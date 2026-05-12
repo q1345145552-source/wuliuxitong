@@ -4,6 +4,8 @@
   "description": "湘泰物流：根目录安装 tsx 后可在仓库根运行后端；前端在 apps/web",
   "scripts": {
     "postinstall": "npm install --prefix apps/web",
+    "build": "npm run build --prefix apps/web",
+    "start": "npm run start --prefix apps/web",
     "dev:api": "tsx apps/api/src/main.ts",
     "dev:web": "npm run dev --prefix apps/web",
     "dev:web:public": "npm run dev:public --prefix apps/web",
