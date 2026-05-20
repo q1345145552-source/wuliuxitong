@@ -1,10 +1,19 @@
+// B-3 ~ B-7: 已从 node:sqlite 迁移到 Prisma + PostgreSQL（2026-05-18）
 import crypto from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
+import { Prisma } from "@prisma/client";
+import { prisma } from "../../db/prisma";
 import type { MinimalHttpApp } from "../../server";
 import { fail, ok, parseJsonArray, requireRole } from "../core/http-utils";
 import { loadProductImagesForOrders, MAX_ORDER_PRODUCT_IMAGES } from "./product-images";
 
 const COMPLETED = new Set(["delivered", "returned", "cancelled"]);
+
+/** Prisma 的 Decimal | null 转 number | null（用于返回前端）。 */
+function decToNumber(value: Prisma.Decimal | null | undefined): number | null {
+  if (value === null || value === undefined) return null;
+  return Number(value.toString());
+}
 
 /**
  * 根据仓库ID返回湘泰运单号前缀。
@@ -24,40 +33,36 @@ function toDatePart(dateText: string): string {
 }
 
 /**
- * 按“仓库前缀+日期+3位流水”生成湘泰运单号。
- */
-/**
  * 判断员工/管理员是否可编辑该订单仓库维度下的数据。
  */
-function staffCanEditOrderWarehouse(
-  db: DatabaseSync,
+async function staffCanEditOrderWarehouse(
   auth: { userId: string; role: string; companyId: string },
   warehouseId: string,
-): boolean {
+): Promise<boolean> {
   if (auth.role === "admin") return true;
-  const user = db.prepare("SELECT warehouse_ids FROM users WHERE id = ?").get(auth.userId) as { warehouse_ids: string } | undefined;
-  const editableWarehouses = parseJsonArray(user?.warehouse_ids);
+  const user = await prisma.user.findUnique({
+    where: { id: auth.userId },
+    select: { warehouseIds: true },
+  });
+  const editableWarehouses = parseJsonArray(user?.warehouseIds);
   return editableWarehouses.includes(warehouseId);
 }
 
-function generateTrackingNo(db: DatabaseSync, warehouseId: string, arrivedAt: string): string {
+/**
+ * 按“仓库前缀+日期+3位流水”生成湘泰运单号。
+ */
+async function generateTrackingNo(warehouseId: string, arrivedAt: string): Promise<string> {
   const prefix = warehousePrefix(warehouseId);
   const datePart = toDatePart(arrivedAt);
   const base = `${prefix}${datePart}`;
-  const row = db
-    .prepare(
-      `
-      SELECT COUNT(1) as count
-      FROM shipments
-      WHERE tracking_no LIKE ?
-      `,
-    )
-    .get(`${base}%`) as { count: number };
-  const seq = String((row?.count ?? 0) + 1).padStart(3, "0");
+  const count = await prisma.shipment.count({
+    where: { trackingNo: { startsWith: base } },
+  });
+  const seq = String(count + 1).padStart(3, "0");
   return `${base}${seq}`;
 }
 
-export function registerOrderRoutes(app: MinimalHttpApp, db: DatabaseSync): void {
+export function registerOrderRoutes(app: MinimalHttpApp, _db: DatabaseSync): void {
   app.post("/client/prealerts", async (req, res) => {
     const auth = requireRole(req, res, ["client"]);
     if (!auth) return;
@@ -92,38 +97,33 @@ export function registerOrderRoutes(app: MinimalHttpApp, db: DatabaseSync): void
     const weightKg = body.weightKg === undefined || body.weightKg === null ? null : Number(body.weightKg);
     const volumeM3 = body.volumeM3 === undefined || body.volumeM3 === null ? null : Number(body.volumeM3);
     const orderId = `o_${Date.now()}`;
-    db.prepare(`
-      INSERT INTO orders (
-        id, company_id, client_id, warehouse_id, batch_no, order_no, approval_status, item_name, product_quantity, package_count, package_unit,
-        weight_kg, volume_m3, receivable_amount_cny, receivable_currency, ship_date, domestic_tracking_no, transport_mode, receiver_name_th, receiver_phone_th, receiver_address_th,
-        status_group, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      orderId,
-      auth.companyId,
-      auth.userId,
-      body.warehouseId.trim(),
-      null,
-      null,
-      "pending",
-      body.itemName,
-      0,
-      Number(body.packageCount ?? 0),
-      body.packageUnit ?? "box",
-      weightKg,
-      volumeM3,
-      null,
-      "CNY",
-      shipDateText,
-      body.domesticTrackingNo ?? null,
-      body.transportMode,
-      body.receiverNameTh?.trim() || "",
-      body.receiverPhoneTh?.trim() || "",
-      body.receiverAddressTh?.trim() || "",
-      "unfinished",
-      now,
-      now,
-    );
+
+    await prisma.order.create({
+      data: {
+        id: orderId,
+        companyId: auth.companyId,
+        clientId: auth.userId,
+        warehouseId: body.warehouseId.trim(),
+        batchNo: null,
+        orderNo: null,
+        approvalStatus: "pending",
+        itemName: body.itemName,
+        productQuantity: 0,
+        packageCount: Number(body.packageCount ?? 0),
+        packageUnit: body.packageUnit ?? "box",
+        weightKg: weightKg as unknown as Prisma.Decimal | null,
+        volumeM3: volumeM3 as unknown as Prisma.Decimal | null,
+        receivableAmountCny: null,
+        receivableCurrency: "CNY",
+        shipDate: shipDateText,
+        domesticTrackingNo: body.domesticTrackingNo ?? null,
+        transportMode: body.transportMode,
+        receiverNameTh: body.receiverNameTh?.trim() || "",
+        receiverPhoneTh: body.receiverPhoneTh?.trim() || "",
+        receiverAddressTh: body.receiverAddressTh?.trim() || "",
+        statusGroup: "unfinished",
+      },
+    });
 
     ok(res, { prealertId: orderId, createdAt: now });
   });
@@ -169,10 +169,11 @@ export function registerOrderRoutes(app: MinimalHttpApp, db: DatabaseSync): void
     }
 
     if (auth.role === "staff") {
-      const user = db
-        .prepare("SELECT warehouse_ids FROM users WHERE id = ?")
-        .get(auth.userId) as { warehouse_ids: string } | undefined;
-      const editableWarehouses = parseJsonArray(user?.warehouse_ids);
+      const user = await prisma.user.findUnique({
+        where: { id: auth.userId },
+        select: { warehouseIds: true },
+      });
+      const editableWarehouses = parseJsonArray(user?.warehouseIds);
       if (!editableWarehouses.includes(body.warehouseId)) {
         fail(res, 403, "FORBIDDEN", "cross warehouse create is not allowed");
         return;
@@ -182,65 +183,59 @@ export function registerOrderRoutes(app: MinimalHttpApp, db: DatabaseSync): void
     const now = arrivedAtDate.toISOString();
     const orderId = `o_${Date.now()}`;
     const shipmentId = `s_${Date.now()}`;
-    const generatedTrackingNo = generateTrackingNo(db, body.warehouseId, body.arrivedAt.trim());
+    const generatedTrackingNo = await generateTrackingNo(body.warehouseId, body.arrivedAt.trim());
     const weightKg = body.weightKg === undefined || body.weightKg === null ? null : Number(body.weightKg);
     const volumeM3 = body.volumeM3 === undefined || body.volumeM3 === null ? null : Number(body.volumeM3);
-    db.prepare(`
-      INSERT INTO orders (
-        id, company_id, client_id, warehouse_id, batch_no, order_no, approval_status, item_name, product_quantity, package_count, package_unit,
-        weight_kg, volume_m3, receivable_amount_cny, receivable_currency, ship_date, domestic_tracking_no, transport_mode, receiver_name_th, receiver_phone_th, receiver_address_th,
-        status_group, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      orderId,
-      auth.companyId,
-      body.clientId,
-      body.warehouseId,
-      body.batchNo?.trim() || null,
-      null,
-      "approved",
-      body.itemName,
-      Number(body.productQuantity ?? 0),
-      Number(body.packageCount ?? 0),
-      body.packageUnit ?? "box",
-      weightKg,
-      volumeM3,
-      null,
-      "CNY",
-      body.arrivedAt.trim(),
-      body.domesticTrackingNo ?? null,
-      body.transportMode,
-      body.receiverNameTh ?? "",
-      body.receiverPhoneTh ?? "",
-      body.receiverAddressTh ?? "",
-      "unfinished",
-      now,
-      now,
-    );
+    const batchNo = body.batchNo?.trim() || null;
+    const packageCountNum = Number(body.packageCount ?? 0);
+    const packageUnit = body.packageUnit ?? "box";
 
-    db.prepare(`
-      INSERT INTO shipments (
-        id, company_id, order_id, tracking_no, batch_no, current_status, current_location, weight_kg, volume_m3,
-        package_count, package_unit, transport_mode, domestic_tracking_no, warehouse_id, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      shipmentId,
-      auth.companyId,
-      orderId,
-      generatedTrackingNo,
-      body.batchNo?.trim() || null,
-      "created",
-      null,
-      weightKg,
-      volumeM3,
-      Number(body.packageCount ?? 0),
-      body.packageUnit ?? "box",
-      body.transportMode,
-      body.domesticTrackingNo ?? null,
-      body.warehouseId,
-      now,
-      now,
-    );
+    await prisma.$transaction([
+      prisma.order.create({
+        data: {
+          id: orderId,
+          companyId: auth.companyId,
+          clientId: body.clientId,
+          warehouseId: body.warehouseId,
+          batchNo,
+          orderNo: null,
+          approvalStatus: "approved",
+          itemName: body.itemName,
+          productQuantity: Number(body.productQuantity ?? 0),
+          packageCount: packageCountNum,
+          packageUnit,
+          weightKg: weightKg as unknown as Prisma.Decimal | null,
+          volumeM3: volumeM3 as unknown as Prisma.Decimal | null,
+          receivableAmountCny: null,
+          receivableCurrency: "CNY",
+          shipDate: body.arrivedAt.trim(),
+          domesticTrackingNo: body.domesticTrackingNo ?? null,
+          transportMode: body.transportMode,
+          receiverNameTh: body.receiverNameTh ?? "",
+          receiverPhoneTh: body.receiverPhoneTh ?? "",
+          receiverAddressTh: body.receiverAddressTh ?? "",
+          statusGroup: "unfinished",
+        },
+      }),
+      prisma.shipment.create({
+        data: {
+          id: shipmentId,
+          companyId: auth.companyId,
+          orderId,
+          trackingNo: generatedTrackingNo,
+          batchNo,
+          currentStatus: "created",
+          currentLocation: null,
+          weightKg: weightKg as unknown as Prisma.Decimal | null,
+          volumeM3: volumeM3 as unknown as Prisma.Decimal | null,
+          packageCount: packageCountNum,
+          packageUnit,
+          transportMode: body.transportMode,
+          domesticTrackingNo: body.domesticTrackingNo ?? null,
+          warehouseId: body.warehouseId,
+        },
+      }),
+    ]);
 
     ok(res, { orderId, createdAt: now });
   });
@@ -267,35 +262,42 @@ export function registerOrderRoutes(app: MinimalHttpApp, db: DatabaseSync): void
       return;
     }
 
-    const order = db
-      .prepare("SELECT id, warehouse_id FROM orders WHERE id = ? AND company_id = ?")
-      .get(orderId, auth.companyId) as { id: string; warehouse_id: string } | undefined;
+    const order = await prisma.order.findFirst({
+      where: { id: orderId, companyId: auth.companyId },
+      select: { id: true, warehouseId: true },
+    });
     if (!order) {
       fail(res, 404, "NOT_FOUND", "order not found");
       return;
     }
 
     if (auth.role === "staff") {
-      const user = db
-        .prepare("SELECT warehouse_ids FROM users WHERE id = ?")
-        .get(auth.userId) as { warehouse_ids: string } | undefined;
-      const editableWarehouses = parseJsonArray(user?.warehouse_ids);
-      if (!editableWarehouses.includes(order.warehouse_id)) {
+      const user = await prisma.user.findUnique({
+        where: { id: auth.userId },
+        select: { warehouseIds: true },
+      });
+      const editableWarehouses = parseJsonArray(user?.warehouseIds);
+      if (!editableWarehouses.includes(order.warehouseId)) {
         fail(res, 403, "FORBIDDEN", "cross warehouse update is not allowed");
         return;
       }
     }
 
-    const now = new Date().toISOString();
-    db.prepare(
-      `
-      UPDATE orders
-      SET receivable_amount_cny = ?, receivable_currency = ?, updated_at = ?
-      WHERE id = ? AND company_id = ?
-      `,
-    ).run(amount, currency, now, orderId, auth.companyId);
+    const updated = await prisma.order.update({
+      where: { id: orderId },
+      data: {
+        receivableAmountCny: amount as unknown as Prisma.Decimal,
+        receivableCurrency: currency,
+      },
+      select: { updatedAt: true },
+    });
 
-    ok(res, { orderId, receivableAmountCny: amount, receivableCurrency: currency, updatedAt: now });
+    ok(res, {
+      orderId,
+      receivableAmountCny: amount,
+      receivableCurrency: currency,
+      updatedAt: updated.updatedAt.toISOString(),
+    });
   });
 
   app.post("/staff/orders/set-payment", async (req, res) => {
@@ -320,26 +322,29 @@ export function registerOrderRoutes(app: MinimalHttpApp, db: DatabaseSync): void
       return;
     }
 
-    const order = db
-      .prepare("SELECT id, warehouse_id FROM orders WHERE id = ? AND company_id = ?")
-      .get(orderId, auth.companyId) as { id: string; warehouse_id: string } | undefined;
+    const order = await prisma.order.findFirst({
+      where: { id: orderId, companyId: auth.companyId },
+      select: { id: true, warehouseId: true },
+    });
     if (!order) {
       fail(res, 404, "NOT_FOUND", "order not found");
       return;
     }
 
     if (auth.role === "staff") {
-      const user = db
-        .prepare("SELECT warehouse_ids FROM users WHERE id = ?")
-        .get(auth.userId) as { warehouse_ids: string } | undefined;
-      const editableWarehouses = parseJsonArray(user?.warehouse_ids);
-      if (!editableWarehouses.includes(order.warehouse_id)) {
+      const user = await prisma.user.findUnique({
+        where: { id: auth.userId },
+        select: { warehouseIds: true },
+      });
+      const editableWarehouses = parseJsonArray(user?.warehouseIds);
+      if (!editableWarehouses.includes(order.warehouseId)) {
         fail(res, 403, "FORBIDDEN", "cross warehouse update is not allowed");
         return;
       }
     }
 
-    const now = new Date().toISOString();
+    const now = new Date();
+    const nowIso = now.toISOString();
     if (paymentStatus === "paid") {
       const proofFileName = typeof body.proofFileName === "string" ? body.proofFileName.trim() : "";
       const proofMime = typeof body.proofMime === "string" ? body.proofMime.trim() : "";
@@ -348,7 +353,7 @@ export function registerOrderRoutes(app: MinimalHttpApp, db: DatabaseSync): void
         fail(res, 400, "BAD_REQUEST", "payment proof is required when marking as paid");
         return;
       }
-      // Basic size guard to avoid storing extremely large blobs in SQLite.
+      // Basic size guard to avoid storing extremely large blobs.
       // base64 expands ~4/3, so 4MB base64 ~= 3MB binary.
       if (proofBase64.length > 4_000_000) {
         fail(res, 400, "BAD_REQUEST", "payment proof is too large (max 4MB base64)");
@@ -364,39 +369,35 @@ export function registerOrderRoutes(app: MinimalHttpApp, db: DatabaseSync): void
         fail(res, 400, "BAD_REQUEST", "invalid payment proof");
         return;
       }
-      db.prepare(
-        `
-        UPDATE orders
-        SET payment_status = 'paid',
-            paid_at = ?,
-            paid_by = ?,
-            payment_proof_file_name = ?,
-            payment_proof_mime = ?,
-            payment_proof_base64 = ?,
-            payment_proof_uploaded_at = ?,
-            updated_at = ?
-        WHERE id = ? AND company_id = ?
-        `,
-      ).run(now, auth.userId, proofFileName, proofMime, proofBase64, now, now, orderId, auth.companyId);
-      ok(res, { orderId, paymentStatus: "paid", paidAt: now, paidBy: auth.userId, updatedAt: now });
+      await prisma.order.update({
+        where: { id: orderId },
+        data: {
+          paymentStatus: "paid",
+          paidAt: now,
+          paidBy: auth.userId,
+          paymentProofFileName: proofFileName,
+          paymentProofMime: proofMime,
+          paymentProofBase64: proofBase64,
+          paymentProofUploadedAt: now,
+        },
+      });
+      ok(res, { orderId, paymentStatus: "paid", paidAt: nowIso, paidBy: auth.userId, updatedAt: nowIso });
       return;
     }
 
-    db.prepare(
-      `
-      UPDATE orders
-      SET payment_status = 'unpaid',
-          paid_at = NULL,
-          paid_by = NULL,
-          payment_proof_file_name = NULL,
-          payment_proof_mime = NULL,
-          payment_proof_base64 = NULL,
-          payment_proof_uploaded_at = NULL,
-          updated_at = ?
-      WHERE id = ? AND company_id = ?
-      `,
-    ).run(now, orderId, auth.companyId);
-    ok(res, { orderId, paymentStatus: "unpaid", paidAt: null, paidBy: null, updatedAt: now });
+    await prisma.order.update({
+      where: { id: orderId },
+      data: {
+        paymentStatus: "unpaid",
+        paidAt: null,
+        paidBy: null,
+        paymentProofFileName: null,
+        paymentProofMime: null,
+        paymentProofBase64: null,
+        paymentProofUploadedAt: null,
+      },
+    });
+    ok(res, { orderId, paymentStatus: "unpaid", paidAt: null, paidBy: null, updatedAt: nowIso });
   });
 
   app.get("/client/orders", async (req, res) => {
@@ -410,122 +411,90 @@ export function registerOrderRoutes(app: MinimalHttpApp, db: DatabaseSync): void
     const orderNo = req.query.orderNo?.trim();
     const domesticTrackingNo = req.query.domesticTrackingNo?.trim();
 
-    const rows = db
-      .prepare(`
-        SELECT
-          o.id, o.client_id, o.warehouse_id, o.order_no, o.item_name, o.transport_mode, o.domestic_tracking_no,
-          o.batch_no, o.approval_status,
-          o.product_quantity, o.package_count, o.package_unit, o.weight_kg, o.volume_m3,
-          o.receivable_amount_cny, o.receivable_currency,
-          o.payment_status, o.paid_at, o.paid_by,
-          o.ship_date, o.created_at, o.updated_at,
-          s.tracking_no, s.current_status,
-          (
-            SELECT sl.remark
-            FROM status_logs sl
-            JOIN shipments sx ON sx.id = sl.shipment_id
-            WHERE sx.order_id = o.id AND sl.company_id = o.company_id AND sl.remark IS NOT NULL AND sl.remark != ''
-            ORDER BY sl.changed_at DESC
-            LIMIT 1
-          ) as latest_remark
-        FROM orders o
-        LEFT JOIN shipments s ON s.order_id = o.id
-        WHERE o.company_id = ? AND o.approval_status = 'approved'
-        ORDER BY o.created_at ASC
-      `)
-      .all(auth.companyId) as Array<{
-      id: string;
-      client_id: string;
-      warehouse_id: string;
-      order_no: string | null;
-      item_name: string;
-      transport_mode: string;
-      domestic_tracking_no: string | null;
-      batch_no: string | null;
-      approval_status: string;
-      product_quantity: number;
-      package_count: number;
-      package_unit: string;
-      weight_kg: number | null;
-      volume_m3: number | null;
-      ship_date: string | null;
-      created_at: string;
-      updated_at: string;
-      receivable_amount_cny: number | null;
-      receivable_currency: string | null;
-      payment_status: string | null;
-      paid_at: string | null;
-      paid_by: string | null;
-      tracking_no: string | null;
-      current_status: string | null;
-      latest_remark: string | null;
-    }>;
+    const orders = await prisma.order.findMany({
+      where: {
+        companyId: auth.companyId,
+        approvalStatus: "approved",
+        clientId: auth.userId,
+      },
+      orderBy: { createdAt: "asc" },
+      include: {
+        shipments: {
+          orderBy: { updatedAt: "desc" },
+          take: 1,
+          select: {
+            id: true,
+            trackingNo: true,
+            currentStatus: true,
+            statusLogs: {
+              where: { NOT: [{ remark: null }, { remark: "" }] },
+              orderBy: { changedAt: "asc" },
+              select: {
+                remark: true,
+                changedAt: true,
+                fromStatus: true,
+                toStatus: true,
+              },
+            },
+          },
+        },
+      },
+    });
 
-    const filtered = rows
-      .filter((row) => row.client_id === auth.userId)
-      .filter((row) => !itemName || row.item_name.includes(itemName))
-      .filter((row) => !transportMode || row.transport_mode === transportMode)
-      .filter((row) => !trackingNo || row.tracking_no === trackingNo)
-      .filter((row) => !orderNo || row.order_no === orderNo)
-      .filter((row) => !domesticTrackingNo || row.domestic_tracking_no === domesticTrackingNo)
-      .filter((row) => {
-        const completed = row.current_status ? COMPLETED.has(row.current_status) : false;
+    const filtered = orders
+      .filter((o) => !itemName || o.itemName.includes(itemName))
+      .filter((o) => !transportMode || o.transportMode === transportMode)
+      .filter((o) => !trackingNo || o.shipments[0]?.trackingNo === trackingNo)
+      .filter((o) => !orderNo || o.orderNo === orderNo)
+      .filter((o) => !domesticTrackingNo || o.domesticTrackingNo === domesticTrackingNo)
+      .filter((o) => {
+        const cur = o.shipments[0]?.currentStatus;
+        const completed = cur ? COMPLETED.has(cur) : false;
         if (statusGroup === "completed") return completed;
         if (statusGroup === "unfinished") return !completed;
         return true;
       });
 
-    const historyStmt = db.prepare(`
-      SELECT sl.remark, sl.changed_at, sl.from_status, sl.to_status
-      FROM status_logs sl
-      JOIN shipments s ON s.id = sl.shipment_id
-      WHERE s.order_id = ? AND sl.company_id = ? AND sl.remark IS NOT NULL AND sl.remark != ''
-      ORDER BY sl.changed_at ASC
-    `);
-
-    const items = filtered.map((row) => {
-      const logisticsRecords = historyStmt.all(row.id, auth.companyId) as Array<{
-        remark: string;
-        changed_at: string;
-        from_status: string;
-        to_status: string;
-      }>;
+    const items = filtered.map((o) => {
+      const ship = o.shipments[0];
+      const logisticsRecords = (ship?.statusLogs ?? []).map((r) => ({
+        remark: r.remark ?? "",
+        changedAt: r.changedAt.toISOString(),
+        fromStatus: r.fromStatus,
+        toStatus: r.toStatus,
+      }));
+      const latestRemark = logisticsRecords.at(-1)?.remark ?? null;
       return {
-        id: row.id,
-        warehouseId: row.warehouse_id,
-        orderNo: row.order_no,
-        itemName: row.item_name,
-        transportMode: row.transport_mode,
-        domesticTrackingNo: row.domestic_tracking_no,
-        batchNo: row.batch_no,
-        approvalStatus: row.approval_status,
-        trackingNo: row.tracking_no,
-        currentStatus: row.current_status,
-        productQuantity: row.product_quantity,
-        packageCount: row.package_count,
-        packageUnit: row.package_unit,
-        weightKg: row.weight_kg,
-        volumeM3: row.volume_m3,
-        receivableAmountCny: row.receivable_amount_cny,
-        receivableCurrency: row.receivable_currency ?? "CNY",
-        paymentStatus: row.payment_status ?? "unpaid",
-        paidAt: row.paid_at ?? undefined,
-        paidBy: row.paid_by ?? undefined,
-        shipDate: row.ship_date,
-        latestRemark: logisticsRecords.at(-1)?.remark ?? row.latest_remark,
-        logisticsRecords: logisticsRecords.map((record) => ({
-          remark: record.remark,
-          changedAt: record.changed_at,
-          fromStatus: record.from_status,
-          toStatus: record.to_status,
-        })),
-        createdAt: row.created_at,
-        updatedAt: row.updated_at,
+        id: o.id,
+        warehouseId: o.warehouseId,
+        orderNo: o.orderNo,
+        itemName: o.itemName,
+        transportMode: o.transportMode,
+        domesticTrackingNo: o.domesticTrackingNo,
+        batchNo: o.batchNo,
+        approvalStatus: o.approvalStatus,
+        trackingNo: ship?.trackingNo ?? null,
+        currentStatus: ship?.currentStatus ?? null,
+        productQuantity: o.productQuantity,
+        packageCount: o.packageCount,
+        packageUnit: o.packageUnit,
+        weightKg: decToNumber(o.weightKg),
+        volumeM3: decToNumber(o.volumeM3),
+        receivableAmountCny: decToNumber(o.receivableAmountCny),
+        receivableCurrency: o.receivableCurrency ?? "CNY",
+        paymentStatus: o.paymentStatus ?? "unpaid",
+        paidAt: o.paidAt ? o.paidAt.toISOString() : undefined,
+        paidBy: o.paidBy ?? undefined,
+        shipDate: o.shipDate,
+        latestRemark,
+        logisticsRecords,
+        createdAt: o.createdAt.toISOString(),
+        updatedAt: o.updatedAt.toISOString(),
       };
     });
 
     const orderIds = items.map((item) => item.id);
-    const imageMap = loadProductImagesForOrders(db, auth.companyId, orderIds);
+    const imageMap = await loadProductImagesForOrders(auth.companyId, orderIds);
     const itemsWithImages = items.map((item) => ({
       ...item,
       productImages: imageMap.get(item.id) ?? [],
@@ -542,151 +511,101 @@ export function registerOrderRoutes(app: MinimalHttpApp, db: DatabaseSync): void
   app.get("/client/prealerts", async (req, res) => {
     const auth = requireRole(req, res, ["client"]);
     if (!auth) return;
-    const rows = db
-      .prepare(`
-        SELECT
-          id, client_id, warehouse_id, order_no, item_name, transport_mode, domestic_tracking_no, batch_no, approval_status,
-          product_quantity, package_count, package_unit, weight_kg, volume_m3, receivable_amount_cny, receivable_currency,
-          payment_status, paid_at, paid_by,
-          ship_date, created_at, updated_at
-        FROM orders
-        WHERE company_id = ? AND approval_status = 'pending'
-        ORDER BY created_at DESC
-      `)
-      .all(auth.companyId) as Array<{
-      id: string;
-      client_id: string;
-      warehouse_id: string;
-      order_no: string | null;
-      item_name: string;
-      transport_mode: string;
-      domestic_tracking_no: string | null;
-      batch_no: string | null;
-      approval_status: string;
-      product_quantity: number;
-      package_count: number;
-      package_unit: string;
-      weight_kg: number | null;
-      volume_m3: number | null;
-      receivable_amount_cny: number | null;
-      receivable_currency: string | null;
-      payment_status: string | null;
-      paid_at: string | null;
-      paid_by: string | null;
-      ship_date: string | null;
-      created_at: string;
-      updated_at: string;
-    }>;
-    const items = rows
-      .filter((row) => row.client_id === auth.userId)
-      .map((row) => ({
-        id: row.id,
-        warehouseId: row.warehouse_id,
-        orderNo: row.order_no,
-        itemName: row.item_name,
-        transportMode: row.transport_mode,
-        domesticTrackingNo: row.domestic_tracking_no,
-        batchNo: row.batch_no,
-        approvalStatus: row.approval_status,
-        productQuantity: row.product_quantity,
-        packageCount: row.package_count,
-        packageUnit: row.package_unit,
-        weightKg: row.weight_kg,
-        volumeM3: row.volume_m3,
-        receivableAmountCny: row.receivable_amount_cny,
-        receivableCurrency: row.receivable_currency ?? "CNY",
-        paymentStatus: row.payment_status ?? "unpaid",
-        paidAt: row.paid_at ?? undefined,
-        paidBy: row.paid_by ?? undefined,
-        shipDate: row.ship_date,
-        createdAt: row.created_at,
-        updatedAt: row.updated_at,
-      }));
+    const orders = await prisma.order.findMany({
+      where: {
+        companyId: auth.companyId,
+        approvalStatus: "pending",
+        clientId: auth.userId,
+      },
+      orderBy: { createdAt: "desc" },
+    });
+    const items = orders.map((o) => ({
+      id: o.id,
+      warehouseId: o.warehouseId,
+      orderNo: o.orderNo,
+      itemName: o.itemName,
+      transportMode: o.transportMode,
+      domesticTrackingNo: o.domesticTrackingNo,
+      batchNo: o.batchNo,
+      approvalStatus: o.approvalStatus,
+      productQuantity: o.productQuantity,
+      packageCount: o.packageCount,
+      packageUnit: o.packageUnit,
+      weightKg: decToNumber(o.weightKg),
+      volumeM3: decToNumber(o.volumeM3),
+      receivableAmountCny: decToNumber(o.receivableAmountCny),
+      receivableCurrency: o.receivableCurrency ?? "CNY",
+      paymentStatus: o.paymentStatus ?? "unpaid",
+      paidAt: o.paidAt ? o.paidAt.toISOString() : undefined,
+      paidBy: o.paidBy ?? undefined,
+      shipDate: o.shipDate,
+      createdAt: o.createdAt.toISOString(),
+      updatedAt: o.updatedAt.toISOString(),
+    }));
     const prealertIds = items.map((item) => item.id);
-    const prealertImageMap = loadProductImagesForOrders(db, auth.companyId, prealertIds);
+    const prealertImageMap = await loadProductImagesForOrders(auth.companyId, prealertIds);
     const prealertItemsWithImages = items.map((item) => ({
       ...item,
       productImages: prealertImageMap.get(item.id) ?? [],
     }));
-    ok(res, { items: prealertItemsWithImages, page: 1, pageSize: prealertItemsWithImages.length, total: prealertItemsWithImages.length });
+    ok(res, {
+      items: prealertItemsWithImages,
+      page: 1,
+      pageSize: prealertItemsWithImages.length,
+      total: prealertItemsWithImages.length,
+    });
   });
 
   app.get("/staff/prealerts", async (req, res) => {
     const auth = requireRole(req, res, ["staff", "admin"]);
     if (!auth) return;
 
-    const user = db
-      .prepare("SELECT warehouse_ids FROM users WHERE id = ?")
-      .get(auth.userId) as { warehouse_ids: string } | undefined;
-    const editableWarehouses = parseJsonArray(user?.warehouse_ids);
+    const user = await prisma.user.findUnique({
+      where: { id: auth.userId },
+      select: { warehouseIds: true },
+    });
+    const editableWarehouses = parseJsonArray(user?.warehouseIds);
 
-    const rows = db
-      .prepare(`
-        SELECT
-          o.id, o.client_id, u.name as client_name, o.warehouse_id, o.order_no, o.item_name, o.transport_mode, o.domestic_tracking_no, o.batch_no, o.approval_status,
-          o.product_quantity, o.package_count, o.package_unit, o.weight_kg, o.volume_m3, o.receivable_amount_cny, o.receivable_currency,
-          o.payment_status, o.paid_at, o.paid_by,
-          o.ship_date, o.created_at, o.updated_at
-        FROM orders o
-        LEFT JOIN users u ON u.id = o.client_id
-        WHERE o.company_id = ? AND o.approval_status = 'pending'
-        ORDER BY o.created_at DESC
-      `)
-      .all(auth.companyId) as Array<{
-      id: string;
-      client_id: string;
-      client_name: string | null;
-      warehouse_id: string;
-      order_no: string | null;
-      item_name: string;
-      transport_mode: string;
-      domestic_tracking_no: string | null;
-      batch_no: string | null;
-      approval_status: string;
-      product_quantity: number;
-      package_count: number;
-      package_unit: string;
-      weight_kg: number | null;
-      volume_m3: number | null;
-      receivable_amount_cny: number | null;
-      receivable_currency: string | null;
-      payment_status: string | null;
-      paid_at: string | null;
-      paid_by: string | null;
-      ship_date: string | null;
-      created_at: string;
-      updated_at: string;
-    }>;
+    const orders = await prisma.order.findMany({
+      where: {
+        companyId: auth.companyId,
+        approvalStatus: "pending",
+      },
+      orderBy: { createdAt: "desc" },
+      include: {
+        client: { select: { name: true } },
+      },
+    });
 
-    const items = rows
-      .filter((row) => auth.role === "admin" || editableWarehouses.includes(row.warehouse_id))
-      .map((row) => ({
-        id: row.id,
-        clientId: row.client_id,
-        clientName: row.client_name,
-        warehouseId: row.warehouse_id,
-        orderNo: row.order_no,
-        itemName: row.item_name,
-        transportMode: row.transport_mode,
-        domesticTrackingNo: row.domestic_tracking_no,
-        batchNo: row.batch_no,
-        approvalStatus: row.approval_status,
-        productQuantity: row.product_quantity,
-        packageCount: row.package_count,
-        packageUnit: row.package_unit,
-        weightKg: row.weight_kg,
-        volumeM3: row.volume_m3,
-        receivableAmountCny: row.receivable_amount_cny,
-        receivableCurrency: row.receivable_currency ?? "CNY",
-        paymentStatus: row.payment_status ?? "unpaid",
-        paidAt: row.paid_at ?? undefined,
-        paidBy: row.paid_by ?? undefined,
-        shipDate: row.ship_date,
-        createdAt: row.created_at,
-        updatedAt: row.updated_at,
+    const items = orders
+      .filter((o) => auth.role === "admin" || editableWarehouses.includes(o.warehouseId))
+      .map((o) => ({
+        id: o.id,
+        clientId: o.clientId,
+        clientName: o.client?.name ?? null,
+        warehouseId: o.warehouseId,
+        orderNo: o.orderNo,
+        itemName: o.itemName,
+        transportMode: o.transportMode,
+        domesticTrackingNo: o.domesticTrackingNo,
+        batchNo: o.batchNo,
+        approvalStatus: o.approvalStatus,
+        productQuantity: o.productQuantity,
+        packageCount: o.packageCount,
+        packageUnit: o.packageUnit,
+        weightKg: decToNumber(o.weightKg),
+        volumeM3: decToNumber(o.volumeM3),
+        receivableAmountCny: decToNumber(o.receivableAmountCny),
+        receivableCurrency: o.receivableCurrency ?? "CNY",
+        paymentStatus: o.paymentStatus ?? "unpaid",
+        paidAt: o.paidAt ? o.paidAt.toISOString() : undefined,
+        paidBy: o.paidBy ?? undefined,
+        shipDate: o.shipDate,
+        createdAt: o.createdAt.toISOString(),
+        updatedAt: o.updatedAt.toISOString(),
       }));
     const staffPrealertIds = items.map((item) => item.id);
-    const staffPrealertImageMap = loadProductImagesForOrders(db, auth.companyId, staffPrealertIds);
+    const staffPrealertImageMap = await loadProductImagesForOrders(auth.companyId, staffPrealertIds);
     const staffPrealertItemsWithImages = items.map((item) => ({
       ...item,
       productImages: staffPrealertImageMap.get(item.id) ?? [],
@@ -724,25 +643,26 @@ export function registerOrderRoutes(app: MinimalHttpApp, db: DatabaseSync): void
       fail(res, 400, "BAD_REQUEST", "file too large (max 4MB base64)");
       return;
     }
-    const order = db
-      .prepare("SELECT id, warehouse_id, approval_status FROM orders WHERE id = ? AND company_id = ?")
-      .get(orderId, auth.companyId) as { id: string; warehouse_id: string; approval_status: string } | undefined;
+    const order = await prisma.order.findFirst({
+      where: { id: orderId, companyId: auth.companyId },
+      select: { id: true, warehouseId: true, approvalStatus: true },
+    });
     if (!order) {
       fail(res, 404, "NOT_FOUND", "order not found");
       return;
     }
-    if (auth.role === "staff" && order.approval_status !== "pending") {
+    if (auth.role === "staff" && order.approvalStatus !== "pending") {
       fail(res, 403, "FORBIDDEN", "staff can only manage product images for pending prealerts");
       return;
     }
-    if (!staffCanEditOrderWarehouse(db, auth, order.warehouse_id)) {
+    if (!(await staffCanEditOrderWarehouse(auth, order.warehouseId))) {
       fail(res, 403, "FORBIDDEN", "cross warehouse update is not allowed");
       return;
     }
-    const countRow = db
-      .prepare("SELECT COUNT(1) as c FROM order_product_images WHERE company_id = ? AND order_id = ?")
-      .get(auth.companyId, orderId) as { c: number };
-    if ((countRow?.c ?? 0) >= MAX_ORDER_PRODUCT_IMAGES) {
+    const count = await prisma.orderProductImage.count({
+      where: { companyId: auth.companyId, orderId },
+    });
+    if (count >= MAX_ORDER_PRODUCT_IMAGES) {
       fail(res, 400, "BAD_REQUEST", `maximum ${MAX_ORDER_PRODUCT_IMAGES} product images per order`);
       return;
     }
@@ -756,16 +676,21 @@ export function registerOrderRoutes(app: MinimalHttpApp, db: DatabaseSync): void
       fail(res, 400, "BAD_REQUEST", "invalid image content");
       return;
     }
-    const now = new Date().toISOString();
+    const now = new Date();
     const imageId = `opi_${Date.now()}_${crypto.randomBytes(4).toString("hex")}`;
-    db.prepare(
-      `
-      INSERT INTO order_product_images (
-        id, company_id, order_id, file_name, mime, content_base64, uploaded_by, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-      `,
-    ).run(imageId, auth.companyId, orderId, fileName, mimeType, contentBase64, auth.userId, now);
-    ok(res, { id: imageId, orderId, fileName, mime: mimeType, createdAt: now });
+    await prisma.orderProductImage.create({
+      data: {
+        id: imageId,
+        companyId: auth.companyId,
+        orderId,
+        fileName,
+        mime: mimeType,
+        contentBase64,
+        uploadedBy: auth.userId,
+        createdAt: now,
+      },
+    });
+    ok(res, { id: imageId, orderId, fileName, mime: mimeType, createdAt: now.toISOString() });
   });
 
   app.delete("/staff/orders/product-images", async (req, res) => {
@@ -776,30 +701,28 @@ export function registerOrderRoutes(app: MinimalHttpApp, db: DatabaseSync): void
       fail(res, 400, "BAD_REQUEST", "id is required");
       return;
     }
-    const row = db
-      .prepare(
-        `
-        SELECT i.id, o.warehouse_id, o.approval_status
-        FROM order_product_images i
-        JOIN orders o ON o.id = i.order_id AND o.company_id = i.company_id
-        WHERE i.id = ? AND i.company_id = ?
-        `,
-      )
-      .get(id, auth.companyId) as { id: string; warehouse_id: string; approval_status: string } | undefined;
-    if (!row) {
+    const image = await prisma.orderProductImage.findFirst({
+      where: { id, companyId: auth.companyId },
+      include: {
+        order: { select: { warehouseId: true, approvalStatus: true } },
+      },
+    });
+    if (!image || !image.order) {
       fail(res, 404, "NOT_FOUND", "image not found");
       return;
     }
-    if (auth.role === "staff" && row.approval_status !== "pending") {
+    if (auth.role === "staff" && image.order.approvalStatus !== "pending") {
       fail(res, 403, "FORBIDDEN", "staff can only manage product images for pending prealerts");
       return;
     }
-    if (!staffCanEditOrderWarehouse(db, auth, row.warehouse_id)) {
+    if (!(await staffCanEditOrderWarehouse(auth, image.order.warehouseId))) {
       fail(res, 403, "FORBIDDEN", "cross warehouse update is not allowed");
       return;
     }
-    const result = db.prepare("DELETE FROM order_product_images WHERE id = ? AND company_id = ?").run(id, auth.companyId);
-    ok(res, { deleted: result.changes > 0, id });
+    const result = await prisma.orderProductImage.deleteMany({
+      where: { id, companyId: auth.companyId },
+    });
+    ok(res, { deleted: result.count > 0, id });
   });
 
   /**
@@ -837,51 +760,39 @@ export function registerOrderRoutes(app: MinimalHttpApp, db: DatabaseSync): void
       return;
     }
 
-    const row = db
-      .prepare(
-        `
-        SELECT s.id AS sid, s.tracking_no, s.order_id, o.id AS oid, o.warehouse_id AS order_wh
-        FROM shipments s
-        INNER JOIN orders o ON o.id = s.order_id
-        WHERE s.id = ? AND s.company_id = ? AND o.company_id = ?
-        `,
-      )
-      .get(shipmentId, auth.companyId, auth.companyId) as
-      | {
-          sid: string;
-          tracking_no: string;
-          order_id: string;
-          oid: string;
-          order_wh: string;
-        }
-      | undefined;
-
-    if (!row) {
+    const shipment = await prisma.shipment.findFirst({
+      where: { id: shipmentId, companyId: auth.companyId },
+      include: {
+        order: {
+          where: { companyId: auth.companyId },
+          select: {
+            id: true,
+            warehouseId: true,
+            receivableAmountCny: true,
+            receivableCurrency: true,
+          },
+        },
+      },
+    });
+    if (!shipment || !shipment.order) {
       fail(res, 404, "NOT_FOUND", "shipment or order not found");
       return;
     }
+    const curOrder = shipment.order;
 
-    if (!staffCanEditOrderWarehouse(db, auth, row.order_wh)) {
+    if (!(await staffCanEditOrderWarehouse(auth, curOrder.warehouseId))) {
       fail(res, 403, "FORBIDDEN", "cross warehouse update is not allowed");
       return;
     }
 
-    let nextWarehouseId = row.order_wh;
+    let nextWarehouseId = curOrder.warehouseId;
     if (body.warehouseId !== undefined && body.warehouseId !== null && String(body.warehouseId).trim() !== "") {
       const nw = String(body.warehouseId).trim();
-      if (!staffCanEditOrderWarehouse(db, auth, nw)) {
+      if (!(await staffCanEditOrderWarehouse(auth, nw))) {
         fail(res, 403, "FORBIDDEN", "cross warehouse update is not allowed");
         return;
       }
       nextWarehouseId = nw;
-    }
-
-    const curOrder = db
-      .prepare("SELECT receivable_amount_cny, receivable_currency FROM orders WHERE id = ? AND company_id = ?")
-      .get(row.oid, auth.companyId) as { receivable_amount_cny: number | null; receivable_currency: string } | undefined;
-    if (!curOrder) {
-      fail(res, 404, "NOT_FOUND", "order not found");
-      return;
     }
 
     const trackingNo = typeof body.trackingNo === "string" ? body.trackingNo.trim() : "";
@@ -889,10 +800,15 @@ export function registerOrderRoutes(app: MinimalHttpApp, db: DatabaseSync): void
       fail(res, 400, "BAD_REQUEST", "trackingNo is required");
       return;
     }
-    if (trackingNo !== row.tracking_no) {
-      const clash = db
-        .prepare("SELECT id FROM shipments WHERE company_id = ? AND tracking_no = ? AND id != ?")
-        .get(auth.companyId, trackingNo, shipmentId) as { id: string } | undefined;
+    if (trackingNo !== shipment.trackingNo) {
+      const clash = await prisma.shipment.findFirst({
+        where: {
+          companyId: auth.companyId,
+          trackingNo,
+          NOT: { id: shipmentId },
+        },
+        select: { id: true },
+      });
       if (clash) {
         fail(res, 400, "BAD_REQUEST", "trackingNo already exists");
         return;
@@ -938,7 +854,6 @@ export function registerOrderRoutes(app: MinimalHttpApp, db: DatabaseSync): void
       fail(res, 400, "BAD_REQUEST", "invalid orderCreatedDate");
       return;
     }
-    const createdAtIso = arrived.toISOString();
 
     const transportMode = body.transportMode === "land" ? "land" : "sea";
 
@@ -953,8 +868,8 @@ export function registerOrderRoutes(app: MinimalHttpApp, db: DatabaseSync): void
       shipDate = raw;
     }
 
-    let receivableAmount: number | null = curOrder.receivable_amount_cny;
-    let currency: "CNY" | "THB" = curOrder.receivable_currency === "THB" ? "THB" : "CNY";
+    let receivableAmount: number | null = decToNumber(curOrder.receivableAmountCny);
+    let currency: "CNY" | "THB" = curOrder.receivableCurrency === "THB" ? "THB" : "CNY";
     if (body.receivableAmountCny !== undefined && body.receivableAmountCny !== null) {
       const amt = Number(body.receivableAmountCny);
       if (!Number.isFinite(amt) || amt < 0) {
@@ -972,86 +887,50 @@ export function registerOrderRoutes(app: MinimalHttpApp, db: DatabaseSync): void
     const receiverAddressTh = body.receiverAddressTh?.trim() ?? "";
     const containerNo = body.containerNo?.trim() || null;
 
-    const now = new Date().toISOString();
+    const now = new Date();
 
-    db.prepare(
-      `
-      UPDATE orders SET
-        warehouse_id = ?,
-        batch_no = ?,
-        item_name = ?,
-        product_quantity = ?,
-        package_count = ?,
-        package_unit = ?,
-        weight_kg = ?,
-        volume_m3 = ?,
-        domestic_tracking_no = ?,
-        transport_mode = ?,
-        ship_date = ?,
-        receiver_address_th = ?,
-        receivable_amount_cny = ?,
-        receivable_currency = ?,
-        created_at = ?,
-        updated_at = ?
-      WHERE id = ? AND company_id = ?
-      `,
-    ).run(
-      nextWarehouseId,
-      batchNo,
-      itemName,
-      Math.floor(productQuantity),
-      Math.floor(packageCount),
-      packageUnit,
-      weightKg,
-      volumeM3,
-      domesticTrackingNo,
-      transportMode,
-      shipDate,
-      receiverAddressTh,
-      receivableAmount,
-      currency,
-      createdAtIso,
-      now,
-      row.oid,
-      auth.companyId,
-    );
-
-    db.prepare(
-      `
-      UPDATE shipments SET
-        warehouse_id = ?,
-        tracking_no = ?,
-        batch_no = ?,
-        domestic_tracking_no = ?,
-        package_count = ?,
-        package_unit = ?,
-        weight_kg = ?,
-        volume_m3 = ?,
-        transport_mode = ?,
-        container_no = ?,
-        updated_at = ?
-      WHERE id = ? AND company_id = ?
-      `,
-    ).run(
-      nextWarehouseId,
-      trackingNo,
-      batchNo,
-      domesticTrackingNo,
-      Math.floor(packageCount),
-      packageUnit,
-      weightKg,
-      volumeM3,
-      transportMode,
-      containerNo,
-      now,
-      shipmentId,
-      auth.companyId,
-    );
+    await prisma.$transaction([
+      prisma.order.update({
+        where: { id: curOrder.id },
+        data: {
+          warehouseId: nextWarehouseId,
+          batchNo,
+          itemName,
+          productQuantity: Math.floor(productQuantity),
+          packageCount: Math.floor(packageCount),
+          packageUnit,
+          weightKg: weightKg as unknown as Prisma.Decimal | null,
+          volumeM3: volumeM3 as unknown as Prisma.Decimal | null,
+          domesticTrackingNo,
+          transportMode,
+          shipDate,
+          receiverAddressTh,
+          receivableAmountCny: receivableAmount as unknown as Prisma.Decimal | null,
+          receivableCurrency: currency,
+          createdAt: arrived,
+        },
+      }),
+      prisma.shipment.update({
+        where: { id: shipmentId },
+        data: {
+          warehouseId: nextWarehouseId,
+          trackingNo,
+          batchNo,
+          domesticTrackingNo,
+          packageCount: Math.floor(packageCount),
+          packageUnit,
+          weightKg: weightKg as unknown as Prisma.Decimal | null,
+          volumeM3: volumeM3 as unknown as Prisma.Decimal | null,
+          transportMode,
+          containerNo,
+        },
+      }),
+    ]);
 
     ok(res, {
       shipmentId,
-      orderId: row.oid,
-      updatedAt: now,
+      orderId: curOrder.id,
+      updatedAt: now.toISOString(),
     });
   });
 
@@ -1078,64 +957,59 @@ export function registerOrderRoutes(app: MinimalHttpApp, db: DatabaseSync): void
       return;
     }
 
-    const order = db
-      .prepare(`
-        SELECT
-          id, warehouse_id, approval_status, item_name, product_quantity, package_count, package_unit,
-          weight_kg, volume_m3, domestic_tracking_no, transport_mode, ship_date
-        FROM orders
-        WHERE id = ? AND company_id = ?
-      `)
-      .get(body.orderId, auth.companyId) as
-      | {
-          id: string;
-          warehouse_id: string;
-          approval_status: string;
-          item_name: string;
-          product_quantity: number;
-          package_count: number;
-          package_unit: string;
-          weight_kg: number | null;
-          volume_m3: number | null;
-          domestic_tracking_no: string | null;
-          transport_mode: string;
-          ship_date: string | null;
-        }
-      | undefined;
+    const order = await prisma.order.findFirst({
+      where: { id: body.orderId, companyId: auth.companyId },
+      select: {
+        id: true,
+        warehouseId: true,
+        approvalStatus: true,
+        itemName: true,
+        productQuantity: true,
+        packageCount: true,
+        packageUnit: true,
+        weightKg: true,
+        volumeM3: true,
+        domesticTrackingNo: true,
+        transportMode: true,
+        shipDate: true,
+      },
+    });
     if (!order) {
       fail(res, 404, "NOT_FOUND", "prealert order not found");
       return;
     }
-    if (order.approval_status !== "pending") {
+    if (order.approvalStatus !== "pending") {
       fail(res, 400, "VALIDATION_ERROR", "order is not pending");
       return;
     }
 
     if (auth.role === "staff") {
-      const user = db
-        .prepare("SELECT warehouse_ids FROM users WHERE id = ?")
-        .get(auth.userId) as { warehouse_ids: string } | undefined;
-      const editableWarehouses = parseJsonArray(user?.warehouse_ids);
-      if (!editableWarehouses.includes(order.warehouse_id)) {
+      const user = await prisma.user.findUnique({
+        where: { id: auth.userId },
+        select: { warehouseIds: true },
+      });
+      const editableWarehouses = parseJsonArray(user?.warehouseIds);
+      if (!editableWarehouses.includes(order.warehouseId)) {
         fail(res, 403, "FORBIDDEN", "cross warehouse approve is not allowed");
         return;
       }
     }
 
-    const now = new Date().toISOString();
+    const now = new Date();
+    const nowIso = now.toISOString();
     const batchNo = body.batchNo.trim();
-    const itemName = body.itemName?.trim() || order.item_name;
-    const packageCount = body.packageCount === undefined ? order.package_count : Number(body.packageCount);
-    const productQuantity = body.productQuantity === undefined ? order.product_quantity : Number(body.productQuantity);
-    const packageUnit = body.packageUnit ?? (order.package_unit as "bag" | "box");
-    const weightKg = body.weightKg === undefined ? order.weight_kg : Number(body.weightKg);
-    const volumeM3 = body.volumeM3 === undefined ? order.volume_m3 : Number(body.volumeM3);
+    const itemName = body.itemName?.trim() || order.itemName;
+    const packageCount = body.packageCount === undefined ? order.packageCount : Number(body.packageCount);
+    const productQuantity = body.productQuantity === undefined ? order.productQuantity : Number(body.productQuantity);
+    const packageUnit = body.packageUnit ?? (order.packageUnit as "bag" | "box");
+    const weightKg = body.weightKg === undefined ? decToNumber(order.weightKg) : Number(body.weightKg);
+    const volumeM3 = body.volumeM3 === undefined ? decToNumber(order.volumeM3) : Number(body.volumeM3);
     const receivableAmountCny = body.receivableAmountCny === undefined ? null : Number(body.receivableAmountCny);
     const receivableCurrency = body.receivableCurrency === "THB" ? "THB" : "CNY";
     const domesticTrackingNo =
-      body.domesticTrackingNo === undefined ? order.domestic_tracking_no : body.domesticTrackingNo.trim() || null;
-    const transportMode = body.transportMode ?? (order.transport_mode as "sea" | "land");
-    const shipDate = body.shipDate === undefined ? (order.ship_date ?? now.slice(0, 10)) : body.shipDate.trim();
+      body.domesticTrackingNo === undefined ? order.domesticTrackingNo : body.domesticTrackingNo.trim() || null;
+    const transportMode = body.transportMode ?? (order.transportMode as "sea" | "land");
+    const shipDate = body.shipDate === undefined ? (order.shipDate ?? nowIso.slice(0, 10)) : body.shipDate.trim();
 
     if (
       Number.isNaN(packageCount) ||
@@ -1169,72 +1043,51 @@ export function registerOrderRoutes(app: MinimalHttpApp, db: DatabaseSync): void
       return;
     }
 
-    db.prepare(`
-      UPDATE orders
-      SET
-        approval_status = 'approved',
-        batch_no = ?,
-        item_name = ?,
-        product_quantity = ?,
-        package_count = ?,
-        package_unit = ?,
-        weight_kg = ?,
-        volume_m3 = ?,
-        receivable_amount_cny = ?,
-        receivable_currency = ?,
-        ship_date = ?,
-        domestic_tracking_no = ?,
-        transport_mode = ?,
-        updated_at = ?
-      WHERE id = ?
-    `).run(
-      batchNo,
-      itemName,
-      productQuantity,
-      packageCount,
-      packageUnit,
-      weightKg,
-      volumeM3,
-      receivableAmountCny,
-      receivableCurrency,
-      shipDate,
-      domesticTrackingNo,
-      transportMode,
-      now,
-      order.id,
-    );
+    await prisma.order.update({
+      where: { id: order.id },
+      data: {
+        approvalStatus: "approved",
+        batchNo,
+        itemName,
+        productQuantity,
+        packageCount,
+        packageUnit,
+        weightKg: weightKg as unknown as Prisma.Decimal | null,
+        volumeM3: volumeM3 as unknown as Prisma.Decimal | null,
+        receivableAmountCny: receivableAmountCny as unknown as Prisma.Decimal,
+        receivableCurrency,
+        shipDate,
+        domesticTrackingNo,
+        transportMode,
+      },
+    });
 
-    const existingShipment = db
-      .prepare("SELECT id FROM shipments WHERE order_id = ? AND company_id = ? LIMIT 1")
-      .get(order.id, auth.companyId) as { id: string } | undefined;
+    const existingShipment = await prisma.shipment.findFirst({
+      where: { orderId: order.id, companyId: auth.companyId },
+      select: { id: true },
+    });
     if (!existingShipment) {
       const shipmentId = `s_${Date.now()}`;
       const generatedTrackingNo = `AUTO_${order.id}`;
-      db.prepare(`
-        INSERT INTO shipments (
-          id, company_id, order_id, tracking_no, batch_no, current_status, current_location,
-          weight_kg, volume_m3, package_count, package_unit, transport_mode, domestic_tracking_no,
-          warehouse_id, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(
-        shipmentId,
-        auth.companyId,
-        order.id,
-        generatedTrackingNo,
-        batchNo,
-        "created",
-        null,
-        weightKg,
-        volumeM3,
-        packageCount,
-        packageUnit,
-        transportMode,
-        domesticTrackingNo,
-        order.warehouse_id,
-        now,
-        now,
-      );
+      await prisma.shipment.create({
+        data: {
+          id: shipmentId,
+          companyId: auth.companyId,
+          orderId: order.id,
+          trackingNo: generatedTrackingNo,
+          batchNo,
+          currentStatus: "created",
+          currentLocation: null,
+          weightKg: weightKg as unknown as Prisma.Decimal | null,
+          volumeM3: volumeM3 as unknown as Prisma.Decimal | null,
+          packageCount,
+          packageUnit,
+          transportMode,
+          domesticTrackingNo,
+          warehouseId: order.warehouseId,
+        },
+      });
     }
-    ok(res, { orderId: order.id, batchNo, approvalStatus: "approved", approvedAt: now });
+    ok(res, { orderId: order.id, batchNo, approvalStatus: "approved", approvedAt: nowIso });
   });
 }

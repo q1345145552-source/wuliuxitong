@@ -11,10 +11,20 @@
     "dev:web:public": "npm run dev:public --prefix apps/web",
     "dev:web:lan": "node scripts/dev-web-lan.mjs",
     "build:web": "npm run build --prefix apps/web",
-    "start:web": "npm run start --prefix apps/web"
+    "start:web": "npm run start --prefix apps/web",
+    "db:generate": "prisma generate --schema=apps/api/prisma/schema.prisma",
+    "db:migrate": "prisma migrate dev --schema=apps/api/prisma/schema.prisma",
+    "db:migrate:deploy": "prisma migrate deploy --schema=apps/api/prisma/schema.prisma",
+    "db:studio": "prisma studio --schema=apps/api/prisma/schema.prisma",
+    "db:seed": "tsx apps/api/prisma/seed.ts",
+    "db:reset": "prisma migrate reset --schema=apps/api/prisma/schema.prisma"
   },
   "devDependencies": {
+    "prisma": "^5.22.0",
     "tsx": "^4.19.2"
+  },
+  "dependencies": {
+    "@prisma/client": "^5.22.0"
   },
   "engines": {
     "node": ">=22.0.0"

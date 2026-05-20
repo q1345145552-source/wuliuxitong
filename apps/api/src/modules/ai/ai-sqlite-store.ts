@@ -1,3 +1,8 @@
+/**
+ * ⚠️ DEPRECATED — 此文件已不再使用（2026-05-20）
+ * 已被 ai-prisma-store.ts 取代。保留 1 个月作回滚缓冲，预计 2026-06-20 后删除。
+ * 不要在任何地方 import 此文件。
+ */
 import type { DatabaseSync } from "node:sqlite";
 import type {
   AiKnowledgeItem,
