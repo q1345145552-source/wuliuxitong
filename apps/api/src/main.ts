@@ -1,10 +1,12 @@
-import { createDbContext } from "./db/sqlite";
+// B-final: 完全切换到 Prisma + PostgreSQL（2026-05-20）
+import { prisma } from "./db/prisma";
 import { registerAdminRoutes } from "./modules/admin/routes";
 import { registerClientAiRoutes } from "./modules/ai";
 import { registerAdminOpsRoutes } from "./modules/admin-ops/routes";
 import { registerAuthRoutes } from "./modules/auth/routes";
 import { registerClientAddressRoutes } from "./modules/client-addresses/routes";
 import { registerClientComplianceRoutes } from "./modules/client-compliance/routes";
+import { registerContainerRoutes } from "./modules/containers/routes";
 import { registerOrderRoutes } from "./modules/orders/routes";
 import { registerShipmentRoutes } from "./modules/shipments/routes";
 import { createApp } from "./server";
@@ -13,130 +15,64 @@ import { startDailyExchangeRateScheduler } from "./modules/exchange-rate/rate-sy
 const PORT = Number(process.env.PORT ?? 3001);
 
 const app = createApp();
-const db = createDbContext();
 
-// Core business routes
-registerAuthRoutes(app, db.db);
-registerOrderRoutes(app, db.db);
-registerShipmentRoutes(app, db.db);
-registerClientAddressRoutes(app, db.db);
-registerClientComplianceRoutes(app, db.db);
-registerAdminRoutes(app, db.db);
-registerAdminOpsRoutes(app, db.db);
-startDailyExchangeRateScheduler(db.db);
+// 启动时做一次 Prisma 连接探测，让链路问题尽早暴露
+prisma
+  .$connect()
+  .then(() => {
+    // eslint-disable-next-line no-console
+    console.log("[prisma] connected to PostgreSQL");
+  })
+  .catch((err) => {
+    // eslint-disable-next-line no-console
+    console.error("[prisma] connection failed:", err);
+    process.exit(1);
+  });
 
-// AI routes
-registerClientAiRoutes(app, db.db);
+// ===== Core business routes（所有模块已切换到 Prisma；第二个参数 undefined 仅为兼容签名）=====
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const _legacy: any = undefined;
+registerAuthRoutes(app, _legacy);
+registerOrderRoutes(app, _legacy);
+registerShipmentRoutes(app, _legacy);
+registerClientAddressRoutes(app, _legacy);
+registerClientComplianceRoutes(app, _legacy);
+registerAdminRoutes(app, _legacy);
+registerAdminOpsRoutes(app, _legacy);
+registerContainerRoutes(app);
+startDailyExchangeRateScheduler();
+
+// ===== AI routes =====
+registerClientAiRoutes(app, _legacy);
+
+// 优雅停机
+process.on("SIGINT", async () => {
+  // eslint-disable-next-line no-console
+  console.log("\n[api] SIGINT received, closing Prisma...");
+  await prisma.$disconnect();
+  process.exit(0);
+});
+process.on("SIGTERM", async () => {
+  await prisma.$disconnect();
+  process.exit(0);
+});
 
 app.listen(PORT, () => {
   // eslint-disable-next-line no-console
   console.log(`[api] running on http://localhost:${PORT}`);
-  // eslint-disable-next-line no-console
+  console.log("[api] data source: PostgreSQL via Prisma");
   console.log("[api] POST /auth/login");
-  // eslint-disable-next-line no-console
   console.log("[api] POST /auth/register");
-  // eslint-disable-next-line no-console
-  console.log("[api] POST /staff/orders");
-  // eslint-disable-next-line no-console
-  console.log("[api] POST /staff/orders/product-images");
-  // eslint-disable-next-line no-console
-  console.log("[api] DELETE /staff/orders/product-images?id=opi_xxx");
-  // eslint-disable-next-line no-console
   console.log("[api] GET  /client/orders");
-  // eslint-disable-next-line no-console
-  console.log("[api] GET  /client/shipments/search");
-  // eslint-disable-next-line no-console
-  console.log("[api] GET  /public/track?trackingNo=xxx&phoneLast4=1234");
-  // eslint-disable-next-line no-console
-  console.log("[api] GET  /client/express/universal?trackingNo=xxx&companyCode=shunfeng");
-  // eslint-disable-next-line no-console
-  console.log("[api] GET  /client/addresses");
-  // eslint-disable-next-line no-console
-  console.log("[api] POST /client/addresses");
-  // eslint-disable-next-line no-console
-  console.log("[api] POST /client/addresses/set-default");
-  // eslint-disable-next-line no-console
-  console.log("[api] DELETE /client/addresses?id=addr_xxx");
-  // eslint-disable-next-line no-console
-  console.log("[api] GET  /client/documents");
-  // eslint-disable-next-line no-console
-  console.log("[api] POST /client/documents");
-  // eslint-disable-next-line no-console
-  console.log("[api] DELETE /client/documents?id=doc_xxx");
-  // eslint-disable-next-line no-console
-  console.log("[api] GET  /client/wallet/overview");
-  // eslint-disable-next-line no-console
-  console.log("[api] GET  /staff/shipments");
-  // eslint-disable-next-line no-console
-  console.log("[api] POST /staff/shipments/set-container");
-  // eslint-disable-next-line no-console
-  console.log("[api] POST /staff/shipments/repair-order-links");
-  // eslint-disable-next-line no-console
-  console.log("[api] GET  /staff/inbound-photos?shipmentId=s_xxx");
-  // eslint-disable-next-line no-console
-  console.log("[api] POST /staff/inbound-photos");
-  // eslint-disable-next-line no-console
-  console.log("[api] POST /staff/shipments/update-status");
-  // eslint-disable-next-line no-console
   console.log("[api] GET  /admin/dashboard/overview");
-  // eslint-disable-next-line no-console
-  console.log("[api] GET  /admin/users?role=staff|client");
-  // eslint-disable-next-line no-console
-  console.log("[api] POST /admin/users (create staff)");
-  // eslint-disable-next-line no-console
-  console.log("[api] POST /admin/users/client (create client)");
-  // eslint-disable-next-line no-console
-  console.log("[api] DELETE /admin/users?id=xxx");
-  // eslint-disable-next-line no-console
-  console.log("[api] POST /admin/users/set-password");
-  // eslint-disable-next-line no-console
-  console.log("[api] GET  /admin/orders");
-  // eslint-disable-next-line no-console
-  console.log("[api] POST /admin/orders/update");
-  // eslint-disable-next-line no-console
-  console.log("[api] GET  /admin/lmp/rates");
-  // eslint-disable-next-line no-console
-  console.log("[api] POST /admin/lmp/rates");
-  // eslint-disable-next-line no-console
-  console.log("[api] GET  /admin/customs/cases");
-  // eslint-disable-next-line no-console
-  console.log("[api] POST /admin/customs/cases");
-  // eslint-disable-next-line no-console
-  console.log("[api] GET  /admin/lastmile/orders");
-  // eslint-disable-next-line no-console
-  console.log("[api] POST /admin/lastmile/orders");
-  // eslint-disable-next-line no-console
-  console.log("[api] GET  /admin/settlement/entries");
-  // eslint-disable-next-line no-console
-  console.log("[api] POST /admin/settlement/entries");
-  // eslint-disable-next-line no-console
-  console.log("[api] GET  /admin/settlement/profit");
-  // eslint-disable-next-line no-console
-  console.log("[api] GET  /admin/ops/overview");
-  // eslint-disable-next-line no-console
   console.log("[api] POST /client/ai/chat");
-  // eslint-disable-next-line no-console
-  console.log("[api] GET  /client/ai/suggestions");
-  // eslint-disable-next-line no-console
-  console.log("[api] GET  /admin/ai/audit-logs");
-  // eslint-disable-next-line no-console
-  console.log("[api] GET  /admin/ai/knowledge-gaps");
-  // eslint-disable-next-line no-console
-  console.log("[api] POST /admin/ai/knowledge-gaps/resolve");
-  // eslint-disable-next-line no-console
-  console.log("[api] GET  /admin/ai/session-memory");
-  // eslint-disable-next-line no-console
-  console.log("[api] DELETE /admin/ai/session-memory?sessionId=xxx|userId=xxx");
-  // eslint-disable-next-line no-console
-  console.log("[api] GET  /admin/system/status-labels");
-  // eslint-disable-next-line no-console
-  console.log("[api] POST /admin/system/status-labels");
-  // eslint-disable-next-line no-console
-  console.log("[api] POST /admin/system/status-labels/reset");
-  // eslint-disable-next-line no-console
-  console.log("[api] GET  /admin/ai/knowledge");
-  // eslint-disable-next-line no-console
-  console.log("[api] POST /admin/ai/knowledge");
-  // eslint-disable-next-line no-console
-  console.log("[api] DELETE /admin/ai/knowledge?id=kn_xxx");
+  // 新增：Container（柜子）& 出柜追踪
+  console.log("[api] GET  /admin/containers                    柜列表");
+  console.log("[api] GET  /admin/containers/detail?id=xxx      柜详情（含装载运单）");
+  console.log("[api] POST /admin/containers                    新建柜子");
+  console.log("[api] POST /admin/containers/status             变更柜子状态");
+  console.log("[api] POST /admin/containers/load               装柜");
+  console.log("[api] DELETE /admin/containers/load?id=xxx      卸柜");
+  console.log("[api] GET  /client/shipments/track?trackingNo=xxx  客户追踪（含出柜信息）");
+  console.log("[api] ...（其他路由日志已折叠）");
 });

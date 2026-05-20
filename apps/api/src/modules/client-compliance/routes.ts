@@ -1,4 +1,6 @@
+// B-4b: 已从 node:sqlite 迁移到 Prisma + PostgreSQL（2026-05-20）
 import type { DatabaseSync } from "node:sqlite";
+import { prisma } from "../../db/prisma";
 import type { MinimalHttpApp } from "../../server";
 import { fail, ok, requireRole } from "../core/http-utils";
 import { refreshCnyThbRateIfStale } from "../exchange-rate/rate-sync";
@@ -6,35 +8,30 @@ import { refreshCnyThbRateIfStale } from "../exchange-rate/rate-sync";
 /**
  * 注册客户端合规与多币种账户接口。
  */
-export function registerClientComplianceRoutes(app: MinimalHttpApp, db: DatabaseSync): void {
+export function registerClientComplianceRoutes(app: MinimalHttpApp, _db: DatabaseSync): void {
   app.get("/client/documents", async (req, res) => {
     const auth = requireRole(req, res, ["client"]);
     if (!auth) return;
-    const rows = db
-      .prepare(
-        `
-        SELECT id, doc_type, file_name, mime, content_base64, created_at
-        FROM client_documents
-        WHERE company_id = ? AND client_id = ?
-        ORDER BY created_at DESC
-        `,
-      )
-      .all(auth.companyId, auth.userId) as Array<{
-      id: string;
-      doc_type: string;
-      file_name: string;
-      mime: string;
-      content_base64: string;
-      created_at: string;
-    }>;
+    const rows = await prisma.clientDocument.findMany({
+      where: { companyId: auth.companyId, clientId: auth.userId },
+      orderBy: { createdAt: "desc" },
+      select: {
+        id: true,
+        docType: true,
+        fileName: true,
+        mime: true,
+        contentBase64: true,
+        createdAt: true,
+      },
+    });
     ok(res, {
       items: rows.map((item) => ({
         id: item.id,
-        docType: item.doc_type,
-        fileName: item.file_name,
+        docType: item.docType,
+        fileName: item.fileName,
         mime: item.mime,
-        contentBase64: item.content_base64,
-        createdAt: item.created_at,
+        contentBase64: item.contentBase64,
+        createdAt: item.createdAt.toISOString(),
       })),
     });
   });
@@ -60,16 +57,26 @@ export function registerClientComplianceRoutes(app: MinimalHttpApp, db: Database
       fail(res, 400, "BAD_REQUEST", "file too large (max 4MB base64)");
       return;
     }
-    const now = new Date().toISOString();
     const id = `doc_${Date.now()}`;
-    db.prepare(
-      `
-      INSERT INTO client_documents (
-        id, company_id, client_id, doc_type, file_name, mime, content_base64, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-      `,
-    ).run(id, auth.companyId, auth.userId, docType, fileName, mime, contentBase64, now);
-    ok(res, { id, docType, fileName, mime, createdAt: now });
+    const created = await prisma.clientDocument.create({
+      data: {
+        id,
+        companyId: auth.companyId,
+        clientId: auth.userId,
+        docType,
+        fileName,
+        mime,
+        contentBase64,
+      },
+      select: { id: true, docType: true, fileName: true, mime: true, createdAt: true },
+    });
+    ok(res, {
+      id: created.id,
+      docType: created.docType,
+      fileName: created.fileName,
+      mime: created.mime,
+      createdAt: created.createdAt.toISOString(),
+    });
   });
 
   app.delete("/client/documents", async (req, res) => {
@@ -80,31 +87,26 @@ export function registerClientComplianceRoutes(app: MinimalHttpApp, db: Database
       fail(res, 400, "BAD_REQUEST", "id is required");
       return;
     }
-    const result = db
-      .prepare("DELETE FROM client_documents WHERE id = ? AND company_id = ? AND client_id = ?")
-      .run(id, auth.companyId, auth.userId);
-    ok(res, { deleted: result.changes > 0, id });
+    const result = await prisma.clientDocument.deleteMany({
+      where: { id, companyId: auth.companyId, clientId: auth.userId },
+    });
+    ok(res, { deleted: result.count > 0, id });
   });
 
   app.get("/client/wallet/overview", async (req, res) => {
     const auth = requireRole(req, res, ["client"]);
     if (!auth) return;
-    const rateSnapshot = await refreshCnyThbRateIfStale(db);
-    const accountRows = db
-      .prepare(
-        `
-        SELECT currency, balance, updated_at
-        FROM client_wallet_accounts
-        WHERE company_id = ? AND client_id = ?
-        ORDER BY currency ASC
-        `,
-      )
-      .all(auth.companyId, auth.userId) as Array<{ currency: string; balance: number; updated_at: string }>;
+    const rateSnapshot = await refreshCnyThbRateIfStale();
+    const accountRows = await prisma.clientWalletAccount.findMany({
+      where: { companyId: auth.companyId, clientId: auth.userId },
+      orderBy: { currency: "asc" },
+      select: { currency: true, balance: true, updatedAt: true },
+    });
     ok(res, {
       accounts: accountRows.map((item) => ({
         currency: item.currency,
-        balance: item.balance,
-        updatedAt: item.updated_at,
+        balance: Number(item.balance.toString()),
+        updatedAt: item.updatedAt.toISOString(),
       })),
       exchangeRate: {
         pair: "CNY/THB",

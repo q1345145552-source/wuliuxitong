@@ -1,21 +1,23 @@
+// B-4c: 已从 node:sqlite 迁移到 Prisma + PostgreSQL（2026-05-20）
 import type { DatabaseSync } from "node:sqlite";
+import { prisma } from "../../db/prisma";
 import type { MinimalHttpApp } from "../../server";
 import { fail, ok, requireRole } from "../core/http-utils";
 
-interface ClientAddressRow {
+type ClientAddressRow = {
   id: string;
-  company_id: string;
-  client_id: string;
-  contact_name: string;
-  contact_phone: string;
-  address_detail: string;
-  lat: number | null;
-  lng: number | null;
+  companyId: string;
+  clientId: string;
+  contactName: string;
+  contactPhone: string;
+  addressDetail: string;
+  lat: { toString(): string } | null;
+  lng: { toString(): string } | null;
   label: string | null;
-  is_default: number;
-  created_at: string;
-  updated_at: string;
-}
+  isDefault: number;
+  createdAt: Date;
+  updatedAt: Date;
+};
 
 /**
  * 将数据库行映射为前端需要的地址对象。
@@ -23,17 +25,17 @@ interface ClientAddressRow {
 function toAddressPayload(row: ClientAddressRow) {
   return {
     id: row.id,
-    companyId: row.company_id,
-    clientId: row.client_id,
-    contactName: row.contact_name,
-    contactPhone: row.contact_phone,
-    addressDetail: row.address_detail,
-    lat: row.lat ?? undefined,
-    lng: row.lng ?? undefined,
+    companyId: row.companyId,
+    clientId: row.clientId,
+    contactName: row.contactName,
+    contactPhone: row.contactPhone,
+    addressDetail: row.addressDetail,
+    lat: row.lat !== null ? Number(row.lat.toString()) : undefined,
+    lng: row.lng !== null ? Number(row.lng.toString()) : undefined,
     label: row.label ?? undefined,
-    isDefault: row.is_default === 1,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
+    isDefault: row.isDefault === 1,
+    createdAt: row.createdAt.toISOString(),
+    updatedAt: row.updatedAt.toISOString(),
   };
 }
 
@@ -50,22 +52,14 @@ function normalizeCoord(value: unknown): number | null {
 /**
  * 注册客户端地址簿相关接口。
  */
-export function registerClientAddressRoutes(app: MinimalHttpApp, db: DatabaseSync): void {
+export function registerClientAddressRoutes(app: MinimalHttpApp, _db: DatabaseSync): void {
   app.get("/client/addresses", async (req, res) => {
     const auth = requireRole(req, res, ["client"]);
     if (!auth) return;
-    const rows = db
-      .prepare(
-        `
-        SELECT
-          id, company_id, client_id, contact_name, contact_phone, address_detail, lat, lng, label,
-          is_default, created_at, updated_at
-        FROM client_addresses
-        WHERE company_id = ? AND client_id = ?
-        ORDER BY is_default DESC, updated_at DESC
-        `,
-      )
-      .all(auth.companyId, auth.userId) as ClientAddressRow[];
+    const rows = await prisma.clientAddress.findMany({
+      where: { companyId: auth.companyId, clientId: auth.userId },
+      orderBy: [{ isDefault: "desc" }, { updatedAt: "desc" }],
+    });
     ok(res, { items: rows.map(toAddressPayload) });
   });
 
@@ -90,33 +84,33 @@ export function registerClientAddressRoutes(app: MinimalHttpApp, db: DatabaseSyn
     }
     const lat = normalizeCoord(body.lat);
     const lng = normalizeCoord(body.lng);
-    const now = new Date().toISOString();
     const id = `addr_${Date.now()}`;
     const isDefault = body.isDefault ? 1 : 0;
-    if (isDefault) {
-      db.prepare("UPDATE client_addresses SET is_default = 0 WHERE company_id = ? AND client_id = ?").run(
-        auth.companyId,
-        auth.userId,
-      );
-    }
-    db.prepare(
-      `
-      INSERT INTO client_addresses (
-        id, company_id, client_id, contact_name, contact_phone, address_detail, lat, lng, label, is_default, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `,
-    ).run(id, auth.companyId, auth.userId, contactName, contactPhone, addressDetail, lat, lng, body.label?.trim() || null, isDefault, now, now);
-    const created = db
-      .prepare(
-        `
-        SELECT
-          id, company_id, client_id, contact_name, contact_phone, address_detail, lat, lng, label,
-          is_default, created_at, updated_at
-        FROM client_addresses
-        WHERE id = ?
-        `,
-      )
-      .get(id) as ClientAddressRow;
+
+    // 事务：若设为默认地址，先把同一客户的所有地址 isDefault 置 0，再插入新地址
+    const created = await prisma.$transaction(async (tx) => {
+      if (isDefault === 1) {
+        await tx.clientAddress.updateMany({
+          where: { companyId: auth.companyId, clientId: auth.userId },
+          data: { isDefault: 0 },
+        });
+      }
+      return tx.clientAddress.create({
+        data: {
+          id,
+          companyId: auth.companyId,
+          clientId: auth.userId,
+          contactName,
+          contactPhone,
+          addressDetail,
+          lat,
+          lng,
+          label: body.label?.trim() || null,
+          isDefault,
+        },
+      });
+    });
+
     ok(res, toAddressPayload(created));
   });
 
@@ -129,20 +123,26 @@ export function registerClientAddressRoutes(app: MinimalHttpApp, db: DatabaseSyn
       fail(res, 400, "BAD_REQUEST", "id is required");
       return;
     }
-    const existed = db
-      .prepare("SELECT id FROM client_addresses WHERE id = ? AND company_id = ? AND client_id = ?")
-      .get(id, auth.companyId, auth.userId) as { id: string } | undefined;
+    const existed = await prisma.clientAddress.findFirst({
+      where: { id, companyId: auth.companyId, clientId: auth.userId },
+      select: { id: true },
+    });
     if (!existed) {
       fail(res, 404, "NOT_FOUND", "address not found");
       return;
     }
-    const now = new Date().toISOString();
-    db.prepare("UPDATE client_addresses SET is_default = 0 WHERE company_id = ? AND client_id = ?").run(
-      auth.companyId,
-      auth.userId,
-    );
-    db.prepare("UPDATE client_addresses SET is_default = 1, updated_at = ? WHERE id = ?").run(now, id);
-    ok(res, { id, isDefault: true, updatedAt: now });
+    const updatedAt = new Date();
+    await prisma.$transaction([
+      prisma.clientAddress.updateMany({
+        where: { companyId: auth.companyId, clientId: auth.userId },
+        data: { isDefault: 0 },
+      }),
+      prisma.clientAddress.update({
+        where: { id },
+        data: { isDefault: 1, updatedAt },
+      }),
+    ]);
+    ok(res, { id, isDefault: true, updatedAt: updatedAt.toISOString() });
   });
 
   app.delete("/client/addresses", async (req, res) => {
@@ -153,9 +153,9 @@ export function registerClientAddressRoutes(app: MinimalHttpApp, db: DatabaseSyn
       fail(res, 400, "BAD_REQUEST", "id is required");
       return;
     }
-    const result = db
-      .prepare("DELETE FROM client_addresses WHERE id = ? AND company_id = ? AND client_id = ?")
-      .run(id, auth.companyId, auth.userId);
-    ok(res, { deleted: result.changes > 0, id });
+    const result = await prisma.clientAddress.deleteMany({
+      where: { id, companyId: auth.companyId, clientId: auth.userId },
+    });
+    ok(res, { deleted: result.count > 0, id });
   });
 }

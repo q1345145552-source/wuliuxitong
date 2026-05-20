@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import type { MinimalHttpApp } from "../../server";
+import { prisma } from "../../db/prisma";
 import { fail, ok } from "../core/http-utils";
 import { signAuthToken } from "./token";
 
@@ -39,7 +40,14 @@ function verifyPassword(password: string, passwordHash: string | null): boolean 
   return legacy === passwordHash;
 }
 
-export function registerAuthRoutes(app: MinimalHttpApp, db: DatabaseSync): void {
+/**
+ * 注册鉴权路由（登录 + 注册）
+ *
+ * ⚠️ B-2 改造：内部已完全切换到 Prisma + PostgreSQL。
+ * 第二个参数 `_db` 保留只是为了兼容 main.ts 的调用签名，不再使用。
+ * 等所有模块迁移完成后会从签名中移除。
+ */
+export function registerAuthRoutes(app: MinimalHttpApp, _db: DatabaseSync): void {
   app.post("/auth/login", async (req, res) => {
     const body = (req.body ?? {}) as { account?: string; password?: string; role?: string };
     if (!body.account?.trim()) {
@@ -47,14 +55,19 @@ export function registerAuthRoutes(app: MinimalHttpApp, db: DatabaseSync): void 
       return;
     }
 
-    const rowById = db
-      .prepare("SELECT id, company_id, role, name, password_hash FROM users WHERE id = ? AND status = 'active'")
-      .get(body.account.trim()) as
-      | { id: string; company_id: string; role: string; name: string; password_hash: string | null }
-      | undefined;
-    const user = rowById;
+    const user = await prisma.user.findUnique({
+      where: { id: body.account.trim() },
+      select: {
+        id: true,
+        companyId: true,
+        role: true,
+        name: true,
+        status: true,
+        passwordHash: true,
+      },
+    });
 
-    if (!user) {
+    if (!user || user.status !== "active") {
       fail(res, 401, "UNAUTHORIZED", "invalid credentials");
       return;
     }
@@ -62,14 +75,14 @@ export function registerAuthRoutes(app: MinimalHttpApp, db: DatabaseSync): void 
       fail(res, 401, "UNAUTHORIZED", "invalid credentials");
       return;
     }
-
-    if (!verifyPassword(body.password ?? "", user.password_hash)) {
+    if (!verifyPassword(body.password ?? "", user.passwordHash)) {
       fail(res, 401, "UNAUTHORIZED", "invalid credentials");
       return;
     }
+
     const token = signAuthToken({
       userId: user.id,
-      companyId: user.company_id,
+      companyId: user.companyId,
       role: user.role as "admin" | "staff" | "client",
     });
 
@@ -79,7 +92,7 @@ export function registerAuthRoutes(app: MinimalHttpApp, db: DatabaseSync): void 
         id: user.id,
         name: user.name,
         role: user.role,
-        companyId: user.company_id,
+        companyId: user.companyId,
       },
     });
   });
@@ -111,38 +124,40 @@ export function registerAuthRoutes(app: MinimalHttpApp, db: DatabaseSync): void 
       return;
     }
 
-    const existedById = db.prepare("SELECT id FROM users WHERE id = ?").get(account) as { id: string } | undefined;
+    const existedById = await prisma.user.findUnique({
+      where: { id: account },
+      select: { id: true },
+    });
     if (existedById) {
       fail(res, 409, "CONFLICT", "account already exists");
       return;
     }
-    const existedByPhone = db
-      .prepare("SELECT id FROM users WHERE phone = ? AND role = 'client'")
-      .get(phone) as { id: string } | undefined;
+
+    const existedByPhone = await prisma.user.findFirst({
+      where: { phone, role: "client" },
+      select: { id: true },
+    });
     if (existedByPhone) {
       fail(res, 409, "CONFLICT", "phone already exists");
       return;
     }
 
-    const now = new Date().toISOString();
     const passwordHash = hashPassword(password);
-    db.prepare(`
-      INSERT INTO users (
-        id, company_id, role, name, phone, status, warehouse_ids, created_at, password_hash, company_name, email
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      account,
-      companyId,
-      "client",
-      name,
-      phone,
-      "active",
-      "[]",
-      now,
-      passwordHash,
-      companyName,
-      email,
-    );
+    await prisma.user.create({
+      data: {
+        id: account,
+        companyId,
+        role: "client",
+        name,
+        phone,
+        status: "active",
+        warehouseIds: "[]",
+        passwordHash,
+        companyName,
+        email,
+      },
+    });
+
     const token = signAuthToken({
       userId: account,
       companyId,

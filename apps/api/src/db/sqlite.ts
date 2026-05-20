@@ -1,3 +1,14 @@
+/**
+ * ⚠️ DEPRECATED — 此文件已不再使用（2026-05-20）
+ *
+ * 系统已完成 SQLite → PostgreSQL 迁移：
+ *   - 数据访问层：apps/api/src/db/prisma.ts（PrismaClient）
+ *   - Schema 管理：apps/api/prisma/schema.prisma
+ *   - 数据初始化：apps/api/prisma/seed.ts
+ *
+ * 本文件保留 1 个月作为回滚缓冲，预计 2026-06-20 后删除。
+ * 不要在任何地方 import 此文件。
+ */
 import { DatabaseSync } from "node:sqlite";
 import crypto from "node:crypto";
 import fs from "node:fs";

@@ -1,50 +1,40 @@
+// B-7: 已从 node:sqlite 迁移到 Prisma + PostgreSQL（2026-05-20）
 import type { DatabaseSync } from "node:sqlite";
+import { Prisma } from "@prisma/client";
+import { prisma } from "../../db/prisma";
 import type { MinimalHttpApp } from "../../server";
 import { fail, ok, requireRole } from "../core/http-utils";
+
+/** Decimal | null → number */
+function decToNum(value: Prisma.Decimal | null | undefined): number {
+  if (value === null || value === undefined) return 0;
+  return Number(value.toString());
+}
 
 /**
  * 注册管理员运营侧（LMP/关务/末端/结算）接口。
  */
-export function registerAdminOpsRoutes(app: MinimalHttpApp, db: DatabaseSync): void {
+export function registerAdminOpsRoutes(app: MinimalHttpApp, _db: DatabaseSync): void {
   app.get("/admin/lmp/rates", async (req, res) => {
     const auth = requireRole(req, res, ["admin"]);
     if (!auth) return;
-    const rows = db
-      .prepare(
-        `
-        SELECT id, route_code, supplier_name, transport_mode, season_tag,
-               supplier_cost, quote_price, currency, effective_from, effective_to, updated_at
-        FROM admin_lmp_rates
-        WHERE company_id = ?
-        ORDER BY updated_at DESC
-        `,
-      )
-      .all(auth.companyId) as Array<{
-      id: string;
-      route_code: string;
-      supplier_name: string;
-      transport_mode: string;
-      season_tag: string;
-      supplier_cost: number;
-      quote_price: number;
-      currency: string;
-      effective_from: string;
-      effective_to: string | null;
-      updated_at: string;
-    }>;
+    const rows = await prisma.adminLmpRate.findMany({
+      where: { companyId: auth.companyId },
+      orderBy: { updatedAt: "desc" },
+    });
     ok(res, {
       items: rows.map((item) => ({
         id: item.id,
-        routeCode: item.route_code,
-        supplierName: item.supplier_name,
-        transportMode: item.transport_mode,
-        seasonTag: item.season_tag,
-        supplierCost: item.supplier_cost,
-        quotePrice: item.quote_price,
+        routeCode: item.routeCode,
+        supplierName: item.supplierName,
+        transportMode: item.transportMode,
+        seasonTag: item.seasonTag,
+        supplierCost: decToNum(item.supplierCost),
+        quotePrice: decToNum(item.quotePrice),
         currency: item.currency,
-        effectiveFrom: item.effective_from,
-        effectiveTo: item.effective_to ?? undefined,
-        updatedAt: item.updated_at,
+        effectiveFrom: item.effectiveFrom,
+        effectiveTo: item.effectiveTo ?? undefined,
+        updatedAt: item.updatedAt.toISOString(),
       })),
     });
   });
@@ -73,60 +63,41 @@ export function registerAdminOpsRoutes(app: MinimalHttpApp, db: DatabaseSync): v
       fail(res, 400, "BAD_REQUEST", "invalid lmp rate payload");
       return;
     }
-    const now = new Date().toISOString();
     const id = `lmp_${Date.now()}`;
-    db.prepare(
-      `
-      INSERT INTO admin_lmp_rates (
-        id, company_id, route_code, supplier_name, transport_mode, season_tag,
-        supplier_cost, quote_price, currency, effective_from, effective_to, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `,
-    ).run(
-      id,
-      auth.companyId,
-      routeCode,
-      supplierName,
-      transportMode,
-      seasonTag,
-      supplierCost,
-      quotePrice,
-      body.currency?.trim() || "CNY",
-      body.effectiveFrom?.trim() || now.slice(0, 10),
-      body.effectiveTo?.trim() || null,
-      now,
-    );
-    ok(res, { id, updatedAt: now });
+    const created = await prisma.adminLmpRate.create({
+      data: {
+        id,
+        companyId: auth.companyId,
+        routeCode,
+        supplierName,
+        transportMode,
+        seasonTag,
+        supplierCost,
+        quotePrice,
+        currency: body.currency?.trim() || "CNY",
+        effectiveFrom: body.effectiveFrom?.trim() || new Date().toISOString().slice(0, 10),
+        effectiveTo: body.effectiveTo?.trim() || null,
+      },
+      select: { id: true, updatedAt: true },
+    });
+    ok(res, { id: created.id, updatedAt: created.updatedAt.toISOString() });
   });
 
   app.get("/admin/customs/cases", async (req, res) => {
     const auth = requireRole(req, res, ["admin"]);
     if (!auth) return;
-    const rows = db
-      .prepare(
-        `
-        SELECT id, shipment_id, order_id, status, remark, updated_at
-        FROM admin_customs_cases
-        WHERE company_id = ?
-        ORDER BY updated_at DESC
-        `,
-      )
-      .all(auth.companyId) as Array<{
-      id: string;
-      shipment_id: string | null;
-      order_id: string | null;
-      status: string;
-      remark: string | null;
-      updated_at: string;
-    }>;
+    const rows = await prisma.adminCustomsCase.findMany({
+      where: { companyId: auth.companyId },
+      orderBy: { updatedAt: "desc" },
+    });
     ok(res, {
       items: rows.map((item) => ({
         id: item.id,
-        shipmentId: item.shipment_id ?? undefined,
-        orderId: item.order_id ?? undefined,
+        shipmentId: item.shipmentId ?? undefined,
+        orderId: item.orderId ?? undefined,
         status: item.status,
         remark: item.remark ?? undefined,
-        updatedAt: item.updated_at,
+        updatedAt: item.updatedAt.toISOString(),
       })),
     });
   });
@@ -141,45 +112,35 @@ export function registerAdminOpsRoutes(app: MinimalHttpApp, db: DatabaseSync): v
       return;
     }
     const id = `cus_${Date.now()}`;
-    const now = new Date().toISOString();
-    db.prepare(
-      `
-      INSERT INTO admin_customs_cases (
-        id, company_id, shipment_id, order_id, status, remark, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?)
-      `,
-    ).run(id, auth.companyId, body.shipmentId?.trim() || null, body.orderId?.trim() || null, status, body.remark?.trim() || null, now);
-    ok(res, { id, updatedAt: now });
+    const created = await prisma.adminCustomsCase.create({
+      data: {
+        id,
+        companyId: auth.companyId,
+        shipmentId: body.shipmentId?.trim() || null,
+        orderId: body.orderId?.trim() || null,
+        status,
+        remark: body.remark?.trim() || null,
+      },
+      select: { id: true, updatedAt: true },
+    });
+    ok(res, { id: created.id, updatedAt: created.updatedAt.toISOString() });
   });
 
   app.get("/admin/lastmile/orders", async (req, res) => {
     const auth = requireRole(req, res, ["admin"]);
     if (!auth) return;
-    const rows = db
-      .prepare(
-        `
-        SELECT id, shipment_id, carrier_name, external_tracking_no, status, updated_at
-        FROM admin_lastmile_orders
-        WHERE company_id = ?
-        ORDER BY updated_at DESC
-        `,
-      )
-      .all(auth.companyId) as Array<{
-      id: string;
-      shipment_id: string;
-      carrier_name: string;
-      external_tracking_no: string;
-      status: string;
-      updated_at: string;
-    }>;
+    const rows = await prisma.adminLastmileOrder.findMany({
+      where: { companyId: auth.companyId },
+      orderBy: { updatedAt: "desc" },
+    });
     ok(res, {
       items: rows.map((item) => ({
         id: item.id,
-        shipmentId: item.shipment_id,
-        carrierName: item.carrier_name,
-        externalTrackingNo: item.external_tracking_no,
+        shipmentId: item.shipmentId,
+        carrierName: item.carrierName,
+        externalTrackingNo: item.externalTrackingNo,
         status: item.status,
-        updatedAt: item.updated_at,
+        updatedAt: item.updatedAt.toISOString(),
       })),
     });
   });
@@ -197,47 +158,36 @@ export function registerAdminOpsRoutes(app: MinimalHttpApp, db: DatabaseSync): v
       return;
     }
     const id = `lm_${Date.now()}`;
-    const now = new Date().toISOString();
-    db.prepare(
-      `
-      INSERT INTO admin_lastmile_orders (
-        id, company_id, shipment_id, carrier_name, external_tracking_no, status, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?)
-      `,
-    ).run(id, auth.companyId, shipmentId, carrierName, externalTrackingNo, status, now);
-    ok(res, { id, updatedAt: now });
+    const created = await prisma.adminLastmileOrder.create({
+      data: {
+        id,
+        companyId: auth.companyId,
+        shipmentId,
+        carrierName,
+        externalTrackingNo,
+        status,
+      },
+      select: { id: true, updatedAt: true },
+    });
+    ok(res, { id: created.id, updatedAt: created.updatedAt.toISOString() });
   });
 
   app.get("/admin/settlement/entries", async (req, res) => {
     const auth = requireRole(req, res, ["admin"]);
     if (!auth) return;
-    const rows = db
-      .prepare(
-        `
-        SELECT id, order_id, client_receivable, supplier_payable, tax_fee, currency, updated_at
-        FROM admin_settlement_entries
-        WHERE company_id = ?
-        ORDER BY updated_at DESC
-        `,
-      )
-      .all(auth.companyId) as Array<{
-      id: string;
-      order_id: string;
-      client_receivable: number;
-      supplier_payable: number;
-      tax_fee: number;
-      currency: string;
-      updated_at: string;
-    }>;
+    const rows = await prisma.adminSettlementEntry.findMany({
+      where: { companyId: auth.companyId },
+      orderBy: { updatedAt: "desc" },
+    });
     ok(res, {
       items: rows.map((item) => ({
         id: item.id,
-        orderId: item.order_id,
-        clientReceivable: item.client_receivable,
-        supplierPayable: item.supplier_payable,
-        taxFee: item.tax_fee,
+        orderId: item.orderId,
+        clientReceivable: decToNum(item.clientReceivable),
+        supplierPayable: decToNum(item.supplierPayable),
+        taxFee: decToNum(item.taxFee),
         currency: item.currency,
-        updatedAt: item.updated_at,
+        updatedAt: item.updatedAt.toISOString(),
       })),
     });
   });
@@ -261,47 +211,43 @@ export function registerAdminOpsRoutes(app: MinimalHttpApp, db: DatabaseSync): v
       return;
     }
     const id = `set_${Date.now()}`;
-    const now = new Date().toISOString();
-    db.prepare(
-      `
-      INSERT INTO admin_settlement_entries (
-        id, company_id, order_id, client_receivable, supplier_payable, tax_fee, currency, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-      `,
-    ).run(id, auth.companyId, orderId, clientReceivable, supplierPayable, taxFee, body.currency?.trim() || "CNY", now);
-    ok(res, { id, updatedAt: now });
+    const created = await prisma.adminSettlementEntry.create({
+      data: {
+        id,
+        companyId: auth.companyId,
+        orderId,
+        clientReceivable,
+        supplierPayable,
+        taxFee,
+        currency: body.currency?.trim() || "CNY",
+      },
+      select: { id: true, updatedAt: true },
+    });
+    ok(res, { id: created.id, updatedAt: created.updatedAt.toISOString() });
   });
 
   app.get("/admin/settlement/profit", async (req, res) => {
     const auth = requireRole(req, res, ["admin"]);
     if (!auth) return;
-    const rows = db
-      .prepare(
-        `
-        SELECT order_id, client_receivable, supplier_payable, tax_fee, currency, updated_at
-        FROM admin_settlement_entries
-        WHERE company_id = ?
-        ORDER BY updated_at DESC
-        `,
-      )
-      .all(auth.companyId) as Array<{
-      order_id: string;
-      client_receivable: number;
-      supplier_payable: number;
-      tax_fee: number;
-      currency: string;
-      updated_at: string;
-    }>;
+    const rows = await prisma.adminSettlementEntry.findMany({
+      where: { companyId: auth.companyId },
+      orderBy: { updatedAt: "desc" },
+    });
     ok(res, {
-      items: rows.map((item) => ({
-        orderId: item.order_id,
-        clientReceivable: item.client_receivable,
-        supplierPayable: item.supplier_payable,
-        taxFee: item.tax_fee,
-        profit: Number((item.client_receivable - item.supplier_payable - item.tax_fee).toFixed(2)),
-        currency: item.currency,
-        updatedAt: item.updated_at,
-      })),
+      items: rows.map((item) => {
+        const cr = decToNum(item.clientReceivable);
+        const sp = decToNum(item.supplierPayable);
+        const tf = decToNum(item.taxFee);
+        return {
+          orderId: item.orderId,
+          clientReceivable: cr,
+          supplierPayable: sp,
+          taxFee: tf,
+          profit: Number((cr - sp - tf).toFixed(2)),
+          currency: item.currency,
+          updatedAt: item.updatedAt.toISOString(),
+        };
+      }),
     });
   });
 
@@ -309,75 +255,47 @@ export function registerAdminOpsRoutes(app: MinimalHttpApp, db: DatabaseSync): v
     const auth = requireRole(req, res, ["admin"]);
     if (!auth) return;
 
-    const profitRows = db
-      .prepare(
-        `
-        SELECT order_id, client_receivable, supplier_payable, tax_fee, updated_at
-        FROM admin_settlement_entries
-        WHERE company_id = ?
-        ORDER BY updated_at DESC
-        LIMIT 20
-        `,
-      )
-      .all(auth.companyId) as Array<{
-      order_id: string;
-      client_receivable: number;
-      supplier_payable: number;
-      tax_fee: number;
-      updated_at: string;
-    }>;
-    const totalRevenue = profitRows.reduce((sum, item) => sum + item.client_receivable, 0);
-    const totalCost = profitRows.reduce((sum, item) => sum + item.supplier_payable + item.tax_fee, 0);
+    const profitRows = await prisma.adminSettlementEntry.findMany({
+      where: { companyId: auth.companyId },
+      orderBy: { updatedAt: "desc" },
+      take: 20,
+    });
+    const profitNumeric = profitRows.map((item) => ({
+      orderId: item.orderId,
+      clientReceivable: decToNum(item.clientReceivable),
+      supplierPayable: decToNum(item.supplierPayable),
+      taxFee: decToNum(item.taxFee),
+      updatedAt: item.updatedAt.toISOString(),
+    }));
+    const totalRevenue = profitNumeric.reduce((sum, item) => sum + item.clientReceivable, 0);
+    const totalCost = profitNumeric.reduce((sum, item) => sum + item.supplierPayable + item.taxFee, 0);
     const totalProfit = totalRevenue - totalCost;
     const grossMarginPercent = totalRevenue > 0 ? Number(((totalProfit / totalRevenue) * 100).toFixed(2)) : 0;
-    const profitTrend = profitRows.slice(0, 7).map((item) => ({
-      orderId: item.order_id,
-      profit: Number((item.client_receivable - item.supplier_payable - item.tax_fee).toFixed(2)),
-      updatedAt: item.updated_at,
+    const profitTrend = profitNumeric.slice(0, 7).map((item) => ({
+      orderId: item.orderId,
+      profit: Number((item.clientReceivable - item.supplierPayable - item.taxFee).toFixed(2)),
+      updatedAt: item.updatedAt,
     }));
 
-    const customsRows = db
-      .prepare(
-        `
-        SELECT id, shipment_id, order_id, status, remark, updated_at
-        FROM admin_customs_cases
-        WHERE company_id = ? AND status IN ('inspection', 'pending')
-        ORDER BY updated_at DESC
-        LIMIT 20
-        `,
-      )
-      .all(auth.companyId) as Array<{
-      id: string;
-      shipment_id: string | null;
-      order_id: string | null;
-      status: string;
-      remark: string | null;
-      updated_at: string;
-    }>;
+    const customsRows = await prisma.adminCustomsCase.findMany({
+      where: { companyId: auth.companyId, status: { in: ["inspection", "pending"] } },
+      orderBy: { updatedAt: "desc" },
+      take: 20,
+    });
 
-    const lmpRows = db
-      .prepare(
-        `
-        SELECT route_code, supplier_name, quote_price, updated_at
-        FROM admin_lmp_rates
-        WHERE company_id = ?
-        ORDER BY route_code ASC, supplier_name ASC, updated_at DESC
-        `,
-      )
-      .all(auth.companyId) as Array<{
-      route_code: string;
-      supplier_name: string;
-      quote_price: number;
-      updated_at: string;
-    }>;
+    const lmpRows = await prisma.adminLmpRate.findMany({
+      where: { companyId: auth.companyId },
+      orderBy: [{ routeCode: "asc" }, { supplierName: "asc" }, { updatedAt: "desc" }],
+    });
     const latestByKey = new Map<string, { quotePrice: number; updatedAt: string }>();
     const previousByKey = new Map<string, { quotePrice: number; updatedAt: string }>();
     lmpRows.forEach((item) => {
-      const key = `${item.route_code}__${item.supplier_name}`;
+      const key = `${item.routeCode}__${item.supplierName}`;
+      const snapshot = { quotePrice: decToNum(item.quotePrice), updatedAt: item.updatedAt.toISOString() };
       if (!latestByKey.has(key)) {
-        latestByKey.set(key, { quotePrice: item.quote_price, updatedAt: item.updated_at });
+        latestByKey.set(key, snapshot);
       } else if (!previousByKey.has(key)) {
-        previousByKey.set(key, { quotePrice: item.quote_price, updatedAt: item.updated_at });
+        previousByKey.set(key, snapshot);
       }
     });
     const supplierPriceAlerts = Array.from(latestByKey.entries())
@@ -409,11 +327,11 @@ export function registerAdminOpsRoutes(app: MinimalHttpApp, db: DatabaseSync): v
       profitTrend,
       customsAlerts: customsRows.map((item) => ({
         id: item.id,
-        shipmentId: item.shipment_id ?? undefined,
-        orderId: item.order_id ?? undefined,
+        shipmentId: item.shipmentId ?? undefined,
+        orderId: item.orderId ?? undefined,
         status: item.status,
         remark: item.remark ?? undefined,
-        updatedAt: item.updated_at,
+        updatedAt: item.updatedAt.toISOString(),
       })),
       supplierPriceAlerts,
     });

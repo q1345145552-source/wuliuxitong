@@ -1,3 +1,4 @@
+// B-8: 已从 node:sqlite 迁移到 Prisma + PostgreSQL（2026-05-20）
 import type {
   AiChatRequest,
   AiSuggestionResponse,
@@ -5,13 +6,14 @@ import type {
 import type { ApiResponse } from "../../../../../packages/shared-types/common-response";
 import type { DatabaseSync } from "node:sqlite";
 import type { Order, Shipment, StatusLabelConfig } from "../../../../../packages/shared-types/entities";
+import { prisma } from "../../db/prisma";
 import {
-  SqliteAiAuditStore,
-  SqliteAiKnowledgeGapStore,
-  SqliteAiKnowledgeStore,
-  SqliteStatusLabelStore,
-} from "./ai-sqlite-store";
-import { SqliteAiSessionMemoryStore } from "./ai-session-memory-store";
+  PrismaAiAuditStore,
+  PrismaAiKnowledgeGapStore,
+  PrismaAiKnowledgeStore,
+  PrismaAiSessionMemoryStore,
+  PrismaStatusLabelStore,
+} from "./ai-prisma-store";
 import { ClientAiService } from "./ai-service";
 import { HttpDeepSeekClient } from "./deepseek-client";
 import type { AuthContext, QueryDataSource } from "./ai-types";
@@ -33,120 +35,65 @@ export interface MinimalHttpApp {
   delete(path: string, handler: (req: HttpRequest, res: HttpResponse) => Promise<void>): void;
 }
 
-class SqliteCompanyScopedDataSource implements QueryDataSource {
-  constructor(private readonly db: DatabaseSync) {}
-
+class PrismaCompanyScopedDataSource implements QueryDataSource {
   async listOrders(scope: { companyId: string }): Promise<Order[]> {
-    const rows = this.db
-      .prepare(`
-        SELECT
-          id, company_id, client_id, item_name, product_quantity, package_count, package_unit,
-          domestic_tracking_no, order_no, transport_mode, warehouse_id, batch_no,
-          weight_kg, volume_m3, receiver_name_th, receiver_phone_th, receiver_address_th,
-          status_group, created_at, updated_at
-        FROM orders
-        WHERE company_id = ?
-        ORDER BY created_at DESC
-      `)
-      .all(scope.companyId) as Array<{
-      id: string;
-      company_id: string;
-      client_id: string;
-      item_name: string;
-      product_quantity: number;
-      package_count: number;
-      package_unit: "bag" | "box" | null;
-      domestic_tracking_no: string | null;
-      order_no: string | null;
-      transport_mode: "sea" | "land" | null;
-      warehouse_id: string | null;
-      batch_no: string | null;
-      weight_kg: number | null;
-      volume_m3: number | null;
-      receiver_name_th: string | null;
-      receiver_phone_th: string | null;
-      receiver_address_th: string | null;
-      status_group: "unfinished" | "completed" | null;
-      created_at: string;
-      updated_at: string;
-    }>;
+    const rows = await prisma.order.findMany({
+      where: { companyId: scope.companyId },
+      orderBy: { createdAt: "desc" },
+    });
 
     return rows.map((r) => ({
       id: r.id,
-      companyId: r.company_id,
-      clientId: r.client_id,
+      companyId: r.companyId,
+      clientId: r.clientId,
       pickupAddressCn: "",
       deliveryAddressTh: "",
-      receiverName: r.receiver_name_th ?? "",
-      receiverPhone: r.receiver_phone_th ?? "",
+      receiverName: r.receiverNameTh ?? "",
+      receiverPhone: r.receiverPhoneTh ?? "",
       serviceType: "standard",
-      itemName: r.item_name,
-      productQuantity: r.product_quantity ?? 0,
-      packageCount: r.package_count ?? 0,
-      packageUnit: r.package_unit ?? "box",
-      domesticTrackingNo: r.domestic_tracking_no ?? undefined,
-      orderNo: r.order_no ?? undefined,
-      transportMode: r.transport_mode ?? undefined,
-      warehouseId: r.warehouse_id ?? undefined,
-      batchNo: r.batch_no ?? undefined,
-      weightKg: r.weight_kg ?? undefined,
-      volumeM3: r.volume_m3 ?? undefined,
-      receiverNameTh: r.receiver_name_th ?? undefined,
-      receiverPhoneTh: r.receiver_phone_th ?? undefined,
-      receiverAddressTh: r.receiver_address_th ?? undefined,
-      statusGroup: r.status_group ?? undefined,
-      createdAt: r.created_at,
-      updatedAt: r.updated_at,
+      itemName: r.itemName,
+      productQuantity: r.productQuantity ?? 0,
+      packageCount: r.packageCount ?? 0,
+      packageUnit: (r.packageUnit as "bag" | "box" | null) ?? "box",
+      domesticTrackingNo: r.domesticTrackingNo ?? undefined,
+      orderNo: r.orderNo ?? undefined,
+      transportMode: (r.transportMode as "sea" | "land" | null) ?? undefined,
+      warehouseId: r.warehouseId ?? undefined,
+      batchNo: r.batchNo ?? undefined,
+      weightKg: r.weightKg !== null ? Number(r.weightKg.toString()) : undefined,
+      volumeM3: r.volumeM3 !== null ? Number(r.volumeM3.toString()) : undefined,
+      receiverNameTh: r.receiverNameTh ?? undefined,
+      receiverPhoneTh: r.receiverPhoneTh ?? undefined,
+      receiverAddressTh: r.receiverAddressTh ?? undefined,
+      statusGroup: (r.statusGroup as "unfinished" | "completed" | null) ?? undefined,
+      createdAt: r.createdAt.toISOString(),
+      updatedAt: r.updatedAt.toISOString(),
     }));
   }
 
   async listShipments(scope: { companyId: string }): Promise<Shipment[]> {
-    const rows = this.db
-      .prepare(`
-        SELECT
-          id, company_id, order_id, tracking_no, current_status, current_location,
-          weight_kg, volume_m3, package_count, package_unit, transport_mode,
-          domestic_tracking_no, warehouse_id, batch_no, created_at, updated_at
-        FROM shipments
-        WHERE company_id = ?
-        ORDER BY updated_at DESC
-      `)
-      .all(scope.companyId) as Array<{
-      id: string;
-      company_id: string;
-      order_id: string;
-      tracking_no: string;
-      current_status: Shipment["currentStatus"];
-      current_location: string | null;
-      weight_kg: number | null;
-      volume_m3: number | null;
-      package_count: number | null;
-      package_unit: "bag" | "box" | null;
-      transport_mode: "sea" | "land" | null;
-      domestic_tracking_no: string | null;
-      warehouse_id: string | null;
-      batch_no: string | null;
-      created_at: string;
-      updated_at: string;
-    }>;
+    const rows = await prisma.shipment.findMany({
+      where: { companyId: scope.companyId },
+      orderBy: { updatedAt: "desc" },
+    });
 
     return rows.map((r) => ({
       id: r.id,
-      companyId: r.company_id,
-      orderId: r.order_id,
-      trackingNo: r.tracking_no,
-      currentStatus: r.current_status,
-      currentLocation: r.current_location ?? undefined,
-      weightKg: r.weight_kg ?? undefined,
-      volumeM3: r.volume_m3 ?? undefined,
-      packageCount: r.package_count ?? undefined,
-      packageUnit: r.package_unit ?? undefined,
-      transportMode: r.transport_mode ?? undefined,
-      domesticTrackingNo: r.domestic_tracking_no ?? undefined,
-      warehouseId: r.warehouse_id ?? undefined,
-      batchNo: r.batch_no ?? undefined,
-      createdAt: r.created_at,
-      updatedAt: r.updated_at,
+      companyId: r.companyId,
+      orderId: r.orderId,
+      trackingNo: r.trackingNo,
+      currentStatus: r.currentStatus as Shipment["currentStatus"],
+      currentLocation: r.currentLocation ?? undefined,
+      weightKg: r.weightKg !== null ? Number(r.weightKg.toString()) : undefined,
+      volumeM3: r.volumeM3 !== null ? Number(r.volumeM3.toString()) : undefined,
+      packageCount: r.packageCount ?? undefined,
+      packageUnit: (r.packageUnit as "bag" | "box" | null) ?? undefined,
+      transportMode: (r.transportMode as "sea" | "land" | null) ?? undefined,
+      domesticTrackingNo: r.domesticTrackingNo ?? undefined,
+      warehouseId: r.warehouseId ?? undefined,
+      batchNo: r.batchNo ?? undefined,
+      createdAt: r.createdAt.toISOString(),
+      updatedAt: r.updatedAt.toISOString(),
     }));
   }
 }
@@ -169,14 +116,14 @@ function jsonError(code: Exclude<ApiResponse<unknown>["code"], "OK">, message: s
   };
 }
 
-export function registerClientAiRoutes(app: MinimalHttpApp, db: DatabaseSync): void {
-  const auditStore = new SqliteAiAuditStore(db);
-  const knowledgeGapStore = new SqliteAiKnowledgeGapStore(db);
-  const statusLabelStore = new SqliteStatusLabelStore(db);
-  const knowledgeStore = new SqliteAiKnowledgeStore(db);
-  const memoryStore = new SqliteAiSessionMemoryStore(db);
+export function registerClientAiRoutes(app: MinimalHttpApp, _db: DatabaseSync): void {
+  const auditStore = new PrismaAiAuditStore();
+  const knowledgeGapStore = new PrismaAiKnowledgeGapStore();
+  const statusLabelStore = new PrismaStatusLabelStore();
+  const knowledgeStore = new PrismaAiKnowledgeStore();
+  const memoryStore = new PrismaAiSessionMemoryStore();
   const service = new ClientAiService({
-    dataSource: new SqliteCompanyScopedDataSource(db),
+    dataSource: new PrismaCompanyScopedDataSource(),
     auditStore,
     knowledgeGapStore,
     llmClient: new HttpDeepSeekClient(),

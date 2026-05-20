@@ -6,6 +6,7 @@ import { Bar, BarChart, CartesianGrid, Cell, Line, LineChart, ResponsiveContaine
 import EmptyStateCard from "../../modules/layout/EmptyStateCard";
 import RoleShell from "../../modules/layout/RoleShell";
 import Toast from "../../modules/layout/Toast";
+import { ContainerTrackingSection } from "../../components/ContainerTrackingSection";
 import { formatCny } from "../../modules/billing/billing-utils";
 import { sendAiMessage } from "../../services/ai-client";
 import {
@@ -970,7 +971,12 @@ export default function ClientHomePage() {
             {hasQueried && queriedOrders.map((item, idx) => (
           <article key={item.id} className="order-card">
             <div className="order-head">
-              <div className="order-title">#{idx + 1} 订单 {item.id}</div>
+              <div className="order-title">
+                #{idx + 1} {item.itemName || "未填品名"}
+                <span style={{ marginLeft: 8, fontSize: 13, color: "#6b7280", fontWeight: 400 }}>
+                  · {item.id}
+                </span>
+              </div>
               <div className="order-badges">
                 <span className="order-badge order-badge-amount">金额：{formatCny(item.receivableAmountCny ?? null)}</span>
                 <span
@@ -1096,6 +1102,10 @@ export default function ClientHomePage() {
                       查看文件中心
                     </a>
                   </div>
+                </div>
+                {/* 📦 出柜追踪 — 显示该订单运单所属的柜子（含拆柜提示）*/}
+                <div className="order-field" style={{ gridColumn: "1 / -1" }}>
+                  <ContainerTrackingSection trackingNo={item.trackingNo ?? undefined} />
                 </div>
                 <div className="order-field">
                   <div className="order-field-label">物流状态</div>
