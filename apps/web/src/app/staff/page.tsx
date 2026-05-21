@@ -2110,8 +2110,12 @@ export default function StaffHomePage() {
               />
               <button
                 type="button"
-                disabled={loading}
+                disabled={loading || !photoDraft.shipmentId.trim() || !photoDraft.fileName || !photoDraft.contentBase64}
                 onClick={async () => {
+                  if (!photoDraft.shipmentId.trim() || !photoDraft.fileName || !photoDraft.mime || !photoDraft.contentBase64) {
+                    setMessage("请先填写运单ID并选择文件");
+                    return;
+                  }
                   setLoading(true);
                   try {
                     await uploadStaffInboundPhoto({
@@ -2131,7 +2135,7 @@ export default function StaffHomePage() {
                     setLoading(false);
                   }
                 }}
-                style={{ border: "none", borderRadius: 8, padding: "8px 14px", color: "#fff", background: "#dc2626" }}
+                style={{ border: "none", borderRadius: 8, padding: "8px 14px", color: "#fff", background: photoDraft.shipmentId.trim() && photoDraft.fileName && photoDraft.contentBase64 ? "#dc2626" : "#9ca3af" }}
               >
                 上传入库照片
               </button>
