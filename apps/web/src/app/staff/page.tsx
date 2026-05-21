@@ -502,7 +502,7 @@ export default function StaffHomePage() {
     { id: "wh_guangzhou_01", label: "广州仓" },
     { id: "wh_dongguan_01", label: "东莞仓" },
   ];
-  const logisticsStatusOptions = ["已收货", "途中", "已到达"] as const;
+  const logisticsStatusOptions = ["已揽收", "已入库", "报关中", "运输中", "泰国清关", "派送中", "已签收"] as const;
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
   const [toast, setToast] = useState("");
@@ -701,18 +701,30 @@ export default function StaffHomePage() {
     return null;
   };
 
-  const toLogisticsStatus = (status?: string): "" | "已收货" | "途中" | "已到达" => {
+  const toLogisticsStatus = (status?: string): string => {
     if (!status) return "";
     const v = status.trim();
-    if (v === "delivered" || v === "returned" || v === "cancelled") return "已到达";
-    if (v === "inTransit" || v === "customsTH" || v === "outForDelivery") return "途中";
-    return "已收货";
+    if (v === "delivered") return "已签收";
+    if (v === "returned") return "已退回";
+    if (v === "cancelled") return "已取消";
+    if (v === "outForDelivery") return "派送中";
+    if (v === "customsTH") return "泰国清关";
+    if (v === "inTransit") return "运输中";
+    if (v === "customsPending") return "报关中";
+    if (v === "inWarehouseCN") return "已入库";
+    if (v === "pickedUp") return "已揽收";
+    if (v === "created") return "已创建";
+    return v;
   };
 
   const toSystemStatus = (logisticsStatus: string): string => {
-    if (logisticsStatus === "已收货") return "created";
-    if (logisticsStatus === "途中") return "inTransit";
-    if (logisticsStatus === "已到达") return "delivered";
+    if (logisticsStatus === "已揽收") return "pickedUp";
+    if (logisticsStatus === "已入库") return "inWarehouseCN";
+    if (logisticsStatus === "报关中") return "customsPending";
+    if (logisticsStatus === "运输中") return "inTransit";
+    if (logisticsStatus === "泰国清关") return "customsTH";
+    if (logisticsStatus === "派送中") return "outForDelivery";
+    if (logisticsStatus === "已签收") return "delivered";
     return logisticsStatus;
   };
 
