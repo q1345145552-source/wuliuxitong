@@ -30,6 +30,8 @@ import {
   type AdminAiSessionMemoryItem,
   type AdminAiKnowledgeGapItem,
   fetchAdminOpsOverview,
+  fetchShippingConfig,
+  updateShippingConfig,
 } from "../../services/business-api";
 import {
   createKnowledgeItem,
@@ -46,6 +48,7 @@ const SECTION_IDS = [
   "ai-knowledge-gaps",
   "knowledge-feed",
   "knowledge-list",
+  "shipping-config",
 ] as const;
 
 const SECTION_LABELS: Record<(typeof SECTION_IDS)[number], string> = {
@@ -57,6 +60,7 @@ const SECTION_LABELS: Record<(typeof SECTION_IDS)[number], string> = {
   "ai-knowledge-gaps": "AI待补知识问题",
   "knowledge-feed": "AI知识投喂",
   "knowledge-list": "已投喂的知识列表",
+  "shipping-config": "运费配置",
 };
 
 const sectionStyle = {
@@ -105,6 +109,9 @@ export default function AdminHomePage() {
   const [knowledgeItems, setKnowledgeItems] = useState<AiKnowledgeItem[]>([]);
   const [message, setMessage] = useState("");
   const [toast, setToast] = useState("");
+  const [shippingConfigSea, setShippingConfigSea] = useState("0.5");
+  const [shippingConfigLand, setShippingConfigLand] = useState("0.2");
+  const [configSaving, setConfigSaving] = useState(false);
   const [title, setTitle] = useState("");
   const [content, setContent] = useState("");
   const [staffPanelCollapsed, setStaffPanelCollapsed] = useState(false);
@@ -130,7 +137,9 @@ export default function AdminHomePage() {
     shipDate: "",
   });
   const [staffForm, setStaffForm] = useState({ id: "", name: "", phone: "", password: "" });
-  const [clientForm, setClientForm] = useState({ id: "", name: "", companyName: "", phone: "", email: "" });
+  const [clientForm, setClientForm] = useState({ id: "", name: "", companyName: "", phone: "", email: "", password: "" });
+  const [showStaffModal, setShowStaffModal] = useState(false);
+  const [showClientModal, setShowClientModal] = useState(false);
   const [settingPasswordFor, setSettingPasswordFor] = useState<string | null>(null);
   const [settingPasswordValue, setSettingPasswordValue] = useState("");
   const [memoryFilterSessionId, setMemoryFilterSessionId] = useState("");
@@ -450,6 +459,7 @@ export default function AdminHomePage() {
         password: staffForm.password.trim() || undefined,
       });
       setStaffForm({ id: "", name: "", phone: "", password: "" });
+      setShowStaffModal(false);
       setToast("员工添加成功");
       setMessage("");
       await Promise.all([loadStaff(), loadOverview()]);
@@ -515,8 +525,10 @@ export default function AdminHomePage() {
         companyName: clientForm.companyName.trim() || undefined,
         phone: clientForm.phone.trim(),
         email: clientForm.email.trim() || undefined,
+        password: clientForm.password.trim() || undefined,
       });
-      setClientForm({ id: "", name: "", companyName: "", phone: "", email: "" });
+      setClientForm({ id: "", name: "", companyName: "", phone: "", email: "", password: "" });
+      setShowClientModal(false);
       setToast("客户添加成功");
       setMessage("");
       await Promise.all([loadClients(), loadOverview()]);
@@ -793,56 +805,15 @@ export default function AdminHomePage() {
           <p style={{ color: "#64748b", fontSize: 13, margin: 0 }}>已折叠，可防止误删。点击「展开」后显示添加员工与员工列表（含设置密码、删除等操作）。</p>
         ) : (
           <>
-        <div style={{ marginBottom: 16, padding: 12, background: "#f8fafc", borderRadius: 8, border: "1px solid #e2e8f0" }}>
-          <div style={{ fontWeight: 600, marginBottom: 4 }}>添加员工</div>
-          <div style={{ fontSize: 12, color: "#64748b", marginBottom: 8 }}>需使用管理员身份登录；姓名、手机为必填，账号与密码可选（不填账号将自动生成）。</div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 8, alignItems: "end" }}>
-            <div>
-              <label style={{ fontSize: 12, color: "#64748b", display: "block", marginBottom: 4 }}>账号（选填，不填则自动生成）</label>
-              <input
-                value={staffForm.id}
-                onChange={(e) => setStaffForm((f) => ({ ...f, id: e.target.value }))}
-                placeholder="如 u_staff_002"
-                style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 10px", width: "100%" }}
-              />
-            </div>
-            <div>
-              <label style={{ fontSize: 12, color: "#64748b", display: "block", marginBottom: 4 }}>姓名 *</label>
-              <input
-                value={staffForm.name}
-                onChange={(e) => setStaffForm((f) => ({ ...f, name: e.target.value }))}
-                placeholder="员工姓名"
-                style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 10px", width: "100%" }}
-              />
-            </div>
-            <div>
-              <label style={{ fontSize: 12, color: "#64748b", display: "block", marginBottom: 4 }}>手机 *</label>
-              <input
-                value={staffForm.phone}
-                onChange={(e) => setStaffForm((f) => ({ ...f, phone: e.target.value }))}
-                placeholder="手机号"
-                style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 10px", width: "100%" }}
-              />
-            </div>
-            <div>
-              <label style={{ fontSize: 12, color: "#64748b", display: "block", marginBottom: 4 }}>登录密码（选填，可稍后设置）</label>
-              <input
-                type="password"
-                value={staffForm.password}
-                onChange={(e) => setStaffForm((f) => ({ ...f, password: e.target.value }))}
-                placeholder="密码"
-                style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 10px", width: "100%" }}
-              />
-            </div>
-            <button
-              type="button"
-              onClick={() => void submitAddStaff()}
-              disabled={loading}
-              style={{ border: "none", borderRadius: 8, padding: "8px 14px", background: "#2563eb", color: "#fff", fontWeight: 600, cursor: "pointer" }}
-            >
-              添加员工
-            </button>
-          </div>
+        <div style={{ marginBottom: 12 }}>
+          <button
+            type="button"
+            onClick={() => { setShowStaffModal(true); setStaffForm({ id: "", name: "", phone: "", password: "" }); }}
+            style={{ border: "none", borderRadius: 8, padding: "8px 14px", background: "#2563eb", color: "#fff", fontWeight: 600, cursor: "pointer" }}
+          >
+            ＋ 创建账号
+          </button>
+          <span style={{ marginLeft: 8, fontSize: 12, color: "#64748b" }}>需使用管理员身份登录</span>
         </div>
         {staffList.length === 0 ? (
           <EmptyStateCard title="暂无员工" description="请在上方添加员工账号。" />
@@ -922,65 +893,14 @@ export default function AdminHomePage() {
             刷新
           </button>
         </div>
-        <div style={{ marginBottom: 16, padding: 12, background: "#f8fafc", borderRadius: 8, border: "1px solid #e2e8f0" }}>
-          <div style={{ fontWeight: 600, marginBottom: 4 }}>添加客户</div>
-          <div style={{ fontSize: 12, color: "#64748b", marginBottom: 8 }}>客户名字、电话号码为必填；公司名字、邮箱选填。账号不填则自动生成。</div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 8, alignItems: "end" }}>
-            <div>
-              <label style={{ fontSize: 12, color: "#64748b", display: "block", marginBottom: 4 }}>账号（选填）</label>
-              <input
-                value={clientForm.id}
-                onChange={(e) => setClientForm((f) => ({ ...f, id: e.target.value }))}
-                placeholder="如 u_client_002"
-                style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 10px", width: "100%" }}
-              />
-            </div>
-            <div>
-              <label style={{ fontSize: 12, color: "#64748b", display: "block", marginBottom: 4 }}>客户名字 *</label>
-              <input
-                value={clientForm.name}
-                onChange={(e) => setClientForm((f) => ({ ...f, name: e.target.value }))}
-                placeholder="客户姓名"
-                style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 10px", width: "100%" }}
-              />
-            </div>
-            <div>
-              <label style={{ fontSize: 12, color: "#64748b", display: "block", marginBottom: 4 }}>公司名字</label>
-              <input
-                value={clientForm.companyName}
-                onChange={(e) => setClientForm((f) => ({ ...f, companyName: e.target.value }))}
-                placeholder="公司名称"
-                style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 10px", width: "100%" }}
-              />
-            </div>
-            <div>
-              <label style={{ fontSize: 12, color: "#64748b", display: "block", marginBottom: 4 }}>电话号码 *</label>
-              <input
-                value={clientForm.phone}
-                onChange={(e) => setClientForm((f) => ({ ...f, phone: e.target.value }))}
-                placeholder="手机号"
-                style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 10px", width: "100%" }}
-              />
-            </div>
-            <div>
-              <label style={{ fontSize: 12, color: "#64748b", display: "block", marginBottom: 4 }}>邮箱</label>
-              <input
-                type="email"
-                value={clientForm.email}
-                onChange={(e) => setClientForm((f) => ({ ...f, email: e.target.value }))}
-                placeholder="email@example.com"
-                style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 10px", width: "100%" }}
-              />
-            </div>
-            <button
-              type="button"
-              onClick={() => void submitAddClient()}
-              disabled={loading}
-              style={{ border: "none", borderRadius: 8, padding: "8px 14px", background: "#2563eb", color: "#fff", fontWeight: 600, cursor: "pointer" }}
-            >
-              添加客户
-            </button>
-          </div>
+        <div style={{ marginBottom: 12 }}>
+          <button
+            type="button"
+            onClick={() => { setShowClientModal(true); setClientForm({ id: "", name: "", companyName: "", phone: "", email: "", password: "" }); }}
+            style={{ border: "none", borderRadius: 8, padding: "8px 14px", background: "#2563eb", color: "#fff", fontWeight: 600, cursor: "pointer" }}
+          >
+            ＋ 创建账号
+          </button>
         </div>
         {clientList.length === 0 ? (
           <EmptyStateCard title="暂无客户" description="请在上方添加客户。" />
@@ -1377,11 +1297,122 @@ export default function AdminHomePage() {
           </div>
         )}
       </section>
+      <section id="shipping-config" style={{ ...sectionStyle, display: activeSection === "shipping-config" ? "block" : "none" }}>
+        <h2 style={{ marginTop: 0, marginBottom: 12, fontSize: 18 }}>运费配置</h2>
+        <p style={{ color: "#64748b", marginBottom: 12, fontSize: 14 }}>
+          设置最低计费体积（低消）。当货物体积低于低消时，按低消计算运费。
+        </p>
+        <div style={{ display: "grid", gap: 10, maxWidth: 400 }}>
+          <div>
+            <div style={{ fontSize: 13, color: "#374151", marginBottom: 4 }}>海运低消（立方米）</div>
+            <input
+              value={shippingConfigSea}
+              onChange={(e) => setShippingConfigSea(e.target.value)}
+              type="number" step="0.1" min="0"
+              style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "8px 10px", fontSize: 13, width: "100%" }}
+            />
+          </div>
+          <div>
+            <div style={{ fontSize: 13, color: "#374151", marginBottom: 4 }}>陆运低消（立方米）</div>
+            <input
+              value={shippingConfigLand}
+              onChange={(e) => setShippingConfigLand(e.target.value)}
+              type="number" step="0.1" min="0"
+              style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "8px 10px", fontSize: 13, width: "100%" }}
+            />
+          </div>
+          <button
+            type="button"
+            disabled={configSaving}
+            onClick={async () => {
+              setConfigSaving(true);
+              try {
+                await updateShippingConfig({ sea_min_volume: shippingConfigSea, land_min_volume: shippingConfigLand });
+                setToast("配置已保存");
+              } catch { setToast("保存失败"); }
+              finally { setConfigSaving(false); }
+            }}
+            style={{ border: "none", borderRadius: 6, padding: "8px 16px", background: "#2563eb", color: "#fff", fontWeight: 500, fontSize: 13, cursor: "pointer", justifySelf: "start" }}
+          >
+            {configSaving ? "保存中…" : "保存配置"}
+          </button>
+        </div>
+      </section>
 
       {message ? (
         <p style={{ marginTop: 12, color: message.includes("失败") ? "#b91c1c" : "#065f46" }}>{message}</p>
       ) : null}
       <Toast open={toast.length > 0} message={toast} />
+
+      {/* 创建员工弹窗 */}
+      {showStaffModal && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(0,0,0,0.4)", padding: 16 }}>
+          <div style={{ width: "100%", maxWidth: 440, background: "#fff", borderRadius: 12, padding: 24, boxShadow: "0 20px 60px rgba(0,0,0,0.3)" }}>
+            <h3 style={{ margin: "0 0 16px", fontSize: 18, fontWeight: 600 }}>创建员工账号</h3>
+            <div style={{ display: "grid", gap: 10 }}>
+              <div>
+                <label style={{ fontSize: 12, color: "#64748b", display: "block", marginBottom: 4 }}>账号（选填）</label>
+                <input value={staffForm.id} onChange={(e) => setStaffForm((f) => ({ ...f, id: e.target.value }))} placeholder="留空自动生成" style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 10px", width: "100%", fontSize: 13 }} />
+              </div>
+              <div>
+                <label style={{ fontSize: 12, color: "#64748b", display: "block", marginBottom: 4 }}>姓名 *</label>
+                <input value={staffForm.name} onChange={(e) => setStaffForm((f) => ({ ...f, name: e.target.value }))} placeholder="员工姓名" style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 10px", width: "100%", fontSize: 13 }} />
+              </div>
+              <div>
+                <label style={{ fontSize: 12, color: "#64748b", display: "block", marginBottom: 4 }}>手机 *</label>
+                <input value={staffForm.phone} onChange={(e) => setStaffForm((f) => ({ ...f, phone: e.target.value }))} placeholder="手机号" style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 10px", width: "100%", fontSize: 13 }} />
+              </div>
+              <div>
+                <label style={{ fontSize: 12, color: "#64748b", display: "block", marginBottom: 4 }}>登录密码</label>
+                <input type="password" value={staffForm.password} onChange={(e) => setStaffForm((f) => ({ ...f, password: e.target.value }))} placeholder="密码（可选）" style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 10px", width: "100%", fontSize: 13 }} />
+              </div>
+            </div>
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 16 }}>
+              <button type="button" onClick={() => setShowStaffModal(false)} style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 14px", background: "#fff", cursor: "pointer", color: "#374151", fontSize: 13 }}>取消</button>
+              <button type="button" disabled={loading} onClick={() => void submitAddStaff()} style={{ border: "none", borderRadius: 8, padding: "8px 14px", background: loading ? "#94a3b8" : "#2563eb", color: "#fff", fontWeight: 600, cursor: loading ? "not-allowed" : "pointer", fontSize: 13 }}>{loading ? "提交中…" : "创建"}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 创建客户弹窗 */}
+      {showClientModal && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(0,0,0,0.4)", padding: 16 }}>
+          <div style={{ width: "100%", maxWidth: 440, background: "#fff", borderRadius: 12, padding: 24, boxShadow: "0 20px 60px rgba(0,0,0,0.3)" }}>
+            <h3 style={{ margin: "0 0 16px", fontSize: 18, fontWeight: 600 }}>创建客户账号</h3>
+            <div style={{ display: "grid", gap: 10 }}>
+              <div>
+                <label style={{ fontSize: 12, color: "#64748b", display: "block", marginBottom: 4 }}>账号（选填，不填则自动生成）</label>
+                <input value={clientForm.id} onChange={(e) => setClientForm((f) => ({ ...f, id: e.target.value }))} placeholder="留空自动生成" style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 10px", width: "100%", fontSize: 13 }} />
+              </div>
+              <div>
+                <label style={{ fontSize: 12, color: "#64748b", display: "block", marginBottom: 4 }}>客户名字 *</label>
+                <input value={clientForm.name} onChange={(e) => setClientForm((f) => ({ ...f, name: e.target.value }))} placeholder="客户姓名" style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 10px", width: "100%", fontSize: 13 }} />
+              </div>
+              <div>
+                <label style={{ fontSize: 12, color: "#64748b", display: "block", marginBottom: 4 }}>公司名字</label>
+                <input value={clientForm.companyName} onChange={(e) => setClientForm((f) => ({ ...f, companyName: e.target.value }))} placeholder="公司名（可选）" style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 10px", width: "100%", fontSize: 13 }} />
+              </div>
+              <div>
+                <label style={{ fontSize: 12, color: "#64748b", display: "block", marginBottom: 4 }}>电话号码 *</label>
+                <input value={clientForm.phone} onChange={(e) => setClientForm((f) => ({ ...f, phone: e.target.value }))} placeholder="手机号" style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 10px", width: "100%", fontSize: 13 }} />
+              </div>
+              <div>
+                <label style={{ fontSize: 12, color: "#64748b", display: "block", marginBottom: 4 }}>邮箱</label>
+                <input value={clientForm.email} onChange={(e) => setClientForm((f) => ({ ...f, email: e.target.value }))} placeholder="email@example.com" style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 10px", width: "100%", fontSize: 13 }} />
+              </div>
+              <div>
+                <label style={{ fontSize: 12, color: "#64748b", display: "block", marginBottom: 4 }}>登录密码 *</label>
+                <input type="password" value={clientForm.password} onChange={(e) => setClientForm((f) => ({ ...f, password: e.target.value }))} placeholder="密码（必填）" style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 10px", width: "100%", fontSize: 13 }} />
+              </div>
+            </div>
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 16 }}>
+              <button type="button" onClick={() => setShowClientModal(false)} style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 14px", background: "#fff", cursor: "pointer", color: "#374151", fontSize: 13 }}>取消</button>
+              <button type="button" disabled={loading} onClick={() => void submitAddClient()} style={{ border: "none", borderRadius: 8, padding: "8px 14px", background: loading ? "#94a3b8" : "#2563eb", color: "#fff", fontWeight: 600, cursor: loading ? "not-allowed" : "pointer", fontSize: 13 }}>{loading ? "提交中…" : "创建"}</button>
+            </div>
+          </div>
+        </div>
+      )}
     </RoleShell>
   );
 }

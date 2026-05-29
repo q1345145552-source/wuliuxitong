@@ -86,7 +86,7 @@
 
 ### 9.3 强制一致性要求
 1. 三端查询参数命名必须一致（trackingNo、domesticTrackingNo、itemName、transportMode、dateFrom、dateTo）。
-2. 三端“完成/未完成”分组规则必须一致。
+2. 三端"完成/未完成"分组规则必须一致。
 3. 任何字段变更先更新：
    - docs/domain-dictionary.md
    - docs/api-contract.md
@@ -98,7 +98,7 @@
 - 是否遗漏 domesticTrackingNo 字段？
 - transportMode 是否统一使用 sea/land 枚举？
 - completed/unfinished 规则是否与文档一致？
-- client 数据范围是否仍限制为“仅本人”？
+- client 数据范围是否仍限制为"仅本人"？
 财务板块（对账、结算、退款、发票）归入 V2，不进入当前 V1 开发范围。
 ## 10. Staff V1 新规则同步（状态与仓库权限）
 
@@ -122,7 +122,7 @@
 ## 11. Staff 创建订单与字段对齐规则（V1）
 
 ### 11.1 命名统一
-- “国内订单号”与“国内快递单号”统一为 domesticTrackingNo。
+- "国内订单号"与"国内快递单号"统一为 domesticTrackingNo。
 - 禁止在任何分支新增同义字段名（如 domesticOrderNo、chinaExpressNo）。
 
 ### 11.2 Agent 分工补充
@@ -176,7 +176,7 @@
 
 ### 13.2 强制约束
 1. DeepSeek 仅允许后端代理调用，禁止前端直连。
-2. AI 查询必须限定在“同公司范围”。
+2. AI 查询必须限定在"同公司范围"。
 3. AI 回答必须基于结构化数据，不允许无证据输出。
 4. 每次 AI 对话必须写审计日志（userId/companyId/question/answerSummary/queriedAt）。
 

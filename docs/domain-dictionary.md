@@ -99,7 +99,7 @@ created -> pickedUp -> inWarehouseCN -> customsPending -> inTransit -> customsTH
 
 ### 10.2 字段统一命名（全系统唯一）
 - trackingNo: 运单号
-- domesticTrackingNo: 国内快递单号（注意：与“国内订单号”为同一字段语义）
+- domesticTrackingNo: 国内快递单号（注意：与"国内订单号"为同一字段语义）
 - weightKg: 重量（kg）
 - volumeM3: 体积（m³）
 - packageCount: 袋数/箱数数量
@@ -111,7 +111,7 @@ created -> pickedUp -> inWarehouseCN -> customsPending -> inTransit -> customsTH
 - admin: 可见可改
 
 ### 10.4 一致性要求
-- 禁止再新增“国内订单号”同义字段，统一使用 domesticTrackingNo。
+- 禁止再新增"国内订单号"同义字段，统一使用 domesticTrackingNo。
 - 以上字段在 staff 录入后，client 端必须展示一致值。
 
 ## 11. 管理员端 V1 - 业务范围定义
@@ -162,12 +162,12 @@ created -> pickedUp -> inWarehouseCN -> customsPending -> inTransit -> customsTH
 - AI 回答必须基于业务数据，不允许编造结果。
 
 ### 13.2 数据范围
-- AI 查询范围限定为“同一客户公司下全部账号数据”。
+- AI 查询范围限定为"同一客户公司下全部账号数据"。
 - 不允许访问其他公司数据。
 
 ### 13.3 支持问题类型（V1）
-- 单票进度查询：例如“我的单号 THCN0001 到哪了？”
-- 汇总查询：例如“我本月一共发了多少货？”
+- 单票进度查询：例如"我的单号 THCN0001 到哪了？"
+- 汇总查询：例如"我本月一共发了多少货？"
 
 ### 13.4 AI 查询审计字段
 - aiQueryId: string

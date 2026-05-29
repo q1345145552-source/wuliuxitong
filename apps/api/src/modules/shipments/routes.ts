@@ -8,12 +8,13 @@ import { fail, ok, parseJsonArray, requireRole } from "../core/http-utils";
 import { loadProductImagesForOrders } from "../orders/product-images";
 
 const STATUS_FLOW = [
-  "created",
-  "pickedUp",
-  "inWarehouseCN",
-  "customsPending",
-  "inTransit",
+  "loaded",
+  "delayDeparted",
+  "departed",
+  "arrivedPort",
   "customsTH",
+  "customsCleared",
+  "inWarehouseTH",
   "outForDelivery",
   "delivered",
 ];
@@ -542,6 +543,90 @@ export function registerShipmentRoutes(app: MinimalHttpApp, _db: DatabaseSync): 
       updatedCount: targetShipments.length,
       changedAt: now.toISOString(),
     });
+  });
+
+  /**
+   * 运单分柜：从父单拆出子单，父单扣除件数，子单独立追踪。
+   */
+  app.post("/staff/shipments/split", async (req, res) => {
+    const auth = requireRole(req, res, ["staff", "admin"]);
+    if (!auth) return;
+
+    const body = (req.body ?? {}) as {
+      parentShipmentId?: string;
+      splits?: Array<{
+        batchNo: string;
+        itemName: string;
+        packageCount: number;
+      }>;
+    };
+
+    const parentId = body.parentShipmentId?.trim();
+    const splits = body.splits ?? [];
+    if (!parentId || splits.length === 0) {
+      fail(res, 400, "BAD_REQUEST", "parentShipmentId and at least one split are required");
+      return;
+    }
+
+    const parent = await prisma.shipment.findUnique({
+      where: { id: parentId },
+      include: { order: { select: { id: true, companyId: true } } },
+    });
+    if (!parent || parent.companyId !== auth.companyId) {
+      fail(res, 404, "NOT_FOUND", "parent shipment not found");
+      return;
+    }
+    if (parent.parentTrackingNo) {
+      fail(res, 400, "BAD_REQUEST", "cannot split a child shipment");
+      return;
+    }
+
+    const totalSplitCount = splits.reduce((sum, s) => sum + s.packageCount, 0);
+    const parentPackageCount = parent.packageCount ?? 0;
+    if (totalSplitCount > parentPackageCount) {
+      fail(res, 400, "BAD_REQUEST", `split total (${totalSplitCount}) exceeds parent package count (${parentPackageCount})`);
+      return;
+    }
+
+    const results: Array<{ trackingNo: string; shipmentId: string }> = [];
+
+    await prisma.$transaction(async (tx) => {
+      // 更新父单：扣减件数
+      await tx.shipment.update({
+        where: { id: parent.id },
+        data: {
+          packageCount: parentPackageCount - totalSplitCount,
+        },
+      });
+
+      // 创建子单
+      for (let i = 0; i < splits.length; i++) {
+        const split = splits[i];
+        const childId = `s_${Date.now()}_${i}`;
+        const childTrackingNo = `${parent.trackingNo}-FG${i + 1}`;
+
+        await tx.shipment.create({
+          data: {
+            id: childId,
+            companyId: auth.companyId,
+            orderId: parent.orderId,
+            trackingNo: childTrackingNo,
+            parentTrackingNo: parent.trackingNo,
+            batchNo: split.batchNo,
+            itemName: split.itemName,
+            currentStatus: parent.currentStatus,
+            packageCount: split.packageCount,
+            packageUnit: parent.packageUnit,
+            transportMode: parent.transportMode,
+            warehouseId: parent.warehouseId,
+          },
+        });
+
+        results.push({ trackingNo: childTrackingNo, shipmentId: childId });
+      }
+    });
+
+    ok(res, { parentTrackingNo: parent.trackingNo, children: results });
   });
 
   /**

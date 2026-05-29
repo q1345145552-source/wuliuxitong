@@ -4,6 +4,7 @@ export interface StaffCreateOrderPayload {
   clientId: string;
   warehouseId: string;
   batchNo?: string;
+  trackingNo?: string;
   arrivedAt: string;
   itemName: string;
   productQuantity?: number;
@@ -31,6 +32,7 @@ export interface ClientPrealertPayload {
   receiverNameTh?: string;
   receiverPhoneTh?: string;
   receiverAddressTh?: string;
+  trackingNo?: string;
 }
 
 export interface ClientAddressItem {
@@ -163,7 +165,7 @@ export interface OrderItem {
   }>;
   itemName: string;
   transportMode: string;
-  approvalStatus?: "pending" | "approved";
+  approvalStatus?: "pending" | "approved" | "shipped";
   domesticTrackingNo?: string;
   trackingNo?: string;
   currentStatus?: string;
@@ -343,6 +345,26 @@ export interface AdminOpsOverview {
     delta: number;
     updatedAt: string;
   }>;
+}
+
+export interface FinanceRow {
+  id: string;
+  orderNo: string;
+  clientName: string;
+  transportMode: string;
+  warehouse: string;
+  weightKg: number;
+  volumeM3: number;
+  paymentStatus: string;
+  createdAt: string;
+}
+
+export interface FinanceSummary {
+  totalOrders: number;
+  totalWeight: number;
+  totalVolume: number;
+  monthOrders: number;
+  rows: FinanceRow[];
 }
 
 export async function createStaffOrder(payload: StaffCreateOrderPayload): Promise<{
@@ -569,13 +591,60 @@ export async function fetchClientOrders(params?: {
   return data.items;
 }
 
-export async function fetchClientPrealerts(): Promise<OrderItem[]> {
-  const response = await fetch(`${apiBaseUrl()}/client/prealerts`, {
+/**
+ * 获取客户端预报单列表
+ * @param status 预报单状态：pending(待审核), approved(已审核/待发货), shipped(已发货), all(全部)
+ */
+export async function fetchClientPrealerts(status: string = "pending"): Promise<OrderItem[]> {
+  const response = await fetch(`${apiBaseUrl()}/client/prealerts?status=${status}`, {
     method: "GET",
     headers: { ...authHeaders() },
   });
   const data = await parseApiResponse<{ items: OrderItem[] }>(response);
   return data.items;
+}
+
+/**
+ * 客户确认发货 - 将已审核的预报单转为正式订单
+ */
+export async function shipClientPrealert(orderId: string): Promise<{
+  orderId: string;
+  trackingNo: string;
+  shippedAt: string;
+}> {
+  const response = await fetch(`${apiBaseUrl()}/client/prealerts/ship`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...authHeaders(),
+    },
+    body: JSON.stringify({ orderId }),
+  });
+  return parseApiResponse(response);
+}
+
+export async function deleteClientPrealert(orderId: string): Promise<{ deleted: boolean }> {
+  const response = await fetch(`${apiBaseUrl()}/client/prealerts/delete`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...authHeaders(),
+    },
+    body: JSON.stringify({ orderId }),
+  });
+  return parseApiResponse(response);
+}
+
+export async function updateClientPrealert(orderId: string, payload: Record<string, unknown>): Promise<{ updated: boolean }> {
+  const response = await fetch(`${apiBaseUrl()}/client/prealerts/update`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...authHeaders(),
+    },
+    body: JSON.stringify({ orderId, ...payload }),
+  });
+  return parseApiResponse(response);
 }
 
 export async function fetchStaffPrealerts(): Promise<OrderItem[]> {
@@ -668,12 +737,33 @@ export async function fetchClientShipments(): Promise<ShipmentItem[]> {
   return data.items;
 }
 
+export async function splitStaffShipment(payload: {
+  parentShipmentId: string;
+  splits: Array<{ batchNo: string; itemName: string; packageCount: number }>;
+}): Promise<{ parentTrackingNo: string; children: Array<{ trackingNo: string; shipmentId: string }> }> {
+  const response = await fetch(`${apiBaseUrl()}/staff/shipments/split`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify(payload),
+  });
+  return parseApiResponse(response);
+}
+
 export async function fetchStaffShipments(): Promise<ShipmentItem[]> {
   const response = await fetch(`${apiBaseUrl()}/staff/shipments`, {
     method: "GET",
     headers: { ...authHeaders() },
   });
   const data = await parseApiResponse<{ items: ShipmentItem[] }>(response);
+  return data.items;
+}
+
+export async function fetchStaffClients(): Promise<Array<{ id: string; name: string }>> {
+  const response = await fetch(`${apiBaseUrl()}/staff/clients`, {
+    method: "GET",
+    headers: { ...authHeaders() },
+  });
+  const data = await parseApiResponse<{ items: Array<{ id: string; name: string }> }>(response);
   return data.items;
 }
 
@@ -918,6 +1008,7 @@ export async function createAdminClient(payload: {
   companyName?: string;
   phone: string;
   email?: string;
+  password?: string;
 }): Promise<{ id: string; name: string; companyName: string | null; phone: string; email: string | null; createdAt: string }> {
   const response = await fetch(`${apiBaseUrl()}/admin/users/client`, {
     method: "POST",
@@ -1136,6 +1227,226 @@ export async function fetchAdminOpsOverview(): Promise<AdminOpsOverview> {
   const response = await fetch(`${apiBaseUrl()}/admin/ops/overview`, {
     method: "GET",
     headers: { ...authHeaders() },
+  });
+  return parseApiResponse(response);
+}
+
+/**
+ * 获取财务汇总数据。
+ */
+export async function fetchFinanceSummary(): Promise<FinanceSummary> {
+  const response = await fetch(`${apiBaseUrl()}/admin/finance/summary`, {
+    method: "GET",
+    headers: { ...authHeaders() },
+  });
+  return parseApiResponse(response);
+}
+
+// ============================================================================
+// 用户管理相关（管理员端）
+// ============================================================================
+
+export interface ManagedUser {
+  id: string;
+  companyId: string;
+  role: string;
+  name: string;
+  phone: string;
+  status: string;
+  createdAt: string;
+  companyName?: string;
+  email?: string;
+  warehouseIds?: string[];
+}
+
+/**
+ * 获取用户列表（管理员）。
+ */
+export async function fetchManagedUsers(): Promise<ManagedUser[]> {
+  const response = await fetch(`${apiBaseUrl()}/admin/users`, {
+    method: "GET",
+    headers: { ...authHeaders() },
+  });
+  const data = await parseApiResponse<{ items: ManagedUser[] }>(response);
+  return data.items;
+}
+
+/**
+ * 创建用户（管理员）。
+ */
+export async function createManagedUser(payload: {
+  role: string;
+  name: string;
+  phone: string;
+  password: string;
+  companyName?: string;
+  email?: string;
+  warehouseIds?: string[];
+}): Promise<ManagedUser> {
+  const response = await fetch(`${apiBaseUrl()}/admin/users`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...authHeaders(),
+    },
+    body: JSON.stringify(payload),
+  });
+  return parseApiResponse(response);
+}
+
+/**
+ * 重置用户密码（管理员）。
+ */
+export async function resetUserPassword(userId: string, password: string): Promise<{ updated: boolean; id: string }> {
+  const response = await fetch(`${apiBaseUrl()}/admin/users/set-password`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...authHeaders(),
+    },
+    body: JSON.stringify({ id: userId, password }),
+  });
+  return parseApiResponse(response);
+}
+
+/**
+ * 禁用/启用用户（管理员）。
+ */
+export async function toggleUserBan(userId: string): Promise<{ id: string; status: string }> {
+  const response = await fetch(`${apiBaseUrl()}/admin/users/toggle-ban`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...authHeaders(),
+    },
+    body: JSON.stringify({ id: userId }),
+  });
+  return parseApiResponse(response);
+}
+
+// ============================================================================
+// 装柜清单相关
+// ============================================================================
+
+export interface LoadingManifestItem {
+  id: string;
+  manifestNo: string;
+  warehouse: string;
+  status: string;
+  carrierInfo: string | null;
+  sealedAt: string | null;
+  totalBills: number;
+  createdAt: string;
+}
+
+export interface LoadingManifestDetail extends LoadingManifestItem {
+  bills: Array<{
+    id: string;
+    shipmentId: string;
+    trackingNo: string | null;
+    batchNo: string | null;
+    itemName: string | null;
+    currentStatus: string | null;
+  }>;
+}
+
+/**
+ * 创建装柜清单。
+ */
+export async function createLoadingManifest(payload: {
+  warehouse: string;
+  carrierInfo?: string;
+}): Promise<{ manifestNo: string }> {
+  const response = await fetch(`${apiBaseUrl()}/staff/loading-manifests`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...authHeaders(),
+    },
+    body: JSON.stringify(payload),
+  });
+  const body = await parseApiResponse<{ message: string; manifest: { id: string; manifestNo: string } }>(response);
+  return { manifestNo: body.manifest.manifestNo };
+}
+
+/**
+ * 获取装柜清单列表。
+ */
+export async function fetchLoadingManifests(filters?: { query?: string; status?: string }): Promise<LoadingManifestItem[]> {
+  const params = new URLSearchParams();
+  if (filters?.query) params.set("query", filters.query);
+  if (filters?.status) params.set("status", filters.status);
+  const qs = params.toString();
+  const url = `${apiBaseUrl()}/staff/loading-manifests${qs ? `?${qs}` : ""}`;
+  const response = await fetch(url, {
+    method: "GET",
+    headers: { ...authHeaders() },
+  });
+  const data = await parseApiResponse<{ items: LoadingManifestItem[] }>(response);
+  return data.items;
+}
+
+/**
+ * 获取装柜清单详情。
+ */
+export async function fetchLoadingManifestDetail(manifestId: string): Promise<LoadingManifestDetail> {
+  const response = await fetch(`${apiBaseUrl()}/staff/loading-manifests/detail?id=${manifestId}`, {
+    method: "GET",
+    headers: { ...authHeaders() },
+  });
+  return parseApiResponse(response);
+}
+
+/**
+ * 封装装柜清单。
+ */
+export async function sealLoadingManifest(manifestId: string): Promise<LoadingManifestItem> {
+  const response = await fetch(`${apiBaseUrl()}/staff/loading-manifests/seal?id=${manifestId}`, {
+    method: "POST",
+    headers: { ...authHeaders() },
+  });
+  return parseApiResponse(response);
+}
+
+/**
+ * 添加运单到装柜清单。
+ */
+export async function removeShipmentFromManifest(manifestId: string, itemId: string): Promise<{ removed: boolean }> {
+  const response = await fetch(`${apiBaseUrl()}/staff/loading-manifests/remove-shipment?id=${manifestId}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({ itemId }),
+  });
+  return parseApiResponse(response);
+}
+
+export async function addShipmentToManifest(manifestId: string, trackingNo: string): Promise<{ added: boolean }> {
+  const response = await fetch(`${apiBaseUrl()}/staff/loading-manifests/add-shipment?id=${manifestId}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...authHeaders(),
+    },
+    body: JSON.stringify({ trackingNo }),
+  });
+  return parseApiResponse(response);
+}
+export async function fetchShippingConfig(): Promise<Record<string, string>> {
+  const response = await fetch(`${apiBaseUrl()}/admin/shipping/config`, {
+    method: "GET",
+    headers: { ...authHeaders() },
+  });
+  return parseApiResponse(response);
+}
+
+export async function updateShippingConfig(payload: Record<string, string>): Promise<Record<string, string>> {
+  const response = await fetch(`${apiBaseUrl()}/admin/shipping/config`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...authHeaders(),
+    },
+    body: JSON.stringify(payload),
   });
   return parseApiResponse(response);
 }

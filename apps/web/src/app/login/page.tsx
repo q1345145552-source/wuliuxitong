@@ -1,10 +1,10 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { setAuthSession, type MockRole } from "../../auth/mock-session";
+import { setAuthSession } from "../../auth/mock-session";
 import { login } from "../../services/auth-api";
 
-const roleRouteMap: Record<MockRole, string> = {
+const roleRouteMap: Record<string, string> = {
   admin: "/admin",
   staff: "/staff",
   client: "/client",
@@ -13,7 +13,6 @@ const roleRouteMap: Record<MockRole, string> = {
 export default function LoginPage() {
   const [account, setAccount] = useState("");
   const [password, setPassword] = useState("");
-  const [role, setRole] = useState<MockRole>("client");
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
 
@@ -27,7 +26,6 @@ export default function LoginPage() {
       const result = await login({
         account: account.trim(),
         password: password.trim(),
-        role,
       });
       setAuthSession({
         userId: result.user.id,
@@ -35,7 +33,7 @@ export default function LoginPage() {
         role: result.user.role,
         token: result.token,
       });
-      window.location.href = roleRouteMap[result.user.role];
+      window.location.href = roleRouteMap[result.user.role] || "/";
     } catch (error) {
       const text = error instanceof Error ? error.message : "登录失败";
       setMessage(`登录失败：${text}`);
@@ -45,10 +43,36 @@ export default function LoginPage() {
   };
 
   return (
-    <main style={{ minHeight: "100vh", display: "grid", placeItems: "center", background: "#f8fafc", padding: 20 }}>
-      <section style={{ width: "100%", maxWidth: 420, border: "1px solid #e5e7eb", borderRadius: 12, background: "#fff", padding: 20 }}>
-        <h1 style={{ margin: 0, fontSize: 24 }}>湘泰物流系统登录</h1>
-        <p style={{ marginTop: 8, color: "#64748b", fontSize: 14 }}>请输入账号和密码登录系统。</p>
+    <div style={{
+        minHeight: "100vh",
+        width: "100vw",
+        display: "grid",
+        placeItems: "center",
+        padding: 20,
+        position: "relative",
+        overflow: "hidden",
+        backgroundImage: "url(/images/login-bg.jpg)",
+        backgroundSize: "cover",
+        backgroundPosition: "center",
+        backgroundRepeat: "no-repeat",
+      }}>
+      {/* 半透明遮罩 */}
+      <div style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.35)", zIndex: 0 }} />
+      <section style={{
+          position: "relative",
+          zIndex: 1,
+          width: "100%",
+          maxWidth: 440,
+          border: "1px solid rgba(255,255,255,0.18)",
+          borderRadius: 16,
+          background: "rgba(255,255,255,0.75)",
+          backdropFilter: "blur(20px)",
+          WebkitBackdropFilter: "blur(20px)",
+          padding: "32px 28px",
+          boxShadow: "0 16px 48px rgba(0,0,0,0.3)",
+        }}>
+        <h1 style={{ margin: 0, fontSize: 24, textAlign: "center", color: "#171717" }}>湘泰物流系统登录</h1>
+        <p style={{ marginTop: 8, color: "#6b7280", fontSize: 14, textAlign: "center" }}>请输入账号和密码登录系统。</p>
 
         <div style={{ display: "grid", gap: 10, marginTop: 14 }}>
           <input
@@ -64,15 +88,7 @@ export default function LoginPage() {
             placeholder="密码"
             style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "10px 12px" }}
           />
-          <select
-            value={role}
-            onChange={(e) => setRole(e.target.value as MockRole)}
-            style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "10px 12px", background: "#fff" }}
-          >
-            <option value="client">客户</option>
-            <option value="staff">员工</option>
-            <option value="admin">管理员</option>
-          </select>
+
           <button
             type="button"
             onClick={() => void submit()}
@@ -97,6 +113,6 @@ export default function LoginPage() {
           还没有账号？<a href="/register" style={{ color: "#2563eb", textDecoration: "none" }}>去注册</a>
         </div>
       </section>
-    </main>
+    </div>
   );
 }

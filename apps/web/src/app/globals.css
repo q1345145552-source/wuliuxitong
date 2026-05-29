@@ -27,6 +27,12 @@ body {
   background: var(--bg-page);
 }
 
+main.dashboard-layout {
+  max-width: none;
+  margin: 0;
+  animation: pageFadeIn 0.35s ease-out;
+}
+
 main {
   max-width: 1180px;
   margin: 0 auto;
@@ -97,8 +103,9 @@ main {
   padding: 24px;
   max-width: none;
   width: 100%;
-  min-height: 100vh;
+  height: 100vh;
   margin: 0;
+  overflow: hidden;
 }
 
 .dashboard-sidebar {
@@ -108,9 +115,10 @@ main {
   border-radius: 12px;
   background: #ffffff;
   padding: 18px;
-  min-height: calc(100vh - 48px);
+  height: calc(100vh - 48px);
   position: sticky;
   top: 24px;
+  overflow-y: auto;
 }
 
 .dashboard-sidebar-title {
@@ -174,6 +182,8 @@ main {
 .dashboard-content {
   flex: 1;
   min-width: 0;
+  height: calc(100vh - 48px);
+  overflow-y: auto;
 }
 
 .glass-topbar {

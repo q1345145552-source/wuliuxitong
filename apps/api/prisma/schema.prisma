@@ -104,12 +104,14 @@ model Shipment {
   companyId           String    @map("company_id")
   orderId             String    @map("order_id")
   trackingNo          String    @unique @map("tracking_no")
+  parentTrackingNo    String?   @map("parent_tracking_no")
   batchNo             String?   @map("batch_no")
   containerNo         String?   @map("container_no") // 保留兼容性，新代码用 ContainerItem
   currentStatus       String    @map("current_status")
   currentLocation     String?   @map("current_location")
   weightKg            Decimal?  @map("weight_kg") @db.Decimal(10, 2)
   volumeM3            Decimal?  @map("volume_m3") @db.Decimal(10, 3)
+  itemName            String?   @map("item_name")
   packageCount        Int?      @map("package_count")
   packageUnit         String?   @map("package_unit")
   transportMode       String?   @map("transport_mode")
@@ -131,6 +133,7 @@ model Shipment {
   @@index([companyId, currentStatus])
   @@index([orderId])
   @@index([batchNo])
+  @@index([parentTrackingNo])
   @@map("shipments")
 }
 
@@ -405,6 +408,9 @@ model Container {
   companyId         String    @map("company_id")
   containerNo       String    @unique @map("container_no") // 柜号
   containerType     String    @map("container_type") // 20GP | 40HQ
+  warehouseId       String?   @map("warehouse_id")
+  carrierName       String?   @map("carrier_name")
+  sealedAt          DateTime? @map("sealed_at")
   loadingDate       DateTime? @map("loading_date")        // 装柜日期
   departureDate     DateTime? @map("departure_date")      // 开船日期
   eta               DateTime?                              // 预计到港

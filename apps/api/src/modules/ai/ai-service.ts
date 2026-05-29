@@ -331,7 +331,7 @@ export class ClientAiService implements AiService {
           "仅输出一个 JSON 对象，不要输出任何解释文字，不要输出 markdown。",
           '示例：{"intent":"summary","trackingNo":"","itemName":"耳机","statusScope":"all","timeHint":"最近7天","metric":"count","confidence":0.92}',
           "如果没有对应字段，用空字符串。",
-          "如果用户是追问（例如“那耳机呢/那本月呢”），请结合 previousContext 补全缺失条件。",
+          '如果用户是追问（例如"那耳机呢/那本月呢"），请结合 previousContext 补全缺失条件。',
         ].join("\n"),
         context: parseContext,
       });
@@ -670,7 +670,7 @@ export class ClientAiService implements AiService {
   ): Promise<string> {
     try {
       const refined = await this.deps.llmClient.summarizeWithContext({
-        question: `${question}\n请严格使用“业务客服模板”风格输出，保持字段齐全。仅输出最终中文答复正文，不要返回JSON、不要返回代码块、不要解释过程。`,
+        question: `${question}\n请严格使用"业务客服模板"风格输出，保持字段齐全。仅输出最终中文答复正文，不要返回JSON、不要返回代码块、不要解释过程。`,
         context: llmContext,
       });
       if (!refined?.trim()) return fallbackAnswer;
@@ -1050,7 +1050,7 @@ export class ClientAiService implements AiService {
       `${timeLabel} / ${statusLabel}`,
       "",
       "【建议操作】",
-      "可改成“全部时间”或“全部状态”再试，或直接提供单号让我帮你查明细。",
+      '可改成"全部时间"或"全部状态"再试，或直接提供单号让我帮你查明细。',
     ].join("\n");
   }
 

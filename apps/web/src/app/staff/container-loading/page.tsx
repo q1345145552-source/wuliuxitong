@@ -1,0 +1,338 @@
+"use client";
+
+import { useCallback, useEffect, useMemo, useState } from "react";
+import RoleShell from "../../../modules/layout/RoleShell";
+import Toast from "../../../modules/layout/Toast";
+import {
+  fetchLoadingManifests,
+  createLoadingManifest,
+  fetchLoadingManifestDetail,
+  sealLoadingManifest,
+  addShipmentToManifest,
+  removeShipmentFromManifest,
+  fetchStaffShipments,
+  type LoadingManifestItem,
+  type LoadingManifestDetail,
+  type ShipmentItem,
+} from "../../../services/business-api";
+
+const STATUS_LABEL: Record<string, string> = {
+  LOADING: "装柜中",
+  SEALED: "已封柜",
+  IN_TRANSIT: "运输中",
+  ARRIVED: "已到达",
+};
+
+const STATUS_COLOR: Record<string, string> = {
+  LOADING: "#d97706",
+  SEALED: "#16a34a",
+  IN_TRANSIT: "#2563eb",
+  ARRIVED: "#6b7280",
+};
+
+const inputStyle = { border: "1px solid #d1d5db", borderRadius: 6, padding: "8px 12px", fontSize: 13, background: "#fff" } as const;
+
+export default function StaffContainerLoadingPage() {
+  const [query, setQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState("ALL");
+  const [list, setList] = useState<LoadingManifestItem[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [toast, setToast] = useState("");
+  const [showCreate, setShowCreate] = useState(false);
+  const [createForm, setCreateForm] = useState({ warehouse: "wh_yiwu_01", carrierInfo: "" });
+  const [creating, setCreating] = useState(false);
+  const [selectedId, setSelectedId] = useState("");
+  const [detail, setDetail] = useState<LoadingManifestDetail | null>(null);
+  const [loadingDetail, setLoadingDetail] = useState(false);
+  const [adding, setAdding] = useState(false);
+
+  // 运单列表搜索
+  const [allShipments, setAllShipments] = useState<ShipmentItem[]>([]);
+  const [shipSearch, setShipSearch] = useState({ trackingNo: "", clientId: "", transportMode: "" });
+  const [selectedShipments, setSelectedShipments] = useState<Set<string>>(new Set());
+  // 已装柜运单映射：shipmentId → container manifestNo
+  const [loadedShipments, setLoadedShipments] = useState<Record<string, string>>({});
+
+  // 加载运单列表 + 已装柜信息
+  useEffect(() => {
+    Promise.all([
+      fetchStaffShipments(),
+      fetchLoadingManifests({ query: "", status: "ALL" }),
+    ]).then(([shipments, manifests]) => {
+      setAllShipments(shipments);
+      // 获取所有柜子的已装运单
+      const mapping: Record<string, string> = {};
+      Promise.all(manifests.map((m) =>
+        fetchLoadingManifestDetail(m.id).then((d) => {
+          d.bills.forEach((b) => { mapping[b.shipmentId] = m.manifestNo; });
+        }).catch(() => {})
+      )).then(() => setLoadedShipments(mapping));
+    }).catch(() => {});
+  }, []);
+
+  // 筛选运单
+  const filteredShipments = useMemo(() => {
+    return allShipments.filter((s) => {
+      if (shipSearch.trackingNo && !(s.trackingNo ?? "").toLowerCase().includes(shipSearch.trackingNo.toLowerCase())) return false;
+      if (shipSearch.clientId && !(s.clientId ?? "").toLowerCase().includes(shipSearch.clientId.toLowerCase())) return false;
+      if (shipSearch.transportMode && s.transportMode !== shipSearch.transportMode) return false;
+      return true;
+    });
+  }, [allShipments, shipSearch]);
+
+  // 已在本柜中的运单 ID 集合
+  const existingShipmentIds = useMemo(() => {
+    const set = new Set<string>();
+    if (detail) detail.bills.forEach((b) => set.add(b.shipmentId));
+    return set;
+  }, [detail]);
+
+  const loadList = useCallback(async () => {
+    setLoading(true);
+    setError("");
+    try {
+      const items = await fetchLoadingManifests({ query: query.trim(), status: statusFilter });
+      setList(items);
+      if (!selectedId && items.length > 0) setSelectedId(items[0].id);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "加载失败");
+      setList([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [query, statusFilter, selectedId]);
+
+  useEffect(() => { void loadList(); }, []);
+
+  const loadDetail = useCallback(async (id: string) => {
+    if (!id) return;
+    setLoadingDetail(true);
+    try {
+      const d = await fetchLoadingManifestDetail(id);
+      setDetail(d);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "详情加载失败");
+    } finally {
+      setLoadingDetail(false);
+    }
+  }, []);
+
+  useEffect(() => { if (selectedId) void loadDetail(selectedId); }, [selectedId, loadDetail]);
+
+  const handleCreate = async () => {
+    setCreating(true);
+    try {
+      const result = await createLoadingManifest(createForm);
+      setToast(`装柜任务已创建: ${result.manifestNo}`);
+      setShowCreate(false);
+      setCreateForm({ warehouse: "wh_yiwu_01", carrierInfo: "" });
+      await loadList();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "创建失败");
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  const handleSeal = async () => {
+    if (!selectedId) return;
+    try {
+      await sealLoadingManifest(selectedId);
+      setToast("封柜成功");
+      await loadList();
+      await loadDetail(selectedId);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "封柜失败");
+    }
+  };
+
+  const handleBulkAdd = async () => {
+    if (!selectedId || selectedShipments.size === 0) return;
+    setAdding(true);
+    let success = 0;
+    const errors: string[] = [];
+    for (const trackingNo of selectedShipments) {
+      if (!trackingNo) { errors.push("空运单号"); continue; }
+      try {
+        await addShipmentToManifest(selectedId, trackingNo);
+        success++;
+      } catch (e: any) {
+        errors.push(`${trackingNo}: ${e.message ?? "失败"}`);
+      }
+    }
+    setToast(`成功添加 ${success} 个运单到装柜${errors.length > 0 ? `，失败 ${errors.length} 个：${errors.join("；")}` : ""}`);
+    setSelectedShipments(new Set());
+    await loadDetail(selectedId);
+    setAdding(false);
+  };
+
+  const handleRemoveShipment = async (itemId: string) => {
+    if (!selectedId) return;
+    try {
+      await removeShipmentFromManifest(selectedId, itemId);
+      setToast("运单已从装柜删除");
+      await loadDetail(selectedId);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "删除失败");
+    }
+  };
+
+  const toggleSelect = (trackingNo: string) => {
+    setSelectedShipments((prev) => {
+      const next = new Set(prev);
+      if (next.has(trackingNo)) next.delete(trackingNo);
+      else next.add(trackingNo);
+      return next;
+    });
+  };
+
+  return (
+    <RoleShell allowedRole="staff" title="装柜管理">
+      <h1 style={{ fontSize: 22, fontWeight: 700, color: "#0f172a", margin: "0 0 16px" }}>装柜管理</h1>
+
+      {/* 搜索 & 新建 */}
+      <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap", alignItems: "center" }}>
+        <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="搜索柜号…" style={{ ...inputStyle, minWidth: 200 }} />
+        <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} style={inputStyle}>
+          <option value="ALL">全部状态</option>
+          <option value="LOADING">装柜中</option>
+          <option value="SEALED">已封柜</option>
+          <option value="IN_TRANSIT">运输中</option>
+          <option value="ARRIVED">已到达</option>
+        </select>
+        <button onClick={() => void loadList()} style={{ border: "none", borderRadius: 6, padding: "8px 16px", background: "#2563eb", color: "#fff", fontWeight: 500, fontSize: 13, cursor: "pointer" }}>搜索</button>
+        <button onClick={() => setShowCreate(!showCreate)} style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "8px 16px", background: "#fff", fontSize: 13, cursor: "pointer" }}>
+          {showCreate ? "收起" : "+ 新建装柜"}
+        </button>
+      </div>
+
+      {/* 新建表单 */}
+      {showCreate && (
+        <div style={{ border: "1px solid #e5e7eb", borderRadius: 8, padding: 16, background: "#f8fafc", marginBottom: 12, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+          <select value={createForm.warehouse} onChange={(e) => setCreateForm((v) => ({ ...v, warehouse: e.target.value }))} style={inputStyle}>
+            <option value="wh_yiwu_01">义乌仓</option>
+            <option value="wh_guangzhou_01">广州仓</option>
+            <option value="wh_dongguan_01">东莞仓</option>
+          </select>
+          <input value={createForm.carrierInfo} onChange={(e) => setCreateForm((v) => ({ ...v, carrierInfo: e.target.value }))} placeholder="承运信息（可选）" style={{ ...inputStyle, flex: 1, minWidth: 200 }} />
+          <button disabled={creating} onClick={handleCreate} style={{ border: "none", borderRadius: 6, padding: "8px 16px", background: "#2563eb", color: "#fff", fontWeight: 500, fontSize: 13, cursor: creating ? "not-allowed" : "pointer" }}>
+            {creating ? "创建中…" : "创建"}
+          </button>
+        </div>
+      )}
+
+      {error && <p style={{ color: "#b91c1c", fontSize: 13, marginBottom: 8 }}>{error}</p>}
+
+      <div style={{ display: "grid", gridTemplateColumns: "320px 1fr", gap: 16, alignItems: "start" }}>
+        {/* 左侧柜列表 */}
+        <div style={{ border: "1px solid #e5e7eb", borderRadius: 10, overflow: "hidden", background: "#fff" }}>
+          {loading ? <p style={{ padding: 20, color: "#94a3b8", fontSize: 13 }}>加载中…</p> : list.length === 0 ? (
+            <p style={{ padding: 20, color: "#94a3b8", fontSize: 13, textAlign: "center" }}>暂无装柜任务，请先创建装柜</p>
+          ) : (
+            list.map((item) => (
+              <div key={item.id} onClick={() => setSelectedId(item.id)} style={{ padding: "12px 16px", cursor: "pointer", borderBottom: "1px solid #f1f5f9", background: selectedId === item.id ? "#eff6ff" : "transparent" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <span style={{ fontWeight: 600, fontSize: 14, color: "#0f172a" }}>{item.manifestNo}</span>
+                  <span style={{ fontSize: 11, fontWeight: 500, color: STATUS_COLOR[item.status] ?? "#94a3b8" }}>{STATUS_LABEL[item.status] ?? item.status}</span>
+                </div>
+                <div style={{ fontSize: 12, color: "#64748b", marginTop: 4 }}>
+                  {item.warehouse} · {item.totalBills} 票 · {item.createdAt.slice(0, 10)}
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+
+        {/* 右侧详情 + 运单列表 */}
+        <div>
+          {/* 柜子详情 */}
+          <div style={{ border: "1px solid #e5e7eb", borderRadius: 10, padding: 16, background: "#fff", marginBottom: 12 }}>
+            {loadingDetail ? <p style={{ color: "#94a3b8", fontSize: 13 }}>加载中…</p> : !detail ? (
+              <p style={{ color: "#94a3b8", fontSize: 13 }}>选择左侧装柜任务查看详情</p>
+            ) : (
+              <>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+                  <div>
+                    <h2 style={{ margin: 0, fontSize: 18, fontWeight: 700, color: "#0f172a" }}>{detail.manifestNo}</h2>
+                    <div style={{ fontSize: 13, color: "#64748b", marginTop: 4 }}>
+                      仓库: {detail.warehouse} · 状态: {STATUS_LABEL[detail.status] ?? detail.status}
+                      {detail.carrierInfo ? ` · 承运: ${detail.carrierInfo}` : ""}
+                    </div>
+                  </div>
+                  {detail.status === "LOADING" && (
+                    <button onClick={handleSeal} style={{ border: "none", borderRadius: 6, padding: "8px 16px", background: "#1f2937", color: "#fff", fontWeight: 500, fontSize: 13, cursor: "pointer" }}>封柜</button>
+                  )}
+                </div>
+
+                {/* 已装运单列表 */}
+                <div style={{ fontSize: 13, fontWeight: 500, color: "#64748b", marginBottom: 8 }}>已装运单（{detail.bills.length}）</div>
+                {detail.bills.length === 0 ? (
+                  <p style={{ color: "#94a3b8", fontSize: 13, marginBottom: 12 }}>暂无运单，从下方选择运单添加到本柜</p>
+                ) : (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 4, marginBottom: 12 }}>
+                    {detail.bills.map((b) => (
+                      <div key={b.id} style={{ border: "1px solid #f1f5f9", borderRadius: 6, padding: "6px 10px", display: "flex", justifyContent: "space-between", alignItems: "center", background: "#f8fafc" }}>
+                        <div>
+                          <span style={{ fontWeight: 500, fontSize: 13 }}>{b.trackingNo ?? b.shipmentId}</span>
+                          {b.itemName ? <span style={{ marginLeft: 8, fontSize: 12, color: "#64748b" }}>{b.itemName}</span> : null}
+                        </div>
+                        <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                          <span style={{ fontSize: 12, color: STATUS_COLOR[b.currentStatus ?? ""] ?? "#64748b" }}>{b.currentStatus ?? "—"}</span>
+                          {detail.status === "LOADING" && (
+                            <button onClick={() => handleRemoveShipment(b.id)} style={{ border: "1px solid #fca5a5", borderRadius: 4, padding: "2px 6px", fontSize: 11, background: "#fff", color: "#dc2626", cursor: "pointer" }}>删除</button>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+
+          {/* 运单列表（可添加到装柜） */}
+          {detail && detail.status === "LOADING" && (
+            <div style={{ border: "1px solid #e5e7eb", borderRadius: 10, padding: 16, background: "#fff" }}>
+              <div style={{ fontSize: 14, fontWeight: 600, color: "#0f172a", marginBottom: 8 }}>选择运单添加到本柜</div>
+              <div style={{ display: "flex", gap: 8, marginBottom: 10, flexWrap: "wrap" }}>
+                <input value={shipSearch.trackingNo} onChange={(e) => setShipSearch((v) => ({ ...v, trackingNo: e.target.value }))} placeholder="运单号" style={{ ...inputStyle, flex: 1, minWidth: 120 }} />
+                <input value={shipSearch.clientId} onChange={(e) => setShipSearch((v) => ({ ...v, clientId: e.target.value }))} placeholder="唛头" style={{ ...inputStyle, flex: 1, minWidth: 120 }} />
+                <select value={shipSearch.transportMode} onChange={(e) => setShipSearch((v) => ({ ...v, transportMode: e.target.value }))} style={inputStyle}>
+                  <option value="">全部运输方式</option>
+                  <option value="sea">海运</option>
+                  <option value="land">陆运</option>
+                </select>
+                <button onClick={() => setSelectedShipments(new Set(filteredShipments.filter((s) => !existingShipmentIds.has(s.id) && !loadedShipments[s.id]).map((s) => s.trackingNo)))} style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "6px 12px", fontSize: 12, background: "#fff", cursor: "pointer" }}>全选</button>
+                <button disabled={adding || selectedShipments.size === 0} onClick={handleBulkAdd} style={{ border: "none", borderRadius: 6, padding: "6px 14px", fontSize: 12, background: selectedShipments.size === 0 ? "#94a3b8" : "#2563eb", color: "#fff", cursor: selectedShipments.size === 0 ? "not-allowed" : "pointer", fontWeight: 600 }}>
+                  {adding ? "添加中…" : `添加选中（${selectedShipments.size}）`}
+                </button>
+              </div>
+              <div style={{ maxHeight: 300, overflow: "auto", border: "1px solid #f1f5f9", borderRadius: 6 }}>
+                {filteredShipments.length === 0 ? (
+                  <p style={{ padding: 16, color: "#94a3b8", fontSize: 13, textAlign: "center" }}>暂无匹配运单</p>
+                ) : (
+                  filteredShipments.map((s) => {
+                    const alreadyIn = existingShipmentIds.has(s.id);
+                    const loadedContainer = loadedShipments[s.id];
+                    return (
+                      <div key={s.id} onClick={() => !alreadyIn && !loadedContainer && toggleSelect(s.trackingNo)} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 10px", borderBottom: "1px solid #f1f5f9", cursor: (alreadyIn || loadedContainer) ? "not-allowed" : "pointer", opacity: (alreadyIn || loadedContainer) ? 0.5 : 1, background: selectedShipments.has(s.trackingNo) ? "#eff6ff" : "transparent" }}>
+                        <input type="checkbox" checked={selectedShipments.has(s.trackingNo) || alreadyIn || !!loadedContainer} disabled={alreadyIn || !!loadedContainer} onChange={() => !alreadyIn && !loadedContainer && toggleSelect(s.trackingNo)} />
+                        <span style={{ fontSize: 12, fontWeight: 500, color: "#1e3a8a", fontFamily: "monospace", minWidth: 150 }}>{s.trackingNo}</span>
+                        <span style={{ fontSize: 12, color: "#6b21a8", minWidth: 80 }}>{s.clientId ?? "—"}</span>
+                        <span style={{ fontSize: 12, color: "#64748b", minWidth: 50 }}>{s.transportMode === "sea" ? "海运" : "陆运"}</span>
+                        <span style={{ fontSize: 12, color: loadedContainer ? "#d97706" : alreadyIn ? "#16a34a" : "#64748b" }}>{loadedContainer ? `已装柜(${loadedContainer})` : alreadyIn ? "已在本柜" : s.currentStatus ?? ""}</span>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      <Toast open={toast.length > 0} message={toast} />
+    </RoleShell>
+  );
+}

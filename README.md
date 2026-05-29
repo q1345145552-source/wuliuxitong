@@ -8,6 +8,17 @@
 
 并已接入 DeepSeek AI 对话能力（客户端提问订单进度/发货汇总）。
 
+## 核心业务流程图
+
+```
+客户创建预报单 → 员工审核 → 客户确认发货 → 生成正式运单号 → 物流追踪
+     (pending)      (approved)     (shipped)      (trackingNo)
+```
+
+## 修复记录
+
+详见 [CHANGELOG.md](CHANGELOG.md)。
+
 ## 目录结构
 
 - `apps/web`：前端（Next.js）
@@ -102,15 +113,48 @@ npm run dev:web:public
 
 ## 核心接口（V1）
 
-- `POST /client/ai/chat`
-- `GET /client/ai/suggestions`
-- `GET /admin/ai/audit-logs`
-- `GET /admin/system/status-labels`
-- `POST /admin/system/status-labels`
-- `POST /admin/system/status-labels/reset`
-- `GET /admin/ai/knowledge`
-- `POST /admin/ai/knowledge`
-- `DELETE /admin/ai/knowledge?id=kn_xxx`
+### 客户端
+- `POST /client/prealerts` — 创建预报单
+- `GET /client/prealerts?status=pending|approved|shipped` — 查询预报单
+- `POST /client/prealerts/ship` — 确认发货（生成正式运单号）
+- `GET /client/orders` — 正式订单列表（含物流轨迹）
+- `GET /client/shipments/track?trackingNo=xxx` — 运单追踪
+- `POST /client/ai/chat` — AI 客服对话
+- `GET /client/ai/suggestions` — AI 常用建议
+
+### 员工端
+- `GET /staff/prealerts` — 待审核预报单列表
+- `POST /staff/prealerts/approve` — 审核通过预报单（自动创建 Shipment）
+- `POST /staff/orders` — 创建正式订单
+- `POST /staff/orders/patch-shipment-bundle` — 更新运单信息
+- `POST /staff/shipments/update-status` — 推进运单状态
+- `GET /staff/loading-manifests` — 装柜列表
+- `POST /staff/loading-manifests` — 创建装柜
+- `GET /staff/loading-manifests/detail?id=xxx` — 装柜详情
+- `POST /staff/loading-manifests/seal?id=xxx` — 封柜
+- `POST /staff/loading-manifests/add-shipment?id=xxx` — 添加运单到柜
+- `POST /staff/orders/product-images` — 上传产品图片
+
+### 管理员
+- `GET /admin/dashboard/overview` — 运营看板
+- `GET /admin/users` — 用户列表（?role=staff|client 筛选）
+- `POST /admin/users` — 创建用户（支持 role=staff|client）
+- `POST /admin/users/set-password` — 修改密码
+- `POST /admin/users/toggle-ban` — 禁用/启用用户
+- `GET /admin/orders` — 订单管理
+- `POST /admin/orders/update` — 更新订单
+- `GET /admin/containers` — 柜列表
+- `POST /admin/containers` — 新建柜子
+- `POST /admin/containers/status` — 变更柜子状态
+- `POST /admin/containers/load` — 装柜
+- `DELETE /admin/containers/load?id=xxx` — 卸柜
+- `GET /admin/finance/summary` — 财务汇总
+- `GET /admin/lmp/rates` — 运价管理
+- `GET /admin/customs/cases` — 清关案件
+- `GET /admin/lastmile/orders` — 尾程派送
+- `POST /admin/ai/knowledge` — AI 知识投喂
+- `DELETE /admin/ai/knowledge?id=kn_xxx` — 删除知识
+- `GET /admin/ai/audit-logs` — AI 审计日志
 
 ## 常见问题
 
@@ -120,7 +164,7 @@ npm run dev:web:public
 lsof -nP -iTCP:3001 -sTCP:LISTEN | awk 'NR>1 {print $2}' | xargs -r kill -9
 ```
 
-### 2) AI 返回“未配置 API Key”
+### 2) AI 返回"未配置 API Key"
 
 说明后端未读到 `DEEPSEEK_API_KEY`。请在项目根目录建 `.env` 并写 `DEEPSEEK_API_KEY=sk-xxx`，或在同一终端 `export DEEPSEEK_API_KEY="sk-xxx"` 后再启动后端。详见 [docs/deepseek-setup.md](docs/deepseek-setup.md)。
 

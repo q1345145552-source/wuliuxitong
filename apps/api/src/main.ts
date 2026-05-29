@@ -7,6 +7,9 @@ import { registerAuthRoutes } from "./modules/auth/routes";
 import { registerClientAddressRoutes } from "./modules/client-addresses/routes";
 import { registerClientComplianceRoutes } from "./modules/client-compliance/routes";
 import { registerContainerRoutes } from "./modules/containers/routes";
+import { registerLoadingManifestRoutes } from "./modules/loading-manifests/routes";
+import { registerFinanceRoutes } from "./modules/finance/routes";
+import { registerShippingConfigRoutes } from "./modules/shipping-config/routes";
 import { registerOrderRoutes } from "./modules/orders/routes";
 import { registerShipmentRoutes } from "./modules/shipments/routes";
 import { createApp } from "./server";
@@ -40,6 +43,9 @@ registerClientComplianceRoutes(app, _legacy);
 registerAdminRoutes(app, _legacy);
 registerAdminOpsRoutes(app, _legacy);
 registerContainerRoutes(app);
+registerLoadingManifestRoutes(app);
+registerFinanceRoutes(app);
+registerShippingConfigRoutes(app);
 startDailyExchangeRateScheduler();
 
 // ===== AI routes =====

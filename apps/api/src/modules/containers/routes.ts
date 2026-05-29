@@ -507,8 +507,17 @@ export function registerContainerRoutes(app: MinimalHttpApp): void {
     );
     const isSplit = shipment.containerItems.length > 1;
 
+    const childShipments = shipment.parentTrackingNo
+      ? []
+      : await prisma.shipment.findMany({
+          where: { parentTrackingNo: shipment.trackingNo, companyId: auth.companyId },
+          include: {
+            statusLogs: { orderBy: { changedAt: "asc" } },
+          },
+          orderBy: { trackingNo: "asc" },
+        });
+
     ok(res, {
-      shipmentId: shipment.id,
       trackingNo: shipment.trackingNo,
       orderId: shipment.order.id,
       orderNo: shipment.order.orderNo,
@@ -548,6 +557,24 @@ export function registerContainerRoutes(app: MinimalHttpApp): void {
         changedAt: log.changedAt.toISOString(),
         operatorRole: log.operatorRole,
       })),
+      // 子单信息（分柜后运单才有）
+      // 子单信息
+      children: childShipments.length > 0
+        ? childShipments.map((cs) => ({
+            trackingNo: cs.trackingNo,
+            batchNo: cs.batchNo,
+            itemName: cs.itemName,
+            packageCount: cs.packageCount,
+            currentStatus: cs.currentStatus,
+            timeline: cs.statusLogs.map((log) => ({
+              fromStatus: log.fromStatus,
+              toStatus: log.toStatus,
+              remark: log.remark ?? "",
+              changedAt: log.changedAt.toISOString(),
+              operatorRole: log.operatorRole,
+            })),
+          }))
+        : undefined,
       createdAt: shipment.createdAt.toISOString(),
       updatedAt: shipment.updatedAt.toISOString(),
     });

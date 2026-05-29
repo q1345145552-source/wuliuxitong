@@ -1,10 +1,11 @@
 export type ShipmentStatus =
-  | "created"
-  | "pickedUp"
-  | "inWarehouseCN"
-  | "customsPending"
-  | "inTransit"
+  | "loaded"
+  | "delayDeparted"
+  | "departed"
+  | "arrivedPort"
   | "customsTH"
+  | "customsCleared"
+  | "inWarehouseTH"
   | "outForDelivery"
   | "delivered"
   | "exception"
@@ -12,12 +13,13 @@ export type ShipmentStatus =
   | "cancelled";
 
 export const SHIPMENT_STATUS_FLOW: ShipmentStatus[] = [
-  "created",
-  "pickedUp",
-  "inWarehouseCN",
-  "customsPending",
-  "inTransit",
+  "loaded",
+  "delayDeparted",
+  "departed",
+  "arrivedPort",
   "customsTH",
+  "customsCleared",
+  "inWarehouseTH",
   "outForDelivery",
   "delivered",
 ];

@@ -98,7 +98,7 @@ pm2 startup
 
 ## 3. Nginx 反向代理与 HTTPS
 
-安装 Nginx 与证书（Let’s Encrypt 等）后，示例配置思路：
+安装 Nginx 与证书（Let's Encrypt 等）后，示例配置思路：
 
 - `yourdomain.com` → `http://127.0.0.1:3000`
 - `api.yourdomain.com` → `http://127.0.0.1:3001`

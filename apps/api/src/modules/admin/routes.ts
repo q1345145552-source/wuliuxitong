@@ -161,7 +161,23 @@ export function registerAdminRoutes(app: MinimalHttpApp, _db: DatabaseSync): voi
 
     const role = typeof req.query?.role === "string" ? req.query.role : undefined;
     if (role !== "staff" && role !== "client") {
-      ok(res, { items: [] });
+      // 无 role 过滤时返回所有 staff + client
+      const allRows = await prisma.user.findMany({
+        where: { companyId: auth.companyId, role: { in: ["staff", "client"] } },
+        orderBy: { createdAt: "desc" },
+        select: {
+          id: true,
+          companyId: true,
+          role: true,
+          name: true,
+          phone: true,
+          status: true,
+          createdAt: true,
+          companyName: true,
+          email: true,
+        },
+      });
+      ok(res, { items: allRows });
       return;
     }
 
@@ -467,6 +483,7 @@ export function registerAdminRoutes(app: MinimalHttpApp, _db: DatabaseSync): voi
       name?: string;
       phone?: string;
       password?: string;
+      role?: string;
     };
     const name = typeof body.name === "string" ? body.name.trim() : "";
     const phone = typeof body.phone === "string" ? body.phone.trim() : "";
@@ -476,8 +493,9 @@ export function registerAdminRoutes(app: MinimalHttpApp, _db: DatabaseSync): voi
     }
 
     const rawId = typeof body.id === "string" ? body.id.trim() : "";
-    const id = rawId || `u_staff_${Date.now()}`;
+    const id = rawId || `u_${body.role === "client" ? "client" : "staff"}_${Date.now()}`;
     const passwordHash = typeof body.password === "string" && body.password.trim() ? hashPassword(body.password.trim()) : null;
+    const targetRole = body.role === "client" ? "client" : "staff";
 
     const existing = await prisma.user.findUnique({ where: { id }, select: { id: true } });
     if (existing) {
@@ -489,14 +507,14 @@ export function registerAdminRoutes(app: MinimalHttpApp, _db: DatabaseSync): voi
       data: {
         id,
         companyId: auth.companyId,
-        role: "staff",
+        role: targetRole,
         name,
         phone,
         status: "active",
         warehouseIds: "[]",
         passwordHash,
       },
-      select: { id: true, name: true, phone: true, createdAt: true },
+      select: { id: true, name: true, role: true, phone: true, createdAt: true },
     });
 
     ok(res, { id: created.id, name: created.name, phone: created.phone, createdAt: created.createdAt.toISOString() });
@@ -512,6 +530,7 @@ export function registerAdminRoutes(app: MinimalHttpApp, _db: DatabaseSync): voi
       companyName?: string;
       phone?: string;
       email?: string;
+      password?: string;
     };
     const name = typeof body.name === "string" ? body.name.trim() : "";
     const phone = typeof body.phone === "string" ? body.phone.trim() : "";
@@ -531,6 +550,9 @@ export function registerAdminRoutes(app: MinimalHttpApp, _db: DatabaseSync): voi
       return;
     }
 
+    const passwordHash = typeof body.password === "string" && body.password.trim()
+      ? hashPassword(body.password.trim()) : null;
+
     const created = await prisma.user.create({
       data: {
         id,
@@ -540,7 +562,7 @@ export function registerAdminRoutes(app: MinimalHttpApp, _db: DatabaseSync): voi
         phone,
         status: "active",
         warehouseIds: "[]",
-        passwordHash: null,
+        passwordHash,
         companyName,
         email,
       },
@@ -625,5 +647,37 @@ export function registerAdminRoutes(app: MinimalHttpApp, _db: DatabaseSync): voi
     const passwordHash = hashPassword(password);
     await prisma.user.update({ where: { id }, data: { passwordHash } });
     ok(res, { updated: true, id });
+  });
+
+  /**
+   * 禁用/启用用户（管理员）。
+   */
+  app.post("/admin/users/toggle-ban", async (req, res) => {
+    const auth = requireRole(req, res, ["admin"]);
+    if (!auth) return;
+
+    const body = (req.body ?? {}) as { id?: string };
+    const id = typeof body.id === "string" ? body.id.trim() : "";
+    if (!id) {
+      fail(res, 400, "BAD_REQUEST", "user id is required");
+      return;
+    }
+
+    const row = await prisma.user.findUnique({
+      where: { id },
+      select: { id: true, companyId: true, status: true },
+    });
+    if (!row) {
+      fail(res, 404, "NOT_FOUND", "user not found");
+      return;
+    }
+    if (row.companyId !== auth.companyId) {
+      fail(res, 403, "FORBIDDEN", "cannot toggle user of another company");
+      return;
+    }
+
+    const newStatus = row.status === "active" ? "inactive" : "active";
+    await prisma.user.update({ where: { id }, data: { status: newStatus } });
+    ok(res, { id, status: newStatus });
   });
 }
