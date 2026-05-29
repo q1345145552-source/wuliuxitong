@@ -8,6 +8,21 @@
   --success: #10b981;
   --processing: #f59e0b;
   --danger: #b91c1c;
+  /* 兼容性变量（admin/accounts, admin/finance 等页面使用） */
+  --ink: #0f172a;
+  --ink-mute: #64748b;
+  --hairline: #dbe3f0;
+  --hairline-cool: #e2e8f0;
+  --canvas: #ffffff;
+  --canvas-soft: #f8fafc;
+  --accent-crimson: #b91c1c;
+  --accent-yellow: #d97706;
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-xl: 20px;
+  --shadow-lg: 0 12px 28px rgba(15, 23, 42, 0.22);
 }
 
 * {
