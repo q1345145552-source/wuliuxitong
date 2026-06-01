@@ -103,7 +103,7 @@ export default function ClientBillDetailPage() {
             </div>
           </div>
 
-          <p style={{ margin: "10px 0 0 0", color: "#64748b", fontSize: 13 }}>
+          <p style={{ margin: "10px 0 0 0", color: "#1f2937", fontSize: 13 }}>
             本页展示订单全部基础信息（尤其是金额），不展示物流状态与轨迹记录。
           </p>
 

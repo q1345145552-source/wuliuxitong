@@ -559,8 +559,8 @@ export default function ClientHomePage() {
               <ResponsiveContainer>
                 <LineChart data={clientEtaTrend}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                  <XAxis dataKey="label" stroke="#64748b" />
-                  <YAxis stroke="#64748b" />
+                  <XAxis dataKey="label" stroke="#1f2937" />
+                  <YAxis stroke="#1f2937" />
                   <Tooltip
                     formatter={(value) => [`${String(value ?? "-")} 天`, "时效"]}
                     labelFormatter={(label) => (label ? `订单号：${String(label)}` : "时效详情")}
@@ -576,8 +576,8 @@ export default function ClientHomePage() {
               <ResponsiveContainer>
                 <BarChart data={clientStatusData}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                  <XAxis dataKey="name" stroke="#64748b" />
-                  <YAxis stroke="#64748b" />
+                  <XAxis dataKey="name" stroke="#1f2937" />
+                  <YAxis stroke="#1f2937" />
                   <Tooltip />
                   <Bar dataKey="value" radius={[6, 6, 0, 0]}>
                     {clientStatusData.map((item) => (
@@ -613,7 +613,7 @@ export default function ClientHomePage() {
               style={{ flex: 1, border: "1px solid #d1d5db", borderRadius: 6, padding: "8px 12px", fontSize: 13 }} />
           </div>
           {prealerts.length === 0 ? (
-            <div style={{ color: "#6b7280", fontSize: 13, padding: "20px 0", textAlign: "center" }}>暂无预报单</div>
+            <div style={{ color: "#1f2937", fontSize: 13, padding: "20px 0", textAlign: "center" }}>暂无预报单</div>
           ) : (
             <div style={{ display: "grid", gap: 8 }}>
               {prealerts.filter((item) => {
@@ -626,7 +626,7 @@ export default function ClientHomePage() {
                 const isShipped = item.approvalStatus === "shipped";
                 const isReceived = item.currentStatus === "delivered" || item.currentStatus === "inWarehouseCN";
                 const sLabel = isPending ? "待审核" : isApproved ? "已审核" : isReceived ? "已入库" : "已发货";
-                const sColor = isPending ? "#92400e" : isApproved ? "#0369a1" : isReceived ? "#16a34a" : "#6b7280";
+                const sColor = isPending ? "#92400e" : isApproved ? "#0369a1" : isReceived ? "#16a34a" : "#1f2937";
                 const sBg = isPending ? "#fef3c7" : isApproved ? "#e0f2fe" : isReceived ? "#dcfce7" : "#f3f4f6";
                 const sBd = isPending ? "#fde68a" : isApproved ? "#7dd3fc" : isReceived ? "#86efac" : "#e5e7eb";
                 return (
@@ -636,7 +636,7 @@ export default function ClientHomePage() {
                         <span style={{ fontWeight: 600, fontSize: 14, fontFamily: "monospace" }}>{item.orderNo || item.id}</span>
                         <span style={{ marginLeft: 8, fontSize: 11, fontWeight: 500, color: sColor, background: sBg, padding: "2px 8px", borderRadius: 4 }}>{sLabel}</span>
                       </div>
-                      <div style={{ fontSize: 12, color: "#6b7280" }}>{item.createdAt.slice(0, 10)}</div>
+                      <div style={{ fontSize: 12, color: "#1f2937" }}>{item.createdAt.slice(0, 10)}</div>
                     </div>
                     <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: 6, fontSize: 13, color: "#374151", marginBottom: 8 }}>
                       <div>品名：{item.itemName}</div>
@@ -797,12 +797,12 @@ export default function ClientHomePage() {
                   基础运费 = {finalChargeVolume.toFixed(3)} × ¥{unitPrice}/立方米 = ¥{freightFee.toFixed(2)}；
                   合计 = ¥{estimatedFee.toFixed(2)}。
                 </div>
-                <div style={{ marginTop: 6, color: "#64748b", fontSize: 12 }}>
+                <div style={{ marginTop: 6, color: "#1f2937", fontSize: 12 }}>
                   注：该结果为预估价；{etaByMode}，最终以客服复核与实际计费规则为准。
                 </div>
               </>
             ) : (
-              <div style={{ color: "#64748b", fontSize: 13 }}>
+              <div style={{ color: "#1f2937", fontSize: 13 }}>
                 请输入重量或体积后自动计算预估运费。
               </div>
             )}
@@ -865,7 +865,7 @@ export default function ClientHomePage() {
                   borderRadius: 999,
                   padding: "6px 14px",
                   color: "#fff",
-                  background: queryMode === "unfinished" ? "#2563eb" : "#64748b",
+                  background: queryMode === "unfinished" ? "#2563eb" : "#1f2937",
                 }}
               >
                 订单在途
@@ -878,7 +878,7 @@ export default function ClientHomePage() {
                   borderRadius: 999,
                   padding: "6px 14px",
                   color: "#fff",
-                  background: queryMode === "completed" ? "#2563eb" : "#64748b",
+                  background: queryMode === "completed" ? "#2563eb" : "#1f2937",
                 }}
               >
                 订单已完成
@@ -891,7 +891,7 @@ export default function ClientHomePage() {
                   borderRadius: 999,
                   padding: "6px 14px",
                   color: "#fff",
-                  background: queryMode === "all" ? "#2563eb" : "#64748b",
+                  background: queryMode === "all" ? "#2563eb" : "#1f2937",
                 }}
               >
                 全部订单
@@ -931,7 +931,7 @@ export default function ClientHomePage() {
                       top: "50%",
                       transform: "translateY(-50%)",
                       fontSize: 12,
-                      color: "#64748b",
+                      color: "#1f2937",
                       pointerEvents: "none",
                     }}
                   >
@@ -1012,7 +1012,7 @@ export default function ClientHomePage() {
             <div className="order-head">
               <div className="order-title">
                 #{idx + 1} {item.itemName || "未填品名"}
-                <span style={{ marginLeft: 8, fontSize: 13, color: "#6b7280", fontWeight: 400 }}>
+                <span style={{ marginLeft: 8, fontSize: 13, color: "#1f2937", fontWeight: 400 }}>
                   · {item.id}
                 </span>
               </div>
@@ -1113,7 +1113,7 @@ export default function ClientHomePage() {
                   <div className="order-field-label">订单详情 · 产品图</div>
                   <div className="order-field-value" style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
                     {(item.productImages?.length ?? 0) === 0 ? (
-                      <span style={{ color: "#64748b" }}>暂无（由仓库员工上传）</span>
+                      <span style={{ color: "#1f2937" }}>暂无（由仓库员工上传）</span>
                     ) : (
                       item.productImages?.map((img) => (
                         <a
@@ -1240,7 +1240,7 @@ export default function ClientHomePage() {
               style={{ flex: 1, border: "1px solid #d1d5db", borderRadius: 6, padding: "8px 12px", fontSize: 13 }} />
           </div>
           {prealerts.length === 0 ? (
-            <div style={{ color: "#6b7280", fontSize: 13, padding: "20px 0", textAlign: "center" }}>暂无预报单</div>
+            <div style={{ color: "#1f2937", fontSize: 13, padding: "20px 0", textAlign: "center" }}>暂无预报单</div>
           ) : (
             <div style={{ display: "grid", gap: 8 }}>
               {prealerts.filter((item) => {
@@ -1253,7 +1253,7 @@ export default function ClientHomePage() {
                 const isShipped = item.approvalStatus === "shipped";
                 const isReceived = item.currentStatus === "delivered" || item.currentStatus === "inWarehouseCN";
                 const sLabel = isPending ? "待审核" : isApproved ? "已审核" : isReceived ? "已入库" : "已发货";
-                const sColor = isPending ? "#92400e" : isApproved ? "#0369a1" : isReceived ? "#16a34a" : "#6b7280";
+                const sColor = isPending ? "#92400e" : isApproved ? "#0369a1" : isReceived ? "#16a34a" : "#1f2937";
                 const sBg = isPending ? "#fef3c7" : isApproved ? "#e0f2fe" : isReceived ? "#dcfce7" : "#f3f4f6";
                 const sBd = isPending ? "#fde68a" : isApproved ? "#7dd3fc" : isReceived ? "#86efac" : "#e5e7eb";
                 return (
@@ -1263,7 +1263,7 @@ export default function ClientHomePage() {
                         <span style={{ fontWeight: 600, fontSize: 14, fontFamily: "monospace" }}>{item.orderNo || item.id}</span>
                         <span style={{ marginLeft: 8, fontSize: 11, fontWeight: 500, color: sColor, background: sBg, padding: "2px 8px", borderRadius: 4 }}>{sLabel}</span>
                       </div>
-                      <div style={{ fontSize: 12, color: "#6b7280" }}>{item.createdAt.slice(0, 10)}</div>
+                      <div style={{ fontSize: 12, color: "#1f2937" }}>{item.createdAt.slice(0, 10)}</div>
                     </div>
                     <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: 6, fontSize: 13, color: "#374151", marginBottom: 8 }}>
                       <div>品名：{item.itemName}</div>
@@ -1331,8 +1331,8 @@ export default function ClientHomePage() {
                 <input type="number" min={0} step="0.01" value={form.widthCm} onChange={(e) => updateOrderDimensions({ widthCm: e.target.value })} placeholder="宽(cm)" style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "8px 10px", fontSize: 13 }} />
                 <input type="number" min={0} step="0.01" value={form.heightCm} onChange={(e) => updateOrderDimensions({ heightCm: e.target.value })} placeholder="高(cm)" style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "8px 10px", fontSize: 13 }} />
               </div>
-              <div style={{ fontSize: 11, color: "#64748b", marginTop: -6 }}>总体积 = 单件体积 × 箱数，自动计算</div>
-              <input readOnly value={form.volumeM3} placeholder="体积(m³) 自动计算" style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "8px 10px", fontSize: 13, color: "#64748b", background: "#f8fafc" }} />
+              <div style={{ fontSize: 11, color: "#1f2937", marginTop: -6 }}>总体积 = 单件体积 × 箱数，自动计算</div>
+              <input readOnly value={form.volumeM3} placeholder="体积(m³) 自动计算" style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "8px 10px", fontSize: 13, color: "#1f2937", background: "#f8fafc" }} />
               <input value={form.trackingNo ?? ""} onChange={(e) => setForm((v) => ({ ...v, trackingNo: e.target.value }))} placeholder="预报单号（留空自动生成）" style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "8px 10px", fontSize: 13 }} />
               <input value={form.domesticTrackingNo} onChange={(e) => setForm((v) => ({ ...v, domesticTrackingNo: e.target.value }))} placeholder="国内快递单号" style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "8px 10px", fontSize: 13 }} />
               <select value={form.transportMode} onChange={(e) => setForm((v) => ({ ...v, transportMode: e.target.value as "sea" | "land" }))} style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "8px 10px", fontSize: 13 }}>

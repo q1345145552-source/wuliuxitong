@@ -27,7 +27,7 @@ const STATUS_COLOR: Record<string, string> = {
   LOADING: "#d97706",
   SEALED: "#16a34a",
   IN_TRANSIT: "#2563eb",
-  ARRIVED: "#6b7280",
+  ARRIVED: "#1f2937",
 };
 
 const inputStyle = { border: "1px solid #d1d5db", borderRadius: 6, padding: "8px 12px", fontSize: 13, background: "#fff" } as const;
@@ -227,16 +227,16 @@ export default function StaffContainerLoadingPage() {
       <div style={{ display: "grid", gridTemplateColumns: "320px 1fr", gap: 16, alignItems: "start" }}>
         {/* 左侧柜列表 */}
         <div style={{ border: "1px solid #e5e7eb", borderRadius: 10, overflow: "hidden", background: "#fff" }}>
-          {loading ? <p style={{ padding: 20, color: "#64748b", fontSize: 13 }}>加载中…</p> : list.length === 0 ? (
-            <p style={{ padding: 20, color: "#64748b", fontSize: 13, textAlign: "center" }}>暂无装柜任务，请先创建装柜</p>
+          {loading ? <p style={{ padding: 20, color: "#1f2937", fontSize: 13 }}>加载中…</p> : list.length === 0 ? (
+            <p style={{ padding: 20, color: "#1f2937", fontSize: 13, textAlign: "center" }}>暂无装柜任务，请先创建装柜</p>
           ) : (
             list.map((item) => (
               <div key={item.id} onClick={() => setSelectedId(item.id)} style={{ padding: "12px 16px", cursor: "pointer", borderBottom: "1px solid #f1f5f9", background: selectedId === item.id ? "#eff6ff" : "transparent" }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                   <span style={{ fontWeight: 600, fontSize: 14, color: "#0f172a" }}>{item.manifestNo}</span>
-                  <span style={{ fontSize: 11, fontWeight: 500, color: STATUS_COLOR[item.status] ?? "#64748b" }}>{STATUS_LABEL[item.status] ?? item.status}</span>
+                  <span style={{ fontSize: 11, fontWeight: 500, color: STATUS_COLOR[item.status] ?? "#1f2937" }}>{STATUS_LABEL[item.status] ?? item.status}</span>
                 </div>
-                <div style={{ fontSize: 12, color: "#64748b", marginTop: 4 }}>
+                <div style={{ fontSize: 12, color: "#1f2937", marginTop: 4 }}>
                   {item.warehouse} · {item.totalBills} 票 · {item.createdAt.slice(0, 10)}
                 </div>
               </div>
@@ -248,14 +248,14 @@ export default function StaffContainerLoadingPage() {
         <div>
           {/* 柜子详情 */}
           <div style={{ border: "1px solid #e5e7eb", borderRadius: 10, padding: 16, background: "#fff", marginBottom: 12 }}>
-            {loadingDetail ? <p style={{ color: "#64748b", fontSize: 13 }}>加载中…</p> : !detail ? (
-              <p style={{ color: "#64748b", fontSize: 13 }}>选择左侧装柜任务查看详情</p>
+            {loadingDetail ? <p style={{ color: "#1f2937", fontSize: 13 }}>加载中…</p> : !detail ? (
+              <p style={{ color: "#1f2937", fontSize: 13 }}>选择左侧装柜任务查看详情</p>
             ) : (
               <>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
                   <div>
                     <h2 style={{ margin: 0, fontSize: 18, fontWeight: 700, color: "#0f172a" }}>{detail.manifestNo}</h2>
-                    <div style={{ fontSize: 13, color: "#64748b", marginTop: 4 }}>
+                    <div style={{ fontSize: 13, color: "#1f2937", marginTop: 4 }}>
                       仓库: {detail.warehouse} · 状态: {STATUS_LABEL[detail.status] ?? detail.status}
                       {detail.carrierInfo ? ` · 承运: ${detail.carrierInfo}` : ""}
                     </div>
@@ -266,19 +266,19 @@ export default function StaffContainerLoadingPage() {
                 </div>
 
                 {/* 已装运单列表 */}
-                <div style={{ fontSize: 13, fontWeight: 500, color: "#64748b", marginBottom: 8 }}>已装运单（{detail.bills.length}）</div>
+                <div style={{ fontSize: 13, fontWeight: 500, color: "#1f2937", marginBottom: 8 }}>已装运单（{detail.bills.length}）</div>
                 {detail.bills.length === 0 ? (
-                  <p style={{ color: "#64748b", fontSize: 13, marginBottom: 12 }}>暂无运单，从下方选择运单添加到本柜</p>
+                  <p style={{ color: "#1f2937", fontSize: 13, marginBottom: 12 }}>暂无运单，从下方选择运单添加到本柜</p>
                 ) : (
                   <div style={{ display: "flex", flexDirection: "column", gap: 4, marginBottom: 12 }}>
                     {detail.bills.map((b) => (
                       <div key={b.id} style={{ border: "1px solid #f1f5f9", borderRadius: 6, padding: "6px 10px", display: "flex", justifyContent: "space-between", alignItems: "center", background: "#f8fafc" }}>
                         <div>
                           <span style={{ fontWeight: 500, fontSize: 13 }}>{b.trackingNo ?? b.shipmentId}</span>
-                          {b.itemName ? <span style={{ marginLeft: 8, fontSize: 12, color: "#64748b" }}>{b.itemName}</span> : null}
+                          {b.itemName ? <span style={{ marginLeft: 8, fontSize: 12, color: "#1f2937" }}>{b.itemName}</span> : null}
                         </div>
                         <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                          <span style={{ fontSize: 12, color: STATUS_COLOR[b.currentStatus ?? ""] ?? "#64748b" }}>{b.currentStatus ?? "—"}</span>
+                          <span style={{ fontSize: 12, color: STATUS_COLOR[b.currentStatus ?? ""] ?? "#1f2937" }}>{b.currentStatus ?? "—"}</span>
                           {detail.status === "LOADING" && (
                             <button onClick={() => handleRemoveShipment(b.id)} style={{ border: "1px solid #fca5a5", borderRadius: 4, padding: "2px 6px", fontSize: 11, background: "#fff", color: "#dc2626", cursor: "pointer" }}>删除</button>
                           )}
@@ -304,13 +304,13 @@ export default function StaffContainerLoadingPage() {
                   <option value="land">陆运</option>
                 </select>
                 <button onClick={() => setSelectedShipments(new Set(filteredShipments.filter((s) => !existingShipmentIds.has(s.id) && !loadedShipments[s.id]).map((s) => s.trackingNo)))} style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "6px 12px", fontSize: 12, background: "#fff", cursor: "pointer" }}>全选</button>
-                <button disabled={adding || selectedShipments.size === 0} onClick={handleBulkAdd} style={{ border: "none", borderRadius: 6, padding: "6px 14px", fontSize: 12, background: selectedShipments.size === 0 ? "#64748b" : "#2563eb", color: "#fff", cursor: selectedShipments.size === 0 ? "not-allowed" : "pointer", fontWeight: 600 }}>
+                <button disabled={adding || selectedShipments.size === 0} onClick={handleBulkAdd} style={{ border: "none", borderRadius: 6, padding: "6px 14px", fontSize: 12, background: selectedShipments.size === 0 ? "#1f2937" : "#2563eb", color: "#fff", cursor: selectedShipments.size === 0 ? "not-allowed" : "pointer", fontWeight: 600 }}>
                   {adding ? "添加中…" : `添加选中（${selectedShipments.size}）`}
                 </button>
               </div>
               <div style={{ maxHeight: 300, overflow: "auto", border: "1px solid #f1f5f9", borderRadius: 6 }}>
                 {filteredShipments.length === 0 ? (
-                  <p style={{ padding: 16, color: "#64748b", fontSize: 13, textAlign: "center" }}>暂无匹配运单</p>
+                  <p style={{ padding: 16, color: "#1f2937", fontSize: 13, textAlign: "center" }}>暂无匹配运单</p>
                 ) : (
                   filteredShipments.map((s) => {
                     const alreadyIn = existingShipmentIds.has(s.id);
@@ -320,8 +320,8 @@ export default function StaffContainerLoadingPage() {
                         <input type="checkbox" checked={selectedShipments.has(s.trackingNo) || alreadyIn || !!loadedContainer} disabled={alreadyIn || !!loadedContainer} onChange={() => !alreadyIn && !loadedContainer && toggleSelect(s.trackingNo)} />
                         <span style={{ fontSize: 12, fontWeight: 500, color: "#1e3a8a", fontFamily: "monospace", minWidth: 150 }}>{s.trackingNo}</span>
                         <span style={{ fontSize: 12, color: "#6b21a8", minWidth: 80 }}>{s.clientId ?? "—"}</span>
-                        <span style={{ fontSize: 12, color: "#64748b", minWidth: 50 }}>{s.transportMode === "sea" ? "海运" : "陆运"}</span>
-                        <span style={{ fontSize: 12, color: loadedContainer ? "#d97706" : alreadyIn ? "#16a34a" : "#64748b" }}>{loadedContainer ? `已装柜(${loadedContainer})` : alreadyIn ? "已在本柜" : s.currentStatus ?? ""}</span>
+                        <span style={{ fontSize: 12, color: "#1f2937", minWidth: 50 }}>{s.transportMode === "sea" ? "海运" : "陆运"}</span>
+                        <span style={{ fontSize: 12, color: loadedContainer ? "#d97706" : alreadyIn ? "#16a34a" : "#1f2937" }}>{loadedContainer ? `已装柜(${loadedContainer})` : alreadyIn ? "已在本柜" : s.currentStatus ?? ""}</span>
                       </div>
                     );
                   })

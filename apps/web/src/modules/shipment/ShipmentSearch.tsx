@@ -64,7 +64,7 @@ export default function ShipmentSearch({
           <input value={value.weightKg} onChange={(e) => onChange("weightKg", e.target.value)} placeholder="重量" style={inputStyle} />
           <input value={value.volumeM3} onChange={(e) => onChange("volumeM3", e.target.value)} placeholder="体积" style={inputStyle} />
           <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-            <span style={{ fontSize: 11, color: "#6b7280" }}>到仓日期</span>
+            <span style={{ fontSize: 11, color: "#1f2937" }}>到仓日期</span>
             <input type="date" value={value.arrivedAt} onChange={(e) => onChange("arrivedAt", e.target.value)} style={inputStyle} />
           </div>
           <select value={value.logisticsStatus} onChange={(e) => onChange("logisticsStatus", e.target.value)} style={inputStyle}>
@@ -79,7 +79,7 @@ export default function ShipmentSearch({
           </select>
           <input value={value.receiverAddress} onChange={(e) => onChange("receiverAddress", e.target.value)} placeholder="收货地址" style={inputStyle} />
           <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-            <span style={{ fontSize: 11, color: "#6b7280" }}>发货日期</span>
+            <span style={{ fontSize: 11, color: "#1f2937" }}>发货日期</span>
             <input type="date" value={value.shipDate} onChange={(e) => onChange("shipDate", e.target.value)} style={inputStyle} />
           </div>
           <input value={value.receivableAmount} onChange={(e) => onChange("receivableAmount", e.target.value)} placeholder="加收金额" style={inputStyle} />

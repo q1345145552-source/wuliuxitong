@@ -45,25 +45,25 @@ export default function ClientWalletPage() {
     <RoleShell allowedRole="client" title="多币种账户">
       <section style={{ border: "1px solid #e5e7eb", borderRadius: 12, padding: 16, background: "#fff", marginBottom: 14 }}>
         <h2 style={{ marginTop: 0 }}>账户余额（CNY / THB）</h2>
-        {loading ? <p style={{ color: "#64748b" }}>加载中...</p> : null}
+        {loading ? <p style={{ color: "#1f2937" }}>加载中...</p> : null}
         {summary ? (
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(220px,1fr))", gap: 10 }}>
             <div style={{ border: "1px solid #e2e8f0", borderRadius: 10, padding: 10, background: "#f8fafc" }}>
-              <div style={{ color: "#64748b", fontSize: 12 }}>人民币余额</div>
+              <div style={{ color: "#1f2937", fontSize: 12 }}>人民币余额</div>
               <div style={{ fontSize: 24, fontWeight: 700 }}>¥{summary.cny.toFixed(2)}</div>
             </div>
             <div style={{ border: "1px solid #e2e8f0", borderRadius: 10, padding: 10, background: "#f8fafc" }}>
-              <div style={{ color: "#64748b", fontSize: 12 }}>泰铢余额</div>
+              <div style={{ color: "#1f2937", fontSize: 12 }}>泰铢余额</div>
               <div style={{ fontSize: 24, fontWeight: 700 }}>฿{summary.thb.toFixed(2)}</div>
             </div>
             <div style={{ border: "1px solid #e2e8f0", borderRadius: 10, padding: 10, background: "#f8fafc" }}>
-              <div style={{ color: "#64748b", fontSize: 12 }}>汇率（{summary.pair}）</div>
+              <div style={{ color: "#1f2937", fontSize: 12 }}>汇率（{summary.pair}）</div>
               <div style={{ fontSize: 20, fontWeight: 700 }}>{summary.rate.toFixed(4)}</div>
             </div>
             <div style={{ border: "1px solid #e2e8f0", borderRadius: 10, padding: 10, background: "#f8fafc" }}>
-              <div style={{ color: "#64748b", fontSize: 12 }}>折算总额（CNY）</div>
+              <div style={{ color: "#1f2937", fontSize: 12 }}>折算总额（CNY）</div>
               <div style={{ fontSize: 22, fontWeight: 700 }}>¥{summary.totalCny.toFixed(2)}</div>
-              <div style={{ fontSize: 12, color: "#64748b", marginTop: 4 }}>折算总额（THB）：฿{summary.totalThb.toFixed(2)}</div>
+              <div style={{ fontSize: 12, color: "#1f2937", marginTop: 4 }}>折算总额（THB）：฿{summary.totalThb.toFixed(2)}</div>
             </div>
           </div>
         ) : null}

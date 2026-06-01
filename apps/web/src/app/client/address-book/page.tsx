@@ -49,7 +49,7 @@ export default function ClientAddressBookPage() {
     <RoleShell allowedRole="client" title="常用地址库">
       <section style={{ border: "1px solid #e5e7eb", borderRadius: 12, padding: 16, background: "#fff", marginBottom: 14 }}>
         <h2 style={{ marginTop: 0 }}>地址簿管理</h2>
-        <p style={{ color: "#64748b", marginTop: 0 }}>保存收件信息后，可在客户端下单页一键填充。</p>
+        <p style={{ color: "#1f2937", marginTop: 0 }}>保存收件信息后，可在客户端下单页一键填充。</p>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(220px,1fr))", gap: 8 }}>
           <input value={form.label} onChange={(e) => setForm((v) => ({ ...v, label: e.target.value }))} placeholder="标签（如：曼谷店）" style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 10px" }} />
           <input value={form.contactName} onChange={(e) => setForm((v) => ({ ...v, contactName: e.target.value }))} placeholder="联系人" style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 10px" }} />
@@ -113,7 +113,7 @@ export default function ClientAddressBookPage() {
       <section style={{ border: "1px solid #e5e7eb", borderRadius: 12, padding: 16, background: "#fff" }}>
         <h3 style={{ marginTop: 0 }}>已保存地址</h3>
         {items.length === 0 ? (
-          <p style={{ color: "#64748b" }}>暂无地址</p>
+          <p style={{ color: "#1f2937" }}>暂无地址</p>
         ) : (
           <div style={{ display: "grid", gap: 8 }}>
             {items.map((item) => (
@@ -137,7 +137,7 @@ export default function ClientAddressBookPage() {
                         setLoading(false);
                       }
                     }}
-                    style={{ border: "1px solid #64748b", borderRadius: 8, padding: "6px 10px", background: "#fff" }}
+                    style={{ border: "1px solid #1f2937", borderRadius: 8, padding: "6px 10px", background: "#fff" }}
                   >
                     设为默认
                   </button>

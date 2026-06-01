@@ -21,7 +21,7 @@ export default function MockLoginPanel() {
       }}
     >
       <h2 style={{ margin: 0, fontSize: 18 }}>账号入口</h2>
-      <p style={{ marginTop: 8, color: "#6b7280" }}>
+      <p style={{ marginTop: 8, color: "#1f2937" }}>
         系统已切换为真实登录模式。请先登录或注册后再进入工作台。
       </p>
 
