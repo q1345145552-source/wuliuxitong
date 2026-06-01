@@ -639,8 +639,8 @@ export function registerAdminRoutes(app: MinimalHttpApp, _db: DatabaseSync): voi
       fail(res, 403, "FORBIDDEN", "cannot update user of another company");
       return;
     }
-    if (row.role !== "staff") {
-      fail(res, 403, "FORBIDDEN", "only staff password can be set here");
+    if (row.role !== "staff" && row.role !== "client") {
+      fail(res, 403, "FORBIDDEN", "only staff or client password can be set here");
       return;
     }
 

@@ -907,17 +907,50 @@ export default function AdminHomePage() {
         ) : (
           <div style={{ display: "grid", gap: 8 }}>
             {clientList.map((u) => (
-              <div
-                key={u.id}
-                style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 8, ...cardStyle }}
-              >
-                <span><strong>账号</strong> {u.id}</span>
-                <span><strong>客户名字</strong> {u.name}</span>
-                <span><strong>公司名字</strong> {u.companyName ?? "-"}</span>
-                <span><strong>电话</strong> {u.phone}</span>
-                <span><strong>邮箱</strong> {u.email ?? "-"}</span>
-                <span><strong>状态</strong> {u.status}</span>
-                <span style={{ color: "#64748b", fontSize: 12 }}>{u.createdAt.slice(0, 10)}</span>
+              <div key={u.id} style={{ marginBottom: 8 }}>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 8, ...cardStyle }}>
+                  <span><strong>账号</strong> {u.id}</span>
+                  <span><strong>客户名字</strong> {u.name}</span>
+                  <span><strong>公司名字</strong> {u.companyName ?? "-"}</span>
+                  <span><strong>电话</strong> {u.phone}</span>
+                  <span><strong>邮箱</strong> {u.email ?? "-"}</span>
+                  <span><strong>状态</strong> {u.status}</span>
+                  <span style={{ color: "#64748b", fontSize: 12 }}>{u.createdAt.slice(0, 10)}</span>
+                  <button
+                    type="button"
+                    onClick={() => setSettingPasswordFor(settingPasswordFor === u.id ? null : u.id)}
+                    disabled={loading}
+                    style={{ border: "1px solid #059669", color: "#059669", borderRadius: 8, padding: "6px 10px", background: "#f0fdf4", cursor: "pointer", fontSize: 13 }}
+                  >
+                    {settingPasswordFor === u.id ? "取消" : "设置密码"}
+                  </button>
+                </div>
+                {settingPasswordFor === u.id ? (
+                  <div style={{ marginTop: 8, paddingTop: 8, borderTop: "1px solid #e5e7eb", display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                    <input
+                      type="password"
+                      value={settingPasswordValue}
+                      onChange={(e) => setSettingPasswordValue(e.target.value)}
+                      placeholder="输入新密码"
+                      style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "6px 10px", width: 180 }}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => void submitSetPassword(u.id)}
+                      disabled={loading || !settingPasswordValue.trim()}
+                      style={{ border: "none", borderRadius: 8, padding: "6px 12px", background: "#059669", color: "#fff", cursor: "pointer" }}
+                    >
+                      确认
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => { setSettingPasswordFor(null); setSettingPasswordValue(""); }}
+                      style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "6px 12px", background: "#fff", cursor: "pointer" }}
+                    >
+                      取消
+                    </button>
+                  </div>
+                ) : null}
               </div>
             ))}
           </div>
