@@ -77,7 +77,7 @@ export default function ClientImportsPage() {
     <RoleShell allowedRole="client" title="客户端批量下单">
       <section style={{ border: "1px solid #e5e7eb", borderRadius: 12, padding: 16, background: "#fff" }}>
         <h2 style={{ marginTop: 0 }}>智能下单系统（批量导入）</h2>
-        <p style={{ color: "#1f2937", marginTop: 0 }}>
+        <p style={{ color: "#000000", marginTop: 0 }}>
           支持 Excel 批量导入预报单。建议先下载模板，按字段填好后上传。
         </p>
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 12 }}>
@@ -149,14 +149,14 @@ export default function ClientImportsPage() {
               border: "none",
               borderRadius: 8,
               padding: "8px 12px",
-              background: rows.length === 0 ? "#1f2937" : "#2563eb",
+              background: rows.length === 0 ? "#000000" : "#2563eb",
               color: "#fff",
             }}
           >
             {loading ? "提交中..." : "一键提交批量下单"}
           </button>
         </div>
-        <div style={{ marginBottom: 10, color: "#475569", fontSize: 13 }}>当前有效行：{validCount}</div>
+        <div style={{ marginBottom: 10, color: "#000000", fontSize: 13 }}>当前有效行：{validCount}</div>
         {rows.length > 0 ? (
           <div style={{ overflowX: "auto" }}>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>

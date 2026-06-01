@@ -66,11 +66,11 @@ export function openShipmentTrack(trackingNo: string) {
   modal.innerHTML = `
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
       <h3 style="margin:0;font-size:18px;font-weight:600">物流轨迹</h3>
-      <span style="font-size:13px;color:#1f2937">${escapeHtml(trackingNo)}</span>
+      <span style="font-size:13px;color:#000000">${escapeHtml(trackingNo)}</span>
     </div>
-    <div id="track-content" style="text-align:center;padding:40px 0;color:#1f2937">加载中…</div>
+    <div id="track-content" style="text-align:center;padding:40px 0;color:#000000">加载中…</div>
     <div style="display:flex;justify-content:flex-end;margin-top:16px">
-      <button id="track-close-btn" style="border:1px solid #d1d5db;border-radius:6px;padding:8px 16px;font-size:13px;background:#fff;cursor:pointer;color:#374151">关闭</button>
+      <button id="track-close-btn" style="border:1px solid #d1d5db;border-radius:6px;padding:8px 16px;font-size:13px;background:#fff;cursor:pointer;color:#000000">关闭</button>
     </div>
   `;
   overlay.appendChild(modal);
@@ -93,7 +93,7 @@ export function openShipmentTrack(trackingNo: string) {
       const data = json.data as TrackData | undefined;
       const content = modal.querySelector("#track-content")!;
       if (!data || !data.timeline) {
-        content.innerHTML = '<div style="color:#1f2937;padding:20px 0">暂无物流轨迹</div>';
+        content.innerHTML = '<div style="color:#000000;padding:20px 0">暂无物流轨迹</div>';
         return;
       }
       // 当前状态
@@ -102,7 +102,7 @@ export function openShipmentTrack(trackingNo: string) {
       </div>`;
       // 柜号信息
       if (data.containers?.length > 0) {
-        html += `<div style="margin-bottom:12px;font-size:12px;color:#1f2937">柜号：${data.containers.map((c) => c.containerNo).join(" / ")}</div>`;
+        html += `<div style="margin-bottom:12px;font-size:12px;color:#000000">柜号：${data.containers.map((c) => c.containerNo).join(" / ")}</div>`;
       }
       // 时间线
       html += '<div style="position:relative;padding-left:24px">';
@@ -111,10 +111,10 @@ export function openShipmentTrack(trackingNo: string) {
         const isLast = i === data.timeline.length - 1;
         html += `<div style="position:relative;padding-bottom:${isLast ? "0" : "16px"}">
           <div style="position:absolute;left:-18px;top:4px;width:10px;height:10px;border-radius:50%;background:${isLast ? "#16a34a" : "#93c5fd"};border:2px solid #fff;box-shadow:0 0 0 1px ${isLast ? "#16a34a" : "#93c5fd"}"></div>
-          <div style="font-size:12px;color:#1f2937;margin-bottom:2px">${formatTime(item.changedAt)}</div>
-          <div style="font-size:13px;font-weight:500;color:#1f2937">${statusZh(item.fromStatus)} → ${statusZh(item.toStatus)}</div>
-          ${item.remark ? `<div style="font-size:12px;color:#1f2937;margin-top:2px">备注：${escapeHtml(item.remark)}</div>` : ""}
-          <div style="font-size:11px;color:#1f2937;margin-top:1px">操作人：${item.operatorRole === "client" ? "客户" : item.operatorRole === "staff" ? "员工" : "管理员"}</div>
+          <div style="font-size:12px;color:#000000;margin-bottom:2px">${formatTime(item.changedAt)}</div>
+          <div style="font-size:13px;font-weight:500;color:#000000">${statusZh(item.fromStatus)} → ${statusZh(item.toStatus)}</div>
+          ${item.remark ? `<div style="font-size:12px;color:#000000;margin-top:2px">备注：${escapeHtml(item.remark)}</div>` : ""}
+          <div style="font-size:11px;color:#000000;margin-top:1px">操作人：${item.operatorRole === "client" ? "客户" : item.operatorRole === "staff" ? "员工" : "管理员"}</div>
         </div>`;
       });
       html += "</div>";
@@ -122,11 +122,11 @@ export function openShipmentTrack(trackingNo: string) {
       // 子单轨迹
       if (data.children && data.children.length > 0) {
         html += '<div style="margin-top:20px;border-top:1px solid #e5e7eb;padding-top:16px">';
-        html += '<div style="font-size:14px;font-weight:600;color:#374151;margin-bottom:12px">分柜子单轨迹</div>';
+        html += '<div style="font-size:14px;font-weight:600;color:#000000;margin-bottom:12px">分柜子单轨迹</div>';
         data.children.forEach((child) => {
           html += `<div style="margin-bottom:16px;padding:10px 12px;background:#f8fafc;border-radius:8px;border:1px solid #e2e8f0">
             <div style="font-size:13px;font-weight:600;color:#1e3a8a;margin-bottom:4px">${escapeHtml(child.trackingNo)}</div>
-            <div style="font-size:12px;color:#1f2937;margin-bottom:4px">柜号：${child.batchNo ? escapeHtml(child.batchNo) : "-"} ｜ 品名：${child.itemName ?? "-"} ｜ 件数：${child.packageCount ?? "-"}</div>
+            <div style="font-size:12px;color:#000000;margin-bottom:4px">柜号：${child.batchNo ? escapeHtml(child.batchNo) : "-"} ｜ 品名：${child.itemName ?? "-"} ｜ 件数：${child.packageCount ?? "-"}</div>
             <div style="font-size:12px;color:#166534;margin-bottom:6px">当前状态：${statusZh(child.currentStatus)}</div>`;
           if (child.timeline && child.timeline.length > 0) {
             html += '<div style="position:relative;padding-left:20px">';
@@ -135,14 +135,14 @@ export function openShipmentTrack(trackingNo: string) {
               const isLast = j === child.timeline.length - 1;
               html += `<div style="position:relative;padding-bottom:${isLast ? "0" : "10px"}">
                 <div style="position:absolute;left:-14px;top:4px;width:8px;height:8px;border-radius:50%;background:${isLast ? "#16a34a" : "#93c5fd"};border:2px solid #fff;box-shadow:0 0 0 1px ${isLast ? "#16a34a" : "#93c5fd"}"></div>
-                <div style="font-size:11px;color:#1f2937">${formatTime(tl.changedAt)}</div>
-                <div style="font-size:12px;font-weight:500;color:#1f2937">${statusZh(tl.fromStatus)} → ${statusZh(tl.toStatus)}</div>
-                ${tl.remark ? `<div style="font-size:11px;color:#1f2937">备注：${escapeHtml(tl.remark)}</div>` : ""}
+                <div style="font-size:11px;color:#000000">${formatTime(tl.changedAt)}</div>
+                <div style="font-size:12px;font-weight:500;color:#000000">${statusZh(tl.fromStatus)} → ${statusZh(tl.toStatus)}</div>
+                ${tl.remark ? `<div style="font-size:11px;color:#000000">备注：${escapeHtml(tl.remark)}</div>` : ""}
               </div>`;
             });
             html += '</div>';
           } else {
-            html += '<div style="font-size:11px;color:#1f2937">暂无轨迹</div>';
+            html += '<div style="font-size:11px;color:#000000">暂无轨迹</div>';
           }
           html += '</div>';
         });

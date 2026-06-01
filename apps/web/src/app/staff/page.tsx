@@ -53,11 +53,11 @@ function OrderProductImagesPanel(props: OrderProductImagesPanelProps) {
   const canAdd = props.canManage && imgs.length < MAX_ORDER_PRODUCT_IMAGES;
   return (
     <div style={{ marginTop: 8, marginBottom: 8, padding: 10, background: "#f8fafc", borderRadius: 8, border: "1px solid #e2e8f0" }}>
-      <div style={{ fontWeight: 600, marginBottom: 6, fontSize: 13, color: "#334155" }}>
+      <div style={{ fontWeight: 600, marginBottom: 6, fontSize: 13, color: "#000000" }}>
         订单详情 · 产品图（最多 {MAX_ORDER_PRODUCT_IMAGES} 张）
       </div>
       {imgs.length === 0 && !canAdd ? (
-        <div style={{ fontSize: 12, color: "#1f2937" }}>暂无产品图</div>
+        <div style={{ fontSize: 12, color: "#000000" }}>暂无产品图</div>
       ) : (
         <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "flex-start" }}>
           {imgs.map((img) => (
@@ -110,13 +110,13 @@ function OrderProductImagesPanel(props: OrderProductImagesPanelProps) {
                 style={{
                   width: 88,
                   height: 88,
-                  border: "1px dashed #1f2937",
+                  border: "1px dashed #000000",
                   borderRadius: 8,
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "center",
                   fontSize: 12,
-                  color: "#1f2937",
+                  color: "#000000",
                   cursor: props.busy ? "not-allowed" : "pointer",
                   background: "#fff",
                 }}
@@ -127,7 +127,7 @@ function OrderProductImagesPanel(props: OrderProductImagesPanelProps) {
           ) : null}
         </div>
       )}
-      {!props.canManage ? <div style={{ fontSize: 12, color: "#1f2937", marginTop: 6 }}>仅展示；无本仓库操作权限时不可修改（与上传接口校验的订单仓库一致）。</div> : null}
+      {!props.canManage ? <div style={{ fontSize: 12, color: "#000000", marginTop: 6 }}>仅展示；无本仓库操作权限时不可修改（与上传接口校验的订单仓库一致）。</div> : null}
     </div>
   );
 }
@@ -308,7 +308,7 @@ function StatusUpdateImageAttach(props: StatusUpdateImageAttachProps) {
           {props.previewUrl ? (
             <img src={props.previewUrl} alt="" style={{ maxWidth: 100, maxHeight: 72, objectFit: "cover", borderRadius: 4 }} />
           ) : (
-            <span style={{ fontSize: 11, color: "#1f2937", textAlign: "center", lineHeight: 1.35, userSelect: "none" }}>
+            <span style={{ fontSize: 11, color: "#000000", textAlign: "center", lineHeight: 1.35, userSelect: "none" }}>
               拖放或点击
               <br />
               上传图片
@@ -318,7 +318,7 @@ function StatusUpdateImageAttach(props: StatusUpdateImageAttachProps) {
       </div>
       {props.fileName ? (
         <div
-          style={{ fontSize: 11, color: "#475569", maxWidth: 120, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+          style={{ fontSize: 11, color: "#000000", maxWidth: 120, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
           title={props.fileName}
         >
           {props.fileName}
@@ -344,7 +344,7 @@ function StatusUpdateImageAttach(props: StatusUpdateImageAttachProps) {
           清除
         </button>
       ) : null}
-      <span style={{ fontSize: 11, color: "#1f2937" }}>附图存为入库拍照</span>
+      <span style={{ fontSize: 11, color: "#000000" }}>附图存为入库拍照</span>
     </div>
   );
 }
@@ -437,7 +437,7 @@ type ShipmentEditFormFieldProps = {
 function ShipmentEditFormField(props: ShipmentEditFormFieldProps) {
   return (
     <div style={{ border: "1px solid #e5e7eb", borderRadius: 8, padding: "10px 12px", background: "#ffffff" }}>
-      <div style={{ fontSize: 12, color: "#1f2937", marginBottom: 6 }}>
+      <div style={{ fontSize: 12, color: "#000000", marginBottom: 6 }}>
         {props.label}
         {props.required ? <span style={{ color: "#dc2626", marginLeft: 2 }}>*</span> : null}
       </div>
@@ -1275,7 +1275,7 @@ export default function StaffHomePage() {
         background: "#ffffff",
       }}
     >
-      <div style={{ color: "#1f2937", fontSize: 12, marginBottom: 6 }}>{label}</div>
+      <div style={{ color: "#000000", fontSize: 12, marginBottom: 6 }}>{label}</div>
       {children}
     </div>
   );
@@ -1289,8 +1289,8 @@ export default function StaffHomePage() {
         padding: "3px 6px",
       }}
     >
-      <div style={{ fontSize: 10, color: "#1f2937" }}>{label}</div>
-      <div style={{ fontSize: 12, color: "#1f2937", fontWeight: 600 }}>{value}</div>
+      <div style={{ fontSize: 10, color: "#000000" }}>{label}</div>
+      <div style={{ fontSize: 12, color: "#000000", fontWeight: 600 }}>{value}</div>
     </div>
   );
 
@@ -1520,7 +1520,7 @@ export default function StaffHomePage() {
             borderRadius: 12,
             padding: 14,
             background: "#f8fafc",
-            color: "#475569",
+            color: "#000000",
             fontSize: 14,
             lineHeight: 1.6,
           }}
@@ -1551,7 +1551,7 @@ export default function StaffHomePage() {
               border: "1px solid #d1d5db",
               borderRadius: 8,
               padding: "6px 10px",
-              color: "#374151",
+              color: "#000000",
               background: "#fff",
               fontWeight: 600,
             }}
@@ -1576,7 +1576,7 @@ export default function StaffHomePage() {
                       const displayDraft = isEditing ? draft : confirmedDraft;
                       return (
                         <>
-                    <div style={{ fontWeight: 600, fontSize: 12, marginBottom: 4, color: "#374151" }}>
+                    <div style={{ fontWeight: 600, fontSize: 12, marginBottom: 4, color: "#000000" }}>
                       {item.clientName ?? item.clientId ?? "-"} · {item.createdAt.slice(0, 10)}
                     </div>
                     <div
@@ -1684,7 +1684,7 @@ export default function StaffHomePage() {
                               placeholder="重量"
                               style={{ ...prealertEditInputStyle, marginBottom: 0 }}
                             />
-                            <span style={{ color: "#1f2937", fontSize: 13, minWidth: 26 }}>kg</span>
+                            <span style={{ color: "#000000", fontSize: 13, minWidth: 26 }}>kg</span>
                           </div>
                           <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
                             <input
@@ -1704,7 +1704,7 @@ export default function StaffHomePage() {
                               placeholder="体积"
                               style={{ ...prealertEditInputStyle, marginBottom: 0 }}
                             />
-                            <span style={{ color: "#1f2937", fontSize: 13, minWidth: 30 }}>m3</span>
+                            <span style={{ color: "#000000", fontSize: 13, minWidth: 30 }}>m3</span>
                           </div>
                           <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
                             <input
@@ -1840,7 +1840,7 @@ export default function StaffHomePage() {
                             type="button"
                             disabled={loading}
                             onClick={() => void confirmPrealertEdit(item.id)}
-                            style={{ border: "none", borderRadius: 8, padding: "8px 14px", color: "#fff", background: "#374151", fontWeight: 600 }}
+                            style={{ border: "none", borderRadius: 8, padding: "8px 14px", color: "#fff", background: "#000000", fontWeight: 600 }}
                           >
                             确认修改
                           </button>
@@ -1855,7 +1855,7 @@ export default function StaffHomePage() {
                               }));
                               setEditingPrealertId(null);
                             }}
-                            style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 14px", color: "#374151", background: "#fff", fontWeight: 600 }}
+                            style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 14px", color: "#000000", background: "#fff", fontWeight: 600 }}
                           >
                             取消修改
                           </button>
@@ -1875,7 +1875,7 @@ export default function StaffHomePage() {
                             }));
                             setEditingPrealertId(item.id);
                           }}
-                          style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 14px", color: "#374151", background: "#fff", fontWeight: 600 }}
+                          style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 14px", color: "#000000", background: "#fff", fontWeight: 600 }}
                         >
                           修改
                         </button>
@@ -1884,7 +1884,7 @@ export default function StaffHomePage() {
                         type="button"
                         disabled={loading}
                         onClick={() => setApprovingPrealert(item)}
-                        style={{ border: "none", borderRadius: 8, padding: "8px 14px", color: "#fff", background: "#374151", fontWeight: 600 }}
+                        style={{ border: "none", borderRadius: 8, padding: "8px 14px", color: "#fff", background: "#000000", fontWeight: 600 }}
                       >
                         审核通过
                       </button>
@@ -1959,7 +1959,7 @@ export default function StaffHomePage() {
             }
             readOnly
             placeholder="湘泰运单号（系统自动生成）"
-            style={{ ...orderCreateInputStyle, color: "#1f2937", background: "#f8fafc" }}
+            style={{ ...orderCreateInputStyle, color: "#000000", background: "#f8fafc" }}
           />
           <input value={form.domesticOrderNo} onChange={(e) => setForm((v) => ({ ...v, domesticOrderNo: e.target.value }))} placeholder="国内单号" style={orderCreateInputStyle} />
           <input type="number" value={form.packageCount} onChange={(e) => setForm((v) => ({ ...v, packageCount: e.target.value }))} placeholder="包裹数量" style={orderCreateInputStyle} />
@@ -1993,22 +1993,22 @@ export default function StaffHomePage() {
               style={orderCreateInputStyle}
             />
           </div>
-          <div style={{ fontSize: 12, color: "#1f2937", marginTop: -4, marginBottom: 4 }}>尺寸：厘米；体积（m³）= 长×宽×高 ÷ 1,000,000，自动填入下方。</div>
+          <div style={{ fontSize: 12, color: "#000000", marginTop: -4, marginBottom: 4 }}>尺寸：厘米；体积（m³）= 长×宽×高 ÷ 1,000,000，自动填入下方。</div>
           <input type="number" step="0.01" value={form.weightKg} onChange={(e) => setForm((v) => ({ ...v, weightKg: e.target.value }))} placeholder="重量（kg）" style={orderCreateInputStyle} />
           <input
             type="text"
             readOnly
             value={form.volumeM3}
             placeholder="体积（m³，根据长宽高自动生成）"
-            style={{ ...orderCreateInputStyle, color: "#1f2937", background: "#f8fafc" }}
+            style={{ ...orderCreateInputStyle, color: "#000000", background: "#f8fafc" }}
           />
           <div style={{ display: "grid", gap: 4 }}>
             <input type="date" value={form.arrivedAt} onChange={(e) => setForm((v) => ({ ...v, arrivedAt: e.target.value }))} style={orderCreateInputStyle} />
-            <div style={{ fontSize: 12, color: "#1f2937", marginTop: -6, marginBottom: 8 }}>说明：该日期为到仓日期</div>
+            <div style={{ fontSize: 12, color: "#000000", marginTop: -6, marginBottom: 8 }}>说明：该日期为到仓日期</div>
           </div>
         </div>
         <div style={{ marginTop: 10 }}>
-          <button type="button" disabled={loading} onClick={() => void submitOrder()} style={{ border: "none", borderRadius: 8, padding: "8px 14px", color: "#fff", background: "#374151" }}>
+          <button type="button" disabled={loading} onClick={() => void submitOrder()} style={{ border: "none", borderRadius: 8, padding: "8px 14px", color: "#fff", background: "#000000" }}>
             创建订单
           </button>
         </div>
@@ -2155,7 +2155,7 @@ export default function StaffHomePage() {
                     setLoading(false);
                   }
                 }}
-                style={{ border: "none", borderRadius: 8, padding: "8px 14px", color: "#fff", background: photoDraft.shipmentId.trim() && photoDraft.fileName && photoDraft.contentBase64 ? "#dc2626" : "#1f2937" }}
+                style={{ border: "none", borderRadius: 8, padding: "8px 14px", color: "#fff", background: photoDraft.shipmentId.trim() && photoDraft.fileName && photoDraft.contentBase64 ? "#dc2626" : "#000000" }}
               >
                 上传入库照片
               </button>
@@ -2181,7 +2181,7 @@ export default function StaffHomePage() {
               <div style={{ marginTop: 8, display: "grid", gap: 8 }}>
                 {photoList.map((item) => (
                   <div key={item.id} style={{ border: "1px solid #fecdd3", borderRadius: 8, padding: 8, background: "#fff" }}>
-                    <div style={{ fontSize: 12, color: "#1f2937" }}>
+                    <div style={{ fontSize: 12, color: "#000000" }}>
                       {item.fileName} / {item.createdAt} / 操作员 {item.operatorId}
                     </div>
                     <img src={`data:${item.mime};base64,${item.contentBase64}`} alt={item.fileName} style={{ maxWidth: "100%", maxHeight: 160, marginTop: 6, borderRadius: 6 }} />
@@ -2260,7 +2260,7 @@ export default function StaffHomePage() {
           {statusHasSearched && searchedBatchNo && filteredStatusShipments.length > 0 ? (
             <div style={{ border: "1px solid #e5e7eb", borderRadius: 10, padding: 10, background: "#f8fafc" }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
-                <div style={{ color: "#334155", fontWeight: 600 }}>
+                <div style={{ color: "#000000", fontWeight: 600 }}>
                   当前柜号：{batchNoForBulkEdit}（共 {filteredStatusShipments.length} 条）
                 </div>
                 <button
@@ -2278,7 +2278,7 @@ export default function StaffHomePage() {
                     padding: "6px 12px",
                     background: "#fff",
                     fontWeight: 600,
-                    color: "#374151",
+                    color: "#000000",
                     cursor: loading || !exactBatchNo ? "not-allowed" : "pointer",
                     opacity: loading || !exactBatchNo ? 0.55 : 1,
                   }}
@@ -2371,7 +2371,7 @@ export default function StaffHomePage() {
             filteredStatusShipments.map((item) => (
               <div key={item.id} style={{ border: "1px solid #e5e7eb", borderRadius: 10, padding: 10, background: "#fff" }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
-                  <div style={{ display: "flex", gap: 14, color: "#374151", fontWeight: 600 }}>
+                  <div style={{ display: "flex", gap: 14, color: "#000000", fontWeight: 600 }}>
                     <span>柜号：{item.batchNo ?? "-"}</span>
                     <span>物流状态：{toLogisticsStatus(item.currentStatus) || "-"}</span>
                   </div>
@@ -2384,7 +2384,7 @@ export default function StaffHomePage() {
                       setStatusEditDraft({ toStatus: toLogisticsStatus(item.currentStatus), remark: "" });
                       resetStatusAttach();
                     }}
-                    style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "6px 12px", background: "#fff", fontWeight: 600, color: "#374151" }}
+                    style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "6px 12px", background: "#fff", fontWeight: 600, color: "#000000" }}
                   >
                     状态修改
                   </button>
@@ -2467,7 +2467,7 @@ export default function StaffHomePage() {
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 10, gap: 12 }}>
           <div style={{ flex: 1 }}>
             <h2 style={{ margin: 0, fontSize: 18, color: "#111827" }}>运单管理</h2>
-            <p style={{ margin: "6px 0 8px", fontSize: 12, color: "#1f2937" }}>
+            <p style={{ margin: "6px 0 8px", fontSize: 12, color: "#000000" }}>
               表格展示运单号、用户、状态、加收金额、运输方式、发货时间、件重体、仓库与地址；点击「查看」或 + 展开查看详情与物流轨迹。
             </p>
         <ShipmentSearch value={shipmentSearch} onChange={(key, val) => setShipmentSearch((prev) => ({ ...prev, [key]: val }))} onSearch={runShipmentListSearch} warehouseOptions={warehouseOptions} logisticsStatusOptions={logisticsStatusOptions} inputStyle={orderCreateInputStyle} />
@@ -2576,7 +2576,7 @@ export default function StaffHomePage() {
                           </td>
                           <td style={{ padding: "8px 6px", fontWeight: 600, color: "#6b21a8", whiteSpace: "nowrap", fontFamily: "monospace", fontSize: 12 }}>{item.clientId ?? "—"}</td>
                           <td style={{ padding: "8px 6px", fontWeight: 600, color: "#1e3a8a", whiteSpace: "nowrap" }}>{item.trackingNo}</td>
-                          <td style={{ padding: "8px 6px", color: "#334155" }}>{item.clientName ?? item.clientId ?? "—"}</td>
+                          <td style={{ padding: "8px 6px", color: "#000000" }}>{item.clientName ?? item.clientId ?? "—"}</td>
                           <td style={{ padding: "8px 6px", whiteSpace: "nowrap" }}>{shipmentStatusZh(item.currentStatus)}</td>
                           <td style={{ padding: "8px 6px", whiteSpace: "nowrap" }}>
                             {item.receivableAmountCny != null
@@ -2584,7 +2584,7 @@ export default function StaffHomePage() {
                               : "0"}
                           </td>
                           <td style={{ padding: "8px 6px", whiteSpace: "nowrap" }}>{transportModeLabel(item.transportMode)}</td>
-                          <td style={{ padding: "8px 6px", whiteSpace: "nowrap", color: "#1f2937" }}>
+                          <td style={{ padding: "8px 6px", whiteSpace: "nowrap", color: "#000000" }}>
                             {item.shipDate ?? formatDateTime(item.arrivedAt)}
                           </td>
                           <td style={{ padding: "8px 6px" }}>{item.packageCount ?? "—"}</td>
@@ -2592,7 +2592,7 @@ export default function StaffHomePage() {
                           <td style={{ padding: "8px 6px", whiteSpace: "nowrap" }}>{formatMetric(item.volumeM3)}</td>
                           <td style={{ padding: "8px 6px", whiteSpace: "nowrap" }}>{formatMetric(item.volumeM3 != null && item.volumeM3 > 0 ? Math.max(item.volumeM3, item.transportMode === "sea" ? 0.5 : item.transportMode === "land" ? 0.2 : 0) : undefined)}</td>
                           <td style={{ padding: "8px 6px", whiteSpace: "nowrap" }}>{warehouseLabelFromId(item.warehouseId)}</td>
-                          <td style={{ padding: "8px 6px", color: "#475569", fontSize: 12, maxWidth: 160 }} title={item.receiverAddressTh ?? ""}>
+                          <td style={{ padding: "8px 6px", color: "#000000", fontSize: 12, maxWidth: 160 }} title={item.receiverAddressTh ?? ""}>
                             {truncateText(item.receiverAddressTh, 24)}
                           </td>
                           <td style={{ padding: "8px 6px", whiteSpace: "nowrap" }}>
@@ -2701,7 +2701,7 @@ export default function StaffHomePage() {
                                                     gap: 6,
                                                     cursor: formDisabled ? "not-allowed" : "pointer",
                                                     fontSize: 13,
-                                                    color: "#1f2937",
+                                                    color: "#000000",
                                                   }}
                                                 >
                                                   <input
@@ -2944,7 +2944,7 @@ export default function StaffHomePage() {
                                             <input
                                               value={item.clientName ?? item.clientId ?? "—"}
                                               readOnly
-                                              style={{ ...inputInCard, color: "#1f2937", background: "#f8fafc" }}
+                                              style={{ ...inputInCard, color: "#000000", background: "#f8fafc" }}
                                             />
                                           </ShipmentEditFormField>
                                           <ShipmentEditFormField label="运输方式" required>
@@ -3036,7 +3036,7 @@ export default function StaffHomePage() {
                                                 type="file"
                                                 accept="image/*"
                                                 disabled={formDisabled}
-                                                style={{ fontSize: 12, color: "#475569" }}
+                                                style={{ fontSize: 12, color: "#000000" }}
                                                 onChange={async (ev) => {
                                                   const f = ev.target.files?.[0] ?? null;
                                                   ev.target.value = "";
@@ -3064,7 +3064,7 @@ export default function StaffHomePage() {
                                                   }
                                                 }}
                                               />
-                                              <span style={{ fontSize: 11, color: "#1f2937" }}>上传后写入入库拍照记录</span>
+                                              <span style={{ fontSize: 11, color: "#000000" }}>上传后写入入库拍照记录</span>
                                             </div>
                                           </ShipmentEditFormField>
                                           <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
@@ -3098,7 +3098,7 @@ export default function StaffHomePage() {
                                           borderRadius: 8,
                                           padding: "8px 14px",
                                           color: "#fff",
-                                          background: item.orderId ? "#059669" : "#1f2937",
+                                          background: item.orderId ? "#059669" : "#000000",
                                           cursor: item.orderId ? "pointer" : "not-allowed",
                                           fontWeight: 600,
                                         }}
@@ -3134,7 +3134,7 @@ export default function StaffHomePage() {
                                     type="button"
                                     disabled={loading}
                                     onClick={() => setShipmentTableExpandedId(null)}
-                                    style={{ border: "1px solid #cbd5e1", borderRadius: 8, padding: "8px 14px", background: "#fff", color: "#475569" }}
+                                    style={{ border: "1px solid #cbd5e1", borderRadius: 8, padding: "8px 14px", background: "#fff", color: "#000000" }}
                                   >
                                     收起
                                   </button>
@@ -3166,7 +3166,7 @@ export default function StaffHomePage() {
         }}
       >
         <h2 style={{ marginTop: 0, fontSize: 18, color: "#111827", marginBottom: 12 }}>尾端派送</h2>
-        <p style={{ fontSize: 12, color: "#1f2937", marginBottom: 10 }}>查询客户唛头与派送地址，支持按唛头或客户名搜索。</p>
+        <p style={{ fontSize: 12, color: "#000000", marginBottom: 10 }}>查询客户唛头与派送地址，支持按唛头或客户名搜索。</p>
         <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
           <input
             value={lastmileKeyword}
@@ -3196,7 +3196,7 @@ export default function StaffHomePage() {
           </button>
         </div>
         {lastmileItems.length === 0 ? (
-          <div style={{ color: "#1f2937", fontSize: 13, padding: "20px 0", textAlign: "center" }}>无结果，请输入唛头或客户名搜索</div>
+          <div style={{ color: "#000000", fontSize: 13, padding: "20px 0", textAlign: "center" }}>无结果，请输入唛头或客户名搜索</div>
         ) : (
           <div style={{ display: "grid", gap: 10 }}>
             {lastmileItems.map((client) => (
@@ -3204,20 +3204,20 @@ export default function StaffHomePage() {
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
                   <div>
                     <span style={{ fontWeight: 700, fontSize: 15, color: "#6b21a8", fontFamily: "monospace" }}>{client.id}</span>
-                    <span style={{ marginLeft: 8, fontSize: 13, color: "#374151" }}>{client.name}</span>
+                    <span style={{ marginLeft: 8, fontSize: 13, color: "#000000" }}>{client.name}</span>
                   </div>
-                  <span style={{ fontSize: 12, color: "#1f2937" }}>{client.phone}</span>
+                  <span style={{ fontSize: 12, color: "#000000" }}>{client.phone}</span>
                 </div>
                 {client.addresses.length === 0 ? (
-                  <div style={{ fontSize: 12, color: "#1f2937" }}>暂无地址</div>
+                  <div style={{ fontSize: 12, color: "#000000" }}>暂无地址</div>
                 ) : (
                   client.addresses.map((addr) => (
                     <div key={addr.id} style={{ padding: "6px 8px", background: "#f8fafc", borderRadius: 6, marginBottom: 4, border: addr.isDefault ? "1px solid #bbf7d0" : "1px solid #f1f5f9" }}>
-                      <div style={{ fontSize: 12, color: "#374151" }}>
+                      <div style={{ fontSize: 12, color: "#000000" }}>
                         {addr.isDefault ? <span style={{ color: "#16a34a", fontWeight: 600 }}>［默认］</span> : null}
                         {addr.receiverName} ｜ {addr.receiverPhone}
                       </div>
-                      <div style={{ fontSize: 11, color: "#1f2937", marginTop: 2 }}>{[addr.province, addr.city, addr.address].filter(Boolean).join(" ")}</div>
+                      <div style={{ fontSize: 11, color: "#000000", marginTop: 2 }}>{[addr.province, addr.city, addr.address].filter(Boolean).join(" ")}</div>
                     </div>
                   ))
                 )}
@@ -3234,10 +3234,10 @@ export default function StaffHomePage() {
         <div style={{ position: "fixed", inset: 0, zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(0,0,0,0.4)", padding: 16 }}>
           <div style={{ width: "100%", maxWidth: 560, maxHeight: "90vh", overflow: "auto", background: "#fff", borderRadius: 12, padding: 24, boxShadow: "0 20px 60px rgba(0,0,0,0.3)" }}>
             <h3 style={{ margin: "0 0 16px", fontSize: 18, fontWeight: 600 }}>审核预报单</h3>
-            <div style={{ color: "#1f2937", fontSize: 13, marginBottom: 12 }}>
+            <div style={{ color: "#000000", fontSize: 13, marginBottom: 12 }}>
               客户：{approvingPrealert.clientName ?? "-"} · {approvingPrealert.createdAt.slice(0, 10)}
             </div>
-            <div style={{ display: "grid", gap: 6, fontSize: 13, color: "#374151", marginBottom: 16 }}>
+            <div style={{ display: "grid", gap: 6, fontSize: 13, color: "#000000", marginBottom: 16 }}>
               <div>仓库：{warehouseOptions.find((w) => w.id === (prealertEditDrafts[approvingPrealert.id]?.warehouseId ?? approvingPrealert.warehouseId))?.label ?? "-"}</div>
               <div>品名：{prealertEditDrafts[approvingPrealert.id]?.itemName ?? approvingPrealert.itemName}</div>
               <div>件数：{prealertEditDrafts[approvingPrealert.id]?.packageCount ?? approvingPrealert.packageCount} {prealertEditDrafts[approvingPrealert.id]?.packageUnit ?? approvingPrealert.packageUnit}</div>
@@ -3248,16 +3248,16 @@ export default function StaffHomePage() {
               <div>运输方式：{(prealertEditDrafts[approvingPrealert.id]?.transportMode ?? approvingPrealert.transportMode) === "sea" ? "海运" : "陆运"}</div>
               <div>发货日期：{prealertEditDrafts[approvingPrealert.id]?.shipDate ?? approvingPrealert.shipDate ?? approvingPrealert.createdAt.slice(0, 10)}</div>
               <div style={{ marginTop: 8, borderTop: "1px solid #e5e7eb", paddingTop: 8 }}>
-                <div style={{ fontSize: 12, color: "#1f2937", marginBottom: 4 }}>应收金额（必填）</div>
+                <div style={{ fontSize: 12, color: "#000000", marginBottom: 4 }}>应收金额（必填）</div>
                 <input type="number" step="0.01" value={prealertEditDrafts[approvingPrealert.id]?.receivableAmountCny ?? approvingPrealert.receivableAmountCny ?? ""} onChange={(e) => setPrealertEditDrafts((prev) => ({ ...prev, [approvingPrealert.id]: { ...(prev[approvingPrealert.id] ?? buildPrealertDraft(approvingPrealert)), receivableAmountCny: +e.target.value } }))} placeholder="输入应收金额" style={prealertEditInputStyle} />
               </div>
               <div>
-                <div style={{ fontSize: 12, color: "#1f2937", marginBottom: 4 }}>柜号（可选）</div>
+                <div style={{ fontSize: 12, color: "#000000", marginBottom: 4 }}>柜号（可选）</div>
                 <input value={prealertBatchDrafts[approvingPrealert.id] ?? ""} onChange={(e) => setPrealertBatchDrafts((prev) => ({ ...prev, [approvingPrealert.id]: e.target.value }))} placeholder="柜号（装柜时填写）" style={prealertEditInputStyle} />
               </div>
             </div>
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
-              <button type="button" onClick={() => setApprovingPrealert(null)} style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "8px 16px", fontSize: 13, background: "#fff", cursor: "pointer", color: "#374151" }}>取消</button>
+              <button type="button" onClick={() => setApprovingPrealert(null)} style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "8px 16px", fontSize: 13, background: "#fff", cursor: "pointer", color: "#000000" }}>取消</button>
               <button type="button" onClick={async () => {
                 const item = approvingPrealert;
                 const draft = prealertEditDrafts[item.id] ?? buildPrealertDraft(item);
@@ -3329,20 +3329,20 @@ export default function StaffHomePage() {
                 <input type="number" min={0} step="0.01" value={form.widthCm} onChange={(e) => updateOrderDimensions({ widthCm: e.target.value })} placeholder="宽(cm)" style={orderCreateInputStyle} />
                 <input type="number" min={0} step="0.01" value={form.heightCm} onChange={(e) => updateOrderDimensions({ heightCm: e.target.value })} placeholder="高(cm)" style={orderCreateInputStyle} />
               </div>
-              <div style={{ fontSize: 11, color: "#1f2937", marginTop: -4 }}>总体积 = 单件体积 × 件数，自动填入</div>
+              <div style={{ fontSize: 11, color: "#000000", marginTop: -4 }}>总体积 = 单件体积 × 件数，自动填入</div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
                 <input type="number" step="0.01" value={form.weightKg} onChange={(e) => setForm((v) => ({ ...v, weightKg: e.target.value }))} placeholder="重量（kg）*" style={orderCreateInputStyle} />
-                <input readOnly value={form.volumeM3} placeholder="体积（m³）自动计算" style={{ ...orderCreateInputStyle, color: "#1f2937", background: "#f8fafc" }} />
+                <input readOnly value={form.volumeM3} placeholder="体积（m³）自动计算" style={{ ...orderCreateInputStyle, color: "#000000", background: "#f8fafc" }} />
               </div>
               <select value={form.transportMode} onChange={(e) => setForm((v) => ({ ...v, transportMode: e.target.value as "sea" | "land" }))} style={orderCreateInputStyle}>
                 <option value="sea">海运</option>
                 <option value="land">陆运</option>
               </select>
               <input type="date" value={form.arrivedAt} onChange={(e) => setForm((v) => ({ ...v, arrivedAt: e.target.value }))} style={orderCreateInputStyle} />
-              <div style={{ fontSize: 11, color: "#1f2937", marginTop: -4 }}>到仓日期 *</div>
+              <div style={{ fontSize: 11, color: "#000000", marginTop: -4 }}>到仓日期 *</div>
               <input value={form.domesticOrderNo} onChange={(e) => setForm((v) => ({ ...v, domesticOrderNo: e.target.value }))} placeholder="国内单号" style={orderCreateInputStyle} />
               <hr style={{ border: "none", borderTop: "1px solid #e5e7eb", margin: "8px 0" }} />
-              <div style={{ fontSize: 13, fontWeight: 500, color: "#374151" }}>泰国收件人信息</div>
+              <div style={{ fontSize: 13, fontWeight: 500, color: "#000000" }}>泰国收件人信息</div>
               <input value={form.receiverNameTh} onChange={(e) => setForm((v) => ({ ...v, receiverNameTh: e.target.value }))} placeholder="收件人姓名 *" style={orderCreateInputStyle} />
               <input value={form.receiverPhoneTh} onChange={(e) => setForm((v) => ({ ...v, receiverPhoneTh: e.target.value }))} placeholder="收件人电话 *" style={orderCreateInputStyle} />
               <textarea value={form.receiverAddressTh} onChange={(e) => setForm((v) => ({ ...v, receiverAddressTh: e.target.value }))} placeholder="收件人地址（泰国）*" rows={2} style={{ ...orderCreateInputStyle, resize: "vertical", minHeight: 48 }} />
@@ -3353,8 +3353,8 @@ export default function StaffHomePage() {
               <p style={{ marginTop: 8, color: "#065f46", fontSize: 13 }}>{message}</p>
             ) : null}
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 16 }}>
-              <button type="button" onClick={() => { setShowCreateModal(false); setMessage(""); }} style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "8px 16px", fontSize: 13, background: "#fff", cursor: "pointer", color: "#374151" }}>取消</button>
-              <button type="button" disabled={loading} onClick={() => void submitOrder()} style={{ border: "none", borderRadius: 6, padding: "8px 16px", fontSize: 13, background: loading ? "#1f2937" : "#2563eb", color: "#fff", fontWeight: 500, cursor: loading ? "not-allowed" : "pointer" }}>{loading ? "提交中…" : "创建订单"}</button>
+              <button type="button" onClick={() => { setShowCreateModal(false); setMessage(""); }} style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "8px 16px", fontSize: 13, background: "#fff", cursor: "pointer", color: "#000000" }}>取消</button>
+              <button type="button" disabled={loading} onClick={() => void submitOrder()} style={{ border: "none", borderRadius: 6, padding: "8px 16px", fontSize: 13, background: loading ? "#000000" : "#2563eb", color: "#fff", fontWeight: 500, cursor: loading ? "not-allowed" : "pointer" }}>{loading ? "提交中…" : "创建订单"}</button>
             </div>
           </div>
         </div>
@@ -3365,17 +3365,17 @@ export default function StaffHomePage() {
         <div style={{ position: "fixed", inset: 0, zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(0,0,0,0.4)", padding: 16 }}>
           <div style={{ width: "100%", maxWidth: 540, maxHeight: "90vh", overflow: "auto", background: "#fff", borderRadius: 12, padding: 24, boxShadow: "0 20px 60px rgba(0,0,0,0.3)" }}>
             <h3 style={{ margin: "0 0 12px", fontSize: 18, fontWeight: 600 }}>运单分柜</h3>
-            <div style={{ fontSize: 13, color: "#1f2937", marginBottom: 12 }}>
+            <div style={{ fontSize: 13, color: "#000000", marginBottom: 12 }}>
               运单号：{splittingShipment.trackingNo} ｜ 当前总件数：<strong>{splittingShipment.packageCount ?? "—"}</strong>
             </div>
-            <div style={{ fontSize: 12, color: "#1f2937", marginBottom: 12 }}>
+            <div style={{ fontSize: 12, color: "#000000", marginBottom: 12 }}>
               已分配：{splitRows.reduce((sum, r) => sum + (Number(r.packageCount) || 0), 0)} 件
               ｜ 剩余：{(splittingShipment.packageCount ?? 0) - splitRows.reduce((sum, r) => sum + (Number(r.packageCount) || 0), 0)} 件
             </div>
             <div style={{ display: "grid", gap: 12 }}>
               {splitRows.map((row, i) => (
                 <div key={i} style={{ padding: 12, border: "1px solid #e5e7eb", borderRadius: 8, background: "#fafafa" }}>
-                  <div style={{ fontSize: 12, fontWeight: 600, color: "#374151", marginBottom: 6 }}>分柜 {i + 1}</div>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: "#000000", marginBottom: 6 }}>分柜 {i + 1}</div>
                   <div style={{ display: "grid", gap: 6 }}>
                     <input value={row.batchNo} onChange={(e) => setSplitRows((prev) => prev.map((r, j) => j === i ? { ...r, batchNo: e.target.value } : r))} placeholder="柜号 *" style={orderCreateInputStyle} />
                     <input value={row.itemName} onChange={(e) => setSplitRows((prev) => prev.map((r, j) => j === i ? { ...r, itemName: e.target.value } : r))} placeholder="品名" style={orderCreateInputStyle} />
@@ -3385,13 +3385,13 @@ export default function StaffHomePage() {
               ))}
             </div>
             <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
-              <button type="button" onClick={() => setSplitRows((prev) => [...prev, { batchNo: "", itemName: splittingShipment.itemName ?? "", packageCount: "" }])} style={{ border: "1px dashed #d1d5db", borderRadius: 6, padding: "6px 12px", fontSize: 12, background: "#fff", cursor: "pointer", color: "#1f2937" }}>＋ 添加分柜</button>
+              <button type="button" onClick={() => setSplitRows((prev) => [...prev, { batchNo: "", itemName: splittingShipment.itemName ?? "", packageCount: "" }])} style={{ border: "1px dashed #d1d5db", borderRadius: 6, padding: "6px 12px", fontSize: 12, background: "#fff", cursor: "pointer", color: "#000000" }}>＋ 添加分柜</button>
             </div>
             {message && message.includes("分柜") ? (
               <p style={{ marginTop: 8, color: message.includes("失败") ? "#b91c1c" : "#065f46", fontSize: 13 }}>{message}</p>
             ) : null}
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 16 }}>
-              <button type="button" onClick={() => { setSplittingShipment(null); setMessage(""); }} style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "8px 16px", fontSize: 13, background: "#fff", cursor: "pointer", color: "#374151" }}>取消</button>
+              <button type="button" onClick={() => { setSplittingShipment(null); setMessage(""); }} style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "8px 16px", fontSize: 13, background: "#fff", cursor: "pointer", color: "#000000" }}>取消</button>
               <button type="button" disabled={loading} onClick={async () => {
                 const validRows = splitRows.filter((r) => r.batchNo.trim() && Number(r.packageCount) > 0);
                 if (validRows.length === 0) { setMessage("分柜失败：请至少填写一个有效的柜号和件数"); return; }
@@ -3412,7 +3412,7 @@ export default function StaffHomePage() {
                   const text = error instanceof Error ? error.message : "分柜失败";
                   setMessage(`分柜失败：${text}`);
                 } finally { setLoading(false); }
-              }} style={{ border: "none", borderRadius: 6, padding: "8px 16px", fontSize: 13, background: loading ? "#1f2937" : "#d97706", color: "#fff", fontWeight: 500, cursor: loading ? "not-allowed" : "pointer" }}>{loading ? "提交中…" : "确认分柜"}</button>
+              }} style={{ border: "none", borderRadius: 6, padding: "8px 16px", fontSize: 13, background: loading ? "#000000" : "#d97706", color: "#fff", fontWeight: 500, cursor: loading ? "not-allowed" : "pointer" }}>{loading ? "提交中…" : "确认分柜"}</button>
             </div>
           </div>
         </div>

@@ -56,7 +56,7 @@ export default function ClientDocumentsPage() {
     <RoleShell allowedRole="client" title="清关文件上传">
       <section style={{ border: "1px solid #e5e7eb", borderRadius: 12, padding: 16, background: "#fff", marginBottom: 14 }}>
         <h2 style={{ marginTop: 0 }}>KYC & Documents</h2>
-        <p style={{ color: "#1f2937", marginTop: 0 }}>
+        <p style={{ color: "#000000", marginTop: 0 }}>
           支持上传身份证、营业执照、商业发票与装箱单，支持 PDF/图片在线预览。
         </p>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
@@ -115,7 +115,7 @@ export default function ClientDocumentsPage() {
       <section style={{ border: "1px solid #e5e7eb", borderRadius: 12, padding: 16, background: "#fff" }}>
         <h3 style={{ marginTop: 0 }}>已上传文件</h3>
         {items.length === 0 ? (
-          <p style={{ color: "#1f2937" }}>暂无上传文件</p>
+          <p style={{ color: "#000000" }}>暂无上传文件</p>
         ) : (
           <div style={{ display: "grid", gap: 10 }}>
             {items.map((item) => {
@@ -124,7 +124,7 @@ export default function ClientDocumentsPage() {
               return (
                 <div key={item.id} style={{ border: "1px solid #e2e8f0", borderRadius: 10, padding: 10, background: "#f8fafc" }}>
                   <div style={{ fontWeight: 700 }}>{item.fileName}</div>
-                  <div style={{ fontSize: 12, color: "#1f2937", marginTop: 2 }}>
+                  <div style={{ fontSize: 12, color: "#000000", marginTop: 2 }}>
                     类型：{item.docType} / 上传时间：{item.createdAt}
                   </div>
                   <div style={{ marginTop: 8 }}>

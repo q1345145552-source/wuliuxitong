@@ -201,7 +201,7 @@ export default function AdminHomePage() {
       { name: "已完成", value: bucket.delivered, color: "#10b981" },
       { name: "在途", value: bucket.inTransit, color: "#f59e0b" },
       { name: "处理中", value: bucket.processing, color: "#f59e0b" },
-      { name: "异常/其他", value: bucket.exception, color: "#1f2937" },
+      { name: "异常/其他", value: bucket.exception, color: "#000000" },
     ];
   }, [orderList]);
 
@@ -642,38 +642,38 @@ export default function AdminHomePage() {
             }}
           >
             <div className={overviewFlash ? "kpi-flash" : ""} style={cardStyle}>
-              <div style={{ color: "#1f2937", fontSize: 12 }}>员工账号总人数</div>
+              <div style={{ color: "#000000", fontSize: 12 }}>员工账号总人数</div>
               <div style={{ fontSize: 22, fontWeight: 700 }}>
                 <CountUpNumber value={overview.staffAccountCount} />
               </div>
             </div>
             <div className={overviewFlash ? "kpi-flash" : ""} style={cardStyle}>
-              <div style={{ color: "#1f2937", fontSize: 12 }}>客户账号</div>
+              <div style={{ color: "#000000", fontSize: 12 }}>客户账号</div>
               <div style={{ fontSize: 22, fontWeight: 700 }}>
                 <CountUpNumber value={overview.clientAccountCount} />
               </div>
             </div>
             <div className={overviewFlash ? "kpi-flash" : ""} style={cardStyle}>
-              <div style={{ color: "#1f2937", fontSize: 12 }}>今日新增订单</div>
+              <div style={{ color: "#000000", fontSize: 12 }}>今日新增订单</div>
               <div style={{ fontSize: 22, fontWeight: 700 }}>
                 <CountUpNumber value={overview.newOrderCountToday} />
               </div>
             </div>
             <div className={overviewFlash ? "kpi-flash" : ""} style={cardStyle}>
-              <div style={{ color: "#1f2937", fontSize: 12 }}>在途订单</div>
+              <div style={{ color: "#000000", fontSize: 12 }}>在途订单</div>
               <div style={{ fontSize: 22, fontWeight: 700 }}>
                 <CountUpNumber value={overview.inTransitOrderCount} />
               </div>
             </div>
             <div className={overviewFlash ? "kpi-flash" : ""} style={cardStyle}>
-              <div style={{ color: "#1f2937", fontSize: 12 }}>当日收货总方数</div>
+              <div style={{ color: "#000000", fontSize: 12 }}>当日收货总方数</div>
               <div style={{ fontSize: 22, fontWeight: 700 }}>
                 <CountUpNumber value={overview.receivedVolumeM3Today} decimals={1} />
               </div>
             </div>
           </div>
         ) : (
-          <p style={{ color: "#1f2937" }}>看板数据加载中…</p>
+          <p style={{ color: "#000000" }}>看板数据加载中…</p>
         )}
         <div style={{ marginTop: 14, display: "grid", gap: 12 }}>
           <div className="dashboard-grid-2">
@@ -683,8 +683,8 @@ export default function AdminHomePage() {
                 <ResponsiveContainer>
                   <LineChart data={etaTrendData}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                    <XAxis dataKey="label" stroke="#1f2937" />
-                    <YAxis stroke="#1f2937" />
+                    <XAxis dataKey="label" stroke="#000000" />
+                    <YAxis stroke="#000000" />
                     <Tooltip
                       formatter={(value) => [`${String(value ?? "-")} 天`, "时效"]}
                       labelFormatter={(label) => (label ? `订单号：${String(label)}` : "时效详情")}
@@ -700,8 +700,8 @@ export default function AdminHomePage() {
                 <ResponsiveContainer>
                   <BarChart data={statusDistribution}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                    <XAxis dataKey="name" stroke="#1f2937" />
-                    <YAxis stroke="#1f2937" />
+                    <XAxis dataKey="name" stroke="#000000" />
+                    <YAxis stroke="#000000" />
                     <Tooltip />
                     <Bar dataKey="value" radius={[6, 6, 0, 0]}>
                       {statusDistribution.map((item) => (
@@ -727,7 +727,7 @@ export default function AdminHomePage() {
             <div style={{ fontWeight: 700, marginBottom: 6 }}>毛利率趋势（最近结算）</div>
             {opsOverview ? (
               <>
-                <div style={{ fontSize: 13, color: "#334155", marginBottom: 8 }}>
+                <div style={{ fontSize: 13, color: "#000000", marginBottom: 8 }}>
                   总收入 {opsOverview.profitSummary.totalRevenue.toFixed(2)} / 总成本{" "}
                   {opsOverview.profitSummary.totalCost.toFixed(2)} / 总利润{" "}
                   {opsOverview.profitSummary.totalProfit.toFixed(2)} / 毛利率{" "}
@@ -735,14 +735,14 @@ export default function AdminHomePage() {
                 </div>
                 <div style={{ display: "grid", gap: 4 }}>
                   {opsOverview.profitTrend.map((item) => (
-                    <div key={`${item.orderId}-${item.updatedAt}`} style={{ fontSize: 12, color: "#475569" }}>
+                    <div key={`${item.orderId}-${item.updatedAt}`} style={{ fontSize: 12, color: "#000000" }}>
                       订单 {item.orderId}：利润 {item.profit.toFixed(2)}（{item.updatedAt.slice(0, 16)}）
                     </div>
                   ))}
                 </div>
               </>
             ) : (
-              <div style={{ fontSize: 13, color: "#1f2937" }}>暂无利润趋势数据</div>
+              <div style={{ fontSize: 13, color: "#000000" }}>暂无利润趋势数据</div>
             )}
           </div>
           <div style={{ border: "1px solid #fde68a", borderRadius: 10, padding: 10, background: "#fffbeb" }}>
@@ -757,7 +757,7 @@ export default function AdminHomePage() {
                 ))}
               </div>
             ) : (
-              <div style={{ fontSize: 13, color: "#1f2937" }}>暂无查验/待处理告警</div>
+              <div style={{ fontSize: 13, color: "#000000" }}>暂无查验/待处理告警</div>
             )}
           </div>
           <div style={{ border: "1px solid #bfdbfe", borderRadius: 10, padding: 10, background: "#eff6ff" }}>
@@ -773,7 +773,7 @@ export default function AdminHomePage() {
                 ))}
               </div>
             ) : (
-              <div style={{ fontSize: 13, color: "#1f2937" }}>暂无报价变动提醒</div>
+              <div style={{ fontSize: 13, color: "#000000" }}>暂无报价变动提醒</div>
             )}
           </div>
         </div>
@@ -802,7 +802,7 @@ export default function AdminHomePage() {
           </div>
         </div>
         {staffPanelCollapsed ? (
-          <p style={{ color: "#1f2937", fontSize: 13, margin: 0 }}>已折叠，可防止误删。点击「展开」后显示添加员工与员工列表（含设置密码、删除等操作）。</p>
+          <p style={{ color: "#000000", fontSize: 13, margin: 0 }}>已折叠，可防止误删。点击「展开」后显示添加员工与员工列表（含设置密码、删除等操作）。</p>
         ) : (
           <>
         <div style={{ marginBottom: 12 }}>
@@ -813,7 +813,7 @@ export default function AdminHomePage() {
           >
             ＋ 创建账号
           </button>
-          <span style={{ marginLeft: 8, fontSize: 12, color: "#1f2937" }}>需使用管理员身份登录</span>
+          <span style={{ marginLeft: 8, fontSize: 12, color: "#000000" }}>需使用管理员身份登录</span>
         </div>
         {staffList.length === 0 ? (
           <EmptyStateCard title="暂无员工" description="请在上方添加员工账号。" />
@@ -826,7 +826,7 @@ export default function AdminHomePage() {
                   <span><strong>姓名</strong> {u.name}</span>
                   <span><strong>手机</strong> {u.phone}</span>
                   <span><strong>状态</strong> {u.status}</span>
-                  <span style={{ color: "#1f2937", fontSize: 12 }}>{u.createdAt.slice(0, 10)}</span>
+                  <span style={{ color: "#000000", fontSize: 12 }}>{u.createdAt.slice(0, 10)}</span>
                   <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                     <button
                       type="button"
@@ -915,7 +915,7 @@ export default function AdminHomePage() {
                   <span><strong>电话</strong> {u.phone}</span>
                   <span><strong>邮箱</strong> {u.email ?? "-"}</span>
                   <span><strong>状态</strong> {u.status}</span>
-                  <span style={{ color: "#1f2937", fontSize: 12 }}>{u.createdAt.slice(0, 10)}</span>
+                  <span style={{ color: "#000000", fontSize: 12 }}>{u.createdAt.slice(0, 10)}</span>
                   <button
                     type="button"
                     onClick={() => setSettingPasswordFor(settingPasswordFor === u.id ? null : u.id)}
@@ -978,7 +978,7 @@ export default function AdminHomePage() {
                 borderRadius: 8,
                 padding: "6px 12px",
                 color: "#fff",
-                background: orderList.length === 0 ? "#1f2937" : "#2563eb",
+                background: orderList.length === 0 ? "#000000" : "#2563eb",
                 cursor: orderList.length === 0 ? "not-allowed" : "pointer",
               }}
             >
@@ -995,7 +995,7 @@ export default function AdminHomePage() {
           </div>
         </div>
         {ordersPanelCollapsed ? (
-          <p style={{ color: "#1f2937", fontSize: 13, margin: 0 }}>已折叠。点击「展开」可查看订单列表并导出 Excel。</p>
+          <p style={{ color: "#000000", fontSize: 13, margin: 0 }}>已折叠。点击「展开」可查看订单列表并导出 Excel。</p>
         ) : orderList.length === 0 ? (
           <EmptyStateCard title="暂无订单" description="当前公司下暂无订单数据。" />
         ) : (
@@ -1081,7 +1081,7 @@ export default function AdminHomePage() {
                     <td style={{ padding: "8px 6px", fontWeight: 600, color: "#1e3a8a", whiteSpace: "nowrap" }}>
                       {o.trackingNo ?? "—"}
                     </td>
-                    <td style={{ padding: "8px 6px", color: "#334155" }}>{o.clientName ?? o.clientId ?? "—"}</td>
+                    <td style={{ padding: "8px 6px", color: "#000000" }}>{o.clientName ?? o.clientId ?? "—"}</td>
                     <td style={{ padding: "8px 6px", whiteSpace: "nowrap" }}>{shipmentStatusLabel(o.currentStatus)}</td>
                     <td style={{ padding: "8px 6px", whiteSpace: "nowrap" }}>
                       {o.receivableAmountCny != null
@@ -1089,7 +1089,7 @@ export default function AdminHomePage() {
                         : "0"}
                     </td>
                     <td style={{ padding: "8px 6px", whiteSpace: "nowrap" }}>{transportModeLabel(o.transportMode)}</td>
-                    <td style={{ padding: "8px 6px", whiteSpace: "nowrap", color: "#1f2937" }}>
+                    <td style={{ padding: "8px 6px", whiteSpace: "nowrap", color: "#000000" }}>
                       {o.shipDate ?? o.createdAt.slice(0, 10)}
                     </td>
                     <td style={{ padding: "8px 6px" }}>{o.packageCount}</td>
@@ -1097,7 +1097,7 @@ export default function AdminHomePage() {
                     <td style={{ padding: "8px 6px", whiteSpace: "nowrap" }}>{o.volumeM3 ?? "—"}</td>
                     <td style={{ padding: "8px 6px", whiteSpace: "nowrap" }}>{o.volumeM3 ?? "—"}</td>
                     <td style={{ padding: "8px 6px", whiteSpace: "nowrap" }}>{warehouseLabel(o.warehouseId)}</td>
-                    <td style={{ padding: "8px 6px", color: "#475569", fontSize: 12, maxWidth: 160 }} title={o.receiverAddressTh ?? ""}>
+                    <td style={{ padding: "8px 6px", color: "#000000", fontSize: 12, maxWidth: 160 }} title={o.receiverAddressTh ?? ""}>
                       {o.receiverAddressTh ?? "—"}
                     </td>
                     <td style={{ padding: "8px 6px", whiteSpace: "nowrap" }}>
@@ -1181,7 +1181,7 @@ export default function AdminHomePage() {
                     <td style={{ padding: "8px 6px" }}>{row.statusScope ?? "-"}</td>
                     <td style={{ padding: "8px 6px" }}>{row.timeHint ?? "-"}</td>
                     <td style={{ padding: "8px 6px" }}>{row.metric ?? "-"}</td>
-                    <td style={{ padding: "8px 6px", color: "#1f2937" }}>{row.updatedAt.slice(0, 16)}</td>
+                    <td style={{ padding: "8px 6px", color: "#000000" }}>{row.updatedAt.slice(0, 16)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -1234,7 +1234,7 @@ export default function AdminHomePage() {
               <tbody>
                 {knowledgeGapList.map((item) => (
                   <tr key={item.id} style={{ borderBottom: "1px solid #e2e8f0" }}>
-                    <td style={{ padding: "8px 6px", color: "#1f2937" }}>{item.createdAt.slice(0, 16)}</td>
+                    <td style={{ padding: "8px 6px", color: "#000000" }}>{item.createdAt.slice(0, 16)}</td>
                     <td style={{ padding: "8px 6px" }}>{item.userId}</td>
                     <td style={{ padding: "8px 6px", whiteSpace: "pre-wrap" }}>{item.question}</td>
                     <td style={{ padding: "8px 6px" }}>{item.knowledgeCountAtAsk}</td>
@@ -1250,7 +1250,7 @@ export default function AdminHomePage() {
                           标记已处理
                         </button>
                       ) : (
-                        <span style={{ color: "#1f2937" }}>{item.resolvedBy ? `已由 ${item.resolvedBy} 处理` : "已处理"}</span>
+                        <span style={{ color: "#000000" }}>{item.resolvedBy ? `已由 ${item.resolvedBy} 处理` : "已处理"}</span>
                       )}
                     </td>
                   </tr>
@@ -1264,7 +1264,7 @@ export default function AdminHomePage() {
       {/* 7. AI知识投喂 */}
       <section id="knowledge-feed" style={{ ...sectionStyle, display: activeSection === "knowledge-feed" ? "block" : "none" }}>
         <h2 style={{ marginTop: 0, marginBottom: 12, fontSize: 18 }}>{SECTION_LABELS["knowledge-feed"]}</h2>
-        <p style={{ color: "#1f2937", marginBottom: 12, fontSize: 14 }}>
+        <p style={{ color: "#000000", marginBottom: 12, fontSize: 14 }}>
           填写业务规则、时效说明、清关说明等内容，AI 会作为上下文参考。
         </p>
         <div style={{ display: "grid", gap: 8, maxWidth: 720 }}>
@@ -1304,8 +1304,8 @@ export default function AdminHomePage() {
             {knowledgeItems.map((item) => (
               <div key={item.id} style={{ border: "1px solid #e5e7eb", borderRadius: 10, padding: 12 }}>
                 <div style={{ fontWeight: 600 }}>{item.title}</div>
-                <div style={{ marginTop: 6, whiteSpace: "pre-wrap", color: "#374151", fontSize: 14 }}>{item.content}</div>
-                <div style={{ marginTop: 6, color: "#1f2937", fontSize: 12 }}>
+                <div style={{ marginTop: 6, whiteSpace: "pre-wrap", color: "#000000", fontSize: 14 }}>{item.content}</div>
+                <div style={{ marginTop: 6, color: "#000000", fontSize: 12 }}>
                   {item.createdAt} / by {item.createdBy}
                 </div>
                 <div style={{ marginTop: 8 }}>
@@ -1332,12 +1332,12 @@ export default function AdminHomePage() {
       </section>
       <section id="shipping-config" style={{ ...sectionStyle, display: activeSection === "shipping-config" ? "block" : "none" }}>
         <h2 style={{ marginTop: 0, marginBottom: 12, fontSize: 18 }}>运费配置</h2>
-        <p style={{ color: "#1f2937", marginBottom: 12, fontSize: 14 }}>
+        <p style={{ color: "#000000", marginBottom: 12, fontSize: 14 }}>
           设置最低计费体积（低消）。当货物体积低于低消时，按低消计算运费。
         </p>
         <div style={{ display: "grid", gap: 10, maxWidth: 400 }}>
           <div>
-            <div style={{ fontSize: 13, color: "#374151", marginBottom: 4 }}>海运低消（立方米）</div>
+            <div style={{ fontSize: 13, color: "#000000", marginBottom: 4 }}>海运低消（立方米）</div>
             <input
               value={shippingConfigSea}
               onChange={(e) => setShippingConfigSea(e.target.value)}
@@ -1346,7 +1346,7 @@ export default function AdminHomePage() {
             />
           </div>
           <div>
-            <div style={{ fontSize: 13, color: "#374151", marginBottom: 4 }}>陆运低消（立方米）</div>
+            <div style={{ fontSize: 13, color: "#000000", marginBottom: 4 }}>陆运低消（立方米）</div>
             <input
               value={shippingConfigLand}
               onChange={(e) => setShippingConfigLand(e.target.value)}
@@ -1384,25 +1384,25 @@ export default function AdminHomePage() {
             <h3 style={{ margin: "0 0 16px", fontSize: 18, fontWeight: 600 }}>创建员工账号</h3>
             <div style={{ display: "grid", gap: 10 }}>
               <div>
-                <label style={{ fontSize: 12, color: "#1f2937", display: "block", marginBottom: 4 }}>账号（选填）</label>
+                <label style={{ fontSize: 12, color: "#000000", display: "block", marginBottom: 4 }}>账号（选填）</label>
                 <input value={staffForm.id} onChange={(e) => setStaffForm((f) => ({ ...f, id: e.target.value }))} placeholder="留空自动生成" style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 10px", width: "100%", fontSize: 13 }} />
               </div>
               <div>
-                <label style={{ fontSize: 12, color: "#1f2937", display: "block", marginBottom: 4 }}>姓名 *</label>
+                <label style={{ fontSize: 12, color: "#000000", display: "block", marginBottom: 4 }}>姓名 *</label>
                 <input value={staffForm.name} onChange={(e) => setStaffForm((f) => ({ ...f, name: e.target.value }))} placeholder="员工姓名" style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 10px", width: "100%", fontSize: 13 }} />
               </div>
               <div>
-                <label style={{ fontSize: 12, color: "#1f2937", display: "block", marginBottom: 4 }}>手机 *</label>
+                <label style={{ fontSize: 12, color: "#000000", display: "block", marginBottom: 4 }}>手机 *</label>
                 <input value={staffForm.phone} onChange={(e) => setStaffForm((f) => ({ ...f, phone: e.target.value }))} placeholder="手机号" style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 10px", width: "100%", fontSize: 13 }} />
               </div>
               <div>
-                <label style={{ fontSize: 12, color: "#1f2937", display: "block", marginBottom: 4 }}>登录密码</label>
+                <label style={{ fontSize: 12, color: "#000000", display: "block", marginBottom: 4 }}>登录密码</label>
                 <input type="password" value={staffForm.password} onChange={(e) => setStaffForm((f) => ({ ...f, password: e.target.value }))} placeholder="密码（可选）" style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 10px", width: "100%", fontSize: 13 }} />
               </div>
             </div>
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 16 }}>
-              <button type="button" onClick={() => setShowStaffModal(false)} style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 14px", background: "#fff", cursor: "pointer", color: "#374151", fontSize: 13 }}>取消</button>
-              <button type="button" disabled={loading} onClick={() => void submitAddStaff()} style={{ border: "none", borderRadius: 8, padding: "8px 14px", background: loading ? "#1f2937" : "#2563eb", color: "#fff", fontWeight: 600, cursor: loading ? "not-allowed" : "pointer", fontSize: 13 }}>{loading ? "提交中…" : "创建"}</button>
+              <button type="button" onClick={() => setShowStaffModal(false)} style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 14px", background: "#fff", cursor: "pointer", color: "#000000", fontSize: 13 }}>取消</button>
+              <button type="button" disabled={loading} onClick={() => void submitAddStaff()} style={{ border: "none", borderRadius: 8, padding: "8px 14px", background: loading ? "#000000" : "#2563eb", color: "#fff", fontWeight: 600, cursor: loading ? "not-allowed" : "pointer", fontSize: 13 }}>{loading ? "提交中…" : "创建"}</button>
             </div>
           </div>
         </div>
@@ -1415,33 +1415,33 @@ export default function AdminHomePage() {
             <h3 style={{ margin: "0 0 16px", fontSize: 18, fontWeight: 600 }}>创建客户账号</h3>
             <div style={{ display: "grid", gap: 10 }}>
               <div>
-                <label style={{ fontSize: 12, color: "#1f2937", display: "block", marginBottom: 4 }}>账号（选填，不填则自动生成）</label>
+                <label style={{ fontSize: 12, color: "#000000", display: "block", marginBottom: 4 }}>账号（选填，不填则自动生成）</label>
                 <input value={clientForm.id} onChange={(e) => setClientForm((f) => ({ ...f, id: e.target.value }))} placeholder="留空自动生成" style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 10px", width: "100%", fontSize: 13 }} />
               </div>
               <div>
-                <label style={{ fontSize: 12, color: "#1f2937", display: "block", marginBottom: 4 }}>客户名字 *</label>
+                <label style={{ fontSize: 12, color: "#000000", display: "block", marginBottom: 4 }}>客户名字 *</label>
                 <input value={clientForm.name} onChange={(e) => setClientForm((f) => ({ ...f, name: e.target.value }))} placeholder="客户姓名" style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 10px", width: "100%", fontSize: 13 }} />
               </div>
               <div>
-                <label style={{ fontSize: 12, color: "#1f2937", display: "block", marginBottom: 4 }}>公司名字</label>
+                <label style={{ fontSize: 12, color: "#000000", display: "block", marginBottom: 4 }}>公司名字</label>
                 <input value={clientForm.companyName} onChange={(e) => setClientForm((f) => ({ ...f, companyName: e.target.value }))} placeholder="公司名（可选）" style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 10px", width: "100%", fontSize: 13 }} />
               </div>
               <div>
-                <label style={{ fontSize: 12, color: "#1f2937", display: "block", marginBottom: 4 }}>电话号码 *</label>
+                <label style={{ fontSize: 12, color: "#000000", display: "block", marginBottom: 4 }}>电话号码 *</label>
                 <input value={clientForm.phone} onChange={(e) => setClientForm((f) => ({ ...f, phone: e.target.value }))} placeholder="手机号" style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 10px", width: "100%", fontSize: 13 }} />
               </div>
               <div>
-                <label style={{ fontSize: 12, color: "#1f2937", display: "block", marginBottom: 4 }}>邮箱</label>
+                <label style={{ fontSize: 12, color: "#000000", display: "block", marginBottom: 4 }}>邮箱</label>
                 <input value={clientForm.email} onChange={(e) => setClientForm((f) => ({ ...f, email: e.target.value }))} placeholder="email@example.com" style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 10px", width: "100%", fontSize: 13 }} />
               </div>
               <div>
-                <label style={{ fontSize: 12, color: "#1f2937", display: "block", marginBottom: 4 }}>登录密码 *</label>
+                <label style={{ fontSize: 12, color: "#000000", display: "block", marginBottom: 4 }}>登录密码 *</label>
                 <input type="password" value={clientForm.password} onChange={(e) => setClientForm((f) => ({ ...f, password: e.target.value }))} placeholder="密码（必填）" style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 10px", width: "100%", fontSize: 13 }} />
               </div>
             </div>
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 16 }}>
-              <button type="button" onClick={() => setShowClientModal(false)} style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 14px", background: "#fff", cursor: "pointer", color: "#374151", fontSize: 13 }}>取消</button>
-              <button type="button" disabled={loading} onClick={() => void submitAddClient()} style={{ border: "none", borderRadius: 8, padding: "8px 14px", background: loading ? "#1f2937" : "#2563eb", color: "#fff", fontWeight: 600, cursor: loading ? "not-allowed" : "pointer", fontSize: 13 }}>{loading ? "提交中…" : "创建"}</button>
+              <button type="button" onClick={() => setShowClientModal(false)} style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 14px", background: "#fff", cursor: "pointer", color: "#000000", fontSize: 13 }}>取消</button>
+              <button type="button" disabled={loading} onClick={() => void submitAddClient()} style={{ border: "none", borderRadius: 8, padding: "8px 14px", background: loading ? "#000000" : "#2563eb", color: "#fff", fontWeight: 600, cursor: loading ? "not-allowed" : "pointer", fontSize: 13 }}>{loading ? "提交中…" : "创建"}</button>
             </div>
           </div>
         </div>

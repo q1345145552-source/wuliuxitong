@@ -72,7 +72,7 @@ export default function LoginPage() {
           boxShadow: "0 16px 48px rgba(0,0,0,0.3)",
         }}>
         <h1 style={{ margin: 0, fontSize: 24, textAlign: "center", color: "#171717" }}>湘泰物流系统登录</h1>
-        <p style={{ marginTop: 8, color: "#1f2937", fontSize: 14, textAlign: "center" }}>请输入账号和密码登录系统。</p>
+        <p style={{ marginTop: 8, color: "#000000", fontSize: 14, textAlign: "center" }}>请输入账号和密码登录系统。</p>
 
         <div style={{ display: "grid", gap: 10, marginTop: 14 }}>
           <input
@@ -97,7 +97,7 @@ export default function LoginPage() {
               border: "none",
               borderRadius: 8,
               padding: "10px 12px",
-              background: canSubmit && !loading ? "#2563eb" : "#1f2937",
+              background: canSubmit && !loading ? "#2563eb" : "#000000",
               color: "#fff",
               fontWeight: 600,
               cursor: canSubmit && !loading ? "pointer" : "not-allowed",

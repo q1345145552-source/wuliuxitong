@@ -83,7 +83,7 @@ export default function ClientTrackPage() {
     <RoleShell allowedRole="client" title="物流追踪看板">
       <section style={{ border: "1px solid #e5e7eb", borderRadius: 12, padding: 16, background: "#fff" }}>
         <h2 style={{ marginTop: 0 }}>Track & Trace（免登录查询）</h2>
-        <p style={{ color: "#1f2937", marginTop: 0 }}>
+        <p style={{ color: "#000000", marginTop: 0 }}>
           点击按钮将<strong>直接打开快递100</strong>（无需先填单号）；填写单号或公司编码后，跳转链接会尽量带上参数。
         </p>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(220px,1fr))", gap: 8 }}>

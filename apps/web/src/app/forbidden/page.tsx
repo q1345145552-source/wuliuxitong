@@ -16,7 +16,7 @@ export default function ForbiddenPage() {
       <p style={{ color: "#4b5563", marginBottom: 8 }}>
         当前登录角色无权访问该页面。
       </p>
-      <p style={{ color: "#1f2937", marginBottom: 16 }}>来源页面：{from}</p>
+      <p style={{ color: "#000000", marginBottom: 16 }}>来源页面：{from}</p>
       <div style={{ display: "flex", gap: 10 }}>
         <a href="/login" style={{ color: "#2563eb", textDecoration: "none" }}>
           返回登录切换角色

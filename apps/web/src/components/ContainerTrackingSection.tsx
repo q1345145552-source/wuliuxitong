@@ -60,7 +60,7 @@ function statusColor(status: string): { bg: string; fg: string; border: string }
     case "SIGNED":
       return { bg: "#dcfce7", fg: "#166534", border: "#bbf7d0" };
     default:
-      return { bg: "#f1f5f9", fg: "#475569", border: "#e2e8f0" };
+      return { bg: "#f1f5f9", fg: "#000000", border: "#e2e8f0" };
   }
 }
 
@@ -210,7 +210,7 @@ export function ContainerTrackingSection({ shipmentId, trackingNo }: Props) {
                       padding: "1px 7px",
                       borderRadius: 4,
                       background: "#f1f5f9",
-                      color: "#475569",
+                      color: "#000000",
                       fontWeight: 600,
                     }}
                   >

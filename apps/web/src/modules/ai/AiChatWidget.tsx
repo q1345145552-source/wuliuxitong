@@ -132,10 +132,10 @@ export default function AiChatWidget() {
         >
           <div style={{ padding: "12px 14px", borderBottom: "1px solid #e5e7eb" }}>
             <strong>订单 AI 助手</strong>
-            <div style={{ fontSize: 12, color: "#1f2937", marginTop: 4 }}>
+            <div style={{ fontSize: 12, color: "#000000", marginTop: 4 }}>
               数据范围：同公司账号数据
             </div>
-            <div style={{ fontSize: 12, color: "#1f2937", marginTop: 2 }}>
+            <div style={{ fontSize: 12, color: "#000000", marginTop: 2 }}>
               当前身份：{session.role} / {session.userId} / {session.companyId}
             </div>
           </div>
@@ -184,7 +184,7 @@ export default function AiChatWidget() {
                   border: "1px solid #e5e7eb",
                 }}
               >
-                <span style={{ color: "#1f2937", marginRight: 6 }}>AI 思考中</span>
+                <span style={{ color: "#000000", marginRight: 6 }}>AI 思考中</span>
                 <span className="typing-dots" aria-hidden>
                   <span />
                   <span />
@@ -232,7 +232,7 @@ export default function AiChatWidget() {
                 }}
               />
               {input.trim().length > 0 && !loading ? (
-                <div style={{ marginTop: 4, color: "#1f2937", fontSize: 12 }}>输入中...</div>
+                <div style={{ marginTop: 4, color: "#000000", fontSize: 12 }}>输入中...</div>
               ) : null}
             </div>
             <button
@@ -244,7 +244,7 @@ export default function AiChatWidget() {
                 borderRadius: 8,
                 padding: "8px 14px",
                 color: "#fff",
-                background: canSend ? "#2563eb" : "#1f2937",
+                background: canSend ? "#2563eb" : "#000000",
                 cursor: canSend ? "pointer" : "not-allowed",
               }}
             >

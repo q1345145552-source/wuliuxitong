@@ -94,7 +94,7 @@ export default function ClientBillsPage() {
 
   return (
     <RoleShell allowedRole="client" title="我的账单">
-      <p style={{ marginTop: 0, color: "#1f2937", fontSize: 13 }}>
+      <p style={{ marginTop: 0, color: "#000000", fontSize: 13 }}>
         账单页只展示订单信息与金额，不包含物流状态/轨迹（避免把物流进度当作账单要素）。
       </p>
 
@@ -121,7 +121,7 @@ export default function ClientBillsPage() {
             borderRadius: 999,
             padding: "6px 14px",
             color: "#fff",
-            background: payTab === "unpaid" ? "#2563eb" : "#1f2937",
+            background: payTab === "unpaid" ? "#2563eb" : "#000000",
             fontWeight: 800,
           }}
         >
@@ -135,7 +135,7 @@ export default function ClientBillsPage() {
             borderRadius: 999,
             padding: "6px 14px",
             color: "#fff",
-            background: payTab === "paid" ? "#2563eb" : "#1f2937",
+            background: payTab === "paid" ? "#2563eb" : "#000000",
             fontWeight: 800,
           }}
         >
@@ -182,7 +182,7 @@ export default function ClientBillsPage() {
             border: "none",
             borderRadius: 10,
             padding: "8px 12px",
-            background: filtered.length === 0 ? "#1f2937" : "#0f766e",
+            background: filtered.length === 0 ? "#000000" : "#0f766e",
             color: "#fff",
             fontWeight: 800,
             cursor: filtered.length === 0 ? "not-allowed" : "pointer",

@@ -71,7 +71,7 @@ export default function RoleSwitcher(props: { compact?: boolean }) {
         background: "#fff",
       }}
     >
-      <div style={{ fontSize: compact ? 12 : 13, color: "#1f2937", marginBottom: 8 }}>
+      <div style={{ fontSize: compact ? 12 : 13, color: "#000000", marginBottom: 8 }}>
         当前身份：{session ? `${session.role} / ${session.userId} / ${session.companyId}` : "未登录"}
       </div>
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
