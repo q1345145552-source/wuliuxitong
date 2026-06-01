@@ -137,7 +137,7 @@ export default function ClientAddressBookPage() {
                         setLoading(false);
                       }
                     }}
-                    style={{ border: "1px solid #94a3b8", borderRadius: 8, padding: "6px 10px", background: "#fff" }}
+                    style={{ border: "1px solid #64748b", borderRadius: 8, padding: "6px 10px", background: "#fff" }}
                   >
                     设为默认
                   </button>

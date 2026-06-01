@@ -149,7 +149,7 @@ export default function ClientImportsPage() {
               border: "none",
               borderRadius: 8,
               padding: "8px 12px",
-              background: rows.length === 0 ? "#94a3b8" : "#2563eb",
+              background: rows.length === 0 ? "#64748b" : "#2563eb",
               color: "#fff",
             }}
           >

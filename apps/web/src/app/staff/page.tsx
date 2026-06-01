@@ -57,7 +57,7 @@ function OrderProductImagesPanel(props: OrderProductImagesPanelProps) {
         订单详情 · 产品图（最多 {MAX_ORDER_PRODUCT_IMAGES} 张）
       </div>
       {imgs.length === 0 && !canAdd ? (
-        <div style={{ fontSize: 12, color: "#94a3b8" }}>暂无产品图</div>
+        <div style={{ fontSize: 12, color: "#64748b" }}>暂无产品图</div>
       ) : (
         <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "flex-start" }}>
           {imgs.map((img) => (
@@ -110,7 +110,7 @@ function OrderProductImagesPanel(props: OrderProductImagesPanelProps) {
                 style={{
                   width: 88,
                   height: 88,
-                  border: "1px dashed #94a3b8",
+                  border: "1px dashed #64748b",
                   borderRadius: 8,
                   display: "flex",
                   alignItems: "center",
@@ -344,7 +344,7 @@ function StatusUpdateImageAttach(props: StatusUpdateImageAttachProps) {
           清除
         </button>
       ) : null}
-      <span style={{ fontSize: 11, color: "#94a3b8" }}>附图存为入库拍照</span>
+      <span style={{ fontSize: 11, color: "#64748b" }}>附图存为入库拍照</span>
     </div>
   );
 }
@@ -2155,7 +2155,7 @@ export default function StaffHomePage() {
                     setLoading(false);
                   }
                 }}
-                style={{ border: "none", borderRadius: 8, padding: "8px 14px", color: "#fff", background: photoDraft.shipmentId.trim() && photoDraft.fileName && photoDraft.contentBase64 ? "#dc2626" : "#9ca3af" }}
+                style={{ border: "none", borderRadius: 8, padding: "8px 14px", color: "#fff", background: photoDraft.shipmentId.trim() && photoDraft.fileName && photoDraft.contentBase64 ? "#dc2626" : "#6b7280" }}
               >
                 上传入库照片
               </button>
@@ -3064,7 +3064,7 @@ export default function StaffHomePage() {
                                                   }
                                                 }}
                                               />
-                                              <span style={{ fontSize: 11, color: "#94a3b8" }}>上传后写入入库拍照记录</span>
+                                              <span style={{ fontSize: 11, color: "#64748b" }}>上传后写入入库拍照记录</span>
                                             </div>
                                           </ShipmentEditFormField>
                                           <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
@@ -3098,7 +3098,7 @@ export default function StaffHomePage() {
                                           borderRadius: 8,
                                           padding: "8px 14px",
                                           color: "#fff",
-                                          background: item.orderId ? "#059669" : "#94a3b8",
+                                          background: item.orderId ? "#059669" : "#64748b",
                                           cursor: item.orderId ? "pointer" : "not-allowed",
                                           fontWeight: 600,
                                         }}
@@ -3196,7 +3196,7 @@ export default function StaffHomePage() {
           </button>
         </div>
         {lastmileItems.length === 0 ? (
-          <div style={{ color: "#9ca3af", fontSize: 13, padding: "20px 0", textAlign: "center" }}>无结果，请输入唛头或客户名搜索</div>
+          <div style={{ color: "#6b7280", fontSize: 13, padding: "20px 0", textAlign: "center" }}>无结果，请输入唛头或客户名搜索</div>
         ) : (
           <div style={{ display: "grid", gap: 10 }}>
             {lastmileItems.map((client) => (
@@ -3209,7 +3209,7 @@ export default function StaffHomePage() {
                   <span style={{ fontSize: 12, color: "#64748b" }}>{client.phone}</span>
                 </div>
                 {client.addresses.length === 0 ? (
-                  <div style={{ fontSize: 12, color: "#94a3b8" }}>暂无地址</div>
+                  <div style={{ fontSize: 12, color: "#64748b" }}>暂无地址</div>
                 ) : (
                   client.addresses.map((addr) => (
                     <div key={addr.id} style={{ padding: "6px 8px", background: "#f8fafc", borderRadius: 6, marginBottom: 4, border: addr.isDefault ? "1px solid #bbf7d0" : "1px solid #f1f5f9" }}>
@@ -3354,7 +3354,7 @@ export default function StaffHomePage() {
             ) : null}
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 16 }}>
               <button type="button" onClick={() => { setShowCreateModal(false); setMessage(""); }} style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "8px 16px", fontSize: 13, background: "#fff", cursor: "pointer", color: "#374151" }}>取消</button>
-              <button type="button" disabled={loading} onClick={() => void submitOrder()} style={{ border: "none", borderRadius: 6, padding: "8px 16px", fontSize: 13, background: loading ? "#94a3b8" : "#2563eb", color: "#fff", fontWeight: 500, cursor: loading ? "not-allowed" : "pointer" }}>{loading ? "提交中…" : "创建订单"}</button>
+              <button type="button" disabled={loading} onClick={() => void submitOrder()} style={{ border: "none", borderRadius: 6, padding: "8px 16px", fontSize: 13, background: loading ? "#64748b" : "#2563eb", color: "#fff", fontWeight: 500, cursor: loading ? "not-allowed" : "pointer" }}>{loading ? "提交中…" : "创建订单"}</button>
             </div>
           </div>
         </div>
@@ -3412,7 +3412,7 @@ export default function StaffHomePage() {
                   const text = error instanceof Error ? error.message : "分柜失败";
                   setMessage(`分柜失败：${text}`);
                 } finally { setLoading(false); }
-              }} style={{ border: "none", borderRadius: 6, padding: "8px 16px", fontSize: 13, background: loading ? "#94a3b8" : "#d97706", color: "#fff", fontWeight: 500, cursor: loading ? "not-allowed" : "pointer" }}>{loading ? "提交中…" : "确认分柜"}</button>
+              }} style={{ border: "none", borderRadius: 6, padding: "8px 16px", fontSize: 13, background: loading ? "#64748b" : "#d97706", color: "#fff", fontWeight: 500, cursor: loading ? "not-allowed" : "pointer" }}>{loading ? "提交中…" : "确认分柜"}</button>
             </div>
           </div>
         </div>

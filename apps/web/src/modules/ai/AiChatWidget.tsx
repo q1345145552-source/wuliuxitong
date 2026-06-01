@@ -244,7 +244,7 @@ export default function AiChatWidget() {
                 borderRadius: 8,
                 padding: "8px 14px",
                 color: "#fff",
-                background: canSend ? "#2563eb" : "#9ca3af",
+                background: canSend ? "#2563eb" : "#6b7280",
                 cursor: canSend ? "pointer" : "not-allowed",
               }}
             >

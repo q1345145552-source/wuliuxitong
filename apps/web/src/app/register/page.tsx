@@ -115,7 +115,7 @@ export default function RegisterPage() {
               border: "none",
               borderRadius: 8,
               padding: "10px 12px",
-              background: canSubmit && !loading ? "#059669" : "#94a3b8",
+              background: canSubmit && !loading ? "#059669" : "#64748b",
               color: "#fff",
               fontWeight: 600,
               cursor: canSubmit && !loading ? "pointer" : "not-allowed",

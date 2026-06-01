@@ -613,7 +613,7 @@ export default function ClientHomePage() {
               style={{ flex: 1, border: "1px solid #d1d5db", borderRadius: 6, padding: "8px 12px", fontSize: 13 }} />
           </div>
           {prealerts.length === 0 ? (
-            <div style={{ color: "#9ca3af", fontSize: 13, padding: "20px 0", textAlign: "center" }}>暂无预报单</div>
+            <div style={{ color: "#6b7280", fontSize: 13, padding: "20px 0", textAlign: "center" }}>暂无预报单</div>
           ) : (
             <div style={{ display: "grid", gap: 8 }}>
               {prealerts.filter((item) => {
@@ -636,7 +636,7 @@ export default function ClientHomePage() {
                         <span style={{ fontWeight: 600, fontSize: 14, fontFamily: "monospace" }}>{item.orderNo || item.id}</span>
                         <span style={{ marginLeft: 8, fontSize: 11, fontWeight: 500, color: sColor, background: sBg, padding: "2px 8px", borderRadius: 4 }}>{sLabel}</span>
                       </div>
-                      <div style={{ fontSize: 12, color: "#9ca3af" }}>{item.createdAt.slice(0, 10)}</div>
+                      <div style={{ fontSize: 12, color: "#6b7280" }}>{item.createdAt.slice(0, 10)}</div>
                     </div>
                     <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: 6, fontSize: 13, color: "#374151", marginBottom: 8 }}>
                       <div>品名：{item.itemName}</div>
@@ -865,7 +865,7 @@ export default function ClientHomePage() {
                   borderRadius: 999,
                   padding: "6px 14px",
                   color: "#fff",
-                  background: queryMode === "unfinished" ? "#2563eb" : "#94a3b8",
+                  background: queryMode === "unfinished" ? "#2563eb" : "#64748b",
                 }}
               >
                 订单在途
@@ -878,7 +878,7 @@ export default function ClientHomePage() {
                   borderRadius: 999,
                   padding: "6px 14px",
                   color: "#fff",
-                  background: queryMode === "completed" ? "#2563eb" : "#94a3b8",
+                  background: queryMode === "completed" ? "#2563eb" : "#64748b",
                 }}
               >
                 订单已完成
@@ -891,7 +891,7 @@ export default function ClientHomePage() {
                   borderRadius: 999,
                   padding: "6px 14px",
                   color: "#fff",
-                  background: queryMode === "all" ? "#2563eb" : "#94a3b8",
+                  background: queryMode === "all" ? "#2563eb" : "#64748b",
                 }}
               >
                 全部订单
@@ -931,7 +931,7 @@ export default function ClientHomePage() {
                       top: "50%",
                       transform: "translateY(-50%)",
                       fontSize: 12,
-                      color: "#94a3b8",
+                      color: "#64748b",
                       pointerEvents: "none",
                     }}
                   >
@@ -1113,7 +1113,7 @@ export default function ClientHomePage() {
                   <div className="order-field-label">订单详情 · 产品图</div>
                   <div className="order-field-value" style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
                     {(item.productImages?.length ?? 0) === 0 ? (
-                      <span style={{ color: "#94a3b8" }}>暂无（由仓库员工上传）</span>
+                      <span style={{ color: "#64748b" }}>暂无（由仓库员工上传）</span>
                     ) : (
                       item.productImages?.map((img) => (
                         <a
@@ -1240,7 +1240,7 @@ export default function ClientHomePage() {
               style={{ flex: 1, border: "1px solid #d1d5db", borderRadius: 6, padding: "8px 12px", fontSize: 13 }} />
           </div>
           {prealerts.length === 0 ? (
-            <div style={{ color: "#9ca3af", fontSize: 13, padding: "20px 0", textAlign: "center" }}>暂无预报单</div>
+            <div style={{ color: "#6b7280", fontSize: 13, padding: "20px 0", textAlign: "center" }}>暂无预报单</div>
           ) : (
             <div style={{ display: "grid", gap: 8 }}>
               {prealerts.filter((item) => {
@@ -1263,7 +1263,7 @@ export default function ClientHomePage() {
                         <span style={{ fontWeight: 600, fontSize: 14, fontFamily: "monospace" }}>{item.orderNo || item.id}</span>
                         <span style={{ marginLeft: 8, fontSize: 11, fontWeight: 500, color: sColor, background: sBg, padding: "2px 8px", borderRadius: 4 }}>{sLabel}</span>
                       </div>
-                      <div style={{ fontSize: 12, color: "#9ca3af" }}>{item.createdAt.slice(0, 10)}</div>
+                      <div style={{ fontSize: 12, color: "#6b7280" }}>{item.createdAt.slice(0, 10)}</div>
                     </div>
                     <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: 6, fontSize: 13, color: "#374151", marginBottom: 8 }}>
                       <div>品名：{item.itemName}</div>

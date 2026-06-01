@@ -68,7 +68,7 @@ export function openShipmentTrack(trackingNo: string) {
       <h3 style="margin:0;font-size:18px;font-weight:600">物流轨迹</h3>
       <span style="font-size:13px;color:#6b7280">${escapeHtml(trackingNo)}</span>
     </div>
-    <div id="track-content" style="text-align:center;padding:40px 0;color:#94a3b8">加载中…</div>
+    <div id="track-content" style="text-align:center;padding:40px 0;color:#64748b">加载中…</div>
     <div style="display:flex;justify-content:flex-end;margin-top:16px">
       <button id="track-close-btn" style="border:1px solid #d1d5db;border-radius:6px;padding:8px 16px;font-size:13px;background:#fff;cursor:pointer;color:#374151">关闭</button>
     </div>
@@ -93,7 +93,7 @@ export function openShipmentTrack(trackingNo: string) {
       const data = json.data as TrackData | undefined;
       const content = modal.querySelector("#track-content")!;
       if (!data || !data.timeline) {
-        content.innerHTML = '<div style="color:#94a3b8;padding:20px 0">暂无物流轨迹</div>';
+        content.innerHTML = '<div style="color:#64748b;padding:20px 0">暂无物流轨迹</div>';
         return;
       }
       // 当前状态
@@ -114,7 +114,7 @@ export function openShipmentTrack(trackingNo: string) {
           <div style="font-size:12px;color:#64748b;margin-bottom:2px">${formatTime(item.changedAt)}</div>
           <div style="font-size:13px;font-weight:500;color:#1f2937">${statusZh(item.fromStatus)} → ${statusZh(item.toStatus)}</div>
           ${item.remark ? `<div style="font-size:12px;color:#6b7280;margin-top:2px">备注：${escapeHtml(item.remark)}</div>` : ""}
-          <div style="font-size:11px;color:#9ca3af;margin-top:1px">操作人：${item.operatorRole === "client" ? "客户" : item.operatorRole === "staff" ? "员工" : "管理员"}</div>
+          <div style="font-size:11px;color:#6b7280;margin-top:1px">操作人：${item.operatorRole === "client" ? "客户" : item.operatorRole === "staff" ? "员工" : "管理员"}</div>
         </div>`;
       });
       html += "</div>";
@@ -142,7 +142,7 @@ export function openShipmentTrack(trackingNo: string) {
             });
             html += '</div>';
           } else {
-            html += '<div style="font-size:11px;color:#9ca3af">暂无轨迹</div>';
+            html += '<div style="font-size:11px;color:#6b7280">暂无轨迹</div>';
           }
           html += '</div>';
         });

@@ -121,7 +121,7 @@ export default function ClientBillsPage() {
             borderRadius: 999,
             padding: "6px 14px",
             color: "#fff",
-            background: payTab === "unpaid" ? "#2563eb" : "#94a3b8",
+            background: payTab === "unpaid" ? "#2563eb" : "#64748b",
             fontWeight: 800,
           }}
         >
@@ -135,7 +135,7 @@ export default function ClientBillsPage() {
             borderRadius: 999,
             padding: "6px 14px",
             color: "#fff",
-            background: payTab === "paid" ? "#2563eb" : "#94a3b8",
+            background: payTab === "paid" ? "#2563eb" : "#64748b",
             fontWeight: 800,
           }}
         >
@@ -182,7 +182,7 @@ export default function ClientBillsPage() {
             border: "none",
             borderRadius: 10,
             padding: "8px 12px",
-            background: filtered.length === 0 ? "#94a3b8" : "#0f766e",
+            background: filtered.length === 0 ? "#64748b" : "#0f766e",
             color: "#fff",
             fontWeight: 800,
             cursor: filtered.length === 0 ? "not-allowed" : "pointer",

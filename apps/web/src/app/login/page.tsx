@@ -97,7 +97,7 @@ export default function LoginPage() {
               border: "none",
               borderRadius: 8,
               padding: "10px 12px",
-              background: canSubmit && !loading ? "#2563eb" : "#94a3b8",
+              background: canSubmit && !loading ? "#2563eb" : "#64748b",
               color: "#fff",
               fontWeight: 600,
               cursor: canSubmit && !loading ? "pointer" : "not-allowed",

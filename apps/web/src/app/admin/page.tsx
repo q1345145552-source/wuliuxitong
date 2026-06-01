@@ -201,7 +201,7 @@ export default function AdminHomePage() {
       { name: "已完成", value: bucket.delivered, color: "#10b981" },
       { name: "在途", value: bucket.inTransit, color: "#f59e0b" },
       { name: "处理中", value: bucket.processing, color: "#f59e0b" },
-      { name: "异常/其他", value: bucket.exception, color: "#94a3b8" },
+      { name: "异常/其他", value: bucket.exception, color: "#64748b" },
     ];
   }, [orderList]);
 
@@ -978,7 +978,7 @@ export default function AdminHomePage() {
                 borderRadius: 8,
                 padding: "6px 12px",
                 color: "#fff",
-                background: orderList.length === 0 ? "#94a3b8" : "#2563eb",
+                background: orderList.length === 0 ? "#64748b" : "#2563eb",
                 cursor: orderList.length === 0 ? "not-allowed" : "pointer",
               }}
             >
@@ -1402,7 +1402,7 @@ export default function AdminHomePage() {
             </div>
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 16 }}>
               <button type="button" onClick={() => setShowStaffModal(false)} style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 14px", background: "#fff", cursor: "pointer", color: "#374151", fontSize: 13 }}>取消</button>
-              <button type="button" disabled={loading} onClick={() => void submitAddStaff()} style={{ border: "none", borderRadius: 8, padding: "8px 14px", background: loading ? "#94a3b8" : "#2563eb", color: "#fff", fontWeight: 600, cursor: loading ? "not-allowed" : "pointer", fontSize: 13 }}>{loading ? "提交中…" : "创建"}</button>
+              <button type="button" disabled={loading} onClick={() => void submitAddStaff()} style={{ border: "none", borderRadius: 8, padding: "8px 14px", background: loading ? "#64748b" : "#2563eb", color: "#fff", fontWeight: 600, cursor: loading ? "not-allowed" : "pointer", fontSize: 13 }}>{loading ? "提交中…" : "创建"}</button>
             </div>
           </div>
         </div>
@@ -1441,7 +1441,7 @@ export default function AdminHomePage() {
             </div>
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 16 }}>
               <button type="button" onClick={() => setShowClientModal(false)} style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 14px", background: "#fff", cursor: "pointer", color: "#374151", fontSize: 13 }}>取消</button>
-              <button type="button" disabled={loading} onClick={() => void submitAddClient()} style={{ border: "none", borderRadius: 8, padding: "8px 14px", background: loading ? "#94a3b8" : "#2563eb", color: "#fff", fontWeight: 600, cursor: loading ? "not-allowed" : "pointer", fontSize: 13 }}>{loading ? "提交中…" : "创建"}</button>
+              <button type="button" disabled={loading} onClick={() => void submitAddClient()} style={{ border: "none", borderRadius: 8, padding: "8px 14px", background: loading ? "#64748b" : "#2563eb", color: "#fff", fontWeight: 600, cursor: loading ? "not-allowed" : "pointer", fontSize: 13 }}>{loading ? "提交中…" : "创建"}</button>
             </div>
           </div>
         </div>
