@@ -680,7 +680,7 @@ export default function ClientHomePage() {
                             src={'data:' + img.mime + ';base64,' + img.contentBase64}
                             alt={img.fileName}
                             onClick={() => setPreviewImage({ src: 'data:' + img.mime + ';base64,' + img.contentBase64, alt: img.fileName })}
-                            style={{ width: 48, height: 48, objectFit: "cover", borderRadius: 4, border: "1px solid #e5e7eb", cursor: "pointer" }}
+                            style={{ width: 100, height: 100, objectFit: "cover", borderRadius: 4, border: "1px solid #e5e7eb", cursor: "pointer" }}
                           />
                         ))}
                       </div>
@@ -1321,7 +1321,7 @@ export default function ClientHomePage() {
                             src={'data:' + img.mime + ';base64,' + img.contentBase64}
                             alt={img.fileName}
                             onClick={() => setPreviewImage({ src: 'data:' + img.mime + ';base64,' + img.contentBase64, alt: img.fileName })}
-                            style={{ width: 48, height: 48, objectFit: "cover", borderRadius: 4, border: "1px solid #e5e7eb", cursor: "pointer" }}
+                            style={{ width: 100, height: 100, objectFit: "cover", borderRadius: 4, border: "1px solid #e5e7eb", cursor: "pointer" }}
                           />
                         ))}
                       </div>
