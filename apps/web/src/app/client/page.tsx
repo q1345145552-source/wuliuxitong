@@ -21,7 +21,7 @@ import {
   type ClientAddressItem,
   type OrderItem,
 } from "../../services/business-api";
-import { openPrintLabel } from "../../modules/shipment/ShipmentPrintLabel";
+import { openPrintLabel, openPrintPrealert } from "../../modules/shipment/ShipmentPrintLabel";
 import { openShipmentTrack } from "../../modules/shipment/ShipmentTrackModal";
 
 const initialSearch = {
@@ -668,6 +668,20 @@ export default function ClientHomePage() {
                       {item.trackingNo ? (
                         <button type="button" onClick={() => openShipmentTrack(item.trackingNo!)} style={{ border: "1px solid #2563eb", borderRadius: 4, padding: "4px 10px", fontSize: 12, background: "#fff", color: "#2563eb", cursor: "pointer", marginLeft: 6 }}>物流轨迹</button>
                       ) : null}
+                      <button type="button" onClick={() => {
+                        const wl = warehouseOptions.find(w => w.id === item.warehouseId)?.label || item.warehouseId || "—";
+                        openPrintPrealert({
+                          prealertNo: item.orderNo || item.id,
+                          itemName: item.itemName,
+                          packageCount: item.packageCount,
+                          packageUnit: (item.packageUnit as "bag" | "box") || "box",
+                          transportMode: (item.transportMode as "sea" | "land") || "sea",
+                          warehouseLabel: wl,
+                          domesticTrackingNo: item.domesticTrackingNo,
+                          createdAt: item.createdAt,
+                          clientId: item.clientId,
+                        });
+                      }} style={{ border: "1px solid #8b5cf6", borderRadius: 4, padding: "4px 10px", fontSize: 12, background: "#fff", color: "#8b5cf6", cursor: "pointer", marginLeft: 6 }}>打印预报单</button>
                     </div>
                   </div>
                 );
@@ -1295,6 +1309,20 @@ export default function ClientHomePage() {
                       {item.trackingNo ? (
                         <button type="button" onClick={() => openShipmentTrack(item.trackingNo!)} style={{ border: "1px solid #2563eb", borderRadius: 4, padding: "4px 10px", fontSize: 12, background: "#fff", color: "#2563eb", cursor: "pointer", marginLeft: 6 }}>物流轨迹</button>
                       ) : null}
+                      <button type="button" onClick={() => {
+                        const wl = warehouseOptions.find(w => w.id === item.warehouseId)?.label || item.warehouseId || "—";
+                        openPrintPrealert({
+                          prealertNo: item.orderNo || item.id,
+                          itemName: item.itemName,
+                          packageCount: item.packageCount,
+                          packageUnit: (item.packageUnit as "bag" | "box") || "box",
+                          transportMode: (item.transportMode as "sea" | "land") || "sea",
+                          warehouseLabel: wl,
+                          domesticTrackingNo: item.domesticTrackingNo,
+                          createdAt: item.createdAt,
+                          clientId: item.clientId,
+                        });
+                      }} style={{ border: "1px solid #8b5cf6", borderRadius: 4, padding: "4px 10px", fontSize: 12, background: "#fff", color: "#8b5cf6", cursor: "pointer", marginLeft: 6 }}>打印预报单</button>
                     </div>
                   </div>
                 );

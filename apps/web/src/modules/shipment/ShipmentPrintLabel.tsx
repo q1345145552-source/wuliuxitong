@@ -57,6 +57,59 @@ export function openPrintLabel(props: ShipmentPrintLabelProps) {
   win.document.close();
 }
 
+export interface PrealertPrintProps {
+  prealertNo: string;
+  itemName: string;
+  packageCount: number;
+  packageUnit: "bag" | "box";
+  transportMode: "sea" | "land";
+  warehouseLabel: string;
+  domesticTrackingNo?: string;
+  createdAt: string;
+  clientId?: string;
+}
+
+/**
+ * 预报单打印：预报单号 + 品名 + 件数 + 运输方式 + 仓库 + 国内单号 + 创建时间 + 唛头。
+ * 点击后打开新窗口直接打印。
+ */
+export function openPrintPrealert(props: PrealertPrintProps) {
+  const win = window.open("", "_blank", "width=480,height=680");
+  if (!win) return;
+
+  const modeLabel = props.transportMode === "sea" ? "海运" : "陆运";
+  const pkgLabel = props.packageUnit === "box" ? "箱" : "袋";
+
+  win.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>预报单</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: "Helvetica Neue", Arial, sans-serif; padding: 20px; }
+  .prealert { width: 380px; margin: 0 auto; border: 2px solid #000; padding: 24px; }
+  .title { text-align: center; font-size: 22px; font-weight: bold; margin-bottom: 20px; letter-spacing: 4px; }
+  .row { display: flex; padding: 8px 0; border-bottom: 1px solid #e5e7eb; font-size: 14px; }
+  .row .label { width: 80px; color: #6b7280; flex-shrink: 0; }
+  .row .value { flex: 1; font-weight: 500; color: #111; word-break: break-all; }
+  .prealert-no { font-size: 18px; font-weight: bold; margin-bottom: 8px; text-align: center; font-family: monospace; }
+  .footer { font-size: 11px; color: #999; text-align: center; margin-top: 20px; }
+  @media print { body { padding: 0; } .prealert { border: none; } }
+</style></head><body>
+<div class="prealert">
+  <div class="title">预 报 单</div>
+  <div class="prealert-no">${escapeHtml(props.prealertNo)}</div>
+  <div class="row"><span class="label">品名</span><span class="value">${escapeHtml(props.itemName)}</span></div>
+  <div class="row"><span class="label">件数</span><span class="value">${props.packageCount} ${pkgLabel}</span></div>
+  <div class="row"><span class="label">运输方式</span><span class="value">${modeLabel}</span></div>
+  <div class="row"><span class="label">仓库</span><span class="value">${escapeHtml(props.warehouseLabel)}</span></div>
+  ${props.domesticTrackingNo ? `<div class="row"><span class="label">国内单号</span><span class="value">${escapeHtml(props.domesticTrackingNo)}</span></div>` : ""}
+  <div class="row"><span class="label">创建时间</span><span class="value">${props.createdAt.slice(0, 10)}</span></div>
+  ${props.clientId ? `<div class="row"><span class="label">唛头</span><span class="value">${escapeHtml(props.clientId)}</span></div>` : ""}
+  <div class="footer">湘泰物流</div>
+</div>
+<script>window.print();</script></body></html>`);
+
+  win.document.close();
+}
+
 function escapeHtml(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
