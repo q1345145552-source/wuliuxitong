@@ -18,8 +18,10 @@ import {
   updateClientPrealert,
   fetchClientOrders,
   fetchClientWalletOverview,
+  fetchShippingPrices,
   type ClientAddressItem,
   type OrderItem,
+  type ShippingPriceItem,
 } from "../../services/business-api";
 import { openPrintLabel, openPrintPrealert } from "../../modules/shipment/ShipmentPrintLabel";
 import { openShipmentTrack } from "../../modules/shipment/ShipmentTrackModal";
@@ -120,6 +122,7 @@ export default function ClientHomePage() {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [editingPrealert, setEditingPrealert] = useState<OrderItem | null>(null);
   const [previewImage, setPreviewImage] = useState<{ src: string; alt: string } | null>(null);
+  const [shippingPrices, setShippingPrices] = useState<Record<string, ShippingPriceItem> | null>(null);
   const [queryPanelCollapsed, setQueryPanelCollapsed] = useState(false);
   const [openLogisticsByOrder, setOpenLogisticsByOrder] = useState<Record<string, boolean>>({});
   const [openDetailsByOrder, setOpenDetailsByOrder] = useState<Record<string, boolean>>({});
@@ -229,6 +232,9 @@ export default function ClientHomePage() {
         setMessage(`加载失败：${text}`);
       })
       .finally(() => setLoading(false));
+
+    // 加载运费价格表
+    fetchShippingPrices().then(setShippingPrices).catch(() => {});
 
     // 15 秒自动刷新同步
     const interval = window.setInterval(() => {
@@ -507,7 +513,8 @@ export default function ClientHomePage() {
   const freightVolume = Number(freightForm.volumeM3 || 0);
   const safeWeight = Number.isNaN(freightWeight) ? 0 : Math.max(freightWeight, 0);
   const safeVolume = Number.isNaN(freightVolume) ? 0 : Math.max(freightVolume, 0);
-  const defaultUnitPrice = freightRateMap[freightForm.transportMode][freightForm.cargoType];
+  const priceKey = `${freightForm.transportMode}|${freightForm.cargoType}`;
+  const defaultUnitPrice = shippingPrices?.[priceKey]?.unitPriceCny ?? freightRateMap[freightForm.transportMode][freightForm.cargoType];
   const overrideUnitPriceRaw = freightForm.unitPriceOverride.trim();
   const overrideUnitPrice = overrideUnitPriceRaw ? Number(overrideUnitPriceRaw) : undefined;
   const unitPrice =
@@ -516,8 +523,9 @@ export default function ClientHomePage() {
       : defaultUnitPrice;
   const convertedVolumeByWeight = safeWeight / 500;
   const chargeVolume = Math.max(safeVolume, convertedVolumeByWeight);
-  const minVolume = freightForm.transportMode === "sea" ? 0.5 : 0.2;
-  const finalChargeVolume = Math.max(chargeVolume, minVolume);
+  const disableMin = shippingPrices?.[priceKey]?.disableMinVolume ?? false;
+  const minVolume = disableMin ? 0 : (freightForm.transportMode === "sea" ? 0.5 : 0.2);
+  const finalChargeVolume = minVolume > 0 ? Math.max(chargeVolume, minVolume) : chargeVolume;
   const freightFee = finalChargeVolume * unitPrice;
   const estimatedFee = freightFee;
   const hasFreightInput = safeWeight > 0 || safeVolume > 0;
