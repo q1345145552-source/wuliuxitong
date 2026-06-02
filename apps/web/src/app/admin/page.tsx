@@ -94,8 +94,10 @@ const WAREHOUSE_TRACKING_PREFIX_MAP: Record<string, string[]> = {
   wh_dongguan_01: ["DG", "DGXT"],
 };
 
+export const dynamic = "force-dynamic";
+
 export default function AdminHomePage() {
-  const [session, setSession] = useState<MockSession>(null!);
+  const [session, setSession] = useState<MockSession | null>(null);
   const [loading, setLoading] = useState(false);
   const [overviewFlash, setOverviewFlash] = useState(false);
   const [overview, setOverview] = useState<AdminOverview | null>(null);
@@ -351,12 +353,15 @@ export default function AdminHomePage() {
   }, [knowledgeGapStatus]);
 
   const loadKnowledge = useCallback(async () => {
+    if (!session?.companyId) return;
     const list = await fetchKnowledgeList(session.companyId);
     setKnowledgeItems(list);
-  }, [session.companyId]);
+  }, [session]);
 
   const loadAll = useCallback(
-    async (currentSession: MockSession = session) => {
+    async (currentSession?: MockSession | null) => {
+      const s = currentSession ?? session;
+      if (!s?.companyId) return;
       setLoading(true);
       setMessage("");
       try {
@@ -368,7 +373,7 @@ export default function AdminHomePage() {
           loadOrders(),
           loadSessionMemory(),
           loadKnowledgeGaps(),
-          fetchKnowledgeList(currentSession.companyId).then(setKnowledgeItems),
+          fetchKnowledgeList(s.companyId).then(setKnowledgeItems),
         ]);
       } catch (error) {
         const text = error instanceof Error ? error.message : "加载失败";
@@ -415,7 +420,7 @@ export default function AdminHomePage() {
       await createKnowledgeItem({
         title: title.trim(),
         content: content.trim(),
-        companyId: session.companyId,
+        companyId: session?.companyId ?? "",
       });
       setTitle("");
       setContent("");
@@ -433,7 +438,7 @@ export default function AdminHomePage() {
     setLoading(true);
     setMessage("");
     try {
-      await deleteKnowledgeItem(id, session.companyId);
+      await deleteKnowledgeItem(id, session?.companyId ?? "");
       await loadKnowledge();
       setToast("知识条目删除成功");
     } catch (error) {
@@ -617,7 +622,7 @@ export default function AdminHomePage() {
     setLoading(true);
     setMessage("");
     try {
-      await resolveAdminAiKnowledgeGap({ id, companyId: session.companyId });
+      await resolveAdminAiKnowledgeGap({ id, companyId: session?.companyId ?? "" });
       await loadKnowledgeGaps();
       setToast("已标记为已处理");
     } catch (error) {
@@ -627,6 +632,9 @@ export default function AdminHomePage() {
       setLoading(false);
     }
   };
+
+  if (!session) return null;
+
   return (
     <RoleShell allowedRole="admin" title="管理员工作台">
       {/* 1. 运营看板 */}
