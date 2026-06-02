@@ -409,13 +409,18 @@ export default function ClientHomePage() {
   const orderStatusText = (status?: string): string => {
     const value = (status ?? "").toLowerCase();
     if (!value) return "未更新";
+    if (value === "created") return "已创建";
+    if (value === "pickedup") return "已揽收";
+    if (value === "inwarehousecn" || value === "receivedcn") return "国内仓已收货";
+    if (value === "customspending") return "报关中";
     if (value === "loaded") return "已装柜";
     if (value === "delaydeparted") return "延迟开船";
     if (value === "departed") return "已开船";
     if (value === "arrivedport") return "已到港";
+    if (value === "intransit") return "运输中";
     if (value === "customsth") return "清关中";
     if (value === "customscleared") return "清关已放行";
-    if (value === "inwarehouseth") return "已到仓";
+    if (value === "inwarehouseth" || value === "warehouseth") return "已到仓";
     if (value === "outfordelivery") return "派送中";
     if (value === "delivered") return "派送完成";
     if (value === "returned") return "已退回";

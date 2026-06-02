@@ -137,20 +137,29 @@ function OrderProductImagesPanel(props: OrderProductImagesPanelProps) {
  */
 function shipmentStatusZh(status: string | undefined): string {
   if (!status) return "—";
+  const value = status.toLowerCase();
   const map: Record<string, string> = {
+    created: "已创建",
+    pickedup: "已揽收",
+    inwarehousecn: "国内仓已收货",
+    receivedcn: "国内仓已收货",
+    customspending: "报关中",
     loaded: "已装柜",
-    delayDeparted: "延迟开船",
+    delaydeparted: "延迟开船",
     departed: "已开船",
-    arrivedPort: "已到港",
-    customsTH: "清关中",
-    customsCleared: "清关已放行",
-    inWarehouseTH: "已到仓",
-    outForDelivery: "派送中",
+    arrivedport: "已到港",
+    intransit: "运输中",
+    customsth: "清关中",
+    customscleared: "清关已放行",
+    inwarehouseth: "已到仓",
+    warehouseTH: "已到仓",
+    outfordelivery: "派送中",
     delivered: "派送完成",
     exception: "异常",
     returned: "已退回",
     cancelled: "已取消",
   };
+  return map[value] ?? value;
   return map[status] ?? status;
 }
 
@@ -740,19 +749,7 @@ export default function StaffHomePage() {
 
   const toLogisticsStatus = (status?: string): string => {
     if (!status) return "";
-    const v = status.trim();
-    if (v === "delivered") return "派送完成";
-    if (v === "returned") return "已退回";
-    if (v === "cancelled") return "已取消";
-    if (v === "outForDelivery") return "派送中";
-    if (v === "inWarehouseTH") return "已到仓";
-    if (v === "customsCleared") return "清关已放行";
-    if (v === "customsTH") return "清关中";
-    if (v === "arrivedPort") return "已到港";
-    if (v === "departed") return "已开船";
-    if (v === "delayDeparted") return "延迟开船";
-    if (v === "loaded") return "已装柜";
-    return v;
+    return shipmentStatusZh(status);
   };
 
   const toSystemStatus = (logisticsStatus: string): string => {
