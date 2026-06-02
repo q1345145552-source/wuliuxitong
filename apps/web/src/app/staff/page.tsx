@@ -594,6 +594,7 @@ export default function StaffHomePage() {
   });
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [shipmentSearchCollapsed, setShipmentSearchCollapsed] = useState(true);
+  const [selectedForExport, setSelectedForExport] = useState<Set<string>>(new Set());
   const [approvingPrealert, setApprovingPrealert] = useState<OrderItem | null>(null);
   const [splittingShipment, setSplittingShipment] = useState<ShipmentItem | null>(null);
   const [splitRows, setSplitRows] = useState<Array<{ batchNo: string; itemName: string; packageCount: string }>>([]);
@@ -1480,12 +1481,34 @@ export default function StaffHomePage() {
     lengthCm > 0 && widthCm > 0 && heightCm > 0 ? (lengthCm * widthCm * heightCm) / 6000 : 0;
   const chargeableWeightKg = Math.max(actualWeightKg > 0 ? actualWeightKg : 0, volumetricWeightKg);
 
+  const toggleSelectShipment = (trackingNo: string) => {
+    setSelectedForExport((prev) => {
+      const next = new Set(prev);
+      if (next.has(trackingNo)) next.delete(trackingNo); else next.add(trackingNo);
+      return next;
+    });
+  };
+
+  const toggleSelectAll = () => {
+    if (selectedForExport.size === filteredShipmentList.length) {
+      setSelectedForExport(new Set());
+    } else {
+      setSelectedForExport(new Set(filteredShipmentList.map((s) => s.trackingNo)));
+    }
+  };
+
+  // 搜索条件变化时清空选中
+  useEffect(() => { setSelectedForExport(new Set()); }, [shipmentSearch]);
+
   const exportShipmentsToExcel = () => {
-    if (filteredShipmentList.length === 0) {
+    const source = selectedForExport.size > 0
+      ? filteredShipmentList.filter((s) => selectedForExport.has(s.trackingNo))
+      : filteredShipmentList;
+    if (source.length === 0) {
       setMessage("当前没有可导出的运单数据。");
       return;
     }
-    const rows = filteredShipmentList.map((item) => ({
+    const rows = source.map((item) => ({
       运单号: item.trackingNo ?? "-",
       归属用户: item.clientName ?? item.clientId ?? "-",
       运单状态: shipmentStatusZh(item.currentStatus),
@@ -2500,9 +2523,9 @@ export default function StaffHomePage() {
             <button
               type="button"
               onClick={() => {
-                if (filteredShipmentList.length === 0) { setMessage("没有可导出的运单"); return; }
-                const rows = filteredShipmentList.map((item) => ({
-                  唛头: item.clientId ?? "-",
+                const source = selectedForExport.size > 0 ? filteredShipmentList.filter((s) => selectedForExport.has(s.trackingNo)) : filteredShipmentList;
+                if (source.length === 0) { setMessage("没有可导出的运单"); return; }
+                const rows = source.map((item) => ({
                   运单号: item.trackingNo ?? "-",
                   归属用户: item.clientName ?? item.clientId ?? "-",
                   运单状态: shipmentStatusZh(item.currentStatus),
@@ -2551,7 +2574,9 @@ export default function StaffHomePage() {
                 <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, minWidth: 1180 }}>
                   <thead>
                     <tr style={{ background: "#f1f5f9", textAlign: "left", borderBottom: "2px solid #e2e8f0" }}>
-                      <th style={{ padding: "10px 8px", width: 44 }} />
+                      <th style={{ padding: "10px 8px", width: 44 }}>
+                        <input type="checkbox" checked={selectedForExport.size === filteredShipmentList.length && filteredShipmentList.length > 0} onChange={toggleSelectAll} style={{ cursor: "pointer" }} />
+                      </th>
                       <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>唛头</th>
                       <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>运单号</th>
                       <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>运单所属用户</th>
@@ -2572,7 +2597,8 @@ export default function StaffHomePage() {
                     {filteredShipmentList.map((item) => (
                       <Fragment key={item.id}>
                         <tr style={{ borderBottom: "1px solid #e2e8f0", background: shipmentTableExpandedId === item.id ? "#eff6ff" : "#fff" }}>
-                          <td style={{ padding: "8px 6px", verticalAlign: "middle" }}>
+                          <td style={{ padding: "8px 6px", verticalAlign: "middle", display: "flex", gap: 4, alignItems: "center" }}>
+                            <input type="checkbox" checked={selectedForExport.has(item.trackingNo)} onChange={() => toggleSelectShipment(item.trackingNo)} style={{ cursor: "pointer" }} />
                             <button
                               type="button"
                               onClick={() => {
