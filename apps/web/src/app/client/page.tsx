@@ -119,6 +119,7 @@ export default function ClientHomePage() {
   const [prealertSearch, setPrealertSearch] = useState("");
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [editingPrealert, setEditingPrealert] = useState<OrderItem | null>(null);
+  const [previewImage, setPreviewImage] = useState<{ src: string; alt: string } | null>(null);
   const [queryPanelCollapsed, setQueryPanelCollapsed] = useState(false);
   const [openLogisticsByOrder, setOpenLogisticsByOrder] = useState<Record<string, boolean>>({});
   const [openDetailsByOrder, setOpenDetailsByOrder] = useState<Record<string, boolean>>({});
@@ -674,9 +675,13 @@ export default function ClientHomePage() {
                     {(item.productImages?.length ?? 0) > 0 && (
                       <div style={{ display: "flex", gap: 4, marginBottom: 8, flexWrap: "wrap" }}>
                         {item.productImages!.map((img) => (
-                          <a key={img.id} href={'data:' + img.mime + ';base64,' + img.contentBase64} target="_blank" rel="noreferrer">
-                            <img src={'data:' + img.mime + ';base64,' + img.contentBase64} alt={img.fileName} style={{ width: 48, height: 48, objectFit: "cover", borderRadius: 4, border: "1px solid #e5e7eb" }} />
-                          </a>
+                          <img
+                            key={img.id}
+                            src={'data:' + img.mime + ';base64,' + img.contentBase64}
+                            alt={img.fileName}
+                            onClick={() => setPreviewImage({ src: 'data:' + img.mime + ';base64,' + img.contentBase64, alt: img.fileName })}
+                            style={{ width: 48, height: 48, objectFit: "cover", borderRadius: 4, border: "1px solid #e5e7eb", cursor: "pointer" }}
+                          />
                         ))}
                       </div>
                     )}
@@ -1311,9 +1316,13 @@ export default function ClientHomePage() {
                     {(item.productImages?.length ?? 0) > 0 && (
                       <div style={{ display: "flex", gap: 4, marginBottom: 8, flexWrap: "wrap" }}>
                         {item.productImages!.map((img) => (
-                          <a key={img.id} href={'data:' + img.mime + ';base64,' + img.contentBase64} target="_blank" rel="noreferrer">
-                            <img src={'data:' + img.mime + ';base64,' + img.contentBase64} alt={img.fileName} style={{ width: 48, height: 48, objectFit: "cover", borderRadius: 4, border: "1px solid #e5e7eb" }} />
-                          </a>
+                          <img
+                            key={img.id}
+                            src={'data:' + img.mime + ';base64,' + img.contentBase64}
+                            alt={img.fileName}
+                            onClick={() => setPreviewImage({ src: 'data:' + img.mime + ';base64,' + img.contentBase64, alt: img.fileName })}
+                            style={{ width: 48, height: 48, objectFit: "cover", borderRadius: 4, border: "1px solid #e5e7eb", cursor: "pointer" }}
+                          />
                         ))}
                       </div>
                     )}
@@ -1456,6 +1465,22 @@ export default function ClientHomePage() {
         </div>
       )}
       <Toast open={toast.length > 0} message={toast} />
+      {previewImage && (
+        <div
+          onClick={() => setPreviewImage(null)}
+          style={{
+            position: "fixed", inset: 0, background: "rgba(0,0,0,0.75)", zIndex: 9999,
+            display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer",
+          }}
+        >
+          <img
+            src={previewImage.src}
+            alt={previewImage.alt}
+            onClick={(e) => e.stopPropagation()}
+            style={{ maxWidth: "90vw", maxHeight: "90vh", objectFit: "contain", borderRadius: 8, boxShadow: "0 8px 32px rgba(0,0,0,0.4)" }}
+          />
+        </div>
+      )}
     </RoleShell>
   );
 }
