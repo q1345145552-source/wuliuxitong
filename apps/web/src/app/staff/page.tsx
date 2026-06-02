@@ -2625,8 +2625,8 @@ export default function StaffHomePage() {
                     {filteredShipmentList.map((item) => (
                       <Fragment key={item.id}>
                         <tr style={{ borderBottom: "1px solid #e2e8f0", background: shipmentTableExpandedId === item.id ? "#eff6ff" : "#fff" }}>
-                          <td style={{ padding: "8px 6px", verticalAlign: "middle", display: "flex", gap: 4, alignItems: "center" }}>
-                            <input type="checkbox" checked={selectedForExport.has(item.trackingNo)} onChange={() => toggleSelectShipment(item.trackingNo)} style={{ cursor: "pointer" }} />
+                          <td style={{ padding: "8px 6px", verticalAlign: "middle", whiteSpace: "nowrap" }}>
+                            <input type="checkbox" checked={selectedForExport.has(item.trackingNo)} onChange={() => toggleSelectShipment(item.trackingNo)} style={{ cursor: "pointer", marginRight: 4 }} />
                             <button
                               type="button"
                               onClick={() => {
