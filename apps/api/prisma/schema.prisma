@@ -496,17 +496,19 @@ model Delivery {
 // ============================================================================
 
 model PricingRule {
-  id             String   @id @default(cuid())
-  companyId      String   @map("company_id")
-  cargoType      String   @map("cargo_type") // NORMAL | INSPECTION | SENSITIVE
-  customerId     String?  @map("customer_id") // null = 通用价；有值 = VIP 专属价
-  unitPriceUsd   Decimal  @map("unit_price_usd") @db.Decimal(10, 2)
-  effectiveFrom  DateTime @map("effective_from")
-  effectiveTo    DateTime? @map("effective_to")
-  createdAt      DateTime @default(now()) @map("created_at")
-  updatedAt      DateTime @updatedAt @map("updated_at")
+  id               String   @id @default(cuid())
+  companyId        String   @map("company_id")
+  transportMode    String   @default("sea") @map("transport_mode") // sea | land
+  cargoType        String   @map("cargo_type") // normal | inspection | sensitive
+  customerId       String?  @map("customer_id") // null = 通用价；有值 = 客户专属价
+  unitPriceCny     Decimal  @map("unit_price_cny") @db.Decimal(10, 2)
+  disableMinVolume Boolean  @default(false) @map("disable_min_volume") // 取消低消
+  effectiveFrom    DateTime @map("effective_from")
+  effectiveTo      DateTime? @map("effective_to")
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
 
-  @@index([companyId, cargoType, customerId])
+  @@index([companyId, transportMode, cargoType, customerId])
   @@map("pricing_rules")
 }
 

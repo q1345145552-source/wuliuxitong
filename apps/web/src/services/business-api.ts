@@ -1397,6 +1397,63 @@ export async function fetchShippingConfig(): Promise<Record<string, string>> {
   return parseApiResponse(response);
 }
 
+export interface ShippingPriceItem {
+  unitPriceCny: number;
+  disableMinVolume: boolean;
+}
+
+export async function fetchShippingPrices(clientId?: string): Promise<Record<string, ShippingPriceItem>> {
+  const query = clientId ? `?clientId=${encodeURIComponent(clientId)}` : "";
+  const response = await fetch(`${apiBaseUrl()}/client/shipping/prices${query}`, {
+    method: "GET",
+    headers: { ...authHeaders() },
+  });
+  return parseApiResponse(response);
+}
+
+export async function fetchAdminShippingRates(): Promise<{
+  items: Array<{
+    id: string;
+    transportMode: string;
+    cargoType: string;
+    customerId: string | null;
+    customerName: string | null;
+    unitPriceCny: number;
+    disableMinVolume: boolean;
+  }>;
+  defaults: Array<{ transportMode: string; cargoType: string; unitPriceCny: number }>;
+}> {
+  const response = await fetch(`${apiBaseUrl()}/admin/shipping/rates`, {
+    method: "GET",
+    headers: { ...authHeaders() },
+  });
+  return parseApiResponse(response);
+}
+
+export async function saveAdminShippingRate(payload: {
+  id?: string;
+  transportMode: string;
+  cargoType: string;
+  customerId?: string | null;
+  unitPriceCny: number;
+  disableMinVolume?: boolean;
+}): Promise<{ saved: boolean }> {
+  const response = await fetch(`${apiBaseUrl()}/admin/shipping/rates`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify(payload),
+  });
+  return parseApiResponse(response);
+}
+
+export async function deleteAdminShippingRate(id: string): Promise<{ deleted: boolean }> {
+  const response = await fetch(`${apiBaseUrl()}/admin/shipping/rates?id=${encodeURIComponent(id)}`, {
+    method: "DELETE",
+    headers: { ...authHeaders() },
+  });
+  return parseApiResponse(response);
+}
+
 export async function updateShippingConfig(payload: Record<string, string>): Promise<Record<string, string>> {
   const response = await fetch(`${apiBaseUrl()}/admin/shipping/config`, {
     method: "POST",
