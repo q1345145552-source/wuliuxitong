@@ -111,6 +111,7 @@ export interface OrderProductImageItem {
 export interface ShipmentItem {
   id: string;
   orderId?: string;
+  orderNo?: string;
   trackingNo: string;
   batchNo?: string;
   containerNo?: string;

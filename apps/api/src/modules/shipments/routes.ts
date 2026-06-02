@@ -385,6 +385,7 @@ export function registerShipmentRoutes(app: MinimalHttpApp, _db: DatabaseSync): 
       .map((r) => ({
         id: r.id,
         orderId: r.orderId,
+        orderNo: r.order.orderNo ?? undefined,
         trackingNo: r.trackingNo,
         batchNo: r.batchNo,
         currentStatus: r.currentStatus,
@@ -424,6 +425,7 @@ export function registerShipmentRoutes(app: MinimalHttpApp, _db: DatabaseSync): 
     const items = rows.map((r) => ({
       id: r.id,
       orderId: r.order?.id ?? undefined,
+      orderNo: r.order?.orderNo ?? undefined,
       trackingNo: r.trackingNo,
       batchNo: r.batchNo,
       containerNo: r.containerNo ?? undefined,
