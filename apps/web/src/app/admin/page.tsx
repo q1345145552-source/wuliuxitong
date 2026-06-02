@@ -157,6 +157,7 @@ export default function AdminHomePage() {
   const [content, setContent] = useState("");
   const [staffPanelCollapsed, setStaffPanelCollapsed] = useState(false);
   const [ordersPanelCollapsed, setOrdersPanelCollapsed] = useState(false);
+  const [selectedOrders, setSelectedOrders] = useState<Set<string>>(new Set());
   const [orderSearch, setOrderSearch] = useState({
     trackingNo: "", domesticTrackingNo: "", clientName: "", warehouseId: "",
     batchNo: "", itemName: "", packageCount: "", productQuantity: "",
@@ -647,12 +648,21 @@ export default function AdminHomePage() {
     });
   }, [orderList, orderSearch]);
 
+  const toggleSelectOrder = (id: string) => {
+    setSelectedOrders((prev) => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+  };
+  const toggleSelectAllOrders = () => {
+    if (selectedOrders.size === filteredOrderList.length) setSelectedOrders(new Set());
+    else setSelectedOrders(new Set(filteredOrderList.map((o) => o.id)));
+  };
+
   const exportOrdersToExcel = () => {
-    if (filteredOrderList.length === 0) {
+    const source = selectedOrders.size > 0 ? filteredOrderList.filter((o) => selectedOrders.has(o.id)) : filteredOrderList;
+    if (source.length === 0) {
       setMessage("当前没有可导出的订单数据。");
       return;
     }
-    const rows = filteredOrderList.map((o) => ({
+    const rows = source.map((o) => ({
       订单号: o.id,
       客户: o.clientName ?? o.clientId ?? "-",
       品名: o.itemName,
@@ -1220,6 +1230,9 @@ export default function AdminHomePage() {
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, minWidth: 1180 }}>
               <thead>
                 <tr style={{ borderBottom: "2px solid #e2e8f0", textAlign: "left" }}>
+                  <th style={{ padding: "10px 8px", width: 44 }}>
+                    <input type="checkbox" checked={selectedOrders.size === filteredOrderList.length && filteredOrderList.length > 0} onChange={toggleSelectAllOrders} style={{ cursor: "pointer" }} />
+                  </th>
                   <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>运单号</th>
                   <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>运单所属用户</th>
                   <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>运单状态</th>
@@ -1238,6 +1251,9 @@ export default function AdminHomePage() {
               <tbody>
                 {filteredOrderList.map((o) => (
                   <tr key={o.id} style={{ borderBottom: "1px solid #e2e8f0" }}>
+                    <td style={{ padding: "8px 6px" }}>
+                      <input type="checkbox" checked={selectedOrders.has(o.id)} onChange={() => toggleSelectOrder(o.id)} style={{ cursor: "pointer" }} />
+                    </td>
                     <td style={{ padding: "8px 6px", fontWeight: 600, color: "#1e3a8a", whiteSpace: "nowrap" }}>
                       {o.trackingNo ?? "—"}
                     </td>

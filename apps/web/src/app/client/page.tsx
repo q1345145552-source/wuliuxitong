@@ -126,6 +126,7 @@ export default function ClientHomePage() {
   const [editingPrealert, setEditingPrealert] = useState<OrderItem | null>(null);
   const [previewImage, setPreviewImage] = useState<{ src: string; alt: string } | null>(null);
   const [shippingPrices, setShippingPrices] = useState<Record<string, ShippingPriceItem> | null>(null);
+  const [selectedOrders, setSelectedOrders] = useState<Set<string>>(new Set());
   const [queryPanelCollapsed, setQueryPanelCollapsed] = useState(false);
   const [openLogisticsByOrder, setOpenLogisticsByOrder] = useState<Record<string, boolean>>({});
   const [openDetailsByOrder, setOpenDetailsByOrder] = useState<Record<string, boolean>>({});
