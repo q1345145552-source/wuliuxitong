@@ -5,7 +5,7 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "../../db/prisma";
 import type { MinimalHttpApp } from "../../server";
 import { fail, ok, parseJsonArray, requireRole } from "../core/http-utils";
-import { loadProductImagesForOrders } from "../orders/product-images";
+
 
 const STATUS_FLOW = [
   "loaded",
@@ -418,11 +418,6 @@ export function registerShipmentRoutes(app: MinimalHttpApp, _db: DatabaseSync): 
       },
     });
 
-    const orderIds = rows
-      .map((r) => r.order?.id)
-      .filter((id): id is string => Boolean(id));
-    const imageMap = await loadProductImagesForOrders(auth.companyId, orderIds);
-
     const items = rows.map((r) => ({
       id: r.id,
       orderId: r.order?.id ?? undefined,
@@ -450,7 +445,7 @@ export function registerShipmentRoutes(app: MinimalHttpApp, _db: DatabaseSync): 
       paymentStatus: (r.order?.paymentStatus === "paid" ? "paid" : "unpaid") as "paid" | "unpaid",
       packageUnit: ((r.order?.packageUnit === "bag" ? "bag" : "box") as "bag" | "box"),
       canEdit: auth.role === "admin",
-      productImages: r.order?.id ? imageMap.get(r.order.id) ?? [] : [],
+      productImages: [],
     }));
 
     ok(res, { items, page: 1, pageSize: items.length, total: items.length });
