@@ -327,9 +327,9 @@ button:disabled {
   opacity: 0.72;
 }
 
-button:not([style*="background: #fff"]):not([style*="background:#fff"]) {
-  background: linear-gradient(145deg, #4f46e5, #1e3a8a);
-  color: #fff;
+button {
+  background: linear-gradient(145deg, #4f46e5, #1e3a8a) !important;
+  color: #fff !important;
 }
 
 a {
