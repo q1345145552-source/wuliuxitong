@@ -1019,7 +1019,7 @@ export default function ClientHomePage() {
               <input
                 value={search.status}
                 onChange={(e) => setSearch((v) => ({ ...v, status: e.target.value }))}
-                placeholder="状态（如 inTransit）"
+                placeholder="状态（如 运输中）"
                 style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 10px" }}
               />
               <select
@@ -1112,7 +1112,7 @@ export default function ClientHomePage() {
                 <span className={`order-badge ${item.transportMode === "sea" ? "order-badge-sea" : "order-badge-land"}`}>
                   {item.transportMode === "sea" ? "海运" : "陆运"}
                 </span>
-                <span className={statusToneClass(item.currentStatus)}>{item.currentStatus ?? "-"}</span>
+                <span className={statusToneClass(item.currentStatus)}>{orderStatusText(item.currentStatus)}</span>
               </div>
             </div>
 

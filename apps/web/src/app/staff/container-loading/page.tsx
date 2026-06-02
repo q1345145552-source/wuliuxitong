@@ -23,6 +23,14 @@ const STATUS_LABEL: Record<string, string> = {
   ARRIVED: "已到达",
 };
 
+const SHIPMENT_STATUS_ZH: Record<string, string> = {
+  created: "已创建", pickedup: "已揽收", inwarehousecn: "国内仓已收货", receivedcn: "国内仓已收货",
+  customspending: "报关中", loaded: "已装柜", delaydeparted: "延迟开船", departed: "已开船",
+  arrivedport: "已到港", intransit: "运输中", customsth: "清关中", customscleared: "清关已放行",
+  inwarehouseth: "已到仓", outfordelivery: "派送中", delivered: "派送完成",
+  exception: "异常", returned: "已退回", cancelled: "已取消",
+};
+
 const STATUS_COLOR: Record<string, string> = {
   LOADING: "#d97706",
   SEALED: "#16a34a",
@@ -278,7 +286,7 @@ export default function StaffContainerLoadingPage() {
                           {b.itemName ? <span style={{ marginLeft: 8, fontSize: 12, color: "#000000" }}>{b.itemName}</span> : null}
                         </div>
                         <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                          <span style={{ fontSize: 12, color: STATUS_COLOR[b.currentStatus ?? ""] ?? "#000000" }}>{b.currentStatus ?? "—"}</span>
+                          <span style={{ fontSize: 12, color: STATUS_COLOR[b.currentStatus ?? ""] ?? "#000000" }}>{SHIPMENT_STATUS_ZH[b.currentStatus ?? ""] ?? b.currentStatus ?? "—"}</span>
                           {detail.status === "LOADING" && (
                             <button onClick={() => handleRemoveShipment(b.id)} style={{ border: "1px solid #fca5a5", borderRadius: 4, padding: "2px 6px", fontSize: 11, background: "#fff", color: "#dc2626", cursor: "pointer" }}>删除</button>
                           )}
@@ -321,7 +329,7 @@ export default function StaffContainerLoadingPage() {
                         <span style={{ fontSize: 12, fontWeight: 500, color: "#1e3a8a", fontFamily: "monospace", minWidth: 150 }}>{s.trackingNo}</span>
                         <span style={{ fontSize: 12, color: "#6b21a8", minWidth: 80 }}>{s.clientId ?? "—"}</span>
                         <span style={{ fontSize: 12, color: "#000000", minWidth: 50 }}>{s.transportMode === "sea" ? "海运" : "陆运"}</span>
-                        <span style={{ fontSize: 12, color: loadedContainer ? "#d97706" : alreadyIn ? "#16a34a" : "#000000" }}>{loadedContainer ? `已装柜(${loadedContainer})` : alreadyIn ? "已在本柜" : s.currentStatus ?? ""}</span>
+                        <span style={{ fontSize: 12, color: loadedContainer ? "#d97706" : alreadyIn ? "#16a34a" : "#000000" }}>{loadedContainer ? `已装柜(${loadedContainer})` : alreadyIn ? "已在本柜" : SHIPMENT_STATUS_ZH[s.currentStatus ?? ""] ?? s.currentStatus ?? ""}</span>
                       </div>
                     );
                   })

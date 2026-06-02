@@ -643,7 +643,7 @@ export default function AdminHomePage() {
       运输方式: o.transportMode,
       国内单号: o.domesticTrackingNo ?? "-",
       柜号: o.batchNo ?? "-",
-      审批状态: o.approvalStatus,
+      审批状态: o.approvalStatus === "pending" ? "待审核" : o.approvalStatus === "approved" ? "已审核" : o.approvalStatus === "shipped" ? "已发货" : o.approvalStatus,
       产品数量: o.productQuantity ?? "-",
       包裹数量: o.packageCount ?? "-",
       重量kg: o.weightKg ?? "-",
