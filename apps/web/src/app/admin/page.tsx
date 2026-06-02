@@ -1609,7 +1609,7 @@ export default function AdminHomePage() {
                         await loadRates();
                         await loadClientPrices(c.id);
                         setToast("已保存");
-                      } catch { setToast("保存失败"); }
+                      } catch (err) { setToast(`保存失败：${err instanceof Error ? err.message : "网络错误"}`); }
                     }} style={{ border: "none", borderRadius: 6, padding: "8px 16px", background: "#2563eb", color: "#fff", fontWeight: 500, fontSize: 13, cursor: "pointer", marginTop: 8 }}>保存客户价格</button>
                   </div>
                 ) : null}
