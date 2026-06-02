@@ -83,7 +83,7 @@ export default function ClientBillDetailPage() {
             fontWeight: 600,
           }}
         >
-          返回订单查询
+          返回运单查询
         </a>
       </div>
 

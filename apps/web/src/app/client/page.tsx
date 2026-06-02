@@ -287,6 +287,11 @@ export default function ClientHomePage() {
       const result = await shipClientPrealert(orderId);
       setToast("确认发货成功！运单号：" + result.trackingNo);
       await refreshMainData();
+      // 同步更新运单查询列表（若已查询过）
+      if (hasQueried) {
+        const orders = await fetchClientOrders();
+        setQueriedOrders(orders);
+      }
     } catch (error) {
       const text = error instanceof Error ? error.message : "确认发货失败";
       setToast("确认发货失败：" + text);
@@ -329,7 +334,7 @@ export default function ClientHomePage() {
   };
 
   /**
-   * 查询区默认加载：进入“我的订单查询”后自动展示全部订单。
+   * 查询区默认加载：进入“我的运单查询”后自动展示全部订单。
    */
   const runDefaultAllOrderQuery = async () => {
     if (loading) return;
@@ -350,7 +355,7 @@ export default function ClientHomePage() {
   };
 
   /**
-   * 切换订单查询分组（在途/已完成/全部）。
+   * 切换运单查询分组（在途/已完成/全部）。
    */
   const changeQueryMode = (mode: "unfinished" | "completed" | "all") => {
     setQueryMode(mode);
@@ -862,7 +867,7 @@ export default function ClientHomePage() {
       >
         <div className="section-label section-label-query">查询区</div>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-          <h2 style={{ margin: 0, fontSize: 20 }}>我的订单查询</h2>
+          <h2 style={{ margin: 0, fontSize: 20 }}>我的运单查询</h2>
           <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
             <a
               href="/client/bills"
