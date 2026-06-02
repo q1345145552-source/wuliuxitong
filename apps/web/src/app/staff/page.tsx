@@ -580,13 +580,15 @@ export default function StaffHomePage() {
     productQuantity: "",
     weightKg: "",
     volumeM3: "",
-    arrivedAt: "",
+    arrivedAtFrom: "",
+    arrivedAtTo: "",
     warehouseId: "",
     logisticsStatus: "",
     containerNo: "",
     transportMode: "",
     receiverAddress: "",
-    shipDate: "",
+    shipDateFrom: "",
+    shipDateTo: "",
     receivableAmount: "",
     statusRaw: "",
   });
@@ -1399,13 +1401,15 @@ export default function StaffHomePage() {
     const productQuantityKeyword = shipmentSearch.productQuantity.trim();
     const weightKgKeyword = shipmentSearch.weightKg.trim();
     const volumeM3Keyword = shipmentSearch.volumeM3.trim();
-    const arrivedAtKeyword = shipmentSearch.arrivedAt.trim();
+    const arrivedAtFrom = shipmentSearch.arrivedAtFrom.trim();
+    const arrivedAtTo = shipmentSearch.arrivedAtTo.trim();
     const warehouseKeyword = shipmentSearch.warehouseId.trim();
     const logisticsStatusKeyword = shipmentSearch.logisticsStatus.trim();
     const containerNoKeyword = shipmentSearch.containerNo.trim().toLowerCase();
     const transportModeKeyword = shipmentSearch.transportMode.trim();
     const receiverAddressKeyword = shipmentSearch.receiverAddress.trim().toLowerCase();
-    const shipDateKeyword = shipmentSearch.shipDate.trim();
+    const shipDateFrom = shipmentSearch.shipDateFrom.trim();
+    const shipDateTo = shipmentSearch.shipDateTo.trim();
     const receivableAmountKeyword = shipmentSearch.receivableAmount.trim();
     const statusRawKeyword = shipmentSearch.statusRaw.trim().toLowerCase();
 
@@ -1438,13 +1442,15 @@ export default function StaffHomePage() {
       if (productQuantityKeyword && !productQuantity.includes(productQuantityKeyword)) return false;
       if (weightKgKeyword && !weightKg.includes(weightKgKeyword)) return false;
       if (volumeM3Keyword && !volumeM3.includes(volumeM3Keyword)) return false;
-      if (arrivedAtKeyword && !arrivedAt.includes(arrivedAtKeyword)) return false;
+      if (arrivedAtFrom && arrivedAt < arrivedAtFrom) return false;
+      if (arrivedAtTo && arrivedAt > arrivedAtTo) return false;
       if (warehouseKeyword && warehouseId !== warehouseKeyword.toLowerCase()) return false;
       if (logisticsStatusKeyword && logisticsStatus !== logisticsStatusKeyword) return false;
       if (containerNoKeyword && !containerNo.includes(containerNoKeyword)) return false;
       if (transportModeKeyword && (item.transportMode ?? "") !== transportModeKeyword) return false;
       if (receiverAddressKeyword && !receiverAddr.includes(receiverAddressKeyword)) return false;
-      if (shipDateKeyword && shipDateVal !== shipDateKeyword) return false;
+      if (shipDateFrom && shipDateVal < shipDateFrom) return false;
+      if (shipDateTo && shipDateVal > shipDateTo) return false;
       if (receivableAmountKeyword && !receivableText.includes(receivableAmountKeyword)) return false;
       if (statusRawKeyword && !statusRaw.includes(statusRawKeyword)) return false;
       return true;

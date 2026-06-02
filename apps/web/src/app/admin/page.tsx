@@ -160,8 +160,8 @@ export default function AdminHomePage() {
   const [orderSearch, setOrderSearch] = useState({
     trackingNo: "", domesticTrackingNo: "", clientName: "", warehouseId: "",
     batchNo: "", itemName: "", packageCount: "", productQuantity: "",
-    weightKg: "", volumeM3: "", arrivedAt: "", logisticsStatus: "",
-    containerNo: "", transportMode: "", receiverAddress: "", shipDate: "",
+    weightKg: "", volumeM3: "", arrivedAtFrom: "", arrivedAtTo: "", logisticsStatus: "",
+    containerNo: "", transportMode: "", receiverAddress: "", shipDateFrom: "", shipDateTo: "",
     receivableAmount: "", statusRaw: "",
   });
   const [editingOrderId, setEditingOrderId] = useState("");
@@ -625,12 +625,14 @@ export default function AdminHomePage() {
       if (s.productQuantity && !pq.includes(s.productQuantity)) return false;
       if (s.weightKg && !wk.includes(s.weightKg)) return false;
       if (s.volumeM3 && !vm.includes(s.volumeM3)) return false;
-      if (s.arrivedAt && !ar.includes(s.arrivedAt)) return false;
+      if (s.arrivedAtFrom && ar < s.arrivedAtFrom) return false;
+      if (s.arrivedAtTo && ar > s.arrivedAtTo) return false;
       if (s.logisticsStatus && shipmentStatusLabel(item.currentStatus) !== s.logisticsStatus) return false;
       if (s.containerNo && !cnr.includes(s.containerNo.toLowerCase())) return false;
       if (s.transportMode && tm !== s.transportMode) return false;
       if (s.receiverAddress && !ra.includes(s.receiverAddress.toLowerCase())) return false;
-      if (s.shipDate && sd !== s.shipDate) return false;
+      if (s.shipDateFrom && sd < s.shipDateFrom) return false;
+      if (s.shipDateTo && sd > s.shipDateTo) return false;
       if (s.receivableAmount && !rc.includes(s.receivableAmount)) return false;
       if (s.statusRaw && !sr.includes(s.statusRaw.toLowerCase())) return false;
       return true;

@@ -29,7 +29,8 @@ import { openShipmentTrack } from "../../modules/shipment/ShipmentTrackModal";
 const initialSearch = {
   batchNo: "",
   orderId: "",
-  arrivedDate: "",
+  arrivedDateFrom: "",
+  arrivedDateTo: "",
   domesticTrackingNo: "",
   status: "",
   transportMode: "",
@@ -328,7 +329,12 @@ export default function ClientHomePage() {
       const result = baseOrders
         .filter((item) => !search.batchNo || (item.trackingNo ?? "").toLowerCase().includes(search.batchNo.toLowerCase()))
         .filter((item) => !search.orderId || item.id.toLowerCase().includes(search.orderId.toLowerCase()))
-        .filter((item) => !search.arrivedDate || item.createdAt.startsWith(search.arrivedDate))
+        .filter((item) => {
+          const d = item.createdAt.slice(0, 10);
+          if (search.arrivedDateFrom && d < search.arrivedDateFrom) return false;
+          if (search.arrivedDateTo && d > search.arrivedDateTo) return false;
+          return true;
+        })
         .filter(
           (item) =>
             !search.domesticTrackingNo ||
@@ -986,15 +992,26 @@ export default function ClientHomePage() {
                 placeholder="订单号"
                 style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 10px" }}
               />
-              <div style={{ position: "relative", width: "100%" }}>
+              <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
                 <input
                   type="date"
-                  className="client-arrived-date-input"
-                  value={search.arrivedDate}
-                  onChange={(e) => setSearch((v) => ({ ...v, arrivedDate: e.target.value }))}
-                  style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 64px 8px 10px", width: "100%", boxSizing: "border-box" }}
+                  value={search.arrivedDateFrom}
+                  onChange={(e) => setSearch((v) => ({ ...v, arrivedDateFrom: e.target.value }))}
+                  style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 10px", flex: 1 }}
+                  placeholder="到仓起始"
                 />
-                {!search.arrivedDate ? (
+                <span style={{ fontSize: 12, color: "#6b7280" }}>~</span>
+                <input
+                  type="date"
+                  value={search.arrivedDateTo}
+                  onChange={(e) => setSearch((v) => ({ ...v, arrivedDateTo: e.target.value }))}
+                  style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 10px", flex: 1 }}
+                  placeholder="到仓截止"
+                />
+              </div>
+              <div style={{ position: "relative", width: "100%", display: "none" }}>
+                <input type="date" style={{ display: "none" }} />
+                {(!search.arrivedDateFrom && !search.arrivedDateTo) ? (
                   <div
                     style={{
                       position: "absolute",

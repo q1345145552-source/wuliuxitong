@@ -14,12 +14,14 @@ interface ShipmentSearchProps {
     productQuantity: string;
     weightKg: string;
     volumeM3: string;
-    arrivedAt: string;
+    arrivedAtFrom: string;
+    arrivedAtTo: string;
     logisticsStatus: string;
     containerNo: string;
     transportMode: string;
     receiverAddress: string;
-    shipDate: string;
+    shipDateFrom: string;
+    shipDateTo: string;
     receivableAmount: string;
     statusRaw: string;
   };
@@ -65,7 +67,11 @@ export default function ShipmentSearch({
           <input value={value.volumeM3} onChange={(e) => onChange("volumeM3", e.target.value)} placeholder="体积" style={inputStyle} />
           <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
             <span style={{ fontSize: 11, color: "#000000" }}>到仓日期</span>
-            <input type="date" value={value.arrivedAt} onChange={(e) => onChange("arrivedAt", e.target.value)} style={inputStyle} />
+            <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+              <input type="date" value={value.arrivedAtFrom} onChange={(e) => onChange("arrivedAtFrom", e.target.value)} style={{ ...inputStyle, flex: 1 }} />
+              <span style={{ fontSize: 11 }}>~</span>
+              <input type="date" value={value.arrivedAtTo} onChange={(e) => onChange("arrivedAtTo", e.target.value)} style={{ ...inputStyle, flex: 1 }} />
+            </div>
           </div>
           <select value={value.logisticsStatus} onChange={(e) => onChange("logisticsStatus", e.target.value)} style={inputStyle}>
             <option value="">全部状态</option>
@@ -80,7 +86,11 @@ export default function ShipmentSearch({
           <input value={value.receiverAddress} onChange={(e) => onChange("receiverAddress", e.target.value)} placeholder="收货地址" style={inputStyle} />
           <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
             <span style={{ fontSize: 11, color: "#000000" }}>发货日期</span>
-            <input type="date" value={value.shipDate} onChange={(e) => onChange("shipDate", e.target.value)} style={inputStyle} />
+            <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+              <input type="date" value={value.shipDateFrom} onChange={(e) => onChange("shipDateFrom", e.target.value)} style={{ ...inputStyle, flex: 1 }} />
+              <span style={{ fontSize: 11 }}>~</span>
+              <input type="date" value={value.shipDateTo} onChange={(e) => onChange("shipDateTo", e.target.value)} style={{ ...inputStyle, flex: 1 }} />
+            </div>
           </div>
           <input value={value.receivableAmount} onChange={(e) => onChange("receivableAmount", e.target.value)} placeholder="加收金额" style={inputStyle} />
         </div>
