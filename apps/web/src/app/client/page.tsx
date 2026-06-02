@@ -100,6 +100,7 @@ function PrealertPrintButton({ item }: { item: OrderItem }) {
         domesticTrackingNo: item.domesticTrackingNo,
         createdAt: item.createdAt,
         clientId: item.clientId,
+        productQuantity: item.productQuantity,
       });
     }} style={{ border: "1px solid #8b5cf6", borderRadius: 4, padding: "4px 10px", fontSize: 12, background: "#fff", color: "#8b5cf6", cursor: "pointer", marginLeft: 6 }}>打印预报单</button>
   );
@@ -688,7 +689,7 @@ export default function ClientHomePage() {
                         }} style={{ border: "none", borderRadius: 4, padding: "4px 14px", fontSize: 12, background: "#16a34a", color: "#fff", fontWeight: 500, cursor: "pointer" }}>确认发货</button>
                       )}
                       {(isApproved || isShipped) && item.trackingNo ? (
-                        <button type="button" onClick={() => openPrintLabel({ marks: item.clientId ?? "", packageCount: item.packageCount ?? "—", trackingNo: item.trackingNo ?? "", itemName: item.itemName })} style={{ border: "1px solid #16a34a", borderRadius: 4, padding: "4px 10px", fontSize: 12, background: "#fff", color: "#16a34a", cursor: "pointer", marginLeft: 6 }}>打印</button>
+                        <button type="button" onClick={() => openPrintLabel({ marks: item.clientId ?? "", packageCount: item.packageCount ?? "—", trackingNo: item.trackingNo ?? "", itemName: item.itemName, productQuantity: item.productQuantity, transportMode: item.transportMode })} style={{ border: "1px solid #16a34a", borderRadius: 4, padding: "4px 10px", fontSize: 12, background: "#fff", color: "#16a34a", cursor: "pointer", marginLeft: 6 }}>打印</button>
                       ) : null}
                       {item.trackingNo ? (
                         <button type="button" onClick={() => openShipmentTrack(item.trackingNo!)} style={{ border: "1px solid #2563eb", borderRadius: 4, padding: "4px 10px", fontSize: 12, background: "#fff", color: "#2563eb", cursor: "pointer", marginLeft: 6 }}>物流轨迹</button>
@@ -1316,7 +1317,7 @@ export default function ClientHomePage() {
                         }} style={{ border: "none", borderRadius: 4, padding: "4px 14px", fontSize: 12, background: "#16a34a", color: "#fff", fontWeight: 500, cursor: "pointer" }}>确认发货</button>
                       )}
                       {(isApproved || isShipped) && item.trackingNo ? (
-                        <button type="button" onClick={() => openPrintLabel({ marks: item.clientId ?? "", packageCount: item.packageCount ?? "—", trackingNo: item.trackingNo ?? "", itemName: item.itemName })} style={{ border: "1px solid #16a34a", borderRadius: 4, padding: "4px 10px", fontSize: 12, background: "#fff", color: "#16a34a", cursor: "pointer", marginLeft: 6 }}>打印</button>
+                        <button type="button" onClick={() => openPrintLabel({ marks: item.clientId ?? "", packageCount: item.packageCount ?? "—", trackingNo: item.trackingNo ?? "", itemName: item.itemName, productQuantity: item.productQuantity, transportMode: item.transportMode })} style={{ border: "1px solid #16a34a", borderRadius: 4, padding: "4px 10px", fontSize: 12, background: "#fff", color: "#16a34a", cursor: "pointer", marginLeft: 6 }}>打印</button>
                       ) : null}
                       {item.trackingNo ? (
                         <button type="button" onClick={() => openShipmentTrack(item.trackingNo!)} style={{ border: "1px solid #2563eb", borderRadius: 4, padding: "4px 10px", fontSize: 12, background: "#fff", color: "#2563eb", cursor: "pointer", marginLeft: 6 }}>物流轨迹</button>
