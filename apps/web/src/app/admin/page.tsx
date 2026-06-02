@@ -1107,9 +1107,9 @@ export default function AdminHomePage() {
         ) : null}
         {ordersPanelCollapsed ? (
           <p style={{ color: "#000000", fontSize: 13, margin: 0 }}>已折叠。点击「展开」可查看订单列表并导出 Excel。</p>
-        ) : (() => {
-          if (filteredOrderList.length === 0) return <EmptyStateCard title="暂无匹配订单" description="无匹配结果" />;
-          return (
+        ) : filteredOrderList.length === 0 ? (
+          <EmptyStateCard title="暂无匹配订单" description="无匹配结果" />
+        ) : (
           <div style={{ overflowX: "auto" }}>
             {editingOrderId ? (
               <div style={{ ...cardStyle, marginBottom: 10, display: "grid", gap: 8 }}>
@@ -1225,8 +1225,7 @@ export default function AdminHomePage() {
               </tbody>
             </table>
           </div>
-          );
-        })()}
+        )}
       </section>
 
       {/* 5. AI会话记忆运维 */}
@@ -1299,8 +1298,7 @@ export default function AdminHomePage() {
               </tbody>
             </table>
           </div>
-          );
-        })()}
+        )}
       </section>
 
       {/* 6. AI待补知识问题 */}
