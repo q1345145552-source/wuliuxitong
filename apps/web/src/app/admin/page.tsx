@@ -1110,8 +1110,6 @@ export default function AdminHomePage() {
         ) : (() => {
           if (filteredOrderList.length === 0) return <EmptyStateCard title="暂无匹配订单" description="无匹配结果" />;
           return (
-          <EmptyStateCard title="暂无订单" description="当前公司下暂无订单数据。" />
-        ) : (
           <div style={{ overflowX: "auto" }}>
             {editingOrderId ? (
               <div style={{ ...cardStyle, marginBottom: 10, display: "grid", gap: 8 }}>
