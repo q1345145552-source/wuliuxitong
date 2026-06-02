@@ -1017,7 +1017,7 @@ export default function ClientHomePage() {
                   setHasQueried(false);
                   setQueriedOrders([]);
                 }}
-                style={{ border: "1px solid #cbd5e1", borderRadius: 8, padding: "8px 14px", background: "#fff" }}
+                style={{ border: "1px solid #cbd5e1", borderRadius: 8, padding: "8px 14px", background: "#fff", color: "#000000" }}
               >
                 清空条件
               </button>

@@ -88,6 +88,7 @@ export default function RoleSwitcher(props: { compact?: boolean }) {
               padding: compact ? "5px 10px" : "6px 12px",
               background: session?.role === role ? "#dbeafe" : "#fff",
               cursor: switchingRole ? "not-allowed" : "pointer",
+              color: "#000000",
             }}
           >
             {switchingRole === role ? "切换中..." : `切换为 ${role}`}
@@ -102,6 +103,7 @@ export default function RoleSwitcher(props: { compact?: boolean }) {
             padding: compact ? "5px 10px" : "6px 12px",
             background: "#fff",
             cursor: "pointer",
+            color: "#000000",
           }}
         >
           退出登录

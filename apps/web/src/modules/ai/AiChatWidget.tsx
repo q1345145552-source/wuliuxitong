@@ -153,6 +153,7 @@ export default function AiChatWidget() {
                   fontSize: 12,
                   cursor: "pointer",
                   background: "#f8fafc",
+                  color: "#000000",
                 }}
               >
                 {item}

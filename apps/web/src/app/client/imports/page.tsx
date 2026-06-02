@@ -84,7 +84,7 @@ export default function ClientImportsPage() {
           <button
             type="button"
             onClick={downloadTemplate}
-            style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 12px", background: "#fff" }}
+            style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 12px", background: "#fff", color: "#000000" }}
           >
             下载模板
           </button>

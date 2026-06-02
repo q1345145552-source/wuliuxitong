@@ -339,6 +339,7 @@ function StatusUpdateImageAttach(props: StatusUpdateImageAttachProps) {
             padding: "2px 8px",
             background: "#fff",
             cursor: props.disabled ? "not-allowed" : "pointer",
+            color: "#000000",
           }}
         >
           清除
@@ -2251,7 +2252,7 @@ export default function StaffHomePage() {
               setStatusEditDraft({ toStatus: "", remark: "" });
               resetStatusAttach();
             }}
-            style={{ border: "1px solid #cbd5e1", borderRadius: 8, padding: "8px 14px", background: "#fff" }}
+            style={{ border: "1px solid #cbd5e1", borderRadius: 8, padding: "8px 14px", background: "#fff", color: "#000000" }}
           >
             清空
           </button>
@@ -2340,7 +2341,7 @@ export default function StaffHomePage() {
                           setStatusEditDraft({ toStatus: "", remark: "" });
                           resetStatusAttach();
                         }}
-                        style={{ border: "1px solid #cbd5e1", borderRadius: 8, padding: "8px 14px", background: "#fff" }}
+                        style={{ border: "1px solid #cbd5e1", borderRadius: 8, padding: "8px 14px", background: "#fff", color: "#000000" }}
                       >
                         取消
                       </button>
@@ -2430,7 +2431,7 @@ export default function StaffHomePage() {
                             setStatusEditDraft({ toStatus: "", remark: "" });
                             resetStatusAttach();
                           }}
-                          style={{ border: "1px solid #cbd5e1", borderRadius: 8, padding: "8px 14px", background: "#fff" }}
+                          style={{ border: "1px solid #cbd5e1", borderRadius: 8, padding: "8px 14px", background: "#fff", color: "#000000" }}
                         >
                           取消
                         </button>

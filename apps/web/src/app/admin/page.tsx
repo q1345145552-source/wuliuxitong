@@ -794,7 +794,7 @@ export default function AdminHomePage() {
             <button
               type="button"
               onClick={() => setStaffPanelCollapsed((v) => !v)}
-              style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "6px 10px", background: "#fff", fontWeight: 600, cursor: "pointer" }}
+              style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "6px 10px", background: "#fff", fontWeight: 600, cursor: "pointer", color: "#000000" }}
             >
               {staffPanelCollapsed ? "展开" : "折叠"}
             </button>
@@ -802,7 +802,7 @@ export default function AdminHomePage() {
               type="button"
               onClick={() => void loadStaff()}
               disabled={loading}
-              style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "6px 12px", background: "#fff", cursor: "pointer" }}
+              style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "6px 12px", background: "#fff", cursor: "pointer", color: "#000000" }}
             >
               刷新
             </button>
@@ -873,7 +873,7 @@ export default function AdminHomePage() {
                     <button
                       type="button"
                       onClick={() => { setSettingPasswordFor(null); setSettingPasswordValue(""); }}
-                      style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "6px 12px", background: "#fff", cursor: "pointer" }}
+                      style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "6px 12px", background: "#fff", cursor: "pointer", color: "#000000" }}
                     >
                       取消
                     </button>
@@ -895,7 +895,7 @@ export default function AdminHomePage() {
             type="button"
             onClick={() => void loadClients()}
             disabled={loading}
-            style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "6px 12px", background: "#fff", cursor: "pointer" }}
+            style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "6px 12px", background: "#fff", cursor: "pointer", color: "#000000" }}
           >
             刷新
           </button>
@@ -952,7 +952,7 @@ export default function AdminHomePage() {
                     <button
                       type="button"
                       onClick={() => { setSettingPasswordFor(null); setSettingPasswordValue(""); }}
-                      style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "6px 12px", background: "#fff", cursor: "pointer" }}
+                      style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "6px 12px", background: "#fff", cursor: "pointer", color: "#000000" }}
                     >
                       取消
                     </button>
@@ -972,7 +972,7 @@ export default function AdminHomePage() {
             <button
               type="button"
               onClick={() => setOrdersPanelCollapsed((v) => !v)}
-              style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "6px 10px", background: "#fff", fontWeight: 600, cursor: "pointer" }}
+              style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "6px 10px", background: "#fff", fontWeight: 600, cursor: "pointer", color: "#000000" }}
             >
               {ordersPanelCollapsed ? "展开" : "折叠"}
             </button>
@@ -995,7 +995,7 @@ export default function AdminHomePage() {
               type="button"
               onClick={() => void loadOrders()}
               disabled={loading}
-              style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "6px 12px", background: "#fff", cursor: "pointer" }}
+              style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "6px 12px", background: "#fff", cursor: "pointer", color: "#000000" }}
             >
               刷新
             </button>
@@ -1057,7 +1057,7 @@ export default function AdminHomePage() {
                   <button
                     type="button"
                     onClick={() => setEditingOrderId("")}
-                    style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 14px", background: "#fff", cursor: "pointer" }}
+                    style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 14px", background: "#fff", cursor: "pointer", color: "#000000" }}
                   >
                     取消编辑
                   </button>
@@ -1133,7 +1133,7 @@ export default function AdminHomePage() {
               type="button"
               onClick={() => void loadSessionMemory()}
               disabled={loading}
-              style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "6px 12px", background: "#fff", cursor: "pointer" }}
+              style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "6px 12px", background: "#fff", cursor: "pointer", color: "#000000" }}
             >
               刷新
             </button>
@@ -1217,7 +1217,7 @@ export default function AdminHomePage() {
               type="button"
               onClick={() => void loadKnowledgeGaps()}
               disabled={loading}
-              style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "6px 12px", background: "#fff", cursor: "pointer" }}
+              style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "6px 12px", background: "#fff", cursor: "pointer", color: "#000000" }}
             >
               刷新
             </button>
