@@ -1578,7 +1578,7 @@ export default function StaffHomePage() {
                       return (
                         <>
                     <div style={{ fontWeight: 600, fontSize: 12, marginBottom: 4, color: "#000000" }}>
-                      {item.clientName ?? item.clientId ?? "-"} · {item.createdAt.slice(0, 10)}
+                      <span style={{ fontFamily: "monospace" }}>{item.orderNo || item.id}</span> · {item.clientName ?? item.clientId ?? "-"} · {item.createdAt.slice(0, 10)}
                     </div>
                     <div
                       style={{

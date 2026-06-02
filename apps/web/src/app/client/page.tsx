@@ -671,6 +671,15 @@ export default function ClientHomePage() {
                       
                       {isShipped && item.trackingNo ? <div>运单号：{item.trackingNo}</div> : null}
                     </div>
+                    {(item.productImages?.length ?? 0) > 0 && (
+                      <div style={{ display: "flex", gap: 4, marginBottom: 8, flexWrap: "wrap" }}>
+                        {item.productImages!.map((img) => (
+                          <a key={img.id} href={'data:' + img.mime + ';base64,' + img.contentBase64} target="_blank" rel="noreferrer">
+                            <img src={'data:' + img.mime + ';base64,' + img.contentBase64} alt={img.fileName} style={{ width: 48, height: 48, objectFit: "cover", borderRadius: 4, border: "1px solid #e5e7eb" }} />
+                          </a>
+                        ))}
+                      </div>
+                    )}
                     <div style={{ display: "flex", gap: 6, justifyContent: "flex-end", borderTop: "1px solid #f3f4f6", paddingTop: 8 }}>
                       {isPending && (
                         <>
@@ -1299,6 +1308,15 @@ export default function ClientHomePage() {
                       
                       {isShipped && item.trackingNo ? <div>运单号：{item.trackingNo}</div> : null}
                     </div>
+                    {(item.productImages?.length ?? 0) > 0 && (
+                      <div style={{ display: "flex", gap: 4, marginBottom: 8, flexWrap: "wrap" }}>
+                        {item.productImages!.map((img) => (
+                          <a key={img.id} href={'data:' + img.mime + ';base64,' + img.contentBase64} target="_blank" rel="noreferrer">
+                            <img src={'data:' + img.mime + ';base64,' + img.contentBase64} alt={img.fileName} style={{ width: 48, height: 48, objectFit: "cover", borderRadius: 4, border: "1px solid #e5e7eb" }} />
+                          </a>
+                        ))}
+                      </div>
+                    )}
                     <div style={{ display: "flex", gap: 6, justifyContent: "flex-end", borderTop: "1px solid #f3f4f6", paddingTop: 8 }}>
                       {isPending && (
                         <>
