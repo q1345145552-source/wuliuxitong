@@ -1454,6 +1454,31 @@ export async function deleteAdminShippingRate(id: string): Promise<{ deleted: bo
   return parseApiResponse(response);
 }
 
+export async function fetchClientShippingConfig(clientId: string): Promise<{
+  clientId: string;
+  prices: Record<string, number>;
+  disableMinVolume: boolean;
+}> {
+  const response = await fetch(`${apiBaseUrl()}/admin/shipping/client-config?clientId=${encodeURIComponent(clientId)}`, {
+    method: "GET",
+    headers: { ...authHeaders() },
+  });
+  return parseApiResponse(response);
+}
+
+export async function saveClientShippingConfig(payload: {
+  clientId: string;
+  prices: Record<string, number>;
+  disableMinVolume: boolean;
+}): Promise<{ saved: boolean }> {
+  const response = await fetch(`${apiBaseUrl()}/admin/shipping/client-config`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify(payload),
+  });
+  return parseApiResponse(response);
+}
+
 export async function updateShippingConfig(payload: Record<string, string>): Promise<Record<string, string>> {
   const response = await fetch(`${apiBaseUrl()}/admin/shipping/config`, {
     method: "POST",

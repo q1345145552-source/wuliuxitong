@@ -36,6 +36,8 @@ import {
   fetchAdminShippingRates,
   saveAdminShippingRate,
   deleteAdminShippingRate,
+  fetchClientShippingConfig,
+  saveClientShippingConfig,
 } from "../../services/business-api";
 import {
   createKnowledgeItem,
@@ -147,6 +149,9 @@ export default function AdminHomePage() {
   }>>([]);
   const [rateDefaults, setRateDefaults] = useState<Array<{ transportMode: string; cargoType: string; unitPriceCny: number }>>([]);
   const [rateEditForm, setRateEditForm] = useState({ transportMode: "sea", cargoType: "normal", customerId: "", unitPriceCny: "", disableMinVolume: false });
+  const [expandedClientId, setExpandedClientId] = useState<string | null>(null);
+  const [clientPrices, setClientPrices] = useState<Record<string, number>>({});
+  const [clientMinVolumeDisabled, setClientMinVolumeDisabled] = useState(false);
   const [title, setTitle] = useState("");
   const [content, setContent] = useState("");
   const [staffPanelCollapsed, setStaffPanelCollapsed] = useState(false);
@@ -721,6 +726,23 @@ export default function AdminHomePage() {
       setRateItems(data.items);
       setRateDefaults(data.defaults);
     } catch { /* ignore */ }
+  };
+
+  const loadClientPrices = async (clientId: string) => {
+    try {
+      const data = await fetchClientShippingConfig(clientId);
+      setClientPrices(data.prices);
+      setClientMinVolumeDisabled(data.disableMinVolume);
+    } catch { /* ignore */ }
+  };
+
+  const toggleClientExpand = async (clientId: string) => {
+    if (expandedClientId === clientId) {
+      setExpandedClientId(null);
+      return;
+    }
+    setExpandedClientId(clientId);
+    await loadClientPrices(clientId);
   };
 
   useEffect(() => {
@@ -1484,21 +1506,16 @@ export default function AdminHomePage() {
 
         {/* 价格管理 */}
         <h3 style={{ marginTop: 24, marginBottom: 10, fontSize: 16 }}>价格管理</h3>
-        <p style={{ color: "#000000", marginBottom: 12, fontSize: 13 }}>
-          默认价格若无手动配置则使用内置默认值。可为特定客户设置专属价格或取消低消。
-        </p>
 
         {/* 默认价格表 */}
         <div style={{ marginBottom: 20 }}>
-          <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 8, color: "#000000" }}>当前价格表</div>
+          <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 8, color: "#000000" }}>默认价格（所有客户通用）</div>
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
             <thead>
               <tr style={{ borderBottom: "2px solid #e5e7eb" }}>
                 <th style={{ padding: "6px 8px", textAlign: "left", color: "#000000" }}>运输方式</th>
                 <th style={{ padding: "6px 8px", textAlign: "left", color: "#000000" }}>货物类型</th>
-                <th style={{ padding: "6px 8px", textAlign: "left", color: "#000000" }}>客户</th>
                 <th style={{ padding: "6px 8px", textAlign: "right", color: "#000000" }}>单价 (¥/m³)</th>
-                <th style={{ padding: "6px 8px", textAlign: "center", color: "#000000" }}>取消低消</th>
                 <th style={{ padding: "6px 8px", textAlign: "center", color: "#000000" }}>操作</th>
               </tr>
             </thead>
@@ -1507,96 +1524,92 @@ export default function AdminHomePage() {
                 const override = rateItems.find((r) => r.transportMode === d.transportMode && r.cargoType === d.cargoType && !r.customerId);
                 const price = override?.unitPriceCny ?? d.unitPriceCny;
                 return (
-                  <tr key={`${d.transportMode}|${d.cargoType}|default`} style={{ borderBottom: "1px solid #f3f4f6" }}>
+                  <tr key={`${d.transportMode}|${d.cargoType}`} style={{ borderBottom: "1px solid #f3f4f6" }}>
                     <td style={{ padding: "6px 8px" }}>{d.transportMode === "sea" ? "海运" : "陆运"}</td>
                     <td style={{ padding: "6px 8px" }}>{d.cargoType === "normal" ? "普货" : d.cargoType === "inspection" ? "商检" : "敏感"}</td>
-                    <td style={{ padding: "6px 8px", color: "#6b7280" }}>通用</td>
                     <td style={{ padding: "6px 8px", textAlign: "right" }}>¥{price.toFixed(0)}</td>
-                    <td style={{ padding: "6px 8px", textAlign: "center" }}>—</td>
                     <td style={{ padding: "6px 8px", textAlign: "center" }}>
                       <button type="button" onClick={() => setRateEditForm({
-                        transportMode: d.transportMode, cargoType: d.cargoType,
-                        customerId: "", unitPriceCny: String(price), disableMinVolume: false
+                        transportMode: d.transportMode, cargoType: d.cargoType, customerId: "", unitPriceCny: String(price), disableMinVolume: false
                       })} style={{ border: "1px solid #2563eb", borderRadius: 4, padding: "2px 8px", fontSize: 12, background: "#fff", color: "#2563eb", cursor: "pointer" }}>编辑</button>
                     </td>
                   </tr>
                 );
               })}
-              {/* 客户专属价格 */}
-              {rateItems.filter((r) => r.customerId).map((r) => (
-                <tr key={r.id} style={{ borderBottom: "1px solid #f3f4f6", background: "#fefce8" }}>
-                  <td style={{ padding: "6px 8px" }}>{r.transportMode === "sea" ? "海运" : "陆运"}</td>
-                  <td style={{ padding: "6px 8px" }}>{r.cargoType === "normal" ? "普货" : r.cargoType === "inspection" ? "商检" : "敏感"}</td>
-                  <td style={{ padding: "6px 8px" }}>{clientList.find((c) => c.id === r.customerId)?.name ?? r.customerId}</td>
-                  <td style={{ padding: "6px 8px", textAlign: "right", fontWeight: 600 }}>¥{r.unitPriceCny.toFixed(0)}</td>
-                  <td style={{ padding: "6px 8px", textAlign: "center" }}>{r.disableMinVolume ? "✓" : "—"}</td>
-                  <td style={{ padding: "6px 8px", textAlign: "center" }}>
-                    <button type="button" onClick={() => setRateEditForm({
-                      transportMode: r.transportMode, cargoType: r.cargoType,
-                      customerId: r.customerId ?? "", unitPriceCny: String(r.unitPriceCny), disableMinVolume: r.disableMinVolume
-                    })} style={{ border: "1px solid #2563eb", borderRadius: 4, padding: "2px 8px", fontSize: 12, background: "#fff", color: "#2563eb", cursor: "pointer", marginRight: 4 }}>编辑</button>
-                    <button type="button" onClick={async () => {
-                      if (!confirm("删除此客户专属价格？")) return;
-                      try { await deleteAdminShippingRate(r.id); await loadRates(); setToast("已删除"); } catch { setToast("删除失败"); }
-                    }} style={{ border: "1px solid #dc2626", borderRadius: 4, padding: "2px 8px", fontSize: 12, background: "#fff", color: "#dc2626", cursor: "pointer" }}>删除</button>
-                  </td>
-                </tr>
-              ))}
             </tbody>
           </table>
+          {/* 编辑默认价格表单 */}
+          {rateEditForm.unitPriceCny && !rateEditForm.customerId ? (
+            <div style={{ border: "1px solid #e5e7eb", borderRadius: 8, padding: 12, marginTop: 10, background: "#f9fafb" }}>
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <span style={{ fontSize: 13, color: "#000000" }}>{rateEditForm.transportMode === "sea" ? "海运" : "陆运"}·{rateEditForm.cargoType === "normal" ? "普货" : rateEditForm.cargoType === "inspection" ? "商检" : "敏感"}</span>
+                <input value={rateEditForm.unitPriceCny} onChange={(e) => setRateEditForm((f) => ({ ...f, unitPriceCny: e.target.value }))}
+                  type="number" style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "6px 8px", fontSize: 13, width: 100 }} />
+                <button type="button" onClick={async () => {
+                  const p = Number(rateEditForm.unitPriceCny);
+                  if (!p || p <= 0) { setToast("请输入有效价格"); return; }
+                  try { await saveAdminShippingRate({ transportMode: rateEditForm.transportMode, cargoType: rateEditForm.cargoType, customerId: null, unitPriceCny: p }); await loadRates(); setRateEditForm({ transportMode: "sea", cargoType: "normal", customerId: "", unitPriceCny: "", disableMinVolume: false }); setToast("已保存"); } catch { setToast("保存失败"); }
+                }} style={{ border: "none", borderRadius: 6, padding: "6px 12px", background: "#2563eb", color: "#fff", fontWeight: 500, fontSize: 13, cursor: "pointer" }}>保存</button>
+                <button type="button" onClick={() => setRateEditForm({ transportMode: "sea", cargoType: "normal", customerId: "", unitPriceCny: "", disableMinVolume: false })}
+                  style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "6px 12px", background: "#fff", color: "#000000", fontSize: 13, cursor: "pointer" }}>取消</button>
+              </div>
+            </div>
+          ) : null}
         </div>
 
-        {/* 添加/编辑表单 */}
-        <div style={{ border: "1px solid #e5e7eb", borderRadius: 8, padding: 12, background: "#f9fafb" }}>
-          <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 8, color: "#000000" }}>{rateEditForm.unitPriceCny ? "编辑价格" : "添加价格"}</div>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-            <select value={rateEditForm.transportMode} onChange={(e) => setRateEditForm((f) => ({ ...f, transportMode: e.target.value }))}
-              style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "6px 8px", fontSize: 13 }}>
-              <option value="sea">海运</option>
-              <option value="land">陆运</option>
-            </select>
-            <select value={rateEditForm.cargoType} onChange={(e) => setRateEditForm((f) => ({ ...f, cargoType: e.target.value }))}
-              style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "6px 8px", fontSize: 13 }}>
-              <option value="normal">普货</option>
-              <option value="inspection">商检</option>
-              <option value="sensitive">敏感</option>
-            </select>
-          </div>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 8 }}>
-            <select value={rateEditForm.customerId} onChange={(e) => setRateEditForm((f) => ({ ...f, customerId: e.target.value }))}
-              style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "6px 8px", fontSize: 13 }}>
-              <option value="">通用（所有客户）</option>
-              {clientList.map((c) => (
-                <option key={c.id} value={c.id}>{c.name} ({c.id})</option>
-              ))}
-            </select>
-            <input value={rateEditForm.unitPriceCny} onChange={(e) => setRateEditForm((f) => ({ ...f, unitPriceCny: e.target.value }))}
-              placeholder="单价 ¥/m³" type="number" style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "6px 8px", fontSize: 13 }} />
-          </div>
-          {rateEditForm.customerId ? (
-            <label style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 8, fontSize: 13, cursor: "pointer" }}>
-              <input type="checkbox" checked={rateEditForm.disableMinVolume} onChange={(e) => setRateEditForm((f) => ({ ...f, disableMinVolume: e.target.checked }))} />
-              <span style={{ color: "#000000" }}>取消低消</span>
-            </label>
-          ) : null}
-          <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
-            <button type="button" onClick={async () => {
-              const price = Number(rateEditForm.unitPriceCny);
-              if (!price || price <= 0) { setToast("请输入有效价格"); return; }
-              try {
-                await saveAdminShippingRate({
-                  transportMode: rateEditForm.transportMode, cargoType: rateEditForm.cargoType,
-                  customerId: rateEditForm.customerId || null, unitPriceCny: price,
-                  disableMinVolume: rateEditForm.disableMinVolume,
-                });
-                await loadRates();
-                setRateEditForm({ transportMode: "sea", cargoType: "normal", customerId: "", unitPriceCny: "", disableMinVolume: false });
-                setToast("已保存");
-              } catch { setToast("保存失败"); }
-            }} style={{ border: "none", borderRadius: 6, padding: "8px 16px", background: "#2563eb", color: "#fff", fontWeight: 500, fontSize: 13, cursor: "pointer" }}>保存</button>
-            <button type="button" onClick={() => setRateEditForm({ transportMode: "sea", cargoType: "normal", customerId: "", unitPriceCny: "", disableMinVolume: false })}
-              style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "8px 16px", background: "#fff", color: "#000000", fontSize: 13, cursor: "pointer" }}>取消</button>
-          </div>
+        {/* 客户专属配置 */}
+        <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 8, color: "#000000" }}>客户专属配置</div>
+        <div style={{ display: "grid", gap: 6 }}>
+          {clientList.map((c) => {
+            const hasCustom = rateItems.some((r) => r.customerId === c.id);
+            const isExpanded = expandedClientId === c.id;
+            const hasMinDisabled = rateItems.some((r) => r.customerId === c.id && r.disableMinVolume);
+            return (
+              <div key={c.id} style={{ border: "1px solid #e5e7eb", borderRadius: 8, padding: 10, background: hasCustom ? "#fefce8" : "#fff" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <div>
+                    <span style={{ fontWeight: 600, fontSize: 14 }}>{c.name}</span>
+                    <span style={{ marginLeft: 8, fontSize: 12, color: "#6b7280", fontFamily: "monospace" }}>{c.id}</span>
+                    {hasCustom ? <span style={{ marginLeft: 8, fontSize: 11, color: "#d97706" }}>已配置</span> : <span style={{ marginLeft: 8, fontSize: 11, color: "#9ca3af" }}>使用默认</span>}
+                    {hasMinDisabled ? <span style={{ marginLeft: 8, fontSize: 11, color: "#8b5cf6" }}>低消已取消</span> : null}
+                  </div>
+                  <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                    <button type="button" onClick={() => toggleClientExpand(c.id)}
+                      style={{ border: "1px solid #2563eb", borderRadius: 4, padding: "4px 10px", fontSize: 12, background: "#fff", color: "#2563eb", cursor: "pointer" }}>
+                      {isExpanded ? "收起" : "查看价格"}
+                    </button>
+                  </div>
+                </div>
+                {isExpanded ? (
+                  <div style={{ marginTop: 10, borderTop: "1px solid #e5e7eb", paddingTop: 10 }}>
+                    <label style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 10, fontSize: 13, cursor: "pointer" }}>
+                      <input type="checkbox" checked={clientMinVolumeDisabled} onChange={(e) => setClientMinVolumeDisabled(e.target.checked)} />
+                      <span style={{ color: "#000000" }}>取消低消</span>
+                    </label>
+                    {rateDefaults.map((d) => {
+                      const key = `${d.transportMode}|${d.cargoType}`;
+                      const val = clientPrices[key] ?? d.unitPriceCny;
+                      return (
+                        <div key={key} style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 6 }}>
+                          <span style={{ width: 100, fontSize: 13 }}>{d.transportMode === "sea" ? "海运" : "陆运"}·{d.cargoType === "normal" ? "普货" : d.cargoType === "inspection" ? "商检" : "敏感"}</span>
+                          <input value={val} onChange={(e) => setClientPrices((p) => ({ ...p, [key]: Number(e.target.value) || 0 }))}
+                            type="number" style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "6px 8px", fontSize: 13, width: 90 }} />
+                          <span style={{ fontSize: 12, color: "#9ca3af" }}>¥/m³</span>
+                        </div>
+                      );
+                    })}
+                    <button type="button" onClick={async () => {
+                      try {
+                        await saveClientShippingConfig({ clientId: c.id, prices: clientPrices, disableMinVolume: clientMinVolumeDisabled });
+                        await loadRates();
+                        setToast("已保存");
+                      } catch { setToast("保存失败"); }
+                    }} style={{ border: "none", borderRadius: 6, padding: "8px 16px", background: "#2563eb", color: "#fff", fontWeight: 500, fontSize: 13, cursor: "pointer", marginTop: 8 }}>保存客户价格</button>
+                  </div>
+                ) : null}
+              </div>
+            );
+          })}
         </div>
       </section>
 

@@ -150,6 +150,64 @@ export function registerShippingConfigRoutes(app: MinimalHttpApp): void {
     ok(res, { deleted: true });
   });
 
+  // 获取单个客户的专属配置（价格 + 低消）
+  app.get("/admin/shipping/client-config", async (req, res) => {
+    const auth = requireRole(req, res, ["admin"]);
+    if (!auth) return;
+    const clientId = req.query.clientId?.trim();
+    if (!clientId) { fail(res, 400, "BAD_REQUEST", "clientId required"); return; }
+    const rows = await prisma.pricingRule.findMany({
+      where: { companyId: auth.companyId, customerId: clientId },
+    });
+    const prices: Record<string, number> = {};
+    let disableMinVolume = false;
+    for (const r of rows) {
+      const key = `${r.transportMode}|${r.cargoType}`;
+      prices[key] = Number(r.unitPriceCny.toString());
+      if (r.disableMinVolume) disableMinVolume = true;
+    }
+    ok(res, { clientId, prices, disableMinVolume });
+  });
+
+  // 批量保存客户专属价格
+  app.post("/admin/shipping/client-config", async (req, res) => {
+    const auth = requireRole(req, res, ["admin"]);
+    if (!auth) return;
+    const body = (req.body ?? {}) as {
+      clientId?: string;
+      prices?: Record<string, number>;
+      disableMinVolume?: boolean;
+    };
+    const clientId = body.clientId?.trim();
+    if (!clientId) { fail(res, 400, "BAD_REQUEST", "clientId required"); return; }
+
+    // 删除该客户现有所有配置
+    await prisma.pricingRule.deleteMany({
+      where: { companyId: auth.companyId, customerId: clientId },
+    });
+
+    // 保存新价格
+    if (body.prices) {
+      for (const [key, price] of Object.entries(body.prices)) {
+        const [transportMode, cargoType] = key.split("|");
+        if (!transportMode || !cargoType || typeof price !== "number" || price <= 0) continue;
+        await prisma.pricingRule.create({
+          data: {
+            companyId: auth.companyId,
+            transportMode,
+            cargoType,
+            customerId: clientId,
+            unitPriceCny: price,
+            disableMinVolume: body.disableMinVolume ?? false,
+            effectiveFrom: new Date(),
+          },
+        });
+      }
+    }
+
+    ok(res, { saved: true });
+  });
+
   // 客户端获取有效价格
   app.get("/client/shipping/prices", async (req, res) => {
     const auth = requireRole(req, res, ["client", "staff", "admin"]);
