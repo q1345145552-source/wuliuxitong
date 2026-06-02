@@ -736,6 +736,15 @@ export default function AdminHomePage() {
     } catch { /* ignore */ }
   };
 
+  const priceDefaults = rateDefaults.length > 0 ? rateDefaults : [
+    { transportMode: "sea", cargoType: "normal", unitPriceCny: 550 },
+    { transportMode: "sea", cargoType: "inspection", unitPriceCny: 700 },
+    { transportMode: "sea", cargoType: "sensitive", unitPriceCny: 800 },
+    { transportMode: "land", cargoType: "normal", unitPriceCny: 1070 },
+    { transportMode: "land", cargoType: "inspection", unitPriceCny: 1250 },
+    { transportMode: "land", cargoType: "sensitive", unitPriceCny: 1350 },
+  ];
+
   const loadClientPrices = async (clientId: string) => {
     try {
       const data = await fetchClientShippingConfig(clientId);
@@ -1550,7 +1559,7 @@ export default function AdminHomePage() {
                 {isView ? (
                   <div style={{ marginTop: 10, borderTop: "1px solid #e5e7eb", paddingTop: 10 }}>
                     <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 6, color: "#000000" }}>当前价格</div>
-                    {rateDefaults.map((d) => {
+                    {priceDefaults.map((d) => {
                       const key = `${d.transportMode}|${d.cargoType}`;
                       const val = clientPrices[key] ?? rateDefaults.find((rd) => rd.transportMode === d.transportMode && rd.cargoType === d.cargoType)?.unitPriceCny ?? d.unitPriceCny;
                       return (
@@ -1572,7 +1581,7 @@ export default function AdminHomePage() {
                       <input type="checkbox" checked={clientMinVolumeDisabled} onChange={(e) => setClientMinVolumeDisabled(e.target.checked)} />
                       <span style={{ color: "#000000" }}>取消低消</span>
                     </label>
-                    {rateDefaults.map((d) => {
+                    {priceDefaults.map((d) => {
                       const key = `${d.transportMode}|${d.cargoType}`;
                       const val = clientPrices[key] ?? d.unitPriceCny;
                       return (
