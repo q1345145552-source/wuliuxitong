@@ -1479,6 +1479,23 @@ export async function saveClientShippingConfig(payload: {
   return parseApiResponse(response);
 }
 
+export async function fetchClientNotes(): Promise<Record<string, { content: string; updatedAt: string }>> {
+  const response = await fetch(`${apiBaseUrl()}/staff/lastmile/notes`, {
+    method: "GET",
+    headers: { ...authHeaders() },
+  });
+  return parseApiResponse(response);
+}
+
+export async function saveClientNote(clientId: string, content: string): Promise<{ saved: boolean }> {
+  const response = await fetch(`${apiBaseUrl()}/admin/shipping/notes`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({ clientId, content }),
+  });
+  return parseApiResponse(response);
+}
+
 export async function updateShippingConfig(payload: Record<string, string>): Promise<Record<string, string>> {
   const response = await fetch(`${apiBaseUrl()}/admin/shipping/config`, {
     method: "POST",

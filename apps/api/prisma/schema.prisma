@@ -636,3 +636,14 @@ model AuditLog {
   @@index([resourceType, resourceId])
   @@map("audit_logs")
 }
+
+model ClientNote {
+  id        String   @id @default(cuid())
+  companyId String   @map("company_id")
+  clientId  String   @map("client_id") @unique
+  content   String   @default("")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@map("client_notes")
+}

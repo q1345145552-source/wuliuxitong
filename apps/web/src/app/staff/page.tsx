@@ -20,6 +20,7 @@ import {
   fetchStaffPrealerts,
   fetchStaffShipments,
   fetchShipmentImages,
+  fetchClientNotes,
   patchStaffShipmentOrderBundle,
   repairStaffShipmentOrderLinks,
   type RepairStaffShipmentOrderLinksResult,
@@ -615,6 +616,11 @@ export default function StaffHomePage() {
     }>;
   }>>([]);
   const [lastmileLoading, setLastmileLoading] = useState(false);
+  const [clientNotes, setClientNotes] = useState<Record<string, { content: string; updatedAt: string }>>({});
+
+  const loadClientNotesData = async () => {
+    try { setClientNotes(await fetchClientNotes()); } catch { }
+  };
 
   const loadLastmileAddresses = async (keyword: string) => {
     setLastmileLoading(true);
@@ -633,6 +639,7 @@ export default function StaffHomePage() {
   useEffect(() => {
     if (activeSection === "staff-lastmile" && lastmileItems.length === 0) {
       void loadLastmileAddresses("");
+      void loadClientNotesData();
     }
   }, [activeSection]);
 
@@ -3288,6 +3295,13 @@ export default function StaffHomePage() {
                     </div>
                   ))
                 )}
+                {/* 备注（只读） */}
+                <div style={{ marginTop: 8, borderTop: "1px solid #e5e7eb", paddingTop: 8 }}>
+                  <div style={{ fontSize: 11, color: "#6b7280", marginBottom: 4 }}>备注</div>
+                  <div style={{ fontSize: 12, color: clientNotes[client.id]?.content ? "#000000" : "#9ca3af", whiteSpace: "pre-wrap" }}>
+                    {clientNotes[client.id]?.content || "暂无备注"}
+                  </div>
+                </div>
               </div>
             ))}
           </div>

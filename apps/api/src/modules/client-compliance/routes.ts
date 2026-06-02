@@ -31,4 +31,34 @@ export function registerClientComplianceRoutes(app: MinimalHttpApp, _db: Databas
       },
     });
   });
+
+  // 获取所有客户备注
+  app.get("/staff/lastmile/notes", async (req, res) => {
+    const auth = requireRole(req, res, ["staff", "admin"]);
+    if (!auth) return;
+    const rows = await prisma.clientNote.findMany({
+      where: { companyId: auth.companyId },
+      select: { clientId: true, content: true, updatedAt: true },
+    });
+    const map: Record<string, { content: string; updatedAt: string }> = {};
+    for (const r of rows) {
+      map[r.clientId] = { content: r.content, updatedAt: r.updatedAt.toISOString() };
+    }
+    ok(res, map);
+  });
+
+  // 保存客户备注（仅管理员）
+  app.post("/admin/shipping/notes", async (req, res) => {
+    const auth = requireRole(req, res, ["admin"]);
+    if (!auth) return;
+    const body = (req.body ?? {}) as { clientId?: string; content?: string };
+    const clientId = body.clientId?.trim();
+    if (!clientId) { fail(res, 400, "BAD_REQUEST", "clientId required"); return; }
+    await prisma.clientNote.upsert({
+      where: { clientId },
+      create: { companyId: auth.companyId, clientId, content: body.content ?? "" },
+      update: { content: body.content ?? "" },
+    });
+    ok(res, { saved: true });
+  });
 }
