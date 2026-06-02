@@ -160,7 +160,6 @@ function shipmentStatusZh(status: string | undefined): string {
     cancelled: "已取消",
   };
   return map[value] ?? value;
-  return map[status] ?? status;
 }
 
 /**
