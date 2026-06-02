@@ -83,15 +83,17 @@ export function registerShippingConfigRoutes(app: MinimalHttpApp): void {
       orderBy: [{ customerId: "asc" }, { transportMode: "asc" }, { cargoType: "asc" }],
     });
     ok(res, {
-      items: rows.map((r) => ({
-        id: r.id,
-        transportMode: r.transportMode,
-        cargoType: r.cargoType,
-        customerId: r.customerId,
-        customerName: null as string | null,
-        unitPriceCny: Number(r.unitPriceCny.toString()),
-        disableMinVolume: r.disableMinVolume,
-      })),
+      items: rows
+        .filter((r) => Number(r.unitPriceCny.toString()) > 0) // 过滤占位记录
+        .map((r) => ({
+          id: r.id,
+          transportMode: r.transportMode,
+          cargoType: r.cargoType,
+          customerId: r.customerId,
+          customerName: null as string | null,
+          unitPriceCny: Number(r.unitPriceCny.toString()),
+          disableMinVolume: r.disableMinVolume,
+        })),
       defaults: DEFAULT_PRICES,
     });
   });
@@ -162,9 +164,15 @@ export function registerShippingConfigRoutes(app: MinimalHttpApp): void {
     const prices: Record<string, number> = {};
     let disableMinVolume = false;
     for (const r of rows) {
+      const price = Number(r.unitPriceCny.toString());
+      if (price <= 0) continue; // 跳过占位记录
       const key = `${r.transportMode}|${r.cargoType}`;
-      prices[key] = Number(r.unitPriceCny.toString());
+      prices[key] = price;
       if (r.disableMinVolume) disableMinVolume = true;
+    }
+    // 检查是否有专门的 disableMinVolume 占位记录
+    if (!disableMinVolume) {
+      disableMinVolume = rows.some((r) => r.disableMinVolume && Number(r.unitPriceCny.toString()) <= 0);
     }
     ok(res, { clientId, prices, disableMinVolume });
   });
@@ -240,19 +248,24 @@ export function registerShippingConfigRoutes(app: MinimalHttpApp): void {
 
     // Merge: client overrides take priority
     const priceMap = new Map<string, { unitPriceCny: number; disableMinVolume: boolean }>();
+    let clientMinDisabled = false;
     for (const r of rows) {
-      const key = `${r.transportMode}|${r.cargoType}`;
+      const price = Number(r.unitPriceCny.toString());
       if (r.customerId === clientId) {
-        priceMap.set(key, { unitPriceCny: Number(r.unitPriceCny.toString()), disableMinVolume: r.disableMinVolume });
-      } else if (r.customerId === null && !priceMap.has(key)) {
-        priceMap.set(key, { unitPriceCny: Number(r.unitPriceCny.toString()), disableMinVolume: false });
+        if (r.disableMinVolume) clientMinDisabled = true;
+        if (price <= 0) continue; // 跳过占位记录
+        const key = `${r.transportMode}|${r.cargoType}`;
+        priceMap.set(key, { unitPriceCny: price, disableMinVolume: r.disableMinVolume });
+      } else if (r.customerId === null && !priceMap.has(`${r.transportMode}|${r.cargoType}`)) {
+        priceMap.set(`${r.transportMode}|${r.cargoType}`, { unitPriceCny: price, disableMinVolume: false });
       }
     }
 
     const result: Record<string, { unitPriceCny: number; disableMinVolume: boolean }> = {};
     for (const d of DEFAULT_PRICES) {
       const key = `${d.transportMode}|${d.cargoType}`;
-      result[key] = priceMap.get(key) ?? { unitPriceCny: d.unitPriceCny, disableMinVolume: false };
+      const entry = priceMap.get(key) ?? { unitPriceCny: d.unitPriceCny, disableMinVolume: false };
+      result[key] = { unitPriceCny: entry.unitPriceCny, disableMinVolume: entry.disableMinVolume || clientMinDisabled };
     }
 
     ok(res, result);
