@@ -36,6 +36,7 @@ export const roleFunctionMenus: Record<MockRole, RoleFunctionMenuItem[]> = {
     { id: "admin-func-staff", label: "员工管理", href: "/admin#staff" },
     { id: "admin-func-clients", label: "客户管理", href: "/admin#clients" },
     { id: "admin-func-orders", label: "订单管理", href: "/admin#orders" },
+    { id: "admin-func-shipping", label: "运费配置", href: "/admin#shipping-config" },
     { id: "admin-func-lmp", label: "渠道与价格管理", href: "/admin/lmp" },
     { id: "admin-func-customs", label: "关务监控", href: "/admin/customs" },
     { id: "admin-func-lastmile", label: "海外仓/末端集成", href: "/admin/lastmile" },
