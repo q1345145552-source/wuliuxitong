@@ -239,10 +239,10 @@ export default function ClientHomePage() {
     // 加载运费价格表
     fetchShippingPrices().then(setShippingPrices).catch(() => {});
 
-    // 15 秒自动刷新同步
+    // 10 秒自动刷新同步
     const interval = window.setInterval(() => {
       refreshMainData().catch(() => {});
-    }, 15000);
+    }, 10000);
     return () => window.clearInterval(interval);
   }, []);
 

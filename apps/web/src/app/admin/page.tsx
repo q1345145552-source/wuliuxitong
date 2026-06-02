@@ -292,18 +292,27 @@ export default function AdminHomePage() {
   }, []);
 
   const loadStaff = useCallback(async () => {
-    const list = await fetchAdminStaff();
-    setStaffList(list);
+    try {
+      const list = await fetchAdminStaff();
+      setStaffList(list);
+      setToast("员工列表已刷新");
+    } catch (e) { setToast("刷新失败"); }
   }, []);
 
   const loadClients = useCallback(async () => {
-    const list = await fetchAdminClients();
-    setClientList(list);
+    try {
+      const list = await fetchAdminClients();
+      setClientList(list);
+      setToast("客户列表已刷新");
+    } catch (e) { setToast("刷新失败"); }
   }, []);
 
   const loadOrders = useCallback(async () => {
-    const list = await fetchAdminOrders();
-    setOrderList(list);
+    try {
+      const list = await fetchAdminOrders();
+      setOrderList(list);
+      setToast("订单列表已刷新");
+    } catch (e) { setToast("刷新失败"); }
   }, []);
 
   /**
@@ -436,6 +445,14 @@ export default function AdminHomePage() {
     if (!next) return;
     setSession(next);
     void loadAll(next);
+
+    // 10 秒自动刷新同步
+    const interval = window.setInterval(() => {
+      loadStaff().catch(() => {});
+      loadClients().catch(() => {});
+      loadOrders().catch(() => {});
+    }, 10000);
+    return () => window.clearInterval(interval);
   }, []);
 
   useEffect(() => {
