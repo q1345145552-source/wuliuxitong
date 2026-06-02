@@ -9,6 +9,7 @@ import CountUpNumber from "../../modules/layout/CountUpNumber";
 import EmptyStateCard from "../../modules/layout/EmptyStateCard";
 import RoleShell from "../../modules/layout/RoleShell";
 import Toast from "../../modules/layout/Toast";
+import ShipmentSearch from "../../modules/shipment/ShipmentSearch";
 import {
   fetchAdminOverview,
   fetchAdminStaff,
@@ -88,6 +89,27 @@ const WAREHOUSE_LABEL_MAP: Record<string, string> = {
   wh_dongguan_01: "东莞仓",
 };
 
+const warehouseOptions = [
+  { id: "wh_yiwu_01", label: "义乌仓" },
+  { id: "wh_guangzhou_01", label: "广州仓" },
+  { id: "wh_dongguan_01", label: "东莞仓" },
+];
+
+const logisticsStatusOptions = [
+  "已创建", "已揽收", "国内仓已收货", "报关中", "已装柜",
+  "延迟开船", "已开船", "已到港", "运输中",
+  "清关中", "清关已放行", "已到仓", "派送中", "派送完成",
+] as const;
+
+/** 中文状态 → 英文 status */
+const STATUS_REVERSE_MAP: Record<string, string> = {
+  "已创建": "created", "已揽收": "pickedup", "国内仓已收货": "inwarehousecn",
+  "报关中": "customspending", "已装柜": "loaded", "延迟开船": "delaydeparted",
+  "已开船": "departed", "已到港": "arrivedport", "运输中": "intransit",
+  "清关中": "customsth", "清关已放行": "customscleared", "已到仓": "inwarehouseth",
+  "派送中": "outfordelivery", "派送完成": "delivered",
+};
+
 /**
  * 管理端运单号前缀规则：仓库与单号前缀必须匹配。
  */
@@ -127,6 +149,13 @@ export default function AdminHomePage() {
   const [content, setContent] = useState("");
   const [staffPanelCollapsed, setStaffPanelCollapsed] = useState(false);
   const [ordersPanelCollapsed, setOrdersPanelCollapsed] = useState(false);
+  const [orderSearch, setOrderSearch] = useState({
+    trackingNo: "", domesticTrackingNo: "", clientName: "", warehouseId: "",
+    batchNo: "", itemName: "", packageCount: "", productQuantity: "",
+    weightKg: "", volumeM3: "", arrivedAt: "", logisticsStatus: "",
+    containerNo: "", transportMode: "", receiverAddress: "", shipDate: "",
+    receivableAmount: "", statusRaw: "",
+  });
   const [editingOrderId, setEditingOrderId] = useState("");
   const [orderEditForm, setOrderEditForm] = useState({
     trackingNo: "",
@@ -558,12 +587,54 @@ export default function AdminHomePage() {
     }
   };
 
+  const filteredOrderList = useMemo(() => {
+    const s = orderSearch;
+    return orderList.filter((item) => {
+      const trackingNo = (item.trackingNo ?? "").toLowerCase();
+      const dn = (item.domesticTrackingNo ?? "").toLowerCase();
+      const cn = `${item.clientName ?? ""} ${item.clientId ?? ""}`.toLowerCase();
+      const wn = (item.warehouseId ?? "").toLowerCase();
+      const bn = (item.batchNo ?? "").toLowerCase();
+      const inm = (item.itemName ?? "").toLowerCase();
+      const pn = (item.packageCount ?? "").toString();
+      const pq = (item.productQuantity ?? "").toString();
+      const wk = (item.weightKg ?? "").toString();
+      const vm = (item.volumeM3 ?? "").toString();
+      const ar = item.shipDate ?? item.createdAt?.slice(0, 10) ?? "";
+      const cnr = (item.containerNo ?? "").toLowerCase();
+      const tm = item.transportMode ?? "";
+      const ra = (item.receiverAddressTh ?? "").toLowerCase();
+      const sd = (item.shipDate ?? "").slice(0, 10);
+      const rc = item.receivableAmountCny != null ? String(item.receivableAmountCny) : "";
+      const sr = (item.currentStatus ?? "").toLowerCase();
+      if (s.trackingNo && !trackingNo.includes(s.trackingNo.toLowerCase())) return false;
+      if (s.domesticTrackingNo && !dn.includes(s.domesticTrackingNo.toLowerCase())) return false;
+      if (s.clientName && !cn.includes(s.clientName.toLowerCase())) return false;
+      if (s.warehouseId && wn !== s.warehouseId) return false;
+      if (s.batchNo && !bn.includes(s.batchNo.toLowerCase())) return false;
+      if (s.itemName && !inm.includes(s.itemName.toLowerCase())) return false;
+      if (s.packageCount && !pn.includes(s.packageCount)) return false;
+      if (s.productQuantity && !pq.includes(s.productQuantity)) return false;
+      if (s.weightKg && !wk.includes(s.weightKg)) return false;
+      if (s.volumeM3 && !vm.includes(s.volumeM3)) return false;
+      if (s.arrivedAt && !ar.includes(s.arrivedAt)) return false;
+      if (s.logisticsStatus && shipmentStatusLabel(item.currentStatus) !== s.logisticsStatus) return false;
+      if (s.containerNo && !cnr.includes(s.containerNo.toLowerCase())) return false;
+      if (s.transportMode && tm !== s.transportMode) return false;
+      if (s.receiverAddress && !ra.includes(s.receiverAddress.toLowerCase())) return false;
+      if (s.shipDate && sd !== s.shipDate) return false;
+      if (s.receivableAmount && !rc.includes(s.receivableAmount)) return false;
+      if (s.statusRaw && !sr.includes(s.statusRaw.toLowerCase())) return false;
+      return true;
+    });
+  }, [orderList, orderSearch]);
+
   const exportOrdersToExcel = () => {
-    if (orderList.length === 0) {
+    if (filteredOrderList.length === 0) {
       setMessage("当前没有可导出的订单数据。");
       return;
     }
-    const rows = orderList.map((o) => ({
+    const rows = filteredOrderList.map((o) => ({
       订单号: o.id,
       客户: o.clientName ?? o.clientId ?? "-",
       品名: o.itemName,
@@ -1022,9 +1093,21 @@ export default function AdminHomePage() {
             </button>
           </div>
         </div>
+        {!ordersPanelCollapsed ? (
+          <ShipmentSearch
+            value={orderSearch}
+            onChange={(key, val) => setOrderSearch((prev) => ({ ...prev, [key]: val }))}
+            onSearch={() => {}}
+            warehouseOptions={warehouseOptions}
+            logisticsStatusOptions={logisticsStatusOptions as unknown as string[]}
+            inputStyle={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 10px", fontSize: 13 }}
+          />
+        ) : null}
         {ordersPanelCollapsed ? (
           <p style={{ color: "#000000", fontSize: 13, margin: 0 }}>已折叠。点击「展开」可查看订单列表并导出 Excel。</p>
-        ) : orderList.length === 0 ? (
+        ) : (() => {
+          if (filteredOrderList.length === 0) return <EmptyStateCard title="暂无匹配订单" description="无匹配结果" />;
+          return (
           <EmptyStateCard title="暂无订单" description="当前公司下暂无订单数据。" />
         ) : (
           <div style={{ overflowX: "auto" }}>
@@ -1104,7 +1187,7 @@ export default function AdminHomePage() {
                 </tr>
               </thead>
               <tbody>
-                {orderList.map((o) => (
+                {filteredOrderList.map((o) => (
                   <tr key={o.id} style={{ borderBottom: "1px solid #e2e8f0" }}>
                     <td style={{ padding: "8px 6px", fontWeight: 600, color: "#1e3a8a", whiteSpace: "nowrap" }}>
                       {o.trackingNo ?? "—"}
@@ -1215,7 +1298,8 @@ export default function AdminHomePage() {
               </tbody>
             </table>
           </div>
-        )}
+          );
+        })()}
       </section>
 
       {/* 6. AI待补知识问题 */}
