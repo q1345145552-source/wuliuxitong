@@ -1225,7 +1225,8 @@ export default function AdminHomePage() {
               </tbody>
             </table>
           </div>
-        )}
+          );
+        })()}
       </section>
 
       {/* 5. AI会话记忆运维 */}
