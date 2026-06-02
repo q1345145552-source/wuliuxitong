@@ -852,7 +852,7 @@ export default function AdminHomePage() {
               <div style={{ display: "grid", gap: 4 }}>
                 {opsOverview.customsAlerts.slice(0, 6).map((item) => (
                   <div key={item.id} style={{ fontSize: 12, color: "#92400e" }}>
-                    [{item.status}] shipment {item.shipmentId ?? "-"} / order {item.orderId ?? "-"} /{" "}
+                    [{item.status === "inspection" ? "查验" : item.status === "released" ? "放行" : item.status === "pending" ? "待处理" : item.status}] shipment {item.shipmentId ?? "-"} / order {item.orderId ?? "-"} /{" "}
                     {item.remark ?? "无备注"}
                   </div>
                 ))}
@@ -926,7 +926,7 @@ export default function AdminHomePage() {
                   <span><strong>账号</strong> {u.id}</span>
                   <span><strong>姓名</strong> {u.name}</span>
                   <span><strong>手机</strong> {u.phone}</span>
-                  <span><strong>状态</strong> {u.status}</span>
+                  <span><strong>状态</strong> {u.status === "inactive" ? "已封禁" : "正常"}</span>
                   <span style={{ color: "#000000", fontSize: 12 }}>{u.createdAt.slice(0, 10)}</span>
                   <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                     <button
@@ -1015,7 +1015,7 @@ export default function AdminHomePage() {
                   <span><strong>公司名字</strong> {u.companyName ?? "-"}</span>
                   <span><strong>电话</strong> {u.phone}</span>
                   <span><strong>邮箱</strong> {u.email ?? "-"}</span>
-                  <span><strong>状态</strong> {u.status}</span>
+                  <span><strong>状态</strong> {u.status === "inactive" ? "已封禁" : "正常"}</span>
                   <span style={{ color: "#000000", fontSize: 12 }}>{u.createdAt.slice(0, 10)}</span>
                   <button
                     type="button"

@@ -440,7 +440,7 @@ export default function ClientHomePage() {
     if (value === "returned") return "已退回";
     if (value === "cancelled") return "已取消";
     if (value === "exception") return "异常件";
-    return status ?? "未更新";
+    return "未更新";
   };
 
   /**

@@ -90,9 +90,9 @@ export default function AdminFinancePage() {
                 {pageRows.map((r) => (
                   <tr key={r.id} style={{ borderTop: "1px solid var(--hairline-cool)" }}>
                     <td style={{ padding: "10px 12px", fontWeight: 500 }}>{r.orderNo}</td>
-                    <td style={{ padding: "10px 12px" }}>{r.warehouse}</td>
+                    <td style={{ padding: "10px 12px" }}>{{ wh_yiwu_01: "义乌仓", wh_guangzhou_01: "广州仓", wh_dongguan_01: "东莞仓", wh_shenzhen_01: "深圳仓" }[r.warehouse] ?? r.warehouse}</td>
                     <td style={{ padding: "10px 12px" }}>{r.clientName}</td>
-                    <td style={{ padding: "10px 12px" }}>{r.transportMode}</td>
+                    <td style={{ padding: "10px 12px" }}>{r.transportMode === "sea" ? "海运" : r.transportMode === "land" ? "陆运" : r.transportMode}</td>
                     <td style={{ padding: "10px 12px", textAlign: "right" }}>{r.weightKg.toFixed(1)}</td>
                     <td style={{ padding: "10px 12px", textAlign: "right" }}>{r.volumeM3.toFixed(4)}</td>
                     <td style={{ padding: "10px 12px" }}>

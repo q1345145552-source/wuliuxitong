@@ -83,7 +83,7 @@ export default function AdminLastmilePage() {
         <div style={{ display: "grid", gap: 8 }}>
           {items.map((item) => (
             <div key={item.id} style={{ border: "1px solid #e2e8f0", borderRadius: 8, padding: 8, background: "#f8fafc" }}>
-              {item.carrierName} / {item.externalTrackingNo} / shipment: {item.shipmentId} / {item.status}
+              {item.carrierName} / {item.externalTrackingNo} / shipment: {item.shipmentId} / {item.status === "created" ? "已创建" : item.status === "inTransit" ? "派送中" : item.status === "delivered" ? "已签收" : item.status}
             </div>
           ))}
         </div>

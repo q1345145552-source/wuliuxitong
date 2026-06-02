@@ -176,7 +176,7 @@ export default function ClientImportsPage() {
                     <td style={{ padding: "6px 4px" }}>
                       {row.packageCount} {row.packageUnit}
                     </td>
-                    <td style={{ padding: "6px 4px" }}>{row.transportMode}</td>
+                    <td style={{ padding: "6px 4px" }}>{row.transportMode === "sea" ? "海运" : "陆运"}</td>
                   </tr>
                 ))}
               </tbody>

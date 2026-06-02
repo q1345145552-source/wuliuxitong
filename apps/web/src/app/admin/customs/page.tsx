@@ -78,7 +78,7 @@ export default function AdminCustomsPage() {
         <div style={{ display: "grid", gap: 8 }}>
           {items.map((item) => (
             <div key={item.id} style={{ border: "1px solid #e2e8f0", borderRadius: 8, padding: 8, background: "#f8fafc" }}>
-              {item.status} / shipment: {item.shipmentId ?? "-"} / order: {item.orderId ?? "-"} / {item.remark ?? "-"}
+              [{item.status === "inspection" ? "查验" : item.status === "released" ? "放行" : item.status === "pending" ? "待处理" : item.status}] shipment: {item.shipmentId ?? "-"} / order: {item.orderId ?? "-"} / {item.remark ?? "-"}
             </div>
           ))}
         </div>

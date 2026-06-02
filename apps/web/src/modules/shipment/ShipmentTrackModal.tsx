@@ -48,7 +48,7 @@ const STATUS_ZH: Record<string, string> = {
 };
 
 function statusZh(s: string): string {
-  return STATUS_ZH[s.toLowerCase()] || s;
+  return STATUS_ZH[s.toLowerCase()] || s || "未知";
 }
 
 function formatTime(iso: string): string {
