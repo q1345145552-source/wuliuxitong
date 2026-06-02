@@ -47,7 +47,7 @@ const warehouseAddressMap: Record<string, string> = {
   wh_yiwu_01: "浙江省金华市义乌市北苑街道 xx 路 88 号（义乌仓）",
   wh_guangzhou_01: "广东省广州市白云区石井街道 xx 物流园 16 栋（广州仓）",
   wh_dongguan_01: "广东省东莞市虎门镇 xx 工业区 9 号（东莞仓）",
-  wh_shenzhen_01: "广东省深圳市龙岗区 xx 物流园 12 栋（深圳仓）",
+  wh_shenzhen_01: "（深圳仓地址待补充）",
 };
 
 type FreightTransportMode = "land" | "sea";
