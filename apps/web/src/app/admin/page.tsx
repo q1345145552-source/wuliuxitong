@@ -724,8 +724,8 @@ export default function AdminHomePage() {
   };
 
   useEffect(() => {
-    if (activeSection === "shipping-config") void loadRates();
-  }, [activeSection]);
+    if (activeSection === "shipping-config" && clientList.length > 0) void loadRates();
+  }, [activeSection, clientList]);
 
   if (!session) return null;
 
@@ -1527,10 +1527,14 @@ export default function AdminHomePage() {
                 <tr key={r.id} style={{ borderBottom: "1px solid #f3f4f6", background: "#fefce8" }}>
                   <td style={{ padding: "6px 8px" }}>{r.transportMode === "sea" ? "海运" : "陆运"}</td>
                   <td style={{ padding: "6px 8px" }}>{r.cargoType === "normal" ? "普货" : r.cargoType === "inspection" ? "商检" : "敏感"}</td>
-                  <td style={{ padding: "6px 8px" }}>{r.customerId}{r.customerName ? ` (${r.customerName})` : ""}</td>
+                  <td style={{ padding: "6px 8px" }}>{clientList.find((c) => c.id === r.customerId)?.name ?? r.customerId}</td>
                   <td style={{ padding: "6px 8px", textAlign: "right", fontWeight: 600 }}>¥{r.unitPriceCny.toFixed(0)}</td>
                   <td style={{ padding: "6px 8px", textAlign: "center" }}>{r.disableMinVolume ? "✓" : "—"}</td>
                   <td style={{ padding: "6px 8px", textAlign: "center" }}>
+                    <button type="button" onClick={() => setRateEditForm({
+                      transportMode: r.transportMode, cargoType: r.cargoType,
+                      customerId: r.customerId ?? "", unitPriceCny: String(r.unitPriceCny), disableMinVolume: r.disableMinVolume
+                    })} style={{ border: "1px solid #2563eb", borderRadius: 4, padding: "2px 8px", fontSize: 12, background: "#fff", color: "#2563eb", cursor: "pointer", marginRight: 4 }}>编辑</button>
                     <button type="button" onClick={async () => {
                       if (!confirm("删除此客户专属价格？")) return;
                       try { await deleteAdminShippingRate(r.id); await loadRates(); setToast("已删除"); } catch { setToast("删除失败"); }
@@ -1559,8 +1563,13 @@ export default function AdminHomePage() {
             </select>
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 8 }}>
-            <input value={rateEditForm.customerId} onChange={(e) => setRateEditForm((f) => ({ ...f, customerId: e.target.value }))}
-              placeholder="客户ID（留空=通用）" style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "6px 8px", fontSize: 13 }} />
+            <select value={rateEditForm.customerId} onChange={(e) => setRateEditForm((f) => ({ ...f, customerId: e.target.value }))}
+              style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "6px 8px", fontSize: 13 }}>
+              <option value="">通用（所有客户）</option>
+              {clientList.map((c) => (
+                <option key={c.id} value={c.id}>{c.name} ({c.id})</option>
+              ))}
+            </select>
             <input value={rateEditForm.unitPriceCny} onChange={(e) => setRateEditForm((f) => ({ ...f, unitPriceCny: e.target.value }))}
               placeholder="单价 ¥/m³" type="number" style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "6px 8px", fontSize: 13 }} />
           </div>
