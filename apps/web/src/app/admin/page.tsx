@@ -152,6 +152,7 @@ export default function AdminHomePage() {
   const [expandedClientId, setExpandedClientId] = useState<string | null>(null);
   const [clientPrices, setClientPrices] = useState<Record<string, number>>({});
   const [clientMinVolumeDisabled, setClientMinVolumeDisabled] = useState(false);
+  const [defaultEditPrices, setDefaultEditPrices] = useState<Record<string, number>>({});
   const [title, setTitle] = useState("");
   const [content, setContent] = useState("");
   const [staffPanelCollapsed, setStaffPanelCollapsed] = useState(false);
@@ -725,6 +726,13 @@ export default function AdminHomePage() {
       const data = await fetchAdminShippingRates();
       setRateItems(data.items);
       setRateDefaults(data.defaults);
+      // 初始化默认价格编辑值
+      const initPrices: Record<string, number> = {};
+      for (const d of data.defaults) {
+        const override = data.items.find((r) => r.transportMode === d.transportMode && r.cargoType === d.cargoType && !r.customerId);
+        initPrices[`${d.transportMode}|${d.cargoType}`] = override?.unitPriceCny ?? d.unitPriceCny;
+      }
+      setDefaultEditPrices(initPrices);
     } catch { /* ignore */ }
   };
 
@@ -1538,20 +1546,19 @@ export default function AdminHomePage() {
               })}
             </tbody>
           </table>
-          {/* 编辑默认价格（内联行内编辑） */}
+          {/* 编辑默认价格 */}
           <div style={{ marginTop: 10, borderTop: "1px solid #e5e7eb", paddingTop: 10 }}>
             <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 6, color: "#000000" }}>编辑默认价格</div>
             {rateDefaults.map((d) => {
-              const override = rateItems.find((r) => r.transportMode === d.transportMode && r.cargoType === d.cargoType && !r.customerId);
-              const price = override?.unitPriceCny ?? d.unitPriceCny;
+              const key = `${d.transportMode}|${d.cargoType}`;
+              const val = defaultEditPrices[key] ?? d.unitPriceCny;
               return (
-                <div key={`edit-${d.transportMode}|${d.cargoType}`} style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 6 }}>
+                <div key={key} style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 6 }}>
                   <span style={{ width: 100, fontSize: 13 }}>{d.transportMode === "sea" ? "海运" : "陆运"}·{d.cargoType === "normal" ? "普货" : d.cargoType === "inspection" ? "商检" : "敏感"}</span>
-                  <input defaultValue={price} id={`edit-default-${d.transportMode}-${d.cargoType}`}
+                  <input value={val} onChange={(e) => setDefaultEditPrices((p) => ({ ...p, [key]: Number(e.target.value) || 0 }))}
                     type="number" style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "6px 8px", fontSize: 13, width: 90 }} />
                   <button type="button" onClick={async () => {
-                    const input = document.getElementById(`edit-default-${d.transportMode}-${d.cargoType}`) as HTMLInputElement;
-                    const p = Number(input?.value);
+                    const p = defaultEditPrices[key];
                     if (!p || p <= 0) { setToast("请输入有效价格"); return; }
                     try { await saveAdminShippingRate({ transportMode: d.transportMode, cargoType: d.cargoType, customerId: null, unitPriceCny: p }); await loadRates(); setToast("已保存"); } catch { setToast("保存失败"); }
                   }} style={{ border: "none", borderRadius: 4, padding: "4px 10px", fontSize: 12, background: "#2563eb", color: "#fff", cursor: "pointer" }}>保存</button>
@@ -1587,7 +1594,7 @@ export default function AdminHomePage() {
                 {isExpanded ? (
                   <div style={{ marginTop: 10, borderTop: "1px solid #e5e7eb", paddingTop: 10 }}>
                     <label style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 10, fontSize: 13, cursor: "pointer" }}>
-                      <input type="checkbox" id={`chk-min-${c.id}`} checked={clientMinVolumeDisabled} onChange={(e) => setClientMinVolumeDisabled(e.target.checked)} />
+                      <input type="checkbox" checked={clientMinVolumeDisabled} onChange={(e) => setClientMinVolumeDisabled(e.target.checked)} />
                       <span style={{ color: "#000000" }}>取消低消</span>
                     </label>
                     {rateDefaults.map((d) => {

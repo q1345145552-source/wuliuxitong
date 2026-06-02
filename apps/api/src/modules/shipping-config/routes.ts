@@ -187,22 +187,36 @@ export function registerShippingConfigRoutes(app: MinimalHttpApp): void {
     });
 
     // 保存新价格
-    if (body.prices) {
-      for (const [key, price] of Object.entries(body.prices)) {
-        const [transportMode, cargoType] = key.split("|");
-        if (!transportMode || !cargoType || typeof price !== "number" || price <= 0) continue;
-        await prisma.pricingRule.create({
-          data: {
-            companyId: auth.companyId,
-            transportMode,
-            cargoType,
-            customerId: clientId,
-            unitPriceCny: price,
-            disableMinVolume: body.disableMinVolume ?? false,
-            effectiveFrom: new Date(),
-          },
-        });
-      }
+    const prices = body.prices ?? {};
+    const entries = Object.entries(prices).filter(([, v]) => typeof v === "number" && v > 0);
+    for (const [key, price] of entries) {
+      const [transportMode, cargoType] = key.split("|");
+      if (!transportMode || !cargoType) continue;
+      await prisma.pricingRule.create({
+        data: {
+          companyId: auth.companyId,
+          transportMode,
+          cargoType,
+          customerId: clientId,
+          unitPriceCny: price,
+          disableMinVolume: body.disableMinVolume ?? false,
+          effectiveFrom: new Date(),
+        },
+      });
+    }
+    // 仅设置低消 flag 但没有价格时：创建占位记录
+    if (body.disableMinVolume && entries.length === 0) {
+      await prisma.pricingRule.create({
+        data: {
+          companyId: auth.companyId,
+          transportMode: "sea",
+          cargoType: "normal",
+          customerId: clientId,
+          unitPriceCny: 0,
+          disableMinVolume: true,
+          effectiveFrom: new Date(),
+        },
+      });
     }
 
     ok(res, { saved: true });
