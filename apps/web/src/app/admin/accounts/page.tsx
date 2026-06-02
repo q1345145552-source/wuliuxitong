@@ -103,7 +103,7 @@ export default function AdminAccountsPage() {
       <div style={{ border: "1px solid var(--hairline)", borderRadius: "var(--radius-lg)", padding: 16, background: "var(--canvas)", marginBottom: 16 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <span style={{ fontWeight: 600, color: "var(--ink)" }}>创建新账号</span>
-          <button onClick={() => setShowCreate(!showCreate)} style={{ border: "1px solid var(--hairline)", borderRadius: "var(--radius-sm)", padding: "6px 14px", background: "var(--canvas)", cursor: "pointer", fontSize: 13, fontWeight: 500 }}>
+          <button onClick={() => setShowCreate(!showCreate)} style={{ border: "1px solid var(--hairline)", borderRadius: "var(--radius-sm)", padding: "6px 14px", background: "var(--canvas)", cursor: "pointer", fontSize: 13, fontWeight: 500, color: "#000000" }}>
             {showCreate ? "收起" : "展开"}
           </button>
         </div>
@@ -116,7 +116,7 @@ export default function AdminAccountsPage() {
               <option value="staff">员工</option>
             </select>
             <input value={createForm.phone} onChange={(e) => setCreateForm((v) => ({ ...v, phone: e.target.value }))} placeholder="手机号" style={{ border: "1px solid var(--hairline)", borderRadius: "var(--radius-sm)", padding: "8px 12px", fontSize: 14 }} />
-            <button disabled={creating} onClick={handleCreate} style={{ border: "none", borderRadius: "var(--radius-sm)", padding: "8px 16px", background: "var(--brand)", color: "#171717", fontWeight: 500, fontSize: 14, cursor: creating ? "not-allowed" : "pointer" }}>
+            <button disabled={creating} onClick={handleCreate} style={{ border: "none", borderRadius: "var(--radius-sm)", padding: "8px 16px", background: "var(--brand)", color: "#fff", fontWeight: 500, fontSize: 14, cursor: creating ? "not-allowed" : "pointer" }}>
               {creating ? "创建中…" : "创建账号"}
             </button>
           </div>
@@ -158,7 +158,7 @@ export default function AdminAccountsPage() {
                   <td style={{ padding: "10px 12px", color: "var(--ink-mute)" }}>{u.createdAt.slice(0, 10)}</td>
                   <td style={{ padding: "10px 12px" }}>
                     <div style={{ display: "flex", gap: 6 }}>
-                      <button disabled={actionId === u.id} onClick={() => { setPwdModal(u); setNewPwd(""); setConfirmPwd(""); setPwdError(""); }} style={{ border: "1px solid var(--hairline)", borderRadius: "var(--radius-xs)", padding: "4px 10px", fontSize: 12, background: "var(--canvas)", cursor: "pointer", fontWeight: 500 }}>
+                      <button disabled={actionId === u.id} onClick={() => { setPwdModal(u); setNewPwd(""); setConfirmPwd(""); setPwdError(""); }} style={{ border: "1px solid var(--hairline)", borderRadius: "var(--radius-xs)", padding: "4px 10px", fontSize: 12, background: "var(--canvas)", cursor: "pointer", fontWeight: 500, color: "#000000" }}>
                         修改密码
                       </button>
                       <button disabled={actionId === u.id} onClick={() => void handleToggleBan(u)} style={{ border: `1px solid ${u.status === "inactive" ? "var(--success)" : "var(--accent-crimson)"}`, borderRadius: "var(--radius-xs)", padding: "4px 10px", fontSize: 12, background: "var(--canvas)", cursor: "pointer", fontWeight: 500, color: u.status === "inactive" ? "var(--success)" : "var(--accent-crimson)" }}>
@@ -187,8 +187,8 @@ export default function AdminAccountsPage() {
               <input type="password" value={confirmPwd} onChange={(e) => setConfirmPwd(e.target.value)} placeholder="确认新密码" style={{ border: "1px solid var(--hairline)", borderRadius: "var(--radius-sm)", padding: "8px 12px", fontSize: 14 }} />
               {pwdError && <p style={{ color: "var(--accent-crimson)", fontSize: 13, margin: 0 }}>{pwdError}</p>}
               <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 8 }}>
-                <button onClick={() => setPwdModal(null)} style={{ border: "1px solid var(--hairline)", borderRadius: "var(--radius-sm)", padding: "8px 16px", fontSize: 13, background: "var(--canvas)", cursor: "pointer" }}>取消</button>
-                <button disabled={pwdSubmitting} onClick={handleResetPwd} style={{ border: "none", borderRadius: "var(--radius-sm)", padding: "8px 16px", fontSize: 13, background: "var(--brand)", color: "#171717", fontWeight: 500, cursor: pwdSubmitting ? "not-allowed" : "pointer" }}>
+                <button onClick={() => setPwdModal(null)} style={{ border: "1px solid var(--hairline)", borderRadius: "var(--radius-sm)", padding: "8px 16px", fontSize: 13, background: "var(--canvas)", cursor: "pointer", color: "#000000" }}>取消</button>
+                <button disabled={pwdSubmitting} onClick={handleResetPwd} style={{ border: "none", borderRadius: "var(--radius-sm)", padding: "8px 16px", fontSize: 13, background: "var(--brand)", color: "#fff", fontWeight: 500, cursor: pwdSubmitting ? "not-allowed" : "pointer" }}>
                   {pwdSubmitting ? "提交中…" : "确认修改"}
                 </button>
               </div>

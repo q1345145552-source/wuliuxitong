@@ -1345,7 +1345,7 @@ export default function ClientHomePage() {
               <textarea value={form.receiverAddressTh} onChange={(e) => setForm((v) => ({ ...v, receiverAddressTh: e.target.value }))} placeholder="收件地址（泰国）" rows={2} style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "8px 10px", fontSize: 13, resize: "vertical" }} />
             </div>
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 16 }}>
-              <button type="button" onClick={() => setShowCreateModal(false)} style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "8px 16px", fontSize: 13, background: "#fff", cursor: "pointer" }}>取消</button>
+              <button type="button" onClick={() => setShowCreateModal(false)} style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "8px 16px", fontSize: 13, background: "#fff", cursor: "pointer", color: "#000000" }}>取消</button>
               <button type="button" onClick={async () => {
                 if (!form.itemName || !form.transportMode || !form.warehouseId) { setToast("请填写必填项"); return; }
                 try {
@@ -1388,7 +1388,7 @@ export default function ClientHomePage() {
               </select>
             </div>
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 16 }}>
-              <button type="button" onClick={() => setEditingPrealert(null)} style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "8px 16px", fontSize: 13, background: "#fff", cursor: "pointer" }}>取消</button>
+              <button type="button" onClick={() => setEditingPrealert(null)} style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "8px 16px", fontSize: 13, background: "#fff", cursor: "pointer", color: "#000000" }}>取消</button>
               <button type="button" onClick={async () => {
                 try {
                   await updateClientPrealert(editingPrealert.id, {

@@ -328,8 +328,8 @@ button:disabled {
 }
 
 button {
-  background: linear-gradient(145deg, #4f46e5, #1e3a8a) !important;
-  color: #fff !important;
+  background: linear-gradient(145deg, #4f46e5, #1e3a8a);
+  color: #fff;
 }
 
 a {

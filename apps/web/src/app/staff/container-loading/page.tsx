@@ -202,7 +202,7 @@ export default function StaffContainerLoadingPage() {
           <option value="ARRIVED">已到达</option>
         </select>
         <button onClick={() => void loadList()} style={{ border: "none", borderRadius: 6, padding: "8px 16px", background: "#2563eb", color: "#fff", fontWeight: 500, fontSize: 13, cursor: "pointer" }}>搜索</button>
-        <button onClick={() => setShowCreate(!showCreate)} style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "8px 16px", background: "#fff", fontSize: 13, cursor: "pointer" }}>
+        <button onClick={() => setShowCreate(!showCreate)} style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "8px 16px", background: "#fff", fontSize: 13, cursor: "pointer", color: "#000000" }}>
           {showCreate ? "收起" : "+ 新建装柜"}
         </button>
       </div>
@@ -303,7 +303,7 @@ export default function StaffContainerLoadingPage() {
                   <option value="sea">海运</option>
                   <option value="land">陆运</option>
                 </select>
-                <button onClick={() => setSelectedShipments(new Set(filteredShipments.filter((s) => !existingShipmentIds.has(s.id) && !loadedShipments[s.id]).map((s) => s.trackingNo)))} style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "6px 12px", fontSize: 12, background: "#fff", cursor: "pointer" }}>全选</button>
+                <button onClick={() => setSelectedShipments(new Set(filteredShipments.filter((s) => !existingShipmentIds.has(s.id) && !loadedShipments[s.id]).map((s) => s.trackingNo)))} style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "6px 12px", fontSize: 12, background: "#fff", cursor: "pointer", color: "#000000" }}>全选</button>
                 <button disabled={adding || selectedShipments.size === 0} onClick={handleBulkAdd} style={{ border: "none", borderRadius: 6, padding: "6px 14px", fontSize: 12, background: selectedShipments.size === 0 ? "#000000" : "#2563eb", color: "#fff", cursor: selectedShipments.size === 0 ? "not-allowed" : "pointer", fontWeight: 600 }}>
                   {adding ? "添加中…" : `添加选中（${selectedShipments.size}）`}
                 </button>

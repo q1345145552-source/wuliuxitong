@@ -112,8 +112,8 @@ export default function AdminFinancePage() {
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 12px", borderTop: "1px solid var(--hairline-cool)", fontSize: 13, color: "var(--ink-mute)" }}>
             <span>共 {filtered.length} 条，第 {safePage}/{totalPages} 页</span>
             <div style={{ display: "flex", gap: 6 }}>
-              <button disabled={safePage <= 1} onClick={() => setPage((p) => Math.max(1, p - 1))} style={{ border: "1px solid var(--hairline)", borderRadius: "var(--radius-xs)", padding: "4px 12px", fontSize: 12, background: "var(--canvas)", cursor: safePage <= 1 ? "not-allowed" : "pointer" }}>上一页</button>
-              <button disabled={safePage >= totalPages} onClick={() => setPage((p) => p + 1)} style={{ border: "1px solid var(--hairline)", borderRadius: "var(--radius-xs)", padding: "4px 12px", fontSize: 12, background: "var(--canvas)", cursor: safePage >= totalPages ? "not-allowed" : "pointer" }}>下一页</button>
+              <button disabled={safePage <= 1} onClick={() => setPage((p) => Math.max(1, p - 1))} style={{ border: "1px solid var(--hairline)", borderRadius: "var(--radius-xs)", padding: "4px 12px", fontSize: 12, background: "var(--canvas)", cursor: safePage <= 1 ? "not-allowed" : "pointer", color: "#000000" }}>上一页</button>
+              <button disabled={safePage >= totalPages} onClick={() => setPage((p) => p + 1)} style={{ border: "1px solid var(--hairline)", borderRadius: "var(--radius-xs)", padding: "4px 12px", fontSize: 12, background: "var(--canvas)", cursor: safePage >= totalPages ? "not-allowed" : "pointer", color: "#000000" }}>下一页</button>
             </div>
           </div>
         </div>
