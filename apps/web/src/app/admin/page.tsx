@@ -1538,23 +1538,27 @@ export default function AdminHomePage() {
               })}
             </tbody>
           </table>
-          {/* 编辑默认价格表单 */}
-          {rateEditForm.unitPriceCny && !rateEditForm.customerId ? (
-            <div style={{ border: "1px solid #e5e7eb", borderRadius: 8, padding: 12, marginTop: 10, background: "#f9fafb" }}>
-              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                <span style={{ fontSize: 13, color: "#000000" }}>{rateEditForm.transportMode === "sea" ? "海运" : "陆运"}·{rateEditForm.cargoType === "normal" ? "普货" : rateEditForm.cargoType === "inspection" ? "商检" : "敏感"}</span>
-                <input value={rateEditForm.unitPriceCny} onChange={(e) => setRateEditForm((f) => ({ ...f, unitPriceCny: e.target.value }))}
-                  type="number" style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "6px 8px", fontSize: 13, width: 100 }} />
-                <button type="button" onClick={async () => {
-                  const p = Number(rateEditForm.unitPriceCny);
-                  if (!p || p <= 0) { setToast("请输入有效价格"); return; }
-                  try { await saveAdminShippingRate({ transportMode: rateEditForm.transportMode, cargoType: rateEditForm.cargoType, customerId: null, unitPriceCny: p }); await loadRates(); setRateEditForm({ transportMode: "sea", cargoType: "normal", customerId: "", unitPriceCny: "", disableMinVolume: false }); setToast("已保存"); } catch { setToast("保存失败"); }
-                }} style={{ border: "none", borderRadius: 6, padding: "6px 12px", background: "#2563eb", color: "#fff", fontWeight: 500, fontSize: 13, cursor: "pointer" }}>保存</button>
-                <button type="button" onClick={() => setRateEditForm({ transportMode: "sea", cargoType: "normal", customerId: "", unitPriceCny: "", disableMinVolume: false })}
-                  style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "6px 12px", background: "#fff", color: "#000000", fontSize: 13, cursor: "pointer" }}>取消</button>
-              </div>
-            </div>
-          ) : null}
+          {/* 编辑默认价格（内联行内编辑） */}
+          <div style={{ marginTop: 10, borderTop: "1px solid #e5e7eb", paddingTop: 10 }}>
+            <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 6, color: "#000000" }}>编辑默认价格</div>
+            {rateDefaults.map((d) => {
+              const override = rateItems.find((r) => r.transportMode === d.transportMode && r.cargoType === d.cargoType && !r.customerId);
+              const price = override?.unitPriceCny ?? d.unitPriceCny;
+              return (
+                <div key={`edit-${d.transportMode}|${d.cargoType}`} style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 6 }}>
+                  <span style={{ width: 100, fontSize: 13 }}>{d.transportMode === "sea" ? "海运" : "陆运"}·{d.cargoType === "normal" ? "普货" : d.cargoType === "inspection" ? "商检" : "敏感"}</span>
+                  <input defaultValue={price} id={`edit-default-${d.transportMode}-${d.cargoType}`}
+                    type="number" style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "6px 8px", fontSize: 13, width: 90 }} />
+                  <button type="button" onClick={async () => {
+                    const input = document.getElementById(`edit-default-${d.transportMode}-${d.cargoType}`) as HTMLInputElement;
+                    const p = Number(input?.value);
+                    if (!p || p <= 0) { setToast("请输入有效价格"); return; }
+                    try { await saveAdminShippingRate({ transportMode: d.transportMode, cargoType: d.cargoType, customerId: null, unitPriceCny: p }); await loadRates(); setToast("已保存"); } catch { setToast("保存失败"); }
+                  }} style={{ border: "none", borderRadius: 4, padding: "4px 10px", fontSize: 12, background: "#2563eb", color: "#fff", cursor: "pointer" }}>保存</button>
+                </div>
+              );
+            })}
+          </div>
         </div>
 
         {/* 客户专属配置 */}
@@ -1583,7 +1587,7 @@ export default function AdminHomePage() {
                 {isExpanded ? (
                   <div style={{ marginTop: 10, borderTop: "1px solid #e5e7eb", paddingTop: 10 }}>
                     <label style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 10, fontSize: 13, cursor: "pointer" }}>
-                      <input type="checkbox" checked={clientMinVolumeDisabled} onChange={(e) => setClientMinVolumeDisabled(e.target.checked)} />
+                      <input type="checkbox" id={`chk-min-${c.id}`} checked={clientMinVolumeDisabled} onChange={(e) => setClientMinVolumeDisabled(e.target.checked)} />
                       <span style={{ color: "#000000" }}>取消低消</span>
                     </label>
                     {rateDefaults.map((d) => {
@@ -1600,7 +1604,8 @@ export default function AdminHomePage() {
                     })}
                     <button type="button" onClick={async () => {
                       try {
-                        await saveClientShippingConfig({ clientId: c.id, prices: clientPrices, disableMinVolume: clientMinVolumeDisabled });
+                        const chk = document.getElementById(`chk-min-${c.id}`) as HTMLInputElement;
+                        await saveClientShippingConfig({ clientId: c.id, prices: clientPrices, disableMinVolume: chk?.checked ?? false });
                         await loadRates();
                         setToast("已保存");
                       } catch { setToast("保存失败"); }
