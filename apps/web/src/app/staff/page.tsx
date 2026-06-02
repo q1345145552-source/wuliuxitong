@@ -636,13 +636,6 @@ export default function StaffHomePage() {
     } finally { setLastmileLoading(false); }
   };
 
-  useEffect(() => {
-    if (activeSection === "staff-lastmile" && lastmileItems.length === 0) {
-      void loadLastmileAddresses("");
-      void loadClientNotesData();
-    }
-  }, [activeSection]);
-
   const [form, setForm] = useState({
     clientId: "u_client_001",
     warehouseId: "wh_yiwu_01",
@@ -707,6 +700,13 @@ export default function StaffHomePage() {
   });
   const [photoList, setPhotoList] = useState<StaffInboundPhotoItem[]>([]);
   const [activeSection, setActiveSection] = useState<(typeof STAFF_SECTION_IDS)[number]>("staff-billing");
+
+  useEffect(() => {
+    if (activeSection === "staff-lastmile" && lastmileItems.length === 0) {
+      void loadLastmileAddresses("");
+      void loadClientNotesData();
+    }
+  }, [activeSection]);
 
   // 判断 hash 是否属于员工端可展示的功能分区。
   const isStaffSectionId = (value: string): value is (typeof STAFF_SECTION_IDS)[number] =>
