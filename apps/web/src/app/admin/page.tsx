@@ -87,12 +87,14 @@ const WAREHOUSE_LABEL_MAP: Record<string, string> = {
   wh_yiwu_01: "义乌仓",
   wh_guangzhou_01: "广州仓",
   wh_dongguan_01: "东莞仓",
+  wh_shenzhen_01: "深圳仓",
 };
 
 const warehouseOptions = [
   { id: "wh_yiwu_01", label: "义乌仓" },
   { id: "wh_guangzhou_01", label: "广州仓" },
   { id: "wh_dongguan_01", label: "东莞仓" },
+  { id: "wh_shenzhen_01", label: "深圳仓" },
 ];
 
 const logisticsStatusOptions = [
@@ -137,7 +139,7 @@ export default function AdminHomePage() {
   const [message, setMessage] = useState("");
   const [toast, setToast] = useState("");
   const [shippingConfigSea, setShippingConfigSea] = useState("0.5");
-  const [shippingConfigLand, setShippingConfigLand] = useState("0.2");
+  const [shippingConfigLand, setShippingConfigLand] = useState("0.3");
   const [configSaving, setConfigSaving] = useState(false);
   const [rateItems, setRateItems] = useState<Array<{
     id: string; transportMode: string; cargoType: string; customerId: string | null;

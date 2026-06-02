@@ -4,7 +4,7 @@ import { fail, ok, requireRole } from "../core/http-utils";
 
 const DEFAULT_CONFIG = {
   sea_min_volume: "0.5",
-  land_min_volume: "0.2",
+  land_min_volume: "0.3",
 };
 
 /**
@@ -37,12 +37,12 @@ async function saveConfig(key: string, value: string): Promise<void> {
 
 // ── Default price seeds ──
 const DEFAULT_PRICES: Array<{ transportMode: string; cargoType: string; unitPriceCny: number }> = [
-  { transportMode: "sea", cargoType: "normal", unitPriceCny: 540 },
-  { transportMode: "sea", cargoType: "inspection", unitPriceCny: 680 },
-  { transportMode: "sea", cargoType: "sensitive", unitPriceCny: 880 },
-  { transportMode: "land", cargoType: "normal", unitPriceCny: 680 },
-  { transportMode: "land", cargoType: "inspection", unitPriceCny: 780 },
-  { transportMode: "land", cargoType: "sensitive", unitPriceCny: 980 },
+  { transportMode: "sea", cargoType: "normal", unitPriceCny: 550 },
+  { transportMode: "sea", cargoType: "inspection", unitPriceCny: 700 },
+  { transportMode: "sea", cargoType: "sensitive", unitPriceCny: 800 },
+  { transportMode: "land", cargoType: "normal", unitPriceCny: 1070 },
+  { transportMode: "land", cargoType: "inspection", unitPriceCny: 1250 },
+  { transportMode: "land", cargoType: "sensitive", unitPriceCny: 1350 },
 ];
 
 export function registerShippingConfigRoutes(app: MinimalHttpApp): void {

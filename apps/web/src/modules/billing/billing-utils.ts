@@ -3,7 +3,7 @@ import type { ShippingPriceItem } from "../../services/business-api";
 
 type TransportMode = "sea" | "land";
 
-const DEFAULT_UNIT_PRICE: Record<TransportMode, number> = { sea: 540, land: 680 };
+const DEFAULT_UNIT_PRICE: Record<TransportMode, number> = { sea: 550, land: 1070 };
 
 function safeNumber(input: unknown): number | null {
   if (typeof input !== "number") return null;

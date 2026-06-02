@@ -172,6 +172,7 @@ function warehouseLabelFromId(warehouseId: string | undefined): string {
     wh_yiwu_01: "义乌仓",
     wh_guangzhou_01: "广州仓",
     wh_dongguan_01: "东莞仓",
+  wh_shenzhen_01: "深圳仓",
   };
   return map[warehouseId] ?? warehouseId;
 }
@@ -522,6 +523,7 @@ export default function StaffHomePage() {
     { id: "wh_yiwu_01", label: "义乌仓" },
     { id: "wh_guangzhou_01", label: "广州仓" },
     { id: "wh_dongguan_01", label: "东莞仓" },
+  { id: "wh_shenzhen_01", label: "深圳仓" },
   ];
   const logisticsStatusOptions = ["已装柜", "延迟开船", "已开船", "已到港", "清关中", "清关已放行", "已到仓", "派送中", "派送完成"] as const;
   const [loading, setLoading] = useState(false);

@@ -22,6 +22,7 @@ function warehousePrefix(warehouseId: string): string {
   if (warehouseId === "wh_guangzhou_01") return "GZXT";
   if (warehouseId === "wh_yiwu_01") return "YWXT";
   if (warehouseId === "wh_dongguan_01") return "DGXT";
+  if (warehouseId === "wh_shenzhen_01") return "SZXT";
   return "XT";
 }
 

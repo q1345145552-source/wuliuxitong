@@ -40,12 +40,14 @@ const warehouseOptions = [
   { id: "wh_yiwu_01", label: "义乌仓" },
   { id: "wh_guangzhou_01", label: "广州仓" },
   { id: "wh_dongguan_01", label: "东莞仓" },
+  { id: "wh_shenzhen_01", label: "深圳仓" },
 ];
 
 const warehouseAddressMap: Record<string, string> = {
   wh_yiwu_01: "浙江省金华市义乌市北苑街道 xx 路 88 号（义乌仓）",
   wh_guangzhou_01: "广东省广州市白云区石井街道 xx 物流园 16 栋（广州仓）",
   wh_dongguan_01: "广东省东莞市虎门镇 xx 工业区 9 号（东莞仓）",
+  wh_shenzhen_01: "广东省深圳市龙岗区 xx 物流园 12 栋（深圳仓）",
 };
 
 type FreightTransportMode = "land" | "sea";
@@ -54,8 +56,8 @@ type FreightCargoType = "normal" | "inspection" | "sensitive";
 const freightRateMap: Record<FreightTransportMode, Record<FreightCargoType, number>> = {
   // 统一按“计费体积（立方米）× 单价（元/立方米）”计费
   // 注：海运普货 540 元/立方米（按你提供的口径）
-  land: { normal: 680, inspection: 780, sensitive: 980 },
-  sea: { normal: 540, inspection: 680, sensitive: 880 },
+  land: { normal: 1070, inspection: 1250, sensitive: 1350 },
+  sea: { normal: 550, inspection: 700, sensitive: 800 },
 };
 
 const CLIENT_SECTION_IDS = ["client-main", "client-query", "client-prealert"] as const;
@@ -524,9 +526,13 @@ export default function ClientHomePage() {
   const convertedVolumeByWeight = safeWeight / 500;
   const chargeVolume = Math.max(safeVolume, convertedVolumeByWeight);
   const disableMin = shippingPrices?.[priceKey]?.disableMinVolume ?? false;
-  const minVolume = disableMin ? 0 : (freightForm.transportMode === "sea" ? 0.5 : 0.2);
+  const minVolume = disableMin ? 0 : (freightForm.transportMode === "sea" ? 0.5 : 0.3);
   const finalChargeVolume = minVolume > 0 ? Math.max(chargeVolume, minVolume) : chargeVolume;
-  const freightFee = finalChargeVolume * unitPrice;
+  let freightFee = finalChargeVolume * unitPrice;
+  // 义乌陆运附加费 +120/方
+  if (freightForm.transportMode === "land" && freightForm.warehouseId === "wh_yiwu_01") {
+    freightFee += finalChargeVolume * 120;
+  }
   const estimatedFee = freightFee;
   const hasFreightInput = safeWeight > 0 || safeVolume > 0;
   const cargoTypeLabel =
