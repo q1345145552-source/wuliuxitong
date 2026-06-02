@@ -1576,7 +1576,7 @@ export default function AdminHomePage() {
                 ) : null}
                 {/* 编辑价格 */}
                 {isEdit ? (
-                  <div style={{ marginTop: 10, borderTop: "1px solid #e5e7eb", paddingTop: 10 }}>
+                  <div style={{ marginTop: 10, borderTop: "1px solid #e5e7eb", paddingTop: 10 }} data-client={c.id}>
                     <label style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 10, fontSize: 13, cursor: "pointer" }}>
                       <input type="checkbox" checked={clientMinVolumeDisabled} onChange={(e) => setClientMinVolumeDisabled(e.target.checked)} />
                       <span style={{ color: "#000000" }}>取消低消</span>
@@ -1587,7 +1587,7 @@ export default function AdminHomePage() {
                       return (
                         <div key={key} style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 6 }}>
                           <span style={{ width: 100, fontSize: 13 }}>{d.transportMode === "sea" ? "海运" : "陆运"}·{d.cargoType === "normal" ? "普货" : d.cargoType === "inspection" ? "商检" : "敏感"}</span>
-                          <input value={val} onChange={(e) => setClientPrices((p) => ({ ...p, [key]: Number(e.target.value) || 0 }))}
+                          <input value={val} data-price-key={key} onChange={(e) => setClientPrices((p) => ({ ...p, [key]: Number(e.target.value) || 0 }))}
                             type="number" style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "6px 8px", fontSize: 13, width: 90 }} />
                           <span style={{ fontSize: 12, color: "#9ca3af" }}>¥/m³</span>
                         </div>
@@ -1595,7 +1595,17 @@ export default function AdminHomePage() {
                     })}
                     <button type="button" onClick={async () => {
                       try {
-                        await saveClientShippingConfig({ clientId: c.id, prices: clientPrices, disableMinVolume: clientMinVolumeDisabled });
+                        // 从 DOM 读取当前值，避免 React 闭包陈旧问题
+                        const chk = document.querySelector(`[data-client="${c.id}"] input[type="checkbox"]`) as HTMLInputElement;
+                        const disableMin = chk?.checked ?? clientMinVolumeDisabled;
+                        const prices: Record<string, number> = {};
+                        document.querySelectorAll(`[data-client="${c.id}"] input[data-price-key]`).forEach((el) => {
+                          const input = el as HTMLInputElement;
+                          const key = input.dataset.priceKey;
+                          const v = Number(input.value);
+                          if (key && v > 0) prices[key] = v;
+                        });
+                        await saveClientShippingConfig({ clientId: c.id, prices, disableMinVolume: disableMin });
                         await loadRates();
                         await loadClientPrices(c.id);
                         setToast("已保存");
