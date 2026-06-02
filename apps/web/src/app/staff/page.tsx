@@ -615,6 +615,27 @@ export default function StaffHomePage() {
     }>;
   }>>([]);
   const [lastmileLoading, setLastmileLoading] = useState(false);
+
+  const loadLastmileAddresses = async (keyword: string) => {
+    setLastmileLoading(true);
+    try {
+      const resp = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:3001"}/staff/lastmile/addresses?keyword=${encodeURIComponent(keyword)}`, {
+        headers: { ...(await import("../../services/core-api")).authHeaders() },
+      });
+      const json = await resp.json();
+      if (json.code === "OK") setLastmileItems(json.data.items);
+      else setMessage("查询失败：" + (json.message ?? "未知错误"));
+    } catch (e: any) {
+      setMessage("查询失败：" + (e.message ?? "网络错误"));
+    } finally { setLastmileLoading(false); }
+  };
+
+  useEffect(() => {
+    if (activeSection === "staff-lastmile" && lastmileItems.length === 0) {
+      void loadLastmileAddresses("");
+    }
+  }, [activeSection]);
+
   const [form, setForm] = useState({
     clientId: "u_client_001",
     warehouseId: "wh_yiwu_01",
@@ -3222,7 +3243,7 @@ export default function StaffHomePage() {
         }}
       >
         <h2 style={{ marginTop: 0, fontSize: 18, color: "#111827", marginBottom: 12 }}>尾端派送</h2>
-        <p style={{ fontSize: 12, color: "#000000", marginBottom: 10 }}>查询客户唛头与派送地址，支持按唛头或客户名搜索。</p>
+        <p style={{ fontSize: 12, color: "#000000", marginBottom: 10 }}>所有客户唛头及派送地址，支持按唛头或客户名搜索。</p>
         <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
           <input
             value={lastmileKeyword}
@@ -3233,29 +3254,19 @@ export default function StaffHomePage() {
           <button
             type="button"
             disabled={lastmileLoading}
-            onClick={async () => {
-              setLastmileLoading(true);
-              try {
-                const resp = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:3001"}/staff/lastmile/addresses?keyword=${encodeURIComponent(lastmileKeyword)}`, {
-                  headers: { ...(await import("../../services/core-api")).authHeaders() },
-                });
-                const json = await resp.json();
-                if (json.code === "OK") setLastmileItems(json.data.items);
-                else setMessage("查询失败：" + (json.message ?? "未知错误"));
-              } catch (e: any) {
-                setMessage("查询失败：" + (e.message ?? "网络错误"));
-              } finally { setLastmileLoading(false); }
-            }}
-            style={{ border: "none", borderRadius: 6, padding: "8px 16px", fontSize: 13, background: "#2563eb", color: "#fff", fontWeight: 500, cursor: lastmileLoading ? "not-allowed" : "pointer" }}
+            onClick={() => { setLastmileKeyword(""); void loadLastmileAddresses(""); }}
+            style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "8px 12px", fontSize: 13, background: "#fff", color: "#000000", cursor: "pointer" }}
           >
-            {lastmileLoading ? "查询中…" : "查询"}
+            重置
           </button>
         </div>
-        {lastmileItems.length === 0 ? (
-          <div style={{ color: "#000000", fontSize: 13, padding: "20px 0", textAlign: "center" }}>无结果，请输入唛头或客户名搜索</div>
+        {lastmileLoading ? (
+          <div style={{ color: "#000000", fontSize: 13, padding: "20px 0", textAlign: "center" }}>加载中…</div>
+        ) : lastmileItems.length === 0 ? (
+          <div style={{ color: "#000000", fontSize: 13, padding: "20px 0", textAlign: "center" }}>暂无客户数据</div>
         ) : (
           <div style={{ display: "grid", gap: 10 }}>
-            {lastmileItems.map((client) => (
+            {lastmileItems.filter((c) => !lastmileKeyword || c.id.toLowerCase().includes(lastmileKeyword.toLowerCase()) || c.name.toLowerCase().includes(lastmileKeyword.toLowerCase())).map((client) => (
               <div key={client.id} style={{ border: "1px solid #e2e8f0", borderRadius: 8, padding: 12, background: "#fff" }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
                   <div>
