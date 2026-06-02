@@ -378,8 +378,8 @@ export function registerShipmentRoutes(app: MinimalHttpApp, _db: DatabaseSync): 
     });
 
     const items = rows
-      .filter((r) => !trackingNo || r.trackingNo === trackingNo)
-      .filter((r) => !domesticTrackingNo || r.domesticTrackingNo === domesticTrackingNo)
+      .filter((r) => !trackingNo || r.trackingNo.includes(trackingNo))
+      .filter((r) => !domesticTrackingNo || r.domesticTrackingNo.includes(domesticTrackingNo))
       .filter((r) => !itemName || r.order.itemName.includes(itemName))
       .filter((r) => !transportMode || r.order.transportMode === transportMode)
       .map((r) => ({

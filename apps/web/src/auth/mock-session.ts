@@ -9,11 +9,7 @@ export interface MockSession {
 
 const SESSION_KEY = "mock_session_v1";
 
-export const DEFAULT_SESSIONS: Record<MockRole, MockSession> = {
-  admin: { userId: "u_admin_001", companyId: "c_001", role: "admin", token: "" },
-  staff: { userId: "u_staff_001", companyId: "c_001", role: "staff", token: "" },
-  client: { userId: "u_client_001", companyId: "c_001", role: "client", token: "" },
-};
+
 
 export function getOptionalSession(): MockSession | null {
   if (typeof window === "undefined") return null;
@@ -28,16 +24,8 @@ export function getOptionalSession(): MockSession | null {
   }
 }
 
-export function getMockSession(): MockSession {
-  return getOptionalSession() ?? DEFAULT_SESSIONS.client;
-}
-
-export function setMockSession(role: MockRole): MockSession {
-  const next = DEFAULT_SESSIONS[role];
-  if (typeof window !== "undefined") {
-    window.localStorage.setItem(SESSION_KEY, JSON.stringify(next));
-  }
-  return next;
+export function getMockSession(): MockSession | null {
+  return getOptionalSession();
 }
 
 export function setAuthSession(session: MockSession): MockSession {

@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import * as XLSX from "xlsx";
 import { Bar, BarChart, CartesianGrid, Cell, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import type { AiKnowledgeItem } from "../../../../../packages/shared-types/entities";
-import { DEFAULT_SESSIONS, getOptionalSession, type MockSession } from "../../auth/mock-session";
+import { getOptionalSession, type MockSession } from "../../auth/mock-session";
 import CountUpNumber from "../../modules/layout/CountUpNumber";
 import EmptyStateCard from "../../modules/layout/EmptyStateCard";
 import RoleShell from "../../modules/layout/RoleShell";
@@ -95,7 +95,7 @@ const WAREHOUSE_TRACKING_PREFIX_MAP: Record<string, string[]> = {
 };
 
 export default function AdminHomePage() {
-  const [session, setSession] = useState<MockSession>(DEFAULT_SESSIONS.client);
+  const [session, setSession] = useState<MockSession | null>(null);
   const [loading, setLoading] = useState(false);
   const [overviewFlash, setOverviewFlash] = useState(false);
   const [overview, setOverview] = useState<AdminOverview | null>(null);
@@ -627,6 +627,7 @@ export default function AdminHomePage() {
       setLoading(false);
     }
   };
+  if (!session) return null;
 
   return (
     <RoleShell allowedRole="admin" title="管理员工作台">

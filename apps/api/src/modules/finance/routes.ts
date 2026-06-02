@@ -19,6 +19,7 @@ export function registerFinanceRoutes(app: MinimalHttpApp): void {
       where: { companyId: auth.companyId },
       orderBy: { createdAt: "desc" },
       include: {
+        client: { select: { name: true } },
         shipments: { select: { id: true, currentStatus: true, weightKg: true, volumeM3: true } },
       },
     });
@@ -38,7 +39,7 @@ export function registerFinanceRoutes(app: MinimalHttpApp): void {
       return {
         id: o.id,
         orderNo: o.orderNo ?? o.id,
-        clientName: o.customerName ?? "—",
+        clientName: o.client?.name ?? "—",
         transportMode: o.transportMode ?? "—",
         warehouse: o.warehouseId ?? "—",
         weightKg: w,

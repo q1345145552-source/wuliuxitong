@@ -399,7 +399,7 @@ export function registerOrderRoutes(app: MinimalHttpApp, _db: DatabaseSync): voi
   });
 
   app.post("/staff/orders/set-receivable", async (req, res) => {
-    const auth = requireRole(req, res, ["admin"]);
+    const auth = requireRole(req, res, ["staff", "admin"]);
     if (!auth) return;
 
     const body = (req.body ?? {}) as {
@@ -459,7 +459,7 @@ export function registerOrderRoutes(app: MinimalHttpApp, _db: DatabaseSync): voi
   });
 
   app.post("/staff/orders/set-payment", async (req, res) => {
-    const auth = requireRole(req, res, ["admin"]);
+    const auth = requireRole(req, res, ["staff", "admin"]);
     if (!auth) return;
 
     const body = (req.body ?? {}) as {
@@ -693,11 +693,6 @@ export function registerOrderRoutes(app: MinimalHttpApp, _db: DatabaseSync): voi
       batchNo: o.batchNo,
       approvalStatus: o.approvalStatus,
       productQuantity: o.productQuantity,
-      transportMode: o.transportMode,
-      domesticTrackingNo: o.domesticTrackingNo,
-      batchNo: o.batchNo,
-      approvalStatus: o.approvalStatus,
-      productQuantity: o.productQuantity,
       packageCount: o.packageCount,
       packageUnit: o.packageUnit,
       weightKg: decToNumber(o.weightKg),
@@ -898,7 +893,7 @@ export function registerOrderRoutes(app: MinimalHttpApp, _db: DatabaseSync): voi
    * 员工按运单维度一次性更新关联订单与运单的基础信息（与列表「订单详情」编辑一致）。
    */
   app.post("/staff/orders/patch-shipment-bundle", async (req, res) => {
-    const auth = requireRole(req, res, ["admin"]);
+    const auth = requireRole(req, res, ["staff", "admin"]);
     if (!auth) return;
 
     const body = (req.body ?? {}) as {

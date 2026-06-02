@@ -1,15 +1,11 @@
 // B-6: 已从 node:sqlite 迁移到 Prisma + PostgreSQL（2026-05-20）
-import crypto from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import { Prisma } from "@prisma/client";
 import { prisma } from "../../db/prisma";
 import type { MinimalHttpApp } from "../../server";
 import { fail, ok, requireRole } from "../core/http-utils";
 import { loadProductImagesForOrders } from "../orders/product-images";
-
-function hashPassword(password: string): string {
-  return crypto.createHash("sha256").update(password, "utf8").digest("hex");
-}
+import { hashPassword } from "../auth/crypto-utils";
 
 /** Decimal | null → number | null */
 function decToNumber(value: Prisma.Decimal | null | undefined): number | null {

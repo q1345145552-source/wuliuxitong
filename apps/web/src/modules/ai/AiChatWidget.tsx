@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { DEFAULT_SESSIONS, getMockSession, type MockSession } from "../../auth/mock-session";
+import { getMockSession, type MockSession } from "../../auth/mock-session";
 import { fetchAiSuggestions, sendAiMessage } from "../../services/ai-client";
 
 type Message = {
@@ -11,7 +11,7 @@ type Message = {
 };
 
 export default function AiChatWidget() {
-  const [session, setSession] = useState<MockSession>(DEFAULT_SESSIONS.client);
+  const [session, setSession] = useState<MockSession | null>(null);
   const [open, setOpen] = useState(false);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
@@ -136,7 +136,7 @@ export default function AiChatWidget() {
               数据范围：同公司账号数据
             </div>
             <div style={{ fontSize: 12, color: "#000000", marginTop: 2 }}>
-              当前身份：{session.role} / {session.userId} / {session.companyId}
+              当前身份：{session?.role} / {session?.userId} / {session?.companyId}
             </div>
           </div>
 
