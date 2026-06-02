@@ -78,15 +78,6 @@ export interface UniversalExpressTrackResult {
   }>;
 }
 
-export interface ClientDocumentItem {
-  id: string;
-  docType: string;
-  fileName: string;
-  mime: string;
-  contentBase64: string;
-  createdAt: string;
-}
-
 export interface ClientWalletOverview {
   accounts: Array<{
     currency: string;
@@ -520,49 +511,6 @@ export async function fetchUniversalExpressTrack(params: {
   }
   const response = await fetch(`${apiBaseUrl()}/client/express/universal?${query.toString()}`, {
     method: "GET",
-    headers: { ...authHeaders() },
-  });
-  return parseApiResponse(response);
-}
-
-/**
- * 拉取客户端合规文件列表。
- */
-export async function fetchClientDocuments(): Promise<ClientDocumentItem[]> {
-  const response = await fetch(`${apiBaseUrl()}/client/documents`, {
-    method: "GET",
-    headers: { ...authHeaders() },
-  });
-  const data = await parseApiResponse<{ items: ClientDocumentItem[] }>(response);
-  return data.items;
-}
-
-/**
- * 上传客户端合规文件。
- */
-export async function uploadClientDocument(payload: {
-  docType: string;
-  fileName: string;
-  mime: string;
-  contentBase64: string;
-}): Promise<{ id: string; docType: string; fileName: string; mime: string; createdAt: string }> {
-  const response = await fetch(`${apiBaseUrl()}/client/documents`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...authHeaders(),
-    },
-    body: JSON.stringify(payload),
-  });
-  return parseApiResponse(response);
-}
-
-/**
- * 删除客户端合规文件。
- */
-export async function deleteClientDocument(id: string): Promise<{ deleted: boolean; id: string }> {
-  const response = await fetch(`${apiBaseUrl()}/client/documents?id=${encodeURIComponent(id)}`, {
-    method: "DELETE",
     headers: { ...authHeaders() },
   });
   return parseApiResponse(response);

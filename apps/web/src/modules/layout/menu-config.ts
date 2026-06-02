@@ -61,7 +61,6 @@ export const roleFunctionMenus: Record<MockRole, RoleFunctionMenuItem[]> = {
     { id: "client-func-imports", label: "批量下单", href: "/client/imports" },
     { id: "client-func-quote", label: "智能算费", href: "/client#client-main" },
     { id: "client-func-track", label: "免登录轨迹查询", href: "/client/track" },
-    { id: "client-func-docs", label: "清关资料上传", href: "/client/documents" },
     { id: "client-func-wallet", label: "多币种账户", href: "/client/wallet" },
     { id: "client-func-address", label: "常用地址库", href: "/client/address-book" },
     { id: "client-func-bills", label: "账单页面", href: "/client/bills" },

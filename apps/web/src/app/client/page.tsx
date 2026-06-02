@@ -1191,14 +1191,6 @@ export default function ClientHomePage() {
                     )}
                   </div>
                 </div>
-                <div className="order-field">
-                  <div className="order-field-label">清关文件下载</div>
-                  <div className="order-field-value">
-                    <a href="/client/documents" style={{ color: "#1e3a8a", fontWeight: 700, textDecoration: "none" }}>
-                      查看文件中心
-                    </a>
-                  </div>
-                </div>
                 {/* 📦 出柜追踪 — 显示该订单运单所属的柜子（含拆柜提示）*/}
                 <div className="order-field" style={{ gridColumn: "1 / -1" }}>
                   <ContainerTrackingSection trackingNo={item.trackingNo ?? undefined} />
