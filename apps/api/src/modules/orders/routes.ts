@@ -62,6 +62,31 @@ async function generateTrackingNo(warehouseId: string, arrivedAt: string): Promi
   return `${base}${seq}`;
 }
 
+/**
+ * 生成预报单号：YWYB + 7 位序号流水，使用 pg_advisory_xact_lock 保证并发安全。
+ */
+const PREALERT_LOCK_KEY = 0x5afd00b1; // hash-like magic for "prealert_seq"
+
+async function generatePrealertNo(): Promise<string> {
+  await prisma.$executeRaw`SELECT pg_advisory_xact_lock(${PREALERT_LOCK_KEY})`;
+
+  const last = await prisma.order.findFirst({
+    where: { orderNo: { startsWith: "YWYB" } },
+    orderBy: { orderNo: "desc" },
+    select: { orderNo: true },
+  });
+
+  let nextSeq = 1;
+  if (last?.orderNo) {
+    const numPart = parseInt(last.orderNo.replace("YWYB", ""), 10);
+    if (!Number.isNaN(numPart)) {
+      nextSeq = numPart + 1;
+    }
+  }
+
+  return `YWYB${String(nextSeq).padStart(7, "0")}`;
+}
+
 export function registerOrderRoutes(app: MinimalHttpApp, _db: DatabaseSync): void {
   app.post("/client/prealerts", async (req, res) => {
     const auth = requireRole(req, res, ["client"]);
@@ -106,7 +131,7 @@ export function registerOrderRoutes(app: MinimalHttpApp, _db: DatabaseSync): voi
         clientId: auth.userId,
         warehouseId: body.warehouseId.trim(),
         batchNo: null,
-        orderNo: body.trackingNo?.trim() || null,
+        orderNo: body.trackingNo?.trim() || (await generatePrealertNo()),
         approvalStatus: "pending",
         itemName: body.itemName,
         productQuantity: 0,
