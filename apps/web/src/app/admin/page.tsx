@@ -158,6 +158,7 @@ export default function AdminHomePage() {
   const [staffPanelCollapsed, setStaffPanelCollapsed] = useState(false);
   const [ordersPanelCollapsed, setOrdersPanelCollapsed] = useState(false);
   const [selectedOrders, setSelectedOrders] = useState<Set<string>>(new Set());
+  const [pageSize, setPageSize] = useState(100);
   const [orderSearch, setOrderSearch] = useState({
     trackingNo: "", domesticTrackingNo: "", clientName: "", warehouseId: "",
     batchNo: "", itemName: "", packageCount: "", productQuantity: "",
@@ -651,6 +652,8 @@ export default function AdminHomePage() {
   const toggleSelectOrder = (id: string) => {
     setSelectedOrders((prev) => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n; });
   };
+  const pagedOrders = useMemo(() => filteredOrderList.slice(0, pageSize), [filteredOrderList, pageSize]);
+
   const toggleSelectAllOrders = () => {
     if (selectedOrders.size === filteredOrderList.length) setSelectedOrders(new Set());
     else setSelectedOrders(new Set(filteredOrderList.map((o) => o.id)));
@@ -1169,6 +1172,12 @@ export default function AdminHomePage() {
         ) : filteredOrderList.length === 0 ? (
           <EmptyStateCard title="暂无匹配订单" description="无匹配结果" />
         ) : (
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8, padding: "0 8px" }}>
+            <span style={{ fontSize: 12, color: "#000000" }}>共 {filteredOrderList.length} 条</span>
+            <select value={pageSize} onChange={(e) => setPageSize(Number(e.target.value))} style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "4px 8px", fontSize: 12 }}>
+              {[20, 50, 100, 200, 500, 1000].map((n) => <option key={n} value={n}>{n}条/页</option>)}
+            </select>
+          </div>
           <div style={{ overflowX: "auto" }}>
             {editingOrderId ? (
               <div style={{ ...cardStyle, marginBottom: 10, display: "grid", gap: 8 }}>
@@ -1249,7 +1258,7 @@ export default function AdminHomePage() {
                 </tr>
               </thead>
               <tbody>
-                {filteredOrderList.map((o) => (
+                {pagedOrders.map((o) => (
                   <tr key={o.id} style={{ borderBottom: "1px solid #e2e8f0" }}>
                     <td style={{ padding: "8px 6px" }}>
                       <input type="checkbox" checked={selectedOrders.has(o.id)} onChange={() => toggleSelectOrder(o.id)} style={{ cursor: "pointer" }} />

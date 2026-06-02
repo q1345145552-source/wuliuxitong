@@ -127,6 +127,8 @@ export default function ClientHomePage() {
   const [previewImage, setPreviewImage] = useState<{ src: string; alt: string } | null>(null);
   const [shippingPrices, setShippingPrices] = useState<Record<string, ShippingPriceItem> | null>(null);
   const [selectedOrders, setSelectedOrders] = useState<Set<string>>(new Set());
+  const [pageSize, setPageSize] = useState(100);
+  const toggleSelectClientOrder = (id: string) => { setSelectedOrders((p) => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n; }); };
   const [queryPanelCollapsed, setQueryPanelCollapsed] = useState(false);
   const [openLogisticsByOrder, setOpenLogisticsByOrder] = useState<Record<string, boolean>>({});
   const [openDetailsByOrder, setOpenDetailsByOrder] = useState<Record<string, boolean>>({});
@@ -671,6 +673,12 @@ export default function ClientHomePage() {
             <button type="button" onClick={() => setShowCreateModal(true)}
               style={{ border: "none", borderRadius: 6, padding: "8px 16px", background: "#2563eb", color: "#fff", fontWeight: 500, fontSize: 13, cursor: "pointer" }}>创建预报单</button>
           </div>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+            <div style={{ fontSize: 12, color: "#000000" }}>共 {prealerts.length} 条</div>
+            <select value={pageSize} onChange={(e) => setPageSize(Number(e.target.value))} style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "4px 8px", fontSize: 12 }}>
+              {[20, 50, 100, 200, 500, 1000].map((n) => <option key={n} value={n}>{n}条/页</option>)}
+            </select>
+          </div>
           <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
             <input value={prealertSearch} onChange={(e) => setPrealertSearch(e.target.value)}
               placeholder="搜索单号、品名…"
@@ -680,11 +688,11 @@ export default function ClientHomePage() {
             <div style={{ color: "#000000", fontSize: 13, padding: "20px 0", textAlign: "center" }}>暂无预报单</div>
           ) : (
             <div style={{ display: "grid", gap: 8 }}>
-              {prealerts.filter((item) => {
+              {prealerts.filter((item) =>  => {
                 const q = prealertSearch.trim().toLowerCase();
                 if (!q) return true;
                 return item.id.toLowerCase().includes(q) || (item.itemName ?? "").toLowerCase().includes(q);
-              }).map((item) => {
+              }).slice(0, pageSize).map((item) => {
                 const isPending = item.approvalStatus === "pending";
                 const isApproved = item.approvalStatus === "approved";
                 const isShipped = item.approvalStatus === "shipped";
@@ -1096,7 +1104,7 @@ export default function ClientHomePage() {
           </>
         )}
 
-            {hasQueried && queriedOrders.map((item, idx) => (
+            {hasQueried && queriedOrders.slice(0, pageSize).map((item, idx) => (
           <article key={item.id} className="order-card">
             <div className="order-head">
               <div className="order-title">
@@ -1324,11 +1332,11 @@ export default function ClientHomePage() {
             <div style={{ color: "#000000", fontSize: 13, padding: "20px 0", textAlign: "center" }}>暂无预报单</div>
           ) : (
             <div style={{ display: "grid", gap: 8 }}>
-              {prealerts.filter((item) => {
+              {prealerts.filter((item) =>  => {
                 const q = prealertSearch.trim().toLowerCase();
                 if (!q) return true;
                 return item.id.toLowerCase().includes(q) || (item.itemName ?? "").toLowerCase().includes(q);
-              }).map((item) => {
+              }).slice(0, pageSize).map((item) => {
                 const isPending = item.approvalStatus === "pending";
                 const isApproved = item.approvalStatus === "approved";
                 const isShipped = item.approvalStatus === "shipped";

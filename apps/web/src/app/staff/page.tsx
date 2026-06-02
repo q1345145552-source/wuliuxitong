@@ -596,6 +596,7 @@ export default function StaffHomePage() {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [shipmentSearchCollapsed, setShipmentSearchCollapsed] = useState(true);
   const [selectedForExport, setSelectedForExport] = useState<Set<string>>(new Set());
+  const [pageSize, setPageSize] = useState(100);
   const [approvingPrealert, setApprovingPrealert] = useState<OrderItem | null>(null);
   const [splittingShipment, setSplittingShipment] = useState<ShipmentItem | null>(null);
   const [splitRows, setSplitRows] = useState<Array<{ batchNo: string; itemName: string; packageCount: string }>>([]);
@@ -1524,6 +1525,8 @@ export default function StaffHomePage() {
       setSelectedForExport(new Set(filteredShipmentList.map((s) => s.trackingNo)));
     }
   };
+
+  const pagedShipments = useMemo(() => filteredShipmentList.slice(0, pageSize), [filteredShipmentList, pageSize]);
 
   // 搜索条件变化时清空选中
   useEffect(() => { setSelectedForExport(new Set()); }, [shipmentSearch]);
@@ -2588,6 +2591,12 @@ export default function StaffHomePage() {
               ＋ 创建订单
             </button>
           </div>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+            <span style={{ fontSize: 12, color: "#000000" }}>共 {filteredShipmentList.length} 条</span>
+            <select value={pageSize} onChange={(e) => setPageSize(Number(e.target.value))} style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "4px 8px", fontSize: 12 }}>
+              {[20, 50, 100, 200, 500, 1000].map((n) => <option key={n} value={n}>{n}条/页</option>)}
+            </select>
+          </div>
         </div>
           <>
             {shipments.length === 0 ? (
@@ -2622,7 +2631,7 @@ export default function StaffHomePage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {filteredShipmentList.map((item) => (
+                    {pagedShipments.map((item) => (
                       <Fragment key={item.id}>
                         <tr style={{ borderBottom: "1px solid #e2e8f0", background: shipmentTableExpandedId === item.id ? "#eff6ff" : "#fff" }}>
                           <td style={{ padding: "8px 6px", verticalAlign: "middle", whiteSpace: "nowrap" }}>
