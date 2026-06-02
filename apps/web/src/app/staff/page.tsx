@@ -160,7 +160,7 @@ function shipmentStatusZh(status: string | undefined): string {
     returned: "已退回",
     cancelled: "已取消",
   };
-  return map[value] ?? value || "未知";
+  return map[value] ?? (value || "未知");
 }
 
 /**
