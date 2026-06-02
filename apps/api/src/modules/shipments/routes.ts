@@ -451,6 +451,16 @@ export function registerShipmentRoutes(app: MinimalHttpApp, _db: DatabaseSync): 
     ok(res, { items, page: 1, pageSize: items.length, total: items.length });
   });
 
+  // 按需加载单个订单的产品图
+  app.get("/staff/shipments/images", async (req, res) => {
+    const auth = requireRole(req, res, ["staff", "admin"]);
+    if (!auth) return;
+    const orderId = req.query.orderId?.trim();
+    if (!orderId) { fail(res, 400, "BAD_REQUEST", "orderId required"); return; }
+    const imageMap = await loadProductImagesForOrders(auth.companyId, [orderId]);
+    ok(res, { images: imageMap.get(orderId) ?? [] });
+  });
+
   app.post("/staff/shipments/update-status", async (req, res) => {
     const auth = requireRole(req, res, ["staff", "admin"]);
     if (!auth) return;

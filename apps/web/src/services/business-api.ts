@@ -759,6 +759,15 @@ export async function fetchStaffShipments(): Promise<ShipmentItem[]> {
   return data.items;
 }
 
+export async function fetchShipmentImages(orderId: string): Promise<OrderProductImageItem[]> {
+  const response = await fetch(`${apiBaseUrl()}/staff/shipments/images?orderId=${encodeURIComponent(orderId)}`, {
+    method: "GET",
+    headers: { ...authHeaders() },
+  });
+  const data = await parseApiResponse<{ images: OrderProductImageItem[] }>(response);
+  return data.images;
+}
+
 export async function fetchStaffClients(): Promise<Array<{ id: string; name: string }>> {
   const response = await fetch(`${apiBaseUrl()}/staff/clients`, {
     method: "GET",

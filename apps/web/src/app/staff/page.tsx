@@ -19,6 +19,7 @@ import {
   fetchStaffInboundPhotos,
   fetchStaffPrealerts,
   fetchStaffShipments,
+  fetchShipmentImages,
   patchStaffShipmentOrderBundle,
   repairStaffShipmentOrderLinks,
   type RepairStaffShipmentOrderLinksResult,
@@ -535,6 +536,7 @@ export default function StaffHomePage() {
   const [prealertPanelCollapsed, setPrealertPanelCollapsed] = useState(false);
   const [shipmentListCollapsed, setShipmentListCollapsed] = useState(false);
   const [shipmentTableExpandedId, setShipmentTableExpandedId] = useState<string | null>(null);
+  const [shipmentImagesCache, setShipmentImagesCache] = useState<Record<string, OrderProductImageItem[]>>({});
   const [shipmentOrderEditDrafts, setShipmentOrderEditDrafts] = useState<Record<string, ShipmentOrderEditDraft>>({});
   const [clientSearchKeyword, setClientSearchKeyword] = useState("");
   const [shipments, setShipments] = useState<ShipmentItem[]>([]);
@@ -870,6 +872,10 @@ export default function StaffHomePage() {
         contentBase64,
       });
       await loadPageData();
+      // 刷新该订单的图片缓存
+      fetchShipmentImages(orderId).then((imgs) => {
+        setShipmentImagesCache((c) => ({ ...c, [orderId]: imgs }));
+      }).catch(() => {});
       setToast("产品图已上传");
     } catch (error) {
       const text = error instanceof Error ? error.message : "上传失败";
@@ -888,6 +894,13 @@ export default function StaffHomePage() {
     try {
       await deleteStaffOrderProductImage(imageId);
       await loadPageData();
+      // 清除该订单图片缓存（下次展开时重新加载）
+      const oid = shipmentTableExpandedId ? shipments.find((s) => s.id === shipmentTableExpandedId)?.orderId : undefined;
+      if (oid) {
+        fetchShipmentImages(oid).then((imgs) => {
+          setShipmentImagesCache((c) => ({ ...c, [oid]: imgs }));
+        }).catch(() => {});
+      }
       setToast("产品图已删除");
     } catch (error) {
       const text = error instanceof Error ? error.message : "删除失败";
@@ -2558,6 +2571,12 @@ export default function StaffHomePage() {
                                 setShipmentTableExpandedId((prev) => {
                                   if (prev === item.id) return null;
                                   setShipmentOrderEditDrafts((d) => ({ ...d, [item.id]: buildShipmentOrderEditDraft(item) }));
+                                  const oid = item.orderId;
+                                  if (oid && !shipmentImagesCache[oid]) {
+                                    fetchShipmentImages(oid).then((imgs) => {
+                                      setShipmentImagesCache((c) => ({ ...c, [oid]: imgs }));
+                                    }).catch(() => {});
+                                  }
                                   return item.id;
                                 });
                               }}
@@ -3082,7 +3101,7 @@ export default function StaffHomePage() {
                                 {item.orderId ? (
                                   <OrderProductImagesPanel
                                     orderId={item.orderId}
-                                    images={item.productImages ?? []}
+                                    images={shipmentImagesCache[item.orderId] ?? []}
                                     canManage={false}
                                     busy={loading}
                                     onSelectFile={(file) => uploadOrderProductImageAndReload(item.orderId!, file)}
