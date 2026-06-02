@@ -95,7 +95,7 @@ const WAREHOUSE_TRACKING_PREFIX_MAP: Record<string, string[]> = {
 };
 
 export default function AdminHomePage() {
-  const [session, setSession] = useState<MockSession | null>(null);
+  const [session, setSession] = useState<MockSession>(null!);
   const [loading, setLoading] = useState(false);
   const [overviewFlash, setOverviewFlash] = useState(false);
   const [overview, setOverview] = useState<AdminOverview | null>(null);
@@ -627,8 +627,6 @@ export default function AdminHomePage() {
       setLoading(false);
     }
   };
-  if (!session) return null;
-
   return (
     <RoleShell allowedRole="admin" title="管理员工作台">
       {/* 1. 运营看板 */}
