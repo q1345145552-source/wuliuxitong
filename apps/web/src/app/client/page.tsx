@@ -229,6 +229,12 @@ export default function ClientHomePage() {
         setMessage(`加载失败：${text}`);
       })
       .finally(() => setLoading(false));
+
+    // 15 秒自动刷新同步
+    const interval = window.setInterval(() => {
+      refreshMainData().catch(() => {});
+    }, 15000);
+    return () => window.clearInterval(interval);
   }, []);
 
   useEffect(() => {
