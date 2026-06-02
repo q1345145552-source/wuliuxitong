@@ -688,7 +688,7 @@ export default function ClientHomePage() {
             <div style={{ color: "#000000", fontSize: 13, padding: "20px 0", textAlign: "center" }}>暂无预报单</div>
           ) : (
             <div style={{ display: "grid", gap: 8 }}>
-              {prealerts.filter((item) =>  => {
+              {prealerts.filter((item) => {
                 const q = prealertSearch.trim().toLowerCase();
                 if (!q) return true;
                 return item.id.toLowerCase().includes(q) || (item.itemName ?? "").toLowerCase().includes(q);
@@ -1332,7 +1332,7 @@ export default function ClientHomePage() {
             <div style={{ color: "#000000", fontSize: 13, padding: "20px 0", textAlign: "center" }}>暂无预报单</div>
           ) : (
             <div style={{ display: "grid", gap: 8 }}>
-              {prealerts.filter((item) =>  => {
+              {prealerts.filter((item) => {
                 const q = prealertSearch.trim().toLowerCase();
                 if (!q) return true;
                 return item.id.toLowerCase().includes(q) || (item.itemName ?? "").toLowerCase().includes(q);

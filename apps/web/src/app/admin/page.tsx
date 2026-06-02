@@ -1172,6 +1172,7 @@ export default function AdminHomePage() {
         ) : filteredOrderList.length === 0 ? (
           <EmptyStateCard title="暂无匹配订单" description="无匹配结果" />
         ) : (
+          <>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8, padding: "0 8px" }}>
             <span style={{ fontSize: 12, color: "#000000" }}>共 {filteredOrderList.length} 条</span>
             <select value={pageSize} onChange={(e) => setPageSize(Number(e.target.value))} style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "4px 8px", fontSize: 12 }}>
@@ -1299,6 +1300,7 @@ export default function AdminHomePage() {
               </tbody>
             </table>
           </div>
+          </>
         )}
       </section>
 
