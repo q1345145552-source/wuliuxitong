@@ -392,11 +392,38 @@ export function registerOrderRoutes(app: MinimalHttpApp, _db: DatabaseSync): voi
       receiverPhoneTh?: string;
       receiverAddressTh?: string;
       warehouseId?: string;
+      products?: Array<{
+        itemName: string;
+        packageCount: number;
+        lengthCm?: number;
+        widthCm?: number;
+        heightCm?: number;
+        productQuantity?: number;
+      }>;
     };
+
+    const staffProducts = body.products?.length
+      ? body.products.map((p, i) => ({
+          itemName: p.itemName.trim(),
+          packageCount: p.packageCount || 1,
+          lengthCm: p.lengthCm ?? null,
+          widthCm: p.widthCm ?? null,
+          heightCm: p.heightCm ?? null,
+          productQuantity: p.productQuantity ?? null,
+          sortOrder: i,
+        }))
+      : body.itemName ? [{ itemName: body.itemName.trim(), packageCount: Number(body.packageCount ?? 0), lengthCm: null, widthCm: null, heightCm: null, productQuantity: null, sortOrder: 0 }] : [];
+
+    const prName = staffProducts[0]?.itemName ?? body.itemName ?? "";
+    const prPkg = staffProducts.reduce((s, p) => s + p.packageCount, 0) || Number(body.packageCount ?? 0);
+    const prVol = staffProducts.reduce((s, p) => {
+      if (p.lengthCm && p.widthCm && p.heightCm) return s + (p.lengthCm * p.widthCm * p.heightCm * p.packageCount) / 1_000_000;
+      return s;
+    }, body.volumeM3 ?? 0);
 
     if (
       !body.clientId ||
-      !body.itemName ||
+      (!prName && !body.itemName) ||
       !body.transportMode ||
       !body.warehouseId ||
       !body.arrivedAt?.trim()
@@ -459,7 +486,7 @@ export function registerOrderRoutes(app: MinimalHttpApp, _db: DatabaseSync): voi
           packageCount: packageCountNum,
           packageUnit,
           weightKg: weightKg as unknown as Prisma.Decimal | null,
-          volumeM3: volumeM3 as unknown as Prisma.Decimal | null,
+          volumeM3: prVol > 0 ? prVol : (volumeM3 as unknown as Prisma.Decimal | null,
           receivableAmountCny: null,
           receivableCurrency: "CNY",
           shipDate: body.arrivedAt.trim(),
@@ -481,7 +508,7 @@ export function registerOrderRoutes(app: MinimalHttpApp, _db: DatabaseSync): voi
           currentStatus: "created",
           currentLocation: null,
           weightKg: weightKg as unknown as Prisma.Decimal | null,
-          volumeM3: volumeM3 as unknown as Prisma.Decimal | null,
+          volumeM3: prVol > 0 ? prVol : (volumeM3 as unknown as Prisma.Decimal | null,
           packageCount: packageCountNum,
           packageUnit,
           transportMode: body.transportMode,
@@ -1166,7 +1193,7 @@ export function registerOrderRoutes(app: MinimalHttpApp, _db: DatabaseSync): voi
           packageCount: Math.floor(packageCount),
           packageUnit,
           weightKg: weightKg as unknown as Prisma.Decimal | null,
-          volumeM3: volumeM3 as unknown as Prisma.Decimal | null,
+          volumeM3: prVol > 0 ? prVol : (volumeM3 as unknown as Prisma.Decimal | null,
           domesticTrackingNo,
           transportMode,
           shipDate,
@@ -1186,7 +1213,7 @@ export function registerOrderRoutes(app: MinimalHttpApp, _db: DatabaseSync): voi
           packageCount: Math.floor(packageCount),
           packageUnit,
           weightKg: weightKg as unknown as Prisma.Decimal | null,
-          volumeM3: volumeM3 as unknown as Prisma.Decimal | null,
+          volumeM3: prVol > 0 ? prVol : (volumeM3 as unknown as Prisma.Decimal | null,
           transportMode,
           containerNo,
         },
@@ -1320,7 +1347,7 @@ export function registerOrderRoutes(app: MinimalHttpApp, _db: DatabaseSync): voi
         packageCount,
         packageUnit,
         weightKg: weightKg as unknown as Prisma.Decimal | null,
-        volumeM3: volumeM3 as unknown as Prisma.Decimal | null,
+        volumeM3: prVol > 0 ? prVol : (volumeM3 as unknown as Prisma.Decimal | null,
         receivableAmountCny: receivableAmountCny as unknown as Prisma.Decimal,
         receivableCurrency,
         shipDate,
@@ -1357,7 +1384,7 @@ export function registerOrderRoutes(app: MinimalHttpApp, _db: DatabaseSync): voi
           currentStatus: "created",
           currentLocation: null,
           weightKg: weightKg as unknown as Prisma.Decimal | null,
-          volumeM3: volumeM3 as unknown as Prisma.Decimal | null,
+          volumeM3: prVol > 0 ? prVol : (volumeM3 as unknown as Prisma.Decimal | null,
           packageCount,
           packageUnit,
           transportMode,

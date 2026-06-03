@@ -597,6 +597,9 @@ export default function StaffHomePage() {
   const [shipmentSearchCollapsed, setShipmentSearchCollapsed] = useState(true);
   const [selectedForExport, setSelectedForExport] = useState<Set<string>>(new Set());
   const [pageSize, setPageSize] = useState(100);
+  const [staffFormProducts, setStaffFormProducts] = useState<Array<{
+    itemName: string; packageCount: string; lengthCm: string; widthCm: string; heightCm: string; productQuantity: string;
+  }>>([]);
   const [approvingPrealert, setApprovingPrealert] = useState<OrderItem | null>(null);
   const [splittingShipment, setSplittingShipment] = useState<ShipmentItem | null>(null);
   const [splitRows, setSplitRows] = useState<Array<{ batchNo: string; itemName: string; packageCount: string }>>([]);

@@ -17,6 +17,14 @@ export interface StaffCreateOrderPayload {
   receiverNameTh: string;
   receiverPhoneTh: string;
   receiverAddressTh: string;
+  products?: Array<{
+    itemName: string;
+    packageCount: number;
+    lengthCm?: number;
+    widthCm?: number;
+    heightCm?: number;
+    productQuantity?: number;
+  }>;
 }
 
 export interface ClientPrealertPayload {
