@@ -2043,12 +2043,14 @@ export default function StaffHomePage() {
               <input value={form.itemName} onChange={(e) => setForm((v) => ({ ...v, itemName: e.target.value }))} placeholder="品名 *" style={orderCreateInputStyle} />
             ) : null}
             {staffFormProducts.map((p, i) => (
-              <div key={i} style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr 1fr 1fr auto", gap: 4, marginBottom: 4, alignItems: "center" }}>
+              <div key={i} style={{ display: "grid", gridTemplateColumns: "3fr 1fr 0.8fr 0.8fr 0.8fr 1fr 1fr auto", gap: 3, marginBottom: 4, alignItems: "center" }}>
                 <input value={p.itemName} onChange={(e) => { const n = [...staffFormProducts]; n[i] = { ...n[i], itemName: e.target.value }; setStaffFormProducts(n); }} placeholder="品名" style={{ border: "1px solid #d1d5db", borderRadius: 4, padding: "4px 6px", fontSize: 12 }} />
                 <input type="number" value={p.packageCount} onChange={(e) => { const n = [...staffFormProducts]; n[i] = { ...n[i], packageCount: e.target.value }; setStaffFormProducts(n); }} placeholder="箱数" style={{ border: "1px solid #d1d5db", borderRadius: 4, padding: "4px 6px", fontSize: 12 }} />
                 <input type="number" step="0.01" value={p.lengthCm} onChange={(e) => { const n = [...staffFormProducts]; n[i] = { ...n[i], lengthCm: e.target.value }; setStaffFormProducts(n); }} placeholder="长" style={{ border: "1px solid #d1d5db", borderRadius: 4, padding: "4px 6px", fontSize: 12 }} />
                 <input type="number" step="0.01" value={p.widthCm} onChange={(e) => { const n = [...staffFormProducts]; n[i] = { ...n[i], widthCm: e.target.value }; setStaffFormProducts(n); }} placeholder="宽" style={{ border: "1px solid #d1d5db", borderRadius: 4, padding: "4px 6px", fontSize: 12 }} />
                 <input type="number" step="0.01" value={p.heightCm} onChange={(e) => { const n = [...staffFormProducts]; n[i] = { ...n[i], heightCm: e.target.value }; setStaffFormProducts(n); }} placeholder="高" style={{ border: "1px solid #d1d5db", borderRadius: 4, padding: "4px 6px", fontSize: 12 }} />
+                <input type="number" value={p.productQuantity} onChange={(e) => { const n = [...staffFormProducts]; n[i] = { ...n[i], productQuantity: e.target.value }; setStaffFormProducts(n); }} placeholder="单箱数量" style={{ border: "1px solid #d1d5db", borderRadius: 4, padding: "4px 6px", fontSize: 12 }} />
+                <input type="number" step="0.01" value={p.weightKg} onChange={(e) => { const n = [...staffFormProducts]; n[i] = { ...n[i], weightKg: e.target.value }; setStaffFormProducts(n); }} placeholder="单箱重量" style={{ border: "1px solid #d1d5db", borderRadius: 4, padding: "4px 6px", fontSize: 12 }} />
                 <button type="button" onClick={() => setStaffFormProducts((v) => v.filter((_, j) => j !== i))} style={{ border: "1px solid #fca5a5", borderRadius: 4, padding: "4px 6px", fontSize: 11, background: "#fff", color: "#dc2626", cursor: "pointer" }}>X</button>
               </div>
             ))}
@@ -3447,7 +3449,7 @@ export default function StaffHomePage() {
                   <input value={form.itemName} onChange={(e) => setForm((v) => ({ ...v, itemName: e.target.value }))} placeholder="品名 *" style={orderCreateInputStyle} />
                 ) : null}
                 {staffFormProducts.map((p, i) => (
-                  <div key={i} style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr 1fr 1fr auto", gap: 4, marginBottom: 4, alignItems: "center" }}>
+                  <div key={i} style={{ display: "grid", gridTemplateColumns: "3fr 1fr 0.8fr 0.8fr 0.8fr 1fr 1fr auto", gap: 3, marginBottom: 4, alignItems: "center" }}>
                     <input value={p.itemName} onChange={(e) => { const n = [...staffFormProducts]; n[i] = { ...n[i], itemName: e.target.value }; setStaffFormProducts(n); }} placeholder="品名" style={{ border: "1px solid #d1d5db", borderRadius: 4, padding: "4px 6px", fontSize: 12 }} />
                     <input type="number" value={p.packageCount} onChange={(e) => { const n = [...staffFormProducts]; n[i] = { ...n[i], packageCount: e.target.value }; setStaffFormProducts(n); }} placeholder="箱数" style={{ border: "1px solid #d1d5db", borderRadius: 4, padding: "4px 6px", fontSize: 12 }} />
                     <input type="number" step="0.01" value={p.lengthCm} onChange={(e) => { const n = [...staffFormProducts]; n[i] = { ...n[i], lengthCm: e.target.value }; setStaffFormProducts(n); }} placeholder="长" style={{ border: "1px solid #d1d5db", borderRadius: 4, padding: "4px 6px", fontSize: 12 }} />
