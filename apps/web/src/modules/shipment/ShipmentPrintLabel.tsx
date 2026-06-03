@@ -25,24 +25,32 @@ export function openPrintLabel(props: ShipmentPrintLabelProps) {
   const hasProducts = (props.products?.length ?? 0) > 0;
 
   let labelsHtml = "";
-  for (let i = 1; i <= total; i++) {
-    let productRows = "";
-    if (hasProducts) {
-      productRows = props.products!.map((p) =>
-        `<div class="row"><span>${escapeHtml(p.itemName)} ×${p.packageCount}箱</span></div>`
-      ).join("");
-    } else {
-      productRows = `<div class="row"><span>${escapeHtml(props.itemName ?? "")}</span></div>`;
-    }
-
-    labelsHtml += `
+  let globalIdx = 0;
+  if (hasProducts) {
+    for (const p of props.products!) {
+      for (let j = 0; j < p.packageCount; j++) {
+        globalIdx++;
+        labelsHtml += `
 <div class="label">
   <div class="row"><span>${escapeHtml(props.marks)}</span><span>${escapeHtml(modeText)}</span></div>
-  ${productRows}
+  <div class="row"><span>${escapeHtml(p.itemName)}</span></div>
+  <div class="row"><span>箱号：${globalIdx}/${total}</span></div>
+  <div class="row"><span>${escapeHtml(props.trackingNo)}</span></div>
+  <div class="footer">湘泰物流</div>
+</div>`;
+      }
+    }
+  } else {
+    for (let i = 1; i <= total; i++) {
+      labelsHtml += `
+<div class="label">
+  <div class="row"><span>${escapeHtml(props.marks)}</span><span>${escapeHtml(modeText)}</span></div>
+  <div class="row"><span>${escapeHtml(props.itemName ?? "")}</span></div>
   <div class="row"><span>箱号：${i}/${total}</span><span>${props.productQuantity ? `单箱数量：${props.productQuantity}个` : ""}</span></div>
   <div class="row"><span>${escapeHtml(props.trackingNo)}</span></div>
   <div class="footer">湘泰物流</div>
 </div>`;
+    }
   }
 
   win.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>运单标签</title>
@@ -89,24 +97,32 @@ export function openPrintPrealert(props: PrealertPrintProps) {
   const hasProducts = (props.products?.length ?? 0) > 0;
 
   let labelsHtml = "";
-  for (let i = 1; i <= total; i++) {
-    let productRows = "";
-    if (hasProducts) {
-      productRows = props.products!.map((p) =>
-        `<div class="row"><span>${escapeHtml(p.itemName)} ×${p.packageCount}箱</span></div>`
-      ).join("");
-    } else {
-      productRows = `<div class="row"><span>${escapeHtml(props.itemName)}</span></div>`;
-    }
-
-    labelsHtml += `
+  let globalIdx = 0;
+  if (hasProducts) {
+    for (const p of props.products!) {
+      for (let j = 0; j < p.packageCount; j++) {
+        globalIdx++;
+        labelsHtml += `
 <div class="label">
   <div class="row"><span>${escapeHtml(props.clientId ?? "")}</span><span>${escapeHtml(modeText)}</span></div>
-  ${productRows}
+  <div class="row"><span>${escapeHtml(p.itemName)}</span></div>
+  <div class="row"><span>箱号：${globalIdx}/${total}</span></div>
+  <div class="row"><span>${escapeHtml(props.prealertNo)}</span></div>
+  <div class="footer">湘泰物流预报单</div>
+</div>`;
+      }
+    }
+  } else {
+    for (let i = 1; i <= total; i++) {
+      labelsHtml += `
+<div class="label">
+  <div class="row"><span>${escapeHtml(props.clientId ?? "")}</span><span>${escapeHtml(modeText)}</span></div>
+  <div class="row"><span>${escapeHtml(props.itemName)}</span></div>
   <div class="row"><span>箱号：${i}/${total}</span><span>${props.productQuantity ? `单箱数量：${props.productQuantity}个` : ""}</span></div>
   <div class="row"><span>${escapeHtml(props.prealertNo)}</span></div>
   <div class="footer">湘泰物流预报单</div>
 </div>`;
+    }
   }
 
   win.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>预报单标签</title>
