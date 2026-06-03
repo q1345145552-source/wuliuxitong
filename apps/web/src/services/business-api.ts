@@ -248,6 +248,7 @@ export interface AdminOrderItem {
   createdAt: string;
   updatedAt: string;
   productImages?: OrderProductImageItem[];
+  products?: OrderProductItem[];
 }
 
 export interface AdminAiSessionMemoryItem {
