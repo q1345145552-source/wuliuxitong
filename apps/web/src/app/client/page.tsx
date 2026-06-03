@@ -19,6 +19,7 @@ import {
   fetchClientOrders,
   fetchClientWalletOverview,
   fetchShippingPrices,
+  uploadStaffOrderProductImage,
   type ClientAddressItem,
   type OrderItem,
   type ShippingPriceItem,
