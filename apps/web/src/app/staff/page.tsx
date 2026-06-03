@@ -1662,6 +1662,11 @@ export default function StaffHomePage() {
                     <div style={{ fontWeight: 600, fontSize: 12, marginBottom: 4, color: "#000000" }}>
                       <span style={{ fontFamily: "monospace" }}>{item.orderNo || item.id}</span> · {item.clientName ?? item.clientId ?? "-"} · {item.createdAt.slice(0, 10)}
                     </div>
+                    {(item.products?.length ?? 0) > 1 && (
+                      <div style={{ fontSize: 11, color: "#000000", marginBottom: 6, background: "#fefce8", borderRadius: 4, padding: "3px 6px" }}>
+                        {item.products!.map((p) => `${p.itemName}×${p.packageCount}箱`).join(" | ")}
+                      </div>
+                    )}
                     <div
                       style={{
                         marginBottom: 6,
