@@ -1478,7 +1478,7 @@ export default function ClientHomePage() {
                     <button type="button" onClick={() => setFormProducts((v) => v.filter((_, j) => j !== i))} style={{ border: "1px solid #fca5a5", borderRadius: 4, padding: "4px 6px", fontSize: 11, background: "#fff", color: "#dc2626", cursor: "pointer" }}>✕</button>
                   </div>
                 );})}
-                {
+                {(() => {
                   const totalVol = formProducts.reduce((s, p) => {
                     const pkg = Number(p.packageCount) || 0;
                     const l = Number(p.lengthCm) || 0;
@@ -1496,7 +1496,7 @@ export default function ClientHomePage() {
                       合计：总体积 {totalVol.toFixed(4)}m³  |  总重量 {totalWt.toFixed(2)}kg
                     </div>
                   );
-                }
+                })()}
                 <button type="button" onClick={() => setFormProducts((v) => [...v, { itemName: "", packageCount: "", lengthCm: "", widthCm: "", heightCm: "", productQuantity: "", weightKg: "" }])} style={{ border: "1px dashed #2563eb", borderRadius: 4, padding: "4px 10px", fontSize: 12, background: "#fff", color: "#2563eb", cursor: "pointer", marginTop: 4 }}>+ 添加产品</button>
               </div>
               <div style={{ fontSize: 12, color: "#000000", marginTop: 4 }}>
