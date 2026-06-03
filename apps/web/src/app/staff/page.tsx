@@ -621,6 +621,39 @@ export default function StaffHomePage() {
   }>>([]);
   const [lastmileLoading, setLastmileLoading] = useState(false);
   const [clientNotes, setClientNotes] = useState<Record<string, { content: string; updatedAt: string }>>({});
+  const [editingNote, setEditingNote] = useState<{ clientId: string; content: string } | null>(null);
+  const [showAddAddress, setShowAddAddress] = useState<string | null>(null);
+  const [addrForm, setAddrForm] = useState({ contactName: "", contactPhone: "", addressDetail: "", label: "" });
+
+  const saveNote = async (clientId: string, content: string) => {
+    try {
+      await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:3001"}/admin/shipping/notes`, {
+        method: "POST",
+        headers: { ...(await import("../../services/core-api")).authHeaders(), "Content-Type": "application/json" },
+        body: JSON.stringify({ clientId, content }),
+      });
+      setToast("备注已保存");
+      setEditingNote(null);
+      await loadClientNotesData();
+    } catch { setToast("保存失败"); }
+  };
+
+  const saveAddr = async (clientId: string) => {
+    if (!addrForm.contactName.trim() || !addrForm.contactPhone.trim() || !addrForm.addressDetail.trim()) {
+      setToast("请填写完整地址信息"); return;
+    }
+    try {
+      await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:3001"}/staff/client-addresses`, {
+        method: "POST",
+        headers: { ...(await import("../../services/core-api")).authHeaders(), "Content-Type": "application/json" },
+        body: JSON.stringify({ clientId, ...addrForm }),
+      });
+      setToast("地址已添加");
+      setShowAddAddress(null);
+      setAddrForm({ contactName: "", contactPhone: "", addressDetail: "", label: "" });
+      void loadLastmileAddresses(lastmileKeyword);
+    } catch { setToast("保存失败"); }
+  };
 
   const loadClientNotesData = async () => {
     try { setClientNotes(await fetchClientNotes()); } catch { }
