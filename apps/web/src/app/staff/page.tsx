@@ -616,8 +616,6 @@ export default function StaffHomePage() {
       contactName: string;
       contactPhone: string;
       addressDetail: string;
-      province: string;
-      city: string;
       isDefault: boolean;
     }>;
   }>>([]);
@@ -3392,7 +3390,7 @@ export default function StaffHomePage() {
                         {addr.isDefault ? <span style={{ color: "#16a34a", fontWeight: 600 }}>［默认］</span> : null}
                         {addr.contactName} ｜ {addr.contactPhone}
                       </div>
-                      <div style={{ fontSize: 11, color: "#000000", marginTop: 2 }}>{[addr.province, addr.city, addr.addressDetail].filter(Boolean).join(" ")}</div>
+                      <div style={{ fontSize: 11, color: "#000000", marginTop: 2 }}>{addr.addressDetail.filter(Boolean).join(" ")}</div>
                     </div>
                   ))
                 )}
