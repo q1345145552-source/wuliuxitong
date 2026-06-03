@@ -1,5 +1,4 @@
 // B-4c: 已从 node:sqlite 迁移到 Prisma + PostgreSQL（2026-05-20）
-import type { DatabaseSync } from "node:sqlite";
 import { prisma } from "../../db/prisma";
 import type { MinimalHttpApp } from "../../server";
 import { fail, ok, requireRole } from "../core/http-utils";
@@ -52,7 +51,7 @@ function normalizeCoord(value: unknown): number | null {
 /**
  * 注册客户端地址簿相关接口。
  */
-export function registerClientAddressRoutes(app: MinimalHttpApp, _db: DatabaseSync): void {
+export function registerClientAddressRoutes(app: MinimalHttpApp): void {
   app.get("/client/addresses", async (req, res) => {
     const auth = requireRole(req, res, ["client"]);
     if (!auth) return;

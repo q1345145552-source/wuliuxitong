@@ -1,5 +1,4 @@
 // B-5: 已从 node:sqlite 迁移到 Prisma + PostgreSQL（2026-05-20）
-import type { DatabaseSync } from "node:sqlite";
 import { createHash } from "node:crypto";
 import { Prisma } from "@prisma/client";
 import { prisma } from "../../db/prisma";
@@ -87,7 +86,7 @@ function mapKuaidi100State(state?: string): string {
   return "未知";
 }
 
-export function registerShipmentRoutes(app: MinimalHttpApp, _db: DatabaseSync): void {
+export function registerShipmentRoutes(app: MinimalHttpApp): void {
   app.get("/staff/inbound-photos", async (req, res) => {
     const auth = requireRole(req, res, ["staff", "admin"]);
     if (!auth) return;

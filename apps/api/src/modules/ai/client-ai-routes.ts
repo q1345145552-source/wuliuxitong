@@ -4,7 +4,6 @@ import type {
   AiSuggestionResponse,
 } from "../../../../../packages/shared-types/common-response";
 import type { ApiResponse } from "../../../../../packages/shared-types/common-response";
-import type { DatabaseSync } from "node:sqlite";
 import type { Order, Shipment, StatusLabelConfig } from "../../../../../packages/shared-types/entities";
 import { prisma } from "../../db/prisma";
 import {
@@ -17,23 +16,9 @@ import {
 import { ClientAiService } from "./ai-service";
 import { HttpDeepSeekClient } from "./deepseek-client";
 import type { AuthContext, QueryDataSource } from "./ai-types";
+import type { HttpRequest, HttpResponse, MinimalHttpApp } from "../../server";
 
-interface HttpRequest {
-  body?: unknown;
-  auth?: AuthContext;
-  query?: Record<string, string | undefined>;
-}
 
-interface HttpResponse {
-  status(code: number): HttpResponse;
-  json(payload: unknown): void;
-}
-
-export interface MinimalHttpApp {
-  post(path: string, handler: (req: HttpRequest, res: HttpResponse) => Promise<void>): void;
-  get(path: string, handler: (req: HttpRequest, res: HttpResponse) => Promise<void>): void;
-  delete(path: string, handler: (req: HttpRequest, res: HttpResponse) => Promise<void>): void;
-}
 
 class PrismaCompanyScopedDataSource implements QueryDataSource {
   async listOrders(scope: { companyId: string }): Promise<Order[]> {
@@ -116,7 +101,7 @@ function jsonError(code: Exclude<ApiResponse<unknown>["code"], "OK">, message: s
   };
 }
 
-export function registerClientAiRoutes(app: MinimalHttpApp, _db: DatabaseSync): void {
+export function registerClientAiRoutes(app: MinimalHttpApp): void {
   const auditStore = new PrismaAiAuditStore();
   const knowledgeGapStore = new PrismaAiKnowledgeGapStore();
   const statusLabelStore = new PrismaStatusLabelStore();

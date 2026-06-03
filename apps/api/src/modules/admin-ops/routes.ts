@@ -1,12 +1,11 @@
 // B-7: 已从 node:sqlite 迁移到 Prisma + PostgreSQL（2026-05-20）
-import type { DatabaseSync } from "node:sqlite";
 import { Prisma } from "@prisma/client";
 import { prisma } from "../../db/prisma";
 import type { MinimalHttpApp } from "../../server";
 import { fail, ok, requireRole } from "../core/http-utils";
 
 /** Decimal | null → number */
-function decToNum(value: Prisma.Decimal | null | undefined): number {
+function decToNumber(value: Prisma.Decimal | null | undefined): number {
   if (value === null || value === undefined) return 0;
   return Number(value.toString());
 }
@@ -14,7 +13,7 @@ function decToNum(value: Prisma.Decimal | null | undefined): number {
 /**
  * 注册管理员运营侧（LMP/关务/末端/结算）接口。
  */
-export function registerAdminOpsRoutes(app: MinimalHttpApp, _db: DatabaseSync): void {
+export function registerAdminOpsRoutes(app: MinimalHttpApp): void {
   app.get("/admin/lmp/rates", async (req, res) => {
     const auth = requireRole(req, res, ["admin"]);
     if (!auth) return;
@@ -29,8 +28,8 @@ export function registerAdminOpsRoutes(app: MinimalHttpApp, _db: DatabaseSync): 
         supplierName: item.supplierName,
         transportMode: item.transportMode,
         seasonTag: item.seasonTag,
-        supplierCost: decToNum(item.supplierCost),
-        quotePrice: decToNum(item.quotePrice),
+        supplierCost: decToNumber(item.supplierCost),
+        quotePrice: decToNumber(item.quotePrice),
         currency: item.currency,
         effectiveFrom: item.effectiveFrom,
         effectiveTo: item.effectiveTo ?? undefined,
@@ -183,9 +182,9 @@ export function registerAdminOpsRoutes(app: MinimalHttpApp, _db: DatabaseSync): 
       items: rows.map((item) => ({
         id: item.id,
         orderId: item.orderId,
-        clientReceivable: decToNum(item.clientReceivable),
-        supplierPayable: decToNum(item.supplierPayable),
-        taxFee: decToNum(item.taxFee),
+        clientReceivable: decToNumber(item.clientReceivable),
+        supplierPayable: decToNumber(item.supplierPayable),
+        taxFee: decToNumber(item.taxFee),
         currency: item.currency,
         updatedAt: item.updatedAt.toISOString(),
       })),
@@ -235,9 +234,9 @@ export function registerAdminOpsRoutes(app: MinimalHttpApp, _db: DatabaseSync): 
     });
     ok(res, {
       items: rows.map((item) => {
-        const cr = decToNum(item.clientReceivable);
-        const sp = decToNum(item.supplierPayable);
-        const tf = decToNum(item.taxFee);
+        const cr = decToNumber(item.clientReceivable);
+        const sp = decToNumber(item.supplierPayable);
+        const tf = decToNumber(item.taxFee);
         return {
           orderId: item.orderId,
           clientReceivable: cr,
@@ -262,9 +261,9 @@ export function registerAdminOpsRoutes(app: MinimalHttpApp, _db: DatabaseSync): 
     });
     const profitNumeric = profitRows.map((item) => ({
       orderId: item.orderId,
-      clientReceivable: decToNum(item.clientReceivable),
-      supplierPayable: decToNum(item.supplierPayable),
-      taxFee: decToNum(item.taxFee),
+      clientReceivable: decToNumber(item.clientReceivable),
+      supplierPayable: decToNumber(item.supplierPayable),
+      taxFee: decToNumber(item.taxFee),
       updatedAt: item.updatedAt.toISOString(),
     }));
     const totalRevenue = profitNumeric.reduce((sum, item) => sum + item.clientReceivable, 0);
@@ -291,7 +290,7 @@ export function registerAdminOpsRoutes(app: MinimalHttpApp, _db: DatabaseSync): 
     const previousByKey = new Map<string, { quotePrice: number; updatedAt: string }>();
     lmpRows.forEach((item) => {
       const key = `${item.routeCode}__${item.supplierName}`;
-      const snapshot = { quotePrice: decToNum(item.quotePrice), updatedAt: item.updatedAt.toISOString() };
+      const snapshot = { quotePrice: decToNumber(item.quotePrice), updatedAt: item.updatedAt.toISOString() };
       if (!latestByKey.has(key)) {
         latestByKey.set(key, snapshot);
       } else if (!previousByKey.has(key)) {

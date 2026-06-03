@@ -32,16 +32,13 @@ prisma
     process.exit(1);
   });
 
-// ===== Core business routes（所有模块已切换到 Prisma；第二个参数 undefined 仅为兼容签名）=====
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const _legacy: any = undefined;
-registerAuthRoutes(app, _legacy);
-registerOrderRoutes(app, _legacy);
-registerShipmentRoutes(app, _legacy);
-registerClientAddressRoutes(app, _legacy);
-registerClientComplianceRoutes(app, _legacy);
-registerAdminRoutes(app, _legacy);
-registerAdminOpsRoutes(app, _legacy);
+registerAuthRoutes(app);
+registerOrderRoutes(app);
+registerShipmentRoutes(app);
+registerClientAddressRoutes(app);
+registerClientComplianceRoutes(app);
+registerAdminRoutes(app);
+registerAdminOpsRoutes(app);
 registerContainerRoutes(app);
 registerLoadingManifestRoutes(app);
 registerFinanceRoutes(app);
@@ -49,7 +46,7 @@ registerShippingConfigRoutes(app);
 startDailyExchangeRateScheduler();
 
 // ===== AI routes =====
-registerClientAiRoutes(app, _legacy);
+registerClientAiRoutes(app);
 
 // 优雅停机
 process.on("SIGINT", async () => {

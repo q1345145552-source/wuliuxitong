@@ -1,6 +1,5 @@
 // B-3 ~ B-7: 已从 node:sqlite 迁移到 Prisma + PostgreSQL（2026-05-18）
 import crypto from "node:crypto";
-import type { DatabaseSync } from "node:sqlite";
 import { Prisma } from "@prisma/client";
 import { prisma } from "../../db/prisma";
 import type { MinimalHttpApp } from "../../server";
@@ -108,7 +107,7 @@ async function generatePrealertNo(): Promise<string> {
   return `YWYB${String(nextSeq).padStart(7, "0")}`;
 }
 
-export function registerOrderRoutes(app: MinimalHttpApp, _db: DatabaseSync): void {
+export function registerOrderRoutes(app: MinimalHttpApp): void {
   app.post("/client/prealerts", async (req, res) => {
     const auth = requireRole(req, res, ["client"]);
     if (!auth) return;

@@ -1,44 +1,8 @@
-import crypto from "node:crypto";
-import type { DatabaseSync } from "node:sqlite";
 import type { MinimalHttpApp } from "../../server";
 import { prisma } from "../../db/prisma";
 import { fail, ok } from "../core/http-utils";
 import { signAuthToken } from "./token";
-
-function hashPassword(password: string): string {
-  const salt = crypto.randomBytes(16);
-  const cost = 16384;
-  const blockSize = 8;
-  const parallelization = 1;
-  const keyLen = 64;
-  const derived = crypto.scryptSync(password, salt, keyLen, { N: cost, r: blockSize, p: parallelization });
-  return `scrypt$${cost}$${blockSize}$${parallelization}$${salt.toString("base64")}$${derived.toString("base64")}`;
-}
-
-function verifyPassword(password: string, passwordHash: string | null): boolean {
-  if (!passwordHash) return false;
-  if (passwordHash.startsWith("scrypt$")) {
-    const parts = passwordHash.split("$");
-    if (parts.length !== 6) return false;
-    const [, nRaw, rRaw, pRaw, saltBase64, hashBase64] = parts;
-    const n = Number(nRaw);
-    const r = Number(rRaw);
-    const p = Number(pRaw);
-    if (!saltBase64 || !hashBase64 || Number.isNaN(n) || Number.isNaN(r) || Number.isNaN(p)) return false;
-    try {
-      const salt = Buffer.from(saltBase64, "base64");
-      const expected = Buffer.from(hashBase64, "base64");
-      const actual = crypto.scryptSync(password, salt, expected.length, { N: n, r, p });
-      if (actual.length !== expected.length) return false;
-      return crypto.timingSafeEqual(actual, expected);
-    } catch {
-      return false;
-    }
-  }
-  // Backward-compatible verification for legacy SHA-256 hashes.
-  const legacy = crypto.createHash("sha256").update(password, "utf8").digest("hex");
-  return legacy === passwordHash;
-}
+import { hashPassword, verifyPassword } from "./crypto-utils";
 
 /**
  * 注册鉴权路由（登录 + 注册）
@@ -47,7 +11,7 @@ function verifyPassword(password: string, passwordHash: string | null): boolean 
  * 第二个参数 `_db` 保留只是为了兼容 main.ts 的调用签名，不再使用。
  * 等所有模块迁移完成后会从签名中移除。
  */
-export function registerAuthRoutes(app: MinimalHttpApp, _db: DatabaseSync): void {
+export function registerAuthRoutes(app: MinimalHttpApp): void {
   app.post("/auth/login", async (req, res) => {
     const body = (req.body ?? {}) as { account?: string; password?: string; role?: string };
     if (!body.account?.trim()) {

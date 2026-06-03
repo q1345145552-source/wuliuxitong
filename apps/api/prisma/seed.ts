@@ -434,13 +434,13 @@ async function main() {
           id: `seed_price_${cargoType}`,
           companyId: COMPANY_ID,
           cargoType,
-          unitPriceUsd: cargoType === "NORMAL" ? 75 : cargoType === "INSPECTION" ? 95 : 120,
+          unitPriceCny: cargoType === "NORMAL" ? 75 : cargoType === "INSPECTION" ? 95 : 120,
           effectiveFrom: pricingFrom,
         },
       }),
     ),
   );
-  console.log("✔ 计费规则 seed 完成（普货 75 / 商检 95 / 敏感 120 USD/m³）");
+  console.log("✔ 计费规则 seed 完成（普货 75 / 商检 95 / 敏感 120 CNY/m³）");
 
   // ---------------- 客户分级（u_client_001 默认 C 级）----------------
   await prisma.customerCredit.upsert({

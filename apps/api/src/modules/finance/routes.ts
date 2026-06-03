@@ -2,7 +2,7 @@ import { prisma } from "../../db/prisma";
 import type { MinimalHttpApp } from "../../server";
 import { fail, ok, requireRole } from "../core/http-utils";
 
-function decToNum(v: any): number {
+function decToNumber(v: any): number {
   if (v === null || v === undefined) return 0;
   return Number(v.toString());
 }
@@ -31,8 +31,8 @@ export function registerFinanceRoutes(app: MinimalHttpApp): void {
     let monthOrders = 0;
     const rows = orders.map((o) => {
       totalOrders++;
-      const w = decToNum(o.weightKg);
-      const v = decToNum(o.volumeM3);
+      const w = decToNumber(o.weightKg);
+      const v = decToNumber(o.volumeM3);
       totalWeight += w;
       totalVolume += v;
       if (o.createdAt >= monthStart) monthOrders++;

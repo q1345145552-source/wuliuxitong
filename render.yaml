@@ -12,8 +12,6 @@ services:
         value: 22
       - key: AUTH_SECRET
         sync: false
-      - key: SQLITE_PATH
-        value: /tmp/dev.sqlite
       - key: DEEPSEEK_API_KEY
         sync: false
       - key: DEEPSEEK_MODEL

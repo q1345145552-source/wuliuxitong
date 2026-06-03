@@ -1,5 +1,4 @@
 // B-6: 已从 node:sqlite 迁移到 Prisma + PostgreSQL（2026-05-20）
-import type { DatabaseSync } from "node:sqlite";
 import { Prisma } from "@prisma/client";
 import { prisma } from "../../db/prisma";
 import type { MinimalHttpApp } from "../../server";
@@ -118,7 +117,7 @@ async function attachLinkedShipments(
   return result;
 }
 
-export function registerAdminRoutes(app: MinimalHttpApp, _db: DatabaseSync): void {
+export function registerAdminRoutes(app: MinimalHttpApp): void {
   app.get("/admin/dashboard/overview", async (req, res) => {
     const auth = requireRole(req, res, ["admin"]);
     if (!auth) return;
