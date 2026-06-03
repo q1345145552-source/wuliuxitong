@@ -1424,8 +1424,6 @@ export function registerOrderRoutes(app: MinimalHttpApp, _db: DatabaseSync): voi
             contactName: true,
             contactPhone: true,
             addressDetail: true,
-            province: true,
-            city: true,
             isDefault: true,
           },
           orderBy: { isDefault: "desc" },
