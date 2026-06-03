@@ -1423,7 +1423,7 @@ export function registerOrderRoutes(app: MinimalHttpApp, _db: DatabaseSync): voi
             id: true,
             contactName: true,
             contactPhone: true,
-            address: true,
+            addressDetail: true,
             province: true,
             city: true,
             isDefault: true,
