@@ -11,8 +11,8 @@ export interface ShipmentPrintLabelProps {
 }
 
 /**
- * 运单打印标签：唛头 + 运输方式 + 品名 + 箱号 + 单箱数量 + 运单号。
- * 横排布局，按箱数生成多张。
+ * 运单打印标签：唛头 + 运输方式 + 产品列表 + 箱号 + 单箱数量 + 运单号。
+ * 多产品时每行一个产品，标明箱数。
  */
 export function openPrintLabel(props: ShipmentPrintLabelProps) {
   const win = window.open("", "_blank", "width=340,height=520");
@@ -22,13 +22,23 @@ export function openPrintLabel(props: ShipmentPrintLabelProps) {
   const modeText = props.transportMode
     ? (props.transportMode === "sea" ? "海运" : "陆运")
     : "";
+  const hasProducts = (props.products?.length ?? 0) > 0;
 
   let labelsHtml = "";
   for (let i = 1; i <= total; i++) {
+    let productRows = "";
+    if (hasProducts) {
+      productRows = props.products!.map((p) =>
+        `<div class="row"><span>${escapeHtml(p.itemName)} ×${p.packageCount}箱</span></div>`
+      ).join("");
+    } else {
+      productRows = `<div class="row"><span>${escapeHtml(props.itemName ?? "")}</span></div>`;
+    }
+
     labelsHtml += `
 <div class="label">
-  <div class="row"><span>${escapeHtml(props.marks)}</span><span>${escapeHtml(modeText)}</span><span>${escapeHtml(props.itemName ?? "")}</span></div>
-  ${props.products?.length ? `<div class="row"><span>${props.products.map((p) => escapeHtml(p.itemName) + " ×" + p.packageCount + "箱").join(" | ")}</span></div>` : ""}
+  <div class="row"><span>${escapeHtml(props.marks)}</span><span>${escapeHtml(modeText)}</span></div>
+  ${productRows}
   <div class="row"><span>箱号：${i}/${total}</span><span>${props.productQuantity ? `单箱数量：${props.productQuantity}个` : ""}</span></div>
   <div class="row"><span>${escapeHtml(props.trackingNo)}</span></div>
   <div class="footer">湘泰物流</div>
@@ -43,7 +53,6 @@ export function openPrintLabel(props: ShipmentPrintLabelProps) {
   .label:last-child { page-break-after: auto; }
   .row { display: flex; font-size: 14px; font-weight: bold; margin: 3px 0; }
   .row span { flex: 1; text-align: center; word-break: break-all; }
-  .row span:only-child { flex: 1; }
   .footer { font-size: 10px; color: #888; text-align: center; margin-top: 4px; }
   @media print { body { padding: 0; } .label { border: none; } }
 </style></head><body>
@@ -64,11 +73,12 @@ export interface PrealertPrintProps {
   createdAt: string;
   clientId?: string;
   productQuantity?: number;
+  products?: Array<{ itemName: string; packageCount: number }>;
 }
 
 /**
- * 预报单打印标签：唛头 + 运输方式 + 品名 + 箱号 + 单箱数量 + 预报单号。
- * 横排布局，按箱数生成多张。
+ * 预报单打印标签：唛头 + 运输方式 + 产品列表 + 箱号 + 单箱数量 + 预报单号。
+ * 多产品时每行一个产品，标明箱数。
  */
 export function openPrintPrealert(props: PrealertPrintProps) {
   const win = window.open("", "_blank", "width=340,height=520");
@@ -76,12 +86,23 @@ export function openPrintPrealert(props: PrealertPrintProps) {
 
   const total = Number(props.packageCount) || 1;
   const modeText = props.transportMode === "sea" ? "海运" : "陆运";
+  const hasProducts = (props.products?.length ?? 0) > 0;
 
   let labelsHtml = "";
   for (let i = 1; i <= total; i++) {
+    let productRows = "";
+    if (hasProducts) {
+      productRows = props.products!.map((p) =>
+        `<div class="row"><span>${escapeHtml(p.itemName)} ×${p.packageCount}箱</span></div>`
+      ).join("");
+    } else {
+      productRows = `<div class="row"><span>${escapeHtml(props.itemName)}</span></div>`;
+    }
+
     labelsHtml += `
 <div class="label">
-  <div class="row"><span>${escapeHtml(props.clientId ?? "")}</span><span>${escapeHtml(modeText)}</span><span>${escapeHtml(props.itemName)}</span></div>
+  <div class="row"><span>${escapeHtml(props.clientId ?? "")}</span><span>${escapeHtml(modeText)}</span></div>
+  ${productRows}
   <div class="row"><span>箱号：${i}/${total}</span><span>${props.productQuantity ? `单箱数量：${props.productQuantity}个` : ""}</span></div>
   <div class="row"><span>${escapeHtml(props.prealertNo)}</span></div>
   <div class="footer">湘泰物流预报单</div>
@@ -96,7 +117,6 @@ export function openPrintPrealert(props: PrealertPrintProps) {
   .label:last-child { page-break-after: auto; }
   .row { display: flex; font-size: 14px; font-weight: bold; margin: 3px 0; }
   .row span { flex: 1; text-align: center; word-break: break-all; }
-  .row span:only-child { flex: 1; }
   .footer { font-size: 10px; color: #888; text-align: center; margin-top: 4px; }
   @media print { body { padding: 0; } .label { border: none; } }
 </style></head><body>

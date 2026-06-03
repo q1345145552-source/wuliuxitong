@@ -106,6 +106,7 @@ function PrealertPrintButton({ item }: { item: OrderItem }) {
         createdAt: item.createdAt,
         clientId: item.clientId,
         productQuantity: item.productQuantity,
+        products: item.products?.map(p => ({ itemName: p.itemName, packageCount: p.packageCount })),
       });
     }} style={{ border: "1px solid #8b5cf6", borderRadius: 4, padding: "4px 10px", fontSize: 12, background: "#fff", color: "#8b5cf6", cursor: "pointer", marginLeft: 6 }}>打印预报单</button>
   );
