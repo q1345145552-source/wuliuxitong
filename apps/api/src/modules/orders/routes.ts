@@ -7,6 +7,26 @@ import type { MinimalHttpApp } from "../../server";
 import { fail, ok, parseJsonArray, requireRole } from "../core/http-utils";
 import { loadProductImagesForOrders, MAX_ORDER_PRODUCT_IMAGES } from "./product-images";
 
+/** 批量加载订单的产品行 */
+async function loadOrderProducts(companyId: string, orderIds: string[]): Promise<Map<string, any[]>> {
+  if (orderIds.length === 0) return new Map();
+  const rows = await prisma.orderProduct.findMany({
+    where: { companyId, orderId: { in: [...new Set(orderIds)] } },
+    orderBy: { sortOrder: "asc" },
+  });
+  const map = new Map<string, any[]>();
+  for (const r of rows) {
+    const list = map.get(r.orderId) ?? [];
+    list.push({
+      id: r.id, itemName: r.itemName, packageCount: r.packageCount,
+      lengthCm: r.lengthCm, widthCm: r.widthCm, heightCm: r.heightCm,
+      productQuantity: r.productQuantity,
+    });
+    map.set(r.orderId, list);
+  }
+  return map;
+}
+
 const COMPLETED = new Set(["delivered", "returned", "cancelled"]);
 
 /** Prisma 的 Decimal | null 转 number | null（用于返回前端）。 */
@@ -107,9 +127,42 @@ export function registerOrderRoutes(app: MinimalHttpApp, _db: DatabaseSync): voi
       receiverPhoneTh?: string;
       receiverAddressTh?: string;
       trackingNo?: string;
+      products?: Array<{
+        itemName: string;
+        packageCount: number;
+        lengthCm?: number;
+        widthCm?: number;
+        heightCm?: number;
+        productQuantity?: number;
+      }>;
     };
 
-    if (!body.warehouseId?.trim() || !body.itemName || !body.transportMode) {
+    if (!body.warehouseId?.trim() || (!body.itemName && !body.products?.length) || !body.transportMode) {
+      fail(res, 400, "BAD_REQUEST", "missing required prealert fields");
+      return;
+    }
+
+    // Compute products totals
+    const products = body.products?.length
+      ? body.products.map((p, i) => ({
+          itemName: p.itemName.trim(),
+          packageCount: p.packageCount || 1,
+          lengthCm: p.lengthCm ?? null,
+          widthCm: p.widthCm ?? null,
+          heightCm: p.heightCm ?? null,
+          productQuantity: p.productQuantity ?? null,
+          sortOrder: i,
+        }))
+      : [{ itemName: body.itemName!.trim(), packageCount: Number(body.packageCount ?? 0), lengthCm: null, widthCm: null, heightCm: null, productQuantity: null, sortOrder: 0 }];
+
+    const totalPkg = products.reduce((s, p) => s + p.packageCount, 0);
+    const totalVol = products.reduce((s, p) => {
+      if (p.lengthCm && p.widthCm && p.heightCm) return s + (p.lengthCm * p.widthCm * p.heightCm * p.packageCount) / 1_000_000;
+      return s;
+    }, body.volumeM3 ?? 0);
+    const primaryName = products[0].itemName;
+
+    if (!body.warehouseId?.trim() || !primaryName || !body.transportMode) {
       fail(res, 400, "BAD_REQUEST", "missing required prealert fields");
       return;
     }
@@ -121,8 +174,8 @@ export function registerOrderRoutes(app: MinimalHttpApp, _db: DatabaseSync): voi
       fail(res, 400, "BAD_REQUEST", "invalid shipDate");
       return;
     }
-    const weightKg = body.weightKg === undefined || body.weightKg === null ? null : Number(body.weightKg);
-    const volumeM3 = body.volumeM3 === undefined || body.volumeM3 === null ? null : Number(body.volumeM3);
+    const manualWeightKg = body.weightKg === undefined || body.weightKg === null ? null : Number(body.weightKg);
+    const manualVolumeM3 = body.volumeM3 === undefined || body.volumeM3 === null ? null : Number(body.volumeM3);
     const orderId = `o_${Date.now()}`;
 
     await prisma.order.create({
@@ -134,12 +187,12 @@ export function registerOrderRoutes(app: MinimalHttpApp, _db: DatabaseSync): voi
         batchNo: null,
         orderNo: body.trackingNo?.trim() || (await generatePrealertNo()),
         approvalStatus: "pending",
-        itemName: body.itemName,
+        itemName: primaryName,
         productQuantity: 0,
-        packageCount: Number(body.packageCount ?? 0),
+        packageCount: totalPkg,
         packageUnit: body.packageUnit ?? "box",
-        weightKg: weightKg as unknown as Prisma.Decimal | null,
-        volumeM3: volumeM3 as unknown as Prisma.Decimal | null,
+        weightKg: manualWeightKg as unknown as Prisma.Decimal | null,
+        volumeM3: totalVol > 0 ? totalVol : (manualVolumeM3 as unknown as Prisma.Decimal | null),
         receivableAmountCny: null,
         receivableCurrency: "CNY",
         shipDate: shipDateText,
@@ -151,6 +204,23 @@ export function registerOrderRoutes(app: MinimalHttpApp, _db: DatabaseSync): voi
         statusGroup: "unfinished",
       },
     });
+
+    // Create product records
+    for (const p of products) {
+      await prisma.orderProduct.create({
+        data: {
+          companyId: auth.companyId,
+          orderId,
+          itemName: p.itemName,
+          packageCount: p.packageCount,
+          lengthCm: p.lengthCm,
+          widthCm: p.widthCm,
+          heightCm: p.heightCm,
+          productQuantity: p.productQuantity,
+          sortOrder: p.sortOrder,
+        },
+      });
+    }
 
     ok(res, { prealertId: orderId, createdAt: now });
   });
@@ -679,9 +749,11 @@ export function registerOrderRoutes(app: MinimalHttpApp, _db: DatabaseSync): voi
 
     const orderIds = items.map((item) => item.id);
     const imageMap = await loadProductImagesForOrders(auth.companyId, orderIds);
+    const productsMap = await loadOrderProducts(auth.companyId, orderIds);
     const itemsWithImages = items.map((item) => ({
       ...item,
       productImages: imageMap.get(item.id) ?? [],
+      products: productsMap.get(item.id) ?? [],
     }));
 
     ok(res, {
@@ -734,9 +806,11 @@ export function registerOrderRoutes(app: MinimalHttpApp, _db: DatabaseSync): voi
     }));
     const prealertIds = items.map((item) => item.id);
     const prealertImageMap = await loadProductImagesForOrders(auth.companyId, prealertIds);
+    const prealertProductsMap = await loadOrderProducts(auth.companyId, prealertIds);
     const prealertItemsWithImages = items.map((item) => ({
       ...item,
       productImages: prealertImageMap.get(item.id) ?? [],
+        products: prealertProductsMap.get(item.id) ?? [],
     }));
     ok(res, {
       items: prealertItemsWithImages,
@@ -796,9 +870,11 @@ export function registerOrderRoutes(app: MinimalHttpApp, _db: DatabaseSync): voi
       }));
     const staffPrealertIds = items.map((item) => item.id);
     const staffPrealertImageMap = await loadProductImagesForOrders(auth.companyId, staffPrealertIds);
+    const staffPrealertProductsMap = await loadOrderProducts(auth.companyId, staffPrealertIds);
     const staffPrealertItemsWithImages = items.map((item) => ({
       ...item,
       productImages: staffPrealertImageMap.get(item.id) ?? [],
+        products: staffPrealertProductsMap.get(item.id) ?? [],
     }));
     ok(res, {
       items: staffPrealertItemsWithImages,

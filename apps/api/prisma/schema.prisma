@@ -330,6 +330,25 @@ model OrderProductImage {
   @@map("order_product_images")
 }
 
+model OrderProduct {
+  id              String  @id @default(cuid())
+  companyId       String  @map("company_id")
+  orderId         String  @map("order_id")
+  itemName        String  @map("item_name")
+  packageCount    Int     @map("package_count") @default(1)
+  lengthCm        Float?  @map("length_cm")
+  widthCm         Float?  @map("width_cm")
+  heightCm        Float?  @map("height_cm")
+  productQuantity Int?    @map("product_quantity")
+  sortOrder       Int     @map("sort_order") @default(0)
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([companyId, orderId, sortOrder])
+  @@map("order_products")
+}
+
 // ============================================================================
 // 管理员运营模块
 // ============================================================================
