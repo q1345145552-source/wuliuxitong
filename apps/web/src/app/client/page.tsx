@@ -1011,7 +1011,7 @@ export default function ClientHomePage() {
                 placeholder="订单号"
                 style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 10px" }}
               />
-              <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+              <div style={{ display: "flex", gap: 4, alignItems: "center", gridColumn: "span 2" }}>
                 <input
                   type="date"
                   value={search.arrivedDateFrom}
@@ -1123,6 +1123,16 @@ export default function ClientHomePage() {
                   · {item.id}
                 </span>
               </div>
+              {(item.products?.length ?? 0) > 1 && (
+                <div style={{ fontSize: 12, color: "#000000", marginTop: 4, background: "#f8fafc", borderRadius: 6, padding: "4px 8px" }}>
+                  {item.products!.map((p, i) => (
+                    <div key={p.id || i}>
+                      · {p.itemName} ×{p.packageCount}箱
+                      {p.lengthCm ? ` (${p.lengthCm}×${p.widthCm}×${p.heightCm}cm, 每箱${p.productQuantity ?? "—"}个)` : ""}
+                    </div>
+                  ))}
+                </div>
+              )}
               <div className="order-badges">
                 <span className="order-badge order-badge-amount">金额：{formatCny(item.receivableAmountCny ?? null)}</span>
                 <span

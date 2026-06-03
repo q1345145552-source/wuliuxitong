@@ -2785,7 +2785,20 @@ export default function StaffHomePage() {
                                         }}
                                       >
                                         <div style={{ flex: "1 1 300px", display: "flex", flexDirection: "column", gap: 12 }}>
-                                          <ShipmentEditFormField label="运单号" required>
+                                          {(item.products?.length ?? 0) > 1 && (
+                                        <div style={{ marginBottom: 12, background: "#fefce8", borderRadius: 6, padding: "8px 10px", fontSize: 12 }}>
+                                          <span style={{ fontWeight: 600, color: "#000000" }}>产品列表：</span>
+                                          {item.products!.map((p) => (
+                                            <span key={p.id} style={{ marginLeft: 8, color: "#000000" }}>
+                                              {p.itemName} ×{p.packageCount}箱
+                                              {p.lengthCm ? ` (${p.lengthCm}×${p.widthCm}×${p.heightCm}cm)` : ""}
+                                              {p.productQuantity ? `，${p.productQuantity}个/箱` : ""}
+                                              {" | "}
+                                            </span>
+                                          ))}
+                                        </div>
+                                      )}
+                                      <ShipmentEditFormField label="运单号" required>
                                             <input
                                               value={draft.trackingNo}
                                               onChange={(e) => mergeShipmentOrderDraft(item.id, item, { trackingNo: e.target.value })}
