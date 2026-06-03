@@ -166,6 +166,8 @@ export default function ClientHomePage() {
   const [formProducts, setFormProducts] = useState<Array<{
     itemName: string; packageCount: string; lengthCm: string; widthCm: string; heightCm: string; productQuantity: string; weightKg: string;
   }>>([]);
+  const [prealertImageFiles, setPrealertImageFiles] = useState<File[]>([]);
+  const [prealertImagePreviews, setPrealertImagePreviews] = useState<string[]>([]);
   const [addressBook, setAddressBook] = useState<ClientAddressItem[]>([]);
   const [selectedAddressId, setSelectedAddressId] = useState("");
   const [activeSection, setActiveSection] = useState<(typeof CLIENT_SECTION_IDS)[number]>("client-main");
@@ -1489,8 +1491,30 @@ export default function ClientHomePage() {
               <input value={form.receiverPhoneTh} onChange={(e) => setForm((v) => ({ ...v, receiverPhoneTh: e.target.value }))} placeholder="收件电话（泰国）" style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "8px 10px", fontSize: 13 }} />
               <textarea value={form.receiverAddressTh} onChange={(e) => setForm((v) => ({ ...v, receiverAddressTh: e.target.value }))} placeholder="收件地址（泰国）" rows={2} style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "8px 10px", fontSize: 13, resize: "vertical" }} />
             </div>
+            {/* 产品图片上传 */}
+            <div style={{ marginTop: 10, border: "1px dashed #d1d5db", borderRadius: 8, padding: 10 }}>
+              <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 6, color: "#000000" }}>产品图片（可选，可多选）</div>
+              <input type="file" multiple accept="image/*" onChange={(e) => {
+                const files = Array.from(e.target.files || []);
+                setPrealertImageFiles(files);
+                setPrealertImagePreviews(files.map(f => URL.createObjectURL(f)));
+              }} style={{ fontSize: 12 }} />
+              {prealertImagePreviews.length > 0 && (
+                <div style={{ display: "flex", gap: 6, marginTop: 8, flexWrap: "wrap" }}>
+                  {prealertImagePreviews.map((url, i) => (
+                    <div key={i} style={{ position: "relative" }}>
+                      <img src={url} style={{ width: 60, height: 60, objectFit: "cover", borderRadius: 4, border: "1px solid #e5e7eb" }} />
+                      <button type="button" onClick={() => {
+                        setPrealertImageFiles(f => f.filter((_, j) => j !== i));
+                        setPrealertImagePreviews(p => p.filter((_, j) => j !== i));
+                      }} style={{ position: "absolute", top: -6, right: -6, border: "1px solid #fca5a5", borderRadius: 10, width: 18, height: 18, fontSize: 10, background: "#fff", color: "#dc2626", cursor: "pointer", padding: 0, lineHeight: 1 }}>✕</button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 16 }}>
-              <button type="button" onClick={() => setShowCreateModal(false)} style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "8px 16px", fontSize: 13, background: "#fff", cursor: "pointer", color: "#000000" }}>取消</button>
+              <button type="button" onClick={() => { setShowCreateModal(false); setPrealertImageFiles([]); setPrealertImagePreviews([]); }} style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "8px 16px", fontSize: 13, background: "#fff", cursor: "pointer", color: "#000000" }}>取消</button>
               <button type="button" onClick={async () => {
                 const hasProducts = formProducts.length > 0 && formProducts.some((p) => p.itemName.trim());
                 if (!hasProducts && !form.itemName) { setToast("请填写品名"); return; }
@@ -1501,11 +1525,26 @@ export default function ClientHomePage() {
                     payload.products = formProducts.filter((p) => p.itemName.trim()).map((p) => ({ itemName: p.itemName.trim(), packageCount: Number(p.packageCount) || 1, lengthCm: p.lengthCm ? Number(p.lengthCm) : undefined, widthCm: p.widthCm ? Number(p.widthCm) : undefined, heightCm: p.heightCm ? Number(p.heightCm) : undefined, productQuantity: p.productQuantity ? Number(p.productQuantity) : undefined, weightKg: p.weightKg ? Number(p.weightKg) : undefined }));
                     payload.itemName = payload.products[0].itemName;
                   }
-                  await createClientPrealert(payload);
+                  const result = await createClientPrealert(payload);
+                  // Upload images
+                  if (prealertImageFiles.length > 0) {
+                    for (const file of prealertImageFiles) {
+                      try {
+                        const base64 = await new Promise<string>((resolve) => {
+                          const reader = new FileReader();
+                          reader.onload = () => resolve((reader.result as string).split(",")[1]);
+                          reader.readAsDataURL(file);
+                        });
+                        await uploadStaffOrderProductImage({ orderId: result.prealertId, fileName: file.name, mime: file.type || "image/jpeg", contentBase64: base64 });
+                      } catch { /* skip */ }
+                    }
+                  }
                   setToast("预报单创建成功");
                   setShowCreateModal(false);
                   setForm({ warehouseId: "", itemName: "", packageCount: "", packageUnit: "box" as "bag" | "box", lengthCm: "", widthCm: "", heightCm: "", weightKg: "", volumeM3: "", trackingNo: "", domesticTrackingNo: "", transportMode: "" as "" | "sea" | "land", receiverNameTh: "", receiverPhoneTh: "", receiverAddressTh: "" });
                   setFormProducts([]);
+                  setPrealertImageFiles([]);
+                  setPrealertImagePreviews([]);
                   await refreshMainData();
                 } catch { setToast("创建失败"); }
               }} style={{ border: "none", borderRadius: 6, padding: "8px 16px", fontSize: 13, background: "#2563eb", color: "#fff", fontWeight: 500, cursor: "pointer" }}>

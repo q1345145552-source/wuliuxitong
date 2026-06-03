@@ -600,6 +600,8 @@ export default function StaffHomePage() {
   const [staffFormProducts, setStaffFormProducts] = useState<Array<{
     itemName: string; packageCount: string; lengthCm: string; widthCm: string; heightCm: string; productQuantity: string; weightKg: string;
   }>>([]);
+  const [orderImageFiles, setOrderImageFiles] = useState<File[]>([]);
+  const [orderImagePreviews, setOrderImagePreviews] = useState<string[]>([]);
   const [approvingPrealert, setApprovingPrealert] = useState<OrderItem | null>(null);
   const [splittingShipment, setSplittingShipment] = useState<ShipmentItem | null>(null);
   const [splitRows, setSplitRows] = useState<Array<{ batchNo: string; itemName: string; packageCount: string }>>([]);
@@ -1132,6 +1134,21 @@ export default function StaffHomePage() {
         receiverAddressTh: form.receiverAddressTh,
         products: hasProducts ? staffFormProducts.filter(p => p.itemName.trim()).map(p => ({ itemName: p.itemName.trim(), packageCount: Number(p.packageCount) || 1, lengthCm: p.lengthCm ? Number(p.lengthCm) : undefined, widthCm: p.widthCm ? Number(p.widthCm) : undefined, heightCm: p.heightCm ? Number(p.heightCm) : undefined, productQuantity: p.productQuantity ? Number(p.productQuantity) : undefined, weightKg: p.weightKg ? Number(p.weightKg) : undefined })) : undefined,
       });
+      // Upload product images
+      if (orderImageFiles.length > 0) {
+        for (const file of orderImageFiles) {
+          try {
+            const reader = new FileReader();
+            const base64 = await new Promise<string>((resolve) => {
+              reader.onload = () => resolve((reader.result as string).split(",")[1]);
+              reader.readAsDataURL(file);
+            });
+            await uploadStaffOrderProductImage({ orderId: result.orderId, fileName: file.name, mime: file.type || "image/jpeg", contentBase64: base64 });
+          } catch { /* skip failed upload */ }
+        }
+        setOrderImageFiles([]);
+        setOrderImagePreviews([]);
+      }
       setCreateStepDone(true);
       setToast("订单创建成功");
       setMessage(`订单创建成功：${result.orderId}`);
@@ -3488,13 +3505,35 @@ export default function StaffHomePage() {
               <input value={form.receiverPhoneTh} onChange={(e) => setForm((v) => ({ ...v, receiverPhoneTh: e.target.value }))} placeholder="收件人电话 *" style={orderCreateInputStyle} />
               <textarea value={form.receiverAddressTh} onChange={(e) => setForm((v) => ({ ...v, receiverAddressTh: e.target.value }))} placeholder="收件人地址（泰国）*" rows={2} style={{ ...orderCreateInputStyle, resize: "vertical", minHeight: 48 }} />
             </div>
+            {/* 产品图片上传 */}
+            <div style={{ marginTop: 10, border: "1px dashed #d1d5db", borderRadius: 8, padding: 10 }}>
+              <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 6, color: "#000000" }}>产品图片（可选，可多选）</div>
+              <input type="file" multiple accept="image/*" onChange={(e) => {
+                const files = Array.from(e.target.files || []);
+                setOrderImageFiles(files);
+                setOrderImagePreviews(files.map(f => URL.createObjectURL(f)));
+              }} style={{ fontSize: 12 }} />
+              {orderImagePreviews.length > 0 && (
+                <div style={{ display: "flex", gap: 6, marginTop: 8, flexWrap: "wrap" }}>
+                  {orderImagePreviews.map((url, i) => (
+                    <div key={i} style={{ position: "relative" }}>
+                      <img src={url} style={{ width: 60, height: 60, objectFit: "cover", borderRadius: 4, border: "1px solid #e5e7eb" }} />
+                      <button type="button" onClick={() => {
+                        setOrderImageFiles(f => f.filter((_, j) => j !== i));
+                        setOrderImagePreviews(p => p.filter((_, j) => j !== i));
+                      }} style={{ position: "absolute", top: -6, right: -6, border: "1px solid #fca5a5", borderRadius: 10, width: 18, height: 18, fontSize: 10, background: "#fff", color: "#dc2626", cursor: "pointer", padding: 0, lineHeight: 1 }}>✕</button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
             {message && message.includes("失败") ? (
               <p style={{ marginTop: 8, color: "#b91c1c", fontSize: 13 }}>{message}</p>
             ) : message && !message.includes("失败") && showCreateModal ? (
               <p style={{ marginTop: 8, color: "#065f46", fontSize: 13 }}>{message}</p>
             ) : null}
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 16 }}>
-              <button type="button" onClick={() => { setShowCreateModal(false); setMessage(""); }} style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "8px 16px", fontSize: 13, background: "#fff", cursor: "pointer", color: "#000000" }}>取消</button>
+              <button type="button" onClick={() => { setShowCreateModal(false); setMessage(""); setOrderImageFiles([]); setOrderImagePreviews([]); }} style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "8px 16px", fontSize: 13, background: "#fff", cursor: "pointer", color: "#000000" }}>取消</button>
               <button type="button" disabled={loading} onClick={() => void submitOrder()} style={{ border: "none", borderRadius: 6, padding: "8px 16px", fontSize: 13, background: loading ? "#000000" : "#2563eb", color: "#fff", fontWeight: 500, cursor: loading ? "not-allowed" : "pointer" }}>{loading ? "提交中…" : "创建订单"}</button>
             </div>
           </div>
