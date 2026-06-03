@@ -164,7 +164,7 @@ export default function ClientHomePage() {
     receiverAddressTh: "",
   });
   const [formProducts, setFormProducts] = useState<Array<{
-    itemName: string; packageCount: string; lengthCm: string; widthCm: string; heightCm: string; productQuantity: string;
+    itemName: string; packageCount: string; lengthCm: string; widthCm: string; heightCm: string; productQuantity: string; weightKg: string;
   }>>([]);
   const [addressBook, setAddressBook] = useState<ClientAddressItem[]>([]);
   const [selectedAddressId, setSelectedAddressId] = useState("");
@@ -1441,7 +1441,7 @@ export default function ClientHomePage() {
       {/* 创建预报单弹窗 */}
       {showCreateModal && (
         <div style={{ position: "fixed", inset: 0, zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(0,0,0,0.4)", padding: 16 }}>
-          <div style={{ width: "100%", maxWidth: 520, maxHeight: "90vh", overflow: "auto", background: "#fff", borderRadius: 12, padding: 24, boxShadow: "0 20px 60px rgba(0,0,0,0.3)" }}>
+          <div style={{ width: "100%", maxWidth: 680, maxHeight: "90vh", overflow: "auto", background: "#fff", borderRadius: 12, padding: 24, boxShadow: "0 20px 60px rgba(0,0,0,0.3)" }}>
             <h3 style={{ margin: "0 0 16px", fontSize: 18, fontWeight: 600 }}>创建预报单</h3>
             <div style={{ display: "grid", gap: 10 }}>
               <select value={form.warehouseId} onChange={(e) => setForm((v) => ({ ...v, warehouseId: e.target.value }))} style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "8px 10px", fontSize: 13 }}>
@@ -1464,7 +1464,7 @@ export default function ClientHomePage() {
                     <button type="button" onClick={() => setFormProducts((v) => v.filter((_, j) => j !== i))} style={{ border: "1px solid #fca5a5", borderRadius: 4, padding: "4px 6px", fontSize: 11, background: "#fff", color: "#dc2626", cursor: "pointer" }}>✕</button>
                   </div>
                 ))}
-                <button type="button" onClick={() => setFormProducts((v) => [...v, { itemName: "", packageCount: "", lengthCm: "", widthCm: "", heightCm: "", productQuantity: "" }])} style={{ border: "1px dashed #2563eb", borderRadius: 4, padding: "4px 10px", fontSize: 12, background: "#fff", color: "#2563eb", cursor: "pointer", marginTop: 4 }}>+ 添加产品</button>
+                <button type="button" onClick={() => setFormProducts((v) => [...v, { itemName: "", packageCount: "", lengthCm: "", widthCm: "", heightCm: "", productQuantity: "", weightKg: "" }])} style={{ border: "1px dashed #2563eb", borderRadius: 4, padding: "4px 10px", fontSize: 12, background: "#fff", color: "#2563eb", cursor: "pointer", marginTop: 4 }}>+ 添加产品</button>
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
                 <select value={form.packageUnit} onChange={(e) => setForm((v) => ({ ...v, packageUnit: e.target.value as "bag" | "box" }))} style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "8px 10px", fontSize: 13 }}>

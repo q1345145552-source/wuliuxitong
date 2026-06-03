@@ -598,7 +598,7 @@ export default function StaffHomePage() {
   const [selectedForExport, setSelectedForExport] = useState<Set<string>>(new Set());
   const [pageSize, setPageSize] = useState(100);
   const [staffFormProducts, setStaffFormProducts] = useState<Array<{
-    itemName: string; packageCount: string; lengthCm: string; widthCm: string; heightCm: string; productQuantity: string;
+    itemName: string; packageCount: string; lengthCm: string; widthCm: string; heightCm: string; productQuantity: string; weightKg: string;
   }>>([]);
   const [approvingPrealert, setApprovingPrealert] = useState<OrderItem | null>(null);
   const [splittingShipment, setSplittingShipment] = useState<ShipmentItem | null>(null);
@@ -2052,7 +2052,7 @@ export default function StaffHomePage() {
                 <button type="button" onClick={() => setStaffFormProducts((v) => v.filter((_, j) => j !== i))} style={{ border: "1px solid #fca5a5", borderRadius: 4, padding: "4px 6px", fontSize: 11, background: "#fff", color: "#dc2626", cursor: "pointer" }}>X</button>
               </div>
             ))}
-            <button type="button" onClick={() => setStaffFormProducts((v) => [...v, { itemName: "", packageCount: "", lengthCm: "", widthCm: "", heightCm: "", productQuantity: "" }])} style={{ border: "1px dashed #2563eb", borderRadius: 4, padding: "4px 10px", fontSize: 12, background: "#fff", color: "#2563eb", cursor: "pointer", marginTop: 4 }}>+ 添加产品</button>
+            <button type="button" onClick={() => setStaffFormProducts((v) => [...v, { itemName: "", packageCount: "", lengthCm: "", widthCm: "", heightCm: "", productQuantity: "", weightKg: "" }])} style={{ border: "1px dashed #2563eb", borderRadius: 4, padding: "4px 10px", fontSize: 12, background: "#fff", color: "#2563eb", cursor: "pointer", marginTop: 4 }}>+ 添加产品</button>
           </div>
           <input value={form.domesticOrderNo} onChange={(e) => setForm((v) => ({ ...v, domesticOrderNo: e.target.value }))} placeholder="国内单号" style={orderCreateInputStyle} />
           <input type="number" value={form.packageCount} onChange={(e) => setForm((v) => ({ ...v, packageCount: e.target.value }))} placeholder="包裹数量" style={orderCreateInputStyle} />
@@ -3421,7 +3421,7 @@ export default function StaffHomePage() {
       {/* 创建订单弹窗 */}
       {showCreateModal ? (
         <div style={{ position: "fixed", inset: 0, zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(0,0,0,0.4)", padding: 16 }}>
-          <div style={{ width: "100%", maxWidth: 600, maxHeight: "90vh", overflow: "auto", background: "#fff", borderRadius: 12, padding: 24, boxShadow: "0 20px 60px rgba(0,0,0,0.3)" }}>
+          <div style={{ width: "100%", maxWidth: 720, maxHeight: "90vh", overflow: "auto", background: "#fff", borderRadius: 12, padding: 24, boxShadow: "0 20px 60px rgba(0,0,0,0.3)" }}>
             <h3 style={{ margin: "0 0 16px", fontSize: 18, fontWeight: 600 }}>创建订单</h3>
             <div style={{ display: "grid", gap: 8 }}>
               <input value={clientSearchKeyword} onChange={(e) => setClientSearchKeyword(e.target.value)} placeholder="搜索客户名字或ID" style={orderCreateInputStyle} />
@@ -3456,7 +3456,7 @@ export default function StaffHomePage() {
                     <button type="button" onClick={() => setStaffFormProducts((v) => v.filter((_, j) => j !== i))} style={{ border: "1px solid #fca5a5", borderRadius: 4, padding: "4px 6px", fontSize: 11, background: "#fff", color: "#dc2626", cursor: "pointer" }}>✕</button>
                   </div>
                 ))}
-                <button type="button" onClick={() => setStaffFormProducts((v) => [...v, { itemName: "", packageCount: "", lengthCm: "", widthCm: "", heightCm: "", productQuantity: "" }])} style={{ border: "1px dashed #2563eb", borderRadius: 4, padding: "4px 10px", fontSize: 12, background: "#fff", color: "#2563eb", cursor: "pointer", marginTop: 4 }}>+ 添加产品</button>
+                <button type="button" onClick={() => setStaffFormProducts((v) => [...v, { itemName: "", packageCount: "", lengthCm: "", widthCm: "", heightCm: "", productQuantity: "", weightKg: "" }])} style={{ border: "1px dashed #2563eb", borderRadius: 4, padding: "4px 10px", fontSize: 12, background: "#fff", color: "#2563eb", cursor: "pointer", marginTop: 4 }}>+ 添加产品</button>
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
                 <select value={form.packageUnit} onChange={(e) => setForm((v) => ({ ...v, packageUnit: e.target.value as "bag" | "box" }))} style={orderCreateInputStyle}>
