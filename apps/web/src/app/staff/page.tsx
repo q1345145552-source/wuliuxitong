@@ -613,8 +613,8 @@ export default function StaffHomePage() {
     phone: string;
     addresses: Array<{
       id: string;
-      receiverName: string;
-      receiverPhone: string;
+      contactName: string;
+      contactPhone: string;
       address: string;
       province: string;
       city: string;
@@ -3390,7 +3390,7 @@ export default function StaffHomePage() {
                     <div key={addr.id} style={{ padding: "6px 8px", background: "#f8fafc", borderRadius: 6, marginBottom: 4, border: addr.isDefault ? "1px solid #bbf7d0" : "1px solid #f1f5f9" }}>
                       <div style={{ fontSize: 12, color: "#000000" }}>
                         {addr.isDefault ? <span style={{ color: "#16a34a", fontWeight: 600 }}>［默认］</span> : null}
-                        {addr.receiverName} ｜ {addr.receiverPhone}
+                        {addr.contactName} ｜ {addr.contactPhone}
                       </div>
                       <div style={{ fontSize: 11, color: "#000000", marginTop: 2 }}>{[addr.province, addr.city, addr.address].filter(Boolean).join(" ")}</div>
                     </div>
