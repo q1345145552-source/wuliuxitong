@@ -57,7 +57,7 @@ export default function LoginPage() {
         backgroundRepeat: "no-repeat",
       }}>
       {/* 半透明遮罩 */}
-      <div style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.35)", zIndex: 0 }} />
+      <div style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.15)", zIndex: 0 }} />
       <section style={{
           position: "relative",
           zIndex: 1,

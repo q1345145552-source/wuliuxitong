@@ -1171,7 +1171,7 @@ export default function StaffHomePage() {
         packageUnit: form.packageUnit,
         weightKg,
         volumeM3,
-        domesticTrackingNo: form.domesticOrderNo.trim(),
+        domesticTrackingNo: form.domesticOrderNo.trim() || undefined,
         transportMode: form.transportMode,
         receiverNameTh: form.receiverNameTh,
         receiverPhoneTh: form.receiverPhoneTh,
@@ -2156,7 +2156,7 @@ export default function StaffHomePage() {
           <div style={{ fontSize: 12, color: "#000000", marginTop: 4 }}>
             💡 输入长宽高和单箱重量后，体积和总重量在前端实时自动计算
           </div>
-          <input value={form.domesticOrderNo} onChange={(e) => setForm((v) => ({ ...v, domesticOrderNo: e.target.value }))} placeholder="国内单号" style={orderCreateInputStyle} />
+          <input value={form.domesticOrderNo} onChange={(e) => setForm((v) => ({ ...v, domesticOrderNo: e.target.value }))} placeholder="国内单号（选填）" style={orderCreateInputStyle} />
           <input type="number" value={form.packageCount} onChange={(e) => updateOrderDimensions({ packageCount: e.target.value })} placeholder="包裹数量" style={orderCreateInputStyle} />
           <input type="number" value={form.productQuantity} onChange={(e) => setForm((v) => ({ ...v, productQuantity: e.target.value }))} placeholder="产品数量 *" style={orderCreateInputStyle} />
           <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 8 }}>
@@ -3637,7 +3637,7 @@ export default function StaffHomePage() {
               </select>
               <input type="date" value={form.arrivedAt} onChange={(e) => setForm((v) => ({ ...v, arrivedAt: e.target.value }))} style={orderCreateInputStyle} />
               <div style={{ fontSize: 11, color: "#000000", marginTop: -4 }}>到仓日期 *</div>
-              <input value={form.domesticOrderNo} onChange={(e) => setForm((v) => ({ ...v, domesticOrderNo: e.target.value }))} placeholder="国内单号" style={orderCreateInputStyle} />
+              <input value={form.domesticOrderNo} onChange={(e) => setForm((v) => ({ ...v, domesticOrderNo: e.target.value }))} placeholder="国内单号（选填）" style={orderCreateInputStyle} />
               <hr style={{ border: "none", borderTop: "1px solid #e5e7eb", margin: "8px 0" }} />
             </div>
             {/* 产品图片上传 */}
