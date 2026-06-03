@@ -90,7 +90,7 @@ const VALID_PACKAGE_UNITS = ["bag", "box"] as const;
 const VALID_TRANSPORT_MODES = ["sea", "land"] as const;
 
 function PrealertPrintButton({ item }: { item: OrderItem }) {
-  const wl = warehouseOptions.find(w => w.id === item.warehouseId)?.label  |  |  item.warehouseId  |  |  "—";
+  const wl = warehouseOptions.find(w => w.id === item.warehouseId)?.label ||  item.warehouseId  |  |  "—";
   const safePkgUnit = VALID_PACKAGE_UNITS.includes(item.packageUnit as any) ? (item.packageUnit as "bag"  |  "box") : "box";
   const safeTransport = VALID_TRANSPORT_MODES.includes(item.transportMode as any) ? (item.transportMode as "sea"  |  "land") : "sea";
 
