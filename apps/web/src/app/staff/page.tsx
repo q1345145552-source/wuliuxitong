@@ -1063,6 +1063,23 @@ export default function StaffHomePage() {
     const timer = window.setTimeout(() => setToast(""), 2200);
     return () => window.clearTimeout(timer);
   }, [toast]);
+  // Auto-fill volume and weight from multi-product form
+  useEffect(() => {
+    if (staffFormProducts.length === 0) return;
+    const totalVol = staffFormProducts.reduce((s, p) => {
+      const pkg = Number(p.packageCount) || 0;
+      const l = Number(p.lengthCm) || 0;
+      const w = Number(p.widthCm) || 0;
+      const h = Number(p.heightCm) || 0;
+      return s + ((l > 0 && w > 0 && h > 0) ? (l * w * h * pkg) / 1_000_000 : 0);
+    }, 0);
+    const totalWt = staffFormProducts.reduce((s, p) => {
+      const pkg = Number(p.packageCount) || 0;
+      const wt = Number(p.weightKg) || 0;
+      return s + wt * pkg;
+    }, 0);
+    setForm((v) => ({ ...v, volumeM3: totalVol > 0 ? String(totalVol.toFixed(4)) : v.volumeM3, weightKg: totalWt > 0 ? String(totalWt.toFixed(2)) : v.weightKg }));
+  }, [staffFormProducts]);
 
   useEffect(() => {
     const syncSectionByHash = () => {
@@ -2134,7 +2151,7 @@ export default function StaffHomePage() {
             />
           </div>
           <div style={{ fontSize: 12, color: "#000000", marginTop: -4, marginBottom: 4 }}>尺寸：厘米；体积（m³）= 长×宽×高 ÷ 1,000,000，自动填入下方。</div>
-          <input type="number" step="0.01" value={form.weightKg} onChange={(e) => setForm((v) => ({ ...v, weightKg: e.target.value }))} placeholder="重量（kg）" style={orderCreateInputStyle} />
+          <input type="number" step="0.01" value={form.weightKg} readOnly={staffFormProducts.length > 0} onChange={(e) => setForm((v) => ({ ...v, weightKg: e.target.value }))} placeholder="重量（kg）" style={orderCreateInputStyle} />
           <input
             type="text"
             readOnly
@@ -3544,7 +3561,7 @@ export default function StaffHomePage() {
                   <option value="box">箱</option>
                   <option value="bag">袋</option>
                 </select>
-                <input type="number" step="0.001" value={form.volumeM3} onChange={(e) => setForm((v) => ({ ...v, volumeM3: e.target.value }))} placeholder="总体积（m³）" style={orderCreateInputStyle} />
+                <input type="number" step="0.001" value={form.volumeM3} readOnly={staffFormProducts.length > 0} onChange={(e) => setForm((v) => ({ ...v, volumeM3: e.target.value }))} placeholder="总体积（m³）" style={orderCreateInputStyle} />
                 <input type="number" step="0.01" value={form.weightKg} onChange={(e) => setForm((v) => ({ ...v, weightKg: e.target.value }))} placeholder="总重量（kg）" style={orderCreateInputStyle} />
               </div>
               <select value={form.transportMode} onChange={(e) => setForm((v) => ({ ...v, transportMode: e.target.value as "sea" | "land" }))} style={orderCreateInputStyle}>
