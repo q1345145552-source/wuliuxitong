@@ -11,12 +11,13 @@ jobs:
       - name: Deploy via SSH
         uses: appleboy/ssh-action@v1.2.2
         with:
-          host: ${{ secrets.VPS_HOST }}
-          username: ${{ secrets.VPS_USER }}
-          key: ${{ secrets.VPS_SSH_KEY }}
-          port: ${{ secrets.VPS_SSH_PORT }}
+          host: \${{ secrets.VPS_HOST }}
+          username: \${{ secrets.VPS_USER }}
+          key: \${{ secrets.VPS_SSH_KEY }}
+          port: \${{ secrets.VPS_SSH_PORT }}
           script: |
             cd /root/MyWebSite
             git pull origin main
+            npx prisma migrate deploy --schema=apps/api/prisma/schema.prisma
             docker compose up -d --build
             docker ps
