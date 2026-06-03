@@ -90,14 +90,14 @@ const VALID_PACKAGE_UNITS = ["bag", "box"] as const;
 const VALID_TRANSPORT_MODES = ["sea", "land"] as const;
 
 function PrealertPrintButton({ item }: { item: OrderItem }) {
-  const wl = warehouseOptions.find(w => w.id === item.warehouseId)?.label ||  item.warehouseId  |  |  "—";
+  const wl = warehouseOptions.find(w => w.id === item.warehouseId)?.label || item.warehouseId || "—";
   const safePkgUnit = VALID_PACKAGE_UNITS.includes(item.packageUnit as any) ? (item.packageUnit as "bag"  |  "box") : "box";
   const safeTransport = VALID_TRANSPORT_MODES.includes(item.transportMode as any) ? (item.transportMode as "sea"  |  "land") : "sea";
 
   return (
     <button type="button" onClick={() => {
       openPrintPrealert({
-        prealertNo: item.orderNo  |  |  item.id,
+        prealertNo: item.orderNo || item.id,
         itemName: item.itemName,
         packageCount: item.packageCount,
         packageUnit: safePkgUnit,
@@ -199,7 +199,7 @@ export default function ClientHomePage() {
    * 格式化体积字符串。
    */
   const formatVolumeM3String = (m3: number): string => {
-    if (!Number.isFinite(m3)  |  |  m3 <= 0) return "";
+    if (!Number.isFinite(m3) || m3 <= 0) return "";
     return String(Number(m3.toFixed(6)));
   };
 
@@ -278,7 +278,7 @@ export default function ClientHomePage() {
     setLoading(true);
     setMessage("");
     try {
-      if (!form.warehouseId  |  |  !form.itemName.trim()  |  |  !form.transportMode) {
+      if (!form.warehouseId || !form.itemName.trim() || !form.transportMode) {
         setMessage("请填写仓库、品名、运输方式。");
         setLoading(false);
         return;
@@ -286,15 +286,15 @@ export default function ClientHomePage() {
       const result = await createClientPrealert({
         warehouseId: form.warehouseId,
         itemName: form.itemName.trim(),
-        packageCount: Number(form.packageCount  |  |  0),
+        packageCount: Number(form.packageCount || 0),
         packageUnit: form.packageUnit,
         weightKg: form.weightKg ? Number(form.weightKg) : undefined,
         volumeM3: form.volumeM3 ? Number(form.volumeM3) : undefined,
-        domesticTrackingNo: form.domesticTrackingNo.trim()  |  |  undefined,
+        domesticTrackingNo: form.domesticTrackingNo.trim() || undefined,
         transportMode: form.transportMode as "sea"  |  "land",
-        receiverNameTh: form.receiverNameTh.trim()  |  |  undefined,
-        receiverPhoneTh: form.receiverPhoneTh.trim()  |  |  undefined,
-        receiverAddressTh: form.receiverAddressTh.trim()  |  |  undefined,
+        receiverNameTh: form.receiverNameTh.trim() || undefined,
+        receiverPhoneTh: form.receiverPhoneTh.trim() || undefined,
+        receiverAddressTh: form.receiverAddressTh.trim() || undefined,
       });
       setToast("预报单提交成功");
       setMessage(`预报单创建成功：${result.prealertId}`);
@@ -337,8 +337,8 @@ export default function ClientHomePage() {
           ? await fetchClientOrders()
           : await fetchClientOrders({ statusGroup: queryMode });
       const result = baseOrders
-        .filter((item) => !search.batchNo  |  |  (item.trackingNo ?? "").toLowerCase().includes(search.batchNo.toLowerCase()))
-        .filter((item) => !search.orderId  |  |  item.id.toLowerCase().includes(search.orderId.toLowerCase()))
+        .filter((item) => !search.batchNo || (item.trackingNo ?? "").toLowerCase().includes(search.batchNo.toLowerCase()))
+        .filter((item) => !search.orderId || item.id.toLowerCase().includes(search.orderId.toLowerCase()))
         .filter((item) => {
           const d = item.createdAt.slice(0, 10);
           if (search.arrivedDateFrom && d < search.arrivedDateFrom) return false;
@@ -347,12 +347,11 @@ export default function ClientHomePage() {
         })
         .filter(
           (item) =>
-            !search.domesticTrackingNo  |  | 
-            (item.domesticTrackingNo ?? "").toLowerCase().includes(search.domesticTrackingNo.toLowerCase()),
+            !search.domesticTrackingNo || (item.domesticTrackingNo ?? "").toLowerCase().includes(search.domesticTrackingNo.toLowerCase()),
         )
-        .filter((item) => !search.status  |  |  (item.currentStatus ?? "").toLowerCase() === search.status.toLowerCase())
-        .filter((item) => !search.transportMode  |  |  item.transportMode === search.transportMode)
-        .filter((item) => !search.warehouseId  |  |  item.warehouseId === search.warehouseId);
+        .filter((item) => !search.status || (item.currentStatus ?? "").toLowerCase() === search.status.toLowerCase())
+        .filter((item) => !search.transportMode || item.transportMode === search.transportMode)
+        .filter((item) => !search.warehouseId || item.warehouseId === search.warehouseId);
       setQueriedOrders(result);
       setHasQueried(true);
     } catch (error) {
@@ -397,7 +396,7 @@ export default function ClientHomePage() {
 
   const runAiSearch = async () => {
     const question = aiQuestion.trim();
-    if (!question  |  |  aiLoading) return;
+    if (!question || aiLoading) return;
     setAiLoading(true);
     setAiAnswer("");
     try {
@@ -419,8 +418,8 @@ export default function ClientHomePage() {
 
   const statusToneClass = (status?: string): string => {
     const value = (status ?? "").toLowerCase();
-    if (value === "delivered"  |  |  value === "returned"  |  |  value === "cancelled") return "order-badge order-badge-land";
-    if (value === "loaded"  |  |  value === "delaydeparted"  |  |  value === "departed"  |  |  value === "arrivedport"  |  |  value === "customsth"  |  |  value === "customscleared"  |  |  value === "inwarehouseth"  |  |  value === "outfordelivery") {
+    if (value === "delivered" || value === "returned" || value === "cancelled") return "order-badge order-badge-land";
+    if (value === "loaded" || value === "delaydeparted" || value === "departed" || value === "arrivedport" || value === "customsth" || value === "customscleared" || value === "inwarehouseth" || value === "outfordelivery") {
       return "order-badge order-badge-sea";
     }
     return "order-badge";
@@ -428,8 +427,8 @@ export default function ClientHomePage() {
 
   const logisticsStatusText = (status?: string): string => {
     const value = (status ?? "").toLowerCase();
-    if (value === "delivered"  |  |  value === "returned"  |  |  value === "cancelled") return "已到达";
-    if (value === "loaded"  |  |  value === "delaydeparted"  |  |  value === "departed"  |  |  value === "arrivedport"  |  |  value === "customsth"  |  |  value === "customscleared"  |  |  value === "inwarehouseth"  |  |  value === "outfordelivery") return "途中";
+    if (value === "delivered" || value === "returned" || value === "cancelled") return "已到达";
+    if (value === "loaded" || value === "delaydeparted" || value === "departed" || value === "arrivedport" || value === "customsth" || value === "customscleared" || value === "inwarehouseth" || value === "outfordelivery") return "途中";
     return "已收货";
   };
 
@@ -441,7 +440,7 @@ export default function ClientHomePage() {
     if (!value) return "未更新";
     if (value === "created") return "已创建";
     if (value === "pickedup") return "已揽收";
-    if (value === "inwarehousecn"  |  |  value === "receivedcn") return "国内仓已收货";
+    if (value === "inwarehousecn" || value === "receivedcn") return "国内仓已收货";
     if (value === "customspending") return "报关中";
     if (value === "loaded") return "已装柜";
     if (value === "delaydeparted") return "延迟开船";
@@ -450,7 +449,7 @@ export default function ClientHomePage() {
     if (value === "intransit") return "运输中";
     if (value === "customsth") return "清关中";
     if (value === "customscleared") return "清关已放行";
-    if (value === "inwarehouseth"  |  |  value === "warehouseth") return "已到仓";
+    if (value === "inwarehouseth" || value === "warehouseth") return "已到仓";
     if (value === "outfordelivery") return "派送中";
     if (value === "delivered") return "派送完成";
     if (value === "returned") return "已退回";
@@ -527,8 +526,8 @@ export default function ClientHomePage() {
     });
   };
 
-  const freightWeight = Number(freightForm.weightKg  |  |  0);
-  const freightVolume = Number(freightForm.volumeM3  |  |  0);
+  const freightWeight = Number(freightForm.weightKg || 0);
+  const freightVolume = Number(freightForm.volumeM3 || 0);
   const safeWeight = Number.isNaN(freightWeight) ? 0 : Math.max(freightWeight, 0);
   const safeVolume = Number.isNaN(freightVolume) ? 0 : Math.max(freightVolume, 0);
   const priceKey = `${freightForm.transportMode} | ${freightForm.cargoType}`;
@@ -550,7 +549,7 @@ export default function ClientHomePage() {
     freightFee += finalChargeVolume * 120;
   }
   const estimatedFee = freightFee;
-  const hasFreightInput = safeWeight > 0  |  |  safeVolume > 0;
+  const hasFreightInput = safeWeight > 0 || safeVolume > 0;
   const cargoTypeLabel =
     freightForm.cargoType === "normal"
       ? "普货"
@@ -698,12 +697,12 @@ export default function ClientHomePage() {
               {prealerts.filter((item) => {
                 const q = prealertSearch.trim().toLowerCase();
                 if (!q) return true;
-                return item.id.toLowerCase().includes(q)  |  |  (item.itemName ?? "").toLowerCase().includes(q);
+                return item.id.toLowerCase().includes(q) || (item.itemName ?? "").toLowerCase().includes(q);
               }).slice(0, pageSize).map((item) => {
                 const isPending = item.approvalStatus === "pending";
                 const isApproved = item.approvalStatus === "approved";
                 const isShipped = item.approvalStatus === "shipped";
-                const isReceived = item.currentStatus === "delivered"  |  |  item.currentStatus === "inWarehouseCN";
+                const isReceived = item.currentStatus === "delivered" || item.currentStatus === "inWarehouseCN";
                 const sLabel = isPending ? "待审核" : isApproved ? "已审核" : isReceived ? "已入库" : "已发货";
                 const sColor = isPending ? "#92400e" : isApproved ? "#0369a1" : isReceived ? "#16a34a" : "#000000";
                 const sBg = isPending ? "#fef3c7" : isApproved ? "#e0f2fe" : isReceived ? "#dcfce7" : "#f3f4f6";
@@ -712,7 +711,7 @@ export default function ClientHomePage() {
                   <div key={item.id} style={{ border: "1px solid " + sBd, borderRadius: 8, padding: 12, background: "#fff" }}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8 }}>
                       <div>
-                        <span style={{ fontWeight: 600, fontSize: 14, fontFamily: "monospace" }}>{item.orderNo  |  |  item.id}</span>
+                        <span style={{ fontWeight: 600, fontSize: 14, fontFamily: "monospace" }}>{item.orderNo || item.id}</span>
                         <span style={{ marginLeft: 8, fontSize: 11, fontWeight: 500, color: sColor, background: sBg, padding: "2px 8px", borderRadius: 4 }}>{sLabel}</span>
                       </div>
                       <div style={{ fontSize: 12, color: "#000000" }}>{item.createdAt.slice(0, 10)}</div>
@@ -727,7 +726,7 @@ export default function ClientHomePage() {
                     {(item.products?.length ?? 0) > 1 && (
                       <div style={{ marginBottom: 8, fontSize: 12, color: "#000000", background: "#f8fafc", borderRadius: 6, padding: "6px 8px" }}>
                         {item.products!.map((p, i) => (
-                          <div key={p.id  |  |  i}>{p.itemName} ×{p.packageCount}箱</div>
+                          <div key={p.id || i}>{p.itemName} ×{p.packageCount}箱</div>
                         ))}
                       </div>
                     )}
@@ -758,10 +757,10 @@ export default function ClientHomePage() {
                       )}
                       {isApproved && (
                         <button type="button" disabled={false} onClick={() => {
-                          if (confirm("确认发货？预报单号：" + (item.orderNo  |  |  item.id))) void handleShip(item.id);
+                          if (confirm("确认发货？预报单号：" + (item.orderNo || item.id))) void handleShip(item.id);
                         }} style={{ border: "none", borderRadius: 4, padding: "4px 14px", fontSize: 12, background: "#16a34a", color: "#fff", fontWeight: 500, cursor: "pointer" }}>确认发货</button>
                       )}
-                      {(isApproved  |  |  isShipped) && item.trackingNo ? (
+                      {(isApproved || isShipped) && item.trackingNo ? (
                         <button type="button" onClick={() => openPrintLabel({ marks: item.clientId ?? "", packageCount: item.packageCount ?? "—", trackingNo: item.trackingNo ?? "", itemName: item.itemName, productQuantity: item.productQuantity, transportMode: item.transportMode, products: item.products?.map(p => ({ itemName: p.itemName, packageCount: p.packageCount })) })} style={{ border: "1px solid #16a34a", borderRadius: 4, padding: "4px 10px", fontSize: 12, background: "#fff", color: "#16a34a", cursor: "pointer", marginLeft: 6 }}>打印</button>
                       ) : null}
                       {item.trackingNo ? (
@@ -910,7 +909,7 @@ export default function ClientHomePage() {
         </div>
       </section>
 
-      {activeSection === "client-main"  |  |  activeSection === "client-query" ? (
+      {activeSection === "client-main" || activeSection === "client-query" ? (
         <div className="section-divider" aria-hidden />
       ) : null}
 
@@ -1122,7 +1121,7 @@ export default function ClientHomePage() {
           <article key={item.id} className="order-card">
             <div className="order-head">
               <div className="order-title">
-                #{idx + 1} {item.itemName  |  |  "未填品名"}
+                #{idx + 1} {item.itemName || "未填品名"}
                 <span style={{ marginLeft: 8, fontSize: 13, color: "#000000", fontWeight: 400 }}>
                   · {item.id}
                 </span>
@@ -1130,7 +1129,7 @@ export default function ClientHomePage() {
               {(item.products?.length ?? 0) > 1 && (
                 <div style={{ fontSize: 12, color: "#000000", marginTop: 4, background: "#f8fafc", borderRadius: 6, padding: "4px 8px" }}>
                   {item.products!.map((p, i) => (
-                    <div key={p.id  |  |  i}>
+                    <div key={p.id || i}>
                       · {p.itemName} ×{p.packageCount}箱
                       {p.lengthCm ? ` (${p.lengthCm}×${p.widthCm}×${p.heightCm}cm, 每箱${p.productQuantity ?? "—"}个)` : ""}
                     </div>
@@ -1333,7 +1332,7 @@ export default function ClientHomePage() {
         ) : null}
       </section>
 
-      {activeSection === "client-query"  |  |  activeSection === "client-prealert" ? (
+      {activeSection === "client-query" || activeSection === "client-prealert" ? (
         <div className="section-divider" aria-hidden />
       ) : null}
       <section
@@ -1359,12 +1358,12 @@ export default function ClientHomePage() {
               {prealerts.filter((item) => {
                 const q = prealertSearch.trim().toLowerCase();
                 if (!q) return true;
-                return item.id.toLowerCase().includes(q)  |  |  (item.itemName ?? "").toLowerCase().includes(q);
+                return item.id.toLowerCase().includes(q) || (item.itemName ?? "").toLowerCase().includes(q);
               }).slice(0, pageSize).map((item) => {
                 const isPending = item.approvalStatus === "pending";
                 const isApproved = item.approvalStatus === "approved";
                 const isShipped = item.approvalStatus === "shipped";
-                const isReceived = item.currentStatus === "delivered"  |  |  item.currentStatus === "inWarehouseCN";
+                const isReceived = item.currentStatus === "delivered" || item.currentStatus === "inWarehouseCN";
                 const sLabel = isPending ? "待审核" : isApproved ? "已审核" : isReceived ? "已入库" : "已发货";
                 const sColor = isPending ? "#92400e" : isApproved ? "#0369a1" : isReceived ? "#16a34a" : "#000000";
                 const sBg = isPending ? "#fef3c7" : isApproved ? "#e0f2fe" : isReceived ? "#dcfce7" : "#f3f4f6";
@@ -1373,7 +1372,7 @@ export default function ClientHomePage() {
                   <div key={item.id} style={{ border: "1px solid " + sBd, borderRadius: 8, padding: 12, background: "#fff" }}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8 }}>
                       <div>
-                        <span style={{ fontWeight: 600, fontSize: 14, fontFamily: "monospace" }}>{item.orderNo  |  |  item.id}</span>
+                        <span style={{ fontWeight: 600, fontSize: 14, fontFamily: "monospace" }}>{item.orderNo || item.id}</span>
                         <span style={{ marginLeft: 8, fontSize: 11, fontWeight: 500, color: sColor, background: sBg, padding: "2px 8px", borderRadius: 4 }}>{sLabel}</span>
                       </div>
                       <div style={{ fontSize: 12, color: "#000000" }}>{item.createdAt.slice(0, 10)}</div>
@@ -1388,7 +1387,7 @@ export default function ClientHomePage() {
                     {(item.products?.length ?? 0) > 1 && (
                       <div style={{ marginBottom: 8, fontSize: 12, color: "#000000", background: "#f8fafc", borderRadius: 6, padding: "6px 8px" }}>
                         {item.products!.map((p, i) => (
-                          <div key={p.id  |  |  i}>{p.itemName} ×{p.packageCount}箱</div>
+                          <div key={p.id || i}>{p.itemName} ×{p.packageCount}箱</div>
                         ))}
                       </div>
                     )}
@@ -1419,10 +1418,10 @@ export default function ClientHomePage() {
                       )}
                       {isApproved && (
                         <button type="button" disabled={false} onClick={() => {
-                          if (confirm("确认发货？预报单号：" + (item.orderNo  |  |  item.id))) void handleShip(item.id);
+                          if (confirm("确认发货？预报单号：" + (item.orderNo || item.id))) void handleShip(item.id);
                         }} style={{ border: "none", borderRadius: 4, padding: "4px 14px", fontSize: 12, background: "#16a34a", color: "#fff", fontWeight: 500, cursor: "pointer" }}>确认发货</button>
                       )}
-                      {(isApproved  |  |  isShipped) && item.trackingNo ? (
+                      {(isApproved || isShipped) && item.trackingNo ? (
                         <button type="button" onClick={() => openPrintLabel({ marks: item.clientId ?? "", packageCount: item.packageCount ?? "—", trackingNo: item.trackingNo ?? "", itemName: item.itemName, productQuantity: item.productQuantity, transportMode: item.transportMode, products: item.products?.map(p => ({ itemName: p.itemName, packageCount: p.packageCount })) })} style={{ border: "1px solid #16a34a", borderRadius: 4, padding: "4px 10px", fontSize: 12, background: "#fff", color: "#16a34a", cursor: "pointer", marginLeft: 6 }}>打印</button>
                       ) : null}
                       {item.trackingNo ? (
@@ -1458,11 +1457,11 @@ export default function ClientHomePage() {
                   <input value={form.itemName} onChange={(e) => setForm((v) => ({ ...v, itemName: e.target.value }))} placeholder="品名 *" style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "8px 10px", fontSize: 13, width: "100%" }} />
                 ) : null}
                 {formProducts.map((p, i) => {
-                  const pPkg = Number(p.packageCount)  |  |  0;
-                  const pL = Number(p.lengthCm)  |  |  0;
-                  const pW = Number(p.widthCm)  |  |  0;
-                  const pH = Number(p.heightCm)  |  |  0;
-                  const pWt = Number(p.weightKg)  |  |  0;
+                  const pPkg = Number(p.packageCount) || 0;
+                  const pL = Number(p.lengthCm) || 0;
+                  const pW = Number(p.widthCm) || 0;
+                  const pH = Number(p.heightCm) || 0;
+                  const pWt = Number(p.weightKg) || 0;
                   const prodVol = (pL > 0 && pW > 0 && pH > 0) ? (pL * pW * pH * pPkg) / 1_000_000 : 0;
                   const prodWt = pWt * pPkg;
                   return (
@@ -1481,15 +1480,15 @@ export default function ClientHomePage() {
                 );})}
                 {
                   const totalVol = formProducts.reduce((s, p) => {
-                    const pkg = Number(p.packageCount)  |  |  0;
-                    const l = Number(p.lengthCm)  |  |  0;
-                    const w = Number(p.widthCm)  |  |  0;
-                    const h = Number(p.heightCm)  |  |  0;
+                    const pkg = Number(p.packageCount) || 0;
+                    const l = Number(p.lengthCm) || 0;
+                    const w = Number(p.widthCm) || 0;
+                    const h = Number(p.heightCm) || 0;
                     return s + ((l > 0 && w > 0 && h > 0) ? (l * w * h * pkg) / 1_000_000 : 0);
                   }, 0);
                   const totalWt = formProducts.reduce((s, p) => {
-                    const pkg = Number(p.packageCount)  |  |  0;
-                    const wt = Number(p.weightKg)  |  |  0;
+                    const pkg = Number(p.packageCount) || 0;
+                    const wt = Number(p.weightKg) || 0;
                     return s + wt * pkg;
                   }, 0);
                   return (
@@ -1532,7 +1531,7 @@ export default function ClientHomePage() {
             <div style={{ marginTop: 10, border: "1px dashed #d1d5db", borderRadius: 8, padding: 10 }}>
               <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 6, color: "#000000" }}>产品图片（可选，可多选）</div>
               <input type="file" multiple accept="image/*" onChange={(e) => {
-                const files = Array.from(e.target.files  |  |  []);
+                const files = Array.from(e.target.files || []);
                 setPrealertImageFiles(files);
                 setPrealertImagePreviews(files.map(f => URL.createObjectURL(f)));
               }} style={{ fontSize: 12 }} />
@@ -1555,11 +1554,11 @@ export default function ClientHomePage() {
               <button type="button" onClick={async () => {
                 const hasProducts = formProducts.length > 0 && formProducts.some((p) => p.itemName.trim());
                 if (!hasProducts && !form.itemName) { setToast("请填写品名"); return; }
-                if (!form.transportMode  |  |  !form.warehouseId) { setToast("请填写必填项"); return; }
+                if (!form.transportMode || !form.warehouseId) { setToast("请填写必填项"); return; }
                 try {
-                  const payload: any = { ...form, packageCount: +form.packageCount  |  |  0, weightKg: form.weightKg ? +form.weightKg : undefined, volumeM3: form.volumeM3 ? +form.volumeM3 : undefined, transportMode: form.transportMode as "sea"  |  "land", trackingNo: form.trackingNo?.trim()  |  |  undefined };
+                  const payload: any = { ...form, packageCount: +form.packageCount || 0, weightKg: form.weightKg ? +form.weightKg : undefined, volumeM3: form.volumeM3 ? +form.volumeM3 : undefined, transportMode: form.transportMode as "sea"  |  "land", trackingNo: form.trackingNo?.trim() || undefined };
                   if (hasProducts) {
-                    payload.products = formProducts.filter((p) => p.itemName.trim()).map((p) => ({ itemName: p.itemName.trim(), packageCount: Number(p.packageCount)  |  |  1, lengthCm: p.lengthCm ? Number(p.lengthCm) : undefined, widthCm: p.widthCm ? Number(p.widthCm) : undefined, heightCm: p.heightCm ? Number(p.heightCm) : undefined, productQuantity: p.productQuantity ? Number(p.productQuantity) : undefined, weightKg: p.weightKg ? Number(p.weightKg) : undefined }));
+                    payload.products = formProducts.filter((p) => p.itemName.trim()).map((p) => ({ itemName: p.itemName.trim(), packageCount: Number(p.packageCount) || 1, lengthCm: p.lengthCm ? Number(p.lengthCm) : undefined, widthCm: p.widthCm ? Number(p.widthCm) : undefined, heightCm: p.heightCm ? Number(p.heightCm) : undefined, productQuantity: p.productQuantity ? Number(p.productQuantity) : undefined, weightKg: p.weightKg ? Number(p.weightKg) : undefined }));
                     payload.itemName = payload.products[0].itemName;
                   }
                   const result = await createClientPrealert(payload);
@@ -1572,7 +1571,7 @@ export default function ClientHomePage() {
                           reader.onload = () => resolve((reader.result as string).split(",")[1]);
                           reader.readAsDataURL(file);
                         });
-                        await uploadStaffOrderProductImage({ orderId: result.prealertId, fileName: file.name, mime: file.type  |  |  "image/jpeg", contentBase64: base64 });
+                        await uploadStaffOrderProductImage({ orderId: result.prealertId, fileName: file.name, mime: file.type || "image/jpeg", contentBase64: base64 });
                       } catch { /* skip */ }
                     }
                   }
