@@ -7,6 +7,7 @@ export interface ShipmentPrintLabelProps {
   itemName?: string;
   productQuantity?: number;
   transportMode?: string;
+  products?: Array<{ itemName: string; packageCount: number }>;
 }
 
 /**
@@ -27,6 +28,7 @@ export function openPrintLabel(props: ShipmentPrintLabelProps) {
     labelsHtml += `
 <div class="label">
   <div class="row"><span>${escapeHtml(props.marks)}</span><span>${escapeHtml(modeText)}</span><span>${escapeHtml(props.itemName ?? "")}</span></div>
+  ${props.products?.length ? `<div class="row"><span>${props.products.map((p) => escapeHtml(p.itemName) + " ×" + p.packageCount + "箱").join(" | ")}</span></div>` : ""}
   <div class="row"><span>箱号：${i}/${total}</span><span>${props.productQuantity ? `单箱数量：${props.productQuantity}个` : ""}</span></div>
   <div class="row"><span>${escapeHtml(props.trackingNo)}</span></div>
   <div class="footer">湘泰物流</div>
