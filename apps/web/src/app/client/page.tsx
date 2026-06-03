@@ -1505,6 +1505,14 @@ export default function ClientHomePage() {
         <div style={{ position: "fixed", inset: 0, zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(0,0,0,0.4)", padding: 16 }}>
           <div style={{ width: "100%", maxWidth: 520, maxHeight: "90vh", overflow: "auto", background: "#fff", borderRadius: 12, padding: 24, boxShadow: "0 20px 60px rgba(0,0,0,0.3)" }}>
             <h3 style={{ margin: "0 0 16px", fontSize: 18, fontWeight: 600 }}>编辑预报单</h3>
+            {(editingPrealert.products?.length ?? 0) > 1 && (
+              <div style={{ marginBottom: 10, background: "#f8fafc", borderRadius: 6, padding: "8px 10px", fontSize: 12 }}>
+                <div style={{ fontWeight: 600, marginBottom: 4, color: "#000000" }}>产品列表</div>
+                {editingPrealert.products!.map((p) => (
+                  <div key={p.id} style={{ color: "#000000" }}>{p.itemName} ×{p.packageCount}箱</div>
+                ))}
+              </div>
+            )}
             <div style={{ display: "grid", gap: 10 }}>
               <input value={editingPrealert.itemName} onChange={(e) => setEditingPrealert((v) => v ? { ...v, itemName: e.target.value } : v)} placeholder="品名" style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "8px 10px", fontSize: 13 }} />
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>

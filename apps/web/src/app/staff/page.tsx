@@ -3337,6 +3337,14 @@ export default function StaffHomePage() {
             <div style={{ color: "#000000", fontSize: 13, marginBottom: 12 }}>
               客户：{approvingPrealert.clientName ?? "-"} · {approvingPrealert.createdAt.slice(0, 10)}
             </div>
+            {(approvingPrealert.products?.length ?? 0) > 1 && (
+              <div style={{ marginBottom: 10, background: "#fefce8", borderRadius: 6, padding: "8px 10px", fontSize: 12 }}>
+                <div style={{ fontWeight: 600, marginBottom: 4, color: "#000000" }}>产品列表</div>
+                {approvingPrealert.products!.map((p) => (
+                  <div key={p.id} style={{ color: "#000000" }}>{p.itemName} ×{p.packageCount}箱{p.lengthCm ? ` (${p.lengthCm}×${p.widthCm}×${p.heightCm}cm)` : ""}</div>
+                ))}
+              </div>
+            )}
             <div style={{ display: "grid", gap: 6, fontSize: 13, color: "#000000", marginBottom: 16 }}>
               <div>仓库：{warehouseOptions.find((w) => w.id === (prealertEditDrafts[approvingPrealert.id]?.warehouseId ?? approvingPrealert.warehouseId))?.label ?? "-"}</div>
               <div>品名：{prealertEditDrafts[approvingPrealert.id]?.itemName ?? approvingPrealert.itemName}</div>

@@ -1183,6 +1183,14 @@ export default function AdminHomePage() {
             {editingOrderId ? (
               <div style={{ ...cardStyle, marginBottom: 10, display: "grid", gap: 8 }}>
                 <div style={{ fontWeight: 700, color: "#0f172a" }}>正在编辑订单：{editingOrderId}</div>
+                {(orderList.find(o => o.id === editingOrderId)?.products?.length ?? 0) > 1 && (
+                  <div style={{ marginBottom: 8, background: "#f8fafc", borderRadius: 6, padding: "6px 10px", fontSize: 12 }}>
+                    <span style={{ fontWeight: 600 }}>产品列表：</span>
+                    {orderList.find(o => o.id === editingOrderId)!.products!.map((p) => (
+                      <span key={p.id} style={{ marginLeft: 8 }}>{p.itemName} ×{p.packageCount}箱</span>
+                    ))}
+                  </div>
+                )}
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 8 }}>
                   <input value={orderEditForm.trackingNo} onChange={(e) => setOrderEditForm((v) => ({ ...v, trackingNo: e.target.value.toUpperCase() }))} placeholder="运单号（如 YW... / DG...）" style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 10px" }} />
                   <input value={orderEditForm.batchNo} onChange={(e) => setOrderEditForm((v) => ({ ...v, batchNo: e.target.value }))} placeholder="批次号" style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 10px" }} />
