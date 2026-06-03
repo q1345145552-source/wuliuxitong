@@ -89,6 +89,7 @@ model Order {
   client            User                @relation("ClientOrders", fields: [clientId], references: [id])
   shipments         Shipment[]
   productImages     OrderProductImage[]
+  products          OrderProduct[]
   customsCases      AdminCustomsCase[]
   settlementEntries AdminSettlementEntry[]
   invoiceLines      InvoiceLine[]
