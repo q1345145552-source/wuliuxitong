@@ -8,7 +8,7 @@ import { fail, ok, parseJsonArray, requireRole } from "../core/http-utils";
 import { loadProductImagesForOrders, MAX_ORDER_PRODUCT_IMAGES } from "./product-images";
 
 /** 批量加载订单的产品行 */
-async function loadOrderProducts(companyId: string, orderIds: string[]): Promise<Map<string, any[]>> {
+export async function loadOrderProducts(companyId: string, orderIds: string[]): Promise<Map<string, any[]>> {
   if (orderIds.length === 0) return new Map();
   const rows = await prisma.orderProduct.findMany({
     where: { companyId, orderId: { in: [...new Set(orderIds)] } },

@@ -5,6 +5,7 @@ import { prisma } from "../../db/prisma";
 import type { MinimalHttpApp } from "../../server";
 import { fail, ok, requireRole } from "../core/http-utils";
 import { loadProductImagesForOrders } from "../orders/product-images";
+import { loadOrderProducts } from "../orders/routes";
 import { hashPassword } from "../auth/crypto-utils";
 
 /** Decimal | null → number | null */
@@ -263,10 +264,12 @@ export function registerAdminRoutes(app: MinimalHttpApp, _db: DatabaseSync): voi
     });
     const adminOrderIds = adminOrderItems.map((item) => item.id);
     const adminImageMap = await loadProductImagesForOrders(auth.companyId, adminOrderIds);
+    const adminProductsMap = await loadOrderProducts(auth.companyId, adminOrderIds);
     ok(res, {
       items: adminOrderItems.map((item) => ({
         ...item,
         productImages: adminImageMap.get(item.id) ?? [],
+        products: adminProductsMap.get(item.id) ?? [],
       })),
     });
   });
