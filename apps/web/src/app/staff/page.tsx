@@ -2099,7 +2099,7 @@ export default function StaffHomePage() {
             <button type="button" onClick={() => setStaffFormProducts((v) => [...v, { itemName: "", packageCount: "", lengthCm: "", widthCm: "", heightCm: "", productQuantity: "", weightKg: "" }])} style={{ border: "1px dashed #2563eb", borderRadius: 4, padding: "4px 10px", fontSize: 12, background: "#fff", color: "#2563eb", cursor: "pointer", marginTop: 4 }}>+ 添加产品</button>
           </div>
           <div style={{ fontSize: 12, color: "#000000", marginTop: 4 }}>
-            💡 总体积与总重量由后端根据产品长宽高×箱数和单箱重量×箱数自动计算
+            💡 输入长宽高和单箱重量后，体积和总重量在前端实时自动计算
           </div>
           <input value={form.domesticOrderNo} onChange={(e) => setForm((v) => ({ ...v, domesticOrderNo: e.target.value }))} placeholder="国内单号" style={orderCreateInputStyle} />
           <input type="number" value={form.packageCount} onChange={(e) => updateOrderDimensions({ packageCount: e.target.value })} placeholder="包裹数量" style={orderCreateInputStyle} />
@@ -3508,7 +3508,7 @@ export default function StaffHomePage() {
                 <button type="button" onClick={() => setStaffFormProducts((v) => [...v, { itemName: "", packageCount: "", lengthCm: "", widthCm: "", heightCm: "", productQuantity: "", weightKg: "" }])} style={{ border: "1px dashed #2563eb", borderRadius: 4, padding: "4px 10px", fontSize: 12, background: "#fff", color: "#2563eb", cursor: "pointer", marginTop: 4 }}>+ 添加产品</button>
               </div>
               <div style={{ fontSize: 12, color: "#000000", marginTop: 4 }}>
-                💡 总体积与总重量由后端根据产品长宽高×箱数和单箱重量×箱数自动计算
+                💡 输入长宽高和单箱重量后，体积和总重量在前端实时自动计算
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
                 <select value={form.packageUnit} onChange={(e) => setForm((v) => ({ ...v, packageUnit: e.target.value as "bag" | "box" }))} style={orderCreateInputStyle}>
