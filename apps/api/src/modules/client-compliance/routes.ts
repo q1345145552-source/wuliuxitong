@@ -49,7 +49,7 @@ export function registerClientComplianceRoutes(app: MinimalHttpApp, _db: Databas
 
   // 保存客户备注（仅管理员）
   app.post("/admin/shipping/notes", async (req, res) => {
-    const auth = requireRole(req, res, ["admin"]);
+    const auth = requireRole(req, res, ["staff", "admin"]);
     if (!auth) return;
     const body = (req.body ?? {}) as { clientId?: string; content?: string };
     const clientId = body.clientId?.trim();
@@ -60,5 +60,34 @@ export function registerClientComplianceRoutes(app: MinimalHttpApp, _db: Databas
       update: { content: body.content ?? "" },
     });
     ok(res, { saved: true });
+  });
+  // 员工端创建客户地址
+  app.post("/staff/client-addresses", async (req, res) => {
+    const auth = requireRole(req, res, ["staff", "admin"]);
+    if (!auth) return;
+    const body = (req.body ?? {}) as {
+      clientId?: string;
+      contactName?: string;
+      contactPhone?: string;
+      addressDetail?: string;
+      label?: string;
+    };
+    const clientId = body.clientId?.trim();
+    if (!clientId) { fail(res, 400, "BAD_REQUEST", "clientId required"); return; }
+    if (!body.contactName?.trim()) { fail(res, 400, "BAD_REQUEST", "contactName required"); return; }
+    if (!body.contactPhone?.trim()) { fail(res, 400, "BAD_REQUEST", "contactPhone required"); return; }
+    if (!body.addressDetail?.trim()) { fail(res, 400, "BAD_REQUEST", "addressDetail required"); return; }
+    const addr = await prisma.clientAddress.create({
+      data: {
+        id: `addr_${Date.now()}`,
+        companyId: auth.companyId,
+        clientId,
+        contactName: body.contactName.trim(),
+        contactPhone: body.contactPhone.trim(),
+        addressDetail: body.addressDetail.trim(),
+        label: body.label?.trim() || null,
+      },
+    });
+    ok(res, { id: addr.id, created: true });
   });
 }
