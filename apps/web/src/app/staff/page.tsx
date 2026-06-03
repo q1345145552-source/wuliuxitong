@@ -2722,7 +2722,7 @@ export default function StaffHomePage() {
                             </button>
                             <button
                               type="button"
-                              onClick={() => openPrintLabel({ marks: item.clientId ?? "—", packageCount: item.packageCount ?? "—", trackingNo: item.trackingNo ?? "", itemName: item.itemName, productQuantity: item.productQuantity, transportMode: item.transportMode })}
+                              onClick={() => openPrintLabel({ marks: item.clientId ?? "—", packageCount: item.packageCount ?? "—", trackingNo: item.trackingNo ?? "", itemName: item.itemName, productQuantity: item.productQuantity, transportMode: item.transportMode, products: item.products?.map(p => ({ itemName: p.itemName, packageCount: p.packageCount })) })}
                               style={{ border: "none", background: "transparent", color: "#16a34a", cursor: "pointer", fontWeight: 600, padding: 0, marginLeft: 8 }}
                             >
                               打印
