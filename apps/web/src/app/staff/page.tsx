@@ -1091,9 +1091,7 @@ export default function StaffHomePage() {
       return;
     }
     if (
-      Number.isNaN(packageCount) ||
-      Number.isNaN(volumeM3) ||
-      Number.isNaN(weightKg)
+      Number.isNaN(packageCount) || Number.isNaN(volumeM3) || Number.isNaN(weightKg)
     ) {
       setMessage("数量、重量、体积请输入有效数字。");
       return;
@@ -1103,9 +1101,7 @@ export default function StaffHomePage() {
       return;
     }
     if (
-      packageCount <= 0 ||
-      volumeM3 <= 0 ||
-      weightKg <= 0
+      packageCount <= 0 || volumeM3 <= 0 || weightKg <= 0
     ) {
       setMessage("包裹数量、重量、体积必须大于 0。");
       return;
@@ -2081,7 +2077,7 @@ export default function StaffHomePage() {
                 <button type="button" onClick={() => setStaffFormProducts((v) => v.filter((_, j) => j !== i))} style={{ border: "1px solid #fca5a5", borderRadius: 4, padding: "4px 6px", fontSize: 11, background: "#fff", color: "#dc2626", cursor: "pointer" }}>X</button>
               </div>
             );})}
-            {
+            {(() => {
               const totalVol = staffFormProducts.reduce((s, p) => {
                 const pkg = Number(p.packageCount) || 0;
                 const l = Number(p.lengthCm) || 0;
@@ -2099,7 +2095,7 @@ export default function StaffHomePage() {
                   合计：总体积 {totalVol.toFixed(4)}m³  |  总重量 {totalWt.toFixed(2)}kg
                 </div>
               );
-            }
+            })()}
             <button type="button" onClick={() => setStaffFormProducts((v) => [...v, { itemName: "", packageCount: "", lengthCm: "", widthCm: "", heightCm: "", productQuantity: "", weightKg: "" }])} style={{ border: "1px dashed #2563eb", borderRadius: 4, padding: "4px 10px", fontSize: 12, background: "#fff", color: "#2563eb", cursor: "pointer", marginTop: 4 }}>+ 添加产品</button>
           </div>
           <div style={{ fontSize: 12, color: "#000000", marginTop: 4 }}>
