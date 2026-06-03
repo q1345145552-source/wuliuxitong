@@ -615,7 +615,7 @@ export default function StaffHomePage() {
       id: string;
       contactName: string;
       contactPhone: string;
-      address: string;
+      addressDetail: string;
       province: string;
       city: string;
       isDefault: boolean;
