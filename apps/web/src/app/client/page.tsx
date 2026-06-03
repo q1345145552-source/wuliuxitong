@@ -261,6 +261,23 @@ export default function ClientHomePage() {
     const timer = window.setTimeout(() => setToast(""), 2200);
     return () => window.clearTimeout(timer);
   }, [toast]);
+  // Auto-fill volume and weight from multi-product form
+  useEffect(() => {
+    if (formProducts.length === 0) return;
+    const totalVol = formProducts.reduce((s, p) => {
+      const pkg = Number(p.packageCount) || 0;
+      const l = Number(p.lengthCm) || 0;
+      const w = Number(p.widthCm) || 0;
+      const h = Number(p.heightCm) || 0;
+      return s + ((l > 0 && w > 0 && h > 0) ? (l * w * h * pkg) / 1_000_000 : 0);
+    }, 0);
+    const totalWt = formProducts.reduce((s, p) => {
+      const pkg = Number(p.packageCount) || 0;
+      const wt = Number(p.weightKg) || 0;
+      return s + wt * pkg;
+    }, 0);
+    setForm((v) => ({ ...v, volumeM3: totalVol > 0 ? String(totalVol.toFixed(4)) : v.volumeM3, weightKg: totalWt > 0 ? String(totalWt.toFixed(2)) : v.weightKg }));
+  }, [formProducts]);
 
   useEffect(() => {
     const syncSectionByHash = () => {
@@ -1513,7 +1530,7 @@ export default function ClientHomePage() {
                   <option value="bag">袋</option>
                 </select>
                 <input type="number" value={form.packageCount} onChange={(e) => updateOrderDimensions({ packageCount: e.target.value })} placeholder="箱/袋数" style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "8px 10px", fontSize: 13 }} />
-                <input type="number" step="0.001" value={form.volumeM3} onChange={(e) => setForm((v) => ({ ...v, volumeM3: e.target.value }))} placeholder="总体积（m³）" style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "8px 10px", fontSize: 13 }} />
+                <input type="number" step="0.001" value={form.volumeM3} readOnly={formProducts.length > 0} onChange={(e) => setForm((v) => ({ ...v, volumeM3: e.target.value }))} placeholder="总体积（m³）" style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "8px 10px", fontSize: 13 }} />
                 <input type="number" step="0.01" value={form.weightKg ?? ""} onChange={(e) => setForm((v) => ({ ...v, weightKg: e.target.value }))} placeholder="总重量(kg)" style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "8px 10px", fontSize: 13 }} />
               </div>
               <input value={form.trackingNo ?? ""} onChange={(e) => setForm((v) => ({ ...v, trackingNo: e.target.value }))} placeholder="预报单号（留空自动生成）" style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "8px 10px", fontSize: 13 }} />
