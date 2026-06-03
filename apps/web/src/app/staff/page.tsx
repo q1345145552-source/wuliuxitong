@@ -2063,27 +2063,34 @@ export default function StaffHomePage() {
       >
         <h2 style={{ marginTop: 0, fontSize: 18, color: "#111827", marginBottom: 12 }}>创建订单（员工）</h2>
         <div style={{ display: "grid", gap: 0, maxWidth: 760 }}>
+          <div style={{ position: "relative" }}>
+            <input
+              value={clientSearchKeyword}
+              onChange={(e) => {
+                setClientSearchKeyword(e.target.value);
+                const match = allClientOptions.find(
+                  (c) => `${c.id} - ${c.name}` === e.target.value
+                );
+                if (match) setForm((v) => ({ ...v, clientId: match.id }));
+              }}
+              onFocus={() => setClientSearchKeyword("")}
+              placeholder="搜索客户名字或ID…"
+              list="client-options"
+              autoComplete="off"
+              style={{ ...orderCreateInputStyle, width: "100%" }}
+            />
+            <datalist id="client-options">
+              {filteredClientOptions.map((item) => (
+                <option key={item.id} value={`${item.id} - ${item.name}`} />
+              ))}
+            </datalist>
+          </div>
           <input
-            value={clientSearchKeyword}
-            onChange={(e) => setClientSearchKeyword(e.target.value)}
-            placeholder="搜索客户名字或客户ID（可选）"
-            style={orderCreateInputStyle}
+            value={allClientOptions.find((c) => c.id === form.clientId)?.id ?? form.clientId}
+            readOnly
+            style={{ ...orderCreateInputStyle, background: "#f8fafc", color: "#000000", fontWeight: 600 }}
+            placeholder="已选唛头"
           />
-          <select
-            value={form.clientId}
-            onChange={(e) => setForm((v) => ({ ...v, clientId: e.target.value }))}
-            style={orderCreateInputStyle}
-          >
-            {filteredClientOptions.length === 0 ? (
-              <option value={form.clientId}>未找到匹配客户，请调整搜索关键词</option>
-            ) : (
-              filteredClientOptions.map((item) => (
-                <option key={item.id} value={item.id}>
-                  唛头：{item.id} - {item.name}
-                </option>
-              ))
-            )}
-          </select>
           <select
             value={form.warehouseId}
             onChange={(e) => setForm((v) => ({ ...v, warehouseId: e.target.value }))}
