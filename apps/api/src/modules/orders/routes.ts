@@ -1421,8 +1421,8 @@ export function registerOrderRoutes(app: MinimalHttpApp, _db: DatabaseSync): voi
         addresses: {
           select: {
             id: true,
-            receiverName: true,
-            receiverPhone: true,
+            contactName: true,
+            contactPhone: true,
             address: true,
             province: true,
             city: true,
