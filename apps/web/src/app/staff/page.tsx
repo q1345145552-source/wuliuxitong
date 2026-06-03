@@ -1112,13 +1112,14 @@ export default function StaffHomePage() {
     setLoading(true);
     setMessage("");
     try {
+      const hasProducts = staffFormProducts.length > 0 && staffFormProducts.some((p) => p.itemName.trim());
       const result = await createStaffOrder({
         clientId: form.clientId,
         warehouseId: form.warehouseId,
         batchNo,
         trackingNo: form.trackingNo.trim() || undefined,
         arrivedAt,
-        itemName,
+        itemName: hasProducts ? staffFormProducts[0].itemName.trim() : itemName,
         productQuantity,
         packageCount,
         packageUnit: form.packageUnit,
@@ -1129,6 +1130,7 @@ export default function StaffHomePage() {
         receiverNameTh: form.receiverNameTh,
         receiverPhoneTh: form.receiverPhoneTh,
         receiverAddressTh: form.receiverAddressTh,
+        products: hasProducts ? staffFormProducts.filter(p => p.itemName.trim()).map(p => ({ itemName: p.itemName.trim(), packageCount: Number(p.packageCount) || 1, lengthCm: p.lengthCm ? Number(p.lengthCm) : undefined, widthCm: p.widthCm ? Number(p.widthCm) : undefined, heightCm: p.heightCm ? Number(p.heightCm) : undefined, productQuantity: p.productQuantity ? Number(p.productQuantity) : undefined })) : undefined,
       });
       setCreateStepDone(true);
       setToast("订单创建成功");
@@ -2030,18 +2032,23 @@ export default function StaffHomePage() {
           <input value={form.trackingNo} onChange={(e) => setForm((v) => ({ ...v, trackingNo: e.target.value }))} placeholder="运单号（留空自动生成）" style={orderCreateInputStyle} />
           <input value={form.batchNo} onChange={(e) => setForm((v) => ({ ...v, batchNo: e.target.value }))} placeholder="柜号（可选）" style={orderCreateInputStyle} />
           <input value={form.itemName} onChange={(e) => setForm((v) => ({ ...v, itemName: e.target.value }))} placeholder="品名 *" style={orderCreateInputStyle} />
-          <input
-            value={
-              form.warehouseId === "wh_guangzhou_01"
-                ? "将自动生成：GZXTYYYYMMDD001"
-                : form.warehouseId === "wh_yiwu_01"
-                  ? "将自动生成：YWXTYYYYMMDD001"
-                  : "将自动生成：DGXTYYYYMMDD001"
-            }
-            readOnly
-            placeholder="湘泰运单号（系统自动生成）"
-            style={{ ...orderCreateInputStyle, color: "#000000", background: "#f8fafc" }}
-          />
+          <div style={{ border: "1px solid #e5e7eb", borderRadius: 8, padding: 10, background: "#f9fafb" }}>
+            <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 8, color: "#000000" }}>产品列表</div>
+            {staffFormProducts.length === 0 ? (
+              <input value={form.itemName} onChange={(e) => setForm((v) => ({ ...v, itemName: e.target.value }))} placeholder="品名 *" style={orderCreateInputStyle} />
+            ) : null}
+            {staffFormProducts.map((p, i) => (
+              <div key={i} style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr 1fr 1fr auto", gap: 4, marginBottom: 4, alignItems: "center" }}>
+                <input value={p.itemName} onChange={(e) => { const n = [...staffFormProducts]; n[i] = { ...n[i], itemName: e.target.value }; setStaffFormProducts(n); }} placeholder="品名" style={{ border: "1px solid #d1d5db", borderRadius: 4, padding: "4px 6px", fontSize: 12 }} />
+                <input type="number" value={p.packageCount} onChange={(e) => { const n = [...staffFormProducts]; n[i] = { ...n[i], packageCount: e.target.value }; setStaffFormProducts(n); }} placeholder="箱数" style={{ border: "1px solid #d1d5db", borderRadius: 4, padding: "4px 6px", fontSize: 12 }} />
+                <input type="number" step="0.01" value={p.lengthCm} onChange={(e) => { const n = [...staffFormProducts]; n[i] = { ...n[i], lengthCm: e.target.value }; setStaffFormProducts(n); }} placeholder="长" style={{ border: "1px solid #d1d5db", borderRadius: 4, padding: "4px 6px", fontSize: 12 }} />
+                <input type="number" step="0.01" value={p.widthCm} onChange={(e) => { const n = [...staffFormProducts]; n[i] = { ...n[i], widthCm: e.target.value }; setStaffFormProducts(n); }} placeholder="宽" style={{ border: "1px solid #d1d5db", borderRadius: 4, padding: "4px 6px", fontSize: 12 }} />
+                <input type="number" step="0.01" value={p.heightCm} onChange={(e) => { const n = [...staffFormProducts]; n[i] = { ...n[i], heightCm: e.target.value }; setStaffFormProducts(n); }} placeholder="高" style={{ border: "1px solid #d1d5db", borderRadius: 4, padding: "4px 6px", fontSize: 12 }} />
+                <button type="button" onClick={() => setStaffFormProducts((v) => v.filter((_, j) => j !== i))} style={{ border: "1px solid #fca5a5", borderRadius: 4, padding: "4px 6px", fontSize: 11, background: "#fff", color: "#dc2626", cursor: "pointer" }}>X</button>
+              </div>
+            ))}
+            <button type="button" onClick={() => setStaffFormProducts((v) => [...v, { itemName: "", packageCount: "", lengthCm: "", widthCm: "", heightCm: "", productQuantity: "" }])} style={{ border: "1px dashed #2563eb", borderRadius: 4, padding: "4px 10px", fontSize: 12, background: "#fff", color: "#2563eb", cursor: "pointer", marginTop: 4 }}>+ 添加产品</button>
+          </div>
           <input value={form.domesticOrderNo} onChange={(e) => setForm((v) => ({ ...v, domesticOrderNo: e.target.value }))} placeholder="国内单号" style={orderCreateInputStyle} />
           <input type="number" value={form.packageCount} onChange={(e) => setForm((v) => ({ ...v, packageCount: e.target.value }))} placeholder="包裹数量" style={orderCreateInputStyle} />
           <input type="number" value={form.productQuantity} onChange={(e) => setForm((v) => ({ ...v, productQuantity: e.target.value }))} placeholder="产品数量 *" style={orderCreateInputStyle} />
