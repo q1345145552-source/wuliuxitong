@@ -3415,24 +3415,29 @@ export default function StaffHomePage() {
               </select>
               <input value={form.trackingNo} onChange={(e) => setForm((v) => ({ ...v, trackingNo: e.target.value }))} placeholder="运单号（留空自动生成）" style={orderCreateInputStyle} />
               <input value={form.batchNo} onChange={(e) => setForm((v) => ({ ...v, batchNo: e.target.value }))} placeholder="柜号（可选）" style={orderCreateInputStyle} />
-              <input value={form.itemName} onChange={(e) => setForm((v) => ({ ...v, itemName: e.target.value }))} placeholder="品名 *" style={orderCreateInputStyle} />
+              <div style={{ border: "1px solid #e5e7eb", borderRadius: 8, padding: 10, background: "#f9fafb" }}>
+                <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 8, color: "#000000" }}>产品列表</div>
+                {staffFormProducts.length === 0 ? (
+                  <input value={form.itemName} onChange={(e) => setForm((v) => ({ ...v, itemName: e.target.value }))} placeholder="品名 *" style={orderCreateInputStyle} />
+                ) : null}
+                {staffFormProducts.map((p, i) => (
+                  <div key={i} style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr 1fr 1fr auto", gap: 4, marginBottom: 4, alignItems: "center" }}>
+                    <input value={p.itemName} onChange={(e) => { const n = [...staffFormProducts]; n[i] = { ...n[i], itemName: e.target.value }; setStaffFormProducts(n); }} placeholder="品名" style={{ border: "1px solid #d1d5db", borderRadius: 4, padding: "4px 6px", fontSize: 12 }} />
+                    <input type="number" value={p.packageCount} onChange={(e) => { const n = [...staffFormProducts]; n[i] = { ...n[i], packageCount: e.target.value }; setStaffFormProducts(n); }} placeholder="箱数" style={{ border: "1px solid #d1d5db", borderRadius: 4, padding: "4px 6px", fontSize: 12 }} />
+                    <input type="number" step="0.01" value={p.lengthCm} onChange={(e) => { const n = [...staffFormProducts]; n[i] = { ...n[i], lengthCm: e.target.value }; setStaffFormProducts(n); }} placeholder="长" style={{ border: "1px solid #d1d5db", borderRadius: 4, padding: "4px 6px", fontSize: 12 }} />
+                    <input type="number" step="0.01" value={p.widthCm} onChange={(e) => { const n = [...staffFormProducts]; n[i] = { ...n[i], widthCm: e.target.value }; setStaffFormProducts(n); }} placeholder="宽" style={{ border: "1px solid #d1d5db", borderRadius: 4, padding: "4px 6px", fontSize: 12 }} />
+                    <input type="number" step="0.01" value={p.heightCm} onChange={(e) => { const n = [...staffFormProducts]; n[i] = { ...n[i], heightCm: e.target.value }; setStaffFormProducts(n); }} placeholder="高" style={{ border: "1px solid #d1d5db", borderRadius: 4, padding: "4px 6px", fontSize: 12 }} />
+                    <button type="button" onClick={() => setStaffFormProducts((v) => v.filter((_, j) => j !== i))} style={{ border: "1px solid #fca5a5", borderRadius: 4, padding: "4px 6px", fontSize: 11, background: "#fff", color: "#dc2626", cursor: "pointer" }}>✕</button>
+                  </div>
+                ))}
+                <button type="button" onClick={() => setStaffFormProducts((v) => [...v, { itemName: "", packageCount: "", lengthCm: "", widthCm: "", heightCm: "", productQuantity: "" }])} style={{ border: "1px dashed #2563eb", borderRadius: 4, padding: "4px 10px", fontSize: 12, background: "#fff", color: "#2563eb", cursor: "pointer", marginTop: 4 }}>+ 添加产品</button>
+              </div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-                <input type="number" min={0} value={form.packageCount} onChange={(e) => setForm((v) => ({ ...v, packageCount: e.target.value }))} placeholder="包裹数量 *" style={orderCreateInputStyle} />
                 <select value={form.packageUnit} onChange={(e) => setForm((v) => ({ ...v, packageUnit: e.target.value as "bag" | "box" }))} style={orderCreateInputStyle}>
                   <option value="box">箱</option>
                   <option value="bag">袋</option>
                 </select>
-              </div>
-              <input type="number" min={0} value={form.productQuantity} onChange={(e) => setForm((v) => ({ ...v, productQuantity: e.target.value }))} placeholder="产品数量 *" style={orderCreateInputStyle} />
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 6 }}>
-                <input type="number" min={0} step="0.01" value={form.lengthCm} onChange={(e) => updateOrderDimensions({ lengthCm: e.target.value })} placeholder="长(cm)" style={orderCreateInputStyle} />
-                <input type="number" min={0} step="0.01" value={form.widthCm} onChange={(e) => updateOrderDimensions({ widthCm: e.target.value })} placeholder="宽(cm)" style={orderCreateInputStyle} />
-                <input type="number" min={0} step="0.01" value={form.heightCm} onChange={(e) => updateOrderDimensions({ heightCm: e.target.value })} placeholder="高(cm)" style={orderCreateInputStyle} />
-              </div>
-              <div style={{ fontSize: 11, color: "#000000", marginTop: -4 }}>总体积 = 单件体积 × 件数，自动填入</div>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-                <input type="number" step="0.01" value={form.weightKg} onChange={(e) => setForm((v) => ({ ...v, weightKg: e.target.value }))} placeholder="重量（kg）*" style={orderCreateInputStyle} />
-                <input readOnly value={form.volumeM3} placeholder="体积（m³）自动计算" style={{ ...orderCreateInputStyle, color: "#000000", background: "#f8fafc" }} />
+                <input type="number" step="0.01" value={form.weightKg} onChange={(e) => setForm((v) => ({ ...v, weightKg: e.target.value }))} placeholder="总重量（kg）" style={orderCreateInputStyle} />
               </div>
               <select value={form.transportMode} onChange={(e) => setForm((v) => ({ ...v, transportMode: e.target.value as "sea" | "land" }))} style={orderCreateInputStyle}>
                 <option value="sea">海运</option>
