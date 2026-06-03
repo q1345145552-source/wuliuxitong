@@ -3639,10 +3639,7 @@ export default function StaffHomePage() {
               <div style={{ fontSize: 11, color: "#000000", marginTop: -4 }}>到仓日期 *</div>
               <input value={form.domesticOrderNo} onChange={(e) => setForm((v) => ({ ...v, domesticOrderNo: e.target.value }))} placeholder="国内单号" style={orderCreateInputStyle} />
               <hr style={{ border: "none", borderTop: "1px solid #e5e7eb", margin: "8px 0" }} />
-              <div style={{ fontSize: 13, fontWeight: 500, color: "#000000" }}>泰国收件人信息</div>
-              <input value={form.receiverNameTh} onChange={(e) => setForm((v) => ({ ...v, receiverNameTh: e.target.value }))} placeholder="收件人姓名 *" style={orderCreateInputStyle} />
-              <input value={form.receiverPhoneTh} onChange={(e) => setForm((v) => ({ ...v, receiverPhoneTh: e.target.value }))} placeholder="收件人电话 *" style={orderCreateInputStyle} />
-              <textarea value={form.receiverAddressTh} onChange={(e) => setForm((v) => ({ ...v, receiverAddressTh: e.target.value }))} placeholder="收件人地址（泰国）*" rows={2} style={{ ...orderCreateInputStyle, resize: "vertical", minHeight: 48 }} />
+  r="收件人地址（泰国）*" rows={2} style={{ ...orderCreateInputStyle, resize: "vertical", minHeight: 48 }} />
             </div>
             {/* 产品图片上传 */}
             <div style={{ marginTop: 10, border: "1px dashed #d1d5db", borderRadius: 8, padding: 10 }}>
