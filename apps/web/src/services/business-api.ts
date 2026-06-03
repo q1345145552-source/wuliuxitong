@@ -128,6 +128,17 @@ export interface ShipmentItem {
   paymentStatus?: "paid" | "unpaid";
   canEdit?: boolean;
   productImages?: OrderProductImageItem[];
+  products?: OrderProductItem[];
+}
+
+export interface OrderProductItem {
+  id: string;
+  itemName: string;
+  packageCount: number;
+  lengthCm?: number | null;
+  widthCm?: number | null;
+  heightCm?: number | null;
+  productQuantity?: number | null;
 }
 
 export interface StaffInboundPhotoItem {
@@ -176,6 +187,7 @@ export interface OrderItem {
   createdAt: string;
   updatedAt?: string;
   productImages?: OrderProductImageItem[];
+  products?: OrderProductItem[];
 }
 
 export interface AdminOverview {

@@ -717,6 +717,13 @@ export default function ClientHomePage() {
                       
                       {isShipped && item.trackingNo ? <div>运单号：{item.trackingNo}</div> : null}
                     </div>
+                    {(item.products?.length ?? 0) > 1 && (
+                      <div style={{ marginBottom: 8, fontSize: 12, color: "#000000", background: "#f8fafc", borderRadius: 6, padding: "6px 8px" }}>
+                        {item.products!.map((p, i) => (
+                          <div key={p.id || i}>{p.itemName} ×{p.packageCount}箱</div>
+                        ))}
+                      </div>
+                    )}
                     {(item.productImages?.length ?? 0) > 0 && (
                       <div style={{ display: "flex", gap: 4, marginBottom: 8, flexWrap: "wrap" }}>
                         {item.productImages!.map((img) => (
@@ -1361,6 +1368,13 @@ export default function ClientHomePage() {
                       
                       {isShipped && item.trackingNo ? <div>运单号：{item.trackingNo}</div> : null}
                     </div>
+                    {(item.products?.length ?? 0) > 1 && (
+                      <div style={{ marginBottom: 8, fontSize: 12, color: "#000000", background: "#f8fafc", borderRadius: 6, padding: "6px 8px" }}>
+                        {item.products!.map((p, i) => (
+                          <div key={p.id || i}>{p.itemName} ×{p.packageCount}箱</div>
+                        ))}
+                      </div>
+                    )}
                     {(item.productImages?.length ?? 0) > 0 && (
                       <div style={{ display: "flex", gap: 4, marginBottom: 8, flexWrap: "wrap" }}>
                         {item.productImages!.map((img) => (
