@@ -2441,9 +2441,7 @@ export default function ClientHomePage() {
                 <option value="sea">海运</option>
                 <option value="land">陆运</option>
               </select>
-              <input value={form.receiverNameTh} onChange={(e) => setForm((v) => ({ ...v, receiverNameTh: e.target.value }))} placeholder="收件人（泰国）" style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "8px 10px", fontSize: 13 }} />
-              <input value={form.receiverPhoneTh} onChange={(e) => setForm((v) => ({ ...v, receiverPhoneTh: e.target.value }))} placeholder="收件电话（泰国）" style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "8px 10px", fontSize: 13 }} />
-              <textarea value={form.receiverAddressTh} onChange={(e) => setForm((v) => ({ ...v, receiverAddressTh: e.target.value }))} placeholder="收件地址（泰国）" rows={2} style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "8px 10px", fontSize: 13, resize: "vertical" }} />
+              
             </div>
             {/* 产品图片上传 */}
             <div style={{ marginTop: 10, border: "1px dashed #d1d5db", borderRadius: 8, padding: 10 }}>
