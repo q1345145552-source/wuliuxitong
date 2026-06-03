@@ -150,12 +150,11 @@ export function registerOrderRoutes(app: MinimalHttpApp, _db: DatabaseSync): voi
           lengthCm: p.lengthCm ?? null,
           widthCm: p.widthCm ?? null,
           heightCm: p.heightCm ?? null,
-          productQuantity: p.productQuantity ?? null,
-          sortOrder: i,
-        }))
+          productQuantity: p.productQuantity ?? null, weightKg: p.weightKg ?? null, sortOrder: i }))
       : [{ itemName: body.itemName!.trim(), packageCount: Number(body.packageCount ?? 0), lengthCm: null, widthCm: null, heightCm: null, productQuantity: null, sortOrder: 0 }];
 
     const totalPkg = products.reduce((s, p) => s + p.packageCount, 0);
+    const totalWeight = products.reduce((s, p) => s + (p.weightKg ?? 0) * p.packageCount, body.weightKg ?? 0);
     const totalVol = products.reduce((s, p) => {
       if (p.lengthCm && p.widthCm && p.heightCm) return s + (p.lengthCm * p.widthCm * p.heightCm * p.packageCount) / 1_000_000;
       return s;
@@ -191,7 +190,7 @@ export function registerOrderRoutes(app: MinimalHttpApp, _db: DatabaseSync): voi
         productQuantity: 0,
         packageCount: totalPkg,
         packageUnit: body.packageUnit ?? "box",
-        weightKg: manualWeightKg as unknown as Prisma.Decimal | null,
+        weightKg: totalWeight > 0 ? (totalWeight as unknown as Prisma.Decimal) : (manualWeightKg as unknown as Prisma.Decimal | null),
         volumeM3: totalVol > 0 ? totalVol : (manualVolumeM3 as unknown as Prisma.Decimal | null),
         receivableAmountCny: null,
         receivableCurrency: "CNY",
@@ -409,13 +408,12 @@ export function registerOrderRoutes(app: MinimalHttpApp, _db: DatabaseSync): voi
           lengthCm: p.lengthCm ?? null,
           widthCm: p.widthCm ?? null,
           heightCm: p.heightCm ?? null,
-          productQuantity: p.productQuantity ?? null,
-          sortOrder: i,
-        }))
+          productQuantity: p.productQuantity ?? null, weightKg: p.weightKg ?? null, sortOrder: i }))
       : body.itemName ? [{ itemName: body.itemName.trim(), packageCount: Number(body.packageCount ?? 0), lengthCm: null, widthCm: null, heightCm: null, productQuantity: null, sortOrder: 0 }] : [];
 
     const prName = staffProducts[0]?.itemName ?? body.itemName ?? "";
     const prPkg = staffProducts.reduce((s, p) => s + p.packageCount, 0) || Number(body.packageCount ?? 0);
+    const prWeight = staffProducts.reduce((s, p) => s + (p.weightKg ?? 0) * p.packageCount, 0);
     const prVol = staffProducts.reduce((s, p) => {
       if (p.lengthCm && p.widthCm && p.heightCm) return s + (p.lengthCm * p.widthCm * p.heightCm * p.packageCount) / 1_000_000;
       return s;
@@ -1346,7 +1344,7 @@ export function registerOrderRoutes(app: MinimalHttpApp, _db: DatabaseSync): voi
         productQuantity,
         packageCount,
         packageUnit,
-        weightKg: weightKg as unknown as Prisma.Decimal | null,
+        weightKg: prWeight > 0 ? (prWeight as unknown as Prisma.Decimal) : (weightKg as unknown as Prisma.Decimal | null),
         volumeM3: prVol > 0 ? (prVol as unknown as Prisma.Decimal) : (volumeM3 as unknown as Prisma.Decimal | null),
         receivableAmountCny: receivableAmountCny as unknown as Prisma.Decimal,
         receivableCurrency,
