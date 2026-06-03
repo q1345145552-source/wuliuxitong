@@ -2018,7 +2018,7 @@ export default function StaffHomePage() {
             ) : (
               filteredClientOptions.map((item) => (
                 <option key={item.id} value={item.id}>
-                  客户名字：{item.name}
+                  唛头：{item.id} - {item.name}
                 </option>
               ))
             )}
@@ -3421,7 +3421,7 @@ export default function StaffHomePage() {
       {/* 创建订单弹窗 */}
       {showCreateModal ? (
         <div style={{ position: "fixed", inset: 0, zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(0,0,0,0.4)", padding: 16 }}>
-          <div style={{ width: "100%", maxWidth: 720, maxHeight: "90vh", overflow: "auto", background: "#fff", borderRadius: 12, padding: 24, boxShadow: "0 20px 60px rgba(0,0,0,0.3)" }}>
+          <div style={{ width: "100%", maxWidth: 1000, maxHeight: "90vh", overflow: "auto", background: "#fff", borderRadius: 12, padding: 24, boxShadow: "0 20px 60px rgba(0,0,0,0.3)" }}>
             <h3 style={{ margin: "0 0 16px", fontSize: 18, fontWeight: 600 }}>创建订单</h3>
             <div style={{ display: "grid", gap: 8 }}>
               <input value={clientSearchKeyword} onChange={(e) => setClientSearchKeyword(e.target.value)} placeholder="搜索客户名字或ID" style={orderCreateInputStyle} />
