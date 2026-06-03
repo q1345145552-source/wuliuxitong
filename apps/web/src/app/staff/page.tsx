@@ -667,7 +667,7 @@ export default function StaffHomePage() {
   /**
    * 更新长宽高并同步写入由尺寸换算得到的体积（m³）。
    */
-  const updateOrderDimensions = (patch: Partial<Pick<typeof form, "lengthCm" | "widthCm" | "heightCm">>) => {
+  const updateOrderDimensions = (patch: Partial<Pick<typeof form, "lengthCm" | "widthCm" | "heightCm" | "packageCount">>) => {
     setForm((prev) => {
       const next = { ...prev, ...patch };
       const l = Number(String(next.lengthCm).trim());
@@ -2077,7 +2077,7 @@ export default function StaffHomePage() {
             💡 总体积与总重量由后端根据产品长宽高×箱数和单箱重量×箱数自动计算
           </div>
           <input value={form.domesticOrderNo} onChange={(e) => setForm((v) => ({ ...v, domesticOrderNo: e.target.value }))} placeholder="国内单号" style={orderCreateInputStyle} />
-          <input type="number" value={form.packageCount} onChange={(e) => setForm((v) => ({ ...v, packageCount: e.target.value }))} placeholder="包裹数量" style={orderCreateInputStyle} />
+          <input type="number" value={form.packageCount} onChange={(e) => updateOrderDimensions({ packageCount: e.target.value })} placeholder="包裹数量" style={orderCreateInputStyle} />
           <input type="number" value={form.productQuantity} onChange={(e) => setForm((v) => ({ ...v, productQuantity: e.target.value }))} placeholder="产品数量 *" style={orderCreateInputStyle} />
           <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 8 }}>
             <input
