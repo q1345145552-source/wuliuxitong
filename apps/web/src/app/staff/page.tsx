@@ -3432,7 +3432,7 @@ export default function StaffHomePage() {
                   <option value={form.clientId}>未找到匹配客户</option>
                 ) : (
                   filteredClientOptions.map((item) => (
-                    <option key={item.id} value={item.id}>客户：{item.name}</option>
+                    <option key={item.id} value={item.id}>唛头：{item.id} - {item.name}</option>
                   ))
                 )}
               </select>
