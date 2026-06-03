@@ -3394,6 +3394,36 @@ export default function StaffHomePage() {
                     </div>
                   ))
                 )}
+                {/* 操作按钮 */}
+                <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
+                  <button type="button" onClick={() => { setShowAddAddress(client.id); setAddrForm({ contactName: "", contactPhone: "", addressDetail: "", label: "" }); }} style={{ border: "1px solid #2563eb", borderRadius: 4, padding: "4px 8px", fontSize: 11, background: "#eff6ff", color: "#2563eb", cursor: "pointer" }}>＋ 添加地址</button>
+                  <button type="button" onClick={() => setEditingNote({ clientId: client.id, content: clientNotes[client.id]?.content ?? "" })} style={{ border: "1px solid #8b5cf6", borderRadius: 4, padding: "4px 8px", fontSize: 11, background: "#f5f3ff", color: "#8b5cf6", cursor: "pointer" }}>✎ 编辑备注</button>
+                </div>
+                {/* 添加地址表单 */}
+                {showAddAddress === client.id && (
+                  <div style={{ marginTop: 6, padding: 8, background: "#f0f9ff", borderRadius: 6, border: "1px solid #bae6fd" }}>
+                    <div style={{ display: "grid", gap: 4 }}>
+                      <input value={addrForm.contactName} onChange={(e) => setAddrForm((v) => ({ ...v, contactName: e.target.value }))} placeholder="联系人姓名" style={{ border: "1px solid #d1d5db", borderRadius: 4, padding: "4px 6px", fontSize: 11 }} />
+                      <input value={addrForm.contactPhone} onChange={(e) => setAddrForm((v) => ({ ...v, contactPhone: e.target.value }))} placeholder="联系电话" style={{ border: "1px solid #d1d5db", borderRadius: 4, padding: "4px 6px", fontSize: 11 }} />
+                      <input value={addrForm.addressDetail} onChange={(e) => setAddrForm((v) => ({ ...v, addressDetail: e.target.value }))} placeholder="详细地址" style={{ border: "1px solid #d1d5db", borderRadius: 4, padding: "4px 6px", fontSize: 11 }} />
+                      <input value={addrForm.label} onChange={(e) => setAddrForm((v) => ({ ...v, label: e.target.value }))} placeholder="标签（可选，如：公司/家）" style={{ border: "1px solid #d1d5db", borderRadius: 4, padding: "4px 6px", fontSize: 11 }} />
+                      <div style={{ display: "flex", gap: 4, justifyContent: "flex-end" }}>
+                        <button type="button" onClick={() => setShowAddAddress(null)} style={{ border: "1px solid #d1d5db", borderRadius: 4, padding: "3px 8px", fontSize: 11, background: "#fff", cursor: "pointer" }}>取消</button>
+                        <button type="button" onClick={() => saveAddr(client.id)} style={{ border: "none", borderRadius: 4, padding: "3px 8px", fontSize: 11, background: "#2563eb", color: "#fff", cursor: "pointer" }}>保存</button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+                {/* 编辑备注表单 */}
+                {editingNote?.clientId === client.id && (
+                  <div style={{ marginTop: 6, padding: 8, background: "#faf5ff", borderRadius: 6, border: "1px solid #e9d5ff" }}>
+                    <textarea value={editingNote.content} onChange={(e) => setEditingNote((v) => v ? { ...v, content: e.target.value } : null)} rows={3} placeholder="输入备注..." style={{ border: "1px solid #d1d5db", borderRadius: 4, padding: "4px 6px", fontSize: 11, width: "100%", resize: "vertical" }} />
+                    <div style={{ display: "flex", gap: 4, justifyContent: "flex-end", marginTop: 4 }}>
+                      <button type="button" onClick={() => setEditingNote(null)} style={{ border: "1px solid #d1d5db", borderRadius: 4, padding: "3px 8px", fontSize: 11, background: "#fff", cursor: "pointer" }}>取消</button>
+                      <button type="button" onClick={() => saveNote(client.id, editingNote.content)} style={{ border: "none", borderRadius: 4, padding: "3px 8px", fontSize: 11, background: "#8b5cf6", color: "#fff", cursor: "pointer" }}>保存</button>
+                    </div>
+                  </div>
+                )}
                 {/* 备注（只读） */}
                 <div style={{ marginTop: 8, borderTop: "1px solid #e5e7eb", paddingTop: 8 }}>
                   <div style={{ fontSize: 11, color: "#6b7280", marginBottom: 4 }}>备注</div>
