@@ -325,6 +325,68 @@ main {
   .sidebar-overlay.open {
     display: block;
   }
+
+  /* 手机端表格：水平滚动 */
+  table {
+    display: block;
+    overflow-x: auto;
+    white-space: nowrap;
+    -webkit-overflow-scrolling: touch;
+    max-width: 100%;
+    font-size: 12px;
+  }
+  thead, tbody, tr, th, td {
+    white-space: nowrap;
+  }
+
+  /* 内容区内边距缩减 */
+  .dashboard-content > * {
+    padding-left: 0;
+    padding-right: 0;
+  }
+
+  /* 卡片式面板手机全宽 */
+  .dashboard-panel,
+  .dashboard-grid-2 {
+    grid-template-columns: 1fr;
+    gap: 8px;
+    padding: 10px;
+  }
+
+  /* 表单网格手机端单列 */
+  .order-fields,
+  .prealert-fields {
+    grid-template-columns: 1fr;
+    gap: 6px;
+  }
+
+  /* KPI 卡片更紧凑 */
+  .order-summary-row {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 4px;
+    font-size: 12px;
+  }
+
+  /* 按钮触控区域更大 */
+  button {
+    min-height: 36px;
+    touch-action: manipulation;
+  }
+
+  /* 输入框触控友好 */
+  input, select, textarea {
+    font-size: 16px;
+  }
+
+  /* 页面标题手机缩小 */
+  .glass-topbar-title {
+    font-size: 13px;
+  }
+
+  /* 隐藏非必要信息列 (保留在表格但用户可横滑) */
+  .hide-on-mobile {
+    display: none;
+  }
 }
 
 header {
