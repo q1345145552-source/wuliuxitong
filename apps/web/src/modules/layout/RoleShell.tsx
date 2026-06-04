@@ -51,6 +51,7 @@ export default function RoleShell(props: {
   const [session, setSession] = useState<MockSession | null>(null);
   const [currentPath, setCurrentPath] = useState("");
   const [currentHash, setCurrentHash] = useState("");
+  const [sidebarOpen, setSidebarOpen] = useState(false);
 
   useEffect(() => {
     const next = getOptionalSession();
@@ -129,9 +130,15 @@ export default function RoleShell(props: {
     );
   }
 
+  const closeSidebar = () => setSidebarOpen(false);
+
   return (
     <main className="dashboard-layout">
-      <aside className="dashboard-sidebar">
+      {/* 手机端遮罩 */}
+      <div className={`sidebar-overlay ${sidebarOpen ? "open" : ""}`} onClick={closeSidebar} />
+
+      <aside className={`dashboard-sidebar ${sidebarOpen ? "open" : ""}`}>
+        <button type="button" className="sidebar-close-btn" onClick={closeSidebar}>✕</button>
         <h2 className="dashboard-sidebar-title">工作台导航</h2>
         <div className="dashboard-sidebar-group">
           {roleMenus[allowedRole].map((item) => (
@@ -139,6 +146,7 @@ export default function RoleShell(props: {
               key={item.id}
               href={item.href}
               className={`dashboard-sidebar-link ${currentPath === item.href ? "dashboard-sidebar-link-active" : ""}`}
+              onClick={closeSidebar}
             >
               {(() => {
                 const Icon = iconForMenuId(item.id);
@@ -155,6 +163,7 @@ export default function RoleShell(props: {
               key={item.id}
               href={item.href}
               className={`dashboard-sidebar-link ${currentPath + currentHash === item.href ? "dashboard-sidebar-link-active" : ""}`}
+              onClick={closeSidebar}
             >
               {(() => {
                 const Icon = iconForMenuId(item.id);
@@ -171,6 +180,7 @@ export default function RoleShell(props: {
               key={item.id}
               href={item.href}
               className={`dashboard-sidebar-link ${currentPath === item.href ? "dashboard-sidebar-link-active" : ""}`}
+              onClick={closeSidebar}
             >
               {(() => {
                 const Icon = iconForMenuId(item.id);
@@ -196,6 +206,11 @@ export default function RoleShell(props: {
       </aside>
       <div className="dashboard-content">
         <div className="glass-topbar">
+          <button type="button" className="mobile-hamburger" onClick={() => setSidebarOpen(true)}>
+            <span className="hamburger-line" />
+            <span className="hamburger-line" />
+            <span className="hamburger-line" />
+          </button>
           <span className="glass-topbar-title">{title}</span>
           <span className="glass-topbar-meta">{session.userId} · {session.role}</span>
         </div>

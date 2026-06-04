@@ -229,11 +229,15 @@ main {
   color: #000000;
 }
 
+/* 桌面端隐藏手机元素 */
+.mobile-hamburger,
+.sidebar-close-btn,
+.sidebar-overlay { display: none; }
+
 @media (max-width: 900px) {
   .home-layout {
     flex-direction: column;
   }
-
   .home-sidebar {
     width: 100%;
     min-width: 0;
@@ -242,13 +246,84 @@ main {
 
   .dashboard-layout {
     flex-direction: column;
+    padding: 0;
+    gap: 0;
+  }
+  .dashboard-content {
+    height: 100vh;
+    height: 100dvh;
+  }
+  .glass-topbar {
+    top: 0;
+    border-radius: 0;
+    margin-bottom: 8px;
+    padding: 10px 12px;
   }
 
+  /* 汉堡菜单 */
+  .mobile-hamburger {
+    display: inline-flex;
+    flex-direction: column;
+    gap: 4px;
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 4px;
+  }
+  .hamburger-line {
+    display: block;
+    width: 20px;
+    height: 2px;
+    border-radius: 2px;
+    background: #1e3a8a;
+  }
+
+  /* 抽屉式侧边栏 */
   .dashboard-sidebar {
-    width: 100%;
-    min-width: 0;
-    min-height: auto;
-    position: static;
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 280px;
+    max-width: 85vw;
+    height: 100vh;
+    height: 100dvh;
+    z-index: 100;
+    transform: translateX(-100%);
+    transition: transform 0.25s ease;
+    border-radius: 0;
+    padding-top: 50px;
+  }
+  .dashboard-sidebar.open {
+    transform: translateX(0);
+  }
+
+  /* 关闭按钮 */
+  .sidebar-close-btn {
+    display: block;
+    position: absolute;
+    top: 10px;
+    right: 12px;
+    background: none;
+    border: 1px solid #d1d5db;
+    border-radius: 6px;
+    width: 32px;
+    height: 32px;
+    font-size: 16px;
+    color: #374151;
+    cursor: pointer;
+    z-index: 101;
+  }
+
+  /* 遮罩 */
+  .sidebar-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.4);
+    z-index: 99;
+  }
+  .sidebar-overlay.open {
+    display: block;
   }
 }
 
