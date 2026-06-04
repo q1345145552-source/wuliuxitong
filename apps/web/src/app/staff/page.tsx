@@ -690,9 +690,6 @@ export default function StaffHomePage() {
     domesticOrderNo: "",
     packageUnit: "box" as "bag" | "box",
     transportMode: "land" as "sea" | "land",
-    receiverNameTh: "Anan",
-    receiverPhoneTh: "0820000000",
-    receiverAddressTh: "Chiang Mai",
   });
 
   /**
@@ -1173,9 +1170,6 @@ export default function StaffHomePage() {
         volumeM3,
         domesticTrackingNo: form.domesticOrderNo.trim() || undefined,
         transportMode: form.transportMode,
-        receiverNameTh: form.receiverNameTh,
-        receiverPhoneTh: form.receiverPhoneTh,
-        receiverAddressTh: form.receiverAddressTh,
         products: hasProducts ? staffFormProducts.filter(p => p.itemName.trim()).map(p => ({ itemName: p.itemName.trim(), packageCount: Number(p.packageCount) || 1, lengthCm: p.lengthCm ? Number(p.lengthCm) : undefined, widthCm: p.widthCm ? Number(p.widthCm) : undefined, heightCm: p.heightCm ? Number(p.heightCm) : undefined, productQuantity: p.productQuantity ? Number(p.productQuantity) : undefined, weightKg: p.weightKg ? Number(p.weightKg) : undefined })) : undefined,
       });
       // Upload product images
