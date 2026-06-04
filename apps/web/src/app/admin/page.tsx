@@ -670,7 +670,7 @@ export default function AdminHomePage() {
     }
     const rows = source.map((o) => ({
       订单号: o.id,
-      客户: o.clientName ?? o.clientId ?? "-",
+      客户: o.clientId ?? "-",
       品名: o.itemName,
       运输方式: o.transportMode,
       国内单号: o.domesticTrackingNo ?? "-",
@@ -1198,7 +1198,7 @@ export default function AdminHomePage() {
                   <input value={orderEditForm.clientId} onChange={(e) => setOrderEditForm((v) => ({ ...v, clientId: e.target.value }))} placeholder="唛头（留空不修改）" list="admin-client-options" autoComplete="off" style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 10px" }} />
                   <datalist id="admin-client-options">
                     {clientList.map((c) => (
-                      <option key={c.id} value={c.id}>{c.name ?? c.id}</option>
+                      <option key={c.id} value={c.id}>{c.id}</option>
                     ))}
                   </datalist>
                   <input value={orderEditForm.trackingNo} onChange={(e) => setOrderEditForm((v) => ({ ...v, trackingNo: e.target.value.toUpperCase() }))} placeholder="运单号（如 YW... / DG...）" style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 10px" }} />
@@ -1284,7 +1284,7 @@ export default function AdminHomePage() {
                     <td style={{ padding: "8px 6px", fontWeight: 600, color: "#1e3a8a", whiteSpace: "nowrap" }}>
                       {o.trackingNo ?? "—"}
                     </td>
-                    <td style={{ padding: "8px 6px", color: "#000000" }}>{o.clientName ?? o.clientId ?? "—"}</td>
+                    <td style={{ padding: "8px 6px", color: "#000000", fontWeight: 600 }}>{o.clientId ?? "—"}</td>
                     <td style={{ padding: "8px 6px", whiteSpace: "nowrap" }}>{shipmentStatusLabel(o.currentStatus)}</td>
                     <td style={{ padding: "8px 6px", whiteSpace: "nowrap" }}>
                       {o.receivableAmountCny != null
