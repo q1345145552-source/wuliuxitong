@@ -168,6 +168,7 @@ export default function AdminHomePage() {
   });
   const [editingOrderId, setEditingOrderId] = useState("");
   const [orderEditForm, setOrderEditForm] = useState({
+    clientId: "",
     trackingNo: "",
     batchNo: "",
     warehouseId: "wh_yiwu_01",
@@ -314,6 +315,7 @@ export default function AdminHomePage() {
   const startEditOrder = (order: AdminOrderItem) => {
     setEditingOrderId(order.id);
     setOrderEditForm({
+      clientId: order.clientId ?? "",
       trackingNo: order.trackingNo ?? "",
       batchNo: order.batchNo ?? "",
       warehouseId: order.warehouseId ?? "wh_yiwu_01",
@@ -362,6 +364,7 @@ export default function AdminHomePage() {
     try {
       await updateAdminOrder({
         orderId: editingOrderId,
+        clientId: orderEditForm.clientId.trim() || undefined,
         itemName: orderEditForm.itemName.trim(),
         trackingNo: orderEditForm.trackingNo.trim() || undefined,
         batchNo: orderEditForm.batchNo.trim() || undefined,
@@ -1192,6 +1195,12 @@ export default function AdminHomePage() {
                   </div>
                 )}
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 8 }}>
+                  <select value={orderEditForm.clientId} onChange={(e) => setOrderEditForm((v) => ({ ...v, clientId: e.target.value }))} style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 10px" }}>
+                    <option value="">唛头（不修改）</option>
+                    {clientList.filter(c => c.role === "client").map((c) => (
+                      <option key={c.id} value={c.id}>{c.name ?? c.id}</option>
+                    ))}
+                  </select>
                   <input value={orderEditForm.trackingNo} onChange={(e) => setOrderEditForm((v) => ({ ...v, trackingNo: e.target.value.toUpperCase() }))} placeholder="运单号（如 YW... / DG...）" style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 10px" }} />
                   <input value={orderEditForm.batchNo} onChange={(e) => setOrderEditForm((v) => ({ ...v, batchNo: e.target.value }))} placeholder="批次号" style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 10px" }} />
                   <select value={orderEditForm.warehouseId} onChange={(e) => setOrderEditForm((v) => ({ ...v, warehouseId: e.target.value }))} style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 10px" }}>

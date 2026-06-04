@@ -924,6 +924,7 @@ export async function fetchAdminOrders(): Promise<AdminOrderItem[]> {
  */
 export async function updateAdminOrder(payload: {
   orderId: string;
+  clientId?: string;
   itemName: string;
   transportMode: "sea" | "land";
   domesticTrackingNo?: string;

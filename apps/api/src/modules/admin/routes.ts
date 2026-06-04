@@ -282,6 +282,7 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
 
     const body = (req.body ?? {}) as {
       orderId?: string;
+      clientId?: string;
       itemName?: string;
       transportMode?: "sea" | "land";
       domesticTrackingNo?: string | null;
@@ -431,6 +432,7 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
         data: {
           warehouseId,
           batchNo,
+          clientId: body.clientId?.trim() || undefined,
           itemName,
           transportMode,
           domesticTrackingNo,
