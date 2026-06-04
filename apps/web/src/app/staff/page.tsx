@@ -1122,17 +1122,20 @@ export default function StaffHomePage() {
   }, []);
 
   const submitOrder = async () => {
-    const itemName = form.itemName.trim();
+    const hasProducts = staffFormProducts.length > 0 && staffFormProducts.some((p) => p.itemName.trim());
+    const itemName = hasProducts ? staffFormProducts[0].itemName.trim() : form.itemName.trim();
     const batchNo = form.batchNo.trim();
     const arrivedAt = form.arrivedAt.trim();
-    const packageCount = Number(form.packageCount.trim());
+    const packageCount = hasProducts
+      ? staffFormProducts.reduce((s, p) => s + (Number(p.packageCount) || 1), 0)
+      : Number(form.packageCount.trim());
     const productQuantityText = form.productQuantity.trim();
     const productQuantity = productQuantityText ? Number(productQuantityText) : undefined;
     const volumeM3 = Number(form.volumeM3.trim());
     const weightKg = Number(form.weightKg.trim());
 
-    if (!itemName || !arrivedAt || !form.warehouseId) {
-      setMessage("请先完整填写创建订单信息。");
+    if (!itemName || !arrivedAt || !form.warehouseId || !form.clientId || !form.transportMode) {
+      setMessage("请先完整填写创建订单信息（唛头、品名、仓库、运输方式、到仓日期为必填）。");
       return;
     }
     if (
@@ -1141,7 +1144,7 @@ export default function StaffHomePage() {
       setMessage("数量、重量、体积请输入有效数字。");
       return;
     }
-    if (!productQuantityText || Number(productQuantityText) <= 0) {
+    if (!hasProducts && (!productQuantityText || Number(productQuantityText) <= 0)) {
       setMessage("产品数量必须大于 0。");
       return;
     }
@@ -1155,7 +1158,6 @@ export default function StaffHomePage() {
     setLoading(true);
     setMessage("");
     try {
-      const hasProducts = staffFormProducts.length > 0 && staffFormProducts.some((p) => p.itemName.trim());
       const result = await createStaffOrder({
         clientId: form.clientId,
         warehouseId: form.warehouseId,
