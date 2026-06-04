@@ -178,17 +178,6 @@ export function registerShipmentRoutes(app: MinimalHttpApp): void {
       fail(res, 404, "NOT_FOUND", "shipment not found");
       return;
     }
-    if (auth.role === "staff") {
-      const user = await prisma.user.findUnique({
-        where: { id: auth.userId },
-        select: { warehouseIds: true },
-      });
-      const editableWarehouses = parseJsonArray(user?.warehouseIds);
-      if (!editableWarehouses.includes(shipment.warehouseId)) {
-        fail(res, 403, "FORBIDDEN", "cross warehouse update is not allowed");
-        return;
-      }
-    }
     const updated = await prisma.shipment.update({
       where: { id: shipmentId },
       data: { containerNo },
@@ -498,18 +487,6 @@ export function registerShipmentRoutes(app: MinimalHttpApp): void {
       return;
     }
 
-    if (auth.role === "staff") {
-      const user = await prisma.user.findUnique({
-        where: { id: auth.userId },
-        select: { warehouseIds: true },
-      });
-      const editableWarehouses = parseJsonArray(user?.warehouseIds);
-      const denied = targetShipments.some((shipment) => !editableWarehouses.includes(shipment.warehouseId));
-      if (denied) {
-        fail(res, 403, "FORBIDDEN", "cross warehouse update is not allowed");
-        return;
-      }
-    }
 
     const invalid = targetShipments.some((shipment) => !canTransit(shipment.currentStatus, body.toStatus!));
     if (invalid) {

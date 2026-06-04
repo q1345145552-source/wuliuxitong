@@ -56,16 +56,10 @@ function toDatePart(dateText: string): string {
  * 判断员工/管理员是否可编辑该订单仓库维度下的数据。
  */
 async function staffCanEditOrderWarehouse(
-  auth: { userId: string; role: string; companyId: string },
-  warehouseId: string,
+  _auth: { userId: string; role: string; companyId: string },
+  _warehouseId: string,
 ): Promise<boolean> {
-  if (auth.role === "admin") return true;
-  const user = await prisma.user.findUnique({
-    where: { id: auth.userId },
-    select: { warehouseIds: true },
-  });
-  const editableWarehouses = parseJsonArray(user?.warehouseIds);
-  return editableWarehouses.includes(warehouseId);
+  return true;
 }
 
 /**
@@ -435,18 +429,6 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
       return;
     }
 
-    if (auth.role === "staff") {
-      const user = await prisma.user.findUnique({
-        where: { id: auth.userId },
-        select: { warehouseIds: true },
-      });
-      const editableWarehouses = parseJsonArray(user?.warehouseIds);
-      if (!editableWarehouses.includes(body.warehouseId)) {
-        fail(res, 403, "FORBIDDEN", "cross warehouse create is not allowed");
-        return;
-      }
-    }
-
     const now = arrivedAtDate.toISOString();
     const orderId = `o_${Date.now()}`;
     const shipmentId = `s_${Date.now()}`;
@@ -549,18 +531,6 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
       return;
     }
 
-    if (auth.role === "staff") {
-      const user = await prisma.user.findUnique({
-        where: { id: auth.userId },
-        select: { warehouseIds: true },
-      });
-      const editableWarehouses = parseJsonArray(user?.warehouseIds);
-      if (!editableWarehouses.includes(order.warehouseId)) {
-        fail(res, 403, "FORBIDDEN", "cross warehouse update is not allowed");
-        return;
-      }
-    }
-
     const updated = await prisma.order.update({
       where: { id: orderId },
       data: {
@@ -607,18 +577,6 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
     if (!order) {
       fail(res, 404, "NOT_FOUND", "order not found");
       return;
-    }
-
-    if (auth.role === "staff") {
-      const user = await prisma.user.findUnique({
-        where: { id: auth.userId },
-        select: { warehouseIds: true },
-      });
-      const editableWarehouses = parseJsonArray(user?.warehouseIds);
-      if (!editableWarehouses.includes(order.warehouseId)) {
-        fail(res, 403, "FORBIDDEN", "cross warehouse update is not allowed");
-        return;
-      }
     }
 
     const now = new Date();
@@ -1272,18 +1230,6 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
     if (order.approvalStatus !== "pending") {
       fail(res, 400, "VALIDATION_ERROR", "order is not pending");
       return;
-    }
-
-    if (auth.role === "staff") {
-      const user = await prisma.user.findUnique({
-        where: { id: auth.userId },
-        select: { warehouseIds: true },
-      });
-      const editableWarehouses = parseJsonArray(user?.warehouseIds);
-      if (!editableWarehouses.includes(order.warehouseId)) {
-        fail(res, 403, "FORBIDDEN", "cross warehouse approve is not allowed");
-        return;
-      }
     }
 
     const now = new Date();
