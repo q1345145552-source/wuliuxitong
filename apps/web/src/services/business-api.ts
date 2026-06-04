@@ -14,9 +14,9 @@ export interface StaffCreateOrderPayload {
   volumeM3?: number;
   domesticTrackingNo?: string;
   transportMode: "sea" | "land";
-  receiverNameTh: string;
-  receiverPhoneTh: string;
-  receiverAddressTh: string;
+  receiverNameTh?: string;
+  receiverPhoneTh?: string;
+  receiverAddressTh?: string;
   products?: Array<{
     itemName: string;
     packageCount: number;
