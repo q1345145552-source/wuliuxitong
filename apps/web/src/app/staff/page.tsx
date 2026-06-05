@@ -3459,7 +3459,6 @@ export default function StaffHomePage() {
                                               <input
                                                 type="file"
                                                 accept="image/*"
-                                                disabled={formDisabled}
                                                 style={{ fontSize: 12, color: "#000000" }}
                                                 onChange={async (ev) => {
                                                   const f = ev.target.files?.[0] ?? null;
@@ -3504,7 +3503,7 @@ export default function StaffHomePage() {
                                   <OrderProductImagesPanel
                                     orderId={item.orderId}
                                     images={item.productImages ?? shipmentImagesCache[item.orderId] ?? []}
-                                    canManage={false}
+                                    canManage={true}
                                     busy={loading}
                                     onSelectFile={(file) => uploadOrderProductImageAndReload(item.orderId!, file)}
                                     onDelete={(imageId) => deleteOrderProductImageAndReload(imageId)}
