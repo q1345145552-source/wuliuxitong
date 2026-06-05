@@ -1296,7 +1296,7 @@ export default function AdminHomePage() {
                     <td style={{ padding: "8px 6px", fontWeight: 600, color: "#1e3a8a", whiteSpace: "nowrap" }}>
                       {o.trackingNo ?? "—"}
                     </td>
-                    <td style={{ padding: "8px 6px", color: "#000000", maxWidth: 100, overflow: "hidden", textOverflow: "ellipsis" }}>{o.itemName ?? "—"}</td>
+                    <td style={{ padding: "8px 6px", color: "#000000", minWidth: 100, whiteSpace: "normal", wordBreak: "break-word" }}>{o.itemName ?? "—"}</td>
                     <td style={{ padding: "8px 6px", color: "#000000", fontWeight: 600 }}>{o.clientId ?? "—"}</td>
                     <td style={{ padding: "8px 6px", whiteSpace: "nowrap" }}>{shipmentStatusLabel(o.currentStatus)}</td>
                     <td style={{ padding: "8px 6px", whiteSpace: "nowrap" }}>
