@@ -443,7 +443,11 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
         return;
       }
     }
-    const generatedTrackingNo = manualTrackingNo || (await generateTrackingNo(body.warehouseId, body.arrivedAt.trim()));
+    if (!manualTrackingNo) {
+      fail(res, 400, "BAD_REQUEST", "运单号为必填");
+      return;
+    }
+    const generatedTrackingNo = manualTrackingNo;
     const weightKg = body.weightKg === undefined || body.weightKg === null ? null : Number(body.weightKg);
     const volumeM3 = body.volumeM3 === undefined || body.volumeM3 === null ? null : Number(body.volumeM3);
     const batchNo = body.batchNo?.trim() || null;

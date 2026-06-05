@@ -1141,6 +1141,10 @@ export default function StaffHomePage() {
     const volumeM3 = Number(form.volumeM3.trim());
     const weightKg = Number(form.weightKg.trim());
 
+    if (!form.trackingNo.trim()) {
+      setMessage("运单号为必填，请手动输入。");
+      return;
+    }
     if (!itemName || !arrivedAt || !form.warehouseId || !form.clientId || !form.transportMode) {
       setMessage("请先完整填写创建订单信息（唛头、品名、仓库、运输方式、到仓日期为必填）。");
       return;
@@ -1169,7 +1173,7 @@ export default function StaffHomePage() {
         clientId: form.clientId,
         warehouseId: form.warehouseId,
         batchNo,
-        trackingNo: form.trackingNo.trim() || undefined,
+        trackingNo: form.trackingNo.trim(),
         arrivedAt,
         itemName: hasProducts ? staffFormProducts[0].itemName.trim() : itemName,
         productQuantity,
@@ -2247,7 +2251,7 @@ export default function StaffHomePage() {
               </option>
             ))}
           </select>
-          <input value={form.trackingNo} onChange={(e) => setForm((v) => ({ ...v, trackingNo: e.target.value }))} placeholder="运单号（留空自动生成）" style={orderCreateInputStyle} />
+          <input value={form.trackingNo} onChange={(e) => setForm((v) => ({ ...v, trackingNo: e.target.value }))} placeholder="运单号 *" style={orderCreateInputStyle} />
           <input value={form.batchNo} onChange={(e) => setForm((v) => ({ ...v, batchNo: e.target.value }))} placeholder="柜号（可选）" style={orderCreateInputStyle} />
           <input value={form.itemName} onChange={(e) => setForm((v) => ({ ...v, itemName: e.target.value }))} placeholder="品名 *" style={orderCreateInputStyle} />
           <div style={{ border: "1px solid #e5e7eb", borderRadius: 8, padding: 10, background: "#f9fafb" }}>
@@ -3724,7 +3728,7 @@ export default function StaffHomePage() {
                   <option key={item.id} value={item.id}>仓库：{item.label}</option>
                 ))}
               </select>
-              <input value={form.trackingNo} onChange={(e) => setForm((v) => ({ ...v, trackingNo: e.target.value }))} placeholder="运单号（留空自动生成）" style={orderCreateInputStyle} />
+              <input value={form.trackingNo} onChange={(e) => setForm((v) => ({ ...v, trackingNo: e.target.value }))} placeholder="运单号 *" style={orderCreateInputStyle} />
               <input value={form.batchNo} onChange={(e) => setForm((v) => ({ ...v, batchNo: e.target.value }))} placeholder="柜号（可选）" style={orderCreateInputStyle} />
               <div style={{ border: "1px solid #e5e7eb", borderRadius: 8, padding: 10, background: "#f9fafb" }}>
                 <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 8, color: "#000000" }}>产品列表</div>
