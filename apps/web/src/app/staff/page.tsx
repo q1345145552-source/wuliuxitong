@@ -697,6 +697,7 @@ export default function StaffHomePage() {
     domesticOrderNo: "",
     packageUnit: "box" as "bag" | "box",
     transportMode: "land" as "sea" | "land",
+    cargoType: "NORMAL",
   });
 
   /**
@@ -1182,6 +1183,7 @@ export default function StaffHomePage() {
         weightKg,
         volumeM3,
         domesticTrackingNo: form.domesticOrderNo.trim() || undefined,
+        cargoType: form.cargoType,
         transportMode: form.transportMode,
         products: hasProducts ? staffFormProducts.filter(p => p.itemName.trim()).map(p => ({ itemName: p.itemName.trim(), packageCount: Number(p.packageCount) || 1, lengthCm: p.lengthCm ? Number(p.lengthCm) : undefined, widthCm: p.widthCm ? Number(p.widthCm) : undefined, heightCm: p.heightCm ? Number(p.heightCm) : undefined, productQuantity: p.productQuantity ? Number(p.productQuantity) : undefined, weightKg: p.weightKg ? Number(p.weightKg) : undefined })) : undefined,
       });

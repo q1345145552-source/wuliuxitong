@@ -379,6 +379,7 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
       weightKg?: number;
       volumeM3?: number;
       domesticTrackingNo?: string;
+      cargoType?: string;
       transportMode?: "sea" | "land";
       receiverNameTh?: string;
       receiverPhoneTh?: string;
@@ -475,6 +476,7 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
           shipDate: body.arrivedAt.trim(),
           domesticTrackingNo: body.domesticTrackingNo ?? null,
           transportMode: body.transportMode,
+          cargoType: body.cargoType?.trim() || "NORMAL",
           receiverNameTh: "",
           receiverPhoneTh: "",
           receiverAddressTh: "",
@@ -726,6 +728,7 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
         paidAt: o.paidAt ? o.paidAt.toISOString() : undefined,
         paidBy: o.paidBy ?? undefined,
         shipDate: o.shipDate,
+        cargoType: o.cargoType ?? "NORMAL",
         latestRemark,
         logisticsRecords,
         createdAt: o.createdAt.toISOString(),

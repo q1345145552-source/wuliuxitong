@@ -14,6 +14,7 @@ export interface StaffCreateOrderPayload {
   volumeM3?: number;
   domesticTrackingNo?: string;
   transportMode: "sea" | "land";
+  cargoType?: string;
   receiverNameTh?: string;
   receiverPhoneTh?: string;
   receiverAddressTh?: string;
@@ -114,6 +115,7 @@ export interface ShipmentItem {
   trackingNo: string;
   batchNo?: string;
   containerNo?: string;
+  cargoType?: string;
   clientId?: string;
   clientName?: string;
   itemName?: string;
@@ -222,6 +224,7 @@ export interface AdminOrderItem {
   id: string;
   orderId?: string;
   shipmentId?: string;
+  cargoType?: string;
   clientId: string;
   clientName: string | null;
   warehouseId: string;

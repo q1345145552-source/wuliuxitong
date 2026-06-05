@@ -250,6 +250,7 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
       receivableCurrency: r.order?.receivableCurrency ?? undefined,
       paymentStatus: (r.order?.paymentStatus === "paid" ? "paid" : "unpaid") as "paid" | "unpaid",
       packageUnit: ((r.order?.packageUnit === "bag" ? "bag" : "box") as "bag" | "box"),
+      cargoType: r.order?.cargoType ?? "NORMAL",
       canEdit: true,
       approvalStatus: r.order?.approvalStatus ?? undefined,
       statusGroup: r.order?.statusGroup ?? undefined,
@@ -285,6 +286,7 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
       orderId?: string;
       clientId?: string;
       itemName?: string;
+      cargoType?: string;
       transportMode?: "sea" | "land";
       domesticTrackingNo?: string | null;
       productQuantity?: number;
@@ -435,6 +437,7 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
           batchNo,
           clientId: body.clientId?.trim() || undefined,
           itemName,
+          cargoType: body.cargoType?.trim() || undefined,
           transportMode,
           domesticTrackingNo,
           productQuantity,

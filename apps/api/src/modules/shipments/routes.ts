@@ -432,6 +432,7 @@ export function registerShipmentRoutes(app: MinimalHttpApp): void {
       receivableCurrency: r.order?.receivableCurrency ?? undefined,
       paymentStatus: (r.order?.paymentStatus === "paid" ? "paid" : "unpaid") as "paid" | "unpaid",
       packageUnit: ((r.order?.packageUnit === "bag" ? "bag" : "box") as "bag" | "box"),
+      cargoType: r.order?.cargoType ?? "NORMAL",
       canEdit: auth.role === "admin",
       productImages: [],
     }));
