@@ -1206,6 +1206,12 @@ export default function StaffHomePage() {
       const displayNo = form.trackingNo.trim() || result.orderId;
       setToast("订单创建成功");
       setMessage(`订单创建成功：${displayNo}`);
+      // 刷新产品图缓存
+      if (orderImageFiles.length > 0) {
+        fetchShipmentImages(result.orderId).then((imgs) => {
+          setShipmentImagesCache((c) => ({ ...c, [result.orderId]: imgs }));
+        }).catch(() => {});
+      }
       // 重置表单
       setForm({
         domesticOrderNo: "", trackingNo: "", batchNo: "",
