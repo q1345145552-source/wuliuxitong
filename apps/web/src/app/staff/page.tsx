@@ -1204,7 +1204,18 @@ export default function StaffHomePage() {
       const displayNo = form.trackingNo.trim() || result.orderId;
       setToast("订单创建成功");
       setMessage(`订单创建成功：${displayNo}`);
+      // 重置表单
+      setForm({
+        domesticOrderNo: "", trackingNo: "", batchNo: "",
+        itemName: "", warehouseId: "wh_yiwu_01", packageUnit: "box",
+        transportMode: "land", arrivedAt: "", clientId: "",
+        packageCount: "", volumeM3: "", weightKg: "", productQuantity: "",
+      });
+      setStaffFormProducts([]);
       setShowCreateModal(false);
+      setClientSearchKeyword("");
+      setOrderImageFiles([]);
+      setOrderImagePreviews([]);
       await loadPageData();
     } catch (error) {
       const text = error instanceof Error ? error.message : "创建失败";
