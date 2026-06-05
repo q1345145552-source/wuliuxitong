@@ -2946,7 +2946,7 @@ export default function StaffHomePage() {
                                   if (prev === item.id) return null;
                                   setShipmentOrderEditDrafts((d) => ({ ...d, [item.id]: buildShipmentOrderEditDraft(item) }));
                                   const oid = item.orderId;
-                                  if (oid && !shipmentImagesCache[oid]) {
+                                  if (oid) {
                                     fetchShipmentImages(oid).then((imgs) => {
                                       setShipmentImagesCache((c) => ({ ...c, [oid]: imgs }));
                                     }).catch(() => {});
