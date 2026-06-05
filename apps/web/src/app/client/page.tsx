@@ -1138,19 +1138,14 @@ export default function ClientHomePage() {
           <article key={item.id} className="order-card">
             <div className="order-head">
               <div className="order-title">
-                #{idx + 1} {item.itemName || "未填品名"}
-
+                {(item.products?.length ?? 0) > 0
+                  ? item.products!.map((p, i) => (
+                      <div key={p.id || i} style={{ lineHeight: 1.4, fontSize: 14 }}>
+                        {p.itemName} ×{p.packageCount}
+                      </div>
+                    ))
+                  : (item.itemName || "未填品名")}
               </div>
-              {(item.products?.length ?? 0) > 1 && (
-                <div style={{ fontSize: 12, color: "#000000", marginTop: 4, background: "#f8fafc", borderRadius: 6, padding: "4px 8px" }}>
-                  {item.products!.map((p, i) => (
-                    <div key={p.id || i}>
-                      · {p.itemName} ×{p.packageCount}箱
-                      {p.lengthCm ? ` (${p.lengthCm}×${p.widthCm}×${p.heightCm}cm, 每箱${p.productQuantity ?? "—"}个)` : ""}
-                    </div>
-                  ))}
-                </div>
-              )}
               <div className="order-badges">
                 <span className="order-badge order-badge-amount">金额：{formatCny(item.receivableAmountCny ?? null)}</span>
                 <span
@@ -1262,7 +1257,6 @@ export default function ClientHomePage() {
                       {item.products!.map((p, i) => (
                         <div key={i} style={{ marginBottom: 2 }}>
                           {p.itemName} ×{p.packageCount}
-                          {p.lengthCm ? ` — ${p.lengthCm}×${p.widthCm}×${p.heightCm} cm` : ""}
                         </div>
                       ))}
                     </div>
