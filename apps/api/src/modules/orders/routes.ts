@@ -914,8 +914,8 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
       fail(res, 400, "BAD_REQUEST", "only image uploads are allowed");
       return;
     }
-    if (contentBase64.length > 4_000_000) {
-      fail(res, 400, "BAD_REQUEST", "file too large (max 4MB base64)");
+    if (contentBase64.length > 20_000_000) {
+      fail(res, 400, "BAD_REQUEST", "file too large (max 20MB base64)");
       return;
     }
     const order = await prisma.order.findFirst({

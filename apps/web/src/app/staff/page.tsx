@@ -1197,7 +1197,7 @@ export default function StaffHomePage() {
               reader.readAsDataURL(file);
             });
             await uploadStaffOrderProductImage({ orderId: result.orderId, fileName: file.name, mime: file.type || "image/jpeg", contentBase64: base64 });
-          } catch { /* skip failed upload */ }
+          } catch (e) { setMessage(`图片上传失败：${e instanceof Error ? e.message : "未知错误"}`); }
         }
         setOrderImageFiles([]);
         setOrderImagePreviews([]);
