@@ -2969,9 +2969,11 @@ export default function StaffHomePage() {
                           </td>
                           <td style={{ padding: "8px 6px", fontWeight: 600, color: "#6b21a8", whiteSpace: "nowrap", fontFamily: "monospace", fontSize: 12 }}>{item.clientId ?? "—"}</td>
                           <td style={{ padding: "8px 6px", fontWeight: 600, color: "#1e3a8a", whiteSpace: "nowrap" }}>{item.orderNo || item.trackingNo}</td>
-                          <td style={{ padding: "8px 6px", color: "#000000", minWidth: 100, whiteSpace: "nowrap" }}>
+                          <td style={{ padding: "8px 6px", color: "#000000", minWidth: 100 }}>
                             {(item.products?.length ?? 0) > 0
-                              ? item.products!.map(p => `${p.itemName}×${p.packageCount}`).join("  ")
+                              ? item.products!.map((p, i) => (
+                                  <div key={i} style={{ lineHeight: 1.4 }}>{p.itemName} ×{p.packageCount}</div>
+                                ))
                               : (item.itemName ?? "—")}
                           </td>
                           <td style={{ padding: "8px 6px", color: "#000000" }}>{item.clientName ?? item.clientId ?? "—"}</td>
