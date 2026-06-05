@@ -704,20 +704,22 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
       return;
     }
 
-    // 级联删除：先清理所有关联记录
-    for (const s of order.shipments) {
-      await prisma.adminCustomsCase.updateMany({ where: { shipmentId: s.id }, data: { shipmentId: null } });
-      await prisma.adminLastmileOrder.deleteMany({ where: { shipmentId: s.id } });
-      await prisma.warehouseLocation.updateMany({ where: { shipmentId: s.id }, data: { shipmentId: null } });
-      await prisma.staffInboundPhoto.deleteMany({ where: { shipmentId: s.id } });
-      await prisma.statusLog.deleteMany({ where: { shipmentId: s.id } });
-      await prisma.shipmentContainerItem.deleteMany({ where: { shipmentId: s.id } });
-      await prisma.delivery.deleteMany({ where: { shipmentId: s.id } });
-      await prisma.shipment.delete({ where: { id: s.id } });
-    }
-    await prisma.orderProductImage.deleteMany({ where: { orderId } });
-    await prisma.orderProduct.deleteMany({ where: { orderId } });
-    await prisma.order.delete({ where: { id: orderId } });
+    // 事务：级联清理所有关联记录后删除订单
+    await prisma.$transaction(async (tx) => {
+      for (const s of order.shipments) {
+        await tx.adminCustomsCase.updateMany({ where: { shipmentId: s.id }, data: { shipmentId: null } });
+        await tx.adminLastmileOrder.deleteMany({ where: { shipmentId: s.id } });
+        await tx.warehouseLocation.updateMany({ where: { shipmentId: s.id }, data: { shipmentId: null } });
+        await tx.staffInboundPhoto.deleteMany({ where: { shipmentId: s.id } });
+        await tx.statusLog.deleteMany({ where: { shipmentId: s.id } });
+        await tx.shipmentContainerItem.deleteMany({ where: { shipmentId: s.id } });
+        await tx.delivery.deleteMany({ where: { shipmentId: s.id } });
+        await tx.shipment.delete({ where: { id: s.id } });
+      }
+      await tx.orderProductImage.deleteMany({ where: { orderId } });
+      await tx.orderProduct.deleteMany({ where: { orderId } });
+      await tx.order.delete({ where: { id: orderId } });
+    });
 
     ok(res, { deleted: true, orderId, itemName: order.itemName });
   });
