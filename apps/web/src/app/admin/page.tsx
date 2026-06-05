@@ -1299,9 +1299,9 @@ export default function AdminHomePage() {
                     <td style={{ padding: "8px 6px", color: "#000000", minWidth: 100 }}>
                       {(o.products?.length ?? 0) > 0
                         ? o.products!.map((p, i) => (
-                            <div key={i} style={{ lineHeight: 1.4 }}>
-                              {p.itemName} ×{p.packageCount}
-                              {p.lengthCm ? `  ${p.lengthCm}×${p.widthCm}×${p.heightCm}cm` : ""}
+                            <div key={i} style={{ marginBottom: i < (o.products?.length ?? 0) - 1 ? 3 : 0 }}>
+                              <div style={{ fontWeight: 500 }}>{p.itemName}</div>
+                              {p.lengthCm ? <div style={{ fontSize: 11, color: "#000000", paddingLeft: 4 }}>{p.lengthCm}×{p.widthCm}×{p.heightCm}cm</div> : null}
                             </div>
                           ))
                         : (o.itemName ?? "—")}
