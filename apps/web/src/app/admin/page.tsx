@@ -1187,83 +1187,6 @@ export default function AdminHomePage() {
               {[20, 50, 100, 200, 500, 1000].map((n) => <option key={n} value={n}>{n}条/页</option>)}
             </select>
           </div>
-          <div style={{ overflowX: "auto" }}>
-            {editingOrderId ? (
-              <div style={{ ...cardStyle, marginBottom: 10, display: "grid", gap: 8 }}>
-                <div style={{ fontWeight: 700, color: "#0f172a" }}>正在编辑订单：{editingOrderId}</div>
-                {(orderList.find(o => (o.orderId ?? o.id) === editingOrderId)?.products?.length ?? 0) > 1 && (
-                  <div style={{ marginBottom: 8, background: "#f8fafc", borderRadius: 6, padding: "6px 10px", fontSize: 12 }}>
-                    <span style={{ fontWeight: 600 }}>产品列表：</span>
-                    {orderList.find(o => (o.orderId ?? o.id) === editingOrderId)!.products!.map((p) => (
-                      <span key={p.id} style={{ marginLeft: 8 }}>{p.itemName} ×{p.packageCount}箱</span>
-                    ))}
-                  </div>
-                )}
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 8 }}>
-                  <input value={orderEditForm.clientId} onChange={(e) => setOrderEditForm((v) => ({ ...v, clientId: e.target.value }))} placeholder="唛头（留空不修改）" list="admin-client-options" autoComplete="off" style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 10px" }} />
-                  <datalist id="admin-client-options">
-                    {clientList.map((c) => (
-                      <option key={c.id} value={c.id}>{c.id}</option>
-                    ))}
-                  </datalist>
-                  <input value={orderEditForm.trackingNo} onChange={(e) => setOrderEditForm((v) => ({ ...v, trackingNo: e.target.value.toUpperCase() }))} placeholder="运单号（如 YW... / DG...）" style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 10px" }} />
-                  <input value={orderEditForm.batchNo} onChange={(e) => setOrderEditForm((v) => ({ ...v, batchNo: e.target.value }))} placeholder="批次号" style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 10px" }} />
-                  <select value={orderEditForm.warehouseId} onChange={(e) => setOrderEditForm((v) => ({ ...v, warehouseId: e.target.value }))} style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 10px" }}>
-                    <option value="wh_yiwu_01">义乌仓</option>
-                    <option value="wh_guangzhou_01">广州仓</option>
-                    <option value="wh_dongguan_01">东莞仓</option>
-                  </select>
-                  <input value={orderEditForm.itemName} onChange={(e) => setOrderEditForm((v) => ({ ...v, itemName: e.target.value }))} placeholder="品名" style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 10px" }} />
-                  <select value={orderEditForm.transportMode} onChange={(e) => setOrderEditForm((v) => ({ ...v, transportMode: e.target.value as "sea" | "land" }))} style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 10px" }}>
-                    <option value="sea">海运</option>
-                    <option value="land">陆运</option>
-                  </select>
-                  <select value={orderEditForm.cargoType ?? "NORMAL"} onChange={(e) => setOrderEditForm((v) => ({ ...v, cargoType: e.target.value }))} style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 10px" }}>
-                    <option value="NORMAL">普货</option>
-                    <option value="INSPECTION">商检</option>
-                    <option value="SENSITIVE">敏感</option>
-                  </select>
-                  <input value={orderEditForm.domesticTrackingNo} onChange={(e) => setOrderEditForm((v) => ({ ...v, domesticTrackingNo: e.target.value }))} placeholder="国内快递单号" style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 10px" }} />
-                  <input value={orderEditForm.receiverAddressTh} onChange={(e) => setOrderEditForm((v) => ({ ...v, receiverAddressTh: e.target.value }))} placeholder="收货地址（泰国）" style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 10px" }} />
-                  <input value={orderEditForm.containerNo} onChange={(e) => setOrderEditForm((v) => ({ ...v, containerNo: e.target.value }))} placeholder="装柜号" style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 10px" }} />
-                  <input value={orderEditForm.productQuantity} onChange={(e) => setOrderEditForm((v) => ({ ...v, productQuantity: e.target.value }))} placeholder="产品数量" style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 10px" }} />
-                  <input value={orderEditForm.packageCount} onChange={(e) => setOrderEditForm((v) => ({ ...v, packageCount: e.target.value }))} placeholder="件数" style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 10px" }} />
-                  <select value={orderEditForm.packageUnit} onChange={(e) => setOrderEditForm((v) => ({ ...v, packageUnit: e.target.value as "bag" | "box" }))} style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 10px" }}>
-                    <option value="box">box</option>
-                    <option value="bag">bag</option>
-                  </select>
-                  <input value={orderEditForm.weightKg} onChange={(e) => setOrderEditForm((v) => ({ ...v, weightKg: e.target.value }))} placeholder="重量(kg)" style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 10px" }} />
-                  <input value={orderEditForm.volumeM3} onChange={(e) => setOrderEditForm((v) => ({ ...v, volumeM3: e.target.value }))} placeholder="体积(m3)" style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 10px" }} />
-                  <input value={orderEditForm.receivableAmountCny} onChange={(e) => setOrderEditForm((v) => ({ ...v, receivableAmountCny: e.target.value }))} placeholder="应收金额(CNY)" style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 10px" }} />
-                  <select value={orderEditForm.receivableCurrency} onChange={(e) => setOrderEditForm((v) => ({ ...v, receivableCurrency: e.target.value as "CNY" | "THB" }))} style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 10px" }}>
-                    <option value="CNY">CNY</option>
-                    <option value="THB">THB</option>
-                  </select>
-                  <select value={orderEditForm.paymentStatus} onChange={(e) => setOrderEditForm((v) => ({ ...v, paymentStatus: e.target.value as "paid" | "unpaid" }))} style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 10px" }}>
-                    <option value="unpaid">未支付</option>
-                    <option value="paid">已支付</option>
-                  </select>
-                  <input type="date" value={orderEditForm.shipDate} onChange={(e) => setOrderEditForm((v) => ({ ...v, shipDate: e.target.value }))} style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 10px" }} />
-                </div>
-                <div style={{ display: "flex", gap: 8 }}>
-                  <button
-                    type="button"
-                    onClick={() => void submitOrderEdit()}
-                    disabled={loading}
-                    style={{ border: "none", borderRadius: 8, padding: "8px 14px", color: "#fff", background: "#2563eb", cursor: "pointer" }}
-                  >
-                    保存订单编辑
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setEditingOrderId("")}
-                    style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 14px", background: "#fff", cursor: "pointer", color: "#000000" }}
-                  >
-                    取消编辑
-                  </button>
-                </div>
-              </div>
-            ) : null}
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, minWidth: 1180 }}>
               <thead>
                 <tr style={{ borderBottom: "2px solid #e2e8f0", textAlign: "left" }}>
@@ -1360,6 +1283,37 @@ export default function AdminHomePage() {
                 ))}
               </tbody>
             </table>
+            {editingOrderId ? (
+              <div style={{ ...cardStyle, marginTop: 10, display: "grid", gap: 8 }}>
+                <div style={{ fontWeight: 700, color: "#0f172a" }}>正在编辑订单：{editingOrderId}</div>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 8 }}>
+                  <input value={orderEditForm.clientId} onChange={(e) => setOrderEditForm((v) => ({ ...v, clientId: e.target.value }))} placeholder="唛头（留空不修改）" list="admin-client-options" autoComplete="off" style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 10px" }} />
+                  <datalist id="admin-client-options">{clientList.map((c) => (<option key={c.id} value={c.id}>{c.id}</option>))}</datalist>
+                  <input value={orderEditForm.trackingNo} onChange={(e) => setOrderEditForm((v) => ({ ...v, trackingNo: e.target.value.toUpperCase() }))} placeholder="运单号（如 YW... / DG...）" style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 10px" }} />
+                  <input value={orderEditForm.batchNo} onChange={(e) => setOrderEditForm((v) => ({ ...v, batchNo: e.target.value }))} placeholder="柜号" style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 10px" }} />
+                  <select value={orderEditForm.warehouseId} onChange={(e) => setOrderEditForm((v) => ({ ...v, warehouseId: e.target.value }))} style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 10px" }}><option value="wh_yiwu_01">义乌仓</option><option value="wh_guangzhou_01">广州仓</option><option value="wh_dongguan_01">东莞仓</option></select>
+                  <input value={orderEditForm.itemName} onChange={(e) => setOrderEditForm((v) => ({ ...v, itemName: e.target.value }))} placeholder="品名" style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 10px" }} />
+                  <select value={orderEditForm.transportMode} onChange={(e) => setOrderEditForm((v) => ({ ...v, transportMode: e.target.value as "sea" | "land" }))} style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 10px" }}><option value="sea">海运</option><option value="land">陆运</option></select>
+                  <select value={orderEditForm.cargoType ?? "NORMAL"} onChange={(e) => setOrderEditForm((v) => ({ ...v, cargoType: e.target.value }))} style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 10px" }}><option value="NORMAL">普货</option><option value="INSPECTION">商检</option><option value="SENSITIVE">敏感</option></select>
+                  <input value={orderEditForm.domesticTrackingNo} onChange={(e) => setOrderEditForm((v) => ({ ...v, domesticTrackingNo: e.target.value }))} placeholder="国内单号" style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 10px" }} />
+                  <input value={orderEditForm.receiverAddressTh} onChange={(e) => setOrderEditForm((v) => ({ ...v, receiverAddressTh: e.target.value }))} placeholder="收货地址" style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 10px" }} />
+                  <input value={orderEditForm.containerNo} onChange={(e) => setOrderEditForm((v) => ({ ...v, containerNo: e.target.value }))} placeholder="装柜号" style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 10px" }} />
+                  <input value={orderEditForm.productQuantity} onChange={(e) => setOrderEditForm((v) => ({ ...v, productQuantity: e.target.value }))} placeholder="产品数量" style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 10px" }} />
+                  <input value={orderEditForm.packageCount} onChange={(e) => setOrderEditForm((v) => ({ ...v, packageCount: e.target.value }))} placeholder="件数" style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 10px" }} />
+                  <select value={orderEditForm.packageUnit} onChange={(e) => setOrderEditForm((v) => ({ ...v, packageUnit: e.target.value as "bag" | "box" }))} style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 10px" }}><option value="box">box</option><option value="bag">bag</option></select>
+                  <input value={orderEditForm.weightKg} onChange={(e) => setOrderEditForm((v) => ({ ...v, weightKg: e.target.value }))} placeholder="重量(kg)" style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 10px" }} />
+                  <input value={orderEditForm.volumeM3} onChange={(e) => setOrderEditForm((v) => ({ ...v, volumeM3: e.target.value }))} placeholder="体积(m3)" style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 10px" }} />
+                  <input value={orderEditForm.receivableAmountCny} onChange={(e) => setOrderEditForm((v) => ({ ...v, receivableAmountCny: e.target.value }))} placeholder="应收金额(CNY)" style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 10px" }} />
+                  <select value={orderEditForm.receivableCurrency} onChange={(e) => setOrderEditForm((v) => ({ ...v, receivableCurrency: e.target.value as "CNY" | "THB" }))} style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 10px" }}><option value="CNY">CNY</option><option value="THB">THB</option></select>
+                  <select value={orderEditForm.paymentStatus} onChange={(e) => setOrderEditForm((v) => ({ ...v, paymentStatus: e.target.value as "paid" | "unpaid" }))} style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 10px" }}><option value="unpaid">未支付</option><option value="paid">已支付</option></select>
+                  <input type="date" value={orderEditForm.shipDate} onChange={(e) => setOrderEditForm((v) => ({ ...v, shipDate: e.target.value }))} style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 10px" }} />
+                </div>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button type="button" onClick={() => void submitOrderEdit()} disabled={loading} style={{ border: "none", borderRadius: 8, padding: "8px 14px", color: "#fff", background: "#2563eb", cursor: "pointer" }}>保存订单编辑</button>
+                  <button type="button" onClick={() => setEditingOrderId("")} style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 14px", background: "#fff", cursor: "pointer", color: "#000000" }}>取消编辑</button>
+                </div>
+              </div>
+            ) : null}
           </div>
           </>
         )}
