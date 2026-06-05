@@ -57,7 +57,6 @@ export default function ClientBillsPage() {
 
   const filtered = useMemo(() => {
     const orderIdKey = filters.orderId.trim().toLowerCase();
-    const batchKey = filters.batchNo.trim().toLowerCase();
     const warehouseId = filters.warehouseId.trim();
     const transportMode = filters.transportMode.trim();
     return orders
