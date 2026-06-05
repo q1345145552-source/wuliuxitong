@@ -917,10 +917,7 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
     const count = await prisma.orderProductImage.count({
       where: { companyId: auth.companyId, orderId },
     });
-    if (count >= MAX_ORDER_PRODUCT_IMAGES) {
-      fail(res, 400, "BAD_REQUEST", `maximum ${MAX_ORDER_PRODUCT_IMAGES} product images per order`);
-      return;
-    }
+    // 图片数量不限制
     try {
       const buf = Buffer.from(contentBase64, "base64");
       if (buf.length === 0) {
