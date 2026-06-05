@@ -1767,7 +1767,6 @@ export default function StaffHomePage() {
       所属仓库: warehouseLabelFromId(item.warehouseId),
       收货地址: truncateText(item.receiverAddressTh, 40),
       柜号: item.batchNo ?? "-",
-      品名: item.itemName ?? "-",
       国内单号: item.domesticTrackingNo ?? "-",
       产品数量: item.productQuantity ?? "-",
       到仓日期: formatDateTime(item.arrivedAt, "-"),
@@ -2833,7 +2832,6 @@ export default function StaffHomePage() {
                   计费体积: item.volumeM3 != null && item.volumeM3 > 0 ? Math.max(item.volumeM3, item.transportMode === "sea" ? 0.5 : item.transportMode === "land" ? 0.2 : 0).toFixed(3) : "-",
                   所属仓库: warehouseLabelFromId(item.warehouseId),
                   柜号: item.batchNo ?? "-",
-                  品名: item.itemName ?? "-",
                   国内单号: item.domesticTrackingNo ?? "-",
                   到仓日期: formatDateTime(item.arrivedAt, "-"),
                 }));
