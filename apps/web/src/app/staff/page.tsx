@@ -1201,8 +1201,9 @@ export default function StaffHomePage() {
         setOrderImagePreviews([]);
       }
       setCreateStepDone(true);
+      const displayNo = form.trackingNo.trim() || result.orderId;
       setToast("订单创建成功");
-      setMessage(`订单创建成功：${result.orderId}`);
+      setMessage(`订单创建成功：${displayNo}`);
       setShowCreateModal(false);
       await loadPageData();
     } catch (error) {
