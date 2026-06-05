@@ -594,6 +594,13 @@ export default function StaffHomePage() {
     statusRaw: "",
   });
   const [showCreateModal, setShowCreateModal] = useState(false);
+  const [showBatchImport, setShowBatchImport] = useState(false);
+  const [batchRows, setBatchRows] = useState<Array<{clientId: string; warehouseId: string; itemName: string; packageCount: number; packageUnit: "bag" | "box"; weightKg?: number; volumeM3?: number; arrivedAt: string; transportMode: "sea" | "land"; domesticTrackingNo?: string; batchNo?: string; productQuantity?: number; receiverNameTh?: string; receiverPhoneTh?: string; receiverAddressTh?: string}>>([]);
+  const [batchLoading, setBatchLoading] = useState(false);
+  const [batchProgress, setBatchProgress] = useState({ current: 0, success: 0, fail: 0 });
+  const [batchErrors, setBatchErrors] = useState<string[]>([]);
+  const [batchFileName, setBatchFileName] = useState("");
+  const [batchConfirmed, setBatchConfirmed] = useState(false);
   const [shipmentSearchCollapsed, setShipmentSearchCollapsed] = useState(true);
   const [selectedForExport, setSelectedForExport] = useState<Set<string>>(new Set());
   const [pageSize, setPageSize] = useState(100);
@@ -1201,6 +1208,148 @@ export default function StaffHomePage() {
       setLoading(false);
     }
   };
+
+
+  function downloadStaffBatchTemplate() {
+    const ws = XLSX.utils.json_to_sheet([{
+      "唛头 *": "",
+      "仓库 *": "",
+      "品名 *": "",
+      "箱数 *": "",
+      "包装类型（箱/袋，默认箱）": "",
+      "长cm（数字）": "",
+      "宽cm（数字）": "",
+      "高cm（数字）": "",
+      "单箱重量kg *（数字）": "",
+      "到仓日期 *（YYYY-MM-DD）": "",
+      "运输方式 *（海运/陆运）": "",
+      "国内单号（选填）": "",
+      "产品数量": "",
+    }]);
+    ws["!cols"] = [
+      { wch: 12 },  // 唛头
+      { wch: 14 },  // 仓库
+      { wch: 12 },  // 品名
+      { wch: 10 },  // 箱数
+      { wch: 32 },  // 包装类型
+      { wch: 12 },  // 长cm
+      { wch: 12 },  // 宽cm
+      { wch: 12 },  // 高cm
+      { wch: 24 },  // 单箱重量kg
+      { wch: 28 },  // 到仓日期
+      { wch: 12 },  // 运输方式
+      { wch: 20 },  // 国内单号
+      { wch: 14 },  // 产品数量
+    ];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "员工批量下单模板");
+    XLSX.writeFile(wb, "员工批量下单模板.xlsx");
+  }
+
+  function normalizeStaffBatchRows(rows: Record<string, unknown>[]) {
+    // 按关键字模糊匹配列名（兼容有无括号格式说明）
+    function findCol(row: Record<string, unknown>, keywords: string[]): string {
+      const keys = Object.keys(row);
+      for (const kw of keywords) {
+        const found = keys.find((k) => k.includes(kw));
+        if (found) return String(row[found] ?? "").trim();
+      }
+      return "";
+    }
+    function cleanNum(v: unknown): number | undefined {
+      if (v === undefined || v === "") return undefined;
+      if (typeof v === "number" && Number.isFinite(v)) return v;
+      const cleaned = String(v).replace(/[^0-9.\-]/g, "");
+      if (!cleaned) return undefined;
+      const n = Number(cleaned);
+      return Number.isFinite(n) ? n : undefined;
+    }
+    function findNum(row: Record<string, unknown>, keywords: string[]): number | undefined {
+      const keys = Object.keys(row);
+      for (const kw of keywords) {
+        const found = keys.find((k) => k.includes(kw));
+        if (found) return cleanNum(row[found]);
+      }
+      return undefined;
+    }
+    return rows
+      .map((row) => {
+        const transportRaw = findCol(row, ["运输方式"]).toLowerCase().replace("海运", "sea").replace("陆运", "land");
+        const unitRaw = findCol(row, ["包装类型"]).toLowerCase().replace("箱", "box").replace("袋", "bag");
+        const warehouseNameMap: Record<string, string> = {
+          "义乌仓": "wh_yiwu_01", "广州仓": "wh_guangzhou_01", "东莞仓": "wh_dongguan_01", "深圳仓": "wh_shenzhen_01",
+        };
+        const rawWarehouse = findCol(row, ["仓库"]);
+        const warehouseId = warehouseNameMap[rawWarehouse] || rawWarehouse;
+        const packageCount = findNum(row, ["箱数"]) ?? 0;
+        const perBoxWeightKg = findNum(row, ["单箱重量"]);
+        const weightKg = perBoxWeightKg != null && packageCount > 0 ? perBoxWeightKg * packageCount : perBoxWeightKg;
+        const lengthCm = findNum(row, ["长cm", "长"]);
+        const widthCm = findNum(row, ["宽cm", "宽"]);
+        const heightCm = findNum(row, ["高cm", "高"]);
+        let volumeM3: number | undefined;
+        if (lengthCm && widthCm && heightCm && lengthCm > 0 && widthCm > 0 && heightCm > 0) {
+          volumeM3 = (lengthCm * widthCm * heightCm) / 1_000_000;
+        }
+        let arrivedAt = findCol(row, ["到仓日期"]);
+        if (/^\d{5}$/.test(arrivedAt)) {
+          const d = new Date((Number(arrivedAt) - 25569) * 86400000);
+          arrivedAt = d.toISOString().slice(0, 10);
+        }
+        return {
+          clientId: findCol(row, ["唛头"]),
+          warehouseId,
+          itemName: findCol(row, ["品名"]),
+          packageCount,
+          packageUnit: unitRaw.includes("bag") ? "bag" as const : "box" as const,
+          weightKg,
+          volumeM3,
+          arrivedAt,
+          transportMode: transportRaw.includes("land") ? "land" as const : "sea" as const,
+          domesticTrackingNo: findCol(row, ["国内单号"]) || undefined,
+          productQuantity: findNum(row, ["产品数量"]),
+        };
+      })
+      .filter((item) => item.clientId && item.warehouseId && item.itemName && item.arrivedAt && item.packageCount > 0);
+  }
+  async function submitStaffBatch() {
+    setBatchLoading(true);
+    setBatchErrors([]);
+    setBatchProgress({ current: 0, success: 0, fail: 0 });
+    const errors: string[] = [];
+    let success = 0;
+    for (let i = 0; i < batchRows.length; i++) {
+      setBatchProgress({ current: i + 1, success, fail: errors.length });
+      const row = batchRows[i];
+      try {
+        await createStaffOrder({
+          clientId: row.clientId,
+          warehouseId: row.warehouseId,
+          arrivedAt: row.arrivedAt,
+          itemName: row.itemName,
+          packageCount: row.packageCount,
+          packageUnit: row.packageUnit,
+          weightKg: row.weightKg,
+          volumeM3: row.volumeM3,
+          transportMode: row.transportMode,
+          domesticTrackingNo: row.domesticTrackingNo,
+          productQuantity: row.productQuantity,
+
+        });
+        success++;
+        setBatchProgress({ current: i + 1, success, fail: errors.length });
+      } catch (err) {
+        const text = err instanceof Error ? err.message : "提交失败";
+        errors.push(`第${i + 1}行(${row.itemName}): ${text}`);
+        setBatchErrors([...errors]);
+        setBatchProgress({ current: i + 1, success, fail: errors.length });
+      }
+    }
+    setBatchLoading(false);
+    setBatchErrors(errors);
+    await loadPageData();
+  }
+
 
   const submitStatusUpdate = async (shipmentId: string) => {
     const toStatus = toSystemStatus(statusEditDraft.toStatus.trim());
@@ -2703,6 +2852,13 @@ export default function StaffHomePage() {
             >
               ＋ 创建订单
             </button>
+            <button
+              type="button"
+              onClick={() => setShowBatchImport(true)}
+              style={{ border: "1px solid #2563eb", borderRadius: 8, padding: "8px 16px", color: "#2563eb", background: "#fff", cursor: "pointer", fontWeight: 600, whiteSpace: "nowrap", fontSize: 14 }}
+            >
+              批量创建
+            </button>
           </div>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
             <span style={{ fontSize: 12, color: "#000000" }}>共 {filteredShipmentList.length} 条</span>
@@ -2832,7 +2988,7 @@ export default function StaffHomePage() {
                             </button>
                             <button
                               type="button"
-                              onClick={() => openPrintLabel({ marks: item.clientId ?? "—", packageCount: item.packageCount ?? "—", trackingNo: item.trackingNo ?? "", itemName: item.itemName, productQuantity: item.productQuantity, transportMode: item.transportMode, products: item.products?.map(p => ({ itemName: p.itemName, packageCount: p.packageCount })) })}
+                              onClick={() => openPrintLabel({ marks: item.clientName ?? item.clientId ?? "—", packageCount: item.packageCount ?? "—", trackingNo: item.trackingNo ?? "", itemName: item.itemName, productQuantity: item.productQuantity, transportMode: item.transportMode, products: item.products?.map(p => ({ itemName: p.itemName, packageCount: p.packageCount })) })}
                               style={{ border: "none", background: "transparent", color: "#16a34a", cursor: "pointer", fontWeight: 600, padding: 0, marginLeft: 8 }}
                             >
                               打印
@@ -3666,6 +3822,109 @@ export default function StaffHomePage() {
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 16 }}>
               <button type="button" onClick={() => { setShowCreateModal(false); setMessage(""); setOrderImageFiles([]); setOrderImagePreviews([]); }} style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "8px 16px", fontSize: 13, background: "#fff", cursor: "pointer", color: "#000000" }}>取消</button>
               <button type="button" disabled={loading} onClick={() => void submitOrder()} style={{ border: "none", borderRadius: 6, padding: "8px 16px", fontSize: 13, background: loading ? "#000000" : "#2563eb", color: "#fff", fontWeight: 500, cursor: loading ? "not-allowed" : "pointer" }}>{loading ? "提交中…" : "创建订单"}</button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {/* 批量上传弹窗 */}
+      {showBatchImport ? (
+        <div style={{ position: "fixed", inset: 0, zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(0,0,0,0.4)", padding: 16 }}>
+          <div style={{ width: "100%", maxWidth: 900, maxHeight: "90vh", overflow: "auto", background: "#fff", borderRadius: 12, padding: 24, boxShadow: "0 20px 60px rgba(0,0,0,0.3)" }}>
+            <h3 style={{ margin: "0 0 16px", fontSize: 18, fontWeight: 600 }}>批量创建订单</h3>
+            <p style={{ fontSize: 13, color: "#000000", margin: "0 0 12px" }}>
+              支持 Excel 批量导入订单。建议先下载模板，按字段填好后上传。
+            </p>
+            {batchFileName && (
+              <div style={{ marginBottom: 12, padding: "10px 14px", background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: 8, fontSize: 14 }}>
+                📄 已上传: <strong>{batchFileName}</strong> — 有效数据 <strong>{batchRows.length}</strong> 条
+                {batchRows.length === 0 && <span style={{ color: "#dc2626", marginLeft: 8 }}>⚠️ 无有效数据，请检查模板格式</span>}
+              </div>
+            )}
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 12, alignItems: "center" }}>
+              <button type="button" onClick={downloadStaffBatchTemplate} style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 12px", background: "#fff", color: "#000000", cursor: "pointer" }}>下载模板</button>
+              <label style={{ border: "1px solid #2563eb", borderRadius: 8, padding: "8px 12px", background: "#eff6ff", color: "#1d4ed8", cursor: "pointer" }}>
+                上传 Excel
+                <input type="file" accept=".xlsx,.xls" style={{ display: "none" }} onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (!file) return;
+                  setBatchFileName(file.name);
+                  setBatchConfirmed(false);
+                  file.arrayBuffer().then((buf) => {
+                    const wb = XLSX.read(buf, { type: "array" });
+                    const ws = wb.Sheets[wb.SheetNames[0]];
+                    const raw = XLSX.utils.sheet_to_json(ws, { defval: "" });
+                    const normalized = normalizeStaffBatchRows(raw as Record<string, unknown>[]);
+                    setBatchRows(normalized);
+                    setBatchErrors([]);
+                    setBatchProgress({ current: 0, success: 0, fail: 0 });
+                  });
+                  e.target.value = "";
+                }} />
+              </label>
+              {!batchConfirmed && batchRows.length > 0 && !batchLoading && batchProgress.current === 0 && (
+                <button type="button" onClick={() => { setBatchConfirmed(true); void submitStaffBatch(); }} style={{ border: "none", borderRadius: 8, padding: "8px 16px", background: "#16a34a", color: "#fff", cursor: "pointer", fontWeight: 600, fontSize: 14 }}>
+                  确认上传 {batchRows.length} 条
+                </button>
+              )}
+            </div>
+            {batchLoading && (
+              <div style={{ marginBottom: 12 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, marginBottom: 4 }}>
+                  <span>正在提交第 {batchProgress.current}/{batchRows.length} 条…</span>
+                  <span><span style={{ color: "#16a34a" }}>✅ {batchProgress.success}</span> / <span style={{ color: batchProgress.fail > 0 ? "#dc2626" : "#6b7280" }}>❌ {batchProgress.fail}</span></span>
+                </div>
+                <div style={{ height: 8, background: "#e5e7eb", borderRadius: 4, overflow: "hidden" }}>
+                  <div style={{ height: "100%", width: `${(batchProgress.current / batchRows.length) * 100}%`, background: "#2563eb", borderRadius: 4, transition: "width 0.3s" }} />
+                </div>
+              </div>
+            )}
+            {batchErrors.length > 0 && !batchLoading && (
+              <div style={{ marginBottom: 12, padding: 12, borderRadius: 8, background: "#fef2f2", border: "1px solid #fecaca" }}>
+                <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 4, color: "#b91c1c" }}>❌ 失败明细：</div>
+                <ul style={{ margin: 0, paddingLeft: 20, fontSize: 13, color: "#b91c1c" }}>
+                  {batchErrors.map((e, i) => <li key={i}>{e}</li>)}
+                </ul>
+              </div>
+            )}
+            {!batchLoading && batchProgress.current > 0 && batchErrors.length === 0 && (
+              <div style={{ marginBottom: 12, padding: 12, borderRadius: 8, background: "#f0fdf4", border: "1px solid #bbf7d0" }}>
+                <div style={{ fontWeight: 600, fontSize: 14, color: "#166534" }}>✅ 全部提交成功：{batchProgress.success} 条</div>
+              </div>
+            )}
+            {batchRows.length > 0 && (
+              <div style={{ overflowX: "auto", marginBottom: 12 }}>
+                <div style={{ fontSize: 13, marginBottom: 4, color: "#000000" }}>预览：有效行 {batchRows.length} 条</div>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                  <thead>
+                    <tr style={{ borderBottom: "1px solid #e2e8f0", background: "#f8fafc" }}>
+                      <th style={{ textAlign: "left", padding: "6px 4px" }}>#</th>
+                      <th style={{ textAlign: "left", padding: "6px 4px" }}>客户ID</th>
+                      <th style={{ textAlign: "left", padding: "6px 4px" }}>仓库</th>
+                      <th style={{ textAlign: "left", padding: "6px 4px" }}>品名</th>
+                      <th style={{ textAlign: "left", padding: "6px 4px" }}>箱数</th>
+                      <th style={{ textAlign: "left", padding: "6px 4px" }}>到仓日期</th>
+                      <th style={{ textAlign: "left", padding: "6px 4px" }}>运输</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {batchRows.map((row, idx) => (
+                      <tr key={idx} style={{ borderBottom: "1px solid #f1f5f9" }}>
+                        <td style={{ padding: "6px 4px" }}>{idx + 1}</td>
+                        <td style={{ padding: "6px 4px" }}>{allClientOptions.find((c) => c.id === row.clientId)?.name ?? row.clientId}</td>
+                        <td style={{ padding: "6px 4px" }}>{{"wh_yiwu_01":"义乌仓","wh_guangzhou_01":"广州仓","wh_dongguan_01":"东莞仓","wh_shenzhen_01":"深圳仓"}[row.warehouseId] ?? row.warehouseId}</td>
+                        <td style={{ padding: "6px 4px" }}>{row.itemName}</td>
+                        <td style={{ padding: "6px 4px" }}>{row.packageCount} {row.packageUnit}</td>
+                        <td style={{ padding: "6px 4px" }}>{row.arrivedAt}</td>
+                        <td style={{ padding: "6px 4px" }}>{row.transportMode === "sea" ? "海运" : "陆运"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 16 }}>
+              <button type="button" onClick={() => { setShowBatchImport(false); setBatchRows([]); setBatchErrors([]); setBatchProgress({ current: 0, success: 0, fail: 0 }); setBatchFileName(""); setBatchConfirmed(false); }} style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "8px 16px", fontSize: 13, background: "#fff", cursor: "pointer", color: "#000000" }}>关闭</button>
             </div>
           </div>
         </div>

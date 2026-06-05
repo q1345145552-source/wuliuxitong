@@ -973,6 +973,16 @@ export async function deleteAdminStaff(userId: string): Promise<{ deleted: boole
   return parseApiResponse(response);
 }
 
+
+export async function deleteAdminOrder(orderId: string): Promise<{ deleted: boolean; orderId: string; itemName: string }> {
+  const response = await fetch(`${apiBaseUrl()}/admin/orders/delete`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({ orderId }),
+  });
+  return parseApiResponse(response);
+}
+
 export async function setAdminStaffPassword(userId: string, password: string): Promise<{ updated: boolean; id: string }> {
   const response = await fetch(`${apiBaseUrl()}/admin/users/set-password`, {
     method: "POST",

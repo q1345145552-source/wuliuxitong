@@ -680,4 +680,40 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
     await prisma.user.update({ where: { id }, data: { status: newStatus } });
     ok(res, { id, status: newStatus });
   });
+
+  /**
+   * 管理员删除运单（级联删除状态日志、产品图、产品行、运单本身、订单）
+   */
+  app.post("/admin/orders/delete", async (req, res) => {
+    const auth = requireRole(req, res, ["admin"]);
+    if (!auth) return;
+
+    const body = (req.body ?? {}) as { orderId?: string };
+    const orderId = body.orderId?.trim();
+    if (!orderId) {
+      fail(res, 400, "BAD_REQUEST", "orderId is required");
+      return;
+    }
+
+    const order = await prisma.order.findFirst({
+      where: { id: orderId, companyId: auth.companyId },
+      include: { shipments: { select: { id: true } } },
+    });
+    if (!order) {
+      fail(res, 404, "NOT_FOUND", "order not found");
+      return;
+    }
+
+    // 级联删除
+    for (const s of order.shipments) {
+      await prisma.statusLog.deleteMany({ where: { shipmentId: s.id } });
+      await prisma.shipment.delete({ where: { id: s.id } });
+    }
+    await prisma.orderProductImage.deleteMany({ where: { orderId } });
+    await prisma.orderProduct.deleteMany({ where: { orderId } });
+    await prisma.order.delete({ where: { id: orderId } });
+
+    ok(res, { deleted: true, orderId, itemName: order.itemName });
+  });
+
 }

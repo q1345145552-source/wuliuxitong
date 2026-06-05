@@ -23,6 +23,7 @@ import {
   createAdminStaff,
   createAdminClient,
   deleteAdminStaff,
+  deleteAdminOrder,
   setAdminStaffPassword,
   type AdminOverview,
   type AdminOpsOverview,
@@ -1284,7 +1285,7 @@ export default function AdminHomePage() {
                     <td style={{ padding: "8px 6px", fontWeight: 600, color: "#1e3a8a", whiteSpace: "nowrap" }}>
                       {o.trackingNo ?? "—"}
                     </td>
-                    <td style={{ padding: "8px 6px", color: "#000000", fontWeight: 600 }}>{o.clientId ?? "—"}</td>
+                    <td style={{ padding: "8px 6px", color: "#000000", fontWeight: 600 }}>{o.clientName ?? o.clientId ?? "—"}</td>
                     <td style={{ padding: "8px 6px", whiteSpace: "nowrap" }}>{shipmentStatusLabel(o.currentStatus)}</td>
                     <td style={{ padding: "8px 6px", whiteSpace: "nowrap" }}>
                       {o.receivableAmountCny != null
@@ -1307,9 +1308,25 @@ export default function AdminHomePage() {
                       <button
                         type="button"
                         onClick={() => startEditOrder(o)}
-                        style={{ border: "1px solid #bfdbfe", borderRadius: 8, padding: "4px 10px", background: "#eff6ff", color: "#1d4ed8", cursor: "pointer", fontWeight: 700 }}
+                        style={{ border: "1px solid #bfdbfe", borderRadius: 8, padding: "4px 10px", background: "#eff6ff", color: "#1d4ed8", cursor: "pointer", fontWeight: 700, marginRight: 6 }}
                       >
                         编辑
+                      </button>
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          if (!confirm(`确定删除运单 ${o.trackingNo ?? o.id}（${o.itemName ?? ""}）？\n\n此操作不可撤销，将级联删除运单、状态日志、产品行等所有关联数据。`)) return;
+                          try {
+                            await deleteAdminOrder(o.id);
+                            setToast(`已删除：${o.itemName ?? o.id}`);
+                            await loadOrders();
+                          } catch (err) {
+                            setMessage(`删除失败：${err instanceof Error ? err.message : "未知错误"}`);
+                          }
+                        }}
+                        style={{ border: "1px solid #fecaca", borderRadius: 8, padding: "4px 10px", background: "#fef2f2", color: "#dc2626", cursor: "pointer", fontWeight: 700 }}
+                      >
+                        删除
                       </button>
                     </td>
                   </tr>
