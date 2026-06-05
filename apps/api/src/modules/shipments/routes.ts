@@ -435,7 +435,26 @@ export function registerShipmentRoutes(app: MinimalHttpApp): void {
       cargoType: r.order?.cargoType ?? "NORMAL",
       canEdit: auth.role === "admin",
       productImages: [],
+      products: undefined as any[] | undefined,
     }));
+
+    // 批量加载产品明细
+    const orderIds = [...new Set(items.map((i) => i.orderId).filter(Boolean) as string[])];
+    if (orderIds.length > 0) {
+      const productRows = await prisma.orderProduct.findMany({
+        where: { orderId: { in: orderIds } },
+        orderBy: { sortOrder: "asc" },
+      });
+      const pmap = new Map<string, any[]>();
+      for (const r of productRows) {
+        const list = pmap.get(r.orderId) ?? [];
+        list.push({ id: r.id, itemName: r.itemName, packageCount: r.packageCount });
+        pmap.set(r.orderId, list);
+      }
+      for (const item of items) {
+        if (item.orderId) item.products = pmap.get(item.orderId);
+      }
+    }
 
     ok(res, { items, page: 1, pageSize: items.length, total: items.length });
   });
