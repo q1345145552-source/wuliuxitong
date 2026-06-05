@@ -62,7 +62,7 @@ const SECTION_LABELS: Record<(typeof SECTION_IDS)[number], string> = {
   overview: "运营看板",
   staff: "员工管理",
   clients: "客户管理",
-  orders: "订单数据管理",
+  orders: "运单管理",
   "ai-memory": "AI会话记忆运维",
   "ai-knowledge-gaps": "AI待补知识问题",
   "knowledge-feed": "AI知识投喂",
@@ -308,6 +308,12 @@ export default function AdminHomePage() {
 
   const loadOrders = useCallback(async () => {
     const list = await fetchAdminOrders();
+    // 按运单号数字降序：YW0001220 > YW0001219
+    list.sort((a, b) => {
+      const an = (a.trackingNo ?? "").replace(/\D/g, "");
+      const bn = (b.trackingNo ?? "").replace(/\D/g, "");
+      return (Number(bn) || 0) - (Number(an) || 0);
+    });
     setOrderList(list);
   }, []);
 
@@ -338,7 +344,10 @@ export default function AdminHomePage() {
       paymentStatus: order.paymentStatus === "paid" ? "paid" : "unpaid",
       shipDate: order.shipDate ?? "",
     });
-    window.scrollTo({ top: 0, behavior: "smooth" });
+    // 滚动到编辑面板
+    setTimeout(() => {
+      document.getElementById("admin-edit-panel")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 100);
   };
 
   /**
@@ -1128,7 +1137,7 @@ export default function AdminHomePage() {
         )}
       </section>
 
-      {/* 4. 订单数据管理 */}
+      {/* 4. 运单管理 */}
       <section id="orders" style={{ ...sectionStyle, display: activeSection === "orders" ? "block" : "none" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
           <h2 style={{ margin: 0, fontSize: 18 }}>{SECTION_LABELS.orders}</h2>
@@ -1285,7 +1294,7 @@ export default function AdminHomePage() {
               </tbody>
             </table>
             {editingOrderId ? (
-              <div style={{ ...cardStyle, marginTop: 10, display: "grid", gap: 8 }}>
+              <div id="admin-edit-panel" style={{ ...cardStyle, marginTop: 10, display: "grid", gap: 8 }}>
                 <div style={{ fontWeight: 700, color: "#0f172a" }}>正在编辑订单：{editingOrderId}</div>
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 8 }}>
                   <input value={orderEditForm.clientId} onChange={(e) => setOrderEditForm((v) => ({ ...v, clientId: e.target.value }))} placeholder="唛头（留空不修改）" list="admin-client-options" autoComplete="off" style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 10px" }} />

@@ -899,6 +899,12 @@ export default function StaffHomePage() {
 
   const loadPageData = async (): Promise<ShipmentItem[]> => {
     const [shipmentItems, prealertItems, clientItems] = await Promise.all([fetchStaffShipments(), fetchStaffPrealerts(), fetchStaffClients()]);
+    // 按运单号数字降序
+    shipmentItems.sort((a, b) => {
+      const an = (a.trackingNo ?? "").replace(/\D/g, "");
+      const bn = (b.trackingNo ?? "").replace(/\D/g, "");
+      return (Number(bn) || 0) - (Number(an) || 0);
+    });
     setStaffClients(clientItems);
     setShipments(shipmentItems);
     setPrealerts(prealertItems);
