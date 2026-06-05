@@ -595,7 +595,7 @@ export default function StaffHomePage() {
   });
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showBatchImport, setShowBatchImport] = useState(false);
-  const [batchRows, setBatchRows] = useState<Array<{clientId: string; warehouseId: string; itemName: string; packageCount: number; packageUnit: "bag" | "box"; weightKg?: number; volumeM3?: number; arrivedAt: string; transportMode: "sea" | "land"; domesticTrackingNo?: string; batchNo?: string; productQuantity?: number; receiverNameTh?: string; receiverPhoneTh?: string; receiverAddressTh?: string}>>([]);
+  const [batchRows, setBatchRows] = useState<Array<{clientId: string; trackingNo?: string; warehouseId: string; itemName: string; packageCount: number; packageUnit: "bag" | "box"; weightKg?: number; volumeM3?: number; arrivedAt: string; transportMode: "sea" | "land"; domesticTrackingNo?: string; batchNo?: string; productQuantity?: number; receiverNameTh?: string; receiverPhoneTh?: string; receiverAddressTh?: string}>>([]);
   const [batchLoading, setBatchLoading] = useState(false);
   const [batchProgress, setBatchProgress] = useState({ current: 0, success: 0, fail: 0 });
   const [batchErrors, setBatchErrors] = useState<string[]>([]);
@@ -1217,6 +1217,7 @@ export default function StaffHomePage() {
   function downloadStaffBatchTemplate() {
     const ws = XLSX.utils.json_to_sheet([{
       "唛头 *": "",
+      "运单号 *": "",
       "仓库 *": "",
       "品名 *": "",
       "箱数 *": "",
@@ -1232,6 +1233,7 @@ export default function StaffHomePage() {
     }]);
     ws["!cols"] = [
       { wch: 12 },  // 唛头
+      { wch: 20 },  // 运单号
       { wch: 14 },  // 仓库
       { wch: 12 },  // 品名
       { wch: 10 },  // 箱数
@@ -1302,6 +1304,7 @@ export default function StaffHomePage() {
         }
         return {
           clientId: findCol(row, ["唛头"]),
+          trackingNo: findCol(row, ["运单号"]) || undefined,
           warehouseId,
           itemName: findCol(row, ["品名"]),
           packageCount,
@@ -1329,6 +1332,7 @@ export default function StaffHomePage() {
         await createStaffOrder({
           clientId: row.clientId,
           warehouseId: row.warehouseId,
+          trackingNo: row.trackingNo,
           arrivedAt: row.arrivedAt,
           itemName: row.itemName,
           packageCount: row.packageCount,
@@ -3918,6 +3922,7 @@ export default function StaffHomePage() {
                       <tr key={idx} style={{ borderBottom: "1px solid #f1f5f9" }}>
                         <td style={{ padding: "6px 4px" }}>{idx + 1}</td>
                         <td style={{ padding: "6px 4px" }}>{allClientOptions.find((c) => c.id === row.clientId)?.name ?? row.clientId}</td>
+                        <td style={{ padding: "6px 4px" }}>{row.trackingNo ?? "—"}</td>
                         <td style={{ padding: "6px 4px" }}>{{"wh_yiwu_01":"义乌仓","wh_guangzhou_01":"广州仓","wh_dongguan_01":"东莞仓","wh_shenzhen_01":"深圳仓"}[row.warehouseId] ?? row.warehouseId}</td>
                         <td style={{ padding: "6px 4px" }}>{row.itemName}</td>
                         <td style={{ padding: "6px 4px" }}>{row.packageCount} {row.packageUnit}</td>
