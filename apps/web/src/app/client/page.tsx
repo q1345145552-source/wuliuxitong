@@ -1267,31 +1267,7 @@ export default function ClientHomePage() {
                   <div className="order-field-label">实时汇率</div>
                   <div className="order-field-value">{walletRateText}</div>
                 </div>
-                <div className="order-field">
-                  <div className="order-field-label">订单详情 · 产品图</div>
-                  <div className="order-field-value" style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-                    {(item.productImages?.length ?? 0) === 0 ? (
-                      <span style={{ color: "#000000" }}>暂无（由仓库员工上传）</span>
-                    ) : (
-                      item.productImages?.map((img) => (
-                        <a
-                          key={img.id}
-                          href={`data:${img.mime};base64,${img.contentBase64}`}
-                          download={img.fileName}
-                          target="_blank"
-                          rel="noreferrer"
-                          style={{ display: "block" }}
-                        >
-                          <img
-                            src={`data:${img.mime};base64,${img.contentBase64}`}
-                            alt={img.fileName}
-                            style={{ width: 72, height: 72, objectFit: "cover", borderRadius: 8, border: "1px solid #e2e8f0" }}
-                          />
-                        </a>
-                      ))
-                    )}
-                  </div>
-                </div>
+
                 {/* 📦 出柜追踪 — 显示该订单运单所属的柜子（含拆柜提示）*/}
                 <div className="order-field" style={{ gridColumn: "1 / -1" }}>
                   <ContainerTrackingSection trackingNo={item.trackingNo ?? undefined} />

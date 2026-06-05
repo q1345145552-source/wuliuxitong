@@ -2137,14 +2137,6 @@ export default function StaffHomePage() {
                         </>
                       )}
                     </div>
-                    <OrderProductImagesPanel
-                      orderId={item.id}
-                      images={item.productImages ?? []}
-                      canManage
-                      busy={loading}
-                      onSelectFile={(file) => uploadOrderProductImageAndReload(item.id, file)}
-                      onDelete={(imageId) => deleteOrderProductImageAndReload(imageId)}
-                    />
                     <input
                       value={prealertBatchDrafts[item.id] ?? ""}
                       onChange={(e) =>
@@ -3496,16 +3488,6 @@ export default function StaffHomePage() {
                                     </>
                                   );
                                 })()}
-                                {item.orderId ? (
-                                  <OrderProductImagesPanel
-                                    orderId={item.orderId}
-                                    images={shipmentImagesCache[item.orderId] ?? []}
-                                    canManage={false}
-                                    busy={loading}
-                                    onSelectFile={(file) => uploadOrderProductImageAndReload(item.orderId!, file)}
-                                    onDelete={(imageId) => deleteOrderProductImageAndReload(imageId)}
-                                  />
-                                ) : null}
                                 <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
                                   {item.canEdit ? (
                                     <>
