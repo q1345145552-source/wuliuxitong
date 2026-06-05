@@ -1139,9 +1139,7 @@ export default function ClientHomePage() {
             <div className="order-head">
               <div className="order-title">
                 #{idx + 1} {item.itemName || "未填品名"}
-                <span style={{ marginLeft: 8, fontSize: 13, color: "#000000", fontWeight: 400 }}>
-                  · {item.id}
-                </span>
+
               </div>
               {(item.products?.length ?? 0) > 1 && (
                 <div style={{ fontSize: 12, color: "#000000", marginTop: 4, background: "#f8fafc", borderRadius: 6, padding: "4px 8px" }}>
@@ -1237,17 +1235,17 @@ export default function ClientHomePage() {
                   <div className="order-field-value">{item.domesticTrackingNo ?? "-"}</div>
                 </div>
                 <div className="order-field">
-                  <div className="order-field-label">CBM（体积）</div>
-                  <div className="order-field-value">{item.volumeM3 ?? "-"}</div>
+                  <div className="order-field-label">体积</div>
+                  <div className="order-field-value">{item.volumeM3 != null ? `${item.volumeM3} m³` : "-"}</div>
                 </div>
                 <div className="order-field">
-                  <div className="order-field-label">重量（kg）</div>
-                  <div className="order-field-value">{item.weightKg ?? "-"}</div>
+                  <div className="order-field-label">重量</div>
+                  <div className="order-field-value">{item.weightKg != null ? `${item.weightKg} 公斤` : "-"}</div>
                 </div>
                 <div className="order-field">
                   <div className="order-field-label">件数</div>
                   <div className="order-field-value">
-                    {item.packageCount} {item.packageUnit}
+                    {item.packageCount} {item.packageUnit === "bag" ? "袋" : "箱"}
                   </div>
                 </div>
                 {(item.products?.length ?? 0) > 0 && (
@@ -1264,7 +1262,7 @@ export default function ClientHomePage() {
                   </div>
                 )}
                 <div className="order-field">
-                  <div className="order-field-label">实时汇率（CNY/THB）</div>
+                  <div className="order-field-label">实时汇率</div>
                   <div className="order-field-value">{walletRateText}</div>
                 </div>
                 <div className="order-field">
