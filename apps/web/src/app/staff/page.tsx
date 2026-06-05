@@ -696,7 +696,7 @@ export default function StaffHomePage() {
     weightKg: "",
     domesticOrderNo: "",
     packageUnit: "box" as "bag" | "box",
-    transportMode: "land" as "sea" | "land",
+    transportMode: "sea" as "sea" | "land",
     cargoType: "NORMAL",
   });
 
@@ -1182,7 +1182,7 @@ export default function StaffHomePage() {
         packageUnit: form.packageUnit,
         weightKg,
         volumeM3,
-        domesticTrackingNo: form.domesticOrderNo.trim() || undefined,
+        domesticTrackingNo: form.domesticOrderNo.trim() || "货拉拉",
         cargoType: form.cargoType,
         transportMode: form.transportMode,
         products: hasProducts ? staffFormProducts.filter(p => p.itemName.trim()).map(p => ({ itemName: p.itemName.trim(), packageCount: Number(p.packageCount) || 1, lengthCm: p.lengthCm ? Number(p.lengthCm) : undefined, widthCm: p.widthCm ? Number(p.widthCm) : undefined, heightCm: p.heightCm ? Number(p.heightCm) : undefined, productQuantity: p.productQuantity ? Number(p.productQuantity) : undefined, weightKg: p.weightKg ? Number(p.weightKg) : undefined })) : undefined,
@@ -1210,7 +1210,7 @@ export default function StaffHomePage() {
       setForm({
         domesticOrderNo: "", trackingNo: "", batchNo: "",
         itemName: "", warehouseId: "wh_yiwu_01", packageUnit: "box" as "bag" | "box",
-        transportMode: "land" as "sea" | "land", cargoType: "NORMAL", arrivedAt: "", clientId: "",
+        transportMode: "sea" as "sea" | "land", cargoType: "NORMAL", arrivedAt: "", clientId: "",
         packageCount: "", volumeM3: "", weightKg: "", productQuantity: "",
         lengthCm: "", widthCm: "", heightCm: "",
       });
