@@ -716,6 +716,10 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
         await tx.delivery.deleteMany({ where: { shipmentId: s.id } });
         await tx.shipment.delete({ where: { id: s.id } });
       }
+      // Order 级别的 FK 清理
+      await tx.adminCustomsCase.updateMany({ where: { orderId }, data: { orderId: null } });
+      await tx.invoiceLine.updateMany({ where: { orderId }, data: { orderId: null } });
+      await tx.adminSettlementEntry.deleteMany({ where: { orderId } });
       await tx.orderProductImage.deleteMany({ where: { orderId } });
       await tx.orderProduct.deleteMany({ where: { orderId } });
       await tx.order.delete({ where: { id: orderId } });
