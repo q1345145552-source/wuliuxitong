@@ -1240,7 +1240,11 @@ export default function ClientHomePage() {
                 </div>
                 <div className="order-field">
                   <div className="order-field-label">重量</div>
-                  <div className="order-field-value">{item.weightKg != null ? `${item.weightKg} 公斤` : "-"}</div>
+                  <div className="order-field-value">{item.weightKg != null ? `${item.weightKg} kg` : "-"}</div>
+                </div>
+                <div className="order-field">
+                  <div className="order-field-label">发货日期</div>
+                  <div className="order-field-value">{item.shipDate ?? item.createdAt?.slice(0, 10) ?? "-"}</div>
                 </div>
                 <div className="order-field">
                   <div className="order-field-label">件数</div>
@@ -1255,7 +1259,7 @@ export default function ClientHomePage() {
                       {item.products!.map((p, i) => (
                         <div key={i} style={{ marginBottom: 2 }}>
                           {p.itemName} ×{p.packageCount}
-                          {p.lengthCm ? ` (${p.lengthCm}×${p.widthCm}×${p.heightCm}cm)` : ""}
+                          {p.lengthCm ? ` — ${p.lengthCm}×${p.widthCm}×${p.heightCm} cm` : ""}
                         </div>
                       ))}
                     </div>
