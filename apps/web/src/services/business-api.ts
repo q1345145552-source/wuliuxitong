@@ -714,7 +714,7 @@ export async function fetchClientShipments(): Promise<ShipmentItem[]> {
 
 export async function splitStaffShipment(payload: {
   parentShipmentId: string;
-  splits: Array<{ batchNo: string; itemName: string; packageCount: number }>;
+  splits: Array<{ trackingNo: string; batchNo: string; itemName: string; packageCount: number }>;
 }): Promise<{ parentTrackingNo: string; children: Array<{ trackingNo: string; shipmentId: string }> }> {
   const response = await fetch(`${apiBaseUrl()}/staff/shipments/split`, {
     method: "POST",

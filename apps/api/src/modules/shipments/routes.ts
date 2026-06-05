@@ -574,6 +574,7 @@ export function registerShipmentRoutes(app: MinimalHttpApp): void {
     const body = (req.body ?? {}) as {
       parentShipmentId?: string;
       splits?: Array<{
+        trackingNo: string;
         batchNo: string;
         itemName: string;
         packageCount: number;
@@ -584,6 +585,24 @@ export function registerShipmentRoutes(app: MinimalHttpApp): void {
     const splits = body.splits ?? [];
     if (!parentId || splits.length === 0) {
       fail(res, 400, "BAD_REQUEST", "parentShipmentId and at least one split are required");
+      return;
+    }
+    if (splits.some((s) => !s.trackingNo?.trim())) {
+      fail(res, 400, "BAD_REQUEST", "每一条分柜运单号均为必填");
+      return;
+    }
+    // 检查分柜运单号是否重复
+    const splitNos = splits.map((s) => s.trackingNo.trim());
+    if (new Set(splitNos).size !== splitNos.length) {
+      fail(res, 400, "BAD_REQUEST", "分柜运单号不可重复");
+      return;
+    }
+    const existingNos = await prisma.shipment.findMany({
+      where: { trackingNo: { in: splitNos }, companyId: auth.companyId },
+      select: { trackingNo: true },
+    });
+    if (existingNos.length > 0) {
+      fail(res, 409, "CONFLICT", `运单号 ${existingNos.map((s) => s.trackingNo).join(", ")} 已存在`);
       return;
     }
 
@@ -622,7 +641,7 @@ export function registerShipmentRoutes(app: MinimalHttpApp): void {
       for (let i = 0; i < splits.length; i++) {
         const split = splits[i];
         const childId = `s_${Date.now()}_${i}`;
-        const childTrackingNo = `${parent.trackingNo}-FG${i + 1}`;
+        const childTrackingNo = split.trackingNo.trim();
 
         await tx.shipment.create({
           data: {

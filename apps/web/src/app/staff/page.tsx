@@ -611,7 +611,7 @@ export default function StaffHomePage() {
   const [orderImagePreviews, setOrderImagePreviews] = useState<string[]>([]);
   const [approvingPrealert, setApprovingPrealert] = useState<OrderItem | null>(null);
   const [splittingShipment, setSplittingShipment] = useState<ShipmentItem | null>(null);
-  const [splitRows, setSplitRows] = useState<Array<{ batchNo: string; itemName: string; packageCount: string }>>([]);
+  const [splitRows, setSplitRows] = useState<Array<{ trackingNo: string; batchNo: string; itemName: string; packageCount: string }>>([]);
 
   const [lastmileKeyword, setLastmileKeyword] = useState("");
   const [lastmileItems, setLastmileItems] = useState<Array<{
@@ -3046,7 +3046,7 @@ export default function StaffHomePage() {
                               type="button"
                               onClick={() => {
                                 setSplittingShipment(item);
-                                setSplitRows([{ batchNo: "", itemName: item.itemName ?? "", packageCount: "" }]);
+                                setSplitRows([{ trackingNo: "", batchNo: "", itemName: item.itemName ?? "", packageCount: "" }]);
                               }}
                               style={{ border: "none", background: "transparent", color: "#d97706", cursor: "pointer", fontWeight: 600, padding: 0, marginLeft: 8 }}
                             >
@@ -4001,6 +4001,7 @@ export default function StaffHomePage() {
                 <div key={i} style={{ padding: 12, border: "1px solid #e5e7eb", borderRadius: 8, background: "#fafafa" }}>
                   <div style={{ fontSize: 12, fontWeight: 600, color: "#000000", marginBottom: 6 }}>分柜 {i + 1}</div>
                   <div style={{ display: "grid", gap: 6 }}>
+                    <input value={row.trackingNo} onChange={(e) => setSplitRows((prev) => prev.map((r, j) => j === i ? { ...r, trackingNo: e.target.value } : r))} placeholder="运单号 *" style={orderCreateInputStyle} />
                     <input value={row.batchNo} onChange={(e) => setSplitRows((prev) => prev.map((r, j) => j === i ? { ...r, batchNo: e.target.value } : r))} placeholder="柜号 *" style={orderCreateInputStyle} />
                     <input value={row.itemName} onChange={(e) => setSplitRows((prev) => prev.map((r, j) => j === i ? { ...r, itemName: e.target.value } : r))} placeholder="品名" style={orderCreateInputStyle} />
                     <input type="number" min={1} value={row.packageCount} onChange={(e) => setSplitRows((prev) => prev.map((r, j) => j === i ? { ...r, packageCount: e.target.value } : r))} placeholder="移走件数 *" style={orderCreateInputStyle} />
@@ -4009,7 +4010,7 @@ export default function StaffHomePage() {
               ))}
             </div>
             <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
-              <button type="button" onClick={() => setSplitRows((prev) => [...prev, { batchNo: "", itemName: splittingShipment.itemName ?? "", packageCount: "" }])} style={{ border: "1px dashed #d1d5db", borderRadius: 6, padding: "6px 12px", fontSize: 12, background: "#fff", cursor: "pointer", color: "#000000" }}>＋ 添加分柜</button>
+              <button type="button" onClick={() => setSplitRows((prev) => [...prev, { trackingNo: "", batchNo: "", itemName: splittingShipment.itemName ?? "", packageCount: "" }])} style={{ border: "1px dashed #d1d5db", borderRadius: 6, padding: "6px 12px", fontSize: 12, background: "#fff", cursor: "pointer", color: "#000000" }}>＋ 添加分柜</button>
             </div>
             {message && message.includes("分柜") ? (
               <p style={{ marginTop: 8, color: message.includes("失败") ? "#b91c1c" : "#065f46", fontSize: 13 }}>{message}</p>
@@ -4017,15 +4018,15 @@ export default function StaffHomePage() {
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 16 }}>
               <button type="button" onClick={() => { setSplittingShipment(null); setMessage(""); }} style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "8px 16px", fontSize: 13, background: "#fff", cursor: "pointer", color: "#000000" }}>取消</button>
               <button type="button" disabled={loading} onClick={async () => {
-                const validRows = splitRows.filter((r) => r.batchNo.trim() && Number(r.packageCount) > 0);
-                if (validRows.length === 0) { setMessage("分柜失败：请至少填写一个有效的柜号和件数"); return; }
+                const validRows = splitRows.filter((r) => r.trackingNo.trim() && r.batchNo.trim() && Number(r.packageCount) > 0);
+                if (validRows.length === 0) { setMessage("分柜失败：请至少填写运单号、柜号和件数"); return; }
                 const totalSplit = validRows.reduce((s, r) => s + Number(r.packageCount), 0);
                 if (totalSplit > (splittingShipment.packageCount ?? 0)) { setMessage(`分柜失败：移走总件数(${totalSplit})超过当前总件数(${splittingShipment.packageCount ?? 0})`); return; }
                 setLoading(true); setMessage("");
                 try {
                   const result = await splitStaffShipment({
                     parentShipmentId: splittingShipment.id,
-                    splits: validRows.map((r) => ({ batchNo: r.batchNo.trim(), itemName: r.itemName.trim(), packageCount: Number(r.packageCount) })),
+                    splits: validRows.map((r) => ({ trackingNo: r.trackingNo.trim(), batchNo: r.batchNo.trim(), itemName: r.itemName.trim(), packageCount: Number(r.packageCount) })),
                   });
                   setToast(`分柜成功：${result.children.length} 个子单`);
                   setMessage(`分柜成功：${result.children.map((c) => c.trackingNo).join("、")}`);
