@@ -1410,6 +1410,17 @@ export async function removeShipmentFromManifest(manifestId: string, itemId: str
   return parseApiResponse(response);
 }
 
+/**
+ * 管理员删除柜子（仅 LOADING 状态）。
+ */
+export async function deleteContainer(containerId: string): Promise<{ deleted: boolean; id: string }> {
+  const response = await fetch(`${apiBaseUrl()}/admin/containers?id=${encodeURIComponent(containerId)}`, {
+    method: "DELETE",
+    headers: { ...authHeaders() },
+  });
+  return parseApiResponse(response);
+}
+
 export async function addShipmentToManifest(manifestId: string, trackingNo: string): Promise<{ added: boolean }> {
   const response = await fetch(`${apiBaseUrl()}/staff/loading-manifests/add-shipment?id=${manifestId}`, {
     method: "POST",

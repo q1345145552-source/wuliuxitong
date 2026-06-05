@@ -11,6 +11,7 @@ import {
   addShipmentToManifest,
   removeShipmentFromManifest,
   fetchStaffShipments,
+  deleteContainer,
   type LoadingManifestItem,
   type LoadingManifestDetail,
   type ShipmentItem,
@@ -155,6 +156,20 @@ export default function StaffContainerLoadingPage() {
     }
   };
 
+  const handleDelete = async () => {
+    if (!selectedId || !detail) return;
+    if (!confirm(`确定删除柜子 ${detail.manifestNo}？\n\n此操作不可撤销。`)) return;
+    try {
+      await deleteContainer(selectedId);
+      setToast("柜子已删除");
+      setSelectedId("");
+      setDetail(null);
+      await loadList();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "删除失败");
+    }
+  };
+
   const handleBulkAdd = async () => {
     if (!selectedId || selectedShipments.size === 0) return;
     setAdding(true);
@@ -196,7 +211,7 @@ export default function StaffContainerLoadingPage() {
   };
 
   return (
-    <RoleShell allowedRole="staff" title="装柜管理">
+    <RoleShell allowedRole={["staff", "admin"]} title="装柜管理">
       <h1 style={{ fontSize: 22, fontWeight: 700, color: "#0f172a", margin: "0 0 16px" }}>装柜管理</h1>
 
       {/* 搜索 & 新建 */}
@@ -268,9 +283,14 @@ export default function StaffContainerLoadingPage() {
                       {detail.carrierInfo ? ` · 承运: ${detail.carrierInfo}` : ""}
                     </div>
                   </div>
-                  {detail.status === "LOADING" && (
-                    <button onClick={handleSeal} style={{ border: "none", borderRadius: 6, padding: "8px 16px", background: "#000000", color: "#fff", fontWeight: 500, fontSize: 13, cursor: "pointer" }}>封柜</button>
-                  )}
+                  <div style={{ display: "flex", gap: 8 }}>
+                    {detail.status === "LOADING" && (
+                      <button onClick={handleSeal} style={{ border: "none", borderRadius: 6, padding: "8px 16px", background: "#000000", color: "#fff", fontWeight: 500, fontSize: 13, cursor: "pointer" }}>封柜</button>
+                    )}
+                    {detail.status === "LOADING" && (
+                      <button onClick={handleDelete} style={{ border: "1px solid #fecaca", borderRadius: 6, padding: "8px 16px", background: "#fef2f2", color: "#dc2626", fontWeight: 500, fontSize: 13, cursor: "pointer" }}>删除柜子</button>
+                    )}
+                  </div>
                 </div>
 
                 {/* 已装运单列表 */}

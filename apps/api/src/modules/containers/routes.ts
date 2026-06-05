@@ -449,6 +449,38 @@ export function registerContainerRoutes(app: MinimalHttpApp): void {
     ok(res, { deleted: true, id });
   });
 
+  // ============ 管理员删除柜子 ============
+  app.delete("/admin/containers", async (req, res) => {
+    const auth = requireRole(req, res, ["admin"]);
+    if (!auth) return;
+
+    const id = req.query.id?.trim();
+    if (!id) {
+      fail(res, 400, "BAD_REQUEST", "id is required");
+      return;
+    }
+
+    const container = await prisma.container.findFirst({
+      where: { id, companyId: auth.companyId },
+      select: { id: true, currentStatus: true },
+    });
+    if (!container) {
+      fail(res, 404, "NOT_FOUND", "container not found");
+      return;
+    }
+    if (container.currentStatus !== "LOADING") {
+      fail(res, 400, "VALIDATION_ERROR", "只能删除装柜中状态的柜子");
+      return;
+    }
+
+    await prisma.$transaction(async (tx) => {
+      await tx.shipmentContainerItem.deleteMany({ where: { containerId: id } });
+      await tx.container.delete({ where: { id } });
+    });
+
+    ok(res, { deleted: true, id });
+  });
+
   // ============ 客户追踪：根据运单 ID 查看完整的"出柜"信息 ============
   // 返回：运单基础信息 + 所属的所有柜子 + 状态时间线
   app.get("/client/shipments/track", async (req, res) => {

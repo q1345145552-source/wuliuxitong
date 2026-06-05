@@ -42,11 +42,12 @@ function iconForMenuId(id: string): LucideIcon {
 }
 
 export default function RoleShell(props: {
-  allowedRole: MockRole;
+  allowedRole: MockRole | MockRole[];
   title: string;
   children: ReactNode;
 }) {
   const { allowedRole, title, children } = props;
+  const allowedRoles = Array.isArray(allowedRole) ? allowedRole : [allowedRole];
   const [mounted, setMounted] = useState(false);
   const [session, setSession] = useState<MockSession | null>(null);
   const [currentPath, setCurrentPath] = useState("");
@@ -84,7 +85,7 @@ export default function RoleShell(props: {
       }, 300);
       return () => clearTimeout(timer);
     }
-    if (session.role !== allowedRole) {
+    if (!allowedRoles.includes(session.role)) {
       const timer = setTimeout(() => {
         const from = encodeURIComponent(window.location.pathname);
         window.location.href = `/forbidden?from=${from}`;
@@ -119,7 +120,7 @@ export default function RoleShell(props: {
     );
   }
 
-  if (session.role !== allowedRole) {
+  if (!allowedRoles.includes(session.role)) {
     return (
       <main style={{ padding: 24 }}>
         <h1 className="biz-title" style={{ fontSize: 28, marginBottom: 8 }}>{title}</h1>
