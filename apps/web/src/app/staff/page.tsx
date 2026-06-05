@@ -2913,18 +2913,17 @@ export default function StaffHomePage() {
                         <input type="checkbox" checked={selectedForExport.size === filteredShipmentList.length && filteredShipmentList.length > 0} onChange={toggleSelectAll} style={{ cursor: "pointer" }} />
                       </th>
                       <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>唛头</th>
-                      <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>运单号</th>
-                      <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>品名</th>
                       <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>仓库</th>
-                      <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>国内单号</th>
+                      <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>运单号</th>
                       <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>柜号</th>
+                      <th style={{ padding: "10px 8px", minWidth: 120 }}>品名</th>
+                      <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>包装</th>
+                      <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>体积</th>
+                      <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>重量</th>
                       <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>运输方式</th>
                       <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>货型</th>
-                      <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>发货时间</th>
-                      <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>件数</th>
-                      <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>重量</th>
-                      <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>体积</th>
-                      <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>计费体积</th>
+                      <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>到仓日期</th>
+                      <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>国内单号</th>
                       <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>加收金额</th>
                       <th style={{ padding: "10px 8px", minWidth: 120 }}>收货地址</th>
                       <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>操作</th>
@@ -2968,7 +2967,9 @@ export default function StaffHomePage() {
                             </button>
                           </td>
                           <td style={{ padding: "8px 6px", fontWeight: 600, color: "#6b21a8", whiteSpace: "nowrap", fontFamily: "monospace", fontSize: 12 }}>{item.clientId ?? "—"}</td>
+                          <td style={{ padding: "8px 6px", whiteSpace: "nowrap" }}>{warehouseLabelFromId(item.warehouseId)}</td>
                           <td style={{ padding: "8px 6px", fontWeight: 600, color: "#1e3a8a", whiteSpace: "nowrap" }}>{item.orderNo || item.trackingNo}</td>
+                          <td style={{ padding: "8px 6px", whiteSpace: "nowrap" }}>{item.batchNo ?? "—"}</td>
                           <td style={{ padding: "8px 6px", color: "#000000", minWidth: 120 }}>
                             {(item.products?.length ?? 0) > 0
                               ? item.products!.map((p, i) => (
@@ -2982,9 +2983,9 @@ export default function StaffHomePage() {
                                 ))
                               : (item.itemName ?? "—")}
                           </td>
-                          <td style={{ padding: "8px 6px", whiteSpace: "nowrap" }}>{warehouseLabelFromId(item.warehouseId)}</td>
-                          <td style={{ padding: "8px 6px", whiteSpace: "nowrap", color: "#000000" }}>{item.domesticTrackingNo ?? "—"}</td>
-                          <td style={{ padding: "8px 6px", whiteSpace: "nowrap" }}>{item.batchNo ?? "—"}</td>
+                          <td style={{ padding: "8px 6px" }}>{item.packageUnit === "bag" ? "袋" : "箱"}</td>
+                          <td style={{ padding: "8px 6px", whiteSpace: "nowrap" }}>{formatMetric(item.volumeM3, 6)}</td>
+                          <td style={{ padding: "8px 6px", whiteSpace: "nowrap" }}>{formatMetric(item.weightKg, 2)}</td>
                           <td style={{ padding: "8px 6px", whiteSpace: "nowrap" }}>{transportModeLabel(item.transportMode)}</td>
                           <td style={{ padding: "8px 6px", whiteSpace: "nowrap", fontSize: 12 }}>
                             {item.cargoType === "INSPECTION" ? "商检" : item.cargoType === "SENSITIVE" ? "敏感" : "普货"}
@@ -2992,10 +2993,7 @@ export default function StaffHomePage() {
                           <td style={{ padding: "8px 6px", whiteSpace: "nowrap", color: "#000000" }}>
                             {item.shipDate ?? formatDateTime(item.arrivedAt)}
                           </td>
-                          <td style={{ padding: "8px 6px" }}>{item.packageCount ?? "—"}</td>
-                          <td style={{ padding: "8px 6px", whiteSpace: "nowrap" }}>{formatMetric(item.weightKg, 2)}</td>
-                          <td style={{ padding: "8px 6px", whiteSpace: "nowrap" }}>{formatMetric(item.volumeM3, 6)}</td>
-                          <td style={{ padding: "8px 6px", whiteSpace: "nowrap" }}>{formatMetric(item.volumeM3 != null && item.volumeM3 > 0 ? Math.max(item.volumeM3, item.transportMode === "sea" ? 0.5 : item.transportMode === "land" ? 0.2 : 0) : undefined)}</td>
+                          <td style={{ padding: "8px 6px", whiteSpace: "nowrap", color: "#000000" }}>{item.domesticTrackingNo ?? "—"}</td>
                           <td style={{ padding: "8px 6px", whiteSpace: "nowrap" }}>
                             {item.receivableAmountCny != null
                               ? `${item.receivableCurrency === "THB" ? "THB" : "CNY"} ${item.receivableAmountCny.toFixed(2)}`
