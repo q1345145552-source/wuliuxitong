@@ -1140,9 +1140,12 @@ export default function ClientHomePage() {
               <div className="order-title">
                 {(item.products?.length ?? 0) > 0
                   ? item.products!.map((p, i) => (
-                      <div key={p.id || i} style={{ lineHeight: 1.4, fontSize: 14 }}>
-                        {p.itemName} ×{p.packageCount}
-                        {p.lengthCm ? `  ${p.lengthCm}×${p.widthCm}×${p.heightCm}cm` : ""}
+                      <div key={p.id || i} style={{ marginBottom: i < (item.products?.length ?? 0) - 1 ? 4 : 0 }}>
+                        <div style={{ fontWeight: 600 }}>{p.itemName}</div>
+                        <div style={{ fontSize: 12, color: "#000000", paddingLeft: 4 }}>
+                          {p.packageCount}件
+                          {p.lengthCm ? `  ${p.lengthCm}×${p.widthCm}×${p.heightCm}cm` : ""}
+                        </div>
                       </div>
                     ))
                   : (item.itemName || "未填品名")}
