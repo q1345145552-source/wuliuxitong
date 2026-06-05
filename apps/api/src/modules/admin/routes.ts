@@ -704,9 +704,15 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
       return;
     }
 
-    // 级联删除
+    // 级联删除：先清理所有关联记录
     for (const s of order.shipments) {
+      await prisma.adminCustomsCase.updateMany({ where: { shipmentId: s.id }, data: { shipmentId: null } });
+      await prisma.adminLastmileOrder.deleteMany({ where: { shipmentId: s.id } });
+      await prisma.warehouseLocation.updateMany({ where: { shipmentId: s.id }, data: { shipmentId: null } });
+      await prisma.staffInboundPhoto.deleteMany({ where: { shipmentId: s.id } });
       await prisma.statusLog.deleteMany({ where: { shipmentId: s.id } });
+      await prisma.shipmentContainerItem.deleteMany({ where: { shipmentId: s.id } });
+      await prisma.delivery.deleteMany({ where: { shipmentId: s.id } });
       await prisma.shipment.delete({ where: { id: s.id } });
     }
     await prisma.orderProductImage.deleteMany({ where: { orderId } });

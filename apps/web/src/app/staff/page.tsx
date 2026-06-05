@@ -1752,6 +1752,7 @@ export default function StaffHomePage() {
     }
     const rows = source.map((item) => ({
       运单号: item.trackingNo ?? "-",
+      品名: item.itemName ?? "-",
       归属用户: item.clientName ?? item.clientId ?? "-",
       运单状态: shipmentStatusZh(item.currentStatus),
       加收金额: item.receivableAmountCny != null ? `${item.receivableCurrency === "THB" ? "THB" : "CNY"} ${item.receivableAmountCny}` : "0",
@@ -2820,6 +2821,7 @@ export default function StaffHomePage() {
                 if (source.length === 0) { setMessage("没有可导出的运单"); return; }
                 const rows = source.map((item) => ({
                   运单号: item.trackingNo ?? "-",
+                  品名: item.itemName ?? "-",
                   归属用户: item.clientName ?? item.clientId ?? "-",
                   运单状态: shipmentStatusZh(item.currentStatus),
                   加收金额: item.receivableAmountCny != null ? `${item.receivableCurrency === "THB" ? "THB" : "CNY"} ${item.receivableAmountCny}` : "0",
@@ -2885,6 +2887,7 @@ export default function StaffHomePage() {
                       </th>
                       <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>唛头</th>
                       <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>运单号</th>
+                      <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>品名</th>
                       <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>运单所属用户</th>
                       <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>运单状态</th>
                       <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>加收金额</th>
@@ -2938,6 +2941,7 @@ export default function StaffHomePage() {
                           </td>
                           <td style={{ padding: "8px 6px", fontWeight: 600, color: "#6b21a8", whiteSpace: "nowrap", fontFamily: "monospace", fontSize: 12 }}>{item.clientId ?? "—"}</td>
                           <td style={{ padding: "8px 6px", fontWeight: 600, color: "#1e3a8a", whiteSpace: "nowrap" }}>{item.orderNo || item.trackingNo}</td>
+                          <td style={{ padding: "8px 6px", color: "#000000", maxWidth: 120, overflow: "hidden", textOverflow: "ellipsis" }}>{item.itemName ?? "—"}</td>
                           <td style={{ padding: "8px 6px", color: "#000000" }}>{item.clientName ?? item.clientId ?? "—"}</td>
                           <td style={{ padding: "8px 6px", whiteSpace: "nowrap" }}>{shipmentStatusZh(item.currentStatus)}</td>
                           <td style={{ padding: "8px 6px", whiteSpace: "nowrap" }}>
