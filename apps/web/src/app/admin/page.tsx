@@ -314,7 +314,7 @@ export default function AdminHomePage() {
    * 载入待编辑订单到表单，便于管理员修改客户端订单信息。
    */
   const startEditOrder = (order: AdminOrderItem) => {
-    setEditingOrderId(order.id);
+    setEditingOrderId(order.orderId ?? order.id);
     setOrderEditForm({
       clientId: order.clientId ?? "",
       trackingNo: order.trackingNo ?? "",
@@ -1188,10 +1188,10 @@ export default function AdminHomePage() {
             {editingOrderId ? (
               <div style={{ ...cardStyle, marginBottom: 10, display: "grid", gap: 8 }}>
                 <div style={{ fontWeight: 700, color: "#0f172a" }}>正在编辑订单：{editingOrderId}</div>
-                {(orderList.find(o => o.id === editingOrderId)?.products?.length ?? 0) > 1 && (
+                {(orderList.find(o => (o.orderId ?? o.id) === editingOrderId)?.products?.length ?? 0) > 1 && (
                   <div style={{ marginBottom: 8, background: "#f8fafc", borderRadius: 6, padding: "6px 10px", fontSize: 12 }}>
                     <span style={{ fontWeight: 600 }}>产品列表：</span>
-                    {orderList.find(o => o.id === editingOrderId)!.products!.map((p) => (
+                    {orderList.find(o => (o.orderId ?? o.id) === editingOrderId)!.products!.map((p) => (
                       <span key={p.id} style={{ marginLeft: 8 }}>{p.itemName} ×{p.packageCount}箱</span>
                     ))}
                   </div>

@@ -212,63 +212,64 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
     const auth = requireRole(req, res, ["admin"]);
     if (!auth) return;
 
-    const orders = await prisma.order.findMany({
+    const rows = await prisma.shipment.findMany({
       where: { companyId: auth.companyId },
-      orderBy: { createdAt: "desc" },
+      orderBy: { updatedAt: "desc" },
+      take: 500,
       include: {
-        client: { select: { name: true } },
+        order: {
+          include: {
+            client: { select: { name: true } },
+          },
+        },
       },
     });
 
-    // 一次性查所有关联运单
-    const shipmentMap = await attachLinkedShipments(
-      auth.companyId,
-      orders.map((o) => ({ id: o.id, batchNo: o.batchNo, domesticTrackingNo: o.domesticTrackingNo })),
-    );
+    const items = rows.map((r) => ({
+      id: r.id,
+      orderId: r.order?.id ?? undefined,
+      orderNo: r.order?.orderNo ?? undefined,
+      trackingNo: r.trackingNo,
+      batchNo: r.batchNo,
+      containerNo: r.containerNo ?? undefined,
+      clientId: r.order?.clientId ?? undefined,
+      clientName: r.order?.client?.name ?? undefined,
+      itemName: r.order?.itemName ?? undefined,
+      domesticTrackingNo: r.domesticTrackingNo ?? undefined,
+      packageCount: r.packageCount ?? undefined,
+      productQuantity: r.order?.productQuantity ?? undefined,
+      weightKg: decToNumber(r.weightKg) ?? undefined,
+      volumeM3: decToNumber(r.volumeM3) ?? undefined,
+      currentStatus: r.currentStatus,
+      warehouseId: r.warehouseId,
+      updatedAt: r.updatedAt.toISOString(),
+      transportMode: r.order?.transportMode ?? undefined,
+      shipDate: r.order?.shipDate ?? undefined,
+      receiverAddressTh: r.order?.receiverAddressTh ?? undefined,
+      receivableAmountCny: decToNumber(r.order?.receivableAmountCny ?? null) ?? undefined,
+      receivableCurrency: r.order?.receivableCurrency ?? undefined,
+      paymentStatus: (r.order?.paymentStatus === "paid" ? "paid" : "unpaid") as "paid" | "unpaid",
+      packageUnit: ((r.order?.packageUnit === "bag" ? "bag" : "box") as "bag" | "box"),
+      canEdit: true,
+      approvalStatus: r.order?.approvalStatus ?? undefined,
+      statusGroup: r.order?.statusGroup ?? undefined,
+      paidAt: r.order?.paidAt ? r.order?.paidAt.toISOString() : undefined,
+      paidBy: r.order?.paidBy ?? undefined,
+      createdAt: r.order?.createdAt.toISOString() ?? r.createdAt.toISOString(),
+      productImages: [] as any[],
+      products: [] as any[],
+    }));
 
-    const adminOrderItems = orders.map((o) => {
-      const linked = shipmentMap.get(o.id);
-      return {
-        id: o.id,
-        clientId: o.clientId,
-        clientName: o.client?.name ?? null,
-        warehouseId: o.warehouseId,
-        orderNo: o.orderNo,
-        itemName: o.itemName,
-        transportMode: o.transportMode,
-        domesticTrackingNo: o.domesticTrackingNo,
-        batchNo: o.batchNo,
-        approvalStatus: o.approvalStatus,
-        productQuantity: o.productQuantity,
-        packageCount: o.packageCount,
-        packageUnit: o.packageUnit,
-        weightKg: decToNumber(o.weightKg),
-        volumeM3: decToNumber(o.volumeM3),
-        receiverAddressTh: o.receiverAddressTh ?? undefined,
-        receivableAmountCny: decToNumber(o.receivableAmountCny),
-        receivableCurrency: o.receivableCurrency ?? "CNY",
-        paymentStatus: o.paymentStatus ?? "unpaid",
-        paidAt: o.paidAt ? o.paidAt.toISOString() : undefined,
-        paidBy: o.paidBy ?? undefined,
-        shipDate: o.shipDate,
-        statusGroup: o.statusGroup,
-        createdAt: o.createdAt.toISOString(),
-        updatedAt: o.updatedAt.toISOString(),
-        shipmentId: linked?.id ?? undefined,
-        trackingNo: linked?.trackingNo ?? undefined,
-        currentStatus: linked?.currentStatus ?? undefined,
-        containerNo: linked?.containerNo ?? undefined,
-        canEdit: true,
-      };
-    });
-    const adminOrderIds = adminOrderItems.map((item) => item.id);
-    const adminImageMap = await loadProductImagesForOrders(auth.companyId, adminOrderIds);
-    const adminProductsMap = await loadOrderProducts(auth.companyId, adminOrderIds);
+    // 按需加载产品图和产品行
+    const orderIds = [...new Set(items.map((i) => i.orderId).filter(Boolean) as string[])];
+    const imageMap = await loadProductImagesForOrders(auth.companyId, orderIds);
+    const productsMap = await loadOrderProducts(auth.companyId, orderIds);
+
     ok(res, {
-      items: adminOrderItems.map((item) => ({
+      items: items.map((item) => ({
         ...item,
-        productImages: adminImageMap.get(item.id) ?? [],
-        products: adminProductsMap.get(item.id) ?? [],
+        productImages: item.orderId ? (imageMap.get(item.orderId) ?? []) : [],
+        products: item.orderId ? (productsMap.get(item.orderId) ?? []) : [],
       })),
     });
   });

@@ -220,6 +220,7 @@ export interface AdminUserItem {
 
 export interface AdminOrderItem {
   id: string;
+  orderId?: string;
   shipmentId?: string;
   clientId: string;
   clientName: string | null;
