@@ -2915,15 +2915,15 @@ export default function StaffHomePage() {
                       <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>唛头</th>
                       <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>运单号</th>
                       <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>品名</th>
-                      <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>运单所属用户</th>
-                      <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>运单状态</th>
-                      <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>所属仓库</th>
+                      <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>仓库</th>
+                      <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>国内单号</th>
+                      <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>柜号</th>
                       <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>运输方式</th>
                       <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>货型</th>
                       <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>发货时间</th>
-                      <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>总件数</th>
-                      <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>总重量</th>
-                      <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>总体积</th>
+                      <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>件数</th>
+                      <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>重量</th>
+                      <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>体积</th>
                       <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>计费体积</th>
                       <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>加收金额</th>
                       <th style={{ padding: "10px 8px", minWidth: 120 }}>收货地址</th>
@@ -2979,9 +2979,9 @@ export default function StaffHomePage() {
                                 ))
                               : (item.itemName ?? "—")}
                           </td>
-                          <td style={{ padding: "8px 6px", color: "#000000" }}>{item.clientName ?? item.clientId ?? "—"}</td>
-                          <td style={{ padding: "8px 6px", whiteSpace: "nowrap" }}>{shipmentStatusZh(item.currentStatus)}</td>
                           <td style={{ padding: "8px 6px", whiteSpace: "nowrap" }}>{warehouseLabelFromId(item.warehouseId)}</td>
+                          <td style={{ padding: "8px 6px", whiteSpace: "nowrap", color: "#000000" }}>{item.domesticTrackingNo ?? "—"}</td>
+                          <td style={{ padding: "8px 6px", whiteSpace: "nowrap" }}>{item.batchNo ?? "—"}</td>
                           <td style={{ padding: "8px 6px", whiteSpace: "nowrap" }}>{transportModeLabel(item.transportMode)}</td>
                           <td style={{ padding: "8px 6px", whiteSpace: "nowrap", fontSize: 12 }}>
                             {item.cargoType === "INSPECTION" ? "商检" : item.cargoType === "SENSITIVE" ? "敏感" : "普货"}
