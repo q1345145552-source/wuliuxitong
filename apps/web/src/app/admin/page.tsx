@@ -336,6 +336,7 @@ export default function AdminHomePage() {
       paymentStatus: order.paymentStatus === "paid" ? "paid" : "unpaid",
       shipDate: order.shipDate ?? "",
     });
+    window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
   /**
@@ -1262,7 +1263,8 @@ export default function AdminHomePage() {
                     <input type="checkbox" checked={selectedOrders.size === filteredOrderList.length && filteredOrderList.length > 0} onChange={toggleSelectAllOrders} style={{ cursor: "pointer" }} />
                   </th>
                   <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>运单号</th>
-                  <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>运单所属用户</th>
+                  <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>品名</th>
+                  <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>唛头</th>
                   <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>运单状态</th>
                   <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>加收金额</th>
                   <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>运输方式</th>
@@ -1285,7 +1287,8 @@ export default function AdminHomePage() {
                     <td style={{ padding: "8px 6px", fontWeight: 600, color: "#1e3a8a", whiteSpace: "nowrap" }}>
                       {o.trackingNo ?? "—"}
                     </td>
-                    <td style={{ padding: "8px 6px", color: "#000000", fontWeight: 600 }}>{o.clientName ?? o.clientId ?? "—"}</td>
+                    <td style={{ padding: "8px 6px", color: "#000000", maxWidth: 100, overflow: "hidden", textOverflow: "ellipsis" }}>{o.itemName ?? "—"}</td>
+                    <td style={{ padding: "8px 6px", color: "#000000", fontWeight: 600 }}>{o.clientId ?? "—"}</td>
                     <td style={{ padding: "8px 6px", whiteSpace: "nowrap" }}>{shipmentStatusLabel(o.currentStatus)}</td>
                     <td style={{ padding: "8px 6px", whiteSpace: "nowrap" }}>
                       {o.receivableAmountCny != null
