@@ -2911,7 +2911,7 @@ export default function StaffHomePage() {
                       <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>品名</th>
                       <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>运单所属用户</th>
                       <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>运单状态</th>
-                      <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>加收金额</th>
+                      <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>所属仓库</th>
                       <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>运输方式</th>
                       <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>货型</th>
                       <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>发货时间</th>
@@ -2919,7 +2919,7 @@ export default function StaffHomePage() {
                       <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>总重量</th>
                       <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>总体积</th>
                       <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>计费体积</th>
-                      <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>所属仓库</th>
+                      <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>加收金额</th>
                       <th style={{ padding: "10px 8px", minWidth: 120 }}>收货地址</th>
                       <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>操作</th>
                     </tr>
@@ -2966,11 +2966,7 @@ export default function StaffHomePage() {
                           <td style={{ padding: "8px 6px", color: "#000000", maxWidth: 120, overflow: "hidden", textOverflow: "ellipsis" }}>{item.itemName ?? "—"}</td>
                           <td style={{ padding: "8px 6px", color: "#000000" }}>{item.clientName ?? item.clientId ?? "—"}</td>
                           <td style={{ padding: "8px 6px", whiteSpace: "nowrap" }}>{shipmentStatusZh(item.currentStatus)}</td>
-                          <td style={{ padding: "8px 6px", whiteSpace: "nowrap" }}>
-                            {item.receivableAmountCny != null
-                              ? `${item.receivableCurrency === "THB" ? "THB" : "CNY"} ${item.receivableAmountCny.toFixed(2)}`
-                              : "0"}
-                          </td>
+                          <td style={{ padding: "8px 6px", whiteSpace: "nowrap" }}>{warehouseLabelFromId(item.warehouseId)}</td>
                           <td style={{ padding: "8px 6px", whiteSpace: "nowrap" }}>{transportModeLabel(item.transportMode)}</td>
                           <td style={{ padding: "8px 6px", whiteSpace: "nowrap", fontSize: 12 }}>
                             {item.cargoType === "INSPECTION" ? "商检" : item.cargoType === "SENSITIVE" ? "敏感" : "普货"}
@@ -2982,7 +2978,11 @@ export default function StaffHomePage() {
                           <td style={{ padding: "8px 6px", whiteSpace: "nowrap" }}>{formatMetric(item.weightKg, 2)}</td>
                           <td style={{ padding: "8px 6px", whiteSpace: "nowrap" }}>{formatMetric(item.volumeM3, 6)}</td>
                           <td style={{ padding: "8px 6px", whiteSpace: "nowrap" }}>{formatMetric(item.volumeM3 != null && item.volumeM3 > 0 ? Math.max(item.volumeM3, item.transportMode === "sea" ? 0.5 : item.transportMode === "land" ? 0.2 : 0) : undefined)}</td>
-                          <td style={{ padding: "8px 6px", whiteSpace: "nowrap" }}>{warehouseLabelFromId(item.warehouseId)}</td>
+                          <td style={{ padding: "8px 6px", whiteSpace: "nowrap" }}>
+                            {item.receivableAmountCny != null
+                              ? `${item.receivableCurrency === "THB" ? "THB" : "CNY"} ${item.receivableAmountCny.toFixed(2)}`
+                              : "0"}
+                          </td>
                           <td style={{ padding: "8px 6px", color: "#000000", fontSize: 12, maxWidth: 160 }} title={item.receiverAddressTh ?? ""}>
                             {truncateText(item.receiverAddressTh, 24)}
                           </td>
