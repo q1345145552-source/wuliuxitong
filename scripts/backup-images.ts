@@ -13,21 +13,14 @@ import * as path from "path";
 const prisma = new PrismaClient();
 
 const BACKUP_DIR = process.env.IMAGE_BACKUP_DIR || "/root/image-backups";
-const DAYS_OLD = 3;
 
 async function backup() {
-  const cutoff = new Date();
-  cutoff.setDate(cutoff.getDate() - DAYS_OLD);
-
   const images = await prisma.orderProductImage.findMany({
-    where: {
-      createdAt: { lt: cutoff },
-    },
     orderBy: { createdAt: "asc" },
   });
 
   if (images.length === 0) {
-    console.log(`[${new Date().toISOString()}] 没有超过 ${DAYS_OLD} 天的图片需要备份`);
+    console.log(`[${new Date().toISOString()}] 没有新图片需要备份`);
     await prisma.$disconnect();
     return;
   }
