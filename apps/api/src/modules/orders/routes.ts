@@ -926,8 +926,8 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
       fail(res, 404, "NOT_FOUND", "order not found");
       return;
     }
-    if (auth.role === "staff" && order.approvalStatus !== "pending") {
-      fail(res, 403, "FORBIDDEN", "staff can only manage product images for pending prealerts");
+    if (auth.role === "staff" && order.approvalStatus !== "pending" && order.approvalStatus !== "approved") {
+      fail(res, 403, "FORBIDDEN", "staff can only manage product images for pending or approved orders");
       return;
     }
     if (!(await staffCanEditOrderWarehouse(auth, order.warehouseId))) {
@@ -983,8 +983,8 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
       fail(res, 404, "NOT_FOUND", "image not found");
       return;
     }
-    if (auth.role === "staff" && image.order.approvalStatus !== "pending") {
-      fail(res, 403, "FORBIDDEN", "staff can only manage product images for pending prealerts");
+    if (auth.role === "staff" && image.order.approvalStatus !== "pending" && image.order.approvalStatus !== "approved") {
+      fail(res, 403, "FORBIDDEN", "staff can only manage product images for pending or approved orders");
       return;
     }
     if (!(await staffCanEditOrderWarehouse(auth, image.order.warehouseId))) {
