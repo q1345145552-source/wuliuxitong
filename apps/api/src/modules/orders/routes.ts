@@ -455,7 +455,7 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
     const packageCountNum = Number(body.packageCount ?? 0);
     const packageUnit = body.packageUnit ?? "box";
 
-    await prisma.$transaction([
+    const txOps: any[] = [
       prisma.order.create({
         data: {
           id: orderId,
@@ -501,7 +501,27 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
           warehouseId: body.warehouseId,
         },
       }),
-    ]);
+    ];
+    // 保存产品行
+    if (staffProducts.length > 0) {
+      txOps.push(
+        prisma.orderProduct.createMany({
+          data: staffProducts.map((p) => ({
+            companyId: auth.companyId,
+            orderId,
+            itemName: p.itemName,
+            packageCount: p.packageCount,
+            lengthCm: p.lengthCm,
+            widthCm: p.widthCm,
+            heightCm: p.heightCm,
+            productQuantity: p.productQuantity,
+            weightKg: p.weightKg,
+            sortOrder: p.sortOrder,
+          })),
+        }),
+      );
+    }
+    await prisma.$transaction(txOps);
 
     ok(res, { orderId, createdAt: now });
   });
