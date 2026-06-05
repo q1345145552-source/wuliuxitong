@@ -3831,8 +3831,8 @@ export default function StaffHomePage() {
               <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 6, color: "#000000" }}>产品图片（可选，可多选）</div>
               <input type="file" multiple accept="image/*" onChange={(e) => {
                 const files = Array.from(e.target.files || []);
-                setOrderImageFiles(files);
-                setOrderImagePreviews(files.map(f => URL.createObjectURL(f)));
+                setOrderImageFiles(prev => [...prev, ...files]);
+                setOrderImagePreviews(prev => [...prev, ...files.map(f => URL.createObjectURL(f))]);
               }} style={{ fontSize: 12 }} />
               {orderImagePreviews.length > 0 && (
                 <div style={{ display: "flex", gap: 6, marginTop: 8, flexWrap: "wrap" }}>
