@@ -1226,10 +1226,6 @@ export default function ClientHomePage() {
                   <div className="order-field-value">{warehouseOptions.find(w => w.id === item.warehouseId)?.label ?? item.warehouseId ?? "—"}</div>
                 </div>
                 <div className="order-field">
-                  <div className="order-field-label">柜号/批次</div>
-                  <div className="order-field-value">{item.batchNo ?? "-"}</div>
-                </div>
-                <div className="order-field">
                   <div className="order-field-label">国内单号</div>
                   <div className="order-field-value">{item.domesticTrackingNo ?? "-"}</div>
                 </div>
