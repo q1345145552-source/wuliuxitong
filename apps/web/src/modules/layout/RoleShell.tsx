@@ -142,7 +142,7 @@ export default function RoleShell(props: {
         <button type="button" className="sidebar-close-btn" onClick={closeSidebar}>✕</button>
         <h2 className="dashboard-sidebar-title">工作台导航</h2>
         <div className="dashboard-sidebar-group">
-          {roleMenus[allowedRole].map((item) => (
+          {roleMenus[allowedRoles[0]].map((item) => (
             <a
               key={item.id}
               href={item.href}
@@ -159,7 +159,7 @@ export default function RoleShell(props: {
         </div>
         <h3 className="dashboard-sidebar-subtitle">功能分区</h3>
         <div className="dashboard-sidebar-group">
-          {roleFunctionMenus[allowedRole].map((item) => (
+          {roleFunctionMenus[allowedRoles[0]].map((item) => (
             <a
               key={item.id}
               href={item.href}
