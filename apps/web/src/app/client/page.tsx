@@ -1225,8 +1225,16 @@ export default function ClientHomePage() {
             {openDetailsByOrder[item.id] ? (
               <div className="order-fields" style={{ marginTop: 10 }}>
                 <div className="order-field">
-                  <div className="order-field-label" style={{ display: "none" }}>柜号/批次</div>
-                  <div className="order-field-value" style={{ display: "none" }}>{item.batchNo ?? "-"}</div>
+                  <div className="order-field-label">仓库</div>
+                  <div className="order-field-value">{warehouseOptions.find(w => w.id === item.warehouseId)?.label ?? item.warehouseId ?? "—"}</div>
+                </div>
+                <div className="order-field">
+                  <div className="order-field-label">柜号/批次</div>
+                  <div className="order-field-value">{item.batchNo ?? "-"}</div>
+                </div>
+                <div className="order-field">
+                  <div className="order-field-label">国内单号</div>
+                  <div className="order-field-value">{item.domesticTrackingNo ?? "-"}</div>
                 </div>
                 <div className="order-field">
                   <div className="order-field-label">CBM（体积）</div>
@@ -1242,6 +1250,19 @@ export default function ClientHomePage() {
                     {item.packageCount} {item.packageUnit}
                   </div>
                 </div>
+                {(item.products?.length ?? 0) > 0 && (
+                  <div className="order-field">
+                    <div className="order-field-label">产品明细</div>
+                    <div className="order-field-value" style={{ fontSize: 12 }}>
+                      {item.products!.map((p, i) => (
+                        <div key={i} style={{ marginBottom: 2 }}>
+                          {p.itemName} ×{p.packageCount}
+                          {p.lengthCm ? ` (${p.lengthCm}×${p.widthCm}×${p.heightCm}cm)` : ""}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
                 <div className="order-field">
                   <div className="order-field-label">实时汇率（CNY/THB）</div>
                   <div className="order-field-value">{walletRateText}</div>
