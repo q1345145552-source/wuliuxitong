@@ -1207,9 +1207,10 @@ export default function StaffHomePage() {
       // 重置表单
       setForm({
         domesticOrderNo: "", trackingNo: "", batchNo: "",
-        itemName: "", warehouseId: "wh_yiwu_01", packageUnit: "box",
-        transportMode: "land", arrivedAt: "", clientId: "",
+        itemName: "", warehouseId: "wh_yiwu_01", packageUnit: "box" as "bag" | "box",
+        transportMode: "land" as "sea" | "land", arrivedAt: "", clientId: "",
         packageCount: "", volumeM3: "", weightKg: "", productQuantity: "",
+        lengthCm: "", widthCm: "", heightCm: "",
       });
       setStaffFormProducts([]);
       setShowCreateModal(false);
