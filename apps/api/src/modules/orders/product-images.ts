@@ -2,7 +2,7 @@
 import { prisma } from "../../db/prisma";
 
 /** 单个订单最多保存的产品详情图数量。 */
-export const MAX_ORDER_PRODUCT_IMAGES = 5;
+export const MAX_ORDER_PRODUCT_IMAGES = 999;
 
 export type OrderProductImagePayload = {
   id: string;

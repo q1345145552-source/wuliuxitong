@@ -35,7 +35,7 @@ import {
   updateStaffShipmentStatus,
 } from "../../services/business-api";
 
-const MAX_ORDER_PRODUCT_IMAGES = 5;
+const MAX_ORDER_PRODUCT_IMAGES = 999;
 
 type OrderProductImagesPanelProps = {
   orderId: string;
