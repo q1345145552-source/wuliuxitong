@@ -798,7 +798,7 @@ export default function ClientHomePage() {
             <input
               value={aiQuestion}
               onChange={(e) => setAiQuestion(e.target.value)}
-              placeholder="例如：柜号 CAB-2026-A01 现在到哪了？"
+              placeholder="例如：我的运单现在到哪了？"
               style={{ flex: 1, border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 10px" }}
               onKeyDown={(e) => {
                 if (e.key === "Enter") {

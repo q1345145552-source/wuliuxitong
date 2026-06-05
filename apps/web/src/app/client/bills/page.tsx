@@ -24,7 +24,6 @@ export default function ClientBillsPage() {
   const [orders, setOrders] = useState<OrderItem[]>([]);
   const [filters, setFilters] = useState({
     orderId: "",
-    batchNo: "",
     warehouseId: "",
     transportMode: "",
   });
@@ -67,17 +66,16 @@ export default function ClientBillsPage() {
         return status === payTab;
       })
       .filter((item) => !orderIdKey || item.id.toLowerCase().includes(orderIdKey))
-      .filter((item) => !batchKey || (item.batchNo ?? "").toLowerCase().includes(batchKey))
       .filter((item) => !warehouseId || (item.warehouseId ?? "") === warehouseId)
       .filter((item) => !transportMode || (item.transportMode ?? "") === transportMode);
-  }, [filters.batchNo, filters.orderId, filters.transportMode, filters.warehouseId, orders, payTab]);
+  }, [filters.orderId, filters.transportMode, filters.warehouseId, orders, payTab]);
 
   const exportBillsExcel = () => {
     const rows = filtered.map((item, idx) => ({
       序号: idx + 1,
       订单号: item.id,
       仓库: warehouseLabel(item.warehouseId),
-      柜号: item.batchNo ?? "-",
+
       订单编号: item.orderNo ?? "-",
       品名: item.itemName ?? "-",
       运输方式: item.transportMode === "sea" ? "海运" : item.transportMode === "land" ? "陆运" : item.transportMode ?? "-",
@@ -147,12 +145,7 @@ export default function ClientBillsPage() {
           placeholder="订单号"
           style={{ flex: 1, minWidth: 180, border: "1px solid #d1d5db", borderRadius: 10, padding: "8px 10px" }}
         />
-        <input
-          value={filters.batchNo}
-          onChange={(e) => setFilters((v) => ({ ...v, batchNo: e.target.value }))}
-          placeholder="柜号"
-          style={{ flex: 1, minWidth: 160, border: "1px solid #d1d5db", borderRadius: 10, padding: "8px 10px" }}
-        />
+
         <select
           value={filters.warehouseId}
           onChange={(e) => setFilters((v) => ({ ...v, warehouseId: e.target.value }))}
@@ -196,7 +189,6 @@ export default function ClientBillsPage() {
           onClick={() =>
             setFilters({
               orderId: "",
-              batchNo: "",
               warehouseId: "",
               transportMode: "",
             })
@@ -254,10 +246,6 @@ export default function ClientBillsPage() {
               <div className="order-field">
                 <div className="order-field-label">仓库</div>
                 <div className="order-field-value">{warehouseLabel(item.warehouseId)}</div>
-              </div>
-              <div className="order-field">
-                <div className="order-field-label">柜号</div>
-                <div className="order-field-value">{item.batchNo ?? "-"}</div>
               </div>
               <div className="order-field">
                 <div className="order-field-label">订单编号</div>

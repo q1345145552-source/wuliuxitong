@@ -113,10 +113,6 @@ export default function ClientBillDetailPage() {
               <div className="order-field-value">{warehouseLabel(order.warehouseId)}</div>
             </div>
             <div className="order-field">
-              <div className="order-field-label">柜号</div>
-              <div className="order-field-value">{getText(order.batchNo)}</div>
-            </div>
-            <div className="order-field">
               <div className="order-field-label">订单编号</div>
               <div className="order-field-value">{getText(order.orderNo)}</div>
             </div>
