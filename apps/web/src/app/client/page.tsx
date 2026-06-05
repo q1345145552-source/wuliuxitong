@@ -276,7 +276,7 @@ export default function ClientHomePage() {
       const wt = Number(p.weightKg) || 0;
       return s + wt * pkg;
     }, 0);
-    setForm((v) => ({ ...v, volumeM3: totalVol > 0 ? String(totalVol.toFixed(4)) : v.volumeM3, weightKg: totalWt > 0 ? String(totalWt.toFixed(2)) : v.weightKg }));
+    setForm((v) => ({ ...v, volumeM3: totalVol > 0 ? String(totalVol.toFixed(6)) : v.volumeM3, weightKg: totalWt > 0 ? String(totalWt.toFixed(2)) : v.weightKg }));
   }, [formProducts]);
 
   useEffect(() => {
