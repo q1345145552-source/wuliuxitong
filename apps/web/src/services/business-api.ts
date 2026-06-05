@@ -178,6 +178,7 @@ export interface OrderItem {
   }>;
   itemName: string;
   transportMode: string;
+  cargoType?: string;
   approvalStatus?: "pending" | "approved" | "shipped";
   domesticTrackingNo?: string;
   trackingNo?: string;
