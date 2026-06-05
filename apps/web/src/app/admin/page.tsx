@@ -1187,6 +1187,7 @@ export default function AdminHomePage() {
               {[20, 50, 100, 200, 500, 1000].map((n) => <option key={n} value={n}>{n}条/页</option>)}
             </select>
           </div>
+          <div style={{ overflowX: "auto" }}>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, minWidth: 1180 }}>
               <thead>
                 <tr style={{ borderBottom: "2px solid #e2e8f0", textAlign: "left" }}>
