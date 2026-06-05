@@ -1142,6 +1142,7 @@ export default function ClientHomePage() {
                   ? item.products!.map((p, i) => (
                       <div key={p.id || i} style={{ lineHeight: 1.4, fontSize: 14 }}>
                         {p.itemName} ×{p.packageCount}
+                        {p.lengthCm ? `  ${p.lengthCm}×${p.widthCm}×${p.heightCm}cm` : ""}
                       </div>
                     ))
                   : (item.itemName || "未填品名")}
@@ -1257,6 +1258,7 @@ export default function ClientHomePage() {
                       {item.products!.map((p, i) => (
                         <div key={i} style={{ marginBottom: 2 }}>
                           {p.itemName} ×{p.packageCount}
+                          {p.lengthCm ? `  ${p.lengthCm}×${p.widthCm}×${p.heightCm}cm` : ""}
                         </div>
                       ))}
                     </div>

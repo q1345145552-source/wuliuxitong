@@ -2972,7 +2972,10 @@ export default function StaffHomePage() {
                           <td style={{ padding: "8px 6px", color: "#000000", minWidth: 100 }}>
                             {(item.products?.length ?? 0) > 0
                               ? item.products!.map((p, i) => (
-                                  <div key={i} style={{ lineHeight: 1.4 }}>{p.itemName} ×{p.packageCount}</div>
+                                  <div key={i} style={{ lineHeight: 1.4 }}>
+                                    {p.itemName} ×{p.packageCount}
+                                    {p.lengthCm ? `  ${p.lengthCm}×${p.widthCm}×${p.heightCm}cm` : ""}
+                                  </div>
                                 ))
                               : (item.itemName ?? "—")}
                           </td>

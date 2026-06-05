@@ -448,7 +448,7 @@ export function registerShipmentRoutes(app: MinimalHttpApp): void {
       const pmap = new Map<string, any[]>();
       for (const r of productRows) {
         const list = pmap.get(r.orderId) ?? [];
-        list.push({ id: r.id, itemName: r.itemName, packageCount: r.packageCount });
+        list.push({ id: r.id, itemName: r.itemName, packageCount: r.packageCount, lengthCm: r.lengthCm, widthCm: r.widthCm, heightCm: r.heightCm, productQuantity: r.productQuantity });
         pmap.set(r.orderId, list);
       }
       for (const item of items) {
