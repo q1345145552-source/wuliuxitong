@@ -3503,7 +3503,7 @@ export default function StaffHomePage() {
                                 {item.orderId ? (
                                   <OrderProductImagesPanel
                                     orderId={item.orderId}
-                                    images={shipmentImagesCache[item.orderId] ?? []}
+                                    images={item.productImages ?? shipmentImagesCache[item.orderId] ?? []}
                                     canManage={false}
                                     busy={loading}
                                     onSelectFile={(file) => uploadOrderProductImageAndReload(item.orderId!, file)}
