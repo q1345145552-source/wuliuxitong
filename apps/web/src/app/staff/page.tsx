@@ -1210,7 +1210,7 @@ export default function StaffHomePage() {
       setForm({
         domesticOrderNo: "", trackingNo: "", batchNo: "",
         itemName: "", warehouseId: "wh_yiwu_01", packageUnit: "box" as "bag" | "box",
-        transportMode: "land" as "sea" | "land", arrivedAt: "", clientId: "",
+        transportMode: "land" as "sea" | "land", cargoType: "NORMAL", arrivedAt: "", clientId: "",
         packageCount: "", volumeM3: "", weightKg: "", productQuantity: "",
         lengthCm: "", widthCm: "", heightCm: "",
       });
@@ -2913,6 +2913,7 @@ export default function StaffHomePage() {
                       <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>运单状态</th>
                       <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>加收金额</th>
                       <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>运输方式</th>
+                      <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>货型</th>
                       <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>发货时间</th>
                       <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>总件数</th>
                       <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>总重量</th>
@@ -2971,6 +2972,9 @@ export default function StaffHomePage() {
                               : "0"}
                           </td>
                           <td style={{ padding: "8px 6px", whiteSpace: "nowrap" }}>{transportModeLabel(item.transportMode)}</td>
+                          <td style={{ padding: "8px 6px", whiteSpace: "nowrap", fontSize: 12 }}>
+                            {item.cargoType === "INSPECTION" ? "商检" : item.cargoType === "SENSITIVE" ? "敏感" : "普货"}
+                          </td>
                           <td style={{ padding: "8px 6px", whiteSpace: "nowrap", color: "#000000" }}>
                             {item.shipDate ?? formatDateTime(item.arrivedAt)}
                           </td>
@@ -3811,6 +3815,11 @@ export default function StaffHomePage() {
               <select value={form.transportMode} onChange={(e) => setForm((v) => ({ ...v, transportMode: e.target.value as "sea" | "land" }))} style={orderCreateInputStyle}>
                 <option value="sea">海运</option>
                 <option value="land">陆运</option>
+              </select>
+              <select value={form.cargoType} onChange={(e) => setForm((v) => ({ ...v, cargoType: e.target.value }))} style={orderCreateInputStyle}>
+                <option value="NORMAL">普货</option>
+                <option value="INSPECTION">商检</option>
+                <option value="SENSITIVE">敏感</option>
               </select>
               <input type="date" value={form.arrivedAt} onChange={(e) => setForm((v) => ({ ...v, arrivedAt: e.target.value }))} style={orderCreateInputStyle} />
               <div style={{ fontSize: 11, color: "#000000", marginTop: -4 }}>到仓日期 *</div>

@@ -930,6 +930,7 @@ export async function updateAdminOrder(payload: {
   orderId: string;
   clientId?: string;
   itemName: string;
+  cargoType?: string;
   transportMode: "sea" | "land";
   domesticTrackingNo?: string;
   trackingNo?: string;

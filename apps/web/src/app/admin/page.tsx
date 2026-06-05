@@ -187,6 +187,7 @@ export default function AdminHomePage() {
     receivableCurrency: "CNY" as "CNY" | "THB",
     paymentStatus: "unpaid" as "paid" | "unpaid",
     shipDate: "",
+    cargoType: "NORMAL",
   });
   const [staffForm, setStaffForm] = useState({ id: "", name: "", phone: "", password: "" });
   const [clientForm, setClientForm] = useState({ id: "", name: "", companyName: "", phone: "", email: "", password: "" });
@@ -330,6 +331,7 @@ export default function AdminHomePage() {
       packageUnit: order.packageUnit === "bag" ? "bag" : "box",
       weightKg: order.weightKg === null || order.weightKg === undefined ? "" : String(order.weightKg),
       volumeM3: order.volumeM3 === null || order.volumeM3 === undefined ? "" : String(order.volumeM3),
+      cargoType: order.cargoType ?? "NORMAL",
       receivableAmountCny:
         order.receivableAmountCny === null || order.receivableAmountCny === undefined ? "" : String(order.receivableAmountCny),
       receivableCurrency: order.receivableCurrency === "THB" ? "THB" : "CNY",
@@ -368,6 +370,7 @@ export default function AdminHomePage() {
         orderId: editingOrderId,
         clientId: orderEditForm.clientId.trim() || undefined,
         itemName: orderEditForm.itemName.trim(),
+        cargoType: orderEditForm.cargoType,
         trackingNo: orderEditForm.trackingNo.trim() || undefined,
         batchNo: orderEditForm.batchNo.trim() || undefined,
         warehouseId: orderEditForm.warehouseId,
@@ -1215,6 +1218,11 @@ export default function AdminHomePage() {
                     <option value="sea">海运</option>
                     <option value="land">陆运</option>
                   </select>
+                  <select value={orderEditForm.cargoType ?? "NORMAL"} onChange={(e) => setOrderEditForm((v) => ({ ...v, cargoType: e.target.value }))} style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 10px" }}>
+                    <option value="NORMAL">普货</option>
+                    <option value="INSPECTION">商检</option>
+                    <option value="SENSITIVE">敏感</option>
+                  </select>
                   <input value={orderEditForm.domesticTrackingNo} onChange={(e) => setOrderEditForm((v) => ({ ...v, domesticTrackingNo: e.target.value }))} placeholder="国内快递单号" style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 10px" }} />
                   <input value={orderEditForm.receiverAddressTh} onChange={(e) => setOrderEditForm((v) => ({ ...v, receiverAddressTh: e.target.value }))} placeholder="收货地址（泰国）" style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 10px" }} />
                   <input value={orderEditForm.containerNo} onChange={(e) => setOrderEditForm((v) => ({ ...v, containerNo: e.target.value }))} placeholder="装柜号" style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 10px" }} />
@@ -1268,6 +1276,7 @@ export default function AdminHomePage() {
                   <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>运单状态</th>
                   <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>加收金额</th>
                   <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>运输方式</th>
+                  <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>货型</th>
                   <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>发货时间</th>
                   <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>总件数</th>
                   <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>总重量</th>
@@ -1296,6 +1305,9 @@ export default function AdminHomePage() {
                         : "0"}
                     </td>
                     <td style={{ padding: "8px 6px", whiteSpace: "nowrap" }}>{transportModeLabel(o.transportMode)}</td>
+                    <td style={{ padding: "8px 6px", whiteSpace: "nowrap", fontSize: 12 }}>
+                      {o.cargoType === "INSPECTION" ? "商检" : o.cargoType === "SENSITIVE" ? "敏感" : "普货"}
+                    </td>
                     <td style={{ padding: "8px 6px", whiteSpace: "nowrap", color: "#000000" }}>
                       {o.shipDate ?? o.createdAt.slice(0, 10)}
                     </td>
