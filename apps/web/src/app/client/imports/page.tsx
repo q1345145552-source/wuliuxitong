@@ -104,12 +104,12 @@ function normalizeRows(rows: Record<string, unknown>[]): ImportRow[] {
         warehouseId,
         itemName: findCol(row, ["品名"]),
         packageCount,
-        packageUnit: packageUnitRaw.includes("bag") ? "bag" : "box",
+        packageUnit: (packageUnitRaw.includes("bag") ? "bag" : "box") as "bag" | "box",
         weightKg,
         volumeM3,
         shipDate: shipDate || undefined,
         domesticTrackingNo: findCol(row, ["国内单号"]) || undefined,
-        transportMode: transportModeRaw.includes("land") ? "land" : "sea",
+        transportMode: (transportModeRaw.includes("land") ? "land" : "sea") as "sea" | "land",
       };
     })
     .filter((item) => item.warehouseId && item.itemName && Number.isFinite(item.packageCount) && item.packageCount > 0);
