@@ -364,7 +364,7 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
 
     const packageUnit = body.packageUnit === "bag" ? "bag" : "box";
     const transportMode = body.transportMode === "land" ? "land" : "sea";
-    const domesticTrackingNo = body.domesticTrackingNo?.trim() || null;
+    const domesticTrackingNo = body.domesticTrackingNo?.trim() || null; // 空字符串 = 清空
     const weightKg = body.weightKg === undefined || body.weightKg === null ? null : Number(body.weightKg);
     const volumeM3 = body.volumeM3 === undefined || body.volumeM3 === null ? null : Number(body.volumeM3);
     if (weightKg !== null && !Number.isFinite(weightKg)) {
@@ -444,7 +444,7 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
         data: {
           warehouseId,
           batchNo,
-          clientId: body.clientId?.trim() || undefined,
+          clientId: body.clientId?.trim() || null,
           itemName,
           cargoType: body.cargoType?.trim() || undefined,
           transportMode,

@@ -235,22 +235,22 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
       },
     });
 
-    // Create product records
-    for (const p of products) {
-      await prisma.orderProduct.create({
-        data: {
+    // Create product records (批量插入)
+    if (products.length > 0) {
+      await prisma.orderProduct.createMany({
+        data: products.map((p, i) => ({
           companyId: auth.companyId,
           orderId,
           itemName: p.itemName,
           packageCount: p.packageCount,
-          lengthCm: p.lengthCm,
-          widthCm: p.widthCm,
-          heightCm: p.heightCm,
-          productQuantity: p.productQuantity,
+          lengthCm: p.lengthCm ?? null,
+          widthCm: p.widthCm ?? null,
+          heightCm: p.heightCm ?? null,
+          productQuantity: p.productQuantity ?? null,
           cargoType: p.cargoType,
           domesticTrackingNo: p.domesticTrackingNo,
-          sortOrder: p.sortOrder,
-        },
+          sortOrder: i,
+        })),
       });
     }
 
