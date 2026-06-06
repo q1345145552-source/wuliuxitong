@@ -155,6 +155,7 @@ export interface OrderProductItem {
   productQuantity?: number | null;
   cargoType?: string;
   domesticTrackingNo?: string;
+  weightKg?: number | null;
 }
 
 export interface StaffInboundPhotoItem {

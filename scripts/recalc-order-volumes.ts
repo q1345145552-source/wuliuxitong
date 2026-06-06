@@ -8,7 +8,7 @@ const prisma = new PrismaClient();
 
 async function main() {
   const orders = await prisma.order.findMany({
-    select: { id: true, itemName: true, trackingNo: true },
+    select: { id: true, itemName: true },
   });
 
   let fixed = 0;
