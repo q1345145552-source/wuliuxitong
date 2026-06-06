@@ -3045,8 +3045,17 @@ export default function StaffHomePage() {
                         </tr>
                         {shipmentTableExpandedId === item.id ? (
                           <tr>
-                            <td colSpan={15} style={{ padding: 0, background: "#f8fafc", borderBottom: "1px solid #e2e8f0" }}>
+                            <td colSpan={10} style={{ padding: 0, background: "#f8fafc", borderBottom: "1px solid #e2e8f0" }}>
                               <div style={{ padding: 14 }}>
+                                {/* 隐藏信息栏 */}
+                                <div style={{ display: "flex", flexWrap: "wrap", gap: "8px 20px", marginBottom: 12, padding: 8, background: "#f1f5f9", borderRadius: 6, fontSize: 12 }}>
+                                  <span>仓库：<strong>{warehouseLabelFromId(item.warehouseId)}</strong></span>
+                                  <span>柜号：<strong>{item.batchNo ?? "—"}</strong></span>
+                                  <span>包装：<strong>{item.packageUnit === "bag" ? "袋" : "箱"}</strong></span>
+                                  <span>国内单号：<strong>{item.domesticTrackingNo ?? "—"}</strong></span>
+                                  <span>加收金额：<strong>{item.receivableAmountCny != null ? `${item.receivableCurrency === "THB" ? "THB" : "CNY"} ${item.receivableAmountCny.toFixed(2)}` : "0"}</strong></span>
+                                  <span>收货地址：<strong>{item.receiverAddressTh ?? "—"}</strong></span>
+                                </div>
                                 <div style={{ fontWeight: 700, marginBottom: 12, color: "#0f172a" }}>运单详情（只读）</div>
                                 {(() => {
                                   const draft = shipmentOrderEditDrafts[item.id] ?? buildShipmentOrderEditDraft(item);
