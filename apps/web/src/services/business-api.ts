@@ -25,6 +25,7 @@ export interface StaffCreateOrderPayload {
     widthCm?: number;
     heightCm?: number;
     productQuantity?: number;
+    cargoType?: string;
   }>;
 }
 
@@ -149,6 +150,7 @@ export interface OrderProductItem {
   widthCm?: number | null;
   heightCm?: number | null;
   productQuantity?: number | null;
+  cargoType?: string;
 }
 
 export interface StaffInboundPhotoItem {
@@ -948,6 +950,15 @@ export async function updateAdminOrder(payload: {
   receivableCurrency?: "CNY" | "THB";
   paymentStatus?: "paid" | "unpaid";
   shipDate?: string;
+  products?: Array<{
+    itemName: string;
+    packageCount: number;
+    lengthCm?: number;
+    widthCm?: number;
+    heightCm?: number;
+    productQuantity?: number;
+    cargoType?: string;
+  }>;
 }): Promise<{ orderId: string; updatedAt: string }> {
   const response = await fetch(`${apiBaseUrl()}/admin/orders/update`, {
     method: "POST",

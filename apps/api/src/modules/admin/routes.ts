@@ -303,6 +303,15 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
       receiverAddressTh?: string;
       containerNo?: string | null;
       paymentStatus?: "paid" | "unpaid";
+      products?: Array<{
+        itemName: string;
+        packageCount: number;
+        lengthCm?: number;
+        widthCm?: number;
+        heightCm?: number;
+        productQuantity?: number;
+        cargoType?: string;
+      }>;
     };
 
     const orderId = body.orderId?.trim();
@@ -428,8 +437,7 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
 
     const now = new Date();
 
-    // 事务：订单 + 关联运单一致更新
-    await prisma.$transaction([
+    const txOps: any[] = [
       prisma.order.update({
         where: { id: orderId },
         data: {
@@ -470,7 +478,31 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
           updatedAt: now,
         },
       }),
-    ]);
+    ];
+    // 如果传了 products 数组，则删除旧产品行并重建
+    if (body.products && body.products.length > 0) {
+      txOps.push(
+        prisma.orderProduct.deleteMany({ where: { orderId, companyId: auth.companyId } }),
+      );
+      txOps.push(
+        prisma.orderProduct.createMany({
+          data: body.products.map((p, i) => ({
+            companyId: auth.companyId,
+            orderId,
+            itemName: p.itemName.trim(),
+            packageCount: p.packageCount || 1,
+            lengthCm: p.lengthCm ?? null,
+            widthCm: p.widthCm ?? null,
+            heightCm: p.heightCm ?? null,
+            productQuantity: p.productQuantity ?? null,
+            cargoType: p.cargoType?.trim() || "NORMAL",
+            sortOrder: i,
+          })),
+        }),
+      );
+    }
+    // 事务：订单 + 关联运单 + 产品行一致更新
+    await prisma.$transaction(txOps);
 
     ok(res, {
       orderId,

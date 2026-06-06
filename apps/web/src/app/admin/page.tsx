@@ -189,6 +189,9 @@ export default function AdminHomePage() {
     shipDate: "",
     cargoType: "NORMAL",
   });
+  const [editProducts, setEditProducts] = useState<Array<{
+    itemName: string; packageCount: string; lengthCm: string; widthCm: string; heightCm: string; productQuantity: string; weightKg: string; cargoType: string;
+  }>>([]);
   const [staffForm, setStaffForm] = useState({ id: "", name: "", phone: "", password: "" });
   const [clientForm, setClientForm] = useState({ id: "", name: "", companyName: "", phone: "", email: "", password: "" });
   const [showStaffModal, setShowStaffModal] = useState(false);
@@ -344,6 +347,20 @@ export default function AdminHomePage() {
       paymentStatus: order.paymentStatus === "paid" ? "paid" : "unpaid",
       shipDate: order.shipDate ?? "",
     });
+    if (order.products && order.products.length > 0) {
+      setEditProducts(order.products.map((p) => ({
+        itemName: p.itemName ?? "",
+        packageCount: String(p.packageCount ?? ""),
+        lengthCm: p.lengthCm != null ? String(p.lengthCm) : "",
+        widthCm: p.widthCm != null ? String(p.widthCm) : "",
+        heightCm: p.heightCm != null ? String(p.heightCm) : "",
+        productQuantity: p.productQuantity != null ? String(p.productQuantity) : "",
+        weightKg: "",
+        cargoType: p.cargoType ?? "NORMAL",
+      })));
+    } else {
+      setEditProducts([]);
+    }
   };
 
   /**
@@ -392,6 +409,15 @@ export default function AdminHomePage() {
         receivableCurrency: orderEditForm.receivableCurrency,
         paymentStatus: orderEditForm.paymentStatus,
         shipDate: orderEditForm.shipDate.trim() || undefined,
+        products: editProducts.length > 0 ? editProducts.filter(p => p.itemName.trim()).map(p => ({
+          itemName: p.itemName.trim(),
+          packageCount: Number(p.packageCount) || 1,
+          lengthCm: p.lengthCm ? Number(p.lengthCm) : undefined,
+          widthCm: p.widthCm ? Number(p.widthCm) : undefined,
+          heightCm: p.heightCm ? Number(p.heightCm) : undefined,
+          productQuantity: p.productQuantity ? Number(p.productQuantity) : undefined,
+          cargoType: p.cargoType || "NORMAL",
+        })) : undefined,
       });
       setToast("订单信息已更新");
       await loadOrders();
@@ -1264,7 +1290,13 @@ export default function AdminHomePage() {
                     <td style={{ padding: "8px 6px", whiteSpace: "nowrap" }}>{o.weightKg ?? "—"}</td>
                     <td style={{ padding: "8px 6px", whiteSpace: "nowrap" }}>{transportModeLabel(o.transportMode)}</td>
                     <td style={{ padding: "8px 6px", whiteSpace: "nowrap", fontSize: 12 }}>
-                      {o.cargoType === "INSPECTION" ? "商检" : o.cargoType === "SENSITIVE" ? "敏感" : "普货"}
+                      {(o.products?.length ?? 0) > 0
+                        ? o.products!.map((p, i) => (
+                            <div key={i} style={{ marginBottom: i < (o.products?.length ?? 0) - 1 ? 2 : 0 }}>
+                              {(p.cargoType ?? "NORMAL") === "INSPECTION" ? "商检" : (p.cargoType ?? "NORMAL") === "SENSITIVE" ? "敏感" : "普货"}
+                            </div>
+                          ))
+                        : (o.cargoType === "INSPECTION" ? "商检" : o.cargoType === "SENSITIVE" ? "敏感" : "普货")}
                     </td>
                     <td style={{ padding: "8px 6px", whiteSpace: "nowrap", color: "#000000" }}>
                       {o.shipDate ?? o.createdAt.slice(0, 10)}
@@ -1303,7 +1335,7 @@ export default function AdminHomePage() {
                   </tr>
                   {editingOrderId === (o.orderId ?? o.id) ? (
                     <tr key={`edit-${o.id}`} style={{ background: "#f8fafc" }}>
-                      <td colSpan={10} style={{ padding: 12 }}>
+                      <td colSpan={13} style={{ padding: 12 }}>
                         <div style={{ display: "grid", gap: 8 }}>
                           <div style={{ fontWeight: 700, color: "#0f172a" }}>编辑：{o.trackingNo ?? o.id}</div>
                           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 8 }}>
@@ -1327,6 +1359,29 @@ export default function AdminHomePage() {
                             <select value={orderEditForm.receivableCurrency} onChange={(e) => setOrderEditForm((v) => ({ ...v, receivableCurrency: e.target.value as "CNY" | "THB" }))} style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 10px" }}><option value="CNY">CNY</option><option value="THB">THB</option></select>
                             <select value={orderEditForm.paymentStatus} onChange={(e) => setOrderEditForm((v) => ({ ...v, paymentStatus: e.target.value as "paid" | "unpaid" }))} style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 10px" }}><option value="unpaid">未支付</option><option value="paid">已支付</option></select>
                             <input type="date" value={orderEditForm.shipDate} onChange={(e) => setOrderEditForm((v) => ({ ...v, shipDate: e.target.value }))} style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 10px" }} />
+                          </div>
+                          <div style={{ border: "1px solid #e5e7eb", borderRadius: 8, padding: 10, background: "#f9fafb", marginTop: 8 }}>
+                            <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 8, color: "#000000" }}>产品行编辑</div>
+                            {editProducts.length === 0 && (
+                              <div style={{ fontSize: 12, color: "#9ca3af", padding: "4px 0" }}>无产品行，点击下方按钮添加</div>
+                            )}
+                            {editProducts.map((p, i) => (
+                              <div key={i} style={{ display: "grid", gridTemplateColumns: "2fr 0.8fr 0.6fr 0.6fr 0.6fr 0.8fr 0.8fr auto", gap: 4, marginBottom: 4, alignItems: "center" }}>
+                                <input value={p.itemName} onChange={(e) => { const n = [...editProducts]; n[i] = { ...n[i], itemName: e.target.value }; setEditProducts(n); }} placeholder="品名" style={{ border: "1px solid #d1d5db", borderRadius: 4, padding: "4px 6px", fontSize: 12 }} />
+                                <input type="number" value={p.packageCount} onChange={(e) => { const n = [...editProducts]; n[i] = { ...n[i], packageCount: e.target.value }; setEditProducts(n); }} placeholder="箱数" style={{ border: "1px solid #d1d5db", borderRadius: 4, padding: "4px 6px", fontSize: 12 }} />
+                                <input type="number" step="0.01" value={p.lengthCm} onChange={(e) => { const n = [...editProducts]; n[i] = { ...n[i], lengthCm: e.target.value }; setEditProducts(n); }} placeholder="长cm" style={{ border: "1px solid #d1d5db", borderRadius: 4, padding: "4px 6px", fontSize: 12 }} />
+                                <input type="number" step="0.01" value={p.widthCm} onChange={(e) => { const n = [...editProducts]; n[i] = { ...n[i], widthCm: e.target.value }; setEditProducts(n); }} placeholder="宽cm" style={{ border: "1px solid #d1d5db", borderRadius: 4, padding: "4px 6px", fontSize: 12 }} />
+                                <input type="number" step="0.01" value={p.heightCm} onChange={(e) => { const n = [...editProducts]; n[i] = { ...n[i], heightCm: e.target.value }; setEditProducts(n); }} placeholder="高cm" style={{ border: "1px solid #d1d5db", borderRadius: 4, padding: "4px 6px", fontSize: 12 }} />
+                                <input type="number" value={p.productQuantity} onChange={(e) => { const n = [...editProducts]; n[i] = { ...n[i], productQuantity: e.target.value }; setEditProducts(n); }} placeholder="单箱数量" style={{ border: "1px solid #d1d5db", borderRadius: 4, padding: "4px 6px", fontSize: 12 }} />
+                                <select value={p.cargoType || "NORMAL"} onChange={(e) => { const n = [...editProducts]; n[i] = { ...n[i], cargoType: e.target.value }; setEditProducts(n); }} style={{ border: "1px solid #d1d5db", borderRadius: 4, padding: "4px 6px", fontSize: 12, background: "#fff" }}>
+                                  <option value="NORMAL">普货</option>
+                                  <option value="INSPECTION">商检</option>
+                                  <option value="SENSITIVE">敏感</option>
+                                </select>
+                                <button type="button" onClick={() => setEditProducts((v) => v.filter((_, j) => j !== i))} style={{ border: "1px solid #fca5a5", borderRadius: 4, padding: "4px 6px", fontSize: 11, background: "#fff", color: "#dc2626", cursor: "pointer" }}>X</button>
+                              </div>
+                            ))}
+                            <button type="button" onClick={() => setEditProducts((v) => [...v, { itemName: "", packageCount: "", lengthCm: "", widthCm: "", heightCm: "", productQuantity: "", weightKg: "", cargoType: "NORMAL" }])} style={{ border: "1px dashed #2563eb", borderRadius: 4, padding: "4px 10px", fontSize: 12, background: "#fff", color: "#2563eb", cursor: "pointer", marginTop: 4 }}>+ 添加产品</button>
                           </div>
                           <div style={{ display: "flex", gap: 8 }}>
                             <button type="button" onClick={() => void submitOrderEdit()} disabled={loading} style={{ border: "none", borderRadius: 8, padding: "8px 14px", color: "#fff", background: "#2563eb", cursor: "pointer" }}>保存</button>

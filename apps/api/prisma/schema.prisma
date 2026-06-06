@@ -341,6 +341,7 @@ model OrderProduct {
   widthCm         Float?  @map("width_cm")
   heightCm        Float?  @map("height_cm")
   productQuantity Int?    @map("product_quantity")
+  cargoType       String  @default("NORMAL") @map("cargo_type")
   weightKg        Float?  @map("weight_kg")
   sortOrder       Int     @map("sort_order") @default(0)
   createdAt       DateTime @default(now()) @map("created_at")

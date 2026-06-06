@@ -1145,6 +1145,11 @@ export default function ClientHomePage() {
                         <div style={{ fontSize: 12, color: "#000000", paddingLeft: 4 }}>
                           {p.packageCount}件
                           {p.lengthCm ? `  ${p.lengthCm}×${p.widthCm}×${p.heightCm}cm` : ""}
+                          {(p.cargoType ?? "NORMAL") !== "NORMAL" ? (
+                            <span style={{ marginLeft: 6, fontSize: 11, padding: "1px 5px", borderRadius: 4, background: (p.cargoType ?? "NORMAL") === "INSPECTION" ? "#fef3c7" : "#fce7f3", color: (p.cargoType ?? "NORMAL") === "INSPECTION" ? "#92400e" : "#9d174d" }}>
+                              {(p.cargoType ?? "NORMAL") === "INSPECTION" ? "商检" : "敏感"}
+                            </span>
+                          ) : null}
                         </div>
                       </div>
                     ))

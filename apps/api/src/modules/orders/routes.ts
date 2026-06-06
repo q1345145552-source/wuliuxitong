@@ -20,6 +20,7 @@ export async function loadOrderProducts(companyId: string, orderIds: string[]): 
       id: r.id, itemName: r.itemName, packageCount: r.packageCount,
       lengthCm: r.lengthCm, widthCm: r.widthCm, heightCm: r.heightCm,
       productQuantity: r.productQuantity,
+      cargoType: r.cargoType,
     });
     map.set(r.orderId, list);
   }
@@ -127,6 +128,7 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
         widthCm?: number;
         heightCm?: number;
         productQuantity?: number;
+        cargoType?: string;
       }>;
     };
 
@@ -143,7 +145,7 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
           lengthCm: p.lengthCm ?? null,
           widthCm: p.widthCm ?? null,
           heightCm: p.heightCm ?? null,
-          productQuantity: p.productQuantity ?? null, weightKg: p.weightKg ?? null, sortOrder: i }))
+          productQuantity: p.productQuantity ?? null, cargoType: p.cargoType?.trim() || "NORMAL", weightKg: p.weightKg ?? null, sortOrder: i }))
       : [{ itemName: body.itemName!.trim(), packageCount: Number(body.packageCount ?? 0), lengthCm: null, widthCm: null, heightCm: null, productQuantity: null, sortOrder: 0 }];
 
     const totalPkg = products.reduce((s, p) => s + p.packageCount, 0);
@@ -209,6 +211,7 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
           widthCm: p.widthCm,
           heightCm: p.heightCm,
           productQuantity: p.productQuantity,
+          cargoType: p.cargoType,
           sortOrder: p.sortOrder,
         },
       });
@@ -392,6 +395,7 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
         widthCm?: number;
         heightCm?: number;
         productQuantity?: number;
+        cargoType?: string;
       }>;
     };
 
@@ -402,7 +406,7 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
           lengthCm: p.lengthCm ?? null,
           widthCm: p.widthCm ?? null,
           heightCm: p.heightCm ?? null,
-          productQuantity: p.productQuantity ?? null, weightKg: p.weightKg ?? null, sortOrder: i }))
+          productQuantity: p.productQuantity ?? null, cargoType: p.cargoType?.trim() || "NORMAL", weightKg: p.weightKg ?? null, sortOrder: i }))
       : body.itemName ? [{ itemName: body.itemName.trim(), packageCount: Number(body.packageCount ?? 0), lengthCm: null, widthCm: null, heightCm: null, productQuantity: null, sortOrder: 0 }] : [];
 
     const prName = staffProducts[0]?.itemName ?? body.itemName ?? "";
@@ -515,6 +519,7 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
             widthCm: p.widthCm,
             heightCm: p.heightCm,
             productQuantity: p.productQuantity,
+            cargoType: p.cargoType,
             weightKg: p.weightKg,
             sortOrder: p.sortOrder,
           })),
