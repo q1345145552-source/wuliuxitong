@@ -6,7 +6,6 @@ import { Bar, BarChart, CartesianGrid, Cell, Line, LineChart, ResponsiveContaine
 import EmptyStateCard from "../../modules/layout/EmptyStateCard";
 import RoleShell from "../../modules/layout/RoleShell";
 import Toast from "../../modules/layout/Toast";
-import { ContainerTrackingSection } from "../../components/ContainerTrackingSection";
 import { formatCny } from "../../modules/billing/billing-utils";
 import { sendAiMessage } from "../../services/ai-client";
 import { apiBaseUrl } from "../../services/core-api";
@@ -1303,10 +1302,6 @@ export default function ClientHomePage() {
                       ))
                     )}
                   </div>
-                </div>
-                {/* 📦 出柜追踪 — 显示该订单运单所属的柜子（含拆柜提示）*/}
-                <div className="order-field" style={{ gridColumn: "1 / -1" }}>
-                  <ContainerTrackingSection trackingNo={item.trackingNo ?? undefined} hideContainerNo />
                 </div>
                 <div className="order-field">
                   <div className="order-field-label">物流状态</div>
