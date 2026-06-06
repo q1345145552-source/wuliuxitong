@@ -1193,21 +1193,21 @@ export default function StaffHomePage() {
         transportMode: form.transportMode,
         products: hasProducts ? staffFormProducts.filter(p => p.itemName.trim()).map(p => ({ itemName: p.itemName.trim(), packageCount: Number(p.packageCount) || 1, lengthCm: p.lengthCm ? Number(p.lengthCm) : undefined, widthCm: p.widthCm ? Number(p.widthCm) : undefined, heightCm: p.heightCm ? Number(p.heightCm) : undefined, productQuantity: p.productQuantity ? Number(p.productQuantity) : undefined, weightKg: p.weightKg ? Number(p.weightKg) : undefined })) : undefined,
       });
-      // Upload product images
+      // 并行上传产品图片
       if (orderImageFiles.length > 0) {
-        for (const file of orderImageFiles) {
-          try {
-            const reader = new FileReader();
+        try {
+          await Promise.all(orderImageFiles.map(async (file) => {
             const base64 = await new Promise<string>((resolve) => {
+              const reader = new FileReader();
               reader.onload = () => resolve((reader.result as string).split(",")[1]);
               reader.readAsDataURL(file);
             });
-            await uploadStaffOrderProductImage({ orderId: result.orderId, fileName: file.name, mime: file.type || "image/jpeg", contentBase64: base64 });
-          } catch (e) {
-            setLoading(false);
-            setMessage(`图片上传失败：${e instanceof Error ? e.message : "未知错误"}`);
-            return;
-          }
+            return uploadStaffOrderProductImage({ orderId: result.orderId, fileName: file.name, mime: file.type || "image/jpeg", contentBase64: base64 });
+          }));
+        } catch (e) {
+          setLoading(false);
+          setMessage(`图片上传失败：${e instanceof Error ? e.message : "未知错误"}`);
+          return;
         }
         setOrderImageFiles([]);
         setOrderImagePreviews([]);
