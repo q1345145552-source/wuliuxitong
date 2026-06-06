@@ -454,7 +454,7 @@ export function registerShipmentRoutes(app: MinimalHttpApp): void {
       const pmap = new Map<string, any[]>();
       for (const r of productRows) {
         const list = pmap.get(r.orderId) ?? [];
-        list.push({ id: r.id, itemName: r.itemName, packageCount: r.packageCount, lengthCm: r.lengthCm, widthCm: r.widthCm, heightCm: r.heightCm, productQuantity: r.productQuantity, cargoType: r.cargoType });
+        list.push({ id: r.id, itemName: r.itemName, packageCount: r.packageCount, lengthCm: r.lengthCm, widthCm: r.widthCm, heightCm: r.heightCm, productQuantity: r.productQuantity, cargoType: r.cargoType, domesticTrackingNo: r.domesticTrackingNo });
         pmap.set(r.orderId, list);
       }
       const imap = new Map<string, any[]>();

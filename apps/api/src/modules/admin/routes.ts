@@ -311,6 +311,7 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
         heightCm?: number;
         productQuantity?: number;
         cargoType?: string;
+        domesticTrackingNo?: string;
       }>;
     };
 
@@ -496,6 +497,7 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
             heightCm: p.heightCm ?? null,
             productQuantity: p.productQuantity ?? null,
             cargoType: p.cargoType?.trim() || "NORMAL",
+            domesticTrackingNo: p.domesticTrackingNo?.trim() || "货拉拉",
             sortOrder: i,
           })),
         }),

@@ -190,7 +190,7 @@ export default function AdminHomePage() {
     cargoType: "NORMAL",
   });
   const [editProducts, setEditProducts] = useState<Array<{
-    itemName: string; packageCount: string; lengthCm: string; widthCm: string; heightCm: string; productQuantity: string; weightKg: string; cargoType: string;
+    itemName: string; packageCount: string; lengthCm: string; widthCm: string; heightCm: string; productQuantity: string; weightKg: string; cargoType: string; domesticTrackingNo: string;
   }>>([]);
   const [staffForm, setStaffForm] = useState({ id: "", name: "", phone: "", password: "" });
   const [clientForm, setClientForm] = useState({ id: "", name: "", companyName: "", phone: "", email: "", password: "" });
@@ -357,6 +357,7 @@ export default function AdminHomePage() {
         productQuantity: p.productQuantity != null ? String(p.productQuantity) : "",
         weightKg: "",
         cargoType: p.cargoType ?? "NORMAL",
+        domesticTrackingNo: p.domesticTrackingNo ?? "货拉拉",
       })));
     } else {
       setEditProducts([]);
@@ -426,6 +427,7 @@ export default function AdminHomePage() {
           heightCm: p.heightCm ? Number(p.heightCm) : undefined,
           productQuantity: p.productQuantity ? Number(p.productQuantity) : undefined,
           cargoType: p.cargoType || "NORMAL",
+          domesticTrackingNo: p.domesticTrackingNo.trim() || "货拉拉",
         })),
       });
       setToast("订单信息已更新");
@@ -1371,7 +1373,7 @@ export default function AdminHomePage() {
                               <div style={{ fontSize: 12, color: "#9ca3af", padding: "4px 0" }}>无产品行，点击下方按钮添加</div>
                             )}
                             {editProducts.map((p, i) => (
-                              <div key={i} style={{ display: "grid", gridTemplateColumns: "2fr 0.8fr 0.6fr 0.6fr 0.6fr 0.8fr 0.8fr auto", gap: 4, marginBottom: 4, alignItems: "center" }}>
+                              <div key={i} style={{ display: "grid", gridTemplateColumns: "2fr 0.8fr 0.6fr 0.6fr 0.6fr 0.8fr 0.8fr 1fr auto", gap: 4, marginBottom: 4, alignItems: "center" }}>
                                 <input value={p.itemName} onChange={(e) => { const n = [...editProducts]; n[i] = { ...n[i], itemName: e.target.value }; setEditProducts(n); }} placeholder="品名" style={{ border: "1px solid #d1d5db", borderRadius: 4, padding: "4px 6px", fontSize: 12 }} />
                                 <input type="number" value={p.packageCount} onChange={(e) => { const n = [...editProducts]; n[i] = { ...n[i], packageCount: e.target.value }; setEditProducts(n); }} placeholder="箱数" style={{ border: "1px solid #d1d5db", borderRadius: 4, padding: "4px 6px", fontSize: 12 }} />
                                 <input type="number" step="0.01" value={p.lengthCm} onChange={(e) => { const n = [...editProducts]; n[i] = { ...n[i], lengthCm: e.target.value }; setEditProducts(n); }} placeholder="长cm" style={{ border: "1px solid #d1d5db", borderRadius: 4, padding: "4px 6px", fontSize: 12 }} />
@@ -1383,10 +1385,11 @@ export default function AdminHomePage() {
                                   <option value="INSPECTION">商检</option>
                                   <option value="SENSITIVE">敏感</option>
                                 </select>
+                                <input value={p.domesticTrackingNo} onChange={(e) => { const n = [...editProducts]; n[i] = { ...n[i], domesticTrackingNo: e.target.value }; setEditProducts(n); }} placeholder="国内单号" style={{ border: "1px solid #d1d5db", borderRadius: 4, padding: "4px 6px", fontSize: 12 }} />
                                 <button type="button" onClick={() => setEditProducts((v) => v.filter((_, j) => j !== i))} style={{ border: "1px solid #fca5a5", borderRadius: 4, padding: "4px 6px", fontSize: 11, background: "#fff", color: "#dc2626", cursor: "pointer" }}>X</button>
                               </div>
                             ))}
-                            <button type="button" onClick={() => setEditProducts((v) => [...v, { itemName: "", packageCount: "", lengthCm: "", widthCm: "", heightCm: "", productQuantity: "", weightKg: "", cargoType: "NORMAL" }])} style={{ border: "1px dashed #2563eb", borderRadius: 4, padding: "4px 10px", fontSize: 12, background: "#fff", color: "#2563eb", cursor: "pointer", marginTop: 4 }}>+ 添加产品</button>
+                            <button type="button" onClick={() => setEditProducts((v) => [...v, { itemName: "", packageCount: "", lengthCm: "", widthCm: "", heightCm: "", productQuantity: "", weightKg: "", cargoType: "NORMAL", domesticTrackingNo: "货拉拉" }])} style={{ border: "1px dashed #2563eb", borderRadius: 4, padding: "4px 10px", fontSize: 12, background: "#fff", color: "#2563eb", cursor: "pointer", marginTop: 4 }}>+ 添加产品</button>
                           </div>
                           {(o.productImages?.length ?? 0) > 0 && (
                             <div style={{ marginTop: 8, padding: 10, background: "#f8fafc", borderRadius: 8, border: "1px solid #e2e8f0" }}>

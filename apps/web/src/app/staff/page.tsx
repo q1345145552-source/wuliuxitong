@@ -605,7 +605,7 @@ export default function StaffHomePage() {
   const [selectedForExport, setSelectedForExport] = useState<Set<string>>(new Set());
   const [pageSize, setPageSize] = useState(100);
   const [staffFormProducts, setStaffFormProducts] = useState<Array<{
-    itemName: string; packageCount: string; lengthCm: string; widthCm: string; heightCm: string; productQuantity: string; weightKg: string; cargoType: string;
+    itemName: string; packageCount: string; lengthCm: string; widthCm: string; heightCm: string; productQuantity: string; weightKg: string; cargoType: string; domesticTrackingNo: string;
   }>>([]);
   const [orderImageFiles, setOrderImageFiles] = useState<File[]>([]);
   const [orderImagePreviews, setOrderImagePreviews] = useState<string[]>([]);
@@ -1191,7 +1191,7 @@ export default function StaffHomePage() {
         domesticTrackingNo: form.domesticOrderNo.trim() || "货拉拉",
         cargoType: form.cargoType,
         transportMode: form.transportMode,
-        products: hasProducts ? staffFormProducts.filter(p => p.itemName.trim()).map(p => ({ itemName: p.itemName.trim(), packageCount: Number(p.packageCount) || 1, lengthCm: p.lengthCm ? Number(p.lengthCm) : undefined, widthCm: p.widthCm ? Number(p.widthCm) : undefined, heightCm: p.heightCm ? Number(p.heightCm) : undefined, productQuantity: p.productQuantity ? Number(p.productQuantity) : undefined, weightKg: p.weightKg ? Number(p.weightKg) : undefined, cargoType: p.cargoType || "NORMAL" })) : undefined,
+        products: hasProducts ? staffFormProducts.filter(p => p.itemName.trim()).map(p => ({ itemName: p.itemName.trim(), packageCount: Number(p.packageCount) || 1, lengthCm: p.lengthCm ? Number(p.lengthCm) : undefined, widthCm: p.widthCm ? Number(p.widthCm) : undefined, heightCm: p.heightCm ? Number(p.heightCm) : undefined, productQuantity: p.productQuantity ? Number(p.productQuantity) : undefined, weightKg: p.weightKg ? Number(p.weightKg) : undefined, cargoType: p.cargoType || "NORMAL", domesticTrackingNo: p.domesticTrackingNo.trim() || "货拉拉" })) : undefined,
       });
       // 并行上传产品图片
       if (orderImageFiles.length > 0) {
@@ -2303,7 +2303,7 @@ export default function StaffHomePage() {
             const prodVol = (pL > 0 && pW > 0 && pH > 0) ? (pL * pW * pH * pPkg) / 1_000_000 : 0;
             const prodWt = pWt * pPkg;
             return (
-              <div key={i} style={{ display: "grid", gridTemplateColumns: "3fr 1fr 0.8fr 0.8fr 0.8fr 1fr 0.9fr 0.9fr 1fr 1fr auto", gap: 3, marginBottom: 4, alignItems: "center" }}>
+              <div key={i} style={{ display: "grid", gridTemplateColumns: "3fr 1fr 0.8fr 0.8fr 0.8fr 0.9fr 0.9fr 0.9fr 1fr 1fr 1fr auto", gap: 3, marginBottom: 4, alignItems: "center" }}>
                 <input value={p.itemName} onChange={(e) => { const n = [...staffFormProducts]; n[i] = { ...n[i], itemName: e.target.value }; setStaffFormProducts(n); }} placeholder="品名" style={{ border: "1px solid #d1d5db", borderRadius: 4, padding: "4px 6px", fontSize: 12 }} />
                 <input type="number" value={p.packageCount} onChange={(e) => { const n = [...staffFormProducts]; n[i] = { ...n[i], packageCount: e.target.value }; setStaffFormProducts(n); }} placeholder="箱数" style={{ border: "1px solid #d1d5db", borderRadius: 4, padding: "4px 6px", fontSize: 12 }} />
                 <input type="number" step="0.01" value={p.lengthCm} onChange={(e) => { const n = [...staffFormProducts]; n[i] = { ...n[i], lengthCm: e.target.value }; setStaffFormProducts(n); }} placeholder="长cm" style={{ border: "1px solid #d1d5db", borderRadius: 4, padding: "4px 6px", fontSize: 12 }} />
@@ -2316,6 +2316,7 @@ export default function StaffHomePage() {
                   <option value="INSPECTION">商检</option>
                   <option value="SENSITIVE">敏感</option>
                 </select>
+                <input value={p.domesticTrackingNo} onChange={(e) => { const n = [...staffFormProducts]; n[i] = { ...n[i], domesticTrackingNo: e.target.value }; setStaffFormProducts(n); }} placeholder="国内单号" style={{ border: "1px solid #d1d5db", borderRadius: 4, padding: "4px 6px", fontSize: 12 }} />
                 <span style={{ fontSize: 11, color: prodVol > 0 ? "#2563eb" : "#9ca3af", textAlign: "right", padding: "0 4px" }}>{prodVol > 0 ? prodVol.toFixed(4) + "m³" : "—"}</span>
                 <span style={{ fontSize: 11, color: prodWt > 0 ? "#2563eb" : "#9ca3af", textAlign: "right", padding: "0 4px" }}>{prodWt > 0 ? prodWt.toFixed(2) + "kg" : "—"}</span>
                 <button type="button" onClick={() => setStaffFormProducts((v) => v.filter((_, j) => j !== i))} style={{ border: "1px solid #fca5a5", borderRadius: 4, padding: "4px 6px", fontSize: 11, background: "#fff", color: "#dc2626", cursor: "pointer" }}>X</button>
@@ -2340,12 +2341,11 @@ export default function StaffHomePage() {
                 </div>
               );
             })()}
-            <button type="button" onClick={() => setStaffFormProducts((v) => [...v, { itemName: "", packageCount: "", lengthCm: "", widthCm: "", heightCm: "", productQuantity: "", weightKg: "", cargoType: "NORMAL" }])} style={{ border: "1px dashed #2563eb", borderRadius: 4, padding: "4px 10px", fontSize: 12, background: "#fff", color: "#2563eb", cursor: "pointer", marginTop: 4 }}>+ 添加产品</button>
+            <button type="button" onClick={() => setStaffFormProducts((v) => [...v, { itemName: "", packageCount: "", lengthCm: "", widthCm: "", heightCm: "", productQuantity: "", weightKg: "", cargoType: "NORMAL", domesticTrackingNo: "货拉拉" }])} style={{ border: "1px dashed #2563eb", borderRadius: 4, padding: "4px 10px", fontSize: 12, background: "#fff", color: "#2563eb", cursor: "pointer", marginTop: 4 }}>+ 添加产品</button>
           </div>
           <div style={{ fontSize: 12, color: "#000000", marginTop: 4 }}>
             💡 输入长宽高和单箱重量后，体积和总重量在前端实时自动计算
           </div>
-          <input value={form.domesticOrderNo} onChange={(e) => setForm((v) => ({ ...v, domesticOrderNo: e.target.value }))} placeholder="国内单号（选填）" style={orderCreateInputStyle} />
           <input type="number" value={form.packageCount} onChange={(e) => updateOrderDimensions({ packageCount: e.target.value })} placeholder="包裹数量" style={orderCreateInputStyle} />
           <input type="number" value={form.productQuantity} onChange={(e) => setForm((v) => ({ ...v, productQuantity: e.target.value }))} placeholder="产品数量 *" style={orderCreateInputStyle} />
           <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 8 }}>
@@ -3088,7 +3088,7 @@ export default function StaffHomePage() {
                                   <span>仓库：<strong>{warehouseLabelFromId(item.warehouseId)}</strong></span>
                                   <span>柜号：<strong>{item.batchNo ?? "—"}</strong></span>
                                   <span>包装：<strong>{item.packageUnit === "bag" ? "袋" : "箱"}</strong></span>
-                                  <span>国内单号：<strong>{item.domesticTrackingNo ?? "—"}</strong></span>
+                                  <span>国内单号：<strong>{(item.products?.length ?? 0) > 0 ? item.products!.map(p => p.domesticTrackingNo ?? "货拉拉").filter((v, i, a) => a.indexOf(v) === i).join("、") : (item.domesticTrackingNo ?? "—")}</strong></span>
                                   <span>加收金额：<strong>{item.receivableAmountCny != null ? `${item.receivableCurrency === "THB" ? "THB" : "CNY"} ${item.receivableAmountCny.toFixed(2)}` : "0"}</strong></span>
                                   <span>收货地址：<strong>{item.receiverAddressTh ?? "—"}</strong></span>
                                 </div>
@@ -3820,7 +3820,7 @@ export default function StaffHomePage() {
                   const prodVol = (pL > 0 && pW > 0 && pH > 0) ? (pL * pW * pH * pPkg) / 1_000_000 : 0;
                   const prodWt = pWt * pPkg;
                   return (
-                  <div key={i} style={{ display: "grid", gridTemplateColumns: "3fr 1fr 0.8fr 0.8fr 0.8fr 1fr 0.9fr 0.9fr 1fr 1fr auto", gap: 3, marginBottom: 4, alignItems: "center" }}>
+                  <div key={i} style={{ display: "grid", gridTemplateColumns: "3fr 1fr 0.8fr 0.8fr 0.8fr 0.9fr 0.9fr 0.9fr 1fr 1fr 1fr auto", gap: 3, marginBottom: 4, alignItems: "center" }}>
                     <input value={p.itemName} onChange={(e) => { const n = [...staffFormProducts]; n[i] = { ...n[i], itemName: e.target.value }; setStaffFormProducts(n); }} placeholder="品名" style={{ border: "1px solid #d1d5db", borderRadius: 4, padding: "4px 6px", fontSize: 12 }} />
                     <input type="number" value={p.packageCount} onChange={(e) => { const n = [...staffFormProducts]; n[i] = { ...n[i], packageCount: e.target.value }; setStaffFormProducts(n); }} placeholder="箱数" style={{ border: "1px solid #d1d5db", borderRadius: 4, padding: "4px 6px", fontSize: 12 }} />
                     <input type="number" step="0.01" value={p.lengthCm} onChange={(e) => { const n = [...staffFormProducts]; n[i] = { ...n[i], lengthCm: e.target.value }; setStaffFormProducts(n); }} placeholder="长cm" style={{ border: "1px solid #d1d5db", borderRadius: 4, padding: "4px 6px", fontSize: 12 }} />
@@ -3833,6 +3833,7 @@ export default function StaffHomePage() {
                       <option value="INSPECTION">商检</option>
                       <option value="SENSITIVE">敏感</option>
                     </select>
+                    <input value={p.domesticTrackingNo} onChange={(e) => { const n = [...staffFormProducts]; n[i] = { ...n[i], domesticTrackingNo: e.target.value }; setStaffFormProducts(n); }} placeholder="国内单号" style={{ border: "1px solid #d1d5db", borderRadius: 4, padding: "4px 6px", fontSize: 12 }} />
                     <span style={{ fontSize: 11, color: prodVol > 0 ? "#2563eb" : "#9ca3af", textAlign: "right", padding: "0 4px" }}>{prodVol > 0 ? prodVol.toFixed(4) + "m³" : "—"}</span>
                     <span style={{ fontSize: 11, color: prodWt > 0 ? "#2563eb" : "#9ca3af", textAlign: "right", padding: "0 4px" }}>{prodWt > 0 ? prodWt.toFixed(2) + "kg" : "—"}</span>
                     <button type="button" onClick={() => setStaffFormProducts((v) => v.filter((_, j) => j !== i))} style={{ border: "1px solid #fca5a5", borderRadius: 4, padding: "4px 6px", fontSize: 11, background: "#fff", color: "#dc2626", cursor: "pointer" }}>X</button>
@@ -3857,7 +3858,7 @@ export default function StaffHomePage() {
                     </div>
                   );
                 })()}
-                <button type="button" onClick={() => setStaffFormProducts((v) => [...v, { itemName: "", packageCount: "", lengthCm: "", widthCm: "", heightCm: "", productQuantity: "", weightKg: "", cargoType: "NORMAL" }])} style={{ border: "1px dashed #2563eb", borderRadius: 4, padding: "4px 10px", fontSize: 12, background: "#fff", color: "#2563eb", cursor: "pointer", marginTop: 4 }}>+ 添加产品</button>
+                <button type="button" onClick={() => setStaffFormProducts((v) => [...v, { itemName: "", packageCount: "", lengthCm: "", widthCm: "", heightCm: "", productQuantity: "", weightKg: "", cargoType: "NORMAL", domesticTrackingNo: "货拉拉" }])} style={{ border: "1px dashed #2563eb", borderRadius: 4, padding: "4px 10px", fontSize: 12, background: "#fff", color: "#2563eb", cursor: "pointer", marginTop: 4 }}>+ 添加产品</button>
               </div>
               <div style={{ fontSize: 12, color: "#000000", marginTop: 4 }}>
                 💡 输入长宽高和单箱重量后，体积和总重量在前端实时自动计算
@@ -3876,7 +3877,6 @@ export default function StaffHomePage() {
               </select>
               <input type="date" value={form.arrivedAt} onChange={(e) => setForm((v) => ({ ...v, arrivedAt: e.target.value }))} style={orderCreateInputStyle} />
               <div style={{ fontSize: 11, color: "#000000", marginTop: -4 }}>到仓日期 *</div>
-              <input value={form.domesticOrderNo} onChange={(e) => setForm((v) => ({ ...v, domesticOrderNo: e.target.value }))} placeholder="国内单号（选填）" style={orderCreateInputStyle} />
               <hr style={{ border: "none", borderTop: "1px solid #e5e7eb", margin: "8px 0" }} />
             </div>
             {/* 产品图片上传 */}

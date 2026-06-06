@@ -26,6 +26,7 @@ export interface StaffCreateOrderPayload {
     heightCm?: number;
     productQuantity?: number;
     cargoType?: string;
+    domesticTrackingNo?: string;
   }>;
 }
 
@@ -151,6 +152,7 @@ export interface OrderProductItem {
   heightCm?: number | null;
   productQuantity?: number | null;
   cargoType?: string;
+  domesticTrackingNo?: string;
 }
 
 export interface StaffInboundPhotoItem {
@@ -958,6 +960,7 @@ export async function updateAdminOrder(payload: {
     heightCm?: number;
     productQuantity?: number;
     cargoType?: string;
+    domesticTrackingNo?: string;
   }>;
 }): Promise<{ orderId: string; updatedAt: string }> {
   const response = await fetch(`${apiBaseUrl()}/admin/orders/update`, {
