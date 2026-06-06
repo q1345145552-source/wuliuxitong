@@ -1380,6 +1380,7 @@ export interface LoadingManifestDetail extends LoadingManifestItem {
 export async function createLoadingManifest(payload: {
   warehouse: string;
   carrierInfo?: string;
+  containerNo?: string;
 }): Promise<{ manifestNo: string }> {
   const response = await fetch(`${apiBaseUrl()}/staff/loading-manifests`, {
     method: "POST",

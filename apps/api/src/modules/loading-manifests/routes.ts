@@ -56,14 +56,17 @@ export function registerLoadingManifestRoutes(app: MinimalHttpApp): void {
   app.post("/staff/loading-manifests", async (req, res) => {
     const auth = requireRole(req, res, ["staff", "admin"]);
     if (!auth) return;
-    const body = (req.body ?? {}) as { warehouse?: string; carrierInfo?: string };
+    const body = (req.body ?? {}) as { warehouse?: string; carrierInfo?: string; containerNo?: string };
     if (!body.warehouse) { fail(res, 400, "BAD_REQUEST", "仓库参数无效"); return; }
-    const manifestNo = await issueManifestNo(new Date());
+    const containerNo = body.containerNo?.trim() || await issueManifestNo(new Date());
+    // 查重
+    const existed = await prisma.container.findUnique({ where: { containerNo }, select: { id: true } });
+    if (existed) { fail(res, 409, "CONFLICT", `柜号 ${containerNo} 已存在`); return; }
     const container = await prisma.container.create({
       data: {
         id: `ctr_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
         companyId: auth.companyId,
-        containerNo: manifestNo,
+        containerNo,
         containerType: body.warehouse === "wh_dongguan_01" ? "40HQ" : "20GP",
         warehouseId: body.warehouse,
         currentStatus: "LOADING",

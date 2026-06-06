@@ -49,7 +49,7 @@ export default function StaffContainerLoadingPage() {
   const [error, setError] = useState("");
   const [toast, setToast] = useState("");
   const [showCreate, setShowCreate] = useState(false);
-  const [createForm, setCreateForm] = useState({ warehouse: "wh_yiwu_01", carrierInfo: "" });
+  const [createForm, setCreateForm] = useState({ warehouse: "wh_yiwu_01", carrierInfo: "", containerNo: "" });
   const [creating, setCreating] = useState(false);
   const [selectedId, setSelectedId] = useState("");
   const [detail, setDetail] = useState<LoadingManifestDetail | null>(null);
@@ -135,7 +135,7 @@ export default function StaffContainerLoadingPage() {
       const result = await createLoadingManifest(createForm);
       setToast(`装柜任务已创建: ${result.manifestNo}`);
       setShowCreate(false);
-      setCreateForm({ warehouse: "wh_yiwu_01", carrierInfo: "" });
+      setCreateForm({ warehouse: "wh_yiwu_01", carrierInfo: "", containerNo: "" });
       await loadList();
     } catch (e) {
       setError(e instanceof Error ? e.message : "创建失败");
@@ -233,12 +233,13 @@ export default function StaffContainerLoadingPage() {
       {/* 新建表单 */}
       {showCreate && (
         <div style={{ border: "1px solid #e5e7eb", borderRadius: 8, padding: 16, background: "#f8fafc", marginBottom: 12, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+          <input value={createForm.containerNo} onChange={(e) => setCreateForm((v) => ({ ...v, containerNo: e.target.value }))} placeholder="柜号 *" style={{ ...inputStyle, minWidth: 160 }} />
+          <input value={createForm.carrierInfo} onChange={(e) => setCreateForm((v) => ({ ...v, carrierInfo: e.target.value }))} placeholder="船次/船名 *" style={{ ...inputStyle, flex: 1, minWidth: 200 }} />
           <select value={createForm.warehouse} onChange={(e) => setCreateForm((v) => ({ ...v, warehouse: e.target.value }))} style={inputStyle}>
             <option value="wh_yiwu_01">义乌仓</option>
             <option value="wh_guangzhou_01">广州仓</option>
             <option value="wh_dongguan_01">东莞仓</option>
           </select>
-          <input value={createForm.carrierInfo} onChange={(e) => setCreateForm((v) => ({ ...v, carrierInfo: e.target.value }))} placeholder="承运信息（可选）" style={{ ...inputStyle, flex: 1, minWidth: 200 }} />
           <button disabled={creating} onClick={handleCreate} style={{ border: "none", borderRadius: 6, padding: "8px 16px", background: "#2563eb", color: "#fff", fontWeight: 500, fontSize: 13, cursor: creating ? "not-allowed" : "pointer" }}>
             {creating ? "创建中…" : "创建"}
           </button>
