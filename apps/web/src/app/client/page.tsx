@@ -165,7 +165,7 @@ export default function ClientHomePage() {
     receiverAddressTh: "",
   });
   const [formProducts, setFormProducts] = useState<Array<{
-    itemName: string; packageCount: string; lengthCm: string; widthCm: string; heightCm: string; productQuantity: string; weightKg: string;
+    itemName: string; packageCount: string; lengthCm: string; widthCm: string; heightCm: string; productQuantity: string; weightKg: string; domesticTrackingNo: string;
   }>>([]);
   const [prealertImageFiles, setPrealertImageFiles] = useState<File[]>([]);
   const [prealertImagePreviews, setPrealertImagePreviews] = useState<string[]>([]);
@@ -1148,6 +1148,9 @@ export default function ClientHomePage() {
                           <span style={{ marginLeft: 6, fontSize: 12, color: "#000000" }}>
                             货型：{(p.cargoType ?? "NORMAL") === "INSPECTION" ? "商检" : (p.cargoType ?? "NORMAL") === "SENSITIVE" ? "敏感" : "普货"}
                           </span>
+                          <span style={{ marginLeft: 6, fontSize: 12, color: "#000000" }}>
+                            国内单号：{p.domesticTrackingNo || "货拉拉"}
+                          </span>
                         </div>
                       </div>
                     ))
@@ -1506,7 +1509,7 @@ export default function ClientHomePage() {
                   const prodVol = (pL > 0 && pW > 0 && pH > 0) ? (pL * pW * pH * pPkg) / 1_000_000 : 0;
                   const prodWt = pWt * pPkg;
                   return (
-                  <div key={i} style={{ display: "grid", gridTemplateColumns: "3fr 1fr 0.8fr 0.8fr 0.8fr 1fr 1fr 1fr 1fr auto", gap: 3, marginBottom: 4, alignItems: "center" }}>
+                  <div key={i} style={{ display: "grid", gridTemplateColumns: "3fr 1fr 0.8fr 0.8fr 0.8fr 1fr 1fr 1fr 1fr 1fr auto", gap: 3, marginBottom: 4, alignItems: "center" }}>
                     <input value={p.itemName} onChange={(e) => setFormProducts((v) => { const n = [...v]; n[i] = { ...n[i], itemName: e.target.value }; return n; })} placeholder="品名" style={{ border: "1px solid #d1d5db", borderRadius: 4, padding: "4px 6px", fontSize: 12 }} />
                     <input type="number" value={p.packageCount} onChange={(e) => setFormProducts((v) => { const n = [...v]; n[i] = { ...n[i], packageCount: e.target.value }; return n; })} placeholder="箱数" style={{ border: "1px solid #d1d5db", borderRadius: 4, padding: "4px 6px", fontSize: 12 }} />
                     <input type="number" step="0.01" value={p.lengthCm} onChange={(e) => setFormProducts((v) => { const n = [...v]; n[i] = { ...n[i], lengthCm: e.target.value }; return n; })} placeholder="长cm" style={{ border: "1px solid #d1d5db", borderRadius: 4, padding: "4px 6px", fontSize: 12 }} />
@@ -1514,6 +1517,7 @@ export default function ClientHomePage() {
                     <input type="number" step="0.01" value={p.heightCm} onChange={(e) => setFormProducts((v) => { const n = [...v]; n[i] = { ...n[i], heightCm: e.target.value }; return n; })} placeholder="高cm" style={{ border: "1px solid #d1d5db", borderRadius: 4, padding: "4px 6px", fontSize: 12 }} />
                     <input type="number" value={p.productQuantity} onChange={(e) => setFormProducts((v) => { const n = [...v]; n[i] = { ...n[i], productQuantity: e.target.value }; return n; })} placeholder="单箱数量" style={{ border: "1px solid #d1d5db", borderRadius: 4, padding: "4px 6px", fontSize: 12 }} />
                     <input type="number" step="0.01" value={p.weightKg} onChange={(e) => setFormProducts((v) => { const n = [...v]; n[i] = { ...n[i], weightKg: e.target.value }; return n; })} placeholder="单箱重量kg" style={{ border: "1px solid #d1d5db", borderRadius: 4, padding: "4px 6px", fontSize: 12 }} />
+                    <input value={p.domesticTrackingNo || "货拉拉"} onChange={(e) => setFormProducts((v) => { const n = [...v]; n[i] = { ...n[i], domesticTrackingNo: e.target.value }; return n; })} placeholder="国内单号" style={{ border: "1px solid #d1d5db", borderRadius: 4, padding: "4px 6px", fontSize: 12 }} />
                     <span style={{ fontSize: 11, color: prodVol > 0 ? "#2563eb" : "#9ca3af", textAlign: "right", padding: "0 4px" }}>{prodVol > 0 ? prodVol.toFixed(4) + "m³" : "---"}</span>
                     <span style={{ fontSize: 11, color: prodWt > 0 ? "#2563eb" : "#9ca3af", textAlign: "right", padding: "0 4px" }}>{prodWt > 0 ? prodWt.toFixed(2) + "kg" : "---"}</span>
                     <button type="button" onClick={() => setFormProducts((v) => v.filter((_, j) => j !== i))} style={{ border: "1px solid #fca5a5", borderRadius: 4, padding: "4px 6px", fontSize: 11, background: "#fff", color: "#dc2626", cursor: "pointer" }}>✕</button>
@@ -1538,7 +1542,7 @@ export default function ClientHomePage() {
                     </div>
                   );
                 })()}
-                <button type="button" onClick={() => setFormProducts((v) => [...v, { itemName: "", packageCount: "", lengthCm: "", widthCm: "", heightCm: "", productQuantity: "", weightKg: "" }])} style={{ border: "1px dashed #2563eb", borderRadius: 4, padding: "4px 10px", fontSize: 12, background: "#fff", color: "#2563eb", cursor: "pointer", marginTop: 4 }}>+ 添加产品</button>
+                <button type="button" onClick={() => setFormProducts((v) => [...v, { itemName: "", packageCount: "", lengthCm: "", widthCm: "", heightCm: "", productQuantity: "", weightKg: "", domesticTrackingNo: "货拉拉" }])} style={{ border: "1px dashed #2563eb", borderRadius: 4, padding: "4px 10px", fontSize: 12, background: "#fff", color: "#2563eb", cursor: "pointer", marginTop: 4 }}>+ 添加产品</button>
               </div>
               <div style={{ fontSize: 12, color: "#000000", marginTop: 4 }}>
                 💡 输入长宽高和箱/袋数后，体积自动计算（长×宽×高÷1,000,000×箱数）
@@ -1599,7 +1603,7 @@ export default function ClientHomePage() {
                 try {
                   const payload: any = { ...form, packageCount: +form.packageCount || 0, weightKg: form.weightKg ? +form.weightKg : undefined, volumeM3: form.volumeM3 ? +form.volumeM3 : undefined, transportMode: form.transportMode as "sea"  |  "land", trackingNo: form.trackingNo?.trim() || undefined };
                   if (hasProducts) {
-                    payload.products = formProducts.filter((p) => p.itemName.trim()).map((p) => ({ itemName: p.itemName.trim(), packageCount: Number(p.packageCount) || 1, lengthCm: p.lengthCm ? Number(p.lengthCm) : undefined, widthCm: p.widthCm ? Number(p.widthCm) : undefined, heightCm: p.heightCm ? Number(p.heightCm) : undefined, productQuantity: p.productQuantity ? Number(p.productQuantity) : undefined, weightKg: p.weightKg ? Number(p.weightKg) : undefined }));
+                    payload.products = formProducts.filter((p) => p.itemName.trim()).map((p) => ({ itemName: p.itemName.trim(), packageCount: Number(p.packageCount) || 1, lengthCm: p.lengthCm ? Number(p.lengthCm) : undefined, widthCm: p.widthCm ? Number(p.widthCm) : undefined, heightCm: p.heightCm ? Number(p.heightCm) : undefined, productQuantity: p.productQuantity ? Number(p.productQuantity) : undefined, weightKg: p.weightKg ? Number(p.weightKg) : undefined, domesticTrackingNo: p.domesticTrackingNo?.trim() || "货拉拉" }));
                     payload.itemName = payload.products[0].itemName;
                   }
                   const result = await createClientPrealert(payload);
