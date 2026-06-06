@@ -3787,7 +3787,7 @@ export default function StaffHomePage() {
       {/* 创建订单弹窗 */}
       {showCreateModal ? (
         <div style={{ position: "fixed", inset: 0, zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(0,0,0,0.4)", padding: 16 }}>
-          <div style={{ width: "100%", maxWidth: 1200, maxHeight: "90vh", overflow: "auto", background: "#fff", borderRadius: 12, padding: 24, boxShadow: "0 20px 60px rgba(0,0,0,0.3)" }}>
+          <div style={{ width: "100%", maxWidth: 1320, maxHeight: "90vh", overflow: "auto", background: "#fff", borderRadius: 12, padding: 24, boxShadow: "0 20px 60px rgba(0,0,0,0.3)" }}>
             <h3 style={{ margin: "0 0 16px", fontSize: 18, fontWeight: 600 }}>创建订单</h3>
             <div style={{ display: "grid", gap: 8 }}>
               <div style={{ position: "relative" }}>
@@ -3873,11 +3873,6 @@ export default function StaffHomePage() {
               <select value={form.transportMode} onChange={(e) => setForm((v) => ({ ...v, transportMode: e.target.value as "sea" | "land" }))} style={orderCreateInputStyle}>
                 <option value="sea">海运</option>
                 <option value="land">陆运</option>
-              </select>
-              <select value={form.cargoType} onChange={(e) => setForm((v) => ({ ...v, cargoType: e.target.value }))} style={orderCreateInputStyle}>
-                <option value="NORMAL">普货</option>
-                <option value="INSPECTION">商检</option>
-                <option value="SENSITIVE">敏感</option>
               </select>
               <input type="date" value={form.arrivedAt} onChange={(e) => setForm((v) => ({ ...v, arrivedAt: e.target.value }))} style={orderCreateInputStyle} />
               <div style={{ fontSize: 11, color: "#000000", marginTop: -4 }}>到仓日期 *</div>
