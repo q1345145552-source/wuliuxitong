@@ -3081,7 +3081,7 @@ export default function StaffHomePage() {
                         </tr>
                         {shipmentTableExpandedId === item.id ? (
                           <tr>
-                            <td colSpan={10} style={{ padding: 0, background: "#f8fafc", borderBottom: "1px solid #e2e8f0" }}>
+                            <td colSpan={13} style={{ padding: 0, background: "#f8fafc", borderBottom: "1px solid #e2e8f0" }}>
                               <div style={{ padding: 14 }}>
                                 {/* 隐藏信息栏 */}
                                 <div style={{ display: "flex", flexWrap: "wrap", gap: "8px 20px", marginBottom: 12, padding: 8, background: "#f1f5f9", borderRadius: 6, fontSize: 12 }}>
