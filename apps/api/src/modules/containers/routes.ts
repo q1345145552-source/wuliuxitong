@@ -189,6 +189,7 @@ export function registerContainerRoutes(app: MinimalHttpApp): void {
     const body = (req.body ?? {}) as {
       containerNo?: string;
       containerType?: "20GP" | "40HQ" | string;
+      carrierName?: string;
       loadingDate?: string;
       departureDate?: string;
       eta?: string;
@@ -215,6 +216,7 @@ export function registerContainerRoutes(app: MinimalHttpApp): void {
         companyId: auth.companyId,
         containerNo,
         containerType,
+        carrierName: body.carrierName?.trim() || null,
         loadingDate: body.loadingDate ? new Date(body.loadingDate) : null,
         departureDate: body.departureDate ? new Date(body.departureDate) : null,
         eta: body.eta ? new Date(body.eta) : null,
