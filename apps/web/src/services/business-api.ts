@@ -32,7 +32,7 @@ export interface StaffCreateOrderPayload {
 
 export interface ClientPrealertPayload {
   warehouseId: string;
-  itemName: string;
+  itemName?: string;
   packageCount: number;
   packageUnit: "bag" | "box";
   weightKg?: number;
@@ -44,6 +44,17 @@ export interface ClientPrealertPayload {
   receiverPhoneTh?: string;
   receiverAddressTh?: string;
   trackingNo?: string;
+  products?: Array<{
+    itemName: string;
+    packageCount: number;
+    lengthCm?: number;
+    widthCm?: number;
+    heightCm?: number;
+    productQuantity?: number;
+    weightKg?: number;
+    cargoType?: string;
+    domesticTrackingNo?: string;
+  }>;
 }
 
 export interface ClientAddressItem {

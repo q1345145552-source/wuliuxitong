@@ -421,7 +421,7 @@ export function registerShipmentRoutes(app: MinimalHttpApp): void {
       productQuantity: r.order?.productQuantity ?? undefined,
       weightKg: decToNumber(r.weightKg) ?? undefined,
       volumeM3: decToNumber(r.volumeM3) ?? undefined,
-      arrivedAt: r.order?.createdAt.toISOString() ?? undefined,
+      arrivedAt: r.order?.shipDate ?? undefined,
       currentStatus: r.currentStatus,
       warehouseId: r.warehouseId,
       updatedAt: r.updatedAt.toISOString(),
@@ -454,7 +454,7 @@ export function registerShipmentRoutes(app: MinimalHttpApp): void {
       const pmap = new Map<string, any[]>();
       for (const r of productRows) {
         const list = pmap.get(r.orderId) ?? [];
-        list.push({ id: r.id, itemName: r.itemName, packageCount: r.packageCount, lengthCm: r.lengthCm, widthCm: r.widthCm, heightCm: r.heightCm, productQuantity: r.productQuantity, cargoType: r.cargoType, domesticTrackingNo: r.domesticTrackingNo });
+        list.push({ id: r.id, itemName: r.itemName, packageCount: r.packageCount, lengthCm: r.lengthCm, widthCm: r.widthCm, heightCm: r.heightCm, productQuantity: r.productQuantity, cargoType: r.cargoType, domesticTrackingNo: r.domesticTrackingNo, weightKg: r.weightKg });
         pmap.set(r.orderId, list);
       }
       const imap = new Map<string, any[]>();
