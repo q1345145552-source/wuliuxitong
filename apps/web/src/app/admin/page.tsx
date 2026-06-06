@@ -1244,7 +1244,6 @@ export default function AdminHomePage() {
                     <td style={{ padding: "8px 6px", whiteSpace: "nowrap", color: "#000000" }}>
                       {o.shipDate ?? o.createdAt.slice(0, 10)}
                     </td>
-                    </td>
                     <td style={{ padding: "8px 6px", whiteSpace: "nowrap" }}>
                       <button
                         type="button"
