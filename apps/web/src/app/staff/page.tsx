@@ -1235,7 +1235,7 @@ export default function StaffHomePage() {
       setClientSearchKeyword("");
       setOrderImageFiles([]);
       setOrderImagePreviews([]);
-      await loadPageData();
+      loadPageData().catch(() => {});
     } catch (error) {
       const text = error instanceof Error ? error.message : "创建失败";
       setMessage(`创建失败：${text}`);
