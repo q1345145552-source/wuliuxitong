@@ -381,7 +381,12 @@ export default function AdminHomePage() {
       setMessage(`运单号前缀需与仓库一致：${prefixes.join("/")}`);
       return;
     }
-    if (!orderEditForm.itemName.trim()) {
+    // 从产品行计算总数
+    const activeProducts = editProducts.filter(p => p.itemName.trim());
+    const totalPackageCount = activeProducts.reduce((s, p) => s + (Number(p.packageCount) || 1), 0);
+    const totalProductQuantity = activeProducts.reduce((s, p) => s + (Number(p.productQuantity) || 0), 0);
+    const primaryItemName = activeProducts[0]?.itemName.trim() || orderEditForm.itemName.trim();
+    if (!primaryItemName) {
       setMessage("请填写品名。");
       return;
     }
@@ -391,8 +396,8 @@ export default function AdminHomePage() {
       await updateAdminOrder({
         orderId: editingOrderId,
         clientId: orderEditForm.clientId.trim() || undefined,
-        itemName: orderEditForm.itemName.trim(),
-        cargoType: orderEditForm.cargoType,
+        itemName: primaryItemName,
+        cargoType: undefined,
         trackingNo: orderEditForm.trackingNo.trim() || undefined,
         batchNo: orderEditForm.batchNo.trim() || undefined,
         warehouseId: orderEditForm.warehouseId,
@@ -400,8 +405,8 @@ export default function AdminHomePage() {
         domesticTrackingNo: orderEditForm.domesticTrackingNo.trim() || undefined,
         receiverAddressTh: orderEditForm.receiverAddressTh.trim(),
         containerNo: orderEditForm.containerNo.trim() || undefined,
-        productQuantity: Number(orderEditForm.productQuantity || 0),
-        packageCount: Number(orderEditForm.packageCount || 0),
+        productQuantity: totalProductQuantity,
+        packageCount: totalPackageCount,
         packageUnit: orderEditForm.packageUnit,
         weightKg: orderEditForm.weightKg.trim() ? Number(orderEditForm.weightKg) : undefined,
         volumeM3: orderEditForm.volumeM3.trim() ? Number(orderEditForm.volumeM3) : undefined,
@@ -409,7 +414,7 @@ export default function AdminHomePage() {
         receivableCurrency: orderEditForm.receivableCurrency,
         paymentStatus: orderEditForm.paymentStatus,
         shipDate: orderEditForm.shipDate.trim() || undefined,
-        products: editProducts.length > 0 ? editProducts.filter(p => p.itemName.trim()).map(p => ({
+        products: activeProducts.map(p => ({
           itemName: p.itemName.trim(),
           packageCount: Number(p.packageCount) || 1,
           lengthCm: p.lengthCm ? Number(p.lengthCm) : undefined,
@@ -417,7 +422,7 @@ export default function AdminHomePage() {
           heightCm: p.heightCm ? Number(p.heightCm) : undefined,
           productQuantity: p.productQuantity ? Number(p.productQuantity) : undefined,
           cargoType: p.cargoType || "NORMAL",
-        })) : undefined,
+        })),
       });
       setToast("订单信息已更新");
       await loadOrders();
@@ -1344,14 +1349,10 @@ export default function AdminHomePage() {
                             <input value={orderEditForm.trackingNo} onChange={(e) => setOrderEditForm((v) => ({ ...v, trackingNo: e.target.value.toUpperCase() }))} placeholder="运单号" style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 10px" }} />
                             <input value={orderEditForm.batchNo} onChange={(e) => setOrderEditForm((v) => ({ ...v, batchNo: e.target.value }))} placeholder="柜号" style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 10px" }} />
                             <select value={orderEditForm.warehouseId} onChange={(e) => setOrderEditForm((v) => ({ ...v, warehouseId: e.target.value }))} style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 10px" }}><option value="wh_yiwu_01">义乌仓</option><option value="wh_guangzhou_01">广州仓</option><option value="wh_dongguan_01">东莞仓</option></select>
-                            <input value={orderEditForm.itemName} onChange={(e) => setOrderEditForm((v) => ({ ...v, itemName: e.target.value }))} placeholder="品名" style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 10px" }} />
                             <select value={orderEditForm.transportMode} onChange={(e) => setOrderEditForm((v) => ({ ...v, transportMode: e.target.value as "sea" | "land" }))} style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 10px" }}><option value="sea">海运</option><option value="land">陆运</option></select>
-                            <select value={orderEditForm.cargoType ?? "NORMAL"} onChange={(e) => setOrderEditForm((v) => ({ ...v, cargoType: e.target.value }))} style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 10px" }}><option value="NORMAL">普货</option><option value="INSPECTION">商检</option><option value="SENSITIVE">敏感</option></select>
                             <input value={orderEditForm.domesticTrackingNo} onChange={(e) => setOrderEditForm((v) => ({ ...v, domesticTrackingNo: e.target.value }))} placeholder="国内单号" style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 10px" }} />
                             <input value={orderEditForm.receiverAddressTh} onChange={(e) => setOrderEditForm((v) => ({ ...v, receiverAddressTh: e.target.value }))} placeholder="收货地址" style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 10px" }} />
                             <input value={orderEditForm.containerNo} onChange={(e) => setOrderEditForm((v) => ({ ...v, containerNo: e.target.value }))} placeholder="装柜号" style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 10px" }} />
-                            <input value={orderEditForm.productQuantity} onChange={(e) => setOrderEditForm((v) => ({ ...v, productQuantity: e.target.value }))} placeholder="产品数量" style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 10px" }} />
-                            <input value={orderEditForm.packageCount} onChange={(e) => setOrderEditForm((v) => ({ ...v, packageCount: e.target.value }))} placeholder="件数" style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 10px" }} />
                             <select value={orderEditForm.packageUnit} onChange={(e) => setOrderEditForm((v) => ({ ...v, packageUnit: e.target.value as "bag" | "box" }))} style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 10px" }}><option value="box">箱</option><option value="bag">袋</option></select>
                             <input value={orderEditForm.weightKg} onChange={(e) => setOrderEditForm((v) => ({ ...v, weightKg: e.target.value }))} placeholder="重量(kg)" style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 10px" }} />
                             <input value={orderEditForm.volumeM3} onChange={(e) => setOrderEditForm((v) => ({ ...v, volumeM3: e.target.value }))} placeholder="体积(m³)" style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 10px" }} />
