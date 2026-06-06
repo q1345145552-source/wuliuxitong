@@ -42,6 +42,7 @@ interface Props {
   /** 优先用 shipmentId 查询，没有则用 trackingNo */
   shipmentId?: string;
   trackingNo?: string;
+  hideContainerNo?: boolean;
 }
 
 /** 柜子状态 → 颜色映射 */
@@ -71,7 +72,7 @@ function formatDate(iso: string | null): string {
   return d.toLocaleDateString("zh-CN", { month: "2-digit", day: "2-digit" });
 }
 
-export function ContainerTrackingSection({ shipmentId, trackingNo }: Props) {
+export function ContainerTrackingSection({ shipmentId, trackingNo, hideContainerNo }: Props) {
   const [data, setData] = useState<TrackData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -202,7 +203,7 @@ export function ContainerTrackingSection({ shipmentId, trackingNo }: Props) {
               <div>
                 <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
                   <span style={{ fontWeight: 700, color: "#0f172a", fontSize: 14 }}>
-                    柜 {idx + 1}：{c.containerNo}
+                    柜 {idx + 1}{hideContainerNo ? "" : `：${c.containerNo}`}
                   </span>
                   <span
                     style={{

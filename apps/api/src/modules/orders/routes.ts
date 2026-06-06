@@ -894,7 +894,7 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
   });
 
   app.post("/staff/orders/product-images", async (req, res) => {
-    const auth = requireRole(req, res, ["staff", "admin"]);
+    const auth = requireRole(req, res, ["staff", "admin", "client"]);
     if (!auth) return;
     const body = (req.body ?? {}) as {
       orderId?: string;
@@ -928,6 +928,10 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
     }
     if (auth.role === "staff" && order.approvalStatus !== "pending" && order.approvalStatus !== "approved") {
       fail(res, 403, "FORBIDDEN", "staff can only manage product images for pending or approved orders");
+      return;
+    }
+    if (auth.role === "client" && (order.clientId !== auth.userId || order.approvalStatus !== "pending")) {
+      fail(res, 403, "FORBIDDEN", "client can only manage product images for their own pending prealerts");
       return;
     }
     if (!(await staffCanEditOrderWarehouse(auth, order.warehouseId))) {
@@ -966,7 +970,7 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
   });
 
   app.delete("/staff/orders/product-images", async (req, res) => {
-    const auth = requireRole(req, res, ["staff", "admin"]);
+    const auth = requireRole(req, res, ["staff", "admin", "client"]);
     if (!auth) return;
     const id = req.query.id?.trim();
     if (!id) {
@@ -985,6 +989,10 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
     }
     if (auth.role === "staff" && image.order.approvalStatus !== "pending" && image.order.approvalStatus !== "approved") {
       fail(res, 403, "FORBIDDEN", "staff can only manage product images for pending or approved orders");
+      return;
+    }
+    if (auth.role === "client" && (image.order.clientId !== auth.userId || image.order.approvalStatus !== "pending")) {
+      fail(res, 403, "FORBIDDEN", "client can only manage their own pending prealert images");
       return;
     }
     if (!(await staffCanEditOrderWarehouse(auth, image.order.warehouseId))) {

@@ -1294,7 +1294,7 @@ export default function ClientHomePage() {
                 </div>
                 {/* 📦 出柜追踪 — 显示该订单运单所属的柜子（含拆柜提示）*/}
                 <div className="order-field" style={{ gridColumn: "1 / -1" }}>
-                  <ContainerTrackingSection trackingNo={item.trackingNo ?? undefined} />
+                  <ContainerTrackingSection trackingNo={item.trackingNo ?? undefined} hideContainerNo />
                 </div>
                 <div className="order-field">
                   <div className="order-field-label">物流状态</div>
