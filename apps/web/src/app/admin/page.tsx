@@ -16,6 +16,7 @@ import {
   fetchAdminStaff,
   fetchAdminClients,
   fetchAdminOrders,
+  fetchShipmentImages,
   updateAdminOrder,
   fetchAdminAiSessionMemory,
   fetchAdminAiKnowledgeGaps,
@@ -169,6 +170,8 @@ export default function AdminHomePage() {
     receivableAmount: "", statusRaw: "",
   });
   const [editingOrderId, setEditingOrderId] = useState("");
+  const [expandedOrderId, setExpandedOrderId] = useState("");
+  const [orderImagesCache, setOrderImagesCache] = useState<Record<string, Array<{ id: string; fileName: string; mime: string; contentBase64: string; filePath?: string | null; imageUrl?: string; createdAt: string }>>>({});
   const [orderEditForm, setOrderEditForm] = useState({
     clientId: "",
     trackingNo: "",
@@ -1255,9 +1258,25 @@ export default function AdminHomePage() {
               <tbody>
                 {pagedOrders.map((o) => (
                   <Fragment key={o.id}>
-                  <tr style={{ borderBottom: "1px solid #e2e8f0" }}>
-                    <td style={{ padding: "8px 6px" }}>
-                      <input type="checkbox" checked={selectedOrders.has(o.id)} onChange={() => toggleSelectOrder(o.id)} style={{ cursor: "pointer" }} />
+                  <tr style={{ borderBottom: "1px solid #e2e8f0", background: expandedOrderId === o.id ? "#eff6ff" : "#fff" }}>
+                    <td style={{ padding: "8px 6px", verticalAlign: "middle", whiteSpace: "nowrap" }}>
+                      <input type="checkbox" checked={selectedOrders.has(o.id)} onChange={() => toggleSelectOrder(o.id)} style={{ cursor: "pointer", marginRight: 4 }} />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setExpandedOrderId((prev) => {
+                            if (prev === o.id) return "";
+                            const oid = o.orderId ?? o.id;
+                            fetchShipmentImages(oid).then((imgs: any) => {
+                              setOrderImagesCache((c: any) => ({ ...c, [oid]: imgs }));
+                            }).catch(() => {});
+                            return o.id;
+                          });
+                        }}
+                        style={{ border: "1px solid #cbd5e1", borderRadius: 6, width: 28, height: 28, background: "#fff", cursor: "pointer", fontSize: 16, lineHeight: 1, color: "#0f172a" }}
+                      >
+                        {expandedOrderId === o.id ? "−" : "+"}
+                      </button>
                     </td>
                     <td style={{ padding: "8px 6px", color: "#000000", fontWeight: 600 }}>{o.clientId ?? "—"}</td>
                     <td style={{ padding: "8px 6px", fontWeight: 600, color: "#1e3a8a", whiteSpace: "nowrap" }}>
@@ -1346,6 +1365,31 @@ export default function AdminHomePage() {
                       </button>
                     </td>
                   </tr>
+                  {expandedOrderId === o.id ? (
+                    <tr>
+                      <td colSpan={13} style={{ padding: 0, background: "#f8fafc", borderBottom: "1px solid #e2e8f0" }}>
+                        <div style={{ padding: 14 }}>
+                          <div style={{ display: "flex", flexWrap: "wrap", gap: "8px 20px", marginBottom: 12, padding: 8, background: "#f1f5f9", borderRadius: 6, fontSize: 12 }}>
+                            <span>仓库：<strong>{warehouseOptions.find(w => w.id === o.warehouseId)?.label ?? "—"}</strong></span>
+                            <span>柜号：<strong>{o.batchNo ?? "—"}</strong></span>
+                            <span>包装：<strong>{o.packageUnit === "bag" ? "袋" : "箱"}</strong></span>
+                            <span>国内单号：<strong>{((o.products?.length ?? 0) > 0) ? o.products!.map(p => p.domesticTrackingNo || "货拉拉").filter((v, i, a) => a.indexOf(v) === i).join("、") : (o.domesticTrackingNo ?? "—")}</strong></span>
+                            <span>收货地址：<strong>{o.receiverAddressTh ?? "—"}</strong></span>
+                          </div>
+                          {(o.productImages?.length ?? 0) > 0 || (orderImagesCache[o.orderId ?? o.id]?.length ?? 0) > 0 ? (
+                            <div style={{ marginBottom: 10, padding: 10, background: "#f8fafc", borderRadius: 8, border: "1px solid #e2e8f0" }}>
+                              <div style={{ fontWeight: 600, marginBottom: 6, fontSize: 13, color: "#000000" }}>产品图</div>
+                              <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                                {(orderImagesCache[o.orderId ?? o.id] ?? o.productImages ?? []).map((img: any) => (
+                                  <img key={img.id} src={img.imageUrl ? `${apiBaseUrl()}${img.imageUrl}` : `data:${img.mime};base64,${img.contentBase64}`} alt={img.fileName} style={{ width: 88, height: 88, objectFit: "cover", borderRadius: 8, border: "1px solid #e5e7eb" }} />
+                                ))}
+                              </div>
+                            </div>
+                          ) : null}
+                        </div>
+                      </td>
+                    </tr>
+                  ) : null}
                   {editingOrderId === (o.orderId ?? o.id) ? (
                     <tr key={`edit-${o.id}`} style={{ background: "#f8fafc" }}>
                       <td colSpan={13} style={{ padding: 12 }}>
