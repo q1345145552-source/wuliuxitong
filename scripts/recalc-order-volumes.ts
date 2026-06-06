@@ -1,56 +1,46 @@
 /**
- * 重算所有订单的体积和重量（从产品行重新计算，修复之前翻倍的 bug）。
- * 运行：npx tsx scripts/recalc-order-volumes.ts
+ * 强制重算所有订单的体积和重量（用 raw SQL 确保覆盖）。
  */
 import { PrismaClient } from "@prisma/client";
 
 const prisma = new PrismaClient();
 
 async function main() {
-  const orders = await prisma.order.findMany({
-    select: { id: true, itemName: true },
-  });
+  // 直接用 SQL 从产品行重算并强制覆盖
+  await prisma.$executeRawUnsafe(`
+    UPDATE orders o SET
+      weight_kg = COALESCE((
+        SELECT SUM(op.weight_kg * op.package_count)
+        FROM order_products op
+        WHERE op.order_id = o.id
+      ), null),
+      volume_m3 = COALESCE((
+        SELECT SUM(op.length_cm * op.width_cm * op.height_cm * op.package_count) / 1000000.0
+        FROM order_products op
+        WHERE op.order_id = o.id
+          AND op.length_cm IS NOT NULL
+          AND op.width_cm IS NOT NULL
+          AND op.height_cm IS NOT NULL
+      ), null),
+      package_count = COALESCE((
+        SELECT SUM(op.package_count)
+        FROM order_products op
+        WHERE op.order_id = o.id
+      ), 0)
+  `);
 
-  let fixed = 0;
-  for (const order of orders) {
-    const products = await prisma.orderProduct.findMany({
-      where: { orderId: order.id },
-      select: { packageCount: true, lengthCm: true, widthCm: true, heightCm: true, weightKg: true },
-    });
+  // 同步到运单
+  await prisma.$executeRawUnsafe(`
+    UPDATE shipments s SET
+      weight_kg = o.weight_kg,
+      volume_m3 = o.volume_m3,
+      package_count = o.package_count
+    FROM orders o
+    WHERE s.order_id = o.id
+  `);
 
-    if (products.length === 0) continue;
-
-    const totalPkg = products.reduce((s, p) => s + p.packageCount, 0);
-    const totalWeight = products.reduce((s, p) => s + (p.weightKg ?? 0) * p.packageCount, 0);
-    const totalVol = products.reduce((s, p) => {
-      if (p.lengthCm && p.widthCm && p.heightCm) return s + (p.lengthCm * p.widthCm * p.heightCm * p.packageCount) / 1_000_000;
-      return s;
-    }, 0);
-
-    await prisma.order.update({
-      where: { id: order.id },
-      data: {
-        packageCount: totalPkg,
-        weightKg: totalWeight > 0 ? totalWeight : null,
-        volumeM3: totalVol > 0 ? totalVol : null,
-      },
-    });
-
-    // Also update linked shipments
-    await prisma.shipment.updateMany({
-      where: { orderId: order.id },
-      data: {
-        packageCount: totalPkg,
-        weightKg: totalWeight > 0 ? totalWeight : null,
-        volumeM3: totalVol > 0 ? totalVol : null,
-      },
-    });
-
-    fixed++;
-    if (fixed % 50 === 0) console.log(`  ${fixed}/${orders.length} done`);
-  }
-
-  console.log(`Done. Recalculated ${fixed} orders.`);
+  const count = await prisma.order.count();
+  console.log(`Done. Updated all ${count} orders and their shipments.`);
   await prisma.$disconnect();
 }
 
