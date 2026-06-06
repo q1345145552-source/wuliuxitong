@@ -1253,7 +1253,7 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
           packageCount: Math.floor(packageCount),
           packageUnit,
           weightKg: weightKg as unknown as Prisma.Decimal | null,
-          volumeM3: prVol > 0 ? (prVol as unknown as Prisma.Decimal) : (volumeM3 as unknown as Prisma.Decimal | null),
+          volumeM3: (volumeM3 as unknown as Prisma.Decimal | null),
           domesticTrackingNo,
           transportMode,
           shipDate,
@@ -1273,7 +1273,7 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
           packageCount: Math.floor(packageCount),
           packageUnit,
           weightKg: weightKg as unknown as Prisma.Decimal | null,
-          volumeM3: prVol > 0 ? (prVol as unknown as Prisma.Decimal) : (volumeM3 as unknown as Prisma.Decimal | null),
+          volumeM3: (volumeM3 as unknown as Prisma.Decimal | null),
           transportMode,
           containerNo,
         },
@@ -1339,7 +1339,7 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
 
     const now = new Date();
     const nowIso = now.toISOString();
-    const batchNo = body.batchNo.trim();
+    const batchNo = body.batchNo?.trim() || null;
     const itemName = body.itemName?.trim() || order.itemName;
     const packageCount = body.packageCount === undefined ? order.packageCount : Number(body.packageCount);
     const productQuantity = body.productQuantity === undefined ? order.productQuantity : Number(body.productQuantity);
@@ -1394,8 +1394,8 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
         productQuantity,
         packageCount,
         packageUnit,
-        weightKg: prWeight > 0 ? (prWeight as unknown as Prisma.Decimal) : (weightKg as unknown as Prisma.Decimal | null),
-        volumeM3: prVol > 0 ? (prVol as unknown as Prisma.Decimal) : (volumeM3 as unknown as Prisma.Decimal | null),
+        weightKg: (weightKg as unknown as Prisma.Decimal | null),
+        volumeM3: (volumeM3 as unknown as Prisma.Decimal | null),
         receivableAmountCny: receivableAmountCny as unknown as Prisma.Decimal,
         receivableCurrency,
         shipDate,
@@ -1431,8 +1431,8 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
           batchNo,
           currentStatus: "created",
           currentLocation: null,
-          weightKg: prWeight > 0 ? (prWeight as unknown as Prisma.Decimal) : (weightKg as unknown as Prisma.Decimal | null),
-          volumeM3: prVol > 0 ? (prVol as unknown as Prisma.Decimal) : (volumeM3 as unknown as Prisma.Decimal | null),
+          weightKg: (weightKg as unknown as Prisma.Decimal | null),
+          volumeM3: (volumeM3 as unknown as Prisma.Decimal | null),
           packageCount,
           packageUnit,
           transportMode,
