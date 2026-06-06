@@ -1193,7 +1193,7 @@ export default function AdminHomePage() {
             </select>
           </div>
           <div style={{ overflowX: "auto" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, minWidth: 1180 }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, minWidth: 1480 }}>
               <thead>
                 <tr style={{ borderBottom: "2px solid #e2e8f0", textAlign: "left" }}>
                   <th style={{ padding: "10px 8px", width: 44 }}>
@@ -1201,7 +1201,10 @@ export default function AdminHomePage() {
                   </th>
                   <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>唛头</th>
                   <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>运单号</th>
-                  <th style={{ padding: "10px 8px", minWidth: 140 }}>品名 / 箱数 / 单箱数量 / 长宽高</th>
+                  <th style={{ padding: "10px 8px", minWidth: 120 }}>品名</th>
+                  <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>箱数</th>
+                  <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>单箱数量</th>
+                  <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>长宽高(cm)</th>
                   <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>体积</th>
                   <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>重量</th>
                   <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>运输方式</th>
@@ -1221,14 +1224,41 @@ export default function AdminHomePage() {
                     <td style={{ padding: "8px 6px", fontWeight: 600, color: "#1e3a8a", whiteSpace: "nowrap" }}>
                       {o.trackingNo ?? "—"}
                     </td>
-                    <td style={{ padding: "8px 6px", color: "#000000", minWidth: 140 }}>
+                    <td style={{ padding: "8px 6px", color: "#000000", minWidth: 120 }}>
                       {(o.products?.length ?? 0) > 0
                         ? o.products!.map((p, i) => (
                             <div key={i} style={{ marginBottom: i < (o.products?.length ?? 0) - 1 ? 2 : 0, whiteSpace: "nowrap" }}>
-                              {p.itemName} {p.packageCount}箱{p.productQuantity ? ` ${p.productQuantity}个/箱` : ""}{p.lengthCm ? ` ${p.lengthCm}×${p.widthCm}×${p.heightCm}cm` : ""}
+                              {p.itemName}
                             </div>
                           ))
                         : (o.itemName ?? "—")}
+                    </td>
+                    <td style={{ padding: "8px 6px", whiteSpace: "nowrap" }}>
+                      {(o.products?.length ?? 0) > 0
+                        ? o.products!.map((p, i) => (
+                            <div key={i} style={{ marginBottom: i < (o.products?.length ?? 0) - 1 ? 2 : 0 }}>
+                              {p.packageCount}箱
+                            </div>
+                          ))
+                        : "—"}
+                    </td>
+                    <td style={{ padding: "8px 6px", whiteSpace: "nowrap" }}>
+                      {(o.products?.length ?? 0) > 0
+                        ? o.products!.map((p, i) => (
+                            <div key={i} style={{ marginBottom: i < (o.products?.length ?? 0) - 1 ? 2 : 0 }}>
+                              {p.productQuantity ? `${p.productQuantity}个/箱` : "—"}
+                            </div>
+                          ))
+                        : "—"}
+                    </td>
+                    <td style={{ padding: "8px 6px", whiteSpace: "nowrap" }}>
+                      {(o.products?.length ?? 0) > 0
+                        ? o.products!.map((p, i) => (
+                            <div key={i} style={{ marginBottom: i < (o.products?.length ?? 0) - 1 ? 2 : 0 }}>
+                              {p.lengthCm ? `${p.lengthCm}×${p.widthCm}×${p.heightCm}cm` : "—"}
+                            </div>
+                          ))
+                        : "—"}
                     </td>
                     <td style={{ padding: "8px 6px", whiteSpace: "nowrap" }}>{o.volumeM3 ?? "—"}</td>
                     <td style={{ padding: "8px 6px", whiteSpace: "nowrap" }}>{o.weightKg ?? "—"}</td>
