@@ -960,9 +960,9 @@ export async function updateAdminOrder(payload: {
   productQuantity: number;
   packageCount: number;
   packageUnit: "bag" | "box";
-  weightKg?: number;
-  volumeM3?: number;
-  receivableAmountCny?: number;
+  weightKg?: number | null;
+  volumeM3?: number | null;
+  receivableAmountCny?: number | null;
   receivableCurrency?: "CNY" | "THB";
   paymentStatus?: "paid" | "unpaid";
   shipDate?: string;
