@@ -760,7 +760,7 @@ export default function ClientHomePage() {
                             key={img.id}
                             src={imgSrc(img)}
                             alt={img.fileName}
-                            onClick={() => setPreviewImage({ src: imgSrc(img), alt: img.fileName })})}
+                            onClick={() => setPreviewImage({ src: imgSrc(img), alt: img.fileName })}
                             style={{ width: 100, height: 100, objectFit: "cover", borderRadius: 4, border: "1px solid #e5e7eb", cursor: "pointer" }}
                           />
                         ))}
@@ -1295,7 +1295,7 @@ export default function ClientHomePage() {
                           style={{ display: "block" }}
                         >
                           <img
-                            src={imgSrc(img)}`}
+                            src={imgSrc(img)}
                             alt={img.fileName}
                             style={{ width: 72, height: 72, objectFit: "cover", borderRadius: 8, border: "1px solid #e2e8f0" }}
                           />
@@ -1448,7 +1448,7 @@ export default function ClientHomePage() {
                             key={img.id}
                             src={imgSrc(img)}
                             alt={img.fileName}
-                            onClick={() => setPreviewImage({ src: imgSrc(img), alt: img.fileName })})}
+                            onClick={() => setPreviewImage({ src: imgSrc(img), alt: img.fileName })}
                             style={{ width: 100, height: 100, objectFit: "cover", borderRadius: 4, border: "1px solid #e5e7eb", cursor: "pointer" }}
                           />
                         ))}
