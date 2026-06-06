@@ -152,11 +152,11 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
       : [{ itemName: body.itemName!.trim(), packageCount: Number(body.packageCount ?? 0), lengthCm: null, widthCm: null, heightCm: null, productQuantity: null, sortOrder: 0 }];
 
     const totalPkg = products.reduce((s, p) => s + p.packageCount, 0);
-    const totalWeight = products.reduce((s, p) => s + (p.weightKg ?? 0) * p.packageCount, body.weightKg ?? 0);
+    const totalWeight = products.reduce((s, p) => s + (p.weightKg ?? 0) * p.packageCount, 0);
     const totalVol = products.reduce((s, p) => {
       if (p.lengthCm && p.widthCm && p.heightCm) return s + (p.lengthCm * p.widthCm * p.heightCm * p.packageCount) / 1_000_000;
       return s;
-    }, body.volumeM3 ?? 0);
+    }, 0);
     const primaryName = products[0].itemName;
 
     if (!body.warehouseId?.trim() || !primaryName || !body.transportMode) {
@@ -420,7 +420,7 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
     const prVol = staffProducts.reduce((s, p) => {
       if (p.lengthCm && p.widthCm && p.heightCm) return s + (p.lengthCm * p.widthCm * p.heightCm * p.packageCount) / 1_000_000;
       return s;
-    }, body.volumeM3 ?? 0);
+    }, 0);
 
     if (
       !body.clientId ||
