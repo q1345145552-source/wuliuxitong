@@ -1374,7 +1374,7 @@ export default function AdminHomePage() {
                               <div style={{ fontSize: 12, color: "#9ca3af", padding: "4px 0" }}>无产品行，点击下方按钮添加</div>
                             )}
                             {editProducts.map((p, i) => (
-                              <div key={i} style={{ display: "grid", gridTemplateColumns: "2fr 0.8fr 0.6fr 0.6fr 0.6fr 0.8fr 0.8fr 1fr auto", gap: 4, marginBottom: 4, alignItems: "center" }}>
+                              <div key={i} style={{ display: "grid", gridTemplateColumns: "2fr 0.4fr 0.3fr 0.3fr 0.3fr 0.4fr 0.8fr 1fr auto", gap: 4, marginBottom: 4, alignItems: "center" }}>
                                 <input value={p.itemName} onChange={(e) => { const n = [...editProducts]; n[i] = { ...n[i], itemName: e.target.value }; setEditProducts(n); }} placeholder="品名" style={{ border: "1px solid #d1d5db", borderRadius: 4, padding: "4px 6px", fontSize: 12 }} />
                                 <input type="number" value={p.packageCount} onChange={(e) => { const n = [...editProducts]; n[i] = { ...n[i], packageCount: e.target.value }; setEditProducts(n); }} placeholder="箱数" style={{ border: "1px solid #d1d5db", borderRadius: 4, padding: "4px 6px", fontSize: 12 }} />
                                 <input type="number" step="0.01" value={p.lengthCm} onChange={(e) => { const n = [...editProducts]; n[i] = { ...n[i], lengthCm: e.target.value }; setEditProducts(n); }} placeholder="长cm" style={{ border: "1px solid #d1d5db", borderRadius: 4, padding: "4px 6px", fontSize: 12 }} />
