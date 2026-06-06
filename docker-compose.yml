@@ -49,6 +49,8 @@ services:
       PORT: "3001"
       DATABASE_URL: postgresql://${POSTGRES_USER:-xiangtai}:${POSTGRES_PASSWORD:-xiangtai_dev}@postgres:5432/${POSTGRES_DB:-xiangtai}?schema=public
       REDIS_URL: redis://redis:6379
+    volumes:
+      - ./data/images:/images
     depends_on:
       postgres:
         condition: service_healthy

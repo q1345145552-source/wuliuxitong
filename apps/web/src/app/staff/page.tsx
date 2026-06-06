@@ -11,6 +11,7 @@ import { splitStaffShipment } from "../../services/business-api";
 import EmptyStateCard from "../../modules/layout/EmptyStateCard";
 import RoleShell from "../../modules/layout/RoleShell";
 import Toast from "../../modules/layout/Toast";
+import { apiBaseUrl } from "../../services/core-api";
 import {
   approveStaffPrealert,
   createStaffOrder,
@@ -65,7 +66,7 @@ function OrderProductImagesPanel(props: OrderProductImagesPanelProps) {
           {imgs.map((img) => (
             <div key={img.id}>
               <img
-                src={`data:${img.mime};base64,${img.contentBase64}`}
+                src={img.imageUrl ? `${apiBaseUrl()}${img.imageUrl}` : `data:${img.mime};base64,${img.contentBase64}`}
                 alt={img.fileName}
                 style={{ width: 88, height: 88, objectFit: "cover", borderRadius: 8, border: "1px solid #e5e7eb", display: "block" }}
               />

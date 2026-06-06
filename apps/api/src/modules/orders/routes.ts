@@ -5,6 +5,7 @@ import { prisma } from "../../db/prisma";
 import type { MinimalHttpApp } from "../../server";
 import { fail, ok, parseJsonArray, requireRole } from "../core/http-utils";
 import { loadProductImagesForOrders, MAX_ORDER_PRODUCT_IMAGES } from "./product-images";
+import { saveImageToDisk, deleteImageFile } from "./image-storage";
 
 /** 批量加载订单的产品行 */
 export async function loadOrderProducts(companyId: string, orderIds: string[]): Promise<Map<string, any[]>> {
@@ -964,6 +965,8 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
     }
     const now = new Date();
     const imageId = `opi_${Date.now()}_${crypto.randomBytes(4).toString("hex")}`;
+    // 保存文件到磁盘
+    const filePath = saveImageToDisk(orderId, mimeType, contentBase64);
     await prisma.orderProductImage.create({
       data: {
         id: imageId,
@@ -972,11 +975,12 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
         fileName,
         mime: mimeType,
         contentBase64,
+        filePath,
         uploadedBy: auth.userId,
         createdAt: now,
       },
     });
-    ok(res, { id: imageId, orderId, fileName, mime: mimeType, createdAt: now.toISOString() });
+    ok(res, { id: imageId, orderId, fileName, mime: mimeType, filePath, createdAt: now.toISOString() });
   });
 
   app.delete("/staff/orders/product-images", async (req, res) => {
@@ -1008,6 +1012,10 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
     if (!(await staffCanEditOrderWarehouse(auth, image.order.warehouseId))) {
       fail(res, 403, "FORBIDDEN", "cross warehouse update is not allowed");
       return;
+    }
+    // 删除磁盘文件
+    if (image.filePath) {
+      deleteImageFile(image.filePath);
     }
     const result = await prisma.orderProductImage.deleteMany({
       where: { id, companyId: auth.companyId },

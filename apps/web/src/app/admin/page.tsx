@@ -10,6 +10,7 @@ import EmptyStateCard from "../../modules/layout/EmptyStateCard";
 import RoleShell from "../../modules/layout/RoleShell";
 import Toast from "../../modules/layout/Toast";
 import ShipmentSearch from "../../modules/shipment/ShipmentSearch";
+import { apiBaseUrl } from "../../services/core-api";
 import {
   fetchAdminOverview,
   fetchAdminStaff,
@@ -1396,7 +1397,7 @@ export default function AdminHomePage() {
                               <div style={{ fontWeight: 600, marginBottom: 6, fontSize: 13, color: "#000000" }}>产品图</div>
                               <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
                                 {o.productImages!.map((img) => (
-                                  <img key={img.id} src={`data:${img.mime};base64,${img.contentBase64}`} alt={img.fileName} style={{ width: 88, height: 88, objectFit: "cover", borderRadius: 8, border: "1px solid #e5e7eb" }} />
+                                  <img key={img.id} src={img.imageUrl ? `${apiBaseUrl()}${img.imageUrl}` : `data:${img.mime};base64,${img.contentBase64}`} alt={img.fileName} style={{ width: 88, height: 88, objectFit: "cover", borderRadius: 8, border: "1px solid #e5e7eb" }} />
                                 ))}
                               </div>
                             </div>

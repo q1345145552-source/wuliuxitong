@@ -9,6 +9,7 @@ import Toast from "../../modules/layout/Toast";
 import { ContainerTrackingSection } from "../../components/ContainerTrackingSection";
 import { formatCny } from "../../modules/billing/billing-utils";
 import { sendAiMessage } from "../../services/ai-client";
+import { apiBaseUrl } from "../../services/core-api";
 import {
   fetchClientAddresses,
   createClientPrealert,
@@ -111,6 +112,11 @@ function PrealertPrintButton({ item }: { item: OrderItem }) {
       });
     }} style={{ border: "1px solid #8b5cf6", borderRadius: 4, padding: "4px 10px", fontSize: 12, background: "#fff", color: "#8b5cf6", cursor: "pointer", marginLeft: 6 }}>打印预报单</button>
   );
+}
+
+function imgSrc(img: { imageUrl?: string | null; mime: string; contentBase64: string }): string {
+  if (img.imageUrl) return apiBaseUrl() + img.imageUrl;
+  return 'data:' + img.mime + ';base64,' + img.contentBase64;
 }
 
 export default function ClientHomePage() {
@@ -752,9 +758,9 @@ export default function ClientHomePage() {
                         {item.productImages!.map((img) => (
                           <img
                             key={img.id}
-                            src={'data:' + img.mime + ';base64,' + img.contentBase64}
+                            src={imgSrc(img)}
                             alt={img.fileName}
-                            onClick={() => setPreviewImage({ src: 'data:' + img.mime + ';base64,' + img.contentBase64, alt: img.fileName })}
+                            onClick={() => setPreviewImage({ src: imgSrc(img), alt: img.fileName })})}
                             style={{ width: 100, height: 100, objectFit: "cover", borderRadius: 4, border: "1px solid #e5e7eb", cursor: "pointer" }}
                           />
                         ))}
@@ -1282,14 +1288,14 @@ export default function ClientHomePage() {
                       item.productImages?.map((img) => (
                         <a
                           key={img.id}
-                          href={`data:${img.mime};base64,${img.contentBase64}`}
+                          href={imgSrc(img)}
                           download={img.fileName}
                           target="_blank"
                           rel="noreferrer"
                           style={{ display: "block" }}
                         >
                           <img
-                            src={`data:${img.mime};base64,${img.contentBase64}`}
+                            src={imgSrc(img)}`}
                             alt={img.fileName}
                             style={{ width: 72, height: 72, objectFit: "cover", borderRadius: 8, border: "1px solid #e2e8f0" }}
                           />
@@ -1440,9 +1446,9 @@ export default function ClientHomePage() {
                         {item.productImages!.map((img) => (
                           <img
                             key={img.id}
-                            src={'data:' + img.mime + ';base64,' + img.contentBase64}
+                            src={imgSrc(img)}
                             alt={img.fileName}
-                            onClick={() => setPreviewImage({ src: 'data:' + img.mime + ';base64,' + img.contentBase64, alt: img.fileName })}
+                            onClick={() => setPreviewImage({ src: imgSrc(img), alt: img.fileName })})}
                             style={{ width: 100, height: 100, objectFit: "cover", borderRadius: 4, border: "1px solid #e5e7eb", cursor: "pointer" }}
                           />
                         ))}

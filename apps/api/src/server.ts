@@ -112,6 +112,28 @@ export function createApp(): MinimalHttpApp {
           query[key] = value;
         });
 
+        // 静态文件服务：/images/* → 直接从磁盘读取
+        if (method === "GET" && path.startsWith("/images/")) {
+          const fs = await import("node:fs");
+          const pathModule = await import("node:path");
+          const filePath = pathModule.default.join("/images", pathModule.default.basename(path));
+          if (!fs.default.existsSync(filePath)) {
+            rawRes.statusCode = 404;
+            rawRes.end("Not Found");
+            return;
+          }
+          const ext = pathModule.default.extname(filePath).toLowerCase();
+          const mimeTypes: Record<string, string> = {
+            ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png",
+            ".gif": "image/gif", ".webp": "image/webp", ".bmp": "image/bmp",
+          };
+          rawRes.setHeader("Content-Type", mimeTypes[ext] ?? "application/octet-stream");
+          rawRes.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+          const buf = fs.default.readFileSync(filePath);
+          rawRes.end(buf);
+          return;
+        }
+
         const routeTable =
           method === "POST" ? postRoutes : method === "DELETE" ? deleteRoutes : getRoutes;
         const handler = routeTable[path];

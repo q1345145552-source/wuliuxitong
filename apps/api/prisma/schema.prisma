@@ -321,6 +321,7 @@ model OrderProductImage {
   fileName      String   @map("file_name")
   mime          String
   contentBase64 String   @map("content_base64") @db.Text
+  filePath      String?  @map("file_path")
   uploadedBy    String   @map("uploaded_by")
   createdAt     DateTime @default(now()) @map("created_at")
 

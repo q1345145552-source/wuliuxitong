@@ -107,6 +107,8 @@ export interface OrderProductImageItem {
   fileName: string;
   mime: string;
   contentBase64: string;
+  filePath?: string | null;
+  imageUrl?: string;
   createdAt: string;
 }
 
