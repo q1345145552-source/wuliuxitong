@@ -1093,10 +1093,10 @@ export default function StaffHomePage() {
       })
       .finally(() => setLoading(false));
 
-    // 10 秒自动刷新同步
+    // 30 秒自动刷新同步
     const interval = window.setInterval(() => {
       loadPageData().catch(() => {});
-    }, 10000);
+    }, 30000);
     return () => window.clearInterval(interval);
   }, []);
 

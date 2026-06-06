@@ -438,35 +438,22 @@ export function registerShipmentRoutes(app: MinimalHttpApp): void {
       products: undefined as any[] | undefined,
     }));
 
-    // 批量加载产品明细 + 产品图
+    // 批量加载产品明细（不含图片，图片仅在展开行时按需加载）
     const orderIds = [...new Set(items.map((i) => i.orderId).filter(Boolean) as string[])];
     if (orderIds.length > 0) {
-      const [productRows, imageRows] = await Promise.all([
-        prisma.orderProduct.findMany({
-          where: { orderId: { in: orderIds } },
-          orderBy: { sortOrder: "asc" },
-        }),
-        prisma.orderProductImage.findMany({
-          where: { companyId: auth.companyId, orderId: { in: orderIds } },
-          orderBy: { createdAt: "asc" },
-        }),
-      ]);
+      const productRows = await prisma.orderProduct.findMany({
+        where: { orderId: { in: orderIds } },
+        orderBy: { sortOrder: "asc" },
+      });
       const pmap = new Map<string, any[]>();
       for (const r of productRows) {
         const list = pmap.get(r.orderId) ?? [];
         list.push({ id: r.id, itemName: r.itemName, packageCount: r.packageCount, lengthCm: r.lengthCm, widthCm: r.widthCm, heightCm: r.heightCm, productQuantity: r.productQuantity, cargoType: r.cargoType });
         pmap.set(r.orderId, list);
       }
-      const imap = new Map<string, any[]>();
-      for (const r of imageRows) {
-        const list = imap.get(r.orderId) ?? [];
-        list.push({ id: r.id, fileName: r.fileName, mime: r.mime, contentBase64: r.contentBase64, createdAt: r.createdAt.toISOString() });
-        imap.set(r.orderId, list);
-      }
       for (const item of items) {
         if (item.orderId) {
           item.products = pmap.get(item.orderId);
-          item.productImages = imap.get(item.orderId);
         }
       }
     }
