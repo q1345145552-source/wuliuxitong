@@ -3,6 +3,38 @@ import crypto from "node:crypto";
 import { Prisma } from "@prisma/client";
 import { prisma } from "../../db/prisma";
 import type { MinimalHttpApp } from "../../server";
+
+/** 默认单价（元/m³） */
+const DEFAULT_UNIT_PRICES: Record<string, number> = {
+  "sea|NORMAL": 550,
+  "sea|INSPECTION": 700,
+  "sea|SENSITIVE": 800,
+  "land|NORMAL": 1070,
+  "land|INSPECTION": 1250,
+  "land|SENSITIVE": 1350,
+} as const;
+
+const MIN_VOLUME_M3 = 1; // 最低计费体积
+
+/** 根据运输方式和货型计算应收金额 */
+async function calcReceivableAmount(
+  companyId: string,
+  transportMode: string,
+  cargoType: string,
+  volumeM3: number,
+): Promise<number | null> {
+  if (!volumeM3 || volumeM3 <= 0) return null;
+  const key = `${transportMode}|${cargoType}`;
+  // 先查客户定价规则（此处传入 null customerId 用默认价格）
+  const rule = await prisma.pricingRule.findFirst({
+    where: { companyId, transportMode, cargoType, customerId: null },
+    select: { unitPriceCny: true },
+  });
+  const unitPrice = rule ? Number(rule.unitPriceCny.toString()) : (DEFAULT_UNIT_PRICES[key] ?? null);
+  if (!unitPrice || unitPrice <= 0) return null;
+  const billableVol = Math.max(volumeM3, MIN_VOLUME_M3);
+  return Math.round(billableVol * unitPrice * 100) / 100;
+}
 import { fail, ok, parseJsonArray, requireRole } from "../core/http-utils";
 import { loadProductImagesForOrders, MAX_ORDER_PRODUCT_IMAGES } from "./product-images";
 import { saveImageToDisk, deleteImageFile } from "./image-storage";
@@ -220,6 +252,17 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
           sortOrder: p.sortOrder,
         },
       });
+    }
+
+    // 自动计算应收金额
+    if (totalVol > 0) {
+      const amount = await calcReceivableAmount(auth.companyId, body.transportMode, "NORMAL", totalVol);
+      if (amount !== null) {
+        await prisma.order.update({
+          where: { id: orderId },
+          data: { receivableAmountCny: amount as unknown as Prisma.Decimal },
+        });
+      }
     }
 
     ok(res, { prealertId: orderId, createdAt: now });
@@ -534,6 +577,17 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
       );
     }
     await prisma.$transaction(txOps);
+
+    // 自动计算应收金额
+    const vol = prVol > 0 ? prVol : (volumeM3 ?? 0);
+    const ct = body.cargoType?.trim() || "NORMAL";
+    const amount = await calcReceivableAmount(auth.companyId, body.transportMode, ct, vol);
+    if (amount !== null) {
+      await prisma.order.update({
+        where: { id: orderId },
+        data: { receivableAmountCny: amount as unknown as Prisma.Decimal },
+      });
+    }
 
     ok(res, { orderId, createdAt: now });
   });
