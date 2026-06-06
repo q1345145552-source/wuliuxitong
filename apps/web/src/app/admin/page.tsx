@@ -382,12 +382,16 @@ export default function AdminHomePage() {
       return;
     }
     // 从产品行计算总数
-    const activeProducts = editProducts.filter(p => p.itemName.trim());
+    const activeProducts = editProducts;
     const totalPackageCount = activeProducts.reduce((s, p) => s + (Number(p.packageCount) || 1), 0);
     const totalProductQuantity = activeProducts.reduce((s, p) => s + (Number(p.productQuantity) || 0), 0);
     const primaryItemName = activeProducts[0]?.itemName.trim() || orderEditForm.itemName.trim();
     if (!primaryItemName) {
       setMessage("请填写品名。");
+      return;
+    }
+    if (activeProducts.length === 0) {
+      setMessage("请至少添加一个产品行。");
       return;
     }
     setLoading(true);
