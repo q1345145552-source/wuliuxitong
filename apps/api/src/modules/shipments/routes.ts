@@ -638,6 +638,7 @@ export function registerShipmentRoutes(app: MinimalHttpApp): void {
       });
 
       // 创建子单
+      const childMap = new Map<string, { id: string; packageCount: number }>();
       for (let i = 0; i < splits.length; i++) {
         const split = splits[i];
         const childId = `s_${Date.now()}_${i}`;
@@ -660,7 +661,46 @@ export function registerShipmentRoutes(app: MinimalHttpApp): void {
           },
         });
 
+        childMap.set(childId, { id: childId, packageCount: split.packageCount });
         results.push({ trackingNo: childTrackingNo, shipmentId: childId });
+      }
+
+      // 同步柜内数据：按件数比例分配已装载的体积和件数
+      const containerItems = await tx.shipmentContainerItem.findMany({
+        where: { shipmentId: parent.id },
+      });
+
+      for (const item of containerItems) {
+        // 父单保留的件数比例
+        const parentRatio = (parentPackageCount - totalSplitCount) / parentPackageCount;
+        const parentVolume = Number(item.loadedVolumeM3) * parentRatio;
+        const parentPieces = Math.round(item.loadedPieceCount * parentRatio);
+
+        await tx.shipmentContainerItem.update({
+          where: { id: item.id },
+          data: {
+            loadedVolumeM3: parentVolume,
+            loadedPieceCount: parentPieces,
+          },
+        });
+
+        // 为每个子单分配对应的柜内数据
+        for (const [childId, child] of childMap) {
+          const childRatio = child.packageCount / parentPackageCount;
+          const childVolume = Number(item.loadedVolumeM3) * childRatio;
+          const childPieces = Math.round(item.loadedPieceCount * childRatio);
+
+          if (childPieces > 0) {
+            await tx.shipmentContainerItem.create({
+              data: {
+                shipmentId: childId,
+                containerId: item.containerId,
+                loadedVolumeM3: childVolume,
+                loadedPieceCount: childPieces,
+              },
+            });
+          }
+        }
       }
     });
 
