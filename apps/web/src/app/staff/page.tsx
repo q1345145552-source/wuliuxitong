@@ -2975,13 +2975,8 @@ export default function StaffHomePage() {
                           <td style={{ padding: "8px 6px", color: "#000000", minWidth: 140 }}>
                             {(item.products?.length ?? 0) > 0
                               ? item.products!.map((p, i) => (
-                                  <div key={i} style={{ marginBottom: i < (item.products?.length ?? 0) - 1 ? 4 : 0 }}>
-                                    <div style={{ fontWeight: 500 }}>{p.itemName}</div>
-                                    <div style={{ fontSize: 11, color: "#000000", paddingLeft: 4 }}>
-                                      {p.packageCount}件
-                                      {p.productQuantity ? `，${p.productQuantity}个/箱` : ""}
-                                      {p.lengthCm ? `  ${p.lengthCm}×${p.widthCm}×${p.heightCm}cm` : ""}
-                                    </div>
+                                  <div key={i} style={{ marginBottom: i < (item.products?.length ?? 0) - 1 ? 2 : 0, whiteSpace: "nowrap" }}>
+                                    {p.itemName} {p.packageCount}箱{p.productQuantity ? ` ${p.productQuantity}个/箱` : ""}{p.lengthCm ? ` ${p.lengthCm}×${p.widthCm}×${p.heightCm}cm` : ""}
                                   </div>
                                 ))
                               : (item.itemName ?? "—")}
