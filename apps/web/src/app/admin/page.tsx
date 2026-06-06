@@ -1201,7 +1201,7 @@ export default function AdminHomePage() {
                   </th>
                   <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>唛头</th>
                   <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>运单号</th>
-                  <th style={{ padding: "10px 8px", minWidth: 140 }}>品名</th>
+                  <th style={{ padding: "10px 8px", minWidth: 140 }}>品名 / 箱数 / 单箱数量 / 长宽高</th>
                   <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>体积</th>
                   <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>重量</th>
                   <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>运输方式</th>
