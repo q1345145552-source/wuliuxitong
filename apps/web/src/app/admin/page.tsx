@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import * as XLSX from "xlsx";
 import { Bar, BarChart, CartesianGrid, Cell, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import type { AiKnowledgeItem } from "../../../../../packages/shared-types/entities";
@@ -1218,7 +1218,8 @@ export default function AdminHomePage() {
               </thead>
               <tbody>
                 {pagedOrders.map((o) => (
-                  <tr key={o.id} style={{ borderBottom: "1px solid #e2e8f0" }}>
+                  <Fragment key={o.id}>
+                  <tr style={{ borderBottom: "1px solid #e2e8f0" }}>
                     <td style={{ padding: "8px 6px" }}>
                       <input type="checkbox" checked={selectedOrders.has(o.id)} onChange={() => toggleSelectOrder(o.id)} style={{ cursor: "pointer" }} />
                     </td>
@@ -1327,6 +1328,7 @@ export default function AdminHomePage() {
                       </td>
                     </tr>
                   ) : null}
+                  </Fragment>
                 ))}
               </tbody>
             </table>
