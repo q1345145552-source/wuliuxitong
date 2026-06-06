@@ -1384,6 +1384,16 @@ export default function AdminHomePage() {
                             ))}
                             <button type="button" onClick={() => setEditProducts((v) => [...v, { itemName: "", packageCount: "", lengthCm: "", widthCm: "", heightCm: "", productQuantity: "", weightKg: "", cargoType: "NORMAL" }])} style={{ border: "1px dashed #2563eb", borderRadius: 4, padding: "4px 10px", fontSize: 12, background: "#fff", color: "#2563eb", cursor: "pointer", marginTop: 4 }}>+ 添加产品</button>
                           </div>
+                          {(o.productImages?.length ?? 0) > 0 && (
+                            <div style={{ marginTop: 8, padding: 10, background: "#f8fafc", borderRadius: 8, border: "1px solid #e2e8f0" }}>
+                              <div style={{ fontWeight: 600, marginBottom: 6, fontSize: 13, color: "#000000" }}>产品图</div>
+                              <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                                {o.productImages!.map((img) => (
+                                  <img key={img.id} src={`data:${img.mime};base64,${img.contentBase64}`} alt={img.fileName} style={{ width: 88, height: 88, objectFit: "cover", borderRadius: 8, border: "1px solid #e5e7eb" }} />
+                                ))}
+                              </div>
+                            </div>
+                          )}
                           <div style={{ display: "flex", gap: 8 }}>
                             <button type="button" onClick={() => void submitOrderEdit()} disabled={loading} style={{ border: "none", borderRadius: 8, padding: "8px 14px", color: "#fff", background: "#2563eb", cursor: "pointer" }}>保存</button>
                             <button type="button" onClick={() => setEditingOrderId("")} style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 14px", background: "#fff", cursor: "pointer", color: "#000000" }}>取消</button>
