@@ -1200,19 +1200,13 @@ export default function AdminHomePage() {
                     <input type="checkbox" checked={selectedOrders.size === filteredOrderList.length && filteredOrderList.length > 0} onChange={toggleSelectAllOrders} style={{ cursor: "pointer" }} />
                   </th>
                   <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>唛头</th>
-                  <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>仓库</th>
                   <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>运单号</th>
-                  <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>柜号</th>
-                  <th style={{ padding: "10px 8px", minWidth: 120 }}>品名</th>
-                  <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>包装</th>
+                  <th style={{ padding: "10px 8px", minWidth: 140 }}>品名</th>
                   <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>体积</th>
                   <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>重量</th>
                   <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>运输方式</th>
                   <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>货型</th>
                   <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>到仓日期</th>
-                  <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>国内单号</th>
-                  <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>加收金额</th>
-                  <th style={{ padding: "10px 8px", minWidth: 120 }}>收货地址</th>
                   <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>操作</th>
                 </tr>
               </thead>
@@ -1224,12 +1218,10 @@ export default function AdminHomePage() {
                       <input type="checkbox" checked={selectedOrders.has(o.id)} onChange={() => toggleSelectOrder(o.id)} style={{ cursor: "pointer" }} />
                     </td>
                     <td style={{ padding: "8px 6px", color: "#000000", fontWeight: 600 }}>{o.clientId ?? "—"}</td>
-                    <td style={{ padding: "8px 6px", whiteSpace: "nowrap" }}>{warehouseLabel(o.warehouseId)}</td>
                     <td style={{ padding: "8px 6px", fontWeight: 600, color: "#1e3a8a", whiteSpace: "nowrap" }}>
                       {o.trackingNo ?? "—"}
                     </td>
-                    <td style={{ padding: "8px 6px", whiteSpace: "nowrap" }}>{o.batchNo ?? "—"}</td>
-                    <td style={{ padding: "8px 6px", color: "#000000", minWidth: 100 }}>
+                    <td style={{ padding: "8px 6px", color: "#000000", minWidth: 140 }}>
                       {(o.products?.length ?? 0) > 0
                         ? o.products!.map((p, i) => (
                             <div key={i} style={{ marginBottom: i < (o.products?.length ?? 0) - 1 ? 4 : 0 }}>
@@ -1243,7 +1235,6 @@ export default function AdminHomePage() {
                           ))
                         : (o.itemName ?? "—")}
                     </td>
-                    <td style={{ padding: "8px 6px" }}>{o.packageUnit === "bag" ? "袋" : "箱"}</td>
                     <td style={{ padding: "8px 6px", whiteSpace: "nowrap" }}>{o.volumeM3 ?? "—"}</td>
                     <td style={{ padding: "8px 6px", whiteSpace: "nowrap" }}>{o.weightKg ?? "—"}</td>
                     <td style={{ padding: "8px 6px", whiteSpace: "nowrap" }}>{transportModeLabel(o.transportMode)}</td>
@@ -1253,14 +1244,6 @@ export default function AdminHomePage() {
                     <td style={{ padding: "8px 6px", whiteSpace: "nowrap", color: "#000000" }}>
                       {o.shipDate ?? o.createdAt.slice(0, 10)}
                     </td>
-                    <td style={{ padding: "8px 6px", whiteSpace: "nowrap", color: "#000000" }}>{o.domesticTrackingNo ?? "—"}</td>
-                    <td style={{ padding: "8px 6px", whiteSpace: "nowrap" }}>
-                      {o.receivableAmountCny != null
-                        ? `${o.receivableCurrency === "THB" ? "THB" : "CNY"} ${o.receivableAmountCny.toFixed(2)}`
-                        : "0"}
-                    </td>
-                    <td style={{ padding: "8px 6px", color: "#000000", fontSize: 12, maxWidth: 160 }} title={o.receiverAddressTh ?? ""}>
-                      {o.receiverAddressTh ?? "—"}
                     </td>
                     <td style={{ padding: "8px 6px", whiteSpace: "nowrap" }}>
                       <button
@@ -1296,7 +1279,7 @@ export default function AdminHomePage() {
                   </tr>
                   {editingOrderId === (o.orderId ?? o.id) ? (
                     <tr key={`edit-${o.id}`} style={{ background: "#f8fafc" }}>
-                      <td colSpan={16} style={{ padding: 12 }}>
+                      <td colSpan={10} style={{ padding: 12 }}>
                         <div style={{ display: "grid", gap: 8 }}>
                           <div style={{ fontWeight: 700, color: "#0f172a" }}>编辑：{o.trackingNo ?? o.id}</div>
                           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 8 }}>
