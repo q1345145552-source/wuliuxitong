@@ -574,6 +574,7 @@ export function registerContainerRoutes(app: MinimalHttpApp): void {
           containerId: it.containerId,
           containerNo: it.container.containerNo,
           containerType: it.container.containerType,
+          carrierName: it.container.carrierName ?? null,
           loadedVolumeM3: decToNumber(it.loadedVolumeM3),
           loadedPieceCount: it.loadedPieceCount,
           containerStatus: it.container.currentStatus,

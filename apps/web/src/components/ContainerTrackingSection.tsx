@@ -17,6 +17,7 @@ type ContainerInfo = {
   containerId: string;
   containerNo: string;
   containerType: string;
+  carrierName?: string | null;
   loadedVolumeM3: number;
   loadedPieceCount: number;
   containerStatus: string;
@@ -217,6 +218,11 @@ export function ContainerTrackingSection({ shipmentId, trackingNo, hideContainer
                   >
                     {c.containerType}
                   </span>
+                  {c.carrierName ? (
+                    <span style={{ fontSize: 12, color: "#475569", fontWeight: 500 }}>
+                      {c.carrierName}
+                    </span>
+                  ) : null}
                   <span
                     style={{
                       fontSize: 12,
