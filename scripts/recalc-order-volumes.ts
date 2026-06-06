@@ -31,8 +31,8 @@ async function main() {
       where: { id: order.id },
       data: {
         packageCount: totalPkg,
-        weightKg: totalWeight > 0 ? totalWeight : undefined,
-        volumeM3: totalVol > 0 ? totalVol : undefined,
+        weightKg: totalWeight > 0 ? totalWeight : null,
+        volumeM3: totalVol > 0 ? totalVol : null,
       },
     });
 
@@ -41,8 +41,8 @@ async function main() {
       where: { orderId: order.id },
       data: {
         packageCount: totalPkg,
-        weightKg: totalWeight > 0 ? totalWeight : undefined,
-        volumeM3: totalVol > 0 ? totalVol : undefined,
+        weightKg: totalWeight > 0 ? totalWeight : null,
+        volumeM3: totalVol > 0 ? totalVol : null,
       },
     });
 
