@@ -232,162 +232,6 @@ function formatVolumeM3String(m3: number): string {
   if (!Number.isFinite(m3) || m3 <= 0) return "";
   return String(Number(m3.toFixed(6)));
 }
-
-type StatusUpdateImageAttachProps = {
-  disabled: boolean;
-  previewUrl: string | null;
-  fileName: string | null;
-  dragActive: boolean;
-  onDragActive: (active: boolean) => void;
-  onPickFile: (file: File | null) => void;
-};
-
-/**
- * 状态更新区附图：支持点击选择或拖放单张图片，展示预览与清除。
- */
-function StatusUpdateImageAttach(props: StatusUpdateImageAttachProps) {
-  const inputRef = useRef<HTMLInputElement>(null);
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 4, alignItems: "flex-start" }}>
-      <div style={{ position: "relative" }}>
-        <input
-          ref={inputRef}
-          type="file"
-          accept="image/*"
-          disabled={props.disabled}
-          style={{ position: "absolute", width: 0, height: 0, opacity: 0, pointerEvents: "none" }}
-          onChange={(e) => {
-            const f = e.target.files?.[0] ?? null;
-            e.target.value = "";
-            props.onPickFile(f);
-          }}
-        />
-        <div
-          onDragEnter={(e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            props.onDragActive(true);
-          }}
-          onDragOver={(e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            props.onDragActive(true);
-          }}
-          onDragLeave={(e) => {
-            e.preventDefault();
-            const related = e.relatedTarget as Node | null;
-            if (related && e.currentTarget.contains(related)) return;
-            props.onDragActive(false);
-          }}
-          onDrop={(e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            props.onDragActive(false);
-            const f = e.dataTransfer.files?.[0] ?? null;
-            props.onPickFile(f);
-          }}
-          onClick={() => {
-            if (!props.disabled) inputRef.current?.click();
-          }}
-          onKeyDown={(e) => {
-            if (props.disabled) return;
-            if (e.key === "Enter" || e.key === " ") {
-              e.preventDefault();
-              inputRef.current?.click();
-            }
-          }}
-          role="button"
-          tabIndex={props.disabled ? -1 : 0}
-          aria-label="上传或拖放图片"
-          style={{
-            width: 112,
-            minHeight: 88,
-            border: `2px dashed ${props.dragActive ? "#2563eb" : "#cbd5e1"}`,
-            borderRadius: 8,
-            background: props.dragActive ? "#eff6ff" : "#f8fafc",
-            display: "flex",
-            flexDirection: "column",
-            alignItems: "center",
-            justifyContent: "center",
-            padding: 6,
-            cursor: props.disabled ? "not-allowed" : "pointer",
-            opacity: props.disabled ? 0.6 : 1,
-            boxSizing: "border-box",
-          }}
-        >
-          {props.previewUrl ? (
-            <img src={props.previewUrl} alt="" style={{ maxWidth: 100, maxHeight: 72, objectFit: "cover", borderRadius: 4 }} />
-          ) : (
-            <span style={{ fontSize: 11, color: "#000000", textAlign: "center", lineHeight: 1.35, userSelect: "none" }}>
-              拖放或点击
-              <br />
-              上传图片
-            </span>
-          )}
-        </div>
-      </div>
-      {props.fileName ? (
-        <div
-          style={{ fontSize: 11, color: "#000000", maxWidth: 120, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
-          title={props.fileName}
-        >
-          {props.fileName}
-        </div>
-      ) : null}
-      {props.previewUrl ? (
-        <button
-          type="button"
-          disabled={props.disabled}
-          onClick={(e) => {
-            e.stopPropagation();
-            props.onPickFile(null);
-          }}
-          style={{
-            fontSize: 11,
-            border: "1px solid #e2e8f0",
-            borderRadius: 6,
-            padding: "2px 8px",
-            background: "#fff",
-            cursor: props.disabled ? "not-allowed" : "pointer",
-            color: "#000000",
-          }}
-        >
-          清除
-        </button>
-      ) : null}
-      <span style={{ fontSize: 11, color: "#000000" }}>附图存为入库拍照</span>
-    </div>
-  );
-}
-
-type ShipmentOrderEditDraft = {
-  trackingNo: string;
-  warehouseId: string;
-  batchNo: string;
-  itemName: string;
-  domesticTrackingNo: string;
-  productQuantity: string;
-  packageCount: string;
-  packageUnit: "bag" | "box";
-  weightKg: string;
-  volumeM3: string;
-  orderCreatedDate: string;
-  transportMode: "sea" | "land";
-  /** 发货日期时间（datetime-local 字符串，保存时取日期部分写入 ship_date）。 */
-  shipLocal: string;
-  receiverAddressTh: string;
-  containerNo: string;
-  receivableAmountCny: string;
-  receivableCurrency: "CNY" | "THB";
-  paymentStatus: "paid" | "unpaid";
-  /** 仅表单展示，后端暂无字段持久化。 */
-  destinationCountry: string;
-  /** 仅表单展示，后端暂无字段持久化。 */
-  customsDeclaration: "none" | "declare";
-};
-
-/**
- * 将接口返回的发货日期转为 datetime-local 初始值。
  */
 function shipmentShipDateToLocalInput(shipDate: string | undefined): string {
   if (!shipDate?.trim()) return "";
@@ -548,10 +392,6 @@ export default function StaffHomePage() {
   const [prealertConfirmedDrafts, setPrealertConfirmedDrafts] = useState<Record<string, PrealertEditDraft>>({});
   const [editingPrealertId, setEditingPrealertId] = useState<string | null>(null);
   const [createStepDone, setCreateStepDone] = useState(false);
-  const [statusSearch, setStatusSearch] = useState({
-    batchNo: "",
-    shipmentStatus: "",
-  });
   const [shipmentSearch, setShipmentSearch] = useState({
     batchNo: "",
     clientName: "",
@@ -1480,9 +1320,6 @@ export default function StaffHomePage() {
       .filter((item) => !prealertSearch.warehouseId || item.warehouseId === prealertSearch.warehouseId);
   }, [prealerts, prealertSearch]);
 
-
-  const batchNoForBulkEdit = exactBatchNo || searchedBatchNo;
-  const canSubmitBatchEdit = Boolean(statusEditDraft.toStatus.trim()) && Boolean(statusEditDraft.remark.trim());
 
   const filteredShipmentList = useMemo(() => {
     const batchNoKeyword = shipmentSearch.batchNo.trim().toLowerCase();
