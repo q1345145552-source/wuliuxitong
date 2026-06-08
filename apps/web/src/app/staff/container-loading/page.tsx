@@ -49,7 +49,7 @@ export default function StaffContainerLoadingPage() {
   const [error, setError] = useState("");
   const [toast, setToast] = useState("");
   const [showCreate, setShowCreate] = useState(false);
-  const [createForm, setCreateForm] = useState({ warehouse: "wh_yiwu_01", carrierInfo: "", containerNo: "" });
+  const [createForm, setCreateForm] = useState({ warehouse: "wh_yiwu_01", voyage: "", vesselName: "", containerNo: "" });
   const [creating, setCreating] = useState(false);
   const [selectedId, setSelectedId] = useState("");
   const [detail, setDetail] = useState<LoadingManifestDetail | null>(null);
@@ -132,10 +132,14 @@ export default function StaffContainerLoadingPage() {
   const handleCreate = async () => {
     setCreating(true);
     try {
-      const result = await createLoadingManifest(createForm);
+      const result = await createLoadingManifest({
+        warehouse: createForm.warehouse,
+        containerNo: createForm.containerNo,
+        carrierInfo: [createForm.voyage, createForm.vesselName].filter(Boolean).join(" / ") || undefined,
+      });
       setToast(`装柜任务已创建: ${result.manifestNo}`);
       setShowCreate(false);
-      setCreateForm({ warehouse: "wh_yiwu_01", carrierInfo: "", containerNo: "" });
+      setCreateForm({ warehouse: "wh_yiwu_01", voyage: "", vesselName: "", containerNo: "" });
       await loadList();
     } catch (e) {
       setError(e instanceof Error ? e.message : "创建失败");
@@ -233,8 +237,9 @@ export default function StaffContainerLoadingPage() {
       {/* 新建表单 */}
       {showCreate && (
         <div style={{ border: "1px solid #e5e7eb", borderRadius: 8, padding: 16, background: "#f8fafc", marginBottom: 12, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-          <input value={createForm.containerNo} onChange={(e) => setCreateForm((v) => ({ ...v, containerNo: e.target.value }))} placeholder="柜号 *" style={{ ...inputStyle, minWidth: 160 }} />
-          <input value={createForm.carrierInfo} onChange={(e) => setCreateForm((v) => ({ ...v, carrierInfo: e.target.value }))} placeholder="船次/船名 *" style={{ ...inputStyle, flex: 1, minWidth: 200 }} />
+          <input value={createForm.containerNo} onChange={(e) => setCreateForm((v) => ({ ...v, containerNo: e.target.value }))} placeholder="柜号" style={{ ...inputStyle, minWidth: 150 }} />
+          <input value={createForm.voyage} onChange={(e) => setCreateForm((v) => ({ ...v, voyage: e.target.value }))} placeholder="船次" style={{ ...inputStyle, minWidth: 130 }} />
+          <input value={createForm.vesselName} onChange={(e) => setCreateForm((v) => ({ ...v, vesselName: e.target.value }))} placeholder="船名" style={{ ...inputStyle, minWidth: 150 }} />
           <select value={createForm.warehouse} onChange={(e) => setCreateForm((v) => ({ ...v, warehouse: e.target.value }))} style={inputStyle}>
             <option value="wh_yiwu_01">义乌仓</option>
             <option value="wh_guangzhou_01">广州仓</option>
@@ -281,7 +286,7 @@ export default function StaffContainerLoadingPage() {
                     <h2 style={{ margin: 0, fontSize: 18, fontWeight: 700, color: "#0f172a" }}>{detail.manifestNo}</h2>
                     <div style={{ fontSize: 13, color: "#000000", marginTop: 4 }}>
                       仓库: {detail.warehouse} · 状态: {STATUS_LABEL[detail.status] ?? detail.status}
-                      {detail.carrierInfo ? ` · 承运: ${detail.carrierInfo}` : ""}
+                      {detail.carrierInfo ? ` · 船次/船名: ${detail.carrierInfo}` : ""}
                     </div>
                   </div>
                   <div style={{ display: "flex", gap: 8 }}>
