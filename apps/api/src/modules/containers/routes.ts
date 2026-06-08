@@ -38,12 +38,12 @@ const CONTAINER_STATUS_LABEL: Record<string, string> = {
 /** 柜子状态推进时，对应推运单到什么状态 */
 const CONTAINER_TO_SHIPMENT_STATUS: Record<string, string> = {
   SEALED: "loaded",
-  IN_TRANSIT: "intransit",
-  DELAY_DEPARTED: "intransit",
-  ARRIVED: "arrivedport",
-  CUSTOMS: "customsth",
-  CUSTOMS_CLEARED: "customscleared",
-  IN_WAREHOUSE_TH: "inwarehouseth",
+  IN_TRANSIT: "departed",
+  DELAY_DEPARTED: "delayDeparted",
+  ARRIVED: "arrivedPort",
+  CUSTOMS: "customsTH",
+  CUSTOMS_CLEARED: "customsCleared",
+  IN_WAREHOUSE_TH: "inWarehouseTH",
 };
 
 /** 判断状态切换是否合法（只能往前推进，不能倒退；可同状态续写）。 */
@@ -325,7 +325,7 @@ export function registerContainerRoutes(app: MinimalHttpApp): void {
               shipmentId: shipmentIds[i],
               operatorId: auth.userId,
               operatorRole: auth.role,
-              fromStatus: "(container-driven)",
+              fromStatus: "loaded",
               toStatus: shipmentNextStatus,
               remark: body.remark?.trim() || `${CONTAINER_STATUS_LABEL[toStatus] ?? toStatus}`,
               changedAt: now,

@@ -448,10 +448,15 @@ export default function ClientHomePage() {
   };
 
   const logisticsStatusText = (status?: string): string => {
-    const value = (status ?? "").toLowerCase();
-    if (value === "delivered" || value === "returned" || value === "cancelled") return "已到达";
-    if (value === "loaded" || value === "delaydeparted" || value === "departed" || value === "arrivedport" || value === "customsth" || value === "customscleared" || value === "inwarehouseth" || value === "outfordelivery") return "途中";
-    return "已收货";
+    const map: Record<string, string> = {
+      created: "已创建", pickedup: "已揽收", inwarehousecn: "国内仓已收货",
+      customspending: "报关中", loaded: "已装柜", delaydeparted: "延迟开船",
+      departed: "已开船", arrivedport: "已到港", intransit: "运输中",
+      customsth: "清关中", customscleared: "清关已放行", inwarehouseth: "已到仓",
+      outfordelivery: "派送中", delivered: "已签收",
+      returned: "已退回", cancelled: "已取消", exception: "异常",
+    };
+    return map[(status ?? "").toLowerCase()] ?? "处理中";
   };
 
   /**
