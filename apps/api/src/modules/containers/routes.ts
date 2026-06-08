@@ -324,7 +324,7 @@ export function registerContainerRoutes(app: MinimalHttpApp): void {
               operatorRole: auth.role,
               fromStatus: "(container-driven)",
               toStatus: shipmentNextStatus,
-              remark: `柜子 ${container.containerNo} → ${toStatus}${body.remark ? ` · ${body.remark}` : ""}`,
+              remark: body.remark?.trim() || `${CONTAINER_STATUS_LABEL[toStatus] ?? toStatus}`,
               changedAt: now,
             },
           }),
