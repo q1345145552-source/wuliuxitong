@@ -27,11 +27,9 @@ const STATUS_LABEL: Record<string, string> = {
   CUSTOMS: "清关中",
   CUSTOMS_CLEARED: "清关已放行",
   IN_WAREHOUSE_TH: "已到仓",
-  DELIVERING: "派送中",
-  SIGNED: "已签收",
 };
 
-const STATUS_FLOW = ["LOADING", "SEALED", "IN_TRANSIT", "DELAY_DEPARTED", "ARRIVED", "CUSTOMS", "CUSTOMS_CLEARED", "IN_WAREHOUSE_TH", "DELIVERING", "SIGNED"] as const;
+const STATUS_FLOW = ["LOADING", "SEALED", "IN_TRANSIT", "DELAY_DEPARTED", "ARRIVED", "CUSTOMS", "CUSTOMS_CLEARED", "IN_WAREHOUSE_TH"] as const;
 
 const WAREHOUSE_ZH: Record<string, string> = {
   wh_yiwu_01: "义乌仓",
@@ -263,8 +261,6 @@ export default function StaffContainerLoadingPage() {
           <option value="CUSTOMS">清关中</option>
           <option value="CUSTOMS_CLEARED">清关已放行</option>
           <option value="IN_WAREHOUSE_TH">已到仓</option>
-          <option value="DELIVERING">派送中</option>
-          <option value="SIGNED">已签收</option>
         </select>
         <button onClick={() => void loadList()} style={{ border: "none", borderRadius: 6, padding: "8px 16px", background: "#2563eb", color: "#fff", fontWeight: 500, fontSize: 13, cursor: "pointer" }}>搜索</button>
         <button onClick={() => setShowCreate(!showCreate)} style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "8px 16px", background: "#fff", fontSize: 13, cursor: "pointer", color: "#000000" }}>

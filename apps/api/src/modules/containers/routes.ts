@@ -22,8 +22,6 @@ const CONTAINER_STATUS_FLOW = [
   "CUSTOMS",
   "CUSTOMS_CLEARED",
   "IN_WAREHOUSE_TH",
-  "DELIVERING",
-  "SIGNED",
 ] as const;
 
 const CONTAINER_STATUS_LABEL: Record<string, string> = {
@@ -35,8 +33,6 @@ const CONTAINER_STATUS_LABEL: Record<string, string> = {
   CUSTOMS: "清关中",
   CUSTOMS_CLEARED: "清关已放行",
   IN_WAREHOUSE_TH: "已到仓",
-  DELIVERING: "派送中",
-  SIGNED: "已签收",
 };
 
 /** 柜子状态推进时，对应推运单到什么状态 */
@@ -48,8 +44,6 @@ const CONTAINER_TO_SHIPMENT_STATUS: Record<string, string> = {
   CUSTOMS: "customsth",
   CUSTOMS_CLEARED: "customscleared",
   IN_WAREHOUSE_TH: "inwarehouseth",
-  DELIVERING: "outfordelivery",
-  SIGNED: "delivered",
 };
 
 /** 判断状态切换是否合法（只能往前推进，不能倒退；可同状态续写）。 */
