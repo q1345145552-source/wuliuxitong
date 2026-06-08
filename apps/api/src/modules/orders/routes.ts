@@ -25,7 +25,6 @@ async function calcReceivableAmount(
 ): Promise<number | null> {
   if (!volumeM3 || volumeM3 <= 0) return null;
   const key = `${transportMode}|${cargoType}`;
-  // 先查客户定价规则（此处传入 null customerId 用默认价格）
   const rule = await prisma.pricingRule.findFirst({
     where: { companyId, transportMode, cargoType, customerId: null },
     select: { unitPriceCny: true },
@@ -34,6 +33,34 @@ async function calcReceivableAmount(
   if (!unitPrice || unitPrice <= 0) return null;
   const billableVol = Math.max(volumeM3, MIN_VOLUME_M3);
   return Math.round(billableVol * unitPrice * 100) / 100;
+}
+
+/** 按产品行分别计算应收金额并求和 */
+async function calcReceivableByProducts(
+  companyId: string,
+  transportMode: string,
+  products: Array<{ packageCount: number; lengthCm?: number | null; widthCm?: number | null; heightCm?: number | null; cargoType?: string }>,
+  fallbackVolume?: number | null,
+): Promise<number | null> {
+  let total = 0;
+  let hasProductVolume = false;
+  for (const p of products) {
+    const vol = (p.lengthCm && p.widthCm && p.heightCm)
+      ? (p.lengthCm * p.widthCm * p.heightCm * p.packageCount) / 1_000_000
+      : 0;
+    if (vol <= 0) continue;
+    hasProductVolume = true;
+    const ct = p.cargoType?.trim() || "NORMAL";
+    // 缓存 key → price 避免重复查询
+    const amount = await calcReceivableAmount(companyId, transportMode, ct, vol);
+    if (amount !== null) total += amount;
+  }
+  if (hasProductVolume) return total > 0 ? Math.round(total * 100) / 100 : null;
+  // 无产品体积时用回退总体积
+  if (fallbackVolume && fallbackVolume > 0) {
+    return calcReceivableAmount(companyId, transportMode, "NORMAL", fallbackVolume);
+  }
+  return null;
 }
 import { fail, ok, parseJsonArray, requireRole } from "../core/http-utils";
 import { loadProductImagesForOrders, MAX_ORDER_PRODUCT_IMAGES } from "./product-images";
@@ -254,9 +281,9 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
       });
     }
 
-    // 自动计算应收金额
-    if (totalVol > 0) {
-      const amount = await calcReceivableAmount(auth.companyId, body.transportMode, "NORMAL", totalVol);
+    // 自动计算应收金额（按产品行分别计价求和）
+    if (products.length > 0) {
+      const amount = await calcReceivableByProducts(auth.companyId, body.transportMode, products, totalVol);
       if (amount !== null) {
         await prisma.order.update({
           where: { id: orderId },
@@ -508,10 +535,10 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
     const packageCountNum = Number(body.packageCount ?? 0);
     const packageUnit = body.packageUnit ?? "box";
 
-    // 事务前计算应收金额（避免事务内查定价表）
-    const calcVol = prVol > 0 ? prVol : (volumeM3 ?? 0);
-    const calcCt = body.cargoType?.trim() || "NORMAL";
-    const calcAmount = await calcReceivableAmount(auth.companyId, body.transportMode, calcCt, calcVol);
+    // 事务前计算应收金额（按产品行分别计价求和）
+    const calcAmount = staffProducts.length > 0
+      ? await calcReceivableByProducts(auth.companyId, body.transportMode, staffProducts, volumeM3)
+      : await calcReceivableAmount(auth.companyId, body.transportMode, "NORMAL", prVol || (volumeM3 ?? 0));
 
     const txOps: any[] = [
       prisma.order.create({
