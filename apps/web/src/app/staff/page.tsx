@@ -1371,7 +1371,10 @@ export default function StaffHomePage() {
       const clientName = `${item.clientName ?? ""} ${item.clientId ?? ""}`.toLowerCase();
       const itemName = (item.itemName ?? "").toLowerCase();
       const trackingNo = (item.trackingNo ?? "").toLowerCase();
-      const domesticTrackingNo = (item.domesticTrackingNo ?? "").toLowerCase();
+      const domesticTrackingNo = (
+        (item.domesticTrackingNo ?? "") +
+        (item.products?.map(p => p.domesticTrackingNo ?? "").join(" ") ?? "")
+      ).toLowerCase();
       const packageCount = item.packageCount == null ? "" : String(item.packageCount);
       const productQuantity = item.productQuantity == null ? "" : String(item.productQuantity);
       const weightKg = item.weightKg == null ? "" : String(item.weightKg);
@@ -2336,7 +2339,7 @@ export default function StaffHomePage() {
                 id="staff-shipment-list-table-wrap"
                 style={{ overflowX: "auto", border: "1px solid #e2e8f0", borderRadius: 10, background: "#fff" }}
               >
-                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, minWidth: 1480 }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, minWidth: 1660 }}>
                   <thead>
                     <tr style={{ background: "#f1f5f9", textAlign: "left", borderBottom: "2px solid #e2e8f0" }}>
                       <th style={{ padding: "10px 8px", width: 44 }}>
@@ -2348,6 +2351,7 @@ export default function StaffHomePage() {
                       <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>箱数</th>
                       <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>单箱数量</th>
                       <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>长宽高(cm)</th>
+                      <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>国内单号</th>
                       <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>体积</th>
                       <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>重量</th>
                       <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>运输方式</th>
@@ -2431,6 +2435,15 @@ export default function StaffHomePage() {
                                 ))
                               : "—"}
                           </td>
+                          <td style={{ padding: "8px 6px", whiteSpace: "nowrap" }}>
+                            {(item.products?.length ?? 0) > 0
+                              ? item.products!.map((p, i) => (
+                                  <div key={i} style={{ marginBottom: i < (item.products?.length ?? 0) - 1 ? 2 : 0 }}>
+                                    {p.domesticTrackingNo || "货拉拉"}
+                                  </div>
+                                ))
+                              : (item.domesticTrackingNo || "—")}
+                          </td>
                           <td style={{ padding: "8px 6px", whiteSpace: "nowrap" }}>{formatMetric(item.volumeM3, 6)}</td>
                           <td style={{ padding: "8px 6px", whiteSpace: "nowrap" }}>{formatMetric(item.weightKg, 2)}</td>
                           <td style={{ padding: "8px 6px", whiteSpace: "nowrap" }}>{transportModeLabel(item.transportMode)}</td>
@@ -2496,7 +2509,7 @@ export default function StaffHomePage() {
                         </tr>
                         {shipmentTableExpandedId === item.id ? (
                           <tr>
-                            <td colSpan={13} style={{ padding: 0, background: "#f8fafc", borderBottom: "1px solid #e2e8f0" }}>
+                            <td colSpan={14} style={{ padding: 0, background: "#f8fafc", borderBottom: "1px solid #e2e8f0" }}>
                               <div style={{ padding: 14 }}>
                                 {/* 隐藏信息栏 */}
                                 <div style={{ display: "flex", flexWrap: "wrap", gap: "8px 20px", marginBottom: 12, padding: 8, background: "#f1f5f9", borderRadius: 6, fontSize: 12 }}>
