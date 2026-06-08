@@ -2950,24 +2950,7 @@ export default function StaffHomePage() {
                                       >
                                         保存订单信息
                                       </button>
-                                      <button
-                                        type="button"
-                                        disabled={loading}
-                                        onClick={() => {
-                                          setActiveSection("staff-status-update");
-                                          window.location.hash = "staff-status-update";
-                                          setStatusSearch((prev) => ({ ...prev, batchNo: item.batchNo ?? "" }));
-                                          setStatusHasSearched(true);
-                                          setEditingShipmentId(item.id);
-                                          setStatusEditDraft({ toStatus: toLogisticsStatus(item.currentStatus), remark: "" });
-                                        }}
-                                        style={{
-                                          border: "none",
-                                          borderRadius: 8,
-                                          padding: "8px 14px",
-                                          color: "#fff",
-                                          background: "#1e3a8a",
-                                          cursor: "pointer",
+
                                           fontWeight: 600,
                                         }}
                                       >
