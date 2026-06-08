@@ -2642,35 +2642,8 @@ export default function StaffHomePage() {
                                           <ShipmentEditFormField label="运单状态">
                                             <select
                                               value={currentShipmentStatus}
-                                              disabled={formDisabled}
+                                              disabled={true}
                                               style={inputInCard}
-                                              onChange={async (e) => {
-                                                const next = e.target.value;
-                                                if (next === currentShipmentStatus) return;
-                                                setLoading(true);
-                                                setMessage("");
-                                                try {
-                                                  await updateStaffShipmentStatus({
-                                                    shipmentId: item.id,
-                                                    toStatus: next,
-                                                    remark: "",
-                                                  });
-                                                  const items = await loadPageData();
-                                                  const u = items.find((s) => s.id === item.id);
-                                                  if (u) {
-                                                    setShipmentOrderEditDrafts((prev) => ({
-                                                      ...prev,
-                                                      [item.id]: buildShipmentOrderEditDraft(u),
-                                                    }));
-                                                  }
-                                                  setToast("运单状态已更新");
-                                                } catch (error) {
-                                                  const text = error instanceof Error ? error.message : "更新失败";
-                                                  setMessage(`运单状态更新失败：${text}`);
-                                                } finally {
-                                                  setLoading(false);
-                                                }
-                                              }}
                                             >
                                               {statusTargets.map((st) => (
                                                 <option key={st} value={st}>
