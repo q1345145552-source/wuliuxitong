@@ -68,6 +68,7 @@ export default function StaffContainerLoadingPage() {
   const [detail, setDetail] = useState<LoadingManifestDetail | null>(null);
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [adding, setAdding] = useState(false);
+  const [statusRemark, setStatusRemark] = useState("");
 
   // 运单列表搜索
   const [allShipments, setAllShipments] = useState<ShipmentItem[]>([]);
@@ -129,6 +130,7 @@ export default function StaffContainerLoadingPage() {
 
   const loadDetail = useCallback(async (id: string) => {
     if (!id) return;
+    setStatusRemark("");
     setLoadingDetail(true);
     try {
       const d = await fetchLoadingManifestDetail(id);
@@ -164,7 +166,8 @@ export default function StaffContainerLoadingPage() {
   const handlePushStatus = async (toStatus: string) => {
     if (!selectedId || !detail) return;
     try {
-      const result = await updateContainerStatus({ id: selectedId, toStatus });
+      const result = await updateContainerStatus({ id: selectedId, toStatus, remark: statusRemark.trim() || undefined });
+      setStatusRemark("");
       setToast(`柜子「${result.containerNo}」已推进至 ${STATUS_LABEL[toStatus] ?? toStatus}（影响 ${result.affectedShipmentCount} 个运单）`);
       await loadList();
       await loadDetail(selectedId);
@@ -318,13 +321,14 @@ export default function StaffContainerLoadingPage() {
                       {detail.carrierInfo ? ` · 船次/船名: ${detail.carrierInfo}` : ""}
                     </div>
                   </div>
-                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                    <input value={statusRemark} onChange={(e) => setStatusRemark(e.target.value)} placeholder="备注（选填）" style={{ ...inputStyle, minWidth: 200, flex: 1 }} />
                     {(() => {
                       const currentIdx = STATUS_FLOW.indexOf(detail.status as typeof STATUS_FLOW[number]);
                       if (currentIdx < 0 || currentIdx >= STATUS_FLOW.length - 1) return null;
                       const nextStatus = STATUS_FLOW[currentIdx + 1];
                       return (
-                        <button onClick={() => handlePushStatus(nextStatus)} style={{ border: "none", borderRadius: 6, padding: "8px 16px", background: "#2563eb", color: "#fff", fontWeight: 500, fontSize: 13, cursor: "pointer" }}>
+                        <button onClick={() => handlePushStatus(nextStatus)} style={{ border: "none", borderRadius: 6, padding: "8px 16px", background: "#2563eb", color: "#fff", fontWeight: 500, fontSize: 13, cursor: "pointer", whiteSpace: "nowrap" }}>
                           推进至「{STATUS_LABEL[nextStatus]}」
                         </button>
                       );
