@@ -508,6 +508,11 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
     const packageCountNum = Number(body.packageCount ?? 0);
     const packageUnit = body.packageUnit ?? "box";
 
+    // 事务前计算应收金额（避免事务内查定价表）
+    const calcVol = prVol > 0 ? prVol : (volumeM3 ?? 0);
+    const calcCt = body.cargoType?.trim() || "NORMAL";
+    const calcAmount = await calcReceivableAmount(auth.companyId, body.transportMode, calcCt, calcVol);
+
     const txOps: any[] = [
       prisma.order.create({
         data: {
@@ -524,7 +529,7 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
           packageUnit,
           weightKg: prWeight > 0 ? (prWeight as unknown as Prisma.Decimal) : (weightKg as unknown as Prisma.Decimal | null),
           volumeM3: prVol > 0 ? (prVol as unknown as Prisma.Decimal) : (volumeM3 as unknown as Prisma.Decimal | null),
-          receivableAmountCny: null,
+          receivableAmountCny: calcAmount !== null ? (calcAmount as unknown as Prisma.Decimal) : null,
           receivableCurrency: "CNY",
           shipDate: body.arrivedAt.trim(),
           domesticTrackingNo: body.domesticTrackingNo ?? null,
@@ -577,17 +582,6 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
       );
     }
     await prisma.$transaction(txOps);
-
-    // 自动计算应收金额
-    const vol = prVol > 0 ? prVol : (volumeM3 ?? 0);
-    const ct = body.cargoType?.trim() || "NORMAL";
-    const amount = await calcReceivableAmount(auth.companyId, body.transportMode, ct, vol);
-    if (amount !== null) {
-      await prisma.order.update({
-        where: { id: orderId },
-        data: { receivableAmountCny: amount as unknown as Prisma.Decimal },
-      });
-    }
 
     ok(res, { orderId, createdAt: now });
   });
