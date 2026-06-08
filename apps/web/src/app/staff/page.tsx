@@ -338,6 +338,8 @@ type ShipmentOrderEditDraft = {
   receivableAmountCny: string;
   receivableCurrency: "CNY" | "THB";
   paymentStatus: "paid" | "unpaid";
+  destinationCountry: string;
+  customsDeclaration: "none" | "declare";
 };
 
 /**
