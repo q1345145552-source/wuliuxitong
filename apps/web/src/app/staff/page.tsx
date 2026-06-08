@@ -552,11 +552,6 @@ export default function StaffHomePage() {
     batchNo: "",
     shipmentStatus: "",
   });
-  useEffect(() => {
-    return () => {
-      if (statusAttachPreviewUrl) URL.revokeObjectURL(statusAttachPreviewUrl);
-    };
-  }, [statusAttachPreviewUrl]);
   const [shipmentSearch, setShipmentSearch] = useState({
     batchNo: "",
     clientName: "",
