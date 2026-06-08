@@ -484,6 +484,7 @@ export function registerShipmentRoutes(app: MinimalHttpApp): void {
     ok(res, { images: imageMap.get(orderId) ?? [] });
   });
 
+  app.post("/staff/shipments/split", async (req, res) => {
     const auth = requireRole(req, res, ["staff", "admin"]);
     if (!auth) return;
 
