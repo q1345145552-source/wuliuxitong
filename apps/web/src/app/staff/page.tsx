@@ -232,7 +232,7 @@ function formatVolumeM3String(m3: number): string {
   if (!Number.isFinite(m3) || m3 <= 0) return "";
   return String(Number(m3.toFixed(6)));
 }
- */
+
 function shipmentShipDateToLocalInput(shipDate: string | undefined): string {
   if (!shipDate?.trim()) return "";
   const s = shipDate.trim();
