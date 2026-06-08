@@ -880,8 +880,6 @@ export async function patchStaffShipmentOrderBundle(payload: {
   return parseApiResponse(response);
 }
 
-}
-
 export async function fetchAdminOverview(): Promise<AdminOverview> {
   const response = await fetch(`${apiBaseUrl()}/admin/dashboard/overview`, {
     method: "GET",
