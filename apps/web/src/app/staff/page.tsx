@@ -319,6 +319,27 @@ function formatRepairShipmentOrderLinkToast(result: RepairStaffShipmentOrderLink
   return `未能修复：${first.reason}`;
 }
 
+type ShipmentOrderEditDraft = {
+  trackingNo: string;
+  warehouseId: string;
+  batchNo: string;
+  itemName: string;
+  domesticTrackingNo: string;
+  productQuantity: string;
+  packageCount: string;
+  packageUnit: "bag" | "box";
+  weightKg: string;
+  volumeM3: string;
+  orderCreatedDate: string;
+  transportMode: "sea" | "land";
+  shipLocal: string;
+  receiverAddressTh: string;
+  containerNo: string;
+  receivableAmountCny: string;
+  receivableCurrency: "CNY" | "THB";
+  paymentStatus: "paid" | "unpaid";
+};
+
 /**
  * 由运单行构造订单详情编辑草稿。
  */
