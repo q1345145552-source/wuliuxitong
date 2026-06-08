@@ -17,8 +17,11 @@ const CONTAINER_STATUS_FLOW = [
   "LOADING",
   "SEALED",
   "IN_TRANSIT",
+  "DELAY_DEPARTED",
   "ARRIVED",
   "CUSTOMS",
+  "CUSTOMS_CLEARED",
+  "IN_WAREHOUSE_TH",
   "DELIVERING",
   "SIGNED",
 ] as const;
@@ -27,8 +30,11 @@ const CONTAINER_STATUS_LABEL: Record<string, string> = {
   LOADING: "装柜中",
   SEALED: "已封柜",
   IN_TRANSIT: "运输中",
+  DELAY_DEPARTED: "延迟开船",
   ARRIVED: "已到港",
   CUSTOMS: "清关中",
+  CUSTOMS_CLEARED: "清关已放行",
+  IN_WAREHOUSE_TH: "已到仓",
   DELIVERING: "派送中",
   SIGNED: "已签收",
 };
@@ -37,8 +43,11 @@ const CONTAINER_STATUS_LABEL: Record<string, string> = {
 const CONTAINER_TO_SHIPMENT_STATUS: Record<string, string> = {
   SEALED: "loaded",
   IN_TRANSIT: "intransit",
+  DELAY_DEPARTED: "intransit",
   ARRIVED: "arrivedport",
   CUSTOMS: "customsth",
+  CUSTOMS_CLEARED: "customscleared",
+  IN_WAREHOUSE_TH: "inwarehouseth",
   DELIVERING: "outfordelivery",
   SIGNED: "delivered",
 };
@@ -49,7 +58,7 @@ function canContainerTransit(from: string, to: string): boolean {
   const fromIdx = CONTAINER_STATUS_FLOW.indexOf(from as typeof CONTAINER_STATUS_FLOW[number]);
   const toIdx = CONTAINER_STATUS_FLOW.indexOf(to as typeof CONTAINER_STATUS_FLOW[number]);
   if (fromIdx < 0 || toIdx < 0) return false;
-  return toIdx === fromIdx + 1;
+  return toIdx > fromIdx;
 }
 
 function decToNumber(value: Prisma.Decimal | null | undefined): number {

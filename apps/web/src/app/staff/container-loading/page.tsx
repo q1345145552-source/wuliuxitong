@@ -22,13 +22,16 @@ const STATUS_LABEL: Record<string, string> = {
   LOADING: "装柜中",
   SEALED: "已封柜",
   IN_TRANSIT: "运输中",
+  DELAY_DEPARTED: "延迟开船",
   ARRIVED: "已到港",
   CUSTOMS: "清关中",
+  CUSTOMS_CLEARED: "清关已放行",
+  IN_WAREHOUSE_TH: "已到仓",
   DELIVERING: "派送中",
   SIGNED: "已签收",
 };
 
-const STATUS_FLOW = ["LOADING", "SEALED", "IN_TRANSIT", "ARRIVED", "CUSTOMS", "DELIVERING", "SIGNED"] as const;
+const STATUS_FLOW = ["LOADING", "SEALED", "IN_TRANSIT", "DELAY_DEPARTED", "ARRIVED", "CUSTOMS", "CUSTOMS_CLEARED", "IN_WAREHOUSE_TH", "DELIVERING", "SIGNED"] as const;
 
 const WAREHOUSE_ZH: Record<string, string> = {
   wh_yiwu_01: "义乌仓",
@@ -69,6 +72,7 @@ export default function StaffContainerLoadingPage() {
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [adding, setAdding] = useState(false);
   const [statusRemark, setStatusRemark] = useState("");
+  const [targetStatus, setTargetStatus] = useState("");
 
   // 运单列表搜索
   const [allShipments, setAllShipments] = useState<ShipmentItem[]>([]);
@@ -254,8 +258,11 @@ export default function StaffContainerLoadingPage() {
           <option value="LOADING">装柜中</option>
           <option value="SEALED">已封柜</option>
           <option value="IN_TRANSIT">运输中</option>
+          <option value="DELAY_DEPARTED">延迟开船</option>
           <option value="ARRIVED">已到港</option>
           <option value="CUSTOMS">清关中</option>
+          <option value="CUSTOMS_CLEARED">清关已放行</option>
+          <option value="IN_WAREHOUSE_TH">已到仓</option>
           <option value="DELIVERING">派送中</option>
           <option value="SIGNED">已签收</option>
         </select>
@@ -326,11 +333,23 @@ export default function StaffContainerLoadingPage() {
                     {(() => {
                       const currentIdx = STATUS_FLOW.indexOf(detail.status as typeof STATUS_FLOW[number]);
                       if (currentIdx < 0 || currentIdx >= STATUS_FLOW.length - 1) return null;
-                      const nextStatus = STATUS_FLOW[currentIdx + 1];
+                      const options = STATUS_FLOW.slice(currentIdx + 1);
                       return (
-                        <button onClick={() => handlePushStatus(nextStatus)} style={{ border: "none", borderRadius: 6, padding: "8px 16px", background: "#2563eb", color: "#fff", fontWeight: 500, fontSize: 13, cursor: "pointer", whiteSpace: "nowrap" }}>
-                          推进至「{STATUS_LABEL[nextStatus]}」
-                        </button>
+                        <>
+                          <select value={targetStatus} onChange={(e) => setTargetStatus(e.target.value)} style={inputStyle}>
+                            <option value="">选择目标状态</option>
+                            {options.map((s) => (
+                              <option key={s} value={s}>{STATUS_LABEL[s] ?? s}</option>
+                            ))}
+                          </select>
+                          <button
+                            disabled={!targetStatus}
+                            onClick={() => { if (targetStatus) handlePushStatus(targetStatus); setTargetStatus(""); }}
+                            style={{ border: "none", borderRadius: 6, padding: "8px 16px", background: targetStatus ? "#2563eb" : "#94a3b8", color: "#fff", fontWeight: 500, fontSize: 13, cursor: targetStatus ? "pointer" : "not-allowed", whiteSpace: "nowrap" }}
+                          >
+                            确认推进
+                          </button>
+                        </>
                       );
                     })()}
                     {detail.status === "LOADING" && (
