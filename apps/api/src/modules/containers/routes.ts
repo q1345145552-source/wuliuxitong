@@ -300,7 +300,6 @@ export function registerContainerRoutes(app: MinimalHttpApp): void {
     if (toStatus === "ARRIVED" && !container.ata) updateData.ata = now;
     if (toStatus === "DELIVERING" && !container.customsClearedAt) updateData.customsClearedAt = now;
 
-    // 推进柜内每个运单的状态（仅在 DELIVERING / SIGNED 时）
     const shipmentIds = container.items.map((it) => it.shipmentId);
     const ops: Prisma.PrismaPromise<unknown>[] = [
       prisma.container.update({ where: { id: container.id }, data: updateData }),
@@ -309,23 +308,30 @@ export function registerContainerRoutes(app: MinimalHttpApp): void {
     const shipmentNextStatus: string | null = CONTAINER_TO_SHIPMENT_STATUS[toStatus] ?? null;
 
     if (shipmentNextStatus && shipmentIds.length > 0) {
+      // 查询各运单当前状态，用于正确写入日志
+      const shipments = await prisma.shipment.findMany({
+        where: { id: { in: shipmentIds }, companyId: auth.companyId },
+        select: { id: true, currentStatus: true },
+      });
+      const statusMap = new Map(shipments.map((s) => [s.id, s.currentStatus]));
+
       ops.push(
         prisma.shipment.updateMany({
           where: { id: { in: shipmentIds }, companyId: auth.companyId },
           data: { currentStatus: shipmentNextStatus, updatedAt: now },
         }),
       );
-      // 写状态日志（每个运单一条）
       for (let i = 0; i < shipmentIds.length; i++) {
+        const sid = shipmentIds[i];
         ops.push(
           prisma.statusLog.create({
             data: {
               id: `sl_ctn_${Date.now()}_${i}_${Math.random().toString(36).slice(2, 6)}`,
               companyId: auth.companyId,
-              shipmentId: shipmentIds[i],
+              shipmentId: sid,
               operatorId: auth.userId,
               operatorRole: auth.role,
-              fromStatus: "loaded",
+              fromStatus: statusMap.get(sid) ?? "loaded",
               toStatus: shipmentNextStatus,
               remark: body.remark?.trim() || `${CONTAINER_STATUS_LABEL[toStatus] ?? toStatus}`,
               changedAt: now,
