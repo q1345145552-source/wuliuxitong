@@ -2950,12 +2950,6 @@ export default function StaffHomePage() {
                                       >
                                         保存订单信息
                                       </button>
-
-                                          fontWeight: 600,
-                                        }}
-                                      >
-                                        去修改物流状态
-                                      </button>
                                     </>
                                   ) : null}
                                   <button
