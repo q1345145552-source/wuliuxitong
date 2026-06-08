@@ -1226,7 +1226,7 @@ export default function AdminHomePage() {
             </select>
           </div>
           <div style={{ overflowX: "auto" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, minWidth: 1480 }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, minWidth: 1700 }}>
               <thead>
                 <tr style={{ borderBottom: "2px solid #e2e8f0", textAlign: "left" }}>
                   <th style={{ padding: "10px 8px", width: 44 }}>
@@ -1238,6 +1238,7 @@ export default function AdminHomePage() {
                   <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>箱数</th>
                   <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>单箱数量</th>
                   <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>长宽高(cm)</th>
+                  <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>国内单号</th>
                   <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>体积</th>
                   <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>重量</th>
                   <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>运输方式</th>
@@ -1309,6 +1310,15 @@ export default function AdminHomePage() {
                           ))
                         : "—"}
                     </td>
+                    <td style={{ padding: "8px 6px", whiteSpace: "nowrap" }}>
+                      {(o.products?.length ?? 0) > 0
+                        ? o.products!.map((p, i) => (
+                            <div key={i} style={{ marginBottom: i < (o.products?.length ?? 0) - 1 ? 2 : 0 }}>
+                              {p.domesticTrackingNo || "货拉拉"}
+                            </div>
+                          ))
+                        : (o.domesticTrackingNo || "—")}
+                    </td>
                     <td style={{ padding: "8px 6px", whiteSpace: "nowrap" }}>{o.volumeM3 ?? "—"}</td>
                     <td style={{ padding: "8px 6px", whiteSpace: "nowrap" }}>{o.weightKg ?? "—"}</td>
                     <td style={{ padding: "8px 6px", whiteSpace: "nowrap" }}>{transportModeLabel(o.transportMode)}</td>
@@ -1358,7 +1368,7 @@ export default function AdminHomePage() {
                   </tr>
                   {expandedOrderId === o.id ? (
                     <tr>
-                      <td colSpan={13} style={{ padding: 0, background: "#f8fafc", borderBottom: "1px solid #e2e8f0" }}>
+                      <td colSpan={14} style={{ padding: 0, background: "#f8fafc", borderBottom: "1px solid #e2e8f0" }}>
                         <div style={{ padding: 14 }}>
                           <div style={{ display: "flex", flexWrap: "wrap", gap: "8px 20px", marginBottom: 12, padding: 8, background: "#f1f5f9", borderRadius: 6, fontSize: 12 }}>
                             <span>仓库：<strong>{warehouseOptions.find(w => w.id === o.warehouseId)?.label ?? "—"}</strong></span>
@@ -1383,7 +1393,7 @@ export default function AdminHomePage() {
                   ) : null}
                   {editingOrderId === (o.orderId ?? o.id) ? (
                     <tr key={`edit-${o.id}`} style={{ background: "#f8fafc" }}>
-                      <td colSpan={13} style={{ padding: 12 }}>
+                      <td colSpan={14} style={{ padding: 12 }}>
                         <div style={{ display: "grid", gap: 8 }}>
                           <div style={{ fontWeight: 700, color: "#0f172a" }}>编辑：{o.trackingNo ?? o.id}</div>
                           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 8 }}>
