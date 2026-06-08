@@ -6,7 +6,7 @@
 //                    │   loadedVolumeM3 + loadedPieceCount  │
 // 一票货可拆到多个柜子（N:N）；柜子的状态自成一套状态机
 //
-// 柜子状态：LOADING → IN_TRANSIT → ARRIVED → CUSTOMS → DELIVERING → SIGNED
+// 柜子状态：LOADING → SEALED → IN_TRANSIT → ARRIVED → CUSTOMS → DELIVERING → SIGNED
 
 import { Prisma } from "@prisma/client";
 import { prisma } from "../../db/prisma";
@@ -15,6 +15,7 @@ import { fail, ok, requireRole } from "../core/http-utils";
 
 const CONTAINER_STATUS_FLOW = [
   "LOADING",
+  "SEALED",
   "IN_TRANSIT",
   "ARRIVED",
   "CUSTOMS",
@@ -24,11 +25,22 @@ const CONTAINER_STATUS_FLOW = [
 
 const CONTAINER_STATUS_LABEL: Record<string, string> = {
   LOADING: "装柜中",
-  IN_TRANSIT: "在途",
-  ARRIVED: "到港",
+  SEALED: "已封柜",
+  IN_TRANSIT: "运输中",
+  ARRIVED: "已到港",
   CUSTOMS: "清关中",
   DELIVERING: "派送中",
-  SIGNED: "全部签收",
+  SIGNED: "已签收",
+};
+
+/** 柜子状态推进时，对应推运单到什么状态 */
+const CONTAINER_TO_SHIPMENT_STATUS: Record<string, string> = {
+  SEALED: "loaded",
+  IN_TRANSIT: "intransit",
+  ARRIVED: "arrivedport",
+  CUSTOMS: "customsth",
+  DELIVERING: "outfordelivery",
+  SIGNED: "delivered",
 };
 
 /** 判断状态切换是否合法（只能往前推进，不能倒退；可同状态续写）。 */
@@ -291,11 +303,7 @@ export function registerContainerRoutes(app: MinimalHttpApp): void {
       prisma.container.update({ where: { id: container.id }, data: updateData }),
     ];
 
-    let shipmentNextStatus: string | null = null;
-    if (toStatus === "IN_TRANSIT") shipmentNextStatus = "inTransit";
-    else if (toStatus === "ARRIVED") shipmentNextStatus = "customsTH";
-    else if (toStatus === "DELIVERING") shipmentNextStatus = "outForDelivery";
-    else if (toStatus === "SIGNED") shipmentNextStatus = "delivered";
+    const shipmentNextStatus: string | null = CONTAINER_TO_SHIPMENT_STATUS[toStatus] ?? null;
 
     if (shipmentNextStatus && shipmentIds.length > 0) {
       ops.push(

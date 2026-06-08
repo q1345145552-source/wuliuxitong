@@ -1455,6 +1455,20 @@ export interface ShippingPriceItem {
   disableMinVolume: boolean;
 }
 
+/** 推进柜子状态 */
+export async function updateContainerStatus(payload: {
+  id: string;
+  toStatus: string;
+  remark?: string;
+}): Promise<{ containerNo: string; fromStatus: string; toStatus: string; affectedShipmentCount: number }> {
+  const response = await fetch(`${apiBaseUrl()}/admin/containers/status`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify(payload),
+  });
+  return parseApiResponse(response);
+}
+
 export async function fetchShippingPrices(clientId?: string): Promise<Record<string, ShippingPriceItem>> {
   const query = clientId ? `?clientId=${encodeURIComponent(clientId)}` : "";
   const response = await fetch(`${apiBaseUrl()}/client/shipping/prices${query}`, {

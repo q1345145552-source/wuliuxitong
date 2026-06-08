@@ -12,6 +12,7 @@ import {
   removeShipmentFromManifest,
   fetchStaffShipments,
   deleteContainer,
+  updateContainerStatus,
   type LoadingManifestItem,
   type LoadingManifestDetail,
   type ShipmentItem,
@@ -21,7 +22,19 @@ const STATUS_LABEL: Record<string, string> = {
   LOADING: "装柜中",
   SEALED: "已封柜",
   IN_TRANSIT: "运输中",
-  ARRIVED: "已到达",
+  ARRIVED: "已到港",
+  CUSTOMS: "清关中",
+  DELIVERING: "派送中",
+  SIGNED: "已签收",
+};
+
+const STATUS_FLOW = ["LOADING", "SEALED", "IN_TRANSIT", "ARRIVED", "CUSTOMS", "DELIVERING", "SIGNED"] as const;
+
+const WAREHOUSE_ZH: Record<string, string> = {
+  wh_yiwu_01: "义乌仓",
+  wh_guangzhou_01: "广州仓",
+  wh_dongguan_01: "东莞仓",
+  wh_shenzhen_01: "深圳仓",
 };
 
 const SHIPMENT_STATUS_ZH: Record<string, string> = {
@@ -148,6 +161,18 @@ export default function StaffContainerLoadingPage() {
     }
   };
 
+  const handlePushStatus = async (toStatus: string) => {
+    if (!selectedId || !detail) return;
+    try {
+      const result = await updateContainerStatus({ id: selectedId, toStatus });
+      setToast(`柜子「${result.containerNo}」已推进至 ${STATUS_LABEL[toStatus] ?? toStatus}（影响 ${result.affectedShipmentCount} 个运单）`);
+      await loadList();
+      await loadDetail(selectedId);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "状态更新失败");
+    }
+  };
+
   const handleSeal = async () => {
     if (!selectedId) return;
     try {
@@ -226,7 +251,10 @@ export default function StaffContainerLoadingPage() {
           <option value="LOADING">装柜中</option>
           <option value="SEALED">已封柜</option>
           <option value="IN_TRANSIT">运输中</option>
-          <option value="ARRIVED">已到达</option>
+          <option value="ARRIVED">已到港</option>
+          <option value="CUSTOMS">清关中</option>
+          <option value="DELIVERING">派送中</option>
+          <option value="SIGNED">已签收</option>
         </select>
         <button onClick={() => void loadList()} style={{ border: "none", borderRadius: 6, padding: "8px 16px", background: "#2563eb", color: "#fff", fontWeight: 500, fontSize: 13, cursor: "pointer" }}>搜索</button>
         <button onClick={() => setShowCreate(!showCreate)} style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "8px 16px", background: "#fff", fontSize: 13, cursor: "pointer", color: "#000000" }}>
@@ -266,7 +294,7 @@ export default function StaffContainerLoadingPage() {
                   <span style={{ fontSize: 11, fontWeight: 500, color: STATUS_COLOR[item.status] ?? "#000000" }}>{STATUS_LABEL[item.status] ?? item.status}</span>
                 </div>
                 <div style={{ fontSize: 12, color: "#000000", marginTop: 4 }}>
-                  {item.warehouse} · {item.totalBills} 票 · {item.createdAt.slice(0, 10)}
+                  {WAREHOUSE_ZH[item.warehouse] ?? item.warehouse} · {item.totalBills} 票 · {item.createdAt.slice(0, 10)}
                 </div>
               </div>
             ))
@@ -285,14 +313,21 @@ export default function StaffContainerLoadingPage() {
                   <div>
                     <h2 style={{ margin: 0, fontSize: 18, fontWeight: 700, color: "#0f172a" }}>{detail.manifestNo}</h2>
                     <div style={{ fontSize: 13, color: "#000000", marginTop: 4 }}>
-                      仓库: {detail.warehouse} · 状态: {STATUS_LABEL[detail.status] ?? detail.status}
+                      仓库: {WAREHOUSE_ZH[detail.warehouse] ?? detail.warehouse} · 状态: {STATUS_LABEL[detail.status] ?? detail.status}
                       {detail.carrierInfo ? ` · 船次/船名: ${detail.carrierInfo}` : ""}
                     </div>
                   </div>
-                  <div style={{ display: "flex", gap: 8 }}>
-                    {detail.status === "LOADING" && (
-                      <button onClick={handleSeal} style={{ border: "none", borderRadius: 6, padding: "8px 16px", background: "#000000", color: "#fff", fontWeight: 500, fontSize: 13, cursor: "pointer" }}>封柜</button>
-                    )}
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    {(() => {
+                      const currentIdx = STATUS_FLOW.indexOf(detail.status as typeof STATUS_FLOW[number]);
+                      if (currentIdx < 0 || currentIdx >= STATUS_FLOW.length - 1) return null;
+                      const nextStatus = STATUS_FLOW[currentIdx + 1];
+                      return (
+                        <button onClick={() => handlePushStatus(nextStatus)} style={{ border: "none", borderRadius: 6, padding: "8px 16px", background: "#2563eb", color: "#fff", fontWeight: 500, fontSize: 13, cursor: "pointer" }}>
+                          推进至「{STATUS_LABEL[nextStatus]}」
+                        </button>
+                      );
+                    })()}
                     {detail.status === "LOADING" && (
                       <button onClick={handleDelete} style={{ border: "1px solid #fecaca", borderRadius: 6, padding: "8px 16px", background: "#fef2f2", color: "#dc2626", fontWeight: 500, fontSize: 13, cursor: "pointer" }}>删除柜子</button>
                     )}
