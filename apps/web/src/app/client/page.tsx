@@ -57,7 +57,7 @@ type FreightCargoType = "normal"  |  "inspection"  |  "sensitive";
 
 const freightRateMap: Record<FreightTransportMode, Record<FreightCargoType, number>> = {
   // 统一按“计费体积（立方米）× 单价（元/立方米）”计费
-  // 注：海运普货 540 元/立方米（按你提供的口径）
+  // 注：海运普货 550 元/立方米（按你提供的口径）
   land: { normal: 1070, inspection: 1250, sensitive: 1350 },
   sea: { normal: 550, inspection: 700, sensitive: 800 },
 };
@@ -568,7 +568,7 @@ export default function ClientHomePage() {
   const convertedVolumeByWeight = safeWeight / 500;
   const chargeVolume = Math.max(safeVolume, convertedVolumeByWeight);
   const disableMin = shippingPrices?.[priceKey]?.disableMinVolume ?? false;
-  const minVolume = disableMin ? 0 : (freightForm.transportMode === "sea" ? 0.5 : 0.3);
+  const minVolume = disableMin ? 0 : 1;
   const finalChargeVolume = minVolume > 0 ? Math.max(chargeVolume, minVolume) : chargeVolume;
   let freightFee = finalChargeVolume * unitPrice;
   // 义乌陆运附加费 +120/方
