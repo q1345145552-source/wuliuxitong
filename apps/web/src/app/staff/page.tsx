@@ -33,7 +33,6 @@ import {
   type ShipmentItem,
   uploadStaffInboundPhoto,
   uploadStaffOrderProductImage,
-  updateStaffShipmentStatus,
 } from "../../services/business-api";
 
 const MAX_ORDER_PRODUCT_IMAGES = 999;
@@ -210,7 +209,6 @@ const STAFF_SECTION_IDS = [
   "staff-prealert-review",
   "staff-create-order",
   "staff-ops-tools",
-  "staff-status-update",
   "staff-order-shipment",
   "staff-lastmile",
 ] as const;
@@ -554,19 +552,6 @@ export default function StaffHomePage() {
     batchNo: "",
     shipmentStatus: "",
   });
-  const [statusHasSearched, setStatusHasSearched] = useState(false);
-  const [editingShipmentId, setEditingShipmentId] = useState<string | null>(null);
-  const [editingBatchNo, setEditingBatchNo] = useState<string | null>(null);
-  const [statusEditDraft, setStatusEditDraft] = useState({
-    toStatus: "",
-    remark: "",
-  });
-  const [statusAttachFile, setStatusAttachFile] = useState<File | null>(null);
-  const [statusAttachDragActive, setStatusAttachDragActive] = useState(false);
-  const statusAttachPreviewUrl = useMemo(
-    () => (statusAttachFile ? URL.createObjectURL(statusAttachFile) : null),
-    [statusAttachFile],
-  );
   useEffect(() => {
     return () => {
       if (statusAttachPreviewUrl) URL.revokeObjectURL(statusAttachPreviewUrl);
@@ -829,19 +814,6 @@ export default function StaffHomePage() {
     return shipmentStatusZh(status);
   };
 
-  const toSystemStatus = (logisticsStatus: string): string => {
-    if (logisticsStatus === "已装柜") return "loaded";
-    if (logisticsStatus === "延迟开船") return "delayDeparted";
-    if (logisticsStatus === "已开船") return "departed";
-    if (logisticsStatus === "已到港") return "arrivedPort";
-    if (logisticsStatus === "清关中") return "customsTH";
-    if (logisticsStatus === "清关已放行") return "customsCleared";
-    if (logisticsStatus === "已到仓") return "inWarehouseTH";
-    if (logisticsStatus === "派送中") return "outForDelivery";
-    if (logisticsStatus === "派送完成") return "delivered";
-    return logisticsStatus;
-  };
-
   /**
    * 将文件读取为 base64，供入库拍照上传接口使用。
    */
@@ -859,45 +831,12 @@ export default function StaffHomePage() {
   /**
    * 选择或清除状态更新附图（仅接受图片）。
    */
-  const handleStatusAttachPick = (file: File | null) => {
-    if (!file) {
-      setStatusAttachFile(null);
-      return;
-    }
-    if (!file.type.startsWith("image/")) {
-      setMessage("请上传图片文件（jpg/png 等）。");
-      return;
-    }
-    setStatusAttachFile(file);
-  };
-
   /**
    * 重置状态更新表单中的附图（取消编辑或清空搜索时调用）。
    */
-  const resetStatusAttach = () => {
-    setStatusAttachFile(null);
-    setStatusAttachDragActive(false);
-  };
-
   /**
    * 状态更新成功后，将当前附图写入各运单的入库拍照记录。
    */
-  const uploadStatusInboundPhotosIfAny = async (shipmentIds: string[]) => {
-    if (!statusAttachFile || shipmentIds.length === 0) return;
-    const contentBase64 = await readFileAsBase64(statusAttachFile);
-    const mime = statusAttachFile.type || "image/jpeg";
-    const fileName = statusAttachFile.name;
-    for (const shipmentId of shipmentIds) {
-      await uploadStaffInboundPhoto({
-        shipmentId,
-        fileName,
-        mime,
-        contentBase64,
-        note: "状态更新附图",
-      });
-    }
-  };
-
   const loadPageData = async (): Promise<ShipmentItem[]> => {
     const [shipmentItems, prealertItems, clientItems] = await Promise.all([fetchStaffShipments(), fetchStaffPrealerts(), fetchStaffClients()]);
     // 按运单号数字降序
@@ -1391,108 +1330,6 @@ export default function StaffHomePage() {
   }
 
 
-  const submitStatusUpdate = async (shipmentId: string) => {
-    const toStatus = toSystemStatus(statusEditDraft.toStatus.trim());
-    const remark = statusEditDraft.remark.trim();
-    if (!toStatus) {
-      setMessage("请先选择物流状态。");
-      return;
-    }
-    if (!remark) {
-      setMessage("请先填写编辑信息。");
-      return;
-    }
-    setLoading(true);
-    setMessage("");
-    try {
-      const result = await updateStaffShipmentStatus({
-        shipmentId,
-        toStatus,
-        remark,
-      });
-      if (statusAttachFile && result.shipmentIds.length > 0) {
-        try {
-          await uploadStatusInboundPhotosIfAny(result.shipmentIds);
-        } catch (uploadErr) {
-          const ut = uploadErr instanceof Error ? uploadErr.message : "上传失败";
-          setMessage(`状态已更新，但附图上传失败：${ut}`);
-          resetStatusAttach();
-          setEditingShipmentId(null);
-          setStatusEditDraft({ toStatus: "", remark: "" });
-          await loadPageData();
-          return;
-        }
-      }
-      resetStatusAttach();
-      setToast("运单状态更新成功");
-      setMessage(
-        result.mode === "batch"
-          ? `批次 ${result.batchNo ?? "-"} 更新成功，共 ${result.updatedCount} 条 -> ${result.toStatus}`
-          : `状态更新成功：${result.fromStatus ?? "-"} -> ${result.toStatus}`,
-      );
-      setEditingShipmentId(null);
-      setStatusEditDraft({ toStatus: "", remark: "" });
-      await loadPageData();
-    } catch (error) {
-      const text = error instanceof Error ? error.message : "更新失败";
-      setMessage(`更新失败：${text}`);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const submitBatchStatusUpdate = async (batchNo: string) => {
-    const targetBatchNo = batchNo.trim();
-    const toStatus = toSystemStatus(statusEditDraft.toStatus.trim());
-    const remark = statusEditDraft.remark.trim();
-    if (!targetBatchNo) {
-      setMessage("请先输入柜号并搜索。");
-      return;
-    }
-    if (!toStatus) {
-      setMessage("请先选择物流状态。");
-      return;
-    }
-    if (!remark) {
-      setMessage("请先填写编辑信息。");
-      return;
-    }
-    setLoading(true);
-    setMessage("");
-    try {
-      const result = await updateStaffShipmentStatus({
-        batchNo: targetBatchNo,
-        updateByBatch: true,
-        toStatus,
-        remark,
-      });
-      if (statusAttachFile && result.shipmentIds.length > 0) {
-        try {
-          await uploadStatusInboundPhotosIfAny(result.shipmentIds);
-        } catch (uploadErr) {
-          const ut = uploadErr instanceof Error ? uploadErr.message : "上传失败";
-          setMessage(`状态已更新，但附图上传失败：${ut}`);
-          resetStatusAttach();
-          setEditingBatchNo(null);
-          setStatusEditDraft({ toStatus: "", remark: "" });
-          await loadPageData();
-          return;
-        }
-      }
-      resetStatusAttach();
-      setToast("批量状态更新成功");
-      setMessage(`批次 ${result.batchNo ?? targetBatchNo} 更新成功，共 ${result.updatedCount} 条 -> ${result.toStatus}`);
-      setEditingBatchNo(null);
-      setStatusEditDraft({ toStatus: "", remark: "" });
-      await loadPageData();
-    } catch (error) {
-      const text = error instanceof Error ? error.message : "更新失败";
-      setMessage(`更新失败：${text}`);
-    } finally {
-      setLoading(false);
-    }
-  };
-
   const approvePrealert = async (orderId: string) => {
     const sourceItem = prealerts.find((item) => item.id === orderId);
     const currentDraft = prealertEditDrafts[orderId] ?? (sourceItem ? buildPrealertDraft(sourceItem) : undefined);
@@ -1648,27 +1485,7 @@ export default function StaffHomePage() {
       .filter((item) => !prealertSearch.warehouseId || item.warehouseId === prealertSearch.warehouseId);
   }, [prealerts, prealertSearch]);
 
-  const filteredStatusShipments = useMemo(() => {
-    if (!statusHasSearched) return [];
-    const batchNoKeyword = statusSearch.batchNo.trim().toLowerCase();
-    const shipmentStatusKeyword = statusSearch.shipmentStatus.trim();
-    return shipments.filter((item) => {
-      const batchNo = (item.batchNo ?? "").toLowerCase();
-      const logisticsStatus = toLogisticsStatus(item.currentStatus);
-      const batchMatched = !batchNoKeyword || batchNo.includes(batchNoKeyword);
-      const statusMatched = !shipmentStatusKeyword || logisticsStatus === shipmentStatusKeyword;
-      return batchMatched && statusMatched;
-    });
-  }, [shipments, statusHasSearched, statusSearch]);
 
-  const searchedBatchNo = useMemo(() => statusSearch.batchNo.trim(), [statusSearch.batchNo]);
-  const exactBatchNo = useMemo(() => {
-    if (!searchedBatchNo) return "";
-    const exact = filteredStatusShipments.find(
-      (item) => (item.batchNo ?? "").trim().toLowerCase() === searchedBatchNo.toLowerCase(),
-    );
-    return (exact?.batchNo ?? "").trim();
-  }, [filteredStatusShipments, searchedBatchNo]);
   const batchNoForBulkEdit = exactBatchNo || searchedBatchNo;
   const canSubmitBatchEdit = Boolean(statusEditDraft.toStatus.trim()) && Boolean(statusEditDraft.remark.trim());
 
@@ -2578,264 +2395,6 @@ export default function StaffHomePage() {
         </div>
       </section>
 
-      <section
-        id="staff-status-update"
-        style={{
-          display: activeSection === "staff-status-update" ? "block" : "none",
-          border: "1px solid #e5e7eb",
-          borderLeft: "4px solid #d1d5db",
-          borderRadius: 12,
-          padding: 16,
-          marginBottom: 18,
-          background: "#ffffff",
-          boxShadow: "0 1px 3px rgba(15,23,42,0.06)",
-        }}
-      >
-        <h2 style={{ marginTop: 0, fontSize: 18, color: "#111827", marginBottom: 12 }}>更新订单状态（员工）</h2>
-        <div style={{ display: "grid", gap: 8, maxWidth: 760, gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))" }}>
-          <input
-            value={statusSearch.batchNo}
-            onChange={(e) => setStatusSearch((v) => ({ ...v, batchNo: e.target.value }))}
-            placeholder="柜号"
-            style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 10px", width: "100%" }}
-          />
-          <select
-            value={statusSearch.shipmentStatus}
-            onChange={(e) => setStatusSearch((v) => ({ ...v, shipmentStatus: e.target.value }))}
-            style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 10px", width: "100%" }}
-          >
-            <option value="">物流状态（全部）</option>
-            {logisticsStatusOptions.map((item) => (
-              <option key={item} value={item}>
-                {item}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div style={{ marginTop: 8, display: "flex", gap: 8 }}>
-          <button
-            type="button"
-            disabled={loading}
-            onClick={() => {
-              setStatusHasSearched(true);
-              setEditingShipmentId(null);
-              setEditingBatchNo(null);
-              resetStatusAttach();
-            }}
-            style={{ border: "none", borderRadius: 8, padding: "8px 14px", color: "#fff", background: "#4b5563" }}
-          >
-            搜索
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              setStatusSearch({ batchNo: "", shipmentStatus: "" });
-              setStatusHasSearched(false);
-              setEditingShipmentId(null);
-              setEditingBatchNo(null);
-              setStatusEditDraft({ toStatus: "", remark: "" });
-              resetStatusAttach();
-            }}
-            style={{ border: "1px solid #cbd5e1", borderRadius: 8, padding: "8px 14px", background: "#fff", color: "#000000" }}
-          >
-            清空
-          </button>
-        </div>
-        <div style={{ marginTop: 10, display: "grid", gap: 8 }}>
-          {statusHasSearched && searchedBatchNo && filteredStatusShipments.length > 0 ? (
-            <div style={{ border: "1px solid #e5e7eb", borderRadius: 10, padding: 10, background: "#f8fafc" }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
-                <div style={{ color: "#000000", fontWeight: 600 }}>
-                  当前柜号：{batchNoForBulkEdit}（共 {filteredStatusShipments.length} 条）
-                </div>
-                <button
-                  type="button"
-                  disabled={loading || !exactBatchNo}
-                  onClick={() => {
-                    setEditingShipmentId(null);
-                    setEditingBatchNo(batchNoForBulkEdit);
-                    setStatusEditDraft({ toStatus: "", remark: "" });
-                    resetStatusAttach();
-                  }}
-                  style={{
-                    border: "1px solid #d1d5db",
-                    borderRadius: 8,
-                    padding: "6px 12px",
-                    background: "#fff",
-                    fontWeight: 600,
-                    color: "#000000",
-                    cursor: loading || !exactBatchNo ? "not-allowed" : "pointer",
-                    opacity: loading || !exactBatchNo ? 0.55 : 1,
-                  }}
-                >
-                  按当前柜号批量状态修改
-                </button>
-              </div>
-              {!exactBatchNo ? (
-                <div style={{ marginTop: 8, color: "#b45309", fontSize: 13 }}>
-                  提示：当前是模糊匹配，建议输入完整柜号后再执行批量修改。
-                </div>
-              ) : null}
-              {editingBatchNo ? (
-                <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 10 }}>
-                  <div style={{ display: "grid", gap: 8, gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))" }}>
-                    <select
-                      value={statusEditDraft.toStatus}
-                      onChange={(e) => setStatusEditDraft((v) => ({ ...v, toStatus: e.target.value }))}
-                      style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 10px" }}
-                    >
-                      <option value="">选择物流状态</option>
-                      {logisticsStatusOptions.map((status) => (
-                        <option key={status} value={status}>
-                          {status}
-                        </option>
-                      ))}
-                    </select>
-                    <textarea
-                      value={statusEditDraft.remark}
-                      onChange={(e) => setStatusEditDraft((v) => ({ ...v, remark: e.target.value }))}
-                      placeholder="编辑信息（手动输入，必填）"
-                      rows={3}
-                      style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 10px", resize: "vertical" }}
-                    />
-                  </div>
-                  <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "flex-start" }}>
-                    <div style={{ display: "flex", gap: 8 }}>
-                      <button
-                        type="button"
-                        disabled={loading}
-                        onClick={() => void submitBatchStatusUpdate(editingBatchNo)}
-                        style={{
-                          border: "none",
-                          borderRadius: 8,
-                          padding: "8px 14px",
-                          color: "#fff",
-                          background: "#4b5563",
-                          cursor: loading ? "not-allowed" : "pointer",
-                          opacity: loading ? 0.55 : 1,
-                        }}
-                      >
-                        确认批量修改
-                      </button>
-                      <button
-                        type="button"
-                        disabled={loading}
-                        onClick={() => {
-                          setEditingBatchNo(null);
-                          setStatusEditDraft({ toStatus: "", remark: "" });
-                          resetStatusAttach();
-                        }}
-                        style={{ border: "1px solid #cbd5e1", borderRadius: 8, padding: "8px 14px", background: "#fff", color: "#000000" }}
-                      >
-                        取消
-                      </button>
-                    </div>
-                    <StatusUpdateImageAttach
-                      disabled={loading}
-                      previewUrl={statusAttachPreviewUrl}
-                      fileName={statusAttachFile?.name ?? null}
-                      dragActive={statusAttachDragActive}
-                      onDragActive={setStatusAttachDragActive}
-                      onPickFile={handleStatusAttachPick}
-                    />
-                  </div>
-                  {!canSubmitBatchEdit ? (
-                    <div style={{ color: "#b45309", fontSize: 13 }}>
-                      可直接点击“确认批量修改”，系统会提示你缺少的必填项。
-                    </div>
-                  ) : null}
-                </div>
-              ) : null}
-            </div>
-          ) : null}
-          {!statusHasSearched ? (
-            <EmptyStateCard title="请先搜索" description="输入柜号和物流状态后点击“搜索”。" />
-          ) : filteredStatusShipments.length === 0 ? (
-            <EmptyStateCard title="无匹配结果" description="可调整柜号或物流状态后重新搜索。" />
-          ) : (
-            filteredStatusShipments.map((item) => (
-              <div key={item.id} style={{ border: "1px solid #e5e7eb", borderRadius: 10, padding: 10, background: "#fff" }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
-                  <div style={{ display: "flex", gap: 14, color: "#000000", fontWeight: 600 }}>
-                    <span>柜号：{item.batchNo ?? "-"}</span>
-                    <span>物流状态：{toLogisticsStatus(item.currentStatus) || "-"}</span>
-                  </div>
-                  <button
-                    type="button"
-                    disabled={loading}
-                    onClick={() => {
-                      setEditingBatchNo(null);
-                      setEditingShipmentId(item.id);
-                      setStatusEditDraft({ toStatus: toLogisticsStatus(item.currentStatus), remark: "" });
-                      resetStatusAttach();
-                    }}
-                    style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "6px 12px", background: "#fff", fontWeight: 600, color: "#000000" }}
-                  >
-                    状态修改
-                  </button>
-                </div>
-                {editingShipmentId === item.id ? (
-                  <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 10 }}>
-                    <div style={{ display: "grid", gap: 8, gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))" }}>
-                      <select
-                        value={statusEditDraft.toStatus}
-                        onChange={(e) => setStatusEditDraft((v) => ({ ...v, toStatus: e.target.value }))}
-                        style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 10px" }}
-                      >
-                        <option value="">选择物流状态</option>
-                        {logisticsStatusOptions.map((status) => (
-                          <option key={status} value={status}>
-                            {status}
-                          </option>
-                        ))}
-                      </select>
-                      <textarea
-                        value={statusEditDraft.remark}
-                        onChange={(e) => setStatusEditDraft((v) => ({ ...v, remark: e.target.value }))}
-                        placeholder="编辑信息（手动输入，必填）"
-                        rows={3}
-                        style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 10px", resize: "vertical" }}
-                      />
-                    </div>
-                    <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "flex-start" }}>
-                      <div style={{ display: "flex", gap: 8 }}>
-                        <button
-                          type="button"
-                          disabled={loading}
-                          onClick={() => void submitStatusUpdate(item.id)}
-                          style={{ border: "none", borderRadius: 8, padding: "8px 14px", color: "#fff", background: "#4b5563" }}
-                        >
-                          确认修改
-                        </button>
-                        <button
-                          type="button"
-                          disabled={loading}
-                          onClick={() => {
-                            setEditingShipmentId(null);
-                            setStatusEditDraft({ toStatus: "", remark: "" });
-                            resetStatusAttach();
-                          }}
-                          style={{ border: "1px solid #cbd5e1", borderRadius: 8, padding: "8px 14px", background: "#fff", color: "#000000" }}
-                        >
-                          取消
-                        </button>
-                      </div>
-                      <StatusUpdateImageAttach
-                        disabled={loading}
-                        previewUrl={statusAttachPreviewUrl}
-                        fileName={statusAttachFile?.name ?? null}
-                        dragActive={statusAttachDragActive}
-                        onDragActive={setStatusAttachDragActive}
-                        onPickFile={handleStatusAttachPick}
-                      />
-                    </div>
-                  </div>
-                ) : null}
-              </div>
-            ))
-          )}
-        </div>
-      </section>
 
       <section
         id="staff-order-shipment"

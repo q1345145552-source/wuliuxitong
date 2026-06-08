@@ -52,7 +52,6 @@ export const roleFunctionMenus: Record<MockRole, RoleFunctionMenuItem[]> = {
     { id: "staff-func-prealert", label: "预报单审核", href: "/staff#staff-prealert-review" },
     { id: "staff-func-order-shipment", label: "运单管理", href: "/staff#staff-order-shipment" },
     { id: "staff-func-ops-tools", label: "入库与标签工具", href: "/staff#staff-ops-tools" },
-    { id: "staff-func-status", label: "状态更新", href: "/staff#staff-status-update" },
     { id: "staff-func-container-loading", label: "装柜管理", href: "/staff/container-loading" },
     { id: "staff-func-prices", label: "客户价格查询", href: "/staff/prices" },
     { id: "staff-func-lastmile", label: "尾端派送", href: "/staff#staff-lastmile" },

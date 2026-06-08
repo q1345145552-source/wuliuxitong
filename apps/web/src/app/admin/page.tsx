@@ -109,14 +109,6 @@ const logisticsStatusOptions = [
 ] as const;
 
 /** 中文状态 → 英文 status */
-const STATUS_REVERSE_MAP: Record<string, string> = {
-  "已创建": "created", "已揽收": "pickedup", "国内仓已收货": "inwarehousecn",
-  "报关中": "customspending", "已装柜": "loaded", "延迟开船": "delaydeparted",
-  "已开船": "departed", "已到港": "arrivedport", "运输中": "intransit",
-  "清关中": "customsth", "清关已放行": "customscleared", "已到仓": "inwarehouseth",
-  "派送中": "outfordelivery", "派送完成": "delivered",
-};
-
 /**
  * 管理端运单号前缀规则：仓库与单号前缀必须匹配。
  */

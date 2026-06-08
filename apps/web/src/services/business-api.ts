@@ -880,31 +880,6 @@ export async function patchStaffShipmentOrderBundle(payload: {
   return parseApiResponse(response);
 }
 
-export async function updateStaffShipmentStatus(payload: {
-  shipmentId?: string;
-  batchNo?: string;
-  updateByBatch?: boolean;
-  toStatus: string;
-  remark?: string;
-}): Promise<{
-  mode: "single" | "batch";
-  batchNo?: string | null;
-  shipmentId?: string | null;
-  shipmentIds: string[];
-  fromStatus?: string | null;
-  toStatus: string;
-  updatedCount: number;
-  changedAt: string;
-}> {
-  const response = await fetch(`${apiBaseUrl()}/staff/shipments/update-status`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...authHeaders(),
-    },
-    body: JSON.stringify(payload),
-  });
-  return parseApiResponse(response);
 }
 
 export async function fetchAdminOverview(): Promise<AdminOverview> {
