@@ -272,6 +272,7 @@ export default function StaffContainerLoadingPage() {
             <option value="wh_yiwu_01">义乌仓</option>
             <option value="wh_guangzhou_01">广州仓</option>
             <option value="wh_dongguan_01">东莞仓</option>
+            <option value="wh_shenzhen_01">深圳仓</option>
           </select>
           <button disabled={creating} onClick={handleCreate} style={{ border: "none", borderRadius: 6, padding: "8px 16px", background: "#2563eb", color: "#fff", fontWeight: 500, fontSize: 13, cursor: creating ? "not-allowed" : "pointer" }}>
             {creating ? "创建中…" : "创建"}
