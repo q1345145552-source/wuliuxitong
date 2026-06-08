@@ -24,10 +24,10 @@ async function calcByProducts(companyId, transportMode, products) {
     hasAny = true;
     const ct = prod.cargoType || "NORMAL";
     const key = `${transportMode}|${ct}`;
-    const rule = await p.pricingRule.findFirst({
+    const rule = companyId ? await p.pricingRule.findFirst({
       where: { companyId, transportMode, cargoType: ct, customerId: null },
       select: { unitPriceCny: true },
-    });
+    }) : null;
     const unitPrice = rule ? Number(rule.unitPriceCny.toString()) : (DEFAULT_UNIT_PRICES[key] || 550);
     const billable = Math.max(vol, MIN_VOLUME_M3);
     total += billable * unitPrice;
@@ -37,7 +37,7 @@ async function calcByProducts(companyId, transportMode, products) {
 
 async function main() {
   const orders = await p.order.findMany({
-    select: { id: true, itemName: true, transportMode: true },
+    select: { id: true, itemName: true, transportMode: true, companyId: true },
   });
 
   let fixed = 0;
@@ -48,7 +48,7 @@ async function main() {
     });
     if (products.length === 0) continue;
 
-    const amount = await calcByProducts(null, order.transportMode || "sea", products);
+    const amount = await calcByProducts(order.companyId, order.transportMode || "sea", products);
     if (amount !== null) {
       await p.order.update({
         where: { id: order.id },
