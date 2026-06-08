@@ -1484,6 +1484,18 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
     ok(res, { items: users });
   });
 
+  // 尾端派送：删除地址
+  app.delete("/staff/lastmile/addresses", async (req, res) => {
+    const auth = requireRole(req, res, ["staff", "admin"]);
+    if (!auth) return;
+    const id = req.query.id?.trim();
+    if (!id) { fail(res, 400, "BAD_REQUEST", "id is required"); return; }
+    const addr = await prisma.clientAddress.findFirst({ where: { id, companyId: auth.companyId } });
+    if (!addr) { fail(res, 404, "NOT_FOUND", "address not found"); return; }
+    await prisma.clientAddress.delete({ where: { id } });
+    ok(res, { deleted: true, id });
+  });
+
   // 获取客户列表（供员工端创建订单时选择）
   app.get("/staff/clients", async (req, res) => {
     const auth = requireRole(req, res, ["staff", "admin"]);

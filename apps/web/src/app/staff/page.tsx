@@ -510,6 +510,18 @@ export default function StaffHomePage() {
     try { setClientNotes(await fetchClientNotes()); } catch { }
   };
 
+  const deleteAddr = async (addrId: string) => {
+    try {
+      const resp = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:3001"}/staff/lastmile/addresses?id=${encodeURIComponent(addrId)}`, {
+        method: "DELETE",
+        headers: { ...(await import("../../services/core-api")).authHeaders() },
+      });
+      const json = await resp.json();
+      if (json.code === "OK") { setToast("地址已删除"); void loadLastmileAddresses(lastmileKeyword); }
+      else setMessage("删除失败：" + (json.message ?? "未知错误"));
+    } catch (e: any) { setMessage("删除失败：" + (e.message ?? "网络错误")); }
+  };
+
   const loadLastmileAddresses = async (keyword: string) => {
     setLastmileLoading(true);
     try {
@@ -3037,12 +3049,20 @@ export default function StaffHomePage() {
                   <div style={{ fontSize: 12, color: "#000000" }}>暂无地址</div>
                 ) : (
                   client.addresses.map((addr) => (
-                    <div key={addr.id} style={{ padding: "6px 8px", background: "#f8fafc", borderRadius: 6, marginBottom: 4, border: addr.isDefault ? "1px solid #bbf7d0" : "1px solid #f1f5f9" }}>
-                      <div style={{ fontSize: 12, color: "#000000" }}>
-                        {addr.isDefault ? <span style={{ color: "#16a34a", fontWeight: 600 }}>［默认］</span> : null}
-                        {addr.contactName} ｜ {addr.contactPhone}
+                    <div key={addr.id} style={{ padding: "6px 8px", background: "#f8fafc", borderRadius: 6, marginBottom: 4, border: addr.isDefault ? "1px solid #bbf7d0" : "1px solid #f1f5f9", display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontSize: 12, color: "#000000" }}>
+                          {addr.isDefault ? <span style={{ color: "#16a34a", fontWeight: 600 }}>［默认］</span> : null}
+                          {addr.contactName} ｜ {addr.contactPhone}
+                        </div>
+                        <div style={{ fontSize: 11, color: "#000000", marginTop: 2 }}>{addr.addressDetail}</div>
                       </div>
-                      <div style={{ fontSize: 11, color: "#000000", marginTop: 2 }}>{addr.addressDetail}</div>
+                      <div style={{ display: "flex", gap: 4, flexShrink: 0, marginLeft: 8 }}>
+                        <button type="button" onClick={() => {
+                          if (!confirm("确定删除该地址？")) return;
+                          deleteAddr(addr.id);
+                        }} style={{ border: "1px solid #fca5a5", borderRadius: 4, padding: "2px 5px", fontSize: 10, background: "#fff", color: "#dc2626", cursor: "pointer" }}>删除</button>
+                      </div>
                     </div>
                   ))
                 )}
