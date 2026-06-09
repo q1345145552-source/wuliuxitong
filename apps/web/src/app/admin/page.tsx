@@ -584,6 +584,11 @@ export default function AdminHomePage() {
 
   const confirmDeleteClient = async (userId: string, userName: string) => {
     if (!window.confirm(`确定要删除客户「${userName}」吗？删除后该账号将无法登录。此操作不可撤销。`)) return;
+    const pwd = window.prompt("请输入二级密码以确认删除：");
+    if (pwd !== "lyj200538") {
+      setMessage("二级密码错误，删除已取消");
+      return;
+    }
     setLoading(true);
     setMessage("");
     try {
