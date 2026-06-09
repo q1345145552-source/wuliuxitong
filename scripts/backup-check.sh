@@ -36,14 +36,7 @@ else
   fi
 fi
 
-# 4. 清理30天前的旧备份
-OLD_COUNT=$(find "$BACKUP_DIR" -type f -mtime +30 2>/dev/null | wc -l | tr -d ' ')
-if [ "$OLD_COUNT" -gt 0 ]; then
-  find "$BACKUP_DIR" -type f -mtime +30 -delete
-  log "🧹 清理了 $OLD_COUNT 个旧备份（30天前）"
-fi
-
-# 5. 磁盘空间预警
+# 4. 磁盘空间预警
 BACKUP_SIZE=$(du -sh "$BACKUP_DIR" 2>/dev/null | cut -f1)
 log "备份目录大小: $BACKUP_SIZE"
 log "========== 完成 =========="
