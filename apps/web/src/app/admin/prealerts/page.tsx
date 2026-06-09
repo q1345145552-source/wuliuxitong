@@ -6,7 +6,7 @@ import EmptyStateCard from "../../../modules/layout/EmptyStateCard";
 import RoleShell from "../../../modules/layout/RoleShell";
 import Toast from "../../../modules/layout/Toast";
 import {
-  approveStaffPrealert,
+  receiveStaffPrealert,
   fetchStaffPrealerts,
   type OrderItem,
 } from "../../../services/business-api";
@@ -124,7 +124,7 @@ export default function AdminPrealertsPage() {
     if (!draft.receivableAmountCny || draft.receivableAmountCny < 0) { setMessage("请输入应收金额"); return; }
     setLoading(true);
     try {
-      await approveStaffPrealert({
+      await receiveStaffPrealert({
         orderId: item.id,
         batchNo: `BATCH_${Date.now()}`,
         warehouseId: draft.warehouseId,
@@ -140,22 +140,22 @@ export default function AdminPrealertsPage() {
         transportMode: draft.transportMode,
         shipDate: draft.shipDate || undefined,
       });
-      setToast("审核通过，已生成运单");
+      setToast("已确认收货");
       setEditingPrealertId(null);
       await loadPrealerts();
     } catch (err) {
-      setMessage(`审核失败：${err instanceof Error ? err.message : "未知错误"}`);
+      setMessage(`确认收货失败：${err instanceof Error ? err.message : "未知错误"}`);
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <RoleShell allowedRole="admin" title="预报单审核">
+    <RoleShell allowedRole="admin" title="预报单收货确认">
       <Toast open={toast.length > 0} message={toast} />
       <div style={{ maxWidth: 1400, margin: "0 auto", padding: "24px 16px" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-          <h1 style={{ margin: 0, fontSize: 22, fontWeight: 700, color: "#111827" }}>预报单审核</h1>
+          <h1 style={{ margin: 0, fontSize: 22, fontWeight: 700, color: "#111827" }}>预报单收货确认</h1>
           <button onClick={loadPrealerts} disabled={loading} style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "6px 12px", background: "#fff", cursor: "pointer", color: "#000" }}>刷新</button>
         </div>
         {message ? <div style={{ marginBottom: 12, padding: 10, background: "#fef2f2", borderRadius: 8, color: "#b91c1c", fontSize: 13 }}>{message}</div> : null}
@@ -245,7 +245,7 @@ export default function AdminPrealertsPage() {
                       ) : (
                         <>
                           <button onClick={() => setEditingPrealertId(item.id)} style={{ border: "1px solid #2563eb", borderRadius: 6, padding: "4px 12px", background: "#eff6ff", color: "#2563eb", cursor: "pointer", fontSize: 12 }}>编辑</button>
-                          <button disabled={loading} onClick={() => handleApprove(item)} style={{ border: "none", borderRadius: 6, padding: "4px 12px", background: "#16a34a", color: "#fff", cursor: "pointer", fontSize: 12, fontWeight: 600 }}>审核通过</button>
+                          <button disabled={loading} onClick={() => handleApprove(item)} style={{ border: "none", borderRadius: 6, padding: "4px 12px", background: "#16a34a", color: "#fff", cursor: "pointer", fontSize: 12, fontWeight: 600 }}>确认收货</button>
                         </>
                       )}
                     </div>

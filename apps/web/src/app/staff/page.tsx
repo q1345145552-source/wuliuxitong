@@ -14,6 +14,7 @@ import Toast from "../../modules/layout/Toast";
 import { apiBaseUrl } from "../../services/core-api";
 import {
   approveStaffPrealert,
+  receiveStaffPrealert,
   createStaffOrder,
   deleteStaffOrderProductImage,
   fetchStaffClients,
@@ -1200,7 +1201,7 @@ export default function StaffHomePage() {
   }
 
 
-  const approvePrealert = async (orderId: string) => {
+  const receivePrealert = async (orderId: string) => {
     const sourceItem = prealerts.find((item) => item.id === orderId);
     const currentDraft = prealertEditDrafts[orderId] ?? (sourceItem ? buildPrealertDraft(sourceItem) : undefined);
     const confirmedDraft = prealertConfirmedDrafts[orderId] ?? currentDraft;
@@ -1210,7 +1211,7 @@ export default function StaffHomePage() {
     }
     const confirmedDraftError = validatePrealertDraft(confirmedDraft);
     if (confirmedDraftError) {
-      setMessage(`审核失败：${confirmedDraftError}`);
+      setMessage(`确认收货失败：${confirmedDraftError}`);
       return;
     }
     if (editingPrealertId === orderId && !isSamePrealertDraft(currentDraft, confirmedDraft)) {
@@ -1223,7 +1224,7 @@ export default function StaffHomePage() {
     setMessage("");
     try {
       const draft = confirmedDraft;
-      await approveStaffPrealert({
+      await receiveStaffPrealert({
         orderId,
         batchNo,
         warehouseId: draft?.warehouseId,
@@ -1240,12 +1241,12 @@ export default function StaffHomePage() {
         shipDate: draft?.shipDate,
       });
       setEditingPrealertId((current) => (current === orderId ? null : current));
-      setToast("预报单审核通过");
-      setMessage(`预报单 ${orderId} 已审核通过${batchNo ? `，柜号 ${batchNo}` : ""}。`);
+      setToast("已确认收货");
+      setMessage(`预报单 ${orderId} 已确认收货${batchNo ? `，柜号 ${batchNo}` : ""}。`);
       await loadPageData();
     } catch (error) {
-      const text = error instanceof Error ? error.message : "审核失败";
-      setMessage(`审核失败：${text}`);
+      const text = error instanceof Error ? error.message : "确认收货失败";
+      setMessage(`确认收货失败：${text}`);
     } finally {
       setLoading(false);
     }
@@ -1559,7 +1560,7 @@ export default function StaffHomePage() {
         }}
       >
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
-          <h2 style={{ margin: 0, fontSize: 18, color: "#111827" }}>客户预报单审核</h2>
+          <h2 style={{ margin: 0, fontSize: 18, color: "#111827" }}>预报单收货确认</h2>
           <button
             type="button"
             onClick={() => setPrealertPanelCollapsed((v) => !v)}
@@ -1578,7 +1579,7 @@ export default function StaffHomePage() {
         </div>
           <>
             {prealerts.length === 0 ? (
-              <EmptyStateCard title="暂无待审核预报单" description="客户提交预报单后会在这里显示，审核通过后会自动移出。" />
+              <EmptyStateCard title="暂无待审核预报单" description="客户提交预报单后会在这里显示，确认收货后会自动移出。" />
             ) : filteredPrealerts.length === 0 ? (
               <EmptyStateCard title="未找到匹配预报单" description="可调整客户名字、国内快递单号、仓库或运输方式筛选条件。" />
             ) : (
@@ -1907,7 +1908,7 @@ export default function StaffHomePage() {
                         onClick={() => setApprovingPrealert(item)}
                         style={{ border: "none", borderRadius: 8, padding: "8px 14px", color: "#fff", background: "#000000", fontWeight: 600 }}
                       >
-                        审核通过
+                        确认收货
                       </button>
                     </div>
                         </>
@@ -3154,7 +3155,7 @@ export default function StaffHomePage() {
                 const batchNo = (prealertBatchDrafts[item.id] ?? "").trim();
                 if (!draft.receivableAmountCny || draft.receivableAmountCny <= 0) { setToast("请填写应收金额"); return; }
                 try {
-                  await approveStaffPrealert({
+                  await receiveStaffPrealert({
                     orderId: item.id,
                     batchNo,
                     itemName: draft.itemName,
@@ -3169,14 +3170,14 @@ export default function StaffHomePage() {
                     transportMode: draft.transportMode,
                     shipDate: draft.shipDate,
                   });
-                  setToast(`预报单 ${item.id} 审核通过`);
+                  setToast(`预报单 ${item.id} 确认收货`);
                   await loadPageData();
                 } catch (error) {
-                  const text = error instanceof Error ? error.message : "审核失败";
-                  setToast("审核失败：" + text);
+                  const text = error instanceof Error ? error.message : "确认收货失败";
+                  setToast("确认收货失败：" + text);
                 }
                 setApprovingPrealert(null);
-              }} style={{ border: "none", borderRadius: 6, padding: "8px 16px", fontSize: 13, background: "#2563eb", color: "#fff", fontWeight: 500, cursor: "pointer" }}>审核通过</button>
+              }} style={{ border: "none", borderRadius: 6, padding: "8px 16px", fontSize: 13, background: "#2563eb", color: "#fff", fontWeight: 500, cursor: "pointer" }}>确认收货</button>
             </div>
           </div>
         </div>
