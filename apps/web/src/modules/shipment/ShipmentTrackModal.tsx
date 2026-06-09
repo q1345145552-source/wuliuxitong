@@ -1,7 +1,7 @@
 "use client";
 
 import { createRoot } from "react-dom/client";
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { authHeaders, apiBaseUrl } from "../../services/core-api";
 
 // ── Types ──
@@ -575,18 +575,27 @@ function ShipmentTrackModal({ trackingNo, onClose }: { trackingNo: string; onClo
 // ── Public API ──
 
 export function openShipmentTrack(trackingNo: string) {
+  // 移除旧弹窗
+  const old = document.getElementById("track-modal-root");
+  if (old) old.remove();
+
   const overlay = document.createElement("div");
   overlay.id = "track-modal-root";
   document.body.appendChild(overlay);
 
-  const root = createRoot(overlay);
-  root.render(
-    <ShipmentTrackModal
-      trackingNo={trackingNo}
-      onClose={() => {
-        root.unmount();
-        document.body.removeChild(overlay);
-      }}
-    />,
-  );
+  try {
+    const root = createRoot(overlay);
+    root.render(
+      <ShipmentTrackModal
+        trackingNo={trackingNo}
+        onClose={() => {
+          root.unmount();
+          overlay.remove();
+        }}
+      />,
+    );
+  } catch {
+    // fallback: 直接拼接 HTML（兼容旧浏览器）
+    overlay.innerHTML = `<div style="position:fixed;inset:0;z-index:9999;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.4);padding:16px" onclick="this.parentElement?.remove()"><div style="width:100%;max-width:500px;background:#fff;border-radius:12px;padding:24px;text-align:center"><div style="font-size:40px;margin-bottom:12px">😞</div><div style="font-size:14px;color:#b91c1c">加载失败，请刷新页面后重试</div></div></div>`;
+  }
 }
