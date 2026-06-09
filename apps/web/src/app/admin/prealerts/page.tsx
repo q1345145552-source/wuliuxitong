@@ -137,7 +137,7 @@ export default function AdminPrealertsPage() {
   };
 
   return (
-    <RoleShell role="admin">
+    <RoleShell allowedRole="admin">
       <Toast message={toast} />
       <div style={{ maxWidth: 1400, margin: "0 auto", padding: "24px 16px" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
