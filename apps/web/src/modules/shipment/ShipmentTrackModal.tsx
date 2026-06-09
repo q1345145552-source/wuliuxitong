@@ -169,12 +169,11 @@ function TimelineNode({ item, isLast, isChild }: { item: TimelineItem; isLast: b
             {item.remark}
           </div>
         ) : null}
-        <div style={{ fontSize: isChild ? 10 : 11, color: "#9ca3af", marginTop: 3 }}>
-          {item.operatorRole === "client"
-            ? "👤 客户"
-            : `${item.operatorRole === "staff" ? "💼" : "🔧"} ${item.operatorName || (item.operatorRole === "staff" ? "员工" : "管理员")} (${item.operatorRole === "staff" ? "员工" : "管理员"})`
-          }
-        </div>
+        {item.operatorRole !== "client" && (
+          <div style={{ fontSize: isChild ? 10 : 11, color: "#9ca3af", marginTop: 3 }}>
+            {item.operatorRole === "staff" ? "💼" : "🔧"} {item.operatorName || (item.operatorRole === "staff" ? "员工" : "管理员")}
+          </div>
+        )}
       </div>
     </div>
   );
