@@ -39,18 +39,24 @@ interface TrackData {
 // ── Status config ──
 
 const STATUS_CONFIG: Record<string, { zh: string; color: string; bg: string; icon: string }> = {
-  loaded:       { zh: "已装柜",   color: "#0369a1", bg: "#e0f2fe", icon: "📦" },
-  delayDeparted:{ zh: "延迟开船", color: "#b45309", bg: "#fef3c7", icon: "⚠️" },
-  departed:     { zh: "已开船",   color: "#1e40af", bg: "#dbeafe", icon: "🚢" },
-  arrivedPort:  { zh: "已到港",   color: "#065f46", bg: "#d1fae5", icon: "⚓" },
-  customsTH:    { zh: "清关中",   color: "#92400e", bg: "#fef3c7", icon: "📋" },
-  customsCleared:{ zh: "清关已放行", color: "#166534", bg: "#dcfce7", icon: "✅" },
-  inWarehouseTH:{ zh: "已到仓",   color: "#7c3aed", bg: "#ede9fe", icon: "🏠" },
-  outForDelivery:{ zh: "派送中",  color: "#db2777", bg: "#fce7f3", icon: "🚚" },
-  delivered:    { zh: "派送完成", color: "#16a34a", bg: "#f0fdf4", icon: "🎉" },
-  exception:    { zh: "异常",     color: "#dc2626", bg: "#fef2f2", icon: "❗" },
-  returned:     { zh: "已退回",   color: "#991b1b", bg: "#fee2e2", icon: "↩️" },
-  cancelled:    { zh: "已取消",   color: "#6b7280", bg: "#f3f4f6", icon: "❌" },
+  loaded:         { zh: "已装柜",     color: "#0369a1", bg: "#e0f2fe", icon: "📦" },
+  delaydeparted:  { zh: "延迟开船",   color: "#b45309", bg: "#fef3c7", icon: "⚠️" },
+  departed:       { zh: "已开船",     color: "#1e40af", bg: "#dbeafe", icon: "🚢" },
+  arrivedport:    { zh: "已到港",     color: "#065f46", bg: "#d1fae5", icon: "⚓" },
+  customsth:      { zh: "清关中",     color: "#92400e", bg: "#fef3c7", icon: "📋" },
+  customscleared: { zh: "清关已放行", color: "#166534", bg: "#dcfce7", icon: "✅" },
+  inwarehouseth:  { zh: "已到仓",     color: "#7c3aed", bg: "#ede9fe", icon: "🏠" },
+  outfordelivery: { zh: "派送中",     color: "#db2777", bg: "#fce7f3", icon: "🚚" },
+  delivered:      { zh: "派送完成",   color: "#16a34a", bg: "#f0fdf4", icon: "🎉" },
+  exception:      { zh: "异常",       color: "#dc2626", bg: "#fef2f2", icon: "❗" },
+  returned:       { zh: "已退回",     color: "#991b1b", bg: "#fee2e2", icon: "↩️" },
+  cancelled:      { zh: "已取消",     color: "#6b7280", bg: "#f3f4f6", icon: "❌" },
+  // 容器状态（旧日志兼容）
+  intransit:      { zh: "运输中",     color: "#1e40af", bg: "#dbeafe", icon: "🚢" },
+  customs:        { zh: "清关中",     color: "#92400e", bg: "#fef3c7", icon: "📋" },
+  loading:        { zh: "装柜中",     color: "#0369a1", bg: "#e0f2fe", icon: "📦" },
+  sealed:         { zh: "已封柜",     color: "#0369a1", bg: "#e0f2fe", icon: "📦" },
+  arrived:        { zh: "已到港",     color: "#065f46", bg: "#d1fae5", icon: "⚓" },
 };
 
 function statusCfg(s: string) {
