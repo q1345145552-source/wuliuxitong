@@ -140,28 +140,37 @@ async function generateTrackingNo(warehouseId: string, arrivedAt: string): Promi
 }
 
 /**
- * 生成预报单号：YWYB + 7 位序号流水，使用 pg_advisory_xact_lock 保证并发安全。
+ * 生成预报单号：仓库前缀 + YB + 7 位序号，使用 pg_advisory_xact_lock 保证并发安全。
  */
-const PREALERT_LOCK_KEY = 0x5afd00b1; // hash-like magic for "prealert_seq"
+const PREALERT_LOCK_KEY = 0x5afd00b1;
 
-async function generatePrealertNo(): Promise<string> {
+function prealertPrefix(warehouseId: string): string {
+  if (warehouseId === "wh_guangzhou_01") return "GZYB";
+  if (warehouseId === "wh_yiwu_01") return "YWYB";
+  if (warehouseId === "wh_dongguan_01") return "DGYB";
+  if (warehouseId === "wh_shenzhen_01") return "SZYB";
+  return "YWYB";
+}
+
+async function generatePrealertNo(warehouseId: string): Promise<string> {
+  const prefix = prealertPrefix(warehouseId);
   await prisma.$executeRaw`SELECT pg_advisory_xact_lock(${PREALERT_LOCK_KEY})`;
 
   const last = await prisma.order.findFirst({
-    where: { orderNo: { startsWith: "YWYB" } },
+    where: { orderNo: { startsWith: prefix } },
     orderBy: { orderNo: "desc" },
     select: { orderNo: true },
   });
 
   let nextSeq = 1;
   if (last?.orderNo) {
-    const numPart = parseInt(last.orderNo.replace("YWYB", ""), 10);
+    const numPart = parseInt(last.orderNo.replace(prefix, ""), 10);
     if (!Number.isNaN(numPart)) {
       nextSeq = numPart + 1;
     }
   }
 
-  return `YWYB${String(nextSeq).padStart(7, "0")}`;
+  return `${prefix}${String(nextSeq).padStart(7, "0")}`;
 }
 
 export function registerOrderRoutes(app: MinimalHttpApp): void {
@@ -235,6 +244,8 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
     const manualVolumeM3 = body.volumeM3 === undefined || body.volumeM3 === null ? null : Number(body.volumeM3);
     const orderId = `o_${Date.now()}`;
 
+    const orderNo = await generatePrealertNo(body.warehouseId.trim());
+
     await prisma.order.create({
       data: {
         id: orderId,
@@ -242,8 +253,8 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
         clientId: auth.userId,
         warehouseId: body.warehouseId.trim(),
         batchNo: null,
-        orderNo: body.trackingNo?.trim() || (await generatePrealertNo()),
-        approvalStatus: "pending",
+        orderNo,
+        approvalStatus: "shipped",
         itemName: primaryName,
         productQuantity: 0,
         packageCount: totalPkg,
@@ -292,72 +303,97 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
       }
     }
 
-    ok(res, { prealertId: orderId, createdAt: now });
+    // 同步创建运单（预报单=运单号）
+    const shipmentId = `s_${Date.now()}`;
+    await prisma.shipment.create({
+      data: {
+        id: shipmentId,
+        companyId: auth.companyId,
+        orderId,
+        trackingNo: orderNo,
+        batchNo: null,
+        currentStatus: "created",
+        weightKg: totalWeight > 0 ? (totalWeight as unknown as Prisma.Decimal) : (manualWeightKg as unknown as Prisma.Decimal | null),
+        volumeM3: totalVol > 0 ? (totalVol as unknown as Prisma.Decimal) : (manualVolumeM3 as unknown as Prisma.Decimal | null),
+        packageCount: totalPkg,
+        packageUnit: body.packageUnit ?? "box",
+        transportMode: body.transportMode,
+        domesticTrackingNo: body.domesticTrackingNo ?? null,
+        warehouseId: body.warehouseId.trim(),
+      },
+    });
+
+    ok(res, { prealertId: orderId, trackingNo: orderNo, createdAt: now });
   });
 
   /**
-   * 客户端确认发货 - 将已审核的预报单转为正式订单并生成运单号。
+   * 员工/管理员确认收货：核实数据并标记预报单为已收货。
    */
-  app.post("/client/prealerts/ship", async (req, res) => {
-    const auth = requireRole(req, res, ["client"]);
+  app.post("/staff/prealerts/receive", async (req, res) => {
+    const auth = requireRole(req, res, ["staff", "admin"]);
     if (!auth) return;
 
-    const body = (req.body ?? {}) as { orderId?: string };
+    const body = (req.body ?? {}) as {
+      orderId?: string;
+      itemName?: string;
+      packageCount?: number;
+      packageUnit?: "bag" | "box";
+      weightKg?: number;
+      volumeM3?: number;
+      productQuantity?: number;
+      domesticTrackingNo?: string;
+      transportMode?: "sea" | "land";
+      cargoType?: string;
+    };
     const orderId = body.orderId?.trim();
-    if (!orderId) {
-      fail(res, 400, "BAD_REQUEST", "orderId is required");
-      return;
-    }
+    if (!orderId) { fail(res, 400, "BAD_REQUEST", "orderId is required"); return; }
 
     const order = await prisma.order.findFirst({
-      where: { id: orderId, companyId: auth.companyId, clientId: auth.userId },
+      where: { id: orderId, companyId: auth.companyId },
+      include: { shipments: { take: 1, select: { id: true } } },
     });
-    if (!order) {
-      fail(res, 404, "NOT_FOUND", "order not found");
-      return;
-    }
-    if (order.approvalStatus !== "approved") {
-      fail(res, 400, "VALIDATION_ERROR", "prealert is not in approved status");
+    if (!order) { fail(res, 404, "NOT_FOUND", "order not found"); return; }
+    if (order.approvalStatus === "received") {
+      fail(res, 400, "VALIDATION_ERROR", "已确认收货");
       return;
     }
 
-    // 查找对应的运单（审核时已创建，trackingNo 为 AUTO_ 占位符）
-    const shipment = await prisma.shipment.findFirst({
-      where: { orderId, companyId: auth.companyId },
-    });
-    if (!shipment) {
-      fail(res, 404, "NOT_FOUND", "shipment not found for this order");
-      return;
-    }
-
-    // 运单号已在审核时生成，此处仅更新状态
     const now = new Date();
-    const shippedAt = now.toISOString();
+    const updateData: any = {
+      approvalStatus: "received",
+      statusGroup: "unfinished",
+      updatedAt: now,
+    };
+    if (body.itemName?.trim()) updateData.itemName = body.itemName.trim();
+    if (body.packageCount !== undefined) updateData.packageCount = Number(body.packageCount);
+    if (body.packageUnit) updateData.packageUnit = body.packageUnit;
+    if (body.weightKg !== undefined) updateData.weightKg = body.weightKg as any;
+    if (body.volumeM3 !== undefined) updateData.volumeM3 = body.volumeM3 as any;
+    if (body.productQuantity !== undefined) updateData.productQuantity = Number(body.productQuantity);
+    if (body.transportMode) updateData.transportMode = body.transportMode;
+    if (body.cargoType) updateData.cargoType = body.cargoType;
+    if (body.domesticTrackingNo) updateData.domesticTrackingNo = body.domesticTrackingNo;
 
-    // 更新运单状态
-    await prisma.shipment.update({
-      where: { id: shipment.id },
-      data: {
-        currentStatus: "created",
-        updatedAt: now,
-      },
-    });
+    await prisma.order.update({ where: { id: orderId }, data: updateData });
 
-    // 更新订单状态（确认发货）
-    await prisma.order.update({
-      where: { id: orderId },
-      data: {
-        approvalStatus: "shipped",
-        statusGroup: "unfinished",
-        updatedAt: now,
-      },
-    });
+    // 同步更新运单
+    const shipment = order.shipments[0];
+    if (shipment) {
+      const sUpdate: any = { updatedAt: now };
+      if (body.weightKg !== undefined) sUpdate.weightKg = body.weightKg as any;
+      if (body.volumeM3 !== undefined) sUpdate.volumeM3 = body.volumeM3 as any;
+      if (body.packageCount !== undefined) sUpdate.packageCount = Number(body.packageCount);
+      if (body.packageUnit) sUpdate.packageUnit = body.packageUnit;
+      if (body.transportMode) sUpdate.transportMode = body.transportMode;
+      if (body.itemName?.trim()) sUpdate.itemName = body.itemName.trim();
+      await prisma.shipment.update({ where: { id: shipment.id }, data: sUpdate });
+    }
 
-    ok(res, { orderId, trackingNo: shipment.trackingNo, shippedAt });
+    ok(res, { orderId, status: "received", updatedAt: now.toISOString() });
   });
 
   /**
-   * 客户端删除待审核预报单（仅 pending 状态可删）。
+   * 客户端删除预报单（已收货前可删）。
    */
   app.post("/client/prealerts/delete", async (req, res) => {
     const auth = requireRole(req, res, ["client"]);
@@ -375,8 +411,8 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
       fail(res, 404, "NOT_FOUND", "order not found");
       return;
     }
-    if (order.approvalStatus !== "pending") {
-      fail(res, 400, "VALIDATION_ERROR", "only pending prealert can be deleted");
+    if (order.approvalStatus === "received") {
+      fail(res, 400, "VALIDATION_ERROR", "已确认收货，无法删除");
       return;
     }
     await prisma.orderProductImage.deleteMany({ where: { orderId } });
@@ -416,8 +452,8 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
       fail(res, 404, "NOT_FOUND", "order not found");
       return;
     }
-    if (order.approvalStatus !== "pending") {
-      fail(res, 400, "VALIDATION_ERROR", "only pending prealert can be edited");
+    if (order.approvalStatus === "received") {
+      fail(res, 400, "VALIDATION_ERROR", "已确认收货，无法编辑");
       return;
     }
     const now = new Date();
@@ -933,7 +969,7 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
     const orders = await prisma.order.findMany({
       where: {
         companyId: auth.companyId,
-        approvalStatus: "pending",
+        approvalStatus: { in: ["shipped", "received"] },
       },
       orderBy: { createdAt: "desc" },
       include: {
@@ -1312,163 +1348,7 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
     });
   });
 
-  app.post("/staff/prealerts/approve", async (req, res) => {
-    const auth = requireRole(req, res, ["staff", "admin"]);
-    if (!auth) return;
-    const body = (req.body ?? {}) as {
-      orderId?: string;
-      batchNo?: string;
-      itemName?: string;
-      packageCount?: number;
-      packageUnit?: "bag" | "box";
-      productQuantity?: number;
-      weightKg?: number;
-      volumeM3?: number;
-      receivableAmountCny?: number;
-      receivableCurrency?: "CNY" | "THB";
-      domesticTrackingNo?: string;
-      transportMode?: "sea" | "land";
-      shipDate?: string;
-      trackingNo?: string;
-    };
-    if (!body.orderId) {
-      fail(res, 400, "BAD_REQUEST", "orderId is required");
-      return;
-    }
-
-    const order = await prisma.order.findFirst({
-      where: { id: body.orderId, companyId: auth.companyId },
-      select: {
-        id: true,
-        warehouseId: true,
-        approvalStatus: true,
-        itemName: true,
-        productQuantity: true,
-        packageCount: true,
-        packageUnit: true,
-        weightKg: true,
-        volumeM3: true,
-        domesticTrackingNo: true,
-        transportMode: true,
-        shipDate: true,
-      },
-    });
-    if (!order) {
-      fail(res, 404, "NOT_FOUND", "prealert order not found");
-      return;
-    }
-    if (order.approvalStatus !== "pending") {
-      fail(res, 400, "VALIDATION_ERROR", "order is not pending");
-      return;
-    }
-
-    const now = new Date();
-    const nowIso = now.toISOString();
-    const batchNo = body.batchNo?.trim() || null;
-    const itemName = body.itemName?.trim() || order.itemName;
-    const packageCount = body.packageCount === undefined ? order.packageCount : Number(body.packageCount);
-    const productQuantity = body.productQuantity === undefined ? order.productQuantity : Number(body.productQuantity);
-    const packageUnit = body.packageUnit ?? (order.packageUnit as "bag" | "box");
-    const weightKg = body.weightKg === undefined ? decToNumber(order.weightKg) : Number(body.weightKg);
-    const volumeM3 = body.volumeM3 === undefined ? decToNumber(order.volumeM3) : Number(body.volumeM3);
-    const receivableAmountCny = body.receivableAmountCny === undefined ? null : Number(body.receivableAmountCny);
-    const receivableCurrency = body.receivableCurrency === "THB" ? "THB" : "CNY";
-    const domesticTrackingNo =
-      body.domesticTrackingNo === undefined ? order.domesticTrackingNo : body.domesticTrackingNo.trim() || null;
-    const transportMode = body.transportMode ?? (order.transportMode as "sea" | "land");
-    const shipDate = body.shipDate === undefined ? (order.shipDate ?? nowIso.slice(0, 10)) : body.shipDate.trim();
-
-    if (
-      Number.isNaN(packageCount) ||
-      Number.isNaN(productQuantity) ||
-      (weightKg !== null && Number.isNaN(weightKg)) ||
-      (volumeM3 !== null && Number.isNaN(volumeM3)) ||
-      (receivableAmountCny !== null && Number.isNaN(receivableAmountCny))
-    ) {
-      fail(res, 400, "BAD_REQUEST", "invalid numeric fields");
-      return;
-    }
-    if (receivableAmountCny === null || receivableAmountCny <= 0) {
-      fail(res, 400, "BAD_REQUEST", "receivableAmountCny must be greater than 0");
-      return;
-    }
-    if (packageUnit !== "bag" && packageUnit !== "box") {
-      fail(res, 400, "BAD_REQUEST", "invalid packageUnit");
-      return;
-    }
-    if (transportMode !== "sea" && transportMode !== "land") {
-      fail(res, 400, "BAD_REQUEST", "invalid transportMode");
-      return;
-    }
-    if (!shipDate) {
-      fail(res, 400, "BAD_REQUEST", "shipDate is required");
-      return;
-    }
-    const shipDateParsed = new Date(`${shipDate}T00:00:00`);
-    if (Number.isNaN(shipDateParsed.getTime())) {
-      fail(res, 400, "BAD_REQUEST", "invalid shipDate");
-      return;
-    }
-
-    await prisma.order.update({
-      where: { id: order.id },
-      data: {
-        approvalStatus: "approved",
-        batchNo,
-        itemName,
-        productQuantity,
-        packageCount,
-        packageUnit,
-        weightKg: (weightKg as unknown as Prisma.Decimal | null),
-        volumeM3: (volumeM3 as unknown as Prisma.Decimal | null),
-        receivableAmountCny: receivableAmountCny as unknown as Prisma.Decimal,
-        receivableCurrency,
-        shipDate,
-        domesticTrackingNo,
-        transportMode,
-      },
-    });
-
-    const existingShipment = await prisma.shipment.findFirst({
-      where: { orderId: order.id, companyId: auth.companyId },
-      select: { id: true },
-    });
-    if (!existingShipment) {
-      const shipmentId = `s_${Date.now()}`;
-      const manualTrackingNo = body.trackingNo?.trim();
-      if (manualTrackingNo) {
-        const clash = await prisma.shipment.findFirst({
-          where: { trackingNo: manualTrackingNo, companyId: auth.companyId },
-          select: { id: true },
-        });
-        if (clash) {
-          fail(res, 409, "CONFLICT", `运单号 ${manualTrackingNo} 已存在`);
-          return;
-        }
-      }
-      const generatedTrackingNo = manualTrackingNo || (await generateTrackingNo(order.warehouseId, nowIso));
-      await prisma.shipment.create({
-        data: {
-          id: shipmentId,
-          companyId: auth.companyId,
-          orderId: order.id,
-          trackingNo: generatedTrackingNo,
-          batchNo,
-          currentStatus: "created",
-          currentLocation: null,
-          weightKg: (weightKg as unknown as Prisma.Decimal | null),
-          volumeM3: (volumeM3 as unknown as Prisma.Decimal | null),
-          packageCount,
-          packageUnit,
-          transportMode,
-          domesticTrackingNo,
-          warehouseId: order.warehouseId,
-        },
-      });
-    }
-
-    ok(res, { orderId: order.id, batchNo, approvalStatus: "approved", approvedAt: nowIso });
-  });
+  // approve endpoint removed — replaced by POST /staff/prealerts/receive
 
   // 尾端派送：获取所有客户及其地址
   app.get("/staff/lastmile/addresses", async (req, res) => {

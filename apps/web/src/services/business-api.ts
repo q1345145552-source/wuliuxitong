@@ -199,7 +199,7 @@ export interface OrderItem {
   itemName: string;
   transportMode: string;
   cargoType?: string;
-  approvalStatus?: "pending" | "approved" | "shipped";
+  approvalStatus?: "pending" | "approved" | "shipped" | "received";
   domesticTrackingNo?: string;
   trackingNo?: string;
   currentStatus?: string;
@@ -649,6 +649,26 @@ export async function fetchStaffPrealerts(): Promise<OrderItem[]> {
   });
   const data = await parseApiResponse<{ items: OrderItem[] }>(response);
   return data.items;
+}
+
+export async function receiveStaffPrealert(payload: {
+  orderId: string;
+  itemName?: string;
+  packageCount?: number;
+  packageUnit?: "bag" | "box";
+  productQuantity?: number;
+  weightKg?: number;
+  volumeM3?: number;
+  domesticTrackingNo?: string;
+  transportMode?: "sea" | "land";
+  cargoType?: string;
+}): Promise<{ orderId: string; status: string; updatedAt: string }> {
+  const response = await fetch(`${apiBaseUrl()}/staff/prealerts/receive`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify(payload),
+  });
+  return parseApiResponse(response);
 }
 
 export async function approveStaffPrealert(payload: {

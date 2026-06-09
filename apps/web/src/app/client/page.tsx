@@ -13,7 +13,7 @@ import {
   fetchClientAddresses,
   createClientPrealert,
   fetchClientPrealerts,
-  shipClientPrealert,
+  // shipClientPrealert removed — 预报单创建即已发货
   deleteClientPrealert,
   updateClientPrealert,
   fetchClientOrders,
@@ -326,22 +326,6 @@ export default function ClientHomePage() {
       setMessage(`提交失败：${text}`);
     } finally {
       setLoading(false);
-    }
-  };
-
-  const handleShip = async (orderId: string) => {
-    try {
-      const result = await shipClientPrealert(orderId);
-      setToast("确认发货成功！运单号：" + result.trackingNo);
-      await refreshMainData();
-      // 同步更新运单查询列表（若已查询过）
-      if (hasQueried) {
-        const orders = await fetchClientOrders();
-        setQueriedOrders(orders);
-      }
-    } catch (error) {
-      const text = error instanceof Error ? error.message : "确认发货失败";
-      setToast("确认发货失败：" + text);
     }
   };
 
@@ -730,14 +714,12 @@ export default function ClientHomePage() {
                 if (!q) return true;
                 return item.id.toLowerCase().includes(q) || (item.itemName ?? "").toLowerCase().includes(q);
               }).slice(0, pageSize).map((item) => {
-                const isPending = item.approvalStatus === "pending";
-                const isApproved = item.approvalStatus === "approved";
                 const isShipped = item.approvalStatus === "shipped";
-                const isReceived = item.currentStatus === "delivered" || item.currentStatus === "inWarehouseCN";
-                const sLabel = isPending ? "待审核" : isApproved ? "已审核" : isReceived ? "已入库" : "已发货";
-                const sColor = isPending ? "#92400e" : isApproved ? "#0369a1" : isReceived ? "#16a34a" : "#000000";
-                const sBg = isPending ? "#fef3c7" : isApproved ? "#e0f2fe" : isReceived ? "#dcfce7" : "#f3f4f6";
-                const sBd = isPending ? "#fde68a" : isApproved ? "#7dd3fc" : isReceived ? "#86efac" : "#e5e7eb";
+                const isReceived = item.approvalStatus === "received";
+                const sLabel = isReceived ? "已收货" : "已发货";
+                const sColor = isReceived ? "#16a34a" : "#0369a1";
+                const sBg = isReceived ? "#dcfce7" : "#e0f2fe";
+                const sBd = isReceived ? "#86efac" : "#7dd3fc";
                 return (
                   <div key={item.id} style={{ border: "1px solid " + sBd, borderRadius: 8, padding: 12, background: "#fff" }}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8 }}>
@@ -752,7 +734,7 @@ export default function ClientHomePage() {
                       <div>件数：{item.packageCount} {item.packageUnit === "box" ? "箱" : "袋"}</div>
                       <div>运输：{item.transportMode === "sea" ? "海运" : "陆运"}</div>
                       
-                      {isShipped && item.trackingNo ? <div>运单号：{item.trackingNo}</div> : null}
+                      {item.trackingNo ? <div>运单号：{item.trackingNo}</div> : null}
                     </div>
                     {(item.products?.length ?? 0) > 1 && (
                       <div style={{ marginBottom: 8, fontSize: 12, color: "#000000", background: "#f8fafc", borderRadius: 6, padding: "6px 8px" }}>
@@ -775,7 +757,7 @@ export default function ClientHomePage() {
                       </div>
                     )}
                     <div style={{ display: "flex", gap: 6, justifyContent: "flex-end", borderTop: "1px solid #f3f4f6", paddingTop: 8 }}>
-                      {isPending && (
+                      {isShipped && (
                         <>
                           <button type="button" onClick={() => setEditingPrealert(item)}
                             style={{ border: "1px solid #d1d5db", borderRadius: 4, padding: "4px 10px", fontSize: 12, background: "#fff", color: "#000000", cursor: "pointer" }}>编辑</button>
@@ -786,12 +768,7 @@ export default function ClientHomePage() {
                           }} style={{ border: "1px solid #fca5a5", borderRadius: 4, padding: "4px 10px", fontSize: 12, background: "#fff", color: "#dc2626", cursor: "pointer" }}>删除</button>
                         </>
                       )}
-                      {isApproved && (
-                        <button type="button" disabled={false} onClick={() => {
-                          if (confirm("确认发货？预报单号：" + (item.orderNo || item.id))) void handleShip(item.id);
-                        }} style={{ border: "none", borderRadius: 4, padding: "4px 14px", fontSize: 12, background: "#16a34a", color: "#fff", fontWeight: 500, cursor: "pointer" }}>确认发货</button>
-                      )}
-                      {(isApproved || isShipped) && item.trackingNo ? (
+                                            {(isShipped || isReceived) && item.trackingNo ? (
                         <button type="button" onClick={() => openPrintLabel({ marks: item.clientId ?? "", packageCount: item.packageCount ?? "—", trackingNo: item.trackingNo ?? "", itemName: item.itemName, productQuantity: item.productQuantity, transportMode: item.transportMode, products: item.products?.map(p => ({ itemName: p.itemName, packageCount: p.packageCount })) })} style={{ border: "1px solid #16a34a", borderRadius: 4, padding: "4px 10px", fontSize: 12, background: "#fff", color: "#16a34a", cursor: "pointer", marginLeft: 6 }}>打印</button>
                       ) : null}
                       {item.trackingNo ? (
@@ -1408,14 +1385,12 @@ export default function ClientHomePage() {
                 if (!q) return true;
                 return item.id.toLowerCase().includes(q) || (item.itemName ?? "").toLowerCase().includes(q);
               }).slice(0, pageSize).map((item) => {
-                const isPending = item.approvalStatus === "pending";
-                const isApproved = item.approvalStatus === "approved";
                 const isShipped = item.approvalStatus === "shipped";
-                const isReceived = item.currentStatus === "delivered" || item.currentStatus === "inWarehouseCN";
-                const sLabel = isPending ? "待审核" : isApproved ? "已审核" : isReceived ? "已入库" : "已发货";
-                const sColor = isPending ? "#92400e" : isApproved ? "#0369a1" : isReceived ? "#16a34a" : "#000000";
-                const sBg = isPending ? "#fef3c7" : isApproved ? "#e0f2fe" : isReceived ? "#dcfce7" : "#f3f4f6";
-                const sBd = isPending ? "#fde68a" : isApproved ? "#7dd3fc" : isReceived ? "#86efac" : "#e5e7eb";
+                const isReceived = item.approvalStatus === "received";
+                const sLabel = isReceived ? "已收货" : "已发货";
+                const sColor = isReceived ? "#16a34a" : "#0369a1";
+                const sBg = isReceived ? "#dcfce7" : "#e0f2fe";
+                const sBd = isReceived ? "#86efac" : "#7dd3fc";
                 return (
                   <div key={item.id} style={{ border: "1px solid " + sBd, borderRadius: 8, padding: 12, background: "#fff" }}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8 }}>
@@ -1430,7 +1405,7 @@ export default function ClientHomePage() {
                       <div>件数：{item.packageCount} {item.packageUnit === "box" ? "箱" : "袋"}</div>
                       <div>运输：{item.transportMode === "sea" ? "海运" : "陆运"}</div>
                       
-                      {isShipped && item.trackingNo ? <div>运单号：{item.trackingNo}</div> : null}
+                      {item.trackingNo ? <div>运单号：{item.trackingNo}</div> : null}
                     </div>
                     {(item.products?.length ?? 0) > 1 && (
                       <div style={{ marginBottom: 8, fontSize: 12, color: "#000000", background: "#f8fafc", borderRadius: 6, padding: "6px 8px" }}>
@@ -1453,7 +1428,7 @@ export default function ClientHomePage() {
                       </div>
                     )}
                     <div style={{ display: "flex", gap: 6, justifyContent: "flex-end", borderTop: "1px solid #f3f4f6", paddingTop: 8 }}>
-                      {isPending && (
+                      {isShipped && (
                         <>
                           <button type="button" onClick={() => setEditingPrealert(item)}
                             style={{ border: "1px solid #d1d5db", borderRadius: 4, padding: "4px 10px", fontSize: 12, background: "#fff", color: "#000000", cursor: "pointer" }}>编辑</button>
@@ -1464,12 +1439,7 @@ export default function ClientHomePage() {
                           }} style={{ border: "1px solid #fca5a5", borderRadius: 4, padding: "4px 10px", fontSize: 12, background: "#fff", color: "#dc2626", cursor: "pointer" }}>删除</button>
                         </>
                       )}
-                      {isApproved && (
-                        <button type="button" disabled={false} onClick={() => {
-                          if (confirm("确认发货？预报单号：" + (item.orderNo || item.id))) void handleShip(item.id);
-                        }} style={{ border: "none", borderRadius: 4, padding: "4px 14px", fontSize: 12, background: "#16a34a", color: "#fff", fontWeight: 500, cursor: "pointer" }}>确认发货</button>
-                      )}
-                      {(isApproved || isShipped) && item.trackingNo ? (
+                                            {(isShipped || isReceived) && item.trackingNo ? (
                         <button type="button" onClick={() => openPrintLabel({ marks: item.clientId ?? "", packageCount: item.packageCount ?? "—", trackingNo: item.trackingNo ?? "", itemName: item.itemName, productQuantity: item.productQuantity, transportMode: item.transportMode, products: item.products?.map(p => ({ itemName: p.itemName, packageCount: p.packageCount })) })} style={{ border: "1px solid #16a34a", borderRadius: 4, padding: "4px 10px", fontSize: 12, background: "#fff", color: "#16a34a", cursor: "pointer", marginLeft: 6 }}>打印</button>
                       ) : null}
                       {item.trackingNo ? (
