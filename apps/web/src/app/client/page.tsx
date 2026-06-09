@@ -1359,9 +1359,10 @@ export default function ClientHomePage() {
                         <div style={{ fontSize: 11, color: "#9ca3af", marginBottom: 3 }}>{record.periodText}</div>
                         {record.remark ? <div style={{ fontSize: 12, color: "#4b5563", lineHeight: 1.5 }}>{record.remark}</div> : null}
                         <div style={{ fontSize: 10, color: "#9ca3af", marginTop: 4 }}>
-                          {record.operatorRole === "client" ? "👤" : record.operatorRole === "staff" ? "💼" : "🔧"}
-                          {" "}{record.operatorName || (record.operatorRole === "client" ? "客户" : record.operatorRole === "staff" ? "员工" : "管理员")}
-                          {record.operatorRole ? <span style={{ marginLeft: 3, color: "#d1d5db" }}>({record.operatorRole === "client" ? "客户" : record.operatorRole === "staff" ? "员工" : "管理员"})</span> : null}
+                          {record.operatorRole === "client"
+                            ? "👤 客户"
+                            : `${record.operatorRole === "staff" ? "💼" : "🔧"} ${record.operatorName || (record.operatorRole === "staff" ? "员工" : "管理员")} (${record.operatorRole === "staff" ? "员工" : "管理员"})`
+                          }
                         </div>
                       </div>
                     </div>

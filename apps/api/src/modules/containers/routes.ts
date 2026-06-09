@@ -585,8 +585,8 @@ export function registerContainerRoutes(app: MinimalHttpApp): void {
       totalLoadedM3: Number(totalLoaded.toFixed(3)),
       isSplit,
       splitCount: shipment.containerItems.length,
-      // 所属的所有柜子（拆柜情况下会有多个）
-      containers: shipment.containerItems
+      // 所属的所有柜子（拆柜情况下会有多个）— 客户端隐藏
+      containers: auth.role === "client" ? [] : shipment.containerItems
         .sort((a, b) => a.container.createdAt.getTime() - b.container.createdAt.getTime())
         .map((it) => ({
           containerId: it.containerId,
@@ -618,7 +618,7 @@ export function registerContainerRoutes(app: MinimalHttpApp): void {
       children: childShipments.length > 0
         ? childShipments.map((cs) => ({
             trackingNo: cs.trackingNo,
-            batchNo: cs.batchNo,
+            batchNo: auth.role === "client" ? null : cs.batchNo,
             itemName: cs.itemName,
             packageCount: cs.packageCount,
             currentStatus: cs.currentStatus,
