@@ -415,20 +415,23 @@ function TrackContent({ data }: { data: TrackData }) {
 
 // ── Modal wrapper ──
 
-function ShipmentTrackModal({ trackingNo, onClose }: { trackingNo: string; onClose: () => void }) {
+function ShipmentTrackModal({ trackingOrId, onClose }: { trackingOrId: string; onClose: () => void }) {
   const [data, setData] = useState<TrackData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
-  useEffect(() => {
+  const load = () => {
     setLoading(true);
     setError("");
-    const params = new URLSearchParams({ trackingNo });
+    const isUuid = /^[a-f0-9-]{20,}$/i.test(trackingOrId);
+    const params = new URLSearchParams(
+      isUuid ? { shipmentId: trackingOrId } : { trackingNo: trackingOrId }
+    );
     fetch(`${apiBaseUrl()}/client/shipments/track?${params.toString()}`, {
       headers: { ...authHeaders() },
     })
       .then((resp) => resp.json())
-      .then((json) => {
+      .then((json: any) => {
         setData(json.data ?? null);
         setLoading(false);
       })
@@ -436,7 +439,9 @@ function ShipmentTrackModal({ trackingNo, onClose }: { trackingNo: string; onClo
         setError("加载失败，请重试");
         setLoading(false);
       });
-  }, [trackingNo]);
+  };
+
+  useEffect(() => { load(); }, [trackingOrId]);
 
   return (
     <div
@@ -480,7 +485,7 @@ function ShipmentTrackModal({ trackingNo, onClose }: { trackingNo: string; onClo
           <div>
             <h3 style={{ margin: 0, fontSize: 18, fontWeight: 700, color: "#111827" }}>物流轨迹</h3>
             <div style={{ fontSize: 12, color: "#6b7280", marginTop: 2, fontFamily: "monospace" }}>
-              {trackingNo}
+              {data?.trackingNo || trackingOrId}
             </div>
           </div>
           <button
@@ -521,17 +526,7 @@ function ShipmentTrackModal({ trackingNo, onClose }: { trackingNo: string; onClo
               <div style={{ fontSize: 40, marginBottom: 12 }}>😞</div>
               <div style={{ fontSize: 14, color: "#b91c1c", marginBottom: 8 }}>{error}</div>
               <button
-                onClick={() => {
-                  setLoading(true);
-                  setError("");
-                  const params = new URLSearchParams({ trackingNo });
-                  fetch(`${apiBaseUrl()}/client/shipments/track?${params.toString()}`, {
-                    headers: { ...authHeaders() },
-                  })
-                    .then((resp) => resp.json())
-                    .then((json) => { setData(json.data ?? null); setLoading(false); })
-                    .catch(() => { setError("加载失败，请重试"); setLoading(false); });
-                }}
+                onClick={() => load()}
                 style={{
                   border: "1px solid #d1d5db",
                   borderRadius: 8,
@@ -574,7 +569,7 @@ function ShipmentTrackModal({ trackingNo, onClose }: { trackingNo: string; onClo
 
 // ── Public API ──
 
-export function openShipmentTrack(trackingNo: string) {
+export function openShipmentTrack(trackingOrId: string) {
   // 移除旧弹窗
   const old = document.getElementById("track-modal-root");
   if (old) old.remove();
@@ -587,7 +582,7 @@ export function openShipmentTrack(trackingNo: string) {
     const root = createRoot(overlay);
     root.render(
       <ShipmentTrackModal
-        trackingNo={trackingNo}
+        trackingOrId={trackingOrId}
         onClose={() => {
           root.unmount();
           overlay.remove();
@@ -595,7 +590,6 @@ export function openShipmentTrack(trackingNo: string) {
       />,
     );
   } catch {
-    // fallback: 直接拼接 HTML（兼容旧浏览器）
     overlay.innerHTML = `<div style="position:fixed;inset:0;z-index:9999;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.4);padding:16px" onclick="this.parentElement?.remove()"><div style="width:100%;max-width:500px;background:#fff;border-radius:12px;padding:24px;text-align:center"><div style="font-size:40px;margin-bottom:12px">😞</div><div style="font-size:14px;color:#b91c1c">加载失败，请刷新页面后重试</div></div></div>`;
   }
 }
