@@ -89,6 +89,12 @@ export default function AdminPrealertsPage() {
 
   useEffect(() => { loadPrealerts(); }, []);
 
+  useEffect(() => {
+    if (!toast) return;
+    const t = window.setTimeout(() => setToast(""), 2200);
+    return () => window.clearTimeout(t);
+  }, [toast]);
+
   const filteredPrealerts = useMemo(() => {
     return prealerts.filter((item) => {
       if (prealertSearch.clientName) {
@@ -138,7 +144,7 @@ export default function AdminPrealertsPage() {
 
   return (
     <RoleShell allowedRole="admin" title="预报单审核">
-      <Toast message={toast} />
+      <Toast open={toast.length > 0} message={toast} />
       <div style={{ maxWidth: 1400, margin: "0 auto", padding: "24px 16px" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
           <h1 style={{ margin: 0, fontSize: 22, fontWeight: 700, color: "#111827" }}>预报单审核</h1>
