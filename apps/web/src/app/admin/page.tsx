@@ -110,6 +110,14 @@ const cardStyle = {
   fontSize: 14,
 };
 
+const prealertEditInputStyle: React.CSSProperties = {
+  border: "1px solid #d1d5db",
+  borderRadius: 6,
+  padding: "6px 8px",
+  fontSize: 12,
+  width: "100%",
+};
+
 const WAREHOUSE_LABEL_MAP: Record<string, string> = {
   wh_yiwu_01: "义乌仓",
   wh_guangzhou_01: "广州仓",
