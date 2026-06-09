@@ -126,19 +126,14 @@ export default function AdminPrealertsPage() {
     try {
       await receiveStaffPrealert({
         orderId: item.id,
-        batchNo: `BATCH_${Date.now()}`,
-        warehouseId: draft.warehouseId,
         itemName: draft.itemName.trim(),
         packageCount: draft.packageCount,
         packageUnit: draft.packageUnit,
         productQuantity: draft.productQuantity,
         weightKg: draft.weightKg || undefined,
         volumeM3: draft.volumeM3 || undefined,
-        receivableAmountCny: draft.receivableAmountCny,
-        receivableCurrency: draft.receivableCurrency,
         domesticTrackingNo: draft.domesticTrackingNo.trim() || undefined,
         transportMode: draft.transportMode,
-        shipDate: draft.shipDate || undefined,
       });
       setToast("已确认收货");
       setEditingPrealertId(null);
