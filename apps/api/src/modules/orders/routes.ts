@@ -393,7 +393,7 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
   });
 
   /**
-   * 客户端删除预报单（已收货前可删）。
+   * 客户端删除预报单（确认收货前可删）。
    */
   app.post("/client/prealerts/delete", async (req, res) => {
     const auth = requireRole(req, res, ["client"]);
@@ -421,7 +421,7 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
   });
 
   /**
-   * 客户端编辑待审核预报单（仅 pending 状态可编辑）。
+   * 客户端编辑预报单（确认收货前可编辑）。
    */
   app.post("/client/prealerts/update", async (req, res) => {
     const auth = requireRole(req, res, ["client"]);
@@ -1053,11 +1053,11 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
       fail(res, 404, "NOT_FOUND", "order not found");
       return;
     }
-    if (auth.role === "staff" && order.approvalStatus !== "pending" && order.approvalStatus !== "approved") {
+    if (auth.role === "staff" && order.approvalStatus !== "shipped" && order.approvalStatus !== "received") {
       fail(res, 403, "FORBIDDEN", "staff can only manage product images for pending or approved orders");
       return;
     }
-    if (auth.role === "client" && (order.clientId !== auth.userId || order.approvalStatus !== "pending")) {
+    if (auth.role === "client" && (order.clientId !== auth.userId || order.approvalStatus !== "shipped" && order.approvalStatus !== "received")) {
       fail(res, 403, "FORBIDDEN", "client can only manage product images for their own pending prealerts");
       return;
     }
@@ -1117,11 +1117,11 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
       fail(res, 404, "NOT_FOUND", "image not found");
       return;
     }
-    if (auth.role === "staff" && image.order.approvalStatus !== "pending" && image.order.approvalStatus !== "approved") {
+    if (auth.role === "staff" && image.order.approvalStatus !== "shipped" && order.approvalStatus !== "received" && image.order.approvalStatus !== "approved") {
       fail(res, 403, "FORBIDDEN", "staff can only manage product images for pending or approved orders");
       return;
     }
-    if (auth.role === "client" && (image.order.clientId !== auth.userId || image.order.approvalStatus !== "pending")) {
+    if (auth.role === "client" && (image.order.clientId !== auth.userId || image.order.approvalStatus !== "shipped" && order.approvalStatus !== "received")) {
       fail(res, 403, "FORBIDDEN", "client can only manage their own pending prealert images");
       return;
     }

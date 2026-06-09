@@ -602,21 +602,6 @@ export async function fetchClientPrealerts(status: string = "pending"): Promise<
 /**
  * 客户确认发货 - 将已审核的预报单转为正式订单
  */
-export async function shipClientPrealert(orderId: string): Promise<{
-  orderId: string;
-  trackingNo: string;
-  shippedAt: string;
-}> {
-  const response = await fetch(`${apiBaseUrl()}/client/prealerts/ship`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...authHeaders(),
-    },
-    body: JSON.stringify({ orderId }),
-  });
-  return parseApiResponse(response);
-}
 
 export async function deleteClientPrealert(orderId: string): Promise<{ deleted: boolean }> {
   const response = await fetch(`${apiBaseUrl()}/client/prealerts/delete`, {
@@ -671,37 +656,6 @@ export async function receiveStaffPrealert(payload: {
   return parseApiResponse(response);
 }
 
-export async function approveStaffPrealert(payload: {
-  orderId: string;
-  batchNo: string;
-  warehouseId?: string;
-  itemName?: string;
-  packageCount?: number;
-  packageUnit?: "bag" | "box";
-  productQuantity?: number;
-  weightKg?: number;
-  volumeM3?: number;
-  receivableAmountCny: number;
-  receivableCurrency?: "CNY" | "THB";
-  domesticTrackingNo?: string;
-  transportMode?: "sea" | "land";
-  shipDate?: string;
-}): Promise<{
-  orderId: string;
-  batchNo: string;
-  approvalStatus: "approved";
-  approvedAt: string;
-}> {
-  const response = await fetch(`${apiBaseUrl()}/staff/prealerts/approve`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...authHeaders(),
-    },
-    body: JSON.stringify(payload),
-  });
-  return parseApiResponse(response);
-}
 
 export async function setStaffOrderReceivable(payload: {
   orderId: string;

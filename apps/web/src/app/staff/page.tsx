@@ -13,7 +13,6 @@ import RoleShell from "../../modules/layout/RoleShell";
 import Toast from "../../modules/layout/Toast";
 import { apiBaseUrl } from "../../services/core-api";
 import {
-  approveStaffPrealert,
   receiveStaffPrealert,
   createStaffOrder,
   deleteStaffOrderProductImage,
@@ -664,18 +663,8 @@ export default function StaffHomePage() {
     if (!Number.isFinite(draft.volumeM3) || draft.volumeM3 <= 0) {
       return "体积必须大于 0。";
     }
-    if (!Number.isFinite(draft.receivableAmountCny) || draft.receivableAmountCny <= 0) {
-      return "应收金额必须大于 0。";
-    }
     if (draft.transportMode !== "sea" && draft.transportMode !== "land") {
       return "运输方式无效，请选择海运或陆运。";
-    }
-    if (!draft.shipDate) {
-      return "发货日期不能为空。";
-    }
-    const shipDate = new Date(`${draft.shipDate}T00:00:00`);
-    if (Number.isNaN(shipDate.getTime())) {
-      return "发货日期格式无效，请重新选择日期。";
     }
     return null;
   };
@@ -1574,7 +1563,7 @@ export default function StaffHomePage() {
         </div>
           <>
             {prealerts.length === 0 ? (
-              <EmptyStateCard title="暂无待审核预报单" description="客户提交预报单后会在这里显示，确认收货后会自动移出。" />
+              <EmptyStateCard title="暂无待收货预报单" description="客户端创建预报单后会在这里显示。" />
             ) : filteredPrealerts.length === 0 ? (
               <EmptyStateCard title="未找到匹配预报单" description="可调整客户名字、国内快递单号、仓库或运输方式筛选条件。" />
             ) : (

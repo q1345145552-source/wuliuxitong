@@ -116,12 +116,11 @@ export default function AdminPrealertsPage() {
       .filter((item) => !prealertSearch.warehouseId || item.warehouseId === prealertSearch.warehouseId);
   }, [prealerts, prealertSearch]);
 
-  const handleApprove = async (item: OrderItem) => {
+  const handleReceive = async (item: OrderItem) => {
     const draft = prealertConfirmedDrafts[item.id] ?? buildPrealertDraft(item);
     if (!draft.warehouseId) { setMessage("请选择仓库"); return; }
     if (!draft.itemName.trim()) { setMessage("请输入品名"); return; }
     if (!draft.packageCount || draft.packageCount < 1) { setMessage("请输入箱数"); return; }
-    if (!draft.receivableAmountCny || draft.receivableAmountCny < 0) { setMessage("请输入应收金额"); return; }
     setLoading(true);
     try {
       await receiveStaffPrealert({
@@ -240,7 +239,7 @@ export default function AdminPrealertsPage() {
                       ) : (
                         <>
                           <button onClick={() => setEditingPrealertId(item.id)} style={{ border: "1px solid #2563eb", borderRadius: 6, padding: "4px 12px", background: "#eff6ff", color: "#2563eb", cursor: "pointer", fontSize: 12 }}>编辑</button>
-                          <button disabled={loading} onClick={() => handleApprove(item)} style={{ border: "none", borderRadius: 6, padding: "4px 12px", background: "#16a34a", color: "#fff", cursor: "pointer", fontSize: 12, fontWeight: 600 }}>确认收货</button>
+                          <button disabled={loading} onClick={() => handleReceive(item)} style={{ border: "none", borderRadius: 6, padding: "4px 12px", background: "#16a34a", color: "#fff", cursor: "pointer", fontSize: 12, fontWeight: 600 }}>确认收货</button>
                         </>
                       )}
                     </div>

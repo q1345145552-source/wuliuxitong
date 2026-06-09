@@ -13,7 +13,7 @@ import {
   fetchClientAddresses,
   createClientPrealert,
   fetchClientPrealerts,
-  // shipClientPrealert removed — 预报单创建即已发货
+  // 预报单创建即已发货，不再需要确认发货
   deleteClientPrealert,
   updateClientPrealert,
   fetchClientOrders,
