@@ -331,6 +331,7 @@ export function registerContainerRoutes(app: MinimalHttpApp): void {
               shipmentId: sid,
               operatorId: auth.userId,
               operatorRole: auth.role,
+              operatorName: auth.name ?? "",
               fromStatus: statusMap.get(sid) ?? "loaded",
               toStatus: shipmentNextStatus,
               remark: body.remark?.trim() || `${CONTAINER_STATUS_LABEL[toStatus] ?? toStatus}`,
@@ -610,6 +611,7 @@ export function registerContainerRoutes(app: MinimalHttpApp): void {
         remark: log.remark ?? "",
         changedAt: log.changedAt.toISOString(),
         operatorRole: log.operatorRole,
+        operatorName: log.operatorName ?? "",
       })),
       // 子单信息（分柜后运单才有）
       // 子单信息
@@ -626,6 +628,7 @@ export function registerContainerRoutes(app: MinimalHttpApp): void {
               remark: log.remark ?? "",
               changedAt: log.changedAt.toISOString(),
               operatorRole: log.operatorRole,
+              operatorName: log.operatorName ?? "",
             })),
           }))
         : undefined,

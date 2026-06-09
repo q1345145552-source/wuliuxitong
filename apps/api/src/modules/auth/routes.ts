@@ -48,6 +48,7 @@ export function registerAuthRoutes(app: MinimalHttpApp): void {
       userId: user.id,
       companyId: user.companyId,
       role: user.role as "admin" | "staff" | "client",
+      userName: user.name,
     });
 
     ok(res, {
@@ -126,6 +127,7 @@ export function registerAuthRoutes(app: MinimalHttpApp): void {
       userId: account,
       companyId,
       role: "client",
+      userName: name,
     });
 
     ok(res, {

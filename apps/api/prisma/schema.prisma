@@ -144,6 +144,7 @@ model StatusLog {
   shipmentId    String   @map("shipment_id")
   operatorId    String   @map("operator_id")
   operatorRole  String   @map("operator_role")
+  operatorName  String   @default("") @map("operator_name")
   fromStatus    String   @map("from_status")
   toStatus      String   @map("to_status")
   remark        String?

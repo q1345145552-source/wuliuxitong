@@ -4,6 +4,7 @@ export interface AuthTokenPayload {
   userId: string;
   companyId: string;
   role: "admin" | "staff" | "client";
+  userName: string;
   exp: number;
 }
 
@@ -26,6 +27,7 @@ export function signAuthToken(input: {
   userId: string;
   companyId: string;
   role: "admin" | "staff" | "client";
+  userName: string;
   expiresInSeconds?: number;
 }): string {
   const header = { alg: "HS256", typ: "JWT" };
@@ -35,6 +37,7 @@ export function signAuthToken(input: {
     userId: input.userId,
     companyId: input.companyId,
     role: input.role,
+    userName: input.userName,
     exp,
   };
   const encodedHeader = base64UrlEncode(JSON.stringify(header));
@@ -65,6 +68,7 @@ export function verifyAuthToken(token: string): AuthTokenPayload | null {
       userId: payload.userId,
       companyId: payload.companyId,
       role: payload.role,
+      userName: payload.userName ?? "",
       exp: payload.exp,
     };
   } catch {

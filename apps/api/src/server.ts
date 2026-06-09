@@ -12,6 +12,7 @@ export interface HttpRequest {
     userId: string;
     companyId: string;
     role: "admin" | "staff" | "client";
+    name: string;
   };
 }
 
@@ -41,6 +42,7 @@ function parseAuth(headers: IncomingMessage["headers"]): HttpRequest["auth"] {
     userId: payload.userId,
     companyId: payload.companyId,
     role: payload.role,
+    name: payload.userName ?? "",
   };
 }
 

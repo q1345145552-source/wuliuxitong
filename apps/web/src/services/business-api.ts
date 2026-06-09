@@ -193,6 +193,8 @@ export interface OrderItem {
     changedAt: string;
     fromStatus?: string;
     toStatus?: string;
+    operatorRole?: string;
+    operatorName?: string;
   }>;
   itemName: string;
   transportMode: string;

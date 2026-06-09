@@ -12,6 +12,7 @@ interface TimelineItem {
   remark: string;
   changedAt: string;
   operatorRole: string;
+  operatorName: string;
 }
 
 interface ChildShipmentData {
@@ -169,7 +170,11 @@ function TimelineNode({ item, isLast, isChild }: { item: TimelineItem; isLast: b
           </div>
         ) : null}
         <div style={{ fontSize: isChild ? 10 : 11, color: "#9ca3af", marginTop: 3 }}>
-          {item.operatorRole === "client" ? "👤 客户" : item.operatorRole === "staff" ? "💼 员工" : "🔧 管理员"}
+          {item.operatorRole === "client" ? "👤" : item.operatorRole === "staff" ? "💼" : "🔧"}
+          {" "}{item.operatorName || (item.operatorRole === "client" ? "客户" : item.operatorRole === "staff" ? "员工" : "管理员")}
+          <span style={{ marginLeft: 4, color: "#d1d5db" }}>
+            ({item.operatorRole === "client" ? "客户" : item.operatorRole === "staff" ? "员工" : "管理员"})
+          </span>
         </div>
       </div>
     </div>

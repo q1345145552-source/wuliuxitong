@@ -783,6 +783,8 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
                 changedAt: true,
                 fromStatus: true,
                 toStatus: true,
+                operatorRole: true,
+                operatorName: true,
               },
             },
           },
@@ -811,6 +813,8 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
         changedAt: r.changedAt.toISOString(),
         fromStatus: r.fromStatus,
         toStatus: r.toStatus,
+        operatorRole: r.operatorRole,
+        operatorName: r.operatorName ?? "",
       }));
       const latestRemark = logisticsRecords.at(-1)?.remark ?? null;
       return {
