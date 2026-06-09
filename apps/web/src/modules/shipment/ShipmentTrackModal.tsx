@@ -432,11 +432,21 @@ function ShipmentTrackModal({ trackingOrId, onClose }: { trackingOrId: string; o
     })
       .then((resp) => resp.json())
       .then((json: any) => {
-        setData(json.data ?? null);
+        if (json.code !== "OK") {
+          setError(json.message || "查询失败");
+          setLoading(false);
+          return;
+        }
+        if (!json.data || !json.data.trackingNo) {
+          setError("未找到该运单");
+          setLoading(false);
+          return;
+        }
+        setData(json.data);
         setLoading(false);
       })
-      .catch(() => {
-        setError("加载失败，请重试");
+      .catch((err: any) => {
+        setError(err?.message || "加载失败，请重试");
         setLoading(false);
       });
   };
