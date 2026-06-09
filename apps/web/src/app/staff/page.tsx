@@ -1226,19 +1226,14 @@ export default function StaffHomePage() {
       const draft = confirmedDraft;
       await receiveStaffPrealert({
         orderId,
-        batchNo,
-        warehouseId: draft?.warehouseId,
         itemName: draft?.itemName,
         packageCount: draft?.packageCount,
         packageUnit: draft?.packageUnit,
         productQuantity: draft?.productQuantity,
         weightKg: draft?.weightKg,
         volumeM3: draft?.volumeM3,
-        receivableAmountCny: draft.receivableAmountCny,
-        receivableCurrency: draft.receivableCurrency,
         domesticTrackingNo: draft?.domesticTrackingNo,
         transportMode: draft?.transportMode,
-        shipDate: draft?.shipDate,
       });
       setEditingPrealertId((current) => (current === orderId ? null : current));
       setToast("已确认收货");
@@ -3153,22 +3148,17 @@ export default function StaffHomePage() {
                 const item = approvingPrealert;
                 const draft = prealertEditDrafts[item.id] ?? buildPrealertDraft(item);
                 const batchNo = (prealertBatchDrafts[item.id] ?? "").trim();
-                if (!draft.receivableAmountCny || draft.receivableAmountCny <= 0) { setToast("请填写应收金额"); return; }
                 try {
                   await receiveStaffPrealert({
                     orderId: item.id,
-                    batchNo,
                     itemName: draft.itemName,
                     packageCount: draft.packageCount,
                     packageUnit: draft.packageUnit,
                     productQuantity: draft.productQuantity,
                     weightKg: draft.weightKg,
                     volumeM3: draft.volumeM3,
-                    receivableAmountCny: draft.receivableAmountCny,
-                    receivableCurrency: draft.receivableCurrency,
                     domesticTrackingNo: draft.domesticTrackingNo,
                     transportMode: draft.transportMode,
-                    shipDate: draft.shipDate,
                   });
                   setToast(`预报单 ${item.id} 确认收货`);
                   await loadPageData();
