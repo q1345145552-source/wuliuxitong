@@ -65,10 +65,10 @@ export default function AdminPrealertsPage() {
   const [toast, setToast] = useState("");
   const [prealerts, setPrealerts] = useState<OrderItem[]>([]);
   const [prealertSearch, setPrealertSearch] = useState({
-    clientName: "",
-    domesticTrackingNo: "",
+    keyword: "",
     warehouseId: "",
-    transportMode: "",
+    itemName: "",
+    domesticTrackingNo: "",
   });
   const [prealertEditDrafts, setPrealertEditDrafts] = useState<Record<string, PrealertEditDraft>>({});
   const [prealertConfirmedDrafts, setPrealertConfirmedDrafts] = useState<Record<string, PrealertEditDraft>>({});
@@ -96,16 +96,24 @@ export default function AdminPrealertsPage() {
   }, [toast]);
 
   const filteredPrealerts = useMemo(() => {
-    return prealerts.filter((item) => {
-      if (prealertSearch.clientName) {
-        const cn = `${item.clientName ?? ""} ${item.clientId ?? ""}`.toLowerCase();
-        if (!cn.includes(prealertSearch.clientName.toLowerCase())) return false;
-      }
-      if (prealertSearch.domesticTrackingNo && !(item.domesticTrackingNo ?? "").toLowerCase().includes(prealertSearch.domesticTrackingNo.toLowerCase())) return false;
-      if (prealertSearch.warehouseId && item.warehouseId !== prealertSearch.warehouseId) return false;
-      if (prealertSearch.transportMode && item.transportMode !== prealertSearch.transportMode) return false;
-      return true;
-    });
+    const kw = prealertSearch.keyword.trim().toLowerCase();
+    const domesticKw = prealertSearch.domesticTrackingNo.trim().toLowerCase();
+    const itemKw = prealertSearch.itemName.trim().toLowerCase();
+    return prealerts
+      .filter((item) => {
+        if (!kw) return true;
+        const searchText = `${item.id} ${item.orderNo ?? ""} ${item.clientName ?? ""}`.toLowerCase();
+        return searchText.includes(kw);
+      })
+      .filter((item) => {
+        if (!domesticKw) return true;
+        return (item.domesticTrackingNo ?? "").toLowerCase().includes(domesticKw);
+      })
+      .filter((item) => {
+        if (!itemKw) return true;
+        return (item.itemName ?? "").toLowerCase().includes(itemKw);
+      })
+      .filter((item) => !prealertSearch.warehouseId || item.warehouseId === prealertSearch.warehouseId);
   }, [prealerts, prealertSearch]);
 
   const handleApprove = async (item: OrderItem) => {
