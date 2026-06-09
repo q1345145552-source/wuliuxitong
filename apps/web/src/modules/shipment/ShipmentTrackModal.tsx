@@ -296,7 +296,7 @@ function TrackContent({ data }: { data: TrackData }) {
       </div>
 
       {/* Timeline header */}
-      {data.timeline.length > 0 && (
+      {data.timeline.length > 0 ? (
         <>
           <div style={{
             display: "flex",
@@ -540,7 +540,7 @@ function ShipmentTrackModal({ trackingOrId, onClose }: { trackingOrId: string; o
                 重试
               </button>
             </div>
-          ) : !data || data.timeline.length === 0 ? (
+          ) : !data ? (
             <div style={{ textAlign: "center", padding: "40px 0" }}>
               <div style={{ fontSize: 40, marginBottom: 12 }}>📭</div>
               <div style={{ fontSize: 14, color: "#6b7280", marginBottom: 4 }}>暂无物流轨迹</div>
