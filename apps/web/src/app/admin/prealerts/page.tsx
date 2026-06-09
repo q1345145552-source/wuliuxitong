@@ -53,7 +53,7 @@ function buildPrealertDraft(item: OrderItem): PrealertEditDraft {
     volumeM3: item.volumeM3 ?? 0,
     receivableAmountCny: item.receivableAmountCny ?? 0,
     receivableCurrency: (item.receivableCurrency as "CNY" | "THB") ?? "CNY",
-    domesticTrackingNo: firstProduct?.domesticTrackingNo || item.domesticTrackingNo ?? "",
+    domesticTrackingNo: (firstProduct?.domesticTrackingNo || item.domesticTrackingNo) ?? "",
     transportMode: (item.transportMode as "sea" | "land") ?? "sea",
     shipDate: item.shipDate?.slice(0, 10) ?? "",
   };
