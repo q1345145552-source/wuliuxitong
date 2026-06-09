@@ -1,7 +1,7 @@
 "use client";
 
 import { createRoot } from "react-dom/client";
-import { useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { authHeaders, apiBaseUrl } from "../../services/core-api";
 
 // ── Types ──
@@ -420,7 +420,7 @@ function ShipmentTrackModal({ trackingOrId, onClose }: { trackingOrId: string; o
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
-  useEffect(() => {
+  const load = useCallback(() => {
     setLoading(true);
     setError("");
     setData(null);
@@ -454,6 +454,8 @@ function ShipmentTrackModal({ trackingOrId, onClose }: { trackingOrId: string; o
         setLoading(false);
       });
   }, [trackingOrId]);
+
+  useEffect(() => { load(); }, [load]);
 
   return (
     <div

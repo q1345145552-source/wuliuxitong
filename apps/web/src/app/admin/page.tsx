@@ -218,9 +218,8 @@ export default function AdminHomePage() {
   const [calcHeight, setCalcHeight] = useState("");
   const [calcQty, setCalcQty] = useState("1");
   const [calcResult, setCalcResult] = useState("");
-  const [lastmileKeyword, setLastmileKeyword] = useState("");
-  const [lastmileAddresses, setLastmileAddresses] = useState<Array<{ id: string; clientId: string; contactName: string; contactPhone: string; addressDetail: string; label?: string }>>([]);
-  const [lastmileNotes, setLastmileNotes] = useState<Record<string, string>>({});
+  const [lastmileNoteId, setLastmileNoteId] = useState("");
+  const [lastmileNoteContent, setLastmileNoteContent] = useState("");
   const [orderImagesCache, setOrderImagesCache] = useState<Record<string, Array<{ id: string; fileName: string; mime: string; contentBase64: string; filePath?: string | null; imageUrl?: string; createdAt: string }>>>({});
   const [orderEditForm, setOrderEditForm] = useState({
     clientId: "",
@@ -1696,53 +1695,30 @@ export default function AdminHomePage() {
       {/* 尾端派送 */}
       <section id="lastmile" style={{ ...sectionStyle, display: activeSection === "lastmile" ? "block" : "none" }}>
         <h2 style={{ margin: "0 0 16px", fontSize: 18 }}>{SECTION_LABELS["lastmile"]}</h2>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(350px, 1fr))", gap: 16 }}>
-          <div>
-            <h4 style={{ margin: "0 0 8px", fontSize: 14 }}>客户地址管理</h4>
-            <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
-              <input value={lastmileKeyword} onChange={(e) => setLastmileKeyword(e.target.value)} placeholder="搜索客户ID或名字" style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "6px 8px", fontSize: 12, flex: 1 }} />
-              <button onClick={async () => {
-                if (!lastmileKeyword.trim()) return;
-                try {
-                  const resp = await fetch(`${apiBaseUrl()}/client/addresses/search?keyword=${encodeURIComponent(lastmileKeyword.trim())}`, { headers: { "Content-Type": "application/json" } });
-                  const json = await resp.json();
-                  setLastmileAddresses(json.data?.items ?? []);
-                } catch { /* ignore */ }
-              }} style={{ border: "none", borderRadius: 6, padding: "6px 12px", background: "#2563eb", color: "#fff", cursor: "pointer", fontSize: 12 }}>搜索</button>
-            </div>
-            {lastmileAddresses.length > 0 ? (
-              <div style={{ display: "grid", gap: 6 }}>
-                {lastmileAddresses.map((addr) => (
-                  <div key={addr.id} style={{ padding: 8, border: "1px solid #e5e7eb", borderRadius: 6, fontSize: 12 }}>
-                    <div style={{ fontWeight: 600 }}>{addr.contactName} · {addr.contactPhone}{addr.label ? ` · [${addr.label}]` : ""}</div>
-                    <div style={{ color: "#000000" }}>{addr.addressDetail}</div>
-                    <div style={{ fontSize: 10, color: "#000000" }}>客户ID：{addr.clientId}</div>
-                  </div>
-                ))}
-              </div>
-            ) : lastmileKeyword ? <div style={{ fontSize: 12, color: "#000000" }}>未找到地址，请修改搜索词。</div> : <div style={{ fontSize: 12, color: "#000000" }}>输入客户ID搜索其收货地址。</div>}
+        <div style={{ maxWidth: 500 }}>
+          <h4 style={{ margin: "0 0 8px", fontSize: 14 }}>客户备注</h4>
+          <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+            <input value={lastmileNoteId} onChange={(e) => setLastmileNoteId(e.target.value)} placeholder="客户ID" style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "6px 8px", fontSize: 12, flex: 1 }} />
+            <button onClick={async () => {
+              if (!lastmileNoteId.trim()) return;
+              try { const notes = await fetchClientNotes(); setLastmileNoteContent(notes[lastmileNoteId.trim()]?.content ?? ""); } catch {}
+            }} style={{ border: "none", borderRadius: 6, padding: "6px 12px", background: "#2563eb", color: "#fff", cursor: "pointer", fontSize: 12 }}>加载</button>
           </div>
-          <div>
-            <h4 style={{ margin: "0 0 8px", fontSize: 14 }}>客户备注</h4>
-            <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
-              <input value={lastmileKeyword} onChange={(e) => setLastmileKeyword(e.target.value)} placeholder="客户ID" style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "6px 8px", fontSize: 12, flex: 1 }} />
-            </div>
-            <textarea
-              value={lastmileNotes[lastmileKeyword] ?? ""}
-              onChange={(e) => setLastmileNotes((prev) => ({ ...prev, [lastmileKeyword]: e.target.value }))}
-              placeholder="输入客户备注…"
-              rows={4}
-              style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "8px", width: "100%", fontSize: 12, resize: "vertical" }}
-            />
-            <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 8 }}>
-              <button onClick={async () => {
-                if (!lastmileKeyword.trim()) return;
-                try {
-                  await saveClientNote(lastmileKeyword.trim(), lastmileNotes[lastmileKeyword] ?? "");
-                  setToast("备注已保存");
-                } catch (err) { setMessage(`保存失败：${err instanceof Error ? err.message : "未知"}`); }
-              }} style={{ border: "none", borderRadius: 6, padding: "6px 12px", background: "#2563eb", color: "#fff", cursor: "pointer", fontSize: 12 }}>保存备注</button>
-            </div>
+          <textarea
+            value={lastmileNoteContent}
+            onChange={(e) => setLastmileNoteContent(e.target.value)}
+            placeholder="输入客户备注…"
+            rows={5}
+            style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "8px", width: "100%", fontSize: 12, resize: "vertical" }}
+          />
+          <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 8 }}>
+            <button onClick={async () => {
+              if (!lastmileNoteId.trim()) return;
+              try {
+                await saveClientNote(lastmileNoteId.trim(), lastmileNoteContent);
+                setToast("备注已保存");
+              } catch (err) { setMessage(`保存失败：${err instanceof Error ? err.message : "未知"}`); }
+            }} style={{ border: "none", borderRadius: 6, padding: "6px 12px", background: "#2563eb", color: "#fff", cursor: "pointer", fontSize: 12 }}>保存备注</button>
           </div>
         </div>
       </section>
