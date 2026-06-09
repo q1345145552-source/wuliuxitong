@@ -329,7 +329,7 @@ function TrackContent({ data }: { data: TrackData }) {
             ))}
           </div>
         </>
-      )}
+      ) : null}
 
       {/* Children (split shipments) */}
       {data.children && data.children.length > 0 && (
