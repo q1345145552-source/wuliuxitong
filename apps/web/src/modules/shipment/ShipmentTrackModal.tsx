@@ -93,85 +93,162 @@ function LoadingSkeleton() {
   );
 }
 
-function TimelineNode({ item, isLast, isChild }: { item: TimelineItem; isLast: boolean; isChild?: boolean }) {
+function TimelineNode({ item, isLast, isChild, index, total }: { item: TimelineItem; isLast: boolean; isChild?: boolean; index: number; total: number }) {
   const fromCfg = statusCfg(item.fromStatus);
   const toCfg = statusCfg(item.toStatus);
-  const dotSize = isChild ? 8 : 12;
-  const dotOffset = isChild ? -5 : -4;
+  const dotSize = isChild ? 10 : 16;
 
   return (
-    <div style={{ position: "relative", paddingBottom: isLast ? 0 : 20, paddingLeft: isChild ? 20 : 28 }}>
+    <div style={{
+      position: "relative",
+      paddingBottom: isLast ? 0 : 32,
+      paddingLeft: isChild ? 28 : 36,
+    }}>
       {/* connecting line */}
       {!isLast && (
         <div style={{
           position: "absolute",
-          left: isChild ? 8 : 10,
-          top: dotSize + 4,
+          left: isChild ? 12 : 16,
+          top: dotSize + 8,
           bottom: 0,
           width: 2,
-          background: isChild ? "#d1d5db" : "linear-gradient(180deg, #93c5fd, #e2e8f0)",
+          background: isChild
+            ? "linear-gradient(180deg, #d1d5db, #e5e7eb)"
+            : `linear-gradient(180deg, ${toCfg.color}60, #e5e7eb)`,
           borderRadius: 1,
         }} />
       )}
+
+      {/* dot ring */}
+      <div style={{
+        position: "absolute",
+        left: isChild ? 3 : 4,
+        top: 4,
+        width: dotSize + 8,
+        height: dotSize + 8,
+        borderRadius: "50%",
+        background: isLast ? `${toCfg.color}15` : `${toCfg.color}08`,
+        zIndex: 0,
+      }} />
       {/* dot */}
       <div style={{
         position: "absolute",
-        left: dotOffset,
-        top: 2,
+        left: isChild ? 7 : 8,
+        top: 8,
         width: dotSize,
         height: dotSize,
         borderRadius: "50%",
-        background: isLast ? toCfg.color : "#93c5fd",
-        border: `2px solid #fff`,
-        boxShadow: `0 0 0 2px ${isLast ? toCfg.color : "#93c5fd"}`,
+        background: isLast ? toCfg.color : "#fff",
+        border: `3px solid ${isLast ? toCfg.color : "#94a3b8"}`,
         zIndex: 1,
-        transition: "all 0.3s ease",
+        boxShadow: `0 0 0 3px #fff`,
       }} />
+
+      {/* step badge */}
+      {!isChild && (
+        <div style={{
+          position: "absolute",
+          left: -6,
+          top: dotSize + 4,
+          fontSize: 10,
+          color: "#94a3b8",
+          fontWeight: 500,
+          whiteSpace: "nowrap",
+        }}>
+          第{index + 1}步
+        </div>
+      )}
 
       {/* content card */}
       <div style={{
-        background: isLast ? toCfg.bg : "#fafbfc",
-        border: `1px solid ${isLast ? toCfg.color + "30" : "#e5e7eb"}`,
-        borderRadius: 10,
-        padding: isChild ? "8px 10px" : "10px 14px",
-        transition: "all 0.2s ease",
+        background: "#fff",
+        border: `1px solid ${isLast ? toCfg.color + "40" : "#e5e7eb"}`,
+        borderLeft: `3px solid ${toCfg.color}`,
+        borderRadius: "8px 10px 10px 8px",
+        padding: isChild ? "10px 12px" : "14px 16px",
+        boxShadow: isLast
+          ? `0 2px 8px ${toCfg.color}15`
+          : "0 1px 3px rgba(0,0,0,0.04)",
       }}>
-        <div style={{ fontSize: isChild ? 11 : 12, color: "#9ca3af", marginBottom: 4 }}>
+        {/* time */}
+        <div style={{
+          fontSize: isChild ? 11 : 13,
+          color: "#374151",
+          fontWeight: 600,
+          marginBottom: 10,
+          display: "flex",
+          alignItems: "center",
+          gap: 6,
+        }}>
+          <span style={{ fontSize: 14 }}>🕐</span>
           {formatTime(item.changedAt)}
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4, flexWrap: "wrap" }}>
+
+        {/* status transition */}
+        <div style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+          marginBottom: item.remark ? 10 : 6,
+        }}>
           <span style={{
-            display: "inline-block",
-            padding: "1px 6px",
-            borderRadius: 4,
-            fontSize: isChild ? 10 : 11,
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 4,
+            padding: "3px 10px",
+            borderRadius: 6,
+            fontSize: isChild ? 11 : 12,
             fontWeight: 600,
             background: fromCfg.bg,
             color: fromCfg.color,
+            border: `1px solid ${fromCfg.color}30`,
           }}>
             {fromCfg.icon} {fromCfg.zh}
           </span>
-          <span style={{ color: "#9ca3af", fontSize: isChild ? 10 : 12 }}>→</span>
+          <span style={{ color: "#94a3b8", fontSize: 16, fontWeight: 700 }}>→</span>
           <span style={{
-            display: "inline-block",
-            padding: "1px 6px",
-            borderRadius: 4,
-            fontSize: isChild ? 10 : 11,
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 4,
+            padding: "3px 10px",
+            borderRadius: 6,
+            fontSize: isChild ? 11 : 12,
             fontWeight: 700,
             background: toCfg.bg,
             color: toCfg.color,
+            border: `1px solid ${toCfg.color}40`,
           }}>
             {toCfg.icon} {toCfg.zh}
           </span>
         </div>
+
+        {/* remark */}
         {item.remark ? (
-          <div style={{ fontSize: isChild ? 11 : 12, color: "#4b5563", lineHeight: 1.5 }}>
+          <div style={{
+            fontSize: isChild ? 12 : 13,
+            color: "#1e293b",
+            lineHeight: 1.6,
+            marginBottom: 8,
+            padding: "8px 10px",
+            background: "#f8fafc",
+            borderRadius: 6,
+            border: "1px solid #e2e8f0",
+          }}>
             {item.remark}
           </div>
         ) : null}
+
+        {/* operator */}
         {item.operatorRole !== "client" && (
-          <div style={{ fontSize: isChild ? 10 : 11, color: "#9ca3af", marginTop: 3 }}>
-            {item.operatorRole === "staff" ? "💼" : "🔧"} {item.operatorName || (item.operatorRole === "staff" ? "员工" : "管理员")}
+          <div style={{
+            fontSize: isChild ? 11 : 12,
+            color: "#64748b",
+            display: "flex",
+            alignItems: "center",
+            gap: 4,
+          }}>
+            <span style={{ fontSize: 13 }}>{item.operatorRole === "staff" ? "💼" : "🔧"}</span>
+            <span style={{ fontWeight: 600 }}>{item.operatorName || (item.operatorRole === "staff" ? "员工" : "管理员")}</span>
           </div>
         )}
       </div>
@@ -246,6 +323,8 @@ function TrackContent({ data }: { data: TrackData }) {
                 key={i}
                 item={item}
                 isLast={i === data.timeline.length - 1}
+                index={i}
+                total={data.timeline.length}
               />
             ))}
           </div>
@@ -315,6 +394,8 @@ function TrackContent({ data }: { data: TrackData }) {
                         item={tl}
                         isLast={j === child.timeline.length - 1}
                         isChild
+                        index={j}
+                        total={child.timeline.length}
                       />
                     ))}
                   </div>
