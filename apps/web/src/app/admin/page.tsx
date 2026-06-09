@@ -10,6 +10,7 @@ import EmptyStateCard from "../../modules/layout/EmptyStateCard";
 import RoleShell from "../../modules/layout/RoleShell";
 import Toast from "../../modules/layout/Toast";
 import ShipmentSearch from "../../modules/shipment/ShipmentSearch";
+import { openPrintLabel } from "../../modules/shipment/ShipmentPrintLabel";
 import { openShipmentTrack } from "../../modules/shipment/ShipmentTrackModal";
 import { apiBaseUrl } from "../../services/core-api";
 import {
@@ -43,6 +44,21 @@ import {
   deleteAdminShippingRate,
   fetchClientShippingConfig,
   saveClientShippingConfig,
+  // 员工端共享功能
+  splitStaffShipment,
+  setStaffOrderPayment,
+  setStaffShipmentContainer,
+  uploadStaffOrderProductImage,
+  deleteStaffOrderProductImage,
+  fetchStaffClients,
+  fetchStaffPrealerts,
+  approveStaffPrealert,
+  createStaffOrder,
+  fetchClientNotes,
+  saveClientNote,
+  patchStaffShipmentOrderBundle,
+  type OrderProductImageItem,
+  type ShipmentItem,
 } from "../../services/business-api";
 import {
   createKnowledgeItem,
@@ -60,6 +76,8 @@ const SECTION_IDS = [
   "knowledge-feed",
   "knowledge-list",
   "shipping-config",
+  "ops-tools",
+  "lastmile",
 ] as const;
 
 const SECTION_LABELS: Record<(typeof SECTION_IDS)[number], string> = {
@@ -72,6 +90,8 @@ const SECTION_LABELS: Record<(typeof SECTION_IDS)[number], string> = {
   "knowledge-feed": "AI知识投喂",
   "knowledge-list": "已投喂的知识列表",
   "shipping-config": "运费配置",
+  "ops-tools": "入库与标签工具",
+  "lastmile": "尾端派送",
 };
 
 const sectionStyle = {
@@ -165,6 +185,34 @@ export default function AdminHomePage() {
   });
   const [editingOrderId, setEditingOrderId] = useState("");
   const [expandedOrderId, setExpandedOrderId] = useState("");
+  const [showSplitModal, setShowSplitModal] = useState(false);
+  const [splitShipmentTrackingNo, setSplitShipmentTrackingNo] = useState("");
+  const [splitForm, setSplitForm] = useState([{ trackingNo: "", batchNo: "", itemName: "", packageCount: 1 }]);
+  const [showCreateOrderModal, setShowCreateOrderModal] = useState(false);
+  const [showBatchImport, setShowBatchImport] = useState(false);
+  const [staffClients, setStaffClients] = useState<Array<{ id: string; name: string }>>([]);
+  const [createForm, setCreateForm] = useState({
+    clientId: "", warehouseId: "wh_yiwu_01", arrivedAt: new Date().toISOString().slice(0, 10),
+    transportMode: "sea" as "sea" | "land", domesticTrackingNo: "", batchNo: "", shipDate: "",
+    receiverNameTh: "", receiverPhoneTh: "", receiverAddressTh: "",
+  });
+  const [createProducts, setCreateProducts] = useState<Array<{
+    itemName: string; packageCount: number; lengthCm: string; widthCm: string;
+    heightCm: string; productQuantity: string; cargoType: string; domesticTrackingNo: string;
+  }>>([{ itemName: "", packageCount: 1, lengthCm: "", widthCm: "", heightCm: "", productQuantity: "", cargoType: "NORMAL", domesticTrackingNo: "" }]);
+  const [batchRows, setBatchRows] = useState<Array<any>>([]);
+  const [batchLoading, setBatchLoading] = useState(false);
+  const [batchProgress, setBatchProgress] = useState({ current: 0, success: 0, fail: 0 });
+  const [batchFileName, setBatchFileName] = useState("");
+  const [batchConfirmed, setBatchConfirmed] = useState(false);
+  const [calcLength, setCalcLength] = useState("");
+  const [calcWidth, setCalcWidth] = useState("");
+  const [calcHeight, setCalcHeight] = useState("");
+  const [calcQty, setCalcQty] = useState("1");
+  const [calcResult, setCalcResult] = useState("");
+  const [lastmileKeyword, setLastmileKeyword] = useState("");
+  const [lastmileAddresses, setLastmileAddresses] = useState<Array<{ id: string; clientId: string; contactName: string; contactPhone: string; addressDetail: string; label?: string }>>([]);
+  const [lastmileNotes, setLastmileNotes] = useState<Record<string, string>>({});
   const [orderImagesCache, setOrderImagesCache] = useState<Record<string, Array<{ id: string; fileName: string; mime: string; contentBase64: string; filePath?: string | null; imageUrl?: string; createdAt: string }>>>({});
   const [orderEditForm, setOrderEditForm] = useState({
     clientId: "",
@@ -1266,6 +1314,20 @@ export default function AdminHomePage() {
             </button>
             <button
               type="button"
+              onClick={async () => { const clients = await fetchStaffClients(); setStaffClients(clients); setShowCreateOrderModal(true); }}
+              style={{ border: "none", borderRadius: 8, padding: "6px 12px", color: "#fff", background: "#16a34a", cursor: "pointer", fontWeight: 600 }}
+            >
+              ＋ 创建订单
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowBatchImport(true)}
+              style={{ border: "1px solid #d97706", borderRadius: 8, padding: "6px 12px", color: "#d97706", background: "#fffbeb", cursor: "pointer", fontWeight: 600 }}
+            >
+              📥 批量导入
+            </button>
+            <button
+              type="button"
               onClick={exportOrdersToExcel}
               disabled={orderList.length === 0}
               style={{
@@ -1457,6 +1519,20 @@ export default function AdminHomePage() {
                       >
                         物流轨迹
                       </button>
+                      <button
+                        type="button"
+                        onClick={() => openPrintLabel({ marks: o.clientName ?? o.clientId ?? "—", packageCount: o.packageCount ?? "—", trackingNo: o.trackingNo ?? "", itemName: o.itemName, productQuantity: o.productQuantity, transportMode: o.transportMode, products: (o.products ?? []).map(p => ({ itemName: p.itemName, packageCount: p.packageCount })) })}
+                        style={{ border: "none", background: "transparent", color: "#16a34a", cursor: "pointer", fontWeight: 600, padding: 0, marginLeft: 8 }}
+                      >
+                        打印
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => { setSplitShipmentTrackingNo(o.trackingNo ?? o.id); setShowSplitModal(true); }}
+                        style={{ border: "none", background: "transparent", color: "#9333ea", cursor: "pointer", fontWeight: 600, padding: 0, marginLeft: 8 }}
+                      >
+                        分柜
+                      </button>
                     </td>
                   </tr>
                   {expandedOrderId === o.id ? (
@@ -1468,6 +1544,7 @@ export default function AdminHomePage() {
                             <span>柜号：<strong>{o.batchNo ?? "—"}</strong></span>
                             <span>包装：<strong>{o.packageUnit === "bag" ? "袋" : "箱"}</strong></span>
                             <span>国内单号：<strong>{((o.products?.length ?? 0) > 0) ? o.products!.map(p => p.domesticTrackingNo || "货拉拉").filter((v, i, a) => a.indexOf(v) === i).join("、") : (o.domesticTrackingNo ?? "—")}</strong></span>
+                            <span>加收金额：<strong>{o.receivableAmountCny != null ? `${o.receivableAmountCny} ${o.receivableCurrency ?? "CNY"}` : "—"}</strong></span>
                             <span>收货地址：<strong>{o.receiverAddressTh ?? "—"}</strong></span>
                           </div>
                           {(o.productImages?.length ?? 0) > 0 || (orderImagesCache[o.orderId ?? o.id]?.length ?? 0) > 0 ? (
@@ -1475,11 +1552,21 @@ export default function AdminHomePage() {
                               <div style={{ fontWeight: 600, marginBottom: 6, fontSize: 13, color: "#000000" }}>产品图</div>
                               <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
                                 {(orderImagesCache[o.orderId ?? o.id] ?? o.productImages ?? []).map((img: any) => (
-                                  <img key={img.id} src={img.imageUrl ? `${apiBaseUrl()}${img.imageUrl}` : `data:${img.mime};base64,${img.contentBase64}`} alt={img.fileName} style={{ width: 88, height: 88, objectFit: "cover", borderRadius: 8, border: "1px solid #e5e7eb" }} />
+                                  <div key={img.id} style={{ position: "relative" }}>
+                                    <img src={img.imageUrl ? `${apiBaseUrl()}${img.imageUrl}` : `data:${img.mime};base64,${img.contentBase64}`} alt={img.fileName} style={{ width: 88, height: 88, objectFit: "cover", borderRadius: 8, border: "1px solid #e5e7eb" }} />
+                                    <button type="button" onClick={async () => { await deleteStaffOrderProductImage(img.id); const oid = o.orderId ?? o.id; const imgs = await fetchShipmentImages(oid); setOrderImagesCache((c) => ({ ...c, [oid]: imgs })); }} style={{ position: "absolute", top: -4, right: -4, width: 18, height: 18, borderRadius: "50%", background: "#dc2626", color: "#fff", border: "none", cursor: "pointer", fontSize: 11, lineHeight: 1 }}>×</button>
+                                  </div>
                                 ))}
                               </div>
+                              <div style={{ marginTop: 8 }}>
+                                <input type="file" accept="image/*" onChange={async (e) => { const f = e.target.files?.[0]; if (!f) return; const oid = o.orderId ?? o.id; const toBase64 = (file: File) => new Promise<string>((resolve) => { const r = new FileReader(); r.onloadend = () => resolve((r.result as string).split(",")[1]); r.readAsDataURL(file); }); const base64 = await toBase64(f); await uploadStaffOrderProductImage({ orderId: oid, fileName: f.name, mime: f.type, contentBase64: base64 }); const imgs = await fetchShipmentImages(oid); setOrderImagesCache((c) => ({ ...c, [oid]: imgs })); }} style={{ fontSize: 12 }} />
+                              </div>
                             </div>
-                          ) : null}
+                          ) : (
+                            <div style={{ marginBottom: 10 }}>
+                              <input type="file" accept="image/*" onChange={async (e) => { const f = e.target.files?.[0]; if (!f) return; const oid = o.orderId ?? o.id; const toBase64 = (file: File) => new Promise<string>((resolve) => { const r = new FileReader(); r.onloadend = () => resolve((r.result as string).split(",")[1]); r.readAsDataURL(file); }); const base64 = await toBase64(f); await uploadStaffOrderProductImage({ orderId: oid, fileName: f.name, mime: f.type, contentBase64: base64 }); const imgs = await fetchShipmentImages(oid); setOrderImagesCache((c) => ({ ...c, [oid]: imgs })); setToast("产品图已上传"); }} style={{ fontSize: 12, color: "#2563eb" }} />
+                            </div>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -1557,6 +1644,99 @@ export default function AdminHomePage() {
           </div>
           </>
         )}
+      </section>
+
+      {/* 入库与标签工具 */}
+      <section id="ops-tools" style={{ ...sectionStyle, display: activeSection === "ops-tools" ? "block" : "none" }}>
+        <h2 style={{ margin: "0 0 16px", fontSize: 18 }}>{SECTION_LABELS["ops-tools"]}</h2>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 16 }}>
+          <div style={{ padding: 16, background: "#f8fafc", borderRadius: 8, border: "1px solid #e2e8f0" }}>
+            <h4 style={{ margin: "0 0 12px", fontSize: 14 }}>体积重量核算</h4>
+            <div style={{ display: "grid", gap: 8 }}>
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <input value={calcLength} onChange={(e) => setCalcLength(e.target.value)} placeholder="长(cm)" style={prealertEditInputStyle} />
+                <span style={{ color: "#000000" }}>×</span>
+                <input value={calcWidth} onChange={(e) => setCalcWidth(e.target.value)} placeholder="宽(cm)" style={prealertEditInputStyle} />
+                <span style={{ color: "#000000" }}>×</span>
+                <input value={calcHeight} onChange={(e) => setCalcHeight(e.target.value)} placeholder="高(cm)" style={prealertEditInputStyle} />
+              </div>
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <span style={{ fontSize: 12, minWidth: 60 }}>数量：</span>
+                <input type="number" value={calcQty} onChange={(e) => setCalcQty(e.target.value)} style={{ ...prealertEditInputStyle, width: 80 }} />
+                <span style={{ fontSize: 12, color: "#000000" }}>箱</span>
+                <button onClick={() => {
+                  const l = Number(calcLength); const w = Number(calcWidth); const h = Number(calcHeight); const q = Number(calcQty);
+                  if (!l || !w || !h) { setCalcResult("请填写长宽高"); return; }
+                  const volM3 = (l * w * h * q) / 1_000_000;
+                  const weightEst = volM3 * 167;
+                  setCalcResult(`${volM3.toFixed(3)} m³（≈ ${weightEst.toFixed(1)} kg）`);
+                }} style={{ border: "none", borderRadius: 6, padding: "6px 12px", background: "#2563eb", color: "#fff", cursor: "pointer", fontSize: 12 }}>计算</button>
+              </div>
+              {calcResult && <div style={{ fontSize: 14, fontWeight: 600, color: "#16a34a" }}>{calcResult}</div>}
+            </div>
+          </div>
+          <div style={{ padding: 16, background: "#f8fafc", borderRadius: 8, border: "1px solid #e2e8f0" }}>
+            <h4 style={{ margin: "0 0 12px", fontSize: 14 }}>标签打印</h4>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              <p style={{ fontSize: 12, color: "#000000", margin: 0 }}>在运单管理列表中点击「打印」按钮即可打印 FBA 标签 / 面单 / 箱号条码。</p>
+              <p style={{ fontSize: 12, color: "#000000", margin: 0 }}>支持：唛头、运单号、品名、箱数、运输方式等信息一键打印。</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* 尾端派送 */}
+      <section id="lastmile" style={{ ...sectionStyle, display: activeSection === "lastmile" ? "block" : "none" }}>
+        <h2 style={{ margin: "0 0 16px", fontSize: 18 }}>{SECTION_LABELS["lastmile"]}</h2>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(350px, 1fr))", gap: 16 }}>
+          <div>
+            <h4 style={{ margin: "0 0 8px", fontSize: 14 }}>客户地址管理</h4>
+            <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+              <input value={lastmileKeyword} onChange={(e) => setLastmileKeyword(e.target.value)} placeholder="搜索客户ID或名字" style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "6px 8px", fontSize: 12, flex: 1 }} />
+              <button onClick={async () => {
+                if (!lastmileKeyword.trim()) return;
+                try {
+                  const resp = await fetch(`${apiBaseUrl()}/client/addresses/search?keyword=${encodeURIComponent(lastmileKeyword.trim())}`, { headers: { "Content-Type": "application/json" } });
+                  const json = await resp.json();
+                  setLastmileAddresses(json.data?.items ?? []);
+                } catch { /* ignore */ }
+              }} style={{ border: "none", borderRadius: 6, padding: "6px 12px", background: "#2563eb", color: "#fff", cursor: "pointer", fontSize: 12 }}>搜索</button>
+            </div>
+            {lastmileAddresses.length > 0 ? (
+              <div style={{ display: "grid", gap: 6 }}>
+                {lastmileAddresses.map((addr) => (
+                  <div key={addr.id} style={{ padding: 8, border: "1px solid #e5e7eb", borderRadius: 6, fontSize: 12 }}>
+                    <div style={{ fontWeight: 600 }}>{addr.contactName} · {addr.contactPhone}{addr.label ? ` · [${addr.label}]` : ""}</div>
+                    <div style={{ color: "#000000" }}>{addr.addressDetail}</div>
+                    <div style={{ fontSize: 10, color: "#000000" }}>客户ID：{addr.clientId}</div>
+                  </div>
+                ))}
+              </div>
+            ) : lastmileKeyword ? <div style={{ fontSize: 12, color: "#000000" }}>未找到地址，请修改搜索词。</div> : <div style={{ fontSize: 12, color: "#000000" }}>输入客户ID搜索其收货地址。</div>}
+          </div>
+          <div>
+            <h4 style={{ margin: "0 0 8px", fontSize: 14 }}>客户备注</h4>
+            <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+              <input value={lastmileKeyword} onChange={(e) => setLastmileKeyword(e.target.value)} placeholder="客户ID" style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "6px 8px", fontSize: 12, flex: 1 }} />
+            </div>
+            <textarea
+              value={lastmileNotes[lastmileKeyword] ?? ""}
+              onChange={(e) => setLastmileNotes((prev) => ({ ...prev, [lastmileKeyword]: e.target.value }))}
+              placeholder="输入客户备注…"
+              rows={4}
+              style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "8px", width: "100%", fontSize: 12, resize: "vertical" }}
+            />
+            <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 8 }}>
+              <button onClick={async () => {
+                if (!lastmileKeyword.trim()) return;
+                try {
+                  await saveClientNote(lastmileKeyword.trim(), lastmileNotes[lastmileKeyword] ?? "");
+                  setToast("备注已保存");
+                } catch (err) { setMessage(`保存失败：${err instanceof Error ? err.message : "未知"}`); }
+              }} style={{ border: "none", borderRadius: 6, padding: "6px 12px", background: "#2563eb", color: "#fff", cursor: "pointer", fontSize: 12 }}>保存备注</button>
+            </div>
+          </div>
+        </div>
       </section>
 
       {/* 5. AI会话记忆运维 */}
@@ -1981,6 +2161,212 @@ export default function AdminHomePage() {
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 16 }}>
               <button type="button" onClick={() => { setShowClientModal(false); setEditingClientId(null); setClientForm({ id: "", name: "", companyName: "", phone: "", email: "", password: "" }); }} style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 14px", background: "#fff", cursor: "pointer", color: "#000000", fontSize: 13 }}>取消</button>
               <button type="button" disabled={loading} onClick={() => void (editingClientId ? submitEditClient() : submitAddClient())} style={{ border: "none", borderRadius: 8, padding: "8px 14px", background: loading ? "#000000" : "#2563eb", color: "#fff", fontWeight: 600, cursor: loading ? "not-allowed" : "pointer", fontSize: 13 }}>{loading ? "提交中…" : editingClientId ? "保存" : "创建"}</button>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* 分柜弹窗 */}
+      {showSplitModal && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(0,0,0,0.4)", padding: 16 }}>
+          <div style={{ width: "100%", maxWidth: 520, background: "#fff", borderRadius: 12, padding: 24, boxShadow: "0 20px 60px rgba(0,0,0,0.3)", maxHeight: "80vh", overflow: "auto" }}>
+            <h3 style={{ margin: "0 0 16px", fontSize: 18, fontWeight: 600 }}>分柜 — {splitShipmentTrackingNo}</h3>
+            <div style={{ display: "grid", gap: 10, marginBottom: 16 }}>
+              {splitForm.map((row, i) => (
+                <div key={i} style={{ display: "grid", gridTemplateColumns: "1.5fr 1fr 2fr 0.7fr", gap: 6 }}>
+                  <input value={row.trackingNo} onChange={(e) => { const n = [...splitForm]; n[i].trackingNo = e.target.value.toUpperCase(); setSplitForm(n); }} placeholder="子运单号" style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "6px 8px", fontSize: 12 }} />
+                  <input value={row.batchNo} onChange={(e) => { const n = [...splitForm]; n[i].batchNo = e.target.value; setSplitForm(n); }} placeholder="批次号" style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "6px 8px", fontSize: 12 }} />
+                  <input value={row.itemName} onChange={(e) => { const n = [...splitForm]; n[i].itemName = e.target.value; setSplitForm(n); }} placeholder="品名" style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "6px 8px", fontSize: 12 }} />
+                  <input type="number" value={row.packageCount} onChange={(e) => { const n = [...splitForm]; n[i].packageCount = Math.max(1, Number(e.target.value)); setSplitForm(n); }} placeholder="件数" style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "6px 8px", fontSize: 12 }} />
+                </div>
+              ))}
+            </div>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
+              <button type="button" onClick={() => { setSplitForm([...splitForm, { trackingNo: "", batchNo: "", itemName: "", packageCount: 1 }]); }} style={{ border: "1px solid #2563eb", borderRadius: 8, padding: "6px 12px", background: "#eff6ff", color: "#2563eb", cursor: "pointer", fontSize: 13 }}>＋ 添加子单</button>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button type="button" onClick={() => { setShowSplitModal(false); setSplitForm([{ trackingNo: "", batchNo: "", itemName: "", packageCount: 1 }]); }} style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 14px", background: "#fff", cursor: "pointer", fontSize: 13 }}>取消</button>
+                <button type="button" disabled={loading} onClick={async () => { const valid = splitForm.filter(s => s.trackingNo.trim() && s.itemName.trim()); if (valid.length === 0) { setMessage("请至少填写一个子运单号"); return; } setLoading(true); try { const parentShipment = orderList.find(o => (o.trackingNo ?? o.id) === splitShipmentTrackingNo); await splitStaffShipment({ parentShipmentId: parentShipment?.id ?? "", splits: valid }); setToast(`分柜成功：${valid.length} 个子单`); setShowSplitModal(false); setSplitForm([{ trackingNo: "", batchNo: "", itemName: "", packageCount: 1 }]); loadOrders(); } catch (err) { setMessage(`分柜失败：${err instanceof Error ? err.message : "未知错误"}`); } finally { setLoading(false); } }} style={{ border: "none", borderRadius: 8, padding: "8px 14px", background: "#2563eb", color: "#fff", fontWeight: 600, cursor: "pointer", fontSize: 13 }}>{loading ? "提交中…" : "确认分柜"}</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* 创建订单弹窗 */}
+      {showCreateOrderModal && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(0,0,0,0.4)", padding: 16 }}>
+          <div style={{ width: "100%", maxWidth: 640, background: "#fff", borderRadius: 12, padding: 24, boxShadow: "0 20px 60px rgba(0,0,0,0.3)", maxHeight: "85vh", overflow: "auto" }}>
+            <h3 style={{ margin: "0 0 16px", fontSize: 18, fontWeight: 600 }}>创建订单</h3>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 8, marginBottom: 12 }}>
+              <div>
+                <label style={{ fontSize: 11, display: "block", marginBottom: 2 }}>客户 *</label>
+                <input list="admin-create-client" value={createForm.clientId} onChange={(e) => setCreateForm(f => ({ ...f, clientId: e.target.value }))} placeholder="输入客户ID搜索" style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "6px 8px", width: "100%", fontSize: 12 }} />
+                <datalist id="admin-create-client">{staffClients.map(c => (<option key={c.id} value={c.id}>{c.id} - {c.name}</option>))}</datalist>
+              </div>
+              <div>
+                <label style={{ fontSize: 11, display: "block", marginBottom: 2 }}>仓库</label>
+                <select value={createForm.warehouseId} onChange={(e) => setCreateForm(f => ({ ...f, warehouseId: e.target.value }))} style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "6px 8px", width: "100%", fontSize: 12 }}>
+                  {warehouseOptions.map(w => (<option key={w.id} value={w.id}>{w.label}</option>))}
+                </select>
+              </div>
+              <div>
+                <label style={{ fontSize: 11, display: "block", marginBottom: 2 }}>到仓日期</label>
+                <input type="date" value={createForm.arrivedAt} onChange={(e) => setCreateForm(f => ({ ...f, arrivedAt: e.target.value }))} style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "6px 8px", width: "100%", fontSize: 12 }} />
+              </div>
+              <div>
+                <label style={{ fontSize: 11, display: "block", marginBottom: 2 }}>运输方式</label>
+                <select value={createForm.transportMode} onChange={(e) => setCreateForm(f => ({ ...f, transportMode: e.target.value as "sea" | "land" }))} style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "6px 8px", width: "100%", fontSize: 12 }}>
+                  <option value="sea">海运</option><option value="land">陆运</option>
+                </select>
+              </div>
+              <div>
+                <label style={{ fontSize: 11, display: "block", marginBottom: 2 }}>国内单号</label>
+                <input value={createForm.domesticTrackingNo} onChange={(e) => setCreateForm(f => ({ ...f, domesticTrackingNo: e.target.value }))} placeholder="货拉拉" style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "6px 8px", width: "100%", fontSize: 12 }} />
+              </div>
+              <div>
+                <label style={{ fontSize: 11, display: "block", marginBottom: 2 }}>泰国收货人</label>
+                <input value={createForm.receiverNameTh} onChange={(e) => setCreateForm(f => ({ ...f, receiverNameTh: e.target.value }))} style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "6px 8px", width: "100%", fontSize: 12 }} />
+              </div>
+              <div>
+                <label style={{ fontSize: 11, display: "block", marginBottom: 2 }}>泰国收货电话</label>
+                <input value={createForm.receiverPhoneTh} onChange={(e) => setCreateForm(f => ({ ...f, receiverPhoneTh: e.target.value }))} style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "6px 8px", width: "100%", fontSize: 12 }} />
+              </div>
+              <div>
+                <label style={{ fontSize: 11, display: "block", marginBottom: 2 }}>泰国收货地址</label>
+                <input value={createForm.receiverAddressTh} onChange={(e) => setCreateForm(f => ({ ...f, receiverAddressTh: e.target.value }))} style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "6px 8px", width: "100%", fontSize: 12 }} />
+              </div>
+            </div>
+            <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 8 }}>产品行</div>
+            {createProducts.map((p, i) => (
+              <div key={i} style={{ display: "grid", gridTemplateColumns: "2fr 0.6fr 0.8fr 0.8fr 0.8fr 1.2fr", gap: 4, marginBottom: 4 }}>
+                <input value={p.itemName} onChange={(e) => { const n = [...createProducts]; n[i].itemName = e.target.value; setCreateProducts(n); }} placeholder="品名" style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "4px 6px", fontSize: 11 }} />
+                <input type="number" value={p.packageCount} onChange={(e) => { const n = [...createProducts]; n[i].packageCount = Math.max(1, Number(e.target.value)); setCreateProducts(n); }} placeholder="箱数" style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "4px 6px", fontSize: 11 }} />
+                <input value={p.productQuantity} onChange={(e) => { const n = [...createProducts]; n[i].productQuantity = e.target.value; setCreateProducts(n); }} placeholder="数量/箱" style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "4px 6px", fontSize: 11 }} />
+                <input value={`${p.lengthCm}×${p.widthCm}×${p.heightCm}`} onChange={(e) => { const parts = e.target.value.split("×"); const n = [...createProducts]; n[i].lengthCm = parts[0] || ""; n[i].widthCm = parts[1] || ""; n[i].heightCm = parts[2] || ""; setCreateProducts(n); }} placeholder="L×W×H cm" style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "4px 6px", fontSize: 11 }} />
+                <select value={p.cargoType} onChange={(e) => { const n = [...createProducts]; n[i].cargoType = e.target.value; setCreateProducts(n); }} style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "4px 6px", fontSize: 11 }}>
+                  <option value="NORMAL">普货</option><option value="INSPECTION">商检</option><option value="SENSITIVE">敏感</option>
+                </select>
+                <div style={{ display: "flex", gap: 4 }}>
+                  <input value={p.domesticTrackingNo} onChange={(e) => { const n = [...createProducts]; n[i].domesticTrackingNo = e.target.value; setCreateProducts(n); }} placeholder="国内单号" style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "4px 6px", fontSize: 11, flex: 1 }} />
+                  {createProducts.length > 1 && <button onClick={() => { setCreateProducts(createProducts.filter((_, j) => j !== i)); }} style={{ border: "none", background: "#fecaca", color: "#dc2626", borderRadius: 4, cursor: "pointer", fontSize: 11 }}>✕</button>}
+                </div>
+              </div>
+            ))}
+            <button onClick={() => setCreateProducts([...createProducts, { itemName: "", packageCount: 1, lengthCm: "", widthCm: "", heightCm: "", productQuantity: "", cargoType: "NORMAL", domesticTrackingNo: "" }])} style={{ border: "1px solid #2563eb", borderRadius: 6, padding: "4px 10px", background: "#eff6ff", color: "#2563eb", cursor: "pointer", fontSize: 12, marginBottom: 16 }}>＋ 添加产品行</button>
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+              <button onClick={() => setShowCreateOrderModal(false)} style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 14px", background: "#fff", cursor: "pointer", color: "#000" }}>取消</button>
+              <button disabled={loading} onClick={async () => {
+                if (!createForm.clientId.trim()) { setMessage("请选择客户"); return; }
+                const validProducts = createProducts.filter(p => p.itemName.trim() && p.packageCount > 0);
+                if (validProducts.length === 0) { setMessage("请至少填写一个产品行"); return; }
+                setLoading(true);
+                try {
+                  await createStaffOrder({
+                    clientId: createForm.clientId.trim(),
+                    warehouseId: createForm.warehouseId,
+                    arrivedAt: createForm.arrivedAt,
+                    transportMode: createForm.transportMode,
+                    domesticTrackingNo: createForm.domesticTrackingNo.trim() || undefined,
+                    batchNo: createForm.batchNo.trim() || undefined,
+                    receiverNameTh: createForm.receiverNameTh.trim() || undefined,
+                    receiverPhoneTh: createForm.receiverPhoneTh.trim() || undefined,
+                    receiverAddressTh: createForm.receiverAddressTh.trim() || undefined,
+                    itemName: validProducts[0].itemName.trim(),
+                    packageCount: validProducts[0].packageCount,
+                    packageUnit: "box",
+                    products: validProducts.map(p => ({
+                      itemName: p.itemName.trim(),
+                      packageCount: p.packageCount,
+                      lengthCm: Number(p.lengthCm) || undefined,
+                      widthCm: Number(p.widthCm) || undefined,
+                      heightCm: Number(p.heightCm) || undefined,
+                      productQuantity: Number(p.productQuantity) || undefined,
+                      cargoType: p.cargoType,
+                      domesticTrackingNo: p.domesticTrackingNo.trim() || undefined,
+                    })),
+                  });
+                  setToast("订单创建成功");
+                  setShowCreateOrderModal(false);
+                  await loadOrders();
+                } catch (err) {
+                  setMessage(`创建失败：${err instanceof Error ? err.message : "未知错误"}`);
+                } finally { setLoading(false); }
+              }} style={{ border: "none", borderRadius: 8, padding: "8px 14px", background: "#2563eb", color: "#fff", fontWeight: 600, cursor: "pointer" }}>
+                {loading ? "提交中…" : "创建"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 批量导入弹窗 */}
+      {showBatchImport && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(0,0,0,0.4)", padding: 16 }}>
+          <div style={{ width: "100%", maxWidth: 700, background: "#fff", borderRadius: 12, padding: 24, boxShadow: "0 20px 60px rgba(0,0,0,0.3)", maxHeight: "85vh", overflow: "auto" }}>
+            <h3 style={{ margin: "0 0 16px", fontSize: 18, fontWeight: 600 }}>批量导入运单</h3>
+            <div style={{ marginBottom: 12, fontSize: 12, color: "#000" }}>
+              下载模板 → 填写数据 → 上传文件。表头：客户ID, 仓库ID, 品名, 箱数, 包装单位, 运输方式, 到仓日期, 国内单号, 泰国收货人, 泰国收货电话, 泰国收货地址
+            </div>
+            {!batchConfirmed ? (
+              <>
+                <input type="file" accept=".xlsx,.xls,.csv" onChange={async (e) => {
+                  const f = e.target.files?.[0]; if (!f) return;
+                  setBatchFileName(f.name);
+                  const XLSX = await import("xlsx");
+                  const data = await f.arrayBuffer();
+                  const wb = XLSX.read(data);
+                  const ws = wb.Sheets[wb.SheetNames[0]];
+                  const rows = XLSX.utils.sheet_to_json<any>(ws);
+                  setBatchRows(rows);
+                }} style={{ marginBottom: 12, fontSize: 12 }} />
+                {batchRows.length > 0 && (
+                  <div style={{ marginBottom: 12 }}>
+                    <div style={{ fontSize: 12, marginBottom: 4 }}>预览（{batchRows.length} 条）：</div>
+                    <div style={{ maxHeight: 200, overflow: "auto", fontSize: 11, border: "1px solid #e5e7eb", borderRadius: 6 }}>
+                      <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                        <thead><tr style={{ background: "#f1f5f9" }}>{Object.keys(batchRows[0]).slice(0, 6).map(k => (<th key={k} style={{ padding: "4px 6px", textAlign: "left" }}>{k}</th>))}</tr></thead>
+                        <tbody>{batchRows.slice(0, 20).map((r: any, i: number) => (<tr key={i}>{Object.values(r).slice(0, 6).map((v: any, j: number) => (<td key={j} style={{ padding: "2px 6px" }}>{String(v ?? "")}</td>))}</tr>))}</tbody>
+                      </table>
+                    </div>
+                    <button onClick={() => setBatchConfirmed(true)} style={{ marginTop: 8, border: "none", borderRadius: 6, padding: "6px 12px", background: "#16a34a", color: "#fff", cursor: "pointer", fontSize: 12 }}>确认导入</button>
+                  </div>
+                )}
+              </>
+            ) : (
+              <div>
+                <div style={{ marginBottom: 8, fontSize: 12 }}>正在导入 {batchRows.length} 条…</div>
+                {batchProgress.current > 0 && (<div style={{ height: 4, background: "#e5e7eb", borderRadius: 2, marginBottom: 8 }}><div style={{ height: "100%", background: "#16a34a", borderRadius: 2, width: `${(batchProgress.current / batchRows.length) * 100}%` }} /></div>)}
+              </div>
+            )}
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 16 }}>
+              <button onClick={() => { setShowBatchImport(false); setBatchRows([]); setBatchConfirmed(false); setBatchFileName(""); }} style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 14px", background: "#fff", cursor: "pointer" }}>取消</button>
+              {batchConfirmed && (
+                <button disabled={batchLoading} onClick={async () => {
+                  setBatchLoading(true); let success = 0; let fail = 0;
+                  for (let i = 0; i < batchRows.length; i++) {
+                    const r = batchRows[i];
+                    try {
+                      await createStaffOrder({
+                        clientId: String(r["客户ID"] ?? r.clientId ?? ""), warehouseId: String(r["仓库ID"] ?? r.warehouseId ?? "wh_yiwu_01"),
+                        arrivedAt: String(r["到仓日期"] ?? r.arrivedAt ?? new Date().toISOString().slice(0, 10)),
+                        itemName: String(r["品名"] ?? r.itemName ?? ""), packageCount: Number(r["箱数"] ?? r.packageCount ?? 1),
+                        packageUnit: (r["包装单位"] ?? r.packageUnit ?? "box") as "bag" | "box",
+                        transportMode: (r["运输方式"] ?? r.transportMode ?? "sea") as "sea" | "land",
+                        domesticTrackingNo: String(r["国内单号"] ?? r.domesticTrackingNo ?? ""),
+                        receiverNameTh: String(r["泰国收货人"] ?? r.receiverNameTh ?? ""),
+                        receiverPhoneTh: String(r["泰国收货电话"] ?? r.receiverPhoneTh ?? ""),
+                        receiverAddressTh: String(r["泰国收货地址"] ?? r.receiverAddressTh ?? ""),
+                      });
+                      success++;
+                    } catch { fail++; }
+                    setBatchProgress({ current: i + 1, success, fail });
+                  }
+                  setBatchLoading(false);
+                  setToast(`导入完成：成功 ${success}，失败 ${fail}`);
+                  setShowBatchImport(false); setBatchRows([]); setBatchConfirmed(false);
+                  await loadOrders();
+                }} style={{ border: "none", borderRadius: 8, padding: "8px 14px", background: "#2563eb", color: "#fff", fontWeight: 600, cursor: "pointer" }}>
+                  {batchLoading ? `导入中 ${batchProgress.current}/${batchRows.length}` : "开始导入"}
+                </button>
+              )}
             </div>
           </div>
         </div>
