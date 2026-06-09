@@ -582,6 +582,22 @@ export default function AdminHomePage() {
     }
   };
 
+  const confirmDeleteClient = async (userId: string, userName: string) => {
+    if (!window.confirm(`确定要删除客户「${userName}」吗？删除后该账号将无法登录。此操作不可撤销。`)) return;
+    setLoading(true);
+    setMessage("");
+    try {
+      await deleteAdminStaff(userId);
+      setToast("客户已删除");
+      await Promise.all([loadClients(), loadOverview()]);
+    } catch (error) {
+      const text = error instanceof Error ? error.message : "删除失败";
+      setMessage(`删除失败：${text}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const confirmDeleteStaff = async (userId: string, userName: string) => {
     if (!window.confirm(`确定要删除员工「${userName}」吗？删除后该账号将无法登录。`)) return;
     setLoading(true);
@@ -1132,6 +1148,14 @@ export default function AdminHomePage() {
                     style={{ border: "1px solid #059669", color: "#059669", borderRadius: 8, padding: "6px 10px", background: "#f0fdf4", cursor: "pointer", fontSize: 13 }}
                   >
                     {settingPasswordFor === u.id ? "取消" : "设置密码"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => confirmDeleteClient(u.id, u.name)}
+                    disabled={loading}
+                    style={{ border: "1px solid #fca5a5", color: "#dc2626", borderRadius: 8, padding: "6px 10px", background: "#fef2f2", cursor: "pointer", fontSize: 13 }}
+                  >
+                    删除
                   </button>
                 </div>
                 {settingPasswordFor === u.id ? (

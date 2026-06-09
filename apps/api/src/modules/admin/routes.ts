@@ -639,8 +639,8 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
       fail(res, 403, "FORBIDDEN", "cannot delete user of another company");
       return;
     }
-    if (row.role !== "staff") {
-      fail(res, 403, "FORBIDDEN", "only staff can be deleted here");
+    if (row.role !== "staff" && row.role !== "client") {
+      fail(res, 403, "FORBIDDEN", "only staff and client can be deleted");
       return;
     }
 
