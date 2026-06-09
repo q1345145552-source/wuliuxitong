@@ -331,7 +331,7 @@ export function registerContainerRoutes(app: MinimalHttpApp): void {
               shipmentId: sid,
               operatorId: auth.userId,
               operatorRole: auth.role,
-              operatorName: auth.name ?? "",
+              operatorName: auth.name,
               fromStatus: statusMap.get(sid) ?? "loaded",
               toStatus: shipmentNextStatus,
               remark: body.remark?.trim() || `${CONTAINER_STATUS_LABEL[toStatus] ?? toStatus}`,

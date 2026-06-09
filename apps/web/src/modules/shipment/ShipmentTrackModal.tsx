@@ -420,9 +420,10 @@ function ShipmentTrackModal({ trackingOrId, onClose }: { trackingOrId: string; o
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
-  const load = () => {
+  useEffect(() => {
     setLoading(true);
     setError("");
+    setData(null);
     const isUuid = /^[a-f0-9-]{20,}$/i.test(trackingOrId);
     const params = new URLSearchParams(
       isUuid ? { shipmentId: trackingOrId } : { trackingNo: trackingOrId }
@@ -434,11 +435,13 @@ function ShipmentTrackModal({ trackingOrId, onClose }: { trackingOrId: string; o
       .then((json: any) => {
         if (json.code !== "OK") {
           setError(json.message || "查询失败");
+          setData(null);
           setLoading(false);
           return;
         }
         if (!json.data || !json.data.trackingNo) {
           setError("未找到该运单");
+          setData(null);
           setLoading(false);
           return;
         }
@@ -447,11 +450,10 @@ function ShipmentTrackModal({ trackingOrId, onClose }: { trackingOrId: string; o
       })
       .catch((err: any) => {
         setError(err?.message || "加载失败，请重试");
+        setData(null);
         setLoading(false);
       });
-  };
-
-  useEffect(() => { load(); }, [trackingOrId]);
+  }, [trackingOrId]);
 
   return (
     <div
