@@ -1341,39 +1341,27 @@ export default function ClientHomePage() {
             ) : null}
 
             {openDetailsByOrder[item.id] && openLogisticsByOrder[item.id] && (item.logisticsRecords?.length ?? 0) > 0 ? (
-              <div
-                style={{
-                  marginTop: 10,
-                  border: "1px solid #e2e8f0",
-                  borderRadius: 8,
-                  background: "#f8fafc",
-                  padding: 10,
-                  display: "grid",
-                  gap: 8,
-                }}
-              >
-                {buildLogisticsTransitions(item.logisticsRecords).map((record, index) => (
-                  <div
-                    key={`${item.id}-${record.changedAt}-${index}`}
-                    style={{
-                      border: "1px solid #e2e8f0",
-                      borderRadius: 8,
-                      padding: "8px 10px",
-                      background: "#fff",
-                      color: "#000000",
-                      fontSize: 13,
-                    }}
-                  >
-                    <div style={{ marginBottom: 4, fontWeight: 600 }}>
-                      状态变更：{statusLabel(record.fromStatus)}
-                      {" -> "}
-                      {statusLabel(record.toStatus)}
+              <div style={{ marginTop: 10, padding: "4px 0 4px 24px", position: "relative" }}>
+                <div style={{ position: "absolute", left: 10, top: 8, bottom: 8, width: 2, background: "linear-gradient(180deg, #93c5fd, #e2e8f0)", borderRadius: 1 }} />
+                {buildLogisticsTransitions(item.logisticsRecords).map((record, index, arr) => {
+                  const isLast = index === arr.length - 1;
+                  const fromCfg = (() => { const s = (record.fromStatus ?? "").toLowerCase(); return s === "loaded" ? { color: "#0369a1", bg: "#e0f2fe" } : s === "departed" ? { color: "#1e40af", bg: "#dbeafe" } : s === "arrivedport" ? { color: "#065f46", bg: "#d1fae5" } : s === "customsth" ? { color: "#92400e", bg: "#fef3c7" } : s === "customscleared" ? { color: "#166534", bg: "#dcfce7" } : s === "inwarehouseth" ? { color: "#7c3aed", bg: "#ede9fe" } : s === "outfordelivery" ? { color: "#db2777", bg: "#fce7f3" } : s === "delivered" ? { color: "#16a34a", bg: "#f0fdf4" } : { color: "#6b7280", bg: "#f3f4f6" }; })();
+                  const toCfg = (() => { const s = (record.toStatus ?? "").toLowerCase(); return s === "loaded" ? { color: "#0369a1", bg: "#e0f2fe" } : s === "departed" ? { color: "#1e40af", bg: "#dbeafe" } : s === "arrivedport" ? { color: "#065f46", bg: "#d1fae5" } : s === "customsth" ? { color: "#92400e", bg: "#fef3c7" } : s === "customscleared" ? { color: "#166534", bg: "#dcfce7" } : s === "inwarehouseth" ? { color: "#7c3aed", bg: "#ede9fe" } : s === "outfordelivery" ? { color: "#db2777", bg: "#fce7f3" } : s === "delivered" ? { color: "#16a34a", bg: "#f0fdf4" } : { color: "#6b7280", bg: "#f3f4f6" }; })();
+                  return (
+                    <div key={`${item.id}-${record.changedAt}-${index}`} style={{ position: "relative", paddingBottom: isLast ? 0 : 14 }}>
+                      <div style={{ position: "absolute", left: -19, top: 6, width: 10, height: 10, borderRadius: "50%", background: isLast ? toCfg.color : "#93c5fd", border: "2px solid #fff", boxShadow: `0 0 0 2px ${isLast ? toCfg.color : "#93c5fd"}40`, zIndex: 1 }} />
+                      <div style={{ background: "#fff", border: "1px solid #e5e7eb", borderRadius: 10, padding: "10px 12px", transition: "all 0.15s ease" }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6, flexWrap: "wrap" }}>
+                          <span style={{ padding: "2px 8px", borderRadius: 4, fontSize: 11, fontWeight: 600, background: fromCfg.bg, color: fromCfg.color }}>{statusLabel(record.fromStatus)}</span>
+                          <span style={{ color: "#9ca3af", fontSize: 11 }}>→</span>
+                          <span style={{ padding: "2px 8px", borderRadius: 4, fontSize: 11, fontWeight: 700, background: toCfg.bg, color: toCfg.color }}>{statusLabel(record.toStatus)}</span>
+                        </div>
+                        <div style={{ fontSize: 11, color: "#9ca3af", marginBottom: 3 }}>{record.periodText}</div>
+                        {record.remark ? <div style={{ fontSize: 12, color: "#4b5563", lineHeight: 1.5 }}>{record.remark}</div> : null}
+                      </div>
                     </div>
-                    <div style={{ marginBottom: 4 }}>变更时间：{formatDateTime(record.changedAt)}</div>
-                    <div style={{ marginBottom: 4 }}>时间段：{record.periodText}</div>
-                    <div>物流信息：{record.remark}</div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             ) : null}
           </article>
