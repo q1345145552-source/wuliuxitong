@@ -1015,6 +1015,22 @@ export async function createAdminClient(payload: {
   return parseApiResponse(response);
 }
 
+export async function updateAdminClient(payload: {
+  id: string;
+  name?: string;
+  companyName?: string;
+  phone?: string;
+  email?: string;
+  password?: string;
+}): Promise<{ id: string; name: string; companyName: string | null; phone: string; email: string | null; createdAt: string }> {
+  const response = await fetch(`${apiBaseUrl()}/admin/users/client/update`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify(payload),
+  });
+  return parseApiResponse(response);
+}
+
 export async function fetchAdminAiSessionMemory(params?: {
   companyId?: string;
   limit?: number;

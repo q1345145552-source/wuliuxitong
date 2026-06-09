@@ -617,6 +617,79 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
     });
   });
 
+  app.post("/admin/users/client/update", async (req, res) => {
+    const auth = requireRole(req, res, ["admin"]);
+    if (!auth) return;
+
+    const body = (req.body ?? {}) as {
+      id?: string;
+      name?: string;
+      companyName?: string;
+      phone?: string;
+      email?: string;
+      password?: string;
+    };
+    const id = typeof body.id === "string" ? body.id.trim() : "";
+    if (!id) {
+      fail(res, 400, "BAD_REQUEST", "客户ID为必填");
+      return;
+    }
+
+    const existing = await prisma.user.findUnique({
+      where: { id },
+      select: { id: true, companyId: true, role: true },
+    });
+    if (!existing) {
+      fail(res, 404, "NOT_FOUND", "客户不存在");
+      return;
+    }
+    if (existing.companyId !== auth.companyId) {
+      fail(res, 403, "FORBIDDEN", "无权修改其他公司的客户");
+      return;
+    }
+    if (existing.role !== "client") {
+      fail(res, 400, "BAD_REQUEST", "只能编辑客户账号");
+      return;
+    }
+
+    const updateData: Record<string, unknown> = {};
+    if (typeof body.name === "string" && body.name.trim()) {
+      updateData.name = body.name.trim();
+    }
+    if (body.companyName !== undefined) {
+      updateData.companyName = typeof body.companyName === "string" ? body.companyName.trim() || null : null;
+    }
+    if (typeof body.phone === "string" && body.phone.trim()) {
+      updateData.phone = body.phone.trim();
+    }
+    if (body.email !== undefined) {
+      updateData.email = typeof body.email === "string" ? body.email.trim() || null : null;
+    }
+    if (typeof body.password === "string" && body.password.trim()) {
+      updateData.passwordHash = hashPassword(body.password.trim());
+    }
+
+    if (Object.keys(updateData).length === 0) {
+      fail(res, 400, "BAD_REQUEST", "没有需要更新的字段");
+      return;
+    }
+
+    const updated = await prisma.user.update({
+      where: { id },
+      data: updateData,
+      select: { id: true, name: true, companyName: true, phone: true, email: true, createdAt: true },
+    });
+
+    ok(res, {
+      id: updated.id,
+      name: updated.name,
+      companyName: updated.companyName,
+      phone: updated.phone,
+      email: updated.email,
+      createdAt: updated.createdAt.toISOString(),
+    });
+  });
+
   app.delete("/admin/users", async (req, res) => {
     const auth = requireRole(req, res, ["admin"]);
     if (!auth) return;

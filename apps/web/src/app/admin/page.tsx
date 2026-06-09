@@ -10,6 +10,7 @@ import EmptyStateCard from "../../modules/layout/EmptyStateCard";
 import RoleShell from "../../modules/layout/RoleShell";
 import Toast from "../../modules/layout/Toast";
 import ShipmentSearch from "../../modules/shipment/ShipmentSearch";
+import { openShipmentTrack } from "../../modules/shipment/ShipmentTrackModal";
 import { apiBaseUrl } from "../../services/core-api";
 import {
   fetchAdminOverview,
@@ -24,6 +25,7 @@ import {
   resolveAdminAiKnowledgeGap,
   createAdminStaff,
   createAdminClient,
+  updateAdminClient,
   deleteAdminStaff,
   deleteAdminOrder,
   setAdminStaffPassword,
@@ -192,6 +194,7 @@ export default function AdminHomePage() {
   const [clientForm, setClientForm] = useState({ id: "", name: "", companyName: "", phone: "", email: "", password: "" });
   const [showStaffModal, setShowStaffModal] = useState(false);
   const [showClientModal, setShowClientModal] = useState(false);
+  const [editingClientId, setEditingClientId] = useState<string | null>(null);
   const [settingPasswordFor, setSettingPasswordFor] = useState<string | null>(null);
   const [settingPasswordValue, setSettingPasswordValue] = useState("");
   const [memoryFilterSessionId, setMemoryFilterSessionId] = useState("");
@@ -672,6 +675,41 @@ export default function AdminHomePage() {
     }
   };
 
+  const submitEditClient = async () => {
+    if (!editingClientId) return;
+    if (!clientForm.name.trim() || !clientForm.phone.trim()) {
+      setMessage("请填写客户名字和电话号码。");
+      return;
+    }
+    setLoading(true);
+    setMessage("");
+    try {
+      await updateAdminClient({
+        id: editingClientId,
+        name: clientForm.name.trim(),
+        companyName: clientForm.companyName.trim() || undefined,
+        phone: clientForm.phone.trim(),
+        email: clientForm.email.trim() || undefined,
+        password: clientForm.password.trim() || undefined,
+      });
+      setClientForm({ id: "", name: "", companyName: "", phone: "", email: "", password: "" });
+      setShowClientModal(false);
+      setEditingClientId(null);
+      setToast("客户信息已更新");
+      setMessage("");
+      await loadClients();
+    } catch (error) {
+      const text = error instanceof Error ? error.message : "更新失败";
+      if (text.includes("permission") || text.includes("FORBIDDEN") || text.includes("403")) {
+        setMessage("更新失败：请使用管理员身份登录后再试。");
+      } else {
+        setMessage(`更新失败：${text}`);
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const filteredOrderList = useMemo(() => {
     const s = orderSearch;
     return orderList.filter((item) => {
@@ -1126,7 +1164,7 @@ export default function AdminHomePage() {
         <div style={{ marginBottom: 12 }}>
           <button
             type="button"
-            onClick={() => { setShowClientModal(true); setClientForm({ id: "", name: "", companyName: "", phone: "", email: "", password: "" }); }}
+            onClick={() => { setShowClientModal(true); setEditingClientId(null); setClientForm({ id: "", name: "", companyName: "", phone: "", email: "", password: "" }); }}
             style={{ border: "none", borderRadius: 8, padding: "8px 14px", background: "#2563eb", color: "#fff", fontWeight: 600, cursor: "pointer" }}
           >
             ＋ 创建账号
@@ -1153,6 +1191,25 @@ export default function AdminHomePage() {
                     style={{ border: "1px solid #059669", color: "#059669", borderRadius: 8, padding: "6px 10px", background: "#f0fdf4", cursor: "pointer", fontSize: 13 }}
                   >
                     {settingPasswordFor === u.id ? "取消" : "设置密码"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setEditingClientId(u.id);
+                      setClientForm({
+                        id: u.id,
+                        name: u.name,
+                        companyName: u.companyName ?? "",
+                        phone: u.phone,
+                        email: u.email ?? "",
+                        password: "",
+                      });
+                      setShowClientModal(true);
+                    }}
+                    disabled={loading}
+                    style={{ border: "1px solid #f59e0b", color: "#d97706", borderRadius: 8, padding: "6px 10px", background: "#fffbeb", cursor: "pointer", fontSize: 13 }}
+                  >
+                    编辑
                   </button>
                   <button
                     type="button"
@@ -1392,6 +1449,13 @@ export default function AdminHomePage() {
                         style={{ border: "1px solid #fecaca", borderRadius: 8, padding: "4px 10px", background: "#fef2f2", color: "#dc2626", cursor: "pointer", fontWeight: 700 }}
                       >
                         删除
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => openShipmentTrack(o.trackingNo ?? o.id)}
+                        style={{ border: "none", background: "transparent", color: "#2563eb", cursor: "pointer", fontWeight: 600, padding: 0, marginLeft: 8 }}
+                      >
+                        物流轨迹
                       </button>
                     </td>
                   </tr>
@@ -1883,15 +1947,15 @@ export default function AdminHomePage() {
         </div>
       )}
 
-      {/* 创建客户弹窗 */}
+      {/* 创建/编辑客户弹窗 */}
       {showClientModal && (
         <div style={{ position: "fixed", inset: 0, zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(0,0,0,0.4)", padding: 16 }}>
           <div style={{ width: "100%", maxWidth: 440, background: "#fff", borderRadius: 12, padding: 24, boxShadow: "0 20px 60px rgba(0,0,0,0.3)" }}>
-            <h3 style={{ margin: "0 0 16px", fontSize: 18, fontWeight: 600 }}>创建客户账号</h3>
+            <h3 style={{ margin: "0 0 16px", fontSize: 18, fontWeight: 600 }}>{editingClientId ? "编辑客户账号" : "创建客户账号"}</h3>
             <div style={{ display: "grid", gap: 10 }}>
               <div>
-                <label style={{ fontSize: 12, color: "#000000", display: "block", marginBottom: 4 }}>账号（选填，不填则自动生成）</label>
-                <input value={clientForm.id} onChange={(e) => setClientForm((f) => ({ ...f, id: e.target.value }))} placeholder="留空自动生成" style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 10px", width: "100%", fontSize: 13 }} />
+                <label style={{ fontSize: 12, color: "#000000", display: "block", marginBottom: 4 }}>账号{editingClientId ? "" : "（选填，不填则自动生成）"}</label>
+                <input value={clientForm.id} onChange={(e) => setClientForm((f) => ({ ...f, id: e.target.value }))} placeholder={editingClientId ? undefined : "留空自动生成"} disabled={!!editingClientId} style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 10px", width: "100%", fontSize: 13, background: editingClientId ? "#f3f4f6" : "#fff", color: editingClientId ? "#6b7280" : "#000000" }} />
               </div>
               <div>
                 <label style={{ fontSize: 12, color: "#000000", display: "block", marginBottom: 4 }}>客户名字 *</label>
@@ -1910,13 +1974,13 @@ export default function AdminHomePage() {
                 <input value={clientForm.email} onChange={(e) => setClientForm((f) => ({ ...f, email: e.target.value }))} placeholder="email@example.com" style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 10px", width: "100%", fontSize: 13 }} />
               </div>
               <div>
-                <label style={{ fontSize: 12, color: "#000000", display: "block", marginBottom: 4 }}>登录密码 *</label>
-                <input type="password" value={clientForm.password} onChange={(e) => setClientForm((f) => ({ ...f, password: e.target.value }))} placeholder="密码（必填）" style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 10px", width: "100%", fontSize: 13 }} />
+                <label style={{ fontSize: 12, color: "#000000", display: "block", marginBottom: 4 }}>{editingClientId ? "登录密码（留空不修改）" : "登录密码 *"}</label>
+                <input type="password" value={clientForm.password} onChange={(e) => setClientForm((f) => ({ ...f, password: e.target.value }))} placeholder={editingClientId ? "留空不修改密码" : "密码（必填）"} style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 10px", width: "100%", fontSize: 13 }} />
               </div>
             </div>
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 16 }}>
-              <button type="button" onClick={() => setShowClientModal(false)} style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 14px", background: "#fff", cursor: "pointer", color: "#000000", fontSize: 13 }}>取消</button>
-              <button type="button" disabled={loading} onClick={() => void submitAddClient()} style={{ border: "none", borderRadius: 8, padding: "8px 14px", background: loading ? "#000000" : "#2563eb", color: "#fff", fontWeight: 600, cursor: loading ? "not-allowed" : "pointer", fontSize: 13 }}>{loading ? "提交中…" : "创建"}</button>
+              <button type="button" onClick={() => { setShowClientModal(false); setEditingClientId(null); setClientForm({ id: "", name: "", companyName: "", phone: "", email: "", password: "" }); }} style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 14px", background: "#fff", cursor: "pointer", color: "#000000", fontSize: 13 }}>取消</button>
+              <button type="button" disabled={loading} onClick={() => void (editingClientId ? submitEditClient() : submitAddClient())} style={{ border: "none", borderRadius: 8, padding: "8px 14px", background: loading ? "#000000" : "#2563eb", color: "#fff", fontWeight: 600, cursor: loading ? "not-allowed" : "pointer", fontSize: 13 }}>{loading ? "提交中…" : editingClientId ? "保存" : "创建"}</button>
             </div>
           </div>
         </div>
