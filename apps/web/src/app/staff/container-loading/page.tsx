@@ -368,9 +368,7 @@ export default function StaffContainerLoadingPage() {
                         </div>
                         <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
                           <span style={{ fontSize: 12, color: STATUS_COLOR[b.currentStatus ?? ""] ?? "#000000" }}>{SHIPMENT_STATUS_ZH[b.currentStatus ?? ""] ?? b.currentStatus ?? "—"}</span>
-                          {detail.status === "LOADING" && (
-                            <button onClick={() => handleRemoveShipment(b.id)} style={{ border: "1px solid #fca5a5", borderRadius: 4, padding: "2px 6px", fontSize: 11, background: "#fff", color: "#dc2626", cursor: "pointer" }}>删除</button>
-                          )}
+                          <button onClick={() => handleRemoveShipment(b.id)} style={{ border: "1px solid #fca5a5", borderRadius: 4, padding: "2px 6px", fontSize: 11, background: "#fff", color: "#dc2626", cursor: "pointer" }}>删除</button>
                         </div>
                       </div>
                     ))}
@@ -381,7 +379,7 @@ export default function StaffContainerLoadingPage() {
           </div>
 
           {/* 运单列表（可添加到装柜） */}
-          {detail && detail.status === "LOADING" && (
+          {detail && (
             <div style={{ border: "1px solid #e5e7eb", borderRadius: 10, padding: 16, background: "#fff" }}>
               <div style={{ fontSize: 14, fontWeight: 600, color: "#0f172a", marginBottom: 8 }}>选择运单添加到本柜</div>
               <div style={{ display: "flex", gap: 8, marginBottom: 10, flexWrap: "wrap" }}>

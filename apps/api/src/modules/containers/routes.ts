@@ -393,11 +393,6 @@ export function registerContainerRoutes(app: MinimalHttpApp): void {
       fail(res, 404, "NOT_FOUND", "shipment not found");
       return;
     }
-    if (container.currentStatus !== "LOADING") {
-      fail(res, 400, "VALIDATION_ERROR", "container is not in LOADING status");
-      return;
-    }
-
     // 检查体积是否超过运单总体积（已装 + 本次 <= 总量）
     if (shipment.volumeM3 !== null) {
       const alreadyLoaded = shipment.containerItems.reduce(
@@ -416,15 +411,38 @@ export function registerContainerRoutes(app: MinimalHttpApp): void {
       }
     }
 
+    const now = new Date();
+    // 非 LOADING 状态的柜子，装柜时同步运单状态
+    const syncStatus = container.currentStatus !== "LOADING"
+      ? (CONTAINER_TO_SHIPMENT_STATUS[container.currentStatus] ?? null)
+      : null;
+
     try {
       const item = await prisma.shipmentContainerItem.create({
-        data: {
-          shipmentId,
-          containerId,
-          loadedVolumeM3: volume,
-          loadedPieceCount: pieces,
-        },
+        data: { shipmentId, containerId, loadedVolumeM3: volume, loadedPieceCount: pieces },
       });
+
+      // 同步运单状态 + 写日志
+      if (syncStatus && shipment.currentStatus !== syncStatus) {
+        await prisma.$transaction([
+          prisma.shipment.update({ where: { id: shipmentId }, data: { currentStatus: syncStatus, updatedAt: now } }),
+          prisma.statusLog.create({
+            data: {
+              id: `sl_load_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+              companyId: auth.companyId,
+              shipmentId,
+              operatorId: auth.userId,
+              operatorRole: auth.role,
+              operatorName: auth.name,
+              fromStatus: shipment.currentStatus,
+              toStatus: syncStatus,
+              remark: `装入柜子 ${container.containerNo}`,
+              changedAt: now,
+            },
+          }),
+        ]);
+      }
+
       ok(res, {
         id: item.id,
         containerId,
@@ -462,11 +480,6 @@ export function registerContainerRoutes(app: MinimalHttpApp): void {
       fail(res, 404, "NOT_FOUND", "load item not found");
       return;
     }
-    if (item.container.currentStatus !== "LOADING") {
-      fail(res, 400, "VALIDATION_ERROR", "container is not in LOADING status; cannot unload");
-      return;
-    }
-
     await prisma.shipmentContainerItem.delete({ where: { id } });
     ok(res, { deleted: true, id });
   });
