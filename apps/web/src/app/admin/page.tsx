@@ -1387,6 +1387,7 @@ export default function AdminHomePage() {
                   </th>
                   <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>唛头</th>
                   <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>运单号</th>
+                  <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>到仓日期</th>
                   <th style={{ padding: "10px 8px", minWidth: 120 }}>品名</th>
                   <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>箱数</th>
                   <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>单箱数量</th>
@@ -1396,7 +1397,6 @@ export default function AdminHomePage() {
                   <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>重量</th>
                   <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>运输方式</th>
                   <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>货型</th>
-                  <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>到仓日期</th>
                   <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>操作</th>
                 </tr>
               </thead>
@@ -1426,6 +1426,9 @@ export default function AdminHomePage() {
                     <td style={{ padding: "8px 6px", color: "#000000", fontWeight: 600 }}>{o.clientId ?? "—"}</td>
                     <td style={{ padding: "8px 6px", fontWeight: 600, color: "#1e3a8a", whiteSpace: "nowrap" }}>
                       {o.trackingNo ?? "—"}
+                    </td>
+                    <td style={{ padding: "8px 6px", whiteSpace: "nowrap", color: "#000000" }}>
+                      {o.shipDate ?? o.createdAt.slice(0, 10)}
                     </td>
                     <td style={{ padding: "8px 6px", color: "#000000", minWidth: 120 }}>
                       {(o.products?.length ?? 0) > 0
@@ -1483,9 +1486,6 @@ export default function AdminHomePage() {
                             </div>
                           ))
                         : (o.cargoType === "INSPECTION" ? "商检" : o.cargoType === "SENSITIVE" ? "敏感" : "普货")}
-                    </td>
-                    <td style={{ padding: "8px 6px", whiteSpace: "nowrap", color: "#000000" }}>
-                      {o.shipDate ?? o.createdAt.slice(0, 10)}
                     </td>
                     <td style={{ padding: "8px 6px", whiteSpace: "nowrap" }}>
                       <button
