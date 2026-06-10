@@ -71,6 +71,7 @@ export default function StaffContainerLoadingPage() {
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [adding, setAdding] = useState(false);
   const [statusRemark, setStatusRemark] = useState("");
+  const [statusDate, setStatusDate] = useState("");
   const [targetStatus, setTargetStatus] = useState("");
 
   // 运单列表搜索
@@ -169,8 +170,9 @@ export default function StaffContainerLoadingPage() {
   const handlePushStatus = async (toStatus: string) => {
     if (!selectedId || !detail) return;
     try {
-      const result = await updateContainerStatus({ id: selectedId, toStatus, remark: statusRemark.trim() || undefined });
+      const result = await updateContainerStatus({ id: selectedId, toStatus, remark: statusRemark.trim() || undefined, date: statusDate || undefined });
       setStatusRemark("");
+      setStatusDate("");
       setToast(`柜子「${result.containerNo}」已推进至 ${STATUS_LABEL[toStatus] ?? toStatus}（影响 ${result.affectedShipmentCount} 个运单）`);
       await loadList();
       await loadDetail(selectedId);
@@ -327,6 +329,7 @@ export default function StaffContainerLoadingPage() {
                   </div>
                   <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
                     <input value={statusRemark} onChange={(e) => setStatusRemark(e.target.value)} placeholder="备注（选填）" style={{ ...inputStyle, minWidth: 200, flex: 1 }} />
+                    <input type="date" value={statusDate} onChange={(e) => setStatusDate(e.target.value)} style={{ ...inputStyle, maxWidth: 150 }} title="选择日期（不选则为当天）" />
                     {(() => {
                       const currentIdx = STATUS_FLOW.indexOf(detail.status as typeof STATUS_FLOW[number]);
                       if (currentIdx < 0 || currentIdx >= STATUS_FLOW.length - 1) return null;

@@ -260,7 +260,7 @@ export function registerContainerRoutes(app: MinimalHttpApp): void {
     const auth = requireRole(req, res, ["admin", "staff"]);
     if (!auth) return;
 
-    const body = (req.body ?? {}) as { id?: string; toStatus?: string; remark?: string };
+    const body = (req.body ?? {}) as { id?: string; toStatus?: string; remark?: string; date?: string };
     const id = body.id?.trim();
     const toStatus = body.toStatus?.trim();
     if (!id || !toStatus) {
@@ -291,7 +291,10 @@ export function registerContainerRoutes(app: MinimalHttpApp): void {
       return;
     }
 
-    const now = new Date();
+    const customDate = typeof body.date === "string" && body.date.trim()
+      ? new Date(body.date.trim() + "T00:00:00.000Z")
+      : null;
+    const now = customDate && !Number.isNaN(customDate.getTime()) ? customDate : new Date();
     const updateData: Prisma.ContainerUpdateInput = {
       currentStatus: toStatus,
       updatedAt: now,

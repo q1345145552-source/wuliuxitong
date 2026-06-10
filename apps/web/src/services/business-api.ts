@@ -1450,6 +1450,7 @@ export async function updateContainerStatus(payload: {
   id: string;
   toStatus: string;
   remark?: string;
+  date?: string;
 }): Promise<{ containerNo: string; fromStatus: string; toStatus: string; affectedShipmentCount: number }> {
   const response = await fetch(`${apiBaseUrl()}/admin/containers/status`, {
     method: "POST",
