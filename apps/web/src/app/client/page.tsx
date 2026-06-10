@@ -439,7 +439,7 @@ export default function ClientHomePage() {
       customs: "清关中", customsth: "清关中", customscleared: "清关已放行",
       inwarehouseth: "已到仓", warehouseth: "已到仓",
       loading: "装柜中", sealed: "已封柜", arrived: "已到港",
-      outfordelivery: "派送中", delivered: "已签收",
+      outfordelivery: "派送中", delivered: "派送完成",
       returned: "已退回", cancelled: "已取消", exception: "异常",
     };
     return map[(status ?? "").toLowerCase()] ?? "处理中";
@@ -467,7 +467,7 @@ export default function ClientHomePage() {
     if (value === "delivered") return "派送完成";
     if (value === "returned") return "已退回";
     if (value === "cancelled") return "已取消";
-    if (value === "exception") return "异常件";
+    if (value === "exception") return "异常";
     return "未更新";
   };
 

@@ -264,14 +264,19 @@ export default function AdminHomePage() {
     if (value === "pickedup") return "已揽收";
     if (value === "inwarehousecn" || value === "receivedcn") return "国内仓已收货";
     if (value === "customspending") return "报关中";
+    if (value === "loaded") return "已装柜";
+    if (value === "delaydeparted") return "延迟开船";
+    if (value === "departed") return "已开船";
+    if (value === "arrivedport") return "已到港";
     if (value === "intransit") return "运输中";
     if (value === "customsth") return "清关中";
-    if (value === "warehouseth") return "泰国仓处理中";
+    if (value === "customscleared") return "清关已放行";
+    if (value === "warehouseth" || value === "inwarehouseth") return "已到仓";
     if (value === "outfordelivery") return "派送中";
-    if (value === "delivered") return "已签收";
+    if (value === "delivered") return "派送完成";
     if (value === "returned") return "已退回";
     if (value === "cancelled") return "已取消";
-    if (value === "exception") return "异常件";
+    if (value === "exception") return "异常";
     return status ?? "—";
   };
 

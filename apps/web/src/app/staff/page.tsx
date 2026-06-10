@@ -154,7 +154,7 @@ function shipmentStatusZh(status: string | undefined): string {
     customsth: "清关中",
     customscleared: "清关已放行",
     inwarehouseth: "已到仓",
-    warehouseTH: "已到仓",
+    warehouseth: "已到仓",
     outfordelivery: "派送中",
     delivered: "派送完成",
     exception: "异常",

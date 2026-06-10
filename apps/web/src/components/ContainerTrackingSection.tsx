@@ -51,12 +51,20 @@ function statusColor(status: string): { bg: string; fg: string; border: string }
   switch (status) {
     case "LOADING":
       return { bg: "#fef3c7", fg: "#92400e", border: "#fde68a" };
+    case "SEALED":
+      return { bg: "#e0f2fe", fg: "#0369a1", border: "#7dd3fc" };
     case "IN_TRANSIT":
       return { bg: "#dbeafe", fg: "#1d4ed8", border: "#bfdbfe" };
+    case "DELAY_DEPARTED":
+      return { bg: "#fef3c7", fg: "#b45309", border: "#fde68a" };
     case "ARRIVED":
       return { bg: "#cffafe", fg: "#0e7490", border: "#a5f3fc" };
     case "CUSTOMS":
       return { bg: "#fce7f3", fg: "#9d174d", border: "#fbcfe8" };
+    case "CUSTOMS_CLEARED":
+      return { bg: "#dcfce7", fg: "#166534", border: "#bbf7d0" };
+    case "IN_WAREHOUSE_TH":
+      return { bg: "#ede9fe", fg: "#7c3aed", border: "#c4b5fd" };
     case "DELIVERING":
       return { bg: "#fed7aa", fg: "#9a3412", border: "#fdba74" };
     case "SIGNED":
