@@ -1053,12 +1053,8 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
       fail(res, 404, "NOT_FOUND", "order not found");
       return;
     }
-    if (auth.role === "staff" && order.approvalStatus !== "shipped" && order.approvalStatus !== "received") {
-      fail(res, 403, "FORBIDDEN", "staff can only manage product images for shipped or received orders");
-      return;
-    }
-    if (auth.role === "client" && (order.clientId !== auth.userId || (order.approvalStatus !== "shipped" && order.approvalStatus !== "received"))) {
-      fail(res, 403, "FORBIDDEN", "client can only manage product images for their own shipped or received orders");
+    if (auth.role === "client" && order.clientId !== auth.userId) {
+      fail(res, 403, "FORBIDDEN", "client can only manage product images for their own orders");
       return;
     }
     if (!(await staffCanEditOrderWarehouse(auth, order.warehouseId))) {
@@ -1117,12 +1113,8 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
       fail(res, 404, "NOT_FOUND", "image not found");
       return;
     }
-    if (auth.role === "staff" && image.order.approvalStatus !== "shipped" && image.order.approvalStatus !== "received") {
-      fail(res, 403, "FORBIDDEN", "staff can only manage product images for shipped or received orders");
-      return;
-    }
-    if (auth.role === "client" && (image.order.clientId !== auth.userId || (image.order.approvalStatus !== "shipped" && image.order.approvalStatus !== "received"))) {
-      fail(res, 403, "FORBIDDEN", "client can only manage product images for their own shipped or received orders");
+    if (auth.role === "client" && image.order.clientId !== auth.userId) {
+      fail(res, 403, "FORBIDDEN", "client can only manage product images for their own orders");
       return;
     }
     if (!(await staffCanEditOrderWarehouse(auth, image.order.warehouseId))) {
