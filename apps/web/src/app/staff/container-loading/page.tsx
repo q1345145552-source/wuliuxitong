@@ -40,7 +40,7 @@ const WAREHOUSE_ZH: Record<string, string> = {
 
 const SHIPMENT_STATUS_ZH: Record<string, string> = {
   created: "已创建", pickedup: "已揽收", inwarehousecn: "国内仓已收货", receivedcn: "国内仓已收货",
-  customspending: "报关中", loaded: "已装柜", delaydeparted: "延迟开船", departed: "已开船",
+  customspending: "报关中", loaded: "已装柜", delayDeparted: "延迟开船", delaydeparted: "延迟开船", departed: "已开船",
   arrivedport: "已到港", intransit: "运输中", customsth: "清关中", customscleared: "清关已放行",
   inwarehouseth: "已到仓", outfordelivery: "派送中", delivered: "派送完成",
   exception: "异常", returned: "已退回", cancelled: "已取消",

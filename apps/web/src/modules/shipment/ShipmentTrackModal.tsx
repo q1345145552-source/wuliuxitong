@@ -41,6 +41,7 @@ interface TrackData {
 const STATUS_CONFIG: Record<string, { zh: string; color: string; bg: string; icon: string }> = {
   loaded:         { zh: "已装柜",     color: "#0369a1", bg: "#e0f2fe", icon: "📦" },
   delaydeparted:  { zh: "延迟开船",   color: "#b45309", bg: "#fef3c7", icon: "⚠️" },
+  delay_departed: { zh: "延迟开船",   color: "#b45309", bg: "#fef3c7", icon: "⚠️" },
   departed:       { zh: "已开船",     color: "#1e40af", bg: "#dbeafe", icon: "🚢" },
   arrivedport:    { zh: "已到港",     color: "#065f46", bg: "#d1fae5", icon: "⚓" },
   customsth:      { zh: "清关中",     color: "#92400e", bg: "#fef3c7", icon: "📋" },
