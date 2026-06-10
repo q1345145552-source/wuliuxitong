@@ -59,7 +59,7 @@ export default function ShipmentSearch({
       </div>
       {!collapsed && (
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 8, marginBottom: 10, padding: 10, border: "1px dashed #e5e7eb", borderRadius: 8 }}>
-          <input value={value.batchNo} onChange={(e) => onChange("batchNo", e.target.value)} placeholder="柜号" style={inputStyle} />
+          <input value={value.batchNo} onChange={(e) => onChange("batchNo", e.target.value)} placeholder="批次号" style={inputStyle} />
           <input value={value.itemName} onChange={(e) => onChange("itemName", e.target.value)} placeholder="品名" style={inputStyle} />
           <input value={value.packageCount} onChange={(e) => onChange("packageCount", e.target.value)} placeholder="包裹数量" style={inputStyle} />
           <input value={value.productQuantity} onChange={(e) => onChange("productQuantity", e.target.value)} placeholder="产品数量" style={inputStyle} />
@@ -75,7 +75,7 @@ export default function ShipmentSearch({
             <option value="">全部状态</option>
             {logisticsStatusOptions.map((s) => (<option key={s} value={s}>{s}</option>))}
           </select>
-          <input value={value.containerNo} onChange={(e) => onChange("containerNo", e.target.value)} placeholder="装柜号" style={inputStyle} />
+          <input value={value.containerNo} onChange={(e) => onChange("containerNo", e.target.value)} placeholder="柜号" style={inputStyle} />
           <select value={value.transportMode} onChange={(e) => onChange("transportMode", e.target.value)} style={inputStyle}>
             <option value="">运输方式</option>
             <option value="sea">海运</option>
