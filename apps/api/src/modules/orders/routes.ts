@@ -1078,21 +1078,26 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
     const now = new Date();
     const imageId = `opi_${Date.now()}_${crypto.randomBytes(4).toString("hex")}`;
     // 保存文件到磁盘
-    const filePath = saveImageToDisk(orderId, mimeType, contentBase64);
-    await prisma.orderProductImage.create({
-      data: {
-        id: imageId,
-        companyId: auth.companyId,
-        orderId,
-        fileName,
-        mime: mimeType,
-        contentBase64,
-        filePath,
-        uploadedBy: auth.userId,
-        createdAt: now,
-      },
-    });
-    ok(res, { id: imageId, orderId, fileName, mime: mimeType, filePath, createdAt: now.toISOString() });
+    try {
+      const filePath = saveImageToDisk(orderId, mimeType, contentBase64);
+      await prisma.orderProductImage.create({
+        data: {
+          id: imageId,
+          companyId: auth.companyId,
+          orderId,
+          fileName,
+          mime: mimeType,
+          contentBase64,
+          filePath,
+          uploadedBy: auth.userId,
+          createdAt: now,
+        },
+      });
+      ok(res, { id: imageId, orderId, fileName, mime: mimeType, filePath, createdAt: now.toISOString() });
+    } catch (err) {
+      console.error("[product-image] save failed:", err);
+      fail(res, 500, "INTERNAL_ERROR", `保存图片失败：${err instanceof Error ? err.message : "未知错误"}`);
+    }
   });
 
   app.delete("/staff/orders/product-images", async (req, res) => {
