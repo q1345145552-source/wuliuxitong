@@ -1047,18 +1047,18 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
     }
     const order = await prisma.order.findFirst({
       where: { id: orderId, companyId: auth.companyId },
-      select: { id: true, warehouseId: true, approvalStatus: true },
+      select: { id: true, warehouseId: true, approvalStatus: true, clientId: true },
     });
     if (!order) {
       fail(res, 404, "NOT_FOUND", "order not found");
       return;
     }
     if (auth.role === "staff" && order.approvalStatus !== "shipped" && order.approvalStatus !== "received") {
-      fail(res, 403, "FORBIDDEN", "staff can only manage product images for pending or approved orders");
+      fail(res, 403, "FORBIDDEN", "staff can only manage product images for shipped or received orders");
       return;
     }
-    if (auth.role === "client" && (order.clientId !== auth.userId || order.approvalStatus !== "shipped" && order.approvalStatus !== "received")) {
-      fail(res, 403, "FORBIDDEN", "client can only manage product images for their own pending prealerts");
+    if (auth.role === "client" && (order.clientId !== auth.userId || (order.approvalStatus !== "shipped" && order.approvalStatus !== "received"))) {
+      fail(res, 403, "FORBIDDEN", "client can only manage product images for their own shipped or received orders");
       return;
     }
     if (!(await staffCanEditOrderWarehouse(auth, order.warehouseId))) {
@@ -1110,19 +1110,19 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
     const image = await prisma.orderProductImage.findFirst({
       where: { id, companyId: auth.companyId },
       include: {
-        order: { select: { warehouseId: true, approvalStatus: true } },
+        order: { select: { warehouseId: true, approvalStatus: true, clientId: true } },
       },
     });
     if (!image || !image.order) {
       fail(res, 404, "NOT_FOUND", "image not found");
       return;
     }
-    if (auth.role === "staff" && image.order.approvalStatus !== "shipped" && order.approvalStatus !== "received" && image.order.approvalStatus !== "approved") {
-      fail(res, 403, "FORBIDDEN", "staff can only manage product images for pending or approved orders");
+    if (auth.role === "staff" && image.order.approvalStatus !== "shipped" && image.order.approvalStatus !== "received") {
+      fail(res, 403, "FORBIDDEN", "staff can only manage product images for shipped or received orders");
       return;
     }
-    if (auth.role === "client" && (image.order.clientId !== auth.userId || image.order.approvalStatus !== "shipped" && order.approvalStatus !== "received")) {
-      fail(res, 403, "FORBIDDEN", "client can only manage their own pending prealert images");
+    if (auth.role === "client" && (image.order.clientId !== auth.userId || (image.order.approvalStatus !== "shipped" && image.order.approvalStatus !== "received"))) {
+      fail(res, 403, "FORBIDDEN", "client can only manage product images for their own shipped or received orders");
       return;
     }
     if (!(await staffCanEditOrderWarehouse(auth, image.order.warehouseId))) {
