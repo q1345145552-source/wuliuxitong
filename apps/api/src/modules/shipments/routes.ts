@@ -546,11 +546,24 @@ export function registerShipmentRoutes(app: MinimalHttpApp): void {
     const results: Array<{ trackingNo: string; shipmentId: string }> = [];
 
     await prisma.$transaction(async (tx) => {
+      // 行级锁：防止并发分柜
+      await tx.$queryRaw`SELECT id FROM shipments WHERE id = ${parentId} FOR UPDATE`;
+
+      // 重新读取父单件数（加锁后最新值）
+      const locked = await tx.shipment.findUnique({
+        where: { id: parentId },
+        select: { packageCount: true, volumeM3: true },
+      });
+      const currentPkg = locked?.packageCount ?? 0;
+      if (totalSplitCount > currentPkg) {
+        throw new Error(`split total (${totalSplitCount}) exceeds current package count (${currentPkg})`);
+      }
+
       // 更新父单：扣减件数
       await tx.shipment.update({
         where: { id: parent.id },
         data: {
-          packageCount: parentPackageCount - totalSplitCount,
+          packageCount: currentPkg - totalSplitCount,
         },
       });
 
@@ -582,16 +595,19 @@ export function registerShipmentRoutes(app: MinimalHttpApp): void {
         results.push({ trackingNo: childTrackingNo, shipmentId: childId });
       }
 
-      // 同步柜内数据：按件数比例分配已装载的体积和件数
+      // 同步柜内数据：按件数比例精确分配体积和件数
       const containerItems = await tx.shipmentContainerItem.findMany({
         where: { shipmentId: parent.id },
       });
 
       for (const item of containerItems) {
+        const itemVol = Number(item.loadedVolumeM3);
+        const itemPcs = item.loadedPieceCount;
+
         // 父单保留的件数比例
-        const parentRatio = (parentPackageCount - totalSplitCount) / parentPackageCount;
-        const parentVolume = Number(item.loadedVolumeM3) * parentRatio;
-        const parentPieces = Math.round(item.loadedPieceCount * parentRatio);
+        const parentRatio = (currentPkg - totalSplitCount) / currentPkg;
+        const parentVolume = Number((itemVol * parentRatio).toFixed(6));
+        const parentPieces = Math.round(itemPcs * parentRatio);
 
         await tx.shipmentContainerItem.update({
           where: { id: item.id },
@@ -603,9 +619,9 @@ export function registerShipmentRoutes(app: MinimalHttpApp): void {
 
         // 为每个子单分配对应的柜内数据
         for (const [childId, child] of childMap) {
-          const childRatio = child.packageCount / parentPackageCount;
-          const childVolume = Number(item.loadedVolumeM3) * childRatio;
-          const childPieces = Math.round(item.loadedPieceCount * childRatio);
+          const childRatio = child.packageCount / currentPkg;
+          const childVolume = Number((itemVol * childRatio).toFixed(6));
+          const childPieces = Math.round(itemPcs * childRatio);
 
           if (childPieces > 0) {
             await tx.shipmentContainerItem.create({
