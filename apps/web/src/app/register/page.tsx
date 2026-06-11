@@ -58,7 +58,7 @@ export default function RegisterPage() {
   return (
     <main style={{ minHeight: "100vh", display: "grid", placeItems: "center", background: "#f8fafc", padding: 20 }}>
       <section style={{ width: "100%", maxWidth: 460, border: "1px solid #e5e7eb", borderRadius: 12, background: "#fff", padding: 20 }}>
-        <h1 style={{ margin: 0, fontSize: 24 }}>湘泰物流系统注册</h1>
+        <h1 style={{ margin: 0, fontSize: 24 }}>湘泰物流网站注册</h1>
         <p style={{ marginTop: 8, color: "#000000", fontSize: 14 }}>注册后将以客户身份进入系统。</p>
 
         <div style={{ display: "grid", gap: 10, marginTop: 14 }}>

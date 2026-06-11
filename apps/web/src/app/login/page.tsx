@@ -76,7 +76,7 @@ export default function LoginPage() {
           padding: "32px 28px",
           boxShadow: "0 16px 48px rgba(0,0,0,0.3)",
         }}>
-        <h1 style={{ margin: 0, fontSize: 24, textAlign: "center", color: "#171717" }}>湘泰物流系统登录</h1>
+        <h1 style={{ margin: 0, fontSize: 24, textAlign: "center", color: "#171717" }}>湘泰物流网站登录</h1>
 
         {existingSession ? (
           <div style={{ marginTop: 16, textAlign: "center" }}>

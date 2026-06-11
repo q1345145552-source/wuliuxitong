@@ -36,7 +36,7 @@ export function openPrintLabel(props: ShipmentPrintLabelProps) {
   <div class="row"><span>${escapeHtml(p.itemName)}</span></div>
   <div class="row"><span>箱号：${globalIdx}/${total}</span></div>
   <div class="row"><span>${escapeHtml(props.trackingNo)}</span></div>
-  <div class="footer">湘泰物流</div>
+  <div class="footer">湘泰物流网站</div>
 </div>`;
       }
     }
@@ -48,7 +48,7 @@ export function openPrintLabel(props: ShipmentPrintLabelProps) {
   <div class="row"><span>${escapeHtml(props.itemName ?? "")}</span></div>
   <div class="row"><span>箱号：${i}/${total}</span><span>${props.productQuantity ? `单箱数量：${props.productQuantity}个` : ""}</span></div>
   <div class="row"><span>${escapeHtml(props.trackingNo)}</span></div>
-  <div class="footer">湘泰物流</div>
+  <div class="footer">湘泰物流网站</div>
 </div>`;
     }
   }
@@ -108,7 +108,7 @@ export function openPrintPrealert(props: PrealertPrintProps) {
   <div class="row"><span>${escapeHtml(p.itemName)}</span></div>
   <div class="row"><span>箱号：${globalIdx}/${total}</span></div>
   <div class="row"><span>${escapeHtml(props.prealertNo)}</span></div>
-  <div class="footer">湘泰物流预报单</div>
+  <div class="footer">湘泰物流网站预报单</div>
 </div>`;
       }
     }
@@ -120,7 +120,7 @@ export function openPrintPrealert(props: PrealertPrintProps) {
   <div class="row"><span>${escapeHtml(props.itemName)}</span></div>
   <div class="row"><span>箱号：${i}/${total}</span><span>${props.productQuantity ? `单箱数量：${props.productQuantity}个` : ""}</span></div>
   <div class="row"><span>${escapeHtml(props.prealertNo)}</span></div>
-  <div class="footer">湘泰物流预报单</div>
+  <div class="footer">湘泰物流网站预报单</div>
 </div>`;
     }
   }
