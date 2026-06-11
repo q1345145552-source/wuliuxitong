@@ -464,11 +464,14 @@ export default function AdminHomePage() {
     const finalVolume = hasProductDims ? autoVolume : (orderEditForm.volumeM3.trim() ? Number(orderEditForm.volumeM3) : null);
     const finalWeight = autoWeight > 0 ? autoWeight : (orderEditForm.weightKg.trim() ? Number(orderEditForm.weightKg) : null);
 
+    const saveOrderId = editingOrderId;
+    if (!saveOrderId) { setMessage("编辑失败：未选择订单"); return; }
+
     setLoading(true);
     setMessage("");
     try {
       await updateAdminOrder({
-        orderId: editingOrderId,
+        orderId: saveOrderId,
         clientId: orderEditForm.clientId.trim() || "",
         itemName: primaryItemName,
         trackingNo: orderEditForm.trackingNo.trim() || "",

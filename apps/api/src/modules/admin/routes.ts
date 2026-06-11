@@ -315,23 +315,29 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
       }>;
     };
 
-    const orderId = body.orderId?.trim();
-    if (!orderId) {
+    const rawId = body.orderId?.trim();
+    if (!rawId) {
       fail(res, 400, "BAD_REQUEST", "orderId is required");
       return;
     }
 
-    const exists = await prisma.order.findFirst({
+    // 支持传入运单ID（shipment id），自动查找关联订单
+    let orderId = rawId;
+    let exists = await prisma.order.findFirst({
       where: { id: orderId, companyId: auth.companyId },
-      select: {
-        id: true,
-        warehouseId: true,
-        batchNo: true,
-        domesticTrackingNo: true,
-        receiverAddressTh: true,
-        paymentStatus: true,
-      },
+      select: { id: true, warehouseId: true, batchNo: true, domesticTrackingNo: true, receiverAddressTh: true, paymentStatus: true },
     });
+    if (!exists) {
+      // 尝试通过运单ID查找
+      const shipment = await prisma.shipment.findUnique({
+        where: { id: rawId },
+        select: { orderId: true, order: { select: { id: true, warehouseId: true, batchNo: true, domesticTrackingNo: true, receiverAddressTh: true, paymentStatus: true } } },
+      });
+      if (shipment?.order) {
+        exists = shipment.order;
+        orderId = shipment.order.id;
+      }
+    }
     if (!exists) {
       fail(res, 404, "NOT_FOUND", "order not found");
       return;
