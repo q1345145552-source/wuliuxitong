@@ -1,7 +1,7 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { setAuthSession } from "../../auth/mock-session";
+import { useEffect, useMemo, useState } from "react";
+import { clearAuthSession, getOptionalSession, setAuthSession } from "../../auth/mock-session";
 import { login } from "../../services/auth-api";
 
 const roleRouteMap: Record<string, string> = {
@@ -15,6 +15,11 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
+  const [existingSession, setExistingSession] = useState<ReturnType<typeof getOptionalSession>>(null);
+
+  useEffect(() => {
+    setExistingSession(getOptionalSession());
+  }, []);
 
   const canSubmit = useMemo(() => account.trim().length > 0 && password.trim().length > 0, [account, password]);
 
@@ -72,7 +77,32 @@ export default function LoginPage() {
           boxShadow: "0 16px 48px rgba(0,0,0,0.3)",
         }}>
         <h1 style={{ margin: 0, fontSize: 24, textAlign: "center", color: "#171717" }}>湘泰物流系统登录</h1>
-        <p style={{ marginTop: 8, color: "#000000", fontSize: 14, textAlign: "center" }}>请输入账号和密码登录系统。</p>
+
+        {existingSession ? (
+          <div style={{ marginTop: 16, textAlign: "center" }}>
+            <p style={{ color: "#000000", fontSize: 14, marginBottom: 12 }}>
+              检测到已登录账号：<strong>{existingSession.userId}</strong>（{existingSession.role === "admin" ? "管理员" : existingSession.role === "staff" ? "员工" : "客户"}）
+            </p>
+            <div style={{ display: "flex", gap: 8, justifyContent: "center" }}>
+              <button
+                type="button"
+                onClick={() => { window.location.href = roleRouteMap[existingSession.role] || "/"; }}
+                style={{ border: "none", borderRadius: 8, padding: "10px 20px", background: "#2563eb", color: "#fff", fontWeight: 600, cursor: "pointer" }}
+              >
+                进入工作台
+              </button>
+              <button
+                type="button"
+                onClick={() => { clearAuthSession(); setExistingSession(null); }}
+                style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "10px 20px", background: "#fff", cursor: "pointer", color: "#dc2626" }}
+              >
+                退出并切换账号
+              </button>
+            </div>
+          </div>
+        ) : (
+          <>
+            <p style={{ marginTop: 8, color: "#000000", fontSize: 14, textAlign: "center" }}>请输入账号和密码登录系统。</p>
 
         <div style={{ display: "grid", gap: 10, marginTop: 14 }}>
           <input
@@ -109,9 +139,13 @@ export default function LoginPage() {
 
         {message ? <p style={{ marginTop: 10, color: "#b91c1c", fontSize: 13 }}>{message}</p> : null}
 
-        <div style={{ marginTop: 12, fontSize: 13 }}>
-          还没有账号？<a href="/register" style={{ color: "#2563eb", textDecoration: "none" }}>去注册</a>
-        </div>
+        {!existingSession && (
+          <div style={{ marginTop: 12, fontSize: 13 }}>
+            还没有账号？<a href="/register" style={{ color: "#2563eb", textDecoration: "none" }}>去注册</a>
+          </div>
+        )}
+          </>
+        )}
       </section>
     </div>
   );
