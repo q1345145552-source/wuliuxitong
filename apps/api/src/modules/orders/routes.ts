@@ -14,16 +14,45 @@ const DEFAULT_UNIT_PRICES: Record<string, number> = {
   "land|SENSITIVE": 1350,
 } as const;
 
-const MIN_VOLUME_M3 = 1; // 最低计费体积
+const MIN_VOLUME_DEFAULTS: Record<string, number> = { sea: 0.5, land: 0.3 };
 
-/** 根据运输方式和货型计算应收金额 */
-async function calcReceivableAmount(
+/** 从配置表获取最低计费体积 */
+async function getMinVolume(companyId: string, transportMode: string): Promise<number> {
+  const row = await prisma.shippingConfig.findFirst({
+    where: { companyId, status: `min_volume_${transportMode}` },
+    select: { value: true },
+  });
+  if (row?.value) {
+    const v = Number(row.value);
+    if (Number.isFinite(v) && v > 0) return v;
+  }
+  return MIN_VOLUME_DEFAULTS[transportMode] ?? 0.5;
+}
+
+/** 计算产品总积体 */
+function calcTotalVolume(products: Array<{ packageCount: number; lengthCm?: number | null; widthCm?: number | null; heightCm?: number | null }>): number {
+  return products.reduce((sum, p) => {
+    if (p.lengthCm && p.widthCm && p.heightCm)
+      return sum + (p.lengthCm * p.widthCm * p.heightCm * p.packageCount) / 1_000_000;
+    return sum;
+  }, 0);
+}
+
+/** 按订单总积体统一计费：总积体 vs 低消，取较大值 × 单价 */
+async function calcReceivableByProducts(
   companyId: string,
   transportMode: string,
-  cargoType: string,
-  volumeM3: number,
+  products: Array<{ packageCount: number; lengthCm?: number | null; widthCm?: number | null; heightCm?: number | null; cargoType?: string }>,
+  fallbackVolume?: number | null,
 ): Promise<number | null> {
-  if (!volumeM3 || volumeM3 <= 0) return null;
+  const totalVol = calcTotalVolume(products);
+  const effectiveVol = totalVol > 0 ? totalVol : (fallbackVolume ?? 0);
+  if (effectiveVol <= 0) return null;
+
+  const minVol = await getMinVolume(companyId, transportMode);
+  const billableVol = Math.max(effectiveVol, minVol);
+
+  const cargoType = (products.length > 0 ? products[0].cargoType?.trim() : null) || "NORMAL";
   const key = `${transportMode}|${cargoType}`;
   const rule = await prisma.pricingRule.findFirst({
     where: { companyId, transportMode, cargoType, customerId: null },
@@ -31,36 +60,8 @@ async function calcReceivableAmount(
   });
   const unitPrice = rule ? Number(rule.unitPriceCny.toString()) : (DEFAULT_UNIT_PRICES[key] ?? null);
   if (!unitPrice || unitPrice <= 0) return null;
-  const billableVol = Math.max(volumeM3, MIN_VOLUME_M3);
-  return Math.round(billableVol * unitPrice * 100) / 100;
-}
 
-/** 按产品行分别计算应收金额并求和 */
-async function calcReceivableByProducts(
-  companyId: string,
-  transportMode: string,
-  products: Array<{ packageCount: number; lengthCm?: number | null; widthCm?: number | null; heightCm?: number | null; cargoType?: string }>,
-  fallbackVolume?: number | null,
-): Promise<number | null> {
-  let total = 0;
-  let hasProductVolume = false;
-  for (const p of products) {
-    const vol = (p.lengthCm && p.widthCm && p.heightCm)
-      ? (p.lengthCm * p.widthCm * p.heightCm * p.packageCount) / 1_000_000
-      : 0;
-    if (vol <= 0) continue;
-    hasProductVolume = true;
-    const ct = p.cargoType?.trim() || "NORMAL";
-    // 缓存 key → price 避免重复查询
-    const amount = await calcReceivableAmount(companyId, transportMode, ct, vol);
-    if (amount !== null) total += amount;
-  }
-  if (hasProductVolume) return total > 0 ? Math.round(total * 100) / 100 : null;
-  // 无产品体积时用回退总体积
-  if (fallbackVolume && fallbackVolume > 0) {
-    return calcReceivableAmount(companyId, transportMode, "NORMAL", fallbackVolume);
-  }
-  return null;
+  return Math.round(billableVol * unitPrice * 100) / 100;
 }
 import { fail, ok, parseJsonArray, requireRole } from "../core/http-utils";
 import { loadProductImagesForOrders, MAX_ORDER_PRODUCT_IMAGES } from "./product-images";
@@ -574,7 +575,7 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
     // 事务前计算应收金额（按产品行分别计价求和）
     const calcAmount = staffProducts.length > 0
       ? await calcReceivableByProducts(auth.companyId, body.transportMode, staffProducts, volumeM3)
-      : await calcReceivableAmount(auth.companyId, body.transportMode, "NORMAL", prVol || (volumeM3 ?? 0));
+      : await calcReceivableByProducts(auth.companyId, body.transportMode, staffProducts, volumeM3);
 
     const txOps: any[] = [
       prisma.order.create({
