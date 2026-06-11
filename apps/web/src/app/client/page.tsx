@@ -52,8 +52,8 @@ const warehouseAddressMap: Record<string, string> = {
   wh_shenzhen_01: "（深圳仓地址待补充）",
 };
 
-type FreightTransportMode = "land"  |  "sea";
-type FreightCargoType = "normal"  |  "inspection"  |  "sensitive";
+type FreightTransportMode = "land"  |  "sea";
+type FreightCargoType = "normal"  |  "inspection"  |  "sensitive";
 
 const freightRateMap: Record<FreightTransportMode, Record<FreightCargoType, number>> = {
   // 统一按“计费体积（立方米）× 单价（元/立方米）”计费
@@ -91,8 +91,8 @@ const VALID_TRANSPORT_MODES = ["sea", "land"] as const;
 
 function PrealertPrintButton({ item }: { item: OrderItem }) {
   const wl = warehouseOptions.find(w => w.id === item.warehouseId)?.label || item.warehouseId || "—";
-  const safePkgUnit = VALID_PACKAGE_UNITS.includes(item.packageUnit as any) ? (item.packageUnit as "bag"  |  "box") : "box";
-  const safeTransport = VALID_TRANSPORT_MODES.includes(item.transportMode as any) ? (item.transportMode as "sea"  |  "land") : "sea";
+  const safePkgUnit = VALID_PACKAGE_UNITS.includes(item.packageUnit as any) ? (item.packageUnit as "bag"  |  "box") : "box";
+  const safeTransport = VALID_TRANSPORT_MODES.includes(item.transportMode as any) ? (item.transportMode as "sea"  |  "land") : "sea";
 
   return (
     <button type="button" onClick={() => {
@@ -122,7 +122,7 @@ export default function ClientHomePage() {
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
   const [toast, setToast] = useState("");
-  const [queryMode, setQueryMode] = useState<"unfinished"  |  "completed"  |  "all"  |  null>("all");
+  const [queryMode, setQueryMode] = useState<"unfinished"  |  "completed"  |  "all"  |  null>("all");
   const [queriedOrders, setQueriedOrders] = useState<OrderItem[]>([]);
   const [hasQueried, setHasQueried] = useState(false);
   const [prealerts, setPrealerts] = useState<OrderItem[]>([]);
@@ -130,9 +130,9 @@ export default function ClientHomePage() {
   const [walletRateText, setWalletRateText] = useState("-");
   const [prealertSearch, setPrealertSearch] = useState("");
   const [showCreateModal, setShowCreateModal] = useState(false);
-  const [editingPrealert, setEditingPrealert] = useState<OrderItem  |  null>(null);
-  const [previewImage, setPreviewImage] = useState<{ src: string; alt: string }  |  null>(null);
-  const [shippingPrices, setShippingPrices] = useState<Record<string, ShippingPriceItem>  |  null>(null);
+  const [editingPrealert, setEditingPrealert] = useState<OrderItem  |  null>(null);
+  const [previewImage, setPreviewImage] = useState<{ src: string; alt: string }  |  null>(null);
+  const [shippingPrices, setShippingPrices] = useState<Record<string, ShippingPriceItem>  |  null>(null);
   const [selectedOrders, setSelectedOrders] = useState<Set<string>>(new Set());
   const [pageSize, setPageSize] = useState(100);
   const toggleSelectClientOrder = (id: string) => { setSelectedOrders((p) => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n; }); };
@@ -156,7 +156,7 @@ export default function ClientHomePage() {
     warehouseId: "",
     itemName: "",
     packageCount: "",
-    packageUnit: "box" as "bag"  |  "box",
+    packageUnit: "box" as "bag"  |  "box",
     lengthCm: "",
     widthCm: "",
     heightCm: "",
@@ -164,7 +164,7 @@ export default function ClientHomePage() {
     weightKg: "",
     volumeM3: "",
     domesticTrackingNo: "",
-    transportMode: "" as ""  |  "sea"  |  "land",
+    transportMode: "" as ""  |  "sea"  |  "land",
     receiverNameTh: "",
     receiverPhoneTh: "",
     receiverAddressTh: "",
@@ -211,7 +211,7 @@ export default function ClientHomePage() {
   /**
    * 更新长宽高并同步计算体积。
    */
-  const updateOrderDimensions = (patch: Partial<Pick<typeof form, "lengthCm"  |  "widthCm"  |  "heightCm"  |  "packageCount">>) => {
+  const updateOrderDimensions = (patch: Partial<Pick<typeof form, "lengthCm"  |  "widthCm"  |  "heightCm"  |  "packageCount">>) => {
     setForm((prev) => {
       const next = { ...prev, ...patch };
       const l = Number(String(next.lengthCm).trim());
@@ -313,7 +313,7 @@ export default function ClientHomePage() {
         weightKg: form.weightKg ? Number(form.weightKg) : undefined,
         volumeM3: form.volumeM3 ? Number(form.volumeM3) : undefined,
         domesticTrackingNo: form.domesticTrackingNo.trim() || undefined,
-        transportMode: form.transportMode as "sea"  |  "land",
+        transportMode: form.transportMode as "sea"  |  "land",
         receiverNameTh: form.receiverNameTh.trim() || undefined,
         receiverPhoneTh: form.receiverPhoneTh.trim() || undefined,
         receiverAddressTh: form.receiverAddressTh.trim() || undefined,
@@ -392,7 +392,7 @@ export default function ClientHomePage() {
   /**
    * 切换运单查询分组（在途/已完成/全部）。
    */
-  const changeQueryMode = (mode: "unfinished"  |  "completed"  |  "all") => {
+  const changeQueryMode = (mode: "unfinished"  |  "completed"  |  "all") => {
     setQueryMode(mode);
     setSearch(initialSearch);
     setHasQueried(false);
@@ -485,7 +485,7 @@ export default function ClientHomePage() {
   /**
    * 构建带阶段（已完成/进行中/未开始）的物流时间轴数据。
    */
-  const buildOrderTimeline = (status?: string): Array<{ key: string; label: string; phase: "done"  |  "active"  |  "pending" }> => {
+  const buildOrderTimeline = (status?: string): Array<{ key: string; label: string; phase: "done"  |  "active"  |  "pending" }> => {
     const normalized = normalizeTimelineStatus(status);
     const activeIndex = ORDER_TIMELINE.findIndex((item) => item.key.toLowerCase() === normalized.toLowerCase());
     const fallbackIndex = normalized === "delivered" ? ORDER_TIMELINE.length - 1 : Math.max(activeIndex, 0);
@@ -517,7 +517,7 @@ export default function ClientHomePage() {
    * 构建物流状态变更记录（按时间升序，并补充时间段信息）。
    */
   const buildLogisticsTransitions = (
-    records: OrderItem["logisticsRecords"]  |  undefined,
+    records: OrderItem["logisticsRecords"]  |  undefined,
   ): Array<{
     fromStatus?: string;
     toStatus?: string;
@@ -545,7 +545,7 @@ export default function ClientHomePage() {
   const freightVolume = Number(freightForm.volumeM3 || 0);
   const safeWeight = Number.isNaN(freightWeight) ? 0 : Math.max(freightWeight, 0);
   const safeVolume = Number.isNaN(freightVolume) ? 0 : Math.max(freightVolume, 0);
-  const priceKey = `${freightForm.transportMode} | ${freightForm.cargoType}`;
+  const priceKey = `${freightForm.transportMode} | ${freightForm.cargoType}`;
   const defaultUnitPrice = shippingPrices?.[priceKey]?.unitPriceCny ?? freightRateMap[freightForm.transportMode][freightForm.cargoType];
   const overrideUnitPriceRaw = freightForm.unitPriceOverride.trim();
   const overrideUnitPrice = overrideUnitPriceRaw ? Number(overrideUnitPriceRaw) : undefined;
@@ -1512,7 +1512,7 @@ export default function ClientHomePage() {
                   }, 0);
                   return (
                     <div style={{ fontSize: 12, fontWeight: 600, padding: "4px 0", color: "#2563eb", textAlign: "right" }}>
-                      合计：总体积 {totalVol.toFixed(4)}m³  |  总重量 {totalWt.toFixed(2)}kg
+                      合计：总体积 {totalVol.toFixed(4)}m³  |  总重量 {totalWt.toFixed(2)}kg
                     </div>
                   );
                 })()}
@@ -1527,7 +1527,7 @@ export default function ClientHomePage() {
                 <input type="number" min={0} step="0.01" value={form.heightCm} onChange={(e) => updateOrderDimensions({ heightCm: e.target.value })} placeholder="高（cm）" style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "8px 10px", fontSize: 13 }} />
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 8 }}>
-                <select value={form.packageUnit} onChange={(e) => setForm((v) => ({ ...v, packageUnit: e.target.value as "bag"  |  "box" }))} style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "8px 10px", fontSize: 13 }}>
+                <select value={form.packageUnit} onChange={(e) => setForm((v) => ({ ...v, packageUnit: e.target.value as "bag"  |  "box" }))} style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "8px 10px", fontSize: 13 }}>
                   <option value="box">箱</option>
                   <option value="bag">袋</option>
                 </select>
@@ -1537,7 +1537,7 @@ export default function ClientHomePage() {
               </div>
               <input value={form.trackingNo ?? ""} onChange={(e) => setForm((v) => ({ ...v, trackingNo: e.target.value }))} placeholder="预报单号（留空自动生成）" style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "8px 10px", fontSize: 13 }} />
               <input value={form.domesticTrackingNo} onChange={(e) => setForm((v) => ({ ...v, domesticTrackingNo: e.target.value }))} placeholder="国内快递单号" style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "8px 10px", fontSize: 13 }} />
-              <select value={form.transportMode} onChange={(e) => setForm((v) => ({ ...v, transportMode: e.target.value as "sea"  |  "land" }))} style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "8px 10px", fontSize: 13 }}>
+              <select value={form.transportMode} onChange={(e) => setForm((v) => ({ ...v, transportMode: e.target.value as "sea"  |  "land" }))} style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "8px 10px", fontSize: 13 }}>
                 <option value="">运输方式 *</option>
                 <option value="sea">海运</option>
                 <option value="land">陆运</option>
@@ -1575,7 +1575,7 @@ export default function ClientHomePage() {
                 if (!hasProducts && !form.itemName) { setToast("请填写品名"); return; }
                 if (!form.transportMode || !form.warehouseId) { setToast("请填写必填项"); return; }
                 try {
-                  const payload: any = { ...form, packageCount: +form.packageCount || 0, weightKg: form.weightKg ? +form.weightKg : undefined, volumeM3: form.volumeM3 ? +form.volumeM3 : undefined, transportMode: form.transportMode as "sea"  |  "land", trackingNo: form.trackingNo?.trim() || undefined };
+                  const payload: any = { ...form, packageCount: +form.packageCount || 0, weightKg: form.weightKg ? +form.weightKg : undefined, volumeM3: form.volumeM3 ? +form.volumeM3 : undefined, transportMode: form.transportMode as "sea"  |  "land", trackingNo: form.trackingNo?.trim() || undefined };
                   if (hasProducts) {
                     payload.products = formProducts.filter((p) => p.itemName.trim()).map((p) => ({ itemName: p.itemName.trim(), packageCount: Number(p.packageCount) || 1, lengthCm: p.lengthCm ? Number(p.lengthCm) : undefined, widthCm: p.widthCm ? Number(p.widthCm) : undefined, heightCm: p.heightCm ? Number(p.heightCm) : undefined, productQuantity: p.productQuantity ? Number(p.productQuantity) : undefined, weightKg: p.weightKg ? Number(p.weightKg) : undefined, domesticTrackingNo: p.domesticTrackingNo?.trim() || "货拉拉", cargoType: "NORMAL" }));
                     payload.itemName = payload.products[0].itemName;
@@ -1596,7 +1596,7 @@ export default function ClientHomePage() {
                   }
                   setToast("预报单创建成功");
                   setShowCreateModal(false);
-                  setForm({ warehouseId: "", itemName: "", packageCount: "", packageUnit: "box" as "bag"  |  "box", lengthCm: "", widthCm: "", heightCm: "", weightKg: "", volumeM3: "", trackingNo: "", domesticTrackingNo: "", transportMode: "" as ""  |  "sea"  |  "land", receiverNameTh: "", receiverPhoneTh: "", receiverAddressTh: "" });
+                  setForm({ warehouseId: "", itemName: "", packageCount: "", packageUnit: "box" as "bag"  |  "box", lengthCm: "", widthCm: "", heightCm: "", weightKg: "", volumeM3: "", trackingNo: "", domesticTrackingNo: "", transportMode: "" as ""  |  "sea"  |  "land", receiverNameTh: "", receiverPhoneTh: "", receiverAddressTh: "" });
                   setFormProducts([]);
                   setPrealertImageFiles([]);
                   setPrealertImagePreviews([]);
@@ -1627,7 +1627,7 @@ export default function ClientHomePage() {
               <input value={editingPrealert.itemName} onChange={(e) => setEditingPrealert((v) => v ? { ...v, itemName: e.target.value } : v)} placeholder="品名" style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "8px 10px", fontSize: 13 }} />
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
                 <input type="number" value={editingPrealert.packageCount} onChange={(e) => setEditingPrealert((v) => v ? { ...v, packageCount: +e.target.value } : v)} placeholder="箱数" style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "8px 10px", fontSize: 13 }} />
-                <select value={editingPrealert.packageUnit} onChange={(e) => setEditingPrealert((v) => v ? { ...v, packageUnit: e.target.value as "bag"  |  "box" } : v)} style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "8px 10px", fontSize: 13 }}>
+                <select value={editingPrealert.packageUnit} onChange={(e) => setEditingPrealert((v) => v ? { ...v, packageUnit: e.target.value as "bag"  |  "box" } : v)} style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "8px 10px", fontSize: 13 }}>
                   <option value="box">箱</option>
                   <option value="bag">袋</option>
                 </select>

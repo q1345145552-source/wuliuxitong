@@ -2010,7 +2010,7 @@ export default function StaffHomePage() {
               }, 0);
               return (
                 <div style={{ fontSize: 12, fontWeight: 600, padding: "4px 0", color: "#2563eb", textAlign: "right" }}>
-                  合计：总体积 {totalVol.toFixed(6)}m³  |  总重量 {totalWt.toFixed(2)}kg
+                  合计：总体积 {totalVol.toFixed(6)}m³  |  总重量 {totalWt.toFixed(2)}kg
                 </div>
               );
             })()}
@@ -3232,7 +3232,7 @@ export default function StaffHomePage() {
                   }, 0);
                   return (
                     <div style={{ fontSize: 12, fontWeight: 600, padding: "4px 0", color: "#2563eb", textAlign: "right" }}>
-                      合计：总体积 {totalVol.toFixed(6)}m³  |  总重量 {totalWt.toFixed(2)}kg
+                      合计：总体积 {totalVol.toFixed(6)}m³  |  总重量 {totalWt.toFixed(2)}kg
                     </div>
                   );
                 })()}
