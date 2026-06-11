@@ -447,6 +447,23 @@ export default function AdminHomePage() {
       setMessage("请至少添加一个产品行。");
       return;
     }
+    // 从产品行自动计算总体积和总重量
+    let autoVolume = 0;
+    let autoWeight = 0;
+    let hasProductDims = false;
+    for (const p of activeProducts) {
+      const l = Number(p.lengthCm); const w = Number(p.widthCm); const h = Number(p.heightCm);
+      const qty = Number(p.packageCount) || 1;
+      if (l > 0 && w > 0 && h > 0) {
+        autoVolume += (l * w * h * qty) / 1_000_000;
+        hasProductDims = true;
+      }
+      const pw = Number(p.weightKg);
+      if (pw > 0) autoWeight += pw * qty;
+    }
+    const finalVolume = hasProductDims ? autoVolume : (orderEditForm.volumeM3.trim() ? Number(orderEditForm.volumeM3) : null);
+    const finalWeight = autoWeight > 0 ? autoWeight : (orderEditForm.weightKg.trim() ? Number(orderEditForm.weightKg) : null);
+
     setLoading(true);
     setMessage("");
     try {
@@ -464,8 +481,8 @@ export default function AdminHomePage() {
         productQuantity: totalProductQuantity,
         packageCount: totalPackageCount,
         packageUnit: orderEditForm.packageUnit,
-        weightKg: orderEditForm.weightKg.trim() ? Number(orderEditForm.weightKg) : null,
-        volumeM3: orderEditForm.volumeM3.trim() ? Number(orderEditForm.volumeM3) : null,
+        weightKg: finalWeight,
+        volumeM3: finalVolume,
         receivableAmountCny: orderEditForm.receivableAmountCny.trim() ? Number(orderEditForm.receivableAmountCny) : null,
         receivableCurrency: orderEditForm.receivableCurrency,
         paymentStatus: orderEditForm.paymentStatus,
