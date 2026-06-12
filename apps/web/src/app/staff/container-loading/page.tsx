@@ -213,6 +213,7 @@ export default function StaffContainerLoadingPage() {
       setSelectedId("");
       setDetail(null);
       await loadList();
+      await loadShipmentList();
     } catch (e) {
       setError(e instanceof Error ? e.message : "删除失败");
     }

@@ -239,9 +239,14 @@ export function registerLoadingManifestRoutes(app: MinimalHttpApp): void {
       const loadPieces = reqPieces;
       const loadVolume = Number(((totalPkg > 0 ? (vol * reqPieces) / totalPkg : 0)).toFixed(3));
       const itemId = `sci_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
-      await tx.shipmentContainerItem.create({
-        data: { id: itemId, containerId, shipmentId: loadShipmentId, loadedVolumeM3: loadVolume, loadedPieceCount: loadPieces },
-      });
+      try {
+        await tx.shipmentContainerItem.create({
+          data: { id: itemId, containerId, shipmentId: loadShipmentId, loadedVolumeM3: loadVolume, loadedPieceCount: loadPieces },
+        });
+      } catch (e: any) {
+        if (e?.code === "P2002") throw new Error("该运单已在本柜中");
+        throw e;
+      }
 
       // 状态同步
       const syncMap: Record<string, string> = {
