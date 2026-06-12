@@ -160,6 +160,7 @@ export function registerLoadingManifestRoutes(app: MinimalHttpApp): void {
         where: { trackingNo: body.trackingNo!.trim(), companyId: auth.companyId },
       });
       if (!shipment) throw new Error("未找到该运单号");
+      if (shipment.parentTrackingNo) throw new Error("子运单不能再次装柜，请使用父运单号");
 
       await tx.$queryRaw`SELECT id FROM shipments WHERE id = ${shipment.id} FOR UPDATE`;
       const locked = await tx.shipment.findUnique({ where: { id: shipment.id }, select: { packageCount: true, volumeM3: true } });
