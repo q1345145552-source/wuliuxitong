@@ -181,8 +181,8 @@ export function registerLoadingManifestRoutes(app: MinimalHttpApp): void {
       let loadShipmentId = shipment.id;
       let loadTrackingNo = shipment.trackingNo;
 
-      // 部分装柜 → 创建子运单；全部装柜 → 直接装父运单
-      if (reqPieces < totalPkg) {
+      // 全部装柜也建子运单 — 保持件数自洽
+      {
         const children = await tx.shipment.findMany({
           where: { parentTrackingNo: shipment.trackingNo, companyId: auth.companyId },
           select: { trackingNo: true },
@@ -242,13 +242,13 @@ export function registerLoadingManifestRoutes(app: MinimalHttpApp): void {
       if (syncStatus) {
         await tx.shipment.update({ where: { id: loadShipmentId }, data: { currentStatus: syncStatus, updatedAt: now } });
         await tx.statusLog.create({
-          data: { id: `sl_mnf_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`, companyId: auth.companyId, shipmentId: loadShipmentId, operatorId: auth.userId, operatorRole: auth.role, operatorName: auth.name ?? "", fromStatus: "loaded", toStatus: syncStatus, remark: `装入柜子 ${container.containerNo}${reqPieces < totalPkg ? `（分装 ${reqPieces}件）` : ""}`, changedAt: now },
+          data: { id: `sl_mnf_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`, companyId: auth.companyId, shipmentId: loadShipmentId, operatorId: auth.userId, operatorRole: auth.role, operatorName: auth.name ?? "", fromStatus: "loaded", toStatus: syncStatus, remark: `装入柜子 ${container.containerNo}（分装 ${reqPieces}件）`, changedAt: now },
         });
       } else {
         await tx.shipment.update({ where: { id: loadShipmentId }, data: { currentStatus: "loaded" } });
       }
 
-      return { loadTrackingNo, isPartial: reqPieces < totalPkg, parentTrackingNo: reqPieces < totalPkg ? shipment.trackingNo : null };
+      return { loadTrackingNo, isPartial: false, parentTrackingNo: shipment.trackingNo };
     });
 
     ok(res, { message: "运单已添加到装柜", trackingNo: result.loadTrackingNo, isPartial: result.isPartial, parentTrackingNo: result.parentTrackingNo });
