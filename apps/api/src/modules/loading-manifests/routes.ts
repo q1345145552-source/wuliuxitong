@@ -29,10 +29,19 @@ export function registerLoadingManifestRoutes(app: MinimalHttpApp): void {
     const auth = requireRole(req, res, ["staff", "admin"]);
     if (!auth) return;
     const keyword = (req.query.query ?? "").trim();
+    const trackingNo = (req.query.trackingNo ?? "").trim();
     const status = (req.query.status ?? "").trim();
     const where: any = { companyId: auth.companyId };
     if (keyword) where.containerNo = { contains: keyword, mode: "insensitive" };
     if (status && status !== "ALL") where.currentStatus = status;
+    // 按运单号过滤：查找包含该运单号的柜子
+    if (trackingNo) {
+      const matchingItems = await prisma.shipmentContainerItem.findMany({
+        where: { shipment: { trackingNo: { contains: trackingNo, mode: "insensitive" } } },
+        select: { containerId: true },
+      });
+      where.id = { in: [...new Set(matchingItems.map(i => i.containerId))] };
+    }
     const list = await prisma.container.findMany({
       where,
       orderBy: { createdAt: "desc" },

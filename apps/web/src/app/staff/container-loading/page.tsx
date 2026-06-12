@@ -58,6 +58,7 @@ const inputStyle = { border: "1px solid #d1d5db", borderRadius: 6, padding: "8px
 
 export default function StaffContainerLoadingPage() {
   const [query, setQuery] = useState("");
+  const [searchTrackingNo, setSearchTrackingNo] = useState("");
   const [statusFilter, setStatusFilter] = useState("ALL");
   const [list, setList] = useState<LoadingManifestItem[]>([]);
   const [loading, setLoading] = useState(false);
@@ -88,7 +89,7 @@ export default function StaffContainerLoadingPage() {
   const loadShipmentList = async () => {
     const [shipments, manifests] = await Promise.all([
       fetchStaffShipments(),
-      fetchLoadingManifests({ query: "", status: "ALL" }),
+      fetchLoadingManifests({ status: "ALL" }),
     ]);
     setAllShipments(shipments);
     const mapping: Record<string, string> = {};
@@ -129,7 +130,7 @@ export default function StaffContainerLoadingPage() {
     setLoading(true);
     setError("");
     try {
-      const items = await fetchLoadingManifests({ query: query.trim(), status: statusFilter });
+      const items = await fetchLoadingManifests({ query: query.trim(), trackingNo: searchTrackingNo.trim(), status: statusFilter });
       setList(items);
       if (!selectedId && items.length > 0) setSelectedId(items[0].id);
     } catch (e) {
@@ -138,7 +139,7 @@ export default function StaffContainerLoadingPage() {
     } finally {
       setLoading(false);
     }
-  }, [query, statusFilter, selectedId]);
+  }, [query, searchTrackingNo, statusFilter, selectedId]);
 
   useEffect(() => { void loadList(); }, []);
 
@@ -259,7 +260,8 @@ export default function StaffContainerLoadingPage() {
 
       {/* 搜索 & 新建 */}
       <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap", alignItems: "center" }}>
-        <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="搜索柜号…" style={{ ...inputStyle, minWidth: 200 }} />
+        <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="搜索柜号…" style={{ ...inputStyle, minWidth: 150 }} />
+        <input value={searchTrackingNo} onChange={(e) => setSearchTrackingNo(e.target.value)} placeholder="搜索单号…" style={{ ...inputStyle, minWidth: 150 }} />
         <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} style={inputStyle}>
           <option value="ALL">全部状态</option>
           <option value="LOADING">装柜中</option>

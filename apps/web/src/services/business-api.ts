@@ -1371,9 +1371,10 @@ export async function createLoadingManifest(payload: {
 /**
  * 获取装柜清单列表。
  */
-export async function fetchLoadingManifests(filters?: { query?: string; status?: string }): Promise<LoadingManifestItem[]> {
+export async function fetchLoadingManifests(filters?: { query?: string; trackingNo?: string; status?: string }): Promise<LoadingManifestItem[]> {
   const params = new URLSearchParams();
   if (filters?.query) params.set("query", filters.query);
+  if (filters?.trackingNo) params.set("trackingNo", filters.trackingNo);
   if (filters?.status) params.set("status", filters.status);
   const qs = params.toString();
   const url = `${apiBaseUrl()}/staff/loading-manifests${qs ? `?${qs}` : ""}`;
