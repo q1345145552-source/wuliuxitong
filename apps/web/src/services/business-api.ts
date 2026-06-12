@@ -1335,7 +1335,14 @@ export interface LoadingManifestDetail extends LoadingManifestItem {
     trackingNo: string | null;
     batchNo: string | null;
     itemName: string | null;
+    clientId: string | null;
+    productQuantity: number | null;
+    cargoType: string | null;
+    packageCount: number | null;
+    transportMode: string | null;
     currentStatus: string | null;
+    loadedPieces: number;
+    loadedVolume: number;
   }>;
 }
 

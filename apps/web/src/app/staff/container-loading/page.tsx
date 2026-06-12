@@ -363,16 +363,27 @@ export default function StaffContainerLoadingPage() {
                 {detail.bills.length === 0 ? (
                   <p style={{ color: "#000000", fontSize: 13, marginBottom: 12 }}>暂无运单，从下方选择运单添加到本柜</p>
                 ) : (
-                  <div style={{ display: "flex", flexDirection: "column", gap: 4, marginBottom: 12 }}>
+                  <div style={{ marginBottom: 12 }}>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 0.7fr 0.7fr 0.5fr 0.5fr auto", gap: 4, padding: "4px 10px", fontSize: 11, color: "#6b7280", fontWeight: 600, borderBottom: "1px solid #e5e7eb" }}>
+                      <span>运单号 / 品名</span>
+                      <span>唛头</span>
+                      <span>产品数/件数</span>
+                      <span>运输</span>
+                      <span>状态</span>
+                      <span>操作</span>
+                    </div>
                     {detail.bills.map((b) => (
-                      <div key={b.id} style={{ border: "1px solid #f1f5f9", borderRadius: 6, padding: "6px 10px", display: "flex", justifyContent: "space-between", alignItems: "center", background: "#f8fafc" }}>
+                      <div key={b.id} style={{ display: "grid", gridTemplateColumns: "1fr 0.7fr 0.7fr 0.5fr 0.5fr auto", gap: 4, padding: "6px 10px", borderBottom: "1px solid #f1f5f9", alignItems: "center", background: "#fff", fontSize: 12 }}>
                         <div>
-                          <span style={{ fontWeight: 500, fontSize: 13 }}>{b.trackingNo ?? b.shipmentId}</span>
-                          {b.itemName ? <span style={{ marginLeft: 8, fontSize: 12, color: "#000000" }}>{b.itemName}</span> : null}
+                          <span style={{ fontWeight: 600, fontFamily: "monospace", color: "#1e3a8a" }}>{b.trackingNo ?? "—"}</span>
+                          {b.itemName ? <span style={{ display: "block", color: "#374151", marginTop: 1 }}>{b.itemName}</span> : null}
                         </div>
-                        <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                          <span style={{ fontSize: 12, color: STATUS_COLOR[b.currentStatus ?? ""] ?? "#000000" }}>{SHIPMENT_STATUS_ZH[b.currentStatus ?? ""] ?? b.currentStatus ?? "—"}</span>
-                          <button onClick={() => handleRemoveShipment(b.id)} style={{ border: "1px solid #fca5a5", borderRadius: 4, padding: "2px 6px", fontSize: 11, background: "#fff", color: "#dc2626", cursor: "pointer" }}>删除</button>
+                        <span style={{ color: "#6b21a8", fontWeight: 500 }}>{b.clientId ?? "—"}</span>
+                        <span style={{ color: "#374151" }}>{b.productQuantity != null ? `${b.productQuantity}个` : "—"} / {b.packageCount ?? "—"}件</span>
+                        <span style={{ color: "#374151" }}>{b.transportMode === "sea" ? "海运" : b.transportMode === "land" ? "陆运" : "—"}</span>
+                        <span style={{ color: STATUS_COLOR[b.currentStatus ?? ""] ?? "#000000", fontWeight: 500 }}>{SHIPMENT_STATUS_ZH[b.currentStatus ?? ""] ?? b.currentStatus ?? "—"}</span>
+                        <div style={{ display: "flex", gap: 4 }}>
+                          <button onClick={() => handleRemoveShipment(b.id)} style={{ border: "1px solid #fca5a5", borderRadius: 4, padding: "2px 6px", fontSize: 11, background: "#fff", color: "#dc2626", cursor: "pointer" }}>卸柜</button>
                         </div>
                       </div>
                     ))}

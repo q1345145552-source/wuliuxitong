@@ -87,7 +87,12 @@ export function registerLoadingManifestRoutes(app: MinimalHttpApp): void {
         items: {
           include: {
             shipment: {
-              select: { id: true, trackingNo: true, batchNo: true, currentStatus: true, weightKg: true, volumeM3: true, order: { select: { itemName: true } } },
+              select: {
+                id: true, trackingNo: true, batchNo: true, currentStatus: true,
+                weightKg: true, volumeM3: true, packageCount: true, packageUnit: true,
+                transportMode: true, domesticTrackingNo: true,
+                order: { select: { itemName: true, clientId: true, productQuantity: true, cargoType: true } },
+              },
             },
           },
         },
@@ -107,7 +112,14 @@ export function registerLoadingManifestRoutes(app: MinimalHttpApp): void {
         trackingNo: item.shipment?.trackingNo ?? null,
         batchNo: item.shipment?.batchNo ?? null,
         itemName: item.shipment?.order?.itemName ?? null,
+        clientId: item.shipment?.order?.clientId ?? null,
+        productQuantity: item.shipment?.order?.productQuantity ?? null,
+        cargoType: item.shipment?.order?.cargoType ?? null,
+        packageCount: item.shipment?.packageCount ?? null,
+        transportMode: item.shipment?.transportMode ?? null,
         currentStatus: item.shipment?.currentStatus ?? null,
+        loadedPieces: item.loadedPieceCount,
+        loadedVolume: Number(item.loadedVolumeM3),
       })),
     });
   });
