@@ -2492,9 +2492,6 @@ export default function StaffHomePage() {
                             >
                               打印
                             </button>
-                            <button
-                              type="button"
-
                           </td>
                         </tr>
                         {shipmentTableExpandedId === item.id ? (
