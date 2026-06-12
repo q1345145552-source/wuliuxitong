@@ -294,7 +294,7 @@ function TrackContent({ data }: { data: TrackData }) {
                 transition: "all 0.15s",
               }}
             >
-              {i === 0 ? "📦 父运单" : `📋 ${t.trackingNo}`}
+              {i === 0 ? `📦 ${t.trackingNo}` : `📋 ${t.trackingNo}`}
             </button>
           ))}
         </div>
