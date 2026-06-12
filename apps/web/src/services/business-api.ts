@@ -138,6 +138,7 @@ export interface ShipmentItem {
   domesticTrackingNo?: string;
   packageCount?: number;
   packageUnit?: "bag" | "box";
+  totalPackageCount?: number;
   productQuantity?: number;
   weightKg?: number;
   volumeM3?: number;

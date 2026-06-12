@@ -473,6 +473,24 @@ export function registerShipmentRoutes(app: MinimalHttpApp): void {
       }
     }
 
+    // 补充父运单总件数（父剩余 + 所有子运单件数）
+    const parentIds = items.filter(i => !i.parentTrackingNo).map(i => i.trackingNo);
+    if (parentIds.length > 0) {
+      const childRows = await prisma.shipment.findMany({
+        where: { parentTrackingNo: { in: parentIds }, companyId: auth.companyId },
+        select: { parentTrackingNo: true, packageCount: true },
+      });
+      const childSum = new Map<string, number>();
+      for (const c of childRows) {
+        childSum.set(c.parentTrackingNo!, (childSum.get(c.parentTrackingNo!) ?? 0) + (c.packageCount ?? 0));
+      }
+      for (const item of items) {
+        if (!item.parentTrackingNo) {
+          (item as any).totalPackageCount = (item.packageCount ?? 0) + (childSum.get(item.trackingNo) ?? 0);
+        }
+      }
+    }
+
     ok(res, { items, page: 1, pageSize: items.length, total: items.length });
   });
 
