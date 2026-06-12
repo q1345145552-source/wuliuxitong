@@ -266,8 +266,8 @@ function TimelineNode({ item, isLast, isChild, index, total }: { item: TimelineI
 function TrackContent({ data }: { data: TrackData }) {
   const [activeTab, setActiveTab] = useState(0); // 0=父运单, 1+=子运单
   const allTabs = [
-    { trackingNo: data.trackingNo, currentStatus: data.currentStatus, timeline: data.timeline },
-    ...(data.children ?? []).map(c => ({ trackingNo: c.trackingNo, currentStatus: c.currentStatus, timeline: c.timeline })),
+    { trackingNo: data.trackingNo, currentStatus: data.currentStatus, timeline: data.timeline, packageCount: undefined as number | undefined },
+    ...(data.children ?? []).map(c => ({ trackingNo: c.trackingNo, currentStatus: c.currentStatus, timeline: c.timeline, packageCount: c.packageCount })),
   ];
   const tab = allTabs[activeTab] ?? allTabs[0];
   const currentCfg = statusCfg(tab.currentStatus);
@@ -294,7 +294,7 @@ function TrackContent({ data }: { data: TrackData }) {
                 transition: "all 0.15s",
               }}
             >
-              {i === 0 ? `📦 ${t.trackingNo}` : `📋 ${t.trackingNo}`}
+              {i === 0 ? `📦 ${t.trackingNo}` : `📋 ${t.trackingNo} (${allTabs[i].packageCount ?? "?"}件)`}
             </button>
           ))}
         </div>
