@@ -434,8 +434,7 @@ export default function StaffContainerLoadingPage() {
               <div style={{ maxHeight: 300, overflow: "auto", border: "1px solid #f1f5f9", borderRadius: 6 }}>
                 {filteredShipments.length === 0 ? (
                   <p style={{ padding: 16, color: "#000000", fontSize: 13, textAlign: "center" }}>暂无匹配运单</p>
-                ) : (
-                  filteredShipments.map((s) => {
+                ) : filteredShipments.map((s) => {
                     const alreadyIn = existingShipmentIds.has(s.id);
                     const loadedContainer = loadedShipments[s.id];
                     const isSelected = s.trackingNo in selectedShipments;
@@ -462,7 +461,6 @@ export default function StaffContainerLoadingPage() {
                       </div>
                     );
                   })}
-                )}
               </div>
             </div>
           )}
