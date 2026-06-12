@@ -12,10 +12,12 @@ RESTARTED=0
 log()  { echo "[$NOW] $1"; }
 alert(){ echo "[$NOW] ❌ $1"; ALERT=1; }
 ok()   { echo "[$NOW] ✅ $1"; }
+RESTART_LIST=""
+
 restart_service() {
   local svc=$1
   echo "[$NOW] 🔄 重启 $svc ..."
-  docker compose restart "$svc" 2>/dev/null && RESTARTED=1 && echo "[$NOW] ✅ $svc 已重启" || echo "[$NOW] ❌ $svc 重启失败"
+  docker restart "$svc" 2>/dev/null && { RESTARTED=1; RESTART_LIST="$RESTART_LIST $svc"; echo "[$NOW] ✅ $svc 已重启"; } || echo "[$NOW] ❌ $svc 重启失败"
 }
 
 # ── 1. 容器状态检查 ──
@@ -92,11 +94,36 @@ fi
 
 # ── 飞书通知 ──
 FEISHU_URL="https://open.feishu.cn/open-apis/bot/v2/hook/e49ecf0c-003d-41ae-9971-823ab219d9a4"
+
+send_feishu() {
+  local title="$1"
+  local body="$2"
+  curl -s -X POST "$FEISHU_URL" -H "Content-Type: application/json" \
+    -d "{\"msg_type\":\"text\",\"content\":{\"text\":\"$title\n时间：$NOW\n$body\"}}" > /dev/null 2>&1
+}
+
 if [ "$ALERT" -eq 1 ] || [ "$RESTARTED" -eq 1 ]; then
-  MSG="【监控告警】湘泰物流服务器\n时间：$NOW\n"
-  if [ "$ALERT" -eq 1 ]; then MSG="$MSG\n⚠️ 发现异常，已尝试自动修复"; fi
-  if [ "$RESTARTED" -eq 1 ]; then MSG="$MSG\n🔄 已自动重启服务"; fi
-  curl -s -X POST "$FEISHU_URL" -H "Content-Type: application/json" -d "{\"msg_type\":\"text\",\"content\":{\"text\":\"$MSG\"}}" > /dev/null 2>&1
+  if [ "$RESTARTED" -eq 1 ]; then
+    # 重启后复检
+    sleep 5
+    FIXED=0
+    FAILED=""
+    for container in $RESTART_LIST; do
+      STATUS=$(docker inspect -f '{{.State.Status}}' "$container" 2>/dev/null)
+      if [ "$STATUS" = "running" ]; then
+        FIXED=1
+      else
+        FAILED="$FAILED $container"
+      fi
+    done
+    if [ -n "$FAILED" ]; then
+      send_feishu "【监控告警】❌ 自动修复失败" "以下服务未能恢复：$FAILED\n请手动检查。"
+    else
+      send_feishu "【监控告警】✅ 已自动修复" "所有异常服务已恢复正常。"
+    fi
+  else
+    send_feishu "【监控告警】⚠️ 发现异常" "请检查服务器状态。"
+  fi
 fi
 
 # ── 汇总 ──
