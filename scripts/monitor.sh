@@ -44,8 +44,8 @@ fi
 
 # ── 3. 前端响应检查 ──
 WEB_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:3000 --max-time 5 2>/dev/null || echo "000")
-if [ "$WEB_CODE" = "200" ]; then
-  ok "前端响应正常 (HTTP 200)"
+if [ "$WEB_CODE" = "200" ] || [ "$WEB_CODE" = "307" ] || [ "$WEB_CODE" = "301" ] || [ "$WEB_CODE" = "302" ]; then
+  ok "前端响应正常 (HTTP $WEB_CODE)"
 elif [ "$WEB_CODE" = "000" ]; then
   alert "前端无响应"
   restart_service "mywebsite-web-1"
