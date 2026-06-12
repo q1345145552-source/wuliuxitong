@@ -264,10 +264,42 @@ function TimelineNode({ item, isLast, isChild, index, total }: { item: TimelineI
 }
 
 function TrackContent({ data }: { data: TrackData }) {
-  const currentCfg = statusCfg(data.currentStatus);
+  const [activeTab, setActiveTab] = useState(0); // 0=父运单, 1+=子运单
+  const allTabs = [
+    { trackingNo: data.trackingNo, currentStatus: data.currentStatus, timeline: data.timeline },
+    ...(data.children ?? []).map(c => ({ trackingNo: c.trackingNo, currentStatus: c.currentStatus, timeline: c.timeline })),
+  ];
+  const tab = allTabs[activeTab] ?? allTabs[0];
+  const currentCfg = statusCfg(tab.currentStatus);
 
   return (
     <div>
+      {/* Tab bar */}
+      {allTabs.length > 1 && (
+        <div style={{ display: "flex", gap: 0, marginBottom: 16, border: "1px solid #e5e7eb", borderRadius: 10, overflow: "hidden" }}>
+          {allTabs.map((t, i) => (
+            <button
+              key={i}
+              onClick={() => setActiveTab(i)}
+              style={{
+                flex: 1,
+                border: "none",
+                padding: "8px 12px",
+                fontSize: 12,
+                fontWeight: activeTab === i ? 700 : 500,
+                background: activeTab === i ? "#2563eb" : "#fff",
+                color: activeTab === i ? "#fff" : "#374151",
+                cursor: "pointer",
+                borderRight: i < allTabs.length - 1 ? "1px solid #e5e7eb" : "none",
+                transition: "all 0.15s",
+              }}
+            >
+              {i === 0 ? "📦 父运单" : `📋 ${t.trackingNo}`}
+            </button>
+          ))}
+        </div>
+      )}
+
       {/* Current status banner */}
       <div style={{
         display: "flex",
@@ -294,7 +326,7 @@ function TrackContent({ data }: { data: TrackData }) {
         <div>
           <div style={{ fontSize: 11, color: "#6b7280", marginBottom: 2 }}>当前状态</div>
           <div style={{ fontSize: 17, fontWeight: 700, color: currentCfg.color }}>{currentCfg.zh}</div>
-          {data.containers?.length > 0 && (
+          {activeTab === 0 && data.containers?.length > 0 && (
             <div style={{ fontSize: 11, color: "#6b7280", marginTop: 2 }}>
               {data.containers.map((c) => c.containerNo).join("  ｜  ")}
             </div>
@@ -303,7 +335,7 @@ function TrackContent({ data }: { data: TrackData }) {
       </div>
 
       {/* Timeline header */}
-      {data.timeline.length > 0 ? (
+      {tab.timeline.length > 0 ? (
         <>
           <div style={{
             display: "flex",
@@ -320,102 +352,23 @@ function TrackContent({ data }: { data: TrackData }) {
               background: "#f3f4f6",
               borderRadius: 10,
               padding: "1px 8px",
-            }}>{data.timeline.length} 条</span>
+            }}>{tab.timeline.length} 条</span>
           </div>
 
           {/* Timeline */}
           <div style={{ position: "relative" }}>
-            {data.timeline.map((item, i) => (
+            {tab.timeline.map((item, i) => (
               <TimelineNode
                 key={i}
                 item={item}
-                isLast={i === data.timeline.length - 1}
+                isLast={i === tab.timeline.length - 1}
                 index={i}
-                total={data.timeline.length}
+                total={tab.timeline.length}
               />
             ))}
           </div>
         </>
       ) : null}
-
-      {/* Children (split shipments) */}
-      {data.children && data.children.length > 0 && (
-        <div style={{ marginTop: 28 }}>
-          <div style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 6,
-            marginBottom: 14,
-            paddingBottom: 8,
-            borderBottom: "1px solid #e5e7eb",
-          }}>
-            <span style={{ fontSize: 14, fontWeight: 600, color: "#111827" }}>📦 分柜子单 ({data.children.length})</span>
-          </div>
-
-          {data.children.map((child, idx) => {
-            const childCfg = statusCfg(child.currentStatus);
-            return (
-              <div key={idx} style={{
-                marginBottom: 16,
-                borderRadius: 12,
-                background: "#fafbff",
-                border: "1px solid #e2e8f0",
-                overflow: "hidden",
-              }}>
-                {/* Child header */}
-                <div style={{
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                  padding: "10px 14px",
-                  background: "linear-gradient(135deg, #eff6ff, #f8fafc)",
-                  borderBottom: "1px solid #e2e8f0",
-                }}>
-                  <div>
-                    <div style={{ fontSize: 14, fontWeight: 700, color: "#1e3a8a", fontFamily: "monospace" }}>
-                      {child.trackingNo}
-                    </div>
-                    <div style={{ fontSize: 11, color: "#6b7280", marginTop: 2 }}>
-                      柜号：{child.batchNo ?? "-"} ｜ {child.itemName ?? "-"} ｜ {child.packageCount ?? "-"} 件
-                    </div>
-                  </div>
-                  <span style={{
-                    padding: "3px 10px",
-                    borderRadius: 20,
-                    fontSize: 11,
-                    fontWeight: 600,
-                    background: childCfg.bg,
-                    color: childCfg.color,
-                    whiteSpace: "nowrap",
-                  }}>
-                    {childCfg.icon} {childCfg.zh}
-                  </span>
-                </div>
-
-                {/* Child timeline */}
-                {child.timeline?.length > 0 ? (
-                  <div style={{ padding: "12px 14px", position: "relative" }}>
-                    {child.timeline.map((tl, j) => (
-                      <TimelineNode
-                        key={j}
-                        item={tl}
-                        isLast={j === child.timeline.length - 1}
-                        isChild
-                        index={j}
-                        total={child.timeline.length}
-                      />
-                    ))}
-                  </div>
-                ) : (
-                  <div style={{ padding: 16, textAlign: "center", fontSize: 12, color: "#9ca3af" }}>
-                    暂无轨迹记录
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      )}
     </div>
   );
 }
