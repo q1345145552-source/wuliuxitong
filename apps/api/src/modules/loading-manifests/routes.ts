@@ -168,46 +168,43 @@ export function registerLoadingManifestRoutes(app: MinimalHttpApp): void {
       const reqPieces = typeof body.pieceCount === "number" && body.pieceCount > 0 ? body.pieceCount : totalPkg;
       if (reqPieces > totalPkg) throw new Error(`装柜件数(${reqPieces})超过运单总件数(${totalPkg})`);
 
-      let loadShipmentId = shipment.id;
-      let loadTrackingNo = shipment.trackingNo;
       const vol = locked?.volumeM3 ? Number(locked.volumeM3) : 0;
+      if (reqPieces === 0) throw new Error("装柜件数不能为0");
 
-      // 部分装柜 → 创建子运单
-      if (reqPieces < totalPkg) {
-        const children = await tx.shipment.findMany({
-          where: { parentTrackingNo: shipment.trackingNo, companyId: auth.companyId },
-          select: { trackingNo: true },
-          orderBy: { trackingNo: "asc" },
-        });
-        let nextSeq = 1;
-        for (const c of children) {
-          const match = c.trackingNo.match(/-(\d+)$/);
-          if (match) { const n = parseInt(match[1]); if (n >= nextSeq) nextSeq = n + 1; }
-        }
-        const childTrackingNo = `${shipment.trackingNo}-${nextSeq}`;
-        const childId = `s_${Date.now()}`;
-        const childVolume = Number(((vol * reqPieces) / totalPkg).toFixed(3));
-
-        const created = await tx.shipment.create({
-          data: {
-            id: childId, companyId: auth.companyId, orderId: shipment.orderId,
-            trackingNo: childTrackingNo, parentTrackingNo: shipment.trackingNo,
-            batchNo: shipment.batchNo, currentStatus: "loaded",
-            packageCount: reqPieces, packageUnit: shipment.packageUnit,
-            weightKg: shipment.weightKg, volumeM3: childVolume,
-            transportMode: shipment.transportMode, domesticTrackingNo: shipment.domesticTrackingNo,
-            warehouseId: shipment.warehouseId, itemName: shipment.itemName,
-          },
-        });
-
-        await tx.shipment.update({
-          where: { id: shipment.id },
-          data: { packageCount: totalPkg - reqPieces, updatedAt: new Date() },
-        });
-
-        loadShipmentId = created.id;
-        loadTrackingNo = childTrackingNo;
+      // 全部走子运单 — 父运单永远不直接装柜
+      const children = await tx.shipment.findMany({
+        where: { parentTrackingNo: shipment.trackingNo, companyId: auth.companyId },
+        select: { trackingNo: true },
+        orderBy: { trackingNo: "asc" },
+      });
+      let nextSeq = 1;
+      for (const c of children) {
+        const match = c.trackingNo.match(/-(\d+)$/);
+        if (match) { const n = parseInt(match[1]); if (n >= nextSeq) nextSeq = n + 1; }
       }
+      const childTrackingNo = `${shipment.trackingNo}-${nextSeq}`;
+      const childId = `s_${Date.now()}`;
+      const childVolume = Number(((vol * reqPieces) / totalPkg).toFixed(3));
+
+      const created = await tx.shipment.create({
+        data: {
+          id: childId, companyId: auth.companyId, orderId: shipment.orderId,
+          trackingNo: childTrackingNo, parentTrackingNo: shipment.trackingNo,
+          batchNo: shipment.batchNo, currentStatus: "loaded",
+          packageCount: reqPieces, packageUnit: shipment.packageUnit,
+          weightKg: shipment.weightKg, volumeM3: childVolume,
+          transportMode: shipment.transportMode, domesticTrackingNo: shipment.domesticTrackingNo,
+          warehouseId: shipment.warehouseId, itemName: shipment.itemName,
+        },
+      });
+
+      await tx.shipment.update({
+        where: { id: shipment.id },
+        data: { packageCount: totalPkg - reqPieces, updatedAt: new Date() },
+      });
+
+      const loadShipmentId = created.id;
+      const loadTrackingNo = childTrackingNo;
 
       // 装柜
       const existing = await tx.shipmentContainerItem.findFirst({
@@ -216,7 +213,7 @@ export function registerLoadingManifestRoutes(app: MinimalHttpApp): void {
       if (existing) throw new Error("该运单已在本柜中");
 
       const loadPieces = reqPieces;
-      const loadVolume = Number(((totalPkg > 0 ? (vol * reqPieces) / totalPkg : 0)).toFixed(3));
+      const loadVolume = Number((((vol * reqPieces) / totalPkg)).toFixed(3));
       const itemId = `sci_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
       await tx.shipmentContainerItem.create({
         data: { id: itemId, containerId, shipmentId: loadShipmentId, loadedVolumeM3: loadVolume, loadedPieceCount: loadPieces },
@@ -233,13 +230,13 @@ export function registerLoadingManifestRoutes(app: MinimalHttpApp): void {
       if (syncStatus) {
         await tx.shipment.update({ where: { id: loadShipmentId }, data: { currentStatus: syncStatus, updatedAt: now } });
         await tx.statusLog.create({
-          data: { id: `sl_mnf_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`, companyId: auth.companyId, shipmentId: loadShipmentId, operatorId: auth.userId, operatorRole: auth.role, operatorName: auth.name ?? "", fromStatus: "loaded", toStatus: syncStatus, remark: `装入柜子 ${container.containerNo}${reqPieces < totalPkg ? "（分装）" : ""}`, changedAt: now },
+          data: { id: `sl_mnf_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`, companyId: auth.companyId, shipmentId: loadShipmentId, operatorId: auth.userId, operatorRole: auth.role, operatorName: auth.name ?? "", fromStatus: "loaded", toStatus: syncStatus, remark: `装入柜子 ${container.containerNo}（分装 ${reqPieces}件）`, changedAt: now },
         });
       } else {
         await tx.shipment.update({ where: { id: loadShipmentId }, data: { currentStatus: "loaded" } });
       }
 
-      return { loadTrackingNo, isPartial: reqPieces < totalPkg, parentTrackingNo: reqPieces < totalPkg ? shipment.trackingNo : null };
+      return { loadTrackingNo, isPartial: reqPieces < totalPkg, parentTrackingNo: shipment.trackingNo };
     });
 
     ok(res, { message: "运单已添加到装柜", trackingNo: result.loadTrackingNo, isPartial: result.isPartial, parentTrackingNo: result.parentTrackingNo });
