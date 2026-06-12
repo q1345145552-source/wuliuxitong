@@ -546,6 +546,10 @@ export function registerContainerRoutes(app: MinimalHttpApp): void {
             receiverNameTh: true,
             receiverAddressTh: true,
             cargoType: true,
+            products: {
+              select: { itemName: true, packageCount: true },
+              orderBy: { sortOrder: "asc" },
+            },
           },
         },
         containerItems: {
@@ -592,6 +596,7 @@ export function registerContainerRoutes(app: MinimalHttpApp): void {
       orderId: shipment.order.id,
       orderNo: shipment.order.orderNo,
       itemName: shipment.order.itemName,
+      products: shipment.order.products.map(p => ({ itemName: p.itemName, packageCount: p.packageCount })),
       cargoType: shipment.order.cargoType,
       currentStatus: shipment.currentStatus,
       currentLocation: shipment.currentLocation ?? undefined,

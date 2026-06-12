@@ -27,6 +27,7 @@ interface ChildShipmentData {
 interface TrackData {
   trackingNo: string;
   itemName?: string;
+  products?: Array<{ itemName: string; packageCount: number }>;
   currentStatus: string;
   containers: Array<{
     containerNo: string;
@@ -304,9 +305,18 @@ function TrackContent({ data }: { data: TrackData }) {
       {/* 产品信息 */}
       <div style={{ marginBottom: 12, padding: "8px 12px", background: "#f8fafc", borderRadius: 8, fontSize: 12, color: "#374151" }}>
         {activeTab === 0 ? (
-          <span>📦 品名：{data.itemName ?? "—"} ｜ 总柜数：{data.children?.length ?? 0}个子单</span>
+          <>
+            {data.products && data.products.length > 1 ? (
+              data.products.map((p, i) => (
+                <div key={i}>📦 {p.itemName} ×{p.packageCount}箱</div>
+              ))
+            ) : (
+              <span>📦 品名：{data.itemName ?? "—"}</span>
+            )}
+            <div style={{ marginTop: 2 }}>分装：{data.children?.length ?? 0}个子单</div>
+          </>
         ) : data.children?.[activeTab - 1] ? (
-          <span>📦 品名：{data.children[activeTab - 1].itemName ?? "—"} ｜ 件数：{data.children[activeTab - 1].packageCount ?? "—"} 件{data.children[activeTab - 1].batchNo ? ` ｜ 柜号：${data.children[activeTab - 1].batchNo}` : ""}</span>
+          <span>📦 {data.children[activeTab - 1].itemName ?? "—"} ｜ {data.children[activeTab - 1].packageCount ?? "—"} 件{data.children[activeTab - 1].batchNo ? ` ｜ 柜号：${data.children[activeTab - 1].batchNo}` : ""}</span>
         ) : null}
       </div>
 
