@@ -771,9 +771,7 @@ export default function ClientHomePage() {
                                             {(isShipped || isReceived) && item.trackingNo ? (
                         <button type="button" onClick={() => openPrintLabel({ marks: item.clientId ?? "", packageCount: item.packageCount ?? "—", trackingNo: item.trackingNo ?? "", itemName: item.itemName, productQuantity: item.productQuantity, transportMode: item.transportMode, products: item.products?.map(p => ({ itemName: p.itemName, packageCount: p.packageCount })) })} style={{ border: "1px solid #16a34a", borderRadius: 4, padding: "4px 10px", fontSize: 12, background: "#fff", color: "#16a34a", cursor: "pointer", marginLeft: 6 }}>打印</button>
                       ) : null}
-                      {item.trackingNo ? (
-                        <button type="button" onClick={() => openShipmentTrack(item.trackingNo || item.id)} style={{ border: "1px solid #2563eb", borderRadius: 4, padding: "4px 10px", fontSize: 12, background: "#fff", color: "#2563eb", cursor: "pointer", marginLeft: 6 }}>物流轨迹</button>
-                      ) : null}
+                      <button type="button" onClick={() => openShipmentTrack(item.trackingNo || item.id)} style={{ border: "1px solid #2563eb", borderRadius: 4, padding: "4px 10px", fontSize: 12, background: "#fff", color: "#2563eb", cursor: "pointer", marginLeft: 6 }}>物流轨迹</button>
                       <PrealertPrintButton item={item} />
                     </div>
                   </div>
@@ -1442,9 +1440,7 @@ export default function ClientHomePage() {
                                             {(isShipped || isReceived) && item.trackingNo ? (
                         <button type="button" onClick={() => openPrintLabel({ marks: item.clientId ?? "", packageCount: item.packageCount ?? "—", trackingNo: item.trackingNo ?? "", itemName: item.itemName, productQuantity: item.productQuantity, transportMode: item.transportMode, products: item.products?.map(p => ({ itemName: p.itemName, packageCount: p.packageCount })) })} style={{ border: "1px solid #16a34a", borderRadius: 4, padding: "4px 10px", fontSize: 12, background: "#fff", color: "#16a34a", cursor: "pointer", marginLeft: 6 }}>打印</button>
                       ) : null}
-                      {item.trackingNo ? (
-                        <button type="button" onClick={() => openShipmentTrack(item.trackingNo || item.id)} style={{ border: "1px solid #2563eb", borderRadius: 4, padding: "4px 10px", fontSize: 12, background: "#fff", color: "#2563eb", cursor: "pointer", marginLeft: 6 }}>物流轨迹</button>
-                      ) : null}
+                      <button type="button" onClick={() => openShipmentTrack(item.trackingNo || item.id)} style={{ border: "1px solid #2563eb", borderRadius: 4, padding: "4px 10px", fontSize: 12, background: "#fff", color: "#2563eb", cursor: "pointer", marginLeft: 6 }}>物流轨迹</button>
                       <PrealertPrintButton item={item} />
                     </div>
                   </div>
