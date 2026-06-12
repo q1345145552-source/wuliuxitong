@@ -162,13 +162,6 @@ export function registerLoadingManifestRoutes(app: MinimalHttpApp): void {
       if (!shipment) throw new Error("未找到该运单号");
       if (shipment.parentTrackingNo) throw new Error("子运单不能再次装柜，请使用父运单号");
 
-      // 检查是否已装在其他柜子
-      const alreadyLoaded = await tx.shipmentContainerItem.findFirst({
-        where: { shipmentId: shipment.id, containerId: { not: containerId } },
-        select: { container: { select: { containerNo: true } } },
-      });
-      if (alreadyLoaded) throw new Error(`该运单已装柜「${alreadyLoaded.container.containerNo}」，请先卸柜再操作`);
-
       await tx.$queryRaw`SELECT id FROM shipments WHERE id = ${shipment.id} FOR UPDATE`;
       const locked = await tx.shipment.findUnique({ where: { id: shipment.id }, select: { packageCount: true, volumeM3: true } });
       const totalPkg = locked?.packageCount ?? 0;
