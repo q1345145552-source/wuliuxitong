@@ -432,26 +432,27 @@ export default function StaffContainerLoadingPage() {
               )}
 
               <div style={{ maxHeight: 300, overflow: "auto", border: "1px solid #f1f5f9", borderRadius: 6 }}>
-                {filteredShipments.length === 0 ? (
-                  <p style={{ padding: 16, color: "#000000", fontSize: 13, textAlign: "center" }}>暂无匹配运单</p>
-                ) : filteredShipments.map((s) => {
+                {(() => {
+                  if (filteredShipments.length === 0) return <p style={{ padding: 16, color: "#000000", fontSize: 13, textAlign: "center" }}>暂无匹配运单</p>;
+                  return filteredShipments.map((s) => {
                     const alreadyIn = existingShipmentIds.has(s.id);
                     const loadedContainer = loadedShipments[s.id];
                     const isSelected = s.trackingNo in selectedShipments;
                     const totalPkg = s.packageCount ?? 0;
+                    const handleCheck = () => {
+                      if (alreadyIn || loadedContainer) return;
+                      if (isSelected) {
+                        const n = { ...selectedShipments };
+                        delete n[s.trackingNo];
+                        setSelectedShipments(n);
+                      } else {
+                        setBulkPieceDialog(s.trackingNo);
+                        setBulkPieceCount(String(totalPkg));
+                      }
+                    };
                     return (
                       <div key={s.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 10px", borderBottom: "1px solid #f1f5f9", opacity: (alreadyIn || loadedContainer) ? 0.5 : 1, background: isSelected ? "#eff6ff" : "transparent" }}>
-                        <input type="checkbox" checked={isSelected || alreadyIn || !!loadedContainer} disabled={alreadyIn || !!loadedContainer} onChange={() => {
-                          if (alreadyIn || loadedContainer) return;
-                          if (isSelected) {
-                            const n = { ...selectedShipments };
-                            delete n[s.trackingNo];
-                            setSelectedShipments(n);
-                          } else {
-                            setBulkPieceDialog(s.trackingNo);
-                            setBulkPieceCount(String(totalPkg));
-                          }
-                        }} />
+                        <input type="checkbox" checked={isSelected || alreadyIn || !!loadedContainer} disabled={alreadyIn || !!loadedContainer} onChange={handleCheck} />
                         <span style={{ fontSize: 12, fontWeight: 500, color: "#1e3a8a", fontFamily: "monospace", minWidth: 150 }}>{s.trackingNo}</span>
                         <span style={{ fontSize: 12, color: "#6b21a8", minWidth: 80 }}>{s.clientId ?? "—"}</span>
                         <span style={{ fontSize: 12, color: "#000000", minWidth: 60 }}>{totalPkg}件</span>
@@ -460,7 +461,7 @@ export default function StaffContainerLoadingPage() {
                         <span style={{ fontSize: 12, color: loadedContainer ? "#d97706" : alreadyIn ? "#16a34a" : "#000000" }}>{loadedContainer ? `已装柜(${loadedContainer})` : alreadyIn ? "已在本柜" : SHIPMENT_STATUS_ZH[s.currentStatus ?? ""] ?? s.currentStatus ?? ""}</span>
                       </div>
                     );
-                  })}
+                  })})()}
               </div>
             </div>
           )}
