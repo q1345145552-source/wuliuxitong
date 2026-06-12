@@ -573,9 +573,7 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
     const packageUnit = body.packageUnit ?? "box";
 
     // 事务前计算应收金额（按产品行分别计价求和）
-    const calcAmount = staffProducts.length > 0
-      ? await calcReceivableByProducts(auth.companyId, body.transportMode, staffProducts, volumeM3)
-      : await calcReceivableByProducts(auth.companyId, body.transportMode, staffProducts, volumeM3);
+    const calcAmount = await calcReceivableByProducts(auth.companyId, body.transportMode, staffProducts, volumeM3);
 
     const txOps: any[] = [
       prisma.order.create({
