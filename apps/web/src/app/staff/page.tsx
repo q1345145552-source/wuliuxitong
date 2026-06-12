@@ -2494,14 +2494,7 @@ export default function StaffHomePage() {
                             </button>
                             <button
                               type="button"
-                              onClick={() => {
-                                setSplittingShipment(item);
-                                setSplitRows([{ trackingNo: "", batchNo: "", itemName: item.itemName ?? "", packageCount: "" }]);
-                              }}
-                              style={{ border: "none", background: "transparent", color: "#d97706", cursor: "pointer", fontWeight: 600, padding: 0, marginLeft: 8 }}
-                            >
-                              分柜
-                            </button>
+
                           </td>
                         </tr>
                         {shipmentTableExpandedId === item.id ? (

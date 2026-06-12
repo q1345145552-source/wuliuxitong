@@ -13,6 +13,7 @@ import {
   fetchStaffShipments,
   deleteContainer,
   updateContainerStatus,
+  splitStaffShipment,
   type LoadingManifestItem,
   type LoadingManifestDetail,
   type ShipmentItem,
@@ -73,6 +74,8 @@ export default function StaffContainerLoadingPage() {
   const [statusRemark, setStatusRemark] = useState("");
   const [statusDate, setStatusDate] = useState("");
   const [targetStatus, setTargetStatus] = useState("");
+  const [splittingBill, setSplittingBill] = useState<{ shipmentId: string; trackingNo: string; packageCount: number } | null>(null);
+  const [splitRows, setSplitRows] = useState<Array<{ trackingNo: string; batchNo: string; itemName: string; packageCount: string }>>([]);
 
   // 运单列表搜索
   const [allShipments, setAllShipments] = useState<ShipmentItem[]>([]);
@@ -383,6 +386,7 @@ export default function StaffContainerLoadingPage() {
                         <span style={{ color: "#374151" }}>{b.transportMode === "sea" ? "海运" : b.transportMode === "land" ? "陆运" : "—"}</span>
                         <span style={{ color: STATUS_COLOR[b.currentStatus ?? ""] ?? "#000000", fontWeight: 500 }}>{SHIPMENT_STATUS_ZH[b.currentStatus ?? ""] ?? b.currentStatus ?? "—"}</span>
                         <div style={{ display: "flex", gap: 4 }}>
+                          <button onClick={() => { setSplittingBill({ shipmentId: b.shipmentId, trackingNo: b.trackingNo ?? "", packageCount: b.packageCount ?? 0 }); setSplitRows([{ trackingNo: "", batchNo: "", itemName: b.itemName ?? "", packageCount: "" }]); }} style={{ border: "1px solid #d97706", borderRadius: 4, padding: "2px 6px", fontSize: 11, background: "#fffbeb", color: "#d97706", cursor: "pointer" }}>分柜</button>
                           <button onClick={() => handleRemoveShipment(b.id)} style={{ border: "1px solid #fca5a5", borderRadius: 4, padding: "2px 6px", fontSize: 11, background: "#fff", color: "#dc2626", cursor: "pointer" }}>卸柜</button>
                         </div>
                       </div>
@@ -434,6 +438,44 @@ export default function StaffContainerLoadingPage() {
         </div>
       </div>
 
+      {/* 分柜弹窗 */}
+      {splittingBill && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(0,0,0,0.4)", padding: 16 }}>
+          <div style={{ width: "100%", maxWidth: 520, background: "#fff", borderRadius: 12, padding: 24, boxShadow: "0 20px 60px rgba(0,0,0,0.3)", maxHeight: "80vh", overflow: "auto" }}>
+            <h3 style={{ margin: "0 0 8px", fontSize: 18, fontWeight: 600 }}>运单分柜 — {splittingBill.trackingNo}</h3>
+            <div style={{ fontSize: 12, color: "#6b7280", marginBottom: 12 }}>当前总件数：{splittingBill.packageCount} | 已分配：{splitRows.reduce((s, r) => s + (Number(r.packageCount) || 0), 0)} 件 | 剩余：{splittingBill.packageCount - splitRows.reduce((s, r) => s + (Number(r.packageCount) || 0), 0)} 件</div>
+            <div style={{ display: "grid", gap: 8, marginBottom: 16 }}>
+              {splitRows.map((row, i) => (
+                <div key={i} style={{ display: "grid", gridTemplateColumns: "1.5fr 1fr 2fr 0.7fr", gap: 6 }}>
+                  <input value={row.trackingNo} onChange={(e) => { const n = [...splitRows]; n[i].trackingNo = e.target.value.toUpperCase(); setSplitRows(n); }} placeholder="子运单号" style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "6px 8px", fontSize: 12 }} />
+                  <input value={row.batchNo} onChange={(e) => { const n = [...splitRows]; n[i].batchNo = e.target.value; setSplitRows(n); }} placeholder="批次号" style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "6px 8px", fontSize: 12 }} />
+                  <input value={row.itemName} onChange={(e) => { const n = [...splitRows]; n[i].itemName = e.target.value; setSplitRows(n); }} placeholder="品名" style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "6px 8px", fontSize: 12 }} />
+                  <input type="number" value={row.packageCount} onChange={(e) => { const n = [...splitRows]; n[i].packageCount = e.target.value; setSplitRows(n); }} placeholder="件数" style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "6px 8px", fontSize: 12 }} />
+                </div>
+              ))}
+            </div>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
+              <button onClick={() => setSplitRows([...splitRows, { trackingNo: "", batchNo: "", itemName: splittingBill.trackingNo, packageCount: "" }])} style={{ border: "1px solid #2563eb", borderRadius: 8, padding: "6px 12px", background: "#eff6ff", color: "#2563eb", cursor: "pointer", fontSize: 13 }}>＋ 添加子单</button>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button onClick={() => { setSplittingBill(null); setSplitRows([]); }} style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 14px", background: "#fff", cursor: "pointer", fontSize: 13 }}>取消</button>
+                <button disabled={loading} onClick={async () => {
+                  const valid = splitRows.filter(s => s.trackingNo.trim() && s.packageCount);
+                  if (valid.length === 0) { setError("请至少填写一个子运单号"); return; }
+                  const totalSplit = valid.reduce((s, r) => s + (Number(r.packageCount) || 0), 0);
+                  if (totalSplit > splittingBill.packageCount) { setError(`移走总件数(${totalSplit})超过当前总件数(${splittingBill.packageCount})`); return; }
+                  setLoading(true);
+                  try {
+                    const result = await splitStaffShipment({ parentShipmentId: splittingBill.shipmentId, splits: valid.map(r => ({ trackingNo: r.trackingNo.trim(), batchNo: r.batchNo.trim(), itemName: r.itemName.trim(), packageCount: Number(r.packageCount) })) });
+                    setToast(`分柜成功：${result.children.length} 个子单`);
+                    setSplittingBill(null); setSplitRows([]);
+                    loadDetail(selectedId);
+                  } catch (err) { setError(err instanceof Error ? err.message : "分柜失败"); } finally { setLoading(false); }
+                }} style={{ border: "none", borderRadius: 8, padding: "8px 14px", background: "#d97706", color: "#fff", fontWeight: 600, cursor: "pointer", fontSize: 13 }}>确认分柜</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
       <Toast open={toast.length > 0} message={toast} />
     </RoleShell>
   );
