@@ -449,7 +449,7 @@ export default function StaffContainerLoadingPage() {
                     const isParent = !s.parentTrackingNo;
                     const children = isParent ? allShipments.filter(c => c.parentTrackingNo === s.trackingNo) : [];
                     const orderTotal = s.productQuantity;
-                    const totalPkg = orderTotal != null ? orderTotal : remaining + children.reduce((sum, c) => sum + (c.packageCount ?? 0), 0);
+                    const totalPkg = (orderTotal != null && orderTotal > 0) ? orderTotal : remaining + children.reduce((sum, c) => sum + (c.packageCount ?? 0), 0);
                     const loadedChildren = children.filter(c => loadedShipments[c.id]);
                     return (
                       <div key={s.id} style={{ padding: "8px 10px", borderBottom: "1px solid #f1f5f9", opacity: alreadyIn ? 0.5 : 1, background: isSelected ? "#eff6ff" : "transparent" }}>
