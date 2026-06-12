@@ -443,26 +443,36 @@ export default function StaffContainerLoadingPage() {
                     const alreadyIn = existingShipmentIds.has(s.id);
                     const loadedContainer = loadedShipments[s.id];
                     const isSelected = s.trackingNo in selectedShipments;
-                    const totalPkg = s.packageCount ?? 0;
+                    const remaining = s.packageCount ?? 0;
+                    const isParent = !s.parentTrackingNo;
+                    const children = isParent ? allShipments.filter(c => c.parentTrackingNo === s.trackingNo) : [];
+                    const totalPkg = remaining + children.reduce((sum, c) => sum + (c.packageCount ?? 0), 0);
+                    const loadedChildren = children.filter(c => loadedShipments[c.id]);
                     return (
-                      <div key={s.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 10px", borderBottom: "1px solid #f1f5f9", opacity: (alreadyIn || alreadyIn) ? 0.5 : 1, background: isSelected ? "#eff6ff" : "transparent" }}>
-                        <input type="checkbox" checked={isSelected || alreadyIn} disabled={alreadyIn} onChange={() => {
-                          if (alreadyIn) return;
-                          if (isSelected) {
-                            const n = { ...selectedShipments };
-                            delete n[s.trackingNo];
-                            setSelectedShipments(n);
-                          } else {
-                            setBulkPieceDialog(s.trackingNo);
-                            setBulkPieceCount(String(totalPkg));
-                          }
-                        }} />
-                        <span style={{ fontSize: 12, fontWeight: 500, color: "#1e3a8a", fontFamily: "monospace", minWidth: 150 }}>{s.trackingNo}</span>
-                        <span style={{ fontSize: 12, color: "#6b21a8", minWidth: 80 }}>{s.clientId ?? "—"}</span>
-                        <span style={{ fontSize: 12, color: "#000000", minWidth: 60 }}>{totalPkg}件</span>
-                        {isSelected && <span style={{ fontSize: 11, color: "#2563eb" }}>装{selectedShipments[s.trackingNo]}件</span>}
-                        <span style={{ fontSize: 12, color: "#000000", minWidth: 50 }}>{s.transportMode === "sea" ? "海运" : "陆运"}</span>
-                        <span style={{ fontSize: 12, color: loadedContainer ? "#d97706" : alreadyIn ? "#16a34a" : "#000000" }}>{loadedContainer ? `已装柜(${loadedContainer})` : alreadyIn ? "已在本柜" : SHIPMENT_STATUS_ZH[s.currentStatus ?? ""] ?? s.currentStatus ?? ""}</span>
+                      <div key={s.id} style={{ padding: "8px 10px", borderBottom: "1px solid #f1f5f9", opacity: alreadyIn ? 0.5 : 1, background: isSelected ? "#eff6ff" : "transparent" }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                          <input type="checkbox" checked={isSelected || alreadyIn} disabled={alreadyIn || (isParent && remaining === 0)} onChange={() => {
+                            if (alreadyIn || (isParent && remaining === 0)) return;
+                            if (isSelected) { const n = { ...selectedShipments }; delete n[s.trackingNo]; setSelectedShipments(n); }
+                            else { setBulkPieceDialog(s.trackingNo); setBulkPieceCount(String(remaining)); }
+                          }} />
+                          <span style={{ fontSize: 12, fontWeight: 600, fontFamily: "monospace", color: "#1e3a8a", minWidth: 150 }}>{s.trackingNo}</span>
+                          <span style={{ fontSize: 12, color: "#6b21a8", minWidth: 60 }}>{s.clientId ?? "—"}</span>
+                          <span style={{ fontSize: 12, color: "#000000", minWidth: 140 }}>
+                            {isParent ? `共${totalPkg}件` : `${totalPkg}件`}
+                            {isParent && remaining < totalPkg ? <span style={{ color: "#059669", fontWeight: 600 }}>（剩{remaining}件）</span> : null}
+                          </span>
+                          {isSelected && <span style={{ fontSize: 11, color: "#2563eb", fontWeight: 600 }}>装{selectedShipments[s.trackingNo]}件</span>}
+                          <span style={{ fontSize: 12, color: "#000000", minWidth: 50 }}>{s.transportMode === "sea" ? "海运" : s.transportMode === "land" ? "陆运" : "—"}</span>
+                          <span style={{ fontSize: 12, color: alreadyIn ? "#16a34a" : loadedContainer ? "#d97706" : "#000000" }}>{alreadyIn ? "已在本柜" : loadedContainer ? `已装柜(${loadedContainer})` : SHIPMENT_STATUS_ZH[s.currentStatus ?? ""] ?? s.currentStatus ?? ""}</span>
+                        </div>
+                        {loadedChildren.length > 0 && (
+                          <div style={{ paddingLeft: 28, fontSize: 11, color: "#6b7280", marginTop: 3 }}>
+                            {loadedChildren.map(c => (
+                              <span key={c.id} style={{ marginRight: 14 }}>📦 {c.trackingNo}: {c.packageCount}件 → {loadedShipments[c.id]}</span>
+                            ))}
+                          </div>
+                        )}
                       </div>
                     );
                   })}

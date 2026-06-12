@@ -411,6 +411,7 @@ export function registerShipmentRoutes(app: MinimalHttpApp): void {
       orderId: r.order?.id ?? undefined,
       orderNo: r.order?.orderNo ?? undefined,
       trackingNo: r.trackingNo,
+      parentTrackingNo: r.parentTrackingNo ?? undefined,
       batchNo: r.batchNo,
       containerNo: r.containerNo ?? undefined,
       clientId: r.order?.clientId ?? undefined,

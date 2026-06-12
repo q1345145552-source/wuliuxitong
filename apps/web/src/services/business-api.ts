@@ -128,6 +128,7 @@ export interface ShipmentItem {
   orderId?: string;
   orderNo?: string;
   trackingNo: string;
+  parentTrackingNo?: string;
   batchNo?: string;
   containerNo?: string;
   cargoType?: string;
