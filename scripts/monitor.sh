@@ -90,6 +90,15 @@ else
   alert "数据库连接失败"
 fi
 
+# ── 飞书通知 ──
+FEISHU_URL="https://open.feishu.cn/open-apis/bot/v2/hook/e49ecf0c-003d-41ae-9971-823ab219d9a4"
+if [ "$ALERT" -eq 1 ] || [ "$RESTARTED" -eq 1 ]; then
+  MSG="【监控告警】湘泰物流服务器\n时间：$NOW\n"
+  if [ "$ALERT" -eq 1 ]; then MSG="$MSG\n⚠️ 发现异常，已尝试自动修复"; fi
+  if [ "$RESTARTED" -eq 1 ]; then MSG="$MSG\n🔄 已自动重启服务"; fi
+  curl -s -X POST "$FEISHU_URL" -H "Content-Type: application/json" -d "{\"msg_type\":\"text\",\"content\":{\"text\":\"$MSG\"}}" > /dev/null 2>&1
+fi
+
 # ── 汇总 ──
 log "========== 检查完成 =========="
 if [ "$ALERT" -eq 1 ]; then
