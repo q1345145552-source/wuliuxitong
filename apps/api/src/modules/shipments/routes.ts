@@ -355,6 +355,7 @@ export function registerShipmentRoutes(app: MinimalHttpApp): void {
     const rows = await prisma.shipment.findMany({
       where: {
         companyId: auth.companyId,
+        parentTrackingNo: null,
         order: { clientId: auth.userId },
       },
       orderBy: { updatedAt: "desc" },
@@ -394,7 +395,7 @@ export function registerShipmentRoutes(app: MinimalHttpApp): void {
     if (!auth) return;
 
     const rows = await prisma.shipment.findMany({
-      where: { companyId: auth.companyId },
+      where: { companyId: auth.companyId, parentTrackingNo: null },
       orderBy: { updatedAt: "desc" },
       take: 100,
       include: {

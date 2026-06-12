@@ -213,7 +213,7 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
     if (!auth) return;
 
     const rows = await prisma.shipment.findMany({
-      where: { companyId: auth.companyId },
+      where: { companyId: auth.companyId, parentTrackingNo: null },
       orderBy: { updatedAt: "desc" },
       take: 500,
       include: {
