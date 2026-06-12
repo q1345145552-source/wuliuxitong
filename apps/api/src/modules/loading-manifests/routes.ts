@@ -85,6 +85,7 @@ export function registerLoadingManifestRoutes(app: MinimalHttpApp): void {
       where: { id, companyId: auth.companyId },
       include: {
         items: {
+          orderBy: { createdAt: "asc" },
           include: {
             shipment: {
               select: {
