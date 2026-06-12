@@ -80,7 +80,9 @@ export default function StaffContainerLoadingPage() {
   // 运单列表搜索
   const [allShipments, setAllShipments] = useState<ShipmentItem[]>([]);
   const [shipSearch, setShipSearch] = useState({ trackingNo: "", clientId: "", transportMode: "" });
-  const [selectedShipments, setSelectedShipments] = useState<Set<string>>(new Set());
+  const [selectedShipments, setSelectedShipments] = useState<Record<string, number>>({});
+  const [bulkPieceDialog, setBulkPieceDialog] = useState<string | null>(null);
+  const [bulkPieceCount, setBulkPieceCount] = useState("");
   // 已装柜运单映射：shipmentId → container manifestNo
   const [loadedShipments, setLoadedShipments] = useState<Record<string, string>>({});
 
@@ -211,21 +213,22 @@ export default function StaffContainerLoadingPage() {
   };
 
   const handleBulkAdd = async () => {
-    if (!selectedId || selectedShipments.size === 0) return;
+    const entries = Object.entries(selectedShipments);
+    if (!selectedId || entries.length === 0) return;
     setAdding(true);
     let success = 0;
     const errors: string[] = [];
-    for (const trackingNo of selectedShipments) {
+    for (const [trackingNo, pieceCount] of entries) {
       if (!trackingNo) { errors.push("空运单号"); continue; }
       try {
-        await addShipmentToManifest(selectedId, trackingNo);
+        await addShipmentToManifest(selectedId, trackingNo, pieceCount > 0 ? pieceCount : undefined);
         success++;
       } catch (e: any) {
         errors.push(`${trackingNo}: ${e.message ?? "失败"}`);
       }
     }
     setToast(`成功添加 ${success} 个运单到装柜${errors.length > 0 ? `，失败 ${errors.length} 个：${errors.join("；")}` : ""}`);
-    setSelectedShipments(new Set());
+    setSelectedShipments({});
     await loadDetail(selectedId);
     setAdding(false);
   };
@@ -241,14 +244,7 @@ export default function StaffContainerLoadingPage() {
     }
   };
 
-  const toggleSelect = (trackingNo: string) => {
-    setSelectedShipments((prev) => {
-      const next = new Set(prev);
-      if (next.has(trackingNo)) next.delete(trackingNo);
-      else next.add(trackingNo);
-      return next;
-    });
-  };
+
 
   return (
     <RoleShell allowedRole={["staff", "admin"]} title="装柜管理">
@@ -369,6 +365,7 @@ export default function StaffContainerLoadingPage() {
                   <div style={{ marginBottom: 12 }}>
                     <div style={{ display: "grid", gridTemplateColumns: "1fr 0.7fr 0.7fr 0.5fr 0.5fr auto", gap: 4, padding: "4px 10px", fontSize: 11, color: "#6b7280", fontWeight: 600, borderBottom: "1px solid #e5e7eb" }}>
                       <span>运单号 / 品名</span>
+                      <span>父运单</span>
                       <span>唛头</span>
                       <span>产品数/件数</span>
                       <span>运输</span>
@@ -409,11 +406,32 @@ export default function StaffContainerLoadingPage() {
                   <option value="sea">海运</option>
                   <option value="land">陆运</option>
                 </select>
-                <button onClick={() => setSelectedShipments(new Set(filteredShipments.filter((s) => !existingShipmentIds.has(s.id) && !loadedShipments[s.id]).map((s) => s.trackingNo)))} style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "6px 12px", fontSize: 12, background: "#fff", cursor: "pointer", color: "#000000" }}>全选</button>
-                <button disabled={adding || selectedShipments.size === 0} onClick={handleBulkAdd} style={{ border: "none", borderRadius: 6, padding: "6px 14px", fontSize: 12, background: selectedShipments.size === 0 ? "#000000" : "#2563eb", color: "#fff", cursor: selectedShipments.size === 0 ? "not-allowed" : "pointer", fontWeight: 600 }}>
-                  {adding ? "添加中…" : `添加选中（${selectedShipments.size}）`}
+                <button disabled={adding || Object.keys(selectedShipments).length === 0} onClick={handleBulkAdd} style={{ border: "none", borderRadius: 6, padding: "6px 14px", fontSize: 12, background: Object.keys(selectedShipments).length === 0 ? "#000000" : "#2563eb", color: "#fff", cursor: Object.keys(selectedShipments).length === 0 ? "not-allowed" : "pointer", fontWeight: 600 }}>
+                  {adding ? "添加中…" : `添加选中（${Object.keys(selectedShipments).length}）`}
                 </button>
               </div>
+              {/* 选择件数弹窗 */}
+              {bulkPieceDialog && (
+                <div style={{ position: "fixed", inset: 0, zIndex: 60, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(0,0,0,0.3)" }} onClick={() => { setBulkPieceDialog(null); setBulkPieceCount(""); }}>
+                  <div style={{ background: "#fff", borderRadius: 10, padding: 20, boxShadow: "0 8px 40px rgba(0,0,0,0.2)", minWidth: 300 }} onClick={e => e.stopPropagation()}>
+                    <h4 style={{ margin: "0 0 10px", fontSize: 15 }}>装柜件数 — {bulkPieceDialog}</h4>
+                    <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                      <input type="number" value={bulkPieceCount} onChange={e => setBulkPieceCount(e.target.value)} style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "8px 12px", fontSize: 14, width: "100%" }} min="1" autoFocus />
+                    </div>
+                    <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 12 }}>
+                      <button onClick={() => { setBulkPieceDialog(null); setBulkPieceCount(""); }} style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "6px 14px", background: "#fff", cursor: "pointer", fontSize: 13 }}>取消</button>
+                      <button onClick={() => {
+                        const n = parseInt(bulkPieceCount) || 0;
+                        if (n > 0 && bulkPieceDialog) {
+                          setSelectedShipments(p => ({ ...p, [bulkPieceDialog]: n }));
+                        }
+                        setBulkPieceDialog(null); setBulkPieceCount("");
+                      }} style={{ border: "none", borderRadius: 6, padding: "6px 14px", background: "#2563eb", color: "#fff", cursor: "pointer", fontSize: 13 }}>确认</button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               <div style={{ maxHeight: 300, overflow: "auto", border: "1px solid #f1f5f9", borderRadius: 6 }}>
                 {filteredShipments.length === 0 ? (
                   <p style={{ padding: 16, color: "#000000", fontSize: 13, textAlign: "center" }}>暂无匹配运单</p>
@@ -421,16 +439,30 @@ export default function StaffContainerLoadingPage() {
                   filteredShipments.map((s) => {
                     const alreadyIn = existingShipmentIds.has(s.id);
                     const loadedContainer = loadedShipments[s.id];
+                    const isSelected = s.trackingNo in selectedShipments;
+                    const totalPkg = s.packageCount ?? 0;
                     return (
-                      <div key={s.id} onClick={() => !alreadyIn && !loadedContainer && toggleSelect(s.trackingNo)} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 10px", borderBottom: "1px solid #f1f5f9", cursor: (alreadyIn || loadedContainer) ? "not-allowed" : "pointer", opacity: (alreadyIn || loadedContainer) ? 0.5 : 1, background: selectedShipments.has(s.trackingNo) ? "#eff6ff" : "transparent" }}>
-                        <input type="checkbox" checked={selectedShipments.has(s.trackingNo) || alreadyIn || !!loadedContainer} disabled={alreadyIn || !!loadedContainer} onChange={() => !alreadyIn && !loadedContainer && toggleSelect(s.trackingNo)} />
+                      <div key={s.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 10px", borderBottom: "1px solid #f1f5f9", opacity: (alreadyIn || loadedContainer) ? 0.5 : 1, background: isSelected ? "#eff6ff" : "transparent" }}>
+                        <input type="checkbox" checked={isSelected || alreadyIn || !!loadedContainer} disabled={alreadyIn || !!loadedContainer} onChange={() => {
+                          if (alreadyIn || loadedContainer) return;
+                          if (isSelected) {
+                            const n = { ...selectedShipments };
+                            delete n[s.trackingNo];
+                            setSelectedShipments(n);
+                          } else {
+                            setBulkPieceDialog(s.trackingNo);
+                            setBulkPieceCount(String(totalPkg));
+                          }
+                        }} />
                         <span style={{ fontSize: 12, fontWeight: 500, color: "#1e3a8a", fontFamily: "monospace", minWidth: 150 }}>{s.trackingNo}</span>
                         <span style={{ fontSize: 12, color: "#6b21a8", minWidth: 80 }}>{s.clientId ?? "—"}</span>
+                        <span style={{ fontSize: 12, color: "#000000", minWidth: 60 }}>{totalPkg}件</span>
+                        {isSelected && <span style={{ fontSize: 11, color: "#2563eb" }}>装{selectedShipments[s.trackingNo]}件</span>}
                         <span style={{ fontSize: 12, color: "#000000", minWidth: 50 }}>{s.transportMode === "sea" ? "海运" : "陆运"}</span>
                         <span style={{ fontSize: 12, color: loadedContainer ? "#d97706" : alreadyIn ? "#16a34a" : "#000000" }}>{loadedContainer ? `已装柜(${loadedContainer})` : alreadyIn ? "已在本柜" : SHIPMENT_STATUS_ZH[s.currentStatus ?? ""] ?? s.currentStatus ?? ""}</span>
                       </div>
                     );
-                  })
+                  })}
                 )}
               </div>
             </div>

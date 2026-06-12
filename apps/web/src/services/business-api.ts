@@ -1341,6 +1341,7 @@ export interface LoadingManifestDetail extends LoadingManifestItem {
     packageCount: number | null;
     transportMode: string | null;
     currentStatus: string | null;
+    parentTrackingNo: string | null;
     loadedPieces: number;
     loadedVolume: number;
   }>;
@@ -1428,14 +1429,11 @@ export async function deleteContainer(containerId: string): Promise<{ deleted: b
   return parseApiResponse(response);
 }
 
-export async function addShipmentToManifest(manifestId: string, trackingNo: string): Promise<{ added: boolean }> {
+export async function addShipmentToManifest(manifestId: string, trackingNo: string, pieceCount?: number): Promise<{ message: string; trackingNo: string; isPartial?: boolean; parentTrackingNo?: string }> {
   const response = await fetch(`${apiBaseUrl()}/staff/loading-manifests/add-shipment?id=${manifestId}`, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...authHeaders(),
-    },
-    body: JSON.stringify({ trackingNo }),
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({ trackingNo, pieceCount }),
   });
   return parseApiResponse(response);
 }

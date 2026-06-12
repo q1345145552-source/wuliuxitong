@@ -89,7 +89,7 @@ export function registerLoadingManifestRoutes(app: MinimalHttpApp): void {
           include: {
             shipment: {
               select: {
-                id: true, trackingNo: true, batchNo: true, currentStatus: true,
+                id: true, trackingNo: true, batchNo: true, currentStatus: true, parentTrackingNo: true,
                 weightKg: true, volumeM3: true, packageCount: true, packageUnit: true,
                 transportMode: true, domesticTrackingNo: true,
                 order: { select: { itemName: true, clientId: true, productQuantity: true, cargoType: true } },
@@ -119,6 +119,7 @@ export function registerLoadingManifestRoutes(app: MinimalHttpApp): void {
         packageCount: item.shipment?.packageCount ?? null,
         transportMode: item.shipment?.transportMode ?? null,
         currentStatus: item.shipment?.currentStatus ?? null,
+        parentTrackingNo: item.shipment?.parentTrackingNo ?? null,
         loadedPieces: item.loadedPieceCount,
         loadedVolume: Number(item.loadedVolumeM3),
       })),
@@ -142,69 +143,93 @@ export function registerLoadingManifestRoutes(app: MinimalHttpApp): void {
     ok(res, { message: "封柜成功", manifest: { id: updated.id, status: updated.currentStatus } });
   });
 
-  // 添加运单到装柜（通过运单号 trackingNo）
+  // 添加运单到装柜（通过运单号 trackingNo，可选 pieceCount 按件数分装）
   app.post("/staff/loading-manifests/add-shipment", async (req, res) => {
     const auth = requireRole(req, res, ["staff", "admin"]);
     if (!auth) return;
     const id = req.query.id as string;
-    const body = (req.body ?? {}) as { trackingNo?: string };
+    const body = (req.body ?? {}) as { trackingNo?: string; pieceCount?: number };
     if (!body.trackingNo?.trim()) { fail(res, 400, "BAD_REQUEST", "运单号不能为空"); return; }
-    // 按运单号查找 shipment
+    const container = await prisma.container.findFirst({ where: { id, companyId: auth.companyId } });
+    if (!container) { fail(res, 404, "NOT_FOUND", "装柜任务不存在"); return; }
+
+    // 按运单号查找 shipment（可能是父运单）
     const shipment = await prisma.shipment.findFirst({
       where: { trackingNo: body.trackingNo.trim(), companyId: auth.companyId },
     });
     if (!shipment) { fail(res, 404, "NOT_FOUND", "未找到该运单号"); return; }
-    const container = await prisma.container.findFirst({ where: { id, companyId: auth.companyId } });
-    if (!container) { fail(res, 404, "NOT_FOUND", "装柜任务不存在"); return; }
-    // Check if already added
+
+    const totalPkg = shipment.packageCount ?? 0;
+    const reqPieces = typeof body.pieceCount === "number" && body.pieceCount > 0 ? body.pieceCount : totalPkg;
+    if (reqPieces > totalPkg) { fail(res, 400, "BAD_REQUEST", `装柜件数(${reqPieces})超过运单总件数(${totalPkg})`); return; }
+
+    let loadShipmentId = shipment.id;
+    let loadTrackingNo = shipment.trackingNo;
+    const loadPieces = reqPieces;
+    const vol = shipment.volumeM3 ? Number(shipment.volumeM3) : 0;
+    const loadVolume = totalPkg > 0 ? (vol * reqPieces) / totalPkg : 0;
+
+    // 部分装柜 → 创建子运单
+    if (reqPieces < totalPkg) {
+      const childNos = await prisma.shipment.findMany({
+        where: { parentTrackingNo: shipment.trackingNo, companyId: auth.companyId },
+        select: { trackingNo: true },
+      });
+      const nextSeq = childNos.length + 1;
+      const childTrackingNo = `${shipment.trackingNo}-${nextSeq}`;
+      const childId = `s_${Date.now()}`;
+
+      const created = await prisma.shipment.create({
+        data: {
+          id: childId, companyId: auth.companyId, orderId: shipment.orderId,
+          trackingNo: childTrackingNo, parentTrackingNo: shipment.trackingNo,
+          batchNo: shipment.batchNo, currentStatus: "loaded",
+          packageCount: reqPieces, packageUnit: shipment.packageUnit,
+          weightKg: shipment.weightKg, volumeM3: (vol * reqPieces) / totalPkg as any,
+          transportMode: shipment.transportMode, domesticTrackingNo: shipment.domesticTrackingNo,
+          warehouseId: shipment.warehouseId, itemName: shipment.itemName,
+        },
+      });
+
+      // 父运单扣减件数
+      await prisma.shipment.update({
+        where: { id: shipment.id },
+        data: { packageCount: totalPkg - reqPieces, updatedAt: new Date() },
+      });
+
+      loadShipmentId = created.id;
+      loadTrackingNo = childTrackingNo;
+    }
+
+    // 装柜
     const existing = await prisma.shipmentContainerItem.findFirst({
-      where: { containerId: id, shipmentId: shipment.id },
+      where: { containerId: id, shipmentId: loadShipmentId },
     });
     if (existing) { fail(res, 400, "BAD_REQUEST", "该运单已在本柜中"); return; }
-    // 计算体积和件数（取 shipment 上的值，无则默认为 0）
-    const loadedVolume = shipment.volumeM3 ? Number(shipment.volumeM3) : 0;
-    const loadedPieces = shipment.packageCount ?? 0;
+
     const itemId = `sci_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
     await prisma.shipmentContainerItem.create({
-      data: {
-        id: itemId,
-        containerId: id,
-        shipmentId: shipment.id,
-        loadedVolumeM3: loadedVolume,
-        loadedPieceCount: loadedPieces,
-      },
+      data: { id: itemId, containerId: id, shipmentId: loadShipmentId, loadedVolumeM3: loadVolume, loadedPieceCount: loadPieces },
     });
-    // 非 LOADING 状态的柜子，同步运单状态到柜子对应状态
+
+    // 状态同步
     const CONTAINER_TO_SHIPMENT: Record<string, string> = {
       SEALED: "loaded", IN_TRANSIT: "departed", DELAY_DEPARTED: "delayDeparted",
       ARRIVED: "arrivedPort", CUSTOMS: "customsTH", CUSTOMS_CLEARED: "customsCleared",
       IN_WAREHOUSE_TH: "inWarehouseTH",
     };
     const syncStatus = CONTAINER_TO_SHIPMENT[container.currentStatus] ?? null;
+    const now = new Date();
     if (syncStatus) {
-      const now = new Date();
-      await prisma.shipment.update({
-        where: { id: shipment.id },
-        data: { currentStatus: syncStatus, updatedAt: now },
-      });
+      await prisma.shipment.update({ where: { id: loadShipmentId }, data: { currentStatus: syncStatus, updatedAt: now } });
       await prisma.statusLog.create({
-        data: {
-          id: `sl_mnf_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-          companyId: auth.companyId, shipmentId: shipment.id,
-          operatorId: auth.userId, operatorRole: auth.role, operatorName: auth.name ?? "",
-          fromStatus: shipment.currentStatus, toStatus: syncStatus,
-          remark: `装入柜子 ${container.containerNo}`,
-          changedAt: now,
-        },
+        data: { id: `sl_mnf_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`, companyId: auth.companyId, shipmentId: loadShipmentId, operatorId: auth.userId, operatorRole: auth.role, operatorName: auth.name ?? "", fromStatus: "loaded", toStatus: syncStatus, remark: `装入柜子 ${container.containerNo}（分装）`, changedAt: now },
       });
     } else {
-      // LOADING 状态：仅更新为 loaded
-      await prisma.shipment.update({
-        where: { id: shipment.id },
-        data: { currentStatus: "loaded" },
-      });
+      await prisma.shipment.update({ where: { id: loadShipmentId }, data: { currentStatus: "loaded" } });
     }
-    ok(res, { message: "运单已添加到装柜", trackingNo: body.trackingNo });
+
+    ok(res, { message: "运单已添加到装柜", trackingNo: loadTrackingNo, isPartial: reqPieces < totalPkg, parentTrackingNo: reqPieces < totalPkg ? shipment.trackingNo : null });
   });
 
   // 从装柜删除运单
@@ -216,8 +241,26 @@ export function registerLoadingManifestRoutes(app: MinimalHttpApp): void {
     if (!body.itemId) { fail(res, 400, "BAD_REQUEST", "itemId required"); return; }
     const item = await prisma.shipmentContainerItem.findFirst({
       where: { id: body.itemId, container: { companyId: auth.companyId } },
+      include: { shipment: { select: { id: true, trackingNo: true, parentTrackingNo: true, packageCount: true } } },
     });
     if (!item) { fail(res, 404, "NOT_FOUND", "装柜记录不存在"); return; }
+
+    // 如果是子运单，卸柜时恢复父运单件数
+    if (item.shipment.parentTrackingNo) {
+      const parent = await prisma.shipment.findFirst({
+        where: { trackingNo: item.shipment.parentTrackingNo, companyId: auth.companyId },
+        select: { id: true, packageCount: true },
+      });
+      if (parent) {
+        await prisma.shipment.update({
+          where: { id: parent.id },
+          data: { packageCount: (parent.packageCount ?? 0) + (item.shipment.packageCount ?? 0), updatedAt: new Date() },
+        });
+      }
+      // 删除子运单
+      await prisma.shipment.delete({ where: { id: item.shipment.id } });
+    }
+
     await prisma.shipmentContainerItem.delete({ where: { id: body.itemId } });
     ok(res, { message: "运单已从装柜删除" });
   });
