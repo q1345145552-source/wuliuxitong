@@ -26,6 +26,7 @@ interface ChildShipmentData {
 
 interface TrackData {
   trackingNo: string;
+  itemName?: string;
   currentStatus: string;
   containers: Array<{
     containerNo: string;
@@ -294,11 +295,20 @@ function TrackContent({ data }: { data: TrackData }) {
                 transition: "all 0.15s",
               }}
             >
-              {i === 0 ? `📦 ${t.trackingNo}` : `📋 ${t.trackingNo} (${allTabs[i].packageCount ?? "?"}件)`}
+              {i === 0 ? `📦 ${t.trackingNo}` : `📋 ${t.trackingNo}`}
             </button>
           ))}
         </div>
       )}
+
+      {/* 产品信息 */}
+      <div style={{ marginBottom: 12, padding: "8px 12px", background: "#f8fafc", borderRadius: 8, fontSize: 12, color: "#374151" }}>
+        {activeTab === 0 ? (
+          <span>📦 品名：{data.itemName ?? "—"} ｜ 总柜数：{data.children?.length ?? 0}个子单</span>
+        ) : data.children?.[activeTab - 1] ? (
+          <span>📦 品名：{data.children[activeTab - 1].itemName ?? "—"} ｜ 件数：{data.children[activeTab - 1].packageCount ?? "—"} 件{data.children[activeTab - 1].batchNo ? ` ｜ 柜号：${data.children[activeTab - 1].batchNo}` : ""}</span>
+        ) : null}
+      </div>
 
       {/* Current status banner */}
       <div style={{
