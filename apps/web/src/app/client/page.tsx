@@ -726,9 +726,9 @@ export default function ClientHomePage() {
                       <div>
                         <span style={{ fontWeight: 600, fontSize: 14, fontFamily: "monospace" }}>{item.orderNo || item.id}</span>
                         <span style={{ marginLeft: 8, fontSize: 11, fontWeight: 500, color: sColor, background: sBg, padding: "2px 8px", borderRadius: 4 }}>{sLabel}</span>
-                        <button type="button" onClick={() => openShipmentTrack(item.trackingNo || item.id)} style={{ marginLeft: 8, border: "1px solid #2563eb", borderRadius: 4, padding: "2px 8px", fontSize: 11, background: "#eff6ff", color: "#2563eb", cursor: "pointer" }}>物流轨迹</button>
                       </div>
                       <div style={{ fontSize: 12, color: "#000000" }}>{item.createdAt.slice(0, 10)}</div>
+                      <button type="button" onClick={() => openShipmentTrack(item.trackingNo || item.id)} style={{ border: "1px solid #2563eb", borderRadius: 4, padding: "2px 8px", fontSize: 11, background: "#eff6ff", color: "#2563eb", cursor: "pointer" }}>物流轨迹</button>
                     </div>
                     <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: 6, fontSize: 13, color: "#000000", marginBottom: 8 }}>
                       <div>品名：{item.itemName}</div>
@@ -1395,9 +1395,9 @@ export default function ClientHomePage() {
                       <div>
                         <span style={{ fontWeight: 600, fontSize: 14, fontFamily: "monospace" }}>{item.orderNo || item.id}</span>
                         <span style={{ marginLeft: 8, fontSize: 11, fontWeight: 500, color: sColor, background: sBg, padding: "2px 8px", borderRadius: 4 }}>{sLabel}</span>
-                        <button type="button" onClick={() => openShipmentTrack(item.trackingNo || item.id)} style={{ marginLeft: 8, border: "1px solid #2563eb", borderRadius: 4, padding: "2px 8px", fontSize: 11, background: "#eff6ff", color: "#2563eb", cursor: "pointer" }}>物流轨迹</button>
                       </div>
                       <div style={{ fontSize: 12, color: "#000000" }}>{item.createdAt.slice(0, 10)}</div>
+                      <button type="button" onClick={() => openShipmentTrack(item.trackingNo || item.id)} style={{ border: "1px solid #2563eb", borderRadius: 4, padding: "2px 8px", fontSize: 11, background: "#eff6ff", color: "#2563eb", cursor: "pointer" }}>物流轨迹</button>
                     </div>
                     <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: 6, fontSize: 13, color: "#000000", marginBottom: 8 }}>
                       <div>品名：{item.itemName}</div>
