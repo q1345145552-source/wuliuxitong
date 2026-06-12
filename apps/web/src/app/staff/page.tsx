@@ -706,7 +706,7 @@ export default function StaffHomePage() {
       return (Number(bn) || 0) - (Number(an) || 0);
     });
     setStaffClients(clientItems);
-    setShipments(shipmentItems);
+    setShipments(shipmentItems.filter(s => !s.parentTrackingNo));
     setPrealerts(prealertItems);
     setPrealertBatchDrafts((prev) => {
       const next: Record<string, string> = { ...prev };
