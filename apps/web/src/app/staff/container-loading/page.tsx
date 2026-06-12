@@ -80,6 +80,8 @@ export default function StaffContainerLoadingPage() {
   const [selectedShipments, setSelectedShipments] = useState<Record<string, number>>({});
   const [bulkPieceDialog, setBulkPieceDialog] = useState<string | null>(null);
   const [bulkPieceCount, setBulkPieceCount] = useState("");
+  const [unloadDialog, setUnloadDialog] = useState<{itemId: string; loadedPieces: number} | null>(null);
+  const [unloadCount, setUnloadCount] = useState("");
   // 已装柜运单映射：shipmentId → container manifestNo
   const [loadedShipments, setLoadedShipments] = useState<Record<string, string>>({});
 
@@ -230,14 +232,14 @@ export default function StaffContainerLoadingPage() {
     setAdding(false);
   };
 
-  const handleRemoveShipment = async (itemId: string) => {
+  const handleRemoveShipment = async (itemId: string, pieceCount?: number) => {
     if (!selectedId) return;
     try {
-      await removeShipmentFromManifest(selectedId, itemId);
-      setToast("运单已从装柜删除");
+      await removeShipmentFromManifest(selectedId, itemId, pieceCount);
+      setToast("运单已从装柜卸下");
       await loadDetail(selectedId);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "删除失败");
+      setError(e instanceof Error ? e.message : "卸柜失败");
     }
   };
 
@@ -380,7 +382,7 @@ export default function StaffContainerLoadingPage() {
                         <span style={{ color: "#374151" }}>{b.transportMode === "sea" ? "海运" : b.transportMode === "land" ? "陆运" : "—"}</span>
                         <span style={{ color: STATUS_COLOR[b.currentStatus ?? ""] ?? "#000000", fontWeight: 500 }}>{SHIPMENT_STATUS_ZH[b.currentStatus ?? ""] ?? b.currentStatus ?? "—"}</span>
                         <div style={{ display: "flex", gap: 4 }}>
-                          <button onClick={() => handleRemoveShipment(b.id)} style={{ border: "1px solid #fca5a5", borderRadius: 4, padding: "2px 6px", fontSize: 11, background: "#fff", color: "#dc2626", cursor: "pointer" }}>卸柜</button>
+                          <button onClick={() => { setUnloadDialog({itemId: b.id, loadedPieces: b.loadedPieces}); setUnloadCount(String(b.loadedPieces)); }} style={{ border: "1px solid #fca5a5", borderRadius: 4, padding: "2px 6px", fontSize: 11, background: "#fff", color: "#dc2626", cursor: "pointer" }}>卸柜</button>
                         </div>
                       </div>
                     ))}
@@ -465,6 +467,19 @@ export default function StaffContainerLoadingPage() {
       </div>
 
       
+      {unloadDialog && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 60, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(0,0,0,0.3)" }} onClick={() => setUnloadDialog(null)}>
+          <div style={{ background: "#fff", borderRadius: 10, padding: 20, boxShadow: "0 8px 40px rgba(0,0,0,0.2)", minWidth: 300 }} onClick={e => e.stopPropagation()}>
+            <h4 style={{ margin: "0 0 10px", fontSize: 15 }}>卸柜件数</h4>
+            <input type="number" value={unloadCount} onChange={e => setUnloadCount(e.target.value)} style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "8px 12px", fontSize: 14, width: "100%" }} min="1" max={unloadDialog.loadedPieces} autoFocus />
+            <div style={{ fontSize: 11, color: "#6b7280", marginTop: 4 }}>当前装柜 {unloadDialog.loadedPieces} 件</div>
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 12 }}>
+              <button onClick={() => setUnloadDialog(null)} style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "6px 14px", background: "#fff", cursor: "pointer", fontSize: 13 }}>取消</button>
+              <button onClick={() => { const n = parseInt(unloadCount); if (n > 0 && unloadDialog) { handleRemoveShipment(unloadDialog.itemId, n === unloadDialog.loadedPieces ? undefined : n); } setUnloadDialog(null); }} style={{ border: "none", borderRadius: 6, padding: "6px 14px", background: "#dc2626", color: "#fff", cursor: "pointer", fontSize: 13 }}>确认卸柜</button>
+            </div>
+          </div>
+        </div>
+      )}
       <Toast open={toast.length > 0} message={toast} />
     </RoleShell>
   );

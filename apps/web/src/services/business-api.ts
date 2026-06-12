@@ -1409,11 +1409,11 @@ export async function sealLoadingManifest(manifestId: string): Promise<LoadingMa
 /**
  * 添加运单到装柜清单。
  */
-export async function removeShipmentFromManifest(manifestId: string, itemId: string): Promise<{ removed: boolean }> {
+export async function removeShipmentFromManifest(manifestId: string, itemId: string, pieceCount?: number): Promise<{ message: string }> {
   const response = await fetch(`${apiBaseUrl()}/staff/loading-manifests/remove-shipment?id=${manifestId}`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeaders() },
-    body: JSON.stringify({ itemId }),
+    body: JSON.stringify({ itemId, pieceCount }),
   });
   return parseApiResponse(response);
 }

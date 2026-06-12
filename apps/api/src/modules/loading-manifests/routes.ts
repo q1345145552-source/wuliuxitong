@@ -244,39 +244,70 @@ export function registerLoadingManifestRoutes(app: MinimalHttpApp): void {
     ok(res, { message: "运单已添加到装柜", trackingNo: result.loadTrackingNo, isPartial: result.isPartial, parentTrackingNo: result.parentTrackingNo });
   });
 
-  // 从装柜删除运单
+  // 从装柜卸下运单（可选 pieceCount 部分卸柜）
   app.post("/staff/loading-manifests/remove-shipment", async (req, res) => {
     const auth = requireRole(req, res, ["staff", "admin"]);
     if (!auth) return;
-    const body = (req.body ?? {}) as { itemId?: string };
+    const body = (req.body ?? {}) as { itemId?: string; pieceCount?: number };
     if (!body.itemId) { fail(res, 400, "BAD_REQUEST", "itemId required"); return; }
 
     await prisma.$transaction(async (tx) => {
       const item = await tx.shipmentContainerItem.findFirst({
         where: { id: body.itemId, container: { companyId: auth.companyId } },
-        include: { shipment: { select: { id: true, parentTrackingNo: true, packageCount: true } } },
+        include: { shipment: { select: { id: true, parentTrackingNo: true, packageCount: true, volumeM3: true } } },
       });
       if (!item) throw new Error("装柜记录不存在");
 
-      // 先删除装柜关系
-      await tx.shipmentContainerItem.delete({ where: { id: body.itemId } });
+      const totalLoaded = item.loadedPieceCount;
+      const reqPieces = typeof body.pieceCount === "number" && body.pieceCount > 0 && body.pieceCount < totalLoaded ? body.pieceCount : totalLoaded;
+      const childPkg = item.shipment.packageCount ?? 0;
+      const childVol = item.shipment.volumeM3 ? Number(item.shipment.volumeM3) : 0;
 
-      // 子运单：恢复父运单件数 → 删子运单
-      if (item.shipment.parentTrackingNo) {
-        const parent = await tx.shipment.findFirst({
-          where: { trackingNo: item.shipment.parentTrackingNo, companyId: auth.companyId },
-          select: { id: true, packageCount: true },
+      // 部分卸柜：减子运单件数 + 减装柜件数 + 恢复父运单
+      if (reqPieces < totalLoaded) {
+        const newLoaded = totalLoaded - reqPieces;
+        const newPkg = childPkg - reqPieces;
+        const newVol = Number((newPkg > 0 && childPkg > 0 ? (childVol * newPkg) / childPkg : 0).toFixed(3));
+        await tx.shipmentContainerItem.update({
+          where: { id: body.itemId },
+          data: { loadedPieceCount: newLoaded, loadedVolumeM3: newVol },
         });
-        if (parent) {
-          await tx.shipment.update({
-            where: { id: parent.id },
-            data: { packageCount: (parent.packageCount ?? 0) + (item.shipment.packageCount ?? 0), updatedAt: new Date() },
+        await tx.shipment.update({
+          where: { id: item.shipment.id },
+          data: { packageCount: newPkg, volumeM3: newVol as any, updatedAt: new Date() },
+        });
+        // 恢复父运单
+        if (item.shipment.parentTrackingNo) {
+          const parent = await tx.shipment.findFirst({
+            where: { trackingNo: item.shipment.parentTrackingNo, companyId: auth.companyId },
+            select: { id: true, packageCount: true },
           });
+          if (parent) {
+            await tx.shipment.update({
+              where: { id: parent.id },
+              data: { packageCount: (parent.packageCount ?? 0) + reqPieces, updatedAt: new Date() },
+            });
+          }
         }
-        await tx.shipment.delete({ where: { id: item.shipment.id } });
+      } else {
+        // 全量卸柜
+        await tx.shipmentContainerItem.delete({ where: { id: body.itemId } });
+        if (item.shipment.parentTrackingNo) {
+          const parent = await tx.shipment.findFirst({
+            where: { trackingNo: item.shipment.parentTrackingNo, companyId: auth.companyId },
+            select: { id: true, packageCount: true },
+          });
+          if (parent) {
+            await tx.shipment.update({
+              where: { id: parent.id },
+              data: { packageCount: (parent.packageCount ?? 0) + (item.shipment.packageCount ?? 0), updatedAt: new Date() },
+            });
+          }
+          await tx.shipment.delete({ where: { id: item.shipment.id } });
+        }
       }
     });
 
-    ok(res, { message: "运单已从装柜删除" });
+    ok(res, { message: "运单已从装柜卸下" });
   });
 }
