@@ -85,21 +85,25 @@ export default function StaffContainerLoadingPage() {
   // 已装柜运单映射：shipmentId → container manifestNo
   const [loadedShipments, setLoadedShipments] = useState<Record<string, string>>({});
 
-  // 加载运单列表 + 已装柜信息
-  useEffect(() => {
-    Promise.all([
+  const loadShipmentList = async () => {
+    const [shipments, manifests] = await Promise.all([
       fetchStaffShipments(),
       fetchLoadingManifests({ query: "", status: "ALL" }),
-    ]).then(([shipments, manifests]) => {
-      setAllShipments(shipments);
-      // 获取所有柜子的已装运单
-      const mapping: Record<string, string> = {};
-      Promise.all(manifests.map((m) =>
-        fetchLoadingManifestDetail(m.id).then((d) => {
-          d.bills.forEach((b) => { mapping[b.shipmentId] = m.manifestNo; });
-        }).catch(() => {})
-      )).then(() => setLoadedShipments(mapping));
-    }).catch(() => {});
+    ]);
+    setAllShipments(shipments);
+    const mapping: Record<string, string> = {};
+    for (const m of manifests) {
+      try {
+        const d = await fetchLoadingManifestDetail(m.id);
+        d.bills.forEach((b) => { mapping[b.shipmentId] = m.manifestNo; });
+      } catch {}
+    }
+    setLoadedShipments(mapping);
+  };
+
+  // 加载运单列表 + 已装柜信息
+  useEffect(() => {
+    loadShipmentList().catch(() => {});
   }, []);
 
   // 筛选运单
@@ -229,6 +233,7 @@ export default function StaffContainerLoadingPage() {
     setToast(`成功添加 ${success} 个运单到装柜${errors.length > 0 ? `，失败 ${errors.length} 个：${errors.join("；")}` : ""}`);
     setSelectedShipments({});
     await loadDetail(selectedId);
+    await loadShipmentList();
     setAdding(false);
   };
 
@@ -238,6 +243,7 @@ export default function StaffContainerLoadingPage() {
       await removeShipmentFromManifest(selectedId, itemId, pieceCount);
       setToast("运单已从装柜卸下");
       await loadDetail(selectedId);
+      await loadShipmentList();
     } catch (e) {
       setError(e instanceof Error ? e.message : "卸柜失败");
     }
