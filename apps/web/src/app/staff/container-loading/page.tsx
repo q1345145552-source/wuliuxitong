@@ -437,9 +437,9 @@ export default function StaffContainerLoadingPage() {
                     const isSelected = s.trackingNo in selectedShipments;
                     const totalPkg = s.packageCount ?? 0;
                     return (
-                      <div key={s.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 10px", borderBottom: "1px solid #f1f5f9", opacity: (alreadyIn || loadedContainer) ? 0.5 : 1, background: isSelected ? "#eff6ff" : "transparent" }}>
-                        <input type="checkbox" checked={isSelected || alreadyIn || !!loadedContainer} disabled={alreadyIn || !!loadedContainer} onChange={() => {
-                          if (alreadyIn || loadedContainer) return;
+                      <div key={s.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 10px", borderBottom: "1px solid #f1f5f9", opacity: (alreadyIn || alreadyIn) ? 0.5 : 1, background: isSelected ? "#eff6ff" : "transparent" }}>
+                        <input type="checkbox" checked={isSelected || alreadyIn} disabled={alreadyIn} onChange={() => {
+                          if (alreadyIn) return;
                           if (isSelected) {
                             const n = { ...selectedShipments };
                             delete n[s.trackingNo];
