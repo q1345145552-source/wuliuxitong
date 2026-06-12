@@ -473,20 +473,31 @@ export function registerShipmentRoutes(app: MinimalHttpApp): void {
       }
     }
 
-    // 补充父运单总件数（父剩余 + 所有子运单件数）
+    // 补充父运单总件数：父剩余 + 子运单件数 + 父直装柜内件数
     const parentIds = items.filter(i => !i.parentTrackingNo).map(i => i.trackingNo);
+    const parentShipmentIds = items.filter(i => !i.parentTrackingNo).map(i => i.id);
     if (parentIds.length > 0) {
-      const childRows = await prisma.shipment.findMany({
-        where: { parentTrackingNo: { in: parentIds }, companyId: auth.companyId },
-        select: { parentTrackingNo: true, packageCount: true },
-      });
+      const [childRows, parentLoadRows] = await Promise.all([
+        prisma.shipment.findMany({
+          where: { parentTrackingNo: { in: parentIds }, companyId: auth.companyId },
+          select: { parentTrackingNo: true, packageCount: true },
+        }),
+        prisma.shipmentContainerItem.findMany({
+          where: { shipmentId: { in: parentShipmentIds } },
+          select: { shipmentId: true, loadedPieceCount: true },
+        }),
+      ]);
       const childSum = new Map<string, number>();
       for (const c of childRows) {
         childSum.set(c.parentTrackingNo!, (childSum.get(c.parentTrackingNo!) ?? 0) + (c.packageCount ?? 0));
       }
+      const parentLoadSum = new Map<string, number>();
+      for (const p of parentLoadRows) {
+        parentLoadSum.set(p.shipmentId, (parentLoadSum.get(p.shipmentId) ?? 0) + p.loadedPieceCount);
+      }
       for (const item of items) {
         if (!item.parentTrackingNo) {
-          (item as any).totalPackageCount = (item.packageCount ?? 0) + (childSum.get(item.trackingNo) ?? 0);
+          (item as any).totalPackageCount = (item.packageCount ?? 0) + (childSum.get(item.trackingNo) ?? 0) + (parentLoadSum.get(item.id) ?? 0);
         }
       }
     }
