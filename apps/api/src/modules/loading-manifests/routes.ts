@@ -164,15 +164,19 @@ export function registerLoadingManifestRoutes(app: MinimalHttpApp): void {
       const container = await tx.container.findFirst({ where: { id: containerId, companyId: auth.companyId } });
       if (!container) throw new Error("装柜任务不存在");
 
-      // 锁父运单防并发
+      // 先锁再读，防并发 TOCTOU
       const shipment = await tx.shipment.findFirst({
         where: { trackingNo: body.trackingNo!.trim(), companyId: auth.companyId },
       });
       if (!shipment) throw new Error("未找到该运单号");
-      if (shipment.parentTrackingNo) throw new Error("子运单不能再次装柜，请使用父运单号");
 
       await tx.$queryRaw`SELECT id FROM shipments WHERE id = ${shipment.id} FOR UPDATE`;
-      const locked = await tx.shipment.findUnique({ where: { id: shipment.id }, select: { packageCount: true, volumeM3: true } });
+      const locked = await tx.shipment.findUnique({
+        where: { id: shipment.id },
+        select: { packageCount: true, volumeM3: true, parentTrackingNo: true, orderId: true, batchNo: true, packageUnit: true, weightKg: true, transportMode: true, domesticTrackingNo: true, warehouseId: true, itemName: true },
+      });
+      if (!locked) throw new Error("未找到该运单号");
+      if (locked.parentTrackingNo) throw new Error("子运单不能再次装柜，请使用父运单号");
       const totalPkg = locked?.packageCount ?? 0;
       const reqPieces = typeof body.pieceCount === "number" && body.pieceCount > 0 ? body.pieceCount : totalPkg;
       if (reqPieces > totalPkg) throw new Error(`装柜件数(${reqPieces})超过运单总件数(${totalPkg})`);
