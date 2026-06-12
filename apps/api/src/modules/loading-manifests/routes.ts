@@ -181,8 +181,8 @@ export function registerLoadingManifestRoutes(app: MinimalHttpApp): void {
       let loadShipmentId = shipment.id;
       let loadTrackingNo = shipment.trackingNo;
 
-      // 全部装柜也建子运单 — 保持件数自洽
-      {
+      // 部分装 → 建子运单；全部装 → 父运单直装（但必须扣件数到0）
+      if (reqPieces < totalPkg) {
         const children = await tx.shipment.findMany({
           where: { parentTrackingNo: shipment.trackingNo, companyId: auth.companyId },
           select: { trackingNo: true },
@@ -216,6 +216,12 @@ export function registerLoadingManifestRoutes(app: MinimalHttpApp): void {
 
         loadShipmentId = childId;
         loadTrackingNo = childTrackingNo;
+      } else {
+        // 全部装柜：父运单直装，件数扣到0
+        await tx.shipment.update({
+          where: { id: shipment.id },
+          data: { packageCount: 0, updatedAt: new Date() },
+        });
       }
 
       // 装柜
@@ -242,13 +248,13 @@ export function registerLoadingManifestRoutes(app: MinimalHttpApp): void {
       if (syncStatus) {
         await tx.shipment.update({ where: { id: loadShipmentId }, data: { currentStatus: syncStatus, updatedAt: now } });
         await tx.statusLog.create({
-          data: { id: `sl_mnf_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`, companyId: auth.companyId, shipmentId: loadShipmentId, operatorId: auth.userId, operatorRole: auth.role, operatorName: auth.name ?? "", fromStatus: "loaded", toStatus: syncStatus, remark: `装入柜子 ${container.containerNo}（分装 ${reqPieces}件）`, changedAt: now },
+          data: { id: `sl_mnf_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`, companyId: auth.companyId, shipmentId: loadShipmentId, operatorId: auth.userId, operatorRole: auth.role, operatorName: auth.name ?? "", fromStatus: "loaded", toStatus: syncStatus, remark: `装入柜子 ${container.containerNo}${reqPieces < totalPkg ? `（分装 ${reqPieces}件）` : ""}`, changedAt: now },
         });
       } else {
         await tx.shipment.update({ where: { id: loadShipmentId }, data: { currentStatus: "loaded" } });
       }
 
-      return { loadTrackingNo, isPartial: false, parentTrackingNo: shipment.trackingNo };
+      return { loadTrackingNo, isPartial: reqPieces < totalPkg, parentTrackingNo: reqPieces < totalPkg ? shipment.trackingNo : null };
     });
 
     ok(res, { message: "运单已添加到装柜", trackingNo: result.loadTrackingNo, isPartial: result.isPartial, parentTrackingNo: result.parentTrackingNo });
@@ -304,6 +310,13 @@ export function registerLoadingManifestRoutes(app: MinimalHttpApp): void {
       } else {
         // 全量卸柜
         await tx.shipmentContainerItem.delete({ where: { id: body.itemId } });
+        if (!isChild) {
+          // 父运单直装 → 恢复全部件数
+          await tx.shipment.update({
+            where: { id: item.shipment.id },
+            data: { packageCount: (item.shipment.packageCount ?? 0) + item.loadedPieceCount, updatedAt: new Date() },
+          });
+        }
         if (item.shipment.parentTrackingNo) {
           const parent = await tx.shipment.findFirst({
             where: { trackingNo: item.shipment.parentTrackingNo, companyId: auth.companyId },
