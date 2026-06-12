@@ -17,13 +17,13 @@ const DEFAULT_UNIT_PRICES: Record<string, number> = {
 const MIN_VOLUME_DEFAULTS: Record<string, number> = { sea: 0.5, land: 0.3 };
 
 /** 从配置表获取最低计费体积 */
-async function getMinVolume(companyId: string, transportMode: string): Promise<number> {
-  const row = await prisma.shippingConfig.findFirst({
-    where: { companyId, status: `min_volume_${transportMode}` },
-    select: { value: true },
+async function getMinVolume(transportMode: string): Promise<number> {
+  const row = await prisma.aiStatusLabel.findFirst({
+    where: { status: `min_volume_${transportMode}` },
+    select: { labelZh: true },
   });
-  if (row?.value) {
-    const v = Number(row.value);
+  if (row?.labelZh) {
+    const v = Number(row.labelZh);
     if (Number.isFinite(v) && v > 0) return v;
   }
   return MIN_VOLUME_DEFAULTS[transportMode] ?? 0.5;
@@ -49,7 +49,7 @@ async function calcReceivableByProducts(
   const effectiveVol = totalVol > 0 ? totalVol : (fallbackVolume ?? 0);
   if (effectiveVol <= 0) return null;
 
-  const minVol = await getMinVolume(companyId, transportMode);
+  const minVol = await getMinVolume(transportMode);
   const billableVol = Math.max(effectiveVol, minVol);
 
   const cargoType = (products.length > 0 ? products[0].cargoType?.trim() : null) || "NORMAL";
