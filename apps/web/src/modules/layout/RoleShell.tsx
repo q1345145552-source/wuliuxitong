@@ -86,11 +86,9 @@ export default function RoleShell(props: {
       return () => clearTimeout(timer);
     }
     if (!allowedRoles.includes(session.role)) {
-      const timer = setTimeout(() => {
-        const from = encodeURIComponent(window.location.pathname);
-        window.location.href = `/forbidden?from=${from}`;
-      }, 600);
-      return () => clearTimeout(timer);
+      const goMap: Record<string, string> = { admin: "/admin", staff: "/staff", client: "/client" };
+      window.location.href = goMap[session.role] || "/login";
+      return;
     }
     return;
   }, [allowedRole, mounted, session]);
