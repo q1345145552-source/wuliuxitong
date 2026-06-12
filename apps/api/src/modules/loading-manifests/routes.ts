@@ -143,7 +143,6 @@ export function registerLoadingManifestRoutes(app: MinimalHttpApp): void {
     if (!shipment) { fail(res, 404, "NOT_FOUND", "未找到该运单号"); return; }
     const container = await prisma.container.findFirst({ where: { id, companyId: auth.companyId } });
     if (!container) { fail(res, 404, "NOT_FOUND", "装柜任务不存在"); return; }
-    if (container.currentStatus !== "LOADING") { fail(res, 400, "BAD_REQUEST", "只能在装柜中状态添加运单"); return; }
     // Check if already added
     const existing = await prisma.shipmentContainerItem.findFirst({
       where: { containerId: id, shipmentId: shipment.id },
@@ -152,20 +151,46 @@ export function registerLoadingManifestRoutes(app: MinimalHttpApp): void {
     // 计算体积和件数（取 shipment 上的值，无则默认为 0）
     const loadedVolume = shipment.volumeM3 ? Number(shipment.volumeM3) : 0;
     const loadedPieces = shipment.packageCount ?? 0;
+    const itemId = `sci_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
     await prisma.shipmentContainerItem.create({
       data: {
-        id: `sci_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+        id: itemId,
         containerId: id,
         shipmentId: shipment.id,
         loadedVolumeM3: loadedVolume,
         loadedPieceCount: loadedPieces,
       },
     });
-    // 更新运单状态为 loaded（已装柜）
-    await prisma.shipment.update({
-      where: { id: shipment.id },
-      data: { currentStatus: "loaded" },
-    });
+    // 非 LOADING 状态的柜子，同步运单状态到柜子对应状态
+    const CONTAINER_TO_SHIPMENT: Record<string, string> = {
+      SEALED: "loaded", IN_TRANSIT: "departed", DELAY_DEPARTED: "delayDeparted",
+      ARRIVED: "arrivedPort", CUSTOMS: "customsTH", CUSTOMS_CLEARED: "customsCleared",
+      IN_WAREHOUSE_TH: "inWarehouseTH",
+    };
+    const syncStatus = CONTAINER_TO_SHIPMENT[container.currentStatus] ?? null;
+    if (syncStatus) {
+      const now = new Date();
+      await prisma.shipment.update({
+        where: { id: shipment.id },
+        data: { currentStatus: syncStatus, updatedAt: now },
+      });
+      await prisma.statusLog.create({
+        data: {
+          id: `sl_mnf_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+          companyId: auth.companyId, shipmentId: shipment.id,
+          operatorId: auth.userId, operatorRole: auth.role, operatorName: auth.name ?? "",
+          fromStatus: shipment.currentStatus, toStatus: syncStatus,
+          remark: `装入柜子 ${container.containerNo}`,
+          changedAt: now,
+        },
+      });
+    } else {
+      // LOADING 状态：仅更新为 loaded
+      await prisma.shipment.update({
+        where: { id: shipment.id },
+        data: { currentStatus: "loaded" },
+      });
+    }
     ok(res, { message: "运单已添加到装柜", trackingNo: body.trackingNo });
   });
 

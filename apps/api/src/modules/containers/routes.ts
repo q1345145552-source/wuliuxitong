@@ -403,7 +403,7 @@ export function registerContainerRoutes(app: MinimalHttpApp): void {
         0,
       );
       const shipmentTotal = decToNumber(shipment.volumeM3);
-      if (alreadyLoaded + volume > shipmentTotal + 0.01) {
+      if (shipmentTotal > 0 && alreadyLoaded + volume > shipmentTotal + 0.01) {
         fail(
           res,
           400,
