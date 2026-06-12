@@ -355,9 +355,9 @@ function TrackContent({ data }: { data: TrackData }) {
             }}>{tab.timeline.length} 条</span>
           </div>
 
-          {/* Timeline */}
+          {/* Timeline: 最新在上 */}
           <div style={{ position: "relative" }}>
-            {tab.timeline.map((item, i) => (
+            {tab.timeline.slice().reverse().map((item, i) => (
               <TimelineNode
                 key={i}
                 item={item}
