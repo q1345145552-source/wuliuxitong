@@ -187,8 +187,8 @@ export function registerLoadingManifestRoutes(app: MinimalHttpApp): void {
       let loadShipmentId = shipment.id;
       let loadTrackingNo = shipment.trackingNo;
 
-      // 部分装 → 建子运单；全部装 → 父运单直装（但必须扣件数到0）
-      if (reqPieces < totalPkg) {
+      // 全部走子运单，不再区分部分装/全部装
+      {
         const children = await tx.shipment.findMany({
           where: { parentTrackingNo: shipment.trackingNo, companyId: auth.companyId },
           select: { trackingNo: true },
@@ -222,12 +222,6 @@ export function registerLoadingManifestRoutes(app: MinimalHttpApp): void {
 
         loadShipmentId = childId;
         loadTrackingNo = childTrackingNo;
-      } else {
-        // 全部装柜：父运单直装，件数扣到0
-        await tx.shipment.update({
-          where: { id: shipment.id },
-          data: { packageCount: 0, updatedAt: new Date() },
-        });
       }
 
       // 装柜
@@ -285,10 +279,8 @@ export function registerLoadingManifestRoutes(app: MinimalHttpApp): void {
       });
       if (!item) throw new Error("装柜记录不存在");
 
-      const isChild = !!item.shipment.parentTrackingNo;
       const totalLoaded = item.loadedPieceCount;
-      // 非子运单只能全量卸柜
-      const reqPieces = isChild && typeof body.pieceCount === "number" && body.pieceCount > 0 && body.pieceCount < totalLoaded ? body.pieceCount : totalLoaded;
+      const reqPieces = typeof body.pieceCount === "number" && body.pieceCount > 0 && body.pieceCount < totalLoaded ? body.pieceCount : totalLoaded;
       const childPkg = item.shipment.packageCount ?? 0;
       const childVol = item.shipment.volumeM3 ? Number(item.shipment.volumeM3) : 0;
 
@@ -321,13 +313,6 @@ export function registerLoadingManifestRoutes(app: MinimalHttpApp): void {
       } else {
         // 全量卸柜
         await tx.shipmentContainerItem.delete({ where: { id: body.itemId } });
-        if (!isChild) {
-          // 父运单直装 → 恢复全部件数
-          await tx.shipment.update({
-            where: { id: item.shipment.id },
-            data: { packageCount: (item.shipment.packageCount ?? 0) + item.loadedPieceCount, updatedAt: new Date() },
-          });
-        }
         if (item.shipment.parentTrackingNo) {
           const parent = await tx.shipment.findFirst({
             where: { trackingNo: item.shipment.parentTrackingNo, companyId: auth.companyId },
