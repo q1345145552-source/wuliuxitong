@@ -109,14 +109,15 @@ export default function StaffContainerLoadingPage() {
 
   // 筛选运单
   const filteredShipments = useMemo(() => {
-    return allShipments.filter((s) => {
-      // 只显示父运单，不显示已分装的子运单
-      if (s.parentTrackingNo) return false;
-      if (shipSearch.trackingNo && !(s.trackingNo ?? "").toLowerCase().includes(shipSearch.trackingNo.toLowerCase())) return false;
-      if (shipSearch.clientId && !(s.clientId ?? "").toLowerCase().includes(shipSearch.clientId.toLowerCase())) return false;
-      if (shipSearch.transportMode && s.transportMode !== shipSearch.transportMode) return false;
-      return true;
-    });
+    return allShipments
+      .filter((s) => {
+        if (s.parentTrackingNo) return false;
+        if (shipSearch.trackingNo && !(s.trackingNo ?? "").toLowerCase().includes(shipSearch.trackingNo.toLowerCase())) return false;
+        if (shipSearch.clientId && !(s.clientId ?? "").toLowerCase().includes(shipSearch.clientId.toLowerCase())) return false;
+        if (shipSearch.transportMode && s.transportMode !== shipSearch.transportMode) return false;
+        return true;
+      })
+      .sort((a, b) => (b.updatedAt ?? "").localeCompare(a.updatedAt ?? ""));
   }, [allShipments, shipSearch]);
 
   // 已在本柜中的运单 ID 集合
