@@ -117,7 +117,11 @@ export default function StaffContainerLoadingPage() {
         if (shipSearch.transportMode && s.transportMode !== shipSearch.transportMode) return false;
         return true;
       })
-      .sort((a, b) => (b.updatedAt ?? "").localeCompare(a.updatedAt ?? ""));
+      .sort((a, b) => {
+        const an = (a.trackingNo ?? "").replace(/\D/g, "");
+        const bn = (b.trackingNo ?? "").replace(/\D/g, "");
+        return (Number(bn) || 0) - (Number(an) || 0);
+      });
   }, [allShipments, shipSearch]);
 
   // 已在本柜中的运单 ID 集合
