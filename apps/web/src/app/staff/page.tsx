@@ -742,6 +742,7 @@ export default function StaffHomePage() {
    * 上传订单产品图后刷新员工端数据。
    */
   const uploadOrderProductImageAndReload = async (orderId: string, file: File) => {
+    if (!orderId) { setToast("上传失败：缺少订单ID"); return; }
     setLoading(true);
     setMessage("");
     try {
