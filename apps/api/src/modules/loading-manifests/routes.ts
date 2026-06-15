@@ -259,7 +259,13 @@ export function registerLoadingManifestRoutes(app: MinimalHttpApp): void {
         await tx.shipment.update({ where: { id: loadShipmentId }, data: { currentStatus: "loaded" } });
       }
 
-      return { loadTrackingNo, isPartial: reqPieces < totalPkg, parentTrackingNo: reqPieces < totalPkg ? shipment.trackingNo : null };
+      // 同步父运单状态
+      if (loadShipmentId !== shipment.id) {
+        const parentStatus = syncStatus ?? "loaded";
+        await tx.shipment.update({ where: { id: shipment.id }, data: { currentStatus: parentStatus, updatedAt: now } });
+      }
+
+      return { loadTrackingNo, isPartial: reqPieces < totalPkg, parentTrackingNo: shipment.trackingNo };
     });
 
     ok(res, { message: "运单已添加到装柜", trackingNo: result.loadTrackingNo, isPartial: result.isPartial, parentTrackingNo: result.parentTrackingNo });
