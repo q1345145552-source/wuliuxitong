@@ -72,16 +72,19 @@ else
 fi
 
 # ── 6. 备份检查（24小时内有过备份） ──
-BACKUP_DIR="/root/image-backups"
-if [ -d "$BACKUP_DIR" ]; then
-  RECENT=$(find "$BACKUP_DIR" -type f -mmin -1440 2>/dev/null | wc -l | tr -d ' ')
-  if [ "$RECENT" -gt 0 ]; then
-    ok "备份正常（24h内有 $RECENT 个文件）"
-  else
-    alert "备份异常：24小时内无新备份文件"
+BACKUP_OK=0
+for BACKUP_DIR in "/root/db-backups" "/root/image-backups"; do
+  if [ -d "$BACKUP_DIR" ]; then
+    RECENT=$(find "$BACKUP_DIR" -type f -mmin -1440 2>/dev/null | wc -l | tr -d ' ')
+    if [ "$RECENT" -gt 0 ]; then
+      BACKUP_OK=1
+    fi
   fi
+done
+if [ "$BACKUP_OK" -eq 1 ]; then
+  ok "备份正常"
 else
-  alert "备份目录 $BACKUP_DIR 不存在"
+  alert "备份异常：24小时内无新备份文件"
 fi
 
 # ── 7. 数据库连接 ──
