@@ -470,7 +470,7 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
       }),
       // 同步所有关联运单（按 order_id 关联的那些）
       prisma.shipment.updateMany({
-        where: { orderId, companyId: auth.companyId },
+        where: { orderId, companyId: auth.companyId, parentTrackingNo: null },
         data: {
           warehouseId,
           ...(trackingNo ? { trackingNo } : {}),
