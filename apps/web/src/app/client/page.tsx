@@ -395,10 +395,25 @@ export default function ClientHomePage() {
   const changeQueryMode = (mode: "unfinished"  |  "completed"  |  "all") => {
     setQueryMode(mode);
     setSearch(initialSearch);
-    setHasQueried(false);
-    setQueriedOrders([]);
-    setMessage("");
   };
+
+  // 切换查询模式时自动执行查询
+  useEffect(() => {
+    if (!queryMode) return;
+    setHasQueried(false);
+    setMessage("");
+    setLoading(true);
+    (async () => {
+      try {
+        const baseOrders = queryMode === "all"
+          ? await fetchClientOrders()
+          : await fetchClientOrders({ statusGroup: queryMode });
+        setQueriedOrders(baseOrders);
+        setHasQueried(true);
+      } catch { setMessage("查询失败"); }
+      finally { setLoading(false); }
+    })();
+  }, [queryMode]);
 
   const runAiSearch = async () => {
     const question = aiQuestion.trim();
