@@ -311,10 +311,10 @@ export function registerContainerRoutes(app: MinimalHttpApp): void {
     const shipmentNextStatus: string | null = CONTAINER_TO_SHIPMENT_STATUS[toStatus] ?? null;
 
     if (shipmentNextStatus && shipmentIds.length > 0) {
-      // 查询各运单当前状态，用于正确写入日志
+      // 查询各运单当前状态（含父运单），用于正确写入日志
       const shipments = await prisma.shipment.findMany({
         where: { id: { in: shipmentIds }, companyId: auth.companyId },
-        select: { id: true, currentStatus: true },
+        select: { id: true, currentStatus: true, parentTrackingNo: true },
       });
       const statusMap = new Map(shipments.map((s) => [s.id, s.currentStatus]));
 
@@ -324,6 +324,18 @@ export function registerContainerRoutes(app: MinimalHttpApp): void {
           data: { currentStatus: shipmentNextStatus, updatedAt: now },
         }),
       );
+
+      // 同步父运单状态
+      const parentNos = [...new Set(shipments.filter(s => s.parentTrackingNo).map(s => s.parentTrackingNo!))];
+      if (parentNos.length > 0) {
+        ops.push(
+          prisma.shipment.updateMany({
+            where: { trackingNo: { in: parentNos }, companyId: auth.companyId },
+            data: { currentStatus: shipmentNextStatus, updatedAt: now },
+          }),
+        );
+      }
+
       for (let i = 0; i < shipmentIds.length; i++) {
         const sid = shipmentIds[i];
         ops.push(
