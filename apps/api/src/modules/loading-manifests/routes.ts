@@ -279,6 +279,8 @@ export function registerLoadingManifestRoutes(app: MinimalHttpApp): void {
     if (!body.itemId) { fail(res, 400, "BAD_REQUEST", "itemId required"); return; }
 
     await prisma.$transaction(async (tx) => {
+      // 锁柜内记录防并发
+      await tx.$queryRaw`SELECT id FROM shipment_container_items WHERE id = ${body.itemId} FOR UPDATE`;
       const item = await tx.shipmentContainerItem.findFirst({
         where: { id: body.itemId, container: { companyId: auth.companyId } },
         include: { shipment: { select: { id: true, parentTrackingNo: true, packageCount: true, volumeM3: true } } },
@@ -305,6 +307,7 @@ export function registerLoadingManifestRoutes(app: MinimalHttpApp): void {
         });
         // 恢复父运单
         if (item.shipment.parentTrackingNo) {
+          await tx.$queryRaw`SELECT id FROM shipments WHERE tracking_no = ${item.shipment.parentTrackingNo} FOR UPDATE`;
           const parent = await tx.shipment.findFirst({
             where: { trackingNo: item.shipment.parentTrackingNo, companyId: auth.companyId },
             select: { id: true, packageCount: true },
@@ -320,6 +323,7 @@ export function registerLoadingManifestRoutes(app: MinimalHttpApp): void {
         // 全量卸柜
         await tx.shipmentContainerItem.delete({ where: { id: body.itemId } });
         if (item.shipment.parentTrackingNo) {
+          await tx.$queryRaw`SELECT id FROM shipments WHERE tracking_no = ${item.shipment.parentTrackingNo} FOR UPDATE`;
           const parent = await tx.shipment.findFirst({
             where: { trackingNo: item.shipment.parentTrackingNo, companyId: auth.companyId },
             select: { id: true, packageCount: true },
