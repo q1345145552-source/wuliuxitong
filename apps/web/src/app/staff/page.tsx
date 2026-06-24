@@ -599,10 +599,16 @@ export default function StaffHomePage() {
   const [photoList, setPhotoList] = useState<StaffInboundPhotoItem[]>([]);
   const [activeSection, setActiveSection] = useState<(typeof STAFF_SECTION_IDS)[number]>("staff-billing");
 
-  const [lmShipmentIds, setLmShipmentIds] = useState("");
   const [lmDriverName, setLmDriverName] = useState("");
   const [lmLicensePlate, setLmLicensePlate] = useState("");
   const [lmPhoneNumber, setLmPhoneNumber] = useState("");
+  const [lmShipments, setLmShipments] = useState<Array<{id:string;trackingNo:string;clientId:string;itemName:string;packageCount:number}>>([]);
+  const [lmSelected, setLmSelected] = useState<Set<string>>(new Set());
+  const [lmShipSearch, setLmShipSearch] = useState("");
+  const loadLmShipments = async () => {
+    try { const r = await fetch(apiBaseUrl()+"/staff/shipments",{headers:authHeaders()}); const d=await r.json();
+      if(d.code==="OK") setLmShipments(d.data.items.filter((s:any)=>!s.parentTrackingNo&&s.currentStatus==="inWarehouseTH").map((s:any)=>({id:s.id,trackingNo:s.trackingNo,clientId:s.clientId??"",itemName:s.itemName??"",packageCount:s.packageCount??0}))); } catch {}
+  };
   const [lmOrderList, setLmOrderList] = useState<Array<{id:string;deliveryNo:string;shipmentId:string;driverName?:string;licensePlate?:string;phoneNumber?:string;status:string}>>([]);
   const loadLmOrders = async () => { try { const r=await fetch(apiBaseUrl()+"/admin/lastmile/orders",{headers:authHeaders()}); const d=await r.json(); if(d.code==="OK")setLmOrderList(d.data.items); } catch {} };
 
@@ -3004,21 +3010,34 @@ export default function StaffHomePage() {
         <div style={{ border: "1px solid #e5e7eb", borderRadius: 8, padding: 12, marginBottom: 16, background: "#f8fafc" }}>
           <h4 style={{ margin: "0 0 8px", fontSize: 14 }}>创建派送单（一车多单，逗号分隔）</h4>
           <div style={{ display: "grid", gap: 6 }}>
-            <textarea value={lmShipmentIds} onChange={e => setLmShipmentIds(e.target.value)} placeholder="运单号（逗号或换行分隔）" rows={2} style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "6px 8px", fontSize: 12, resize: "vertical" }} />
+            <div style={{ border: "1px solid #e5e7eb", borderRadius: 6, padding: 8, background: "#fff" }}>
+              <input value={lmShipSearch} onChange={e=>setLmShipSearch(e.target.value)} onFocus={()=>loadLmShipments()} placeholder="搜索运单（已到泰国的）..." style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "6px 8px", fontSize: 12, width: "100%", marginBottom: 4 }} />
+              <div style={{ maxHeight: 150, overflow: "auto" }}>
+                {lmShipments.filter(s=>!lmShipSearch||(s.trackingNo||"").includes(lmShipSearch)||(s.clientId||"").includes(lmShipSearch)).slice(0,20).map(s=>(
+                  <label key={s.id} style={{ display: "flex", alignItems: "center", gap: 6, padding: "2px 0", fontSize: 12, cursor: "pointer" }}>
+                    <input type="checkbox" checked={lmSelected.has(s.id)} onChange={()=>{const n=new Set(lmSelected);n.has(s.id)?n.delete(s.id):n.add(s.id);setLmSelected(n)}} />
+                    <span style={{ fontFamily: "monospace", color: "#1e3a8a", minWidth: 150 }}>{s.trackingNo}</span>
+                    <span style={{ color: "#6b21a8", minWidth: 60 }}>{s.clientId}</span>
+                    <span style={{ color: "#374151" }}>{s.itemName} · {s.packageCount}件</span>
+                  </label>
+                ))}
+              </div>
+              <div style={{ fontSize: 11, color: "#6b7280", marginTop: 4 }}>已选 {lmSelected.size} 个运单</div>
+            </div>
             <div style={{ display: "flex", gap: 6 }}>
               <input value={lmDriverName} onChange={e => setLmDriverName(e.target.value)} placeholder="司机姓名" style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "6px 8px", fontSize: 12, flex: 1 }} />
               <input value={lmLicensePlate} onChange={e => setLmLicensePlate(e.target.value)} placeholder="车牌号" style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "6px 8px", fontSize: 12, flex: 1 }} />
               <input value={lmPhoneNumber} onChange={e => setLmPhoneNumber(e.target.value)} placeholder="电话" style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "6px 8px", fontSize: 12, flex: 1 }} />
             </div>
-            <button disabled={!lmShipmentIds.trim()} onClick={async () => {
-              const ids = lmShipmentIds.split(/[,\s\n]+/).map(s=>s.trim()).filter(Boolean);
+            <button disabled={lmSelected.size===0} onClick={async () => {
+              const ids = Array.from(lmSelected);
               if (ids.length===0) return;
               try {
                 const r = await fetch(apiBaseUrl()+"/admin/lastmile/orders",{method:"POST",headers:{"Content-Type":"application/json",...authHeaders()},body:JSON.stringify({shipmentIds:ids,driverName:lmDriverName.trim(),licensePlate:lmLicensePlate.trim(),phoneNumber:lmPhoneNumber.trim()})});
                 const d = await r.json();
                 if (d.code!=="OK") throw new Error(d.message||"创建失败");
                 setToast(`派送单 ${d.data.deliveryNo} 已创建（${d.data.count}个运单）`);
-                setLmShipmentIds("");setLmDriverName("");setLmLicensePlate("");setLmPhoneNumber("");
+                setLmSelected(new Set());setLmDriverName("");setLmLicensePlate("");setLmPhoneNumber("");
                 loadLmOrders();
               } catch(e:any) { setToast(e.message||"创建失败"); }
             }} style={{ border: "none", borderRadius: 6, padding: "6px 14px", background: "#2563eb", color: "#fff", cursor: "pointer", fontSize: 12, justifySelf: "start" }}>创建派送单</button>
