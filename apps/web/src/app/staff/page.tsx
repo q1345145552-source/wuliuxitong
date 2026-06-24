@@ -3070,7 +3070,7 @@ export default function StaffHomePage() {
                 {lmOrderList.map(o => (
                   <tr key={o.id} style={{ borderBottom: "1px solid #e2e8f0" }}>
                     <td style={{ padding: "4px 6px", fontFamily: "monospace", fontSize: 11 }}>{o.deliveryNo}</td>
-                    <td style={{ padding: "4px 6px", fontFamily: "monospace" }}>{o.shipmentId}</td>
+                    <td style={{ padding: "4px 6px", fontFamily: "monospace" }}>{o.trackingNo || o.shipmentId}</td>
                     <td style={{ padding: "4px 6px" }}>{o.driverName ?? "-"}</td>
                     <td style={{ padding: "4px 6px" }}>{o.licensePlate ?? "-"}</td>
                     <td style={{ padding: "4px 6px" }}>{o.phoneNumber ?? "-"}</td>

@@ -1777,7 +1777,7 @@ export default function AdminHomePage() {
                 {lmOrders.map(o => (
                   <tr key={o.id} style={{ borderBottom: "1px solid #e2e8f0" }}>
                     <td style={{ padding: "6px 8px", fontFamily: "monospace", fontSize: 11 }}>{o.deliveryNo}</td>
-                    <td style={{ padding: "6px 8px", fontFamily: "monospace" }}>{o.shipmentId}</td>
+                    <td style={{ padding: "6px 8px", fontFamily: "monospace" }}>{o.trackingNo || o.shipmentId}</td>
                     <td style={{ padding: "6px 8px" }}>{o.driverName ?? "-"}</td>
                     <td style={{ padding: "6px 8px" }}>{o.licensePlate ?? "-"}</td>
                     <td style={{ padding: "6px 8px" }}>{o.phoneNumber ?? "-"}</td>
