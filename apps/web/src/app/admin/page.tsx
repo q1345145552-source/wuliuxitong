@@ -38,6 +38,7 @@ import {
   type AdminAiKnowledgeGapItem,
   fetchAdminOpsOverview,
   updateShippingConfig,
+  fetchShippingConfig,
   fetchAdminShippingRates,
   fetchClientShippingConfig,
   saveClientShippingConfig,
@@ -583,6 +584,13 @@ export default function AdminHomePage() {
   useEffect(() => {
     void loadKnowledgeGaps();
   }, [loadKnowledgeGaps]);
+
+  useEffect(() => {
+    fetchShippingConfig().then(c => {
+      if (c.sea_min_volume) setShippingConfigSea(c.sea_min_volume);
+      if (c.land_min_volume) setShippingConfigLand(c.land_min_volume);
+    }).catch(() => {});
+  }, []);
 
   const submitKnowledge = async () => {
     if (!title.trim() || !content.trim()) {

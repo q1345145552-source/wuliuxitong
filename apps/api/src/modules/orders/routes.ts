@@ -19,7 +19,7 @@ const MIN_VOLUME_DEFAULTS: Record<string, number> = { sea: 0.5, land: 0.3 };
 /** 从配置表获取最低计费体积 */
 async function getMinVolume(transportMode: string): Promise<number> {
   const row = await prisma.aiStatusLabel.findFirst({
-    where: { status: `min_volume_${transportMode}` },
+    where: { status: `min_volume_${transportMode}_min_volume` },
     select: { labelZh: true },
   });
   if (row?.labelZh) {
