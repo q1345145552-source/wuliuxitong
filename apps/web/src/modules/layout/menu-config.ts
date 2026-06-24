@@ -55,6 +55,7 @@ export const roleFunctionMenus: Record<MockRole, RoleFunctionMenuItem[]> = {
     { id: "staff-func-container-loading", label: "装柜管理", href: "/staff/container-loading" },
     { id: "staff-func-prices", label: "客户价格查询", href: "/staff/prices" },
     { id: "staff-func-lastmile", label: "尾端派送", href: "/staff#staff-lastmile" },
+    { id: "staff-func-address", label: "尾端地址", href: "/staff#staff-address" },
   ],
   client: [
     { id: "client-func-main", label: "主页与AI", href: "/client#client-main" },

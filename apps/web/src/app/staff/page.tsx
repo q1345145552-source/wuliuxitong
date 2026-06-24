@@ -211,6 +211,7 @@ const STAFF_SECTION_IDS = [
   "staff-ops-tools",
   "staff-order-shipment",
   "staff-lastmile",
+  "staff-address",
 ] as const;
 
 /**
