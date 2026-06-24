@@ -278,6 +278,8 @@ export default function StaffContainerLoadingPage() {
           <option value="CUSTOMS">清关中</option>
           <option value="CUSTOMS_CLEARED">清关已放行</option>
           <option value="IN_WAREHOUSE_TH">已到仓</option>
+          <option value="OUT_FOR_DELIVERY">派送中</option>
+          <option value="SIGNED">已签收</option>
         </select>
         <button onClick={() => void loadList()} style={{ border: "none", borderRadius: 6, padding: "8px 16px", background: "#2563eb", color: "#fff", fontWeight: 500, fontSize: 13, cursor: "pointer" }}>搜索</button>
         <button onClick={() => setShowCreate(!showCreate)} style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "8px 16px", background: "#fff", fontSize: 13, cursor: "pointer", color: "#000000" }}>
