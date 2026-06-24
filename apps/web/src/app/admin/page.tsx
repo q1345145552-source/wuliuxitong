@@ -209,16 +209,10 @@ export default function AdminHomePage() {
   const [calcHeight, setCalcHeight] = useState("");
   const [calcQty, setCalcQty] = useState("1");
   const [calcResult, setCalcResult] = useState("");
-  const [lmForm, setLmForm] = useState({ shipmentId: "", driverName: "", licensePlate: "", phoneNumber: "" });
-  const [lmOrders, setLmOrders] = useState<Array<{id:string;shipmentId:string;driverName?:string|null;licensePlate?:string|null;phoneNumber?:string|null;status:string}>>([]);
+  const [lmForm, setLmForm] = useState({ shipmentIds: "", driverName: "", licensePlate: "", phoneNumber: "" });
+  const [lmOrders, setLmOrders] = useState<Array<{id:string;deliveryNo:string;shipmentId:string;driverName?:string|null;licensePlate?:string|null;phoneNumber?:string|null;status:string}>>([]);
   const loadLastmileOrders = async () => {
     try { const res = await fetch(`${apiBaseUrl()}/admin/lastmile/orders`, { headers: authHeaders() }); const d = await parseApiResponse<{items:any[]}>(res); setLmOrders(d.items); } catch {}
-  };
-  const lastmileNoteId = "";
-  const lastmileNoteContent = "";
-  const createLastmileOrder = async (payload: Record<string,string>) => {
-    const res = await fetch(`${apiBaseUrl()}/admin/lastmile/orders`, { method: "POST", headers: {"Content-Type":"application/json",...authHeaders()}, body: JSON.stringify(payload) });
-    return parseApiResponse(res);
   };
   const updateLastmileStatus = async (id: string, status: string) => {
     const res = await fetch(`${apiBaseUrl()}/admin/lastmile/status`, { method: "POST", headers: {"Content-Type":"application/json",...authHeaders()}, body: JSON.stringify({id, status}) });
@@ -1725,17 +1719,17 @@ export default function AdminHomePage() {
         <div style={{ border: "1px solid #e5e7eb", borderRadius: 8, padding: 16, marginBottom: 16, background: "#f8fafc" }}>
           <h4 style={{ margin: "0 0 12px", fontSize: 14 }}>创建派送单</h4>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, maxWidth: 600 }}>
-            <input value={lmForm.shipmentId} onChange={e => setLmForm(f => ({...f, shipmentId: e.target.value}))} placeholder="运单号" style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "8px 12px", fontSize: 13 }} />
+            <textarea value={lmForm.shipmentIds} onChange={e => setLmForm(f => ({...f, shipmentIds: e.target.value}))} placeholder="运单号（逗号或换行分隔多个）" rows={2} style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "8px 12px", fontSize: 13, gridColumn: "1/-1", resize: "vertical" }} />
             <input value={lmForm.driverName} onChange={e => setLmForm(f => ({...f, driverName: e.target.value}))} placeholder="司机姓名" style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "8px 12px", fontSize: 13 }} />
             <input value={lmForm.licensePlate} onChange={e => setLmForm(f => ({...f, licensePlate: e.target.value}))} placeholder="车牌号" style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "8px 12px", fontSize: 13 }} />
             <input value={lmForm.phoneNumber} onChange={e => setLmForm(f => ({...f, phoneNumber: e.target.value}))} placeholder="电话" style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "8px 12px", fontSize: 13 }} />
           </div>
-          <button disabled={loading || !lmForm.shipmentId.trim()} onClick={async () => {
+          <button disabled={loading || !lmForm.shipmentIds.trim()} onClick={async () => {
             setLoading(true);
             try {
-              await createLastmileOrder({ shipmentId: lmForm.shipmentId.trim(), driverName: lmForm.driverName.trim(), licensePlate: lmForm.licensePlate.trim(), phoneNumber: lmForm.phoneNumber.trim() });
+              (()=>{const ids=lmForm.shipmentIds.split(/[,\s\n]+/).map(s=>s.trim()).filter(Boolean);return fetch(apiBaseUrl()+"/admin/lastmile/orders",{method:"POST",headers:{"Content-Type":"application/json",...authHeaders()},body:JSON.stringify({shipmentIds:ids,driverName:lmForm.driverName.trim(),licensePlate:lmForm.licensePlate.trim(),phoneNumber:lmForm.phoneNumber.trim()})}).then(r=>r.json()).then(d=>{if(d.code!=="OK")throw new Error(d.message||"创建失败");setToast(d.data.deliveryNo+" 已创建（"+d.data.count+"个运单）")})})();
               setToast("派送单已创建");
-              setLmForm({ shipmentId: "", driverName: "", licensePlate: "", phoneNumber: "" });
+              setLmForm({ shipmentIds: "", driverName: "", licensePlate: "", phoneNumber: "" });
               loadLastmileOrders();
             } catch (e: any) { setToast(e.message ?? "创建失败"); }
             finally { setLoading(false); }
@@ -1747,6 +1741,7 @@ export default function AdminHomePage() {
           <div style={{ overflowX: "auto" }}>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
               <thead><tr style={{ borderBottom: "2px solid #e2e8f0", textAlign: "left" }}>
+                <th style={{ padding: "6px 8px" }}>派送单号</th>
                 <th style={{ padding: "6px 8px" }}>运单号</th>
                 <th style={{ padding: "6px 8px" }}>司机</th>
                 <th style={{ padding: "6px 8px" }}>车牌</th>
@@ -1757,6 +1752,7 @@ export default function AdminHomePage() {
               <tbody>
                 {lmOrders.map(o => (
                   <tr key={o.id} style={{ borderBottom: "1px solid #e2e8f0" }}>
+                    <td style={{ padding: "6px 8px", fontFamily: "monospace", fontSize: 11 }}>{o.deliveryNo}</td>
                     <td style={{ padding: "6px 8px", fontFamily: "monospace" }}>{o.shipmentId}</td>
                     <td style={{ padding: "6px 8px" }}>{o.driverName ?? "-"}</td>
                     <td style={{ padding: "6px 8px" }}>{o.licensePlate ?? "-"}</td>
