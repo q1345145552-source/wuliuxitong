@@ -209,7 +209,14 @@ export default function AdminHomePage() {
   const [calcHeight, setCalcHeight] = useState("");
   const [calcQty, setCalcQty] = useState("1");
   const [calcResult, setCalcResult] = useState("");
-  const [lmForm, setLmForm] = useState({ shipmentIds: "", driverName: "", licensePlate: "", phoneNumber: "" });
+  const [lmForm, setLmForm] = useState({ driverName: "", licensePlate: "", phoneNumber: "" });
+  const [lmShipments, setLmShipments] = useState<Array<{id:string;trackingNo:string;clientId:string;itemName:string;packageCount:number}>>([]);
+  const [lmSelected, setLmSelected] = useState<Set<string>>(new Set());
+  const [lmShipSearch, setLmShipSearch] = useState("");
+  const loadLmShipments = async () => {
+    try { const r = await fetch(apiBaseUrl()+"/staff/shipments",{headers:authHeaders()}); const d=await r.json();
+      if(d.code==="OK") setLmShipments(d.data.items.filter((s:any)=>!s.parentTrackingNo&&s.currentStatus==="inWarehouseTH").map((s:any)=>({id:s.id,trackingNo:s.trackingNo,clientId:s.clientId??"",itemName:s.itemName??"",packageCount:s.packageCount??0}))); } catch {}
+  };
   const [lmOrders, setLmOrders] = useState<Array<{id:string;deliveryNo:string;shipmentId:string;driverName?:string|null;licensePlate?:string|null;phoneNumber?:string|null;status:string}>>([]);
   const loadLastmileOrders = async () => {
     try { const res = await fetch(`${apiBaseUrl()}/admin/lastmile/orders`, { headers: authHeaders() }); const d = await parseApiResponse<{items:any[]}>(res); setLmOrders(d.items); } catch {}
@@ -1719,17 +1726,30 @@ export default function AdminHomePage() {
         <div style={{ border: "1px solid #e5e7eb", borderRadius: 8, padding: 16, marginBottom: 16, background: "#f8fafc" }}>
           <h4 style={{ margin: "0 0 12px", fontSize: 14 }}>创建派送单</h4>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, maxWidth: 600 }}>
-            <textarea value={lmForm.shipmentIds} onChange={e => setLmForm(f => ({...f, shipmentIds: e.target.value}))} placeholder="运单号（逗号或换行分隔多个）" rows={2} style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "8px 12px", fontSize: 13, gridColumn: "1/-1", resize: "vertical" }} />
+            <div style={{ border: "1px solid #e5e7eb", borderRadius: 6, padding: 8, background: "#fff", gridColumn: "1/-1" }}>
+              <input value={lmShipSearch} onChange={e=>setLmShipSearch(e.target.value)} onFocus={()=>loadLmShipments()} placeholder="搜索运单（已到泰国的）..." style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "6px 8px", fontSize: 12, width: "100%", marginBottom: 4 }} />
+              <div style={{ maxHeight: 150, overflow: "auto" }}>
+                {lmShipments.filter(s=>!lmShipSearch||(s.trackingNo||"").includes(lmShipSearch)||(s.clientId||"").includes(lmShipSearch)).slice(0,20).map(s=>(
+                  <label key={s.id} style={{ display: "flex", alignItems: "center", gap: 6, padding: "2px 0", fontSize: 12, cursor: "pointer" }}>
+                    <input type="checkbox" checked={lmSelected.has(s.id)} onChange={()=>{const n=new Set(lmSelected);n.has(s.id)?n.delete(s.id):n.add(s.id);setLmSelected(n)}} />
+                    <span style={{ fontFamily: "monospace", color: "#1e3a8a", minWidth: 150 }}>{s.trackingNo}</span>
+                    <span style={{ color: "#6b21a8", minWidth: 60 }}>{s.clientId}</span>
+                    <span style={{ color: "#374151" }}>{s.itemName} · {s.packageCount}件</span>
+                  </label>
+                ))}
+              </div>
+              <div style={{ fontSize: 11, color: "#6b7280", marginTop: 4 }}>已选 {lmSelected.size} 个运单</div>
+            </div>
             <input value={lmForm.driverName} onChange={e => setLmForm(f => ({...f, driverName: e.target.value}))} placeholder="司机姓名" style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "8px 12px", fontSize: 13 }} />
             <input value={lmForm.licensePlate} onChange={e => setLmForm(f => ({...f, licensePlate: e.target.value}))} placeholder="车牌号" style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "8px 12px", fontSize: 13 }} />
             <input value={lmForm.phoneNumber} onChange={e => setLmForm(f => ({...f, phoneNumber: e.target.value}))} placeholder="电话" style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "8px 12px", fontSize: 13 }} />
           </div>
-          <button disabled={loading || !lmForm.shipmentIds.trim()} onClick={async () => {
+          <button disabled={loading || lmSelected.size===0} onClick={async () => {
             setLoading(true);
             try {
-              (()=>{const ids=lmForm.shipmentIds.split(/[,\s\n]+/).map(s=>s.trim()).filter(Boolean);return fetch(apiBaseUrl()+"/admin/lastmile/orders",{method:"POST",headers:{"Content-Type":"application/json",...authHeaders()},body:JSON.stringify({shipmentIds:ids,driverName:lmForm.driverName.trim(),licensePlate:lmForm.licensePlate.trim(),phoneNumber:lmForm.phoneNumber.trim()})}).then(r=>r.json()).then(d=>{if(d.code!=="OK")throw new Error(d.message||"创建失败");setToast(d.data.deliveryNo+" 已创建（"+d.data.count+"个运单）")})})();
+              (()=>{const ids=Array.from(lmSelected);return fetch(apiBaseUrl()+"/admin/lastmile/orders",{method:"POST",headers:{"Content-Type":"application/json",...authHeaders()},body:JSON.stringify({shipmentIds:ids,driverName:lmForm.driverName.trim(),licensePlate:lmForm.licensePlate.trim(),phoneNumber:lmForm.phoneNumber.trim()})}).then(r=>r.json()).then(d=>{if(d.code!=="OK")throw new Error(d.message||"创建失败");setToast(d.data.deliveryNo+" 已创建（"+d.data.count+"个运单）")})})();
               setToast("派送单已创建");
-              setLmForm({ shipmentIds: "", driverName: "", licensePlate: "", phoneNumber: "" });
+              setLmForm({ driverName: "", licensePlate: "", phoneNumber: "" }); setLmSelected(new Set());
               loadLastmileOrders();
             } catch (e: any) { setToast(e.message ?? "创建失败"); }
             finally { setLoading(false); }
