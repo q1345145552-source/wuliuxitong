@@ -618,6 +618,8 @@ export default function StaffHomePage() {
   const [lmLicensePlate, setLmLicensePlate] = useState("");
   const [lmPhoneNumber, setLmPhoneNumber] = useState("");
   const [lmShipments, setLmShipments] = useState<Array<{id:string;trackingNo:string;clientId:string;itemName:string;packageCount:number}>>([]);
+  const [lmSignData, setLmSignData] = useState<{id:string}|null>(null);
+  const lmSignFileRef = useRef<HTMLInputElement>(null);
   const [lmSelected, setLmSelected] = useState<Set<string>>(new Set());
   const [lmShipSearch, setLmShipSearch] = useState("");
   const loadLmShipments = async () => {
@@ -3076,7 +3078,7 @@ export default function StaffHomePage() {
                     <td style={{ padding: "4px 6px" }}>{o.phoneNumber ?? "-"}</td>
                     <td style={{ padding: "4px 6px" }}>{o.status==="SIGNED"?"✅已签收":"🚚派送中"}</td>
                     <td style={{ padding: "4px 6px" }}>{o.status!=="SIGNED"&&(
-                      <><button onClick={async ()=>{try{await fetch(apiBaseUrl()+"/admin/lastmile/status",{method:"POST",headers:{"Content-Type":"application/json",...authHeaders()},body:JSON.stringify({id:o.id,status:"SIGNED"})});setToast("已签收");loadLmOrders()}catch(e:any){setToast(e.message||"失败")}}} style={{ border: "1px solid #16a34a", borderRadius: 4, padding: "2px 6px", fontSize: 11, background: "#fff", color: "#16a34a", cursor: "pointer" }}>签收</button>
+                      <><button onClick={()=>{setLmSignData({id:o.id});lmSignFileRef.current?.click()}} style={{ border: "1px solid #16a34a", borderRadius: 4, padding: "2px 6px", fontSize: 11, background: "#fff", color: "#16a34a", cursor: "pointer" }}>签收</button>
                       <button onClick={async ()=>{if(!confirm("确定删除？"))return;try{await fetch(apiBaseUrl()+"/admin/lastmile/orders?id="+o.id,{method:"DELETE",headers:authHeaders()});setToast("已删除");loadLmOrders()}catch(e:any){setToast(e.message||"失败")}}} style={{ border: "1px solid #fca5a5", borderRadius: 4, padding: "2px 4px", fontSize: 11, background: "#fff", color: "#dc2626", cursor: "pointer", marginLeft: 4 }}>删除</button></>
                     )}</td>
                   </tr>
@@ -3087,6 +3089,14 @@ export default function StaffHomePage() {
         )}
 
               </section>
+        {/* 追加运单 */}
+        <div style={{ border: "1px solid #e5e7eb", borderRadius: 8, padding: 12, marginTop: 12, background: "#fefce8" }}>
+          <h4 style={{ margin: "0 0 8px", fontSize: 14 }}>追加运单到已有派送单</h4>
+          <div style={{ display: "flex", gap: 6 }}>
+            <input value={lmShipSearch} onChange={e=>setLmShipSearch(e.target.value)} placeholder="派送单号（如WD000001）" style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "6px 8px", fontSize: 12, flex: 1 }} />
+            <button disabled={!lmShipSearch.trim() || lmSelected.size===0} onClick={async () => { const ids = Array.from(lmSelected); if(ids.length===0)return; try { const r = await fetch(apiBaseUrl()+"/admin/lastmile/orders",{method:"POST",headers:{"Content-Type":"application/json",...authHeaders()},body:JSON.stringify({shipmentIds:ids,deliveryNo:lmShipSearch.trim()})}); const d = await r.json(); if(d.code!=="OK") throw new Error(d.message||"追加失败"); setToast("已追加"+d.data.count+"个运单到"+lmShipSearch.trim()); setLmSelected(new Set()); loadLmOrders(); } catch(e:any){setToast(e.message||"追加失败");} }} style={{ border: "none", borderRadius: 6, padding: "6px 14px", background: "#ca8a04", color: "#fff", cursor: "pointer", fontSize: 12 }}>追加</button>
+          </div>
+        </div>
       <section
         id="staff-address"
         style={{
