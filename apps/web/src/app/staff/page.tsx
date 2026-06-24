@@ -11,7 +11,7 @@ import { splitStaffShipment } from "../../services/business-api";
 import EmptyStateCard from "../../modules/layout/EmptyStateCard";
 import RoleShell from "../../modules/layout/RoleShell";
 import Toast from "../../modules/layout/Toast";
-import { apiBaseUrl } from "../../services/core-api";
+import { apiBaseUrl, authHeaders } from "../../services/core-api";
 import {
   receiveStaffPrealert,
   createStaffOrder,
@@ -599,10 +599,20 @@ export default function StaffHomePage() {
   const [photoList, setPhotoList] = useState<StaffInboundPhotoItem[]>([]);
   const [activeSection, setActiveSection] = useState<(typeof STAFF_SECTION_IDS)[number]>("staff-billing");
 
+  const [lmShipmentIds, setLmShipmentIds] = useState("");
+  const [lmDriverName, setLmDriverName] = useState("");
+  const [lmLicensePlate, setLmLicensePlate] = useState("");
+  const [lmPhoneNumber, setLmPhoneNumber] = useState("");
+  const [lmOrderList, setLmOrderList] = useState<Array<{id:string;deliveryNo:string;shipmentId:string;driverName?:string;licensePlate?:string;phoneNumber?:string;status:string}>>([]);
+  const loadLmOrders = async () => { try { const r=await fetch(apiBaseUrl()+"/admin/lastmile/orders",{headers:authHeaders()}); const d=await r.json(); if(d.code==="OK")setLmOrderList(d.data.items); } catch {} };
+
   useEffect(() => {
-    if (activeSection === "staff-lastmile" && lastmileItems.length === 0) {
-      void loadLastmileAddresses("");
-      void loadClientNotesData();
+    if (activeSection === "staff-lastmile") {
+      loadLmOrders();
+      if (lastmileItems.length === 0) {
+        void loadLastmileAddresses("");
+        void loadClientNotesData();
+      }
     }
   }, [activeSection]);
 
@@ -2989,6 +2999,58 @@ export default function StaffHomePage() {
         }}
       >
         <h2 style={{ marginTop: 0, fontSize: 18, color: "#111827", marginBottom: 12 }}>尾端派送</h2>
+
+        {/* 创建派送单 */}
+        <div style={{ border: "1px solid #e5e7eb", borderRadius: 8, padding: 12, marginBottom: 16, background: "#f8fafc" }}>
+          <h4 style={{ margin: "0 0 8px", fontSize: 14 }}>创建派送单（一车多单，逗号分隔）</h4>
+          <div style={{ display: "grid", gap: 6 }}>
+            <textarea value={lmShipmentIds} onChange={e => setLmShipmentIds(e.target.value)} placeholder="运单号（逗号或换行分隔）" rows={2} style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "6px 8px", fontSize: 12, resize: "vertical" }} />
+            <div style={{ display: "flex", gap: 6 }}>
+              <input value={lmDriverName} onChange={e => setLmDriverName(e.target.value)} placeholder="司机姓名" style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "6px 8px", fontSize: 12, flex: 1 }} />
+              <input value={lmLicensePlate} onChange={e => setLmLicensePlate(e.target.value)} placeholder="车牌号" style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "6px 8px", fontSize: 12, flex: 1 }} />
+              <input value={lmPhoneNumber} onChange={e => setLmPhoneNumber(e.target.value)} placeholder="电话" style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "6px 8px", fontSize: 12, flex: 1 }} />
+            </div>
+            <button disabled={!lmShipmentIds.trim()} onClick={async () => {
+              const ids = lmShipmentIds.split(/[,\s\n]+/).map(s=>s.trim()).filter(Boolean);
+              if (ids.length===0) return;
+              try {
+                const r = await fetch(apiBaseUrl()+"/admin/lastmile/orders",{method:"POST",headers:{"Content-Type":"application/json",...authHeaders()},body:JSON.stringify({shipmentIds:ids,driverName:lmDriverName.trim(),licensePlate:lmLicensePlate.trim(),phoneNumber:lmPhoneNumber.trim()})});
+                const d = await r.json();
+                if (d.code!=="OK") throw new Error(d.message||"创建失败");
+                setToast(`派送单 ${d.data.deliveryNo} 已创建（${d.data.count}个运单）`);
+                setLmShipmentIds("");setLmDriverName("");setLmLicensePlate("");setLmPhoneNumber("");
+                loadLmOrders();
+              } catch(e:any) { setToast(e.message||"创建失败"); }
+            }} style={{ border: "none", borderRadius: 6, padding: "6px 14px", background: "#2563eb", color: "#fff", cursor: "pointer", fontSize: 12, justifySelf: "start" }}>创建派送单</button>
+          </div>
+        </div>
+
+        {/* 派送列表 */}
+        {lmOrderList.length > 0 && (
+          <div style={{ overflowX: "auto", marginBottom: 16 }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+              <thead><tr style={{ borderBottom: "2px solid #e2e8f0", textAlign: "left" }}>
+                <th style={{ padding: "4px 6px" }}>派送单号</th><th style={{ padding: "4px 6px" }}>运单号</th><th style={{ padding: "4px 6px" }}>司机</th><th style={{ padding: "4px 6px" }}>车牌</th><th style={{ padding: "4px 6px" }}>电话</th><th style={{ padding: "4px 6px" }}>状态</th><th style={{ padding: "4px 6px" }}>操作</th>
+              </tr></thead>
+              <tbody>
+                {lmOrderList.map(o => (
+                  <tr key={o.id} style={{ borderBottom: "1px solid #e2e8f0" }}>
+                    <td style={{ padding: "4px 6px", fontFamily: "monospace", fontSize: 11 }}>{o.deliveryNo}</td>
+                    <td style={{ padding: "4px 6px", fontFamily: "monospace" }}>{o.shipmentId}</td>
+                    <td style={{ padding: "4px 6px" }}>{o.driverName ?? "-"}</td>
+                    <td style={{ padding: "4px 6px" }}>{o.licensePlate ?? "-"}</td>
+                    <td style={{ padding: "4px 6px" }}>{o.phoneNumber ?? "-"}</td>
+                    <td style={{ padding: "4px 6px" }}>{o.status==="SIGNED"?"✅已签收":"🚚派送中"}</td>
+                    <td style={{ padding: "4px 6px" }}>{o.status!=="SIGNED"&&(
+                      <button onClick={async ()=>{try{await fetch(apiBaseUrl()+"/admin/lastmile/status",{method:"POST",headers:{"Content-Type":"application/json",...authHeaders()},body:JSON.stringify({id:o.id,status:"SIGNED"})});setToast("已签收");loadLmOrders()}catch(e:any){setToast(e.message||"失败")}}} style={{ border: "1px solid #16a34a", borderRadius: 4, padding: "2px 6px", fontSize: 11, background: "#fff", color: "#16a34a", cursor: "pointer" }}>签收</button>
+                    )}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+
         <p style={{ fontSize: 12, color: "#000000", marginBottom: 10 }}>所有客户唛头及派送地址，支持按唛头或客户名搜索。</p>
         <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
           <input
