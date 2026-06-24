@@ -834,7 +834,12 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
       .filter((o) => !orderNo || o.orderNo === orderNo)
       .filter((o) => !domesticTrackingNo || o.domesticTrackingNo === domesticTrackingNo)
       .filter((o) => {
-        const cur = o.shipments[0]?.currentStatus;
+        const cur = o.shipments.reduce((latest: string | null, s) => {
+          if (!latest) return s.currentStatus;
+          const latestIdx = STATUS_FLOW.indexOf(latest);
+          const curIdx = STATUS_FLOW.indexOf(s.currentStatus);
+          return curIdx > latestIdx ? s.currentStatus : latest;
+        }, null);
         const completed = cur ? COMPLETED.has(cur) : false;
         if (statusGroup === "completed") return completed;
         if (statusGroup === "unfinished") return !completed;
@@ -842,7 +847,7 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
       });
 
     const items = filtered.map((o) => {
-      const ship = o.shipments[0];
+      const ship = o.shipments.find(s => !s.parentTrackingNo) || o.shipments[0];
       const logisticsRecords = (ship?.statusLogs ?? []).map((r) => ({
         remark: r.remark ?? "",
         changedAt: r.changedAt.toISOString(),
