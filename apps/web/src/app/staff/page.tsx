@@ -630,7 +630,6 @@ export default function StaffHomePage() {
   useEffect(() => {
     if (activeSection === "staff-lastmile") {
       loadLmOrders();
-      if (lastmileItems.length === 0) { void loadLastmileAddresses(""); void loadClientNotesData(); }
     }
     if (activeSection === "staff-address" && addrItems.length === 0) {
       void loadAddrAddresses("");
