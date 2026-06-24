@@ -153,19 +153,28 @@ export function registerAdminOpsRoutes(app: MinimalHttpApp): void {
   app.post("/admin/lastmile/orders", async (req, res) => {
     const auth = requireRole(req, res, ["staff", "admin"]);
     if (!auth) return;
-    const body = (req.body ?? {}) as { shipmentIds?: string[]; driverName?: string; licensePlate?: string; phoneNumber?: string; status?: string };
+    const body = (req.body ?? {}) as { shipmentIds?: string[]; driverName?: string; licensePlate?: string; phoneNumber?: string; status?: string; deliveryNo?: string };
     const shipmentIds = (body.shipmentIds ?? []).map(s => s.trim()).filter(Boolean);
     const driverName = body.driverName?.trim() || "";
     const licensePlate = body.licensePlate?.trim() || "";
     const phoneNumber = body.phoneNumber?.trim() || "";
     const status = body.status?.trim() || "DELIVERING";
+    const existingDeliveryNo = body.deliveryNo?.trim();
     if (shipmentIds.length === 0) {
       fail(res, 400, "BAD_REQUEST", "at least one shipmentId is required");
       return;
     }
-    // 生成派送单号：WD + 6位序号
-    const count = await prisma.adminLastmileOrder.count({ where: { deliveryNo: { startsWith: "WD" } } });
-    const deliveryNo = `WD${String(count + 1).padStart(6, "0")}`;
+    // 生成或复用派送单号
+    let deliveryNo: string;
+    if (existingDeliveryNo) {
+      // 追加到已有派送单
+      const exist = await prisma.adminLastmileOrder.findFirst({ where: { deliveryNo: existingDeliveryNo, companyId: auth.companyId }, select: { deliveryNo: true, driverName: true, licensePlate: true, phoneNumber: true } });
+      if (!exist) { fail(res, 404, "NOT_FOUND", "deliveryNo not found"); return; }
+      deliveryNo = existingDeliveryNo;
+    } else {
+      const count = await prisma.adminLastmileOrder.count({ where: { deliveryNo: { startsWith: "WD" } } });
+      deliveryNo = `WD${String(count + 1).padStart(6, "0")}`;
+    }
     
     const results: Array<{ id: string; shipmentId: string }> = [];
     for (const sid of shipmentIds) {
