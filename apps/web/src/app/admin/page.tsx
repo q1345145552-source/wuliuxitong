@@ -214,7 +214,7 @@ export default function AdminHomePage() {
   const [lmSelected, setLmSelected] = useState<Set<string>>(new Set());
   const [lmShipSearch, setLmShipSearch] = useState("");
   const loadLmShipments = async () => {
-    try { const r = await fetch(apiBaseUrl()+"/staff/shipments",{headers:authHeaders()}); const d=await r.json();
+    try { const r = await fetch(apiBaseUrl()+"/staff/shipments?limit=500",{headers:authHeaders()}); const d=await r.json();
       if(d.code==="OK") setLmShipments(d.data.items.filter((s:any)=>!s.parentTrackingNo&&["inWarehouseTH","outForDelivery","delivered"].includes(s.currentStatus)).map((s:any)=>({id:s.id,trackingNo:s.trackingNo,clientId:s.clientId??"",itemName:s.itemName??"",packageCount:s.packageCount??0}))); } catch {}
   };
   const [lmOrders, setLmOrders] = useState<Array<{id:string;deliveryNo:string;shipmentId:string;driverName?:string|null;licensePlate?:string|null;phoneNumber?:string|null;status:string}>>([]);
