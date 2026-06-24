@@ -3173,7 +3173,8 @@ export default function StaffHomePage() {
 
 
       {message ? <p style={{ marginTop: 12, color: message.includes("失败") ? "#b91c1c" : "#065f46" }}>{message}</p> : null}
-      <Toast open={toast.length > 0} message={toast} />
+            <input ref={lmSignFileRef} type="file" accept="image/*" style={{ display: "none" }} onChange={async (e: any) => { const f = e.target.files?.[0]; e.target.value = ""; if (!f || !lmSignData) return; const rdr = new FileReader(); rdr.onload = async () => { const b64 = (rdr.result as string).split(",")[1] || ""; try { const res = await fetch(apiBaseUrl()+"/admin/lastmile/status", { method: "POST", headers: {"Content-Type":"application/json",...authHeaders()}, body: JSON.stringify({ id: lmSignData.id, status: "SIGNED", signImageBase64: b64 }) }); if (!res.ok) throw new Error((await res.json()).message||"失败"); setToast("已签收"); loadLmOrders(); } catch(e: any) { setToast(e.message||"失败"); } setLmSignData(null); }; rdr.readAsDataURL(f); }} />
+<Toast open={toast.length > 0} message={toast} />
       {/* 预报单审核弹窗 */}
       {approvingPrealert && (
         <div style={{ position: "fixed", inset: 0, zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(0,0,0,0.4)", padding: 16 }}>
