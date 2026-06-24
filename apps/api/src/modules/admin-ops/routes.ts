@@ -126,7 +126,7 @@ export function registerAdminOpsRoutes(app: MinimalHttpApp): void {
   });
 
   app.get("/admin/lastmile/orders", async (req, res) => {
-    const auth = requireRole(req, res, ["admin"]);
+    const auth = requireRole(req, res, ["staff", "admin"]);
     if (!auth) return;
     const rows = await prisma.adminLastmileOrder.findMany({
       where: { companyId: auth.companyId },
@@ -148,7 +148,7 @@ export function registerAdminOpsRoutes(app: MinimalHttpApp): void {
   });
 
   app.post("/admin/lastmile/orders", async (req, res) => {
-    const auth = requireRole(req, res, ["admin"]);
+    const auth = requireRole(req, res, ["staff", "admin"]);
     if (!auth) return;
     const body = (req.body ?? {}) as { shipmentId?: string; carrierName?: string; driverName?: string; licensePlate?: string; phoneNumber?: string; externalTrackingNo?: string; status?: string };
     const shipmentId = body.shipmentId?.trim();
