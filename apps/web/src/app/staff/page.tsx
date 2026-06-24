@@ -633,6 +633,7 @@ export default function StaffHomePage() {
     }
     if (activeSection === "staff-address" && addrItems.length === 0) {
       void loadAddrAddresses("");
+      void loadClientNotesData();
     }
   }, [activeSection]);
 
@@ -3102,30 +3103,63 @@ export default function StaffHomePage() {
         <h2 style={{ marginTop: 0, fontSize: 18, color: "#111827", marginBottom: 12 }}>尾端地址</h2>
         <p style={{ fontSize: 12, color: "#000000", marginBottom: 10 }}>客户端注册后自动同步唛头与派送地址。</p>
         <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
-          <input value={addrKeyword} onChange={e => setLastmileKeyword(e.target.value)} placeholder="搜索唛头或客户名"
+          <input value={addrKeyword} onChange={e => { setAddrKeyword(e.target.value); if(!e.target.value) loadAddrAddresses(""); }} onKeyDown={e => { if(e.key==="Enter") loadAddrAddresses(addrKeyword); }} placeholder="搜索唛头或客户名"
             style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "8px 10px", fontSize: 13, flex: 1 }} />
+          <button type="button" onClick={() => { setAddrKeyword(""); loadAddrAddresses(""); }}
+            style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "8px 12px", fontSize: 13, background: "#fff", color: "#000000", cursor: "pointer" }}>重置</button>
         </div>
-        {addrItems.length === 0 ? (
-          <div style={{ color: "#000000", fontSize: 13, padding: "20px 0", textAlign: "center" }}>暂无客户数据</div>
-        ) : (
-          <div style={{ display: "grid", gap: 10 }}>
+        {addrLoading ? <div style={{ color: "#000000", fontSize: 13, padding: "20px 0", textAlign: "center" }}>加载中…</div>
+        : addrItems.length === 0 ? <div style={{ color: "#000000", fontSize: 13, padding: "20px 0", textAlign: "center" }}>暂无客户数据</div>
+        : (<div style={{ display: "grid", gap: 10 }}>
             {addrItems.filter(c => !addrKeyword || c.id.toLowerCase().includes(addrKeyword.toLowerCase()) || c.name.toLowerCase().includes(addrKeyword.toLowerCase())).map(client => (
               <div key={client.id} style={{ border: "1px solid #e2e8f0", borderRadius: 8, padding: 12, background: "#fff" }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                  <div>
-                    <span style={{ fontWeight: 700, fontSize: 15, color: "#6b21a8", fontFamily: "monospace" }}>{client.id}</span>
-                    <span style={{ marginLeft: 8, fontSize: 13, color: "#000000" }}>{client.name}</span>
-                  </div>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                  <div><span style={{ fontWeight: 700, fontSize: 15, color: "#6b21a8", fontFamily: "monospace" }}>{client.id}</span>
+                    <span style={{ marginLeft: 8, fontSize: 13, color: "#000000" }}>{client.name}</span></div>
+                  <span style={{ fontSize: 12, color: "#000000" }}>{client.phone}</span>
                 </div>
-                {client.addresses.length === 0 ? <div style={{ fontSize: 12, color: "#000000", marginTop: 4 }}>暂无地址</div> : client.addresses.map(addr => (
-                  <div key={addr.id} style={{ padding: "6px 8px", background: "#f8fafc", borderRadius: 6, marginTop: 4, border: addr.isDefault ? "1px solid #bbf7d0" : "1px solid #f1f5f9" }}>
-                    <div style={{ fontSize: 12, color: "#000000" }}>
-                      {addr.isDefault ? <span style={{ color: "#16a34a", fontWeight: 600 }}>[默认]</span> : null}
-                      {addr.contactName} | {addr.contactPhone}
+                {client.addresses.length === 0 ? <div style={{ fontSize: 12, color: "#000000" }}>暂无地址</div>
+                : client.addresses.map(addr => (
+                  <div key={addr.id} style={{ padding: "6px 8px", background: "#f8fafc", borderRadius: 6, marginBottom: 4, border: addr.isDefault ? "1px solid #bbf7d0" : "1px solid #f1f5f9", display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontSize: 12, color: "#000000" }}>{addr.isDefault ? <span style={{ color: "#16a34a", fontWeight: 600 }}>[默认]</span> : null}{addr.contactName} | {addr.contactPhone}</div>
+                      <div style={{ fontSize: 11, color: "#000000", marginTop: 2 }}>{addr.addressDetail}</div>
                     </div>
-                    <div style={{ fontSize: 11, color: "#000000", marginTop: 2 }}>{addr.addressDetail}</div>
+                    <button type="button" onClick={() => { if(!confirm("确定删除该地址？")) return; deleteAddr(addr.id); }} style={{ border: "1px solid #fca5a5", borderRadius: 4, padding: "2px 5px", fontSize: 10, background: "#fff", color: "#dc2626", cursor: "pointer", marginLeft: 8 }}>删除</button>
                   </div>
                 ))}
+                <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
+                  <button type="button" onClick={() => { setShowAddAddress(client.id); setAddrForm({ contactName: "", contactPhone: "", addressDetail: "", label: "" }); }}
+                    style={{ border: "1px solid #2563eb", borderRadius: 4, padding: "4px 8px", fontSize: 11, background: "#eff6ff", color: "#2563eb", cursor: "pointer" }}>＋ 添加地址</button>
+                  <button type="button" onClick={() => setEditingNote({ clientId: client.id, content: clientNotes[client.id]?.content ?? "" })}
+                    style={{ border: "1px solid #8b5cf6", borderRadius: 4, padding: "4px 8px", fontSize: 11, background: "#f5f3ff", color: "#8b5cf6", cursor: "pointer" }}>✎ 编辑备注</button>
+                </div>
+                {showAddAddress === client.id && (
+                  <div style={{ marginTop: 6, padding: 8, background: "#f0f9ff", borderRadius: 6, border: "1px solid #bae6fd" }}>
+                    <div style={{ display: "grid", gap: 4 }}>
+                      <input value={addrForm.contactName} onChange={e => setAddrForm(v => ({...v, contactName: e.target.value}))} placeholder="联系人姓名" style={{ border: "1px solid #d1d5db", borderRadius: 4, padding: "4px 6px", fontSize: 11 }} />
+                      <input value={addrForm.contactPhone} onChange={e => setAddrForm(v => ({...v, contactPhone: e.target.value}))} placeholder="联系电话" style={{ border: "1px solid #d1d5db", borderRadius: 4, padding: "4px 6px", fontSize: 11 }} />
+                      <input value={addrForm.addressDetail} onChange={e => setAddrForm(v => ({...v, addressDetail: e.target.value}))} placeholder="详细地址" style={{ border: "1px solid #d1d5db", borderRadius: 4, padding: "4px 6px", fontSize: 11 }} />
+                      <div style={{ display: "flex", gap: 4, justifyContent: "flex-end" }}>
+                        <button type="button" onClick={() => setShowAddAddress(null)} style={{ border: "1px solid #d1d5db", borderRadius: 4, padding: "3px 8px", fontSize: 11, background: "#fff", cursor: "pointer" }}>取消</button>
+                        <button type="button" onClick={() => saveAddr(client.id)} style={{ border: "none", borderRadius: 4, padding: "3px 8px", fontSize: 11, background: "#2563eb", color: "#fff", cursor: "pointer" }}>保存</button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+                {editingNote?.clientId === client.id && (
+                  <div style={{ marginTop: 6, padding: 8, background: "#faf5ff", borderRadius: 6, border: "1px solid #e9d5ff" }}>
+                    <textarea value={editingNote.content} onChange={e => setEditingNote(v => v ? {...v, content: e.target.value} : null)} rows={3} placeholder="输入备注..." style={{ border: "1px solid #d1d5db", borderRadius: 4, padding: "4px 6px", fontSize: 11, width: "100%", resize: "vertical" }} />
+                    <div style={{ display: "flex", gap: 4, justifyContent: "flex-end", marginTop: 4 }}>
+                      <button type="button" onClick={() => setEditingNote(null)} style={{ border: "1px solid #d1d5db", borderRadius: 4, padding: "3px 8px", fontSize: 11, background: "#fff", cursor: "pointer" }}>取消</button>
+                      <button type="button" onClick={() => saveNote(client.id, editingNote.content)} style={{ border: "none", borderRadius: 4, padding: "3px 8px", fontSize: 11, background: "#8b5cf6", color: "#fff", cursor: "pointer" }}>保存</button>
+                    </div>
+                  </div>
+                )}
+                <div style={{ marginTop: 8, borderTop: "1px solid #e5e7eb", paddingTop: 8 }}>
+                  <div style={{ fontSize: 11, color: "#6b7280", marginBottom: 4 }}>备注</div>
+                  <div style={{ fontSize: 12, color: clientNotes[client.id]?.content ? "#000000" : "#9ca3af", whiteSpace: "pre-wrap" }}>{clientNotes[client.id]?.content || "暂无备注"}</div>
+                </div>
               </div>
             ))}
           </div>
