@@ -386,6 +386,24 @@ export default function StaffHomePage() {
     transportMode: "sea" | "land";
     shipDate: string;
   };
+
+function buildPrealertDraft(item: any): PrealertEditDraft {
+  const firstProduct = item.products?.[0];
+  return {
+    warehouseId: item.warehouseId ?? "",
+    itemName: item.itemName ?? "",
+    packageCount: item.packageCount ?? 0,
+    packageUnit: (item.packageUnit as "bag" | "box") ?? "box",
+    productQuantity: item.productQuantity ?? 0,
+    weightKg: item.weightKg ?? 0,
+    volumeM3: item.volumeM3 ?? 0,
+    receivableAmountCny: item.receivableAmountCny ?? 0,
+    receivableCurrency: (item.receivableCurrency as "CNY" | "THB") ?? "CNY",
+    domesticTrackingNo: (firstProduct?.domesticTrackingNo || item.domesticTrackingNo) ?? "",
+    transportMode: (item.transportMode as "sea" | "land") ?? "sea",
+    shipDate: item.shipDate?.slice(0, 10) ?? "",
+  };
+}
   const [staffClients, setStaffClients] = useState<Array<{ id: string; name: string }>>([]);
   const warehouseOptions = [
     { id: "wh_yiwu_01", label: "义乌仓" },
@@ -927,6 +945,9 @@ export default function StaffHomePage() {
     }, 0);
     setForm((v) => ({ ...v, volumeM3: totalVol > 0 ? String(totalVol.toFixed(6)) : v.volumeM3, weightKg: totalWt > 0 ? String(totalWt.toFixed(2)) : v.weightKg }));
   }, [staffFormProducts]);
+
+  const isStaffSectionId = (value: string): value is (typeof STAFF_SECTION_IDS)[number] =>
+    STAFF_SECTION_IDS.includes(value as (typeof STAFF_SECTION_IDS)[number]);
 
   useEffect(() => {
     const syncSectionByHash = () => {
