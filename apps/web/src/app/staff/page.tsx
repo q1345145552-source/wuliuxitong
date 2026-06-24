@@ -607,7 +607,7 @@ export default function StaffHomePage() {
   const [lmShipSearch, setLmShipSearch] = useState("");
   const loadLmShipments = async () => {
     try { const r = await fetch(apiBaseUrl()+"/staff/shipments?limit=500",{headers:authHeaders()}); const d=await r.json();
-      if(d.code==="OK") setLmShipments(d.data.items.filter((s:any)=>!s.parentTrackingNo&&["customsTH","inWarehouseTH","outForDelivery","delivered"].includes(s.currentStatus)).map((s:any)=>({id:s.id,trackingNo:s.trackingNo,clientId:s.clientId??"",itemName:s.itemName??"",packageCount:s.packageCount??0}))); } catch {}
+      if(d.code==="OK") setLmShipments(d.data.items.filter((s:any)=>!s.parentTrackingNo&&["inWarehouseTH","outForDelivery","delivered"].includes(s.currentStatus)).map((s:any)=>({id:s.id,trackingNo:s.trackingNo,clientId:s.clientId??"",itemName:s.itemName??"",packageCount:s.packageCount??0}))); } catch {}
   };
   const [lmOrderList, setLmOrderList] = useState<Array<{id:string;deliveryNo:string;shipmentId:string;driverName?:string;licensePlate?:string;phoneNumber?:string;status:string}>>([]);
   const loadLmOrders = async () => { try { const r=await fetch(apiBaseUrl()+"/admin/lastmile/orders",{headers:authHeaders()}); const d=await r.json(); if(d.code==="OK")setLmOrderList(d.data.items); } catch {} };
