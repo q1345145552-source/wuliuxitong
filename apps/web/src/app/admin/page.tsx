@@ -426,12 +426,6 @@ export default function AdminHomePage() {
       setMessage("请填写运单号。");
       return;
     }
-    const trackingNoUpper = orderEditForm.trackingNo.trim().toUpperCase();
-    const prefixes = WAREHOUSE_TRACKING_PREFIX_MAP[orderEditForm.warehouseId] ?? ["XT"];
-    if (!prefixes.some((prefix) => trackingNoUpper.startsWith(prefix))) {
-      setMessage(`运单号前缀需与仓库一致：${prefixes.join("/")}`);
-      return;
-    }
     // 从产品行计算总数
     const activeProducts = editProducts;
     const totalPackageCount = activeProducts.reduce((s, p) => s + (Number(p.packageCount) || 1), 0);

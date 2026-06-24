@@ -407,15 +407,6 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
       fail(res, 400, "BAD_REQUEST", "trackingNo is required");
       return;
     }
-    if (trackingNo && !isTrackingNoMatchedWarehouse(warehouseId, trackingNo)) {
-      fail(
-        res,
-        400,
-        "BAD_REQUEST",
-        `trackingNo prefix must match warehouse: ${allowedTrackingPrefixesByWarehouse(warehouseId).join("/")}`,
-      );
-      return;
-    }
     if (trackingNo && linkedShipment) {
       const conflict = await prisma.shipment.findFirst({
         where: {
