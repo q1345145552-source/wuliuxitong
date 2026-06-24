@@ -71,6 +71,7 @@ const SECTION_IDS = [
   "shipping-config",
   "ops-tools",
   "lastmile",
+  "lastmile-address",
 ] as const;
 
 const SECTION_LABELS: Record<(typeof SECTION_IDS)[number], string> = {
@@ -85,6 +86,7 @@ const SECTION_LABELS: Record<(typeof SECTION_IDS)[number], string> = {
   "shipping-config": "运费配置",
   "ops-tools": "入库与标签工具",
   "lastmile": "尾端派送",
+  "lastmile-address": "尾端地址",
 };
 
 const sectionStyle = {
@@ -1809,6 +1811,12 @@ export default function AdminHomePage() {
           };
           reader.readAsDataURL(f);
         }} />
+      </section>
+
+      {/* 尾端地址 */}
+      <section id="lastmile-address" style={{ ...sectionStyle, display: activeSection === "lastmile-address" ? "block" : "none" }}>
+        <h2 style={{ margin: "0 0 16px", fontSize: 18 }}>尾端地址</h2>
+        <p style={{ fontSize: 13, color: "#6b7280" }}>客户端注册后自动同步唛头与派送地址。</p>
       </section>
 
       {/* 5. AI会话记忆运维 */}
