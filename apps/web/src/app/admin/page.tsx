@@ -1764,6 +1764,7 @@ export default function AdminHomePage() {
                           try { await updateLastmileStatus(o.id, "SIGNED"); loadLastmileOrders(); setToast("已签收"); } catch (e: any) { setToast(e.message ?? "失败"); }
                         }} style={{ border: "1px solid #16a34a", borderRadius: 4, padding: "2px 8px", fontSize: 11, background: "#fff", color: "#16a34a", cursor: "pointer" }}>签收</button>
                       )}
+                      <button onClick={async ()=>{if(!confirm("确定删除？"))return;try{await fetch(apiBaseUrl()+"/admin/lastmile/orders?id="+o.id,{method:"DELETE",headers:authHeaders()});setToast("已删除");loadLastmileOrders()}catch(e:any){setToast(e.message||"失败")}}} style={{ border: "1px solid #fca5a5", borderRadius: 4, padding: "2px 6px", fontSize: 11, background: "#fff", color: "#dc2626", cursor: "pointer", marginLeft: 4 }}>删除</button>
                     </td>
                   </tr>
                 ))}

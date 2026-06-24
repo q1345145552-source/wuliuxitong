@@ -3042,7 +3042,8 @@ export default function StaffHomePage() {
                     <td style={{ padding: "4px 6px" }}>{o.phoneNumber ?? "-"}</td>
                     <td style={{ padding: "4px 6px" }}>{o.status==="SIGNED"?"✅已签收":"🚚派送中"}</td>
                     <td style={{ padding: "4px 6px" }}>{o.status!=="SIGNED"&&(
-                      <button onClick={async ()=>{try{await fetch(apiBaseUrl()+"/admin/lastmile/status",{method:"POST",headers:{"Content-Type":"application/json",...authHeaders()},body:JSON.stringify({id:o.id,status:"SIGNED"})});setToast("已签收");loadLmOrders()}catch(e:any){setToast(e.message||"失败")}}} style={{ border: "1px solid #16a34a", borderRadius: 4, padding: "2px 6px", fontSize: 11, background: "#fff", color: "#16a34a", cursor: "pointer" }}>签收</button>
+                      <><button onClick={async ()=>{try{await fetch(apiBaseUrl()+"/admin/lastmile/status",{method:"POST",headers:{"Content-Type":"application/json",...authHeaders()},body:JSON.stringify({id:o.id,status:"SIGNED"})});setToast("已签收");loadLmOrders()}catch(e:any){setToast(e.message||"失败")}}} style={{ border: "1px solid #16a34a", borderRadius: 4, padding: "2px 6px", fontSize: 11, background: "#fff", color: "#16a34a", cursor: "pointer" }}>签收</button>
+                      <button onClick={async ()=>{if(!confirm("确定删除？"))return;try{await fetch(apiBaseUrl()+"/admin/lastmile/orders?id="+o.id,{method:"DELETE",headers:authHeaders()});setToast("已删除");loadLmOrders()}catch(e:any){setToast(e.message||"失败")}}} style={{ border: "1px solid #fca5a5", borderRadius: 4, padding: "2px 4px", fontSize: 11, background: "#fff", color: "#dc2626", cursor: "pointer", marginLeft: 4 }}>删除</button></>
                     )}</td>
                   </tr>
                 ))}
