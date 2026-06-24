@@ -629,6 +629,17 @@ export default function StaffHomePage() {
   const [lmOrderList, setLmOrderList] = useState<Array<{id:string;deliveryNo:string;shipmentId:string;trackingNo?:string;driverName?:string;licensePlate?:string;phoneNumber?:string;status:string}>>([]);
   const loadLmOrders = async () => { try { const r=await fetch(apiBaseUrl()+"/admin/lastmile/orders",{headers:authHeaders()}); const d=await r.json(); if(d.code==="OK")setLmOrderList(d.data.items); } catch {} };
 
+  // 按派送单号分组，检查是否全部签收
+  const lmGroupStatus = useMemo(() => {
+    const groups: Record<string, { total: number; signed: number }> = {};
+    for (const o of lmOrderList) {
+      if (!groups[o.deliveryNo]) groups[o.deliveryNo] = { total: 0, signed: 0 };
+      groups[o.deliveryNo].total++;
+      if (o.status === 'SIGNED') groups[o.deliveryNo].signed++;
+    }
+    return groups;
+  }, [lmOrderList]);
+
   useEffect(() => {
     if (activeSection === "staff-lastmile") {
       loadLmOrders();
@@ -3061,7 +3072,12 @@ export default function StaffHomePage() {
           </div>
         </div>
 
-        {/* 派送列表 */}
+        {/* 派送列表 */}        {lmOrderList.length > 0 && Object.entries(lmGroupStatus).map(([dn, g]) => (
+          <div key={dn} style={{ fontSize: 12, color: g.total===g.signed?'#16a34a':'#6b7280', marginBottom: 4 }}>
+            {dn}: {g.signed}/{g.total} 签收 {g.total===g.signed?'✅ 派送完成':'🚚 派送中'}
+          </div>
+        ))}
+
         {lmOrderList.length > 0 && (
           <div style={{ overflowX: "auto", marginBottom: 16 }}>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
