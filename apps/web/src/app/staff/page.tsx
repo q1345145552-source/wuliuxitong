@@ -616,10 +616,10 @@ export default function StaffHomePage() {
   useEffect(() => {
     if (activeSection === "staff-lastmile") {
       loadLmOrders();
-      if (lastmileItems.length === 0) {
-        void loadLastmileAddresses("");
-        void loadClientNotesData();
-      }
+      if (lastmileItems.length === 0) { void loadLastmileAddresses(""); void loadClientNotesData(); }
+    }
+    if (activeSection === "staff-address" && lastmileItems.length === 0) {
+      void loadLastmileAddresses("");
     }
   }, [activeSection]);
 
@@ -3167,6 +3167,52 @@ export default function StaffHomePage() {
           </div>
         )}
       </section>
+      <section
+        id="staff-address"
+        style={{
+          display: activeSection === "staff-address" ? "block" : "none",
+          border: "1px solid #e5e7eb",
+          borderLeft: "4px solid #d1d5db",
+          borderRadius: 12,
+          padding: 16,
+          marginBottom: 18,
+          background: "#fcfcfd",
+          boxShadow: "0 1px 3px rgba(15,23,42,0.06)",
+        }}
+      >
+        <h2 style={{ marginTop: 0, fontSize: 18, color: "#111827", marginBottom: 12 }}>尾端地址</h2>
+        <p style={{ fontSize: 12, color: "#000000", marginBottom: 10 }}>客户端注册后自动同步唛头与派送地址。</p>
+        <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+          <input value={lastmileKeyword} onChange={e => setLastmileKeyword(e.target.value)} placeholder="搜索唛头或客户名"
+            style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "8px 10px", fontSize: 13, flex: 1 }} />
+        </div>
+        {lastmileItems.length === 0 ? (
+          <div style={{ color: "#000000", fontSize: 13, padding: "20px 0", textAlign: "center" }}>暂无客户数据</div>
+        ) : (
+          <div style={{ display: "grid", gap: 10 }}>
+            {lastmileItems.filter(c => !lastmileKeyword || c.id.toLowerCase().includes(lastmileKeyword.toLowerCase()) || c.name.toLowerCase().includes(lastmileKeyword.toLowerCase())).map(client => (
+              <div key={client.id} style={{ border: "1px solid #e2e8f0", borderRadius: 8, padding: 12, background: "#fff" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <div>
+                    <span style={{ fontWeight: 700, fontSize: 15, color: "#6b21a8", fontFamily: "monospace" }}>{client.id}</span>
+                    <span style={{ marginLeft: 8, fontSize: 13, color: "#000000" }}>{client.name}</span>
+                  </div>
+                </div>
+                {client.addresses.length === 0 ? <div style={{ fontSize: 12, color: "#000000", marginTop: 4 }}>暂无地址</div> : client.addresses.map(addr => (
+                  <div key={addr.id} style={{ padding: "6px 8px", background: "#f8fafc", borderRadius: 6, marginTop: 4, border: addr.isDefault ? "1px solid #bbf7d0" : "1px solid #f1f5f9" }}>
+                    <div style={{ fontSize: 12, color: "#000000" }}>
+                      {addr.isDefault ? <span style={{ color: "#16a34a", fontWeight: 600 }}>[默认]</span> : null}
+                      {addr.contactName} | {addr.contactPhone}
+                    </div>
+                    <div style={{ fontSize: 11, color: "#000000", marginTop: 2 }}>{addr.addressDetail}</div>
+                  </div>
+                ))}
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+
 
       {message ? <p style={{ marginTop: 12, color: message.includes("失败") ? "#b91c1c" : "#065f46" }}>{message}</p> : null}
       <Toast open={toast.length > 0} message={toast} />
