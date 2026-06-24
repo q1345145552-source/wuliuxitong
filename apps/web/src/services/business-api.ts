@@ -330,9 +330,13 @@ export interface AdminCustomsCaseItem {
 
 export interface AdminLastmileItem {
   id: string;
+  deliveryNo: string;
   shipmentId: string;
   carrierName: string;
   externalTrackingNo: string;
+  driverName?: string | null;
+  licensePlate?: string | null;
+  phoneNumber?: string | null;
   status: string;
   updatedAt: string;
 }
@@ -1156,11 +1160,12 @@ export async function fetchAdminLastmileOrders(): Promise<AdminLastmileItem[]> {
  * 新增末端派送对接记录。
  */
 export async function createAdminLastmileOrder(payload: {
-  shipmentId: string;
-  carrierName: string;
-  externalTrackingNo: string;
+  shipmentIds: string[];
+  driverName?: string;
+  licensePlate?: string;
+  phoneNumber?: string;
   status?: string;
-}): Promise<{ id: string; updatedAt: string }> {
+}): Promise<{ deliveryNo: string; count: number }> {
   const response = await fetch(`${apiBaseUrl()}/admin/lastmile/orders`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeaders() },
