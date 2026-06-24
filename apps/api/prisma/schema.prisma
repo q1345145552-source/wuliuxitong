@@ -396,6 +396,7 @@ model AdminCustomsCase {
 model AdminLastmileOrder {
   id                  String   @id
   companyId           String   @map("company_id")
+  deliveryNo          String   @map("delivery_no") @unique
   shipmentId          String   @map("shipment_id")
   carrierName         String   @map("carrier_name")
   externalTrackingNo  String   @map("external_tracking_no")
@@ -407,6 +408,7 @@ model AdminLastmileOrder {
 
   shipment Shipment @relation(fields: [shipmentId], references: [id])
 
+  @@index([deliveryNo, updatedAt(sort: Desc)])
   @@index([shipmentId, updatedAt(sort: Desc)])
   @@map("admin_lastmile_orders")
 }

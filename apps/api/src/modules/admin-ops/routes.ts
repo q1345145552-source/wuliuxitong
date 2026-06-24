@@ -135,6 +135,7 @@ export function registerAdminOpsRoutes(app: MinimalHttpApp): void {
     ok(res, {
       items: rows.map((item) => ({
         id: item.id,
+        deliveryNo: item.deliveryNo,
         shipmentId: item.shipmentId,
         carrierName: item.carrierName,
         externalTrackingNo: item.externalTrackingNo,
@@ -150,34 +151,32 @@ export function registerAdminOpsRoutes(app: MinimalHttpApp): void {
   app.post("/admin/lastmile/orders", async (req, res) => {
     const auth = requireRole(req, res, ["staff", "admin"]);
     if (!auth) return;
-    const body = (req.body ?? {}) as { shipmentId?: string; carrierName?: string; driverName?: string; licensePlate?: string; phoneNumber?: string; externalTrackingNo?: string; status?: string };
-    const shipmentId = body.shipmentId?.trim();
-    const carrierName = body.carrierName?.trim() || "自营";
-    const driverName = body.driverName?.trim();
-    const licensePlate = body.licensePlate?.trim();
-    const phoneNumber = body.phoneNumber?.trim();
-    const externalTrackingNo = body.externalTrackingNo?.trim() || "";
+    const body = (req.body ?? {}) as { shipmentIds?: string[]; driverName?: string; licensePlate?: string; phoneNumber?: string; status?: string };
+    const shipmentIds = (body.shipmentIds ?? []).map(s => s.trim()).filter(Boolean);
+    const driverName = body.driverName?.trim() || "";
+    const licensePlate = body.licensePlate?.trim() || "";
+    const phoneNumber = body.phoneNumber?.trim() || "";
     const status = body.status?.trim() || "DELIVERING";
-    if (!shipmentId) {
-      fail(res, 400, "BAD_REQUEST", "shipmentId is required");
+    if (shipmentIds.length === 0) {
+      fail(res, 400, "BAD_REQUEST", "at least one shipmentId is required");
       return;
     }
-    const id = `lm_${Date.now()}`;
-    const created = await prisma.adminLastmileOrder.create({
-      data: {
-        id,
-        companyId: auth.companyId,
-        shipmentId,
-        carrierName,
-        driverName,
-        licensePlate,
-        phoneNumber,
-        externalTrackingNo,
-        status,
-      },
-      select: { id: true, updatedAt: true },
-    });
-    ok(res, { id: created.id, updatedAt: created.updatedAt.toISOString() });
+    // 生成派送单号：LM-YYYYMMDD-NNN
+    const dateKey = new Date().toISOString().slice(0, 10).replace(/-/g, "");
+    const count = await prisma.adminLastmileOrder.count({ where: { deliveryNo: { startsWith: `LM-${dateKey}` } } });
+    const deliveryNo = `LM-${dateKey}-${String(count + 1).padStart(3, "0")}`;
+    
+    const results: Array<{ id: string; shipmentId: string }> = [];
+    for (const sid of shipmentIds) {
+      const id = `lm_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+      await prisma.adminLastmileOrder.create({
+        data: { id, companyId: auth.companyId, deliveryNo, shipmentId: sid, carrierName: "自营", driverName, licensePlate, phoneNumber, externalTrackingNo: "", status },
+      });
+      results.push({ id, shipmentId: sid });
+      // 同步运单状态
+      await prisma.shipment.update({ where: { id: sid }, data: { currentStatus: "outForDelivery", updatedAt: new Date() } });
+    }
+    ok(res, { deliveryNo, count: results.length });
   });
 
   // 尾程派送状态更新
