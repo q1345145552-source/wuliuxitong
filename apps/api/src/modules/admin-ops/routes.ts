@@ -193,11 +193,13 @@ export function registerAdminOpsRoutes(app: MinimalHttpApp): void {
   app.post("/admin/lastmile/status", async (req, res) => {
     const auth = requireRole(req, res, ["admin", "staff"]);
     if (!auth) return;
-    const body = (req.body ?? {}) as { id?: string; status?: string };
+    const body = (req.body ?? {}) as { id?: string; status?: string; signImageBase64?: string };
     if (!body.id || !body.status) { fail(res, 400, "BAD_REQUEST", "id and status required"); return; }
+    const updateData: any = { status: body.status };
+    if (body.signImageBase64) updateData.signImageBase64 = body.signImageBase64;
     const updated = await prisma.adminLastmileOrder.update({
       where: { id: body.id },
-      data: { status: body.status },
+      data: updateData,
     });
     const now = new Date();
     if (body.status === "SIGNED") {

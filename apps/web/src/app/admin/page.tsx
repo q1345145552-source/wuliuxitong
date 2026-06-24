@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as XLSX from "xlsx";
 import { Bar, BarChart, CartesianGrid, Cell, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import type { AiKnowledgeItem } from "../../../../../packages/shared-types/entities";
@@ -213,6 +213,8 @@ export default function AdminHomePage() {
   const [lmShipments, setLmShipments] = useState<Array<{id:string;trackingNo:string;clientId:string;itemName:string;packageCount:number}>>([]);
   const [lmSelected, setLmSelected] = useState<Set<string>>(new Set());
   const [lmShipSearch, setLmShipSearch] = useState("");
+  const lmSignFileRef = useRef<HTMLInputElement>(null);
+  const [lmSignData, setLmSignData] = useState<{id:string;base64:string}|null>(null);
   const loadLmShipments = async () => {
     try { const r = await fetch(apiBaseUrl()+"/staff/shipments?limit=500",{headers:authHeaders()}); const d=await r.json();
       if(d.code==="OK") setLmShipments(d.data.items.filter((s:any)=>!s.parentTrackingNo&&["inWarehouseTH","outForDelivery","delivered"].includes(s.currentStatus)).map((s:any)=>({id:s.id,trackingNo:s.trackingNo,clientId:s.clientId??"",itemName:s.itemName??"",packageCount:s.packageCount??0}))); } catch {}
@@ -221,8 +223,8 @@ export default function AdminHomePage() {
   const loadLastmileOrders = async () => {
     try { const res = await fetch(`${apiBaseUrl()}/admin/lastmile/orders`, { headers: authHeaders() }); const d = await parseApiResponse<{items:any[]}>(res); setLmOrders(d.items); } catch {}
   };
-  const updateLastmileStatus = async (id: string, status: string) => {
-    const res = await fetch(`${apiBaseUrl()}/admin/lastmile/status`, { method: "POST", headers: {"Content-Type":"application/json",...authHeaders()}, body: JSON.stringify({id, status}) });
+  const updateLastmileStatus = async (id: string, status: string, signImageBase64?: string) => {
+    const res = await fetch(`${apiBaseUrl()}/admin/lastmile/status`, { method: "POST", headers: {"Content-Type":"application/json",...authHeaders()}, body: JSON.stringify({id, status, signImageBase64: signImageBase64 || undefined}) });
     return parseApiResponse(res);
   };
   const [orderImagesCache, setOrderImagesCache] = useState<Record<string, Array<{ id: string; fileName: string; mime: string; contentBase64: string; filePath?: string | null; imageUrl?: string; createdAt: string }>>>({});
@@ -1781,7 +1783,7 @@ export default function AdminHomePage() {
                     <td style={{ padding: "6px 8px" }}>
                       {o.status !== "SIGNED" && (
                         <button onClick={async () => {
-                          try { await updateLastmileStatus(o.id, "SIGNED"); loadLastmileOrders(); setToast("已签收"); } catch (e: any) { setToast(e.message ?? "失败"); }
+                          setLmSignData({id:o.id,base64:""}); lmSignFileRef.current?.click();
                         }} style={{ border: "1px solid #16a34a", borderRadius: 4, padding: "2px 8px", fontSize: 11, background: "#fff", color: "#16a34a", cursor: "pointer" }}>签收</button>
                       )}
                       <button onClick={async ()=>{if(!confirm("确定删除？"))return;try{await fetch(apiBaseUrl()+"/admin/lastmile/orders?id="+o.id,{method:"DELETE",headers:authHeaders()});setToast("已删除");loadLastmileOrders()}catch(e:any){setToast(e.message||"失败")}}} style={{ border: "1px solid #fca5a5", borderRadius: 4, padding: "2px 6px", fontSize: 11, background: "#fff", color: "#dc2626", cursor: "pointer", marginLeft: 4 }}>删除</button>
@@ -1792,6 +1794,21 @@ export default function AdminHomePage() {
             </table>
           </div>
         )}
+        <input ref={lmSignFileRef} type="file" accept="image/*" style={{ display: "none" }} onChange={async (e) => {
+          const f = e.target.files?.[0]; e.target.value = "";
+          if (!f || !lmSignData) return;
+          const reader = new FileReader();
+          reader.onload = async () => {
+            const base64 = (reader.result as string).split(",")[1] || "";
+            try {
+              await updateLastmileStatus(lmSignData.id, "SIGNED", base64);
+              loadLastmileOrders();
+              setToast("已签收");
+            } catch(ee:any) { setToast(ee.message||"失败"); }
+            setLmSignData(null);
+          };
+          reader.readAsDataURL(f);
+        }} />
       </section>
 
       {/* 5. AI会话记忆运维 */}

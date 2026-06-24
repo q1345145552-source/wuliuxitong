@@ -683,6 +683,7 @@ export function registerContainerRoutes(app: MinimalHttpApp): void {
         driverName: lastmileOrder.driverName,
         licensePlate: lastmileOrder.licensePlate,
         phoneNumber: lastmileOrder.phoneNumber,
+        signImageBase64: lastmileOrder.signImageBase64,
         status: lastmileOrder.status,
       } : null,
     });

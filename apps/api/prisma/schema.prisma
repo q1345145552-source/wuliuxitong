@@ -403,6 +403,7 @@ model AdminLastmileOrder {
   driverName          String?  @map("driver_name")
   licensePlate        String?  @map("license_plate")
   phoneNumber         String?  @map("phone_number")
+  signImageBase64     String?  @map("sign_image_base64") @db.Text
   status              String
   updatedAt           DateTime @updatedAt @map("updated_at")
 
