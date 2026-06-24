@@ -458,6 +458,20 @@ export default function StaffHomePage() {
   const [splittingShipment, setSplittingShipment] = useState<ShipmentItem | null>(null);
   const [splitRows, setSplitRows] = useState<Array<{ trackingNo: string; batchNo: string; itemName: string; packageCount: string }>>([]);
 
+  // 尾端地址专用 state（不共享）
+  const [addrKeyword, setAddrKeyword] = useState("");
+  const [addrItems, setAddrItems] = useState<Array<{ id: string; name: string; phone: string; addresses: Array<{ id: string; contactName: string; contactPhone: string; addressDetail: string; isDefault: number }> }>>([]);
+  const [addrLoading, setAddrLoading] = useState(false);
+  const loadAddrAddresses = async (keyword: string) => {
+    setAddrLoading(true);
+    try {
+      const resp = await fetch(apiBaseUrl() + "/staff/lastmile/addresses?keyword=" + encodeURIComponent(keyword), { headers: authHeaders() });
+      const json = await resp.json();
+      if (json.code === "OK") setAddrItems(json.data.items);
+    } catch {}
+    finally { setAddrLoading(false); }
+  };
+
   const [lastmileKeyword, setLastmileKeyword] = useState("");
   const [lastmileItems, setLastmileItems] = useState<Array<{
     id: string;
@@ -618,8 +632,8 @@ export default function StaffHomePage() {
       loadLmOrders();
       if (lastmileItems.length === 0) { void loadLastmileAddresses(""); void loadClientNotesData(); }
     }
-    if (activeSection === "staff-address" && lastmileItems.length === 0) {
-      void loadLastmileAddresses("");
+    if (activeSection === "staff-address" && addrItems.length === 0) {
+      void loadAddrAddresses("");
     }
   }, [activeSection]);
 
@@ -3183,14 +3197,14 @@ export default function StaffHomePage() {
         <h2 style={{ marginTop: 0, fontSize: 18, color: "#111827", marginBottom: 12 }}>尾端地址</h2>
         <p style={{ fontSize: 12, color: "#000000", marginBottom: 10 }}>客户端注册后自动同步唛头与派送地址。</p>
         <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
-          <input value={lastmileKeyword} onChange={e => setLastmileKeyword(e.target.value)} placeholder="搜索唛头或客户名"
+          <input value={addrKeyword} onChange={e => setLastmileKeyword(e.target.value)} placeholder="搜索唛头或客户名"
             style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "8px 10px", fontSize: 13, flex: 1 }} />
         </div>
-        {lastmileItems.length === 0 ? (
+        {addrItems.length === 0 ? (
           <div style={{ color: "#000000", fontSize: 13, padding: "20px 0", textAlign: "center" }}>暂无客户数据</div>
         ) : (
           <div style={{ display: "grid", gap: 10 }}>
-            {lastmileItems.filter(c => !lastmileKeyword || c.id.toLowerCase().includes(lastmileKeyword.toLowerCase()) || c.name.toLowerCase().includes(lastmileKeyword.toLowerCase())).map(client => (
+            {addrItems.filter(c => !addrKeyword || c.id.toLowerCase().includes(addrKeyword.toLowerCase()) || c.name.toLowerCase().includes(addrKeyword.toLowerCase())).map(client => (
               <div key={client.id} style={{ border: "1px solid #e2e8f0", borderRadius: 8, padding: 12, background: "#fff" }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                   <div>
