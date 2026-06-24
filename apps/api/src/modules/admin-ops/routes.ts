@@ -131,6 +131,7 @@ export function registerAdminOpsRoutes(app: MinimalHttpApp): void {
     const rows = await prisma.adminLastmileOrder.findMany({
       where: { companyId: auth.companyId },
       orderBy: { updatedAt: "desc" },
+      include: { shipment: { select: { trackingNo: true } } },
     });
     ok(res, {
       items: rows.map((item) => ({
