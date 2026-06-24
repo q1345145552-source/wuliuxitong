@@ -137,6 +137,7 @@ export function registerAdminOpsRoutes(app: MinimalHttpApp): void {
         id: item.id,
         deliveryNo: item.deliveryNo,
         shipmentId: item.shipmentId,
+        trackingNo: item.shipment?.trackingNo ?? item.shipmentId,
         carrierName: item.carrierName,
         externalTrackingNo: item.externalTrackingNo,
         driverName: item.driverName,
