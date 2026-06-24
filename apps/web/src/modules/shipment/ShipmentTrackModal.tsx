@@ -41,6 +41,7 @@ interface TrackData {
 // ── Status config ──
 
 const STATUS_CONFIG: Record<string, { zh: string; color: string; bg: string; icon: string }> = {
+  created:        { zh: "已创建",     color: "#6b7280", bg: "#f3f4f6", icon: "📝" },
   loaded:         { zh: "已装柜",     color: "#0369a1", bg: "#e0f2fe", icon: "📦" },
   delaydeparted:  { zh: "延迟开船",   color: "#b45309", bg: "#fef3c7", icon: "⚠️" },
   delay_departed: { zh: "延迟开船",   color: "#b45309", bg: "#fef3c7", icon: "⚠️" },
