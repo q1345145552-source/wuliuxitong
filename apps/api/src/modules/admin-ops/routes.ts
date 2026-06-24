@@ -161,10 +161,9 @@ export function registerAdminOpsRoutes(app: MinimalHttpApp): void {
       fail(res, 400, "BAD_REQUEST", "at least one shipmentId is required");
       return;
     }
-    // 生成派送单号：LM-YYYYMMDD-NNN
-    const dateKey = new Date().toISOString().slice(0, 10).replace(/-/g, "");
-    const count = await prisma.adminLastmileOrder.count({ where: { deliveryNo: { startsWith: `LM-${dateKey}` } } });
-    const deliveryNo = `LM-${dateKey}-${String(count + 1).padStart(3, "0")}`;
+    // 生成派送单号：WD + 6位序号
+    const count = await prisma.adminLastmileOrder.count({ where: { deliveryNo: { startsWith: "WD" } } });
+    const deliveryNo = `WD${String(count + 1).padStart(6, "0")}`;
     
     const results: Array<{ id: string; shipmentId: string }> = [];
     for (const sid of shipmentIds) {
