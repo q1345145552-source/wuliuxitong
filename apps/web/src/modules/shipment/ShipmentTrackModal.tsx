@@ -36,6 +36,13 @@ interface TrackData {
   }>;
   timeline: TimelineItem[];
   children?: ChildShipmentData[];
+  lastmile?: {
+    carrierName: string;
+    driverName?: string | null;
+    licensePlate?: string | null;
+    phoneNumber?: string | null;
+    status: string;
+  } | null;
 }
 
 // ── Status config ──
@@ -302,6 +309,17 @@ function TrackContent({ data }: { data: TrackData }) {
           ))}
         </div>
       )}
+
+      {/* 尾程派送 */}
+      {data.lastmile ? (
+        <div style={{ marginBottom: 12, padding: "10px 12px", background: "#fefce8", borderRadius: 8, fontSize: 12, border: "1px solid #fde68a" }}>
+          <div style={{ fontWeight: 600, color: "#92400e", marginBottom: 4 }}>🚚 派送信息</div>
+          {data.lastmile.driverName ? <div>司机：{data.lastmile.driverName}</div> : null}
+          {data.lastmile.licensePlate ? <div>车牌：{data.lastmile.licensePlate}</div> : null}
+          {data.lastmile.phoneNumber ? <div>电话：{data.lastmile.phoneNumber}</div> : null}
+          <div>状态：{data.lastmile.status === "SIGNED" ? "✅ 已签收" : "🚚 派送中"}</div>
+        </div>
+      ) : null}
 
       {/* 产品信息 */}
       <div style={{ marginBottom: 12, padding: "8px 12px", background: "#f8fafc", borderRadius: 8, fontSize: 12, color: "#374151" }}>
