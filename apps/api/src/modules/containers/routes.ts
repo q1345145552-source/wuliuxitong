@@ -599,6 +599,11 @@ export function registerContainerRoutes(app: MinimalHttpApp): void {
     );
     const isSplit = shipment.containerItems.length > 1;
 
+    const lastmileOrder = await prisma.adminLastmileOrder.findFirst({
+      where: { shipmentId: shipment.id },
+      orderBy: { updatedAt: "desc" },
+    });
+
     const childShipments = shipment.parentTrackingNo
       ? []
       : await prisma.shipment.findMany({
@@ -673,6 +678,13 @@ export function registerContainerRoutes(app: MinimalHttpApp): void {
         : undefined,
       createdAt: shipment.createdAt.toISOString(),
       updatedAt: shipment.updatedAt.toISOString(),
+      lastmile: lastmileOrder ? {
+        carrierName: lastmileOrder.carrierName,
+        driverName: lastmileOrder.driverName,
+        licensePlate: lastmileOrder.licensePlate,
+        phoneNumber: lastmileOrder.phoneNumber,
+        status: lastmileOrder.status,
+      } : null,
     });
   });
 }

@@ -12,7 +12,7 @@ import Toast from "../../modules/layout/Toast";
 import ShipmentSearch from "../../modules/shipment/ShipmentSearch";
 import { openPrintLabel } from "../../modules/shipment/ShipmentPrintLabel";
 import { openShipmentTrack } from "../../modules/shipment/ShipmentTrackModal";
-import { apiBaseUrl } from "../../services/core-api";
+import { apiBaseUrl, authHeaders, parseApiResponse } from "../../services/core-api";
 import {
   fetchAdminOverview,
   fetchAdminStaff,
@@ -209,8 +209,21 @@ export default function AdminHomePage() {
   const [calcHeight, setCalcHeight] = useState("");
   const [calcQty, setCalcQty] = useState("1");
   const [calcResult, setCalcResult] = useState("");
-  const [lastmileNoteId, setLastmileNoteId] = useState("");
-  const [lastmileNoteContent, setLastmileNoteContent] = useState("");
+  const [lmForm, setLmForm] = useState({ shipmentId: "", driverName: "", licensePlate: "", phoneNumber: "" });
+  const [lmOrders, setLmOrders] = useState<Array<{id:string;shipmentId:string;driverName?:string|null;licensePlate?:string|null;phoneNumber?:string|null;status:string}>>([]);
+  const loadLastmileOrders = async () => {
+    try { const res = await fetch(`${apiBaseUrl()}/admin/lastmile/orders`, { headers: authHeaders() }); const d = await parseApiResponse<{items:any[]}>(res); setLmOrders(d.items); } catch {}
+  };
+  const lastmileNoteId = "";
+  const lastmileNoteContent = "";
+  const createLastmileOrder = async (payload: Record<string,string>) => {
+    const res = await fetch(`${apiBaseUrl()}/admin/lastmile/orders`, { method: "POST", headers: {"Content-Type":"application/json",...authHeaders()}, body: JSON.stringify(payload) });
+    return parseApiResponse(res);
+  };
+  const updateLastmileStatus = async (id: string, status: string) => {
+    const res = await fetch(`${apiBaseUrl()}/admin/lastmile/status`, { method: "POST", headers: {"Content-Type":"application/json",...authHeaders()}, body: JSON.stringify({id, status}) });
+    return parseApiResponse(res);
+  };
   const [orderImagesCache, setOrderImagesCache] = useState<Record<string, Array<{ id: string; fileName: string; mime: string; contentBase64: string; filePath?: string | null; imageUrl?: string; createdAt: string }>>>({});
   const [orderEditForm, setOrderEditForm] = useState({
     clientId: "",
@@ -964,6 +977,7 @@ export default function AdminHomePage() {
 
   useEffect(() => {
     if (activeSection === "shipping-config" && clientList.length > 0) void loadRates();
+    if (activeSection === "lastmile") loadLastmileOrders();
   }, [activeSection, clientList]);
 
   if (!session) return null;
@@ -1706,32 +1720,61 @@ export default function AdminHomePage() {
       {/* 尾端派送 */}
       <section id="lastmile" style={{ ...sectionStyle, display: activeSection === "lastmile" ? "block" : "none" }}>
         <h2 style={{ margin: "0 0 16px", fontSize: 18 }}>{SECTION_LABELS["lastmile"]}</h2>
-        <div style={{ maxWidth: 500 }}>
-          <h4 style={{ margin: "0 0 8px", fontSize: 14 }}>客户备注</h4>
-          <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
-            <input value={lastmileNoteId} onChange={(e) => setLastmileNoteId(e.target.value)} placeholder="客户ID" style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "6px 8px", fontSize: 12, flex: 1 }} />
-            <button onClick={async () => {
-              if (!lastmileNoteId.trim()) return;
-              try { const notes = await fetchClientNotes(); setLastmileNoteContent(notes[lastmileNoteId.trim()]?.content ?? ""); } catch {}
-            }} style={{ border: "none", borderRadius: 6, padding: "6px 12px", background: "#2563eb", color: "#fff", cursor: "pointer", fontSize: 12 }}>加载</button>
+
+        {/* 创建派送单 */}
+        <div style={{ border: "1px solid #e5e7eb", borderRadius: 8, padding: 16, marginBottom: 16, background: "#f8fafc" }}>
+          <h4 style={{ margin: "0 0 12px", fontSize: 14 }}>创建派送单</h4>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, maxWidth: 600 }}>
+            <input value={lmForm.shipmentId} onChange={e => setLmForm(f => ({...f, shipmentId: e.target.value}))} placeholder="运单号" style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "8px 12px", fontSize: 13 }} />
+            <input value={lmForm.driverName} onChange={e => setLmForm(f => ({...f, driverName: e.target.value}))} placeholder="司机姓名" style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "8px 12px", fontSize: 13 }} />
+            <input value={lmForm.licensePlate} onChange={e => setLmForm(f => ({...f, licensePlate: e.target.value}))} placeholder="车牌号" style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "8px 12px", fontSize: 13 }} />
+            <input value={lmForm.phoneNumber} onChange={e => setLmForm(f => ({...f, phoneNumber: e.target.value}))} placeholder="电话" style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "8px 12px", fontSize: 13 }} />
           </div>
-          <textarea
-            value={lastmileNoteContent}
-            onChange={(e) => setLastmileNoteContent(e.target.value)}
-            placeholder="输入客户备注…"
-            rows={5}
-            style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "8px", width: "100%", fontSize: 12, resize: "vertical" }}
-          />
-          <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 8 }}>
-            <button onClick={async () => {
-              if (!lastmileNoteId.trim()) return;
-              try {
-                await saveClientNote(lastmileNoteId.trim(), lastmileNoteContent);
-                setToast("备注已保存");
-              } catch (err) { setMessage(`保存失败：${err instanceof Error ? err.message : "未知"}`); }
-            }} style={{ border: "none", borderRadius: 6, padding: "6px 12px", background: "#2563eb", color: "#fff", cursor: "pointer", fontSize: 12 }}>保存备注</button>
-          </div>
+          <button disabled={loading || !lmForm.shipmentId.trim()} onClick={async () => {
+            setLoading(true);
+            try {
+              await createLastmileOrder({ shipmentId: lmForm.shipmentId.trim(), driverName: lmForm.driverName.trim(), licensePlate: lmForm.licensePlate.trim(), phoneNumber: lmForm.phoneNumber.trim() });
+              setToast("派送单已创建");
+              setLmForm({ shipmentId: "", driverName: "", licensePlate: "", phoneNumber: "" });
+              loadLastmileOrders();
+            } catch (e: any) { setToast(e.message ?? "创建失败"); }
+            finally { setLoading(false); }
+          }} style={{ marginTop: 8, border: "none", borderRadius: 6, padding: "8px 16px", background: "#2563eb", color: "#fff", cursor: "pointer", fontSize: 13 }}>创建派送单</button>
         </div>
+
+        {/* 派送列表 */}
+        {lmOrders.length === 0 ? <p style={{ color: "#6b7280", fontSize: 13 }}>暂无派送单</p> : (
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+              <thead><tr style={{ borderBottom: "2px solid #e2e8f0", textAlign: "left" }}>
+                <th style={{ padding: "6px 8px" }}>运单号</th>
+                <th style={{ padding: "6px 8px" }}>司机</th>
+                <th style={{ padding: "6px 8px" }}>车牌</th>
+                <th style={{ padding: "6px 8px" }}>电话</th>
+                <th style={{ padding: "6px 8px" }}>状态</th>
+                <th style={{ padding: "6px 8px" }}>操作</th>
+              </tr></thead>
+              <tbody>
+                {lmOrders.map(o => (
+                  <tr key={o.id} style={{ borderBottom: "1px solid #e2e8f0" }}>
+                    <td style={{ padding: "6px 8px", fontFamily: "monospace" }}>{o.shipmentId}</td>
+                    <td style={{ padding: "6px 8px" }}>{o.driverName ?? "-"}</td>
+                    <td style={{ padding: "6px 8px" }}>{o.licensePlate ?? "-"}</td>
+                    <td style={{ padding: "6px 8px" }}>{o.phoneNumber ?? "-"}</td>
+                    <td style={{ padding: "6px 8px" }}>{o.status === "SIGNED" ? "✅ 已签收" : o.status === "DELIVERING" ? "🚚 派送中" : o.status}</td>
+                    <td style={{ padding: "6px 8px" }}>
+                      {o.status !== "SIGNED" && (
+                        <button onClick={async () => {
+                          try { await updateLastmileStatus(o.id, "SIGNED"); loadLastmileOrders(); setToast("已签收"); } catch (e: any) { setToast(e.message ?? "失败"); }
+                        }} style={{ border: "1px solid #16a34a", borderRadius: 4, padding: "2px 8px", fontSize: 11, background: "#fff", color: "#16a34a", cursor: "pointer" }}>签收</button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </section>
 
       {/* 5. AI会话记忆运维 */}

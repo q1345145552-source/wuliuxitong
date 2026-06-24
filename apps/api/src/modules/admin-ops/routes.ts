@@ -138,6 +138,9 @@ export function registerAdminOpsRoutes(app: MinimalHttpApp): void {
         shipmentId: item.shipmentId,
         carrierName: item.carrierName,
         externalTrackingNo: item.externalTrackingNo,
+        driverName: item.driverName,
+        licensePlate: item.licensePlate,
+        phoneNumber: item.phoneNumber,
         status: item.status,
         updatedAt: item.updatedAt.toISOString(),
       })),
@@ -147,13 +150,16 @@ export function registerAdminOpsRoutes(app: MinimalHttpApp): void {
   app.post("/admin/lastmile/orders", async (req, res) => {
     const auth = requireRole(req, res, ["admin"]);
     if (!auth) return;
-    const body = (req.body ?? {}) as { shipmentId?: string; carrierName?: string; externalTrackingNo?: string; status?: string };
+    const body = (req.body ?? {}) as { shipmentId?: string; carrierName?: string; driverName?: string; licensePlate?: string; phoneNumber?: string; externalTrackingNo?: string; status?: string };
     const shipmentId = body.shipmentId?.trim();
-    const carrierName = body.carrierName?.trim();
-    const externalTrackingNo = body.externalTrackingNo?.trim();
-    const status = body.status?.trim() || "created";
-    if (!shipmentId || !carrierName || !externalTrackingNo) {
-      fail(res, 400, "BAD_REQUEST", "shipmentId, carrierName, externalTrackingNo are required");
+    const carrierName = body.carrierName?.trim() || "自营";
+    const driverName = body.driverName?.trim();
+    const licensePlate = body.licensePlate?.trim();
+    const phoneNumber = body.phoneNumber?.trim();
+    const externalTrackingNo = body.externalTrackingNo?.trim() || "";
+    const status = body.status?.trim() || "DELIVERING";
+    if (!shipmentId) {
+      fail(res, 400, "BAD_REQUEST", "shipmentId is required");
       return;
     }
     const id = `lm_${Date.now()}`;
@@ -163,12 +169,31 @@ export function registerAdminOpsRoutes(app: MinimalHttpApp): void {
         companyId: auth.companyId,
         shipmentId,
         carrierName,
+        driverName,
+        licensePlate,
+        phoneNumber,
         externalTrackingNo,
         status,
       },
       select: { id: true, updatedAt: true },
     });
     ok(res, { id: created.id, updatedAt: created.updatedAt.toISOString() });
+  });
+
+  // 尾程派送状态更新
+  app.post("/admin/lastmile/status", async (req, res) => {
+    const auth = requireRole(req, res, ["admin", "staff"]);
+    if (!auth) return;
+    const body = (req.body ?? {}) as { id?: string; status?: string };
+    if (!body.id || !body.status) { fail(res, 400, "BAD_REQUEST", "id and status required"); return; }
+    const updated = await prisma.adminLastmileOrder.update({
+      where: { id: body.id },
+      data: { status: body.status },
+    });
+    if (body.status === "SIGNED") {
+      await prisma.shipment.update({ where: { id: updated.shipmentId }, data: { currentStatus: "delivered", updatedAt: new Date() } });
+    }
+    ok(res, { id: updated.id, status: updated.status });
   });
 
   app.get("/admin/settlement/entries", async (req, res) => {

@@ -399,6 +399,9 @@ model AdminLastmileOrder {
   shipmentId          String   @map("shipment_id")
   carrierName         String   @map("carrier_name")
   externalTrackingNo  String   @map("external_tracking_no")
+  driverName          String?  @map("driver_name")
+  licensePlate        String?  @map("license_plate")
+  phoneNumber         String?  @map("phone_number")
   status              String
   updatedAt           DateTime @updatedAt @map("updated_at")
 
