@@ -174,6 +174,7 @@ export function registerAdminOpsRoutes(app: MinimalHttpApp): void {
       if (!exist) { fail(res, 404, "NOT_FOUND", "deliveryNo not found"); return; }
       deliveryNo = existingDeliveryNo;
     } else {
+      await prisma.$executeRawUnsafe('SELECT pg_advisory_xact_lock(2901)');
       const count = await prisma.adminLastmileOrder.count({ where: { deliveryNo: { startsWith: "WD" } } });
       deliveryNo = `WD${String(count + 1).padStart(6, "0")}`;
     }
