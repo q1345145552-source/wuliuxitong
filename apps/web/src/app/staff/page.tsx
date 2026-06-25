@@ -641,7 +641,8 @@ function buildPrealertDraft(item: any): PrealertEditDraft {
   const lmSignFileRef = useRef<HTMLInputElement>(null);
   const [lmSelected, setLmSelected] = useState<Set<string>>(new Set());
   const [lmShipSearch, setLmShipSearch] = useState("");
-  const loadLmShipments = async () => {
+  const [lmBatchInput, setLmBatchInput] = useState("");
+const loadLmShipments = async () => {
     try { const r = await fetch(apiBaseUrl()+"/staff/shipments?limit=500",{headers:authHeaders()}); const d=await r.json();
       if(d.code==="OK") setLmShipments(d.data.items.filter((s:any)=>["inWarehouseTH","outForDelivery","delivered"].includes(s.currentStatus)).map((s:any)=>({id:s.id,trackingNo:s.trackingNo,clientId:s.clientId??"",itemName:s.itemName??"",packageCount:s.packageCount??0}))); } catch {}
   };
@@ -3021,6 +3022,15 @@ function buildPrealertDraft(item: any): PrealertEditDraft {
           <h4 style={{ margin: "0 0 8px", fontSize: 14 }}>创建派送单（一车多单，逗号分隔）</h4>
           <div style={{ display: "grid", gap: 6 }}>
             <div style={{ border: "1px solid #e5e7eb", borderRadius: 6, padding: 8, background: "#fff" }}>
+              <input value={lmBatchInput} onChange={e => setLmBatchInput(e.target.value)} onBlur={() => {
+                const nums = lmBatchInput.split(/[,\s\n]+/).map(s=>s.trim()).filter(Boolean);
+                if (nums.length > 0) {
+                  const found = new Set<string>();
+                  lmShipments.forEach(s => { if (nums.includes(s.trackingNo)) found.add(s.id); });
+                  if (found.size > 0) { const n = new Set(lmSelected); found.forEach(id => n.add(id)); setLmSelected(n); }
+                  setLmBatchInput(nums.join(", "));
+                }
+              }} placeholder="粘贴运单号批量勾选..." style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "4px 8px", fontSize: 11, width: "100%", marginBottom: 4, color: "#6b21a8" }} />
               <input value={lmShipSearch} onChange={e=>setLmShipSearch(e.target.value)} onFocus={()=>loadLmShipments()} placeholder="搜索运单（已到泰国的）..." style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "6px 8px", fontSize: 12, width: "100%", marginBottom: 4 }} />
               <div style={{ maxHeight: 150, overflow: "auto" }}>
                 {lmShipments.filter(s=>!lmShipSearch||(s.trackingNo||"").includes(lmShipSearch)||(s.clientId||"").includes(lmShipSearch)).slice(0,20).map(s=>(
