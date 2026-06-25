@@ -630,7 +630,15 @@ export function registerContainerRoutes(app: MinimalHttpApp): void {
       isSplit,
       splitCount: shipment.containerItems.length,
       // 所属的所有柜子（拆柜情况下会有多个）— 客户端隐藏
-      containers: auth.role === "client" ? [] : shipment.containerItems
+      containers: auth.role === "client"
+        ? shipment.containerItems.map((it) => ({
+            loadingDate: it.container.loadingDate?.toISOString() ?? null,
+            departureDate: it.container.departureDate?.toISOString() ?? null,
+            ata: it.container.ata?.toISOString() ?? null,
+            customsClearedAt: it.container.customsClearedAt?.toISOString() ?? null,
+            containerStatus: it.container.currentStatus,
+          }))
+        : shipment.containerItems
         .sort((a, b) => a.container.createdAt.getTime() - b.container.createdAt.getTime())
         .map((it) => ({
           containerId: it.containerId,

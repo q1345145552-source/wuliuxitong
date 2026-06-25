@@ -30,9 +30,13 @@ interface TrackData {
   products?: Array<{ itemName: string; packageCount: number }>;
   currentStatus: string;
   containers: Array<{
-    containerNo: string;
+    containerNo?: string;
     containerStatus: string;
-    containerStatusLabel: string;
+    containerStatusLabel?: string;
+    loadingDate?: string | null;
+    departureDate?: string | null;
+    ata?: string | null;
+    customsClearedAt?: string | null;
   }>;
   timeline: TimelineItem[];
   children?: ChildShipmentData[];
@@ -311,6 +315,21 @@ function TrackContent({ data }: { data: TrackData }) {
         </div>
       )}
 
+      {/* 装柜时间线（客户端看到日期但不含柜号） */}
+      {data.containers && data.containers.length > 0 && data.containers.some(c => c.loadingDate || c.departureDate) ? (
+        <div style={{ marginBottom: 12, padding: "8px 12px", background: "#f0f9ff", borderRadius: 8, fontSize: 12, border: "1px solid #bae6fd" }}>
+          <div style={{ fontWeight: 600, color: "#0369a1", marginBottom: 4 }}>📅 装柜时间</div>
+          {data.containers.map((c, i) => (
+            <div key={i} style={{ marginBottom: 4 }}>
+              {c.loadingDate ? <div>装柜：{c.loadingDate.slice(0, 10)}</div> : null}
+              {c.departureDate ? <div>开船：{c.departureDate.slice(0, 10)}</div> : null}
+              {c.ata ? <div>到港：{c.ata.slice(0, 10)}</div> : null}
+              {c.customsClearedAt ? <div>清关放行：{c.customsClearedAt.slice(0, 10)}</div> : null}
+            </div>
+          ))}
+        </div>
+      ) : null}
+
       {/* 尾程派送 */}
       {data.lastmile ? (
         <div style={{ marginBottom: 12, padding: "10px 12px", background: "#fefce8", borderRadius: 8, fontSize: 12, border: "1px solid #fde68a" }}>
@@ -371,7 +390,7 @@ function TrackContent({ data }: { data: TrackData }) {
           <div style={{ fontSize: 17, fontWeight: 700, color: currentCfg.color }}>{currentCfg.zh}</div>
           {activeTab === 0 && data.containers?.length > 0 && (
             <div style={{ fontSize: 11, color: "#6b7280", marginTop: 2 }}>
-              {data.containers.map((c) => c.containerNo).join("  ｜  ")}
+              {data.containers.map((c) => c.containerNo || "—").join("  ｜  ")}
             </div>
           )}
         </div>
