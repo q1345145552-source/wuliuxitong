@@ -139,6 +139,7 @@ export function registerAdminOpsRoutes(app: MinimalHttpApp): void {
         deliveryNo: item.deliveryNo,
         shipmentId: item.shipmentId,
         trackingNo: item.shipment?.trackingNo ?? item.shipmentId,
+        deliveryDate: item.deliveryDate,
         carrierName: item.carrierName,
         externalTrackingNo: item.externalTrackingNo,
         driverName: item.driverName,
@@ -153,11 +154,12 @@ export function registerAdminOpsRoutes(app: MinimalHttpApp): void {
   app.post("/admin/lastmile/orders", async (req, res) => {
     const auth = requireRole(req, res, ["staff", "admin"]);
     if (!auth) return;
-    const body = (req.body ?? {}) as { shipmentIds?: string[]; driverName?: string; licensePlate?: string; phoneNumber?: string; status?: string; deliveryNo?: string };
+    const body = (req.body ?? {}) as { shipmentIds?: string[]; driverName?: string; licensePlate?: string; phoneNumber?: string; status?: string; deliveryNo?: string; deliveryDate?: string };
     const shipmentIds = (body.shipmentIds ?? []).map(s => s.trim()).filter(Boolean);
     const driverName = body.driverName?.trim() || "";
     const licensePlate = body.licensePlate?.trim() || "";
     const phoneNumber = body.phoneNumber?.trim() || "";
+    const deliveryDate = body.deliveryDate?.trim() || "";
     const status = body.status?.trim() || "DELIVERING";
     const existingDeliveryNo = body.deliveryNo?.trim();
     if (shipmentIds.length === 0) {
@@ -180,7 +182,7 @@ export function registerAdminOpsRoutes(app: MinimalHttpApp): void {
     for (const sid of shipmentIds) {
       const id = `lm_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
       await prisma.adminLastmileOrder.create({
-        data: { id, companyId: auth.companyId, deliveryNo, shipmentId: sid, carrierName: "自营", driverName, licensePlate, phoneNumber, externalTrackingNo: "", status },
+        data: { id, companyId: auth.companyId, deliveryNo, shipmentId: sid, carrierName: "自营", driverName, licensePlate, phoneNumber, deliveryDate, externalTrackingNo: "", status },
       });
       results.push({ id, shipmentId: sid });
       // 同步运单状态 + 日志

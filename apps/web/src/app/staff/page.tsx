@@ -636,6 +636,7 @@ function buildPrealertDraft(item: any): PrealertEditDraft {
   const [lmLicensePlate, setLmLicensePlate] = useState("");
   const [lmPhoneNumber, setLmPhoneNumber] = useState("");
   const [lmShipments, setLmShipments] = useState<Array<{id:string;trackingNo:string;clientId:string;itemName:string;packageCount:number}>>([]);
+  const [lmDeliveryDate, setLmDeliveryDate] = useState("");
   const [lmSignData, setLmSignData] = useState<{id:string}|null>(null);
   const lmSignFileRef = useRef<HTMLInputElement>(null);
   const [lmSelected, setLmSelected] = useState<Set<string>>(new Set());
@@ -644,7 +645,7 @@ function buildPrealertDraft(item: any): PrealertEditDraft {
     try { const r = await fetch(apiBaseUrl()+"/staff/shipments?limit=500",{headers:authHeaders()}); const d=await r.json();
       if(d.code==="OK") setLmShipments(d.data.items.filter((s:any)=>["inWarehouseTH","outForDelivery","delivered"].includes(s.currentStatus)).map((s:any)=>({id:s.id,trackingNo:s.trackingNo,clientId:s.clientId??"",itemName:s.itemName??"",packageCount:s.packageCount??0}))); } catch {}
   };
-  const [lmOrderList, setLmOrderList] = useState<Array<{id:string;deliveryNo:string;shipmentId:string;trackingNo?:string;driverName?:string;licensePlate?:string;phoneNumber?:string;status:string}>>([]);
+  const [lmOrderList, setLmOrderList] = useState<Array<{id:string;deliveryNo:string;shipmentId:string;trackingNo?:string;driverName?:string;licensePlate?:string;phoneNumber?:string;deliveryDate?:string;status:string}>>([]);
   const loadLmOrders = async () => { try { const r=await fetch(apiBaseUrl()+"/admin/lastmile/orders",{headers:authHeaders()}); const d=await r.json(); if(d.code==="OK")setLmOrderList(d.data.items); } catch {} };
 
   // 按派送单号分组，检查是否全部签收
@@ -3037,16 +3038,17 @@ function buildPrealertDraft(item: any): PrealertEditDraft {
               <input value={lmDriverName} onChange={e => setLmDriverName(e.target.value)} placeholder="司机姓名" style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "6px 8px", fontSize: 12, flex: 1 }} />
               <input value={lmLicensePlate} onChange={e => setLmLicensePlate(e.target.value)} placeholder="车牌号" style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "6px 8px", fontSize: 12, flex: 1 }} />
               <input value={lmPhoneNumber} onChange={e => setLmPhoneNumber(e.target.value)} placeholder="电话" style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "6px 8px", fontSize: 12, flex: 1 }} />
+              <input type="date" value={lmDeliveryDate} onChange={e => setLmDeliveryDate(e.target.value)} style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "6px 8px", fontSize: 12 }} />
             </div>
             <button disabled={lmSelected.size===0} onClick={async () => {
               const ids = Array.from(lmSelected);
               if (ids.length===0) return;
               try {
-                const r = await fetch(apiBaseUrl()+"/admin/lastmile/orders",{method:"POST",headers:{"Content-Type":"application/json",...authHeaders()},body:JSON.stringify({shipmentIds:ids,driverName:lmDriverName.trim(),licensePlate:lmLicensePlate.trim(),phoneNumber:lmPhoneNumber.trim()})});
+                const r = await fetch(apiBaseUrl()+"/admin/lastmile/orders",{method:"POST",headers:{"Content-Type":"application/json",...authHeaders()},body:JSON.stringify({shipmentIds:ids,driverName:lmDriverName.trim(),licensePlate:lmLicensePlate.trim(),phoneNumber:lmPhoneNumber.trim(),deliveryDate:lmDeliveryDate})});
                 const d = await r.json();
                 if (d.code!=="OK") throw new Error(d.message||"创建失败");
                 setToast(`派送单 ${d.data.deliveryNo} 已创建（${d.data.count}个运单）`);
-                setLmSelected(new Set());setLmDriverName("");setLmLicensePlate("");setLmPhoneNumber("");
+                setLmSelected(new Set());setLmDriverName("");setLmLicensePlate("");setLmPhoneNumber("");setLmDeliveryDate("");
                 loadLmOrders();
               } catch(e:any) { setToast(e.message||"创建失败"); }
             }} style={{ border: "none", borderRadius: 6, padding: "6px 14px", background: "#2563eb", color: "#fff", cursor: "pointer", fontSize: 12, justifySelf: "start" }}>创建派送单</button>
@@ -3097,6 +3099,7 @@ function buildPrealertDraft(item: any): PrealertEditDraft {
                         <td style={{ padding: "4px 6px" }}>{o.driverName ?? "-"}</td>
                         <td style={{ padding: "4px 6px" }}>{o.licensePlate ?? "-"}</td>
                         <td style={{ padding: "4px 6px" }}>{o.phoneNumber ?? "-"}</td>
+                        <td style={{ padding: "4px 6px" }}>{o.deliveryDate || "-"}</td>
                         <td style={{ padding: "4px 6px" }}>{o.status === "SIGNED" ? "✅ 已签收" : "🚚 派送中"}</td>
                         <td style={{ padding: "4px 6px" }}>
                           {o.status !== "SIGNED" && (
