@@ -637,7 +637,7 @@ function buildPrealertDraft(item: any): PrealertEditDraft {
   const [lmPhoneNumber, setLmPhoneNumber] = useState("");
   const [lmShipments, setLmShipments] = useState<Array<{id:string;trackingNo:string;clientId:string;itemName:string;packageCount:number}>>([]);
   const [lmDeliveryDate, setLmDeliveryDate] = useState("");
-  const [lmSignData, setLmSignData] = useState<{id:string}|null>(null);
+  const [lmSignData, setLmSignData] = useState<{id:string;action:string}|null>(null);
   const lmSignFileRef = useRef<HTMLInputElement>(null);
   const [lmSelected, setLmSelected] = useState<Set<string>>(new Set());
   const [lmShipSearch, setLmShipSearch] = useState("");
@@ -3103,7 +3103,7 @@ function buildPrealertDraft(item: any): PrealertEditDraft {
                         <td style={{ padding: "4px 6px" }}>{o.status === "SIGNED" ? "✅ 已签收" : "🚚 派送中"}</td>
                         <td style={{ padding: "4px 6px" }}>
                           {o.status !== "SIGNED" && (
-                            <button onClick={() => { setLmSignData({ id: o.id }); lmSignFileRef.current?.click(); }} style={{ border: "1px solid #16a34a", borderRadius: 4, padding: "2px 6px", fontSize: 11, background: "#fff", color: "#16a34a", cursor: "pointer" }}>签收</button>
+                            <button onClick={() => { setLmSignData({ id: o.id, action: "sign" }); lmSignFileRef.current?.click(); }} style={{ border: "1px solid #16a34a", borderRadius: 4, padding: "2px 6px", fontSize: 11, background: "#fff", color: "#16a34a", cursor: "pointer" }}>签收</button>
                           )}
                           <button onClick={async () => { if (!confirm("确定删除？")) return; try { await fetch(apiBaseUrl()+"/admin/lastmile/orders?id="+o.id, { method: "DELETE", headers: authHeaders() }); setToast("已删除"); loadLmOrders(); } catch(e: any) { setToast(e.message || "失败"); } }} style={{ border: "1px solid #fca5a5", borderRadius: 4, padding: "2px 4px", fontSize: 11, background: "#fff", color: "#dc2626", cursor: "pointer", marginLeft: 4 }}>删除</button>
                         </td>
@@ -3197,7 +3197,7 @@ function buildPrealertDraft(item: any): PrealertEditDraft {
 
 
       {message ? <p style={{ marginTop: 12, color: message.includes("失败") ? "#b91c1c" : "#065f46" }}>{message}</p> : null}
-            <input ref={lmSignFileRef} type="file" accept="image/*" style={{ display: "none" }} onChange={async (e: any) => { const f = e.target.files?.[0]; e.target.value = ""; if (!f || !lmSignData) return; const rdr = new FileReader(); rdr.onload = async () => { const b64 = (rdr.result as string).split(",")[1] || ""; try { const res = await fetch(apiBaseUrl()+"/admin/lastmile/status", { method: "POST", headers: {"Content-Type":"application/json",...authHeaders()}, body: JSON.stringify({ id: lmSignData.id, status: "SIGNED", signImageBase64: b64 }) }); if (!res.ok) throw new Error((await res.json()).message||"失败"); setToast("已签收"); loadLmOrders(); } catch(e: any) { setToast(e.message||"失败"); } setLmSignData(null); }; rdr.readAsDataURL(f); }} />
+            <input ref={lmSignFileRef} type="file" accept="image/*" style={{ display: "none" }} onChange={async (e: any) => { const f = e.target.files?.[0]; e.target.value = ""; if (!f || !lmSignData) return; const rdr = new FileReader(); rdr.onload = async () => { const b64 = (rdr.result as string).split(",")[1] || ""; try { const res = await fetch(apiBaseUrl()+"/admin/lastmile/status", { method: "POST", headers: {"Content-Type":"application/json",...authHeaders()}, body: JSON.stringify({ id: lmSignData.id, status: lmSignData.action === "sign" ? "SIGNED" : undefined, signImageBase64: b64 }) }); if (!res.ok) throw new Error((await res.json()).message||"失败"); setToast(lmSignData.action === "sign" ? "已签收" : "图片已上传"); loadLmOrders(); } catch(e: any) { setToast(e.message||"失败"); } setLmSignData(null); }; rdr.readAsDataURL(f); }} />
 <Toast open={toast.length > 0} message={toast} />
       {/* 预报单审核弹窗 */}
       {approvingPrealert && (
