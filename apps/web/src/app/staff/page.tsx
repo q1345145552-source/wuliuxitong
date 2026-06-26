@@ -646,7 +646,7 @@ const loadLmShipments = async () => {
     try { const r = await fetch(apiBaseUrl()+"/staff/shipments?limit=500",{headers:authHeaders()}); const d=await r.json();
       if(d.code==="OK") setLmShipments(d.data.items.filter((s:any)=>["inWarehouseTH","outForDelivery","delivered"].includes(s.currentStatus)).map((s:any)=>({id:s.id,trackingNo:s.trackingNo,clientId:s.clientId??"",itemName:s.itemName??"",packageCount:s.packageCount??0}))); } catch {}
   };
-  const [lmOrderList, setLmOrderList] = useState<Array<{id:string;deliveryNo:string;shipmentId:string;trackingNo?:string;driverName?:string;licensePlate?:string;phoneNumber?:string;deliveryDate?:string;status:string}>>([]);
+  const [lmOrderList, setLmOrderList] = useState<Array<{id:string;deliveryNo:string;shipmentId:string;trackingNo?:string;driverName?:string;licensePlate?:string;phoneNumber?:string;deliveryDate?:string;clientId?:string;status:string}>>([]);
   const loadLmOrders = async () => { try { const r=await fetch(apiBaseUrl()+"/admin/lastmile/orders",{headers:authHeaders()}); const d=await r.json(); if(d.code==="OK")setLmOrderList(d.data.items); } catch {} };
 
   // 按派送单号分组，检查是否全部签收
@@ -3100,11 +3100,12 @@ const loadLmShipments = async () => {
                 </div>
                 <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
                   <thead><tr style={{ borderBottom: "2px solid #e2e8f0", textAlign: "left" }}>
-                    <th style={{ padding: "4px 6px" }}>运单号</th><th style={{ padding: "4px 6px" }}>司机</th><th style={{ padding: "4px 6px" }}>车牌</th><th style={{ padding: "4px 6px" }}>电话</th><th style={{ padding: "4px 6px" }}>日期</th><th style={{ padding: "4px 6px" }}>状态</th><th style={{ padding: "4px 6px" }}>操作</th>
+                    <th style={{ padding: "4px 6px" }}>唛头</th><th style={{ padding: "4px 6px" }}>运单号</th><th style={{ padding: "4px 6px" }}>司机</th><th style={{ padding: "4px 6px" }}>车牌</th><th style={{ padding: "4px 6px" }}>电话</th><th style={{ padding: "4px 6px" }}>日期</th><th style={{ padding: "4px 6px" }}>状态</th><th style={{ padding: "4px 6px" }}>操作</th>
                   </tr></thead>
                   <tbody>
                     {items.map(o => (
                       <tr key={o.id} style={{ borderBottom: "1px solid #e5e7eb" }}>
+                        <td style={{ padding: "4px 6px", fontFamily: "monospace" }}>{o.clientId || "-"}</td>
                         <td style={{ padding: "4px 6px", fontFamily: "monospace" }}>{o.trackingNo || o.shipmentId}</td>
                         <td style={{ padding: "4px 6px" }}>{o.driverName ?? "-"}</td>
                         <td style={{ padding: "4px 6px" }}>{o.licensePlate ?? "-"}</td>
