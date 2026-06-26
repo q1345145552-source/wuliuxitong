@@ -169,10 +169,15 @@ export function registerAdminOpsRoutes(app: MinimalHttpApp): void {
     // 生成或复用派送单号
     let deliveryNo: string;
     if (existingDeliveryNo) {
-      // 追加到已有派送单
-      const exist = await prisma.adminLastmileOrder.findFirst({ where: { deliveryNo: existingDeliveryNo, companyId: auth.companyId }, select: { deliveryNo: true, driverName: true, licensePlate: true, phoneNumber: true } });
+      // 追加到已有派送单，继承司机信息
+      const exist = await prisma.adminLastmileOrder.findFirst({ where: { deliveryNo: existingDeliveryNo, companyId: auth.companyId }, select: { deliveryNo: true, driverName: true, licensePlate: true, phoneNumber: true, deliveryDate: true } });
       if (!exist) { fail(res, 404, "NOT_FOUND", "deliveryNo not found"); return; }
       deliveryNo = existingDeliveryNo;
+      // 追加时不传司机信息则继承已有值
+      if (!driverName) driverName = exist.driverName ?? "";
+      if (!licensePlate) licensePlate = exist.licensePlate ?? "";
+      if (!phoneNumber) phoneNumber = exist.phoneNumber ?? "";
+      if (!deliveryDate) deliveryDate = exist.deliveryDate ?? "";
     } else {
       deliveryNo = await prisma.$transaction(async (tx) => {
         await tx.$executeRawUnsafe('SELECT pg_advisory_xact_lock(2901)');
