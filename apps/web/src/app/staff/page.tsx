@@ -3022,6 +3022,11 @@ const loadLmShipments = async () => {
           <h4 style={{ margin: "0 0 8px", fontSize: 14 }}>创建派送单（一车多单，逗号分隔）</h4>
           <div style={{ display: "grid", gap: 6 }}>
             <div style={{ border: "1px solid #e5e7eb", borderRadius: 6, padding: 8, background: "#fff" }}>
+              <div style={{ display: "flex", gap: 4, marginBottom: 4 }}>
+                {[...new Set(lmShipments.map(s => s.clientId).filter(Boolean))].slice(0, 10).map(m => (
+                  <button key={m} onClick={() => { setLmShipSearch(m); const found = new Set<string>(); lmShipments.filter(s => s.clientId === m).forEach(s => found.add(s.id)); const n = new Set(lmSelected); found.forEach(id => n.add(id)); setLmSelected(n); }} style={{ border: "1px solid #6b21a8", borderRadius: 4, padding: "1px 6px", fontSize: 10, background: lmShipSearch === m ? "#6b21a8" : "#fff", color: lmShipSearch === m ? "#fff" : "#6b21a8", cursor: "pointer" }}>{m}</button>
+                ))}
+              </div>
               <input value={lmBatchInput} onChange={e => setLmBatchInput(e.target.value)} onBlur={() => {
                 const nums = lmBatchInput.split(/[,\s\n]+/).map(s=>s.trim()).filter(Boolean);
                 if (nums.length > 0) {
