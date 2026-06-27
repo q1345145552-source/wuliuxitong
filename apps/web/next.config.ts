@@ -6,6 +6,15 @@ const nextConfig: NextConfig = {
     root: path.join(__dirname, "..", ".."),
   },
   poweredByHeader: false,
+  async rewrites() {
+    const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL || "http://api:3001";
+    return [
+      { source: "/auth/:path*", destination: `${apiBase}/auth/:path*` },
+      { source: "/admin/:path*", destination: `${apiBase}/admin/:path*` },
+      { source: "/staff/:path*", destination: `${apiBase}/staff/:path*` },
+      { source: "/client/:path*", destination: `${apiBase}/client/:path*` },
+    ];
+  },
   async headers() {
     return [
       {
