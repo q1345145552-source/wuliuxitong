@@ -30,7 +30,7 @@ docker compose up -d
 # 5. 等待健康检查
 echo "⏳ 等待服务就绪..."
 sleep 5
-if curl -sf http://localhost:3001/auth/login -o /dev/null; then
+if curl -sf http://localhost:3001 -o /dev/null; then
   echo "✅ API 正常"
 else
   echo "⚠️  API 端口未响应，检查日志: docker logs mywebsite-api-1"
