@@ -711,77 +711,42 @@ export default function ClientHomePage() {
           {prealerts.length === 0 ? (
             <div style={{ color: "#000000", fontSize: 13, padding: "20px 0", textAlign: "center" }}>暂无预报单</div>
           ) : (
-            <div style={{ display: "grid", gap: 8 }}>
-              {prealerts.filter((item) => {
-                const q = prealertSearch.trim().toLowerCase();
-                if (!q) return true;
-                return item.id.toLowerCase().includes(q) || (item.itemName ?? "").toLowerCase().includes(q);
-              }).slice(0, pageSize).map((item) => {
-                const isShipped = item.approvalStatus === "shipped";
-                const isReceived = item.approvalStatus === "received";
-                const sLabel = isReceived ? "已收货" : "已发货";
-                const sColor = isReceived ? "#16a34a" : "#0369a1";
-                const sBg = isReceived ? "#dcfce7" : "#e0f2fe";
-                const sBd = isReceived ? "#86efac" : "#7dd3fc";
-                return (
-                  <div key={item.id} style={{ border: "1px solid " + sBd, borderRadius: 8, padding: 12, background: "#fff" }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8 }}>
-                      <div>
-                        <span style={{ fontWeight: 600, fontSize: 14, fontFamily: "monospace" }}>{item.orderNo || item.id}</span>
-                        <span style={{ marginLeft: 8, fontSize: 11, fontWeight: 500, color: sColor, background: sBg, padding: "2px 8px", borderRadius: 4 }}>{sLabel}</span>
-                      </div>
-                      <div style={{ fontSize: 12, color: "#000000" }}>{item.createdAt.slice(0, 10)}</div>
-                      <button type="button" onClick={() => openShipmentTrack(item.trackingNo || item.id)} style={{ border: "1px solid #2563eb", borderRadius: 4, padding: "2px 8px", fontSize: 11, background: "#eff6ff", color: "#2563eb", cursor: "pointer" }}>物流轨迹</button>
-                    </div>
-                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: 6, fontSize: 13, color: "#000000", marginBottom: 8 }}>
-                      <div>品名：{item.itemName}</div>
-                      <div>件数：{item.packageCount} {item.packageUnit === "box" ? "箱" : "袋"}</div>
-                      <div>运输：{item.transportMode === "sea" ? "海运" : "陆运"}</div>
-                      
-                      {item.trackingNo ? <div>运单号：{item.trackingNo}</div> : null}
-                    </div>
-                    {(item.products?.length ?? 0) > 1 && (
-                      <div style={{ marginBottom: 8, fontSize: 12, color: "#000000", background: "#f8fafc", borderRadius: 6, padding: "6px 8px" }}>
-                        {(item.products ?? []).map((p, i) => (
-                          <div key={p.id || i}>{p.itemName} ×{p.packageCount}箱</div>
-                        ))}
-                      </div>
-                    )}
-                    {(item.productImages?.length ?? 0) > 0 && (
-                      <div style={{ display: "flex", gap: 4, marginBottom: 8, flexWrap: "wrap" }}>
-                        {item.productImages!.map((img) => (
-                          <img
-                            key={img.id}
-                            src={imgSrc(img)}
-                            alt={img.fileName}
-                            onClick={() => setPreviewImage({ src: imgSrc(img), alt: img.fileName })}
-                            style={{ width: 100, height: 100, objectFit: "cover", borderRadius: 4, border: "1px solid #e5e7eb", cursor: "pointer" }}
-                          />
-                        ))}
-                      </div>
-                    )}
-                    <div style={{ display: "flex", gap: 6, justifyContent: "flex-end", borderTop: "1px solid #f3f4f6", paddingTop: 8 }}>
-                      {isShipped && (
-                        <>
-                          <button type="button" onClick={() => setEditingPrealert(item)}
-                            style={{ border: "1px solid #d1d5db", borderRadius: 4, padding: "4px 10px", fontSize: 12, background: "#fff", color: "#000000", cursor: "pointer" }}>编辑</button>
-                          <button type="button" onClick={async () => {
-                            if (!confirm("确定删除此预报单？")) return;
-                            try { await deleteClientPrealert(item.id); setToast("预报单已删除"); await refreshMainData(); }
-                            catch { setToast("删除失败"); }
-                          }} style={{ border: "1px solid #fca5a5", borderRadius: 4, padding: "4px 10px", fontSize: 12, background: "#fff", color: "#dc2626", cursor: "pointer" }}>删除</button>
-                        </>
-                      )}
-                                            {(isShipped || isReceived) && item.trackingNo ? (
-                        <button type="button" onClick={() => openPrintLabel({ marks: item.clientId ?? "", packageCount: item.packageCount ?? "—", trackingNo: item.trackingNo ?? "", itemName: item.itemName, productQuantity: item.productQuantity, transportMode: item.transportMode, products: item.products?.map(p => ({ itemName: p.itemName, packageCount: p.packageCount })) })} style={{ border: "1px solid #16a34a", borderRadius: 4, padding: "4px 10px", fontSize: 12, background: "#fff", color: "#16a34a", cursor: "pointer", marginLeft: 6 }}>打印</button>
-                      ) : null}
-                                            <PrealertPrintButton item={item} />
-                    </div>
-                  </div>
-                );
-              })}
+                        <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                <thead><tr style={{ borderBottom: "2px solid #e5e7eb", textAlign: "left", background: "#f8fafc" }}>
+                  <th style={{ padding: "6px 8px", fontWeight: 600 }}>唛头</th><th style={{ padding: "6px 8px", fontWeight: 600 }}>预报单号</th><th style={{ padding: "6px 8px", fontWeight: 600 }}>品名</th><th style={{ padding: "6px 8px", fontWeight: 600 }}>件</th><th style={{ padding: "6px 8px", fontWeight: 600 }}>运输</th><th style={{ padding: "6px 8px", fontWeight: 600 }}>状态</th><th style={{ padding: "6px 8px", fontWeight: 600 }}>操作</th>
+                </tr></thead>
+                <tbody>
+                  {prealerts.filter((item) => {
+                    const q = prealertSearch.trim().toLowerCase();
+                    if (!q) return true;
+                    return item.id.toLowerCase().includes(q) || (item.itemName ?? "").toLowerCase().includes(q);
+                  }).slice(0, pageSize).map((item) => {
+                    const isShipped = item.approvalStatus === "shipped";
+                    const isReceived = item.approvalStatus === "received";
+                    const sLabel = isReceived ? "已收货" : "已发货";
+                    const sColor = isReceived ? "#16a34a" : "#0369a1";
+                    const sBg = isReceived ? "#dcfce7" : "#e0f2fe";
+                    return (
+                      <tr key={item.id} style={{ borderBottom: "1px solid #e5e7eb" }}>
+                        <td style={{ padding: "6px 8px", fontFamily: "monospace", color: "#6b21a8", fontSize: 12 }}>{item.clientId || "—"}</td>
+                        <td style={{ padding: "6px 8px", fontFamily: "monospace", fontSize: 11 }}>{item.orderNo || item.id}<br /><span style={{ fontSize: 10, color: "#6b7280" }}>{item.trackingNo || ""}</span></td>
+                        <td style={{ padding: "6px 8px" }}>{item.itemName}</td>
+                        <td style={{ padding: "6px 8px", whiteSpace: "nowrap" }}>{item.packageCount} {item.packageUnit === "box" ? "箱" : "袋"}</td>
+                        <td style={{ padding: "6px 8px" }}>{item.transportMode === "sea" ? "🚢海运" : "🚚陆运"}</td>
+                        <td style={{ padding: "6px 8px" }}><span style={{ fontSize: 11, fontWeight: 500, color: sColor, background: sBg, padding: "2px 6px", borderRadius: 4 }}>{sLabel}</span></td>
+                        <td style={{ padding: "6px 8px", whiteSpace: "nowrap" }}>
+                          <button type="button" onClick={() => openShipmentTrack(item.trackingNo || item.id)} style={{ border: "1px solid #2563eb", borderRadius: 4, padding: "2px 8px", fontSize: 11, background: "#eff6ff", color: "#2563eb", cursor: "pointer" }}>物流轨迹</button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
             </div>
+
           )}
+
         </div>
 
         <div style={{ border: "1px solid #e5e7eb", borderRadius: 8, padding: 10, marginBottom: 12, background: "#f8fafc" }}>
@@ -1380,77 +1345,42 @@ export default function ClientHomePage() {
           {prealerts.length === 0 ? (
             <div style={{ color: "#000000", fontSize: 13, padding: "20px 0", textAlign: "center" }}>暂无预报单</div>
           ) : (
-            <div style={{ display: "grid", gap: 8 }}>
-              {prealerts.filter((item) => {
-                const q = prealertSearch.trim().toLowerCase();
-                if (!q) return true;
-                return item.id.toLowerCase().includes(q) || (item.itemName ?? "").toLowerCase().includes(q);
-              }).slice(0, pageSize).map((item) => {
-                const isShipped = item.approvalStatus === "shipped";
-                const isReceived = item.approvalStatus === "received";
-                const sLabel = isReceived ? "已收货" : "已发货";
-                const sColor = isReceived ? "#16a34a" : "#0369a1";
-                const sBg = isReceived ? "#dcfce7" : "#e0f2fe";
-                const sBd = isReceived ? "#86efac" : "#7dd3fc";
-                return (
-                  <div key={item.id} style={{ border: "1px solid " + sBd, borderRadius: 8, padding: 12, background: "#fff" }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8 }}>
-                      <div>
-                        <span style={{ fontWeight: 600, fontSize: 14, fontFamily: "monospace" }}>{item.orderNo || item.id}</span>
-                        <span style={{ marginLeft: 8, fontSize: 11, fontWeight: 500, color: sColor, background: sBg, padding: "2px 8px", borderRadius: 4 }}>{sLabel}</span>
-                      </div>
-                      <div style={{ fontSize: 12, color: "#000000" }}>{item.createdAt.slice(0, 10)}</div>
-                      <button type="button" onClick={() => openShipmentTrack(item.trackingNo || item.id)} style={{ border: "1px solid #2563eb", borderRadius: 4, padding: "2px 8px", fontSize: 11, background: "#eff6ff", color: "#2563eb", cursor: "pointer" }}>物流轨迹</button>
-                    </div>
-                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: 6, fontSize: 13, color: "#000000", marginBottom: 8 }}>
-                      <div>品名：{item.itemName}</div>
-                      <div>件数：{item.packageCount} {item.packageUnit === "box" ? "箱" : "袋"}</div>
-                      <div>运输：{item.transportMode === "sea" ? "海运" : "陆运"}</div>
-                      
-                      {item.trackingNo ? <div>运单号：{item.trackingNo}</div> : null}
-                    </div>
-                    {(item.products?.length ?? 0) > 1 && (
-                      <div style={{ marginBottom: 8, fontSize: 12, color: "#000000", background: "#f8fafc", borderRadius: 6, padding: "6px 8px" }}>
-                        {(item.products ?? []).map((p, i) => (
-                          <div key={p.id || i}>{p.itemName} ×{p.packageCount}箱</div>
-                        ))}
-                      </div>
-                    )}
-                    {(item.productImages?.length ?? 0) > 0 && (
-                      <div style={{ display: "flex", gap: 4, marginBottom: 8, flexWrap: "wrap" }}>
-                        {item.productImages!.map((img) => (
-                          <img
-                            key={img.id}
-                            src={imgSrc(img)}
-                            alt={img.fileName}
-                            onClick={() => setPreviewImage({ src: imgSrc(img), alt: img.fileName })}
-                            style={{ width: 100, height: 100, objectFit: "cover", borderRadius: 4, border: "1px solid #e5e7eb", cursor: "pointer" }}
-                          />
-                        ))}
-                      </div>
-                    )}
-                    <div style={{ display: "flex", gap: 6, justifyContent: "flex-end", borderTop: "1px solid #f3f4f6", paddingTop: 8 }}>
-                      {isShipped && (
-                        <>
-                          <button type="button" onClick={() => setEditingPrealert(item)}
-                            style={{ border: "1px solid #d1d5db", borderRadius: 4, padding: "4px 10px", fontSize: 12, background: "#fff", color: "#000000", cursor: "pointer" }}>编辑</button>
-                          <button type="button" onClick={async () => {
-                            if (!confirm("确定删除此预报单？")) return;
-                            try { await deleteClientPrealert(item.id); setToast("预报单已删除"); await refreshMainData(); }
-                            catch { setToast("删除失败"); }
-                          }} style={{ border: "1px solid #fca5a5", borderRadius: 4, padding: "4px 10px", fontSize: 12, background: "#fff", color: "#dc2626", cursor: "pointer" }}>删除</button>
-                        </>
-                      )}
-                                            {(isShipped || isReceived) && item.trackingNo ? (
-                        <button type="button" onClick={() => openPrintLabel({ marks: item.clientId ?? "", packageCount: item.packageCount ?? "—", trackingNo: item.trackingNo ?? "", itemName: item.itemName, productQuantity: item.productQuantity, transportMode: item.transportMode, products: item.products?.map(p => ({ itemName: p.itemName, packageCount: p.packageCount })) })} style={{ border: "1px solid #16a34a", borderRadius: 4, padding: "4px 10px", fontSize: 12, background: "#fff", color: "#16a34a", cursor: "pointer", marginLeft: 6 }}>打印</button>
-                      ) : null}
-                                            <PrealertPrintButton item={item} />
-                    </div>
-                  </div>
-                );
-              })}
+                        <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                <thead><tr style={{ borderBottom: "2px solid #e5e7eb", textAlign: "left", background: "#f8fafc" }}>
+                  <th style={{ padding: "6px 8px", fontWeight: 600 }}>唛头</th><th style={{ padding: "6px 8px", fontWeight: 600 }}>预报单号</th><th style={{ padding: "6px 8px", fontWeight: 600 }}>品名</th><th style={{ padding: "6px 8px", fontWeight: 600 }}>件</th><th style={{ padding: "6px 8px", fontWeight: 600 }}>运输</th><th style={{ padding: "6px 8px", fontWeight: 600 }}>状态</th><th style={{ padding: "6px 8px", fontWeight: 600 }}>操作</th>
+                </tr></thead>
+                <tbody>
+                  {prealerts.filter((item) => {
+                    const q = prealertSearch.trim().toLowerCase();
+                    if (!q) return true;
+                    return item.id.toLowerCase().includes(q) || (item.itemName ?? "").toLowerCase().includes(q);
+                  }).slice(0, pageSize).map((item) => {
+                    const isShipped = item.approvalStatus === "shipped";
+                    const isReceived = item.approvalStatus === "received";
+                    const sLabel = isReceived ? "已收货" : "已发货";
+                    const sColor = isReceived ? "#16a34a" : "#0369a1";
+                    const sBg = isReceived ? "#dcfce7" : "#e0f2fe";
+                    return (
+                      <tr key={item.id} style={{ borderBottom: "1px solid #e5e7eb" }}>
+                        <td style={{ padding: "6px 8px", fontFamily: "monospace", color: "#6b21a8", fontSize: 12 }}>{item.clientId || "—"}</td>
+                        <td style={{ padding: "6px 8px", fontFamily: "monospace", fontSize: 11 }}>{item.orderNo || item.id}<br /><span style={{ fontSize: 10, color: "#6b7280" }}>{item.trackingNo || ""}</span></td>
+                        <td style={{ padding: "6px 8px" }}>{item.itemName}</td>
+                        <td style={{ padding: "6px 8px", whiteSpace: "nowrap" }}>{item.packageCount} {item.packageUnit === "box" ? "箱" : "袋"}</td>
+                        <td style={{ padding: "6px 8px" }}>{item.transportMode === "sea" ? "🚢海运" : "🚚陆运"}</td>
+                        <td style={{ padding: "6px 8px" }}><span style={{ fontSize: 11, fontWeight: 500, color: sColor, background: sBg, padding: "2px 6px", borderRadius: 4 }}>{sLabel}</span></td>
+                        <td style={{ padding: "6px 8px", whiteSpace: "nowrap" }}>
+                          <button type="button" onClick={() => openShipmentTrack(item.trackingNo || item.id)} style={{ border: "1px solid #2563eb", borderRadius: 4, padding: "2px 8px", fontSize: 11, background: "#eff6ff", color: "#2563eb", cursor: "pointer" }}>物流轨迹</button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
             </div>
+
           )}
+
         </div>
 
       </section>
