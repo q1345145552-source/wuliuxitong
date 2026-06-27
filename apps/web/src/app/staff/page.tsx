@@ -920,12 +920,7 @@ const loadLmShipments = async () => {
       })
       .finally(() => setLoading(false));
 
-    // 30 秒自动刷新同步
-    const interval = window.setInterval(() => {
-      if (document.hidden) return;
-      loadPageData().catch(() => {});
-    }, 30000);
-    return () => window.clearInterval(interval);
+
   }, []);
 
   useEffect(() => {

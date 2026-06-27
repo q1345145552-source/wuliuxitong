@@ -132,6 +132,7 @@ model Shipment {
   lastmileOrders   AdminLastmileOrder[]
 
   @@index([companyId, currentStatus])
+  @@index([companyId, updatedAt])
   @@index([orderId])
   @@index([batchNo])
   @@index([parentTrackingNo])
