@@ -7,12 +7,11 @@ const nextConfig: NextConfig = {
   },
   poweredByHeader: false,
   async rewrites() {
-    const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL || "http://api:3001";
     return [
-      { source: "/auth/:path*", destination: `${apiBase}/auth/:path*` },
-      { source: "/admin/:path*", destination: `${apiBase}/admin/:path*` },
-      { source: "/staff/:path*", destination: `${apiBase}/staff/:path*` },
-      { source: "/client/:path*", destination: `${apiBase}/client/:path*` },
+      { source: "/auth/:path*", destination: "http://api:3001/auth/:path*" },
+      { source: "/admin/:path*", destination: "http://api:3001/admin/:path*" },
+      { source: "/staff/:path*", destination: "http://api:3001/staff/:path*" },
+      { source: "/client/:path*", destination: "http://api:3001/client/:path*" },
     ];
   },
   async headers() {
