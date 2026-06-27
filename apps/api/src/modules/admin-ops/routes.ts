@@ -157,10 +157,10 @@ export function registerAdminOpsRoutes(app: MinimalHttpApp): void {
     if (!auth) return;
     const body = (req.body ?? {}) as { shipmentIds?: string[]; driverName?: string; licensePlate?: string; phoneNumber?: string; status?: string; deliveryNo?: string; deliveryDate?: string };
     const shipmentIds = (body.shipmentIds ?? []).map(s => s.trim()).filter(Boolean);
-    const driverName = body.driverName?.trim() || "";
-    const licensePlate = body.licensePlate?.trim() || "";
-    const phoneNumber = body.phoneNumber?.trim() || "";
-    const deliveryDate = body.deliveryDate?.trim() || "";
+    let driverName = body.driverName?.trim() || "";
+    let licensePlate = body.licensePlate?.trim() || "";
+    let phoneNumber = body.phoneNumber?.trim() || "";
+    let deliveryDate = body.deliveryDate?.trim() || "";
     const status = body.status?.trim() || "DELIVERING";
     const existingDeliveryNo = body.deliveryNo?.trim();
     if (shipmentIds.length === 0) {
