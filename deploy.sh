@@ -1,18 +1,44 @@
 #!/bin/bash
 set -e
+echo "=== 湘泰物流网站部署 ==="
 
-# =============================================
-# 湘泰国际物流系统 - 一键部署脚本
-# 使用: 先在服务器配置好 .env 文件
-# 依赖: Docker + Docker Compose
-# =============================================
+cd "$(dirname "$0")"
 
-SERVER="${VPS_USER:-root}@${VPS_HOST:?请设置 VPS_HOST 环境变量，例如 export VPS_HOST=your-server-ip}"
+# 1. 检查 .env
+if ! grep -q "NEXT_PUBLIC_API_BASE_URL=" .env 2>/dev/null; then
+  echo "❌ 缺少 .env 文件或 NEXT_PUBLIC_API_BASE_URL 未设置"
+  exit 1
+fi
+source .env
+echo "✅ API 地址: $NEXT_PUBLIC_API_BASE_URL"
 
-echo "🚀 开始部署到 $SERVER ..."
+# 2. 拉代码
+echo "📥 拉取最新代码..."
+git fetch origin
+git reset --hard origin/main
 
-ssh "$SERVER" 'set -e && cd /root/MyWebSite && echo "📦 拉取最新代码..." && git pull origin main && echo "🗄️  执行数据库迁移..." && npx prisma migrate deploy --schema=apps/api/prisma/schema.prisma && echo "🐳 构建并重启服务..." && docker compose up -d --build && echo "✅ 部署完成：" && docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"'
+# 3. 安装依赖
+npm install --ignore-scripts 2>/dev/null || true
 
-echo "🎉 部署成功！"
-echo "   前端: http://${VPS_HOST}:3000"
-echo "   API:  http://${VPS_HOST}:3001"
+# 4. 构建并启动
+echo "🔨 构建 Docker 镜像..."
+docker compose build --no-cache web
+
+echo "🚀 启动服务..."
+docker compose up -d
+
+# 5. 等待健康检查
+echo "⏳ 等待服务就绪..."
+sleep 5
+if curl -sf http://localhost:3001/auth/login -o /dev/null; then
+  echo "✅ API 正常"
+else
+  echo "⚠️  API 端口未响应，检查日志: docker logs mywebsite-api-1"
+fi
+if curl -sf http://localhost:3000 -o /dev/null; then
+  echo "✅ Web 正常"
+else
+  echo "⚠️  Web 端口未响应"
+fi
+
+echo "=== 部署完成 ==="

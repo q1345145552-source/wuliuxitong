@@ -13,6 +13,7 @@ RUN npm ci
 COPY apps/web .
 
 ARG NEXT_PUBLIC_API_BASE_URL
+RUN test -n "$NEXT_PUBLIC_API_BASE_URL" || (echo "❌ NEXT_PUBLIC_API_BASE_URL is required" && exit 1)
 ENV NEXT_PUBLIC_API_BASE_URL=${NEXT_PUBLIC_API_BASE_URL}
 
 RUN npm run build
