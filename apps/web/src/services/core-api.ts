@@ -32,10 +32,6 @@ function inferRenderApiUrlFromWindow(): string | null {
  * 则自动按域名推断线上 API 地址，避免线上请求 127.0.0.1。
  */
 export function apiBaseUrl(): string {
-  // 浏览器端：直接用当前页面的 host 拼 3001 端口
-  if (typeof window !== "undefined") {
-    return `${window.location.protocol}//${window.location.hostname}:3001`;
-  }
   const configured = (process.env.NEXT_PUBLIC_API_BASE_URL ?? process.env.VITE_API_BASE_URL ?? "http://localhost:3001").trim();
   const inferredRenderApiUrl = inferRenderApiUrlFromWindow();
   if (inferredRenderApiUrl && isLoopbackApiUrl(configured)) {
