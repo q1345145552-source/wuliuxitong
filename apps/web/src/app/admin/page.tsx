@@ -13,6 +13,7 @@ import ShipmentSearch from "../../modules/shipment/ShipmentSearch";
 import { openPrintLabel } from "../../modules/shipment/ShipmentPrintLabel";
 import { openShipmentTrack } from "../../modules/shipment/ShipmentTrackModal";
 import { apiBaseUrl, authHeaders, parseApiResponse } from "../../services/core-api";
+import { DEFAULT_SHIPPING_PRICES, INSPECTION_SURCHARGE, SENSITIVE_SURCHARGE } from "../../../../../packages/shared-types/constants";
 import {
   fetchAdminOverview,
   fetchAdminStaff,

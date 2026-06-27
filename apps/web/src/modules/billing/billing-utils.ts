@@ -1,6 +1,6 @@
 import type { OrderItem } from "../../services/business-api";
 import type { ShippingPriceItem } from "../../services/business-api";
-import { DEFAULT_SHIPPING_PRICES } from "../../../packages/shared-types/constants";
+import { DEFAULT_SHIPPING_PRICES } from "../../../../../packages/shared-types/constants";
 
 type TransportMode = "sea" | "land";
 
