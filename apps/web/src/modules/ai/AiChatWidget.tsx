@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { getAuthSession, type AuthSession } from "../../auth/auth-session";
+import { getOptionalSession, type AuthSession } from "../../auth/auth-session";
 import { fetchAiSuggestions, sendAiMessage } from "../../services/ai-client";
 
 type Message = {
@@ -35,7 +35,7 @@ export default function AiChatWidget() {
   }, []);
 
   useEffect(() => {
-    setSession(getAuthSession());
+    setSession(getOptionalSession());
   }, []);
 
   useEffect(() => {
