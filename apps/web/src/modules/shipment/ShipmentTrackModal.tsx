@@ -339,7 +339,7 @@ function TrackContent({ data }: { data: TrackData }) {
           {data.lastmile.phoneNumber ? <div>电话：{data.lastmile.phoneNumber}</div> : null}
           <div>状态：{data.lastmile.status === "SIGNED" ? "✅ 已签收" : "🚚 派送中"}</div>
           {data.lastmile.signImageBase64 ? (
-            <img src={`data:image/jpeg;base64,${data.lastmile.signImageBase64}`} alt="签收凭证" style={{ marginTop: 4, maxWidth: 200, maxHeight: 200, borderRadius: 6, border: "1px solid #e5e7eb" }} />
+            <img src={data.lastmile.signImageBase64} alt="签收凭证" style={{ marginTop: 4, maxWidth: 200, maxHeight: 200, borderRadius: 6, border: "1px solid #e5e7eb" }} />
           ) : null}
         </div>
       ) : null}

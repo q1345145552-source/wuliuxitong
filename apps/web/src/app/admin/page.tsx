@@ -222,7 +222,7 @@ export default function AdminHomePage() {
     try { const r = await fetch(apiBaseUrl()+"/staff/shipments?limit=500",{headers:authHeaders()}); const d=await r.json();
       if(d.code==="OK") setLmShipments(d.data.items.filter((s:any)=>["inWarehouseTH","outForDelivery","delivered"].includes(s.currentStatus)).map((s:any)=>({id:s.id,trackingNo:s.trackingNo,clientId:s.clientId??"",itemName:s.itemName??"",packageCount:s.packageCount??0}))); } catch (e) { console.error(e); }
   };
-  const [lmOrders, setLmOrders] = useState<Array<{id:string;deliveryNo:string;shipmentId:string;trackingNo?:string;driverName?:string|null;licensePlate?:string|null;phoneNumber?:string|null;deliveryDate?:string|null;status:string}>>([]);
+  const [lmOrders, setLmOrders] = useState<Array<{id:string;deliveryNo:string;shipmentId:string;trackingNo?:string;driverName?:string|null;licensePlate?:string|null;phoneNumber?:string|null;deliveryDate?:string|null;signImageBase64?:string|null;status:string}>>([]);
   const loadLastmileOrders = async () => {
     try { const res = await fetch(`${apiBaseUrl()}/admin/lastmile/orders`, { headers: authHeaders() }); const d = await parseApiResponse<{items:any[]}>(res); setLmOrders(d.items); } catch (e) { console.error(e); }
   };
@@ -1786,7 +1786,7 @@ export default function AdminHomePage() {
                     <td style={{ padding: "6px 8px" }}>{o.licensePlate ?? "-"}</td>
                     <td style={{ padding: "6px 8px" }}>{o.phoneNumber ?? "-"}</td>
                     <td style={{ padding: "6px 8px" }}>{o.deliveryDate || "-"}</td>
-                    <td style={{ padding: "6px 8px" }}>{o.status === "SIGNED" ? "✅ 已签收" : o.status === "DELIVERING" ? "🚚 派送中" : o.status}</td>
+                    <td style={{ padding: "6px 8px" }}>{o.status === "SIGNED" ? <>✅ 已签收{o.signImageBase64?<img src={"data:image/jpeg;base64,"+o.signImageBase64} style={{maxWidth:40,maxHeight:40,borderRadius:4,marginLeft:4}} alt="" />:null}</> : o.status === "DELIVERING" ? "🚚 派送中" : o.status}</td>
                     <td style={{ padding: "6px 8px" }}>
                       {o.status !== "SIGNED" && (
                         <button onClick={async () => {

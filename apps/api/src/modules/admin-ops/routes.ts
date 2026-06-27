@@ -146,6 +146,7 @@ export function registerAdminOpsRoutes(app: MinimalHttpApp): void {
         driverName: item.driverName,
         licensePlate: item.licensePlate,
         phoneNumber: item.phoneNumber,
+        signImageBase64: item.signImageBase64,
         status: item.status,
         updatedAt: item.updatedAt.toISOString(),
       })),

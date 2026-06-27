@@ -153,7 +153,7 @@ async function main() {
     volumeM3: number;
     statusGroup: string;
     minutesAgo: number;
-    cargoType: "NORMAL" | "INSPECTION" | "SENSITIVE";
+    cargoType: "normal" | "inspection" | "sensitive";
   };
 
   const demoOrders: DemoSeed[] = [
@@ -178,7 +178,7 @@ async function main() {
       volumeM3: 1.28,
       statusGroup: "unfinished",
       minutesAgo: 30,
-      cargoType: "NORMAL",
+      cargoType: "normal",
     },
     {
       orderId: "o_002",
@@ -201,7 +201,7 @@ async function main() {
       volumeM3: 0.76,
       statusGroup: "unfinished",
       minutesAgo: 25,
-      cargoType: "SENSITIVE",
+      cargoType: "sensitive",
     },
     {
       orderId: "o_003",
@@ -224,7 +224,7 @@ async function main() {
       volumeM3: 1.95,
       statusGroup: "unfinished",
       minutesAgo: 20,
-      cargoType: "NORMAL",
+      cargoType: "normal",
     },
     {
       orderId: "o_004",
@@ -247,7 +247,7 @@ async function main() {
       volumeM3: 0.61,
       statusGroup: "completed",
       minutesAgo: 15,
-      cargoType: "SENSITIVE",
+      cargoType: "sensitive",
     },
     {
       orderId: "o_005",
@@ -270,7 +270,7 @@ async function main() {
       volumeM3: 1.12,
       statusGroup: "unfinished",
       minutesAgo: 10,
-      cargoType: "INSPECTION",
+      cargoType: "inspection",
     },
   ];
 
@@ -424,7 +424,7 @@ async function main() {
   // ---------------- 计费规则 ----------------
   const pricingFrom = new Date(now.getFullYear(), 0, 1);
   await Promise.all(
-    (["NORMAL", "INSPECTION", "SENSITIVE"] as const).map((cargoType, idx) =>
+    (["normal", "inspection", "sensitive"] as const).map((cargoType, idx) =>
       prisma.pricingRule.upsert({
         where: {
           id: `seed_price_${cargoType}`,
@@ -434,7 +434,7 @@ async function main() {
           id: `seed_price_${cargoType}`,
           companyId: COMPANY_ID,
           cargoType,
-          unitPriceCny: cargoType === "NORMAL" ? 75 : cargoType === "INSPECTION" ? 95 : 120,
+          unitPriceCny: cargoType === "normal" ? 75 : cargoType === "inspection" ? 95 : 120,
           effectiveFrom: pricingFrom,
         },
       }),

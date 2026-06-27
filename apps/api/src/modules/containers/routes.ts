@@ -307,8 +307,6 @@ export function registerContainerRoutes(app: MinimalHttpApp): void {
     };
     if (toStatus === "IN_TRANSIT" && !container.departureDate) updateData.departureDate = now;
     if (toStatus === "ARRIVED" && !container.ata) updateData.ata = now;
-    if (toStatus === "DELIVERING" && !container.customsClearedAt) updateData.customsClearedAt = now;
-
     const shipmentIds = container.items.map((it) => it.shipmentId);
     const ops: Prisma.PrismaPromise<unknown>[] = [
       prisma.container.update({ where: { id: container.id }, data: updateData }),
@@ -587,7 +585,11 @@ export function registerContainerRoutes(app: MinimalHttpApp): void {
     }
 
     // 客户角色：只能看自己的货
-    if (auth.role === "client" && shipment.order?.clientId !== auth.userId) {
+    if (!shipment.order) {
+      fail(res, 404, "NOT_FOUND", "order not found for this shipment");
+      return;
+    }
+    if (auth.role === "client" && shipment.order.clientId !== auth.userId) {
       fail(res, 403, "FORBIDDEN", "this shipment does not belong to you");
       return;
     }
@@ -691,7 +693,7 @@ export function registerContainerRoutes(app: MinimalHttpApp): void {
         driverName: lastmileOrder.driverName,
         licensePlate: lastmileOrder.licensePlate,
         phoneNumber: lastmileOrder.phoneNumber,
-        signImageBase64: lastmileOrder.signImageBase64,
+        signImageBase64: lastmileOrder.signImageBase64 ? `data:image/jpeg;base64,${lastmileOrder.signImageBase64}` : null,
         status: lastmileOrder.status,
       } : null,
     });
