@@ -471,7 +471,7 @@ export function registerShipmentRoutes(app: MinimalHttpApp): void {
       const imap = new Map<string, any[]>();
       for (const r of imageRows) {
         const list = imap.get(r.orderId) ?? [];
-        list.push({ id: r.id, fileName: r.fileName, mime: r.mime, contentBase64: "", filePath: r.filePath, imageUrl: r.filePath || undefined, createdAt: r.createdAt.toISOString() });
+        list.push({ id: r.id, fileName: r.fileName, mime: r.mime, filePath: r.filePath, imageUrl: r.filePath || undefined, createdAt: r.createdAt.toISOString() });
         imap.set(r.orderId, list);
       }
       for (const item of items) {
