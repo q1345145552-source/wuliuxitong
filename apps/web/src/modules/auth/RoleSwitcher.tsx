@@ -5,26 +5,26 @@ import {
   clearAuthSession,
   getOptionalSession,
   setAuthSession,
-  type MockRole,
-  type MockSession,
-} from "../../auth/mock-session";
+  type AuthRole,
+  type AuthSession,
+} from "../../auth/auth-session";
 import { login } from "../../services/auth-api";
 
-const roleRouteMap: Record<MockRole, string> = {
+const roleRouteMap: Record<AuthRole, string> = {
   client: "/client",
   staff: "/staff",
   admin: "/admin",
 };
 
-const quickAccounts: Record<MockRole, string> = {
+const quickAccounts: Record<AuthRole, string> = {
   client: "u_client_001",
   staff: "u_staff_001",
   admin: "u_admin_001",
 };
 
 export default function RoleSwitcher(props: { compact?: boolean }) {
-  const [session, setSession] = useState<MockSession | null>(null);
-  const [switchingRole, setSwitchingRole] = useState<MockRole | null>(null);
+  const [session, setSession] = useState<AuthSession | null>(null);
+  const [switchingRole, setSwitchingRole] = useState<AuthRole | null>(null);
   const [error, setError] = useState("");
   const compact = props.compact ?? false;
 
@@ -37,7 +37,7 @@ export default function RoleSwitcher(props: { compact?: boolean }) {
     window.location.href = "/login";
   };
 
-  const quickSwitch = async (role: MockRole) => {
+  const quickSwitch = async (role: AuthRole) => {
     if (switchingRole) return;
     setSwitchingRole(role);
     setError("");
@@ -76,7 +76,7 @@ export default function RoleSwitcher(props: { compact?: boolean }) {
       </div>
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
         <a href="/login" style={{ color: "#2563eb", textDecoration: "none" }}>返回登录</a>
-        {(["client", "staff", "admin"] as MockRole[]).map((role) => (
+        {(["client", "staff", "admin"] as AuthRole[]).map((role) => (
           <button
             key={role}
             type="button"

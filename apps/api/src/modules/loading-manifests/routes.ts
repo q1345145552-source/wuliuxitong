@@ -89,7 +89,8 @@ export function registerLoadingManifestRoutes(app: MinimalHttpApp): void {
   app.get("/staff/loading-manifests/detail", async (req, res) => {
     const auth = requireRole(req, res, ["staff", "admin"]);
     if (!auth) return;
-    const id = req.query.id as string;
+    const id = req.query.id?.trim();
+    if (!id) { fail(res, 400, "BAD_REQUEST", "id is required"); return; }
     const container = await prisma.container.findFirst({
       where: { id, companyId: auth.companyId },
       include: {
@@ -139,7 +140,8 @@ export function registerLoadingManifestRoutes(app: MinimalHttpApp): void {
   app.post("/staff/loading-manifests/seal", async (req, res) => {
     const auth = requireRole(req, res, ["staff", "admin"]);
     if (!auth) return;
-    const id = req.query.id as string;
+    const id = req.query.id?.trim();
+    if (!id) { fail(res, 400, "BAD_REQUEST", "id is required"); return; }
     const container = await prisma.container.findFirst({ where: { id, companyId: auth.companyId } });
     if (!container) { fail(res, 404, "NOT_FOUND", "装柜任务不存在"); return; }
     if (container.currentStatus === "SEALED" || container.currentStatus === "IN_TRANSIT" || container.currentStatus === "ARRIVED") {
@@ -156,7 +158,8 @@ export function registerLoadingManifestRoutes(app: MinimalHttpApp): void {
   app.post("/staff/loading-manifests/add-shipment", async (req, res) => {
     const auth = requireRole(req, res, ["staff", "admin"]);
     if (!auth) return;
-    const containerId = req.query.id as string;
+    const containerId = req.query.id?.trim();
+    if (!containerId) { fail(res, 400, "BAD_REQUEST", "container id is required"); return; }
     const body = (req.body ?? {}) as { trackingNo?: string; pieceCount?: number };
     if (!body.trackingNo?.trim()) { fail(res, 400, "BAD_REQUEST", "运单号不能为空"); return; }
 

@@ -1,3 +1,4 @@
+import { DEFAULT_SHIPPING_PRICES, INSPECTION_SURCHARGE, SENSITIVE_SURCHARGE } from "../../../../../../packages/shared-types/constants";
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
@@ -58,8 +59,8 @@ type FreightCargoType = "normal"  |  "inspection"  |  "sensitive";
 const freightRateMap: Record<FreightTransportMode, Record<FreightCargoType, number>> = {
   // 统一按“计费体积（立方米）× 单价（元/立方米）”计费
   // 注：海运普货 550 元/立方米（按你提供的口径）
-  land: { normal: 1070, inspection: 1250, sensitive: 1350 },
-  sea: { normal: 550, inspection: 700, sensitive: 800 },
+  land: { normal: DEFAULT_SHIPPING_PRICES.land, inspection: DEFAULT_SHIPPING_PRICES.land + INSPECTION_SURCHARGE, sensitive: DEFAULT_SHIPPING_PRICES.land + SENSITIVE_SURCHARGE },
+  sea: { normal: DEFAULT_SHIPPING_PRICES.sea, inspection: DEFAULT_SHIPPING_PRICES.sea + INSPECTION_SURCHARGE, sensitive: DEFAULT_SHIPPING_PRICES.sea + SENSITIVE_SURCHARGE },
 };
 
 const CLIENT_SECTION_IDS = ["client-main", "client-query", "client-prealert"] as const;
@@ -183,16 +184,16 @@ export default function ClientHomePage() {
     CLIENT_SECTION_IDS.includes(value as (typeof CLIENT_SECTION_IDS)[number]);
 
   const refreshMainData = async () => {
-    const [allPrealerts, orders, wallet, addresses] = await Promise.all([
+    const results = await Promise.allSettled([
       fetchClientPrealerts("all"),
       fetchClientOrders(),
       fetchClientWalletOverview(),
       fetchClientAddresses(),
     ]);
-    setPrealerts(allPrealerts);
-    setDashboardOrders(orders);
-    setWalletRateText(wallet.exchangeRate.rate.toFixed(4));
-    setAddressBook(addresses);
+    if (results[0].status === "fulfilled") setPrealerts(results[0].value);
+    if (results[1].status === "fulfilled") setDashboardOrders(results[1].value);
+    if (results[2].status === "fulfilled") setWalletRateText(results[2].value.exchangeRate.rate.toFixed(4));
+    if (results[3].status === "fulfilled") setAddressBook(results[3].value);
   };
 
   /**
@@ -256,6 +257,7 @@ export default function ClientHomePage() {
 
     // 10 秒自动刷新同步
     const interval = window.setInterval(() => {
+      if (document.hidden) return;
       refreshMainData().catch(() => {});
     }, 10000);
     return () => window.clearInterval(interval);
@@ -739,7 +741,7 @@ export default function ClientHomePage() {
                     </div>
                     {(item.products?.length ?? 0) > 1 && (
                       <div style={{ marginBottom: 8, fontSize: 12, color: "#000000", background: "#f8fafc", borderRadius: 6, padding: "6px 8px" }}>
-                        {item.products!.map((p, i) => (
+                        {(item.products ?? []).map((p, i) => (
                           <div key={p.id || i}>{p.itemName} ×{p.packageCount}箱</div>
                         ))}
                       </div>
@@ -1128,14 +1130,14 @@ export default function ClientHomePage() {
             <div className="order-head">
               <div className="order-title">
                 {(item.products?.length ?? 0) > 0
-                  ? item.products!.map((p, i) => (
+                  ? (item.products ?? []).map((p, i) => (
                       <div key={p.id || i} style={{ marginBottom: i < (item.products?.length ?? 0) - 1 ? 4 : 0 }}>
                         <div style={{ fontWeight: 600 }}>{p.itemName}</div>
                         <div style={{ fontSize: 12, color: "#000000", paddingLeft: 4 }}>
                           {p.packageCount}件
                           {p.lengthCm ? `  ${p.lengthCm}×${p.widthCm}×${p.heightCm}cm` : ""}
                           <span style={{ marginLeft: 6, fontSize: 12, color: "#000000" }}>
-                            货型：{(p.cargoType ?? "NORMAL") === "INSPECTION" ? "商检" : (p.cargoType ?? "NORMAL") === "SENSITIVE" ? "敏感" : "普货"}
+                            货型：{((p.cargoType ?? "normal").toLowerCase() === "inspection" ? "商检" : (p.cargoType ?? "normal").toLowerCase() === "sensitive" ? "敏感" : "普货")}
                           </span>
                           <span style={{ marginLeft: 6, fontSize: 12, color: "#000000" }}>
                             国内单号：{p.domesticTrackingNo || "货拉拉"}
@@ -1171,7 +1173,7 @@ export default function ClientHomePage() {
                   {item.transportMode === "sea" ? "海运" : "陆运"}
                 </span>
                 <span className="order-badge" style={{ background: "#fef3c7", color: "#92400e", borderColor: "#fcd34d" }}>
-                  {item.cargoType === "INSPECTION" ? "商检" : item.cargoType === "SENSITIVE" ? "敏感" : "普货"}
+                  {(item.cargoType ?? "normal").toLowerCase() === "inspection" ? "商检" : (item.cargoType ?? "normal").toLowerCase() === "sensitive" ? "敏感" : "普货"}
                 </span>
                 <span className={statusToneClass(item.currentStatus)}>{orderStatusText(item.currentStatus)}</span>
               </div>
@@ -1249,7 +1251,7 @@ export default function ClientHomePage() {
                   <div className="order-field">
                     <div className="order-field-label">产品明细</div>
                     <div className="order-field-value" style={{ fontSize: 12 }}>
-                      {item.products!.map((p, i) => (
+                      {(item.products ?? []).map((p, i) => (
                         <div key={i} style={{ marginBottom: 2 }}>
                           {p.itemName} ×{p.packageCount}
                           {p.lengthCm ? `  ${p.lengthCm}×${p.widthCm}×${p.heightCm}cm` : ""}
@@ -1408,7 +1410,7 @@ export default function ClientHomePage() {
                     </div>
                     {(item.products?.length ?? 0) > 1 && (
                       <div style={{ marginBottom: 8, fontSize: 12, color: "#000000", background: "#f8fafc", borderRadius: 6, padding: "6px 8px" }}>
-                        {item.products!.map((p, i) => (
+                        {(item.products ?? []).map((p, i) => (
                           <div key={p.id || i}>{p.itemName} ×{p.packageCount}箱</div>
                         ))}
                       </div>
@@ -1573,7 +1575,7 @@ export default function ClientHomePage() {
                 try {
                   const payload: any = { ...form, packageCount: +form.packageCount || 0, weightKg: form.weightKg ? +form.weightKg : undefined, volumeM3: form.volumeM3 ? +form.volumeM3 : undefined, transportMode: form.transportMode as "sea"  |  "land", trackingNo: form.trackingNo?.trim() || undefined };
                   if (hasProducts) {
-                    payload.products = formProducts.filter((p) => p.itemName.trim()).map((p) => ({ itemName: p.itemName.trim(), packageCount: Number(p.packageCount) || 1, lengthCm: p.lengthCm ? Number(p.lengthCm) : undefined, widthCm: p.widthCm ? Number(p.widthCm) : undefined, heightCm: p.heightCm ? Number(p.heightCm) : undefined, productQuantity: p.productQuantity ? Number(p.productQuantity) : undefined, weightKg: p.weightKg ? Number(p.weightKg) : undefined, domesticTrackingNo: p.domesticTrackingNo?.trim() || "货拉拉", cargoType: "NORMAL" }));
+                    payload.products = formProducts.filter((p) => p.itemName.trim()).map((p) => ({ itemName: p.itemName.trim(), packageCount: Number(p.packageCount) || 1, lengthCm: p.lengthCm ? Number(p.lengthCm) : undefined, widthCm: p.widthCm ? Number(p.widthCm) : undefined, heightCm: p.heightCm ? Number(p.heightCm) : undefined, productQuantity: p.productQuantity ? Number(p.productQuantity) : undefined, weightKg: p.weightKg ? Number(p.weightKg) : undefined, domesticTrackingNo: p.domesticTrackingNo?.trim() || "货拉拉", cargoType: "normal" }));
                     payload.itemName = payload.products[0].itemName;
                   }
                   const result = await createClientPrealert(payload);
@@ -1614,7 +1616,7 @@ export default function ClientHomePage() {
             {(editingPrealert.products?.length ?? 0) > 1 && (
               <div style={{ marginBottom: 10, background: "#f8fafc", borderRadius: 6, padding: "8px 10px", fontSize: 12 }}>
                 <div style={{ fontWeight: 600, marginBottom: 4, color: "#000000" }}>产品列表</div>
-                {editingPrealert.products!.map((p) => (
+                {(editingPrealert.products ?? []).map((p) => (
                   <div key={p.id} style={{ color: "#000000" }}>{p.itemName} ×{p.packageCount}箱</div>
                 ))}
               </div>

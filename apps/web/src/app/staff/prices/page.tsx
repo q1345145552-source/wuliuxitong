@@ -1,3 +1,4 @@
+import { DEFAULT_SHIPPING_PRICES, INSPECTION_SURCHARGE, SENSITIVE_SURCHARGE } from "../../../../../../packages/shared-types/constants";
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
@@ -7,10 +8,10 @@ import { fetchStaffClients, fetchAdminShippingRates, fetchClientShippingConfig }
 export default function StaffPricesPage() {
   const [clients, setClients] = useState<Array<{ id: string; name: string }>>([]);
   const [defaults, setDefaults] = useState<Array<{ transportMode: string; cargoType: string; unitPriceCny: number }>>([
-    { transportMode: "sea", cargoType: "normal", unitPriceCny: 550 },
+    { transportMode: "sea", cargoType: "normal", unitPriceCny: DEFAULT_SHIPPING_PRICES.sea },
     { transportMode: "sea", cargoType: "inspection", unitPriceCny: 700 },
     { transportMode: "sea", cargoType: "sensitive", unitPriceCny: 800 },
-    { transportMode: "land", cargoType: "normal", unitPriceCny: 1070 },
+    { transportMode: "land", cargoType: "normal", unitPriceCny: DEFAULT_SHIPPING_PRICES.land },
     { transportMode: "land", cargoType: "inspection", unitPriceCny: 1250 },
     { transportMode: "land", cargoType: "sensitive", unitPriceCny: 1350 },
   ]);
@@ -39,7 +40,7 @@ export default function StaffPricesPage() {
       const d = await fetchClientShippingConfig(id);
       setClientPrices(d.prices);
       setDisableMin(d.disableMinVolume);
-    } catch { }
+    } catch (e) { console.error(e); }
   };
 
   return (

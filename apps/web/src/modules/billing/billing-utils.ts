@@ -1,9 +1,11 @@
 import type { OrderItem } from "../../services/business-api";
 import type { ShippingPriceItem } from "../../services/business-api";
+import { DEFAULT_SHIPPING_PRICES } from "../../../../packages/shared-types/constants";
 
 type TransportMode = "sea" | "land";
 
-const DEFAULT_UNIT_PRICE: Record<TransportMode, number> = { sea: 550, land: 1070 };
+const { sea, land } = DEFAULT_SHIPPING_PRICES;
+const DEFAULT_UNIT_PRICE: Record<TransportMode, number> = { sea, land };
 
 function safeNumber(input: unknown): number | null {
   if (typeof input !== "number") return null;

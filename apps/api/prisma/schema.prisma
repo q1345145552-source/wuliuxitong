@@ -81,7 +81,7 @@ model Order {
   receiverAddressTh        String    @map("receiver_address_th")
   statusGroup              String    @default("unfinished") @map("status_group")
   // ⭐ 新增字段：货物类型（普货/商检/敏感），用于差异化计费
-  cargoType                String    @default("NORMAL") @map("cargo_type")
+  cargoType                String    @default("normal") @map("cargo_type")
   createdAt                DateTime  @default(now()) @map("created_at")
   updatedAt                DateTime  @updatedAt @map("updated_at")
 
@@ -343,7 +343,7 @@ model OrderProduct {
   widthCm         Float?  @map("width_cm")
   heightCm        Float?  @map("height_cm")
   productQuantity Int?    @map("product_quantity")
-  cargoType             String  @default("NORMAL") @map("cargo_type")
+  cargoType             String  @default("normal") @map("cargo_type")
   domesticTrackingNo    String  @default("货拉拉") @map("domestic_tracking_no")
   weightKg              Float?  @map("weight_kg")
   sortOrder       Int     @map("sort_order") @default(0)
@@ -408,7 +408,7 @@ model AdminLastmileOrder {
   status              String
   updatedAt           DateTime @updatedAt @map("updated_at")
 
-  shipment Shipment @relation(fields: [shipmentId], references: [id])
+  shipment Shipment @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
 
   @@index([deliveryNo, updatedAt(sort: Desc)])
   @@index([shipmentId, updatedAt(sort: Desc)])
@@ -425,7 +425,7 @@ model AdminSettlementEntry {
   currency         String   @default("CNY")
   updatedAt        DateTime @updatedAt @map("updated_at")
 
-  order Order @relation(fields: [orderId], references: [id])
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
 
   @@index([orderId, updatedAt(sort: Desc)])
   @@map("admin_settlement_entries")
@@ -581,7 +581,7 @@ model InvoiceLine {
   description   String?
 
   invoice Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
-  order   Order?  @relation(fields: [orderId], references: [id])
+  order   Order?  @relation(fields: [orderId], references: [id], onDelete: SetNull)
 
   @@index([invoiceId])
   @@map("invoice_lines")

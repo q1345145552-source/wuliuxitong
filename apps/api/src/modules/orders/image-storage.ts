@@ -17,9 +17,11 @@ export function ensureImagesDir(): void {
  * The file is named `<orderId>_<cuid>.ext` to avoid collisions.
  */
 export function saveImageToDisk(orderId: string, mime: string, contentBase64: string): string {
+  // Defense-in-depth: sanitize orderId to prevent path traversal
+  const safeId = orderId.replace(/[^a-zA-Z0-9_-]/g, "_");
   ensureImagesDir();
   const ext = mimeToExt(mime);
-  const name = `${orderId}_${crypto.randomBytes(6).toString("hex")}${ext}`;
+  const name = `${safeId}_${crypto.randomBytes(6).toString("hex")}${ext}`;
   const filePath = path.join(IMAGES_DIR, name);
   const buffer = Buffer.from(contentBase64, "base64");
   fs.writeFileSync(filePath, buffer);

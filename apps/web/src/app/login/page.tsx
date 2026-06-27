@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { clearAuthSession, getOptionalSession, setAuthSession } from "../../auth/mock-session";
+import { clearAuthSession, getOptionalSession, setAuthSession } from "../../auth/auth-session";
 import { login } from "../../services/auth-api";
 
 const roleRouteMap: Record<string, string> = {

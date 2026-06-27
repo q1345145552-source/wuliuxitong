@@ -62,8 +62,12 @@ function createJsonResponse(rawRes: ServerResponse): HttpResponse {
 }
 
 async function readJsonBody(req: IncomingMessage): Promise<unknown> {
+  const maxBytes = 20 * 1024 * 1024; // 20MB 限制
   const chunks: Buffer[] = [];
+  let totalBytes = 0;
   for await (const chunk of req) {
+    totalBytes += chunk.length;
+    if (totalBytes > maxBytes) return undefined;
     chunks.push(Buffer.from(chunk));
   }
   if (chunks.length === 0) return undefined;
@@ -93,12 +97,16 @@ export function createApp(): MinimalHttpApp {
     },
     listen(port, callback) {
       const server = createServer(async (rawReq, rawRes) => {
-        rawRes.setHeader("Access-Control-Allow-Origin", "*");
+        const allowedOrigin = process.env.CORS_ORIGIN?.trim() || (process.env.NODE_ENV === "production" ? "" : "*");
+        if (allowedOrigin) {
+          rawRes.setHeader("Access-Control-Allow-Origin", allowedOrigin);
+        }
         rawRes.setHeader("Access-Control-Allow-Methods", "GET,POST,DELETE,OPTIONS");
         rawRes.setHeader(
           "Access-Control-Allow-Headers",
           "Content-Type,x-role,x-user-id,x-company-id,Authorization",
         );
+        rawRes.setHeader("Vary", "Origin");
 
         if ((rawReq.method ?? "").toUpperCase() === "OPTIONS") {
           rawRes.statusCode = 204;

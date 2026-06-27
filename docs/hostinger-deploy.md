@@ -14,13 +14,13 @@
 | 项目 | 说明 |
 |------|------|
 | 主机 | 至少 2 vCPU / 2GB RAM 的 VPS 更稳妥 |
-| Node.js | **20+**（API 使用 `node:sqlite`） |
+| Node.js | **22+**（API 使用 Prisma + PostgreSQL） |
 | 域名 | 可拆成：`www` 指向前端，`api.` 指向 API（或同一域名路径反代） |
 
-在服务器的仓库根目录下运行 API：`process.cwd()` 需为仓库根，`SQLITE_PATH` 未设置时数据库路径为 `<仓库根>/apps/api/data/dev.sqlite`。生产建议显式指定绝对路径，例如：
+在服务器的仓库根目录下运行 API：需要配置 `DATABASE_URL` 指向 PostgreSQL 实例。示例：
 
 ```bash
-export SQLITE_PATH="/var/www/MyWebSite/apps/api/data/production.sqlite"
+export DATABASE_URL="postgresql://user:password@localhost:5432/xiangtai"
 ```
 
 务必定期备份该文件（及同目录 WAL/SHM 若存在）。
@@ -69,7 +69,7 @@ export AUTH_SECRET="<至少32位随机串>"
 export DEEPSEEK_API_KEY="sk-..."
 export DEEPSEEK_MODEL="deepseek-chat"
 export DEEPSEEK_API_BASE_URL="https://api.deepseek.com/chat/completions"
-export SQLITE_PATH="/var/www/MyWebSite/apps/api/data/production.sqlite"
+export DATABASE_URL="postgresql://user:password@localhost:5432/xiangtai"
 ```
 
 若使用 `.env`，需确保 API 进程在启动时已加载（当前项目若未统一用 `dotenv`，请以 `source` 或 PM2 `env_file` 等方式注入变量）。
@@ -140,7 +140,7 @@ pm2 restart logistics-api
    检查浏览器里请求的 base URL；检查 Nginx 是否把 `api` 域名指到 `3001`；检查 CORS（当前 API 较宽松，多为 URL 写错或未 HTTPS）。
 
 2. **数据库丢失**  
-   确认 `SQLITE_PATH` 指向持久磁盘；勿在每次部署时删除 `data` 目录。
+   确认 `DATABASE_URL` 指向持久数据库；勿在每次部署时删除数据库。
 
 3. **`npx tsx` 慢或失败**  
    可固定安装：`npm install -g tsx`，PM2 里改为 `tsx apps/api/src/main.ts`；或后续增加 `apps/api` 的 `package.json` 与 `npm run start` 脚本以锁定版本。

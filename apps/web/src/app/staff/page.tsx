@@ -248,14 +248,16 @@ function shipmentShipDateToLocalInput(shipDate: string | undefined): string {
   return `${datePart}T12:00`;
 }
 
-/** 与后端 update-status 主流程一致。 */
+/** 与后端 STATUS_FLOW 完全一致。 */
 const SHIPMENT_STATUS_FLOW = [
   "created",
-  "pickedUp",
-  "inWarehouseCN",
-  "customsPending",
-  "inTransit",
+  "loaded",
+  "delayDeparted",
+  "departed",
+  "arrivedPort",
   "customsTH",
+  "customsCleared",
+  "inWarehouseTH",
   "outForDelivery",
   "delivered",
 ] as const;
@@ -486,7 +488,7 @@ function buildPrealertDraft(item: any): PrealertEditDraft {
       const resp = await fetch(apiBaseUrl() + "/staff/lastmile/addresses?keyword=" + encodeURIComponent(keyword), { headers: authHeaders() });
       const json = await resp.json();
       if (json.code === "OK") setAddrItems(json.data.items);
-    } catch {}
+    } catch (e) { console.error(e); }
     finally { setAddrLoading(false); }
   };
 
@@ -540,7 +542,7 @@ function buildPrealertDraft(item: any): PrealertEditDraft {
   };
 
   const loadClientNotesData = async () => {
-    try { setClientNotes(await fetchClientNotes()); } catch { }
+    try { setClientNotes(await fetchClientNotes()); } catch (e) { console.error(e); }
   };
 
   const deleteAddr = async (addrId: string) => {
@@ -586,7 +588,7 @@ function buildPrealertDraft(item: any): PrealertEditDraft {
     domesticOrderNo: "",
     packageUnit: "box" as "bag" | "box",
     transportMode: "sea" as "sea" | "land",
-    cargoType: "NORMAL",
+    cargoType: "normal",
   });
 
   /**
@@ -644,10 +646,10 @@ function buildPrealertDraft(item: any): PrealertEditDraft {
   const [lmBatchInput, setLmBatchInput] = useState("");
 const loadLmShipments = async () => {
     try { const r = await fetch(apiBaseUrl()+"/staff/shipments?limit=500",{headers:authHeaders()}); const d=await r.json();
-      if(d.code==="OK") setLmShipments(d.data.items.filter((s:any)=>["inWarehouseTH","outForDelivery","delivered"].includes(s.currentStatus)).map((s:any)=>({id:s.id,trackingNo:s.trackingNo,clientId:s.clientId??"",itemName:s.itemName??"",packageCount:s.packageCount??0}))); } catch {}
+      if(d.code==="OK") setLmShipments(d.data.items.filter((s:any)=>["inWarehouseTH","outForDelivery","delivered"].includes(s.currentStatus)).map((s:any)=>({id:s.id,trackingNo:s.trackingNo,clientId:s.clientId??"",itemName:s.itemName??"",packageCount:s.packageCount??0}))); } catch (e) { console.error(e); }
   };
   const [lmOrderList, setLmOrderList] = useState<Array<{id:string;deliveryNo:string;shipmentId:string;trackingNo?:string;driverName?:string;licensePlate?:string;phoneNumber?:string;deliveryDate?:string;clientId?:string;status:string}>>([]);
-  const loadLmOrders = async () => { try { const r=await fetch(apiBaseUrl()+"/admin/lastmile/orders",{headers:authHeaders()}); const d=await r.json(); if(d.code==="OK")setLmOrderList(d.data.items); } catch {} };
+  const loadLmOrders = async () => { try { const r=await fetch(apiBaseUrl()+"/admin/lastmile/orders",{headers:authHeaders()}); const d=await r.json(); if(d.code==="OK")setLmOrderList(d.data.items); } catch (e) { console.error(e); } };
 
   // 按派送单号分组，检查是否全部签收
   
@@ -920,6 +922,7 @@ const loadLmShipments = async () => {
 
     // 30 秒自动刷新同步
     const interval = window.setInterval(() => {
+      if (document.hidden) return;
       loadPageData().catch(() => {});
     }, 30000);
     return () => window.clearInterval(interval);
@@ -1019,7 +1022,7 @@ const loadLmShipments = async () => {
         domesticTrackingNo: form.domesticOrderNo.trim() || "货拉拉",
         cargoType: form.cargoType,
         transportMode: form.transportMode,
-        products: hasProducts ? staffFormProducts.filter(p => p.itemName.trim()).map(p => ({ itemName: p.itemName.trim(), packageCount: Number(p.packageCount) || 1, lengthCm: p.lengthCm ? Number(p.lengthCm) : undefined, widthCm: p.widthCm ? Number(p.widthCm) : undefined, heightCm: p.heightCm ? Number(p.heightCm) : undefined, productQuantity: p.productQuantity ? Number(p.productQuantity) : undefined, weightKg: p.weightKg ? Number(p.weightKg) : undefined, cargoType: p.cargoType || "NORMAL", domesticTrackingNo: p.domesticTrackingNo.trim() || "货拉拉" })) : undefined,
+        products: hasProducts ? staffFormProducts.filter(p => p.itemName.trim()).map(p => ({ itemName: p.itemName.trim(), packageCount: Number(p.packageCount) || 1, lengthCm: p.lengthCm ? Number(p.lengthCm) : undefined, widthCm: p.widthCm ? Number(p.widthCm) : undefined, heightCm: p.heightCm ? Number(p.heightCm) : undefined, productQuantity: p.productQuantity ? Number(p.productQuantity) : undefined, weightKg: p.weightKg ? Number(p.weightKg) : undefined, cargoType: (p.cargoType || "normal").toLowerCase(), domesticTrackingNo: p.domesticTrackingNo.trim() || "货拉拉" })) : undefined,
       });
       // 并行上传产品图片
       if (orderImageFiles.length > 0) {
@@ -1054,7 +1057,7 @@ const loadLmShipments = async () => {
       setForm({
         domesticOrderNo: "", trackingNo: "", batchNo: "",
         itemName: "", warehouseId: "wh_yiwu_01", packageUnit: "box" as "bag" | "box",
-        transportMode: "sea" as "sea" | "land", cargoType: "NORMAL", arrivedAt: "", clientId: "",
+        transportMode: "sea" as "sea" | "land", cargoType: "normal", arrivedAt: "", clientId: "",
         packageCount: "", volumeM3: "", weightKg: "", productQuantity: "",
         lengthCm: "", widthCm: "", heightCm: "",
       });
@@ -1610,7 +1613,7 @@ const loadLmShipments = async () => {
                     </div>
                     {(item.products?.length ?? 0) > 1 && (
                       <div style={{ fontSize: 11, color: "#000000", marginBottom: 6, background: "#fefce8", borderRadius: 4, padding: "3px 6px" }}>
-                        {item.products!.map((p) => `${p.itemName}×${p.packageCount}箱`).join(" | ")}
+                        {(item.products ?? []).map((p) => `${p.itemName}×${p.packageCount}箱`).join(" | ")}
                       </div>
                     )}
                     <div
@@ -2012,10 +2015,10 @@ const loadLmShipments = async () => {
                 <input type="number" step="0.01" value={p.heightCm} onChange={(e) => { const n = [...staffFormProducts]; n[i] = { ...n[i], heightCm: e.target.value }; setStaffFormProducts(n); }} placeholder="高" style={{ border: "1px solid #d1d5db", borderRadius: 4, padding: "3px 4px", fontSize: 11, minWidth: 0 }} />
                 <input type="number" value={p.productQuantity} onChange={(e) => { const n = [...staffFormProducts]; n[i] = { ...n[i], productQuantity: e.target.value }; setStaffFormProducts(n); }} placeholder="单箱数量" style={{ border: "1px solid #d1d5db", borderRadius: 4, padding: "3px 4px", fontSize: 11, minWidth: 0 }} />
                 <input type="number" step="0.01" value={p.weightKg} onChange={(e) => { const n = [...staffFormProducts]; n[i] = { ...n[i], weightKg: e.target.value }; setStaffFormProducts(n); }} placeholder="单箱重kg" style={{ border: "1px solid #d1d5db", borderRadius: 4, padding: "3px 4px", fontSize: 11, minWidth: 0 }} />
-                <select value={p.cargoType || "NORMAL"} onChange={(e) => { const n = [...staffFormProducts]; n[i] = { ...n[i], cargoType: e.target.value }; setStaffFormProducts(n); }} style={{ border: "1px solid #d1d5db", borderRadius: 4, padding: "3px 2px", fontSize: 11, background: "#fff", minWidth: 0 }}>
-                  <option value="NORMAL">普货</option>
-                  <option value="INSPECTION">商检</option>
-                  <option value="SENSITIVE">敏感</option>
+                <select value={(p.cargoType || "normal").toLowerCase()} onChange={(e) => { const n = [...staffFormProducts]; n[i] = { ...n[i], cargoType: e.target.value }; setStaffFormProducts(n); }} style={{ border: "1px solid #d1d5db", borderRadius: 4, padding: "3px 2px", fontSize: 11, background: "#fff", minWidth: 0 }}>
+                  <option value="normal">普货</option>
+                  <option value="inspection">商检</option>
+                  <option value="sensitive">敏感</option>
                 </select>
                 <input value={p.domesticTrackingNo || ""} onChange={(e) => { const n = [...staffFormProducts]; n[i] = { ...n[i], domesticTrackingNo: e.target.value }; setStaffFormProducts(n); }} placeholder="货拉拉" style={{ border: "1px solid #d1d5db", borderRadius: 4, padding: "3px 4px", fontSize: 11, minWidth: 0 }} />
                 <span style={{ fontSize: 10, color: prodVol > 0 ? "#2563eb" : "#9ca3af", textAlign: "right", padding: "0 2px", whiteSpace: "nowrap" }}>{prodVol > 0 ? prodVol.toFixed(3) + "m³" : "—"}</span>
@@ -2042,7 +2045,7 @@ const loadLmShipments = async () => {
                 </div>
               );
             })()}
-            <button type="button" onClick={() => setStaffFormProducts((v) => [...v, { itemName: "", packageCount: "", lengthCm: "", widthCm: "", heightCm: "", productQuantity: "", weightKg: "", cargoType: "NORMAL", domesticTrackingNo: "" }])} style={{ border: "1px dashed #2563eb", borderRadius: 4, padding: "4px 10px", fontSize: 12, background: "#fff", color: "#2563eb", cursor: "pointer", marginTop: 4 }}>+ 添加产品</button>
+            <button type="button" onClick={() => setStaffFormProducts((v) => [...v, { itemName: "", packageCount: "", lengthCm: "", widthCm: "", heightCm: "", productQuantity: "", weightKg: "", cargoType: "normal", domesticTrackingNo: "" }])} style={{ border: "1px dashed #2563eb", borderRadius: 4, padding: "4px 10px", fontSize: 12, background: "#fff", color: "#2563eb", cursor: "pointer", marginTop: 4 }}>+ 添加产品</button>
           </div>
           <div style={{ fontSize: 12, color: "#000000", marginTop: 4 }}>
             💡 输入长宽高和单箱重量后，体积和总重量在前端实时自动计算
@@ -2426,7 +2429,7 @@ const loadLmShipments = async () => {
                           <td style={{ padding: "8px 6px", fontWeight: 600, color: "#1e3a8a", whiteSpace: "nowrap" }}>{item.orderNo || item.trackingNo}</td>
                           <td style={{ padding: "8px 6px", color: "#000000", minWidth: 120 }}>
                             {(item.products?.length ?? 0) > 0
-                              ? item.products!.map((p, i) => (
+                              ? (item.products ?? []).map((p, i) => (
                                   <div key={i} style={{ marginBottom: i < (item.products?.length ?? 0) - 1 ? 2 : 0, whiteSpace: "nowrap" }}>
                                     {p.itemName}
                                   </div>
@@ -2435,7 +2438,7 @@ const loadLmShipments = async () => {
                           </td>
                           <td style={{ padding: "8px 6px", whiteSpace: "nowrap" }}>
                             {(item.products?.length ?? 0) > 0
-                              ? item.products!.map((p, i) => (
+                              ? (item.products ?? []).map((p, i) => (
                                   <div key={i} style={{ marginBottom: i < (item.products?.length ?? 0) - 1 ? 2 : 0 }}>
                                     {p.packageCount}箱
                                   </div>
@@ -2444,7 +2447,7 @@ const loadLmShipments = async () => {
                           </td>
                           <td style={{ padding: "8px 6px", whiteSpace: "nowrap" }}>
                             {(item.products?.length ?? 0) > 0
-                              ? item.products!.map((p, i) => (
+                              ? (item.products ?? []).map((p, i) => (
                                   <div key={i} style={{ marginBottom: i < (item.products?.length ?? 0) - 1 ? 2 : 0 }}>
                                     {p.productQuantity ? `${p.productQuantity}个/箱` : "—"}
                                   </div>
@@ -2453,7 +2456,7 @@ const loadLmShipments = async () => {
                           </td>
                           <td style={{ padding: "8px 6px", whiteSpace: "nowrap" }}>
                             {(item.products?.length ?? 0) > 0
-                              ? item.products!.map((p, i) => (
+                              ? (item.products ?? []).map((p, i) => (
                                   <div key={i} style={{ marginBottom: i < (item.products?.length ?? 0) - 1 ? 2 : 0 }}>
                                     {p.lengthCm ? `${p.lengthCm}×${p.widthCm}×${p.heightCm}cm` : "—"}
                                   </div>
@@ -2462,7 +2465,7 @@ const loadLmShipments = async () => {
                           </td>
                           <td style={{ padding: "8px 6px", whiteSpace: "nowrap" }}>
                             {(item.products?.length ?? 0) > 0
-                              ? item.products!.map((p, i) => (
+                              ? (item.products ?? []).map((p, i) => (
                                   <div key={i} style={{ marginBottom: i < (item.products?.length ?? 0) - 1 ? 2 : 0 }}>
                                     {p.domesticTrackingNo || "货拉拉"}
                                   </div>
@@ -2474,12 +2477,12 @@ const loadLmShipments = async () => {
                           <td style={{ padding: "8px 6px", whiteSpace: "nowrap" }}>{transportModeLabel(item.transportMode)}</td>
                           <td style={{ padding: "8px 6px", whiteSpace: "nowrap", fontSize: 12 }}>
                             {(item.products?.length ?? 0) > 0
-                              ? item.products!.map((p, i) => (
+                              ? (item.products ?? []).map((p, i) => (
                                   <div key={i} style={{ marginBottom: i < (item.products?.length ?? 0) - 1 ? 2 : 0 }}>
-                                    {(p.cargoType ?? "NORMAL") === "INSPECTION" ? "商检" : (p.cargoType ?? "NORMAL") === "SENSITIVE" ? "敏感" : "普货"}
+                                    {((p.cargoType ?? "normal").toLowerCase() === "inspection" ? "商检" : (p.cargoType ?? "normal").toLowerCase() === "sensitive" ? "敏感" : "普货")}
                                   </div>
                                 ))
-                              : (item.cargoType === "INSPECTION" ? "商检" : item.cargoType === "SENSITIVE" ? "敏感" : "普货")}
+                              : ((item.cargoType ?? "normal").toLowerCase() === "inspection" ? "商检" : (item.cargoType ?? "normal").toLowerCase() === "sensitive" ? "敏感" : "普货")}
                           </td>
                           <td style={{ padding: "8px 6px", whiteSpace: "nowrap", color: "#000000" }}>
                             {item.shipDate ?? formatDateTime(item.arrivedAt)}
@@ -2531,7 +2534,7 @@ const loadLmShipments = async () => {
                                   <span>仓库：<strong>{warehouseLabelFromId(item.warehouseId)}</strong></span>
                                   <span>柜号：<strong>{item.batchNo ?? "—"}</strong></span>
                                   <span>包装：<strong>{item.packageUnit === "bag" ? "袋" : "箱"}</strong></span>
-                                  <span>国内单号：<strong>{(item.products?.length ?? 0) > 0 ? item.products!.map(p => p.domesticTrackingNo ?? "货拉拉").filter((v, i, a) => a.indexOf(v) === i).join("、") : (item.domesticTrackingNo ?? "—")}</strong></span>
+                                  <span>国内单号：<strong>{(item.products?.length ?? 0) > 0 ? (item.products ?? []).map(p => p.domesticTrackingNo ?? "货拉拉").filter((v, i, a) => a.indexOf(v) === i).join("、") : (item.domesticTrackingNo ?? "—")}</strong></span>
                                   <span>加收金额：<strong>{item.receivableAmountCny != null ? `${item.receivableCurrency === "THB" ? "THB" : "CNY"} ${item.receivableAmountCny.toFixed(2)}` : "0"}</strong></span>
                                   <span>收货地址：<strong>{item.receiverAddressTh ?? "—"}</strong></span>
                                 </div>
@@ -2573,7 +2576,7 @@ const loadLmShipments = async () => {
                                           {(item.products?.length ?? 0) > 1 && (
                                         <div style={{ marginBottom: 12, background: "#fefce8", borderRadius: 6, padding: "8px 10px", fontSize: 12 }}>
                                           <span style={{ fontWeight: 600, color: "#000000" }}>产品列表：</span>
-                                          {item.products!.map((p) => (
+                                          {(item.products ?? []).map((p) => (
                                             <span key={p.id} style={{ marginLeft: 8, color: "#000000" }}>
                                               {p.itemName} ×{p.packageCount}箱
                                               {p.lengthCm ? ` (${p.lengthCm}×${p.widthCm}×${p.heightCm}cm)` : ""}
@@ -3226,7 +3229,7 @@ const loadLmShipments = async () => {
             {(approvingPrealert.products?.length ?? 0) > 1 && (
               <div style={{ marginBottom: 10, background: "#fefce8", borderRadius: 6, padding: "8px 10px", fontSize: 12 }}>
                 <div style={{ fontWeight: 600, marginBottom: 4, color: "#000000" }}>产品列表</div>
-                {approvingPrealert.products!.map((p) => (
+                {(approvingPrealert.products ?? []).map((p) => (
                   <div key={p.id} style={{ color: "#000000" }}>{p.itemName} ×{p.packageCount}箱{p.lengthCm ? ` (${p.lengthCm}×${p.widthCm}×${p.heightCm}cm)` : ""}</div>
                 ))}
               </div>
@@ -3325,10 +3328,10 @@ const loadLmShipments = async () => {
                     <input type="number" step="0.01" value={p.heightCm} onChange={(e) => { const n = [...staffFormProducts]; n[i] = { ...n[i], heightCm: e.target.value }; setStaffFormProducts(n); }} placeholder="高" style={{ border: "1px solid #d1d5db", borderRadius: 4, padding: "3px 4px", fontSize: 11, minWidth: 0 }} />
                     <input type="number" value={p.productQuantity} onChange={(e) => { const n = [...staffFormProducts]; n[i] = { ...n[i], productQuantity: e.target.value }; setStaffFormProducts(n); }} placeholder="单箱数量" style={{ border: "1px solid #d1d5db", borderRadius: 4, padding: "3px 4px", fontSize: 11, minWidth: 0 }} />
                     <input type="number" step="0.01" value={p.weightKg} onChange={(e) => { const n = [...staffFormProducts]; n[i] = { ...n[i], weightKg: e.target.value }; setStaffFormProducts(n); }} placeholder="单箱重kg" style={{ border: "1px solid #d1d5db", borderRadius: 4, padding: "3px 4px", fontSize: 11, minWidth: 0 }} />
-                    <select value={p.cargoType || "NORMAL"} onChange={(e) => { const n = [...staffFormProducts]; n[i] = { ...n[i], cargoType: e.target.value }; setStaffFormProducts(n); }} style={{ border: "1px solid #d1d5db", borderRadius: 4, padding: "3px 2px", fontSize: 11, background: "#fff", minWidth: 0 }}>
-                      <option value="NORMAL">普货</option>
-                      <option value="INSPECTION">商检</option>
-                      <option value="SENSITIVE">敏感</option>
+                    <select value={(p.cargoType || "normal").toLowerCase()} onChange={(e) => { const n = [...staffFormProducts]; n[i] = { ...n[i], cargoType: e.target.value }; setStaffFormProducts(n); }} style={{ border: "1px solid #d1d5db", borderRadius: 4, padding: "3px 2px", fontSize: 11, background: "#fff", minWidth: 0 }}>
+                      <option value="normal">普货</option>
+                      <option value="inspection">商检</option>
+                      <option value="sensitive">敏感</option>
                     </select>
                     <input value={p.domesticTrackingNo || ""} onChange={(e) => { const n = [...staffFormProducts]; n[i] = { ...n[i], domesticTrackingNo: e.target.value }; setStaffFormProducts(n); }} placeholder="货拉拉" style={{ border: "1px solid #d1d5db", borderRadius: 4, padding: "3px 4px", fontSize: 11, minWidth: 0 }} />
                     <span style={{ fontSize: 10, color: prodVol > 0 ? "#2563eb" : "#9ca3af", textAlign: "right", padding: "0 2px", whiteSpace: "nowrap" }}>{prodVol > 0 ? prodVol.toFixed(3) + "m³" : "—"}</span>
@@ -3355,7 +3358,7 @@ const loadLmShipments = async () => {
                     </div>
                   );
                 })()}
-                <button type="button" onClick={() => setStaffFormProducts((v) => [...v, { itemName: "", packageCount: "", lengthCm: "", widthCm: "", heightCm: "", productQuantity: "", weightKg: "", cargoType: "NORMAL", domesticTrackingNo: "" }])} style={{ border: "1px dashed #2563eb", borderRadius: 4, padding: "4px 10px", fontSize: 12, background: "#fff", color: "#2563eb", cursor: "pointer", marginTop: 4 }}>+ 添加产品</button>
+                <button type="button" onClick={() => setStaffFormProducts((v) => [...v, { itemName: "", packageCount: "", lengthCm: "", widthCm: "", heightCm: "", productQuantity: "", weightKg: "", cargoType: "normal", domesticTrackingNo: "" }])} style={{ border: "1px dashed #2563eb", borderRadius: 4, padding: "4px 10px", fontSize: 12, background: "#fff", color: "#2563eb", cursor: "pointer", marginTop: 4 }}>+ 添加产品</button>
               </div>
               <div style={{ fontSize: 12, color: "#000000", marginTop: 4 }}>
                 💡 输入长宽高和单箱重量后，体积和总重量在前端实时自动计算

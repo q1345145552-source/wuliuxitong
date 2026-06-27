@@ -97,7 +97,7 @@ export default function StaffContainerLoadingPage() {
       try {
         const d = await fetchLoadingManifestDetail(m.id);
         d.bills.forEach((b) => { mapping[b.shipmentId] = m.manifestNo; });
-      } catch {}
+      } catch (e) { console.error(e); }
     }
     setLoadedShipments(mapping);
   };

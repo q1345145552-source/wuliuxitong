@@ -3,10 +3,12 @@ import { createHash } from "node:crypto";
 import { Prisma } from "@prisma/client";
 import { prisma } from "../../db/prisma";
 import type { MinimalHttpApp } from "../../server";
+import { checkRateLimit, getClientIp, rateLimitKey } from "../core/rate-limit";
 import { fail, ok, parseJsonArray, requireRole } from "../core/http-utils";
 
 
 const STATUS_FLOW = [
+  "created",
   "loaded",
   "delayDeparted",
   "departed",
@@ -187,6 +189,12 @@ export function registerShipmentRoutes(app: MinimalHttpApp): void {
   });
 
   app.get("/public/track", async (req, res) => {
+    // 速率限制：每个 IP 每分钟最多 30 次查询，防止暴力枚举
+    const ip = getClientIp(req.headers);
+    if (checkRateLimit(rateLimitKey(ip, "track"), 30, 60_000)) {
+      fail(res, 429, "BAD_REQUEST", "too many requests, please try again later");
+      return;
+    }
     const trackingNo = req.query.trackingNo?.trim();
     const phoneLast4 = req.query.phoneLast4?.trim();
     if (!trackingNo || !phoneLast4 || phoneLast4.length !== 4) {
@@ -435,7 +443,7 @@ export function registerShipmentRoutes(app: MinimalHttpApp): void {
       receivableCurrency: r.order?.receivableCurrency ?? undefined,
       paymentStatus: (r.order?.paymentStatus === "paid" ? "paid" : "unpaid") as "paid" | "unpaid",
       packageUnit: ((r.order?.packageUnit === "bag" ? "bag" : "box") as "bag" | "box"),
-      cargoType: r.order?.cargoType ?? "NORMAL",
+      cargoType: r.order?.cargoType ?? "normal",
       canEdit: auth.role === "admin",
       productImages: undefined as any[] | undefined,
       products: undefined as any[] | undefined,

@@ -170,7 +170,7 @@ export function registerClientAiRoutes(app: MinimalHttpApp): void {
       return;
     }
 
-    const companyId = req.query?.companyId ?? auth.companyId;
+    const companyId = auth.companyId;
     const logs = await auditStore.listByCompany(companyId);
     res.status(200).json(jsonOk(logs));
   });
@@ -185,7 +185,7 @@ export function registerClientAiRoutes(app: MinimalHttpApp): void {
       res.status(403).json(jsonError("FORBIDDEN", "only admin can read ai knowledge gaps"));
       return;
     }
-    const companyId = req.query?.companyId ?? auth.companyId;
+    const companyId = auth.companyId;
     const statusRaw = req.query?.status?.trim();
     const status = statusRaw === "open" || statusRaw === "resolved" ? statusRaw : undefined;
     const list = await knowledgeGapStore.listByCompany(companyId, status);
@@ -208,7 +208,7 @@ export function registerClientAiRoutes(app: MinimalHttpApp): void {
       res.status(400).json(jsonError("BAD_REQUEST", "id is required"));
       return;
     }
-    const companyId = payload.companyId ?? auth.companyId;
+    const companyId = auth.companyId;
     const okResolved = await knowledgeGapStore.resolve({
       companyId,
       id,
@@ -231,7 +231,7 @@ export function registerClientAiRoutes(app: MinimalHttpApp): void {
       res.status(403).json(jsonError("FORBIDDEN", "only admin can read ai session memory"));
       return;
     }
-    const companyId = req.query?.companyId ?? auth.companyId;
+    const companyId = auth.companyId;
     const limitRaw = req.query?.limit?.trim();
     const limit = limitRaw ? Number(limitRaw) : 200;
     const safeLimit = Number.isNaN(limit) ? 200 : Math.max(1, Math.min(limit, 1000));
@@ -249,7 +249,7 @@ export function registerClientAiRoutes(app: MinimalHttpApp): void {
       res.status(403).json(jsonError("FORBIDDEN", "only admin can clear ai session memory"));
       return;
     }
-    const companyId = req.query?.companyId ?? auth.companyId;
+    const companyId = auth.companyId;
     const sessionId = req.query?.sessionId?.trim() || undefined;
     const userId = req.query?.userId?.trim() || undefined;
     const removed = await memoryStore.removeByFilter({ companyId, sessionId, userId });
@@ -322,7 +322,7 @@ export function registerClientAiRoutes(app: MinimalHttpApp): void {
       res.status(403).json(jsonError("FORBIDDEN", "only admin can read ai knowledge"));
       return;
     }
-    const companyId = req.query?.companyId ?? auth.companyId;
+    const companyId = auth.companyId;
     const items = await knowledgeStore.list(companyId);
     res.status(200).json(jsonOk(items));
   });
@@ -342,7 +342,7 @@ export function registerClientAiRoutes(app: MinimalHttpApp): void {
       res.status(400).json(jsonError("BAD_REQUEST", "title and content are required"));
       return;
     }
-    const companyId = payload.companyId ?? auth.companyId;
+    const companyId = auth.companyId;
     const created = await knowledgeStore.add({
       companyId,
       title: payload.title.trim(),
@@ -367,7 +367,7 @@ export function registerClientAiRoutes(app: MinimalHttpApp): void {
       res.status(400).json(jsonError("BAD_REQUEST", "id is required"));
       return;
     }
-    const companyId = req.query?.companyId ?? auth.companyId;
+    const companyId = auth.companyId;
     const deleted = await knowledgeStore.remove(companyId, id);
     if (!deleted) {
       res.status(404).json(jsonError("NOT_FOUND", "knowledge item not found"));

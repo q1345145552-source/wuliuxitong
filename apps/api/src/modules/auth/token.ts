@@ -20,7 +20,11 @@ function base64UrlDecode(input: string): Buffer {
 }
 
 function tokenSecret(): string {
-  return process.env.AUTH_SECRET?.trim() || "dev-only-change-me";
+  const secret = process.env.AUTH_SECRET?.trim();
+  if (!secret) {
+    throw new Error("FATAL: AUTH_SECRET environment variable is required but not set. Generate a random key: openssl rand -base64 48");
+  }
+  return secret;
 }
 
 export function signAuthToken(input: {

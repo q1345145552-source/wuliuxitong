@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { getMockSession, type MockSession } from "../../auth/mock-session";
+import { getAuthSession, type AuthSession } from "../../auth/auth-session";
 import { fetchAiSuggestions, sendAiMessage } from "../../services/ai-client";
 
 type Message = {
@@ -11,7 +11,7 @@ type Message = {
 };
 
 export default function AiChatWidget() {
-  const [session, setSession] = useState<MockSession | null>(null);
+  const [session, setSession] = useState<AuthSession | null>(null);
   const [open, setOpen] = useState(false);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
@@ -35,14 +35,16 @@ export default function AiChatWidget() {
   }, []);
 
   useEffect(() => {
-    setSession(getMockSession());
+    setSession(getAuthSession());
   }, []);
 
   useEffect(() => {
     if (!open) return;
+    const ac = new AbortController();
     fetchAiSuggestions()
       .then((res) => setSuggestions(res.suggestions))
-      .catch(() => setSuggestions([]));
+      .catch((e) => { console.error("suggestions failed", e); setSuggestions([]); });
+    return () => ac.abort();
   }, [open]);
 
   const canSend = useMemo(() => input.trim().length > 0 && !loading, [input, loading]);
@@ -63,14 +65,14 @@ export default function AiChatWidget() {
       const answerId = `a_${Date.now()}`;
       setMessages((prev) => [
         ...prev,
-        { id: answerId, role: "assistant", content: "" },
+        { id: answerId, role: "assistant", content: "…" },
       ]);
       let current = 0;
       if (typeTimerRef.current) {
         window.clearInterval(typeTimerRef.current);
       }
       typeTimerRef.current = window.setInterval(() => {
-        current += 1;
+        current += 3; // batch 3 chars per tick for smoother long responses
         const nextText = result.answer.slice(0, current);
         setMessages((prev) =>
           prev.map((item) => (item.id === answerId ? { ...item, content: nextText } : item)),
@@ -81,7 +83,7 @@ export default function AiChatWidget() {
         }
       }, 16);
     } catch (error) {
-      const messageText = error instanceof Error ? error.message : "AI 请求失败";
+      const messageText = error instanceof Error ? error.message : "网络错误，请稍后重试";
       setMessages((prev) => [
         ...prev,
         { id: `e_${Date.now()}`, role: "assistant", content: `请求失败：${messageText}` },
@@ -245,7 +247,7 @@ export default function AiChatWidget() {
                 borderRadius: 8,
                 padding: "8px 14px",
                 color: "#fff",
-                background: canSend ? "#2563eb" : "#000000",
+                background: canSend ? "#2563eb" : "#9ca3af",
                 cursor: canSend ? "pointer" : "not-allowed",
               }}
             >

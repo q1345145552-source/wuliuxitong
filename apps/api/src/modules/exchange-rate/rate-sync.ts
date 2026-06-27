@@ -41,7 +41,10 @@ export async function upsertCnyThbRate(input: { rate: number; updatedAt?: string
  */
 export async function fetchLiveCnyThbRate(): Promise<{ rate: number; updatedAt: string }> {
   const endpoint = process.env.EXCHANGE_RATE_API_URL?.trim() || DEFAULT_EXCHANGE_RATE_API;
-  const response = await fetch(endpoint, { method: "GET" });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 10_000);
+  try {
+    const response = await fetch(endpoint, { method: "GET", signal: controller.signal });
   if (!response.ok) {
     throw new Error(`exchange api http ${response.status}`);
   }
@@ -52,6 +55,9 @@ export async function fetchLiveCnyThbRate(): Promise<{ rate: number; updatedAt: 
   }
   const updatedAt = new Date(data.time_last_update_utc ?? Date.now()).toISOString();
   return { rate, updatedAt };
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 /**
@@ -98,7 +104,12 @@ export async function refreshCnyThbRateIfStale(): Promise<{
     return { rate: latest.rate, updatedAt: latest.updatedAt, refreshed: true };
   }
 
-  // Fallback keeps wallet page available when first sync fails.
+  // Try EXCHANGE_RATE_FALLBACK env var first, then last-resort fallback
+  const envRate = Number(process.env.EXCHANGE_RATE_FALLBACK?.trim());
+  if (Number.isFinite(envRate) && envRate > 0) {
+    console.warn(`[exchange-rate] using EXCHANGE_RATE_FALLBACK: ${envRate}`);
+    return { rate: envRate, updatedAt: nowIso, refreshed: false };
+  }
   return { rate: 5.06, updatedAt: nowIso, refreshed: false };
 }
 

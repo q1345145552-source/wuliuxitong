@@ -6,7 +6,7 @@
 
 - **前端**：Next.js，默认端口 `3000`
 - **后端**：Node HTTP API，默认端口 `3001`
-- **数据库**：SQLite 文件（Docker 卷持久化）
+- **数据库**：PostgreSQL（Docker 卷持久化）
 
 浏览器通过环境变量 **`NEXT_PUBLIC_API_BASE_URL`** 访问后端，该地址必须是用户手机/电脑能访问的 **公网 URL**（不能写 Docker 内部主机名）。
 
@@ -74,7 +74,7 @@ docker compose up -d --build web
 
 - 不要将 `.env`、数据库文件提交到 Git。
 - 生产环境务必使用 **HTTPS**。
-- 定期备份 SQLite 卷或文件（`/data/app.sqlite` 对应卷 `api-sqlite`）。
+- 定期备份 PostgreSQL 数据库（`/var/lib/postgresql/data` 对应卷 `postgres-data`）。
 
 ## 四、故障排查
 

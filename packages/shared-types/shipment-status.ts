@@ -1,5 +1,6 @@
 export type ShipmentStatus =
   | "loaded"
+  | "created"
   | "delayDeparted"
   | "departed"
   | "arrivedPort"
@@ -13,6 +14,7 @@ export type ShipmentStatus =
   | "cancelled";
 
 export const SHIPMENT_STATUS_FLOW: ShipmentStatus[] = [
+  "created",
   "loaded",
   "delayDeparted",
   "departed",

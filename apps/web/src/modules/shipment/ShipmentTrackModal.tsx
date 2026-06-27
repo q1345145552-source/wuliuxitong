@@ -390,7 +390,7 @@ function TrackContent({ data }: { data: TrackData }) {
           <div style={{ fontSize: 17, fontWeight: 700, color: currentCfg.color }}>{currentCfg.zh}</div>
           {activeTab === 0 && data.containers?.length > 0 && (
             <div style={{ fontSize: 11, color: "#6b7280", marginTop: 2 }}>
-              {data.containers.map((c) => c.containerNo || "—").join("  ｜  ")}
+              {data.containers.map((c) => c.containerNo).filter(Boolean).join("  ｜  ") || null}
             </div>
           )}
         </div>
@@ -629,7 +629,19 @@ export function openShipmentTrack(trackingOrId: string) {
         }}
       />,
     );
-  } catch {
-    overlay.innerHTML = `<div style="position:fixed;inset:0;z-index:9999;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.4);padding:16px" onclick="this.parentElement?.remove()"><div style="width:100%;max-width:500px;background:#fff;border-radius:12px;padding:24px;text-align:center"><div style="font-size:40px;margin-bottom:12px">😞</div><div style="font-size:14px;color:#b91c1c">加载失败，请刷新页面后重试</div></div></div>`;
+  } catch (e) {
+    console.error("ShipmentTrackModal: failed to mount", e);
+    const errRoot = createRoot(overlay);
+    errRoot.render(
+      <div
+        style={{ position: "fixed", inset: 0, zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(0,0,0,0.4)", padding: 16 }}
+        onClick={() => { errRoot.unmount(); overlay.remove(); }}
+      >
+        <div style={{ width: "100%", maxWidth: 500, background: "#fff", borderRadius: 12, padding: 24, textAlign: "center" }}>
+          <div style={{ fontSize: 40, marginBottom: 12 }}>😞</div>
+          <div style={{ fontSize: 14, color: "#b91c1c" }}>加载失败，请刷新页面后重试</div>
+        </div>
+      </div>,
+    );
   }
 }

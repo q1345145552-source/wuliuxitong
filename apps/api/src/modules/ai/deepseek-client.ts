@@ -26,7 +26,7 @@ export class HttpDeepSeekClient implements DeepSeekClient {
   }): Promise<string> {
     // Fallback keeps V1 usable when key is not configured.
     if (!this.apiKey) {
-      return `系统暂未配置 DeepSeek API Key。基于业务数据给出结果：${input.context}`;
+      return "系统暂未配置 DeepSeek API Key。请联系管理员配置后使用 AI 客服功能。";
     }
 
     const payload = {

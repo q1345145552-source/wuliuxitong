@@ -18,6 +18,10 @@ services:
         value: deepseek-chat
       - key: DEEPSEEK_API_BASE_URL
         value: https://api.deepseek.com/chat/completions
+      - key: DATABASE_URL
+        sync: false
+      - key: REDIS_URL
+        sync: false
 
   - type: web
     name: xiangtai-web

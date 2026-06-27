@@ -23,7 +23,7 @@ restart_service() {
 # ── 1. 容器状态检查 ──
 log "========== 健康检查 =========="
 
-for container in mywebsite-api-1 mywebsite-web-1 xiangtai-postgres xiangtai-redis; do
+for container in xiangtai-api xiangtai-web xiangtai-postgres xiangtai-redis; do
   STATUS=$(docker inspect -f '{{.State.Status}}' "$container" 2>/dev/null)
   if [ "$STATUS" = "running" ]; then
     ok "$container 运行中"
@@ -39,7 +39,7 @@ if [ "$API_CODE" = "200" ] || [ "$API_CODE" = "401" ]; then
   ok "API 响应正常 (HTTP $API_CODE)"
 elif [ "$API_CODE" = "000" ]; then
   alert "API 无响应（可能挂了）"
-  restart_service "mywebsite-api-1"
+  restart_service "xiangtai-api"
 else
   alert "API 异常响应 (HTTP $API_CODE)"
 fi
@@ -50,7 +50,7 @@ if [ "$WEB_CODE" = "200" ] || [ "$WEB_CODE" = "307" ] || [ "$WEB_CODE" = "301" ]
   ok "前端响应正常 (HTTP $WEB_CODE)"
 elif [ "$WEB_CODE" = "000" ]; then
   alert "前端无响应"
-  restart_service "mywebsite-web-1"
+  restart_service "xiangtai-web"
 else
   alert "前端异常响应 (HTTP $WEB_CODE)"
 fi
@@ -96,7 +96,7 @@ else
 fi
 
 # ── 飞书通知 ──
-FEISHU_URL="https://open.feishu.cn/open-apis/bot/v2/hook/e49ecf0c-003d-41ae-9971-823ab219d9a4"
+FEISHU_URL="${FEISHU_WEBHOOK_URL:-}"
 
 send_feishu() {
   local title="$1"

@@ -1,4 +1,4 @@
-import type { MockRole } from "../../auth/mock-session";
+import type { AuthRole } from "../../auth/auth-session";
 
 export interface MenuItem {
   id: string;
@@ -12,7 +12,7 @@ export interface RoleFunctionMenuItem {
   href: string;
 }
 
-export const roleMenus: Record<MockRole, MenuItem[]> = {
+export const roleMenus: Record<AuthRole, MenuItem[]> = {
   client: [
     { id: "client-home", label: "客户端工作台", href: "/client" },
     { id: "client-orders", label: "我的订单", href: "/client" },
@@ -30,7 +30,7 @@ export const roleMenus: Record<MockRole, MenuItem[]> = {
 
 export const globalMenus: MenuItem[] = [];
 
-export const roleFunctionMenus: Record<MockRole, RoleFunctionMenuItem[]> = {
+export const roleFunctionMenus: Record<AuthRole, RoleFunctionMenuItem[]> = {
   admin: [
     { id: "admin-func-overview", label: "运营看板", href: "/admin#overview" },
     { id: "admin-func-staff", label: "员工管理", href: "/admin#staff" },
@@ -38,8 +38,11 @@ export const roleFunctionMenus: Record<MockRole, RoleFunctionMenuItem[]> = {
     { id: "admin-func-orders", label: "运单管理", href: "/admin#orders" },
     { id: "admin-func-shipping", label: "运费配置", href: "/admin#shipping-config" },
     { id: "admin-func-lmp", label: "渠道与价格管理", href: "/admin/lmp" },
-    { id: "admin-func-container", label: "装柜管理", href: "/staff/container-loading" },
+    { id: "admin-func-container", label: "装柜管理", href: "/admin#container-loading" },
     { id: "admin-func-customs", label: "关务监控", href: "/admin/customs" },
+    { id: "admin-func-accounts", label: "账号管理", href: "/admin/accounts" },
+    { id: "admin-func-prealerts", label: "预报单管理", href: "/admin/prealerts" },
+    { id: "admin-func-finance", label: "财务管理", href: "/admin/finance" },
     { id: "admin-func-lastmile", label: "尾端派送", href: "/admin#lastmile" },
     { id: "admin-func-address", label: "尾端地址", href: "/admin#lastmile-address" },
     { id: "admin-func-settlement", label: "财务结算与利润", href: "/admin/settlement" },

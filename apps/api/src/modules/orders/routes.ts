@@ -3,15 +3,17 @@ import crypto from "node:crypto";
 import { Prisma } from "@prisma/client";
 import { prisma } from "../../db/prisma";
 import type { MinimalHttpApp } from "../../server";
+import { DEFAULT_SHIPPING_PRICES, INSPECTION_SURCHARGE, SENSITIVE_SURCHARGE } from "../../../../../packages/shared-types/constants";
 
-/** 默认单价（元/m³） */
+/** 默认单价（元/m³） — 基价来自共享常量，加价同理 */
+const { sea, land } = DEFAULT_SHIPPING_PRICES;
 const DEFAULT_UNIT_PRICES: Record<string, number> = {
-  "sea|NORMAL": 550,
-  "sea|INSPECTION": 700,
-  "sea|SENSITIVE": 800,
-  "land|NORMAL": 1070,
-  "land|INSPECTION": 1250,
-  "land|SENSITIVE": 1350,
+  "sea|NORMAL": sea,
+  "sea|INSPECTION": sea + INSPECTION_SURCHARGE,
+  "sea|SENSITIVE": sea + SENSITIVE_SURCHARGE,
+  "land|NORMAL": land,
+  "land|INSPECTION": land + INSPECTION_SURCHARGE,
+  "land|SENSITIVE": land + SENSITIVE_SURCHARGE,
 } as const;
 
 const MIN_VOLUME_DEFAULTS: Record<string, number> = { sea: 0.5, land: 0.3 };
@@ -52,7 +54,7 @@ async function calcReceivableByProducts(
   const minVol = await getMinVolume(transportMode);
   const billableVol = Math.max(effectiveVol, minVol);
 
-  const cargoType = (products.length > 0 ? products[0].cargoType?.trim() : null) || "NORMAL";
+  const cargoType = (products.length > 0 ? products[0].cargoType?.trim() : null) || "normal";
   const key = `${transportMode}|${cargoType}`;
   const rule = await prisma.pricingRule.findFirst({
     where: { companyId, transportMode, cargoType, customerId: null },
@@ -127,7 +129,9 @@ async function staffCanEditOrderWarehouse(
 }
 
 /**
+ * ⚠️ DEPRECATED: 当前不再使用，运单号由 generatePrealertNo() 生成。
  * 按"仓库前缀+日期+3位流水"生成湘泰运单号。
+ * 如重新启用，需添加 pg_advisory_xact_lock 或 unique constraint retry 防止并发冲突。
  */
 async function generateTrackingNo(warehouseId: string, arrivedAt: string): Promise<string> {
   const prefix = warehousePrefix(warehouseId);
@@ -155,23 +159,28 @@ function prealertPrefix(warehouseId: string): string {
 
 async function generatePrealertNo(warehouseId: string): Promise<string> {
   const prefix = prealertPrefix(warehouseId);
-  await prisma.$executeRaw`SELECT pg_advisory_xact_lock(${PREALERT_LOCK_KEY})`;
+  // Use $transaction to keep advisory lock active during read+compute
+  const result = await prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(${PREALERT_LOCK_KEY})`;
 
-  const last = await prisma.order.findFirst({
-    where: { orderNo: { startsWith: prefix } },
-    orderBy: { orderNo: "desc" },
-    select: { orderNo: true },
+    const last = await tx.order.findFirst({
+      where: { orderNo: { startsWith: prefix } },
+      orderBy: { orderNo: "desc" },
+      select: { orderNo: true },
+    });
+
+    let nextSeq = 1;
+    if (last?.orderNo) {
+      const numPart = parseInt(last.orderNo.replace(prefix, ""), 10);
+      if (!Number.isNaN(numPart)) {
+        nextSeq = numPart + 1;
+      }
+    }
+
+    return `${prefix}${String(nextSeq).padStart(7, "0")}`;
   });
 
-  let nextSeq = 1;
-  if (last?.orderNo) {
-    const numPart = parseInt(last.orderNo.replace(prefix, ""), 10);
-    if (!Number.isNaN(numPart)) {
-      nextSeq = numPart + 1;
-    }
-  }
-
-  return `${prefix}${String(nextSeq).padStart(7, "0")}`;
+  return result;
 }
 
 export function registerOrderRoutes(app: MinimalHttpApp): void {
@@ -214,14 +223,15 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
     const products = body.products?.length
       ? body.products.map((p, i) => ({
           itemName: p.itemName.trim(),
-          packageCount: p.packageCount || 1,
+          packageCount: Math.max(1, p.packageCount || 1),
           lengthCm: p.lengthCm ?? null,
           widthCm: p.widthCm ?? null,
           heightCm: p.heightCm ?? null,
-          productQuantity: p.productQuantity ?? null, cargoType: p.cargoType?.trim() || "NORMAL", domesticTrackingNo: p.domesticTrackingNo?.trim() || "货拉拉", weightKg: p.weightKg ?? null, sortOrder: i }))
+          productQuantity: p.productQuantity ?? null, cargoType: p.cargoType?.trim() || "normal", domesticTrackingNo: p.domesticTrackingNo?.trim() || "货拉拉", weightKg: p.weightKg ?? null, sortOrder: i }))
       : [{ itemName: body.itemName!.trim(), packageCount: Number(body.packageCount ?? 0), lengthCm: null, widthCm: null, heightCm: null, productQuantity: null, sortOrder: 0 }];
 
-    const totalPkg = products.reduce((s, p) => s + p.packageCount, 0);
+    // PackageCount: 0 silently coerced to 1
+    const totalPkg = products.reduce((s, p) => s + Math.max(1, p.packageCount || 1), 0);
     const totalWeight = products.reduce((s, p) => s + (p.weightKg ?? 0) * p.packageCount, 0);
     const totalVol = products.reduce((s, p) => {
       if (p.lengthCm && p.widthCm && p.heightCm) return s + (p.lengthCm * p.widthCm * p.heightCm * p.packageCount) / 1_000_000;
@@ -416,8 +426,30 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
       fail(res, 400, "VALIDATION_ERROR", "已确认收货，无法删除");
       return;
     }
-    await prisma.orderProductImage.deleteMany({ where: { orderId } });
-    await prisma.order.delete({ where: { id: orderId } });
+    await prisma.$transaction(async (tx) => {
+      // 先获取订单下所有运单，用于级联清理
+      const orderShipments = await tx.shipment.findMany({
+        where: { orderId },
+        select: { id: true },
+      });
+      for (const s of orderShipments) {
+        await tx.adminCustomsCase.updateMany({ where: { shipmentId: s.id }, data: { shipmentId: null } });
+        await tx.adminLastmileOrder.deleteMany({ where: { shipmentId: s.id } });
+        await tx.warehouseLocation.updateMany({ where: { shipmentId: s.id }, data: { shipmentId: null } });
+        await tx.staffInboundPhoto.deleteMany({ where: { shipmentId: s.id } });
+        await tx.statusLog.deleteMany({ where: { shipmentId: s.id } });
+        await tx.shipmentContainerItem.deleteMany({ where: { shipmentId: s.id } });
+        await tx.delivery.deleteMany({ where: { shipmentId: s.id } });
+        await tx.shipment.delete({ where: { id: s.id } });
+      }
+      // Order 级别的 FK 清理
+      await tx.adminCustomsCase.updateMany({ where: { orderId }, data: { orderId: null } });
+      await tx.invoiceLine.updateMany({ where: { orderId }, data: { orderId: null } });
+      await tx.adminSettlementEntry.deleteMany({ where: { orderId } });
+      await tx.orderProductImage.deleteMany({ where: { orderId } });
+      await tx.orderProduct.deleteMany({ where: { orderId } });
+      await tx.order.delete({ where: { id: orderId } });
+    });
     ok(res, { deleted: true, orderId });
   });
 
@@ -515,11 +547,11 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
     const staffProducts = body.products?.length
       ? body.products.map((p, i) => ({
           itemName: p.itemName.trim(),
-          packageCount: p.packageCount || 1,
+          packageCount: Math.max(1, p.packageCount || 1),
           lengthCm: p.lengthCm ?? null,
           widthCm: p.widthCm ?? null,
           heightCm: p.heightCm ?? null,
-          productQuantity: p.productQuantity ?? null, cargoType: p.cargoType?.trim() || "NORMAL", domesticTrackingNo: p.domesticTrackingNo?.trim() || "货拉拉", weightKg: p.weightKg ?? null, sortOrder: i }))
+          productQuantity: p.productQuantity ?? null, cargoType: p.cargoType?.trim() || "normal", domesticTrackingNo: p.domesticTrackingNo?.trim() || "货拉拉", weightKg: p.weightKg ?? null, sortOrder: i }))
       : body.itemName ? [{ itemName: body.itemName.trim(), packageCount: Number(body.packageCount ?? 0), lengthCm: null, widthCm: null, heightCm: null, productQuantity: null, sortOrder: 0 }] : [];
 
     const prName = staffProducts[0]?.itemName ?? body.itemName ?? "";
@@ -538,6 +570,16 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
       !body.arrivedAt?.trim()
     ) {
       fail(res, 400, "BAD_REQUEST", "missing required fields");
+      return;
+    }
+
+    // Verify clientId belongs to the same company and is a client role
+    const targetClient = await prisma.user.findUnique({
+      where: { id: body.clientId },
+      select: { id: true, companyId: true, role: true },
+    });
+    if (!targetClient || targetClient.companyId !== auth.companyId || targetClient.role !== "client") {
+      fail(res, 400, "BAD_REQUEST", "invalid clientId");
       return;
     }
 
@@ -596,7 +638,7 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
           shipDate: body.arrivedAt.trim(),
           domesticTrackingNo: body.domesticTrackingNo ?? null,
           transportMode: body.transportMode,
-          cargoType: body.cargoType?.trim() || "NORMAL",
+          cargoType: body.cargoType?.trim() || "normal",
           receiverNameTh: "",
           receiverPhoneTh: "",
           receiverAddressTh: "",
@@ -879,7 +921,7 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
         paidAt: o.paidAt ? o.paidAt.toISOString() : undefined,
         paidBy: o.paidBy ?? undefined,
         shipDate: o.shipDate,
-        cargoType: o.cargoType ?? "NORMAL",
+        cargoType: o.cargoType ?? "normal",
         latestRemark,
         logisticsRecords,
         createdAt: o.createdAt.toISOString(),
@@ -1068,7 +1110,10 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
     const count = await prisma.orderProductImage.count({
       where: { companyId: auth.companyId, orderId },
     });
-    // 图片数量不限制
+    if (count >= MAX_ORDER_PRODUCT_IMAGES) {
+      fail(res, 400, "BAD_REQUEST", `image limit reached (max ${MAX_ORDER_PRODUCT_IMAGES})`);
+      return;
+    }
     try {
       const buf = Buffer.from(contentBase64, "base64");
       if (buf.length === 0) {
@@ -1130,13 +1175,13 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
       fail(res, 403, "FORBIDDEN", "cross warehouse update is not allowed");
       return;
     }
-    // 删除磁盘文件
-    if (image.filePath) {
-      deleteImageFile(image.filePath);
-    }
+    // 先删DB记录，再删磁盘文件（倒序避免悬空引用）
     const result = await prisma.orderProductImage.deleteMany({
       where: { id, companyId: auth.companyId },
     });
+    if (result.count > 0 && image.filePath) {
+      deleteImageFile(image.filePath);
+    }
     ok(res, { deleted: result.count > 0, id });
   });
 

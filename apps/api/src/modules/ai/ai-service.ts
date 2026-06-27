@@ -670,7 +670,7 @@ export class ClientAiService implements AiService {
   ): Promise<string> {
     try {
       const refined = await this.deps.llmClient.summarizeWithContext({
-        question: `${question}\n请严格使用"业务客服模板"风格输出，保持字段齐全。仅输出最终中文答复正文，不要返回JSON、不要返回代码块、不要解释过程。`,
+        question: `请严格使用"业务客服模板"风格输出，保持字段齐全。仅输出最终中文答复正文，不要返回JSON、不要返回代码块、不要解释过程。\n用户问题：${question}`,
         context: llmContext,
       });
       if (!refined?.trim()) return fallbackAnswer;
@@ -684,6 +684,13 @@ export class ClientAiService implements AiService {
   private normalizeModelAnswer(rawAnswer: string, fallbackAnswer: string): string {
     const text = rawAnswer.trim();
     if (!text) return fallbackAnswer;
+
+    // Sanitize HTML/script injection from model output
+    const sanitize = (s: string) => s
+      .replace(/<script[\s\S]*?<\/script>/gi, "")
+      .replace(/<img[^>]*onerror\s*=[^>]*>/gi, "")
+      .replace(/<[^>]*>/g, "")
+      .replace(/javascript\s*:/gi, "");
 
     // Strip markdown code fences if model wraps content.
     const fenced = text.match(/^```(?:json|text|markdown)?\s*([\s\S]*?)\s*```$/i);
@@ -720,7 +727,7 @@ export class ClientAiService implements AiService {
       // Not JSON, continue with plain text.
     }
 
-    return content;
+    return sanitize(content);
   }
 
   private formatNotFoundAnswer(trackingNo: string): string {

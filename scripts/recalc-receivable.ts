@@ -9,8 +9,8 @@ const p = new PrismaClient();
 const MIN_VOLUME_M3 = 1;
 
 const DEFAULT_UNIT_PRICES = {
-  "sea|NORMAL": 550, "sea|INSPECTION": 700, "sea|SENSITIVE": 800,
-  "land|NORMAL": 1070, "land|INSPECTION": 1250, "land|SENSITIVE": 1350,
+  "sea|normal": 550, "sea|inspection": 700, "sea|sensitive": 800,
+  "land|normal": 1070, "land|inspection": 1250, "land|sensitive": 1350,
 };
 
 async function calcByProducts(companyId, transportMode, products) {
@@ -22,7 +22,7 @@ async function calcByProducts(companyId, transportMode, products) {
       : 0;
     if (vol <= 0) continue;
     hasAny = true;
-    const ct = prod.cargoType || "NORMAL";
+    const ct = (prod.cargoType || "normal").toLowerCase();
     const key = `${transportMode}|${ct}`;
     const rule = companyId ? await p.pricingRule.findFirst({
       where: { companyId, transportMode, cargoType: ct, customerId: null },

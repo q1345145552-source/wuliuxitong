@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { setAuthSession } from "../../auth/mock-session";
+import { setAuthSession } from "../../auth/auth-session";
 import { registerClient } from "../../services/auth-api";
 
 export default function RegisterPage() {
@@ -18,13 +18,19 @@ export default function RegisterPage() {
   const [message, setMessage] = useState("");
 
   const canSubmit = useMemo(() => {
+    const phoneOk = /^\+?\d{7,15}$/.test(form.phone.trim());
+    const emailOk = !form.email.trim() || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim());
     return (
       form.account.trim().length > 0 &&
-      form.password.trim().length >= 6 &&
+      form.password.trim().length >= 8 &&
       form.name.trim().length > 0 &&
-      form.phone.trim().length > 0
+      phoneOk &&
+      emailOk
     );
   }, [form]);
+  const phoneError = form.phone.trim() && !/^\+?\d{7,15}$/.test(form.phone.trim()) ? "手机号格式不正确" : "";
+  const emailError = form.email.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim()) ? "邮箱格式不正确" : "";
+  const passwordHint = form.password.trim() && form.password.trim().length < 8 ? `至少8位（当前${form.password.trim().length}位）` : "";
 
   const submit = async () => {
     if (!canSubmit || loading) return;
@@ -72,9 +78,10 @@ export default function RegisterPage() {
             type="password"
             value={form.password}
             onChange={(e) => setForm((v) => ({ ...v, password: e.target.value }))}
-            placeholder="密码（至少6位）"
-            style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "10px 12px" }}
+            placeholder="密码（至少8位）"
+            style={{ border: `1px solid ${passwordHint ? "#fca5a5" : "#d1d5db"}`, borderRadius: 8, padding: "10px 12px" }}
           />
+          {passwordHint ? <span style={{ fontSize: 11, color: "#dc2626", marginTop: -6 }}>{passwordHint}</span> : null}
           <input
             value={form.name}
             onChange={(e) => setForm((v) => ({ ...v, name: e.target.value }))}
@@ -84,9 +91,10 @@ export default function RegisterPage() {
           <input
             value={form.phone}
             onChange={(e) => setForm((v) => ({ ...v, phone: e.target.value }))}
-            placeholder="手机号（必填）"
-            style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "10px 12px" }}
+            placeholder="手机号（必填，7-15位数字）"
+            style={{ border: `1px solid ${phoneError ? "#fca5a5" : "#d1d5db"}`, borderRadius: 8, padding: "10px 12px" }}
           />
+          {phoneError ? <span style={{ fontSize: 11, color: "#dc2626", marginTop: -6 }}>{phoneError}</span> : null}
           <input
             value={form.companyId}
             onChange={(e) => setForm((v) => ({ ...v, companyId: e.target.value }))}
@@ -104,8 +112,9 @@ export default function RegisterPage() {
             value={form.email}
             onChange={(e) => setForm((v) => ({ ...v, email: e.target.value }))}
             placeholder="邮箱（选填）"
-            style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "10px 12px" }}
+            style={{ border: `1px solid ${emailError ? "#fca5a5" : "#d1d5db"}`, borderRadius: 8, padding: "10px 12px" }}
           />
+          {emailError ? <span style={{ fontSize: 11, color: "#dc2626", marginTop: -6 }}>{emailError}</span> : null}
 
           <button
             type="button"

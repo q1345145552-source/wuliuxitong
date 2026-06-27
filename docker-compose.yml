@@ -26,10 +26,11 @@ services:
     container_name: xiangtai-redis
     ports:
       - "6379:6379"
+    command: redis-server --requirepass ${REDIS_PASSWORD:-xiangtai_redis_dev}
     volumes:
       - redis-data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "redis-cli", "--no-auth-warning", "-a", "${REDIS_PASSWORD:-xiangtai_redis_dev}", "ping"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -48,7 +49,7 @@ services:
       DEEPSEEK_API_BASE_URL: ${DEEPSEEK_API_BASE_URL:-https://api.deepseek.com/chat/completions}
       PORT: "3001"
       DATABASE_URL: postgresql://${POSTGRES_USER:-xiangtai}:${POSTGRES_PASSWORD:-xiangtai_dev}@postgres:5432/${POSTGRES_DB:-xiangtai}?schema=public
-      REDIS_URL: redis://redis:6379
+      REDIS_URL: redis://:${REDIS_PASSWORD:-xiangtai_redis_dev}@redis:6379
     volumes:
       - ./data/images:/images
     depends_on:
@@ -56,6 +57,11 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3001/auth/login -T 3 --post-data '{}' || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
     restart: unless-stopped
 
   web:
@@ -70,6 +76,11 @@ services:
       - api
     environment:
       NODE_ENV: production
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3000 -T 3 || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
     restart: unless-stopped
 
 volumes:

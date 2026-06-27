@@ -35,11 +35,8 @@ export async function resetStatusLabels(): Promise<{ reset: boolean; total: numb
   return parseApiResponse<{ reset: boolean; total: number }>(response);
 }
 
-export async function fetchKnowledgeList(companyId?: string): Promise<AiKnowledgeItem[]> {
-  const url = companyId
-    ? `${apiBaseUrl()}/admin/ai/knowledge?companyId=${encodeURIComponent(companyId)}`
-    : `${apiBaseUrl()}/admin/ai/knowledge`;
-  const response = await fetch(url, {
+export async function fetchKnowledgeList(): Promise<AiKnowledgeItem[]> {
+  const response = await fetch(`${apiBaseUrl()}/admin/ai/knowledge`, {
     method: "GET",
     headers: {
       "Content-Type": "application/json",
@@ -52,7 +49,6 @@ export async function fetchKnowledgeList(companyId?: string): Promise<AiKnowledg
 export async function createKnowledgeItem(payload: {
   title: string;
   content: string;
-  companyId?: string;
 }): Promise<AiKnowledgeItem> {
   const response = await fetch(`${apiBaseUrl()}/admin/ai/knowledge`, {
     method: "POST",
@@ -65,10 +61,9 @@ export async function createKnowledgeItem(payload: {
   return parseApiResponse<AiKnowledgeItem>(response);
 }
 
-export async function deleteKnowledgeItem(id: string, companyId?: string): Promise<{ deleted: boolean; id: string }> {
+export async function deleteKnowledgeItem(id: string): Promise<{ deleted: boolean; id: string }> {
   const query = new URLSearchParams();
   query.set("id", id);
-  if (companyId) query.set("companyId", companyId);
   const response = await fetch(`${apiBaseUrl()}/admin/ai/knowledge?${query.toString()}`, {
     method: "DELETE",
     headers: {

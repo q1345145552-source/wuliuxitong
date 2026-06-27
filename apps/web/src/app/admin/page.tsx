@@ -4,7 +4,7 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "rea
 import * as XLSX from "xlsx";
 import { Bar, BarChart, CartesianGrid, Cell, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import type { AiKnowledgeItem } from "../../../../../packages/shared-types/entities";
-import { getOptionalSession, type MockSession } from "../../auth/mock-session";
+import { getOptionalSession, type AuthSession } from "../../auth/auth-session";
 import CountUpNumber from "../../modules/layout/CountUpNumber";
 import EmptyStateCard from "../../modules/layout/EmptyStateCard";
 import RoleShell from "../../modules/layout/RoleShell";
@@ -146,7 +146,7 @@ const WAREHOUSE_TRACKING_PREFIX_MAP: Record<string, string[]> = {
 export const dynamic = "force-dynamic";
 
 export default function AdminHomePage() {
-  const [session, setSession] = useState<MockSession | null>(null);
+  const [session, setSession] = useState<AuthSession | null>(null);
   const [loading, setLoading] = useState(false);
   const [overviewFlash, setOverviewFlash] = useState(false);
   const [overview, setOverview] = useState<AdminOverview | null>(null);
@@ -200,7 +200,7 @@ export default function AdminHomePage() {
   const [createProducts, setCreateProducts] = useState<Array<{
     itemName: string; packageCount: number; lengthCm: string; widthCm: string;
     heightCm: string; productQuantity: string; cargoType: string; domesticTrackingNo: string;
-  }>>([{ itemName: "", packageCount: 1, lengthCm: "", widthCm: "", heightCm: "", productQuantity: "", cargoType: "NORMAL", domesticTrackingNo: "" }]);
+  }>>([{ itemName: "", packageCount: 1, lengthCm: "", widthCm: "", heightCm: "", productQuantity: "", cargoType: "normal", domesticTrackingNo: "" }]);
   const [batchRows, setBatchRows] = useState<Array<any>>([]);
   const [batchLoading, setBatchLoading] = useState(false);
   const [batchProgress, setBatchProgress] = useState({ current: 0, success: 0, fail: 0 });
@@ -219,11 +219,11 @@ export default function AdminHomePage() {
   const [lmSignData, setLmSignData] = useState<{id:string;base64:string}|null>(null);
   const loadLmShipments = async () => {
     try { const r = await fetch(apiBaseUrl()+"/staff/shipments?limit=500",{headers:authHeaders()}); const d=await r.json();
-      if(d.code==="OK") setLmShipments(d.data.items.filter((s:any)=>["inWarehouseTH","outForDelivery","delivered"].includes(s.currentStatus)).map((s:any)=>({id:s.id,trackingNo:s.trackingNo,clientId:s.clientId??"",itemName:s.itemName??"",packageCount:s.packageCount??0}))); } catch {}
+      if(d.code==="OK") setLmShipments(d.data.items.filter((s:any)=>["inWarehouseTH","outForDelivery","delivered"].includes(s.currentStatus)).map((s:any)=>({id:s.id,trackingNo:s.trackingNo,clientId:s.clientId??"",itemName:s.itemName??"",packageCount:s.packageCount??0}))); } catch (e) { console.error(e); }
   };
   const [lmOrders, setLmOrders] = useState<Array<{id:string;deliveryNo:string;shipmentId:string;trackingNo?:string;driverName?:string|null;licensePlate?:string|null;phoneNumber?:string|null;deliveryDate?:string|null;status:string}>>([]);
   const loadLastmileOrders = async () => {
-    try { const res = await fetch(`${apiBaseUrl()}/admin/lastmile/orders`, { headers: authHeaders() }); const d = await parseApiResponse<{items:any[]}>(res); setLmOrders(d.items); } catch {}
+    try { const res = await fetch(`${apiBaseUrl()}/admin/lastmile/orders`, { headers: authHeaders() }); const d = await parseApiResponse<{items:any[]}>(res); setLmOrders(d.items); } catch (e) { console.error(e); }
   };
   const updateLastmileStatus = async (id: string, status: string, signImageBase64?: string) => {
     const res = await fetch(`${apiBaseUrl()}/admin/lastmile/status`, { method: "POST", headers: {"Content-Type":"application/json",...authHeaders()}, body: JSON.stringify({id, status, signImageBase64: signImageBase64 || undefined}) });
@@ -249,7 +249,7 @@ export default function AdminHomePage() {
     receivableCurrency: "CNY" as "CNY" | "THB",
     paymentStatus: "unpaid" as "paid" | "unpaid",
     shipDate: "",
-    cargoType: "NORMAL",
+    cargoType: "normal",
   });
   const [editProducts, setEditProducts] = useState<Array<{
     itemName: string; packageCount: string; lengthCm: string; widthCm: string; heightCm: string; productQuantity: string; weightKg: string; cargoType: string; domesticTrackingNo: string;
@@ -408,7 +408,7 @@ export default function AdminHomePage() {
       packageUnit: order.packageUnit === "bag" ? "bag" : "box",
       weightKg: order.weightKg === null || order.weightKg === undefined ? "" : String(order.weightKg),
       volumeM3: order.volumeM3 === null || order.volumeM3 === undefined ? "" : String(order.volumeM3),
-      cargoType: order.cargoType ?? "NORMAL",
+      cargoType: order.cargoType ?? "normal",
       receivableAmountCny:
         order.receivableAmountCny === null || order.receivableAmountCny === undefined ? "" : String(order.receivableAmountCny),
       receivableCurrency: order.receivableCurrency === "THB" ? "THB" : "CNY",
@@ -424,7 +424,7 @@ export default function AdminHomePage() {
         heightCm: p.heightCm != null ? String(p.heightCm) : "",
         productQuantity: p.productQuantity != null ? String(p.productQuantity) : "",
         weightKg: p.weightKg != null ? String(p.weightKg) : "",
-        cargoType: p.cargoType ?? "NORMAL",
+        cargoType: p.cargoType ?? "normal",
         domesticTrackingNo: p.domesticTrackingNo ?? "货拉拉",
       })));
     } else {
@@ -507,7 +507,7 @@ export default function AdminHomePage() {
           widthCm: p.widthCm ? Number(p.widthCm) : undefined,
           heightCm: p.heightCm ? Number(p.heightCm) : undefined,
           productQuantity: p.productQuantity ? Number(p.productQuantity) : undefined,
-          cargoType: p.cargoType || "NORMAL",
+          cargoType: p.cargoType || "normal",
           domesticTrackingNo: p.domesticTrackingNo.trim() || "货拉拉",
           weightKg: p.weightKg ? Number(p.weightKg) : undefined,
         })),
@@ -534,12 +534,12 @@ export default function AdminHomePage() {
 
   const loadKnowledge = useCallback(async () => {
     if (!session?.companyId) return;
-    const list = await fetchKnowledgeList(session.companyId);
+    const list = await fetchKnowledgeList();
     setKnowledgeItems(list);
   }, [session]);
 
   const loadAll = useCallback(
-    async (currentSession?: MockSession | null) => {
+    async (currentSession?: AuthSession | null) => {
       const s = currentSession ?? session;
       if (!s?.companyId) return;
       setLoading(true);
@@ -553,7 +553,7 @@ export default function AdminHomePage() {
           loadOrders(),
           loadSessionMemory(),
           loadKnowledgeGaps(),
-          fetchKnowledgeList(s.companyId).then(setKnowledgeItems),
+          fetchKnowledgeList().then(setKnowledgeItems),
         ]);
       } catch (error) {
         const text = error instanceof Error ? error.message : "加载失败";
@@ -573,6 +573,7 @@ export default function AdminHomePage() {
 
     // 10 秒自动刷新同步
     const interval = window.setInterval(() => {
+      if (document.hidden) return;
       loadStaff().catch(() => {});
       loadClients().catch(() => {});
       loadOrders().catch(() => {});
@@ -615,7 +616,6 @@ export default function AdminHomePage() {
       await createKnowledgeItem({
         title: title.trim(),
         content: content.trim(),
-        companyId: session?.companyId ?? "",
       });
       setTitle("");
       setContent("");
@@ -633,7 +633,7 @@ export default function AdminHomePage() {
     setLoading(true);
     setMessage("");
     try {
-      await deleteKnowledgeItem(id, session?.companyId ?? "");
+      await deleteKnowledgeItem(id);
       await loadKnowledge();
       setToast("知识条目删除成功");
     } catch (error) {
@@ -677,15 +677,16 @@ export default function AdminHomePage() {
 
   const confirmDeleteClient = async (userId: string, userName: string) => {
     if (!window.confirm(`确定要删除客户「${userName}」吗？删除后该账号将无法登录。此操作不可撤销。`)) return;
-    const pwd = window.prompt("请输入二级密码以确认删除：");
-    if (pwd !== "lyj200538") {
-      setMessage("二级密码错误，删除已取消");
+    // 安全问题：已移除前端硬编码二级密码，改为后端二次鉴权
+    const pwd = window.prompt("请输入您的管理员密码以确认删除：");
+    if (!pwd) {
+      setMessage("操作已取消");
       return;
     }
     setLoading(true);
     setMessage("");
     try {
-      await deleteAdminStaff(userId);
+      await deleteAdminStaff(userId, pwd);
       setToast("客户已删除");
       await Promise.all([loadClients(), loadOverview()]);
     } catch (error) {
@@ -928,7 +929,7 @@ export default function AdminHomePage() {
     setLoading(true);
     setMessage("");
     try {
-      await resolveAdminAiKnowledgeGap({ id, companyId: session?.companyId ?? "" });
+      await resolveAdminAiKnowledgeGap({ id });
       await loadKnowledgeGaps();
       setToast("已标记为已处理");
     } catch (error) {
@@ -955,12 +956,12 @@ export default function AdminHomePage() {
   };
 
   const priceDefaults = rateDefaults.length > 0 ? rateDefaults : [
-    { transportMode: "sea", cargoType: "normal", unitPriceCny: 550 },
-    { transportMode: "sea", cargoType: "inspection", unitPriceCny: 700 },
-    { transportMode: "sea", cargoType: "sensitive", unitPriceCny: 800 },
-    { transportMode: "land", cargoType: "normal", unitPriceCny: 1070 },
-    { transportMode: "land", cargoType: "inspection", unitPriceCny: 1250 },
-    { transportMode: "land", cargoType: "sensitive", unitPriceCny: 1350 },
+    { transportMode: "sea", cargoType: "normal", unitPriceCny: DEFAULT_SHIPPING_PRICES.sea },
+    { transportMode: "sea", cargoType: "inspection", unitPriceCny: DEFAULT_SHIPPING_PRICES.sea + INSPECTION_SURCHARGE },
+    { transportMode: "sea", cargoType: "sensitive", unitPriceCny: DEFAULT_SHIPPING_PRICES.sea + SENSITIVE_SURCHARGE },
+    { transportMode: "land", cargoType: "normal", unitPriceCny: DEFAULT_SHIPPING_PRICES.land },
+    { transportMode: "land", cargoType: "inspection", unitPriceCny: DEFAULT_SHIPPING_PRICES.land + INSPECTION_SURCHARGE },
+    { transportMode: "land", cargoType: "sensitive", unitPriceCny: DEFAULT_SHIPPING_PRICES.land + SENSITIVE_SURCHARGE },
   ];
 
   const loadClientPrices = async (clientId: string) => {
@@ -1470,7 +1471,7 @@ export default function AdminHomePage() {
                     </td>
                     <td style={{ padding: "8px 6px", color: "#000000", minWidth: 120 }}>
                       {(o.products?.length ?? 0) > 0
-                        ? o.products!.map((p, i) => (
+                        ? (o.products ?? []).map((p, i) => (
                             <div key={i} style={{ marginBottom: i < (o.products?.length ?? 0) - 1 ? 2 : 0, whiteSpace: "nowrap" }}>
                               {p.itemName}
                             </div>
@@ -1479,7 +1480,7 @@ export default function AdminHomePage() {
                     </td>
                     <td style={{ padding: "8px 6px", whiteSpace: "nowrap" }}>
                       {(o.products?.length ?? 0) > 0
-                        ? o.products!.map((p, i) => (
+                        ? (o.products ?? []).map((p, i) => (
                             <div key={i} style={{ marginBottom: i < (o.products?.length ?? 0) - 1 ? 2 : 0 }}>
                               {p.packageCount}箱
                             </div>
@@ -1488,7 +1489,7 @@ export default function AdminHomePage() {
                     </td>
                     <td style={{ padding: "8px 6px", whiteSpace: "nowrap" }}>
                       {(o.products?.length ?? 0) > 0
-                        ? o.products!.map((p, i) => (
+                        ? (o.products ?? []).map((p, i) => (
                             <div key={i} style={{ marginBottom: i < (o.products?.length ?? 0) - 1 ? 2 : 0 }}>
                               {p.productQuantity ? `${p.productQuantity}个/箱` : "—"}
                             </div>
@@ -1497,7 +1498,7 @@ export default function AdminHomePage() {
                     </td>
                     <td style={{ padding: "8px 6px", whiteSpace: "nowrap" }}>
                       {(o.products?.length ?? 0) > 0
-                        ? o.products!.map((p, i) => (
+                        ? (o.products ?? []).map((p, i) => (
                             <div key={i} style={{ marginBottom: i < (o.products?.length ?? 0) - 1 ? 2 : 0 }}>
                               {p.lengthCm ? `${p.lengthCm}×${p.widthCm}×${p.heightCm}cm` : "—"}
                             </div>
@@ -1506,7 +1507,7 @@ export default function AdminHomePage() {
                     </td>
                     <td style={{ padding: "8px 6px", whiteSpace: "nowrap" }}>
                       {(o.products?.length ?? 0) > 0
-                        ? o.products!.map((p, i) => (
+                        ? (o.products ?? []).map((p, i) => (
                             <div key={i} style={{ marginBottom: i < (o.products?.length ?? 0) - 1 ? 2 : 0 }}>
                               {p.domesticTrackingNo || "货拉拉"}
                             </div>
@@ -1518,12 +1519,12 @@ export default function AdminHomePage() {
                     <td style={{ padding: "8px 6px", whiteSpace: "nowrap" }}>{transportModeLabel(o.transportMode)}</td>
                     <td style={{ padding: "8px 6px", whiteSpace: "nowrap", fontSize: 12 }}>
                       {(o.products?.length ?? 0) > 0
-                        ? o.products!.map((p, i) => (
+                        ? (o.products ?? []).map((p, i) => (
                             <div key={i} style={{ marginBottom: i < (o.products?.length ?? 0) - 1 ? 2 : 0 }}>
-                              {(p.cargoType ?? "NORMAL") === "INSPECTION" ? "商检" : (p.cargoType ?? "NORMAL") === "SENSITIVE" ? "敏感" : "普货"}
+                              {((p.cargoType ?? "normal").toLowerCase() === "inspection" ? "商检" : (p.cargoType ?? "normal").toLowerCase() === "sensitive" ? "敏感" : "普货")}
                             </div>
                           ))
-                        : (o.cargoType === "INSPECTION" ? "商检" : o.cargoType === "SENSITIVE" ? "敏感" : "普货")}
+                        : ((o.cargoType ?? "normal").toLowerCase() === "inspection" ? "商检" : (o.cargoType ?? "normal").toLowerCase() === "sensitive" ? "敏感" : "普货")}
                     </td>
                     <td style={{ padding: "8px 6px", whiteSpace: "nowrap" }}>
                       <button
@@ -1580,7 +1581,7 @@ export default function AdminHomePage() {
                             <span>仓库：<strong>{warehouseOptions.find(w => w.id === o.warehouseId)?.label ?? "—"}</strong></span>
                             <span>柜号：<strong>{o.batchNo ?? "—"}</strong></span>
                             <span>包装：<strong>{o.packageUnit === "bag" ? "袋" : "箱"}</strong></span>
-                            <span>国内单号：<strong>{((o.products?.length ?? 0) > 0) ? o.products!.map(p => p.domesticTrackingNo || "货拉拉").filter((v, i, a) => a.indexOf(v) === i).join("、") : (o.domesticTrackingNo ?? "—")}</strong></span>
+                            <span>国内单号：<strong>{((o.products?.length ?? 0) > 0) ? (o.products ?? []).map(p => p.domesticTrackingNo || "货拉拉").filter((v, i, a) => a.indexOf(v) === i).join("、") : (o.domesticTrackingNo ?? "—")}</strong></span>
                             <span>加收金额：<strong>{o.receivableAmountCny != null ? `${o.receivableAmountCny} ${o.receivableCurrency ?? "CNY"}` : "—"}</strong></span>
                             <span>收货地址：<strong>{o.receiverAddressTh ?? "—"}</strong></span>
                           </div>
@@ -1645,16 +1646,16 @@ export default function AdminHomePage() {
                                 <input type="number" step="0.01" value={p.heightCm} onChange={(e) => { const n = [...editProducts]; n[i] = { ...n[i], heightCm: e.target.value }; setEditProducts(n); }} placeholder="高cm" style={{ border: "1px solid #d1d5db", borderRadius: 4, padding: "4px 6px", fontSize: 12 }} />
                                 <input type="number" value={p.productQuantity} onChange={(e) => { const n = [...editProducts]; n[i] = { ...n[i], productQuantity: e.target.value }; setEditProducts(n); }} placeholder="单箱数量" style={{ border: "1px solid #d1d5db", borderRadius: 4, padding: "4px 6px", fontSize: 12 }} />
                                 <input type="number" step="0.01" value={p.weightKg} onChange={(e) => { const n = [...editProducts]; n[i] = { ...n[i], weightKg: e.target.value }; setEditProducts(n); }} placeholder="单箱重kg" style={{ border: "1px solid #d1d5db", borderRadius: 4, padding: "4px 6px", fontSize: 12 }} />
-                                <select value={p.cargoType || "NORMAL"} onChange={(e) => { const n = [...editProducts]; n[i] = { ...n[i], cargoType: e.target.value }; setEditProducts(n); }} style={{ border: "1px solid #d1d5db", borderRadius: 4, padding: "4px 6px", fontSize: 12, background: "#fff" }}>
-                                  <option value="NORMAL">普货</option>
-                                  <option value="INSPECTION">商检</option>
-                                  <option value="SENSITIVE">敏感</option>
+                                <select value={(p.cargoType || "normal").toLowerCase()} onChange={(e) => { const n = [...editProducts]; n[i] = { ...n[i], cargoType: e.target.value }; setEditProducts(n); }} style={{ border: "1px solid #d1d5db", borderRadius: 4, padding: "4px 6px", fontSize: 12, background: "#fff" }}>
+                                  <option value="normal">普货</option>
+                                  <option value="inspection">商检</option>
+                                  <option value="sensitive">敏感</option>
                                 </select>
                                 <input value={p.domesticTrackingNo || ""} onChange={(e) => { const n = [...editProducts]; n[i] = { ...n[i], domesticTrackingNo: e.target.value }; setEditProducts(n); }} placeholder="货拉拉" style={{ border: "1px solid #d1d5db", borderRadius: 4, padding: "4px 6px", fontSize: 12 }} />
                                 <button type="button" onClick={() => setEditProducts((v) => v.filter((_, j) => j !== i))} style={{ border: "1px solid #fca5a5", borderRadius: 4, padding: "4px 6px", fontSize: 11, background: "#fff", color: "#dc2626", cursor: "pointer" }}>X</button>
                               </div>
                             ))}
-                            <button type="button" onClick={() => setEditProducts((v) => [...v, { itemName: "", packageCount: "", lengthCm: "", widthCm: "", heightCm: "", productQuantity: "", weightKg: "", cargoType: "NORMAL", domesticTrackingNo: "" }])} style={{ border: "1px dashed #2563eb", borderRadius: 4, padding: "4px 10px", fontSize: 12, background: "#fff", color: "#2563eb", cursor: "pointer", marginTop: 4 }}>+ 添加产品</button>
+                            <button type="button" onClick={() => setEditProducts((v) => [...v, { itemName: "", packageCount: "", lengthCm: "", widthCm: "", heightCm: "", productQuantity: "", weightKg: "", cargoType: "normal", domesticTrackingNo: "" }])} style={{ border: "1px dashed #2563eb", borderRadius: 4, padding: "4px 10px", fontSize: 12, background: "#fff", color: "#2563eb", cursor: "pointer", marginTop: 4 }}>+ 添加产品</button>
                           </div>
                           {(o.productImages?.length ?? 0) > 0 && (
                             <div style={{ marginTop: 8, padding: 10, background: "#f8fafc", borderRadius: 8, border: "1px solid #e2e8f0" }}>
@@ -2301,7 +2302,7 @@ export default function AdminHomePage() {
                 <input value={p.productQuantity} onChange={(e) => { const n = [...createProducts]; n[i].productQuantity = e.target.value; setCreateProducts(n); }} placeholder="数量/箱" style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "4px 6px", fontSize: 11 }} />
                 <input value={`${p.lengthCm}×${p.widthCm}×${p.heightCm}`} onChange={(e) => { const parts = e.target.value.split("×"); const n = [...createProducts]; n[i].lengthCm = parts[0] || ""; n[i].widthCm = parts[1] || ""; n[i].heightCm = parts[2] || ""; setCreateProducts(n); }} placeholder="L×W×H cm" style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "4px 6px", fontSize: 11 }} />
                 <select value={p.cargoType} onChange={(e) => { const n = [...createProducts]; n[i].cargoType = e.target.value; setCreateProducts(n); }} style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "4px 6px", fontSize: 11 }}>
-                  <option value="NORMAL">普货</option><option value="INSPECTION">商检</option><option value="SENSITIVE">敏感</option>
+                  <option value="normal">普货</option><option value="inspection">商检</option><option value="sensitive">敏感</option>
                 </select>
                 <div style={{ display: "flex", gap: 4 }}>
                   <input value={p.domesticTrackingNo} onChange={(e) => { const n = [...createProducts]; n[i].domesticTrackingNo = e.target.value; setCreateProducts(n); }} placeholder="国内单号" style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "4px 6px", fontSize: 11, flex: 1 }} />
@@ -2309,7 +2310,7 @@ export default function AdminHomePage() {
                 </div>
               </div>
             ))}
-            <button onClick={() => setCreateProducts([...createProducts, { itemName: "", packageCount: 1, lengthCm: "", widthCm: "", heightCm: "", productQuantity: "", cargoType: "NORMAL", domesticTrackingNo: "" }])} style={{ border: "1px solid #2563eb", borderRadius: 6, padding: "4px 10px", background: "#eff6ff", color: "#2563eb", cursor: "pointer", fontSize: 12, marginBottom: 16 }}>＋ 添加产品行</button>
+            <button onClick={() => setCreateProducts([...createProducts, { itemName: "", packageCount: 1, lengthCm: "", widthCm: "", heightCm: "", productQuantity: "", cargoType: "normal", domesticTrackingNo: "" }])} style={{ border: "1px solid #2563eb", borderRadius: 6, padding: "4px 10px", background: "#eff6ff", color: "#2563eb", cursor: "pointer", fontSize: 12, marginBottom: 16 }}>＋ 添加产品行</button>
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
               <button onClick={() => setShowCreateOrderModal(false)} style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 14px", background: "#fff", cursor: "pointer", color: "#000" }}>取消</button>
               <button disabled={loading} onClick={async () => {

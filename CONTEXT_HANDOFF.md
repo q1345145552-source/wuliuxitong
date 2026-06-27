@@ -1,7 +1,7 @@
 # 阶段移交说明（CONTEXT_HANDOFF）
 
 > 本文档用于记录**当前阶段开发进度**、**未解决问题**与**下一阶段计划**。  
-> 更新日期：**2026-05-12**（以仓库当前状态为依据；后续迭代请按需修订本文件。）
+> 更新日期：**2026-06-26**（已迁移至 PostgreSQL，清理遗留 SQLite 代码）
 
 ---
 
@@ -9,9 +9,10 @@
 
 ### 1. 架构与技术栈
 
-- **前端**：Next.js（`apps/web`），多端角色界面（管理员 / 员工 / 客户）。
-- **后端**：自建最小 HTTP 服务（`apps/api`），Node `node:sqlite` 等业务数据读写。
-- **共享类型**：`packages/shared-types`。
+- **前端**：Next.js 16（`apps/web`），多端角色界面（管理员 / 员工 / 客户）。
+- **后端**：自建最小 HTTP 服务（`apps/api`），Prisma ORM + PostgreSQL 数据库。
+- **共享类型**：`packages/shared-types`（部分类型需与 Prisma 表同步更新）。
+- **AI**：DeepSeek API（`deepseek-client.ts`），Prisma 存储后端。
 - **文档**：业务与接入说明主要在 `README.md`、`docs/` 下若干文档。
 
 ### 2. 业务与 RBAC
@@ -44,8 +45,10 @@
 
 ### 5. 数据与兼容
 
-- **SQLite**：`apps/api/data/dev.sqlite`（或 `SQLITE_PATH` 指定路径）；迁移包含 `password_hash`、`company_name`、`email` 等与用户扩展字段。
-- 员工密码当前为 **SHA-256**，仅适用于演示；生产应换 **bcrypt/argon2** 等。
+- **PostgreSQL**：生产使用 Neon 云数据库；本地开发可用 Docker Compose 中 Postgres 容器。
+- 密码使用 Node.js `scrypt` 哈希（`crypto-utils.ts`），已升级到安全级别。
+- 图片存储：同时支持 Base64（数据库）和文件系统（`IMAGES_DIR`），建议生产迁移到对象存储。
+- **遗留 SQLite 代码已清理**（`db/sqlite.ts`、`ai-sqlite-store.ts` 等 3 个文件已删除）。
 
 ---
 
@@ -55,49 +58,61 @@
 
 | 事项 | 说明 |
 |------|------|
-| `DEEPSEEK_API_KEY` | 本地/部署环境若未加载，客户端 AI 将走降级文案；需约定统一方式：`export` / 项目根 `.env` / `node --env-file` 等。**若曾计划 `load-dotenv.ts` 自动读 `.env`，需确认是否已并入 `main.ts`。 |
-| `AUTH_SECRET`（若启用 JWT） | `README.md` 要求服务端配置随机密钥；需与 Cookie/Token 实际实现对照，避免生产默认弱配置。 |
+| `AUTH_SECRET` | 2026-06-26 已更换为随机密钥；未配置时服务拒绝启动（`token.ts` 会抛错）|
+| `CORS_ORIGIN` | 生产环境需设置具体域名（`server.ts` 通过环境变量控制）|
+| `FEISHU_WEBHOOK_URL` | 飞书通知需配置此变量；旧 Token 已暴露于 Git 历史，必须撤销重新生成 |
 
-### 2. 安全与合规
+### 2. 安全与合规（2026-06-26 已加固）
 
-- 员工密码哈希方案偏简单；需策略：盐、迭代、禁止日志打印密钥。
-- 管理端批量删除员工、SQLite 备份与审计：生产需操作审计与安全策略评估。
+- ✅ 密码使用 Node.js `scrypt` 哈希（`crypto-utils.ts`）
+- ✅ 登录/注册限流：登录 10次/分/IP，注册 5次/时/IP（`rate-limit.ts`）
+- ✅ 管理员删除用户需二次密码鉴权（`verifyPassword`）
+- ✅ Docker 容器以 `node` 用户运行（非 root）
+- ✅ `.env` 已从 Git 排除，包含生产凭据注释提醒
+- ✅ AI 输出经 HTML 清洗（`sanitize()` 函数去除 `<script>`、`onerror` 等）
+- ✅ 全局安全响应头（CSP、X-Frame-Options、X-Content-Type-Options 等）
+- ⚠️ 飞书 Webhook 旧 Token 仍需手动撤销（飞书后台操作）
 
 ### 3. 产品一致性与运维
 
-- 前端若仍混杂 **Mock Session**（`apps/web/src/auth/mock-session.ts`）与 **Bearer Token**，需统一为一种模式并更新文档。
-- Excel 导出依赖浏览器 **`xlsx`** 包与大列表性能未做分页与限流评估。
-- 缺少自动化测试覆盖（单元 / 集成 / E2E）。
+- ✅ `mock-session.ts` → `auth-session.ts` 已重命名（2026-06-26）
+- ⚠️ Excel 导出依赖浏览器 **`xlsx`** 包与大列表性能未做分页与限流评估。
+- ⚠️ 缺少自动化测试覆盖（单元 / 集成 / E2E）。
 
-### 4. 文档与仓库同步
+### 4. 数据结构与一致性（2026-06-26 已处理）
 
-- `README.md` 引用 `docs/deepseek-setup.md` 时若文件缺失，新来的开发者会感到困惑——应补文件或删掉链接。
-- 「湘泰」「中泰」等系统在 README / 产品与代码注释中的称谓需对齐品牌。
+- ✅ SQLite → PostgreSQL 全面迁移完成
+- ✅ 遗留 SQLite 文件已删除（3 文件，1,581 行）
+- ✅ 前后端运单状态体系统一（`STATUS_FLOW` 添加 `"created"`首状态）
+- ✅ `generatePrealertNo` 事务锁修复（`$transaction` 包裹）
+- ✅ 预报单删除支持级联清理（products + shipments）
+- ✅ `clientId` 跨公司校验（`POST /staff/orders`）
+- ✅ 图片路径遍历防御（`orderId` 过滤特殊字符）
 
 ---
 
 ## 三、下一步计划（建议优先级）
 
-### P0 — 环境与上线基础
+### P0 — 环境与上线基础 ✅ 已完成
 
-1. **统一环境与密钥**：项目根 `.env.example`（含 `DEEPSEEK_API_KEY`、`AUTH_SECRET`、`PORT`、`NEXT_PUBLIC_API_BASE_URL`、`SQLITE_PATH`）+ 后端启动必读 `.env` 或文档化 `node --env-file=.env`。  
-2. **核实鉴权链路**：全站仅用 JWT + `Authorization`，或保留开发用 Mock —— 写入 `README` 与环境区分（dev/staging/prod）。
+1. ~~统一环境与密钥~~
+2. ~~核实鉴权链路~~ — 全站仅 JWT + `Authorization: Bearer`
 
-### P1 — 安全与可靠性
+### P1 — 安全与可靠性 ✅ 已完成
 
-3. **密码哈希升级**：新员工/重置密码改用 bcrypt（或等价方案），旧数据按需迁移策略。  
-4. **管理员敏感操作**：删除员工二次确认已实现于前端；可考虑后端幂等与软删除。
+3. ~~密码哈希升级~~ — 已使用 `scrypt`
+4. ~~管理员敏感操作~~ — 已实现后端二次密码鉴权
 
 ### P2 — 产品与体验
 
-5. **知识库**：已落 SQLite；可补充分页、搜索与「知识条目版本」运维能力。  
-6. **报表与订单**：大额导出可走服务端生成下载链接或使用流式，避免单次拉全表。  
+5. **前端巨型组件拆分**：`staff/page.tsx`(3578行)、`admin/page.tsx`(2436行)、`client/page.tsx`(1682行)
+6. **报表与订单**：大额导出可走服务端生成下载链接或使用流式，避免单次拉全表。
 7. **监控与告警**：DeepSeek 失败率、超时、402/401 等指标。
 
 ### P3 — 工程化
 
-8. **根级 `package.json` + workspaces**（可选）：统一 `npm run dev:api` / `npm run dev:web`。  
-9. **CI**：lint、typecheck、`sqlite` migration 自检脚本。  
+8. **CI**：lint、typecheck、自动化测试脚本。
+9. **结构化日志**：替换 `console.log` 为 `pino`/`winston`。
 10. **里程碑文档**：在每个大版本末尾更新 `CONTEXT_HANDOFF.md` 的日期与三节内容。
 
 ---

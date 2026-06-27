@@ -1,4 +1,4 @@
-import { getOptionalSession } from "../auth/mock-session";
+import { getOptionalSession } from "../auth/auth-session";
 
 /**
  * 统一去除 URL 末尾斜杠，避免拼接路径时出现双斜杠。

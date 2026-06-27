@@ -1,10 +1,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { clearAuthSession, getOptionalSession, type MockSession } from "../../auth/mock-session";
+import { clearAuthSession, getOptionalSession, type AuthSession } from "../../auth/auth-session";
 
 export default function MockLoginPanel() {
-  const [session, setSession] = useState<MockSession | null>(null);
+  const [session, setSession] = useState<AuthSession | null>(null);
 
   useEffect(() => {
     setSession(getOptionalSession());

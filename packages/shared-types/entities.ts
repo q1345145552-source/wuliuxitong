@@ -85,14 +85,13 @@ export interface PackageItem {
   packageType?: "carton" | "pallet" | "other";
 }
 
-export interface StatusAuditLog {
+export interface StatusLog {
   id: string;
-  companyId?: string;
+  companyId: string;
   shipmentId: string;
   operatorId: string;
   operatorName: string;
-  operatorRole: "admin" | "staff";
-  operatorWarehouseId?: string;
+  operatorRole: string;
   fromStatus: ShipmentStatus;
   toStatus: ShipmentStatus;
   remark?: string;

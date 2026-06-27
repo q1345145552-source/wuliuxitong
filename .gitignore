@@ -11,3 +11,5 @@ coverage/
 .env.*.local
 apps/api/data/
 .reasonix/
+*.tsbuildinfo
+tools/

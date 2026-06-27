@@ -1,6 +1,7 @@
 import type { MinimalHttpApp } from "../../server";
 import { prisma } from "../../db/prisma";
 import { fail, ok } from "../core/http-utils";
+import { checkRateLimit, getClientIp, rateLimitKey } from "../core/rate-limit";
 import { signAuthToken } from "./token";
 import { hashPassword, verifyPassword } from "./crypto-utils";
 
@@ -13,6 +14,12 @@ import { hashPassword, verifyPassword } from "./crypto-utils";
  */
 export function registerAuthRoutes(app: MinimalHttpApp): void {
   app.post("/auth/login", async (req, res) => {
+    // 速率限制：每个 IP 每分钟最多 10 次登录尝试
+    const ip = getClientIp(req.headers);
+    if (checkRateLimit(rateLimitKey(ip, "login"), 10, 60_000)) {
+      fail(res, 429, "BAD_REQUEST", "too many login attempts, please try again later");
+      return;
+    }
     const body = (req.body ?? {}) as { account?: string; password?: string; role?: string };
     if (!body.account?.trim()) {
       fail(res, 400, "BAD_REQUEST", "account is required");
@@ -63,6 +70,12 @@ export function registerAuthRoutes(app: MinimalHttpApp): void {
   });
 
   app.post("/auth/register", async (req, res) => {
+    // 速率限制：每个 IP 每小时最多 5 次注册
+    const ip = getClientIp(req.headers);
+    if (checkRateLimit(rateLimitKey(ip, "register"), 5, 3600_000)) {
+      fail(res, 429, "BAD_REQUEST", "too many registration attempts, please try again later");
+      return;
+    }
     const body = (req.body ?? {}) as {
       account?: string;
       password?: string;
@@ -84,8 +97,8 @@ export function registerAuthRoutes(app: MinimalHttpApp): void {
       fail(res, 400, "BAD_REQUEST", "account, password, name and phone are required");
       return;
     }
-    if (password.length < 6) {
-      fail(res, 400, "BAD_REQUEST", "password must be at least 6 characters");
+    if (password.length < 8) {
+      fail(res, 400, "BAD_REQUEST", "password must be at least 8 characters");
       return;
     }
 

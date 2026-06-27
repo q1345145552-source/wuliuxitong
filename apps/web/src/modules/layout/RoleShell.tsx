@@ -18,7 +18,7 @@ import {
   Wallet,
   type LucideIcon,
 } from "lucide-react";
-import { clearAuthSession, getOptionalSession, type MockRole, type MockSession } from "../../auth/mock-session";
+import { clearAuthSession, getOptionalSession, type AuthRole, type AuthSession } from "../../auth/auth-session";
 import { globalMenus, roleFunctionMenus, roleMenus } from "./menu-config";
 
 /**
@@ -42,14 +42,14 @@ function iconForMenuId(id: string): LucideIcon {
 }
 
 export default function RoleShell(props: {
-  allowedRole: MockRole | MockRole[];
+  allowedRole: AuthRole | AuthRole[];
   title: string;
   children: ReactNode;
 }) {
   const { allowedRole, title, children } = props;
   const allowedRoles = Array.isArray(allowedRole) ? allowedRole : [allowedRole];
   const [mounted, setMounted] = useState(false);
-  const [session, setSession] = useState<MockSession | null>(null);
+  const [session, setSession] = useState<AuthSession | null>(null);
   const [currentPath, setCurrentPath] = useState("");
   const [currentHash, setCurrentHash] = useState("");
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -79,15 +79,14 @@ export default function RoleShell(props: {
   useEffect(() => {
     if (!mounted) return;
     if (!session) {
-      const timer = setTimeout(() => {
-        const from = encodeURIComponent(window.location.pathname);
-        window.location.href = `/login?from=${from}`;
-      }, 300);
-      return () => clearTimeout(timer);
+      const from = encodeURIComponent(window.location.pathname);
+      window.location.href = `/login?from=${from}`;
+      return;
     }
     if (!allowedRoles.includes(session.role)) {
+      const from = encodeURIComponent(window.location.pathname);
       const goMap: Record<string, string> = { admin: "/admin", staff: "/staff", client: "/client" };
-      window.location.href = goMap[session.role] || "/login";
+      window.location.href = `${goMap[session.role] || "/login"}?from=${from}`;
       return;
     }
     return;
@@ -140,7 +139,7 @@ export default function RoleShell(props: {
         <button type="button" className="sidebar-close-btn" onClick={closeSidebar}>✕</button>
         <h2 className="dashboard-sidebar-title">工作台导航</h2>
         <div className="dashboard-sidebar-group">
-          {roleMenus[allowedRoles[0]].map((item) => (
+          {roleMenus[session.role].map((item) => (
             <a
               key={item.id}
               href={item.href}

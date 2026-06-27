@@ -2,7 +2,7 @@
 
 本项目在 Render 建议创建 2 个 Web Service：
 
-- `xiangtai-api`：后端 API（Node + SQLite 持久盘）
+- `xiangtai-api`：后端 API（Node + PostgreSQL）
 - `xiangtai-web`：前端 Next.js
 
 仓库根目录已提供 `render.yaml`，可直接走 Blueprint 一键创建。
@@ -20,7 +20,7 @@
 - `AUTH_SECRET`：必填，至少 32 位随机字符串。
 - `DEEPSEEK_API_KEY`：可选，不填则 AI 能力不可用。
 
-`SQLITE_PATH` 已在 `render.yaml` 设为 `/var/data/dev.sqlite`，并挂载持久盘。
+`DATABASE_URL 通过环境变量配置
 
 ### 2.2 前端服务 `xiangtai-web`
 
@@ -44,5 +44,5 @@
 
 ## 5. 数据持久化说明
 
-- API 使用 SQLite，数据文件位于 `/var/data/dev.sqlite`。
+- API 使用 PostgreSQL，数据文件位于 `PostgreSQL 数据库`。
 - `render.yaml` 已配置持久盘，重启服务不会丢失数据库。

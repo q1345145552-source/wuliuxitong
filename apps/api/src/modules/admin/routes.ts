@@ -3,6 +3,7 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "../../db/prisma";
 import type { MinimalHttpApp } from "../../server";
 import { fail, ok, requireRole } from "../core/http-utils";
+import { verifyPassword } from "../auth/crypto-utils";
 import { loadProductImagesForOrders } from "../orders/product-images";
 import { loadOrderProducts } from "../orders/routes";
 import { hashPassword } from "../auth/crypto-utils";
@@ -250,7 +251,7 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
       receivableCurrency: r.order?.receivableCurrency ?? undefined,
       paymentStatus: (r.order?.paymentStatus === "paid" ? "paid" : "unpaid") as "paid" | "unpaid",
       packageUnit: ((r.order?.packageUnit === "bag" ? "bag" : "box") as "bag" | "box"),
-      cargoType: r.order?.cargoType ?? "NORMAL",
+      cargoType: r.order?.cargoType ?? "normal",
       canEdit: true,
       approvalStatus: r.order?.approvalStatus ?? undefined,
       statusGroup: r.order?.statusGroup ?? undefined,
@@ -493,7 +494,7 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
             widthCm: p.widthCm ?? null,
             heightCm: p.heightCm ?? null,
             productQuantity: p.productQuantity ?? null,
-            cargoType: p.cargoType?.trim() || "NORMAL",
+            cargoType: p.cargoType?.trim() || "normal",
             domesticTrackingNo: p.domesticTrackingNo?.trim() || "货拉拉",
             sortOrder: i,
           })),
@@ -694,6 +695,21 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
     const id = typeof req.query?.id === "string" ? req.query.id.trim() : "";
     if (!id) {
       fail(res, 400, "BAD_REQUEST", "user id is required");
+      return;
+    }
+
+    // 二次鉴权：验证管理员自己的密码
+    const body = (req.body ?? {}) as { confirmPassword?: string };
+    if (!body.confirmPassword?.trim()) {
+      fail(res, 400, "BAD_REQUEST", "confirmPassword is required for user deletion");
+      return;
+    }
+    const admin = await prisma.user.findUnique({
+      where: { id: auth.userId },
+      select: { passwordHash: true },
+    });
+    if (!admin || !verifyPassword(body.confirmPassword, admin.passwordHash ?? "")) {
+      fail(res, 403, "FORBIDDEN", "invalid admin password");
       return;
     }
 

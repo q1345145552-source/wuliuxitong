@@ -587,7 +587,7 @@ export function registerContainerRoutes(app: MinimalHttpApp): void {
     }
 
     // 客户角色：只能看自己的货
-    if (auth.role === "client" && shipment.order.clientId !== auth.userId) {
+    if (auth.role === "client" && shipment.order?.clientId !== auth.userId) {
       fail(res, 403, "FORBIDDEN", "this shipment does not belong to you");
       return;
     }

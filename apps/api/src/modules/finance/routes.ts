@@ -1,8 +1,9 @@
 import { prisma } from "../../db/prisma";
+import { Prisma } from "@prisma/client";
 import type { MinimalHttpApp } from "../../server";
 import { fail, ok, requireRole } from "../core/http-utils";
 
-function decToNumber(v: any): number {
+function decToNumber(v: Prisma.Decimal | null | undefined): number {
   if (v === null || v === undefined) return 0;
   return Number(v.toString());
 }

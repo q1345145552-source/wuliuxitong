@@ -1,6 +1,7 @@
 import { prisma } from "../../db/prisma";
 import type { MinimalHttpApp } from "../../server";
 import { fail, ok, requireRole } from "../core/http-utils";
+import { DEFAULT_SHIPPING_PRICES, INSPECTION_SURCHARGE, SENSITIVE_SURCHARGE } from "../../../../../packages/shared-types/constants";
 
 const DEFAULT_CONFIG = {
   sea_min_volume: "0.5",
@@ -36,13 +37,14 @@ async function saveConfig(key: string, value: string): Promise<void> {
 }
 
 // ── Default price seeds ──
+const { sea, land } = DEFAULT_SHIPPING_PRICES;
 const DEFAULT_PRICES: Array<{ transportMode: string; cargoType: string; unitPriceCny: number }> = [
-  { transportMode: "sea", cargoType: "normal", unitPriceCny: 550 },
-  { transportMode: "sea", cargoType: "inspection", unitPriceCny: 700 },
-  { transportMode: "sea", cargoType: "sensitive", unitPriceCny: 800 },
-  { transportMode: "land", cargoType: "normal", unitPriceCny: 1070 },
-  { transportMode: "land", cargoType: "inspection", unitPriceCny: 1250 },
-  { transportMode: "land", cargoType: "sensitive", unitPriceCny: 1350 },
+  { transportMode: "sea", cargoType: "normal", unitPriceCny: sea },
+  { transportMode: "sea", cargoType: "inspection", unitPriceCny: sea + INSPECTION_SURCHARGE },
+  { transportMode: "sea", cargoType: "sensitive", unitPriceCny: sea + SENSITIVE_SURCHARGE },
+  { transportMode: "land", cargoType: "normal", unitPriceCny: land },
+  { transportMode: "land", cargoType: "inspection", unitPriceCny: land + INSPECTION_SURCHARGE },
+  { transportMode: "land", cargoType: "sensitive", unitPriceCny: land + SENSITIVE_SURCHARGE },
 ];
 
 export function registerShippingConfigRoutes(app: MinimalHttpApp): void {

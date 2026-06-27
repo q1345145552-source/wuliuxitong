@@ -271,7 +271,7 @@ export interface AdminOrderItem {
   receivableCurrency?: "CNY" | "THB";
   paymentStatus?: "paid" | "unpaid";
   shipDate: string | null;
-  statusGroup: string;
+  statusGroup?: string;
   createdAt: string;
   updatedAt: string;
   productImages?: OrderProductImageItem[];
@@ -954,10 +954,11 @@ export async function createAdminStaff(payload: {
   return parseApiResponse(response);
 }
 
-export async function deleteAdminStaff(userId: string): Promise<{ deleted: boolean; id: string }> {
+export async function deleteAdminStaff(userId: string, confirmPassword?: string): Promise<{ deleted: boolean; id: string }> {
   const response = await fetch(`${apiBaseUrl()}/admin/users?id=${encodeURIComponent(userId)}`, {
     method: "DELETE",
-    headers: { ...authHeaders() },
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({ confirmPassword: confirmPassword || "" }),
   });
   return parseApiResponse(response);
 }
@@ -1014,11 +1015,9 @@ export async function updateAdminClient(payload: {
 }
 
 export async function fetchAdminAiSessionMemory(params?: {
-  companyId?: string;
   limit?: number;
 }): Promise<{ items: AdminAiSessionMemoryItem[]; total: number; limit: number }> {
   const query = new URLSearchParams();
-  if (params?.companyId) query.set("companyId", params.companyId);
   if (typeof params?.limit === "number") query.set("limit", String(params.limit));
   const suffix = query.toString();
   const response = await fetch(
@@ -1032,12 +1031,10 @@ export async function fetchAdminAiSessionMemory(params?: {
 }
 
 export async function clearAdminAiSessionMemory(params?: {
-  companyId?: string;
   sessionId?: string;
   userId?: string;
 }): Promise<{ removed: number; companyId: string; sessionId: string | null; userId: string | null }> {
   const query = new URLSearchParams();
-  if (params?.companyId) query.set("companyId", params.companyId);
   if (params?.sessionId) query.set("sessionId", params.sessionId);
   if (params?.userId) query.set("userId", params.userId);
   const suffix = query.toString();
@@ -1052,11 +1049,9 @@ export async function clearAdminAiSessionMemory(params?: {
 }
 
 export async function fetchAdminAiKnowledgeGaps(params?: {
-  companyId?: string;
   status?: "open" | "resolved";
 }): Promise<{ items: AdminAiKnowledgeGapItem[]; total: number; status: "open" | "resolved" | "all" }> {
   const query = new URLSearchParams();
-  if (params?.companyId) query.set("companyId", params.companyId);
   if (params?.status) query.set("status", params.status);
   const suffix = query.toString();
   const response = await fetch(
@@ -1071,7 +1066,6 @@ export async function fetchAdminAiKnowledgeGaps(params?: {
 
 export async function resolveAdminAiKnowledgeGap(params: {
   id: string;
-  companyId?: string;
 }): Promise<{ resolved: true; id: string }> {
   const response = await fetch(`${apiBaseUrl()}/admin/ai/knowledge-gaps/resolve`, {
     method: "POST",
@@ -1290,20 +1284,8 @@ export async function createManagedUser(payload: {
   return parseApiResponse(response);
 }
 
-/**
- * 重置用户密码（管理员）。
- */
-export async function resetUserPassword(userId: string, password: string): Promise<{ updated: boolean; id: string }> {
-  const response = await fetch(`${apiBaseUrl()}/admin/users/set-password`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...authHeaders(),
-    },
-    body: JSON.stringify({ id: userId, password }),
-  });
-  return parseApiResponse(response);
-}
+/** @deprecated Use setAdminStaffPassword instead. Kept for backward compatibility. */
+export const resetUserPassword = setAdminStaffPassword;
 
 /**
  * 禁用/启用用户（管理员）。
@@ -1406,7 +1388,7 @@ export async function fetchLoadingManifestDetail(manifestId: string): Promise<Lo
 /**
  * 封装装柜清单。
  */
-export async function sealLoadingManifest(manifestId: string): Promise<LoadingManifestItem> {
+export async function sealLoadingManifest(manifestId: string): Promise<{ message: string; manifest: { id: string; status: string } }> {
   const response = await fetch(`${apiBaseUrl()}/staff/loading-manifests/seal?id=${manifestId}`, {
     method: "POST",
     headers: { ...authHeaders() },
@@ -1501,29 +1483,7 @@ export async function fetchAdminShippingRates(): Promise<{
   return parseApiResponse(response);
 }
 
-export async function saveAdminShippingRate(payload: {
-  id?: string;
-  transportMode: string;
-  cargoType: string;
-  customerId?: string | null;
-  unitPriceCny: number;
-  disableMinVolume?: boolean;
-}): Promise<{ saved: boolean }> {
-  const response = await fetch(`${apiBaseUrl()}/admin/shipping/rates`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", ...authHeaders() },
-    body: JSON.stringify(payload),
-  });
-  return parseApiResponse(response);
-}
 
-export async function deleteAdminShippingRate(id: string): Promise<{ deleted: boolean }> {
-  const response = await fetch(`${apiBaseUrl()}/admin/shipping/rates?id=${encodeURIComponent(id)}`, {
-    method: "DELETE",
-    headers: { ...authHeaders() },
-  });
-  return parseApiResponse(response);
-}
 
 export async function fetchClientShippingConfig(clientId: string): Promise<{
   clientId: string;

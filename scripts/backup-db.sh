@@ -6,7 +6,7 @@ BACKUP_DIR="/root/db-backups"
 mkdir -p "$BACKUP_DIR"
 FILE="$BACKUP_DIR/xiangtai_$(date +%Y%m%d).sql.gz"
 
-FEISHU_URL="https://open.feishu.cn/open-apis/bot/v2/hook/e49ecf0c-003d-41ae-9971-823ab219d9a4"
+FEISHU_URL="${FEISHU_WEBHOOK_URL:-}"
 
 cd /root/MyWebSite
 
