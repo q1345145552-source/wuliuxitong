@@ -1094,234 +1094,40 @@ export default function ClientHomePage() {
           </>
         )}
 
-            {hasQueried && queriedOrders.slice(0, pageSize).map((item, idx) => (
-          <article key={item.id} className="order-card">
-            <div className="order-head">
-              <div className="order-title">
-                {(item.products?.length ?? 0) > 0
-                  ? (item.products ?? []).map((p, i) => (
-                      <div key={p.id || i} style={{ marginBottom: i < (item.products?.length ?? 0) - 1 ? 4 : 0 }}>
-                        <div style={{ fontWeight: 600 }}>{p.itemName}</div>
-                        <div style={{ fontSize: 12, color: "#000000", paddingLeft: 4 }}>
-                          {p.packageCount}件
-                          {p.lengthCm ? `  ${p.lengthCm}×${p.widthCm}×${p.heightCm}cm` : ""}
-                          <span style={{ marginLeft: 6, fontSize: 12, color: "#000000" }}>
-                            货型：{((p.cargoType ?? "normal").toLowerCase() === "inspection" ? "商检" : (p.cargoType ?? "normal").toLowerCase() === "sensitive" ? "敏感" : "普货")}
-                          </span>
-                          <span style={{ marginLeft: 6, fontSize: 12, color: "#000000" }}>
-                            国内单号：{p.domesticTrackingNo || "货拉拉"}
-                          </span>
-                        </div>
-                      </div>
-                    ))
-                  : (item.itemName || "未填品名")}
-              </div>
-              <div className="order-badges">
-                <span className="order-badge order-badge-amount">金额：{formatCny(item.receivableAmountCny ?? null)}</span>
-                <span
-                  className={`order-badge ${(item.paymentStatus ?? "unpaid") === "paid" ? "order-badge-paid" : "order-badge-unpaid"}`}
-                >
-                  {(item.paymentStatus ?? "unpaid") === "paid" ? "已付款" : "待付款"}
-                </span>
-                <a
-                  href={`/client/bills/${encodeURIComponent(item.id)}`}
-                  style={{
-                    border: "1px solid #bfdbfe",
-                    borderRadius: 999,
-                    padding: "3px 10px",
-                    background: "#eff6ff",
-                    color: "#1d4ed8",
-                    textDecoration: "none",
-                    fontSize: 12,
-                    fontWeight: 700,
-                  }}
-                >
-                  账单
-                </a>
-                <span className={`order-badge ${item.transportMode === "sea" ? "order-badge-sea" : "order-badge-land"}`}>
-                  {item.transportMode === "sea" ? "海运" : "陆运"}
-                </span>
-                <span className="order-badge" style={{ background: "#fef3c7", color: "#92400e", borderColor: "#fcd34d" }}>
-                  {(item.cargoType ?? "normal").toLowerCase() === "inspection" ? "商检" : (item.cargoType ?? "normal").toLowerCase() === "sensitive" ? "敏感" : "普货"}
-                </span>
-                <span className={statusToneClass(item.currentStatus)}>{orderStatusText(item.currentStatus)}</span>
-              </div>
+            {hasQueried && queriedOrders.length > 0 ? (
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                <thead><tr style={{ borderBottom: "2px solid #e5e7eb", textAlign: "left", background: "#f8fafc" }}>
+                  <th style={{ padding: "6px 8px", fontWeight: 600 }}>唛头</th><th style={{ padding: "6px 8px", fontWeight: 600 }}>预报单号</th><th style={{ padding: "6px 8px", fontWeight: 600 }}>品名</th><th style={{ padding: "6px 8px", fontWeight: 600 }}>尺寸(cm)</th><th style={{ padding: "6px 8px", fontWeight: 600 }}>体积(m³)</th><th style={{ padding: "6px 8px", fontWeight: 600 }}>重量(kg)</th><th style={{ padding: "6px 8px", fontWeight: 600 }}>件</th><th style={{ padding: "6px 8px", fontWeight: 600 }}>运输</th><th style={{ padding: "6px 8px", fontWeight: 600 }}>物流状态</th><th style={{ padding: "6px 8px", fontWeight: 600 }}>操作</th>
+                </tr></thead>
+                <tbody>
+                  {queriedOrders.slice(0, pageSize).map((item: any) => {
+                    const st = item.currentStatus || "";
+                    const statusMap: Record<string, string> = { created: "已创建", loaded: "已装柜", departed: "已开船", arrivedPort: "已到港", customsTH: "清关中", customsCleared: "清关已放行", inWarehouseTH: "已到仓", outForDelivery: "派送中", delivered: "已签收" };
+                    const dims = (item.products ?? []).map((p: any) => (p.lengthCm && p.widthCm && p.heightCm ? p.lengthCm + "×" + p.widthCm + "×" + p.heightCm : null)).filter(Boolean).join(", ");
+                    return (
+                      <tr key={item.id} style={{ borderBottom: "1px solid #e5e7eb" }}>
+                        <td style={{ padding: "6px 8px", fontFamily: "monospace", color: "#6b21a8", fontSize: 12 }}>{item.clientId || "—"}</td>
+                        <td style={{ padding: "6px 8px", fontFamily: "monospace", fontSize: 11 }}>{item.orderNo || item.id}<br /><span style={{ fontSize: 10, color: "#6b7280" }}>{item.trackingNo || ""}</span></td>
+                        <td style={{ padding: "6px 8px" }}>{(item.products?.length ?? 0) > 0 ? (item.products ?? []).map((p: any, i: number) => (<div key={p.id || i}>{p.itemName}</div>)) : (item.itemName || "未填品名")}</td>
+                        <td style={{ padding: "6px 8px", fontSize: 11, whiteSpace: "nowrap" }}>{dims || "—"}</td>
+                        <td style={{ padding: "6px 8px", whiteSpace: "nowrap" }}>{item.volumeM3 != null ? Number(item.volumeM3).toFixed(3) : "—"}</td>
+                        <td style={{ padding: "6px 8px", whiteSpace: "nowrap" }}>{item.weightKg != null ? Number(item.weightKg).toFixed(2) : "—"}</td>
+                        <td style={{ padding: "6px 8px", whiteSpace: "nowrap" }}>{item.packageCount} {item.packageUnit === "box" ? "箱" : "袋"}</td>
+                        <td style={{ padding: "6px 8px" }}>{item.transportMode === "sea" ? "🚢海运" : "🚚陆运"}</td>
+                        <td style={{ padding: "6px 8px" }}>{statusMap[st] || st || "—"}</td>
+                        <td style={{ padding: "6px 8px", whiteSpace: "nowrap" }}>
+                          <button onClick={() => openShipmentTrack(item.trackingNo || item.id)} style={{ border: "1px solid #2563eb", borderRadius: 4, padding: "2px 8px", fontSize: 11, background: "#eff6ff", color: "#2563eb", cursor: "pointer" }}>物流轨迹</button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
             </div>
-
-            <div className="order-summary-row">
-              <div className="order-summary-item">
-                <span className="order-summary-label">单号</span>
-                <span className="order-summary-value">{item.trackingNo ?? item.id}</span>
-              </div>
-              <div className="order-summary-item">
-                <span className="order-summary-label">目的国</span>
-                <span className="order-summary-value">🇹🇭 泰国</span>
-              </div>
-              <div className="order-summary-item">
-                <span className="order-summary-label">当前状态</span>
-                <span className="order-summary-value">{orderStatusText(item.currentStatus)}</span>
-              </div>
-              <button
-                type="button"
-                className="order-detail-toggle"
-                onClick={() =>
-                  setOpenDetailsByOrder((prev) => ({
-                    ...prev,
-                    [item.id]: !prev[item.id],
-                  }))
-                }
-              >
-                {openDetailsByOrder[item.id] ? "收起详情" : "展开详情"}
-              </button>
-            </div>
-
-            <div className="order-stepper">
-              {buildOrderTimeline(item.currentStatus).map((node) => (
-                <div key={`${item.id}-${node.key}`} className="order-stepper-node">
-                  <span className={`order-step-icon order-step-${node.phase}`} />
-                  {(() => {
-                    const Icon = orderTimelineIcon(node.key);
-                    return <Icon size={12} />;
-                  })()}
-                  <span className="order-step-label">{node.label}</span>
-                </div>
-              ))}
-            </div>
-
-            {openDetailsByOrder[item.id] ? (
-              <div className="order-fields" style={{ marginTop: 10 }}>
-                <div className="order-field">
-                  <div className="order-field-label">仓库</div>
-                  <div className="order-field-value">{warehouseOptions.find(w => w.id === item.warehouseId)?.label ?? item.warehouseId ?? "—"}</div>
-                </div>
-                <div className="order-field">
-                  <div className="order-field-label">国内单号</div>
-                  <div className="order-field-value">{item.domesticTrackingNo ?? "-"}</div>
-                </div>
-                <div className="order-field">
-                  <div className="order-field-label">体积</div>
-                  <div className="order-field-value">{item.volumeM3 != null ? `${item.volumeM3} m³` : "-"}</div>
-                </div>
-                <div className="order-field">
-                  <div className="order-field-label">重量</div>
-                  <div className="order-field-value">{item.weightKg != null ? `${item.weightKg} kg` : "-"}</div>
-                </div>
-                <div className="order-field">
-                  <div className="order-field-label">发货日期</div>
-                  <div className="order-field-value">{item.shipDate ?? item.createdAt?.slice(0, 10) ?? "-"}</div>
-                </div>
-                <div className="order-field">
-                  <div className="order-field-label">件数</div>
-                  <div className="order-field-value">
-                    {item.packageCount} {item.packageUnit === "bag" ? "袋" : "箱"}
-                  </div>
-                </div>
-                {(item.products?.length ?? 0) > 0 && (
-                  <div className="order-field">
-                    <div className="order-field-label">产品明细</div>
-                    <div className="order-field-value" style={{ fontSize: 12 }}>
-                      {(item.products ?? []).map((p, i) => (
-                        <div key={i} style={{ marginBottom: 2 }}>
-                          {p.itemName} ×{p.packageCount}
-                          {p.lengthCm ? `  ${p.lengthCm}×${p.widthCm}×${p.heightCm}cm` : ""}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-                <div className="order-field">
-                  <div className="order-field-label">实时汇率</div>
-                  <div className="order-field-value">{walletRateText}</div>
-                </div>
-                <div className="order-field">
-                  <div className="order-field-label">订单详情 · 产品图</div>
-                  <div className="order-field-value" style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-                    {(item.productImages?.length ?? 0) === 0 ? (
-                      <span style={{ color: "#000000" }}>暂无（由仓库员工上传）</span>
-                    ) : (
-                      item.productImages?.map((img) => (
-                        <a
-                          key={img.id}
-                          href={imgSrc(img)}
-                          download={img.fileName}
-                          target="_blank"
-                          rel="noreferrer"
-                          style={{ display: "block" }}
-                        >
-                          <img
-                            src={imgSrc(img)}
-                            alt={img.fileName}
-                            style={{ width: 72, height: 72, objectFit: "cover", borderRadius: 8, border: "1px solid #e2e8f0" }}
-                          />
-                        </a>
-                      ))
-                    )}
-                  </div>
-                </div>
-                <div className="order-field">
-                  <div className="order-field-label">物流状态</div>
-                  <div className="order-field-value">
-                    {logisticsStatusText(item.currentStatus)}
-                    {(item.logisticsRecords?.length ?? 0) > 0 ? (
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setOpenLogisticsByOrder((prev) => ({
-                            ...prev,
-                            [item.id]: !prev[item.id],
-                          }))
-                        }
-                        style={{
-                          marginLeft: 8,
-                          border: "1px solid #d1d5db",
-                          borderRadius: 8,
-                          padding: "2px 8px",
-                          background: "#fff",
-                          color: "#1d4ed8",
-                          cursor: "pointer",
-                          fontSize: 12,
-                        }}
-                      >
-                        {openLogisticsByOrder[item.id] ? "收起记录" : `查看记录（${item.logisticsRecords?.length ?? 0}）`}
-                      </button>
-                    ) : null}
-                  </div>
-                </div>
-              </div>
-            ) : null}
-
-            {openDetailsByOrder[item.id] && openLogisticsByOrder[item.id] && (item.logisticsRecords?.length ?? 0) > 0 ? (
-              <div style={{ marginTop: 10, padding: "4px 0 4px 24px", position: "relative" }}>
-                <div style={{ position: "absolute", left: 10, top: 8, bottom: 8, width: 2, background: "linear-gradient(180deg, #93c5fd, #e2e8f0)", borderRadius: 1 }} />
-                {buildLogisticsTransitions(item.logisticsRecords).map((record, index, arr) => {
-                  const isLast = index === arr.length - 1;
-                  const colorMap: Record<string, { color: string; bg: string }> = { loaded: { color: "#0369a1", bg: "#e0f2fe" }, departed: { color: "#1e40af", bg: "#dbeafe" }, delaydeparted: { color: "#b45309", bg: "#fef3c7" }, arrivedport: { color: "#065f46", bg: "#d1fae5" }, customsth: { color: "#92400e", bg: "#fef3c7" }, customscleared: { color: "#166534", bg: "#dcfce7" }, inwarehouseth: { color: "#7c3aed", bg: "#ede9fe" }, outfordelivery: { color: "#db2777", bg: "#fce7f3" }, delivered: { color: "#16a34a", bg: "#f0fdf4" }, intransit: { color: "#1e40af", bg: "#dbeafe" }, customs: { color: "#92400e", bg: "#fef3c7" }, loading: { color: "#0369a1", bg: "#e0f2fe" }, sealed: { color: "#0369a1", bg: "#e0f2fe" }, arrived: { color: "#065f46", bg: "#d1fae5" } };
-                  const fromCfg = colorMap[(record.fromStatus ?? "").toLowerCase()] ?? { color: "#6b7280", bg: "#f3f4f6" };
-                  const toCfg = colorMap[(record.toStatus ?? "").toLowerCase()] ?? { color: "#6b7280", bg: "#f3f4f6" };
-                  return (
-                    <div key={`${item.id}-${record.changedAt}-${index}`} style={{ position: "relative", paddingBottom: isLast ? 0 : 14 }}>
-                      <div style={{ position: "absolute", left: -19, top: 6, width: 10, height: 10, borderRadius: "50%", background: isLast ? toCfg.color : "#93c5fd", border: "2px solid #fff", boxShadow: `0 0 0 2px ${isLast ? toCfg.color : "#93c5fd"}40`, zIndex: 1 }} />
-                      <div style={{ background: "#fff", border: "1px solid #e5e7eb", borderRadius: 10, padding: "10px 12px", transition: "all 0.15s ease" }}>
-                        <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6, flexWrap: "wrap" }}>
-                          <span style={{ padding: "2px 8px", borderRadius: 4, fontSize: 11, fontWeight: 600, background: fromCfg.bg, color: fromCfg.color }}>{statusLabel(record.fromStatus)}</span>
-                          <span style={{ color: "#9ca3af", fontSize: 11 }}>→</span>
-                          <span style={{ padding: "2px 8px", borderRadius: 4, fontSize: 11, fontWeight: 700, background: toCfg.bg, color: toCfg.color }}>{statusLabel(record.toStatus)}</span>
-                        </div>
-                        <div style={{ fontSize: 11, color: "#9ca3af", marginBottom: 3 }}>{record.periodText}</div>
-                        {record.remark ? <div style={{ fontSize: 12, color: "#4b5563", lineHeight: 1.5 }}>{record.remark}</div> : null}
-                        {record.operatorRole && record.operatorRole !== "client" && (
-                          <div style={{ fontSize: 10, color: "#9ca3af", marginTop: 4 }}>
-                            {record.operatorRole === "staff" ? "💼" : "🔧"} {record.operatorName || (record.operatorRole === "staff" ? "员工" : "管理员")}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            ) : null}
-          </article>
-            ))}
+          ) : (
+            <EmptyStateCard title="无匹配订单" description="可调整查询条件后重新查询。" />
+          )}
           </>
         ) : null}
       </section>
