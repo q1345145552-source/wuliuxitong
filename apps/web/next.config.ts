@@ -12,6 +12,7 @@ const nextConfig: NextConfig = {
       { source: "/admin/:path*", destination: "http://api:3001/admin/:path*" },
       { source: "/staff/:path*", destination: "http://api:3001/staff/:path*" },
       { source: "/client/:path*", destination: "http://api:3001/client/:path*" },
+      { source: "/images/:path*", destination: "http://api:3001/images/:path*" },
     ];
   },
   async headers() {
