@@ -11,7 +11,16 @@ const SESSION_KEY = "auth_session_v1";
 
 export function getOptionalSession(): AuthSession | null {
   if (typeof window === "undefined") return null;
-  const raw = window.localStorage.getItem(SESSION_KEY);
+  let raw = window.localStorage.getItem(SESSION_KEY);
+  // 兼容旧 key 无缝迁移
+  if (!raw) {
+    const oldRaw = window.localStorage.getItem("mock_session_v1");
+    if (oldRaw) {
+      window.localStorage.setItem(SESSION_KEY, oldRaw);
+      window.localStorage.removeItem("mock_session_v1");
+      raw = oldRaw;
+    }
+  }
   if (!raw) return null;
   try {
     const parsed = JSON.parse(raw) as AuthSession;

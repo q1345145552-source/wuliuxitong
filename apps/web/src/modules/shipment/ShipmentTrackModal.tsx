@@ -105,7 +105,7 @@ function LoadingSkeleton() {
           <div style={{ position: "absolute", left: 2, top: 0, bottom: -20, width: 2, background: "#e5e7eb" }} />
           <div style={{ position: "absolute", left: -3, top: 2, width: 12, height: 12, borderRadius: "50%", background: "#e5e7eb" }} />
           <div style={{ flex: 1 }}>
-            <div style={{ height: 12, width: 80, background: "#e5e7eb", borderRadius: 4, marginBottom: 6, animation: "pulse 1.5s infinite" }} />
+            <div style={{ height: 12, width: 80, background: "#e5e7eb", borderRadius: 4, marginBottom: 6, animation: "none" }} />
             <div style={{ height: 14, width: "70%", background: "#f3f4f6", borderRadius: 4, marginBottom: 4 }} />
             <div style={{ height: 10, width: "40%", background: "#f9fafb", borderRadius: 4 }} />
           </div>
@@ -492,7 +492,7 @@ function ShipmentTrackModal({ trackingOrId, onClose }: { trackingOrId: string; o
         background: "rgba(0,0,0,0.45)",
         backdropFilter: "blur(2px)",
         padding: 16,
-        animation: "fadeIn 0.2s ease",
+        animation: "none",
       }}
     >
       <div style={{
@@ -503,7 +503,7 @@ function ShipmentTrackModal({ trackingOrId, onClose }: { trackingOrId: string; o
         background: "#fff",
         borderRadius: 16,
         boxShadow: "0 24px 80px rgba(0,0,0,0.25)",
-        animation: "slideUp 0.25s ease",
+        animation: "none",
       }}>
         {/* Header */}
         <div style={{
@@ -588,21 +588,7 @@ function ShipmentTrackModal({ trackingOrId, onClose }: { trackingOrId: string; o
         </div>
       </div>
 
-      {/* Global animation styles */}
-      <style>{`
-        @keyframes fadeIn {
-          from { opacity: 0; }
-          to { opacity: 1; }
-        }
-        @keyframes slideUp {
-          from { opacity: 0; transform: translateY(20px) scale(0.97); }
-          to { opacity: 1; transform: translateY(0) scale(1); }
-        }
-        @keyframes pulse {
-          0%, 100% { opacity: 1; }
-          50% { opacity: 0.5; }
-        }
-      `}</style>
+
     </div>
   );
 }
