@@ -1913,16 +1913,15 @@ export default function AdminHomePage() {
                         </span>
                       </td>
                       <td style={{ padding: "8px 10px" }}>
-                        <button
-                          type="button"
+                        <img
+                          src={r.proofImage}
+                          alt="付款凭证"
                           onClick={() => {
                             const w = window.open("", "_blank");
                             if (w) { w.document.write(`<img src="${r.proofImage}" style="max-width:100%" />`); }
                           }}
-                          style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "4px 10px", background: "#fff", cursor: "pointer", fontSize: 12 }}
-                        >
-                          查看凭证
-                        </button>
+                          style={{ width: 60, height: 60, objectFit: "cover", borderRadius: 6, border: "1px solid #e5e7eb", cursor: "pointer" }}
+                        />
                       </td>
                       <td style={{ padding: "8px 10px", maxWidth: 150, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: 12, color: "#6b7280" }}>
                         {r.reviewRemark || r.remark || "—"}
