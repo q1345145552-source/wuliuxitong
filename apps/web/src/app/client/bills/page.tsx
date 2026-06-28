@@ -48,7 +48,7 @@ export default function ClientBillsPage() {
       });
       const data = await res.json();
       if (data.code !== "OK") throw new Error(data.message || "付款失败");
-      alert(data.data.message);
+      setMessage(data.data.message);
       setPayModal(null);
       setPayProof(null);
       window.location.reload();
