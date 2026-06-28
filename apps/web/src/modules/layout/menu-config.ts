@@ -51,6 +51,7 @@ export const roleFunctionMenus: Record<AuthRole, RoleFunctionMenuItem[]> = {
     { id: "admin-func-ai-feed", label: "AI知识投喂", href: "/admin#knowledge-feed" },
     { id: "admin-func-ai-list", label: "知识列表", href: "/admin#knowledge-list" },
     { id: "admin-func-wallet-recharges", label: "充值审核", href: "/admin#wallet-recharges" },
+    { id: "admin-func-offline-payments", label: "付款审核", href: "/admin#offline-payments" },
   ],
   staff: [
     { id: "staff-func-billing", label: "账单管理", href: "/staff#staff-billing" },

@@ -1020,4 +1020,72 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
     });
   });
 
+  // ===== 管理员：线下付款审核列表 =====
+  app.get("/admin/offline-payments", async (req, res) => {
+    const auth = requireRole(req, res, ["admin"]);
+    if (!auth) return;
+    const rows = await prisma.order.findMany({
+      where: {
+        companyId: auth.companyId,
+        paymentProofBase64: { not: null },
+        paymentStatus: "unpaid",
+      },
+      orderBy: { paymentProofUploadedAt: "desc" },
+      select: {
+        id: true,
+        clientId: true,
+        itemName: true,
+        receivableAmountCny: true,
+        paymentProofBase64: true,
+        paymentProofUploadedAt: true,
+        trackingNo: true,
+        client: { select: { name: true, companyName: true } },
+      },
+    });
+    ok(res, {
+      items: rows.map((r) => ({
+        id: r.id,
+        orderId: r.id,
+        trackingNo: r.trackingNo,
+        clientId: r.clientId,
+        clientName: r.client.name,
+        companyName: r.client.companyName,
+        itemName: r.itemName,
+        amount: Number(r.receivableAmountCny ?? 0),
+        proofImage: r.paymentProofBase64,
+        submittedAt: r.paymentProofUploadedAt?.toISOString() ?? null,
+      })),
+    });
+  });
+
+  // ===== 管理员：通过线下付款 =====
+  app.post("/admin/offline-payments/approve", async (req, res) => {
+    const auth = requireRole(req, res, ["admin"]);
+    if (!auth) return;
+    const body = (req.body ?? {}) as { orderId?: string };
+    const orderId = body.orderId?.trim();
+    if (!orderId) { fail(res, 400, "BAD_REQUEST", "缺少订单ID"); return; }
+    const order = await prisma.order.findFirst({ where: { id: orderId, companyId: auth.companyId }, select: { id: true, paymentStatus: true } });
+    if (!order) { fail(res, 404, "NOT_FOUND", "订单不存在"); return; }
+    await prisma.order.update({
+      where: { id: orderId },
+      data: { paymentStatus: "paid", paidAt: new Date(), paidBy: `管理员审核(${auth.name})` },
+    });
+    ok(res, { approved: true, orderId });
+  });
+
+  // ===== 管理员：拒绝线下付款 =====
+  app.post("/admin/offline-payments/reject", async (req, res) => {
+    const auth = requireRole(req, res, ["admin"]);
+    if (!auth) return;
+    const body = (req.body ?? {}) as { orderId?: string };
+    const orderId = body.orderId?.trim();
+    if (!orderId) { fail(res, 400, "BAD_REQUEST", "缺少订单ID"); return; }
+    await prisma.order.update({
+      where: { id: orderId, companyId: auth.companyId },
+      data: { paymentProofBase64: null, paymentProofMime: null, paymentProofFileName: null, paymentProofUploadedAt: null },
+    });
+    ok(res, { rejected: true, orderId });
+  });
+
 }

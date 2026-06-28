@@ -79,6 +79,7 @@ const SECTION_IDS = [
   "lastmile",
   "lastmile-address",
   "wallet-recharges",
+  "offline-payments",
 ] as const;
 
 const SECTION_LABELS: Record<(typeof SECTION_IDS)[number], string> = {
@@ -95,6 +96,7 @@ const SECTION_LABELS: Record<(typeof SECTION_IDS)[number], string> = {
   "lastmile": "尾端派送",
   "lastmile-address": "尾端地址",
   "wallet-recharges": "充值审核",
+  "offline-payments": "付款审核",
 };
 
 const sectionStyle = {
@@ -241,6 +243,11 @@ export default function AdminHomePage() {
   const [rechargeList, setRechargeList] = useState<AdminWalletRechargeItem[]>([]);
   const [rechargeStatusFilter, setRechargeStatusFilter] = useState("");
   const [rejectModalId, setRejectModalId] = useState<string | null>(null);
+  // 线下付款审核
+  const [offlinePayments, setOfflinePayments] = useState<Array<{id:string;orderId:string;trackingNo:string;clientName:string;itemName:string;amount:number;proofImage:string;submittedAt:string|null}>>([]);
+  const loadOfflinePayments = async () => {
+    try { const r = await fetch(`${apiBaseUrl()}/admin/offline-payments`, { headers: authHeaders() }); const d = await r.json(); if (d.code === "OK") setOfflinePayments(d.data.items); } catch (e) { console.error(e); }
+  };
   const [rejectRemark, setRejectRemark] = useState("");
   const loadRecharges = async () => {
     try {
@@ -1004,6 +1011,7 @@ export default function AdminHomePage() {
     if (activeSection === "shipping-config" && clientList.length > 0) void loadRates();
     if (activeSection === "lastmile") loadLastmileOrders();
     if (activeSection === "wallet-recharges") loadRecharges();
+    if (activeSection === "offline-payments") loadOfflinePayments();
   }, [activeSection, clientList]);
 
   if (!session) return null;
@@ -2011,6 +2019,52 @@ export default function AdminHomePage() {
           </div>
         </div>
       )}
+
+      {/* 线下付款审核 */}
+      <section id="offline-payments" style={{ ...sectionStyle, display: activeSection === "offline-payments" ? "block" : "none" }}>
+        <h2 style={{ margin: "0 0 16px", fontSize: 18 }}>{SECTION_LABELS["offline-payments"]}</h2>
+        {offlinePayments.length === 0 ? (
+          <p style={{ color: "#6b7280", fontSize: 13 }}>暂无待审核的线下付款</p>
+        ) : (
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+              <thead><tr style={{ background: "#f9fafb", borderBottom: "1px solid #e5e7eb" }}>
+                <th style={{ padding: "8px 10px", textAlign: "left" }}>运单号</th>
+                <th style={{ padding: "8px 10px", textAlign: "left" }}>客户</th>
+                <th style={{ padding: "8px 10px", textAlign: "left" }}>品名</th>
+                <th style={{ padding: "8px 10px", textAlign: "right" }}>金额</th>
+                <th style={{ padding: "8px 10px", textAlign: "left" }}>提交时间</th>
+                <th style={{ padding: "8px 10px", textAlign: "left" }}>凭证</th>
+                <th style={{ padding: "8px 10px", textAlign: "left" }}>操作</th>
+              </tr></thead>
+              <tbody>
+                {offlinePayments.map((p) => (
+                  <tr key={p.id} style={{ borderBottom: "1px solid #f3f4f6" }}>
+                    <td style={{ padding: "8px 10px", fontFamily: "monospace" }}>{p.trackingNo || "—"}</td>
+                    <td style={{ padding: "8px 10px" }}>{p.clientName}</td>
+                    <td style={{ padding: "8px 10px" }}>{p.itemName}</td>
+                    <td style={{ padding: "8px 10px", textAlign: "right", fontWeight: 600 }}>¥{p.amount.toFixed(2)}</td>
+                    <td style={{ padding: "8px 10px", fontSize: 12 }}>{p.submittedAt ? new Date(p.submittedAt).toLocaleString("zh-CN") : "—"}</td>
+                    <td style={{ padding: "8px 10px" }}>
+                      <img src={p.proofImage} alt="凭证" onClick={() => { const w = window.open("","_blank"); if (w) w.document.write(`<img src="${p.proofImage}" style="max-width:100%"/>`); }} style={{ width: 60, height: 60, objectFit: "cover", borderRadius: 6, border: "1px solid #e5e7eb", cursor: "pointer" }} />
+                    </td>
+                    <td style={{ padding: "8px 10px", whiteSpace: "nowrap" }}>
+                      <button type="button" onClick={async () => {
+                        if (!confirm("确认通过？运单将标记为已付款")) return;
+                        try { await fetch(`${apiBaseUrl()}/admin/offline-payments/approve`, { method: "POST", headers: {"Content-Type":"application/json",...authHeaders()}, body: JSON.stringify({orderId: p.orderId}) }); setToast("已通过"); loadOfflinePayments(); } catch (e: any) { setToast(e.message||"失败"); }
+                      }} style={{ border: "none", borderRadius: 6, padding: "4px 10px", background: "#16a34a", color: "#fff", cursor: "pointer", fontSize: 12, marginRight: 4 }}>通过</button>
+                      <button type="button" onClick={async () => {
+                        if (!confirm("确认拒绝？凭证将被清除")) return;
+                        try { await fetch(`${apiBaseUrl()}/admin/offline-payments/reject`, { method: "POST", headers: {"Content-Type":"application/json",...authHeaders()}, body: JSON.stringify({orderId: p.orderId}) }); setToast("已拒绝"); loadOfflinePayments(); } catch (e: any) { setToast(e.message||"失败"); }
+                      }} style={{ border: "none", borderRadius: 6, padding: "4px 10px", background: "#dc2626", color: "#fff", cursor: "pointer", fontSize: 12 }}>拒绝</button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
 
       {/* 5. AI会话记忆运维 */}
       <section id="ai-memory" style={{ ...sectionStyle, display: activeSection === "ai-memory" ? "block" : "none" }}>

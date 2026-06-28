@@ -948,6 +948,69 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
     });
   });
 
+  // ===== 客户端付款 =====
+  app.post("/client/orders/pay", async (req, res) => {
+    const auth = requireRole(req, res, ["client"]);
+    if (!auth) return;
+    const body = (req.body ?? {}) as { orderId?: string; method?: string; proofImage?: string };
+    const orderId = body.orderId?.trim();
+    const method = body.method?.trim();
+
+    if (!orderId) { fail(res, 400, "BAD_REQUEST", "缺少订单ID"); return; }
+    if (method !== "balance" && method !== "offline") {
+      fail(res, 400, "BAD_REQUEST", "支付方式无效，可选：balance（余额）或 offline（线下）");
+      return;
+    }
+
+    const order = await prisma.order.findFirst({
+      where: { id: orderId, clientId: auth.userId, companyId: auth.companyId },
+      select: { id: true, receivableAmountCny: true, receivableCurrency: true, paymentStatus: true, trackingNo: true },
+    });
+    if (!order) { fail(res, 404, "NOT_FOUND", "订单不存在"); return; }
+    if (order.paymentStatus === "paid") { fail(res, 400, "BAD_REQUEST", "该运单已付款"); return; }
+    const amount = Number(order.receivableAmountCny ?? 0);
+    if (amount <= 0) { fail(res, 400, "BAD_REQUEST", "该运单无应收金额"); return; }
+
+    if (method === "balance") {
+      // 余额支付
+      const wallet = await prisma.clientWalletAccount.findUnique({
+        where: { clientId_currency: { clientId: auth.userId, currency: "CNY" } },
+        select: { balance: true },
+      });
+      const balance = Number(wallet?.balance ?? 0);
+      if (balance < amount) {
+        fail(res, 400, "BALANCE_INSUFFICIENT", `余额不足：需要 ¥${amount.toFixed(2)}，当前余额 ¥${balance.toFixed(2)}`);
+        return;
+      }
+      await prisma.$transaction(async (tx) => {
+        await tx.clientWalletAccount.update({
+          where: { clientId_currency: { clientId: auth.userId, currency: "CNY" } },
+          data: { balance: { decrement: amount } },
+        });
+        await tx.order.update({
+          where: { id: orderId },
+          data: { paymentStatus: "paid", paidAt: new Date(), paidBy: `${auth.name}(余额)` },
+        });
+      });
+      ok(res, { success: true, method: "balance", message: `余额支付成功 ¥${amount.toFixed(2)}` });
+    } else {
+      // 线下支付
+      const proofImage = (body.proofImage ?? "").trim();
+      if (!proofImage) { fail(res, 400, "BAD_REQUEST", "请上传付款凭证"); return; }
+      await prisma.order.update({
+        where: { id: orderId },
+        data: {
+          paymentProofBase64: proofImage,
+          paymentProofMime: "image/png",
+          paymentProofFileName: `payment_${orderId}.png`,
+          paymentProofUploadedAt: new Date(),
+          paymentStatus: "unpaid", // 保持未付款，等管理员审核
+        },
+      });
+      ok(res, { success: true, method: "offline", message: "付款凭证已提交，等待管理员审核" });
+    }
+  });
+
   app.get("/client/prealerts", async (req, res) => {
     const auth = requireRole(req, res, ["client"]);
     if (!auth) return;

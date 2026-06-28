@@ -1,11 +1,12 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import * as XLSX from "xlsx";
 import EmptyStateCard from "../../../modules/layout/EmptyStateCard";
 import RoleShell from "../../../modules/layout/RoleShell";
 import { formatCny } from "../../../modules/billing/billing-utils";
 import { fetchClientOrders, type OrderItem } from "../../../services/business-api";
+import { apiBaseUrl, authHeaders } from "../../../services/core-api";
 
 function uniqueById(items: OrderItem[]): OrderItem[] {
   const seen = new Set<string>();
@@ -28,6 +29,32 @@ export default function ClientBillsPage() {
     transportMode: "",
   });
   const [payTab, setPayTab] = useState<"unpaid" | "paid">("unpaid");
+  const [payModal, setPayModal] = useState<{ orderId: string; trackingNo: string; amount: number } | null>(null);
+  const [payMethod, setPayMethod] = useState<"balance" | "offline">("balance");
+  const [payProof, setPayProof] = useState<string | null>(null);
+  const [paySubmitting, setPaySubmitting] = useState(false);
+  const [payError, setPayError] = useState("");
+  const payFileRef = useRef<HTMLInputElement>(null);
+
+  const handlePay = async () => {
+    if (!payModal) return;
+    if (payMethod === "offline" && !payProof) { setPayError("请上传付款凭证"); return; }
+    setPaySubmitting(true);
+    setPayError("");
+    try {
+      const res = await fetch(`${apiBaseUrl()}/client/orders/pay`, {
+        method: "POST", headers: { "Content-Type": "application/json", ...authHeaders() },
+        body: JSON.stringify({ orderId: payModal.orderId, method: payMethod, proofImage: payMethod === "offline" ? payProof : undefined }),
+      });
+      const data = await res.json();
+      if (data.code !== "OK") throw new Error(data.message || "付款失败");
+      alert(data.data.message);
+      setPayModal(null);
+      setPayProof(null);
+      window.location.reload();
+    } catch (e: any) { setPayError(e.message || "付款失败"); }
+    finally { setPaySubmitting(false); }
+  };
 
   const warehouseOptions = [
     { id: "wh_yiwu_01", label: "义乌仓" },
@@ -237,6 +264,15 @@ export default function ClientBillsPage() {
                 >
                   查看账单
                 </a>
+                {(item.paymentStatus ?? "unpaid") !== "paid" && amount && amount > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setPayModal({ orderId: item.id, trackingNo: item.trackingNo || item.orderNo || "—", amount })}
+                    style={{ border: "none", borderRadius: 999, padding: "3px 10px", background: "#16a34a", color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer", marginLeft: 6 }}
+                  >
+                    付款
+                  </button>
+                )}
               </div>
             </div>
 
@@ -273,6 +309,32 @@ export default function ClientBillsPage() {
           </article>
         );
       })}
+      {/* 付款弹窗 */}
+      {payModal && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 60, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(0,0,0,0.4)", padding: 16 }}>
+          <div style={{ width: "100%", maxWidth: 440, background: "#fff", borderRadius: 12, padding: 24, boxShadow: "0 20px 60px rgba(0,0,0,0.3)" }}>
+            <h3 style={{ margin: "0 0 16px", fontSize: 18 }}>付款</h3>
+            <p style={{ fontSize: 13, color: "#6b7280", marginBottom: 12 }}>运单 {payModal.trackingNo} · 金额 ¥{payModal.amount.toFixed(2)}</p>
+            <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+              <button type="button" onClick={() => setPayMethod("balance")} style={{ flex: 1, padding: 12, borderRadius: 8, border: payMethod === "balance" ? "2px solid #2563eb" : "1px solid #d1d5db", background: payMethod === "balance" ? "#eff6ff" : "#fff", fontWeight: 600, fontSize: 14, cursor: "pointer" }}>💰 余额支付</button>
+              <button type="button" onClick={() => setPayMethod("offline")} style={{ flex: 1, padding: 12, borderRadius: 8, border: payMethod === "offline" ? "2px solid #2563eb" : "1px solid #d1d5db", background: payMethod === "offline" ? "#eff6ff" : "#fff", fontWeight: 600, fontSize: 14, cursor: "pointer" }}>📎 线下支付</button>
+            </div>
+            {payMethod === "offline" && (
+              <div style={{ marginBottom: 16 }}>
+                <label style={{ display: "block", marginBottom: 6, fontWeight: 500, fontSize: 14 }}>上传付款凭证</label>
+                <input ref={payFileRef} type="file" accept="image/*" onChange={(e) => { const f = e.target.files?.[0]; if (f) { const r = new FileReader(); r.onload = () => setPayProof(r.result as string); r.readAsDataURL(f); } }} />
+                {payProof && <img src={payProof} alt="凭证" style={{ width: "100%", maxHeight: 160, objectFit: "contain", borderRadius: 8, border: "1px solid #e5e7eb", marginTop: 8 }} />}
+              </div>
+            )}
+            {payMethod === "balance" && <p style={{ fontSize: 12, color: "#6b7280", marginBottom: 16 }}>将从您的 CNY 余额中扣除 ¥{payModal.amount.toFixed(2)}</p>}
+            {payError && <p style={{ color: "#dc2626", fontSize: 13, marginBottom: 12 }}>{payError}</p>}
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+              <button type="button" onClick={() => { setPayModal(null); setPayProof(null); setPayError(""); }} disabled={paySubmitting} style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 16px", background: "#fff", cursor: "pointer", fontSize: 13 }}>取消</button>
+              <button type="button" onClick={handlePay} disabled={paySubmitting} style={{ border: "none", borderRadius: 8, padding: "8px 20px", background: "#16a34a", color: "#fff", fontWeight: 600, cursor: "pointer", fontSize: 13 }}>{paySubmitting ? "处理中..." : "确认支付"}</button>
+            </div>
+          </div>
+        </div>
+      )}
     </RoleShell>
   );
 }
