@@ -1118,7 +1118,7 @@ export default function ClientHomePage() {
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
                 <thead><tr style={{ borderBottom: "2px solid #e5e7eb", textAlign: "left", background: "#f8fafc" }}>
                   <th style={{ padding: "6px 4px", fontWeight: 600, width: 30 }}></th>
-                  <th style={{ padding: "6px 8px", fontWeight: 600 }}>唛头</th><th style={{ padding: "6px 8px", fontWeight: 600 }}>预报单号</th><th style={{ padding: "6px 8px", fontWeight: 600 }}>品名</th><th style={{ padding: "6px 8px", fontWeight: 600 }}>尺寸(cm)</th><th style={{ padding: "6px 8px", fontWeight: 600 }}>体积(m³)</th><th style={{ padding: "6px 8px", fontWeight: 600 }}>重量(kg)</th><th style={{ padding: "6px 8px", fontWeight: 600 }}>件</th><th style={{ padding: "6px 8px", fontWeight: 600 }}>运输</th><th style={{ padding: "6px 8px", fontWeight: 600 }}>物流状态</th><th style={{ padding: "6px 8px", fontWeight: 600 }}>操作</th>
+                  <th style={{ padding: "6px 8px", fontWeight: 600 }}>唛头</th><th style={{ padding: "6px 8px", fontWeight: 600 }}>运单号</th><th style={{ padding: "6px 8px", fontWeight: 600 }}>品名</th><th style={{ padding: "6px 8px", fontWeight: 600 }}>尺寸(cm)</th><th style={{ padding: "6px 8px", fontWeight: 600 }}>体积(m³)</th><th style={{ padding: "6px 8px", fontWeight: 600 }}>重量(kg)</th><th style={{ padding: "6px 8px", fontWeight: 600 }}>件</th><th style={{ padding: "6px 8px", fontWeight: 600 }}>运输</th><th style={{ padding: "6px 8px", fontWeight: 600 }}>物流状态</th><th style={{ padding: "6px 8px", fontWeight: 600 }}>操作</th>
                 </tr></thead>
                 <tbody>
                   {queriedOrders.slice(0, pageSize).map((item: any) => {
@@ -1146,7 +1146,7 @@ export default function ClientHomePage() {
                             </button>
                           </td>
                           <td style={{ padding: "6px 8px", fontFamily: "monospace", color: "#6b21a8", fontSize: 12 }}>{item.clientId || "—"}</td>
-                          <td style={{ padding: "6px 8px", fontFamily: "monospace", fontSize: 11 }}>{item.orderNo || "—"}<br /><span style={{ fontSize: 10, color: "#6b7280" }}>{item.trackingNo || ""}</span></td>
+                          <td style={{ padding: "6px 8px", fontFamily: "monospace", fontSize: 11 }}>{item.trackingNo || "—"}<br /><span style={{ fontSize: 10, color: "#6b7280" }}>{item.orderNo ? `${item.orderNo}` : ""}</span></td>
                           <td style={{ padding: "6px 8px" }}>{(item.products?.length ?? 0) > 0 ? (item.products ?? []).map((p: any, i: number) => (<div key={p.id || i}>{p.itemName}</div>)) : (item.itemName || "未填品名")}</td>
                           <td style={{ padding: "6px 8px", fontSize: 11, whiteSpace: "nowrap" }}>{dims || "—"}</td>
                           <td style={{ padding: "6px 8px", whiteSpace: "nowrap" }}>{item.volumeM3 != null ? Number(item.volumeM3).toFixed(3) : "—"}</td>
