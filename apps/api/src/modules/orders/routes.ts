@@ -972,27 +972,30 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
     if (amount <= 0) { fail(res, 400, "BAD_REQUEST", "该运单无应收金额"); return; }
 
     if (method === "balance") {
-      // 余额支付
-      const wallet = await prisma.clientWalletAccount.findUnique({
-        where: { clientId_currency: { clientId: auth.userId, currency: "CNY" } },
-        select: { balance: true },
-      });
-      const balance = Number(wallet?.balance ?? 0);
-      if (balance < amount) {
-        fail(res, 400, "BALANCE_INSUFFICIENT", `余额不足：需要 ¥${amount.toFixed(2)}，当前余额 ¥${balance.toFixed(2)}`);
-        return;
+      // 余额支付：事务内原子查余额+扣款，防止并发超扣
+      try {
+        await prisma.$transaction(async (tx) => {
+          const wallet = await tx.clientWalletAccount.findUnique({
+            where: { clientId_currency: { clientId: auth.userId, currency: "CNY" } },
+            select: { balance: true },
+          });
+          const balance = Number(wallet?.balance ?? 0);
+          if (balance < amount) throw new Error("BALANCE_INSUFFICIENT");
+          await tx.clientWalletAccount.update({
+            where: { clientId_currency: { clientId: auth.userId, currency: "CNY" } },
+            data: { balance: { decrement: amount } },
+          });
+          await tx.order.update({
+            where: { id: orderId },
+            data: { paymentStatus: "paid", paidAt: new Date(), paidBy: `${auth.name}(余额)` },
+          });
+        });
+        ok(res, { success: true, method: "balance", message: `余额支付成功 ¥${amount.toFixed(2)}` });
+      } catch (e: any) {
+        if (e.message === "BALANCE_INSUFFICIENT") {
+          fail(res, 400, "BALANCE_INSUFFICIENT", `余额不足：需要 ¥${amount.toFixed(2)}`);
+        } else throw e;
       }
-      await prisma.$transaction(async (tx) => {
-        await tx.clientWalletAccount.update({
-          where: { clientId_currency: { clientId: auth.userId, currency: "CNY" } },
-          data: { balance: { decrement: amount } },
-        });
-        await tx.order.update({
-          where: { id: orderId },
-          data: { paymentStatus: "paid", paidAt: new Date(), paidBy: `${auth.name}(余额)` },
-        });
-      });
-      ok(res, { success: true, method: "balance", message: `余额支付成功 ¥${amount.toFixed(2)}` });
     } else {
       // 线下支付
       const proofImage = (body.proofImage ?? "").trim();
