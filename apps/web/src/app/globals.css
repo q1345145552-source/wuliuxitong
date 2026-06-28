@@ -1254,3 +1254,9 @@ pre {
   appearance: none;
   -webkit-appearance: none;
 }
+
+/* 全局：disabled 按钮统一半透明 + 禁止光标 */
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed !important;
+}
