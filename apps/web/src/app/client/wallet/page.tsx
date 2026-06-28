@@ -186,9 +186,8 @@ export default function ClientWalletPage() {
               <div style={{ fontSize: 20, fontWeight: 700 }}>{summary.rate.toFixed(4)}</div>
             </div>
             <div style={{ border: "1px solid #e2e8f0", borderRadius: 10, padding: 10, background: "#f8fafc" }}>
-              <div style={{ color: "#000000", fontSize: 12 }}>折算总额</div>
-              <div style={{ fontSize: 28, fontWeight: 700 }}>¥{summary.totalCny.toFixed(2)}</div>
-              <div style={{ fontSize: 15, color: "#6b7280", marginTop: 4 }}>≈ ฿{summary.totalThb.toFixed(2)}</div>
+              <div style={{ color: "#000000", fontSize: 12 }}>折算总额（THB）</div>
+              <div style={{ fontSize: 28, fontWeight: 700 }}>฿{summary.totalThb.toFixed(2)}</div>
             </div>
           </div>
         ) : null}
