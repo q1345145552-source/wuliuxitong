@@ -1038,7 +1038,7 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
         receivableAmountCny: true,
         paymentProofBase64: true,
         paymentProofUploadedAt: true,
-        trackingNo: true,
+        shipments: { take: 1, orderBy: { updatedAt: "desc" }, select: { trackingNo: true } },
         client: { select: { name: true, companyName: true } },
       },
     });
@@ -1046,7 +1046,7 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
       items: rows.map((r) => ({
         id: r.id,
         orderId: r.id,
-        trackingNo: r.trackingNo,
+        trackingNo: r.shipments[0]?.trackingNo ?? null,
         clientId: r.clientId,
         clientName: r.client.name,
         companyName: r.client.companyName,
