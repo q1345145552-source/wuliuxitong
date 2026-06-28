@@ -416,7 +416,7 @@ export default function ClientHomePage() {
     }
   };
 
-  useEffect(() => { void runDefaultAllOrderQuery(); }, []);
+  // 不再自动查询，用户手动选择模式后点击执行查询
 
   const statusToneClass = (status?: string): string => {
     const value = (status ?? "").toLowerCase();
