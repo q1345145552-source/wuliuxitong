@@ -887,7 +887,6 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
             id: true,
             fileName: true,
             mime: true,
-            contentBase64: true,
             filePath: true,
           },
         },
@@ -969,7 +968,6 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
           id: img.id,
           fileName: img.fileName,
           mime: img.mime,
-          contentBase64: img.contentBase64,
           imageUrl: img.filePath ? `/images/${img.filePath.split("/").pop()}` : undefined,
         })),
       };

@@ -115,9 +115,10 @@ function PrealertPrintButton({ item }: { item: OrderItem }) {
   );
 }
 
-function imgSrc(img: { imageUrl?: string | null; mime: string; contentBase64: string }): string {
+function imgSrc(img: { imageUrl?: string | null; mime?: string; contentBase64?: string }): string {
   if (img.imageUrl) return apiBaseUrl() + img.imageUrl;
-  return 'data:' + img.mime + ';base64,' + img.contentBase64;
+  if (img.contentBase64 && img.mime) return 'data:' + img.mime + ';base64,' + img.contentBase64;
+  return '';
 }
 
 export default function ClientHomePage() {
@@ -1081,7 +1082,7 @@ export default function ClientHomePage() {
                     const statusMap: Record<string, string> = { created: "已创建", loaded: "已装柜", departed: "已开船", arrivedPort: "已到港", customsTH: "清关中", customsCleared: "清关已放行", inWarehouseTH: "已到仓", outForDelivery: "派送中", delivered: "已签收" };
                     const dims = (item.products ?? []).map((p: any) => (p.lengthCm && p.widthCm && p.heightCm ? p.lengthCm + "×" + p.widthCm + "×" + p.heightCm : null)).filter(Boolean).join(", ");
                     const isExpanded = !!openDetailsByOrder[item.id];
-                    const images: Array<{ id: string; fileName: string; mime: string; contentBase64: string; imageUrl?: string }> = item.productImages ?? [];
+                    const images: Array<{ id: string; fileName: string; mime?: string; contentBase64?: string; imageUrl?: string }> = item.productImages ?? [];
                     const cargoTypeLabel = item.cargoType === "inspection" ? "商检" : item.cargoType === "sensitive" ? "敏感" : "普货";
                     return (
                       <Fragment key={item.id}>
