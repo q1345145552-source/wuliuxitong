@@ -8,6 +8,7 @@ interface OpenErApiResponse {
 }
 
 const DEFAULT_EXCHANGE_RATE_API = "https://open.er-api.com/v6/latest/CNY";
+const REFRESH_INTERVAL_MS = 2 * 60 * 60 * 1000;
 
 let syncingPromise: Promise<void> | null = null;
 
