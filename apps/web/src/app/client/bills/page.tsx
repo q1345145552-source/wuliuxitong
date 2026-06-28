@@ -340,7 +340,7 @@ export default function ClientBillsPage() {
             {payError && <p style={{ color: "#dc2626", fontSize: 13, marginBottom: 12 }}>{payError}</p>}
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
               <button type="button" onClick={() => { setPayModal(null); setPayProof(null); setPayError(""); }} disabled={paySubmitting} style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 16px", background: "#fff", cursor: "pointer", fontSize: 13 }}>取消</button>
-              <button type="button" onClick={handlePay} disabled={paySubmitting} style={{ border: "none", borderRadius: 8, padding: "8px 20px", background: "#16a34a", color: "#fff", fontWeight: 600, cursor: "pointer", fontSize: 13 }}>{paySubmitting ? "处理中..." : "确认支付"}</button>
+              <button type="button" onClick={handlePay} disabled={paySubmitting} style={{ border: "none", borderRadius: 8, padding: "8px 20px", background: paySubmitting ? "#6b7280" : "#16a34a", color: "#fff", fontWeight: 600, cursor: paySubmitting ? "not-allowed" : "pointer", fontSize: 14, opacity: paySubmitting ? 0.7 : 1 }}>{paySubmitting ? "处理中..." : "确认支付"}</button>
             </div>
           </div>
         </div>
