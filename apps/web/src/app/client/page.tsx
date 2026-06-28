@@ -122,6 +122,22 @@ function imgSrc(img: { imageUrl?: string | null; mime: string; contentBase64: st
   return 'data:' + img.mime + ';base64,' + img.contentBase64;
 }
 
+// ── localStorage 运单缓存 ──
+const ORDERS_CACHE_PREFIX = "xt_orders_";
+function getOrdersCacheKey(): string {
+  try {
+    const raw = localStorage.getItem("auth_session_v1");
+    if (raw) { const session = JSON.parse(raw); if (session.userId) return ORDERS_CACHE_PREFIX + session.userId; }
+  } catch { /* ignore */ }
+  return ORDERS_CACHE_PREFIX + "unknown";
+}
+function loadOrdersFromCache(): OrderItem[] | null {
+  try { const raw = localStorage.getItem(getOrdersCacheKey()); return raw ? JSON.parse(raw) : null; } catch { return null; }
+}
+function saveOrdersToCache(orders: OrderItem[]) {
+  try { localStorage.setItem(getOrdersCacheKey(), JSON.stringify(orders)); } catch { /* quota */ }
+}
+
 export default function ClientHomePage() {
   const [loading, setLoading] = useState(false);
   const [dashboardLoading, setDashboardLoading] = useState(false);
@@ -360,6 +376,9 @@ export default function ClientHomePage() {
         .filter((item) => !search.warehouseId || item.warehouseId === search.warehouseId);
       setQueriedOrders(result);
       setHasQueried(true);
+      if (queryMode === "all" && !search.batchNo && !search.orderId && !search.arrivedDateFrom && !search.arrivedDateTo && !search.domesticTrackingNo && !search.status && !search.transportMode && !search.warehouseId) {
+        saveOrdersToCache(result);
+      }
     } catch (error) {
       const text = error instanceof Error ? error.message : "查询失败";
       setMessage(`查询失败：${text}`);
@@ -371,23 +390,7 @@ export default function ClientHomePage() {
   /**
    * 查询区默认加载：进入“我的运单查询”后自动展示全部订单。
    */
-  const runDefaultAllOrderQuery = async () => {
-    if (loading) return;
-    setLoading(true);
-    setMessage("");
-    try {
-      const result = await fetchClientOrders();
-      setQueryMode("all");
-      setSearch(initialSearch);
-      setQueriedOrders(result);
-      setHasQueried(true);
-    } catch (error) {
-      const text = error instanceof Error ? error.message : "查询失败";
-      setMessage(`查询失败：${text}`);
-    } finally {
-      setLoading(false);
-    }
-  };
+
 
   /**
    * 切换运单查询分组（在途/已完成/全部）。
@@ -416,7 +419,25 @@ export default function ClientHomePage() {
     }
   };
 
-  // 不再自动查询，用户手动选择模式后点击执行查询
+  // 页面加载：缓存优先 → 瞬时显示 → 后台静默更新
+  useEffect(() => {
+    const cached = loadOrdersFromCache();
+    if (cached && cached.length > 0) {
+      setQueriedOrders(cached);
+      setHasQueried(true);
+      setQueryMode("all");
+    }
+    setDashboardLoading(true);
+    fetchClientOrders()
+      .then((orders) => {
+        setQueriedOrders(orders);
+        setHasQueried(true);
+        setQueryMode("all");
+        saveOrdersToCache(orders);
+      })
+      .catch(() => {})
+      .finally(() => setDashboardLoading(false));
+  }, []);
 
   const statusToneClass = (status?: string): string => {
     const value = (status ?? "").toLowerCase();
