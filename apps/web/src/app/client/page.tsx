@@ -1181,7 +1181,7 @@ export default function ClientHomePage() {
                                 <div><span style={{ color: "#6b7280", fontSize: 12 }}>应收金额：</span><strong>{item.receivableAmountCny != null ? `¥${Number(item.receivableAmountCny).toFixed(2)}` : "—"}</strong></div>
                                 <div><span style={{ color: "#6b7280", fontSize: 12 }}>支付状态：</span>{item.paymentStatus === "paid" ? <span style={{ color: "#16a34a" }}>已付款</span> : <span style={{ color: "#6b7280" }}>未付款</span>}</div>
                                 {item.paidAt ? <div><span style={{ color: "#6b7280", fontSize: 12 }}>付款时间：</span>{new Date(item.paidAt).toLocaleString("zh-CN")}</div> : null}
-                                {item.paidBy ? <div><span style={{ color: "#6b7280", fontSize: 12 }}>付款人：</span>{item.paidBy}</div> : null}
+                                {item.paidBy ? <div><span style={{ color: "#6b7280", fontSize: 12 }}>付款方式：</span>{item.paidBy.includes("余额") ? "余额支付" : item.paidBy.includes("管理员") ? "线下支付(已审核)" : item.paidBy}</div> : null}
                               </div>
                               {/* 产品明细 */}
                               {(item.products?.length ?? 0) > 0 ? (

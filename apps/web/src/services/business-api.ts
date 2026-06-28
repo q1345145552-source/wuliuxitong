@@ -256,6 +256,7 @@ export interface OrderItem {
   paymentStatus?: "paid" | "unpaid";
   paidAt?: string;
   paidBy?: string;
+  paymentProofUploadedAt?: string;
   shipDate?: string;
   createdAt: string;
   updatedAt?: string;

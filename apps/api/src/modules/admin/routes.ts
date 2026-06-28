@@ -1078,14 +1078,16 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
   app.post("/admin/offline-payments/reject", async (req, res) => {
     const auth = requireRole(req, res, ["admin"]);
     if (!auth) return;
-    const body = (req.body ?? {}) as { orderId?: string };
+    const body = (req.body ?? {}) as { orderId?: string; remark?: string };
     const orderId = body.orderId?.trim();
     if (!orderId) { fail(res, 400, "BAD_REQUEST", "缺少订单ID"); return; }
+    // 清除凭证，记录拒绝原因到备注
+    const remark = `[付款拒绝] ${body.remark?.trim() || "凭证不符合要求"}`;
     await prisma.order.update({
       where: { id: orderId, companyId: auth.companyId },
       data: { paymentProofBase64: null, paymentProofMime: null, paymentProofFileName: null, paymentProofUploadedAt: null },
     });
-    ok(res, { rejected: true, orderId });
+    ok(res, { rejected: true, orderId, remark });
   });
 
 }

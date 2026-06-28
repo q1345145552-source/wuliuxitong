@@ -245,6 +245,8 @@ export default function AdminHomePage() {
   const [rejectModalId, setRejectModalId] = useState<string | null>(null);
   // 线下付款审核
   const [offlinePayments, setOfflinePayments] = useState<Array<{id:string;orderId:string;trackingNo:string;clientName:string;itemName:string;amount:number;proofImage:string;submittedAt:string|null}>>([]);
+  const [offlineRejectId, setOfflineRejectId] = useState<string | null>(null);
+  const [offlineRejectRemark, setOfflineRejectRemark] = useState("");
   const loadOfflinePayments = async () => {
     try { const r = await fetch(`${apiBaseUrl()}/admin/offline-payments`, { headers: authHeaders() }); const d = await r.json(); if (d.code === "OK") setOfflinePayments(d.data.items); } catch (e) { console.error(e); }
   };
@@ -2020,6 +2022,23 @@ export default function AdminHomePage() {
         </div>
       )}
 
+      {/* 线下付款拒绝原因弹窗 */}
+      {offlineRejectId && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 60, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(0,0,0,0.4)", padding: 16 }}>
+          <div style={{ width: "100%", maxWidth: 400, background: "#fff", borderRadius: 12, padding: 24, boxShadow: "0 20px 60px rgba(0,0,0,0.3)" }}>
+            <h3 style={{ margin: "0 0 16px", fontSize: 16 }}>拒绝付款</h3>
+            <textarea placeholder="请填写拒绝原因" value={offlineRejectRemark} onChange={(e) => setOfflineRejectRemark(e.target.value)} rows={3} style={{ width: "100%", padding: 10, border: "1px solid #d1d5db", borderRadius: 8, fontSize: 14, boxSizing: "border-box", resize: "vertical" }} />
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 16 }}>
+              <button type="button" onClick={() => setOfflineRejectId(null)} style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 16px", background: "#fff", cursor: "pointer", fontSize: 13 }}>取消</button>
+              <button type="button" onClick={async () => {
+                if (!offlineRejectRemark.trim()) { setToast("请填写拒绝原因"); return; }
+                try { await fetch(`${apiBaseUrl()}/admin/offline-payments/reject`, { method: "POST", headers: {"Content-Type":"application/json",...authHeaders()}, body: JSON.stringify({orderId: offlineRejectId, remark: offlineRejectRemark.trim()}) }); setToast("已拒绝"); setOfflineRejectId(null); loadOfflinePayments(); } catch (e: any) { setToast(e.message||"失败"); }
+              }} style={{ border: "none", borderRadius: 8, padding: "8px 16px", background: "#dc2626", color: "#fff", fontWeight: 600, cursor: "pointer", fontSize: 13 }}>确认拒绝</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* 线下付款审核 */}
       <section id="offline-payments" style={{ ...sectionStyle, display: activeSection === "offline-payments" ? "block" : "none" }}>
         <h2 style={{ margin: "0 0 16px", fontSize: 18 }}>{SECTION_LABELS["offline-payments"]}</h2>
@@ -2053,10 +2072,7 @@ export default function AdminHomePage() {
                         if (!confirm("确认通过？运单将标记为已付款")) return;
                         try { await fetch(`${apiBaseUrl()}/admin/offline-payments/approve`, { method: "POST", headers: {"Content-Type":"application/json",...authHeaders()}, body: JSON.stringify({orderId: p.orderId}) }); setToast("已通过"); loadOfflinePayments(); } catch (e: any) { setToast(e.message||"失败"); }
                       }} style={{ border: "none", borderRadius: 6, padding: "4px 10px", background: "#16a34a", color: "#fff", cursor: "pointer", fontSize: 12, marginRight: 4 }}>通过</button>
-                      <button type="button" onClick={async () => {
-                        if (!confirm("确认拒绝？凭证将被清除")) return;
-                        try { await fetch(`${apiBaseUrl()}/admin/offline-payments/reject`, { method: "POST", headers: {"Content-Type":"application/json",...authHeaders()}, body: JSON.stringify({orderId: p.orderId}) }); setToast("已拒绝"); loadOfflinePayments(); } catch (e: any) { setToast(e.message||"失败"); }
-                      }} style={{ border: "none", borderRadius: 6, padding: "4px 10px", background: "#dc2626", color: "#fff", cursor: "pointer", fontSize: 12 }}>拒绝</button>
+                      <button type="button" onClick={() => { setOfflineRejectId(p.orderId); setOfflineRejectRemark(""); }} style={{ border: "none", borderRadius: 6, padding: "4px 10px", background: "#dc2626", color: "#fff", cursor: "pointer", fontSize: 12 }}>拒绝</button>
                     </td>
                   </tr>
                 ))}

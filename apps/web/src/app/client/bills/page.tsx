@@ -5,7 +5,7 @@ import * as XLSX from "xlsx";
 import EmptyStateCard from "../../../modules/layout/EmptyStateCard";
 import RoleShell from "../../../modules/layout/RoleShell";
 import { formatCny } from "../../../modules/billing/billing-utils";
-import { fetchClientOrders, type OrderItem } from "../../../services/business-api";
+import { fetchClientOrders, fetchClientWalletOverview, type OrderItem } from "../../../services/business-api";
 import { apiBaseUrl, authHeaders } from "../../../services/core-api";
 
 function uniqueById(items: OrderItem[]): OrderItem[] {
@@ -34,7 +34,21 @@ export default function ClientBillsPage() {
   const [payProof, setPayProof] = useState<string | null>(null);
   const [paySubmitting, setPaySubmitting] = useState(false);
   const [payError, setPayError] = useState("");
+  const [walletBalance, setWalletBalance] = useState(0);
   const payFileRef = useRef<HTMLInputElement>(null);
+
+  const loadOrders = async () => {
+    setLoading(true);
+    setMessage("");
+    Promise.all([fetchClientOrders({ statusGroup: "unfinished" }), fetchClientOrders({ statusGroup: "completed" })])
+      .then(([unfinished, completed]) => {
+        const merged = uniqueById([...unfinished, ...completed]);
+        merged.sort((a, b) => (b.createdAt ?? "").localeCompare(a.createdAt ?? ""));
+        setOrders(merged);
+      })
+      .catch((error) => { const text = error instanceof Error ? error.message : "加载失败"; setMessage(`加载失败：${text}`); })
+      .finally(() => setLoading(false));
+  };
 
   const handlePay = async () => {
     if (!payModal) return;
@@ -48,12 +62,20 @@ export default function ClientBillsPage() {
       });
       const data = await res.json();
       if (data.code !== "OK") throw new Error(data.message || "付款失败");
-      setMessage(data.data.message);
+      setMessage(data.data?.message || "付款成功");
       setPayModal(null);
       setPayProof(null);
-      window.location.reload();
+      await loadOrders();
     } catch (e: any) { setPayError(e.message || "付款失败"); }
     finally { setPaySubmitting(false); }
+  };
+
+  const openPayModal = async (item: OrderItem) => {
+    setPayModal({ orderId: item.id, trackingNo: item.trackingNo || item.orderNo || "—", amount: item.receivableAmountCny ?? 0 });
+    try {
+      const wallet = await fetchClientWalletOverview();
+      setWalletBalance(wallet.accounts.find((a) => a.currency === "CNY")?.balance ?? 0);
+    } catch { setWalletBalance(0); }
   };
 
   const warehouseOptions = [
@@ -264,15 +286,17 @@ export default function ClientBillsPage() {
                 >
                   查看账单
                 </a>
-                {(item.paymentStatus ?? "unpaid") !== "paid" && amount && amount > 0 && (
+                {item.paymentProofUploadedAt && (item.paymentStatus ?? "unpaid") !== "paid" ? (
+                  <span style={{ fontSize: 11, color: "#d97706", background: "#fef3c7", padding: "2px 8px", borderRadius: 999, marginLeft: 6 }}>凭证待审核</span>
+                ) : (item.paymentStatus ?? "unpaid") !== "paid" && amount && amount > 0 ? (
                   <button
                     type="button"
-                    onClick={() => setPayModal({ orderId: item.id, trackingNo: item.trackingNo || item.orderNo || "—", amount })}
+                    onClick={() => openPayModal(item)}
                     style={{ border: "none", borderRadius: 999, padding: "3px 10px", background: "#16a34a", color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer", marginLeft: 6 }}
                   >
                     付款
                   </button>
-                )}
+                ) : null}
               </div>
             </div>
 
@@ -326,7 +350,7 @@ export default function ClientBillsPage() {
                 {payProof && <img src={payProof} alt="凭证" style={{ width: "100%", maxHeight: 160, objectFit: "contain", borderRadius: 8, border: "1px solid #e5e7eb", marginTop: 8 }} />}
               </div>
             )}
-            {payMethod === "balance" && <p style={{ fontSize: 12, color: "#6b7280", marginBottom: 16 }}>将从您的 CNY 余额中扣除 ¥{payModal.amount.toFixed(2)}</p>}
+            {payMethod === "balance" && <p style={{ fontSize: 13, color: "#6b7280", marginBottom: 16 }}>当前 CNY 余额：<strong>¥{walletBalance.toFixed(2)}</strong>{walletBalance < payModal.amount ? <span style={{ color: "#dc2626", marginLeft: 8 }}>余额不足</span> : <span style={{ color: "#16a34a", marginLeft: 8 }}>余额充足</span>}<br />将扣除 ¥{payModal.amount.toFixed(2)}</p>}
             {payError && <p style={{ color: "#dc2626", fontSize: 13, marginBottom: 12 }}>{payError}</p>}
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
               <button type="button" onClick={() => { setPayModal(null); setPayProof(null); setPayError(""); }} disabled={paySubmitting} style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 16px", background: "#fff", cursor: "pointer", fontSize: 13 }}>取消</button>
