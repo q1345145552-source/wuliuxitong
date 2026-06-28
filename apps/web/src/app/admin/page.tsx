@@ -881,7 +881,7 @@ export default function AdminHomePage() {
       return;
     }
     const rows = source.map((o) => ({
-      订单号: o.id,
+      运单号: o.trackingNo ?? "-",
       客户: o.clientId ?? "-",
       品名: o.itemName,
       运输方式: o.transportMode,
@@ -1563,7 +1563,7 @@ export default function AdminHomePage() {
                       <button
                         type="button"
                         onClick={async () => {
-                          if (!confirm(`确定删除运单 ${o.trackingNo ?? o.id}（${o.itemName ?? ""}）？\n\n此操作不可撤销，将级联删除运单、状态日志、产品行等所有关联数据。`)) return;
+                          if (!confirm(`确定删除运单 ${o.trackingNo ?? "—"}（${o.itemName ?? ""}）？\n\n此操作不可撤销，将级联删除运单、状态日志、产品行等所有关联数据。`)) return;
                           try {
                             await deleteAdminOrder(o.orderId ?? o.id);
                             setToast(`已删除：${o.itemName ?? o.id}`);
