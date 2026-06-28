@@ -23,7 +23,7 @@ export default function ClientBillsPage() {
   const [message, setMessage] = useState("");
   const [orders, setOrders] = useState<OrderItem[]>([]);
   const [filters, setFilters] = useState({
-    orderId: "",
+    trackingNo: "",
     warehouseId: "",
     transportMode: "",
   });
@@ -56,7 +56,7 @@ export default function ClientBillsPage() {
   }, []);
 
   const filtered = useMemo(() => {
-    const orderIdKey = filters.orderId.trim().toLowerCase();
+    const orderIdKey = filters.trackingNo.trim().toLowerCase();
     const warehouseId = filters.warehouseId.trim();
     const transportMode = filters.transportMode.trim();
     return orders
@@ -64,18 +64,17 @@ export default function ClientBillsPage() {
         const status = item.paymentStatus ?? "unpaid";
         return status === payTab;
       })
-      .filter((item) => !orderIdKey || item.id.toLowerCase().includes(orderIdKey))
+      .filter((item) => !orderIdKey || (item.trackingNo ?? "").toLowerCase().includes(orderIdKey))
       .filter((item) => !warehouseId || (item.warehouseId ?? "") === warehouseId)
       .filter((item) => !transportMode || (item.transportMode ?? "") === transportMode);
-  }, [filters.orderId, filters.transportMode, filters.warehouseId, orders, payTab]);
+  }, [filters.trackingNo, filters.transportMode, filters.warehouseId, orders, payTab]);
 
   const exportBillsExcel = () => {
     const rows = filtered.map((item, idx) => ({
       序号: idx + 1,
-      订单号: item.id,
+      运单号: item.trackingNo ?? "-",
       仓库: warehouseLabel(item.warehouseId),
-
-      订单编号: item.orderNo ?? "-",
+      预报单号: item.orderNo ?? "-",
       品名: item.itemName ?? "-",
       运输方式: item.transportMode === "sea" ? "海运" : item.transportMode === "land" ? "陆运" : item.transportMode ?? "-",
       包裹数量: `${item.packageCount ?? "-"} ${item.packageUnit ?? ""}`.trim(),
@@ -139,9 +138,9 @@ export default function ClientBillsPage() {
           已付款
         </button>
         <input
-          value={filters.orderId}
-          onChange={(e) => setFilters((v) => ({ ...v, orderId: e.target.value }))}
-          placeholder="订单号"
+          value={filters.trackingNo}
+          onChange={(e) => setFilters((v) => ({ ...v, trackingNo: e.target.value }))}
+          placeholder="运单号"
           style={{ flex: 1, minWidth: 180, border: "1px solid #d1d5db", borderRadius: 10, padding: "8px 10px" }}
         />
 
@@ -187,7 +186,7 @@ export default function ClientBillsPage() {
           type="button"
           onClick={() =>
             setFilters({
-              orderId: "",
+              trackingNo: "",
               warehouseId: "",
               transportMode: "",
             })
@@ -217,7 +216,7 @@ export default function ClientBillsPage() {
         return (
           <article key={item.id} className="order-card">
             <div className="order-head">
-              <div className="order-title">#{idx + 1} 订单 {item.id}</div>
+              <div className="order-title">#{idx + 1} 运单 {item.trackingNo || item.orderNo || "-"}</div>
               <div className="order-badges">
                 <span className="order-badge order-badge-amount">金额：{formatCny(amount)}</span>
                 <span className={`order-badge ${(item.paymentStatus ?? "unpaid") === "paid" ? "order-badge-paid" : "order-badge-unpaid"}`}>
@@ -247,8 +246,8 @@ export default function ClientBillsPage() {
                 <div className="order-field-value">{warehouseLabel(item.warehouseId)}</div>
               </div>
               <div className="order-field">
-                <div className="order-field-label">订单编号</div>
-                <div className="order-field-value">{item.orderNo ?? "-"}</div>
+                <div className="order-field-label">运单号</div>
+                <div className="order-field-value">{item.trackingNo || "-"}</div>
               </div>
               <div className="order-field">
                 <div className="order-field-label">品名</div>
