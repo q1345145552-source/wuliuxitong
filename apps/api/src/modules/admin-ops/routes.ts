@@ -273,8 +273,8 @@ export function registerAdminOpsRoutes(app: MinimalHttpApp): void {
       orderBy: { updatedAt: "desc" },
     });
     const orderIds = [...new Set(rows.map((r) => r.orderId))];
-    const orders = await prisma.order.findMany({ where: { id: { in: orderIds }, companyId: auth.companyId }, select: { id: true, trackingNo: true } });
-    const tnMap = new Map(orders.map((o) => [o.id, o.trackingNo]));
+    const orders = await prisma.order.findMany({ where: { id: { in: orderIds }, companyId: auth.companyId }, select: { id: true, shipments: { take: 1, orderBy: { updatedAt: "desc" }, select: { trackingNo: true } } } });
+    const tnMap = new Map(orders.map((o) => [o.id, o.shipments[0]?.trackingNo ?? null]));
     ok(res, {
       items: rows.map((item) => ({
         id: item.id,
@@ -331,8 +331,8 @@ export function registerAdminOpsRoutes(app: MinimalHttpApp): void {
       orderBy: { updatedAt: "desc" },
     });
     const orderIds = [...new Set(rows.map((r) => r.orderId))];
-    const orders = await prisma.order.findMany({ where: { id: { in: orderIds }, companyId: auth.companyId }, select: { id: true, trackingNo: true } });
-    const tnMap = new Map(orders.map((o) => [o.id, o.trackingNo]));
+    const orders = await prisma.order.findMany({ where: { id: { in: orderIds }, companyId: auth.companyId }, select: { id: true, shipments: { take: 1, orderBy: { updatedAt: "desc" }, select: { trackingNo: true } } } });
+    const tnMap = new Map(orders.map((o) => [o.id, o.shipments[0]?.trackingNo ?? null]));
     ok(res, {
       items: rows.map((item) => {
         const cr = decToNumber(item.clientReceivable);
@@ -373,8 +373,8 @@ export function registerAdminOpsRoutes(app: MinimalHttpApp): void {
     const totalProfit = totalRevenue - totalCost;
     const grossMarginPercent = totalRevenue > 0 ? Number(((totalProfit / totalRevenue) * 100).toFixed(2)) : 0;
     const profitOrderIds = [...new Set(profitNumeric.map((item) => item.orderId))];
-    const profitOrders = await prisma.order.findMany({ where: { id: { in: profitOrderIds }, companyId: auth.companyId }, select: { id: true, trackingNo: true } });
-    const trackingNoByOrderId = new Map(profitOrders.map((o) => [o.id, o.trackingNo]));
+    const profitOrders = await prisma.order.findMany({ where: { id: { in: profitOrderIds }, companyId: auth.companyId }, select: { id: true, shipments: { take: 1, orderBy: { updatedAt: "desc" }, select: { trackingNo: true } } } });
+    const trackingNoByOrderId = new Map(profitOrders.map((o) => [o.id, o.shipments[0]?.trackingNo ?? null]));
     const profitTrend = profitNumeric.slice(0, 7).map((item) => ({
       orderId: item.orderId,
       trackingNo: trackingNoByOrderId.get(item.orderId) ?? null,
