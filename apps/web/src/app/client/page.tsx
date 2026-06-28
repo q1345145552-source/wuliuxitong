@@ -22,10 +22,8 @@ import {
   fetchClientWalletOverview,
   fetchShippingPrices,
   uploadStaffOrderProductImage,
-  fetchShipmentImages,
   type ClientAddressItem,
   type OrderItem,
-  type OrderProductImageItem,
   type ShippingPriceItem,
 } from "../../services/business-api";
 import { openPrintLabel, openPrintPrealert } from "../../modules/shipment/ShipmentPrintLabel";
@@ -144,7 +142,6 @@ export default function ClientHomePage() {
   const [queryPanelCollapsed, setQueryPanelCollapsed] = useState(false);
   const [openLogisticsByOrder, setOpenLogisticsByOrder] = useState<Record<string, boolean>>({});
   const [openDetailsByOrder, setOpenDetailsByOrder] = useState<Record<string, boolean>>({});
-  const [detailImagesCache, setDetailImagesCache] = useState<Record<string, OrderProductImageItem[]>>({});
   const [search, setSearch] = useState(initialSearch);
   const [aiQuestion, setAiQuestion] = useState("");
   const [aiAnswer, setAiAnswer] = useState("");
@@ -1084,7 +1081,7 @@ export default function ClientHomePage() {
                     const statusMap: Record<string, string> = { created: "已创建", loaded: "已装柜", departed: "已开船", arrivedPort: "已到港", customsTH: "清关中", customsCleared: "清关已放行", inWarehouseTH: "已到仓", outForDelivery: "派送中", delivered: "已签收" };
                     const dims = (item.products ?? []).map((p: any) => (p.lengthCm && p.widthCm && p.heightCm ? p.lengthCm + "×" + p.widthCm + "×" + p.heightCm : null)).filter(Boolean).join(", ");
                     const isExpanded = !!openDetailsByOrder[item.id];
-                    const images = detailImagesCache[item.id] ?? [];
+                    const images: Array<{ id: string; fileName: string; mime: string; contentBase64: string; imageUrl?: string }> = item.productImages ?? [];
                     const cargoTypeLabel = item.cargoType === "inspection" ? "商检" : item.cargoType === "sensitive" ? "敏感" : "普货";
                     return (
                       <Fragment key={item.id}>
@@ -1092,18 +1089,9 @@ export default function ClientHomePage() {
                           <td style={{ padding: "6px 4px", textAlign: "center" }}>
                             <button
                               type="button"
-                              onClick={async () => {
+                              onClick={() => {
                                 const next = { ...openDetailsByOrder };
-                                if (next[item.id]) { delete next[item.id]; } else {
-                                  next[item.id] = true;
-                                  // 加载产品图片
-                                  if (!detailImagesCache[item.id]) {
-                                    try {
-                                      const imgs = await fetchShipmentImages(item.id);
-                                      setDetailImagesCache((prev) => ({ ...prev, [item.id]: imgs }));
-                                    } catch { /* ignore */ }
-                                  }
-                                }
+                                if (next[item.id]) { delete next[item.id]; } else { next[item.id] = true; }
                                 setOpenDetailsByOrder(next);
                               }}
                               style={{ border: "none", borderRadius: 4, padding: "2px 6px", background: isExpanded ? "#dbeafe" : "#f3f4f6", color: "#374151", cursor: "pointer", fontSize: 14, fontWeight: 700, lineHeight: 1 }}
