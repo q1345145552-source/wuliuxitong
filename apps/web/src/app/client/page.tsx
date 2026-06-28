@@ -1183,23 +1183,6 @@ export default function ClientHomePage() {
                                 {item.paidAt ? <div><span style={{ color: "#6b7280", fontSize: 12 }}>付款时间：</span>{new Date(item.paidAt).toLocaleString("zh-CN")}</div> : null}
                                 {item.paidBy ? <div><span style={{ color: "#6b7280", fontSize: 12 }}>付款人：</span>{item.paidBy}</div> : null}
                               </div>
-                              {/* 物流轨迹 */}
-                              {(item.logisticsRecords?.length ?? 0) > 0 ? (
-                                <div style={{ marginBottom: 12 }}>
-                                  <h4 style={{ margin: "0 0 8px", fontSize: 14, color: "#374151" }}>物流轨迹</h4>
-                                  {item.latestRemark ? <div style={{ marginBottom: 6, fontSize: 12, color: "#6b7280" }}>最新备注：{item.latestRemark}</div> : null}
-                                  <div style={{ borderLeft: "2px solid #d1d5db", paddingLeft: 12 }}>
-                                    {[...(item.logisticsRecords ?? [])].reverse().map((r: any, i: number) => (
-                                      <div key={i} style={{ padding: "4px 0", fontSize: 12 }}>
-                                        <span style={{ color: "#2563eb", fontWeight: 500 }}>{logisticsStatusText(r.toStatus)}</span>
-                                        <span style={{ color: "#9ca3af", marginLeft: 8 }}>{new Date(r.changedAt).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })}</span>
-                                        {r.operatorName ? <span style={{ color: "#6b7280", marginLeft: 6 }}>💼 {r.operatorName}</span> : null}
-                                        {r.remark ? <div style={{ color: "#6b7280", fontSize: 11, marginTop: 1 }}>{r.remark}</div> : null}
-                                      </div>
-                                    ))}
-                                  </div>
-                                </div>
-                              ) : null}
                               {/* 产品明细 */}
                               {(item.products?.length ?? 0) > 0 ? (
                                 <div style={{ marginBottom: 12 }}>
