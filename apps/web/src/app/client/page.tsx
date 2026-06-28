@@ -419,11 +419,7 @@ export default function ClientHomePage() {
     }
   };
 
-  useEffect(() => {
-    if (activeSection !== "client-query") return;
-    if (hasQueried) return;
-    void runDefaultAllOrderQuery();
-  }, [activeSection, hasQueried]);
+  useEffect(() => { void runDefaultAllOrderQuery(); }, []);
 
   const statusToneClass = (status?: string): string => {
     const value = (status ?? "").toLowerCase();
