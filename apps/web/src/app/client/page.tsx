@@ -448,6 +448,11 @@ export default function ClientHomePage() {
     return "order-badge";
   };
 
+  const warehouseLabel = (id?: string) => {
+    const map: Record<string, string> = { wh_yiwu_01: "义乌仓", wh_guangzhou_01: "广州仓", wh_dongguan_01: "东莞仓", wh_shenzhen_01: "深圳仓" };
+    return map[id ?? ""] || id || "—";
+  };
+
   const logisticsStatusText = (status?: string): string => {
     const map: Record<string, string> = {
       created: "已创建", pickedup: "已揽收", inwarehousecn: "国内仓已收货", receivedcn: "国内仓已收货",
@@ -1155,18 +1160,79 @@ export default function ClientHomePage() {
                         </tr>
                         {isExpanded && (
                           <tr style={{ borderBottom: "1px solid #e5e7eb", background: "#f8fafc" }}>
-                            <td colSpan={11} style={{ padding: "10px 16px" }}>
-                              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 8, marginBottom: 8 }}>
+                            <td colSpan={11} style={{ padding: "12px 16px" }}>
+                              {/* 基本信息 */}
+                              <h4 style={{ margin: "0 0 8px", fontSize: 14, color: "#374151" }}>基本信息</h4>
+                              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "6px 16px", marginBottom: 12 }}>
+                                <div><span style={{ color: "#6b7280", fontSize: 12 }}>仓库：</span>{warehouseLabel(item.warehouseId)}</div>
+                                <div><span style={{ color: "#6b7280", fontSize: 12 }}>批次号：</span>{item.batchNo || "—"}</div>
+                                <div><span style={{ color: "#6b7280", fontSize: 12 }}>运单号：</span>{item.trackingNo || "—"}</div>
+                                <div><span style={{ color: "#6b7280", fontSize: 12 }}>预报单号：</span>{item.orderNo || "—"}</div>
+                                <div><span style={{ color: "#6b7280", fontSize: 12 }}>审批状态：</span>{item.approvalStatus === "shipped" ? "已发货" : item.approvalStatus === "approved" ? "已审核" : item.approvalStatus || "—"}</div>
+                                <div><span style={{ color: "#6b7280", fontSize: 12 }}>运输方式：</span>{item.transportMode === "sea" ? "海运" : item.transportMode === "land" ? "陆运" : item.transportMode || "—"}</div>
                                 <div><span style={{ color: "#6b7280", fontSize: 12 }}>国内单号：</span>{item.domesticTrackingNo || "—"}</div>
+                                <div><span style={{ color: "#6b7280", fontSize: 12 }}>发货日期：</span>{item.shipDate || "—"}</div>
                                 <div><span style={{ color: "#6b7280", fontSize: 12 }}>货型：</span>{cargoTypeLabel}</div>
-                                <div><span style={{ color: "#6b7280", fontSize: 12 }}>创建时间：</span>{item.createdAt ? new Date(item.createdAt).toLocaleString("zh-CN") : "—"}</div>
-                                <div><span style={{ color: "#6b7280", fontSize: 12 }}>应收金额：</span><strong>{item.receivableAmountCny != null ? `¥${Number(item.receivableAmountCny).toFixed(2)}` : "—"}{item.paymentStatus === "paid" ? <span style={{ color: "#16a34a", marginLeft: 6, fontSize: 11 }}>已付款</span> : null}</strong></div>
+                                <div><span style={{ color: "#6b7280", fontSize: 12 }}>收货地址：</span>{item.receiverAddressTh || "—"}</div>
                               </div>
-                              {item.receiverAddressTh ? <div style={{ marginBottom: 8 }}><span style={{ color: "#6b7280", fontSize: 12 }}>收货地址：</span>{item.receiverAddressTh}</div> : null}
-                              <div style={{ marginBottom: 8 }}>
-                                <span style={{ color: "#6b7280", fontSize: 12 }}>产品图片：</span>
+                              {/* 财务信息 */}
+                              <h4 style={{ margin: "0 0 8px", fontSize: 14, color: "#374151" }}>财务信息</h4>
+                              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "6px 16px", marginBottom: 12 }}>
+                                <div><span style={{ color: "#6b7280", fontSize: 12 }}>应收金额：</span><strong>{item.receivableAmountCny != null ? `¥${Number(item.receivableAmountCny).toFixed(2)}` : "—"}</strong></div>
+                                <div><span style={{ color: "#6b7280", fontSize: 12 }}>支付状态：</span>{item.paymentStatus === "paid" ? <span style={{ color: "#16a34a" }}>已付款</span> : <span style={{ color: "#6b7280" }}>未付款</span>}</div>
+                                {item.paidAt ? <div><span style={{ color: "#6b7280", fontSize: 12 }}>付款时间：</span>{new Date(item.paidAt).toLocaleString("zh-CN")}</div> : null}
+                                {item.paidBy ? <div><span style={{ color: "#6b7280", fontSize: 12 }}>付款人：</span>{item.paidBy}</div> : null}
+                              </div>
+                              {/* 物流轨迹 */}
+                              {(item.logisticsRecords?.length ?? 0) > 0 ? (
+                                <div style={{ marginBottom: 12 }}>
+                                  <h4 style={{ margin: "0 0 8px", fontSize: 14, color: "#374151" }}>物流轨迹</h4>
+                                  {item.latestRemark ? <div style={{ marginBottom: 6, fontSize: 12, color: "#6b7280" }}>最新备注：{item.latestRemark}</div> : null}
+                                  <div style={{ borderLeft: "2px solid #d1d5db", paddingLeft: 12 }}>
+                                    {[...(item.logisticsRecords ?? [])].reverse().map((r: any, i: number) => (
+                                      <div key={i} style={{ padding: "4px 0", fontSize: 12 }}>
+                                        <span style={{ color: "#2563eb", fontWeight: 500 }}>{logisticsStatusText(r.toStatus)}</span>
+                                        <span style={{ color: "#9ca3af", marginLeft: 8 }}>{new Date(r.changedAt).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })}</span>
+                                        {r.operatorName ? <span style={{ color: "#6b7280", marginLeft: 6 }}>💼 {r.operatorName}</span> : null}
+                                        {r.remark ? <div style={{ color: "#6b7280", fontSize: 11, marginTop: 1 }}>{r.remark}</div> : null}
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              ) : null}
+                              {/* 产品明细 */}
+                              {(item.products?.length ?? 0) > 0 ? (
+                                <div style={{ marginBottom: 12 }}>
+                                  <h4 style={{ margin: "0 0 8px", fontSize: 14, color: "#374151" }}>产品明细</h4>
+                                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                                    <thead><tr style={{ background: "#f1f5f9" }}>
+                                      <th style={{ padding: "4px 6px", textAlign: "left" }}>品名</th>
+                                      <th style={{ padding: "4px 6px", textAlign: "center" }}>件数</th>
+                                      <th style={{ padding: "4px 6px", textAlign: "center" }}>单箱数量</th>
+                                      <th style={{ padding: "4px 6px", textAlign: "center" }}>尺寸(cm)</th>
+                                      <th style={{ padding: "4px 6px", textAlign: "center" }}>重量(kg)</th>
+                                      <th style={{ padding: "4px 6px", textAlign: "center" }}>货型</th>
+                                    </tr></thead>
+                                    <tbody>
+                                      {(item.products ?? []).map((p: any, i: number) => (
+                                        <tr key={p.id || i} style={{ borderBottom: "1px solid #e5e7eb" }}>
+                                          <td style={{ padding: "4px 6px" }}>{p.itemName}</td>
+                                          <td style={{ padding: "4px 6px", textAlign: "center" }}>{p.packageCount}</td>
+                                          <td style={{ padding: "4px 6px", textAlign: "center" }}>{p.productQuantity ?? "—"}</td>
+                                          <td style={{ padding: "4px 6px", textAlign: "center", fontSize: 11 }}>{p.lengthCm && p.widthCm && p.heightCm ? `${p.lengthCm}×${p.widthCm}×${p.heightCm}` : "—"}</td>
+                                          <td style={{ padding: "4px 6px", textAlign: "center" }}>{p.weightKg != null ? p.weightKg : "—"}</td>
+                                          <td style={{ padding: "4px 6px", textAlign: "center" }}>{p.cargoType === "inspection" ? "商检" : p.cargoType === "sensitive" ? "敏感" : "普货"}</td>
+                                        </tr>
+                                      ))}
+                                    </tbody>
+                                  </table>
+                                </div>
+                              ) : null}
+                              {/* 产品图片 */}
+                              <div>
+                                <h4 style={{ margin: "0 0 8px", fontSize: 14, color: "#374151" }}>产品图片</h4>
                                 {images.length === 0 ? <span style={{ fontSize: 12, color: "#9ca3af" }}>暂无</span> : (
-                                  <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 4 }}>
+                                  <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
                                     {images.map((img) => (
                                       <img key={img.id} src={imgSrc(img)} alt={img.fileName} onClick={() => setPreviewImage({ src: imgSrc(img), alt: img.fileName })} style={{ width: 80, height: 80, objectFit: "cover", borderRadius: 6, border: "1px solid #e5e7eb", cursor: "pointer" }} />
                                     ))}

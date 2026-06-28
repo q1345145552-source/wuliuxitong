@@ -901,7 +901,9 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
       const latestRemark = logisticsRecords.at(-1)?.remark ?? null;
       return {
         id: o.id,
+        clientId: o.clientId,
         warehouseId: o.warehouseId,
+        receiverAddressTh: o.receiverAddressTh,
         orderNo: o.orderNo,
         itemName: o.itemName,
         transportMode: o.transportMode,
