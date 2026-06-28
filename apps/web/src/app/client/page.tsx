@@ -377,23 +377,7 @@ export default function ClientHomePage() {
   /**
    * 查询区默认加载：进入“我的运单查询”后自动展示全部订单。
    */
-  const runDefaultAllOrderQuery = async () => {
-    if (loading) return;
-    setLoading(true);
-    setMessage("");
-    try {
-      const result = await fetchClientOrders();
-      setQueryMode("all");
-      setSearch(initialSearch);
-      setQueriedOrders(result);
-      setHasQueried(true);
-    } catch (error) {
-      const text = error instanceof Error ? error.message : "查询失败";
-      setMessage(`查询失败：${text}`);
-    } finally {
-      setLoading(false);
-    }
-  };
+
 
   /**
    * 切换运单查询分组（在途/已完成/全部）。
@@ -422,7 +406,7 @@ export default function ClientHomePage() {
     }
   };
 
-  useEffect(() => { void runDefaultAllOrderQuery(); }, []);
+  // 不再自动加载全部运单，由用户手动选择模式后点击"执行查询"
 
   const statusToneClass = (status?: string): string => {
     const value = (status ?? "").toLowerCase();
