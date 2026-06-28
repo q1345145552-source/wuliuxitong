@@ -852,4 +852,172 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
     ok(res, { deleted: true, orderId, itemName: order.itemName });
   });
 
+  // ===== 管理员：充值审核列表 =====
+  app.get("/admin/wallet/recharges", async (req, res) => {
+    const auth = requireRole(req, res, ["admin"]);
+    if (!auth) return;
+    const statusFilter = (req.query?.status ?? "") as string;
+    const where: any = { companyId: auth.companyId };
+    if (statusFilter && ["PENDING", "APPROVED", "REJECTED"].includes(statusFilter)) {
+      where.status = statusFilter;
+    }
+    const rows = await prisma.walletRecharge.findMany({
+      where,
+      orderBy: { createdAt: "desc" },
+      select: {
+        id: true,
+        clientId: true,
+        currency: true,
+        amount: true,
+        paymentMethod: true,
+        proofImage: true,
+        status: true,
+        remark: true,
+        reviewRemark: true,
+        reviewedBy: true,
+        createdAt: true,
+        updatedAt: true,
+        client: { select: { name: true, companyName: true } },
+        reviewer: { select: { name: true } },
+      },
+    });
+    ok(res, {
+      recharges: rows.map((r) => ({
+        id: r.id,
+        clientId: r.clientId,
+        clientName: r.client.name,
+        companyName: r.client.companyName,
+        currency: r.currency,
+        amount: Number(r.amount.toString()),
+        paymentMethod: r.paymentMethod,
+        proofImage: r.proofImage,
+        status: r.status,
+        remark: r.remark,
+        reviewRemark: r.reviewRemark,
+        reviewedBy: r.reviewedBy,
+        reviewerName: r.reviewer?.name ?? null,
+        createdAt: r.createdAt.toISOString(),
+        updatedAt: r.updatedAt.toISOString(),
+      })),
+    });
+  });
+
+  // ===== 管理员：通过充值申请 =====
+  app.post("/admin/wallet/recharges/approve", async (req, res) => {
+    const auth = requireRole(req, res, ["admin"]);
+    if (!auth) return;
+    const body = (req.body ?? {}) as { id?: string };
+    const id = body.id?.trim();
+    if (!id) { fail(res, 400, "BAD_REQUEST", "缺少充值ID"); return; }
+
+    const recharge = await prisma.walletRecharge.findFirst({
+      where: { id, companyId: auth.companyId },
+    });
+    if (!recharge) { fail(res, 404, "NOT_FOUND", "充值记录不存在"); return; }
+    if (recharge.status !== "PENDING") {
+      fail(res, 400, "BAD_REQUEST", "该充值申请已处理过");
+      return;
+    }
+
+    await prisma.$transaction(async (tx) => {
+      // 更新充值状态
+      await tx.walletRecharge.update({
+        where: { id },
+        data: { status: "APPROVED", reviewedBy: auth.userId },
+      });
+      // 增加客户端对应币种余额
+      await tx.clientWalletAccount.upsert({
+        where: {
+          clientId_currency: {
+            clientId: recharge.clientId,
+            currency: recharge.currency,
+          },
+        },
+        create: {
+          clientId: recharge.clientId,
+          companyId: recharge.companyId,
+          currency: recharge.currency,
+          balance: recharge.amount,
+        },
+        update: {
+          balance: { increment: recharge.amount },
+        },
+      });
+    });
+
+    ok(res, { approved: true, id });
+  });
+
+  // ===== 管理员：拒绝充值申请 =====
+  app.post("/admin/wallet/recharges/reject", async (req, res) => {
+    const auth = requireRole(req, res, ["admin"]);
+    if (!auth) return;
+    const body = (req.body ?? {}) as { id?: string; reviewRemark?: string };
+    const id = body.id?.trim();
+    if (!id) { fail(res, 400, "BAD_REQUEST", "缺少充值ID"); return; }
+    const reviewRemark = (body.reviewRemark ?? "").trim();
+    if (!reviewRemark) {
+      fail(res, 400, "BAD_REQUEST", "请填写拒绝原因");
+      return;
+    }
+
+    const recharge = await prisma.walletRecharge.findFirst({
+      where: { id, companyId: auth.companyId },
+    });
+    if (!recharge) { fail(res, 404, "NOT_FOUND", "充值记录不存在"); return; }
+    if (recharge.status !== "PENDING") {
+      fail(res, 400, "BAD_REQUEST", "该充值申请已处理过");
+      return;
+    }
+
+    await prisma.walletRecharge.update({
+      where: { id },
+      data: { status: "REJECTED", reviewRemark, reviewedBy: auth.userId },
+    });
+
+    ok(res, { rejected: true, id });
+  });
+
+  // ===== 员工端：查看所有客户余额 =====
+  app.get("/staff/wallet/balances", async (req, res) => {
+    const auth = requireRole(req, res, ["staff", "admin"]);
+    if (!auth) return;
+    const accounts = await prisma.clientWalletAccount.findMany({
+      where: { companyId: auth.companyId },
+      orderBy: { clientId: "asc" },
+      select: {
+        clientId: true,
+        currency: true,
+        balance: true,
+        updatedAt: true,
+      },
+    });
+    // 查询客户姓名
+    const clientIds = [...new Set(accounts.map((a) => a.clientId))];
+    const users = await prisma.user.findMany({
+      where: { id: { in: clientIds }, companyId: auth.companyId },
+      select: { id: true, name: true, companyName: true },
+    });
+    const userMap = new Map(users.map((u) => [u.id, u]));
+
+    // 按客户分组
+    const map = new Map<string, { cny: number; thb: number }>();
+    for (const a of accounts) {
+      if (!map.has(a.clientId)) map.set(a.clientId, { cny: 0, thb: 0 });
+      const entry = map.get(a.clientId)!;
+      if (a.currency === "CNY") entry.cny = Number(a.balance.toString());
+      if (a.currency === "THB") entry.thb = Number(a.balance.toString());
+    }
+
+    ok(res, {
+      balances: [...map.entries()].map(([clientId, b]) => ({
+        clientId,
+        clientName: userMap.get(clientId)?.name ?? "",
+        companyName: userMap.get(clientId)?.companyName ?? "",
+        cny: b.cny,
+        thb: b.thb,
+      })),
+    });
+  });
+
 }

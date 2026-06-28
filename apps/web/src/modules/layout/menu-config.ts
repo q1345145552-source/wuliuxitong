@@ -50,6 +50,7 @@ export const roleFunctionMenus: Record<AuthRole, RoleFunctionMenuItem[]> = {
     { id: "admin-func-ai-gap", label: "AI待补知识", href: "/admin#ai-knowledge-gaps" },
     { id: "admin-func-ai-feed", label: "AI知识投喂", href: "/admin#knowledge-feed" },
     { id: "admin-func-ai-list", label: "知识列表", href: "/admin#knowledge-list" },
+    { id: "admin-func-wallet-recharges", label: "充值审核", href: "/admin#wallet-recharges" },
   ],
   staff: [
     { id: "staff-func-billing", label: "账单管理", href: "/staff#staff-billing" },
@@ -60,6 +61,7 @@ export const roleFunctionMenus: Record<AuthRole, RoleFunctionMenuItem[]> = {
     { id: "staff-func-prices", label: "客户价格查询", href: "/staff/prices" },
     { id: "staff-func-lastmile", label: "尾端派送", href: "/staff#staff-lastmile" },
     { id: "staff-func-address", label: "尾端地址", href: "/staff#staff-address" },
+    { id: "staff-func-wallet", label: "客户余额", href: "/staff#staff-wallet" },
   ],
   client: [
     { id: "client-func-main", label: "主页与AI", href: "/client#client-main" },

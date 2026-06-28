@@ -53,6 +53,11 @@ import {
   saveClientNote,
   type OrderProductImageItem,
   type ShipmentItem,
+  // 充值审核
+  fetchAdminRecharges,
+  approveRecharge,
+  rejectRecharge,
+  type AdminWalletRechargeItem,
 } from "../../services/business-api";
 import {
   createKnowledgeItem,
@@ -73,6 +78,7 @@ const SECTION_IDS = [
   "ops-tools",
   "lastmile",
   "lastmile-address",
+  "wallet-recharges",
 ] as const;
 
 const SECTION_LABELS: Record<(typeof SECTION_IDS)[number], string> = {
@@ -88,6 +94,7 @@ const SECTION_LABELS: Record<(typeof SECTION_IDS)[number], string> = {
   "ops-tools": "入库与标签工具",
   "lastmile": "尾端派送",
   "lastmile-address": "尾端地址",
+  "wallet-recharges": "充值审核",
 };
 
 const sectionStyle = {
@@ -229,6 +236,17 @@ export default function AdminHomePage() {
   const updateLastmileStatus = async (id: string, status: string, signImageBase64?: string) => {
     const res = await fetch(`${apiBaseUrl()}/admin/lastmile/status`, { method: "POST", headers: {"Content-Type":"application/json",...authHeaders()}, body: JSON.stringify({id, status, signImageBase64: signImageBase64 || undefined}) });
     return parseApiResponse(res);
+  };
+  // 充值审核
+  const [rechargeList, setRechargeList] = useState<AdminWalletRechargeItem[]>([]);
+  const [rechargeStatusFilter, setRechargeStatusFilter] = useState("");
+  const [rejectModalId, setRejectModalId] = useState<string | null>(null);
+  const [rejectRemark, setRejectRemark] = useState("");
+  const loadRecharges = async () => {
+    try {
+      const data = await fetchAdminRecharges(rechargeStatusFilter || undefined);
+      setRechargeList(data.recharges);
+    } catch (e) { console.error(e); }
   };
   const [orderImagesCache, setOrderImagesCache] = useState<Record<string, Array<{ id: string; fileName: string; mime: string; contentBase64: string; filePath?: string | null; imageUrl?: string; createdAt: string }>>>({});
   const [orderEditForm, setOrderEditForm] = useState({
@@ -985,6 +1003,7 @@ export default function AdminHomePage() {
   useEffect(() => {
     if (activeSection === "shipping-config" && clientList.length > 0) void loadRates();
     if (activeSection === "lastmile") loadLastmileOrders();
+    if (activeSection === "wallet-recharges") loadRecharges();
   }, [activeSection, clientList]);
 
   if (!session) return null;
@@ -1823,6 +1842,176 @@ export default function AdminHomePage() {
         <h2 style={{ margin: "0 0 16px", fontSize: 18 }}>尾端地址</h2>
         <p style={{ fontSize: 13, color: "#6b7280" }}>客户端注册后自动同步唛头与派送地址。</p>
       </section>
+
+      {/* 充值审核 */}
+      <section id="wallet-recharges" style={{ ...sectionStyle, display: activeSection === "wallet-recharges" ? "block" : "none" }}>
+        <h2 style={{ margin: "0 0 16px", fontSize: 18 }}>{SECTION_LABELS["wallet-recharges"]}</h2>
+        {/* 状态筛选 */}
+        <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+          {["", "PENDING", "APPROVED", "REJECTED"].map((s) => (
+            <button
+              key={s}
+              type="button"
+              onClick={() => { setRechargeStatusFilter(s); setTimeout(() => loadRecharges(), 0); }}
+              style={{
+                border: rechargeStatusFilter === s ? "2px solid #2563eb" : "1px solid #d1d5db",
+                borderRadius: 8,
+                padding: "6px 14px",
+                background: rechargeStatusFilter === s ? "#eff6ff" : "#fff",
+                color: rechargeStatusFilter === s ? "#2563eb" : "#374151",
+                fontWeight: 600,
+                fontSize: 13,
+                cursor: "pointer",
+              }}
+            >
+              {s === "" ? "全部" : s === "PENDING" ? "待审核" : s === "APPROVED" ? "已通过" : "已拒绝"}
+            </button>
+          ))}
+        </div>
+        {rechargeList.length === 0 ? (
+          <p style={{ color: "#6b7280", fontSize: 13 }}>暂无充值申请</p>
+        ) : (
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+              <thead>
+                <tr style={{ background: "#f9fafb", borderBottom: "1px solid #e5e7eb" }}>
+                  <th style={{ padding: "8px 10px", textAlign: "left", fontWeight: 600, color: "#374151", whiteSpace: "nowrap" }}>时间</th>
+                  <th style={{ padding: "8px 10px", textAlign: "left", fontWeight: 600, color: "#374151", whiteSpace: "nowrap" }}>客户</th>
+                  <th style={{ padding: "8px 10px", textAlign: "left", fontWeight: 600, color: "#374151", whiteSpace: "nowrap" }}>币种</th>
+                  <th style={{ padding: "8px 10px", textAlign: "right", fontWeight: 600, color: "#374151", whiteSpace: "nowrap" }}>金额</th>
+                  <th style={{ padding: "8px 10px", textAlign: "left", fontWeight: 600, color: "#374151", whiteSpace: "nowrap" }}>支付方式</th>
+                  <th style={{ padding: "8px 10px", textAlign: "left", fontWeight: 600, color: "#374151", whiteSpace: "nowrap" }}>状态</th>
+                  <th style={{ padding: "8px 10px", textAlign: "left", fontWeight: 600, color: "#374151", whiteSpace: "nowrap" }}>凭证</th>
+                  <th style={{ padding: "8px 10px", textAlign: "left", fontWeight: 600, color: "#374151", whiteSpace: "nowrap" }}>备注</th>
+                  <th style={{ padding: "8px 10px", textAlign: "left", fontWeight: 600, color: "#374151", whiteSpace: "nowrap" }}>操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rechargeList.map((r) => {
+                  const methodLabel = r.paymentMethod === "WECHAT" ? "微信" : r.paymentMethod === "ALIPAY" ? "支付宝" : "银行转账";
+                  const statusLabel = r.status === "PENDING" ? "待审核" : r.status === "APPROVED" ? "已通过" : "已拒绝";
+                  const statusColor =
+                    r.status === "PENDING" ? { bg: "#fef3c7", text: "#92400e" } :
+                    r.status === "APPROVED" ? { bg: "#d1fae5", text: "#065f46" } :
+                    { bg: "#fee2e2", text: "#991b1b" };
+                  return (
+                    <tr key={r.id} style={{ borderBottom: "1px solid #f3f4f6" }}>
+                      <td style={{ padding: "8px 10px", whiteSpace: "nowrap", fontSize: 12 }}>
+                        {new Date(r.createdAt).toLocaleString("zh-CN", {
+                          month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit",
+                        })}
+                      </td>
+                      <td style={{ padding: "8px 10px", whiteSpace: "nowrap" }}>{r.clientName}{r.companyName ? ` (${r.companyName})` : ""}</td>
+                      <td style={{ padding: "8px 10px" }}>{r.currency}</td>
+                      <td style={{ padding: "8px 10px", textAlign: "right", fontWeight: 600 }}>
+                        {r.currency === "CNY" ? "¥" : "฿"}{r.amount.toFixed(2)}
+                      </td>
+                      <td style={{ padding: "8px 10px" }}>{methodLabel}</td>
+                      <td style={{ padding: "8px 10px" }}>
+                        <span style={{ display: "inline-block", padding: "2px 8px", borderRadius: 10, fontSize: 12, background: statusColor.bg, color: statusColor.text }}>
+                          {statusLabel}
+                        </span>
+                      </td>
+                      <td style={{ padding: "8px 10px" }}>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const w = window.open("", "_blank");
+                            if (w) { w.document.write(`<img src="${r.proofImage}" style="max-width:100%" />`); }
+                          }}
+                          style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "4px 10px", background: "#fff", cursor: "pointer", fontSize: 12 }}
+                        >
+                          查看凭证
+                        </button>
+                      </td>
+                      <td style={{ padding: "8px 10px", maxWidth: 150, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: 12, color: "#6b7280" }}>
+                        {r.reviewRemark || r.remark || "—"}
+                      </td>
+                      <td style={{ padding: "8px 10px", whiteSpace: "nowrap" }}>
+                        {r.status === "PENDING" ? (
+                          <div style={{ display: "flex", gap: 4 }}>
+                            <button
+                              type="button"
+                              disabled={loading}
+                              onClick={async () => {
+                                if (!window.confirm(`确认通过 ${r.clientName} 的 ${r.currency} ${r.amount} 充值？`)) return;
+                                setLoading(true);
+                                try {
+                                  await approveRecharge(r.id);
+                                  setToast("充值已通过");
+                                  await loadRecharges();
+                                } catch (e: any) { setToast(e.message ?? "操作失败"); }
+                                finally { setLoading(false); }
+                              }}
+                              style={{ border: "none", borderRadius: 6, padding: "4px 10px", background: "#16a34a", color: "#fff", cursor: "pointer", fontSize: 12, fontWeight: 600 }}
+                            >
+                              通过
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => { setRejectModalId(r.id); setRejectRemark(""); }}
+                              style={{ border: "none", borderRadius: 6, padding: "4px 10px", background: "#dc2626", color: "#fff", cursor: "pointer", fontSize: 12, fontWeight: 600 }}
+                            >
+                              拒绝
+                            </button>
+                          </div>
+                        ) : (
+                          <span style={{ fontSize: 12, color: "#6b7280" }}>
+                            {r.reviewerName ? `审核人：${r.reviewerName}` : "—"}
+                          </span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+
+      {/* 拒绝原因弹窗 */}
+      {rejectModalId && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 60, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(0,0,0,0.4)", padding: 16 }}>
+          <div style={{ width: "100%", maxWidth: 400, background: "#fff", borderRadius: 12, padding: 24, boxShadow: "0 20px 60px rgba(0,0,0,0.3)" }}>
+            <h3 style={{ margin: "0 0 16px", fontSize: 16 }}>拒绝原因</h3>
+            <textarea
+              placeholder="请填写拒绝原因"
+              value={rejectRemark}
+              onChange={(e) => setRejectRemark(e.target.value)}
+              rows={3}
+              style={{ width: "100%", padding: "10px", border: "1px solid #d1d5db", borderRadius: 8, fontSize: 14, boxSizing: "border-box", resize: "vertical" }}
+            />
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 16 }}>
+              <button
+                type="button"
+                onClick={() => setRejectModalId(null)}
+                style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 16px", background: "#fff", cursor: "pointer", fontSize: 13 }}
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                disabled={loading || !rejectRemark.trim()}
+                onClick={async () => {
+                  if (!rejectRemark.trim()) return;
+                  setLoading(true);
+                  try {
+                    await rejectRecharge(rejectModalId, rejectRemark.trim());
+                    setToast("已拒绝");
+                    setRejectModalId(null);
+                    await loadRecharges();
+                  } catch (e: any) { setToast(e.message ?? "操作失败"); }
+                  finally { setLoading(false); }
+                }}
+                style={{ border: "none", borderRadius: 8, padding: "8px 16px", background: "#dc2626", color: "#fff", fontWeight: 600, cursor: "pointer", fontSize: 13 }}
+              >
+                确认拒绝
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* 5. AI会话记忆运维 */}
       <section id="ai-memory" style={{ ...sectionStyle, display: activeSection === "ai-memory" ? "block" : "none" }}>

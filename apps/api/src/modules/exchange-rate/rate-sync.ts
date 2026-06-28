@@ -8,7 +8,6 @@ interface OpenErApiResponse {
 }
 
 const DEFAULT_EXCHANGE_RATE_API = "https://open.er-api.com/v6/latest/CNY";
-const REFRESH_INTERVAL_MS = 2 * 60 * 60 * 1000;
 
 let syncingPromise: Promise<void> | null = null;
 
@@ -114,7 +113,7 @@ export async function refreshCnyThbRateIfStale(): Promise<{
 }
 
 /**
- * 启动汇率自动刷新任务（每 2 小时执行一次，启动时先执行一次）。
+ * 启动汇率自动刷新任务（每天 0 点执行一次，启动时先执行一次）。
  */
 export function startDailyExchangeRateScheduler(): void {
   const run = async () => {
@@ -124,8 +123,32 @@ export function startDailyExchangeRateScheduler(): void {
       `[exchange-rate] CNY/THB=${result.rate.toFixed(4)} updatedAt=${result.updatedAt} refreshed=${result.refreshed}`,
     );
   };
+
+  // 启动时立即执行一次
   void run();
-  setInterval(() => {
-    void run();
-  }, REFRESH_INTERVAL_MS);
+
+  // 计算距离下一个 0 点（UTC+8 北京时间）的毫秒数
+  const scheduleMidnight = () => {
+    const now = new Date();
+    // 使用 UTC+8 计算
+    const utc8 = new Date(now.getTime() + 8 * 60 * 60 * 1000);
+    const midnight = new Date(
+      Date.UTC(utc8.getUTCFullYear(), utc8.getUTCMonth(), utc8.getUTCDate() + 1, 0, 0, 0),
+    );
+    const delayMs = midnight.getTime() - now.getTime();
+    return delayMs;
+  };
+
+  const scheduleNext = () => {
+    const delay = scheduleMidnight();
+    setTimeout(() => {
+      void run();
+      // 之后每 24 小时执行
+      setInterval(() => {
+        void run();
+      }, 24 * 60 * 60 * 1000);
+    }, delay);
+  };
+
+  scheduleNext();
 }

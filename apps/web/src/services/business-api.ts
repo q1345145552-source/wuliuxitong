@@ -113,6 +113,46 @@ export interface ClientWalletOverview {
   };
 }
 
+// ===== 充值相关类型 =====
+
+export interface WalletRechargeItem {
+  id: string;
+  currency: string;
+  amount: number;
+  paymentMethod: string;
+  status: string; // PENDING | APPROVED | REJECTED
+  remark: string | null;
+  reviewRemark: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AdminWalletRechargeItem {
+  id: string;
+  clientId: string;
+  clientName: string;
+  companyName: string | null;
+  currency: string;
+  amount: number;
+  paymentMethod: string;
+  proofImage: string;
+  status: string;
+  remark: string | null;
+  reviewRemark: string | null;
+  reviewedBy: string | null;
+  reviewerName: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface StaffWalletBalanceItem {
+  clientId: string;
+  clientName: string;
+  companyName: string | null;
+  cny: number;
+  thb: number;
+}
+
 export interface OrderProductImageItem {
   id: string;
   fileName: string;
@@ -573,6 +613,88 @@ export async function fetchUniversalExpressTrack(params: {
  */
 export async function fetchClientWalletOverview(): Promise<ClientWalletOverview> {
   const response = await fetch(`${apiBaseUrl()}/client/wallet/overview`, {
+    method: "GET",
+    headers: { ...authHeaders() },
+  });
+  return parseApiResponse(response);
+}
+
+// ===== 客户端充值 =====
+
+/**
+ * 客户端提交充值申请。
+ */
+export async function submitRecharge(payload: {
+  amount: number;
+  currency: string;
+  paymentMethod: string;
+  proofImage: string;
+  remark?: string;
+}): Promise<{ id: string; status: string; message: string }> {
+  const response = await fetch(`${apiBaseUrl()}/client/wallet/recharge`, {
+    method: "POST",
+    headers: { ...authHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  return parseApiResponse(response);
+}
+
+/**
+ * 客户端获取充值记录。
+ */
+export async function fetchClientWalletRecharges(): Promise<{ recharges: WalletRechargeItem[] }> {
+  const response = await fetch(`${apiBaseUrl()}/client/wallet/recharges`, {
+    method: "GET",
+    headers: { ...authHeaders() },
+  });
+  return parseApiResponse(response);
+}
+
+// ===== 管理员充值审核 =====
+
+/**
+ * 管理员获取充值审核列表。
+ */
+export async function fetchAdminRecharges(status?: string): Promise<{ recharges: AdminWalletRechargeItem[] }> {
+  const query = status ? `?status=${status}` : "";
+  const response = await fetch(`${apiBaseUrl()}/admin/wallet/recharges${query}`, {
+    method: "GET",
+    headers: { ...authHeaders() },
+  });
+  return parseApiResponse(response);
+}
+
+/**
+ * 管理员通过充值申请。
+ */
+export async function approveRecharge(id: string): Promise<{ approved: boolean; id: string }> {
+  const response = await fetch(`${apiBaseUrl()}/admin/wallet/recharges/approve`, {
+    method: "POST",
+    headers: { ...authHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({ id }),
+  });
+  return parseApiResponse(response);
+}
+
+/**
+ * 管理员拒绝充值申请。
+ */
+export async function rejectRecharge(id: string, reviewRemark: string): Promise<{ rejected: boolean; id: string }> {
+  const response = await fetch(`${apiBaseUrl()}/admin/wallet/recharges/reject`, {
+    method: "POST",
+    headers: { ...authHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({ id, reviewRemark }),
+  });
+  return parseApiResponse(response);
+}
+
+// ===== 员工端客户余额 =====
+
+/**
+ * 员工端获取所有客户余额。
+ */
+export async function fetchStaffWalletBalances(): Promise<{ balances: StaffWalletBalanceItem[] }> {
+  const response = await fetch(`${apiBaseUrl()}/staff/wallet/balances`, {
     method: "GET",
     headers: { ...authHeaders() },
   });

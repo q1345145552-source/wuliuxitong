@@ -33,6 +33,8 @@ import {
   type ShipmentItem,
   uploadStaffInboundPhoto,
   uploadStaffOrderProductImage,
+  fetchStaffWalletBalances,
+  type StaffWalletBalanceItem,
 } from "../../services/business-api";
 
 const MAX_ORDER_PRODUCT_IMAGES = 999;
@@ -212,6 +214,7 @@ const STAFF_SECTION_IDS = [
   "staff-order-shipment",
   "staff-lastmile",
   "staff-address",
+  "staff-wallet",
 ] as const;
 
 /**
@@ -650,6 +653,15 @@ const loadLmShipments = async () => {
   };
   const [lmOrderList, setLmOrderList] = useState<Array<{id:string;deliveryNo:string;shipmentId:string;trackingNo?:string;driverName?:string;licensePlate?:string;phoneNumber?:string;deliveryDate?:string;clientId?:string;status:string}>>([]);
   const loadLmOrders = async () => { try { const r=await fetch(apiBaseUrl()+"/admin/lastmile/orders",{headers:authHeaders()}); const d=await r.json(); if(d.code==="OK")setLmOrderList(d.data.items); } catch (e) { console.error(e); } };
+
+  // 客户余额
+  const [walletBalances, setWalletBalances] = useState<StaffWalletBalanceItem[]>([]);
+  const loadWalletBalances = async () => {
+    try {
+      const data = await fetchStaffWalletBalances();
+      setWalletBalances(data.balances);
+    } catch (e) { console.error(e); }
+  };
 
   // 按派送单号分组，检查是否全部签收
   
@@ -3571,6 +3583,48 @@ const loadLmShipments = async () => {
           </div>
         </div>
       ) : null}
+
+      {/* 客户余额 */}
+      {activeSection === "staff-wallet" && (
+        <section style={{ border: "1px solid #e5e7eb", borderRadius: 12, padding: 16, background: "#fff", marginTop: 16 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+            <h2 style={{ margin: 0, fontSize: 18 }}>客户余额</h2>
+            <button
+              type="button"
+              onClick={loadWalletBalances}
+              style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "6px 14px", background: "#fff", cursor: "pointer", fontSize: 13 }}
+            >
+              刷新
+            </button>
+          </div>
+          {walletBalances.length === 0 ? (
+            <p style={{ color: "#6b7280", fontSize: 13 }}>暂无数据，点击刷新加载</p>
+          ) : (
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                <thead>
+                  <tr style={{ background: "#f9fafb", borderBottom: "1px solid #e5e7eb" }}>
+                    <th style={{ padding: "8px 12px", textAlign: "left", fontWeight: 600, color: "#374151" }}>客户</th>
+                    <th style={{ padding: "8px 12px", textAlign: "left", fontWeight: 600, color: "#374151" }}>公司</th>
+                    <th style={{ padding: "8px 12px", textAlign: "right", fontWeight: 600, color: "#374151" }}>人民币余额 (CNY)</th>
+                    <th style={{ padding: "8px 12px", textAlign: "right", fontWeight: 600, color: "#374151" }}>泰铢余额 (THB)</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {walletBalances.map((b) => (
+                    <tr key={b.clientId} style={{ borderBottom: "1px solid #f3f4f6" }}>
+                      <td style={{ padding: "8px 12px" }}>{b.clientName}</td>
+                      <td style={{ padding: "8px 12px", color: "#6b7280" }}>{b.companyName || "—"}</td>
+                      <td style={{ padding: "8px 12px", textAlign: "right", fontWeight: 600 }}>¥{b.cny.toFixed(2)}</td>
+                      <td style={{ padding: "8px 12px", textAlign: "right", fontWeight: 600 }}>฿{b.thb.toFixed(2)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
+      )}
     </RoleShell>
   );
 }

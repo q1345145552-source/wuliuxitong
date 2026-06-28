@@ -38,6 +38,8 @@ model User {
   addresses         ClientAddress[]
   documents         ClientDocument[]
   walletAccounts    ClientWalletAccount[]
+  walletRecharges   WalletRecharge[]     @relation("WalletRechargeClient")
+  reviewedRecharges WalletRecharge[]     @relation("WalletRechargeReviewer")
   aiAuditLogs       AiAuditLog[]
   inboundPhotos     StaffInboundPhoto[]  @relation("OperatorInboundPhotos")
   productImages     OrderProductImage[]
@@ -292,6 +294,29 @@ model ClientExchangeRate {
 
   @@id([baseCurrency, quoteCurrency])
   @@map("client_exchange_rates")
+}
+
+model WalletRecharge {
+  id            String   @id @default(cuid())
+  companyId     String   @map("company_id")
+  clientId      String   @map("client_id")
+  currency      String
+  amount        Decimal  @db.Decimal(14, 2)
+  paymentMethod String   @map("payment_method")
+  proofImage    String   @map("proof_image") @db.Text
+  remark        String?
+  status        String   @default("PENDING")
+  reviewRemark  String?  @map("review_remark")
+  reviewedBy    String?  @map("reviewed_by")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  client   User  @relation("WalletRechargeClient", fields: [clientId], references: [id])
+  reviewer User? @relation("WalletRechargeReviewer", fields: [reviewedBy], references: [id])
+
+  @@index([companyId, status])
+  @@index([clientId])
+  @@map("wallet_recharges")
 }
 
 // ============================================================================
