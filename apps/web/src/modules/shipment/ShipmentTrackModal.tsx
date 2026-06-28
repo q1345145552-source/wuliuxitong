@@ -206,11 +206,8 @@ function TimelineNode({ item, isLast, isChild, index, total }: { item: TimelineI
           {formatTime(item.changedAt)}
         </div>
 
-        {/* status transition */}
+        {/* status */}
         <div style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 8,
           marginBottom: item.remark ? 10 : 6,
         }}>
           <span style={{
@@ -221,24 +218,9 @@ function TimelineNode({ item, isLast, isChild, index, total }: { item: TimelineI
             borderRadius: 6,
             fontSize: isChild ? 11 : 12,
             fontWeight: 600,
-            background: fromCfg.bg,
-            color: fromCfg.color,
-            border: `1px solid ${fromCfg.color}30`,
-          }}>
-            {fromCfg.icon} {fromCfg.zh}
-          </span>
-          <span style={{ color: "#94a3b8", fontSize: 16, fontWeight: 700 }}>→</span>
-          <span style={{
-            display: "inline-flex",
-            alignItems: "center",
-            gap: 4,
-            padding: "3px 10px",
-            borderRadius: 6,
-            fontSize: isChild ? 11 : 12,
-            fontWeight: 700,
             background: toCfg.bg,
             color: toCfg.color,
-            border: `1px solid ${toCfg.color}40`,
+            border: toCfg.color + "30",
           }}>
             {toCfg.icon} {toCfg.zh}
           </span>
