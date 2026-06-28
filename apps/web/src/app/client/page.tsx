@@ -2,7 +2,7 @@
 
 import { DEFAULT_SHIPPING_PRICES, INSPECTION_SURCHARGE, SENSITIVE_SURCHARGE } from "../../../../../packages/shared-types/constants";
 
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { Anchor, ClipboardCheck, PackageCheck, Ship, Truck, Warehouse, type LucideIcon } from "lucide-react";
 import { Bar, BarChart, CartesianGrid, Cell, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import EmptyStateCard from "../../modules/layout/EmptyStateCard";
@@ -22,8 +22,10 @@ import {
   fetchClientWalletOverview,
   fetchShippingPrices,
   uploadStaffOrderProductImage,
+  fetchShipmentImages,
   type ClientAddressItem,
   type OrderItem,
+  type OrderProductImageItem,
   type ShippingPriceItem,
 } from "../../services/business-api";
 import { openPrintLabel, openPrintPrealert } from "../../modules/shipment/ShipmentPrintLabel";
@@ -141,6 +143,7 @@ export default function ClientHomePage() {
   const [queryPanelCollapsed, setQueryPanelCollapsed] = useState(false);
   const [openLogisticsByOrder, setOpenLogisticsByOrder] = useState<Record<string, boolean>>({});
   const [openDetailsByOrder, setOpenDetailsByOrder] = useState<Record<string, boolean>>({});
+  const [detailImagesCache, setDetailImagesCache] = useState<Record<string, OrderProductImageItem[]>>({});
   const [search, setSearch] = useState(initialSearch);
   const [aiQuestion, setAiQuestion] = useState("");
   const [aiAnswer, setAiAnswer] = useState("");
@@ -1094,6 +1097,7 @@ export default function ClientHomePage() {
             <div style={{ overflowX: "auto" }}>
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
                 <thead><tr style={{ borderBottom: "2px solid #e5e7eb", textAlign: "left", background: "#f8fafc" }}>
+                  <th style={{ padding: "6px 8px", fontWeight: 600, width: 30 }}></th>
                   <th style={{ padding: "6px 8px", fontWeight: 600 }}>唛头</th><th style={{ padding: "6px 8px", fontWeight: 600 }}>预报单号</th><th style={{ padding: "6px 8px", fontWeight: 600 }}>品名</th><th style={{ padding: "6px 8px", fontWeight: 600 }}>尺寸(cm)</th><th style={{ padding: "6px 8px", fontWeight: 600 }}>体积(m³)</th><th style={{ padding: "6px 8px", fontWeight: 600 }}>重量(kg)</th><th style={{ padding: "6px 8px", fontWeight: 600 }}>件</th><th style={{ padding: "6px 8px", fontWeight: 600 }}>运输</th><th style={{ padding: "6px 8px", fontWeight: 600 }}>物流状态</th><th style={{ padding: "6px 8px", fontWeight: 600 }}>操作</th>
                 </tr></thead>
                 <tbody>
@@ -1101,21 +1105,118 @@ export default function ClientHomePage() {
                     const st = item.currentStatus || "";
                     const statusMap: Record<string, string> = { created: "已创建", loaded: "已装柜", departed: "已开船", arrivedPort: "已到港", customsTH: "清关中", customsCleared: "清关已放行", inWarehouseTH: "已到仓", outForDelivery: "派送中", delivered: "已签收" };
                     const dims = (item.products ?? []).map((p: any) => (p.lengthCm && p.widthCm && p.heightCm ? p.lengthCm + "×" + p.widthCm + "×" + p.heightCm : null)).filter(Boolean).join(", ");
+                    const isExpanded = !!openDetailsByOrder[item.id];
+                    const images = detailImagesCache[item.id] ?? [];
+                    const cargoTypeLabel = item.cargoType === "inspection" ? "商检" : item.cargoType === "sensitive" ? "敏感" : "普货";
                     return (
-                      <tr key={item.id} style={{ borderBottom: "1px solid #e5e7eb" }}>
-                        <td style={{ padding: "6px 8px", fontFamily: "monospace", color: "#6b21a8", fontSize: 12 }}>{item.clientId || "—"}</td>
-                        <td style={{ padding: "6px 8px", fontFamily: "monospace", fontSize: 11 }}>{item.orderNo || "—"}<br /><span style={{ fontSize: 10, color: "#6b7280" }}>{item.trackingNo || ""}</span></td>
-                        <td style={{ padding: "6px 8px" }}>{(item.products?.length ?? 0) > 0 ? (item.products ?? []).map((p: any, i: number) => (<div key={p.id || i}>{p.itemName}</div>)) : (item.itemName || "未填品名")}</td>
-                        <td style={{ padding: "6px 8px", fontSize: 11, whiteSpace: "nowrap" }}>{dims || "—"}</td>
-                        <td style={{ padding: "6px 8px", whiteSpace: "nowrap" }}>{item.volumeM3 != null ? Number(item.volumeM3).toFixed(3) : "—"}</td>
-                        <td style={{ padding: "6px 8px", whiteSpace: "nowrap" }}>{item.weightKg != null ? Number(item.weightKg).toFixed(2) : "—"}</td>
-                        <td style={{ padding: "6px 8px", whiteSpace: "nowrap" }}>{item.packageCount} {item.packageUnit === "box" ? "箱" : "袋"}</td>
-                        <td style={{ padding: "6px 8px" }}>{item.transportMode === "sea" ? "🚢海运" : "🚚陆运"}</td>
-                        <td style={{ padding: "6px 8px" }}>{statusMap[st] || st || "—"}</td>
-                        <td style={{ padding: "6px 8px", whiteSpace: "nowrap" }}>
-                          {item.trackingNo ? <button onClick={() => openShipmentTrack(item.trackingNo!)} style={{ border: "1px solid #2563eb", borderRadius: 4, padding: "2px 8px", fontSize: 11, background: "#eff6ff", color: "#2563eb", cursor: "pointer" }}>物流轨迹</button> : <span style={{ fontSize: 11, color: "#9ca3af" }}>暂无物流轨迹</span>}
-                        </td>
-                      </tr>
+                      <Fragment key={item.id}>
+                        <tr style={{ borderBottom: isExpanded ? "none" : "1px solid #e5e7eb", background: isExpanded ? "#f8fafc" : "#fff" }}>
+                          <td style={{ padding: "6px 4px", textAlign: "center" }}>
+                            <button
+                              type="button"
+                              onClick={async () => {
+                                const next = { ...openDetailsByOrder };
+                                if (next[item.id]) { delete next[item.id]; } else {
+                                  next[item.id] = true;
+                                  // 加载产品图片
+                                  if (!detailImagesCache[item.id]) {
+                                    try {
+                                      const imgs = await fetchShipmentImages(item.id);
+                                      setDetailImagesCache((prev) => ({ ...prev, [item.id]: imgs }));
+                                    } catch { /* ignore */ }
+                                  }
+                                }
+                                setOpenDetailsByOrder(next);
+                              }}
+                              style={{ border: "none", borderRadius: 4, padding: "2px 6px", background: isExpanded ? "#dbeafe" : "#f3f4f6", color: "#374151", cursor: "pointer", fontSize: 14, fontWeight: 700, lineHeight: 1 }}
+                            >
+                              {isExpanded ? "−" : "+"}
+                            </button>
+                          </td>
+                          <td style={{ padding: "6px 8px", fontFamily: "monospace", color: "#6b21a8", fontSize: 12 }}>{item.clientId || "—"}</td>
+                          <td style={{ padding: "6px 8px", fontFamily: "monospace", fontSize: 11 }}>{item.orderNo || "—"}<br /><span style={{ fontSize: 10, color: "#6b7280" }}>{item.trackingNo || ""}</span></td>
+                          <td style={{ padding: "6px 8px" }}>{(item.products?.length ?? 0) > 0 ? (item.products ?? []).map((p: any, i: number) => (<div key={p.id || i}>{p.itemName}</div>)) : (item.itemName || "未填品名")}</td>
+                          <td style={{ padding: "6px 8px", fontSize: 11, whiteSpace: "nowrap" }}>{dims || "—"}</td>
+                          <td style={{ padding: "6px 8px", whiteSpace: "nowrap" }}>{item.volumeM3 != null ? Number(item.volumeM3).toFixed(3) : "—"}</td>
+                          <td style={{ padding: "6px 8px", whiteSpace: "nowrap" }}>{item.weightKg != null ? Number(item.weightKg).toFixed(2) : "—"}</td>
+                          <td style={{ padding: "6px 8px", whiteSpace: "nowrap" }}>{item.packageCount} {item.packageUnit === "box" ? "箱" : "袋"}</td>
+                          <td style={{ padding: "6px 8px" }}>{item.transportMode === "sea" ? "🚢海运" : "🚚陆运"}</td>
+                          <td style={{ padding: "6px 8px" }}>{statusMap[st] || st || "—"}</td>
+                          <td style={{ padding: "6px 8px", whiteSpace: "nowrap" }}>
+                            {item.trackingNo ? <button onClick={() => openShipmentTrack(item.trackingNo!)} style={{ border: "1px solid #2563eb", borderRadius: 4, padding: "2px 8px", fontSize: 11, background: "#eff6ff", color: "#2563eb", cursor: "pointer", marginRight: 4 }}>物流轨迹</button> : <span style={{ fontSize: 11, color: "#9ca3af", marginRight: 4 }}>暂无轨迹</span>}
+                          </td>
+                        </tr>
+                        {/* 展开详情 */}
+                        {isExpanded && (
+                          <tr style={{ borderBottom: "1px solid #e5e7eb", background: "#f8fafc" }}>
+                            <td colSpan={11} style={{ padding: "10px 16px" }}>
+                              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 8, marginBottom: 10 }}>
+                                <div><span style={{ color: "#6b7280", fontSize: 12 }}>国内单号：</span><span style={{ fontSize: 13 }}>{item.domesticTrackingNo || "—"}</span></div>
+                                <div><span style={{ color: "#6b7280", fontSize: 12 }}>货型：</span><span style={{ fontSize: 13 }}>{cargoTypeLabel}</span></div>
+                                <div><span style={{ color: "#6b7280", fontSize: 12 }}>创建时间：</span><span style={{ fontSize: 13 }}>{item.createdAt ? new Date(item.createdAt).toLocaleString("zh-CN") : "—"}</span></div>
+                                <div><span style={{ color: "#6b7280", fontSize: 12 }}>应收金额：</span><span style={{ fontSize: 13, fontWeight: 600 }}>
+                                  {item.receivableAmountCny != null ? `¥${Number(item.receivableAmountCny).toFixed(2)}` : "—"}
+                                  {item.paymentStatus === "paid" ? <span style={{ color: "#16a34a", marginLeft: 6, fontSize: 11 }}>已付款</span> : null}
+                                </span></div>
+                              </div>
+                              {item.receiverAddressTh ? (
+                                <div style={{ marginBottom: 8 }}><span style={{ color: "#6b7280", fontSize: 12 }}>收货地址：</span><span style={{ fontSize: 13 }}>{item.receiverAddressTh}</span></div>
+                              ) : null}
+                              {/* 产品明细 */}
+                              {(item.products?.length ?? 0) > 0 ? (
+                                <div style={{ marginBottom: 8 }}>
+                                  <div style={{ color: "#6b7280", fontSize: 12, marginBottom: 4 }}>产品明细：</div>
+                                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                                    <thead><tr style={{ background: "#f1f5f9" }}>
+                                      <th style={{ padding: "4px 6px", textAlign: "left", fontWeight: 600 }}>品名</th>
+                                      <th style={{ padding: "4px 6px", textAlign: "center", fontWeight: 600 }}>件数</th>
+                                      <th style={{ padding: "4px 6px", textAlign: "center", fontWeight: 600 }}>单箱数量</th>
+                                      <th style={{ padding: "4px 6px", textAlign: "center", fontWeight: 600 }}>尺寸(cm)</th>
+                                      <th style={{ padding: "4px 6px", textAlign: "center", fontWeight: 600 }}>重量(kg)</th>
+                                      <th style={{ padding: "4px 6px", textAlign: "center", fontWeight: 600 }}>货型</th>
+                                    </tr></thead>
+                                    <tbody>
+                                      {(item.products ?? []).map((p: any, i: number) => (
+                                        <tr key={p.id || i} style={{ borderBottom: "1px solid #e5e7eb" }}>
+                                          <td style={{ padding: "4px 6px" }}>{p.itemName}</td>
+                                          <td style={{ padding: "4px 6px", textAlign: "center" }}>{p.packageCount}</td>
+                                          <td style={{ padding: "4px 6px", textAlign: "center" }}>{p.productQuantity ?? "—"}</td>
+                                          <td style={{ padding: "4px 6px", textAlign: "center", fontSize: 11 }}>
+                                            {p.lengthCm && p.widthCm && p.heightCm ? `${p.lengthCm}×${p.widthCm}×${p.heightCm}` : "—"}
+                                          </td>
+                                          <td style={{ padding: "4px 6px", textAlign: "center" }}>{p.weightKg != null ? p.weightKg : "—"}</td>
+                                          <td style={{ padding: "4px 6px", textAlign: "center", fontSize: 11 }}>
+                                            {p.cargoType === "inspection" ? "商检" : p.cargoType === "sensitive" ? "敏感" : "普货"}
+                                          </td>
+                                        </tr>
+                                      ))}
+                                    </tbody>
+                                  </table>
+                                </div>
+                              ) : null}
+                              {/* 产品图片 */}
+                              <div>
+                                <div style={{ color: "#6b7280", fontSize: 12, marginBottom: 4 }}>产品图片：</div>
+                                {images.length === 0 ? (
+                                  <span style={{ fontSize: 12, color: "#9ca3af" }}>暂无产品图</span>
+                                ) : (
+                                  <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                                    {images.map((img) => (
+                                      <img
+                                        key={img.id}
+                                        src={imgSrc(img)}
+                                        alt={img.fileName}
+                                        onClick={() => setPreviewImage({ src: imgSrc(img), alt: img.fileName })}
+                                        style={{ width: 80, height: 80, objectFit: "cover", borderRadius: 6, border: "1px solid #e5e7eb", cursor: "pointer" }}
+                                      />
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                      </Fragment>
                     );
                   })}
                 </tbody>
