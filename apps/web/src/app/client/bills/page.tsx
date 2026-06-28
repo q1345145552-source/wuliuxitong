@@ -257,21 +257,23 @@ export default function ClientBillsPage() {
                 <span className={`order-badge ${(item.paymentStatus ?? "unpaid") === "paid" ? "order-badge-paid" : "order-badge-unpaid"}`}>
                   {paymentLabel}
                 </span>
-                <a
-                  href={`/client/bills/${encodeURIComponent(item.id)}`}
-                  style={{
-                    border: "1px solid #bfdbfe",
-                    borderRadius: 999,
-                    padding: "3px 10px",
-                    background: "#eff6ff",
-                    color: "#1d4ed8",
-                    textDecoration: "none",
-                    fontSize: 12,
-                    fontWeight: 700,
-                  }}
-                >
-                  查看账单
-                </a>
+                {(item.paymentStatus ?? "unpaid") !== "paid" && (
+                  <a
+                    href={`/client/bills/${encodeURIComponent(item.id)}`}
+                    style={{
+                      border: "1px solid #bfdbfe",
+                      borderRadius: 999,
+                      padding: "3px 10px",
+                      background: "#eff6ff",
+                      color: "#1d4ed8",
+                      textDecoration: "none",
+                      fontSize: 12,
+                      fontWeight: 700,
+                    }}
+                  >
+                    查看账单
+                  </a>
+                )}
                 {item.paymentProofUploadedAt && (item.paymentStatus ?? "unpaid") !== "paid" ? (
                   <span style={{ fontSize: 11, color: "#d97706", background: "#fef3c7", padding: "2px 8px", borderRadius: 999, marginLeft: 6 }}>凭证待审核</span>
                 ) : (item.paymentStatus ?? "unpaid") !== "paid" && amount && amount > 0 ? (
