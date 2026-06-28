@@ -505,10 +505,15 @@ export function registerShipmentRoutes(app: MinimalHttpApp): void {
 
   // 按需加载单个订单的产品图
   app.get("/staff/shipments/images", async (req, res) => {
-    const auth = requireRole(req, res, ["staff", "admin"]);
+    const auth = requireRole(req, res, ["staff", "admin", "client"]);
     if (!auth) return;
     const orderId = req.query.orderId?.trim();
     if (!orderId) { fail(res, 400, "BAD_REQUEST", "orderId required"); return; }
+    // 客户端只能看自己名下订单的图片
+    if (auth.role === "client") {
+      const own = await prisma.order.findFirst({ where: { id: orderId, clientId: auth.userId, companyId: auth.companyId }, select: { id: true } });
+      if (!own) { fail(res, 403, "FORBIDDEN", "无权查看该订单图片"); return; }
+    }
     const imageMap = await loadProductImagesForOrders(auth.companyId, [orderId]);
     ok(res, { images: imageMap.get(orderId) ?? [] });
   });
