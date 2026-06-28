@@ -88,21 +88,7 @@ export default function ClientBillsPage() {
     return warehouseOptions.find((w) => w.id === warehouseId)?.label ?? warehouseId;
   };
 
-  useEffect(() => {
-    setLoading(true);
-    setMessage("");
-    Promise.all([fetchClientOrders({ statusGroup: "unfinished" }), fetchClientOrders({ statusGroup: "completed" })])
-      .then(([unfinished, completed]) => {
-        const merged = uniqueById([...unfinished, ...completed]);
-        merged.sort((a, b) => (b.createdAt ?? "").localeCompare(a.createdAt ?? ""));
-        setOrders(merged);
-      })
-      .catch((error) => {
-        const text = error instanceof Error ? error.message : "加载失败";
-        setMessage(`加载失败：${text}`);
-      })
-      .finally(() => setLoading(false));
-  }, []);
+  useEffect(() => { loadOrders(); }, []);
 
   const filtered = useMemo(() => {
     const orderIdKey = filters.trackingNo.trim().toLowerCase();
