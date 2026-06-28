@@ -89,10 +89,14 @@ export function registerAdminOpsRoutes(app: MinimalHttpApp): void {
       where: { companyId: auth.companyId },
       orderBy: { updatedAt: "desc" },
     });
+    const shipmentIds = [...new Set(rows.map((r) => r.shipmentId).filter(Boolean))];
+    const shipments = await prisma.shipment.findMany({ where: { id: { in: shipmentIds } }, select: { id: true, trackingNo: true } });
+    const tnMap = new Map(shipments.map((s) => [s.id, s.trackingNo]));
     ok(res, {
       items: rows.map((item) => ({
         id: item.id,
         shipmentId: item.shipmentId ?? undefined,
+        shipmentTrackingNo: item.shipmentId ? (tnMap.get(item.shipmentId) ?? null) : null,
         orderId: item.orderId ?? undefined,
         status: item.status,
         remark: item.remark ?? undefined,
@@ -268,10 +272,14 @@ export function registerAdminOpsRoutes(app: MinimalHttpApp): void {
       where: { companyId: auth.companyId },
       orderBy: { updatedAt: "desc" },
     });
+    const orderIds = [...new Set(rows.map((r) => r.orderId))];
+    const orders = await prisma.order.findMany({ where: { id: { in: orderIds }, companyId: auth.companyId }, select: { id: true, trackingNo: true } });
+    const tnMap = new Map(orders.map((o) => [o.id, o.trackingNo]));
     ok(res, {
       items: rows.map((item) => ({
         id: item.id,
         orderId: item.orderId,
+        trackingNo: tnMap.get(item.orderId) ?? null,
         clientReceivable: decToNumber(item.clientReceivable),
         supplierPayable: decToNumber(item.supplierPayable),
         taxFee: decToNumber(item.taxFee),
@@ -322,6 +330,9 @@ export function registerAdminOpsRoutes(app: MinimalHttpApp): void {
       where: { companyId: auth.companyId },
       orderBy: { updatedAt: "desc" },
     });
+    const orderIds = [...new Set(rows.map((r) => r.orderId))];
+    const orders = await prisma.order.findMany({ where: { id: { in: orderIds }, companyId: auth.companyId }, select: { id: true, trackingNo: true } });
+    const tnMap = new Map(orders.map((o) => [o.id, o.trackingNo]));
     ok(res, {
       items: rows.map((item) => {
         const cr = decToNumber(item.clientReceivable);
@@ -329,6 +340,7 @@ export function registerAdminOpsRoutes(app: MinimalHttpApp): void {
         const tf = decToNumber(item.taxFee);
         return {
           orderId: item.orderId,
+          trackingNo: tnMap.get(item.orderId) ?? null,
           clientReceivable: cr,
           supplierPayable: sp,
           taxFee: tf,
@@ -360,8 +372,12 @@ export function registerAdminOpsRoutes(app: MinimalHttpApp): void {
     const totalCost = profitNumeric.reduce((sum, item) => sum + item.supplierPayable + item.taxFee, 0);
     const totalProfit = totalRevenue - totalCost;
     const grossMarginPercent = totalRevenue > 0 ? Number(((totalProfit / totalRevenue) * 100).toFixed(2)) : 0;
+    const profitOrderIds = [...new Set(profitNumeric.map((item) => item.orderId))];
+    const profitOrders = await prisma.order.findMany({ where: { id: { in: profitOrderIds }, companyId: auth.companyId }, select: { id: true, trackingNo: true } });
+    const trackingNoByOrderId = new Map(profitOrders.map((o) => [o.id, o.trackingNo]));
     const profitTrend = profitNumeric.slice(0, 7).map((item) => ({
       orderId: item.orderId,
+      trackingNo: trackingNoByOrderId.get(item.orderId) ?? null,
       profit: Number((item.clientReceivable - item.supplierPayable - item.taxFee).toFixed(2)),
       updatedAt: item.updatedAt,
     }));
@@ -406,6 +422,10 @@ export function registerAdminOpsRoutes(app: MinimalHttpApp): void {
       .filter((item): item is NonNullable<typeof item> => Boolean(item))
       .slice(0, 10);
 
+    const customsShipmentIds = [...new Set(customsRows.map((r) => r.shipmentId).filter(Boolean))];
+    const customsOrders = await prisma.shipment.findMany({ where: { id: { in: customsShipmentIds }, companyId: auth.companyId }, select: { id: true, trackingNo: true, orderId: true } });
+    const trackingNoByShipmentId = new Map(customsOrders.map((s) => [s.id, s.trackingNo]));
+
     ok(res, {
       profitSummary: {
         totalRevenue: Number(totalRevenue.toFixed(2)),
@@ -417,6 +437,7 @@ export function registerAdminOpsRoutes(app: MinimalHttpApp): void {
       customsAlerts: customsRows.map((item) => ({
         id: item.id,
         shipmentId: item.shipmentId ?? undefined,
+        shipmentTrackingNo: item.shipmentId ? (trackingNoByShipmentId.get(item.shipmentId) ?? null) : null,
         orderId: item.orderId ?? undefined,
         status: item.status,
         remark: item.remark ?? undefined,

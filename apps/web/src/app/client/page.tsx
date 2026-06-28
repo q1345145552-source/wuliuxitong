@@ -360,7 +360,7 @@ export default function ClientHomePage() {
           : await fetchClientOrders({ statusGroup: queryMode });
       const result = baseOrders
         .filter((item) => !search.batchNo || (item.trackingNo ?? "").toLowerCase().includes(search.batchNo.toLowerCase()))
-        .filter((item) => !search.orderId || item.id.toLowerCase().includes(search.orderId.toLowerCase()))
+        .filter((item) => !search.orderId || (item.trackingNo ?? "").toLowerCase().includes(search.orderId.toLowerCase()))
         .filter((item) => {
           const d = item.createdAt.slice(0, 10);
           if (search.arrivedDateFrom && d < search.arrivedDateFrom) return false;
@@ -1007,7 +1007,7 @@ export default function ClientHomePage() {
               <input
                 value={search.orderId}
                 onChange={(e) => setSearch((v) => ({ ...v, orderId: e.target.value }))}
-                placeholder="订单号"
+                placeholder="运单号"
                 style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 10px" }}
               />
               <div style={{ display: "flex", gap: 4, alignItems: "center", gridColumn: "span 2" }}>

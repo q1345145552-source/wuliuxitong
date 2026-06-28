@@ -39,7 +39,7 @@ export function registerFinanceRoutes(app: MinimalHttpApp): void {
       if (o.createdAt >= monthStart) monthOrders++;
       return {
         id: o.id,
-        orderNo: o.orderNo ?? o.id,
+        orderNo: o.orderNo ?? "—",
         clientName: o.client?.name ?? "—",
         transportMode: o.transportMode ?? "—",
         warehouse: o.warehouseId ?? "—",

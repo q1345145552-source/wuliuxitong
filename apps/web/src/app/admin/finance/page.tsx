@@ -76,7 +76,7 @@ export default function AdminFinancePage() {
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, minWidth: 900 }}>
               <thead>
                 <tr style={{ background: "var(--canvas-soft)" }}>
-                  <th style={{ padding: "10px 12px", textAlign: "left", fontWeight: 500, color: "var(--ink-mute)" }}>订单号</th>
+                  <th style={{ padding: "10px 12px", textAlign: "left", fontWeight: 500, color: "var(--ink-mute)" }}>预报单号</th>
                   <th style={{ padding: "10px 12px", textAlign: "left", fontWeight: 500, color: "var(--ink-mute)" }}>仓库</th>
                   <th style={{ padding: "10px 12px", textAlign: "left", fontWeight: 500, color: "var(--ink-mute)" }}>客户</th>
                   <th style={{ padding: "10px 12px", textAlign: "left", fontWeight: 500, color: "var(--ink-mute)" }}>运输方式</th>

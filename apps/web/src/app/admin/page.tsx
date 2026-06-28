@@ -1114,9 +1114,9 @@ export default function AdminHomePage() {
                   {opsOverview.profitSummary.grossMarginPercent.toFixed(2)}%
                 </div>
                 <div style={{ display: "grid", gap: 4 }}>
-                  {opsOverview.profitTrend.map((item) => (
+                  {opsOverview.profitTrend.map((item: any) => (
                     <div key={`${item.orderId}-${item.updatedAt}`} style={{ fontSize: 12, color: "#000000" }}>
-                      订单 {item.orderId}：利润 {item.profit.toFixed(2)}（{item.updatedAt.slice(0, 16)}）
+                      运单 {item.trackingNo ?? item.orderId ?? "—"}：利润 {item.profit.toFixed(2)}（{item.updatedAt.slice(0, 16)}）
                     </div>
                   ))}
                 </div>
@@ -1129,9 +1129,9 @@ export default function AdminHomePage() {
             <div style={{ fontWeight: 700, marginBottom: 6 }}>关务查验预警</div>
             {opsOverview && opsOverview.customsAlerts.length > 0 ? (
               <div style={{ display: "grid", gap: 4 }}>
-                {opsOverview.customsAlerts.slice(0, 6).map((item) => (
+                {opsOverview.customsAlerts.slice(0, 6).map((item: any) => (
                   <div key={item.id} style={{ fontSize: 12, color: "#92400e" }}>
-                    [{item.status === "inspection" ? "查验" : item.status === "released" ? "放行" : item.status === "pending" ? "待处理" : item.status}] shipment {item.shipmentId ?? "-"} / order {item.orderId ?? "-"} /{" "}
+                    [{item.status === "inspection" ? "查验" : item.status === "released" ? "放行" : item.status === "pending" ? "待处理" : item.status}] 运单 {item.shipmentTrackingNo ?? item.shipmentId ?? "-"} /{" "}
                     {item.remark ?? "无备注"}
                   </div>
                 ))}
@@ -1566,7 +1566,7 @@ export default function AdminHomePage() {
                           if (!confirm(`确定删除运单 ${o.trackingNo ?? "—"}（${o.itemName ?? ""}）？\n\n此操作不可撤销，将级联删除运单、状态日志、产品行等所有关联数据。`)) return;
                           try {
                             await deleteAdminOrder(o.orderId ?? o.id);
-                            setToast(`已删除：${o.itemName ?? o.id}`);
+                            setToast(`已删除：${o.trackingNo ?? o.itemName ?? "—"}`);
                             await loadOrders();
                           } catch (err) {
                             setMessage(`删除失败：${err instanceof Error ? err.message : "未知错误"}`);
@@ -1633,7 +1633,7 @@ export default function AdminHomePage() {
                     <tr key={`edit-${o.id}`} style={{ background: "#f8fafc" }}>
                       <td colSpan={14} style={{ padding: 12 }}>
                         <div style={{ display: "grid", gap: 8 }}>
-                          <div style={{ fontWeight: 700, color: "#0f172a" }}>编辑：{o.trackingNo ?? o.id}</div>
+                          <div style={{ fontWeight: 700, color: "#0f172a" }}>编辑：{o.trackingNo ?? "—"}</div>
                           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 8 }}>
                             <input value={orderEditForm.clientId} onChange={(e) => setOrderEditForm((v) => ({ ...v, clientId: e.target.value }))} placeholder="唛头" list="admin-client-options" autoComplete="off" style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 10px" }} />
                             <datalist id="admin-client-options">{clientList.map((c) => (<option key={c.id} value={c.id}>{c.id}</option>))}</datalist>

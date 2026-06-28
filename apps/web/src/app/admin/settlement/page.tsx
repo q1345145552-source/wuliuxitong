@@ -87,9 +87,9 @@ export default function AdminSettlementPage() {
       <section style={{ border: "1px solid #e5e7eb", borderRadius: 12, padding: 16, background: "#fff", marginBottom: 12 }}>
         <h3 style={{ marginTop: 0 }}>结算列表</h3>
         <div style={{ display: "grid", gap: 8 }}>
-          {entries.map((item) => (
+          {entries.map((item: any) => (
             <div key={item.id} style={{ border: "1px solid #e2e8f0", borderRadius: 8, padding: 8, background: "#f8fafc" }}>
-              订单 {item.orderId} / AR {item.clientReceivable} / AP {item.supplierPayable} / 税费 {item.taxFee} / {item.currency}
+              运单 {item.trackingNo ?? item.orderId} / AR {item.clientReceivable} / AP {item.supplierPayable} / 税费 {item.taxFee} / {item.currency}
             </div>
           ))}
         </div>
@@ -98,9 +98,9 @@ export default function AdminSettlementPage() {
       <section style={{ border: "1px solid #e5e7eb", borderRadius: 12, padding: 16, background: "#fff" }}>
         <h3 style={{ marginTop: 0 }}>利润分析（单票）</h3>
         <div style={{ display: "grid", gap: 8 }}>
-          {profitItems.map((item) => (
+          {profitItems.map((item: any) => (
             <div key={`${item.orderId}-${item.updatedAt}`} style={{ border: "1px solid #e2e8f0", borderRadius: 8, padding: 8, background: "#f8fafc" }}>
-              订单 {item.orderId} / 利润 = AR({item.clientReceivable}) - AP({item.supplierPayable}) - 税费({item.taxFee}) ={" "}
+              运单 {item.trackingNo ?? item.orderId} / 利润 = AR({item.clientReceivable}) - AP({item.supplierPayable}) - 税费({item.taxFee}) ={" "}
               <strong>{item.profit}</strong> {item.currency}
             </div>
           ))}

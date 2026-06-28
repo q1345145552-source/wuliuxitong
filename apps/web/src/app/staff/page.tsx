@@ -1051,7 +1051,7 @@ const loadLmShipments = async () => {
         setOrderImagePreviews([]);
       }
       setCreateStepDone(true);
-      const displayNo = form.trackingNo.trim() || result.orderId;
+      const displayNo = form.trackingNo.trim() || "已创建";
       setToast("订单创建成功");
       setMessage(`订单创建成功：${displayNo}`);
       // 刷新产品图缓存
@@ -1264,7 +1264,7 @@ const loadLmShipments = async () => {
       });
       setEditingPrealertId((current) => (current === orderId ? null : current));
       setToast("已确认收货");
-      setMessage(`预报单 ${orderId} 已确认收货${batchNo ? `，柜号 ${batchNo}` : ""}。`);
+      setMessage(`预报单 ${sourceItem?.orderNo || orderId} 已确认收货${batchNo ? `，柜号 ${batchNo}` : ""}。`);
       await loadPageData();
     } catch (error) {
       const text = error instanceof Error ? error.message : "确认收货失败";
@@ -1285,10 +1285,11 @@ const loadLmShipments = async () => {
       setMessage(`确认修改失败：${draftError}`);
       return;
     }
+    const source = prealerts.find((item) => item.id === orderId);
     setPrealertConfirmedDrafts((prev) => ({ ...prev, [orderId]: draft }));
     setEditingPrealertId(null);
     setToast("修改已确认");
-    setMessage(`预报单 ${orderId} 修改已确认。`);
+    setMessage(`预报单 ${source?.orderNo || orderId} 修改已确认。`);
   };
 
   const FieldCard = ({

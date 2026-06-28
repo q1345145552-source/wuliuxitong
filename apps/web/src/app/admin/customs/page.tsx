@@ -76,9 +76,9 @@ export default function AdminCustomsPage() {
       <section style={{ border: "1px solid #e5e7eb", borderRadius: 12, padding: 16, background: "#fff" }}>
         <h3 style={{ marginTop: 0 }}>关务事件列表</h3>
         <div style={{ display: "grid", gap: 8 }}>
-          {items.map((item) => (
+          {items.map((item: any) => (
             <div key={item.id} style={{ border: "1px solid #e2e8f0", borderRadius: 8, padding: 8, background: "#f8fafc" }}>
-              [{item.status === "inspection" ? "查验" : item.status === "released" ? "放行" : item.status === "pending" ? "待处理" : item.status}] shipment: {item.shipmentId ?? "-"} / order: {item.orderId ?? "-"} / {item.remark ?? "-"}
+              [{item.status === "inspection" ? "查验" : item.status === "released" ? "放行" : item.status === "pending" ? "待处理" : item.status}] 运单 {item.shipmentTrackingNo ?? item.shipmentId ?? "-"} / {item.remark ?? "-"}
             </div>
           ))}
         </div>
