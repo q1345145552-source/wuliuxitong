@@ -35,7 +35,7 @@ const STATUS_COLORS: Record<string, { bg: string; text: string }> = {
 };
 
 /**
- * 客户端多币种账户页面（含充值功能）。
+ * 客户端余额页面（含充值功能）。
  */
 export default function ClientWalletPage() {
   const [data, setData] = useState<ClientWalletOverview | null>(null);
@@ -149,7 +149,7 @@ export default function ClientWalletPage() {
   }, [data]);
 
   return (
-    <RoleShell allowedRole="client" title="多币种账户">
+    <RoleShell allowedRole="client" title="余额">
       {/* 余额卡片 */}
       <section style={{ border: "1px solid #e5e7eb", borderRadius: 12, padding: 16, background: "#fff", marginBottom: 14 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
