@@ -964,7 +964,7 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
 
     const order = await prisma.order.findFirst({
       where: { id: orderId, clientId: auth.userId, companyId: auth.companyId },
-      select: { id: true, receivableAmountCny: true, receivableCurrency: true, paymentStatus: true, trackingNo: true },
+      select: { id: true, receivableAmountCny: true, receivableCurrency: true, paymentStatus: true },
     });
     if (!order) { fail(res, 404, "NOT_FOUND", "订单不存在"); return; }
     if (order.paymentStatus === "paid") { fail(res, 400, "BAD_REQUEST", "该运单已付款"); return; }
