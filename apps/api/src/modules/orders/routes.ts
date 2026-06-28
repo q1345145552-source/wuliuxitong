@@ -866,30 +866,6 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
             },
           },
         },
-        products: {
-          orderBy: { sortOrder: "asc" },
-          select: {
-            id: true,
-            itemName: true,
-            packageCount: true,
-            lengthCm: true,
-            widthCm: true,
-            heightCm: true,
-            productQuantity: true,
-            cargoType: true,
-            domesticTrackingNo: true,
-            weightKg: true,
-          },
-        },
-        productImages: {
-          orderBy: { createdAt: "asc" },
-          select: {
-            id: true,
-            fileName: true,
-            mime: true,
-            filePath: true,
-          },
-        },
       },
     });
 
@@ -925,7 +901,6 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
       const latestRemark = logisticsRecords.at(-1)?.remark ?? null;
       return {
         id: o.id,
-        clientId: o.clientId,
         warehouseId: o.warehouseId,
         orderNo: o.orderNo,
         itemName: o.itemName,
@@ -947,29 +922,10 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
         paidBy: o.paidBy ?? undefined,
         shipDate: o.shipDate,
         cargoType: o.cargoType ?? "normal",
-        receiverAddressTh: o.receiverAddressTh,
         latestRemark,
         logisticsRecords,
         createdAt: o.createdAt.toISOString(),
         updatedAt: o.updatedAt.toISOString(),
-        products: (o.products ?? []).map((p) => ({
-          id: p.id,
-          itemName: p.itemName,
-          packageCount: p.packageCount,
-          lengthCm: p.lengthCm,
-          widthCm: p.widthCm,
-          heightCm: p.heightCm,
-          productQuantity: p.productQuantity,
-          cargoType: p.cargoType,
-          domesticTrackingNo: p.domesticTrackingNo,
-          weightKg: decToNumber(p.weightKg),
-        })),
-        productImages: (o.productImages ?? []).map((img) => ({
-          id: img.id,
-          fileName: img.fileName,
-          mime: img.mime,
-          imageUrl: img.filePath ? `/images/${img.filePath.split("/").pop()}` : undefined,
-        })),
       };
     });
 

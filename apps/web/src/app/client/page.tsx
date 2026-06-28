@@ -294,6 +294,15 @@ export default function ClientHomePage() {
     return () => window.removeEventListener("hashchange", syncSectionByHash);
   }, []);
 
+  // 进入运单查询区自动加载全部运单
+  const [hasAutoQueried, setHasAutoQueried] = useState(false);
+  useEffect(() => {
+    if (activeSection === "client-query" && !hasAutoQueried && !loading) {
+      setHasAutoQueried(true);
+      changeQueryMode("all");
+    }
+  }, [activeSection]);
+
   const submitPrealert = async () => {
     setLoading(true);
     setMessage("");
@@ -372,14 +381,25 @@ export default function ClientHomePage() {
 
 
   /**
-   * 切换运单查询分组（在途/已完成/全部）。
+   * 切换运单查询分组并自动执行查询（在途/已完成/全部）。
    */
-  const changeQueryMode = (mode: "unfinished"  |  "completed"  |  "all") => {
+  const changeQueryMode = async (mode: "unfinished"  |  "completed"  |  "all") => {
     setQueryMode(mode);
     setSearch(initialSearch);
-    setHasQueried(false);
-    setQueriedOrders([]);
+    setLoading(true);
     setMessage("");
+    try {
+      const result = mode === "all"
+        ? await fetchClientOrders()
+        : await fetchClientOrders({ statusGroup: mode });
+      setQueriedOrders(result);
+      setHasQueried(true);
+    } catch (error) {
+      const text = error instanceof Error ? error.message : "查询失败";
+      setMessage(`查询失败：${text}`);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const runAiSearch = async () => {
