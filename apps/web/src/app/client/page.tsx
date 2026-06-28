@@ -124,6 +124,7 @@ function imgSrc(img: { imageUrl?: string | null; mime: string; contentBase64: st
 
 export default function ClientHomePage() {
   const [loading, setLoading] = useState(false);
+  const [dashboardLoading, setDashboardLoading] = useState(false);
   const [message, setMessage] = useState("");
   const [toast, setToast] = useState("");
   const [queryMode, setQueryMode] = useState<"unfinished"  |  "completed"  |  "all"  |  null>("all");
@@ -248,23 +249,16 @@ export default function ClientHomePage() {
   };
 
   useEffect(() => {
-    setLoading(true);
+    setDashboardLoading(true);
     refreshMainData()
       .catch((error) => {
         const text = error instanceof Error ? error.message : "加载失败";
         setMessage(`加载失败：${text}`);
       })
-      .finally(() => setLoading(false));
+      .finally(() => setDashboardLoading(false));
 
     // 加载运费价格表
     fetchShippingPrices().then(setShippingPrices).catch(() => {});
-
-    // 10 秒自动刷新同步
-    const interval = window.setInterval(() => {
-      if (document.hidden) return;
-      refreshMainData().catch(() => {});
-    }, 10000);
-    return () => window.clearInterval(interval);
   }, []);
 
   useEffect(() => {
