@@ -48,7 +48,7 @@ export function apiBaseUrl(): string {
 export function authHeaders(): Record<string, string> {
   const session = getOptionalSession();
   if (!session || !session.token) {
-    throw new Error("请先登录");
+    return {};
   }
   return {
     Authorization: `Bearer ${session.token}`,
@@ -57,8 +57,16 @@ export function authHeaders(): Record<string, string> {
 
 /**
  * 统一解析后端响应并在失败时抛出可读错误。
+ * 401 自动跳转登录页。
  */
 export async function parseApiResponse<T>(response: Response): Promise<T> {
+  if (response.status === 401) {
+    // token 过期或未登录，跳转登录页
+    if (typeof window !== "undefined" && !window.location.pathname.startsWith("/login")) {
+      window.location.href = "/login?expired=1";
+    }
+    throw new Error("登录已过期，请重新登录");
+  }
   const text = await response.text();
   let payload: { code?: string; message?: string; data?: T } | null = null;
   try {
