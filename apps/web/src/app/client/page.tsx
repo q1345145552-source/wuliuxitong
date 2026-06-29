@@ -439,7 +439,7 @@ export default function ClientHomePage() {
       .finally(() => setDashboardLoading(false));
   }, []);
 
-  // 运单查询区 60 秒自动刷新（无需手动刷新页面）
+  // 运单查询区 10 秒自动刷新（无需手动刷新页面）
   useEffect(() => {
     if (activeSection !== "client-query") return;
     const interval = setInterval(async () => {
@@ -451,7 +451,7 @@ export default function ClientHomePage() {
         setHasQueried(true);
         if (queryMode === "all") saveOrdersToCache(orders);
       } catch { /* silent */ }
-    }, 60000);
+    }, 10000);
     return () => clearInterval(interval);
   }, [activeSection, queryMode]);
 
