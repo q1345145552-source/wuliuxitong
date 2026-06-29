@@ -38,7 +38,7 @@ export const roleFunctionMenus: Record<AuthRole, RoleFunctionMenuItem[]> = {
     { id: "admin-func-orders", label: "运单管理", href: "/admin#orders" },
     { id: "admin-func-shipping", label: "运费配置", href: "/admin#shipping-config" },
     { id: "admin-func-lmp", label: "渠道与价格管理", href: "/admin/lmp" },
-    { id: "admin-func-container", label: "装柜管理", href: "/admin#container-loading" },
+    { id: "admin-func-container", label: "装柜管理", href: "/staff/container-loading" },
     { id: "admin-func-customs", label: "关务监控", href: "/admin/customs" },
     { id: "admin-func-accounts", label: "账号管理", href: "/admin/accounts" },
     { id: "admin-func-prealerts", label: "预报单管理", href: "/admin/prealerts" },
