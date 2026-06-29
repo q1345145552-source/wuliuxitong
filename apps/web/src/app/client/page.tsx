@@ -439,6 +439,22 @@ export default function ClientHomePage() {
       .finally(() => setDashboardLoading(false));
   }, []);
 
+  // 运单查询区 60 秒自动刷新（无需手动刷新页面）
+  useEffect(() => {
+    if (activeSection !== "client-query") return;
+    const interval = setInterval(async () => {
+      try {
+        const orders = queryMode === "all"
+          ? await fetchClientOrders()
+          : await fetchClientOrders({ statusGroup: queryMode as "unfinished" | "completed" });
+        setQueriedOrders(orders);
+        setHasQueried(true);
+        if (queryMode === "all") saveOrdersToCache(orders);
+      } catch { /* silent */ }
+    }, 60000);
+    return () => clearInterval(interval);
+  }, [activeSection, queryMode]);
+
   const statusToneClass = (status?: string): string => {
     const value = (status ?? "").toLowerCase();
     if (value === "delivered" || value === "returned" || value === "cancelled") return "order-badge order-badge-land";
