@@ -18,7 +18,15 @@ export default function LoginPage() {
   const [existingSession, setExistingSession] = useState<ReturnType<typeof getOptionalSession>>(null);
 
   useEffect(() => {
-    setExistingSession(getOptionalSession());
+    const session = getOptionalSession();
+    // 如果是 token 过期跳转回来的，清掉旧 session，不显示进入工作台按钮
+    const isExpired = typeof window !== "undefined" && new URLSearchParams(window.location.search).has("expired");
+    if (isExpired) {
+      clearAuthSession();
+      setExistingSession(null);
+    } else {
+      setExistingSession(session);
+    }
   }, []);
 
   const canSubmit = useMemo(() => account.trim().length > 0 && password.trim().length > 0, [account, password]);
