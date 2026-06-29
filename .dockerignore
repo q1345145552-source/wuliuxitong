@@ -5,3 +5,7 @@ apps/web/.next
 *.log
 .env
 .env.*
+scripts/
+docs/
+*.md
+!README.md

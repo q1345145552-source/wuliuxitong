@@ -7,11 +7,13 @@ import type { AiKnowledgeStore, StatusLabelStore } from "./ai-types";
 
 export const DEFAULT_STATUS_LABELS: StatusLabelConfig[] = [
   { status: "created", labelZh: "已创建" },
-  { status: "pickedUp", labelZh: "已揽收" },
-  { status: "inWarehouseCN", labelZh: "中国仓已入库" },
-  { status: "customsPending", labelZh: "清关待处理" },
-  { status: "inTransit", labelZh: "运输中" },
-  { status: "customsTH", labelZh: "泰国清关中" },
+  { status: "loaded", labelZh: "已装柜" },
+  { status: "delayDeparted", labelZh: "延迟开船" },
+  { status: "departed", labelZh: "已开船" },
+  { status: "arrivedPort", labelZh: "已到港" },
+  { status: "customsTH", labelZh: "清关中" },
+  { status: "customsCleared", labelZh: "清关已放行" },
+  { status: "inWarehouseTH", labelZh: "已到仓" },
   { status: "outForDelivery", labelZh: "派送中" },
   { status: "delivered", labelZh: "已签收" },
   { status: "exception", labelZh: "异常" },

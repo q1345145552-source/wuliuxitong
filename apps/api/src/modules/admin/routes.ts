@@ -426,7 +426,7 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
     let shipDate: string | null = null;
     if (body.shipDate !== undefined && body.shipDate !== null && String(body.shipDate).trim() !== "") {
       const raw = String(body.shipDate).trim().slice(0, 10);
-      const parsed = new Date(`${raw}T00:00:00.000Z`);
+      const parsed = new Date(`${raw}T00:00:00`);
       if (Number.isNaN(parsed.getTime())) {
         fail(res, 400, "BAD_REQUEST", "invalid shipDate");
         return;

@@ -12,6 +12,7 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "../../db/prisma";
 import type { MinimalHttpApp } from "../../server";
 import { fail, ok, requireRole } from "../core/http-utils";
+import { canTransit } from "../shipments/routes";
 
 const CONTAINER_STATUS_FLOW = [
   "LOADING",
@@ -164,24 +165,25 @@ export function registerContainerRoutes(app: MinimalHttpApp): void {
     const totalVolume = container.items.reduce((sum, it) => sum + decToNumber(it.loadedVolumeM3), 0);
     const totalPieces = container.items.reduce((sum, it) => sum + it.loadedPieceCount, 0);
 
+    // 客户端不允许查看柜号、船期等装柜敏感信息
+    const isClient = auth.role === "client";
     ok(res, {
       id: container.id,
-      containerNo: container.containerNo,
-      containerType: container.containerType,
-      carrierName: container.carrierName ?? null,
-      loadingDate: container.loadingDate?.toISOString() ?? null,
-      departureDate: container.departureDate?.toISOString() ?? null,
-      eta: container.eta?.toISOString() ?? null,
-      ata: container.ata?.toISOString() ?? null,
-      customsClearedAt: container.customsClearedAt?.toISOString() ?? null,
+      containerNo: isClient ? undefined : container.containerNo,
+      containerType: isClient ? undefined : container.containerType,
+      carrierName: isClient ? undefined : (container.carrierName ?? null),
+      loadingDate: isClient ? undefined : (container.loadingDate?.toISOString() ?? null),
+      departureDate: isClient ? undefined : (container.departureDate?.toISOString() ?? null),
+      eta: isClient ? undefined : (container.eta?.toISOString() ?? null),
+      ata: isClient ? undefined : (container.ata?.toISOString() ?? null),
+      customsClearedAt: isClient ? undefined : (container.customsClearedAt?.toISOString() ?? null),
       currentStatus: container.currentStatus,
-      currentStatusLabel: CONTAINER_STATUS_LABEL[container.currentStatus] ?? container.currentStatus,
+      currentStatusLabel: isClient ? undefined : (CONTAINER_STATUS_LABEL[container.currentStatus] ?? container.currentStatus),
       remark: container.remark ?? undefined,
-      totalLoadedVolumeM3: Number(totalVolume.toFixed(3)),
-      totalLoadedPieceCount: totalPieces,
-      // 客户视角下隐藏其他客户的货
+      totalLoadedVolumeM3: isClient ? undefined : Number(totalVolume.toFixed(3)),
+      totalLoadedPieceCount: isClient ? undefined : totalPieces,
       shipments: container.items
-        .filter((it) => auth.role !== "client" || it.shipment.order?.clientId === auth.userId)
+        .filter((it) => !isClient || it.shipment.order?.clientId === auth.userId)
         .map((it) => ({
           shipmentId: it.shipmentId,
           trackingNo: it.shipment.trackingNo,
@@ -190,13 +192,13 @@ export function registerContainerRoutes(app: MinimalHttpApp): void {
           itemName: it.shipment.order?.itemName ?? null,
           receiverNameTh: it.shipment.order?.receiverNameTh ?? null,
           receiverAddressTh: it.shipment.order?.receiverAddressTh ?? null,
-          loadedVolumeM3: decToNumber(it.loadedVolumeM3),
-          loadedPieceCount: it.loadedPieceCount,
-          shipmentTotalVolumeM3: it.shipment.volumeM3 ? decToNumber(it.shipment.volumeM3) : null,
-          // 拆柜提示：本运单装载量小于总量 = 拆柜
-          isSplit:
+          loadedVolumeM3: isClient ? undefined : decToNumber(it.loadedVolumeM3),
+          loadedPieceCount: isClient ? undefined : it.loadedPieceCount,
+          shipmentTotalVolumeM3: isClient ? undefined : (it.shipment.volumeM3 ? decToNumber(it.shipment.volumeM3) : null),
+          isSplit: isClient ? undefined : (
             it.shipment.volumeM3 !== null &&
-            decToNumber(it.loadedVolumeM3) < decToNumber(it.shipment.volumeM3) - 0.001,
+            decToNumber(it.loadedVolumeM3) < decToNumber(it.shipment.volumeM3) - 0.001
+          ),
           currentStatus: it.shipment.currentStatus,
         })),
       createdAt: container.createdAt.toISOString(),
@@ -298,7 +300,7 @@ export function registerContainerRoutes(app: MinimalHttpApp): void {
     }
 
     const customDate = typeof body.date === "string" && body.date.trim()
-      ? new Date(body.date.trim() + "T00:00:00.000Z")
+      ? new Date(body.date.trim() + "T00:00:00")
       : null;
     const now = customDate && !Number.isNaN(customDate.getTime()) ? customDate : new Date();
     const updateData: Prisma.ContainerUpdateInput = {
@@ -315,12 +317,22 @@ export function registerContainerRoutes(app: MinimalHttpApp): void {
     const shipmentNextStatus: string | null = CONTAINER_TO_SHIPMENT_STATUS[toStatus] ?? null;
 
     if (shipmentNextStatus && shipmentIds.length > 0) {
-      // 查询各运单当前状态（含父运单），用于正确写入日志
+      // 查询各运单当前状态
       const shipments = await prisma.shipment.findMany({
         where: { id: { in: shipmentIds }, companyId: auth.companyId },
         select: { id: true, currentStatus: true, parentTrackingNo: true },
       });
       const statusMap = new Map(shipments.map((s) => [s.id, s.currentStatus]));
+
+      // 校验每个运单的状态流转是否合法
+      const invalidShipments = shipments.filter(
+        (s) => !canTransit(s.currentStatus, shipmentNextStatus!)
+      );
+      if (invalidShipments.length > 0) {
+        const ids = invalidShipments.map((s) => `${s.id}(${s.currentStatus})`).join(", ");
+        fail(res, 400, "VALIDATION_ERROR", `以下运单不允许从当前状态流转到 ${shipmentNextStatus}：${ids}`);
+        return;
+      }
 
       ops.push(
         prisma.shipment.updateMany({
@@ -410,6 +422,16 @@ export function registerContainerRoutes(app: MinimalHttpApp): void {
     }
     if (!shipment) {
       fail(res, 404, "NOT_FOUND", "shipment not found");
+      return;
+    }
+    if (container.currentStatus !== "LOADING") {
+      fail(res, 400, "VALIDATION_ERROR", "container is not in LOADING status");
+      return;
+    }
+    // 已完成/异常/退回/取消的运单不允许重新装柜
+    const completedOrException = new Set(["delivered", "returned", "cancelled", "exception"]);
+    if (completedOrException.has(shipment.currentStatus)) {
+      fail(res, 400, "VALIDATION_ERROR", `shipment is ${shipment.currentStatus} and cannot be loaded`);
       return;
     }
     // 检查体积是否超过运单总体积（已装 + 本次 <= 总量）

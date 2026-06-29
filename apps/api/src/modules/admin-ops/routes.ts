@@ -62,7 +62,7 @@ export function registerAdminOpsRoutes(app: MinimalHttpApp): void {
       fail(res, 400, "BAD_REQUEST", "invalid lmp rate payload");
       return;
     }
-    const id = `lmp_${Date.now()}`;
+    const id = `lmp_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
     const created = await prisma.adminLmpRate.create({
       data: {
         id,
@@ -114,7 +114,12 @@ export function registerAdminOpsRoutes(app: MinimalHttpApp): void {
       fail(res, 400, "BAD_REQUEST", "status is required");
       return;
     }
-    const id = `cus_${Date.now()}`;
+    const VALID_CUSTOMS_STATUSES = ["pending", "inspection", "cleared", "rejected"];
+    if (!VALID_CUSTOMS_STATUSES.includes(status)) {
+      fail(res, 400, "BAD_REQUEST", `status must be one of: ${VALID_CUSTOMS_STATUSES.join(", ")}`);
+      return;
+    }
+    const id = `cus_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
     const created = await prisma.adminCustomsCase.create({
       data: {
         id,
@@ -307,7 +312,7 @@ export function registerAdminOpsRoutes(app: MinimalHttpApp): void {
       fail(res, 400, "BAD_REQUEST", "invalid settlement payload");
       return;
     }
-    const id = `set_${Date.now()}`;
+    const id = `set_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
     const created = await prisma.adminSettlementEntry.create({
       data: {
         id,

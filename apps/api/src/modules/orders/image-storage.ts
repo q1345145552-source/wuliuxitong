@@ -2,7 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import * as crypto from "node:crypto";
 
-const IMAGES_DIR = process.env.IMAGES_DIR || "/images";
+const IMAGES_DIR = process.env.IMAGES_DIR || "/app/images";
 const IMAGES_URL_PREFIX = "/images";
 
 /** Initialize the images directory (call once on startup). */

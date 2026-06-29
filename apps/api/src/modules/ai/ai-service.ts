@@ -63,6 +63,7 @@ const SUGGESTIONS = [
 
 const COMPLETED_STATUSES: ShipmentStatus[] = ["delivered", "returned", "cancelled"];
 const EXCEPTION_STATUSES: ShipmentStatus[] = ["exception", "returned", "cancelled"];
+const IN_TRANSIT_STATUSES: ShipmentStatus[] = ["loaded", "delayDeparted", "departed", "arrivedPort", "customsTH", "customsCleared", "inWarehouseTH", "outForDelivery"];
 const GREETING_RE = /(你好|您好|hi|hello|哈喽|在吗|你在吗)/i;
 const SERVICE_QA_RE =
   /(时效|多久|几天|清关|报关|费用|运费|计费|体积重|实重|禁运|违禁|能寄|可以寄|赔付|理赔|破损|丢件|签收|派送|上门|对账|发票|资料|装箱单|轨迹|查不到)/;
@@ -619,7 +620,7 @@ export class ClientAiService implements AiService {
 
   private matchStatusScope(shipment: Shipment, statusScope: StatusScope): boolean {
     if (statusScope === "all") return true;
-    if (statusScope === "inTransit") return shipment.currentStatus === "inTransit";
+    if (statusScope === "inTransit") return IN_TRANSIT_STATUSES.includes(shipment.currentStatus);
     if (statusScope === "completed") return COMPLETED_STATUSES.includes(shipment.currentStatus);
     if (statusScope === "unfinished") return !COMPLETED_STATUSES.includes(shipment.currentStatus);
     return EXCEPTION_STATUSES.includes(shipment.currentStatus);
@@ -643,7 +644,7 @@ export class ClientAiService implements AiService {
     return shipments.reduce(
       (acc, item) => {
         acc.totalCount += 1;
-        if (item.currentStatus === "inTransit") {
+        if (IN_TRANSIT_STATUSES.includes(item.currentStatus)) {
           acc.inTransitCount += 1;
         }
         if (COMPLETED_STATUSES.includes(item.currentStatus)) {

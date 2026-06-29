@@ -76,6 +76,6 @@ app.listen(PORT, () => {
   console.log("[api] POST /admin/containers/status             变更柜子状态");
   console.log("[api] POST /admin/containers/load               装柜");
   console.log("[api] DELETE /admin/containers/load?id=xxx      卸柜");
-  console.log("[api] GET  /client/shipments/track?trackingNo=xxx  客户追踪（含出柜信息）");
+  console.log("[api] GET  /client/shipments/track?trackingNo=xxx  客户追踪（客户端不返回柜号信息）");
   console.log("[api] ...（其他路由日志已折叠）");
 });

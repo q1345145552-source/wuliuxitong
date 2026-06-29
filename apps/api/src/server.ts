@@ -126,7 +126,7 @@ export function createApp(): MinimalHttpApp {
         if (method === "GET" && path.startsWith("/images/")) {
           const fs = await import("node:fs");
           const pathModule = await import("node:path");
-          const imagesDir = process.env.IMAGES_DIR || "/images";
+          const imagesDir = process.env.IMAGES_DIR || "/app/images";
           const filePath = pathModule.default.join(imagesDir, pathModule.default.basename(path));
           if (!fs.default.existsSync(filePath)) {
             rawRes.statusCode = 404;
@@ -169,7 +169,12 @@ export function createApp(): MinimalHttpApp {
         try {
           await handler(req, res);
         } catch (error) {
-          const message = error instanceof Error ? error.message : "internal error";
+          // eslint-disable-next-line no-console
+          console.error("[api] unhandled error:", error instanceof Error ? error.message : error);
+          const isProduction = process.env.NODE_ENV === "production";
+          const message = isProduction
+            ? "Internal server error"
+            : error instanceof Error ? error.message : "internal error";
           res.status(500).json({
             code: "INTERNAL_ERROR",
             message,

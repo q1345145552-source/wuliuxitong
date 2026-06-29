@@ -52,11 +52,13 @@ interface Kuaidi100WebQueryResponse {
   }>;
 }
 
-function canTransit(fromStatus: string, toStatus: string): boolean {
+export function canTransit(fromStatus: string, toStatus: string): boolean {
   if (fromStatus === toStatus) return true;
   if (EXCEPTION_STATUSES.has(toStatus)) return true;
   const fromIndex = STATUS_FLOW.indexOf(fromStatus);
   const toIndex = STATUS_FLOW.indexOf(toStatus);
+  // 允许从异常状态恢复到任意正常状态（如取消→重新装柜）
+  if (fromIndex < 0 && EXCEPTION_STATUSES.has(fromStatus) && toIndex >= 0) return true;
   if (fromIndex < 0 || toIndex < 0) return false;
   return toIndex === fromIndex + 1;
 }
@@ -218,8 +220,14 @@ export function registerShipmentRoutes(app: MinimalHttpApp): void {
       fail(res, 404, "NOT_FOUND", "shipment not found");
       return;
     }
-    const receiverTail = (shipment.order.receiverPhoneTh ?? "").slice(-4);
-    const clientTail = (shipment.order.client?.phone ?? "").slice(-4);
+    const receiverPhone = shipment.order.receiverPhoneTh ?? "";
+    const clientPhone = shipment.order.client?.phone ?? "";
+    const receiverTail = receiverPhone.length >= 4 ? receiverPhone.slice(-4) : "";
+    const clientTail = clientPhone.length >= 4 ? clientPhone.slice(-4) : "";
+    if (!receiverTail && !clientTail) {
+      fail(res, 403, "FORBIDDEN", "phone verification failed");
+      return;
+    }
     if (phoneLast4 !== receiverTail && phoneLast4 !== clientTail) {
       fail(res, 403, "FORBIDDEN", "phone verification failed");
       return;
@@ -386,7 +394,7 @@ export function registerShipmentRoutes(app: MinimalHttpApp): void {
         trackingNo: r.trackingNo,
         batchNo: r.batchNo,
         currentStatus: r.currentStatus,
-        currentLocation: r.currentLocation,
+        currentLocation: r.currentLocation ?? undefined,
         updatedAt: r.updatedAt.toISOString(),
         weightKg: decToNumber(r.weightKg),
         volumeM3: decToNumber(r.volumeM3),
@@ -434,6 +442,7 @@ export function registerShipmentRoutes(app: MinimalHttpApp): void {
       volumeM3: decToNumber(r.volumeM3) ?? undefined,
       arrivedAt: r.order?.shipDate ?? undefined,
       currentStatus: r.currentStatus,
+      currentLocation: r.currentLocation ?? undefined,
       warehouseId: r.warehouseId,
       updatedAt: r.updatedAt.toISOString(),
       transportMode: r.order?.transportMode ?? undefined,
@@ -571,6 +580,10 @@ export function registerShipmentRoutes(app: MinimalHttpApp): void {
     }
 
     const totalSplitCount = splits.reduce((sum, s) => sum + s.packageCount, 0);
+    if (totalSplitCount <= 0) {
+      fail(res, 400, "BAD_REQUEST", "split total must be greater than zero");
+      return;
+    }
     const parentPackageCount = parent.packageCount ?? 0;
     if (totalSplitCount > parentPackageCount) {
       fail(res, 400, "BAD_REQUEST", `split total (${totalSplitCount}) exceeds parent package count (${parentPackageCount})`);
@@ -605,7 +618,7 @@ export function registerShipmentRoutes(app: MinimalHttpApp): void {
       const childMap = new Map<string, { id: string; packageCount: number }>();
       for (let i = 0; i < splits.length; i++) {
         const split = splits[i];
-        const childId = `s_${Date.now()}_${i}`;
+        const childId = `s_${Date.now()}_${i}_${Math.random().toString(36).slice(2, 6)}`;
         const childTrackingNo = split.trackingNo.trim();
 
         await tx.shipment.create({

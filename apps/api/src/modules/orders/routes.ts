@@ -1377,7 +1377,7 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
       fail(res, 400, "BAD_REQUEST", "orderCreatedDate is required");
       return;
     }
-    const arrived = new Date(`${orderCreatedDate}T00:00:00.000Z`);
+    const arrived = new Date(`${orderCreatedDate}T00:00:00`);
     if (Number.isNaN(arrived.getTime())) {
       fail(res, 400, "BAD_REQUEST", "invalid orderCreatedDate");
       return;
@@ -1388,7 +1388,7 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
     let shipDate: string | null = null;
     if (body.shipDate !== undefined && body.shipDate !== null && String(body.shipDate).trim() !== "") {
       const raw = String(body.shipDate).trim().slice(0, 10);
-      const sd = new Date(`${raw}T00:00:00.000Z`);
+      const sd = new Date(`${raw}T00:00:00`);
       if (Number.isNaN(sd.getTime())) {
         fail(res, 400, "BAD_REQUEST", "invalid shipDate");
         return;

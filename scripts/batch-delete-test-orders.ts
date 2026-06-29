@@ -34,8 +34,9 @@ async function main() {
       // 最后删订单
       await prisma.order.delete({ where: { id: order.id } });
       console.log(`  ✅ 已删除: ${order.itemName} (${order.id})`);
-    } catch (e: any) {
-      console.log(`  ❌ 删除失败: ${order.itemName} → ${e.message}`);
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : "unknown error";
+      console.log(`  ❌ 删除失败: ${order.itemName} → ${msg}`);
     }
   }
 
