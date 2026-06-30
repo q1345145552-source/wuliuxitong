@@ -63,6 +63,17 @@ export function canTransit(fromStatus: string, toStatus: string): boolean {
   return toIndex === fromIndex + 1;
 }
 
+/** 宽松版：只要求前进不后退，允许跳步（用于容器批量同步场景） */
+export function canTransitLoose(fromStatus: string, toStatus: string): boolean {
+  if (fromStatus === toStatus) return true;
+  if (EXCEPTION_STATUSES.has(toStatus)) return true;
+  const fromIndex = STATUS_FLOW.indexOf(fromStatus);
+  const toIndex = STATUS_FLOW.indexOf(toStatus);
+  if (fromIndex < 0 && EXCEPTION_STATUSES.has(fromStatus) && toIndex >= 0) return true;
+  if (fromIndex < 0 || toIndex < 0) return false;
+  return toIndex > fromIndex;
+}
+
 /** Decimal | null → number | null */
 function decToNumber(value: Prisma.Decimal | null | undefined): number | null {
   if (value === null || value === undefined) return null;

@@ -12,7 +12,7 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "../../db/prisma";
 import type { MinimalHttpApp } from "../../server";
 import { fail, ok, requireRole } from "../core/http-utils";
-import { canTransit } from "../shipments/routes";
+import { canTransitLoose } from "../shipments/routes";
 
 const CONTAINER_STATUS_FLOW = [
   "LOADING",
@@ -326,7 +326,7 @@ export function registerContainerRoutes(app: MinimalHttpApp): void {
 
       // 校验每个运单的状态流转是否合法
       const invalidShipments = shipments.filter(
-        (s) => !canTransit(s.currentStatus, shipmentNextStatus!)
+        (s) => !canTransitLoose(s.currentStatus, shipmentNextStatus!)
       );
       if (invalidShipments.length > 0) {
         const ids = invalidShipments.map((s) => `${s.id}(${s.currentStatus})`).join(", ");
@@ -422,10 +422,6 @@ export function registerContainerRoutes(app: MinimalHttpApp): void {
     }
     if (!shipment) {
       fail(res, 404, "NOT_FOUND", "shipment not found");
-      return;
-    }
-    if (container.currentStatus !== "LOADING") {
-      fail(res, 400, "VALIDATION_ERROR", "container is not in LOADING status");
       return;
     }
     // 已完成/异常/退回/取消的运单不允许重新装柜
@@ -607,11 +603,7 @@ export function registerContainerRoutes(app: MinimalHttpApp): void {
     }
 
     // 客户角色：只能看自己的货
-    if (!shipment.order) {
-      fail(res, 404, "NOT_FOUND", "order not found for this shipment");
-      return;
-    }
-    if (auth.role === "client" && shipment.order.clientId !== auth.userId) {
+    if (auth.role === "client" && shipment.order?.clientId !== auth.userId) {
       fail(res, 403, "FORBIDDEN", "this shipment does not belong to you");
       return;
     }
@@ -640,15 +632,15 @@ export function registerContainerRoutes(app: MinimalHttpApp): void {
 
     ok(res, {
       trackingNo: shipment.trackingNo,
-      orderId: shipment.order.id,
-      orderNo: shipment.order.orderNo,
-      itemName: shipment.order.itemName,
-      products: shipment.order.products.map(p => ({ itemName: p.itemName, packageCount: p.packageCount })),
-      cargoType: shipment.order.cargoType,
+      orderId: shipment.order?.id ?? null,
+      orderNo: shipment.order?.orderNo ?? null,
+      itemName: shipment.order?.itemName ?? null,
+      products: shipment.order?.products?.map(p => ({ itemName: p.itemName, packageCount: p.packageCount })) ?? [],
+      cargoType: shipment.order?.cargoType ?? null,
       currentStatus: shipment.currentStatus,
       currentLocation: shipment.currentLocation ?? undefined,
-      receiverNameTh: shipment.order.receiverNameTh,
-      receiverAddressTh: shipment.order.receiverAddressTh,
+      receiverNameTh: shipment.order?.receiverNameTh ?? null,
+      receiverAddressTh: shipment.order?.receiverAddressTh ?? null,
       totalVolumeM3: totalVolume,
       totalLoadedM3: Number(totalLoaded.toFixed(3)),
       isSplit,
