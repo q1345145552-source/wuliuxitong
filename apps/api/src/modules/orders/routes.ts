@@ -876,12 +876,8 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
       .filter((o) => !orderNo || o.orderNo === orderNo)
       .filter((o) => !domesticTrackingNo || o.domesticTrackingNo === domesticTrackingNo)
       .filter((o) => {
-        const cur = o.shipments.reduce((latest: string | null, s) => {
-          if (!latest) return s.currentStatus;
-          const latestIdx = STATUS_FLOW.indexOf(latest);
-          const curIdx = STATUS_FLOW.indexOf(s.currentStatus);
-          return curIdx > latestIdx ? s.currentStatus : latest;
-        }, null);
+        // shipments 已用 take:1 限制为 1 条，直接取其状态
+        const cur = o.shipments[0]?.currentStatus ?? null;
         const completed = cur ? COMPLETED.has(cur) : false;
         if (statusGroup === "completed") return completed;
         if (statusGroup === "unfinished") return !completed;

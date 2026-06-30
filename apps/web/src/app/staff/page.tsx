@@ -516,9 +516,9 @@ function buildPrealertDraft(item: any): PrealertEditDraft {
 
   const saveNote = async (clientId: string, content: string) => {
     try {
-      await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:3001"}/admin/shipping/notes`, {
+      await fetch(`${apiBaseUrl()}/admin/shipping/notes`, {
         method: "POST",
-        headers: { ...(await import("../../services/core-api")).authHeaders(), "Content-Type": "application/json" },
+        headers: { ...authHeaders(), "Content-Type": "application/json" },
         body: JSON.stringify({ clientId, content }),
       });
       setToast("备注已保存");
@@ -532,9 +532,9 @@ function buildPrealertDraft(item: any): PrealertEditDraft {
       setToast("请填写完整地址信息"); return;
     }
     try {
-      await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:3001"}/staff/client-addresses`, {
+      await fetch(`${apiBaseUrl()}/staff/client-addresses`, {
         method: "POST",
-        headers: { ...(await import("../../services/core-api")).authHeaders(), "Content-Type": "application/json" },
+        headers: { ...authHeaders(), "Content-Type": "application/json" },
         body: JSON.stringify({ clientId, ...addrForm }),
       });
       setToast("地址已添加");
@@ -550,9 +550,9 @@ function buildPrealertDraft(item: any): PrealertEditDraft {
 
   const deleteAddr = async (addrId: string) => {
     try {
-      const resp = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:3001"}/staff/lastmile/addresses?id=${encodeURIComponent(addrId)}`, {
+      const resp = await fetch(`${apiBaseUrl()}/staff/lastmile/addresses?id=${encodeURIComponent(addrId)}`, {
         method: "DELETE",
-        headers: { ...(await import("../../services/core-api")).authHeaders() },
+        headers: { ...authHeaders() },
       });
       const json = await resp.json();
       if (json.code === "OK") { setToast("地址已删除"); void loadLastmileAddresses(lastmileKeyword); }
@@ -563,8 +563,8 @@ function buildPrealertDraft(item: any): PrealertEditDraft {
   const loadLastmileAddresses = async (keyword: string) => {
     setLastmileLoading(true);
     try {
-      const resp = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:3001"}/staff/lastmile/addresses?keyword=${encodeURIComponent(keyword)}`, {
-        headers: { ...(await import("../../services/core-api")).authHeaders() },
+      const resp = await fetch(`${apiBaseUrl()}/staff/lastmile/addresses?keyword=${encodeURIComponent(keyword)}`, {
+        headers: { ...authHeaders() },
       });
       const json = await resp.json();
       if (json.code === "OK") setLastmileItems(json.data.items);

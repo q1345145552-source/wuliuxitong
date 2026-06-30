@@ -442,7 +442,7 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
         data: {
           warehouseId,
           batchNo,
-          clientId: body.clientId?.trim() || null,
+          ...(body.clientId !== undefined ? { clientId: body.clientId?.trim() || null } : {}),
           itemName,
           cargoType: body.cargoType?.trim() || undefined,
           transportMode,
