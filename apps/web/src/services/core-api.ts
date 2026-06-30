@@ -80,3 +80,20 @@ export async function parseApiResponse<T>(response: Response): Promise<T> {
   }
   return payload.data as T;
 }
+
+/**
+ * 统一 API 请求：fetch + parseApiResponse + 网络错误捕获。
+ * 所有 business-api 函数应优先使用此包装。
+ */
+export async function apiRequest<T>(
+  url: string,
+  options: RequestInit = {},
+): Promise<T> {
+  let response: Response;
+  try {
+    response = await fetch(url, options);
+  } catch (e: any) {
+    throw new Error(e?.message || "网络连接失败，请检查网络后重试");
+  }
+  return parseApiResponse<T>(response);
+}

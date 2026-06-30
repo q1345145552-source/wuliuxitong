@@ -2,7 +2,7 @@
 
 import { createRoot } from "react-dom/client";
 import { useCallback, useEffect, useState } from "react";
-import { authHeaders, apiBaseUrl } from "../../services/core-api";
+import { authHeaders, apiBaseUrl, parseApiResponse } from "../../services/core-api";
 
 // ── Types ──
 
@@ -435,21 +435,14 @@ function ShipmentTrackModal({ trackingOrId, onClose }: { trackingOrId: string; o
     fetch(`${apiBaseUrl()}/client/shipments/track?${params.toString()}`, {
       headers: { ...authHeaders() },
     })
-      .then((resp) => resp.json())
-      .then((json: any) => {
-        if (json.code !== "OK") {
-          setError(json.message || "查询失败");
-          setData(null);
-          setLoading(false);
-          return;
-        }
-        if (!json.data || !json.data.trackingNo) {
+      .then(parseApiResponse)
+      .then((data: any) => {
+        if (!data || !data.trackingNo) {
           setError("未找到该运单");
           setData(null);
-          setLoading(false);
-          return;
+        } else {
+          setData(data);
         }
-        setData(json.data);
         setLoading(false);
       })
       .catch((err: any) => {
