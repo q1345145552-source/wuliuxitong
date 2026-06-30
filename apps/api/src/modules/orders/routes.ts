@@ -1030,15 +1030,23 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
         clientId: auth.userId,
       },
       orderBy: { createdAt: "desc" },
+      include: {
+        client: { select: { name: true } },
+        shipments: { orderBy: { createdAt: "desc" }, take: 1, select: { trackingNo: true, currentStatus: true } },
+      },
     });
     const items = orders.map((o) => ({
       id: o.id,
       warehouseId: o.warehouseId,
       orderNo: o.orderNo,
+      clientId: o.clientId,
+      clientName: o.client?.name ?? null,
+      trackingNo: o.shipments[0]?.trackingNo ?? undefined,
+      currentStatus: o.shipments[0]?.currentStatus ?? undefined,
       itemName: o.itemName,
       transportMode: o.transportMode,
       domesticTrackingNo: o.domesticTrackingNo,
-      batchNo: o.batchNo,
+      batchNo: undefined, // 客户端隐藏柜号
       approvalStatus: o.approvalStatus,
       productQuantity: o.productQuantity,
       packageCount: o.packageCount,

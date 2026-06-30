@@ -35,6 +35,7 @@ export async function loadProductImagesForOrders(
       fileName: true,
       mime: true,
       filePath: true,
+      contentBase64: true,
       createdAt: true,
     },
   });
