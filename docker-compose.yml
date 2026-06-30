@@ -37,6 +37,7 @@ services:
     restart: unless-stopped
 
   api:
+    user: root  # 容器以 root 运行，避免 /images 目录权限问题
     build:
       context: .
       dockerfile: Dockerfile.api
