@@ -455,8 +455,8 @@ export function registerContainerRoutes(app: MinimalHttpApp): void {
       : null;
 
     try {
-      await prisma.$transaction(async (tx) => {
-        await tx.shipmentContainerItem.create({
+      const item = await prisma.$transaction(async (tx) => {
+        const created = await tx.shipmentContainerItem.create({
           data: { shipmentId, containerId, loadedVolumeM3: volume, loadedPieceCount: pieces },
         });
 
@@ -481,6 +481,7 @@ export function registerContainerRoutes(app: MinimalHttpApp): void {
             });
           }
         }
+        return created;
       });
 
       ok(res, {
