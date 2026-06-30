@@ -464,6 +464,7 @@ export default function AdminHomePage() {
    * 保存管理员对客户端订单的编辑结果。
    */
   const submitOrderEdit = async () => {
+    if (loading) return;
     if (!editingOrderId) {
       setMessage("请先选择要编辑的订单。");
       return;
@@ -634,6 +635,7 @@ export default function AdminHomePage() {
   }, []);
 
   const submitKnowledge = async () => {
+    if (loading) return;
     if (!title.trim() || !content.trim()) {
       setMessage("请先填写知识标题和内容。");
       return;
@@ -673,6 +675,7 @@ export default function AdminHomePage() {
   };
 
   const submitAddStaff = async () => {
+    if (loading) return;
     if (!staffForm.name.trim() || !staffForm.phone.trim()) {
       setMessage("请填写员工姓名和手机号。");
       return;
@@ -742,6 +745,7 @@ export default function AdminHomePage() {
   };
 
   const submitSetPassword = async (userId: string) => {
+    if (loading) return;
     if (!settingPasswordValue.trim()) {
       setMessage("请输入新密码。");
       return;
@@ -762,6 +766,7 @@ export default function AdminHomePage() {
   };
 
   const submitAddClient = async () => {
+    if (loading) return;
     if (!clientForm.name.trim() || !clientForm.phone.trim()) {
       setMessage("请填写客户名字和电话号码。");
       return;
@@ -795,6 +800,7 @@ export default function AdminHomePage() {
   };
 
   const submitEditClient = async () => {
+    if (loading) return;
     if (!editingClientId) return;
     if (!clientForm.name.trim() || !clientForm.phone.trim()) {
       setMessage("请填写客户名字和电话号码。");

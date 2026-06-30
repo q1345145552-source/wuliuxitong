@@ -974,6 +974,7 @@ const loadLmShipments = async () => {
   }, []);
 
   const submitOrder = async () => {
+    if (loading) return;
     const hasProducts = staffFormProducts.length > 0 && staffFormProducts.some((p) => p.itemName.trim());
     const itemName = hasProducts ? staffFormProducts[0].itemName.trim() : form.itemName.trim();
     const batchNo = form.batchNo.trim();

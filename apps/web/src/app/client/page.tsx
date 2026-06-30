@@ -313,6 +313,7 @@ export default function ClientHomePage() {
   }, []);
 
   const submitPrealert = async () => {
+    if (loading) return;
     setLoading(true);
     setMessage("");
     try {
