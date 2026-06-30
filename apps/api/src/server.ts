@@ -1,6 +1,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { URL } from "node:url";
 import { verifyAuthToken } from "./modules/auth/token";
+import { logger } from "./modules/core/logger";
 
 export interface HttpRequest {
   method: string;
@@ -169,8 +170,7 @@ export function createApp(): MinimalHttpApp {
         try {
           await handler(req, res);
         } catch (error) {
-          // eslint-disable-next-line no-console
-          console.error("[api] unhandled error:", error instanceof Error ? error.message : error);
+          logger.error("unhandled error", { error: error instanceof Error ? error.message : String(error) });
           const isProduction = process.env.NODE_ENV === "production";
           const message = isProduction
             ? "Internal server error"

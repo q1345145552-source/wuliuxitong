@@ -14,6 +14,7 @@ import { registerOrderRoutes } from "./modules/orders/routes";
 import { registerShipmentRoutes } from "./modules/shipments/routes";
 import { createApp } from "./server";
 import { startDailyExchangeRateScheduler } from "./modules/exchange-rate/rate-sync";
+import { logger } from "./modules/core/logger";
 
 const PORT = Number(process.env.PORT ?? 3001);
 
@@ -23,12 +24,10 @@ const app = createApp();
 prisma
   .$connect()
   .then(() => {
-    // eslint-disable-next-line no-console
-    console.log("[prisma] connected to PostgreSQL");
+    logger.info("connected to PostgreSQL", { module: "prisma" });
   })
   .catch((err) => {
-    // eslint-disable-next-line no-console
-    console.error("[prisma] connection failed:", err);
+    logger.error("Prisma connection failed", { module: "prisma", error: String(err) });
     process.exit(1);
   });
 
@@ -50,32 +49,20 @@ registerClientAiRoutes(app);
 
 // 优雅停机
 process.on("SIGINT", async () => {
-  // eslint-disable-next-line no-console
-  console.log("\n[api] SIGINT received, closing Prisma...");
+  logger.info("SIGINT received, closing Prisma...");
   await prisma.$disconnect();
   process.exit(0);
 });
 process.on("SIGTERM", async () => {
+  logger.info("SIGTERM received, closing Prisma...");
   await prisma.$disconnect();
   process.exit(0);
 });
 
 app.listen(PORT, () => {
-  // eslint-disable-next-line no-console
-  console.log(`[api] running on http://localhost:${PORT}`);
-  console.log("[api] data source: PostgreSQL via Prisma");
-  console.log("[api] POST /auth/login");
-  console.log("[api] POST /auth/register");
-  console.log("[api] GET  /client/orders");
-  console.log("[api] GET  /admin/dashboard/overview");
-  console.log("[api] POST /client/ai/chat");
-  // 新增：Container（柜子）& 出柜追踪
-  console.log("[api] GET  /admin/containers                    柜列表");
-  console.log("[api] GET  /admin/containers/detail?id=xxx      柜详情（含装载运单）");
-  console.log("[api] POST /admin/containers                    新建柜子");
-  console.log("[api] POST /admin/containers/status             变更柜子状态");
-  console.log("[api] POST /admin/containers/load               装柜");
-  console.log("[api] DELETE /admin/containers/load?id=xxx      卸柜");
-  console.log("[api] GET  /client/shipments/track?trackingNo=xxx  客户追踪（客户端不返回柜号信息）");
-  console.log("[api] ...（其他路由日志已折叠）");
+  logger.info(`API server running on http://localhost:${PORT}`, {
+    dataSource: "PostgreSQL via Prisma",
+    port: PORT,
+  });
+  logger.info("Registered routes: /auth/login, /auth/register, /client/orders, /admin/dashboard/overview, /client/ai/chat, /admin/containers/*, /client/shipments/track");
 });

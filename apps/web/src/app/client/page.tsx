@@ -11,6 +11,7 @@ import Toast from "../../modules/layout/Toast";
 import { formatCny } from "../../modules/billing/billing-utils";
 import { sendAiMessage } from "../../services/ai-client";
 import { apiBaseUrl } from "../../services/core-api";
+import { volumeM3FromDimensionsCm, formatVolumeM3String, warehouseLabelFromId } from "../../modules/staff/utils";
 import {
   fetchClientAddresses,
   createClientPrealert,
@@ -215,19 +216,6 @@ export default function ClientHomePage() {
     if (results[1].status === "fulfilled") setDashboardOrders(results[1].value);
     if (results[2].status === "fulfilled") setWalletRateText(results[2].value.exchangeRate.rate.toFixed(4));
     if (results[3].status === "fulfilled") setAddressBook(results[3].value);
-  };
-
-  /**
-   * 根据长宽高（厘米）计算体积（立方米）。
-   */
-  const volumeM3FromDimensionsCm = (l: number, w: number, h: number) => (l * w * h) / 1_000_000;
-
-  /**
-   * 格式化体积字符串。
-   */
-  const formatVolumeM3String = (m3: number): string => {
-    if (!Number.isFinite(m3) || m3 <= 0) return "";
-    return String(Number(m3.toFixed(6)));
   };
 
   /**
@@ -469,10 +457,7 @@ export default function ClientHomePage() {
     return "order-badge";
   };
 
-  const warehouseLabel = (id?: string) => {
-    const map: Record<string, string> = { wh_yiwu_01: "义乌仓", wh_guangzhou_01: "广州仓", wh_dongguan_01: "东莞仓", wh_shenzhen_01: "深圳仓" };
-    return map[id ?? ""] || id || "—";
-  };
+  const warehouseLabel = warehouseLabelFromId;
 
   const logisticsStatusText = (status?: string): string => {
     const map: Record<string, string> = {

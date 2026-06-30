@@ -20,6 +20,7 @@
     "db:reset": "prisma migrate reset --schema=apps/api/prisma/schema.prisma"
   },
   "devDependencies": {
+    "@types/node": "^26.0.1",
     "prisma": "^5.22.0",
     "tsx": "^4.19.2",
     "typescript": "^5.8.3"

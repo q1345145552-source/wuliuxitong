@@ -14,6 +14,9 @@ import { openPrintLabel } from "../../modules/shipment/ShipmentPrintLabel";
 import { openShipmentTrack } from "../../modules/shipment/ShipmentTrackModal";
 import { apiBaseUrl, authHeaders, parseApiResponse } from "../../services/core-api";
 import { DEFAULT_SHIPPING_PRICES, INSPECTION_SURCHARGE, SENSITIVE_SURCHARGE } from "../../../../../packages/shared-types/constants";
+import { shipmentStatusZh, transportModeLabel, warehouseLabelFromId } from "../../modules/staff/utils";
+import StaffLastmile from "../../components/staff/StaffLastmile";
+import ShippingConfig from "../../components/admin/ShippingConfig";
 import {
   fetchAdminOverview,
   fetchAdminStaff,
@@ -293,41 +296,9 @@ export default function AdminHomePage() {
   const [memoryFilterUserId, setMemoryFilterUserId] = useState("");
   const [activeSection, setActiveSection] = useState<(typeof SECTION_IDS)[number]>("overview");
 
-  /**
-   * 后台统一运输方式文案。
-   */
-  const transportModeLabel = (mode?: string) => ((mode ?? "").toLowerCase() === "sea" ? "海运" : "陆运");
-
-  /**
-   * 后台统一运单状态文案。
-   */
-  const shipmentStatusLabel = (status?: string) => {
-    const value = (status ?? "").toLowerCase();
-    if (!value) return "—";
-    if (value === "created") return "已创建";
-    if (value === "pickedup") return "已揽收";
-    if (value === "inwarehousecn" || value === "receivedcn") return "国内仓已收货";
-    if (value === "customspending") return "报关中";
-    if (value === "loaded") return "已装柜";
-    if (value === "delaydeparted") return "延迟开船";
-    if (value === "departed") return "已开船";
-    if (value === "arrivedport") return "已到港";
-    if (value === "intransit") return "运输中";
-    if (value === "customsth") return "清关中";
-    if (value === "customscleared") return "清关已放行";
-    if (value === "warehouseth" || value === "inwarehouseth") return "已到仓";
-    if (value === "outfordelivery") return "派送中";
-    if (value === "delivered") return "派送完成";
-    if (value === "returned") return "已退回";
-    if (value === "cancelled") return "已取消";
-    if (value === "exception") return "异常";
-    return status ?? "—";
-  };
-
-  /**
-   * 后台统一仓库文案。
-   */
-  const warehouseLabel = (warehouseId?: string) => WAREHOUSE_LABEL_MAP[warehouseId ?? ""] ?? warehouseId ?? "—";
+  // 复用 staff/utils 中的状态/运输方式/仓库标签函数
+  const shipmentStatusLabel = shipmentStatusZh;
+  const warehouseLabel = warehouseLabelFromId;
 
   /**
    * 看板状态分布：用于状态卡片与柱状图展示。
@@ -895,7 +866,12 @@ export default function AdminHomePage() {
       setMessage("当前没有可导出的订单数据。");
       return;
     }
-    const rows = source.map((o) => ({
+    const EXPORT_MAX = 1000;
+    const exportSlice = source.length > EXPORT_MAX ? source.slice(0, EXPORT_MAX) : source;
+    if (source.length > EXPORT_MAX) {
+      setToast(`数据共 ${source.length} 条，超出导出上限，仅导出前 ${EXPORT_MAX} 条。请缩小筛选范围。`);
+    }
+    const rows = exportSlice.map((o) => ({
       运单号: o.trackingNo ?? "-",
       客户: o.clientId ?? "-",
       品名: o.itemName,
@@ -2302,144 +2278,19 @@ export default function AdminHomePage() {
           </div>
         )}
       </section>
-      <section id="shipping-config" style={{ ...sectionStyle, display: activeSection === "shipping-config" ? "block" : "none" }}>
-        <h2 style={{ marginTop: 0, marginBottom: 12, fontSize: 18 }}>运费配置</h2>
-        <p style={{ color: "#000000", marginBottom: 12, fontSize: 14 }}>
-          设置最低计费体积（低消）。当货物体积低于低消时，按低消计算运费。
-        </p>
-        <div style={{ display: "grid", gap: 10, maxWidth: 400 }}>
-          <div>
-            <div style={{ fontSize: 13, color: "#000000", marginBottom: 4 }}>海运低消（立方米）</div>
-            <input
-              value={shippingConfigSea}
-              onChange={(e) => setShippingConfigSea(e.target.value)}
-              type="number" step="0.1" min="0"
-              style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "8px 10px", fontSize: 13, width: "100%" }}
-            />
-          </div>
-          <div>
-            <div style={{ fontSize: 13, color: "#000000", marginBottom: 4 }}>陆运低消（立方米）</div>
-            <input
-              value={shippingConfigLand}
-              onChange={(e) => setShippingConfigLand(e.target.value)}
-              type="number" step="0.1" min="0"
-              style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "8px 10px", fontSize: 13, width: "100%" }}
-            />
-          </div>
-          <button
-            type="button"
-            disabled={configSaving}
-            onClick={async () => {
-              setConfigSaving(true);
-              try {
-                await updateShippingConfig({ sea_min_volume: shippingConfigSea, land_min_volume: shippingConfigLand });
-                setToast("配置已保存");
-              } catch { setToast("保存失败"); }
-              finally { setConfigSaving(false); }
-            }}
-            style={{ border: "none", borderRadius: 6, padding: "8px 16px", background: "#2563eb", color: "#fff", fontWeight: 500, fontSize: 13, cursor: "pointer", justifySelf: "start" }}
-          >
-            {configSaving ? "保存中…" : "保存配置"}
-          </button>
-        </div>
-
-        {/* 客户价格管理 */}
-        <h3 style={{ marginTop: 24, marginBottom: 10, fontSize: 16 }}>客户价格管理</h3>
-        <div style={{ display: "grid", gap: 6 }}>
-          {clientList.map((c) => {
-            const hasCustom = rateItems.some((r) => r.customerId === c.id);
-            const hasMinDisabled = rateItems.some((r) => r.customerId === c.id && r.disableMinVolume);
-            const isView = expandedClientId === c.id;
-            const isEdit = expandedClientId === `edit-${c.id}`;
-            return (
-              <div key={c.id} style={{ border: "1px solid #e5e7eb", borderRadius: 8, padding: 10, background: hasCustom ? "#fefce8" : "#fff" }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                  <div>
-                    <span style={{ fontWeight: 600, fontSize: 14 }}>{c.name}</span>
-                    <span style={{ marginLeft: 8, fontSize: 12, color: "#6b7280", fontFamily: "monospace" }}>{c.id}</span>
-                    {hasCustom ? <span style={{ marginLeft: 8, fontSize: 11, color: "#d97706" }}>已配置</span> : <span style={{ marginLeft: 8, fontSize: 11, color: "#9ca3af" }}>使用默认</span>}
-                    {hasMinDisabled ? <span style={{ marginLeft: 8, fontSize: 11, color: "#8b5cf6" }}>低消已取消</span> : null}
-                  </div>
-                  <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                    <button type="button" onClick={() => {
-                      if (isView) { setExpandedClientId(null); return; }
-                      setExpandedClientId(c.id);
-                      loadClientPrices(c.id);
-                    }} style={{ border: "1px solid #2563eb", borderRadius: 4, padding: "4px 10px", fontSize: 12, background: "#fff", color: "#2563eb", cursor: "pointer" }}>
-                      {isView ? "收起" : "查看价格"}
-                    </button>
-                    <button type="button" onClick={() => {
-                      if (isEdit) { setExpandedClientId(null); return; }
-                      setExpandedClientId(`edit-${c.id}`);
-                      loadClientPrices(c.id);
-                    }} style={{ border: "none", borderRadius: 4, padding: "4px 10px", fontSize: 12, background: "#2563eb", color: "#fff", cursor: "pointer" }}>
-                      {isEdit ? "收起" : "编辑价格"}
-                    </button>
-                  </div>
-                </div>
-                {/* 查看价格（只读） */}
-                {isView ? (
-                  <div style={{ marginTop: 10, borderTop: "1px solid #e5e7eb", paddingTop: 10 }}>
-                    <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 6, color: "#000000" }}>当前价格</div>
-                    {priceDefaults.map((d) => {
-                      const key = `${d.transportMode}|${d.cargoType}`;
-                      const val = clientPrices[key] ?? rateDefaults.find((rd) => rd.transportMode === d.transportMode && rd.cargoType === d.cargoType)?.unitPriceCny ?? d.unitPriceCny;
-                      return (
-                        <div key={key} style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 4 }}>
-                          <span style={{ width: 100, fontSize: 13 }}>{d.transportMode === "sea" ? "海运" : "陆运"}·{d.cargoType === "normal" ? "普货" : d.cargoType === "inspection" ? "商检" : "敏感"}</span>
-                          <span style={{ fontSize: 13, fontWeight: 600 }}>¥{val.toFixed(0)}/m³</span>
-                        </div>
-                      );
-                    })}
-                    <div style={{ marginTop: 6, fontSize: 12, color: clientMinVolumeDisabled ? "#8b5cf6" : "#6b7280" }}>
-                      低消：{clientMinVolumeDisabled ? "已取消" : `海运${shippingConfigSea}方 / 陆运${shippingConfigLand}方`}
-                    </div>
-                  </div>
-                ) : null}
-                {/* 编辑价格 */}
-                {isEdit ? (
-                  <div style={{ marginTop: 10, borderTop: "1px solid #e5e7eb", paddingTop: 10 }} data-client={c.id}>
-                    <label style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 10, fontSize: 13, cursor: "pointer" }}>
-                      <input type="checkbox" checked={clientMinVolumeDisabled} onChange={(e) => setClientMinVolumeDisabled(e.target.checked)} />
-                      <span style={{ color: "#000000" }}>取消低消</span>
-                    </label>
-                    {priceDefaults.map((d) => {
-                      const key = `${d.transportMode}|${d.cargoType}`;
-                      const val = clientPrices[key] ?? d.unitPriceCny;
-                      return (
-                        <div key={key} style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 6 }}>
-                          <span style={{ width: 100, fontSize: 13 }}>{d.transportMode === "sea" ? "海运" : "陆运"}·{d.cargoType === "normal" ? "普货" : d.cargoType === "inspection" ? "商检" : "敏感"}</span>
-                          <input value={val} data-price-key={key} onChange={(e) => setClientPrices((p) => ({ ...p, [key]: Number(e.target.value) || 0 }))}
-                            type="number" style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "6px 8px", fontSize: 13, width: 90 }} />
-                          <span style={{ fontSize: 12, color: "#9ca3af" }}>¥/m³</span>
-                        </div>
-                      );
-                    })}
-                    <button type="button" onClick={async () => {
-                      try {
-                        // 从 DOM 读取当前值，避免 React 闭包陈旧问题
-                        const chk = document.querySelector(`[data-client="${c.id}"] input[type="checkbox"]`) as HTMLInputElement;
-                        const disableMin = chk?.checked ?? clientMinVolumeDisabled;
-                        const prices: Record<string, number> = {};
-                        document.querySelectorAll(`[data-client="${c.id}"] input[data-price-key]`).forEach((el) => {
-                          const input = el as HTMLInputElement;
-                          const key = input.dataset.priceKey;
-                          const v = Number(input.value);
-                          if (key && v > 0) prices[key] = v;
-                        });
-                        await saveClientShippingConfig({ clientId: c.id, prices, disableMinVolume: disableMin });
-                        await loadRates();
-                        await loadClientPrices(c.id);
-                        setToast("已保存");
-                      } catch (err) { setToast(`保存失败：${err instanceof Error ? err.message : "网络错误"}`); }
-                    }} style={{ border: "none", borderRadius: 6, padding: "8px 16px", background: "#2563eb", color: "#fff", fontWeight: 500, fontSize: 13, cursor: "pointer", marginTop: 8 }}>保存客户价格</button>
-                  </div>
-                ) : null}
-              </div>
-            );
-          })}
-        </div>
-      </section>
+      <ShippingConfig
+        visible={activeSection === "shipping-config"}
+        shippingConfigSea={shippingConfigSea}
+        onSeaChange={setShippingConfigSea}
+        shippingConfigLand={shippingConfigLand}
+        onLandChange={setShippingConfigLand}
+        configSaving={configSaving}
+        clientList={clientList}
+        rateItems={rateItems}
+        rateDefaults={rateDefaults}
+        onToast={setToast}
+        onRatesReload={loadRates}
+      />
 
       {message ? (
         <p style={{ marginTop: 12, color: message.includes("失败") ? "#b91c1c" : "#065f46" }}>{message}</p>
