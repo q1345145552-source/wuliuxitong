@@ -1153,7 +1153,7 @@ export default function ClientHomePage() {
                               if (next[item.id]) { delete next[item.id]; } else {
                                 next[item.id] = true;
                                 if (!detailImagesCache[item.id]) {
-                                  try { const imgs = await fetchShipmentImages(item.id); setDetailImagesCache((prev) => ({ ...prev, [item.id]: imgs })); } catch { /* ignore */ }
+                                  try { const imgs = await fetchShipmentImages(item.id); setDetailImagesCache((prev) => ({ ...prev, [item.id]: imgs })); } catch (e) { console.error("加载产品图失败:", item.id, item.trackingNo, e); }
                                 }
                               }
                               setOpenDetailsByOrder(next);
