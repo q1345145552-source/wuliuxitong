@@ -13,6 +13,9 @@ COPY apps/api ./apps/api
 
 RUN npx prisma generate --schema=apps/api/prisma/schema.prisma
 
+# TypeScript 类型检查 — 捕获缺失 import、类型错误等
+RUN npx tsc --noEmit --project apps/api/tsconfig.json
+
 ENV NODE_ENV=production
 ENV PORT=3001
 

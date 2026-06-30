@@ -92,7 +92,7 @@ export async function loadOrderProducts(companyId: string, orderIds: string[]): 
   return map;
 }
 
-const COMPLETED = new Set(["delivered", "returned", "cancelled"]);
+import { COMPLETED_STATUSES as COMPLETED } from "../shipments/status-flow";
 
 /** Prisma 的 Decimal | null 转 number | null（用于返回前端）。 */
 function decToNumber(value: Prisma.Decimal | null | undefined): number | null {

@@ -6,21 +6,7 @@ import type { MinimalHttpApp } from "../../server";
 import { checkRateLimit, getClientIp, rateLimitKey } from "../core/rate-limit";
 import { fail, ok, parseJsonArray, requireRole } from "../core/http-utils";
 import { loadProductImagesForOrders } from "../orders/product-images";
-
-
-const STATUS_FLOW = [
-  "created",
-  "loaded",
-  "delayDeparted",
-  "departed",
-  "arrivedPort",
-  "customsTH",
-  "customsCleared",
-  "inWarehouseTH",
-  "outForDelivery",
-  "delivered",
-];
-const EXCEPTION_STATUSES = new Set(["exception", "returned", "cancelled"]);
+import { STATUS_FLOW, EXCEPTION_STATUSES } from "./status-flow";
 
 interface Kuaidi100QueryPayload {
   com?: string;
