@@ -200,23 +200,25 @@ export function registerAdminOpsRoutes(app: MinimalHttpApp): void {
     const results: Array<{ id: string; shipmentId: string }> = [];
     for (const sid of shipmentIds) {
       const id = `lm_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
-      await prisma.adminLastmileOrder.create({
-        data: { id, companyId: auth.companyId, deliveryNo, shipmentId: sid, carrierName: "自营", driverName, licensePlate, phoneNumber, deliveryDate, externalTrackingNo: "", status },
+      const now = new Date();
+      await prisma.$transaction(async (tx) => {
+        await tx.adminLastmileOrder.create({
+          data: { id, companyId: auth.companyId, deliveryNo, shipmentId: sid, carrierName: "自营", driverName, licensePlate, phoneNumber, deliveryDate, externalTrackingNo: "", status },
+        });
+        // 同步运单状态 + 日志
+        const ship = await tx.shipment.findUnique({ where: { id: sid }, select: { currentStatus: true, parentTrackingNo: true } });
+        if (ship) {
+          await tx.shipment.update({ where: { id: sid }, data: { currentStatus: "outForDelivery", updatedAt: now } });
+          await tx.statusLog.create({
+            data: { id: `sl_lm_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`, companyId: auth.companyId, shipmentId: sid, operatorId: auth.userId, operatorRole: auth.role, operatorName: auth.name ?? "", fromStatus: ship.currentStatus, toStatus: "outForDelivery", remark: `尾程派送出车（${deliveryNo}）`, changedAt: now },
+          });
+          if (ship.parentTrackingNo) {
+            const parent = await tx.shipment.findFirst({ where: { trackingNo: ship.parentTrackingNo, companyId: auth.companyId }, select: { id: true } });
+            if (parent) { await tx.shipment.update({ where: { id: parent.id }, data: { currentStatus: "outForDelivery", updatedAt: now } }); }
+          }
+        }
       });
       results.push({ id, shipmentId: sid });
-      // 同步运单状态 + 日志
-      const now = new Date();
-      const ship = await prisma.shipment.findUnique({ where: { id: sid }, select: { currentStatus: true, parentTrackingNo: true } });
-      if (ship) {
-        await prisma.shipment.update({ where: { id: sid }, data: { currentStatus: "outForDelivery", updatedAt: now } });
-        await prisma.statusLog.create({
-          data: { id: `sl_lm_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`, companyId: auth.companyId, shipmentId: sid, operatorId: auth.userId, operatorRole: auth.role, operatorName: auth.name ?? "", fromStatus: ship.currentStatus, toStatus: "outForDelivery", remark: `尾程派送出车（${deliveryNo}）`, changedAt: now },
-        });
-        if (ship.parentTrackingNo) {
-          const parent = await prisma.shipment.findFirst({ where: { trackingNo: ship.parentTrackingNo, companyId: auth.companyId }, select: { id: true } });
-          if (parent) { await prisma.shipment.update({ where: { id: parent.id }, data: { currentStatus: "outForDelivery", updatedAt: now } }); }
-        }
-      }
     }
     ok(res, { deliveryNo, count: results.length });
   });
@@ -235,27 +237,29 @@ export function registerAdminOpsRoutes(app: MinimalHttpApp): void {
     });
     const now = new Date();
     if (body.status === "SIGNED") {
-      const shipment = await prisma.shipment.findUnique({ where: { id: updated.shipmentId }, select: { id: true, currentStatus: true, parentTrackingNo: true } });
-      if (shipment) {
-        await prisma.shipment.update({ where: { id: shipment.id }, data: { currentStatus: "delivered", updatedAt: now } });
-        await prisma.statusLog.create({
-          data: {
-            id: `sl_lm_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-            companyId: auth.companyId, shipmentId: shipment.id,
-            operatorId: auth.userId, operatorRole: auth.role, operatorName: auth.name ?? "",
-            fromStatus: shipment.currentStatus, toStatus: "delivered",
-            remark: `尾程派送已签收（${updated.deliveryNo ?? updated.id}）`,
-            changedAt: now,
-          },
-        });
-        // 同步父运单
-        if (shipment.parentTrackingNo) {
-          const parent = await prisma.shipment.findFirst({ where: { trackingNo: shipment.parentTrackingNo, companyId: auth.companyId }, select: { id: true } });
-          if (parent) {
-            await prisma.shipment.update({ where: { id: parent.id }, data: { currentStatus: "delivered", updatedAt: now } });
+      await prisma.$transaction(async (tx) => {
+        const shipment = await tx.shipment.findUnique({ where: { id: updated.shipmentId }, select: { id: true, currentStatus: true, parentTrackingNo: true } });
+        if (shipment) {
+          await tx.shipment.update({ where: { id: shipment.id }, data: { currentStatus: "delivered", updatedAt: now } });
+          await tx.statusLog.create({
+            data: {
+              id: `sl_lm_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+              companyId: auth.companyId, shipmentId: shipment.id,
+              operatorId: auth.userId, operatorRole: auth.role, operatorName: auth.name ?? "",
+              fromStatus: shipment.currentStatus, toStatus: "delivered",
+              remark: `尾程派送已签收（${updated.deliveryNo ?? updated.id}）`,
+              changedAt: now,
+            },
+          });
+          // 同步父运单
+          if (shipment.parentTrackingNo) {
+            const parent = await tx.shipment.findFirst({ where: { trackingNo: shipment.parentTrackingNo, companyId: auth.companyId }, select: { id: true } });
+            if (parent) {
+              await tx.shipment.update({ where: { id: parent.id }, data: { currentStatus: "delivered", updatedAt: now } });
+            }
           }
         }
-      }
+      });
     }
     ok(res, { id: updated.id, status: updated.status });
   });
