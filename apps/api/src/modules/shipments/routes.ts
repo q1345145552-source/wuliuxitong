@@ -5,6 +5,7 @@ import { prisma } from "../../db/prisma";
 import type { MinimalHttpApp } from "../../server";
 import { checkRateLimit, getClientIp, rateLimitKey } from "../core/rate-limit";
 import { fail, ok, parseJsonArray, requireRole } from "../core/http-utils";
+import { loadProductImagesForOrders } from "../orders/product-images";
 
 
 const STATUS_FLOW = [
