@@ -244,7 +244,9 @@ export default function ClientBillsPage() {
 
       {message ? <p style={{ color: "#b91c1c" }}>{message}</p> : null}
 
-      {!loading && filtered.length === 0 ? (
+      {loading && filtered.length === 0 ? (
+        <p style={{ color: "#6b7280", fontSize: 13, padding: 20, textAlign: "center" }}>加载中...</p>
+      ) : !loading && filtered.length === 0 ? (
         <EmptyStateCard title="暂无账单数据" description="当前没有可展示的订单账单，或搜索条件无匹配。" />
       ) : null}
 

@@ -1020,6 +1020,7 @@ export default function AdminHomePage() {
     if (activeSection === "lastmile") loadLastmileOrders();
     if (activeSection === "wallet-recharges") loadRecharges();
     if (activeSection === "offline-payments") loadOfflinePayments();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeSection, clientList]);
 
   if (!session) return null;

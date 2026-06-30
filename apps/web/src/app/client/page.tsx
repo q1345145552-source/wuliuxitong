@@ -440,20 +440,24 @@ export default function ClientHomePage() {
       .finally(() => setDashboardLoading(false));
   }, []);
 
-  // 运单查询区 10 秒自动刷新（无需手动刷新页面）
+  // 运单查询区 10 秒自动刷新（递归setTimeout，防请求堆积）
   useEffect(() => {
     if (activeSection !== "client-query") return;
-    const interval = setInterval(async () => {
+    let timer: ReturnType<typeof setTimeout>;
+    let cancelled = false;
+    const poll = async () => {
+      if (cancelled) return;
       try {
         const orders = queryMode === "all"
           ? await fetchClientOrders()
           : await fetchClientOrders({ statusGroup: queryMode as "unfinished" | "completed" });
-        setQueriedOrders(orders);
-        setHasQueried(true);
+        if (!cancelled) { setQueriedOrders(orders); setHasQueried(true); }
         if (queryMode === "all") saveOrdersToCache(orders);
       } catch { /* silent */ }
-    }, 10000);
-    return () => clearInterval(interval);
+      if (!cancelled) timer = setTimeout(poll, 10000);
+    };
+    timer = setTimeout(poll, 10000);
+    return () => { cancelled = true; clearTimeout(timer); };
   }, [activeSection, queryMode]);
 
   const statusToneClass = (status?: string): string => {

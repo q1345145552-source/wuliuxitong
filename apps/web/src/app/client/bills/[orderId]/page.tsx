@@ -23,20 +23,24 @@ export default function ClientBillDetailPage() {
 
   useEffect(() => {
     if (!orderId) return;
+    let cancelled = false;
     setLoading(true);
     setMessage("");
     Promise.all([fetchClientOrders({ statusGroup: "unfinished" }), fetchClientOrders({ statusGroup: "completed" })])
       .then(([unfinished, completed]) => {
+        if (cancelled) return;
         const all = [...unfinished, ...completed];
         const found = all.find((item) => item.id === orderId) ?? null;
         setOrder(found);
         if (!found) setMessage("未找到该订单账单（可能无权限或订单不存在）。");
       })
       .catch((error) => {
+        if (cancelled) return;
         const text = error instanceof Error ? error.message : "加载失败";
         setMessage(`加载失败：${text}`);
       })
-      .finally(() => setLoading(false));
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
   }, [orderId]);
 
   const amount = useMemo(() => (order ? (order.receivableAmountCny ?? null) : null), [order]);
