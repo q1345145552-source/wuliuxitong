@@ -163,7 +163,8 @@ export function registerLoadingManifestRoutes(app: MinimalHttpApp): void {
     const body = (req.body ?? {}) as { trackingNo?: string; pieceCount?: number };
     if (!body.trackingNo?.trim()) { fail(res, 400, "BAD_REQUEST", "运单号不能为空"); return; }
 
-    const result = await prisma.$transaction(async (tx) => {
+    try {
+      const result = await prisma.$transaction(async (tx) => {
       const container = await tx.container.findFirst({ where: { id: containerId, companyId: auth.companyId } });
       if (!container) throw new Error("装柜任务不存在");
 
@@ -272,6 +273,9 @@ export function registerLoadingManifestRoutes(app: MinimalHttpApp): void {
     });
 
     ok(res, { message: "运单已添加到装柜", trackingNo: result.loadTrackingNo, isPartial: result.isPartial, parentTrackingNo: result.parentTrackingNo });
+    } catch (e: any) {
+      fail(res, 400, "BAD_REQUEST", e.message ?? "装柜失败");
+    }
   });
 
   // 从装柜卸下运单（可选 pieceCount 部分卸柜）
@@ -281,7 +285,8 @@ export function registerLoadingManifestRoutes(app: MinimalHttpApp): void {
     const body = (req.body ?? {}) as { itemId?: string; pieceCount?: number };
     if (!body.itemId) { fail(res, 400, "BAD_REQUEST", "itemId required"); return; }
 
-    await prisma.$transaction(async (tx) => {
+    try {
+      await prisma.$transaction(async (tx) => {
       // 锁柜内记录防并发
       await tx.$queryRaw`SELECT id FROM shipment_container_items WHERE id = ${body.itemId} FOR UPDATE`;
       const item = await tx.shipmentContainerItem.findFirst({
@@ -343,5 +348,8 @@ export function registerLoadingManifestRoutes(app: MinimalHttpApp): void {
     });
 
     ok(res, { message: "运单已从装柜卸下" });
+    } catch (e: any) {
+      fail(res, 400, "BAD_REQUEST", e.message ?? "卸柜失败");
+    }
   });
 }

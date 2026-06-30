@@ -455,33 +455,35 @@ export function registerContainerRoutes(app: MinimalHttpApp): void {
       : null;
 
     try {
-      const item = await prisma.shipmentContainerItem.create({
-        data: { shipmentId, containerId, loadedVolumeM3: volume, loadedPieceCount: pieces },
+      await prisma.$transaction(async (tx) => {
+        await tx.shipmentContainerItem.create({
+          data: { shipmentId, containerId, loadedVolumeM3: volume, loadedPieceCount: pieces },
+        });
+
+        // 同步运单状态 + 写日志（事务内读取当前状态，防 TOCTOU）
+        if (syncStatus) {
+          const current = await tx.shipment.findUnique({ where: { id: shipmentId }, select: { currentStatus: true } });
+          if (current && current.currentStatus !== syncStatus) {
+            await tx.shipment.update({ where: { id: shipmentId }, data: { currentStatus: syncStatus, updatedAt: now } });
+            await tx.statusLog.create({
+              data: {
+                id: `sl_load_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+                companyId: auth.companyId,
+                shipmentId,
+                operatorId: auth.userId,
+                operatorRole: auth.role,
+                operatorName: auth.name,
+                fromStatus: current.currentStatus,
+                toStatus: syncStatus,
+                remark: `装入柜子 ${container.containerNo}`,
+                changedAt: now,
+              },
+            });
+          }
+        }
       });
 
-      // 同步运单状态 + 写日志
-      if (syncStatus && shipment.currentStatus !== syncStatus) {
-        await prisma.$transaction([
-          prisma.shipment.update({ where: { id: shipmentId }, data: { currentStatus: syncStatus, updatedAt: now } }),
-          prisma.statusLog.create({
-            data: {
-              id: `sl_load_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-              companyId: auth.companyId,
-              shipmentId,
-              operatorId: auth.userId,
-              operatorRole: auth.role,
-              operatorName: auth.name,
-              fromStatus: shipment.currentStatus,
-              toStatus: syncStatus,
-              remark: `装入柜子 ${container.containerNo}`,
-              changedAt: now,
-            },
-          }),
-        ]);
-      }
-
       ok(res, {
-        id: item.id,
         containerId,
         shipmentId,
         loadedVolumeM3: volume,
