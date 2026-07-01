@@ -35,6 +35,13 @@ grep -rn "变量名" apps/ --include="*.ts" --include="*.tsx"
 - 事务内所有 Prisma 操作都要用 `tx.xxx` 而不是 `prisma.xxx`
 - 事务回调内的 `throw new Error` 不会自动转成 API 错误响应，需要外层 try/catch
 
+### 8. 给某个 model 加了新字段或新关联表后
+**必须检查三端（admin/staff/client）的 API 和前端是否都同步了。**
+- 三端 API 是独立写的，没有共用数据层，加字段容易漏端
+- 典型场景：给 `order_products` 加了字段，员工端/管理员端 API 升级了 `include` 查询，但客户端 API 没改
+- 检查方法：`grep -rn "新字段名" apps/api/src/modules/ --include="*.ts"` 看是否三个角色的路由文件都有引用
+- 特别注意：客户端有多个 API 端点（`/client/orders`、`/client/shipments/search`、`/client/prealerts`），要逐个检查
+
 ## 曾经犯过的具体错误
 
 | # | 错误 | 教训 |
@@ -46,3 +53,4 @@ grep -rn "变量名" apps/ --include="*.ts" --include="*.tsx"
 | 5 | 改 rewrite 规则导致请求匹配不上 | 改配置全链路测试 |
 | 6 | 事务回调没 return 导致变量引用崩溃 | 事务回调最后 return 数据 |
 | 7 | 改构建流程没本地先跑 | 构建改动先验证 |
+| 8 | 加了 `order_products` 表和多产品功能，只改了 staff/admin 的 API 和前端，客户端 API 没同步升级，导致客户端看不到产品行级别的国内单号 | 给 model 加字段/加关联表后，三端 API + 前端逐个检查 |
