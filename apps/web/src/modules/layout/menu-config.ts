@@ -36,54 +36,7 @@ export const roleMenus: Record<AuthRole, MenuItem[]> = {
 
 export const globalMenus: MenuItem[] = [];
 
-export const roleFunctionMenus: Record<AuthRole, RoleFunctionMenuItem[]> = {
-  admin: [
-    { id: "admin-func-overview", label: "运营看板", href: "/admin#overview" },
-    { id: "admin-func-staff", label: "员工管理", href: "/admin#staff" },
-    { id: "admin-func-clients", label: "客户管理", href: "/admin#clients" },
-    { id: "admin-func-orders", label: "运单管理", href: "/admin#orders" },
-    { id: "admin-func-shipping", label: "运费配置", href: "/admin#shipping-config" },
-    { id: "admin-func-lmp", label: "渠道与价格管理", href: "/admin/lmp" },
-    { id: "admin-func-container", label: "装柜管理", href: "/staff/container-loading" },
-    { id: "admin-func-customs", label: "关务监控", href: "/admin/customs" },
-    { id: "admin-func-accounts", label: "账号管理", href: "/admin/accounts" },
-    { id: "admin-func-prealerts", label: "预报单管理", href: "/admin/prealerts" },
-    { id: "admin-func-finance", label: "财务管理", href: "/admin/finance" },
-    { id: "admin-func-lastmile", label: "尾端派送", href: "/admin#lastmile" },
-    { id: "admin-func-address", label: "尾端地址", href: "/admin#lastmile-address" },
-    { id: "admin-func-settlement", label: "财务结算与利润", href: "/admin/settlement" },
-    { id: "admin-func-ai-memory", label: "AI会话记忆", href: "/admin#ai-memory" },
-    { id: "admin-func-ai-gap", label: "AI待补知识", href: "/admin#ai-knowledge-gaps" },
-    { id: "admin-func-ai-feed", label: "AI知识投喂", href: "/admin#knowledge-feed" },
-    { id: "admin-func-ai-list", label: "知识列表", href: "/admin#knowledge-list" },
-    { id: "admin-func-wallet-recharges", label: "充值审核", href: "/admin#wallet-recharges" },
-    { id: "admin-func-offline-payments", label: "付款审核", href: "/admin#offline-payments" },
-  ],
-  staff: [
-    { id: "staff-func-billing", label: "账单管理", href: "/staff#staff-billing" },
-    { id: "staff-func-prealert", label: "预报单审核", href: "/staff#staff-prealert-review" },
-    { id: "staff-func-order-shipment", label: "运单管理", href: "/staff#staff-order-shipment" },
-    { id: "staff-func-ops-tools", label: "入库与标签工具", href: "/staff#staff-ops-tools" },
-    { id: "staff-func-container-loading", label: "装柜管理", href: "/staff/container-loading" },
-    { id: "staff-func-prices", label: "客户价格查询", href: "/staff/prices" },
-    { id: "staff-func-lastmile", label: "尾端派送", href: "/staff#staff-lastmile" },
-    { id: "staff-func-address", label: "尾端地址", href: "/staff#staff-address" },
-    { id: "staff-func-wallet", label: "客户余额", href: "/staff#staff-wallet" },
-  ],
-  client: [
-    { id: "client-func-main", label: "主页与AI", href: "/client#client-main" },
-    { id: "client-func-query", label: "我的运单查询", href: "/client#client-query" },
-    { id: "client-func-prealert", label: "预报单", href: "/client#client-prealert" },
-    { id: "client-func-imports", label: "批量下单", href: "/client/imports" },
-    { id: "client-func-quote", label: "智能算费", href: "/client#client-main" },
-    { id: "client-func-track", label: "免登录轨迹查询", href: "/client/track" },
-    { id: "client-func-address", label: "常用地址库", href: "/client/address-book" },
-    { id: "client-func-wallet", label: "余额", href: "/client/wallet" },
-    { id: "client-func-bills", label: "账单页面", href: "/client/bills" },
-  ],
-};
-
-/** 分组版：运单相关 vs 其他业务分明 */
+/** 分组菜单：运单相关 vs 其他业务分明 */
 export const roleFunctionGroups: Record<AuthRole, MenuGroup[]> = {
   admin: [
     {

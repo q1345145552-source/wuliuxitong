@@ -375,7 +375,7 @@ export function registerShipmentRoutes(app: MinimalHttpApp): void {
       orderBy: { updatedAt: "desc" },
       include: {
         order: {
-          select: { id: true, clientId: true, itemName: true, transportMode: true },
+          select: { id: true, clientId: true, itemName: true, transportMode: true, orderNo: true },
         },
       },
     });

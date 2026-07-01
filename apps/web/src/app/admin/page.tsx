@@ -52,8 +52,6 @@ import {
   fetchStaffClients,
   fetchStaffPrealerts,
   createStaffOrder,
-  fetchClientNotes,
-  saveClientNote,
   type OrderProductImageItem,
   type ShipmentItem,
   // 充值审核
