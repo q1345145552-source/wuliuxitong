@@ -158,14 +158,14 @@ main {
 }
 
 .dashboard-sidebar-group-header {
-  display: flex;
+  display: flex !important;
   align-items: center;
   gap: 6px;
-  border: 1px solid #e0e0e0;
+  border: 1px solid #cccccc !important;
   border-radius: 6px;
   padding: 6px 10px;
-  background: transparent;
-  color: #666666;
+  background: transparent !important;
+  color: #555555 !important;
   font-size: 12px;
   font-weight: 500;
   cursor: pointer;
@@ -186,24 +186,24 @@ main {
 }
 
 .dashboard-sidebar-link {
-  display: inline-flex;
+  display: inline-flex !important;
   align-items: center;
   gap: 6px;
-  border: none;
+  border: none !important;
   border-radius: 6px;
   padding: 5px 8px;
-  background: transparent;
-  color: #555555;
+  background: transparent !important;
+  color: #444444 !important;
   text-decoration: none;
   font-size: 13px;
   transition: color 0.15s;
 }
 .dashboard-sidebar-link:hover {
-  color: #111111;
+  color: #111111 !important;
 }
 
 .dashboard-sidebar-link-active {
-  color: #111111;
+  color: #111111 !important;
   font-weight: 600;
 }
 
