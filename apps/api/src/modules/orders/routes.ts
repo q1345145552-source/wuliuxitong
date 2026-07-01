@@ -845,10 +845,6 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
       },
       orderBy: { createdAt: "asc" },
       include: {
-        products: {
-          orderBy: { sortOrder: "asc" },
-          select: { id: true, itemName: true, packageCount: true, domesticTrackingNo: true },
-        },
         shipments: {
           orderBy: { updatedAt: "desc" },
           take: 1,
