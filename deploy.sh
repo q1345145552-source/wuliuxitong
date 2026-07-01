@@ -27,18 +27,27 @@ docker compose build --no-cache web
 echo "🚀 启动服务..."
 docker compose up -d
 
-# 5. 等待健康检查
+# 5. 等待健康检查（轮询最多 60 秒）
 echo "⏳ 等待服务就绪..."
-sleep 5
-if curl -sf http://localhost:3001 -o /dev/null; then
-  echo "✅ API 正常"
-else
-  echo "⚠️  API 端口未响应，检查日志: docker logs mywebsite-api-1"
-fi
-if curl -sf http://localhost:3000 -o /dev/null; then
-  echo "✅ Web 正常"
-else
-  echo "⚠️  Web 端口未响应"
-fi
+
+wait_for_service() {
+  local url=$1
+  local name=$2
+  local max_wait=60
+  local elapsed=0
+  while [ $elapsed -lt $max_wait ]; do
+    if curl -sf "$url" -o /dev/null 2>/dev/null; then
+      echo "✅ $name 正常"
+      return 0
+    fi
+    sleep 3
+    elapsed=$((elapsed + 3))
+  done
+  echo "⚠️  $name 未响应（等了 ${max_wait}s）"
+  return 1
+}
+
+wait_for_service "http://localhost:3001" "API"
+wait_for_service "http://localhost:3000" "Web"
 
 echo "=== 部署完成 ==="
