@@ -163,6 +163,33 @@ main {
   padding: 0 2px;
 }
 
+.dashboard-sidebar-group-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border: none;
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: transparent;
+  color: #374151;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  text-align: left;
+  width: 100%;
+  transition: background 0.15s;
+}
+.dashboard-sidebar-group-header:hover {
+  background: #e8ecf2;
+}
+
+.dashboard-sidebar-group-arrow {
+  font-size: 10px;
+  color: #9ca3af;
+  width: 12px;
+  flex-shrink: 0;
+}
+
 .dashboard-sidebar-link {
   display: inline-flex;
   align-items: center;

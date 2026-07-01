@@ -53,6 +53,7 @@ export default function RoleShell(props: {
   const [currentPath, setCurrentPath] = useState("");
   const [currentHash, setCurrentHash] = useState("");
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set(["📦 运单管理", "📦 我的运单"]));
 
   useEffect(() => {
     const next = getOptionalSession();
@@ -155,25 +156,42 @@ export default function RoleShell(props: {
           ))}
         </div>
         <h3 className="dashboard-sidebar-subtitle">功能分区</h3>
-        {(roleFunctionGroups[allowedRoles[0]] ?? []).map((group) => (
-          <div key={group.groupLabel} className="dashboard-sidebar-group">
-            <div className="dashboard-sidebar-group-label">{group.groupLabel}</div>
-            {group.items.map((item) => (
-              <a
-                key={item.id}
-                href={item.href}
-                className={`dashboard-sidebar-link ${currentPath + currentHash === item.href ? "dashboard-sidebar-link-active" : ""}`}
-                onClick={closeSidebar}
+        {(roleFunctionGroups[allowedRoles[0]] ?? []).map((group) => {
+          const isExpanded = expandedGroups.has(group.groupLabel);
+          return (
+            <div key={group.groupLabel} className="dashboard-sidebar-group">
+              <button
+                type="button"
+                className="dashboard-sidebar-group-header"
+                onClick={() => {
+                  setExpandedGroups((prev) => {
+                    const next = new Set(prev);
+                    if (next.has(group.groupLabel)) next.delete(group.groupLabel);
+                    else next.add(group.groupLabel);
+                    return next;
+                  });
+                }}
               >
-                {(() => {
-                  const Icon = iconForMenuId(item.id);
-                  return <Icon size={14} />;
-                })()}
-                {item.label}
-              </a>
-            ))}
-          </div>
-        ))}
+                <span className="dashboard-sidebar-group-arrow">{isExpanded ? "▾" : "▸"}</span>
+                {group.groupLabel}
+              </button>
+              {isExpanded && group.items.map((item) => (
+                <a
+                  key={item.id}
+                  href={item.href}
+                  className={`dashboard-sidebar-link ${currentPath + currentHash === item.href ? "dashboard-sidebar-link-active" : ""}`}
+                  onClick={closeSidebar}
+                >
+                  {(() => {
+                    const Icon = iconForMenuId(item.id);
+                    return <Icon size={14} />;
+                  })()}
+                  {item.label}
+                </a>
+              ))}
+            </div>
+          );
+        })}
         <h3 className="dashboard-sidebar-subtitle">全局菜单</h3>
         <div className="dashboard-sidebar-group">
           {globalMenus.map((item) => (
