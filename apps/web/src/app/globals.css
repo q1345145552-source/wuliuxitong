@@ -165,7 +165,7 @@ main {
   border-radius: 6px;
   padding: 5px 8px;
   background: transparent;
-  color: #d1d5db;
+  color: #c8ccd2;
   font-size: 12px;
   font-weight: 400;
   cursor: pointer;
@@ -174,12 +174,12 @@ main {
   transition: color 0.15s;
 }
 .dashboard-sidebar-group-header:hover {
-  color: #9ca3af;
+  color: #6b7280;
 }
 
 .dashboard-sidebar-group-arrow {
   font-size: 9px;
-  color: #e5e7eb;
+  color: #c0c7cf;
   width: 10px;
   flex-shrink: 0;
 }
