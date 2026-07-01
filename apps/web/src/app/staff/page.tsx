@@ -1695,7 +1695,6 @@ const loadLmShipments = async () => {
                       </th>
                       <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>唛头</th>
                       <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>运单号</th>
-                      <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>到仓日期</th>
                       <th style={{ padding: "10px 8px", minWidth: 120 }}>品名</th>
                       <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>箱数</th>
                       <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>单箱数量</th>
@@ -1705,6 +1704,7 @@ const loadLmShipments = async () => {
                       <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>重量</th>
                       <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>运输方式</th>
                       <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>货型</th>
+                      <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>到仓日期</th>
                       <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>操作</th>
                     </tr>
                   </thead>
