@@ -42,6 +42,19 @@ grep -rn "变量名" apps/ --include="*.ts" --include="*.tsx"
 - 检查方法：`grep -rn "新字段名" apps/api/src/modules/ --include="*.ts"` 看是否三个角色的路由文件都有引用
 - 特别注意：客户端有多个 API 端点（`/client/orders`、`/client/shipments/search`、`/client/prealerts`），要逐个检查
 
+### 9. 改动完成后必须收尾清理（最容易漏）
+改完代码后，回到每个被修改的文件做三件事：
+
+1. **清理冗余 import**：提取了组件/函数后，原文件里对应的 import 是否还在但不再使用？`grep "import的名字" 当前文件` 确认引用次数 > 1（定义 + 至少一次使用）
+2. **清理死代码**：加了新的替代方案（如 `roleFunctionGroups` 替代 `roleFunctionMenus`），旧的删了没？
+3. **检查重复逻辑**：新加的代码和已有的代码有没有做同一件事？比如 PR 查询已经 `include` 了，后面又调了一次 `loadXxx()` 函数重复查
+
+**验证命令：**
+```bash
+npm run build  # 能过不代表没冗余，但过不了说明有问题
+grep -rn "被提取的函数名" apps/web/src/app/ --include="*.tsx"  # 看原文件里还有没有残留定义
+```
+
 ## 曾经犯过的具体错误
 
 | # | 错误 | 教训 |
@@ -54,3 +67,4 @@ grep -rn "变量名" apps/ --include="*.ts" --include="*.tsx"
 | 6 | 事务回调没 return 导致变量引用崩溃 | 事务回调最后 return 数据 |
 | 7 | 改构建流程没本地先跑 | 构建改动先验证 |
 | 8 | 加了 `order_products` 表和多产品功能，只改了 staff/admin 的 API 和前端，客户端 API 没同步升级，导致客户端看不到产品行级别的国内单号 | 给 model 加字段/加关联表后，三端 API + 前端逐个检查 |
+| 9 | 组件提取后遗留了未使用的 import（PrealertSearch、calcOrderAmountCny 等）、死代码没删（roleFunctionMenus）、API 重复查询（include + loadOrderProducts 双查） | 改动完成后回到每个被改文件做收尾清理：冗余 import、死代码、重复逻辑 |
