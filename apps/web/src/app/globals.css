@@ -161,27 +161,28 @@ main {
   display: flex;
   align-items: center;
   gap: 6px;
-  border: none;
+  border: 1px solid #e0e0e0;
   border-radius: 6px;
-  padding: 5px 8px;
+  padding: 6px 10px;
   background: transparent;
-  color: #b5b5b5;
+  color: #666666;
   font-size: 12px;
-  font-weight: 400;
+  font-weight: 500;
   cursor: pointer;
   text-align: left;
   width: 100%;
-  transition: color 0.15s;
+  transition: border-color 0.15s;
 }
 .dashboard-sidebar-group-header:hover {
-  color: #888888;
+  border-color: #aaaaaa;
 }
 
 .dashboard-sidebar-group-arrow {
   font-size: 9px;
-  color: #cccccc;
+  color: #999999;
   width: 10px;
   flex-shrink: 0;
+  transition: transform 0.15s;
 }
 
 .dashboard-sidebar-link {
@@ -192,17 +193,17 @@ main {
   border-radius: 6px;
   padding: 5px 8px;
   background: transparent;
-  color: #888888;
+  color: #555555;
   text-decoration: none;
   font-size: 13px;
   transition: color 0.15s;
 }
 .dashboard-sidebar-link:hover {
-  color: #333333;
+  color: #111111;
 }
 
 .dashboard-sidebar-link-active {
-  color: #222222;
+  color: #111111;
   font-weight: 600;
 }
 
