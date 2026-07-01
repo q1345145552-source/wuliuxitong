@@ -380,9 +380,31 @@ export function registerShipmentRoutes(app: MinimalHttpApp): void {
       },
     });
 
+    // 加载产品行，用于展示多产品国内单号
+    const orderIds = [...new Set(rows.map((r) => r.orderId))];
+    let productMap = new Map<string, Array<{ itemName: string; domesticTrackingNo: string }>>();
+    if (orderIds.length > 0) {
+      const products = await prisma.orderProduct.findMany({
+        where: { orderId: { in: orderIds }, companyId: auth.companyId },
+        orderBy: { sortOrder: "asc" },
+        select: { orderId: true, itemName: true, domesticTrackingNo: true },
+      });
+      for (const p of products) {
+        const list = productMap.get(p.orderId) ?? [];
+        list.push({ itemName: p.itemName, domesticTrackingNo: p.domesticTrackingNo });
+        productMap.set(p.orderId, list);
+      }
+    }
+
     const items = rows
       .filter((r) => !trackingNo || r.trackingNo.includes(trackingNo))
-      .filter((r) => !domesticTrackingNo || r.domesticTrackingNo.includes(domesticTrackingNo))
+      .filter((r) => {
+        if (!domesticTrackingNo) return true;
+        // 匹配运单级国内单号 或 任意产品行的国内单号
+        if ((r.domesticTrackingNo ?? "").includes(domesticTrackingNo)) return true;
+        const prods = productMap.get(r.orderId) ?? [];
+        return prods.some((p) => p.domesticTrackingNo.includes(domesticTrackingNo));
+      })
       .filter((r) => !itemName || r.order.itemName.includes(itemName))
       .filter((r) => !transportMode || r.order.transportMode === transportMode)
       .map((r) => ({
@@ -399,6 +421,11 @@ export function registerShipmentRoutes(app: MinimalHttpApp): void {
         packageCount: r.packageCount,
         packageUnit: r.packageUnit,
         domesticTrackingNo: r.domesticTrackingNo,
+        // 多产品国内单号
+        products: (productMap.get(r.orderId) ?? []).map((p) => ({
+          itemName: p.itemName,
+          domesticTrackingNo: p.domesticTrackingNo,
+        })),
       }));
 
     ok(res, { items, page: 1, pageSize: items.length, total: items.length });

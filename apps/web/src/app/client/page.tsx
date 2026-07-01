@@ -356,10 +356,13 @@ export default function ClientHomePage() {
           if (search.arrivedDateTo && d > search.arrivedDateTo) return false;
           return true;
         })
-        .filter(
-          (item) =>
-            !search.domesticTrackingNo || (item.domesticTrackingNo ?? "").toLowerCase().includes(search.domesticTrackingNo.toLowerCase()),
-        )
+        .filter((item) => {
+          if (!search.domesticTrackingNo) return true;
+          const kw = search.domesticTrackingNo.toLowerCase();
+          if ((item.domesticTrackingNo ?? "").toLowerCase().includes(kw)) return true;
+          // 同时搜索产品行的国内单号
+          return (item.products ?? []).some((p: any) => (p.domesticTrackingNo ?? "").toLowerCase().includes(kw));
+        })
         .filter((item) => !search.status || (item.currentStatus ?? "").toLowerCase() === search.status.toLowerCase())
         .filter((item) => !search.transportMode || item.transportMode === search.transportMode)
         .filter((item) => !search.warehouseId || item.warehouseId === search.warehouseId);
@@ -1176,7 +1179,7 @@ export default function ClientHomePage() {
                                 <div><span style={{ color: "#6b7280", fontSize: 12 }}>预报单号：</span>{item.orderNo || "—"}</div>
                                 <div><span style={{ color: "#6b7280", fontSize: 12 }}>审批状态：</span>{item.approvalStatus === "shipped" ? "已发货" : item.approvalStatus === "approved" ? "已审核" : item.approvalStatus || "—"}</div>
                                 <div><span style={{ color: "#6b7280", fontSize: 12 }}>运输方式：</span>{item.transportMode === "sea" ? "海运" : item.transportMode === "land" ? "陆运" : item.transportMode || "—"}</div>
-                                <div><span style={{ color: "#6b7280", fontSize: 12 }}>国内单号：</span>{item.domesticTrackingNo || "—"}</div>
+                                <div><span style={{ color: "#6b7280", fontSize: 12 }}>国内单号：</span>{(item.products?.length ?? 0) > 0 ? (item.products ?? []).map((p: any) => p.domesticTrackingNo || "—").filter(Boolean).join("、") || "—" : (item.domesticTrackingNo || "—")}</div>
                                 <div><span style={{ color: "#6b7280", fontSize: 12 }}>发货日期：</span>{item.shipDate || "—"}</div>
                                 <div><span style={{ color: "#6b7280", fontSize: 12 }}>货型：</span>{cargoTypeLabel}</div>
                                 <div><span style={{ color: "#6b7280", fontSize: 12 }}>收货地址：</span>{item.receiverAddressTh || "—"}</div>
@@ -1201,6 +1204,7 @@ export default function ClientHomePage() {
                                       <th style={{ padding: "4px 6px", textAlign: "center" }}>尺寸(cm)</th>
                                       <th style={{ padding: "4px 6px", textAlign: "center" }}>重量(kg)</th>
                                       <th style={{ padding: "4px 6px", textAlign: "center" }}>货型</th>
+                                      <th style={{ padding: "4px 6px", textAlign: "center" }}>国内单号</th>
                                     </tr></thead>
                                     <tbody>
                                       {(item.products ?? []).map((p: any, i: number) => (
@@ -1211,6 +1215,7 @@ export default function ClientHomePage() {
                                           <td style={{ padding: "4px 6px", textAlign: "center", fontSize: 11 }}>{p.lengthCm && p.widthCm && p.heightCm ? `${p.lengthCm}×${p.widthCm}×${p.heightCm}` : "—"}</td>
                                           <td style={{ padding: "4px 6px", textAlign: "center" }}>{p.weightKg != null ? p.weightKg : "—"}</td>
                                           <td style={{ padding: "4px 6px", textAlign: "center" }}>{p.cargoType === "inspection" ? "商检" : p.cargoType === "sensitive" ? "敏感" : "普货"}</td>
+                                          <td style={{ padding: "4px 6px", textAlign: "center", fontSize: 11 }}>{p.domesticTrackingNo || "—"}</td>
                                         </tr>
                                       ))}
                                     </tbody>
