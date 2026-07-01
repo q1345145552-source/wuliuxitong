@@ -53,7 +53,7 @@ export default function RoleShell(props: {
   const [currentPath, setCurrentPath] = useState("");
   const [currentHash, setCurrentHash] = useState("");
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set(["📦 运单管理", "📦 我的运单"]));
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set(["运单管理", "我的运单"]));
 
   useEffect(() => {
     const next = getOptionalSession();

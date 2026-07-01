@@ -171,21 +171,21 @@ main {
   border-radius: 8px;
   padding: 8px 10px;
   background: transparent;
-  color: #374151;
+  color: #6b7280;
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 500;
   cursor: pointer;
   text-align: left;
   width: 100%;
   transition: background 0.15s;
 }
 .dashboard-sidebar-group-header:hover {
-  background: #e8ecf2;
+  background: #f3f4f6;
 }
 
 .dashboard-sidebar-group-arrow {
   font-size: 10px;
-  color: #9ca3af;
+  color: #d1d5db;
   width: 12px;
   flex-shrink: 0;
 }

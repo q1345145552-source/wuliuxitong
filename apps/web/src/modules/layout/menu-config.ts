@@ -40,13 +40,13 @@ export const globalMenus: MenuItem[] = [];
 export const roleFunctionGroups: Record<AuthRole, MenuGroup[]> = {
   admin: [
     {
-      groupLabel: "📊 运营看板",
+      groupLabel: "运营看板",
       items: [
         { id: "admin-func-overview", label: "运营看板", href: "/admin#overview" },
       ],
     },
     {
-      groupLabel: "📦 运单管理",
+      groupLabel: "运单管理",
       items: [
         { id: "admin-func-orders", label: "运单管理", href: "/admin#orders" },
         { id: "admin-func-prealerts", label: "预报单管理", href: "/admin/prealerts" },
@@ -54,7 +54,7 @@ export const roleFunctionGroups: Record<AuthRole, MenuGroup[]> = {
       ],
     },
     {
-      groupLabel: "👥 账号管理",
+      groupLabel: "账号管理",
       items: [
         { id: "admin-func-staff", label: "员工管理", href: "/admin#staff" },
         { id: "admin-func-clients", label: "客户管理", href: "/admin#clients" },
@@ -62,7 +62,7 @@ export const roleFunctionGroups: Record<AuthRole, MenuGroup[]> = {
       ],
     },
     {
-      groupLabel: "🚚 尾端运营",
+      groupLabel: "尾端运营",
       items: [
         { id: "admin-func-lastmile", label: "尾端派送", href: "/admin#lastmile" },
         { id: "admin-func-address", label: "尾端地址", href: "/admin#lastmile-address" },
@@ -70,7 +70,7 @@ export const roleFunctionGroups: Record<AuthRole, MenuGroup[]> = {
       ],
     },
     {
-      groupLabel: "💰 财务",
+      groupLabel: "财务",
       items: [
         { id: "admin-func-finance", label: "财务管理", href: "/admin/finance" },
         { id: "admin-func-settlement", label: "财务结算与利润", href: "/admin/settlement" },
@@ -78,7 +78,7 @@ export const roleFunctionGroups: Record<AuthRole, MenuGroup[]> = {
       ],
     },
     {
-      groupLabel: "⚙️ 系统配置",
+      groupLabel: "系统配置",
       items: [
         { id: "admin-func-shipping", label: "运费配置", href: "/admin#shipping-config" },
         { id: "admin-func-lmp", label: "渠道与价格管理", href: "/admin/lmp" },
@@ -86,7 +86,7 @@ export const roleFunctionGroups: Record<AuthRole, MenuGroup[]> = {
       ],
     },
     {
-      groupLabel: "🤖 AI 知识库",
+      groupLabel: "AI 知识库",
       items: [
         { id: "admin-func-ai-feed", label: "AI知识投喂", href: "/admin#knowledge-feed" },
         { id: "admin-func-ai-list", label: "知识列表", href: "/admin#knowledge-list" },
@@ -97,7 +97,7 @@ export const roleFunctionGroups: Record<AuthRole, MenuGroup[]> = {
   ],
   staff: [
     {
-      groupLabel: "📦 运单管理",
+      groupLabel: "运单管理",
       items: [
         { id: "staff-func-order-shipment", label: "运单管理", href: "/staff#staff-order-shipment" },
         { id: "staff-func-prealert", label: "预报单审核", href: "/staff#staff-prealert-review" },
@@ -106,14 +106,14 @@ export const roleFunctionGroups: Record<AuthRole, MenuGroup[]> = {
       ],
     },
     {
-      groupLabel: "🚚 尾端运营",
+      groupLabel: "尾端运营",
       items: [
         { id: "staff-func-lastmile", label: "尾端派送", href: "/staff#staff-lastmile" },
         { id: "staff-func-address", label: "尾端地址", href: "/staff#staff-address" },
       ],
     },
     {
-      groupLabel: "💰 财务",
+      groupLabel: "财务",
       items: [
         { id: "staff-func-billing", label: "账单管理", href: "/staff#staff-billing" },
         { id: "staff-func-wallet", label: "客户余额", href: "/staff#staff-wallet" },
@@ -123,7 +123,7 @@ export const roleFunctionGroups: Record<AuthRole, MenuGroup[]> = {
   ],
   client: [
     {
-      groupLabel: "📦 我的运单",
+      groupLabel: "我的运单",
       items: [
         { id: "client-func-query", label: "运单查询", href: "/client#client-query" },
         { id: "client-func-prealert", label: "预报单", href: "/client#client-prealert" },
@@ -132,7 +132,7 @@ export const roleFunctionGroups: Record<AuthRole, MenuGroup[]> = {
       ],
     },
     {
-      groupLabel: "🔧 其他",
+      groupLabel: "其他",
       items: [
         { id: "client-func-main", label: "主页与AI", href: "/client#client-main" },
         { id: "client-func-quote", label: "智能算费", href: "/client#client-main" },
