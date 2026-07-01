@@ -126,7 +126,7 @@ main {
 .dashboard-sidebar {
   width: 280px;
   min-width: 280px;
-  border: 1px solid #dbe3f0;
+  border: 1px solid #e5e7eb;
   border-radius: 12px;
   background: #ffffff;
   padding: 18px;
@@ -138,29 +138,23 @@ main {
 
 .dashboard-sidebar-title {
   margin: 0 0 12px 0;
-  font-size: 17px;
-  color: #0f172a;
+  font-size: 16px;
+  color: #9ca3af;
+  font-weight: 500;
 }
 
 .dashboard-sidebar-subtitle {
   margin: 18px 0 10px 0;
-  font-size: 14px;
-  color: #000000;
+  font-size: 11px;
+  color: #d1d5db;
+  font-weight: 500;
+  letter-spacing: 0.5px;
 }
 
 .dashboard-sidebar-group {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-}
-
-.dashboard-sidebar-group-label {
-  font-size: 11px;
-  font-weight: 600;
-  color: #6b7280;
-  text-transform: none;
-  letter-spacing: 0;
-  padding: 0 2px;
+  gap: 4px;
 }
 
 .dashboard-sidebar-group-header {
@@ -168,46 +162,49 @@ main {
   align-items: center;
   gap: 6px;
   border: none;
-  border-radius: 8px;
-  padding: 8px 10px;
+  border-radius: 6px;
+  padding: 5px 8px;
   background: transparent;
-  color: #6b7280;
-  font-size: 13px;
+  color: #9ca3af;
+  font-size: 12px;
   font-weight: 500;
   cursor: pointer;
   text-align: left;
   width: 100%;
-  transition: background 0.15s;
+  transition: color 0.15s;
 }
 .dashboard-sidebar-group-header:hover {
-  background: #f3f4f6;
+  color: #6b7280;
 }
 
 .dashboard-sidebar-group-arrow {
-  font-size: 10px;
+  font-size: 9px;
   color: #d1d5db;
-  width: 12px;
+  width: 10px;
   flex-shrink: 0;
 }
 
 .dashboard-sidebar-link {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  border: 1px solid #dbe3f0;
-  border-radius: 10px;
-  padding: 10px 12px;
-  background: #f8fafc;
-  color: #1e3a8a;
+  gap: 6px;
+  border: none;
+  border-radius: 6px;
+  padding: 5px 8px;
+  background: transparent;
+  color: #9ca3af;
   text-decoration: none;
-  font-size: 14px;
+  font-size: 13px;
+  transition: color 0.15s;
+}
+.dashboard-sidebar-link:hover {
+  color: #374151;
 }
 
 .dashboard-sidebar-link-active {
-  border-color: #1e3a8a;
-  background: #e9eefb;
-  color: #1e3a8a;
-  font-weight: 700;
+  background: #f3f4f6;
+  color: #111827;
+  font-weight: 500;
 }
 
 .dashboard-sidebar-actions {
@@ -217,12 +214,12 @@ main {
 .dashboard-logout-button {
   width: 100%;
   border: 1px solid #fecaca;
-  border-radius: 10px;
-  padding: 10px 12px;
-  background: #fff1f2;
-  color: #b91c1c;
-  font-size: 15px;
-  font-weight: 700;
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: transparent;
+  color: #f87171;
+  font-size: 13px;
+  font-weight: 500;
   cursor: pointer;
   display: inline-flex;
   align-items: center;
