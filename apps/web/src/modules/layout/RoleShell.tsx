@@ -19,7 +19,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { clearAuthSession, getOptionalSession, type AuthRole, type AuthSession } from "../../auth/auth-session";
-import { globalMenus, roleFunctionMenus, roleMenus } from "./menu-config";
+import { globalMenus, roleFunctionGroups, roleMenus } from "./menu-config";
 
 /**
  * 为导航菜单返回对应的 Lucide 图标。
@@ -155,22 +155,25 @@ export default function RoleShell(props: {
           ))}
         </div>
         <h3 className="dashboard-sidebar-subtitle">功能分区</h3>
-        <div className="dashboard-sidebar-group">
-          {roleFunctionMenus[allowedRoles[0]].map((item) => (
-            <a
-              key={item.id}
-              href={item.href}
-              className={`dashboard-sidebar-link ${currentPath + currentHash === item.href ? "dashboard-sidebar-link-active" : ""}`}
-              onClick={closeSidebar}
-            >
-              {(() => {
-                const Icon = iconForMenuId(item.id);
-                return <Icon size={14} />;
-              })()}
-              {item.label}
-            </a>
-          ))}
-        </div>
+        {(roleFunctionGroups[allowedRoles[0]] ?? []).map((group) => (
+          <div key={group.groupLabel} className="dashboard-sidebar-group">
+            <div className="dashboard-sidebar-group-label">{group.groupLabel}</div>
+            {group.items.map((item) => (
+              <a
+                key={item.id}
+                href={item.href}
+                className={`dashboard-sidebar-link ${currentPath + currentHash === item.href ? "dashboard-sidebar-link-active" : ""}`}
+                onClick={closeSidebar}
+              >
+                {(() => {
+                  const Icon = iconForMenuId(item.id);
+                  return <Icon size={14} />;
+                })()}
+                {item.label}
+              </a>
+            ))}
+          </div>
+        ))}
         <h3 className="dashboard-sidebar-subtitle">全局菜单</h3>
         <div className="dashboard-sidebar-group">
           {globalMenus.map((item) => (
