@@ -22,7 +22,7 @@ npm install --ignore-scripts 2>/dev/null || true
 
 # 4. 构建并启动
 echo "🔨 构建 Docker 镜像..."
-docker compose build --no-cache web
+docker compose build --no-cache web api
 
 echo "🚀 启动服务..."
 docker compose up -d

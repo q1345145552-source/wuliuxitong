@@ -20,6 +20,11 @@ const PORT = Number(process.env.PORT ?? 3001);
 
 const app = createApp();
 
+// 健康检查端点
+app.get("/", (_req, res) => {
+  res.status(200).json({ status: "ok" });
+});
+
 // 启动时做一次 Prisma 连接探测，让链路问题尽早暴露
 prisma
   .$connect()
