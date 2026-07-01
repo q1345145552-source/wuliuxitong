@@ -139,15 +139,15 @@ main {
 .dashboard-sidebar-title {
   margin: 0 0 12px 0;
   font-size: 16px;
-  color: #9ca3af;
-  font-weight: 500;
+  color: #d1d5db;
+  font-weight: 400;
 }
 
 .dashboard-sidebar-subtitle {
   margin: 18px 0 10px 0;
   font-size: 11px;
-  color: #d1d5db;
-  font-weight: 500;
+  color: #e5e7eb;
+  font-weight: 400;
   letter-spacing: 0.5px;
 }
 
@@ -165,21 +165,21 @@ main {
   border-radius: 6px;
   padding: 5px 8px;
   background: transparent;
-  color: #9ca3af;
+  color: #d1d5db;
   font-size: 12px;
-  font-weight: 500;
+  font-weight: 400;
   cursor: pointer;
   text-align: left;
   width: 100%;
   transition: color 0.15s;
 }
 .dashboard-sidebar-group-header:hover {
-  color: #6b7280;
+  color: #9ca3af;
 }
 
 .dashboard-sidebar-group-arrow {
   font-size: 9px;
-  color: #d1d5db;
+  color: #e5e7eb;
   width: 10px;
   flex-shrink: 0;
 }
@@ -192,18 +192,17 @@ main {
   border-radius: 6px;
   padding: 5px 8px;
   background: transparent;
-  color: #9ca3af;
+  color: #d1d5db;
   text-decoration: none;
   font-size: 13px;
   transition: color 0.15s;
 }
 .dashboard-sidebar-link:hover {
-  color: #374151;
+  color: #6b7280;
 }
 
 .dashboard-sidebar-link-active {
-  background: #f3f4f6;
-  color: #111827;
+  color: #374151;
   font-weight: 500;
 }
 
