@@ -118,7 +118,7 @@ export default function ClientBillsPage() {
       品名: item.itemName ?? "-",
       运输方式: item.transportMode === "sea" ? "海运" : item.transportMode === "land" ? "陆运" : item.transportMode ?? "-",
       包裹数量: `${item.packageCount ?? "-"} ${item.packageUnit ?? ""}`.trim(),
-      重量kg: item.weightKg ?? "-",
+      重量: item.weightKg ?? "-",
       金额: typeof item.receivableAmountCny === "number" ? item.receivableAmountCny.toFixed(2) : "-",
     }));
     const worksheet = XLSX.utils.json_to_sheet(rows);
