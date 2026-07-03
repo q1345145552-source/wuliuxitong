@@ -867,10 +867,7 @@ export default function AdminHomePage() {
     if (exportDateFrom) source = source.filter((o) => (o.shipDate ?? "").slice(0,10) >= exportDateFrom);
     if (exportDateTo) source = source.filter((o) => (o.shipDate ?? "").slice(0,10) <= exportDateTo);
     if (source.length === 0) { setMessage("所选日期范围内没有订单。"); return; }
-    const EXPORT_MAX = 1000;
-    const exportSlice = source.length > EXPORT_MAX ? source.slice(0, EXPORT_MAX) : source;
-    if (source.length > EXPORT_MAX) setToast(`数据共 ${source.length} 条，超出导出上限，仅导出前 ${EXPORT_MAX} 条。`);
-    const rows = exportSlice.map((o) => ({
+    const rows = source.map((o) => ({
       运单号: o.trackingNo ?? "-", 客户: o.clientId ?? "-", 品名: o.itemName,
       运输方式: o.transportMode, 国内单号: o.domesticTrackingNo ?? "-", 柜号: o.batchNo ?? "-",
       审批状态: o.approvalStatus === "pending" ? "待审核" : o.approvalStatus === "approved" ? "已审核" : o.approvalStatus === "shipped" ? "已发货" : o.approvalStatus,

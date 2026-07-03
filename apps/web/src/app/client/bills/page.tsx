@@ -108,9 +108,7 @@ export default function ClientBillsPage() {
   }, [filters.trackingNo, filters.transportMode, filters.warehouseId, orders, payTab]);
 
   const exportBillsExcel = () => {
-    const EXPORT_MAX = 1000;
-    const exportSlice = filtered.length > EXPORT_MAX ? filtered.slice(0, EXPORT_MAX) : filtered;
-    const rows = exportSlice.map((item, idx) => ({
+    const rows = filtered.map((item, idx) => ({
       序号: idx + 1,
       运单号: item.trackingNo ?? "-",
       仓库: warehouseLabel(item.warehouseId),

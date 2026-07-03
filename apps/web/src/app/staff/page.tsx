@@ -1164,10 +1164,7 @@ const loadLmShipments = async () => {
     if (exportDateFrom) source = source.filter((s) => (s.shipDate ?? s.arrivedAt ?? "").slice(0,10) >= exportDateFrom);
     if (exportDateTo) source = source.filter((s) => (s.shipDate ?? s.arrivedAt ?? "").slice(0,10) <= exportDateTo);
     if (source.length === 0) { setMessage("所选日期范围内没有运单。"); return; }
-    const EXPORT_MAX = 1000;
-    const exportSlice = source.length > EXPORT_MAX ? source.slice(0, EXPORT_MAX) : source;
-    if (source.length > EXPORT_MAX) setToast(`数据共 ${source.length} 条，超出导出上限，仅导出前 ${EXPORT_MAX} 条。`);
-    const rows = exportSlice.map((item) => ({
+    const rows = source.map((item) => ({
       运单号: item.trackingNo ?? "-", 品名: item.itemName ?? "-",
       归属用户: item.clientName ?? item.clientId ?? "-",
       运单状态: shipmentStatusZh(item.currentStatus),
