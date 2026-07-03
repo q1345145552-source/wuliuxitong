@@ -41,9 +41,7 @@ export default function FclInquiryPanel(props: ClientFclInquiryProps) {
 
   const loadList = async () => {
     try {
-      const url = props.isStaff
-        ? `${apiBaseUrl()}/client/fcl-inquiries`
-        : `${apiBaseUrl()}/client/fcl-inquiries`;
+      const url = `${apiBaseUrl()}/client/fcl-inquiries`; // staff和client共用同一个GET端点
       const r = await fetch(url, { headers: authHeaders() });
       const d = await r.json();
       if (d.code === "OK") setList(d.data.items);

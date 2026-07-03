@@ -74,20 +74,22 @@ export default function AdminPrealertsPage() {
   const [prealertConfirmedDrafts, setPrealertConfirmedDrafts] = useState<Record<string, PrealertEditDraft>>({});
   const [editingPrealertId, setEditingPrealertId] = useState<string | null>(null);
 
-  const loadPrealerts = async () => {
+  const loadPrealerts = async (cancelled?: { current: boolean }) => {
     setLoading(true);
     try {
       const items = await fetchStaffPrealerts();
+      if (cancelled?.current) return;
       setPrealerts(items);
       setMessage("");
     } catch (err) {
+      if (cancelled?.current) return;
       setMessage(`加载失败：${err instanceof Error ? err.message : "未知错误"}`);
     } finally {
-      setLoading(false);
+      if (!cancelled?.current) setLoading(false);
     }
   };
 
-  useEffect(() => { loadPrealerts(); }, []);
+  useEffect(() => { const c = { current: false }; loadPrealerts(c); return () => { c.current = true; }; }, []);
 
   useEffect(() => {
     if (!toast) return;
@@ -150,7 +152,7 @@ export default function AdminPrealertsPage() {
       <div style={{ maxWidth: 1400, margin: "0 auto", padding: "24px 16px" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
           <h1 style={{ margin: 0, fontSize: 22, fontWeight: 700, color: "#111827" }}>预报单收货确认</h1>
-          <button onClick={loadPrealerts} disabled={loading} style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "6px 12px", background: "#fff", cursor: "pointer", color: "#000" }}>刷新</button>
+          <button onClick={() => loadPrealerts()} disabled={loading} style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "6px 12px", background: "#fff", cursor: "pointer", color: "#000" }}>刷新</button>
         </div>
         {message ? <div style={{ marginBottom: 12, padding: 10, background: "#fef2f2", borderRadius: 8, color: "#b91c1c", fontSize: 13 }}>{message}</div> : null}
         <PrealertSearch

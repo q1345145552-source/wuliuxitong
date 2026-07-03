@@ -582,15 +582,16 @@ const loadLmShipments = async () => {
   };
 
   useEffect(() => {
+    let cancelled = false;
     setLoading(true);
     loadPageData()
       .catch((error) => {
+        if (cancelled) return;
         const text = error instanceof Error ? error.message : "加载失败";
         setMessage(`加载失败：${text}`);
       })
-      .finally(() => setLoading(false));
-
-
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
   }, []);
 
   useEffect(() => {
