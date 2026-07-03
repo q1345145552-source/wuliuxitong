@@ -436,8 +436,11 @@ export function registerShipmentRoutes(app: MinimalHttpApp): void {
     if (!auth) return;
 
     const limit = parseInt(req.query.limit as string) || 500;
+    const includeChildren = req.query.all === "1"; // 尾端派送等场景需要包含子运单
+    const where: any = { companyId: auth.companyId };
+    if (!includeChildren) where.parentTrackingNo = null;
     const rows = await prisma.shipment.findMany({
-      where: { companyId: auth.companyId, parentTrackingNo: null },
+      where,
       orderBy: { updatedAt: "desc" },
       take: Math.min(limit, 500),
       include: {
