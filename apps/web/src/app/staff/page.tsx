@@ -1152,49 +1152,41 @@ const loadLmShipments = async () => {
   // 搜索条件变化时清空选中
   useEffect(() => { setSelectedForExport(new Set()); }, [shipmentSearch]);
 
+  const [exportDateFrom, setExportDateFrom] = useState("");
+  const [exportDateTo, setExportDateTo] = useState("");
+
   const exportShipmentsToExcel = () => {
-    const source = selectedForExport.size > 0
+    let source = selectedForExport.size > 0
       ? filteredShipmentList.filter((s) => selectedForExport.has(s.trackingNo))
       : filteredShipmentList;
-    if (source.length === 0) {
-      setMessage("当前没有可导出的运单数据。");
-      return;
-    }
-    // 导出上限：防止浏览器因大列表卡死（服务端导出待后续实现）
+    if (source.length === 0) { setMessage("当前没有可导出的运单数据。"); return; }
+    // 日期筛选
+    if (exportDateFrom) source = source.filter((s) => (s.shipDate ?? s.arrivedAt ?? "").slice(0,10) >= exportDateFrom);
+    if (exportDateTo) source = source.filter((s) => (s.shipDate ?? s.arrivedAt ?? "").slice(0,10) <= exportDateTo);
+    if (source.length === 0) { setMessage("所选日期范围内没有运单。"); return; }
     const EXPORT_MAX = 1000;
     const exportSlice = source.length > EXPORT_MAX ? source.slice(0, EXPORT_MAX) : source;
-    if (source.length > EXPORT_MAX) {
-      setToast(`数据共 ${source.length} 条，超出导出上限，仅导出前 ${EXPORT_MAX} 条。请缩小筛选范围。`);
-    }
+    if (source.length > EXPORT_MAX) setToast(`数据共 ${source.length} 条，超出导出上限，仅导出前 ${EXPORT_MAX} 条。`);
     const rows = exportSlice.map((item) => ({
-      运单号: item.trackingNo ?? "-",
-      品名: item.itemName ?? "-",
+      运单号: item.trackingNo ?? "-", 品名: item.itemName ?? "-",
       归属用户: item.clientName ?? item.clientId ?? "-",
       运单状态: shipmentStatusZh(item.currentStatus),
       加收金额: item.receivableAmountCny != null ? `${item.receivableCurrency === "THB" ? "THB" : "CNY"} ${item.receivableAmountCny}` : "0",
       运输方式: transportModeLabel(item.transportMode),
       发货时间: item.shipDate ?? formatDateTime(item.arrivedAt, "-"),
-      总件数: item.packageCount ?? "-",
-      总重量: item.weightKg ?? "-",
-      总体积: item.volumeM3 ?? "-",
-      计费体积: item.volumeM3 != null && item.volumeM3 > 0
-        ? Math.max(item.volumeM3, item.transportMode === "sea" ? 0.5 : item.transportMode === "land" ? 0.2 : 0).toFixed(3)
-        : "-",
+      总件数: item.packageCount ?? "-", 总重量: item.weightKg ?? "-", 总体积: item.volumeM3 ?? "-",
+      计费体积: item.volumeM3 != null && item.volumeM3 > 0 ? Math.max(item.volumeM3, item.transportMode === "sea" ? 0.5 : item.transportMode === "land" ? 0.2 : 0).toFixed(3) : "-",
       所属仓库: warehouseLabelFromId(item.warehouseId),
       收货地址: truncateText(item.receiverAddressTh, 40),
-      柜号: item.batchNo ?? "-",
-      国内单号: item.domesticTrackingNo ?? "-",
-      产品数量: item.productQuantity ?? "-",
-      到仓日期: formatDateTime(item.arrivedAt, "-"),
-      可编辑: item.canEdit ? "是" : "否",
-      更新时间: item.updatedAt ?? "-",
+      柜号: item.batchNo ?? "-", 国内单号: item.domesticTrackingNo ?? "-",
+      产品数量: item.productQuantity ?? "-", 到仓日期: formatDateTime(item.arrivedAt, "-"),
+      可编辑: item.canEdit ? "是" : "否", 更新时间: item.updatedAt ?? "-",
     }));
-    const worksheet = XLSX.utils.json_to_sheet(rows);
-    const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, worksheet, "运单列表");
-    const today = new Date().toISOString().slice(0, 10);
-    XLSX.writeFile(workbook, `运单列表_${today}.xlsx`);
-    setToast("导出Excel成功");
+    const ws = XLSX.utils.json_to_sheet(rows);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "运单列表");
+    XLSX.writeFile(wb, `运单列表_${new Date().toISOString().slice(0,10)}.xlsx`);
+    setToast(`已导出 ${rows.length} 条`);
   };
 
   return (
@@ -1623,37 +1615,14 @@ const loadLmShipments = async () => {
             </p>
         <ShipmentSearch value={shipmentSearch} onChange={(key, val) => setShipmentSearch((prev) => ({ ...prev, [key]: val }))} onSearch={runShipmentListSearch} warehouseOptions={warehouseOptions} logisticsStatusOptions={logisticsStatusOptions} inputStyle={orderCreateInputStyle} />
           </div>
-          <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 2 }}>
-            <button
-              type="button"
-              onClick={() => {
-                const source = selectedForExport.size > 0 ? filteredShipmentList.filter((s) => selectedForExport.has(s.trackingNo)) : filteredShipmentList;
-                if (source.length === 0) { setMessage("没有可导出的运单"); return; }
-                const rows = source.map((item) => ({
-                  运单号: item.trackingNo ?? "-",
-                  品名: item.itemName ?? "-",
-                  归属用户: item.clientName ?? item.clientId ?? "-",
-                  运单状态: shipmentStatusZh(item.currentStatus),
-                  加收金额: item.receivableAmountCny != null ? `${item.receivableCurrency === "THB" ? "THB" : "CNY"} ${item.receivableAmountCny}` : "0",
-                  运输方式: transportModeLabel(item.transportMode),
-                  发货时间: item.shipDate ?? formatDateTime(item.arrivedAt, "-"),
-                  总件数: item.packageCount ?? "-",
-                  总重量: item.weightKg ?? "-",
-                  总体积: item.volumeM3 ?? "-",
-                  计费体积: item.volumeM3 != null && item.volumeM3 > 0 ? Math.max(item.volumeM3, item.transportMode === "sea" ? 0.5 : item.transportMode === "land" ? 0.2 : 0).toFixed(3) : "-",
-                  所属仓库: warehouseLabelFromId(item.warehouseId),
-                  柜号: item.batchNo ?? "-",
-                  国内单号: item.domesticTrackingNo ?? "-",
-                  到仓日期: formatDateTime(item.arrivedAt, "-"),
-                }));
-                const ws = XLSX.utils.json_to_sheet(rows);
-                const wb = XLSX.utils.book_new();
-                XLSX.utils.book_append_sheet(wb, ws, "运单列表");
-                XLSX.writeFile(wb, `运单列表_${new Date().toISOString().slice(0, 10)}.xlsx`);
-                setToast(`已导出 ${rows.length} 条`);
-              }}
-              style={{ border: "1px solid #2563eb", borderRadius: 8, padding: "8px 16px", color: "#2563eb", background: "#fff", cursor: "pointer", fontWeight: 600, whiteSpace: "nowrap", fontSize: 14 }}
-            >
+          <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 2, flexWrap: "wrap" }}>
+            <input type="date" value={exportDateFrom} onChange={e => setExportDateFrom(e.target.value)}
+              style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "6px 8px", fontSize: 12 }} title="导出日期从" />
+            <span style={{ fontSize: 12, color: "#9ca3af" }}>至</span>
+            <input type="date" value={exportDateTo} onChange={e => setExportDateTo(e.target.value)}
+              style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "6px 8px", fontSize: 12 }} title="导出日期到" />
+            <button type="button" onClick={exportShipmentsToExcel}
+              style={{ border: "1px solid #2563eb", borderRadius: 8, padding: "8px 16px", color: "#2563eb", background: "#fff", cursor: "pointer", fontWeight: 600, whiteSpace: "nowrap", fontSize: 14 }}>
               导出Excel
             </button>
             <button

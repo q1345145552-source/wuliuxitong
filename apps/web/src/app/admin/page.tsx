@@ -858,40 +858,32 @@ export default function AdminHomePage() {
     else setSelectedOrders(new Set(filteredOrderList.map((o) => o.id)));
   };
 
+  const [exportDateFrom, setExportDateFrom] = useState("");
+  const [exportDateTo, setExportDateTo] = useState("");
+
   const exportOrdersToExcel = () => {
-    const source = selectedOrders.size > 0 ? filteredOrderList.filter((o) => selectedOrders.has(o.id)) : filteredOrderList;
-    if (source.length === 0) {
-      setMessage("当前没有可导出的订单数据。");
-      return;
-    }
+    let source = selectedOrders.size > 0 ? filteredOrderList.filter((o) => selectedOrders.has(o.id)) : filteredOrderList;
+    if (source.length === 0) { setMessage("当前没有可导出的订单数据。"); return; }
+    if (exportDateFrom) source = source.filter((o) => (o.shipDate ?? "").slice(0,10) >= exportDateFrom);
+    if (exportDateTo) source = source.filter((o) => (o.shipDate ?? "").slice(0,10) <= exportDateTo);
+    if (source.length === 0) { setMessage("所选日期范围内没有订单。"); return; }
     const EXPORT_MAX = 1000;
     const exportSlice = source.length > EXPORT_MAX ? source.slice(0, EXPORT_MAX) : source;
-    if (source.length > EXPORT_MAX) {
-      setToast(`数据共 ${source.length} 条，超出导出上限，仅导出前 ${EXPORT_MAX} 条。请缩小筛选范围。`);
-    }
+    if (source.length > EXPORT_MAX) setToast(`数据共 ${source.length} 条，超出导出上限，仅导出前 ${EXPORT_MAX} 条。`);
     const rows = exportSlice.map((o) => ({
-      运单号: o.trackingNo ?? "-",
-      客户: o.clientId ?? "-",
-      品名: o.itemName,
-      运输方式: o.transportMode,
-      国内单号: o.domesticTrackingNo ?? "-",
-      柜号: o.batchNo ?? "-",
+      运单号: o.trackingNo ?? "-", 客户: o.clientId ?? "-", 品名: o.itemName,
+      运输方式: o.transportMode, 国内单号: o.domesticTrackingNo ?? "-", 柜号: o.batchNo ?? "-",
       审批状态: o.approvalStatus === "pending" ? "待审核" : o.approvalStatus === "approved" ? "已审核" : o.approvalStatus === "shipped" ? "已发货" : o.approvalStatus,
-      产品数量: o.productQuantity ?? "-",
-      包裹数量: o.packageCount ?? "-",
-      重量: o.weightKg ?? "-",
-      体积: o.volumeM3 ?? "-",
-      到仓日期: o.shipDate ?? "-",
-      状态组: o.statusGroup ?? "-",
-      创建时间: o.createdAt ?? "-",
-      更新时间: o.updatedAt ?? "-",
+      产品数量: o.productQuantity ?? "-", 包裹数量: o.packageCount ?? "-",
+      重量: o.weightKg ?? "-", 体积: o.volumeM3 ?? "-",
+      到仓日期: o.shipDate ?? "-", 状态组: o.statusGroup ?? "-",
+      创建时间: o.createdAt ?? "-", 更新时间: o.updatedAt ?? "-",
     }));
-    const worksheet = XLSX.utils.json_to_sheet(rows);
-    const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, worksheet, "订单列表");
-    const today = new Date().toISOString().slice(0, 10);
-    XLSX.writeFile(workbook, `订单数据_${today}.xlsx`);
-    setToast("导出Excel成功");
+    const ws = XLSX.utils.json_to_sheet(rows);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "订单列表");
+    XLSX.writeFile(wb, `订单数据_${new Date().toISOString().slice(0,10)}.xlsx`);
+    setToast(`已导出 ${rows.length} 条`);
   };
 
   // 根据导航切换当前显示的功能分区。
@@ -1381,19 +1373,13 @@ export default function AdminHomePage() {
             >
               📥 批量导入
             </button>
-            <button
-              type="button"
-              onClick={exportOrdersToExcel}
-              disabled={orderList.length === 0}
-              style={{
-                border: "none",
-                borderRadius: 8,
-                padding: "6px 12px",
-                color: "#fff",
-                background: orderList.length === 0 ? "#000000" : "#2563eb",
-                cursor: orderList.length === 0 ? "not-allowed" : "pointer",
-              }}
-            >
+            <input type="date" value={exportDateFrom} onChange={e => setExportDateFrom(e.target.value)}
+              style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "5px 6px", fontSize: 11 }} title="导出日期从" />
+            <span style={{ fontSize: 11, color: "#9ca3af" }}>至</span>
+            <input type="date" value={exportDateTo} onChange={e => setExportDateTo(e.target.value)}
+              style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "5px 6px", fontSize: 11 }} title="导出日期到" />
+            <button type="button" onClick={exportOrdersToExcel}
+              style={{ border: "none", borderRadius: 8, padding: "6px 12px", color: "#fff", background: "#2563eb", cursor: "pointer", fontSize: 13 }}>
               导出Excel
             </button>
             <button
