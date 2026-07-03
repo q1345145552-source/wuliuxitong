@@ -435,9 +435,9 @@ export function registerShipmentRoutes(app: MinimalHttpApp): void {
     const auth = requireRole(req, res, ["staff", "admin"]);
     if (!auth) return;
 
-    const limit = parseInt(req.query.limit as string) || 100;
+    const limit = parseInt(req.query.limit as string) || 500;
     const rows = await prisma.shipment.findMany({
-      where: { companyId: auth.companyId },
+      where: { companyId: auth.companyId, parentTrackingNo: null },
       orderBy: { updatedAt: "desc" },
       take: Math.min(limit, 500),
       include: {
