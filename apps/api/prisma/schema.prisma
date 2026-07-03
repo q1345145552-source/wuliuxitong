@@ -46,6 +46,7 @@ model User {
   credit            CustomerCredit?
   invoices          Invoice[]
   auditLogs         AuditLog[]           @relation("ActorAuditLogs")
+  fclInquiries      FclInquiry[]
 
   @@index([companyId])
   @@index([role])
@@ -704,4 +705,36 @@ model ClientNote {
   createdAt DateTime @default(now()) @map("created_at")
 
   @@map("client_notes")
+}
+
+// ============================================================================
+// 整柜询价
+// ============================================================================
+
+model FclInquiry {
+  id              String   @id @default(cuid())
+  companyId       String   @map("company_id")
+  clientId        String   @map("client_id")
+  createdBy       String   @map("created_by") // userId of submitter (staff or client)
+  createdByRole   String   @map("created_by_role") // "staff" | "client"
+  productName     String   @map("product_name") @db.Text
+  cargoValue      String   @map("cargo_value") // 货值（文本）
+  cargoWeight     String   @map("cargo_weight") // 货重（文本）
+  address         String   @db.Text // 地址
+  containerType   String   @map("container_type") @default("1*40HQ") // 柜型
+  serviceType     String   @map("service_type") @default("清提派") // 清提派 | 派送
+  loadingDate     String?  @map("loading_date") // 装柜时间
+  certFileName    String?  @map("cert_file_name") // 认证文件名
+  certFileBase64  String?  @map("cert_file_base64") @db.Text // 认证文件 base64
+  productImages   String?  @map("product_images") @db.Text // JSON 数组 [{fileName, base64}]
+  status          String   @default("pending") // pending | processing | completed
+  remark          String?  // 管理员备注
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  client User @relation(fields: [clientId], references: [id])
+
+  @@index([companyId, status])
+  @@index([companyId, createdAt(sort: Desc)])
+  @@map("fcl_inquiries")
 }

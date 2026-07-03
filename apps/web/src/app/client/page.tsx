@@ -31,6 +31,7 @@ import {
 } from "../../services/business-api";
 import { openPrintLabel, openPrintPrealert } from "../../modules/shipment/ShipmentPrintLabel";
 import { openShipmentTrack } from "../../modules/shipment/ShipmentTrackModal";
+import FclInquiryPanel from "../../components/client/FclInquiryPanel";
 
 const initialSearch = {
   batchNo: "",
@@ -67,7 +68,7 @@ const freightRateMap: Record<FreightTransportMode, Record<FreightCargoType, numb
   sea: { normal: DEFAULT_SHIPPING_PRICES.sea, inspection: DEFAULT_SHIPPING_PRICES.sea + INSPECTION_SURCHARGE, sensitive: DEFAULT_SHIPPING_PRICES.sea + SENSITIVE_SURCHARGE },
 };
 
-const CLIENT_SECTION_IDS = ["client-main", "client-query", "client-prealert"] as const;
+const CLIENT_SECTION_IDS = ["client-main", "client-query", "client-prealert", "client-fcl"] as const;
 const ORDER_TIMELINE = [
   { key: "loaded", label: "装柜" },
   { key: "departed", label: "开船" },
@@ -1523,6 +1524,9 @@ export default function ClientHomePage() {
         </div>
       )}
       <Toast open={toast.length > 0} message={toast} />
+      <section id="client-fcl" style={{ display: activeSection === "client-fcl" ? "block" : "none" }}>
+        <FclInquiryPanel visible={activeSection === "client-fcl"} onToast={setToast} />
+      </section>
       {previewImage && (
         <div
           onClick={() => setPreviewImage(null)}

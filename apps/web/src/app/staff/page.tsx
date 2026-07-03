@@ -47,6 +47,7 @@ import ShipmentEditFormField from "../../components/staff/ShipmentEditFormField"
 import StaffPrealertList from "../../components/staff/StaffPrealertList";
 import type { PrealertSearchState } from "../../components/staff/StaffPrealertList";
 import StaffLastmile from "../../components/staff/StaffLastmile";
+import FclInquiryPanel from "../../components/client/FclInquiryPanel";
 import {
   shipmentStatusZh,
   warehouseLabelFromId,
@@ -2776,6 +2777,10 @@ const loadLmShipments = async () => {
       ) : null}
 
       {/* 客户余额 */}
+      <section id="staff-fcl" style={{ display: activeSection === "staff-fcl" ? "block" : "none" }}>
+        <FclInquiryPanel visible={activeSection === "staff-fcl"} isStaff clients={staffClients} onToast={setToast} />
+      </section>
+
       {activeSection === "staff-wallet" && (
         <section style={{ border: "1px solid #e5e7eb", borderRadius: 12, padding: 16, background: "#fff", marginTop: 16 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>

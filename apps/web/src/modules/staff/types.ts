@@ -50,6 +50,7 @@ export const STAFF_SECTION_IDS = [
   "staff-lastmile",
   "staff-address",
   "staff-wallet",
+  "staff-fcl",
 ] as const;
 
 export type StaffSectionId = (typeof STAFF_SECTION_IDS)[number];

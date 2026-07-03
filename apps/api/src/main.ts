@@ -12,6 +12,7 @@ import { registerFinanceRoutes } from "./modules/finance/routes";
 import { registerShippingConfigRoutes } from "./modules/shipping-config/routes";
 import { registerOrderRoutes } from "./modules/orders/routes";
 import { registerShipmentRoutes } from "./modules/shipments/routes";
+import { registerFclInquiryRoutes } from "./modules/fcl-inquiries/routes";
 import { createApp } from "./server";
 import { startDailyExchangeRateScheduler } from "./modules/exchange-rate/rate-sync";
 import { logger } from "./modules/core/logger";
@@ -47,6 +48,7 @@ registerContainerRoutes(app);
 registerLoadingManifestRoutes(app);
 registerFinanceRoutes(app);
 registerShippingConfigRoutes(app);
+registerFclInquiryRoutes(app);
 startDailyExchangeRateScheduler();
 
 // ===== AI routes =====
