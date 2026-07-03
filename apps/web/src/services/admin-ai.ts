@@ -1,75 +1,27 @@
 import type { AiKnowledgeItem, StatusLabelConfig } from "../../../../packages/shared-types/entities";
-import { authHeaders, apiBaseUrl, parseApiResponse } from "./core-api";
+import { apiBaseUrl, apiRequest } from "./core-api";
 
-export async function fetchStatusLabels(): Promise<StatusLabelConfig[]> {
-  const response = await fetch(`${apiBaseUrl()}/admin/system/status-labels`, {
-    method: "GET",
-    headers: {
-      "Content-Type": "application/json",
-      ...authHeaders(),
-    },
-  });
-  return parseApiResponse<StatusLabelConfig[]>(response);
+export function fetchStatusLabels(): Promise<StatusLabelConfig[]> {
+  return apiRequest(`${apiBaseUrl()}/admin/system/status-labels`);
 }
 
-export async function updateStatusLabels(items: StatusLabelConfig[]): Promise<{ updated: number }> {
-  const response = await fetch(`${apiBaseUrl()}/admin/system/status-labels`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...authHeaders(),
-    },
-    body: JSON.stringify({ items }),
-  });
-  return parseApiResponse<{ updated: number }>(response);
+export function updateStatusLabels(items: StatusLabelConfig[]): Promise<{ updated: number }> {
+  return apiRequest(`${apiBaseUrl()}/admin/system/status-labels`, { method: "POST", body: JSON.stringify({ items }) });
 }
 
-export async function resetStatusLabels(): Promise<{ reset: boolean; total: number }> {
-  const response = await fetch(`${apiBaseUrl()}/admin/system/status-labels/reset`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...authHeaders(),
-    },
-  });
-  return parseApiResponse<{ reset: boolean; total: number }>(response);
+export function resetStatusLabels(): Promise<{ reset: boolean; total: number }> {
+  return apiRequest(`${apiBaseUrl()}/admin/system/status-labels/reset`, { method: "POST" });
 }
 
-export async function fetchKnowledgeList(): Promise<AiKnowledgeItem[]> {
-  const response = await fetch(`${apiBaseUrl()}/admin/ai/knowledge`, {
-    method: "GET",
-    headers: {
-      "Content-Type": "application/json",
-      ...authHeaders(),
-    },
-  });
-  return parseApiResponse<AiKnowledgeItem[]>(response);
+export function fetchKnowledgeList(): Promise<AiKnowledgeItem[]> {
+  return apiRequest(`${apiBaseUrl()}/admin/ai/knowledge`);
 }
 
-export async function createKnowledgeItem(payload: {
-  title: string;
-  content: string;
-}): Promise<AiKnowledgeItem> {
-  const response = await fetch(`${apiBaseUrl()}/admin/ai/knowledge`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...authHeaders(),
-    },
-    body: JSON.stringify(payload),
-  });
-  return parseApiResponse<AiKnowledgeItem>(response);
+export function createKnowledgeItem(payload: { title: string; content: string }): Promise<AiKnowledgeItem> {
+  return apiRequest(`${apiBaseUrl()}/admin/ai/knowledge`, { method: "POST", body: JSON.stringify(payload) });
 }
 
-export async function deleteKnowledgeItem(id: string): Promise<{ deleted: boolean; id: string }> {
-  const query = new URLSearchParams();
-  query.set("id", id);
-  const response = await fetch(`${apiBaseUrl()}/admin/ai/knowledge?${query.toString()}`, {
-    method: "DELETE",
-    headers: {
-      "Content-Type": "application/json",
-      ...authHeaders(),
-    },
-  });
-  return parseApiResponse<{ deleted: boolean; id: string }>(response);
+export function deleteKnowledgeItem(id: string): Promise<{ deleted: boolean; id: string }> {
+  const query = new URLSearchParams(); query.set("id", id);
+  return apiRequest(`${apiBaseUrl()}/admin/ai/knowledge?${query.toString()}`, { method: "DELETE" });
 }

@@ -82,18 +82,60 @@ export async function parseApiResponse<T>(response: Response): Promise<T> {
 }
 
 /**
- * 统一 API 请求：fetch + parseApiResponse + 网络错误捕获。
- * 所有 business-api 函数应优先使用此包装。
+ * 统一 API 请求：fetch + 超时 + 429重试 + parseApiResponse + 错误兜底。
+ * 所有 API 调用必须使用此包装，禁止裸调 fetch。
  */
 export async function apiRequest<T>(
   url: string,
   options: RequestInit = {},
 ): Promise<T> {
-  let response: Response;
-  try {
-    response = await fetch(url, options);
-  } catch (e: any) {
-    throw new Error(e?.message || "网络连接失败，请检查网络后重试");
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30_000); // 30秒超时
+
+  let lastError: Error | null = null;
+  // 429 限流自动重试最多 2 次，间隔 2s / 4s
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const response = await fetch(url, {
+        ...options,
+        signal: controller.signal,
+        headers: {
+          ...authHeaders(),
+          ...(options.headers as Record<string, string> || {}),
+        },
+      });
+
+      // 429 限流 → 等待后重试
+      if (response.status === 429 && attempt < 2) {
+        await new Promise((r) => setTimeout(r, (attempt + 1) * 2000));
+        continue;
+      }
+
+      // 5xx 服务器错误 → 友好提示
+      if (response.status >= 500) {
+        throw new Error("服务器繁忙，请稍后重试");
+      }
+
+      clearTimeout(timeout);
+      return parseApiResponse<T>(response);
+    } catch (e: any) {
+      lastError = e;
+      // 超时
+      if (e.name === "AbortError") {
+        lastError = new Error("请求超时，请检查网络后重试");
+        break;
+      }
+      // 网络断开
+      if (e instanceof TypeError && (e.message.includes("fetch") || e.message.includes("network"))) {
+        lastError = new Error("网络连接异常，请检查网络后重试");
+        break;
+      }
+      // 429 重试中不抛
+      if (attempt < 2) continue;
+      break;
+    }
   }
-  return parseApiResponse<T>(response);
+
+  clearTimeout(timeout);
+  throw lastError || new Error("请求失败");
 }
