@@ -190,6 +190,7 @@ export function buildShipmentOrderEditDraft(item: ShipmentItem): ShipmentOrderEd
   };
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function buildPrealertDraft(item: any): PrealertEditDraft {
   const firstProduct = item.products?.[0];
   return {

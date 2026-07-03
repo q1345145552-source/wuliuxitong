@@ -62,7 +62,12 @@ export default function StaffLastmile(props: StaffLastmileProps) {
           headers: { "Content-Type": "application/json", ...authHeaders() },
           body: JSON.stringify({ id: lmSignData.id, status: lmSignData.action === "sign" ? "SIGNED" : undefined, signImageBase64: b64 }),
         });
-        if (!res.ok) throw new Error((await res.json()).message || "失败");
+        if (!res.ok) {
+          const text = await res.text();
+          let msg = "失败";
+          try { const d = JSON.parse(text); msg = d.message || msg; } catch {}
+          throw new Error(msg);
+        }
         props.onToast(lmSignData.action === "sign" ? "已签收" : "图片已上传");
         props.onReloadOrders();
       } catch (e: any) {

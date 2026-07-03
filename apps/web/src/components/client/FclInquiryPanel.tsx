@@ -47,7 +47,7 @@ export default function FclInquiryPanel(props: ClientFclInquiryProps) {
       const r = await fetch(url, { headers: authHeaders() });
       const d = await r.json();
       if (d.code === "OK") setList(d.data.items);
-    } catch { /* ignore */ }
+    } catch (e: any) { props.onToast("加载询价记录失败：" + (e.message || "网络错误")); }
     setListLoaded(true);
   };
 

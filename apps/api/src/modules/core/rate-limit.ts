@@ -9,14 +9,17 @@ interface RateLimitEntry {
 }
 
 const store = new Map<string, RateLimitEntry>();
+let cleanupInterval: ReturnType<typeof setInterval> | null = null;
 
-// 每 60 秒清理一次过期条目
-setInterval(() => {
-  const now = Date.now();
-  for (const [key, entry] of store) {
-    if (now > entry.resetAt) store.delete(key);
-  }
-}, 60_000).unref();
+// 每 60 秒清理一次过期条目（幂等，防止热重载重复创建）
+if (!cleanupInterval) {
+  cleanupInterval = setInterval(() => {
+    const now = Date.now();
+    for (const [key, entry] of store) {
+      if (now > entry.resetAt) store.delete(key);
+    }
+  }, 60_000).unref();
+}
 
 /**
  * 检查是否超过速率限制。

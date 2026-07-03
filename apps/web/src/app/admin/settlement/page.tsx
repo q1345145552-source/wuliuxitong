@@ -36,8 +36,10 @@ export default function AdminSettlementPage() {
   };
 
   useEffect(() => {
+    let cancelled = false;
     setLoading(true);
-    reload().finally(() => setLoading(false));
+    reload().finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
   }, []);
 
   return (

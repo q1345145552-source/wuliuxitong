@@ -36,13 +36,16 @@ export default function ClientAddressBookPage() {
   };
 
   useEffect(() => {
+    let cancelled = false;
     setLoading(true);
     reload()
       .catch((error) => {
+        if (cancelled) return;
         const text = error instanceof Error ? error.message : "加载失败";
         setMessage(`加载失败：${text}`);
       })
-      .finally(() => setLoading(false));
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
   }, []);
 
   return (

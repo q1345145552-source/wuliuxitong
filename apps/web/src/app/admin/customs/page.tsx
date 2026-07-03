@@ -27,8 +27,10 @@ export default function AdminCustomsPage() {
   };
 
   useEffect(() => {
+    let cancelled = false;
     setLoading(true);
-    reload().finally(() => setLoading(false));
+    reload().finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
   }, []);
 
   return (
@@ -40,7 +42,7 @@ export default function AdminCustomsPage() {
           <input value={form.orderId} onChange={(e) => setForm((v) => ({ ...v, orderId: e.target.value }))} placeholder="订单ID（可选）" style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 10px" }} />
           <select value={form.status} onChange={(e) => setForm((v) => ({ ...v, status: e.target.value }))} style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 10px" }}>
             <option value="inspection">查验</option>
-            <option value="released">放行</option>
+            <option value="cleared">放行</option>
             <option value="pending">待处理</option>
           </select>
           <input value={form.remark} onChange={(e) => setForm((v) => ({ ...v, remark: e.target.value }))} placeholder="备注（通知客服原因）" style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 10px" }} />
@@ -78,7 +80,7 @@ export default function AdminCustomsPage() {
         <div style={{ display: "grid", gap: 8 }}>
           {items.map((item: any) => (
             <div key={item.id} style={{ border: "1px solid #e2e8f0", borderRadius: 8, padding: 8, background: "#f8fafc" }}>
-              [{item.status === "inspection" ? "查验" : item.status === "released" ? "放行" : item.status === "pending" ? "待处理" : item.status}] 运单 {item.shipmentTrackingNo ?? item.shipmentId ?? "-"} / {item.remark ?? "-"}
+              [{item.status === "inspection" ? "查验" : item.status === "cleared" ? "放行" : item.status === "pending" ? "待处理" : item.status}] 运单 {item.shipmentTrackingNo ?? item.shipmentId ?? "-"} / {item.remark ?? "-"}
             </div>
           ))}
         </div>

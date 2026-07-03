@@ -91,7 +91,8 @@ export default function RoleShell(props: {
       return;
     }
     return;
-  }, [allowedRole, mounted, session]);
+  // allowedRoles 已提前计算为稳定数组，用 join 避免引用变化导致重复执行
+  }, [allowedRoles.join(","), mounted, session]);
 
   if (!mounted) {
     return (

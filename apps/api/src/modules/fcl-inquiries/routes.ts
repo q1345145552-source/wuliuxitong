@@ -57,7 +57,7 @@ export function registerFclInquiryRoutes(app: MinimalHttpApp): void {
         serviceType: r.serviceType, loadingDate: r.loadingDate,
         certFileName: r.certFileName,
         certFileBase64: r.certFileBase64,
-        productImages: r.productImages ? JSON.parse(r.productImages) : [],
+        productImages: (() => { try { return r.productImages ? JSON.parse(r.productImages) : []; } catch { return []; } })(),
         status: r.status, remark: r.remark,
         createdByRole: r.createdByRole,
         createdAt: r.createdAt.toISOString(),
