@@ -3,8 +3,8 @@
 import { useRef, useState } from "react";
 import { apiBaseUrl, authHeaders } from "../../services/core-api";
 
-type LmShipment = { id: string; trackingNo: string; clientId: string; itemName: string; packageCount: number };
-type LmOrderItem = { id: string; deliveryNo: string; shipmentId: string; trackingNo?: string; driverName?: string; licensePlate?: string; phoneNumber?: string; deliveryDate?: string; clientId?: string; status: string };
+type LmShipment = { id: string; trackingNo: string; clientId: string; itemName: string; packageCount: number; containerNo?: string };
+type LmOrderItem = { id: string; deliveryNo: string; shipmentId: string; trackingNo?: string; driverName?: string; licensePlate?: string; phoneNumber?: string; deliveryDate?: string; clientId?: string; status: string; signImageBase64?: string | null };
 
 export type StaffLastmileProps = {
   visible: boolean;
@@ -24,6 +24,7 @@ export default function StaffLastmile(props: StaffLastmileProps) {
   const [lmPhoneNumber, setLmPhoneNumber] = useState("");
   const [lmDeliveryDate, setLmDeliveryDate] = useState("");
   const [lmSignData, setLmSignData] = useState<{ id: string; action: string } | null>(null);
+  const [previewImg, setPreviewImg] = useState<string | null>(null);
   const lmSignFileRef = useRef<HTMLInputElement>(null);
 
   if (!props.visible) return null;
@@ -89,10 +90,6 @@ export default function StaffLastmile(props: StaffLastmileProps) {
     }
   };
 
-  const filteredShipments = props.lmShipments.filter(s =>
-    !lmShipSearch || (s.trackingNo || "").includes(lmShipSearch) || (s.clientId || "").includes(lmShipSearch)
-  ).slice(0, 20);
-
   const groups: Record<string, typeof props.lmOrderList> = {};
   for (const o of props.lmOrderList) {
     if (!groups[o.deliveryNo]) groups[o.deliveryNo] = [];
@@ -121,14 +118,18 @@ export default function StaffLastmile(props: StaffLastmileProps) {
                 setLmBatchInput(nums.join(", "));
               }
             }} placeholder="粘贴运单号批量勾选..." style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "4px 8px", fontSize: 11, width: "100%", marginBottom: 4, color: "#6b21a8" }} />
-            <input value={lmShipSearch} onChange={e => setLmShipSearch(e.target.value)} onFocus={props.onLoadShipments} placeholder="搜索运单（已到泰国的）..." style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "6px 8px", fontSize: 12, width: "100%", marginBottom: 4 }} />
-            <div style={{ maxHeight: 150, overflow: "auto" }}>
-              {filteredShipments.map(s => (
+            <input value={lmShipSearch} onChange={e => setLmShipSearch(e.target.value)} onFocus={props.onLoadShipments} placeholder="搜索运单号/唛头/品名..." style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "6px 8px", fontSize: 12, width: "100%", marginBottom: 4 }} />
+            <div style={{ maxHeight: 180, overflow: "auto" }}>
+              {props.lmShipments
+                .filter(s => !lmShipSearch || (s.trackingNo||"").includes(lmShipSearch) || (s.clientId||"").includes(lmShipSearch) || (s.itemName||"").includes(lmShipSearch))
+                .slice(0, 50)
+                .map(s => (
                 <label key={s.id} style={{ display: "flex", alignItems: "center", gap: 6, padding: "2px 0", fontSize: 12, cursor: "pointer" }}>
                   <input type="checkbox" checked={lmSelected.has(s.id)} onChange={() => { const n = new Set(lmSelected); n.has(s.id) ? n.delete(s.id) : n.add(s.id); setLmSelected(n); }} />
                   <span style={{ fontFamily: "monospace", color: "#1e3a8a", minWidth: 150 }}>{s.trackingNo}</span>
-                  <span style={{ color: "#6b21a8", minWidth: 60 }}>{s.clientId}</span>
-                  <span style={{ color: "#374151" }}>{s.itemName} · {s.packageCount}件</span>
+                  <span style={{ color: "#6b21a8", minWidth: 70, fontWeight: 600 }}>{s.clientId}</span>
+                  <span style={{ color: "#374151", flex: 1 }}>{s.itemName}</span>
+                  <span style={{ color: "#6b7280", minWidth: 40, textAlign: "right" }}>{s.packageCount}件</span>
                 </label>
               ))}
             </div>
@@ -183,7 +184,9 @@ export default function StaffLastmile(props: StaffLastmileProps) {
                     <td style={{ padding: "4px 6px" }}>{o.licensePlate ?? "-"}</td>
                     <td style={{ padding: "4px 6px" }}>{o.phoneNumber ?? "-"}</td>
                     <td style={{ padding: "4px 6px" }}>{o.deliveryDate || "-"}</td>
-                    <td style={{ padding: "4px 6px" }}>{o.status === "SIGNED" ? "✅ 已签收" : "🚚 派送中"}</td>
+                    <td style={{ padding: "4px 6px" }}>
+                      {o.status === "SIGNED" ? <span>✅ 已签收{o.signImageBase64 ? <img src={"data:image/jpeg;base64,"+o.signImageBase64} alt="签收凭证" onClick={() => setPreviewImg("data:image/jpeg;base64,"+o.signImageBase64!)} style={{ maxWidth:40, maxHeight:40, borderRadius:4, marginLeft:4, cursor:"pointer", border:"1px solid #e5e7eb" }} /> : null}</span> : "🚚 派送中"}
+                    </td>
                     <td style={{ padding: "4px 6px" }}>
                       {o.status !== "SIGNED" && (
                         <button onClick={() => { setLmSignData({ id: o.id, action: "sign" }); lmSignFileRef.current?.click(); }} style={{ border: "1px solid #16a34a", borderRadius: 4, padding: "2px 6px", fontSize: 11, background: "#fff", color: "#16a34a", cursor: "pointer" }}>签收</button>
@@ -199,6 +202,13 @@ export default function StaffLastmile(props: StaffLastmileProps) {
       })}
 
       <input ref={lmSignFileRef} type="file" accept="image/*" style={{ display: "none" }} onChange={(e: any) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) handleSign(f); }} />
+
+      {/* 签收图片放大预览 */}
+      {previewImg && (
+        <div onClick={() => setPreviewImg(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.75)", zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
+          <img src={previewImg} alt="签收凭证" onClick={e => e.stopPropagation()} style={{ maxWidth: "90vw", maxHeight: "90vh", borderRadius: 8 }} />
+        </div>
+      )}
     </section>
   );
 }
