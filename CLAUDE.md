@@ -2,6 +2,51 @@
 
 > 以下是我在这个项目中犯过的所有错误，每次改动前必须回顾。
 
+---
+
+## 2026-07-02 ~ 07-03 会话改动总览
+
+### 新增功能
+- **整柜询价**：客户端+员工端表单（品名/货值/货重/地址/柜型/清提派/认证文件/产品图片），三端侧边栏入口，DB 新增 `fcl_inquiries` 表
+- **侧边栏折叠分组**：三端菜单从平铺改为可折叠展开的分组结构（运单管理/尾端运营/财务等）
+- **API 健康检查**：`GET /` 返回 `{"status":"ok"}`，修复部署脚本假警告
+
+### Bug 修复
+| 问题 | 修复 |
+|---|---|
+| 客户端看不到多产品国内单号 | API 返回产品行 domesticTrackingNo，前端聚合展示+搜索 |
+| 员工端比管理员端少 104 条运单 | `/staff/shipments` 加 `parentTrackingNo: null` + `take: 500` |
+| 员工端+管理员端表头列错位 | `<th>` 和 `<td>` 逐列对齐 |
+| Excel 导出中英混杂 | `重量kg→重量`、`体积m3→体积` |
+| 部署脚本 API 假警告 | 轮询等待替代固定 `sleep 5` |
+| 产品 API 重复查询 | 移除冗余 `include: products` |
+
+### 代码重构
+- staff/page.tsx: 3632→2822行(-22%)，提取 6 个组件 + 共享 types/utils
+- admin/page.tsx: 2707→2553行(-6%)，提取 ShippingConfig 组件
+- client/page.tsx: 复用 staff/utils 工具函数
+- menu-config.ts: 新增分组结构 `roleFunctionGroups`
+- CI: `.github/workflows/ci.yml`
+- 日志: main.ts + server.ts 改用结构化 logger
+
+### 新增文件
+```
+apps/web/src/modules/staff/types.ts, utils.ts
+apps/web/src/components/staff/{StaffProductImagesPanel,ShipmentEditFormField,StaffPrealertList,StaffLastmile}.tsx
+apps/web/src/components/admin/ShippingConfig.tsx
+apps/web/src/components/client/FclInquiryPanel.tsx
+apps/api/src/modules/fcl-inquiries/routes.ts
+.github/workflows/ci.yml
+```
+
+### 部署
+- `deploy.sh` 改为同时构建 web + api，轮询等待最多 60s
+- 服务器：`docker exec mywebsite-api-1 npx prisma db execute ...` 建 fcl_inquiries 表
+
+---
+
+## 改代码前强制检查
+
 ## 改代码前强制检查
 
 ### 1. 删/改任何变量、函数、常量前
