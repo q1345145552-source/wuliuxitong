@@ -74,8 +74,9 @@ export default function StaffLastmile(props: StaffLastmileProps) {
         props.onReloadOrders();
       } catch (e: any) {
         props.onToast(e.message || "失败");
+      } finally {
+        setLmSignData(null);
       }
-      setLmSignData(null);
     };
     rdr.readAsDataURL(file);
   };

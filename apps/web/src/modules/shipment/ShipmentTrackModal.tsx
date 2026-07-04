@@ -428,7 +428,7 @@ function ShipmentTrackModal({ trackingOrId, onClose }: { trackingOrId: string; o
     setLoading(true);
     setError("");
     setData(null);
-    const isUuid = /^[a-f0-9-]{20,}$/i.test(trackingOrId);
+    const isUuid = /^[a-z0-9_-]{20,}$/i.test(trackingOrId);
     const params = new URLSearchParams(
       isUuid ? { shipmentId: trackingOrId } : { trackingNo: trackingOrId }
     );

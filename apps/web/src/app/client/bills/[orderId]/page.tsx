@@ -52,6 +52,7 @@ export default function ClientBillDetailPage() {
     { id: "wh_yiwu_01", label: "义乌仓" },
     { id: "wh_guangzhou_01", label: "广州仓" },
     { id: "wh_dongguan_01", label: "东莞仓" },
+    { id: "wh_shenzhen_01", label: "深圳仓" },
   ] as const;
   const warehouseLabel = (warehouseId?: string): string => {
     if (!warehouseId) return "-";

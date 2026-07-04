@@ -650,8 +650,8 @@ export class ClientAiService implements AiService {
         if (COMPLETED_STATUSES.includes(item.currentStatus)) {
           acc.completedCount += 1;
         }
-        acc.totalWeightKg += item.weightKg ?? 0;
-        acc.totalVolumeM3 += item.volumeM3 ?? 0;
+        acc.totalWeightKg += Number(item.weightKg ?? 0) || 0;
+        acc.totalVolumeM3 += Number(item.volumeM3 ?? 0) || 0;
         return acc;
       },
       {

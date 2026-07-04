@@ -201,7 +201,7 @@ export function buildPrealertDraft(item: any): PrealertEditDraft {
     productQuantity: item.productQuantity ?? 0,
     weightKg: item.weightKg ?? 0,
     volumeM3: item.volumeM3 ?? 0,
-    receivableAmountCny: item.receivableAmountCny ?? 0,
+    receivableAmountCny: item.receivableAmountCny != null ? item.receivableAmountCny : 0,
     receivableCurrency: (item.receivableCurrency as "CNY" | "THB") ?? "CNY",
     domesticTrackingNo: (firstProduct?.domesticTrackingNo || item.domesticTrackingNo) ?? "",
     transportMode: (item.transportMode as "sea" | "land") ?? "sea",
