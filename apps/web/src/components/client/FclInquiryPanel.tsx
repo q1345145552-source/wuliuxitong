@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { apiBaseUrl, authHeaders } from "../../services/core-api";
+import { apiBaseUrl, apiRequest } from "../../services/core-api";
 
 type FclInquiryItem = {
   id: string; clientId: string; productName: string;
@@ -41,10 +41,8 @@ export default function FclInquiryPanel(props: ClientFclInquiryProps) {
 
   const loadList = async () => {
     try {
-      const url = `${apiBaseUrl()}/client/fcl-inquiries`; // staff和client共用同一个GET端点
-      const r = await fetch(url, { headers: authHeaders() });
-      const d = await r.json();
-      if (d.code === "OK") setList(d.data.items);
+      const data = await apiRequest<{ items: FclInquiryItem[] }>(`${apiBaseUrl()}/client/fcl-inquiries`);
+      setList(data.items);
     } catch (e: any) { props.onToast("加载询价记录失败：" + (e.message || "网络错误")); }
     setListLoaded(true);
   };
@@ -89,13 +87,10 @@ export default function FclInquiryPanel(props: ClientFclInquiryProps) {
       if (props.isStaff) body.clientId = selectedClientId.trim();
 
       const endpoint = props.isStaff ? "/staff/fcl-inquiries" : "/client/fcl-inquiries";
-      const r = await fetch(apiBaseUrl() + endpoint, {
+      await apiRequest(apiBaseUrl() + endpoint, {
         method: "POST",
-        headers: { "Content-Type": "application/json", ...authHeaders() },
         body: JSON.stringify(body),
       });
-      const d = await r.json();
-      if (d.code !== "OK") throw new Error(d.message || "提交失败");
       props.onToast("整柜询价已提交");
       // 清空表单
       setProductName(""); setCargoValue(""); setCargoWeight(""); setAddress("");
