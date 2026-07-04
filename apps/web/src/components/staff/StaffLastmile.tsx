@@ -25,6 +25,7 @@ export default function StaffLastmile(props: StaffLastmileProps) {
   const [lmDeliveryDate, setLmDeliveryDate] = useState("");
   const [lmSignData, setLmSignData] = useState<{ id: string; action: string } | null>(null);
   const [previewImg, setPreviewImg] = useState<string | null>(null);
+  const [lmOrderSearch, setLmOrderSearch] = useState("");
   const lmSignFileRef = useRef<HTMLInputElement>(null);
 
   if (!props.visible) return null;
@@ -90,8 +91,12 @@ export default function StaffLastmile(props: StaffLastmileProps) {
     }
   };
 
-  const groups: Record<string, typeof props.lmOrderList> = {};
-  for (const o of props.lmOrderList) {
+  const filteredOrders = props.lmOrderList.filter(o =>
+    !lmOrderSearch || (o.deliveryNo || "").includes(lmOrderSearch) || (o.trackingNo || "").includes(lmOrderSearch) || (o.clientId || "").includes(lmOrderSearch)
+  );
+
+  const groups: Record<string, typeof filteredOrders> = {};
+  for (const o of filteredOrders) {
     if (!groups[o.deliveryNo]) groups[o.deliveryNo] = [];
     groups[o.deliveryNo].push(o);
   }
@@ -145,7 +150,12 @@ export default function StaffLastmile(props: StaffLastmileProps) {
         </div>
       </div>
 
-      {props.lmOrderList.length > 0 && Object.entries(groups).map(([dn, items]) => {
+      {props.lmOrderList.length > 0 && (
+        <div style={{ marginBottom: 12 }}>
+          <input value={lmOrderSearch} onChange={e => setLmOrderSearch(e.target.value)} placeholder="搜索派送单号/运单号/唛头..." style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "6px 8px", fontSize: 12, width: "100%" }} />
+        </div>
+      )}
+      {Object.entries(groups).map(([dn, items]) => {
         const signed = items.filter(o => o.status === "SIGNED").length;
         const total = items.length;
         const done = signed === total;
