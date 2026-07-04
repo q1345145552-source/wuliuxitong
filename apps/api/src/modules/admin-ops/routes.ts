@@ -192,8 +192,13 @@ export function registerAdminOpsRoutes(app: MinimalHttpApp): void {
     } else {
       deliveryNo = await prisma.$transaction(async (tx) => {
         await tx.$executeRawUnsafe('SELECT pg_advisory_xact_lock(2901)');
-        const count = await tx.adminLastmileOrder.count({ where: { deliveryNo: { startsWith: "WD" } } });
-        return `WD${String(count + 1).padStart(6, "0")}`;
+        const last = await tx.adminLastmileOrder.findFirst({
+          where: { deliveryNo: { startsWith: "WD" } },
+          orderBy: { deliveryNo: "desc" },
+          select: { deliveryNo: true },
+        });
+        const num = last ? parseInt(last.deliveryNo.replace("WD", ""), 10) || 0 : 0;
+        return `WD${String(num + 1).padStart(6, "0")}`;
       });
     }
     
