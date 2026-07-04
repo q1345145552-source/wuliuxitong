@@ -26,6 +26,7 @@ export default function StaffLastmile(props: StaffLastmileProps) {
   const [lmSignData, setLmSignData] = useState<{ id: string; action: string } | null>(null);
   const [previewImg, setPreviewImg] = useState<string | null>(null);
   const [lmOrderSearch, setLmOrderSearch] = useState("");
+  const [busy, setBusy] = useState(false);
   const lmSignFileRef = useRef<HTMLInputElement>(null);
 
   if (!props.visible) return null;
@@ -33,6 +34,7 @@ export default function StaffLastmile(props: StaffLastmileProps) {
   const createLastmile = async () => {
     const ids = Array.from(lmSelected);
     if (ids.length === 0) return;
+    setBusy(true);
     try {
       const r = await fetch(apiBaseUrl() + "/admin/lastmile/orders", {
         method: "POST",
@@ -50,6 +52,8 @@ export default function StaffLastmile(props: StaffLastmileProps) {
       props.onReloadOrders();
     } catch (e: any) {
       props.onToast(e.message || "创建失败");
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -147,7 +151,7 @@ export default function StaffLastmile(props: StaffLastmileProps) {
             <input value={lmPhoneNumber} onChange={e => setLmPhoneNumber(e.target.value)} placeholder="电话" style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "6px 8px", fontSize: 12, flex: 1 }} />
             <input type="date" value={lmDeliveryDate} onChange={e => setLmDeliveryDate(e.target.value)} style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "6px 8px", fontSize: 12 }} />
           </div>
-          <button disabled={lmSelected.size === 0} onClick={createLastmile} style={{ border: "none", borderRadius: 6, padding: "6px 14px", background: "#2563eb", color: "#fff", cursor: "pointer", fontSize: 12, justifySelf: "start" }}>创建派送单</button>
+          <button disabled={busy || lmSelected.size === 0} onClick={createLastmile} style={{ border: "none", borderRadius: 6, padding: "6px 14px", background: "#2563eb", color: "#fff", cursor: "pointer", fontSize: 12, justifySelf: "start" }}>创建派送单</button>
         </div>
       </div>
 
@@ -200,7 +204,7 @@ export default function StaffLastmile(props: StaffLastmileProps) {
                     </td>
                     <td style={{ padding: "4px 6px" }}>
                       {o.status !== "SIGNED" && (
-                        <button onClick={() => { setLmSignData({ id: o.id, action: "sign" }); lmSignFileRef.current?.click(); }} style={{ border: "1px solid #16a34a", borderRadius: 4, padding: "2px 6px", fontSize: 11, background: "#fff", color: "#16a34a", cursor: "pointer" }}>签收</button>
+                        <button disabled={busy} onClick={() => { setLmSignData({ id: o.id, action: "sign" }); lmSignFileRef.current?.click(); }} style={{ border: "1px solid #16a34a", borderRadius: 4, padding: "2px 6px", fontSize: 11, background: "#fff", color: "#16a34a", cursor: "pointer" }}>签收</button>
                       )}
                       <button onClick={() => deleteOrder(o.id)} style={{ border: "1px solid #fca5a5", borderRadius: 4, padding: "2px 4px", fontSize: 11, background: "#fff", color: "#dc2626", cursor: "pointer", marginLeft: 4 }}>删除</button>
                     </td>

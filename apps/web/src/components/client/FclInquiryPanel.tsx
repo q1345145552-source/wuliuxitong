@@ -25,6 +25,7 @@ export default function FclInquiryPanel(props: ClientFclInquiryProps) {
   const [message, setMessage] = useState("");
   const [list, setList] = useState<FclInquiryItem[]>([]);
   const [listLoaded, setListLoaded] = useState(false);
+  const [listError, setListError] = useState(false);
 
   // 表单
   const [productName, setProductName] = useState("");
@@ -43,7 +44,7 @@ export default function FclInquiryPanel(props: ClientFclInquiryProps) {
     try {
       const data = await apiRequest<{ items: FclInquiryItem[] }>(`${apiBaseUrl()}/client/fcl-inquiries`);
       setList(data.items);
-    } catch (e: any) { props.onToast("加载询价记录失败：" + (e.message || "网络错误")); }
+    } catch (e: any) { props.onToast("加载询价记录失败：" + (e.message || "网络错误")); setListError(true); }
     setListLoaded(true);
   };
 
@@ -205,7 +206,8 @@ export default function FclInquiryPanel(props: ClientFclInquiryProps) {
       {/* 历史列表 */}
       <h3 style={{ fontSize: 15, marginBottom: 10 }}>询价记录</h3>
       {!listLoaded && <button onClick={loadList} style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "6px 14px", background: "#fff", cursor: "pointer", fontSize: 13 }}>加载记录</button>}
-      {listLoaded && list.length === 0 && <p style={{ color: "#9ca3af", fontSize: 13 }}>暂无询价记录</p>}
+      {listLoaded && listError && <button onClick={() => { setListError(false); setListLoaded(false); }} style={{ border: "1px solid #fca5a5", borderRadius: 6, padding: "6px 14px", background: "#fff", color: "#dc2626", cursor: "pointer", fontSize: 13 }}>加载失败，点击重试</button>}
+      {listLoaded && !listError && list.length === 0 && <p style={{ color: "#9ca3af", fontSize: 13 }}>暂无询价记录</p>}
       {list.length > 0 && (
         <div style={{ overflowX: "auto" }}>
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
