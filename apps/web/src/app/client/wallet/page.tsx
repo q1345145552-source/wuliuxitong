@@ -86,6 +86,7 @@ export default function ClientWalletPage() {
       const result = reader.result as string;
       setRechargeProof(result);
     };
+    reader.onerror = () => setRechargeError("文件读取失败，请重试");
     reader.readAsDataURL(file);
   };
 

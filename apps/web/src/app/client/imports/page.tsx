@@ -133,18 +133,22 @@ export default function ClientImportsPage() {
   const handleUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
-    const buffer = await file.arrayBuffer();
-    const wb = XLSX.read(buffer, { type: "array" });
-    const ws = wb.Sheets[wb.SheetNames[0]];
-    const raw = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { defval: "" });
-    const normalized = normalizeRows(raw);
-    setRows(normalized);
-    setCurrent(0);
-    setSuccessCount(0);
-    setFailCount(0);
-    setErrors([]);
-    setDone(false);
-    setMessage(`已读取 ${normalized.length} 条有效数据`);
+    try {
+      const buffer = await file.arrayBuffer();
+      const wb = XLSX.read(buffer, { type: "array" });
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      const raw = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { defval: "" });
+      const normalized = normalizeRows(raw);
+      setRows(normalized);
+      setCurrent(0);
+      setSuccessCount(0);
+      setFailCount(0);
+      setErrors([]);
+      setDone(false);
+      setMessage(`已读取 ${normalized.length} 条有效数据`);
+    } catch {
+      setMessage("文件解析失败，请确认使用提供的模板格式");
+    }
     event.target.value = "";
   };
 

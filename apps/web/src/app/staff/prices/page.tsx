@@ -19,6 +19,7 @@ export default function StaffPricesPage() {
   const [clientPrices, setClientPrices] = useState<Record<string, number>>({});
   const [disableMin, setDisableMin] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
 
   const load = async () => {
     setLoading(true);
@@ -26,6 +27,8 @@ export default function StaffPricesPage() {
       const [c, r] = await Promise.all([fetchStaffClients(), fetchAdminShippingRates()]);
       setClients(c);
       setDefaults(r.defaults);
+    } catch {
+      setError("加载失败，请刷新重试");
     } finally {
       setLoading(false);
     }
@@ -48,7 +51,7 @@ export default function StaffPricesPage() {
       <section style={{ border: "1px solid #e5e7eb", borderRadius: 12, padding: 20, background: "#fff" }}>
         <h2 style={{ marginTop: 0, fontSize: 18 }}>客户价格查询</h2>
         <p style={{ color: "#000000", fontSize: 13, marginBottom: 16 }}>查看每个客户当前的价格配置（只读）。</p>
-        {loading ? <p>加载中…</p> : (
+        {error ? <p style={{ color: "#b91c1c" }}>{error}</p> : loading ? <p>加载中…</p> : (
           <div style={{ display: "grid", gap: 6 }}>
             {clients.map((c) => (
               <div key={c.id} style={{ border: "1px solid #e5e7eb", borderRadius: 8, padding: 10 }}>

@@ -340,7 +340,7 @@ function TrackContent({ data }: { data: TrackData }) {
             <div style={{ marginTop: 2 }}>分装：{data.children?.length ?? 0}个子单</div>
           </>
         ) : data.children?.[activeTab - 1] ? (
-          <span>📦 {data.children[activeTab - 1].itemName ?? "—"} ｜ {data.children[activeTab - 1].packageCount ?? "—"} 件{data.children[activeTab - 1].batchNo ? ` ｜ 柜号：${data.children[activeTab - 1].batchNo}` : ""}</span>
+          <span>📦 {data.children[activeTab - 1].itemName ?? "—"} ｜ {data.children[activeTab - 1].packageCount ?? "—"} 件{data.containers?.[0]?.containerNo && data.children[activeTab - 1].batchNo ? ` ｜ 柜号：${data.children[activeTab - 1].batchNo}` : ""}</span>
         ) : null}
       </div>
 
