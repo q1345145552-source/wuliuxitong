@@ -435,6 +435,9 @@ export default function ClientHomePage() {
   // 运单查询区 10 秒自动刷新（递归setTimeout，防请求堆积）
   useEffect(() => {
     if (activeSection !== "client-query") return;
+    // 有搜索条件时不自动刷新，避免覆盖用户筛选结果
+    const hasFilter = search.batchNo || search.orderId || search.domesticTrackingNo || search.status || search.transportMode || search.warehouseId || search.arrivedDateFrom || search.arrivedDateTo;
+    if (hasFilter && hasQueried) return;
     let timer: ReturnType<typeof setTimeout>;
     let cancelled = false;
     const poll = async () => {
@@ -450,7 +453,7 @@ export default function ClientHomePage() {
     };
     timer = setTimeout(poll, 10000);
     return () => { cancelled = true; clearTimeout(timer); };
-  }, [activeSection, queryMode]);
+  }, [activeSection, queryMode, hasQueried]);
 
   const statusToneClass = (status?: string): string => {
     const value = (status ?? "").toLowerCase();
