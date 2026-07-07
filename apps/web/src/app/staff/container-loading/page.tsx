@@ -26,10 +26,11 @@ const STATUS_LABEL: Record<string, string> = {
   ARRIVED: "已到港",
   CUSTOMS: "清关中",
   CUSTOMS_CLEARED: "清关已放行",
+  UNLOADING: "正在卸柜",
   IN_WAREHOUSE_TH: "已到仓",
 };
 
-const STATUS_FLOW = ["LOADING", "SEALED", "IN_TRANSIT", "DELAY_DEPARTED", "ARRIVED", "CUSTOMS", "CUSTOMS_CLEARED", "IN_WAREHOUSE_TH"] as const;
+const STATUS_FLOW = ["LOADING", "SEALED", "IN_TRANSIT", "DELAY_DEPARTED", "ARRIVED", "CUSTOMS", "CUSTOMS_CLEARED", "UNLOADING", "IN_WAREHOUSE_TH"] as const;
 
 const WAREHOUSE_ZH: Record<string, string> = {
   wh_yiwu_01: "义乌仓",
@@ -277,6 +278,7 @@ export default function StaffContainerLoadingPage() {
           <option value="ARRIVED">已到港</option>
           <option value="CUSTOMS">清关中</option>
           <option value="CUSTOMS_CLEARED">清关已放行</option>
+          <option value="UNLOADING">正在卸柜</option>
           <option value="IN_WAREHOUSE_TH">已到仓</option>
           <option value="OUT_FOR_DELIVERY">派送中</option>
           <option value="SIGNED">已签收</option>
