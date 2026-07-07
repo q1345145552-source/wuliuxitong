@@ -2,7 +2,7 @@
 
 import { DEFAULT_SHIPPING_PRICES, INSPECTION_SURCHARGE, SENSITIVE_SURCHARGE } from "../../../../../packages/shared-types/constants";
 
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { Anchor, ClipboardCheck, PackageCheck, Ship, Truck, Warehouse, type LucideIcon } from "lucide-react";
 import { Bar, BarChart, CartesianGrid, Cell, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import EmptyStateCard from "../../modules/layout/EmptyStateCard";
@@ -433,6 +433,10 @@ export default function ClientHomePage() {
   }, []);
 
   // 运单查询区 10 秒自动刷新（递归setTimeout，防请求堆积）
+  // 用 ref 跟踪最新的 queryMode，避免轮询闭包拿到旧值
+  const queryModeRef = useRef(queryMode);
+  queryModeRef.current = queryMode;
+
   useEffect(() => {
     if (activeSection !== "client-query") return;
     // 有搜索条件时不自动刷新，避免覆盖用户筛选结果
@@ -443,11 +447,12 @@ export default function ClientHomePage() {
     const poll = async () => {
       if (cancelled) return;
       try {
-        const orders = queryMode === "all"
+        const mode = queryModeRef.current;
+        const orders = mode === "all"
           ? await fetchClientOrders()
-          : await fetchClientOrders({ statusGroup: queryMode as "unfinished" | "completed" });
+          : await fetchClientOrders({ statusGroup: mode as "unfinished" | "completed" });
         if (!cancelled) { setQueriedOrders(orders); setHasQueried(true); }
-        if (queryMode === "all") saveOrdersToCache(orders);
+        if (mode === "all") saveOrdersToCache(orders);
       } catch { /* silent */ }
       if (!cancelled) timer = setTimeout(poll, 10000);
     };
