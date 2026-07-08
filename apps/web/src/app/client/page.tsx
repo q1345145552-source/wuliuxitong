@@ -367,6 +367,7 @@ export default function ClientHomePage() {
         .filter((item) => !search.status || (item.currentStatus ?? "").toLowerCase() === search.status.toLowerCase())
         .filter((item) => !search.transportMode || item.transportMode === search.transportMode)
         .filter((item) => !search.warehouseId || item.warehouseId === search.warehouseId);
+      console.log("[查询] 设置结果", result.length, "条", new Date().toLocaleTimeString());
       setQueriedOrders(result);
       setHasQueried(true);
       hasQueriedRef.current = true;
@@ -427,7 +428,8 @@ export default function ClientHomePage() {
     setDashboardLoading(true);
     fetchClientOrders()
       .then((orders) => {
-        if (hasQueriedRef.current) return; // 用户已手动搜索，不覆盖
+        if (hasQueriedRef.current) { console.log("[初始加载] 跳过覆盖，用户已搜索"); return; }
+        console.log("[初始加载] 设置初始数据", orders.length, "条");
         setQueriedOrders(orders);
         setHasQueried(true);
         setQueryMode("all");
@@ -1163,6 +1165,7 @@ export default function ClientHomePage() {
                                   try { const imgs = await fetchShipmentImages(item.id); setDetailImagesCache((prev) => ({ ...prev, [item.id]: imgs })); } catch (e) { console.error("加载产品图失败:", item.id, item.trackingNo, e); }
                                 }
                               }
+                              console.log("[详情] 展开/收起", item.id, !!next[item.id], new Date().toLocaleTimeString());
                               setOpenDetailsByOrder(next);
                             }} style={{ border: "none", borderRadius: 4, padding: "2px 6px", background: isExpanded ? "#dbeafe" : "#f3f4f6", color: "#374151", cursor: "pointer", fontSize: 14, fontWeight: 700, lineHeight: 1 }}>
                               {isExpanded ? "−" : "+"}
