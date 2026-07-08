@@ -24,7 +24,7 @@ export default function StaffProductImagesPanel(props: OrderProductImagesPanelPr
           {imgs.map((img) => (
             <div key={img.id}>
               <img
-                src={img.imageUrl ? `${apiBaseUrl()}${img.imageUrl}` : `data:${img.mime};base64,${img.contentBase64}`}
+                src={img.imageUrl ? `${apiBaseUrl()}${img.imageUrl}` : ""}
                 alt={img.fileName}
                 style={{ width: 88, height: 88, objectFit: "cover", borderRadius: 8, border: "1px solid #e5e7eb", display: "block" }}
               />

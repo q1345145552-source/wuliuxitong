@@ -213,10 +213,17 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
     const auth = requireRole(req, res, ["admin"]);
     if (!auth) return;
 
-    const rows = await prisma.shipment.findMany({
-      where: { companyId: auth.companyId, parentTrackingNo: null },
-      orderBy: { updatedAt: "desc" },
-      take: 500,
+    const page = parseInt(req.query.page as string) || 1;
+    const pageSize = Math.min(parseInt(req.query.pageSize as string) || 50, 200);
+    const where = { companyId: auth.companyId, parentTrackingNo: null } as const;
+
+    const [total, rows] = await Promise.all([
+      prisma.shipment.count({ where }),
+      prisma.shipment.findMany({
+        where,
+        orderBy: { updatedAt: "desc" },
+        skip: (page - 1) * pageSize,
+        take: pageSize,
       include: {
         order: {
           include: {
@@ -273,6 +280,9 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
         productImages: item.orderId ? (imageMap.get(item.orderId) ?? []) : [],
         products: item.orderId ? (productsMap.get(item.orderId) ?? []) : [],
       })),
+      page,
+      pageSize,
+      total,
     });
   });
 

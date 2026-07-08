@@ -189,7 +189,8 @@ export default function AdminHomePage() {
   const [staffPanelCollapsed, setStaffPanelCollapsed] = useState(false);
   const [ordersPanelCollapsed, setOrdersPanelCollapsed] = useState(false);
   const [selectedOrders, setSelectedOrders] = useState<Set<string>>(new Set());
-  const [pageSize, setPageSize] = useState(100);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(50);
   const [orderSearch, setOrderSearch] = useState({
     trackingNo: "", domesticTrackingNo: "", clientName: "", warehouseId: "",
     batchNo: "", itemName: "", packageCount: "", productQuantity: "",
@@ -851,7 +852,11 @@ export default function AdminHomePage() {
   const toggleSelectOrder = (id: string) => {
     setSelectedOrders((prev) => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n; });
   };
-  const pagedOrders = useMemo(() => filteredOrderList.slice(0, pageSize), [filteredOrderList, pageSize]);
+  const totalPages = Math.max(1, Math.ceil(filteredOrderList.length / pageSize));
+  const pagedOrders = useMemo(() => {
+    const offset = (currentPage - 1) * pageSize;
+    return filteredOrderList.slice(offset, offset + pageSize);
+  }, [filteredOrderList, pageSize, currentPage]);
 
   const toggleSelectAllOrders = () => {
     if (selectedOrders.size === filteredOrderList.length) setSelectedOrders(new Set());
@@ -1406,10 +1411,14 @@ export default function AdminHomePage() {
         ) : (
           <>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8, padding: "0 8px" }}>
-            <span style={{ fontSize: 12, color: "#000000" }}>共 {filteredOrderList.length} 条</span>
-            <select value={pageSize} onChange={(e) => setPageSize(Number(e.target.value))} style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "4px 8px", fontSize: 12 }}>
-              {[20, 50, 100, 200, 500, 1000].map((n) => <option key={n} value={n}>{n}条/页</option>)}
-            </select>
+            <span style={{ fontSize: 12, color: "#000000" }}>共 {filteredOrderList.length} 条 · 第 {currentPage}/{totalPages} 页</span>
+            <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+              <button onClick={() => setCurrentPage((p) => Math.max(1, p - 1))} disabled={currentPage <= 1} style={{ border: "1px solid #d1d5db", borderRadius: 4, padding: "2px 8px", background: "#fff", cursor: currentPage <= 1 ? "default" : "pointer", fontSize: 12, opacity: currentPage <= 1 ? 0.5 : 1 }}>上一页</button>
+              <button onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))} disabled={currentPage >= totalPages} style={{ border: "1px solid #d1d5db", borderRadius: 4, padding: "2px 8px", background: "#fff", cursor: currentPage >= totalPages ? "default" : "pointer", fontSize: 12, opacity: currentPage >= totalPages ? 0.5 : 1 }}>下一页</button>
+              <select value={pageSize} onChange={(e) => { setPageSize(Number(e.target.value)); setCurrentPage(1); }} style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "4px 8px", fontSize: 12 }}>
+                {[20, 50, 100, 200].map((n) => <option key={n} value={n}>{n}条/页</option>)}
+              </select>
+            </div>
           </div>
           <div style={{ overflowX: "auto" }}>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, minWidth: 1700 }}>

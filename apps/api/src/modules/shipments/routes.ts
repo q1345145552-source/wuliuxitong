@@ -435,14 +435,19 @@ export function registerShipmentRoutes(app: MinimalHttpApp): void {
     const auth = requireRole(req, res, ["staff", "admin"]);
     if (!auth) return;
 
-    const limit = parseInt(req.query.limit as string) || 500;
-    const includeChildren = req.query.all === "1"; // 尾端派送等场景需要包含子运单
+    const page = parseInt(req.query.page as string) || 1;
+    const pageSize = Math.min(parseInt(req.query.pageSize as string) || 50, 200);
+    const includeChildren = req.query.all === "1";
     const where: any = { companyId: auth.companyId };
     if (!includeChildren) where.parentTrackingNo = null;
-    const rows = await prisma.shipment.findMany({
-      where,
-      orderBy: { updatedAt: "desc" },
-      take: Math.min(limit, 500),
+
+    const [total, rows] = await Promise.all([
+      prisma.shipment.count({ where }),
+      prisma.shipment.findMany({
+        where,
+        orderBy: { updatedAt: "desc" },
+        skip: (page - 1) * pageSize,
+        take: pageSize,
       include: {
         order: {
           include: {
@@ -508,7 +513,7 @@ export function registerShipmentRoutes(app: MinimalHttpApp): void {
       const imap = new Map<string, any[]>();
       for (const r of imageRows) {
         const list = imap.get(r.orderId) ?? [];
-        list.push({ id: r.id, fileName: r.fileName, mime: r.mime, contentBase64: r.contentBase64 ?? "", filePath: r.filePath, imageUrl: r.filePath || undefined, createdAt: r.createdAt.toISOString() });
+        list.push({ id: r.id, fileName: r.fileName, mime: r.mime, imageUrl: r.filePath || undefined, createdAt: r.createdAt.toISOString() });
         imap.set(r.orderId, list);
       }
       for (const item of items) {
@@ -537,7 +542,7 @@ export function registerShipmentRoutes(app: MinimalHttpApp): void {
       }
     }
 
-    ok(res, { items, page: 1, pageSize: items.length, total: items.length });
+    ok(res, { items, page, pageSize, total });
   });
 
   // 按需加载单个订单的产品图

@@ -848,12 +848,20 @@ export async function splitStaffShipment(payload: {
 }
 
 export async function fetchStaffShipments(): Promise<ShipmentItem[]> {
-  const response = await fetch(`${apiBaseUrl()}/staff/shipments`, {
+  const response = await fetch(`${apiBaseUrl()}/staff/shipments?pageSize=200`, {
     method: "GET",
     headers: { ...authHeaders() },
   });
   const data = await parseApiResponse<{ items: ShipmentItem[] }>(response);
   return data.items;
+}
+
+export async function fetchStaffShipmentsPaged(page: number, pageSize: number): Promise<{ items: ShipmentItem[]; total: number; page: number; pageSize: number }> {
+  const response = await fetch(`${apiBaseUrl()}/staff/shipments?page=${page}&pageSize=${pageSize}`, {
+    method: "GET",
+    headers: { ...authHeaders() },
+  });
+  return parseApiResponse(response);
 }
 
 export async function fetchShipmentImages(orderId: string): Promise<OrderProductImageItem[]> {

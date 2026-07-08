@@ -830,6 +830,8 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
     const auth = requireRole(req, res, ["client"]);
     if (!auth) return;
 
+    const page = parseInt(req.query.page as string) || 1;
+    const pageSize = Math.min(parseInt(req.query.pageSize as string) || 50, 200);
     const statusGroup = req.query.statusGroup?.trim();
     const itemName = req.query.itemName?.trim();
     const transportMode = req.query.transportMode?.trim();
@@ -837,13 +839,14 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
     const orderNo = req.query.orderNo?.trim();
     const domesticTrackingNo = req.query.domesticTrackingNo?.trim();
 
-    const orders = await prisma.order.findMany({
-      where: {
-        companyId: auth.companyId,
-        approvalStatus: { in: ["approved", "shipped"] },
-        clientId: auth.userId,
-      },
-      orderBy: { createdAt: "asc" },
+    const where = { companyId: auth.companyId, approvalStatus: { in: ["approved", "shipped"] }, clientId: auth.userId } as const;
+    const [total, orders] = await Promise.all([
+      prisma.order.count({ where }),
+      prisma.order.findMany({
+        where,
+        orderBy: { createdAt: "asc" },
+        skip: (page - 1) * pageSize,
+        take: pageSize,
       include: {
         shipments: {
           orderBy: { updatedAt: "desc" },
@@ -936,12 +939,7 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
       products: productsMap.get(item.id) ?? [],
     }));
 
-    ok(res, {
-      items: itemsWithImages,
-      page: 1,
-      pageSize: itemsWithImages.length,
-      total: itemsWithImages.length,
-    });
+    ok(res, { items: itemsWithImages, page, pageSize, total });
   });
 
   // ===== 客户端付款 =====

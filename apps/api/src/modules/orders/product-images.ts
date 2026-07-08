@@ -8,8 +8,6 @@ export type OrderProductImagePayload = {
   id: string;
   fileName: string;
   mime: string;
-  contentBase64: string;
-  filePath?: string | null;
   imageUrl?: string;
   createdAt: string;
 };
@@ -47,8 +45,6 @@ export async function loadProductImagesForOrders(
       id: row.id,
       fileName: row.fileName,
       mime: row.mime,
-      contentBase64: row.filePath ? "" : row.contentBase64,
-      filePath: row.filePath,
       imageUrl: row.filePath || undefined,
       createdAt: row.createdAt.toISOString(),
     });
