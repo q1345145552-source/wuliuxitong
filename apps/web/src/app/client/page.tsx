@@ -439,9 +439,8 @@ export default function ClientHomePage() {
 
   useEffect(() => {
     if (activeSection !== "client-query") return;
-    // 有搜索条件时不自动刷新，避免覆盖用户筛选结果
-    const hasFilter = search.batchNo || search.orderId || search.domesticTrackingNo || search.status || search.transportMode || search.warehouseId || search.arrivedDateFrom || search.arrivedDateTo;
-    if (hasFilter && hasQueried) return;
+    // 用户已执行过查询，不再自动刷新，避免覆盖搜索结果
+    if (hasQueried) return;
     let timer: ReturnType<typeof setTimeout>;
     let cancelled = false;
     const poll = async () => {
