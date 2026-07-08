@@ -53,7 +53,6 @@ import {
   fetchStaffPrealerts,
   createStaffOrder,
   type OrderProductImageItem,
-  type ShipmentItem,
   // 充值审核
   fetchAdminRecharges,
   approveRecharge,

@@ -155,10 +155,10 @@ export default function ClientHomePage() {
   const [editingPrealert, setEditingPrealert] = useState<OrderItem  |  null>(null);
   const [previewImage, setPreviewImage] = useState<{ src: string; alt: string }  |  null>(null);
   const [shippingPrices, setShippingPrices] = useState<Record<string, ShippingPriceItem>  |  null>(null);
-  const [selectedOrders, setSelectedOrders] = useState<Set<string>>(new Set());
+
   const [pageSize, setPageSize] = useState(50);
   const [currentPage, setCurrentPage] = useState(1);
-  const toggleSelectClientOrder = (id: string) => { setSelectedOrders((p) => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n; }); };
+
   const [queryPanelCollapsed, setQueryPanelCollapsed] = useState(false);
   const [openLogisticsByOrder, setOpenLogisticsByOrder] = useState<Record<string, boolean>>({});
   const [openDetailsByOrder, setOpenDetailsByOrder] = useState<Record<string, boolean>>({});

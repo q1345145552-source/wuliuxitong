@@ -157,7 +157,7 @@ export interface OrderProductImageItem {
   id: string;
   fileName: string;
   mime: string;
-  contentBase64: string;
+  contentBase64?: string;
   filePath?: string | null;
   imageUrl?: string;
   createdAt: string;
@@ -856,13 +856,6 @@ export async function fetchStaffShipments(): Promise<ShipmentItem[]> {
   return data.items;
 }
 
-export async function fetchStaffShipmentsPaged(page: number, pageSize: number): Promise<{ items: ShipmentItem[]; total: number; page: number; pageSize: number }> {
-  const response = await fetch(`${apiBaseUrl()}/staff/shipments?page=${page}&pageSize=${pageSize}`, {
-    method: "GET",
-    headers: { ...authHeaders() },
-  });
-  return parseApiResponse(response);
-}
 
 export async function fetchShipmentImages(orderId: string): Promise<OrderProductImageItem[]> {
   const response = await fetch(`${apiBaseUrl()}/staff/shipments/images?orderId=${encodeURIComponent(orderId)}`, {
