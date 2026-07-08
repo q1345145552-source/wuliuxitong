@@ -423,8 +423,6 @@ export default function ClientHomePage() {
       setQueriedOrders(cached);
       setQueryMode("all");
     }
-    // 无论有无缓存，立即阻止轮询，等初始加载完成再放开
-    setHasQueried(true);
     setDashboardLoading(true);
     fetchClientOrders()
       .then((orders) => {
@@ -445,8 +443,9 @@ export default function ClientHomePage() {
 
   useEffect(() => {
     if (activeSection !== "client-query") return;
-    // 用户已执行过查询，不再自动刷新，避免覆盖搜索结果
-    if (hasQueried) return;
+    // 有搜索条件时不自动刷新；纯浏览分组（在途/已完成/全部）正常刷新
+    const hasFilter = search.batchNo || search.orderId || search.domesticTrackingNo || search.status || search.transportMode || search.warehouseId || search.arrivedDateFrom || search.arrivedDateTo;
+    if (hasFilter || dashboardLoading) return;
     let timer: ReturnType<typeof setTimeout>;
     let cancelled = false;
     const poll = async () => {
@@ -463,7 +462,7 @@ export default function ClientHomePage() {
     };
     timer = setTimeout(poll, 10000);
     return () => { cancelled = true; clearTimeout(timer); };
-  }, [activeSection, queryMode, hasQueried]);
+  }, [activeSection, queryMode, dashboardLoading, search.batchNo, search.orderId, search.domesticTrackingNo, search.status, search.transportMode, search.warehouseId, search.arrivedDateFrom, search.arrivedDateTo]);
 
   const statusToneClass = (status?: string): string => {
     const value = (status ?? "").toLowerCase();
