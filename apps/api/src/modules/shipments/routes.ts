@@ -448,14 +448,15 @@ export function registerShipmentRoutes(app: MinimalHttpApp): void {
         orderBy: { updatedAt: "desc" },
         skip: (page - 1) * pageSize,
         take: pageSize,
-      include: {
-        order: {
-          include: {
-            client: { select: { name: true } },
+        include: {
+          order: {
+            include: {
+              client: { select: { name: true } },
+            },
           },
         },
-      },
-    });
+      }),
+    ]);
 
     const items = rows.map((r) => ({
       id: r.id,

@@ -847,30 +847,31 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
         orderBy: { createdAt: "asc" },
         skip: (page - 1) * pageSize,
         take: pageSize,
-      include: {
-        shipments: {
-          orderBy: { updatedAt: "desc" },
-          take: 1,
-          select: {
-            id: true,
-            trackingNo: true,
-            currentStatus: true,
-            statusLogs: {
-              where: { NOT: [{ remark: null }, { remark: "" }] },
-              orderBy: { changedAt: "asc" },
-              select: {
-                remark: true,
-                changedAt: true,
-                fromStatus: true,
-                toStatus: true,
-                operatorRole: true,
-                operatorName: true,
+        include: {
+          shipments: {
+            orderBy: { updatedAt: "desc" },
+            take: 1,
+            select: {
+              id: true,
+              trackingNo: true,
+              currentStatus: true,
+              statusLogs: {
+                where: { NOT: [{ remark: null }, { remark: "" }] },
+                orderBy: { changedAt: "asc" },
+                select: {
+                  remark: true,
+                  changedAt: true,
+                  fromStatus: true,
+                  toStatus: true,
+                  operatorRole: true,
+                  operatorName: true,
+                },
               },
             },
           },
         },
-      },
-    });
+      }),
+    ]);
 
     const filtered = orders
       .filter((o) => !itemName || o.itemName.includes(itemName))
