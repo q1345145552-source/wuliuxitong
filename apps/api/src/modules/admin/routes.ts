@@ -139,6 +139,7 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
         where: { companyId: auth.companyId, updatedAt: { gte: startOfToday } },
         _sum: { volumeM3: true },
       }),
+  }),$
     ]);
 
     const totalVolume = volumeAgg._sum.volumeM3 ? Number(volumeAgg._sum.volumeM3.toString()) : 0;
@@ -231,7 +232,7 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
             },
           },
         },
-      },
+      }),
     ]);
 
     const items = rows.map((r) => ({
