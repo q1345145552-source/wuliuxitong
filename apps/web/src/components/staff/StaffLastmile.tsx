@@ -155,7 +155,9 @@ export default function StaffLastmile(props: StaffLastmileProps) {
         </div>
       </div>
 
-      {props.lmOrderList.length > 0 && (
+      {props.lmOrderList.length === 0 ? (
+        <p style={{ color: "#9ca3af", fontSize: 13 }}>暂无派送单</p>
+      ) : (
         <div style={{ marginBottom: 12 }}>
           <input value={lmOrderSearch} onChange={e => setLmOrderSearch(e.target.value)} placeholder="搜索派送单号/运单号/唛头..." style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "6px 8px", fontSize: 12, width: "100%" }} />
         </div>

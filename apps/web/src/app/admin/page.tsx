@@ -240,6 +240,7 @@ export default function AdminHomePage() {
     const res = await fetch(`${apiBaseUrl()}/admin/lastmile/status`, { method: "POST", headers: {"Content-Type":"application/json",...authHeaders()}, body: JSON.stringify({id, status, signImageBase64: signImageBase64 || undefined}) });
     return parseApiResponse(res);
   };
+  const [previewImg, setPreviewImg] = useState<string | null>(null);
   // 充值审核
   const [rechargeList, setRechargeList] = useState<AdminWalletRechargeItem[]>([]);
   const [rechargeStatusFilter, setRechargeStatusFilter] = useState("");
@@ -1787,7 +1788,7 @@ export default function AdminHomePage() {
                     <td style={{ padding: "6px 8px" }}>{o.licensePlate ?? "-"}</td>
                     <td style={{ padding: "6px 8px" }}>{o.phoneNumber ?? "-"}</td>
                     <td style={{ padding: "6px 8px" }}>{o.deliveryDate || "-"}</td>
-                    <td style={{ padding: "6px 8px" }}>{o.status === "SIGNED" ? <>✅ 已签收{o.signImageBase64?<img src={"data:image/jpeg;base64,"+o.signImageBase64} style={{maxWidth:40,maxHeight:40,borderRadius:4,marginLeft:4}} alt="" />:null}</> : o.status === "DELIVERING" ? "🚚 派送中" : o.status}</td>
+                    <td style={{ padding: "6px 8px" }}>{o.status === "SIGNED" ? <span>✅ 已签收{o.signImageBase64 ? <img src={"data:image/jpeg;base64,"+o.signImageBase64} alt="签收凭证" onClick={() => setPreviewImg("data:image/jpeg;base64,"+o.signImageBase64!)} style={{ maxWidth:40, maxHeight:40, borderRadius:4, marginLeft:4, cursor:"pointer", border:"1px solid #e5e7eb" }} /> : null}</span> : o.status === "DELIVERING" ? "🚚 派送中" : o.status}</td>
                     <td style={{ padding: "6px 8px" }}>
                       {o.status !== "SIGNED" && (
                         <button onClick={async () => {
@@ -1817,6 +1818,13 @@ export default function AdminHomePage() {
           };
           reader.readAsDataURL(f);
         }} />
+
+      {/* 签收图片放大预览 */}
+      {previewImg && (
+        <div onClick={() => setPreviewImg(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.75)", zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
+          <img src={previewImg} alt="签收凭证" onClick={e => e.stopPropagation()} style={{ maxWidth: "90vw", maxHeight: "90vh", borderRadius: 8 }} />
+        </div>
+      )}
       </section>
 
       {/* 尾端地址 */}
