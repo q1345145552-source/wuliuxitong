@@ -1594,7 +1594,7 @@ export default function AdminHomePage() {
                               <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
                                 {(orderImagesCache[o.orderId ?? o.id] ?? o.productImages ?? []).map((img: any) => (
                                   <div key={img.id} style={{ position: "relative" }}>
-                                    <img src={img.imageUrl ? `${apiBaseUrl()}${img.imageUrl}` : `data:${img.mime};base64,${img.contentBase64}`} alt={img.fileName} style={{ width: 88, height: 88, objectFit: "cover", borderRadius: 8, border: "1px solid #e5e7eb" }} />
+                                    <img src={img.imageUrl ? `${apiBaseUrl()}${img.imageUrl}` : ""} alt={img.fileName} style={{ width: 88, height: 88, objectFit: "cover", borderRadius: 8, border: "1px solid #e5e7eb" }} />
                                     <button type="button" onClick={async () => { await deleteStaffOrderProductImage(img.id); const oid = o.orderId ?? o.id; const imgs = await fetchShipmentImages(oid); setOrderImagesCache((c) => ({ ...c, [oid]: imgs })); }} style={{ position: "absolute", top: -4, right: -4, width: 18, height: 18, borderRadius: "50%", background: "#dc2626", color: "#fff", border: "none", cursor: "pointer", fontSize: 11, lineHeight: 1 }}>×</button>
                                   </div>
                                 ))}
@@ -1665,7 +1665,7 @@ export default function AdminHomePage() {
                               <div style={{ fontWeight: 600, marginBottom: 6, fontSize: 13, color: "#000000" }}>产品图</div>
                               <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
                                 {o.productImages!.map((img) => (
-                                  <img key={img.id} src={img.imageUrl ? `${apiBaseUrl()}${img.imageUrl}` : `data:${img.mime};base64,${img.contentBase64}`} alt={img.fileName} style={{ width: 88, height: 88, objectFit: "cover", borderRadius: 8, border: "1px solid #e5e7eb" }} />
+                                  <img key={img.id} src={img.imageUrl ? `${apiBaseUrl()}${img.imageUrl}` : ""} alt={img.fileName} style={{ width: 88, height: 88, objectFit: "cover", borderRadius: 8, border: "1px solid #e5e7eb" }} />
                                 ))}
                               </div>
                             </div>

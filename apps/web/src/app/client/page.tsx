@@ -119,9 +119,8 @@ function PrealertPrintButton({ item }: { item: OrderItem }) {
   );
 }
 
-function imgSrc(img: { imageUrl?: string | null; mime: string; contentBase64: string }): string {
-  if (img.imageUrl) return apiBaseUrl() + img.imageUrl;
-  return 'data:' + img.mime + ';base64,' + img.contentBase64;
+function imgSrc(img: { imageUrl?: string | null }): string {
+  return img.imageUrl ? apiBaseUrl() + img.imageUrl : "";
 }
 
 // ── localStorage 运单缓存 ──
@@ -157,7 +156,8 @@ export default function ClientHomePage() {
   const [previewImage, setPreviewImage] = useState<{ src: string; alt: string }  |  null>(null);
   const [shippingPrices, setShippingPrices] = useState<Record<string, ShippingPriceItem>  |  null>(null);
   const [selectedOrders, setSelectedOrders] = useState<Set<string>>(new Set());
-  const [pageSize, setPageSize] = useState(100);
+  const [pageSize, setPageSize] = useState(50);
+  const [currentPage, setCurrentPage] = useState(1);
   const toggleSelectClientOrder = (id: string) => { setSelectedOrders((p) => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n; }); };
   const [queryPanelCollapsed, setQueryPanelCollapsed] = useState(false);
   const [openLogisticsByOrder, setOpenLogisticsByOrder] = useState<Record<string, boolean>>({});
@@ -1136,6 +1136,19 @@ export default function ClientHomePage() {
         )}
 
             {hasQueried && queriedOrders.length > 0 ? (
+            <>
+            {(() => {
+              const totalPages = Math.max(1, Math.ceil(queriedOrders.length / pageSize));
+              return (
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                  <span style={{ fontSize: 12, color: "#6b7280" }}>共 {queriedOrders.length} 条 · 第 {currentPage}/{totalPages} 页</span>
+                  <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                    <button onClick={() => setCurrentPage((p) => Math.max(1, p - 1))} disabled={currentPage <= 1} style={{ border: "1px solid #d1d5db", borderRadius: 4, padding: "2px 8px", background: "#fff", cursor: currentPage <= 1 ? "default" : "pointer", fontSize: 12 }}>上一页</button>
+                    <button onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))} disabled={currentPage >= totalPages} style={{ border: "1px solid #d1d5db", borderRadius: 4, padding: "2px 8px", background: "#fff", cursor: currentPage >= totalPages ? "default" : "pointer", fontSize: 12 }}>下一页</button>
+                  </div>
+                </div>
+              );
+            })()}
             <div style={{ overflowX: "auto" }}>
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
                 <thead><tr style={{ borderBottom: "2px solid #e5e7eb", textAlign: "left", background: "#f8fafc" }}>
@@ -1143,7 +1156,7 @@ export default function ClientHomePage() {
                   <th style={{ padding: "6px 8px", fontWeight: 600 }}>唛头</th><th style={{ padding: "6px 8px", fontWeight: 600 }}>运单号</th><th style={{ padding: "6px 8px", fontWeight: 600 }}>品名</th><th style={{ padding: "6px 8px", fontWeight: 600 }}>尺寸(cm)</th><th style={{ padding: "6px 8px", fontWeight: 600 }}>体积(m³)</th><th style={{ padding: "6px 8px", fontWeight: 600 }}>重量(kg)</th><th style={{ padding: "6px 8px", fontWeight: 600 }}>件</th><th style={{ padding: "6px 8px", fontWeight: 600 }}>运输</th><th style={{ padding: "6px 8px", fontWeight: 600 }}>物流状态</th><th style={{ padding: "6px 8px", fontWeight: 600 }}>操作</th>
                 </tr></thead>
                 <tbody>
-                  {queriedOrders.slice(0, pageSize).map((item: any) => {
+                  {queriedOrders.slice((currentPage - 1) * pageSize, currentPage * pageSize).map((item: any) => {
                     const st = item.currentStatus || "";
                     const statusMap: Record<string, string> = { created: "已创建", loaded: "已装柜", departed: "已开船", arrivedPort: "已到港", customsTH: "清关中", customsCleared: "清关已放行", inWarehouseTH: "已到仓", outForDelivery: "派送中", delivered: "已签收" };
                     const dims = (item.products ?? []).map((p: any) => (p.lengthCm && p.widthCm && p.heightCm ? p.lengthCm + "×" + p.widthCm + "×" + p.heightCm : null)).filter(Boolean).join(", ");
@@ -1255,6 +1268,7 @@ export default function ClientHomePage() {
                 </tbody>
               </table>
             </div>
+            </>
           ) : (
             <EmptyStateCard title="无匹配订单" description="可调整查询条件后重新查询。" />
           )}
