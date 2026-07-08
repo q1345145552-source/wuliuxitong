@@ -369,6 +369,7 @@ export default function ClientHomePage() {
         .filter((item) => !search.warehouseId || item.warehouseId === search.warehouseId);
       setQueriedOrders(result);
       setHasQueried(true);
+      hasQueriedRef.current = true;
       if (queryMode === "all" && !search.batchNo && !search.orderId && !search.arrivedDateFrom && !search.arrivedDateTo && !search.domesticTrackingNo && !search.status && !search.transportMode && !search.warehouseId) {
         saveOrdersToCache(result);
       }
@@ -392,6 +393,7 @@ export default function ClientHomePage() {
     setQueryMode(mode);
     setSearch(initialSearch);
     setHasQueried(false);
+    hasQueriedRef.current = false;
     setQueriedOrders([]);
     setMessage("");
   };
@@ -413,6 +415,8 @@ export default function ClientHomePage() {
   };
 
   // 页面加载：缓存优先 → 瞬时显示 → 后台静默更新
+  // 页面初始加载：缓存优先，后台静默刷新
+  // 如果初始请求返回时用户已手动搜索，不覆盖结果
   useEffect(() => {
     const cached = loadOrdersFromCache();
     if (cached && cached.length > 0) {
@@ -423,6 +427,7 @@ export default function ClientHomePage() {
     setDashboardLoading(true);
     fetchClientOrders()
       .then((orders) => {
+        if (hasQueriedRef.current) return; // 用户已手动搜索，不覆盖
         setQueriedOrders(orders);
         setHasQueried(true);
         setQueryMode("all");
@@ -436,6 +441,7 @@ export default function ClientHomePage() {
   // 用 ref 跟踪最新的 queryMode，避免轮询闭包拿到旧值
   const queryModeRef = useRef(queryMode);
   queryModeRef.current = queryMode;
+  const hasQueriedRef = useRef(false);
 
   useEffect(() => {
     if (activeSection !== "client-query") return;
