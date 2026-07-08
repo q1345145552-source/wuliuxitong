@@ -258,7 +258,7 @@ export default function AdminHomePage() {
       setRechargeList(data.recharges);
     } catch (e) { console.error(e); }
   };
-  const [orderImagesCache, setOrderImagesCache] = useState<Record<string, Array<{ id: string; fileName: string; mime: string; contentBase64: string; filePath?: string | null; imageUrl?: string; createdAt: string }>>>({});
+  const [orderImagesCache, setOrderImagesCache] = useState<Record<string, Array<{ id: string; fileName: string; mime: string; contentBase64?: string; filePath?: string | null; imageUrl?: string; createdAt: string }>>>({});
   const [orderEditForm, setOrderEditForm] = useState({
     clientId: "",
     trackingNo: "",
