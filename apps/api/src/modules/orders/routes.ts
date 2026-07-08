@@ -837,6 +837,12 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
     const orderNo = req.query.orderNo?.trim();
     const domesticTrackingNo = req.query.domesticTrackingNo?.trim();
 
+    // 临时调试：追踪6698客户查询
+    if (auth.userId === "XHH6698" || auth.userId === "6698") {
+      // eslint-disable-next-line no-console
+      console.log(`[DEBUG-6698] ${new Date().toISOString()} /client/orders statusGroup=${statusGroup||"all"} trackingNo=${trackingNo||"-"} domesticNo=${domesticTrackingNo||"-"}`);
+    }
+
     const orders = await prisma.order.findMany({
       where: {
         companyId: auth.companyId,
