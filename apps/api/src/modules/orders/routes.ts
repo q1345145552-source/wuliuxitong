@@ -837,10 +837,6 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
     const orderNo = req.query.orderNo?.trim();
     const domesticTrackingNo = req.query.domesticTrackingNo?.trim();
 
-    // 临时调试：记录所有client/orders请求
-    // eslint-disable-next-line no-console
-    console.log(`[DEBUG-CLIENT] ${new Date().toISOString()} userId=${auth.userId} statusGroup=${statusGroup||"all"}`);
-
     const orders = await prisma.order.findMany({
       where: {
         companyId: auth.companyId,

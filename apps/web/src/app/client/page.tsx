@@ -421,15 +421,15 @@ export default function ClientHomePage() {
     const cached = loadOrdersFromCache();
     if (cached && cached.length > 0) {
       setQueriedOrders(cached);
-      setHasQueried(true);
       setQueryMode("all");
     }
+    // 无论有无缓存，立即阻止轮询，等初始加载完成再放开
+    setHasQueried(true);
     setDashboardLoading(true);
     fetchClientOrders()
       .then((orders) => {
         if (hasQueriedRef.current) return;
         setQueriedOrders(orders);
-        setHasQueried(true);
         setQueryMode("all");
         saveOrdersToCache(orders);
       })
