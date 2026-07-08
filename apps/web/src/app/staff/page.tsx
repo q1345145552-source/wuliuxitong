@@ -405,6 +405,7 @@ const loadLmShipments = async () => {
     setStaffClients(clientItems);
     setShipments(shipmentItems.filter(s => !s.parentTrackingNo));
     setPrealerts(prealertItems);
+    loadLmOrders();
     setPrealertBatchDrafts((prev) => {
       const next: Record<string, string> = { ...prev };
       prealertItems.forEach((item) => {
