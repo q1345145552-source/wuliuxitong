@@ -596,6 +596,8 @@ const loadLmShipments = async () => {
     return () => { cancelled = true; };
   }, []);
 
+  useEffect(() => { loadLmOrders(); }, []);
+
   useEffect(() => {
     if (!toast) return;
     const timer = window.setTimeout(() => setToast(""), 2200);
