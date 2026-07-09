@@ -596,7 +596,7 @@ const loadLmShipments = async () => {
     return () => { cancelled = true; };
   }, []);
 
-  useEffect(() => { loadLmOrders(); }, []);
+  useEffect(() => { loadLmOrders(); loadLmShipments(); }, []);
 
   useEffect(() => {
     if (!toast) return;

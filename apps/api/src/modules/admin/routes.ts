@@ -415,23 +415,23 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
         : body.paymentStatus;
     const trackingNo = body.trackingNo === undefined ? linkedShipment?.trackingNo ?? null : body.trackingNo?.trim() || null;
     const containerNo = body.containerNo === undefined ? linkedShipment?.containerNo ?? null : body.containerNo?.trim() || null;
-    if (linkedShipment && !trackingNo) {
+    if (!trackingNo) {
       fail(res, 400, "BAD_REQUEST", "trackingNo is required");
       return;
     }
-    if (trackingNo && linkedShipment) {
-      const conflict = await prisma.shipment.findFirst({
-        where: {
-          companyId: auth.companyId,
-          trackingNo,
-          NOT: { id: linkedShipment.id },
-        },
-        select: { id: true },
-      });
-      if (conflict) {
-        fail(res, 400, "BAD_REQUEST", "trackingNo already exists");
-        return;
-      }
+    // 排除当前编辑的运单自身 + attachLinkedShipments 找到的关联运单
+    const excludeIds = [rawId, linkedShipment?.id].filter(Boolean) as string[];
+    const conflict = await prisma.shipment.findFirst({
+      where: {
+        companyId: auth.companyId,
+        trackingNo,
+        NOT: { id: { in: excludeIds } },
+      },
+      select: { id: true },
+    });
+    if (conflict) {
+      fail(res, 400, "BAD_REQUEST", "trackingNo already exists");
+      return;
     }
 
     let shipDate: string | null = null;
