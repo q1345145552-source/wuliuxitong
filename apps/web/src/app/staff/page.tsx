@@ -2,7 +2,6 @@
 
 import { Fragment, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import * as XLSX from "xlsx";
-import { AlertTriangle, ArrowRight, CheckCircle, Download, Eye, FileDown, FileUp, Lightbulb, PackagePlus, Pencil, Plus, Search, Upload, X, XCircle } from "lucide-react";
 import { formatCny } from "../../modules/billing/billing-utils";
 import ShipmentSearch from "../../modules/shipment/ShipmentSearch";
 import { openPrintLabel } from "../../modules/shipment/ShipmentPrintLabel";
@@ -1343,7 +1342,7 @@ const loadLmShipments = async () => {
                 <input value={p.domesticTrackingNo || ""} onChange={(e) => { const n = [...staffFormProducts]; n[i] = { ...n[i], domesticTrackingNo: e.target.value }; setStaffFormProducts(n); }} placeholder="货拉拉" style={{ border: "1px solid #d1d5db", borderRadius: 4, padding: "3px 4px", fontSize: 11, minWidth: 0 }} />
                 <span style={{ fontSize: 10, color: prodVol > 0 ? "#2563eb" : "#9ca3af", textAlign: "right", padding: "0 2px", whiteSpace: "nowrap" }}>{prodVol > 0 ? prodVol.toFixed(3) + "m³" : "—"}</span>
                 <span style={{ fontSize: 10, color: prodWt > 0 ? "#2563eb" : "#9ca3af", textAlign: "right", padding: "0 2px", whiteSpace: "nowrap" }}>{prodWt > 0 ? prodWt.toFixed(1) + "kg" : "—"}</span>
-                <button type="button" onClick={() => setStaffFormProducts((v) => v.filter((_, j) => j !== i))} style={{ border: "1px solid #fca5a5", borderRadius: 4, padding: "2px 4px", fontSize: 10, background: "#fff", color: "#dc2626", cursor: "pointer", minWidth: 20 }}><X size={12} /></button>
+                <button type="button" onClick={() => setStaffFormProducts((v) => v.filter((_, j) => j !== i))} style={{ border: "1px solid #fca5a5", borderRadius: 4, padding: "2px 4px", fontSize: 10, background: "#fff", color: "#dc2626", cursor: "pointer", minWidth: 20 }}>✕</button>
               </div>
             );})}
             {(() => {
@@ -1368,7 +1367,7 @@ const loadLmShipments = async () => {
             <button type="button" onClick={() => setStaffFormProducts((v) => [...v, { itemName: "", packageCount: "", lengthCm: "", widthCm: "", heightCm: "", productQuantity: "", weightKg: "", cargoType: "normal", domesticTrackingNo: "" }])} style={{ border: "1px dashed #2563eb", borderRadius: 4, padding: "4px 10px", fontSize: 12, background: "#fff", color: "#2563eb", cursor: "pointer", marginTop: 4 }}>+ 添加产品</button>
           </div>
           <div style={{ fontSize: 12, color: "#000000", marginTop: 4 }}>
-            <Lightbulb size={12} style={{display:"inline"}} /> 输入长宽高和单箱重量后，体积和总重量在前端实时自动计算
+            💡 输入长宽高和单箱重量后，体积和总重量在前端实时自动计算
           </div>
           <input type="number" value={form.packageCount} onChange={(e) => updateOrderDimensions({ packageCount: e.target.value })} placeholder="包裹数量" style={orderCreateInputStyle} />
           <input type="number" value={form.productQuantity} onChange={(e) => setForm((v) => ({ ...v, productQuantity: e.target.value }))} placeholder="产品数量 *" style={orderCreateInputStyle} />
@@ -1637,7 +1636,7 @@ const loadLmShipments = async () => {
               onClick={() => setShowCreateModal(true)}
               style={{ border: "none", borderRadius: 8, padding: "8px 16px", color: "#fff", background: "#2563eb", cursor: "pointer", fontWeight: 600, whiteSpace: "nowrap", fontSize: 14 }}
             >
-              <Plus size={14} style={{display:"inline"}} /> 创建订单
+              ＋ 创建订单
             </button>
             <button
               type="button"
@@ -2359,9 +2358,9 @@ const loadLmShipments = async () => {
                 ))}
                 <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
                   <button type="button" onClick={() => { setShowAddAddress(client.id); setAddrForm({ contactName: "", contactPhone: "", addressDetail: "", label: "" }); }}
-                    style={{ border: "1px solid #2563eb", borderRadius: 4, padding: "4px 8px", fontSize: 11, background: "#eff6ff", color: "#2563eb", cursor: "pointer" }}><Plus size={11} style={{display:"inline"}} /> 添加地址</button>
+                    style={{ border: "1px solid #2563eb", borderRadius: 4, padding: "4px 8px", fontSize: 11, background: "#eff6ff", color: "#2563eb", cursor: "pointer" }}>＋ 添加地址</button>
                   <button type="button" onClick={() => setEditingNote({ clientId: client.id, content: clientNotes[client.id]?.content ?? "" })}
-                    style={{ border: "1px solid #8b5cf6", borderRadius: 4, padding: "4px 8px", fontSize: 11, background: "#f5f3ff", color: "#8b5cf6", cursor: "pointer" }}><Pencil size={11} style={{display:"inline"}} /> 编辑备注</button>
+                    style={{ border: "1px solid #8b5cf6", borderRadius: 4, padding: "4px 8px", fontSize: 11, background: "#f5f3ff", color: "#8b5cf6", cursor: "pointer" }}>✎ 编辑备注</button>
                 </div>
                 {showAddAddress === client.id && (
                   <div style={{ marginTop: 6, padding: 8, background: "#f0f9ff", borderRadius: 6, border: "1px solid #bae6fd" }}>
@@ -2517,7 +2516,7 @@ const loadLmShipments = async () => {
                     <input value={p.domesticTrackingNo || ""} onChange={(e) => { const n = [...staffFormProducts]; n[i] = { ...n[i], domesticTrackingNo: e.target.value }; setStaffFormProducts(n); }} placeholder="货拉拉" style={{ border: "1px solid #d1d5db", borderRadius: 4, padding: "3px 4px", fontSize: 11, minWidth: 0 }} />
                     <span style={{ fontSize: 10, color: prodVol > 0 ? "#2563eb" : "#9ca3af", textAlign: "right", padding: "0 2px", whiteSpace: "nowrap" }}>{prodVol > 0 ? prodVol.toFixed(3) + "m³" : "—"}</span>
                     <span style={{ fontSize: 10, color: prodWt > 0 ? "#2563eb" : "#9ca3af", textAlign: "right", padding: "0 2px", whiteSpace: "nowrap" }}>{prodWt > 0 ? prodWt.toFixed(1) + "kg" : "—"}</span>
-                    <button type="button" onClick={() => setStaffFormProducts((v) => v.filter((_, j) => j !== i))} style={{ border: "1px solid #fca5a5", borderRadius: 4, padding: "2px 4px", fontSize: 10, background: "#fff", color: "#dc2626", cursor: "pointer", minWidth: 20 }}><X size={12} /></button>
+                    <button type="button" onClick={() => setStaffFormProducts((v) => v.filter((_, j) => j !== i))} style={{ border: "1px solid #fca5a5", borderRadius: 4, padding: "2px 4px", fontSize: 10, background: "#fff", color: "#dc2626", cursor: "pointer", minWidth: 20 }}>✕</button>
                   </div>
                 );})}
                 {(() => {
@@ -2542,7 +2541,7 @@ const loadLmShipments = async () => {
                 <button type="button" onClick={() => setStaffFormProducts((v) => [...v, { itemName: "", packageCount: "", lengthCm: "", widthCm: "", heightCm: "", productQuantity: "", weightKg: "", cargoType: "normal", domesticTrackingNo: "" }])} style={{ border: "1px dashed #2563eb", borderRadius: 4, padding: "4px 10px", fontSize: 12, background: "#fff", color: "#2563eb", cursor: "pointer", marginTop: 4 }}>+ 添加产品</button>
               </div>
               <div style={{ fontSize: 12, color: "#000000", marginTop: 4 }}>
-                <Lightbulb size={12} style={{display:"inline"}} /> 输入长宽高和单箱重量后，体积和总重量在前端实时自动计算
+                💡 输入长宽高和单箱重量后，体积和总重量在前端实时自动计算
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
                 <select value={form.packageUnit} onChange={(e) => setForm((v) => ({ ...v, packageUnit: e.target.value as "bag" | "box" }))} style={orderCreateInputStyle}>
@@ -2576,7 +2575,7 @@ const loadLmShipments = async () => {
                       <button type="button" onClick={() => {
                         setOrderImageFiles(f => f.filter((_, j) => j !== i));
                         setOrderImagePreviews(p => p.filter((_, j) => j !== i));
-                      }} style={{ position: "absolute", top: -6, right: -6, border: "1px solid #fca5a5", borderRadius: 10, width: 18, height: 18, fontSize: 10, background: "#fff", color: "#dc2626", cursor: "pointer", padding: 0, lineHeight: 1 }}><X size={12} /></button>
+                      }} style={{ position: "absolute", top: -6, right: -6, border: "1px solid #fca5a5", borderRadius: 10, width: 18, height: 18, fontSize: 10, background: "#fff", color: "#dc2626", cursor: "pointer", padding: 0, lineHeight: 1 }}>✕</button>
                     </div>
                   ))}
                 </div>
@@ -2606,7 +2605,7 @@ const loadLmShipments = async () => {
             {batchFileName && (
               <div style={{ marginBottom: 12, padding: "10px 14px", background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: 8, fontSize: 14 }}>
                 📄 已上传: <strong>{batchFileName}</strong> — 有效数据 <strong>{batchRows.length}</strong> 条
-                {batchRows.length === 0 && <span style={{ color: "#dc2626", marginLeft: 8 }}><AlertTriangle size={13} style={{display:"inline",color:"#dc2626"}} /> 无有效数据，请检查模板格式</span>}
+                {batchRows.length === 0 && <span style={{ color: "#dc2626", marginLeft: 8 }}>⚠️ 无有效数据，请检查模板格式</span>}
               </div>
             )}
             <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 12, alignItems: "center" }}>
@@ -2640,7 +2639,7 @@ const loadLmShipments = async () => {
               <div style={{ marginBottom: 12 }}>
                 <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, marginBottom: 4 }}>
                   <span>正在提交第 {batchProgress.current}/{batchRows.length} 条…</span>
-                  <span><span style={{ color: "#16a34a" }}><CheckCircle size={13} style={{display:"inline",color:"#16a34a"}} /> {batchProgress.success}</span> / <span style={{ color: batchProgress.fail > 0 ? "#dc2626" : "#6b7280" }}><XCircle size={13} style={{display:"inline"}} /> {batchProgress.fail}</span></span>
+                  <span><span style={{ color: "#16a34a" }}>✅ {batchProgress.success}</span> / <span style={{ color: batchProgress.fail > 0 ? "#dc2626" : "#6b7280" }}>❌ {batchProgress.fail}</span></span>
                 </div>
                 <div style={{ height: 8, background: "#e5e7eb", borderRadius: 4, overflow: "hidden" }}>
                   <div style={{ height: "100%", width: `${(batchProgress.current / batchRows.length) * 100}%`, background: "#2563eb", borderRadius: 4, transition: "width 0.3s" }} />
@@ -2649,7 +2648,7 @@ const loadLmShipments = async () => {
             )}
             {batchErrors.length > 0 && !batchLoading && (
               <div style={{ marginBottom: 12, padding: 12, borderRadius: 8, background: "#fef2f2", border: "1px solid #fecaca" }}>
-                <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 4, color: "#b91c1c" }}><XCircle size={13} style={{display:"inline",color:"#b91c1c"}} /> 失败明细：</div>
+                <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 4, color: "#b91c1c" }}>❌ 失败明细：</div>
                 <ul style={{ margin: 0, paddingLeft: 20, fontSize: 13, color: "#b91c1c" }}>
                   {batchErrors.map((e, i) => <li key={i}>{e}</li>)}
                 </ul>
@@ -2657,7 +2656,7 @@ const loadLmShipments = async () => {
             )}
             {!batchLoading && batchProgress.current > 0 && batchErrors.length === 0 && (
               <div style={{ marginBottom: 12, padding: 12, borderRadius: 8, background: "#f0fdf4", border: "1px solid #bbf7d0" }}>
-                <div style={{ fontWeight: 600, fontSize: 14, color: "#166534" }}><CheckCircle size={14} style={{display:"inline",color:"#16a34a"}} /> 全部提交成功：{batchProgress.success} 条</div>
+                <div style={{ fontWeight: 600, fontSize: 14, color: "#166534" }}>✅ 全部提交成功：{batchProgress.success} 条</div>
               </div>
             )}
             {batchRows.length > 0 && (
@@ -2725,7 +2724,7 @@ const loadLmShipments = async () => {
               ))}
             </div>
             <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
-              <button type="button" onClick={() => setSplitRows((prev) => [...prev, { trackingNo: "", batchNo: "", itemName: splittingShipment.itemName ?? "", packageCount: "" }])} style={{ border: "1px dashed #d1d5db", borderRadius: 6, padding: "6px 12px", fontSize: 12, background: "#fff", cursor: "pointer", color: "#000000" }}><Plus size={12} style={{display:"inline"}} /> 添加分柜</button>
+              <button type="button" onClick={() => setSplitRows((prev) => [...prev, { trackingNo: "", batchNo: "", itemName: splittingShipment.itemName ?? "", packageCount: "" }])} style={{ border: "1px dashed #d1d5db", borderRadius: 6, padding: "6px 12px", fontSize: 12, background: "#fff", cursor: "pointer", color: "#000000" }}>＋ 添加分柜</button>
             </div>
             {message && message.includes("分柜") ? (
               <p style={{ marginTop: 8, color: message.includes("失败") ? "#b91c1c" : "#065f46", fontSize: 13 }}>{message}</p>
@@ -2784,8 +2783,8 @@ const loadLmShipments = async () => {
                   <tr style={{ background: "#f9fafb", borderBottom: "1px solid #e5e7eb" }}>
                     <th style={{ padding: "8px 12px", textAlign: "left", fontWeight: 600, color: "#374151" }}>客户</th>
                     <th style={{ padding: "8px 12px", textAlign: "left", fontWeight: 600, color: "#374151" }}>公司</th>
-                    <th style={{ padding: "8px 12px", textAlign: "right", fontWeight: 600, color: "#374151" }}>人民币余额</th>
-                    <th style={{ padding: "8px 12px", textAlign: "right", fontWeight: 600, color: "#374151" }}>泰铢余额</th>
+                    <th style={{ padding: "8px 12px", textAlign: "right", fontWeight: 600, color: "#374151" }}>人民币余额 (CNY)</th>
+                    <th style={{ padding: "8px 12px", textAlign: "right", fontWeight: 600, color: "#374151" }}>泰铢余额 (THB)</th>
                   </tr>
                 </thead>
                 <tbody>

@@ -3,7 +3,6 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as XLSX from "xlsx";
 import { Bar, BarChart, CartesianGrid, Cell, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { ArrowRight, CheckCircle, Plus, Truck, X } from "lucide-react";
 import type { AiKnowledgeItem } from "../../../../../packages/shared-types/entities";
 import { getOptionalSession, type AuthSession } from "../../auth/auth-session";
 import CountUpNumber from "../../modules/layout/CountUpNumber";
@@ -144,7 +143,7 @@ const logisticsStatusOptions = [
   "清关中", "清关已放行", "已到仓", "派送中", "派送完成",
 ] as const;
 
-/** 中文状态 <ArrowRight size={12} style={{display:"inline"}} /> 英文 status */
+/** 中文状态 → 英文 status */
 /**
  * 管理端运单号前缀规则：仓库与单号前缀必须匹配。
  */
@@ -1177,7 +1176,7 @@ export default function AdminHomePage() {
             onClick={() => { setShowStaffModal(true); setStaffForm({ id: "", name: "", phone: "", password: "" }); }}
             style={{ border: "none", borderRadius: 8, padding: "8px 14px", background: "#2563eb", color: "#fff", fontWeight: 600, cursor: "pointer" }}
           >
-            <Plus size={14} style={{display:"inline"}} /> 创建账号
+            ＋ 创建账号
           </button>
           <span style={{ marginLeft: 8, fontSize: 12, color: "#000000" }}>需使用管理员身份登录</span>
         </div>
@@ -1265,7 +1264,7 @@ export default function AdminHomePage() {
             onClick={() => { setShowClientModal(true); setEditingClientId(null); setClientForm({ id: "", name: "", companyName: "", phone: "", email: "", password: "" }); }}
             style={{ border: "none", borderRadius: 8, padding: "8px 14px", background: "#2563eb", color: "#fff", fontWeight: 600, cursor: "pointer" }}
           >
-            <Plus size={14} style={{display:"inline"}} /> 创建账号
+            ＋ 创建账号
           </button>
         </div>
         {clientList.length === 0 ? (
@@ -1367,7 +1366,7 @@ export default function AdminHomePage() {
               onClick={async () => { const clients = await fetchStaffClients(); setStaffClients(clients); setShowCreateOrderModal(true); }}
               style={{ border: "none", borderRadius: 8, padding: "6px 12px", color: "#fff", background: "#16a34a", cursor: "pointer", fontWeight: 600 }}
             >
-              <Plus size={14} style={{display:"inline"}} /> 创建订单
+              ＋ 创建订单
             </button>
             <button
               type="button"
@@ -1789,7 +1788,7 @@ export default function AdminHomePage() {
                     <td style={{ padding: "6px 8px" }}>{o.licensePlate ?? "-"}</td>
                     <td style={{ padding: "6px 8px" }}>{o.phoneNumber ?? "-"}</td>
                     <td style={{ padding: "6px 8px" }}>{o.deliveryDate || "-"}</td>
-                    <td style={{ padding: "6px 8px" }}>{o.status === "SIGNED" ? <span><CheckCircle size={14} style={{display:'inline',color:'#16a34a'}} /> 已签收{o.signImageBase64 ? <img src={"data:image/jpeg;base64,"+o.signImageBase64} alt="签收凭证" onClick={() => setPreviewImg("data:image/jpeg;base64,"+o.signImageBase64!)} style={{ maxWidth:40, maxHeight:40, borderRadius:4, marginLeft:4, cursor:"pointer", border:"1px solid #e5e7eb" }} /> : null}</span> : o.status === "DELIVERING" ? "<Truck size={14} style={{display:'inline',color:'#db2777'}} /> 派送中" : o.status}</td>
+                    <td style={{ padding: "6px 8px" }}>{o.status === "SIGNED" ? <span>✅ 已签收{o.signImageBase64 ? <img src={"data:image/jpeg;base64,"+o.signImageBase64} alt="签收凭证" onClick={() => setPreviewImg("data:image/jpeg;base64,"+o.signImageBase64!)} style={{ maxWidth:40, maxHeight:40, borderRadius:4, marginLeft:4, cursor:"pointer", border:"1px solid #e5e7eb" }} /> : null}</span> : o.status === "DELIVERING" ? "🚚 派送中" : o.status}</td>
                     <td style={{ padding: "6px 8px" }}>
                       {o.status !== "SIGNED" && (
                         <button onClick={async () => {
@@ -2421,11 +2420,11 @@ export default function AdminHomePage() {
                 </select>
                 <div style={{ display: "flex", gap: 4 }}>
                   <input value={p.domesticTrackingNo} onChange={(e) => { const n = [...createProducts]; n[i].domesticTrackingNo = e.target.value; setCreateProducts(n); }} placeholder="国内单号" style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "4px 6px", fontSize: 11, flex: 1 }} />
-                  {createProducts.length > 1 && <button onClick={() => { setCreateProducts(createProducts.filter((_, j) => j !== i)); }} style={{ border: "none", background: "#fecaca", color: "#dc2626", borderRadius: 4, cursor: "pointer", fontSize: 11 }}><X size={12} /></button>}
+                  {createProducts.length > 1 && <button onClick={() => { setCreateProducts(createProducts.filter((_, j) => j !== i)); }} style={{ border: "none", background: "#fecaca", color: "#dc2626", borderRadius: 4, cursor: "pointer", fontSize: 11 }}>✕</button>}
                 </div>
               </div>
             ))}
-            <button onClick={() => setCreateProducts([...createProducts, { itemName: "", packageCount: 1, lengthCm: "", widthCm: "", heightCm: "", productQuantity: "", cargoType: "normal", domesticTrackingNo: "" }])} style={{ border: "1px solid #2563eb", borderRadius: 6, padding: "4px 10px", background: "#eff6ff", color: "#2563eb", cursor: "pointer", fontSize: 12, marginBottom: 16 }}><Plus size={12} style={{display:"inline"}} /> 添加产品行</button>
+            <button onClick={() => setCreateProducts([...createProducts, { itemName: "", packageCount: 1, lengthCm: "", widthCm: "", heightCm: "", productQuantity: "", cargoType: "normal", domesticTrackingNo: "" }])} style={{ border: "1px solid #2563eb", borderRadius: 6, padding: "4px 10px", background: "#eff6ff", color: "#2563eb", cursor: "pointer", fontSize: 12, marginBottom: 16 }}>＋ 添加产品行</button>
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
               <button onClick={() => setShowCreateOrderModal(false)} style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 14px", background: "#fff", cursor: "pointer", color: "#000" }}>取消</button>
               <button disabled={loading} onClick={async () => {
@@ -2478,7 +2477,7 @@ export default function AdminHomePage() {
           <div style={{ width: "100%", maxWidth: 700, background: "#fff", borderRadius: 12, padding: 24, boxShadow: "0 20px 60px rgba(0,0,0,0.3)", maxHeight: "85vh", overflow: "auto" }}>
             <h3 style={{ margin: "0 0 16px", fontSize: 18, fontWeight: 600 }}>批量导入运单</h3>
             <div style={{ marginBottom: 12, fontSize: 12, color: "#000" }}>
-              下载模板 <ArrowRight size={12} style={{display:"inline"}} /> 填写数据 <ArrowRight size={12} style={{display:"inline"}} /> 上传文件。表头：客户ID, 仓库ID, 品名, 箱数, 包装单位, 运输方式, 到仓日期, 国内单号, 泰国收货人, 泰国收货电话, 泰国收货地址
+              下载模板 → 填写数据 → 上传文件。表头：客户ID, 仓库ID, 品名, 箱数, 包装单位, 运输方式, 到仓日期, 国内单号, 泰国收货人, 泰国收货电话, 泰国收货地址
             </div>
             {!batchConfirmed ? (
               <>

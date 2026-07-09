@@ -6,8 +6,6 @@ import {
   Boxes,
   Brain,
   Building2,
-  ChevronDown,
-  ChevronRight,
   FileText,
   LayoutDashboard,
   LogOut,
@@ -18,7 +16,6 @@ import {
   UserCog,
   Users,
   Wallet,
-  X,
   type LucideIcon,
 } from "lucide-react";
 import { clearAuthSession, getOptionalSession, type AuthRole, type AuthSession } from "../../auth/auth-session";
@@ -141,7 +138,7 @@ export default function RoleShell(props: {
       <div className={`sidebar-overlay ${sidebarOpen ? "open" : ""}`} onClick={closeSidebar} />
 
       <aside className={`dashboard-sidebar ${sidebarOpen ? "open" : ""}`}>
-        <button type="button" className="sidebar-close-btn" onClick={closeSidebar}><X size={16} /></button>
+        <button type="button" className="sidebar-close-btn" onClick={closeSidebar}>✕</button>
         <h2 className="dashboard-sidebar-title">工作台导航</h2>
         <div className="dashboard-sidebar-group">
           {roleMenus[session.role].map((item) => (
@@ -176,7 +173,7 @@ export default function RoleShell(props: {
                   });
                 }}
               >
-                <span className="dashboard-sidebar-group-arrow">{isExpanded ? <ChevronDown size={9} /> : <ChevronRight size={9} />}</span>
+                <span className="dashboard-sidebar-group-arrow">{isExpanded ? "▾" : "▸"}</span>
                 {group.groupLabel}
               </button>
               {isExpanded && group.items.map((item) => (

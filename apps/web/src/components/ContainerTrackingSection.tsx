@@ -1,7 +1,5 @@
 "use client";
 
-import { Package } from "lucide-react";
-
 /**
  * 出柜追踪组件 — 客户端"我的订单"卡片里显示该订单运单所属的柜子。
  *
@@ -126,7 +124,7 @@ export function ContainerTrackingSection({ shipmentId, trackingNo, hideContainer
   if (loading) {
     return (
       <div style={{ padding: 10, color: "#94a3b8", fontSize: 13 }}>
-        <Package size={14} style={{display:"inline"}} /> 正在查询出柜信息…
+        📦 正在查询出柜信息…
       </div>
     );
   }
@@ -134,7 +132,7 @@ export function ContainerTrackingSection({ shipmentId, trackingNo, hideContainer
   if (error) {
     return (
       <div style={{ padding: 10, color: "#dc2626", fontSize: 13 }}>
-        <Package size={14} style={{display:"inline"}} /> 出柜信息加载失败：{error}
+        📦 出柜信息加载失败：{error}
       </div>
     );
   }
@@ -151,7 +149,7 @@ export function ContainerTrackingSection({ shipmentId, trackingNo, hideContainer
           borderRadius: 8,
         }}
       >
-        <Package size={14} style={{display:"inline"}} /> 暂未装柜（货物还在仓库集货中）
+        📦 暂未装柜（货物还在仓库集货中）
       </div>
     );
   }
@@ -168,7 +166,7 @@ export function ContainerTrackingSection({ shipmentId, trackingNo, hideContainer
       {/* 标题 + 拆柜提示 */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
         <div style={{ fontWeight: 700, fontSize: 14, color: "#1e293b" }}>
-          <Package size={14} style={{display:"inline"}} /> 出柜追踪
+          📦 出柜追踪
           <span style={{ marginLeft: 8, color: "#64748b", fontWeight: 400, fontSize: 12 }}>
             总量 {data.totalVolumeM3.toFixed(2)} m³ · 已装 {data.totalLoadedM3.toFixed(2)} m³
           </span>

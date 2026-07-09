@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ArrowLeft, ArrowRight, Package } from "lucide-react";
 import RoleShell from "../../../modules/layout/RoleShell";
 import Toast from "../../../modules/layout/Toast";
 import {
@@ -395,7 +394,7 @@ export default function StaffContainerLoadingPage() {
                       <div key={b.id} style={{ display: "grid", gridTemplateColumns: "1fr 0.6fr 0.7fr 0.5fr 0.4fr auto", gap: 4, padding: "6px 10px", borderBottom: "1px solid #f1f5f9", alignItems: "center", background: "#fff", fontSize: 12 }}>
                         <div>
                           <span style={{ fontWeight: 600, fontFamily: "monospace", color: "#1e3a8a" }}>{b.trackingNo ?? "—"}</span>
-                          {b.parentTrackingNo ? <span style={{ display: "block", fontSize: 10, color: "#9333ea" }}><ArrowLeft size={10} style={{display:'inline'}} /> {b.parentTrackingNo}</span> : null}
+                          {b.parentTrackingNo ? <span style={{ display: "block", fontSize: 10, color: "#9333ea" }}>← {b.parentTrackingNo}</span> : null}
                           {b.itemName ? <span style={{ display: "block", color: "#374151", marginTop: 1 }}>{b.itemName}</span> : null}
                         </div>
                         <span style={{ color: "#6b21a8", fontWeight: 500 }}>{b.clientId ?? "—"}</span>
@@ -484,7 +483,7 @@ export default function StaffContainerLoadingPage() {
                         {loadedChildren.length > 0 && (
                           <div style={{ paddingLeft: 28, fontSize: 11, color: "#6b7280", marginTop: 3 }}>
                             {loadedChildren.map(c => (
-                              <span key={c.id} style={{ marginRight: 14 }}><Package size={12} style={{display:'inline'}} /> {c.trackingNo}: {c.packageCount}件 <ArrowRight size={12} style={{display:'inline'}} /> {loadedShipments[c.id]}</span>
+                              <span key={c.id} style={{ marginRight: 14 }}>📦 {c.trackingNo}: {c.packageCount}件 → {loadedShipments[c.id]}</span>
                             ))}
                           </div>
                         )}
