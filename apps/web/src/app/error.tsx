@@ -1,10 +1,10 @@
-"use client";
+"use client";import { AlertTriangle } from "lucide-react";
 
 export default function RootError({ error, reset }: { error: Error; reset: () => void }) {
   return (
     <main style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "#f8fafc" }}>
       <div style={{ textAlign: "center", maxWidth: 400, padding: 24 }}>
-        <div style={{ fontSize: 40, marginBottom: 12 }}>⚠️</div>
+        <div style={{ marginBottom: 12 }}><AlertTriangle size={40} style={{ color: "#d97706" }} /></div>
         <h2 style={{ margin: 0, fontSize: 18, color: "#111827" }}>页面加载出错</h2>
         <p style={{ marginTop: 8, color: "#6b7280", fontSize: 13 }}>{error.message || "发生了未知错误"}</p>
         <button

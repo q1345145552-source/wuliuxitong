@@ -2,6 +2,7 @@
 
 import { useRef, useState } from "react";
 import { apiBaseUrl, authHeaders } from "../../services/core-api";
+import { CheckCircle, Plus, Truck, X } from "lucide-react";
 
 type LmShipment = { id: string; trackingNo: string; clientId: string; itemName: string; packageCount: number; containerNo?: string };
 type LmOrderItem = { id: string; deliveryNo: string; shipmentId: string; trackingNo?: string; driverName?: string; licensePlate?: string; phoneNumber?: string; deliveryDate?: string; clientId?: string; status: string; signImageBase64?: string | null };
@@ -171,7 +172,7 @@ export default function StaffLastmile(props: StaffLastmileProps) {
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
               <div style={{ fontSize: 13, fontWeight: 600 }}>
                 <span style={{ fontFamily: "monospace", color: "#1e3a8a" }}>{dn}</span>
-                <span style={{ color: done ? "#16a34a" : "#6b7280", marginLeft: 8 }}>{signed}/{total} 签收 {done ? "✅ 派送完成" : "🚚 派送中"}</span>
+                <span style={{ color: done ? "#16a34a" : "#6b7280", marginLeft: 8 }}>{signed}/{total} 签收 {done ? <><CheckCircle size={14} style={{ display: "inline", color: "#16a34a" }} /> 派送完成</> : <><Truck size={14} style={{ display: "inline", color: "#db2777" }} /> 派送中</>}</span>
               </div>
               {!done && (
                 <button onClick={async () => {
@@ -185,7 +186,7 @@ export default function StaffLastmile(props: StaffLastmileProps) {
                     setLmSelected(new Set());
                     props.onReloadOrders();
                   } catch (e: any) { props.onToast(e.message || "追加失败"); }
-                }} style={{ border: "1px solid #ca8a04", borderRadius: 4, padding: "2px 8px", fontSize: 11, background: "#fefce8", color: "#ca8a04", cursor: "pointer" }}>＋追加运单</button>
+                }} style={{ border: "1px solid #ca8a04", borderRadius: 4, padding: "2px 8px", fontSize: 11, background: "#fefce8", color: "#ca8a04", cursor: "pointer" }}><Plus size={11} style={{ display: "inline" }} />追加运单</button>
               )}
             </div>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
@@ -202,7 +203,7 @@ export default function StaffLastmile(props: StaffLastmileProps) {
                     <td style={{ padding: "4px 6px" }}>{o.phoneNumber ?? "-"}</td>
                     <td style={{ padding: "4px 6px" }}>{o.deliveryDate || "-"}</td>
                     <td style={{ padding: "4px 6px" }}>
-                      {o.status === "SIGNED" ? <span>✅ 已签收{o.signImageBase64 ? <img src={"data:image/jpeg;base64,"+o.signImageBase64} alt="签收凭证" onClick={() => setPreviewImg("data:image/jpeg;base64,"+o.signImageBase64!)} style={{ maxWidth:40, maxHeight:40, borderRadius:4, marginLeft:4, cursor:"pointer", border:"1px solid #e5e7eb" }} /> : null}</span> : "🚚 派送中"}
+                      {o.status === "SIGNED" ? <span><CheckCircle size={14} style={{ display: "inline", color: "#16a34a" }} /> 已签收{o.signImageBase64 ? <img src={"data:image/jpeg;base64,"+o.signImageBase64} alt="签收凭证" onClick={() => setPreviewImg("data:image/jpeg;base64,"+o.signImageBase64!)} style={{ maxWidth:40, maxHeight:40, borderRadius:4, marginLeft:4, cursor:"pointer", border:"1px solid #e5e7eb" }} /> : null}</span> : <><Truck size={14} style={{ display: "inline", color: "#db2777" }} /> 派送中</>}
                     </td>
                     <td style={{ padding: "4px 6px" }}>
                       {o.status !== "SIGNED" && (

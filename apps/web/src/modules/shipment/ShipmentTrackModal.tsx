@@ -3,6 +3,28 @@
 import { createRoot } from "react-dom/client";
 import { useCallback, useEffect, useState } from "react";
 import { authHeaders, apiBaseUrl, parseApiResponse } from "../../services/core-api";
+import {
+  AlertCircle,
+  AlertTriangle,
+  Anchor,
+  Briefcase,
+  Calendar,
+  CheckCircle,
+  ClipboardList,
+  Clock,
+  FileText,
+  Frown,
+  Home,
+  Inbox,
+  MapPin,
+  Package,
+  Ship,
+  Truck,
+  Undo2,
+  Wrench,
+  X,
+  XCircle,
+} from "lucide-react";
 
 // ── Types ──
 
@@ -52,31 +74,55 @@ interface TrackData {
 
 // ── Status config ──
 
-const STATUS_CONFIG: Record<string, { zh: string; color: string; bg: string; icon: string }> = {
-  created:        { zh: "已创建",     color: "#6b7280", bg: "#f3f4f6", icon: "📝" },
-  loaded:         { zh: "已装柜",     color: "#0369a1", bg: "#e0f2fe", icon: "📦" },
-  delaydeparted:  { zh: "延迟开船",   color: "#b45309", bg: "#fef3c7", icon: "⚠️" },
-  delay_departed: { zh: "延迟开船",   color: "#b45309", bg: "#fef3c7", icon: "⚠️" },
-  departed:       { zh: "已开船",     color: "#1e40af", bg: "#dbeafe", icon: "🚢" },
-  arrivedport:    { zh: "已到港",     color: "#065f46", bg: "#d1fae5", icon: "⚓" },
-  customsth:      { zh: "清关中",     color: "#92400e", bg: "#fef3c7", icon: "📋" },
-  customscleared: { zh: "清关已放行", color: "#166534", bg: "#dcfce7", icon: "✅" },
-  inwarehouseth:  { zh: "已到仓",     color: "#7c3aed", bg: "#ede9fe", icon: "🏠" },
-  outfordelivery: { zh: "派送中",     color: "#db2777", bg: "#fce7f3", icon: "🚚" },
-  delivered:      { zh: "派送完成",   color: "#16a34a", bg: "#f0fdf4", icon: "🎉" },
-  exception:      { zh: "异常",       color: "#dc2626", bg: "#fef2f2", icon: "❗" },
-  returned:       { zh: "已退回",     color: "#991b1b", bg: "#fee2e2", icon: "↩️" },
-  cancelled:      { zh: "已取消",     color: "#6b7280", bg: "#f3f4f6", icon: "❌" },
-  // 容器状态（旧日志兼容）
-  intransit:      { zh: "运输中",     color: "#1e40af", bg: "#dbeafe", icon: "🚢" },
-  customs:        { zh: "清关中",     color: "#92400e", bg: "#fef3c7", icon: "📋" },
-  loading:        { zh: "装柜中",     color: "#0369a1", bg: "#e0f2fe", icon: "📦" },
-  sealed:         { zh: "已封柜",     color: "#0369a1", bg: "#e0f2fe", icon: "📦" },
-  arrived:        { zh: "已到港",     color: "#065f46", bg: "#d1fae5", icon: "⚓" },
+const STATUS_ICON_MAP: Record<string, React.ReactNode> = {
+  created:        <FileText size={16} />,
+  loaded:         <Package size={16} />,
+  delaydeparted:  <AlertTriangle size={16} />,
+  delay_departed: <AlertTriangle size={16} />,
+  departed:       <Ship size={16} />,
+  arrivedport:    <Anchor size={16} />,
+  customsth:      <ClipboardList size={16} />,
+  customscleared: <CheckCircle size={16} />,
+  inwarehouseth:  <Home size={16} />,
+  outfordelivery: <Truck size={16} />,
+  delivered:      <CheckCircle size={16} />,
+  exception:      <AlertCircle size={16} />,
+  returned:       <Undo2 size={16} />,
+  cancelled:      <XCircle size={16} />,
+  intransit:      <Ship size={16} />,
+  customs:        <ClipboardList size={16} />,
+  loading:        <Package size={16} />,
+  sealed:         <Package size={16} />,
+  arrived:        <Anchor size={16} />,
+};
+
+const STATUS_CONFIG: Record<string, { zh: string; color: string; bg: string }> = {
+  created:        { zh: "已创建",     color: "#6b7280", bg: "#f3f4f6" },
+  loaded:         { zh: "已装柜",     color: "#0369a1", bg: "#e0f2fe" },
+  delaydeparted:  { zh: "延迟开船",   color: "#b45309", bg: "#fef3c7" },
+  delay_departed: { zh: "延迟开船",   color: "#b45309", bg: "#fef3c7" },
+  departed:       { zh: "已开船",     color: "#1e40af", bg: "#dbeafe" },
+  arrivedport:    { zh: "已到港",     color: "#065f46", bg: "#d1fae5" },
+  customsth:      { zh: "清关中",     color: "#92400e", bg: "#fef3c7" },
+  customscleared: { zh: "清关已放行", color: "#166534", bg: "#dcfce7" },
+  inwarehouseth:  { zh: "已到仓",     color: "#7c3aed", bg: "#ede9fe" },
+  outfordelivery: { zh: "派送中",     color: "#db2777", bg: "#fce7f3" },
+  delivered:      { zh: "派送完成",   color: "#16a34a", bg: "#f0fdf4" },
+  exception:      { zh: "异常",       color: "#dc2626", bg: "#fef2f2" },
+  returned:       { zh: "已退回",     color: "#991b1b", bg: "#fee2e2" },
+  cancelled:      { zh: "已取消",     color: "#6b7280", bg: "#f3f4f6" },
+  intransit:      { zh: "运输中",     color: "#1e40af", bg: "#dbeafe" },
+  customs:        { zh: "清关中",     color: "#92400e", bg: "#fef3c7" },
+  loading:        { zh: "装柜中",     color: "#0369a1", bg: "#e0f2fe" },
+  sealed:         { zh: "已封柜",     color: "#0369a1", bg: "#e0f2fe" },
+  arrived:        { zh: "已到港",     color: "#065f46", bg: "#d1fae5" },
 };
 
 function statusCfg(s: string) {
-  return STATUS_CONFIG[s.toLowerCase()] ?? { zh: s || "未知", color: "#6b7280", bg: "#f3f4f6", icon: "📌" };
+  return STATUS_CONFIG[s.toLowerCase()] ?? { zh: s || "未知", color: "#6b7280", bg: "#f3f4f6" };
+}
+function statusIcon(s: string): React.ReactNode {
+  return STATUS_ICON_MAP[s.toLowerCase()] ?? <MapPin size={16} />;
 }
 
 function formatTime(iso: string): string {
@@ -202,7 +248,7 @@ function TimelineNode({ item, isLast, isChild, index, total }: { item: TimelineI
           alignItems: "center",
           gap: 6,
         }}>
-          <span style={{ fontSize: 14 }}>🕐</span>
+          <span style={{ fontSize: 14 }}><Clock size={14} style={{ display: "inline" }} /></span>
           {formatTime(item.changedAt)}
         </div>
 
@@ -222,7 +268,7 @@ function TimelineNode({ item, isLast, isChild, index, total }: { item: TimelineI
             color: toCfg.color,
             border: toCfg.color + "30",
           }}>
-            {toCfg.icon} {toCfg.zh}
+            {statusIcon(item.toStatus)} {toCfg.zh}
           </span>
         </div>
 
@@ -251,7 +297,7 @@ function TimelineNode({ item, isLast, isChild, index, total }: { item: TimelineI
             alignItems: "center",
             gap: 4,
           }}>
-            <span style={{ fontSize: 13 }}>{item.operatorRole === "staff" ? "💼" : "🔧"}</span>
+            <span style={{ fontSize: 13 }}>{item.operatorRole === "staff" ? <Briefcase size={13} style={{ display: "inline" }} /> : <Wrench size={13} style={{ display: "inline" }} />}</span>
             <span style={{ fontWeight: 600 }}>{item.operatorName || (item.operatorRole === "staff" ? "员工" : "管理员")}</span>
           </div>
         )}
@@ -291,7 +337,7 @@ function TrackContent({ data }: { data: TrackData }) {
                 transition: "all 0.15s",
               }}
             >
-              {i === 0 ? `📦 ${t.trackingNo}` : `📋 ${t.trackingNo}`}
+              {i === 0 ? <><Package size={12} style={{ display: "inline" }} /> {t.trackingNo}</> : <><ClipboardList size={12} style={{ display: "inline" }} /> {t.trackingNo}</>}
             </button>
           ))}
         </div>
@@ -300,7 +346,7 @@ function TrackContent({ data }: { data: TrackData }) {
       {/* 装柜时间线（客户端看到日期但不含柜号） */}
       {data.containers && data.containers.length > 0 && data.containers.some(c => c.loadingDate || c.departureDate) ? (
         <div style={{ marginBottom: 12, padding: "8px 12px", background: "#f0f9ff", borderRadius: 8, fontSize: 12, border: "1px solid #bae6fd" }}>
-          <div style={{ fontWeight: 600, color: "#0369a1", marginBottom: 4 }}>📅 装柜时间</div>
+          <div style={{ fontWeight: 600, color: "#0369a1", marginBottom: 4 }}><Calendar size={14} style={{ display: "inline" }} /> 装柜时间</div>
           {data.containers.map((c, i) => (
             <div key={i} style={{ marginBottom: 4 }}>
               {c.loadingDate ? <div>装柜：{c.loadingDate.slice(0, 10)}</div> : null}
@@ -315,11 +361,11 @@ function TrackContent({ data }: { data: TrackData }) {
       {/* 尾程派送 */}
       {data.lastmile ? (
         <div style={{ marginBottom: 12, padding: "10px 12px", background: "#fefce8", borderRadius: 8, fontSize: 12, border: "1px solid #fde68a" }}>
-          <div style={{ fontWeight: 600, color: "#92400e", marginBottom: 4 }}>🚚 派送信息</div>
+          <div style={{ fontWeight: 600, color: "#92400e", marginBottom: 4 }}><Truck size={14} style={{ display: "inline" }} /> 派送信息</div>
           {data.lastmile.driverName ? <div>司机：{data.lastmile.driverName}</div> : null}
           {data.lastmile.licensePlate ? <div>车牌：{data.lastmile.licensePlate}</div> : null}
           {data.lastmile.phoneNumber ? <div>电话：{data.lastmile.phoneNumber}</div> : null}
-          <div>状态：{data.lastmile.status === "SIGNED" ? "✅ 已签收" : "🚚 派送中"}</div>
+          <div>状态：{data.lastmile.status === "SIGNED" ? <><CheckCircle size={14} style={{ display: "inline", color: "#16a34a" }} /> 已签收</> : <><Truck size={14} style={{ display: "inline", color: "#db2777" }} /> 派送中</>}</div>
           {data.lastmile.signImageBase64 ? (
             <img src={data.lastmile.signImageBase64} alt="签收凭证" style={{ marginTop: 4, maxWidth: 200, maxHeight: 200, borderRadius: 6, border: "1px solid #e5e7eb" }} />
           ) : null}
@@ -332,15 +378,15 @@ function TrackContent({ data }: { data: TrackData }) {
           <>
             {data.products && data.products.length > 1 ? (
               data.products.map((p, i) => (
-                <div key={i}>📦 {p.itemName} ×{p.packageCount}箱</div>
+                <div key={i}><Package size={12} style={{ display: "inline" }} /> {p.itemName} ×{p.packageCount}箱</div>
               ))
             ) : (
-              <span>📦 品名：{data.itemName ?? "—"}</span>
+              <span><Package size={12} style={{ display: "inline" }} /> 品名：{data.itemName ?? "—"}</span>
             )}
             <div style={{ marginTop: 2 }}>分装：{data.children?.length ?? 0}个子单</div>
           </>
         ) : data.children?.[activeTab - 1] ? (
-          <span>📦 {data.children[activeTab - 1].itemName ?? "—"} ｜ {data.children[activeTab - 1].packageCount ?? "—"} 件{data.containers?.[0]?.containerNo && data.children[activeTab - 1].batchNo ? ` ｜ 柜号：${data.children[activeTab - 1].batchNo}` : ""}</span>
+          <span><Package size={12} style={{ display: "inline" }} /> {data.children[activeTab - 1].itemName ?? "—"} ｜ {data.children[activeTab - 1].packageCount ?? "—"} 件{data.containers?.[0]?.containerNo && data.children[activeTab - 1].batchNo ? ` ｜ 柜号：${data.children[activeTab - 1].batchNo}` : ""}</span>
         ) : null}
       </div>
 
@@ -366,7 +412,7 @@ function TrackContent({ data }: { data: TrackData }) {
           fontSize: 22,
           flexShrink: 0,
           boxShadow: `0 4px 12px ${currentCfg.color}40`,
-        }}>{currentCfg.icon}</div>
+        }}>{statusIcon(tab.currentStatus)}</div>
         <div>
           <div style={{ fontSize: 11, color: "#6b7280", marginBottom: 2 }}>当前状态</div>
           <div style={{ fontSize: 17, fontWeight: 700, color: currentCfg.color }}>{currentCfg.zh}</div>
@@ -389,7 +435,7 @@ function TrackContent({ data }: { data: TrackData }) {
             paddingBottom: 8,
             borderBottom: "1px solid #e5e7eb",
           }}>
-            <span style={{ fontSize: 14, fontWeight: 600, color: "#111827" }}>📋 状态变更记录</span>
+            <span style={{ fontSize: 14, fontWeight: 600, color: "#111827" }}><ClipboardList size={14} style={{ display: "inline" }} /> 状态变更记录</span>
             <span style={{
               fontSize: 11,
               color: "#6b7280",
@@ -524,7 +570,7 @@ function ShipmentTrackModal({ trackingOrId, onClose }: { trackingOrId: string; o
               e.currentTarget.style.color = "#6b7280";
             }}
           >
-            ✕
+            <X size={16} />
           </button>
         </div>
 
@@ -534,7 +580,7 @@ function ShipmentTrackModal({ trackingOrId, onClose }: { trackingOrId: string; o
             <LoadingSkeleton />
           ) : error ? (
             <div style={{ textAlign: "center", padding: "40px 0" }}>
-              <div style={{ fontSize: 40, marginBottom: 12 }}>😞</div>
+              <div style={{ fontSize: 40, marginBottom: 12 }}><Frown size={40} style={{ color: "#b91c1c" }} /></div>
               <div style={{ fontSize: 14, color: "#b91c1c", marginBottom: 8 }}>{error}</div>
               <button
                 onClick={() => load()}
@@ -553,7 +599,7 @@ function ShipmentTrackModal({ trackingOrId, onClose }: { trackingOrId: string; o
             </div>
           ) : !data ? (
             <div style={{ textAlign: "center", padding: "40px 0" }}>
-              <div style={{ fontSize: 40, marginBottom: 12 }}>📭</div>
+              <div style={{ fontSize: 40, marginBottom: 12 }}><Inbox size={40} style={{ color: "#9ca3af" }} /></div>
               <div style={{ fontSize: 14, color: "#6b7280", marginBottom: 4 }}>暂无物流轨迹</div>
               <div style={{ fontSize: 12, color: "#9ca3af" }}>货物状态更新后将显示在这里</div>
             </div>
@@ -599,7 +645,7 @@ export function openShipmentTrack(trackingOrId: string) {
         onClick={() => { errRoot.unmount(); overlay.remove(); }}
       >
         <div style={{ width: "100%", maxWidth: 500, background: "#fff", borderRadius: 12, padding: 24, textAlign: "center" }}>
-          <div style={{ fontSize: 40, marginBottom: 12 }}>😞</div>
+          <div style={{ fontSize: 40, marginBottom: 12 }}><Frown size={40} style={{ color: "#b91c1c" }} /></div>
           <div style={{ fontSize: 14, color: "#b91c1c" }}>加载失败，请刷新页面后重试</div>
         </div>
       </div>,
