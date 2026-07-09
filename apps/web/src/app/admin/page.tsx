@@ -1411,11 +1411,11 @@ export default function AdminHomePage() {
         ) : (
           <>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8, padding: "0 8px" }}>
-            <span style={{ fontSize: 12, color: "#000000" }}>共 {filteredOrderList.length} 条 · 第 {currentPage}/{totalPages} 页</span>
+            <span style={{ fontSize: 13, color: "#111827", fontWeight: 500 }}>共 {filteredOrderList.length} 条 · 第 {currentPage}/{totalPages} 页</span>
             <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-              <button onClick={() => setCurrentPage((p) => Math.max(1, p - 1))} disabled={currentPage <= 1} style={{ border: "1px solid #d1d5db", borderRadius: 4, padding: "2px 8px", background: "#fff", cursor: currentPage <= 1 ? "default" : "pointer", fontSize: 12, opacity: currentPage <= 1 ? 0.5 : 1 }}>上一页</button>
-              <button onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))} disabled={currentPage >= totalPages} style={{ border: "1px solid #d1d5db", borderRadius: 4, padding: "2px 8px", background: "#fff", cursor: currentPage >= totalPages ? "default" : "pointer", fontSize: 12, opacity: currentPage >= totalPages ? 0.5 : 1 }}>下一页</button>
-              <select value={pageSize} onChange={(e) => { setPageSize(Number(e.target.value)); setCurrentPage(1); }} style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "4px 8px", fontSize: 12 }}>
+              <button onClick={() => setCurrentPage((p) => Math.max(1, p - 1))} disabled={currentPage <= 1} style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "4px 12px", background: currentPage <= 1 ? "#f3f4f6" : "#fff", color: currentPage <= 1 ? "#9ca3af" : "#111827", cursor: currentPage <= 1 ? "default" : "pointer", fontSize: 13, fontWeight: 500 }}>上一页</button>
+              <button onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))} disabled={currentPage >= totalPages} style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "4px 12px", background: currentPage >= totalPages ? "#f3f4f6" : "#fff", color: currentPage >= totalPages ? "#9ca3af" : "#111827", cursor: currentPage >= totalPages ? "default" : "pointer", fontSize: 13, fontWeight: 500 }}>下一页</button>
+              <select value={pageSize} onChange={(e) => { setPageSize(Number(e.target.value)); setCurrentPage(1); }} style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "4px 8px", fontSize: 13, color: "#111827" }}>
                 {[20, 50, 100, 200].map((n) => <option key={n} value={n}>{n}条/页</option>)}
               </select>
             </div>
