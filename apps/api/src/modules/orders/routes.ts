@@ -831,7 +831,7 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
     if (!auth) return;
 
     const page = parseInt(req.query.page as string) || 1;
-    const pageSize = Math.min(parseInt(req.query.pageSize as string) || 50, 200);
+    const pageSize = Math.min(parseInt(req.query.pageSize as string) || 50, 500);
     const statusGroup = req.query.statusGroup?.trim();
     const itemName = req.query.itemName?.trim();
     const transportMode = req.query.transportMode?.trim();

@@ -436,7 +436,7 @@ export function registerShipmentRoutes(app: MinimalHttpApp): void {
     if (!auth) return;
 
     const page = parseInt(req.query.page as string) || 1;
-    const pageSize = Math.min(parseInt(req.query.pageSize as string) || 50, 200);
+    const pageSize = Math.min(parseInt(req.query.pageSize as string) || 50, 500);
     const includeChildren = req.query.all === "1";
     const where: any = { companyId: auth.companyId };
     if (!includeChildren) where.parentTrackingNo = null;

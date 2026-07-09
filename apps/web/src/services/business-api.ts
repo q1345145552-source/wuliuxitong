@@ -706,6 +706,8 @@ export async function fetchClientOrders(params?: {
   statusGroup?: "completed" | "unfinished";
 }): Promise<OrderItem[]> {
   const query = new URLSearchParams();
+  query.set("pageSize", "500");
+  query.set("page", "1");
   if (params?.statusGroup) query.set("statusGroup", params.statusGroup);
   const response = await fetch(`${apiBaseUrl()}/client/orders?${query.toString()}`, {
     method: "GET",
@@ -848,7 +850,7 @@ export async function splitStaffShipment(payload: {
 }
 
 export async function fetchStaffShipments(): Promise<ShipmentItem[]> {
-  const response = await fetch(`${apiBaseUrl()}/staff/shipments?pageSize=200`, {
+  const response = await fetch(`${apiBaseUrl()}/staff/shipments?pageSize=500&page=1`, {
     method: "GET",
     headers: { ...authHeaders() },
   });
@@ -1013,7 +1015,7 @@ export async function fetchAdminClients(): Promise<AdminUserItem[]> {
 }
 
 export async function fetchAdminOrders(): Promise<AdminOrderItem[]> {
-  const response = await fetch(`${apiBaseUrl()}/admin/orders`, {
+  const response = await fetch(`${apiBaseUrl()}/admin/orders?pageSize=500&page=1`, {
     method: "GET",
     headers: { ...authHeaders() },
   });

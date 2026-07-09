@@ -214,7 +214,7 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
     if (!auth) return;
 
     const page = parseInt(req.query.page as string) || 1;
-    const pageSize = Math.min(parseInt(req.query.pageSize as string) || 50, 200);
+    const pageSize = Math.min(parseInt(req.query.pageSize as string) || 50, 500);
     const where = { companyId: auth.companyId, parentTrackingNo: null } as const;
 
     const [total, rows] = await Promise.all([
