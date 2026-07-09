@@ -3,7 +3,6 @@
 import { DEFAULT_SHIPPING_PRICES, INSPECTION_SURCHARGE, SENSITIVE_SURCHARGE } from "../../../../../packages/shared-types/constants";
 
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
-import { Anchor, ClipboardCheck, PackageCheck, Ship, Truck, Warehouse, type LucideIcon } from "lucide-react";
 import { Bar, BarChart, CartesianGrid, Cell, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import EmptyStateCard from "../../modules/layout/EmptyStateCard";
 import RoleShell from "../../modules/layout/RoleShell";
@@ -79,18 +78,6 @@ const ORDER_TIMELINE = [
   { key: "outForDelivery", label: "派送" },
   { key: "delivered", label: "签收" },
 ] as const;
-
-/**
- * 返回订单时间轴节点图标。
- */
-function orderTimelineIcon(key: string): LucideIcon {
-  if (key === "created") return ClipboardCheck;
-  if (key === "inWarehouseCN") return Warehouse;
-  if (key === "inTransit") return Ship;
-  if (key === "customsTH") return Anchor;
-  if (key === "outForDelivery") return Truck;
-  return PackageCheck;
-}
 
 const VALID_PACKAGE_UNITS = ["bag", "box"] as const;
 const VALID_TRANSPORT_MODES = ["sea", "land"] as const;
@@ -774,10 +761,10 @@ export default function ClientHomePage() {
                         <td style={{ padding: "6px 8px", fontFamily: "monospace", fontSize: 11 }}>{item.orderNo || "—"}<br /><span style={{ fontSize: 10, color: "#6b7280" }}>{item.trackingNo || ""}</span></td>
                         <td style={{ padding: "6px 8px" }}>{item.itemName}</td>
                         <td style={{ padding: "6px 8px", fontSize: 11, whiteSpace: "nowrap" }}>{(() => { const dims = (item.products ?? []).map((p: any) => (p.lengthCm && p.widthCm && p.heightCm ? p.lengthCm + "×" + p.widthCm + "×" + p.heightCm : null)).filter(Boolean).join(", "); return dims || "—"; })()}</td>
-                        <td style={{ padding: "6px 8px", whiteSpace: "nowrap" }}>{item.volumeM3 != null ? Number(item.volumeM3).toFixed(3) : "—"}</td>
-                        <td style={{ padding: "6px 8px", whiteSpace: "nowrap" }}>{item.weightKg != null ? Number(item.weightKg).toFixed(2) : "—"}</td>
-                        <td style={{ padding: "6px 8px", whiteSpace: "nowrap" }}>{item.packageCount} {item.packageUnit === "box" ? "箱" : "袋"}</td>
-                        <td style={{ padding: "6px 8px" }}>{item.transportMode === "sea" ? "海运" : "陆运"}</td>
+                        <td style={{ padding: "6px 8px", whiteSpace: "nowrap" }} className="col-num">{item.volumeM3 != null ? Number(item.volumeM3).toFixed(3) : "—"}</td>
+                        <td style={{ padding: "6px 8px", whiteSpace: "nowrap" }} className="col-num">{item.weightKg != null ? Number(item.weightKg).toFixed(2) : "—"}</td>
+                        <td style={{ padding: "6px 8px", whiteSpace: "nowrap" }} className="col-num">{item.packageCount} {item.packageUnit === "box" ? "箱" : "袋"}</td>
+                        <td style={{ padding: "6px 8px" }}><span className={item.transportMode === "sea" ? "tag tag-sea" : "tag tag-land"}>{item.transportMode === "sea" ? "海运" : "陆运"}</span></td>
                         <td style={{ padding: "6px 8px" }}><span style={{ fontSize: 11, fontWeight: 500, color: sColor, background: sBg, padding: "2px 6px", borderRadius: 4 }}>{sLabel}</span></td>
                         <td style={{ padding: "6px 8px", whiteSpace: "nowrap" }}>
                           {item.trackingNo ? <button type="button" onClick={() => openShipmentTrack(item.trackingNo!)} style={{ border: "1px solid #2563eb", borderRadius: 4, padding: "2px 8px", fontSize: 11, background: "#eff6ff", color: "#2563eb", cursor: "pointer" }}>物流轨迹</button> : <span style={{ fontSize: 11, color: "#9ca3af" }}>暂无物流轨迹</span>}
@@ -1184,10 +1171,10 @@ export default function ClientHomePage() {
                           <td style={{ padding: "6px 8px", fontFamily: "monospace", fontSize: 11 }}>{item.trackingNo || "—"}<br /><span style={{ fontSize: 10, color: "#6b7280" }}>{item.orderNo ? `${item.orderNo}` : ""}</span></td>
                           <td style={{ padding: "6px 8px" }}>{(item.products?.length ?? 0) > 0 ? (item.products ?? []).map((p: any, i: number) => (<div key={p.id || i}>{p.itemName}</div>)) : (item.itemName || "未填品名")}</td>
                           <td style={{ padding: "6px 8px", fontSize: 11, whiteSpace: "nowrap" }}>{dims || "—"}</td>
-                          <td style={{ padding: "6px 8px", whiteSpace: "nowrap" }}>{item.volumeM3 != null ? Number(item.volumeM3).toFixed(3) : "—"}</td>
-                          <td style={{ padding: "6px 8px", whiteSpace: "nowrap" }}>{item.weightKg != null ? Number(item.weightKg).toFixed(2) : "—"}</td>
-                          <td style={{ padding: "6px 8px", whiteSpace: "nowrap" }}>{item.packageCount} {item.packageUnit === "box" ? "箱" : "袋"}</td>
-                          <td style={{ padding: "6px 8px" }}>{item.transportMode === "sea" ? "海运" : "陆运"}</td>
+                          <td style={{ padding: "6px 8px", whiteSpace: "nowrap" }} className="col-num">{item.volumeM3 != null ? Number(item.volumeM3).toFixed(3) : "—"}</td>
+                          <td style={{ padding: "6px 8px", whiteSpace: "nowrap" }} className="col-num">{item.weightKg != null ? Number(item.weightKg).toFixed(2) : "—"}</td>
+                          <td style={{ padding: "6px 8px", whiteSpace: "nowrap" }} className="col-num">{item.packageCount} {item.packageUnit === "box" ? "箱" : "袋"}</td>
+                          <td style={{ padding: "6px 8px" }}><span className={item.transportMode === "sea" ? "tag tag-sea" : "tag tag-land"}>{item.transportMode === "sea" ? "海运" : "陆运"}</span></td>
                           <td style={{ padding: "6px 8px" }}>{statusMap[st] || st || "—"}</td>
                           <td style={{ padding: "6px 8px", whiteSpace: "nowrap" }}>
                             {item.trackingNo ? <button onClick={() => openShipmentTrack(item.trackingNo!)} style={{ border: "1px solid #2563eb", borderRadius: 4, padding: "2px 8px", fontSize: 11, background: "#eff6ff", color: "#2563eb", cursor: "pointer", marginRight: 4 }}>物流轨迹</button> : <span style={{ fontSize: 11, color: "#9ca3af", marginRight: 4 }}>暂无轨迹</span>}
@@ -1320,10 +1307,10 @@ export default function ClientHomePage() {
                         <td style={{ padding: "6px 8px", fontFamily: "monospace", fontSize: 11 }}>{item.orderNo || "—"}<br /><span style={{ fontSize: 10, color: "#6b7280" }}>{item.trackingNo || ""}</span></td>
                         <td style={{ padding: "6px 8px" }}>{item.itemName}</td>
                         <td style={{ padding: "6px 8px", fontSize: 11, whiteSpace: "nowrap" }}>{(() => { const dims = (item.products ?? []).map((p: any) => (p.lengthCm && p.widthCm && p.heightCm ? p.lengthCm + "×" + p.widthCm + "×" + p.heightCm : null)).filter(Boolean).join(", "); return dims || "—"; })()}</td>
-                        <td style={{ padding: "6px 8px", whiteSpace: "nowrap" }}>{item.volumeM3 != null ? Number(item.volumeM3).toFixed(3) : "—"}</td>
-                        <td style={{ padding: "6px 8px", whiteSpace: "nowrap" }}>{item.weightKg != null ? Number(item.weightKg).toFixed(2) : "—"}</td>
-                        <td style={{ padding: "6px 8px", whiteSpace: "nowrap" }}>{item.packageCount} {item.packageUnit === "box" ? "箱" : "袋"}</td>
-                        <td style={{ padding: "6px 8px" }}>{item.transportMode === "sea" ? "海运" : "陆运"}</td>
+                        <td style={{ padding: "6px 8px", whiteSpace: "nowrap" }} className="col-num">{item.volumeM3 != null ? Number(item.volumeM3).toFixed(3) : "—"}</td>
+                        <td style={{ padding: "6px 8px", whiteSpace: "nowrap" }} className="col-num">{item.weightKg != null ? Number(item.weightKg).toFixed(2) : "—"}</td>
+                        <td style={{ padding: "6px 8px", whiteSpace: "nowrap" }} className="col-num">{item.packageCount} {item.packageUnit === "box" ? "箱" : "袋"}</td>
+                        <td style={{ padding: "6px 8px" }}><span className={item.transportMode === "sea" ? "tag tag-sea" : "tag tag-land"}>{item.transportMode === "sea" ? "海运" : "陆运"}</span></td>
                         <td style={{ padding: "6px 8px" }}><span style={{ fontSize: 11, fontWeight: 500, color: sColor, background: sBg, padding: "2px 6px", borderRadius: 4 }}>{sLabel}</span></td>
                         <td style={{ padding: "6px 8px", whiteSpace: "nowrap" }}>
                           {item.trackingNo ? <button type="button" onClick={() => openShipmentTrack(item.trackingNo!)} style={{ border: "1px solid #2563eb", borderRadius: 4, padding: "2px 8px", fontSize: 11, background: "#eff6ff", color: "#2563eb", cursor: "pointer" }}>物流轨迹</button> : <span style={{ fontSize: 11, color: "#9ca3af" }}>暂无物流轨迹</span>}

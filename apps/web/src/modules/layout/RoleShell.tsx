@@ -1,45 +1,8 @@
 "use client";
 
 import { useEffect, useState, type ReactNode } from "react";
-import {
-  BadgeDollarSign,
-  Boxes,
-  Brain,
-  Building2,
-  FileText,
-  LayoutDashboard,
-  LogOut,
-  PackageSearch,
-  Route,
-  ShieldCheck,
-  Truck,
-  UserCog,
-  Users,
-  Wallet,
-  type LucideIcon,
-} from "lucide-react";
 import { clearAuthSession, getOptionalSession, type AuthRole, type AuthSession } from "../../auth/auth-session";
 import { globalMenus, roleFunctionGroups, roleMenus } from "./menu-config";
-
-/**
- * 为导航菜单返回对应的 Lucide 图标。
- */
-function iconForMenuId(id: string): LucideIcon {
-  if (id.includes("overview") || id.includes("home")) return LayoutDashboard;
-  if (id.includes("staff")) return UserCog;
-  if (id.includes("client") || id.includes("clients")) return Users;
-  if (id.includes("order") || id.includes("shipment")) return Truck;
-  if (id.includes("track")) return Route;
-  if (id.includes("bill") || id.includes("settlement")) return BadgeDollarSign;
-  if (id.includes("wallet")) return Wallet;
-  if (id.includes("docs") || id.includes("knowledge")) return FileText;
-  if (id.includes("ai")) return Brain;
-  if (id.includes("customs")) return ShieldCheck;
-  if (id.includes("lastmile")) return PackageSearch;
-  if (id.includes("lmp")) return Building2;
-  if (id.includes("import")) return Boxes;
-  return LayoutDashboard;
-}
 
 export default function RoleShell(props: {
   allowedRole: AuthRole | AuthRole[];
@@ -148,10 +111,6 @@ export default function RoleShell(props: {
               className={`dashboard-sidebar-link ${currentPath === item.href ? "dashboard-sidebar-link-active" : ""}`}
               onClick={closeSidebar}
             >
-              {(() => {
-                const Icon = iconForMenuId(item.id);
-                return <Icon size={14} />;
-              })()}
               {item.label}
             </a>
           ))}
@@ -183,10 +142,6 @@ export default function RoleShell(props: {
                   className={`dashboard-sidebar-link ${currentPath + currentHash === item.href ? "dashboard-sidebar-link-active" : ""}`}
                   onClick={closeSidebar}
                 >
-                  {(() => {
-                    const Icon = iconForMenuId(item.id);
-                    return <Icon size={14} />;
-                  })()}
                   {item.label}
                 </a>
               ))}
@@ -202,10 +157,6 @@ export default function RoleShell(props: {
               className={`dashboard-sidebar-link ${currentPath === item.href ? "dashboard-sidebar-link-active" : ""}`}
               onClick={closeSidebar}
             >
-              {(() => {
-                const Icon = iconForMenuId(item.id);
-                return <Icon size={14} />;
-              })()}
               {item.label}
             </a>
           ))}
@@ -219,7 +170,6 @@ export default function RoleShell(props: {
               window.location.href = "/login";
             }}
           >
-            <LogOut size={14} />
             退出账号
           </button>
         </div>

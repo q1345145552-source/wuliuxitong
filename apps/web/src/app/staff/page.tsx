@@ -1666,7 +1666,7 @@ const loadLmShipments = async () => {
               <EmptyStateCard title="没有匹配结果" description="请调整搜索条件后重试。" />
             ) : (
               <div
-                id="staff-shipment-list-table-wrap"
+                className="table-card"
                 style={{ overflowX: "auto", border: "1px solid #e2e8f0", borderRadius: 10, background: "#fff" }}
               >
                 <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, minWidth: 1660 }}>
