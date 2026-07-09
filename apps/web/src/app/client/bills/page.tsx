@@ -343,7 +343,7 @@ export default function ClientBillsPage() {
                 {payProof && <img src={payProof} alt="凭证" style={{ width: "100%", maxHeight: 160, objectFit: "contain", borderRadius: 8, border: "1px solid #e5e7eb", marginTop: 8 }} />}
               </div>
             )}
-            {payMethod === "balance" && <p style={{ fontSize: 13, color: "#6b7280", marginBottom: 16 }}>当前 CNY 余额：<strong>¥{walletBalance.toFixed(2)}</strong>{walletBalance < payModal.amount ? <span style={{ color: "#dc2626", marginLeft: 8 }}>余额不足</span> : <span style={{ color: "#16a34a", marginLeft: 8 }}>余额充足</span>}<br />将扣除 ¥{payModal.amount.toFixed(2)}</p>}
+            {payMethod === "balance" && <p style={{ fontSize: 13, color: "#6b7280", marginBottom: 16 }}>当前人民币余额：<strong>¥{walletBalance.toFixed(2)}</strong>{walletBalance < payModal.amount ? <span style={{ color: "#dc2626", marginLeft: 8 }}>余额不足</span> : <span style={{ color: "#16a34a", marginLeft: 8 }}>余额充足</span>}<br />将扣除 ¥{payModal.amount.toFixed(2)}</p>}
             {payError && <p style={{ color: "#dc2626", fontSize: 13, marginBottom: 12 }}>{payError}</p>}
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
               <button type="button" onClick={() => { setPayModal(null); setPayProof(null); setPayError(""); }} disabled={paySubmitting} style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 16px", background: "#fff", cursor: "pointer", fontSize: 13 }}>取消</button>

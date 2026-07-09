@@ -2783,8 +2783,8 @@ const loadLmShipments = async () => {
                   <tr style={{ background: "#f9fafb", borderBottom: "1px solid #e5e7eb" }}>
                     <th style={{ padding: "8px 12px", textAlign: "left", fontWeight: 600, color: "#374151" }}>客户</th>
                     <th style={{ padding: "8px 12px", textAlign: "left", fontWeight: 600, color: "#374151" }}>公司</th>
-                    <th style={{ padding: "8px 12px", textAlign: "right", fontWeight: 600, color: "#374151" }}>人民币余额 (CNY)</th>
-                    <th style={{ padding: "8px 12px", textAlign: "right", fontWeight: 600, color: "#374151" }}>泰铢余额 (THB)</th>
+                    <th style={{ padding: "8px 12px", textAlign: "right", fontWeight: 600, color: "#374151" }}>人民币余额</th>
+                    <th style={{ padding: "8px 12px", textAlign: "right", fontWeight: 600, color: "#374151" }}>泰铢余额</th>
                   </tr>
                 </thead>
                 <tbody>
