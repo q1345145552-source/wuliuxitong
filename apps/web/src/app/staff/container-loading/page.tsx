@@ -483,7 +483,7 @@ export default function StaffContainerLoadingPage() {
                         {loadedChildren.length > 0 && (
                           <div style={{ paddingLeft: 28, fontSize: 11, color: "#6b7280", marginTop: 3 }}>
                             {loadedChildren.map(c => (
-                              <span key={c.id} style={{ marginRight: 14 }}>📦 {c.trackingNo}: {c.packageCount}件 → {loadedShipments[c.id]}</span>
+                              <span key={c.id} style={{ marginRight: 14 }}>{c.trackingNo}: {c.packageCount}件 → {loadedShipments[c.id]}</span>
                             ))}
                           </div>
                         )}

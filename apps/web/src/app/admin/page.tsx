@@ -1176,7 +1176,7 @@ export default function AdminHomePage() {
             onClick={() => { setShowStaffModal(true); setStaffForm({ id: "", name: "", phone: "", password: "" }); }}
             style={{ border: "none", borderRadius: 8, padding: "8px 14px", background: "#2563eb", color: "#fff", fontWeight: 600, cursor: "pointer" }}
           >
-            ＋ 创建账号
+            创建账号
           </button>
           <span style={{ marginLeft: 8, fontSize: 12, color: "#000000" }}>需使用管理员身份登录</span>
         </div>
@@ -1264,7 +1264,7 @@ export default function AdminHomePage() {
             onClick={() => { setShowClientModal(true); setEditingClientId(null); setClientForm({ id: "", name: "", companyName: "", phone: "", email: "", password: "" }); }}
             style={{ border: "none", borderRadius: 8, padding: "8px 14px", background: "#2563eb", color: "#fff", fontWeight: 600, cursor: "pointer" }}
           >
-            ＋ 创建账号
+            创建账号
           </button>
         </div>
         {clientList.length === 0 ? (
@@ -1366,7 +1366,7 @@ export default function AdminHomePage() {
               onClick={async () => { const clients = await fetchStaffClients(); setStaffClients(clients); setShowCreateOrderModal(true); }}
               style={{ border: "none", borderRadius: 8, padding: "6px 12px", color: "#fff", background: "#16a34a", cursor: "pointer", fontWeight: 600 }}
             >
-              ＋ 创建订单
+              创建订单
             </button>
             <button
               type="button"
@@ -1788,7 +1788,7 @@ export default function AdminHomePage() {
                     <td style={{ padding: "6px 8px" }}>{o.licensePlate ?? "-"}</td>
                     <td style={{ padding: "6px 8px" }}>{o.phoneNumber ?? "-"}</td>
                     <td style={{ padding: "6px 8px" }}>{o.deliveryDate || "-"}</td>
-                    <td style={{ padding: "6px 8px" }}>{o.status === "SIGNED" ? <span>✅ 已签收{o.signImageBase64 ? <img src={"data:image/jpeg;base64,"+o.signImageBase64} alt="签收凭证" onClick={() => setPreviewImg("data:image/jpeg;base64,"+o.signImageBase64!)} style={{ maxWidth:40, maxHeight:40, borderRadius:4, marginLeft:4, cursor:"pointer", border:"1px solid #e5e7eb" }} /> : null}</span> : o.status === "DELIVERING" ? "🚚 派送中" : o.status}</td>
+                    <td style={{ padding: "6px 8px" }}>{o.status === "SIGNED" ? <span>已签收{o.signImageBase64 ? <img src={"data:image/jpeg;base64,"+o.signImageBase64} alt="签收凭证" onClick={() => setPreviewImg("data:image/jpeg;base64,"+o.signImageBase64!)} style={{ maxWidth:40, maxHeight:40, borderRadius:4, marginLeft:4, cursor:"pointer", border:"1px solid #e5e7eb" }} /> : null}</span> : o.status === "DELIVERING" ? " 派送中" : o.status}</td>
                     <td style={{ padding: "6px 8px" }}>
                       {o.status !== "SIGNED" && (
                         <button onClick={async () => {
@@ -2420,11 +2420,11 @@ export default function AdminHomePage() {
                 </select>
                 <div style={{ display: "flex", gap: 4 }}>
                   <input value={p.domesticTrackingNo} onChange={(e) => { const n = [...createProducts]; n[i].domesticTrackingNo = e.target.value; setCreateProducts(n); }} placeholder="国内单号" style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "4px 6px", fontSize: 11, flex: 1 }} />
-                  {createProducts.length > 1 && <button onClick={() => { setCreateProducts(createProducts.filter((_, j) => j !== i)); }} style={{ border: "none", background: "#fecaca", color: "#dc2626", borderRadius: 4, cursor: "pointer", fontSize: 11 }}>✕</button>}
+                  {createProducts.length > 1 && <button onClick={() => { setCreateProducts(createProducts.filter((_, j) => j !== i)); }} style={{ border: "none", background: "#fecaca", color: "#dc2626", borderRadius: 4, cursor: "pointer", fontSize: 11 }}>×</button>}
                 </div>
               </div>
             ))}
-            <button onClick={() => setCreateProducts([...createProducts, { itemName: "", packageCount: 1, lengthCm: "", widthCm: "", heightCm: "", productQuantity: "", cargoType: "normal", domesticTrackingNo: "" }])} style={{ border: "1px solid #2563eb", borderRadius: 6, padding: "4px 10px", background: "#eff6ff", color: "#2563eb", cursor: "pointer", fontSize: 12, marginBottom: 16 }}>＋ 添加产品行</button>
+            <button onClick={() => setCreateProducts([...createProducts, { itemName: "", packageCount: 1, lengthCm: "", widthCm: "", heightCm: "", productQuantity: "", cargoType: "normal", domesticTrackingNo: "" }])} style={{ border: "1px solid #2563eb", borderRadius: 6, padding: "4px 10px", background: "#eff6ff", color: "#2563eb", cursor: "pointer", fontSize: 12, marginBottom: 16 }}>添加产品行</button>
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
               <button onClick={() => setShowCreateOrderModal(false)} style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 14px", background: "#fff", cursor: "pointer", color: "#000" }}>取消</button>
               <button disabled={loading} onClick={async () => {

@@ -247,9 +247,9 @@ export default function ClientImportsPage() {
             <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, marginBottom: 4 }}>
               <span>正在提交第 {current}/{rows.length} 条…</span>
               <span>
-                <span style={{ color: "#16a34a" }}>✅ {successCount}</span>
+                <span style={{ color: "#16a34a" }}>{successCount}</span>
                 {" / "}
-                <span style={{ color: failCount > 0 ? "#dc2626" : "#6b7280" }}>❌ {failCount}</span>
+                <span style={{ color: failCount > 0 ? "#dc2626" : "#6b7280" }}>{failCount}</span>
               </span>
             </div>
             <div style={{ height: 8, background: "#e5e7eb", borderRadius: 4, overflow: "hidden" }}>
@@ -262,7 +262,7 @@ export default function ClientImportsPage() {
         {done && (
           <div style={{ marginBottom: 12, padding: 12, borderRadius: 8, background: failCount > 0 ? "#fef2f2" : "#f0fdf4", border: `1px solid ${failCount > 0 ? "#fecaca" : "#bbf7d0"}` }}>
             <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 4 }}>
-              批量下单完成：✅ 成功 {successCount} 条 / ❌ 失败 {failCount} 条
+              批量下单完成：成功 {successCount} 条 / 失败 {failCount} 条
             </div>
             {errors.length > 0 && (
               <ul style={{ margin: 0, paddingLeft: 20, fontSize: 13, color: "#b91c1c" }}>

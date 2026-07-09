@@ -229,7 +229,7 @@ export default function FclInquiryPanel(props: ClientFclInquiryProps) {
                   <td style={{ padding: "6px 8px" }}>{item.serviceType}</td>
                   <td style={{ padding: "6px 8px" }}>{item.loadingDate || "—"}</td>
                   <td style={{ padding: "6px 8px" }}>
-                    {item.status === "pending" ? "⏳ 待处理" : item.status === "processing" ? "🔄 处理中" : "✅ 完成"}
+                    {item.status === "pending" ? "待处理" : item.status === "processing" ? "处理中" : "完成"}
                   </td>
                   <td style={{ padding: "6px 8px", fontSize: 11 }}>{item.createdAt.slice(0, 10)}</td>
                 </tr>
