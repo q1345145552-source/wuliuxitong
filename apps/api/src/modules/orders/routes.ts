@@ -1331,19 +1331,17 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
       fail(res, 400, "BAD_REQUEST", "trackingNo is required");
       return;
     }
-    if (trackingNo !== shipment.trackingNo) {
-      const clash = await prisma.shipment.findFirst({
-        where: {
-          companyId: auth.companyId,
-          trackingNo,
-          NOT: { id: shipmentId },
-        },
-        select: { id: true },
-      });
-      if (clash) {
-        fail(res, 400, "BAD_REQUEST", "trackingNo already exists");
-        return;
-      }
+    const clash = await prisma.shipment.findFirst({
+      where: {
+        companyId: auth.companyId,
+        trackingNo,
+        NOT: { id: shipmentId },
+      },
+      select: { id: true },
+    });
+    if (clash) {
+      fail(res, 400, "BAD_REQUEST", "trackingNo already exists");
+      return;
     }
 
     const itemName = body.itemName?.trim();
