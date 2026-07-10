@@ -419,13 +419,17 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
       fail(res, 400, "BAD_REQUEST", "trackingNo is required");
       return;
     }
-    // 查重：排除当前订单关联的运单自身
-    const currentShipmentId = linkedShipment?.id;
+    // 查重：排除当前订单下的所有运单
+    const orderShipments = await prisma.shipment.findMany({
+      where: { orderId: orderId, companyId: auth.companyId },
+      select: { id: true },
+    });
+    const excludeIds = orderShipments.map(s => s.id);
     const conflict = await prisma.shipment.findFirst({
       where: {
         companyId: auth.companyId,
         trackingNo,
-        ...(currentShipmentId ? { NOT: { id: currentShipmentId } } : {}),
+        ...(excludeIds.length > 0 ? { NOT: { id: { in: excludeIds } } } : {}),
       },
       select: { id: true },
     });
