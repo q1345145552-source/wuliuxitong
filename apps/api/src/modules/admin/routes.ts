@@ -420,7 +420,13 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
       return;
     }
     // 排除当前编辑的运单自身 + attachLinkedShipments 找到的关联运单
-    const excludeIds = [rawId, linkedShipment?.id].filter(Boolean) as string[];
+    const currentShipmentId = linkedShipment?.id ?? (
+      await prisma.shipment.findFirst({
+        where: { orderId: orderId, trackingNo: trackingNo },
+        select: { id: true },
+      })
+    )?.id;
+    const excludeIds = [currentShipmentId, linkedShipment?.id].filter(Boolean) as string[];
     const conflict = await prisma.shipment.findFirst({
       where: {
         companyId: auth.companyId,
