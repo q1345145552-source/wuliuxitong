@@ -137,7 +137,7 @@ export default function StaffLastmile(props: StaffLastmileProps) {
                 <label key={s.id} style={{ display: "flex", alignItems: "center", gap: 6, padding: "2px 0", fontSize: 12, cursor: "pointer" }}>
                   <input type="checkbox" checked={lmSelected.has(s.id)} onChange={() => { const n = new Set(lmSelected); n.has(s.id) ? n.delete(s.id) : n.add(s.id); setLmSelected(n); }} />
                   <span style={{ fontFamily: "monospace", color: "#1e3a8a", minWidth: 150 }}>{s.trackingNo}</span>
-                  <span style={{ color: "#6b21a8", minWidth: 70, fontWeight: 600 }}>{s.clientId}</span>
+                  <span style={{ color: "#6b21a8", minWidth: 100, fontWeight: 600 }}>{s.clientId}</span>
                   <span style={{ color: "#374151", flex: 1 }}>{s.itemName}</span>
                   <span style={{ color: "#6b7280", minWidth: 40, textAlign: "right" }}>{s.packageCount}件</span>
                 </label>
@@ -195,7 +195,7 @@ export default function StaffLastmile(props: StaffLastmileProps) {
               <tbody>
                 {items.map(o => (
                   <tr key={o.id} style={{ borderBottom: "1px solid #e5e7eb" }}>
-                    <td style={{ padding: "4px 6px", fontFamily: "monospace" }}>{o.clientId || "-"}</td>
+                    <td style={{ padding: "4px 6px", fontFamily: "monospace", whiteSpace: "nowrap" }}>{o.clientId || "-"}</td>
                     <td style={{ padding: "4px 6px", fontFamily: "monospace" }}>{o.trackingNo || o.shipmentId}</td>
                     <td style={{ padding: "4px 6px" }}>{o.driverName ?? "-"}</td>
                     <td style={{ padding: "4px 6px" }}>{o.licensePlate ?? "-"}</td>
