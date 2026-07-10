@@ -28,6 +28,7 @@ export interface StaffCreateOrderPayload {
     cargoType?: string;
     domesticTrackingNo?: string;
   }>;
+  remark?: string;
 }
 
 export interface ClientPrealertPayload {
@@ -187,6 +188,7 @@ export interface ShipmentItem {
   currentLocation?: string;
   updatedAt?: string;
   warehouseId?: string;
+  remark?: string | null;
   transportMode?: string;
   shipDate?: string;
   receiverAddressTh?: string;
@@ -228,6 +230,7 @@ export interface OrderItem {
   clientId?: string;
   clientName?: string;
   warehouseId?: string;
+  remark?: string | null;
   batchNo?: string;
   latestRemark?: string;
   logisticsRecords?: Array<{
@@ -976,6 +979,7 @@ export async function patchStaffShipmentOrderBundle(payload: {
   receivableAmountCny?: number | null;
   receivableCurrency?: "CNY" | "THB";
   warehouseId?: string;
+  remark?: string | null;
 }): Promise<{ shipmentId: string; orderId: string; updatedAt: string }> {
   const response = await fetch(`${apiBaseUrl()}/staff/orders/patch-shipment-bundle`, {
     method: "POST",
@@ -1036,6 +1040,7 @@ export async function updateAdminOrder(payload: {
   trackingNo?: string;
   batchNo?: string;
   warehouseId?: string;
+  remark?: string | null;
   receiverAddressTh?: string;
   containerNo?: string;
   productQuantity: number;

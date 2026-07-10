@@ -187,6 +187,7 @@ export function buildShipmentOrderEditDraft(item: ShipmentItem): ShipmentOrderEd
     paymentStatus: item.paymentStatus === "paid" ? "paid" : "unpaid",
     destinationCountry: "泰国",
     customsDeclaration: "none",
+    remark: item.remark ?? "",
   };
 }
 

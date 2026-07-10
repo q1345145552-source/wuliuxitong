@@ -251,6 +251,7 @@ export default function StaffHomePage() {
     packageUnit: "box" as "bag" | "box",
     transportMode: "sea" as "sea" | "land",
     cargoType: "normal",
+    remark: "",
   });
 
   /**
@@ -558,6 +559,7 @@ const loadLmShipments = async () => {
         receivableAmountCny: recv,
         receivableCurrency: draft.receivableCurrency,
         warehouseId: draft.warehouseId.trim(),
+        remark: draft.remark?.trim() || null,
       });
       const shipmentItems = await loadPageData();
       const updated = shipmentItems.find((s) => s.id === shipmentId);
@@ -693,6 +695,7 @@ const loadLmShipments = async () => {
         domesticTrackingNo: form.domesticOrderNo.trim() || "货拉拉",
         cargoType: form.cargoType,
         transportMode: form.transportMode,
+        remark: form.remark?.trim() || undefined,
         products: hasProducts ? staffFormProducts.filter(p => p.itemName.trim()).map(p => ({ itemName: p.itemName.trim(), packageCount: Number(p.packageCount) || 1, lengthCm: p.lengthCm ? Number(p.lengthCm) : undefined, widthCm: p.widthCm ? Number(p.widthCm) : undefined, heightCm: p.heightCm ? Number(p.heightCm) : undefined, productQuantity: p.productQuantity ? Number(p.productQuantity) : undefined, weightKg: p.weightKg ? Number(p.weightKg) : undefined, cargoType: (p.cargoType || "normal").toLowerCase(), domesticTrackingNo: p.domesticTrackingNo.trim() || "货拉拉" })) : undefined,
       });
       // 并行上传产品图片
@@ -731,6 +734,7 @@ const loadLmShipments = async () => {
         transportMode: "sea" as "sea" | "land", cargoType: "normal", arrivedAt: "", clientId: "",
         packageCount: "", volumeM3: "", weightKg: "", productQuantity: "",
         lengthCm: "", widthCm: "", heightCm: "",
+        remark: "",
       });
       setStaffFormProducts([]);
       setShowCreateModal(false);
@@ -1414,6 +1418,11 @@ const loadLmShipments = async () => {
             <div style={{ fontSize: 12, color: "#000000", marginTop: -6, marginBottom: 8 }}>说明：该日期为到仓日期</div>
           </div>
         </div>
+        <div style={{ gridColumn: "1/-1", marginTop: 4 }}>
+          <div style={{ fontSize: 11, color: "#000000", marginBottom: 4 }}>备注</div>
+          <input value={form.remark} onChange={(e) => setForm((v) => ({ ...v, remark: e.target.value }))} placeholder="备注（可选）" style={{ ...orderCreateInputStyle, width: "100%" }} />
+        </div>
+
         <div style={{ marginTop: 10 }}>
           <button type="button" disabled={loading} onClick={() => void submitOrder()} style={{ border: "none", borderRadius: 8, padding: "8px 14px", color: "#fff", background: "#000000" }}>
             创建订单
@@ -2245,6 +2254,15 @@ const loadLmShipments = async () => {
                                               <span style={{ fontSize: 11, color: "#000000" }}>上传后写入入库拍照记录</span>
                                             </div>
                                           </ShipmentEditFormField>
+                                          <ShipmentEditFormField label="备注">
+                                            <input
+                                              value={draft.remark}
+                                              onChange={(e) => mergeShipmentOrderDraft(item.id, item, { remark: e.target.value })}
+                                              placeholder="备注（可选）"
+                                              style={inputInCard}
+                                            />
+                                          </ShipmentEditFormField>
+
                                           <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
                                             <InfoItem label="可编辑" value={item.canEdit ? "是" : "否"} />
                                             <InfoItem label="更新时间" value={item.updatedAt ?? "-"} />
@@ -2581,6 +2599,11 @@ const loadLmShipments = async () => {
                 </div>
               )}
             </div>
+            </div>
+            <div style={{ marginTop: 12 }}>
+              <div style={{ fontSize: 12, color: "#000000", marginBottom: 4 }}>备注</div>
+              <input value={form.remark} onChange={(e) => setForm((v) => ({ ...v, remark: e.target.value }))} placeholder="备注（可选）" style={{ border: "1px solid #d1d5db", borderRadius: 6, padding: "8px 10px", width: "100%", fontSize: 13 }} />
+
             {message && message.includes("失败") ? (
               <p style={{ marginTop: 8, color: "#b91c1c", fontSize: 13 }}>{message}</p>
             ) : message && !message.includes("失败") && showCreateModal ? (

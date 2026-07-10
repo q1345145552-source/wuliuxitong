@@ -202,6 +202,7 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
       receiverPhoneTh?: string;
       receiverAddressTh?: string;
       trackingNo?: string;
+      remark?: string;
       products?: Array<{
         itemName: string;
         packageCount: number;
@@ -532,6 +533,7 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
       receiverPhoneTh?: string;
       receiverAddressTh?: string;
       warehouseId?: string;
+      remark?: string;
       products?: Array<{
         itemName: string;
         packageCount: number;
@@ -661,6 +663,7 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
           transportMode: body.transportMode,
           domesticTrackingNo: body.domesticTrackingNo ?? null,
           warehouseId: body.warehouseId,
+          remark: body.remark?.trim() || null,
         },
       }),
     ];
@@ -1283,6 +1286,7 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
       receivableCurrency?: "CNY" | "THB";
       /** 同步更新订单与运单的归属仓库（员工须对新仓库有编辑权限）。 */
       warehouseId?: string;
+      remark?: string;
     };
 
     const shipmentId = body.shipmentId?.trim();
@@ -1452,6 +1456,7 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
           volumeM3: (volumeM3 as unknown as Prisma.Decimal | null),
           transportMode,
           containerNo,
+          remark: body.remark !== undefined ? body.remark?.trim() || null : undefined,
         },
       }),
     ]);

@@ -121,6 +121,7 @@ model Shipment {
   transportMode       String?   @map("transport_mode")
   domesticTrackingNo  String?   @map("domestic_tracking_no")
   warehouseId         String    @map("warehouse_id")
+  remark              String?   @map("remark")
   createdAt           DateTime  @default(now()) @map("created_at")
   updatedAt           DateTime  @updatedAt @map("updated_at")
 

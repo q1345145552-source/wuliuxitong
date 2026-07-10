@@ -39,6 +39,7 @@ export type ShipmentOrderEditDraft = {
   paymentStatus: "paid" | "unpaid";
   destinationCountry: string;
   customsDeclaration: "none" | "declare";
+  remark: string;
 };
 
 export const STAFF_SECTION_IDS = [
