@@ -1696,6 +1696,7 @@ const loadLmShipments = async () => {
                       <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>运输方式</th>
                       <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>货型</th>
                       <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>到仓日期</th>
+                      <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>备注</th>
                       <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>操作</th>
                     </tr>
                   </thead>
@@ -1797,6 +1798,9 @@ const loadLmShipments = async () => {
                           </td>
                           <td style={{ padding: "8px 6px", whiteSpace: "nowrap", color: "#000000" }}>
                             {item.shipDate ?? formatDateTime(item.arrivedAt)}
+                          </td>
+                          <td style={{ padding: "8px 6px", whiteSpace: "nowrap", maxWidth: 150, overflow: "hidden", textOverflow: "ellipsis" }} title={item.remark || ""}>
+                            {item.remark || ""}
                           </td>
                           <td style={{ padding: "8px 6px", whiteSpace: "nowrap" }}>
                             <button
