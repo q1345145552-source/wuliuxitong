@@ -308,6 +308,7 @@ export interface AdminOrderItem {
   volumeM3: number | null;
   receiverAddressTh?: string;
   containerNo?: string;
+  remark?: string | null;
   trackingNo?: string;
   currentStatus?: string;
   canEdit?: boolean;
