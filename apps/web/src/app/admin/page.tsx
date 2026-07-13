@@ -1439,7 +1439,7 @@ export default function AdminHomePage() {
                   <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>重量</th>
                   <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>运输方式</th>
                   <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>货型</th>
-                  <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>操作</th>
+                  <th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>备注</th><th style={{ padding: "10px 8px", whiteSpace: "nowrap" }}>操作</th>
                 </tr>
               </thead>
               <tbody>
@@ -1529,6 +1529,7 @@ export default function AdminHomePage() {
                           ))
                         : ((o.cargoType ?? "normal").toLowerCase() === "inspection" ? "商检" : (o.cargoType ?? "normal").toLowerCase() === "sensitive" ? "敏感" : "普货")}
                     </td>
+                    <td style={{ padding: "8px 6px", fontSize: 12, maxWidth: 100, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={o.remark || ""}>{o.remark || ""}</td>
                     <td style={{ padding: "8px 6px", whiteSpace: "nowrap" }}>
                       <button
                         type="button"
