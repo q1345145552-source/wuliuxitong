@@ -280,6 +280,7 @@ export default function AdminHomePage() {
     paymentStatus: "unpaid" as "paid" | "unpaid",
     shipDate: "",
     cargoType: "normal",
+    remark: "",
   });
   const [editProducts, setEditProducts] = useState<Array<{
     itemName: string; packageCount: string; lengthCm: string; widthCm: string; heightCm: string; productQuantity: string; weightKg: string; cargoType: string; domesticTrackingNo: string;
@@ -412,6 +413,7 @@ export default function AdminHomePage() {
       receivableCurrency: order.receivableCurrency === "THB" ? "THB" : "CNY",
       paymentStatus: order.paymentStatus === "paid" ? "paid" : "unpaid",
       shipDate: order.shipDate ?? "",
+      remark: order.remark ?? "",
     });
     if (order.products && order.products.length > 0) {
       setEditProducts(order.products.map((p) => ({
@@ -499,6 +501,7 @@ export default function AdminHomePage() {
         receivableCurrency: orderEditForm.receivableCurrency,
         paymentStatus: orderEditForm.paymentStatus,
         shipDate: orderEditForm.shipDate.trim() || undefined,
+        remark: orderEditForm.remark?.trim() || null,
         products: activeProducts.map(p => ({
           itemName: p.itemName.trim(),
           packageCount: Number(p.packageCount) || 1,
@@ -1671,6 +1674,11 @@ export default function AdminHomePage() {
                               </div>
                             </div>
                           )}
+                          <div style={{ marginBottom: 12 }}>
+                            <div style={{ fontSize: 12, color: "#000000", marginBottom: 4 }}>备注</div>
+                            <input value={orderEditForm.remark} onChange={(e) => setOrderEditForm((v) => ({ ...v, remark: e.target.value }))} placeholder="备注（可选）" style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 10px", width: "100%", fontSize: 13 }} />
+                          </div>
+
                           <div style={{ display: "flex", gap: 8 }}>
                             <button type="button" onClick={() => void submitOrderEdit()} disabled={loading} style={{ border: "none", borderRadius: 8, padding: "8px 14px", color: "#fff", background: "#2563eb", cursor: "pointer" }}>保存</button>
                             <button type="button" onClick={() => setEditingOrderId("")} style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 14px", background: "#fff", cursor: "pointer", color: "#000000" }}>取消</button>
@@ -2067,6 +2075,11 @@ export default function AdminHomePage() {
       <section id="ai-memory" style={{ ...sectionStyle, display: activeSection === "ai-memory" ? "block" : "none" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
           <h2 style={{ margin: 0, fontSize: 18 }}>{SECTION_LABELS["ai-memory"]}</h2>
+                          <div style={{ marginBottom: 12 }}>
+                            <div style={{ fontSize: 12, color: "#000000", marginBottom: 4 }}>备注</div>
+                            <input value={orderEditForm.remark} onChange={(e) => setOrderEditForm((v) => ({ ...v, remark: e.target.value }))} placeholder="备注（可选）" style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 10px", width: "100%", fontSize: 13 }} />
+                          </div>
+
           <div style={{ display: "flex", gap: 8 }}>
             <button
               type="button"
@@ -2143,6 +2156,11 @@ export default function AdminHomePage() {
       >
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
           <h2 style={{ margin: 0, fontSize: 18 }}>{SECTION_LABELS["ai-knowledge-gaps"]}</h2>
+                          <div style={{ marginBottom: 12 }}>
+                            <div style={{ fontSize: 12, color: "#000000", marginBottom: 4 }}>备注</div>
+                            <input value={orderEditForm.remark} onChange={(e) => setOrderEditForm((v) => ({ ...v, remark: e.target.value }))} placeholder="备注（可选）" style={{ border: "1px solid #d1d5db", borderRadius: 8, padding: "8px 10px", width: "100%", fontSize: 13 }} />
+                          </div>
+
           <div style={{ display: "flex", gap: 8 }}>
             <select
               value={knowledgeGapStatus}
