@@ -928,6 +928,7 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
         shipDate: o.shipDate,
         cargoType: o.cargoType ?? "normal",
         latestRemark,
+        remark: ship?.remark ?? null,
         logisticsRecords,
         createdAt: o.createdAt.toISOString(),
         updatedAt: o.updatedAt.toISOString(),
