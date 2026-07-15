@@ -1450,7 +1450,14 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
           trackingNo,
           batchNo,
           domesticTrackingNo,
-          packageCount: Math.floor(packageCount),
+          // 有子运单时父运单件数强制为0，防止重复计算
+          packageCount: await (async () => {
+            const childExists = await prisma.shipment.findFirst({
+              where: { parentTrackingNo: shipment.trackingNo, companyId: auth.companyId },
+              select: { id: true },
+            });
+            return childExists ? 0 : Math.floor(packageCount);
+          })(),
           packageUnit,
           weightKg: weightKg as unknown as Prisma.Decimal | null,
           volumeM3: (volumeM3 as unknown as Prisma.Decimal | null),
