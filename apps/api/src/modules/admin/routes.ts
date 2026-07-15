@@ -489,6 +489,7 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
           weightKg,
           volumeM3,
           containerNo,
+          remark: body.remark !== undefined ? body.remark?.trim() || null : undefined,
           updatedAt: now,
         },
       }),
