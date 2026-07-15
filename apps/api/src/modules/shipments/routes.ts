@@ -488,6 +488,7 @@ export function registerShipmentRoutes(app: MinimalHttpApp): void {
       packageUnit: ((r.order?.packageUnit === "bag" ? "bag" : "box") as "bag" | "box"),
       cargoType: r.order?.cargoType ?? "normal",
       canEdit: auth.role === "admin",
+      remark: r.remark ?? undefined,
       productImages: undefined as any[] | undefined,
       products: undefined as any[] | undefined,
     }));
