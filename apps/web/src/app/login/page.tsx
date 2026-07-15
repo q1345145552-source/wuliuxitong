@@ -148,9 +148,6 @@ export default function LoginPage() {
         {message ? <p style={{ marginTop: 10, color: "#b91c1c", fontSize: 13 }}>{message}</p> : null}
 
         {!existingSession && (
-          <div style={{ marginTop: 12, fontSize: 13 }}>
-            还没有账号？<a href="/register" style={{ color: "#2563eb", textDecoration: "none" }}>去注册</a>
-          </div>
         )}
           </>
         )}

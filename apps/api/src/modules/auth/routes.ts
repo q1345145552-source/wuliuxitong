@@ -70,6 +70,9 @@ export function registerAuthRoutes(app: MinimalHttpApp): void {
   });
 
   app.post("/auth/register", async (req, res) => {
+    // 仅管理员可注册新账号
+    const auth = requireRole(req, res, ["admin"]);
+    if (!auth) return;
     // 速率限制：每个 IP 每小时最多 5 次注册
     const ip = getClientIp(req.headers);
     if (checkRateLimit(rateLimitKey(ip, "register"), 5, 3600_000)) {
