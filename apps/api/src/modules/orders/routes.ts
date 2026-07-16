@@ -858,6 +858,7 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
               id: true,
               trackingNo: true,
               currentStatus: true,
+              remark: true,
               statusLogs: {
                 where: { NOT: [{ remark: null }, { remark: "" }] },
                 orderBy: { changedAt: "asc" },
@@ -928,6 +929,7 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
         shipDate: o.shipDate,
         cargoType: o.cargoType ?? "normal",
         latestRemark,
+        remark: ship?.remark ?? null,
         remark: ship?.remark ?? null,
         logisticsRecords,
         createdAt: o.createdAt.toISOString(),
