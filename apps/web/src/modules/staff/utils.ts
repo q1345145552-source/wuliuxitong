@@ -104,6 +104,51 @@ export function formatDateTime(iso: string | null | undefined, fallback = "—")
 }
 
 /**
+ * UTC/Bangkok 时间 → 北京时间中文格式：2026年7月16日 14点30分
+ * 后端存的是 UTC，toLocaleString("zh-CN", {timeZone:"Asia/Shanghai"}) 自动+8。
+ */
+export function formatBeijingTime(iso: string | null | undefined, fallback = "—"): string {
+  if (!iso) return fallback;
+  try {
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return fallback;
+    return d.toLocaleString("zh-CN", {
+      timeZone: "Asia/Shanghai",
+      year: "numeric",
+      month: "long",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    }).replace(/:(\d{2})$/, "点$1分").replace("日 ", "日 ");
+  } catch {
+    return fallback;
+  }
+}
+
+/**
+ * 简短版北京时间：2026-07-16 14:30（列表用）
+ */
+export function formatBeijingTimeShort(iso: string | null | undefined, fallback = "—"): string {
+  if (!iso) return fallback;
+  try {
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return fallback;
+    return d.toLocaleString("zh-CN", {
+      timeZone: "Asia/Shanghai",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    }).replace(/\//g, "-");
+  } catch {
+    return fallback;
+  }
+}
+
+/**
  * 将体积（立方米）格式化为字符串，便于提交表单。
  */
 export function formatVolumeM3String(m3: number): string {

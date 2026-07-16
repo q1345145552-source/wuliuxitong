@@ -2,13 +2,16 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import * as crypto from "node:crypto";
 
-const IMAGES_DIR = process.env.IMAGES_DIR || "/images";
+function getImagesDir(): string {
+  return process.env.IMAGES_DIR || "./data/images";
+}
 const IMAGES_URL_PREFIX = "/images";
 
 /** Initialize the images directory (call once on startup). */
 export function ensureImagesDir(): void {
-  if (!fs.existsSync(IMAGES_DIR)) {
-    fs.mkdirSync(IMAGES_DIR, { recursive: true });
+  const dir = getImagesDir();
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
   }
 }
 
@@ -22,7 +25,7 @@ export function saveImageToDisk(orderId: string, mime: string, contentBase64: st
   ensureImagesDir();
   const ext = mimeToExt(mime);
   const name = `${safeId}_${crypto.randomBytes(6).toString("hex")}${ext}`;
-  const filePath = path.join(IMAGES_DIR, name);
+  const filePath = path.join(getImagesDir(), name);
   const buffer = Buffer.from(contentBase64, "base64");
   fs.writeFileSync(filePath, buffer);
   return `${IMAGES_URL_PREFIX}/${name}`;
@@ -30,7 +33,7 @@ export function saveImageToDisk(orderId: string, mime: string, contentBase64: st
 
 /** Read an image file back as base64. Returns null if the file doesn't exist. */
 export function readImageAsBase64(filePath: string): string | null {
-  const fullPath = path.join(IMAGES_DIR, path.basename(filePath));
+  const fullPath = path.join(getImagesDir(), path.basename(filePath));
   if (!fs.existsSync(fullPath)) return null;
   const buffer = fs.readFileSync(fullPath);
   return buffer.toString("base64");
@@ -38,7 +41,7 @@ export function readImageAsBase64(filePath: string): string | null {
 
 /** Delete an image file from disk. */
 export function deleteImageFile(filePath: string): void {
-  const fullPath = path.join(IMAGES_DIR, path.basename(filePath));
+  const fullPath = path.join(getImagesDir(), path.basename(filePath));
   if (fs.existsSync(fullPath)) {
     fs.unlinkSync(fullPath);
   }

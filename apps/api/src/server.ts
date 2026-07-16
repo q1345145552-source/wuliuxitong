@@ -127,7 +127,7 @@ export function createApp(): MinimalHttpApp {
         if (method === "GET" && path.startsWith("/images/")) {
           const fs = await import("node:fs");
           const pathModule = await import("node:path");
-          const imagesDir = process.env.IMAGES_DIR || "/images";
+          const imagesDir = process.env.IMAGES_DIR || "./data/images";
           const filePath = pathModule.default.join(imagesDir, pathModule.default.basename(path));
           if (!fs.default.existsSync(filePath)) {
             rawRes.statusCode = 404;

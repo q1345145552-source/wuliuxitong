@@ -13,6 +13,7 @@ import { registerShippingConfigRoutes } from "./modules/shipping-config/routes";
 import { registerOrderRoutes } from "./modules/orders/routes";
 import { registerShipmentRoutes } from "./modules/shipments/routes";
 import { registerFclInquiryRoutes } from "./modules/fcl-inquiries/routes";
+import { registerConsolidationRoutes } from "./modules/consolidation/routes";
 import { createApp } from "./server";
 import { startDailyExchangeRateScheduler } from "./modules/exchange-rate/rate-sync";
 import { logger } from "./modules/core/logger";
@@ -49,6 +50,7 @@ registerLoadingManifestRoutes(app);
 registerFinanceRoutes(app);
 registerShippingConfigRoutes(app);
 registerFclInquiryRoutes(app);
+registerConsolidationRoutes(app);
 startDailyExchangeRateScheduler();
 
 // ===== AI routes =====
@@ -71,5 +73,5 @@ app.listen(PORT, () => {
     dataSource: "PostgreSQL via Prisma",
     port: PORT,
   });
-  logger.info("Registered routes: /auth/login, /auth/register, /client/orders, /admin/dashboard/overview, /client/ai/chat, /admin/containers/*, /client/shipments/track");
+  logger.info("Registered routes: /auth/login, /auth/register, /client/orders, /admin/dashboard/overview, /client/ai/chat, /admin/containers/*, /client/shipments/track, /client/consolidation/tasks, /client/consolidation/prealerts");
 });

@@ -52,6 +52,7 @@ export const roleFunctionGroups: Record<AuthRole, MenuGroup[]> = {
         { id: "admin-func-prealerts", label: "预报单管理", href: "/admin/prealerts" },
         { id: "admin-func-container", label: "装柜管理", href: "/staff/container-loading" },
         { id: "admin-func-fcl", label: "整柜询价", href: "/staff#staff-fcl" },
+        { id: "admin-func-consolidation", label: "集货拼柜", href: "/admin/consolidation" },
       ],
     },
     {
@@ -102,6 +103,7 @@ export const roleFunctionGroups: Record<AuthRole, MenuGroup[]> = {
       items: [
         { id: "staff-func-order-shipment", label: "运单管理", href: "/staff#staff-order-shipment" },
         { id: "staff-func-prealert", label: "预报单审核", href: "/staff#staff-prealert-review" },
+        { id: "staff-func-consolidation", label: "集货拼柜", href: "/staff/consolidation" },
         { id: "staff-func-container-loading", label: "装柜管理", href: "/staff/container-loading" },
         { id: "staff-func-fcl", label: "整柜询价", href: "/staff#staff-fcl" },
         { id: "staff-func-ops-tools", label: "入库与标签工具", href: "/staff#staff-ops-tools" },
@@ -129,6 +131,7 @@ export const roleFunctionGroups: Record<AuthRole, MenuGroup[]> = {
       items: [
         { id: "client-func-query", label: "运单查询", href: "/client#client-query" },
         { id: "client-func-prealert", label: "预报单", href: "/client#client-prealert" },
+        { id: "client-func-consolidation", label: "集货拼柜", href: "/client/consolidation" },
         { id: "client-func-fcl", label: "整柜询价", href: "/client#client-fcl" },
         { id: "client-func-imports", label: "批量下单", href: "/client/imports" },
         { id: "client-func-track", label: "免登录查轨迹", href: "/client/track" },

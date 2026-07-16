@@ -1670,3 +1670,447 @@ export async function updateShippingConfig(payload: Record<string, string>): Pro
   });
   return parseApiResponse(response);
 }
+
+// ============================================================================
+// 集货拼柜模块
+// ============================================================================
+
+/** 集货产品明细项 */
+export interface ConsolidationProductItem {
+  id: string;
+  productName: string;
+  packageCount: number;
+  quantityPerBox: number;
+  totalQuantity: number;
+  unitWeight: number | null;
+  totalWeight: number | null;
+  length: number | null;
+  width: number | null;
+  height: number | null;
+  volume: number | null;
+  material: string;
+  cargoValue: string;
+  productImageFileName: string | null;
+  productImageMime: string | null;
+  productImageBase64: string | null;
+  sortOrder: number;
+}
+
+/** 集货预报单列表项 */
+export interface ConsolidationPrealertItem {
+  id: string;
+  taskId: string;
+  trackingNo: string;
+  expressNo: string | null;
+  mark: string;
+  status: "pending" | "received";
+  signedAt: string | null;
+  receivedProofFileName: string | null;
+  receivedProofMime: string | null;
+  receivedProofBase64: string | null;
+  products: ConsolidationProductItem[];
+  createdAt: string;
+}
+
+/** 集货任务列表项 */
+export interface ConsolidationTaskItem {
+  id: string;
+  taskNo: string;
+  destinationTh: string;
+  status: string;
+  maxVolumeM3: number;
+  totalVolumeM3: number;
+  totalPackages: number;
+  totalPrealerts: number;
+  bookingFee: number | null;
+  customsFee: number | null;
+  loadingFee: number | null;
+  totalFee: number | null;
+  currency: string;
+  paymentStatus: string;
+  paidAt: string | null;
+  paymentProofBase64: string | null;
+  paymentProofUploadedAt: string | null;
+  paymentRejectReason: string | null;
+  paymentReviewedAt: string | null;
+  containerNo: string | null;
+  loadingDate: string | null;
+  clientId?: string;
+  clientName?: string;
+  clientPhone?: string;
+  createdAt: string;
+  updatedAt: string;
+  volumePercent: number;
+  isNearFull: boolean;
+  prealerts?: ConsolidationPrealertItem[];
+  statusLogs?: any[];
+}
+
+// ============================================================================
+// 客户端接口
+// ============================================================================
+
+/** 获取客户端集货任务列表 */
+export async function fetchClientConsolidationTasks(status?: "active"): Promise<ConsolidationTaskItem[]> {
+  try {
+    const params = status ? `?status=${encodeURIComponent(status)}` : "";
+    return await apiRequest<ConsolidationTaskItem[]>(
+      `${apiBaseUrl()}/client/consolidation/tasks${params}`,
+    );
+  } catch (error) {
+    throw new Error(`获取集货任务列表失败：${error instanceof Error ? error.message : "未知错误"}`);
+  }
+}
+
+/** 获取客户端集货任务详情 */
+export async function fetchClientConsolidationTaskDetail(taskId: string): Promise<ConsolidationTaskItem> {
+  try {
+    return await apiRequest<ConsolidationTaskItem>(
+      `${apiBaseUrl()}/client/consolidation/tasks/detail?taskId=${encodeURIComponent(taskId)}`,
+    );
+  } catch (error) {
+    throw new Error(`获取任务详情失败：${error instanceof Error ? error.message : "未知错误"}`);
+  }
+}
+
+/** 创建集货任务 */
+export async function createConsolidationTask(destinationTh: string): Promise<ConsolidationTaskItem> {
+  try {
+    return await apiRequest<ConsolidationTaskItem>(
+      `${apiBaseUrl()}/client/consolidation/tasks`,
+      { method: "POST", body: JSON.stringify({ destinationTh }) },
+    );
+  } catch (error) {
+    throw new Error(`创建任务失败：${error instanceof Error ? error.message : "未知错误"}`);
+  }
+}
+
+/** 修改任务目的地 */
+export async function updateConsolidationTask(taskId: string, destinationTh: string): Promise<ConsolidationTaskItem> {
+  try {
+    return await apiRequest<ConsolidationTaskItem>(
+      `${apiBaseUrl()}/client/consolidation/tasks/update`,
+      { method: "POST", body: JSON.stringify({ taskId, destinationTh }) },
+    );
+  } catch (error) {
+    throw new Error(`更新任务失败：${error instanceof Error ? error.message : "未知错误"}`);
+  }
+}
+
+/** 创建预报单 */
+export async function createConsolidationPrealert(payload: {
+  taskId: string;
+  mark: string;
+  expressNo?: string;
+  products: Array<{
+    productName: string;
+    packageCount: number;
+    quantityPerBox: number;
+    unitWeightKg: number;
+    lengthCm: number;
+    widthCm: number;
+    heightCm: number;
+    material: string;
+    cargoValue: string;
+    productImage?: { fileName?: string; mime?: string; base64?: string };
+  }>;
+}): Promise<ConsolidationPrealertItem> {
+  try {
+    return await apiRequest<ConsolidationPrealertItem>(
+      `${apiBaseUrl()}/client/consolidation/prealerts`,
+      { method: "POST", body: JSON.stringify(payload) },
+    );
+  } catch (error) {
+    throw new Error(`创建预报单失败：${error instanceof Error ? error.message : "未知错误"}`);
+  }
+}
+
+/** 编辑预报单 */
+export async function updateConsolidationPrealert(payload: {
+  prealertId: string;
+  mark?: string;
+  expressNo?: string;
+  products?: Array<{
+    productName: string;
+    packageCount: number;
+    quantityPerBox: number;
+    unitWeightKg: number;
+    lengthCm: number;
+    widthCm: number;
+    heightCm: number;
+    material: string;
+    cargoValue: string;
+    productImage?: { fileName?: string; mime?: string; base64?: string };
+  }>;
+}): Promise<ConsolidationPrealertItem> {
+  try {
+    return await apiRequest<ConsolidationPrealertItem>(
+      `${apiBaseUrl()}/client/consolidation/prealerts/update`,
+      { method: "POST", body: JSON.stringify(payload) },
+    );
+  } catch (error) {
+    throw new Error(`编辑预报单失败：${error instanceof Error ? error.message : "未知错误"}`);
+  }
+}
+
+/** 删除预报单 */
+export async function deleteConsolidationPrealert(prealertId: string): Promise<{ deleted: boolean; id: string }> {
+  try {
+    return await apiRequest<{ deleted: boolean; id: string }>(
+      `${apiBaseUrl()}/client/consolidation/prealerts/delete`,
+      { method: "POST", body: JSON.stringify({ prealertId }) },
+    );
+  } catch (error) {
+    throw new Error(`删除预报单失败：${error instanceof Error ? error.message : "未知错误"}`);
+  }
+}
+
+/** 付款 */
+export async function payConsolidationTask(payload: {
+  taskId: string;
+  proofBase64: string;
+  proofFileName?: string;
+  proofMime?: string;
+}): Promise<{ success: boolean; taskId: string }> {
+  try {
+    return await apiRequest<{ success: boolean; taskId: string }>(
+      `${apiBaseUrl()}/client/consolidation/pay`,
+      { method: "POST", body: JSON.stringify(payload) },
+    );
+  } catch (error) {
+    throw new Error(`付款失败：${error instanceof Error ? error.message : "未知错误"}`);
+  }
+}
+
+// ============================================================================
+// 员工端接口
+// ============================================================================
+
+/** 员工查所有客户任务列表 */
+export async function fetchStaffConsolidationTasks(status?: string): Promise<ConsolidationTaskItem[]> {
+  try {
+    const params = status ? `?status=${encodeURIComponent(status)}` : "";
+    return await apiRequest<ConsolidationTaskItem[]>(
+      `${apiBaseUrl()}/staff/consolidation/tasks${params}`,
+    );
+  } catch (error) {
+    throw new Error(`获取任务列表失败：${error instanceof Error ? error.message : "未知错误"}`);
+  }
+}
+
+/** 员工查任务详情 */
+export async function fetchStaffConsolidationTaskDetail(taskId: string): Promise<ConsolidationTaskItem> {
+  try {
+    return await apiRequest<ConsolidationTaskItem>(
+      `${apiBaseUrl()}/staff/consolidation/tasks/detail?taskId=${encodeURIComponent(taskId)}`,
+    );
+  } catch (error) {
+    throw new Error(`获取任务详情失败：${error instanceof Error ? error.message : "未知错误"}`);
+  }
+}
+
+/** 签收预报单 */
+export async function receiveConsolidationPrealert(payload: {
+  prealertId: string;
+  proofBase64: string;
+  proofFileName: string;
+  proofMime: string;
+}): Promise<{ success: boolean; prealertId: string; status: string }> {
+  try {
+    return await apiRequest<{ success: boolean; prealertId: string; status: string }>(
+      `${apiBaseUrl()}/staff/consolidation/prealerts/receive`,
+      { method: "POST", body: JSON.stringify(payload) },
+    );
+  } catch (error) {
+    throw new Error(`签收预报单失败：${error instanceof Error ? error.message : "未知错误"}`);
+  }
+}
+
+/** 确认满柜 */
+export async function confirmConsolidationTaskFull(taskId: string): Promise<{ success: boolean; taskId: string; status: string }> {
+  try {
+    return await apiRequest<{ success: boolean; taskId: string; status: string }>(
+      `${apiBaseUrl()}/staff/consolidation/tasks/confirm-full`,
+      { method: "POST", body: JSON.stringify({ taskId }) },
+    );
+  } catch (error) {
+    throw new Error(`确认满柜失败：${error instanceof Error ? error.message : "未知错误"}`);
+  }
+}
+
+/** 录入报价 */
+export async function quoteConsolidationTask(payload: {
+  taskId: string;
+  bookingFee: number;
+  customsFee: number;
+  loadingFee: number;
+}): Promise<{ success: boolean; taskId: string; totalFee: number; isFirstQuote: boolean }> {
+  try {
+    return await apiRequest<{ success: boolean; taskId: string; totalFee: number; isFirstQuote: boolean }>(
+      `${apiBaseUrl()}/staff/consolidation/tasks/quote`,
+      { method: "POST", body: JSON.stringify(payload) },
+    );
+  } catch (error) {
+    throw new Error(`报价失败：${error instanceof Error ? error.message : "未知错误"}`);
+  }
+}
+
+/** 推进任务状态 */
+export async function advanceConsolidationTaskStatus(payload: {
+  taskId: string;
+  toStatus: string;
+  remark?: string;
+}): Promise<{ success: boolean; taskId: string; fromStatus: string; toStatus: string }> {
+  try {
+    return await apiRequest<{ success: boolean; taskId: string; fromStatus: string; toStatus: string }>(
+      `${apiBaseUrl()}/staff/consolidation/tasks/advance-status`,
+      { method: "POST", body: JSON.stringify(payload) },
+    );
+  } catch (error) {
+    throw new Error(`推进状态失败：${error instanceof Error ? error.message : "未知错误"}`);
+  }
+}
+
+/** 装柜 */
+export async function loadingConsolidationTask(payload: {
+  taskId: string;
+  containerNo?: string;
+  loadingDate?: string;
+}): Promise<{ success: boolean; taskId: string; status: string }> {
+  try {
+    return await apiRequest<{ success: boolean; taskId: string; status: string }>(
+      `${apiBaseUrl()}/staff/consolidation/tasks/loading`,
+      { method: "POST", body: JSON.stringify(payload) },
+    );
+  } catch (error) {
+    throw new Error(`装柜失败：${error instanceof Error ? error.message : "未知错误"}`);
+  }
+}
+
+/** 取消任务 */
+export async function cancelConsolidationTask(taskId: string): Promise<{ success: boolean; taskId: string; status: string }> {
+  try {
+    return await apiRequest<{ success: boolean; taskId: string; status: string }>(
+      `${apiBaseUrl()}/staff/consolidation/tasks/cancel`,
+      { method: "POST", body: JSON.stringify({ taskId }) },
+    );
+  } catch (error) {
+    throw new Error(`取消任务失败：${error instanceof Error ? error.message : "未知错误"}`);
+  }
+}
+
+/** 导出任务数据 */
+
+/** 审核通过付款（员工/管理员） */
+export async function reviewConsolidationPayment(taskId: string): Promise<void> {
+  try {
+    await apiRequest(`${apiBaseUrl()}/staff/consolidation/review-payment`, {
+      method: "POST",
+      body: JSON.stringify({ taskId }),
+    });
+  } catch (error) {
+    throw new Error(`审核付款失败：${error instanceof Error ? error.message : "未知错误"}`);
+  }
+}
+
+/** 审核拒绝付款（员工/管理员） */
+export async function rejectConsolidationPayment(taskId: string, reason: string): Promise<void> {
+  try {
+    await apiRequest(`${apiBaseUrl()}/staff/consolidation/reject-payment`, {
+      method: "POST",
+      body: JSON.stringify({ taskId, reason }),
+    });
+  } catch (error) {
+    throw new Error(`拒绝付款失败：${error instanceof Error ? error.message : "未知错误"}`);
+  }
+}
+
+export async function exportConsolidationTask(taskId: string): Promise<{
+  taskNo: string;
+  taskId: string;
+  totalRows: number;
+  headers: Array<{ key: string; label: string }>;
+  rows: Array<Record<string, any>>;
+}> {
+  try {
+    return await apiRequest<{
+      taskNo: string;
+      taskId: string;
+      totalRows: number;
+      headers: Array<{ key: string; label: string }>;
+      rows: Array<Record<string, any>>;
+    }>(
+      `${apiBaseUrl()}/staff/consolidation/tasks/export?taskId=${encodeURIComponent(taskId)}`,
+    );
+  } catch (error) {
+    throw new Error(`导出失败：${error instanceof Error ? error.message : "未知错误"}`);
+  }
+}
+
+// ============================================================================
+// 管理员端接口
+// ============================================================================
+
+/** 管理员查所有任务 */
+export async function fetchAdminConsolidationTasks(status?: string): Promise<ConsolidationTaskItem[]> {
+  try {
+    const params = status ? `?status=${encodeURIComponent(status)}` : "";
+    return await apiRequest<ConsolidationTaskItem[]>(
+      `${apiBaseUrl()}/admin/consolidation/tasks${params}`,
+    );
+  } catch (error) {
+    throw new Error(`获取任务列表失败：${error instanceof Error ? error.message : "未知错误"}`);
+  }
+}
+
+/** 管理员删除任务（级联删除） */
+export async function deleteAdminConsolidationTask(taskId: string): Promise<{ deleted: boolean; taskId: string }> {
+  try {
+    return await apiRequest<{ deleted: boolean; taskId: string }>(
+      `${apiBaseUrl()}/admin/consolidation/tasks?taskId=${encodeURIComponent(taskId)}`,
+      { method: "DELETE" },
+    );
+  } catch (error) {
+    throw new Error(`删除任务失败：${error instanceof Error ? error.message : "未知错误"}`);
+  }
+}
+
+/** 管理员强制编辑预报单 */
+export async function adminForceEditConsolidationPrealert(payload: {
+  prealertId: string;
+  mark?: string;
+  expressNo?: string;
+  products?: Array<{
+    productName: string;
+    packageCount: number;
+    quantityPerBox: number;
+    unitWeightKg: number;
+    lengthCm: number;
+    widthCm: number;
+    heightCm: number;
+    material: string;
+    cargoValue: string;
+    productImage?: { fileName?: string; mime?: string; base64?: string };
+  }>;
+}): Promise<{ success: boolean; prealertId: string }> {
+  try {
+    return await apiRequest<{ success: boolean; prealertId: string }>(
+      `${apiBaseUrl()}/admin/consolidation/prealerts/force-edit`,
+      { method: "POST", body: JSON.stringify(payload) },
+    );
+  } catch (error) {
+    throw new Error(`强制编辑预报单失败：${error instanceof Error ? error.message : "未知错误"}`);
+  }
+}
+
+/** 管理员强制删除预报单 */
+export async function adminDeleteConsolidationPrealert(prealertId: string): Promise<{ deleted: boolean; prealertId: string }> {
+  try {
+    return await apiRequest<{ deleted: boolean; prealertId: string }>(
+      `${apiBaseUrl()}/admin/consolidation/prealerts/delete`,
+      { method: "POST", body: JSON.stringify({ prealertId }) },
+    );
+  } catch (error) {
+    throw new Error(`删除预报单失败：${error instanceof Error ? error.message : "未知错误"}`);
+  }
+}
