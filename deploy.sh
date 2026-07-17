@@ -1,7 +1,8 @@
 #!/bin/bash
-set -e
-echo "=== 湘泰物流网站部署 ==="
+# 加固版：湘泰物流网站部署
+# 特点：先构建再切换，构建失败则保留旧容器，不中断服务
 
+echo "=== 湘泰物流网站部署 ==="
 cd "$(dirname "$0")"
 
 # 1. 检查 .env
@@ -17,23 +18,45 @@ echo "📥 拉取最新代码..."
 git fetch origin
 git reset --hard origin/main
 
-# 3. 安装依赖
+# 3. 修复备份脚本权限
+chmod +x scripts/backup-db.sh 2>/dev/null || true
+
+# 4. 安装依赖
 npm install --ignore-scripts 2>/dev/null || true
 
-# 4. 构建并启动
+# 5. 确保旧容器在运行（构建期间服务不中断）
+echo "🔧 确保旧服务运行中..."
+docker compose up -d 2>/dev/null || true
+
+# 6. 先尝试增量构建（快），失败再全量（慢）
 echo "🔨 构建 Docker 镜像..."
-docker compose build --no-cache web api
+BUILD_OK=false
 
-echo "🚀 启动服务..."
-docker compose up -d
+if docker compose build web api 2>&1; then
+  BUILD_OK=true
+else
+  echo "⚠️  增量构建失败，尝试全量构建..."
+  if docker compose build --no-cache web api 2>&1; then
+    BUILD_OK=true
+  fi
+fi
 
-# 5. 等待健康检查（轮询最多 60 秒）
+# 7. 构建成功才切换
+if [ "$BUILD_OK" = true ]; then
+  echo "✅ 构建成功，切换容器..."
+  docker compose up -d
+else
+  echo "⛔ 构建失败，保留旧容器"
+  docker compose up -d  # 确保旧容器在跑
+fi
+
+# 8. 健康检查（轮询最多 90 秒）
 echo "⏳ 等待服务就绪..."
 
 wait_for_service() {
   local url=$1
   local name=$2
-  local max_wait=60
+  local max_wait=90
   local elapsed=0
   while [ $elapsed -lt $max_wait ]; do
     if curl -sf "$url" -o /dev/null 2>/dev/null; then
@@ -49,5 +72,8 @@ wait_for_service() {
 
 wait_for_service "http://localhost:3001" "API"
 wait_for_service "http://localhost:3000" "Web"
+
+# 9. 重载 nginx
+nginx -s reload 2>/dev/null || true
 
 echo "=== 部署完成 ==="
