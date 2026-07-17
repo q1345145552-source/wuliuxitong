@@ -51,6 +51,12 @@ else
 fi
 
 # 8. 健康检查（轮询最多 90 秒）
+# 8. 健康检查前先同步数据库 schema
+echo "🗄️  同步数据库 schema..."
+docker compose exec -T api npx prisma db push --schema=apps/api/prisma/schema.prisma  2>&1 || true
+docker compose restart api 2>&1 | tail -1
+sleep 3
+
 echo "⏳ 等待服务就绪..."
 
 wait_for_service() {
