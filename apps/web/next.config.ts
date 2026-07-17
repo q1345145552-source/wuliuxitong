@@ -8,11 +8,11 @@ const nextConfig: NextConfig = {
   poweredByHeader: false,
   async rewrites() {
     return [
-      { source: "/auth/:path*", destination: "http://127.0.0.1:4001/auth/:path*" },
-      { source: "/admin/:path*", destination: "http://127.0.0.1:4001/admin/:path*" },
-      { source: "/staff/:path*", destination: "http://127.0.0.1:4001/staff/:path*" },
-      { source: "/client/:path*", destination: "http://127.0.0.1:4001/client/:path*" },
-      { source: "/images/:path*", destination: "http://127.0.0.1:4001/images/:path*" },
+      { source: "/auth/:path*", destination: "http://api:3001/auth/:path*" },
+      { source: "/admin/:path*", destination: "http://api:3001/admin/:path*" },
+      { source: "/staff/:path*", destination: "http://api:3001/staff/:path*" },
+      { source: "/client/:path*", destination: "http://api:3001/client/:path*" },
+      { source: "/images/:path*", destination: "http://api:3001/images/:path*" },
     ];
   },
   async headers() {
