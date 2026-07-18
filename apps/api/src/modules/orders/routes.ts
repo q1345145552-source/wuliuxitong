@@ -858,6 +858,7 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
               id: true,
               trackingNo: true,
               currentStatus: true,
+              remark: true,
               statusLogs: {
                 where: { NOT: [{ remark: null }, { remark: "" }] },
                 orderBy: { changedAt: "asc" },
