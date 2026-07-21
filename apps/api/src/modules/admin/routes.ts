@@ -262,6 +262,7 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
       cargoType: r.order?.cargoType ?? "normal",
       canEdit: true,
       approvalStatus: r.order?.approvalStatus ?? undefined,
+      remark: r.remark ?? undefined,
       statusGroup: r.order?.statusGroup ?? undefined,
       paidAt: r.order?.paidAt ? r.order?.paidAt.toISOString() : undefined,
       paidBy: r.order?.paidBy ?? undefined,
