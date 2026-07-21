@@ -508,7 +508,7 @@ export default function StaffConsolidationPage() {
           {/* 满柜确认 */}
           {isFull && taskDetail.status === "collecting" && (
             <div style={{ marginBottom: 16, padding: "12px 16px", background: "#fffbeb", borderRadius: 8, border: "1px solid #fde68a", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-              <span style={{ fontWeight: 600, color: "#92400e", fontSize: 14 }}>⚠️ 已到 {taskDetail.maxVolumeM3} 方，请确认满柜</span>
+              <span style={{ fontWeight: 600, color: "#92400e", fontSize: 14 }}>已到 {taskDetail.maxVolumeM3} 方，请确认满柜</span>
               <button onClick={handleConfirmFull} style={{ padding: "6px 16px", background: "#2563eb", color: "#fff", border: "none", borderRadius: 6, cursor: "pointer", fontWeight: 600, fontSize: 13 }}>确认满柜</button>
             </div>
           )}

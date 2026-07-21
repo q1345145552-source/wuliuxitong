@@ -558,19 +558,19 @@ export default function ClientConsolidationPage() {
                   {/* 待审核 → 提示 */}
                   {taskDetail.paymentStatus === "pending_review" && (
                     <div style={{ padding: "12px 16px", background: "#fef3c7", borderRadius: 8, border: "1px solid #f59e0b", color: "#92400e" }}>
-                      ⏳ 付款凭证已提交，等待审核中
+                      付款凭证已提交，等待审核中
                     </div>
                   )}
                   {/* 已付款 → 显示已付 */}
                   {taskDetail.paymentStatus === "paid" && (
                     <div style={{ padding: "12px 16px", background: "#d1fae5", borderRadius: 8, border: "1px solid #10b981", color: "#065f46" }}>
-                      ✅ 已付款 {taskDetail.paidAt ? formatBeijingTime(taskDetail.paidAt) : ""}
+                      已付款 {taskDetail.paidAt ? formatBeijingTime(taskDetail.paidAt) : ""}
                     </div>
                   )}
                   {/* 审核拒绝 → 显示拒绝原因 + 重新提交按钮 */}
                   {taskDetail.paymentStatus === "unpaid" && taskDetail.paymentRejectReason && (
                     <div style={{ marginTop: 8, padding: "12px 16px", background: "#fee2e2", borderRadius: 8, border: "1px solid #ef4444" }}>
-                      <div style={{ color: "#991b1b", fontWeight: 600, marginBottom: 4 }}>❌ 付款审核不通过</div>
+                      <div style={{ color: "#991b1b", fontWeight: 600, marginBottom: 4 }}>付款审核不通过</div>
                       <div style={{ color: "#7f1d1d", fontSize: 13, marginBottom: 8 }}>{taskDetail.paymentRejectReason}</div>
                       <button onClick={() => setShowPay(true)} style={{ padding: "6px 16px", background: "#2563eb", color: "#fff", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 13, fontWeight: 600 }}>重新上传付款凭证</button>
                     </div>
