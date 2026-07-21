@@ -15,7 +15,7 @@ log "========== 备份检查 =========="
 mkdir -p "$BACKUP_DIR"
 
 # 2. 检查远端数据库
-DB_OK=$(docker compose exec -T postgres psql -U xiangtai -d xiangtai -c "SELECT count(*) FROM order_product_images WHERE created_at < NOW() - INTERVAL '3 days'" 2>/dev/null | tail -1 | tr -d ' ')
+DB_OK=$(docker compose exec -T postgres psql -t -A -U xiangtai -d xiangtai -c "SELECT count(*) FROM order_product_images WHERE created_at < NOW() - INTERVAL '3 days'" 2>/dev/null | tr -d ' ')
 log "可备份图片数: $DB_OK"
 
 # 3. 执行备份
