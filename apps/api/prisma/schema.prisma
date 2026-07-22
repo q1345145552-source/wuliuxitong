@@ -21,33 +21,34 @@ datasource db {
 // ============================================================================
 
 model User {
-  id            String   @id
-  companyId     String   @map("company_id")
-  role          String   // admin | staff | client
-  name          String
-  phone         String
-  status        String   // active | inactive
-  warehouseIds  String   @default("[]") @map("warehouse_ids") // JSON 字符串保留兼容性
-  passwordHash  String?  @map("password_hash")
-  companyName   String?  @map("company_name")
-  email         String?
-  createdAt     DateTime @default(now()) @map("created_at")
+  id           String   @id
+  companyId    String   @map("company_id")
+  role         String // admin | staff | client
+  name         String
+  phone        String
+  status       String // active | inactive
+  warehouseIds String   @default("[]") @map("warehouse_ids") // JSON 字符串保留兼容性
+  passwordHash String?  @map("password_hash")
+  companyName  String?  @map("company_name")
+  email        String?
+  createdAt    DateTime @default(now()) @map("created_at")
 
   // 关联
-  ordersAsClient    Order[]              @relation("ClientOrders")
-  addresses         ClientAddress[]
-  documents         ClientDocument[]
-  walletAccounts    ClientWalletAccount[]
-  walletRecharges   WalletRecharge[]     @relation("WalletRechargeClient")
-  reviewedRecharges WalletRecharge[]     @relation("WalletRechargeReviewer")
-  aiAuditLogs       AiAuditLog[]
-  inboundPhotos     StaffInboundPhoto[]  @relation("OperatorInboundPhotos")
-  productImages     OrderProductImage[]
-  credit            CustomerCredit?
-  invoices          Invoice[]
-  auditLogs         AuditLog[]           @relation("ActorAuditLogs")
-  fclInquiries      FclInquiry[]
-  consolidationTasks ConsolidationTask[]
+  ordersAsClient               Order[]                        @relation("ClientOrders")
+  addresses                    ClientAddress[]
+  documents                    ClientDocument[]
+  walletAccounts               ClientWalletAccount[]
+  walletRecharges              WalletRecharge[]               @relation("WalletRechargeClient")
+  reviewedRecharges            WalletRecharge[]               @relation("WalletRechargeReviewer")
+  aiAuditLogs                  AiAuditLog[]
+  inboundPhotos                StaffInboundPhoto[]            @relation("OperatorInboundPhotos")
+  productImages                OrderProductImage[]
+  credit                       CustomerCredit?
+  invoices                     Invoice[]
+  auditLogs                    AuditLog[]                     @relation("ActorAuditLogs")
+  fclInquiries                 FclInquiry[]
+  consolidationTasks           ConsolidationTask[]
+  WhrConsolidationPlanCustomer WhrConsolidationPlanCustomer[]
 
   @@index([companyId])
   @@index([role])
@@ -55,42 +56,45 @@ model User {
 }
 
 model Order {
-  id                       String    @id
-  companyId                String    @map("company_id")
-  clientId                 String    @map("client_id")
-  warehouseId              String    @map("warehouse_id")
-  batchNo                  String?   @map("batch_no")
-  orderNo                  String?   @map("order_no")
-  approvalStatus           String    @default("approved") @map("approval_status")
-  itemName                 String    @map("item_name")
-  productQuantity          Int       @map("product_quantity")
-  packageCount             Int       @map("package_count")
-  packageUnit              String    @map("package_unit")
-  weightKg                 Decimal?  @map("weight_kg") @db.Decimal(10, 2)
-  volumeM3                 Decimal?  @map("volume_m3") @db.Decimal(10, 3)
-  receivableAmountCny      Decimal?  @map("receivable_amount_cny") @db.Decimal(12, 2)
-  receivableCurrency       String    @default("CNY") @map("receivable_currency")
-  paymentStatus            String    @default("unpaid") @map("payment_status")
-  paidAt                   DateTime? @map("paid_at")
-  paidBy                   String?   @map("paid_by")
-  paymentProofFileName     String?   @map("payment_proof_file_name")
-  paymentProofMime         String?   @map("payment_proof_mime")
-  paymentProofBase64       String?   @map("payment_proof_base64") @db.Text
-  paymentProofUploadedAt   DateTime? @map("payment_proof_uploaded_at")
-  shipDate                 String?   @map("ship_date")
-  domesticTrackingNo       String?   @map("domestic_tracking_no")
-  transportMode            String    @map("transport_mode")
-  receiverNameTh           String    @map("receiver_name_th")
-  receiverPhoneTh          String    @map("receiver_phone_th")
-  receiverAddressTh        String    @map("receiver_address_th")
-  statusGroup              String    @default("unfinished") @map("status_group")
+  id                     String    @id
+  companyId              String    @map("company_id")
+  clientId               String    @map("client_id")
+  warehouseId            String    @map("warehouse_id")
+  batchNo                String?   @map("batch_no")
+  orderNo                String?   @map("order_no")
+  approvalStatus         String    @default("approved") @map("approval_status")
+  itemName               String    @map("item_name")
+  productQuantity        Int       @map("product_quantity")
+  packageCount           Int       @map("package_count")
+  packageUnit            String    @map("package_unit")
+  weightKg               Decimal?  @map("weight_kg") @db.Decimal(10, 2)
+  volumeM3               Decimal?  @map("volume_m3") @db.Decimal(10, 3)
+  receivableAmountCny    Decimal?  @map("receivable_amount_cny") @db.Decimal(12, 2)
+  receivableCurrency     String    @default("CNY") @map("receivable_currency")
+  paymentStatus          String    @default("unpaid") @map("payment_status")
+  paidAt                 DateTime? @map("paid_at")
+  paidBy                 String?   @map("paid_by")
+  paymentProofFileName   String?   @map("payment_proof_file_name")
+  paymentProofMime       String?   @map("payment_proof_mime")
+  paymentProofBase64     String?   @map("payment_proof_base64") @db.Text
+  paymentProofUploadedAt DateTime? @map("payment_proof_uploaded_at")
+
+  // 付款凭证（多张，JSON 数组）
+  paymentProofs Json @default("[]") @map("payment_proofs") @db.JsonB
+  shipDate               String?   @map("ship_date")
+  domesticTrackingNo     String?   @map("domestic_tracking_no")
+  transportMode          String    @map("transport_mode")
+  receiverNameTh         String    @map("receiver_name_th")
+  receiverPhoneTh        String    @map("receiver_phone_th")
+  receiverAddressTh      String    @map("receiver_address_th")
+  statusGroup            String    @default("unfinished") @map("status_group")
   // ⭐ 新增字段：货物类型（普货/商检/敏感），用于差异化计费
-  cargoType                String    @default("normal") @map("cargo_type")
-  createdAt                DateTime  @default(now()) @map("created_at")
-  updatedAt                DateTime  @updatedAt @map("updated_at")
+  cargoType              String    @default("normal") @map("cargo_type")
+  createdAt              DateTime  @default(now()) @map("created_at")
+  updatedAt              DateTime  @updatedAt @map("updated_at")
 
   // 关联
-  client            User                @relation("ClientOrders", fields: [clientId], references: [id])
+  client            User                   @relation("ClientOrders", fields: [clientId], references: [id])
   shipments         Shipment[]
   productImages     OrderProductImage[]
   products          OrderProduct[]
@@ -105,36 +109,36 @@ model Order {
 }
 
 model Shipment {
-  id                  String    @id
-  companyId           String    @map("company_id")
-  orderId             String    @map("order_id")
-  trackingNo          String    @unique @map("tracking_no")
-  parentTrackingNo    String?   @map("parent_tracking_no")
-  batchNo             String?   @map("batch_no")
-  containerNo         String?   @map("container_no") // 保留兼容性，新代码用 ContainerItem
-  currentStatus       String    @map("current_status")
-  currentLocation     String?   @map("current_location")
-  weightKg            Decimal?  @map("weight_kg") @db.Decimal(10, 2)
-  volumeM3            Decimal?  @map("volume_m3") @db.Decimal(10, 3)
-  itemName            String?   @map("item_name")
-  packageCount        Int?      @map("package_count")
-  packageUnit         String?   @map("package_unit")
-  transportMode       String?   @map("transport_mode")
-  domesticTrackingNo  String?   @map("domestic_tracking_no")
-  warehouseId         String    @map("warehouse_id")
-  remark              String?   @map("remark")
-  createdAt           DateTime  @default(now()) @map("created_at")
-  updatedAt           DateTime  @updatedAt @map("updated_at")
+  id                 String   @id
+  companyId          String   @map("company_id")
+  orderId            String   @map("order_id")
+  trackingNo         String   @unique @map("tracking_no")
+  parentTrackingNo   String?  @map("parent_tracking_no")
+  batchNo            String?  @map("batch_no")
+  containerNo        String?  @map("container_no") // 保留兼容性，新代码用 ContainerItem
+  currentStatus      String   @map("current_status")
+  currentLocation    String?  @map("current_location")
+  weightKg           Decimal? @map("weight_kg") @db.Decimal(10, 2)
+  volumeM3           Decimal? @map("volume_m3") @db.Decimal(10, 3)
+  itemName           String?  @map("item_name")
+  packageCount       Int?     @map("package_count")
+  packageUnit        String?  @map("package_unit")
+  transportMode      String?  @map("transport_mode")
+  domesticTrackingNo String?  @map("domestic_tracking_no")
+  warehouseId        String   @map("warehouse_id")
+  remark             String?  @map("remark")
+  createdAt          DateTime @default(now()) @map("created_at")
+  updatedAt          DateTime @updatedAt @map("updated_at")
 
   // 关联
-  order             Order                  @relation(fields: [orderId], references: [id])
+  order             Order                   @relation(fields: [orderId], references: [id])
   statusLogs        StatusLog[]
   containerItems    ShipmentContainerItem[]
   warehouseLocation WarehouseLocation?
   delivery          Delivery?
   inboundPhotos     StaffInboundPhoto[]
   customsCases      AdminCustomsCase[]
-  lastmileOrders   AdminLastmileOrder[]
+  lastmileOrders    AdminLastmileOrder[]
 
   @@index([companyId, currentStatus])
   @@index([companyId, updatedAt])
@@ -145,16 +149,16 @@ model Shipment {
 }
 
 model StatusLog {
-  id            String   @id
-  companyId     String   @map("company_id")
-  shipmentId    String   @map("shipment_id")
-  operatorId    String   @map("operator_id")
-  operatorRole  String   @map("operator_role")
-  operatorName  String   @default("") @map("operator_name")
-  fromStatus    String   @map("from_status")
-  toStatus      String   @map("to_status")
-  remark        String?
-  changedAt     DateTime @default(now()) @map("changed_at")
+  id           String   @id
+  companyId    String   @map("company_id")
+  shipmentId   String   @map("shipment_id")
+  operatorId   String   @map("operator_id")
+  operatorRole String   @map("operator_role")
+  operatorName String   @default("") @map("operator_name")
+  fromStatus   String   @map("from_status")
+  toStatus     String   @map("to_status")
+  remark       String?
+  changedAt    DateTime @default(now()) @map("changed_at")
 
   shipment Shipment @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
 
@@ -363,20 +367,20 @@ model OrderProductImage {
 }
 
 model OrderProduct {
-  id              String  @id @default(cuid())
-  companyId       String  @map("company_id")
-  orderId         String  @map("order_id")
-  itemName        String  @map("item_name")
-  packageCount    Int     @map("package_count") @default(1)
-  lengthCm        Float?  @map("length_cm")
-  widthCm         Float?  @map("width_cm")
-  heightCm        Float?  @map("height_cm")
-  productQuantity Int?    @map("product_quantity")
-  cargoType             String  @default("normal") @map("cargo_type")
-  domesticTrackingNo    String  @default("货拉拉") @map("domestic_tracking_no")
-  weightKg              Float?  @map("weight_kg")
-  sortOrder       Int     @map("sort_order") @default(0)
-  createdAt       DateTime @default(now()) @map("created_at")
+  id                 String   @id @default(cuid())
+  companyId          String   @map("company_id")
+  orderId            String   @map("order_id")
+  itemName           String   @map("item_name")
+  packageCount       Int      @default(1) @map("package_count")
+  lengthCm           Float?   @map("length_cm")
+  widthCm            Float?   @map("width_cm")
+  heightCm           Float?   @map("height_cm")
+  productQuantity    Int?     @map("product_quantity")
+  cargoType          String   @default("normal") @map("cargo_type")
+  domesticTrackingNo String   @default("货拉拉") @map("domestic_tracking_no")
+  weightKg           Float?   @map("weight_kg")
+  sortOrder          Int      @default(0) @map("sort_order")
+  createdAt          DateTime @default(now()) @map("created_at")
 
   order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
 
@@ -389,31 +393,31 @@ model OrderProduct {
 // ============================================================================
 
 model AdminLmpRate {
-  id              String    @id
-  companyId       String    @map("company_id")
-  routeCode       String    @map("route_code")
-  supplierName    String    @map("supplier_name")
-  transportMode   String    @map("transport_mode")
-  seasonTag       String    @map("season_tag")
-  supplierCost    Decimal   @map("supplier_cost") @db.Decimal(12, 2)
-  quotePrice      Decimal   @map("quote_price") @db.Decimal(12, 2)
-  currency        String    @default("CNY")
-  effectiveFrom   String    @map("effective_from")
-  effectiveTo     String?   @map("effective_to")
-  updatedAt       DateTime  @updatedAt @map("updated_at")
+  id            String   @id
+  companyId     String   @map("company_id")
+  routeCode     String   @map("route_code")
+  supplierName  String   @map("supplier_name")
+  transportMode String   @map("transport_mode")
+  seasonTag     String   @map("season_tag")
+  supplierCost  Decimal  @map("supplier_cost") @db.Decimal(12, 2)
+  quotePrice    Decimal  @map("quote_price") @db.Decimal(12, 2)
+  currency      String   @default("CNY")
+  effectiveFrom String   @map("effective_from")
+  effectiveTo   String?  @map("effective_to")
+  updatedAt     DateTime @updatedAt @map("updated_at")
 
   @@index([routeCode, updatedAt(sort: Desc)])
   @@map("admin_lmp_rates")
 }
 
 model AdminCustomsCase {
-  id          String   @id
-  companyId   String   @map("company_id")
-  shipmentId  String?  @map("shipment_id")
-  orderId     String?  @map("order_id")
-  status      String
-  remark      String?
-  updatedAt   DateTime @updatedAt @map("updated_at")
+  id         String   @id
+  companyId  String   @map("company_id")
+  shipmentId String?  @map("shipment_id")
+  orderId    String?  @map("order_id")
+  status     String
+  remark     String?
+  updatedAt  DateTime @updatedAt @map("updated_at")
 
   shipment Shipment? @relation(fields: [shipmentId], references: [id])
   order    Order?    @relation(fields: [orderId], references: [id])
@@ -423,19 +427,19 @@ model AdminCustomsCase {
 }
 
 model AdminLastmileOrder {
-  id                  String   @id
-  companyId           String   @map("company_id")
-  deliveryNo          String   @map("delivery_no") @unique
-  shipmentId          String   @map("shipment_id")
-  carrierName         String   @map("carrier_name")
-  externalTrackingNo  String   @map("external_tracking_no")
-  driverName          String?  @map("driver_name")
-  licensePlate        String?  @map("license_plate")
-  phoneNumber         String?  @map("phone_number")
-  signImageBase64     String?  @map("sign_product_image_base64") @db.Text
-  deliveryDate        String?  @map("delivery_date")
-  status              String
-  updatedAt           DateTime @updatedAt @map("updated_at")
+  id                 String   @id
+  companyId          String   @map("company_id")
+  deliveryNo         String   @unique @map("delivery_no")
+  shipmentId         String   @map("shipment_id")
+  carrierName        String   @map("carrier_name")
+  externalTrackingNo String   @map("external_tracking_no")
+  driverName         String?  @map("driver_name")
+  licensePlate       String?  @map("license_plate")
+  phoneNumber        String?  @map("phone_number")
+  signImageBase64    String?  @map("sign_product_image_base64") @db.Text
+  deliveryDate       String?  @map("delivery_date")
+  status             String
+  updatedAt          DateTime @updatedAt @map("updated_at")
 
   shipment Shipment @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
 
@@ -465,23 +469,23 @@ model AdminSettlementEntry {
 // ============================================================================
 
 model Container {
-  id                String    @id @default(cuid())
-  companyId         String    @map("company_id")
-  containerNo       String    @unique @map("container_no") // 柜号
-  containerType     String    @map("container_type") // 20GP | 40HQ
-  warehouseId       String?   @map("warehouse_id")
-  carrierName       String?   @map("carrier_name")
-  sealedAt          DateTime? @map("sealed_at")
-  loadingDate       DateTime? @map("loading_date")        // 装柜日期
-  departureDate     DateTime? @map("departure_date")      // 开船日期
-  eta               DateTime?                              // 预计到港
-  ata               DateTime?                              // 实际到港
-  customsClearedAt  DateTime? @map("customs_cleared_at")  // 清关完成
-  currentStatus     String    @default("LOADING") @map("current_status")
+  id               String    @id @default(cuid())
+  companyId        String    @map("company_id")
+  containerNo      String    @unique @map("container_no") // 柜号
+  containerType    String    @map("container_type") // 20GP | 40HQ
+  warehouseId      String?   @map("warehouse_id")
+  carrierName      String?   @map("carrier_name")
+  sealedAt         DateTime? @map("sealed_at")
+  loadingDate      DateTime? @map("loading_date") // 装柜日期
+  departureDate    DateTime? @map("departure_date") // 开船日期
+  eta              DateTime? // 预计到港
+  ata              DateTime? // 实际到港
+  customsClearedAt DateTime? @map("customs_cleared_at") // 清关完成
+  currentStatus    String    @default("LOADING") @map("current_status")
   // 状态枚举：LOADING / IN_TRANSIT / ARRIVED / CUSTOMS / DELIVERING / SIGNED
-  remark            String?
-  createdAt         DateTime  @default(now()) @map("created_at")
-  updatedAt         DateTime  @updatedAt @map("updated_at")
+  remark           String?
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
 
   items ShipmentContainerItem[]
 
@@ -509,18 +513,18 @@ model ShipmentContainerItem {
 // ============================================================================
 
 model WarehouseLocation {
-  id            String    @id @default(cuid())
-  warehouse     String    // CN | TH
-  locationCode  String    @map("location_code") // 如 CN-A-01-03
-  shipmentId    String?   @unique @map("shipment_id")
-  inAt          DateTime  @default(now()) @map("in_at")
-  outAt         DateTime? @map("out_at")
-  agingDays     Int       @default(0) @map("aging_days") // 由定时任务刷新
-  isAlerted     Boolean   @default(false) @map("is_alerted")
-  status        String    @default("OCCUPIED") // OCCUPIED | EMPTY | LOST | DAMAGED
-  remark        String?
-  createdAt     DateTime  @default(now()) @map("created_at")
-  updatedAt     DateTime  @updatedAt @map("updated_at")
+  id           String    @id @default(cuid())
+  warehouse    String // CN | TH
+  locationCode String    @map("location_code") // 如 CN-A-01-03
+  shipmentId   String?   @unique @map("shipment_id")
+  inAt         DateTime  @default(now()) @map("in_at")
+  outAt        DateTime? @map("out_at")
+  agingDays    Int       @default(0) @map("aging_days") // 由定时任务刷新
+  isAlerted    Boolean   @default(false) @map("is_alerted")
+  status       String    @default("OCCUPIED") // OCCUPIED | EMPTY | LOST | DAMAGED
+  remark       String?
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
 
   shipment Shipment? @relation(fields: [shipmentId], references: [id])
 
@@ -534,18 +538,18 @@ model WarehouseLocation {
 // ============================================================================
 
 model Delivery {
-  id                  String    @id @default(cuid())
-  shipmentId          String    @unique @map("shipment_id")
-  deliveryDate        DateTime  @map("delivery_date")
-  driverName          String    @map("driver_name")
-  recipientSignedName String?   @map("recipient_signed_name")
-  deliveryPdfUrl      String?   @map("delivery_pdf_url")
-  signaturePhotoUrl   String?   @map("signature_photo_url")
-  disclaimerVersion   String    @default("v1-2026-05") @map("disclaimer_version")
-  status              String    @default("PENDING") // PENDING | DELIVERED | SIGNED | EXCEPTION
+  id                  String   @id @default(cuid())
+  shipmentId          String   @unique @map("shipment_id")
+  deliveryDate        DateTime @map("delivery_date")
+  driverName          String   @map("driver_name")
+  recipientSignedName String?  @map("recipient_signed_name")
+  deliveryPdfUrl      String?  @map("delivery_pdf_url")
+  signaturePhotoUrl   String?  @map("signature_photo_url")
+  disclaimerVersion   String   @default("v1-2026-05") @map("disclaimer_version")
+  status              String   @default("PENDING") // PENDING | DELIVERED | SIGNED | EXCEPTION
   remark              String?
-  createdAt           DateTime  @default(now()) @map("created_at")
-  updatedAt           DateTime  @updatedAt @map("updated_at")
+  createdAt           DateTime @default(now()) @map("created_at")
+  updatedAt           DateTime @updatedAt @map("updated_at")
 
   shipment Shipment @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
 
@@ -557,17 +561,17 @@ model Delivery {
 // ============================================================================
 
 model PricingRule {
-  id               String   @id @default(cuid())
-  companyId        String   @map("company_id")
-  transportMode    String   @default("sea") @map("transport_mode") // sea | land
-  cargoType        String   @map("cargo_type") // normal | inspection | sensitive
-  customerId       String?  @map("customer_id") // null = 通用价；有值 = 客户专属价
-  unitPriceCny     Decimal  @map("unit_price_cny") @db.Decimal(10, 2)
-  disableMinVolume Boolean  @default(false) @map("disable_min_volume") // 取消低消
-  effectiveFrom    DateTime @map("effective_from")
+  id               String    @id @default(cuid())
+  companyId        String    @map("company_id")
+  transportMode    String    @default("sea") @map("transport_mode") // sea | land
+  cargoType        String    @map("cargo_type") // normal | inspection | sensitive
+  customerId       String?   @map("customer_id") // null = 通用价；有值 = 客户专属价
+  unitPriceCny     Decimal   @map("unit_price_cny") @db.Decimal(10, 2)
+  disableMinVolume Boolean   @default(false) @map("disable_min_volume") // 取消低消
+  effectiveFrom    DateTime  @map("effective_from")
   effectiveTo      DateTime? @map("effective_to")
-  createdAt        DateTime @default(now()) @map("created_at")
-  updatedAt        DateTime @updatedAt @map("updated_at")
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
 
   @@index([companyId, transportMode, cargoType, customerId])
   @@map("pricing_rules")
@@ -589,7 +593,7 @@ model Invoice {
   createdAt       DateTime  @default(now()) @map("created_at")
   updatedAt       DateTime  @updatedAt @map("updated_at")
 
-  customer User           @relation(fields: [customerId], references: [id])
+  customer User          @relation(fields: [customerId], references: [id])
   lines    InvoiceLine[]
   payments Payment[]
 
@@ -600,14 +604,14 @@ model Invoice {
 }
 
 model InvoiceLine {
-  id            String   @id @default(cuid())
-  invoiceId     String   @map("invoice_id")
-  orderId       String?  @map("order_id")
-  volumeM3      Decimal  @map("volume_m3") @db.Decimal(10, 3) // 已按 0.01 向上取整
-  unitPriceUsd  Decimal  @map("unit_price_usd") @db.Decimal(10, 2)
-  lineAmount    Decimal  @map("line_amount") @db.Decimal(12, 2)
-  cargoType     String   @map("cargo_type")
-  description   String?
+  id           String  @id @default(cuid())
+  invoiceId    String  @map("invoice_id")
+  orderId      String? @map("order_id")
+  volumeM3     Decimal @map("volume_m3") @db.Decimal(10, 3) // 已按 0.01 向上取整
+  unitPriceUsd Decimal @map("unit_price_usd") @db.Decimal(10, 2)
+  lineAmount   Decimal @map("line_amount") @db.Decimal(12, 2)
+  cargoType    String  @map("cargo_type")
+  description  String?
 
   invoice Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
   order   Order?  @relation(fields: [orderId], references: [id], onDelete: SetNull)
@@ -617,16 +621,16 @@ model InvoiceLine {
 }
 
 model Payment {
-  id            String   @id @default(cuid())
-  invoiceId     String   @map("invoice_id")
-  paidAt        DateTime @map("paid_at")
-  amount        Decimal  @db.Decimal(14, 2)
-  currency      String   @default("USD")
-  method        String   // BANK_TRANSFER | CASH | OTHER
-  reference     String?  // 银行流水号等
-  remark        String?
-  recordedBy    String   @map("recorded_by")
-  createdAt     DateTime @default(now()) @map("created_at")
+  id         String   @id @default(cuid())
+  invoiceId  String   @map("invoice_id")
+  paidAt     DateTime @map("paid_at")
+  amount     Decimal  @db.Decimal(14, 2)
+  currency   String   @default("USD")
+  method     String // BANK_TRANSFER | CASH | OTHER
+  reference  String? // 银行流水号等
+  remark     String?
+  recordedBy String   @map("recorded_by")
+  createdAt  DateTime @default(now()) @map("created_at")
 
   invoice Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
 
@@ -639,18 +643,18 @@ model Payment {
 // ============================================================================
 
 model CustomerCredit {
-  customerId          String   @id @map("customer_id")
-  currentLevel        String   @default("D") @map("current_level") // A | B | C | D
-  creditTermDays      Int      @default(0) @map("credit_term_days")
-  creditLimit         Decimal  @default(0) @map("credit_limit") @db.Decimal(14, 2)
-  currentReceivable   Decimal  @default(0) @map("current_receivable") @db.Decimal(14, 2)
-  oldestUnpaidDays    Int      @default(0) @map("oldest_unpaid_days")
-  overdueCount        Int      @default(0) @map("overdue_count")
-  evaluatedAt         DateTime? @map("evaluated_at")
-  manuallyAdjusted    Boolean  @default(false) @map("manually_adjusted")
-  updatedAt           DateTime @updatedAt @map("updated_at")
+  customerId        String    @id @map("customer_id")
+  currentLevel      String    @default("D") @map("current_level") // A | B | C | D
+  creditTermDays    Int       @default(0) @map("credit_term_days")
+  creditLimit       Decimal   @default(0) @map("credit_limit") @db.Decimal(14, 2)
+  currentReceivable Decimal   @default(0) @map("current_receivable") @db.Decimal(14, 2)
+  oldestUnpaidDays  Int       @default(0) @map("oldest_unpaid_days")
+  overdueCount      Int       @default(0) @map("overdue_count")
+  evaluatedAt       DateTime? @map("evaluated_at")
+  manuallyAdjusted  Boolean   @default(false) @map("manually_adjusted")
+  updatedAt         DateTime  @updatedAt @map("updated_at")
 
-  customer  User             @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  customer  User            @relation(fields: [customerId], references: [id], onDelete: Cascade)
   histories CreditHistory[]
 
   @@map("customer_credit")
@@ -660,8 +664,8 @@ model CreditHistory {
   id            String   @id @default(cuid())
   customerId    String   @map("customer_id")
   snapshotMonth String   @map("snapshot_month") // YYYY-MM
-  level         String   // A | B | C | D
-  evaluator     String   // SYSTEM | ADMIN:<userId>
+  level         String // A | B | C | D
+  evaluator     String // SYSTEM | ADMIN:<userId>
   reason        String?  @db.Text
   metrics       String?  @db.Text // JSON 存评估时的快照指标
   createdAt     DateTime @default(now()) @map("created_at")
@@ -681,7 +685,7 @@ model AuditLog {
   companyId    String   @map("company_id")
   actorId      String   @map("actor_id")
   actorRole    String   @map("actor_role")
-  action       String   // CREATE | UPDATE | DELETE | STATUS_CHANGE | LOGIN | ...
+  action       String // CREATE | UPDATE | DELETE | STATUS_CHANGE | LOGIN | ...
   resourceType String   @map("resource_type") // Container | Shipment | Invoice | User ...
   resourceId   String   @map("resource_id")
   beforeJson   String?  @map("before_json") @db.Text
@@ -701,7 +705,7 @@ model AuditLog {
 model ClientNote {
   id        String   @id @default(cuid())
   companyId String   @map("company_id")
-  clientId  String   @map("client_id") @unique
+  clientId  String   @unique @map("client_id")
   content   String   @default("")
   updatedAt DateTime @updatedAt @map("updated_at")
   createdAt DateTime @default(now()) @map("created_at")
@@ -714,25 +718,25 @@ model ClientNote {
 // ============================================================================
 
 model FclInquiry {
-  id              String   @id @default(cuid())
-  companyId       String   @map("company_id")
-  clientId        String   @map("client_id")
-  createdBy       String   @map("created_by") // userId of submitter (staff or client)
-  createdByRole   String   @map("created_by_role") // "staff" | "client"
-  productName     String   @map("product_name") @db.Text
-  cargoValue      String   @map("cargo_value") // 货值（文本）
-  cargoWeight     String   @map("cargo_weight") // 货重（文本）
-  address         String   @db.Text // 地址
-  containerType   String   @map("container_type") @default("1*40HQ") // 柜型
-  serviceType     String   @map("service_type") @default("清提派") // 清提派 | 派送
-  loadingDate     String?  @map("loading_date") // 装柜时间
-  certFileName    String?  @map("cert_file_name") // 认证文件名
-  certFileBase64  String?  @map("cert_file_base64") @db.Text // 认证文件 base64
-  productImages   String?  @map("product_images") @db.Text // JSON 数组 [{fileName, base64}]
-  status          String   @default("pending") // pending | processing | completed
-  remark          String?  // 管理员备注
-  createdAt       DateTime @default(now()) @map("created_at")
-  updatedAt       DateTime @updatedAt @map("updated_at")
+  id             String   @id @default(cuid())
+  companyId      String   @map("company_id")
+  clientId       String   @map("client_id")
+  createdBy      String   @map("created_by") // userId of submitter (staff or client)
+  createdByRole  String   @map("created_by_role") // "staff" | "client"
+  productName    String   @map("product_name") @db.Text
+  cargoValue     String   @map("cargo_value") // 货值（文本）
+  cargoWeight    String   @map("cargo_weight") // 货重（文本）
+  address        String   @db.Text // 地址
+  containerType  String   @default("1*40HQ") @map("container_type") // 柜型
+  serviceType    String   @default("清提派") @map("service_type") // 清提派 | 派送
+  loadingDate    String?  @map("loading_date") // 装柜时间
+  certFileName   String?  @map("cert_file_name") // 认证文件名
+  certFileBase64 String?  @map("cert_file_base64") @db.Text // 认证文件 base64
+  productImages  String?  @map("product_images") @db.Text // JSON 数组 [{fileName, base64}]
+  status         String   @default("pending") // pending | processing | completed
+  remark         String? // 管理员备注
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
 
   client User @relation(fields: [clientId], references: [id])
 
@@ -746,38 +750,38 @@ model FclInquiry {
 // ============================================================================
 
 model ConsolidationTask {
-  id                   String   @id @default(cuid())
-  taskNo               String   @unique @map("task_no") // JH + 7位数字
-  companyId            String   @map("company_id")
-  clientId             String   @map("client_id")
-  destinationTh        String   @map("destination_th") @db.Text
-  status               String   @default("collecting") // collecting | confirmed | loading | shipped | completed | cancelled
-  maxVolumeM3          Decimal  @default(68) @map("max_volume_m3") @db.Decimal(10, 2)
-  totalVolumeM3        Decimal  @default(0) @map("total_volume_m3") @db.Decimal(10, 3)
-  totalPackages        Int      @default(0) @map("total_packages")
-  totalPrealerts       Int      @default(0) @map("total_prealerts")
+  id             String  @id @default(cuid())
+  taskNo         String  @unique @map("task_no") // JH + 7位数字
+  companyId      String  @map("company_id")
+  clientId       String  @map("client_id")
+  destinationTh  String  @map("destination_th") @db.Text
+  status         String  @default("collecting") // collecting | confirmed | loading | shipped | completed | cancelled
+  maxVolumeM3    Decimal @default(68) @map("max_volume_m3") @db.Decimal(10, 2)
+  totalVolumeM3  Decimal @default(0) @map("total_volume_m3") @db.Decimal(10, 3)
+  totalPackages  Int     @default(0) @map("total_packages")
+  totalPrealerts Int     @default(0) @map("total_prealerts")
 
-  bookingFee           Decimal? @map("booking_fee") @db.Decimal(12, 2)
-  customsFee           Decimal? @map("customs_fee") @db.Decimal(12, 2)
-  loadingFee           Decimal? @map("loading_fee") @db.Decimal(12, 2)
-  totalFee             Decimal? @map("total_fee") @db.Decimal(12, 2) // bookingFee + customsFee + loadingFee
-  currency             String   @default("CNY") @map("currency")
+  bookingFee Decimal? @map("booking_fee") @db.Decimal(12, 2)
+  customsFee Decimal? @map("customs_fee") @db.Decimal(12, 2)
+  loadingFee Decimal? @map("loading_fee") @db.Decimal(12, 2)
+  totalFee   Decimal? @map("total_fee") @db.Decimal(12, 2) // bookingFee + customsFee + loadingFee
+  currency   String   @default("CNY") @map("currency")
 
-  paymentStatus        String   @default("unpaid") @map("payment_status") // unpaid | pending_review | paid
-  paidAt               DateTime? @map("paid_at")
-  paymentProofFileName String?  @map("payment_proof_file_name")
-  paymentProofMime     String?  @map("payment_proof_mime")
-  paymentProofBase64   String?  @map("payment_proof_base64") @db.Text
+  paymentStatus          String    @default("unpaid") @map("payment_status") // unpaid | pending_review | paid
+  paidAt                 DateTime? @map("paid_at")
+  paymentProofFileName   String?   @map("payment_proof_file_name")
+  paymentProofMime       String?   @map("payment_proof_mime")
+  paymentProofBase64     String?   @map("payment_proof_base64") @db.Text
   paymentProofUploadedAt DateTime? @map("payment_proof_uploaded_at")
   paymentReviewedAt      DateTime? @map("payment_reviewed_at")
   paymentReviewedBy      String?   @map("payment_reviewed_by")
   paymentRejectReason    String?   @map("payment_reject_reason") @db.Text
 
-  containerNo          String?  @map("container_no")
-  loadingDate          String?  @map("loading_date")
+  containerNo String? @map("container_no")
+  loadingDate String? @map("loading_date")
 
-  createdAt            DateTime @default(now()) @map("created_at")
-  updatedAt            DateTime @updatedAt @map("updated_at")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
   client     User                     @relation(fields: [clientId], references: [id])
   prealerts  ConsolidationPrealert[]
@@ -789,22 +793,22 @@ model ConsolidationTask {
 }
 
 model ConsolidationPrealert {
-  id         String   @id @default(cuid())
-  taskId     String   @map("task_id")
-  companyId  String   @map("company_id")
-  clientId   String   @map("client_id")
-  trackingNo String   @unique @map("tracking_no") // JH-YW + 7位数字
-  expressNo  String?  @map("express_no")
-  mark       String   @map("mark")
-  status     String   @default("pending") @map("status") // pending | received
-  signedAt   DateTime? @map("signed_at")
-  receivedProofFileName String?  @map("received_proof_file_name")
-  receivedProofMime     String?  @map("received_proof_mime")
-  receivedProofBase64   String?  @map("received_proof_base64") @db.Text
-  createdAt  DateTime @default(now()) @map("created_at")
-  updatedAt  DateTime @updatedAt @map("updated_at")
+  id                    String    @id @default(cuid())
+  taskId                String    @map("task_id")
+  companyId             String    @map("company_id")
+  clientId              String    @map("client_id")
+  trackingNo            String    @unique @map("tracking_no") // JH-YW + 7位数字
+  expressNo             String?   @map("express_no")
+  mark                  String    @map("mark")
+  status                String    @default("pending") @map("status") // pending | received
+  signedAt              DateTime? @map("signed_at")
+  receivedProofFileName String?   @map("received_proof_file_name")
+  receivedProofMime     String?   @map("received_proof_mime")
+  receivedProofBase64   String?   @map("received_proof_base64") @db.Text
+  createdAt             DateTime  @default(now()) @map("created_at")
+  updatedAt             DateTime  @updatedAt @map("updated_at")
 
-  task     ConsolidationTask            @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  task     ConsolidationTask              @relation(fields: [taskId], references: [id], onDelete: Cascade)
   products ConsolidationPrealertProduct[]
 
   @@index([taskId])
@@ -813,29 +817,29 @@ model ConsolidationPrealert {
 }
 
 model ConsolidationPrealertProduct {
-  id                   String   @id @default(cuid())
-  prealertId           String   @map("prealert_id")
-  productName          String   @map("product_name")
-  packageCount         Int      @map("package_count")
-  quantityPerBox       Int      @default(1) @map("quantity_per_box")
-  totalQuantity        Int      @default(0) @map("total_quantity") // packageCount * quantityPerBox
-  unitWeight           Decimal? @map("unit_weight") @db.Decimal(10, 2)
-  totalWeight          Decimal? @map("total_weight") @db.Decimal(10, 2) // unitWeight * totalQuantity
+  id             String   @id @default(cuid())
+  prealertId     String   @map("prealert_id")
+  productName    String   @map("product_name")
+  packageCount   Int      @map("package_count")
+  quantityPerBox Int      @default(1) @map("quantity_per_box")
+  totalQuantity  Int      @default(0) @map("total_quantity") // packageCount * quantityPerBox
+  unitWeight     Decimal? @map("unit_weight") @db.Decimal(10, 2)
+  totalWeight    Decimal? @map("total_weight") @db.Decimal(10, 2) // unitWeight * totalQuantity
 
-  length               Decimal? @map("length_cm") @db.Decimal(10, 2)
-  width                Decimal? @map("width_cm") @db.Decimal(10, 2)
-  height               Decimal? @map("height_cm") @db.Decimal(10, 2)
-  volume               Decimal? @map("volume_m3") @db.Decimal(10, 6) // length*width*height/1000000*packageCount
+  length Decimal? @map("length_cm") @db.Decimal(10, 2)
+  width  Decimal? @map("width_cm") @db.Decimal(10, 2)
+  height Decimal? @map("height_cm") @db.Decimal(10, 2)
+  volume Decimal? @map("volume_m3") @db.Decimal(10, 6) // length*width*height/1000000*packageCount
 
-  material             String   @map("material")
-  cargoValue           String   @map("cargo_value")
+  material   String @map("material")
+  cargoValue String @map("cargo_value")
 
-  productImageFileName String?  @map("product_image_file_name")
-  productImageMime     String?  @map("product_image_mime")
-  productImageBase64   String?  @map("product_image_base64") @db.Text
+  productImageFileName String? @map("product_image_file_name")
+  productImageMime     String? @map("product_image_mime")
+  productImageBase64   String? @map("product_image_base64") @db.Text
 
-  sortOrder            Int      @default(0) @map("sort_order")
-  createdAt            DateTime @default(now()) @map("created_at")
+  sortOrder Int      @default(0) @map("sort_order")
+  createdAt DateTime @default(now()) @map("created_at")
 
   prealert ConsolidationPrealert @relation(fields: [prealertId], references: [id], onDelete: Cascade)
 
@@ -859,4 +863,160 @@ model ConsolidationStatusLog {
 
   @@index([taskId, createdAt(sort: Desc)])
   @@map("consolidation_status_logs")
+}
+
+// ============================================================================
+// 集货拼柜仓库版 (Warehouse Consolidation)
+
+// ============================================================================
+// 集货拼柜仓库版 (Warehouse Consolidation)
+// ============================================================================
+
+model WhrConsolidationPlan {
+  id            String   @id @default(cuid())
+  companyId     String   @map("company_id")
+  planNo        String   @unique @map("plan_no") // WHR + 7位数字
+  warehouse     String   @default("义乌") @map("warehouse") // 义乌 | 深圳 | 广州
+  containerType String   @default("40HQ") @map("container_type") // 40HQ | 40GP | 20GP
+  destinationTh String   @map("destination_th") @db.Text
+  totalVolumeM3 Decimal  @default(68) @map("total_volume_m3") @db.Decimal(10, 2)
+  status        String   @default("planning") // planning | collecting | loading | shipped | completed | cancelled
+  createdBy     String   @map("created_by")
+  creatorName   String   @map("creator_name")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  customers WhrConsolidationPlanCustomer[]
+
+  @@index([companyId, status])
+  @@index([companyId, planNo])
+  @@map("whr_consolidation_plans")
+}
+
+model WhrConsolidationPlanCustomer {
+  id                  String   @id @default(cuid())
+  planId              String   @map("plan_id")
+  companyId           String   @map("company_id")
+  clientId            String   @map("client_id")
+  unitPriceNormal     Decimal  @map("unit_price_normal") @db.Decimal(10, 2) // 普货单价 元/方
+  unitPriceInspection Decimal  @map("unit_price_inspection") @db.Decimal(10, 2) // 商检单价 元/方
+  unitPriceSensitive  Decimal  @map("unit_price_sensitive") @db.Decimal(10, 2) // 敏感单价 元/方
+  totalVolumeM3       Decimal  @default(0) @map("total_volume_m3") @db.Decimal(10, 3)
+  totalFee            Decimal? @map("total_fee") @db.Decimal(12, 2)
+  deliveryAddress     String?  @map("delivery_address") @db.Text
+
+  // 客户状态流转: filling → received_pending_payment → paid → loading → shipped → thailand_received
+  // 任意节点可 → cancelled
+  status String @default("filling")
+
+  // 仓库签收
+  signedAt                 DateTime? @map("signed_at")
+  warehouseReceiptFileName String?   @map("warehouse_receipt_file_name")
+  warehouseReceiptMime     String?   @map("warehouse_receipt_mime")
+  warehouseReceiptBase64   String?   @map("warehouse_receipt_base64") @db.Text
+
+  // 付款凭证（客户上传）
+  paymentProofFileName   String?   @map("payment_proof_file_name")
+  paymentProofMime       String?   @map("payment_proof_mime")
+  paymentProofBase64     String?   @map("payment_proof_base64") @db.Text
+  paymentProofUploadedAt DateTime? @map("payment_proof_uploaded_at")
+
+  // 管理员审核
+  paymentReviewedAt   DateTime? @map("payment_reviewed_at")
+  paymentReviewedBy   String?   @map("payment_reviewed_by")
+  paymentRejectReason String?   @map("payment_reject_reason") @db.Text
+
+  // 泰国签收单
+  thailandReceiptFileName String?   @map("thailand_receipt_file_name")
+  thailandReceiptMime     String?   @map("thailand_receipt_mime")
+  thailandReceiptBase64   String?   @map("thailand_receipt_base64") @db.Text
+  thailandReceivedAt      DateTime? @map("thailand_received_at")
+
+  // 取消
+  cancelReason String?   @map("cancel_reason") @db.Text
+  cancelledAt  DateTime? @map("cancelled_at")
+
+  // 汇总
+  totalPrealerts Int @default(0) @map("total_prealerts")
+  totalPackages  Int @default(0) @map("total_packages")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  plan       WhrConsolidationPlan        @relation(fields: [planId], references: [id], onDelete: Cascade)
+  client     User                        @relation(fields: [clientId], references: [id])
+  prealerts  WhrConsolidationPrealert[]
+  statusLogs WhrConsolidationStatusLog[]
+
+  @@index([companyId, clientId])
+  @@index([planId, status])
+  @@index([companyId, planId])
+  @@map("whr_consolidation_plan_customers")
+}
+
+model WhrConsolidationPrealert {
+  id         String    @id @default(cuid())
+  customerId String    @map("customer_id")
+  companyId  String    @map("company_id")
+  trackingNo String    @unique @map("tracking_no") // WHRP + 4位数字
+  expressNo  String?   @map("express_no")
+  mark       String    @map("mark")
+  status     String    @default("pending") // pending | received
+  receivedAt DateTime? @map("received_at")
+  createdAt  DateTime  @default(now()) @map("created_at")
+  updatedAt  DateTime  @updatedAt @map("updated_at")
+
+  planCustomer WhrConsolidationPlanCustomer   @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  items        WhrConsolidationPrealertItem[]
+
+  @@index([customerId])
+  @@index([companyId, customerId])
+  @@map("whr_consolidation_prealerts")
+}
+
+model WhrConsolidationPrealertItem {
+  id                   String   @id @default(cuid())
+  prealertId           String   @map("prealert_id")
+  companyId            String   @map("company_id")
+  productName          String   @map("product_name")
+  packageCount         Int      @map("package_count")
+  quantityPerBox       Int      @default(1) @map("quantity_per_box")
+  totalQuantity        Int      @default(0) @map("total_quantity") // packageCount * quantityPerBox
+  lengthCm             Decimal? @map("length_cm") @db.Decimal(10, 2)
+  widthCm              Decimal? @map("width_cm") @db.Decimal(10, 2)
+  heightCm             Decimal? @map("height_cm") @db.Decimal(10, 2)
+  unitWeightKg         Decimal? @map("unit_weight_kg") @db.Decimal(10, 2)
+  totalWeightKg        Decimal? @map("total_weight_kg") @db.Decimal(10, 2) // unitWeightKg * totalQuantity
+  volumeM3             Decimal? @map("volume_m3") @db.Decimal(10, 6) // lengthCm*widthCm*heightCm/1000000*packageCount
+  material             String   @map("material")
+  cargoValue           String   @map("cargo_value")
+  cargoType            String   @default("normal") @map("cargo_type") // normal | inspection | sensitive
+  productImageFileName String?  @map("product_image_file_name")
+  productImageMime     String?  @map("product_image_mime")
+  productImageBase64   String?  @map("product_image_base64") @db.Text
+  sortOrder            Int      @default(0) @map("sort_order")
+  createdAt            DateTime @default(now()) @map("created_at")
+
+  prealert WhrConsolidationPrealert @relation(fields: [prealertId], references: [id], onDelete: Cascade)
+
+  @@index([prealertId, sortOrder])
+  @@map("whr_consolidation_prealert_items")
+}
+
+model WhrConsolidationStatusLog {
+  id           String   @id @default(cuid())
+  customerId   String   @map("customer_id")
+  companyId    String   @map("company_id")
+  operatorId   String   @map("operator_id")
+  operatorRole String   @map("operator_role")
+  operatorName String   @map("operator_name")
+  fromStatus   String   @map("from_status")
+  toStatus     String   @map("to_status")
+  remark       String?  @map("remark")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  planCustomer WhrConsolidationPlanCustomer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@index([customerId, createdAt(sort: Desc)])
+  @@map("whr_consolidation_status_logs")
 }

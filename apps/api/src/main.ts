@@ -14,6 +14,9 @@ import { registerOrderRoutes } from "./modules/orders/routes";
 import { registerShipmentRoutes } from "./modules/shipments/routes";
 import { registerFclInquiryRoutes } from "./modules/fcl-inquiries/routes";
 import { registerConsolidationRoutes } from "./modules/consolidation/routes";
+import { registerWhrConsolidationRoutes } from "./modules/whr-consolidation/routes";
+import { registerWhrConsolidationStaffRoutes } from "./modules/whr-consolidation/staff-routes";
+import { registerWhrConsolidationClientRoutes } from "./modules/whr-consolidation/client-routes";
 import { createApp } from "./server";
 import { startDailyExchangeRateScheduler } from "./modules/exchange-rate/rate-sync";
 import { logger } from "./modules/core/logger";
@@ -51,6 +54,9 @@ registerFinanceRoutes(app);
 registerShippingConfigRoutes(app);
 registerFclInquiryRoutes(app);
 registerConsolidationRoutes(app);
+  registerWhrConsolidationRoutes(app);
+  registerWhrConsolidationStaffRoutes(app);
+  registerWhrConsolidationClientRoutes(app);
 startDailyExchangeRateScheduler();
 
 // ===== AI routes =====
