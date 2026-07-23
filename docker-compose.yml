@@ -48,6 +48,7 @@ services:
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
       DEEPSEEK_MODEL: ${DEEPSEEK_MODEL:-deepseek-chat}
       DEEPSEEK_API_BASE_URL: ${DEEPSEEK_API_BASE_URL:-https://api.deepseek.com/chat/completions}
+      IMAGES_DIR: /images
       PORT: "3001"
       DATABASE_URL: postgresql://${POSTGRES_USER:-xiangtai}:${POSTGRES_PASSWORD:-xiangtai_dev}@postgres:5432/${POSTGRES_DB:-xiangtai}?schema=public
       REDIS_URL: redis://:${REDIS_PASSWORD:-xiangtai_redis_dev}@redis:6379
