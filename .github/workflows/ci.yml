@@ -56,6 +56,12 @@ jobs:
       - name: Test login throttle
         run: npm run test:login-throttle
 
+      - name: Test shipment list display
+        run: npm run test:shipment-list-display
+
+      - name: Test admin shipment detail
+        run: npm run test:admin-shipment-detail
+
       # 打开另一个登录标签页不应注销现有工作台；成功换账号才清旧订单缓存。
       # 真调浏览器会话模块，用 Map localStorage 覆盖三端、旧 key、异常存储；不连库。
       - name: Test login session stability

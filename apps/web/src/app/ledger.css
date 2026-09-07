@@ -6,21 +6,30 @@
   animation: none;
 }
 .ledger-shell .dashboard-sidebar {
+  --nav-bg: #24343b;
+  --nav-ink: #eef3f5;
+  --nav-muted: #b6c3ca;
+  --nav-hover: #30464f;
+  --nav-active: #3b5560;
+  --nav-line: #41565f;
+  --nav-accent: #bed8e3;
+  --nav-danger: #ffc2b8;
+  color: var(--nav-ink);
   width: 216px;
   min-width: 216px;
   height: 100vh;
   top: 0;
   padding: 24px 12px 16px;
   border: 0;
-  border-right: 1px solid var(--line);
+  border-right: 1px solid var(--nav-line);
   border-radius: 0;
-  background: #f1f1ee;
+  background: var(--nav-bg);
   box-shadow: none;
 }
 .ledger-shell .dashboard-sidebar-title {
   margin: 0 0 28px;
   padding: 0 14px;
-  color: var(--ink);
+  color: var(--nav-ink);
   font-size: 19px;
   font-weight: 600;
   letter-spacing: .025em;
@@ -31,10 +40,10 @@
   font-size: 10px;
   font-weight: 400;
   letter-spacing: .2em;
-  color: var(--ink-2);
+  color: var(--nav-muted, var(--ink-2));
 }
 .ledger-shell .dashboard-sidebar-subtitle {
-  color: var(--ink-2);
+  color: var(--nav-muted);
   padding-left: 14px;
   font-size: 12px;
 }
@@ -45,13 +54,13 @@
   border: 0 !important;
   border-radius: 0;
   background: transparent !important;
-  color: var(--ink-2) !important;
+  color: var(--nav-muted) !important;
   font-size: 13px;
   font-weight: 500;
 }
 .ledger-shell .dashboard-sidebar-group-collapsible.is-expanded .dashboard-sidebar-group-header,
 .ledger-shell .dashboard-sidebar-group-header:hover {
-  color: var(--ink) !important;
+  color: var(--nav-ink) !important;
   background: transparent !important;
   border: 0 !important;
 }
@@ -59,7 +68,7 @@
 .ledger-shell .dashboard-sidebar-group-collapsible.is-expanded .dashboard-sidebar-group-arrow {
   order: 2;
   margin-left: auto;
-  color: var(--ink-2);
+  color: var(--nav-muted);
 }
 .ledger-shell .dashboard-sidebar-group-collapsible .dashboard-sidebar-group-body-inner {
   margin-left: 0;
@@ -69,7 +78,7 @@
 .ledger-shell .dashboard-sidebar-link {
   min-height: 36px;
   padding: 8px 14px;
-  color: var(--ink-2) !important;
+  color: var(--nav-muted) !important;
   background: transparent;
   border: 0 !important;
   border-left: 2px solid transparent !important;
@@ -84,20 +93,20 @@
   font-size: 13px;
 }
 .ledger-shell .dashboard-sidebar-link:hover {
-  color: var(--ink) !important;
-  background: #e9eae4 !important;
+  color: var(--nav-ink) !important;
+  background: var(--nav-hover) !important;
 }
 .ledger-shell .dashboard-sidebar-link-active,
 .ledger-shell .dashboard-sidebar-link-active:hover {
-  color: var(--ink) !important;
-  background: #e6e7e0 !important;
-  border-left-color: var(--brand) !important;
+  color: var(--nav-ink) !important;
+  background: var(--nav-active) !important;
+  border-left-color: var(--nav-accent) !important;
   font-weight: 600;
 }
 .ledger-shell .dashboard-sidebar-link::before { content: none; }
 .ledger-shell .dashboard-sidebar-actions {
   padding-top: 16px;
-  border-top: 1px solid var(--line);
+  border-top: 1px solid var(--nav-line);
 }
 .ledger-shell .dashboard-password-button,
 .ledger-shell .dashboard-logout-button {
@@ -105,25 +114,25 @@
   min-height: 36px;
   padding: 8px 14px;
   border: 0 !important;
-  color: var(--ink-2) !important;
+  color: var(--nav-muted) !important;
   background: transparent !important;
   font-size: 13px;
 }
 .ledger-shell .dashboard-password-button:hover,
 .ledger-shell .dashboard-logout-button:hover {
-  color: var(--ink) !important;
-  background: #e9eae4 !important;
+  color: var(--nav-ink) !important;
+  background: var(--nav-hover) !important;
 }
-.ledger-shell .dashboard-logout-button:hover { color: var(--danger) !important; }
+.ledger-shell .dashboard-logout-button:hover { color: var(--nav-danger) !important; }
 .ledger-shell .sidebar-collapse-btn,
 .ledger-shell .sidebar-collapse-btn:hover,
 .ledger-shell .sidebar-close-btn {
-  border-color: var(--line);
-  color: var(--ink-2) !important;
+  border-color: var(--nav-line);
+  color: var(--nav-muted) !important;
   background: transparent !important;
 }
 .ledger-shell .dashboard-sidebar :is(a, button):focus-visible {
-  outline: 2px solid var(--brand);
+  outline: 2px solid var(--nav-accent);
   outline-offset: 2px;
 }
 .ledger-shell .dashboard-content {
@@ -387,4 +396,34 @@
 @media (max-width: 600px) {
   .ledger-shell .shipment-results-actions { width: 100%; justify-content: space-between; gap: 8px; }
   .ledger-shell .shipment-export-dialog { padding: 20px; }
+}
+
+.ledger-shell .shipment-ledger-table > tbody > tr > .shipment-current-status {
+  color: var(--ink);
+  font-weight: 500;
+  white-space: normal !important;
+  overflow-wrap: anywhere;
+  line-height: 1.5;
+}
+
+
+.ledger-shell .admin-shipment-detail { min-width: 0; color: var(--ink); white-space: normal; margin-bottom: 24px; }
+.ledger-shell .admin-shipment-detail > section { padding: 0; border: 0 !important; border-radius: 0; background: transparent; box-shadow: none; }
+.ledger-shell .admin-shipment-detail section + section { margin-top: 24px; }
+.ledger-shell .admin-shipment-detail h3 { margin: 0 0 16px; font-size: 14px; font-weight: 600; }
+.ledger-shell .shipment-detail-fields { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 20px 32px; margin: 0; }
+.ledger-shell .shipment-detail-fields > div { min-width: 0; }
+.ledger-shell .admin-shipment-detail dt { color: var(--ink-2); font-size: 12px; margin-bottom: 6px; }
+.ledger-shell .admin-shipment-detail dd { margin: 0; font-size: 14px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.ledger-shell .shipment-detail-notes { display: grid; gap: 14px; margin: 20px 0 0; padding-top: 16px; border-top: 1px solid #e5e8e2; }
+.ledger-shell .shipment-detail-products { max-width: 100%; max-height: 520px; overflow: auto; border-block: 1px solid #dce1d9; }
+.ledger-shell .shipment-detail-products:focus-visible { outline: 2px solid var(--ink-2); outline-offset: 2px; }
+.ledger-shell .shipment-detail-products table { width: 100%; min-width: 850px; table-layout: fixed; border-collapse: separate; border-spacing: 0; font-size: 13px; }
+.ledger-shell .shipment-detail-products :is(th, td) { padding: 12px; text-align: left; vertical-align: top; overflow-wrap: anywhere; line-height: 1.6; font-variant-numeric: tabular-nums; border-bottom: 1px solid #e8ebe5; }
+.ledger-shell .shipment-detail-products th { position: sticky; top: 0; z-index: 1; background: #f5f6f3; color: var(--ink-2); font-weight: 500; white-space: nowrap; }
+.ledger-shell .shipment-detail-products :is(th, td):first-child { width: 23%; }
+.ledger-shell .shipment-detail-products :is(th, td):nth-child(5) { width: 20%; }
+.ledger-shell .shipment-detail-products tbody tr:last-child td { border-bottom: 0; }
+@media (max-width: 800px) {
+  .ledger-shell .shipment-detail-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
 }

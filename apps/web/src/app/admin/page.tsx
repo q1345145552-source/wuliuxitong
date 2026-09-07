@@ -22,10 +22,11 @@ import ShipmentStatusGroups, { type ShipmentGroupFilter } from "../../modules/sh
 import { ShipmentOverviewStrip } from "../../modules/shipment/ShipmentOverviewStrip";
 import LastmileAddressPanel from "../../components/lastmile/LastmileAddressPanel";
 import DetailModal from "../../modules/layout/DetailModal";
+import AdminShipmentDetail from "../../components/admin/AdminShipmentDetail";
 import {
   GridColgroup,
-  ProductDetailCell,
-  PRODUCT_DETAIL_COL_WIDTHS,
+  ProductListDetailCell,
+  PRODUCT_LIST_COL_WIDTHS,
   buildProductDetailRows,
   totalPackageCountOf,
   totalVolumeOf,
@@ -179,12 +180,12 @@ const WAREHOUSE_TRACKING_PREFIX_MAP: Record<string, string[]> = {
 export const dynamic = "force-dynamic";
 
 /* 管理员端运单列表的列宽。排版规则见 modules/shipment/ShipmentTableGrid.tsx。
-   ⚠️ 第 5~10 个必须和 PRODUCT_DETAIL_COL_WIDTHS 完全一致。
+   ⚠️ 第 6~10 个必须和 PRODUCT_LIST_COL_WIDTHS 完全一致。
    紧跟在产品明细块后面的 80 是「总箱数」，它和体积、重量一样是整单的合计数，
    所以放在会滚动的明细块外面 —— 放进去会跟着产品一起滚上去看不见。 */
 const ORDER_COL_WIDTHS = [
-  44, 110, 130, 110,
-  ...PRODUCT_DETAIL_COL_WIDTHS,
+  44, 110, 130, 120, 110,
+  ...PRODUCT_LIST_COL_WIDTHS,
   80, 100, 90, 90, 170, 330,
 ] as const;
 const ORDER_TABLE_MIN_WIDTH = ORDER_COL_WIDTHS.reduce((a, b) => a + b, 0);
@@ -1973,16 +1974,16 @@ export default function AdminHomePage() {
               <GridColgroup widths={ORDER_COL_WIDTHS} flexIndex={ORDER_FLEX_COL_INDEX} />
               <thead>
                 <tr style={{ borderBottom: "2px solid var(--l-cool)", textAlign: "left", background: "var(--s-cool-2)" }}>
-                  {/* 货型跟着产品走，必须紧挨着国内单号，才能和上面 5 列绑成同一块一起滚 */}
+                  {/* 产品明细共五列，整块同步滚动 */}
                   <th className="shipment-pin shipment-pin--check" scope="col" style={gridThStyle}>
                     <input type="checkbox" aria-label="选择全部筛选结果（包含其他页）" title="选择全部筛选结果，不限当前页" ref={(node) => { if (node) node.indeterminate = selectedResultOrders.length > 0 && !allResultOrdersSelected; }} checked={allResultOrdersSelected} onChange={toggleSelectAllOrders} style={{ cursor: "pointer" }} />
                   </th>
                   <th className="shipment-pin shipment-pin--mark" scope="col" style={gridThStyle}>唛头</th>
                   <th className="shipment-pin shipment-pin--number" scope="col" style={gridThStyle}>运单号</th>
+                  <th scope="col" className="shipment-current-status" style={gridThStyle}>物流状态</th>
                   <th scope="col" style={gridThStyle}>到仓日期</th>
                   <th scope="col" style={gridThStyle}>品名</th>
                   <th scope="col" style={gridThStyle}>箱数</th>
-                  <th scope="col" style={gridThStyle}>单箱数量</th>
                   <th scope="col" style={gridThStyle}>长宽高(cm)</th>
                   <th scope="col" style={gridThStyle}>国内单号</th>
                   <th scope="col" style={gridThStyle}>货型</th>
@@ -2010,11 +2011,12 @@ export default function AdminHomePage() {
                       {/* 明细块只露 3 行，这里写清楚一共几项，免得漏看 */}
                       <div className="shipment-product-count">共 {detailRows.length} 项</div>
                     </td>
+                    <td className="shipment-current-status" style={gridTdStyle}>{shipmentStatusLabel(o.currentStatus)}</td>
                     <td style={{ ...gridTdStyle, color: "var(--t-strong)" }}>
                       {o.shipDate ?? o.createdAt.slice(0, 10)}
                     </td>
-                    {/* 品名 / 箱数 / 单箱数量 / 长宽高 / 国内单号 / 货型：合并成一块，固定高度一起滚 */}
-                    <ProductDetailCell widths={PRODUCT_DETAIL_COL_WIDTHS} rows={detailRows} />
+                    {/* 品名 / 箱数 / 长宽高 / 国内单号 / 货型：合并成一块，固定高度一起滚 */}
+                    <ProductListDetailCell rows={detailRows} />
                     {/* 总箱数＝把左边「箱数」那一列加起来，省得多产品时人工心算 */}
                     <td style={{ ...gridTdStyle, fontWeight: 600 }}>
                       {(() => {
@@ -2100,13 +2102,10 @@ export default function AdminHomePage() {
                           onClose={() => setExpandedOrderId("")}
                         >
                         <div>
-                          <div style={{ display: "flex", flexWrap: "wrap", gap: "6px 24px", marginBottom: 14, paddingBottom: 12, borderBottom: "1px solid #eceae6", fontSize: 12, color: "#8B94A3" }}>
-                            <span>仓库：<strong>{warehouseOptions.find(w => w.id === o.warehouseId)?.label ?? "—"}</strong></span>
-                            <span>柜号：<strong>{o.batchNo ?? "—"}</strong></span>
-                            <span>包装：<strong>{o.packageUnit === "bag" ? "袋" : "箱"}</strong></span>
-                            <span>国内单号：<strong>{((o.products?.length ?? 0) > 0) ? (o.products ?? []).map(p => p.domesticTrackingNo || "货拉拉").filter((v, i, a) => a.indexOf(v) === i).join("、") : (o.domesticTrackingNo ?? "—")}</strong></span>
-                            <span>收货地址：<strong>{o.receiverAddressTh ?? "—"}</strong></span>
-                          </div>
+                          <AdminShipmentDetail
+                            order={o}
+                            warehouseLabel={warehouseOptions.find(w => w.id === o.warehouseId)?.label ?? warehouseLabelFromId(o.warehouseId)}
+                          />
                           {(o.productImages?.length ?? 0) > 0 || (orderImagesCache[o.orderId ?? o.id]?.length ?? 0) > 0 ? (
                             <div style={{ marginBottom: 10, padding: 10, background: "var(--s-cool)", borderRadius: 8, border: "1px solid var(--l-cool)" }}>
                               <div style={{ fontWeight: 600, marginBottom: 6, fontSize: 13, color: "var(--t-strong)" }}>产品图</div>
@@ -2119,12 +2118,14 @@ export default function AdminHomePage() {
                                 ))}
                               </div>
                               <div style={{ marginTop: 8 }}>
-                                <input type="file" accept="image/*" onChange={async (e) => { const f = e.target.files?.[0]; if (!f) return; const oid = o.orderId ?? o.id; try { const toBase64 = (file: File) => new Promise<string>((resolve, reject) => { const r = new FileReader(); r.onloadend = () => resolve((r.result as string).split(",")[1]); r.onerror = () => reject(new Error("文件读取失败")); r.readAsDataURL(file); }); const base64 = await toBase64(f); await uploadStaffOrderProductImage({ orderId: oid, fileName: f.name, mime: f.type, contentBase64: base64 }); const imgs = await fetchShipmentImages(oid); setOrderImagesCache((c) => ({ ...c, [oid]: imgs })); setToast("产品图已上传"); } catch (err) { setMessage("上传失败：" + (err instanceof Error ? err.message : "未知错误")); } }} style={{ fontSize: 12 }} />
+                                <input aria-label="上传产品图片" type="file" accept="image/*" onChange={async (e) => { const f = e.target.files?.[0]; if (!f) return; const oid = o.orderId ?? o.id; try { const toBase64 = (file: File) => new Promise<string>((resolve, reject) => { const r = new FileReader(); r.onloadend = () => resolve((r.result as string).split(",")[1]); r.onerror = () => reject(new Error("文件读取失败")); r.readAsDataURL(file); }); const base64 = await toBase64(f); await uploadStaffOrderProductImage({ orderId: oid, fileName: f.name, mime: f.type, contentBase64: base64 }); const imgs = await fetchShipmentImages(oid); setOrderImagesCache((c) => ({ ...c, [oid]: imgs })); setToast("产品图已上传"); } catch (err) { setMessage("上传失败：" + (err instanceof Error ? err.message : "未知错误")); } }} style={{ fontSize: 12 }} />
                               </div>
                             </div>
                           ) : (
                             <div style={{ marginBottom: 10 }}>
-                              <input type="file" accept="image/*" onChange={async (e) => { const f = e.target.files?.[0]; if (!f) return; const oid = o.orderId ?? o.id; try { const toBase64 = (file: File) => new Promise<string>((resolve, reject) => { const r = new FileReader(); r.onloadend = () => resolve((r.result as string).split(",")[1]); r.onerror = () => reject(new Error("文件读取失败")); r.readAsDataURL(file); }); const base64 = await toBase64(f); await uploadStaffOrderProductImage({ orderId: oid, fileName: f.name, mime: f.type, contentBase64: base64 }); const imgs = await fetchShipmentImages(oid); setOrderImagesCache((c) => ({ ...c, [oid]: imgs })); setToast("产品图已上传"); } catch (err) { setMessage("上传失败：" + (err instanceof Error ? err.message : "未知错误")); } }} style={{ fontSize: 12, color: "var(--c-blue)" }} />
+                              <h3 style={{ margin: "0 0 8px", fontSize: 14, fontWeight: 600 }}>产品图片</h3>
+                              <p style={{ margin: "0 0 10px", fontSize: 13, color: "var(--t-muted)" }}>暂无产品图片</p>
+                              <input aria-label="上传产品图片" type="file" accept="image/*" onChange={async (e) => { const f = e.target.files?.[0]; if (!f) return; const oid = o.orderId ?? o.id; try { const toBase64 = (file: File) => new Promise<string>((resolve, reject) => { const r = new FileReader(); r.onloadend = () => resolve((r.result as string).split(",")[1]); r.onerror = () => reject(new Error("文件读取失败")); r.readAsDataURL(file); }); const base64 = await toBase64(f); await uploadStaffOrderProductImage({ orderId: oid, fileName: f.name, mime: f.type, contentBase64: base64 }); const imgs = await fetchShipmentImages(oid); setOrderImagesCache((c) => ({ ...c, [oid]: imgs })); setToast("产品图已上传"); } catch (err) { setMessage("上传失败：" + (err instanceof Error ? err.message : "未知错误")); } }} style={{ fontSize: 12, color: "var(--c-blue)" }} />
                             </div>
                           )}
                         </div>

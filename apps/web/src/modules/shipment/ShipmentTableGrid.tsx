@@ -130,6 +130,15 @@ export function cargoTypeLabelOf(value?: string | null) {
 export const PRODUCT_DETAIL_COL_WIDTHS = [180, 70, 90, 150, 150, 70] as const;
 export const PRODUCT_DETAIL_HEADS = ["品名", "箱数", "单箱数量", "长宽高(cm)", "国内单号", "货型"] as const;
 
+const PRODUCT_LIST_COL_INDEXES = [0, 1, 3, 4, 5] as const;
+export const PRODUCT_LIST_COL_WIDTHS = PRODUCT_LIST_COL_INDEXES.map((i) => PRODUCT_DETAIL_COL_WIDTHS[i]);
+
+/** 主列表省略单箱数量；完整明细仍保留六列，数据及导出口径不变。 */
+export function ProductListDetailCell({ rows }: { rows: readonly string[][] }) {
+  return <ProductDetailCell widths={PRODUCT_LIST_COL_WIDTHS} rows={rows.map((row) => PRODUCT_LIST_COL_INDEXES.map((i) => row[i]))} />;
+}
+
+
 type ProductCarrier = {
   products?: OrderProductItem[];
   itemName?: string | null;

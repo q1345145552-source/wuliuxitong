@@ -12,8 +12,8 @@ import ShipmentStatusGroups, { type ShipmentGroupFilter } from "../../modules/sh
 import { ShipmentOverviewStrip } from "../../modules/shipment/ShipmentOverviewStrip";
 import {
   GridColgroup,
-  ProductDetailCell,
-  PRODUCT_DETAIL_COL_WIDTHS,
+  ProductListDetailCell,
+  PRODUCT_LIST_COL_WIDTHS,
   PRODUCT_DETAIL_HEADS,
   buildProductDetailRows,
   totalPackageCountOf,
@@ -98,12 +98,12 @@ import {
 } from "../../modules/staff/utils";
 
 /* 员工端运单列表的列宽。排版规则见 modules/shipment/ShipmentTableGrid.tsx。
-   ⚠️ 第 4~9 个必须和 PRODUCT_DETAIL_COL_WIDTHS 完全一致。
+   ⚠️ 第 5~9 个必须和 PRODUCT_LIST_COL_WIDTHS 完全一致。
    紧跟在产品明细块后面的 80 是「总箱数」，它和体积、重量一样是整单的合计数，
    所以放在会滚动的明细块外面 —— 放进去会跟着产品一起滚上去看不见。 */
 const SHIPMENT_COL_WIDTHS = [
-  44, 110, 130,
-  ...PRODUCT_DETAIL_COL_WIDTHS,
+  44, 110, 130, 120,
+  ...PRODUCT_LIST_COL_WIDTHS,
   80, 100, 90, 90, 110, 170, 190,
 ] as const;
 const SHIPMENT_TABLE_MIN_WIDTH = SHIPMENT_COL_WIDTHS.reduce((a, b) => a + b, 0);
@@ -1803,15 +1803,15 @@ export default function StaffHomePage() {
                   <GridColgroup widths={SHIPMENT_COL_WIDTHS} flexIndex={SHIPMENT_FLEX_COL_INDEX} />
                   <thead>
                     <tr style={{ background: "var(--s-cool-2)", textAlign: "left", borderBottom: "2px solid var(--l-cool)" }}>
-                      {/* 货型跟着产品走，必须紧挨着国内单号，才能和上面 5 列绑成同一块一起滚 */}
+                      {/* 产品明细共五列，整块同步滚动 */}
                       <th className="shipment-pin shipment-pin--check" scope="col" style={gridThStyle}>
                         <input type="checkbox" aria-label="选择全部筛选结果（包含其他页）" title="选择全部筛选结果，不限当前页" ref={(node) => { if (node) node.indeterminate = selectedResultShipments.length > 0 && !allResultShipmentsSelected; }} checked={allResultShipmentsSelected} onChange={toggleSelectAll} style={{ cursor: "pointer" }} />
                       </th>
                       <th className="shipment-pin shipment-pin--mark" scope="col" style={gridThStyle}>唛头</th>
                       <th className="shipment-pin shipment-pin--number" scope="col" style={gridThStyle}>运单号</th>
+                      <th scope="col" className="shipment-current-status" style={gridThStyle}>物流状态</th>
                       <th scope="col" style={gridThStyle}>品名</th>
                       <th scope="col" style={gridThStyle}>箱数</th>
-                      <th scope="col" style={gridThStyle}>单箱数量</th>
                       <th scope="col" style={gridThStyle}>长宽高(cm)</th>
                       <th scope="col" style={gridThStyle}>国内单号</th>
                       <th scope="col" style={gridThStyle}>货型</th>
@@ -1841,8 +1841,9 @@ export default function StaffHomePage() {
                             {/* 明细块只露 3 行，这里写清楚一共几项，免得员工不知道下面还有货 */}
                             <div className="staff-shipment-product-count">共 {detailRows.length} 项</div>
                           </td>
-                          {/* 品名 / 箱数 / 单箱数量 / 长宽高 / 国内单号 / 货型：合并成一块，固定高度一起滚 */}
-                          <ProductDetailCell widths={PRODUCT_DETAIL_COL_WIDTHS} rows={detailRows} />
+                          <td className="shipment-current-status" style={gridTdStyle}>{shipmentStatusZh(item.currentStatus)}</td>
+                          {/* 品名 / 箱数 / 长宽高 / 国内单号 / 货型：合并成一块，固定高度一起滚 */}
+                          <ProductListDetailCell rows={detailRows} />
                           {/* 总箱数＝把左边「箱数」那一列加起来，省得多产品时人工心算 */}
                           <td style={{ ...gridTdStyle, fontWeight: 600 }}>
                             {(() => {
@@ -1911,7 +1912,6 @@ export default function StaffHomePage() {
                                 {/* 隐藏信息栏：不用色块，靠一条细线跟下面分开 */}
                                 <div style={{ display: "flex", flexWrap: "wrap", gap: "6px 24px", marginBottom: 14, paddingBottom: 12, borderBottom: "1px solid #eceae6", fontSize: 12, color: "#8B94A3" }}>
                                   <span>仓库：<strong>{warehouseLabelFromId(item.warehouseId)}</strong></span>
-                                  <span>柜号：<strong>{item.batchNo ?? "—"}</strong></span>
                                   <span>包装：<strong>{item.packageUnit === "bag" ? "袋" : "箱"}</strong></span>
                                   <span>国内单号：<strong>{(item.products?.length ?? 0) > 0 ? (item.products ?? []).map(p => p.domesticTrackingNo ?? "货拉拉").filter((v, i, a) => a.indexOf(v) === i).join("、") : (item.domesticTrackingNo ?? "—")}</strong></span>
                                   <span>加收金额：<strong>{item.receivableAmountCny != null ? `${item.receivableCurrency === "THB" ? "THB" : "CNY"} ${item.receivableAmountCny.toFixed(2)}` : "0"}</strong></span>
@@ -2138,14 +2138,6 @@ export default function StaffHomePage() {
                                               placeholder="与总体积一致时可填相同值"
                                             />
                                           </ShipmentEditFormField>
-                                          <ShipmentEditFormField label="柜号">
-                                            <input
-                                              value={draft.batchNo}
-                                              onChange={(e) => mergeShipmentOrderDraft(item.id, item, { batchNo: e.target.value })}
-                                              disabled={formDisabled}
-                                              style={inputInCard}
-                                            />
-                                          </ShipmentEditFormField>
                                         </div>
                                         <div style={{ flex: "1 1 300px", display: "flex", flexDirection: "column", gap: 12 }}>
                                           <ShipmentEditFormField label="运单所属用户" required>
@@ -2228,14 +2220,6 @@ export default function StaffHomePage() {
                                               disabled={formDisabled}
                                               style={inputInCard}
                                               placeholder="如 14.1"
-                                            />
-                                          </ShipmentEditFormField>
-                                          <ShipmentEditFormField label="装柜号">
-                                            <input
-                                              value={draft.containerNo}
-                                              onChange={(e) => mergeShipmentOrderDraft(item.id, item, { containerNo: e.target.value })}
-                                              disabled={formDisabled}
-                                              style={inputInCard}
                                             />
                                           </ShipmentEditFormField>
                                           <ShipmentEditFormField label="签收单">

@@ -112,9 +112,9 @@ function saveOrdersToCache(orders: OrderItem[]) {
 }
 
 /* 客户端运单列表的列宽。排版规则见 modules/shipment/ShipmentTableGrid.tsx。
-   ⚠️ 第 3~4 个必须和 CLIENT_DETAIL_COL_WIDTHS 完全一致。 */
+   ⚠️ 第 4~5 个必须和 CLIENT_DETAIL_COL_WIDTHS 完全一致。 */
 const CLIENT_DETAIL_COL_WIDTHS = [200, 160] as const;
-const CLIENT_COL_WIDTHS = [110, 140, ...CLIENT_DETAIL_COL_WIDTHS, 100, 100, 80, 80, 110, 150, 160] as const;
+const CLIENT_COL_WIDTHS = [110, 140, 120, ...CLIENT_DETAIL_COL_WIDTHS, 100, 100, 80, 80, 150, 160] as const;
 const CLIENT_TABLE_MIN_WIDTH = CLIENT_COL_WIDTHS.reduce((a, b) => a + b, 0);
 /** 弹性列＝「备注」（表头第 10 个） */
 const CLIENT_FLEX_COL_INDEX = 9;
@@ -1028,7 +1028,7 @@ export default function ClientHomePage() {
               <table className="a3-table shipment-ledger-table shipment-ledger-table--client" style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, tableLayout: "fixed", minWidth: CLIENT_TABLE_MIN_WIDTH }}>
                 <GridColgroup widths={CLIENT_COL_WIDTHS} flexIndex={CLIENT_FLEX_COL_INDEX} />
                 <thead><tr style={{ borderBottom: "2px solid var(--l-soft)", textAlign: "left", background: "var(--s-cool-2)" }}>
-                  <th className="shipment-pin shipment-pin--mark" scope="col" style={gridThStyle}>唛头</th><th className="shipment-pin shipment-pin--number" scope="col" style={gridThStyle}>运单号</th><th scope="col" style={gridThStyle}>品名</th><th scope="col" style={gridThStyle}>尺寸(cm)</th><th scope="col" className="shipment-metric" style={gridThStyle}>体积（m³）</th><th scope="col" className="shipment-metric" style={gridThStyle}>重量（kg）</th><th scope="col" style={gridThStyle}>总箱数</th><th scope="col" style={gridThStyle}>运输</th><th scope="col" style={gridThStyle}>物流状态</th><th scope="col" style={gridThStyle}>备注</th><th scope="col" style={gridThStyle}>操作</th>
+                  <th className="shipment-pin shipment-pin--mark" scope="col" style={gridThStyle}>唛头</th><th className="shipment-pin shipment-pin--number" scope="col" style={gridThStyle}>运单号</th><th scope="col" className="shipment-current-status" style={gridThStyle}>物流状态</th><th scope="col" style={gridThStyle}>品名</th><th scope="col" style={gridThStyle}>尺寸(cm)</th><th scope="col" className="shipment-metric" style={gridThStyle}>体积（m³）</th><th scope="col" className="shipment-metric" style={gridThStyle}>重量（kg）</th><th scope="col" style={gridThStyle}>总箱数</th><th scope="col" style={gridThStyle}>运输</th><th scope="col" style={gridThStyle}>备注</th><th scope="col" style={gridThStyle}>操作</th>
                 </tr></thead>
                 <tbody>
                   {queriedOrders.slice((currentPage - 1) * pageSize, currentPage * pageSize).map((item: any) => {
@@ -1057,13 +1057,13 @@ export default function ClientHomePage() {
                             {/* 明细块只露 3 行，这里写清楚一共几项 */}
                             <div className="shipment-product-count">共 {detailRows.length} 项</div>
                           </td>
+                          <td className="shipment-current-status" style={gridTdStyle}>{shipmentStatusZh(st, CLIENT_STATUS_ZH_OVERRIDES)}</td>
                           {/* 品名 / 尺寸：合并成一块，固定高度一起滚 */}
                           <ProductDetailCell widths={CLIENT_DETAIL_COL_WIDTHS} rows={detailRows} />
                           <td style={gridTdStyle} className="col-num shipment-metric">{totalVolumeM3 != null ? totalVolumeM3.toFixed(3) : "—"}</td>
                           <td style={gridTdStyle} className="col-num shipment-metric">{totalWeightKg != null ? totalWeightKg.toFixed(2) : "—"}</td>
                           <td style={gridTdStyle} className="col-num">{item.packageCount} {item.packageUnit === "box" ? "箱" : "袋"}</td>
                           <td style={gridTdStyle}><span className={item.transportMode === "sea" ? "tag tag-sea" : "tag tag-land"}>{item.transportMode === "sea" ? "海运" : "陆运"}</span></td>
-                          <td style={gridTdStyle}>{shipmentStatusZh(st, CLIENT_STATUS_ZH_OVERRIDES)}</td>
                           <td style={{ ...gridTdStyle, fontSize: 12 }} title={item.remark || ""}>{item.remark || ""}</td>
                           {/* 详情挪到最右边，和物流轨迹并排横着放；原来它在最左边只有 30px 宽，
                               「详情」两个字被挤成上下两行 */}
