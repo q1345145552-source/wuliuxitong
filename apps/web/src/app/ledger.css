@@ -379,7 +379,14 @@
 .ledger-shell .shipment-export-dialog :is(.shipment-export-dates, .staff-shipment-export-dates) label { flex: 1; min-width: 0; }
 .ledger-shell .shipment-export-dialog :is(.shipment-export-dates, .staff-shipment-export-dates) input { width: 100%; min-width: 0; box-sizing: border-box; }
 .ledger-shell .shipment-export-dialog :is(.shipment-export-note, .staff-shipment-export-note) { order: -1; font-size: 13px; }
-.ledger-shell .shipment-ledger-table > :is(thead, tbody) > tr > .shipment-metric { text-align: right !important; font-variant-numeric: tabular-nums; }
+/* 数字列的表头和值共用同一右边缘，覆盖内联及旧 col-num 的不同边距。 */
+.ledger-shell .shipment-ledger-table > :is(thead, tbody) > tr > .shipment-metric {
+  text-align: right !important;
+  padding-left: 8px !important;
+  padding-right: 8px !important;
+  letter-spacing: normal;
+  font-variant-numeric: tabular-nums;
+}
 .ledger-shell .shipment-ledger-table > tbody > tr > .shipment-pin { background: inherit; }
 /* 窄屏只固定运单号，留出空间查看业务字段。 */
 .ledger-shell .shipment-ledger-table > tbody > tr > .shipment-pin--number { position: sticky; left: 0; z-index: 3; }

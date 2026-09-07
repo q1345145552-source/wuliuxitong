@@ -59,4 +59,56 @@ test("原始单箱数量和整票合计不因隐藏列变化", () => {
   assert.equal(grid.totalVolumeOf(item), 0.144567);
   assert.equal(grid.totalWeightOf(item), 9.8765);
 });
+
+function classText(node: ts.JsxElement): string {
+  const attribute = node.openingElement.attributes.properties.find((a): a is ts.JsxAttribute => ts.isJsxAttribute(a) && a.name.getText() === "className");
+  return attribute?.initializer && ts.isStringLiteral(attribute.initializer) ? attribute.initializer.text : "";
+}
+function nearestTable(node: ts.Node): ts.JsxElement | undefined {
+  for (let p = node.parent; p; p = p.parent) {
+    if (ts.isJsxElement(p) && p.openingElement.tagName.getText() === "table") return p;
+  }
+}
+const utilsFile = ts.createSourceFile("utils.ts", readFileSync("apps/web/src/modules/staff/utils.ts", "utf8"), ts.ScriptTarget.Latest, true);
+const formatter = utilsFile.statements.find((n): n is ts.FunctionDeclaration => ts.isFunctionDeclaration(n) && n.name?.text === "formatMetric");
+assert.ok(formatter);
+for (const role of ["admin", "staff", "client"]) test(`${role}真实页面的三列数字表头和值共享对齐标记且取值不变`, () => {
+  const file = path.resolve(`apps/web/src/app/${role}/page.tsx`);
+  const source = ts.createSourceFile(file, readFileSync(file, "utf8"), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  const heads: ts.JsxElement[] = [], values: ts.JsxElement[] = [];
+  const derived: string[] = [];
+  function visit(node: ts.Node) {
+    if (role === "client" && ts.isVariableDeclaration(node) && ["totalVolumeM3", "totalWeightKg"].includes(node.name.getText())) derived.push(`const ${node.getText(source)};`);
+    if (ts.isJsxElement(node) && classText(node).split(/\s+/).includes("shipment-metric")) {
+      const table = nearestTable(node), tag = node.openingElement.tagName.getText();
+      if (table && classText(table).split(/\s+/).includes("shipment-ledger-table")) {
+        if (tag === "th") heads.push(node);
+        if (tag === "td") values.push(node);
+      }
+    }
+    ts.forEachChild(node, visit);
+  }
+  visit(source);
+  assert.equal(heads.length, 3, `${role}的体积/重量/总箱数表头应全用数字列样式`);
+  assert.equal(values.length, 3, `${role}的三列数值应全用同一数字列样式`);
+  const expression = (nodes: ts.JsxElement[]) => nodes.map(n => n.getText(source)).join("");
+  const compiled = ts.transpileModule(`${formatter.getText(utilsFile)}\n${derived.join("\n")}\nexports.view = <table><thead><tr>${expression(heads)}</tr></thead><tbody><tr>${expression(values)}</tr></tbody></table>;`, {
+    fileName: "page-metrics.tsx", compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX },
+  }).outputText;
+  for (const zero of [false, true]) {
+    const item = { products: [{ packageCount: zero ? 0 : 2 }], packageCount: zero ? 0 : 2, packageUnit: "box", totalVolumeM3: zero ? 0 : 1.23456, totalWeightKg: zero ? 0 : 19.753, volumeM3: 0.001, weightKg: 9.876 };
+    const before = JSON.stringify(item), exports: Record<string, any> = {};
+    vm.runInNewContext(compiled, { exports, require: requireWeb, ...grid, o: item, item }, { filename: file });
+    const html = renderToStaticMarkup(exports.view);
+    const text = (tag: string) => [...html.matchAll(new RegExp(`<${tag}\\b[^>]*>(.*?)</${tag}>`, "g"))].map(m => m[1].replace(/<[^>]+>/g, "").replace(/\s/g, ""));
+    const labels = text("th"), numbers = text("td");
+    assert.deepEqual([...labels].sort(), ["体积(m³)", "总箱数", "重量(kg)"].sort());
+    for (let i = 0; i < labels.length; i++) {
+      const expected = labels[i] === "总箱数" ? (zero ? "0箱" : "2箱") : labels[i].startsWith("体积") ? (zero ? "0.000" : "1.235") : (zero ? "0.00" : "19.75");
+      assert.equal(numbers[i], expected, `${role} ${labels[i]} 取值/精度保持`);
+    }
+    assert.equal(JSON.stringify(item), before);
+  }
+});
+
 console.log(`SUMMARY ${passed}/${passed} passed`);

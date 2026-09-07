@@ -1815,9 +1815,9 @@ export default function StaffHomePage() {
                       <th scope="col" style={gridThStyle}>长宽高(cm)</th>
                       <th scope="col" style={gridThStyle}>国内单号</th>
                       <th scope="col" style={gridThStyle}>货型</th>
-                      <th scope="col" style={gridThStyle}>总箱数</th>
-                      <th scope="col" className="shipment-metric" style={gridThStyle}>体积（m³）</th>
-                      <th scope="col" className="shipment-metric" style={gridThStyle}>重量（kg）</th>
+                      <th scope="col" className="shipment-metric" style={gridThStyle}>总箱数</th>
+                      <th scope="col" className="shipment-metric" style={gridThStyle}>体积 (m³)</th>
+                      <th scope="col" className="shipment-metric" style={gridThStyle}>重量 (kg)</th>
                       <th scope="col" style={gridThStyle}>运输方式</th>
                       <th scope="col" style={gridThStyle}>到仓日期</th>
                       <th scope="col" style={gridThStyle}>备注</th>
@@ -1845,7 +1845,7 @@ export default function StaffHomePage() {
                           {/* 品名 / 箱数 / 长宽高 / 国内单号 / 货型：合并成一块，固定高度一起滚 */}
                           <ProductListDetailCell rows={detailRows} />
                           {/* 总箱数＝把左边「箱数」那一列加起来，省得多产品时人工心算 */}
-                          <td style={{ ...gridTdStyle, fontWeight: 600 }}>
+                          <td className="shipment-metric" style={{ ...gridTdStyle, fontWeight: 600 }}>
                             {(() => {
                               const total = totalPackageCountOf(item);
                               return total != null ? `${total} 箱` : "—";
