@@ -412,6 +412,24 @@ async function main(): Promise<void> {
     assert.equal(r.data.children[1].packageCount, 1, "子单件数不许被父单的盖掉");
   });
 
+  await check("7) 装柜管理柜内货物（GET /staff/loading-manifests/detail）：品名三个全拼，老单退回原品名（老板 9-10 追加）", async () => {
+    containerRow = {
+      id: "ct3", containerNo: "CT-2026-003", containerType: "40HQ", warehouseId: "wh_yiwu_01", transportMode: "sea",
+      carrierName: "", currentStatus: "LOADING", sealedAt: null,
+      items: [
+        { id: "ci3", shipmentId: "s1", loadedPieceCount: 6, loadedVolumeM3: 0.432, createdAt: new Date(0), shipment: wholeShipment },
+        { id: "ci4", shipmentId: "s9", loadedPieceCount: 1, loadedVolumeM3: 0.1, createdAt: new Date(1), shipment: legacyShipment },
+      ],
+    };
+    const r = await call("GET /staff/loading-manifests/detail", { id: "ct3" });
+    assert.equal(r.status, 200, `应该 200，实际 ${r.status}：${JSON.stringify(r.data).slice(0, 200)}`);
+    assert.equal(r.data.bills.length, 2);
+    assert.equal(r.data.bills[0].itemName, EXPECTED, `柜内货物品名不对：${r.data.bills[0].itemName}`);
+    assert.equal(r.data.bills[0].loadedPieces, 6, "装入件数不许变");
+    assert.equal(r.data.bills[0].packageCount, 6);
+    assert.equal(r.data.bills[1].itemName, "老单品名");
+  });
+
   console.log(`\n共 ${total} 项，失败 ${failures.length} 项`);
   if (failures.length > 0) {
     console.log("失败：\n  - " + failures.join("\n  - "));

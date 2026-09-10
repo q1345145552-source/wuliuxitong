@@ -7,6 +7,7 @@ import { fail, ok, requireRole } from "../core/http-utils";
 import { BusinessError } from "../core/business-error";
 import { requirePositiveInt } from "../core/int-guard";
 import { loadOrderProductDims } from "../orders/routes";
+import { productNamesLabel } from "../../../../../packages/shared-types/product-names";
 // 柜子状态流程只在 containers/status-flow.ts 定义一处，本文件不再自己抄
 import {
   CONTAINER_STATUS_LABEL,
@@ -203,7 +204,13 @@ export function registerLoadingManifestRoutes(app: MinimalHttpApp): void {
                 id: true, trackingNo: true, batchNo: true, currentStatus: true, parentTrackingNo: true,
                 weightKg: true, volumeM3: true, packageCount: true, packageUnit: true,
                 transportMode: true, domesticTrackingNo: true,
-                order: { select: { itemName: true, clientId: true, productQuantity: true, cargoType: true } },
+                order: {
+                  select: {
+                    itemName: true, clientId: true, productQuantity: true, cargoType: true,
+                    // 柜内货物那一行的品名要把全部产品名带出来（2026-09-10 老板点的）；order.itemName 只存了第一个
+                    products: { orderBy: { sortOrder: "asc" }, select: { itemName: true, sortOrder: true } },
+                  },
+                },
               },
             },
           },
@@ -224,7 +231,7 @@ export function registerLoadingManifestRoutes(app: MinimalHttpApp): void {
         shipmentId: item.shipmentId,
         trackingNo: item.shipment?.trackingNo ?? null,
         batchNo: item.shipment?.batchNo ?? null,
-        itemName: item.shipment?.order?.itemName ?? null,
+        itemName: productNamesLabel(item.shipment?.order?.products, item.shipment?.order?.itemName) || null,
         clientId: item.shipment?.order?.clientId ?? null,
         productQuantity: item.shipment?.order?.productQuantity ?? null,
         cargoType: item.shipment?.order?.cargoType ?? null,

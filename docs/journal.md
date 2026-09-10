@@ -11,6 +11,7 @@
 - **Codex 第一轮复核**（`docs/codex-复核-尾端派送品类不全-2026-09-10.md`）：诊断方向对但不全——运单 `Shipment.create` 根本不写 itemName（可能为空），管理员编辑也传首产品名；四处修复 ✅。报 **P1**：卡片「物流轨迹」弹窗的**子单页签**仍只显示首名或「—」（`containers/routes.ts` track 接口 `children[].itemName = cs.itemName`）；**P2**：新测试的桩无视 select、且没测前端候选链路，M6/M7/M8 三个变异假绿；**P3**：拼长的品名在候选/卡片会被省略号截掉且无 title。
 - **按 Codex 三条整改**：① track 接口 `children[].itemName` 改用 `productNamesLabel(shipment.order?.products, cs.itemName)`；② 测试重写——Prisma 桩严格按 select/include/orderBy/take 裁剪、未实现的模型/方法即抛，新增第 5 项（真前端 `fetchLastmileShipments` → 真 `GET /staff/shipments`，501 票两页）和第 6 项（真 track 路由两个子单）；③ 两处品名 span 加 `title`。9 个变异（Codex 的 8 个 + 轨迹子单退回）全红、恢复后字节一致、9/9 绿；三套 tsc 0 错、全套自测全绿。第二轮提示词已追加在同一文件。
 - **Codex 第二轮**：P1 ✅、P3 ✅、P2 ⚠️ 剩两个测试缺口——桩的 include 分支 `{...row}` 会把没点名的关系漏出去（查询改 `include: {}` 仍绿）；第 2 项只看响应、看不出查询多选了 `signImageBase64`。**已补**：include 语义改成「标量全给、关系只给点名的」；桩记录查询参数，第 2 项直接断言 select 内容。11 个变异（M1–M9 + 这两条）重放全红、恢复后字节一致；业务代码这轮未动。第三轮提示词已追加。
+- **老板追加（9-10）**：装柜管理柜内货物那一行的品名也拼全——`GET /staff/loading-manifests/detail` 的 `order.select` 多带 `products{itemName,sortOrder}`，`bills[].itemName` 用 `productNamesLabel`。测试加第 7 项（真路由，两票：多产品 / 老单），退回老写法即红；tsc 0 错。单独一个本地提交。**未动**：`containers/routes.ts:186`（`/admin/containers/detail`，Codex 查无前端调用方）、列表接口 `shipments:497` / `admin:491`（列表另有产品行明细）。
 - **Codex 第三轮：「可以提交」**。两条 P3 建议（关系写 `true` 时桩只给标量；「有没有图」那次查询断言只选 id）已顺手补上，9/9 绿、抽查 M6/M11 仍红。按老规矩做**本地提交**（一个提交，含三轮整改），未推送、未部署。上线后要专门核：尾端派送卡片品名、候选列表品名、轨迹弹窗子单页签、两种派送单导出的品名列——这次动了 4 个接口的返回内容（列表 / 客户单 / 整柜清单 / 轨迹）。
 
 ## 2026-09-07：49126aa 三端数字列对齐已推送部署（只更新 Web）
