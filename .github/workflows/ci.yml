@@ -121,6 +121,11 @@ jobs:
       - name: Test lastmile dispatch export
         run: npm run test:lastmile-export
 
+      # 多产品运单的品名要把全部产品名带出来（2026-09-10 老板反馈派送单「品类不全」）。
+      # 真调尾端派送卡片、客户签收单、整柜清单三个路由（Prisma 内存桩），不连库。
+      - name: Test lastmile product names
+        run: npm run test:lastmile-product-names
+
       # 普通版集货「还能不能删」那把尺子（2026-08-28 加）。
       # 「删整张预报单」原来一道检查都没有：已付款也照删、级联把货物明细一起删光、
       # 钱一分不退，而且货删完之后「撤销付款」会 400，退款的口子也跟着封死。

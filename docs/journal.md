@@ -1,5 +1,29 @@
 # 项目交接日志
 
+## 2026-09-10：尾端派送与派送单「品类不全」——多产品运单只带出第一个产品名（仅本地）
+
+- 老板反馈：尾端派送页面信息好像不全（不确定），导出的派送单肯定「品类不全」。生产日志只读核对：最近 10 天整柜拆柜清单导出 14 次、客户签收单 3 次；无 5xx。
+- **病根**：员工建单 / 客户预报单在有产品行时，`order.itemName` / `shipment.itemName` 只存**第一个产品名**（orders/routes.ts `products[0].itemName` / `staffProducts[0]?.itemName`；批量导入是拼接的所以没事）。尾端派送卡片、客户签收单（分柜单不展开产品行那条路）、整柜拆柜派送清单（products 故意为空）都拿这个字段当整票品名。
+- **修法（只改显示，不动存的数据）**：新增共享 `packages/shared-types/product-names.ts` `productNamesLabel()`（按 sortOrder 去重拼「 / 」，跟批量导入一致，无产品行退回原 itemName）。改四处：`GET /admin/lastmile/orders`（卡片）、`GET /admin/lastmile/customer-export-data`（签收单）、`GET /staff/loading-manifests/export-data`（整柜清单，`loadOrderProductDims` 顺带带出 `names`）、前端 `fetchLastmileShipments`（可派送候选列表）。
+- 新增 `scripts/test-lastmile-product-names.ts`（7 项，真调三个路由 + 走到 Excel 行，Prisma 内存桩），接 npm/CI。变异自证：三处各退回老写法 → 对应用例红；恢复后字节一致、全绿。三套 tsc 0 错，全套自测全绿。
+- **没改**（同一个字段、同样只显示第一个产品名，报给老板决定）：装柜明细 `loading-manifests:227`、柜子接口 `containers/routes.ts:186/1043`、员工/管理员列表接口 `shipments:497` `admin:491`（列表本身另有产品行明细，不影响）。建单存 itemName 的口径也没动。
+- 另一条日志线索（未处理）：9-8 上午员工 5 次建派送单被 409 拒（运单还挂在旧 WD「派送中」），之后逐票点签收才建成——「签收」会把运单写成已签收；改派/二次派送的正规路径是删旧单那票。未确认是否老板说的「不对劲」。
+- **Codex 第一轮复核**（`docs/codex-复核-尾端派送品类不全-2026-09-10.md`）：诊断方向对但不全——运单 `Shipment.create` 根本不写 itemName（可能为空），管理员编辑也传首产品名；四处修复 ✅。报 **P1**：卡片「物流轨迹」弹窗的**子单页签**仍只显示首名或「—」（`containers/routes.ts` track 接口 `children[].itemName = cs.itemName`）；**P2**：新测试的桩无视 select、且没测前端候选链路，M6/M7/M8 三个变异假绿；**P3**：拼长的品名在候选/卡片会被省略号截掉且无 title。
+- **按 Codex 三条整改**：① track 接口 `children[].itemName` 改用 `productNamesLabel(shipment.order?.products, cs.itemName)`；② 测试重写——Prisma 桩严格按 select/include/orderBy/take 裁剪、未实现的模型/方法即抛，新增第 5 项（真前端 `fetchLastmileShipments` → 真 `GET /staff/shipments`，501 票两页）和第 6 项（真 track 路由两个子单）；③ 两处品名 span 加 `title`。9 个变异（Codex 的 8 个 + 轨迹子单退回）全红、恢复后字节一致、9/9 绿；三套 tsc 0 错、全套自测全绿。第二轮提示词已追加在同一文件。
+- **Codex 第二轮**：P1 ✅、P3 ✅、P2 ⚠️ 剩两个测试缺口——桩的 include 分支 `{...row}` 会把没点名的关系漏出去（查询改 `include: {}` 仍绿）；第 2 项只看响应、看不出查询多选了 `signImageBase64`。**已补**：include 语义改成「标量全给、关系只给点名的」；桩记录查询参数，第 2 项直接断言 select 内容。11 个变异（M1–M9 + 这两条）重放全红、恢复后字节一致；业务代码这轮未动。第三轮提示词已追加。
+- **Codex 第三轮：「可以提交」**。两条 P3 建议（关系写 `true` 时桩只给标量；「有没有图」那次查询断言只选 id）已顺手补上，9/9 绿、抽查 M6/M11 仍红。按老规矩做**本地提交**（一个提交，含三轮整改），未推送、未部署。上线后要专门核：尾端派送卡片品名、候选列表品名、轨迹弹窗子单页签、两种派送单导出的品名列——这次动了 4 个接口的返回内容（列表 / 客户单 / 整柜清单 / 轨迹）。
+
+## 2026-09-07：49126aa 三端数字列对齐已推送部署（只更新 Web）
+
+- 老板明确要求“部署”；7文件hash与上轮最终验证一致，提交/推送 `49126aaa58f39ebd818e6dcd747d6b5d364f9a0a`。服务器HEAD和运行Web revision一致；只更新Web，API仍保留88918ac同一容器，PostgreSQL/Redis及挂载不动，无迁移/db push/业务数据写入。
+- 本次21套非数据库自测、scripts/API/Web三套类型全绿；服务器从精确commit独立归档构建Web，25/25页面通过；候选四入口200，旧Web隔离启动回退演练及本地回退入口实跑通过。本地3000/3001仍原PID67825/32916，未在原仓库build。
+- 新备份 `/root/deploy-backups/20260907T025822Z-alignment`：真实隔离恢复45表、1323订单、2557运单、318图片记录；391物理图片逐一hash。数据库/图片/配置另存本机`.audit/2026-09-07/deploy-alignment/data-backup/`，三份SHA256一致。
+- 10:04:00切Web，10:04:33健康/数据核验通过（Asia/Bangkok）。切换前后45表记录数/主键集合一致，391原图片hash一致、迁移账本相同；API/PG/Redis ID/启动时间/挂载及服务器原package-lock差异、.env、compose保留。
+- 真生产浏览器：基线三端桌面3/3；部署后三端×1440/390最终6/6。管理员/员工各50行、客户14行，体积/整票总重量/总箱数逐票保持，3/2位不变；54个采样数值与表头文字右缘最大偏差0px，勾选/横滚后仍一致。详情/状态列/侧栏手机抽屉原功能一并通过，三端数字局部截图已目检。
+- 初跑5/6，原因是客户一票GZ260801786在切换后10:04:51发生员工子单签收→父单同步（独立只读SQL核实子单轨迹outForDelivery→delivered）。不是排版错误；不回退正常业务，仅对该票该次状态转换作精确预期调整，数字及其余字段仍严格比较后6/6。保留初次exit1和调查证据，不伪报首次全绿。
+- 正式公网四入口200，CSS字节与运行镜像一致；客户异常2=独立计算2、total14保持。临时会话/容器已清理，不改老板浏览器登录。只读验收，未测试生产新增/编辑/导入等写入；不会将切换时计数一致描述成后续没有正常业务更新。
+- 修改源码包、完整提交patch、命令原样记录、已演练的仅Web回退：`.audit/2026-09-07/deploy-alignment/verification.md`。代码已推送部署；本条部署交接仅本地追加，未为日志再触发一次上线。
+
 ## 2026-09-07：三端运单数字列统一对齐（仅本地，未再次部署）
 
 - 老板指出截图数字列歪，批准三端一起对齐。基线f801370；保留上一轮已部署交接日志，没有延用上轮授权再次上线。

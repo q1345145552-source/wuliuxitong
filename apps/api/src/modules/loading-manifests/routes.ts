@@ -399,7 +399,9 @@ export function registerLoadingManifestRoutes(app: MinimalHttpApp): void {
         lastmileOrderId: item.id,
         trackingNo: shipment.trackingNo,
         parentTrackingNo: shipment.parentTrackingNo ?? "",
-        itemName: shipment.itemName || order?.itemName || "",
+        // 清单一行一票、products 故意不展开（见下），所以品名这一格必须把全部产品名带上；
+        // 运单的 itemName 只存了第一个产品名（2026-09-10，老板反馈「品类不全」）
+        itemName: (order?.id ? dimsByOrderId.get(order.id)?.names : undefined) || shipment.itemName || order?.itemName || "",
         packageCount: item.loadedPieceCount,
         packageUnit: shipment.packageUnit || "",
         // ⚠️ 同 admin-ops：没填就是没填，不要变成 0（2026-08-26 修）

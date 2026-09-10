@@ -18,6 +18,7 @@ import { syncParentStatusFromChildren } from "../shipments/parent-status";
 import type { MinimalHttpApp } from "../../server";
 import { fail, ok, requireRole } from "../core/http-utils";
 import { sanitizeRemarkForClient } from "../core/client-privacy";
+import { productNamesLabel } from "../../../../../packages/shared-types/product-names";
 import { logger } from "../core/logger";
 import { canTransitLoose } from "../shipments/routes";
 import { BusinessError } from "../core/business-error";
@@ -1086,7 +1087,9 @@ export function registerContainerRoutes(app: MinimalHttpApp): void {
         ? childShipments.map((cs) => ({
             trackingNo: cs.trackingNo,
             batchNo: auth.role === "client" ? null : cs.batchNo,
-            itemName: cs.itemName,
+            // 子单和父单是同一张订单的货，品名把订单全部产品名带上（2026-09-10 Codex 复核 P1：
+            // 子单自己的 itemName 要么只有第一个产品名、要么是空的，轨迹弹窗子单页签会显示「鞋」或「—」）
+            itemName: productNamesLabel(shipment.order?.products, cs.itemName) || null,
             packageCount: cs.packageCount,
             currentStatus: cs.currentStatus,
             timeline: cs.statusLogs.map((log) => mapLog(log, cs.trackingNo)),

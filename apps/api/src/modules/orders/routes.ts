@@ -49,6 +49,7 @@ export async function loadOrderProducts(companyId: string, orderIds: string[]): 
 import { EXCEPTION_STATUSES } from "../shipments/status-flow";
 import { BusinessError } from "../core/business-error";
 import { classifyStatusGroup, matchesShipmentListFilter, type ClientStatusGroup } from "../../../../../packages/shared-types/shipment-status";
+import { productNamesLabel } from "../../../../../packages/shared-types/product-names";
 
 /**
  * 客户端订单五分类。判断逻辑在 packages/shared-types 的 classifyStatusGroup，
@@ -1796,17 +1797,28 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
  *   · 好几个不一样的 → 用「/」并排，比如 60/50，一个都不丢
  *   · 一个都没填     → 这三个字段干脆不出现，前端按「没有」处理
  */
+export type OrderProductDims = {
+  lengthCm?: number | string;
+  widthCm?: number | string;
+  heightCm?: number | string;
+  /** 全部产品名拼起来（鞋 / 包 / 帽），2026-09-10 加；没有产品行时不出现 */
+  names?: string;
+};
+
 export async function loadOrderProductDims(
   companyId: string,
   orderIds: string[],
-): Promise<Map<string, { lengthCm?: number | string; widthCm?: number | string; heightCm?: number | string }>> {
-  const out = new Map<string, { lengthCm?: number | string; widthCm?: number | string; heightCm?: number | string }>();
+): Promise<Map<string, OrderProductDims>> {
+  const out = new Map<string, OrderProductDims>();
   const ids = Array.from(new Set(orderIds.filter(Boolean)));
   if (ids.length === 0) return out;
 
   const rows = await prisma.orderProduct.findMany({
     where: { orderId: { in: ids }, companyId },
-    select: { orderId: true, lengthCm: true, widthCm: true, heightCm: true },
+    // 品名也一起带出来（2026-09-10，老板反馈整柜清单「品类不全」）：
+    // 运单上的 itemName 只存了第一个产品名，清单一行一票，得把全部产品名拼进那一格
+    select: { orderId: true, lengthCm: true, widthCm: true, heightCm: true, itemName: true, sortOrder: true },
+    orderBy: { sortOrder: "asc" },
   });
 
   const pick = (vals: Array<number | null>): number | string | undefined => {
@@ -1823,13 +1835,15 @@ export async function loadOrderProductDims(
     grouped.set(r.orderId, arr);
   }
   for (const [orderId, list] of grouped) {
-    const entry: { lengthCm?: number | string; widthCm?: number | string; heightCm?: number | string } = {};
+    const entry: OrderProductDims = {};
     const l = pick(list.map((x) => (x.lengthCm == null ? null : Number(x.lengthCm))));
     const w = pick(list.map((x) => (x.widthCm == null ? null : Number(x.widthCm))));
     const h = pick(list.map((x) => (x.heightCm == null ? null : Number(x.heightCm))));
     if (l !== undefined) entry.lengthCm = l;
     if (w !== undefined) entry.widthCm = w;
     if (h !== undefined) entry.heightCm = h;
+    const names = productNamesLabel(list);
+    if (names) entry.names = names;
     if (Object.keys(entry).length > 0) out.set(orderId, entry);
   }
   return out;

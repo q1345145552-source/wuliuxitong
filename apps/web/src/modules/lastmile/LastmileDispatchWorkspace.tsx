@@ -411,7 +411,8 @@ export default function LastmileDispatchWorkspace(props: LastmileDispatchWorkspa
                     />
                     <span className="lastmile-option-main">
                       <strong>{shipment.trackingNo}</strong>
-                      <span>{shipment.clientId || "未标记客户"} · {shipment.itemName || "未填品名"}</span>
+                      {/* 多产品的品名拼起来可能很长，被省略号截掉时鼠标停上去能看全（2026-09-10） */}
+                      <span title={`${shipment.clientId || "未标记客户"} · ${shipment.itemName || "未填品名"}`}>{shipment.clientId || "未标记客户"} · {shipment.itemName || "未填品名"}</span>
                       {shipment.receiverAddress && <small>{shipment.receiverAddress}</small>}
                     </span>
                     <b>{shipment.packageCount}件</b>
@@ -659,7 +660,7 @@ function LastmileWdCard(props: WdCardProps) {
                     </div>
                     <div className="lastmile-shipment-cell">
                       <strong>{order.trackingNo || order.shipmentId}</strong>
-                      <span>{order.itemName || "品名未填写"}{order.packageCount != null ? ` · ${order.packageCount}件` : ""}</span>
+                      <span title={`${order.itemName || "品名未填写"}${order.packageCount != null ? ` · ${order.packageCount}件` : ""}`}>{order.itemName || "品名未填写"}{order.packageCount != null ? ` · ${order.packageCount}件` : ""}</span>
                     </div>
                     <div className="lastmile-row-status">
                       <span className={`lastmile-status-badge ${order.status === "SIGNED" ? "is-done" : "is-active"}`}>{order.status === "SIGNED" ? "已签收" : "派送中"}</span>

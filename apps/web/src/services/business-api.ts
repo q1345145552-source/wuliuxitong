@@ -1,4 +1,5 @@
 import { matchesShipmentListFilter, type ClientStatusGroup } from "../../../../packages/shared-types/shipment-status";
+import { productNamesLabel } from "../../../../packages/shared-types/product-names";
 import { authHeaders, apiBaseUrl, parseApiResponse, apiRequest, fetchWithSession as fetch } from "./core-api";
 
 export interface StaffCreateOrderPayload {
@@ -1029,7 +1030,8 @@ export async function fetchLastmileShipments(): Promise<LastmileShipmentItem[]> 
     id: s.id,
     trackingNo: s.trackingNo,
     clientId: s.clientId ?? "",
-    itemName: s.itemName ?? "",
+    // 候选列表上的品名把全部产品名带出来（2026-09-10）：s.itemName 只存了第一个产品名
+    itemName: productNamesLabel(s.products, s.itemName ?? ""),
     packageCount: s.packageCount ?? 0,
     containerNo: s.containerNo || undefined,
     receiverName: s.receiverNameTh || undefined,

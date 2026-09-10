@@ -8,6 +8,7 @@ import { metricByPieceShare, reconcileFamilyMetric } from "../shipments/split-me
 import type { MinimalHttpApp } from "../../server";
 import { fail, ok, requireRole } from "../core/http-utils";
 import { sanitizeRemarkForClient } from "../core/client-privacy";
+import { productNamesLabel } from "../../../../../packages/shared-types/product-names";
 
 /** 同一票货重复进派送单时抛这个，调用方转成 400 而不是 500 */
 class LastmileConflictError extends Error {
@@ -211,6 +212,9 @@ export function registerAdminOpsRoutes(app: MinimalHttpApp): void {
                 receiverNameTh: true,
                 receiverPhoneTh: true,
                 receiverAddressTh: true,
+                // 卡片上的品名要把全部产品名带出来（2026-09-10，老板反馈「品类不全」）；
+                // shipment.itemName 只存了第一个产品名，见 packages/shared-types/product-names.ts
+                products: { orderBy: { sortOrder: "asc" }, select: { itemName: true, sortOrder: true } },
                 client: {
                   select: {
                     name: true,
@@ -258,7 +262,7 @@ export function registerAdminOpsRoutes(app: MinimalHttpApp): void {
           receiverName: order?.receiverNameTh || defaultAddress?.contactName || order?.client?.name || null,
           receiverPhone: order?.receiverPhoneTh || defaultAddress?.contactPhone || order?.client?.phone || null,
           receiverAddress: order?.receiverAddressTh || defaultAddress?.addressDetail || null,
-          itemName: item.shipment?.itemName ?? null,
+          itemName: productNamesLabel(order?.products, item.shipment?.itemName) || null,
           packageCount: item.shipment?.packageCount ?? null,
           packageUnit: item.shipment?.packageUnit ?? null,
           deliveryDate: item.deliveryDate,
@@ -448,7 +452,9 @@ export function registerAdminOpsRoutes(app: MinimalHttpApp): void {
         lastmileOrderId: row.id,
         trackingNo: shipment.trackingNo,
         parentTrackingNo: shipment.parentTrackingNo ?? "",
-        itemName: shipment.itemName || order?.itemName || "",
+        // 分柜的子单 / 父单下面 products 故意不展开（会把件数重复算回整票），
+        // 那种情况整票只有一行，品名必须把全部产品名带上，不能只印第一个（2026-09-10）
+        itemName: productNamesLabel(order?.products, shipment.itemName || order?.itemName || ""),
         packageCount,
         packageUnit: shipment.packageUnit || order?.packageUnit || "",
         // ⚠️ 这里**必须原样下发 null**，不能 `?? 0`（2026-08-26 修）。
