@@ -562,6 +562,8 @@ export function registerShipmentRoutes(app: MinimalHttpApp): void {
 
     // 补充父运单总件数：父剩余 + 所有子运单件数
     const parentIds = items.filter(i => !i.parentTrackingNo).map(i => i.trackingNo);
+    // 本页父单里哪些已经分过柜（有子单）——尾端候选用它把「自己 0 件」的汇总父单筛掉（2026-09-10）
+    const parentsWithChildren = new Set<string>();
     if (parentIds.length > 0) {
       const childRows = await prisma.shipment.findMany({
         where: { parentTrackingNo: { in: parentIds }, companyId: auth.companyId },
@@ -569,6 +571,7 @@ export function registerShipmentRoutes(app: MinimalHttpApp): void {
       });
       const childSum = new Map<string, number>();
       for (const c of childRows) {
+        parentsWithChildren.add(c.parentTrackingNo!);
         childSum.set(c.parentTrackingNo!, (childSum.get(c.parentTrackingNo!) ?? 0) + (c.packageCount ?? 0));
       }
       for (const item of items) {
@@ -578,6 +581,15 @@ export function registerShipmentRoutes(app: MinimalHttpApp): void {
       }
     }
 
+    // 尾端候选需要区分汇总父单；普通列表保持原有查询和响应。
+    // hasChildren 直接复用上面「补父单总件数」那次子单查询的结果，不再多查一次。
+    if (includeChildren) {
+      ok(res, {
+        items: items.map((item) => ({ ...item, hasChildren: !item.parentTrackingNo && parentsWithChildren.has(item.trackingNo) })),
+        page, pageSize, total,
+      });
+      return;
+    }
     ok(res, { items, page, pageSize, total });
   });
 

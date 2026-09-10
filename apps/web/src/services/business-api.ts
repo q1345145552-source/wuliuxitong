@@ -992,6 +992,7 @@ export interface LastmileShipmentItem {
   clientId: string;
   itemName: string;
   packageCount: number;
+  hasChildren?: boolean;
   containerNo?: string;
   receiverName?: string;
   receiverPhone?: string;
@@ -1026,13 +1027,14 @@ export async function fetchLastmileShipments(): Promise<LastmileShipmentItem[]> 
     if (items.length === 0 || collected.length >= total) break;
     page += 1;
   }
-  return collected.map((s) => ({
+  return collected.filter((s) => s.parentTrackingNo || !s.hasChildren || (s.packageCount ?? 0) !== 0).map((s) => ({
     id: s.id,
     trackingNo: s.trackingNo,
     clientId: s.clientId ?? "",
     // 候选列表上的品名把全部产品名带出来（2026-09-10）：s.itemName 只存了第一个产品名
     itemName: productNamesLabel(s.products, s.itemName ?? ""),
     packageCount: s.packageCount ?? 0,
+    hasChildren: s.hasChildren,
     containerNo: s.containerNo || undefined,
     receiverName: s.receiverNameTh || undefined,
     receiverPhone: s.receiverPhoneTh || undefined,

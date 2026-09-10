@@ -67,6 +67,7 @@ export default function LastmileDispatchWorkspace(props: LastmileDispatchWorkspa
   const [page, setPage] = useState(1);
   const signFileRef = useRef<HTMLInputElement>(null);
   const workspaceRef = useRef<HTMLElement>(null);
+  const dispatchPending = useRef(false);
 
   const allGroups = useMemo(() => buildLastmileWdGroups(props.lmOrderList), [props.lmOrderList]);
   const summary = useMemo(() => lastmileSummaryOf(allGroups), [allGroups]);
@@ -79,6 +80,19 @@ export default function LastmileDispatchWorkspace(props: LastmileDispatchWorkspa
     () => filteredGroups.slice((page - 1) * WD_PAGE_SIZE, page * WD_PAGE_SIZE),
     [filteredGroups, page],
   );
+
+  const deliveringByShipment = useMemo(() => {
+    const map = new Map<string, Set<string>>();
+    for (const order of props.lmOrderList) {
+      if (order.status !== "DELIVERING") continue;
+      const numbers = map.get(order.shipmentId) ?? new Set<string>();
+      numbers.add(order.deliveryNo);
+      map.set(order.shipmentId, numbers);
+    }
+    return map;
+  }, [props.lmOrderList]);
+  const otherDeliveries = (shipmentId: string) =>
+    [...(deliveringByShipment.get(shipmentId) ?? [])].filter((number) => number !== appendTarget);
 
   const filteredShipments = useMemo(() => {
     const query = shipmentSearch.trim().toLocaleLowerCase();
@@ -135,30 +149,64 @@ export default function LastmileDispatchWorkspace(props: LastmileDispatchWorkspa
   };
 
   const submitDispatch = async () => {
+    if (dispatchPending.current) return;
     const shipmentIds = [...selected];
     if (shipmentIds.length === 0) {
       props.onToast("请先勾选运单");
       return;
     }
+    const conflicts = shipmentIds.flatMap((id) => {
+      const numbers = otherDeliveries(id);
+      const trackingNo = props.lmShipments.find((shipment) => shipment.id === id)?.trackingNo || id;
+      return numbers.length > 0 ? [`${trackingNo}（${numbers.join("、")}）`] : [];
+    });
+    const confirmMove = (details: string) => confirm(`${details}\n确定要挪到这张单吗？旧单里会去掉，客户轨迹记一条「改派」。`);
+    let moveFromDelivering = false;
+    if (conflicts.length > 0) {
+      if (!confirmMove(`下面 ${conflicts.length} 票还在别的派送单里派送中：\n${conflicts.join("\n")}`)) return;
+      moveFromDelivering = true;
+    }
+    dispatchPending.current = true;
     setBusy(true);
     try {
-      const response = await fetch(`${apiBaseUrl()}/admin/lastmile/orders`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", ...authHeaders() },
-        body: JSON.stringify({
-          shipmentIds,
-          deliveryNo: appendTarget || undefined,
-          driverName: appendTarget ? undefined : driverName.trim(),
-          licensePlate: appendTarget ? undefined : licensePlate.trim(),
-          phoneNumber: appendTarget ? undefined : phoneNumber.trim(),
-          deliveryDate: appendTarget ? undefined : deliveryDate,
-        }),
-      });
-      const result = await parseApiResponse<{ deliveryNo?: string; count: number }>(response);
+      let result: { deliveryNo?: string; count: number; moved: number; skipped: string[] } | undefined;
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        const response = await fetch(`${apiBaseUrl()}/admin/lastmile/orders`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", ...authHeaders() },
+          body: JSON.stringify({
+            shipmentIds,
+            deliveryNo: appendTarget || undefined,
+            driverName: appendTarget ? undefined : driverName.trim(),
+            licensePlate: appendTarget ? undefined : licensePlate.trim(),
+            phoneNumber: appendTarget ? undefined : phoneNumber.trim(),
+            deliveryDate: appendTarget ? undefined : deliveryDate,
+            moveFromDelivering,
+          }),
+        });
+        try {
+          result = await parseApiResponse<{ deliveryNo?: string; count: number; moved: number; skipped: string[] }>(response);
+          break;
+        } catch (error) {
+          if (attempt === 0 && response.status === 409 && error instanceof Error && error.message.includes("派送中")) {
+            if (!confirmMove(error.message)) return;
+            moveFromDelivering = true;
+            continue;
+          }
+          throw error;
+        }
+      }
+      if (!result) return;
       const deliveryNo = appendTarget || result.deliveryNo || "WD";
-      props.onToast(appendTarget
+      // 只有真的挪了 / 跳过了才提，别每次都拖着「改派 0 票，跳过 0 票」
+      const extras = [
+        (result.moved ?? 0) > 0 ? `改派 ${result.moved} 票` : "",
+        (result.skipped?.length ?? 0) > 0 ? `跳过 ${result.skipped.length} 票（已在这张单里）` : "",
+      ].filter(Boolean);
+      props.onToast((appendTarget
         ? `已追加 ${result.count} 票到 ${deliveryNo}`
-        : `${deliveryNo} 已创建（${result.count}票运单）`);
+        : `${deliveryNo} 已创建（${result.count}票运单）`) +
+        (extras.length > 0 ? `；${extras.join("，")}` : ""));
       resetCreateDraft();
       setAppendTarget("");
       setActiveView("tasks");
@@ -166,6 +214,7 @@ export default function LastmileDispatchWorkspace(props: LastmileDispatchWorkspa
     } catch (error) {
       props.onToast(error instanceof Error ? error.message : "创建失败");
     } finally {
+      dispatchPending.current = false;
       setBusy(false);
     }
   };
@@ -413,6 +462,7 @@ export default function LastmileDispatchWorkspace(props: LastmileDispatchWorkspa
                       <strong>{shipment.trackingNo}</strong>
                       {/* 多产品的品名拼起来可能很长，被省略号截掉时鼠标停上去能看全（2026-09-10） */}
                       <span title={`${shipment.clientId || "未标记客户"} · ${shipment.itemName || "未填品名"}`}>{shipment.clientId || "未标记客户"} · {shipment.itemName || "未填品名"}</span>
+                      {otherDeliveries(shipment.id).length > 0 && <small>在 {otherDeliveries(shipment.id).join("、")} 派送中</small>}
                       {shipment.receiverAddress && <small>{shipment.receiverAddress}</small>}
                     </span>
                     <b>{shipment.packageCount}件</b>

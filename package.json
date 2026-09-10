@@ -34,6 +34,7 @@
     "test:attention-filter": "tsx scripts/test-attention-filter.ts",
     "test:consolidation-delete": "tsx scripts/test-consolidation-delete-guard.ts",
     "test:lastmile-export": "tsx scripts/test-lastmile-export.ts",
+    "test:lastmile-dispatch-rules": "tsx scripts/test-lastmile-dispatch-rules.ts",
     "test:lastmile-product-names": "tsx scripts/test-lastmile-product-names.ts",
     "test:ai-numbers": "TZ=UTC tsx scripts/test-ai-answer-numbers.ts && TZ=Asia/Shanghai tsx scripts/test-ai-answer-numbers.ts",
     "test:ai-limits": "tsx scripts/test-ai-chat-limits.ts",

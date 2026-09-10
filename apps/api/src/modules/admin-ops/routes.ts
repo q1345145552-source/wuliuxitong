@@ -546,8 +546,13 @@ export function registerAdminOpsRoutes(app: MinimalHttpApp): void {
   app.post("/admin/lastmile/orders", async (req, res) => {
     const auth = requireRole(req, res, ["staff", "admin"]);
     if (!auth) return;
-    const body = (req.body ?? {}) as { shipmentIds?: string[]; driverName?: string; licensePlate?: string; phoneNumber?: string; status?: string; deliveryNo?: string; deliveryDate?: string };
-    const shipmentIds = (body.shipmentIds ?? []).map(s => s.trim()).filter(Boolean);
+    const body = (req.body ?? {}) as { shipmentIds?: string[]; driverName?: string; licensePlate?: string; phoneNumber?: string; status?: string; deliveryNo?: string; deliveryDate?: string; moveFromDelivering?: boolean };
+    const shipmentIds = [...new Set((body.shipmentIds ?? []).map(s => s.trim()).filter(Boolean))];
+    const moveFromDelivering = body.moveFromDelivering === true;
+    if (body.moveFromDelivering !== undefined && typeof body.moveFromDelivering !== "boolean") {
+      fail(res, 400, "VALIDATION_ERROR", "改派标志必须是布尔值");
+      return;
+    }
     let driverName = body.driverName?.trim() || "";
     let licensePlate = body.licensePlate?.trim() || "";
     let phoneNumber = body.phoneNumber?.trim() || "";
@@ -611,6 +616,8 @@ export function registerAdminOpsRoutes(app: MinimalHttpApp): void {
     const driverLabel = [driverName, phoneNumber].filter(Boolean).join(" - ");
 
     const results: Array<{ id: string; shipmentId: string }> = [];
+    let moved = 0;
+    const skipped: string[] = [];
     try {
       await prisma.$transaction(async (tx) => {
         if (!existingDeliveryNo) {
@@ -623,7 +630,7 @@ export function registerAdminOpsRoutes(app: MinimalHttpApp): void {
            * 现在锁拿到手后算号、写单、一起提交，锁到提交才放，
            * 第二个人必须等第一张单真正落库之后才能算号。
            *
-           * ⚠️ 锁序：advisory 锁 2901 放在锁运单之前拿，固定成「2901 → 运单行锁」，
+           * ⚠️ 锁序：advisory 锁 2901 放在锁运单之前拿，固定成「2901 → 旧派送单行锁 → 运单行锁」，
            * 全库只有这一处拿 2901，不会跟别的路径成环。
            */
           await tx.$executeRawUnsafe('SELECT pg_advisory_xact_lock(2901)');
@@ -635,6 +642,30 @@ export function registerAdminOpsRoutes(app: MinimalHttpApp): void {
           const num = last ? parseInt(last.deliveryNo.replace("WD", ""), 10) || 0 : 0;
           deliveryNo = `WD${String(num + 1).padStart(6, "0")}`;
         }
+        const deliveringRows = await tx.adminLastmileOrder.findMany({
+          where: { shipmentId: { in: shipmentIds }, companyId: auth.companyId, status: "DELIVERING" },
+          select: { id: true, shipmentId: true, deliveryNo: true },
+        });
+        const conflicts = deliveringRows.filter((row) => row.deliveryNo !== deliveryNo);
+        if (!moveFromDelivering && conflicts.length > 0) {
+          const shipments = await tx.shipment.findMany({
+            where: { id: { in: shipmentIds }, companyId: auth.companyId },
+            select: { id: true, trackingNo: true },
+          });
+          const numbers = new Map(shipments.map((row) => [row.id, row.trackingNo]));
+          throw new LastmileConflictError("下面运单还在别的派送单里派送中：\n" +
+            conflicts.map((row) => `${numbers.get(row.shipmentId) ?? row.shipmentId}（${row.deliveryNo}）`).join("\n") +
+            "\n请确认改派后重试，未送达的货不要点签收。");
+        }
+        // 与签收/删除一致：旧派送单（id 有序）先于运单；锁后重读，保留已签收历史。
+        const oldIds = moveFromDelivering ? conflicts.map((row) => row.id) : [];
+        for (const oldId of [...oldIds].sort()) {
+          await tx.$queryRaw`SELECT id FROM admin_lastmile_orders WHERE id = ${oldId} AND company_id = ${auth.companyId} FOR UPDATE`;
+        }
+        const movableRows = oldIds.length > 0 ? await tx.adminLastmileOrder.findMany({
+          where: { id: { in: oldIds }, companyId: auth.companyId, status: "DELIVERING" },
+          select: { id: true, shipmentId: true, deliveryNo: true },
+        }) : [];
         const departRemark = driverLabel
           ? `司机【${driverLabel}】正在为您派送，请注意查收`
           : `正在为您派送，请注意查收（${deliveryNo}）`;
@@ -657,7 +688,19 @@ export function registerAdminOpsRoutes(app: MinimalHttpApp): void {
          * （shipments/routes.ts:427-429），父单和子单都能被勾进同一张派送单。
          * 复核在测试库查到 5 组父子单同时可派送，双连接实测出真死锁。
          */
-        const orderedIds = await lockShipmentsChildrenFirst(tx, shipmentIds, auth.companyId);
+        // 混选留货父单与另一家子单时，把后者的祖先也放进同一父单排序层，避免 P→Q / Q→P。
+        const selectedRows = await tx.shipment.findMany({
+          where: { id: { in: shipmentIds }, companyId: auth.companyId },
+          select: { parentTrackingNo: true },
+        });
+        const ancestorNos = [...new Set(selectedRows.flatMap((row) => row.parentTrackingNo ? [row.parentTrackingNo] : []))];
+        const ancestors = ancestorNos.length > 0 ? await tx.shipment.findMany({
+          where: { trackingNo: { in: ancestorNos }, companyId: auth.companyId },
+          select: { id: true },
+        }) : [];
+        const lockedIds = await lockShipmentsChildrenFirst(tx, [...new Set([...shipmentIds, ...ancestors.map((row) => row.id)])], auth.companyId);
+        const selectedIds = new Set(shipmentIds);
+        const orderedIds = lockedIds.filter((id) => selectedIds.has(id)); // 祖先只锁不派。
         /** 父单留到最后统一同步，别夹在子单锁中间（见上面 ②） */
         const parentNosToSync = new Set<string>();
         for (const sid of orderedIds) {
@@ -680,20 +723,48 @@ export function registerAdminOpsRoutes(app: MinimalHttpApp): void {
            */
           const ownShipment = await tx.shipment.findFirst({
             where: { id: sid, companyId: auth.companyId },
-            select: { id: true, trackingNo: true, currentStatus: true, parentTrackingNo: true },
+            select: { id: true, trackingNo: true, currentStatus: true, parentTrackingNo: true, packageCount: true },
           });
           if (!ownShipment) {
             throw new LastmileShipmentNotFoundError(`运单 ${sid} 不存在或不属于当前公司`);
           }
+          // 件数为空也按 0 算（跟前端候选过滤 `(packageCount ?? 0)` 同一口径）
+          if (ownShipment.parentTrackingNo == null && (ownShipment.packageCount ?? 0) === 0) {
+            const child = await tx.shipment.findFirst({
+              where: { parentTrackingNo: ownShipment.trackingNo, companyId: auth.companyId },
+              select: { id: true },
+            });
+            if (child) throw new LastmileConflictError(`运单 ${ownShipment.trackingNo} 已分柜、货都在子单上，请勾选它的子单`);
+          }
+          const inTarget = await tx.adminLastmileOrder.findFirst({
+            where: { shipmentId: sid, companyId: auth.companyId, deliveryNo },
+            select: { id: true },
+          });
+          if (inTarget) {
+            skipped.push(ownShipment.trackingNo);
+            continue;
+          }
+          const toMove = movableRows.filter((row) => row.shipmentId === sid);
           const busy = await tx.adminLastmileOrder.findFirst({
-            where: { shipmentId: sid, companyId: auth.companyId, status: "DELIVERING" },
+            where: {
+              shipmentId: sid, companyId: auth.companyId, status: "DELIVERING",
+              id: { notIn: toMove.map((row) => row.id) },
+            },
             select: { deliveryNo: true },
           });
           if (busy) {
+            // 新出现的冲突行没有预先锁定；此时不倒过来拿派送单锁，整车回滚后重新确认。
             throw new LastmileConflictError(
-              `运单 ${ownShipment.trackingNo} 已经在派送单 ${busy.deliveryNo} 里派送中了，不能重复派。要改派请先把那张单删掉或签收。`,
+              `运单 ${ownShipment.trackingNo} 正在 ${busy.deliveryNo} 派送中，派送信息已变化，请重新确认改派。`,
             );
           }
+          for (const old of toMove) {
+            await tx.adminLastmileOrder.delete({ where: { id: old.id } });
+          }
+          if (toMove.length > 0) moved += 1;
+          const shipmentRemark = toMove.length > 0
+            ? `改派：从 ${[...new Set(toMove.map((row) => row.deliveryNo))].join("、")} 转到 ${deliveryNo}，${departRemark}`
+            : departRemark;
 
           const id = `lm_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
           const now = new Date();
@@ -703,7 +774,7 @@ export function registerAdminOpsRoutes(app: MinimalHttpApp): void {
           // 同步运单状态 + 日志
           await tx.shipment.update({ where: { id: ownShipment.id }, data: { currentStatus: "outForDelivery", updatedAt: now } });
           await tx.statusLog.create({
-            data: { id: `sl_lm_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`, companyId: auth.companyId, shipmentId: ownShipment.id, operatorId: auth.userId, operatorRole: auth.role, operatorName: auth.name ?? "", fromStatus: ownShipment.currentStatus, toStatus: "outForDelivery", remark: departRemark, changedAt: now },
+            data: { id: `sl_lm_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`, companyId: auth.companyId, shipmentId: ownShipment.id, operatorId: auth.userId, operatorRole: auth.role, operatorName: auth.name ?? "", fromStatus: ownShipment.currentStatus, toStatus: "outForDelivery", remark: shipmentRemark, changedAt: now },
           });
           if (ownShipment.parentTrackingNo) {
             // ⚠️ 不能直接把父单写成 outForDelivery：分柜后可能只有一个子单出去派送，
@@ -761,7 +832,7 @@ export function registerAdminOpsRoutes(app: MinimalHttpApp): void {
       }
       throw e;
     }
-    ok(res, { deliveryNo, count: results.length });
+    ok(res, { deliveryNo, count: results.length, moved, skipped });
   });
 
   // 尾程派送状态更新

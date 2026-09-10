@@ -121,6 +121,9 @@ jobs:
       - name: Test lastmile dispatch export
         run: npm run test:lastmile-export
 
+      - name: Test lastmile dispatch candidate and reassignment rules
+        run: npm run test:lastmile-dispatch-rules
+
       # 多产品运单的品名要把全部产品名带出来（2026-09-10 老板反馈派送单「品类不全」）。
       # 真调尾端派送卡片、客户签收单、整柜清单三个路由（Prisma 内存桩），不连库。
       - name: Test lastmile product names
