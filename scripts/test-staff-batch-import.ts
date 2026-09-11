@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import { cargoTypeLabel, parseCargoType, strictestCargoType } from "../packages/shared-types/cargo-type";
 import {
   BATCH_SHEET_TO_JSON_OPTIONS,
   lastRowWithCells,
@@ -424,6 +425,57 @@ async function checkInvalidClientIdMessage(): Promise<void> {
   assert.ok(missing.message.includes("缺少必填项"), `没换成中文：${JSON.stringify(missing.message)}`);
   assert.ok(missing.message.includes("仓库"), `没点名缺哪一项：${JSON.stringify(missing.message)}`);
   assert.ok(missing.message.includes("运输方式"), `没点名缺哪一项：${JSON.stringify(missing.message)}`);
+
+  /* ------------------------------------------------------------------
+     货型这道闸（2026-09-11 加）
+     原来四个写入口都是 `body.cargoType?.trim() || "normal"` —— 传什么存什么。
+     传「商检」会原样存进库，而三端显示用的 cargoTypeLabelOf 认不出来就显示「普货」：
+     单子上白写一个错货型，没人会发现。
+     ------------------------------------------------------------------ */
+  /** 非法货型必须在这道闸上就被 400 拦下 —— 放过去就会往下走到真写库那一段 */
+  async function expectCargoReject(body: Record<string, unknown>, label: string) {
+    let out: { status: number; message: string };
+    try {
+      out = await callWith(body);
+    } catch (error) {
+      // 闸没拦住 → 请求继续往下走，倒在假 prisma 上。这正是「校验失效」的样子
+      throw new Error(`${label} 没被货型这道闸拦住，请求继续往下走了：${error instanceof Error ? error.message : error}`);
+    }
+    assert.equal(out.status, 400, `${label} 被放行了（status ${out.status}）`);
+    assert.ok(out.message.includes("货型"), `${label} 是别的闸拦的，不是货型这道：${JSON.stringify(out.message)}`);
+    return out;
+  }
+
+  // 「普货 」末尾的空格会被 trim 掉，剩下「普货」仍然不是库里那三个值之一
+  for (const bad of ["商检", "xyz", "NORMAL_", "普货 "]) {
+    const out = await expectCargoReject({ cargoType: bad }, `整票货型「${bad}」`);
+    assert.ok(out.message.includes(bad.trim()), `报错里没回显填的原文：${JSON.stringify(out.message)}`);
+  }
+
+  /** 产品行上的货型也要校验，而且要点名第几条 */
+  {
+    const out = await expectCargoReject(
+      { products: [{ itemName: "测试品", packageCount: 1, cargoType: "商检" }] },
+      "产品行货型「商检」",
+    );
+    assert.ok(out.message.includes("第 1 条产品"), `没点名是第几条产品：${JSON.stringify(out.message)}`);
+  }
+
+  /** 合法的三个值不许被这道闸拦下（后面会因为假 prisma 没实现而抛错，那是正常的） */
+  for (const good of ["normal", "inspection", "sensitive", "Inspection", undefined]) {
+    let out: { status: number; message: string } | null = null;
+    try {
+      out = await callWith({ cargoType: good });
+    } catch {
+      continue; // 过了这道闸、倒在后面的假 prisma 上 —— 正是想要的结果
+    }
+    if (out && out.status === 400) {
+      assert.ok(
+        !out.message.includes("货型"),
+        `合法货型 ${JSON.stringify(good)} 被货型这道闸拦下了：${JSON.stringify(out.message)}`,
+      );
+    }
+  }
 
   delete (globalThis as any).__prisma;
 }
@@ -857,6 +909,63 @@ const CARGO_COL = "货型（普货/商检/敏感，默认普货）";
     r.issues.some((i) => i.kind === "file" && i.message.includes("请只保留一列")),
     `没按重复列报错：${JSON.stringify(r.issues.map((i) => i.message))}`,
   );
+}
+
+/* ==========================================================================
+   货型的共享函数 + 三端接入（2026-09-11 老板：「直接给我去修了」那三件）
+   ========================================================================== */
+
+/** 拼给列表/导出看的货型标签：多条产品行去重拼起来，老单退回运单自己的 */
+{
+  assert.equal(cargoTypeLabel(["normal", "normal"]), "普货");
+  assert.equal(cargoTypeLabel(["normal", "inspection"]), "普货 / 商检");
+  assert.equal(cargoTypeLabel(["sensitive", "inspection", "sensitive"]), "敏感 / 商检", "没去重或顺序不稳");
+  assert.equal(cargoTypeLabel([], "inspection"), "商检", "没有产品行时要退回运单自己的货型");
+  assert.equal(cargoTypeLabel([], null), "普货", "什么都没有时按普货");
+  // 库里万一躺着脏值，按普货显示，别在导出里冒出第四种说法
+  assert.equal(cargoTypeLabel(["商检"]), "普货", "脏值应该按普货显示");
+  assert.equal(cargoTypeLabel([undefined, null]), "普货");
+}
+
+/** 最严那个：敏感 > 商检 > 普货 */
+{
+  assert.equal(strictestCargoType(["normal", "inspection", "sensitive"]), "sensitive");
+  assert.equal(strictestCargoType(["normal", "inspection"]), "inspection");
+  assert.equal(strictestCargoType(["normal"]), "normal");
+  assert.equal(strictestCargoType([]), "normal");
+}
+
+/** parseCargoType：空=普货且标记没填；认不出来返回 null */
+{
+  assert.deepEqual(parseCargoType(""), { value: "normal", filled: false });
+  assert.deepEqual(parseCargoType("  "), { value: "normal", filled: false });
+  assert.deepEqual(parseCargoType("商检"), { value: "inspection", filled: true });
+  assert.equal(parseCargoType("危险品"), null);
+}
+
+/** 客户端：预报单表单和客户导入模板都要有货型，而且不能再写死 normal */
+{
+  const clientPage = fs.readFileSync("apps/web/src/app/client/page.tsx", "utf8");
+  assert.ok(!/cargoType: "normal" \}\)\)/.test(clientPage), "客户预报单提交还在写死 cargoType: \"normal\"");
+  assert.ok(clientPage.includes("cargoType: p.cargoType || \"normal\""), "客户预报单没把每条产品行自己的货型发出去");
+  assert.ok(/<select value=\{p\.cargoType/.test(clientPage), "客户端产品行里没有货型下拉");
+  assert.ok(/<select value=\{form\.cargoType/.test(clientPage), "客户端没有整票货型下拉（没分产品行时用）");
+
+  const clientImports = fs.readFileSync("apps/web/src/app/client/imports/page.tsx", "utf8");
+  const header = /"(货型[^"]*)":\s*""/.exec(clientImports);
+  assert.ok(header, "客户端批量下单模板里没有货型这一列");
+  // 客户端导入那边的表头是**包含匹配**（findCol 用 k.includes），所以只要含「货型」就够
+  assert.ok(header![1].includes("货型"), `客户端模板表头对不上：${header![1]}`);
+  assert.ok(clientImports.includes('findCol(row, ["货型"])'), "客户端导入没读货型这一列，填了也白填");
+  assert.ok(clientImports.includes("badCargoRows"), "客户端导入没拦住认不出来的货型");
+}
+
+/** 运单列表的 Excel 导出要有货型这一列（员工端 + 管理端） */
+{
+  for (const [label, file] of [["员工端", "apps/web/src/app/staff/page.tsx"], ["管理端", "apps/web/src/app/admin/page.tsx"]] as Array<[string, string]>) {
+    const code = fs.readFileSync(file, "utf8");
+    assert.ok(/货型: cargoTypeLabel\(/.test(code), `${label}运单列表导出没有货型这一列`);
+  }
 }
 
 console.log("staff batch import parser: 100 orders / 300 rows passed");

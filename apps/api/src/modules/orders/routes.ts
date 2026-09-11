@@ -50,6 +50,7 @@ import { EXCEPTION_STATUSES } from "../shipments/status-flow";
 import { BusinessError } from "../core/business-error";
 import { classifyStatusGroup, matchesShipmentListFilter, type ClientStatusGroup } from "../../../../../packages/shared-types/shipment-status";
 import { productNamesLabel } from "../../../../../packages/shared-types/product-names";
+import { CARGO_TYPES, CARGO_TYPE_HINT, strictestCargoType, type CargoType } from "../../../../../packages/shared-types/cargo-type";
 
 /**
  * 客户端订单五分类。判断逻辑在 packages/shared-types 的 classifyStatusGroup，
@@ -228,6 +229,8 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
       receiverAddressTh?: string;
       trackingNo?: string;
       remark?: string;
+      /** 整票货型（2026-09-11 老板拍板：客户自己报）。只有一种货、没分产品行时用它 */
+      cargoType?: string;
       products?: Array<{
         itemName: string;
         packageCount: number;
@@ -278,6 +281,13 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
       }
     }
 
+    /**
+     * 货型校验（2026-09-11）：非法值当场 400，不许静默存成普货。
+     * 客户端现在有货型下拉，只会发那三个值；这道闸挡的是直接调接口的。
+     */
+    const cargo = readCargoTypes(body.cargoType, body.products);
+    if ("error" in cargo) { fail(res, 400, "VALIDATION_ERROR", cargo.error); return; }
+
     // Compute products totals
     const products = body.products?.length
       ? body.products.map((p, i) => ({
@@ -286,7 +296,7 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
           lengthCm: p.lengthCm ?? null,
           widthCm: p.widthCm ?? null,
           heightCm: p.heightCm ?? null,
-          productQuantity: p.productQuantity ?? null, cargoType: p.cargoType?.trim() || "normal", domesticTrackingNo: p.domesticTrackingNo?.trim() || "货拉拉", weightKg: p.weightKg ?? null, sortOrder: i }))
+          productQuantity: p.productQuantity ?? null, cargoType: cargo.products[i], domesticTrackingNo: p.domesticTrackingNo?.trim() || "货拉拉", weightKg: p.weightKg ?? null, sortOrder: i }))
       // 兜底分支的字段要和上面那支**完全一致**，否则联合类型里少了几个字段，
       // 下面 reduce 读 weightKg / cargoType 时会报错（2026-08-27 补齐）
       : [{
@@ -296,12 +306,12 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
           widthCm: null,
           heightCm: null,
           productQuantity: null,
-          // ⚠️ 这两个值必须和**数据库默认值**一模一样。
-          // 原来这里根本没写这两个字段，createMany 传 undefined 时数据库会填默认值
-          // （cargo_type='normal'、domestic_tracking_no='货拉拉'）。
-          // 现在为了让类型对齐显式写出来，但**不能顺手改成别的值** ——
-          // 那就不是「修类型」而是偷偷改了存进去的数据。
-          cargoType: "normal",
+          // ⚠️ domesticTrackingNo 必须和**数据库默认值**一模一样（'货拉拉'）——
+          // 原来这里根本没写，createMany 传 undefined 时数据库会填默认值；
+          // 显式写出来是为了类型对齐，**不能顺手改成别的值**。
+          // 货型 2026-09-11 起改成跟整票一致：客户端没分产品行时会发整票货型，
+          // 原来写死 "normal" 会把客户选的「商检」丢掉（空着仍然是 normal）。
+          cargoType: cargo.order,
           domesticTrackingNo: "货拉拉",
           weightKg: null,
           sortOrder: 0,
@@ -365,6 +375,10 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
           shipDate: shipDateText,
           domesticTrackingNo: body.domesticTrackingNo ?? null,
           transportMode: body.transportMode!,
+          // 订单这一层的货型（2026-09-11 补）：原来这条路**根本没写这个字段**，
+          // 一律吃数据库默认的 normal，客户选了商检也看不出来。
+          // 有产品行时取最严的那个（敏感 > 商检 > 普货），跟批量导入同一个口径。
+          cargoType: body.products?.length ? strictestCargoType(cargo.products) : cargo.order,
           receiverNameTh: body.receiverNameTh?.trim() || "",
           receiverPhoneTh: body.receiverPhoneTh?.trim() || "",
           receiverAddressTh: body.receiverAddressTh?.trim() || "",
@@ -548,7 +562,12 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
     if (receiveVolumeM3 !== undefined) updateData.volumeM3 = receiveVolumeM3 as any;
     if (receiveProductQuantity !== undefined) updateData.productQuantity = receiveProductQuantity;
     if (body.transportMode) updateData.transportMode = body.transportMode;
-    if (body.cargoType) updateData.cargoType = body.cargoType;
+    // 改单时也校验货型（2026-09-11）：原来传什么写什么
+    if (body.cargoType !== undefined && String(body.cargoType).trim() !== "") {
+      const edited = readCargoTypes(body.cargoType, undefined);
+      if ("error" in edited) { fail(res, 400, "VALIDATION_ERROR", edited.error); return; }
+      updateData.cargoType = edited.order;
+    }
     if (body.domesticTrackingNo) updateData.domesticTrackingNo = body.domesticTrackingNo;
     // 2026-08-31（排查报告第 1 条）：柜号传了才写，没传不动
     if (receiveBatchNo !== undefined) updateData.batchNo = receiveBatchNo;
@@ -725,6 +744,10 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
       }
     }
 
+    // 货型校验（2026-09-11）：批量导入现在会真传货型上来，非法值必须 400，不能静默变普货
+    const staffCargo = readCargoTypes(body.cargoType, body.products);
+    if ("error" in staffCargo) { fail(res, 400, "VALIDATION_ERROR", staffCargo.error); return; }
+
     const staffProducts = body.products?.length
       ? body.products.map((p, i) => ({
           itemName: p.itemName.trim(),
@@ -732,7 +755,7 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
           lengthCm: p.lengthCm ?? null,
           widthCm: p.widthCm ?? null,
           heightCm: p.heightCm ?? null,
-          productQuantity: p.productQuantity ?? null, cargoType: p.cargoType?.trim() || "normal", domesticTrackingNo: p.domesticTrackingNo?.trim() || "货拉拉", weightKg: p.weightKg ?? null, sortOrder: i }))
+          productQuantity: p.productQuantity ?? null, cargoType: staffCargo.products[i], domesticTrackingNo: p.domesticTrackingNo?.trim() || "货拉拉", weightKg: p.weightKg ?? null, sortOrder: i }))
       : body.itemName ? [{
           itemName: body.itemName.trim(),
           packageCount: Number(body.packageCount ?? 0),
@@ -740,7 +763,7 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
           widthCm: null,
           heightCm: null,
           productQuantity: null,
-          cargoType: body.cargoType?.trim() || "normal",
+          cargoType: staffCargo.order,
           domesticTrackingNo: body.domesticTrackingNo?.trim() || "货拉拉",
           weightKg: null,
           sortOrder: 0,
@@ -898,7 +921,8 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
           shipDate: arrivedAtText,
           domesticTrackingNo: body.domesticTrackingNo ?? null,
           transportMode,
-          cargoType: body.cargoType?.trim() || "normal",
+          // 有产品行时取最严的那个（敏感 > 商检 > 普货），跟批量导入和客户预报单同一个口径
+          cargoType: body.products?.length ? strictestCargoType(staffCargo.products) : staffCargo.order,
           receiverNameTh: "",
           receiverPhoneTh: "",
           receiverAddressTh: "",
@@ -1804,6 +1828,39 @@ export type OrderProductDims = {
   /** 全部产品名拼起来（鞋 / 包 / 帽），2026-09-10 加；没有产品行时不出现 */
   names?: string;
 };
+
+/**
+ * 货型只认 `normal` / `inspection` / `sensitive`（2026-09-11 加）。
+ *
+ * 原来四个写入口全是 `body.cargoType?.trim() || "normal"` —— **传什么存什么**。
+ * 传个「商检」进来会原样存进库，而三端显示用的 `cargoTypeLabelOf` 认不出来就
+ * 一律显示「普货」：单子上白写了一个错货型，而且没人会发现。
+ *
+ * 空着按普货（跟数据库默认值一致）；填了认不出来的就 400，不静默兜底。
+ */
+class CargoTypeError extends Error {}
+function readCargoType(raw: unknown, where: string): CargoType {
+  if (raw === undefined || raw === null || String(raw).trim() === "") return "normal";
+  const value = String(raw).trim().toLowerCase();
+  if ((CARGO_TYPES as readonly string[]).includes(value)) return value as CargoType;
+  throw new CargoTypeError(`${where}的货型「${String(raw).trim()}」不合法，只能是 ${CARGO_TYPES.join(" / ")}。${CARGO_TYPE_HINT}`);
+}
+
+/** 整票 + 每条产品行一起校验；有问题返回那句话，没问题返回校验过的值 */
+function readCargoTypes(
+  orderRaw: unknown,
+  products: ReadonlyArray<{ cargoType?: string }> | undefined,
+): { order: CargoType; products: CargoType[] } | { error: string } {
+  try {
+    return {
+      order: readCargoType(orderRaw, "整票"),
+      products: (products ?? []).map((product, index) => readCargoType(product.cargoType, `第 ${index + 1} 条产品`)),
+    };
+  } catch (error) {
+    if (error instanceof CargoTypeError) return { error: error.message };
+    throw error;
+  }
+}
 
 export async function loadOrderProductDims(
   companyId: string,

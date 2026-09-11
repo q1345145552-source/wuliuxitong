@@ -5,6 +5,7 @@ import * as XLSX from "xlsx";
 import RoleShell from "../../../modules/layout/RoleShell";
 import { createRequestGate } from "../../../modules/shared/request-gate";
 import { createClientPrealert, type ClientPrealertPayload } from "../../../services/business-api";
+import { CARGO_TYPE_HINT, CARGO_TYPE_ZH, parseCargoType, type CargoType } from "../../../../../../packages/shared-types/cargo-type";
 
 interface ImportRow {
   warehouseId: string;
@@ -16,6 +17,10 @@ interface ImportRow {
   shipDate?: string;
   domesticTrackingNo?: string;
   transportMode: "sea" | "land";
+  /** 货型（2026-09-11）。null = 这一格填了认不出来的字，下面会拦住不让提交 */
+  cargoType: CargoType | null;
+  /** 填错时原样回显给客户看 */
+  cargoTypeRaw: string;
 }
 
 function downloadTemplate(): void {
@@ -32,6 +37,8 @@ function downloadTemplate(): void {
       "发货日期（YYYY-MM-DD）": "",
       "国内单号（选填）": "",
       "运输方式 *（海运/陆运）": "",
+      // 货型加在最后一列（2026-09-11）：中间插列会让按老列序粘数据的文件整体错位
+      "货型（普货/商检/敏感，默认普货）": "",
     },
   ]);
   worksheet["!cols"] = [
@@ -46,6 +53,7 @@ function downloadTemplate(): void {
     { wch: 26 },  // 发货日期
     { wch: 20 },  // 国内单号
     { wch: 12 },  // 运输方式
+    { wch: 30 },  // 货型
   ];
   const workbook = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(workbook, worksheet, "客户端批量下单模板");
@@ -96,6 +104,7 @@ function normalizeRows(rows: Record<string, unknown>[]): ImportRow[] {
       if (lengthCm && widthCm && heightCm && lengthCm > 0 && widthCm > 0 && heightCm > 0) {
         volumeM3 = (lengthCm * widthCm * heightCm) / 1_000_000;
       }
+      const cargoTypeRaw = findCol(row, ["货型"]);
       let shipDate = findCol(row, ["发货日期"]);
       if (/^\d{5}$/.test(shipDate)) {
         const d = new Date((Number(shipDate) - 25569) * 86400000);
@@ -111,6 +120,10 @@ function normalizeRows(rows: Record<string, unknown>[]): ImportRow[] {
         shipDate: shipDate || undefined,
         domesticTrackingNo: findCol(row, ["国内单号"]) || undefined,
         transportMode: (transportModeRaw.includes("land") ? "land" : "sea") as "sea" | "land",
+        // 货型（2026-09-11）：留空按普货；认不出来的先留 null，预览里标红并禁掉提交，
+        // **不许**静默当普货 —— 商检货按普货走，清关要的单据是另一套
+        cargoType: parseCargoType(cargoTypeRaw)?.value ?? null,
+        cargoTypeRaw,
       };
     })
     .filter((item) => item.warehouseId && item.itemName && Number.isFinite(item.packageCount) && item.packageCount > 0);
@@ -179,6 +192,11 @@ export default function ClientImportsPage() {
     }
   };
 
+  /** 填了认不出来的货型的行（提交前要拦住，不能静默当普货） */
+  const badCargoRows = rows
+    .map((row, index) => ({ row, index }))
+    .filter((entry) => entry.row.cargoType === null);
+
   const handleSubmit = async () => {
     // 2026-09-02 终审整改：解析中/提交中/没数据一律拒绝（按钮已 disabled，这里再兜一层）——
     // 解析期间提交的会是上一份旧预览，等新文件解析完打断循环就只写进半批
@@ -213,7 +231,8 @@ export default function ClientImportsPage() {
           shipDate: row.shipDate,
           domesticTrackingNo: row.domesticTrackingNo,
           transportMode: row.transportMode,
-
+          // 货型（2026-09-11）：上面已经拦掉认不出来的，这里一定是那三个值之一
+          cargoType: row.cargoType ?? "normal",
         };
         await createClientPrealert(payload);
         success++;
@@ -271,15 +290,15 @@ export default function ClientImportsPage() {
           </label>
           <button
             type="button"
-            disabled={loading || parsing || rows.length === 0}
+            disabled={loading || parsing || rows.length === 0 || badCargoRows.length > 0}
             onClick={handleSubmit}
             style={{
               border: "none",
               borderRadius: 8,
               padding: "8px 12px",
-              background: loading || parsing || rows.length === 0 ? "var(--t-faint)" : "var(--c-blue)",
+              background: loading || parsing || rows.length === 0 || badCargoRows.length > 0 ? "var(--t-faint)" : "var(--c-blue)",
               color: "var(--white)",
-              cursor: loading || parsing || rows.length === 0 ? "not-allowed" : "pointer",
+              cursor: loading || parsing || rows.length === 0 || badCargoRows.length > 0 ? "not-allowed" : "pointer",
             }}
           >
             {loading ? `提交中 ${current}/${rows.length}...` : "一键提交批量下单"}
@@ -328,7 +347,7 @@ export default function ClientImportsPage() {
                   <th style={th}>品名</th>
                   <th style={th}>箱数</th>
                   <th style={th}>运输</th>
-
+                  <th style={th}>货型</th>
                 </tr>
               </thead>
               <tbody>
@@ -339,7 +358,9 @@ export default function ClientImportsPage() {
                     <td style={td}>{row.itemName}</td>
                     <td style={td}>{row.packageCount} {row.packageUnit}</td>
                     <td style={td}>{row.transportMode === "sea" ? "海运" : "陆运"}</td>
-
+                    <td style={{ ...td, color: row.cargoType === null ? "var(--c-red-deep)" : undefined }}>
+                      {row.cargoType === null ? `「${row.cargoTypeRaw}」认不出来` : CARGO_TYPE_ZH[row.cargoType]}
+                    </td>
                   </tr>
                 ))}
               </tbody>

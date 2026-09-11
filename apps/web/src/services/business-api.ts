@@ -49,6 +49,8 @@ export interface ClientPrealertPayload {
   receiverPhoneTh?: string;
   receiverAddressTh?: string;
   trackingNo?: string;
+  /** 整票货型（2026-09-11）：normal / inspection / sensitive，不传按普货 */
+  cargoType?: string;
   products?: Array<{
     itemName: string;
     packageCount: number;

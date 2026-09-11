@@ -75,3 +75,25 @@ export function strictestCargoType(values: readonly CargoType[]): CargoType {
   if (values.includes("inspection")) return "inspection";
   return "normal";
 }
+
+/**
+ * 一票货在列表/导出里显示的货型（2026-09-11）。
+ *
+ * 一张运单底下几条产品行可能货型不一样，导出是一票一行，所以去重后拼起来：
+ * 「普货 / 商检」。没有产品行的老单退回运单（或订单）自己的货型。
+ * ⚠️ 认不出来的值按普货显示 —— 跟三端的 cargoTypeLabelOf 口径保持一致，
+ *    别在导出里冒出第四种说法。
+ */
+export function cargoTypeLabel(
+  values: ReadonlyArray<string | null | undefined>,
+  fallback?: string | null,
+): string {
+  const zh = CARGO_TYPE_ZH as Record<string, string>;
+  const labels: string[] = [];
+  for (const raw of values) {
+    const label = zh[(raw ?? "").trim().toLowerCase()] ?? CARGO_TYPE_ZH.normal;
+    if (!labels.includes(label)) labels.push(label);
+  }
+  if (labels.length > 0) return labels.join(" / ");
+  return zh[(fallback ?? "").trim().toLowerCase()] ?? CARGO_TYPE_ZH.normal;
+}

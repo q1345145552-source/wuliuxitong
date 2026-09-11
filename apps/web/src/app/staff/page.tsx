@@ -2,6 +2,7 @@
 
 import { matchesShipmentListFilter } from "../../../../../packages/shared-types/shipment-status";
 import { productNamesLabel } from "../../../../../packages/shared-types/product-names";
+import { cargoTypeLabel } from "../../../../../packages/shared-types/cargo-type";
 import { Fragment, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import * as XLSX from "xlsx";
 import { formatCny } from "../../modules/billing/billing-utils";
@@ -1256,6 +1257,8 @@ export default function StaffHomePage() {
     const rows = source.map((item) => ({
       // 导出的品名带全部产品名（2026-09-11，同尾端派送单那次的口径）
       运单号: item.trackingNo ?? "-", 品名: productNamesLabel(item.products, item.itemName) || "-",
+      // 货型（2026-09-11 老板点的）：一票多条产品行货型不同时去重拼起来
+      货型: cargoTypeLabel((item.products ?? []).map((p) => p.cargoType), item.cargoType),
       归属用户: item.clientName ?? item.clientId ?? "-",
       运单状态: shipmentStatusZh(item.currentStatus),
       加收金额: item.receivableAmountCny != null ? `${item.receivableCurrency === "THB" ? "THB" : "CNY"} ${item.receivableAmountCny}` : "0",

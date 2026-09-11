@@ -12,6 +12,7 @@ import { sendAiMessage } from "../../services/ai-client";
 import { apiBaseUrl } from "../../services/core-api";
 import { formatMetric, volumeM3FromDimensionsCm, formatVolumeM3String, warehouseLabelFromId } from "../../modules/staff/utils";
 import { productNamesLabel } from "../../../../../packages/shared-types/product-names";
+import { CARGO_TYPES, CARGO_TYPE_ZH, strictestCargoType } from "../../../../../packages/shared-types/cargo-type";
 import {
   fetchClientAddresses,
   createClientPrealert,
@@ -190,12 +191,15 @@ export default function ClientHomePage() {
     volumeM3: "",
     domesticTrackingNo: "",
     transportMode: "" as ""  |  "sea"  |  "land",
+    // 货型（2026-09-11 老板拍板：客户自己报）。以前客户端整条线没有这一项、
+    // 代码写死 normal，客户报的商检货进系统一律是普货。
+    cargoType: "normal",
     receiverNameTh: "",
     receiverPhoneTh: "",
     receiverAddressTh: "",
   });
   const [formProducts, setFormProducts] = useState<Array<{
-    itemName: string; packageCount: string; lengthCm: string; widthCm: string; heightCm: string; productQuantity: string; weightKg: string; domesticTrackingNo: string;
+    itemName: string; packageCount: string; lengthCm: string; widthCm: string; heightCm: string; productQuantity: string; weightKg: string; domesticTrackingNo: string; cargoType: string;
   }>>([]);
   const [prealertImageFiles, setPrealertImageFiles] = useState<File[]>([]);
   const [prealertImagePreviews, setPrealertImagePreviews] = useState<string[]>([]);
@@ -1271,7 +1275,11 @@ export default function ClientHomePage() {
               <div className="client-prealert-products">
                 <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 8, color: "var(--t-strong)" }}>产品列表</div>
                 {formProducts.length === 0 ? (
-                  <label className="client-prealert-field"><span>品名（必填）</span><input value={form.itemName} onChange={(e) => setForm((v) => ({ ...v, itemName: e.target.value }))} placeholder="品名 *" style={{ border: "1px solid var(--l-strong)", borderRadius: 6, padding: "8px 10px", fontSize: 13, width: "100%" }} /></label>
+                  <>
+                    <label className="client-prealert-field"><span>品名（必填）</span><input value={form.itemName} onChange={(e) => setForm((v) => ({ ...v, itemName: e.target.value }))} placeholder="品名 *" style={{ border: "1px solid var(--l-strong)", borderRadius: 6, padding: "8px 10px", fontSize: 13, width: "100%" }} /></label>
+                    {/* 没有分产品行时，整票一个货型（2026-09-11） */}
+                    <label className="client-prealert-field"><span>货型</span><select value={form.cargoType} onChange={(e) => setForm((v) => ({ ...v, cargoType: e.target.value }))} style={{ border: "1px solid var(--l-strong)", borderRadius: 6, padding: "8px 10px", fontSize: 13, width: "100%" }}>{CARGO_TYPES.map((value) => (<option key={value} value={value}>{CARGO_TYPE_ZH[value]}</option>))}</select></label>
+                  </>
                 ) : null}
                 {formProducts.map((p, i) => {
                   const pPkg = Number(p.packageCount) || 0;
@@ -1293,6 +1301,8 @@ export default function ClientHomePage() {
                     <label className="client-prealert-field"><span>单箱数量</span><input type="number" value={p.productQuantity} onChange={(e) => setFormProducts((v) => { const n = [...v]; n[i] = { ...n[i], productQuantity: e.target.value }; return n; })} placeholder="单箱数量" style={{ border: "1px solid var(--l-strong)", borderRadius: 4, padding: "4px 6px", fontSize: 12 }} /></label>
                     <label className="client-prealert-field"><span>单箱重量（kg）</span><input type="number" step="0.01" value={p.weightKg} onChange={(e) => setFormProducts((v) => { const n = [...v]; n[i] = { ...n[i], weightKg: e.target.value }; return n; })} placeholder="单箱重量kg" style={{ border: "1px solid var(--l-strong)", borderRadius: 4, padding: "4px 6px", fontSize: 12 }} /></label>
                     <label className="client-prealert-field client-prealert-field--wide"><span>国内快递单号</span><input value={p.domesticTrackingNo || ""} onChange={(e) => setFormProducts((v) => { const n = [...v]; n[i] = { ...n[i], domesticTrackingNo: e.target.value }; return n; })} placeholder="货拉拉" style={{ border: "1px solid var(--l-strong)", borderRadius: 4, padding: "4px 6px", fontSize: 12 }} /></label>
+                    {/* 货型（2026-09-11）：下拉只给三个值，客户填不出第四种写法 */}
+                    <label className="client-prealert-field"><span>货型</span><select value={p.cargoType || "normal"} onChange={(e) => setFormProducts((v) => { const n = [...v]; n[i] = { ...n[i], cargoType: e.target.value }; return n; })} style={{ border: "1px solid var(--l-strong)", borderRadius: 4, padding: "4px 6px", fontSize: 12 }}>{CARGO_TYPES.map((value) => (<option key={value} value={value}>{CARGO_TYPE_ZH[value]}</option>))}</select></label>
                     <div className="client-prealert-field"><span>本项体积（m³）</span><output>{prodVol > 0 ? prodVol.toFixed(3) : "---"}</output></div>
                     <div className="client-prealert-field"><span>本项重量（kg）</span><output>{prodWt > 0 ? prodWt.toFixed(2) : "---"}</output></div>
                     </div>
@@ -1318,7 +1328,7 @@ export default function ClientHomePage() {
                     </div>
                   );
                 })()}
-                <button type="button" onClick={() => setFormProducts((v) => [...v, { itemName: "", packageCount: "", lengthCm: "", widthCm: "", heightCm: "", productQuantity: "", weightKg: "", domesticTrackingNo: "" }])} style={{ border: "1px dashed var(--c-blue)", borderRadius: 4, padding: "4px 10px", fontSize: 12, background: "var(--white)", color: "var(--c-blue)", cursor: "pointer", marginTop: 4 }}>+ 添加产品</button>
+                <button type="button" onClick={() => setFormProducts((v) => [...v, { itemName: "", packageCount: "", lengthCm: "", widthCm: "", heightCm: "", productQuantity: "", weightKg: "", domesticTrackingNo: "", cargoType: "normal" }])} style={{ border: "1px dashed var(--c-blue)", borderRadius: 4, padding: "4px 10px", fontSize: 12, background: "var(--white)", color: "var(--c-blue)", cursor: "pointer", marginTop: 4 }}>+ 添加产品</button>
               </div>
               <div style={{ fontSize: 12, color: "var(--t-strong)", marginTop: 4 }}>
                 输入长宽高和箱/袋数后，体积自动计算（长×宽×高÷1,000,000×箱数）
@@ -1387,8 +1397,10 @@ export default function ClientHomePage() {
                 try {
                   const payload: any = { ...form, packageCount: +form.packageCount || 0, weightKg: form.weightKg ? +form.weightKg : undefined, volumeM3: form.volumeM3 ? +form.volumeM3 : undefined, transportMode: form.transportMode as "sea"  |  "land", trackingNo: form.trackingNo?.trim() || undefined };
                   if (hasProducts) {
-                    payload.products = formProducts.filter((p) => p.itemName.trim()).map((p) => ({ itemName: p.itemName.trim(), packageCount: packageCountForPayload(p.packageCount), lengthCm: p.lengthCm ? Number(p.lengthCm) : undefined, widthCm: p.widthCm ? Number(p.widthCm) : undefined, heightCm: p.heightCm ? Number(p.heightCm) : undefined, productQuantity: p.productQuantity ? Number(p.productQuantity) : undefined, weightKg: p.weightKg ? Number(p.weightKg) : undefined, domesticTrackingNo: p.domesticTrackingNo?.trim() || "货拉拉", cargoType: "normal" }));
+                    payload.products = formProducts.filter((p) => p.itemName.trim()).map((p) => ({ itemName: p.itemName.trim(), packageCount: packageCountForPayload(p.packageCount), lengthCm: p.lengthCm ? Number(p.lengthCm) : undefined, widthCm: p.widthCm ? Number(p.widthCm) : undefined, heightCm: p.heightCm ? Number(p.heightCm) : undefined, productQuantity: p.productQuantity ? Number(p.productQuantity) : undefined, weightKg: p.weightKg ? Number(p.weightKg) : undefined, domesticTrackingNo: p.domesticTrackingNo?.trim() || "货拉拉", cargoType: p.cargoType || "normal" }));
                     payload.itemName = payload.products[0].itemName;
+                    // 整票记最严的那个（敏感 > 商检 > 普货），跟批量导入同一个口径
+                    payload.cargoType = strictestCargoType(payload.products.map((x: any) => x.cargoType));
                   }
                   const result = await createClientPrealert(payload);
                   // Upload images
@@ -1408,7 +1420,7 @@ export default function ClientHomePage() {
                   }
                   setToast("预报单创建成功");
                   setShowCreateModal(false);
-                  setForm({ warehouseId: "", itemName: "", packageCount: "", packageUnit: "box" as "bag"  |  "box", lengthCm: "", widthCm: "", heightCm: "", weightKg: "", volumeM3: "", trackingNo: "", domesticTrackingNo: "", transportMode: "" as ""  |  "sea"  |  "land", receiverNameTh: "", receiverPhoneTh: "", receiverAddressTh: "" });
+                  setForm({ warehouseId: "", itemName: "", packageCount: "", packageUnit: "box" as "bag"  |  "box", lengthCm: "", widthCm: "", heightCm: "", weightKg: "", volumeM3: "", trackingNo: "", domesticTrackingNo: "", transportMode: "" as ""  |  "sea"  |  "land", cargoType: "normal", receiverNameTh: "", receiverPhoneTh: "", receiverAddressTh: "" });
                   setFormProducts([]);
                   setPrealertImageFiles([]);
                   setPrealertImagePreviews([]);
