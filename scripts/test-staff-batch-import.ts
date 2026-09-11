@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
 import {
   BATCH_SHEET_TO_JSON_OPTIONS,
   lastRowWithCells,
@@ -623,7 +624,7 @@ const WH_ROW: Record<string, unknown> = {
   仓库: "东莞仓",
   运输方式: "海运",
   运单号: "SITU9234141",
-  货型: "商检",            // 解析器不认这一列（订单默认普货、要人工改），但它在场不许影响别的数字
+  货型: "商检",            // 2026-09-11 起解析器认这一列了（以前不认，导进来全变普货、要人工改）
   品名: "沙发",
   尺寸: "42.5*38*51.5",
   件数: 13,
@@ -662,6 +663,103 @@ const WH_ROW: Record<string, unknown> = {
     `方数不对：${o.volumeM3}`,
   );
   assert.equal(o.products[0].domesticTrackingNo, "SF123456", "国内单号丢了");
+  // 仓库真表里那一列就叫「货型」、填的是「商检」—— 2026-09-11 起必须认出来，不能再变普货
+  assert.equal(o.products[0].cargoType, "inspection", `仓库表的「商检」没认出来：${o.products[0].cargoType}`);
+  assert.equal(o.cargoType, "inspection", `运单这一层的货型不对：${o.cargoType}`);
+}
+
+/* ==========================================================================
+   货型（2026-09-11 老板：批量上传运单的模板要加货型，不然默认普货）
+   ========================================================================== */
+const CARGO_BASE: Record<string, unknown> = {
+  "唛头 *": "CARGOMARK",
+  "运单号 *": "CARGO0001",
+  "仓库 *": "义乌仓",
+  "到仓日期 *（YYYY-MM-DD）": "2026-09-11",
+  "运输方式 *（海运/陆运）": "海运",
+  "品名 *": "沙发",
+  "箱数 *": 2,
+  "单箱重量kg *（数字）": 10,
+};
+const CARGO_COL = "货型（普货/商检/敏感，默认普货）";
+
+/** 没有货型这一列（老模板下载过的文件）→ 照旧普货，不许报错 */
+{
+  const r = parseStaffBatchRows([{ ...CARGO_BASE }]);
+  assert.deepEqual(r.issues, [], `没有货型列就报错了：${JSON.stringify(r.issues.map((i) => i.message))}`);
+  assert.equal(r.orders[0].products[0].cargoType, "normal");
+  assert.equal(r.orders[0].cargoType, "normal");
+}
+
+/** 三种写法 + 留空 + 全角/空格/英文 都要认对 */
+{
+  const cases: Array<[unknown, string]> = [
+    ["普货", "normal"], ["商检", "inspection"], ["敏感", "sensitive"],
+    ["", "normal"], ["   ", "normal"], [null, "normal"], [undefined, "normal"],
+    ["　商检　", "inspection"], ["ｓｅｎｓｉｔｉｖｅ", "sensitive"], ["Inspection", "inspection"],
+    ["普通", "normal"], ["敏感货", "sensitive"],
+  ];
+  for (const [raw, expected] of cases) {
+    const r = parseStaffBatchRows([{ ...CARGO_BASE, [CARGO_COL]: raw }]);
+    assert.deepEqual(r.issues, [], `货型 ${JSON.stringify(raw)} 报错了：${JSON.stringify(r.issues.map((i) => i.message))}`);
+    assert.equal(r.orders[0].products[0].cargoType, expected, `货型 ${JSON.stringify(raw)} 应该是 ${expected}，实际 ${r.orders[0].products[0].cargoType}`);
+    assert.equal(r.orders[0].cargoType, expected, `运单层货型 ${JSON.stringify(raw)} 不对`);
+  }
+}
+
+/** 填了认不出来的字 → 当场报错，**绝不静默变普货**（商检货走普货，清关单据是另一套） */
+{
+  for (const bad of ["危险品", "普通货物", "商检/敏感", "1"]) {
+    const r = parseStaffBatchRows([{ ...CARGO_BASE, [CARGO_COL]: bad }]);
+    assert.equal(r.orders.length, 0, `货型「${bad}」认不出来却还是建单了 —— 它会被当成普货`);
+    const msg = r.issues.map((i) => i.message).join("；");
+    assert.ok(msg.includes(bad), `报错里没回显填的原文：${msg}`);
+    assert.ok(msg.includes("普货") && msg.includes("商检") && msg.includes("敏感"), `报错里没告诉能填什么：${msg}`);
+  }
+}
+
+/** 同一运单几行货型不一样 → 按行各自记，运单这一层取最严的（敏感 > 商检 > 普货） */
+{
+  const r = parseStaffBatchRows([
+    { ...CARGO_BASE, "品名 *": "沙发", [CARGO_COL]: "普货" },
+    { ...CARGO_BASE, "品名 *": "茶几", [CARGO_COL]: "商检" },
+    { ...CARGO_BASE, "品名 *": "台灯", [CARGO_COL]: "敏感" },
+  ]);
+  assert.deepEqual(r.issues, [], `混合货型报错了：${JSON.stringify(r.issues.map((i) => i.message))}`);
+  const o = r.orders[0];
+  assert.deepEqual(o.products.map((p) => p.cargoType), ["normal", "inspection", "sensitive"], "每行的货型没各自记住");
+  assert.equal(o.cargoType, "sensitive", `运单层该取最严的 sensitive，实际 ${o.cargoType}`);
+  // 混合货型不许顺带把别的数字算错
+  assert.equal(o.packageCount, 6, `箱数被货型影响了：${o.packageCount}`);
+  assert.equal(o.itemName, "沙发 / 茶几 / 台灯", `品名拼错了：${o.itemName}`);
+}
+
+/**
+ * 模板和解析器不许各走各的：把**真页面源码里**那一列的表头抠出来，拿它当 key 跑一遍解析。
+ * 谁改了表头而另一边没跟上，这一条就红 —— 比单独 grep 一下「有没有这个字」实在。
+ */
+{
+  const staffPage = fs.readFileSync("apps/web/src/app/staff/page.tsx", "utf8");
+  const header = /"(货型[^"]*)":\s*""/.exec(staffPage);
+  assert.ok(header, "员工端批量下单模板里找不到「货型」那一列");
+  const r = parseStaffBatchRows([{ ...CARGO_BASE, [header![1]]: "商检" }]);
+  assert.deepEqual(r.issues, [], `模板表头「${header![1]}」解析器不认：${JSON.stringify(r.issues.map((i) => i.message))}`);
+  assert.equal(r.orders[0].products[0].cargoType, "inspection", `模板表头「${header![1]}」没解析成商检`);
+
+  // 管理员端那张 12 列模板：表头里要有「货型」，导入时也要真把它读出来
+  const adminPage = fs.readFileSync("apps/web/src/app/admin/page.tsx", "utf8");
+  assert.ok(/const headers = \[[^\]]*"货型"/.test(adminPage), "管理员运单导入模板的表头里没有「货型」");
+  assert.ok(adminPage.includes('r["货型"]'), "管理员导入没读「货型」这一列，填了也白填");
+}
+
+/** 两列都叫货型（比如员工自己又加了一列「货物类型」）→ 按重复列拦下，不猜 */
+{
+  const r = parseStaffBatchRows([{ ...CARGO_BASE, [CARGO_COL]: "商检", 货物类型: "普货" }]);
+  assert.equal(r.orders.length, 0, "两列货型还放行了");
+  assert.ok(
+    r.issues.some((i) => i.kind === "file" && i.message.includes("货型")),
+    `应该报货型列重复：${JSON.stringify(r.issues.map((i) => i.message))}`,
+  );
 }
 
 /** 「总重量」表头绝不能被认成重量：删掉「单项重量」后只剩「总重量」→ 必须按缺列拦下 */

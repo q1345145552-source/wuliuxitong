@@ -1,3 +1,4 @@
+import { parseCargoType, strictestCargoType, CARGO_TYPE_HINT, type CargoType } from "../../../../../packages/shared-types/cargo-type";
 export interface StaffBatchProduct {
   itemName: string;
   packageCount: number;
@@ -6,7 +7,7 @@ export interface StaffBatchProduct {
   heightCm?: number;
   productQuantity?: number;
   weightKg?: number;
-  cargoType?: string;
+  cargoType?: CargoType;
   domesticTrackingNo?: string;
 }
 
@@ -23,6 +24,8 @@ export interface StaffBatchOrder {
   transportMode: "sea" | "land";
   domesticTrackingNo?: string;
   productQuantity?: number;
+  /** 运单这一层的货型：多条产品行不一致时取最严的那个（见 strictestCargoType） */
+  cargoType: CargoType;
   products: StaffBatchProduct[];
   sourceRows: number[];
 }
@@ -138,17 +141,19 @@ type FieldKey =
   | "clientId" | "trackingNo" | "warehouse" | "itemName" | "packageCount"
   | "packageUnit" | "lengthCm" | "widthCm" | "heightCm" | "weightKg"
   | "arrivedAt" | "transportMode" | "domesticTrackingNo" | "perBoxQty" | "legacyQty"
-  | "rowTotalWeightKg" | "dimensions";
+  | "rowTotalWeightKg" | "dimensions" | "cargoType";
 
 /**
  * 每个字段认哪些表头（正规化之后全等比对）。
  *
  * 2026-09-02 拿到仓库真实在用的《上传系统数据》表后补了三样：
  * 「件数」（=箱数）、「日期」（=到仓日期）、「单项重量」（行级总重，见下）。
- * 那张表里其余的列（货型/单项体积/总体积/总重量/计费体积/总计费体积/单价/
+ * 那张表里其余的列（单项体积/总体积/总重量/计费体积/总计费体积/单价/
  * 单项价格/订单总价/备注/结算状态）都**故意不认**——精确匹配下不认就碰不到，
- * 不会影响任何数字。其中「货型」不认意味着他们表里的「商检」导入后会变普货，
- * 这是已知取舍，要人工改。
+ * 不会影响任何数字。
+ *
+ * 「货型」2026-09-11 开始认了（老板：模板要加货型，不然全变普货）。
+ * 在这之前这一列不认、导进来一律是普货，仓库表里填了「商检」的货要人工改回来。
  */
 const FIELD_ALIASES: Record<FieldKey, string[]> = {
   clientId:           ["唛头", "客户唛头"],
@@ -182,6 +187,13 @@ const FIELD_ALIASES: Record<FieldKey, string[]> = {
   perBoxQty:          ["每箱几个", "单箱数量", "每箱数量"],
   // 老模板的列名。只在没有新列时才回落——顺序由 resolveColumns 保证，跟列的先后无关。
   legacyQty:          ["产品数量"],
+  /**
+   * 货型（2026-09-11 加）。**选填**：没有这一列、或这一列留空，都按普货 ——
+   * 老模板下载过、正在用的文件不会因为这次改动报错。
+   * ⚠️ 「类型」这种太泛的名字不收：表里已经有「包装类型」，虽然现在是精确匹配碰不到，
+   *    但别给以后留雷。
+   */
+  cargoType:          ["货型", "货物类型", "货物类别"],
 };
 
 /** 自检：别名不许在两个字段之间重复，否则匹配结果取决于遍历顺序。 */
@@ -687,6 +699,21 @@ export function parseStaffBatchRows(rows: Record<string, unknown>[]): StaffBatch
       draft.issues.push({ rowNumber, trackingNo, message: "长、宽、高需要同时填写" });
     }
 
+    /**
+     * 货型（2026-09-11 加）。留空按普货；填了认不出来的值**当场报错**，
+     * 不许静默变普货 —— 商检货被当普货走掉，清关要的单据就是另一套。
+     */
+    const cargoTypeRaw = columns.cargoType !== undefined ? cellOf(row, columns, "cargoType") : undefined;
+    const cargoTypeParsed = parseCargoType(cargoTypeRaw);
+    if (cargoTypeParsed === null) {
+      draft.issues.push({
+        rowNumber,
+        trackingNo,
+        message: `货型「${String(cargoTypeRaw ?? "").trim()}」认不出来。${CARGO_TYPE_HINT}`,
+      });
+    }
+    const cargoType: CargoType = cargoTypeParsed?.value ?? "normal";
+
     if (itemName && packageCount !== undefined) {
       draft.products.push({
         itemName,
@@ -696,7 +723,7 @@ export function parseStaffBatchRows(rows: Record<string, unknown>[]): StaffBatch
         heightCm,
         productQuantity,
         weightKg,
-        cargoType: "normal",
+        cargoType,
         domesticTrackingNo: textOf(row, columns, "domesticTrackingNo") || undefined,
       });
     }
@@ -776,6 +803,8 @@ export function parseStaffBatchRows(rows: Record<string, unknown>[]): StaffBatch
       transportMode: draft.transportMode!,
       domesticTrackingNo: domesticTrackingNos.length > 0 ? domesticTrackingNos.join(" / ") : undefined,
       productQuantity,
+      // 同一运单几条产品行货型不一样时，运单这一层记最严的那个（宁可多准备材料）
+      cargoType: strictestCargoType(draft.products.map((product) => product.cargoType ?? "normal")),
       products: draft.products,
       sourceRows: draft.sourceRows,
     });

@@ -4,6 +4,7 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "rea
 import * as XLSX from "xlsx";
 import { matchesShipmentListFilter } from "../../../../../packages/shared-types/shipment-status";
 import { productNamesLabel } from "../../../../../packages/shared-types/product-names";
+import { parseCargoType, CARGO_TYPE_HINT } from "../../../../../packages/shared-types/cargo-type";
 import { AT_WAREHOUSE_STATUSES, COMPLETED_STATUSES, CLIENT_STATUS_GROUP_ZH } from "../../../../../packages/shared-types/shipment-status";
 import { Bar, BarChart, CartesianGrid, Cell, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import type { AiKnowledgeItem } from "../../../../../packages/shared-types/entities";
@@ -350,9 +351,11 @@ export default function AdminHomePage() {
     setBatchTemplateDownloading(true);
     try {
       const XLSX = await import("xlsx");
-      const headers = ["客户ID", "仓库ID", "品名", "箱数", "包装单位", "运输方式", "到仓日期", "国内单号", "泰国收货人", "泰国收货电话", "泰国收货地址"];
+      // 「货型」2026-09-11 加在最后一列：以前没有这一列、代码不传，后端一律兜成普货。
+      // 不插在中间 —— 有人是按老列序粘数据的，插中间会整体错位。
+      const headers = ["客户ID", "仓库ID", "品名", "箱数", "包装单位", "运输方式", "到仓日期", "国内单号", "泰国收货人", "泰国收货电话", "泰国收货地址", "货型"];
       const ws = XLSX.utils.aoa_to_sheet([headers]);
-      ws["!cols"] = [18, 24, 24, 10, 14, 14, 18, 24, 20, 24, 45].map((wch) => ({ wch }));
+      ws["!cols"] = [18, 24, 24, 10, 14, 14, 18, 24, 20, 24, 45, 22].map((wch) => ({ wch }));
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, ws, "运单导入模板");
       const notes = XLSX.utils.aoa_to_sheet([
@@ -364,7 +367,8 @@ export default function AdminHomePage() {
         ["到仓日期按文本填写 YYYY-MM-DD，例如 2026-09-05；不要将单元格改成Excel日期格式。"],
         ["填写前，请将客户ID、国内单号、电话和到仓日期的单元格格式设为“文本”，保留开头的0与日期原文。"],
         ["国内单号、泰国收货人、泰国收货电话、泰国收货地址按实际信息填写。"],
-        ["此模板仅用于管理员当前11列导入；员工的多产品批量创建请使用员工端模板，两者不可混用。"],
+        ["货型留空就是普货；商检货填「商检」，敏感货填「敏感」。填别的字会让这一行导入失败并在失败明细里说明，不会悄悄变成普货。"],
+        ["此模板仅用于管理员当前12列导入；员工的多产品批量创建请使用员工端模板，两者不可混用。"],
         ["填写后上传，先核对预览再确认导入；已成功导入的行请勿重复提交。"],
       ]);
       notes["!cols"] = [{ wch: 110 }];
@@ -2912,7 +2916,7 @@ export default function AdminHomePage() {
           <div style={{ width: "100%", maxWidth: 700, background: "var(--white)", borderRadius: 12, padding: 24, boxShadow: "0 20px 60px rgba(0,0,0,0.3)", maxHeight: "85vh", overflow: "auto" }}>
             <h3 style={{ margin: "0 0 16px", fontSize: 18, fontWeight: 600 }}>批量导入运单</h3>
             <div style={{ marginBottom: 12, fontSize: 12, color: "var(--t-strong)" }}>
-              下载模板 → 填写数据 → 上传文件。表头：客户ID, 仓库ID, 品名, 箱数, 包装单位, 运输方式, 到仓日期, 国内单号, 泰国收货人, 泰国收货电话, 泰国收货地址
+              下载模板 → 填写数据 → 上传文件。表头：客户ID, 仓库ID, 品名, 箱数, 包装单位, 运输方式, 到仓日期, 国内单号, 泰国收货人, 泰国收货电话, 泰国收货地址, 货型
             </div>
             {!batchConfirmed ? (
               <>
@@ -3029,6 +3033,13 @@ export default function AdminHomePage() {
                         receiverNameTh: String(r["泰国收货人"] ?? r.receiverNameTh ?? ""),
                         receiverPhoneTh: String(r["泰国收货电话"] ?? r.receiverPhoneTh ?? ""),
                         receiverAddressTh: String(r["泰国收货地址"] ?? r.receiverAddressTh ?? ""),
+                        // 货型（2026-09-11）：留空按普货；填了认不出来的值让这一行失败，
+                        // 不许静默当普货 —— 商检货走普货，清关要的单据是另一套
+                        cargoType: (() => {
+                          const parsed = parseCargoType(r["货型"] ?? r.cargoType);
+                          if (!parsed) throw new Error(`货型「${String(r["货型"] ?? r.cargoType ?? "").trim()}」认不出来。${CARGO_TYPE_HINT}`);
+                          return parsed.value;
+                        })(),
                       });
                       success++;
                     } catch (err) {

@@ -846,6 +846,14 @@ export default function StaffHomePage() {
       //    而解析表头是**包含匹配**，「箱数」那一列会被认成数量列（实测算出 49 而不是 35）。
       // 解析器新旧两个表头都认，老模板下载过的文件不受影响。
       "每箱几个": "",
+      /**
+       * 货型（2026-09-11 老板点的）。以前模板没有这一列、代码写死普货，
+       * 仓库表里填了「商检」的货导进来全变普货，要人工一张张改。
+       * ⚠️ 这一列**加在最后**，不插在中间 —— 员工手上有按老模板列序粘数据的文件，
+       *    中间插一列会让粘进来的数据整体错位（比加一列认错列更惨）。
+       *    放在最后时老文件顶多是这一格空着，空着就是普货，跟改之前一模一样。
+       */
+      "货型（普货/商检/敏感，默认普货）": "",
     }]);
     ws["!cols"] = [
       { wch: 12 },  // 唛头
@@ -862,6 +870,7 @@ export default function StaffHomePage() {
       { wch: 12 },  // 运输方式
       { wch: 20 },  // 国内单号
       { wch: 14 },  // 产品数量
+      { wch: 30 },  // 货型
     ];
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "员工批量下单模板");
@@ -886,6 +895,8 @@ export default function StaffHomePage() {
       ["9. 到仓日期写成 2026-08-29；2026/08/29、2026.08.29、2026年8月29日 也认。不要写成 29/08/2026。"],
       ["10.「每箱几个」填的是「一箱里装几个」，不是这一行一共几个。系统会自动乘箱数。举例：5 箱、每箱 7 个，这里填 7，系统算出总数 35。"],
       ["11. 数字格可以带单位（100cm、10kg、5箱 都认），但不要写成「1米」「40*30」这种，系统会当场报错让你改。"],
+      ["12.「货型」留空就是普货；商检货填「商检」，敏感货填「敏感」。填别的字（比如「普通货物」「危险品」）会在上传时当场报错，不会悄悄变成普货。"],
+      ["13. 同一运单的几行可以填不同货型，按行各自记；运单那一层会记最严的那个（敏感 > 商检 > 普货）。"],
     ]);
     instructions["!cols"] = [{ wch: 110 }];
     XLSX.utils.book_append_sheet(wb, instructions, "填写说明");
@@ -925,6 +936,8 @@ export default function StaffHomePage() {
           transportMode: row.transportMode,
           domesticTrackingNo: row.domesticTrackingNo,
           productQuantity: row.productQuantity,
+          // 运单这一层的货型（2026-09-11）：不传的话后端按 "normal" 兜底，整批又全成普货
+          cargoType: row.cargoType,
           products: row.products,
         });
         success++;
