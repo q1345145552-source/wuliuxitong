@@ -1,6 +1,7 @@
 "use client";
 
 import { matchesShipmentListFilter } from "../../../../../packages/shared-types/shipment-status";
+import { productNamesLabel } from "../../../../../packages/shared-types/product-names";
 import { Fragment, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import * as XLSX from "xlsx";
 import { formatCny } from "../../modules/billing/billing-utils";
@@ -1095,7 +1096,10 @@ export default function StaffHomePage() {
       if (!matchesShipmentListFilter(item.currentStatus, shipmentGroup)) return false;
       const batchNo = (item.batchNo ?? "").toLowerCase();
       const clientName = `${item.clientName ?? ""} ${item.clientId ?? ""}`.toLowerCase();
-      const itemName = (item.itemName ?? "").toLowerCase();
+      /* 按品名搜要认**全部产品名**（2026-09-11）：item.itemName 只存了第一个产品名，
+         一票「鞋 / 包 / 帽」的货搜「帽」原来一条都搜不到。存的那个名也留在草堆里，
+         产品行被改过名时老关键词照样能命中。口径跟国内单号那一行一致（上面几行）。 */
+      const itemName = `${productNamesLabel(item.products, item.itemName)} ${item.itemName ?? ""}`.toLowerCase();
       const trackingNo = (item.trackingNo ?? "").toLowerCase();
       const domesticTrackingNo = (
         (item.domesticTrackingNo ?? "") +
@@ -1237,7 +1241,8 @@ export default function StaffHomePage() {
     }
     const billedVolumeCol = minVolumeMap ? "计费体积" : "计费体积(未按低消调整)";
     const rows = source.map((item) => ({
-      运单号: item.trackingNo ?? "-", 品名: item.itemName ?? "-",
+      // 导出的品名带全部产品名（2026-09-11，同尾端派送单那次的口径）
+      运单号: item.trackingNo ?? "-", 品名: productNamesLabel(item.products, item.itemName) || "-",
       归属用户: item.clientName ?? item.clientId ?? "-",
       运单状态: shipmentStatusZh(item.currentStatus),
       加收金额: item.receivableAmountCny != null ? `${item.receivableCurrency === "THB" ? "THB" : "CNY"} ${item.receivableAmountCny}` : "0",

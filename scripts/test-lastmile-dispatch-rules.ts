@@ -318,6 +318,32 @@ async function main() {
   const invalid=await call("POST /admin/lastmile/orders",{shipmentIds:["S1"],moveFromDelivering:"true"});assert.equal(invalid.status,400);assert.deepEqual({ships,deliveries,logs},snapshot);
  });
 
+ check("23) 删除派送单时这票货另有已签收单：保持已签收，不退回已到仓",async()=>{
+  /* 生产实测 3 票（GZ260702122-1/WD000363、YW0001379-1/WD000359、GZ260800490-1/WD000476）
+     卡在「运单说在泰国仓、却挂着一张已签收派送单」。删单那条路原来只看有没有别的「派送中」单，
+     没看「已签收」，于是把有签收记录的货退回了仓库。 */
+  reset([ship("P",0),ship("C",2,"P")]);
+  for(const row of ships) row.currentStatus="outForDelivery";
+  deliveries=[{...delivery("signed","C","WD000363","SIGNED"),signImageBase64:"proof"},delivery("cur","C","WD000647")];
+  const deleted=await call("DELETE /admin/lastmile/orders",{}, {id:"cur"});
+  assert.equal(deleted.status,200);assert.equal(deleted.data.reverted,true);
+  assert.match(deleted.data.message,/WD000363/);assert.match(deleted.data.message,/已经签收/);
+  // 签收单和凭证一个字都不许动
+  assert.deepEqual(deliveries.map(r=>r.id),["signed"]);assert.equal(deliveries[0].signImageBase64,"proof");
+  assert.equal(ships.find(r=>r.id==="C")!.currentStatus,"delivered");
+  assert.equal(logs.length,1);assert.equal(logs[0].fromStatus,"outForDelivery");assert.equal(logs[0].toStatus,"delivered");
+  assert.match(logs[0].remark,/WD000647/);assert.match(logs[0].remark,/WD000363/);
+  // 父单按全部子单推算：唯一子单已签收，父单不能留在「派送中」
+  assert.equal(ships.find(r=>r.id==="P")!.currentStatus,"delivered");
+ });
+ check("23b) 没有已签收单时照旧退回已到仓（别把上面那条改成一刀切）",async()=>{
+  reset([ship("S1")]);ships[0].currentStatus="outForDelivery";
+  deliveries=[delivery("cur","S1","WD000647")];
+  const deleted=await call("DELETE /admin/lastmile/orders",{}, {id:"cur"});
+  assert.equal(deleted.status,200);assert.equal(deleted.data.reverted,true);assert.equal(deleted.data.message,undefined);
+  assert.equal(ships[0].currentStatus,"inWarehouseTH");assert.equal(logs.length,1);assert.equal(logs[0].toStatus,"inWarehouseTH");
+ });
+
  let failures=0;for(const [name,fn] of cases){try{await fn();console.log("PASS "+name);}catch(e){failures++;console.log("FAIL "+name+"\n"+(e instanceof Error?e.stack:e));}}
  console.log(`CHECKS ${cases.length}; FAILURES ${failures}`);if(failures)process.exitCode=1;
 }

@@ -1009,6 +1009,42 @@ export function registerAdminOpsRoutes(app: MinimalHttpApp): void {
       });
       if (stillOut) return { deleted: true, reverted: false, stillIn: stillOut.deliveryNo };
 
+      /**
+       * ⚠️ 这票货可能**已经在另一张派送单里签收过了**（2026-09-11 补）。
+       *
+       * 上面那段只查「还在派送中」的单，查不到就一律把运单退回「已到仓」。
+       * 生产实测 3 票货因此停在自相矛盾的状态 —— 运单说货在泰国仓，却挂着一张「已签收」的派送单：
+       *   GZ260702122-1（WD000363）、YW0001379-1（WD000359）、GZ260800490-1（WD000476）
+       * 怎么来的：员工先点签收把货从旧单里放出来（2026-09-10 上线「改派」之前没有别的办法），
+       * 再建一张新单，新单后来又被删掉 —— 删这一步把运单退回「已到仓」，
+       * 那张「已签收」的单却还挂着。结果客户轨迹里已经有「已签收」，运单状态却是「已到仓」。
+       *
+       * 货既然有签收记录，删掉另一张单不该把它退回仓库：保持「已签收」才和那张签收单一致。
+       * 真没送到的话，要改的是那张签收单本身，不在这里替员工猜。
+       */
+      const alreadySigned = await tx.adminLastmileOrder.findFirst({
+        where: { shipmentId: ship.id, companyId: auth.companyId, status: "SIGNED" },
+        select: { deliveryNo: true },
+      });
+      if (alreadySigned) {
+        await tx.shipment.update({ where: { id: ship.id }, data: { currentStatus: "delivered", updatedAt: now } });
+        await tx.statusLog.create({
+          data: {
+            id: `sl_lmdel_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+            companyId: auth.companyId, shipmentId: ship.id,
+            operatorId: auth.userId, operatorRole: auth.role, operatorName: auth.name ?? "",
+            fromStatus: "outForDelivery", toStatus: "delivered",
+            remark: `删除派送单（${row.deliveryNo}），这票货在 ${alreadySigned.deliveryNo} 已经签收，运单保持已签收`,
+            changedAt: now,
+          },
+        });
+        // 父单照样按全部子单重新推算，跟下面退回「已到仓」那条路一致
+        if (ship.parentTrackingNo) {
+          await syncParentStatusFromChildren(tx, ship.parentTrackingNo, auth.companyId);
+        }
+        return { deleted: true, reverted: true, signedIn: alreadySigned.deliveryNo };
+      }
+
       await tx.shipment.update({ where: { id: ship.id }, data: { currentStatus: "inWarehouseTH", updatedAt: now } });
       await tx.statusLog.create({
         data: {
@@ -1039,7 +1075,9 @@ export function registerAdminOpsRoutes(app: MinimalHttpApp): void {
       // 这票货还在别的派送单里，所以没退回「已到仓」—— 说清楚，别让员工以为没生效
       message: (result as any).stillIn
         ? `已删除。这票货还在派送单 ${(result as any).stillIn} 里派送中，所以运单状态保持「派送中」。`
-        : undefined,
+        : (result as any).signedIn
+          ? `已删除。这票货在派送单 ${(result as any).signedIn} 里已经签收，所以运单保持「已签收」，没有退回「已到仓」。`
+          : undefined,
     });
   });
 

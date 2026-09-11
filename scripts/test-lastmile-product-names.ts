@@ -430,6 +430,46 @@ async function main(): Promise<void> {
     assert.equal(r.data.bills[1].itemName, "老单品名");
   });
 
+  await check("8) 运单列表（2026-09-11 老板点的第二件）：接口的 itemName 仍是存的那个，页面的搜索/导出自己拼全名", async () => {
+    /**
+     * ⚠️ 这一处**不能照前面几处在后端改** —— 运单列表的「详情」里有一个可编辑的品名输入框，
+     * 它绑的就是这个接口返回的 itemName（buildShipmentOrderEditDraft → draft.itemName →
+     * staff/page.tsx 的 <input value={draft.itemName}>）。后端要是直接回「鞋 / 包 / 帽」，
+     * 员工一点保存就把这串字写回 order.itemName，**真把数据改脏**。
+     * 所以接口保持原样，只在列表的搜索和导出上按产品行拼全名。
+     */
+    shipmentPool = [wholeShipment, childShipment, legacyShipment];
+    const r = await call("GET /staff/shipments", { all: "1", pageSize: "500", page: "1" });
+    assert.equal(r.status, 200, `应该 200，实际 ${r.status}`);
+    const byNo = new Map<string, any>(r.data.items.map((i: any) => [i.trackingNo, i] as [string, any]));
+    assert.equal(byNo.get("YW0001")?.itemName, "鞋", "接口的 itemName 必须还是存的第一个产品名，否则编辑框一保存就写脏数据");
+    assert.equal(byNo.get("YW0009")?.itemName, "老单品名", "老单照旧");
+    // 拼全名要用的产品行必须跟着下发，且带上顺序信息所需的行序
+    assert.deepEqual(byNo.get("YW0001")?.products?.map((p: any) => p.itemName), ["鞋", "包", "帽", "鞋"]);
+    assert.equal(productNamesLabel(byNo.get("YW0001").products, byNo.get("YW0001").itemName), EXPECTED);
+    assert.equal(productNamesLabel(byNo.get("YW0009").products, byNo.get("YW0009").itemName), "老单品名");
+
+    /**
+     * ⚠️ 下面是**扫源码**，只能证明「页面里写了」，证明不了运行时
+     *（跟 test-frontend-guards.ts 第 ③ 类一个性质，包进 if(false) 就抓不到）。
+     * 真正的运行时验收走浏览器：三端各搜一次后续产品名、各导一次 Excel。
+     */
+    const pages: Array<[string, string]> = [
+      ["员工端运单列表", "apps/web/src/app/staff/page.tsx"],
+      ["管理端运单列表", "apps/web/src/app/admin/page.tsx"],
+      ["客户端预报单列表", "apps/web/src/app/client/page.tsx"],
+    ];
+    for (const [label, file] of pages) {
+      const code = fs.readFileSync(path.resolve(file), "utf8");
+      assert.ok(code.includes('from "../../../../../packages/shared-types/product-names"'), `${label} 没引入共享的拼名字函数`);
+      assert.ok(/品名: productNamesLabel\(|productNamesLabel\(item\.products|productNamesLabel\(o\.products/.test(code), `${label} 的品名没走共享函数`);
+    }
+    const staff = fs.readFileSync(path.resolve("apps/web/src/app/staff/page.tsx"), "utf8");
+    assert.ok(staff.includes("value={draft.itemName}"), "编辑框必须继续绑原样的 itemName，不许换成拼好的全名");
+    const utils = fs.readFileSync(path.resolve("apps/web/src/modules/staff/utils.ts"), "utf8");
+    assert.ok(utils.includes("itemName: item.itemName ?? \"\""), "编辑草稿必须继续取接口原样的 itemName");
+  });
+
   console.log(`\n共 ${total} 项，失败 ${failures.length} 项`);
   if (failures.length > 0) {
     console.log("失败：\n  - " + failures.join("\n  - "));

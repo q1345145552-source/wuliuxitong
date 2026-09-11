@@ -11,6 +11,7 @@ import Toast from "../../modules/layout/Toast";
 import { sendAiMessage } from "../../services/ai-client";
 import { apiBaseUrl } from "../../services/core-api";
 import { formatMetric, volumeM3FromDimensionsCm, formatVolumeM3String, warehouseLabelFromId } from "../../modules/staff/utils";
+import { productNamesLabel } from "../../../../../packages/shared-types/product-names";
 import {
   fetchClientAddresses,
   createClientPrealert,
@@ -347,7 +348,9 @@ export default function ClientHomePage() {
   const visiblePrealerts = (prealertSearchActive && prealertSearchPool ? prealertSearchPool : prealerts).filter((item) => {
     const q = prealertSearch.trim().toLowerCase();
     if (!q) return true;
-    return item.id.toLowerCase().includes(q) || (item.itemName ?? "").toLowerCase().includes(q);
+    // 搜品名要认全部产品名（2026-09-11），跟上面列表显示的口径一致
+    const names = `${productNamesLabel(item.products, item.itemName)} ${item.itemName ?? ""}`.toLowerCase();
+    return item.id.toLowerCase().includes(q) || names.includes(q);
   });
 
   useEffect(() => {
@@ -879,7 +882,9 @@ export default function ClientHomePage() {
                       <tr key={item.id} style={{ borderBottom: "1px solid var(--l-soft)" }}>
                         <td style={{ padding: "6px 8px", fontFamily: "monospace", color: "#14171D", fontSize: 12 }}>{item.clientId || "—"}</td>
                         <td style={{ padding: "6px 8px", fontFamily: "monospace", fontSize: 11 }}>{item.orderNo || "—"}<br /><span style={{ fontSize: 10, color: "var(--t-muted)" }}>{item.trackingNo || ""}</span></td>
-                        <td style={{ padding: "6px 8px" }}>{item.itemName}</td>
+                        {/* 品名带全部产品名（2026-09-11）：itemName 只存了第一个产品名，
+                            一票「鞋 / 包 / 帽」的预报单原来只显示「鞋」。右边尺寸那列本来就是按产品行拼的。 */}
+                        <td style={{ padding: "6px 8px" }}>{productNamesLabel(item.products, item.itemName)}</td>
                         <td style={{ padding: "6px 8px", fontSize: 11, whiteSpace: "nowrap" }}>{(() => { const dims = (item.products ?? []).map((p: any) => (p.lengthCm && p.widthCm && p.heightCm ? p.lengthCm + "×" + p.widthCm + "×" + p.heightCm : null)).filter(Boolean).join(", "); return dims || "—"; })()}</td>
                         <td style={{ padding: "6px 8px", whiteSpace: "nowrap" }} className="col-num">{item.volumeM3 != null ? Number(item.volumeM3).toFixed(3) : "—"}</td>
                         <td style={{ padding: "6px 8px", whiteSpace: "nowrap" }} className="col-num">{item.weightKg != null ? Number(item.weightKg).toFixed(2) : "—"}</td>
@@ -1224,7 +1229,9 @@ export default function ClientHomePage() {
                       <tr key={item.id} style={{ borderBottom: "1px solid var(--l-soft)" }}>
                         <td style={{ padding: "6px 8px", fontFamily: "monospace", color: "#14171D", fontSize: 12 }}>{item.clientId || "—"}</td>
                         <td style={{ padding: "6px 8px", fontFamily: "monospace", fontSize: 11 }}>{item.orderNo || "—"}<br /><span style={{ fontSize: 10, color: "var(--t-muted)" }}>{item.trackingNo || ""}</span></td>
-                        <td style={{ padding: "6px 8px" }}>{item.itemName}</td>
+                        {/* 品名带全部产品名（2026-09-11）：itemName 只存了第一个产品名，
+                            一票「鞋 / 包 / 帽」的预报单原来只显示「鞋」。右边尺寸那列本来就是按产品行拼的。 */}
+                        <td style={{ padding: "6px 8px" }}>{productNamesLabel(item.products, item.itemName)}</td>
                         <td style={{ padding: "6px 8px", fontSize: 11, whiteSpace: "nowrap" }}>{(() => { const dims = (item.products ?? []).map((p: any) => (p.lengthCm && p.widthCm && p.heightCm ? p.lengthCm + "×" + p.widthCm + "×" + p.heightCm : null)).filter(Boolean).join(", "); return dims || "—"; })()}</td>
                         <td style={{ padding: "6px 8px", whiteSpace: "nowrap" }} className="col-num">{item.volumeM3 != null ? Number(item.volumeM3).toFixed(3) : "—"}</td>
                         <td style={{ padding: "6px 8px", whiteSpace: "nowrap" }} className="col-num">{item.weightKg != null ? Number(item.weightKg).toFixed(2) : "—"}</td>

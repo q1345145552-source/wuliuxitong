@@ -3,6 +3,7 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as XLSX from "xlsx";
 import { matchesShipmentListFilter } from "../../../../../packages/shared-types/shipment-status";
+import { productNamesLabel } from "../../../../../packages/shared-types/product-names";
 import { AT_WAREHOUSE_STATUSES, COMPLETED_STATUSES, CLIENT_STATUS_GROUP_ZH } from "../../../../../packages/shared-types/shipment-status";
 import { Bar, BarChart, CartesianGrid, Cell, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import type { AiKnowledgeItem } from "../../../../../packages/shared-types/entities";
@@ -1154,7 +1155,9 @@ export default function AdminHomePage() {
       const cn = `${item.clientName ?? ""} ${item.clientId ?? ""}`.toLowerCase();
       const wn = (item.warehouseId ?? "").toLowerCase();
       const bn = (item.batchNo ?? "").toLowerCase();
-      const inm = (item.itemName ?? "").toLowerCase();
+      /* 按品名搜要认**全部产品名**（2026-09-11）：item.itemName 只存了第一个产品名，
+         一票「鞋 / 包 / 帽」的货搜「帽」原来搜不到。跟员工端那一处同一个写法。 */
+      const inm = `${productNamesLabel(item.products, item.itemName)} ${item.itemName ?? ""}`.toLowerCase();
       const pn = (item.packageCount ?? "").toString();
       const pq = (item.productQuantity ?? "").toString();
       const wk = (item.weightKg ?? "").toString();
@@ -1258,7 +1261,8 @@ export default function AdminHomePage() {
     if (exportDateTo) source = source.filter((o) => (o.shipDate ?? "").slice(0,10) <= exportDateTo);
     if (source.length === 0) { setMessage("所选日期范围内没有订单。"); setOrderExportFeedback("所选日期范围内没有订单。"); return; }
     const rows = source.map((o) => ({
-      运单号: o.trackingNo ?? "-", 客户: o.clientId ?? "-", 品名: o.itemName,
+      // 导出的品名带全部产品名（2026-09-11，同员工端导出口径）
+      运单号: o.trackingNo ?? "-", 客户: o.clientId ?? "-", 品名: productNamesLabel(o.products, o.itemName),
       运输方式: o.transportMode, 国内单号: o.domesticTrackingNo ?? "-", 柜号: o.batchNo ?? "-",
       审批状态: o.approvalStatus === "pending" ? "待审核" : o.approvalStatus === "approved" ? "已审核" : o.approvalStatus === "shipped" ? "已发货" : o.approvalStatus,
       产品数量: o.productQuantity ?? "-", 包裹数量: o.packageCount ?? "-",
