@@ -30,6 +30,11 @@ export type LastmileDispatchWorkspaceProps = {
   onToast: (message: string) => void;
   onReloadOrders: () => void | Promise<void>;
   onLoadShipments: () => void | Promise<void>;
+  /**
+   * 能不能撤销误签收（2026-09-11）。只有管理端传 true ——
+   * 员工手滑点错找管理员撤，别自己把签收记录来回掰。
+   */
+  canUnsign?: boolean;
 };
 
 const inputStyle = {
@@ -269,6 +274,29 @@ export default function LastmileDispatchWorkspace(props: LastmileDispatchWorkspa
       }
     };
     reader.readAsDataURL(file);
+  };
+
+  /** 撤销误签收（2026-09-11）：点错签收之后唯一正经的出路，只有管理端看得到这个按钮 */
+  const unsignOrder = async (order: LastmileOrderItem) => {
+    if (!confirm(
+      `确定撤销 ${order.deliveryNo} 里 ${order.trackingNo || order.shipmentId} 的签收吗？\n` +
+      "这票货会回到「派送中」，客户轨迹里会记一条「撤销误签收」。签收照片保留，真签收时会覆盖。",
+    )) return;
+    setBusy(true);
+    try {
+      const response = await fetch(`${apiBaseUrl()}/admin/lastmile/unsign`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeaders() },
+        body: JSON.stringify({ id: order.id }),
+      });
+      const result = await parseApiResponse<{ message?: string }>(response);
+      props.onToast(result.message || "已撤销签收");
+      await props.onReloadOrders();
+    } catch (error) {
+      props.onToast(error instanceof Error ? error.message : "撤销签收失败，请重试");
+    } finally {
+      setBusy(false);
+    }
   };
 
   const deleteOrder = async (order: LastmileOrderItem) => {
@@ -583,6 +611,8 @@ export default function LastmileDispatchWorkspace(props: LastmileDispatchWorkspa
                     onAppend={startAppend}
                     onExport={exportCustomer}
                     onSign={(id) => { setSignTargetId(id); signFileRef.current?.click(); }}
+                    canUnsign={props.canUnsign === true}
+                    onUnsign={unsignOrder}
                     onOpenSignImage={openSignImage}
                     onDelete={deleteOrder}
                   />
@@ -639,6 +669,9 @@ type WdCardProps = {
   /** 2026-09-01 竞态全扫：传整票订单不只传 id —— 弹窗标题要单号，响应落地要认主人 */
   onOpenSignImage: (order: LastmileOrderItem) => void | Promise<void>;
   onDelete: (order: LastmileOrderItem) => void | Promise<void>;
+  /** 2026-09-11：撤销误签收，只有管理端为 true */
+  canUnsign: boolean;
+  onUnsign: (order: LastmileOrderItem) => void | Promise<void>;
 };
 
 function LastmileWdCard(props: WdCardProps) {
@@ -721,6 +754,10 @@ function LastmileWdCard(props: WdCardProps) {
                     <div className="lastmile-row-actions">
                       {order.status !== "SIGNED" && (
                         <button type="button" disabled={props.busy} className="is-sign" style={{ background: "var(--white)" }} onClick={() => props.onSign(order.id)}>上传签收</button>
+                      )}
+                      {/* 点错签收的唯一出路（2026-09-11）。只有管理端看得到 */}
+                      {order.status === "SIGNED" && props.canUnsign && (
+                        <button type="button" disabled={props.busy} style={{ background: "var(--white)" }} onClick={() => void props.onUnsign(order)}>撤销签收</button>
                       )}
                       <button type="button" disabled={!order.trackingNo} style={{ background: "var(--white)" }} onClick={() => order.trackingNo && openShipmentTrack(order.trackingNo)}>物流轨迹</button>
                       <button type="button" className="is-danger" style={{ background: "var(--white)" }} onClick={() => void props.onDelete(order)}>删除</button>

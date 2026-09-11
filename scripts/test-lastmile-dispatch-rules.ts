@@ -84,6 +84,7 @@ const db: any = strict("prisma", {
     async findFirst(args: any) { return list("adminLastmileOrder",deliveries,{...args,take:1})[0] ?? null; },
     async findUnique(args: any) { return list("adminLastmileOrder",deliveries,{...args,take:1})[0] ?? null; },
     async create(args: any) { if(deliveries.some(r=>r.deliveryNo===args.data.deliveryNo&&r.shipmentId===args.data.shipmentId)) throw Object.assign(Error("duplicate"),{code:"P2002"});writes.push(`create:${args.data.shipmentId}`);deliveries.push(copy(args.data));return shape(args.data,args); },
+    async update(args: any) { const r=deliveries.find(x=>match(x,args.where));assert.ok(r,"update 的目标派送单不存在");writes.push(`update:${r.id}`);Object.assign(r,args.data);return shape(r,args); },
     async delete(args: any) { const index=deliveries.findIndex(r=>match(r,args.where));assert.ok(index>=0);writes.push(`delete:${deliveries[index].id}`);return deliveries.splice(index,1)[0]; },
   }),
   statusLog: strict("statusLog", { async create(args: any) { logs.push(copy(args.data));return args.data; } }),
@@ -109,7 +110,7 @@ function loadWebModule(relative: string, fetchImpl: (input:any,init?:RequestInit
   return load(relative);
 }
 // 真工作台 JSX/回调；只替换 hooks 与 I/O，不启动浏览器或 HTTP 服务。
-function workspaceFixture(orderRows: Row[], replies: Array<{status:number;data?:Row;message?:string}>, answers: boolean[]) {
+function workspaceFixture(orderRows: Row[], replies: Array<{status:number;data?:Row;message?:string}>, answers: boolean[], canUnsign=false) {
   let cursor=0;const states:any[]=[];const requests:Row[]=[];const confirms:string[]=[];const toasts:string[]=[];let reloads=0;
   const hook=(init:any)=>{const i=cursor++;if(!(i in states))states[i]=typeof init==="function"?init():init;return [states[i],(v:any)=>{states[i]=typeof v==="function"?v(states[i]):v}]};
   const jsx= (type:any,props:any,key?:any)=>({type,props:props??{},key});
@@ -128,7 +129,7 @@ function workspaceFixture(orderRows: Row[], replies: Array<{status:number;data?:
     },mod,mod.exports);return mod.exports;
   }
   const Component=load(path.resolve("apps/web/src/modules/lastmile/LastmileDispatchWorkspace.tsx")).default;
-  const props={lmOrderList:orderRows,lmShipments:[{id:"S1",trackingNo:"S1",clientId:"客户",itemName:"鞋 / 包",packageCount:2}],onToast:(s:string)=>toasts.push(s),onReloadOrders:()=>{reloads++},onLoadShipments:()=>{}};
+  const props={lmOrderList:orderRows,lmShipments:[{id:"S1",trackingNo:"S1",clientId:"客户",itemName:"鞋 / 包",packageCount:2}],onToast:(s:string)=>toasts.push(s),onReloadOrders:()=>{reloads++},onLoadShipments:()=>{},canUnsign};
   const render=()=>{cursor=0;return Component(props);};
   const nodes=(tree:any):any[]=>Array.isArray(tree)?tree.flatMap(nodes):tree&&typeof tree==="object"?(typeof tree.type==="function"?nodes(tree.type(tree.props)):[tree,...nodes(tree.props?.children)]):[];
   const text=(tree:any):string=>Array.isArray(tree)?tree.map(text).join(""):tree&&typeof tree==="object"?text(tree.props?.children):tree==null||typeof tree==="boolean"?"":String(tree);
@@ -136,6 +137,9 @@ function workspaceFixture(orderRows: Row[], replies: Array<{status:number;data?:
   return {requests,confirms,toasts,render,text,get reloads(){return reloads;},
     async choose(append=false){await button(append?/追加运单/:/^创建 WD/).props.onClick();const box=nodes(render()).find(n=>n.type==="input"&&n.props.type==="checkbox");assert.ok(box);box.props.onChange();},
     async submit(){const node=nodes(render()).find(n=>n.type==="button"&&String(n.props.onClick).includes("submitDispatch"));assert.ok(node,"Submit button");await node.props.onClick();await new Promise<void>(resolve=>setImmediate(resolve));},
+    /** ⚠️ text(render()) 不会展开函数组件（卡片是子组件），找卡片里的按钮必须走 nodes() */
+    findButton(label:string){return nodes(render()).find(n=>n.type==="button"&&text(n).includes(label));},
+    async clickUnsign(){const node=nodes(render()).find(n=>n.type==="button"&&text(n).includes("撤销签收"));assert.ok(node,"撤销签收 button");await node.props.onClick();await new Promise<void>(resolve=>setImmediate(resolve));},
   };
 }
 
@@ -145,10 +149,11 @@ async function main() {
  const routes=new Map<string,Function>();const app:any={};for(const m of ["get","post","put","patch","delete"])app[m]=(p:string,h:Function)=>routes.set(`${m.toUpperCase()} ${p}`,h);
  (await import("../apps/api/src/modules/shipments/routes")).registerShipmentRoutes(app);
  (await import("../apps/api/src/modules/admin-ops/routes")).registerAdminOpsRoutes(app);
- async function call(key:string,body:any={},query:Record<string,string>={}) {
+ async function call(key:string,body:any={},query:Record<string,string>={},auth:any={userId:"staff",companyId:"c",role:"staff",name:"员工"}) {
   const handler=routes.get(key);assert.ok(handler);let status=200;let raw:any;const res:any={status(s:number){status=s;return res},json(p:any){raw=p}};
-  await handler({body,query,headers:{},auth:{userId:"staff",companyId:"c",role:"staff",name:"员工"}},res);return {status,raw,data:raw?.data};
+  await handler({body,query,headers:{},auth},res);return {status,raw,data:raw?.data};
  }
+ const ADMIN={userId:"boss",companyId:"c",role:"admin",name:"管理员"};
  check("1) all=1提供hasChildren，普通列表原字段/查询次数不变",async()=>{
   reset([ship("P0",0),ship("C1",2,"P0"),ship("P1",3),ship("C2",1,"P1"),ship("L",0)]);
   const all=await call("GET /staff/shipments",{}, {all:"1"});assert.equal(all.status,200);
@@ -342,6 +347,82 @@ async function main() {
   const deleted=await call("DELETE /admin/lastmile/orders",{}, {id:"cur"});
   assert.equal(deleted.status,200);assert.equal(deleted.data.reverted,true);assert.equal(deleted.data.message,undefined);
   assert.equal(ships[0].currentStatus,"inWarehouseTH");assert.equal(logs.length,1);assert.equal(logs[0].toStatus,"inWarehouseTH");
+ });
+
+ check("24) 撤销误签收：单子回派送中、运单回派送中、签收图保留、轨迹写撤销、父单跟着推算",async()=>{
+  reset([ship("P",0),ship("C",2,"P")]);
+  for(const row of ships) row.currentStatus="delivered";
+  deliveries=[{...delivery("lm1","C","WD000001","SIGNED"),signImageBase64:"proof"}];
+  locks.length=0;
+  const r=await call("POST /admin/lastmile/unsign",{id:"lm1"},{},ADMIN);
+  assert.equal(r.status,200);assert.equal(r.data.deliveryNo,"WD000001");assert.equal(r.data.trackingNo,"C");
+  assert.match(r.data.message,/撤销/);
+  assert.equal(deliveries[0].status,"DELIVERING","派送单没退回派送中");
+  assert.equal(deliveries[0].signImageBase64,"proof","签收图被删了——点错签收不等于要销毁证据");
+  assert.equal(ships.find(x=>x.id==="C")!.currentStatus,"outForDelivery");
+  assert.equal(logs.length,1);assert.equal(logs[0].fromStatus,"delivered");assert.equal(logs[0].toStatus,"outForDelivery");
+  assert.match(logs[0].remark,/撤销误签收（WD000001）/);
+  assert.equal(logs[0].operatorRole,"admin","轨迹上要留是谁撤的");
+  // 唯一子单回到派送中，父单必须跟着回派送中，不能留在已签收
+  assert.equal(ships.find(x=>x.id==="P")!.currentStatus,"outForDelivery");
+  // 锁序跟签收/删除一致：派送单 → 运单 → 父单
+  assert.deepEqual(locks.filter(k=>k.startsWith("lastmile:")||k.startsWith("shipment:")),["lastmile:lm1","shipment:C","shipment:P"],locks.join(" -> "));
+ });
+ check("25) 撤销的三道闸：不是已签收 / 运单已退回仓库 / 货还在别的派送中单里 —— 都 409 且一个字不写",async()=>{
+  // ① 单子本来就是派送中
+  reset([ship("S1")]);ships[0].currentStatus="outForDelivery";deliveries=[delivery("lm1","S1","WD000001")];
+  let snapshot=copy({ships,deliveries,logs});
+  let r=await call("POST /admin/lastmile/unsign",{id:"lm1"},{},ADMIN);
+  assert.equal(r.status,409);assert.match(r.raw.message,/不是「已签收」/);assert.deepEqual({ships,deliveries,logs},snapshot);
+
+  // ② 单子说已签收，可运单已经退回仓库了（生产里卡住的那 3 票就是这样）—— 不许凭空改成派送中
+  reset([ship("S1")]);ships[0].currentStatus="inWarehouseTH";
+  deliveries=[{...delivery("lm1","S1","WD000001","SIGNED"),signImageBase64:"proof"}];
+  snapshot=copy({ships,deliveries,logs});
+  r=await call("POST /admin/lastmile/unsign",{id:"lm1"},{},ADMIN);
+  assert.equal(r.status,409);assert.match(r.raw.message,/inWarehouseTH/);assert.deepEqual({ships,deliveries,logs},snapshot);
+
+  // ③ 这票货还挂在另一张「派送中」的单里 —— 撤了就会有两张派送中
+  reset([ship("S1")]);ships[0].currentStatus="delivered";
+  deliveries=[{...delivery("lm1","S1","WD000001","SIGNED"),signImageBase64:"proof"},delivery("lm2","S1","WD000002")];
+  snapshot=copy({ships,deliveries,logs});
+  r=await call("POST /admin/lastmile/unsign",{id:"lm2X"},{},ADMIN);
+  assert.equal(r.status,404,"不存在的 id 应该 404");
+  r=await call("POST /admin/lastmile/unsign",{id:"lm1"},{},ADMIN);
+  assert.equal(r.status,409);assert.match(r.raw.message,/WD000002/);assert.deepEqual({ships,deliveries,logs},snapshot);
+ });
+ check("26) 撤销只给管理员：员工 403；别家公司的单 404；都不许动数据",async()=>{
+  reset([ship("S1")]);ships[0].currentStatus="delivered";
+  deliveries=[{...delivery("lm1","S1","WD000001","SIGNED"),signImageBase64:"proof"}];
+  const snapshot=copy({ships,deliveries,logs});
+  const staff=await call("POST /admin/lastmile/unsign",{id:"lm1"});
+  assert.equal(staff.status,403,`员工不该能撤销（拿到 ${staff.status}）`);
+  assert.deepEqual({ships,deliveries,logs},snapshot);
+  const foreign=await call("POST /admin/lastmile/unsign",{id:"lm1"},{},{...ADMIN,companyId:"other"});
+  assert.equal(foreign.status,404,"别家公司的单应该当不存在");
+  assert.deepEqual({ships,deliveries,logs},snapshot);
+  const noId=await call("POST /admin/lastmile/unsign",{},{},ADMIN);
+  assert.equal(noId.status,400);
+ });
+ check("27) 真工作台：管理端才有「撤销签收」按钮，点了弹确认，取消不发请求",async()=>{
+  const signed=[{...delivery("lm1","S1","WD000001","SIGNED"),trackingNo:"S1"}];
+  // 员工端（canUnsign 不传）：按钮不该出现
+  const staffUi=workspaceFixture(signed,[],[]);
+  assert.equal(staffUi.findButton("撤销签收"),undefined,"员工端不该看到撤销签收");
+  assert.ok(staffUi.findButton("删除"),"卡片根本没渲染出来，这条用例等于没测");
+  // 管理端：按钮在；点了先弹确认，选取消就不发请求
+  const cancel=workspaceFixture(signed,[],[false],true);
+  assert.ok(cancel.findButton("撤销签收"),"管理端看不到撤销签收按钮");
+  // 已签收的单不该再出现「上传签收」
+  assert.equal(cancel.findButton("上传签收"),undefined,"已签收的单还显示上传签收");
+  await cancel.clickUnsign();
+  assert.equal(cancel.requests.length,0,"取消了还是发了请求");
+  assert.equal(cancel.confirms.length,1);assert.match(cancel.confirms[0],/撤销/);
+  // 确认之后才发请求，并把后端那句话原样提给员工看
+  const accept=workspaceFixture(signed,[{status:200,data:{message:"已撤销 WD000001 里 S1 的签收"}}],[true],true);
+  await accept.clickUnsign();
+  assert.equal(accept.requests.length,1);assert.equal(accept.requests[0].id,"lm1");
+  assert.equal(accept.toasts.at(-1),"已撤销 WD000001 里 S1 的签收");assert.equal(accept.reloads,1);
  });
 
  let failures=0;for(const [name,fn] of cases){try{await fn();console.log("PASS "+name);}catch(e){failures++;console.log("FAIL "+name+"\n"+(e instanceof Error?e.stack:e));}}

@@ -2289,6 +2289,8 @@ export default function AdminHomePage() {
         </header>
 
           <LastmileDispatchWorkspace
+            /* 撤销误签收只开给管理端（2026-09-11） */
+            canUnsign
             id="admin-lastmile-dispatch"
             surface="embedded"
             showHeading={false}

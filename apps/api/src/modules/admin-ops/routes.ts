@@ -960,6 +960,114 @@ export function registerAdminOpsRoutes(app: MinimalHttpApp): void {
     ok(res, { id: updated.id, status: updated.status });
   });
 
+  /**
+   * 撤销误签收（2026-09-11 老板拍板加的）。
+   *
+   * 背景：2026-08-31 定的规矩是「已签收的单不许改回派送中」—— 那条是为了挡
+   * 「签收完想把状态掰回去再派一趟」，方向没错。但它顺带堵死了**手滑点错签收**
+   * 这种情况：点错之后 `/admin/lastmile/status` 改不回来、删单也不会把已签收的货
+   * 退回（删除那条路只在「还在派送中」时才退），员工唯一的出路是再建一张新派送单。
+   * 生产实测 15 次「已签收 → 又出车」里有 11 次就是这么来的，其中 3 票最后卡成
+   * 「运单在泰国仓、却挂着一张已签收的派送单」。
+   *
+   * 所以开一个**单独的**口子，而不是放开 SIGNED → DELIVERING：
+   *   · 只有管理员能撤（员工手滑找管理员撤，别自己把签收记录来回掰）
+   *   · 只撤「这票货确实还在这张单里派送」的情形：运单必须是 `delivered`，
+   *     而且不许同时挂在别的「派送中」单里 —— 否则撤完会出现两张派送中
+   *   · **不删签收图**：点错了不代表要销毁证据；真签收时那张图会被覆盖
+   *   · 客户轨迹写明「撤销误签收」，不偷偷把那条已签收抹掉（数据忠实记录）
+   *
+   * ⚠️ 锁序跟签收/删除一致【派送单 → 运单 → 父单】，锁完重读再判断（CLAUDE.md 第 28 条）。
+   */
+  app.post("/admin/lastmile/unsign", async (req, res) => {
+    const auth = requireRole(req, res, ["admin"]);
+    if (!auth) return;
+    const body = (req.body ?? {}) as { id?: string };
+    const id = body.id?.trim();
+    if (!id) { fail(res, 400, "BAD_REQUEST", "id required"); return; }
+
+    const now = new Date();
+    let result: { deliveryNo: string; trackingNo: string } | null = null;
+    try {
+      result = await prisma.$transaction(async (tx) => {
+        const own = await tx.adminLastmileOrder.findFirst({
+          where: { id, companyId: auth.companyId },
+          select: { id: true },
+        });
+        if (!own) return null;
+        await tx.$queryRaw`SELECT id FROM admin_lastmile_orders WHERE id = ${own.id} AND company_id = ${auth.companyId} FOR UPDATE`;
+        const fresh = await tx.adminLastmileOrder.findUnique({
+          where: { id: own.id },
+          select: { status: true, deliveryNo: true, shipmentId: true },
+        });
+        if (!fresh) return null;
+        // 拿锁后的状态判断，不是事务外那份
+        if (fresh.status !== "SIGNED") {
+          throw new LastmileConflictError("这张派送单现在不是「已签收」，不用撤销。");
+        }
+
+        await tx.$queryRaw`SELECT id FROM shipments WHERE id = ${fresh.shipmentId} FOR UPDATE`;
+        const shipment = await tx.shipment.findFirst({
+          where: { id: fresh.shipmentId, companyId: auth.companyId },
+          select: { id: true, trackingNo: true, currentStatus: true, parentTrackingNo: true },
+        });
+        if (!shipment) throw new LastmileShipmentNotFoundError(`运单 ${fresh.shipmentId} 不存在或不属于当前公司`);
+
+        /**
+         * ⚠️ 只有「这票货现在确实停在已签收」才能撤。
+         * 货要是已经被退回仓库、或者被别的单接走了，撤这张单只会再造一处矛盾 ——
+         * 生产里那 3 票卡住的就是这种情形（运单在泰国仓、单子说已签收），
+         * 那种得走数据清理，不能让人在这儿点一下就把货凭空改成「派送中」。
+         */
+        if (shipment.currentStatus !== "delivered") {
+          throw new LastmileConflictError(
+            `运单 ${shipment.trackingNo} 现在的状态是「${shipment.currentStatus}」，不是已签收，` +
+            "这张单的签收撤不了（这票货可能已经退回仓库或被别的派送单接走了）。",
+          );
+        }
+        const otherDelivering = await tx.adminLastmileOrder.findFirst({
+          where: { shipmentId: shipment.id, companyId: auth.companyId, status: "DELIVERING" },
+          select: { deliveryNo: true },
+        });
+        if (otherDelivering) {
+          throw new LastmileConflictError(
+            `这票货还在派送单 ${otherDelivering.deliveryNo} 里派送中，撤销这张会出现两张派送中的单。` +
+            "请先处理那一张。",
+          );
+        }
+
+        // 派送单退回派送中；签收图**保留**，真签收时会被覆盖
+        await tx.adminLastmileOrder.update({ where: { id: own.id }, data: { status: "DELIVERING" } });
+        await tx.shipment.update({ where: { id: shipment.id }, data: { currentStatus: "outForDelivery", updatedAt: now } });
+        await tx.statusLog.create({
+          data: {
+            id: `sl_lmunsign_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+            companyId: auth.companyId, shipmentId: shipment.id,
+            operatorId: auth.userId, operatorRole: auth.role, operatorName: auth.name ?? "",
+            fromStatus: "delivered", toStatus: "outForDelivery",
+            remark: `撤销误签收（${fresh.deliveryNo}）：这票货还没送到，退回派送中`,
+            changedAt: now,
+          },
+        });
+        if (shipment.parentTrackingNo) {
+          await syncParentStatusFromChildren(tx, shipment.parentTrackingNo, auth.companyId);
+        }
+        return { deliveryNo: fresh.deliveryNo, trackingNo: shipment.trackingNo };
+      });
+    } catch (e) {
+      if (e instanceof LastmileConflictError) { fail(res, 409, "VALIDATION_ERROR", e.message); return; }
+      if (e instanceof LastmileShipmentNotFoundError) { fail(res, 404, "NOT_FOUND", e.message); return; }
+      throw e;
+    }
+
+    if (!result) { fail(res, 404, "NOT_FOUND", "派送单不存在"); return; }
+    ok(res, {
+      deliveryNo: result.deliveryNo,
+      trackingNo: result.trackingNo,
+      message: `已撤销 ${result.deliveryNo} 里 ${result.trackingNo} 的签收，这票货回到「派送中」。客户轨迹里记了一条「撤销误签收」。`,
+    });
+  });
+
   // 删除派送单
   app.delete("/admin/lastmile/orders", async (req, res) => {
     const auth = requireRole(req, res, ["staff", "admin"]);
