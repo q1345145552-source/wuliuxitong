@@ -257,6 +257,31 @@ function buildDataWithLines(n: number, over: Partial<Record<string, unknown>> = 
   return data as LastmileExportData;
 }
 
+/** 取某一行的行高（没写 ht 就返回 null） */
+function rowHeight(sheet: string, row: number): number | null {
+  const rowTag = new RegExp(`<(?:\\w+:)?row\\b[^>]*\\br="${row}"[^>]*>`).exec(sheet);
+  if (!rowTag) return null;
+  const ht = /\bht="([\d.]+)"/.exec(rowTag[0]);
+  return ht ? Number(ht[1]) : null;
+}
+
+/**
+ * 生产上真实存在的最长品名（14 个产品、116 个字，WD000254 / SZ260702562-1）。
+ * 老板 2026-09-11 第三次报「导出的单品类不全」就是这一类 —— 格子里字是全的，
+ * 行高写死导致纸上只看得到前两个名字。
+ */
+const LONG_NAME = "排气管防摔棒 / 160线束夹支架 / 改装手把胶套 / 气门芯盖 / 龙头压码 / 机油滤芯盖放油螺丝 / 车把堵头 / 后备箱储物盒 / 后备箱垫 / 多功能前挂钩+带钩 / 车把挂钩 / 电门锁盖 / 后备箱隔物板 / 包装袋";
+const MEDIUM_NAME = "前仓垫 / 反光牌 / 夜间警示灯 / 屏幕膜 / 方向套盘 / 电门锁盖 / 车把组合 / 防摔棒 / 隔音棉";
+
+/** 三票货：一个超长品名、一个中等、一个短的（短的用来盯「没事别改行高」） */
+function buildMixedNameData(scope: "customer" | "container"): LastmileExportData {
+  const data = buildDataWithLines(3, { scope }) as any;
+  data.customers[0].shipments[0].itemName = LONG_NAME;
+  data.customers[0].shipments[1].itemName = MEDIUM_NAME;
+  data.customers[0].shipments[2].itemName = "导板 / 电链锯条";
+  return data as LastmileExportData;
+}
+
 async function renderZip(data: LastmileExportData, templatePath: string) {
   const bytes = await buildLastmileTemplateWorkbook(data, fs.readFileSync(templatePath));
   const zip = await JSZip.loadAsync(bytes);
@@ -468,15 +493,66 @@ async function main(): Promise<void> {
       );
     }
   });
+
+  await checkAsync("15) 客户签收单：长品名把行高撑开到放得下，短品名行高一个像素不动", async () => {
+    const { sheetOf, shared } = await renderZip(buildMixedNameData("customer"), CUSTOMER_TEMPLATE);
+    const cn = await sheetOf("sheet1");
+    const th = await sheetOf("sheet2");
+
+    // 字必须是全的（这是 2026-09-10 修好的部分，防改坏）
+    assert.equal(cellValue(cn, shared, "D6"), LONG_NAME, "中文页第 1 行品名被截断了");
+    assert.equal(cellValue(th, shared, "D8"), LONG_NAME, "泰文页第 1 行品名被截断了");
+
+    // 中文页：D 列宽 16.29、模板原行高 35（约 2.6 行）；116 字要 13 行，必须撑开
+    const cnLong = rowHeight(cn, 6);
+    assert.ok(cnLong != null && cnLong >= 13 * 13.5, `中文页长品名那行没撑开（行高 ${cnLong}，至少要 ${13 * 13.5}）`);
+    const cnMedium = rowHeight(cn, 7);
+    assert.ok(cnMedium != null && cnMedium >= 6 * 13.5, `中文页中等品名那行没撑开（行高 ${cnMedium}）`);
+    assert.equal(rowHeight(cn, 8), 35, "短品名那行的行高被动了，短单子的单据样式不该变");
+    for (const row of [9, 15]) {
+      assert.equal(rowHeight(cn, row), 35, `中文页空白行 ${row} 的行高被动了`);
+    }
+
+    // 泰文页：D 列宽 18、模板原行高 20（约 1.4 行），比中文页更挤
+    const thLong = rowHeight(th, 8);
+    assert.ok(thLong != null && thLong >= 11 * 13.5, `泰文页长品名那行没撑开（行高 ${thLong}）`);
+    assert.equal(rowHeight(th, 10), 20, "泰文页短品名那行的行高被动了");
+  });
+
+  await checkAsync("16) 整柜拆柜派送清单：同样按换行行数撑开，短品名保持模板行高 60", async () => {
+    const { sheetOf, shared } = await renderZip(buildMixedNameData("container"), TEMPLATE);
+    const sheet = await sheetOf("sheet1");
+    assert.equal(cellValue(sheet, shared, "C10"), LONG_NAME, "整柜清单第 1 行品名被截断了");
+    const long = rowHeight(sheet, 10);
+    // C 列宽 25.48、原行高 60（约 4.4 行）；116 字要 8 行
+    assert.ok(long != null && long >= 8 * 13.5, `长品名那行没撑开（行高 ${long}）`);
+    assert.equal(rowHeight(sheet, 12), 60, "短品名那行的行高被动了");
+    assert.equal(rowHeight(sheet, 34), 60, "空白明细行的行高被动了");
+  });
+
+  await checkAsync("17) 撑开行高不许把 row 标签写坏：customHeight 在、序号件数合计照旧", async () => {
+    const { sheetOf, shared } = await renderZip(buildMixedNameData("customer"), CUSTOMER_TEMPLATE);
+    const cn = await sheetOf("sheet1");
+    // 改过的那一行必须带 customHeight="1"，否则 Excel 压根不看 ht
+    const rowTag = /<(?:\w+:)?row\b[^>]*\br="6"[^>]*>/.exec(cn);
+    assert.ok(rowTag, "找不到第 6 行");
+    assert.match(rowTag![0], /customHeight="1"/, "撑开行高后 customHeight 丢了，Excel 会忽略 ht");
+    assert.equal((rowTag![0].match(/\bht="/g) ?? []).length, 1, `row 标签里出现了多个 ht：${rowTag![0]}`);
+    // 同一行其它格子和页内合计不受影响
+    assert.equal(cellValue(cn, shared, "B6"), "1", "序号被改坏了");
+    assert.equal(cellValue(cn, shared, "C6"), "SZ000000001", "运单号被改坏了");
+    assert.equal(cellValue(cn, shared, "E6"), "1", "件数被改坏了");
+    assert.equal(cellValue(cn, shared, "E16"), "6", "件数合计被改坏了");
+  });
 }
 
 main()
   .then(() => {
     if (failures.length > 0) {
-      console.error(`\n${failures.length}/13 项不通过：${failures.join("；")}`);
+      console.error(`\n${failures.length}/17 项不通过：${failures.join("；")}`);
       process.exit(1);
     }
-    console.log("整柜拆柜派送清单导出：13 项全部通过");
+    console.log("整柜拆柜派送清单导出：17 项全部通过");
   })
   .catch((error) => {
     console.error(error);

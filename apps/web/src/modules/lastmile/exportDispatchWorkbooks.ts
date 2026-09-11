@@ -250,6 +250,107 @@ function setFormulaCell(sheetXml: string, ref: string, formula: string, cachedVa
   return replaceCellXml(sheetXml, ref, "n", `<${prefix}f>${escapeXml(formula)}</${prefix}f><${prefix}v>${Number.isFinite(cachedValue) ? String(cachedValue) : "0"}</${prefix}v>`);
 }
 
+/**
+ * 品名那一格的行高 —— 2026-09-11 老板第三次报「导出的单品类不全」的真原因。
+ *
+ * 9-10 修的是**数据**：一票多产品的货，品名从只印第一个改成「鞋 / 包 / 帽」全印。
+ * 数据确实全了（本机用真模板 + 真生产品名生成过文件，格子里 116 个字一个不少），
+ * **但纸上还是看不全** —— 三张表的品名列都开着自动换行，行高却是模板写死的：
+ *   · 客户签收单-中文 D 列 宽 16.29、行高 35  → 只露得出 2 行多
+ *   · 客户签收单-泰文 D 列 宽 18、行高 20    → 只露得出 1 行多
+ *   · 整柜拆柜派送清单 C 列 宽 25.48、行高 60 → 只露得出 4 行多
+ * 生产上进过派送单的 1062 票里，有 53 票的品名超过一行能放的量（最长 14 个产品名、
+ * 116 个字，要 13 行才写得下），于是客户手上那张单只看到前两个品名。
+ *
+ * 所以这里按**实际要换几行**把行高撑开。95% 的货（20 字以内）行高一个像素都不变。
+ */
+function wrappedLineCount(text: string, columnWidthChars: number): number {
+  // Excel 的列宽单位是「默认字体下的字符宽」，中日韩文字大约占两个单位
+  const capacity = Math.max(1, Math.floor(columnWidthChars));
+  let lines = 1;
+  let used = 0;
+  for (const char of text) {
+    const width = /[\u1100-\u115F\u2E80-\uA4CF\uAC00-\uD7A3\uF900-\uFAFF\uFE30-\uFE4F\uFF00-\uFF60\uFFE0-\uFFE6]/.test(char) ? 2 : 1;
+    if (used + width > capacity) {
+      lines += 1;
+      used = width;
+    } else {
+      used += width;
+    }
+  }
+  return lines;
+}
+
+/** 模板字体是 10pt，一行约 13.5pt；上下各留一点余量，免得最后一行被边框压掉半截 */
+const WRAP_LINE_HEIGHT = 13.5;
+/** 再长也不无限撑（防脏数据把一页拉成几米长）；20 行放得下 300 多个字 */
+const WRAP_MAX_LINES = 20;
+
+/**
+ * 这一行要多高才放得下这段文字。放得下就返回 null —— 不动模板原来的行高，
+ * 短品名的单子导出来和以前一模一样。
+ */
+function wrapRowHeight(text: string, columnWidthChars: number, baseHeight: number): number | null {
+  if (!text) return null;
+  const needed = Math.min(wrappedLineCount(text, columnWidthChars), WRAP_MAX_LINES);
+  const height = Math.ceil(needed * WRAP_LINE_HEIGHT + 4);
+  return height > baseHeight ? height : null;
+}
+
+function rowPattern(sheetXml: string, row: number): RegExp {
+  const tag = `${xmlPrefix(sheetXml, "row")}row`;
+  return new RegExp(`<${escapeRegExp(tag)}\\b([^>]*\\br="${row}"[^>]*?)(\\s*\\/?)>`);
+}
+
+/** 改某一行的行高；顺手把 customHeight 置上，不然 Excel 会忽略 ht */
+function setRowHeight(sheetXml: string, row: number, height: number): string {
+  const tag = `${xmlPrefix(sheetXml, "row")}row`;
+  const pattern = rowPattern(sheetXml, row);
+  // 模板里没这一行就原样返回 —— 别为了行高把整个导出搞挂
+  if (!pattern.test(sheetXml)) return sheetXml;
+  return sheetXml.replace(pattern, (_match, attributes: string, closing: string) => {
+    const kept = attributes.replace(/\s+ht="[^"]*"/g, "").replace(/\s+customHeight="[^"]*"/g, "");
+    return `<${tag}${kept} ht="${height}" customHeight="1"${closing}>`;
+  });
+}
+
+/**
+ * 模板自己写的列宽 / 行高 —— 不在代码里抄死数字，模板改了这边跟着变。
+ * 读不到就用 Excel 的默认值（列宽 8.43、行高 15）。
+ */
+function columnWidthOf(sheetXml: string, column: string): number {
+  const index = column.split("").reduce((acc, ch) => acc * 26 + (ch.charCodeAt(0) - 64), 0);
+  const colsBlock = new RegExp(`<(?:[A-Za-z_][\\w.-]*:)?cols>([\\s\\S]*?)<\\/(?:[A-Za-z_][\\w.-]*:)?cols>`).exec(sheetXml);
+  if (colsBlock) {
+    for (const match of colsBlock[1].matchAll(/min="(\d+)"[^>]*?max="(\d+)"[^>]*?width="([\d.]+)"/g)) {
+      if (index >= Number(match[1]) && index <= Number(match[2])) return Number(match[3]);
+    }
+  }
+  const fallback = /defaultColWidth="([\d.]+)"/.exec(sheetXml);
+  return fallback ? Number(fallback[1]) : 8.43;
+}
+
+function rowHeightOf(sheetXml: string, row: number): number {
+  const match = rowPattern(sheetXml, row).exec(sheetXml);
+  const ht = match ? /\bht="([\d.]+)"/.exec(match[1]) : null;
+  if (ht) return Number(ht[1]);
+  const fallback = /defaultRowHeight="([\d.]+)"/.exec(sheetXml);
+  return fallback ? Number(fallback[1]) : 15;
+}
+
+/** 写品名，并在一行放不下时把行高撑开（列宽和原行高都从模板里读） */
+function setItemNameCell(
+  sheetXml: string,
+  column: string,
+  row: number,
+  itemName: string,
+  strings: SharedStringsEditor,
+): string {
+  const height = wrapRowHeight(itemName ?? "", columnWidthOf(sheetXml, column), rowHeightOf(sheetXml, row));
+  const xml = setTextCell(sheetXml, `${column}${row}`, itemName, strings);
+  return height == null ? xml : setRowHeight(xml, row, height);
+}
+
 function columnName(index: number): string {
   let value = index;
   let output = "";
@@ -415,7 +516,8 @@ function patchInternalTemplate(
   lines.forEach((line, index) => {
     const row = 10 + index;
     xml = setTextCell(xml, `B${row}`, line.trackingNo, strings);
-    xml = setTextCell(xml, `C${row}`, line.itemName, strings);
+    // 同客户签收单：品名按实际换行行数撑开行高（2026-09-11）
+    xml = setItemNameCell(xml, "C", row, line.itemName, strings);
     xml = setNumberCell(xml, `D${row}`, line.packageCount);
     xml = setOptionalNumberCell(xml, `E${row}`, line.volumeM3);
     xml = setOptionalNumberCell(xml, `F${row}`, line.weightKg);
@@ -485,7 +587,8 @@ function patchCustomerChineseTemplate(
     const row = 6 + index;
     xml = setNumberCell(xml, `B${row}`, sequenceStart + index + 1);
     xml = setTextCell(xml, `C${row}`, line.trackingNo, strings);
-    xml = setTextCell(xml, `D${row}`, line.itemName, strings);
+    // 品名一行放不下就把行高撑开（2026-09-11：数据早就全了，是纸上被行高切掉）
+    xml = setItemNameCell(xml, "D", row, line.itemName, strings);
     xml = setNumberCell(xml, `E${row}`, line.packageCount);
     xml = setOptionalNumberCell(xml, `F${row}`, line.volumeM3);
     xml = setOptionalNumberCell(xml, `G${row}`, line.weightKg);
@@ -530,7 +633,8 @@ function patchCustomerThaiTemplate(
     xml = setNumberCell(xml, `A${row}`, sequenceStart + index + 1);
     xml = setTextCell(xml, `B${row}`, line.clientName, strings);
     xml = setTextCell(xml, `C${row}`, line.clientId, strings);
-    xml = setTextCell(xml, `D${row}`, line.itemName, strings);
+    // 品名一行放不下就把行高撑开（2026-09-11：数据早就全了，是纸上被行高切掉）
+    xml = setItemNameCell(xml, "D", row, line.itemName, strings);
     xml = setNumberCell(xml, `E${row}`, line.packageCount);
     xml = setOptionalNumberCell(xml, `F${row}`, line.volumeM3);
     xml = setOptionalNumberCell(xml, `G${row}`, line.weightKg);
