@@ -542,7 +542,7 @@ export default function ClientWhrConsolidationPage() {
 
             {/* -------- 价格信息 -------- */}
             <div style={{ fontSize: 13, color: "var(--t-muted)", marginBottom: 8 }}>
-              普货：{detail.unitPriceNormal}元/方 · 商检：{detail.unitPriceInspection}元/方 · 敏感：{detail.unitPriceSensitive}元/方
+              普货：{detail.unitPriceNormal}元/方 · 商检货：{detail.unitPriceInspection}元/方 · 敏感货：{detail.unitPriceSensitive}元/方
             </div>
 
             {/* -------- 总费用及其算式 -------- */}
@@ -762,7 +762,7 @@ export default function ClientWhrConsolidationPage() {
                                     <td style={{ ...tdS, padding: "3px 6px", fontSize: 11 }}>{it.volumeM3 != null ? it.volumeM3.toFixed(3) : "-"}</td>
                                     <td style={{ ...tdS, padding: "3px 6px", fontSize: 11 }}>{it.material}</td>
                                     <td style={{ ...tdS, padding: "3px 6px", fontSize: 11 }}>{it.cargoValue}</td>
-                                    <td style={{ ...tdS, padding: "3px 6px", fontSize: 11 }}>{it.cargoType === "inspection" ? "商检" : it.cargoType === "sensitive" ? "敏感" : "普货"}</td>
+                                    <td style={{ ...tdS, padding: "3px 6px", fontSize: 11 }}>{it.cargoType === "inspection" ? "商检货" : it.cargoType === "sensitive" ? "敏感货" : "普货"}</td>
                                     <td style={{ ...tdS, padding: "3px 6px", fontSize: 11 }}>
                                       {it.productImageBase64
                                         ? <button onClick={() => setPreviewImage(it.productImageBase64)} style={{ ...btnGray, padding: "2px 8px", fontSize: 11 }}>查看图片</button>
@@ -880,8 +880,8 @@ export default function ClientWhrConsolidationPage() {
                         <label style={{ fontSize: 11, color: "var(--t-muted)" }}>类型</label>
                         <select value={row.cargoType} onChange={e => { const cp = [...itemForms]; cp[idx] = { ...cp[idx], cargoType: e.target.value }; setItemForms(cp); }} style={{ ...fi, marginTop: 2 }}>
                           <option value="normal">普货</option>
-                          <option value="inspection">商检</option>
-                          <option value="sensitive">敏感</option>
+                          <option value="inspection">商检货</option>
+                          <option value="sensitive">敏感货</option>
                         </select>
                       </div>
                     </div>

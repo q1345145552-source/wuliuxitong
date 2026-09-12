@@ -1052,7 +1052,7 @@ export default function ClientHomePage() {
                         ])
                       : [[item.itemName || "未填品名", "—"]];
                     const isExpanded = !!openDetailsByOrder[item.id];
-                    const cargoTypeLabel = item.cargoType === "inspection" ? "商检" : item.cargoType === "sensitive" ? "敏感" : "普货";
+                    const cargoTypeLabel = item.cargoType === "inspection" ? "商检货" : item.cargoType === "sensitive" ? "敏感货" : "普货";
                     const images = detailImagesCache[item.id] ?? [];
                     const totalVolumeM3 = totalVolumeOf(item);
                     const totalWeightKg = totalWeightOf(item);
@@ -1140,7 +1140,7 @@ export default function ClientHomePage() {
                                           <td style={{ padding: "4px 6px", textAlign: "center" }}>{p.productQuantity ?? "—"}</td>
                                           <td style={{ padding: "4px 6px", textAlign: "center", fontSize: 11 }}>{p.lengthCm && p.widthCm && p.heightCm ? `${p.lengthCm}×${p.widthCm}×${p.heightCm}` : "—"}</td>
                                           <td style={{ padding: "4px 6px", textAlign: "center" }}>{formatMetric(p.weightKg, 2)}</td>
-                                          <td style={{ padding: "4px 6px", textAlign: "center" }}>{p.cargoType === "inspection" ? "商检" : p.cargoType === "sensitive" ? "敏感" : "普货"}</td>
+                                          <td style={{ padding: "4px 6px", textAlign: "center" }}>{p.cargoType === "inspection" ? "商检货" : p.cargoType === "sensitive" ? "敏感货" : "普货"}</td>
                                           <td style={{ padding: "4px 6px", textAlign: "center", fontSize: 11 }}>{p.domesticTrackingNo || "—"}</td>
                                         </tr>
                                       ))}

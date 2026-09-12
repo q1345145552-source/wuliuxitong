@@ -7,7 +7,7 @@ import path from "node:path";
 import vm from "node:vm";
 import ts from "typescript";
 import { createRequire } from "node:module";
-import { parseCargoType } from "../packages/shared-types/cargo-type";
+import { CARGO_TYPE_ZH, CARGO_TYPE_HINT, cargoTypeLabel, parseCargoType, strictestCargoType } from "../packages/shared-types/cargo-type";
 
 const failures: string[] = [];
 let total = 0;
@@ -121,6 +121,8 @@ async function clientImport(rawCargo: unknown, boxes = 2, dimensions: number[] |
   const xlsx = {...XLSX, writeFile(wb: any) { workbook = wb; }};
   evalTs(sourceFunction(clientFile, "downloadTemplate") + "\nmodule.exports=downloadTemplate;", {XLSX: xlsx})();
   assert.ok(workbook);
+  const downloadedHeaders: string[] = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]], {header: 1})[0];
+  assert.equal(downloadedHeaders.find(h => h.includes("货型")), "货型（普货/商检货/敏感货，默认普货）");
   const headers: string[] = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]], {header: 1})[0].filter((h: string) => !legacy || !h.includes("货型"));
   const values = headers.map(h => {
     if (h.includes("货型")) return rawCargo;
@@ -169,6 +171,16 @@ async function clientImport(rawCargo: unknown, boxes = 2, dimensions: number[] |
   return {disabled: submit.props.disabled, requests};
 }
 async function main() {
+  await check("货型统一全称，旧简称/新全称输入映射相同且最严口径不变", () => {
+    assert.deepEqual(CARGO_TYPE_ZH, {normal: "普货", inspection: "商检货", sensitive: "敏感货"});
+    assert.equal(cargoTypeLabel(["normal", "inspection", "sensitive", "inspection"]), "普货 / 商检货 / 敏感货");
+    assert.equal(CARGO_TYPE_HINT, "货型只能填「普货」「商检货」「敏感货」之一，留空按普货");
+    for (const [raw, value] of [["商检", "inspection"], ["商检货", "inspection"], ["敏感", "sensitive"], ["敏感货", "sensitive"]]) {
+      assert.equal(parseCargoType(raw)?.value, value);
+    }
+    assert.equal(strictestCargoType(["normal", "inspection", "sensitive"]), "sensitive");
+    assert.equal(strictestCargoType(["normal", "inspection"]), "inspection");
+  });
   await check("货型别名只接受自有键，继承属性及其他非法值全部拒绝", () => {
     for (const raw of ["constructor", "__proto__", "toString", "hasOwnProperty", "invalid", {}, true, 1]) {
       assert.equal(parseCargoType(raw), null, String(raw));
@@ -245,6 +257,17 @@ async function main() {
       assert.equal(result.requests[0].cargoType, "inspection");
     }
   });
+  await check("客户端真模板上传保留新旧货型中文与英文枚举兼容", async () => {
+    for (const [raw, expected] of [["商检", "inspection"], ["商检货", "inspection"], ["敏感", "sensitive"], ["敏感货", "sensitive"], ["inspection", "inspection"], ["sensitive", "sensitive"]]) {
+      const result = await clientImport(raw);
+      assert.equal(result.disabled, false);
+      assert.equal(result.requests.length, 1);
+      assert.equal(result.requests[0].cargoType, expected);
+      assert.equal(result.requests[0].packageCount, 2);
+      assert.equal(result.requests[0].weightKg, 8);
+      assert.equal(result.requests[0].volumeM3, 0.048);
+    }
+  });
   await check("客户端真实提交入口：constructor/普通非法值均禁用，老模板和空尺寸仍可用", async () => {
     for (const raw of ["constructor", "invalid"]) {
       const result = await clientImport(raw); assert.equal(result.disabled, true); assert.equal(result.requests.length, 0);
@@ -255,7 +278,7 @@ async function main() {
     assert.equal(noDimensions.requests.length, 1); assert.equal(noDimensions.requests[0].volumeM3, undefined);
     assert.equal(noDimensions.requests[0].weightKg, 8);
   });
-  await check("员工/管理员真实模板 XLSX 往返：constructor 拒绝、商检和旧模板可提交", async () => {
+  await check("员工/管理员真实模板 XLSX 往返：全称表头、新旧货型兼容、constructor 拒绝", async () => {
     const cargoModule = await import("../packages/shared-types/cargo-type");
     const staffModule = await import("../apps/web/src/modules/staff/batchOrderImport");
     for (const role of ["staff", "admin"]) {
@@ -269,7 +292,12 @@ async function main() {
         batchTemplateDownloading: false, setBatchTemplateDownloading() {}, setMessage() {}, setToast() {},
       })();
       assert.ok(workbook);
-      for (const value of ["constructor", "商检", "legacy"]) {
+      const downloadedHeaders: string[] = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]], {header:1})[0];
+      const cargoHeader = downloadedHeaders.find(h => h.includes("货型"));
+      assert.ok(cargoHeader);
+      assert.doesNotMatch(cargoHeader, /商检(?!货)|敏感(?!货)/);
+      for (const value of ["constructor", "商检", "商检货", "敏感", "敏感货", "inspection", "sensitive", "legacy"]) {
+        const expected = value === "legacy" ? "normal" : ["敏感", "敏感货", "sensitive"].includes(value) ? "sensitive" : "inspection";
         const headers: string[] = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]], {header:1})[0].filter((h: string) => value !== "legacy" || !h.includes("货型"));
         const values = headers.map(h => {
           if (h.includes("货型")) return value;
@@ -292,7 +320,7 @@ async function main() {
         if (role === "staff") {
           const parsed = staffModule.parseStaffBatchRows(rawRows);
           if (value === "constructor") {assert.equal(parsed.orders.length, 0); assert.ok(parsed.issues.some(issue => issue.message.includes("constructor")));}
-          else {assert.equal(parsed.issues.length, 0, JSON.stringify(parsed.issues)); assert.equal(parsed.orders[0].cargoType, value === "legacy" ? "normal" : "inspection");}
+          else {assert.equal(parsed.issues.length, 0, JSON.stringify(parsed.issues)); assert.equal(parsed.orders[0].cargoType, expected);}
         } else {
           const requests: Row[] = []; let errors: Row[] = [];
           const handler = sourceNode(file, n => ts.isArrowFunction(n) && n.getText().includes("await createStaffOrder({") && n.getText().includes("setBatchFailures(failures)"));
@@ -302,7 +330,7 @@ async function main() {
             loadOrders: async () => {}, createStaffOrder: async (payload: Row) => {requests.push(JSON.parse(JSON.stringify(payload)));},
           })();
           if (value === "constructor") {assert.equal(requests.length, 0); assert.equal(errors.length, 1); assert.match(errors[0].reason, /constructor/);}
-          else {assert.equal(errors.length, 0); assert.equal(requests.length, 1); assert.equal(requests[0].cargoType, value === "legacy" ? "normal" : "inspection");}
+          else {assert.equal(errors.length, 0); assert.equal(requests.length, 1); assert.equal(requests[0].cargoType, expected);}
         }
       }
     }

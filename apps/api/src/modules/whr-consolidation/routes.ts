@@ -30,7 +30,7 @@ const MAX_CUSTOMERS_PER_PLAN = 100;
 
 /** 货型取值 */
 const CARGO_TYPES = ["normal", "inspection", "sensitive"];
-const CARGO_TYPE_ZH: Record<string, string> = { normal: "普货", inspection: "商检", sensitive: "敏感" };
+const CARGO_TYPE_ZH: Record<string, string> = { normal: "普货", inspection: "商检货", sensitive: "敏感货" };
 
 /**
  * 允许管理员改货型 / 删单件货物的状态（用户 2026-08-15 拍板）。
@@ -143,7 +143,7 @@ export function registerWhrConsolidationRoutes(app: MinimalHttpApp): void {
       seenClientIds.add(c.clientId.trim());
       const priceChecks: Array<[string, number | undefined]> = [
         ["普货", c.unitPriceNormal],
-        ["商检", c.unitPriceInspection],
+        ["商检货", c.unitPriceInspection],
         ["敏感货", c.unitPriceSensitive],
       ];
       for (const [label, val] of priceChecks) {
@@ -519,7 +519,7 @@ export function registerWhrConsolidationRoutes(app: MinimalHttpApp): void {
 
     const priceChecks: Array<[string, number | undefined]> = [
       ["普货", body.unitPriceNormal],
-      ["商检", body.unitPriceInspection],
+      ["商检货", body.unitPriceInspection],
       ["敏感货", body.unitPriceSensitive],
     ];
     for (const [label, val] of priceChecks) {

@@ -342,7 +342,7 @@ export default function StaffWhrConsolidationPage() {
     if (!selectedPlanId) return;
     if (!addClientId) { setToast("请选择客户"); return; }
     const checks: Array<[string, string]> = [
-      ["普货", addPriceNormal], ["商检", addPriceInspection], ["敏感货", addPriceSensitive],
+      ["普货", addPriceNormal], ["商检货", addPriceInspection], ["敏感货", addPriceSensitive],
     ];
     for (const [label, v] of checks) {
       if (!v || Number(v) <= 0) { setToast(`${label}单价必须大于0`); return; }
@@ -886,7 +886,7 @@ export default function StaffWhrConsolidationPage() {
                                     <td style={{ ...tdS, padding: "4px 8px", fontSize: 11 }}>{it.packageCount}</td>
                                     <td style={{ ...tdS, padding: "4px 8px", fontSize: 11 }}>{it.volumeM3 != null ? it.volumeM3 : "-"}</td>
                                     <td style={{ ...tdS, padding: "4px 8px", fontSize: 11 }}>{it.totalWeightKg != null ? it.totalWeightKg : "-"}</td>
-                                    <td style={{ ...tdS, padding: "4px 8px", fontSize: 11 }}>{it.cargoType === "inspection" ? "商检" : it.cargoType === "sensitive" ? "敏感" : "普货"}</td>
+                                    <td style={{ ...tdS, padding: "4px 8px", fontSize: 11 }}>{it.cargoType === "inspection" ? "商检货" : it.cargoType === "sensitive" ? "敏感货" : "普货"}</td>
                                   </tr>
                                 ))}</tbody>
                               </table>
@@ -1114,7 +1114,7 @@ export default function StaffWhrConsolidationPage() {
                         <span style={{ fontSize: 13, color: "var(--t-muted)" }}>{c.totalVolumeM3}方 · {c.totalFee ? `¥${c.totalFee.toLocaleString()}` : ""}</span>
                       </div>
                       <div style={{ fontSize: 13, color: "var(--t-muted)", marginTop: 4, display: "flex", alignItems: "center", gap: 10 }}>
-                        <span>普货：{c.unitPriceNormal}元/方 · 商检：{c.unitPriceInspection}元/方 · 敏感：{c.unitPriceSensitive}元/方</span>
+                        <span>普货：{c.unitPriceNormal}元/方 · 商检货：{c.unitPriceInspection}元/方 · 敏感货：{c.unitPriceSensitive}元/方</span>
                         {/* 已装柜/已发运的计划不给动参与名单，和「新增客户」同一条口径 */}
                         {["planning", "collecting"].includes(planDetail.status) && (
                           <button onClick={() => handleRemoveCustomer(c)} disabled={removingCustomerId === c.id} style={{ ...btnGray, padding: "3px 10px", fontSize: 12, color: "var(--c-red-deep)", borderColor: "#fecaca" }}>{removingCustomerId === c.id ? "移除中..." : "移除客户"}</button>
@@ -1169,7 +1169,7 @@ export default function StaffWhrConsolidationPage() {
                                           <td style={{ ...tdS, padding: "3px 6px", fontSize: 11 }}>{it.productName}</td>
                                           <td style={{ ...tdS, padding: "3px 6px", fontSize: 11 }}>{it.packageCount}</td>
                                           <td style={{ ...tdS, padding: "3px 6px", fontSize: 11 }}>{it.volumeM3 != null ? (typeof it.volumeM3 === "number" ? it.volumeM3.toFixed(4) : it.volumeM3) : "-"}</td>
-                                          <td style={{ ...tdS, padding: "3px 6px", fontSize: 11 }}>{it.cargoType === "inspection" ? "商检" : it.cargoType === "sensitive" ? "敏感" : "普货"}</td>
+                                          <td style={{ ...tdS, padding: "3px 6px", fontSize: 11 }}>{it.cargoType === "inspection" ? "商检货" : it.cargoType === "sensitive" ? "敏感货" : "普货"}</td>
                                         </tr>
                                       ))}
                                     </tbody>
@@ -1269,7 +1269,7 @@ export default function StaffWhrConsolidationPage() {
                             <td style={{ ...tdS, padding: "3px 6px", fontSize: 11 }}>{it.packageCount}</td>
                             <td style={{ ...tdS, padding: "3px 6px", fontSize: 11 }}>{it.volumeM3 != null ? (typeof it.volumeM3 === "number" ? it.volumeM3.toFixed(4) : it.volumeM3) : "-"}</td>
                             <td style={{ ...tdS, padding: "3px 6px", fontSize: 11 }}>{it.material || "-"}</td>
-                            <td style={{ ...tdS, padding: "3px 6px", fontSize: 11 }}>{it.cargoType === "inspection" ? "商检" : it.cargoType === "sensitive" ? "敏感" : "普货"}</td>
+                            <td style={{ ...tdS, padding: "3px 6px", fontSize: 11 }}>{it.cargoType === "inspection" ? "商检货" : it.cargoType === "sensitive" ? "敏感货" : "普货"}</td>
                           </tr>
                         ))}
                       </tbody>
@@ -1340,8 +1340,8 @@ export default function StaffWhrConsolidationPage() {
                   <label style={fl}>修改单价（可选，留空不修改）</label>
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
                     <div><label style={{ fontSize: 11, color: "var(--t-muted)" }}>普货单价</label><input type="number" value={rejectPriceNormal} onChange={e => setRejectPriceNormal(e.target.value)} placeholder="留空不修改" style={fi} /></div>
-                    <div><label style={{ fontSize: 11, color: "var(--t-muted)" }}>商检单价</label><input type="number" value={rejectPriceInspection} onChange={e => setRejectPriceInspection(e.target.value)} placeholder="留空不修改" style={fi} /></div>
-                    <div><label style={{ fontSize: 11, color: "var(--t-muted)" }}>敏感单价</label><input type="number" value={rejectPriceSensitive} onChange={e => setRejectPriceSensitive(e.target.value)} placeholder="留空不修改" style={fi} /></div>
+                    <div><label style={{ fontSize: 11, color: "var(--t-muted)" }}>商检货单价</label><input type="number" value={rejectPriceInspection} onChange={e => setRejectPriceInspection(e.target.value)} placeholder="留空不修改" style={fi} /></div>
+                    <div><label style={{ fontSize: 11, color: "var(--t-muted)" }}>敏感货单价</label><input type="number" value={rejectPriceSensitive} onChange={e => setRejectPriceSensitive(e.target.value)} placeholder="留空不修改" style={fi} /></div>
                   </div>
                 </div>
                 <div style={{ marginTop: 14, display: "flex", gap: 8 }}>
@@ -1380,7 +1380,7 @@ export default function StaffWhrConsolidationPage() {
                                   <td style={{ ...tdS, padding: "3px 6px", fontSize: 11 }}>{it.packageCount}</td>
                                   <td style={{ ...tdS, padding: "3px 6px", fontSize: 11 }}>{it.volumeM3 != null ? (typeof it.volumeM3 === "number" ? it.volumeM3.toFixed(3) : it.volumeM3) : "-"}</td>
                                   <td style={{ ...tdS, padding: "3px 6px", fontSize: 11 }}>{it.totalWeightKg != null ? it.totalWeightKg : "-"}</td>
-                                  <td style={{ ...tdS, padding: "3px 6px", fontSize: 11 }}>{it.cargoType === "inspection" ? "商检" : it.cargoType === "sensitive" ? "敏感" : "普货"}</td>
+                                  <td style={{ ...tdS, padding: "3px 6px", fontSize: 11 }}>{it.cargoType === "inspection" ? "商检货" : it.cargoType === "sensitive" ? "敏感货" : "普货"}</td>
                                 </tr>
                               ))}
                             </tbody>
@@ -1512,11 +1512,11 @@ export default function StaffWhrConsolidationPage() {
                   <input type="number" value={addPriceNormal} onChange={e => setAddPriceNormal(e.target.value)} style={fi} />
                 </div>
                 <div>
-                  <label style={fl}>商检单价 (元/方)</label>
+                  <label style={fl}>商检货单价 (元/方)</label>
                   <input type="number" value={addPriceInspection} onChange={e => setAddPriceInspection(e.target.value)} style={fi} />
                 </div>
                 <div>
-                  <label style={fl}>敏感单价 (元/方)</label>
+                  <label style={fl}>敏感货单价 (元/方)</label>
                   <input type="number" value={addPriceSensitive} onChange={e => setAddPriceSensitive(e.target.value)} style={fi} />
                 </div>
               </div>

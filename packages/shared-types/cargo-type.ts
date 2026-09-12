@@ -1,5 +1,5 @@
 /**
- * 货型（普货 / 商检 / 敏感）—— 2026-09-11 老板：「批量上传运单的模板不正确，
+ * 货型（普货 / 商检货 / 敏感货）—— 2026-09-11 老板：「批量上传运单的模板不正确，
  * 需要加一个货型，不然默认普货。」
  *
  * 库里存的是 `normal` / `inspection` / `sensitive`（schema.prisma 上就写着这三个），
@@ -16,8 +16,8 @@ export type CargoType = (typeof CARGO_TYPES)[number];
 /** 存的值 → 中文（跟 ShipmentTableGrid 的 cargoTypeLabelOf 一致） */
 export const CARGO_TYPE_ZH: Record<CargoType, string> = {
   normal: "普货",
-  inspection: "商检",
-  sensitive: "敏感",
+  inspection: "商检货",
+  sensitive: "敏感货",
 };
 
 /** Excel 里可能出现的各种写法。全角、空格、大小写都先抹平再比。 */
@@ -64,7 +64,7 @@ export function parseCargoType(raw: unknown): CargoTypeParse | null {
 }
 
 /** 填错时给人看的那句话 —— 三处调用方共用一份，别各写一句 */
-export const CARGO_TYPE_HINT = "货型只能填「普货」「商检」「敏感」之一，留空按普货";
+export const CARGO_TYPE_HINT = "货型只能填「普货」「商检货」「敏感货」之一，留空按普货";
 
 /**
  * 一张运单上多条产品行货型不一样时，运单这一层记哪个。
@@ -82,7 +82,7 @@ export function strictestCargoType(values: readonly CargoType[]): CargoType {
  * 一票货在列表/导出里显示的货型（2026-09-11）。
  *
  * 一张运单底下几条产品行可能货型不一样，导出是一票一行，所以去重后拼起来：
- * 「普货 / 商检」。没有产品行的老单退回运单（或订单）自己的货型。
+ * 「普货 / 商检货」。没有产品行的老单退回运单（或订单）自己的货型。
  * ⚠️ 认不出来的值按普货显示 —— 跟三端的 cargoTypeLabelOf 口径保持一致，
  *    别在导出里冒出第四种说法。
  */

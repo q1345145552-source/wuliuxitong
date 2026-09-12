@@ -854,7 +854,7 @@ export default function StaffHomePage() {
        *    中间插一列会让粘进来的数据整体错位（比加一列认错列更惨）。
        *    放在最后时老文件顶多是这一格空着，空着就是普货，跟改之前一模一样。
        */
-      "货型（普货/商检/敏感，默认普货）": "",
+      "货型（普货/商检货/敏感货，默认普货）": "",
     }]);
     ws["!cols"] = [
       { wch: 12 },  // 唛头
@@ -896,8 +896,8 @@ export default function StaffHomePage() {
       ["9. 到仓日期写成 2026-08-29；2026/08/29、2026.08.29、2026年8月29日 也认。不要写成 29/08/2026。"],
       ["10.「每箱几个」填的是「一箱里装几个」，不是这一行一共几个。系统会自动乘箱数。举例：5 箱、每箱 7 个，这里填 7，系统算出总数 35。"],
       ["11. 数字格可以带单位（100cm、10kg、5箱 都认），但不要写成「1米」「40*30」这种，系统会当场报错让你改。"],
-      ["12.「货型」留空就是普货；商检货填「商检」，敏感货填「敏感」。填别的字（比如「普通货物」「危险品」）会在上传时当场报错，不会悄悄变成普货。"],
-      ["13. 同一运单的几行可以填不同货型，按行各自记；运单那一层会记最严的那个（敏感 > 商检 > 普货）。"],
+      ["12.「货型」留空就是普货；商检货填「商检货」，敏感货填「敏感货」。填别的字（比如「普通货物」「危险品」）会在上传时当场报错，不会悄悄变成普货。"],
+      ["13. 同一运单的几行可以填不同货型，按行各自记；运单那一层会记最严的那个（敏感货 > 商检货 > 普货）。"],
     ]);
     instructions["!cols"] = [{ wch: 110 }];
     XLSX.utils.book_append_sheet(wb, instructions, "填写说明");
@@ -1418,8 +1418,8 @@ export default function StaffHomePage() {
                 <input type="number" step="0.01" value={p.weightKg} onChange={(e) => { const n = [...staffFormProducts]; n[i] = { ...n[i], weightKg: e.target.value }; setStaffFormProducts(n); }} placeholder="单箱重kg" style={{ border: "1px solid var(--l-strong)", borderRadius: 4, padding: "3px 4px", fontSize: 11, minWidth: 0 }} />
                 <select value={(p.cargoType || "normal").toLowerCase()} onChange={(e) => { const n = [...staffFormProducts]; n[i] = { ...n[i], cargoType: e.target.value }; setStaffFormProducts(n); }} style={{ border: "1px solid var(--l-strong)", borderRadius: 4, padding: "3px 2px", fontSize: 11, background: "var(--white)", minWidth: 0 }}>
                   <option value="normal">普货</option>
-                  <option value="inspection">商检</option>
-                  <option value="sensitive">敏感</option>
+                  <option value="inspection">商检货</option>
+                  <option value="sensitive">敏感货</option>
                 </select>
                 <input value={p.domesticTrackingNo || ""} onChange={(e) => { const n = [...staffFormProducts]; n[i] = { ...n[i], domesticTrackingNo: e.target.value }; setStaffFormProducts(n); }} placeholder="货拉拉" style={{ border: "1px solid var(--l-strong)", borderRadius: 4, padding: "3px 4px", fontSize: 11, minWidth: 0 }} />
                 <span style={{ fontSize: 10, color: prodVol > 0 ? "var(--c-blue)" : "var(--t-faint)", textAlign: "right", padding: "0 2px", whiteSpace: "nowrap" }}>{prodVol > 0 ? prodVol.toFixed(3) + "m³" : "—"}</span>
@@ -2531,8 +2531,8 @@ export default function StaffHomePage() {
                     <input type="number" step="0.01" value={p.weightKg} onChange={(e) => { const n = [...staffFormProducts]; n[i] = { ...n[i], weightKg: e.target.value }; setStaffFormProducts(n); }} placeholder="单箱重kg" style={{ border: "1px solid var(--l-strong)", borderRadius: 4, padding: "3px 4px", fontSize: 11, minWidth: 0 }} />
                     <select value={(p.cargoType || "normal").toLowerCase()} onChange={(e) => { const n = [...staffFormProducts]; n[i] = { ...n[i], cargoType: e.target.value }; setStaffFormProducts(n); }} style={{ border: "1px solid var(--l-strong)", borderRadius: 4, padding: "3px 2px", fontSize: 11, background: "var(--white)", minWidth: 0 }}>
                       <option value="normal">普货</option>
-                      <option value="inspection">商检</option>
-                      <option value="sensitive">敏感</option>
+                      <option value="inspection">商检货</option>
+                      <option value="sensitive">敏感货</option>
                     </select>
                     <input value={p.domesticTrackingNo || ""} onChange={(e) => { const n = [...staffFormProducts]; n[i] = { ...n[i], domesticTrackingNo: e.target.value }; setStaffFormProducts(n); }} placeholder="货拉拉" style={{ border: "1px solid var(--l-strong)", borderRadius: 4, padding: "3px 4px", fontSize: 11, minWidth: 0 }} />
                     <span style={{ fontSize: 10, color: prodVol > 0 ? "var(--c-blue)" : "var(--t-faint)", textAlign: "right", padding: "0 2px", whiteSpace: "nowrap" }}>{prodVol > 0 ? prodVol.toFixed(3) + "m³" : "—"}</span>

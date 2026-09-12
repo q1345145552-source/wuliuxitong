@@ -367,7 +367,7 @@ export default function AdminHomePage() {
         ["到仓日期按文本填写 YYYY-MM-DD，例如 2026-09-05；不要将单元格改成Excel日期格式。"],
         ["填写前，请将客户ID、国内单号、电话和到仓日期的单元格格式设为“文本”，保留开头的0与日期原文。"],
         ["国内单号、泰国收货人、泰国收货电话、泰国收货地址按实际信息填写。"],
-        ["货型留空就是普货；商检货填「商检」，敏感货填「敏感」。填别的字会让这一行导入失败并在失败明细里说明，不会悄悄变成普货。"],
+        ["货型留空就是普货；商检货填「商检货」，敏感货填「敏感货」。填别的字会让这一行导入失败并在失败明细里说明，不会悄悄变成普货。"],
         ["此模板仅用于管理员当前12列导入；员工的多产品批量创建请使用员工端模板，两者不可混用。"],
         ["填写后上传，先核对预览再确认导入；已成功导入的行请勿重复提交。"],
       ]);
@@ -2192,8 +2192,8 @@ export default function AdminHomePage() {
                                 <input type="number" step="0.01" value={p.weightKg} onChange={(e) => { const n = [...editProducts]; n[i] = { ...n[i], weightKg: e.target.value }; setEditProducts(n); }} placeholder="单箱重kg" style={{ border: "1px solid var(--l-strong)", borderRadius: 4, padding: "4px 6px", fontSize: 12 }} />
                                 <select value={(p.cargoType || "normal").toLowerCase()} onChange={(e) => { const n = [...editProducts]; n[i] = { ...n[i], cargoType: e.target.value }; setEditProducts(n); }} style={{ border: "1px solid var(--l-strong)", borderRadius: 4, padding: "4px 6px", fontSize: 12, background: "var(--white)" }}>
                                   <option value="normal">普货</option>
-                                  <option value="inspection">商检</option>
-                                  <option value="sensitive">敏感</option>
+                                  <option value="inspection">商检货</option>
+                                  <option value="sensitive">敏感货</option>
                                 </select>
                                 <input value={p.domesticTrackingNo || ""} onChange={(e) => { const n = [...editProducts]; n[i] = { ...n[i], domesticTrackingNo: e.target.value }; setEditProducts(n); }} placeholder="货拉拉" style={{ border: "1px solid var(--l-strong)", borderRadius: 4, padding: "4px 6px", fontSize: 12 }} />
                                 <button type="button" onClick={() => setEditProducts((v) => v.filter((_, j) => j !== i))} style={{ border: "1px solid #fca5a5", borderRadius: 4, padding: "4px 6px", fontSize: 11, background: "var(--white)", color: "var(--c-red-2)", cursor: "pointer" }}>X</button>
@@ -2854,7 +2854,7 @@ export default function AdminHomePage() {
                 <input value={p.productQuantity} onChange={(e) => { const n = [...createProducts]; n[i].productQuantity = e.target.value; setCreateProducts(n); }} placeholder="数量/箱" style={{ border: "1px solid var(--l-strong)", borderRadius: 6, padding: "4px 6px", fontSize: 11 }} />
                 <input value={`${p.lengthCm}×${p.widthCm}×${p.heightCm}`} onChange={(e) => { const parts = e.target.value.split("×"); const n = [...createProducts]; n[i].lengthCm = parts[0] || ""; n[i].widthCm = parts[1] || ""; n[i].heightCm = parts[2] || ""; setCreateProducts(n); }} placeholder="L×W×H cm" style={{ border: "1px solid var(--l-strong)", borderRadius: 6, padding: "4px 6px", fontSize: 11 }} />
                 <select value={p.cargoType} onChange={(e) => { const n = [...createProducts]; n[i].cargoType = e.target.value; setCreateProducts(n); }} style={{ border: "1px solid var(--l-strong)", borderRadius: 6, padding: "4px 6px", fontSize: 11 }}>
-                  <option value="normal">普货</option><option value="inspection">商检</option><option value="sensitive">敏感</option>
+                  <option value="normal">普货</option><option value="inspection">商检货</option><option value="sensitive">敏感货</option>
                 </select>
                 <div style={{ display: "flex", gap: 4 }}>
                   <input value={p.domesticTrackingNo} onChange={(e) => { const n = [...createProducts]; n[i].domesticTrackingNo = e.target.value; setCreateProducts(n); }} placeholder="国内单号" style={{ border: "1px solid var(--l-strong)", borderRadius: 6, padding: "4px 6px", fontSize: 11, flex: 1 }} />

@@ -49,6 +49,19 @@ test("旧单无产品行仍保留名称及国内单号", () => {
   const rows = grid.buildProductDetailRows({ itemName: "旧商品", domesticTrackingNo: "OLD001", cargoType: "normal" });
   assert.deepEqual(cells(render(grid.ProductListDetailCell, { rows })), ["旧商品", "—", "—", "OLD001", "普货"]);
 });
+test("货型在主列表及详情显示完整名称，不改存储枚举或产品数据", () => {
+  for (const [cargoType, label] of [["normal", "普货"], ["inspection", "商检货"], ["sensitive", "敏感货"]]) {
+    assert.equal(grid.cargoTypeLabelOf(cargoType), label);
+    for (const products of [undefined, [{ itemName: "货品", cargoType, packageCount: 2 }]]) {
+      const item = { itemName: "货品", cargoType, products };
+      const before = JSON.stringify(item);
+      const rows = grid.buildProductDetailRows(item);
+      assert.equal(cells(render(grid.ProductListDetailCell, { rows })).at(-1), label);
+      assert.equal(cells(render(grid.ProductDetailCell, { widths: grid.PRODUCT_DETAIL_COL_WIDTHS, rows })).at(-1), label);
+      assert.equal(JSON.stringify(item), before);
+    }
+  }
+});
 test("原始单箱数量和整票合计不因隐藏列变化", () => {
   const item = { products: [{ itemName: "商品", packageCount: 2, productQuantity: 123, lengthCm: 60, widthCm: 40, heightCm: 30, cargoType: "normal" }], totalVolumeM3: 0.144567, totalWeightKg: 9.8765 };
   const before = JSON.stringify(item);

@@ -766,8 +766,8 @@ export default function ClientConsolidationPage() {
                       <td style={tdStyle}>
                         <select value={r.cargoType} onChange={(e) => { const next = [...productRows]; next[i] = { ...next[i], cargoType: e.target.value }; setProductRows(next); }} style={{ ...miniInput, width: 70 }}>
                           <option value="normal">普货</option>
-                          <option value="inspection">商检</option>
-                          <option value="sensitive">敏感</option>
+                          <option value="inspection">商检货</option>
+                          <option value="sensitive">敏感货</option>
                         </select>
                       </td>
                       <td style={{ ...tdStyle, color: "var(--t-muted)" }}>{totalQty || "-"}</td>
@@ -964,7 +964,7 @@ function PrealertCard({
                   <td style={tdStyle}>{p.volume?.toFixed(4)}</td>
                   <td style={tdStyle}>{p.material}</td>
                   <td style={tdStyle}>{p.cargoValue}</td>
-                  <td style={tdStyle}>{p.cargoType === "inspection" ? "商检" : p.cargoType === "sensitive" ? "敏感" : "普货"}</td>
+                  <td style={tdStyle}>{p.cargoType === "inspection" ? "商检货" : p.cargoType === "sensitive" ? "敏感货" : "普货"}</td>
                   <td style={{ ...tdStyle, textAlign: "center" }}>
                     {p.productImageBase64 ? (
                       <button

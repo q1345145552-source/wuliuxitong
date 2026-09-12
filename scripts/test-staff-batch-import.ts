@@ -749,7 +749,7 @@ const CARGO_COL = "货型（普货/商检/敏感，默认普货）";
     ["普货", "normal"], ["商检", "inspection"], ["敏感", "sensitive"],
     ["", "normal"], ["   ", "normal"], [null, "normal"], [undefined, "normal"],
     ["　商检　", "inspection"], ["ｓｅｎｓｉｔｉｖｅ", "sensitive"], ["Inspection", "inspection"],
-    ["普通", "normal"], ["敏感货", "sensitive"],
+    ["普通", "normal"], ["敏感货", "sensitive"], ["商检货", "inspection"],
   ];
   for (const [raw, expected] of cases) {
     const r = parseStaffBatchRows([{ ...CARGO_BASE, [CARGO_COL]: raw }]);
@@ -918,9 +918,9 @@ const CARGO_COL = "货型（普货/商检/敏感，默认普货）";
 /** 拼给列表/导出看的货型标签：多条产品行去重拼起来，老单退回运单自己的 */
 {
   assert.equal(cargoTypeLabel(["normal", "normal"]), "普货");
-  assert.equal(cargoTypeLabel(["normal", "inspection"]), "普货 / 商检");
-  assert.equal(cargoTypeLabel(["sensitive", "inspection", "sensitive"]), "敏感 / 商检", "没去重或顺序不稳");
-  assert.equal(cargoTypeLabel([], "inspection"), "商检", "没有产品行时要退回运单自己的货型");
+  assert.equal(cargoTypeLabel(["normal", "inspection"]), "普货 / 商检货");
+  assert.equal(cargoTypeLabel(["sensitive", "inspection", "sensitive"]), "敏感货 / 商检货", "没去重或顺序不稳");
+  assert.equal(cargoTypeLabel([], "inspection"), "商检货", "没有产品行时要退回运单自己的货型");
   assert.equal(cargoTypeLabel([], null), "普货", "什么都没有时按普货");
   // 库里万一躺着脏值，按普货显示，别在导出里冒出第四种说法
   assert.equal(cargoTypeLabel(["商检"]), "普货", "脏值应该按普货显示");

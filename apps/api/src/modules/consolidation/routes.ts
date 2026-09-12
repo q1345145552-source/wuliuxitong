@@ -2025,7 +2025,7 @@ export function registerConsolidationRoutes(app: MinimalHttpApp): void {
           material: p.material,
           cargoValue: p.cargoValue,
           // 直接给中文：这是导出到 Excel 的展示数据，全中文系统不能漏英文值出去
-          cargoType: p.cargoType === "inspection" ? "商检" : p.cargoType === "sensitive" ? "敏感" : "普货",
+          cargoType: p.cargoType === "inspection" ? "商检货" : p.cargoType === "sensitive" ? "敏感货" : "普货",
           productImageBase64: (() => {
             if (!p.productImageBase64) return null;
             if (p.productImageBase64.startsWith("data:image/")) return p.productImageBase64;

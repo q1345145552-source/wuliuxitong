@@ -120,7 +120,7 @@ export function ProductDetailCell({ widths, rows }: { widths: readonly number[];
 /** 货型的中文名，三端口径一致 */
 export function cargoTypeLabelOf(value?: string | null) {
   const v = (value ?? "normal").toLowerCase();
-  return v === "inspection" ? "商检" : v === "sensitive" ? "敏感" : "普货";
+  return v === "inspection" ? "商检货" : v === "sensitive" ? "敏感货" : "普货";
 }
 
 /* -------------------------------------------------------------------------

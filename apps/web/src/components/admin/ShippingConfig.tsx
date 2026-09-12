@@ -75,7 +75,7 @@ export default function ShippingConfig(props: ShippingConfigProps) {
     { transportMode: "land", cargoType: "sensitive", unitPriceCny: 480 },
   ];
 
-  const labelMap: Record<string, string> = { sea_normal: "海运·普货", sea_inspection: "海运·商检", sea_sensitive: "海运·敏感", land_normal: "陆运·普货", land_inspection: "陆运·商检", land_sensitive: "陆运·敏感" };
+  const labelMap: Record<string, string> = { sea_normal: "海运·普货", sea_inspection: "海运·商检货", sea_sensitive: "海运·敏感货", land_normal: "陆运·普货", land_inspection: "陆运·商检货", land_sensitive: "陆运·敏感货" };
 
   return (
     <section style={{ marginBottom: 24, border: "1px solid var(--l-soft)", borderRadius: 12, padding: 20, background: "var(--white)" }}>

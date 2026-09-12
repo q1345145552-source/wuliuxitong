@@ -83,7 +83,7 @@ export function calcFeeFromItems(items: FeeItem[], prices: UnitPrices): number {
 
 export const CARGO_TYPE_LABEL: Record<string, string> = {
   normal: "普货",
-  inspection: "商检",
+  inspection: "商检货",
   sensitive: "敏感货",
 };
 

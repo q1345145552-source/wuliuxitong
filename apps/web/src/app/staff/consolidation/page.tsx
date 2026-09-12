@@ -806,7 +806,7 @@ export default function StaffConsolidationPage() {
                     <td style={tdS}>{p.volume?.toFixed(4)}</td>
                     <td style={tdS}>{p.material}</td>
                     <td style={tdS}>{p.cargoValue}</td>
-                    <td style={tdS}>{p.cargoType === "inspection" ? "商检" : p.cargoType === "sensitive" ? "敏感" : "普货"}</td>
+                    <td style={tdS}>{p.cargoType === "inspection" ? "商检货" : p.cargoType === "sensitive" ? "敏感货" : "普货"}</td>
                   </tr>
                 ))}
               </tbody>
@@ -968,7 +968,7 @@ function StaffPrealertRow({
                   <td style={tdS}>{p.volume?.toFixed(4)}</td>
                   <td style={tdS}>{p.material}</td>
                   <td style={tdS}>{p.cargoValue}</td>
-                  <td style={tdS}>{p.cargoType === "inspection" ? "商检" : p.cargoType === "sensitive" ? "敏感" : "普货"}</td>
+                  <td style={tdS}>{p.cargoType === "inspection" ? "商检货" : p.cargoType === "sensitive" ? "敏感货" : "普货"}</td>
                   <td style={{ ...tdS, textAlign: "center" }}>
                     {p.productImageBase64 ? (
                       <button
