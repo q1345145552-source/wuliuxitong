@@ -1840,14 +1840,14 @@ export type OrderProductDims = {
  */
 class CargoTypeError extends Error {}
 function readCargoType(raw: unknown, where: string): CargoType {
-  if (raw === undefined || raw === null || String(raw).trim() === "") return "normal";
+  if (raw === undefined || raw === null || (typeof raw === "string" && raw.trim() === "")) return "normal";
   const value = String(raw).trim().toLowerCase();
-  if ((CARGO_TYPES as readonly string[]).includes(value)) return value as CargoType;
+  if (typeof raw === "string" && (CARGO_TYPES as readonly string[]).includes(value)) return value as CargoType;
   throw new CargoTypeError(`${where}的货型「${String(raw).trim()}」不合法，只能是 ${CARGO_TYPES.join(" / ")}。${CARGO_TYPE_HINT}`);
 }
 
 /** 整票 + 每条产品行一起校验；有问题返回那句话，没问题返回校验过的值 */
-function readCargoTypes(
+export function readCargoTypes(
   orderRaw: unknown,
   products: ReadonlyArray<{ cargoType?: string }> | undefined,
 ): { order: CargoType; products: CargoType[] } | { error: string } {

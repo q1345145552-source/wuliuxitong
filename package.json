@@ -41,7 +41,10 @@
     "test:ai-timeout": "tsx scripts/test-deepseek-timeout.ts",
     "typecheck:scripts": "tsc --noEmit --project tsconfig.scripts.json",
     "test:shipment-list-display": "tsx scripts/test-shipment-list-display.ts",
-    "test:admin-shipment-detail": "tsx scripts/test-admin-shipment-detail.ts"
+    "test:admin-shipment-detail": "tsx scripts/test-admin-shipment-detail.ts",
+    "test:cargo-regressions": "tsx scripts/test-cargo-regressions.ts",
+    "test:dispatch-wrap": "tsx scripts/test-dispatch-wrap.ts",
+    "test:shipment-track-actions": "tsx scripts/test-shipment-track-actions.ts"
   },
   "devDependencies": {
     "@types/node": "^26.0.1",

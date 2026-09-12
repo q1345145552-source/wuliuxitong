@@ -102,7 +102,7 @@ function normalizeRows(rows: Record<string, unknown>[]): ImportRow[] {
       const heightCm = findNum(row, ["高cm", "高"]);
       let volumeM3: number | undefined;
       if (lengthCm && widthCm && heightCm && lengthCm > 0 && widthCm > 0 && heightCm > 0) {
-        volumeM3 = (lengthCm * widthCm * heightCm) / 1_000_000;
+        volumeM3 = (lengthCm * widthCm * heightCm * packageCount) / 1_000_000;
       }
       const cargoTypeRaw = findCol(row, ["货型"]);
       let shipDate = findCol(row, ["发货日期"]);

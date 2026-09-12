@@ -897,7 +897,7 @@ export default function ClientHomePage() {
                         <td style={{ padding: "6px 8px" }}><span style={{ fontSize: 11, fontWeight: 500, color: sColor, background: sBg, padding: "2px 6px", borderRadius: 4 }}>{sLabel}</span></td>
                         <td style={{ padding: "6px 8px", fontSize: 12, maxWidth: 80, overflow: "hidden", textOverflow: "ellipsis" }} title={item.remark || ""}>{item.remark || ""}</td>
                         <td style={{ padding: "6px 8px", whiteSpace: "nowrap" }}>
-                          {item.trackingNo ? <button type="button" onClick={() => openShipmentTrack(item.trackingNo!)} style={{ border: "1px solid var(--c-blue)", borderRadius: 4, padding: "2px 8px", fontSize: 11, background: "var(--c-blue-bg)", color: "var(--c-blue)", cursor: "pointer" }}>物流轨迹</button> : <span style={{ fontSize: 11, color: "var(--t-faint)" }}>暂无物流轨迹</span>}
+                          {item.trackingNo ? <button type="button" onClick={() => openShipmentTrack({ trackingNo: item.trackingNo! })} style={{ border: "1px solid var(--c-blue)", borderRadius: 4, padding: "2px 8px", fontSize: 11, background: "var(--c-blue-bg)", color: "var(--c-blue)", cursor: "pointer" }}>物流轨迹</button> : <span style={{ fontSize: 11, color: "var(--t-faint)" }}>暂无物流轨迹</span>}
                         </td>
                       </tr>
                     );
@@ -1089,7 +1089,7 @@ export default function ClientHomePage() {
                             }} className="row-act">
                               详情
                             </button>
-                            {item.trackingNo ? <button onClick={() => openShipmentTrack(item.trackingNo!)} className="row-act">物流轨迹</button> : <span style={{ fontSize: 11, color: "var(--t-faint)" }}>暂无轨迹</span>}
+                            {item.trackingNo ? <button onClick={() => openShipmentTrack({ trackingNo: item.trackingNo! })} className="row-act">物流轨迹</button> : <span style={{ fontSize: 11, color: "var(--t-faint)" }}>暂无轨迹</span>}
                           </td>
                         </tr>
                         {isExpanded && (
@@ -1244,7 +1244,7 @@ export default function ClientHomePage() {
                         <td style={{ padding: "6px 8px" }}><span style={{ fontSize: 11, fontWeight: 500, color: sColor, background: sBg, padding: "2px 6px", borderRadius: 4 }}>{sLabel}</span></td>
                         <td style={{ padding: "6px 8px", fontSize: 12, maxWidth: 80, overflow: "hidden", textOverflow: "ellipsis" }} title={item.remark || ""}>{item.remark || ""}</td>
                         <td style={{ padding: "6px 8px", whiteSpace: "nowrap" }}>
-                          {item.trackingNo ? <button type="button" onClick={() => openShipmentTrack(item.trackingNo!)} style={{ border: "1px solid var(--c-blue)", borderRadius: 4, padding: "2px 8px", fontSize: 11, background: "var(--c-blue-bg)", color: "var(--c-blue)", cursor: "pointer" }}>物流轨迹</button> : <span style={{ fontSize: 11, color: "var(--t-faint)" }}>暂无物流轨迹</span>}
+                          {item.trackingNo ? <button type="button" onClick={() => openShipmentTrack({ trackingNo: item.trackingNo! })} style={{ border: "1px solid var(--c-blue)", borderRadius: 4, padding: "2px 8px", fontSize: 11, background: "var(--c-blue-bg)", color: "var(--c-blue)", cursor: "pointer" }}>物流轨迹</button> : <span style={{ fontSize: 11, color: "var(--t-faint)" }}>暂无物流轨迹</span>}
                         </td>
                       </tr>
                     );

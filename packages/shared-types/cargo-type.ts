@@ -57,7 +57,9 @@ export function parseCargoType(raw: unknown): CargoTypeParse | null {
     .replace(/[\s　]+/g, "")
     .toLowerCase();
   if (text === "") return { value: "normal", filled: false };
-  const hit = CARGO_TYPE_ALIASES[text];
+  const hit = Object.prototype.hasOwnProperty.call(CARGO_TYPE_ALIASES, text)
+    ? CARGO_TYPE_ALIASES[text]
+    : undefined;
   return hit ? { value: hit, filled: true } : null;
 }
 

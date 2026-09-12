@@ -1,3 +1,4 @@
+import { isManagedLastmileLog } from "../shipments/managed-lastmile-log";
 // 任务 #10: Container & 拆柜 API（2026-05-20）
 // 实现湘泰物流 P0 阶段最核心的"出柜追踪"业务能力
 //
@@ -1015,6 +1016,7 @@ export function registerContainerRoutes(app: MinimalHttpApp): void {
       trackingNo,
       // 员工/管理员删「写错的一条」时要靠它定位；跟操作人一样，客户端不下发
       id: isClient ? "" : log.id,
+      canDelete: !isClient && !isManagedLastmileLog(log),
       fromStatus: log.fromStatus,
       toStatus: log.toStatus,
       remark: sanitizeRemark(log.remark ?? ""),

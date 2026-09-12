@@ -12,6 +12,7 @@ interface TimelineItem {
    * 后端只发给员工和管理员，客户端拿到的是空字符串。
    */
   id?: string;
+  canDelete?: boolean;
   /** 该条记录来自哪张运单。父运单标签里会混入子运单的记录，用它区分是哪一件货 */
   trackingNo?: string;
   fromStatus: string;
@@ -287,7 +288,7 @@ function TrackContent({ data, onReload }: { data: TrackData; onReload?: () => vo
   const canEditTimeline = data.viewerRole === "staff" || data.viewerRole === "admin";
 
   const handleDeleteLog = async (item: TimelineItem) => {
-    if (!item.id || deletingId) return;
+    if (!item.id || item.canDelete === false || deletingId) return;
     const label = statusCfg(item.toStatus).zh;
     const ok = window.confirm(
       `确定删掉这一条吗？\n\n　${label}　${formatTime(item.changedAt)}\n\n` +
@@ -438,7 +439,7 @@ function TrackContent({ data, onReload }: { data: TrackData; onReload?: () => vo
                 total={tab.timeline.length}
                 tabTrackingNo={tab.trackingNo}
                 hideOperator={data.viewerRole === "client"}
-                onDelete={canEditTimeline ? handleDeleteLog : undefined}
+                onDelete={canEditTimeline && item.canDelete !== false ? handleDeleteLog : undefined}
                 deleting={deletingId === item.id}
               />
             ))}
@@ -472,7 +473,12 @@ function TrackContent({ data, onReload }: { data: TrackData; onReload?: () => vo
 
 // ── Modal wrapper ──
 
-function ShipmentTrackModal({ trackingOrId, onClose }: { trackingOrId: string; onClose: () => void }) {
+export type ShipmentTrackTarget =
+  | { trackingNo: string; shipmentId?: never }
+  | { shipmentId: string; trackingNo?: never };
+
+function ShipmentTrackModal({ target, onClose }: { target: ShipmentTrackTarget; onClose: () => void }) {
+  const { trackingNo, shipmentId } = target;
   const [data, setData] = useState<TrackData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -481,9 +487,8 @@ function ShipmentTrackModal({ trackingOrId, onClose }: { trackingOrId: string; o
     setLoading(true);
     setError("");
     setData(null);
-    const isUuid = /^[a-z0-9_-]{20,}$/i.test(trackingOrId);
     const params = new URLSearchParams(
-      isUuid ? { shipmentId: trackingOrId } : { trackingNo: trackingOrId }
+      trackingNo !== undefined ? { trackingNo } : { shipmentId: shipmentId! }
     );
     fetch(`${apiBaseUrl()}/client/shipments/track?${params.toString()}`, {
       headers: { ...authHeaders() },
@@ -503,7 +508,7 @@ function ShipmentTrackModal({ trackingOrId, onClose }: { trackingOrId: string; o
         setData(null);
         setLoading(false);
       });
-  }, [trackingOrId]);
+  }, [trackingNo, shipmentId]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -547,7 +552,7 @@ function ShipmentTrackModal({ trackingOrId, onClose }: { trackingOrId: string; o
           <div>
             <h3 style={{ margin: 0, fontSize: 18, fontWeight: 700, color: "var(--t-heading)" }}>物流轨迹</h3>
             <div style={{ fontSize: 12, color: "var(--t-muted)", marginTop: 2, fontFamily: "monospace" }}>
-              {data?.trackingNo || trackingOrId}
+              {data?.trackingNo || trackingNo || shipmentId}
             </div>
           </div>
           <button
@@ -619,7 +624,7 @@ function ShipmentTrackModal({ trackingOrId, onClose }: { trackingOrId: string; o
 
 // ── Public API ──
 
-export function openShipmentTrack(trackingOrId: string) {
+export function openShipmentTrack(target: ShipmentTrackTarget) {
   // 移除旧弹窗
   const old = document.getElementById("track-modal-root");
   if (old) old.remove();
@@ -632,7 +637,7 @@ export function openShipmentTrack(trackingOrId: string) {
     const root = createRoot(overlay);
     root.render(
       <ShipmentTrackModal
-        trackingOrId={trackingOrId}
+        target={target}
         onClose={() => {
           root.unmount();
           overlay.remove();

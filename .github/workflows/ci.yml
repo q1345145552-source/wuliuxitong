@@ -185,6 +185,12 @@ jobs:
       - name: Test attention filter and client pagination
         run: npm run test:attention-filter
 
+      - name: Test cargo, dispatch wrapping and track actions
+        run: |
+          npm run test:cargo-regressions
+          npm run test:dispatch-wrap
+          npm run test:shipment-track-actions
+
       - name: Build frontend
         run: npm run build --prefix apps/web
         env:

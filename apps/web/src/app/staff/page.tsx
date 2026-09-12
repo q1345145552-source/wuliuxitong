@@ -1905,7 +1905,7 @@ export default function StaffHomePage() {
                             </button>
                             <button
                               type="button"
-                              onClick={() => openShipmentTrack(item.trackingNo)}
+                              onClick={() => openShipmentTrack({ trackingNo: item.trackingNo })}
                               className="row-act"
                             >
                               物流轨迹

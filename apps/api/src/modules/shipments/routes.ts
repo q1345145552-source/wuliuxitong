@@ -11,6 +11,8 @@ import { STATUS_FLOW, STATUS_FLOW_LAND, EXCEPTION_STATUSES, SKIP_ON_ADVANCE_STAT
 import { syncParentStatusFromChildren } from "./parent-status";
 import { loadOrderTotalMetrics } from "./total-metrics";
 import { countShipmentOverview } from "./overview-counts";
+import { isManagedLastmileLog, MANAGED_LASTMILE_LOG_MESSAGE } from "./managed-lastmile-log";
+import { BusinessError } from "../core/business-error";
 
 interface Kuaidi100QueryPayload {
   com?: string;
@@ -678,6 +680,13 @@ export function registerShipmentRoutes(app: MinimalHttpApp): void {
        * 锁序跟别处一致：柜 → 柜内记录 → 运单，这里只碰运单，锁它一个即可。
        */
       await tx.$queryRaw`SELECT id FROM shipments WHERE id = ${log.shipmentId} FOR UPDATE`;
+      const lockedLog = await tx.statusLog.findFirst({
+        where: { id: logId, shipmentId: log.shipmentId, companyId: auth.companyId },
+      });
+      if (!lockedLog) throw new BusinessError("这条轨迹已被处理，请刷新后重试", 404, "NOT_FOUND");
+      if (isManagedLastmileLog(lockedLog)) {
+        throw new BusinessError(MANAGED_LASTMILE_LOG_MESSAGE, 409, "VALIDATION_ERROR");
+      }
       await tx.statusLog.delete({ where: { id: logId } });
 
       // 剩下的最后一条决定当前状态；一条不剩就不动它

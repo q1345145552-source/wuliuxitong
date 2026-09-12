@@ -2086,7 +2086,7 @@ export default function AdminHomePage() {
                       </button>
                       <button
                         type="button"
-                        onClick={() => openShipmentTrack(o.trackingNo ?? o.id)}
+                        onClick={() => openShipmentTrack(o.trackingNo ? { trackingNo: o.trackingNo } : { shipmentId: o.id })}
                         className="row-act"
                       >
                         物流轨迹

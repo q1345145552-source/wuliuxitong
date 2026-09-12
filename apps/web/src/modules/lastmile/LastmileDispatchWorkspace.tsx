@@ -759,7 +759,7 @@ function LastmileWdCard(props: WdCardProps) {
                       {order.status === "SIGNED" && props.canUnsign && (
                         <button type="button" disabled={props.busy} style={{ background: "var(--white)" }} onClick={() => void props.onUnsign(order)}>撤销签收</button>
                       )}
-                      <button type="button" disabled={!order.trackingNo} style={{ background: "var(--white)" }} onClick={() => order.trackingNo && openShipmentTrack(order.trackingNo)}>物流轨迹</button>
+                      <button type="button" disabled={!order.trackingNo} style={{ background: "var(--white)" }} onClick={() => order.trackingNo && openShipmentTrack({ trackingNo: order.trackingNo })}>物流轨迹</button>
                       <button type="button" className="is-danger" style={{ background: "var(--white)" }} onClick={() => void props.onDelete(order)}>删除</button>
                     </div>
                   </div>

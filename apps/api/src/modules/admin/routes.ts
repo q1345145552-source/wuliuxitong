@@ -8,7 +8,7 @@ import type { MinimalHttpApp } from "../../server";
 import { fail, ok, requireRole } from "../core/http-utils";
 import { CONSOLIDATION_CURRENCY, recordRechargeCredit } from "../wallet/consolidation-balance";
 import { loadProductImagesForOrders } from "../orders/product-images";
-import { loadOrderProducts } from "../orders/routes";
+import { loadOrderProducts, readCargoTypes } from "../orders/routes";
 import { hashPassword } from "../auth/crypto-utils";
 import { countShipmentOverview } from "../shipments/overview-counts";
 import { classifyStatusGroup } from "../../../../../packages/shared-types/shipment-status";
@@ -21,6 +21,7 @@ import { clearLoginFailures } from "../core/rate-limit";
 import { loadOrderTotalMetrics } from "../shipments/total-metrics";
 import { BusinessError } from "../core/business-error";
 import { loadOrderProductDims } from "../orders/routes";
+import { strictestCargoType } from "../../../../../packages/shared-types/cargo-type";
 
 /** Decimal | null → number | null */
 function decToNumber(value: Prisma.Decimal | null | undefined): number | null {
@@ -585,6 +586,11 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
     };
 
     const rawId = body.orderId?.trim();
+    const cargo = readCargoTypes(body.cargoType, body.products);
+    if ("error" in cargo) {
+      fail(res, 400, "VALIDATION_ERROR", cargo.error);
+      return;
+    }
     /**
      * ⚠️⚠️ **管理员改单这条路以前没有这道校验**（2026-08-29 补）。
      * 第七轮复核点名：三个后端入口（员工建单 / 客户建单 / 管理员改单），
@@ -789,6 +795,22 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
       // 锁序【订单 → 运单】，跟 orders/routes.ts 确认收货那条路一致。
       // 这个事务下面要 update orders，先锁订单行，两个入口同时改同一张单才会排队。
       await tx.$queryRaw`SELECT id FROM orders WHERE id = ${orderId} AND company_id = ${auth.companyId} FOR UPDATE`;
+      const savedProductCargo = async () => {
+        const products = await tx.orderProduct.findMany({
+          where: { orderId, companyId: auth.companyId },
+          select: { cargoType: true },
+        });
+        const savedCargo = readCargoTypes(undefined, products);
+        if ("error" in savedCargo) throw new BusinessError(savedCargo.error);
+        return products.length > 0 ? strictestCargoType(savedCargo.products) : undefined;
+      };
+      // 只改整票货型不应偷偷覆盖明细；已有产品时请在产品行修改，再按最严同步。
+      if (has("cargoType") && !body.products?.length) {
+        const productCargo = await savedProductCargo();
+        if (productCargo !== undefined && productCargo !== cargo.order) {
+          throw new BusinessError("整票货型须与产品明细的最严货型一致，请在产品行修改货型后保存");
+        }
+      }
       let parentPackageCount = packageCount;
       let parentWeightKg = weightKg;
       let parentVolumeM3 = volumeM3;
@@ -890,7 +912,7 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
           // （非空值在事务外面已经核对过：本公司、client 角色 —— 见上面第55条那段）
           ...(nextClientId ? { clientId: nextClientId } : {}),
           itemName,
-          cargoType: body.cargoType?.trim() || undefined,
+          cargoType: body.cargoType !== undefined ? cargo.order : undefined,
           transportMode,
           domesticTrackingNo,
           productQuantity,
@@ -950,7 +972,7 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
             widthCm: p.widthCm ?? null,
             heightCm: p.heightCm ?? null,
             productQuantity: p.productQuantity ?? null,
-            cargoType: p.cargoType?.trim() || "normal",
+            cargoType: p.cargoType !== undefined || !p.id?.trim() ? cargo.products[i] : undefined,
             domesticTrackingNo: p.domesticTrackingNo?.trim() || "货拉拉",
             weightKg: p.weightKg ?? null,
             sortOrder: i,
@@ -968,6 +990,11 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
               data: { companyId: auth.companyId, orderId, ...data },
             });
           }
+        }
+        // 从锁内实际保存的完整集合汇总，包含未改货型的旧行，不从请求字段猜测。
+        const productCargo = await savedProductCargo();
+        if (productCargo !== undefined) {
+          await tx.order.update({ where: { id: orderId }, data: { cargoType: productCargo } });
         }
       }
     });

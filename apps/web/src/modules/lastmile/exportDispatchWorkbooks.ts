@@ -250,50 +250,52 @@ function setFormulaCell(sheetXml: string, ref: string, formula: string, cachedVa
   return replaceCellXml(sheetXml, ref, "n", `<${prefix}f>${escapeXml(formula)}</${prefix}f><${prefix}v>${Number.isFinite(cachedValue) ? String(cachedValue) : "0"}</${prefix}v>`);
 }
 
-/**
- * 品名那一格的行高 —— 2026-09-11 老板第三次报「导出的单品类不全」的真原因。
- *
- * 9-10 修的是**数据**：一票多产品的货，品名从只印第一个改成「鞋 / 包 / 帽」全印。
- * 数据确实全了（本机用真模板 + 真生产品名生成过文件，格子里 116 个字一个不少），
- * **但纸上还是看不全** —— 三张表的品名列都开着自动换行，行高却是模板写死的：
- *   · 客户签收单-中文 D 列 宽 16.29、行高 35  → 只露得出 2 行多
- *   · 客户签收单-泰文 D 列 宽 18、行高 20    → 只露得出 1 行多
- *   · 整柜拆柜派送清单 C 列 宽 25.48、行高 60 → 只露得出 4 行多
- * 生产上进过派送单的 1062 票里，有 53 票的品名超过一行能放的量（最长 14 个产品名、
- * 116 个字，要 13 行才写得下），于是客户手上那张单只看到前两个品名。
- *
- * 所以这里按**实际要换几行**把行高撑开。95% 的货（20 字以内）行高一个像素都不变。
- */
+/** 半字宽单位的保守字形预算；不把窄字母、泰文声调或组合重音当成宽字。 */
+function characterWidth(char: string): number {
+  if (/[\p{Nonspacing_Mark}\p{Enclosing_Mark}\u200C\u200D]/u.test(char)) return 0;
+  if (/[\u1100-\u115F\u2E80-\uA4CF\uAC00-\uD7A3\uF900-\uFAFF\uFE30-\uFE4F\uFF00-\uFF60\uFFE0-\uFFE6]/.test(char) || /\p{Extended_Pictographic}/u.test(char)) return 2;
+  if (char === "\t") return 4;
+  if (/[MWmw@%&]/.test(char)) return 2;
+  if (/[ilI1.,'`!|:;\s]/.test(char)) return 0.6;
+  if (/[A-Z]/.test(char) || /[\u0E00-\u0E7F]/.test(char)) return 1.5;
+  return 1.2;
+}
+
+/** 按模板实际字号和列宽估算品名折行；短名不降低或覆盖模板行高。 */
 function wrappedLineCount(text: string, columnWidthChars: number): number {
   // Excel 的列宽单位是「默认字体下的字符宽」，中日韩文字大约占两个单位
   const capacity = Math.max(1, Math.floor(columnWidthChars));
-  let lines = 1;
-  let used = 0;
-  for (const char of text) {
-    const width = /[\u1100-\u115F\u2E80-\uA4CF\uAC00-\uD7A3\uF900-\uFAFF\uFE30-\uFE4F\uFF00-\uFF60\uFFE0-\uFFE6]/.test(char) ? 2 : 1;
-    if (used + width > capacity) {
-      lines += 1;
-      used = width;
-    } else {
-      used += width;
+  let lines = 0;
+  // 显式换行独立成段，CRLF 只算一次；空段同样占一行。
+  for (const paragraph of text.split(/\r\n|\r|\n/)) {
+    lines += 1;
+    let used = 0;
+    for (const char of paragraph) {
+      const width = characterWidth(char);
+      if (used > 0 && used + width > capacity) {
+        lines += 1;
+        used = width;
+      } else {
+        used += width;
+      }
     }
   }
   return lines;
 }
 
-/** 模板字体是 10pt，一行约 13.5pt；上下各留一点余量，免得最后一行被边框压掉半截 */
-const WRAP_LINE_HEIGHT = 13.5;
-/** 再长也不无限撑（防脏数据把一页拉成几米长）；20 行放得下 300 多个字 */
+/** 字号的 1.35 倍留出字形行距；这里只估高，不改模板字体。 */
+const WRAP_LINE_SPACING = 1.35;
+/** 超过 20 行保留完整单元格文本但限制行高；极长内容仍需在 Excel 内展开查看。 */
 const WRAP_MAX_LINES = 20;
 
 /**
  * 这一行要多高才放得下这段文字。放得下就返回 null —— 不动模板原来的行高，
  * 短品名的单子导出来和以前一模一样。
  */
-function wrapRowHeight(text: string, columnWidthChars: number, baseHeight: number): number | null {
+function wrapRowHeight(text: string, columnWidthChars: number, baseHeight: number, fontSize: number): number | null {
   if (!text) return null;
   const needed = Math.min(wrappedLineCount(text, columnWidthChars), WRAP_MAX_LINES);
-  const height = Math.ceil(needed * WRAP_LINE_HEIGHT + 4);
+  const height = Math.ceil(needed * fontSize * WRAP_LINE_SPACING + 4);
   return height > baseHeight ? height : null;
 }
 
@@ -338,6 +340,36 @@ function rowHeightOf(sheetXml: string, row: number): number {
   return fallback ? Number(fallback[1]) : 15;
 }
 
+type TemplateFonts = { normalSize: number; cellSizes: number[] };
+
+function xmlBlock(xml: string, name: string): string {
+  return new RegExp(`<(?:[A-Za-z_][\\w.-]*:)?${name}\\b[^>]*>([\\s\\S]*?)<\\/(?:[A-Za-z_][\\w.-]*:)?${name}>`).exec(xml)?.[1] ?? "";
+}
+
+/** XLSX 的列宽基于 Normal 字体，明细格的字号则由 cellXfs/fontId 指向。 */
+function templateFonts(stylesXml: string): TemplateFonts {
+  const fonts = [...xmlBlock(stylesXml, "fonts").matchAll(/<(?:[A-Za-z_][\w.-]*:)?font\b[^>]*>([\s\S]*?)<\/(?:[A-Za-z_][\w.-]*:)?font>/g)]
+    .map((match) => Number(/<(?:[A-Za-z_][\w.-]*:)?sz\b[^>]*\bval="([\d.]+)"/.exec(match[1])?.[1]) || 11);
+  const styleXfs = [...xmlBlock(stylesXml, "cellStyleXfs").matchAll(/<(?:[A-Za-z_][\w.-]*:)?xf\b([^>]*)/g)]
+    .map((match) => Number(/\bfontId="(\d+)"/.exec(match[1])?.[1] ?? 0));
+  const normalStyle = [...xmlBlock(stylesXml, "cellStyles").matchAll(/<(?:[A-Za-z_][\w.-]*:)?cellStyle\b([^>]*)/g)]
+    .find((match) => /\bname="Normal"/.test(match[1]) || /\bbuiltinId="0"/.test(match[1]));
+  const normalIndex = Number(/\bxfId="(\d+)"/.exec(normalStyle?.[1] ?? "")?.[1] ?? 0);
+  const normalSize = fonts[styleXfs[normalIndex] ?? 0] ?? 11;
+  const cellSizes = [...xmlBlock(stylesXml, "cellXfs").matchAll(/<(?:[A-Za-z_][\w.-]*:)?xf\b([^>]*)/g)].map((match) => {
+    const inherited = styleXfs[Number(/\bxfId="(\d+)"/.exec(match[1])?.[1] ?? 0)] ?? 0;
+    const fontId = /\bapplyFont="0"/.test(match[1]) ? inherited : Number(/\bfontId="(\d+)"/.exec(match[1])?.[1] ?? inherited);
+    return fonts[fontId] ?? normalSize;
+  });
+  return { normalSize, cellSizes };
+}
+
+function cellFontSize(sheetXml: string, ref: string, fonts: TemplateFonts): number {
+  const cell = new RegExp(`<(?:[A-Za-z_][\\w.-]*:)?c\\b([^>]*\\br="${escapeRegExp(ref)}"[^>]*)`).exec(sheetXml);
+  const style = Number(/\bs="(\d+)"/.exec(cell?.[1] ?? "")?.[1] ?? 0);
+  return fonts.cellSizes[style] ?? fonts.normalSize;
+}
+
 /** 写品名，并在一行放不下时把行高撑开（列宽和原行高都从模板里读） */
 function setItemNameCell(
   sheetXml: string,
@@ -345,8 +377,12 @@ function setItemNameCell(
   row: number,
   itemName: string,
   strings: SharedStringsEditor,
+  fonts: TemplateFonts,
 ): string {
-  const height = wrapRowHeight(itemName ?? "", columnWidthOf(sheetXml, column), rowHeightOf(sheetXml, row));
+  const fontSize = cellFontSize(sheetXml, `${column}${row}`, fonts);
+  // 大于 Normal 字体时同列容纳的字变少；小字号仍保留原来的保守宽度预算。
+  const width = columnWidthOf(sheetXml, column) * Math.min(1, fonts.normalSize / fontSize);
+  const height = wrapRowHeight(itemName ?? "", width, rowHeightOf(sheetXml, row), fontSize);
   const xml = setTextCell(sheetXml, `${column}${row}`, itemName, strings);
   return height == null ? xml : setRowHeight(xml, row, height);
 }
@@ -496,6 +532,7 @@ function lineTotal(lines: TemplateLine[], key: "packageCount" | "volumeM3" | "we
 function patchInternalTemplate(
   sheetXml: string,
   strings: SharedStringsEditor,
+  fonts: TemplateFonts,
   data: LastmileExportData,
   lines: TemplateLine[],
   sequenceStart: number,
@@ -517,7 +554,7 @@ function patchInternalTemplate(
     const row = 10 + index;
     xml = setTextCell(xml, `B${row}`, line.trackingNo, strings);
     // 同客户签收单：品名按实际换行行数撑开行高（2026-09-11）
-    xml = setItemNameCell(xml, "C", row, line.itemName, strings);
+    xml = setItemNameCell(xml, "C", row, line.itemName, strings, fonts);
     xml = setNumberCell(xml, `D${row}`, line.packageCount);
     xml = setOptionalNumberCell(xml, `E${row}`, line.volumeM3);
     xml = setOptionalNumberCell(xml, `F${row}`, line.weightKg);
@@ -571,6 +608,7 @@ function patchInternalTemplate(
 function patchCustomerChineseTemplate(
   sheetXml: string,
   strings: SharedStringsEditor,
+  fonts: TemplateFonts,
   data: LastmileExportData,
   lines: TemplateLine[],
   sequenceStart: number,
@@ -588,7 +626,7 @@ function patchCustomerChineseTemplate(
     xml = setNumberCell(xml, `B${row}`, sequenceStart + index + 1);
     xml = setTextCell(xml, `C${row}`, line.trackingNo, strings);
     // 品名一行放不下就把行高撑开（2026-09-11：数据早就全了，是纸上被行高切掉）
-    xml = setItemNameCell(xml, "D", row, line.itemName, strings);
+    xml = setItemNameCell(xml, "D", row, line.itemName, strings, fonts);
     xml = setNumberCell(xml, `E${row}`, line.packageCount);
     xml = setOptionalNumberCell(xml, `F${row}`, line.volumeM3);
     xml = setOptionalNumberCell(xml, `G${row}`, line.weightKg);
@@ -615,6 +653,7 @@ function patchCustomerChineseTemplate(
 function patchCustomerThaiTemplate(
   sheetXml: string,
   strings: SharedStringsEditor,
+  fonts: TemplateFonts,
   data: LastmileExportData,
   lines: TemplateLine[],
   sequenceStart: number,
@@ -634,7 +673,7 @@ function patchCustomerThaiTemplate(
     xml = setTextCell(xml, `B${row}`, line.clientName, strings);
     xml = setTextCell(xml, `C${row}`, line.clientId, strings);
     // 品名一行放不下就把行高撑开（2026-09-11：数据早就全了，是纸上被行高切掉）
-    xml = setItemNameCell(xml, "D", row, line.itemName, strings);
+    xml = setItemNameCell(xml, "D", row, line.itemName, strings, fonts);
     xml = setNumberCell(xml, `E${row}`, line.packageCount);
     xml = setOptionalNumberCell(xml, `F${row}`, line.volumeM3);
     xml = setOptionalNumberCell(xml, `G${row}`, line.weightKg);
@@ -791,18 +830,20 @@ async function appendWorksheetClones(zip: JSZip, originalWorkbookXml: string, cl
 
 /**
  * 只替换原始 XLSX 压缩包内的业务值；超出单页容量时克隆完整工作表。
- * styles.xml、合并范围、列宽、行高、页边距、打印设置和声明文案都使用用户原模板。
+ * styles.xml、合并范围、列宽、页边距、打印设置和声明文案使用原模板；仅长品名明细行增高。
  */
 export async function buildLastmileTemplateWorkbook(data: LastmileExportData, templateBytes: ArrayBuffer | Uint8Array): Promise<Uint8Array> {
   const zip = await JSZip.loadAsync(templateBytes);
   const sharedPath = "xl/sharedStrings.xml";
   const workbookPath = "xl/workbook.xml";
-  const [sharedXml, originalWorkbookXml] = await Promise.all([
+  const [sharedXml, originalWorkbookXml, stylesXml] = await Promise.all([
     zip.file(sharedPath)?.async("string"),
     zip.file(workbookPath)?.async("string"),
+    zip.file("xl/styles.xml")?.async("string"),
   ]);
   if (!sharedXml || !originalWorkbookXml) throw new Error("模板格式不符：缺少 sharedStrings.xml 或 workbook.xml");
   const strings = new SharedStringsEditor(sharedXml);
+  const fonts = templateFonts(stylesXml ?? "");
   const sheetNames = workbookSheetNames(originalWorkbookXml);
   const existingSheetNames = new Set(sheetNames);
   const lines = expandTemplateLines(data);
@@ -813,12 +854,12 @@ export async function buildLastmileTemplateWorkbook(data: LastmileExportData, te
     if (!xml) throw new Error("整柜模板缺少主工作表");
     const pages = paginate(lines, 25);
     let sequenceStart = 0;
-    zip.file(path, patchInternalTemplate(xml, strings, data, pages[0], sequenceStart, lines));
+    zip.file(path, patchInternalTemplate(xml, strings, fonts, data, pages[0], sequenceStart, lines));
     sequenceStart += pages[0].length;
     for (let pageIndex = 1; pageIndex < pages.length; pageIndex += 1) {
       clones.push({
         name: pageWorksheetName(sheetNames[0] || "整柜派送清单", pageIndex + 1, existingSheetNames),
-        xml: patchInternalTemplate(xml, strings, data, pages[pageIndex], sequenceStart, lines),
+        xml: patchInternalTemplate(xml, strings, fonts, data, pages[pageIndex], sequenceStart, lines),
       });
       sequenceStart += pages[pageIndex].length;
     }
@@ -829,18 +870,18 @@ export async function buildLastmileTemplateWorkbook(data: LastmileExportData, te
     if (!chineseXml || !thaiXml) throw new Error("客户模板缺少中文或泰文工作表");
     const pages = paginateCustomerLines(lines, 10);
     let sequenceStart = 0;
-    zip.file(chinesePath, patchCustomerChineseTemplate(chineseXml, strings, data, pages[0], sequenceStart));
-    zip.file(thaiPath, patchCustomerThaiTemplate(thaiXml, strings, data, pages[0], sequenceStart));
+    zip.file(chinesePath, patchCustomerChineseTemplate(chineseXml, strings, fonts, data, pages[0], sequenceStart));
+    zip.file(thaiPath, patchCustomerThaiTemplate(thaiXml, strings, fonts, data, pages[0], sequenceStart));
     sequenceStart += pages[0].length;
     for (let pageIndex = 1; pageIndex < pages.length; pageIndex += 1) {
       clones.push(
         {
           name: pageWorksheetName(sheetNames[0] || "客户签收单-中文", pageIndex + 1, existingSheetNames),
-          xml: patchCustomerChineseTemplate(chineseXml, strings, data, pages[pageIndex], sequenceStart),
+          xml: patchCustomerChineseTemplate(chineseXml, strings, fonts, data, pages[pageIndex], sequenceStart),
         },
         {
           name: pageWorksheetName(sheetNames[1] || "客户签收单-泰文", pageIndex + 1, existingSheetNames),
-          xml: patchCustomerThaiTemplate(thaiXml, strings, data, pages[pageIndex], sequenceStart),
+          xml: patchCustomerThaiTemplate(thaiXml, strings, fonts, data, pages[pageIndex], sequenceStart),
         },
       );
       sequenceStart += pages[pageIndex].length;

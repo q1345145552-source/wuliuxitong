@@ -763,7 +763,7 @@ export default function StaffContainerLoadingPage() {
                           {/* 2026-08-06：这里原来只有状态文字，看不到轨迹，员工得跑回运单管理才能查 */}
                           <button
                             disabled={!b.trackingNo}
-                            onClick={() => b.trackingNo && openShipmentTrack(b.trackingNo)}
+                            onClick={() => b.trackingNo && openShipmentTrack({ trackingNo: b.trackingNo })}
                             style={{ border: "1px solid var(--l-strong)", borderRadius: 4, padding: "2px 6px", fontSize: 11, background: "var(--white)", color: b.trackingNo ? "var(--c-navy)" : "var(--t-faint)", cursor: b.trackingNo ? "pointer" : "not-allowed", whiteSpace: "nowrap" }}
                           >
                             物流轨迹
