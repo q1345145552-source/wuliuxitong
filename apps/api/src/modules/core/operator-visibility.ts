@@ -77,12 +77,15 @@ export function hideOperatorIdentity<T extends object>(
  * 生产只有 1 个管理员账号，「管理员」三个字就等于点了名，跟 operatorRole 是同一个信息，
  * 所以给非管理员时把开头这个词去掉，只留「做了什么」。数据库里的原文不动。
  *
- * 只认**开头**的「管理员」：模板都是这么写的；句子中间出现的（比如员工手填的备注）不碰，免得误伤。
+ * 只认**这 8 个模板的开头**（「管理员」后面紧跟 撤销付款 / 把「 / 删除了货物「 / 删除集货计划 / 删除集货任务）。
+ * 2026-09-15 复核补：原来只要备注以「管理员」开头就去掉，员工手填的「管理员已确认明天装」
+ * 会被改成「已确认明天装」，意思变了。现在手填的一律原样。模板改了措辞要同步改这里（测试盯着）。
  * 员工手填备注里写人名这种事，代码没法可靠识别，不在这里处理（生产库目前 0 行）。
  */
+const CODE_WRITTEN_ADMIN_REMARK = /^(\s*)管理员(?=撤销付款|把「|删除了货物「|删除集货计划 |删除集货任务 )/;
 export function hideOperatorInRemark(remark: string, viewerRole: string | null | undefined): string;
 export function hideOperatorInRemark(remark: string | null, viewerRole: string | null | undefined): string | null;
 export function hideOperatorInRemark(remark: string | null, viewerRole: string | null | undefined): string | null {
   if (remark == null || canSeeOperatorIdentity(viewerRole)) return remark;
-  return remark.replace(/^(\s*)管理员\s*/, "$1");
+  return remark.replace(CODE_WRITTEN_ADMIN_REMARK, "$1");
 }

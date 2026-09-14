@@ -368,6 +368,11 @@ async function main(): Promise<void> {
     assert.equal(hideOperatorInRemark("管理员删除了货物「鞋」（2件）", "client"), "删除了货物「鞋」（2件）");
     assert.equal(hideOperatorInRemark("管理员撤销付款", "admin"), "管理员撤销付款", "管理员自己看原文");
     assert.equal(hideOperatorInRemark("请联系管理员确认", "client"), "请联系管理员确认", "句子中间的不碰（手填备注别误伤）");
+    // 2026-09-15 复核补：手填备注开头恰好是「管理员」也不许动，只认代码拼的那 8 个模板
+    assert.equal(hideOperatorInRemark("管理员已确认明天装", "staff"), "管理员已确认明天装", "手填备注开头的「管理员」被误删了");
+    assert.equal(hideOperatorInRemark("管理员撤销付款：客户要求", "client"), "撤销付款：客户要求");
+    assert.equal(hideOperatorInRemark("管理员把「鞋」的货型由普货改为敏感货", "staff"), "把「鞋」的货型由普货改为敏感货");
+    assert.equal(hideOperatorInRemark("管理员删除集货计划 WHR0000001，退回已付款项", "client"), "删除集货计划 WHR0000001，退回已付款项");
     assert.equal(hideOperatorInRemark(null, "client"), null);
   });
 
