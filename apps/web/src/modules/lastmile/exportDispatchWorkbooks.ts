@@ -136,11 +136,32 @@ class SharedStringsEditor {
   private readonly originalUniqueCount: number;
   private readonly prefix: string;
 
-  constructor(private readonly xml: string) {
+  constructor(private xml: string) {
     this.prefix = /<([A-Za-z_][\w.-]*:)?sst\b/.exec(xml)?.[1] ?? "";
     const itemCount = [...xml.matchAll(new RegExp(`<${escapeRegExp(this.prefix)}si\\b`, "g"))].length;
     this.originalCount = Number(/\bcount="(\d+)"/.exec(xml)?.[1] ?? itemCount);
     this.originalUniqueCount = Number(/\buniqueCount="(\d+)"/.exec(xml)?.[1] ?? itemCount);
+  }
+
+  /**
+   * 把模板里**原有**的、文字满足 match 的共享字符串清成空串，返回它们的下标（2026-09-15）。
+   *
+   * ⚠️ 只清内容、**不删 `<si>`**：单元格是按「第几条」引用共享字符串的，
+   *    删掉一条，后面所有编号整体前移，整张表串字；add() 给新字符串编号也是按原条数算的。
+   */
+  blankOriginal(match: (text: string) => boolean): Set<number> {
+    const p = escapeRegExp(this.prefix);
+    const blanked = new Set<number>();
+    let index = 0;
+    this.xml = this.xml.replace(new RegExp(`<${p}si\\b[^>]*?(?:\\/>|>[\\s\\S]*?<\\/${p}si>)`, "g"), (block) => {
+      const current = index;
+      index += 1;
+      const text = [...block.matchAll(new RegExp(`<${p}t\\b[^>]*>([\\s\\S]*?)<\\/${p}t>`, "g"))].map((m) => m[1]).join("");
+      if (!match(unescapeXml(text))) return block;
+      blanked.add(current);
+      return `<${this.prefix}si><${this.prefix}t xml:space="preserve"></${this.prefix}t></${this.prefix}si>`;
+    });
+    return blanked;
   }
 
   add(value: string | number | null | undefined): number {
@@ -205,6 +226,38 @@ function clearCellXml(sheetXml: string, ref: string): string {
     return sheetXml.replace(fullCell, (_match, attributes: string) => `<${tag}${withoutCellType(attributes)}/>`);
   }
   throw new Error(`模板格式不符：找不到单元格 ${ref}`);
+}
+
+function unescapeXml(value: string): string {
+  return value.replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, "\"").replace(/&apos;/g, "'").replace(/&amp;/g, "&");
+}
+
+/**
+ * 客户签收单底部那句「📧 请签收后拍照/扫描回传至湘泰货运 | กรุณาถ่ายรูปหรือสแกนส่งกลับ | 微信/Line：____」。
+ *
+ * 老板 2026-09-15：「直接把这句话去掉，尾端的拆派仓会跟司机对接的」。
+ * 模板里有两条：中文页 sheet1!A55（共享字符串第 41 条）、泰文页 sheet2!A64（第 82 条，泰文在前的同义句
+ * 「📧 กรุณาถ่ายรูปหรือสแกนส่งกลับ | 请签收后回传 | 微信/Line：____」），两条都认。
+ * 上面那句「⚠️ 签字即代表已阅读并同意以上全部条款」不认，要留着。
+ */
+function isReturnInstructionText(text: string): boolean {
+  return /微信\s*\/\s*Line/i.test(text) && /回传|ส่งกลับ/.test(text);
+}
+
+/**
+ * 删掉引用了指定共享字符串的单元格（整个 `<c>` 去掉）。
+ *
+ * 为什么是删格子而不是清空：那一格的样式（s=20）带浅黄底色，只清文字会在纸上留一条空黄条。
+ * 行本身、行高、合并区域（A55:H55 / A64:J64）、样式表都不动 ——
+ * test-dispatch-wrap 第 4 项逐项比对「行高 / 合并 / 打印设置跟模板一致」，动了就红。
+ */
+function removeSharedStringCells(sheetXml: string, indexes: Set<number>): string {
+  if (indexes.size === 0) return sheetXml;
+  const p = escapeRegExp(xmlPrefix(sheetXml, "c"));
+  return sheetXml.replace(
+    new RegExp(`<${p}c\\b([^>]*)>\\s*<${p}v>(\\d+)<\\/${p}v>\\s*<\\/${p}c>`, "g"),
+    (cell, attributes: string, value: string) => (/\bt="s"/.test(attributes) && indexes.has(Number(value)) ? "" : cell),
+  );
 }
 
 function setTextCell(sheetXml: string, ref: string, value: string | number | null | undefined, strings: SharedStringsEditor): string {
@@ -866,8 +919,13 @@ export async function buildLastmileTemplateWorkbook(data: LastmileExportData, te
   } else {
     const chinesePath = "xl/worksheets/sheet1.xml";
     const thaiPath = "xl/worksheets/sheet2.xml";
-    const [chineseXml, thaiXml] = await Promise.all([zip.file(chinesePath)?.async("string"), zip.file(thaiPath)?.async("string")]);
-    if (!chineseXml || !thaiXml) throw new Error("客户模板缺少中文或泰文工作表");
+    const [rawChineseXml, rawThaiXml] = await Promise.all([zip.file(chinesePath)?.async("string"), zip.file(thaiPath)?.async("string")]);
+    if (!rawChineseXml || !rawThaiXml) throw new Error("客户模板缺少中文或泰文工作表");
+    // 2026-09-15：去掉底部「请签收后拍照/扫描回传…微信/Line」那句——共享字符串清空 + 引用它的格子删掉。
+    // 在打补丁、克隆续页**之前**做，所以每一页中文页、泰文页都没有这句。
+    const returnInstruction = strings.blankOriginal(isReturnInstructionText);
+    const chineseXml = removeSharedStringCells(rawChineseXml, returnInstruction);
+    const thaiXml = removeSharedStringCells(rawThaiXml, returnInstruction);
     const pages = paginateCustomerLines(lines, 10);
     let sequenceStart = 0;
     zip.file(chinesePath, patchCustomerChineseTemplate(chineseXml, strings, fonts, data, pages[0], sequenceStart));

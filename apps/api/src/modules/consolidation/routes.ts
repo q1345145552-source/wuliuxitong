@@ -5,6 +5,7 @@ import type { MinimalHttpApp } from "../../server";
 import { fail, ok, requireRole } from "../core/http-utils";
 import { logger } from "../core/logger";
 import { BusinessError } from "../core/business-error";
+import { hideOperatorIdentity, hideOperatorInRemark } from "../core/operator-visibility";
 import { verifyPassword } from "../auth/crypto-utils";
 // 取消任务验管理员密码用的失败限流（2026-08-31 Codex 复核）：复用登录那套内存计数器
 import { rateLimitKey, isFailureBlocked, failureRetryAfterMs, recordFailure, clearFailures } from "../core/rate-limit";
@@ -314,15 +315,16 @@ function formatTaskForList(task: any) {
  */
 function formatTaskForClient(task: any) {
   const { containerNo: _hidden, ...rest } = formatTask(task) as any;
-  return rest;
+  // 2026-09-15：`...task` 还会带出 paymentReviewedBy（审核付款的员工账号 id），一并摘掉
+  return hideOperatorIdentity(rest, "client");
 }
 
 /**
- * 列表专用（客户端）：既摘凭证图，也摘柜号。
+ * 列表专用（客户端）：既摘凭证图，也摘柜号，也摘审核人。
  */
 function formatTaskForClientList(task: any) {
   const { containerNo: _hidden, ...rest } = formatTaskForList(task) as any;
-  return rest;
+  return hideOperatorIdentity(rest, "client");
 }
 
 function formatPrealert(pa: any) {
@@ -362,8 +364,20 @@ function formatStatusLog(log: any) {
  * 页面也把备注显示出来 —— 等于从另一条路又漏出去了。
  * 员工端和管理员端不受影响，照常看得到完整备注。
  */
+/**
+ * 按「谁在看」给状态记录（2026-09-15）。
+ *
+ * formatStatusLog 是 `...log` 整行展开，operatorId / operatorRole / operatorName 全在里面。
+ * 老板拍板：只有超级管理员能看到是哪个账号操作的 —— 员工、客户都要明确摘掉（CLAUDE.md 第 31 条）。
+ * 备注开头代码自己拼的「管理员…」也一并去掉（见 hideOperatorInRemark），库里原文不动。
+ */
+function formatStatusLogForViewer(log: any, viewerRole: string) {
+  const base = hideOperatorIdentity(formatStatusLog(log), viewerRole);
+  return typeof base.remark === "string" ? { ...base, remark: hideOperatorInRemark(base.remark, viewerRole) } : base;
+}
+
 function formatStatusLogForClient(log: any) {
-  const base = formatStatusLog(log);
+  const base = formatStatusLogForViewer(log, "client");
   const remark: unknown = base?.remark;
   if (typeof remark === "string" && /柜号\s*[:：]/.test(remark)) {
     // 整条备注就是柜号 → 换成不含柜号的说法；备注里夹着柜号 → 只抹掉柜号那段
@@ -1285,7 +1299,8 @@ export function registerConsolidationRoutes(app: MinimalHttpApp): void {
     });
 
     const result = tasks.map((t) => ({
-      ...formatTaskForList(t),
+      // 2026-09-15：paymentReviewedBy（审核人账号）只给超级管理员
+      ...hideOperatorIdentity(formatTaskForList(t), auth.role),
       clientName: t.client.name,
       clientPhone: t.client.phone,
       volumePercent: calcVolumePercent(t),
@@ -1326,7 +1341,8 @@ export function registerConsolidationRoutes(app: MinimalHttpApp): void {
     }
 
     ok(res, {
-      ...formatTask(task),
+      // 2026-09-15：这个接口员工和管理员共用（管理员端集货详情也调它），按角色摘审核人
+      ...hideOperatorIdentity(formatTask(task), auth.role),
       clientName: task.client.name,
       clientPhone: task.client.phone,
       volumePercent: calcVolumePercent(task),
@@ -1335,7 +1351,7 @@ export function registerConsolidationRoutes(app: MinimalHttpApp): void {
         ...formatPrealert(pa),
         products: pa.products.map(formatProduct),
       })),
-      statusLogs: task.statusLogs.map(formatStatusLog),
+      statusLogs: task.statusLogs.map((log) => formatStatusLogForViewer(log, auth.role)),
     });
   });
 

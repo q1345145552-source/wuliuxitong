@@ -85,7 +85,8 @@ interface MyDetail {
   deliveryAddress: string | null;
   totalPrealerts: number; totalPackages: number;
   prealerts: PrealertRow[];
-  statusLogs: { id: string; trackingNo?: string; operatorName: string; operatorRole: string; fromStatus: string; toStatus: string; remark: string | null; createdAt: string }[];
+  // 2026-09-15：后端不再给客户下发操作人姓名和角色（操作人身份只有超级管理员能看）
+  statusLogs: { id: string; trackingNo?: string; fromStatus: string; toStatus: string; remark: string | null; createdAt: string }[];
 }
 
 // 货品表单行
@@ -806,7 +807,7 @@ export default function ClientWhrConsolidationPage() {
                   <div key={sl.id} style={{ fontSize: 12, color: "var(--t-muted)", marginBottom: 6, paddingLeft: 10, borderLeft: "2px solid var(--l-soft)" }}>
                     {sl.trackingNo && <strong style={{ color: "var(--c-blue)", marginRight: 6 }}>{sl.trackingNo}</strong>}
                     <strong style={{ color: "var(--t-body)" }}>{STATUS_ZH[sl.fromStatus] ?? sl.fromStatus}</strong> → <strong style={{ color: "var(--t-body)" }}>{STATUS_ZH[sl.toStatus] ?? sl.toStatus}</strong>
-                    &nbsp;· {sl.operatorName} · {formatBeijingTime(sl.createdAt)}
+                    &nbsp;· {formatBeijingTime(sl.createdAt)}
                     {sl.remark && <div style={{ color: "var(--t-faint)", marginTop: 2 }}>{sl.remark}</div>}
                   </div>
                 ))}

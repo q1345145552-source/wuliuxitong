@@ -686,8 +686,6 @@ export default function ClientHomePage() {
     remark: string;
     changedAt: string;
     periodText: string;
-    operatorRole?: string;
-    operatorName?: string;
   }> => {
     const normalized = [...(records ?? [])].sort(
       (a, b) => new Date(a.changedAt).getTime() - new Date(b.changedAt).getTime(),

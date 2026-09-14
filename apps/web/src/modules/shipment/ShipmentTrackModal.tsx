@@ -21,8 +21,12 @@ interface TimelineItem {
   /** 「下一站【泰国边境】」。老轨迹没有这个字段，空着就不显示 */
   nextStop?: string;
   changedAt: string;
-  operatorRole: string;
-  operatorName: string;
+  /**
+   * 操作人：只有超级管理员拿得到（2026-09-15），员工和客户的接口返回里没有这两个字段。
+   * 所以是可选的 —— 别在别处当成必有去读。
+   */
+  operatorRole?: string;
+  operatorName?: string;
 }
 
 interface ChildShipmentData {
@@ -179,7 +183,7 @@ function TimelineNode({ item, isLast, isChild, index, tabTrackingNo, hideOperato
   const dot = isChild ? 20 : 22;
   // 备注跟状态说的是同一件事就不重复显示
   const showRemark = Boolean(item.remark && item.remark !== toCfg.zh);
-  // 客户端一律不显示操作人；其余角色也要真有名字才显示，不再兜底成「员工/管理员」
+  // 只有超级管理员显示操作人（2026-09-15，员工也不显示）；管理员也要真有名字才显示，不兜底成「员工/管理员」
   const showOperator = !hideOperator && Boolean(item.operatorName) && item.operatorRole !== "client";
 
   return (
@@ -258,7 +262,7 @@ function TimelineNode({ item, isLast, isChild, index, tabTrackingNo, hideOperato
       </div>
 
       {/* 第二行：备注（跟状态重复就不显示）+ 操作人。
-          操作人只在有名字时才显示 —— 客户端后端已经把它清空，这里不会再兜底成「员工/管理员」 */}
+          操作人只给超级管理员显示 —— 员工和客户的接口里后端根本不下发，这里也不会兜底成「员工/管理员」 */}
       {showRemark || showOperator ? (
         <div style={{ marginTop: 4, fontSize: isChild ? 12 : 13, color: "var(--t-faint)", lineHeight: 1.6 }}>
           {showRemark ? item.remark : null}
@@ -438,7 +442,7 @@ function TrackContent({ data, onReload }: { data: TrackData; onReload?: () => vo
                 index={i}
                 total={tab.timeline.length}
                 tabTrackingNo={tab.trackingNo}
-                hideOperator={data.viewerRole === "client"}
+                hideOperator={data.viewerRole !== "admin"}
                 onDelete={canEditTimeline && item.canDelete !== false ? handleDeleteLog : undefined}
                 deleting={deletingId === item.id}
               />

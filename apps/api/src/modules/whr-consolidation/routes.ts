@@ -6,6 +6,7 @@ import { fail, ok, requireRole } from "../core/http-utils";
 import { logger } from "../core/logger";
 import { BusinessError } from "../core/business-error";
 import { verifyPassword } from "../auth/crypto-utils";
+import { canSeeOperatorIdentity, hideOperatorInRemark } from "../core/operator-visibility";
 import { lockPlanAliveById, lockPlanAliveByPrealert, lockPlanByPrealert, PlanCancelledError, PlanMissingError } from "./plan-guard";
 import {
   computePendingRefunds,
@@ -237,8 +238,9 @@ export function registerWhrConsolidationRoutes(app: MinimalHttpApp): void {
         destinationTh: p.destinationTh,
         totalVolumeM3: toNum(p.totalVolumeM3),
         status: p.status,
-        createdBy: p.createdBy,
-        creatorName: p.creatorName,
+        // 2026-09-15：创建人（账号 id / 名字）只给超级管理员，这个接口员工也能调
+        createdBy: canSeeOperatorIdentity(auth.role) ? p.createdBy : undefined,
+        creatorName: canSeeOperatorIdentity(auth.role) ? p.creatorName : undefined,
         customerCount: p._count.customers,
         usedVolumeM3: Math.round((volumeMap.get(p.id) ?? 0) * 1000) / 1000,
         createdAt: p.createdAt.toISOString(),
@@ -308,8 +310,9 @@ export function registerWhrConsolidationRoutes(app: MinimalHttpApp): void {
       totalVolumeM3: toNum(plan.totalVolumeM3),
       usedVolumeM3: planUsedVolumeM3,
       status: plan.status,
-      createdBy: plan.createdBy,
-      creatorName: plan.creatorName,
+      // 2026-09-15：创建人只给超级管理员（员工端计划详情也调这个接口）
+      createdBy: canSeeOperatorIdentity(auth.role) ? plan.createdBy : undefined,
+      creatorName: canSeeOperatorIdentity(auth.role) ? plan.creatorName : undefined,
       createdAt: plan.createdAt.toISOString(),
       updatedAt: plan.updatedAt.toISOString(),
       customers: plan.customers.map((c) => {
@@ -383,11 +386,12 @@ export function registerWhrConsolidationRoutes(app: MinimalHttpApp): void {
           })),
           statusLogs: pa.statusLogs.map((sl) => ({
             id: sl.id,
-            operatorName: sl.operatorName,
-            operatorRole: sl.operatorRole,
+            // 2026-09-15：操作人只给超级管理员；备注开头的「管理员」也只给超级管理员
+            operatorName: canSeeOperatorIdentity(auth.role) ? sl.operatorName : undefined,
+            operatorRole: canSeeOperatorIdentity(auth.role) ? sl.operatorRole : undefined,
             fromStatus: sl.fromStatus,
             toStatus: sl.toStatus,
-            remark: sl.remark,
+            remark: hideOperatorInRemark(sl.remark, auth.role),
             createdAt: sl.createdAt.toISOString(),
           })),
         })),

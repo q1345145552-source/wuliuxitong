@@ -32,6 +32,7 @@ import DetailModal from "../../modules/layout/DetailModal";
 import Toast from "../../modules/layout/Toast";
 import { apiBaseUrl, authHeaders, parseApiResponse, fetchWithSession as fetch } from "../../services/core-api";
 import { createRequestGate } from "../../modules/shared/request-gate";
+import { viewerCanSeeOperator } from "../../auth/operator-visibility";
 import LastmileAddressPanel from "../../components/lastmile/LastmileAddressPanel";
 import {
   receiveStaffPrealert,
@@ -1713,7 +1714,8 @@ export default function StaffHomePage() {
                 {photoList.map((item) => (
                   <div key={item.id} style={{ border: "1px solid #fecdd3", borderRadius: 8, padding: 8, background: "var(--white)" }}>
                     <div style={{ fontSize: 12, color: "var(--t-strong)" }}>
-                      {item.fileName} / {item.createdAt} / 操作员 {item.operatorId}
+                      {/* 2026-09-15：「操作员 xxx」只给超级管理员显示（后端也只给管理员下发 operatorId） */}
+                      {item.fileName} / {item.createdAt}{viewerCanSeeOperator() && item.operatorId ? ` / 操作员 ${item.operatorId}` : ""}
                     </div>
                     <img src={`data:${item.mime};base64,${item.contentBase64}`} alt={item.fileName} style={{ maxWidth: "100%", maxHeight: 160, marginTop: 6, borderRadius: 6 }} />
                   </div>

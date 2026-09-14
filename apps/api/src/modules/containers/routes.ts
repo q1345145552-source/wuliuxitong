@@ -19,6 +19,7 @@ import { syncParentStatusFromChildren } from "../shipments/parent-status";
 import type { MinimalHttpApp } from "../../server";
 import { fail, ok, requireRole } from "../core/http-utils";
 import { sanitizeRemarkForClient } from "../core/client-privacy";
+import { hideOperatorIdentity } from "../core/operator-visibility";
 import { productNamesLabel } from "../../../../../packages/shared-types/product-names";
 import { logger } from "../core/logger";
 import { canTransitLoose } from "../shipments/routes";
@@ -1012,7 +1013,7 @@ export function registerContainerRoutes(app: MinimalHttpApp): void {
     const mapLog = (
       log: { id: string; fromStatus: string; toStatus: string; remark: string | null; nextStop?: string | null; changedAt: Date; operatorRole: string; operatorName: string | null },
       trackingNo: string,
-    ) => ({
+    ) => hideOperatorIdentity({
       trackingNo,
       // 员工/管理员删「写错的一条」时要靠它定位；跟操作人一样，客户端不下发
       id: isClient ? "" : log.id,
@@ -1023,10 +1024,15 @@ export function registerContainerRoutes(app: MinimalHttpApp): void {
       // 「下一站【泰国边境】」，客户看得到货接下来去哪；老轨迹没有这个字段就不显示
       nextStop: log.nextStop ?? "",
       changedAt: log.changedAt.toISOString(),
-      // 操作人是内部信息，客户端连数据都不下发（不只是前端不显示）
-      operatorRole: isClient ? "" : log.operatorRole,
-      operatorName: isClient ? "" : (log.operatorName ?? ""),
-    });
+      /**
+       * 操作人是内部信息：只有超级管理员拿得到（2026-09-15 老板拍板，员工也不行）。
+       * 原来只对客户清空，员工照样拿到名字、轨迹弹窗也显示。
+       * 现在非管理员连这两个字段都不下发（hideOperatorIdentity 整个删掉，不是清成空串）。
+       * ⚠️ 上面的 id / canDelete 不是操作人身份，员工删「写错的一条」要靠它，别一起摘。
+       */
+      operatorRole: log.operatorRole,
+      operatorName: log.operatorName ?? "",
+    }, auth.role);
 
     // 父运单的轨迹 = 自己的记录 + 所有子运单的记录，按时间升序合并。
     // 拆柜后的操作只会记在子单上（同步父单状态时并不写日志），不合并的话

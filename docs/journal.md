@@ -1,5 +1,14 @@
 # 项目交接日志
 
+## 2026-09-15：操作人只给超级管理员看＋标签去网站名＋签收单去回传那句（只本地提交，未推送/未上线）
+
+- 老板拍板三件小改动，对所有客户生效：R1 员工端、客户端都不能看到是哪个员工/管理员账号操作的，只有 role=admin 能看；R2 打印标签去掉底部「湘泰物流网站」；R3 客户派送签收单去掉「📧 请签收后拍照/扫描回传…微信/Line」那句（尾端拆派仓跟司机对接）。数据库照旧记操作人，不改表、不改写入。
+- R1 后端：新增唯一定义处 `apps/api/src/modules/core/operator-visibility.ts`（摘除名单按 schema 逐个核过；`hideOperatorIdentity` 整行摘、`canSeeOperatorIdentity` 逐字段判、`hideOperatorInRemark` 去掉代码拼在备注开头的「管理员」）。非管理员一律**删掉字段**而不是清空串：轨迹 `/client/shipments/track`（原来只对客户清空，员工照拿）、普通版集货客户/员工列表+详情（`...task`/`...log` 整行展开带出 operatorId/Name/Role 和 paymentReviewedBy）、仓库版客户详情/员工预报单详情/计划列表+详情（含 createdBy/creatorName）、`/staff/inbound-photos` 的 operatorId、`/client/orders` 物流记录（select 里直接不查）、`/client/orders`·`/client/prealerts`·`/staff/prealerts` 的 paidBy（820af10 老付款功能写过「管理员审核(名字)」）、整柜询价 createdByRole、客户余额流水备注。管理员返回原样。
+- R1 前端：客户端两个集货详情只显示时间；员工集货日志、仓库版计划详情「创建人」、计划列表「创建人」列（th/td 同一条件）、工作台入库照片「操作员」都只在 `viewerCanSeeOperator()`（`apps/web/src/auth/operator-visibility.ts`，按登录角色=admin）时显示——管理员菜单也会进 /staff 页；轨迹弹窗改成 `viewerRole !== "admin"` 就隐藏。相关类型改可选。删「写错的一条」轨迹靠的 id/canDelete 不是身份，没动。
+- R2：`ShipmentPrintLabel.tsx` 两个分支的 footer 行和 `.footer` 样式删掉，唛头/海运陆运/品名/箱号/单箱数量/运单号不动。R3：模板文件没改；`exportDispatchWorkbooks.ts` 在打补丁和克隆续页之前把共享字符串第 41/82 条**清成空串但不删 `<si>`**（删了编号整体错位），并删掉引用它们的 A55/A64 格子（那格样式带浅黄底，只清文字会留空黄条）；行、行高、合并区域、样式表不动，test-dispatch-wrap 第 4 项照旧绿。
+- 验证：改前基线 27 个 test/typecheck 脚本＋web/api 两套 tsc 全部 exit0（文档说全绿我没信，自己跑的）；改后 28 个（多了新测试）＋两套 tsc 全部 exit0。新增 `npm run test:hide-operator-identity`（18 项，真路由＋严格内存桩，夹具里操作人都填了真名字）：客户/员工调 12 类接口拿不到、管理员拿得到、schema 全覆盖闸、真轨迹弹窗渲染、员工页判断、标签 HTML、真模板 12 票生成中泰各 2 页。7 处变异（轨迹接口、集货日志、签收单清句、标签 footer、弹窗条件、计划创建人、员工页 td 条件）逐个撤回都会红，恢复后 hash 一致。
+- 没做：没连生产库、没推送、没部署、没碰 3000/3001 开发服务器，没在真浏览器里点三端页面。「备注开头去掉『管理员』」是我按 operatorRole 同理做的（生产库这 8 个模板目前 0 行），老板要保留原句可以只撤这一个函数调用。员工手填备注里写人名没法可靠识别，没拦（生产只读查过是 0 行）。`packages/shared-types/entities.ts` 里的数据库实体类型没改。司机姓名电话不在范围，没动。
+
 ## 2026-09-12：货型全称3381aca已真实上线
 
 - 用户授权“好的，做”。21件精确提交3381acafc34c6ce62a7b3d3703e8d676f5ed8fa5已推送，GitHub/服务器源码/API-Web镜像四处独立一致；先API后Web切换12:35:47–12:36:23 Bangkok，四容器healthy，PG/Redis原ID/卷/启动不变。

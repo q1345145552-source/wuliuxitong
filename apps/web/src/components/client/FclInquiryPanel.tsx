@@ -12,7 +12,8 @@ type FclInquiryItem = {
   cargoValue: string; cargoWeight: string; address: string;
   containerType: string; serviceType: string; loadingDate: string | null;
   certFileName: string | null;
-  status: string; remark?: string | null; createdByRole: string;
+  // createdByRole：只有超级管理员拿得到（2026-09-15），客户和员工的接口返回里没有
+  status: string; remark?: string | null; createdByRole?: string;
   createdAt: string;
 };
 

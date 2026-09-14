@@ -2,6 +2,7 @@ import { prisma } from "../../db/prisma";
 import type { MinimalHttpApp } from "../../server";
 import { fail, ok, requireRole } from "../core/http-utils";
 import { parseNumericStrict } from "../core/int-guard";
+import { canSeeOperatorIdentity } from "../core/operator-visibility";
 
 /**
  * 2026-09-01（Codex 复核收尾）：分页参数的严格校验。
@@ -101,7 +102,8 @@ export function registerFclInquiryRoutes(app: MinimalHttpApp): void {
         // 2026-08-31（Codex 二轮）：remark 是管理员内部备注（可能写着利润），
         // 客户角色一律不给——照 containers 那边 isClient 摘字段的写法
         remark: isClient ? undefined : r.remark,
-        createdByRole: r.createdByRole,
+        // 2026-09-15：是员工代填还是客户自己提交的，只给超级管理员（前端没显示，但接口里有就算漏）
+        createdByRole: canSeeOperatorIdentity(auth.role) ? r.createdByRole : undefined,
         createdAt: r.createdAt.toISOString(),
       })),
       page,
@@ -146,7 +148,8 @@ export function registerFclInquiryRoutes(app: MinimalHttpApp): void {
       status: r.status,
       // 同列表：内部备注不给客户
       remark: isClient ? undefined : r.remark,
-      createdByRole: r.createdByRole,
+      // 同列表：提交人角色只给超级管理员（2026-09-15）
+      createdByRole: canSeeOperatorIdentity(auth.role) ? r.createdByRole : undefined,
       createdAt: r.createdAt.toISOString(),
     });
   });

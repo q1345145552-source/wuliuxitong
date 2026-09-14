@@ -7,6 +7,7 @@ import { InsufficientBalanceError, PaymentConflictError, chargeForConsolidation 
 import { lockPlanAliveById, lockPlanAliveByPrealert, lockPrealertExpecting, PlanCancelledError, PlanMissingError } from "./plan-guard";
 import { saveImageToDisk, deleteImageFile } from "../orders/image-storage";
 import { BusinessError } from "../core/business-error";
+import { hideOperatorInRemark } from "../core/operator-visibility";
 import {
   ACTIVE_PREALERT_WHERE,
   EDITABLE_PREALERT_STATUS,
@@ -940,11 +941,11 @@ export function registerWhrConsolidationClientRoutes(app: MinimalHttpApp): void 
       statusLogs: allLogs.map((sl) => ({
         id: sl.id,
         trackingNo: sl.trackingNo,
-        operatorName: sl.operatorName,
-        operatorRole: sl.operatorRole,
+        // 2026-09-15：不再下发 operatorName / operatorRole —— 操作人身份只有超级管理员能看。
+        // 这里只列要给的字段（上面 `...sl` 带进来的整行不会漏出去）
         fromStatus: sl.fromStatus,
         toStatus: sl.toStatus,
-        remark: sl.remark,
+        remark: hideOperatorInRemark(sl.remark, "client"),
         createdAt: sl.createdAt.toISOString(),
       })),
     });

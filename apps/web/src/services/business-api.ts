@@ -217,7 +217,8 @@ export interface OrderProductItem {
 export interface StaffInboundPhotoItem {
   id: string;
   shipmentId: string;
-  operatorId: string;
+  /** 上传人账号：只有超级管理员拿得到（2026-09-15），员工的接口返回里没有 */
+  operatorId?: string;
   fileName: string;
   mime: string;
   contentBase64: string;
@@ -239,8 +240,7 @@ export interface OrderItem {
     changedAt: string;
     fromStatus?: string;
     toStatus?: string;
-    operatorRole?: string;
-    operatorName?: string;
+    // 2026-09-15：operatorRole / operatorName 已不再下发（/client/orders 只给客户，操作人只有超级管理员能看）
   }>;
   itemName: string;
   transportMode: string;

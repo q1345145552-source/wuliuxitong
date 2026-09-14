@@ -689,7 +689,8 @@ export default function ClientConsolidationPage() {
                       <div key={log.id || i} style={{ marginBottom: 16, position: "relative" }}>
                         <div style={{ position: "absolute", left: -30, top: 4, width: 12, height: 12, borderRadius: "50%", background: "#1e3a8a", border: "2px solid var(--white)" }} />
                         <div style={{ fontSize: 13, fontWeight: 600 }}>{STATUS_ZH[log.fromStatus] || log.fromStatus} → {STATUS_ZH[log.toStatus] || log.toStatus}</div>
-                        <div style={{ fontSize: 12, color: "var(--t-muted)" }}>{log.operatorName} · {formatBeijingTime(log.createdAt)}</div>
+                        {/* 2026-09-15：不显示操作人，只显示时间（后端也不再下发操作人） */}
+                        <div style={{ fontSize: 12, color: "var(--t-muted)" }}>{formatBeijingTime(log.createdAt)}</div>
                         {log.remark && <div style={{ fontSize: 12, color: "var(--t-faint)", marginTop: 2 }}>{log.remark}</div>}
                       </div>
                     ))}

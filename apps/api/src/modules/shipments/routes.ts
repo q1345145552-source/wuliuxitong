@@ -13,6 +13,7 @@ import { loadOrderTotalMetrics } from "./total-metrics";
 import { countShipmentOverview } from "./overview-counts";
 import { isManagedLastmileLog, MANAGED_LASTMILE_LOG_MESSAGE } from "./managed-lastmile-log";
 import { BusinessError } from "../core/business-error";
+import { canSeeOperatorIdentity } from "../core/operator-visibility";
 
 interface Kuaidi100QueryPayload {
   com?: string;
@@ -130,7 +131,8 @@ export function registerShipmentRoutes(app: MinimalHttpApp): void {
       items: rows.map((item) => ({
         id: item.id,
         shipmentId: item.shipmentId,
-        operatorId: item.operatorId,
+        // 2026-09-15：上传人账号只给超级管理员（员工工作台「操作员 xxx」那一行跟着隐藏）
+        operatorId: canSeeOperatorIdentity(auth.role) ? item.operatorId : undefined,
         fileName: item.fileName,
         mime: item.mime,
         contentBase64: item.contentBase64,

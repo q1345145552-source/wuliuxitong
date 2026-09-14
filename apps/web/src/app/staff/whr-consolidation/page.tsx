@@ -6,6 +6,7 @@ import { apiBaseUrl, apiRequest } from "../../../services/core-api";
 import { formatBeijingTime } from "../../../modules/staff/utils";
 import { base64Bytes, compressImageForUpload, formatBytes } from "../../../modules/shared/image-compress";
 import { createRequestGate } from "../../../modules/shared/request-gate";
+import { viewerCanSeeOperator } from "../../../auth/operator-visibility";
 
 // 选文件时的原图上限。超过这个的多半是选错了（视频/超大扫描件），先挡掉再说。
 const MAX_SOURCE_BYTES = 30 * 1024 * 1024;
@@ -172,10 +173,11 @@ interface OpsPlan {
 
 interface PlanItem {
   id: string; planNo: string; warehouse: string; containerType: string; destinationTh: string;
-  totalVolumeM3: number; usedVolumeM3?: number; status: string; creatorName: string; customerCount: number; createdAt: string;
+  // creatorName：只有超级管理员拿得到（2026-09-15），员工的接口返回里没有
+  totalVolumeM3: number; usedVolumeM3?: number; status: string; creatorName?: string; customerCount: number; createdAt: string;
 }
 interface PlanDetail { id: string; planNo: string; warehouse: string; containerType: string; destinationTh: string;
-  totalVolumeM3: number; status: string; creatorName: string; createdAt: string; updatedAt: string;
+  totalVolumeM3: number; status: string; creatorName?: string; createdAt: string; updatedAt: string;
   customers: any[];
 }
 
@@ -1094,7 +1096,8 @@ export default function StaffWhrConsolidationPage() {
                   <div style={{ border: "1px solid var(--l-soft)", borderRadius: 10, padding: 16, marginBottom: 16 }}>
                     <h4 style={{ margin: "0 0 8px" }}>{planDetail.planNo}</h4>
                     <p style={{ fontSize: 13, color: "var(--t-muted)", margin: 0 }}>{planDetail.warehouse} · {planDetail.containerType} · {planDetail.destinationTh} · {planDetail.totalVolumeM3}方 · <span style={{ padding: "2px 8px", borderRadius: 4, background: TAG[planDetail.status]?.bg ?? "var(--l-soft)", color: TAG[planDetail.status]?.color ?? "var(--t-body)", fontSize: 12 }}>{PLAN_ST_ZH[planDetail.status] ?? planDetail.status}</span></p>
-                    <p style={{ fontSize: 12, color: "var(--t-faint)", margin: "4px 0 0" }}>创建人：{planDetail.creatorName} · {formatBeijingTime(planDetail.createdAt)}</p>
+                    {/* 2026-09-15：创建人只给超级管理员显示；员工只看到创建时间 */}
+                    <p style={{ fontSize: 12, color: "var(--t-faint)", margin: "4px 0 0" }}>{viewerCanSeeOperator() && planDetail.creatorName ? `创建人：${planDetail.creatorName} · ` : ""}{formatBeijingTime(planDetail.createdAt)}</p>
                   </div>
 
                   <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12 }}>
@@ -1190,7 +1193,8 @@ export default function StaffWhrConsolidationPage() {
                     <table className="a3-table" style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
                       <thead>
                         <tr style={{ background: "var(--s-sunken)" }}>
-                          {["计划编号", "仓库", "柜型", "目的地", "总方数", "已用/进度", "客户数", "状态", "创建人", "创建时间"].map(h => <th key={h} style={thS}>{h}</th>)}
+                          {/* 2026-09-15：「创建人」列只给超级管理员 —— 表头和下面数据行的 <td> 用同一个条件，一起有一起没（CLAUDE.md 第 10 条） */}
+                          {["计划编号", "仓库", "柜型", "目的地", "总方数", "已用/进度", "客户数", "状态", ...(viewerCanSeeOperator() ? ["创建人"] : []), "创建时间"].map(h => <th key={h} style={thS}>{h}</th>)}
                         </tr>
                       </thead>
                       <tbody>
@@ -1222,7 +1226,7 @@ export default function StaffWhrConsolidationPage() {
                             </td>
                             <td style={tdS}>{p.customerCount}</td>
                             <td style={tdS}><span style={{ padding: "2px 8px", borderRadius: 4, fontSize: 12, background: TAG[p.status]?.bg ?? "var(--l-soft)", color: TAG[p.status]?.color ?? "var(--t-body)" }}>{PLAN_ST_ZH[p.status] ?? p.status}</span></td>
-                            <td style={tdS}>{p.creatorName}</td>
+                            {viewerCanSeeOperator() ? <td style={tdS}>{p.creatorName}</td> : null}
                             <td style={{ ...tdS, fontSize: 12 }}>{formatBeijingTime(p.createdAt)}</td>
                           </tr>
                           );

@@ -21,6 +21,7 @@ import { fail, ok, requireRole } from "../core/http-utils";
 import { loadProductImagesForOrders, MAX_ORDER_PRODUCT_IMAGES } from "./product-images";
 import { saveImageToDisk, deleteImageFile } from "./image-storage";
 import { sanitizeRemarkForClient } from "../core/client-privacy";
+import { canSeeOperatorIdentity } from "../core/operator-visibility";
 import { loadOrderTotalMetrics } from "../shipments/total-metrics";
 
 /** 批量加载订单的产品行 */
@@ -1073,8 +1074,8 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
                   changedAt: true,
                   fromStatus: true,
                   toStatus: true,
-                  operatorRole: true,
-                  operatorName: true,
+                  // 2026-09-15：不再查 operatorRole / operatorName —— 这个接口只给客户，
+                  // 操作人身份只有超级管理员能看（core/operator-visibility.ts）
                 },
               },
             },
@@ -1113,8 +1114,6 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
         changedAt: r.changedAt.toISOString(),
         fromStatus: r.fromStatus,
         toStatus: r.toStatus,
-        operatorRole: r.operatorRole,
-        operatorName: r.operatorName ?? "",
       }));
       const latestRemark = logisticsRecords.at(-1)?.remark ?? null;
       return {
@@ -1150,7 +1149,7 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
         receivableCurrency: o.receivableCurrency ?? "CNY",
         paymentStatus: o.paymentStatus ?? "unpaid",
         paidAt: o.paidAt ? o.paidAt.toISOString() : undefined,
-        paidBy: o.paidBy ?? undefined,
+        // 2026-09-15 摘掉 paidBy：老付款功能（820af10）往里写过「管理员审核(名字)」，客户不能看
         shipDate: o.shipDate,
         cargoType: o.cargoType ?? "normal",
         latestRemark,
@@ -1230,7 +1229,7 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
       receivableCurrency: o.receivableCurrency ?? "CNY",
       paymentStatus: o.paymentStatus ?? "unpaid",
       paidAt: o.paidAt ? o.paidAt.toISOString() : undefined,
-      paidBy: o.paidBy ?? undefined,
+      // 2026-09-15 摘掉 paidBy（同 /client/orders）：操作人身份只有超级管理员能看
       shipDate: o.shipDate,
       createdAt: o.createdAt.toISOString(),
       updatedAt: o.updatedAt.toISOString(),
@@ -1293,7 +1292,8 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
         receivableCurrency: o.receivableCurrency ?? "CNY",
         paymentStatus: o.paymentStatus ?? "unpaid",
         paidAt: o.paidAt ? o.paidAt.toISOString() : undefined,
-        paidBy: o.paidBy ?? undefined,
+        // 2026-09-15：员工也不能看是谁确认的付款，只有超级管理员能看
+        paidBy: canSeeOperatorIdentity(auth.role) ? (o.paidBy ?? undefined) : undefined,
         shipDate: o.shipDate,
         createdAt: o.createdAt.toISOString(),
         updatedAt: o.updatedAt.toISOString(),

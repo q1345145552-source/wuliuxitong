@@ -5,6 +5,7 @@ import { type DecimalRule, requireDecimal } from "../core/decimal-guard";
 import { parseNumericStrict } from "../core/int-guard";
 import { fail, ok, requireRole } from "../core/http-utils";
 import { CONSOLIDATION_CURRENCY } from "../wallet/consolidation-balance";
+import { hideOperatorInRemark } from "../core/operator-visibility";
 
 /**
  * 2026-08-31 Codex 二轮：充值金额列的规格。
@@ -180,7 +181,8 @@ export function registerClientComplianceRoutes(app: MinimalHttpApp): void {
         balanceAfter: Number(r.balanceAfter),
         source: r.refType ? (refZh[r.refType] ?? r.refType) : "",
         refNo: r.refNo ?? "",
-        remark: r.remark ?? "",
+        // 2026-09-15：「管理员删除集货任务…」这类代码拼的备注，开头的「管理员」不给客户（库里原文不动）
+        remark: hideOperatorInRemark(r.remark ?? "", "client"),
         createdAt: r.createdAt.toISOString(),
       })),
       page,
