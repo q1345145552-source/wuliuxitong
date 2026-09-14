@@ -164,6 +164,22 @@ class SharedStringsEditor {
     return blanked;
   }
 
+  /**
+   * 把模板里**原有**共享字符串中的一段文字换成另一段（2026-09-15）。
+   * 只改 `<t>` 里的字，不增删 `<si>`，编号不变。必须在任何 add() 之前调用，
+   * 这样只会改到模板自带的字，不会碰到导出时写进去的客户数据。返回改了几处。
+   */
+  replaceInOriginal(from: string, to: string): number {
+    const p = escapeRegExp(this.prefix);
+    let changed = 0;
+    this.xml = this.xml.replace(new RegExp(`(<${p}t\\b[^>]*>)([\\s\\S]*?)(<\\/${p}t>)`, "g"), (whole, open: string, body: string, close: string) => {
+      if (!body.includes(from)) return whole;
+      changed += 1;
+      return `${open}${body.split(from).join(to)}${close}`;
+    });
+    return changed;
+  }
+
   add(value: string | number | null | undefined): number {
     const index = this.originalUniqueCount + this.additions.length;
     this.additions.push(String(value ?? ""));
@@ -896,6 +912,10 @@ export async function buildLastmileTemplateWorkbook(data: LastmileExportData, te
   ]);
   if (!sharedXml || !originalWorkbookXml) throw new Error("模板格式不符：缺少 sharedStrings.xml 或 workbook.xml");
   const strings = new SharedStringsEditor(sharedXml);
+  // 2026-09-15 老板：模板里写死的公司名「新泓瀚」改成「我司」—— 代理的客户也会拿到这张单，不能印我们的公司名。
+  // 目前只出现在客户签收单泰文页标题（sheet2!A1，共享字符串第 42 条）。模板文件本身不动，导出时换；
+  // 在任何 add() 之前做，只改模板自带的字。
+  strings.replaceInOriginal("新泓瀚", "我司");
   const fonts = templateFonts(stylesXml ?? "");
   const sheetNames = workbookSheetNames(originalWorkbookXml);
   const existingSheetNames = new Set(sheetNames);

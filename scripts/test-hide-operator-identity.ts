@@ -594,6 +594,30 @@ async function main(): Promise<void> {
     assert.equal(await out.file("xl/styles.xml")!.async("string"), await templateZip.file("xl/styles.xml")!.async("string"), "样式表被动了");
   });
 
+  await check("17) 模板里写死的公司名「新泓瀚」导出时换成「我司」（2026-09-15 老板：代理的客户也会拿到这张单）", async () => {
+    const templateBytes = fs.readFileSync(RECEIPT_TEMPLATE);
+    const templateZip = await JSZip.loadAsync(templateBytes);
+    const templateTexts = sharedTexts(await templateZip.file("xl/sharedStrings.xml")!.async("string"));
+    // 自证：模板第 42 条（泰文页标题）确实写着新泓瀚，不然下面「没有」等于没测
+    assert.ok(templateTexts[42]?.startsWith("新泓瀚 ขนส่ง"), `模板第 42 条变了：${templateTexts[42]}`);
+    const out = await JSZip.loadAsync(await buildLastmileTemplateWorkbook(receiptData(12), templateBytes));
+    const texts = sharedTexts(await out.file("xl/sharedStrings.xml")!.async("string"));
+    let all = "";
+    for (const name of Object.keys(out.files)) if (name.endsWith(".xml")) all += await out.file(name)!.async("string");
+    assert.ok(!all.includes("新泓瀚"), "导出的文件里还有「新泓瀚」");
+    assert.ok(texts.length >= templateTexts.length, "共享字符串条数变少了");
+    const th = await out.file("xl/worksheets/sheet2.xml")!.async("string");
+    const cn = await out.file("xl/worksheets/sheet1.xml")!.async("string");
+    assert.equal(cellText(th, texts, "A1"), templateTexts[42].replace("新泓瀚", "我司"), `泰文页标题不对：${cellText(th, texts, "A1")}`);
+    assert.equal(cellText(cn, texts, "A1"), templateTexts[0], "中文页标题不该动");
+    // 续页的标题也不许再出现新泓瀚
+    const sheetFiles = Object.keys(out.files).filter((n) => /^xl\/worksheets\/sheet\d+\.xml$/.test(n));
+    for (const file of sheetFiles) {
+      const title = cellText(await out.file(file)!.async("string"), texts, "A1");
+      if (title) assert.ok(!title.includes("新泓瀚"), `${file} 标题还是新泓瀚：${title}`);
+    }
+  });
+
   console.log(`\n共 ${total} 项，失败 ${failures.length} 项`);
   if (failures.length > 0) {
     console.log("失败：\n  - " + failures.join("\n  - "));
