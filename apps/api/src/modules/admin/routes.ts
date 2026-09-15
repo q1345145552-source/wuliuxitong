@@ -1279,7 +1279,8 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
            * 改所属代理（2026-09-16）。锁序照 long-term-price.ts 文件头：**先拿客户价排队锁**，
            * 改长期价那边在锁里读 agentId 判代理价下限，两边排队才不会出现「按旧归属判下限、存进新归属」。
            * 往仓库版柜里加这个客户（customers/add、建柜）也先拿同一把锁，所以「查业务记录 → 改归属」
-           * 这段不会被新加进柜的记录插队（运单、普通版任务那两样不走这把锁，写进报告了）。
+           * 这段不会被新加进柜的记录插队。建普通版集货任务（/client/consolidation/tasks）从 2026-09-16 第 2 轮审查起
+           * 也先拿同一把锁、锁里现读 agentId，所以也不会插队；只有新建运单不走这把锁（代理的客户本来就能有运单，无金额影响）。
            */
           await lockClientWhrPrice(tx, id);
           const fresh = await tx.user.findFirst({
