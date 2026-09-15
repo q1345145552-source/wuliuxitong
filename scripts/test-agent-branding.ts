@@ -302,12 +302,13 @@ async function main(): Promise<void> {
     }
   });
 
-  await check("13c) 进门现查品牌 fetchSessionBrand：每次都真发请求（在线改了归属下一次就变）、同一时刻共用一个请求、查到写缓存；服务器出错原样抛出且缓存不动、之后能重查；查的时候换了账号不记到新账号头上（Codex 第二轮 P2-1 / P2-2）", async () => {
+  await check("13c) 现查品牌 fetchSessionBrand：每次都自己真发请求、不复用改归属之前发出的旧请求；先发后到的旧结果不许盖掉新结果；回包格式不对当查不到；服务器出错原样抛出且缓存不动、之后能重查；查的时候换了账号不记到新账号头上（Codex 第二轮 P2-1 / P2-2、第三轮 P2-2 残留 / P3-1）", async () => {
     const g = globalThis as any;
     const saved = { window: g.window, document: g.document, fetch: g.fetch };
     const store = new Map<string, string>();
     const USER = "zz_b4_verify_u1";
-    let serverBrand: unknown = null;
+    /** 服务端此刻会回的 data（请求发出那一刻定下来，模拟「发出之后才改归属」） */
+    let serverData: unknown = { brand: null };
     let serverStatus = 200;
     let calls = 0;
     let hold: Promise<void> | null = null;
@@ -323,45 +324,64 @@ async function main(): Promise<void> {
     g.fetch = async (url: unknown) => {
       calls += 1;
       assert.ok(String(url).endsWith("/client/brand"), `查错了接口 ${String(url)}`);
-      if (hold) await hold;
-      if (serverStatus >= 500) return new Response("boom", { status: serverStatus });
-      return new Response(JSON.stringify({ code: "OK", data: { brand: serverBrand } }), { status: 200, headers: { "content-type": "application/json" } });
+      const data = serverData;
+      const status = serverStatus;
+      const wait = hold;
+      if (wait) await wait;
+      if (status >= 500) return new Response("boom", { status });
+      return new Response(JSON.stringify({ code: "OK", data }), { status: 200, headers: { "content-type": "application/json" } });
     };
     try {
       const session = await import("../apps/web/src/auth/auth-session");
       const hook = await import("../apps/web/src/modules/branding/useWorkbenchBrand");
       store.set(session.AUTH_SESSION_STORAGE_KEY, JSON.stringify({ userId: USER, companyId: "c_001", role: "client", token: "zz_t1" }));
       const cachedBrand = () => JSON.parse(store.get(session.WORKBENCH_BRAND_CACHE_KEY) ?? "null");
+      const AGENT_A = { name: "A 代理国际物流", logoUrl: null, loginPath: "/zz-b4-a" };
+      const AGENT_B = { name: "B 代理", logoUrl: null, loginPath: null };
 
       assert.equal(await hook.fetchSessionBrand(USER, "client"), null);
       assert.equal(calls, 1);
       assert.equal(cachedBrand()?.brand, null);
 
-      serverBrand = { name: "A 代理国际物流", logoUrl: null, loginPath: "/zz-b4-a" };
+      serverData = { brand: AGENT_A };
       const reassigned = await hook.fetchSessionBrand(USER, "client");
       assert.equal(calls, 2, "上一次查到湘泰也要再真发一次请求（在线改归代理）");
       assert.equal(reassigned?.name, "A 代理国际物流");
       assert.equal(cachedBrand()?.userId, USER);
       assert.equal(cachedBrand()?.brand?.name, "A 代理国际物流");
 
+      // 旧请求 old 发出时是湘泰、还没回来 → 改归 B 代理 → 新请求 fresh 发出并先回来 → old 才回来
       let release!: () => void;
       hold = new Promise<void>((resolve) => { release = resolve; });
-      const p1 = hook.fetchSessionBrand(USER, "client");
-      const p2 = hook.fetchSessionBrand(USER, "client");
-      assert.equal(p1, p2, "外壳和页面同一时刻查要共用一个请求");
-      release();
-      await p1;
+      serverData = { brand: null };
+      const old = hook.fetchSessionBrand(USER, "client");
       hold = null;
-      assert.equal(calls, 3);
+      serverData = { brand: AGENT_B };
+      const fresh = hook.fetchSessionBrand(USER, "client");
+      assert.notEqual(old, fresh, "改归属之后再查要自己发请求，不许复用之前发出去的");
+      assert.equal(calls, 4);
+      assert.equal((await fresh)?.name, "B 代理");
+      assert.equal(cachedBrand()?.brand?.name, "B 代理");
+      release();
+      assert.equal(await old, null, "旧请求照实回它自己查到的");
+      assert.equal(cachedBrand()?.brand?.name, "B 代理", "先发后到的旧结果不许盖掉新结果");
+
+      const cacheBeforeMalformed = store.get(session.WORKBENCH_BRAND_CACHE_KEY);
+      for (const bad of [{}, { brand: { name: "", logoUrl: null, loginPath: null } }, { brand: "代理" }]) {
+        serverData = bad;
+        await assert.rejects(hook.fetchSessionBrand(USER, "client"), /账号信息/, `回包 ${JSON.stringify(bad)} 要当查不到`);
+      }
+      assert.equal(store.get(session.WORKBENCH_BRAND_CACHE_KEY), cacheBeforeMalformed, "回包格式不对不许改缓存");
 
       const cacheBeforeError = store.get(session.WORKBENCH_BRAND_CACHE_KEY);
       serverStatus = 502;
       await assert.rejects(hook.fetchSessionBrand(USER, "client"), /服务器繁忙/);
       assert.equal(store.get(session.WORKBENCH_BRAND_CACHE_KEY), cacheBeforeError, "出错不许改缓存");
       serverStatus = 200;
-      serverBrand = null;
+      serverData = { brand: null };
+      const callsBeforeRetry = calls;
       assert.equal(await hook.fetchSessionBrand(USER, "client"), null, "出错之后点重试要能重查");
-      assert.equal(calls, 5);
+      assert.equal(calls, callsBeforeRetry + 1);
 
       hold = new Promise<void>((resolve) => { release = resolve; });
       const p3 = hook.fetchSessionBrand(USER, "client");
@@ -376,6 +396,16 @@ async function main(): Promise<void> {
       g.document = saved.document;
       g.fetch = saved.fetch;
     }
+  });
+
+  await check("13d) 外壳每换一页、切回这个标签页都再查一次品牌，不按账号共用在途请求（Codex 第三轮 P2-2 残留：客户停在主页被在线改归属，左边菜单、主页 AI、左上角一直是旧的；源码检查，页面真跑见 .audit/2026-09-15/r3-fix/ui-brand-r3.cjs）", () => {
+    const shell = fs.readFileSync(path.join(process.cwd(), "apps/web/src/modules/layout/RoleShell.tsx"), "utf-8");
+    assert.match(shell, /useWorkbenchBrand\(session, currentPath\)/, "外壳要把当前页面地址交给品牌钩子（换页再查）");
+    const hook = fs.readFileSync(path.join(process.cwd(), "apps/web/src/modules/branding/useWorkbenchBrand.ts"), "utf-8");
+    const shellHook = hook.slice(hook.indexOf("export function useWorkbenchBrand("));
+    assert.ok(shellHook.includes('addEventListener("focus"') && shellHook.includes('"visibilitychange"'), "切回标签页（focus / visibilitychange）要再查品牌");
+    assert.match(shellHook, /\[revalidate, currentPath\]/, "换一页要再查品牌");
+    assert.ok(!/\binflight\b/.test(hook), "不许按账号共用在途请求（会复用改归属之前发出的旧请求）");
   });
 
   await check("14) 前端解析接口回的品牌：loginPath 只认 /<合规前缀>，logo 只认 /images/，名字空的当没有", () => {

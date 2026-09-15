@@ -112,7 +112,7 @@ export default function RoleShell(props: {
    * 服务端渲染读不到 localStorage，直接用它当初值两边对不上会报 hydration 错。
    */
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => readOnRemount(readCollapsed, false));
-  const brand = useWorkbenchBrand(session);
+  const brand = useWorkbenchBrand(session, currentPath);
 
   // 和 globals.css 的抽屉断点一致。窄屏收起的导航退出键盘顺序，桌面仍是正常导航。
   useEffect(() => {
