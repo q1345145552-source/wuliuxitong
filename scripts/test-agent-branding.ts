@@ -398,14 +398,154 @@ async function main(): Promise<void> {
     }
   });
 
-  await check("13d) 外壳每换一页、切回这个标签页都再查一次品牌，不按账号共用在途请求（Codex 第三轮 P2-2 残留：客户停在主页被在线改归属，左边菜单、主页 AI、左上角一直是旧的；源码检查，页面真跑见 .audit/2026-09-15/r3-fix/ui-brand-r3.cjs）", () => {
+  await check("13d) 外壳每换一页（含同一页只换 #）、切回这个标签页都再查一次品牌；外壳卸载就停掉补查；受限页挂着时跟着外壳查到的更新结果变；不按账号共用在途请求（Codex 第三轮 P2-2 残留、第四轮 P2-2 残留 / P3-1；源码检查，页面真跑见 .audit/2026-09-15/r4-fix/ui-brand-r4fix.cjs）", () => {
     const shell = fs.readFileSync(path.join(process.cwd(), "apps/web/src/modules/layout/RoleShell.tsx"), "utf-8");
-    assert.match(shell, /useWorkbenchBrand\(session, currentPath\)/, "外壳要把当前页面地址交给品牌钩子（换页再查）");
+    assert.match(shell, /useWorkbenchBrand\(session, currentPath \+ currentHash\)/, "外壳要把当前地址（含 #）交给品牌钩子：客户端很多菜单只换 #");
     const hook = fs.readFileSync(path.join(process.cwd(), "apps/web/src/modules/branding/useWorkbenchBrand.ts"), "utf-8");
     const shellHook = hook.slice(hook.indexOf("export function useWorkbenchBrand("));
+    assert.match(shellHook, /createBrandRevalidator\(userId, role\)/, "外壳补查要走 createBrandRevalidator（13e 测的就是它）");
     assert.ok(shellHook.includes('addEventListener("focus"') && shellHook.includes('"visibilitychange"'), "切回标签页（focus / visibilitychange）要再查品牌");
-    assert.match(shellHook, /\[revalidate, currentPath\]/, "换一页要再查品牌");
+    assert.match(shellHook, /\.dispose\(\)/, "外壳卸载 / 换身份时要停掉补查");
+    assert.match(shellHook, /\[locationKey\]/, "换一页（含只换 #）要再查品牌");
     assert.ok(!/\binflight\b/.test(hook), "不许按账号共用在途请求（会复用改归属之前发出的旧请求）");
+    const gate = hook.slice(hook.indexOf("export function useVerifiedSessionBrand("), hook.indexOf("export function useWorkbenchBrand("));
+    assert.match(gate, /subscribeAppliedBrand\(/, "受限页挂着时要听外壳查到的更新结果（被改归代理就退出这一页）");
+    assert.match(gate, /shouldAdoptAppliedBrand\(/, "受限页跟不跟更新结果要走 shouldAdoptAppliedBrand（13f 测的就是它）");
+  });
+
+  await check("13e) 外壳补查调度 createBrandRevalidator：同一时刻只一个请求、在路上时触发 100 次也只补查 1 次、补完不循环；dispose 之后触发不发请求，旧请求回来不补查、不压掉新外壳查到的结果（Codex 第四轮 P3-1）", async () => {
+    const g = globalThis as any;
+    const saved = { window: g.window, document: g.document, fetch: g.fetch };
+    const store = new Map<string, string>();
+    const USER = "zz_b4_revalidator_u1";
+    const AGENT_A = { name: "A 代理国际物流", logoUrl: null, loginPath: "/zz-b4-a" };
+    const AGENT_B = { name: "B 代理", logoUrl: null, loginPath: null };
+    let calls = 0;
+    /** 第 n 次请求怎么回：held = 悬着等 releases[n] 放行；fail = 502；没写的回代理 A */
+    let plan: Record<number, { brand?: unknown; held?: boolean; fail?: boolean }> = {};
+    const releases: Record<number, () => void> = {};
+    g.window = {
+      localStorage: {
+        getItem: (k: string) => store.get(k) ?? null,
+        setItem: (k: string, v: string) => void store.set(k, v),
+        removeItem: (k: string) => void store.delete(k),
+      },
+      location: { protocol: "http:", pathname: "/client", href: "http://127.0.0.1/client" },
+    };
+    g.document = { cookie: "" };
+    g.fetch = async () => {
+      calls += 1;
+      const n = calls;
+      const p = plan[n] ?? { brand: AGENT_A };
+      if (p.held) await new Promise<void>((resolve) => { releases[n] = resolve; });
+      if (p.fail) return new Response("boom", { status: 502 });
+      return new Response(JSON.stringify({ code: "OK", data: { brand: p.brand ?? null } }), { status: 200, headers: { "content-type": "application/json" } });
+    };
+    const settle = () => new Promise<void>((resolve) => setTimeout(resolve, 30));
+    try {
+      const session = await import("../apps/web/src/auth/auth-session");
+      const hook = await import("../apps/web/src/modules/branding/useWorkbenchBrand");
+      store.set(session.AUTH_SESSION_STORAGE_KEY, JSON.stringify({ userId: USER, companyId: "c_001", role: "client", token: "zz_t9" }));
+      const cachedBrand = () => JSON.parse(store.get(session.WORKBENCH_BRAND_CACHE_KEY) ?? "null");
+
+      plan = { 1: { brand: null, held: true } };
+      const burst = hook.createBrandRevalidator(USER, "client");
+      burst.trigger();
+      for (let i = 0; i < 100; i += 1) burst.trigger();
+      assert.equal(calls, 1, "上一次还在路上，不许并发");
+      releases[1]!();
+      await settle();
+      assert.equal(calls, 2, "回来之后只补查一次");
+      await settle();
+      assert.equal(calls, 2, "补查完不许自己循环");
+      assert.equal(cachedBrand()?.brand?.name, "A 代理国际物流");
+      burst.dispose();
+      burst.trigger();
+      await settle();
+      assert.equal(calls, 2, "dispose 之后再触发不许发请求");
+
+      // 旧外壳：请求悬着（湘泰）→ 又触发（记补查）→ 外壳卸载 → 新外壳发请求（B 代理，悬着）→ 旧请求回来 → 新请求回来
+      const base = calls;
+      plan = { [base + 1]: { brand: null, held: true }, [base + 2]: { brand: AGENT_B, held: true }, [base + 3]: { fail: true } };
+      const oldShell = hook.createBrandRevalidator(USER, "client");
+      oldShell.trigger();
+      oldShell.trigger();
+      assert.equal(calls, base + 1);
+      oldShell.dispose();
+      const newShell = hook.createBrandRevalidator(USER, "client");
+      newShell.trigger();
+      assert.equal(calls, base + 2);
+      releases[base + 1]!();
+      await settle();
+      assert.equal(calls, base + 2, "旧外壳卸载了，它的请求回来后不许再补查");
+      releases[base + 2]!();
+      await settle();
+      assert.equal(cachedBrand()?.brand?.name, "B 代理", "新外壳查到的结果要直接生效，不许被旧外壳的补查压掉");
+      newShell.dispose();
+    } finally {
+      g.window = saved.window;
+      g.document = saved.document;
+      g.fetch = saved.fetch;
+    }
+  });
+
+  await check("13f) 受限页挂着时只认「比我进门那次更新」的结果：更新的请求查到不一样的归属才跟着变，更早发出的、归属一样的都不变；每次最新结果写入都通知受限页（归属没变也通知），取消订阅后不再通知（Codex 第四轮 P2-2：已打开的普通版集货页被改归代理后不退出）", async () => {
+    const g = globalThis as any;
+    const saved = { window: g.window, document: g.document, fetch: g.fetch };
+    const store = new Map<string, string>();
+    const USER = "zz_b4_applied_u1";
+    const AGENT = { name: "A 代理国际物流", logoUrl: null, loginPath: "/zz-b4-a" };
+    let serverData: unknown = { brand: null };
+    g.window = {
+      localStorage: {
+        getItem: (k: string) => store.get(k) ?? null,
+        setItem: (k: string, v: string) => void store.set(k, v),
+        removeItem: (k: string) => void store.delete(k),
+      },
+      location: { protocol: "http:", pathname: "/client/consolidation", href: "http://127.0.0.1/client/consolidation" },
+    };
+    g.document = { cookie: "" };
+    g.fetch = async () => {
+      const data = serverData;
+      return new Response(JSON.stringify({ code: "OK", data }), { status: 200, headers: { "content-type": "application/json" } });
+    };
+    try {
+      const session = await import("../apps/web/src/auth/auth-session");
+      const hook = await import("../apps/web/src/modules/branding/useWorkbenchBrand");
+      store.set(session.AUTH_SESSION_STORAGE_KEY, JSON.stringify({ userId: USER, companyId: "c_001", role: "client", token: "zz_t10" }));
+      let notified = 0;
+      const off = hook.subscribeAppliedBrand(() => { notified += 1; });
+
+      const entry = hook.startSessionBrandRequest(USER, "client");
+      assert.equal(await entry.promise, null);
+      const gate = { seq: entry.seq, brand: null };
+      assert.deepEqual(hook.readAppliedSessionBrand(USER), { seq: entry.seq, brand: null });
+      assert.equal(hook.shouldAdoptAppliedBrand(gate, hook.readAppliedSessionBrand(USER)), false, "就是我进门那次自己的结果");
+      assert.equal(notified, 1);
+
+      await hook.fetchSessionBrand(USER, "client");
+      assert.equal(notified, 2, "最新结果写入，归属没变也要通知受限页");
+      assert.equal(hook.shouldAdoptAppliedBrand(gate, hook.readAppliedSessionBrand(USER)), false, "归属没变不跟");
+
+      serverData = { brand: AGENT };
+      await hook.fetchSessionBrand(USER, "client");
+      const applied = hook.readAppliedSessionBrand(USER)!;
+      assert.ok(applied.seq > entry.seq);
+      assert.equal(applied.brand?.name, "A 代理国际物流");
+      assert.equal(hook.shouldAdoptAppliedBrand(gate, applied), true, "更新的请求查到改归代理，受限页要跟着变");
+      assert.equal(hook.shouldAdoptAppliedBrand({ seq: applied.seq + 1, brand: null }, applied), false, "比我进门那次更早发出的结果不跟");
+      assert.equal(hook.shouldAdoptAppliedBrand(gate, null), false);
+
+      off();
+      const before = notified;
+      serverData = { brand: null };
+      await hook.fetchSessionBrand(USER, "client");
+      assert.equal(notified, before, "取消订阅后不再通知");
+    } finally {
+      g.window = saved.window;
+      g.document = saved.document;
+      g.fetch = saved.fetch;
+    }
   });
 
   await check("14) 前端解析接口回的品牌：loginPath 只认 /<合规前缀>，logo 只认 /images/，名字空的当没有", () => {

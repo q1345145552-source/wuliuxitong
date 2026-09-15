@@ -47,6 +47,10 @@ const cacheChecked = new Set<string>();
 /** 每个账号最近一次发出的品牌请求编号：只有最新发出的那次能改模块里记的品牌和缓存 */
 const latestRequest = new Map<string, number>();
 let requestSeq = 0;
+/** 每个账号最近一次写进模块的品牌，是第几次请求查到的（受限页判断「有没有比我进门那次更新的结果」用） */
+const appliedBrand = new Map<string, { seq: number; brand: SessionBrandInfo | null }>();
+/** 受限页听的：最新结果每写进来一次就通知一次（归属没变也通知）。外壳和普通页面听 listeners，只在品牌真变了才通知，免得白白重画 */
+const appliedListeners = new Set<() => void>();
 const listeners = new Set<() => void>();
 
 function notify(): void {
@@ -116,12 +120,13 @@ function sameBrand(a: SessionBrandInfo | null, b: SessionBrandInfo | null): bool
  * 向服务端现查一次这个账号的品牌：**每次都自己发请求，不认缓存，也不复用之前发出去还没回来的请求**
  * （2026-09-15 Codex 第三轮 P3-1：原来同一账号共用在途请求，改归属之前发出的旧请求会被当成这次进门的结果）。
  * 查到了：只有「这个账号最近一次发出的请求」才改模块里记的品牌、缓存和登录页 cookie（先发后到的旧结果不许盖掉新结果），
- * 品牌真变了才通知外壳和页面重画。回包格式不对当查不到（不当成湘泰的）；查不到原样抛给调用方。
+ * 品牌真变了才通知外壳和页面重画，受限页每次都通知。回包格式不对当查不到（不当成湘泰的）；查不到原样抛给调用方。
+ * 返回的 seq 是「这是第几次请求」：受限页拿它跟后来写进模块的结果比新旧。
  */
-export function fetchSessionBrand(userId: string, role: string): Promise<SessionBrandInfo | null> {
+export function startSessionBrandRequest(userId: string, role: string): { seq: number; promise: Promise<SessionBrandInfo | null> } {
   const seq = ++requestSeq;
   latestRequest.set(userId, seq);
-  return (async () => {
+  const promise = (async () => {
     const path = role === "agent" ? "/agent/brand" : "/client/brand";
     const data = await apiRequest<{ brand?: unknown }>(`${apiBaseUrl()}${path}`, { method: "GET" });
     // 换账号会整页重载；这里再核一次，别把上一个账号的结果记到新账号头上
@@ -132,13 +137,85 @@ export function fetchSessionBrand(userId: string, role: string): Promise<Session
     if (latestRequest.get(userId) === seq) {
       writeCache(userId, brand);
       syncLoginCookie(brand);
+      appliedBrand.set(userId, { seq, brand });
       if (!known.has(userId) || !sameBrand(known.get(userId) ?? null, brand)) {
         known.set(userId, brand);
         notify();
       }
+      appliedListeners.forEach((fn) => fn());
     }
     return brand;
   })();
+  return { seq, promise };
+}
+
+export function fetchSessionBrand(userId: string, role: string): Promise<SessionBrandInfo | null> {
+  return startSessionBrandRequest(userId, role).promise;
+}
+
+/** 这个账号最近一次写进模块的品牌，和它是第几次请求查到的；还没查到过是 null */
+export function readAppliedSessionBrand(userId: string): { seq: number; brand: SessionBrandInfo | null } | null {
+  return appliedBrand.get(userId) ?? null;
+}
+
+export function subscribeAppliedBrand(fn: () => void): () => void {
+  appliedListeners.add(fn);
+  return () => {
+    appliedListeners.delete(fn);
+  };
+}
+
+/**
+ * 受限页已经按自己进门那次（gate）判完了，后来模块里又写进一个结果（applied）：要不要跟着变。
+ * 只有「比进门那次更晚发出的请求」查到「不一样的归属」才跟 —— 更早发出的旧结果不许把判断改回去。
+ */
+export function shouldAdoptAppliedBrand(
+  gate: { seq: number; brand: SessionBrandInfo | null },
+  applied: { seq: number; brand: SessionBrandInfo | null } | null,
+): boolean {
+  return applied !== null && applied.seq > gate.seq && !sameBrand(applied.brand, gate.brand);
+}
+
+export interface BrandRevalidator {
+  trigger(): void;
+  dispose(): void;
+}
+
+/**
+ * 外壳的补查调度（一个外壳实例 × 一个登录身份一份）：
+ * · trigger()：要再查一次品牌。同一时刻只让一个请求在路上；在路上时又要查，就记下来等它回来补查一次（触发多少次都只补一次）
+ * · dispose()：外壳卸载或换身份时调。之后 trigger 不发请求，还在路上的请求回来后**不再补查**
+ *   （2026-09-15 Codex 第四轮 P3-1：原来卸载了还会补发一次，这一次要是失败，就成了「最近一次请求」，把新外壳查到的正确结果压掉）
+ * 查不到就维持现状（首帧用的缓存 / 湘泰的样子），下次换页或切回来再查。
+ */
+export function createBrandRevalidator(userId: string, role: string): BrandRevalidator {
+  let running = false;
+  let again = false;
+  let disposed = false;
+  const run = (): void => {
+    running = true;
+    again = false;
+    fetchSessionBrand(userId, role)
+      .catch(() => null)
+      .then(() => {
+        if (!disposed && again) run();
+        else running = false;
+      });
+  };
+  return {
+    trigger() {
+      if (disposed) return;
+      if (running) {
+        again = true;
+        return;
+      }
+      run();
+    },
+    dispose() {
+      disposed = true;
+      again = false;
+    },
+  };
 }
 
 /**
@@ -209,7 +286,7 @@ export function useVerifiedSessionBrand(): { state: VerifiedBrandState; retry: (
    * 这一次挂载、这一轮（attempt）发出去的请求。只有严格模式下 effect 跑两遍时共用它；
    * 离开再回来是新挂载、点重试是新一轮，都自己再发 —— 不拿别处、之前发出去的请求当这次进门的结果（Codex 第三轮 P3-1）。
    */
-  const requestRef = useRef<{ key: string; promise: Promise<SessionBrandInfo | null> } | null>(null);
+  const requestRef = useRef<{ key: string; seq: number; promise: Promise<SessionBrandInfo | null> } | null>(null);
   useEffect(() => {
     if (!userId || !role || (role !== "client" && role !== "agent")) {
       // 湘泰员工 / 管理员没有代理品牌（跟 peek 同一口径）；没登录的由外壳送去登录页
@@ -217,7 +294,7 @@ export function useVerifiedSessionBrand(): { state: VerifiedBrandState; retry: (
       return;
     }
     const key = `${userId}|${role}|${attempt}`;
-    if (requestRef.current?.key !== key) requestRef.current = { key, promise: fetchSessionBrand(userId, role) };
+    if (requestRef.current?.key !== key) requestRef.current = { key, ...startSessionBrandRequest(userId, role) };
     let alive = true;
     setState((prev) => (prev.status === "checking" ? prev : { status: "checking" }));
     requestRef.current.promise.then(
@@ -232,6 +309,23 @@ export function useVerifiedSessionBrand(): { state: VerifiedBrandState; retry: (
       alive = false;
     };
   }, [userId, role, attempt]);
+  /**
+   * 页面已经判完、挂着之后，外壳换页 / 切回标签页又查到了更新的归属：跟着变。
+   * 2026-09-15 Codex 第四轮 P2-2 残留：湘泰客户正停在这一页时被改归代理，外壳已经换成代理的、菜单也藏了，
+   * 这一页却还挂着「+ 创建任务」（点了后端会 403，但确认单 5.7 要求看不到）。现在跟着变，代理的客户就被送回主页。
+   * 只认比这次进门更晚发出的请求（shouldAdoptAppliedBrand），更早的旧结果不许把判断改回去。
+   */
+  useEffect(() => {
+    const entry = requestRef.current;
+    if (!userId || state.status !== "done" || !entry) return;
+    const gate = { seq: entry.seq, brand: state.brand };
+    const follow = () => {
+      const applied = readAppliedSessionBrand(userId);
+      if (applied && shouldAdoptAppliedBrand(gate, applied)) setState({ status: "done", brand: applied.brand });
+    };
+    follow();
+    return subscribeAppliedBrand(follow);
+  }, [userId, state]);
   const retry = useCallback(() => {
     // 只有出错时才重查；连点两下只算一次（第一下已经把状态改成「还在查」）
     if (stateRef.current.status !== "error") return;
@@ -256,52 +350,47 @@ const AGENT_PENDING_BRAND: WorkbenchBrand = { name: "", hiddenMenuIds: [], label
  * - labelOverrides：菜单项 id → 改成的名字
  * 湘泰账号一律 null。
  */
-export function useWorkbenchBrand(session: AuthSession | null, currentPath?: string): WorkbenchBrand | null {
+export function useWorkbenchBrand(session: AuthSession | null, locationKey?: string): WorkbenchBrand | null {
   const state = useSessionBrand(session);
   const role = session?.role ?? null;
   const userId = session?.userId ?? null;
 
   /**
-   * 客户 / 代理的品牌由外壳去查：进工作台查一次、每换一页查一次、切回这个标签页（focus / visibilitychange）查一次。
+   * 客户 / 代理的品牌由外壳去查：进工作台查一次；每换一页查一次（locationKey 是路径 + #，客户端很多菜单只换 #）；
+   * 切回这个标签页（focus / visibilitychange 变成 visible）查一次。
    * 2026-09-15 Codex 第三轮 P2-2 残留：原来一个账号在一个标签页里只查一次，客户停在主页时被在线改了归属，
    * 左边菜单、主页 AI 问答、左上角和标签页标题一直是旧的，要整页刷新才变（后端统一闸照样挡着，没有越权）。
-   * 同一时刻只让一个请求在路上；在路上时又要查，就等它回来再补查一次 —— 不拿改归属之前发出的旧结果收尾。
-   * 查不到就维持现状（首帧用的缓存 / 湘泰的样子），下次换页或切回来再查。
+   * 第四轮：只换 # 的菜单原来不查；外壳卸载后还会补查一次、失败了压掉新外壳的正确结果 ——
+   * 调度交给 createBrandRevalidator，外壳卸载 / 换身份就 dispose。
    */
-  const flightRef = useRef({ running: false, again: false });
-  const revalidate = useCallback(() => {
+  const revalidatorRef = useRef<BrandRevalidator | null>(null);
+  const lastLocationRef = useRef(locationKey);
+  useEffect(() => {
     if (!userId || (role !== "client" && role !== "agent")) return;
-    const flight = flightRef.current;
-    if (flight.running) {
-      flight.again = true;
-      return;
-    }
-    flight.running = true;
-    const run = (): void => {
-      flight.again = false;
-      fetchSessionBrand(userId, role)
-        .catch(() => null)
-        .then(() => {
-          if (flight.again) run();
-          else flight.running = false;
-        });
-    };
-    run();
-  }, [userId, role]);
-  useEffect(() => {
-    revalidate();
-  }, [revalidate, currentPath]);
-  useEffect(() => {
+    const revalidator = createBrandRevalidator(userId, role);
+    revalidatorRef.current = revalidator;
+    // 进来这一下已经查了：把地址记成已查过，下面「换页再查」的 effect 同一轮就不再补查一次
+    lastLocationRef.current = locationKey;
+    revalidator.trigger();
+    const onFocus = () => revalidator.trigger();
     const onVisibilityChange = () => {
-      if (document.visibilityState === "visible") revalidate();
+      if (document.visibilityState === "visible") revalidator.trigger();
     };
-    window.addEventListener("focus", revalidate);
+    window.addEventListener("focus", onFocus);
     document.addEventListener("visibilitychange", onVisibilityChange);
     return () => {
-      window.removeEventListener("focus", revalidate);
+      revalidator.dispose();
+      if (revalidatorRef.current === revalidator) revalidatorRef.current = null;
+      window.removeEventListener("focus", onFocus);
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
-  }, [revalidate]);
+    // locationKey 故意不放进依赖：换页只补查，不重建调度
+  }, [userId, role]);
+  useEffect(() => {
+    if (lastLocationRef.current === locationKey) return;
+    lastLocationRef.current = locationKey;
+    revalidatorRef.current?.trigger();
+  }, [locationKey]);
 
   // 标签页标题图标在浏览器画出这一帧之前就换（layout effect），不先露一帧「湘泰物流网站」再改
   // ⚠️ 会话还没读到（水合那一帧 session 为 null）时不调：那时的 null 不是「这个账号是湘泰的」，
