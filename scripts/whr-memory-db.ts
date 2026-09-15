@@ -119,6 +119,8 @@ function matchScalar(value: unknown, cond: unknown): boolean {
         if (isPlainObject(arg) ? matchScalar(value, arg) : value === arg) return false;
       } else if (op === "equals") {
         if (value !== arg) return false;
+      } else if (op === "startsWith") {
+        if (typeof value !== "string" || !value.startsWith(String(arg))) return false;
       } else {
         throw new Error(`内存库不认识的查询条件 ${op}`);
       }
@@ -318,6 +320,10 @@ async function raw(strings: TemplateStringsArray, ...values: any[]): Promise<any
   const sql = sqlText(strings);
   if (sql.includes("pg_advisory_xact_lock(83020")) {
     emit(`lock:client_price:${values[0]}`);
+    return [];
+  }
+  if (sql.includes("pg_advisory_xact_lock(83001)")) {
+    emit("lock:task_no");
     return [];
   }
   if (sql.includes("pg_advisory_xact_lock(83010)")) {

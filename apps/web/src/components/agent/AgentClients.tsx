@@ -96,7 +96,7 @@ export default function AgentClients() {
                   <tr>
                     <th scope="col" style={th}>唛头</th>
                     <th scope="col" style={th}>名字 / 电话</th>
-                    <th scope="col" style={th}>账号</th>
+                    <th scope="col" style={th}>账号状态</th>
                     <th scope="col" style={th}>仓库版集货价</th>
                     <th scope="col" style={th}>上次改价</th>
                     <th scope="col" style={th}>操作</th>

@@ -215,6 +215,11 @@ jobs:
       - name: Test agent branding
         run: npm run test:agent-branding
 
+      # 侧边栏分组默认展开与记忆（2026-09-16）：代理新浏览器落地 /agent 时「我的客户」要展开；
+      # 管理员/员工/客户的记忆键和默认值不许变。不连库。
+      - name: Test sidebar expanded groups
+        run: npm run test:sidebar-expanded-groups
+
       # 代理工作台隔离（2026-09-16，B3）。纯函数部分 CI 里跑；
       # 真接口部分要连测试库（两个代理 + 湘泰客户各造数据，逐个 /agent/* 接口证明只拿到自己的），
       # CI 没有数据库会打印「跳过」—— 本地改了 agent-portal 必须连测试库跑一遍。

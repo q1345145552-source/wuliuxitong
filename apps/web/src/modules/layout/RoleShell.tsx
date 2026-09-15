@@ -9,10 +9,10 @@ import { changeOwnPassword } from "../../services/auth-api";
 import { apiBaseUrl, apiRequest } from "../../services/core-api";
 import { globalMenus, roleFunctionGroups, roleMenus, type MenuItem } from "./menu-config";
 import { isSamePageHashLink, navigateToHash } from "./navigate-to-hash";
+// 分组展开的默认值和记忆（代理单独一个键、默认展开「我的客户」，原因见该文件）
+import { defaultExpandedGroups, initialExpandedGroups, saveExpandedGroups } from "./sidebar-expanded-groups";
 
-const EXPANDED_GROUPS_KEY = "xt_sidebar_expanded_groups";
 const COLLAPSED_KEY = "xt_sidebar_collapsed";
-const DEFAULT_EXPANDED_GROUPS = ["运单管理", "我的运单"];
 
 /** 各角色的首页。登录后落地、错角色送回、换身份跳转都用这一张 */
 const ROLE_HOME: Record<AuthRole, string> = { admin: "/admin", staff: "/staff", client: "/client", agent: "/agent" };
@@ -29,32 +29,8 @@ const ROLE_LABEL: Record<AuthRole, string> = { admin: "管理员", staff: "员�
 let shellMountedOnceInThisTab = false;
 
 /**
- * 记住哪些功能分区是展开的。
- * localStorage 本身可能抛错（Safari 无痕模式、用户关掉网站数据），
- * 所以读写都要包起来 —— 记不住是小事，把整个工作台顶掉是大事。
- */
-function readExpandedGroups(): string[] | null {
-  try {
-    const raw = window.localStorage.getItem(EXPANDED_GROUPS_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed.filter((v) => typeof v === "string") : null;
-  } catch {
-    return null;
-  }
-}
-
-function saveExpandedGroups(groups: Set<string>): void {
-  try {
-    window.localStorage.setItem(EXPANDED_GROUPS_KEY, JSON.stringify([...groups]));
-  } catch {
-    /* 隐私模式 / 配额满：记不住就算了，不影响使用 */
-  }
-}
-
-/**
  * 记住侧边栏是不是收起来的（只管电脑端；手机端一直是抽屉，见 globals.css 的 @media）。
- * 跟上面两个函数一样包 try —— 记不住是小事，把整个工作台顶掉是大事。
+ * 跟 sidebar-expanded-groups.ts 的读写一样包 try —— 记不住是小事，把整个工作台顶掉是大事。
  */
 function readCollapsed(): boolean {
   try {
@@ -126,7 +102,9 @@ export default function RoleShell(props: {
   const sidebarRef = useRef<HTMLElement>(null);
   const sidebarTriggerRef = useRef<HTMLButtonElement>(null);
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(
-    () => new Set(readOnRemount(readExpandedGroups, null) ?? DEFAULT_EXPANDED_GROUPS),
+    // 服务端首屏/水合那一帧读不到登录信息，也不许读 localStorage → 按「没角色、没记忆」给老默认值；
+    // 挂载后下面的 effect 按真实角色重读
+    () => readOnRemount(() => initialExpandedGroups(getOptionalSession()?.role), new Set(defaultExpandedGroups(null))),
   );
   /**
    * 电脑端把侧边栏整个收起来，把宽度让给表格（运单列表那些表很宽）。
@@ -257,11 +235,13 @@ export default function RoleShell(props: {
   // 挂载一次：核对登录信息、读回侧边栏的展开/收起记忆。
   // 外壳挂在根布局上，换页不会再跑这里（换页后「当前页所在分区展开」由下面按路径的 effect 管）。
   useEffect(() => {
-    acceptSession(getOptionalSession());
+    const initialSession = getOptionalSession();
+    acceptSession(initialSession);
     setMounted(true);
     shellMountedOnceInThisTab = true;
     setCurrentHash(window.location.hash);
-    setExpandedGroups(new Set<string>(readExpandedGroups() ?? DEFAULT_EXPANDED_GROUPS));
+    // 换身份会整页重开（见 identityChanging），所以按挂载时的角色读一次就够
+    setExpandedGroups(initialExpandedGroups(initialSession?.role));
     // 上次是不是把侧边栏收起来了。放在这里读：这个 effect 只在浏览器里跑
     setSidebarCollapsed(readCollapsed());
   }, [acceptSession]);
@@ -512,7 +492,7 @@ export default function RoleShell(props: {
                     if (next.has(group.groupLabel)) next.delete(group.groupLabel);
                     else next.add(group.groupLabel);
                     // 存下来，刷新/新开标签后还能恢复
-                    saveExpandedGroups(next);
+                    saveExpandedGroups(session.role, next);
                     return next;
                   });
                 }}

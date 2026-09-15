@@ -3,6 +3,7 @@ node_modules/
 # 本地生产构建验证和审查用的构建目录（NEXT_DIST_DIR），别提交
 .next-verify*/
 .next-review-*/
+.next-*/
 dist/
 build/
 coverage/

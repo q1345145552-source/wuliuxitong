@@ -18,6 +18,8 @@ import {
   refundToConsolidation,
 } from "../wallet/consolidation-balance";
 import { saveImageToDisk, readImageAsBase64 } from "../orders/image-storage";
+// 客户排队锁：跟「超管改客户归属」同一把，建普通版任务时防止客户同时被改归代理（确认单 4.1）
+import { lockClientWhrPrice } from "../whr-consolidation/long-term-price";
 
 // ============================================================================
 // 辅助函数
@@ -426,6 +428,20 @@ export function registerConsolidationRoutes(app: MinimalHttpApp): void {
     // ⚠️ 取号和插入必须在同一个事务里（2026-08-31 改，排查报告第54条）：
     // 原来是先领号、放锁、再插入，两个客户同时点会领到同一个号，后一个撞唯一约束报「服务器繁忙」
     const task = await prisma.$transaction(async (tx) => {
+      /**
+       * ⚠️ 代理的客户不许有普通版集货任务（确认单 4.1，2026-09-16 第 2 轮复核补）。
+       * server.ts 那道统一闸用的是请求进门时读的 agentId；超管同一刻把这个客户改归代理的话，
+       * 改归属那边「查名下没有普通版任务 → 写 agentId」和这边的插入会互相看不见，两边都成功
+       * （复核实测 40 个客户命中 11 个）。所以这里先拿改归属用的同一把客户锁（锁序也一样：
+       * 客户价排队锁在前、取号锁在后），锁里现读 agentId，已归代理就拒。
+       */
+      await lockClientWhrPrice(tx, auth.userId);
+      const owner = await tx.user.findFirst({
+        where: { id: auth.userId, companyId: auth.companyId },
+        select: { agentId: true },
+      });
+      if (!owner) throw new BusinessError("账号不存在，请重新登录", 401, "UNAUTHORIZED");
+      if (owner.agentId) throw new BusinessError("该功能暂未开放", 403, "FORBIDDEN");
       const taskNo = await generateTaskNo(tx);
       return tx.consolidationTask.create({
         data: {

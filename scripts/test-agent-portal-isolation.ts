@@ -126,6 +126,10 @@ const MUST_NOT_LEAK = [
   "ZZB3X1",
   "ZZB3P-B1",
   "ZZB3P-X1",
+  "ZZB3P-B2",
+  "WHRZZB302", // 只有乙客户的计划
+  "ZZB3A1-9", // 挂在乙订单上的脏子单
+  "4321.98", // 记在代理乙名下的返现
   "operatorName",
   "operatorRole",
   "operatorId",
@@ -215,6 +219,9 @@ async function seed(prisma: any): Promise<void> {
       ship(`${P}s_a1c`, `${P}o_a1`, "ZZB3A1-1", "ZZB3A1"),
       ship(`${P}s_b1`, `${P}o_b1`, "ZZB3B1"),
       ship(`${P}s_x1`, `${P}o_x1`, "ZZB3X1"),
+      // 历史脏数据：子单 parentTrackingNo 指向代理甲的父单 ZZB3A1，但挂在代理乙客户的订单上。
+      // 轨迹接口查子单那句的名下条件（routes.ts「子单也叠加名下客户条件」）去掉，这张就会跟着父单漏给代理甲
+      ship(`${P}s_dirty`, `${P}o_b1`, "ZZB3A1-9", "ZZB3A1"),
     ],
   });
   await prisma.container.create({
@@ -233,6 +240,7 @@ async function seed(prisma: any): Promise<void> {
       log(`${P}l_a1`, `${P}s_a1`, "入库拍照完成", "2026-09-01T01:00:00Z"),
       log(`${P}l_a1c`, `${P}s_a1c`, "装入柜子 ZZB3CU7777777（分装 2件）", "2026-09-02T01:00:00Z"),
       log(`${P}l_b1`, `${P}s_b1`, "乙备注SECRETB", "2026-09-02T02:00:00Z"),
+      log(`${P}l_dirty`, `${P}s_dirty`, "脏子单轨迹SECRETDIRTY", "2026-09-03T01:00:00Z"),
     ],
   });
   // 一车拉甲和乙的货，同一个派送单号
@@ -278,6 +286,13 @@ async function seed(prisma: any): Promise<void> {
       pa(`${P}pa_b1`, `${P}pc_b1`, "ZZB3P-B1", "cb1SECRETB", "received_pending_payment", { totalFee: 450 }),
       pa(`${P}pa_x1`, `${P}pc_x1`, "ZZB3P-X1", "cxSECRETX", "pending"),
       pa(`${P}pa_a2`, `${P}pc_a2`, "ZZB3P-A2", "ca2", "received_pending_payment", { totalFee: 300, signedAt: T("2026-09-04T00:00:00Z") }),
+      // 乙客户在 plan2（收货中）没填泰国地址、**有一张没取消的预报单** —— 首页「没填泰国地址」那句只剩名下条件能挡住它。
+      // 尺寸填全、状态 pending：不掺进「没填尺寸」「没付款」两类，只测地址这一道
+      pa(`${P}pa_b2`, `${P}pc_b2`, "ZZB3P-B2", "cb1SECRETB", "pending"),
+      // 甲客户名下、但付款那一刻记在代理乙名下的单（客户后来改了归属）：返现是乙的，代理甲看到的必须是 null
+      pa(`${P}pa_a1moved`, `${P}pc_a1`, "ZZB3P-A1M", "ca1", "paid", {
+        totalFee: 500, paidAgentId: `${P}agB`, rebateAmount: 4321.98, paymentReviewedAt: T("2026-09-03T00:00:00Z"),
+      }),
     ],
   });
   const item = (id: string, prealertId: string, productName: string, dims: [number | null, number | null, number | null], volumeM3: number | null) => ({
@@ -291,6 +306,8 @@ async function seed(prisma: any): Promise<void> {
       item(`${P}it_b1`, `${P}pa_b1`, "乙品名SECRETB", [100, 100, 100], 1),
       item(`${P}it_x1`, `${P}pa_x1`, "湘泰品名SECRETX", [null, null, null], null),
       item(`${P}it_a2`, `${P}pa_a2`, "甲二品名", [100, 50, 100], 0.5),
+      item(`${P}it_b2`, `${P}pa_b2`, "乙二品名SECRETB", [100, 100, 100], 1),
+      item(`${P}it_a1m`, `${P}pa_a1moved`, "甲改归属品名", [100, 100, 50], 0.5),
     ],
   });
   await prisma.whrConsolidationStatusLog.create({
@@ -468,6 +485,25 @@ async function dbChecks(): Promise<void> {
       assert.deepEqual(Object.keys(child.containers[0]).sort(), ["ata", "containerStatus", "customsClearedAt", "departureDate", "loadingDate"]);
     });
 
+    await check("/agent/shipments/track：挂在别家订单上的脏子单，不跟着父单带出来（children、合并时间线、整份响应都没有）", async () => {
+      const r = await call(A, "GET", "/agent/shipments/track?trackingNo=ZZB3A1");
+      assert.equal(r.status, 200, r.text.slice(0, 300));
+      const d = r.json.data;
+      assert.deepEqual(d.children.map((c: any) => c.trackingNo), ["ZZB3A1-1"], "只有同一张订单上的子单");
+      assert.ok(!d.timeline.some((t: any) => t.trackingNo === "ZZB3A1-9"), "合并时间线里不许有脏子单");
+      assert.ok(!r.text.includes("ZZB3A1-9") && !r.text.includes("SECRETDIRTY"), "响应里一个字都不许有");
+      // 直接拿脏子单的号查也是 404
+      const direct = await call(A, "GET", "/agent/shipments/track?trackingNo=ZZB3A1-9");
+      assert.equal(direct.status, 404);
+    });
+
+    await check("/agent/shipments/track：派送信息只取这张运单自己那一行（甲乙各看各的司机）", async () => {
+      const a = await okData(A, "/agent/shipments/track?trackingNo=ZZB3A1");
+      assert.equal(a.lastmile.driverName, "司机王");
+      const b = await okData(B, "/agent/shipments/track?trackingNo=ZZB3B1");
+      assert.equal(b.lastmile.driverName, "乙司机SECRETB");
+    });
+
     await check("/agent/shipments/track：别家的单、湘泰的单、不存在的单 → 同一句 404", async () => {
       const b = await call(A, "GET", "/agent/shipments/track?trackingNo=ZZB3B1");
       const x = await call(A, "GET", `/agent/shipments/track?shipmentId=${P}s_x1`);
@@ -499,6 +535,9 @@ async function dbChecks(): Promise<void> {
       assert.deepEqual(paid.warehouseReceiptProofs, [{ base64Path: "/images/zz_b3_sign.jpg", fileName: "sign.jpg", mime: "image/jpeg", uploadedAt: "2026-09-02T00:00:00Z" }]);
       assert.ok(!("paymentProofs" in paid) && !("paymentReviewedBy" in paid));
       assert.deepEqual(Object.keys(paid.statusLogs[0]).sort(), ["createdAt", "fromStatus", "id", "remark", "toStatus"]);
+      const moved = d.customers[0].prealerts.find((p: any) => p.trackingNo === "ZZB3P-A1M");
+      assert.ok(moved, "甲客户改归属前付的那张单照样列出来");
+      assert.equal(moved.rebateAmount, null, "付款时记在代理乙名下的返现，代理甲看到 null");
     });
 
     await check("/agent/whr/plan-detail：只有别家客户的计划 / 不存在的计划 → 同一句 404；代理乙看甲独占的计划 404", async () => {
@@ -522,6 +561,18 @@ async function dbChecks(): Promise<void> {
       assert.deepEqual(d.missingSize.map((p: any) => p.trackingNo), ["ZZB3P-A1"], "湘泰客户那张没填尺寸的不出现");
       assert.deepEqual(d.unpaid.map((p: any) => p.trackingNo), ["ZZB3P-A2"], "乙那张待付款不出现");
       assert.deepEqual(d.missingAddress.map((r: any) => `${r.planNo}/${r.clientId}`), [`WHRZZB303/${P}ca2`], "乙在 plan2 没填地址不出现");
+      // 反证夹具是「活的」：同一行在代理乙那边确实算「没填泰国地址」—— 甲那边没有，只能是名下条件挡掉的
+      const b = await okData(B, "/agent/dashboard");
+      assert.deepEqual(b.missingAddress.map((r: any) => `${r.planNo}/${r.clientId}`), [`WHRZZB302/${P}cb1`]);
+    });
+
+    await check("/agent/me、/agent/clients：代理乙拿到的是乙自己的名字和价，不是甲的", async () => {
+      const me = await okData(B, "/agent/me");
+      assert.equal(me.name, "代理乙SECRETB");
+      assert.deepEqual(me.prices, { normal: 400, inspection: 450, sensitive: 500 });
+      const cl = await okData(B, "/agent/clients");
+      assert.deepEqual(cl.agentPrices, { normal: 400, inspection: 450, sensitive: 500 });
+      assert.deepEqual(cl.items.map((i: any) => i.clientId), [`${P}cb1`]);
     });
 
     await check("/agent/wallet：只有名下余额和充值，充值不带截图 / 审核备注 / 审核人", async () => {

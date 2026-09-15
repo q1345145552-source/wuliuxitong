@@ -165,6 +165,7 @@ async function main(): Promise<void> {
     await import("../apps/api/src/modules/whr-consolidation/staff-routes"),
     await import("../apps/api/src/modules/whr-consolidation/client-routes"),
     await import("../apps/api/src/modules/admin/routes"),
+    await import("../apps/api/src/modules/consolidation/routes"),
   ]);
   const { NO_LONG_TERM_PRICE_MESSAGE } = await import("../apps/api/src/modules/whr-consolidation/routes");
 
@@ -564,6 +565,53 @@ async function main(): Promise<void> {
     const r2 = await callRoute("POST /admin/whr-consolidation/address", ADMIN, { body: { planId: P1, customerId: PC_A, deliveryAddress: "新地址" } });
     assert.equal(r2.status, 400, `${r2.status} ${r2.message}`);
     assert.equal(pcRow(PC_A).deliveryAddress, "曼谷一号路");
+  });
+
+  /* ───────────── 9. 代理的客户不许有普通版集货任务（4.1，第 2 轮复核：改归属 × 建任务竞态） ───────────── */
+
+  const CLIENT_NEW = { userId: C_NEW, companyId: "c1", role: "client", name: "空白新客户", agentId: null };
+
+  await check("29) 湘泰客户建普通版任务：先拿客户排队锁（跟改归属同一把）→ 取号 → 写，成功", async () => {
+    seed();
+    const r = await callRoute("POST /client/consolidation/tasks", CLIENT_NEW, { body: { destinationTh: "曼谷三号路" } });
+    assert.equal(r.status, 200, `${r.status} ${r.message}`);
+    assert.equal(mem.db.consolidationTask.filter((t) => t.clientId === C_NEW).length, 1);
+    const w = writes().find((e) => e.startsWith("write:consolidationTask:"))!;
+    assertBefore(`lock:client_price:${C_NEW}`, "lock:task_no", "建普通版任务：客户锁要排在取号锁前面（跟改归属锁序一致）");
+    assertBefore("lock:task_no", w, "建普通版任务：取号锁要在写之前");
+  });
+
+  await check("30) 代理的客户直接打建普通版任务路由（绕过 server.ts 统一闸）→ 403「该功能暂未开放」，一行没写", async () => {
+    seed();
+    const r = await callRoute("POST /client/consolidation/tasks", CLIENT_AG, { body: { destinationTh: "曼谷四号路" } });
+    assert.equal(r.status, 403, `${r.status} ${r.message}`);
+    assert.ok(r.message.includes("该功能暂未开放"), r.message);
+    assert.equal(mem.db.consolidationTask.length, 0);
+    assert.deepEqual(writes(), []);
+  });
+
+  await check("31) 进门时还是湘泰客户、**锁住那一刻超管把他改归代理** → 锁里现读 agentId 拦下 403，任务没建", async () => {
+    seed();
+    mem.onEvent = (e) => {
+      if (e === `lock:client_price:${C_NEW}`) mem.db.user.find((u) => u.id === C_NEW)!.agentId = AGENT_ID;
+    };
+    const r = await callRoute("POST /client/consolidation/tasks", CLIENT_NEW, { body: { destinationTh: "曼谷五号路" } });
+    assert.equal(r.status, 403, `${r.status} ${r.message}`);
+    assert.equal(mem.db.consolidationTask.length, 0);
+    assert.ok(!mem.events.includes("lock:task_no"), `拦下之后不该再取号：${mem.events.join(" → ")}`);
+  });
+
+  await check("32) 改归属：事务外没记录、锁住那一刻客户建了普通版任务 → 锁里重查 409（普通版任务点名）", async () => {
+    seed();
+    mem.onEvent = (e) => {
+      if (e === `lock:client_price:${C_NEW}`) {
+        mem.db.consolidationTask.push({ id: "zz_b1_ctRace", taskNo: "JH0009001", companyId: "c1", clientId: C_NEW, status: "collecting" });
+      }
+    };
+    const r = await callRoute("POST /admin/users/client/update", ADMIN, { body: { id: C_NEW, agentId: AGENT_ID } });
+    assert.equal(r.status, 409, `${r.status} ${r.message}`);
+    assert.ok(r.message.includes("普通版集货"), r.message);
+    assert.equal(mem.db.user.find((u) => u.id === C_NEW)!.agentId, null);
   });
 
   if (failures.length > 0) {
