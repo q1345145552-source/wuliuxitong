@@ -57,11 +57,21 @@ export interface AgentMissingAddress {
   planStatus: string;
   prealertCount: number;
 }
+/**
+ * 列表超过接口上限时的真实总数（CLAUDE.md #21：截断必须说清楚）。
+ * 字段标成可选：本地 API 进程不自动重载，前端先热更新时老接口没有这些字段，页面不许因此白屏（CLAUDE.md #22）。
+ */
+export interface ListCap {
+  total: number;
+  limit: number;
+  truncated: boolean;
+}
 export interface AgentDashboard {
   clientCount: number;
   missingSize: AgentStuckPrealert[];
   missingAddress: AgentMissingAddress[];
   unpaid: AgentStuckPrealert[];
+  caps?: { missingSize: ListCap; missingAddress: ListCap; unpaid: ListCap };
 }
 export function fetchAgentDashboard(): Promise<AgentDashboard> {
   return apiRequest<AgentDashboard>(`${apiBaseUrl()}/agent/dashboard`);
@@ -162,7 +172,7 @@ export interface AgentWhrPlan {
   createdAt: string;
   customers: AgentWhrCustomerSummary[];
 }
-export function fetchAgentWhrPlans(): Promise<{ items: AgentWhrPlan[] }> {
+export function fetchAgentWhrPlans(): Promise<{ items: AgentWhrPlan[] } & Partial<ListCap>> {
   return apiRequest(`${apiBaseUrl()}/agent/whr/plans`);
 }
 
@@ -210,6 +220,9 @@ export interface AgentWhrPrealert {
   rebateAmount: number | null;
   createdAt: string;
   items: AgentWhrItem[];
+  /** 状态记录真实条数；statusLogs 只带最近 statusLogLimit 条 */
+  statusLogTotal?: number;
+  statusLogsTruncated?: boolean;
   statusLogs: Array<{ id: string; fromStatus: string; toStatus: string; remark: string; createdAt: string }>;
 }
 export interface AgentWhrPlanDetail {
@@ -220,6 +233,9 @@ export interface AgentWhrPlanDetail {
   destinationTh: string;
   planStatus: string;
   createdAt: string;
+  /** 每个客户最多带多少张预报单 / 每张单最多带多少条状态记录 */
+  prealertLimit?: number;
+  statusLogLimit?: number;
   customers: Array<{
     customerId: string;
     clientId: string;
@@ -229,6 +245,8 @@ export interface AgentWhrPlanDetail {
     totalFee: number | null;
     totalPackages: number;
     deliveryAddress: string | null;
+    prealertTotal?: number;
+    prealertsTruncated?: boolean;
     prealerts: AgentWhrPrealert[];
   }>;
 }
@@ -313,7 +331,7 @@ export interface AgentRebateLine {
   shippedAt: string | null;
   thailandReceivedAt: string;
 }
-export function fetchAgentRebates(): Promise<{ items: AgentRebateStatement[] }> {
+export function fetchAgentRebates(): Promise<{ items: AgentRebateStatement[] } & Partial<ListCap>> {
   return apiRequest(`${apiBaseUrl()}/agent/rebates`);
 }
 export function fetchAgentRebateDetail(statementId: string): Promise<{ statement: AgentRebateStatement; lines: AgentRebateLine[] }> {

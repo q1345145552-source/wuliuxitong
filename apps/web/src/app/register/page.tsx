@@ -14,10 +14,16 @@
 // 2026-09-16（B4）：代理的专属域名打开这一页时，不写湘泰、不给湘泰的客服微信，
 // 只说「请联系为您开通账号的对接人」（5.1 / 5.4）。代理登录页本来就不显示「申请开通」链接，
 // 这里是兜底有人直接敲地址。湘泰域名打开跟以前一模一样。
+//
+// 2026-09-16（第 5 轮）：只设了前缀、没有专属域名的代理，他的客户跟湘泰共用域名，上面按 Host 认不出来，
+// 以前照样看到「湘泰物流」和湘泰客服微信。现在跟 /login 一个口径：读 xt_brand_login cookie，
+// 前缀真存在就直接转去代理自己的前缀登录页 /<前缀>（那页不显示「申请开通」、也没有湘泰联系方式）。
+// 湘泰访客（没这个 cookie、前缀不存在、cookie 被改成站外地址）照旧看到下面这一页，一个字不变。
 
 import type { Metadata } from "next";
-import { getBrandByRequestHost } from "../../modules/branding/server-brand";
-import { AGENT_VISUAL_STYLE } from "../../modules/branding/brand-core";
+import { redirect } from "next/navigation";
+import { getBrandByLoginCookie, getBrandByRequestHost } from "../../modules/branding/server-brand";
+import { AGENT_VISUAL_STYLE, brandLoginRedirectPath } from "../../modules/branding/brand-core";
 
 /** 客服联系方式。只改这里，页面会同步；留空的项不会显示。 */
 const CONTACT = {
@@ -28,12 +34,18 @@ const CONTACT = {
 };
 
 export async function generateMetadata(): Promise<Metadata> {
-  const brand = await getBrandByRequestHost();
+  // 前缀代理的客户这一页会被转走，但转之前那一下标签页也别写湘泰
+  const brand = (await getBrandByRequestHost()) ?? (await getBrandByLoginCookie())?.brand ?? null;
   return brand ? { title: brand.name } : {};
 }
 
 export default async function RegisterPage() {
   const brand = await getBrandByRequestHost();
+  if (!brand) {
+    const cookieBrand = await getBrandByLoginCookie();
+    const target = cookieBrand ? brandLoginRedirectPath(cookieBrand.slug, "") : null;
+    if (target) redirect(target);
+  }
   // 代理域名：湘泰的联系方式一个都不给
   const items = brand
     ? []

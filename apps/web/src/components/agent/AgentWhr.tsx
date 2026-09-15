@@ -16,6 +16,7 @@ import {
   SectionHeader,
   StatusTag,
   TableWrap,
+  TruncatedNote,
   btn,
   fmtM3,
   fmtMoney,
@@ -97,6 +98,7 @@ function PrealertCard({ pa }: { pa: AgentWhrPrealert }) {
           {pa.statusLogs.length > 0 ? (
             <div style={{ marginTop: 8 }}>
               <div style={{ fontSize: 12, color: "var(--t-muted)", marginBottom: 4 }}>状态记录</div>
+              <TruncatedNote total={pa.statusLogTotal} limit={pa.statusLogs.length} truncated={pa.statusLogsTruncated} which="最近的" />
               <ul style={{ margin: 0, paddingLeft: 18, fontSize: 13 }}>
                 {pa.statusLogs.map((l) => (
                   <li key={l.id}>{fmtTime(l.createdAt)} {PREALERT_LABEL(l.fromStatus)} → {PREALERT_LABEL(l.toStatus)}{l.remark ? `（${l.remark}）` : ""}</li>
@@ -144,6 +146,7 @@ function PlanDetail({ planId, onBack }: { planId: string; onBack: () => void }) 
               <div style={{ fontSize: 13, marginBottom: 10 }}>
                 泰国收货地址：{c.deliveryAddress ? c.deliveryAddress : <span style={{ color: "var(--c-amber-deep)" }}>没填（请让客户填，或把地址发给湘泰超级管理员代填）</span>}
               </div>
+              <TruncatedNote total={c.prealertTotal} limit={data.prealertLimit} truncated={c.prealertsTruncated} unit="张" label="预报单" which="最早的" />
               {c.prealerts.length === 0 ? <div style={{ fontSize: 13, color: "var(--t-muted)" }}>还没有预报单</div> : c.prealerts.map((pa) => <PrealertCard key={pa.id} pa={pa} />)}
             </Panel>
           ))}
@@ -183,6 +186,7 @@ export default function AgentWhr({ focusPlanId, onFocusHandled }: { focusPlanId:
       />
       <LoadState loading={loading && !data} error={error} onRetry={reload} />
       {data && data.items.length === 0 ? <EmptyStateCard title="暂无集货计划" description="名下客户还没有被加进仓库版集货计划。" /> : null}
+      {data ? <TruncatedNote total={data.total} limit={data.limit} truncated={data.truncated} unit="个" label="集货计划" which="最近的" /> : null}
       {data && data.items.length > 0 ? (
         <TableWrap label="集货计划列表">
           <table className="a3-table" style={{ width: "100%", borderCollapse: "collapse", minWidth: 820 }}>

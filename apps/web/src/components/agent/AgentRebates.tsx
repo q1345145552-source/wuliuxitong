@@ -8,7 +8,7 @@
 import { useState } from "react";
 import EmptyStateCard from "../../modules/layout/EmptyStateCard";
 import { fetchAgentRebateDetail, fetchAgentRebates, type AgentRebateLine, type PriceTriple } from "../../services/agent-api";
-import { LoadState, Panel, SectionHeader, StatusTag, TableWrap, btn, fmtM3, fmtMoney, fmtTime, mono, td, tdNum, th, useAgentLoad } from "./agent-ui";
+import { LoadState, Panel, SectionHeader, StatusTag, TableWrap, TruncatedNote, btn, fmtM3, fmtMoney, fmtTime, mono, td, tdNum, th, useAgentLoad } from "./agent-ui";
 
 const BUCKETS = [
   { key: "normal", label: "普货" },
@@ -111,6 +111,7 @@ export default function AgentRebates() {
       />
       <LoadState loading={loading && !data} error={error} onRetry={reload} />
       {data && data.items.length === 0 ? <EmptyStateCard title="还没有返现单" description="名下客户的集货到泰国签收后，下个月 1 号会出返现单。" /> : null}
+      {data ? <TruncatedNote total={data.total} limit={data.limit} truncated={data.truncated} unit="张" label="返现单" which="最近的" /> : null}
       {data && data.items.length > 0 ? (
         <TableWrap label="返现单列表">
           <table className="a3-table" style={{ width: "100%", borderCollapse: "collapse", minWidth: 640 }}>

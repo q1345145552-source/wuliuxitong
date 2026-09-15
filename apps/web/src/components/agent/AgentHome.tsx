@@ -6,7 +6,10 @@
  */
 import EmptyStateCard from "../../modules/layout/EmptyStateCard";
 import { fetchAgentDashboard, type AgentStuckPrealert } from "../../services/agent-api";
-import { LoadState, Panel, SectionHeader, StatusTag, TableWrap, btn, fmtMoney, fmtTime, mono, td, tdNum, th, useAgentLoad } from "./agent-ui";
+import { LoadState, Panel, SectionHeader, StatusTag, TableWrap, TruncatedNote, btn, fmtMoney, fmtTime, mono, td, tdNum, th, useAgentLoad } from "./agent-ui";
+
+/** 首页三类都是最早的排前面：催完的会消失，刷新后接着显示后面的 */
+const STUCK_HINT = "先催这些，处理完刷新会接着显示后面的";
 
 function PrealertTable({ rows, showFee, onOpenPlan }: { rows: AgentStuckPrealert[]; showFee?: boolean; onOpenPlan: (planId: string) => void }) {
   return (
@@ -59,13 +62,16 @@ export default function AgentHome({ onOpenPlan }: { onOpenPlan: (planId: string)
           <EmptyStateCard title="你名下还没有客户" description="客户账号由湘泰超级管理员开在你名下，开好后这里就能看到。" />
         ) : (
           <>
-            <Panel title={`没填尺寸（${data.missingSize.length}）`}>
+            {/* 括号里是真实条数（接口 caps.total）；列表超过上限时下面写清只显示了多少（CLAUDE.md #21） */}
+            <Panel title={`没填尺寸（${data.caps?.missingSize.total ?? data.missingSize.length}）`}>
               <p style={{ margin: "0 0 8px", fontSize: 13, color: "var(--t-muted)" }}>货还没签收，但客户的货品长宽高没填全。仓库签收是按客户填的尺寸算方数收钱的，请催客户在「集货拼柜(仓库版)」里补上。</p>
+              <TruncatedNote {...data.caps?.missingSize} unit="张" which="最早的" hint={STUCK_HINT} />
               {data.missingSize.length === 0 ? <EmptyStateCard title="没有" description="名下客户的待签收单尺寸都填好了。" /> : <PrealertTable rows={data.missingSize} onOpenPlan={onOpenPlan} />}
             </Panel>
 
-            <Panel title={`没填泰国地址（${data.missingAddress.length}）`}>
+            <Panel title={`没填泰国地址（${data.caps?.missingAddress.total ?? data.missingAddress.length}）`}>
               <p style={{ margin: "0 0 8px", fontSize: 13, color: "var(--t-muted)" }}>这些柜还没发运，但客户没填泰国收货地址。请让客户自己填，或者把地址发给湘泰超级管理员代填。</p>
+              <TruncatedNote {...data.caps?.missingAddress} unit="条" which="最早的" hint={STUCK_HINT} />
               {data.missingAddress.length === 0 ? (
                 <EmptyStateCard title="没有" description="名下客户在跑的柜都填了地址。" />
               ) : (
@@ -96,8 +102,9 @@ export default function AgentHome({ onOpenPlan }: { onOpenPlan: (planId: string)
               )}
             </Panel>
 
-            <Panel title={`没付款（${data.unpaid.length}）`}>
+            <Panel title={`没付款（${data.caps?.unpaid.total ?? data.unpaid.length}）`}>
               <p style={{ margin: "0 0 8px", fontSize: 13, color: "var(--t-muted)" }}>仓库已签收、金额已算好，客户还没付款。不付款的货装不了柜，请催客户在客户端点「付款」（从集货余额里扣）。</p>
+              <TruncatedNote {...data.caps?.unpaid} unit="张" which="最早的" hint={STUCK_HINT} />
               {data.unpaid.length === 0 ? <EmptyStateCard title="没有" description="名下客户签收的单都付款了。" /> : <PrealertTable rows={data.unpaid} showFee onOpenPlan={onOpenPlan} />}
             </Panel>
           </>

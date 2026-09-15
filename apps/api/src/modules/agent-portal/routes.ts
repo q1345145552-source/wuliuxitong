@@ -50,6 +50,51 @@ const EXPORT_MAX_ROWS = 5000;
 /** 查不到时统一的说法：不区分「不存在」和「不是你名下的」 */
 const NOT_FOUND = "不存在或不在你名下";
 
+/**
+ * 各列表一次最多给多少条（CLAUDE.md #21：列表不许静默截断）。
+ * 超过上限时接口一并回「真实总数 total / 上限 limit / truncated」，页面写清「共 N 条，只显示前 M 条」。
+ * ⚠️ 故意做成可改的对象，**只给测试夹具临时调小**（造「超过上限」的场景不用真造几千行）；业务代码别改它。
+ */
+export const AGENT_PORTAL_LIST_LIMITS = {
+  /** 首页「没填尺寸」 */
+  dashboardMissingSize: 2000,
+  /** 首页「没付款」 */
+  dashboardUnpaid: 2000,
+  /** 首页「没填泰国地址」 */
+  dashboardMissingAddress: 500,
+  /** 仓库版集货柜列表（按柜数算，不按客户行算：一个柜不会被截成半个） */
+  whrPlans: 1000,
+  /** 一个柜里一个客户的预报单 */
+  planDetailPrealerts: 500,
+  /** 一张预报单的状态记录（取最近的） */
+  planDetailStatusLogs: 50,
+  /** 返现单（一月一张） */
+  rebateStatements: 240,
+};
+
+export interface ListCap {
+  total: number;
+  limit: number;
+  truncated: boolean;
+}
+function listCap(total: number, limit: number): ListCap {
+  return { total, limit, truncated: total > limit };
+}
+
+/** 首页卡住的单：给代理的字段（逐个列，CLAUDE.md #31） */
+const STUCK_PREALERT_SELECT = {
+  id: true,
+  trackingNo: true,
+  mark: true,
+  status: true,
+  totalFee: true,
+  signedAt: true,
+  createdAt: true,
+  planCustomer: { select: { clientId: true, planId: true, plan: { select: { planNo: true } } } },
+} satisfies Prisma.WhrConsolidationPrealertSelect;
+type StuckPrealertRow = Prisma.WhrConsolidationPrealertGetPayload<{ select: typeof STUCK_PREALERT_SELECT }>;
+const STUCK_PREALERT_ORDER: Prisma.WhrConsolidationPrealertOrderByWithRelationInput[] = [{ createdAt: "asc" }, { id: "asc" }];
+
 interface AgentClientRow {
   id: string;
   name: string;
@@ -317,32 +362,59 @@ export function registerAgentPortalRoutes(app: MinimalHttpApp): void {
     const clients = await loadAgentClients(auth);
     const clientNames = new Map(clients.map((c) => [c.id, c.name]));
     const clientIds = clients.map((c) => c.id);
+    const L = AGENT_PORTAL_LIST_LIMITS;
     if (clientIds.length === 0) {
-      ok(res, { clientCount: 0, missingSize: [], missingAddress: [], unpaid: [] });
+      ok(res, {
+        clientCount: 0,
+        missingSize: [],
+        missingAddress: [],
+        unpaid: [],
+        caps: {
+          missingSize: listCap(0, L.dashboardMissingSize),
+          missingAddress: listCap(0, L.dashboardMissingAddress),
+          unpaid: listCap(0, L.dashboardUnpaid),
+        },
+      });
       return;
     }
+    const scopedPlanCustomer = { companyId: auth.companyId, clientId: { in: clientIds } };
 
-    const prealerts = await prisma.whrConsolidationPrealert.findMany({
-      where: {
-        companyId: auth.companyId,
-        status: { in: ["pending", ...UNPAID_PREALERT_STATUSES] },
-        planCustomer: { companyId: auth.companyId, clientId: { in: clientIds } },
-      },
-      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
-      take: 2000,
-      select: {
-        id: true,
-        trackingNo: true,
-        mark: true,
-        status: true,
-        totalFee: true,
-        signedAt: true,
-        createdAt: true,
-        planCustomer: { select: { clientId: true, planId: true, plan: { select: { planNo: true } } } },
-        items: { select: { lengthCm: true, widthCm: true, heightCm: true, volumeM3: true } },
-      },
+    /**
+     * 没填尺寸：要看货品行（isMissingSize），没法整条下推到 where。
+     * 先只拿 id + 长宽高把**全部**待签收单筛完、数出真实条数，再按上限拉明细 ——
+     * 原来是「最早 2000 张待签收 + 待付款混在一起」再在内存里筛，超过就静默少了（CLAUDE.md #19 / #21）。
+     */
+    const pendingRows = await prisma.whrConsolidationPrealert.findMany({
+      where: { companyId: auth.companyId, status: "pending", planCustomer: scopedPlanCustomer },
+      orderBy: STUCK_PREALERT_ORDER,
+      select: { id: true, status: true, items: { select: { lengthCm: true, widthCm: true, heightCm: true, volumeM3: true } } },
     });
-    const mapPrealert = (p: (typeof prealerts)[number]) => ({
+    const missingSizeIds = pendingRows.filter((p) => isMissingSize(p.status, p.items)).map((p) => p.id);
+    const shownMissingSizeIds = missingSizeIds.slice(0, L.dashboardMissingSize);
+    const missingSizeRows = shownMissingSizeIds.length === 0
+      ? []
+      : await prisma.whrConsolidationPrealert.findMany({
+          // 名下条件再带一遍（CLAUDE.md #27：每一次查询各自带过滤，不指望上一句查过）
+          where: { id: { in: shownMissingSizeIds }, companyId: auth.companyId, status: "pending", planCustomer: scopedPlanCustomer },
+          orderBy: STUCK_PREALERT_ORDER,
+          select: STUCK_PREALERT_SELECT,
+        });
+
+    // 没付款：条件全在 where 里，直接数 + 按上限拉
+    const unpaidWhere: Prisma.WhrConsolidationPrealertWhereInput = {
+      companyId: auth.companyId,
+      status: { in: [...UNPAID_PREALERT_STATUSES] },
+      planCustomer: scopedPlanCustomer,
+    };
+    const unpaidTotal = await prisma.whrConsolidationPrealert.count({ where: unpaidWhere });
+    const unpaidRows = await prisma.whrConsolidationPrealert.findMany({
+      where: unpaidWhere,
+      orderBy: STUCK_PREALERT_ORDER,
+      take: L.dashboardUnpaid,
+      select: STUCK_PREALERT_SELECT,
+    });
+
+    const mapPrealert = (p: StuckPrealertRow) => ({
       prealertId: p.id,
       trackingNo: p.trackingNo,
       mark: p.mark,
@@ -356,16 +428,18 @@ export function registerAgentPortalRoutes(app: MinimalHttpApp): void {
       createdAt: p.createdAt.toISOString(),
     });
 
+    const noAddressWhere: Prisma.WhrConsolidationPlanCustomerWhereInput = {
+      companyId: auth.companyId,
+      clientId: { in: clientIds },
+      OR: [{ deliveryAddress: null }, { deliveryAddress: "" }],
+      plan: { status: { in: [...ADDRESS_NEEDED_PLAN_STATUSES] } },
+      prealerts: { some: { status: { not: "cancelled" } } },
+    };
+    const noAddressTotal = await prisma.whrConsolidationPlanCustomer.count({ where: noAddressWhere });
     const noAddressRows = await prisma.whrConsolidationPlanCustomer.findMany({
-      where: {
-        companyId: auth.companyId,
-        clientId: { in: clientIds },
-        OR: [{ deliveryAddress: null }, { deliveryAddress: "" }],
-        plan: { status: { in: [...ADDRESS_NEEDED_PLAN_STATUSES] } },
-        prealerts: { some: { status: { not: "cancelled" } } },
-      },
+      where: noAddressWhere,
       orderBy: [{ createdAt: "asc" }, { id: "asc" }],
-      take: 500,
+      take: L.dashboardMissingAddress,
       select: {
         clientId: true,
         planId: true,
@@ -376,7 +450,7 @@ export function registerAgentPortalRoutes(app: MinimalHttpApp): void {
 
     ok(res, {
       clientCount: clientIds.length,
-      missingSize: prealerts.filter((p) => isMissingSize(p.status, p.items)).map(mapPrealert),
+      missingSize: missingSizeRows.map(mapPrealert),
       missingAddress: noAddressRows
         .map((r) => ({
           clientId: r.clientId,
@@ -386,7 +460,13 @@ export function registerAgentPortalRoutes(app: MinimalHttpApp): void {
           planStatus: r.plan.status,
           prealertCount: r.prealerts.length,
         })),
-      unpaid: prealerts.filter((p) => (UNPAID_PREALERT_STATUSES as readonly string[]).includes(p.status)).map(mapPrealert),
+      unpaid: unpaidRows.map(mapPrealert),
+      // 每一类的真实条数和上限：超过上限页面写「共 N 条，只显示最早的 M 条」（CLAUDE.md #21）
+      caps: {
+        missingSize: listCap(missingSizeIds.length, L.dashboardMissingSize),
+        missingAddress: listCap(noAddressTotal, L.dashboardMissingAddress),
+        unpaid: listCap(unpaidTotal, L.dashboardUnpaid),
+      },
     });
   });
 
@@ -620,14 +700,23 @@ export function registerAgentPortalRoutes(app: MinimalHttpApp): void {
     const clients = await loadAgentClients(auth);
     const clientNames = new Map(clients.map((c) => [c.id, c.name]));
     const clientIds = clients.map((c) => c.id);
+    const planLimit = AGENT_PORTAL_LIST_LIMITS.whrPlans;
     if (clientIds.length === 0) {
-      ok(res, { items: [] });
+      ok(res, { items: [], ...listCap(0, planLimit) });
       return;
     }
-    const rows = await prisma.whrConsolidationPlanCustomer.findMany({
-      where: { companyId: auth.companyId, clientId: { in: clientIds } },
-      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
-      take: 1000,
+    const scopeWhere: Prisma.WhrConsolidationPlanCustomerWhereInput = { companyId: auth.companyId, clientId: { in: clientIds } };
+    const rowOrder: Prisma.WhrConsolidationPlanCustomerOrderByWithRelationInput[] = [{ createdAt: "desc" }, { id: "desc" }];
+    /**
+     * 先只拿 planId 数出一共几个柜、定好柜的顺序（原来按客户行 take 1000，超过就静默少柜，
+     * 而且一个柜有名下好几个客户时会被截成半个）。再只拉排在前面的那些柜的明细。
+     */
+    const idRows = await prisma.whrConsolidationPlanCustomer.findMany({ where: scopeWhere, orderBy: rowOrder, select: { planId: true } });
+    const orderedPlanIds = [...new Set(idRows.map((r) => r.planId))];
+    const shownPlanIds = orderedPlanIds.slice(0, planLimit);
+    const rows = shownPlanIds.length === 0 ? [] : await prisma.whrConsolidationPlanCustomer.findMany({
+      where: { ...scopeWhere, planId: { in: shownPlanIds } },
+      orderBy: rowOrder,
       select: {
         id: true,
         planId: true,
@@ -682,7 +771,9 @@ export function registerAgentPortalRoutes(app: MinimalHttpApp): void {
         deliveryAddress: r.deliveryAddress ?? null,
       });
     }
-    ok(res, { items: [...plans.values()] });
+    // 顺序照第一步定好的柜顺序（两步之间柜被删了就跳过）
+    const items = shownPlanIds.map((id) => plans.get(id)).filter((p): p is NonNullable<typeof p> => Boolean(p));
+    ok(res, { items, ...listCap(orderedPlanIds.length, planLimit) });
   });
 
   /* ===== 仓库版集货：一个柜里名下客户的明细（单子、货品、状态、签收照片、地址） ===== */
@@ -697,6 +788,7 @@ export function registerAgentPortalRoutes(app: MinimalHttpApp): void {
     const clients = await loadAgentClients(auth);
     const clientNames = new Map(clients.map((c) => [c.id, c.name]));
     const clientIds = clients.map((c) => c.id);
+    const L = AGENT_PORTAL_LIST_LIMITS;
     const customers = clientIds.length === 0
       ? []
       : await prisma.whrConsolidationPlanCustomer.findMany({
@@ -714,11 +806,14 @@ export function registerAgentPortalRoutes(app: MinimalHttpApp): void {
             totalPackages: true,
             deliveryAddress: true,
             plan: { select: { planNo: true, warehouse: true, containerType: true, destinationTh: true, status: true, createdAt: true } },
+            // 真实单数（含已取消，跟下面列出来的口径一样），超过上限时页面写清楚
+            _count: { select: { prealerts: true } },
             prealerts: {
               orderBy: [{ createdAt: "asc" }, { id: "asc" }],
-              take: 500,
+              take: L.planDetailPrealerts,
               select: {
                 id: true,
+                _count: { select: { statusLogs: true } },
                 trackingNo: true,
                 expressNo: true,
                 mark: true,
@@ -757,7 +852,7 @@ export function registerAgentPortalRoutes(app: MinimalHttpApp): void {
                 },
                 statusLogs: {
                   orderBy: { createdAt: "desc" },
-                  take: 50,
+                  take: L.planDetailStatusLogs,
                   // ⚠️ 不选 operatorId / operatorName / operatorRole
                   select: { id: true, fromStatus: true, toStatus: true, remark: true, createdAt: true },
                 },
@@ -778,6 +873,8 @@ export function registerAgentPortalRoutes(app: MinimalHttpApp): void {
       destinationTh: plan.destinationTh,
       planStatus: plan.status,
       createdAt: plan.createdAt.toISOString(),
+      prealertLimit: L.planDetailPrealerts,
+      statusLogLimit: L.planDetailStatusLogs,
       customers: customers.map((c) => {
         const prices = {
           unitPriceNormal: c.unitPriceNormal,
@@ -793,6 +890,8 @@ export function registerAgentPortalRoutes(app: MinimalHttpApp): void {
           totalFee: numOrNull(c.totalFee),
           totalPackages: c.totalPackages,
           deliveryAddress: c.deliveryAddress ?? null,
+          prealertTotal: c._count.prealerts,
+          prealertsTruncated: c._count.prealerts > L.planDetailPrealerts,
           prealerts: c.prealerts.map((pa) => {
             const bd = buildFeeBreakdown(pa.items, prices, pa.totalFee);
             return {
@@ -830,6 +929,8 @@ export function registerAgentPortalRoutes(app: MinimalHttpApp): void {
                 cargoValue: it.cargoValue,
                 cargoType: it.cargoType,
               })),
+              statusLogTotal: pa._count.statusLogs,
+              statusLogsTruncated: pa._count.statusLogs > L.planDetailStatusLogs,
               statusLogs: pa.statusLogs.map((sl) => ({
                 id: sl.id,
                 fromStatus: sl.fromStatus,
@@ -1005,13 +1106,16 @@ export function registerAgentPortalRoutes(app: MinimalHttpApp): void {
   app.get("/agent/rebates", async (req, res) => {
     const auth = requireAgent(req, res);
     if (!auth) return;
+    const where = { agentId: auth.agentId, companyId: auth.companyId };
+    const limit = AGENT_PORTAL_LIST_LIMITS.rebateStatements;
+    const total = await prisma.agentRebateStatement.count({ where });
     const rows = await prisma.agentRebateStatement.findMany({
-      where: { agentId: auth.agentId, companyId: auth.companyId },
+      where,
       orderBy: [{ month: "desc" }, { id: "desc" }],
-      take: 240,
+      take: limit,
       select: { id: true, month: true, lineCount: true, totalVolumeM3: true, totalRebate: true, status: true, generatedAt: true, paidAt: true },
     });
-    ok(res, { items: rows.map(mapRebateStatement) });
+    ok(res, { items: rows.map(mapRebateStatement), ...listCap(total, limit) });
   });
 
   app.get("/agent/rebates/detail", async (req, res) => {

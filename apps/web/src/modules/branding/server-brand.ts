@@ -1,6 +1,13 @@
 // ⚠️ 只许服务端组件 import（next/headers 在浏览器里用不了）。没用 "server-only" 包：本仓库没装它，不加依赖。
 import { cookies, headers } from "next/headers";
-import { normalizeBrandHost, normalizeBrandSlug, parsePublicBrand, type PublicBrandInfo } from "./brand-core";
+import {
+  BRAND_LOGIN_COOKIE,
+  normalizeBrandHost,
+  normalizeBrandSlug,
+  parsePublicBrand,
+  resolveBrandLoginCookie,
+  type PublicBrandInfo,
+} from "./brand-core";
 
 /* ==========================================================================
    登录页（服务端组件）查代理品牌（2026-09-16，B4）。只在 Next 服务端跑。
@@ -73,4 +80,13 @@ export async function getBrandByRequestHost(): Promise<PublicBrandInfo | null> {
 export async function readBrandLoginCookie(name: string): Promise<string | null> {
   const jar = await cookies();
   return jar.get(name)?.value ?? null;
+}
+
+/**
+ * 只设了前缀、没有专属域名的代理（5.5 默认）：他的客户跟湘泰共用域名，Host 查不到品牌，
+ * 只能靠 xt_brand_login cookie 认出来。/login、/register 都走这一个（第 5 轮：/register 以前漏了，
+ * 前缀代理的客户点「申请开通」看到了湘泰和湘泰客服微信）。前缀不合规 / 查不到 → null。
+ */
+export async function getBrandByLoginCookie(): Promise<{ slug: string; brand: PublicBrandInfo } | null> {
+  return resolveBrandLoginCookie(await readBrandLoginCookie(BRAND_LOGIN_COOKIE), getBrandBySlug);
 }

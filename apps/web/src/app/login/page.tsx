@@ -1,8 +1,8 @@
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import LoginView from "../../modules/branding/LoginView";
-import { BRAND_LOGIN_COOKIE, brandLoginRedirectPath, normalizeBrandSlug } from "../../modules/branding/brand-core";
-import { getBrandByRequestHost, getBrandBySlug, readBrandLoginCookie } from "../../modules/branding/server-brand";
+import { brandLoginRedirectPath } from "../../modules/branding/brand-core";
+import { getBrandByLoginCookie, getBrandByRequestHost } from "../../modules/branding/server-brand";
 
 /**
  * 登录页（2026-09-16 起是服务端组件，表单本身在 modules/branding/LoginView.tsx，内容没改）。
@@ -17,7 +17,8 @@ import { getBrandByRequestHost, getBrandBySlug, readBrandLoginCookie } from "../
 type SearchParams = Promise<Record<string, string | string[] | undefined>>;
 
 export async function generateMetadata(): Promise<Metadata> {
-  const brand = await getBrandByRequestHost();
+  // 第 5 轮：cookie 认出是前缀代理的客户时这页会被转走，转之前那一下标签页也写代理的名字
+  const brand = (await getBrandByRequestHost()) ?? (await getBrandByLoginCookie())?.brand ?? null;
   // 湘泰自己返回空对象 = 沿用根布局的「湘泰物流网站」
   return brand ? { title: brand.name } : {};
 }
@@ -36,10 +37,10 @@ export default async function LoginPage({ searchParams }: { searchParams: Search
   const hostBrand = await getBrandByRequestHost();
   if (hostBrand) return <LoginView brand={hostBrand} />;
 
-  const cookieSlug = normalizeBrandSlug(await readBrandLoginCookie(BRAND_LOGIN_COOKIE));
-  // 前缀还得真存在（代理改了前缀 / 被删）才转，不然转过去是 404，人就卡死了
-  if (cookieSlug && (await getBrandBySlug(cookieSlug))) {
-    const target = brandLoginRedirectPath(cookieSlug, toSearch(await searchParams));
+  // 前缀还得真存在（代理改了前缀 / 被删）才转，不然转过去是 404，人就卡死了（规则在 getBrandByLoginCookie，/register 共用）
+  const cookieBrand = await getBrandByLoginCookie();
+  if (cookieBrand) {
+    const target = brandLoginRedirectPath(cookieBrand.slug, toSearch(await searchParams));
     if (target) redirect(target);
   }
   return <LoginView brand={null} />;

@@ -114,6 +114,38 @@ export function LoadState({ loading, error, onRetry }: { loading: boolean; error
   return null;
 }
 
+/**
+ * 列表超过接口上限时的提示（CLAUDE.md #21：列表不许静默截断）。没截断 / 老接口没给总数时什么都不画。
+ * 文案照员工端批量导入那句：「共 N 条，只显示前 M 条」。
+ */
+export function TruncatedNote({
+  total,
+  limit,
+  truncated,
+  unit = "条",
+  label = "",
+  which = "前",
+  hint,
+}: {
+  total?: number;
+  limit?: number;
+  truncated?: boolean;
+  /** 量词：条 / 张 / 个 */
+  unit?: string;
+  /** 量词后面跟的名字（只在「共 N …」里出现一次），如「集货计划」 */
+  label?: string;
+  /** 「前」「最早的」「最近的」—— 跟列表排序一致 */
+  which?: string;
+  hint?: string;
+}) {
+  if (!truncated || total == null || limit == null) return null;
+  return (
+    <div role="note" style={{ margin: "0 0 8px", padding: "6px 10px", borderRadius: 6, background: "var(--c-amber-bg)", color: "var(--c-amber-deep)", fontSize: 13 }}>
+      共 {total} {unit}{label}，只显示{which} {limit} {unit}{hint ? `。${hint}` : ""}
+    </div>
+  );
+}
+
 /** 表格外面包一层可横向滚动的框（手机上宽表不撑破页面） */
 export function TableWrap({ children, label }: { children: ReactNode; label: string }) {
   return (

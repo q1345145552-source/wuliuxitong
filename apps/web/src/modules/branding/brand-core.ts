@@ -169,3 +169,19 @@ export function brandLoginRedirectPath(cookieValue: string | null | undefined, s
   const query = search && search.startsWith("?") ? search : "";
   return `/${slug}${query}`;
 }
+
+/**
+ * cookie 里记的前缀 → 真存在的代理（2026-09-16 第 5 轮：/login、/register 共用这一条规则，别各写各的）。
+ * · 格式不对（含 //evil.com 这种）→ null，不去查
+ * · 查不到（代理改了前缀 / 被删 / 接口挂了）→ null，照常显示湘泰页面，免得转过去是 404 人卡死
+ * lookup 由调用方传（服务端是 getBrandBySlug），这样自测脚本不用起 Next 也能测。
+ */
+export async function resolveBrandLoginCookie(
+  cookieValue: string | null | undefined,
+  lookup: (slug: string) => Promise<PublicBrandInfo | null>,
+): Promise<{ slug: string; brand: PublicBrandInfo } | null> {
+  const slug = normalizeBrandSlug(cookieValue ?? "");
+  if (!slug) return null;
+  const brand = await lookup(slug);
+  return brand ? { slug, brand } : null;
+}

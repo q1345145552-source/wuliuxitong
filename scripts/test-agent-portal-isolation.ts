@@ -368,7 +368,7 @@ async function dbChecks(): Promise<void> {
   const { prisma } = await import("../apps/api/src/db/prisma");
   const { createApp } = await import("../apps/api/src/server");
   const { signAuthToken } = await import("../apps/api/src/modules/auth/token");
-  const { registerAgentPortalRoutes } = await import("../apps/api/src/modules/agent-portal/routes");
+  const { registerAgentPortalRoutes, AGENT_PORTAL_LIST_LIMITS } = await import("../apps/api/src/modules/agent-portal/routes");
   const { registerAdminRoutes } = await import("../apps/api/src/modules/admin/routes");
   const { registerShipmentRoutes } = await import("../apps/api/src/modules/shipments/routes");
   const { registerOrderRoutes } = await import("../apps/api/src/modules/orders/routes");
@@ -564,6 +564,95 @@ async function dbChecks(): Promise<void> {
       // 反证夹具是「活的」：同一行在代理乙那边确实算「没填泰国地址」—— 甲那边没有，只能是名下条件挡掉的
       const b = await okData(B, "/agent/dashboard");
       assert.deepEqual(b.missingAddress.map((r: any) => `${r.planNo}/${r.clientId}`), [`WHRZZB302/${P}cb1`]);
+    });
+
+    await check("列表上限（CLAUDE.md #21）：默认上限下没截断 —— truncated=false、total 等于显示条数", async () => {
+      const L = AGENT_PORTAL_LIST_LIMITS;
+      const d = await okData(A, "/agent/dashboard");
+      assert.deepEqual(d.caps, {
+        missingSize: { total: 1, limit: L.dashboardMissingSize, truncated: false },
+        missingAddress: { total: 1, limit: L.dashboardMissingAddress, truncated: false },
+        unpaid: { total: 1, limit: L.dashboardUnpaid, truncated: false },
+      });
+      const plans = await okData(A, "/agent/whr/plans");
+      assert.deepEqual([plans.items.length, plans.total, plans.limit, plans.truncated], [2, 2, L.whrPlans, false]);
+      const detail = await okData(A, `/agent/whr/plan-detail?planId=${P}plan1`);
+      assert.equal(detail.prealertLimit, L.planDetailPrealerts);
+      assert.deepEqual([detail.customers[0].prealerts.length, detail.customers[0].prealertTotal, detail.customers[0].prealertsTruncated], [3, 3, false]);
+      const paid = detail.customers[0].prealerts.find((p: any) => p.trackingNo === "ZZB3P-A1P");
+      assert.deepEqual([paid.statusLogs.length, paid.statusLogTotal, paid.statusLogsTruncated], [1, 1, false]);
+      const reb = await okData(A, "/agent/rebates");
+      assert.deepEqual([reb.items.length, reb.total, reb.limit, reb.truncated], [1, 1, L.rebateStatements, false]);
+    });
+
+    await check("列表上限（CLAUDE.md #21）：超过上限只给前 M 条，total 是真实条数、truncated=true（夹具把上限临时调成 1）", async () => {
+      const L = AGENT_PORTAL_LIST_LIMITS;
+      const saved = { ...L };
+      const T = (s: string) => new Date(s);
+      try {
+        // 给代理甲再造：没填尺寸 +2、没付款 +1、没填地址 +1（新柜 plan4，柜列表也变 3 个）、pa_a1 两条状态记录、返现单 +1
+        await prisma.whrConsolidationPlan.create({ data: { id: `${P}plan4`, companyId: CO, planNo: "WHRZZB304", destinationTh: "曼谷", status: "planning", createdBy: `${P}login_a`, creatorName: "x" } });
+        await prisma.whrConsolidationPlanCustomer.create({
+          data: { id: `${P}pc_a4`, planId: `${P}plan4`, companyId: CO, clientId: `${P}ca1`, unitPriceNormal: 600, unitPriceInspection: 650, unitPriceSensitive: 700, deliveryAddress: null, totalVolumeM3: 0, createdAt: T("2030-01-01T00:00:00Z") },
+        });
+        await prisma.whrConsolidationPrealert.createMany({
+          data: [
+            { id: `${P}pa_cap1`, customerId: `${P}pc_a1`, companyId: CO, trackingNo: "ZZB3P-CAP1", mark: "ca1", status: "pending", createdAt: T("2030-01-01T00:00:00Z") },
+            { id: `${P}pa_cap2`, customerId: `${P}pc_a1`, companyId: CO, trackingNo: "ZZB3P-CAP2", mark: "ca1", status: "pending", createdAt: T("2030-01-02T00:00:00Z") },
+            { id: `${P}pa_cap3`, customerId: `${P}pc_a4`, companyId: CO, trackingNo: "ZZB3P-CAP3", mark: "ca1", status: "received_pending_payment", totalFee: 100, createdAt: T("2030-01-03T00:00:00Z") },
+          ],
+        });
+        await prisma.whrConsolidationStatusLog.createMany({
+          data: [1, 2].map((i) => ({
+            id: `${P}wl_cap${i}`, prealertId: `${P}pa_a1`, companyId: CO, operatorId: `${P}login_a`, operatorRole: "admin", operatorName: "x",
+            fromStatus: "pending", toStatus: "pending", remark: `CAP记录${i}`, createdAt: T(`2030-01-0${i}T00:00:00Z`),
+          })),
+        });
+        await prisma.agentRebateStatement.create({ data: { id: `${P}st_a2`, companyId: CO, agentId: `${P}agA`, month: "2026-07", lineCount: 0, totalVolumeM3: 0, totalRebate: 0, status: "unpaid" } });
+
+        Object.assign(L, { dashboardMissingSize: 1, dashboardUnpaid: 1, dashboardMissingAddress: 1, whrPlans: 1, planDetailPrealerts: 1, planDetailStatusLogs: 1, rebateStatements: 1 });
+
+        const d = await okData(A, "/agent/dashboard");
+        assert.deepEqual(d.missingSize.map((p: any) => p.trackingNo), ["ZZB3P-A1"], "只给最早的那张");
+        assert.deepEqual(d.caps.missingSize, { total: 3, limit: 1, truncated: true });
+        assert.deepEqual(d.unpaid.map((p: any) => p.trackingNo), ["ZZB3P-A2"]);
+        assert.deepEqual(d.caps.unpaid, { total: 2, limit: 1, truncated: true });
+        assert.deepEqual(d.missingAddress.map((r: any) => `${r.planNo}/${r.clientId}`), [`WHRZZB303/${P}ca2`]);
+        assert.deepEqual(d.caps.missingAddress, { total: 2, limit: 1, truncated: true });
+        // 别家（代理乙）的数不许算进代理甲的 total
+        const b = await okData(B, "/agent/dashboard");
+        // 乙名下：ZZB3P-B1 待付款、plan2 没填地址；甲新造的那几行一条都不许算进来
+        assert.deepEqual([b.caps.missingSize.total, b.caps.unpaid.total, b.caps.missingAddress.total], [0, 1, 1]);
+
+        const plans = await okData(A, "/agent/whr/plans");
+        assert.deepEqual(plans.items.map((p: any) => p.planNo), ["WHRZZB304"], "按柜截，最近的柜排前面");
+        assert.deepEqual([plans.total, plans.limit, plans.truncated], [3, 1, true]);
+
+        const detail = await okData(A, `/agent/whr/plan-detail?planId=${P}plan1`);
+        const c = detail.customers[0];
+        assert.equal(detail.prealertLimit, 1);
+        assert.deepEqual([c.prealerts.length, c.prealertTotal, c.prealertsTruncated], [1, 5, true]);
+        const pa = c.prealerts[0];
+        assert.equal(pa.trackingNo, "ZZB3P-A1");
+        assert.deepEqual([pa.statusLogs.length, pa.statusLogTotal, pa.statusLogsTruncated], [1, 2, true]);
+        assert.equal(pa.statusLogs[0].remark, "CAP记录2", "状态记录留最近的");
+
+        const reb = await okData(A, "/agent/rebates");
+        assert.deepEqual(reb.items.map((s: any) => s.month), ["2026-08"]);
+        assert.deepEqual([reb.total, reb.limit, reb.truncated], [2, 1, true]);
+
+        // 刚好等于上限不算截断
+        Object.assign(L, { rebateStatements: 2 });
+        const rebEq = await okData(A, "/agent/rebates");
+        assert.deepEqual([rebEq.items.length, rebEq.total, rebEq.truncated], [2, 2, false]);
+      } finally {
+        Object.assign(L, saved);
+        await prisma.whrConsolidationStatusLog.deleteMany({ where: { id: { in: [`${P}wl_cap1`, `${P}wl_cap2`] } } });
+        await prisma.whrConsolidationPrealert.deleteMany({ where: { id: { in: [`${P}pa_cap1`, `${P}pa_cap2`, `${P}pa_cap3`] } } });
+        await prisma.whrConsolidationPlanCustomer.deleteMany({ where: { id: `${P}pc_a4` } });
+        await prisma.whrConsolidationPlan.deleteMany({ where: { id: `${P}plan4` } });
+        await prisma.agentRebateStatement.deleteMany({ where: { id: `${P}st_a2` } });
+      }
     });
 
     await check("/agent/me、/agent/clients：代理乙拿到的是乙自己的名字和价，不是甲的", async () => {

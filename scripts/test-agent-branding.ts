@@ -301,6 +301,54 @@ async function main(): Promise<void> {
     assert.equal(web.brandLoginRedirectPath("zz-b4-a", "expired=1"), "/zz-b4-a", "不是 ? 开头的查询串不拼");
   });
 
+  await check("15b) 前缀代理的客户（没专属域名）打开 /register 不许看到湘泰和湘泰客服微信：cookie 前缀真存在才转代理登录页，/login /register 共用一条规则（第 5 轮）", async () => {
+    // ① 纯规则：格式不对不查、查不到不转、大写规范化
+    const looked: string[] = [];
+    const brandA = { name: "A 代理", logoUrl: null };
+    const lookup = async (slug: string) => { looked.push(slug); return slug === "zz-b4-a" ? brandA : null; };
+    assert.deepEqual(await web.resolveBrandLoginCookie("zz-b4-a", lookup), { slug: "zz-b4-a", brand: brandA });
+    assert.deepEqual(await web.resolveBrandLoginCookie(" ZZ-B4-A ", lookup), { slug: "zz-b4-a", brand: brandA });
+    assert.equal(await web.resolveBrandLoginCookie("zz-b4-nobody", lookup), null, "前缀不存在不许转（转过去是 404）");
+    looked.length = 0;
+    for (const bad of ["//evil.com", "/evil", "https://evil.com", "%2F%2Fevil.com", "", null, undefined, "a"]) {
+      assert.equal(await web.resolveBrandLoginCookie(bad as any, lookup), null, String(bad));
+    }
+    assert.deepEqual(looked, [], "格式不对的 cookie 不许拿去查接口");
+
+    // ② 源码：两页都是「先按 Host，认不出再按 cookie」，页面和 generateMetadata 都要有
+    const strip = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+    const register = strip(fs.readFileSync(path.join(process.cwd(), "apps/web/src/app/register/page.tsx"), "utf-8"));
+    const login = strip(fs.readFileSync(path.join(process.cwd(), "apps/web/src/app/login/page.tsx"), "utf-8"));
+    for (const [name, src, pageFn, xiangtaiMarker] of [
+      ["register", register, "export default async function RegisterPage", '{ label: "微信", value: CONTACT.wechat }'],
+      ["login", login, "export default async function LoginPage", "<LoginView brand={null} />"],
+    ] as const) {
+      const meta = src.slice(src.indexOf("export async function generateMetadata"), src.indexOf(pageFn));
+      assert.match(meta, /getBrandByRequestHost\(\)\)\s*\?\?\s*\(await getBrandByLoginCookie\(\)\)/, `${name} 的标签页标题没按 cookie 认前缀代理`);
+      const body = src.slice(src.indexOf(pageFn));
+      const hostAt = body.indexOf("getBrandByRequestHost()");
+      const cookieAt = body.indexOf("getBrandByLoginCookie()");
+      const redirectAt = body.indexOf("redirect(target)");
+      assert.ok(hostAt > 0 && cookieAt > hostAt && redirectAt > cookieAt, `${name} 页没有「Host 认不出 → cookie 前缀 → 转代理登录页」`);
+      const xiangtaiAt = body.indexOf(xiangtaiMarker);
+      assert.ok(xiangtaiAt > redirectAt, `${name} 页必须在拼湘泰版内容之前转走`);
+      assert.ok(!/readBrandLoginCookie|normalizeBrandSlug\(/.test(src), `${name} 页别自己读 cookie / 自己规范化，统一走 getBrandByLoginCookie`);
+    }
+    assert.match(register, /brandLoginRedirectPath\(cookieBrand\.slug, ""\)/, "register 转去的地址必须走 brandLoginRedirectPath");
+
+    // ③ 同类扫描：app/ 下凡是按 Host 认品牌的页面，都必须同时认前缀 cookie（专门的前缀登录页 [agentSlug] 除外，它按地址认）
+    const appDir = path.join(process.cwd(), "apps/web/src/app");
+    const walk = (dir: string): string[] => fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
+      const p = path.join(dir, e.name);
+      return e.isDirectory() ? walk(p) : /\.(tsx?|jsx?)$/.test(e.name) ? [p] : [];
+    });
+    const hostOnly = walk(appDir).filter((f) => {
+      const src = strip(fs.readFileSync(f, "utf-8"));
+      return src.includes("getBrandByRequestHost(") && !src.includes("getBrandByLoginCookie(");
+    });
+    assert.deepEqual(hostOnly.map((f) => path.relative(appDir, f)), [], "这些页面只按 Host 认品牌，漏了只设前缀的代理");
+  });
+
   await check("16) 首字图标：名字里的 < > 被转义进 SVG；空名字不崩", () => {
     const uri = web.letterIconDataUri("<B>代理");
     assert.ok(uri.startsWith("data:image/svg+xml,"));
