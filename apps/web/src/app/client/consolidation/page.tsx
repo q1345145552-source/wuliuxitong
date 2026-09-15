@@ -15,6 +15,8 @@ import {
   fetchClientWalletOverview,} from "../../../services/business-api";
 import { formatBeijingTime } from "../../../modules/staff/utils";
 import { createRequestGate } from "../../../modules/shared/request-gate";
+import { useRouter } from "next/navigation";
+import { useCurrentSessionBrand } from "../../../modules/branding/useWorkbenchBrand";
 
 // ============================================================================
 // 状态中文映射
@@ -80,7 +82,30 @@ function calcProductRow(r: ProductFormRow) {
 // ============================================================================
 // 主页面组件
 // ============================================================================
+/**
+ * 代理的客户不给用普通版集货（确认单 4.1 / 5.7「看不到」，2026-09-15 Codex 审查 P2-3）。
+ * 左边菜单藏了、后端统一闸也 403，但直接输网址 / 旧书签还能打开这一页、看到「+ 创建任务」。
+ * 所以页面这一层也挡：品牌还没查到之前不挂业务页（免得先闪一下湘泰的页面、先发一串会被 403 的请求），
+ * 查到是代理的客户就送回主页；湘泰客户照旧。
+ * ⚠️ 业务页的 hooks 全在 ClientConsolidationContent 里，这里判完才挂 —— 别把判断挪进去（hooks 顺序会乱）。
+ */
 export default function ClientConsolidationPage() {
+  const brand = useCurrentSessionBrand();
+  const router = useRouter();
+  useEffect(() => {
+    if (brand) router.replace("/client");
+  }, [brand, router]);
+  if (brand === undefined || brand) {
+    return (
+      <div style={{ padding: 24, fontSize: 14, color: "var(--t-muted)" }}>
+        {brand ? "该功能暂未开放，正在返回主页…" : "加载中…"}
+      </div>
+    );
+  }
+  return <ClientConsolidationContent />;
+}
+
+function ClientConsolidationContent() {
   const [tasks, setTasks] = useState<ConsolidationTaskItem[]>([]);
   const [taskDetail, setTaskDetail] = useState<ConsolidationTaskItem | null>(null);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);

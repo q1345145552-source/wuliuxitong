@@ -614,6 +614,109 @@ async function main(): Promise<void> {
     assert.equal(mem.db.user.find((u) => u.id === C_NEW)!.agentId, null);
   });
 
+  /* ───────────── 9. Codex 审查修复（2026-09-15） ───────────── */
+
+  await check("33) 付款后改价、再撤销付款：单子按柜里现在的单价重算（1300 → 1700），重付扣 1700，快照和返现同一个价；锁序 计划 → 预报单 → 客户汇总 → 钱包", async () => {
+    seed();
+    const { setClientWhrPrice } = await import("../apps/api/src/modules/whr-consolidation/long-term-price");
+    const first = await callRoute("POST /client/whr-consolidation/pay", CLIENT_AG, { body: { planId: P1, prealertId: PA_A } });
+    assert.equal(first.status, 200, first.message);
+    assert.equal(balanceOf(C_AG), 3700);
+    // 代理把客户价改高：柜里单价跟着改，已付款那张单的金额不动（4.14）
+    await setClientWhrPrice({
+      companyId: "c1", clientId: C_AG, prices: { normal: 800, inspection: 900, sensitive: 1000 },
+      actor: { userId: "zz_b1_agentlogin", role: "agent" },
+    });
+    assert.equal(pcRow(PC_A).unitPriceNormal, 800);
+    assert.equal(Number(pa(PA_A).totalFee), 1300, "已付款的金额不该跟着改价变");
+
+    mem.onEvent = null;
+    mem.events = [];
+    const revoke = await callRoute("POST /admin/whr-consolidation/payments/revoke", ADMIN, { body: { prealertId: PA_A, reason: "改价后重付" } });
+    assert.equal(revoke.status, 200, revoke.message);
+    assert.equal(balanceOf(C_AG), 5000, "退的是实际扣过的 1300");
+    assert.equal(Number(pa(PA_A).totalFee), 1700, "回到待付款就按柜里现在的单价重算：1.5×800 + 0.5×1000");
+    assert.equal(Number(pcRow(PC_A).totalFee), 1700, "客户汇总跟着重算");
+    assertBefore(`lock:plan:${P1}`, `lock:prealert:${PA_A}`, "撤销付款：先锁计划再锁单");
+    assertBefore(`write:whrConsolidationPlanCustomer:${PC_A}`, `lock:wallet:${C_AG}`, "撤销付款：客户汇总写完再碰钱包（锁序 计划 → 预报单/客户 → 钱包）");
+
+    const again = await callRoute("POST /client/whr-consolidation/pay", CLIENT_AG, { body: { planId: P1, prealertId: PA_A } });
+    assert.equal(again.status, 200, again.message);
+    const row = pa(PA_A);
+    assert.deepEqual([row.paidPriceNormal, row.paidPriceInspection, row.paidPriceSensitive], [800, 900, 1000]);
+    const charged = 5000 - balanceOf(C_AG);
+    assert.equal(charged, 1700, "重付扣 1700");
+    assert.equal(charged, 1.5 * row.paidPriceNormal + 0.5 * row.paidPriceSensitive, "扣的钱 = 快照单价算出来的钱");
+    assert.equal(row.rebateAmount, 600, "返现按同一个价：1.5×(800−500) + 0.5×(1000−700)");
+  });
+
+  await check("34) 付款最后一道闸：代理客户的单金额跟柜里单价对不上（数据被改脏）→ 409 不扣钱、状态不变、不记快照；湘泰客户同样情况照旧按单子上的金额扣", async () => {
+    seed();
+    pa(PA_A).totalFee = 1200; // 按柜里单价应是 1.5×600 + 0.5×800 = 1300
+    mem.onEvent = null;
+    mem.events = [];
+    const r = await callRoute("POST /client/whr-consolidation/pay", CLIENT_AG, { body: { planId: P1, prealertId: PA_A } });
+    assert.equal(r.status, 409, `${r.status} ${r.message}`);
+    assert.ok(r.message.includes("对不上"), r.message);
+    assert.equal(balanceOf(C_AG), 5000);
+    assert.equal(pa(PA_A).status, "received_pending_payment");
+    assert.equal(pa(PA_A).paidPriceNormal, null);
+    assert.deepEqual(writes(), [], "拦下时一行都不许写");
+
+    seed();
+    pa(PA_X).totalFee = 1700; // 按柜里单价应是 2×550 + 650 = 1750（上线前「删了货没改价」那种老金额）
+    const x = await callRoute("POST /client/whr-consolidation/pay", CLIENT_XT, { body: { planId: P1, prealertId: PA_X } });
+    assert.equal(x.status, 200, x.message);
+    assert.equal(balanceOf(C_XT), 3300, "湘泰客户照单子上的金额扣，不因为老数据付不了款");
+  });
+
+  await check("35) 改归属：锁住客户这一行那一刻有人给他建了第一张运单 → 锁里数到、409 点名运单，归属不变；锁序 客户价锁 → 客户行 → 写（Codex 审查 P2-1）", async () => {
+    seed();
+    mem.onEvent = (e) => {
+      if (e === `lock:user:${C_NEW}`) mem.db.order.push({ id: "zz_b1_oRace", companyId: "c1", clientId: C_NEW });
+    };
+    const r = await callRoute("POST /admin/users/client/update", ADMIN, { body: { id: C_NEW, agentId: AGENT_ID } });
+    assert.equal(r.status, 409, `${r.status} ${r.message}`);
+    assert.ok(r.message.includes("运单 1 张"), r.message);
+    assert.equal(mem.db.user.find((u) => u.id === C_NEW)!.agentId, null);
+
+    seed();
+    mem.onEvent = null;
+    mem.events = [];
+    const moved = await callRoute("POST /admin/users/client/update", ADMIN, { body: { id: C_NEW, agentId: AGENT_ID } });
+    assert.equal(moved.status, 200, moved.message);
+    assertBefore(`lock:client_price:${C_NEW}`, `lock:user:${C_NEW}`, "改归属：先拿客户价排队锁，再锁客户行");
+    assertBefore(`lock:user:${C_NEW}`, `write:user:${C_NEW}`, "改归属：锁住客户行之后才写");
+  });
+
+  await check("36) 移除柜里客户：事务外看没有预报单、锁住计划那一刻客户刚建了一张 → 锁里重数 400，客户行和新单都在；没单的照常移除，锁计划在删之前（Codex 审查 O1）", async () => {
+    seed();
+    const PC_RM = "zz_b1_pcRm";
+    const PA_RM = "zz_b1_paRm";
+    mem.db.whrConsolidationPlanCustomer.push({
+      id: PC_RM, planId: P1, companyId: "c1", clientId: C_NEW, unitPriceNormal: 600, unitPriceInspection: 700, unitPriceSensitive: 800,
+      totalVolumeM3: 0, totalFee: null, deliveryAddress: "曼谷三号路", totalPrealerts: 0, totalPackages: 0, createdAt: T0, updatedAt: T0,
+    });
+    mem.onEvent = (e) => {
+      if (e === `lock:plan:${P1}` && !mem.db.whrConsolidationPrealert.some((x) => x.id === PA_RM)) {
+        mem.db.whrConsolidationPrealert.push(prealertRow(PA_RM, PC_RM, "WHRP9009", "pending", null));
+      }
+    };
+    const blocked = await callRoute("POST /admin/whr-consolidation/customers/remove", ADMIN, { body: { planId: P1, customerId: PC_RM } });
+    assert.equal(blocked.status, 400, `${blocked.status} ${blocked.message}`);
+    assert.ok(blocked.message.includes("预报单"), blocked.message);
+    assert.ok(pcRow(PC_RM), "客户行不该被删");
+    assert.ok(mem.db.whrConsolidationPrealert.some((x) => x.id === PA_RM), "客户刚建的预报单还在");
+
+    mem.onEvent = null;
+    mem.db.whrConsolidationPrealert = mem.db.whrConsolidationPrealert.filter((x) => x.id !== PA_RM);
+    mem.events = [];
+    const removed = await callRoute("POST /admin/whr-consolidation/customers/remove", ADMIN, { body: { planId: P1, customerId: PC_RM } });
+    assert.equal(removed.status, 200, removed.message);
+    assert.ok(!pcRow(PC_RM), "没单的客户照常移除");
+    assertBefore(`lock:plan:${P1}`, `delete:whrConsolidationPlanCustomer:${PC_RM}`, "移除客户：先锁计划再删");
+  });
+
   if (failures.length > 0) {
     console.error(`\n${failures.length}/${total} 项不通过：${failures.join("；")}`);
     process.exit(1);

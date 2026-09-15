@@ -317,7 +317,7 @@ export interface PaidSnapshot {
  * ⚠️ 返现算出负数（客户价低于代理价，存价时已拦住，理论上不会发生）→ 记 0 并写警告日志，
  *    不拦付款：钱是客户付给湘泰的，返现单是湘泰付给代理的，不能因为返现数据异常让客户付不了款。
  */
-export async function buildPaidSnapshot(prealertId: string, tx: any): Promise<PaidSnapshot> {
+export async function buildPaidSnapshot(prealertId: string, tx: any, chargedAmount?: number): Promise<PaidSnapshot> {
   const pa = await tx.whrConsolidationPrealert.findUnique({
     where: { id: prealertId },
     select: {
@@ -352,6 +352,35 @@ export async function buildPaidSnapshot(prealertId: string, tx: any): Promise<Pa
     where: { id: pa.planCustomer.clientId, companyId: pa.companyId },
     select: { agentId: true },
   });
+
+  /**
+   * ⚠️ 最后一道闸：这次扣的钱必须等于「货品方数 × 快照里记的单价」（2026-09-15，Codex 审查 P1-1）。
+   * 两边对不上，快照、返现就跟实际扣的钱各说各话。正常流程里已经堵死（改价、改货型、删货、撤销付款都会重算没付款的单），
+   * 真碰上说明数据被别的路改脏了：
+   *   · 代理的客户：抛错不扣钱（返现跟着快照走，宁可这次收不了款也不能把返现算错），客户联系客服核对
+   *   · 湘泰自己的客户：照旧按单子上的金额扣、记警告日志 —— 上线前的老单子可能有「删了货没改价」的历史金额，
+   *     不能因此付不了款；快照对湘泰客户只是留底，不算返现
+   */
+  if (chargedAmount !== undefined) {
+    const priceFee = calcFeeFromItems(pa.items, pa.planCustomer);
+    if (Math.abs(priceFee - chargedAmount) >= 0.005) {
+      if (client?.agentId) {
+        logger.error("付款快照：扣款金额跟柜里单价算出来的不一致，代理客户的单拦下不扣钱", {
+          预报单: pa.trackingNo,
+          代理: client.agentId,
+          要扣: chargedAmount,
+          按单价算: priceFee,
+        });
+        throw new BusinessError("这张单的金额跟现在的单价对不上，这次没有扣款。请联系客服核对后再付款", 409, "VALIDATION_ERROR");
+      }
+      logger.warn("付款快照：扣款金额跟柜里单价算出来的不一致（湘泰客户照单子上的金额扣）", {
+        预报单: pa.trackingNo,
+        要扣: chargedAmount,
+        按单价算: priceFee,
+      });
+    }
+  }
+
   if (!client?.agentId) return snapshot;
 
   snapshot.paidAgentId = client.agentId;

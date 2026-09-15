@@ -91,6 +91,12 @@ function PrealertCard({ pa }: { pa: AgentWhrPrealert }) {
           {pa.feeBreakdown.rows.length > 0 ? (
             <div style={{ fontSize: 13, marginTop: 8 }}>
               费用明细：{pa.feeBreakdown.rows.map((r) => `${r.label} ${fmtM3(r.volumeM3)} 方 × ${r.unitPrice} = ${fmtMoney(r.amount)}`).join("；")}
+              {/* 付款时没记单价的老单，付款后改过价就算不回总额：写明以实际金额为准（2026-09-15 Codex 审查 P2-2） */}
+              {pa.feeBreakdown.matchesStored === false && pa.totalFee != null ? (
+                <div style={{ color: "#b45309", fontSize: 12, marginTop: 2 }}>
+                  单价后来调整过，这张单以实际金额 {fmtMoney(pa.totalFee)} 为准。
+                </div>
+              ) : null}
             </div>
           ) : null}
           <ProofThumbs proofs={pa.warehouseReceiptProofs} label="仓库签收照片" />

@@ -282,6 +282,21 @@ async function main(): Promise<void> {
     }
   });
 
+  await check("13b) 藏掉的菜单对应的页面自己也按品牌挡：代理的客户直接输网址 / 旧书签进来被送回主页，品牌没查到之前不挂业务页（Codex 审查 P2-3，源码检查）", () => {
+    const clientItems = roleFunctionGroups.client.flatMap((g) => g.items);
+    for (const id of web.AGENT_CLIENT_HIDDEN_MENU_IDS) {
+      const href = clientItems.find((i) => i.id === id)!.href;
+      assert.ok(/^\/client\/[a-z-]+$/.test(href), `${id} 的地址 ${href} 不是独立页面，这条检查要跟着改`);
+      const file = path.join(__dirname, "..", "apps", "web", "src", "app", ...href.slice(1).split("/"), "page.tsx");
+      const src = fs.readFileSync(file, "utf8");
+      const entry = src.slice(src.indexOf("export default function"));
+      const head = entry.slice(0, entry.indexOf("\n}\n"));
+      assert.ok(head.includes("useCurrentSessionBrand()"), `${href} 默认导出没先读品牌`);
+      assert.ok(head.includes('router.replace("/client")'), `${href} 认出代理的客户没送回主页`);
+      assert.ok(head.includes("brand === undefined"), `${href} 品牌还没查到时不许先挂业务页`);
+    }
+  });
+
   await check("14) 前端解析接口回的品牌：loginPath 只认 /<合规前缀>，logo 只认 /images/，名字空的当没有", () => {
     assert.deepEqual(web.parseSessionBrand({ name: "A", logoUrl: "/images/a.png", loginPath: "/zz-b4-a" }), { name: "A", logoUrl: "/images/a.png", loginPath: "/zz-b4-a" });
     assert.equal(web.parseSessionBrand({ name: "A", logoUrl: null, loginPath: "//evil.com" })?.loginPath, null);

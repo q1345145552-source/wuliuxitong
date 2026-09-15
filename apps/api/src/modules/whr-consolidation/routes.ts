@@ -722,7 +722,35 @@ export function registerWhrConsolidationRoutes(app: MinimalHttpApp): void {
       return;
     }
 
-    await prisma.whrConsolidationPlanCustomer.delete({ where: { id: customer.id } });
+    /**
+     * ⚠️ 上面几道检查都在事务外面，只配当「早点给个好看的提示」（2026-09-15，Codex 审查 O1，改动前就有的缝）。
+     * 原来数完「没有预报单」就直接删：数完那一刻客户正好新建了一张预报单，这一删会被数据库级联连带删掉 ——
+     * 客户刚建的单凭空消失。客户建预报单那条路先锁计划行（client-routes.ts lockPlanAliveById），
+     * 这里也先锁计划行，两边排上队；锁住之后重读计划状态、重查客户记录、重数预报单，说了算的是锁里这一次。
+     */
+    await prisma.$transaction(async (tx) => {
+      const planRows = await tx.$queryRaw<Array<{ status: string }>>`SELECT status FROM whr_consolidation_plans WHERE id = ${plan.id} FOR UPDATE`;
+      if (!planRows || planRows.length === 0) {
+        throw new BusinessError("拼柜计划不存在", 404, "NOT_FOUND");
+      }
+      if (!["planning", "collecting"].includes(planRows[0].status)) {
+        throw new BusinessError("该计划刚刚被别人操作过（已开始装柜或已发运），不能再移除客户，请刷新后再看");
+      }
+      const stillThere = await tx.whrConsolidationPlanCustomer.findFirst({
+        where: { id: customer.id, planId: plan.id, companyId: auth.companyId },
+        select: { id: true },
+      });
+      if (!stillThere) {
+        throw new BusinessError("客户记录不存在（可能刚被别人移除了），请刷新后再看", 404, "NOT_FOUND");
+      }
+      const countInLock = await tx.whrConsolidationPrealert.count({ where: { customerId: customer.id } });
+      if (countInLock > 0) {
+        throw new BusinessError(
+          `该客户名下刚刚新建了预报单（现有 ${countInLock} 个），删除会把这些单据连同货物明细、产品图一起删掉。请先逐个取消这些预报单，或者保留该客户。`,
+        );
+      }
+      await tx.whrConsolidationPlanCustomer.delete({ where: { id: customer.id } });
+    });
 
     ok(res, { removed: true, clientId: customer.clientId });
   });
@@ -757,13 +785,18 @@ export function registerWhrConsolidationRoutes(app: MinimalHttpApp): void {
       return;
     }
 
-    const { balanceAfter, refundable } = await prisma.$transaction(async (tx) => {
+    const { balanceAfter, refundable, repricedFee, paidFee } = await prisma.$transaction(async (tx) => {
       /**
        * ⚠️ 先锁子单，再退款（2026-08-27 补）。
        * 全模块统一锁序是【计划 → 子单 → 钱包】。这里原来直接退款，
        * 等于「先锁钱包、后锁子单」—— 跟付款那条路正好反着，
        * 两边同时发生就是死锁（外部复审用真实 PostgreSQL 行锁复现过 40P01）。
+       *
+       * ⚠️ 2026-09-15 起还要**先锁计划**：撤销完要按现价重算这张单和客户汇总（写 plan_customers，见下面），
+       * 改长期价那条路是「计划 → plan_customers → 预报单」，这里不先锁计划就会跟它交叉。
+       * 用「只锁不判死活」的版本 —— 柜作废了也得能退钱（plan-guard.ts 文件头）。
        */
+      await lockPlanByPrealert(tx, prealert.id);
       await tx.$queryRaw`SELECT id FROM whr_consolidation_prealerts WHERE id = ${prealert.id} FOR UPDATE`;
 
       /**
@@ -775,7 +808,7 @@ export function registerWhrConsolidationRoutes(app: MinimalHttpApp): void {
        */
       const nowRow = await tx.whrConsolidationPrealert.findUnique({
         where: { id: prealert.id },
-        select: { status: true },
+        select: { status: true, totalFee: true },
       });
       if (!nowRow) throw new BusinessError("预报单不存在", 404, "NOT_FOUND");
       if (nowRow.status !== "paid") {
@@ -792,6 +825,23 @@ export function registerWhrConsolidationRoutes(app: MinimalHttpApp): void {
         throw new BusinessError("这张预报单没有可退的金额（可能刚刚已经退过了）");
       }
 
+      await tx.whrConsolidationPrealert.update({
+        where: { id: prealert.id },
+        // 撤销付款清空付款快照（2026-09-16，确认单 4.14）：再付款时按那一刻的价重新记
+        data: { status: "received_pending_payment", paymentReviewedAt: null, ...CLEARED_PAID_SNAPSHOT } as any,
+      });
+
+      /**
+       * ⚠️ 回到「待付款」就按柜里现在的单价重算（2026-09-15，Codex 审查 P1-1 实测复现）。
+       * 付款之后长期价改过的话，改价那边只改柜里的单价、不动已付款的金额（4.14）。原来这里只退钱改状态，
+       * 金额还是旧价算的 1300；客户重付扣 1300，付款快照却按柜里的新价记，返现按 1700 那套价算成 600 ——
+       * 扣的钱和记的价对不上。现在跟别的没付款的单一样按现价重算（4.4），重付时扣的钱和快照是同一个价。
+       * 顺序照锁序：预报单 → 客户汇总（plan_customers）→ 最后才碰钱包。
+       */
+      const paidFee = nowRow.totalFee == null ? 0 : Number(nowRow.totalFee);
+      const repricedFee = await recalcPrealertFee(prealert.id, tx);
+      await recalcCustomerTotals(prealert.customerId, tx);
+
       const after = await refundToConsolidation(tx as any, {
         companyId: auth.companyId,
         clientId: prealert.planCustomer.clientId,
@@ -802,11 +852,6 @@ export function registerWhrConsolidationRoutes(app: MinimalHttpApp): void {
         remark: body.reason?.trim() ? `管理员撤销付款：${body.reason.trim()}` : "管理员撤销付款",
         operatorId: auth.userId,
         operatorName: auth.name || auth.userId,
-      });
-      await tx.whrConsolidationPrealert.update({
-        where: { id: prealert.id },
-        // 撤销付款清空付款快照（2026-09-16，确认单 4.14）：再付款时按那一刻的价重新记
-        data: { status: "received_pending_payment", paymentReviewedAt: null, ...CLEARED_PAID_SNAPSHOT } as any,
       });
       await tx.whrConsolidationStatusLog.create({
         data: {
@@ -820,15 +865,19 @@ export function registerWhrConsolidationRoutes(app: MinimalHttpApp): void {
           remark: `管理员撤销付款，退回集货余额 ¥${refundable.toFixed(2)}${body.reason?.trim() ? `（${body.reason.trim()}）` : ""}`,
         },
       });
-      return { balanceAfter: after, refundable };
+      return { balanceAfter: after, refundable, repricedFee, paidFee };
     });
 
+    const repriced = Math.abs(repricedFee - paidFee) >= 0.005;
     ok(res, {
       prealertId: prealert.id,
       refunded: refundable,
       balanceAfter,
       status: "received_pending_payment",
-      message: `已退回 ¥${refundable.toFixed(2)} 到客户集货余额，单子回到待付款`,
+      totalFee: repricedFee,
+      message: repriced
+        ? `已退回 ¥${refundable.toFixed(2)} 到客户集货余额，单子回到待付款；付款后单价改过，重新付款按现在的单价 ¥${repricedFee.toFixed(2)}`
+        : `已退回 ¥${refundable.toFixed(2)} 到客户集货余额，单子回到待付款`,
     });
   });
 
@@ -894,15 +943,16 @@ export function registerWhrConsolidationRoutes(app: MinimalHttpApp): void {
          */
         const freshA = await tx.whrConsolidationPrealert.findUnique({
           where: { id: prealert.id },
-          select: { status: true },
+          select: { status: true, totalFee: true },
         });
         if (!freshA) throw new BusinessError("预报单不存在", 404, "NOT_FOUND");
         if (freshA.status !== "payment_submitted") {
           throw new BusinessError("这张预报单刚刚被别人处理过了，审核没有执行，请刷新后再看");
         }
 
-        // 付款生效这一刻记价格快照（确认单 4.14），跟客户余额付款那条路同一个函数
-        const snapshot = await buildPaidSnapshot(prealert.id, tx);
+        // 付款生效这一刻记价格快照（确认单 4.14），跟客户余额付款那条路同一个函数；
+        // 单子上的金额也交进去核对，代理客户的单跟柜里单价对不上就拦下（2026-09-15，见 buildPaidSnapshot）
+        const snapshot = await buildPaidSnapshot(prealert.id, tx, freshA.totalFee == null ? 0 : Number(freshA.totalFee));
         await tx.whrConsolidationPrealert.update({
           where: { id: prealert.id },
           data: {

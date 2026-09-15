@@ -154,6 +154,15 @@ export function registerWhrConsolidationClientRoutes(app: MinimalHttpApp): void 
       if (planNow?.status === "completed") {
         throw new BusinessError("该拼柜计划已结束，无法创建预报单");
       }
+      // 锁住计划之后再确认自己还在这个柜里（2026-09-15，Codex 审查 O1 配套）：管理员「移除客户」也先锁计划，
+      // 他那边先删掉的话，这里不许再往一条已经没了的客户记录上挂单（不查就撞外键，客户看到「服务器繁忙」）
+      const stillIn = await tx.whrConsolidationPlanCustomer.findFirst({
+        where: { id: customer.id, planId: customer.planId, companyId: auth.companyId },
+        select: { id: true },
+      });
+      if (!stillIn) {
+        throw new BusinessError("您已不在该拼柜计划中，请刷新页面后再看", 403, "FORBIDDEN");
+      }
 
       // 咨询锁 + 插入必须在同一个事务里，锁才真正护住「取最大值 → 插入」这段
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(83011)`;
@@ -749,7 +758,8 @@ export function registerWhrConsolidationClientRoutes(app: MinimalHttpApp): void 
          * 之后谁改价，已付款的单金额和返现都不变。放在扣钱之前 —— 锁序【计划 → 预报单 → 钱包】，
          * 快照只读计划客户行 / 货品 / 用户 / 代理，不加新锁（原因见 buildPaidSnapshot 注释）。
          */
-        const snapshot = await buildPaidSnapshot(prealert.id, tx);
+        // 把这次要扣的钱交进去核对「扣的钱 = 方数 × 快照单价」，代理客户的单对不上就不扣（2026-09-15，Codex 审查 P1-1）
+        const snapshot = await buildPaidSnapshot(prealert.id, tx, amount);
 
         // 扣钱和改状态必须在同一个事务里，不能出现「钱扣了单子没付上」
         const after = await chargeForConsolidation(tx as any, {

@@ -210,6 +210,8 @@ export interface AgentWhrPrealert {
   feeBreakdown: {
     rows: Array<{ cargoType: string; label: string; volumeM3: number; unitPrice: number; amount: number }>;
     totalVolumeM3: number;
+    /** 按明细单价算出来的钱是否等于 totalFee。已付款的单按付款时记下的价算，一般都对得上；false 时页面要提示以实际金额为准 */
+    matchesStored: boolean;
   };
   paidAt: string | null;
   paymentRejectReason: string | null;

@@ -555,6 +555,27 @@ async function dbChecks(): Promise<void> {
       assert.ok(!bMixed.text.includes("甲泰国地址") && !bMixed.text.includes("湘泰地址SECRETX"));
     });
 
+    await check("/agent/whr/plan-detail 费用明细（Codex 审查 P2-2）：已付款的单按付款时记下的客户价解释，付款后改过价也跟总额对得上；付款时没记单价的老单标出对不上", async () => {
+      await prisma.whrConsolidationPrealert.update({ where: { id: `${P}pa_a1paid` }, data: { paidPriceNormal: 600, paidPriceInspection: 650, paidPriceSensitive: 700 } });
+      await prisma.whrConsolidationPlanCustomer.update({ where: { id: `${P}pc_a1` }, data: { unitPriceNormal: 800, unitPriceInspection: 850, unitPriceSensitive: 900 } });
+      try {
+        const d = await okData(A, `/agent/whr/plan-detail?planId=${P}plan1`);
+        const paid = d.customers[0].prealerts.find((p: any) => p.trackingNo === "ZZB3P-A1P");
+        assert.equal(paid.totalFee, 600);
+        assert.deepEqual(
+          paid.feeBreakdown.rows.map((r: any) => [r.cargoType, r.volumeM3, r.unitPrice, r.amount]),
+          [["normal", 1, 600, 600]],
+          "付款后柜里单价改成 800，明细还得按付款时的 600 解释",
+        );
+        assert.equal(paid.feeBreakdown.matchesStored, true);
+        const legacy = d.customers[0].prealerts.find((p: any) => p.trackingNo === "ZZB3P-A1M");
+        assert.equal(legacy.feeBreakdown.matchesStored, false, "没快照的老单只能按现价解释（0.5 方 × 800 = 400 ≠ 500），要标出来");
+      } finally {
+        await prisma.whrConsolidationPlanCustomer.update({ where: { id: `${P}pc_a1` }, data: { unitPriceNormal: 600, unitPriceInspection: 650, unitPriceSensitive: 700 } });
+        await prisma.whrConsolidationPrealert.update({ where: { id: `${P}pa_a1paid` }, data: { paidPriceNormal: null, paidPriceInspection: null, paidPriceSensitive: null } });
+      }
+    });
+
     await check("/agent/dashboard：三类卡住的单只有名下的", async () => {
       const d = await okData(A, "/agent/dashboard");
       assert.equal(d.clientCount, 2);
@@ -742,6 +763,45 @@ async function dbChecks(): Promise<void> {
         assert.equal(list.total, 0);
       } finally {
         await prisma.user.update({ where: { id: `${P}ca1` }, data: { agentId: `${P}agA` } });
+      }
+    });
+
+    await check("改所属代理 × 同一时刻给这个客户建第一张运单（Codex 审查 P2-1，真 PostgreSQL）：运单事务先写进来还没提交 → 改归属必须等它提交、数到这张运单 → 409，归属不变", async () => {
+      const cid = `${P}c_race`;
+      await prisma.user.create({ data: { id: cid, companyId: CO, role: "client", name: "竞态客户", phone: "0800000000", status: "active", agentId: null } });
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => { release = resolve; });
+      let markInserted!: () => void;
+      const inserted = new Promise<void>((resolve) => { markInserted = resolve; });
+      const orderTx = prisma.$transaction(async (tx: any) => {
+        await tx.order.create({
+          data: {
+            id: `${P}o_race`, companyId: CO, clientId: cid, warehouseId: "wh_zz_b3", itemName: "竞态运单", productQuantity: 1, packageCount: 1,
+            packageUnit: "箱", transportMode: "sea", receiverNameTh: "收件人", receiverPhoneTh: "0811111111", receiverAddressTh: "竞态地址",
+          },
+        });
+        markInserted();
+        await gate; // 运单写进去了，先不提交
+      }, { timeout: 60000, maxWait: 10000 });
+      try {
+        await inserted;
+        const moveP = call(tokens.admin, "POST", "/admin/users/client/update", { id: cid, agentId: `${P}agA` });
+        // 没修之前：改归属看不见这张没提交的运单，几秒内就 200 返回了；修好以后它要一直等到运单事务提交
+        const early = await Promise.race([
+          moveP.then((r) => `返回了 ${r.status} ${r.text.slice(0, 200)}`),
+          new Promise<string>((resolve) => setTimeout(() => resolve("还在等"), 8000)),
+        ]);
+        release();
+        await orderTx;
+        const moved = await moveP;
+        assert.equal(early, "还在等", "改归属没等运单事务提交就返回了");
+        assert.equal(moved.status, 409, moved.text);
+        assert.ok(moved.text.includes("运单 1 张"), moved.text);
+        const u = await prisma.user.findUnique({ where: { id: cid }, select: { agentId: true } });
+        assert.equal(u?.agentId, null, "归属不该被改");
+      } finally {
+        release();
+        await orderTx.catch(() => undefined);
       }
     });
 

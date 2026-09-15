@@ -821,6 +821,10 @@ export function registerAgentPortalRoutes(app: MinimalHttpApp): void {
                 signedAt: true,
                 warehouseReceiptProofs: true,
                 totalFee: true,
+                // 付款那一刻记下的客户价：已付款的单按它解释费用明细（Codex 审查 P2-2）。只拿客户价三列，代理价不在这里给
+                paidPriceNormal: true,
+                paidPriceInspection: true,
+                paidPriceSensitive: true,
                 paymentReviewedAt: true,
                 paymentRejectReason: true,
                 thailandReceiptProofs: true,
@@ -893,7 +897,16 @@ export function registerAgentPortalRoutes(app: MinimalHttpApp): void {
           prealertTotal: c._count.prealerts,
           prealertsTruncated: c._count.prealerts > L.planDetailPrealerts,
           prealerts: c.prealerts.map((pa) => {
-            const bd = buildFeeBreakdown(pa.items, prices, pa.totalFee);
+            /**
+             * 已付款的单按付款那一刻记下的客户价解释（4.14，2026-09-15 Codex 审查 P2-2）：付款后长期价改过的话，
+             * 柜里这一行的单价已经是新价，拿它解释旧金额就成了「1.5 方 × 800 = 1200」，加起来跟总额对不上。
+             * 没有快照（没付款，或者上线前付的老单）才用柜里现在的单价；matchesStored 把对不上的标出来给页面提示。
+             */
+            const paidPrices =
+              pa.paidPriceNormal != null && pa.paidPriceInspection != null && pa.paidPriceSensitive != null
+                ? { unitPriceNormal: pa.paidPriceNormal, unitPriceInspection: pa.paidPriceInspection, unitPriceSensitive: pa.paidPriceSensitive }
+                : null;
+            const bd = buildFeeBreakdown(pa.items, paidPrices ?? prices, pa.totalFee);
             return {
               id: pa.id,
               trackingNo: pa.trackingNo,
@@ -903,7 +916,7 @@ export function registerAgentPortalRoutes(app: MinimalHttpApp): void {
               signedAt: iso(pa.signedAt),
               warehouseReceiptProofs: mapProofs(pa.warehouseReceiptProofs),
               totalFee: numOrNull(pa.totalFee),
-              feeBreakdown: { rows: bd.rows, totalVolumeM3: bd.totalVolumeM3 },
+              feeBreakdown: { rows: bd.rows, totalVolumeM3: bd.totalVolumeM3, matchesStored: bd.matchesStored },
               paidAt: iso(pa.paymentReviewedAt),
               paymentRejectReason: pa.paymentRejectReason,
               thailandReceiptProofs: mapProofs(pa.thailandReceiptProofs),

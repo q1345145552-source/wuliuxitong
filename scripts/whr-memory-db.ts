@@ -357,6 +357,11 @@ async function raw(strings: TemplateStringsArray, ...values: any[]): Promise<any
     const pa = find("whrConsolidationPrealert", values[0]);
     return pa ? [{ status: pa.status }] : [];
   }
+  if (/^SELECT id FROM users WHERE id = \? FOR UPDATE$/.test(sql)) {
+    emit(`lock:user:${values[0]}`);
+    const u = find("user", values[0]);
+    return u ? [{ id: u.id }] : [];
+  }
   if (/FROM agents WHERE id = \? AND company_id = \? FOR SHARE/.test(sql)) {
     emit(`lock:agent_share:${values[0]}`);
     const a = mem.db.agent.find((x) => x.id === values[0] && x.companyId === values[1]);
