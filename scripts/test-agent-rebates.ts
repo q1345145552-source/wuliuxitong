@@ -11,6 +11,8 @@
  *  7. 只算 status=thailand_received 且 paid_agent_id=这个代理的；湘泰客户、别的代理、没泰国签收的都不进
  *  8. 锁序：每个代理的事务第一句是 agents FOR UPDATE，之后只插返现单表，不写预报单
  *  9. 「已返」只改状态、时间、操作人，金额和明细不动；重复点不改时间；别家公司 404
+ * 10. 定时器：启动先跑一轮、之后每小时一轮，重复启动不多挂
+ * 多个进程同时出单（真库行锁 / 唯一约束）内存桩测不了 → scripts/test-agent-rebates-db.ts
  */
 process.env.DATABASE_URL = "postgresql://blocked:blocked@127.0.0.1:1/never?connect_timeout=1";
 process.env.NODE_ENV = "test";
@@ -478,6 +480,48 @@ async function main(): Promise<void> {
       assert.deepEqual(bing.map((s) => s.month), ["2026-07"], "8 月超限不出，9 月也不越过去出");
       assert.equal(bing[0].totalRebate, 10);
       assert.ok(!db.lines.some((l) => String(l.prealertId).startsWith("bing-aug") || l.prealertId === "bing-sep"), "超限月份及以后的票一条明细都不写");
+    }
+  });
+
+  await check("14) 定时器：启动先跑一轮、之后每小时跑一轮；重复启动不会多挂一个定时器", async () => {
+    // 多进程同时出单那种情况内存桩测不了，在 scripts/test-agent-rebates-db.ts 里用真库测（Codex 上线前复核 P3-1）
+    const realSetInterval = globalThis.setInterval;
+    const realFindMany = models.agent.findMany;
+    const savedSwitch = process.env.AGENT_REBATE_SCHEDULER;
+    const timers: Array<{ fn: () => void; ms: number }> = [];
+    let runs = 0;
+    const settle = async (want: number) => {
+      for (let i = 0; i < 200 && runs < want; i += 1) await new Promise((r) => setImmediate(r));
+      // 再多等几拍：确认这一轮跑完（running 标记放开），也确认不会多跑
+      for (let i = 0; i < 20; i += 1) await new Promise((r) => setImmediate(r));
+    };
+    try {
+      delete process.env.AGENT_REBATE_SCHEDULER; // 线上不设 = 开
+      models.agent.findMany = async () => {
+        runs += 1;
+        return [];
+      };
+      (globalThis as any).setInterval = (fn: () => void, ms: number) => {
+        timers.push({ fn, ms });
+        return { unref() {} };
+      };
+      gen.startAgentRebateScheduler();
+      gen.startAgentRebateScheduler();
+      await settle(1);
+      assert.equal(runs, 1, "启动时马上跑一轮，重复启动不多跑");
+      assert.equal(timers.length, 1, "只挂一个定时器");
+      assert.equal(timers[0].ms, 60 * 60 * 1000, "每小时一轮");
+      timers[0].fn();
+      await settle(2);
+      assert.equal(runs, 2, "到点再跑一轮");
+      timers[0].fn();
+      await settle(3);
+      assert.equal(runs, 3, "下一个钟头再跑一轮");
+    } finally {
+      (globalThis as any).setInterval = realSetInterval;
+      models.agent.findMany = realFindMany;
+      if (savedSwitch === undefined) delete process.env.AGENT_REBATE_SCHEDULER;
+      else process.env.AGENT_REBATE_SCHEDULER = savedSwitch;
     }
   });
 

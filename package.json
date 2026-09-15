@@ -52,6 +52,7 @@
     "test:agent-portal-isolation": "tsx scripts/test-agent-portal-isolation.ts",
     "test:agent-admin": "tsx scripts/test-agent-admin.ts",
     "test:agent-rebates": "tsx scripts/test-agent-rebates.ts",
+    "test:agent-rebates-db": "tsx scripts/test-agent-rebates-db.ts",
     "test:agent-branding": "tsx scripts/test-agent-branding.ts",
     "test:sidebar-expanded-groups": "tsx scripts/test-sidebar-expanded-groups.ts"
   },
