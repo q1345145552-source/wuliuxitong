@@ -782,6 +782,7 @@ async function dbChecks(): Promise<void> {
         });
         markInserted();
         await gate; // 运单写进去了，先不提交
+        return { inserted: true };
       }, { timeout: 60000, maxWait: 10000 });
       try {
         await inserted;

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useLayoutEffect, useState, useSyncExternalStore } from "react";
 import { WORKBENCH_BRAND_CACHE_KEY, getOptionalSession, type AuthSession } from "../../auth/auth-session";
 import { apiBaseUrl, apiRequest } from "../../services/core-api";
 import {
@@ -44,6 +44,8 @@ type BrandState = SessionBrandInfo | null | undefined;
 const known = new Map<string, SessionBrandInfo | null>();
 const cacheChecked = new Set<string>();
 const loaded = new Set<string>();
+/** 正在查的那一次：外壳和受限页同一时刻都要查时共用一个请求 */
+const inflight = new Map<string, Promise<SessionBrandInfo | null>>();
 const listeners = new Set<() => void>();
 
 function notify(): void {
@@ -104,23 +106,41 @@ function peek(userId: string | null, role: string | null): BrandState {
   return undefined;
 }
 
-async function load(userId: string, role: string): Promise<void> {
-  if (loaded.has(userId)) return;
-  loaded.add(userId);
-  try {
+/**
+ * 向服务端现查一次这个账号的品牌，**不认缓存**；同一时刻已经有一次在查就跟它共用。
+ * 查到了顺手记进模块、写缓存、同步登录页 cookie、通知外壳（左上角和菜单跟着变）；查不到原样抛给调用方。
+ */
+export function fetchSessionBrand(userId: string, role: string): Promise<SessionBrandInfo | null> {
+  const pending = inflight.get(userId);
+  if (pending) return pending;
+  const run = (async () => {
     const path = role === "agent" ? "/agent/brand" : "/client/brand";
     const data = await apiRequest<{ brand?: unknown }>(`${apiBaseUrl()}${path}`, { method: "GET" });
     const brand = parseSessionBrand(data?.brand);
     // 换账号会整页重载；这里再核一次，别把上一个账号的结果记到新账号头上
-    if (getOptionalSession()?.userId !== userId) return;
+    if (getOptionalSession()?.userId !== userId) throw new Error("登录的账号已经换了，请刷新页面");
     known.set(userId, brand);
     writeCache(userId, brand);
     syncLoginCookie(brand);
     notify();
-  } catch {
+    return brand;
+  })();
+  inflight.set(userId, run);
+  const settle = () => {
+    if (inflight.get(userId) === run) inflight.delete(userId);
+  };
+  run.then(settle, settle);
+  return run;
+}
+
+/** 外壳用：一个账号在这个标签页里查一次 */
+function load(userId: string, role: string): void {
+  if (loaded.has(userId)) return;
+  loaded.add(userId);
+  fetchSessionBrand(userId, role).catch(() => {
     // 查不到就维持现状（首帧用的缓存 / 湘泰的样子），下次整页打开再查
     loaded.delete(userId);
-  }
+  });
 }
 
 /**
@@ -165,6 +185,50 @@ export function useSessionBrand(session: Pick<AuthSession, "userId" | "role"> | 
 export function useCurrentSessionBrand(): BrandState {
   const [session] = useState(() => getOptionalSession());
   return useSessionBrand(session);
+}
+
+/** 受限页进门时现查的结果：checking = 还在查；done = 查到了（brand 是对象 = 代理的客户，null = 湘泰的）；error = 没查到 */
+export type VerifiedBrandState =
+  | { status: "checking" }
+  | { status: "done"; brand: SessionBrandInfo | null }
+  | { status: "error"; message: string };
+
+/**
+ * 受限页（代理的客户不许用的页面，比如普通版集货）进门用：**每次打开这一页都向服务端现查一次，不认缓存**。
+ * 2026-09-15 Codex 第二轮 P2-1 / P2-2，原来用 useCurrentSessionBrand：
+ *  ① 查品牌那一下失败（服务器出错 / 断网 / 超时）页面就一直「加载中…」，没提示、没重试；
+ *  ② 按账号记下的品牌一直用到整页刷新：客户在线被改归代理后，同一标签页前进后退还能进这一页；被解绑后又一直被送回主页。
+ * 缓存只管首帧标题图标和左上角，不能拿来判断「能不能进这一页」。
+ * 查不到就是 error（页面写明原因、给「重试」），**绝不当成湘泰客户放行**。
+ */
+export function useVerifiedSessionBrand(): { state: VerifiedBrandState; retry: () => void } {
+  const [session] = useState(() => getOptionalSession());
+  const userId = session?.userId ?? null;
+  const role = session?.role ?? null;
+  const [attempt, setAttempt] = useState(0);
+  const [state, setState] = useState<VerifiedBrandState>({ status: "checking" });
+  useEffect(() => {
+    if (!userId || !role || (role !== "client" && role !== "agent")) {
+      // 湘泰员工 / 管理员没有代理品牌（跟 peek 同一口径）；没登录的由外壳送去登录页
+      setState({ status: "done", brand: null });
+      return;
+    }
+    let alive = true;
+    setState((prev) => (prev.status === "checking" ? prev : { status: "checking" }));
+    fetchSessionBrand(userId, role).then(
+      (brand) => {
+        if (alive) setState({ status: "done", brand });
+      },
+      (error: unknown) => {
+        if (alive) setState({ status: "error", message: error instanceof Error && error.message ? error.message : "请求失败" });
+      },
+    );
+    return () => {
+      alive = false;
+    };
+  }, [userId, role, attempt]);
+  const retry = useCallback(() => setAttempt((n) => n + 1), []);
+  return { state, retry };
 }
 
 /** 服务端渲染时 useLayoutEffect 不跑也会报警告；外壳首屏在服务端只画骨架，用普通 effect 顶上即可 */

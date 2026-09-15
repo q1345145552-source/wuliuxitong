@@ -9,6 +9,12 @@
 --
 -- ⚠️ 这是写库语句，上线时在服务器上跑（上线方案第 6 步之后），跑完接着跑只读的
 --    scripts/agent-go-live-check-long-term-prices.sql 核对。
+--
+-- 跑法：psql -X -v ON_ERROR_STOP=1 -f scripts/agent-go-live-backfill-long-term-prices.sql
+-- 出错即停：中间任何一句报 ERROR，psql 马上退出、退出码非 0（3），事务整个回滚、一行不写。
+-- 成功会打出 INSERT 0 <补了几行> 和 COMMIT、退出码 0。
+-- （2026-09-15 Codex 第二轮 P3-1：原来没有这一行，SQL 报错命令照样退出 0）
+\set ON_ERROR_STOP on
 BEGIN;
 
 INSERT INTO "client_whr_prices"

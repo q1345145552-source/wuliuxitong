@@ -16,7 +16,7 @@ import {
 import { formatBeijingTime } from "../../../modules/staff/utils";
 import { createRequestGate } from "../../../modules/shared/request-gate";
 import { useRouter } from "next/navigation";
-import { useCurrentSessionBrand } from "../../../modules/branding/useWorkbenchBrand";
+import { useVerifiedSessionBrand } from "../../../modules/branding/useWorkbenchBrand";
 
 // ============================================================================
 // 状态中文映射
@@ -87,18 +87,31 @@ function calcProductRow(r: ProductFormRow) {
  * 左边菜单藏了、后端统一闸也 403，但直接输网址 / 旧书签还能打开这一页、看到「+ 创建任务」。
  * 所以页面这一层也挡：品牌还没查到之前不挂业务页（免得先闪一下湘泰的页面、先发一串会被 403 的请求），
  * 查到是代理的客户就送回主页；湘泰客户照旧。
+ * 2026-09-15 Codex 第二轮 P2-1 / P2-2：每次打开这一页都向服务端现查一次归属（不认浏览器里记的品牌），
+ * 在线改了归属，同一标签页前进后退回来也按新的算；查不到就写明原因、给「重试」，**绝不当成湘泰客户放行**。
  * ⚠️ 业务页的 hooks 全在 ClientConsolidationContent 里，这里判完才挂 —— 别把判断挪进去（hooks 顺序会乱）。
  */
 export default function ClientConsolidationPage() {
-  const brand = useCurrentSessionBrand();
+  const { state, retry } = useVerifiedSessionBrand();
   const router = useRouter();
+  const isAgentClient = state.status === "done" && state.brand !== null;
   useEffect(() => {
-    if (brand) router.replace("/client");
-  }, [brand, router]);
-  if (brand === undefined || brand) {
+    if (isAgentClient) router.replace("/client");
+  }, [isAgentClient, router]);
+  if (state.status === "error") {
     return (
       <div style={{ padding: 24, fontSize: 14, color: "var(--t-muted)" }}>
-        {brand ? "该功能暂未开放，正在返回主页…" : "加载中…"}
+        <div style={{ marginBottom: 12 }}>暂时打不开这一页：{state.message}</div>
+        <button onClick={retry} style={{ padding: "6px 16px", border: "1px solid var(--c-blue)", color: "var(--c-blue)", background: "var(--white)", borderRadius: 6, cursor: "pointer", fontSize: 13 }}>
+          重试
+        </button>
+      </div>
+    );
+  }
+  if (state.status !== "done" || state.brand) {
+    return (
+      <div style={{ padding: 24, fontSize: 14, color: "var(--t-muted)" }}>
+        {state.status === "done" ? "该功能暂未开放，正在返回主页…" : "加载中…"}
       </div>
     );
   }

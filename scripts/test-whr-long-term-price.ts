@@ -717,6 +717,48 @@ async function main(): Promise<void> {
     assertBefore(`lock:plan:${P1}`, `delete:whrConsolidationPlanCustomer:${PC_RM}`, "移除客户：先锁计划再删");
   });
 
+  /** 模拟员工「移除柜里客户」已经提交：客户行连同名下预报单一起没了（数据库是级联删） */
+  const dropPlanCustomer = (pcId: string): void => {
+    const gone = new Set(mem.db.whrConsolidationPrealert.filter((x) => x.customerId === pcId).map((x) => x.id));
+    mem.db.whrConsolidationPrealertItem = mem.db.whrConsolidationPrealertItem.filter((x) => !gone.has(x.prealertId));
+    mem.db.whrConsolidationPrealert = mem.db.whrConsolidationPrealert.filter((x) => x.customerId !== pcId);
+    mem.db.whrConsolidationPlanCustomer = mem.db.whrConsolidationPlanCustomer.filter((x) => x.id !== pcId);
+  };
+
+  await check("37) 客户自己填泰国地址：先锁计划再写；**锁住那一刻被移出柜** → 403 不报服务器错误、什么都没写；**锁住那一刻刚发运** → 400 地址不变（Codex 第二轮 O1-R1）", async () => {
+    seed();
+    const r = await callRoute("POST /client/whr-consolidation/address", CLIENT_XT, { body: { planId: P1, deliveryAddress: "  清迈四号路  " } });
+    assert.equal(r.status, 200, r.message);
+    assert.equal(pcRow(PC_X).deliveryAddress, "清迈四号路");
+    assertBefore(`lock:plan:${P1}`, `write:whrConsolidationPlanCustomer:${PC_X}`, "客户填地址要先锁计划再写");
+
+    seed();
+    mem.onEvent = (e) => {
+      if (e === `lock:plan:${P1}`) dropPlanCustomer(PC_X);
+    };
+    const removed = await callRoute("POST /client/whr-consolidation/address", CLIENT_XT, { body: { planId: P1, deliveryAddress: "新地址" } });
+    assert.equal(removed.status, 403, `${removed.status} ${removed.message}`);
+    assert.deepEqual(writes(), [], "被移出柜了还写了东西");
+
+    seed();
+    mem.onEvent = (e) => {
+      if (e === `lock:plan:${P1}`) pa(PA_X).status = "shipped";
+    };
+    const shipped = await callRoute("POST /client/whr-consolidation/address", CLIENT_XT, { body: { planId: P1, deliveryAddress: "新地址" } });
+    assert.equal(shipped.status, 400, `${shipped.status} ${shipped.message}`);
+    assert.equal(pcRow(PC_X).deliveryAddress, "曼谷二号路");
+  });
+
+  await check("38) 超管替客户填泰国地址：事务外查到客户、**锁住计划那一刻客户被移出柜** → 404 不报服务器错误、什么都没写（Codex 第二轮 O1-R1）", async () => {
+    seed();
+    mem.onEvent = (e) => {
+      if (e === `lock:plan:${P1}`) dropPlanCustomer(PC_A);
+    };
+    const r = await callRoute("POST /admin/whr-consolidation/address", ADMIN, { body: { planId: P1, customerId: PC_A, deliveryAddress: "新地址" } });
+    assert.equal(r.status, 404, `${r.status} ${r.message}`);
+    assert.deepEqual(writes(), [], "客户被移出柜了还写了东西");
+  });
+
   if (failures.length > 0) {
     console.error(`\n${failures.length}/${total} 项不通过：${failures.join("；")}`);
     process.exit(1);

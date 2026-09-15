@@ -853,11 +853,35 @@ export function registerWhrConsolidationClientRoutes(app: MinimalHttpApp): void 
       return;
     }
 
-    await prisma.whrConsolidationPlanCustomer.update({
-      where: { id: customer.id },
-      data: { deliveryAddress: body.deliveryAddress.trim() },
+    const deliveryAddress = body.deliveryAddress.trim();
+    /**
+     * ⚠️ 上面两道检查在事务外面，只配早点给个好看的提示（2026-09-15，Codex 第二轮 O1-R1，改动前就有的缝）。
+     * 原来查完直接改：查完那一刻员工正好把这位客户移出了柜，这一改撞上「这一行没了」就成了服务器错误（500）；
+     * 查完那一刻刚发运，地址也照样被改。现在跟超管填地址、移除客户、发运确认一样先锁计划行排队，
+     * 锁住之后重查自己还在不在柜里、有没有货已发运，说了算的是锁里这一次。
+     */
+    const saved = await prisma.$transaction(async (tx) => {
+      await tx.$queryRaw<Array<{ status: string }>>`SELECT status FROM whr_consolidation_plans WHERE id = ${customer.planId} FOR UPDATE`;
+      const current = await tx.whrConsolidationPlanCustomer.findFirst({
+        where: { id: customer.id, planId: customer.planId, clientId: auth.userId, companyId: auth.companyId },
+        select: { id: true },
+      });
+      if (!current) {
+        throw new BusinessError("您已不在该拼柜计划中（可能刚被移出），请刷新后再看", 403, "FORBIDDEN");
+      }
+      const shipped = await tx.whrConsolidationPrealert.count({
+        where: { customerId: current.id, status: { in: ["shipped", "thailand_received"] } },
+      });
+      if (shipped > 0) {
+        throw new BusinessError("已有货物发运，收货地址不可再修改，如需变更请联系客服");
+      }
+      await tx.whrConsolidationPlanCustomer.update({
+        where: { id: current.id },
+        data: { deliveryAddress },
+      });
+      return { customerId: current.id, deliveryAddress };
     });
-    ok(res, { customerId: customer.id, deliveryAddress: body.deliveryAddress.trim() });
+    ok(res, saved);
   });
 
   // =======================================================================

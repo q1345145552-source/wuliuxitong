@@ -648,14 +648,21 @@ export function registerWhrConsolidationRoutes(app: MinimalHttpApp): void {
       const planRows = await tx.$queryRaw<Array<{ status: string }>>`SELECT status FROM whr_consolidation_plans WHERE id = ${planId} FOR UPDATE`;
       if (!planRows || planRows.length === 0) throw new BusinessError("找不到这个柜（可能已被删除）", 404, "NOT_FOUND");
       if (planRows[0].status === "cancelled") throw new BusinessError("这个柜已经取消了，不用再填地址");
+      // 锁住之后重查这位客户还在不在柜里：事务外查到之后可能刚被员工移出柜，
+      // 不查就去改会撞上「这一行没了」变成服务器错误（2026-09-15，Codex 第二轮 O1-R1）
+      const current = await tx.whrConsolidationPlanCustomer.findFirst({
+        where: { id: customer.id, planId, companyId: auth.companyId },
+        select: { id: true },
+      });
+      if (!current) throw new BusinessError("这位客户刚刚被移出这个柜了，请刷新后再看", 404, "NOT_FOUND");
       const shipped = await tx.whrConsolidationPrealert.count({
-        where: { customerId: customer.id, status: { in: WHR_SHIPPED_PREALERT_STATUSES } },
+        where: { customerId: current.id, status: { in: WHR_SHIPPED_PREALERT_STATUSES } },
       });
       if (shipped > 0) {
         throw new BusinessError("这位客户在这个柜里已有货物发运，收货地址不能再改");
       }
       await tx.whrConsolidationPlanCustomer.update({
-        where: { id: customer.id },
+        where: { id: current.id },
         data: { deliveryAddress: address },
       });
       return address;
@@ -728,7 +735,7 @@ export function registerWhrConsolidationRoutes(app: MinimalHttpApp): void {
      * 客户刚建的单凭空消失。客户建预报单那条路先锁计划行（client-routes.ts lockPlanAliveById），
      * 这里也先锁计划行，两边排上队；锁住之后重读计划状态、重查客户记录、重数预报单，说了算的是锁里这一次。
      */
-    await prisma.$transaction(async (tx) => {
+    const removed = await prisma.$transaction(async (tx) => {
       const planRows = await tx.$queryRaw<Array<{ status: string }>>`SELECT status FROM whr_consolidation_plans WHERE id = ${plan.id} FOR UPDATE`;
       if (!planRows || planRows.length === 0) {
         throw new BusinessError("拼柜计划不存在", 404, "NOT_FOUND");
@@ -750,9 +757,10 @@ export function registerWhrConsolidationRoutes(app: MinimalHttpApp): void {
         );
       }
       await tx.whrConsolidationPlanCustomer.delete({ where: { id: customer.id } });
+      return { removed: true, clientId: customer.clientId };
     });
 
-    ok(res, { removed: true, clientId: customer.clientId });
+    ok(res, removed);
   });
 
   // ==========================================================================
