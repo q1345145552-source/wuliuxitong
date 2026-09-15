@@ -35,5 +35,5 @@ export default async function AgentLoginPage({ params }: { params: Params }) {
   if (!slug) notFound();
   const brand = await getBrandBySlug(slug);
   if (!brand) notFound();
-  return <LoginView brand={brand} slug={slug} />;
+  return <LoginView brand={brand} />;
 }

@@ -13,6 +13,9 @@
  *  6. 前端纯逻辑：外壳品牌（藏哪些菜单、改哪些名字，id 必须真在 menu-config 里）、
  *     /login 转代理登录页的地址不许被 cookie 带出站外、首字图标转义、前后端规范化口径一致
  *  7. 前缀登录页敢放在根目录动态段的前提：next.config.ts 的 rewrites 仍是数组写法（afterFiles，先于动态路由）
+ *  8. 登录接口 POST /auth/login 成功时顺带回品牌（第 1 轮审查后加固，防进工作台首帧闪错牌子）：
+ *     只算刚登录的这个账号、只三个字段；失败出口一个字都不带；查品牌出错不许把登录弄挂；
+ *     前端 readLoginBrand 只认接口说的
  */
 process.env.DATABASE_URL = "postgresql://blocked:blocked@127.0.0.1:1/never?connect_timeout=1";
 process.env.NODE_ENV = "test";
@@ -44,6 +47,8 @@ async function check(name: string, body: () => Promise<void> | void): Promise<vo
 
 const db = { users: [] as Row[], agents: [] as Row[] };
 let agentCalls = 0;
+/** 置 true 时按 id 查代理直接抛错（模拟登录时查品牌那一下数据库出错） */
+let agentFindFirstThrows = false;
 
 function matches(row: Row, where: Row): boolean {
   return Object.entries(where).every(([k, v]) => row[k] === v);
@@ -67,6 +72,7 @@ const stub: Row = {
     },
     async findFirst({ where }: Row) {
       agentCalls += 1;
+      if (agentFindFirstThrows) throw new Error("zz 模拟数据库出错");
       assert.ok(where.id, "按 id 查代理必须带 id");
       assert.ok(where.companyId, "按 id 查代理必须同时卡公司");
       const a = db.agents.find((x) => matches(x, where));
@@ -134,6 +140,9 @@ async function main(): Promise<void> {
 
   const app = createApp();
   api.registerBrandingRoutes(app);
+  const { registerAuthRoutes } = await import("../apps/api/src/modules/auth/routes");
+  const { hashPassword } = await import("../apps/api/src/modules/auth/crypto-utils");
+  registerAuthRoutes(app);
   const port = await freePort();
   await new Promise<void>((resolve) => app.listen(port, resolve));
   const call = async (p: string, opts: { token?: string; ip?: string } = {}): Promise<{ status: number; body: any; raw: string }> => {
@@ -317,6 +326,135 @@ async function main(): Promise<void> {
       assert.ok(cfg.includes(`source: "/${prefix}/:path*"`), `${prefix} 转发规则不见了`);
     }
     assert.ok(fs.existsSync(path.join(process.cwd(), "apps/web/src/app/[agentSlug]/page.tsx")), "前缀登录页文件不在");
+  });
+
+  /* ── 8. 登录接口顺带回品牌 ── */
+  const LOGIN_PWD = "zz_fxb_login_fixture_pwd";
+  const LOGIN_HASH = hashPassword(LOGIN_PWD);
+  let loginIp = 0;
+  const postLogin = async (body: Record<string, unknown>): Promise<{ status: number; body: any; raw: string }> => {
+    // 每次换 IP：别撞上「每 IP 每分钟 10 次」那道闸
+    loginIp += 1;
+    const r = await fetch(`http://127.0.0.1:${port}/auth/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Real-IP": `203.0.113.${100 + loginIp}` },
+      body: JSON.stringify(body),
+    });
+    const raw = await r.text();
+    return { status: r.status, body: JSON.parse(raw), raw };
+  };
+  const withLoginPasswords = (): void => { for (const u of db.users) u.passwordHash = LOGIN_HASH; };
+  const brandOnly = (raw: string, where: string): void => {
+    const data = JSON.parse(raw).data;
+    assert.deepEqual(Object.keys(data).sort(), ["brand", "token", "user"], `${where} 登录响应多了/少了顶层字段：${Object.keys(data)}`);
+    if (data.brand !== null) assert.deepEqual(Object.keys(data.brand).sort(), ["loginPath", "logoUrl", "name"], `${where} 品牌字段不对`);
+    // token 是随机串，可能碰巧含「500」这种数字，只核品牌和 user 两块
+    noSecrets(JSON.stringify({ data: { brand: data.brand, user: { id: data.user.id, name: data.user.name, role: data.user.role } } }), where);
+  };
+
+  await check("19) 登录成功回品牌：代理的客户 / 代理本人 → 代理的三个字段；湘泰客户、员工、管理员 → null", async () => {
+    resetFixtures();
+    withLoginPasswords();
+    const a = await postLogin({ account: "zz_b4_client_a", password: LOGIN_PWD });
+    assert.equal(a.status, 200, a.raw);
+    assert.deepEqual(a.body.data.brand, { name: "A 代理国际物流", logoUrl: "/images/zz_b4_logo_abc123.png", loginPath: "/zz-b4-a" });
+    brandOnly(a.raw, "代理的客户登录");
+    const b = await postLogin({ account: "zz_b4_client_b", password: LOGIN_PWD });
+    assert.deepEqual(b.body.data.brand, { name: "<B>代理", logoUrl: null, loginPath: null }, "没前缀 loginPath null、外链 logo 不给");
+    const ag = await postLogin({ account: "zz_b4_agent_login", password: LOGIN_PWD });
+    assert.deepEqual(ag.body.data.brand, { name: "A 代理国际物流", logoUrl: "/images/zz_b4_logo_abc123.png", loginPath: "/zz-b4-a" });
+    brandOnly(ag.raw, "代理本人登录");
+    for (const id of ["zz_b4_client_xt", "zz_b4_staff", "zz_b4_admin"]) {
+      const r = await postLogin({ account: id, password: LOGIN_PWD });
+      assert.equal(r.status, 200, `${id} ${r.raw}`);
+      assert.equal(r.body.data.brand, null, `${id} 必须是湘泰的`);
+      brandOnly(r.raw, `${id} 登录`);
+    }
+    resetFixtures();
+  });
+
+  await check("20) 登录回品牌只看这个账号：员工 / 管理员行上就算挂了 agentId 也 null；别家公司的代理、代理行没了 → null", async () => {
+    resetFixtures();
+    withLoginPasswords();
+    db.users.find((u) => u.id === "zz_b4_staff")!.agentId = "zz_b4_agentA";
+    db.users.find((u) => u.id === "zz_b4_admin")!.agentId = "zz_b4_agentA";
+    const before = agentCalls;
+    for (const id of ["zz_b4_staff", "zz_b4_admin"]) {
+      assert.equal((await postLogin({ account: id, password: LOGIN_PWD })).body.data.brand, null, id);
+    }
+    assert.equal(agentCalls, before, "员工 / 管理员登录不许去查代理表");
+    assert.equal((await postLogin({ account: "zz_b4_client_cross", password: LOGIN_PWD })).body.data.brand, null);
+    assert.equal((await postLogin({ account: "zz_b4_agent_ghost", password: LOGIN_PWD })).body.data.brand, null);
+    resetFixtures();
+  });
+
+  await check("21) 登录失败的响应不带任何品牌（防拿错密码探账号归属）：密码错 / 角色不对 / 账号不存在三种回包一模一样", async () => {
+    resetFixtures();
+    withLoginPasswords();
+    const before = agentCalls;
+    const wrongPwd = await postLogin({ account: "zz_b4_client_a", password: "zz_wrong" });
+    const wrongRole = await postLogin({ account: "zz_b4_client_a", password: LOGIN_PWD, role: "staff" });
+    const noUser = await postLogin({ account: "zz_b4_nobody", password: LOGIN_PWD });
+    for (const [name, r] of [["密码错", wrongPwd], ["角色不对", wrongRole], ["账号不存在", noUser]] as const) {
+      assert.equal(r.status, 401, `${name} ${r.raw}`);
+      assert.ok(!/brand|A 代理|zz-b4-a|logo/i.test(r.raw), `${name} 的失败响应里有品牌信息：${r.raw}`);
+    }
+    // 每个响应自带的请求号、时间戳本来就不同，去掉再比
+    const strip = (r: { body: any }) => { const { requestId: _r, timestamp: _t, ...rest } = r.body; return rest; };
+    assert.deepEqual(strip(wrongPwd), strip(noUser), "密码错和账号不存在的回包不一样 —— 能拿来探账号");
+    assert.deepEqual(strip(wrongRole), strip(noUser));
+    assert.equal(agentCalls, before, "登录失败不许去查代理表");
+    resetFixtures();
+  });
+
+  await check("22) 登录时查品牌出错：登录照常成功，只是不回 brand 字段（前端当不知道）", async () => {
+    resetFixtures();
+    withLoginPasswords();
+    agentFindFirstThrows = true;
+    try {
+      const r = await postLogin({ account: "zz_b4_client_a", password: LOGIN_PWD });
+      assert.equal(r.status, 200, r.raw);
+      assert.ok(r.body.data.token, "没发令牌");
+      assert.ok(!Object.prototype.hasOwnProperty.call(r.body.data, "brand"), `查品牌出错还回了 brand：${r.raw}`);
+    } finally {
+      agentFindFirstThrows = false;
+      resetFixtures();
+    }
+  });
+
+  await check("23) 前端 readLoginBrand：只认登录接口说的；管理员 / 员工永远湘泰；没字段或格式不对当不知道；代理本人回 null 当不知道", () => {
+    const A = { name: "A 代理", logoUrl: "/images/a.png", loginPath: "/zz-b4-a" };
+    assert.deepEqual(web.readLoginBrand({ user: { role: "client" }, brand: A }), { known: true, brand: A });
+    assert.deepEqual(web.readLoginBrand({ user: { role: "agent" }, brand: A }), { known: true, brand: A });
+    assert.deepEqual(web.readLoginBrand({ user: { role: "client" }, brand: null }), { known: true, brand: null });
+    assert.deepEqual(web.readLoginBrand({ user: { role: "agent" }, brand: null }), { known: false }, "代理本人没品牌是脏数据，别写成湘泰");
+    for (const role of ["admin", "staff"]) {
+      assert.deepEqual(web.readLoginBrand({ user: { role }, brand: A }), { known: true, brand: null }, `${role} 回了品牌也当湘泰`);
+    }
+    assert.deepEqual(web.readLoginBrand({ user: { role: "client" } }), { known: false }, "没 brand 字段 = 服务端查品牌出错");
+    assert.deepEqual(web.readLoginBrand({ user: { role: "client" }, brand: { name: "" } }), { known: false });
+    assert.deepEqual(web.readLoginBrand({ user: { role: "client" }, brand: "A 代理" }), { known: false });
+    assert.deepEqual(web.readLoginBrand(null), { known: false });
+    assert.deepEqual(
+      web.readLoginBrand({ user: { role: "client" }, brand: { name: "A", logoUrl: "https://evil.example.net/x.png", loginPath: "//evil.com" } }),
+      { known: true, brand: { name: "A", logoUrl: null, loginPath: null } },
+      "logo / 前缀照样过 parseSessionBrand",
+    );
+  });
+
+  await check("24) 登录页只按登录接口写品牌缓存，不再按「是哪张登录页」猜；退出登录清品牌缓存但不动 xt_brand_login cookie（源码检查）", () => {
+    const view = fs.readFileSync(path.join(process.cwd(), "apps/web/src/modules/branding/LoginView.tsx"), "utf-8");
+    const primeAt = view.indexOf("primeBrandAfterLogin(result)");
+    assert.ok(primeAt > 0, "登录页没把整份登录响应交给 primeBrandAfterLogin");
+    assert.ok(primeAt < view.indexOf("setAuthSession({"), "品牌缓存必须在写会话之前写");
+    assert.ok(primeAt < view.indexOf("window.location.href"), "品牌缓存必须在跳转之前写");
+    const hook = fs.readFileSync(path.join(process.cwd(), "apps/web/src/modules/branding/useWorkbenchBrand.ts"), "utf-8");
+    const prime = hook.slice(hook.indexOf("export function primeBrandAfterLogin"), hook.indexOf("/** 这个登录身份的品牌"));
+    assert.ok(prime.includes("readLoginBrand(result)"), "primeBrandAfterLogin 没走 readLoginBrand");
+    const session = fs.readFileSync(path.join(process.cwd(), "apps/web/src/auth/auth-session.ts"), "utf-8");
+    const clear = session.slice(session.indexOf("export function clearAuthSession"), session.indexOf("export function prepareLoginPage"));
+    assert.ok(clear.includes("safeRemoveItem(WORKBENCH_BRAND_CACHE_KEY)"), "退出登录没清品牌缓存");
+    assert.ok(!/xt_brand_login|BRAND_LOGIN_COOKIE|document\.cookie/.test(clear.replace(/\/\*[\s\S]*?\*\//g, "")), "退出登录不许动 xt_brand_login cookie（B4 靠它把代理的客户送回代理登录页）");
   });
 
   console.log(`\n共 ${total} 项，失败 ${failures.length} 项`);

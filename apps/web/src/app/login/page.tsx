@@ -34,7 +34,7 @@ function toSearch(params: Record<string, string | string[] | undefined>): string
 
 export default async function LoginPage({ searchParams }: { searchParams: SearchParams }) {
   const hostBrand = await getBrandByRequestHost();
-  if (hostBrand) return <LoginView brand={hostBrand} slug={null} />;
+  if (hostBrand) return <LoginView brand={hostBrand} />;
 
   const cookieSlug = normalizeBrandSlug(await readBrandLoginCookie(BRAND_LOGIN_COOKIE));
   // 前缀还得真存在（代理改了前缀 / 被删）才转，不然转过去是 404，人就卡死了
@@ -42,5 +42,5 @@ export default async function LoginPage({ searchParams }: { searchParams: Search
     const target = brandLoginRedirectPath(cookieSlug, toSearch(await searchParams));
     if (target) redirect(target);
   }
-  return <LoginView brand={null} slug={null} />;
+  return <LoginView brand={null} />;
 }

@@ -15,6 +15,7 @@ import { revokeToken } from "../core/token-blacklist";
 import { hashPassword, verifyPassword } from "./crypto-utils";
 import { checkPasswordStrength } from "./password-policy";
 import { isUserRole } from "../../../../../packages/shared-types/role";
+import { findSessionBrand } from "../branding/routes";
 
 /**
  * 注册鉴权路由（登录 + 注册）
@@ -85,6 +86,8 @@ export function registerAuthRoutes(app: MinimalHttpApp): void {
         name: true,
         status: true,
         passwordHash: true,
+        // 只在登录成功后用来算品牌（见下面 brand），失败出口一律不碰它
+        agentId: true,
       },
     });
 
@@ -133,6 +136,30 @@ export function registerAuthRoutes(app: MinimalHttpApp): void {
       passwordHash: user.passwordHash,
     });
 
+    /**
+     * 顺带回这个账号的品牌（2026-09-16 第 1 轮审查后加固，确认单 5.3 / 5.7）。
+     *
+     * 为什么放在登录响应里：代理的客户在一台没用过的电脑上从湘泰 /login 登录，
+     * 进工作台首帧浏览器里没有任何品牌缓存，只能先按湘泰画，等 /client/brand 回来再换 ——
+     * 左上角会闪「湘泰物流」、菜单闪普通版「集货拼柜」、首页闪 AI 问答。
+     * 登录页拿到这个字段后，先写进按账号的品牌缓存再跳转，工作台第一帧就是对的。
+     *
+     * ⚠️ 只算**刚登录成功的这个账号**：客户且归代理 → 代理的；代理本人 → 自己代理的；其余 null。
+     * ⚠️ 字段逐个列出（CLAUDE.md #31），只有 name / logoUrl / loginPath，代理价、专属域名、公司一个都不带。
+     * ⚠️ 失败出口（上面几个 401/429）一律不带品牌 —— 不给拿错密码探「这个账号归不归代理」的机会。
+     * ⚠️ 查品牌出错不许把登录弄挂：记日志、不回 brand 字段（前端当「不知道」，照旧等 /client/brand）。
+     */
+    let brand: { name: string; logoUrl: string | null; loginPath: string | null } | null | undefined = null;
+    if ((user.role === "client" || user.role === "agent") && user.agentId) {
+      try {
+        const found = await findSessionBrand({ agentId: user.agentId, companyId: user.companyId });
+        brand = found ? { name: found.name, logoUrl: found.logoUrl, loginPath: found.loginPath } : null;
+      } catch (error) {
+        brand = undefined;
+        logger.warn("登录成功但查品牌失败，本次不回品牌", { 账号: user.id, 错误: error instanceof Error ? error.message : String(error) });
+      }
+    }
+
     ok(res, {
       token,
       user: {
@@ -141,6 +168,7 @@ export function registerAuthRoutes(app: MinimalHttpApp): void {
         role: user.role,
         companyId: user.companyId,
       },
+      ...(brand === undefined ? {} : { brand }),
     });
   });
 

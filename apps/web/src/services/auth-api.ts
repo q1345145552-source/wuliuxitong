@@ -1,7 +1,16 @@
 import { apiBaseUrl, apiRequest } from "./core-api";
 
+/**
+ * 登录。成功时后端顺带回这个账号的品牌（apps/api/src/modules/auth/routes.ts，2026-09-16）：
+ * brand 对象 = 代理的客户 / 代理本人；null = 湘泰的；**没有这个字段** = 服务端查品牌出错，当不知道。
+ * ⚠️ 类型是手写的（CLAUDE.md #22），用之前过 brand-core.ts 的 readLoginBrand 逐字段核。
+ */
 export function login(payload: { account: string; password: string; role?: "admin" | "staff" | "client" | "agent" }) {
-  return apiRequest<{ token: string; user: { id: string; name: string; role: "admin" | "staff" | "client" | "agent"; companyId: string } }>(
+  return apiRequest<{
+    token: string;
+    user: { id: string; name: string; role: "admin" | "staff" | "client" | "agent"; companyId: string };
+    brand?: { name: string; logoUrl: string | null; loginPath: string | null } | null;
+  }>(
     `${apiBaseUrl()}/auth/login`, { method: "POST", body: JSON.stringify(payload) }
   );
 }

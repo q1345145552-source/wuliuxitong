@@ -523,7 +523,13 @@ export function registerAgentPortalRoutes(app: MinimalHttpApp): void {
     const childShipments = shipment.parentTrackingNo
       ? []
       : await prisma.shipment.findMany({
-          where: { parentTrackingNo: shipment.trackingNo, companyId: auth.companyId },
+          // 子单也叠加名下客户条件（2026-09-16 第 1 轮审查后加固）：父单已经按名下查到，
+          // 正常流程子单和父单同一个 orderId；万一历史脏数据里有子单挂在别家订单上，也不许带出来
+          where: {
+            parentTrackingNo: shipment.trackingNo,
+            companyId: auth.companyId,
+            order: { companyId: auth.companyId, clientId: { in: clientIds } },
+          },
           orderBy: { trackingNo: "asc" },
           select: {
             trackingNo: true,

@@ -21,7 +21,7 @@ const roleRouteMap: Record<string, string> = {
   agent: "/agent",
 };
 
-export default function LoginView({ brand, slug }: { brand: PublicBrandInfo | null; slug: string | null }) {
+export default function LoginView({ brand }: { brand: PublicBrandInfo | null }) {
   const [ready, setReady] = useState(false);
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
@@ -62,14 +62,18 @@ export default function LoginView({ brand, slug }: { brand: PublicBrandInfo | nu
     try {
       // 密码已在上面 trim 过（原因见那段注释），这里原样交给后端比对。
       const result = await login({ account, password });
+      /**
+       * 先按登录接口回的品牌写好缓存，再写会话、再跳转（2026-09-16 第 1 轮审查后加固）：
+       * 工作台第一帧同步读这份缓存 —— 代理的客户从湘泰 /login 登录不闪「湘泰物流」/普通版集货/AI，
+       * 湘泰客户从代理登录页登录也不闪代理名字。只认接口说的，不看是哪张登录页。
+       */
+      primeBrandAfterLogin(result);
       setAuthSession({
         userId: result.user.id,
         companyId: result.user.companyId,
         role: result.user.role,
         token: result.token,
       });
-      // 从代理登录页登进来的：先把品牌记上，进工作台首帧就是代理的（湘泰登录页 brand 为 null，什么都不做）
-      primeBrandAfterLogin(result.user, brand, slug);
       window.location.href = roleRouteMap[result.user.role] || "/";
     } catch (error) {
       const text = error instanceof Error ? error.message : "请稍后重试";

@@ -1,14 +1,14 @@
 "use client";
 
-import { useEffect, useState, useSyncExternalStore } from "react";
-import { getOptionalSession, type AuthSession } from "../../auth/auth-session";
+import { useEffect, useLayoutEffect, useState, useSyncExternalStore } from "react";
+import { WORKBENCH_BRAND_CACHE_KEY, getOptionalSession, type AuthSession } from "../../auth/auth-session";
 import { apiBaseUrl, apiRequest } from "../../services/core-api";
 import {
   BRAND_LOGIN_COOKIE,
   normalizeBrandSlug,
   parseSessionBrand,
+  readLoginBrand,
   toWorkbenchBrand,
-  type PublicBrandInfo,
   type SessionBrandInfo,
   type WorkbenchBrand,
 } from "./brand-core";
@@ -30,11 +30,12 @@ export type { WorkbenchBrand } from "./brand-core";
    为什么要在浏览器里记一份（localStorage，按账号记）：
    整页刷新时接口回来之前那一小会儿不知道是谁的品牌。湘泰客户按「湘泰」画（跟以前一模一样）；
    代理的客户如果每次刷新都先闪一下「湘泰物流」，等于每次都告诉他背后是湘泰。
-   所以查到一次就记下，下次首帧直接用；从代理登录页登进来的，登录那一刻就先记上。
+   所以查到一次就记下，下次首帧直接用；**登录那一刻**按登录接口回的品牌先记上（不管从哪张登录页登进来）。
    记的只有名字、logo 地址、前缀，都是登录页上本来就公开的东西。
+   缓存只认同一个账号（userId 对不上一律当没有）；退出登录时 clearAuthSession 一并清掉。
    ========================================================================== */
 
-const CACHE_KEY = "xt_workbench_brand_v1";
+const CACHE_KEY = WORKBENCH_BRAND_CACHE_KEY;
 
 /** 一个账号的品牌：SessionBrandInfo = 代理的，null = 湘泰的，undefined = 还不知道 */
 type BrandState = SessionBrandInfo | null | undefined;
@@ -121,17 +122,24 @@ async function load(userId: string, role: string): Promise<void> {
 }
 
 /**
- * 代理登录页登录成功那一刻先记上品牌，进工作台首帧就是代理的（不闪湘泰）。
- * 进了工作台接口会再核一遍：万一登进来的其实是湘泰账号，接口回 null 就改回来。
+ * 登录成功那一刻、写会话和跳转之前调（LoginView）：按登录接口回的品牌写好缓存，进工作台第一帧就是对的。
+ * 2026-09-16 第 1 轮审查后改：以前只在代理登录页按「登录页的品牌」猜，
+ * ① 代理的客户从湘泰 /login 登录 → 没缓存，首帧闪「湘泰物流」、普通版集货、AI 问答；
+ * ② 湘泰客户从代理登录页登录 → 先按代理画，首帧闪代理名字。
+ * 现在只认服务端算的（readLoginBrand），两个方向都不猜。
+ * ⚠️ 服务端没回品牌（查品牌出错）→ 不写缓存；userId 不同的旧缓存 readCache 本来就不认，不会串到新账号头上。
  */
-export function primeBrandAfterLogin(user: { id: string; role: string }, brand: PublicBrandInfo | null, slug: string | null): void {
-  if (!brand || (user.role !== "client" && user.role !== "agent")) return;
-  const s = normalizeBrandSlug(slug ?? "");
-  const info: SessionBrandInfo = { name: brand.name, logoUrl: brand.logoUrl, loginPath: s ? `/${s}` : null };
-  known.set(user.id, info);
-  cacheChecked.add(user.id);
-  writeCache(user.id, info);
-  syncLoginCookie(info);
+export function primeBrandAfterLogin(result: { user: { id: string; role: string }; brand?: unknown }): void {
+  const decision = readLoginBrand(result);
+  if (!decision.known) return;
+  const role = result.user.role;
+  if (role === "client" || role === "agent") {
+    known.set(result.user.id, decision.brand);
+    cacheChecked.add(result.user.id);
+    writeCache(result.user.id, decision.brand);
+  }
+  // 湘泰账号：清掉「代理登录页」记忆；代理的：记上他自己的前缀（没前缀也清）
+  syncLoginCookie(decision.brand);
 }
 
 /** 这个登录身份的品牌：对象 = 代理的，null = 湘泰的，undefined = 还在查且没有缓存 */
@@ -157,6 +165,9 @@ export function useCurrentSessionBrand(): BrandState {
   return useSessionBrand(session);
 }
 
+/** 服务端渲染时 useLayoutEffect 不跑也会报警告；外壳首屏在服务端只画骨架，用普通 effect 顶上即可 */
+const useIsomorphicLayoutEffect = typeof window === "undefined" ? useEffect : useLayoutEffect;
+
 /** 代理的名字首帧还不知道时（代理本人、没缓存），左上角先空着，不显示「湘泰物流」 */
 const AGENT_PENDING_BRAND: WorkbenchBrand = { name: "", hiddenMenuIds: [], labelOverrides: {} };
 
@@ -172,7 +183,8 @@ export function useWorkbenchBrand(session: AuthSession | null): WorkbenchBrand |
   const state = useSessionBrand(session);
   const role = session?.role ?? null;
 
-  useEffect(() => {
+  // 标签页标题图标在浏览器画出这一帧之前就换（layout effect），不先露一帧「湘泰物流网站」再改
+  useIsomorphicLayoutEffect(() => {
     if (state === undefined) return;
     applyDocumentBrand(state ? { name: state.name, logoUrl: state.logoUrl } : null);
   }, [state]);

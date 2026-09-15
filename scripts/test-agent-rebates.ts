@@ -460,6 +460,27 @@ async function main(): Promise<void> {
     assert.equal(db.statements.find((s) => s.id === aug.id)!.status, "paid");
   });
 
+  await check("13) 返现合计超过 Decimal(12,2) 上限：不抛错、不写半截，这个代理从超限的月份起暂停出单，前面的月份照出，重跑也一样", async () => {
+    db.agents.push({ id: "agent_bing", companyId: "c1", name: "代理丙" });
+    db.prealerts.push(
+      prealert("bing-jul", { paidAgentId: "agent_bing", thailandReceivedAt: T("2026-07-10T00:00:00Z"), rebateAmount: "10.00" }),
+      // 单票各自放得下 Decimal(12,2)，同月加起来 1.2e10 放不下
+      prealert("bing-aug-1", { paidAgentId: "agent_bing", thailandReceivedAt: T("2026-08-10T00:00:00Z"), rebateAmount: "6000000000.00" }),
+      prealert("bing-aug-2", { paidAgentId: "agent_bing", thailandReceivedAt: T("2026-08-11T00:00:00Z"), rebateAmount: "6000000000.00" }),
+      prealert("bing-aug-small", { paidAgentId: "agent_bing", thailandReceivedAt: T("2026-08-12T00:00:00Z"), rebateAmount: "5.00" }),
+      prealert("bing-sep", { paidAgentId: "agent_bing", thailandReceivedAt: T("2026-09-10T00:00:00Z"), rebateAmount: "3.00" }),
+    );
+    for (let i = 0; i < 2; i += 1) {
+      const r = await gen.generateAgentRebateStatements(T("2026-10-01T00:00:00Z"), { agentIds: ["agent_bing"] });
+      assert.equal(r.statementsCreated, i === 0 ? 1 : 0, "只出 7 月那一张，重跑不多出");
+      assert.deepEqual(r.overflowBlocked, [{ agentId: "agent_bing", month: "2026-08" }]);
+      const bing = db.statements.filter((s) => s.agentId === "agent_bing");
+      assert.deepEqual(bing.map((s) => s.month), ["2026-07"], "8 月超限不出，9 月也不越过去出");
+      assert.equal(bing[0].totalRebate, 10);
+      assert.ok(!db.lines.some((l) => String(l.prealertId).startsWith("bing-aug") || l.prealertId === "bing-sep"), "超限月份及以后的票一条明细都不写");
+    }
+  });
+
   console.log(`\n共 ${total} 项，失败 ${failures.length} 项`);
   if (failures.length > 0) {
     console.log("❌ 失败：\n  - " + failures.join("\n  - "));

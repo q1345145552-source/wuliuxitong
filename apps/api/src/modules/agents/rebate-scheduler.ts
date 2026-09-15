@@ -22,6 +22,7 @@
    ========================================================================== */
 
 import { prisma } from "../../db/prisma";
+import { checkTotalsWritable } from "../core/decimal-guard";
 import { logger } from "../core/logger";
 import { computeRebate } from "../whr-consolidation/rebate";
 import { planAgentStatements, toCents, toMilliM3 } from "./agent-rules";
@@ -56,6 +57,8 @@ export interface RebateRunResult {
   linesCreated: number;
   /** 快照不全、没法算的预报单 id（写了日志，等人查） */
   skippedPrealerts: string[];
+  /** 合计超过库里能存的上限、从这个月起暂停出单的代理（写了错误日志，要人工核对拆单） */
+  overflowBlocked: Array<{ agentId: string; month: string }>;
 }
 
 /** 一票预报单 → 一行明细的数据（纯函数，测试直接用）。快照不全返回 null */
@@ -202,6 +205,33 @@ async function generateForAgent(agentId: string, now: Date, result: RebateRunRes
           0,
         );
         const totalCents = plan.items.reduce((s, p) => s + toCents(p.line.rebateAmount), 0);
+        /**
+         * ⚠️ 合计写库前先查会不会溢出（2026-09-16 第 1 轮审查补，同 CLAUDE.md 里「汇总也要闸」那条）。
+         * 单票返现各自放得下 Decimal(12,2)，一个月加起来可能放不下；原来直接 create，库报 22003，
+         * 被外面的 catch 吞成一行日志，这个代理这个月的单每小时重试、永远出不来，而且连同月的小票一起卡住。
+         * 方数用的是 checkTotalsWritable 的 Decimal(10,3) 口径，比列上的 (12,3) 更严，只会更早拦。
+         */
+        const overflow = checkTotalsWritable({
+          volumes: [["这张返现单的总方数", totalMilli / 1000]],
+          fees: [["这张返现单的返现合计", totalCents / 100]],
+        });
+        if (overflow) {
+          const biggest = [...plan.items]
+            .sort((a, b) => toCents(b.line.rebateAmount) - toCents(a.line.rebateAmount))
+            .slice(0, 5)
+            .map((p) => ({ prealertId: p.id, trackingNo: p.trackingNo, rebateAmount: p.line.rebateAmount }));
+          result.overflowBlocked.push({ agentId, month: plan.month });
+          logger.error("返现单合计超过系统能存的上限，这个代理从这个月起暂停出单，需要人工核对拆单", {
+            agentId,
+            month: plan.month,
+            lineCount,
+            原因: overflow,
+            返现最大的几票: biggest,
+          });
+          // ⚠️ 用 break 不用 continue：这个月的票没进单，排后面的月份时还会被装进去、照样溢出；
+          //    前面已经排好的月份在同一个事务里照常提交
+          break;
+        }
         await tx.agentRebateStatement.create({
           data: {
             companyId,
@@ -234,7 +264,7 @@ export async function generateAgentRebateStatements(
   now: Date = new Date(),
   options: { agentIds?: string[] } = {},
 ): Promise<RebateRunResult> {
-  const result: RebateRunResult = { agents: 0, statementsCreated: 0, linesCreated: 0, skippedPrealerts: [] };
+  const result: RebateRunResult = { agents: 0, statementsCreated: 0, linesCreated: 0, skippedPrealerts: [], overflowBlocked: [] };
   // ⚠️ 传了空数组 = 一个都不跑（CLAUDE.md #27：`{ in: [] }` 以外的「空条件」不许变成「不加条件」）
   if (options.agentIds && options.agentIds.length === 0) return result;
   const agents: Array<{ id: string }> = await prisma.agent.findMany({
@@ -292,7 +322,7 @@ export function startAgentRebateScheduler(): void {
   const run = () => {
     runAgentRebateOnce()
       .then((r) => {
-        if (r && (r.statementsCreated > 0 || r.skippedPrealerts.length > 0)) {
+        if (r && (r.statementsCreated > 0 || r.skippedPrealerts.length > 0 || r.overflowBlocked.length > 0)) {
           logger.info("返现单定时检查", { ...r, skippedPrealerts: r.skippedPrealerts.length });
         }
       })

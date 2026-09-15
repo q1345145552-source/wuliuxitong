@@ -10,6 +10,12 @@ export interface AuthSession {
 const SESSION_KEY = "auth_session_v1";
 
 /**
+ * 工作台品牌缓存（按账号记一份，见 modules/branding/useWorkbenchBrand.ts）。
+ * 键名放这里是因为退出登录要顺手清掉它，而品牌模块本来就依赖本文件，反过来 import 会绕圈。
+ */
+export const WORKBENCH_BRAND_CACHE_KEY = "xt_workbench_brand_v1";
+
+/**
  * 【审查问题 11】localStorage 本身可能抛错，不只是取到的值有问题：
  * Safari 无痕模式、用户在设置里关掉"网站数据"、iOS 低存储时，
  * 光是读 window.localStorage 就会抛 SecurityError。
@@ -76,6 +82,13 @@ export function clearAuthSession(): void {
     safeRemoveItem(SESSION_KEY);
     // 显式退出后，旧兼容键也不应把已经退出的身份重新迁回。
     safeRemoveItem("mock_session_v1");
+    /**
+     * 品牌缓存跟会话同进同出（2026-09-16 第 1 轮审查后加固）：
+     * 下一个人登录时登录接口会带回他自己的品牌、登录页当场写进去，不需要留着上一个人的；
+     * 公用电脑上也别留「上一个登录的是哪家代理的客户」。
+     * ⚠️ 不动 xt_brand_login cookie：退出后 /login 还要靠它把代理的客户送回代理自己的登录页。
+     */
+    safeRemoveItem(WORKBENCH_BRAND_CACHE_KEY);
   }
 }
 

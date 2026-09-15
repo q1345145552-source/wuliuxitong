@@ -80,6 +80,29 @@ export function parseSessionBrand(raw: unknown): SessionBrandInfo | null {
 }
 
 /**
+ * 登录接口 POST /auth/login 成功时顺带回的品牌 → 登录页要不要、要怎么写品牌缓存（2026-09-16 第 1 轮审查后加固）。
+ * · { known: true, brand } ：服务端说了算，照写（brand 为 null = 湘泰的）
+ * · { known: false }       ：不知道（没回这个字段 = 服务端查品牌出错；或回的东西不合格式）→ 不写缓存，照旧等 /client/brand
+ * 规则：
+ * · 管理员 / 员工：永远湘泰（null），不管接口回了什么
+ * · 客户：null = 湘泰客户；对象 = 代理的客户
+ * · 代理本人：只认对象；回 null 是脏数据（代理行没了），当不知道处理，外壳左上角先空着，别写成湘泰
+ * ⚠️ 只看登录接口的回包，**不看是从哪个登录页登进来的**（5.3）：
+ *    以前从代理登录页登录会先按登录页的品牌猜，湘泰客户在代理登录页登录首帧就闪代理名字。
+ */
+export type LoginBrandDecision = { known: false } | { known: true; brand: SessionBrandInfo | null };
+
+export function readLoginBrand(result: unknown): LoginBrandDecision {
+  if (!result || typeof result !== "object" || !Object.prototype.hasOwnProperty.call(result, "brand")) return { known: false };
+  const r = result as { user?: { role?: unknown }; brand?: unknown };
+  const role = r.user?.role;
+  if (role !== "client" && role !== "agent") return { known: true, brand: null };
+  if (r.brand === null) return role === "client" ? { known: true, brand: null } : { known: false };
+  const brand = parseSessionBrand(r.brand);
+  return brand ? { known: true, brand } : { known: false };
+}
+
+/**
  * 登录身份 + 接口回的品牌 → 外壳要的品牌。
  * 管理员 / 员工永远 null（湘泰自己的样子）；没品牌也是 null。
  */
