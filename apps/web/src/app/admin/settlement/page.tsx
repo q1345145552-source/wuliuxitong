@@ -1,7 +1,6 @@
 "use client";
 
 import { Fragment, useCallback, useEffect, useState } from "react";
-import RoleShell from "../../../modules/layout/RoleShell";
 import { fetchContainerRevenue, type ContainerRevenueSummary } from "../../../services/business-api";
 
 /* 2026-08-27 重做：这一页原来是「结算与利润」——手工填应收/应付/税费再算利润，
@@ -34,7 +33,7 @@ export default function AdminSettlementPage() {
   const tdNum = { ...td, textAlign: "right", fontFamily: "monospace" } as const;
 
   return (
-    <RoleShell allowedRole="admin" title="柜子收款" variant="a3">
+    <>
       <h1 style={{ fontSize: 22, fontWeight: 700, color: "var(--ink-legacy)", margin: "0 0 4px" }}>柜子收款</h1>
       <p style={{ fontSize: 13, color: "var(--ink-mute)", margin: "0 0 16px" }}>
         一行一个柜，看这条柜收了客户多少钱。点「客户明细」看柜里每个客户各付了多少。
@@ -136,6 +135,6 @@ export default function AdminSettlementPage() {
           </div>
         </div>
       )}
-    </RoleShell>
+    </>
   );
 }

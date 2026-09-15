@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useMemo, useState, useCallback, useRef } from "react";
-import RoleShell from "../../../modules/layout/RoleShell";
 import {
   fetchAdminConsolidationTasks,
   fetchStaffConsolidationTaskDetail,
@@ -416,7 +415,7 @@ export default function AdminConsolidationPage() {
 
   // ======== 渲染 ========
   return (
-    <RoleShell allowedRole="admin" title="集货拼柜管理" variant="a3">
+    <>
       {toast && (
         <div onClick={() => setToast("")} style={{ position: "fixed", top: 20, right: 20, zIndex: 9999, background: "#14171D", color: "var(--white)", padding: "10px 20px", borderRadius: 8, boxShadow: "0 4px 12px rgba(0,0,0,0.3)", cursor: "pointer" }}>
           {toast}
@@ -800,7 +799,7 @@ export default function AdminConsolidationPage() {
           </div>
         </Modal>
       )}
-    </RoleShell>
+    </>
   );
 }
 

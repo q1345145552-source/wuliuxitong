@@ -1,9 +1,10 @@
 import crypto from "node:crypto";
+import { isUserRole, type UserRole } from "../../../../../packages/shared-types/role";
 
 export interface AuthTokenPayload {
   userId: string;
   companyId: string;
-  role: "admin" | "staff" | "client";
+  role: UserRole;
   userName: string;
   exp: number;
   /**
@@ -59,7 +60,7 @@ export function passwordFingerprint(passwordHash: string | null | undefined): st
 export function signAuthToken(input: {
   userId: string;
   companyId: string;
-  role: "admin" | "staff" | "client";
+  role: UserRole;
   userName: string;
   expiresInSeconds?: number;
   /** 传了就把密码指纹写进令牌；改密码后旧令牌立刻失效 */
@@ -132,7 +133,11 @@ export function verifyAuthToken(token: string): AuthTokenPayload | null {
   try {
     const payload = JSON.parse(base64UrlDecode(encodedPayload).toString("utf8")) as Partial<AuthTokenPayload>;
     if (!payload?.userId || !payload.companyId || !payload.role || !payload.exp) return null;
-    if (payload.role !== "admin" && payload.role !== "staff" && payload.role !== "client") return null;
+    /**
+     * ⚠️ 角色硬闸（2026-09-16 加 agent）：不认得的角色一律当没登录。
+     * 漏加 agent 的话，代理登录成功后下一个请求就被踢回登录页。
+     */
+    if (!isUserRole(payload.role)) return null;
     if (Math.floor(Date.now() / 1000) >= payload.exp) return null;
     return {
       pv: payload.pv,

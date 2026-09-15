@@ -1,13 +1,32 @@
 "use client";
 
 import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from "react";
+import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { clearAuthSession, clearClientOrderCaches, getOptionalSession, type AuthRole, type AuthSession } from "../../auth/auth-session";
+import { useWorkbenchBrand } from "../branding/useWorkbenchBrand";
 import { changeOwnPassword } from "../../services/auth-api";
 import { apiBaseUrl, apiRequest } from "../../services/core-api";
-import { globalMenus, roleFunctionGroups, roleMenus } from "./menu-config";
+import { globalMenus, roleFunctionGroups, roleMenus, type MenuItem } from "./menu-config";
+import { isSamePageHashLink, navigateToHash } from "./navigate-to-hash";
 
 const EXPANDED_GROUPS_KEY = "xt_sidebar_expanded_groups";
 const COLLAPSED_KEY = "xt_sidebar_collapsed";
+const DEFAULT_EXPANDED_GROUPS = ["运单管理", "我的运单"];
+
+/** 各角色的首页。登录后落地、错角色送回、换身份跳转都用这一张 */
+const ROLE_HOME: Record<AuthRole, string> = { admin: "/admin", staff: "/staff", client: "/client", agent: "/agent" };
+const ROLE_LABEL: Record<AuthRole, string> = { admin: "管理员", staff: "员工", client: "客户", agent: "代理" };
+
+/**
+ * 这个浏览器标签页里外壳是不是已经完整挂载过一次（2026-09-16 导航根治）。
+ *
+ * 外壳挂在根布局上以后，平常换页根本不会重新挂载；万一重新挂载（例如从非工作台路径客户端跳回来），
+ * 第二次起首帧直接出完整外壳，不再画一屏骨架。
+ * ⚠️ 第一次（服务端首屏 + 水合那一帧）必须照旧是骨架：服务端读不到登录信息，两边画的不一样会报水合错。
+ * 模块变量只在浏览器里被改（写在 effect 里），服务端永远是 false。
+ */
+let shellMountedOnceInThisTab = false;
 
 /**
  * 记住哪些功能分区是展开的。
@@ -53,6 +72,11 @@ function saveCollapsed(collapsed: boolean): void {
   }
 }
 
+/** 已经挂载过一次才在首帧读浏览器（见 shellMountedOnceInThisTab），否则一律用服务端也能算出的默认值 */
+function readOnRemount<T>(read: () => T, fallback: T): T {
+  return shellMountedOnceInThisTab && typeof window !== "undefined" ? read() : fallback;
+}
+
 export default function RoleShell(props: {
   allowedRole: AuthRole | AuthRole[];
   title: string;
@@ -62,8 +86,10 @@ export default function RoleShell(props: {
 }) {
   const { allowedRole, title, children, variant = "default" } = props;
   const allowedRoles = Array.isArray(allowedRole) ? allowedRole : [allowedRole];
-  const [mounted, setMounted] = useState(false);
-  const [session, setSession] = useState<AuthSession | null>(null);
+  // 菜单高亮用的路径：外壳不随换页卸载，必须跟着 Next 的路由走，不能只在挂载时读一次
+  const currentPath = usePathname() ?? "";
+  const [mounted, setMounted] = useState(() => readOnRemount(() => true, false));
+  const [session, setSession] = useState<AuthSession | null>(() => readOnRemount(getOptionalSession, null));
   const [identityChanging, setIdentityChanging] = useState(false);
   // 父业务页的查询/地址/图片状态不在 RoleShell 内，换身份必须重建整页。
   // 一次挂载绑定一次；暂时读到 null 或 Fast Refresh 时都不覆盖旧身份。
@@ -91,25 +117,24 @@ export default function RoleShell(props: {
     if (!identityChanging || !next) return;
     // 此 effect 在业务 children 已移出 DOM 后运行，不让旧客户数据留在新身份页面。
     if (allowedRoles.includes(next.role)) window.location.reload();
-    else {
-      const home: Record<string, string> = { admin: "/admin", staff: "/staff", client: "/client" };
-      window.location.replace(home[next.role] || "/login");
-    }
+    else window.location.replace(ROLE_HOME[next.role] || "/login");
   }, [identityChanging, allowedRoles.join(",")]);
-  const [currentPath, setCurrentPath] = useState("");
-  const [currentHash, setCurrentHash] = useState("");
+  const [currentHash, setCurrentHash] = useState(() => readOnRemount(() => window.location.hash, ""));
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [mobileNavigation, setMobileNavigation] = useState(false);
+  const [mobileNavigation, setMobileNavigation] = useState(() => readOnRemount(() => window.matchMedia("(max-width: 900px)").matches, false));
   const navigationId = useId();
   const sidebarRef = useRef<HTMLElement>(null);
   const sidebarTriggerRef = useRef<HTMLButtonElement>(null);
-  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set(["运单管理", "我的运单"]));
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(
+    () => new Set(readOnRemount(readExpandedGroups, null) ?? DEFAULT_EXPANDED_GROUPS),
+  );
   /**
    * 电脑端把侧边栏整个收起来，把宽度让给表格（运单列表那些表很宽）。
-   * ⚠️ 初值必须是 false、进浏览器后再从 localStorage 读 ——
+   * ⚠️ 首次挂载初值必须是 false、进浏览器后再从 localStorage 读 ——
    * 服务端渲染读不到 localStorage，直接用它当初值两边对不上会报 hydration 错。
    */
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => readOnRemount(readCollapsed, false));
+  const brand = useWorkbenchBrand(session);
 
   // 和 globals.css 的抽屉断点一致。窄屏收起的导航退出键盘顺序，桌面仍是正常导航。
   useEffect(() => {
@@ -229,40 +254,27 @@ export default function RoleShell(props: {
     }
   };
 
+  // 挂载一次：核对登录信息、读回侧边栏的展开/收起记忆。
+  // 外壳挂在根布局上，换页不会再跑这里（换页后「当前页所在分区展开」由下面按路径的 effect 管）。
   useEffect(() => {
-    const next = getOptionalSession();
-    acceptSession(next);
+    acceptSession(getOptionalSession());
     setMounted(true);
-    const path = window.location.pathname;
-    const hash = window.location.hash;
-    setCurrentPath(path);
-    setCurrentHash(hash);
-
-    // 侧边栏菜单是真链接，点一下整页跳转，组件重新挂载，
-    // 展开状态就被重置回默认值了 —— 表现为「点完功能栏，分区自己收回去」。
-    // 这里做两件事恢复：把上次的展开状态读回来，再把当前页所在的分区强制展开。
-    const groups = roleFunctionGroups[allowedRoles[0]] ?? [];
-    const restored = new Set<string>(readExpandedGroups() ?? ["运单管理", "我的运单"]);
-    for (const g of groups) {
-      const hit = g.items.some(
-        (item) =>
-          item.href === path + hash ||
-          // 独立页面（href 里没有 #）按路径匹配即可
-          (!item.href.includes("#") && item.href === path),
-      );
-      if (hit) restored.add(g.groupLabel);
-    }
-    setExpandedGroups(restored);
+    shellMountedOnceInThisTab = true;
+    setCurrentHash(window.location.hash);
+    setExpandedGroups(new Set<string>(readExpandedGroups() ?? DEFAULT_EXPANDED_GROUPS));
     // 上次是不是把侧边栏收起来了。放在这里读：这个 effect 只在浏览器里跑
     setSidebarCollapsed(readCollapsed());
-    // allowedRoles 已是稳定数组，用 join 避免引用变化导致重复执行
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [allowedRoles.join(","), acceptSession]);
+  }, [acceptSession]);
+
+  // 换页（Link 客户端跳转 / 后退前进）后重读 #：Next 在提交这次渲染前已经把地址写进历史记录
+  useEffect(() => {
+    if (!mounted) return;
+    setCurrentHash(window.location.hash);
+  }, [currentPath, mounted]);
 
   useEffect(() => {
     if (!mounted) return;
     const handleLocationChange = () => {
-      setCurrentPath(window.location.pathname);
       setCurrentHash(window.location.hash);
     };
     window.addEventListener("hashchange", handleLocationChange);
@@ -272,6 +284,31 @@ export default function RoleShell(props: {
       window.removeEventListener("popstate", handleLocationChange);
     };
   }, [mounted]);
+
+  // 菜单按登录身份取（不按页面允许的第一个角色）：管理员进员工页（装柜管理、整柜询价）看到的仍是管理员菜单
+  const menuRole = session?.role;
+
+  // 当前页所在的分组自动展开（换页、后退前进时也要）。只加不减、不写 localStorage：
+  // 用户手动展开/收起才记下来，自动展开不覆盖他的记忆。
+  useEffect(() => {
+    if (!mounted || !menuRole) return;
+    const here = currentPath + currentHash;
+    const hit = (roleFunctionGroups[menuRole] ?? []).find((g) =>
+      g.items.some(
+        (item) =>
+          item.href === here ||
+          // 独立页面（href 里没有 #）按路径匹配即可
+          (!item.href.includes("#") && item.href === currentPath),
+      ),
+    );
+    if (!hit) return;
+    setExpandedGroups((prev) => {
+      if (prev.has(hit.groupLabel)) return prev;
+      const next = new Set(prev);
+      next.add(hit.groupLabel);
+      return next;
+    });
+  }, [mounted, menuRole, currentPath, currentHash]);
 
   // 2026-08-07：登录信息原来只在页面打开时读一次。之后就算它被清掉
   // （在别的标签页退出登录、或者接口返回 401 被清），这个外壳还照常显示
@@ -337,8 +374,7 @@ export default function RoleShell(props: {
     }
     if (!allowedRoles.includes(session.role)) {
       const from = encodeURIComponent(window.location.pathname);
-      const goMap: Record<string, string> = { admin: "/admin", staff: "/staff", client: "/client" };
-      window.location.href = `${goMap[session.role] || "/login"}?from=${from}`;
+      window.location.href = `${ROLE_HOME[session.role] || "/login"}?from=${from}`;
       return;
     }
     return;
@@ -387,6 +423,36 @@ export default function RoleShell(props: {
 
   const closeSidebar = () => setSidebarOpen(false);
 
+  // 品牌钩子（B4 接）：藏哪些菜单、改哪些名字。为 null 时全部照旧
+  const hiddenMenuIds = new Set(brand?.hiddenMenuIds ?? []);
+  const visibleItems = <T extends MenuItem>(items: T[]) => items.filter((item) => !hiddenMenuIds.has(item.id));
+  const menuLabel = (item: MenuItem) => brand?.labelOverrides[item.id] ?? item.label;
+
+  /**
+   * 菜单链接统一走 next/link（2026-09-16 导航根治）：
+   * - 跨页面：交给 Link 客户端跳转，外壳不卸载、左边菜单不消失；Cmd/Ctrl/中键开新标签照常（Link 不拦）。
+   * - 同一页只换 #：Link 自己处理不会发 hashchange，页面切不了分区；在 onNavigate 里拦下，
+   *   改走 navigateToHash（带 Next 的历史标记 + 手动发 hashchange，后退前进才对得上）。
+   * - 手机端点完菜单关抽屉，照旧。
+   */
+  const renderNavLink = (item: MenuItem, active: boolean, ariaCurrent: "page" | "location", tabIndex?: number) => (
+    <Link
+      key={item.id}
+      href={item.href}
+      className={`dashboard-sidebar-link ${active ? "dashboard-sidebar-link-active" : ""}`}
+      aria-current={active ? ariaCurrent : undefined}
+      tabIndex={tabIndex}
+      onClick={closeSidebar}
+      onNavigate={(event) => {
+        if (!isSamePageHashLink(item.href)) return;
+        event.preventDefault();
+        navigateToHash(item.href);
+      }}
+    >
+      {menuLabel(item)}
+    </Link>
+  );
+
   return (
     <main
       className={`dashboard-layout ledger-shell${variant === "a3" ? " a3-shell" : ""}${
@@ -405,7 +471,11 @@ export default function RoleShell(props: {
         inert={mobileNavigation && !sidebarOpen}
       >
         <button type="button" className="sidebar-close-btn" onClick={closeSidebar} aria-label="关闭导航菜单">×</button>
-        <h2 className="dashboard-sidebar-title">湘泰物流<span className="dashboard-brand-caption">XIANGTAI</span></h2>
+        <h2 className="dashboard-sidebar-title">
+          {brand?.logoUrl ? <img src={brand.logoUrl} alt="" style={{ height: 24, marginRight: 8, verticalAlign: "middle" }} /> : null}
+          {brand ? brand.name : "湘泰物流"}
+          {(brand ? brand.caption : "XIANGTAI") ? <span className="dashboard-brand-caption">{brand ? brand.caption : "XIANGTAI"}</span> : null}
+        </h2>
         {/* 桌面收起按钮保持绝对定位，避免影响顶栏及 sticky 列。 */}
         <button
           type="button"
@@ -417,20 +487,14 @@ export default function RoleShell(props: {
           ‹‹
         </button>
         <div className="dashboard-sidebar-group">
-          {roleMenus[session.role].map((item) => (
-            <a
-              key={item.id}
-              href={item.href}
-              className={`dashboard-sidebar-link ${currentPath === item.href && !currentHash ? "dashboard-sidebar-link-active" : ""}`}
-              aria-current={currentPath === item.href && !currentHash ? "page" : undefined}
-              onClick={closeSidebar}
-            >
-              {item.label}
-            </a>
-          ))}
+          {visibleItems(roleMenus[session.role] ?? []).map((item) =>
+            renderNavLink(item, currentPath === item.href && !currentHash, "page"),
+          )}
         </div>
 
-        {(roleFunctionGroups[allowedRoles[0]] ?? []).map((group, groupIndex) => {
+        {(roleFunctionGroups[session.role] ?? []).map((group, groupIndex) => {
+          const items = visibleItems(group.items);
+          if (items.length === 0) return null;
           const isExpanded = expandedGroups.has(group.groupLabel);
           return (
             <div
@@ -447,7 +511,7 @@ export default function RoleShell(props: {
                     const next = new Set(prev);
                     if (next.has(group.groupLabel)) next.delete(group.groupLabel);
                     else next.add(group.groupLabel);
-                    // 存下来，跳转到别的页面后还能恢复
+                    // 存下来，刷新/新开标签后还能恢复
                     saveExpandedGroups(next);
                     return next;
                   });
@@ -460,18 +524,9 @@ export default function RoleShell(props: {
               {/* 收起时不摘节点，只把外层高度收到 0：摘掉就没法放收起动画了 */}
               <div id={`${navigationId}-group-${groupIndex}`} className="dashboard-sidebar-group-body" aria-hidden={!isExpanded}>
                 <div className="dashboard-sidebar-group-body-inner">
-                  {group.items.map((item) => (
-                    <a
-                      key={item.id}
-                      href={item.href}
-                      className={`dashboard-sidebar-link ${currentPath + currentHash === item.href ? "dashboard-sidebar-link-active" : ""}`}
-                      aria-current={currentPath + currentHash === item.href ? "location" : undefined}
-                      tabIndex={isExpanded ? undefined : -1}
-                      onClick={closeSidebar}
-                    >
-                      {item.label}
-                    </a>
-                  ))}
+                  {items.map((item) =>
+                    renderNavLink(item, currentPath + currentHash === item.href, "location", isExpanded ? undefined : -1),
+                  )}
                 </div>
               </div>
             </div>
@@ -479,17 +534,9 @@ export default function RoleShell(props: {
         })}
         {globalMenus.length > 0 && <h3 className="dashboard-sidebar-subtitle">全局菜单</h3>}
         <div className="dashboard-sidebar-group">
-          {globalMenus.map((item) => (
-            <a
-              key={item.id}
-              href={item.href}
-              className={`dashboard-sidebar-link ${currentPath === item.href && !currentHash ? "dashboard-sidebar-link-active" : ""}`}
-              aria-current={currentPath === item.href && !currentHash ? "page" : undefined}
-              onClick={closeSidebar}
-            >
-              {item.label}
-            </a>
-          ))}
+          {visibleItems(globalMenus).map((item) =>
+            renderNavLink(item, currentPath === item.href && !currentHash, "page"),
+          )}
         </div>
         <div className="dashboard-sidebar-actions">
           <button
@@ -560,7 +607,7 @@ export default function RoleShell(props: {
             ››
           </button>
           <span className="glass-topbar-title">{title}</span>
-          <span className="glass-topbar-meta">{session.userId} · {{ admin: "管理员", staff: "员工", client: "客户" }[session.role]}</span>
+          <span className="glass-topbar-meta">{session.userId} · {ROLE_LABEL[session.role]}</span>
         </div>
         {children}
       </div>

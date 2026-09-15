@@ -4,7 +4,6 @@ import { optionalIntegerForReceive, optionalNumberForReceive, validateReceiveDra
 import { useEffect, useMemo, useState } from "react";
 import PrealertSearch from "../../../modules/shipment/PrealertSearch";
 import EmptyStateCard from "../../../modules/layout/EmptyStateCard";
-import RoleShell from "../../../modules/layout/RoleShell";
 import Toast from "../../../modules/layout/Toast";
 import {
   receiveStaffPrealert,
@@ -163,7 +162,7 @@ export default function AdminPrealertsPage() {
   };
 
   return (
-    <RoleShell allowedRole="admin" title="预报单收货确认" variant="a3">
+    <>
       <Toast open={toast.length > 0} message={toast} />
       <div style={{ maxWidth: 1400, margin: "0 auto", padding: "24px 16px" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
@@ -275,6 +274,6 @@ export default function AdminPrealertsPage() {
           )}
         </div>
       </div>
-    </RoleShell>
+    </>
   );
 }

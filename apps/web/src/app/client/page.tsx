@@ -5,7 +5,6 @@ import { Fragment, useEffect, useMemo, useRef, useState, type KeyboardEvent } fr
 import { Bar, BarChart, CartesianGrid, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { validateProductRows, packageCountForPayload } from "../../modules/orders/productRowGuard";
 import EmptyStateCard from "../../modules/layout/EmptyStateCard";
-import RoleShell from "../../modules/layout/RoleShell";
 import Toast from "../../modules/layout/Toast";
 // 2026-08-31 收尾清理：formatCny 引入了但全文件没用过（历史遗留死 import），删掉
 import { sendAiMessage } from "../../services/ai-client";
@@ -205,7 +204,12 @@ export default function ClientHomePage() {
   const [prealertImagePreviews, setPrealertImagePreviews] = useState<string[]>([]);
   const [addressBook, setAddressBook] = useState<ClientAddressItem[]>([]);
   const [selectedAddressId, setSelectedAddressId] = useState("");
-  const [activeSection, setActiveSection] = useState<(typeof CLIENT_SECTION_IDS)[number]>("client-main");
+  // 2026-09-16 导航根治：从别的页面点菜单跳进来带着 #（例如仓库版 → /admin#orders）时，首帧就选对分区，
+  // 不先闪一下默认分区。本页只在外壳核验完登录之后才挂载（那时一定在浏览器里），可以直接读地址。
+  const [activeSection, setActiveSection] = useState<(typeof CLIENT_SECTION_IDS)[number]>(() => {
+    const hashId = typeof window === "undefined" ? "" : window.location.hash.replace(/^#/, "");
+    return (CLIENT_SECTION_IDS as readonly string[]).includes(hashId) ? (hashId as (typeof CLIENT_SECTION_IDS)[number]) : "client-main";
+  });
 
   // 判断 hash 是否属于客户端可展示的功能分区。
   const isClientSectionId = (value: string): value is (typeof CLIENT_SECTION_IDS)[number] =>
@@ -385,6 +389,9 @@ export default function ClientHomePage() {
       const hashId = window.location.hash.replace(/^#/, "");
       if (isClientSectionId(hashId)) {
         setActiveSection(hashId);
+      } else if (!hashId) {
+        // 地址里没有 #（例如后退回最初打开的 /client）就回默认分区，否则地址和显示的分区对不上
+        setActiveSection("client-main");
       }
     };
     syncSectionByHash();
@@ -772,7 +779,7 @@ export default function ClientHomePage() {
   );
 
   return (
-    <RoleShell allowedRole="client" title="客户端工作台" variant="a3">
+    <>
 
       <section
         id="client-main"
@@ -1455,6 +1462,6 @@ export default function ClientHomePage() {
           />
         </div>
       )}
-    </RoleShell>
+    </>
   );
 }

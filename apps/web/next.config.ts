@@ -10,6 +10,9 @@ import type { NextConfig } from "next";
 const API_PROXY_TARGET = process.env.API_PROXY_TARGET?.trim() || "http://api:3001";
 
 const nextConfig: NextConfig = {
+  // 生产构建验证用：老板本机 3000 开着 next dev 占着默认的 .next，
+  // 验证时设 NEXT_DIST_DIR=.next-verify 构建到别的目录，互不干扰。不设就跟以前一样。
+  distDir: process.env.NEXT_DIST_DIR || ".next",
   // dev:public listens on 0.0.0.0; the embedded browser uses this loopback origin.
   // Explicit development-only allowance; API rewrites and production headers stay unchanged.
   allowedDevOrigins: ["127.0.0.1"],
@@ -23,6 +26,9 @@ const nextConfig: NextConfig = {
       { source: "/admin/:path*", destination: `${API_PROXY_TARGET}/admin/:path*` },
       { source: "/staff/:path*", destination: `${API_PROXY_TARGET}/staff/:path*` },
       { source: "/client/:path*", destination: `${API_PROXY_TARGET}/client/:path*` },
+      // 代理工作台接口。页面只有 /agent 一页（分区用 #），/agent/xxx 全留给接口。
+      // rewrites 默认在页面匹配之后才生效，所以 /agent 这一页本身不会被转走（/admin 同理）。
+      { source: "/agent/:path*", destination: `${API_PROXY_TARGET}/agent/:path*` },
       { source: "/images/:path*", destination: `${API_PROXY_TARGET}/images/:path*` },
     ];
   },

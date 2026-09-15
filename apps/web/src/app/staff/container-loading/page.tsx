@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import RoleShell from "../../../modules/layout/RoleShell";
 import Toast from "../../../modules/layout/Toast";
 import { openShipmentTrack } from "../../../modules/shipment/ShipmentTrackModal";
 import { createRequestGate } from "../../../modules/shared/request-gate";
@@ -491,7 +490,7 @@ export default function StaffContainerLoadingPage() {
 
 
   return (
-    <RoleShell allowedRole={["staff", "admin"]} title="装柜管理" variant="a3">
+    <>
       <h1 style={{ fontSize: 22, fontWeight: 700, color: "#14171D", margin: "0 0 16px" }}>装柜管理</h1>
 
       {/* 搜索 & 新建 */}
@@ -877,6 +876,6 @@ export default function StaffContainerLoadingPage() {
         </div>
       )}
       <Toast open={toast.length > 0} message={toast} />
-    </RoleShell>
+    </>
   );
 }

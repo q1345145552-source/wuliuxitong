@@ -1,7 +1,6 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import RoleShell from "../../../modules/layout/RoleShell";
 
 const KUAIDI100_WEB_URL = "https://www.kuaidi100.com/";
 
@@ -83,7 +82,7 @@ export default function ClientTrackPage() {
   // 原来叫「物流追踪看板 / Track & Trace（免登录查询）」，客户以为能查自己的湘泰运单，
   // 点进来发现是查顺丰中通的，容易懵。按实际功能直说，顺带去掉英文（全中文红线）。
   return (
-    <RoleShell allowedRole="client" title="查国内快递" variant="a3">
+    <>
       <section style={{ border: "1px solid var(--l-soft)", borderRadius: 12, padding: 16, background: "var(--white)" }}>
         <h2 style={{ marginTop: 0 }}>查国内快递</h2>
         <p style={{ color: "var(--t-strong)", marginTop: 0 }}>
@@ -156,6 +155,6 @@ export default function ClientTrackPage() {
           </p>
         ) : null}
       </section>
-    </RoleShell>
+    </>
   );
 }

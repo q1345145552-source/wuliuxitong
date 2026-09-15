@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import RoleShell from "../../../modules/layout/RoleShell";
 import {
   createClientAddress,
   deleteClientAddress,
@@ -49,7 +48,7 @@ export default function ClientAddressBookPage() {
   }, []);
 
   return (
-    <RoleShell allowedRole="client" title="常用地址库" variant="a3">
+    <>
       <section style={{ border: "1px solid var(--l-soft)", borderRadius: 12, padding: 16, background: "var(--white)", marginBottom: 14 }}>
         <h2 style={{ marginTop: 0 }}>地址簿管理</h2>
         <p style={{ color: "var(--t-strong)", marginTop: 0 }}>保存收件信息后，可在客户端下单页一键填充。</p>
@@ -167,6 +166,6 @@ export default function ClientAddressBookPage() {
         )}
         {message ? <p style={{ marginTop: 10, color: message.includes("失败") ? "var(--c-red-deep)" : "var(--c-green-dark)" }}>{message}</p> : null}
       </section>
-    </RoleShell>
+    </>
   );
 }

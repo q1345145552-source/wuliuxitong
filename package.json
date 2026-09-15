@@ -45,7 +45,8 @@
     "test:cargo-regressions": "tsx scripts/test-cargo-regressions.ts",
     "test:dispatch-wrap": "tsx scripts/test-dispatch-wrap.ts",
     "test:shipment-track-actions": "tsx scripts/test-shipment-track-actions.ts",
-    "test:hide-operator-identity": "tsx scripts/test-hide-operator-identity.ts"
+    "test:hide-operator-identity": "tsx scripts/test-hide-operator-identity.ts",
+    "test:agent-foundation": "tsx scripts/test-agent-foundation.ts"
   },
   "devDependencies": {
     "@types/node": "^26.0.1",

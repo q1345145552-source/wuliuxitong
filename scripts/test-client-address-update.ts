@@ -57,7 +57,7 @@ async function main(): Promise<void> {
     const res: any = { status(c: number) { status = c; return res; }, json(v: unknown) { payload = v as { message?: string }; } };
     await handler!({
       method: "POST", path: "", query: {}, headers: {}, body,
-      auth: { userId: "STAFF1", companyId: "c_001", role, name: "测试员工" },
+      auth: { userId: "STAFF1", companyId: "c_001", role, name: "测试员工", agentId: null },
     }, res);
     return { status, message: payload.message ?? "" };
   }

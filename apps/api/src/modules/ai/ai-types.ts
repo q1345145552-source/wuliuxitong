@@ -11,6 +11,7 @@ import type {
   Shipment,
 } from "../../../../../packages/shared-types/entities";
 import type { ShipmentStatus } from "../../../../../packages/shared-types/shipment-status";
+import type { UserRole } from "../../../../../packages/shared-types/role";
 
 /**
  * AI 能识别的「查哪一批运单」范围 —— **全模块唯一一份清单**（2026-09-03 收拢）。
@@ -26,7 +27,7 @@ export type AiStatusScope = (typeof AI_STATUS_SCOPES)[number];
 export interface AuthContext {
   userId: string;
   companyId: string;
-  role: "admin" | "staff" | "client";
+  role: UserRole;
 }
 
 export interface QueryScope {

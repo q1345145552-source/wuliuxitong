@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import RoleShell from "../../../modules/layout/RoleShell";
 import { createRequestGate } from "../../../modules/shared/request-gate";
 import {
   fetchClientWalletOverview,
@@ -196,7 +195,7 @@ export default function ClientWalletPage() {
   }, [data]);
 
   return (
-    <RoleShell allowedRole="client" title="集货余额" variant="a3">
+    <>
       {/* 余额卡片 */}
       <section style={{ border: "1px solid var(--l-soft)", borderRadius: 12, padding: 16, background: "var(--white)", marginBottom: 14 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
@@ -518,6 +517,6 @@ export default function ClientWalletPage() {
           </div>
         </div>
       )}
-    </RoleShell>
+    </>
   );
 }

@@ -49,9 +49,9 @@ async function check(name: string, body: () => Promise<void> | void): Promise<vo
 }
 
 /* ── 三种身份。操作人名字故意起得很好认，返回里只要出现就是漏了 ── */
-const STAFF = { userId: "u_staff_jia", companyId: "c1", role: "staff", name: "员工甲" };
-const ADMIN = { userId: "u_admin_boss", companyId: "c1", role: "admin", name: "老板本人" };
-const CLIENT = { userId: "MARK1", companyId: "c1", role: "client", name: "客户一" };
+const STAFF = { userId: "u_staff_jia", companyId: "c1", role: "staff", name: "员工甲", agentId: null };
+const ADMIN = { userId: "u_admin_boss", companyId: "c1", role: "admin", name: "老板本人", agentId: null };
+const CLIENT = { userId: "MARK1", companyId: "c1", role: "client", name: "客户一", agentId: null };
 const IDENTITY_VALUES = [STAFF.name, STAFF.userId, ADMIN.name, ADMIN.userId];
 
 /* ── 严格桩：按 Prisma 的 select / include / orderBy / take 语义裁剪 ── */

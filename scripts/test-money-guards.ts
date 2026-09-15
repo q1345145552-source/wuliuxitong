@@ -334,8 +334,8 @@ check("15) 汇总闸不许把「合计很小」当成错 —— 那会让员工�
 
 async function main(): Promise<void> {
   const routes = await loadRoutes();
-  const ADMIN = { userId: "u_admin", companyId: "c_test", role: "admin", name: "管理员" };
-  const CLIENT = { userId: "u_client", companyId: "c_test", role: "client", name: "客户" };
+  const ADMIN = { userId: "u_admin", companyId: "c_test", role: "admin", name: "管理员", agentId: null };
+  const CLIENT = { userId: "u_client", companyId: "c_test", role: "client", name: "客户", agentId: null };
 
   await checkAsync("12) 四个汇总点的溢出闸 —— **真调那几个 recalc 函数**（喂假 tx，不连库）", async () => {
     /**

@@ -1,4 +1,5 @@
 import type { ApiResponse } from "../../../../../packages/shared-types/common-response";
+import type { UserRole } from "../../../../../packages/shared-types/role";
 import type { HttpRequest, HttpResponse } from "../../server";
 import { isAuthHeaderRevoked } from "./token-blacklist";
 
@@ -53,7 +54,7 @@ export function requireAuth(req: HttpRequest, res: HttpResponse): NonNullable<Ht
 export function requireRole(
   req: HttpRequest,
   res: HttpResponse,
-  roles: Array<"admin" | "staff" | "client">,
+  roles: UserRole[],
 ): NonNullable<HttpRequest["auth"]> | null {
   const auth = requireAuth(req, res);
   if (!auth) return null;

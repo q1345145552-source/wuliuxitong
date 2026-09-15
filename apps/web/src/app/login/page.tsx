@@ -8,6 +8,7 @@ const roleRouteMap: Record<string, string> = {
   admin: "/admin",
   staff: "/staff",
   client: "/client",
+  agent: "/agent",
 };
 
 export default function LoginPage() {

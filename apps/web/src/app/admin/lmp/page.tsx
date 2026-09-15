@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import RoleShell from "../../../modules/layout/RoleShell";
 import { createAdminLmpRate, fetchAdminLmpRates, type AdminLmpRateItem } from "../../../services/business-api";
 
 /**
@@ -36,7 +35,7 @@ export default function AdminLmpPage() {
   }, []);
 
   return (
-    <RoleShell allowedRole="admin" title="渠道与价格管理（LMP）" variant="a3">
+    <>
       <section style={{ border: "1px solid var(--l-soft)", borderRadius: 12, padding: 16, background: "var(--white)", marginBottom: 12 }}>
         <h2 style={{ marginTop: 0 }}>维护航线与供应商底价</h2>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(180px,1fr))", gap: 8 }}>
@@ -96,6 +95,6 @@ export default function AdminLmpPage() {
         </div>
         {message ? <p style={{ marginTop: 10, color: message.includes("失败") ? "var(--c-red-deep)" : "var(--c-green-dark)" }}>{message}</p> : null}
       </section>
-    </RoleShell>
+    </>
   );
 }

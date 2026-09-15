@@ -28,6 +28,9 @@ export const roleMenus: Record<AuthRole, MenuItem[]> = {
   admin: [
     { id: "admin-home", label: "管理员工作台", href: "/admin" },
   ],
+  agent: [
+    { id: "agent-home", label: "代理工作台", href: "/agent" },
+  ],
 };
 
 export const globalMenus: MenuItem[] = [];
@@ -57,6 +60,7 @@ export const roleFunctionGroups: Record<AuthRole, MenuGroup[]> = {
       items: [
         { id: "admin-func-staff", label: "员工管理", href: "/admin#staff" },
         { id: "admin-func-clients", label: "客户管理", href: "/admin#clients" },
+        { id: "admin-func-agents", label: "代理管理", href: "/admin/agents" },
       ],
     },
     {
@@ -139,6 +143,21 @@ export const roleFunctionGroups: Record<AuthRole, MenuGroup[]> = {
         { id: "client-func-main", label: "主页与AI", href: "/client#client-main" },
         { id: "client-func-wallet", label: "集货余额", href: "/client/wallet" },
         { id: "client-func-address", label: "地址库", href: "/client/address-book" },
+      ],
+    },
+  ],
+  // 代理工作台只有 /agent 一页，分区用 #（/agent/xxx 全留给接口转发，见 next.config.ts）
+  agent: [
+    {
+      groupLabel: "我的客户",
+      items: [
+        { id: "agent-func-home", label: "首页", href: "/agent#home" },
+        { id: "agent-func-shipments", label: "运单", href: "/agent#shipments" },
+        { id: "agent-func-whr", label: "仓库版集货", href: "/agent#whr" },
+        { id: "agent-func-clients", label: "客户和价格", href: "/agent#clients" },
+        { id: "agent-func-wallet", label: "集货余额", href: "/agent#wallet" },
+        { id: "agent-func-rebates", label: "返现单", href: "/agent#rebates" },
+        { id: "agent-func-me", label: "我的价格", href: "/agent#me" },
       ],
     },
   ],

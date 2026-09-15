@@ -12,7 +12,6 @@ import { getOptionalSession, type AuthSession } from "../../auth/auth-session";
 import CountUpNumber from "../../modules/layout/CountUpNumber";
 import { validateProductRows, packageCountForPayload } from "../../modules/orders/productRowGuard";
 import EmptyStateCard from "../../modules/layout/EmptyStateCard";
-import RoleShell from "../../modules/layout/RoleShell";
 import Toast from "../../modules/layout/Toast";
 import ShipmentSearch from "../../modules/shipment/ShipmentSearch";
 import { openPrintLabel } from "../../modules/shipment/ShipmentPrintLabel";
@@ -42,6 +41,7 @@ import { formatMetric, shipmentStatusZh, transportModeLabel, warehouseLabelFromI
 import { SHIPMENT_STATUS_FILTER_OPTIONS } from "../../modules/shipment/shipment-status";
 import ShippingConfig from "../../components/admin/ShippingConfig";
 import { createRequestGate } from "../../modules/shared/request-gate";
+import { navigateToHash } from "../../modules/layout/navigate-to-hash";
 import {
   fetchAdminOverview,
   fetchStaffShipmentOverview,
@@ -515,7 +515,12 @@ export default function AdminHomePage() {
   const [showSettingPassword, setShowSettingPassword] = useState(false);
   const [memoryFilterSessionId, setMemoryFilterSessionId] = useState("");
   const [memoryFilterUserId, setMemoryFilterUserId] = useState("");
-  const [activeSection, setActiveSection] = useState<(typeof SECTION_IDS)[number]>("overview");
+  // 2026-09-16 导航根治：从别的页面点菜单跳进来带着 #（例如仓库版 → /admin#orders）时，首帧就选对分区，
+  // 不先闪一下默认分区。本页只在外壳核验完登录之后才挂载（那时一定在浏览器里），可以直接读地址。
+  const [activeSection, setActiveSection] = useState<(typeof SECTION_IDS)[number]>(() => {
+    const hashId = typeof window === "undefined" ? "" : window.location.hash.replace(/^#/, "");
+    return (SECTION_IDS as readonly string[]).includes(hashId) ? (hashId as (typeof SECTION_IDS)[number]) : "overview";
+  });
 
   // 复用 staff/utils 中的状态/运输方式/仓库标签函数
   const shipmentStatusLabel = shipmentStatusZh;
@@ -1312,7 +1317,8 @@ export default function AdminHomePage() {
   const scrollToSection = (id: string) => {
     if (!isSectionId(id)) return;
     setActiveSection(id);
-    window.location.hash = id;
+    // 不能写 window.location.hash = id：那样的历史记录 Next 后退时不认，见 navigate-to-hash.ts
+    navigateToHash(`${window.location.pathname}${window.location.search}#${id}`);
   };
 
   useEffect(() => {
@@ -1320,6 +1326,9 @@ export default function AdminHomePage() {
       const hashId = window.location.hash.replace(/^#/, "");
       if (isSectionId(hashId)) {
         setActiveSection(hashId);
+      } else if (!hashId) {
+        // 地址里没有 #（例如后退回最初打开的 /admin）就回默认分区，否则地址和显示的分区对不上
+        setActiveSection("overview");
       }
     };
     syncSectionByHash();
@@ -1425,7 +1434,7 @@ export default function AdminHomePage() {
   if (!session) return null;
 
   return (
-    <RoleShell allowedRole="admin" title="管理员工作台" variant="a3">
+    <>
       {/* 1. 运营看板 */}
       <section id="overview" style={{ ...sectionStyle, display: activeSection === "overview" ? "block" : "none" }}>
         <h2 style={{ marginTop: 0, marginBottom: 16, fontSize: 18 }}>{SECTION_LABELS.overview}</h2>
@@ -3079,6 +3088,6 @@ export default function AdminHomePage() {
           </div>
         </div>
       )}
-    </RoleShell>
+    </>
   );
 }

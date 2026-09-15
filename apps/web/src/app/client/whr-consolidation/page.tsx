@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState, useCallback, useRef } from "react";
-import RoleShell from "../../../modules/layout/RoleShell";
 import { apiBaseUrl, apiRequest } from "../../../services/core-api";
 import { formatBeijingTime } from "../../../modules/staff/utils";
 import { base64Bytes, compressImageForUpload, formatBytes } from "../../../modules/shared/image-compress";
@@ -463,7 +462,7 @@ export default function ClientWhrConsolidationPage() {
   // 渲染
   // ==========================================================================
   return (
-    <RoleShell allowedRole="client" title="集货拼柜（仓库版）" variant="a3">
+    <>
       <div style={{ maxWidth: "100%", padding: "20px 24px" }}>
         {/* Toast */}
         {toast && (
@@ -1032,7 +1031,7 @@ export default function ClientWhrConsolidationPage() {
           </div>
         )}
       </div>
-    </RoleShell>
+    </>
   );
 }
 

@@ -65,7 +65,7 @@ async function main(): Promise<void> {
     const res: any = { status(c: number) { status = c; return res; }, json(v: unknown) { payload = v as typeof payload; } };
     await handler!({
       method: "GET", path: "", query, headers: {}, body: undefined,
-      auth: { userId: "CLIENT1", companyId: "c_001", role, name: "测试客户" },
+      auth: { userId: "CLIENT1", companyId: "c_001", role, name: "测试客户", agentId: null },
     }, res);
     return { status, message: payload.message ?? "", data: payload.data };
   }

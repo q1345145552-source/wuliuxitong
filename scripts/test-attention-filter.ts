@@ -89,7 +89,7 @@ async function setupRealRoute(statusAt: (index: number) => string) {
     const query: Record<string, string> = {}; url.searchParams.forEach((v, k) => { query[k] = v; });
     let status = 0; let payload: any = {};
     const res: any = { status(c: number) { status = c; return res; }, json(v: unknown) { payload = v; } };
-    await handler!({ method: "GET", path: "/client/orders", query, headers: {}, body: undefined, auth: { userId: "CLIENT1", companyId: "c_001", role: "client", name: "测试客户" } }, res);
+    await handler!({ method: "GET", path: "/client/orders", query, headers: {}, body: undefined, auth: { userId: "CLIENT1", companyId: "c_001", role: "client", name: "测试客户", agentId: null } }, res);
     pages.push({ query, status, items: payload?.data?.items ?? [], total: payload?.data?.total ?? -1 });
     return new Response(JSON.stringify(payload), { status });
   });

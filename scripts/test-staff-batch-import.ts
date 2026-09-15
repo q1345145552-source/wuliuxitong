@@ -360,7 +360,7 @@ async function checkInvalidClientIdMessage(): Promise<void> {
   };
   await handler!({
     method: "POST", path: "", query: {}, headers: {},
-    auth: { userId: "STAFF_TEST", companyId: "c_001", role: "staff", name: "测试员工" },
+    auth: { userId: "STAFF_TEST", companyId: "c_001", role: "staff", name: "测试员工", agentId: null },
     body: {
       clientId: "__NOT_A_REAL_MARK__",
       warehouseId: "wh_yiwu_01",
@@ -399,7 +399,7 @@ async function checkInvalidClientIdMessage(): Promise<void> {
     const r: any = { status(c: number) { st = c; return r; }, json(v: unknown) { pl = v as { message?: string }; } };
     await handler!({
       method: "POST", path: "", query: {}, headers: {},
-      auth: { userId: "STAFF_TEST", companyId: "c_001", role: "staff", name: "测试员工" },
+      auth: { userId: "STAFF_TEST", companyId: "c_001", role: "staff", name: "测试员工", agentId: null },
       body: {
         clientId: "C1", warehouseId: "wh_yiwu_01", transportMode: "sea",
         arrivedAt: "2026-08-29", trackingNo: "TEST-NO-CREATE",

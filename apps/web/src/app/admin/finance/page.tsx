@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import RoleShell from "../../../modules/layout/RoleShell";
 import { fetchFinanceSummary, type FinanceSummary } from "../../../services/business-api";
 
 /* 2026-08-27 重做：这一页只看集货拼柜的两个功能，不再统计运单。
@@ -55,7 +54,7 @@ export default function AdminFinancePage() {
   const thNum = { ...thStyle, textAlign: "right" } as const;
 
   return (
-    <RoleShell allowedRole="admin" title="财务报表" variant="a3">
+    <>
       <h1 style={{ fontSize: 22, fontWeight: 700, color: "var(--ink-legacy)", margin: "0 0 4px" }}>财务结算</h1>
       <p style={{ fontSize: 13, color: "var(--ink-mute)", margin: "0 0 16px" }}>
         只统计集货拼柜（普通版 + 仓库版）。运单不计价，不在这里。
@@ -146,6 +145,6 @@ export default function AdminFinancePage() {
           </div>
         </div>
       )}
-    </RoleShell>
+    </>
   );
 }

@@ -2,7 +2,6 @@
 
 import { useMemo, useRef, useState } from "react";
 import * as XLSX from "xlsx";
-import RoleShell from "../../../modules/layout/RoleShell";
 import { createRequestGate } from "../../../modules/shared/request-gate";
 import { createClientPrealert, type ClientPrealertPayload } from "../../../services/business-api";
 import { CARGO_TYPE_HINT, CARGO_TYPE_ZH, parseCargoType, type CargoType } from "../../../../../../packages/shared-types/cargo-type";
@@ -258,7 +257,7 @@ export default function ClientImportsPage() {
   };
 
   return (
-    <RoleShell allowedRole="client" title="客户端批量下单" variant="a3">
+    <>
       <section style={{ border: "1px solid var(--l-soft)", borderRadius: 12, padding: 16, background: "var(--white)" }}>
         <h2 style={{ marginTop: 0 }}>智能下单系统（批量导入）</h2>
         <p style={{ color: "var(--t-strong)", marginTop: 0 }}>
@@ -368,6 +367,6 @@ export default function ClientImportsPage() {
           </div>
         ) : null}
       </section>
-    </RoleShell>
+    </>
   );
 }

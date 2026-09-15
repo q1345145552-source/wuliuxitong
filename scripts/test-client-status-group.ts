@@ -119,7 +119,7 @@ async function main(): Promise<void> {
     const res: any = { status(c: number) { status = c; return res; }, json(v: unknown) { payload = v as typeof payload; } };
     await handler!({
       method: "GET", path: "", query, headers: {}, body: undefined,
-      auth: { userId: "CLIENT1", companyId: "c_001", role: "client", name: "测试客户" },
+      auth: { userId: "CLIENT1", companyId: "c_001", role: "client", name: "测试客户", agentId: null },
     }, res);
     return { status, items: payload.data?.items ?? [] };
   }
@@ -259,7 +259,7 @@ async function main(): Promise<void> {
     const h = routes.get(`GET ${path}`);
     assert.ok(h, `没注册到 GET ${path}`);
     await h!({ method: "GET", path: "", query: {}, headers: {}, body: undefined,
-      auth: { userId: "CLIENT1", companyId: "c_001", role, name: "测试" } }, res);
+      auth: { userId: "CLIENT1", companyId: "c_001", role, name: "测试", agentId: null } }, res);
     return payload.data;
   }
 
@@ -436,7 +436,7 @@ async function main(): Promise<void> {
     let payload: { data?: any } = {};
     const res: any = { status() { return res; }, json(v: unknown) { payload = v as typeof payload; } };
     await h!({ method: "GET", path: "", query: {}, headers: {}, body: undefined,
-      auth: { userId: "A1", companyId: "c_001", role: "admin", name: "管理员" } }, res);
+      auth: { userId: "A1", companyId: "c_001", role: "admin", name: "管理员", agentId: null } }, res);
 
     const items = payload.data?.items ?? [];
     assert.equal(items.length, 5, `应该返回 5 条，实际 ${items.length}`);

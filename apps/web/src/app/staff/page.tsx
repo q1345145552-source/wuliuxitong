@@ -27,7 +27,6 @@ import {
 import { validateProductRows, packageCountForPayload } from "../../modules/orders/productRowGuard";
 import { optionalIntegerForReceive, optionalNumberForReceive, validateReceiveDraft } from "../../modules/staff/utils";
 import EmptyStateCard from "../../modules/layout/EmptyStateCard";
-import RoleShell from "../../modules/layout/RoleShell";
 import DetailModal from "../../modules/layout/DetailModal";
 import Toast from "../../modules/layout/Toast";
 import { apiBaseUrl, authHeaders, parseApiResponse, fetchWithSession as fetch } from "../../services/core-api";
@@ -347,7 +346,12 @@ export default function StaffHomePage() {
   const photoReadGate = useRef(createRequestGate()).current;
   /** 2026-09-02 终审整改：换运单号时要把文件选择框也清空，否则草稿清了、输入框还显示旧文件名 */
   const photoFileInputRef = useRef<HTMLInputElement>(null);
-  const [activeSection, setActiveSection] = useState<StaffSectionId>("staff-prealert-review");
+  // 2026-09-16 导航根治：从别的页面点菜单跳进来带着 #（例如仓库版 → /admin#orders）时，首帧就选对分区，
+  // 不先闪一下默认分区。本页只在外壳核验完登录之后才挂载（那时一定在浏览器里），可以直接读地址。
+  const [activeSection, setActiveSection] = useState<StaffSectionId>(() => {
+    const hashId = typeof window === "undefined" ? "" : window.location.hash.replace(/^#/, "");
+    return (STAFF_SECTION_IDS as readonly string[]).includes(hashId) ? (hashId as StaffSectionId) : "staff-prealert-review";
+  });
 
   const [lmShipments, setLmShipments] = useState<LastmileShipmentOption[]>([]);
   const [lmShipmentsLoading, setLmShipmentsLoading] = useState(false);
@@ -700,6 +704,9 @@ export default function StaffHomePage() {
       const hashId = window.location.hash.replace(/^#/, "");
       if (isStaffSectionId(hashId)) {
         setActiveSection(hashId);
+      } else if (!hashId) {
+        // 地址里没有 #（例如后退回最初打开的 /staff）就回默认分区，否则地址和显示的分区对不上
+        setActiveSection("staff-prealert-review");
       }
     };
     syncSectionByHash();
@@ -1307,7 +1314,7 @@ export default function StaffHomePage() {
   // 员工端另外三页（装柜管理、集货拼柜、集货拼柜仓库版）本来就是 ["staff","admin"]，
   // 后端那 37 个 /staff 接口也全是 ["staff","admin"] —— 只有这一页漏了（2026-08-11 修）。
   return (
-    <RoleShell allowedRole={["staff", "admin"]} title="员工工作台" variant="a3">
+    <>
 
       {/*
         2026-08-07 补回：a661165「运单不再涉及金额」那次清理，把这块「预报单审核」
@@ -2929,6 +2936,6 @@ export default function StaffHomePage() {
           )}
         </section>
       )}
-    </RoleShell>
+    </>
   );
 }

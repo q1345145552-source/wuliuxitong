@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useMemo, useState, useCallback, useRef } from "react";
-import RoleShell from "../../../modules/layout/RoleShell";
 import {
   fetchClientConsolidationTasks,
   fetchClientConsolidationTaskDetail,
@@ -409,7 +408,7 @@ export default function ClientConsolidationPage() {
 
   // ---- 渲染 ----
   return (
-    <RoleShell allowedRole="client" title="集货拼柜" variant="a3">
+    <>
       {toast && (
         <div style={{ position: "fixed", top: 20, right: 20, zIndex: 9999, background: "#14171D", color: "var(--white)", padding: "10px 20px", borderRadius: 8, boxShadow: "0 4px 12px rgba(0,0,0,0.3)", cursor: "pointer" }} onClick={() => setToast("")}>
           {toast}
@@ -866,7 +865,7 @@ export default function ClientConsolidationPage() {
           </div>
         </Modal>
       )}
-    </RoleShell>
+    </>
   );
 }
 

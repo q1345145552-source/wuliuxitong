@@ -40,7 +40,7 @@ interface ChildShipmentData {
 
 interface TrackData {
   /** 看这个页面的人是什么角色，客户端要隐藏内部信息 */
-  viewerRole?: "admin" | "staff" | "client";
+  viewerRole?: "admin" | "staff" | "client" | "agent";
   trackingNo: string;
   itemName?: string;
   products?: Array<{ itemName: string; packageCount: number }>;

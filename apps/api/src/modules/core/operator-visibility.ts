@@ -40,6 +40,13 @@ export const OPERATOR_IDENTITY_FIELDS = [
    * `管理员审核(${auth.name})` —— 老数据里可能躺着管理员的名字。
    */
   "paidBy",
+  /**
+   * ClientWhrPrice（客户长期价，2026-09-16 代理账号）：谁最后改的价、那人是什么角色。
+   * 设计文档写明「操作人只给超管看」—— 代理工作台、员工端都不许带出去。
+   * AgentRebateStatement.paidBy（谁点的「已返」）走上面那个 paidBy。
+   */
+  "updatedBy",
+  "updatedByRole",
 ] as const;
 
 export type OperatorIdentityField = (typeof OPERATOR_IDENTITY_FIELDS)[number];

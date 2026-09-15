@@ -14,6 +14,7 @@ import { signAuthToken, verifyAuthToken } from "./token";
 import { revokeToken } from "../core/token-blacklist";
 import { hashPassword, verifyPassword } from "./crypto-utils";
 import { checkPasswordStrength } from "./password-policy";
+import { isUserRole } from "../../../../../packages/shared-types/role";
 
 /**
  * 注册鉴权路由（登录 + 注册）
@@ -112,10 +113,21 @@ export function registerAuthRoutes(app: MinimalHttpApp): void {
     // 不清的话，白天陆续打错几次会一路累积到 20，最后把自己关在门外。
     clearLoginFailures(body.account);
 
+    /**
+     * ⚠️ 角色做运行时校验，不许 `as` 硬转（2026-09-16 加 agent 时改）。
+     * 库里要是出现不认得的角色，签出去的令牌下一个请求就会被 token.ts 的硬闸拒掉，
+     * 用户看到的是「登录成功又被踢回登录页」—— 不如在这里直接拒、并留日志。
+     */
+    if (!isUserRole(user.role)) {
+      logger.warn("登录失败：账号角色不认得", { 账号: user.id, 角色: user.role });
+      fail(res, 401, "UNAUTHORIZED", "invalid credentials");
+      return;
+    }
+
     const token = signAuthToken({
       userId: user.id,
       companyId: user.companyId,
-      role: user.role as "admin" | "staff" | "client",
+      role: user.role,
       userName: user.name,
       // 把密码指纹写进令牌：以后改了密码，这张令牌立刻失效，不用等 7 天
       passwordHash: user.passwordHash,

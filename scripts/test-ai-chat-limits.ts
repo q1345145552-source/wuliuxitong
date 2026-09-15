@@ -65,7 +65,7 @@ async function call(userId: string, body: unknown) {
       query: {},
       headers: {},
       body,
-      auth: { userId, companyId: "c_1", role: "client", name: "测试客户" },
+      auth: { userId, companyId: "c_1", role: "client", name: "测试客户", agentId: null },
     },
     res,
   );

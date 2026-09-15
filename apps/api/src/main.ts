@@ -17,6 +17,10 @@ import { registerConsolidationRoutes } from "./modules/consolidation/routes";
 import { registerWhrConsolidationRoutes } from "./modules/whr-consolidation/routes";
 import { registerWhrConsolidationStaffRoutes } from "./modules/whr-consolidation/staff-routes";
 import { registerWhrConsolidationClientRoutes } from "./modules/whr-consolidation/client-routes";
+import { registerAgentAdminRoutes } from "./modules/agents/admin-routes";
+import { startAgentRebateScheduler } from "./modules/agents/rebate-scheduler";
+import { registerAgentPortalRoutes } from "./modules/agent-portal/routes";
+import { registerBrandingRoutes } from "./modules/branding/routes";
 import { createApp } from "./server";
 import { startDailyExchangeRateScheduler } from "./modules/exchange-rate/rate-sync";
 import { logger } from "./modules/core/logger";
@@ -58,6 +62,12 @@ registerConsolidationRoutes(app);
   registerWhrConsolidationStaffRoutes(app);
   registerWhrConsolidationClientRoutes(app);
 startDailyExchangeRateScheduler();
+
+// ===== 代理账号（2026-09-16）=====
+registerAgentAdminRoutes(app);
+registerAgentPortalRoutes(app);
+registerBrandingRoutes(app);
+startAgentRebateScheduler();
 
 // ===== AI routes =====
 registerClientAiRoutes(app);

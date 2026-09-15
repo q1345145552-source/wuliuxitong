@@ -23,7 +23,7 @@ datasource db {
 model User {
   id           String   @id
   companyId    String   @map("company_id")
-  role         String // admin | staff | client
+  role         String // admin | staff | client | agent
   name         String
   phone        String
   status       String // active | inactive
@@ -32,6 +32,11 @@ model User {
   companyName  String?  @map("company_name")
   email        String?
   createdAt    DateTime @default(now()) @map("created_at")
+  /// 2026-09-16 代理账号：role=agent 的行 = 这个代理的登录号；role=client 的行 = 归这个代理的客户；湘泰自己的为空
+  agentId      String?  @map("agent_id")
+
+  agent    Agent?          @relation("AgentUsers", fields: [agentId], references: [id], onDelete: Restrict)
+  whrPrice ClientWhrPrice?
 
   // 关联
   ordersAsClient               Order[]                        @relation("ClientOrders")
@@ -53,6 +58,7 @@ model User {
 
   @@index([companyId])
   @@index([role])
+  @@index([agentId])
   @@map("users")
 }
 
@@ -563,7 +569,6 @@ model ShipmentContainerItem {
   @@map("shipment_container_items")
 }
 
-
 // ============================================================================
 // ⭐ 新增：库位 & 14 天滞库预警
 // ============================================================================
@@ -973,10 +978,10 @@ model WhrConsolidationPlanCustomer {
   client    User                       @relation(fields: [clientId], references: [id])
   prealerts WhrConsolidationPrealert[]
 
-  @@index([companyId, clientId])
-  @@index([companyId, planId])
   // 2026-09-02 老板拍板：同一个柜 + 同一个客户只许一行（数据库级铁门，代码锁是第一道防线）
   @@unique([planId, clientId])
+  @@index([companyId, clientId])
+  @@index([companyId, planId])
   @@map("whr_consolidation_plan_customers")
 }
 
@@ -1015,6 +1020,17 @@ model WhrConsolidationPrealert {
   cancelReason String?   @map("cancel_reason") @db.Text
   cancelledAt  DateTime? @map("cancelled_at")
 
+  // 付款那一刻的价格快照（2026-09-16，确认单 4.14）：付款时写、撤销付款时清空；之后谁改价都不变
+  paidPriceNormal          Decimal? @map("paid_price_normal") @db.Decimal(10, 2)
+  paidPriceInspection      Decimal? @map("paid_price_inspection") @db.Decimal(10, 2)
+  paidPriceSensitive       Decimal? @map("paid_price_sensitive") @db.Decimal(10, 2)
+  /// 付款时客户归哪个代理；湘泰自己的客户为空（下面代理价、返现也为空）
+  paidAgentId              String?  @map("paid_agent_id")
+  paidAgentPriceNormal     Decimal? @map("paid_agent_price_normal") @db.Decimal(10, 2)
+  paidAgentPriceInspection Decimal? @map("paid_agent_price_inspection") @db.Decimal(10, 2)
+  paidAgentPriceSensitive  Decimal? @map("paid_agent_price_sensitive") @db.Decimal(10, 2)
+  rebateAmount             Decimal? @map("rebate_amount") @db.Decimal(12, 2)
+
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
@@ -1025,6 +1041,9 @@ model WhrConsolidationPrealert {
   @@index([customerId])
   @@index([companyId, customerId])
   @@index([status])
+  // ⚠️ 默认索引名 68 个字符，超过 PostgreSQL 63 字符上限被库截掉了末尾 "idx"（迁移 20260916 实测）。
+  //    这里写明库里的真实名字，免得以后比对结构时报「索引名不一致」。
+  @@index([paidAgentId, thailandReceivedAt], map: "whr_consolidation_prealerts_paid_agent_id_thailand_received_at_")
   @@map("whr_consolidation_prealerts")
 }
 
@@ -1073,4 +1092,112 @@ model WhrConsolidationStatusLog {
 
   @@index([prealertId, createdAt(sort: Desc)])
   @@map("whr_consolidation_status_logs")
+}
+
+// ============================================================================
+// 代理账号（2026-09-16，迁移 20260916_agent_accounts）
+// 需求编号见 docs/交接文档-附件-代理账号确认单/final.md（该目录不进 git）
+// ============================================================================
+
+/// 代理。停用代理 = 停它的登录账号（users.status），不在这张表上。
+model Agent {
+  id              String   @id @default(cuid())
+  companyId       String   @map("company_id")
+  name            String
+  /// 走现有图片落盘，存 /images/...（登录前就要显示）
+  logoPath        String?  @map("logo_path")
+  /// 前缀登录：网址/<slug>
+  slug            String?  @unique
+  customDomain    String?  @unique @map("custom_domain")
+  /// 湘泰给代理的三档价 元/方
+  priceNormal     Decimal  @map("price_normal") @db.Decimal(10, 2)
+  priceInspection Decimal  @map("price_inspection") @db.Decimal(10, 2)
+  priceSensitive  Decimal  @map("price_sensitive") @db.Decimal(10, 2)
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  users            User[]                 @relation("AgentUsers")
+  rebateStatements AgentRebateStatement[]
+
+  @@index([companyId])
+  @@map("agents")
+}
+
+/// 客户长期价（仓库版集货，所有客户；4.4 / 4.19）。加进柜子时自动带出。
+model ClientWhrPrice {
+  clientId        String   @id @map("client_id")
+  companyId       String   @map("company_id")
+  priceNormal     Decimal  @map("price_normal") @db.Decimal(10, 2)
+  priceInspection Decimal  @map("price_inspection") @db.Decimal(10, 2)
+  priceSensitive  Decimal  @map("price_sensitive") @db.Decimal(10, 2)
+  /// 操作人只给超管看（沿用 canSeeOperatorIdentity）；上线回填的行为空
+  updatedBy       String?  @map("updated_by")
+  updatedByRole   String?  @map("updated_by_role")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  client User @relation(fields: [clientId], references: [id], onDelete: Restrict)
+
+  @@index([companyId])
+  @@map("client_whr_prices")
+}
+
+/// 每月返现单（4.12 / 4.13）。一个代理一个月一张，出了就不改；「已返」只改状态和时间。
+model AgentRebateStatement {
+  id            String    @id @default(cuid())
+  companyId     String    @map("company_id")
+  agentId       String    @map("agent_id")
+  /// 'YYYY-MM'
+  month         String    @db.VarChar(7)
+  lineCount     Int       @map("line_count")
+  totalVolumeM3 Decimal   @map("total_volume_m3") @db.Decimal(12, 3)
+  totalRebate   Decimal   @map("total_rebate") @db.Decimal(12, 2)
+  /// unpaid | paid
+  status        String    @default("unpaid")
+  generatedAt   DateTime  @default(now()) @map("generated_at")
+  paidAt        DateTime? @map("paid_at")
+  paidBy        String?   @map("paid_by")
+
+  agent Agent             @relation(fields: [agentId], references: [id], onDelete: Restrict)
+  lines AgentRebateLine[]
+
+  @@unique([agentId, month])
+  @@index([companyId])
+  @@map("agent_rebate_statements")
+}
+
+/// 返现单明细（出单时冻结，4.20）。prealertId 唯一 = 一票只算一次。**不存柜号**（3.11 暂缓）
+model AgentRebateLine {
+  id                    String    @id @default(cuid())
+  statementId           String    @map("statement_id")
+  companyId             String    @map("company_id")
+  prealertId            String    @unique @map("prealert_id")
+  trackingNo            String    @map("tracking_no")
+  planNo                String    @map("plan_no")
+  clientId              String    @map("client_id")
+  mark                  String
+  productNames          String    @map("product_names") @db.Text
+  volumeNormalM3        Decimal   @map("volume_normal_m3") @db.Decimal(12, 3)
+  volumeInspectionM3    Decimal   @map("volume_inspection_m3") @db.Decimal(12, 3)
+  volumeSensitiveM3     Decimal   @map("volume_sensitive_m3") @db.Decimal(12, 3)
+  clientPriceNormal     Decimal   @map("client_price_normal") @db.Decimal(10, 2)
+  clientPriceInspection Decimal   @map("client_price_inspection") @db.Decimal(10, 2)
+  clientPriceSensitive  Decimal   @map("client_price_sensitive") @db.Decimal(10, 2)
+  agentPriceNormal      Decimal   @map("agent_price_normal") @db.Decimal(10, 2)
+  agentPriceInspection  Decimal   @map("agent_price_inspection") @db.Decimal(10, 2)
+  agentPriceSensitive   Decimal   @map("agent_price_sensitive") @db.Decimal(10, 2)
+  rebateAmount          Decimal   @map("rebate_amount") @db.Decimal(12, 2)
+  /// 6 个时间：建单 / 仓库签收 / 付款 / 装柜 / 发运 / 泰国签收
+  prealertCreatedAt     DateTime  @map("prealert_created_at")
+  signedAt              DateTime? @map("signed_at")
+  paidAt                DateTime? @map("paid_at")
+  loadedAt              DateTime? @map("loaded_at")
+  shippedAt             DateTime? @map("shipped_at")
+  thailandReceivedAt    DateTime  @map("thailand_received_at")
+  createdAt             DateTime  @default(now()) @map("created_at")
+
+  statement AgentRebateStatement @relation(fields: [statementId], references: [id], onDelete: Restrict)
+
+  @@index([statementId])
+  @@map("agent_rebate_lines")
 }

@@ -185,6 +185,15 @@ jobs:
       - name: Test attention filter and client pagination
         run: npm run test:attention-filter
 
+      # 代理账号地基（2026-09-16 加）。
+      # 令牌角色硬闸、session-guard 角色不一致判失效、真起 HTTP 服务测统一闸 403、
+      # 返现算例（含浮点会差一分的边界）、改长期价的锁序和「只重算没付款的单」。不连库。
+      - name: Test agent foundation
+        run: npm run test:agent-foundation
+
+      - name: Test hide operator identity
+        run: npm run test:hide-operator-identity
+
       - name: Test cargo, dispatch wrapping and track actions
         run: |
           npm run test:cargo-regressions

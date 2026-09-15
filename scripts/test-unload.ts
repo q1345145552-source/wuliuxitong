@@ -286,7 +286,7 @@ async function main(): Promise<void> {
       const res: any = { status(c: number) { status = c; return res; }, json(v: unknown) { payload = v; } };
       await handler!({
         method: "POST", path: "", query: {}, headers: {}, body,
-        auth: { userId: "STAFF1", companyId: "c_1", role: "staff", name: "测试员工" },
+        auth: { userId: "STAFF1", companyId: "c_1", role: "staff", name: "测试员工", agentId: null },
       }, res);
       // 成功时 ok() 包成 { data: { message } }，失败时 fail() 是顶层 message
       return { status, message: payload?.data?.message ?? payload?.message ?? "" };

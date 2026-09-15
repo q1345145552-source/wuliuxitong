@@ -6,6 +6,8 @@ import { isTokenRevoked } from "./modules/core/token-blacklist";
 import { logger } from "./modules/core/logger";
 import { isBusinessError } from "./modules/core/business-error";
 import { fail } from "./modules/core/http-utils";
+import { agentGateRejection } from "./modules/core/agent-scope";
+import type { UserRole } from "../../../packages/shared-types/role";
 
 export interface HttpRequest {
   method: string;
@@ -16,8 +18,14 @@ export interface HttpRequest {
   auth?: {
     userId: string;
     companyId: string;
-    role: "admin" | "staff" | "client";
+    role: UserRole;
     name: string;
+    /**
+     * 所属代理（2026-09-16）。每个请求由 session-guard 从库里现读，不看令牌：
+     * role=agent → 这个代理的 id；role=client → 客户归哪个代理，湘泰自己的客户为 null；
+     * 管理员 / 员工恒为 null。
+     */
+    agentId: string | null;
   };
 }
 
@@ -88,6 +96,7 @@ async function parseAuth(headers: IncomingMessage["headers"], path?: string): Pr
     companyId: payload.companyId,
     role: payload.role,
     name: payload.userName ?? "",
+    agentId: live.agentId,
   };
 }
 
@@ -252,6 +261,20 @@ export function createApp(): MinimalHttpApp {
           body: method === "POST" || method === "DELETE" ? await readJsonBody(rawReq) : undefined,
           auth: await parseAuth(rawReq.headers, path),
         };
+
+        /**
+         * ⚠️ 代理账号统一闸（2026-09-16）。放在所有路由之前，一处管全部：
+         * · 代理的客户（client + agentId）碰 /client/consolidation、/client/ai → 403「该功能暂未开放」
+         *   （确认单 4.1 / 5.7 / 3.6）。AI 那批接口直接读 req.auth、不走 requireRole，逐个加容易漏。
+         * · 代理本人（agent）只许碰 /agent/*、/auth/*，别的一律 403（双保险，理由见 agent-scope.ts）。
+         * agentId 是 session-guard 每次从库里现读的，改归属 / 停代理当场生效。
+         */
+        const agentGate = agentGateRejection(req.auth, path);
+        if (agentGate) {
+          logger.warn("代理账号统一闸拦截", { path, 用户: req.auth?.userId, 角色: req.auth?.role });
+          fail(res, 403, "FORBIDDEN", agentGate);
+          return;
+        }
 
         try {
           await handler(req, res);

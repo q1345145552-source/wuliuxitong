@@ -1,7 +1,7 @@
 import { apiBaseUrl, apiRequest } from "./core-api";
 
-export function login(payload: { account: string; password: string; role?: "admin" | "staff" | "client" }) {
-  return apiRequest<{ token: string; user: { id: string; name: string; role: "admin" | "staff" | "client"; companyId: string } }>(
+export function login(payload: { account: string; password: string; role?: "admin" | "staff" | "client" | "agent" }) {
+  return apiRequest<{ token: string; user: { id: string; name: string; role: "admin" | "staff" | "client" | "agent"; companyId: string } }>(
     `${apiBaseUrl()}/auth/login`, { method: "POST", body: JSON.stringify(payload) }
   );
 }

@@ -409,9 +409,9 @@ check("10) 全仓库不许再有「把箱数兜底成 1」的写法", () => {
 async function main(): Promise<void> {
   routeTable = await loadRoutes();
 
-  const CLIENT = { userId: "u_test_client", companyId: "c_test", role: "client", name: "测试客户" };
-  const STAFF = { userId: "u_test_staff", companyId: "c_test", role: "staff", name: "测试员工" };
-  const ADMIN = { userId: "u_test_admin", companyId: "c_test", role: "admin", name: "测试管理员" };
+  const CLIENT = { userId: "u_test_client", companyId: "c_test", role: "client", name: "测试客户", agentId: null };
+  const STAFF = { userId: "u_test_staff", companyId: "c_test", role: "staff", name: "测试员工", agentId: null };
+  const ADMIN = { userId: "u_test_admin", companyId: "c_test", role: "admin", name: "测试管理员", agentId: null };
 
   /**
    * ⚠️ 三个入口都用**同一组非法输入**打一遍。
