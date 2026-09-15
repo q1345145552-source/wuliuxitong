@@ -133,7 +133,7 @@ function FeeBreakdownPanel({ bd, title = "费用明细", compact }: { bd?: FeeBr
       </div>
       {!bd.matchesStored && bd.storedFee != null && (
         <div style={{ marginTop: 4, color: "#b45309", fontSize: fs - 1 }}>
-          单价在本单结算后有过调整，按现价算为 {money(bd.computedFee)}；本单实际应付以签收时锁定的 {money(bd.storedFee)} 为准。
+          您的单价在本单付款后调整过，按现价算为 {money(bd.computedFee)}；本单实际应付以付款时锁定的 {money(bd.storedFee)} 为准。
         </div>
       )}
     </div>
@@ -280,11 +280,14 @@ export default function ClientWhrConsolidationPage() {
     } catch { setBalance(0); }
   }, []);
 
+  // 2026-09-16（确认单 4.5）：客户还没配长期价时页顶提示「暂未配对价格，请联系管理员」。null = 还没加载完，不提示
+  const [hasLongTermPrice, setHasLongTermPrice] = useState<boolean | null>(null);
   const loadPlans = useCallback(async () => {
     setLoading(true);
     try {
-      const data = await apiRequest<{ items: MyPlan[] }>(`${apiBaseUrl()}/client/whr-consolidation/plans`);
+      const data = await apiRequest<{ items: MyPlan[]; hasLongTermPrice?: boolean }>(`${apiBaseUrl()}/client/whr-consolidation/plans`);
       setPlans(data.items ?? []);
+      setHasLongTermPrice(typeof data.hasLongTermPrice === "boolean" ? data.hasLongTermPrice : null);
     } catch (e: any) { setToast(e?.message ?? "加载计划列表失败"); }
     finally { setLoading(false); }
   }, []);
@@ -472,6 +475,11 @@ export default function ClientWhrConsolidationPage() {
         {/* ================================================================ */}
         {/* 计划列表 */}
         {/* ================================================================ */}
+        {hasLongTermPrice === false && (
+          <div style={{ marginBottom: 16, padding: "10px 16px", background: "var(--c-red-bg)", color: "var(--c-red-deep)", borderRadius: 8, fontSize: 14, fontWeight: 600 }}>
+            暂未配对价格，请联系管理员
+          </div>
+        )}
         <h3 style={{ fontSize: 17, marginBottom: 16 }}>我的拼柜计划</h3>
         {loading ? <p style={{ color: "var(--t-faint)", fontSize: 14 }}>加载中...</p> :
          plans.length === 0 ? <p style={{ color: "var(--t-faint)", fontSize: 14 }}>暂无参与的拼柜计划</p> :

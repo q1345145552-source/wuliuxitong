@@ -12,6 +12,7 @@ import {
   ACTIVE_PREALERT_WHERE,
   EDITABLE_PREALERT_STATUS,
   buildFeeBreakdown,
+  buildPaidSnapshot,
   calcItemVolumeM3,
   deriveLatestStatus,
   mergeFeeBreakdowns,
@@ -51,8 +52,18 @@ export function registerWhrConsolidationClientRoutes(app: MinimalHttpApp): void 
       take: 500,
     });
 
+    /**
+     * 有没有长期价（2026-09-16，确认单 4.5 / 4.19）：没有就在页顶提示「暂未配对价格，请联系管理员」。
+     * 只回一个布尔，价格本身不从这里给（柜里那一行的单价照旧在 items 里）。
+     */
+    const priceRow = await prisma.clientWhrPrice.findFirst({
+      where: { clientId: auth.userId, companyId: auth.companyId },
+      select: { clientId: true },
+    });
+    const hasLongTermPrice = priceRow !== null;
+
     if (myCustomers.length === 0) {
-      ok(res, { items: [] });
+      ok(res, { items: [], hasLongTermPrice });
       return;
     }
 
@@ -64,6 +75,7 @@ export function registerWhrConsolidationClientRoutes(app: MinimalHttpApp): void 
     }
 
     ok(res, {
+      hasLongTermPrice,
       items: myCustomers.map((c) => {
         const activePrealerts = c.prealerts.filter((pa) => pa.status !== "cancelled");
         // 我的费用：只统计未取消的预报单
@@ -732,6 +744,13 @@ export function registerWhrConsolidationClientRoutes(app: MinimalHttpApp): void 
           throw new PaymentConflictError("这张预报单还没有计费金额，请联系客服核对后再付款");
         }
 
+        /**
+         * 付款那一刻的价格快照（2026-09-16，确认单 4.14）：客户价、所属代理、代理价、这票返现一起记在单上，
+         * 之后谁改价，已付款的单金额和返现都不变。放在扣钱之前 —— 锁序【计划 → 预报单 → 钱包】，
+         * 快照只读计划客户行 / 货品 / 用户 / 代理，不加新锁（原因见 buildPaidSnapshot 注释）。
+         */
+        const snapshot = await buildPaidSnapshot(prealert.id, tx);
+
         // 扣钱和改状态必须在同一个事务里，不能出现「钱扣了单子没付上」
         const after = await chargeForConsolidation(tx as any, {
           companyId: auth.companyId,
@@ -751,6 +770,7 @@ export function registerWhrConsolidationClientRoutes(app: MinimalHttpApp): void 
             paymentReviewedAt: new Date(),
             paymentReviewedBy: null,
             paymentRejectReason: null,
+            ...snapshot,
           } as any,
         });
         await tx.whrConsolidationStatusLog.create({

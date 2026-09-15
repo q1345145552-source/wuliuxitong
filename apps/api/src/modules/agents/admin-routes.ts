@@ -1,10 +1,530 @@
+/* ==========================================================================
+   超管「代理管理」+「返现单」接口（2026-09-16，B2）
+   --------------------------------------------------------------------------
+   需求：docs/交接文档-附件-代理账号确认单/final.md（不进 git）
+     2.1 / 2.7 / 2.8 / 2.9 / 4.2 / 4.12 / 4.13 / 4.20 / 5.5 / 6.1 / 6.4
+
+   ⚠️ 全部接口 requireRole(["admin"])，员工一律 403（4.6：代理和返现只有超管和代理自己能看）。
+   ⚠️ 一律按 auth.companyId 过滤，查不到就 404（CLAUDE.md #27）。
+   ⚠️ 给前端的字段逐个列出，不许 `...row`（CLAUDE.md #31）。
+   ⚠️ **接口不许用 `/admin/agents` 本身**（2026-09-16 页面实测踩到）：那是「代理管理」页面的网址，
+      浏览器请求先到 Next，Next 先匹配页面、页面没匹配上才走 next.config.ts 的 /admin/:path* 转发 ——
+      同一个网址的接口永远到不了后端，拿回来的是页面 HTML，前端报 invalid response。
+      所以列表、开代理用 /admin/agents/list、/admin/agents/create；scripts/test-agent-admin.ts 扫着这条。
+
+   接口：
+     GET  /admin/agents/list                代理列表（B1 客户管理「选归属」也读它，只用 id / name）
+     POST /admin/agents/create              开代理（agents 行 + users(role=agent) 行，一次嵌套写入 = 一个事务）
+     POST /admin/agents/update              改名字 / logo / 前缀 / 域名 / 三档代理价
+     POST /admin/agents/login-status        停用 / 启用代理登录号（客户照常登录，2.7）
+     POST /admin/agents/reset-password      重置代理密码（卡强度，2.9）
+     GET  /admin/agents/rebates             返现单列表（按代理、按月、按状态筛）
+     GET  /admin/agents/rebates/detail      返现单明细（4.20）
+     POST /admin/agents/rebates/mark-paid   点「已返」（只改状态、时间、操作人，4.12 / 4.13）
+   ========================================================================== */
+
+import { prisma } from "../../db/prisma";
 import type { MinimalHttpApp } from "../../server";
+import { BusinessError } from "../core/business-error";
+import { fail, ok, requireRole } from "../core/http-utils";
+import { logger } from "../core/logger";
+import { clearLoginFailures } from "../core/rate-limit";
+import { hashPassword } from "../auth/crypto-utils";
+import { checkPasswordStrength } from "../auth/password-policy";
+import { deleteImageFile, saveImageToDisk } from "../orders/image-storage";
+import { parseWhrPriceInput, type WhrPriceTriple } from "../whr-consolidation/long-term-price";
+import { toNum } from "../whr-consolidation/utils";
+import {
+  isValidMonth,
+  normalizeAgentDomain,
+  normalizeAgentSlug,
+  toCents,
+  validateAgentDomain,
+  validateAgentLoginId,
+  validateAgentLogo,
+  validateAgentSlug,
+} from "./agent-rules";
+
+type Tx = any;
+
+const PRICE_LABEL: Record<keyof WhrPriceTriple, string> = { normal: "普货", inspection: "商检货", sensitive: "敏感货" };
+const fmtPrice = (n: number): string => String(Number(n.toFixed(2)));
+const str = (v: unknown): string => (typeof v === "string" ? v.trim() : "");
+const iso = (d: Date | null | undefined): string | null => (d ? d.toISOString() : null);
+
+/** GET /admin/agents/list 每一行。B1 只用 id / name —— 改字段名前先 grep apps/web */
+export interface AdminAgentListItem {
+  id: string;
+  name: string;
+  slug: string | null;
+  customDomain: string | null;
+  logoUrl: string | null;
+  clientCount: number;
+  loginId: string;
+  loginStatus: "active" | "inactive";
+  prices: WhrPriceTriple;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** Prisma 唯一约束冲突 → 人话 */
+function uniqueConflictMessage(error: unknown): string | null {
+  const e = error as { code?: string; meta?: { target?: unknown } };
+  if (e?.code !== "P2002") return null;
+  const target = JSON.stringify(e.meta?.target ?? "");
+  if (target.includes("slug")) return "这个前缀已经被别的代理用了，换一个";
+  if (target.includes("custom_domain") || target.includes("customDomain")) return "这个专属域名已经被别的代理用了";
+  if (target.includes("id")) return "这个登录账号已经有人用了，换一个";
+  return "有重复的数据（前缀、域名或登录账号），请检查后再保存";
+}
+
+/** 读三档价输入：兼容 { prices: {normal,...} } 和平铺 priceNormal 两种写法 */
+function readPrices(body: Record<string, unknown>): WhrPriceTriple {
+  const p = (body.prices ?? {}) as Record<string, unknown>;
+  return parseWhrPriceInput({
+    normal: p.normal ?? body.priceNormal,
+    inspection: p.inspection ?? body.priceInspection,
+    sensitive: p.sensitive ?? body.priceSensitive,
+  });
+}
+
+function readLogo(body: Record<string, unknown>): { mime: string; base64: string } | null {
+  const logo = body.logo as { mime?: unknown; base64?: unknown } | null | undefined;
+  if (!logo || (logo.mime == null && logo.base64 == null)) return null;
+  const issue = validateAgentLogo(logo);
+  if (issue) throw new BusinessError(issue);
+  return { mime: String(logo.mime), base64: String(logo.base64) };
+}
 
 /**
- * 超管「代理管理」+「返现单」接口（2026-09-16 空壳，B2 填内容）。
- * 设计：docs/交接文档-附件-代理账号确认单/做法-技术设计.md 第 3、5 节（不进 git）。
- * ⚠️ 全部接口 requireRole(["admin"])；开代理一个事务同时建 agents 行和 users(role=agent) 行。
+ * 调高代理价时，名下哪些客户的长期价会低于新代理价（4.2 附带规则 / 4.3）。
+ * 只看**调高了的那几档**：没调高的档，客户价本来就不低于它（存价时拦过）。
+ * ⚠️ 必须在已经 `SELECT ... FROM agents ... FOR UPDATE` 的事务里调 ——
+ *    long-term-price.ts 改客户价时拿同一行的 FOR SHARE，两边排队，不会漏掉正在改的价。
  */
-export function registerAgentAdminRoutes(_app: MinimalHttpApp): void {
-  // B2：GET/POST /admin/agents ...
+export async function findClientsBelowNewAgentPrice(
+  tx: Tx,
+  agentId: string,
+  companyId: string,
+  oldPrices: WhrPriceTriple,
+  newPrices: WhrPriceTriple,
+): Promise<string[]> {
+  const raised = (["normal", "inspection", "sensitive"] as const).filter((k) => toCents(newPrices[k]) > toCents(oldPrices[k]));
+  if (raised.length === 0 || !agentId || !companyId) return [];
+  const rows: Array<{ clientId: string; priceNormal: unknown; priceInspection: unknown; priceSensitive: unknown; client: { name: string } | null }> =
+    await tx.clientWhrPrice.findMany({
+      where: { companyId, client: { agentId, role: "client", companyId } },
+      select: { clientId: true, priceNormal: true, priceInspection: true, priceSensitive: true, client: { select: { name: true } } },
+      orderBy: { clientId: "asc" },
+    });
+  const out: string[] = [];
+  for (const r of rows) {
+    const current: WhrPriceTriple = { normal: toNum(r.priceNormal), inspection: toNum(r.priceInspection), sensitive: toNum(r.priceSensitive) };
+    const parts = raised
+      .filter((k) => toCents(current[k]) < toCents(newPrices[k]))
+      .map((k) => `${PRICE_LABEL[k]} ${fmtPrice(current[k])}（新代理价 ${fmtPrice(newPrices[k])}）`);
+    if (parts.length > 0) {
+      const who = r.client?.name && r.client.name !== r.clientId ? `${r.clientId}（${r.client.name}）` : r.clientId;
+      out.push(`${who}：${parts.join("，")}`);
+    }
+  }
+  return out;
+}
+
+export function registerAgentAdminRoutes(app: MinimalHttpApp): void {
+  /* ────────────────────────── 列表 ────────────────────────── */
+  app.get("/admin/agents/list", async (req, res) => {
+    const auth = requireRole(req, res, ["admin"]);
+    if (!auth) return;
+
+    const agents = await prisma.agent.findMany({
+      where: { companyId: auth.companyId },
+      select: {
+        id: true, name: true, slug: true, customDomain: true, logoPath: true,
+        priceNormal: true, priceInspection: true, priceSensitive: true, createdAt: true, updatedAt: true,
+      },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+    });
+    const ids = agents.map((a) => a.id);
+    const users = ids.length === 0
+      ? []
+      : await prisma.user.findMany({
+          where: { companyId: auth.companyId, agentId: { in: ids }, role: { in: ["agent", "client"] } },
+          select: { id: true, role: true, status: true, agentId: true, createdAt: true },
+          orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+        });
+
+    const items: AdminAgentListItem[] = agents.map((a) => {
+      const mine = users.filter((u) => u.agentId === a.id);
+      // 开代理时一个事务只建一个登录号；万一有多个取最早那个
+      const login = mine.find((u) => u.role === "agent");
+      return {
+        id: a.id,
+        name: a.name,
+        slug: a.slug,
+        customDomain: a.customDomain,
+        logoUrl: a.logoPath,
+        clientCount: mine.filter((u) => u.role === "client").length,
+        loginId: login?.id ?? "",
+        loginStatus: login?.status === "active" ? "active" : "inactive",
+        prices: { normal: toNum(a.priceNormal), inspection: toNum(a.priceInspection), sensitive: toNum(a.priceSensitive) },
+        createdAt: a.createdAt.toISOString(),
+        updatedAt: a.updatedAt.toISOString(),
+      };
+    });
+    ok(res, { items });
+  });
+
+  /* ────────────────────────── 开代理 ────────────────────────── */
+  app.post("/admin/agents/create", async (req, res) => {
+    const auth = requireRole(req, res, ["admin"]);
+    if (!auth) return;
+    const body = (req.body ?? {}) as Record<string, unknown>;
+
+    const name = str(body.name);
+    if (!name) return fail(res, 400, "BAD_REQUEST", "请填代理名字");
+    if (name.length > 50) return fail(res, 400, "BAD_REQUEST", "代理名字太长了（最多 50 个字）");
+
+    const slug = normalizeAgentSlug(body.slug);
+    const slugIssue = validateAgentSlug(slug);
+    if (slugIssue) return fail(res, 400, "BAD_REQUEST", slugIssue);
+
+    const customDomain = normalizeAgentDomain(body.customDomain);
+    const domainIssue = validateAgentDomain(customDomain);
+    if (domainIssue) return fail(res, 400, "BAD_REQUEST", domainIssue);
+
+    const prices = readPrices(body); // 不合法抛 BusinessError → 400
+
+    const loginId = str(body.loginId);
+    const loginIssue = validateAgentLoginId(loginId);
+    if (loginIssue) return fail(res, 400, "BAD_REQUEST", loginIssue);
+
+    // 2.9：代理账号能看名下所有客户和返现，密码太简单一律拦
+    const password = typeof body.password === "string" ? body.password : "";
+    if (!password) return fail(res, 400, "BAD_REQUEST", "请填代理登录密码");
+    const weak = checkPasswordStrength(password, undefined, loginId);
+    if (weak) return fail(res, 400, "BAD_REQUEST", weak);
+
+    const phone = str(body.phone).slice(0, 40);
+    const logo = readLogo(body);
+
+    // 早点给个好看的提示；真正说了算的是数据库唯一约束（下面 catch P2002）
+    const [idTaken, slugTaken, domainTaken] = await Promise.all([
+      prisma.user.findUnique({ where: { id: loginId }, select: { id: true } }),
+      slug ? prisma.agent.findUnique({ where: { slug }, select: { id: true } }) : Promise.resolve(null),
+      customDomain ? prisma.agent.findUnique({ where: { customDomain }, select: { id: true } }) : Promise.resolve(null),
+    ]);
+    if (idTaken) return fail(res, 400, "BAD_REQUEST", "这个登录账号已经有人用了，换一个");
+    if (slugTaken) return fail(res, 400, "BAD_REQUEST", "这个前缀已经被别的代理用了，换一个");
+    if (domainTaken) return fail(res, 400, "BAD_REQUEST", "这个专属域名已经被别的代理用了");
+
+    let logoPath: string | null = null;
+    if (logo) {
+      try {
+        logoPath = saveImageToDisk("agent_logo", logo.mime, logo.base64);
+      } catch {
+        return fail(res, 400, "BAD_REQUEST", "logo 保存失败，请重试");
+      }
+    }
+
+    try {
+      /**
+       * ⚠️ 代理行和登录号必须同生同死：一次嵌套写入，Prisma 自动包在一个数据库事务里，
+       * 登录号建不出来（比如账号撞了）代理行也回滚，不会留下「有代理没登录号」的脏数据。
+       * 两行都是全新插入，没有「先读再判」，并发靠唯一约束兜（users.id 主键、agents.slug / custom_domain 唯一）。
+       */
+      const created = await prisma.agent.create({
+        data: {
+          companyId: auth.companyId,
+          name,
+          logoPath,
+          slug,
+          customDomain,
+          priceNormal: prices.normal,
+          priceInspection: prices.inspection,
+          priceSensitive: prices.sensitive,
+          users: {
+            create: [{
+              id: loginId,
+              companyId: auth.companyId,
+              role: "agent",
+              name,
+              phone,
+              status: "active",
+              warehouseIds: "[]",
+              passwordHash: hashPassword(password),
+            }],
+          },
+        },
+        select: { id: true },
+      });
+      ok(res, { id: created.id, loginId });
+    } catch (error) {
+      if (logoPath) { try { deleteImageFile(logoPath); } catch { /* ignore */ } }
+      const msg = uniqueConflictMessage(error);
+      if (msg) return fail(res, 400, "BAD_REQUEST", msg);
+      throw error;
+    }
+  });
+
+  /* ────────────────────────── 编辑 ────────────────────────── */
+  app.post("/admin/agents/update", async (req, res) => {
+    const auth = requireRole(req, res, ["admin"]);
+    if (!auth) return;
+    const body = (req.body ?? {}) as Record<string, unknown>;
+
+    const id = str(body.id);
+    if (!id) return fail(res, 400, "BAD_REQUEST", "缺少代理 id");
+    const name = str(body.name);
+    if (!name) return fail(res, 400, "BAD_REQUEST", "请填代理名字");
+    if (name.length > 50) return fail(res, 400, "BAD_REQUEST", "代理名字太长了（最多 50 个字）");
+
+    const slug = normalizeAgentSlug(body.slug);
+    const slugIssue = validateAgentSlug(slug);
+    if (slugIssue) return fail(res, 400, "BAD_REQUEST", slugIssue);
+    const customDomain = normalizeAgentDomain(body.customDomain);
+    const domainIssue = validateAgentDomain(customDomain);
+    if (domainIssue) return fail(res, 400, "BAD_REQUEST", domainIssue);
+    const prices = readPrices(body);
+    const logo = readLogo(body);
+    const removeLogo = body.removeLogo === true;
+
+    const before = await prisma.agent.findFirst({ where: { id, companyId: auth.companyId }, select: { id: true, logoPath: true } });
+    if (!before) return fail(res, 404, "NOT_FOUND", "代理不存在");
+
+    let newLogoPath: string | null = null;
+    if (logo) {
+      try {
+        newLogoPath = saveImageToDisk("agent_logo", logo.mime, logo.base64);
+      } catch {
+        return fail(res, 400, "BAD_REQUEST", "logo 保存失败，请重试");
+      }
+    }
+
+    let oldLogoPath: string | null = null;
+    try {
+      await prisma.$transaction(
+        async (tx: Tx) => {
+          // 先锁代理行（long-term-price.ts 改客户价拿同一行 FOR SHARE），锁里重读旧价再判
+          const lockedRows = await tx.$queryRaw`SELECT id, logo_path, price_normal, price_inspection, price_sensitive FROM agents WHERE id = ${id} AND company_id = ${auth.companyId} FOR UPDATE`;
+          const row = (lockedRows as Array<{ logo_path: string | null; price_normal: unknown; price_inspection: unknown; price_sensitive: unknown }>)[0];
+          if (!row) throw new BusinessError("代理不存在", 404, "NOT_FOUND");
+          const oldPrices: WhrPriceTriple = { normal: toNum(row.price_normal), inspection: toNum(row.price_inspection), sensitive: toNum(row.price_sensitive) };
+
+          const below = await findClientsBelowNewAgentPrice(tx, id, auth.companyId, oldPrices, prices);
+          if (below.length > 0) {
+            throw new BusinessError(
+              `调不了：名下有 ${below.length} 个客户的价比新代理价低，请代理先把这些客户的价调上去 —— ${below.join("；")}`,
+            );
+          }
+
+          const logoPath = newLogoPath ?? (removeLogo ? null : row.logo_path);
+          if (logoPath !== row.logo_path) oldLogoPath = row.logo_path;
+          await tx.agent.update({
+            where: { id },
+            data: {
+              name,
+              slug,
+              customDomain,
+              logoPath,
+              priceNormal: prices.normal,
+              priceInspection: prices.inspection,
+              priceSensitive: prices.sensitive,
+            },
+          });
+          return true;
+        },
+        { timeout: 30_000, maxWait: 10_000 },
+      );
+    } catch (error) {
+      if (newLogoPath) { try { deleteImageFile(newLogoPath); } catch { /* ignore */ } }
+      const msg = uniqueConflictMessage(error);
+      if (msg) return fail(res, 400, "BAD_REQUEST", msg);
+      throw error;
+    }
+    if (oldLogoPath) { try { deleteImageFile(oldLogoPath); } catch { /* 旧图删不掉不影响保存 */ } }
+    ok(res, { id, updated: true });
+  });
+
+  /* ────────────────────────── 停用 / 启用登录号 ────────────────────────── */
+  app.post("/admin/agents/login-status", async (req, res) => {
+    const auth = requireRole(req, res, ["admin"]);
+    if (!auth) return;
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const id = str(body.id);
+    const status = str(body.status);
+    if (!id) return fail(res, 400, "BAD_REQUEST", "缺少代理 id");
+    if (status !== "active" && status !== "inactive") return fail(res, 400, "BAD_REQUEST", "状态只能是启用或停用");
+
+    const agent = await prisma.agent.findFirst({ where: { id, companyId: auth.companyId }, select: { id: true } });
+    if (!agent) return fail(res, 404, "NOT_FOUND", "代理不存在");
+
+    /**
+     * 2.7：只停代理自己的登录号（role=agent），名下客户（role=client）一个都不动，照常登录。
+     * 直接写目标状态（不是「取反」）：两个人同时点「停用」结果一样，不会一停一启。
+     * 停用当场生效：session-guard 每个请求都回查 users.status，不用等令牌过期。
+     */
+    const updated = await prisma.user.updateMany({
+      where: { agentId: id, companyId: auth.companyId, role: "agent" },
+      data: { status },
+    });
+    if (updated.count === 0) return fail(res, 404, "NOT_FOUND", "这个代理没有登录账号");
+    ok(res, { id, loginStatus: status });
+  });
+
+  /* ────────────────────────── 重置密码 ────────────────────────── */
+  app.post("/admin/agents/reset-password", async (req, res) => {
+    const auth = requireRole(req, res, ["admin"]);
+    if (!auth) return;
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const id = str(body.id);
+    const password = typeof body.password === "string" ? body.password : "";
+    if (!id) return fail(res, 400, "BAD_REQUEST", "缺少代理 id");
+    if (!password) return fail(res, 400, "BAD_REQUEST", "请填新密码");
+
+    const login = await prisma.user.findFirst({
+      where: { agentId: id, companyId: auth.companyId, role: "agent" },
+      select: { id: true },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+    });
+    if (!login) return fail(res, 404, "NOT_FOUND", "代理不存在或没有登录账号");
+
+    const weak = checkPasswordStrength(password, undefined, login.id);
+    if (weak) return fail(res, 400, "BAD_REQUEST", weak);
+
+    // 换密码 = 换密码指纹，代理手上旧的登录令牌当场失效（session-guard）
+    await prisma.user.update({ where: { id: login.id }, data: { passwordHash: hashPassword(password) } });
+    // 被连错锁住时，重置完要能马上用新密码登（跟 /admin/users/set-password 同一口径）
+    clearLoginFailures(login.id);
+    ok(res, { id, loginId: login.id, updated: true });
+  });
+
+  /* ────────────────────────── 返现单列表 ────────────────────────── */
+  app.get("/admin/agents/rebates", async (req, res) => {
+    const auth = requireRole(req, res, ["admin"]);
+    if (!auth) return;
+    const agentId = str(req.query.agentId);
+    const month = str(req.query.month);
+    const status = str(req.query.status);
+    if (month && !isValidMonth(month)) return fail(res, 400, "BAD_REQUEST", "月份格式应为 2026-09 这种");
+    if (status && status !== "unpaid" && status !== "paid") return fail(res, 400, "BAD_REQUEST", "状态只能是未返或已返");
+
+    const rows = await prisma.agentRebateStatement.findMany({
+      where: {
+        companyId: auth.companyId,
+        ...(agentId ? { agentId } : {}),
+        ...(month ? { month } : {}),
+        ...(status ? { status } : {}),
+      },
+      select: {
+        id: true, agentId: true, month: true, lineCount: true, totalVolumeM3: true, totalRebate: true,
+        status: true, generatedAt: true, paidAt: true, paidBy: true,
+        agent: { select: { name: true } },
+      },
+      orderBy: [{ month: "desc" }, { agentId: "asc" }],
+    });
+    ok(res, {
+      items: rows.map((r) => ({
+        id: r.id,
+        agentId: r.agentId,
+        agentName: r.agent?.name ?? "",
+        month: r.month,
+        lineCount: r.lineCount,
+        totalVolumeM3: toNum(r.totalVolumeM3),
+        totalRebate: toNum(r.totalRebate),
+        status: r.status === "paid" ? "paid" : "unpaid",
+        generatedAt: r.generatedAt.toISOString(),
+        paidAt: iso(r.paidAt),
+        // 操作人只给超管看 —— 这一组接口本来就只有超管能进
+        paidBy: r.paidBy,
+      })),
+    });
+  });
+
+  /* ────────────────────────── 返现单明细 ────────────────────────── */
+  app.get("/admin/agents/rebates/detail", async (req, res) => {
+    const auth = requireRole(req, res, ["admin"]);
+    if (!auth) return;
+    const id = str(req.query.id);
+    if (!id) return fail(res, 400, "BAD_REQUEST", "缺少返现单 id");
+
+    const s = await prisma.agentRebateStatement.findFirst({
+      where: { id, companyId: auth.companyId },
+      select: {
+        id: true, agentId: true, month: true, lineCount: true, totalVolumeM3: true, totalRebate: true,
+        status: true, generatedAt: true, paidAt: true, paidBy: true,
+        agent: { select: { name: true } },
+      },
+    });
+    if (!s) return fail(res, 404, "NOT_FOUND", "返现单不存在");
+
+    const lines = await prisma.agentRebateLine.findMany({
+      where: { statementId: s.id, companyId: auth.companyId },
+      orderBy: [{ thailandReceivedAt: "asc" }, { trackingNo: "asc" }],
+    });
+    ok(res, {
+      statement: {
+        id: s.id,
+        agentId: s.agentId,
+        agentName: s.agent?.name ?? "",
+        month: s.month,
+        lineCount: s.lineCount,
+        totalVolumeM3: toNum(s.totalVolumeM3),
+        totalRebate: toNum(s.totalRebate),
+        status: s.status === "paid" ? "paid" : "unpaid",
+        generatedAt: s.generatedAt.toISOString(),
+        paidAt: iso(s.paidAt),
+        paidBy: s.paidBy,
+      },
+      lines: lines.map((l) => ({
+        id: l.id,
+        prealertId: l.prealertId,
+        trackingNo: l.trackingNo,
+        planNo: l.planNo,
+        clientId: l.clientId,
+        mark: l.mark,
+        productNames: l.productNames,
+        volumes: { normal: toNum(l.volumeNormalM3), inspection: toNum(l.volumeInspectionM3), sensitive: toNum(l.volumeSensitiveM3) },
+        clientPrices: { normal: toNum(l.clientPriceNormal), inspection: toNum(l.clientPriceInspection), sensitive: toNum(l.clientPriceSensitive) },
+        agentPrices: { normal: toNum(l.agentPriceNormal), inspection: toNum(l.agentPriceInspection), sensitive: toNum(l.agentPriceSensitive) },
+        rebateAmount: toNum(l.rebateAmount),
+        prealertCreatedAt: l.prealertCreatedAt.toISOString(),
+        signedAt: iso(l.signedAt),
+        paidAt: iso(l.paidAt),
+        loadedAt: iso(l.loadedAt),
+        shippedAt: iso(l.shippedAt),
+        thailandReceivedAt: l.thailandReceivedAt.toISOString(),
+      })),
+    });
+  });
+
+  /* ────────────────────────── 已返 ────────────────────────── */
+  app.post("/admin/agents/rebates/mark-paid", async (req, res) => {
+    const auth = requireRole(req, res, ["admin"]);
+    if (!auth) return;
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const id = str(body.id);
+    if (!id) return fail(res, 400, "BAD_REQUEST", "缺少返现单 id");
+
+    /**
+     * 4.12 / 4.13：出了单就不改，「已返」**只改状态、时间、操作人**，金额和明细一个字不动。
+     * 条件写在 where 里一句做完（status 还是 unpaid 才改），两个人同时点不会写两次时间。
+     */
+    const now = new Date();
+    const updated = await prisma.agentRebateStatement.updateMany({
+      where: { id, companyId: auth.companyId, status: "unpaid" },
+      data: { status: "paid", paidAt: now, paidBy: auth.userId },
+    });
+    if (updated.count === 0) {
+      const current = await prisma.agentRebateStatement.findFirst({
+        where: { id, companyId: auth.companyId },
+        select: { status: true, paidAt: true },
+      });
+      if (!current) return fail(res, 404, "NOT_FOUND", "返现单不存在");
+      // 已经是已返：别人刚点过，照实告诉前端，不报错
+      return ok(res, { id, status: "paid", paidAt: iso(current.paidAt), alreadyPaid: true });
+    }
+    logger.info("返现单已标记已返", { id, by: auth.userId });
+    ok(res, { id, status: "paid", paidAt: now.toISOString(), alreadyPaid: false });
+  });
 }

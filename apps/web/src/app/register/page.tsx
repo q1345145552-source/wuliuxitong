@@ -10,6 +10,14 @@
 //
 // ⚠️ 不要在这里加回任何注册表单：账号只能由管理员在后台创建
 //    （/admin/users 与 /admin/users/client，两个都要 admin 权限）。
+//
+// 2026-09-16（B4）：代理的专属域名打开这一页时，不写湘泰、不给湘泰的客服微信，
+// 只说「请联系为您开通账号的对接人」（5.1 / 5.4）。代理登录页本来就不显示「申请开通」链接，
+// 这里是兜底有人直接敲地址。湘泰域名打开跟以前一模一样。
+
+import type { Metadata } from "next";
+import { getBrandByRequestHost } from "../../modules/branding/server-brand";
+import { AGENT_VISUAL_STYLE } from "../../modules/branding/brand-core";
 
 /** 客服联系方式。只改这里，页面会同步；留空的项不会显示。 */
 const CONTACT = {
@@ -19,19 +27,32 @@ const CONTACT = {
   email: "",   // 邮箱
 };
 
-export default function RegisterPage() {
-  const items = [
-    { label: "电话", value: CONTACT.phone },
-    { label: "微信", value: CONTACT.wechat },
-    { label: "Line", value: CONTACT.line },
-    { label: "邮箱", value: CONTACT.email },
-  ].filter((i) => i.value.trim().length > 0);
+export async function generateMetadata(): Promise<Metadata> {
+  const brand = await getBrandByRequestHost();
+  return brand ? { title: brand.name } : {};
+}
+
+export default async function RegisterPage() {
+  const brand = await getBrandByRequestHost();
+  // 代理域名：湘泰的联系方式一个都不给
+  const items = brand
+    ? []
+    : [
+        { label: "电话", value: CONTACT.phone },
+        { label: "微信", value: CONTACT.wechat },
+        { label: "Line", value: CONTACT.line },
+        { label: "邮箱", value: CONTACT.email },
+      ].filter((i) => i.value.trim().length > 0);
 
   return (
     <div className="auth-shell">
-      <div className="auth-visual">
+      {/* 代理域名不用湘泰背景图（船身印着 XT 标） */}
+      <div className="auth-visual" style={brand ? AGENT_VISUAL_STYLE : undefined}>
         <div className="auth-visual-text">
-          <h2>湘泰物流</h2>
+          {brand?.logoUrl ? (
+            <img src={brand.logoUrl} alt="" style={{ display: "block", maxHeight: 64, maxWidth: 200, marginBottom: 16 }} />
+          ) : null}
+          <h2>{brand ? brand.name : "湘泰物流"}</h2>
           <p>中泰跨境物流管理系统<br />预报 · 装柜 · 清关 · 派送 · 签收，全程可查</p>
         </div>
       </div>

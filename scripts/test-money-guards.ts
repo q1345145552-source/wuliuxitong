@@ -422,7 +422,7 @@ async function main(): Promise<void> {
     assert.equal(wrote.totalPackages, 7, `写进去的总件数不对：${wrote.totalPackages}`);
   });
 
-  await checkAsync("5) 建柜接口：单价 0.001 和总方数超上限都要拦（真调路由）", async () => {
+  await checkAsync("5) 建柜接口：总方数超上限、3 位小数都要拦（真调路由；单价 2026-09-16 起不再由建柜传）", async () => {
     const handler = routes.get("POST /admin/whr-consolidation/plans");
     assert.ok(handler, `没注册建柜路由，现有：${[...routes.keys()].slice(0, 8).join(", ")}`);
     /**
@@ -434,13 +434,11 @@ async function main(): Promise<void> {
       warehouse: "义乌", containerType: "40HQ", destinationTh: "曼谷",
       customers: [{ clientId: "u_client", unitPriceNormal: 850, unitPriceInspection: 900, unitPriceSensitive: 950 }],
     };
-    // 单价 0.001
-    const r1 = await callRoute(handler!, ADMIN, {
-      ...base,
-      customers: [{ clientId: "u_client", unitPriceNormal: 0.001, unitPriceInspection: 900, unitPriceSensitive: 950 }],
-    });
-    assert.equal(r1.status, 400, `单价 0.001 没被拦，拿到 ${r1.status}`);
-    assert.ok(/单价/.test(r1.message), `拦是拦了，但不是单价那道闸：${r1.message}`);
+    /**
+     * 2026-09-16：原来这里还测「单价 0.001 要拦」。建柜不再收单价了（按客户长期价自动带出，
+     * 确认单 4.4 / 4.19），单价那道闸挪到了长期价入口 parseWhrPriceInput —— 由
+     * test-agent-foundation.ts 第 15 项和 test-whr-long-term-price.ts 盯着。
+     */
     // 总方数超上限
     const r2 = await callRoute(handler!, ADMIN, { ...base, totalVolumeM3: 100000000 });
     assert.equal(r2.status, 400, `总方数 1 亿没被拦，拿到 ${r2.status}`);
@@ -492,7 +490,28 @@ async function main(): Promise<void> {
   });
 
 
-  await checkAsync("7) 另外三个改单价的入口也要拦（复核指出我只测了建柜）", async () => {
+  await checkAsync("7) 柜里单独改单价的三个口子全部关掉（2026-09-16 起单价只跟长期价走）", async () => {
+    /**
+     * ⚠️ 2026-09-16 改写。原来这一项测「改单价 / 新增客户 / 审核时改单价」三个入口都要拦 0.001。
+     * 确认单 4.4 / 4.19 之后这三个入口**根本不再收单价**：
+     *   · customers/price 停用 → 410，不碰数据库
+     *   · customers/add、prealerts/review 源码里不许再读 body 里的单价
+     *     （读了就说明有人把「员工手填单价」又加回来了 —— 4.6 明确员工填不了也改不了）
+     * 单价合法性那道闸现在在长期价入口（parseWhrPriceInput），由 test-whr-long-term-price.ts 真调路由盯着。
+     */
+    const gone = routes.get("POST /admin/whr-consolidation/customers/price");
+    assert.ok(gone, "改单价的路由被整个删了 —— 应该留着回 410 + 人话，开着旧页面的人才看得懂");
+    const r = await callRoute(gone!, ADMIN, { planId: "p_1", customerId: "u_client", unitPriceNormal: 850 });
+    assert.equal(r.status, 410, `柜里改单价没有停用，拿到 ${r.status}`);
+    assert.ok(/客户管理/.test(r.message), `提示里没告诉他去哪改：${r.message}`);
+    for (const key of ["POST /admin/whr-consolidation/customers/add", "POST /admin/whr-consolidation/prealerts/review"]) {
+      const handler = routes.get(key);
+      assert.ok(handler, `没注册 ${key}`);
+      assert.ok(!/body\.unitPrice/.test(String(handler)), `${key} 又开始读请求里的单价了`);
+    }
+  });
+
+  await checkAsync("7b) 长期价入口的单价闸：0.001 / 3 位小数 / 布尔都要拦（不碰数据库）", async () => {
     /**
      * ⚠️ 复核实测：断开「修改客户单价」那道金额闸，我这个脚本 6/6 照样全绿 ——
      * 因为我只真调了「建柜」和「普通版建预报单」两个入口，
@@ -503,27 +522,14 @@ async function main(): Promise<void> {
      * 上一版我把 `destinationTh` 写成 `destination`，所有用例都停在
      * 「目的地为必填」上，测了个寂寞。
      */
-    const cases: Array<[string, string, Record<string, unknown>]> = [
-      ["修改客户单价", "POST /admin/whr-consolidation/customers/price",
-        { planId: "p_1", customerId: "u_client" }],
-      ["新增客户", "POST /admin/whr-consolidation/customers/add",
-        { planId: "p_1", clientId: "u_client" }],
-      ["审核时改单价", "POST /admin/whr-consolidation/prealerts/review",
-        { planId: "p_1", prealertId: "pa_1", action: "approve" }],
-    ];
-    for (const [label, key, base] of cases) {
-      const handler = routes.get(key);
-      assert.ok(handler, `没注册 ${key}（${label}）`);
-      // 0.001 会被 Decimal(10,2) 存成 0.00
-      const r1 = await callRoute(handler!, ADMIN, { ...base, unitPriceNormal: 0.001 });
-      assert.equal(r1.status, 400, `【${label}】单价 0.001 没被拦，拿到 ${r1.status}`);
-      assert.ok(/单价/.test(r1.message), `【${label}】拦是拦了，但不是单价闸：${r1.message}`);
-      // 3 位小数
-      const r2 = await callRoute(handler!, ADMIN, { ...base, unitPriceNormal: 12.345 });
-      assert.equal(r2.status, 400, `【${label}】单价 3 位小数没被拦，拿到 ${r2.status}`);
-      // 布尔
-      const r3 = await callRoute(handler!, ADMIN, { ...base, unitPriceNormal: true });
-      assert.equal(r3.status, 400, `【${label}】单价传布尔没被拦，拿到 ${r3.status}`);
+    // 长期价入口的单价闸（不碰数据库）：0.001 会被 Decimal(10,2) 存成 0.00、3 位小数、布尔都要拦
+    const { parseWhrPriceInput } = await import("../apps/api/src/modules/whr-consolidation/long-term-price");
+    for (const [label, bad] of [["0.001", 0.001], ["3 位小数", 12.345], ["布尔", true]] as const) {
+      assert.throws(
+        () => parseWhrPriceInput({ normal: bad, inspection: 900, sensitive: 950 }),
+        /单价/,
+        `长期价入口单价【${label}】没被拦`,
+      );
     }
   });
 

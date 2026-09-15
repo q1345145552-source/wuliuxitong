@@ -175,7 +175,8 @@ export default function AdminConsolidationPage() {
   // 原来这里直接调删除，而且调的接口后端根本不存在（DELETE /admin/consolidation/tasks），
   // 点了必然失败。现在改成：打开弹窗先预检，把「会连带删掉什么」摆出来；
   // 后端拦住时（已收货 / 已开始走流程）再要求输管理员密码强删。
-  const [deletePreview, setDeletePreview] = useState<{ willDelete: Record<string, number>; blockers: string[]; refundTotal?: number; refundCount?: number } | null>(null);
+  // hardBlocked（2026-09-16，确认单 4.15）：已经发运的任务谁都不能删，输密码也不行 —— 这时不给密码框、不给确认按钮
+  const [deletePreview, setDeletePreview] = useState<{ willDelete: Record<string, number>; blockers: string[]; refundTotal?: number; refundCount?: number; hardBlocked?: boolean; hardBlockReason?: string | null } | null>(null);
   const [deletePassword, setDeletePassword] = useState("");
   const [deleteError, setDeleteError] = useState("");
   /* 2026-09-01 竞态全扫：删除预检要认主人。
@@ -198,7 +199,7 @@ export default function AdminConsolidationPage() {
       const r = await deleteAdminConsolidationTask(tid, { dryRun: true });
       // 2026-09-01 竞态全扫·认主人：回来时弹窗已换成别的任务（或已关闭），A 的预检不许挂到 B 的弹窗里
       if (deleteTaskIdRef.current !== tid) return;
-      setDeletePreview({ willDelete: r.willDelete, blockers: r.blockers, refundTotal: r.refundTotal, refundCount: r.refundCount });
+      setDeletePreview({ willDelete: r.willDelete, blockers: r.blockers, refundTotal: r.refundTotal, refundCount: r.refundCount, hardBlocked: r.hardBlocked, hardBlockReason: r.hardBlockReason });
       deletePreviewForRef.current = tid;
     } catch (e: any) {
       if (deleteTaskIdRef.current !== tid) return; // 旧预检的报错也不许乱入
@@ -642,7 +643,13 @@ export default function AdminConsolidationPage() {
       {deleteTaskId && (
         <Modal onClose={() => setDeleteTaskId(null)}>
           <p style={{ marginTop: 0, fontWeight: 600 }}>删除这个集货任务？</p>
-          {deletePreview ? (
+          {deletePreview?.hardBlocked ? (
+            /* 发运红线：已经发出去的任务不给密码框、不给确认按钮，只说清为什么删不了 */
+            <div style={{ background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 6, padding: 10, marginBottom: 12, fontSize: 13, color: "var(--c-red-deep)" }}>
+              <div style={{ fontWeight: 600, marginBottom: 4 }}>这个任务不能删</div>
+              <div>{deletePreview.hardBlockReason || "这个集货任务已经发运，已发出去的任务谁都不能删，输管理员密码也不行"}</div>
+            </div>
+          ) : deletePreview ? (
             <>
               <p style={{ margin: "0 0 8px", fontSize: 13, color: "var(--t-body)" }}>会连带删掉：</p>
               <ul style={{ margin: "0 0 12px", paddingLeft: 20, fontSize: 13, color: "var(--t-body)" }}>
@@ -679,8 +686,10 @@ export default function AdminConsolidationPage() {
           )}
           {deleteError && <p style={{ color: "var(--c-red-deep)", fontSize: 13, margin: "0 0 10px" }}>{deleteError}</p>}
           <div style={{ display: "flex", gap: 8 }}>
-            <button onClick={handleDeleteTask} disabled={deleteTaskSubmitting || !deletePreview} style={{ padding: "8px 16px", background: deletePreview ? "var(--c-red)" : "var(--l-strong)", color: "var(--white)", border: "none", borderRadius: 6, cursor: deletePreview ? "pointer" : "not-allowed" }}>{deleteTaskSubmitting ? "删除中..." : "确认删除"}</button>
-            <button onClick={() => setDeleteTaskId(null)} style={{ padding: "8px 16px", border: "1px solid var(--l-strong)", background: "var(--white)", color: "var(--t-muted)", borderRadius: 6, cursor: "pointer" }}>取消</button>
+            {!deletePreview?.hardBlocked && (
+              <button onClick={handleDeleteTask} disabled={deleteTaskSubmitting || !deletePreview} style={{ padding: "8px 16px", background: deletePreview ? "var(--c-red)" : "var(--l-strong)", color: "var(--white)", border: "none", borderRadius: 6, cursor: deletePreview ? "pointer" : "not-allowed" }}>{deleteTaskSubmitting ? "删除中..." : "确认删除"}</button>
+            )}
+            <button onClick={() => setDeleteTaskId(null)} style={{ padding: "8px 16px", border: "1px solid var(--l-strong)", background: "var(--white)", color: "var(--t-muted)", borderRadius: 6, cursor: "pointer" }}>{deletePreview?.hardBlocked ? "知道了" : "取消"}</button>
           </div>
         </Modal>
       )}

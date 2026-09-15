@@ -194,11 +194,41 @@ jobs:
       - name: Test hide operator identity
         run: npm run test:hide-operator-identity
 
+      # 代理管理 + 返现单（2026-09-16 加，B2）。不连库。
+      # 前缀保留字扫真的 app 目录和 next.config.ts；开代理两行同生同死；代理密码卡强度；
+      # 调高代理价被名下客户价挡住且什么都没写；停用只停代理登录号；
+      # 返现单按北京时间切月、重复跑不重复、出单后新签收进下个月、「已返」只改状态。
+      - name: Test agent admin and rebates
+        run: |
+          npm run test:agent-admin
+          npm run test:agent-rebates
+
       - name: Test cargo, dispatch wrapping and track actions
         run: |
           npm run test:cargo-regressions
           npm run test:dispatch-wrap
           npm run test:shipment-track-actions
+
+      # 代理的客户换牌子（2026-09-16 加，B4）。
+      # 公开品牌接口只回名字和 logo（桩故意把整行价格塞回来，多一个字段就红）、
+      # 客户 / 代理登录后的品牌、改归属当场生效、菜单 id 对得上、/login 转代理登录页不许跳出站外。不连库。
+      - name: Test agent branding
+        run: npm run test:agent-branding
+
+      # 代理工作台隔离（2026-09-16，B3）。纯函数部分 CI 里跑；
+      # 真接口部分要连测试库（两个代理 + 湘泰客户各造数据，逐个 /agent/* 接口证明只拿到自己的），
+      # CI 没有数据库会打印「跳过」—— 本地改了 agent-portal 必须连测试库跑一遍。
+      - name: Test agent portal isolation
+        run: npm run test:agent-portal-isolation
+
+      # 仓库版集货改长期价 + 付款快照 + 超管客户管理（2026-09-16 加，B1）。不连库（内存库 scripts/whr-memory-db.ts）。
+      # 建柜/加客户按长期价带出且锁序对、员工和客户的返回里没有代理信息、改价/改归属/填地址锁里重判。
+      - name: Test warehouse long-term price
+        run: npm run test:whr-long-term-price
+
+      # 已发运的柜谁都不能删，输管理员密码也不行（2026-09-16 加，B1，确认单 4.15）。仓库版 + 普通版，含锁里重判。
+      - name: Test delete after shipped
+        run: npm run test:delete-after-shipped
 
       - name: Build frontend
         run: npm run build --prefix apps/web

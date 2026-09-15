@@ -79,6 +79,13 @@ const LOCK_HELPERS: Record<string, string[]> = {
    */
   generatePrealertNo: ["advisory_prealert_no"],
   generateTaskNo: ["advisory_consolidation_task_no"],
+  /**
+   * ⚠️ 2026-09-16 代理账号新增：客户长期价排队锁（long-term-price.ts，pg_advisory_xact_lock(83020, …)）。
+   * 锁序：客户价锁 → 代理行 → 计划 → 预报单 → 钱包。建柜、往柜里加客户、超管改长期价、
+   * 改客户归属这几条路的第一把锁就是它；不登记的话第 1 项会把它们当成「没锁就写」误报，
+   * 第 6 项也认不出「按 clientId 排序逐个锁」那个循环。第 10 项会去函数体里核实锁真的在。
+   */
+  lockClientWhrPrice: ["advisory_client_whr_price"],
 };
 
 const WRITE_RE = /\btx\.\w+\.(create|update|updateMany|delete|deleteMany|upsert|createMany)\b/;
@@ -301,11 +308,11 @@ console.log("加锁顺序");
 const NO_LOCK_NEEDED: Array<[string, string]> = [
   ["client-addresses/routes.ts", "新建收货地址：纯插入一行新数据，不依赖任何已有状态"],
   ["/admin/whr-consolidation/plans", "新建拼柜计划：纯插入，计划这时候还不存在"],
-  [
-    "/admin/whr-consolidation/prealerts/item-cargo-type",
-    "改货型：只改这一行的货型 + 写一条日志。用户 2026-08-15 拍板「全部手动报价」，" +
-      "这条路故意不重算金额，也不动方数件数，没有共享的合计要护",
-  ],
+  /*
+   * 2026-09-16：原来这里豁免了 item-cargo-type（「故意不重算金额」）。
+   * 那条路现在会重算没付款的单的金额，而且第一句就是 lockPlanAliveByPrealert，
+   * 不需要豁免了 —— 删掉，免得以后它真漏了锁也被这一条吃掉。
+   */
 ];
 
 /**

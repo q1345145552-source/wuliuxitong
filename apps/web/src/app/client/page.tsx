@@ -8,6 +8,7 @@ import EmptyStateCard from "../../modules/layout/EmptyStateCard";
 import Toast from "../../modules/layout/Toast";
 // 2026-08-31 收尾清理：formatCny 引入了但全文件没用过（历史遗留死 import），删掉
 import { sendAiMessage } from "../../services/ai-client";
+import { useCurrentSessionBrand } from "../../modules/branding/useWorkbenchBrand";
 import { apiBaseUrl } from "../../services/core-api";
 import { formatMetric, volumeM3FromDimensionsCm, formatVolumeM3String, warehouseLabelFromId } from "../../modules/staff/utils";
 import { productNamesLabel } from "../../../../../packages/shared-types/product-names";
@@ -174,6 +175,9 @@ export default function ClientHomePage() {
   const [openDetailsByOrder, setOpenDetailsByOrder] = useState<Record<string, boolean>>({});
   const [detailImagesCache, setDetailImagesCache] = useState<Record<string, OrderProductImageItem[]>>({});
   const [search, setSearch] = useState(initialSearch);
+  // 代理的客户不给 AI（3.6 / 5.7，后端统一闸也挡着 /client/ai）。还没查到品牌时照旧显示，接口会 403
+  const sessionBrand = useCurrentSessionBrand();
+  const hideAi = Boolean(sessionBrand);
   const [aiQuestion, setAiQuestion] = useState("");
   const [aiAnswer, setAiAnswer] = useState("");
   const [aiLoading, setAiLoading] = useState(false);
@@ -915,6 +919,7 @@ export default function ClientHomePage() {
 
         </div>
 
+        {hideAi ? null : (
         <div style={{ border: "1px solid var(--l-soft)", borderRadius: 8, padding: 10, marginBottom: 12, background: "var(--s-cool)" }}>
           <div style={{ fontWeight: 600, marginBottom: 8 }}>AI问答</div>
           <div style={{ display: "flex", gap: 8 }}>
@@ -942,6 +947,7 @@ export default function ClientHomePage() {
             <div style={{ marginTop: 8, whiteSpace: "pre-wrap", color: "var(--t-strong)", fontSize: 13 }}>{aiAnswer}</div>
           ) : null}
         </div>
+        )}
       </section>
 
 

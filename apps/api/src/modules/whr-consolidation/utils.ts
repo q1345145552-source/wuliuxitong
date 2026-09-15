@@ -1,6 +1,8 @@
 import { BusinessError } from "../core/business-error";
 import { checkTotalsWritable } from "../core/decimal-guard";
+import { logger } from "../core/logger";
 import { prisma } from "../../db/prisma";
+import { computeRebate } from "./rebate";
 
 // ============================================================================
 // 常量
@@ -268,6 +270,122 @@ export async function recalcUnpaidPrealertFees(planCustomerId: string, tx: any =
   for (const pa of prealerts) {
     await recalcPrealertFee(pa.id, tx);
   }
+}
+
+// ============================================================================
+// 付款快照（2026-09-16，确认单 4.14 / 4.10）
+// ============================================================================
+
+/**
+ * 撤销付款 / 作废已付款的单时，快照整组清空（再付款会重新记）。
+ * 用法：`data: { status: ..., ...CLEARED_PAID_SNAPSHOT }`
+ */
+export const CLEARED_PAID_SNAPSHOT = {
+  paidPriceNormal: null,
+  paidPriceInspection: null,
+  paidPriceSensitive: null,
+  paidAgentId: null,
+  paidAgentPriceNormal: null,
+  paidAgentPriceInspection: null,
+  paidAgentPriceSensitive: null,
+  rebateAmount: null,
+} as const;
+
+export interface PaidSnapshot {
+  paidPriceNormal: number;
+  paidPriceInspection: number;
+  paidPriceSensitive: number;
+  paidAgentId: string | null;
+  paidAgentPriceNormal: number | null;
+  paidAgentPriceInspection: number | null;
+  paidAgentPriceSensitive: number | null;
+  rebateAmount: number | null;
+}
+
+/**
+ * 算「付款那一刻」的价格快照：客户三档价 + 客户所属代理 + 代理三档价 + 这票返现。
+ *
+ * ⚠️ **必须在调用方已经锁住计划和这张预报单之后调**（付款那条路的锁序是【计划 → 预报单 → 钱包】）：
+ *    · 客户价读的是柜里这位客户那一行（plan_customers）—— 改长期价那边改这一行之前也要先锁计划，
+ *      所以锁住计划之后读到的就是「这次扣钱用的那个价」，跟 totalFee 同一口径。
+ *    · 货品、货型在锁住预报单之后读，跟扣的钱对得上。
+ * ⚠️ 代理行**故意不加锁**、普通读：改长期价那条路是「代理行 FOR SHARE → 计划」，
+ *    这里若在锁完计划之后再去拿代理行的锁，就是反着拿；再碰上「调高代理价」的 FOR UPDATE 排队，
+ *    三方会绕成死锁。读已提交的代理价对快照来说足够：代理价改了只影响之后付款的单。
+ * ⚠️ 客户归属（users.agent_id）也是普通读：改归属只许在客户还没有任何集货记录时做
+ *    （admin/routes.ts），能走到付款的客户归属已经改不动了。
+ * ⚠️ 返现算出负数（客户价低于代理价，存价时已拦住，理论上不会发生）→ 记 0 并写警告日志，
+ *    不拦付款：钱是客户付给湘泰的，返现单是湘泰付给代理的，不能因为返现数据异常让客户付不了款。
+ */
+export async function buildPaidSnapshot(prealertId: string, tx: any): Promise<PaidSnapshot> {
+  const pa = await tx.whrConsolidationPrealert.findUnique({
+    where: { id: prealertId },
+    select: {
+      trackingNo: true,
+      companyId: true,
+      items: { select: { cargoType: true, volumeM3: true } },
+      planCustomer: {
+        select: { clientId: true, unitPriceNormal: true, unitPriceInspection: true, unitPriceSensitive: true },
+      },
+    },
+  });
+  if (!pa) throw new BusinessError("预报单不存在", 404, "NOT_FOUND");
+
+  const clientPrices = {
+    normal: toNum(pa.planCustomer.unitPriceNormal),
+    inspection: toNum(pa.planCustomer.unitPriceInspection),
+    sensitive: toNum(pa.planCustomer.unitPriceSensitive),
+  };
+  const snapshot: PaidSnapshot = {
+    paidPriceNormal: clientPrices.normal,
+    paidPriceInspection: clientPrices.inspection,
+    paidPriceSensitive: clientPrices.sensitive,
+    paidAgentId: null,
+    paidAgentPriceNormal: null,
+    paidAgentPriceInspection: null,
+    paidAgentPriceSensitive: null,
+    rebateAmount: null,
+  };
+
+  // 同公司过滤 + 判空（CLAUDE.md #27）：查不到客户就当湘泰自己的客户，代理那几列留空
+  const client = await tx.user.findFirst({
+    where: { id: pa.planCustomer.clientId, companyId: pa.companyId },
+    select: { agentId: true },
+  });
+  if (!client?.agentId) return snapshot;
+
+  snapshot.paidAgentId = client.agentId;
+  const agent = await tx.agent.findFirst({
+    where: { id: client.agentId, companyId: pa.companyId },
+    select: { priceNormal: true, priceInspection: true, priceSensitive: true },
+  });
+  if (!agent) {
+    // 外键是 RESTRICT，正常删不掉代理；真查不到说明数据坏了，记下来但不拦付款
+    logger.warn("付款快照：客户所属代理查不到，返现记 0", { 预报单: pa.trackingNo, 代理: client.agentId });
+    snapshot.rebateAmount = 0;
+    return snapshot;
+  }
+  const agentPrices = {
+    normal: toNum(agent.priceNormal),
+    inspection: toNum(agent.priceInspection),
+    sensitive: toNum(agent.priceSensitive),
+  };
+  snapshot.paidAgentPriceNormal = agentPrices.normal;
+  snapshot.paidAgentPriceInspection = agentPrices.inspection;
+  snapshot.paidAgentPriceSensitive = agentPrices.sensitive;
+
+  const { rebateAmount } = computeRebate(pa.items, clientPrices, agentPrices);
+  if (rebateAmount < 0) {
+    logger.warn("付款快照：返现算出负数（客户价低于代理价），记 0", {
+      预报单: pa.trackingNo,
+      代理: client.agentId,
+      算出来的返现: rebateAmount,
+    });
+    snapshot.rebateAmount = 0;
+  } else {
+    snapshot.rebateAmount = rebateAmount;
+  }
+  return snapshot;
 }
 
 // ============================================================================

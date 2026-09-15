@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { useCurrentSessionBrand } from "../../../modules/branding/useWorkbenchBrand";
 
 const KUAIDI100_WEB_URL = "https://www.kuaidi100.com/";
 
@@ -67,6 +68,7 @@ function matchExpressCompany(option: ExpressCompanyOption, query: string): boole
  * 客户端免登录轨迹查询页面（跳转快递100）。
  */
 export default function ClientTrackPage() {
+  const sessionBrand = useCurrentSessionBrand();
   const [trackingNo, setTrackingNo] = useState("");
   const [companySearch, setCompanySearch] = useState("");
   const [companyCodePreset, setCompanyCodePreset] = useState("");
@@ -90,7 +92,8 @@ export default function ClientTrackPage() {
           先填单号和快递公司的话，跳过去会自动带上。
           <br />
           <span style={{ color: "var(--t-muted)", fontSize: 13 }}>
-            要查自己的湘泰运单，请用左边的「运单查询」。
+            {/* 按品牌说（5.4）：代理的客户写代理名字；还没查到是谁的时候不写公司名 */}
+            要查自己的{sessionBrand ? sessionBrand.name : sessionBrand === null ? "湘泰" : ""}运单，请用左边的「运单查询」。
           </span>
         </p>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(220px,1fr))", gap: 8 }}>

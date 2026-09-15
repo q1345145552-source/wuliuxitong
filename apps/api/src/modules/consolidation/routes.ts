@@ -147,6 +147,23 @@ export function validateConsolidationProductRow(p: any, index: number): string |
   return null;
 }
 
+/**
+ * 删集货任务的「发运红线」（2026-09-16，确认单 4.15）：已经发出去的任务谁都不能删，输管理员密码也不行。
+ *
+ * 普通版任务状态全集（schema 注释 + advance-status 的 validTransitions 核过）：
+ *   collecting → full_confirmed → quoted → paid → loading → in_transit → customs → delivering → completed，另有 cancelled。
+ * 「发运起」= 离开装柜进入运输：in_transit / customs / delivering / completed。
+ * loading（装柜中）还没发出去，照原来的规矩（开始走流程要输密码）。
+ * cancelled 不算：取消只允许在收集中 / 已满柜 / 已报价时做，被取消的任务一定没发过运。
+ * ⚠️ 状态机以后加了新的「运输中」档，这里要一起加 —— 白名单漏写一档等于那档能被带密码删掉。
+ */
+export const CONSOLIDATION_SHIPPED_TASK_STATUSES = ["in_transit", "customs", "delivering", "completed"];
+export function consolidationTaskShippedReason(taskStatus: string): string | null {
+  return CONSOLIDATION_SHIPPED_TASK_STATUSES.includes(taskStatus)
+    ? "这个集货任务已经发运，已发出去的任务谁都不能删，输管理员密码也不行"
+    : null;
+}
+
 export function checkConsolidationDeletable(input: {
   paymentStatus: string;
   taskStatus: string;
@@ -2578,6 +2595,12 @@ export function registerConsolidationRoutes(app: MinimalHttpApp): void {
       prisma.consolidationStatusLog.count({ where: { taskId } }),
     ]);
 
+    /**
+     * 发运红线（2026-09-16，确认单 4.15）：已经发出去的任务谁都不能删，输管理员密码也不行。
+     * 预览照样回（hardBlocked=true），界面据此不给密码框；真删的时候锁里再判一次。
+     */
+    const shippedReason = consolidationTaskShippedReason(task.status);
+
     // 哪些情况算「已经开始走流程」
     const startedPrealerts = task.prealerts.filter((p) => p.status !== "pending");
     const taskStarted = !["collecting", "cancelled"].includes(task.status);
@@ -2599,7 +2622,17 @@ export function registerConsolidationRoutes(app: MinimalHttpApp): void {
     const refundTotal = pendingRefunds.reduce((s, r) => s + r.amount, 0);
 
     if (body.dryRun) {
-      ok(res, { taskNo: task.taskNo, willDelete, blockers, refundTotal, refundCount: pendingRefunds.length });
+      ok(res, {
+        taskNo: task.taskNo, willDelete, blockers, refundTotal, refundCount: pendingRefunds.length,
+        hardBlocked: shippedReason !== null,
+        hardBlockReason: shippedReason,
+      });
+      return;
+    }
+
+    // 发运红线在查密码之前就拦：带没带密码、密码对不对，都一样删不了
+    if (shippedReason) {
+      fail(res, 409, "VALIDATION_ERROR", shippedReason);
       return;
     }
 
@@ -2645,6 +2678,11 @@ export function registerConsolidationRoutes(app: MinimalHttpApp): void {
         select: { status: true, prealerts: { select: { status: true } } },
       });
       if (!nowTask) throw new BusinessError("集货任务不存在", 404, "NOT_FOUND");
+      // ⚠️ 发运红线锁完再判一次（CLAUDE.md #28）：输密码那几秒里员工可能刚把任务推进到运输中
+      const shippedNow = consolidationTaskShippedReason(nowTask.status);
+      if (shippedNow) {
+        throw new BusinessError(shippedNow, 409, "VALIDATION_ERROR");
+      }
       const nowBlocked =
         nowTask.prealerts.some((pa) => pa.status !== "pending") ||
         !["collecting", "cancelled"].includes(nowTask.status);

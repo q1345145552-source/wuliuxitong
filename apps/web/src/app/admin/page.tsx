@@ -41,7 +41,6 @@ import { formatMetric, shipmentStatusZh, transportModeLabel, warehouseLabelFromI
 import { SHIPMENT_STATUS_FILTER_OPTIONS } from "../../modules/shipment/shipment-status";
 import ShippingConfig from "../../components/admin/ShippingConfig";
 import { createRequestGate } from "../../modules/shared/request-gate";
-import { navigateToHash } from "../../modules/layout/navigate-to-hash";
 import {
   fetchAdminOverview,
   fetchStaffShipmentOverview,
@@ -61,6 +60,9 @@ import {
   toggleUserBan,
   deleteAdminOrder,
   setAdminStaffPassword,
+  fetchAgentOptions,
+  setAdminClientWhrPrice,
+  type AgentOption,
   type AdminOverview,
   type AdminOpsOverview,
   type AdminUserItem,
@@ -505,10 +507,16 @@ export default function AdminHomePage() {
     [editProducts, orderEditForm.weightKg, orderEditForm.volumeM3],
   );
   const [staffForm, setStaffForm] = useState({ id: "", name: "", phone: "", password: "" });
-  const [clientForm, setClientForm] = useState({ id: "", name: "", companyName: "", phone: "", email: "", password: "" });
+  const [clientForm, setClientForm] = useState({ id: "", name: "", companyName: "", phone: "", email: "", password: "", agentId: "" });
   const [showStaffModal, setShowStaffModal] = useState(false);
   const [showClientModal, setShowClientModal] = useState(false);
   const [editingClientId, setEditingClientId] = useState<string | null>(null);
+  // 2026-09-16 代理账号：开客户选归属（确认单 2.2 / 6.2）、卡片上填/改长期价（4.19，代理的客户只读 4.7）
+  const [agentOptions, setAgentOptions] = useState<AgentOption[]>([]);
+  /** 编辑弹窗打开时这个客户原来的归属；只有改了才把 agentId 发给后端 */
+  const [editingClientAgentId, setEditingClientAgentId] = useState<string | null>(null);
+  const [priceEditFor, setPriceEditFor] = useState<string | null>(null);
+  const [priceForm, setPriceForm] = useState({ normal: "", inspection: "", sensitive: "" });
   const [settingPasswordFor, setSettingPasswordFor] = useState<string | null>(null);
   const [settingPasswordValue, setSettingPasswordValue] = useState("");
   // 设密码时能不能看见自己输的内容。每次换一个账号设密码都恢复成看不见，避免被旁人瞄到
@@ -636,8 +644,10 @@ export default function AdminHomePage() {
   }, []);
 
   const loadClients = useCallback(async () => {
-    const list = await fetchAdminClients();
+    // 代理下拉跟客户列表一起拉；代理接口出错时返回空数组，不影响客户列表
+    const [list, agents] = await Promise.all([fetchAdminClients(), fetchAgentOptions()]);
     setClientList(list);
+    setAgentOptions(agents);
   }, []);
 
   /**
@@ -1101,10 +1111,12 @@ export default function AdminHomePage() {
         phone: clientForm.phone.trim(),
         email: clientForm.email.trim() || undefined,
         password: clientForm.password.trim() || undefined,
+        agentId: clientForm.agentId || null,
       });
-      setClientForm({ id: "", name: "", companyName: "", phone: "", email: "", password: "" });
+      const agentName = agentOptions.find((a) => a.id === clientForm.agentId)?.name;
+      setClientForm({ id: "", name: "", companyName: "", phone: "", email: "", password: "", agentId: "" });
       setShowClientModal(false);
-      setToast("客户添加成功");
+      setToast(agentName ? `客户添加成功，开在代理「${agentName}」名下` : "客户添加成功");
       setMessage("");
       await Promise.all([loadClients(), loadOverview()]);
     } catch (error) {
@@ -1136,10 +1148,13 @@ export default function AdminHomePage() {
         phone: clientForm.phone.trim(),
         email: clientForm.email.trim() || undefined,
         password: clientForm.password.trim() || undefined,
+        // 归属只有真改了才发（后端只许没业务记录的客户改归属，不改就别去碰那道闸）
+        ...(clientForm.agentId !== (editingClientAgentId ?? "") ? { agentId: clientForm.agentId || null } : {}),
       });
-      setClientForm({ id: "", name: "", companyName: "", phone: "", email: "", password: "" });
+      setClientForm({ id: "", name: "", companyName: "", phone: "", email: "", password: "", agentId: "" });
       setShowClientModal(false);
       setEditingClientId(null);
+      setEditingClientAgentId(null);
       setToast("客户信息已更新");
       setMessage("");
       await loadClients();
@@ -1150,6 +1165,42 @@ export default function AdminHomePage() {
       } else {
         setMessage(`更新失败：${text}`);
       }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  /**
+   * 超管填 / 改湘泰自己客户的长期价（2026-09-16，确认单 4.19）。代理的客户卡片上没有这个按钮，后端也会拒（4.7）。
+   * 改完「计划中/收货中/装柜中」柜里这位客户没付款的单自动按新价重算，已付款的不变（4.14）。
+   */
+  const submitClientWhrPrice = async (u: AdminUserItem) => {
+    if (loading) return;
+    const vals: Array<[string, string]> = [["普货", priceForm.normal], ["商检货", priceForm.inspection], ["敏感货", priceForm.sensitive]];
+    for (const [label, raw] of vals) {
+      const v = raw.trim();
+      const n = Number(v);
+      if (!v || !Number.isFinite(n) || n <= 0) { setMessage(`${label}单价要填大于 0 的数`); return; }
+      // 库里是 Decimal(10,2)，多的小数位会被抹掉，跟填的对不上
+      if (Math.abs(n * 100 - Math.round(n * 100)) > 1e-6) { setMessage(`${label}单价最多只能有 2 位小数`); return; }
+    }
+    setLoading(true);
+    setMessage("");
+    try {
+      const r = await setAdminClientWhrPrice({
+        clientId: u.id,
+        unitPriceNormal: Number(priceForm.normal.trim()),
+        unitPriceInspection: Number(priceForm.inspection.trim()),
+        unitPriceSensitive: Number(priceForm.sensitive.trim()),
+      });
+      setPriceEditFor(null);
+      setToast(r.updatedPlanRows > 0
+        ? `长期价已保存；这个客户在 ${r.updatedPlanRows} 个还没发运的柜里没付款的单已按新价重算`
+        : "长期价已保存，以后加进仓库版集货的柜时自动带出");
+      await loadClients();
+    } catch (error) {
+      const text = error instanceof Error ? error.message : "保存失败";
+      setMessage(`保存长期价失败：${text}`);
     } finally {
       setLoading(false);
     }
@@ -1311,14 +1362,6 @@ export default function AdminHomePage() {
       orderExportInFlight.current = false;
       setOrderExporting(false);
     }
-  };
-
-  // 根据导航切换当前显示的功能分区。
-  const scrollToSection = (id: string) => {
-    if (!isSectionId(id)) return;
-    setActiveSection(id);
-    // 不能写 window.location.hash = id：那样的历史记录 Next 后退时不认，见 navigate-to-hash.ts
-    navigateToHash(`${window.location.pathname}${window.location.search}#${id}`);
   };
 
   useEffect(() => {
@@ -1741,7 +1784,7 @@ export default function AdminHomePage() {
         <div style={{ marginBottom: 12, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
           <button
             type="button"
-            onClick={() => { setShowClientModal(true); setEditingClientId(null); setClientForm({ id: "", name: "", companyName: "", phone: "", email: "", password: "" }); }}
+            onClick={() => { setShowClientModal(true); setEditingClientId(null); setClientForm({ id: "", name: "", companyName: "", phone: "", email: "", password: "", agentId: "" }); }}
             style={{ border: "none", borderRadius: 8, padding: "8px 14px", background: "var(--c-blue)", color: "var(--white)", fontWeight: 600, cursor: "pointer" }}
           >
             创建账号
@@ -1795,6 +1838,41 @@ export default function AdminHomePage() {
                   <span><strong>公司名字</strong> {u.companyName ?? "-"}</span>
                   <span><strong>电话</strong> {u.phone}</span>
                   <span><strong>邮箱</strong> {u.email ?? "-"}</span>
+                  {/* 2026-09-16 代理账号（确认单 6.3 / 4.19）：所属代理、仓库版集货长期价 */}
+                  <span><strong>所属代理</strong> {u.agentId ? (u.agentName ?? "代理") : "湘泰自己的客户"}</span>
+                  <span>
+                    <strong>长期价</strong>{" "}
+                    {u.whrPrice
+                      ? `普 ${u.whrPrice.normal} · 商检 ${u.whrPrice.inspection} · 敏感 ${u.whrPrice.sensitive}`
+                      : <span style={{ color: "var(--c-red-deep)", fontWeight: 600 }}>未填价</span>}
+                    {u.whrPrice && u.whrPrice.filledByRole == null
+                      ? <span style={{ display: "block", fontSize: 11, color: "var(--t-muted)" }}>上线时按最近一个柜的价自动填</span>
+                      : null}
+                    {u.whrPrice && u.whrPrice.filledByRole === "agent"
+                      ? <span style={{ display: "block", fontSize: 11, color: "var(--t-muted)" }}>代理填的</span>
+                      : null}
+                  </span>
+                  {u.agentId ? (
+                    <span style={{ fontSize: 12, color: "var(--t-muted)", alignSelf: "center" }}>价格由代理填，这里不能改</span>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (priceEditFor === u.id) { setPriceEditFor(null); return; }
+                        setSettingPasswordFor(null);
+                        setPriceForm({
+                          normal: u.whrPrice ? String(u.whrPrice.normal) : "",
+                          inspection: u.whrPrice ? String(u.whrPrice.inspection) : "",
+                          sensitive: u.whrPrice ? String(u.whrPrice.sensitive) : "",
+                        });
+                        setPriceEditFor(u.id);
+                      }}
+                      disabled={loading}
+                      style={{ border: "1px solid var(--c-blue)", color: "var(--c-blue)", borderRadius: 8, padding: "6px 10px", background: "var(--white)", cursor: "pointer", fontSize: 13 }}
+                    >
+                      {priceEditFor === u.id ? "取消" : u.whrPrice ? "改长期价" : "填长期价"}
+                    </button>
+                  )}
                   <span><strong>状态</strong> {u.status === "inactive" ? "已封禁" : "正常"}</span>
                   <span style={{ color: "var(--t-strong)", fontSize: 12 }}>{u.createdAt.slice(0, 10)}</span>
                   <button
@@ -1809,6 +1887,7 @@ export default function AdminHomePage() {
                     type="button"
                     onClick={() => {
                       setEditingClientId(u.id);
+                      setEditingClientAgentId(u.agentId ?? null);
                       setClientForm({
                         id: u.id,
                         name: u.name,
@@ -1816,6 +1895,7 @@ export default function AdminHomePage() {
                         phone: u.phone,
                         email: u.email ?? "",
                         password: "",
+                        agentId: u.agentId ?? "",
                       });
                       setShowClientModal(true);
                     }}
@@ -1861,6 +1941,40 @@ export default function AdminHomePage() {
                     >
                       取消
                     </button>
+                  </div>
+                ) : null}
+                {priceEditFor === u.id && !u.agentId ? (
+                  <div style={{ marginTop: 8, paddingTop: 8, borderTop: "1px solid var(--l-soft)", display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                    <span style={{ fontSize: 13, color: "var(--t-strong)" }}>仓库版集货长期价（元/方）</span>
+                    {([["normal", "普货"], ["inspection", "商检货"], ["sensitive", "敏感货"]] as const).map(([key, label]) => (
+                      <label key={key} style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 13, color: "var(--t-strong)" }}>
+                        {label}
+                        <input
+                          type="number"
+                          value={priceForm[key]}
+                          onChange={(e) => setPriceForm((f) => ({ ...f, [key]: e.target.value }))}
+                          style={{ border: "1px solid var(--l-strong)", borderRadius: 8, padding: "6px 8px", width: 90 }}
+                        />
+                      </label>
+                    ))}
+                    <button
+                      type="button"
+                      onClick={() => void submitClientWhrPrice(u)}
+                      disabled={loading}
+                      style={{ border: "none", borderRadius: 8, padding: "6px 12px", background: "var(--c-blue)", color: "var(--white)", cursor: "pointer" }}
+                    >
+                      保存
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPriceEditFor(null)}
+                      style={{ border: "1px solid var(--l-strong)", borderRadius: 8, padding: "6px 12px", background: "var(--white)", cursor: "pointer", color: "var(--t-strong)" }}
+                    >
+                      取消
+                    </button>
+                    <div style={{ flexBasis: "100%", fontSize: 12, color: "var(--t-muted)" }}>
+                      加进仓库版集货的柜时自动带出这个价。改了之后，这个客户在「计划中/集货中/装柜中」柜里没付款的单会按新价重算；已付款的单金额不变。
+                    </div>
                   </div>
                 ) : null}
               </div>
@@ -2798,13 +2912,36 @@ export default function AdminHomePage() {
                 <label style={{ fontSize: 12, color: "var(--t-strong)", display: "block", marginBottom: 4 }}>邮箱</label>
                 <input value={clientForm.email} onChange={(e) => setClientForm((f) => ({ ...f, email: e.target.value }))} placeholder="email@example.com" style={{ border: "1px solid var(--l-strong)", borderRadius: 8, padding: "8px 10px", width: "100%", fontSize: 13 }} />
               </div>
+              {/* 2026-09-16 代理账号：开在哪个代理名下（确认单 2.2 / 2.3 / 6.2） */}
+              <div>
+                <label style={{ fontSize: 12, color: "var(--t-strong)", display: "block", marginBottom: 4 }}>所属代理</label>
+                <select value={clientForm.agentId} onChange={(e) => setClientForm((f) => ({ ...f, agentId: e.target.value }))} style={{ border: "1px solid var(--l-strong)", borderRadius: 8, padding: "8px 10px", width: "100%", fontSize: 13, background: "var(--white)" }}>
+                  <option value="">湘泰自己的客户</option>
+                  {agentOptions.map((a) => (
+                    <option key={a.id} value={a.id}>开在代理「{a.name}」名下</option>
+                  ))}
+                  {/* 代理列表没拉到时，编辑的这位客户原来的代理也要能显示，免得保存时被当成改回湘泰 */}
+                  {clientForm.agentId && !agentOptions.some((a) => a.id === clientForm.agentId) ? (
+                    <option value={clientForm.agentId}>
+                      当前代理（{clientList.find((c) => c.id === editingClientId)?.agentName ?? clientForm.agentId}）
+                    </option>
+                  ) : null}
+                </select>
+                <div style={{ fontSize: 11, color: "var(--t-muted)", marginTop: 4 }}>
+                  {editingClientId
+                    ? "只有还没下过单（没有运单、没有集货记录）的客户才能改归属。"
+                    : agentOptions.length === 0
+                      ? "现在还没有代理（在「代理管理」里开），只能开湘泰自己的客户。"
+                      : "开在代理名下的客户归这个代理管，仓库版集货的价由代理填；员工那边看不到归属。"}
+                </div>
+              </div>
               <div>
                 <label style={{ fontSize: 12, color: "var(--t-strong)", display: "block", marginBottom: 4 }}>{editingClientId ? "登录密码（留空不修改）" : "登录密码 *"}</label>
                 <input type="password" value={clientForm.password} onChange={(e) => setClientForm((f) => ({ ...f, password: e.target.value }))} placeholder={editingClientId ? "留空不修改密码" : "密码（必填）"} style={{ border: "1px solid var(--l-strong)", borderRadius: 8, padding: "8px 10px", width: "100%", fontSize: 13 }} />
               </div>
             </div>
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 16 }}>
-              <button type="button" onClick={() => { setShowClientModal(false); setEditingClientId(null); setClientForm({ id: "", name: "", companyName: "", phone: "", email: "", password: "" }); }} style={{ border: "1px solid var(--l-strong)", borderRadius: 8, padding: "8px 14px", background: "var(--white)", cursor: "pointer", color: "var(--t-strong)", fontSize: 13 }}>取消</button>
+              <button type="button" onClick={() => { setShowClientModal(false); setEditingClientId(null); setClientForm({ id: "", name: "", companyName: "", phone: "", email: "", password: "", agentId: "" }); }} style={{ border: "1px solid var(--l-strong)", borderRadius: 8, padding: "8px 14px", background: "var(--white)", cursor: "pointer", color: "var(--t-strong)", fontSize: 13 }}>取消</button>
               <button type="button" disabled={loading} onClick={() => void (editingClientId ? submitEditClient() : submitAddClient())} style={{ border: "none", borderRadius: 8, padding: "8px 14px", background: loading ? "var(--t-strong)" : "var(--c-blue)", color: "var(--white)", fontWeight: 600, cursor: loading ? "not-allowed" : "pointer", fontSize: 13 }}>{loading ? "提交中…" : editingClientId ? "保存" : "创建"}</button>
             </div>
           </div>

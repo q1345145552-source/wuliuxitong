@@ -89,7 +89,7 @@ function FeeBreakdownPanel({ bd, title = "费用明细", compact }: { bd?: FeeBr
       </div>
       {!bd.matchesStored && bd.storedFee != null && (
         <div style={{ marginTop: 4, color: "#b45309", fontSize: fs - 1 }}>
-          结算后调过单价：按现价算为 {money(bd.computedFee)}，实际应付以锁定的 {money(bd.storedFee)} 为准。
+          付款后客户长期价改过：按现价算为 {money(bd.computedFee)}，实际应付以付款时锁定的 {money(bd.storedFee)} 为准。
         </div>
       )}
     </div>
@@ -227,9 +227,6 @@ export default function StaffWhrConsolidationPage() {
   const [reviewSubmitting, setReviewSubmitting] = useState(false);
   const [showReject, setShowReject] = useState(false);
   const [rejectReason, setRejectReason] = useState("");
-  const [rejectPriceNormal, setRejectPriceNormal] = useState("");
-  const [rejectPriceInspection, setRejectPriceInspection] = useState("");
-  const [rejectPriceSensitive, setRejectPriceSensitive] = useState("");
 
   // ---- 拼柜计划 ----
   const [planList, setPlanList] = useState<PlanItem[]>([]);
@@ -241,9 +238,11 @@ export default function StaffWhrConsolidationPage() {
   const [showAddCustomer, setShowAddCustomer] = useState(false);
   const [addClientId, setAddClientId] = useState("");
   const [addSearch, setAddSearch] = useState("");
-  const [addPriceNormal, setAddPriceNormal] = useState("");
-  const [addPriceInspection, setAddPriceInspection] = useState("");
-  const [addPriceSensitive, setAddPriceSensitive] = useState("");
+  /**
+   * 客户长期价（2026-09-16，确认单 4.6 / 4.19）：加客户时价格自动带出，员工不用填、也改不了。
+   * 只有「客户 id → 三档价」，接口不回所属代理。null = 还没加载 / 加载失败（那就交给后端判）。
+   */
+  const [clientPriceMap, setClientPriceMap] = useState<Record<string, { normal: number; inspection: number; sensitive: number }> | null>(null);
   const [addSubmitting, setAddSubmitting] = useState(false);
   const [removingCustomerId, setRemovingCustomerId] = useState("");
   const [planLoading, setPlanLoading] = useState(false);
@@ -328,8 +327,15 @@ export default function StaffWhrConsolidationPage() {
   /** 客户下拉用 /staff/clients（员工有权限），管理员端那套 /admin/users 员工调不了 */
   const openAddCustomer = async () => {
     setAddClientId(""); setAddSearch("");
-    setAddPriceNormal(""); setAddPriceInspection(""); setAddPriceSensitive("");
     setShowAddCustomer(true);
+    // 长期价每次打开都重拉：超管刚给客户填了价，员工不用刷新整页就能加
+    void apiRequest<{ items: Array<{ clientId: string; unitPriceNormal: number; unitPriceInspection: number; unitPriceSensitive: number }> }>(
+      `${apiBaseUrl()}/admin/whr-consolidation/client-prices`,
+    ).then((data) => {
+      const map: Record<string, { normal: number; inspection: number; sensitive: number }> = {};
+      for (const r of data.items ?? []) map[r.clientId] = { normal: r.unitPriceNormal, inspection: r.unitPriceInspection, sensitive: r.unitPriceSensitive };
+      setClientPriceMap(map);
+    }).catch(() => setClientPriceMap(null));
     if (clientOptions.length > 0) return;
     setClientsLoading(true);
     try {
@@ -342,26 +348,18 @@ export default function StaffWhrConsolidationPage() {
   const handleAddCustomer = async () => {
     if (!selectedPlanId) return;
     if (!addClientId) { setToast("请选择客户"); return; }
-    const checks: Array<[string, string]> = [
-      ["普货", addPriceNormal], ["商检货", addPriceInspection], ["敏感货", addPriceSensitive],
-    ];
-    for (const [label, v] of checks) {
-      if (!v || Number(v) <= 0) { setToast(`${label}单价必须大于0`); return; }
-    }
+    // 页面上先挡一次；说了算的是后端锁里那次（价格也是后端按长期价带出，页面不传）
+    if (clientPriceMap && !clientPriceMap[addClientId]) { setToast("暂未配对价格，请联系管理员"); return; }
     setAddSubmitting(true);
     try {
-      await apiRequest(`${apiBaseUrl()}/admin/whr-consolidation/customers/add`, {
+      const r = await apiRequest<{ unitPriceNormal?: number; unitPriceInspection?: number; unitPriceSensitive?: number }>(`${apiBaseUrl()}/admin/whr-consolidation/customers/add`, {
         method: "POST",
         headers: jsonPost,
-        body: JSON.stringify({
-          planId: selectedPlanId,
-          clientId: addClientId,
-          unitPriceNormal: Number(addPriceNormal),
-          unitPriceInspection: Number(addPriceInspection),
-          unitPriceSensitive: Number(addPriceSensitive),
-        }),
+        body: JSON.stringify({ planId: selectedPlanId, clientId: addClientId }),
       });
-      setToast("客户已加入本计划");
+      setToast(r?.unitPriceNormal != null
+        ? `客户已加入本计划，单价按长期价带出：普货 ${r.unitPriceNormal} · 商检货 ${r.unitPriceInspection} · 敏感货 ${r.unitPriceSensitive} 元/方`
+        : "客户已加入本计划");
       setShowAddCustomer(false);
       loadPlanDetail(selectedPlanId);
     } catch (e: any) { setToast(e?.message ?? "新增失败"); }
@@ -590,15 +588,12 @@ export default function StaffWhrConsolidationPage() {
           body: JSON.stringify({
             planId: reviewTarget.planId, prealertId: reviewTarget.prealert.prealertId,
             action: "reject", rejectReason: rejectReason.trim(),
-            unitPriceNormal: rejectPriceNormal ? Number(rejectPriceNormal) : undefined,
-            unitPriceInspection: rejectPriceInspection ? Number(rejectPriceInspection) : undefined,
-            unitPriceSensitive: rejectPriceSensitive ? Number(rejectPriceSensitive) : undefined,
           }),
         }
       );
       setToast(r?.totalFee != null ? `已拒绝，应付金额已更新为 ¥${r.totalFee}` : "已拒绝");
       reviewPrealertIdRef.current = null; // 2026-09-02 终审整改：关闭处同步清空 owner
-      setShowReject(false); setReviewTarget(null); setRejectReason(""); setRejectPriceNormal(""); setRejectPriceInspection(""); setRejectPriceSensitive("");
+      setShowReject(false); setReviewTarget(null); setRejectReason("");
       loadOperations();
       if (activeTab === "dispatch") loadDispatch();
       if (selectedPlanId) loadPlanDetail(selectedPlanId);
@@ -1339,14 +1334,7 @@ export default function StaffWhrConsolidationPage() {
                   <label style={fl}>拒绝原因 *</label>
                   <textarea value={rejectReason} onChange={e => setRejectReason(e.target.value)} placeholder="请填写拒绝原因" style={{ ...fi, minHeight: 80 }} />
                 </div>
-                <div style={{ marginTop: 10 }}>
-                  <label style={fl}>修改单价（可选，留空不修改）</label>
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
-                    <div><label style={{ fontSize: 11, color: "var(--t-muted)" }}>普货单价</label><input type="number" value={rejectPriceNormal} onChange={e => setRejectPriceNormal(e.target.value)} placeholder="留空不修改" style={fi} /></div>
-                    <div><label style={{ fontSize: 11, color: "var(--t-muted)" }}>商检货单价</label><input type="number" value={rejectPriceInspection} onChange={e => setRejectPriceInspection(e.target.value)} placeholder="留空不修改" style={fi} /></div>
-                    <div><label style={{ fontSize: 11, color: "var(--t-muted)" }}>敏感货单价</label><input type="number" value={rejectPriceSensitive} onChange={e => setRejectPriceSensitive(e.target.value)} placeholder="留空不修改" style={fi} /></div>
-                  </div>
-                </div>
+                {/* 2026-09-16：拒绝时「顺带改单价」去掉了 —— 单价跟着客户长期价走，员工改不了（确认单 4.6） */}
                 <div style={{ marginTop: 14, display: "flex", gap: 8 }}>
                   <button onClick={handleReviewReject} disabled={reviewSubmitting} style={btnBlue}>{reviewSubmitting ? "提交中..." : "确认拒绝"}</button>
                   <button onClick={() => { setShowReject(false); setRejectReason(""); }} style={btnGray}>取消</button>
@@ -1420,7 +1408,7 @@ export default function StaffWhrConsolidationPage() {
                 </div>
                 <div style={{ marginTop: 14, display: "flex", gap: 8 }}>
                   <button onClick={handleReviewApprove} disabled={reviewSubmitting} style={btnBlue}>{reviewSubmitting ? "..." : "审核通过"}</button>
-                  <button onClick={() => { setShowReject(true); setRejectReason(""); setRejectPriceNormal(""); setRejectPriceInspection(""); setRejectPriceSensitive(""); }} style={btnGray}>审核不通过</button>
+                  <button onClick={() => { setShowReject(true); setRejectReason(""); }} style={btnGray}>审核不通过</button>
                 </div>
               </>
             )}
@@ -1504,27 +1492,28 @@ export default function StaffWhrConsolidationPage() {
                       <input type="radio" name="add-whr-client-staff" checked={addClientId === cl.id} onChange={() => setAddClientId(cl.id)} />
                       <span style={{ fontWeight: 600 }}>{cl.name}</span>
                       <span style={{ color: "var(--t-muted)", fontSize: 12 }}>{cl.id}</span>
+                      {clientPriceMap && !clientPriceMap[cl.id] && (
+                        <span style={{ marginLeft: "auto", fontSize: 11, padding: "1px 6px", borderRadius: 4, background: "var(--c-red-bg)", color: "var(--c-red-deep)" }}>未配价</span>
+                      )}
                     </label>
                   ))}
                 </div>
                 <div style={{ fontSize: 12, color: "var(--t-muted)", marginTop: 4 }}>共 {options.length} 位可选</div>
               </div>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginTop: 12 }}>
-                <div>
-                  <label style={fl}>普货单价 (元/方)</label>
-                  <input type="number" value={addPriceNormal} onChange={e => setAddPriceNormal(e.target.value)} style={fi} />
-                </div>
-                <div>
-                  <label style={fl}>商检货单价 (元/方)</label>
-                  <input type="number" value={addPriceInspection} onChange={e => setAddPriceInspection(e.target.value)} style={fi} />
-                </div>
-                <div>
-                  <label style={fl}>敏感货单价 (元/方)</label>
-                  <input type="number" value={addPriceSensitive} onChange={e => setAddPriceSensitive(e.target.value)} style={fi} />
-                </div>
+              {/* 单价按客户长期价自动带出，员工不用填、也改不了（确认单 4.6 / 4.19） */}
+              <div style={{ marginTop: 12, padding: "8px 12px", borderRadius: 6, background: "var(--s-alt)", fontSize: 13, color: "var(--t-body)" }}>
+                {!addClientId ? (
+                  <span style={{ color: "var(--t-muted)" }}>单价按客户的长期价自动带出，不用填。</span>
+                ) : clientPriceMap === null ? (
+                  <span style={{ color: "var(--t-muted)" }}>单价按客户的长期价自动带出（加入后显示）。</span>
+                ) : clientPriceMap[addClientId] ? (
+                  <span>单价自动带出：普货 {clientPriceMap[addClientId].normal} · 商检货 {clientPriceMap[addClientId].inspection} · 敏感货 {clientPriceMap[addClientId].sensitive} 元/方</span>
+                ) : (
+                  <span style={{ color: "var(--c-red-deep)", fontWeight: 600 }}>暂未配对价格，请联系管理员</span>
+                )}
               </div>
               <div style={{ marginTop: 14, display: "flex", gap: 8 }}>
-                <button onClick={handleAddCustomer} disabled={addSubmitting} style={btnBlue}>{addSubmitting ? "添加中..." : "确认新增"}</button>
+                <button onClick={handleAddCustomer} disabled={addSubmitting || (!!addClientId && !!clientPriceMap && !clientPriceMap[addClientId])} style={btnBlue}>{addSubmitting ? "添加中..." : "确认新增"}</button>
                 <button onClick={() => setShowAddCustomer(false)} style={btnGray}>取消</button>
               </div>
             </Modal>

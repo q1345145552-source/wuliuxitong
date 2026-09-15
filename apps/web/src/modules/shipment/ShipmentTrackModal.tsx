@@ -481,7 +481,15 @@ export type ShipmentTrackTarget =
   | { trackingNo: string; shipmentId?: never }
   | { shipmentId: string; trackingNo?: never };
 
-function ShipmentTrackModal({ target, onClose }: { target: ShipmentTrackTarget; onClose: () => void }) {
+/**
+ * 轨迹从哪个接口取（2026-09-16 代理账号）。不传就是原来的 /client/shipments/track，湘泰三端行为不变。
+ * 代理工作台传 /agent/shipments/track —— agent 令牌打 /client/* 会被服务端统一闸 403。
+ */
+export interface ShipmentTrackOptions {
+  endpoint?: "/client/shipments/track" | "/agent/shipments/track";
+}
+
+function ShipmentTrackModal({ target, onClose, endpoint = "/client/shipments/track" }: { target: ShipmentTrackTarget; onClose: () => void; endpoint?: ShipmentTrackOptions["endpoint"] }) {
   const { trackingNo, shipmentId } = target;
   const [data, setData] = useState<TrackData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -494,7 +502,7 @@ function ShipmentTrackModal({ target, onClose }: { target: ShipmentTrackTarget; 
     const params = new URLSearchParams(
       trackingNo !== undefined ? { trackingNo } : { shipmentId: shipmentId! }
     );
-    fetch(`${apiBaseUrl()}/client/shipments/track?${params.toString()}`, {
+    fetch(`${apiBaseUrl()}${endpoint}?${params.toString()}`, {
       headers: { ...authHeaders() },
     })
       .then(parseApiResponse)
@@ -512,7 +520,7 @@ function ShipmentTrackModal({ target, onClose }: { target: ShipmentTrackTarget; 
         setData(null);
         setLoading(false);
       });
-  }, [trackingNo, shipmentId]);
+  }, [trackingNo, shipmentId, endpoint]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -628,7 +636,7 @@ function ShipmentTrackModal({ target, onClose }: { target: ShipmentTrackTarget; 
 
 // ── Public API ──
 
-export function openShipmentTrack(target: ShipmentTrackTarget) {
+export function openShipmentTrack(target: ShipmentTrackTarget, options: ShipmentTrackOptions = {}) {
   // 移除旧弹窗
   const old = document.getElementById("track-modal-root");
   if (old) old.remove();
@@ -642,6 +650,7 @@ export function openShipmentTrack(target: ShipmentTrackTarget) {
     root.render(
       <ShipmentTrackModal
         target={target}
+        endpoint={options.endpoint}
         onClose={() => {
           root.unmount();
           overlay.remove();

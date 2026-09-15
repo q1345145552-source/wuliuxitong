@@ -328,6 +328,59 @@ export interface AdminUserItem {
   createdAt: string;
   companyName?: string;
   email?: string;
+  /**
+   * 2026-09-16 代理账号：以下三项只有 GET /admin/users?role=client 才有（只给超级管理员的接口）。
+   * 员工端客户下拉走 /staff/clients，那边没有这些字段。
+   */
+  agentId?: string | null;
+  agentName?: string | null;
+  whrPrice?: AdminClientWhrPrice | null;
+}
+
+/** 客户长期价（仓库版集货，元/方） */
+export interface AdminClientWhrPrice {
+  normal: number;
+  inspection: number;
+  sensitive: number;
+  /** 谁填的：admin / agent；null = 上线时按这个客户最近一个柜的价自动填的 */
+  filledByRole: string | null;
+  updatedAt: string;
+}
+
+/** 开客户选归属用的代理下拉（B2 的 GET /admin/agents/list 里只取 id 和名字；不能用 /admin/agents，那是页面地址，请求到不了后端） */
+export interface AgentOption {
+  id: string;
+  name: string;
+}
+
+/**
+ * 代理下拉列表。接口没好 / 出错时返回空数组，不让「客户管理」整块报错
+ * （选不了代理时照样能开湘泰自己的客户）。
+ */
+export async function fetchAgentOptions(): Promise<AgentOption[]> {
+  try {
+    const data = await apiRequest<{ items?: Array<{ id: string; name: string }> }>(`${apiBaseUrl()}/admin/agents/list`);
+    return (data.items ?? []).map((a) => ({ id: a.id, name: a.name }));
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * 超管填 / 改湘泰自己客户的长期价（2026-09-16）。代理的客户后端会 403。
+ * 改完「计划中/收货中/装柜中」柜里没付款的单自动按新价重算，updatedPlanRows = 跟着改了几个柜。
+ */
+export async function setAdminClientWhrPrice(payload: {
+  clientId: string;
+  unitPriceNormal: number;
+  unitPriceInspection: number;
+  unitPriceSensitive: number;
+}): Promise<{ clientId: string; whrPrice: { normal: number; inspection: number; sensitive: number }; updatedPlanRows: number }> {
+  return apiRequest(`${apiBaseUrl()}/admin/clients/whr-price`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
 }
 
 export interface AdminOrderItem {
@@ -1297,7 +1350,9 @@ export async function createAdminClient(payload: {
   phone: string;
   email?: string;
   password?: string;
-}): Promise<{ id: string; name: string; companyName: string | null; phone: string; email: string | null; createdAt: string }> {
+  /** 2026-09-16：开在哪个代理名下；不传 / null = 湘泰自己的客户 */
+  agentId?: string | null;
+}): Promise<{ id: string; name: string; companyName: string | null; phone: string; email: string | null; createdAt: string; agentId: string | null; agentName: string | null }> {
   const response = await fetch(`${apiBaseUrl()}/admin/users/client`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeaders() },
@@ -1313,7 +1368,9 @@ export async function updateAdminClient(payload: {
   phone?: string;
   email?: string;
   password?: string;
-}): Promise<{ id: string; name: string; companyName: string | null; phone: string; email: string | null; createdAt: string }> {
+  /** 2026-09-16：不传 = 不改归属；null = 改回湘泰。客户已有运单/集货记录时后端会拒 */
+  agentId?: string | null;
+}): Promise<{ id: string; name: string; companyName: string | null; phone: string; email: string | null; createdAt: string; agentId: string | null }> {
   const response = await fetch(`${apiBaseUrl()}/admin/users/client/update`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeaders() },
@@ -2285,6 +2342,12 @@ export interface ConsolidationDeletePreview {
   refundTotal?: number;
   /** 会退给几位客户 */
   refundCount?: number;
+  /**
+   * 2026-09-16 发运红线（确认单 4.15）：true = 已经发运，谁都不能删、输管理员密码也不行。
+   * 这时界面不给密码框、不给确认按钮，只把 hardBlockReason 摆出来。
+   */
+  hardBlocked?: boolean;
+  hardBlockReason?: string | null;
 }
 
 /**

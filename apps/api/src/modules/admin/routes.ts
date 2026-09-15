@@ -18,6 +18,52 @@ import { CONTAINER_STATUS_LABEL } from "../containers/status-flow";
 import { checkPasswordStrength } from "../auth/password-policy";
 // 重置密码成功后要清登录失败计数（2026-08-31，排查报告第34条），键跟登录接口同一口径
 import { clearLoginFailures } from "../core/rate-limit";
+import {
+  getClientWhrPrice,
+  lockClientWhrPrice,
+  parseWhrPriceInput,
+  setClientWhrPrice,
+} from "../whr-consolidation/long-term-price";
+
+/** 超管想改代理客户的长期价时的那句话（确认单 4.7：代理的客户价只有代理能改，超管也不改） */
+const AGENT_CLIENT_PRICE_READONLY_MESSAGE = "这个客户归代理管，价格由代理自己填，超级管理员这里不能改";
+
+/**
+ * 开客户 / 改客户时传来的「所属代理」（2026-09-16，确认单 2.2 / 2.3 / 6.2）。
+ * 不传、传空 = 湘泰自己的客户；传了就必须是本公司真实存在的代理。
+ * @returns undefined 表示请求里压根没提这个字段（改客户时 = 不改归属）
+ */
+async function readAgentIdInput(
+  raw: unknown,
+  companyId: string,
+): Promise<{ agentId: string | null; agentName: string | null } | { error: string } | undefined> {
+  if (raw === undefined) return undefined;
+  if (raw === null || (typeof raw === "string" && raw.trim() === "")) return { agentId: null, agentName: null };
+  if (typeof raw !== "string") return { error: "所属代理不合法" };
+  const agent = await prisma.agent.findFirst({
+    where: { id: raw.trim(), companyId },
+    select: { id: true, name: true },
+  });
+  if (!agent) return { error: "选的代理不存在，请刷新页面后重新选" };
+  return { agentId: agent.id, agentName: agent.name };
+}
+
+/**
+ * 这个客户名下有没有业务记录（运单 / 普通版集货任务 / 仓库版集货）。
+ * 改归属只许在三样都没有的时候做（设计文档 1.2：不做划转，开错了且没业务数据才许改）。
+ */
+async function countClientBusinessRecords(
+  tx: any,
+  clientId: string,
+  companyId: string,
+): Promise<{ orders: number; consolidationTasks: number; whrPlans: number }> {
+  const [orders, consolidationTasks, whrPlans] = await Promise.all([
+    tx.order.count({ where: { clientId, companyId } }),
+    tx.consolidationTask.count({ where: { clientId, companyId } }),
+    tx.whrConsolidationPlanCustomer.count({ where: { clientId, companyId } }),
+  ]);
+  return { orders, consolidationTasks, whrPlans };
+}
 import { loadOrderTotalMetrics } from "../shipments/total-metrics";
 import { BusinessError } from "../core/business-error";
 import { loadOrderProductDims } from "../orders/routes";
@@ -416,6 +462,13 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
         createdAt: true,
         companyName: true,
         email: true,
+        // 2026-09-16 代理账号：所属代理和长期价只在这个**只给超管**的接口里给（requireRole admin）。
+        // 员工端客户下拉走 /staff/clients，那边只有 id + name，不带这些。
+        agentId: true,
+        agent: { select: { name: true } },
+        whrPrice: {
+          select: { priceNormal: true, priceInspection: true, priceSensitive: true, updatedByRole: true, updatedAt: true },
+        },
       },
     });
 
@@ -430,6 +483,22 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
         createdAt: r.createdAt.toISOString(),
         companyName: r.companyName ?? undefined,
         email: r.email ?? undefined,
+        ...(role === "client"
+          ? {
+              agentId: r.agentId ?? null,
+              agentName: r.agent?.name ?? null,
+              whrPrice: r.whrPrice
+                ? {
+                    normal: Number(r.whrPrice.priceNormal),
+                    inspection: Number(r.whrPrice.priceInspection),
+                    sensitive: Number(r.whrPrice.priceSensitive),
+                    // 谁填的：admin / agent；null = 上线时按最近一个柜的价自动回填的那批
+                    filledByRole: r.whrPrice.updatedByRole ?? null,
+                    updatedAt: r.whrPrice.updatedAt.toISOString(),
+                  }
+                : null,
+            }
+          : {}),
       })),
     });
   });
@@ -1015,11 +1084,18 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
       phone?: string;
       password?: string;
       role?: string;
+      agentId?: string | null;
     };
     const name = typeof body.name === "string" ? body.name.trim() : "";
     const phone = typeof body.phone === "string" ? body.phone.trim() : "";
     if (!name || !phone) {
       fail(res, 400, "BAD_REQUEST", "name and phone are required");
+      return;
+    }
+    // 2026-09-16：这个入口开客户时也认「所属代理」（设计文档第 3 节：两个开客户入口都要带）；开员工不认
+    const agentInput = body.role === "client" ? await readAgentIdInput(body.agentId, auth.companyId) : undefined;
+    if (agentInput && "error" in agentInput) {
+      fail(res, 400, "BAD_REQUEST", agentInput.error);
       return;
     }
 
@@ -1054,6 +1130,7 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
         status: "active",
         warehouseIds: "[]",
         passwordHash,
+        agentId: agentInput?.agentId ?? null,
       },
       select: { id: true, name: true, role: true, phone: true, createdAt: true },
     });
@@ -1072,11 +1149,18 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
       phone?: string;
       email?: string;
       password?: string;
+      /** 2026-09-16：开在哪个代理名下；不传 / 空 = 湘泰自己的客户（确认单 2.2 / 2.3） */
+      agentId?: string | null;
     };
     const name = typeof body.name === "string" ? body.name.trim() : "";
     const phone = typeof body.phone === "string" ? body.phone.trim() : "";
     if (!name || !phone) {
       fail(res, 400, "BAD_REQUEST", "客户名字和电话号码为必填");
+      return;
+    }
+    const agentInput = await readAgentIdInput(body.agentId, auth.companyId);
+    if (agentInput && "error" in agentInput) {
+      fail(res, 400, "BAD_REQUEST", agentInput.error);
       return;
     }
 
@@ -1106,8 +1190,9 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
         passwordHash,
         companyName,
         email,
+        agentId: agentInput?.agentId ?? null,
       },
-      select: { id: true, name: true, companyName: true, phone: true, email: true, createdAt: true },
+      select: { id: true, name: true, companyName: true, phone: true, email: true, createdAt: true, agentId: true },
     });
 
     ok(res, {
@@ -1117,6 +1202,8 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
       phone: created.phone,
       email: created.email,
       createdAt: created.createdAt.toISOString(),
+      agentId: created.agentId ?? null,
+      agentName: agentInput?.agentName ?? null,
     });
   });
 
@@ -1131,10 +1218,17 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
       phone?: string;
       email?: string;
       password?: string;
+      /** 2026-09-16：改所属代理。不传 = 不改；空 = 改回湘泰；只许客户还没有任何业务记录时改 */
+      agentId?: string | null;
     };
     const id = typeof body.id === "string" ? body.id.trim() : "";
     if (!id) {
       fail(res, 400, "BAD_REQUEST", "客户ID为必填");
+      return;
+    }
+    const agentInput = await readAgentIdInput(body.agentId, auth.companyId);
+    if (agentInput && "error" in agentInput) {
+      fail(res, 400, "BAD_REQUEST", agentInput.error);
       return;
     }
 
@@ -1172,16 +1266,72 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
       updateData.passwordHash = hashPassword(body.password.trim());
     }
 
-    if (Object.keys(updateData).length === 0) {
+    if (Object.keys(updateData).length === 0 && !agentInput) {
       fail(res, 400, "BAD_REQUEST", "没有需要更新的字段");
       return;
     }
 
-    const updated = await prisma.user.update({
-      where: { id },
-      data: updateData,
-      select: { id: true, name: true, companyName: true, phone: true, email: true, createdAt: true },
-    });
+    const selectOut = { id: true, name: true, companyName: true, phone: true, email: true, createdAt: true, agentId: true } as const;
+    const updated = !agentInput
+      ? await prisma.user.update({ where: { id }, data: updateData, select: selectOut })
+      : await prisma.$transaction(async (tx) => {
+          /**
+           * 改所属代理（2026-09-16）。锁序照 long-term-price.ts 文件头：**先拿客户价排队锁**，
+           * 改长期价那边在锁里读 agentId 判代理价下限，两边排队才不会出现「按旧归属判下限、存进新归属」。
+           * 往仓库版柜里加这个客户（customers/add、建柜）也先拿同一把锁，所以「查业务记录 → 改归属」
+           * 这段不会被新加进柜的记录插队（运单、普通版任务那两样不走这把锁，写进报告了）。
+           */
+          await lockClientWhrPrice(tx, id);
+          const fresh = await tx.user.findFirst({
+            where: { id, companyId: auth.companyId, role: "client" },
+            select: { agentId: true },
+          });
+          if (!fresh) throw new BusinessError("客户不存在", 404, "NOT_FOUND");
+          const target = agentInput.agentId;
+          if ((fresh.agentId ?? null) !== target) {
+            const rec = await countClientBusinessRecords(tx, id, auth.companyId);
+            if (rec.orders + rec.consolidationTasks + rec.whrPlans > 0) {
+              const parts = [
+                rec.orders > 0 ? `运单 ${rec.orders} 张` : "",
+                rec.consolidationTasks > 0 ? `普通版集货 ${rec.consolidationTasks} 个` : "",
+                rec.whrPlans > 0 ? `仓库版集货 ${rec.whrPlans} 个柜` : "",
+              ].filter(Boolean);
+              throw new BusinessError(
+                `这个客户已经有业务记录（${parts.join("、")}），不能再改所属代理。只有刚开、还没下过单的客户才能改。`,
+                409,
+                "VALIDATION_ERROR",
+              );
+            }
+            if (target) {
+              // 新代理行拿共享锁（跟 setClientWhrPrice 同一个锁法），再核这个客户现有长期价不低于代理价
+              const agentRows = await tx.$queryRaw<Array<{ name: string; price_normal: unknown; price_inspection: unknown; price_sensitive: unknown }>>`SELECT name, price_normal, price_inspection, price_sensitive FROM agents WHERE id = ${target} AND company_id = ${auth.companyId} FOR SHARE`;
+              if (!agentRows || agentRows.length === 0) {
+                throw new BusinessError("选的代理不存在，请刷新页面后重新选", 400, "BAD_REQUEST");
+              }
+              const price = await getClientWhrPrice(id, tx);
+              if (price) {
+                const a = agentRows[0];
+                const low: string[] = [];
+                const pairs: Array<[string, number, number]> = [
+                  ["普货", price.normal, Number(a.price_normal)],
+                  ["商检货", price.inspection, Number(a.price_inspection)],
+                  ["敏感货", price.sensitive, Number(a.price_sensitive)],
+                ];
+                for (const [label, mine, agentPrice] of pairs) {
+                  if (Math.round(mine * 100) < Math.round(agentPrice * 100)) low.push(`${label} ${mine} 低于代理价 ${agentPrice}`);
+                }
+                if (low.length > 0) {
+                  throw new BusinessError(
+                    `这个客户现在的长期价比代理「${a.name}」的价还低（${low.join("；")}），挂到这个代理名下会倒贴返现，改不了。请先把这个客户的长期价改到不低于代理价再改归属。`,
+                    409,
+                    "VALIDATION_ERROR",
+                  );
+                }
+              }
+            }
+          }
+          return tx.user.update({ where: { id }, data: { ...updateData, agentId: target }, select: selectOut });
+        }, { timeout: 30000, maxWait: 10000 });
 
     // 这条路也能给客户重置密码 —— 跟 set-password 一样，重置成功就把
     // 登录失败计数清掉（2026-08-31，排查报告第34条），不然新密码照样被计数挡住。
@@ -1196,6 +1346,79 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
       phone: updated.phone,
       email: updated.email,
       createdAt: updated.createdAt.toISOString(),
+      agentId: updated.agentId ?? null,
+    });
+  });
+
+  /**
+   * 超管填 / 改客户长期价（2026-09-16，确认单 4.4 / 4.7 / 4.19）。
+   *
+   * 只许改**湘泰自己的客户**；客户归代理 → 403（代理的客户价只有代理能改，超管也不改）。
+   * 改完「计划中/收货中/装柜中」柜里这位客户的单价跟着改，没付款的单重算（setClientWhrPrice 负责）。
+   *
+   * ⚠️ 「是不是代理的客户」必须在**客户价排队锁里**再判一次（CLAUDE.md #28）：
+   *    事务外那次判断只配给个快提示；锁之前归属被改成代理，锁里不重判就会让超管改掉代理客户的价。
+   *    setClientWhrPrice 里面还会再拿同一把锁（事务级 advisory 锁可重入，不会自己卡自己）。
+   */
+  app.post("/admin/clients/whr-price", async (req, res) => {
+    const auth = requireRole(req, res, ["admin"]);
+    if (!auth) return;
+
+    const body = (req.body ?? {}) as {
+      clientId?: string;
+      unitPriceNormal?: unknown;
+      unitPriceInspection?: unknown;
+      unitPriceSensitive?: unknown;
+    };
+    const clientId = typeof body.clientId === "string" ? body.clientId.trim() : "";
+    if (!clientId) {
+      fail(res, 400, "BAD_REQUEST", "请选择客户");
+      return;
+    }
+    const rawPrices = { normal: body.unitPriceNormal, inspection: body.unitPriceInspection, sensitive: body.unitPriceSensitive };
+    // 价不合法就别碰数据库（跟 setClientWhrPrice 同一套校验）
+    let prices;
+    try {
+      prices = parseWhrPriceInput(rawPrices);
+    } catch (e) {
+      if (e instanceof BusinessError) {
+        fail(res, 400, "BAD_REQUEST", e.message);
+        return;
+      }
+      throw e;
+    }
+
+    const client = await prisma.user.findFirst({
+      where: { id: clientId, companyId: auth.companyId, role: "client" },
+      select: { id: true, agentId: true },
+    });
+    if (!client) {
+      fail(res, 404, "NOT_FOUND", "客户不存在");
+      return;
+    }
+    if (client.agentId) {
+      fail(res, 403, "FORBIDDEN", AGENT_CLIENT_PRICE_READONLY_MESSAGE);
+      return;
+    }
+
+    const result = await prisma.$transaction(async (tx) => {
+      await lockClientWhrPrice(tx, clientId);
+      const fresh = await tx.user.findFirst({
+        where: { id: clientId, companyId: auth.companyId, role: "client" },
+        select: { agentId: true },
+      });
+      if (!fresh) throw new BusinessError("客户不存在", 404, "NOT_FOUND");
+      if (fresh.agentId) throw new BusinessError(AGENT_CLIENT_PRICE_READONLY_MESSAGE, 403, "FORBIDDEN");
+      return setClientWhrPrice(
+        { companyId: auth.companyId, clientId, prices: rawPrices, actor: { userId: auth.userId, role: auth.role } },
+        tx,
+      );
+    }, { timeout: 30000, maxWait: 10000 });
+
+    ok(res, {
+      clientId,
+      whrPrice: { normal: prices.normal, inspection: prices.inspection, sensitive: prices.sensitive },
+      updatedPlanRows: result.updatedPlanRows,
     });
   });
 
@@ -1263,8 +1486,9 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
      * 可以在这里救他。操作者必须是 admin 这一层，上面的 requireRole 已经保证；
      * 且只能动本公司账号（上面的 companyId 检查）。
      */
-    if (row.role !== "staff" && row.role !== "client" && row.role !== "admin") {
-      fail(res, 403, "FORBIDDEN", "only staff, client or admin password can be set here");
+    // 2026-09-16：白名单加 agent（确认单 2.9：代理忘了密码找超管重置）
+    if (row.role !== "staff" && row.role !== "client" && row.role !== "admin" && row.role !== "agent") {
+      fail(res, 403, "FORBIDDEN", "only staff, client, admin or agent password can be set here");
       return;
     }
 
@@ -1274,7 +1498,8 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
     //    他们的密码普遍就是唛头本身，一刀切会让 66 个客户当场登不进去。
     // 2026-08-31：admin 走这条路后也要卡强度 —— 管理员能看到的比员工还多，
     // 不能反过来允许给管理员账号设弱口令。
-    if (row.role === "staff" || row.role === "admin") {
+    // 2026-09-16：代理账号也卡强度（确认单 2.9：他能看到名下所有客户和返现）；代理的客户照客户规矩不卡
+    if (row.role === "staff" || row.role === "admin" || row.role === "agent") {
       const weakReason = checkPasswordStrength(password, undefined, id);
       if (weakReason) {
         fail(res, 400, "BAD_REQUEST", weakReason);

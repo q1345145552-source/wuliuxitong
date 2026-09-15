@@ -24,6 +24,8 @@
     "test:unload": "tsx scripts/test-unload.ts",
     "test:frontend-guards": "tsx scripts/test-frontend-guards.ts",
     "test:money-guards": "tsx scripts/test-money-guards.ts",
+    "test:whr-long-term-price": "tsx scripts/test-whr-long-term-price.ts",
+    "test:delete-after-shipped": "tsx scripts/test-delete-after-shipped.ts",
     "test:product-rows": "tsx scripts/test-product-rows.ts",
     "test:address-update": "tsx scripts/test-client-address-update.ts",
     "test:batch-import": "tsx scripts/test-staff-batch-import.ts",
@@ -46,7 +48,11 @@
     "test:dispatch-wrap": "tsx scripts/test-dispatch-wrap.ts",
     "test:shipment-track-actions": "tsx scripts/test-shipment-track-actions.ts",
     "test:hide-operator-identity": "tsx scripts/test-hide-operator-identity.ts",
-    "test:agent-foundation": "tsx scripts/test-agent-foundation.ts"
+    "test:agent-foundation": "tsx scripts/test-agent-foundation.ts",
+    "test:agent-portal-isolation": "tsx scripts/test-agent-portal-isolation.ts",
+    "test:agent-admin": "tsx scripts/test-agent-admin.ts",
+    "test:agent-rebates": "tsx scripts/test-agent-rebates.ts",
+    "test:agent-branding": "tsx scripts/test-agent-branding.ts"
   },
   "devDependencies": {
     "@types/node": "^26.0.1",

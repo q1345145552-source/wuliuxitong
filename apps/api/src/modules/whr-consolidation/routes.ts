@@ -1,4 +1,4 @@
-import { DECIMAL_10_2, requireDecimal, requireUnitPrice } from "../core/decimal-guard";
+import { DECIMAL_10_2, requireDecimal } from "../core/decimal-guard";
 import { parseNumericStrict } from "../core/int-guard";
 import { prisma } from "../../db/prisma";
 import type { MinimalHttpApp } from "../../server";
@@ -14,15 +14,38 @@ import {
   refundToConsolidation,
 } from "../wallet/consolidation-balance";
 import {
+  CLEARED_PAID_SNAPSHOT,
   NON_CANCELLABLE_STATUSES,
   buildFeeBreakdown,
+  buildPaidSnapshot,
   mergeFeeBreakdowns,
   recalcCustomerTotals,
   recalcPrealertFee,
-  recalcUnpaidPrealertFees,
   syncPlanStatus,
   toNum,
 } from "./utils";
+import { getClientWhrPrice, lockClientWhrPrice } from "./long-term-price";
+
+/** 没长期价时员工、管理员、客户看到的同一句话（确认单 4.5 / 4.19） */
+export const NO_LONG_TERM_PRICE_MESSAGE = "暂未配对价格，请联系管理员";
+
+/**
+ * 删柜的「发运红线」（2026-09-16，确认单 4.15）：柜只要已经发出去，谁都不能删，输管理员密码也不行。
+ * 仓库版：计划 shipped / completed，或者柜里有任何一张预报单 shipped / thailand_received。
+ * 纯函数，事务外（给预览）和锁里（说了算）用同一份。
+ * @returns 拦就返回给人看的原因；没到红线返回 null（还是按原来的规矩：开始走流程要输密码）
+ */
+export const WHR_SHIPPED_PLAN_STATUSES = ["shipped", "completed"];
+export const WHR_SHIPPED_PREALERT_STATUSES = ["shipped", "thailand_received"];
+export function whrPlanShippedReason(planStatus: string, prealertStatuses: readonly string[]): string | null {
+  const shippedCount = prealertStatuses.filter((s) => WHR_SHIPPED_PREALERT_STATUSES.includes(s)).length;
+  if (WHR_SHIPPED_PLAN_STATUSES.includes(planStatus) || shippedCount > 0) {
+    return shippedCount > 0
+      ? `这个柜已经发运（有 ${shippedCount} 张预报单已发运或已到泰国签收），已发出去的柜谁都不能删，输管理员密码也不行`
+      : "这个柜已经发运，已发出去的柜谁都不能删，输管理员密码也不行";
+  }
+  return null;
+}
 
 /** 列表查询上限，避免计划数变多之后接口整包返回 */
 const PLAN_LIST_TAKE = 500;
@@ -67,15 +90,12 @@ async function generatePlanNoInTx(tx: any): Promise<string> {
   return `WHR${String(nextNum).padStart(7, "0")}`;
 }
 
-/**
- * 改完单价后重算：先刷新所有未付款预报单的费用，再汇总到客户。
- * 已付款/已装柜/已发运的单子金额已结清，不会被改单价影响。
+/*
+ * 2026-09-16：原来这里有个 repriceCustomer（改单价后重算），只给「柜详情改单价」用。
+ * 改单价那个接口停用了（改价走客户长期价，long-term-price.ts 的 setClientWhrPrice），
+ * 它就没有调用方了，按 CLAUDE.md #9 删掉。long-term-price.ts 里直接调的是同样两句
+ * （recalcUnpaidPrealertFees + recalcCustomerTotals），口径只剩那一份。
  */
-async function repriceCustomer(customerId: string, tx: any): Promise<number> {
-  await recalcUnpaidPrealertFees(customerId, tx);
-  const totals = await recalcCustomerTotals(customerId, tx);
-  return totals.totalFee;
-}
 
 // ============================================================================
 // 路由注册
@@ -89,17 +109,16 @@ export function registerWhrConsolidationRoutes(app: MinimalHttpApp): void {
     const auth = requireRole(req, res, ["admin"]);
     if (!auth) return;
 
+    /**
+     * 2026-09-16（确认单 4.4 / 4.19）：建柜**不再收三档单价**，每位客户按自己的长期价自动带出。
+     * 旧页面还会传 unitPrice* 过来，一律不认（不报错，免得开着旧页面的人点不动）。
+     */
     const body = (req.body ?? {}) as {
       warehouse?: string;
       containerType?: string;
       destinationTh?: string;
       totalVolumeM3?: number;
-      customers?: {
-        clientId?: string;
-        unitPriceNormal?: number;
-        unitPriceInspection?: number;
-        unitPriceSensitive?: number;
-      }[];
+      customers?: { clientId?: string }[];
     };
 
     // 校验必填字段
@@ -142,27 +161,13 @@ export function registerWhrConsolidationRoutes(app: MinimalHttpApp): void {
         return;
       }
       seenClientIds.add(c.clientId.trim());
-      const priceChecks: Array<[string, number | undefined]> = [
-        ["普货", c.unitPriceNormal],
-        ["商检货", c.unitPriceInspection],
-        ["敏感货", c.unitPriceSensitive],
-      ];
-      for (const [label, val] of priceChecks) {
-        // ⚠️ 用 requireUnitPrice（2026-08-29）：原来只判「大于 0」，
-        // 而 0.001 也大于 0 —— 库里是 Decimal(10,2)，会被**存成 0.00**，这一柜白送。
-        const priceIssue = val == null ? `第 ${i + 1} 个客户${label}单价为必填` : requireUnitPrice(val, `第 ${i + 1} 个客户${label}单价`);
-        if (priceIssue) {
-          fail(res, 400, "BAD_REQUEST", priceIssue);
-          return;
-        }
-      }
     }
 
     // 客户必须存在、属于本公司、且确实是客户角色
     const clientIds = Array.from(seenClientIds);
     const validClients = await prisma.user.findMany({
       where: { id: { in: clientIds }, companyId: auth.companyId, role: "client" },
-      select: { id: true },
+      select: { id: true, name: true },
     });
     if (validClients.length !== clientIds.length) {
       const validSet = new Set(validClients.map((u) => u.id));
@@ -170,9 +175,27 @@ export function registerWhrConsolidationRoutes(app: MinimalHttpApp): void {
       fail(res, 400, "BAD_REQUEST", `以下客户不存在或不属于本公司：${missing.join(", ")}`);
       return;
     }
+    const clientNameOf = new Map(validClients.map((u) => [u.id, u.name]));
 
     // 编号生成和插入放同一个事务，锁才有意义
     const plan = await prisma.$transaction(async (tx) => {
+      /**
+       * ⚠️ 锁序（long-term-price.ts 文件头）：先按 clientId 排序逐个拿「客户价排队锁」，再取号建柜。
+       * 不先锁的话：这边读到旧长期价 → 超管那边改完价时这个新柜还没提交、他看不见 → 新柜里留着旧价。
+       * 价格在锁里读，没长期价的客户整柜不建，一次把缺价的客户全列出来。
+       */
+      const pricesByClient = new Map<string, { normal: number; inspection: number; sensitive: number }>();
+      const missingPrice: string[] = [];
+      for (const clientId of [...clientIds].sort()) {
+        await lockClientWhrPrice(tx, clientId);
+        const price = await getClientWhrPrice(clientId, tx);
+        if (price) pricesByClient.set(clientId, price);
+        else missingPrice.push(clientNameOf.get(clientId) || clientId);
+      }
+      if (missingPrice.length > 0) {
+        throw new BusinessError(`${missingPrice.join("、")}：${NO_LONG_TERM_PRICE_MESSAGE}`, 400, "BAD_REQUEST");
+      }
+
       const planNo = await generatePlanNoInTx(tx);
       const created = await tx.whrConsolidationPlan.create({
         data: {
@@ -189,14 +212,18 @@ export function registerWhrConsolidationRoutes(app: MinimalHttpApp): void {
       });
 
       await tx.whrConsolidationPlanCustomer.createMany({
-        data: body.customers!.map((c) => ({
-          planId: created.id,
-          companyId: auth.companyId,
-          clientId: c.clientId!.trim(),
-          unitPriceNormal: Number(c.unitPriceNormal),
-          unitPriceInspection: Number(c.unitPriceInspection),
-          unitPriceSensitive: Number(c.unitPriceSensitive),
-        })),
+        data: body.customers!.map((c) => {
+          const clientId = c.clientId!.trim();
+          const price = pricesByClient.get(clientId)!;
+          return {
+            planId: created.id,
+            companyId: auth.companyId,
+            clientId,
+            unitPriceNormal: price.normal,
+            unitPriceInspection: price.inspection,
+            unitPriceSensitive: price.sensitive,
+          };
+        }),
       });
 
       return created;
@@ -401,98 +428,21 @@ export function registerWhrConsolidationRoutes(app: MinimalHttpApp): void {
   });
 
   // ==========================================================================
-  // 4. 修改客户单价
+  // 4. 修改客户单价 —— 已停用（2026-09-16，确认单 4.4 / 4.7 / 4.19）
+  //    柜里的单价跟着客户长期价走：湘泰自己的客户由超管在「客户管理」改，代理的客户由代理改，
+  //    改完「计划中/收货中/装柜中」柜里没付款的单自动重算（long-term-price.ts）。
+  //    这里留着路由回 410 + 人话，开着旧页面的人点了能看懂，而不是 404。
   // ==========================================================================
   app.post("/admin/whr-consolidation/customers/price", async (req, res) => {
     const auth = requireRole(req, res, ["admin"]);
     if (!auth) return;
-
-    const body = (req.body ?? {}) as {
-      planId?: string;
-      customerId?: string;
-      unitPriceNormal?: number;
-      unitPriceInspection?: number;
-      unitPriceSensitive?: number;
-    };
-
-    if (!body.planId?.trim()) {
-      fail(res, 400, "BAD_REQUEST", "planId 为必填");
-      return;
-    }
-    if (!body.customerId?.trim()) {
-      fail(res, 400, "BAD_REQUEST", "customerId 为必填");
-      return;
-    }
-
-    /**
-     * ⚠️ 单价校验放在**碰数据库之前**（2026-08-29 第十轮补）。
-     * 原来它藏在查库和构建 updateData 之后 —— 参数本来就不合法还要先查一轮库；
-     * 更要紧的是**自测验不到它**：复核实测「断开这道闸，金额测试 6/6 照样全绿」，
-     * 正是因为测试走到那里之前就被连库拦下了。
-     * 下面赋值处那道校验保留 —— 重复校验不花钱，删了反而容易漏。
-     */
-    for (const raw of [body.unitPriceNormal, body.unitPriceInspection, body.unitPriceSensitive]) {
-      if (raw == null) continue;
-      const issue = requireUnitPrice(raw, "单价");
-      if (issue) {
-        fail(res, 400, "BAD_REQUEST", issue);
-        return;
-      }
-    }
-
-    const customer = await prisma.whrConsolidationPlanCustomer.findFirst({
-      where: { id: body.customerId, planId: body.planId, companyId: auth.companyId },
-      select: { id: true },
-    });
-
-    if (!customer) {
-      fail(res, 404, "NOT_FOUND", "客户记录不存在");
-      return;
-    }
-
-
-    // 构建更新数据（只改传了的单价）
-    const updateData: Record<string, number> = {};
-    const priceFields: Array<[string, number | undefined]> = [
-      ["unitPriceNormal", body.unitPriceNormal],
-      ["unitPriceInspection", body.unitPriceInspection],
-      ["unitPriceSensitive", body.unitPriceSensitive],
-    ];
-    for (const [field, raw] of priceFields) {
-      if (raw == null) continue;
-      const n = Number(raw);
-      // 同上：0.001 会被 Decimal(10,2) 存成 0.00
-      const priceIssue = requireUnitPrice(raw, "单价");
-      if (priceIssue) {
-        fail(res, 400, "BAD_REQUEST", priceIssue);
-        return;
-      }
-      updateData[field] = n;
-    }
-
-    if (Object.keys(updateData).length === 0) {
-      fail(res, 400, "BAD_REQUEST", "至少需要修改一种单价");
-      return;
-    }
-
-    // 改价 + 重算放同一个事务，避免只改了价没重算就崩了
-    const result = await prisma.$transaction(async (tx) => {
-      // ⚠️ 整柜取消了就不该再改单价 —— 改一次会把柜里所有未付款的单重算一遍金额。
-      // 必须在事务里锁住计划行（2026-08-27 第二版）：第一版在事务外查，
-      // 读到「柜还活着」之后柜被取消了，金额照样被重算。
-      await lockPlanAliveById(tx, body.planId!);
-      await tx.whrConsolidationPlanCustomer.update({
-        where: { id: customer.id },
-        data: updateData,
-      });
-      const totalFee = await repriceCustomer(customer.id, tx);
-      return { totalFee };
-    });
-
-    ok(res, {
-      customerId: customer.id,
-      totalFee: result.totalFee,
-    });
+    // HTTP 410（这个接口没了）；响应体 code 只有固定那几种（common-response.ts），沿用 BAD_REQUEST
+    fail(
+      res,
+      410,
+      "BAD_REQUEST",
+      "柜里不能再单独改单价了：单价跟着客户长期价走。湘泰自己的客户请到「客户管理」里改这个客户的长期价（代理的客户由代理自己改），改完没付款的单会自动按新价重算。",
+    );
   });
 
   // ==========================================================================
@@ -503,13 +453,11 @@ export function registerWhrConsolidationRoutes(app: MinimalHttpApp): void {
     const auth = requireRole(req, res, ["admin", "staff"]);
     if (!auth) return;
 
-    const body = (req.body ?? {}) as {
-      planId?: string;
-      clientId?: string;
-      unitPriceNormal?: number;
-      unitPriceInspection?: number;
-      unitPriceSensitive?: number;
-    };
+    /**
+     * 2026-09-16（确认单 4.4 / 4.6 / 4.19）：**不再收三档单价**，按客户长期价自动带出，员工填不了也改不了。
+     * 旧页面传来的 unitPrice* 一律不认。没长期价 → 400「暂未配对价格，请联系管理员」。
+     */
+    const body = (req.body ?? {}) as { planId?: string; clientId?: string };
 
     if (!body.planId?.trim()) {
       fail(res, 400, "BAD_REQUEST", "planId 为必填");
@@ -520,20 +468,6 @@ export function registerWhrConsolidationRoutes(app: MinimalHttpApp): void {
       return;
     }
     const clientId = body.clientId.trim();
-
-    const priceChecks: Array<[string, number | undefined]> = [
-      ["普货", body.unitPriceNormal],
-      ["商检货", body.unitPriceInspection],
-      ["敏感货", body.unitPriceSensitive],
-    ];
-    for (const [label, val] of priceChecks) {
-      // 同上：0.001 会被 Decimal(10,2) 存成 0.00
-      const priceIssue = val == null ? `${label}单价为必填` : requireUnitPrice(val, `${label}单价`);
-      if (priceIssue) {
-        fail(res, 400, "BAD_REQUEST", priceIssue);
-        return;
-      }
-    }
 
     const plan = await prisma.whrConsolidationPlan.findFirst({
       where: { id: body.planId.trim(), companyId: auth.companyId },
@@ -575,9 +509,26 @@ export function registerWhrConsolidationRoutes(app: MinimalHttpApp): void {
      * 上面事务外那道查重只配当「早点给个好看的提示」，说了算的是锁里这一道。
      * 数据库层的「柜 + 客户」唯一约束要动表结构，另行安排，这里先用锁把口子堵上。
      */
+    // 事务外先看一眼有没有长期价，只为早点给提示；说了算的是锁里那一次
+    if (!(await getClientWhrPrice(clientId))) {
+      fail(res, 400, "BAD_REQUEST", NO_LONG_TERM_PRICE_MESSAGE);
+      return;
+    }
+
     const created = await prisma.$transaction(async (tx) => {
-      // 锁序第一环：先锁计划行（跟本文件其它写操作同一套锁法），顺便拦已取消的柜
+      /**
+       * ⚠️ 锁序（long-term-price.ts 文件头）：客户价排队锁 → 计划。
+       * 必须排在锁计划前面：改长期价那条路是「客户价锁 → 计划」，反着拿就是死锁；
+       * 不锁的话这边读到旧价、那边改价时看不见这一新行，柜里就留着旧价。
+       */
+      await lockClientWhrPrice(tx, clientId);
+      // 锁序下一环：锁计划行（跟本文件其它写操作同一套锁法），顺便拦已取消的柜
       await lockPlanAliveById(tx, plan.id);
+
+      const price = await getClientWhrPrice(clientId, tx);
+      if (!price) {
+        throw new BusinessError(NO_LONG_TERM_PRICE_MESSAGE, 400, "BAD_REQUEST");
+      }
 
       // 锁完重读计划状态：事务外那道「不能再新增客户」的检查只配当提示
       const freshPlan = await tx.whrConsolidationPlan.findUnique({
@@ -603,20 +554,115 @@ export function registerWhrConsolidationRoutes(app: MinimalHttpApp): void {
         throw new BusinessError(`一个计划最多 ${MAX_CUSTOMERS_PER_PLAN} 个客户`);
       }
 
-      return tx.whrConsolidationPlanCustomer.create({
+      const row = await tx.whrConsolidationPlanCustomer.create({
         data: {
           planId: plan.id,
           companyId: auth.companyId,
           clientId,
-          unitPriceNormal: Number(body.unitPriceNormal),
-          unitPriceInspection: Number(body.unitPriceInspection),
-          unitPriceSensitive: Number(body.unitPriceSensitive),
+          unitPriceNormal: price.normal,
+          unitPriceInspection: price.inspection,
+          unitPriceSensitive: price.sensitive,
         },
         select: { id: true },
       });
+      return { id: row.id, price };
     });
 
-    ok(res, { customerId: created.id });
+    // 回的是锁里真正写进去的价（员工也看得到柜里单价，这不是代理信息）
+    ok(res, {
+      customerId: created.id,
+      unitPriceNormal: created.price.normal,
+      unitPriceInspection: created.price.inspection,
+      unitPriceSensitive: created.price.sensitive,
+    });
+  });
+
+  // ==========================================================================
+  // 4b-2. 客户长期价一览（2026-09-16，建柜 / 新增客户弹窗用，管理员和员工都能调）
+  //       只回「客户 id + 三档价」，**不回所属代理、不回谁填的**（确认单 4.6：员工那边不标代理）。
+  //       没填价的客户不在 items 里，前端据此显示「暂未配对价格，请联系管理员」。
+  // ==========================================================================
+  app.get("/admin/whr-consolidation/client-prices", async (req, res) => {
+    const auth = requireRole(req, res, ["admin", "staff"]);
+    if (!auth) return;
+
+    const rows = await prisma.clientWhrPrice.findMany({
+      where: { companyId: auth.companyId, client: { companyId: auth.companyId, role: "client" } },
+      select: { clientId: true, priceNormal: true, priceInspection: true, priceSensitive: true },
+      orderBy: { clientId: "asc" },
+    });
+    ok(res, {
+      items: rows.map((r) => ({
+        clientId: r.clientId,
+        unitPriceNormal: toNum(r.priceNormal),
+        unitPriceInspection: toNum(r.priceInspection),
+        unitPriceSensitive: toNum(r.priceSensitive),
+      })),
+    });
+  });
+
+  // ==========================================================================
+  // 4b-3. 超管替客户填泰国收货地址（2026-09-16，确认单 3.12）
+  //       代理把地址给超管，超管在柜详情里填。规则照客户自己填那条（client-routes.ts）：
+  //       这位客户在这个柜里已有货物发运 / 到泰国签收，就不许再改。
+  // ==========================================================================
+  app.post("/admin/whr-consolidation/address", async (req, res) => {
+    const auth = requireRole(req, res, ["admin"]);
+    if (!auth) return;
+
+    const body = (req.body ?? {}) as { planId?: string; customerId?: string; deliveryAddress?: string };
+    const planId = typeof body.planId === "string" ? body.planId.trim() : "";
+    const customerId = typeof body.customerId === "string" ? body.customerId.trim() : "";
+    const address = typeof body.deliveryAddress === "string" ? body.deliveryAddress.trim() : "";
+    if (!planId) {
+      fail(res, 400, "BAD_REQUEST", "planId 为必填");
+      return;
+    }
+    if (!customerId) {
+      fail(res, 400, "BAD_REQUEST", "customerId 为必填");
+      return;
+    }
+    if (!address) {
+      fail(res, 400, "BAD_REQUEST", "收货地址为必填");
+      return;
+    }
+    if (address.length > 500) {
+      fail(res, 400, "BAD_REQUEST", "收货地址过长（最多 500 字）");
+      return;
+    }
+
+    const customer = await prisma.whrConsolidationPlanCustomer.findFirst({
+      where: { id: customerId, planId, companyId: auth.companyId },
+      select: { id: true },
+    });
+    if (!customer) {
+      fail(res, 404, "NOT_FOUND", "这个柜里没有这位客户");
+      return;
+    }
+
+    const saved = await prisma.$transaction(async (tx) => {
+      /**
+       * ⚠️ 先锁计划再判「发没发运」（CLAUDE.md #28）：发运确认那条路也是先锁计划再改预报单，
+       * 两边排队之后，这里重查到的一定是最新状态，不会出现「刚发运完地址又被改了」。
+       */
+      const planRows = await tx.$queryRaw<Array<{ status: string }>>`SELECT status FROM whr_consolidation_plans WHERE id = ${planId} FOR UPDATE`;
+      if (!planRows || planRows.length === 0) throw new BusinessError("找不到这个柜（可能已被删除）", 404, "NOT_FOUND");
+      if (planRows[0].status === "cancelled") throw new BusinessError("这个柜已经取消了，不用再填地址");
+      const shipped = await tx.whrConsolidationPrealert.count({
+        where: { customerId: customer.id, status: { in: WHR_SHIPPED_PREALERT_STATUSES } },
+      });
+      if (shipped > 0) {
+        throw new BusinessError("这位客户在这个柜里已有货物发运，收货地址不能再改");
+      }
+      await tx.whrConsolidationPlanCustomer.update({
+        where: { id: customer.id },
+        data: { deliveryAddress: address },
+      });
+      return address;
+    });
+
+    logger.info("超管替客户填泰国收货地址（仓库版）", { 操作人: auth.userId, 柜: planId, 计划客户: customer.id });
+    ok(res, { customerId: customer.id, deliveryAddress: saved });
   });
 
   // ==========================================================================
@@ -759,7 +805,8 @@ export function registerWhrConsolidationRoutes(app: MinimalHttpApp): void {
       });
       await tx.whrConsolidationPrealert.update({
         where: { id: prealert.id },
-        data: { status: "received_pending_payment", paymentReviewedAt: null } as any,
+        // 撤销付款清空付款快照（2026-09-16，确认单 4.14）：再付款时按那一刻的价重新记
+        data: { status: "received_pending_payment", paymentReviewedAt: null, ...CLEARED_PAID_SNAPSHOT } as any,
       });
       await tx.whrConsolidationStatusLog.create({
         data: {
@@ -792,14 +839,15 @@ export function registerWhrConsolidationRoutes(app: MinimalHttpApp): void {
     const auth = requireRole(req, res, ["admin", "staff"]);
     if (!auth) return;
 
+    /**
+     * 2026-09-16：拒绝时「顺带改单价」去掉了（确认单 4.4：单价跟长期价走，柜里不再单独改价）。
+     * 旧页面传来的 unitPrice* 一律不认。这条审核流程本来就走不到（没有任何地方写 payment_submitted）。
+     */
     const body = (req.body ?? {}) as {
       planId?: string;
       prealertId?: string;
       action?: string;
       rejectReason?: string;
-      unitPriceNormal?: number;
-      unitPriceInspection?: number;
-      unitPriceSensitive?: number;
     };
 
     if (!body.planId?.trim()) {
@@ -813,16 +861,6 @@ export function registerWhrConsolidationRoutes(app: MinimalHttpApp): void {
     if (!body.action || !["approve", "reject"].includes(body.action)) {
       fail(res, 400, "BAD_REQUEST", "action 必须是 approve 或 reject");
       return;
-    }
-
-    // ⚠️ 同上：单价校验放在碰数据库之前，否则自测验不到（复核实测过）
-    for (const raw of [body.unitPriceNormal, body.unitPriceInspection, body.unitPriceSensitive]) {
-      if (raw == null) continue;
-      const issue = requireUnitPrice(raw, "单价");
-      if (issue) {
-        fail(res, 400, "BAD_REQUEST", issue);
-        return;
-      }
     }
 
     const prealert = await prisma.whrConsolidationPrealert.findFirst({
@@ -863,6 +901,8 @@ export function registerWhrConsolidationRoutes(app: MinimalHttpApp): void {
           throw new BusinessError("这张预报单刚刚被别人处理过了，审核没有执行，请刷新后再看");
         }
 
+        // 付款生效这一刻记价格快照（确认单 4.14），跟客户余额付款那条路同一个函数
+        const snapshot = await buildPaidSnapshot(prealert.id, tx);
         await tx.whrConsolidationPrealert.update({
           where: { id: prealert.id },
           data: {
@@ -870,6 +910,7 @@ export function registerWhrConsolidationRoutes(app: MinimalHttpApp): void {
             paymentReviewedAt: new Date(),
             paymentReviewedBy: auth.userId,
             paymentRejectReason: null,
+            ...snapshot,
           },
         });
         await tx.whrConsolidationStatusLog.create({
@@ -902,27 +943,8 @@ export function registerWhrConsolidationRoutes(app: MinimalHttpApp): void {
       return;
     }
 
-    // 顺带改单价（可选）
-    const priceUpdate: Record<string, number> = {};
-    const rejectPriceFields: Array<[string, number | undefined]> = [
-      ["unitPriceNormal", body.unitPriceNormal],
-      ["unitPriceInspection", body.unitPriceInspection],
-      ["unitPriceSensitive", body.unitPriceSensitive],
-    ];
-    for (const [field, raw] of rejectPriceFields) {
-      if (raw == null) continue;
-      const n = Number(raw);
-      // 同上：0.001 会被 Decimal(10,2) 存成 0.00
-      const priceIssue = requireUnitPrice(raw, "单价");
-      if (priceIssue) {
-        fail(res, 400, "BAD_REQUEST", priceIssue);
-        return;
-      }
-      priceUpdate[field] = n;
-    }
-
     const rejectResult = await prisma.$transaction(async (tx) => {
-      // ⚠️ reject 会改单价并重算费用，同样要拦（2026-08-27 补）
+      // ⚠️ reject 会重算费用，同样要拦（2026-08-27 补）
       await lockPlanAliveByPrealert(tx, prealert.id);
 
       /**
@@ -939,14 +961,6 @@ export function registerWhrConsolidationRoutes(app: MinimalHttpApp): void {
         throw new BusinessError("这张预报单刚刚被别人处理过了，审核没有执行，请刷新后再看");
       }
 
-      // 改单价必须和状态回退在同一个事务里，之前写在事务外，事务失败时价格已经改掉了
-      if (Object.keys(priceUpdate).length > 0) {
-        await tx.whrConsolidationPlanCustomer.update({
-          where: { id: prealert.customerId },
-          data: priceUpdate,
-        });
-      }
-
       await tx.whrConsolidationPrealert.update({
         where: { id: prealert.id },
         data: {
@@ -959,11 +973,8 @@ export function registerWhrConsolidationRoutes(app: MinimalHttpApp): void {
         } as any,
       });
 
-      // 关键：改了单价就要按新价重算这张单的应付金额，否则客户看到的还是签收时冻结的旧金额
+      // 退回待付款，按柜里现在的单价（跟着长期价走）重算这张单的应付金额
       const newFee = await recalcPrealertFee(prealert.id, tx);
-      if (Object.keys(priceUpdate).length > 0) {
-        await recalcUnpaidPrealertFees(prealert.customerId, tx);
-      }
       await recalcCustomerTotals(prealert.customerId, tx);
 
       await tx.whrConsolidationStatusLog.create({
@@ -975,10 +986,7 @@ export function registerWhrConsolidationRoutes(app: MinimalHttpApp): void {
           operatorName: auth.name || auth.userId,
           fromStatus: "payment_submitted",
           toStatus: "received_pending_payment",
-          remark:
-            Object.keys(priceUpdate).length > 0
-              ? `审核不通过；${body.rejectReason!.trim()}；单价已调整，应付金额更新为 ¥${newFee}`
-              : `审核不通过；${body.rejectReason!.trim()}`,
+          remark: `审核不通过；${body.rejectReason!.trim()}`,
         },
       });
 
@@ -1082,6 +1090,9 @@ export function registerWhrConsolidationRoutes(app: MinimalHttpApp): void {
           status: "cancelled",
           cancelReason: body.cancelReason!.trim(),
           cancelledAt: new Date(),
+          // 2026-09-16：已付款的单作废时下面会把钱退回去，付款快照跟「撤销付款」一样清掉，
+          // 免得一张退了钱的单还挂着返现金额（返现单只算泰国签收的，这里清掉是让数据自己说得通）
+          ...CLEARED_PAID_SNAPSHOT,
         },
       });
 
@@ -1142,7 +1153,8 @@ export function registerWhrConsolidationRoutes(app: MinimalHttpApp): void {
 
   // ==========================================================================
   // 9b. 管理员改单件货物的货型（仓库版，2026-08-15 新增）
-  //     客户报单时经常把商检/敏感报成普货，仓库收货才发现。改完金额立刻重算。
+  //     客户报单时经常把商检/敏感报成普货，仓库收货才发现。
+  //     2026-09-16 起：改完没付款的单按新货型自动重算金额（柜里「改单价」停用了，不自动算就没人能调）。
   // ==========================================================================
   app.post("/admin/whr-consolidation/prealerts/item-cargo-type", async (req, res) => {
     const auth = requireRole(req, res, ["admin"]);
@@ -1184,7 +1196,7 @@ export function registerWhrConsolidationRoutes(app: MinimalHttpApp): void {
 
     const toZh = CARGO_TYPE_ZH[body.cargoType]!;
 
-    await prisma.$transaction(async (tx) => {
+    const cargoResult = await prisma.$transaction(async (tx) => {
       // ⚠️ 整柜取消了就不该再动这张单；锁序【计划 → 预报单】，
       // 照紧挨着的 9c 删货物接口的锁法（2026-08-31 补，排查报告第 28 条）
       await lockPlanAliveByPrealert(tx, item.prealert.id);
@@ -1216,6 +1228,15 @@ export function registerWhrConsolidationRoutes(app: MinimalHttpApp): void {
         data: { cargoType: body.cargoType! },
       });
 
+      /**
+       * 2026-09-16 改：**没付款的单按新货型重算金额**（原来 08-15 拍板「故意不重算、要调自己改单价」）。
+       * 柜里「改单价」停用了，不自动算的话这张单的钱就没人能调了。
+       * 能走到这里的一定是锁里重查过的「待签收 / 待付款」，已付款的单根本进不来，金额不会被动。
+       * 方数、件数不受影响：换货型不改长宽高，也不改件数。
+       */
+      const newFee = await recalcPrealertFee(item.prealert.id, tx);
+      const totals = await recalcCustomerTotals(item.prealert.customerId, tx);
+
       await tx.whrConsolidationStatusLog.create({
         data: {
           prealertId: item.prealert.id,
@@ -1225,18 +1246,22 @@ export function registerWhrConsolidationRoutes(app: MinimalHttpApp): void {
           operatorName: auth.name || auth.userId,
           fromStatus: freshItem.prealert.status,
           toStatus: freshItem.prealert.status,
-          remark: `管理员把「${item.productName}」的货型由${fromZh}改为${toZh}`,
+          remark:
+            freshItem.prealert.status === "received_pending_payment"
+              ? `管理员把「${item.productName}」的货型由${fromZh}改为${toZh}，应付金额按新货型重算为 ¥${newFee}`
+              : `管理员把「${item.productName}」的货型由${fromZh}改为${toZh}`,
         },
       });
-
-      // ⚠️ 这里**故意不重算金额**（用户 2026-08-15 拍板：「全部手动报价，系统不用去算价格」）。
-      // 签收那一刻的自动计费保持原样不动，改货型只改记录，钱要不要跟着改由管理员自己定。
-      // 方数和件数也不受影响：换货型不改长宽高，也不改件数。
+      return { newFee, status: freshItem.prealert.status, customerTotalFee: totals.totalFee };
     });
 
     ok(res, {
       itemId: item.id,
       cargoType: body.cargoType,
+      // 真算出来、真写进去的金额（CLAUDE.md #28 ④）
+      prealertStatus: cargoResult.status,
+      totalFee: cargoResult.newFee,
+      customerTotalFee: cargoResult.customerTotalFee,
     });
   });
 
@@ -1325,17 +1350,22 @@ export function registerWhrConsolidationRoutes(app: MinimalHttpApp): void {
         },
       });
 
-      // ⚠️ 只重算「方数 / 件数」这类数量汇总，**不重算金额**
-      //（用户 2026-08-15 拍板：系统不去算价格）。
-      // recalcCustomerTotals 里的 totalFee 只是把各张单已存的金额加起来，不会重新定价。
-      // 删了货但账单金额不变，是有意的 —— 要不要减价由管理员自己决定，界面弹窗已写明。
+      /**
+       * 2026-09-16 改：**没付款的单按剩下的货重算金额**，再汇总到客户（原来 08-15 拍板「不重算金额」）。
+       * 柜里「改单价」停用了，不自动算的话多收的钱就没人能调了。
+       * 能走到这里的一定是锁里重查过的「待签收 / 待付款」，已付款的单进不来。
+       * 界面弹窗和提示文字同步改了（admin/whr-consolidation/page.tsx）。
+       */
+      const newFee = await recalcPrealertFee(item.prealert.id, tx);
       const totals = await recalcCustomerTotals(item.prealert.customerId, tx);
-      return { totals };
+      return { totals, newFee, status: freshPa.status };
     });
 
     ok(res, {
       itemId: item.id,
       customerVolume: result.totals.totalVolumeM3,
+      prealertStatus: result.status,
+      totalFee: result.newFee,
     });
   });
 
@@ -1389,6 +1419,12 @@ export function registerWhrConsolidationRoutes(app: MinimalHttpApp): void {
       }),
     ]);
 
+    /**
+     * 发运红线（2026-09-16，确认单 4.15）：已经发出去的柜谁都不能删，输管理员密码也不行。
+     * 预览照样回（hardBlocked=true），界面据此不给密码框；真删的时候锁里再判一次。
+     */
+    const shippedReason = whrPlanShippedReason(plan.status, allPrealerts.map((p) => p.status));
+
     // 已经收过钱或已发货的，算「开始走流程了」
     const STARTED = ["payment_submitted", "paid", "loading", "shipped", "thailand_received"];
     const started = allPrealerts.filter((p) => STARTED.includes(p.status));
@@ -1416,7 +1452,17 @@ export function registerWhrConsolidationRoutes(app: MinimalHttpApp): void {
     const refundTotal = pendingRefunds.reduce((s, r) => s + r.amount, 0);
 
     if (body.dryRun) {
-      ok(res, { planNo: plan.planNo, willDelete, blockers, refundTotal, refundCount: pendingRefunds.length });
+      ok(res, {
+        planNo: plan.planNo, willDelete, blockers, refundTotal, refundCount: pendingRefunds.length,
+        hardBlocked: shippedReason !== null,
+        hardBlockReason: shippedReason,
+      });
+      return;
+    }
+
+    // 发运红线在查密码之前就拦：带没带密码、密码对不对，都一样删不了
+    if (shippedReason) {
+      fail(res, 409, "VALIDATION_ERROR", shippedReason);
       return;
     }
 
@@ -1487,6 +1533,20 @@ export function registerWhrConsolidationRoutes(app: MinimalHttpApp): void {
         select: { status: true },
       });
       if (!nowPlan) throw new BusinessError("集货计划不存在", 404, "NOT_FOUND");
+      /**
+       * ⚠️ 发运红线锁完再判一次（CLAUDE.md #28）：事务外那次判断之后、锁住之前，
+       * 员工可能正好点了「发运确认」（那条路也是先锁计划），这里不重判就会带着密码把已发运的柜删掉。
+       */
+      const liveStatuses = (
+        await tx.whrConsolidationPrealert.findMany({
+          where: { planCustomer: { planId } },
+          select: { status: true },
+        })
+      ).map((pa) => pa.status);
+      const shippedNow = whrPlanShippedReason(nowPlan.status, liveStatuses);
+      if (shippedNow) {
+        throw new BusinessError(shippedNow, 409, "VALIDATION_ERROR");
+      }
       const startedNow = await tx.whrConsolidationPrealert.count({
         where: { planCustomer: { planId }, status: { in: STARTED } },
       });
