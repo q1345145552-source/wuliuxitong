@@ -1,6 +1,7 @@
 "use client";
 
-import { brandIconHref, type PublicBrandInfo } from "./brand-core";
+import { brandIconHref, TAB_ICON_ORIGINAL_HREF_ATTR, TAB_ICON_SELECTOR, type PublicBrandInfo } from "./brand-core";
+import { EARLY_TAB_BRAND_HANDLE } from "./early-tab-brand";
 
 /* ==========================================================================
    标签页标题 + 图标换成代理的（5.2）。只在浏览器里跑。
@@ -12,10 +13,30 @@ import { brandIconHref, type PublicBrandInfo } from "./brand-core";
    所以登录后在浏览器里改 <title> 和 <link rel=icon> 的 href。
    ⚠️ 只改属性、不删节点：<head> 里那几个节点归 React 管，删了它下次对账会报错。
    ⚠️ Next 换页时可能把 <title> 写回「湘泰物流网站」，所以盯着 <head> 变化再写一遍（值一样就不写，不会死循环）。
+   ⚠️ 整页打开时 <head> 里的内联脚本（early-tab-brand.ts）已经先按缓存换过了：本文件第一次被调用时先把它停掉、接管，
+      改 DOM 的规则两边逐条一致（scripts/test-agent-branding.ts 在同一份假 DOM 上比对）。
    ========================================================================== */
 
-const ICON_SELECTOR = 'link[rel~="icon"], link[rel="apple-touch-icon"], link[rel="shortcut icon"]';
-const ORIGINAL_HREF_ATTR = "data-xt-original-href";
+const ICON_SELECTOR = TAB_ICON_SELECTOR;
+const ORIGINAL_HREF_ATTR = TAB_ICON_ORIGINAL_HREF_ATTR;
+
+/** 内联脚本挂在 window 上的把手（见 early-tab-brand.ts） */
+interface EarlyTabBrandHandle {
+  originalTitle: string | null;
+  stop: () => void;
+}
+
+/** 停掉首帧内联脚本并拿回它记下的原标题；没跑过（湘泰账号、登录页、没缓存）返回 null */
+function takeOverEarlyScript(): EarlyTabBrandHandle | null {
+  try {
+    const early = (window as unknown as Record<string, EarlyTabBrandHandle | undefined>)[EARLY_TAB_BRAND_HANDLE];
+    if (!early || typeof early.stop !== "function") return null;
+    early.stop();
+    return early;
+  } catch {
+    return null;
+  }
+}
 
 let observer: MutationObserver | null = null;
 let current: PublicBrandInfo | null = null;
@@ -36,8 +57,10 @@ function writeOnce(): void {
 /** 换成代理的；传 null 还原成湘泰的（一般用不到：换账号会整页重载） */
 export function applyDocumentBrand(brand: PublicBrandInfo | null): void {
   if (typeof document === "undefined") return;
+  // 内联脚本换过的话，document.title 现在已是代理名字，原标题得从它那儿拿
+  const early = takeOverEarlyScript();
   if (brand) {
-    if (originalTitle === null && !current) originalTitle = document.title;
+    if (originalTitle === null && !current) originalTitle = early ? early.originalTitle : document.title;
     current = brand;
     writeOnce();
     if (!observer) {
@@ -46,7 +69,9 @@ export function applyDocumentBrand(brand: PublicBrandInfo | null): void {
     }
     return;
   }
-  if (!current) return;
+  // 结论是湘泰的：React 自己没换过、内联脚本也没换过 → 什么都不动（湘泰账号一直走这里）
+  if (!current && !early) return;
+  if (!current && early) originalTitle = early.originalTitle;
   current = null;
   observer?.disconnect();
   observer = null;

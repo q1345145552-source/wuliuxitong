@@ -457,6 +457,337 @@ async function main(): Promise<void> {
     assert.ok(!/xt_brand_login|BRAND_LOGIN_COOKIE|document\.cookie/.test(clear.replace(/\/\*[\s\S]*?\*\//g, "")), "退出登录不许动 xt_brand_login cookie（B4 靠它把代理的客户送回代理登录页）");
   });
 
+  /* ── 9. 整页打开 / 刷新工作台：<head> 内联脚本让标签页标题图标第一帧就是代理的（第 1 轮后加固） ── */
+  const early = await import("../apps/web/src/modules/branding/early-tab-brand");
+  const docBrand = await import("../apps/web/src/modules/branding/document-brand");
+  const { AUTH_SESSION_STORAGE_KEY, WORKBENCH_BRAND_CACHE_KEY } = await import("../apps/web/src/auth/auth-session");
+  // 拿「浏览器实际执行的那串字节」编译出判定函数来测，不另写一份
+  const decide = new Function(`return (${early.EARLY_TAB_BRAND_DECIDE_SOURCE});`)() as (p: unknown, s: unknown, c: unknown) => { title: string; iconHref: string | null } | null;
+  const sess = (role: string, userId = "zz_u1", extra: Row = {}): string => JSON.stringify({ userId, companyId: "c_001", role, token: "t", ...extra });
+  const BRAND_LOGO = { name: " A 代理国际物流 ", logoUrl: "/images/zz_fxt_logo.png", loginPath: "/zz-a" };
+  const BRAND_NOLOGO = { name: "<B>代理", logoUrl: null, loginPath: null };
+  const rec = (userId: string, brand: any): string => JSON.stringify(web.buildBrandCacheRecord(userId, brand === null ? null : web.parseSessionBrand(brand)));
+
+  await check("25) 首帧判定（内联脚本那串源码）：只有「工作台路径 + 有效的客户/代理会话 + 同账号缓存 + 品牌有名字」才动；图标地址用缓存里算好的", () => {
+    for (const p of ["/client", "/client/", "/client/whr-consolidation", "/agent"]) {
+      assert.deepEqual(decide(p, sess("client"), rec("zz_u1", BRAND_LOGO)), { title: "A 代理国际物流", iconHref: "/images/zz_fxt_logo.png" }, p);
+    }
+    assert.deepEqual(decide("/agent", sess("agent"), rec("zz_u1", BRAND_NOLOGO)), { title: "<B>代理", iconHref: web.letterIconDataUri("<B>代理") });
+    for (const p of ["/clientx", "/agents", "/login", "/", "/zz-a", "/admin", "/staff/container-loading", "/register", "", null, 1]) {
+      assert.equal(decide(p, sess("client"), rec("zz_u1", BRAND_LOGO)), null, `路径 ${String(p)} 不许动`);
+    }
+    assert.equal(decide("/client", sess("client"), rec("zz_u1", null)), null, "湘泰客户（缓存 brand: null）不许动");
+    assert.equal(decide("/client", sess("client"), rec("zz_u2", BRAND_LOGO)), null, "别的账号的缓存不许认");
+    for (const role of ["admin", "staff", "", "boss"]) assert.equal(decide("/client", sess(role), rec("zz_u1", BRAND_LOGO)), null, `角色 ${role} 不许动`);
+    for (const drop of ["token", "companyId", "userId"]) {
+      assert.equal(decide("/client", sess("client", "zz_u1", { [drop]: "" }), rec("zz_u1", BRAND_LOGO)), null, `会话缺 ${drop} 当没登录`);
+    }
+    for (const bad of [null, "", "{", "null", "[]", "42"]) {
+      assert.equal(decide("/client", bad, rec("zz_u1", BRAND_LOGO)), null, `会话 ${String(bad)}`);
+      assert.equal(decide("/client", sess("client"), bad), null, `缓存 ${String(bad)}`);
+    }
+    // 旧格式缓存（没 iconHref）：只改标题
+    assert.deepEqual(decide("/client", sess("client"), JSON.stringify({ userId: "zz_u1", brand: BRAND_LOGO })), { title: "A 代理国际物流", iconHref: null });
+    // 图标地址跟 brandIconHref 的选法对不上（被改过）：不用，只改标题
+    const tampered = (brand: Row, iconHref: unknown) => decide("/client", sess("client"), JSON.stringify({ userId: "zz_u1", brand, iconHref }))?.iconHref;
+    assert.equal(tampered(BRAND_LOGO, "javascript:alert(1)"), null);
+    assert.equal(tampered(BRAND_LOGO, "/images/other.png"), null, "有 logo 时只认 logo 本身");
+    assert.equal(tampered(BRAND_LOGO, web.letterIconDataUri("A")), null, "有 logo 时不认首字图标");
+    assert.equal(tampered(BRAND_NOLOGO, "/images/zz_fxt_logo.png"), null, "没 logo 时只认首字图标");
+    assert.equal(tampered({ ...BRAND_LOGO, logoUrl: "https://evil.example.net/x.png" }, "https://evil.example.net/x.png"), null, "不合规 logo 不认");
+    assert.equal(tampered(BRAND_NOLOGO, 42), null);
+  });
+
+  await check("26) 首帧判定和 React 那边（getOptionalSession + readCache/parseSessionBrand + peek 只认客户/代理）口径一致：整张组合表逐格比", () => {
+    const sessions: unknown[] = [sess("client"), sess("agent"), sess("admin"), sess("staff"), sess("client", "zz_u2"), sess("client", "zz_u1", { token: "" }), "{", "null", null];
+    const brands: unknown[] = [BRAND_LOGO, BRAND_NOLOGO, null, { name: "  " }, { name: 42 }, "A 代理", { name: "X", logoUrl: "javascript:1" }, { name: "Y", logoUrl: "/images/../x" }];
+    const caches: unknown[] = [null, "garbage", "{}"];
+    for (const b of brands) {
+      caches.push(JSON.stringify({ userId: "zz_u1", brand: b }));
+      const parsed = b === null ? null : web.parseSessionBrand(b);
+      caches.push(JSON.stringify({ userId: "zz_u1", brand: b, iconHref: parsed ? web.brandIconHref(parsed) : null }));
+    }
+    caches.push(rec("zz_u2", BRAND_LOGO));
+    const refSession = (raw: unknown): Row | null => {
+      if (typeof raw !== "string") return null;
+      try {
+        const s = JSON.parse(raw);
+        return s?.role && s.userId && s.companyId && s.token ? s : null;
+      } catch { return null; }
+    };
+    let cells = 0;
+    for (const p of ["/client/wallet", "/agent", "/login", "/clientx"]) {
+      for (const s of sessions) {
+        for (const c of caches) {
+          cells += 1;
+          const got = decide(p, s, c);
+          const session = refSession(s);
+          let expected: { title: string; iconHref: string | null } | null = null;
+          if (/^\/(client|agent)(\/|$)/.test(p) && session && (session.role === "client" || session.role === "agent") && typeof c === "string") {
+            let parsed: Row | null = null;
+            try { parsed = JSON.parse(c); } catch { parsed = null; }
+            const brand = parsed && parsed.userId === session.userId && parsed.brand !== null ? web.parseSessionBrand(parsed.brand) : null;
+            if (brand) expected = { title: brand.name, iconHref: parsed!.iconHref === web.brandIconHref(brand) ? web.brandIconHref(brand) : null };
+          }
+          // 缓存里是 brand 对象但 iconHref 是按「没过 parseSessionBrand 的原 logo」算的这种人为组合，不在比对范围：只比「动不动」和标题
+          assert.equal(got === null, expected === null, `动不动不一致：${p} ${String(s)} ${String(c)}`);
+          if (got && expected) {
+            assert.equal(got.title, expected.title, `标题不一致：${String(c)}`);
+            if (got.iconHref !== null) assert.equal(got.iconHref, expected.iconHref, `图标不一致：${String(c)}`);
+          }
+        }
+      }
+    }
+    assert.ok(cells > 300, `组合太少：${cells}`);
+    // 写缓存的地方算好的图标地址，内联脚本原样拿到
+    for (const b of [BRAND_LOGO, BRAND_NOLOGO]) {
+      const parsed = web.parseSessionBrand(b)!;
+      assert.equal(decide("/client", sess("client"), rec("zz_u1", b))?.iconHref, web.brandIconHref(parsed));
+    }
+    assert.deepEqual(web.buildBrandCacheRecord("zz_u1", null), { userId: "zz_u1", brand: null, iconHref: null });
+  });
+
+  /* ── 假 DOM：只实现两边用到的那几个接口，MutationObserver 按「一次清空一批」模拟微任务 ── */
+  type Mut = { type: string; attributeName?: string };
+  class FakeDom {
+    observers: FakeMO[] = [];
+    head: FakeEl;
+    titleCreated = 0;
+    constructor() { this.head = new FakeEl(this, "head"); }
+    record(m: Mut): void { for (const o of this.observers) if (o.accepts(m)) o.pending = true; }
+    flush(): void {
+      for (let round = 0; ; round += 1) {
+        assert.ok(round < 20, "MutationObserver 来回改停不下来（两边在抢着改）");
+        const due = this.observers.filter((o) => o.pending);
+        if (!due.length) return;
+        for (const o of due) { o.pending = false; o.cb([], o); }
+      }
+    }
+    links(): FakeEl[] { return this.head.children.filter((e) => e.tag === "link"); }
+    titles(): FakeEl[] { return this.head.children.filter((e) => e.tag === "title"); }
+    document(): Row {
+      const dom = this;
+      return {
+        get head() { return dom.head; },
+        get title() { return dom.titles()[0]?.text ?? ""; },
+        set title(v: string) {
+          const t = dom.titles()[0];
+          if (t) t.setText(v);
+          else { dom.titleCreated += 1; const el = new FakeEl(dom, "title"); el.text = v; dom.head.append(el); }
+        },
+        getElementsByTagName: (tag: string) => dom.head.children.filter((e) => e.tag === tag),
+        querySelectorAll: (sel: string) => {
+          assert.equal(sel, web.TAB_ICON_SELECTOR, "选择器变了，假 DOM 要跟着改");
+          return dom.links().filter((l) => {
+            const rel = l.getAttribute("rel") ?? "";
+            return rel.split(/\s+/).includes("icon") || rel === "apple-touch-icon" || rel === "shortcut icon";
+          });
+        },
+      };
+    }
+    snapshot(): Row {
+      return { title: this.titles().map((t) => t.text), links: this.links().map((l) => Object.fromEntries([...l.attrs.entries()].sort())) };
+    }
+  }
+  class FakeEl {
+    attrs = new Map<string, string>();
+    children: FakeEl[] = [];
+    text = "";
+    constructor(public dom: FakeDom, public tag: string, attrs: Record<string, string> = {}) {
+      for (const [k, v] of Object.entries(attrs)) this.attrs.set(k, v);
+    }
+    getAttribute(n: string): string | null { return this.attrs.has(n) ? this.attrs.get(n)! : null; }
+    hasAttribute(n: string): boolean { return this.attrs.has(n); }
+    setAttribute(n: string, v: string): void { this.attrs.set(n, String(v)); this.dom.record({ type: "attributes", attributeName: n }); }
+    removeAttribute(n: string): void { this.attrs.delete(n); this.dom.record({ type: "attributes", attributeName: n }); }
+    setText(v: string): void { this.text = v; this.dom.record({ type: "childList" }); }
+    append(el: FakeEl): void { this.children.push(el); this.dom.record({ type: "childList" }); }
+  }
+  class FakeMO {
+    pending = false;
+    opts: Row = {};
+    dom: FakeDom | null = null;
+    constructor(public cb: (records: unknown[], o: FakeMO) => void) {}
+    observe(target: FakeEl, opts: Row): void {
+      assert.equal(target.tag, "head", "只许盯 <head>");
+      this.dom = target.dom;
+      this.opts = opts;
+      target.dom.observers.push(this);
+    }
+    disconnect(): void { if (this.dom) this.dom.observers = this.dom.observers.filter((o) => o !== this); this.pending = false; }
+    accepts(m: Mut): boolean {
+      if (m.type === "attributes") return !!this.opts.attributes && (!this.opts.attributeFilter || this.opts.attributeFilter.includes(m.attributeName));
+      return !!this.opts.childList;
+    }
+  }
+  const parseXiangtaiHead = (dom: FakeDom): void => {
+    // 服务器 HTML 里根布局 metadata 出来的那几行（顺序照真实构建产物）
+    dom.head.append(new FakeEl(dom, "link", { rel: "stylesheet", href: "/_next/static/chunks/a.css" }));
+    const t = new FakeEl(dom, "title");
+    dom.head.append(t);
+    t.setText("湘泰物流网站");
+    dom.head.append(new FakeEl(dom, "link", { rel: "icon", href: "/favicon.ico?favicon.x.ico", sizes: "48x48", type: "image/x-icon" }));
+    dom.head.append(new FakeEl(dom, "link", { rel: "icon", href: "/icon.png?icon.y.png", sizes: "256x256", type: "image/png" }));
+    dom.head.append(new FakeEl(dom, "link", { rel: "apple-touch-icon", href: "/apple-icon.png?apple-icon.z.png", sizes: "180x180", type: "image/png" }));
+  };
+  const hydrateXiangtaiHead = (dom: FakeDom): void => {
+    // React 水合 metadata：第一个 <title> 的文字写回湘泰；按 href 找不到的图标 link 另插一个湘泰的
+    dom.titles()[0]!.setText("湘泰物流网站");
+    dom.head.append(new FakeEl(dom, "link", { rel: "icon", href: "/icon.png?icon.y.png", sizes: "256x256", type: "image/png" }));
+  };
+  const runEarly = (dom: FakeDom, pathname: string, store: Record<string, string | null> | "throws", withMO = true): Row => {
+    const win: Row = {
+      location: { pathname },
+      localStorage: { getItem: (k: string) => { if (store === "throws") throw new Error("SecurityError"); return store[k] ?? null; } },
+    };
+    new Function("window", "document", "MutationObserver", early.EARLY_TAB_BRAND_SCRIPT)(win, dom.document(), withMO ? FakeMO : undefined);
+    return win;
+  };
+  const withGlobals = <T>(dom: FakeDom, win: Row, body: () => T): T => {
+    const g = globalThis as any;
+    const saved = { document: g.document, window: g.window, MutationObserver: g.MutationObserver };
+    g.document = dom.document(); g.window = win; g.MutationObserver = FakeMO;
+    try { return body(); } finally { g.document = saved.document; g.window = saved.window; g.MutationObserver = saved.MutationObserver; }
+  };
+  const storeFor = (role: string, cacheRaw: string | null): Record<string, string | null> => ({ [AUTH_SESSION_STORAGE_KEY]: sess(role), [WORKBENCH_BRAND_CACHE_KEY]: cacheRaw });
+  const H = early.EARLY_TAB_BRAND_HANDLE;
+  const ORIG = web.TAB_ICON_ORIGINAL_HREF_ATTR;
+
+  await check("27) 内联脚本：解析 <head> 时标题图标当场换成代理的；React 水合写回湘泰的也当场改回；不造第二个 <title>；非 /images/ 图标去 type", () => {
+    for (const b of [BRAND_LOGO, BRAND_NOLOGO]) {
+      const parsed = web.parseSessionBrand(b)!;
+      const icon = web.brandIconHref(parsed);
+      const dom = new FakeDom();
+      const win = runEarly(dom, "/client/whr-consolidation", storeFor("client", rec("zz_u1", b)));
+      assert.equal(dom.titleCreated, 0, "脚本跑的时候还没有 <title>，不许自己造一个");
+      assert.ok(win[H] && typeof win[H].stop === "function", "没挂交接把手");
+      parseXiangtaiHead(dom);
+      dom.flush();
+      assert.equal(dom.document().title, parsed.name);
+      assert.equal(dom.titles().length, 1);
+      for (const l of dom.links().filter((x) => x.getAttribute("rel") !== "stylesheet")) {
+        assert.equal(l.getAttribute("href"), icon);
+        assert.ok(l.getAttribute(ORIG)!.startsWith("/"), "没记原地址");
+        assert.equal(l.hasAttribute("type"), icon.startsWith("/images/"), "type 去留跟 document-brand 不一致");
+      }
+      assert.equal(dom.links()[0]!.getAttribute("href"), "/_next/static/chunks/a.css", "样式表 link 不许动");
+      assert.equal(win[H].originalTitle, "湘泰物流网站");
+      hydrateXiangtaiHead(dom);
+      dom.flush();
+      assert.equal(dom.document().title, parsed.name, "水合写回湘泰标题后没改回");
+      assert.ok(dom.links().filter((x) => x.getAttribute("rel") !== "stylesheet").every((l) => l.getAttribute("href") === icon), "水合插进来的湘泰图标没改");
+    }
+  });
+
+  await check("28) 交接：React 接管后内联脚本停掉；两边在同一份 <head> 上得到的结果逐个属性一样；接管后结论是湘泰的就按原值还原", () => {
+    for (const b of [BRAND_LOGO, BRAND_NOLOGO]) {
+      const parsed = web.parseSessionBrand(b)!;
+      const info = { name: parsed.name, logoUrl: parsed.logoUrl };
+      // A：内联脚本先换 → 水合 → React 按同一个品牌接管
+      const domA = new FakeDom();
+      const winA = runEarly(domA, "/client", storeFor("client", rec("zz_u1", b)));
+      parseXiangtaiHead(domA); domA.flush(); hydrateXiangtaiHead(domA); domA.flush();
+      withGlobals(domA, winA, () => docBrand.applyDocumentBrand(info));
+      assert.equal(winA[H], undefined, "接管后把手没清");
+      assert.equal(domA.observers.length, 1, "接管后应只剩 document-brand 自己的观察者");
+      const snapA = domA.snapshot();
+      // A 接着：Next 写回湘泰标题 → document-brand 改回；再判成湘泰 → 还原成「湘泰物流网站」（原标题从内联脚本那儿拿，不是代理名字）
+      withGlobals(domA, winA, () => { domA.titles()[0]!.setText("湘泰物流网站"); domA.flush(); });
+      assert.equal(domA.document().title, parsed.name);
+      withGlobals(domA, winA, () => docBrand.applyDocumentBrand(null));
+      assert.equal(domA.document().title, "湘泰物流网站", "还原后的标题不对");
+      assert.deepEqual(domA.links().filter((x) => x.getAttribute("rel") !== "stylesheet").map((l) => l.getAttribute("href")),
+        ["/favicon.ico?favicon.x.ico", "/icon.png?icon.y.png", "/apple-icon.png?apple-icon.z.png", "/icon.png?icon.y.png"]);
+      assert.equal(domA.observers.length, 0);
+      // B：没有内联脚本（改之前的样子）→ 水合 → React 换。⚠️ document-brand 的观察者是模块级单例，A 收尾（还原）之后才能开 B
+      const domB = new FakeDom();
+      parseXiangtaiHead(domB); hydrateXiangtaiHead(domB);
+      withGlobals(domB, {}, () => docBrand.applyDocumentBrand(info));
+      assert.deepEqual(snapA, domB.snapshot(), "内联脚本 + 接管 与 只有 document-brand 的结果不一样（口径不一致）");
+      withGlobals(domB, {}, () => docBrand.applyDocumentBrand(null));
+    }
+  });
+
+  await check("29) 内联脚本换过、React 还没换过就判成湘泰（接口说归属改了）：停掉并还原；水合那一帧会话还没读到不许调 applyDocumentBrand（源码）", () => {
+    const dom = new FakeDom();
+    const win = runEarly(dom, "/agent", storeFor("agent", rec("zz_u1", BRAND_NOLOGO)));
+    parseXiangtaiHead(dom); dom.flush();
+    assert.equal(dom.document().title, "<B>代理");
+    withGlobals(dom, win, () => docBrand.applyDocumentBrand(null));
+    assert.equal(win[H], undefined);
+    assert.equal(dom.observers.length, 0);
+    assert.equal(dom.document().title, "湘泰物流网站");
+    assert.deepEqual(dom.links().slice(1).map((l) => l.getAttribute("href")), ["/favicon.ico?favicon.x.ico", "/icon.png?icon.y.png", "/apple-icon.png?apple-icon.z.png"]);
+    // 湘泰账号：没有内联脚本、React 也没换过 → applyDocumentBrand(null) 一个属性都不碰
+    const xt = new FakeDom();
+    parseXiangtaiHead(xt);
+    const before = xt.snapshot();
+    withGlobals(xt, {}, () => docBrand.applyDocumentBrand(null));
+    assert.deepEqual(xt.snapshot(), before);
+    const hook = fs.readFileSync(path.join(process.cwd(), "apps/web/src/modules/branding/useWorkbenchBrand.ts"), "utf-8");
+    assert.match(hook, /if \(state === undefined \|\| !userId\) return;\s*applyDocumentBrand\(/, "会话没读到时不许调 applyDocumentBrand（会把内联脚本换好的标题还原成湘泰）");
+    assert.match(hook, /JSON\.stringify\(buildBrandCacheRecord\(userId, brand\)\)/, "写品牌缓存没带上算好的图标地址");
+  });
+
+  await check("30) 内联脚本不动的情况：湘泰客户 / 管理员 / 登录页 / 代理前缀登录页 / 没缓存；旧缓存只改标题；离开工作台路径还原并停下", () => {
+    const cases: Array<[string, Record<string, string | null>]> = [
+      ["/client", storeFor("client", rec("zz_u1", null))],
+      ["/client", storeFor("admin", rec("zz_u1", BRAND_LOGO))],
+      ["/staff", storeFor("staff", rec("zz_u1", BRAND_LOGO))],
+      ["/login", storeFor("client", rec("zz_u1", BRAND_LOGO))],
+      ["/zz-a", storeFor("client", rec("zz_u1", BRAND_LOGO))],
+      ["/client", storeFor("client", null)],
+      ["/client", { [AUTH_SESSION_STORAGE_KEY]: null, [WORKBENCH_BRAND_CACHE_KEY]: rec("zz_u1", BRAND_LOGO) }],
+    ];
+    for (const [p, store] of cases) {
+      const dom = new FakeDom();
+      const ref = new FakeDom();
+      const win = runEarly(dom, p, store);
+      assert.equal(win[H], undefined, `${p} 不该挂把手`);
+      assert.equal(dom.observers.length, 0, `${p} 不该盯 <head>`);
+      parseXiangtaiHead(dom); dom.flush(); hydrateXiangtaiHead(dom); dom.flush();
+      parseXiangtaiHead(ref); hydrateXiangtaiHead(ref);
+      assert.deepEqual(dom.snapshot(), ref.snapshot(), `${p} 的 <head> 被动了`);
+    }
+    // 旧缓存（没 iconHref）：只改标题，图标一个属性都不碰
+    const old = new FakeDom();
+    runEarly(old, "/client", storeFor("client", JSON.stringify({ userId: "zz_u1", brand: BRAND_LOGO })));
+    parseXiangtaiHead(old); old.flush();
+    assert.equal(old.document().title, "A 代理国际物流");
+    const oldRef = new FakeDom();
+    parseXiangtaiHead(oldRef);
+    assert.deepEqual(old.snapshot().links, oldRef.snapshot().links, "旧缓存（没 iconHref）不许动图标");
+    // 离开工作台路径（保险）：下一次 <head> 变化时还原并停下
+    const leave = new FakeDom();
+    const win = runEarly(leave, "/client", storeFor("client", rec("zz_u1", BRAND_LOGO)));
+    parseXiangtaiHead(leave); leave.flush();
+    win.location.pathname = "/login";
+    leave.titles()[0]!.setText("湘泰物流网站"); leave.flush();
+    assert.equal(leave.document().title, "湘泰物流网站");
+    assert.equal(leave.links()[1]!.getAttribute("href"), "/favicon.ico?favicon.x.ico");
+    assert.equal(win[H], undefined);
+    assert.equal(leave.observers.length, 0);
+  });
+
+  await check("31) 内联脚本异常一律静默：localStorage 抛错、没有 MutationObserver、<title> 已在前面；脚本只用 ES5、不含 </script、根布局 <head> 里真放了它", () => {
+    const dom = new FakeDom();
+    assert.doesNotThrow(() => runEarly(dom, "/client", "throws"));
+    assert.equal(dom.observers.length, 0);
+    const noMO = new FakeDom();
+    parseXiangtaiHead(noMO);
+    assert.doesNotThrow(() => runEarly(noMO, "/client", storeFor("client", rec("zz_u1", BRAND_LOGO)), false));
+    assert.equal(noMO.document().title, "A 代理国际物流", "<title> 已解析出来时脚本当场就该换");
+    assert.equal(noMO.links()[1]!.getAttribute("href"), "/images/zz_fxt_logo.png");
+    const src = early.EARLY_TAB_BRAND_SCRIPT;
+    assert.ok(!/<\/script/i.test(src), "脚本里有 </script，会把 HTML 截断");
+    assert.ok(!/=>|\bconst\b|\blet\b|`|\?\.|\?\?|\bclass\b/.test(src.replace(/\/\*[\s\S]*?\*\//g, "")), "内联脚本只许用 ES5 写法（老浏览器解析失败就整段不跑）");
+    assert.ok(src.includes(JSON.stringify(AUTH_SESSION_STORAGE_KEY)) && src.includes(JSON.stringify(WORKBENCH_BRAND_CACHE_KEY)), "脚本读的键名跟 auth-session.ts 不一致");
+    const layout = fs.readFileSync(path.join(process.cwd(), "apps/web/src/app/layout.tsx"), "utf-8");
+    assert.match(layout, /<head>[\s\S]*<script dangerouslySetInnerHTML=\{\{ __html: EARLY_TAB_BRAND_SCRIPT \}\} \/>[\s\S]*<\/head>/, "根布局 <head> 里没放首帧脚本");
+    const eb = fs.readFileSync(path.join(process.cwd(), "apps/web/src/modules/branding/early-tab-brand.ts"), "utf-8");
+    assert.ok(!/^\s*["']use client["']/m.test(eb), "early-tab-brand.ts 不能是客户端模块（根布局是服务端组件，要直接拿字符串）");
+  });
+
   console.log(`\n共 ${total} 项，失败 ${failures.length} 项`);
   if (failures.length > 0) {
     console.log("❌ 失败：\n  - " + failures.join("\n  - "));

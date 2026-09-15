@@ -5,6 +5,7 @@ import { WORKBENCH_BRAND_CACHE_KEY, getOptionalSession, type AuthSession } from 
 import { apiBaseUrl, apiRequest } from "../../services/core-api";
 import {
   BRAND_LOGIN_COOKIE,
+  buildBrandCacheRecord,
   normalizeBrandSlug,
   parseSessionBrand,
   readLoginBrand,
@@ -68,7 +69,8 @@ function readCache(userId: string): SessionBrandInfo | null | undefined {
 
 function writeCache(userId: string, brand: SessionBrandInfo | null): void {
   try {
-    window.localStorage.setItem(CACHE_KEY, JSON.stringify({ userId, brand }));
+    // 连同算好的标签页图标地址一起存：整页打开时 <head> 里的内联脚本直接用（early-tab-brand.ts）
+    window.localStorage.setItem(CACHE_KEY, JSON.stringify(buildBrandCacheRecord(userId, brand)));
   } catch {
     /* 隐私模式记不住就算了：最多刷新时闪一下 */
   }
@@ -182,12 +184,15 @@ const AGENT_PENDING_BRAND: WorkbenchBrand = { name: "", hiddenMenuIds: [], label
 export function useWorkbenchBrand(session: AuthSession | null): WorkbenchBrand | null {
   const state = useSessionBrand(session);
   const role = session?.role ?? null;
+  const userId = session?.userId ?? null;
 
   // 标签页标题图标在浏览器画出这一帧之前就换（layout effect），不先露一帧「湘泰物流网站」再改
+  // ⚠️ 会话还没读到（水合那一帧 session 为 null）时不调：那时的 null 不是「这个账号是湘泰的」，
+  //    调了会把 <head> 内联脚本按缓存换好的代理标题图标当场还原成湘泰的（early-tab-brand.ts）
   useIsomorphicLayoutEffect(() => {
-    if (state === undefined) return;
+    if (state === undefined || !userId) return;
     applyDocumentBrand(state ? { name: state.name, logoUrl: state.logoUrl } : null);
-  }, [state]);
+  }, [state, userId]);
 
   if (state === undefined) return role === "agent" ? AGENT_PENDING_BRAND : null;
   return toWorkbenchBrand(role, state);

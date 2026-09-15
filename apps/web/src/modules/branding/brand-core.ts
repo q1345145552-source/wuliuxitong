@@ -43,7 +43,9 @@ export const AGENT_VISUAL_STYLE = { backgroundImage: "linear-gradient(160deg, #2
 /** 前缀规则跟后端 branding/routes.ts、代理管理开代理时的校验一致 */
 const SLUG_RE = /^[a-z0-9][a-z0-9-]{1,30}$/;
 const HOST_RE = /^(?=.{1,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)(\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/;
-const LOGO_RE = /^\/images\/[A-Za-z0-9_.-]+$/;
+/** logo 只认本站 /images/<文件名>。标签页首帧内联脚本（early-tab-brand.ts）拿它的 source 拼进去，两边同一条规则 */
+export const BRAND_LOGO_PATH_RE = /^\/images\/[A-Za-z0-9_.-]+$/;
+const LOGO_RE = BRAND_LOGO_PATH_RE;
 
 export function normalizeBrandSlug(raw: unknown): string | null {
   if (typeof raw !== "string") return null;
@@ -127,6 +129,29 @@ export function letterIconDataUri(name: string): string {
 /** 标签页图标：有 logo 用 logo，没有用首字图标 */
 export function brandIconHref(info: PublicBrandInfo): string {
   return info.logoUrl ?? letterIconDataUri(info.name);
+}
+
+/**
+ * 标签页图标要换的是哪几个 <link>、换之前的地址记在哪个属性上。
+ * 浏览器里两处共用：登录后 React 接管的 document-brand.ts、整页打开首帧就跑的内联脚本 early-tab-brand.ts。
+ */
+export const TAB_ICON_SELECTOR = 'link[rel~="icon"], link[rel="apple-touch-icon"], link[rel="shortcut icon"]';
+export const TAB_ICON_ORIGINAL_HREF_ATTR = "data-xt-original-href";
+
+/**
+ * 按账号记在浏览器里的品牌缓存（localStorage 键 WORKBENCH_BRAND_CACHE_KEY）长这样。
+ * iconHref（2026-09-16 第 1 轮后加）：写缓存时就把标签页图标地址算好存上，
+ * 整页打开时 <head> 里的内联脚本直接拿来用，不在脚本里再抄一遍 brandIconHref 的算法。
+ * ⚠️ 旧缓存没有 iconHref：读的一方（useWorkbenchBrand 的 readCache）本来就不看它；内联脚本没有它就只改标题。
+ */
+export interface WorkbenchBrandCacheRecord {
+  userId: string;
+  brand: SessionBrandInfo | null;
+  iconHref: string | null;
+}
+
+export function buildBrandCacheRecord(userId: string, brand: SessionBrandInfo | null): WorkbenchBrandCacheRecord {
+  return { userId, brand, iconHref: brand ? brandIconHref(brand) : null };
 }
 
 /**

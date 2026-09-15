@@ -7,7 +7,9 @@ export interface AuthSession {
   token: string;
 }
 
-const SESSION_KEY = "auth_session_v1";
+/** 导出只为给根布局 <head> 里的标签页首帧脚本读（modules/branding/early-tab-brand.ts），别处照旧用下面的函数 */
+export const AUTH_SESSION_STORAGE_KEY = "auth_session_v1";
+const SESSION_KEY = AUTH_SESSION_STORAGE_KEY;
 
 /**
  * 工作台品牌缓存（按账号记一份，见 modules/branding/useWorkbenchBrand.ts）。
