@@ -407,6 +407,11 @@ async function main(): Promise<void> {
     assert.ok(shellHook.includes('addEventListener("focus"') && shellHook.includes('"visibilitychange"'), "切回标签页（focus / visibilitychange）要再查品牌");
     assert.match(shellHook, /\.dispose\(\)/, "外壳卸载 / 换身份时要停掉补查");
     assert.match(shellHook, /\[locationKey\]/, "换一页（含只换 #）要再查品牌");
+    assert.match(
+      shellHook,
+      /window\.location\.pathname \+ window\.location\.hash/,
+      "换页再查要按浏览器真实地址去重：Next 换路径那一帧外壳记的 # 还是上一页的，按拼出来的地址去重会一次换页查两次（Codex 第五轮 P3-2）",
+    );
     assert.ok(!/\binflight\b/.test(hook), "不许按账号共用在途请求（会复用改归属之前发出的旧请求）");
     const gate = hook.slice(hook.indexOf("export function useVerifiedSessionBrand("), hook.indexOf("export function useWorkbenchBrand("));
     assert.match(gate, /subscribeAppliedBrand\(/, "受限页挂着时要听外壳查到的更新结果（被改归代理就退出这一页）");
@@ -489,7 +494,7 @@ async function main(): Promise<void> {
     }
   });
 
-  await check("13f) 受限页挂着时只认「比我进门那次更新」的结果：更新的请求查到不一样的归属才跟着变，更早发出的、归属一样的都不变；每次最新结果写入都通知受限页（归属没变也通知），取消订阅后不再通知（Codex 第四轮 P2-2：已打开的普通版集货页被改归代理后不退出）", async () => {
+  await check("13f) 受限页挂着时只认「比我进门那次更新」的结果，而且只跟收紧（湘泰 → 代理）、不跟放开：更新的请求查到代理才跟着退出，更早发出的、归属一样的、已经判成代理后又说湘泰的都不变；每次最新结果写入都通知受限页（归属没变也通知），取消订阅后不再通知（Codex 第四轮 P2-2：已打开的普通版集货页被改归代理后不退出）", async () => {
     const g = globalThis as any;
     const saved = { window: g.window, document: g.document, fetch: g.fetch };
     const store = new Map<string, string>();
@@ -535,6 +540,17 @@ async function main(): Promise<void> {
       assert.equal(hook.shouldAdoptAppliedBrand(gate, applied), true, "更新的请求查到改归代理，受限页要跟着变");
       assert.equal(hook.shouldAdoptAppliedBrand({ seq: applied.seq + 1, brand: null }, applied), false, "比我进门那次更早发出的结果不跟");
       assert.equal(hook.shouldAdoptAppliedBrand(gate, null), false);
+      const deniedGate = { seq: entry.seq, brand: applied.brand };
+      assert.equal(
+        hook.shouldAdoptAppliedBrand(deniedGate, { seq: applied.seq + 5, brand: null }),
+        false,
+        "已经判成代理的客户（正在送回主页），更新的结果说是湘泰也不许把业务页再挂出来：只跟收紧、不跟放开（Codex 第五轮 P3-1）",
+      );
+      assert.equal(
+        hook.shouldAdoptAppliedBrand(deniedGate, { seq: applied.seq + 5, brand: { name: "B 代理", logoUrl: null, loginPath: null } }),
+        false,
+        "从一个代理换到另一个代理：本来就不让进，不用跟",
+      );
 
       off();
       const before = notified;

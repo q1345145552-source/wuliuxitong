@@ -167,13 +167,16 @@ export function subscribeAppliedBrand(fn: () => void): () => void {
 
 /**
  * 受限页已经按自己进门那次（gate）判完了，后来模块里又写进一个结果（applied）：要不要跟着变。
- * 只有「比进门那次更晚发出的请求」查到「不一样的归属」才跟 —— 更早发出的旧结果不许把判断改回去。
+ * · 只认「比进门那次更晚发出的请求」—— 更早发出的旧结果不许把判断改回去；
+ * · **只跟收紧，不跟放开**：进门判成湘泰客户、后来查到是代理的客户 → 跟（退出这一页）；
+ *   进门已经判成代理的客户（正在送回主页）、后来又查到湘泰 → 不跟（2026-09-16 Codex 第五轮 P3-1：原来两个方向都跟，
+ *   跳转还没完成时后到的湘泰结果会把「+ 创建任务」重新挂出来）。真被解绑了，回到主页菜单会出来，再进这一页由新的进门查询放行。
  */
 export function shouldAdoptAppliedBrand(
   gate: { seq: number; brand: SessionBrandInfo | null },
   applied: { seq: number; brand: SessionBrandInfo | null } | null,
 ): boolean {
-  return applied !== null && applied.seq > gate.seq && !sameBrand(applied.brand, gate.brand);
+  return applied !== null && applied.seq > gate.seq && gate.brand === null && applied.brand !== null;
 }
 
 export interface BrandRevalidator {
@@ -313,7 +316,7 @@ export function useVerifiedSessionBrand(): { state: VerifiedBrandState; retry: (
    * 页面已经判完、挂着之后，外壳换页 / 切回标签页又查到了更新的归属：跟着变。
    * 2026-09-15 Codex 第四轮 P2-2 残留：湘泰客户正停在这一页时被改归代理，外壳已经换成代理的、菜单也藏了，
    * 这一页却还挂着「+ 创建任务」（点了后端会 403，但确认单 5.7 要求看不到）。现在跟着变，代理的客户就被送回主页。
-   * 只认比这次进门更晚发出的请求（shouldAdoptAppliedBrand），更早的旧结果不许把判断改回去。
+   * 只认比这次进门更晚发出的请求，而且只跟收紧、不跟放开（shouldAdoptAppliedBrand）。
    */
   useEffect(() => {
     const entry = requestRef.current;
@@ -364,13 +367,19 @@ export function useWorkbenchBrand(session: AuthSession | null, locationKey?: str
    * 调度交给 createBrandRevalidator，外壳卸载 / 换身份就 dispose。
    */
   const revalidatorRef = useRef<BrandRevalidator | null>(null);
-  const lastLocationRef = useRef(locationKey);
+  /**
+   * 上一次查品牌时浏览器的真实地址（路径 + #）。去重按真实地址，不按传进来的 locationKey：
+   * Next 换路径那一帧，usePathname 已经是新路径，外壳记的 # 还是上一页的，locationKey 会先变成一个不存在的地址、
+   * 等外壳把 # 同步过来再变一次 —— 按 locationKey 去重，一次换页会查两次（2026-09-16 Codex 第五轮 P3-2）。
+   * locationKey 只用来触发这个 effect。
+   */
+  const lastLocationRef = useRef<string | null>(null);
   useEffect(() => {
     if (!userId || (role !== "client" && role !== "agent")) return;
     const revalidator = createBrandRevalidator(userId, role);
     revalidatorRef.current = revalidator;
     // 进来这一下已经查了：把地址记成已查过，下面「换页再查」的 effect 同一轮就不再补查一次
-    lastLocationRef.current = locationKey;
+    lastLocationRef.current = window.location.pathname + window.location.hash;
     revalidator.trigger();
     const onFocus = () => revalidator.trigger();
     const onVisibilityChange = () => {
@@ -387,8 +396,9 @@ export function useWorkbenchBrand(session: AuthSession | null, locationKey?: str
     // locationKey 故意不放进依赖：换页只补查，不重建调度
   }, [userId, role]);
   useEffect(() => {
-    if (lastLocationRef.current === locationKey) return;
-    lastLocationRef.current = locationKey;
+    const here = window.location.pathname + window.location.hash;
+    if (lastLocationRef.current === here) return;
+    lastLocationRef.current = here;
     revalidatorRef.current?.trigger();
   }, [locationKey]);
 
