@@ -260,3 +260,48 @@ export function matchesShipmentListFilter(
   if (filter === "attention") return ATTENTION_STATUSES.includes(status as ShipmentStatus);
   return classifyStatusGroup(status) === filter;
 }
+
+/**
+ * 一票货拆了子单、子单进度不一样时，列表要补的那句「（部分已放行）」。
+ *
+ * 老板 2026-09-16 拍板：**主状态一个字不动**（仍是最慢的那批货，见 parent-status.ts），
+ * 分组、筛选、顶部四个数的口径也全部不变 —— 一票货只进一个页签，不重复出现。
+ * 这里只负责算出「最快的那批走到哪了」，给显示层补一句话，把话说全。
+ *
+ * ⚠️ 海运 23 步、陆运 17 步是两套流程，必须按这票货自己的 transportMode 取对应那条线比快慢，
+ *    否则陆运的「已到国内港口」会拿海运的序号去比，比出来的是假的。
+ * ⚠️ 流程表里查不到的老状态（pickedUp / customsPending 这类）一律不参与比较 —— 猜不出它在哪一步，
+ *    宁可不补话，也不能补错。
+ * ⚠️ 子单比父单**慢**的时候不补话：那是父子状态本来就没同步好的老数据（2026-09-16 线上有 10 票），
+ *    补一句「部分已到仓」只会让客户更糊涂，等状态修好它自然就对了。
+ */
+export function partialAheadStatus(
+  parentStatus: string | null | undefined,
+  childStatuses: readonly (string | null | undefined)[],
+  parentPieceCount: number | null | undefined,
+  transportMode: string | null | undefined,
+): ShipmentStatus | null {
+  if (!parentStatus || childStatuses.length === 0) return null;
+  // 异常永远要让人看见：它不在流程表里，比不出快慢，但正是最该提醒的一种。
+  if (childStatuses.some((s) => s === "exception")) return "exception";
+
+  const flow = transportMode === "land" ? SHIPMENT_STATUS_FLOW_LAND : SHIPMENT_STATUS_FLOW;
+  const parentIdx = flow.indexOf(parentStatus as ShipmentStatus);
+  if (parentIdx < 0) return null;
+
+  let bestIdx = parentIdx;
+  let best: ShipmentStatus | null = null;
+  for (const status of childStatuses) {
+    // 退回 / 取消的货不会再往前走，拿它比快慢没有意义（跟 pickSlowestStatus 同一条规矩）
+    if (!status || status === "returned" || status === "cancelled") continue;
+    const idx = flow.indexOf(status as ShipmentStatus);
+    if (idx > bestIdx) {
+      bestIdx = idx;
+      best = status as ShipmentStatus;
+    }
+  }
+  // parentPieceCount 只是说明这一句为什么会出现：父单自己还留着货时主状态是它自己那批，
+  // 子单跑到前面去了照样要补话。两种情况算法一样，留着参数是为了调用方看得懂。
+  void parentPieceCount;
+  return best;
+}

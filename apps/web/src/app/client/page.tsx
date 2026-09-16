@@ -35,7 +35,7 @@ import { openShipmentTrack } from "../../modules/shipment/ShipmentTrackModal";
 import ShipmentStatusGroups, { type ShipmentGroupFilter } from "../../modules/shipment/ShipmentStatusGroups";
 import { ShipmentOverviewStrip } from "../../modules/shipment/ShipmentOverviewStrip";
 import DetailModal from "../../modules/layout/DetailModal";
-import { shipmentStatusZh, CLIENT_STATUS_ZH_OVERRIDES, SHIPMENT_STATUS_FILTER_OPTIONS } from "../../modules/shipment/shipment-status";
+import { shipmentStatusWithPartialZh, shipmentStatusZh, CLIENT_STATUS_ZH_OVERRIDES, SHIPMENT_STATUS_FILTER_OPTIONS } from "../../modules/shipment/shipment-status";
 import {
   GridColgroup,
   ProductDetailCell,
@@ -1077,7 +1077,7 @@ export default function ClientHomePage() {
                             {/* 明细块只露 3 行，这里写清楚一共几项 */}
                             <div className="shipment-product-count">共 {detailRows.length} 项</div>
                           </td>
-                          <td className="shipment-current-status" style={gridTdStyle}>{shipmentStatusZh(st, CLIENT_STATUS_ZH_OVERRIDES)}</td>
+                          <td className="shipment-current-status" style={gridTdStyle}>{shipmentStatusWithPartialZh(st, item.partialAhead, CLIENT_STATUS_ZH_OVERRIDES)}</td>
                           {/* 品名 / 尺寸：合并成一块，固定高度一起滚 */}
                           <ProductDetailCell widths={CLIENT_DETAIL_COL_WIDTHS} rows={detailRows} />
                           <td style={gridTdStyle} className="col-num shipment-metric">{totalVolumeM3 != null ? totalVolumeM3.toFixed(3) : "—"}</td>

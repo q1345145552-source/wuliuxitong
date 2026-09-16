@@ -45,6 +45,8 @@ interface TrackData {
   itemName?: string;
   products?: Array<{ itemName: string; packageCount: number }>;
   currentStatus: string;
+  /** 子单进度不一样时，最快的那批走到哪了（2026-09-16，后端下发） */
+  partialAhead?: string;
   containers: Array<{
     containerNo?: string;
     containerStatus: string;
@@ -317,8 +319,8 @@ function TrackContent({ data, onReload }: { data: TrackData; onReload?: () => vo
     }
   };
   const allTabs = [
-    { trackingNo: data.trackingNo, currentStatus: data.currentStatus, timeline: data.timeline, packageCount: undefined as number | undefined },
-    ...(data.children ?? []).map(c => ({ trackingNo: c.trackingNo, currentStatus: c.currentStatus, timeline: c.timeline, packageCount: c.packageCount })),
+    { trackingNo: data.trackingNo, currentStatus: data.currentStatus, partialAhead: data.partialAhead, timeline: data.timeline, packageCount: undefined as number | undefined },
+    ...(data.children ?? []).map(c => ({ trackingNo: c.trackingNo, currentStatus: c.currentStatus, partialAhead: undefined as string | undefined, timeline: c.timeline, packageCount: c.packageCount })),
   ];
   const tab = allTabs[activeTab] ?? allTabs[0];
   const currentCfg = statusCfg(tab.currentStatus);
@@ -409,7 +411,11 @@ function TrackContent({ data, onReload }: { data: TrackData; onReload?: () => vo
       {/* 当前状态：只留文字，不用渐变底、色块和光晕 */}
       <div style={{ marginBottom: 18 }}>
         <div style={{ fontSize: 12, color: "var(--t-faint)", marginBottom: 3 }}>当前状态</div>
-        <div style={{ fontSize: 18, fontWeight: 700, color: "var(--t-heading)" }}>{currentCfg.zh}</div>
+        <div style={{ fontSize: 18, fontWeight: 700, color: "var(--t-heading)" }}>
+          {currentCfg.zh}
+          {/* 子单进度不一样时把话说全：主状态仍是最慢的那批（2026-09-16 拍板） */}
+          {tab.partialAhead ? <span style={{ fontSize: 13, fontWeight: 500, color: "var(--t-muted)" }}>（部分{statusCfg(tab.partialAhead).zh}）</span> : null}
+        </div>
         {activeTab === 0 && data.containers?.length > 0 && (
           <div style={{ fontSize: 12, color: "var(--t-faint)", marginTop: 3 }}>
             {data.containers.map((c) => c.containerNo).filter(Boolean).join("  ｜  ") || null}

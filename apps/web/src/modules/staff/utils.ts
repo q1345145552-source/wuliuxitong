@@ -1,4 +1,4 @@
-import { shipmentStatusZh as sharedShipmentStatusZh } from "../shipment/shipment-status";
+import { shipmentStatusZh as sharedShipmentStatusZh, shipmentStatusWithPartialZh as sharedShipmentStatusWithPartialZh } from "../shipment/shipment-status";
 
 import type { ShipmentItem } from "../../services/business-api";
 import type { RepairStaffShipmentOrderLinksResult } from "../../services/business-api";
@@ -45,6 +45,14 @@ export function shipmentStatusZh(status: string | undefined): string {
   // 对照表挪到 modules/shipment/shipment-status.ts，三端共用一份，
   // 免得客户端那份漏配状态时直接把英文吐给用户（2026-08-07）。
   return sharedShipmentStatusZh(status);
+}
+
+/**
+ * 运单状态转中文，子单进度不一样时补一句「（部分已放行）」（2026-09-16）。
+ * 主状态、分组、筛选口径一个字不动，只是把话说全 —— 逻辑在三端共用那份里。
+ */
+export function shipmentStatusWithPartialZh(status: string | undefined, partialAhead?: string): string {
+  return sharedShipmentStatusWithPartialZh(status, partialAhead);
 }
 
 /**

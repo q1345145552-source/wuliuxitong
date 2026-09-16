@@ -11,6 +11,7 @@ import { STATUS_FLOW, STATUS_FLOW_LAND, EXCEPTION_STATUSES, SKIP_ON_ADVANCE_STAT
 import { syncParentStatusFromChildren } from "./parent-status";
 import { loadOrderTotalMetrics } from "./total-metrics";
 import { countShipmentOverview } from "./overview-counts";
+import { loadPartialAhead } from "./partial-status";
 import { isManagedLastmileLog, MANAGED_LASTMILE_LOG_MESSAGE } from "./managed-lastmile-log";
 import { BusinessError } from "../core/business-error";
 import { canSeeOperatorIdentity } from "../core/operator-visibility";
@@ -395,6 +396,17 @@ export function registerShipmentRoutes(app: MinimalHttpApp): void {
       })),
     );
 
+    // 拆了子单、子单进度不一样时补一句「（部分已放行）」——主状态和分组口径一个字不动（2026-09-16 拍板）
+    const partialAhead = await loadPartialAhead(
+      auth.companyId,
+      rows.map((r) => ({
+        trackingNo: r.trackingNo,
+        currentStatus: r.currentStatus,
+        packageCount: r.packageCount,
+        transportMode: r.transportMode ?? r.order.transportMode,
+      })),
+    );
+
     const items = rows
       .filter((r) => !trackingNo || r.trackingNo.includes(trackingNo))
       .filter((r) => {
@@ -415,6 +427,7 @@ export function registerShipmentRoutes(app: MinimalHttpApp): void {
         // 跟 /client/orders 8-07 那次一个道理 —— 前端不显示不算堵住，
         // 数据到了浏览器就是泄漏。见 core/client-privacy.ts。
         currentStatus: r.currentStatus,
+        partialAhead: partialAhead.get(r.trackingNo),
         currentLocation: r.currentLocation ?? undefined,
         updatedAt: r.updatedAt.toISOString(),
         weightKg: decToNumber(r.weightKg),
@@ -488,6 +501,17 @@ export function registerShipmentRoutes(app: MinimalHttpApp): void {
       })),
     );
 
+    // 同客户端：子单进度不一样时补一句「（部分已放行）」，主状态和分组不动
+    const partialAheadStaff = await loadPartialAhead(
+      auth.companyId,
+      rows.map((r) => ({
+        trackingNo: r.trackingNo,
+        currentStatus: r.currentStatus,
+        packageCount: r.packageCount,
+        transportMode: r.transportMode ?? r.order?.transportMode,
+      })),
+    );
+
     const items = rows.map((r) => ({
       id: r.id,
       orderId: r.order?.id ?? undefined,
@@ -512,6 +536,7 @@ export function registerShipmentRoutes(app: MinimalHttpApp): void {
         : undefined,
       arrivedAt: r.order?.shipDate ?? undefined,
       currentStatus: r.currentStatus,
+      partialAhead: partialAheadStaff.get(r.trackingNo),
       currentLocation: r.currentLocation ?? undefined,
       warehouseId: r.warehouseId,
       updatedAt: r.updatedAt.toISOString(),

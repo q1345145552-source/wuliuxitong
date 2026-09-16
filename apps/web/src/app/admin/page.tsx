@@ -37,7 +37,7 @@ import {
 } from "../../modules/shipment/ShipmentTableGrid";
 import { apiBaseUrl, authHeaders, parseApiResponse, fetchWithSession as fetch } from "../../services/core-api";
 import { DEFAULT_SHIPPING_PRICES, INSPECTION_SURCHARGE, SENSITIVE_SURCHARGE } from "../../../../../packages/shared-types/constants";
-import { formatMetric, shipmentStatusZh, transportModeLabel, warehouseLabelFromId } from "../../modules/staff/utils";
+import { formatMetric, shipmentStatusWithPartialZh, shipmentStatusZh, transportModeLabel, warehouseLabelFromId } from "../../modules/staff/utils";
 import { SHIPMENT_STATUS_FILTER_OPTIONS } from "../../modules/shipment/shipment-status";
 import ShippingConfig from "../../components/admin/ShippingConfig";
 import { createRequestGate } from "../../modules/shared/request-gate";
@@ -2144,7 +2144,7 @@ export default function AdminHomePage() {
                       {/* 明细块只露 3 行，这里写清楚一共几项，免得漏看 */}
                       <div className="shipment-product-count">共 {detailRows.length} 项</div>
                     </td>
-                    <td className="shipment-current-status" style={gridTdStyle}>{shipmentStatusLabel(o.currentStatus)}</td>
+                    <td className="shipment-current-status" style={gridTdStyle}>{shipmentStatusWithPartialZh(o.currentStatus, o.partialAhead)}</td>
                     <td style={{ ...gridTdStyle, color: "var(--t-strong)" }}>
                       {o.shipDate ?? o.createdAt.slice(0, 10)}
                     </td>

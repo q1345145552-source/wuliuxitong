@@ -97,6 +97,7 @@ import {
   buildPrealertDraft,
   SHIPMENT_STATUS_FLOW,
   SHIPMENT_EXCEPTION_STATUSES,
+  shipmentStatusWithPartialZh,
 } from "../../modules/staff/utils";
 
 /* 员工端运单列表的列宽。排版规则见 modules/shipment/ShipmentTableGrid.tsx。
@@ -1871,7 +1872,7 @@ export default function StaffHomePage() {
                             {/* 明细块只露 3 行，这里写清楚一共几项，免得员工不知道下面还有货 */}
                             <div className="staff-shipment-product-count">共 {detailRows.length} 项</div>
                           </td>
-                          <td className="shipment-current-status" style={gridTdStyle}>{shipmentStatusZh(item.currentStatus)}</td>
+                          <td className="shipment-current-status" style={gridTdStyle}>{shipmentStatusWithPartialZh(item.currentStatus, item.partialAhead)}</td>
                           {/* 品名 / 箱数 / 长宽高 / 国内单号 / 货型：合并成一块，固定高度一起滚 */}
                           <ProductListDetailCell rows={detailRows} />
                           {/* 总箱数＝把左边「箱数」那一列加起来，省得多产品时人工心算 */}

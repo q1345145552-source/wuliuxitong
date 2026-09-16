@@ -50,6 +50,7 @@ export async function loadOrderProducts(companyId: string, orderIds: string[]): 
 import { EXCEPTION_STATUSES } from "../shipments/status-flow";
 import { BusinessError } from "../core/business-error";
 import { classifyStatusGroup, matchesShipmentListFilter, type ClientStatusGroup } from "../../../../../packages/shared-types/shipment-status";
+import { loadPartialAhead } from "../shipments/partial-status";
 import { productNamesLabel } from "../../../../../packages/shared-types/product-names";
 import { CARGO_TYPES, CARGO_TYPE_HINT, strictestCargoType, type CargoType } from "../../../../../packages/shared-types/cargo-type";
 
@@ -1105,6 +1106,21 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
         return wantedGroups.includes(classifyClientStatusGroup(o.shipments[0]?.currentStatus));
       });
 
+    // 拆了子单、子单进度不一样时补一句「（部分已放行）」——主状态、分组、筛选一个字不动（2026-09-16 拍板）
+    const partialAheadClient = await loadPartialAhead(
+      auth.companyId,
+      filtered
+        .map((o) => ({ ship: o.shipments[0], transportMode: o.transportMode }))
+        .filter((row): row is { ship: NonNullable<typeof row.ship>; transportMode: string } =>
+          !!row.ship && !!row.ship.trackingNo && !!row.ship.currentStatus)
+        .map((row) => ({
+          trackingNo: row.ship.trackingNo,
+          currentStatus: row.ship.currentStatus,
+          packageCount: null,
+          transportMode: row.transportMode,
+        })),
+    );
+
     const items = filtered.map((o) => {
       // orderBy 已保证父单排在最前 + take:1，这里直接取即可
       const ship = o.shipments[0];
@@ -1134,6 +1150,7 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
         approvalStatus: o.approvalStatus,
         trackingNo: ship?.trackingNo ?? null,
         currentStatus: ship?.currentStatus ?? null,
+        partialAhead: ship?.trackingNo ? partialAheadClient.get(ship.trackingNo) : undefined,
         // 2026-08-31（排查报告第 23 条）：每张单都带算好的分组（2026-09-03 起五个值），
         // 分组按钮和首页状态分布图都按它来，别再各自发明算法。
         // ⚠️ 不是订单表里那个 statusGroup 列（那个只有 unfinished/completed 两种老值）。

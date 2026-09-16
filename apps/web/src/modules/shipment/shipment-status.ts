@@ -136,3 +136,20 @@ export function shipmentStatusZh(
   }
   return "未知状态";
 }
+
+/**
+ * 列表那一列显示的文字：主状态 +「（部分已放行）」。
+ *
+ * 老板 2026-09-16 拍板：拆了子单、子单进度不一样时，主状态仍按**最慢的那批**（分组、筛选、
+ * 顶部四个数一个字不改，一票货只进一个页签），后面补一句把话说全。
+ * partialAhead 由后端下发（三端列表接口都有），为空就只显示主状态。
+ */
+export function shipmentStatusWithPartialZh(
+  status: string | null | undefined,
+  partialAhead: string | null | undefined,
+  overrides?: Record<string, string>,
+): string {
+  const main = shipmentStatusZh(status, overrides);
+  if (!partialAhead) return main;
+  return `${main}（部分${shipmentStatusZh(partialAhead, overrides)}）`;
+}

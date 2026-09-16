@@ -1,3 +1,4 @@
+import { partialAheadStatus } from "../../../../../packages/shared-types/shipment-status";
 import { isManagedLastmileLog } from "../shipments/managed-lastmile-log";
 // 任务 #10: Container & 拆柜 API（2026-05-20）
 // 实现湘泰物流 P0 阶段最核心的"出柜追踪"业务能力
@@ -1053,6 +1054,13 @@ export function registerContainerRoutes(app: MinimalHttpApp): void {
       products: shipment.order?.products?.map(p => ({ itemName: p.itemName, packageCount: p.packageCount })) ?? [],
       cargoType: shipment.order?.cargoType ?? null,
       currentStatus: shipment.currentStatus,
+      // 子单进度不一样时，弹窗头部也补一句「（部分已放行）」——跟三端列表同一份算法（2026-09-16）
+      partialAhead: partialAheadStatus(
+        shipment.currentStatus,
+        childShipments.map((cs) => cs.currentStatus),
+        shipment.packageCount,
+        shipment.transportMode,
+      ) ?? undefined,
       currentLocation: shipment.currentLocation ?? undefined,
       receiverNameTh: shipment.order?.receiverNameTh ?? null,
       receiverAddressTh: shipment.order?.receiverAddressTh ?? null,

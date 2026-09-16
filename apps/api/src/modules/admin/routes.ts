@@ -11,6 +11,7 @@ import { loadProductImagesForOrders } from "../orders/product-images";
 import { loadOrderProducts, readCargoTypes } from "../orders/routes";
 import { hashPassword } from "../auth/crypto-utils";
 import { countShipmentOverview } from "../shipments/overview-counts";
+import { loadPartialAhead } from "../shipments/partial-status";
 import { classifyStatusGroup } from "../../../../../packages/shared-types/shipment-status";
 // 柜子状态中文名只有这一份（后端 status-flow.ts）。前端管理员页不再自己抄一份，
 // 由接口直接下发中文 —— 抄第二份就一定会漏掉后加的状态。
@@ -548,6 +549,17 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
       rows.map((r) => r.orderId).filter((v): v is string => Boolean(v)),
     );
 
+    // 同客户端/员工端：子单进度不一样时补一句「（部分已放行）」，主状态和分组不动
+    const partialAheadAdmin = await loadPartialAhead(
+      auth.companyId,
+      rows.map((r) => ({
+        trackingNo: r.trackingNo,
+        currentStatus: r.currentStatus,
+        packageCount: r.packageCount,
+        transportMode: r.transportMode ?? r.order?.transportMode,
+      })),
+    );
+
     const items = rows.map((r) => ({
       id: r.id,
       orderId: r.order?.id ?? undefined,
@@ -571,6 +583,7 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
         ? totalMetricsByOrderId.get(r.orderId)?.totalVolumeM3
         : undefined,
       currentStatus: r.currentStatus,
+      partialAhead: partialAheadAdmin.get(r.trackingNo),
       warehouseId: r.warehouseId,
       updatedAt: r.updatedAt.toISOString(),
       transportMode: r.order?.transportMode ?? undefined,

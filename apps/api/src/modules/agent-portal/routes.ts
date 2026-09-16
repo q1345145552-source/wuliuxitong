@@ -26,7 +26,7 @@ import { lockClientWhrPrice, parseWhrPriceInput, setClientWhrPrice } from "../wh
 import { buildFeeBreakdown, deriveLatestStatus } from "../whr-consolidation/utils";
 import { loadOrderTotalMetrics } from "../shipments/total-metrics";
 import { productNamesLabel } from "../../../../../packages/shared-types/product-names";
-import { classifyStatusGroup, matchesShipmentListFilter } from "../../../../../packages/shared-types/shipment-status";
+import { classifyStatusGroup, matchesShipmentListFilter, partialAheadStatus } from "../../../../../packages/shared-types/shipment-status";
 import {
   ADDRESS_NEEDED_PLAN_STATUSES,
   UNPAID_PREALERT_STATUSES,
@@ -559,6 +559,9 @@ export function registerAgentPortalRoutes(app: MinimalHttpApp): void {
         trackingNo: true,
         parentTrackingNo: true,
         currentStatus: true,
+        // 「（部分已放行）」要按这票货自己的流程比快慢（海运 23 步 / 陆运 17 步）
+        packageCount: true,
+        transportMode: true,
         volumeM3: true,
         createdAt: true,
         updatedAt: true,
@@ -656,6 +659,13 @@ export function registerAgentPortalRoutes(app: MinimalHttpApp): void {
       products: shipment.order.products.map((p) => ({ itemName: p.itemName, packageCount: p.packageCount })),
       cargoType: shipment.order.cargoType ?? null,
       currentStatus: shipment.currentStatus,
+      // 子单进度不一样时，弹窗头部也补一句「（部分已放行）」——跟三端列表同一份算法（2026-09-16）
+      partialAhead: partialAheadStatus(
+        shipment.currentStatus,
+        childShipments.map((cs) => cs.currentStatus),
+        shipment.packageCount,
+        shipment.transportMode,
+      ) ?? undefined,
       receiverNameTh: shipment.order.receiverNameTh ?? null,
       receiverAddressTh: shipment.order.receiverAddressTh ?? null,
       totalVolumeM3: num(shipment.volumeM3),

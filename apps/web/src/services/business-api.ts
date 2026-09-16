@@ -184,6 +184,8 @@ export interface ShipmentItem {
   totalVolumeM3?: number | null;
   arrivedAt?: string;
   currentStatus: string;
+  /** 子单进度不一样时，最快的那批走到哪了（2026-09-16）。空 = 没有子单或进度一致 */
+  partialAhead?: string;
   currentLocation?: string;
   updatedAt?: string;
   warehouseId?: string;
@@ -227,6 +229,8 @@ export interface StaffInboundPhotoItem {
 }
 
 export interface OrderItem {
+  /** 子单进度不一样时，最快的那批走到哪了（2026-09-16）。空 = 没有子单或进度一致 */
+  partialAhead?: string;
   id: string;
   orderNo?: string;
   clientId?: string;
@@ -384,6 +388,8 @@ export async function setAdminClientWhrPrice(payload: {
 }
 
 export interface AdminOrderItem {
+  /** 子单进度不一样时，最快的那批走到哪了（2026-09-16）。空 = 没有子单或进度一致 */
+  partialAhead?: string;
   id: string;
   orderId?: string;
   shipmentId?: string;
