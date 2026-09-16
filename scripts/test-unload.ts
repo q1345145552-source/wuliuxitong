@@ -40,6 +40,9 @@ async function check(name: string, body: () => Promise<void>): Promise<void> {
   }
 }
 
+/** 第 1～8 项不关心是谁点的，统一用这个人；记没记对人由第 9～14 项盯（2026-09-17 起操作人是必填参数） */
+const 测试员工 = { userId: "STAFF1", role: "staff", name: "测试员工" };
+
 /** 假 tx：记下所有写操作，不连任何数据库 */
 function makeTx(parent: any, items: any[] = []) {
   const 记录 = { 删掉的柜内记录: [] as string[], 删掉的运单: [] as string[], 父单更新: null as any, 轨迹: [] as any[] };
@@ -73,8 +76,11 @@ const 子单 = (over: any = {}) => ({
  * 假 prisma 只有 $transaction 一个方法：直接把「当前场景的假 tx」递给事务回调。
  */
 let 路由用假tx: any = null;
+let 路由用假柜子: any = null;
 (globalThis as any).__prisma = {
   $transaction: async (fn: (tx: any) => Promise<unknown>) => fn(路由用假tx),
+  // 删柜子路由在事务外先查一次柜子（第 14 项用）
+  container: { findFirst: async () => 路由用假柜子 },
 };
 
 /** 换上一套新的路由假 tx（每个场景一套），把所有写操作录下来供断言 */
@@ -92,9 +98,11 @@ function 装路由假tx(opts: { item: any; parent?: any }) {
       // 假对象把两边要的字段都带上就行，不用理会 select/include
       findFirst: async () => opts.item,
       update: async ({ data }: any) => { 记录.柜内记录更新 = data; return data; },
+      delete: async () => {},
     },
     shipment: {
       findFirst: async () => opts.parent ?? null,
+      delete: async () => {},
       update: async ({ where, data }: any) => {
         记录.运单更新次数 += 1;
         if (opts.parent && where?.id === opts.parent.id) 记录.父单更新 = data;
@@ -116,7 +124,7 @@ async function main(): Promise<void> {
   await check("1) 卸柜：件数/方数/重量要全部还给父单", async () => {
     // ⚠️ 三个数字互不相同（父 0 件 / 子 30 件；父 0 方 / 子 1.5 方；父 0kg / 子 120kg）
     const { tx, 记录 } = makeTx({ id: "s_parent", packageCount: 0, volumeM3: 0, weightKg: 0, currentStatus: "delivered" });
-    await unloadItemFully(tx as any, { id: "i_1", shipment: 子单() }, "c_1");
+    await unloadItemFully(tx as any, { id: "i_1", shipment: 子单() }, "c_1", 测试员工);
     assert.equal(记录.父单更新.packageCount, 30, "件数没还回父单");
     assert.equal(Number(记录.父单更新.volumeM3), 1.5, "方数没还回父单");
     assert.equal(Number(记录.父单更新.weightKg), 120, "重量没还回父单");
@@ -133,7 +141,7 @@ async function main(): Promise<void> {
      * 货卸下来就在仓里，退到「已创建」反而说成还没入库。
      */
     const { tx, 记录 } = makeTx({ id: "s_parent", packageCount: 0, volumeM3: 0, weightKg: 0, currentStatus: "delivered" });
-    await unloadItemFully(tx as any, { id: "i_1", shipment: 子单() }, "c_1");
+    await unloadItemFully(tx as any, { id: "i_1", shipment: 子单() }, "c_1", 测试员工);
     assert.equal(记录.父单更新.currentStatus, "inWarehouseCN", "父单状态没退回「已入库」—— 客户会一直看到「已签收」");
     assert.equal(记录.轨迹.length, 1, "没写轨迹 —— 客户会觉得状态莫名其妙变了");
     assert.equal(记录.轨迹[0].fromStatus, "delivered", "轨迹的起点状态不对");
@@ -145,7 +153,7 @@ async function main(): Promise<void> {
     // 「已创建」的老单不回填（2026-09-02 拍板），「已入库」的状态本来就对 —— 两种都不动
     for (const cur of ["created", "inWarehouseCN"]) {
       const { tx, 记录 } = makeTx({ id: "s_parent", packageCount: 70, volumeM3: 3, weightKg: 200, currentStatus: cur });
-      await unloadItemFully(tx as any, { id: "i_1", shipment: 子单() }, "c_1");
+      await unloadItemFully(tx as any, { id: "i_1", shipment: 子单() }, "c_1", 测试员工);
       assert.equal(记录.轨迹.length, 0, `父单是 ${cur} 时还写了轨迹`);
       assert.equal(记录.父单更新.packageCount, 100, "件数还是要还回去（70 + 30）");
       assert.equal(记录.父单更新.currentStatus, undefined, `父单是 ${cur} 时不该动它的状态`);
@@ -170,7 +178,7 @@ async function main(): Promise<void> {
     for (const cur of ["departed", "delivered", "exception"]) {
       // makeTx 第一个参数在这条分支里当「运单自己」用（mock 的 findFirst 不分对象）
       const { tx, 记录 } = makeTx({ id: "s_child", currentStatus: cur });
-      const r = await unloadItemFully(tx as any, { id: "i_1", shipment: 子单({ parentTrackingNo: null }) }, "c_1");
+      const r = await unloadItemFully(tx as any, { id: "i_1", shipment: 子单({ parentTrackingNo: null }) }, "c_1", 测试员工);
       assert.deepEqual(记录.删掉的柜内记录, ["i_1"], "柜内记录没删");
       assert.deepEqual(记录.删掉的运单, [], "把整票货的运单删掉了 —— 客户的单会凭空消失");
       assert.equal(r.删了子单, false);
@@ -188,7 +196,7 @@ async function main(): Promise<void> {
     // 4b) 已退回 / 已取消：业务已终止，不许因卸柜复活；只留 fromStatus=toStatus 的备注轨迹
     for (const cur of ["returned", "cancelled"]) {
       const { tx, 记录 } = makeTx({ id: "s_child", currentStatus: cur });
-      await unloadItemFully(tx as any, { id: "i_1", shipment: 子单({ parentTrackingNo: null }) }, "c_1");
+      await unloadItemFully(tx as any, { id: "i_1", shipment: 子单({ parentTrackingNo: null }) }, "c_1", 测试员工);
       assert.equal(记录.父单更新, null, `${cur} 的整票运单被拽回了 —— 已终止的单不许复活`);
       assert.equal(记录.轨迹.length, 1, `${cur} 卸柜该留一条备注轨迹给排查用`);
       assert.equal(记录.轨迹[0].fromStatus, cur, "备注轨迹的起点状态不对");
@@ -198,7 +206,7 @@ async function main(): Promise<void> {
     // 4c) 还在国内仓（已创建/已入库/暂缓装柜）：状态不动、也不刷轨迹
     for (const cur of ["created", "inWarehouseCN", "holdLoading"]) {
       const { tx, 记录 } = makeTx({ id: "s_child", currentStatus: cur });
-      await unloadItemFully(tx as any, { id: "i_1", shipment: 子单({ parentTrackingNo: null }) }, "c_1");
+      await unloadItemFully(tx as any, { id: "i_1", shipment: 子单({ parentTrackingNo: null }) }, "c_1", 测试员工);
       assert.equal(记录.父单更新, null, `整票运单是 ${cur} 时不该动它的状态`);
       assert.equal(记录.轨迹.length, 0, `整票运单是 ${cur} 时还写了轨迹（刷屏）`);
     }
@@ -217,7 +225,7 @@ async function main(): Promise<void> {
       { id: "i_b", shipment: 子单({ id: "s_b" }) },
     ];
     const { tx, 记录 } = makeTx({ id: "s_parent", packageCount: 0, volumeM3: 0, weightKg: 0, currentStatus: "loaded" }, items);
-    const n = await unloadAllItemsOfContainer(tx as any, "ct_1", "c_1");
+    const n = await unloadAllItemsOfContainer(tx as any, "ct_1", "c_1", 测试员工);
     assert.equal(n, 3, "没有把柜里三条都卸掉");
     assert.deepEqual(记录.删掉的柜内记录, ["i_a", "i_b", "i_c"], "没有按 id 排序处理 —— 会跟别处反向加锁");
     assert.deepEqual(记录.删掉的运单, ["s_a", "s_b", "s_c"], "子单没删干净 —— 会变成孤儿");
@@ -225,7 +233,7 @@ async function main(): Promise<void> {
 
   await check("6) 空柜子直接删，不用做别的", async () => {
     const { tx, 记录 } = makeTx(null, []);
-    const n = await unloadAllItemsOfContainer(tx as any, "ct_1", "c_1");
+    const n = await unloadAllItemsOfContainer(tx as any, "ct_1", "c_1", 测试员工);
     assert.equal(n, 0);
     assert.deepEqual(记录.删掉的柜内记录, []);
   });
@@ -346,6 +354,123 @@ async function main(): Promise<void> {
       assert.equal(记录.柜内记录更新?.loadedPieceCount, 20, "柜内记录件数没减对（30 − 10）");
     }
   });
+
+  /* ================================================================
+   * 9)～14) 卸柜写的轨迹要记**真实点按钮的人**（老板 2026-09-17 拍板）。
+   *
+   * 原来三处写死 operatorId/operatorRole/operatorName = system/system/系统（2026-08-29 加这条轨迹时
+   * 共用函数没接收操作人参数），线上 20 条卸柜记录全是「系统」，出了事查不到是谁动的货。
+   * 「谁能看到操作人」不在这里管 —— 只有超级管理员能看，由 core/operator-visibility.ts 统一摘字段，
+   * test-hide-operator-identity.ts 第 4 项盯着轨迹接口。
+   * ⚠️ 名字故意用真名字样（「可爱」「老板本人」），id 和名字互不相同，防「凑巧相等」假绿。
+   * ================================================================ */
+  const 员工可爱 = { userId: "STAFF9", role: "staff", name: "可爱" };
+  const 管理员 = { userId: "ADMIN1", role: "admin", name: "老板本人" };
+  const 记的是 = (log: any, who: { userId: string; role: string; name: string }, 哪条: string): void => {
+    assert.ok(log, `${哪条}：根本没写轨迹`);
+    assert.notEqual(log.operatorName, "系统", `${哪条}：操作人还是写死的「系统」`);
+    assert.notEqual(log.operatorId, "system", `${哪条}：操作人 id 还是写死的 system`);
+    assert.equal(log.operatorId, who.userId, `${哪条}：操作人 id 应是 ${who.userId}，实际 ${log.operatorId}`);
+    assert.equal(log.operatorRole, who.role, `${哪条}：操作人角色应是 ${who.role}，实际 ${log.operatorRole}`);
+    assert.equal(log.operatorName, who.name, `${哪条}：操作人名字应是「${who.name}」，实际「${log.operatorName}」`);
+  };
+
+  await check("9) 整票卸柜还货给父单：那条「退回国内仓」轨迹记点按钮的员工，不是「系统」", async () => {
+    const { tx, 记录 } = makeTx({ id: "s_parent", packageCount: 0, volumeM3: 0, weightKg: 0, currentStatus: "delivered" });
+    await unloadItemFully(tx as any, { id: "i_1", shipment: 子单() }, "c_1", 员工可爱);
+    assert.equal(记录.轨迹.length, 1, "应该只写一条父单退回的轨迹");
+    记的是(记录.轨迹[0], 员工可爱, "父单退回国内仓那条");
+  });
+
+  await check("10) 没有父单的整票卸柜：那条轨迹也记点按钮的人（管理员点的就记管理员）", async () => {
+    // makeTx 第一个参数就是 shipment.findFirst 查回来的「这票货自己」
+    const { tx, 记录 } = makeTx({ id: "s_child", currentStatus: "loaded" });
+    await unloadItemFully(tx as any, { id: "i_1", shipment: 子单({ parentTrackingNo: null }) }, "c_1", 管理员);
+    assert.equal(记录.轨迹.length, 1, "应该写一条退回国内仓的轨迹");
+    记的是(记录.轨迹[0], 管理员, "没父单那票的退回轨迹");
+  });
+
+  await check("11) 删整个柜子：柜里每一票写的轨迹都记同一个点删除的人", async () => {
+    const items = [
+      { id: "i_b", shipment: 子单({ id: "s_b" }) },
+      { id: "i_a", shipment: 子单({ id: "s_a" }) },
+    ];
+    const { tx, 记录 } = makeTx({ id: "s_parent", packageCount: 0, volumeM3: 0, weightKg: 0, currentStatus: "loaded" }, items);
+    await unloadAllItemsOfContainer(tx as any, "ct_1", "c_1", 管理员);
+    assert.equal(记录.轨迹.length, 2, "两票都该写退回轨迹");
+    记录.轨迹.forEach((log: any, i: number) => 记的是(log, 管理员, `删柜子第 ${i + 1} 条`));
+  });
+
+  {
+    const routes = new Map<string, Handler>();
+    const fakeApp: any = {
+      get(p: string, h: Handler) { routes.set(`GET ${p}`, h); },
+      post(p: string, h: Handler) { routes.set(`POST ${p}`, h); },
+      delete(p: string, h: Handler) { routes.set(`DELETE ${p}`, h); },
+      listen() {},
+    };
+    const lm = await import("../apps/api/src/modules/loading-manifests/routes");
+    (lm as any).registerLoadingManifestRoutes(fakeApp);
+    const ct = await import("../apps/api/src/modules/containers/routes");
+    (ct as any).registerContainerRoutes(fakeApp);
+    const 调 = async (key: string, who: { userId: string; role: string; name: string }, req: { body?: unknown; query?: Record<string, string> }) => {
+      const handler = routes.get(key);
+      assert.ok(handler, `没注册到 ${key}`);
+      let status = 0;
+      let payload: any = {};
+      const res: any = { status(c: number) { status = c; return res; }, json(v: unknown) { payload = v; } };
+      await handler!({
+        method: key.split(" ")[0], path: "", query: req.query ?? {}, headers: {}, body: req.body ?? {},
+        auth: { userId: who.userId, companyId: "c_1", role: who.role, name: who.name, agentId: null },
+      }, res);
+      return { status, message: payload?.data?.message ?? payload?.message ?? "" };
+    };
+    const 柜内记录 = { id: "i_1", containerId: "ct_1", shipmentId: "s_child", loadedPieceCount: 30, loadedVolumeM3: 0.9,
+      shipment: { id: "s_child", parentTrackingNo: "YW0001", packageCount: 30, volumeM3: 1.5, weightKg: 120 } };
+
+    await check("12) 真调「卸柜」接口、只卸一部分：还货给父单那条轨迹记当前登录的员工", async () => {
+      const { 记录 } = 装路由假tx({ item: 柜内记录, parent: { id: "s_parent", packageCount: 5, volumeM3: 2, weightKg: 50, currentStatus: "departed" } });
+      const r = await 调("POST /staff/loading-manifests/remove-shipment", 员工可爱, { body: { itemId: "i_1", pieceCount: 10 } });
+      assert.equal(r.status, 200, `部分卸柜没走通：${r.status} ${r.message}`);
+      assert.equal(记录.轨迹.length, 1, "没写退回轨迹");
+      记的是(记录.轨迹[0], 员工可爱, "部分卸柜那条");
+    });
+
+    await check("13) 真调「卸柜」接口、整票卸下：轨迹记当前登录的人（管理员）", async () => {
+      const { 记录 } = 装路由假tx({ item: 柜内记录, parent: { id: "s_parent", packageCount: 0, volumeM3: 0, weightKg: 0, currentStatus: "departed" } });
+      const r = await 调("POST /staff/loading-manifests/remove-shipment", 管理员, { body: { itemId: "i_1" } });
+      assert.equal(r.status, 200, `整票卸柜没走通：${r.status} ${r.message}`);
+      assert.ok(记录.轨迹.length >= 1, "整票卸柜没写退回轨迹");
+      记录.轨迹.forEach((log: any, i: number) => 记的是(log, 管理员, `整票卸柜第 ${i + 1} 条`));
+    });
+
+    await check("14) 真调「删柜子」接口：柜里每一票的轨迹记当前登录的管理员", async () => {
+      const 记录 = { 轨迹: [] as any[], 删了柜子: false };
+      路由用假柜子 = { id: "ct_1", currentStatus: "LOADING" };
+      路由用假tx = {
+        $queryRaw: async () => [],
+        container: {
+          findUnique: async () => ({ currentStatus: "LOADING" }),
+          delete: async () => { 记录.删了柜子 = true; },
+        },
+        shipmentContainerItem: {
+          findMany: async () => [{ id: "i_1", shipment: 子单({ id: "s_a" }) }, { id: "i_2", shipment: 子单({ id: "s_b" }) }],
+          delete: async () => {},
+        },
+        shipment: {
+          findFirst: async () => ({ id: "s_parent", packageCount: 0, volumeM3: 0, weightKg: 0, currentStatus: "loaded" }),
+          update: async ({ data }: any) => data,
+          delete: async () => {},
+        },
+        statusLog: { create: async ({ data }: any) => { 记录.轨迹.push(data); } },
+      };
+      const r = await 调("DELETE /admin/containers", 管理员, { query: { id: "ct_1" } });
+      assert.equal(r.status, 200, `删柜子没走通：${r.status} ${r.message}`);
+      assert.ok(记录.删了柜子, "柜子没删");
+      assert.equal(记录.轨迹.length, 2, "两票都该写退回轨迹");
+      记录.轨迹.forEach((log: any, i: number) => 记的是(log, 管理员, `删柜子接口第 ${i + 1} 条`));
+    });
+  }
 
   if (failures.length > 0) {
     console.error(`\n${failures.length}/${总项数} 项不通过：${failures.join("；")}`);

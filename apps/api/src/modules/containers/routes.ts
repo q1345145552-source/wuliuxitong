@@ -914,7 +914,7 @@ export function registerContainerRoutes(app: MinimalHttpApp): void {
        * 现在走跟「卸柜」同一份实现（shipments/unload-item.ts），
        * 一份代码两处调用 —— 这个项目里「N 个入口只修了 M 个」已经犯过五六次。
        */
-      await unloadAllItemsOfContainer(tx, id, auth.companyId);
+      await unloadAllItemsOfContainer(tx, id, auth.companyId, { userId: auth.userId, role: auth.role, name: auth.name });
       await tx.container.delete({ where: { id } });
     });
 

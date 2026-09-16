@@ -35,10 +35,24 @@ export interface UnloadableItem {
 
 const toNum = (v: unknown): number => (v == null ? 0 : Number(v));
 
+/**
+ * 点「卸柜 / 删柜子」的人。卸柜写的轨迹记这个人（老板 2026-09-17 拍板）。
+ *
+ * ⚠️ 2026-08-29 加这条轨迹时这里没收操作人，三处写死成 system / 系统，
+ *    线上 20 条卸柜记录因此查不到是谁动的货。现在**必填**：漏传编译就不过。
+ * 「谁能看到操作人」不在这里管 —— 只有超级管理员能看，见 core/operator-visibility.ts。
+ */
+export interface UnloadOperator {
+  userId: string;
+  role: string;
+  name?: string | null;
+}
+
 export async function unloadItemFully(
   tx: any,
   item: UnloadableItem,
   companyId: string,
+  operator: UnloadOperator,
 ): Promise<{ 还给父单: boolean; 删了子单: boolean }> {
   await tx.shipmentContainerItem.delete({ where: { id: item.id } });
 
@@ -102,9 +116,9 @@ export async function unloadItemFully(
           id: `sl_unld_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
           companyId,
           shipmentId: item.shipment.id,
-          operatorId: "system",
-          operatorRole: "system",
-          operatorName: "系统",
+          operatorId: operator.userId,
+          operatorRole: operator.role,
+          operatorName: operator.name ?? "",
           fromStatus: cur,
           toStatus: 已终止 ? cur : "inWarehouseCN",
           remark: 已终止
@@ -177,9 +191,9 @@ export async function unloadItemFully(
           id: `sl_unld_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
           companyId,
           shipmentId: parent.id,
-          operatorId: "system",
-          operatorRole: "system",
-          operatorName: "系统",
+          operatorId: operator.userId,
+          operatorRole: operator.role,
+          operatorName: operator.name ?? "",
           fromStatus: parent.currentStatus,
           toStatus: "inWarehouseCN",
           remark: "已从柜子卸下，退回国内仓等待重新装柜",
@@ -201,6 +215,7 @@ export async function unloadAllItemsOfContainer(
   tx: any,
   containerId: string,
   companyId: string,
+  operator: UnloadOperator,
 ): Promise<number> {
   const items = await tx.shipmentContainerItem.findMany({
     where: { containerId },
@@ -217,7 +232,7 @@ export async function unloadAllItemsOfContainer(
     if (!it.shipment) {
       throw new BusinessError("柜内记录指向的运单不存在，请联系技术处理", 400, "VALIDATION_ERROR");
     }
-    await unloadItemFully(tx, it as UnloadableItem, companyId);
+    await unloadItemFully(tx, it as UnloadableItem, companyId, operator);
   }
   return ordered.length;
 }

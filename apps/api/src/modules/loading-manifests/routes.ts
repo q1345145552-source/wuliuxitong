@@ -977,9 +977,10 @@ export function registerLoadingManifestRoutes(app: MinimalHttpApp): void {
                   id: `sl_unld_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
                   companyId: auth.companyId,
                   shipmentId: parent.id,
-                  operatorId: "system",
-                  operatorRole: "system",
-                  operatorName: "系统",
+                  // 记点「卸柜」的人，不写死「系统」（老板 2026-09-17）；只有超级管理员看得到，见 core/operator-visibility.ts
+                  operatorId: auth.userId,
+                  operatorRole: auth.role,
+                  operatorName: auth.name ?? "",
                   fromStatus: parent.currentStatus,
                   toStatus: "inWarehouseCN",
                   remark: "已从柜子卸下，退回国内仓等待重新装柜",
@@ -1009,6 +1010,7 @@ export function registerLoadingManifestRoutes(app: MinimalHttpApp): void {
             },
           },
           auth.companyId,
+          { userId: auth.userId, role: auth.role, name: auth.name },
         );
       }
     });
