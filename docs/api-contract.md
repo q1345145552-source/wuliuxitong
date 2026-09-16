@@ -644,7 +644,8 @@
 ### 18.1 GET /client/shipments/track
 
 - 调用方明确传 `trackingNo` 或 `shipmentId`；单号再长也不应按长度猜成内部 ID。两者都传时，现有后端优先 `shipmentId`。
-- `timeline[]` 及 `children[].timeline[]` 增加 `canDelete: boolean`。员工/管理员的普通轨迹为 `true`；客户及派送业务自动生成的轨迹为 `false`。
+- `timeline[]` 及 `children[].timeline[]` 增加 `canDelete: boolean`。员工/管理员的普通轨迹为 `true`；客户、派送业务自动生成的轨迹、显示当前状态的最后一条为 `false`。
+- （2026-09-17）员工/管理员的每条轨迹再带 `isCurrentStatus: boolean`：该条 `toStatus` 等于**它所属运单**的当前状态，且那票运单只剩这一条是这个状态时为 `true`（父单页签里的子单记录按子单自己的状态算）。客户不下发此字段。
 - 客户的日志 `id`、操作人继续隐藏。既有品名、件数、状态和父子单合并逻辑不变。
 
 ### 18.2 POST /staff/shipments/track/delete-log
@@ -652,8 +653,17 @@
 - 仅员工/管理员，请求 `{ logId: string }`，仍按本公司校验。
 - 派送业务生成的轨迹（创建、改派、签收、撤销签收、删除派送单）返回 HTTP `409` / `VALIDATION_ERROR`，请从尾端派送处理业务，不单独回退日志。
 - 运单加锁后重读日志；已被处理则 HTTP `404`，不继续写入。
-- 普通轨迹保留原删除/回退能力；不按用户备注里是否出现“派送”二字判定来源。
+- ~~普通轨迹保留原删除/回退能力~~ → **2026-09-17 起只删记录，不改任何运单 / 父单的状态**（原来按剩下的最后一条重算，记录时间是补的，9-15 把 12 张父单改成了「已创建」）。
+- 显示当前状态的最后一条（同 18.1 `isCurrentStatus`，锁内重读状态和条数判断）返回 HTTP `409` / `VALIDATION_ERROR`，提示到「装柜管理」撤销；同一状态还有别的记录时可以删。
+- 成功返回 `{ deleted: true, trackingNo, currentStatus }`，`currentStatus` 是没变的当前状态（原来的 `hasLogsLeft` 去掉，前端没用过）。
+- 不按用户备注里是否出现“派送”二字判定来源。
 - 本次不清理历史记录，也不修改签收图片或件数、体积、重量。
+
+### 18.4 POST /admin/containers/status/undo（2026-09-17）
+
+- 柜里的运单退回「这次推进之前的状态」，取这次推进写的那条轨迹（`sl_ctn_`，`changedAt` + `toStatus` 匹配）里的 `fromStatus`；同一票有多条匹配取最早写的。
+- 只退**锁内重读后仍停在这次推进状态**的运单；之后单独往前走了的、没有这次推进记录的（后装进柜的）不动。原来「按剩下的最后一条轨迹重算」在卸柜重装、补推过去日期的柜子上会把运单退成「已装柜」。
+- `affectedShipmentCount` 改为真正退回的运单数。
 
 ### 18.3 POST /admin/orders/update
 

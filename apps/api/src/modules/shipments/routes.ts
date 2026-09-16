@@ -8,11 +8,10 @@ import { logger } from "../core/logger";
 import { loadProductImagesForOrders } from "../orders/product-images";
 import { checkRateLimit, rateLimitKey } from "../core/rate-limit";
 import { STATUS_FLOW, STATUS_FLOW_LAND, EXCEPTION_STATUSES, SKIP_ON_ADVANCE_STATUSES, COMPLETED_STATUSES } from "./status-flow";
-import { syncParentStatusFromChildren } from "./parent-status";
 import { loadOrderTotalMetrics } from "./total-metrics";
 import { countShipmentOverview } from "./overview-counts";
 import { loadPartialAhead } from "./partial-status";
-import { isManagedLastmileLog, MANAGED_LASTMILE_LOG_MESSAGE } from "./managed-lastmile-log";
+import { CURRENT_STATUS_LOG_MESSAGE, isCurrentStatusLog, isManagedLastmileLog, MANAGED_LASTMILE_LOG_MESSAGE } from "./managed-lastmile-log";
 import { BusinessError } from "../core/business-error";
 import { canSeeOperatorIdentity } from "../core/operator-visibility";
 
@@ -665,18 +664,21 @@ export function registerShipmentRoutes(app: MinimalHttpApp): void {
   });
 
   /**
-   * 删掉物流轨迹里写错的一条（员工和管理员都能用）。
+   * 删掉物流轨迹里的一条（员工和管理员都能用）。
    *
-   * 2026-08-07 加的。柜子状态只能往前推，推错了既回不去也改不了 ——
-   * 真实案例：运单 YW0001396 已开船之后被误推成「延迟运输」，
-   * 客户看到的就是「运输中」突然变「延迟运输」。
+   * 2026-08-07 加的，原来删完会按剩下的最后一条记录把运单状态改回去。
    *
-   * 删完把运单的当前状态退回到剩下的最后一条轨迹。
-   * ⚠️ 如果一条都不剩，当前状态**保持不动** —— 生产库里有 219 张已签收的老运单
-   * 压根没有轨迹记录，把它们重置成「已创建」比留着错状态更糟。
-   * 唯一的例外（2026-09-02 终审整改 P2）：删掉的是**唯一一条「已入库」轨迹**、
-   * 且运单当前状态就是「已入库」时，退回「已创建」—— 入库记录写错了删掉，
-   * 状态不能还挂在「已入库」上。老单保护不受影响：那 219 张的状态是已签收。
+   * ⚠️⚠️ 2026-09-17 老板拍板改成：**只删记录，不改任何运单 / 父单的状态。**
+   * 原因（生产只读核实）：很多记录的时间是按柜子日期补的，「剩下的最后一条」常常不是真实状态 ——
+   *   · 9-15 员工在轨迹里删了父单那条「已从柜子卸下」，12 票父单被改成「已创建」（货其实在泰国清关），
+   *     其中 6 票一直错到第二天推柜子；
+   *   · 全库 953 张 0 件父单里 940 张，删它自己任何一条都会被改错；普通单也有 2 张。
+   * 状态推错了走正规撤回：柜子推错到「装柜管理」撤销，派送/签收错了在尾端派送里撤。
+   *
+   * ⚠️ 显示当前状态的最后一条不许删（409）：状态不跟着退，删了它顶上的状态在轨迹里就对不上了。
+   *    同一状态有两条时可以删掉一条。判断和轨迹弹窗共用 isCurrentStatusLog。
+   * ⚠️ 派送业务写的记录照旧不许单删（isManagedLastmileLog）。
+   * 回归：scripts/test-track-delete-keeps-status-db.ts（真库按 9-15 操作重现）、test-shipment-track-actions.ts。
    */
   app.post("/staff/shipments/track/delete-log", async (req, res) => {
     const auth = requireRole(req, res, ["staff", "admin"]);
@@ -700,11 +702,10 @@ export function registerShipmentRoutes(app: MinimalHttpApp): void {
 
     const result = await prisma.$transaction(async (tx) => {
       /**
-       * ⚠️ 先锁运单（2026-08-29 补）。
-       * 这条路删掉一条轨迹之后，会**按剩下的最后一条把运单当前状态改回去**。
-       * 推进柜子状态那条正在按锁后的清单改这批运单的状态、写轨迹，
-       * 两边同时干，谁后写谁算数 —— 运单状态和轨迹就对不上了。
-       * 锁序跟别处一致：柜 → 柜内记录 → 运单，这里只碰运单，锁它一个即可。
+       * ⚠️ 先锁运单（2026-08-29 补；2026-09-17 不改状态了照样要锁）。
+       * 「是不是当前状态的最后一条」要拿锁内的状态和条数判断（CLAUDE.md 第 28 条）：
+       * 推柜子状态可能正同时改这票货的状态；两个人同时删同一状态的两条，
+       * 不锁的话两边都看到「还有两条」，删完一条不剩。
        */
       await tx.$queryRaw`SELECT id FROM shipments WHERE id = ${log.shipmentId} FOR UPDATE`;
       const lockedLog = await tx.statusLog.findFirst({
@@ -714,69 +715,21 @@ export function registerShipmentRoutes(app: MinimalHttpApp): void {
       if (isManagedLastmileLog(lockedLog)) {
         throw new BusinessError(MANAGED_LASTMILE_LOG_MESSAGE, 409, "VALIDATION_ERROR");
       }
-      await tx.statusLog.delete({ where: { id: logId } });
-
-      // 剩下的最后一条决定当前状态；一条不剩就不动它
-      const latest = await tx.statusLog.findFirst({
-        where: { shipmentId: log.shipmentId },
-        orderBy: { changedAt: "desc" },
-        select: { toStatus: true },
+      const lockedShipment = await tx.shipment.findUnique({
+        where: { id: log.shipmentId },
+        select: { currentStatus: true },
       });
-      if (latest) {
-        await tx.shipment.update({
-          where: { id: log.shipmentId },
-          data: { currentStatus: latest.toStatus, updatedAt: new Date() },
+      if (!lockedShipment) throw new BusinessError("这票货已经不在了，请刷新后重试", 404, "NOT_FOUND");
+      if (lockedLog.toStatus === lockedShipment.currentStatus) {
+        const sameStatusCount = await tx.statusLog.count({
+          where: { shipmentId: log.shipmentId, toStatus: lockedShipment.currentStatus },
         });
-
-        /**
-         * 2026-08-31（排查报告第21条）：删的是**子单**的轨迹时，上面把子单状态退回去了，
-         * 父单的大状态却还挂着按旧子单状态推出来的值 —— 例：3 个子单全签收后父单自动
-         * 「已签收」，员工删掉其中一个点错的签收记录，子单退回「派送中」，父单还挂着
-         * 「已签收」，客户看到订单状态和轨迹两边打架。跟签收、删派送单那些入口保持一致，
-         * 子单状态改完再按全部子单重算一次父单。
-         * · parentTrackingNo 在锁内重读（CLAUDE.md 第 28 条：用锁内数据做决定）；
-         * · 锁序 = 子单 → 父单，跟全系统「先子后父」的规矩一致（见 lock-shipments.ts）；
-         * · 父单自己还留着货的那几张特例，syncParentStatusFromChildren 内部本来就不动它。
-         */
-        const lockedShipment = await tx.shipment.findUnique({
-          where: { id: log.shipmentId },
-          select: { parentTrackingNo: true },
-        });
-        if (lockedShipment?.parentTrackingNo) {
-          await syncParentStatusFromChildren(tx, lockedShipment.parentTrackingNo, auth.companyId);
-        }
-      } else if (log.fromStatus && log.fromStatus !== log.toStatus) {
-        /**
-         * 2026-09-02 终审整改（P2）：删掉**唯一一条**轨迹后状态不回退的问题。
-         * 上面「一条不剩就不动」的保护是给没有轨迹的已签收老单的（219 张）——
-         * 它们的当前状态跟被删轨迹的 toStatus 对不上，不会走进这个分支。
-         *
-         * 2026-09-02 复核整改：上一版这里无论被删轨迹从哪来的，一律退到「已创建」——
-         * 把「唯一一条 loaded→inWarehouseCN 的卸柜轨迹」删掉也被错退成「已创建」。
-         * 改成退回**被删轨迹的 fromStatus**（轨迹本身记着它从哪来）：
-         *   · created→inWarehouseCN 的入库轨迹删掉 → 退回 created；
-         *   · loaded→inWarehouseCN 的卸柜轨迹删掉 → 退回 loaded。
-         * fromStatus 为空或等于 toStatus（备注类轨迹）推不出来路 → 保持不动。
-         * ⚠️ 状态用锁内重读的值判断（CLAUDE.md 第 28 条），不用事务外那份快照 ——
-         * 只有当前状态确实还是被删轨迹的 toStatus 才退，别的状态一律照旧保持不动。
-         */
-        const lockedNow = await tx.shipment.findUnique({
-          where: { id: log.shipmentId },
-          select: { currentStatus: true, parentTrackingNo: true },
-        });
-        if (lockedNow?.currentStatus === log.toStatus) {
-          await tx.shipment.update({
-            where: { id: log.shipmentId },
-            data: { currentStatus: log.fromStatus, updatedAt: new Date() },
-          });
-          // 子单状态变了照旧要重算父单大状态，口径跟上面 latest 分支一致
-          if (lockedNow.parentTrackingNo) {
-            await syncParentStatusFromChildren(tx, lockedNow.parentTrackingNo, auth.companyId);
-          }
-          return { newStatus: log.fromStatus, hasLogsLeft: false };
+        if (isCurrentStatusLog(lockedLog, lockedShipment.currentStatus, sameStatusCount)) {
+          throw new BusinessError(CURRENT_STATUS_LOG_MESSAGE, 409, "VALIDATION_ERROR");
         }
       }
-      return { newStatus: latest?.toStatus ?? log.shipment.currentStatus, hasLogsLeft: !!latest };
+      await tx.statusLog.delete({ where: { id: logId } });
+      return { currentStatus: lockedShipment.currentStatus };
     });
 
     // 轨迹是给客户看的记录，谁删了什么必须留痕（只记状态和时间，不记客户信息）
@@ -786,14 +739,13 @@ export function registerShipmentRoutes(app: MinimalHttpApp): void {
       运单号: log.shipment.trackingNo,
       删掉的状态: log.toStatus,
       那条的时间: log.changedAt.toISOString(),
-      删完当前状态: result.newStatus,
+      当前状态不变: result.currentStatus,
     });
 
     ok(res, {
       deleted: true,
       trackingNo: log.shipment.trackingNo,
-      currentStatus: result.newStatus,
-      hasLogsLeft: result.hasLogsLeft,
+      currentStatus: result.currentStatus,
     });
   });
 

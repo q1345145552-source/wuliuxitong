@@ -78,7 +78,7 @@ const db: any = strict("prisma", {
     async findMany(args: any) { return list("shipment",shipGraph(),args); },
     async findFirst(args: any) { return list("shipment",shipGraph(),{...args,take:1})[0] ?? null; },
     async findUnique(args: any) { return list("shipment",shipGraph(),{...args,take:1})[0] ?? null; },
-    async update(args: any) { const r=ships.find(r=>match(r,args.where));assert.ok(r);Object.assign(r,args.data);return shape(r,args); },
+    async update(args: any) { const r=ships.find(r=>match(r,args.where));assert.ok(r);writes.push(`shipment:${r.id}`);Object.assign(r,args.data);return shape(r,args); },
   }),
   orderProduct: strict("orderProduct", { async findMany(args: any) { return list("orderProduct",[],args); } }),
   orderProductImage: strict("orderProductImage", { async findMany(args: any) { return list("orderProductImage",[],args); } }),
@@ -93,7 +93,8 @@ const db: any = strict("prisma", {
   statusLog: strict("statusLog", {
  async create(args:any){logs.push(copy(args.data));return args.data;},
  async findFirst(args:any){return list("statusLog",logs.map(r=>({...r,shipment:ships.find(s=>s.id===r.shipmentId)})),{...args,take:1})[0]??null;},
- async delete(args:any){const i=logs.findIndex(r=>match(r,args.where));assert.ok(i>=0);return logs.splice(i,1)[0];},
+ async delete(args:any){const i=logs.findIndex(r=>match(r,args.where));assert.ok(i>=0);writes.push(`deleteLog:${logs[i].id}`);return logs.splice(i,1)[0];},
+ async count(args:any){reads.push({model:"statusLog.count",args:copy(args)});return logs.filter(r=>match(r,args.where)).length;},
  }),
   async $queryRaw(strings: TemplateStringsArray,...values: any[]) {
     const sql=strings.join("?").replace(/\s+/g," ");
@@ -140,22 +141,52 @@ async function main() {
   for(const role of ["staff","admin"]){const deleted=await call("POST /staff/shipments/track/delete-log",{logId:unsignLog.id},{...ADMIN,role});assert.equal(deleted.status,409,JSON.stringify(deleted));assert.deepEqual({ships,deliveries,logs},before);}
   assert.ok(ships.every(s=>s.currentStatus==="outForDelivery"));assert.equal(deliveries[0].status,"DELIVERING");
  });
- check("普通轨迹仍可删除并回退，派送日志所有来源受保护",async()=>{
+ check("普通轨迹可删除且父子状态都不动（9-15 父单被改成已创建），派送日志所有来源受保护",async()=>{
   for(const entry of [
     ["sl_lm_1",""],["sl_lmunsign_1",""],["sl_lmdel_1",""],
   ]) {
     reset([ship("S")]);logs=[{id:entry[0],remark:entry[1],companyId:"c",shipmentId:"S",fromStatus:"inWarehouseTH",toStatus:"outForDelivery",changedAt:new Date(1)}];
     const before=copy({ships,logs});assert.equal((await call("POST /staff/shipments/track/delete-log",{logId:entry[0]})).status,409);assert.deepEqual({ships,logs},before);
   }
-  reset([ship("P",0),ship("C",2,"P")]);ships.forEach(s=>s.currentStatus="loaded");
-  logs=[{id:"ordinary",companyId:"c",shipmentId:"C",fromStatus:"inWarehouseCN",toStatus:"loaded",changedAt:new Date(1)}];
+  // 子单那条：删掉不影响子单、父单状态
+  reset([ship("P",0),ship("C",2,"P")]);ships.forEach(s=>s.currentStatus="customsTH");
+  logs=[{id:"ordinary",companyId:"c",shipmentId:"C",fromStatus:"loaded",toStatus:"loaded",changedAt:new Date(5)},
+    {id:"cur",companyId:"c",shipmentId:"C",fromStatus:"arrivedPort",toStatus:"customsTH",changedAt:new Date(1)}];
   assert.equal((await call("POST /staff/shipments/track/delete-log",{logId:"ordinary"})).status,200);
-  assert.equal(logs.length,0);assert.ok(ships.every(s=>s.currentStatus==="inWarehouseCN"));
+  assert.deepEqual(logs.map(l=>l.id),["cur"]);assert.ok(ships.every(s=>s.currentStatus==="customsTH"));
+  assert.ok(!writes.some(w=>!w.startsWith("deleteLog:")),`删记录不许写别的：${writes}`);
+  // 父单自己那条（0 件父单只剩一条「运单已建立」）：删掉「已从柜子卸下」父单不许变成已创建
+  reset([ship("P",0),ship("C",2,"P")]);ships.forEach(s=>s.currentStatus="customsTH");
+  logs=[{id:"created",companyId:"c",shipmentId:"P",fromStatus:"created",toStatus:"created",remark:"运单已建立",changedAt:new Date(0)},
+    {id:"unload",companyId:"c",shipmentId:"P",fromStatus:"departed",toStatus:"inWarehouseCN",remark:"已从柜子卸下，退回国内仓等待重新装柜",changedAt:new Date(9)},
+    {id:"cur",companyId:"c",shipmentId:"C",fromStatus:"arrivedPort",toStatus:"customsTH",changedAt:new Date(1)}];
+  assert.equal((await call("POST /staff/shipments/track/delete-log",{logId:"unload"})).status,200);
+  assert.deepEqual(ships.map(s=>s.currentStatus),["customsTH","customsTH"]);
+  // 唯一一条记录也照样只删记录（原来会按 fromStatus 退回）
+  reset([ship("S")]);ships[0].currentStatus="loaded";
+  logs=[{id:"only",companyId:"c",shipmentId:"S",fromStatus:"created",toStatus:"inWarehouseCN",changedAt:new Date(1)}];
+  assert.equal((await call("POST /staff/shipments/track/delete-log",{logId:"only"})).status,200);
+  assert.equal(logs.length,0);assert.equal(ships[0].currentStatus,"loaded");
+ });
+ check("显示当前状态的那条不许删（409 提示去装柜管理撤销，记录和状态都不动）；同状态两条时可删一条",async()=>{
+  reset([ship("P",0),ship("C",2,"P")]);ships.forEach(s=>s.currentStatus="customsTH");
+  logs=[{id:"cur",companyId:"c",shipmentId:"C",fromStatus:"arrivedPort",toStatus:"customsTH",changedAt:new Date(1)}];
+  for(const role of ["staff","admin"]){
+    const before=copy({ships,logs});const r=await call("POST /staff/shipments/track/delete-log",{logId:"cur"},{...ADMIN,role});
+    assert.equal(r.status,409,JSON.stringify(r.raw));assert.match(r.raw.message,/装柜管理/);assert.deepEqual({ships,logs},before);
+  }
+  reset([ship("C",2,"P0")]);ships[0].currentStatus="loaded";
+  logs=[{id:"a",companyId:"c",shipmentId:"C",fromStatus:"loaded",toStatus:"loaded",remark:"装入柜子",changedAt:new Date(2)},
+    {id:"b",companyId:"c",shipmentId:"C",fromStatus:"loaded",toStatus:"loaded",remark:"已封柜",changedAt:new Date(1)}];
+  assert.equal((await call("POST /staff/shipments/track/delete-log",{logId:"a"})).status,200);
+  assert.equal((await call("POST /staff/shipments/track/delete-log",{logId:"b"})).status,409);
+  assert.deepEqual(logs.map(l=>l.id),["b"]);assert.equal(ships[0].currentStatus,"loaded");
  });
  check("普通柜子轨迹的用户备注含派送字样仍可删除",async()=>{
   reset([ship("S")]);ships[0].currentStatus="inWarehouseTH";
-  logs=[{id:"sl_ctn_1",companyId:"c",shipmentId:"S",remark:"尾端派送前检查包装",fromStatus:"unloading",toStatus:"inWarehouseTH",changedAt:new Date(1)}];
-  assert.equal((await call("POST /staff/shipments/track/delete-log",{logId:"sl_ctn_1"})).status,200);assert.equal(ships[0].currentStatus,"unloading");
+  logs=[{id:"sl_ctn_1",companyId:"c",shipmentId:"S",remark:"尾端派送前检查包装",fromStatus:"unloading",toStatus:"inWarehouseTH",changedAt:new Date(1)},
+    {id:"sl_ctn_2",companyId:"c",shipmentId:"S",remark:"",fromStatus:"inWarehouseTH",toStatus:"inWarehouseTH",changedAt:new Date(2)}];
+  assert.equal((await call("POST /staff/shipments/track/delete-log",{logId:"sl_ctn_1"})).status,200);assert.equal(ships[0].currentStatus,"inWarehouseTH");
  });
  check("锁内重读日志，不采信锁前状态；跨公司及客户无删除权限",async()=>{
   reset([ship("S")]);logs=[{id:"ordinary",companyId:"c",shipmentId:"S",remark:"普通",fromStatus:"inWarehouseTH",toStatus:"outForDelivery",changedAt:new Date(1)}];
@@ -167,14 +198,29 @@ async function main() {
  check("真轨迹GET：父子日志删除能力与权限一致，真组件保留普通删除/隐藏派送删除",async()=>{
   reset([ship("P",0),ship("C",2,"P")]);
   logs=[{id:"sl_lmunsign_1",companyId:"c",shipmentId:"C",fromStatus:"delivered",toStatus:"outForDelivery",remark:"撤销误签收",changedAt:new Date(1),operatorRole:"admin",operatorName:"老板"},
-    {id:"ordinary",companyId:"c",shipmentId:"P",fromStatus:"created",toStatus:"inWarehouseCN",remark:"入库",changedAt:new Date(0),operatorRole:"staff",operatorName:"员工"}];
+    {id:"ordinary",companyId:"c",shipmentId:"P",fromStatus:"created",toStatus:"inWarehouseCN",remark:"入库",changedAt:new Date(0),operatorRole:"staff",operatorName:"员工"},
+    {id:"cur",companyId:"c",shipmentId:"C",fromStatus:"unloading",toStatus:"inWarehouseTH",remark:"已到仓",changedAt:new Date(2),operatorRole:"staff",operatorName:"员工"}];
   for(const role of ["admin","staff","client"]) {
     const r=await call("GET /client/shipments/track",{}, {...ADMIN,role,userId:role==="client"?"mark":"boss"},{trackingNo:"P"});assert.equal(r.status,200);
     assert.equal(r.data.timeline[0].canDelete,role!=="client");assert.equal(r.data.timeline[1].canDelete,false);assert.equal(r.data.children[0].timeline[0].canDelete,false);
+    // 子单唯一一条「已到仓」= 当前状态那条：不给删，员工/管理员标出来；客户不下发这个标记
+    assert.equal(r.data.timeline[2].canDelete,false);assert.equal(r.data.children[0].timeline[1].canDelete,false);
+    assert.equal(r.data.timeline[2].isCurrentStatus,role==="client"?undefined:true);assert.equal(r.data.timeline[0].isCurrentStatus,role==="client"?undefined:false);
     const mod=trackModule(false);const react=webRequire("react");
     const html=webRequire("react-dom/server").renderToStaticMarkup(react.createElement(mod.TrackContent,{data:r.data}));
     assert.equal((html.match(/>删除<\/button>/g)||[]).length,role==="client"?0:1);
+    assert.equal((html.match(/当前状态，推错请到装柜管理撤销/g)||[]).length,role==="client"?0:1);
   }
+ });
+ check("派送业务记录正好是当前状态：不给删，也不提示去装柜管理（该去尾端派送）",async()=>{
+  reset([ship("S")]);ships[0].currentStatus="outForDelivery";
+  logs=[{id:"sl_lm_1",companyId:"c",shipmentId:"S",fromStatus:"inWarehouseTH",toStatus:"outForDelivery",remark:"派送中",changedAt:new Date(1),operatorRole:"staff",operatorName:"员工"}];
+  const r=await call("GET /client/shipments/track",{},{...ADMIN,role:"staff"},{trackingNo:"S"});assert.equal(r.status,200);
+  assert.equal(r.data.timeline[0].canDelete,false);assert.equal(r.data.timeline[0].isCurrentStatus,false);
+  const mod=trackModule(false);const react=webRequire("react");
+  const html=webRequire("react-dom/server").renderToStaticMarkup(react.createElement(mod.TrackContent,{data:r.data}));
+  assert.equal((html.match(/>删除<\/button>/g)||[]).length,0);assert.equal((html.match(/装柜管理/g)||[]).length,0);
+  const d=await call("POST /staff/shipments/track/delete-log",{logId:"sl_lm_1"});assert.equal(d.status,409);assert.match(d.raw.message,/尾端派送/);
  });
  check("真公开弹窗：长短单号均用trackingNo，显式内部ID用shipmentId",async()=>{
   for(const target of [{trackingNo:"SHORT001"},{trackingNo:"LONG202609120000000000000001"},{trackingNo:"中文 运单/001?x=1"},{shipmentId:"internal-id"}]) {

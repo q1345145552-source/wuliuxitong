@@ -13,6 +13,8 @@ interface TimelineItem {
    */
   id?: string;
   canDelete?: boolean;
+  /** 显示当前状态的最后一条：不给删，弹窗里提示去装柜管理撤销（2026-09-17）。客户端不下发 */
+  isCurrentStatus?: boolean;
   /** 该条记录来自哪张运单。父运单标签里会混入子运单的记录，用它区分是哪一件货 */
   trackingNo?: string;
   fromStatus: string;
@@ -174,7 +176,7 @@ function LoadingSkeleton() {
  * 左侧圆点竖线，右侧「状态 + 时间」一行、备注一行，不用卡片和色块。
  * 列表是倒序渲染的（最新在最上），所以 index === 0 就是最新那条。
  */
-function TimelineNode({ item, isLast, isChild, index, tabTrackingNo, hideOperator, onDelete, deleting }: { item: TimelineItem; isLast: boolean; isChild?: boolean; index: number; total: number; tabTrackingNo?: string; hideOperator?: boolean; onDelete?: (item: TimelineItem) => void; deleting?: boolean }) {
+function TimelineNode({ item, isLast, isChild, index, tabTrackingNo, hideOperator, canEdit, onDelete, deleting }: { item: TimelineItem; isLast: boolean; isChild?: boolean; index: number; total: number; tabTrackingNo?: string; hideOperator?: boolean; canEdit?: boolean; onDelete?: (item: TimelineItem) => void; deleting?: boolean }) {
   const toCfg = statusCfg(item.toStatus);
   const isLatest = index === 0;
   // 父运单标签下混合展示了各子单的记录，标出这条属于哪个子单
@@ -241,8 +243,11 @@ function TimelineNode({ item, isLast, isChild, index, tabTrackingNo, hideOperato
         {sourceLabel && (
           <span style={{ fontSize: 12, color: "var(--t-muted)" }}>{sourceLabel}</span>
         )}
-        {/* 删掉写错的一条（员工/管理员）。客户端后端根本不下发 id，这里不会出现 */}
-        {onDelete && item.id ? (
+        {/* 删掉写错的一条（员工/管理员）。客户端后端根本不下发 id，这里不会出现。
+            显示当前状态的那条不给删：删除只删记录、不改状态（2026-09-17），状态推错了要去装柜管理撤销 */}
+        {canEdit && item.isCurrentStatus ? (
+          <span style={{ marginLeft: "auto", fontSize: 12, color: "var(--t-faint)" }}>当前状态，推错请到装柜管理撤销</span>
+        ) : onDelete && item.id ? (
           <button
             type="button"
             disabled={deleting}
@@ -290,7 +295,8 @@ function TrackContent({ data, onReload }: { data: TrackData; onReload?: () => vo
   const [zoomImage, setZoomImage] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
-  // 员工和管理员可以删掉写错的一条轨迹（客户不行，后端连 id 都不下发）
+  // 员工和管理员可以删掉写错的一条轨迹（客户不行，后端连 id 都不下发）。
+  // 2026-09-17 起只删记录、不改运单状态；显示当前状态的那条后端标 isCurrentStatus、不给删
   const canEditTimeline = data.viewerRole === "staff" || data.viewerRole === "admin";
 
   const handleDeleteLog = async (item: TimelineItem) => {
@@ -299,8 +305,8 @@ function TrackContent({ data, onReload }: { data: TrackData; onReload?: () => vo
     const ok = window.confirm(
       `确定删掉这一条吗？\n\n　${label}　${formatTime(item.changedAt)}\n\n` +
       `删掉之后：\n` +
-      `· 当前状态会退回到上一条\n` +
-      `· 客户看到的物流轨迹里也会消失\n` +
+      `· 只是从物流轨迹里去掉这一条，客户也看不到了\n` +
+      `· 运单状态不会变（状态推错了请到「装柜管理」点「撤销」）\n` +
       `· 删了就找不回来了`,
     );
     if (!ok) return;
@@ -449,6 +455,7 @@ function TrackContent({ data, onReload }: { data: TrackData; onReload?: () => vo
                 total={tab.timeline.length}
                 tabTrackingNo={tab.trackingNo}
                 hideOperator={data.viewerRole !== "admin"}
+                canEdit={canEditTimeline}
                 onDelete={canEditTimeline && item.canDelete !== false ? handleDeleteLog : undefined}
                 deleting={deletingId === item.id}
               />

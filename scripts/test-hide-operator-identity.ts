@@ -415,7 +415,14 @@ async function main(): Promise<void> {
       assertNoOperator(`${auth.role} 轨迹`, wire);
     }
     const staff = (await call("GET /client/shipments/track", STAFF, { trackingNo: "YW0001" })).wire;
-    assert.ok(staff.timeline.every((t: Row) => t.id && t.canDelete === true), "员工删「写错的一条」要靠 id / canDelete，不许一起摘掉");
+    // 员工删「写错的一条」要靠 id / canDelete / isCurrentStatus，不许跟操作人一起摘掉。
+    // 夹具里两票都停在「已装柜」，各自唯一一条「已装柜」是当前状态那条，不给删（2026-09-17）
+    assert.ok(staff.timeline.every((t: Row) => t.id), "员工删「写错的一条」要靠 id，不许一起摘掉");
+    for (const t of staff.timeline as Row[]) {
+      const isCurrent = String(t.id).endsWith("_l2");
+      assert.equal(t.canDelete, !isCurrent, `${t.id} 的 canDelete 不对`);
+      assert.equal(t.isCurrentStatus, isCurrent, `${t.id} 的 isCurrentStatus 不对`);
+    }
     const admin = (await call("GET /client/shipments/track", ADMIN, { trackingNo: "YW0001" })).wire;
     assertSeesOperator("管理员轨迹", admin, [STAFF.name, ADMIN.name]);
     assert.equal(admin.timeline[0].operatorRole, "staff");

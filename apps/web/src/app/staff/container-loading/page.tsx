@@ -366,7 +366,7 @@ export default function StaffContainerLoadingPage() {
       `确定撤销这个柜子的「${nowLabel}」吗？\n\n` +
       `· 柜子退回上一个状态\n` +
       `· 柜里每张运单的这条轨迹都会删掉，客户看不到了\n` +
-      `· 每张运单的当前状态退回到它自己上一条轨迹\n` +
+      `· 柜里的运单退回到这次推进之前的状态（之后已经单独往前走了的不动）\n` +
       `· 撤了就找不回来了`,
     );
     if (!ok) return;
@@ -376,7 +376,7 @@ export default function StaffContainerLoadingPage() {
       setToast(
         `已撤销「${STATUS_LABEL[result.undoneStatus] ?? result.undoneStatus}」，` +
         `柜子退回「${STATUS_LABEL[result.currentStatus] ?? result.currentStatus}」` +
-        `（${result.affectedShipmentCount} 个运单，删掉 ${result.deletedLogs} 条轨迹）`,
+        `（退回 ${result.affectedShipmentCount} 个运单，删掉 ${result.deletedLogs} 条轨迹）`,
       );
       await loadList();
       await loadDetail(selectedId);

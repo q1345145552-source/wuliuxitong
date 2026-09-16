@@ -1,5 +1,5 @@
 import { partialAheadStatus } from "../../../../../packages/shared-types/shipment-status";
-import { isManagedLastmileLog } from "../shipments/managed-lastmile-log";
+import { isCurrentStatusLog, isManagedLastmileLog } from "../shipments/managed-lastmile-log";
 // 任务 #10: Container & 拆柜 API（2026-05-20）
 // 实现湘泰物流 P0 阶段最核心的"出柜追踪"业务能力
 //
@@ -738,38 +738,58 @@ export function registerContainerRoutes(app: MinimalHttpApp): void {
          * 而「推进柜子状态」那条路是 `[...ids].sort()` 逐个锁的（本文件 ~429 行）。
          * 一边有序、一边随机，两个柜共用同一批运单（分柜后很常见）时会反向等待。
          *
-         * 排序之外还有一个理由：下面「按剩下的最后一条轨迹重算状态」是**先读后写**，
+         * 排序之外还有一个理由：下面「读这次推进记录里的来路和运单现在的状态、再改状态」是**先读后写**，
          * 不锁的话，读完到写之间别人插一条轨迹，这里就会拿旧的算、把新的盖掉。
          */
         // 走共用函数，理由同上（推进那条）
         await lockShipmentsChildrenFirst(tx, shipmentIds, auth.companyId);
-        const del = await tx.statusLog.deleteMany({
-          where: {
-            companyId: auth.companyId,
-            shipmentId: { in: shipmentIds },
-            changedAt,
-            toStatus: shipmentStatusOfThisPush,
-            // 同上：只删柜子推进自己写的那条，别人写的一律不碰
-            id: { startsWith: PUSH_LOG_PREFIX },
-          },
+        /**
+         * ⚠️⚠️ 每张运单退回「这次推进之前的状态」= 这次推进写的那条轨迹里的 fromStatus（2026-09-17 改）。
+         *
+         * 原来是删完轨迹后「按剩下的最后一条（按显示时间）重算」。但记录时间很多是补的：
+         * 9-15 那种「卸柜后重新装柜、再按过去的日期补推状态」的柜子，「装入柜子」那条是真实时间，
+         * 比补推的「已到港 9-13」「清关中 9-14」都晚 —— 撤一步「清关中」，柜子退到已到港，
+         * 运单却被算成「已装柜」（测试库按 9-15 操作实测复现）。推进时写的那条轨迹本来就记着
+         * 推进前的状态（fromStatus，锁后读的），直接用它，不用去猜哪条是「最后一条」。
+         *
+         * ⚠️ 只退**现在还停在这次推进状态**的运单（锁内重读，CLAUDE.md 第 28 条）：
+         *   · 推进之后单独往前走了的（比如尾端派送、签收）不跟着退，原来按「最后一条」算也是不退；
+         *   · 没有这次推进记录的（后来才装进柜的，状态是装柜时按柜子补的）不动，跟原来一样。
+         * 同一票有多条匹配（同一天同一状态推过两次）取最早写的那条 —— 那才是第一次推进之前的状态。
+         */
+        const pushLogWhere = {
+          companyId: auth.companyId,
+          shipmentId: { in: shipmentIds },
+          changedAt,
+          toStatus: shipmentStatusOfThisPush,
+          // 同上：只删柜子推进自己写的那条，别人写的一条都不碰
+          id: { startsWith: PUSH_LOG_PREFIX },
+        };
+        const pushLogs = await tx.statusLog.findMany({
+          where: pushLogWhere,
+          orderBy: { id: "asc" },
+          select: { shipmentId: true, fromStatus: true },
         });
+        const del = await tx.statusLog.deleteMany({ where: pushLogWhere });
         deletedLogs = del.count;
 
-        // 每张运单按「剩下的最后一条轨迹」重算当前状态；一条不剩的保持不动
-        const remaining = await tx.statusLog.findMany({
-          where: { shipmentId: { in: shipmentIds } },
-          orderBy: { changedAt: "asc" },
-          select: { shipmentId: true, toStatus: true },
+        const beforeThisPush = new Map<string, string>();
+        for (const row of pushLogs) {
+          if (!beforeThisPush.has(row.shipmentId)) beforeThisPush.set(row.shipmentId, row.fromStatus);
+        }
+        const lockedShipments = await tx.shipment.findMany({
+          where: { id: { in: [...beforeThisPush.keys()] }, companyId: auth.companyId },
+          select: { id: true, currentStatus: true },
         });
-        const latestByShipment = new Map<string, string>();
-        for (const row of remaining) latestByShipment.set(row.shipmentId, row.toStatus);
 
         // 按状态分组批量更新，避免几十张运单发几十条 update
         const idsByStatus = new Map<string, string[]>();
-        for (const [sid, status] of latestByShipment) {
-          const list = idsByStatus.get(status) ?? [];
-          list.push(sid);
-          idsByStatus.set(status, list);
+        for (const s of lockedShipments) {
+          if (s.currentStatus !== shipmentStatusOfThisPush) continue;
+          const back = beforeThisPush.get(s.id)!;
+          const list = idsByStatus.get(back) ?? [];
+          list.push(s.id);
+          idsByStatus.set(back, list);
         }
         for (const [status, ids] of idsByStatus) {
           await tx.shipment.updateMany({
@@ -1011,37 +1031,61 @@ export function registerContainerRoutes(app: MinimalHttpApp): void {
     const sanitizeRemark = (remark: string): string =>
       sanitizeRemarkForClient(remark, isClient);
 
+    type TrackLog = { id: string; fromStatus: string; toStatus: string; remark: string | null; nextStop?: string | null; changedAt: Date; operatorRole: string; operatorName: string | null };
+    /**
+     * 显示当前状态的最后一条不给删（2026-09-17 老板拍板，删除只删记录不改状态）。
+     * 按每票货自己的当前状态、自己的记录算 —— 父单页签里混着子单的记录，子单那条看子单的状态。
+     * 跟删除接口共用 isCurrentStatusLog，两边口径必须一样。
+     */
+    const sameStatusCountOf = (logs: TrackLog[], currentStatus: string): number =>
+      logs.filter((l) => l.toStatus === currentStatus).length;
     const mapLog = (
-      log: { id: string; fromStatus: string; toStatus: string; remark: string | null; nextStop?: string | null; changedAt: Date; operatorRole: string; operatorName: string | null },
+      log: TrackLog,
       trackingNo: string,
-    ) => hideOperatorIdentity({
-      trackingNo,
-      // 员工/管理员删「写错的一条」时要靠它定位；跟操作人一样，客户端不下发
-      id: isClient ? "" : log.id,
-      canDelete: !isClient && !isManagedLastmileLog(log),
-      fromStatus: log.fromStatus,
-      toStatus: log.toStatus,
-      remark: sanitizeRemark(log.remark ?? ""),
-      // 「下一站【泰国边境】」，客户看得到货接下来去哪；老轨迹没有这个字段就不显示
-      nextStop: log.nextStop ?? "",
-      changedAt: log.changedAt.toISOString(),
-      /**
-       * 操作人是内部信息：只有超级管理员拿得到（2026-09-15 老板拍板，员工也不行）。
-       * 原来只对客户清空，员工照样拿到名字、轨迹弹窗也显示。
-       * 现在非管理员连这两个字段都不下发（hideOperatorIdentity 整个删掉，不是清成空串）。
-       * ⚠️ 上面的 id / canDelete 不是操作人身份，员工删「写错的一条」要靠它，别一起摘。
-       */
-      operatorRole: log.operatorRole,
-      operatorName: log.operatorName ?? "",
-    }, auth.role);
+      owner: { currentStatus: string; sameStatusCount: number },
+    ) => {
+      // 派送业务的记录本来就不给删，而且推错了要去尾端派送撤，不能提示去装柜管理 —— 不标
+      const managed = isManagedLastmileLog(log);
+      const isCurrentStatus = !managed && isCurrentStatusLog(log, owner.currentStatus, owner.sameStatusCount);
+      return hideOperatorIdentity({
+        trackingNo,
+        // 员工/管理员删「写错的一条」时要靠它定位；跟操作人一样，客户端不下发
+        id: isClient ? "" : log.id,
+        canDelete: !isClient && !managed && !isCurrentStatus,
+        // 员工/管理员的弹窗在这条上写「当前状态，推错请到装柜管理撤销」；客户不下发
+        ...(isClient ? {} : { isCurrentStatus }),
+        fromStatus: log.fromStatus,
+        toStatus: log.toStatus,
+        remark: sanitizeRemark(log.remark ?? ""),
+        // 「下一站【泰国边境】」，客户看得到货接下来去哪；老轨迹没有这个字段就不显示
+        nextStop: log.nextStop ?? "",
+        changedAt: log.changedAt.toISOString(),
+        /**
+         * 操作人是内部信息：只有超级管理员拿得到（2026-09-15 老板拍板，员工也不行）。
+         * 原来只对客户清空，员工照样拿到名字、轨迹弹窗也显示。
+         * 现在非管理员连这两个字段都不下发（hideOperatorIdentity 整个删掉，不是清成空串）。
+         * ⚠️ 上面的 id / canDelete / isCurrentStatus 不是操作人身份，员工删「写错的一条」要靠它，别一起摘。
+         */
+        operatorRole: log.operatorRole,
+        operatorName: log.operatorName ?? "",
+      }, auth.role);
+    };
+    const ownerOf = (s: { currentStatus: string; statusLogs: TrackLog[] }) => ({
+      currentStatus: s.currentStatus,
+      sameStatusCount: sameStatusCountOf(s.statusLogs, s.currentStatus),
+    });
+    const parentOwner = ownerOf(shipment);
 
     // 父运单的轨迹 = 自己的记录 + 所有子运单的记录，按时间升序合并。
     // 拆柜后的操作只会记在子单上（同步父单状态时并不写日志），不合并的话
     // 父单标签会出现「当前状态：已签收 / 暂无物流轨迹」这种自相矛盾的显示。
     // 每条都带上来源单号，前端据此标注是哪一件货。
     const mergedTimeline = [
-      ...shipment.statusLogs.map((log) => mapLog(log, shipment.trackingNo)),
-      ...childShipments.flatMap((cs) => cs.statusLogs.map((log) => mapLog(log, cs.trackingNo))),
+      ...shipment.statusLogs.map((log) => mapLog(log, shipment.trackingNo, parentOwner)),
+      ...childShipments.flatMap((cs) => {
+        const owner = ownerOf(cs);
+        return cs.statusLogs.map((log) => mapLog(log, cs.trackingNo, owner));
+      }),
     ].sort((a, b) => a.changedAt.localeCompare(b.changedAt));
 
     ok(res, {
@@ -1108,7 +1152,10 @@ export function registerContainerRoutes(app: MinimalHttpApp): void {
             itemName: productNamesLabel(shipment.order?.products, cs.itemName) || null,
             packageCount: cs.packageCount,
             currentStatus: cs.currentStatus,
-            timeline: cs.statusLogs.map((log) => mapLog(log, cs.trackingNo)),
+            timeline: (() => {
+              const owner = ownerOf(cs);
+              return cs.statusLogs.map((log) => mapLog(log, cs.trackingNo, owner));
+            })(),
           }))
         : undefined,
       createdAt: shipment.createdAt.toISOString(),
