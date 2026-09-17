@@ -160,6 +160,8 @@ jobs:
         run: npm run test:container-page
       - name: Test rebate undo page wiring
         run: npm run test:rebate-undo-page
+      - name: Test agent whr sections disabled
+        run: npm run test:agent-whr-disabled
 
       # AI 答复的数字校验（2026-08-28 加）。
       # 覆盖三件事：模型润色时改了数字要被拦下、「今天/本月」按北京时间算、

@@ -702,3 +702,21 @@
   - 代理端 `/agent/rebates`、`/agent/rebates/detail` 跟着显示回「未返」（代理本来就看得到状态）；**流水不给代理**。
 - **流水**（`audit_logs`）：`action=STATUS_CHANGE`、`resourceType=AgentRebateStatement`、`resourceId=返现单 id`；`beforeJson` / `afterJson` 记「状态 + 已返时间 + 操作人」，`afterJson` 另带 `month` / `agentId` / `totalRebate`；`remark` 记撤回原因（点「已返」是空串）。动作从 before/after 的状态推出来，不另存字段。
 - **GET /admin/agents/rebates/detail?id=** 多返回 `history: [{ at, actorName, actorRole, action: "paid"|"undoPaid"|"other", reason, amount }]`，最近的在最前面，最多 50 条；按 `companyId` 过滤。操作人名字只在这个**只给超管**的接口里给（`operator-visibility.ts` 的规矩）。
+
+## 20. 仓库版集货定价改回「每个柜当场填」＋代理端集货相关分区暂时关闭（2026-09-18 老板拍板）
+
+老板原话：「那个集货拼柜的功能，我搞错了。得修一下，不要去设置价格，之前的逻辑是正确的，每次柜价格都不一样的。所以所有人都不需要设置价格，包括代理。代理的话直接把这个功能的前端页面先屏蔽掉吧……但是后端暂时保留一下，以后可能会用。」
+
+### 20.1 定价：回到 9-16 之前那套
+
+- **POST /admin/whr-consolidation/plans**（建柜，仅超管）：`customers[]` 重新**收三档单价** `unitPriceNormal` / `unitPriceInspection` / `unitPriceSensitive`，每档必填、`requireUnitPrice`（> 0、最多 2 位小数），缺档或不合法 `400`，整柜不建。**不再读客户长期价**，所以也不再拿「客户价排队锁」；没配过长期价的客户照样能建柜。
+- **POST /admin/whr-consolidation/customers/add**（加客户，超管 + 员工）：同样**当场填三档价**，缺档 / 不合法 `400`。照旧锁计划行、锁后重判计划状态和重复客户。
+- **POST /admin/whr-consolidation/customers/price**（改单价，仅超管）：**恢复**（9-16 到 9-18 之间是 410）。只改传上来的那几档（留空不改）、一档都没传 `400`；事务里先 `lockPlanAliveById`（已取消的柜不许改），改完这位客户**没付款**的单按新价重算（`recalcUnpaidPrealertFees` + `recalcCustomerTotals`，跟长期价那条路同一份口径），已付款的金额不动。
+- **GET /client/whr-consolidation/plans**：不再下发 `hasLongTermPrice`（客户端页顶那句「暂未配对价格，请联系管理员」跟着去掉）；柜里那行的 `myUnitPrice*` 照旧给。
+- **保留但前端没有入口**：`client_whr_prices` 表、`long-term-price.ts`、`POST /admin/users/client/whr-price`、`GET /admin/whr-consolidation/client-prices`、代理端那套长期价接口。**以后要重新开这个功能时注意**：`setClientWhrPrice` 会连带改「计划中/收货中/装柜中」柜里这位客户的单价并重算没付款的单 —— 现在没人能调它，重开之前要先想清楚跟「每柜当场填」怎么共存。
+
+### 20.2 代理工作台：集货相关分区暂时关闭
+
+- 前端开关 `apps/web/src/modules/agent/agent-features.ts` 的 `AGENT_WHR_FEATURES_ENABLED = false`：菜单和分区里去掉**仓库版集货、客户和价格、集货余额、我的价格**；旧链接（`/agent#whr` 等）回首页；首页那三张集货催单卡片换成一句话，**关着时不发 `/agent/home` 请求**。保留**首页、运单、返现单**。
+- **后端一个接口都没删**（`/agent/whr*`、`/agent/wallet*`、`/agent/clients*`、`/agent/me`），改开关就能整套回来。
+- 湘泰自己的客户端集货余额、超管/员工的集货拼柜都不受影响。

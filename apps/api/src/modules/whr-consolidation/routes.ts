@@ -1,4 +1,4 @@
-import { DECIMAL_10_2, requireDecimal } from "../core/decimal-guard";
+import { DECIMAL_10_2, requireDecimal, requireUnitPrice } from "../core/decimal-guard";
 import { parseNumericStrict } from "../core/int-guard";
 import { prisma } from "../../db/prisma";
 import type { MinimalHttpApp } from "../../server";
@@ -21,12 +21,16 @@ import {
   mergeFeeBreakdowns,
   recalcCustomerTotals,
   recalcPrealertFee,
+  recalcUnpaidPrealertFees,
   syncPlanStatus,
   toNum,
 } from "./utils";
-import { getClientWhrPrice, lockClientWhrPrice } from "./long-term-price";
+/**
+ * 2026-09-18 起这个文件不再读客户长期价（`long-term-price.ts` 和 `client_whr_prices` 表都留着，
+ * 老板说后端暂时保留、以后可能会用）。柜里的三档单价一律是建柜 / 加客户 / 改单价时当场填的。
+ */
 
-/** 没长期价时员工、管理员、客户看到的同一句话（确认单 4.5 / 4.19） */
+/** 没长期价时的那句话（9-16 到 9-18 之间用过；现在没有「必须先配价」这道闸了，留着给还在读它的地方） */
 export const NO_LONG_TERM_PRICE_MESSAGE = "暂未配对价格，请联系管理员";
 
 /**
@@ -110,15 +114,16 @@ export function registerWhrConsolidationRoutes(app: MinimalHttpApp): void {
     if (!auth) return;
 
     /**
-     * 2026-09-16（确认单 4.4 / 4.19）：建柜**不再收三档单价**，每位客户按自己的长期价自动带出。
-     * 旧页面还会传 unitPrice* 过来，一律不认（不报错，免得开着旧页面的人点不动）。
+     * 2026-09-18 老板拍板改回来：**每个柜当场填三档单价**（他原话：「不要去设置价格，之前的逻辑是正确的，
+     * 每次柜价格都不一样的。所以所有人都不需要设置价格」）。9-16 那套「客户长期价自动带出」不再用 ——
+     * 长期价的表和代码都留着（long-term-price.ts），只是没有任何地方读它来定价了。
      */
     const body = (req.body ?? {}) as {
       warehouse?: string;
       containerType?: string;
       destinationTh?: string;
       totalVolumeM3?: number;
-      customers?: { clientId?: string }[];
+      customers?: { clientId?: string; unitPriceNormal?: number; unitPriceInspection?: number; unitPriceSensitive?: number }[];
     };
 
     // 校验必填字段
@@ -161,6 +166,20 @@ export function registerWhrConsolidationRoutes(app: MinimalHttpApp): void {
         return;
       }
       seenClientIds.add(c.clientId.trim());
+      const priceChecks: Array<[string, number | undefined]> = [
+        ["普货", c.unitPriceNormal],
+        ["商检货", c.unitPriceInspection],
+        ["敏感货", c.unitPriceSensitive],
+      ];
+      for (const [label, val] of priceChecks) {
+        // ⚠️ 用 requireUnitPrice（2026-08-29）：只判「大于 0」不够 ——
+        // 0.001 也大于 0，库里是 Decimal(10,2)，会被**存成 0.00**，这一柜白送。
+        const priceIssue = val == null ? `第 ${i + 1} 个客户${label}单价为必填` : requireUnitPrice(val, `第 ${i + 1} 个客户${label}单价`);
+        if (priceIssue) {
+          fail(res, 400, "BAD_REQUEST", priceIssue);
+          return;
+        }
+      }
     }
 
     // 客户必须存在、属于本公司、且确实是客户角色
@@ -179,23 +198,7 @@ export function registerWhrConsolidationRoutes(app: MinimalHttpApp): void {
 
     // 编号生成和插入放同一个事务，锁才有意义
     const plan = await prisma.$transaction(async (tx) => {
-      /**
-       * ⚠️ 锁序（long-term-price.ts 文件头）：先按 clientId 排序逐个拿「客户价排队锁」，再取号建柜。
-       * 不先锁的话：这边读到旧长期价 → 超管那边改完价时这个新柜还没提交、他看不见 → 新柜里留着旧价。
-       * 价格在锁里读，没长期价的客户整柜不建，一次把缺价的客户全列出来。
-       */
-      const pricesByClient = new Map<string, { normal: number; inspection: number; sensitive: number }>();
-      const missingPrice: string[] = [];
-      for (const clientId of [...clientIds].sort()) {
-        await lockClientWhrPrice(tx, clientId);
-        const price = await getClientWhrPrice(clientId, tx);
-        if (price) pricesByClient.set(clientId, price);
-        else missingPrice.push(clientNameOf.get(clientId) || clientId);
-      }
-      if (missingPrice.length > 0) {
-        throw new BusinessError(`${missingPrice.join("、")}：${NO_LONG_TERM_PRICE_MESSAGE}`, 400, "BAD_REQUEST");
-      }
-
+      // 2026-09-18：价格是这次填的，不再去读客户长期价，所以也不用先拿「客户价排队锁」了
       const planNo = await generatePlanNoInTx(tx);
       const created = await tx.whrConsolidationPlan.create({
         data: {
@@ -212,18 +215,14 @@ export function registerWhrConsolidationRoutes(app: MinimalHttpApp): void {
       });
 
       await tx.whrConsolidationPlanCustomer.createMany({
-        data: body.customers!.map((c) => {
-          const clientId = c.clientId!.trim();
-          const price = pricesByClient.get(clientId)!;
-          return {
-            planId: created.id,
-            companyId: auth.companyId,
-            clientId,
-            unitPriceNormal: price.normal,
-            unitPriceInspection: price.inspection,
-            unitPriceSensitive: price.sensitive,
-          };
-        }),
+        data: body.customers!.map((c) => ({
+          planId: created.id,
+          companyId: auth.companyId,
+          clientId: c.clientId!.trim(),
+          unitPriceNormal: Number(c.unitPriceNormal),
+          unitPriceInspection: Number(c.unitPriceInspection),
+          unitPriceSensitive: Number(c.unitPriceSensitive),
+        })),
       });
 
       return created;
@@ -433,16 +432,79 @@ export function registerWhrConsolidationRoutes(app: MinimalHttpApp): void {
   //    改完「计划中/收货中/装柜中」柜里没付款的单自动重算（long-term-price.ts）。
   //    这里留着路由回 410 + 人话，开着旧页面的人点了能看懂，而不是 404。
   // ==========================================================================
+  /**
+   * 2026-09-18 老板拍板恢复：柜里能单独改单价（「每次柜价格都不一样的」）。
+   * 9-16 到 9-18 之间这个接口被停用过（那阵子改价走客户长期价），现在回到老规矩：
+   * 只改传上来的那几档，改完这位客户**没付款**的单按新价重算（已付款的金额在付款那一刻就定死了）。
+   */
   app.post("/admin/whr-consolidation/customers/price", async (req, res) => {
     const auth = requireRole(req, res, ["admin"]);
     if (!auth) return;
-    // HTTP 410（这个接口没了）；响应体 code 只有固定那几种（common-response.ts），沿用 BAD_REQUEST
-    fail(
-      res,
-      410,
-      "BAD_REQUEST",
-      "柜里不能再单独改单价了：单价跟着客户长期价走。湘泰自己的客户请到「客户管理」里改这个客户的长期价（代理的客户由代理自己改），改完没付款的单会自动按新价重算。",
-    );
+
+    const body = (req.body ?? {}) as {
+      planId?: string;
+      customerId?: string;
+      unitPriceNormal?: number;
+      unitPriceInspection?: number;
+      unitPriceSensitive?: number;
+    };
+
+    if (!body.planId?.trim()) {
+      fail(res, 400, "BAD_REQUEST", "planId 为必填");
+      return;
+    }
+    if (!body.customerId?.trim()) {
+      fail(res, 400, "BAD_REQUEST", "customerId 为必填");
+      return;
+    }
+
+    /**
+     * ⚠️ 单价校验放在**碰数据库之前**（2026-08-29 第十轮复核）：参数不合法没必要先查库；
+     * 更要紧的是「断开这道闸、金额测试照样全绿」—— 因为测试走到那里之前就被连库拦下了。
+     */
+    const updateData: Record<string, number> = {};
+    const priceFields: Array<[string, string, number | undefined]> = [
+      ["unitPriceNormal", "普货单价", body.unitPriceNormal],
+      ["unitPriceInspection", "商检货单价", body.unitPriceInspection],
+      ["unitPriceSensitive", "敏感货单价", body.unitPriceSensitive],
+    ];
+    for (const [field, label, raw] of priceFields) {
+      if (raw == null) continue;
+      // 0.001 也大于 0，但 Decimal(10,2) 会把它存成 0.00 —— 这一柜白送
+      const issue = requireUnitPrice(raw, label);
+      if (issue) {
+        fail(res, 400, "BAD_REQUEST", issue);
+        return;
+      }
+      updateData[field] = Number(raw);
+    }
+    if (Object.keys(updateData).length === 0) {
+      fail(res, 400, "BAD_REQUEST", "至少需要修改一种单价");
+      return;
+    }
+
+    const customer = await prisma.whrConsolidationPlanCustomer.findFirst({
+      where: { id: body.customerId.trim(), planId: body.planId.trim(), companyId: auth.companyId },
+      select: { id: true },
+    });
+    if (!customer) {
+      fail(res, 404, "NOT_FOUND", "客户记录不存在");
+      return;
+    }
+
+    // 改价 + 重算放同一个事务，避免只改了价没重算就崩了
+    const result = await prisma.$transaction(async (tx) => {
+      // ⚠️ 整柜取消了就不该再改单价 —— 改一次会把柜里所有未付款的单重算一遍金额。
+      // 必须在事务里锁住计划行（2026-08-27 第二版）：事务外查到「柜还活着」之后柜被取消，金额照样被重算。
+      await lockPlanAliveById(tx, body.planId!.trim());
+      await tx.whrConsolidationPlanCustomer.update({ where: { id: customer.id }, data: updateData });
+      // 跟长期价那条路同样两句（口径只有一份，见 long-term-price.ts）
+      await recalcUnpaidPrealertFees(customer.id, tx);
+      const totals = await recalcCustomerTotals(customer.id, tx);
+      return { totalFee: totals.totalFee };
+    }, { timeout: 30000, maxWait: 10000 });
+
+    ok(res, { customerId: customer.id, totalFee: result.totalFee });
   });
 
   // ==========================================================================
@@ -454,10 +516,16 @@ export function registerWhrConsolidationRoutes(app: MinimalHttpApp): void {
     if (!auth) return;
 
     /**
-     * 2026-09-16（确认单 4.4 / 4.6 / 4.19）：**不再收三档单价**，按客户长期价自动带出，员工填不了也改不了。
-     * 旧页面传来的 unitPrice* 一律不认。没长期价 → 400「暂未配对价格，请联系管理员」。
+     * 2026-09-18 老板拍板改回来：加客户时**当场填三档单价**（每个柜价格都不一样）。
+     * 9-16 那套「按客户长期价自动带出」不再用，长期价的表和代码留着但没人读它定价。
      */
-    const body = (req.body ?? {}) as { planId?: string; clientId?: string };
+    const body = (req.body ?? {}) as {
+      planId?: string;
+      clientId?: string;
+      unitPriceNormal?: number;
+      unitPriceInspection?: number;
+      unitPriceSensitive?: number;
+    };
 
     if (!body.planId?.trim()) {
       fail(res, 400, "BAD_REQUEST", "planId 为必填");
@@ -468,6 +536,26 @@ export function registerWhrConsolidationRoutes(app: MinimalHttpApp): void {
       return;
     }
     const clientId = body.clientId.trim();
+
+    const priceChecks: Array<[string, number | undefined]> = [
+      ["普货单价", body.unitPriceNormal],
+      ["商检货单价", body.unitPriceInspection],
+      ["敏感货单价", body.unitPriceSensitive],
+    ];
+    const prices: Record<string, number> = {};
+    for (const [label, raw] of priceChecks) {
+      const issue = raw == null ? `${label}为必填` : requireUnitPrice(raw, label);
+      if (issue) {
+        fail(res, 400, "BAD_REQUEST", issue);
+        return;
+      }
+      prices[label] = Number(raw);
+    }
+    const price = {
+      normal: prices["普货单价"],
+      inspection: prices["商检货单价"],
+      sensitive: prices["敏感货单价"],
+    };
 
     const plan = await prisma.whrConsolidationPlan.findFirst({
       where: { id: body.planId.trim(), companyId: auth.companyId },
@@ -509,26 +597,9 @@ export function registerWhrConsolidationRoutes(app: MinimalHttpApp): void {
      * 上面事务外那道查重只配当「早点给个好看的提示」，说了算的是锁里这一道。
      * 数据库层的「柜 + 客户」唯一约束要动表结构，另行安排，这里先用锁把口子堵上。
      */
-    // 事务外先看一眼有没有长期价，只为早点给提示；说了算的是锁里那一次
-    if (!(await getClientWhrPrice(clientId))) {
-      fail(res, 400, "BAD_REQUEST", NO_LONG_TERM_PRICE_MESSAGE);
-      return;
-    }
-
     const created = await prisma.$transaction(async (tx) => {
-      /**
-       * ⚠️ 锁序（long-term-price.ts 文件头）：客户价排队锁 → 计划。
-       * 必须排在锁计划前面：改长期价那条路是「客户价锁 → 计划」，反着拿就是死锁；
-       * 不锁的话这边读到旧价、那边改价时看不见这一新行，柜里就留着旧价。
-       */
-      await lockClientWhrPrice(tx, clientId);
-      // 锁序下一环：锁计划行（跟本文件其它写操作同一套锁法），顺便拦已取消的柜
+      // 2026-09-18：价格是这次填的，不用再拿「客户价排队锁」；照旧锁计划行（顺便拦已取消的柜）
       await lockPlanAliveById(tx, plan.id);
-
-      const price = await getClientWhrPrice(clientId, tx);
-      if (!price) {
-        throw new BusinessError(NO_LONG_TERM_PRICE_MESSAGE, 400, "BAD_REQUEST");
-      }
 
       // 锁完重读计划状态：事务外那道「不能再新增客户」的检查只配当提示
       const freshPlan = await tx.whrConsolidationPlan.findUnique({

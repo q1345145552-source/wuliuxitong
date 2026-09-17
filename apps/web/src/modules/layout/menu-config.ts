@@ -1,4 +1,5 @@
 import type { AuthRole } from "../../auth/auth-session";
+import { AGENT_WHR_FEATURES_ENABLED } from "../agent/agent-features";
 
 export interface MenuItem {
   id: string;
@@ -153,11 +154,17 @@ export const roleFunctionGroups: Record<AuthRole, MenuGroup[]> = {
       items: [
         { id: "agent-func-home", label: "首页", href: "/agent#home" },
         { id: "agent-func-shipments", label: "运单", href: "/agent#shipments" },
-        { id: "agent-func-whr", label: "仓库版集货", href: "/agent#whr" },
-        { id: "agent-func-clients", label: "客户和价格", href: "/agent#clients" },
-        { id: "agent-func-wallet", label: "集货余额", href: "/agent#wallet" },
+        // 仓库版集货 / 客户和价格 / 集货余额 / 我的价格 —— 2026-09-18 老板拍板暂时不对代理开放，
+        // 开关在 modules/agent/agent-features.ts（改成 true 就全回来，菜单和分区一起）
+        ...(AGENT_WHR_FEATURES_ENABLED
+          ? [
+              { id: "agent-func-whr", label: "仓库版集货", href: "/agent#whr" },
+              { id: "agent-func-clients", label: "客户和价格", href: "/agent#clients" },
+              { id: "agent-func-wallet", label: "集货余额", href: "/agent#wallet" },
+            ]
+          : []),
         { id: "agent-func-rebates", label: "返现单", href: "/agent#rebates" },
-        { id: "agent-func-me", label: "我的价格", href: "/agent#me" },
+        ...(AGENT_WHR_FEATURES_ENABLED ? [{ id: "agent-func-me", label: "我的价格", href: "/agent#me" }] : []),
       ],
     },
   ],

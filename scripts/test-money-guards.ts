@@ -490,25 +490,38 @@ async function main(): Promise<void> {
   });
 
 
-  await checkAsync("7) 柜里单独改单价的三个口子全部关掉（2026-09-16 起单价只跟长期价走）", async () => {
+  await checkAsync("7) 三个收单价的入口都卡住 0.001（2026-09-18 老板拍板：价格回到每个柜当场填）", async () => {
     /**
-     * ⚠️ 2026-09-16 改写。原来这一项测「改单价 / 新增客户 / 审核时改单价」三个入口都要拦 0.001。
-     * 确认单 4.4 / 4.19 之后这三个入口**根本不再收单价**：
-     *   · customers/price 停用 → 410，不碰数据库
-     *   · customers/add、prealerts/review 源码里不许再读 body 里的单价
-     *     （读了就说明有人把「员工手填单价」又加回来了 —— 4.6 明确员工填不了也改不了）
-     * 单价合法性那道闸现在在长期价入口（parseWhrPriceInput），由 test-whr-long-term-price.ts 真调路由盯着。
+     * ⚠️ 2026-09-18 改回来。9-16 到 9-18 之间这三个入口不收单价（改价走客户长期价），
+     * 老板拍板「每次柜价格都不一样，所有人都不需要设置价格」以后，建柜 / 加客户 / 改单价
+     * 又都当场填三档价了 —— 三处都必须卡住 `0.001`（Decimal(10,2) 会存成 0.00，这一柜白送）。
+     * 这一项只测「不合法的价碰不到数据库」，重算逻辑在 test-whr-long-term-price.ts 真调路由测。
      */
-    const gone = routes.get("POST /admin/whr-consolidation/customers/price");
-    assert.ok(gone, "改单价的路由被整个删了 —— 应该留着回 410 + 人话，开着旧页面的人才看得懂");
-    const r = await callRoute(gone!, ADMIN, { planId: "p_1", customerId: "u_client", unitPriceNormal: 850 });
-    assert.equal(r.status, 410, `柜里改单价没有停用，拿到 ${r.status}`);
-    assert.ok(/客户管理/.test(r.message), `提示里没告诉他去哪改：${r.message}`);
-    for (const key of ["POST /admin/whr-consolidation/customers/add", "POST /admin/whr-consolidation/prealerts/review"]) {
-      const handler = routes.get(key);
-      assert.ok(handler, `没注册 ${key}`);
-      assert.ok(!/body\.unitPrice/.test(String(handler)), `${key} 又开始读请求里的单价了`);
-    }
+    const price = routes.get("POST /admin/whr-consolidation/customers/price");
+    assert.ok(price, "没注册「改单价」路由（2026-09-18 恢复的）");
+    const bad = await callRoute(price!, ADMIN, { planId: "p_1", customerId: "u_client", unitPriceNormal: 0.001 });
+    assert.equal(bad.status, 400, `改单价没卡住 0.001，拿到 ${bad.status}`);
+    assert.ok(/单价/.test(bad.message), `提示里没说单价：${bad.message}`);
+    const none = await callRoute(price!, ADMIN, { planId: "p_1", customerId: "u_client" });
+    assert.equal(none.status, 400, "一档都没传也该拦");
+
+    const add = routes.get("POST /admin/whr-consolidation/customers/add");
+    assert.ok(add, "没注册「加客户」路由");
+    const addBad = await callRoute(add!, ADMIN, { planId: "p_1", clientId: "u_client", unitPriceNormal: 0.001, unitPriceInspection: 900, unitPriceSensitive: 950 });
+    assert.equal(addBad.status, 400, `加客户没卡住 0.001，拿到 ${addBad.status}`);
+    const addMissing = await callRoute(add!, ADMIN, { planId: "p_1", clientId: "u_client" });
+    assert.equal(addMissing.status, 400, "加客户不填价也该拦");
+    assert.ok(/必填/.test(addMissing.message), `提示里没说必填：${addMissing.message}`);
+
+    // 建柜那个入口 7a 已经真调过（下面那一项），这里只补一句「三档缺一也拦」
+    const plans = routes.get("POST /admin/whr-consolidation/plans");
+    assert.ok(plans, "没注册「建柜」路由");
+    const planMissing = await callRoute(plans!, ADMIN, {
+      destinationTh: "曼谷",
+      totalVolumeM3: 68,
+      customers: [{ clientId: "u_client", unitPriceNormal: 800, unitPriceInspection: 900 }],
+    });
+    assert.equal(planMissing.status, 400, "建柜缺一档价也该拦");
   });
 
   await checkAsync("7b) 长期价入口的单价闸：0.001 / 3 位小数 / 布尔都要拦（不碰数据库）", async () => {

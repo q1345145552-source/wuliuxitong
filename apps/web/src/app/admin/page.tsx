@@ -61,7 +61,6 @@ import {
   deleteAdminOrder,
   setAdminStaffPassword,
   fetchAgentOptions,
-  setAdminClientWhrPrice,
   type AgentOption,
   type AdminOverview,
   type AdminOpsOverview,
@@ -515,8 +514,7 @@ export default function AdminHomePage() {
   const [agentOptions, setAgentOptions] = useState<AgentOption[]>([]);
   /** 编辑弹窗打开时这个客户原来的归属；只有改了才把 agentId 发给后端 */
   const [editingClientAgentId, setEditingClientAgentId] = useState<string | null>(null);
-  const [priceEditFor, setPriceEditFor] = useState<string | null>(null);
-  const [priceForm, setPriceForm] = useState({ normal: "", inspection: "", sensitive: "" });
+
   const [settingPasswordFor, setSettingPasswordFor] = useState<string | null>(null);
   const [settingPasswordValue, setSettingPasswordValue] = useState("");
   // 设密码时能不能看见自己输的内容。每次换一个账号设密码都恢复成看不见，避免被旁人瞄到
@@ -1171,40 +1169,10 @@ export default function AdminHomePage() {
   };
 
   /**
-   * 超管填 / 改湘泰自己客户的长期价（2026-09-16，确认单 4.19）。代理的客户卡片上没有这个按钮，后端也会拒（4.7）。
-   * 改完「计划中/收货中/装柜中」柜里这位客户没付款的单自动按新价重算，已付款的不变（4.14）。
+   * 2026-09-18 老板拍板：客户长期价这套不用了（价格改成每个柜当场填），所以这里的
+   * 「填/改长期价」表单和提交函数都删了。后端接口 POST /admin/users/client/whr-price
+   * 和服务层的 setAdminClientWhrPrice 都留着，以后要开回来照旧能用。
    */
-  const submitClientWhrPrice = async (u: AdminUserItem) => {
-    if (loading) return;
-    const vals: Array<[string, string]> = [["普货", priceForm.normal], ["商检货", priceForm.inspection], ["敏感货", priceForm.sensitive]];
-    for (const [label, raw] of vals) {
-      const v = raw.trim();
-      const n = Number(v);
-      if (!v || !Number.isFinite(n) || n <= 0) { setMessage(`${label}单价要填大于 0 的数`); return; }
-      // 库里是 Decimal(10,2)，多的小数位会被抹掉，跟填的对不上
-      if (Math.abs(n * 100 - Math.round(n * 100)) > 1e-6) { setMessage(`${label}单价最多只能有 2 位小数`); return; }
-    }
-    setLoading(true);
-    setMessage("");
-    try {
-      const r = await setAdminClientWhrPrice({
-        clientId: u.id,
-        unitPriceNormal: Number(priceForm.normal.trim()),
-        unitPriceInspection: Number(priceForm.inspection.trim()),
-        unitPriceSensitive: Number(priceForm.sensitive.trim()),
-      });
-      setPriceEditFor(null);
-      setToast(r.updatedPlanRows > 0
-        ? `长期价已保存；这个客户在 ${r.updatedPlanRows} 个还没发运的柜里没付款的单已按新价重算`
-        : "长期价已保存，以后加进仓库版集货的柜时自动带出");
-      await loadClients();
-    } catch (error) {
-      const text = error instanceof Error ? error.message : "保存失败";
-      setMessage(`保存长期价失败：${text}`);
-    } finally {
-      setLoading(false);
-    }
-  };
 
   const filteredOrderList = useMemo(() => {
     const s = orderSearch;
@@ -1838,41 +1806,13 @@ export default function AdminHomePage() {
                   <span><strong>公司名字</strong> {u.companyName ?? "-"}</span>
                   <span><strong>电话</strong> {u.phone}</span>
                   <span><strong>邮箱</strong> {u.email ?? "-"}</span>
-                  {/* 2026-09-16 代理账号（确认单 6.3 / 4.19）：所属代理、仓库版集货长期价 */}
+                  {/* 2026-09-16 代理账号（确认单 6.3）：所属代理照旧显示 */}
                   <span><strong>所属代理</strong> {u.agentId ? (u.agentName ?? "代理") : "湘泰自己的客户"}</span>
-                  <span>
-                    <strong>长期价</strong>{" "}
-                    {u.whrPrice
-                      ? `普 ${u.whrPrice.normal} · 商检 ${u.whrPrice.inspection} · 敏感 ${u.whrPrice.sensitive}`
-                      : <span style={{ color: "var(--c-red-deep)", fontWeight: 600 }}>未填价</span>}
-                    {u.whrPrice && u.whrPrice.filledByRole == null
-                      ? <span style={{ display: "block", fontSize: 11, color: "var(--t-muted)" }}>上线时按最近一个柜的价自动填</span>
-                      : null}
-                    {u.whrPrice && u.whrPrice.filledByRole === "agent"
-                      ? <span style={{ display: "block", fontSize: 11, color: "var(--t-muted)" }}>代理填的</span>
-                      : null}
-                  </span>
-                  {u.agentId ? (
-                    <span style={{ fontSize: 12, color: "var(--t-muted)", alignSelf: "center" }}>价格由代理填，这里不能改</span>
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        if (priceEditFor === u.id) { setPriceEditFor(null); return; }
-                        setSettingPasswordFor(null);
-                        setPriceForm({
-                          normal: u.whrPrice ? String(u.whrPrice.normal) : "",
-                          inspection: u.whrPrice ? String(u.whrPrice.inspection) : "",
-                          sensitive: u.whrPrice ? String(u.whrPrice.sensitive) : "",
-                        });
-                        setPriceEditFor(u.id);
-                      }}
-                      disabled={loading}
-                      style={{ border: "1px solid var(--c-blue)", color: "var(--c-blue)", borderRadius: 8, padding: "6px 10px", background: "var(--white)", cursor: "pointer", fontSize: 13 }}
-                    >
-                      {priceEditFor === u.id ? "取消" : u.whrPrice ? "改长期价" : "填长期价"}
-                    </button>
-                  )}
+                  {/*
+                    2026-09-18 老板拍板：**不再有「客户长期价」**（每个柜价格都不一样，价格在建柜 / 加客户 /
+                    改单价时当场填）。所以这里「长期价」那一行和「填/改长期价」按钮都去掉了。
+                    后端接口（POST /admin/users/client/whr-price）和 client_whr_prices 表都留着，以后要用再开。
+                  */}
                   <span><strong>状态</strong> {u.status === "inactive" ? "已封禁" : "正常"}</span>
                   <span style={{ color: "var(--t-strong)", fontSize: 12 }}>{u.createdAt.slice(0, 10)}</span>
                   <button
@@ -1943,40 +1883,7 @@ export default function AdminHomePage() {
                     </button>
                   </div>
                 ) : null}
-                {priceEditFor === u.id && !u.agentId ? (
-                  <div style={{ marginTop: 8, paddingTop: 8, borderTop: "1px solid var(--l-soft)", display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-                    <span style={{ fontSize: 13, color: "var(--t-strong)" }}>仓库版集货长期价（元/方）</span>
-                    {([["normal", "普货"], ["inspection", "商检货"], ["sensitive", "敏感货"]] as const).map(([key, label]) => (
-                      <label key={key} style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 13, color: "var(--t-strong)" }}>
-                        {label}
-                        <input
-                          type="number"
-                          value={priceForm[key]}
-                          onChange={(e) => setPriceForm((f) => ({ ...f, [key]: e.target.value }))}
-                          style={{ border: "1px solid var(--l-strong)", borderRadius: 8, padding: "6px 8px", width: 90 }}
-                        />
-                      </label>
-                    ))}
-                    <button
-                      type="button"
-                      onClick={() => void submitClientWhrPrice(u)}
-                      disabled={loading}
-                      style={{ border: "none", borderRadius: 8, padding: "6px 12px", background: "var(--c-blue)", color: "var(--white)", cursor: "pointer" }}
-                    >
-                      保存
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setPriceEditFor(null)}
-                      style={{ border: "1px solid var(--l-strong)", borderRadius: 8, padding: "6px 12px", background: "var(--white)", cursor: "pointer", color: "var(--t-strong)" }}
-                    >
-                      取消
-                    </button>
-                    <div style={{ flexBasis: "100%", fontSize: 12, color: "var(--t-muted)" }}>
-                      加进仓库版集货的柜时自动带出这个价。改了之后，这个客户在「计划中/集货中/装柜中」柜里没付款的单会按新价重算；已付款的单金额不变。
-                    </div>
-                  </div>
-                ) : null}
+                {/* 2026-09-18：长期价的填写表单去掉了（价格改成每个柜当场填），后端接口留着 */}
               </div>
             ))}
           </div>

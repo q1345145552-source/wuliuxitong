@@ -15,7 +15,7 @@ const SHIPMENT_STATUS_ZH: Record<string, string> = Object.fromEntries(DEFAULT_ST
 import { loadOrderTotalMetrics } from "./total-metrics";
 import { countShipmentOverview } from "./overview-counts";
 import { loadPartialAhead } from "./partial-status";
-import { CONTAINER_PUSH_LOG_MESSAGE, CURRENT_STATUS_LOG_MESSAGE, isContainerPushTransitionLog, isCurrentStatusLog, isManagedLastmileLog, MANAGED_LASTMILE_LOG_MESSAGE } from "./managed-lastmile-log";
+import { CONTAINER_PUSH_LOG_MESSAGE, CURRENT_STATUS_LOG_MESSAGE, deleteBlockedReasonOf, MANAGED_LASTMILE_LOG_MESSAGE } from "./managed-lastmile-log";
 import { findDeletedLogAudits } from "./deleted-log-audits";
 import { BusinessError } from "../core/business-error";
 import { canSeeOperatorIdentity } from "../core/operator-visibility";
@@ -838,24 +838,28 @@ export function registerShipmentRoutes(app: MinimalHttpApp): void {
         where: { id: logId, shipmentId: log.shipmentId, companyId: auth.companyId },
       });
       if (!lockedLog) throw new BusinessError("这条轨迹已被处理，请刷新后重试", 404, "NOT_FOUND");
-      if (isManagedLastmileLog(lockedLog)) {
-        throw new BusinessError(MANAGED_LASTMILE_LOG_MESSAGE, 409, "VALIDATION_ERROR");
-      }
-      if (isContainerPushTransitionLog(lockedLog)) {
-        throw new BusinessError(CONTAINER_PUSH_LOG_MESSAGE, 409, "VALIDATION_ERROR");
-      }
       const lockedShipment = await tx.shipment.findUnique({
         where: { id: log.shipmentId },
         select: { currentStatus: true },
       });
       if (!lockedShipment) throw new BusinessError("这票货已经不在了，请刷新后重试", 404, "NOT_FOUND");
-      if (lockedLog.toStatus === lockedShipment.currentStatus) {
-        const sameStatusCount = await tx.statusLog.count({
-          where: { shipmentId: log.shipmentId, toStatus: lockedShipment.currentStatus },
-        });
-        if (isCurrentStatusLog(lockedLog, lockedShipment.currentStatus, sameStatusCount)) {
-          throw new BusinessError(CURRENT_STATUS_LOG_MESSAGE, 409, "VALIDATION_ERROR");
-        }
+      /**
+       * 三道判断**直接调 deleteBlockedReasonOf**（managed-lastmile-log.ts），跟轨迹弹窗
+       * （containers/routes.ts 的 GET /client/shipments/track）是同一份代码、同一个顺序。
+       * 2026-09-18 复核提醒：这里原来是把那三个 if 内联抄了一遍，当时判断等价，但改一边漏一边时
+       * 弹窗会说「能删」、点下去却 409。现在只有一份口径。
+       */
+      const sameStatusCount = await tx.statusLog.count({
+        where: { shipmentId: log.shipmentId, toStatus: lockedShipment.currentStatus },
+      });
+      const blockedReason = deleteBlockedReasonOf(lockedLog, lockedShipment.currentStatus, sameStatusCount);
+      if (blockedReason) {
+        const message = blockedReason === "lastmile"
+          ? MANAGED_LASTMILE_LOG_MESSAGE
+          : blockedReason === "containerPush"
+            ? CONTAINER_PUSH_LOG_MESSAGE
+            : CURRENT_STATUS_LOG_MESSAGE;
+        throw new BusinessError(message, 409, "VALIDATION_ERROR");
       }
       // 删之前把原记录整条存进操作日志：谁、什么时候删的，管理员能原样恢复
       await tx.auditLog.create({

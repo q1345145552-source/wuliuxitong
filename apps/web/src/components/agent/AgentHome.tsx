@@ -5,6 +5,7 @@
  * 湘泰不直接联系客户，找代理；代理登录后先看到这三类，由他去催。
  */
 import EmptyStateCard from "../../modules/layout/EmptyStateCard";
+import { AGENT_WHR_FEATURES_ENABLED } from "../../modules/agent/agent-features";
 import { fetchAgentDashboard, type AgentStuckPrealert } from "../../services/agent-api";
 import { LoadState, Panel, SectionHeader, StatusTag, TableWrap, TruncatedNote, btn, fmtMoney, fmtTime, mono, td, tdNum, th, useAgentLoad } from "./agent-ui";
 
@@ -47,6 +48,26 @@ function PrealertTable({ rows, showFee, onOpenPlan }: { rows: AgentStuckPrealert
 }
 
 export default function AgentHome({ onOpenPlan }: { onOpenPlan: (planId: string) => void }) {
+  /**
+   * 首页这三类全是仓库版集货的催单。2026-09-18 老板拍板暂时不对代理开放集货，
+   * 所以关着的时候**连请求都不发**（关了还去拉数据等于白占后端），只写一句话说清去哪看。
+   * 开关：modules/agent/agent-features.ts
+   */
+  if (!AGENT_WHR_FEATURES_ENABLED) {
+    return (
+      <section aria-labelledby="agent-home-title">
+        <SectionHeader title="首页" desc="仓库版集货相关的提醒暂时关闭了。" />
+        <EmptyStateCard
+          title="暂时没有要催的单"
+          description="名下客户的货在「运单」里看，返现在「返现单」里看。"
+        />
+      </section>
+    );
+  }
+  return <AgentHomeStuck onOpenPlan={onOpenPlan} />;
+}
+
+function AgentHomeStuck({ onOpenPlan }: { onOpenPlan: (planId: string) => void }) {
   const { data, loading, error, reload } = useAgentLoad(fetchAgentDashboard, []);
 
   return (

@@ -13,6 +13,7 @@
  */
 import { useCallback, useEffect, useState } from "react";
 import { navigateToHash } from "../../modules/layout/navigate-to-hash";
+import { AGENT_WHR_FEATURES_ENABLED, isAgentSectionEnabled } from "../../modules/agent/agent-features";
 import AgentHome from "../../components/agent/AgentHome";
 import AgentShipments from "../../components/agent/AgentShipments";
 import AgentWhr from "../../components/agent/AgentWhr";
@@ -32,7 +33,9 @@ function isSectionId(v: string): v is SectionId {
 function sectionFromHash(): SectionId {
   if (typeof window === "undefined") return "home";
   const id = window.location.hash.replace(/^#/, "");
-  return isSectionId(id) ? id : "home";
+  // 暂时关掉的分区（集货、余额、客户和价格、我的价格）就算有人存了旧链接也回首页，
+  // 别渲染一个半截页面（开关在 modules/agent/agent-features.ts）
+  return isSectionId(id) && isAgentSectionEnabled(id) ? id : "home";
 }
 
 export default function AgentWorkbenchPage() {
@@ -58,11 +61,11 @@ export default function AgentWorkbenchPage() {
     <div style={{ padding: "4px 0 24px" }}>
       {section === "home" ? <AgentHome onOpenPlan={openPlan} /> : null}
       {section === "shipments" ? <AgentShipments /> : null}
-      {section === "whr" ? <AgentWhr focusPlanId={focusPlanId} onFocusHandled={clearFocus} /> : null}
-      {section === "clients" ? <AgentClients /> : null}
-      {section === "wallet" ? <AgentWallet /> : null}
+      {AGENT_WHR_FEATURES_ENABLED && section === "whr" ? <AgentWhr focusPlanId={focusPlanId} onFocusHandled={clearFocus} /> : null}
+      {AGENT_WHR_FEATURES_ENABLED && section === "clients" ? <AgentClients /> : null}
+      {AGENT_WHR_FEATURES_ENABLED && section === "wallet" ? <AgentWallet /> : null}
       {section === "rebates" ? <AgentRebates /> : null}
-      {section === "me" ? <AgentMe /> : null}
+      {AGENT_WHR_FEATURES_ENABLED && section === "me" ? <AgentMe /> : null}
     </div>
   );
 }

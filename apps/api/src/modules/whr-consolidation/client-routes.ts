@@ -53,17 +53,12 @@ export function registerWhrConsolidationClientRoutes(app: MinimalHttpApp): void 
     });
 
     /**
-     * 有没有长期价（2026-09-16，确认单 4.5 / 4.19）：没有就在页顶提示「暂未配对价格，请联系管理员」。
-     * 只回一个布尔，价格本身不从这里给（柜里那一行的单价照旧在 items 里）。
+     * 2026-09-18 老板拍板：不再有「客户长期价」这回事，价格是每个柜当场填的 ——
+     * 所以这里不再查 client_whr_prices、也不再下发 hasLongTermPrice（页顶那句
+     *「暂未配对价格，请联系管理员」跟着去掉）。柜里那一行的单价照旧在 items 里给。
      */
-    const priceRow = await prisma.clientWhrPrice.findFirst({
-      where: { clientId: auth.userId, companyId: auth.companyId },
-      select: { clientId: true },
-    });
-    const hasLongTermPrice = priceRow !== null;
-
     if (myCustomers.length === 0) {
-      ok(res, { items: [], hasLongTermPrice });
+      ok(res, { items: [] });
       return;
     }
 
@@ -75,7 +70,6 @@ export function registerWhrConsolidationClientRoutes(app: MinimalHttpApp): void 
     }
 
     ok(res, {
-      hasLongTermPrice,
       items: myCustomers.map((c) => {
         const activePrealerts = c.prealerts.filter((pa) => pa.status !== "cancelled");
         // 我的费用：只统计未取消的预报单

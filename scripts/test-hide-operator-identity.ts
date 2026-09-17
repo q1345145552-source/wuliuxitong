@@ -132,7 +132,8 @@ const orderRow: Row = {
   weightKg: 8, volumeM3: 0.4, receivableAmountCny: null, receivableCurrency: "CNY", paymentStatus: "paid", paidAt: T1,
   paidBy: `管理员审核(${ADMIN.name})`, shipDate: "2026-09-01", cargoType: "normal", batchNo: "ABCU1234567", createdAt: T0, updatedAt: T1,
   client: { name: "客户一" },
-  shipments: [{ id: "s1", trackingNo: "YW0001", currentStatus: "loaded", remark: null, parentTrackingNo: null, createdAt: T0, updatedAt: T1, statusLogs: shipmentLogs("s1") }],
+  // transportMode 是 2026-09-18 加进 select 的（「部分已放行」按运单自己的运输方式比快慢）
+  shipments: [{ id: "s1", trackingNo: "YW0001", currentStatus: "loaded", remark: null, parentTrackingNo: null, transportMode: "sea", createdAt: T0, updatedAt: T1, statusLogs: shipmentLogs("s1") }],
 };
 
 /** 普通版集货：管理员撤销付款（备注开头带「管理员」）+ 员工装柜（备注带柜号）；付款审核人是员工甲 */

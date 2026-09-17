@@ -42,7 +42,7 @@ function FeeBreakdownPanel({ bd, title = "费用明细", compact }: { bd?: FeeBr
       </div>
       {!bd.matchesStored && bd.storedFee != null && (
         <div style={{ marginTop: 4, color: "#b45309", fontSize: fs - 1 }}>
-          付款后客户长期价改过：按现价算为 {money(bd.computedFee)}，实际应付以付款时锁定的 {money(bd.storedFee)} 为准。
+          付款后柜里单价改过：按现价算为 {money(bd.computedFee)}，实际应付以付款时锁定的 {money(bd.storedFee)} 为准。
         </div>
       )}
     </div>
@@ -218,12 +218,17 @@ interface ClientOption {
   whrPrice?: { normal: number; inspection: number; sensitive: number } | null;
 }
 
-/** 2026-09-16 起建柜只选客户，单价按客户长期价自动带出（确认单 4.4 / 4.19） */
+/**
+ * 2026-09-18 老板拍板改回来：建柜时**每位客户当场填三档单价**（每个柜价格都不一样）。
+ * 9-16 到 9-18 之间是「按客户长期价自动带出」，那套不用了（长期价的表和接口留着，只是没人读）。
+ */
 interface CreateCustomerForm {
   clientId: string;
+  unitPriceNormal: string;
+  unitPriceInspection: string;
+  unitPriceSensitive: string;
 }
 
-const NO_PRICE_MESSAGE = "暂未配对价格，请联系管理员";
 const priceText = (p: { normal: number; inspection: number; sensitive: number }) =>
   `普货 ${p.normal} · 商检货 ${p.inspection} · 敏感货 ${p.sensitive} 元/方`;
 
@@ -288,7 +293,20 @@ export default function AdminWhrConsolidationPage() {
   const [deleteItemTarget, setDeleteItemTarget] = useState<{ item: any; trackingNo: string } | null>(null);
   const [deleteItemSubmitting, setDeleteItemSubmitting] = useState(false);
 
-  // --- 改单价：2026-09-16 停用（单价跟着客户长期价走，改价到「客户管理」）---
+  /**
+   * --- 改单价（2026-09-18 老板拍板恢复：「每次柜价格都不一样的」）---
+   * 9-16 到 9-18 之间这块停用过（那阵子改价走客户长期价）。现在回到老规矩：
+   * 在柜详情里改这位客户的三档价，改完他**没付款**的单按新价重算（已付款的不动）。
+   */
+  const [priceTarget, setPriceTarget] = useState<CustomerDetail | null>(null);
+  const [editPriceNormal, setEditPriceNormal] = useState("");
+  const [editPriceInspection, setEditPriceInspection] = useState("");
+  const [editPriceSensitive, setEditPriceSensitive] = useState("");
+  const [priceSubmitting, setPriceSubmitting] = useState(false);
+  // 加客户时当场填的三档价（2026-09-18）
+  const [addPriceNormal, setAddPriceNormal] = useState("");
+  const [addPriceInspection, setAddPriceInspection] = useState("");
+  const [addPriceSensitive, setAddPriceSensitive] = useState("");
   // 撤销付款（2026-08-07）
   const [revokingId, setRevokingId] = useState("");
   // 新增 / 移除参与客户（2026-08-07）
@@ -462,13 +480,17 @@ export default function AdminWhrConsolidationPage() {
         return;
       }
     }
-    // 单价按客户长期价自动带出（2026-09-16）。页面先挡一次没配价的；说了算的是后端锁里那次
-    {
-      const noPrice = selectedCustomers
-        .map((sc) => clients.find((cl) => cl.id === sc.clientId))
-        .filter((cl) => cl && !cl.whrPrice)
-        .map((cl) => cl!.name);
-      if (noPrice.length > 0) { setToast(`${noPrice.join("、")}：${NO_PRICE_MESSAGE}（到「客户管理」给湘泰自己的客户填长期价；代理的客户找代理填）`); return; }
+    // 三档单价当场填（2026-09-18）：页面先挡一次，说了算的是后端那道 requireUnitPrice
+    for (let i = 0; i < selectedCustomers.length; i++) {
+      const c = selectedCustomers[i];
+      const name = clients.find((cl) => cl.id === c.clientId)?.name ?? `第 ${i + 1} 位客户`;
+      const checks: Array<[string, string]> = [["普货", c.unitPriceNormal], ["商检货", c.unitPriceInspection], ["敏感货", c.unitPriceSensitive]];
+      for (const [label, raw] of checks) {
+        const v = Number(String(raw).trim());
+        if (!String(raw).trim() || !Number.isFinite(v) || v <= 0) { setToast(`${name}的${label}单价要填一个大于 0 的数`); return; }
+        // 库里是 Decimal(10,2)：0.001 会被存成 0.00，这一柜白送
+        if (Math.abs(v * 100 - Math.round(v * 100)) > 1e-6) { setToast(`${name}的${label}单价最多 2 位小数`); return; }
+      }
     }
     setCreateSubmitting(true);
     try {
@@ -483,8 +505,12 @@ export default function AdminWhrConsolidationPage() {
             destinationTh: newDestinationTh.trim(),
             // ⚠️ 不许 `|| 68`：上面已经卡死必须填，这里再兜一次等于把校验抹掉
             totalVolumeM3: Number(String(newTotalVolume).trim()),
-            // 只传客户，单价后端按长期价带出
-            customers: selectedCustomers.map(c => ({ clientId: c.clientId })),
+            customers: selectedCustomers.map(c => ({
+              clientId: c.clientId,
+              unitPriceNormal: Number(String(c.unitPriceNormal).trim()),
+              unitPriceInspection: Number(String(c.unitPriceInspection).trim()),
+              unitPriceSensitive: Number(String(c.unitPriceSensitive).trim()),
+            })),
           }),
         }
       );
@@ -593,7 +619,7 @@ export default function AdminWhrConsolidationPage() {
         `${apiBaseUrl()}/admin/whr-consolidation/prealerts/item-cargo-type`,
         { method: "POST", headers: jsonPost, body: JSON.stringify({ itemId, cargoType }) }
       );
-      // 2026-09-16：没付款的单后端按新货型自动重算金额（柜里「改单价」停用了）
+      // 没付款的单后端按新货型自动重算金额
       setToast(r?.prealertStatus === "received_pending_payment" && r.totalFee != null
         ? `货型已改，应付金额已按新货型自动重算为 ¥${r.totalFee}`
         : "货型已改（货还没签收，签收时按新货型计费）");
@@ -611,7 +637,7 @@ export default function AdminWhrConsolidationPage() {
         `${apiBaseUrl()}/admin/whr-consolidation/prealerts/item-delete`,
         { method: "POST", headers: jsonPost, body: JSON.stringify({ itemId: deleteItemTarget.item.id }) }
       );
-      // 2026-09-16：没付款的单后端按剩下的货自动重算金额（柜里「改单价」停用了）
+      // 没付款的单后端按剩下的货自动重算金额
       const volText = r?.customerVolume != null ? `，该客户占用方数更新为 ${r.customerVolume} 方` : "";
       const feeText = r?.prealertStatus === "received_pending_payment" && r.totalFee != null
         ? `，这张单应付金额已按剩下的货自动重算为 ¥${r.totalFee}`
@@ -660,25 +686,71 @@ export default function AdminWhrConsolidationPage() {
   const openAddCustomer = () => {
     setAddClientId(""); setAddSearch("");
     setShowAddCustomer(true);
-    // 每次打开都重拉：长期价可能刚在「客户管理」里填过
+    setAddPriceNormal("");
+    setAddPriceInspection("");
+    setAddPriceSensitive("");
     loadClients();
+  };
+
+  /** 改这位客户在本柜的单价：改完他没付款的单按新价重算（2026-09-18 恢复） */
+  const handleUpdatePrice = async () => {
+    if (!priceTarget || !selectedPlanId) return;
+    const checks: Array<[string, string]> = [["普货", editPriceNormal], ["商检货", editPriceInspection], ["敏感货", editPriceSensitive]];
+    let filled = 0;
+    for (const [label, raw] of checks) {
+      const text = String(raw).trim();
+      if (!text) continue; // 留空 = 这一档不改
+      const v = Number(text);
+      if (!Number.isFinite(v) || v <= 0) { setToast(`${label}单价要填一个大于 0 的数`); return; }
+      if (Math.abs(v * 100 - Math.round(v * 100)) > 1e-6) { setToast(`${label}单价最多 2 位小数`); return; }
+      filled += 1;
+    }
+    if (filled === 0) { setToast("至少改一种单价"); return; }
+    setPriceSubmitting(true);
+    try {
+      const r = await apiRequest<{ totalFee?: number }>(`${apiBaseUrl()}/admin/whr-consolidation/customers/price`, {
+        method: "POST",
+        headers: jsonPost,
+        body: JSON.stringify({
+          planId: selectedPlanId,
+          customerId: priceTarget.id,
+          unitPriceNormal: String(editPriceNormal).trim() ? Number(editPriceNormal) : undefined,
+          unitPriceInspection: String(editPriceInspection).trim() ? Number(editPriceInspection) : undefined,
+          unitPriceSensitive: String(editPriceSensitive).trim() ? Number(editPriceSensitive) : undefined,
+        }),
+      });
+      setToast(r?.totalFee != null ? `单价已改，没付款的单按新价重算了，这位客户现在合计 ¥${r.totalFee}` : "单价已改");
+      setPriceTarget(null);
+      loadDetail(selectedPlanId);
+    } catch (e: any) { setToast(e?.message ?? "改单价失败"); }
+    finally { setPriceSubmitting(false); }
   };
 
   const handleAddCustomer = async () => {
     if (!selectedPlanId) return;
     if (!addClientId) { setToast("请选择客户"); return; }
-    // 单价按长期价自动带出（2026-09-16）。页面先挡一次没配价的；说了算的是后端锁里那次
-    const picked = clients.find((cl) => cl.id === addClientId);
-    if (picked && !picked.whrPrice) { setToast(NO_PRICE_MESSAGE); return; }
+    // 三档单价当场填（2026-09-18 老板拍板）。页面先挡一次，说了算的是后端那道 requireUnitPrice
+    const priceChecks: Array<[string, string]> = [["普货", addPriceNormal], ["商检货", addPriceInspection], ["敏感货", addPriceSensitive]];
+    for (const [label, raw] of priceChecks) {
+      const v = Number(String(raw).trim());
+      if (!String(raw).trim() || !Number.isFinite(v) || v <= 0) { setToast(`${label}单价要填一个大于 0 的数`); return; }
+      if (Math.abs(v * 100 - Math.round(v * 100)) > 1e-6) { setToast(`${label}单价最多 2 位小数`); return; }
+    }
     setAddSubmitting(true);
     try {
       const r = await apiRequest<{ unitPriceNormal?: number; unitPriceInspection?: number; unitPriceSensitive?: number }>(`${apiBaseUrl()}/admin/whr-consolidation/customers/add`, {
         method: "POST",
         headers: jsonPost,
-        body: JSON.stringify({ planId: selectedPlanId, clientId: addClientId }),
+        body: JSON.stringify({
+          planId: selectedPlanId,
+          clientId: addClientId,
+          unitPriceNormal: Number(String(addPriceNormal).trim()),
+          unitPriceInspection: Number(String(addPriceInspection).trim()),
+          unitPriceSensitive: Number(String(addPriceSensitive).trim()),
+        }),
       });
       setToast(r?.unitPriceNormal != null
-        ? `客户已加入本计划，单价按长期价带出：${priceText({ normal: r.unitPriceNormal, inspection: r.unitPriceInspection ?? 0, sensitive: r.unitPriceSensitive ?? 0 })}`
+        ? `客户已加入本计划，单价：${priceText({ normal: r.unitPriceNormal, inspection: r.unitPriceInspection ?? 0, sensitive: r.unitPriceSensitive ?? 0 })}`
         : "客户已加入本计划");
       setShowAddCustomer(false);
       loadDetail(selectedPlanId);
@@ -889,8 +961,19 @@ export default function AdminWhrConsolidationPage() {
                             <span>普货：{c.unitPriceNormal} 元/方</span>
                             <span>商检货：{c.unitPriceInspection} 元/方</span>
                             <span>敏感货：{c.unitPriceSensitive} 元/方</span>
-                            {/* 2026-09-16：「改单价」去掉了 —— 单价跟着客户长期价走 */}
-                            <span style={{ fontSize: 12, color: "var(--t-faint)" }}>单价跟着客户长期价走，改价请到「客户管理」</span>
+                            {/* 2026-09-18 老板拍板恢复：柜里能改单价（每个柜价格都不一样） */}
+                            {planDetail.status !== "cancelled" && (
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setPriceTarget(c);
+                                  setEditPriceNormal(String(c.unitPriceNormal));
+                                  setEditPriceInspection(String(c.unitPriceInspection));
+                                  setEditPriceSensitive(String(c.unitPriceSensitive));
+                                }}
+                                style={{ ...btnCancel, padding: "4px 12px", fontSize: 12 }}
+                              >改单价</button>
+                            )}
                             {planDetail.status !== "cancelled" && !customerHasShipped(c) && (
                               <button onClick={(e) => { e.stopPropagation(); openAddress(c); }} style={{ ...btnCancel, padding: "4px 12px", fontSize: 12 }}>
                                 {c.deliveryAddress?.trim() ? "改泰国地址" : "填泰国地址"}
@@ -1142,7 +1225,7 @@ export default function AdminWhrConsolidationPage() {
                   <label style={fl}>拒绝原因 *</label>
                   <textarea value={rejectReason} onChange={e => setRejectReason(e.target.value)} placeholder="请填写拒绝原因" style={{ ...fi, minHeight: 80 }} />
                 </div>
-                {/* 2026-09-16：拒绝时「顺带改单价」去掉了 —— 单价跟着客户长期价走，改价到「客户管理」 */}
+                {/* 拒绝时不顺带改单价：要改价在柜详情点「改单价」（2026-09-18 起那个入口回来了） */}
                 <div style={{ marginTop: 14, display: "flex", gap: 8 }}>
                   <button onClick={handleReject} disabled={reviewSubmitting} style={btnConfirm}>{reviewSubmitting ? "提交中..." : "确认拒绝"}</button>
                   <button onClick={() => { setShowReject(false); setRejectReason(""); }} style={btnCancel}>取消</button>
@@ -1271,6 +1354,36 @@ export default function AdminWhrConsolidationPage() {
         )}
 
         {/* ================================================================ */}
+        {/* 弹窗：改单价（2026-09-18 恢复）                                    */}
+        {/* ================================================================ */}
+        {priceTarget && selectedPlanId && (
+          <Modal onClose={() => setPriceTarget(null)}>
+            <h3 style={{ marginTop: 0 }}>改单价 - {priceTarget.clientName}</h3>
+            <div style={{ fontSize: 13, color: "var(--t-muted)", marginBottom: 10 }}>
+              只改这一柜给他的价。改完他<b>没付款</b>的单会按新价重算；已经付过款的单金额不动。留空的那一档不改。
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginTop: 10 }}>
+              <div>
+                <label style={fl}>普货单价 (元/方)</label>
+                <input type="number" min="0" step="0.01" value={editPriceNormal} onChange={e => setEditPriceNormal(e.target.value)} style={fi} />
+              </div>
+              <div>
+                <label style={fl}>商检货单价 (元/方)</label>
+                <input type="number" min="0" step="0.01" value={editPriceInspection} onChange={e => setEditPriceInspection(e.target.value)} style={fi} />
+              </div>
+              <div>
+                <label style={fl}>敏感货单价 (元/方)</label>
+                <input type="number" min="0" step="0.01" value={editPriceSensitive} onChange={e => setEditPriceSensitive(e.target.value)} style={fi} />
+              </div>
+            </div>
+            <div style={{ marginTop: 14, display: "flex", gap: 8 }}>
+              <button onClick={handleUpdatePrice} disabled={priceSubmitting} style={btnConfirm}>{priceSubmitting ? "保存中..." : "保存"}</button>
+              <button onClick={() => setPriceTarget(null)} style={btnCancel}>取消</button>
+            </div>
+          </Modal>
+        )}
+
+        {/* ================================================================ */}
         {/* 弹窗：新增参与客户（2026-08-07）                                   */}
         {/* ================================================================ */}
         {showAddCustomer && selectedPlanId && planDetail && (() => {
@@ -1301,31 +1414,25 @@ export default function AdminWhrConsolidationPage() {
                       <span style={{ color: "var(--t-muted)", fontSize: 12 }}>{cl.phone}{cl.companyName ? ` · ${cl.companyName}` : ""}</span>
                       {/* 超管页可以标代理名（员工页不标，确认单 4.6） */}
                       {cl.agentName && <span style={{ fontSize: 11, padding: "1px 6px", borderRadius: 4, background: "var(--c-blue-bg-2)", color: "var(--c-blue-deep)" }}>代理：{cl.agentName}</span>}
-                      {!cl.whrPrice && <span style={{ marginLeft: "auto", fontSize: 11, padding: "1px 6px", borderRadius: 4, background: "var(--c-red-bg)", color: "var(--c-red-deep)" }}>未填价</span>}
                     </label>
                   ))}
                 </div>
                 <div style={{ fontSize: 12, color: "var(--t-muted)", marginTop: 4 }}>共 {options.length} 位可选</div>
               </div>
-              {/* 单价按客户长期价自动带出，不用填（确认单 4.4 / 4.19） */}
-              {(() => {
-                const picked = clients.find((cl) => cl.id === addClientId);
-                return (
-                  <div style={{ marginTop: 12, padding: "8px 12px", borderRadius: 6, background: "var(--s-alt)", fontSize: 13, color: "var(--t-body)" }}>
-                    {!picked ? (
-                      <span style={{ color: "var(--t-muted)" }}>单价按客户的长期价自动带出，不用填。</span>
-                    ) : picked.whrPrice ? (
-                      <span>单价自动带出：{priceText(picked.whrPrice)}</span>
-                    ) : (
-                      <span style={{ color: "var(--c-red-deep)", fontWeight: 600 }}>
-                        {NO_PRICE_MESSAGE}（{picked.agentName ? "代理的客户由代理填价" : "到「客户管理」给这个客户填长期价"}）
-                      </span>
-                    )}
-                  </div>
-                );
-              })()}
+              {/* 2026-09-18 老板拍板：加客户也当场填这一柜的三档单价 */}
+              <div style={{ marginTop: 12 }}>
+                <label style={fl}>这一柜给他的单价（元/方，必填）</label>
+                <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                  {([["普货", addPriceNormal, setAddPriceNormal], ["商检货", addPriceInspection, setAddPriceInspection], ["敏感货", addPriceSensitive, setAddPriceSensitive]] as Array<[string, string, (v: string) => void]>).map(([label, value, setter]) => (
+                    <label key={label} style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                      <span style={{ color: "var(--t-muted)", fontSize: 13 }}>{label}</span>
+                      <input type="number" min="0" step="0.01" value={value} onChange={(e) => setter(e.target.value)} style={{ ...fi, width: 100, padding: "4px 8px" }} />
+                    </label>
+                  ))}
+                </div>
+              </div>
               <div style={{ marginTop: 14, display: "flex", gap: 8 }}>
-                <button onClick={handleAddCustomer} disabled={addSubmitting || !!(addClientId && clients.find((cl) => cl.id === addClientId) && !clients.find((cl) => cl.id === addClientId)!.whrPrice)} style={btnConfirm}>{addSubmitting ? "添加中..." : "确认新增"}</button>
+                <button onClick={handleAddCustomer} disabled={addSubmitting} style={btnConfirm}>{addSubmitting ? "添加中..." : "确认新增"}</button>
                 <button onClick={() => setShowAddCustomer(false)} style={btnCancel}>取消</button>
               </div>
             </Modal>
@@ -1378,12 +1485,11 @@ export default function AdminWhrConsolidationPage() {
                     <th style={{ ...thS, padding: "4px 8px" }}>客户名</th>
                     <th style={{ ...thS, padding: "4px 8px" }}>电话</th>
                     <th style={{ ...thS, padding: "4px 8px" }}>公司</th>
-                    <th style={{ ...thS, padding: "4px 8px" }}>长期价（元/方）</th>
                     <th style={{ ...thS, padding: "4px 8px" }}>所属代理</th>
                   </tr></thead>
                   <tbody>
                     {filteredClients.length === 0 && (
-                      <tr><td colSpan={6} style={{ ...tdS, padding: "10px 8px", color: "var(--t-faint)" }}>没有匹配的客户</td></tr>
+                      <tr><td colSpan={5} style={{ ...tdS, padding: "10px 8px", color: "var(--t-faint)" }}>没有匹配的客户</td></tr>
                     )}
                     {filteredClients.map(cl => {
                       const isChecked = selectedCustomers.some(sc => sc.clientId === cl.id);
@@ -1392,17 +1498,12 @@ export default function AdminWhrConsolidationPage() {
                           <td style={{ ...tdS, padding: "4px 8px", textAlign: "center" }}>
                             <input type="checkbox" checked={isChecked} onChange={() => {
                               if (isChecked) setSelectedCustomers(selectedCustomers.filter(sc => sc.clientId !== cl.id));
-                              else setSelectedCustomers([...selectedCustomers, { clientId: cl.id }]);
+                              else setSelectedCustomers([...selectedCustomers, { clientId: cl.id, unitPriceNormal: "", unitPriceInspection: "", unitPriceSensitive: "" }]);
                             }} />
                           </td>
                           <td style={{ ...tdS, padding: "4px 8px" }}>{cl.name}</td>
                           <td style={{ ...tdS, padding: "4px 8px" }}>{cl.phone}</td>
                           <td style={{ ...tdS, padding: "4px 8px" }}>{cl.companyName ?? "-"}</td>
-                          <td style={{ ...tdS, padding: "4px 8px", whiteSpace: "nowrap" }}>
-                            {cl.whrPrice
-                              ? `普 ${cl.whrPrice.normal} · 商 ${cl.whrPrice.inspection} · 敏 ${cl.whrPrice.sensitive}`
-                              : <span style={{ color: "var(--c-red-deep)", fontWeight: 600 }}>未填价</span>}
-                          </td>
                           <td style={{ ...tdS, padding: "4px 8px" }}>{cl.agentName ?? "-"}</td>
                         </tr>
                       );
@@ -1414,16 +1515,31 @@ export default function AdminWhrConsolidationPage() {
 
             {selectedCustomers.length > 0 && (
               <div style={{ marginTop: 12 }}>
-                {/* 2026-09-16：单价不再在这里填，按每位客户的长期价自动带出（确认单 4.4 / 4.19） */}
-                <label style={fl}>单价（已选 {selectedCustomers.length} 位客户，按长期价自动带出）</label>
-                {selectedCustomers.map((sc) => {
+                {/* 2026-09-18 老板拍板：每个柜当场填价（每次柜价格都不一样） */}
+                <label style={fl}>这一柜的单价（已选 {selectedCustomers.length} 位客户，元/方，必填）</label>
+                {selectedCustomers.map((sc, idx) => {
                   const client = clients.find(cl => cl.id === sc.clientId);
+                  const setPrice = (field: keyof CreateCustomerForm, value: string) => {
+                    const next = [...selectedCustomers];
+                    next[idx] = { ...next[idx], [field]: value };
+                    setSelectedCustomers(next);
+                  };
                   return (
-                    <div key={sc.clientId} style={{ border: "1px solid var(--l-soft)", borderRadius: 6, padding: "6px 12px", marginBottom: 6, fontSize: 13, display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
-                      <span style={{ fontWeight: 600 }}>{client?.name ?? sc.clientId}</span>
-                      {client?.whrPrice
-                        ? <span style={{ color: "var(--t-body)" }}>{priceText(client.whrPrice)}</span>
-                        : <span style={{ color: "var(--c-red-deep)", fontWeight: 600 }}>{NO_PRICE_MESSAGE}</span>}
+                    <div key={sc.clientId} style={{ border: "1px solid var(--l-soft)", borderRadius: 6, padding: "8px 12px", marginBottom: 6, fontSize: 13, display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+                      <span style={{ fontWeight: 600, minWidth: 90 }}>{client?.name ?? sc.clientId}</span>
+                      {([["普货", "unitPriceNormal"], ["商检货", "unitPriceInspection"], ["敏感货", "unitPriceSensitive"]] as Array<[string, keyof CreateCustomerForm]>).map(([label, field]) => (
+                        <label key={field} style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                          <span style={{ color: "var(--t-muted)" }}>{label}</span>
+                          <input
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            value={String(sc[field] ?? "")}
+                            onChange={(e) => setPrice(field, e.target.value)}
+                            style={{ ...fi, width: 90, padding: "4px 8px" }}
+                          />
+                        </label>
+                      ))}
                     </div>
                   );
                 })}

@@ -1067,6 +1067,9 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
               trackingNo: true,
               currentStatus: true,
               remark: true,
+              // 「（部分已放行）」要按这票货自己的运输方式比快慢（2026-09-18 复核：这里原来只用订单的，
+              // 跟员工端 / 管理员端 / 轨迹弹窗那三处的「运单的 ?? 订单的」口径不一样）
+              transportMode: true,
               statusLogs: {
                 where: { NOT: [{ remark: null }, { remark: "" }] },
                 orderBy: { changedAt: "asc" },
@@ -1106,7 +1109,11 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
         return wantedGroups.includes(classifyClientStatusGroup(o.shipments[0]?.currentStatus));
       });
 
-    // 拆了子单、子单进度不一样时补一句「（部分已放行）」——主状态、分组、筛选一个字不动（2026-09-16 拍板）
+    /**
+     * 拆了子单、子单进度不一样时补一句「（部分已放行）」——主状态、分组、筛选一个字不动（2026-09-16 拍板）。
+     * 运输方式按「运单自己的 ?? 订单的」（2026-09-18 复核统一口径）：运单自己填了陆运、订单还写着海运时，
+     * 原来这里按海运的 23 步比、员工端按陆运的 17 步比，同一票货两个端结论会不一样。
+     */
     const partialAheadClient = await loadPartialAhead(
       auth.companyId,
       filtered
@@ -1117,7 +1124,7 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
           trackingNo: row.ship.trackingNo,
           currentStatus: row.ship.currentStatus,
           packageCount: null,
-          transportMode: row.transportMode,
+          transportMode: row.ship.transportMode ?? row.transportMode,
         })),
     );
 
