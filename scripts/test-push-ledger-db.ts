@@ -518,6 +518,20 @@ async function main(): Promise<void> {
         assert.equal(rShared.status, 200, rShared.message);
       });
       expect("陆运老柜子货轨迹里有「已开船」：原样保存陆运 200（没改就不查）", () => { assert.equal(rSame.status, 200, rSame.message); });
+
+      // 货的推进轨迹是在别的柜子里留下的（Codex 第三批第 3 轮 P2，线上 1 个柜子有这种形状）：遗留整票用同一个运单从柜 A 挪进柜 B，
+      // 柜 A 推过「运输中」。柜 B 自己只走过两边都有的步骤，改陆运不能被柜 A 的记录拦住
+      const pOld = await seedShipment(); const boxA = await newBox(); const moved = await load(boxA.id, pOld);
+      await pushAll(boxA.id, [["SEALED", "2026-08-25"], ["IN_TRANSIT", "2026-09-01"]]);
+      const movedId = (await pm.shipment.findFirst({ where: { trackingNo: moved, companyId: CO }, select: { id: true } })).id;
+      const boxB2 = await newBox();
+      await pm.shipmentContainerItem.deleteMany({ where: { containerId: boxA.id, shipmentId: movedId } });
+      // 挪进柜 B 的时间晚于柜 A 那几条推进记录（记录 id 里的时间戳是真实写入时间）
+      await pm.shipmentContainerItem.create({ data: { id: `sci_moved_${P}`, containerId: boxB2.id, shipmentId: movedId, loadedVolumeM3: 0.2, loadedPieceCount: 1, createdAt: new Date(Date.now() + 3600_000) } });
+      await pm.containerPushBatch.deleteMany({ where: { containerId: boxB2.id } });
+      await pm.container.update({ where: { id: boxB2.id }, data: { currentStatus: "SEALED", statusDates: null, transportMode: "sea" } });
+      const rMoved = await toLand(boxB2.id);
+      expect("货带着柜 A 的「运输中」记录挪进只封过柜的柜 B：柜 B 改陆运 200", () => { assert.equal(rMoved.status, 200, rMoved.message); });
       for (let i = 0; i < 3; i++) await undo(box.id);
       const sw2 = await call("POST /staff/loading-manifests/transport-mode", STAFF, { id: box.id, transportMode: "land" });
       const r = await push(box.id, "AT_PORT_CN", "2026-08-27");

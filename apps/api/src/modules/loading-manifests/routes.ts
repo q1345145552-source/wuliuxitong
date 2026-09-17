@@ -217,20 +217,25 @@ export function registerLoadingManifestRoutes(app: MinimalHttpApp): void {
       const sourcesOf = new Map<string, string[]>();
       for (const [cs, ss] of Object.entries(CONTAINER_TO_SHIPMENT_STATUS)) sourcesOf.set(ss, [...(sourcesOf.get(ss) ?? []), cs]);
       const otherOnlyShipStatuses = [...sourcesOf].filter(([, css]) => css.every((cs) => otherOnly.includes(cs))).map(([ss]) => ss);
-      const boxShipmentIds = (await tx.shipmentContainerItem.findMany({ where: { containerId: container.id }, select: { shipmentId: true } }))
-        .map((it: { shipmentId: string }) => it.shipmentId);
-      if (boxShipmentIds.length > 0 && otherOnlyShipStatuses.length > 0) {
+      const boxItems = await tx.shipmentContainerItem.findMany({ where: { containerId: container.id }, select: { shipmentId: true, createdAt: true } });
+      const loadedAtOf = new Map(boxItems.map((it: { shipmentId: string; createdAt: Date }) => [it.shipmentId, it.createdAt.getTime()]));
+      if (boxItems.length > 0 && otherOnlyShipStatuses.length > 0) {
         const pushLogs = await tx.statusLog.findMany({
           where: {
             companyId: auth.companyId,
-            shipmentId: { in: boxShipmentIds },
+            shipmentId: { in: [...loadedAtOf.keys()] },
             id: { startsWith: "sl_ctn_" },
             OR: [{ toStatus: { in: otherOnlyShipStatuses } }, { fromStatus: { in: otherOnlyShipStatuses } }],
           },
-          select: { fromStatus: true, toStatus: true },
-          take: 100,
+          select: { id: true, shipmentId: true, fromStatus: true, toStatus: true },
         });
         for (const l of pushLogs) {
+          // 推进记录上没记是哪个柜推的：只认装进这个柜以后写的（Codex 第三批第 3 轮 P2 —— 遗留整票用同一个运单从别的柜挪进来，
+          // 带着别的柜的「运输中」，不能算这个柜走过）。先后按记录 id 里的真实写入时间戳比，不按可以回填的 changedAt；
+          // 放宽 10 分钟，防应用服务器和数据库时钟不一致。id 里读不出时间戳的老记录照样算（线上没有这种）
+          const m = /^sl_ctn_(\d{13})_/.exec(l.id);
+          const loadedAt = loadedAtOf.get(l.shipmentId);
+          if (m && loadedAt !== undefined && Number(m[1]) < loadedAt - 10 * 60_000) continue;
           for (const ss of [l.fromStatus, l.toStatus]) for (const cs of sourcesOf.get(ss) ?? []) if (otherOnly.includes(cs)) walked.add(cs);
         }
       }
