@@ -1,6 +1,7 @@
 import { partialAheadStatus } from "../../../../../packages/shared-types/shipment-status";
 import { deleteBlockedReasonOf, isCurrentStatusLog, isManagedLastmileLog } from "../shipments/managed-lastmile-log";
 import { findDeletedLogAudits } from "../shipments/deleted-log-audits";
+import { STATUS_FLOW as SHIP_FLOW, STATUS_FLOW_LAND as SHIP_FLOW_LAND } from "../shipments/status-flow";
 import { DEFAULT_STATUS_LABELS } from "../ai/ai-config-store";
 // 任务 #10: Container & 拆柜 API（2026-05-20）
 // 实现湘泰物流 P0 阶段最核心的"出柜追踪"业务能力
@@ -214,6 +215,35 @@ const shipmentStatusZh = (status: string): string => SHIPMENT_STATUS_ZH[status] 
  * 在装柜页撤销会把客户已经签收的单子悄悄退回去，还会删掉尾端派送写的轨迹，必须挡住（撤销和撤销预览共用）。
  */
 const LASTMILE_ONLY_CONTAINER_STATUSES = new Set(["OUT_FOR_DELIVERY", "SIGNED", "DELIVERING"]);
+
+/**
+ * 撤销会不会把柜子和柜里的货退进两条不同的运输流程（2026-09-17，Codex 第三批第 4 轮）。
+ *
+ * 改运输方式只看柜子自己身上的证据（时间表、推进账本、开船/到港日期）。上线前推的老柜子只剩货的推进记录（sl_ctn_）时，
+ * 那种记录上没记是哪个柜推的，改运输方式那边判不准，会放行；在撤销这一刻核对：柜子要退到的状态、柜里货要退回的状态，
+ * 有一个是「另一种运输方式才有」的就不撤，提示先把运输方式改回去（整柜撤销、撤销预览都用这一份）。
+ * 柜子现在的状态本身就不在自己运输方式的流程里（改运输方式功能出现之前留下的乱数据），照原来的做法不拦。
+ */
+function crossFlowUndoMessage(
+  container: { transportMode: string | null; currentStatus: string },
+  prevContainerStatus: string | null,
+  shipmentBacks: Array<{ trackingNo: string; back: string }>,
+): string | null {
+  const ownFlow = flowOf(container.transportMode);
+  if (!ownFlow.includes(container.currentStatus)) return null;
+  const nowZh = container.transportMode === "land" ? "陆运" : container.transportMode === "sea" ? "海运" : "未标注运输方式（按海运走）";
+  const otherZh = container.transportMode === "land" ? "海运" : "陆运";
+  const tail = `这个柜子现在是${nowZh}，撤了柜子和货会对不上，没有撤销。要撤请先把运输方式改回${otherZh}。`;
+  if (prevContainerStatus && !ownFlow.includes(prevContainerStatus)) {
+    return `柜子要退回的「${CONTAINER_STATUS_LABEL[prevContainerStatus] ?? prevContainerStatus}」是${otherZh}才有的步骤，${tail}`;
+  }
+  const ownShip: readonly string[] = container.transportMode === "land" ? SHIP_FLOW_LAND : SHIP_FLOW;
+  const otherShip: readonly string[] = container.transportMode === "land" ? SHIP_FLOW : SHIP_FLOW_LAND;
+  const bad = shipmentBacks.filter((b) => otherShip.includes(b.back) && !ownShip.includes(b.back));
+  if (bad.length === 0) return null;
+  const sample = bad.slice(0, 3).map((b) => `${b.trackingNo}「${shipmentStatusZh(b.back)}」`).join("、");
+  return `柜里 ${bad.length} 票货要退回的状态是${otherZh}才有的（${sample}${bad.length > 3 ? " 等" : ""}），${tail}`;
+}
 
 type LedgerEntry = { id: string; shipmentId: string; fromStatus: string; toStatus: string; statusLogId: string | null };
 type LedgerShip = { id: string; trackingNo: string; currentStatus: string; parentTrackingNo: string | null };
@@ -796,6 +826,11 @@ export function registerContainerRoutes(app: MinimalHttpApp): void {
         new Map(ships.map((s) => [s.id, s])),
         new Map(ships.map((s) => [s.id, s.trackingNo])),
       );
+      const crossLedgerPreview = crossFlowUndoMessage(container, latestBatch.fromContainerStatus, reverted.map((r) => ({ trackingNo: r.trackingNo, back: r.from })));
+      if (crossLedgerPreview) {
+        fail(res, 409, "VALIDATION_ERROR", crossLedgerPreview);
+        return;
+      }
       ok(res, {
         mode: "ledger",
         currentStatus: container.currentStatus,
@@ -815,6 +850,7 @@ export function registerContainerRoutes(app: MinimalHttpApp): void {
     }
     let revertCount = 0;
     const keep: Array<{ trackingNo: string; reason: string }> = [];
+    const legacyBacks: Array<{ trackingNo: string; back: string }> = [];
     if (plan.changedAt && plan.shipmentStatusOfThisPush && plan.shipmentIds.length > 0) {
       const pushLogs = await prisma.statusLog.findMany({
         where: {
@@ -836,8 +872,16 @@ export function registerContainerRoutes(app: MinimalHttpApp): void {
       for (const s of ships) {
         if (s.currentStatus !== plan.shipmentStatusOfThisPush) keep.push({ trackingNo: s.trackingNo, reason: `已经是「${shipmentStatusZh(s.currentStatus)}」，不跟着退` });
         else if (!before.has(s.id)) keep.push({ trackingNo: s.trackingNo, reason: "上线前后装进柜的货，没有这一步的推进记录，不跟着退" });
-        else if (before.get(s.id) !== s.currentStatus) revertCount++;
+        else {
+          legacyBacks.push({ trackingNo: s.trackingNo, back: before.get(s.id)! });
+          if (before.get(s.id) !== s.currentStatus) revertCount++;
+        }
       }
+    }
+    const crossLegacyPreview = crossFlowUndoMessage(container, plan.prevStatus, legacyBacks);
+    if (crossLegacyPreview) {
+      fail(res, 409, "VALIDATION_ERROR", crossLegacyPreview);
+      return;
     }
     ok(res, { mode: "legacy", currentStatus: container.currentStatus, prevStatus: plan.prevStatus, revertCount, keep });
   });
@@ -897,7 +941,7 @@ export function registerContainerRoutes(app: MinimalHttpApp): void {
     if (latestBatch) {
       const batchResult = await prisma.$transaction(async (tx) => {
         await tx.$queryRaw`SELECT id FROM containers WHERE id = ${container.id} FOR UPDATE`;
-        const fresh = await tx.container.findUnique({ where: { id: container.id }, select: { currentStatus: true } });
+        const fresh = await tx.container.findUnique({ where: { id: container.id }, select: { currentStatus: true, transportMode: true } });
         const freshBatch = await tx.containerPushBatch.findFirst({
           where: { containerId: container.id, companyId: auth.companyId },
           orderBy: { seq: "desc" },
@@ -931,6 +975,12 @@ export function registerContainerRoutes(app: MinimalHttpApp): void {
           new Map(ships.map((s: LedgerShip) => [s.id, s])),
           trackingNoOf,
         );
+        const crossLedger = crossFlowUndoMessage(
+          { transportMode: fresh.transportMode, currentStatus: fresh.currentStatus },
+          freshBatch.fromContainerStatus,
+          reverted.map((r) => ({ trackingNo: r.trackingNo, back: r.from })),
+        );
+        if (crossLedger) throw new BusinessError(crossLedger, 409, "VALIDATION_ERROR");
         const idsByStatus = new Map<string, string[]>();
         for (const r of reverted) {
           if (r.from === r.current) continue;
@@ -1041,6 +1091,10 @@ export function registerContainerRoutes(app: MinimalHttpApp): void {
         );
       }
 
+      {
+        const crossBox = crossFlowUndoMessage({ transportMode: freshContainer.transportMode, currentStatus: nowStatus }, prevStatus, []);
+        if (crossBox) throw new BusinessError(crossBox, 409, "VALIDATION_ERROR");
+      }
       let deletedLogs = 0;
       let affectedShipments = 0;
       const undoneLogIds: string[] = [];
@@ -1124,6 +1178,13 @@ export function registerContainerRoutes(app: MinimalHttpApp): void {
           list.push(s.id);
           idsByStatus.set(back, list);
         }
+        // 还没改任何货：对不上就整个撤销回滚（上面删掉的推进记录也跟着回来）
+        const crossShips = crossFlowUndoMessage(
+          { transportMode: freshContainer.transportMode, currentStatus: nowStatus },
+          null,
+          legacyReverted.map((r) => ({ trackingNo: r.trackingNo, back: r.status })),
+        );
+        if (crossShips) throw new BusinessError(crossShips, 409, "VALIDATION_ERROR");
         for (const [status, ids] of idsByStatus) {
           await tx.shipment.updateMany({
             where: { id: { in: ids }, companyId: auth.companyId },

@@ -205,40 +205,18 @@ export function registerLoadingManifestRoutes(app: MinimalHttpApp): void {
         ...batches.flatMap((b: { fromContainerStatus: string; toContainerStatus: string }) => [b.fromContainerStatus, b.toContainerStatus]),
       ]);
       /**
-       * 上线前推的老柜子没有时间表、也没有账本（Codex 第三批第 2 轮 P1），再看两样老证据：
-       *   · 开船 / 到港日期：只有推「运输中」「已到港」时才写（新建柜子的接口页面没在用）；
-       *   · 柜里货的柜子推进轨迹（sl_ctn_）：老路子撤销就是按它把货退回去的，里面有对方流程独有的状态，改了以后柜子和货会退进两条不同的流程。
-       * 这里「对方流程独有」按两条真流程算，不用上面手抄的名单。
+       * 上线前推的老柜子没有时间表、也没有账本（Codex 第三批第 2 轮 P1），再看开船 / 到港日期：
+       * 这两个日期是柜子自己身上的，只有推「运输中」「已到港」时才写（新建柜子的接口页面没在用）。
+       * 「对方流程独有」按两条真流程算，不用上面手抄的名单。
+       *
+       * ⚠️ 不看柜里货的推进轨迹（sl_ctn_）：那种记录上没记是哪个柜推的，货从别的柜挪进来会带着别的柜的记录，
+       * 按时间先后猜归属两头都会错（Codex 第三批第 3、4 轮）。老柜子只剩这种证据时，改运输方式放行，
+       * 撤销那一刻再核对柜子和货会不会退进两条流程（containers/routes.ts 的 crossFlowUndoMessage），对不上就不撤。
        */
       if (fresh.departureDate) walked.add("IN_TRANSIT");
       if (fresh.ata) walked.add("ARRIVED");
       const targetFlow = flowOf(mode);
       const otherOnly = flowOf(mode === "land" ? "sea" : "land").filter((st) => !targetFlow.includes(st));
-      const sourcesOf = new Map<string, string[]>();
-      for (const [cs, ss] of Object.entries(CONTAINER_TO_SHIPMENT_STATUS)) sourcesOf.set(ss, [...(sourcesOf.get(ss) ?? []), cs]);
-      const otherOnlyShipStatuses = [...sourcesOf].filter(([, css]) => css.every((cs) => otherOnly.includes(cs))).map(([ss]) => ss);
-      const boxItems = await tx.shipmentContainerItem.findMany({ where: { containerId: container.id }, select: { shipmentId: true, createdAt: true } });
-      const loadedAtOf = new Map(boxItems.map((it: { shipmentId: string; createdAt: Date }) => [it.shipmentId, it.createdAt.getTime()]));
-      if (boxItems.length > 0 && otherOnlyShipStatuses.length > 0) {
-        const pushLogs = await tx.statusLog.findMany({
-          where: {
-            companyId: auth.companyId,
-            shipmentId: { in: [...loadedAtOf.keys()] },
-            id: { startsWith: "sl_ctn_" },
-            OR: [{ toStatus: { in: otherOnlyShipStatuses } }, { fromStatus: { in: otherOnlyShipStatuses } }],
-          },
-          select: { id: true, shipmentId: true, fromStatus: true, toStatus: true },
-        });
-        for (const l of pushLogs) {
-          // 推进记录上没记是哪个柜推的：只认装进这个柜以后写的（Codex 第三批第 3 轮 P2 —— 遗留整票用同一个运单从别的柜挪进来，
-          // 带着别的柜的「运输中」，不能算这个柜走过）。先后按记录 id 里的真实写入时间戳比，不按可以回填的 changedAt；
-          // 放宽 10 分钟，防应用服务器和数据库时钟不一致。id 里读不出时间戳的老记录照样算（线上没有这种）
-          const m = /^sl_ctn_(\d{13})_/.exec(l.id);
-          const loadedAt = loadedAtOf.get(l.shipmentId);
-          if (m && loadedAt !== undefined && Number(m[1]) < loadedAt - 10 * 60_000) continue;
-          for (const ss of [l.fromStatus, l.toStatus]) for (const cs of sourcesOf.get(ss) ?? []) if (otherOnly.includes(cs)) walked.add(cs);
-        }
-      }
       const walkedBlocked = [...new Set([...blocked, ...otherOnly])].filter((st) => walked.has(st));
       if (walkedBlocked.length > 0) {
         throw new BusinessError(
