@@ -6,8 +6,10 @@ import {
   fetchAgentRebateDetail,
   fetchAgentRebateStatements,
   markAgentRebatePaid,
+  undoAgentRebatePaid,
   type AdminAgentItem,
   type AgentPriceTriple,
+  type AgentRebateHistoryItem,
   type AgentRebateLineItem,
   type AgentRebateStatementItem,
 } from "../../../services/agents-admin-api";
@@ -17,6 +19,9 @@ import { ErrorBar, Modal, StatusTag, btnCancel, btnConfirm, btnSmall, fi, fl, mo
  * 返现单（2026-09-16，B2；确认单 4.12 / 4.13 / 4.20 / 6.4）。
  * 按代理、按月看；点开看每一票明细；湘泰线下转完账点「已返」。
  * 单子是系统每月 1 号（北京时间）自动出的，这里不能改金额、不能删。
+ *
+ * 2026-09-18 老板拍板：「已返」**能撤回，但要看得到记录**。撤回要写一句原因，
+ * 「已返」和「撤回」都记进操作记录，在明细弹窗最下面一条一条列出来。
  */
 
 const BUCKETS: Array<[keyof AgentPriceTriple, string]> = [["normal", "普货"], ["inspection", "商检"], ["sensitive", "敏感"]];
@@ -41,9 +46,12 @@ export default function AgentRebatesPanel({ agents }: { agents: AdminAgentItem[]
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [toast, setToast] = useState("");
-  const [detail, setDetail] = useState<{ statement: AgentRebateStatementItem; lines: AgentRebateLineItem[] } | null>(null);
+  const [detail, setDetail] = useState<{ statement: AgentRebateStatementItem; lines: AgentRebateLineItem[]; history: AgentRebateHistoryItem[] } | null>(null);
   const [detailLoading, setDetailLoading] = useState("");
   const [paying, setPaying] = useState("");
+  /** 正在撤回哪张单（要先写原因）；原因框的内容 */
+  const [undoing, setUndoing] = useState<AgentRebateStatementItem | null>(null);
+  const [undoReason, setUndoReason] = useState("");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -70,7 +78,7 @@ export default function AgentRebatesPanel({ agents }: { agents: AdminAgentItem[]
   };
 
   const markPaid = async (s: AgentRebateStatementItem) => {
-    if (!confirm(`确认已经把 ${money(s.totalRebate)} 转给「${s.agentName}」（${s.month} 返现单）？\n\n点了以后这张单显示「已返」，不能撤回。`)) return;
+    if (!confirm(`确认已经把 ${money(s.totalRebate)} 转给「${s.agentName}」（${s.month} 返现单）？\n\n点了以后这张单显示「已返」。点错了可以撤回，撤回要写原因、会留操作记录。`)) return;
     setPaying(s.id);
     try {
       const r = await markAgentRebatePaid(s.id);
@@ -79,6 +87,31 @@ export default function AgentRebatesPanel({ agents }: { agents: AdminAgentItem[]
       if (detail?.statement.id === s.id) setDetail(await fetchAgentRebateDetail(s.id));
     } catch (e) {
       setError(`标记失败：${e instanceof Error ? e.message : "未知错误"}`);
+    } finally {
+      setPaying("");
+    }
+  };
+
+  /** 撤回「已返」：原因必填（后端也卡），成功后这张单回到「未返」，操作记录里多一条 */
+  const undoPaid = async () => {
+    const s = undoing;
+    const reason = undoReason.trim();
+    if (!s) return;
+    if (!reason) {
+      setError("撤回要写一句原因（比如「转错账号」），会记进操作记录");
+      return;
+    }
+    setPaying(s.id);
+    setError("");
+    try {
+      const r = await undoAgentRebatePaid(s.id, reason);
+      setToast(r.alreadyUnpaid ? "这张单刚刚已经被撤回了" : `${s.agentName} ${s.month} 已撤回「已返」，回到未返`);
+      setUndoing(null);
+      setUndoReason("");
+      await load();
+      if (detail?.statement.id === s.id) setDetail(await fetchAgentRebateDetail(s.id));
+    } catch (e) {
+      setError(`撤回失败：${e instanceof Error ? e.message : "未知错误"}`);
     } finally {
       setPaying("");
     }
@@ -153,8 +186,10 @@ export default function AgentRebatesPanel({ agents }: { agents: AdminAgentItem[]
                   <td style={tdS}>
                     <div style={{ display: "flex", gap: 6 }}>
                       <button type="button" onClick={() => void openDetail(s.id)} disabled={detailLoading === s.id} style={btnSmall}>{detailLoading === s.id ? "打开中…" : "看明细"}</button>
-                      {s.status === "unpaid" && (
+                      {s.status === "unpaid" ? (
                         <button type="button" onClick={() => void markPaid(s)} disabled={paying === s.id} style={{ ...btnSmall, border: "1px solid var(--c-green)", color: "var(--c-green)" }}>{paying === s.id ? "提交中…" : "已返"}</button>
+                      ) : (
+                        <button type="button" onClick={() => { setUndoing(s); setUndoReason(""); }} disabled={paying === s.id} style={{ ...btnSmall, border: "1px solid var(--c-amber)", color: "var(--c-amber-deep)" }}>撤回</button>
                       )}
                     </div>
                   </td>
@@ -177,8 +212,10 @@ export default function AgentRebatesPanel({ agents }: { agents: AdminAgentItem[]
               </div>
             </div>
             <div style={{ display: "flex", gap: 8 }}>
-              {detail.statement.status === "unpaid" && (
+              {detail.statement.status === "unpaid" ? (
                 <button type="button" onClick={() => void markPaid(detail.statement)} disabled={paying === detail.statement.id} style={btnConfirm}>已返</button>
+              ) : (
+                <button type="button" onClick={() => { setUndoing(detail.statement); setUndoReason(""); }} disabled={paying === detail.statement.id} style={btnCancel}>撤回「已返」</button>
               )}
               <button type="button" onClick={() => setDetail(null)} style={btnCancel}>关闭</button>
             </div>
@@ -216,6 +253,63 @@ export default function AgentRebatesPanel({ agents }: { agents: AdminAgentItem[]
                 ))}
               </tbody>
             </table>
+          </div>
+
+          {/* 操作记录（2026-09-18 老板要的流水）：谁、什么时候、点了已返还是撤回、撤回写的原因 */}
+          <div style={{ marginTop: 16 }}>
+            <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 6 }}>操作记录</div>
+            {detail.history.length === 0 ? (
+              <div style={{ fontSize: 12, color: "var(--t-muted)" }}>还没有人点过「已返」。</div>
+            ) : (
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                <thead>
+                  <tr style={{ background: "var(--s-alt)" }}>
+                    {["时间", "操作", "操作人", "金额", "原因"].map((h) => (
+                      <th key={h} style={thS}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {detail.history.map((h, i) => (
+                    <tr key={`${h.at}-${i}`}>
+                      <td style={{ ...tdS, whiteSpace: "nowrap" }}>{t(h.at)}</td>
+                      <td style={tdS}>
+                        {h.action === "paid" ? <StatusTag tone="green">已返</StatusTag> : h.action === "undoPaid" ? <StatusTag tone="amber">撤回已返</StatusTag> : <StatusTag tone="grey">改动</StatusTag>}
+                      </td>
+                      <td style={{ ...tdS, whiteSpace: "nowrap" }}>{h.actorName || "—"}</td>
+                      <td style={{ ...tdS, whiteSpace: "nowrap" }}>{h.amount === null ? "—" : money(h.amount)}</td>
+                      <td style={tdS}>{h.reason || "—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </Modal>
+      )}
+
+      {undoing && (
+        <Modal onClose={() => { setUndoing(null); setUndoReason(""); }}>
+          <h3 style={{ margin: "0 0 8px" }}>撤回「已返」</h3>
+          <div style={{ fontSize: 13, color: "var(--t-muted)", marginBottom: 12 }}>
+            {undoing.agentName} · {undoing.month} 返现单 · {money(undoing.totalRebate)}
+            <br />
+            撤回后这张单回到「未返」（代理那边也看得到变回未返），金额和明细一个字不动；这次撤回会记进操作记录。
+          </div>
+          <label style={fl} htmlFor="rebate-undo-reason">为什么撤回（必填，会留在记录里）</label>
+          <input
+            id="rebate-undo-reason"
+            style={fi}
+            value={undoReason}
+            maxLength={200}
+            placeholder="例如：转错账号，钱退回来了"
+            onChange={(e) => setUndoReason(e.target.value)}
+          />
+          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 16 }}>
+            <button type="button" onClick={() => { setUndoing(null); setUndoReason(""); }} style={btnCancel}>算了</button>
+            <button type="button" onClick={() => void undoPaid()} disabled={paying === undoing.id || undoReason.trim() === ""} style={btnConfirm}>
+              {paying === undoing.id ? "提交中…" : "确认撤回"}
+            </button>
           </div>
         </Modal>
       )}

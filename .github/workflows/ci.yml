@@ -158,6 +158,8 @@ jobs:
       # 装柜管理页面：撤销 / 删除柜子失败时，红字报错不能被跟着的刷新冲掉（2026-09-17 加，读页面源码卡写法，不连库）。
       - name: Test container loading page error handling
         run: npm run test:container-page
+      - name: Test rebate undo page wiring
+        run: npm run test:rebate-undo-page
 
       # AI 答复的数字校验（2026-08-28 加）。
       # 覆盖三件事：模型润色时改了数字要被拦下、「今天/本月」按北京时间算、

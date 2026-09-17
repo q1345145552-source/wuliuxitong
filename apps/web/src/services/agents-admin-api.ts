@@ -121,10 +121,25 @@ export async function fetchAgentRebateStatements(filter: { agentId?: string; mon
   return data.items ?? [];
 }
 
-export async function fetchAgentRebateDetail(id: string): Promise<{ statement: AgentRebateStatementItem; lines: AgentRebateLineItem[] }> {
+/** 返现单的「已返 / 撤回」流水（2026-09-18）：最近的在最前面，只有超管看得到 */
+export interface AgentRebateHistoryItem {
+  at: string;
+  actorName: string;
+  actorRole: string;
+  action: "paid" | "undoPaid" | "other";
+  reason: string;
+  amount: number | null;
+}
+
+export async function fetchAgentRebateDetail(id: string): Promise<{ statement: AgentRebateStatementItem; lines: AgentRebateLineItem[]; history: AgentRebateHistoryItem[] }> {
   return apiRequest(`${apiBaseUrl()}/admin/agents/rebates/detail?id=${encodeURIComponent(id)}`);
 }
 
 export async function markAgentRebatePaid(id: string): Promise<{ id: string; status: "paid"; paidAt: string | null; alreadyPaid: boolean }> {
   return apiRequest(`${apiBaseUrl()}/admin/agents/rebates/mark-paid`, { method: "POST", headers: jsonPost, body: JSON.stringify({ id }) });
+}
+
+/** 撤回「已返」（2026-09-18 老板拍板）：必须写原因，会记进操作记录 */
+export async function undoAgentRebatePaid(id: string, reason: string): Promise<{ id: string; status: "unpaid"; alreadyUnpaid: boolean }> {
+  return apiRequest(`${apiBaseUrl()}/admin/agents/rebates/undo-paid`, { method: "POST", headers: jsonPost, body: JSON.stringify({ id, reason }) });
 }

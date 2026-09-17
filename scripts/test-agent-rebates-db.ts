@@ -15,6 +15,9 @@
  *   · 子进程全部正常退出，都没打「返现单生成失败」这类错误日志（出错会被 generateAgentRebateStatements 吞成日志，只看退出码看不出来）；
  * 再并发重跑一轮：一张都不多出、库里的单和明细完全不变。整套重复 ROUNDS 轮，每轮重新造数据。
  *
+ * 2026-09-18 另加一段（老板拍板「已返能撤回但要留流水」）：真库上并发点「已返」/「撤回已返」——
+ * 靠的是 agent_rebate_statements 那行 FOR UPDATE + 锁后重读，断言状态只改一次、流水（audit_logs）只写一条。
+ *
  * 只连测试库：DATABASE_URL 不带 neon.tech 的不跑（本机 IPv6 不通、用 IPv4 地址连测试库时，
  * 核实是测试库后设 AGENT_PORTAL_TEST_ALLOW_DB=1，跟 test-agent-portal-isolation 同一个开关）。
  * 没有 DATABASE_URL（CI）打印「跳过」。
@@ -89,7 +92,8 @@ async function check(name: string, body: () => Promise<void>): Promise<void> {
 }
 
 async function cleanup(prisma: any): Promise<void> {
-  // 顺序按外键：明细 → 单 → 状态日志 → 货品 → 预报单 → 柜客户 → 柜 → 长期价 → 用户 → 代理
+  // 顺序按外键：流水（actor 指向 users）→ 明细 → 单 → 状态日志 → 货品 → 预报单 → 柜客户 → 柜 → 长期价 → 用户 → 代理
+  await prisma.auditLog.deleteMany({ where: { companyId: CO } });
   await prisma.agentRebateLine.deleteMany({ where: { companyId: CO } });
   await prisma.agentRebateStatement.deleteMany({ where: { companyId: CO } });
   await prisma.whrConsolidationStatusLog.deleteMany({ where: { companyId: CO } });
@@ -104,6 +108,7 @@ async function cleanup(prisma: any): Promise<void> {
 
 async function leftovers(prisma: any): Promise<number> {
   const counts = await Promise.all([
+    prisma.auditLog.count({ where: { companyId: CO } }),
     prisma.agentRebateLine.count({ where: { companyId: CO } }),
     prisma.agentRebateStatement.count({ where: { companyId: CO } }),
     prisma.whrConsolidationPrealertItem.count({ where: { companyId: CO } }),
@@ -216,6 +221,19 @@ function launch(): WorkerRun {
   return { child, ready, done };
 }
 
+async function freePort(): Promise<number> {
+  const net = await import("node:net");
+  return new Promise((resolve, reject) => {
+    const srv = net.createServer();
+    srv.once("error", reject);
+    srv.listen(0, "127.0.0.1", () => {
+      const address = srv.address();
+      const port = typeof address === "object" && address ? address.port : 0;
+      srv.close(() => (port ? resolve(port) : reject(new Error("没拿到空端口"))));
+    });
+  });
+}
+
 function within<T>(promise: Promise<T>, ms: number, what: string): Promise<T> {
   let timer: NodeJS.Timeout | undefined;
   return Promise.race([
@@ -320,6 +338,69 @@ async function main(): Promise<void> {
         assert.deepEqual(await statementsOf(prisma), after, "重跑后库里的单和明细完全不变");
       });
     }
+    await check("并发点「已返」/「撤回已返」：状态只改一次、流水只写一条（真库行锁）", async () => {
+      await cleanup(prisma);
+      await seed(prisma);
+      const { hashPassword } = await import("../apps/api/src/modules/auth/crypto-utils");
+      const { signAuthToken } = await import("../apps/api/src/modules/auth/token");
+      const { createApp } = await import("../apps/api/src/server");
+      const { registerAgentAdminRoutes } = await import("../apps/api/src/modules/agents/admin-routes");
+      const passwordHash = hashPassword("ZzRbdb#2026x");
+      const adminId = `${P}admin_u`;
+      await prisma.user.create({
+        data: { id: adminId, companyId: CO, role: "admin", name: "并发测试超管", phone: "0800000001", status: "active", passwordHash },
+      });
+      const token = signAuthToken({ userId: adminId, companyId: CO, role: "admin", userName: "并发测试超管", passwordHash });
+      const app = createApp();
+      registerAgentAdminRoutes(app);
+      const port = await freePort();
+      await new Promise<void>((resolve) => app.listen(port, resolve));
+      const call = async (p: string, body?: unknown): Promise<{ status: number; body: any }> => {
+        const r = await fetch(`http://127.0.0.1:${port}${p}`, {
+          method: body === undefined ? "GET" : "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+          body: body === undefined ? undefined : JSON.stringify(body),
+        });
+        return { status: r.status, body: await r.json() };
+      };
+      const auditCount = () => prisma.auditLog.count({ where: { companyId: CO, resourceType: "AgentRebateStatement", resourceId: `${P}st_jun` } });
+      // createApp() 没给关服务的句柄，跑完让主进程自己退出就行（这个脚本最后就是 process.exit）
+      {
+        // 6 月那张单是 paid：4 个请求同时撤回
+        const undos = await Promise.all(Array.from({ length: 4 }, () => call("/admin/agents/rebates/undo-paid", { id: `${P}st_jun`, reason: "并发测试：转错账号" })));
+        assert.deepEqual(undos.map((r) => r.status), [200, 200, 200, 200]);
+        assert.equal(undos.filter((r) => r.body.data.alreadyUnpaid === false).length, 1, "只有一个请求真的撤回了");
+        const jun = (await prisma.agentRebateStatement.findFirst({ where: { id: `${P}st_jun` }, select: { status: true, paidAt: true, paidBy: true, totalRebate: true } }))!;
+        assert.ok(jun, "撤回后查不到这张单");
+        assert.equal(jun.status, "unpaid");
+        assert.equal(jun.paidAt, null);
+        assert.equal(jun.paidBy, null);
+        assert.equal(Number(jun.totalRebate), 60, "金额不动");
+        assert.equal(await auditCount(), 1, "流水只写一条");
+
+        // 再并发点回「已返」
+        const marks = await Promise.all(Array.from({ length: 4 }, () => call("/admin/agents/rebates/mark-paid", { id: `${P}st_jun` })));
+        assert.deepEqual(marks.map((r) => r.status), [200, 200, 200, 200]);
+        assert.equal(marks.filter((r) => r.body.data.alreadyPaid === false).length, 1, "只有一个请求真的标了已返");
+        const back = (await prisma.agentRebateStatement.findFirst({ where: { id: `${P}st_jun` }, select: { status: true, paidAt: true, paidBy: true } }))!;
+        assert.ok(back, "重新已返后查不到这张单");
+        assert.equal(back.status, "paid");
+        assert.equal(back.paidBy, adminId);
+        assert.ok(back.paidAt, "已返时间写上了");
+        assert.equal(await auditCount(), 2, "流水再多一条");
+
+        const detail = await call(`/admin/agents/rebates/detail?id=${P}st_jun`);
+        assert.equal(detail.status, 200);
+        const history = detail.body.data.history as Row[];
+        assert.deepEqual(history.map((h) => h.action), ["paid", "undoPaid"], "最近的在最前面");
+        assert.equal(history[1].reason, "并发测试：转错账号");
+        assert.equal(history[0].actorName, "并发测试超管");
+        assert.equal(Number(history[0].amount), 60);
+        // 明细一条没动
+        const lines = await prisma.agentRebateLine.findMany({ where: { statementId: `${P}st_jun` }, select: { prealertId: true, rebateAmount: true } });
+        assert.deepEqual(lines.map((l: Row) => [l.prealertId, Number(l.rebateAmount)]), [[`${P}p0`, 60]]);
+      }
+    });
   } finally {
     await cleanup(prisma).catch((e: unknown) => console.log("  ⚠️ 清理测试数据失败：", e));
     const left = await leftovers(prisma).catch(() => -1);

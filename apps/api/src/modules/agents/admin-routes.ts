@@ -21,6 +21,7 @@
      GET  /admin/agents/rebates             返现单列表（按代理、按月、按状态筛）
      GET  /admin/agents/rebates/detail      返现单明细（4.20）
      POST /admin/agents/rebates/mark-paid   点「已返」（只改状态、时间、操作人，4.12 / 4.13）
+     POST /admin/agents/rebates/undo-paid   撤回「已返」（2026-09-18 老板拍板：能撤回，但要写原因、留流水）
    ========================================================================== */
 
 import { prisma } from "../../db/prisma";
@@ -33,6 +34,7 @@ import { hashPassword } from "../auth/crypto-utils";
 import { checkPasswordStrength } from "../auth/password-policy";
 import { deleteImageFile, saveImageToDisk } from "../orders/image-storage";
 import { parseWhrPriceInput, type WhrPriceTriple } from "../whr-consolidation/long-term-price";
+import { loadRebateStatusHistory, REBATE_UNDO_REASON_MAX, writeRebateStatusAudit } from "./rebate-audit";
 import { toNum } from "../whr-consolidation/utils";
 import {
   isValidMonth,
@@ -462,7 +464,10 @@ export function registerAgentAdminRoutes(app: MinimalHttpApp): void {
       where: { statementId: s.id, companyId: auth.companyId },
       orderBy: [{ thailandReceivedAt: "asc" }, { trackingNo: "asc" }],
     });
+    // 「已返 / 撤回」的操作流水（2026-09-18）：明细弹窗里直接列出来，不用再多一个接口
+    const history = await loadRebateStatusHistory(prisma, auth.companyId, s.id);
     ok(res, {
+      history,
       statement: {
         id: s.id,
         agentId: s.agentId,
@@ -511,20 +516,92 @@ export function registerAgentAdminRoutes(app: MinimalHttpApp): void {
      * 条件写在 where 里一句做完（status 还是 unpaid 才改），两个人同时点不会写两次时间。
      */
     const now = new Date();
-    const updated = await prisma.agentRebateStatement.updateMany({
-      where: { id, companyId: auth.companyId, status: "unpaid" },
-      data: { status: "paid", paidAt: now, paidBy: auth.userId },
-    });
-    if (updated.count === 0) {
-      const current = await prisma.agentRebateStatement.findFirst({
-        where: { id, companyId: auth.companyId },
-        select: { status: true, paidAt: true },
-      });
-      if (!current) return fail(res, 404, "NOT_FOUND", "返现单不存在");
+    const result = await changeRebatePaidStatus(auth, id, "paid", now);
+    if (result.notFound) return fail(res, 404, "NOT_FOUND", "返现单不存在");
+    if (!result.changed) {
       // 已经是已返：别人刚点过，照实告诉前端，不报错
-      return ok(res, { id, status: "paid", paidAt: iso(current.paidAt), alreadyPaid: true });
+      return ok(res, { id, status: "paid", paidAt: iso(result.current.paidAt), alreadyPaid: true });
     }
     logger.info("返现单已标记已返", { id, by: auth.userId });
     ok(res, { id, status: "paid", paidAt: now.toISOString(), alreadyPaid: false });
+  });
+
+  /* ────────────────────────── 撤回已返 ────────────────────────── */
+  /**
+   * 2026-09-18 老板拍板：「能撤回，但是能看到记录。应该有流水的」。
+   * 只回到「未返」、清掉已返时间和操作人 —— **金额、方数、明细一个字不动**（还是 4.12 / 4.13 的规矩：出了单就不改）。
+   * 必须写一句原因，跟点「已返」一起记进 audit_logs（rebate-audit.ts），明细弹窗里能看到整条流水。
+   * 撤回后代理端那张单也跟着变回「未返」（他本来就看得到状态）；流水是内部记录，代理端不下发。
+   */
+  app.post("/admin/agents/rebates/undo-paid", async (req, res) => {
+    const auth = requireRole(req, res, ["admin"]);
+    if (!auth) return;
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const id = str(body.id);
+    if (!id) return fail(res, 400, "BAD_REQUEST", "缺少返现单 id");
+    const reason = str(body.reason); // str() 本身就去两头空格
+    if (!reason) return fail(res, 400, "BAD_REQUEST", "撤回要写一句原因（比如「转错账号」），会记进操作记录");
+    if (reason.length > REBATE_UNDO_REASON_MAX) {
+      return fail(res, 400, "BAD_REQUEST", `原因最多 ${REBATE_UNDO_REASON_MAX} 个字`);
+    }
+
+    const result = await changeRebatePaidStatus(auth, id, "unpaid", null, reason);
+    if (result.notFound) return fail(res, 404, "NOT_FOUND", "返现单不存在");
+    if (!result.changed) {
+      // 已经是未返（别人刚撤过）：照实说，不报错、也不再写一条流水
+      return ok(res, { id, status: "unpaid", alreadyUnpaid: true });
+    }
+    logger.info("返现单撤回已返", { id, by: auth.userId });
+    ok(res, { id, status: "unpaid", alreadyUnpaid: false });
+  });
+}
+
+/**
+ * 「已返」和「撤回已返」共用这一段：锁住这张单 → 锁后重新读 → 状态真要变才写 → 同一个事务里记流水。
+ * ⚠️ 先锁再读（CLAUDE.md #28）：两个人同时点时，流水里记的「改之前是什么样」才是真的。
+ */
+async function changeRebatePaidStatus(
+  auth: { companyId: string; userId: string; role: string },
+  id: string,
+  want: "paid" | "unpaid",
+  paidAt: Date | null,
+  reason?: string,
+): Promise<
+  | { notFound: true; changed: false; current: { status: string; paidAt: Date | null } }
+  | { notFound: false; changed: boolean; current: { status: string; paidAt: Date | null } }
+> {
+  return prisma.$transaction(async (tx) => {
+    const locked = await tx.$queryRaw<Array<{ id: string; company_id: string; status: string; paid_at: Date | null; paid_by: string | null }>>`
+      SELECT id, company_id, status, paid_at, paid_by FROM agent_rebate_statements WHERE id = ${id} AND company_id = ${auth.companyId} FOR UPDATE`;
+    const row = locked[0];
+    if (!row) return { notFound: true as const, changed: false as const, current: { status: "", paidAt: null } };
+    const current = { status: row.status, paidAt: row.paid_at ?? null };
+    if (row.status === want) return { notFound: false as const, changed: false as const, current };
+
+    const statement = await tx.agentRebateStatement.findFirst({
+      where: { id, companyId: auth.companyId },
+      select: { month: true, agentId: true, totalRebate: true },
+    });
+    if (!statement) return { notFound: true as const, changed: false as const, current };
+
+    const updated = await tx.agentRebateStatement.updateMany({
+      where: { id, companyId: auth.companyId, status: row.status },
+      data: { status: want, paidAt, paidBy: want === "paid" ? auth.userId : null },
+    });
+    if (updated.count === 0) return { notFound: false as const, changed: false as const, current };
+
+    await writeRebateStatusAudit(tx, {
+      companyId: auth.companyId,
+      actorId: auth.userId,
+      actorRole: auth.role,
+      statementId: id,
+      before: { status: row.status, paidAt: row.paid_at ?? null, paidBy: row.paid_by ?? null },
+      after: { status: want, paidAt, paidBy: want === "paid" ? auth.userId : null },
+      month: statement.month,
+      agentId: statement.agentId,
+      totalRebate: toNum(statement.totalRebate),
+      reason,
+    });
+    return { notFound: false as const, changed: true as const, current };
   });
 }

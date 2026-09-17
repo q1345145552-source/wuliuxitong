@@ -46,6 +46,7 @@ let db = {
   prealerts: [] as Row[],
   statements: [] as Row[],
   lines: [] as Row[],
+  audits: [] as Row[],
 };
 let events: string[] = [];
 let seq = 0;
@@ -121,7 +122,36 @@ const models: Row = {
       return db.lines.filter((l) => matches(l, where)).map((l) => ({ ...l }));
     },
   },
+  auditLog: {
+    async create({ data }: Row) {
+      events.push("write:audit_logs");
+      const row = { id: `audit_${++seq}`, createdAt: new Date(auditNow()), ...clone(data) };
+      db.audits.push(row);
+      return { id: row.id };
+    },
+    async findMany({ where, orderBy, take, select }: Row) {
+      let rows = db.audits.filter((a) => matches(a, where));
+      // ⚠️ 桩必须照代码传的 orderBy 排，不能自己写死倒序 —— 否则「排序写反了」这种 bug 桩会替它盖住
+      //（2026-09-18 变异测试就是这么漏掉一处的）
+      const dir = orderBy?.createdAt;
+      if (dir !== "asc" && dir !== "desc") throw new Error(`桩要求查流水时明确 orderBy.createdAt，收到 ${JSON.stringify(orderBy)}`);
+      const sign = dir === "desc" ? -1 : 1;
+      rows = rows.sort((a, b) => sign * (Number(a.createdAt) - Number(b.createdAt)) || sign * (a.id < b.id ? -1 : 1));
+      if (take) rows = rows.slice(0, take);
+      return rows.map((a) => {
+        const out: Row = clone(a);
+        if (select?.actor) out.actor = { name: db.users.find((u) => u.id === a.actorId)?.name ?? null };
+        return out;
+      });
+    },
+  },
 };
+/** 流水的时间：测里要能分出先后，每次调用往后走一秒 */
+let auditClock = Date.parse("2026-10-20T00:00:00Z");
+function auditNow(): number {
+  auditClock += 1000;
+  return auditClock;
+}
 
 async function queryRaw(strings: TemplateStringsArray, ...values: unknown[]): Promise<Row[]> {
   const sql = strings.join("?").replace(/\s+/g, " ").trim();
@@ -129,6 +159,11 @@ async function queryRaw(strings: TemplateStringsArray, ...values: unknown[]): Pr
     events.push(`lock:agents:${values[0]}`);
     const a = db.agents.find((x) => x.id === values[0]);
     return a ? [{ id: a.id, company_id: a.companyId }] : [];
+  }
+  if (sql === "SELECT id, company_id, status, paid_at, paid_by FROM agent_rebate_statements WHERE id = ? AND company_id = ? FOR UPDATE") {
+    events.push(`lock:agent_rebate_statements:${values[0]}`);
+    const st = db.statements.find((x) => x.id === values[0] && x.companyId === values[1]);
+    return st ? [{ id: st.id, company_id: st.companyId, status: st.status, paid_at: st.paidAt ?? null, paid_by: st.paidBy ?? null }] : [];
   }
   throw new Error(`桩没实现这句 SQL：${sql}`);
 }
@@ -460,6 +495,94 @@ async function main(): Promise<void> {
     // 已返之后再跑生成器也不动它
     await gen.generateAgentRebateStatements(T("2026-12-01T00:00:00Z"));
     assert.equal(db.statements.find((s) => s.id === aug.id)!.status, "paid");
+  });
+
+  await check("12b) 撤回「已返」：回到未返、时间和操作人清掉、金额明细不动；必须写原因；别家公司 404；重复撤回不再写流水", async () => {
+    const aug = db.statements.find((s) => s.agentId === "agent_jia" && s.month === "2026-08")!;
+    assert.equal(aug.status, "paid", "前置：12) 已经把它点成已返");
+    const before = clone(aug);
+    const linesBefore = clone(db.lines.filter((l) => l.statementId === aug.id));
+    const auditsBefore = db.audits.length;
+
+    let r = await call("POST", "/admin/agents/rebates/undo-paid", admin, { id: aug.id });
+    assert.equal(r.status, 400, "不写原因不许撤");
+    r = await call("POST", "/admin/agents/rebates/undo-paid", admin, { id: aug.id, reason: "  " });
+    assert.equal(r.status, 400, "只有空格也不算");
+    r = await call("POST", "/admin/agents/rebates/undo-paid", admin, { id: aug.id, reason: "x".repeat(201) });
+    assert.equal(r.status, 400, "原因太长");
+    r = await call("POST", "/admin/agents/rebates/undo-paid", tokenFor("zz_admin_c2"), { id: aug.id, reason: "别家公司" });
+    assert.equal(r.status, 404, "别家公司撤不了");
+    assert.equal(db.statements.find((s) => s.id === aug.id)!.status, "paid", "上面几种都没真撤");
+    assert.equal(db.audits.length, auditsBefore, "没撤成功就不写流水");
+
+    const mark = events.length;
+    r = await call("POST", "/admin/agents/rebates/undo-paid", admin, { id: aug.id, reason: " 转错账号，钱退回来了 " });
+    assert.equal(r.status, 200);
+    assert.equal(r.body.data.status, "unpaid");
+    assert.equal(r.body.data.alreadyUnpaid, false);
+    assert.ok(events.slice(mark).includes(`lock:agent_rebate_statements:${aug.id}`), "先锁这张单再改（CLAUDE.md #28）");
+
+    const after = db.statements.find((s) => s.id === aug.id)!;
+    const changed = Object.keys(after).filter((k) => JSON.stringify(after[k]) !== JSON.stringify((before as Row)[k])).sort();
+    assert.deepEqual(changed, ["paidAt", "paidBy", "status"], "只动这三样");
+    assert.equal(after.status, "unpaid");
+    assert.equal(after.paidAt, null);
+    assert.equal(after.paidBy, null);
+    assert.deepEqual(db.lines.filter((l) => l.statementId === aug.id), linesBefore, "明细一个字不动");
+    assert.equal(after.totalRebate, before.totalRebate, "金额不动");
+
+    const audit = db.audits.at(-1)!;
+    assert.equal(db.audits.length, auditsBefore + 1, "写一条流水");
+    assert.equal(audit.action, "STATUS_CHANGE");
+    assert.equal(audit.resourceType, "AgentRebateStatement");
+    assert.equal(audit.resourceId, aug.id);
+    assert.equal(audit.companyId, "c1");
+    assert.equal(audit.actorId, "zz_admin");
+    assert.equal(audit.actorRole, "admin");
+    assert.equal(audit.remark, "转错账号，钱退回来了", "原因去掉两头空格存下来");
+    assert.deepEqual(JSON.parse(audit.beforeJson), { status: "paid", paidAt: (before as Row).paidAt.toISOString(), paidBy: "zz_admin" });
+    assert.deepEqual(JSON.parse(audit.afterJson), { status: "unpaid", paidAt: null, paidBy: null, month: "2026-08", agentId: "agent_jia", totalRebate: Number(before.totalRebate) });
+
+    // 再撤一次：已经是未返，照实说，不报错也不多写流水
+    r = await call("POST", "/admin/agents/rebates/undo-paid", admin, { id: aug.id, reason: "再点一次" });
+    assert.equal(r.status, 200);
+    assert.equal(r.body.data.alreadyUnpaid, true);
+    assert.equal(db.audits.length, auditsBefore + 1, "重复撤不写第二条");
+    // 不存在的单
+    r = await call("POST", "/admin/agents/rebates/undo-paid", admin, { id: "stmt_nope", reason: "找不到" });
+    assert.equal(r.status, 404);
+  });
+
+  await check("12c) 流水在明细里看得到：已返 → 撤回 → 再已返 三条，带谁、什么时候、原因；撤回后还能再点已返", async () => {
+    const aug = db.statements.find((s) => s.agentId === "agent_jia" && s.month === "2026-08")!;
+    const again = await call("POST", "/admin/agents/rebates/mark-paid", admin, { id: aug.id });
+    assert.equal(again.status, 200);
+    assert.equal(again.body.data.alreadyPaid, false, "撤回之后能重新点已返");
+
+    const detail = await call("GET", `/admin/agents/rebates/detail?id=${aug.id}`, admin);
+    assert.equal(detail.status, 200);
+    const history = detail.body.data.history as Row[];
+    assert.deepEqual(history.map((h) => h.action), ["paid", "undoPaid", "paid"], "三条都在");
+    // ⚠️ 光看动作名分不出顺序（已返 → 撤回 → 已返 正反读一样），要按时间断言
+    const times = history.map((h) => Date.parse(h.at));
+    assert.ok(times[0] > times[1] && times[1] > times[2], `最近的必须在最前面，实际 ${history.map((h) => h.at).join(" / ")}`);
+    assert.equal(history[2].reason, "", "最早那条是点「已返」，没有原因");
+    for (const h of history) {
+      assert.equal(h.actorName, "老板");
+      assert.equal(h.actorRole, "admin");
+      assert.ok(typeof h.at === "string" && h.at.endsWith("Z"), "有时间");
+    }
+    assert.equal(history[1].reason, "转错账号，钱退回来了", "撤回那条带原因");
+    assert.equal(history[0].reason, "", "点已返没有原因");
+    assert.equal(history[0].amount, Number(aug.totalRebate), "流水上带金额，对得上单子");
+    // 别家公司读不到这张单的流水
+    const other = await call("GET", `/admin/agents/rebates/detail?id=${aug.id}`, tokenFor("zz_admin_c2"));
+    assert.equal(other.status, 404);
+    // 别家公司的流水不会混进来
+    db.audits.push({ id: "audit_other", companyId: "c2", actorId: "zz_admin_c2", actorRole: "admin", action: "STATUS_CHANGE", resourceType: "AgentRebateStatement", resourceId: aug.id, beforeJson: null, afterJson: null, remark: "别家的", createdAt: new Date() });
+    const mixed = await call("GET", `/admin/agents/rebates/detail?id=${aug.id}`, admin);
+    assert.equal((mixed.body.data.history as Row[]).length, 3, "只给本公司那三条");
+    db.audits = db.audits.filter((a) => a.id !== "audit_other");
   });
 
   await check("13) 返现合计超过 Decimal(12,2) 上限：不抛错、不写半截，这个代理从超限的月份起暂停出单，前面的月份照出，重跑也一样", async () => {
