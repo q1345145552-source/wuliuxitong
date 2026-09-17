@@ -126,11 +126,15 @@ export function checkNotBelowAgentPrice(prices: WhrPriceTriple, agentPrices: Whr
   return issues.length > 0 ? issues.join("；") : null;
 }
 
-/** 一位客户的「最低价」：他所属代理那三档价。湘泰自己的客户没有下限（agentId 为空） */
+/**
+ * 一位客户的「最低价」。
+ * ⚠️ 湘泰自己的客户也会进这个表，只是 `agentId` / `floor` 为 `null` ——
+ * 这样第二步才分得清「这个客户没有下限」和「这个客户我根本没查过」（Opus 第四轮复核第 4 条）。
+ */
 export interface AgentPriceFloor {
-  agentId: string;
+  agentId: string | null;
   clientName: string;
-  floor: WhrPriceTriple;
+  floor: WhrPriceTriple | null;
 }
 
 /**
@@ -196,8 +200,8 @@ export async function lockAgentPriceFloors(
     });
   }
   for (const c of clients) {
-    if (!c.agentId) continue; // 湘泰自己的客户不受这道闸管
-    out.set(c.id, { agentId: c.agentId, clientName: c.name, floor: prices.get(c.agentId)! });
+    // 湘泰自己的客户（agentId 为空）也要进这个表，floor 记 null —— 见 AgentPriceFloor 上面那段
+    out.set(c.id, { agentId: c.agentId, clientName: c.name, floor: c.agentId ? prices.get(c.agentId)! : null });
   }
   return out;
 }
@@ -220,7 +224,16 @@ export function assertNotBelowAgentFloors(
   const issues: string[] = [];
   for (const entry of entries) {
     const hit = floors.get(entry.clientId);
-    if (!hit) continue; // 湘泰自己的客户不受这道闸管（查不到客户在上一步就 throw 了）
+    /**
+     * ⚠️ 表里没有这个客户 = **上一步没给他查过下限**，绝不能当成「没有下限」放过去
+     *（CLAUDE.md #27，第三轮刚在上一步修过同一个形状，这一半又留了一个 —— Opus 第四轮复核第 4 条）。
+     * 改单价那条路是「锁前按事务外的 clientId 读下限、锁后拿重读的 clientId 来判」，
+     * 两者对不上时必须拦，不许静默跳过。
+     */
+    if (!hit) {
+      throw new BusinessError("这个客户刚刚被换过了（可能被移出柜或改了归属），请刷新页面后重试", 400, "BAD_REQUEST");
+    }
+    if (!hit.floor) continue; // 湘泰自己的客户：查过了，确实没有下限
     for (const key of ["normal", "inspection", "sensitive"] as const) {
       if (toCents(entry.prices[key]) < toCents(hit.floor[key])) {
         const who = entry.clientName ?? hit.clientName ?? entry.clientId;

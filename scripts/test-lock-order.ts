@@ -110,6 +110,13 @@ const LOCK_SQL_RE = /FOR (UPDATE|SHARE)/;
  * 今天全仓的 FOR SHARE 只在 agents 上（没人写它），所以这条区分是给以后兜底的。
  */
 const EXCLUSIVE_LOCK_RE = /FOR UPDATE/;
+/**
+ * ⚠️ 拿的是**共享锁**的 helper 也要单列（Opus 第四轮复核第 3 条）：上一版只把裸 SQL 分共享/排他，
+ * 而 `LOCK_HELPERS` 那条分支不分模式，一律往 `held` 里塞 —— 于是
+ * `assertPlanPricesNotBelowAgent(...)` 后面跟一句 `tx.agent.update(...)`（教科书式的锁升级）
+ * 在第 7 项眼里仍然算「锁住了」。今天 `agents` 不在 HOT_TABLES 里所以碰不着，这是给以后兜底。
+ */
+const SHARED_LOCK_HELPERS = new Set(["assertPlanPricesNotBelowAgent", "lockAgentPriceFloors"]);
 
 const WRITE_RE = /\btx\.\w+\.(create|update|updateMany|delete|deleteMany|upsert|createMany)\b/;
 /**
@@ -554,9 +561,9 @@ check("7) 改了运单/柜子/订单/派送单的事务，必须先锁住同一�
          */
         if (isDeadLine(l)) { j = deadBlockEnd(lines, j); continue; }
         if (isConditionalLockLine(l)) { j += 1; continue; }
-        // 先记下这一行拿到的锁
+        // 先记下这一行拿到的锁（⚠️ 共享锁的 helper 不算「锁住了」，理由见 SHARED_LOCK_HELPERS）
         const helper = Object.keys(LOCK_HELPERS).find((h) => l.includes(`${h}(`));
-        if (helper) for (const tb of LOCK_HELPERS[helper]) held.add(tb);
+        if (helper && !SHARED_LOCK_HELPERS.has(helper)) for (const tb of LOCK_HELPERS[helper]) held.add(tb);
         // ⚠️ 这一项只认排他锁：拿了 FOR SHARE 再写，是锁升级，不算「锁住了」
         if (EXCLUSIVE_LOCK_RE.test(l)) {
           const tb = /FROM\s+(\w+)/.exec(l)?.[1];
@@ -912,17 +919,33 @@ check("11) 仓库版集货定价：所有事务都按【客户价排队锁 → �
     .map((x) => `${rel(x.b.file)}:${x.b.line} ${x.b.route}（${x.seq.join(" → ")}）`);
   assert.deepEqual(bad, [], "下面这些事务的锁序跟改长期价那条路反着，会死锁：\n     " + bad.join("\n     "));
   /**
-   * ⚠️⚠️ 自检必须盯**agents 这一站本身**，不能只数「扫到几个事务」（2026-09-18 两位复核同时实测出来）：
-   * 只要把 LOCK_HELPERS 里那两行登记删掉（或者把 helper 改个名忘了同步），
-   * agents 就从所有 seq 里消失，剩下「客户价锁 + 计划」两站照样 ≥ 3 个事务 ——
-   * 这一项当场变成睁眼瞎，连它本来要抓的「agents 挪到计划后面」都照样全绿。
+   * ⚠️⚠️ 自检不许写成「扫到几个事务就算数」（2026-09-18 第四轮两位复核**各自实测**打穿了两版）：
+   *   第一版数 seen.length ≥ 3 —— 把 LOCK_HELPERS 里的登记删掉，agents 从所有 seq 里消失，
+   *     剩「客户价锁 + 计划」两站照样 ≥ 3，这一项当场变睁眼瞎；
+   *   第二版改成数 withAgents ≥ 3 —— 实际有 5 处，删掉 `lockAgentPriceFloors` 那一行登记还剩 4 处，
+   *     照样绿，**连「改单价把 agents 挪到计划后面」这个它专门要抓的变异也全绿**。
+   * 所以改成**按路由点名**：这三条定价路径各自的锁序必须原样是那三站，谁掉一站就红。
    */
-  const withAgents = seen.filter((x) => x.seq.includes("agents"));
-  assert.ok(
-    withAgents.length >= 3,
-    `只扫到 ${withAgents.length} 处 seq 里真有 agents 的事务（建柜 / 加客户 / 改单价 / 改长期价至少 4 处）——`
-      + ` LOCK_HELPERS 里 assertPlanPricesNotBelowAgent / lockAgentPriceFloors 的登记被删了，或者 FOR SHARE 不认了，这一项的绿灯不作数`,
-  );
+  const seqOf = (file: string, route: string): string[] | null => {
+    const hit = seen.find((x) => rel(x.b.file) === file && x.b.route === route);
+    return hit ? hit.seq : null;
+  };
+  const MUST: Array<[string, string, string[]]> = [
+    // 建柜是新建计划，没有计划行可锁，所以只有前两站
+    ["whr-consolidation/routes.ts", "/admin/whr-consolidation/plans", ["advisory_client_whr_price", "agents"]],
+    ["whr-consolidation/routes.ts", "/admin/whr-consolidation/customers/add", ORDER],
+    ["whr-consolidation/routes.ts", "/admin/whr-consolidation/customers/price", ORDER],
+    ["whr-consolidation/long-term-price.ts", "(文件顶层)", ORDER], // setClientWhrPrice
+  ];
+  for (const [file, route, want] of MUST) {
+    const got = seqOf(file, route);
+    assert.ok(got, `扫不到 ${file} ${route} 的定价事务了 —— 要么路径改名了、要么 LOCK_HELPERS 的登记被删了，这一项的绿灯不作数`);
+    assert.deepEqual(
+      got,
+      want,
+      `${file} ${route} 的锁序不对（要的是 ${want.join(" → ")}，扫到的是 ${got!.join(" → ")}）`,
+    );
+  }
 });
 
 if (failures.length > 0) {

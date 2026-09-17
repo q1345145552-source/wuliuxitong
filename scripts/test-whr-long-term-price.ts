@@ -340,6 +340,46 @@ async function main(): Promise<void> {
     assert.equal(xt.status, 200, `湘泰客户被代理价闸误伤了：${xt.message}`);
   });
 
+  await check("5c2) 「这个客户所属的代理不存在」这句也分人说：员工看到的版本不许暴露客户归代理", async () => {
+    /**
+     * 这条分支上一轮加完**一个测试都没有**（DeepSeek 第四轮复核第 5 条）：
+     * 以后谁把 canSeeOperatorIdentity 去掉、或者新入口漏传 viewerRole，
+     * 员工就重新从报错里知道「这个客户归某个代理」，而全套测试照样绿。
+     */
+    for (const [who, auth, want, forbid] of [
+      ["超管", ADMIN, /所属的代理不存在/, null],
+      ["员工", STAFF, /价格设置有问题/, /代理/],
+    ] as Array<[string, typeof ADMIN, RegExp, RegExp | null]>) {
+      seed();
+      mem.db.agent = mem.db.agent.filter((a: Row) => a.id !== AGENT_ID); // 代理行没了（被删 / 公司对不上）
+      const r = await callRoute("POST /admin/whr-consolidation/customers/add", auth, {
+        body: { planId: P2, clientId: C_AG, unitPriceNormal: 900, unitPriceInspection: 900, unitPriceSensitive: 900 },
+      });
+      assert.equal(r.status, 400, `${who}：代理行查不到却放行了 ${r.status} ${r.message}`);
+      assert.match(r.message, want, `${who}看到的提示不对：${r.message}`);
+      if (forbid) assert.ok(!forbid.test(r.message), `${who}的提示里暴露了代理：${r.message}`);
+      assert.deepEqual(writes(), [], `被拦下还写了库：${writes().join(", ")}`);
+    }
+  });
+
+  await check("5c3) 锁前锁后的客户对不上时不许静默跳过（拆成两步之后另一半也得堵上）", async () => {
+    /**
+     * `assertNotBelowAgentFloors` 拿不到这个客户的下限 = 上一步压根没给他查过，
+     * 绝不能当成「没有下限」放过去（Opus 第四轮复核第 4 条，跟第三轮第 12 条同一个形状）。
+     * 直接调函数造这个局面（真实路径今天走不到：plan_customers.clientId 没人改）。
+     */
+    const { assertNotBelowAgentFloors } = await import("../apps/api/src/modules/whr-consolidation/long-term-price");
+    const floors = new Map([["someone-else", { agentId: null, clientName: "别人", floor: null }]]);
+    assert.throws(
+      () => assertNotBelowAgentFloors(floors, [{ clientId: C_AG, prices: { normal: 1, inspection: 1, sensitive: 1 } }], "admin"),
+      /刚刚被换过/,
+      "表里没有这个客户却放行了 —— 这道算钱的闸等于没有",
+    );
+    // 查过、确实没有下限（湘泰客户）要照常放行
+    const xtFloors = new Map([[C_XT, { agentId: null, clientName: "湘泰客户", floor: null }]]);
+    assertNotBelowAgentFloors(xtFloors, [{ clientId: C_XT, prices: { normal: 1, inspection: 1, sensitive: 1 } }], "admin");
+  });
+
   await check("5d) 改单价：锁之前这个客户被移出柜了 → 锁里重读拦下，404 不报服务器错误、什么都没写", async () => {
     seed();
     mem.onEvent = (e) => {

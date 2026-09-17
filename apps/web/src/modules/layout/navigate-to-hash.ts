@@ -21,7 +21,7 @@ export function navigateToHash(href: string): void {
 }
 
 /**
- * 把地址栏的 # **换成**另一个（不新增历史记录、不发 hashchange）。
+ * 把地址栏的 # **换成**另一个（不新增历史记录；会补发一次 hashchange，见下面第二段）。
  *
  * ⚠️ 「旧链接被退回」这种场景必须用它，不能用 navigateToHash（2026-09-18 复核）：
  * `/agent#whr` 这种已经关掉的分区会被退回 `#home`，如果用 pushState，历史记录就成了

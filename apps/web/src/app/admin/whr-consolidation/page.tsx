@@ -986,8 +986,11 @@ export default function AdminWhrConsolidationPage() {
                             <span>商检货：{c.unitPriceInspection} 元/方</span>
                             <span>敏感货：{c.unitPriceSensitive} 元/方</span>
                             {/* 2026-09-18 老板拍板恢复：柜里能改单价（每个柜价格都不一样）。
-                                只有还在「计划中 / 收货中 / 装柜中」的柜能改：已发运 / 已完成的柜里单子都付过款了，
-                                改价不会改金额，只会让详情显示「付款后柜里单价改过」，看着像账错了（复核第 8 条） */}
+                                只有还在「计划中 / 收货中 / 装柜中」的柜能改（跟后端 REPRICE_PLAN_STATUSES 同一份名单）：
+                                「已完成」的柜里每一票都泰国签收、都付过款了，改价不会改金额，
+                                只会让详情显示「付款后柜里单价改过」，看着像账错了（复核第 8 条）。
+                                ⚠️ 别写成「已发运的柜不能改」：柜子的 shipped 状态系统里没人写，
+                                货发运完柜状态还是 loading，**照样能改** —— 跟 9-16 之前的老行为一致（第三轮复核第 1 条 d） */}
                             {["planning", "collecting", "loading"].includes(planDetail.status) && (
                               <button
                                 onClick={(e) => {

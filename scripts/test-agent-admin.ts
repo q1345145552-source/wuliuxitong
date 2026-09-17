@@ -476,16 +476,26 @@ async function main(): Promise<void> {
    * 老口径会把它放过去（DeepSeek 第二轮复核第 1 条）。
    */
   await check("9) 调高代理价：名下有在跑的柜里客户价低于新价 → 400 并列出柜号和档位，什么都没写；锁序先锁 agents 再查柜里的价", async () => {
+    /**
+     * ⚠️ 「不该算进来的柜」用 completed / cancelled，**别用 shipped**（Opus 第四轮复核第 10 条）：
+     * 柜子的 shipped 状态全系统没人写（syncPlanStatus 只写 collecting / loading / completed），
+     * 拿它当夹具等于在测一个现实中不存在的状态，真把 REPRICE_PLAN_STATUSES 改坏也抓不到。
+     */
     db.plans = [
       { id: "pl_run", companyId: "c1", planNo: "WHR2609001", status: "collecting" },
-      { id: "pl_done", companyId: "c1", planNo: "WHR2608009", status: "shipped" },
+      { id: "pl_load", companyId: "c1", planNo: "WHR2609002", status: "loading" },
+      { id: "pl_done", companyId: "c1", planNo: "WHR2608009", status: "completed" },
+      { id: "pl_cxl", companyId: "c1", planNo: "WHR2608008", status: "cancelled" },
     ];
     db.planCustomers = [
       { id: "pc1", companyId: "c1", planId: "pl_run", clientId: "zz_c_a1", unitPriceNormal: 520, unitPriceInspection: 570, unitPriceSensitive: 650 },
       // ⚠️ 这位客户**没有**长期价行：老口径（查 client_whr_prices）会把他整个漏掉
       { id: "pc2", companyId: "c1", planId: "pl_run", clientId: "zz_c_a2", unitPriceNormal: 505, unitPriceInspection: 560, unitPriceSensitive: 700 },
-      // 已发运的柜：金额都结清了，不该算进来
+      // 装柜中的柜也在这道闸范围内（货可能已经发运，但柜状态就是 loading）
+      { id: "pc5", companyId: "c1", planId: "pl_load", clientId: "zz_c_a1", unitPriceNormal: 505, unitPriceInspection: 560, unitPriceSensitive: 650 },
+      // 已完成 / 已取消的柜：不该算进来
       { id: "pc3", companyId: "c1", planId: "pl_done", clientId: "zz_c_a1", unitPriceNormal: 100, unitPriceInspection: 100, unitPriceSensitive: 100 },
+      { id: "pc6", companyId: "c1", planId: "pl_cxl", clientId: "zz_c_a2", unitPriceNormal: 100, unitPriceInspection: 100, unitPriceSensitive: 100 },
       // 湘泰客户价很低，但不是这个代理名下的，不许算进来
       { id: "pc4", companyId: "c1", planId: "pl_run", clientId: "zz_c_xt", unitPriceNormal: 100, unitPriceInspection: 100, unitPriceSensitive: 100 },
     ];
@@ -493,11 +503,13 @@ async function main(): Promise<void> {
     events = [];
     const r = await call("POST", "/admin/agents/update", admin, updateBody({ normal: 510, inspection: 580, sensitive: 600 }, { name: "改了名字" }));
     assert.equal(r.status, 400, JSON.stringify(r.body));
-    assert.match(r.body.message, /名下有 2 处在跑的柜里/);
+    assert.match(r.body.message, /名下有 3 处在跑的柜里/, "收货中 + 装柜中的柜都要算进来（已完成 / 已取消的不算）");
+    assert.match(r.body.message, /WHR2609002：普货 505（新代理价 510），商检货 560（新代理价 580）/, "装柜中的柜没算进来（货发运完柜状态就是 loading）");
     assert.match(r.body.message, /zz_c_a1（客户一） 在柜 WHR2609001：商检货 570（新代理价 580）/, "要写清楚是哪个客户、哪个柜、哪一档");
     assert.match(r.body.message, /zz_c_a2 在柜 WHR2609001：普货 505（新代理价 510），商检货 560（新代理价 580）/);
     assert.doesNotMatch(r.body.message, /zz_c_xt/);
-    assert.doesNotMatch(r.body.message, /WHR2608009/, "已发运的柜不许算进来");
+    assert.doesNotMatch(r.body.message, /WHR2608009/, "已完成的柜不许算进来");
+    assert.doesNotMatch(r.body.message, /WHR2608008/, "已取消的柜不许算进来");
     assert.doesNotMatch(r.body.message, /zz_c_a1（客户一） 在柜 WHR2609001：普货/, "520 ≥ 510 的档不许误报");
     // 提示要告诉他去哪改（柜详情的「改单价」），不是去改那个已经没入口的长期价
     assert.match(r.body.message, /集货拼柜\(仓库版\)|改单价/);
@@ -518,7 +530,15 @@ async function main(): Promise<void> {
   });
 
   await check("9b) 点名的处数有上限：几十个客户几十个柜也不许拼出一条几千字的报错", async () => {
-    // 一个代理名下 15 个客户，各在一个在跑的柜里，价都低于新代理价
+    /**
+     * ⚠️ 这一项要换一套自己的夹具，**跑完必须还原**（两位复核第四轮同时实测出来的）：
+     * 上一版直接 `db.plans = []` 清空，而紧跟着的第 10 项靠的就是第 9 项留下的那批夹具
+     * （「客户价正好等于新代理价 → 必须放行」那个边界）。夹具一清，第 10 项的 200 成了
+     * 「空集上的必然通过」—— 实测：把闸里的 `<` 改成 `<=`（会误拦合法调价），15 项照样全绿。
+     */
+    const savedPlans = db.plans;
+    const savedPlanCustomers = db.planCustomers;
+    const savedUsers = db.users.slice();
     db.plans = [];
     db.planCustomers = [];
     for (let i = 0; i < 15; i += 1) {
@@ -532,13 +552,18 @@ async function main(): Promise<void> {
     assert.match(r.body.message, /名下有 15 处在跑的柜里/, "总数要说清（CLAUDE.md #21：截断必须写明总数）");
     assert.match(r.body.message, /还有 5 处（共 15 处）/, "超过 10 处没截断");
     assert.ok(r.body.message.length < 1200, `报错太长了（${r.body.message.length} 字），弹窗里会刷屏`);
-    // 清掉这批夹具，别影响后面的用例
-    db.users = db.users.filter((u) => !u.id.startsWith("zz_c_many"));
-    db.plans = [];
-    db.planCustomers = [];
+    // 还原第 9 项那批夹具（不是清空！第 10 项还要用）
+    db.users = savedUsers;
+    db.plans = savedPlans;
+    db.planCustomers = savedPlanCustomers;
   });
 
   await check("10) 调高到不低于所有客户价、或者调低 → 保存成功；只调低不去查客户价", async () => {
+    // ⚠️ 自检：这一项测的是「正好等于新代理价 → 放行」这个边界，夹具是空的话 200 就是必然的（第四轮复核第 1 条）
+    assert.ok(
+      db.planCustomers.some((pc) => db.users.find((u) => u.id === pc.clientId)?.agentId === agentId),
+      "名下一个在跑的柜都没有 —— 这一项的 200 是空集上的必然通过，等于没测（前面哪个用例把夹具清空了）",
+    );
     events = [];
     let r = await call("POST", "/admin/agents/update", admin, updateBody({ normal: 505, inspection: 560, sensitive: 650 }, { name: "曼谷代理甲（新）", slug: "bkk-new", customDomain: "" }));
     assert.equal(r.status, 200, JSON.stringify(r.body));

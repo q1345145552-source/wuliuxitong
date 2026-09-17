@@ -503,10 +503,14 @@ export function registerWhrConsolidationRoutes(app: MinimalHttpApp): void {
       return;
     }
 
-    // 事务外这次查只为早点给提示（说了算的是锁里那一次，CLAUDE.md #28）
+    /**
+     * 事务外这次查只为早点给提示（说了算的是锁里那一次，CLAUDE.md #28）。
+     * ⚠️ 只取 id / clientId：三档价拆成两步之后是**锁里重读**那一份说了算，
+     * 这里再取一份只会让下一个人以为它还有用（Opus / DeepSeek 第四轮复核）。
+     */
     const customer = await prisma.whrConsolidationPlanCustomer.findFirst({
       where: { id: body.customerId.trim(), planId: body.planId.trim(), companyId: auth.companyId },
-      select: { id: true, clientId: true, unitPriceNormal: true, unitPriceInspection: true, unitPriceSensitive: true },
+      select: { id: true, clientId: true },
     });
     if (!customer) {
       fail(res, 404, "NOT_FOUND", "客户记录不存在");

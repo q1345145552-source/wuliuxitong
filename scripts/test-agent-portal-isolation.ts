@@ -790,6 +790,23 @@ async function dbChecks(): Promise<void> {
         assert.ok(!hit.some((line) => line.includes("cb1") || line.includes("SECRETB")), `别家代理的客户混进来了：${hit.join("；")}`);
       });
 
+      /**
+       * ⚠️ 上面那几条夹具全是 collecting / planning，所以**就算把柜状态那条过滤整条删掉也照样通过** ——
+       * 它只验了「Prisma 嵌套写法对不对」，验不了「状态名单对不对」（Opus 第四轮复核第 10 条）。
+       * 这里把 plan3 临时改成「已完成」，它必须从结果里消失；跑完还原。
+       */
+      await prisma.whrConsolidationPlan.update({ where: { id: `${P}plan3` }, data: { status: "completed" } });
+      try {
+        await prisma.$transaction(async (tx) => {
+          const floor = { normal: 500, inspection: 550, sensitive: 600 };
+          const hit = await findClientsBelowNewAgentPrice(tx, `${P}agA`, CO, floor, { normal: 610, inspection: 550, sensitive: 600 });
+          assert.ok(!hit.some((line) => line.includes("WHRZZB303")), `已完成的柜还算在闸里：${hit.join("；")}`);
+          assert.equal(hit.length, 1, `只该剩 plan1 那一处，实际：${hit.join("；")}`);
+        });
+      } finally {
+        await prisma.whrConsolidationPlan.update({ where: { id: `${P}plan3` }, data: { status: "planning" } });
+      }
+
       // ② 归属闸：代理甲改不了湘泰客户 / 代理乙的客户，一行都不许写
       for (const clientId of [`${P}cx`, `${P}cb1`]) {
         await assert.rejects(
