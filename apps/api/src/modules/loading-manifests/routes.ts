@@ -139,6 +139,12 @@ export function registerLoadingManifestRoutes(app: MinimalHttpApp): void {
       select: { id: true, containerNo: true, currentStatus: true, transportMode: true },
     });
     if (!container) { fail(res, 404, "NOT_FOUND", "柜子不存在"); return; }
+    // 没改（选的跟现在一样）：什么都不做。线上有陆运老柜子的货轨迹里带着早年按海运推的「已开船」，
+    // 下面「走过对方流程独有步骤」那道闸会把这种原样保存也拦掉
+    if (container.transportMode === mode) {
+      ok(res, { id: container.id, containerNo: container.containerNo, transportMode: mode });
+      return;
+    }
 
     // 两条流程共有的状态才允许切换；陆运/海运专属状态上不许改
     // ⚠️ 2026-08-13 跟着流程改了两处归属：
@@ -173,7 +179,7 @@ export function registerLoadingManifestRoutes(app: MinimalHttpApp): void {
       await tx.$queryRaw`SELECT id FROM containers WHERE id = ${container.id} FOR UPDATE`;
       const fresh = await tx.container.findUnique({
         where: { id: container.id },
-        select: { currentStatus: true, statusDates: true },
+        select: { currentStatus: true, statusDates: true, departureDate: true, ata: true },
       });
       if (!fresh) throw new BusinessError("装柜任务不存在", 404, "NOT_FOUND");
       if (blocked.includes(fresh.currentStatus)) {
@@ -198,7 +204,37 @@ export function registerLoadingManifestRoutes(app: MinimalHttpApp): void {
         ...Object.keys(walkedDates),
         ...batches.flatMap((b: { fromContainerStatus: string; toContainerStatus: string }) => [b.fromContainerStatus, b.toContainerStatus]),
       ]);
-      const walkedBlocked = blocked.filter((st) => walked.has(st));
+      /**
+       * 上线前推的老柜子没有时间表、也没有账本（Codex 第三批第 2 轮 P1），再看两样老证据：
+       *   · 开船 / 到港日期：只有推「运输中」「已到港」时才写（新建柜子的接口页面没在用）；
+       *   · 柜里货的柜子推进轨迹（sl_ctn_）：老路子撤销就是按它把货退回去的，里面有对方流程独有的状态，改了以后柜子和货会退进两条不同的流程。
+       * 这里「对方流程独有」按两条真流程算，不用上面手抄的名单。
+       */
+      if (fresh.departureDate) walked.add("IN_TRANSIT");
+      if (fresh.ata) walked.add("ARRIVED");
+      const targetFlow = flowOf(mode);
+      const otherOnly = flowOf(mode === "land" ? "sea" : "land").filter((st) => !targetFlow.includes(st));
+      const sourcesOf = new Map<string, string[]>();
+      for (const [cs, ss] of Object.entries(CONTAINER_TO_SHIPMENT_STATUS)) sourcesOf.set(ss, [...(sourcesOf.get(ss) ?? []), cs]);
+      const otherOnlyShipStatuses = [...sourcesOf].filter(([, css]) => css.every((cs) => otherOnly.includes(cs))).map(([ss]) => ss);
+      const boxShipmentIds = (await tx.shipmentContainerItem.findMany({ where: { containerId: container.id }, select: { shipmentId: true } }))
+        .map((it: { shipmentId: string }) => it.shipmentId);
+      if (boxShipmentIds.length > 0 && otherOnlyShipStatuses.length > 0) {
+        const pushLogs = await tx.statusLog.findMany({
+          where: {
+            companyId: auth.companyId,
+            shipmentId: { in: boxShipmentIds },
+            id: { startsWith: "sl_ctn_" },
+            OR: [{ toStatus: { in: otherOnlyShipStatuses } }, { fromStatus: { in: otherOnlyShipStatuses } }],
+          },
+          select: { fromStatus: true, toStatus: true },
+          take: 100,
+        });
+        for (const l of pushLogs) {
+          for (const ss of [l.fromStatus, l.toStatus]) for (const cs of sourcesOf.get(ss) ?? []) if (otherOnly.includes(cs)) walked.add(cs);
+        }
+      }
+      const walkedBlocked = [...new Set([...blocked, ...otherOnly])].filter((st) => walked.has(st));
       if (walkedBlocked.length > 0) {
         throw new BusinessError(
           `这个柜子走过${walkedBlocked.map((st) => `「${CONTAINER_STATUS_LABEL[st] ?? st}」`).join("")}，` +

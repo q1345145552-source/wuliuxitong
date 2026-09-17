@@ -485,6 +485,39 @@ async function main(): Promise<void> {
       await pm.container.update({ where: { id: boxB.id }, data: { statusDates: null } });
       const swB = await call("POST /staff/loading-manifests/transport-mode", STAFF, { id: boxB.id, transportMode: "land" });
       expect("时间表清空的同样柜子：按推进账本照样拒绝改陆运", () => { assert.notEqual(swB.status, 200, swB.message); assert.match(swB.message, /运输中|已到港/); });
+
+      // 上线前推的老柜子（Codex 第三批第 2 轮 P1）：没有时间表、没有账本、未标注运输方式，走过的步骤只留在开船/到港日期、柜里货的推进轨迹里。
+      // 每个柜子只留一种证据，确认每种证据单独都能挡住；只走过两边都有的步骤的老柜子照样能改
+      const legacyBox = async (steps: Array<[string, string]>): Promise<{ id: string; ships: string[] }> => {
+        const pp = await seedShipment(); const bx = await newBox(); const cc = await load(bx.id, pp);
+        await pushAll(bx.id, steps);
+        await pm.containerPushBatch.deleteMany({ where: { containerId: bx.id } });
+        await pm.container.update({ where: { id: bx.id }, data: { statusDates: null, transportMode: null } });
+        const ids = (await pm.shipment.findMany({ where: { trackingNo: { in: [pp, cc] }, companyId: CO }, select: { id: true } })).map((x: Row) => x.id);
+        return { id: bx.id, ships: ids };
+      };
+      const seaSteps: Array<[string, string]> = [["SEALED", "2026-08-25"], ["IN_TRANSIT", "2026-09-01"], ["ARRIVED", "2026-09-13"], ["CUSTOMS", "2026-09-14"]];
+      const onlyLogs = await legacyBox(seaSteps);
+      await pm.container.update({ where: { id: onlyLogs.id }, data: { departureDate: null, ata: null } });
+      const onlyDeparture = await legacyBox(seaSteps);
+      await pm.container.update({ where: { id: onlyDeparture.id }, data: { ata: null } });
+      await pm.statusLog.deleteMany({ where: { shipmentId: { in: onlyDeparture.ships }, id: { startsWith: "sl_ctn_" } } });
+      const onlyAta = await legacyBox(seaSteps);
+      await pm.container.update({ where: { id: onlyAta.id }, data: { departureDate: null } });
+      await pm.statusLog.deleteMany({ where: { shipmentId: { in: onlyAta.ships }, id: { startsWith: "sl_ctn_" } } });
+      const sharedOnly = await legacyBox([["SEALED", "2026-08-25"], ["CUSTOMS", "2026-09-14"]]);
+      const toLand = (id: string) => call("POST /staff/loading-manifests/transport-mode", STAFF, { id, transportMode: "land" });
+      const rLogs = await toLand(onlyLogs.id); const rDep = await toLand(onlyDeparture.id); const rAta = await toLand(onlyAta.id); const rShared = await toLand(sharedOnly.id);
+      // 线上真有：陆运老柜子的货轨迹里带着早年按海运推的「已开船」。原样保存「陆运」不算改，不能被拦
+      await pm.container.update({ where: { id: onlyLogs.id }, data: { transportMode: "land" } });
+      const rSame = await toLand(onlyLogs.id);
+      expect("老柜子只剩货的推进轨迹 / 只剩开船日期 / 只剩到港日期：改陆运都被拒；只走过两边都有的步骤：改陆运 200", () => {
+        assert.notEqual(rLogs.status, 200, `只剩轨迹：${rLogs.message}`); assert.match(rLogs.message, /运输中|已到港/);
+        assert.notEqual(rDep.status, 200, `只剩开船日期：${rDep.message}`); assert.match(rDep.message, /运输中/);
+        assert.notEqual(rAta.status, 200, `只剩到港日期：${rAta.message}`); assert.match(rAta.message, /已到港/);
+        assert.equal(rShared.status, 200, rShared.message);
+      });
+      expect("陆运老柜子货轨迹里有「已开船」：原样保存陆运 200（没改就不查）", () => { assert.equal(rSame.status, 200, rSame.message); });
       for (let i = 0; i < 3; i++) await undo(box.id);
       const sw2 = await call("POST /staff/loading-manifests/transport-mode", STAFF, { id: box.id, transportMode: "land" });
       const r = await push(box.id, "AT_PORT_CN", "2026-08-27");
