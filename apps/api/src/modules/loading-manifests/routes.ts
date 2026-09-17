@@ -16,6 +16,11 @@ import {
   flowOf,
   neverGuessOf,
 } from "../containers/status-flow";
+import { STATUS_FLOW as SHIP_FLOW, STATUS_FLOW_LAND as SHIP_FLOW_LAND } from "../shipments/status-flow";
+import { DEFAULT_STATUS_LABELS } from "../ai/ai-config-store";
+
+/** 改运输方式被拦时给员工看的货状态中文名（名单唯一来源在 ai-config-store） */
+const SHIPMENT_STATUS_ZH: Record<string, string> = Object.fromEntries(DEFAULT_STATUS_LABELS.map((i) => [i.status, i.labelZh]));
 
 /**
  * 生成装柜单号：CN-TH-YYYYMMDDNNN。
@@ -223,6 +228,26 @@ export function registerLoadingManifestRoutes(app: MinimalHttpApp): void {
           `这个柜子走过${walkedBlocked.map((st) => `「${CONTAINER_STATUS_LABEL[st] ?? st}」`).join("")}，` +
             `${mode === "land" ? "陆运" : "海运"}流程里没有这些步骤，改了以后撤销会退到对不上的状态，运输方式没有改。` +
             `要改请先在装柜管理把柜子撤销回这些步骤之前。`,
+        );
+      }
+      /**
+       * 柜里的货**现在**停在另一种运输方式才有的状态上（Codex 第三批第 5 轮：海运柜撤销后一票货退回「已到港」、柜子回到已封柜），
+       * 改了以后柜子和货就在两条流程里。看的是货现在的状态，不是历史记录，不存在「记录是哪个柜的」判不准的问题。
+       * 锁在柜子这一行上，推进、撤销、装柜都拿这把锁，读到的是它们提交以后的状态。退回 / 取消 / 异常两条流程都没有，不算。
+       */
+      const targetShipFlow: readonly string[] = mode === "land" ? SHIP_FLOW_LAND : SHIP_FLOW;
+      const otherShipFlow: readonly string[] = mode === "land" ? SHIP_FLOW : SHIP_FLOW_LAND;
+      const boxShipmentIds = (await tx.shipmentContainerItem.findMany({ where: { containerId: container.id }, select: { shipmentId: true } }))
+        .map((it: { shipmentId: string }) => it.shipmentId);
+      const stuck = boxShipmentIds.length === 0 ? [] : (await tx.shipment.findMany({
+        where: { id: { in: boxShipmentIds }, companyId: auth.companyId },
+        select: { trackingNo: true, currentStatus: true },
+      })).filter((sp: { currentStatus: string }) => otherShipFlow.includes(sp.currentStatus) && !targetShipFlow.includes(sp.currentStatus));
+      if (stuck.length > 0) {
+        const sample = stuck.slice(0, 3).map((sp: { trackingNo: string; currentStatus: string }) => `${sp.trackingNo}「${SHIPMENT_STATUS_ZH[sp.currentStatus] ?? sp.currentStatus}」`).join("、");
+        throw new BusinessError(
+          `柜里 ${stuck.length} 票货现在的状态是${mode === "land" ? "海运" : "陆运"}才有的（${sample}${stuck.length > 3 ? " 等" : ""}），` +
+            `改成${mode === "land" ? "陆运" : "海运"}以后柜子和货对不上，运输方式没有改。`,
         );
       }
       await tx.container.update({ where: { id: container.id }, data: { transportMode: mode } });

@@ -556,6 +556,36 @@ async function main(): Promise<void> {
         assert.deepEqual(stateL, { box: "CUSTOMS", c: "customsTH", batches: 2 });
       });
 
+      // 先撤销、后改运输方式（Codex 第三批第 5 轮）：撤销把一票货退回「已到港」（海运才有），柜子回到已封柜；
+      // 这时改陆运，柜子和货就在两条流程里了 → 看柜里货现在的状态，不许改。陆运柜里货在「到达凭祥口岸」改海运同理
+      const hazard = async (mode: "sea" | "land", aheadStatus: string): Promise<{ id: string; child: string }> => {
+        const pp = await seedShipment();
+        const s0 = await pm.shipment.findFirst({ where: { trackingNo: pp, companyId: CO }, select: { id: true, orderId: true } });
+        await pm.order.update({ where: { id: s0.orderId }, data: { transportMode: mode } });
+        await pm.shipment.update({ where: { id: s0.id }, data: { transportMode: mode } });
+        const bid = (await must("POST /staff/loading-manifests", STAFF, { warehouse: `${P}wh`, transportMode: mode, containerNo: uniq("BOX") })).manifest.id;
+        const cc = await load(bid, pp);
+        await pushAll(bid, [["SEALED", "2026-08-25"]]);
+        await pm.shipment.update({ where: { trackingNo: cc }, data: { currentStatus: aheadStatus } });
+        await pushAll(bid, [["CUSTOMS", "2026-09-14"]]);
+        const uu = await undo(bid);
+        assert.equal(uu.status, 200, uu.message);
+        return { id: bid, child: cc };
+      };
+      const hzSea = await hazard("sea", "arrivedPort");
+      const swHzSea = await toLand(hzSea.id);
+      const hzLand = await hazard("land", "atPortCn");
+      const swHzLand = await toSea(hzLand.id);
+      const hzState = {
+        sea: { mode: (await pm.container.findUnique({ where: { id: hzSea.id }, select: { transportMode: true } }))?.transportMode, ship: await statusOf(hzSea.child) },
+        land: { mode: (await pm.container.findUnique({ where: { id: hzLand.id }, select: { transportMode: true } }))?.transportMode, ship: await statusOf(hzLand.child) },
+      };
+      expect("撤销后柜里货停在「已到港」：改陆运被拒；陆运柜里货停在「到达凭祥口岸」：改海运被拒；运输方式和货都没动", () => {
+        assert.notEqual(swHzSea.status, 200, swHzSea.message); assert.match(swHzSea.message, /已到港/);
+        assert.notEqual(swHzLand.status, 200, swHzLand.message); assert.match(swHzLand.message, /凭祥/);
+        assert.deepEqual(hzState, { sea: { mode: "sea", ship: "arrivedPort" }, land: { mode: "land", ship: "atPortCn" } });
+      });
+
       // 柜子自己要退到对方流程才有的步骤（直接改库造出来的乱数据：陆运柜的时间表 / 账本里有「已到港」）：不撤，什么都不动
       const mixLegacy = await legacyBox(seaSteps);
       await pm.statusLog.deleteMany({ where: { shipmentId: { in: mixLegacy.ships }, id: { startsWith: "sl_ctn_" } } });
@@ -590,8 +620,10 @@ async function main(): Promise<void> {
       await pm.shipmentContainerItem.deleteMany({ where: { containerId: boxA.id, shipmentId: movedId } });
       await pm.shipmentContainerItem.create({ data: { id: `sci_moved_${P}`, containerId: boxB2.id, shipmentId: movedId, loadedVolumeM3: 0.2, loadedPieceCount: 1 } });
       await pm.container.update({ where: { id: boxB2.id }, data: { currentStatus: "SEALED", statusDates: null, transportMode: "sea" } });
+      // 货现在的状态跟柜 B 一致（已装柜，两边都有）；它还停在「已开船」的话会被上面「货现在的状态」那道拦住，那是对的
+      await pm.shipment.update({ where: { id: movedId }, data: { currentStatus: "loaded" } });
       const rMoved = await toLand(boxB2.id);
-      expect("货带着柜 A 的「运输中」记录立刻挪进只封过柜的柜 B：柜 B 改陆运 200", () => { assert.equal(rMoved.status, 200, rMoved.message); });
+      expect("货带着柜 A 的「运输中」记录立刻挪进只封过柜的柜 B、货现在是已装柜：柜 B 改陆运 200", () => { assert.equal(rMoved.status, 200, rMoved.message); });
       for (let i = 0; i < 3; i++) await undo(box.id);
       const sw2 = await call("POST /staff/loading-manifests/transport-mode", STAFF, { id: box.id, transportMode: "land" });
       const r = await push(box.id, "AT_PORT_CN", "2026-08-27");
