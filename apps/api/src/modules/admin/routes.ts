@@ -24,6 +24,8 @@ import {
   lockClientWhrPrice,
   parseWhrPriceInput,
   setClientWhrPrice,
+  LONG_TERM_PRICE_OFF_MESSAGE,
+  LONG_TERM_PRICE_WRITE_ENABLED,
 } from "../whr-consolidation/long-term-price";
 
 /** 超管想改代理客户的长期价时的那句话（确认单 4.7：代理的客户价只有代理能改，超管也不改） */
@@ -1385,6 +1387,8 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
   app.post("/admin/clients/whr-price", async (req, res) => {
     const auth = requireRole(req, res, ["admin"]);
     if (!auth) return;
+    // 同代理那条：功能关闭期间不许再从这里覆盖柜里当场填的价（2026-09-18）
+    if (!LONG_TERM_PRICE_WRITE_ENABLED) return fail(res, 400, "BAD_REQUEST", LONG_TERM_PRICE_OFF_MESSAGE);
 
     const body = (req.body ?? {}) as {
       clientId?: string;

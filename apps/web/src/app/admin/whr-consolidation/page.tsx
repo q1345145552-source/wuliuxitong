@@ -246,11 +246,32 @@ const fi: React.CSSProperties = { width: "100%", padding: "7px 10px", border: "1
 // ============================================================================
 // 主页面
 // ============================================================================
+/**
+ * 页面这道单价校验要跟后端 requireUnitPrice 对得上（2026-09-18 复核第 6 条）：
+ * 必填、大于 0、最多 2 位小数（按字符串判，别用 1e-6 容差）、小于 1 亿（库里是 Decimal(10,2)）。
+ * 返回 null = 没问题。
+ */
+function unitPriceIssue(label: string, raw: string): string | null {
+  const text = String(raw ?? "").trim();
+  if (!text) return `${label}单价为必填`;
+  if (!/^\d+(\.\d{1,2})?$/.test(text)) return `${label}单价只能填数字，最多 2 位小数`;
+  const value = Number(text);
+  if (!Number.isFinite(value) || value <= 0) return `${label}单价要填一个大于 0 的数`;
+  if (value >= 100000000) return `${label}单价太大了（最多 8 位整数）`;
+  return null;
+}
+
 export default function AdminWhrConsolidationPage() {
   // --- 列表 ---
   const [plans, setPlans] = useState<PlanItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [toast, setToast] = useState("");
+  /**
+   * 弹窗里的报错画在弹窗**里面**：Modal 是 inset:0 + zIndex 9999 的遮罩，页面顶部那条 toast 会被压在后面、
+   * 5 秒后还自动消失，员工只看到「点了没反应」（两位复核 2026-09-18 都报了；返现单 9d6d160 已经这么修过）。
+   * 同一时间只会开一个弹窗，所以三处共用这一个。
+   */
+  const [modalError, setModalError] = useState("");
 
   // --- 详情 ---
   const [selectedPlanId, setSelectedPlanId] = useState<string | null>(null);
@@ -459,8 +480,8 @@ export default function AdminWhrConsolidationPage() {
   // 操作函数
   // ==========================================================================
   const handleCreate = async () => {
-    if (!newDestinationTh.trim()) { setToast("请输入目的地"); return; }
-    if (selectedCustomers.length === 0) { setToast("请至少选择一位客户"); return; }
+    if (!newDestinationTh.trim()) { setModalError("请输入目的地"); return; }
+    if (selectedCustomers.length === 0) { setModalError("请至少选择一位客户"); return; }
     /**
      * ⚠️ 总方数不许静默变成 68（2026-08-29 补）。
      * 这个框的初值就是 68、界面上看得见，正常情况没问题；
@@ -471,12 +492,12 @@ export default function AdminWhrConsolidationPage() {
     {
       const v = Number(String(newTotalVolume).trim());
       if (!String(newTotalVolume).trim() || !Number.isFinite(v) || v <= 0) {
-        setToast("请填写柜子总方数（这个数是「已用方数不许超上限」那道闸的依据，不能空着）");
+        setModalError("请填写柜子总方数（这个数是「已用方数不许超上限」那道闸的依据，不能空着）");
         return;
       }
       // 库里是 Decimal(10,2)，多的小数位会被抹掉，跟你填的对不上
       if (Math.abs(v * 100 - Math.round(v * 100)) > 1e-6) {
-        setToast("柜子总方数最多只能有 2 位小数");
+        setModalError("柜子总方数最多只能有 2 位小数");
         return;
       }
     }
@@ -486,10 +507,8 @@ export default function AdminWhrConsolidationPage() {
       const name = clients.find((cl) => cl.id === c.clientId)?.name ?? `第 ${i + 1} 位客户`;
       const checks: Array<[string, string]> = [["普货", c.unitPriceNormal], ["商检货", c.unitPriceInspection], ["敏感货", c.unitPriceSensitive]];
       for (const [label, raw] of checks) {
-        const v = Number(String(raw).trim());
-        if (!String(raw).trim() || !Number.isFinite(v) || v <= 0) { setToast(`${name}的${label}单价要填一个大于 0 的数`); return; }
-        // 库里是 Decimal(10,2)：0.001 会被存成 0.00，这一柜白送
-        if (Math.abs(v * 100 - Math.round(v * 100)) > 1e-6) { setToast(`${name}的${label}单价最多 2 位小数`); return; }
+        const issue = unitPriceIssue(label, raw);
+        if (issue) { setModalError(`${name}的${issue}`); return; }
       }
     }
     setCreateSubmitting(true);
@@ -522,7 +541,7 @@ export default function AdminWhrConsolidationPage() {
       setNewTotalVolume("68");
       setSelectedCustomers([]);
       loadPlans();
-    } catch (e: any) { setToast(e?.message ?? "创建失败"); }
+    } catch (e: any) { setModalError(e?.message ?? "创建失败"); }
     finally { setCreateSubmitting(false); }
   };
 
@@ -684,6 +703,7 @@ export default function AdminWhrConsolidationPage() {
 
   /** 打开「新增客户」弹窗：客户列表是懒加载的，这里补一次 */
   const openAddCustomer = () => {
+    setModalError("");
     setAddClientId(""); setAddSearch("");
     setShowAddCustomer(true);
     setAddPriceNormal("");
@@ -698,43 +718,56 @@ export default function AdminWhrConsolidationPage() {
     const checks: Array<[string, string]> = [["普货", editPriceNormal], ["商检货", editPriceInspection], ["敏感货", editPriceSensitive]];
     let filled = 0;
     for (const [label, raw] of checks) {
-      const text = String(raw).trim();
-      if (!text) continue; // 留空 = 这一档不改
-      const v = Number(text);
-      if (!Number.isFinite(v) || v <= 0) { setToast(`${label}单价要填一个大于 0 的数`); return; }
-      if (Math.abs(v * 100 - Math.round(v * 100)) > 1e-6) { setToast(`${label}单价最多 2 位小数`); return; }
+      if (!String(raw).trim()) continue; // 留空 = 这一档不改
+      const issue = unitPriceIssue(label, raw);
+      if (issue) { setModalError(issue); return; }
       filled += 1;
     }
-    if (filled === 0) { setToast("至少改一种单价"); return; }
+    if (filled === 0) { setModalError("至少改一种单价"); return; }
     setPriceSubmitting(true);
     try {
+      /**
+       * ⚠️ 只发**真的改过**的那几档：弹窗打开时三档都预填着，全发过去的话，
+       * 我开着弹窗这段时间别人改了另外两档，我一保存就把人家的改动覆盖回去了（复核第 11 条）。
+       */
+      const changed = (input: string, current: number): number | undefined => {
+        const text = String(input).trim();
+        if (!text) return undefined;
+        const value = Number(text);
+        return Math.abs(value - Number(current)) < 1e-9 ? undefined : value;
+      };
+      const payload = {
+        planId: selectedPlanId,
+        customerId: priceTarget.id,
+        unitPriceNormal: changed(editPriceNormal, priceTarget.unitPriceNormal),
+        unitPriceInspection: changed(editPriceInspection, priceTarget.unitPriceInspection),
+        unitPriceSensitive: changed(editPriceSensitive, priceTarget.unitPriceSensitive),
+      };
+      if (payload.unitPriceNormal === undefined && payload.unitPriceInspection === undefined && payload.unitPriceSensitive === undefined) {
+        setModalError("三档价都跟原来一样，没什么要改的");
+        setPriceSubmitting(false);
+        return;
+      }
       const r = await apiRequest<{ totalFee?: number }>(`${apiBaseUrl()}/admin/whr-consolidation/customers/price`, {
         method: "POST",
         headers: jsonPost,
-        body: JSON.stringify({
-          planId: selectedPlanId,
-          customerId: priceTarget.id,
-          unitPriceNormal: String(editPriceNormal).trim() ? Number(editPriceNormal) : undefined,
-          unitPriceInspection: String(editPriceInspection).trim() ? Number(editPriceInspection) : undefined,
-          unitPriceSensitive: String(editPriceSensitive).trim() ? Number(editPriceSensitive) : undefined,
-        }),
+        body: JSON.stringify(payload),
       });
       setToast(r?.totalFee != null ? `单价已改，没付款的单按新价重算了，这位客户现在合计 ¥${r.totalFee}` : "单价已改");
       setPriceTarget(null);
       loadDetail(selectedPlanId);
-    } catch (e: any) { setToast(e?.message ?? "改单价失败"); }
+    } catch (e: any) { setModalError(e?.message ?? "改单价失败"); }
     finally { setPriceSubmitting(false); }
   };
 
   const handleAddCustomer = async () => {
     if (!selectedPlanId) return;
-    if (!addClientId) { setToast("请选择客户"); return; }
+    if (!addClientId) { setModalError("请选择客户"); return; }
     // 三档单价当场填（2026-09-18 老板拍板）。页面先挡一次，说了算的是后端那道 requireUnitPrice
     const priceChecks: Array<[string, string]> = [["普货", addPriceNormal], ["商检货", addPriceInspection], ["敏感货", addPriceSensitive]];
     for (const [label, raw] of priceChecks) {
-      const v = Number(String(raw).trim());
-      if (!String(raw).trim() || !Number.isFinite(v) || v <= 0) { setToast(`${label}单价要填一个大于 0 的数`); return; }
-      if (Math.abs(v * 100 - Math.round(v * 100)) > 1e-6) { setToast(`${label}单价最多 2 位小数`); return; }
+      const issue = unitPriceIssue(label, raw);
+      if (issue) { setModalError(issue); return; }
     }
     setAddSubmitting(true);
     try {
@@ -754,7 +787,7 @@ export default function AdminWhrConsolidationPage() {
         : "客户已加入本计划");
       setShowAddCustomer(false);
       loadDetail(selectedPlanId);
-    } catch (e: any) { setToast(e?.message ?? "新增失败"); }
+    } catch (e: any) { setModalError(e?.message ?? "新增失败"); }
     finally { setAddSubmitting(false); }
   };
 
@@ -961,15 +994,20 @@ export default function AdminWhrConsolidationPage() {
                             <span>普货：{c.unitPriceNormal} 元/方</span>
                             <span>商检货：{c.unitPriceInspection} 元/方</span>
                             <span>敏感货：{c.unitPriceSensitive} 元/方</span>
-                            {/* 2026-09-18 老板拍板恢复：柜里能改单价（每个柜价格都不一样） */}
-                            {planDetail.status !== "cancelled" && (
+                            {/* 2026-09-18 老板拍板恢复：柜里能改单价（每个柜价格都不一样）。
+                                只有还在「计划中 / 收货中 / 装柜中」的柜能改：已发运 / 已完成的柜里单子都付过款了，
+                                改价不会改金额，只会让详情显示「付款后柜里单价改过」，看着像账错了（复核第 8 条） */}
+                            {["planning", "collecting", "loading"].includes(planDetail.status) && (
                               <button
                                 onClick={(e) => {
                                   e.stopPropagation();
+                                  setModalError("");
                                   setPriceTarget(c);
-                                  setEditPriceNormal(String(c.unitPriceNormal));
-                                  setEditPriceInspection(String(c.unitPriceInspection));
-                                  setEditPriceSensitive(String(c.unitPriceSensitive));
+                                  // 老柜里可能存着 0.00（8-29 之前 0.001 能过），预填成 "0" 会被「要大于 0」拦死 → 当没填
+                                  const prefill = (v: number) => (Number(v) > 0 ? String(v) : "");
+                                  setEditPriceNormal(prefill(c.unitPriceNormal));
+                                  setEditPriceInspection(prefill(c.unitPriceInspection));
+                                  setEditPriceSensitive(prefill(c.unitPriceSensitive));
                                 }}
                                 style={{ ...btnCancel, padding: "4px 12px", fontSize: 12 }}
                               >改单价</button>
@@ -1357,7 +1395,7 @@ export default function AdminWhrConsolidationPage() {
         {/* 弹窗：改单价（2026-09-18 恢复）                                    */}
         {/* ================================================================ */}
         {priceTarget && selectedPlanId && (
-          <Modal onClose={() => setPriceTarget(null)}>
+          <Modal onClose={() => { setPriceTarget(null); setModalError(""); }}>
             <h3 style={{ marginTop: 0 }}>改单价 - {priceTarget.clientName}</h3>
             <div style={{ fontSize: 13, color: "var(--t-muted)", marginBottom: 10 }}>
               只改这一柜给他的价。改完他<b>没付款</b>的单会按新价重算；已经付过款的单金额不动。留空的那一档不改。
@@ -1376,9 +1414,12 @@ export default function AdminWhrConsolidationPage() {
                 <input type="number" min="0" step="0.01" value={editPriceSensitive} onChange={e => setEditPriceSensitive(e.target.value)} style={fi} />
               </div>
             </div>
+            {modalError && (
+              <div style={{ margin: "10px 0", padding: "10px 12px", background: "var(--c-red-bg)", color: "var(--c-red-deep)", borderRadius: 8, fontSize: 13, whiteSpace: "pre-wrap" }}>{modalError}</div>
+            )}
             <div style={{ marginTop: 14, display: "flex", gap: 8 }}>
               <button onClick={handleUpdatePrice} disabled={priceSubmitting} style={btnConfirm}>{priceSubmitting ? "保存中..." : "保存"}</button>
-              <button onClick={() => setPriceTarget(null)} style={btnCancel}>取消</button>
+              <button onClick={() => { setPriceTarget(null); setModalError(""); }} style={btnCancel}>取消</button>
             </div>
           </Modal>
         )}
@@ -1431,9 +1472,12 @@ export default function AdminWhrConsolidationPage() {
                   ))}
                 </div>
               </div>
+              {modalError && (
+                <div style={{ margin: "10px 0", padding: "10px 12px", background: "var(--c-red-bg)", color: "var(--c-red-deep)", borderRadius: 8, fontSize: 13, whiteSpace: "pre-wrap" }}>{modalError}</div>
+              )}
               <div style={{ marginTop: 14, display: "flex", gap: 8 }}>
                 <button onClick={handleAddCustomer} disabled={addSubmitting} style={btnConfirm}>{addSubmitting ? "添加中..." : "确认新增"}</button>
-                <button onClick={() => setShowAddCustomer(false)} style={btnCancel}>取消</button>
+                <button onClick={() => { setShowAddCustomer(false); setModalError(""); }} style={btnCancel}>取消</button>
               </div>
             </Modal>
           );
@@ -1546,9 +1590,12 @@ export default function AdminWhrConsolidationPage() {
               </div>
             )}
 
+            {modalError && (
+              <div style={{ margin: "10px 0", padding: "10px 12px", background: "var(--c-red-bg)", color: "var(--c-red-deep)", borderRadius: 8, fontSize: 13, whiteSpace: "pre-wrap" }}>{modalError}</div>
+            )}
             <div style={{ marginTop: 14, display: "flex", gap: 8 }}>
               <button onClick={handleCreate} disabled={createSubmitting} style={btnConfirm}>{createSubmitting ? "创建中..." : "确认创建"}</button>
-              <button onClick={() => setShowCreate(false)} style={btnCancel}>取消</button>
+              <button onClick={() => { setShowCreate(false); setModalError(""); }} style={btnCancel}>取消</button>
             </div>
           </Modal>
         )}

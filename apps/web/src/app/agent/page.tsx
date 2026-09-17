@@ -43,14 +43,23 @@ export default function AgentWorkbenchPage() {
   const [focusPlanId, setFocusPlanId] = useState<string | null>(null);
 
   useEffect(() => {
-    const sync = () => setSection(sectionFromHash());
+    const sync = () => {
+      const next = sectionFromHash();
+      setSection(next);
+      // 旧链接（#whr / #wallet …）退回首页时把地址栏也改过来，不然左边菜单一个都不高亮
+      const raw = window.location.hash.replace(/^#/, "");
+      if (raw && raw !== next) {
+        navigateToHash(`${window.location.pathname}${window.location.search}#${next}`);
+      }
+    };
     sync();
     window.addEventListener("hashchange", sync);
     return () => window.removeEventListener("hashchange", sync);
   }, []);
 
-  // 首页「看明细」→ 跳到仓库版集货分区并直接打开那个柜
+  // 首页「看明细」→ 跳到仓库版集货分区并直接打开那个柜（集货关着的时候这条路不许走）
   const openPlan = useCallback((planId: string) => {
+    if (!isAgentSectionEnabled("whr")) return;
     setFocusPlanId(planId);
     setSection("whr");
     navigateToHash(`${window.location.pathname}${window.location.search}#whr`);
@@ -61,11 +70,13 @@ export default function AgentWorkbenchPage() {
     <div style={{ padding: "4px 0 24px" }}>
       {section === "home" ? <AgentHome onOpenPlan={openPlan} /> : null}
       {section === "shipments" ? <AgentShipments /> : null}
-      {AGENT_WHR_FEATURES_ENABLED && section === "whr" ? <AgentWhr focusPlanId={focusPlanId} onFocusHandled={clearFocus} /> : null}
-      {AGENT_WHR_FEATURES_ENABLED && section === "clients" ? <AgentClients /> : null}
-      {AGENT_WHR_FEATURES_ENABLED && section === "wallet" ? <AgentWallet /> : null}
+      {/* ⚠️ 渲染和 sectionFromHash 用**同一份**判断（isAgentSectionEnabled），别一个看全局开关、一个看名单：
+          将来只想单独放开某一个分区时，两边不一致会渲染出空白页（DeepSeek 复核 2026-09-18 第 13 条） */}
+      {isAgentSectionEnabled("whr") && section === "whr" ? <AgentWhr focusPlanId={focusPlanId} onFocusHandled={clearFocus} /> : null}
+      {isAgentSectionEnabled("clients") && section === "clients" ? <AgentClients /> : null}
+      {isAgentSectionEnabled("wallet") && section === "wallet" ? <AgentWallet /> : null}
       {section === "rebates" ? <AgentRebates /> : null}
-      {AGENT_WHR_FEATURES_ENABLED && section === "me" ? <AgentMe /> : null}
+      {isAgentSectionEnabled("me") && section === "me" ? <AgentMe /> : null}
     </div>
   );
 }

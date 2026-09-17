@@ -713,7 +713,7 @@
 - **POST /admin/whr-consolidation/customers/add**（加客户，超管 + 员工）：同样**当场填三档价**，缺档 / 不合法 `400`。照旧锁计划行、锁后重判计划状态和重复客户。
 - **POST /admin/whr-consolidation/customers/price**（改单价，仅超管）：**恢复**（9-16 到 9-18 之间是 410）。只改传上来的那几档（留空不改）、一档都没传 `400`；事务里先 `lockPlanAliveById`（已取消的柜不许改），改完这位客户**没付款**的单按新价重算（`recalcUnpaidPrealertFees` + `recalcCustomerTotals`，跟长期价那条路同一份口径），已付款的金额不动。
 - **GET /client/whr-consolidation/plans**：不再下发 `hasLongTermPrice`（客户端页顶那句「暂未配对价格，请联系管理员」跟着去掉）；柜里那行的 `myUnitPrice*` 照旧给。
-- **保留但前端没有入口**：`client_whr_prices` 表、`long-term-price.ts`、`POST /admin/users/client/whr-price`、`GET /admin/whr-consolidation/client-prices`、代理端那套长期价接口。**以后要重新开这个功能时注意**：`setClientWhrPrice` 会连带改「计划中/收货中/装柜中」柜里这位客户的单价并重算没付款的单 —— 现在没人能调它，重开之前要先想清楚跟「每柜当场填」怎么共存。
+- **保留但前端没有入口**：`client_whr_prices` 表、`long-term-price.ts`、`POST /admin/clients/whr-price`、`GET /admin/whr-consolidation/client-prices`、代理端那套长期价接口。**以后要重新开这个功能时注意**：`setClientWhrPrice` 会连带改「计划中/收货中/装柜中」柜里这位客户的单价并重算没付款的单 —— 现在没人能调它，重开之前要先想清楚跟「每柜当场填」怎么共存。
 
 ### 20.2 代理工作台：集货相关分区暂时关闭
 

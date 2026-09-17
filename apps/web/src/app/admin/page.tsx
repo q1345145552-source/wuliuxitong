@@ -1170,7 +1170,7 @@ export default function AdminHomePage() {
 
   /**
    * 2026-09-18 老板拍板：客户长期价这套不用了（价格改成每个柜当场填），所以这里的
-   * 「填/改长期价」表单和提交函数都删了。后端接口 POST /admin/users/client/whr-price
+   * 「填/改长期价」表单和提交函数都删了。后端接口 POST /admin/clients/whr-price
    * 和服务层的 setAdminClientWhrPrice 都留着，以后要开回来照旧能用。
    */
 
@@ -1811,7 +1811,7 @@ export default function AdminHomePage() {
                   {/*
                     2026-09-18 老板拍板：**不再有「客户长期价」**（每个柜价格都不一样，价格在建柜 / 加客户 /
                     改单价时当场填）。所以这里「长期价」那一行和「填/改长期价」按钮都去掉了。
-                    后端接口（POST /admin/users/client/whr-price）和 client_whr_prices 表都留着，以后要用再开。
+                    后端接口（POST /admin/clients/whr-price）和 client_whr_prices 表都留着，以后要用再开。
                   */}
                   <span><strong>状态</strong> {u.status === "inactive" ? "已封禁" : "正常"}</span>
                   <span style={{ color: "var(--t-strong)", fontSize: 12 }}>{u.createdAt.slice(0, 10)}</span>

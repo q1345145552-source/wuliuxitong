@@ -25,13 +25,18 @@ import {
   syncPlanStatus,
   toNum,
 } from "./utils";
-/**
- * 2026-09-18 起这个文件不再读客户长期价（`long-term-price.ts` 和 `client_whr_prices` 表都留着，
- * 老板说后端暂时保留、以后可能会用）。柜里的三档单价一律是建柜 / 加客户 / 改单价时当场填的。
- */
+import { assertPlanPricesNotBelowAgent, lockClientWhrPrice, REPRICE_PLAN_STATUSES } from "./long-term-price";
 
-/** 没长期价时的那句话（9-16 到 9-18 之间用过；现在没有「必须先配价」这道闸了，留着给还在读它的地方） */
-export const NO_LONG_TERM_PRICE_MESSAGE = "暂未配对价格，请联系管理员";
+/**
+ * 2026-09-18 起这个文件不再读客户长期价来定价（`long-term-price.ts` 和 `client_whr_prices` 表都留着，
+ * 老板说后端暂时保留、以后可能会用）。柜里的三档单价一律是建柜 / 加客户 / 改单价时当场填的。
+ *
+ * ⚠️ 两样东西照旧要：
+ *  ① **客户价排队锁**（`lockClientWhrPrice`）：改客户归属那条路靠它保证「数完业务记录到改完归属之间，
+ *     没有新的柜记录插队」（admin/routes.ts 的注释和 scripts/test-lock-order.ts 都写着这条）。
+ *  ② **代理价下限**（`assertPlanPricesNotBelowAgent`）：代理客户的柜价不能低于湘泰给代理的价（确认单 4.7）。
+ *  锁序统一成【客户价排队锁 → agents FOR SHARE → 计划】，跟 setClientWhrPrice 同方向，别对着拿。
+ */
 
 /**
  * 删柜的「发运红线」（2026-09-16，确认单 4.15）：柜只要已经发出去，谁都不能删，输管理员密码也不行。
@@ -198,7 +203,23 @@ export function registerWhrConsolidationRoutes(app: MinimalHttpApp): void {
 
     // 编号生成和插入放同一个事务，锁才有意义
     const plan = await prisma.$transaction(async (tx) => {
-      // 2026-09-18：价格是这次填的，不再去读客户长期价，所以也不用先拿「客户价排队锁」了
+      // 锁序：客户价排队锁（按 clientId 排序）→ 代理价下限（agents FOR SHARE）→ 取号建柜
+      for (const clientId of [...clientIds].sort()) {
+        await lockClientWhrPrice(tx, clientId);
+      }
+      await assertPlanPricesNotBelowAgent(
+        tx,
+        auth.companyId,
+        body.customers!.map((c) => ({
+          clientId: c.clientId!.trim(),
+          clientName: clientNameOf.get(c.clientId!.trim()),
+          prices: {
+            normal: Number(c.unitPriceNormal),
+            inspection: Number(c.unitPriceInspection),
+            sensitive: Number(c.unitPriceSensitive),
+          },
+        })),
+      );
       const planNo = await generatePlanNoInTx(tx);
       const created = await tx.whrConsolidationPlan.create({
         data: {
@@ -483,9 +504,10 @@ export function registerWhrConsolidationRoutes(app: MinimalHttpApp): void {
       return;
     }
 
+    // 事务外这次查只为早点给提示（说了算的是锁里那一次，CLAUDE.md #28）
     const customer = await prisma.whrConsolidationPlanCustomer.findFirst({
       where: { id: body.customerId.trim(), planId: body.planId.trim(), companyId: auth.companyId },
-      select: { id: true },
+      select: { id: true, clientId: true },
     });
     if (!customer) {
       fail(res, 404, "NOT_FOUND", "客户记录不存在");
@@ -494,13 +516,44 @@ export function registerWhrConsolidationRoutes(app: MinimalHttpApp): void {
 
     // 改价 + 重算放同一个事务，避免只改了价没重算就崩了
     const result = await prisma.$transaction(async (tx) => {
-      // ⚠️ 整柜取消了就不该再改单价 —— 改一次会把柜里所有未付款的单重算一遍金额。
-      // 必须在事务里锁住计划行（2026-08-27 第二版）：事务外查到「柜还活着」之后柜被取消，金额照样被重算。
+      // 锁序：客户价排队锁 → 计划行（整柜取消了就不许改：改一次会把柜里没付款的单全重算）
+      await lockClientWhrPrice(tx, customer.clientId);
       await lockPlanAliveById(tx, body.planId!.trim());
-      await tx.whrConsolidationPlanCustomer.update({ where: { id: customer.id }, data: updateData });
+
+      // 锁后重读这一行：事务外那次查只是提示，这中间客户可能已经被移出柜（DeepSeek 复核第 7 条）
+      const fresh = await tx.whrConsolidationPlanCustomer.findFirst({
+        where: { id: customer.id, planId: body.planId!.trim(), companyId: auth.companyId },
+        select: { id: true, clientId: true, unitPriceNormal: true, unitPriceInspection: true, unitPriceSensitive: true },
+      });
+      if (!fresh) throw new BusinessError("这个客户刚刚被移出这个柜了，请刷新后再看", 404, "NOT_FOUND");
+
+      /**
+       * 只有还在「计划中 / 收货中 / 装柜中」的柜能改价（跟长期价那条路的 REPRICE_PLAN_STATUSES 同一份名单）。
+       * 已发运 / 已完成的柜里单子都付过款了，改价不会改金额，只会让柜详情显示「付款后柜里单价改过」——
+       * 看起来像账错了（DeepSeek 复核 2026-09-18 第 8 条）。
+       */
+      const planRow = await tx.whrConsolidationPlan.findFirst({
+        where: { id: body.planId!.trim(), companyId: auth.companyId },
+        select: { status: true },
+      });
+      if (!planRow || !REPRICE_PLAN_STATUSES.includes(planRow.status)) {
+        throw new BusinessError("这个柜已经发运或完成了，不能再改单价", 400, "BAD_REQUEST");
+      }
+
+      // 代理客户：改完之后的三档价都不能低于给代理的价（没传的档用现价）
+      await assertPlanPricesNotBelowAgent(tx, auth.companyId, [{
+        clientId: fresh.clientId,
+        prices: {
+          normal: updateData.unitPriceNormal ?? toNum(fresh.unitPriceNormal),
+          inspection: updateData.unitPriceInspection ?? toNum(fresh.unitPriceInspection),
+          sensitive: updateData.unitPriceSensitive ?? toNum(fresh.unitPriceSensitive),
+        },
+      }]);
+
+      await tx.whrConsolidationPlanCustomer.update({ where: { id: fresh.id }, data: updateData });
       // 跟长期价那条路同样两句（口径只有一份，见 long-term-price.ts）
-      await recalcUnpaidPrealertFees(customer.id, tx);
-      const totals = await recalcCustomerTotals(customer.id, tx);
+      await recalcUnpaidPrealertFees(fresh.id, tx);
+      const totals = await recalcCustomerTotals(fresh.id, tx);
       return { totalFee: totals.totalFee };
     }, { timeout: 30000, maxWait: 10000 });
 
@@ -598,7 +651,9 @@ export function registerWhrConsolidationRoutes(app: MinimalHttpApp): void {
      * 数据库层的「柜 + 客户」唯一约束要动表结构，另行安排，这里先用锁把口子堵上。
      */
     const created = await prisma.$transaction(async (tx) => {
-      // 2026-09-18：价格是这次填的，不用再拿「客户价排队锁」；照旧锁计划行（顺便拦已取消的柜）
+      // 锁序：客户价排队锁 → 代理价下限（agents FOR SHARE）→ 计划行（顺便拦已取消的柜）
+      await lockClientWhrPrice(tx, clientId);
+      await assertPlanPricesNotBelowAgent(tx, auth.companyId, [{ clientId, prices: price }]);
       await lockPlanAliveById(tx, plan.id);
 
       // 锁完重读计划状态：事务外那道「不能再新增客户」的检查只配当提示

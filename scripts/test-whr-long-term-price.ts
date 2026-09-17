@@ -171,8 +171,6 @@ async function main(): Promise<void> {
     await import("../apps/api/src/modules/admin/routes"),
     await import("../apps/api/src/modules/consolidation/routes"),
   ]);
-  const { NO_LONG_TERM_PRICE_MESSAGE } = await import("../apps/api/src/modules/whr-consolidation/routes");
-
   console.log("仓库版集货长期价 / 付款快照 / 超管客户管理");
 
   /* ───────────── 1. 建柜 / 加客户 ───────────── */
@@ -193,8 +191,14 @@ async function main(): Promise<void> {
     const byClient = Object.fromEntries(rows.map((x) => [x.clientId, [x.unitPriceNormal, x.unitPriceInspection, x.unitPriceSensitive]]));
     assert.deepEqual(byClient[C_XT], [520, 620, 720], "湘泰客户的价没按填的存");
     assert.deepEqual(byClient[C_AG], [580, 680, 780], "代理客户的价没按填的存");
-    // 不再读客户长期价，所以一把「客户价排队锁」都不该拿
-    assert.ok(!mem.events.some((e) => String(e).startsWith("lock:client_price:")), `建柜还在拿客户价锁：${mem.events.join(", ")}`);
+    /**
+     * 价格虽然是当场填的，但两把锁照旧要（DeepSeek 复核 2026-09-18 第 1、2 条）：
+     * 客户价排队锁保证「改客户归属」那条路数完业务记录后不会被新柜记录插队；
+     * 代理价共享锁保证下限判断跟「调高代理价」排队。顺序：客户价（按 id 排序）→ agents → 取号。
+     */
+    assertBefore(`lock:client_price:${C_AG}`, `lock:client_price:${C_XT}`, "多个客户的价锁要按 clientId 排序");
+    assertBefore(`lock:client_price:${C_XT}`, `lock:agent_share:${AGENT_ID}`, "客户价锁要排在代理价共享锁前面");
+    assertBefore(`lock:agent_share:${AGENT_ID}`, "lock:plan_no", "代理价共享锁要排在取号建柜前面");
     assertBefore("lock:plan_no", `write:whrConsolidationPlan:${r.data.id}`, "取号锁在建柜之前");
   });
 
@@ -227,7 +231,8 @@ async function main(): Promise<void> {
     const row = mem.db.whrConsolidationPlanCustomer.find((x) => x.planId === P2 && x.clientId === C_AG)!;
     assert.deepEqual([row.unitPriceNormal, row.unitPriceInspection, row.unitPriceSensitive], [540, 640, 740]);
     assert.deepEqual([r.data.unitPriceNormal, r.data.unitPriceInspection, r.data.unitPriceSensitive], [540, 640, 740]);
-    assert.ok(!mem.events.some((e) => String(e).startsWith("lock:client_price:")), "加客户不该再拿客户价锁");
+    assertBefore(`lock:client_price:${C_AG}`, `lock:agent_share:${AGENT_ID}`, "加客户：客户价锁在代理价共享锁前面");
+    assertBefore(`lock:agent_share:${AGENT_ID}`, `lock:plan:${P2}`, "加客户：代理价共享锁在锁计划前面");
     assertBefore(`lock:plan:${P2}`, `write:whrConsolidationPlanCustomer:${row.id}`, "加客户：锁完计划才写");
     assertNoAgentInfo("员工加客户的返回", r.wire);
   });
@@ -284,6 +289,79 @@ async function main(): Promise<void> {
     const cancelled = await callRoute("POST /admin/whr-consolidation/customers/price", ADMIN, { body: { planId: P1, customerId: PC_X, unitPriceNormal: 580 } });
     assert.ok(cancelled.status >= 400, `已取消的柜还能改单价：${cancelled.status}`);
     assert.equal(pcRow(PC_X).unitPriceNormal, 550, "已取消的柜价被改了");
+  });
+
+  await check("5c) 代理客户的柜价不能低于给代理的价：建柜 / 加客户 / 改单价三处都拦，什么都不写", async () => {
+    // 夹具：代理价 500 / 600 / 700
+    seed();
+    const low = await callRoute("POST /admin/whr-consolidation/plans", ADMIN, {
+      body: { destinationTh: "曼谷", customers: [{ clientId: C_AG, unitPriceNormal: 400, unitPriceInspection: 700, unitPriceSensitive: 800 }] },
+    });
+    assert.equal(low.status, 400, `建柜没拦住低于代理价：${low.status} ${low.message}`);
+    assert.ok(/不能低于给代理的价 500/.test(low.message), low.message);
+    assert.deepEqual(writes(), [], `被拦下还写了库：${writes().join(", ")}`);
+
+    seed();
+    const lowAdd = await callRoute("POST /admin/whr-consolidation/customers/add", STAFF, {
+      body: { planId: P2, clientId: C_AG, unitPriceNormal: 600, unitPriceInspection: 500, unitPriceSensitive: 800 },
+    });
+    assert.equal(lowAdd.status, 400, `加客户没拦住低于代理价：${lowAdd.status} ${lowAdd.message}`);
+    assert.ok(/商检货单价不能低于给代理的价 600/.test(lowAdd.message), lowAdd.message);
+    assert.deepEqual(writes(), [], "被拦下还写了库");
+
+    seed();
+    const lowEdit = await callRoute("POST /admin/whr-consolidation/customers/price", ADMIN, {
+      body: { planId: P1, customerId: PC_A, unitPriceSensitive: 650 },
+    });
+    assert.equal(lowEdit.status, 400, `改单价没拦住低于代理价：${lowEdit.status} ${lowEdit.message}`);
+    assert.ok(/敏感货单价不能低于给代理的价 700/.test(lowEdit.message), lowEdit.message);
+
+    // 湘泰自己的客户不受这道闸管（想填多低填多低）
+    seed();
+    const xt = await callRoute("POST /admin/whr-consolidation/customers/price", ADMIN, {
+      body: { planId: P1, customerId: PC_X, unitPriceNormal: 1 },
+    });
+    assert.equal(xt.status, 200, `湘泰客户被代理价闸误伤了：${xt.message}`);
+  });
+
+  await check("5d) 改单价：锁之前这个客户被移出柜了 → 锁里重读拦下，404 不报服务器错误、什么都没写", async () => {
+    seed();
+    mem.onEvent = (e) => {
+      if (e === `lock:plan:${P1}`) {
+        mem.db.whrConsolidationPlanCustomer = mem.db.whrConsolidationPlanCustomer.filter((c: Row) => c.id !== PC_X);
+      }
+    };
+    const r = await callRoute("POST /admin/whr-consolidation/customers/price", ADMIN, { body: { planId: P1, customerId: PC_X, unitPriceNormal: 580 } });
+    assert.equal(r.status, 404, `锁里没重读这一行：${r.status} ${r.message}`);
+    assert.ok(/移出/.test(r.message), r.message);
+    assert.deepEqual(writes(), [], `被拦下还写了库：${writes().join(", ")}`);
+  });
+
+  await check("5e) 改单价：已付款的单金额和快照一个字不动（只重算没付款的）", async () => {
+    seed();
+    // 现造一张**已付款**的单：金额和快照在付款那一刻就定死了，改单价不许动它
+    mem.db.whrConsolidationPrealert.push({
+      ...JSON.parse(JSON.stringify(pa(PA_X))),
+      id: "zz_b1_paidone",
+      status: "paid",
+      totalFee: 825,
+      paidPriceNormal: 550,
+      paidPriceInspection: 650,
+      paidPriceSensitive: 750,
+    });
+    const before = JSON.parse(JSON.stringify(mem.db.whrConsolidationPrealert.filter((x: Row) => x.status === "paid")));
+    const r = await callRoute("POST /admin/whr-consolidation/customers/price", ADMIN, { body: { planId: P1, customerId: PC_X, unitPriceNormal: 580 } });
+    assert.equal(r.status, 200, r.message);
+    const after = mem.db.whrConsolidationPrealert.filter((x: Row) => x.status === "paid");
+    assert.deepEqual(JSON.parse(JSON.stringify(after)), before, "已付款的单被改了");
+  });
+
+  await check("5f) 改单价只有超管能调：员工 403，一次库都不碰", async () => {
+    seed();
+    const r = await callRoute("POST /admin/whr-consolidation/customers/price", STAFF, { body: { planId: P1, customerId: PC_X, unitPriceNormal: 580 } });
+    assert.equal(r.status, 403, `员工能改单价了：${r.status} ${r.message}`);
+    assert.deepEqual(writes(), [], "被拦下还写了库");
+    assert.equal(pcRow(PC_X).unitPriceNormal, 550);
   });
 
   await check("6) 审核不通过：传了单价也不改柜里的价，只按现价重算这张单", async () => {
@@ -409,54 +487,69 @@ async function main(): Promise<void> {
 
   /* ───────────── 5. 超管改长期价 ───────────── */
 
-  await check("15) 超管改代理客户的长期价 → 403，价没动、一把锁都没拿", async () => {
+  await check("15) 长期价两个写接口都关着：超管和代理调都 400，价没动、一把锁都没拿（2026-09-18 拍板）", async () => {
+    /**
+     * 老板 2026-09-18 拍板「价格每个柜当场填」，代理端前端下线，但**后端保留**。
+     * 光拆页面入口不够：这两个接口一被调到，`setClientWhrPrice` 会把这位客户所有在跑的柜里的价一次覆盖掉
+     *（Opus 复核第 2 条）。所以功能关闭期间接口一律拒绝；开关在 long-term-price.ts。
+     */
     seed();
-    const r = await callRoute("POST /admin/clients/whr-price", ADMIN, {
-      body: { clientId: C_AG, unitPriceNormal: 999, unitPriceInspection: 999, unitPriceSensitive: 999 },
+    const admin = await callRoute("POST /admin/clients/whr-price", ADMIN, {
+      body: { clientId: C_XT, unitPriceNormal: 999, unitPriceInspection: 999, unitPriceSensitive: 999 },
     });
-    assert.equal(r.status, 403, r.message);
-    assert.ok(r.message.includes("代理"), r.message);
-    assert.equal(priceOf(C_AG)!.priceNormal, 600);
-    assert.deepEqual(mem.events, []);
+    assert.equal(admin.status, 400, `超管那条没关：${admin.status} ${admin.message}`);
+    assert.ok(/暂时关闭/.test(admin.message), admin.message);
+    assert.equal(priceOf(C_XT)!.priceNormal, 550, "长期价被改了");
+    assert.equal(pcRow(PC_X).unitPriceNormal, 550, "柜里的价被覆盖了");
+    assert.deepEqual(mem.events, [], `被拦下还拿了锁 / 写了库：${mem.events.join(", ")}`);
+
+    // 代理那条（POST /agent/clients/price）在 scripts/test-agent-portal-isolation.ts 里用真库测（这份内存桩不注册代理端路由）
+    const { LONG_TERM_PRICE_WRITE_ENABLED } = await import("../apps/api/src/modules/whr-consolidation/long-term-price");
+    assert.equal(LONG_TERM_PRICE_WRITE_ENABLED, false, "开关被打开了：打开前先想清楚它会覆盖柜里当场填的价");
   });
 
-  await check("16) 超管改湘泰客户长期价：事务外看是湘泰客户、**锁住那一刻归属被改成代理** → 锁里重判 403，什么都没写", async () => {
+  await check("16) 保留下来的长期价逻辑本身没坏（直接调函数测，开回来时还能用）", async () => {
+    const { setClientWhrPrice } = await import("../apps/api/src/modules/whr-consolidation/long-term-price");
+    // ① 湘泰客户：存价、记是超管改的、在跑的柜跟着改、没付款的单重算（1750 → 1780）
     seed();
-    mem.onEvent = (e) => {
-      if (e === `lock:client_price:${C_XT}`) mem.db.user.find((u) => u.id === C_XT)!.agentId = AGENT_ID;
-    };
-    const r = await callRoute("POST /admin/clients/whr-price", ADMIN, {
-      body: { clientId: C_XT, unitPriceNormal: 560, unitPriceInspection: 660, unitPriceSensitive: 760 },
+    const okRes = await setClientWhrPrice({
+      companyId: "c1",
+      clientId: C_XT,
+      prices: { normal: 560, inspection: 660, sensitive: 760 },
+      actor: { userId: ADMIN.userId, role: "admin" },
     });
-    assert.equal(r.status, 403, `${r.status} ${r.message}`);
-    assert.equal(priceOf(C_XT)!.priceNormal, 550);
-    assert.deepEqual(writes(), []);
-  });
-
-  await check("17) 超管改湘泰客户长期价：存价、记是超管改的、在跑的柜跟着改、没付款的单重算（1750 → 1780）", async () => {
-    seed();
-    const r = await callRoute("POST /admin/clients/whr-price", ADMIN, {
-      body: { clientId: C_XT, unitPriceNormal: 560, unitPriceInspection: 660, unitPriceSensitive: 760 },
-    });
-    assert.equal(r.status, 200, r.message);
-    assert.equal(r.data.updatedPlanRows, 1);
+    assert.equal(okRes.updatedPlanRows, 1);
     assert.equal(priceOf(C_XT)!.priceNormal, 560);
     assert.equal(priceOf(C_XT)!.updatedByRole, "admin");
     assert.equal(pcRow(PC_X).unitPriceNormal, 560);
     assert.equal(Number(pa(PA_X).totalFee), 1780);
+
+    // ② 代理客户：价不能低于给代理的价（代理价 500/600/700）
+    seed();
+    await assert.rejects(
+      () => setClientWhrPrice({
+        companyId: "c1",
+        clientId: C_AG,
+        prices: { normal: 400, inspection: 700, sensitive: 800 },
+        actor: { userId: "zz_b1_agentlogin", role: "agent" },
+      }),
+      /不能低于/,
+      "代理价下限没拦住",
+    );
+    assert.equal(priceOf(C_AG)!.priceNormal, 600, "被拦下还把价改了");
   });
 
-  await check("18) 超管改长期价：0.001 / 3 位小数 / 缺档在碰数据库之前就拦", async () => {
+  await check("17) 长期价的单价闸：0.001 / 3 位小数 / 缺档在碰数据库之前就拦（parseWhrPriceInput）", async () => {
+    const { parseWhrPriceInput } = await import("../apps/api/src/modules/whr-consolidation/long-term-price");
     seed();
-    for (const body of [
-      { clientId: C_XT, unitPriceNormal: 0.001, unitPriceInspection: 1, unitPriceSensitive: 1 },
-      { clientId: C_XT, unitPriceNormal: 12.345, unitPriceInspection: 1, unitPriceSensitive: 1 },
-      { clientId: C_XT, unitPriceNormal: 600, unitPriceInspection: 1 },
+    for (const bad of [
+      { normal: 0.001, inspection: 1, sensitive: 1 },
+      { normal: 12.345, inspection: 1, sensitive: 1 },
+      { normal: 600, inspection: 1 },
     ]) {
-      const r = await callRoute("POST /admin/clients/whr-price", ADMIN, { body });
-      assert.equal(r.status, 400, JSON.stringify(body));
+      assert.throws(() => parseWhrPriceInput(bad as Record<"normal" | "inspection" | "sensitive", unknown>), /单价/, JSON.stringify(bad));
     }
-    assert.deepEqual(mem.events, []);
+    assert.deepEqual(mem.events, [], "校验之前就不该碰库");
   });
 
   /* ───────────── 6. 员工 / 客户看不到代理 ───────────── */

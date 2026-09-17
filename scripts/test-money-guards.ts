@@ -422,7 +422,7 @@ async function main(): Promise<void> {
     assert.equal(wrote.totalPackages, 7, `写进去的总件数不对：${wrote.totalPackages}`);
   });
 
-  await checkAsync("5) 建柜接口：总方数超上限、3 位小数都要拦（真调路由；单价 2026-09-16 起不再由建柜传）", async () => {
+  await checkAsync("5) 建柜接口：总方数超上限、3 位小数都要拦（真调路由；单价 2026-09-18 起又由建柜当场传）", async () => {
     const handler = routes.get("POST /admin/whr-consolidation/plans");
     assert.ok(handler, `没注册建柜路由，现有：${[...routes.keys()].slice(0, 8).join(", ")}`);
     /**

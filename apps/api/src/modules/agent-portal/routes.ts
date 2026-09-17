@@ -22,7 +22,7 @@ import { fail, ok } from "../core/http-utils";
 import { requireAgent, type AgentAuth } from "../core/agent-scope";
 import { BusinessError } from "../core/business-error";
 import { CONSOLIDATION_CURRENCY } from "../wallet/consolidation-balance";
-import { lockClientWhrPrice, parseWhrPriceInput, setClientWhrPrice } from "../whr-consolidation/long-term-price";
+import { lockClientWhrPrice, LONG_TERM_PRICE_OFF_MESSAGE, LONG_TERM_PRICE_WRITE_ENABLED, parseWhrPriceInput, setClientWhrPrice } from "../whr-consolidation/long-term-price";
 import { buildFeeBreakdown, deriveLatestStatus } from "../whr-consolidation/utils";
 import { loadOrderTotalMetrics } from "../shipments/total-metrics";
 import { productNamesLabel } from "../../../../../packages/shared-types/product-names";
@@ -1018,6 +1018,9 @@ export function registerAgentPortalRoutes(app: MinimalHttpApp): void {
   app.post("/agent/clients/price", async (req, res) => {
     const auth = requireAgent(req, res);
     if (!auth) return;
+    // 长期价功能暂时关闭（2026-09-18 老板拍板，代码保留）：不拦的话代理一打这个接口，
+    // 他名下客户在跑的柜里当场填的价会被一次覆盖掉
+    if (!LONG_TERM_PRICE_WRITE_ENABLED) return fail(res, 400, "BAD_REQUEST", LONG_TERM_PRICE_OFF_MESSAGE);
     const body = (req.body ?? {}) as { clientId?: unknown; prices?: Record<"normal" | "inspection" | "sensitive", unknown> };
     const clientId = typeof body.clientId === "string" ? body.clientId.trim() : "";
     if (!clientId || clientId.length > 100) {

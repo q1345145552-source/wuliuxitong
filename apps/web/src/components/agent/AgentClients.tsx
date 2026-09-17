@@ -78,7 +78,7 @@ export default function AgentClients() {
 
   return (
     <section>
-      <SectionHeader title="客户和价格" desc="给名下客户填仓库版集货的价（按方、分三档）。填一次长期用，员工把客户加进柜时自动带出。没填价的客户用不了仓库版集货。" />
+      <SectionHeader title="客户和价格" desc="给名下客户填仓库版集货的价（按方、分三档）。⚠️ 2026-09-18 起价格改成每个柜当场填，这一页连同集货相关分区暂时关闭（开关见 modules/agent/agent-features.ts），开回来之前这段说明要重写。" />
       <LoadState loading={loading && !data} error={error} onRetry={reload} />
       {notice ? <div role="status" style={{ padding: "8px 12px", borderRadius: 8, background: "var(--c-green-bg)", color: "var(--c-green-deep)", fontSize: 13, marginBottom: 12 }}>{notice}</div> : null}
       {data ? (

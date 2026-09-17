@@ -722,31 +722,25 @@ async function dbChecks(): Promise<void> {
       assert.equal(b.json.message, none.json.message);
     });
 
-    await check("POST /agent/clients/price：别家客户 404、湘泰客户 404、低于代理价 400 且没写库", async () => {
-      const b = await call(A, "POST", "/agent/clients/price", { clientId: `${P}cb1`, prices: { normal: 900, inspection: 900, sensitive: 900 } });
-      assert.equal(b.status, 404, b.text);
-      const x = await call(A, "POST", "/agent/clients/price", { clientId: `${P}cx`, prices: { normal: 900, inspection: 900, sensitive: 900 } });
-      assert.equal(x.status, 404, x.text);
-      const low = await call(A, "POST", "/agent/clients/price", { clientId: `${P}ca2`, prices: { normal: 499, inspection: 560, sensitive: 610 } });
-      assert.equal(low.status, 400, low.text);
-      assert.ok(low.json.message.includes("500"), low.json.message);
-      assert.equal(await prisma.clientWhrPrice.findUnique({ where: { clientId: `${P}ca2` } }), null);
-      const cbPrice = await prisma.clientWhrPrice.findUnique({ where: { clientId: `${P}cb1` } });
-      assert.equal(cbPrice, null, "别家客户的价没被写进去");
-    });
-
-    await check("POST /agent/clients/price：合法价存进去（操作人记 agent），没付款的单按新价重算", async () => {
+    await check("POST /agent/clients/price：功能关闭期间一律 400，柜里当场填的价不许被覆盖（2026-09-18 拍板）", async () => {
+      /**
+       * 老板 2026-09-18 把「客户长期价」整套改成「每个柜当场填」，代理端前端下线、**后端保留**。
+       * 这个接口要是还能调，代理一打就把名下客户所有在跑的柜里的价一次覆盖掉（Opus 复核第 2 条），
+       * 所以功能关闭期间必须拒绝。开关：apps/api/src/modules/whr-consolidation/long-term-price.ts
+       */
+      const before = await prisma.whrConsolidationPlanCustomer.findUnique({ where: { id: `${P}pc_a2` }, select: { unitPriceNormal: true } });
       const r = await call(A, "POST", "/agent/clients/price", { clientId: `${P}ca2`, prices: { normal: 520, inspection: 560, sensitive: 610 } });
-      assert.equal(r.status, 200, r.text);
-      assert.equal(r.json.data.updatedPlanRows, 1);
-      assert.deepEqual({ ...r.json.data.price, updatedAt: "x" }, { normal: 520, inspection: 560, sensitive: 610, updatedAt: "x" });
-      const saved = await prisma.clientWhrPrice.findUnique({ where: { clientId: `${P}ca2` } });
-      assert.equal(saved?.updatedBy, `${P}login_a`);
-      assert.equal(saved?.updatedByRole, "agent");
-      const pa2 = await prisma.whrConsolidationPrealert.findUnique({ where: { id: `${P}pa_a2` }, select: { totalFee: true } });
-      assert.equal(Number(pa2?.totalFee), 260, "0.5 方普货 × 520");
-      const pcA2 = await prisma.whrConsolidationPlanCustomer.findUnique({ where: { id: `${P}pc_a2` }, select: { unitPriceNormal: true } });
-      assert.equal(Number(pcA2?.unitPriceNormal), 520);
+      assert.equal(r.status, 400, r.text);
+      assert.ok(r.json.message.includes("暂时关闭"), r.json.message);
+      assert.equal(await prisma.clientWhrPrice.findUnique({ where: { clientId: `${P}ca2` } }), null, "关着还把长期价写进去了");
+      const after = await prisma.whrConsolidationPlanCustomer.findUnique({ where: { id: `${P}pc_a2` }, select: { unitPriceNormal: true } });
+      assert.equal(Number(after?.unitPriceNormal), Number(before?.unitPriceNormal), "关着还把柜里的单价改了");
+      // 别家客户、湘泰客户照样进不来（先被开关拦下，更不会走到查客户那一步）
+      for (const clientId of [`${P}cb1`, `${P}cx`]) {
+        const other = await call(A, "POST", "/agent/clients/price", { clientId, prices: { normal: 900, inspection: 900, sensitive: 900 } });
+        assert.equal(other.status, 400, other.text);
+        assert.equal(await prisma.clientWhrPrice.findUnique({ where: { clientId } }), null);
+      }
     });
 
     await check("agent 令牌打 /admin/* /staff/* /client/* 一律 403", async () => {

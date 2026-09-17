@@ -21,10 +21,10 @@ const home = read("apps/web/src/components/agent/AgentHome.tsx");
 const menu = read("apps/web/src/modules/layout/menu-config.ts");
 
 let failures = 0;
-function check(name: string, fn: () => void | Promise<void>): void {
+/** ⚠️ 必须 await：上一版写成同步 `fn()`，异步用例的断言在 `await import` 之后永远不执行 —— 假绿（DeepSeek 复核 2026-09-18 第 4 条） */
+async function check(name: string, fn: () => void | Promise<void>): Promise<void> {
   try {
-    const out = fn();
-    void out;
+    await fn();
     console.log(`  ✅ ${name}`);
   } catch (e) {
     failures++;
@@ -32,14 +32,15 @@ function check(name: string, fn: () => void | Promise<void>): void {
   }
 }
 
-console.log("代理端集货相关分区（暂时关闭）");
+async function main(): Promise<void> {
+  console.log("代理端集货相关分区（暂时关闭）");
 
-check("1) 开关在一个地方，现在是关的；关掉的分区正好是那四个", () => {
+  await check("1) 开关在一个地方，现在是关的；关掉的分区正好是那四个", () => {
   assert.match(flags, /export const AGENT_WHR_FEATURES_ENABLED = false;/, "开关不是 false（要开回来是老板说了才行）");
   assert.match(flags, /AGENT_DISABLED_SECTIONS = \["whr", "clients", "wallet", "me"\] as const;/, "关掉的分区名单不对");
 });
 
-check("2) 菜单里没有那四项，剩下首页 / 运单 / 返现单", async () => {
+  await check("2) 菜单里没有那四项，剩下首页 / 运单 / 返现单", async () => {
   const mod = await import("../apps/web/src/modules/layout/menu-config");
   const items = mod.roleFunctionGroups.agent.flatMap((g: { items: Array<{ id: string; label: string }> }) => g.items);
   assert.deepEqual(items.map((i) => i.id), ["agent-func-home", "agent-func-shipments", "agent-func-rebates"], `代理菜单现在是 ${items.map((i) => i.label).join(" / ")}`);
@@ -50,17 +51,20 @@ check("2) 菜单里没有那四项，剩下首页 / 运单 / 返现单", async (
   assert.ok(menu.includes("AGENT_WHR_FEATURES_ENABLED"), "菜单没跟着开关走");
 });
 
-check("3) 页面：那四个分区渲染前都判开关；旧链接（#whr 等）回首页", () => {
+  await check("3) 页面：那四个分区渲染前都判开关；旧链接（#whr 等）回首页", () => {
   for (const section of ["whr", "clients", "wallet", "me"]) {
-    const re = new RegExp(`AGENT_WHR_FEATURES_ENABLED && section === "${section}"`);
-    assert.match(page, re, `分区 ${section} 没判开关，关着也会渲染`);
+    // 渲染和 hash 那道闸必须用同一份判断（isAgentSectionEnabled），别一个看全局开关、一个看名单
+    const re = new RegExp(`isAgentSectionEnabled\\("${section}"\\) && section === "${section}"`);
+    assert.match(page, re, `分区 ${section} 没用 isAgentSectionEnabled 判，关着也会渲染 / 将来单独放开会出空白页`);
   }
   assert.match(page, /isSectionId\(id\) && isAgentSectionEnabled\(id\)/, "旧链接没挡：#whr 这种会渲染半截页面");
+  assert.match(page, /if \(!isAgentSectionEnabled\("whr"\)\) return;/, "首页「看明细」那条跳转没判开关");
+  assert.match(page, /if \(raw && raw !== next\)/, "旧链接退回首页时没把地址栏的 # 改掉（左边菜单会一个都不高亮）");
   assert.match(page, /section === "rebates" \? <AgentRebates \/>/, "返现单被连带关掉了（这个要留）");
   assert.match(page, /section === "shipments" \? <AgentShipments \/>/, "运单被连带关掉了（这个要留）");
 });
 
-check("4) 首页：关着时不发集货请求，只写一句话说去哪看", () => {
+  await check("4) 首页：关着时不发集货请求，只写一句话说去哪看", () => {
   const start = home.indexOf("export default function AgentHome");
   const body = home.slice(start, home.indexOf("function AgentHomeStuck"));
   assert.match(body, /if \(!AGENT_WHR_FEATURES_ENABLED\)/, "首页没判开关");
@@ -70,19 +74,51 @@ check("4) 首页：关着时不发集货请求，只写一句话说去哪看", (
   assert.ok(home.includes("fetchAgentDashboard"), "把拉数据的代码删了，以后开不回来");
 });
 
-check("5) 组件文件一个都没删（只是暂时不渲染）", () => {
+  await check("5) 组件文件一个都没删（只是暂时不渲染）", () => {
   for (const f of ["AgentWhr.tsx", "AgentWallet.tsx", "AgentClients.tsx", "AgentMe.tsx"]) {
     assert.ok(existsSync(path.join(process.cwd(), "apps/web/src/components/agent", f)), `${f} 被删了`);
   }
 });
 
-check("6) 后端接口一个都没删（老板要求保留）", () => {
+  await check("5b) 集货三个弹窗的报错画在弹窗里面（不是页面顶部那条，会被遮罩压住还自动消失）", () => {
+    const admin = read("apps/web/src/app/admin/whr-consolidation/page.tsx");
+    const staff = read("apps/web/src/app/staff/whr-consolidation/page.tsx");
+    assert.match(admin, /const \[modalError, setModalError\] = useState\(""\);/, "管理员端集货页没有弹窗内报错");
+    assert.equal((admin.match(/\{modalError && \(/g) ?? []).length, 3, "建柜 / 改单价 / 加客户三个弹窗都要有报错条");
+    for (const fn of ["创建失败", "改单价失败", "新增失败"]) {
+      assert.ok(admin.includes(`setModalError(e?.message ?? "${fn}")`), `${fn} 还写在页面顶部那条 toast 上`);
+    }
+    assert.match(staff, /const \[addError, setAddError\] = useState\(""\);/, "员工端加客户弹窗没有弹窗内报错");
+    assert.ok(staff.includes('setAddError(e?.message ?? "新增失败")'), "员工端新增失败还写在 toast 上");
+  });
+
+  await check("5c) 改单价：只有在跑的柜能改、只发真的改过的那几档、老柜 0 价不预填", () => {
+    const admin = read("apps/web/src/app/admin/whr-consolidation/page.tsx");
+    assert.match(admin, /\["planning", "collecting", "loading"\]\.includes\(planDetail\.status\)/, "已发运 / 已完成的柜还显示「改单价」");
+    assert.match(admin, /const changed = \(input: string, current: number\)/, "没做「只发改过的档」，会把别人刚改的覆盖回去");
+    assert.match(admin, /Number\(v\) > 0 \? String\(v\) : ""/, "老柜里 0 价会被预填成 \"0\"，整次保存会被自己的校验拦死");
+    assert.match(admin, /function unitPriceIssue\(/, "单价校验没抽出来（要跟后端 requireUnitPrice 对齐）");
+    assert.match(admin, /value >= 100000000/, "页面没卡单价上限（后端是 Decimal(10,2)）");
+  });
+
+  await check("6) 后端接口一个都没删（老板要求保留）", () => {
   const routes = read("apps/api/src/modules/agent-portal/routes.ts");
   for (const route of ["/agent/whr/plans", "/agent/wallet", "/agent/clients", "/agent/me"]) {
     assert.ok(routes.includes(route), `后端 ${route} 被删了（老板说后端暂时保留）`);
   }
   assert.ok(existsSync(path.join(process.cwd(), "apps/api/src/modules/whr-consolidation/long-term-price.ts")), "long-term-price.ts 被删了（后端要留）");
+  // 但两个**写**接口在功能关闭期间必须拒绝：不然一打就把柜里当场填的价覆盖掉
+  const ltp = read("apps/api/src/modules/whr-consolidation/long-term-price.ts");
+  assert.match(ltp, /export const LONG_TERM_PRICE_WRITE_ENABLED = false;/, "长期价写接口的开关不是 false");
+  const agentRoutes = read("apps/api/src/modules/agent-portal/routes.ts");
+  const adminRoutes = read("apps/api/src/modules/admin/routes.ts");
+  for (const [name, src] of [["/agent/clients/price", agentRoutes], ["/admin/clients/whr-price", adminRoutes]] as Array<[string, string]>) {
+    assert.ok(src.includes("LONG_TERM_PRICE_WRITE_ENABLED"), `${name} 没判开关，关着也能覆盖柜价`);
+  }
 });
+}
 
-console.log(failures === 0 ? "✅ 全部通过" : `❌ 失败 ${failures} 项`);
-process.exit(failures === 0 ? 0 : 1);
+main().then(() => {
+  console.log(failures === 0 ? "✅ 全部通过" : `❌ 失败 ${failures} 项`);
+  process.exit(failures === 0 ? 0 : 1);
+}).catch((e) => { console.error(e); process.exit(1); });

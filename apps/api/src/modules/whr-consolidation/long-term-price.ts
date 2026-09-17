@@ -40,6 +40,19 @@ export interface WhrPriceTriple {
 
 type Tx = any;
 
+/**
+ * 「客户长期价」这套功能的总开关（2026-09-18）。
+ *
+ * 老板拍板改成「每个柜当场填价」并让代理端前端下线，但要求**后端保留、以后可能会用**。
+ * 光把页面入口拆掉不够：这两个写接口（代理 `POST /agent/clients/price`、超管 `POST /admin/clients/whr-price`）
+ * 一旦被人直接调到（代理自己就能登录、或者谁开着旧页面），`setClientWhrPrice` 会把这位客户
+ * **所有**在跑的柜里的三档价一次覆盖掉、还重算没付款的单 —— 等于把当场填的价悄悄抹了（Opus 复核 2026-09-18 第 2 条）。
+ * 所以功能关闭期间两个写接口一律拒绝；要开回来，把这里改成 true（前端那个开关在 apps/web/src/modules/agent/agent-features.ts）。
+ * 读的那几条（客户列表带出长期价等）不受影响。
+ */
+export const LONG_TERM_PRICE_WRITE_ENABLED = false;
+export const LONG_TERM_PRICE_OFF_MESSAGE = "客户长期价这个功能暂时关闭了（2026-09-18 起价格改成建柜 / 加客户 / 改单价时当场填）";
+
 /** 改长期价时，这几种状态的柜跟着改价（没付款的单重算）。shipped / completed / cancelled 不动 */
 export const REPRICE_PLAN_STATUSES = ["planning", "collecting", "loading"];
 
@@ -110,6 +123,60 @@ export function checkNotBelowAgentPrice(prices: WhrPriceTriple, agentPrices: Whr
     }
   }
   return issues.length > 0 ? issues.join("；") : null;
+}
+
+/**
+ * 柜里给客户填的三档价**不能低于湘泰给他所属代理的价**（2026-09-18 恢复「每柜当场填」时补回来）。
+ *
+ * 9-15 那批定的规矩（确认单 4.7）原来由 `setClientWhrPrice` 把着；价格改成每个柜当场填以后，
+ * 建柜 / 加客户 / 改单价这三个入口都要自己把这道闸补上 —— 不然代理客户的柜价能填得比代理价低，
+ * 付款照收、返现算出来是负数被记成 0（utils.ts），等于湘泰每方少收（代理价 − 客户价）（DeepSeek 复核 2026-09-18 第 1 条）。
+ *
+ * ⚠️ 锁序跟 setClientWhrPrice 一致：调用方先拿「客户价排队锁」，这里再对 agents 行拿 FOR SHARE，之后才锁计划。
+ * 反过来（先锁计划再锁 agents）会跟改长期价那条路对着拿锁。
+ */
+export async function assertPlanPricesNotBelowAgent(
+  tx: Tx,
+  companyId: string,
+  entries: Array<{ clientId: string; clientName?: string; prices: WhrPriceTriple }>,
+): Promise<void> {
+  if (entries.length === 0) return;
+  const clients: Array<{ id: string; name: string; agentId: string | null }> = await tx.user.findMany({
+    where: { id: { in: [...new Set(entries.map((e) => e.clientId))] }, companyId, role: "client" },
+    select: { id: true, name: true, agentId: true },
+  });
+  const agentOf = new Map(clients.map((c) => [c.id, c.agentId]));
+  const nameOf = new Map(clients.map((c) => [c.id, c.name]));
+  const agentIds = [...new Set(clients.map((c) => c.agentId).filter((id): id is string => !!id))].sort();
+  if (agentIds.length === 0) return;
+
+  const agentPrices = new Map<string, WhrPriceTriple>();
+  for (const agentId of agentIds) {
+    // 按 id 排序逐个拿共享锁（调高代理价那边拿的是排他锁，两边自然排队）
+    const rows = await tx.$queryRaw<Array<{ price_normal: unknown; price_inspection: unknown; price_sensitive: unknown }>>`SELECT price_normal, price_inspection, price_sensitive FROM agents WHERE id = ${agentId} AND company_id = ${companyId} FOR SHARE`;
+    if (!rows || rows.length === 0) {
+      throw new BusinessError("这个客户所属的代理不存在，请联系管理员", 400, "BAD_REQUEST");
+    }
+    agentPrices.set(agentId, {
+      normal: toNum(rows[0].price_normal),
+      inspection: toNum(rows[0].price_inspection),
+      sensitive: toNum(rows[0].price_sensitive),
+    });
+  }
+
+  const issues: string[] = [];
+  for (const entry of entries) {
+    const agentId = agentOf.get(entry.clientId);
+    if (!agentId) continue; // 湘泰自己的客户不受这道闸管
+    const floor = agentPrices.get(agentId)!;
+    for (const key of ["normal", "inspection", "sensitive"] as const) {
+      if (toCents(entry.prices[key]) < toCents(floor[key])) {
+        const who = entry.clientName ?? nameOf.get(entry.clientId) ?? entry.clientId;
+        issues.push(`${who}的${PRICE_LABEL[key]}单价不能低于给代理的价 ${formatPrice(floor[key])} 元/方`);
+      }
+    }
+  }
+  if (issues.length > 0) throw new BusinessError(issues.join("；"), 400, "BAD_REQUEST");
 }
 
 export interface SetClientWhrPriceInput {

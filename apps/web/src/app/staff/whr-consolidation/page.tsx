@@ -194,6 +194,21 @@ const fi: React.CSSProperties = { width: "100%", padding: "7px 10px", border: "1
 // ============================================================================
 // 主页面
 // ============================================================================
+/**
+ * 页面这道单价校验要跟后端 requireUnitPrice 对得上（2026-09-18 复核第 6 条）：
+ * 必填、大于 0、最多 2 位小数（按字符串判，别用 1e-6 容差）、小于 1 亿（库里是 Decimal(10,2)）。
+ * 返回 null = 没问题。
+ */
+function unitPriceIssue(label: string, raw: string): string | null {
+  const text = String(raw ?? "").trim();
+  if (!text) return `${label}单价为必填`;
+  if (!/^\d+(\.\d{1,2})?$/.test(text)) return `${label}单价只能填数字，最多 2 位小数`;
+  const value = Number(text);
+  if (!Number.isFinite(value) || value <= 0) return `${label}单价要填一个大于 0 的数`;
+  if (value >= 100000000) return `${label}单价太大了（最多 8 位整数）`;
+  return null;
+}
+
 export default function StaffWhrConsolidationPage() {
   const [activeTab, setActiveTab] = useState<"dispatch" | "operations" | "plans">("dispatch");
   const [toast, setToast] = useState<string>("");
@@ -243,6 +258,8 @@ export default function StaffWhrConsolidationPage() {
   const [addPriceInspection, setAddPriceInspection] = useState("");
   const [addPriceSensitive, setAddPriceSensitive] = useState("");
   const [addSubmitting, setAddSubmitting] = useState(false);
+  /** 加客户弹窗里的报错：画在弹窗里面，页面顶部那条会被遮罩压住、5 秒还自动消失（复核 2026-09-18 第 3 条） */
+  const [addError, setAddError] = useState("");
   const [removingCustomerId, setRemovingCustomerId] = useState("");
   const [planLoading, setPlanLoading] = useState(false);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -325,7 +342,7 @@ export default function StaffWhrConsolidationPage() {
   // ==========================================================================
   /** 客户下拉用 /staff/clients（员工有权限），管理员端那套 /admin/users 员工调不了 */
   const openAddCustomer = async () => {
-    setAddClientId(""); setAddSearch("");
+    setAddClientId(""); setAddSearch(""); setAddError("");
     setAddPriceNormal(""); setAddPriceInspection(""); setAddPriceSensitive("");
     setShowAddCustomer(true);
     if (clientOptions.length > 0) return;
@@ -339,13 +356,12 @@ export default function StaffWhrConsolidationPage() {
 
   const handleAddCustomer = async () => {
     if (!selectedPlanId) return;
-    if (!addClientId) { setToast("请选择客户"); return; }
+    if (!addClientId) { setAddError("请选择客户"); return; }
     // 三档单价当场填（2026-09-18）：页面先挡一次，说了算的是后端那道 requireUnitPrice
     const priceChecks: Array<[string, string]> = [["普货", addPriceNormal], ["商检货", addPriceInspection], ["敏感货", addPriceSensitive]];
     for (const [label, raw] of priceChecks) {
-      const v = Number(String(raw).trim());
-      if (!String(raw).trim() || !Number.isFinite(v) || v <= 0) { setToast(`${label}单价要填一个大于 0 的数`); return; }
-      if (Math.abs(v * 100 - Math.round(v * 100)) > 1e-6) { setToast(`${label}单价最多 2 位小数`); return; }
+      const issue = unitPriceIssue(label, raw);
+      if (issue) { setAddError(issue); return; }
     }
     setAddSubmitting(true);
     try {
@@ -365,7 +381,7 @@ export default function StaffWhrConsolidationPage() {
         : "客户已加入本计划");
       setShowAddCustomer(false);
       loadPlanDetail(selectedPlanId);
-    } catch (e: any) { setToast(e?.message ?? "新增失败"); }
+    } catch (e: any) { setAddError(e?.message ?? "新增失败"); }
     finally { setAddSubmitting(false); }
   };
 
@@ -1478,7 +1494,7 @@ export default function StaffWhrConsolidationPage() {
           const options = clientOptions.filter(cl => !joined.has(cl.id))
             .filter(cl => !q || (cl.name ?? "").toLowerCase().includes(q));
           return (
-            <Modal onClose={() => setShowAddCustomer(false)}>
+            <Modal onClose={() => { setShowAddCustomer(false); setAddError(""); }}>
               <h3 style={{ marginTop: 0 }}>新增参与客户 - {planDetail.planNo}</h3>
               <div style={{ marginTop: 10 }}>
                 <label style={fl}>选择客户</label>
@@ -1512,9 +1528,12 @@ export default function StaffWhrConsolidationPage() {
                   ))}
                 </div>
               </div>
+              {addError && (
+                <div style={{ margin: "10px 0", padding: "10px 12px", background: "var(--c-red-bg)", color: "var(--c-red-deep)", borderRadius: 8, fontSize: 13, whiteSpace: "pre-wrap" }}>{addError}</div>
+              )}
               <div style={{ marginTop: 14, display: "flex", gap: 8 }}>
                 <button onClick={handleAddCustomer} disabled={addSubmitting} style={btnBlue}>{addSubmitting ? "添加中..." : "确认新增"}</button>
-                <button onClick={() => setShowAddCustomer(false)} style={btnGray}>取消</button>
+                <button onClick={() => { setShowAddCustomer(false); setAddError(""); }} style={btnGray}>取消</button>
               </div>
             </Modal>
           );
