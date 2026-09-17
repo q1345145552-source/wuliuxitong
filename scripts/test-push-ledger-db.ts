@@ -467,6 +467,118 @@ async function main(): Promise<void> {
         assert.equal(load4[0].toStatus, "departed");
       });
     } catch (e) { failures++; console.log(`  ❌ 这个场景中途出错，后面几步没跑完：${e instanceof Error ? e.message.split("\n")[0] : String(e)}`); }
+
+    console.log("\n【14 改运输方式：柜子走过另一种运输方式才有的步骤就不许改（Codex 第三批 P1-1）；撤回去只剩两边都有的步骤后能改，改完推、后装、撤都对得上】");
+    try {
+      const p = await seedShipment(); const box = await newBox(); const c = await load(box.id, p);
+      await pushAll(box.id, [["SEALED", "2026-08-25"], ["IN_TRANSIT", "2026-09-01"], ["ARRIVED", "2026-09-13"], ["CUSTOMS", "2026-09-14"]]);
+      const sw = await call("POST /staff/loading-manifests/transport-mode", STAFF, { id: box.id, transportMode: "land" });
+      const mode1 = (await pm.container.findUnique({ where: { id: box.id }, select: { transportMode: true } }))?.transportMode;
+      expect("走过「运输中」「已到港」、停在清关中的海运柜：改陆运被拒，还是海运", () => {
+        assert.notEqual(sw.status, 200, sw.message);
+        assert.match(sw.message, /运输中|已到港/);
+        assert.equal(mode1, "sea");
+      });
+      // 时间表坏了 / 没了，推进账本里也记着走过的步骤，照样挡住
+      const pB = await seedShipment(); const boxB = await newBox(); await load(boxB.id, pB);
+      await pushAll(boxB.id, [["SEALED", "2026-08-25"], ["IN_TRANSIT", "2026-09-01"], ["ARRIVED", "2026-09-13"], ["CUSTOMS", "2026-09-14"]]);
+      await pm.container.update({ where: { id: boxB.id }, data: { statusDates: null } });
+      const swB = await call("POST /staff/loading-manifests/transport-mode", STAFF, { id: boxB.id, transportMode: "land" });
+      expect("时间表清空的同样柜子：按推进账本照样拒绝改陆运", () => { assert.notEqual(swB.status, 200, swB.message); assert.match(swB.message, /运输中|已到港/); });
+      for (let i = 0; i < 3; i++) await undo(box.id);
+      const sw2 = await call("POST /staff/loading-manifests/transport-mode", STAFF, { id: box.id, transportMode: "land" });
+      const r = await push(box.id, "AT_PORT_CN", "2026-08-27");
+      const p2 = await seedShipment(); const c2 = await load(box.id, p2);
+      const u = await undo(box.id);
+      const after = { box: await boxStatus(box.id), c: await statusOf(c), c2: await statusOf(c2), mode: (await pm.container.findUnique({ where: { id: box.id }, select: { transportMode: true } }))?.transportMode };
+      expect("撤回已封柜后改陆运 200；推到达凭祥口岸、后装一票、撤一步：柜子已封柜、两票都是已装柜、还是陆运", () => {
+        assert.equal(sw2.status, 200, sw2.message);
+        assert.equal(r.status, 200, r.message);
+        assert.equal(u.status, 200, u.message);
+        assert.deepEqual(after, { box: "SEALED", c: "loaded", c2: "loaded", mode: "land" });
+      });
+    } catch (e) { failures++; console.log(`  ❌ 这个场景中途出错，后面几步没跑完：${e instanceof Error ? e.message.split("\n")[0] : String(e)}`); }
+
+    console.log("\n【15 恢复删过的记录：老数据运单没填运输方式、订单后来改成陆运，撤回已装柜后不能把「已开船」的重复记录恢复回来（Codex 第三批 P1-2）】");
+    try {
+      const p = await seedShipment(); const box = await newBox(); const c = await load(box.id, p);
+      await pushAll(box.id, [["SEALED", "2026-08-25"], ["IN_TRANSIT", "2026-09-01"]]);
+      const cs = await pm.shipment.findFirst({ where: { trackingNo: c, companyId: CO }, select: { id: true, orderId: true } });
+      const dupId = `sl_mnf_${Date.now()}_dup_${P}`;
+      await pm.statusLog.create({ data: { id: dupId, companyId: CO, shipmentId: cs.id, operatorId: STAFF.userId, operatorRole: "staff", operatorName: STAFF.name, fromStatus: "departed", toStatus: "departed", remark: "重复的开船记录", changedAt: new Date("2026-09-02T00:00:00Z") } });
+      await must("POST /staff/shipments/track/delete-log", STAFF, { logId: dupId });
+      await pm.shipment.updateMany({ where: { trackingNo: { in: [p, c] }, companyId: CO }, data: { transportMode: null } });
+      await pm.order.update({ where: { id: cs.orderId }, data: { transportMode: "land" } });
+      const u = await undo(box.id);
+      const list = await call("GET /admin/shipments/track/deleted-logs", ADMIN, {}, { trackingNo: p });
+      const item = (list.data?.items ?? []).find((i: Row) => i.log?.id === dupId);
+      const r = await call("POST /admin/shipments/track/restore-log", ADMIN, { auditId: item?.auditId ?? "x" });
+      const back = await pm.statusLog.count({ where: { id: dupId } });
+      const st = await statusOf(c);
+      expect("撤回已装柜后恢复「已开船」重复记录 409，记录没放回，货还是已装柜", () => {
+        assert.equal(u.status, 200, u.message);
+        assert.ok(item, JSON.stringify(list.data));
+        assert.equal(r.status, 409, r.message);
+        assert.equal(back, 0);
+        assert.equal(st, "loaded");
+      });
+      // 货现在是陆运才有的「到达凭祥口岸」，记录是海运才有的「已开船」：两条流程都比不出先后，不许恢复
+      await pm.shipment.update({ where: { id: cs.id }, data: { currentStatus: "atPortCn" } });
+      const r2 = await call("POST /admin/shipments/track/restore-log", ADMIN, { auditId: item?.auditId ?? "x" });
+      const back2 = await pm.statusLog.count({ where: { id: dupId } });
+      expect("记录「已开船」、货「到达凭祥口岸」比不出先后：恢复 409，记录没放回", () => {
+        assert.equal(r2.status, 409, r2.message);
+        assert.match(r2.message, /比不出先后/);
+        assert.equal(back2, 0);
+      });
+    } catch (e) { failures++; console.log(`  ❌ 这个场景中途出错，后面几步没跑完：${e instanceof Error ? e.message.split("\n")[0] : String(e)}`); }
+
+    console.log("\n【16 管理员「删过的记录」：运单号改了按新号也查得到；超过 200 条全列出来并给总数（Codex 第三批 P2-1）】");
+    try {
+      const p = await seedShipment();
+      const s = await pm.shipment.findFirst({ where: { trackingNo: p, companyId: CO }, select: { id: true } });
+      const dupId = `sl_new_${Date.now()}_dup_${P}`;
+      await pm.statusLog.create({ data: { id: dupId, companyId: CO, shipmentId: s.id, operatorId: STAFF.userId, operatorRole: "staff", operatorName: STAFF.name, fromStatus: "created", toStatus: "inWarehouseCN", remark: "重复的入库记录", changedAt: new Date("2026-08-20T03:00:00Z") } });
+      await must("POST /staff/shipments/track/delete-log", STAFF, { logId: dupId });
+      const newNo = `${p}X`;
+      await pm.shipment.update({ where: { id: s.id }, data: { trackingNo: newNo } });
+      const byNew = await call("GET /admin/shipments/track/deleted-logs", ADMIN, {}, { trackingNo: newNo });
+      await pm.auditLog.createMany({ data: Array.from({ length: 205 }, (_, i) => ({
+        companyId: CO, actorId: STAFF.userId, actorRole: "staff", action: "DELETE", resourceType: "StatusLog", resourceId: `sl_new_bulk${i}_${P}`,
+        beforeJson: JSON.stringify({ id: `sl_new_bulk${i}_${P}`, companyId: CO, shipmentId: s.id, operatorId: STAFF.userId, operatorRole: "staff", operatorName: STAFF.name, fromStatus: "created", toStatus: "inWarehouseCN", remark: "批量", nextStop: null, changedAt: "2026-08-20T03:00:00.000Z", trackingNo: newNo }),
+        remark: `删除物流轨迹 ${newNo}`,
+      })) });
+      const all = await call("GET /admin/shipments/track/deleted-logs", ADMIN, {}, { trackingNo: newNo });
+      expect("改号后按新号查到那 1 条；再存 205 条后 206 条全列出来、总数 206", () => {
+        assert.equal(byNew.status, 200, byNew.message);
+        assert.deepEqual((byNew.data?.items ?? []).map((i: Row) => i.log?.id), [dupId]);
+        assert.equal(all.status, 200, all.message);
+        assert.equal(all.data.items.length, 206);
+        assert.equal(all.data.total, 206);
+      });
+    } catch (e) { failures++; console.log(`  ❌ 这个场景中途出错，后面几步没跑完：${e instanceof Error ? e.message.split("\n")[0] : String(e)}`); }
+
+    console.log("\n【17 陆运柜里有「预约派送」的货：推前面的步骤跳过它，不挡整柜（Codex 第三批 P2-2）】");
+    try {
+      const p1 = await seedShipment(); const p2 = await seedShipment();
+      for (const t of [p1, p2]) {
+        const s = await pm.shipment.findFirst({ where: { trackingNo: t, companyId: CO }, select: { id: true, orderId: true } });
+        await pm.order.update({ where: { id: s.orderId }, data: { transportMode: "land" } });
+        await pm.shipment.update({ where: { id: s.id }, data: { transportMode: "land" } });
+      }
+      const boxId = (await must("POST /staff/loading-manifests", STAFF, { warehouse: `${P}wh`, transportMode: "land", containerNo: uniq("BOX") })).manifest.id;
+      const c1 = await load(boxId, p1); const c2 = await load(boxId, p2);
+      await pushAll(boxId, [["SEALED", "2026-08-25"]]);
+      await pm.shipment.update({ where: { trackingNo: c2 }, data: { currentStatus: "deliveryBooked" } });
+      const r = await push(boxId, "AT_PORT_CN", "2026-08-27");
+      const s1 = await statusOf(c1); const s2 = await statusOf(c2);
+      expect("推到达凭祥口岸 200；预约派送那票跳过并列出，另一票到口岸", () => {
+        assert.equal(r.status, 200, r.message);
+        assert.ok((r.data?.skippedShipments ?? []).some((x: Row) => x.trackingNo === c2), JSON.stringify(r.data));
+        assert.equal(s1, "atPortCn");
+        assert.equal(s2, "deliveryBooked");
+      });
+    } catch (e) { failures++; console.log(`  ❌ 这个场景中途出错，后面几步没跑完：${e instanceof Error ? e.message.split("\n")[0] : String(e)}`); }
   } finally {
     await cleanup();
     const left = (await pm.shipment.count({ where: { companyId: CO } })) + (await pm.container.count({ where: { companyId: CO } }))

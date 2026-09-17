@@ -16,6 +16,7 @@ import { loadOrderTotalMetrics } from "./total-metrics";
 import { countShipmentOverview } from "./overview-counts";
 import { loadPartialAhead } from "./partial-status";
 import { CONTAINER_PUSH_LOG_MESSAGE, CURRENT_STATUS_LOG_MESSAGE, isContainerPushTransitionLog, isCurrentStatusLog, isManagedLastmileLog, MANAGED_LASTMILE_LOG_MESSAGE } from "./managed-lastmile-log";
+import { findDeletedLogAudits } from "./deleted-log-audits";
 import { BusinessError } from "../core/business-error";
 import { canSeeOperatorIdentity } from "../core/operator-visibility";
 
@@ -671,6 +672,7 @@ export function registerShipmentRoutes(app: MinimalHttpApp): void {
    * 管理员：查某票货被删过的轨迹（2026-09-17，推进账本做法）。
    * 删除接口删之前把原记录整条存进 audit_logs；按父单号查也把子单的一起列出来（9-15 删的「装入柜子」挂在子单上）。
    * 同一条记录删过多次只列最近一次；已经恢复回去（手动恢复或整柜撤销时自动放回）的标 restored。
+   * 按运单 id 找存底，不按备注里的运单号（改过号也查得到）；全部列出、给总数，不截断（Codex 第三批 P2-1）。
    */
   app.get("/admin/shipments/track/deleted-logs", async (req, res) => {
     const auth = requireRole(req, res, ["admin"]);
@@ -680,19 +682,25 @@ export function registerShipmentRoutes(app: MinimalHttpApp): void {
       fail(res, 400, "BAD_REQUEST", "trackingNo is required");
       return;
     }
-    const nos = [trackingNo, ...(await prisma.shipment.findMany({ where: { parentTrackingNo: trackingNo, companyId: auth.companyId }, select: { trackingNo: true } })).map((c) => c.trackingNo)];
-    const rows = await prisma.auditLog.findMany({
-      where: { companyId: auth.companyId, action: "DELETE", resourceType: "StatusLog", remark: { in: nos.map((n) => `删除物流轨迹 ${n}`) } },
-      orderBy: { createdAt: "desc" },
-      take: 200,
-    });
+    const shipmentIds = (await prisma.shipment.findMany({
+      where: { companyId: auth.companyId, OR: [{ trackingNo }, { parentTrackingNo: trackingNo }] },
+      select: { id: true },
+    })).map((s) => s.id);
+    const idSet = new Set(shipmentIds);
+    const rows = await findDeletedLogAudits(prisma, auth.companyId, shipmentIds);
     const latestByLog = new Map<string, (typeof rows)[number]>();
-    for (const r of rows) if (!latestByLog.has(r.resourceId)) latestByLog.set(r.resourceId, r);
+    for (const r of rows) {
+      if (latestByLog.has(r.resourceId)) continue;
+      let sid: unknown;
+      try { sid = JSON.parse(r.beforeJson ?? "{}").shipmentId; } catch { continue; }
+      if (typeof sid === "string" && idSet.has(sid)) latestByLog.set(r.resourceId, r);
+    }
     const logIds = [...latestByLog.keys()];
     const stillThere = new Set((await prisma.statusLog.findMany({ where: { id: { in: logIds }, companyId: auth.companyId }, select: { id: true } })).map((l) => l.id));
     const actorIds = [...new Set([...latestByLog.values()].map((r) => r.actorId))];
     const names = new Map((await prisma.user.findMany({ where: { id: { in: actorIds }, companyId: auth.companyId }, select: { id: true, name: true } })).map((u) => [u.id, u.name]));
     ok(res, {
+      total: latestByLog.size,
       items: [...latestByLog.values()].map((r) => {
         let log: Record<string, unknown> = {};
         try { log = JSON.parse(r.beforeJson ?? "{}"); } catch { log = {}; }
@@ -723,15 +731,30 @@ export function registerShipmentRoutes(app: MinimalHttpApp): void {
     if (!audit || !before) { fail(res, 404, "NOT_FOUND", "找不到这条删除记录"); return; }
     const result = await prisma.$transaction(async (tx) => {
       await tx.$queryRaw`SELECT id FROM shipments WHERE id = ${before.shipmentId} FOR UPDATE`;
-      const ship = await tx.shipment.findFirst({ where: { id: before.shipmentId, companyId: auth.companyId }, select: { id: true, currentStatus: true, transportMode: true, order: { select: { transportMode: true } } } });
+      const ship = await tx.shipment.findFirst({ where: { id: before.shipmentId, companyId: auth.companyId }, select: { id: true, currentStatus: true } });
       if (!ship) throw new BusinessError("这票货已经不在了，没法恢复", 409, "VALIDATION_ERROR");
       {
-        // 老数据运单自己没填运输方式时按订单的（跟列表同口径）
-        const flow: readonly string[] = (ship.transportMode ?? ship.order?.transportMode) === "land" ? STATUS_FLOW_LAND : STATUS_FLOW;
-        const a = flow.indexOf(before.toStatus);
-        const b = flow.indexOf(ship.currentStatus);
-        if (a >= 0 && b >= 0 && a > b) {
-          throw new BusinessError(`这一步已经被撤销了（货现在是「${SHIPMENT_STATUS_ZH[ship.currentStatus] ?? ship.currentStatus}」），恢复回来会跟状态对不上，不能恢复`, 409, "VALIDATION_ERROR");
+        // 海运、陆运两条流程都比，不按这票货的运输方式挑一条（Codex 第三批 P1-2）：老数据运单没填运输方式、订单后来改过，
+        // 只按一条流程比会查不到记录的状态而放行，客户看到「已装柜」的货上面多一条「已开船」。
+        //   · 哪条流程里两个状态都在、记录排在货现在的状态后面 → 这一步已经撤了，不许恢复；
+        //   · 两条流程里都比不出先后（又不是同一个状态，比如货已退回）→ 说不准会不会跟状态对不上，也不许恢复。
+        const rec = String(before.toStatus ?? "");
+        const cur = ship.currentStatus;
+        let comparable = rec === cur;
+        let ahead = false;
+        for (const flow of [STATUS_FLOW, STATUS_FLOW_LAND] as ReadonlyArray<readonly string[]>) {
+          const a = flow.indexOf(rec);
+          const b = flow.indexOf(cur);
+          if (a >= 0 && b >= 0) {
+            comparable = true;
+            if (a > b) ahead = true;
+          }
+        }
+        if (ahead) {
+          throw new BusinessError(`这一步已经被撤销了（货现在是「${SHIPMENT_STATUS_ZH[cur] ?? cur}」），恢复回来会跟状态对不上，不能恢复`, 409, "VALIDATION_ERROR");
+        }
+        if (!comparable) {
+          throw new BusinessError(`这条记录是「${SHIPMENT_STATUS_ZH[rec] ?? rec}」，货现在是「${SHIPMENT_STATUS_ZH[cur] ?? cur}」，比不出先后，恢复回来可能跟状态对不上，不能恢复`, 409, "VALIDATION_ERROR");
         }
       }
       // 状态没变的记录（比如重复的「已封柜」）光比状态挡不住：整柜撤销时把那一步的全部记录 id 记在撤销日志里，在里面就不许恢复

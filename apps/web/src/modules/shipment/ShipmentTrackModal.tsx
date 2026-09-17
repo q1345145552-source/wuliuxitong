@@ -322,6 +322,7 @@ function TrackContent({ data, onReload }: { data: TrackData; onReload?: () => vo
   const [deletingId, setDeletingId] = useState<string | null>(null);
   // 管理员：这票货删过的记录（2026-09-17 推进账本，删之前后端存了底，能原样恢复）
   const [deletedLogs, setDeletedLogs] = useState<DeletedLogItem[] | null>(null);
+  const [deletedTotal, setDeletedTotal] = useState(0);
   const [deletedLoading, setDeletedLoading] = useState(false);
   const [restoringId, setRestoringId] = useState<string | null>(null);
   const isAdmin = data.viewerRole === "admin";
@@ -333,8 +334,10 @@ function TrackContent({ data, onReload }: { data: TrackData; onReload?: () => vo
         method: "GET",
         headers: { ...authHeaders() },
       });
-      const body = await parseApiResponse<{ items: DeletedLogItem[] }>(res);
+      // 后端全部列出并给总数（按运单 id 查，改过号也查得到）
+      const body = await parseApiResponse<{ items: DeletedLogItem[]; total?: number }>(res);
       setDeletedLogs(body.items ?? []);
+      setDeletedTotal(body.total ?? (body.items ?? []).length);
     } catch (e) {
       window.alert("查删过的记录失败：" + (e instanceof Error ? e.message : "请重试"));
     } finally {
@@ -549,7 +552,7 @@ function TrackContent({ data, onReload }: { data: TrackData; onReload?: () => vo
           ) : (
             <div>
               <div style={{ fontSize: 13, fontWeight: 600, color: "var(--t-heading)", marginBottom: 8 }}>
-                删过的记录（{deletedLogs.length} 条）
+                删过的记录（共 {deletedTotal} 条）
               </div>
               {deletedLogs.length === 0 ? (
                 <div style={{ fontSize: 12, color: "var(--t-faint)" }}>这票货没有删过记录</div>

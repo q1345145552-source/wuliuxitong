@@ -173,13 +173,37 @@ export function registerLoadingManifestRoutes(app: MinimalHttpApp): void {
       await tx.$queryRaw`SELECT id FROM containers WHERE id = ${container.id} FOR UPDATE`;
       const fresh = await tx.container.findUnique({
         where: { id: container.id },
-        select: { currentStatus: true },
+        select: { currentStatus: true, statusDates: true },
       });
       if (!fresh) throw new BusinessError("装柜任务不存在", 404, "NOT_FOUND");
       if (blocked.includes(fresh.currentStatus)) {
         throw new BusinessError(
           `这个柜刚刚被推到「${CONTAINER_STATUS_LABEL[fresh.currentStatus] ?? fresh.currentStatus}」了，` +
             `${mode === "land" ? "陆运" : "海运"}流程里没有这一步，运输方式没有改，请刷新后再看`,
+        );
+      }
+      /**
+       * 2026-09-17（Codex 第三批 P1-1）：光看当前状态不够，还要看柜子**走过的**步骤。
+       * 海运柜走过「运输中」「已到港」、停在两边都有的「清关中」时改成陆运，撤销会把柜子退回陆运流程里没有的「已到港」，
+       * 后装进来的货按陆运补轨迹、却按推进账本里的海运步骤跟着退，货的状态和客户看到的轨迹就对不上了。
+       * 走过的步骤看两处：时间表（真推过的步骤，撤销会删掉）和推进账本每一笔的前后状态。撤回到这些步骤之前就能改。
+       */
+      let walkedDates: Record<string, string> = {};
+      try { walkedDates = fresh.statusDates ? JSON.parse(fresh.statusDates) : {}; } catch { walkedDates = {}; }
+      const batches = await tx.containerPushBatch.findMany({
+        where: { containerId: container.id, companyId: auth.companyId },
+        select: { fromContainerStatus: true, toContainerStatus: true },
+      });
+      const walked = new Set<string>([
+        ...Object.keys(walkedDates),
+        ...batches.flatMap((b: { fromContainerStatus: string; toContainerStatus: string }) => [b.fromContainerStatus, b.toContainerStatus]),
+      ]);
+      const walkedBlocked = blocked.filter((st) => walked.has(st));
+      if (walkedBlocked.length > 0) {
+        throw new BusinessError(
+          `这个柜子走过${walkedBlocked.map((st) => `「${CONTAINER_STATUS_LABEL[st] ?? st}」`).join("")}，` +
+            `${mode === "land" ? "陆运" : "海运"}流程里没有这些步骤，改了以后撤销会退到对不上的状态，运输方式没有改。` +
+            `要改请先在装柜管理把柜子撤销回这些步骤之前。`,
         );
       }
       await tx.container.update({ where: { id: container.id }, data: { transportMode: mode } });
@@ -760,7 +784,7 @@ export function registerLoadingManifestRoutes(app: MinimalHttpApp): void {
       // 原来最后一步那条同时当「装入柜子」，撤销那一步时它会跟着删，撤到底这票货一条「已装柜」都不剩（对抗测试 I/J 报的）。
       // 没有账本的老柜子（上线前推的）照原来的写法：老路子撤销不删随柜补记，单独多写的补记会撤不掉、留在轨迹里跟柜子对不上。
       const pushBatches = await tx.containerPushBatch.findMany({
-        where: { containerId },
+        where: { containerId, companyId: auth.companyId },
         orderBy: { seq: "asc" },
         select: { id: true, fromContainerStatus: true, toContainerStatus: true },
       });

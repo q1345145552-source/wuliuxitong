@@ -1,7 +1,7 @@
 import { partialAheadStatus } from "../../../../../packages/shared-types/shipment-status";
 import { deleteBlockedReasonOf, isCurrentStatusLog, isManagedLastmileLog } from "../shipments/managed-lastmile-log";
+import { findDeletedLogAudits } from "../shipments/deleted-log-audits";
 import { DEFAULT_STATUS_LABELS } from "../ai/ai-config-store";
-import { STATUS_FLOW as SHIP_FLOW, STATUS_FLOW_LAND as SHIP_FLOW_LAND } from "../shipments/status-flow";
 // 任务 #10: Container & 拆柜 API（2026-05-20）
 // 实现湘泰物流 P0 阶段最核心的"出柜追踪"业务能力
 //
@@ -70,10 +70,8 @@ async function autoRestoreDeletedLogs(
   for (const t of targets) {
     const has = await tx.statusLog.count({ where: { shipmentId: t.id, toStatus: t.status } });
     if (has > 0) continue;
-    const audits = await tx.auditLog.findMany({
-      where: { companyId, action: "DELETE", resourceType: "StatusLog", remark: `删除物流轨迹 ${t.trackingNo}` },
-      orderBy: { createdAt: "desc" },
-    });
+    // 按运单 id 找存底（改过运单号也找得到，Codex 第三批 P2-1）
+    const audits = await findDeletedLogAudits(tx, companyId, [t.id]);
     for (const a of audits) {
       let before: any;
       try { before = JSON.parse(a.beforeJson ?? "{}"); } catch { continue; }
@@ -573,15 +571,16 @@ export function registerContainerRoutes(app: MinimalHttpApp): void {
      * 2026-09-17（推进账本）：退回/取消的货、比这一步靠后的派送/签收货，推柜子时跳过，不再挡住整柜。
      * 原来整柜报「不允许流转」，撤销过的柜子（柜里有已签收的货）从此推不回去。
      */
-    const SKIP_ON_PUSH = new Set(["deliveryBooked", "outForDelivery", "delivered", "returned", "cancelled"]);
-    const shipFlow: readonly string[] = container.transportMode === "land" ? SHIP_FLOW_LAND : SHIP_FLOW;
+    // 派送三步单独排先后，不按运输流程比：陆运流程里没有「预约派送」，按流程下标比会查不到、不跳过、整柜报错（Codex 第三批 P2-2）
+    const LASTMILE_RANK: Record<string, number> = { deliveryBooked: 1, outForDelivery: 2, delivered: 3 };
     const skipOnPush = (status: string): boolean => {
       // 退回/取消一律跳过；预约派送/派送中/已签收只在比这一步靠后时跳过（推到派送中、已签收时照样跟着推）
       if (status === "returned" || status === "cancelled") return true;
-      if (!SKIP_ON_PUSH.has(status) || !shipmentNextStatus) return false;
-      const a = shipFlow.indexOf(status);
-      const b = shipFlow.indexOf(shipmentNextStatus);
-      return a >= 0 && b >= 0 && a > b;
+      const rank = LASTMILE_RANK[status];
+      if (!rank || !shipmentNextStatus) return false;
+      const targetRank = LASTMILE_RANK[shipmentNextStatus];
+      // 这一步不是派送三步（装柜、运输、清关、入仓…）：派送的货一定比它靠后
+      return !targetRank || rank > targetRank;
     };
 
     if (shipmentNextStatus && shipmentIds.length > 0) {
@@ -627,7 +626,7 @@ export function registerContainerRoutes(app: MinimalHttpApp): void {
 
         // 推进账本：记下这一笔，撤销时原样倒回去
         const lastBatch = await tx.containerPushBatch.findFirst({
-          where: { containerId: container.id },
+          where: { containerId: container.id, companyId: auth.companyId },
           orderBy: { seq: "desc" },
           select: { seq: true },
         });
@@ -900,7 +899,7 @@ export function registerContainerRoutes(app: MinimalHttpApp): void {
         await tx.$queryRaw`SELECT id FROM containers WHERE id = ${container.id} FOR UPDATE`;
         const fresh = await tx.container.findUnique({ where: { id: container.id }, select: { currentStatus: true } });
         const freshBatch = await tx.containerPushBatch.findFirst({
-          where: { containerId: container.id },
+          where: { containerId: container.id, companyId: auth.companyId },
           orderBy: { seq: "desc" },
           include: { entries: true },
         });
@@ -1093,16 +1092,12 @@ export function registerContainerRoutes(app: MinimalHttpApp): void {
         // 员工之前删掉的、本来也是这次推进写的记录（比如重复的「已封柜」）也算撤掉了，记进撤销日志（跟账本那条路一样）
         {
           const idSet = new Set(shipmentIds);
-          const nos = (await tx.shipment.findMany({ where: { id: { in: shipmentIds }, companyId: auth.companyId }, select: { trackingNo: true } }))
-            .map((s) => `删除物流轨迹 ${s.trackingNo}`);
-          const deletedAudits = await tx.auditLog.findMany({
-            where: { companyId: auth.companyId, action: "DELETE", resourceType: "StatusLog", resourceId: { startsWith: PUSH_LOG_PREFIX }, remark: { in: nos } },
-            select: { beforeJson: true },
-          });
+          const deletedAudits = (await findDeletedLogAudits(tx, auth.companyId, shipmentIds))
+            .filter((a) => a.resourceId.startsWith(PUSH_LOG_PREFIX));
           for (const a of deletedAudits) {
             let b: any;
             try { b = JSON.parse(a.beforeJson ?? "{}"); } catch { continue; }
-            if (idSet.has(b.shipmentId) && b.toStatus === shipmentStatusOfThisPush && new Date(b.changedAt).getTime() === changedAt.getTime()) {
+            if (idSet.has(b.shipmentId) && String(b.id ?? "").startsWith(PUSH_LOG_PREFIX) && b.toStatus === shipmentStatusOfThisPush && new Date(b.changedAt).getTime() === changedAt.getTime()) {
               undoneLogIds.push(String(b.id));
             }
           }
