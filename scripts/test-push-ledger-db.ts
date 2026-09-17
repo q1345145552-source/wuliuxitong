@@ -1,0 +1,485 @@
+/**
+ * 推进账本 + 整柜撤销 + 轨迹删除（真 PostgreSQL，2026-09-17）。
+ *
+ * 为什么有这份：老板 9-17 定「第 7 种做法」。原来整柜撤销靠柜子时间表的日期和轨迹记录去「猜」上一步和货原来的状态，
+ * 7 个对抗子代理 + 本机 8 个版本对照实测：同一天推几步、日期填倒了、员工删过记录、柜里有已签收的货、
+ * 开船后才装进来的货，撤销都会退错或把柜子卡死（线上老代码、送审版 94ddf0e、办法 1 都有）。
+ * 现在推柜子状态时记一笔账（container_push_batches / container_push_entries），撤销按账把最近一笔倒回去。
+ * 原型 v7e 经随机乱点 640 次 0 次柜货对不上（办法 1 同测法 41 次）。
+ *
+ * 全部走真实接口：新建装柜单、装柜、推状态、撤销（含预览）、卸柜、派送签收、查轨迹、删记录、管理员查删除记录/恢复。
+ * 只连测试库：DATABASE_URL 不带 neon.tech 的不跑（IPv4 连测试库时核实后设 AGENT_PORTAL_TEST_ALLOW_DB=1）；
+ * 没有 DATABASE_URL（CI）打印「跳过」。测试数据全在假公司 zz_ledger_co 下，开跑前、跑完后都清干净。
+ * 用法：npm run test:push-ledger-db
+ */
+process.env.TZ = "UTC"; // 线上服务器是 UTC；推柜子状态时填的日期按服务器时区解析
+import assert from "node:assert/strict";
+
+type Row = Record<string, any>;
+type Auth = { userId: string; companyId: string; role: string; name: string };
+
+const CO = "zz_ledger_co";
+const P = "zz_ledger_";
+const STAFF: Auth = { userId: `${P}staff`, companyId: CO, role: "staff", name: "测试员工" };
+const ADMIN: Auth = { userId: `${P}admin`, companyId: CO, role: "admin", name: "测试管理员" };
+const MAP: Record<string, string> = {
+  LOADING: "loaded", SEALED: "loaded", IN_TRANSIT: "departed", ARRIVED: "arrivedPort", CUSTOMS: "customsTH",
+  CUSTOMS_CLEARED: "customsCleared", UNLOADING: "unloading", IN_WAREHOUSE_TH: "inWarehouseTH",
+};
+
+let failures = 0;
+function expect(label: string, fn: () => void): void {
+  try {
+    fn();
+    console.log(`  ✅ ${label}`);
+  } catch (e) {
+    failures++;
+    console.log(`  ❌ ${label}\n     ${e instanceof Error ? e.message.split("\n")[0] : String(e)}`);
+  }
+}
+
+async function main(): Promise<void> {
+  const url = process.env.DATABASE_URL ?? "";
+  if (!url || url.includes("blocked")) {
+    console.log("⚠️ 跳过：没有 DATABASE_URL（CI 没有数据库）—— 这一项等于没测");
+    return;
+  }
+  if (!url.includes("neon.tech") && process.env.AGENT_PORTAL_TEST_ALLOW_DB !== "1") {
+    console.log("⚠️ 跳过：DATABASE_URL 不是 Neon 测试库，怕连到生产库不跑（确认是测试库可设 AGENT_PORTAL_TEST_ALLOW_DB=1）—— 这一项等于没测");
+    return;
+  }
+  process.env.NODE_ENV = process.env.NODE_ENV || "test";
+  const { prisma } = await import("../apps/api/src/db/prisma");
+  const { BusinessError } = await import("../apps/api/src/modules/core/business-error");
+  const pm: any = prisma;
+
+  const routes = new Map<string, Function>();
+  const app: any = {};
+  for (const m of ["get", "post", "put", "patch", "delete"]) app[m] = (p: string, h: Function) => routes.set(`${m.toUpperCase()} ${p}`, h);
+  (await import("../apps/api/src/modules/shipments/routes")).registerShipmentRoutes(app);
+  (await import("../apps/api/src/modules/containers/routes")).registerContainerRoutes(app);
+  (await import("../apps/api/src/modules/loading-manifests/routes")).registerLoadingManifestRoutes(app);
+  (await import("../apps/api/src/modules/admin-ops/routes")).registerAdminOpsRoutes(app);
+
+  async function call(key: string, auth: Auth, body: Row = {}, query: Record<string, string> = {}): Promise<{ status: number; data: any; message: string }> {
+    const handler = routes.get(key);
+    if (!handler) return { status: 404, data: undefined, message: `没有这个接口：${key}` };
+    let status = 200;
+    let raw: any;
+    const res: any = { status(s: number) { status = s; return res; }, json(p: any) { raw = p; }, setHeader() {} };
+    try {
+      await handler({ body, query, headers: {}, auth }, res);
+    } catch (e) {
+      if (e instanceof BusinessError) { status = e.httpStatus; raw = { code: e.code, message: e.message }; } else throw e;
+    }
+    return { status, data: raw?.data, message: raw?.message ?? "" };
+  }
+  async function must(key: string, auth: Auth, body: Row = {}, query: Record<string, string> = {}): Promise<any> {
+    const r = await call(key, auth, body, query);
+    assert.equal(r.status, 200, `${key} 失败：${r.status} ${r.message}`);
+    return r.data;
+  }
+
+  async function cleanup(): Promise<void> {
+    const containers = await pm.container.findMany({ where: { companyId: CO }, select: { id: true } });
+    const ids = containers.map((c: Row) => c.id);
+    await pm.adminLastmileOrder.deleteMany({ where: { companyId: CO } });
+    await pm.shipmentContainerItem.deleteMany({ where: { containerId: { in: ids } } });
+    if (pm.containerPushEntry) await pm.containerPushEntry.deleteMany({ where: { companyId: CO } });
+    if (pm.containerPushBatch) await pm.containerPushBatch.deleteMany({ where: { companyId: CO } });
+    await pm.container.deleteMany({ where: { companyId: CO } });
+    await pm.statusLog.deleteMany({ where: { companyId: CO } });
+    await pm.shipment.deleteMany({ where: { companyId: CO } });
+    await pm.order.deleteMany({ where: { companyId: CO } });
+    await pm.auditLog.deleteMany({ where: { companyId: CO } });
+    await pm.user.deleteMany({ where: { companyId: CO } });
+  }
+
+  let seq = 0;
+  const uniq = (tag: string) => `ZZLG${tag}${Date.now().toString(36).toUpperCase()}${seq++}`;
+  async function seedShipment(pieces = 3): Promise<string> {
+    const trackingNo = uniq("T");
+    const orderId = `${P}o_${trackingNo}`;
+    await pm.order.create({ data: {
+      id: orderId, companyId: CO, clientId: `${P}client`, warehouseId: `${P}wh`, itemName: "测试鞋",
+      productQuantity: pieces, packageCount: pieces, packageUnit: "箱", transportMode: "sea",
+      receiverNameTh: "测试收货人", receiverPhoneTh: "000", receiverAddressTh: "测试地址",
+    } });
+    const id = `${P}s_${trackingNo}`;
+    await pm.shipment.create({ data: {
+      id, companyId: CO, orderId, trackingNo, currentStatus: "inWarehouseCN", warehouseId: `${P}wh`,
+      packageCount: pieces, volumeM3: 0.2 * pieces, weightKg: 10 * pieces, transportMode: "sea",
+    } });
+    await pm.statusLog.create({ data: {
+      id: `sl_new_${Date.now()}_${seq++}_${P}`, companyId: CO, shipmentId: id, operatorId: STAFF.userId, operatorRole: "staff", operatorName: STAFF.name,
+      fromStatus: "created", toStatus: "inWarehouseCN", remark: "货已到国内仓，等待装柜", changedAt: new Date("2026-08-20T02:00:00.000Z"),
+    } });
+    return trackingNo;
+  }
+  const newBox = async (): Promise<{ id: string; no: string }> => {
+    const no = uniq("BOX");
+    const id = (await must("POST /staff/loading-manifests", STAFF, { warehouse: `${P}wh`, transportMode: "sea", containerNo: no })).manifest.id;
+    return { id, no };
+  };
+  async function load(boxId: string, trackingNo: string): Promise<string> {
+    const before = await pm.shipment.findMany({ where: { parentTrackingNo: trackingNo, companyId: CO }, select: { trackingNo: true } });
+    await must("POST /staff/loading-manifests/add-shipment", STAFF, { trackingNo }, { id: boxId });
+    const after = await pm.shipment.findMany({ where: { parentTrackingNo: trackingNo, companyId: CO }, select: { trackingNo: true } });
+    return after.map((c: Row) => c.trackingNo).find((t: string) => !before.some((b: Row) => b.trackingNo === t))!;
+  }
+  const push = (boxId: string, toStatus: string, date?: string) => call("POST /admin/containers/status", ADMIN, { id: boxId, toStatus, ...(date ? { date } : {}) });
+  async function pushAll(boxId: string, steps: Array<[string, string]>): Promise<void> {
+    for (const [s, d] of steps) {
+      const r = await push(boxId, s, d);
+      assert.equal(r.status, 200, `推 ${s} 失败：${r.status} ${r.message}`);
+    }
+  }
+  const undo = (boxId: string, expectStatus?: string) => call("POST /admin/containers/status/undo", ADMIN, { id: boxId, ...(expectStatus ? { expectStatus } : {}) });
+  const statusOf = async (trackingNo: string) => (await pm.shipment.findFirst({ where: { trackingNo, companyId: CO }, select: { currentStatus: true } }))?.currentStatus ?? null;
+  const boxStatus = async (id: string) => (await pm.container.findUnique({ where: { id }, select: { currentStatus: true } }))?.currentStatus ?? null;
+  async function timeline(trackingNo: string, role: "staff" | "client" = "staff"): Promise<Row[]> {
+    const who = role === "staff" ? STAFF : { userId: `${P}client`, companyId: CO, role: "client", name: "测试客户" };
+    const t = await must("GET /client/shipments/track", who, {}, { trackingNo });
+    return [...t.timeline].reverse();
+  }
+  /** 柜子和这几票货对得上（货 = 柜子状态对应的货状态） */
+  async function consistent(boxId: string, nos: string[]): Promise<string> {
+    const b = (await boxStatus(boxId))!;
+    const want = MAP[b];
+    const got = await Promise.all(nos.map((n) => statusOf(n)));
+    return got.every((g) => g === want) ? "" : `柜子 ${b}（货应为 ${want}），实际 ${got.join(",")}`;
+  }
+
+  console.log("推进账本 + 整柜撤销 + 轨迹删除（真库）");
+  try {
+    await cleanup();
+    for (const u of [STAFF, ADMIN]) await pm.user.create({ data: { id: u.userId, companyId: CO, role: u.role, name: u.name, phone: "000", status: "active" } });
+    await pm.user.create({ data: { id: `${P}client`, companyId: CO, role: "client", name: "测试客户", phone: "000", status: "active" } });
+
+    console.log("\n【1 删中间「已开船」被挡，连撤到底柜货一直对得上，还能重推（Codex P1）】");
+    try {
+      const p = await seedShipment(); const box = await newBox(); const c = await load(box.id, p);
+      await pushAll(box.id, [["SEALED", "2026-08-25"], ["IN_TRANSIT", "2026-09-01"], ["ARRIVED", "2026-09-13"]]);
+      const dep = (await timeline(p)).find((t) => t.trackingNo === c && t.toStatus === "departed");
+      const d = await call("POST /staff/shipments/track/delete-log", STAFF, { logId: dep!.id });
+      expect("删「已开船」推进记录 → 409，提示去装柜管理撤销；弹窗里不给删并写明原因", () => {
+        assert.equal(d.status, 409, d.message);
+        assert.match(d.message, /装柜管理/);
+        assert.equal(dep!.canDelete, false);
+        assert.equal(dep!.deleteBlockedReason, "containerPush");
+      });
+      const bad: string[] = [];
+      for (let i = 1; i <= 3; i++) { const u = await undo(box.id); if (u.status !== 200) bad.push(`撤${i} ${u.status}`); const x = await consistent(box.id, [p, c]); if (x) bad.push(`撤${i}：${x}`); }
+      const r = await push(box.id, "SEALED", "2026-08-25");
+      expect("连撤三步每步柜货一致，撤到装柜中后能重推封柜", () => { assert.deepEqual(bad, []); assert.equal(r.status, 200, r.message); });
+    } catch (e) { failures++; console.log(`  ❌ 这个场景中途出错，后面几步没跑完：${e instanceof Error ? e.message.split("\n")[0] : String(e)}`); }
+
+    console.log("\n【2 好几步填同一天，连撤四步（线上老代码/送审版都会退错、柜子往前走）】");
+    try {
+      const p = await seedShipment(); const box = await newBox(); const c = await load(box.id, p);
+      await pushAll(box.id, [["SEALED", "2026-08-25"], ["IN_TRANSIT", "2026-09-01"], ["ARRIVED", "2026-09-13"], ["CUSTOMS", "2026-09-14"], ["CUSTOMS_CLEARED", "2026-09-16"], ["UNLOADING", "2026-09-16"], ["IN_WAREHOUSE_TH", "2026-09-16"]]);
+      const path: string[] = []; const bad: string[] = [];
+      for (let i = 1; i <= 4; i++) { await undo(box.id); path.push((await boxStatus(box.id))!); const x = await consistent(box.id, [p, c]); if (x) bad.push(`撤${i}：${x}`); }
+      expect("柜子按推的顺序一步步退（卸柜中→放行→清关中→到港），货每步跟上", () => {
+        assert.deepEqual(path, ["UNLOADING", "CUSTOMS_CLEARED", "CUSTOMS", "ARRIVED"]);
+        assert.deepEqual(bad, []);
+      });
+    } catch (e) { failures++; console.log(`  ❌ 这个场景中途出错，后面几步没跑完：${e instanceof Error ? e.message.split("\n")[0] : String(e)}`); }
+
+    console.log("\n【3 到港日期填得比开船还早，连撤后还能重推（送审版会卡死）；撤回后柜子的日期跟没推过一样，再装进来的货不会补出撤掉的步骤】");
+    try {
+      const p = await seedShipment(); const box = await newBox(); const c = await load(box.id, p);
+      const dates = async () => JSON.stringify(await pm.container.findUnique({ where: { id: box.id }, select: { statusDates: true, departureDate: true, ata: true } }));
+      await pushAll(box.id, [["SEALED", "2026-08-25"]]);
+      const sealedDates = await dates();
+      await pushAll(box.id, [["IN_TRANSIT", "2026-09-01"], ["ARRIVED", "2026-08-30"]]);
+      const bad: string[] = [];
+      for (let i = 1; i <= 2; i++) { await undo(box.id); const x = await consistent(box.id, [p, c]); if (x) bad.push(`撤${i}：${x}`); }
+      const undoneDates = await dates();
+      const p2 = await seedShipment(); const c2 = await load(box.id, p2); const s2 = await statusOf(c2);
+      const r = await push(box.id, "IN_TRANSIT", "2026-09-01");
+      expect("撤到已封柜柜货一致，重推运输中成功", () => { assert.deepEqual(bad, []); assert.equal(r.status, 200, r.message); });
+      expect("撤回已封柜后，柜子时间表、开船/到港日期跟刚封柜时一模一样；这时装进来的货是已装柜", () => {
+        assert.equal(undoneDates, sealedDates);
+        assert.equal(s2, "loaded");
+      });
+    } catch (e) { failures++; console.log(`  ❌ 这个场景中途出错，后面几步没跑完：${e instanceof Error ? e.message.split("\n")[0] : String(e)}`); }
+
+    console.log("\n【4 柜里一票已签收：撤两步不动它，另一票跟着退，再往前推不被它挡住】");
+    try {
+      const p1 = await seedShipment(); const p2 = await seedShipment(); const box = await newBox();
+      const c1 = await load(box.id, p1); const c2 = await load(box.id, p2);
+      await pushAll(box.id, [["SEALED", "2026-08-25"], ["IN_TRANSIT", "2026-09-01"], ["ARRIVED", "2026-09-13"], ["CUSTOMS", "2026-09-14"], ["CUSTOMS_CLEARED", "2026-09-15"], ["UNLOADING", "2026-09-16"], ["IN_WAREHOUSE_TH", "2026-09-17"]]);
+      const s1 = await pm.shipment.findFirst({ where: { trackingNo: c1, companyId: CO }, select: { id: true } });
+      await must("POST /admin/lastmile/orders", ADMIN, { shipmentIds: [s1.id] });
+      const lm = await pm.adminLastmileOrder.findFirst({ where: { shipmentId: s1.id }, select: { id: true } });
+      await must("POST /admin/lastmile/status", ADMIN, { id: lm.id, status: "SIGNED" });
+      const signedLogsBefore = await pm.statusLog.count({ where: { shipmentId: s1.id } });
+      const u1 = await undo(box.id); const u2 = await undo(box.id);
+      const after = { box: await boxStatus(box.id), c1: await statusOf(c1), c2: await statusOf(c2), signedLogs: await pm.statusLog.count({ where: { shipmentId: s1.id } }) };
+      const r = await push(box.id, "UNLOADING", "2026-09-16");
+      expect("撤两步：柜子到清关放行、没签收的那票跟着退、已签收那票不动且轨迹一条没删；撤销结果列出它", () => {
+        assert.equal(u1.status, 200, u1.message); assert.equal(u2.status, 200, u2.message);
+        assert.equal(after.box, "CUSTOMS_CLEARED"); assert.equal(after.c2, "customsCleared"); assert.equal(after.c1, "delivered");
+        assert.equal(after.signedLogs, signedLogsBefore);
+        assert.ok((u1.data.skippedShipments ?? []).some((s: Row) => s.trackingNo === c1), JSON.stringify(u1.data.skippedShipments));
+      });
+      expect("再往前推正在卸柜成功，已签收的货被跳过并在结果里列出", () => {
+        assert.equal(r.status, 200, r.message);
+        assert.ok((r.data.skippedShipments ?? []).some((s: Row) => s.trackingNo === c1), JSON.stringify(r.data.skippedShipments));
+      });
+    } catch (e) { failures++; console.log(`  ❌ 这个场景中途出错，后面几步没跑完：${e instanceof Error ? e.message.split("\n")[0] : String(e)}`); }
+
+    console.log("\n【5 开船后才装进来的货：撤到底跟着退，补记删掉、「装入柜子」留着，能重推】");
+    try {
+      const p1 = await seedShipment(); const p2 = await seedShipment(); const box = await newBox();
+      const c1 = await load(box.id, p1);
+      await pushAll(box.id, [["SEALED", "2026-08-25"], ["IN_TRANSIT", "2026-09-01"]]);
+      const c2 = await load(box.id, p2);
+      // 刚装进来时：一条「装入柜子」（已装柜）+ 已封柜、运输中两条随柜补记，不能出现两条「装入柜子」
+      const justLoaded = await pm.statusLog.findMany({ where: { shipment: { trackingNo: c2 } }, orderBy: { changedAt: "asc" }, select: { toStatus: true, remark: true } });
+      expect("开船后装进来：一条「装入柜子」（已装柜）+ 两条随柜补记", () => {
+        assert.deepEqual(justLoaded.map((l: Row) => [l.toStatus, /^装入柜子 /.test(String(l.remark)), /随柜 .* 补记/.test(String(l.remark))]),
+          [["loaded", true, false], ["loaded", false, true], ["departed", false, true]], JSON.stringify(justLoaded));
+      });
+      await pushAll(box.id, [["ARRIVED", "2026-09-13"]]);
+      const bad: string[] = [];
+      for (let i = 1; i <= 3; i++) { await undo(box.id); const x = await consistent(box.id, [c1, c2]); if (x) bad.push(`撤${i}：${x}`); }
+      const lateLogs = await pm.statusLog.findMany({ where: { shipment: { trackingNo: c2 } }, select: { toStatus: true, remark: true } });
+      const r = await push(box.id, "SEALED", "2026-08-25");
+      expect("每步柜货一致；后装那票只剩「装入柜子」一条；重推封柜成功", () => {
+        assert.deepEqual(bad, []);
+        assert.equal(lateLogs.length, 1, JSON.stringify(lateLogs));
+        assert.match(String(lateLogs[0].remark), /^装入柜子 /);
+        assert.equal(r.status, 200, r.message);
+      });
+    } catch (e) { failures++; console.log(`  ❌ 这个场景中途出错，后面几步没跑完：${e instanceof Error ? e.message.split("\n")[0] : String(e)}`); }
+
+    console.log("\n【6 9-15 形状：删「装入柜子」能删、客户顶上正常；连撤到装柜中自动放回它，每步客户轨迹都有当前状态】");
+    try {
+      const p = await seedShipment(); const box = await newBox(); const c = await load(box.id, p);
+      await pushAll(box.id, [["SEALED", "2026-08-25"], ["IN_TRANSIT", "2026-09-01"], ["ARRIVED", "2026-09-13"], ["CUSTOMS", "2026-09-14"]]);
+      const loadLog = (await timeline(p)).find((t) => t.trackingNo === c && String(t.remark).startsWith("装入柜子"));
+      const d = await call("POST /staff/shipments/track/delete-log", STAFF, { logId: loadLog!.id });
+      const top = (await timeline(p, "client"))[0];
+      expect("删「装入柜子」200；客户最上面变成「清关中」", () => { assert.equal(d.status, 200, d.message); assert.equal(top.toStatus, "customsTH"); });
+      const missing: string[] = [];
+      for (let i = 1; i <= 4; i++) {
+        const u = await undo(box.id);
+        const st = await statusOf(c);
+        const tl = await timeline(p, "client");
+        if (u.status !== 200 || !tl.some((t) => t.toStatus === st)) missing.push(`撤${i}(${u.status}) 状态 ${st} 在客户轨迹里找不到`);
+      }
+      const restored = await pm.statusLog.findUnique({ where: { id: loadLog!.id } });
+      expect("每步客户轨迹都有当前状态；撤到装柜中时原来那条「装入柜子」被原样放回", () => {
+        assert.deepEqual(missing, []);
+        assert.ok(restored, "没放回");
+      });
+    } catch (e) { failures++; console.log(`  ❌ 这个场景中途出错，后面几步没跑完：${e instanceof Error ? e.message.split("\n")[0] : String(e)}`); }
+
+    console.log("\n【7 自动放回只认装柜时写的「装入柜子 本柜号」整号：写错柜号的、柜号撞开头的、推进记录「已封柜」、推柜子时备注里手填「装入柜子 本柜号」的都不放回】");
+    try {
+      const p = await seedShipment(); const box = await newBox(); const c = await load(box.id, p);
+      await pushAll(box.id, [["SEALED", "2026-08-25"]]);
+      const cs = await pm.shipment.findFirst({ where: { trackingNo: c, companyId: CO }, select: { id: true } });
+      const wrongId = `sl_mnf_${Date.now()}_wrong_${P}`;
+      await pm.statusLog.create({ data: { id: wrongId, companyId: CO, shipmentId: cs.id, operatorId: STAFF.userId, operatorRole: "staff", operatorName: STAFF.name, fromStatus: "loaded", toStatus: "loaded", remark: "装入柜子 WRONG123", changedAt: new Date("2026-09-30T00:00:00Z") } });
+      await pushAll(box.id, [["IN_TRANSIT", "2026-09-01"]]);
+      // 柜号撞开头：另一个柜号是本柜号后面多一位（线上真有一对柜号一个是另一个的开头）
+      const prefixId = `sl_mnf_${Date.now()}_prefix_${P}`;
+      await pm.statusLog.create({ data: { id: prefixId, companyId: CO, shipmentId: cs.id, operatorId: STAFF.userId, operatorRole: "staff", operatorName: STAFF.name, fromStatus: "loaded", toStatus: "loaded", remark: `装入柜子 ${box.no}9`, changedAt: new Date("2026-09-29T00:00:00Z") } });
+      // 推柜子时员工在备注里手填了「装入柜子 本柜号」：备注一模一样，但不是装柜写的那条（id 不是 sl_mnf_），不能当它放回
+      const fakeId = `sl_ctn_${Date.now()}_fake_${P}`;
+      await pm.statusLog.create({ data: { id: fakeId, companyId: CO, shipmentId: cs.id, operatorId: STAFF.userId, operatorRole: "staff", operatorName: STAFF.name, fromStatus: "loaded", toStatus: "loaded", remark: `装入柜子 ${box.no}`, changedAt: new Date("2026-08-26T00:00:00Z") } });
+      const logs = await timeline(p);
+      const right = logs.find((t) => t.trackingNo === c && t.remark === `装入柜子 ${box.no}` && t.id !== fakeId);
+      const sealed = logs.find((t) => t.trackingNo === c && t.toStatus === "loaded" && !String(t.remark).startsWith("装入柜子"));
+      // 手填备注那条、撞开头那条最后删（放回时按最近删的优先：不认 id 会先挑中手填那条，只比开头会先挑中撞开头那条）
+      for (const id of [right!.id, sealed!.id, wrongId, fakeId, prefixId]) {
+        const r = await call("POST /staff/shipments/track/delete-log", STAFF, { logId: id });
+        assert.equal(r.status, 200, `删 ${id} 失败 ${r.message}`);
+      }
+      await undo(box.id); await undo(box.id);
+      const left = await pm.statusLog.findMany({ where: { shipmentId: cs.id }, select: { id: true } });
+      expect("撤到装柜中只放回对的「装入柜子」这一条", () => {
+        assert.deepEqual(left.map((l: Row) => l.id), [right!.id]);
+      });
+    } catch (e) { failures++; console.log(`  ❌ 这个场景中途出错，后面几步没跑完：${e instanceof Error ? e.message.split("\n")[0] : String(e)}`); }
+
+    console.log("\n【8 删除存底：管理员按父单号查到子单删掉的记录；已撤销那一步不许恢复；员工不能恢复】");
+    try {
+      const p = await seedShipment(); const box = await newBox(); const c = await load(box.id, p);
+      await pushAll(box.id, [["SEALED", "2026-08-25"], ["IN_TRANSIT", "2026-09-01"]]);
+      const loadLog = (await timeline(p)).find((t) => t.trackingNo === c && String(t.remark).startsWith("装入柜子"));
+      await must("POST /staff/shipments/track/delete-log", STAFF, { logId: loadLog!.id });
+      const list = await call("GET /admin/shipments/track/deleted-logs", ADMIN, {}, { trackingNo: p });
+      const item = (list.data?.items ?? []).find((i: Row) => i.log?.id === loadLog!.id);
+      const staffTry = await call("POST /admin/shipments/track/restore-log", STAFF, { auditId: item?.auditId ?? "x" });
+      expect("按父单号查到子单那条，写着谁删的；员工调恢复 403", () => {
+        assert.equal(list.status, 200, list.message);
+        assert.ok(item, JSON.stringify(list.data));
+        assert.equal(item.deletedBy, STAFF.userId);
+        assert.equal(staffTry.status, 403);
+      });
+      const ok1 = await call("POST /admin/shipments/track/restore-log", ADMIN, { auditId: item.auditId });
+      const st = await statusOf(c);
+      const again = await call("POST /admin/shipments/track/restore-log", ADMIN, { auditId: item.auditId });
+      expect("管理员恢复 200、状态不变、重复恢复 409", () => { assert.equal(ok1.status, 200, ok1.message); assert.equal(st, "departed"); assert.equal(again.status, 409); });
+
+      // 删「已开船」挡住了，换一条能删的记录来测「已撤销那一步不许恢复」：先推到港，删自环的重复记录没有，就造一条
+      const cs = await pm.shipment.findFirst({ where: { trackingNo: c, companyId: CO }, select: { id: true } });
+      const extraId = `sl_mnf_${Date.now()}_extra_${P}`;
+      await pm.statusLog.create({ data: { id: extraId, companyId: CO, shipmentId: cs.id, operatorId: STAFF.userId, operatorRole: "staff", operatorName: STAFF.name, fromStatus: "departed", toStatus: "departed", remark: "重复的开船备注", changedAt: new Date("2026-09-02T00:00:00Z") } });
+      await must("POST /staff/shipments/track/delete-log", STAFF, { logId: extraId });
+      await undo(box.id);
+      const list2 = await call("GET /admin/shipments/track/deleted-logs", ADMIN, {}, { trackingNo: c });
+      const extra = (list2.data?.items ?? []).find((i: Row) => i.log?.id === extraId);
+      const blocked = await call("POST /admin/shipments/track/restore-log", ADMIN, { auditId: extra?.auditId ?? "x" });
+      expect("柜子已撤回封柜后，恢复「已开船」那条 409（这一步已经撤销了）", () => { assert.equal(blocked.status, 409, blocked.message); });
+    } catch (e) { failures++; console.log(`  ❌ 这个场景中途出错，后面几步没跑完：${e instanceof Error ? e.message.split("\n")[0] : String(e)}`); }
+
+    console.log("\n【9 撤销核对页面上看到的状态；撤销预览告诉员工会退到哪、谁不跟着退】");
+    try {
+      const p1 = await seedShipment(); const p2 = await seedShipment(); const box = await newBox();
+      const c1 = await load(box.id, p1); const c2 = await load(box.id, p2);
+      await pushAll(box.id, [["SEALED", "2026-08-25"], ["IN_TRANSIT", "2026-09-01"]]);
+      await pm.shipment.update({ where: { trackingNo: c2 }, data: { currentStatus: "returned" } });
+      const preview = await call("GET /admin/containers/status/undo-preview", ADMIN, {}, { id: box.id });
+      const wrong = await undo(box.id, "ARRIVED");
+      const ok = await undo(box.id, "IN_TRANSIT");
+      expect("预览：退回已封柜、1 票跟着退、退回的那票列出来不动", () => {
+        assert.equal(preview.status, 200, preview.message);
+        assert.equal(preview.data.prevStatus, "SEALED");
+        assert.equal(preview.data.revertCount, 1);
+        assert.ok((preview.data.keep ?? []).some((k: Row) => k.trackingNo === c2), JSON.stringify(preview.data));
+      });
+      expect("expectStatus 不对 409、对 200", () => { assert.equal(wrong.status, 409); assert.equal(ok.status, 200, ok.message); });
+      void c1;
+
+      // 柜子状态被系统以外改过（直接改库），跟账本最后一笔对不上：预览和撤销都拒绝，什么都不动
+      const p3 = await seedShipment(); const box3 = await newBox(); const c3 = await load(box3.id, p3);
+      await pushAll(box3.id, [["SEALED", "2026-08-25"]]);
+      // 撤封柜货的状态不变（已装柜→已装柜），预览不能说「1 票跟着退」
+      const pvSealed = await call("GET /admin/containers/status/undo-preview", ADMIN, {}, { id: box3.id });
+      expect("预览撤封柜：0 票跟着退（状态本来就没变）", () => { assert.equal(pvSealed.status, 200, pvSealed.message); assert.equal(pvSealed.data.revertCount, 0); });
+      await pushAll(box3.id, [["IN_TRANSIT", "2026-09-01"]]);
+      await pm.container.update({ where: { id: box3.id }, data: { currentStatus: "ARRIVED" } });
+      const pv3 = await call("GET /admin/containers/status/undo-preview", ADMIN, {}, { id: box3.id });
+      const u3 = await undo(box3.id);
+      const after3 = { box: await boxStatus(box3.id), c3: await statusOf(c3), batches: await pm.containerPushBatch.count({ where: { containerId: box3.id } }) };
+      expect("柜子状态跟账本对不上：预览、撤销都 409，柜子、货、账本都没动", () => {
+        assert.equal(pv3.status, 409, pv3.message);
+        assert.equal(u3.status, 409, u3.message);
+        assert.deepEqual(after3, { box: "ARRIVED", c3: "departed", batches: 2 });
+      });
+    } catch (e) { failures++; console.log(`  ❌ 这个场景中途出错，后面几步没跑完：${e instanceof Error ? e.message.split("\n")[0] : String(e)}`); }
+
+    console.log("\n【10 推柜子状态：柜里有退回的货跳过它，不挡整柜（已签收的货跳过见场景 4）】");
+    try {
+      const p1 = await seedShipment(); const p2 = await seedShipment(); const box = await newBox();
+      const c1 = await load(box.id, p1); const c2 = await load(box.id, p2);
+      await pushAll(box.id, [["SEALED", "2026-08-25"]]);
+      await pm.shipment.update({ where: { trackingNo: c2 }, data: { currentStatus: "returned" } });
+      const r = await push(box.id, "IN_TRANSIT", "2026-09-01");
+      expect("退回的货跳过", () => {
+        assert.equal(r.status, 200, r.message);
+        assert.ok((r.data.skippedShipments ?? []).some((s: Row) => s.trackingNo === c2), JSON.stringify(r.data));
+      });
+      const s1 = await statusOf(c1); const s2 = await statusOf(c2);
+      expect("没退回的那票到已开船，退回那票还是退回", () => { assert.equal(s1, "departed"); assert.equal(s2, "returned"); });
+    } catch (e) { failures++; console.log(`  ❌ 这个场景中途出错，后面几步没跑完：${e instanceof Error ? e.message.split("\n")[0] : String(e)}`); }
+
+    console.log("\n【11 上线前推过的老柜子（没有账本）：同一天 / 日期倒序撤销按流程顺序找上一步】");
+    try {
+      const p = await seedShipment(); const box = await newBox(); const c = await load(box.id, p);
+      await pushAll(box.id, [["SEALED", "2026-08-25"], ["IN_TRANSIT", "2026-09-01"], ["ARRIVED", "2026-08-30"]]);
+      if (pm.containerPushBatch) await pm.containerPushBatch.deleteMany({ where: { containerId: box.id } });
+      const path: string[] = []; const bad: string[] = [];
+      for (let i = 1; i <= 2; i++) { await undo(box.id); path.push((await boxStatus(box.id))!); const x = await consistent(box.id, [p, c]); if (x) bad.push(`撤${i}：${x}`); }
+      expect("没有账本也按流程顺序退：到港→运输中→已封柜，柜货一致", () => {
+        assert.deepEqual(path, ["IN_TRANSIT", "SEALED"]);
+        assert.deepEqual(bad, []);
+      });
+
+      // 上线前推到运输中（没账本）、上线后推到港（有账本）、再后装一票：撤到港，后装那票退回「已开船」，不是「已装柜」
+      const q1 = await seedShipment(); const q2 = await seedShipment(); const box2 = await newBox(); const d1 = await load(box2.id, q1);
+      await pushAll(box2.id, [["SEALED", "2026-08-25"], ["IN_TRANSIT", "2026-09-01"]]);
+      if (pm.containerPushBatch) await pm.containerPushBatch.deleteMany({ where: { containerId: box2.id } });
+      await pushAll(box2.id, [["ARRIVED", "2026-09-13"]]);
+      const d2 = await load(box2.id, q2);
+      const u = await undo(box2.id);
+      const mixed = { box: await boxStatus(box2.id), d1: await statusOf(d1), d2: await statusOf(d2) };
+      expect("上线前后各推几步的柜子里后装的货：撤到港后跟柜子一起回到「已开船」", () => {
+        assert.equal(u.status, 200, u.message);
+        assert.deepEqual(mixed, { box: "IN_TRANSIT", d1: "departed", d2: "departed" });
+      });
+    } catch (e) { failures++; console.log(`  ❌ 这个场景中途出错，后面几步没跑完：${e instanceof Error ? e.message.split("\n")[0] : String(e)}`); }
+
+    console.log("\n【12 员工删过的重复「已封柜」：那一步被整柜撤销后，管理员不能再恢复它（有账本 / 老柜子都挡）】");
+    try {
+      for (const legacy of [false, true]) {
+        const p = await seedShipment(); const box = await newBox(); const c = await load(box.id, p);
+        await pushAll(box.id, [["SEALED", "2026-08-25"]]);
+        if (legacy && pm.containerPushBatch) await pm.containerPushBatch.deleteMany({ where: { containerId: box.id } });
+        const sealed = (await timeline(p)).find((t) => t.trackingNo === c && String(t.id).startsWith("sl_ctn_") && t.toStatus === "loaded");
+        const d = await call("POST /staff/shipments/track/delete-log", STAFF, { logId: sealed!.id });
+        const u = await undo(box.id);
+        const list = await call("GET /admin/shipments/track/deleted-logs", ADMIN, {}, { trackingNo: c });
+        const item = (list.data?.items ?? []).find((i: Row) => i.log?.id === sealed!.id);
+        const r = await call("POST /admin/shipments/track/restore-log", ADMIN, { auditId: item?.auditId ?? "x" });
+        const back = await pm.statusLog.count({ where: { id: sealed!.id } });
+        expect(`${legacy ? "老柜子" : "有账本"}：删重复「已封柜」200，撤回装柜中后恢复它 409，轨迹里没有它`, () => {
+          assert.equal(d.status, 200, d.message);
+          assert.equal(u.status, 200, u.message);
+          assert.ok(item, JSON.stringify(list.data));
+          assert.equal(r.status, 409, r.message);
+          assert.match(r.message, /撤销/);
+          assert.equal(back, 0);
+        });
+      }
+    } catch (e) { failures++; console.log(`  ❌ 这个场景中途出错，后面几步没跑完：${e instanceof Error ? e.message.split("\n")[0] : String(e)}`); }
+
+    console.log("\n【13 后装货只在柜子有推进账本时多写补记：「封柜」按钮封柜再推开船、后装、连撤到底，后装那票只剩「装入柜子」；没账本的老柜子后装货照原来只写两条】");
+    try {
+      const p1 = await seedShipment(); const box = await newBox(); const c1 = await load(box.id, p1);
+      await must("POST /staff/loading-manifests/seal", STAFF, {}, { id: box.id });
+      await pushAll(box.id, [["IN_TRANSIT", "2026-09-01"]]);
+      const p2 = await seedShipment(); const c2 = await load(box.id, p2);
+      const u1 = await undo(box.id); const u2 = await undo(box.id);
+      const left = (await timeline(p2)).filter((t) => t.trackingNo === c2);
+      const b = await boxStatus(box.id); const s1 = await statusOf(c1); const s2 = await statusOf(c2);
+      expect("封柜按钮封柜、再推开船、再后装一票：连撤两步回装柜中；后装那票只剩「装入柜子」一条，两票都是已装柜", () => {
+        assert.equal(u1.status, 200, u1.message); assert.equal(u2.status, 200, u2.message);
+        assert.equal(b, "LOADING");
+        assert.deepEqual(left.filter((t) => String(t.id).startsWith("sl_mnf_")).map((t) => [t.toStatus, String(t.remark).startsWith("装入柜子")]), [["loaded", true]]);
+        assert.equal(s1, "loaded"); assert.equal(s2, "loaded");
+      });
+
+      const p3 = await seedShipment(); const p4 = await seedShipment(); const box2 = await newBox(); await load(box2.id, p3);
+      await pushAll(box2.id, [["SEALED", "2026-08-25"], ["IN_TRANSIT", "2026-09-01"]]);
+      if (pm.containerPushBatch) await pm.containerPushBatch.deleteMany({ where: { containerId: box2.id } });
+      const c4 = await load(box2.id, p4);
+      const mnf = (await timeline(p4)).filter((t) => t.trackingNo === c4 && String(t.id).startsWith("sl_mnf_"));
+      expect("没账本的老柜子后装货：一条「已封柜」补记 + 一条「装入柜子」（已开船），跟上线前一样", () => {
+        assert.equal(mnf.length, 2, JSON.stringify(mnf.map((t) => [t.toStatus, t.remark])));
+        const load4 = mnf.filter((t) => String(t.remark).startsWith("装入柜子"));
+        assert.equal(load4.length, 1);
+        assert.equal(load4[0].toStatus, "departed");
+      });
+    } catch (e) { failures++; console.log(`  ❌ 这个场景中途出错，后面几步没跑完：${e instanceof Error ? e.message.split("\n")[0] : String(e)}`); }
+  } finally {
+    await cleanup();
+    const left = (await pm.shipment.count({ where: { companyId: CO } })) + (await pm.container.count({ where: { companyId: CO } }))
+      + (await pm.statusLog.count({ where: { companyId: CO } })) + (await pm.user.count({ where: { companyId: CO } }))
+      + (await pm.auditLog.count({ where: { companyId: CO } }));
+    console.log(`\n测试数据清理：剩 ${left} 行`);
+    await pm.$disconnect();
+  }
+  console.log(`\nFAILURES ${failures}`);
+  if (failures) process.exitCode = 1;
+}
+
+main().catch((e) => {
+  console.error(e);
+  process.exitCode = 1;
+});

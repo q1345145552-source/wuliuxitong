@@ -155,6 +155,48 @@ model Shipment {
   @@map("shipments")
 }
 
+/// 推柜子状态的账本（2026-09-17 老板定「推进账本」做法）：每推一次一笔，整柜撤销只认这里，不再靠轨迹记录和日期猜
+model ContainerPushBatch {
+  id                  String    @id
+  companyId           String    @map("company_id")
+  containerId         String    @map("container_id")
+  seq                 Int
+  fromContainerStatus String    @map("from_container_status")
+  toContainerStatus   String    @map("to_container_status")
+  changedAt           DateTime  @map("changed_at")
+  prevStatusDates     String?   @map("prev_status_dates")
+  prevDepartureDate   DateTime? @map("prev_departure_date")
+  prevAta             DateTime? @map("prev_ata")
+  operatorId          String    @map("operator_id")
+  createdAt           DateTime  @default(now()) @map("created_at")
+
+  container Container          @relation(fields: [containerId], references: [id], onDelete: Cascade)
+  entries   ContainerPushEntry[]
+
+  @@unique([containerId, seq])
+  @@index([companyId])
+  @@map("container_push_batches")
+}
+
+/// 账本里这一笔涉及的每票货：推之前/推之后的状态，以及这一步写给客户看的那条轨迹
+model ContainerPushEntry {
+  id          String   @id
+  companyId   String   @map("company_id")
+  batchId     String   @map("batch_id")
+  shipmentId  String   @map("shipment_id")
+  fromStatus  String   @map("from_status")
+  toStatus    String   @map("to_status")
+  statusLogId String?  @map("status_log_id")
+  kind        String
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  batch ContainerPushBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+
+  @@index([batchId])
+  @@index([shipmentId])
+  @@map("container_push_entries")
+}
+
 model StatusLog {
   id           String   @id
   companyId    String   @map("company_id")
@@ -549,6 +591,7 @@ model Container {
   updatedAt        DateTime  @updatedAt @map("updated_at")
 
   items ShipmentContainerItem[]
+  pushBatches ContainerPushBatch[]
 
   @@index([companyId, currentStatus])
   @@map("containers")

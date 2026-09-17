@@ -571,6 +571,7 @@ export function registerAgentPortalRoutes(app: MinimalHttpApp): void {
             clientId: true,
             itemName: true,
             cargoType: true,
+            transportMode: true,
             receiverNameTh: true,
             receiverAddressTh: true,
             products: { orderBy: { sortOrder: "asc" }, select: { itemName: true, packageCount: true, sortOrder: true } },
@@ -664,7 +665,8 @@ export function registerAgentPortalRoutes(app: MinimalHttpApp): void {
         shipment.currentStatus,
         childShipments.map((cs) => cs.currentStatus),
         shipment.packageCount,
-        shipment.transportMode,
+        // 老数据运单自己没填运输方式时按订单的（跟列表同口径，Codex 第二批复核 P2-1）
+        shipment.transportMode ?? shipment.order.transportMode,
       ) ?? undefined,
       receiverNameTh: shipment.order.receiverNameTh ?? null,
       receiverAddressTh: shipment.order.receiverAddressTh ?? null,

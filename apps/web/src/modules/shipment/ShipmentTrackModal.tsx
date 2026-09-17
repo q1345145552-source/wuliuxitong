@@ -6,6 +6,18 @@ import { authHeaders, apiBaseUrl, apiRequest, parseApiResponse, fetchWithSession
 
 // ── Types ──
 
+/** 管理员查到的一条「删过的记录」（后端 GET /admin/shipments/track/deleted-logs） */
+interface DeletedLogItem {
+  auditId: string;
+  deletedBy: string;
+  deletedByName: string;
+  deletedAt: string;
+  /** 已经放回轨迹（管理员恢复过，或整柜撤销时自动放回） */
+  restored: boolean;
+  /** 删之前的整条记录 */
+  log: Record<string, unknown>;
+}
+
 interface TimelineItem {
   /**
    * 这条记录在数据库里的 id，删「写错的一条」时靠它定位。
@@ -15,6 +27,11 @@ interface TimelineItem {
   canDelete?: boolean;
   /** 显示当前状态的最后一条：不给删，弹窗里提示去装柜管理撤销（2026-09-17）。客户端不下发 */
   isCurrentStatus?: boolean;
+  /**
+   * 为什么不能删（2026-09-17 推进账本）：currentStatus 当前状态最后一条 / containerPush 柜子推进改了状态的记录 /
+   * lastmile 派送记录；能删是 null。只发给员工和管理员
+   */
+  deleteBlockedReason?: "currentStatus" | "containerPush" | "lastmile" | null;
   /** 该条记录来自哪张运单。父运单标签里会混入子运单的记录，用它区分是哪一件货 */
   trackingNo?: string;
   fromStatus: string;
@@ -171,6 +188,13 @@ function LoadingSkeleton() {
   );
 }
 
+/** 员工/管理员看到的「这条为什么不能删」（2026-09-17 推进账本） */
+const DELETE_BLOCKED_HINT: Record<"currentStatus" | "containerPush" | "lastmile", string> = {
+  currentStatus: "当前状态，推错请到装柜管理撤销",
+  containerPush: "推进记录，推错请到装柜管理撤销",
+  lastmile: "派送记录，在尾端派送里处理",
+};
+
 /**
  * 一条轨迹记录。样式参考主流快递的物流详情：
  * 左侧圆点竖线，右侧「状态 + 时间」一行、备注一行，不用卡片和色块。
@@ -245,8 +269,10 @@ function TimelineNode({ item, isLast, isChild, index, tabTrackingNo, hideOperato
         )}
         {/* 删掉写错的一条（员工/管理员）。客户端后端根本不下发 id，这里不会出现。
             显示当前状态的那条不给删：删除只删记录、不改状态（2026-09-17），状态推错了要去装柜管理撤销 */}
-        {canEdit && item.isCurrentStatus ? (
-          <span style={{ marginLeft: "auto", fontSize: 12, color: "var(--t-faint)" }}>当前状态，推错请到装柜管理撤销</span>
+        {canEdit && item.deleteBlockedReason ? (
+          <span style={{ marginLeft: "auto", fontSize: 12, color: "var(--t-faint)" }}>{DELETE_BLOCKED_HINT[item.deleteBlockedReason]}</span>
+        ) : canEdit && item.isCurrentStatus ? (
+          <span style={{ marginLeft: "auto", fontSize: 12, color: "var(--t-faint)" }}>{DELETE_BLOCKED_HINT.currentStatus}</span>
         ) : onDelete && item.id ? (
           <button
             type="button"
@@ -294,9 +320,53 @@ function TrackContent({ data, onReload }: { data: TrackData; onReload?: () => vo
   const [activeTab, setActiveTab] = useState(0); // 0=父运单, 1+=子运单
   const [zoomImage, setZoomImage] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  // 管理员：这票货删过的记录（2026-09-17 推进账本，删之前后端存了底，能原样恢复）
+  const [deletedLogs, setDeletedLogs] = useState<DeletedLogItem[] | null>(null);
+  const [deletedLoading, setDeletedLoading] = useState(false);
+  const [restoringId, setRestoringId] = useState<string | null>(null);
+  const isAdmin = data.viewerRole === "admin";
+
+  const loadDeletedLogs = async () => {
+    setDeletedLoading(true);
+    try {
+      const res = await fetch(`${apiBaseUrl()}/admin/shipments/track/deleted-logs?trackingNo=${encodeURIComponent(data.trackingNo)}`, {
+        method: "GET",
+        headers: { ...authHeaders() },
+      });
+      const body = await parseApiResponse<{ items: DeletedLogItem[] }>(res);
+      setDeletedLogs(body.items ?? []);
+    } catch (e) {
+      window.alert("查删过的记录失败：" + (e instanceof Error ? e.message : "请重试"));
+    } finally {
+      setDeletedLoading(false);
+    }
+  };
+
+  const handleRestore = async (item: DeletedLogItem) => {
+    if (restoringId) return;
+    const ok = window.confirm(
+      `把这一条放回物流轨迹吗？\n\n　${statusCfg(String(item.log.toStatus ?? "")).zh}　${formatTime(String(item.log.changedAt ?? ""))}\n\n` +
+      `· 只是把记录放回去，运单状态不会变\n· 客户也会重新看到这一条`,
+    );
+    if (!ok) return;
+    setRestoringId(item.auditId);
+    try {
+      await apiRequest(`${apiBaseUrl()}/admin/shipments/track/restore-log`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ auditId: item.auditId }),
+      });
+      await loadDeletedLogs();
+      onReload?.();
+    } catch (e) {
+      window.alert("恢复失败：" + (e instanceof Error ? e.message : "请重试"));
+    } finally {
+      setRestoringId(null);
+    }
+  };
 
   // 员工和管理员可以删掉写错的一条轨迹（客户不行，后端连 id 都不下发）。
-  // 2026-09-17 起只删记录、不改运单状态；显示当前状态的那条后端标 isCurrentStatus、不给删
+  // 2026-09-17 起只删记录、不改运单状态；不能删的（当前状态最后一条 / 柜子推进记录 / 派送记录）后端标 deleteBlockedReason
   const canEditTimeline = data.viewerRole === "staff" || data.viewerRole === "admin";
 
   const handleDeleteLog = async (item: TimelineItem) => {
@@ -307,7 +377,7 @@ function TrackContent({ data, onReload }: { data: TrackData; onReload?: () => vo
       `删掉之后：\n` +
       `· 只是从物流轨迹里去掉这一条，客户也看不到了\n` +
       `· 运单状态不会变（状态推错了请到「装柜管理」点「撤销」）\n` +
-      `· 删了就找不回来了`,
+      `· 删错了找管理员，管理员能在「删过的记录」里恢复`,
     );
     if (!ok) return;
     setDeletingId(item.id);
@@ -462,6 +532,52 @@ function TrackContent({ data, onReload }: { data: TrackData; onReload?: () => vo
             ))}
           </div>
         </>
+      ) : null}
+
+      {/* 管理员：删过的记录（2026-09-17 推进账本）。只列这票货（含子单）删过的，恢复只放回记录不改状态 */}
+      {isAdmin ? (
+        <div style={{ marginTop: 18, paddingTop: 10, borderTop: "1px solid var(--s-sunken)" }}>
+          {deletedLogs === null ? (
+            <button
+              type="button"
+              disabled={deletedLoading}
+              onClick={loadDeletedLogs}
+              style={{ border: "none", background: "none", padding: 0, fontSize: 12, color: "var(--t-muted)", cursor: deletedLoading ? "not-allowed" : "pointer", textDecoration: "underline" }}
+            >
+              {deletedLoading ? "查询中…" : "删过的记录"}
+            </button>
+          ) : (
+            <div>
+              <div style={{ fontSize: 13, fontWeight: 600, color: "var(--t-heading)", marginBottom: 8 }}>
+                删过的记录（{deletedLogs.length} 条）
+              </div>
+              {deletedLogs.length === 0 ? (
+                <div style={{ fontSize: 12, color: "var(--t-faint)" }}>这票货没有删过记录</div>
+              ) : deletedLogs.map((d) => (
+                <div key={d.auditId} style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap", fontSize: 12, padding: "4px 0", borderBottom: "1px dashed var(--l-soft)" }}>
+                  <span style={{ color: "var(--t-body)" }}>{statusCfg(String(d.log.toStatus ?? "")).zh}</span>
+                  <span style={{ color: "var(--t-faint)" }}>{formatTime(String(d.log.changedAt ?? ""))}</span>
+                  {d.log.remark ? <span style={{ color: "var(--t-muted)" }}>{String(d.log.remark)}</span> : null}
+                  <span style={{ color: "var(--t-faint)" }}>
+                    {String(d.log.trackingNo ?? "")} · {d.deletedByName || "未知"} 删于 {formatTime(d.deletedAt)}
+                  </span>
+                  {d.restored ? (
+                    <span style={{ marginLeft: "auto", color: "var(--t-faint)" }}>已恢复</span>
+                  ) : (
+                    <button
+                      type="button"
+                      disabled={restoringId === d.auditId}
+                      onClick={() => handleRestore(d)}
+                      style={{ marginLeft: "auto", border: "1px solid var(--l-soft)", borderRadius: 6, padding: "2px 8px", background: "var(--white)", fontSize: 12, cursor: "pointer" }}
+                    >
+                      {restoringId === d.auditId ? "恢复中…" : "恢复"}
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       ) : null}
 
       {/* 大图查看：点图片放大，点任意处关闭 */}

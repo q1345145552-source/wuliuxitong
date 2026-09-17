@@ -56,6 +56,8 @@ async function cleanup(prisma: any): Promise<void> {
   await prisma.statusLog.deleteMany({ where: { companyId: CO } });
   await prisma.shipment.deleteMany({ where: { companyId: CO } });
   await prisma.order.deleteMany({ where: { companyId: CO } });
+  // 删除接口删之前把原记录存进 audit_logs（2026-09-17 推进账本），外键指向 users，要先删
+  await prisma.auditLog.deleteMany({ where: { companyId: CO } });
   await prisma.user.deleteMany({ where: { companyId: CO } });
 }
 

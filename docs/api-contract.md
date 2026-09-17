@@ -659,6 +659,22 @@
 - 不按用户备注里是否出现“派送”二字判定来源。
 - 本次不清理历史记录，也不修改签收图片或件数、体积、重量。
 
+### 18.5 推进账本（2026-09-17 老板定，替代 18.2 / 18.4 的做法）
+
+- **新表**（迁移 `20260917_container_push_ledger`，只增不删）：`container_push_batches`（每推一次柜子状态一笔：seq、柜子推之前/推之后的状态、推之前的 statusDates / 开船日期 / 到港日期）、`container_push_entries`（这一笔里每票货推之前/推之后的状态、这一步写的轨迹 id，kind=`push` / `late_add`）。
+- **POST /admin/containers/status**：记一笔账。退回/取消的货、比这一步靠后的预约派送/派送中/已签收的货跳过不挡整柜，列在 `skippedShipments: [{ trackingNo, status }]`；推进被挡的提示给运单号。
+- **POST /staff/loading-manifests/add-shipment**：柜子已经推过（不在装柜中）且有账本时，先单独写一条「装入柜子 柜号」（loaded→loaded），每一步都写「随柜补记」；并记进每一笔账（`late_add`，起点按第一笔之前柜子的状态），撤销时这票货也跟着退、补记一起删，「装入柜子」不删。没有账本的老柜子照上线前的写法（最后一步那条当「装入柜子」）。
+- **GET /admin/containers/status/undo-preview?id=**（员工/管理员）：`{ mode: "ledger"|"legacy", currentStatus, prevStatus, revertCount, keep: [{ trackingNo, reason }] }`，跟真撤销同一份判断，只读。
+- **POST /admin/containers/status/undo** `{ id, expectStatus? }`：
+  - `expectStatus` 跟柜子现在的状态对不上 → `409`（页面没刷新连点两下不会多撤一步）。
+  - 有账本：撤最近一笔。柜子恢复成那笔记的「推之前」；还在柜里、还停在这一步的货回到记的状态，只删这些货这一步的轨迹；不在柜里 / 已经走到别的状态的不动、轨迹不删，列在 `skippedShipments: [{ trackingNo, reason }]`。账本最后一笔跟柜子状态对不上（锁内确认）→ `409` 请联系技术；被别人抢先 → 「刚刚被别人改过，请刷新」。柜里这批货的父单都重算。写 `audit_logs`（action=UNDO，`beforeJson.undoneLogIds` = 这一步撤掉的全部记录 id，含员工之前删掉的）。
+  - 没有账本（上线前推的步骤）：沿用 18.4，但上一步按流程顺序找（时间表里混着另一条流程状态时才按日期）；状态没变的不算进 `affectedShipmentCount`；也写 UNDO 日志（`undoneLogIds` 含这次推进写的、员工之前删掉的同一批记录）。
+  - 两条路：货退回的那一步轨迹里一条记录都没有时，从删除存底里把「装入柜子 <本柜号>」（整号匹配）原样放回，写 RESTORE 日志；返回 `restoredLogs`。
+- **POST /staff/shipments/track/delete-log**：在 18.2 基础上，柜子推进（`sl_ctn_`）/ 随柜补记（`sl_mnf_`）里改了状态的记录 → `409`（提示去装柜管理撤销）；删之前把原记录整条写进 `audit_logs`（action=DELETE、resourceType=StatusLog、remark=`删除物流轨迹 <单号>`）。
+- **GET /client/shipments/track**：员工/管理员每条轨迹多 `deleteBlockedReason: "lastmile" | "containerPush" | "currentStatus" | null`，跟删除接口同一份判断（`deleteBlockedReasonOf`）；客户不下发。`partialAhead` 按 `shipment.transportMode ?? order.transportMode`（代理端 `/agent/shipments/track` 同）。
+- **GET /admin/shipments/track/deleted-logs?trackingNo=**（仅管理员）：这票货和它子单删过的记录（同一条只列最近一次）`{ items: [{ auditId, deletedBy, deletedByName, deletedAt, restored, log }] }`。
+- **POST /admin/shipments/track/restore-log** `{ auditId }`（仅管理员，员工 403）：原样放回，不改状态；记录的状态比货现在靠后（那一步已经撤了）→ `409`；记录 id 在某次整柜撤销的 `undoneLogIds` 里（状态没变的重复记录，比如「已封柜」）→ `409`；已经恢复过 → `409`；存底读不出来 → `404`。
+
 ### 18.4 POST /admin/containers/status/undo（2026-09-17）
 
 - 柜里的运单退回「这次推进之前的状态」，取这次推进写的那条轨迹（`sl_ctn_`，`changedAt` + `toStatus` 匹配）里的 `fromStatus`；同一票有多条匹配取最早写的。

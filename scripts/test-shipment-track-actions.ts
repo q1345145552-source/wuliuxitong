@@ -9,7 +9,7 @@ import ts from "typescript";
 import { createRequire } from "node:module";
 const webRequire = createRequire(path.resolve("apps/web/package.json"));
 type Row = Record<string, any>;
-let ships: Row[] = [], deliveries: Row[] = [], logs: Row[] = [];
+let ships: Row[] = [], deliveries: Row[] = [], logs: Row[] = [], audits: Row[] = [];
 const reads: Array<{ model: string; args: any }> = [];
 const locks: string[] = [];
 const writes: string[] = [];
@@ -70,7 +70,7 @@ function delivery(id:string,sid:string,wd:string,status="DELIVERING"): Row {
  return {id,companyId:"c",shipmentId:sid,deliveryNo:wd,status,driverName:"司机",phoneNumber:"123",licensePlate:"车",deliveryDate:"2026-09-10",signImageBase64:null,updatedAt:new Date(0)};
 }
 function shipGraph() { return ships.map(s=>({...s,containerItems:[],statusLogs:logs.filter(l=>l.shipmentId===s.id),order:{...s.order,products:[]}})); }
-function reset(list: Row[]) { ships=copy(list);deliveries=[];logs=[];reads.length=0;locks.length=0;writes.length=0;afterLock=()=>{}; }
+function reset(list: Row[]) { ships=copy(list);deliveries=[];logs=[];audits=[];reads.length=0;locks.length=0;writes.length=0;afterLock=()=>{}; }
 function list(model: string, rows: Row[], args: any): any[] { reads.push({model,args:copy(args)}); return shape(rows,args); }
 const db: any = strict("prisma", {
   shipment: strict("shipment", {
@@ -89,6 +89,10 @@ const db: any = strict("prisma", {
     async create(args: any) { if(deliveries.some(r=>r.deliveryNo===args.data.deliveryNo&&r.shipmentId===args.data.shipmentId)) throw Object.assign(Error("duplicate"),{code:"P2002"});writes.push(`create:${args.data.shipmentId}`);deliveries.push(copy(args.data));return shape(args.data,args); },
     async update(args: any) { const r=deliveries.find(x=>match(x,args.where));assert.ok(r,"update 的目标派送单不存在");writes.push(`update:${r.id}`);Object.assign(r,args.data);return shape(r,args); },
     async delete(args: any) { const index=deliveries.findIndex(r=>match(r,args.where));assert.ok(index>=0);writes.push(`delete:${deliveries[index].id}`);return deliveries.splice(index,1)[0]; },
+  }),
+  // 删除接口删之前把原记录存进 audit_logs（2026-09-17 推进账本）
+  auditLog: strict("auditLog", {
+    async create(args: any) { audits.push(copy(args.data)); writes.push(`audit:${args.data.resourceId}`); return args.data; },
   }),
   statusLog: strict("statusLog", {
  async create(args:any){logs.push(copy(args.data));return args.data;},
@@ -154,7 +158,10 @@ async function main() {
     {id:"cur",companyId:"c",shipmentId:"C",fromStatus:"arrivedPort",toStatus:"customsTH",changedAt:new Date(1)}];
   assert.equal((await call("POST /staff/shipments/track/delete-log",{logId:"ordinary"})).status,200);
   assert.deepEqual(logs.map(l=>l.id),["cur"]);assert.ok(ships.every(s=>s.currentStatus==="customsTH"));
-  assert.ok(!writes.some(w=>!w.startsWith("deleteLog:")),`删记录不许写别的：${writes}`);
+  assert.ok(!writes.some(w=>!w.startsWith("deleteLog:")&&!w.startsWith("audit:")),`删记录只许删这条、写一条删除存底：${writes}`);
+  // 删之前整条存底：谁删的、原记录原样（管理员能恢复）
+  assert.equal(audits.length,1);assert.equal(audits[0].action,"DELETE");assert.equal(audits[0].resourceId,"ordinary");assert.equal(audits[0].actorId,"staff");
+  assert.equal(JSON.parse(audits[0].beforeJson).id,"ordinary");
   // 父单自己那条（0 件父单只剩一条「运单已建立」）：删掉「已从柜子卸下」父单不许变成已创建
   reset([ship("P",0),ship("C",2,"P")]);ships.forEach(s=>s.currentStatus="customsTH");
   logs=[{id:"created",companyId:"c",shipmentId:"P",fromStatus:"created",toStatus:"created",remark:"运单已建立",changedAt:new Date(0)},
@@ -182,11 +189,21 @@ async function main() {
   assert.equal((await call("POST /staff/shipments/track/delete-log",{logId:"b"})).status,409);
   assert.deepEqual(logs.map(l=>l.id),["b"]);assert.equal(ships[0].currentStatus,"loaded");
  });
- check("普通柜子轨迹的用户备注含派送字样仍可删除",async()=>{
+ check("柜子推进记录：备注含派送字样不算派送记录；状态没变的能删，改了状态的不许删（推错走整柜撤销）",async()=>{
   reset([ship("S")]);ships[0].currentStatus="inWarehouseTH";
-  logs=[{id:"sl_ctn_1",companyId:"c",shipmentId:"S",remark:"尾端派送前检查包装",fromStatus:"unloading",toStatus:"inWarehouseTH",changedAt:new Date(1)},
-    {id:"sl_ctn_2",companyId:"c",shipmentId:"S",remark:"",fromStatus:"inWarehouseTH",toStatus:"inWarehouseTH",changedAt:new Date(2)}];
+  logs=[{id:"sl_ctn_1",companyId:"c",shipmentId:"S",remark:"尾端派送前检查包装",fromStatus:"inWarehouseTH",toStatus:"inWarehouseTH",changedAt:new Date(1)},
+    {id:"sl_ctn_2",companyId:"c",shipmentId:"S",remark:"",fromStatus:"unloading",toStatus:"inWarehouseTH",changedAt:new Date(2)},
+    {id:"sl_mnf_3",companyId:"c",shipmentId:"S",remark:"运输中（随柜补记）",fromStatus:"loaded",toStatus:"departed",changedAt:new Date(0)}];
   assert.equal((await call("POST /staff/shipments/track/delete-log",{logId:"sl_ctn_1"})).status,200);assert.equal(ships[0].currentStatus,"inWarehouseTH");
+  for(const id of ["sl_ctn_2","sl_mnf_3"]){
+    const before=copy({ships,logs});const r=await call("POST /staff/shipments/track/delete-log",{logId:id});
+    assert.equal(r.status,409,JSON.stringify(r.raw));assert.match(r.raw.message,/柜子推进.*装柜管理/);assert.deepEqual({ships,logs},before);
+  }
+  const t=await call("GET /client/shipments/track",{},{...ADMIN,role:"staff"},{trackingNo:"S"});
+  assert.deepEqual(t.data.timeline.map((x:any)=>[x.id,x.canDelete,x.deleteBlockedReason]),[["sl_mnf_3",false,"containerPush"],["sl_ctn_2",false,"containerPush"]]);
+  const mod=trackModule(false);const react=webRequire("react");
+  const html=webRequire("react-dom/server").renderToStaticMarkup(react.createElement(mod.TrackContent,{data:t.data}));
+  assert.equal((html.match(/推进记录，推错请到装柜管理撤销/g)||[]).length,2);assert.equal((html.match(/>删除<\/button>/g)||[]).length,0);
  });
  check("锁内重读日志，不采信锁前状态；跨公司及客户无删除权限",async()=>{
   reset([ship("S")]);logs=[{id:"ordinary",companyId:"c",shipmentId:"S",remark:"普通",fromStatus:"inWarehouseTH",toStatus:"outForDelivery",changedAt:new Date(1)}];
@@ -210,6 +227,8 @@ async function main() {
     const html=webRequire("react-dom/server").renderToStaticMarkup(react.createElement(mod.TrackContent,{data:r.data}));
     assert.equal((html.match(/>删除<\/button>/g)||[]).length,role==="client"?0:1);
     assert.equal((html.match(/当前状态，推错请到装柜管理撤销/g)||[]).length,role==="client"?0:1);
+    // 「删过的记录」入口只给管理员（2026-09-17 推进账本：删之前存底，管理员能恢复）
+    assert.equal(html.includes("删过的记录"),role==="admin");
   }
  });
  check("派送业务记录正好是当前状态：不给删，也不提示去装柜管理（该去尾端派送）",async()=>{

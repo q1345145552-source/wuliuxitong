@@ -7,7 +7,7 @@
 --   B 多余  → 数据库有、设计图没有。一旦跑 prisma db push，这些字段连同里面的数据会被删掉
 --
 -- 什么都不输出 = 完全一致，没问题。
--- 生成自 schema.prisma，共 48 张表 / 605 个字段（2026-09-16 加代理账号后重数：数的是下面 VALUES 的实际行数，用脚本数过，605 行无重复）。
+-- 生成自 schema.prisma，共 50 张表 / 626 个字段（2026-09-17 加推进账本后重数：数的是下面 VALUES 的实际行数，用脚本数过，626 行无重复，并跟 schema.prisma 逐表逐字段比过一致）。
 --
 -- ⚠️ 这份清单是手抄的，schema.prisma 加了字段必须回来同步一行，否则部署时会报
 --    「B 多余」的假警告（2026-08-05 加 containers.transport_mode 时就漏了一次）。
@@ -619,7 +619,28 @@ WITH expected(table_name, column_name) AS (VALUES
   ('agent_rebate_lines','loaded_at'),
   ('agent_rebate_lines','shipped_at'),
   ('agent_rebate_lines','thailand_received_at'),
-  ('agent_rebate_lines','created_at')
+  ('agent_rebate_lines','created_at'),
+  ('container_push_batches','id'),
+  ('container_push_batches','company_id'),
+  ('container_push_batches','container_id'),
+  ('container_push_batches','seq'),
+  ('container_push_batches','from_container_status'),
+  ('container_push_batches','to_container_status'),
+  ('container_push_batches','changed_at'),
+  ('container_push_batches','prev_status_dates'),
+  ('container_push_batches','prev_departure_date'),
+  ('container_push_batches','prev_ata'),
+  ('container_push_batches','operator_id'),
+  ('container_push_batches','created_at'),
+  ('container_push_entries','id'),
+  ('container_push_entries','company_id'),
+  ('container_push_entries','batch_id'),
+  ('container_push_entries','shipment_id'),
+  ('container_push_entries','from_status'),
+  ('container_push_entries','to_status'),
+  ('container_push_entries','status_log_id'),
+  ('container_push_entries','kind'),
+  ('container_push_entries','created_at')
 ),
 actual AS (
   SELECT c.table_name::text AS table_name, c.column_name::text AS column_name

@@ -8,10 +8,14 @@ import { logger } from "../core/logger";
 import { loadProductImagesForOrders } from "../orders/product-images";
 import { checkRateLimit, rateLimitKey } from "../core/rate-limit";
 import { STATUS_FLOW, STATUS_FLOW_LAND, EXCEPTION_STATUSES, SKIP_ON_ADVANCE_STATUSES, COMPLETED_STATUSES } from "./status-flow";
+import { DEFAULT_STATUS_LABELS } from "../ai/ai-config-store";
+
+/** 给员工/管理员看的货状态中文名（名单唯一来源在 ai-config-store） */
+const SHIPMENT_STATUS_ZH: Record<string, string> = Object.fromEntries(DEFAULT_STATUS_LABELS.map((i) => [i.status, i.labelZh]));
 import { loadOrderTotalMetrics } from "./total-metrics";
 import { countShipmentOverview } from "./overview-counts";
 import { loadPartialAhead } from "./partial-status";
-import { CURRENT_STATUS_LOG_MESSAGE, isCurrentStatusLog, isManagedLastmileLog, MANAGED_LASTMILE_LOG_MESSAGE } from "./managed-lastmile-log";
+import { CONTAINER_PUSH_LOG_MESSAGE, CURRENT_STATUS_LOG_MESSAGE, isContainerPushTransitionLog, isCurrentStatusLog, isManagedLastmileLog, MANAGED_LASTMILE_LOG_MESSAGE } from "./managed-lastmile-log";
 import { BusinessError } from "../core/business-error";
 import { canSeeOperatorIdentity } from "../core/operator-visibility";
 
@@ -664,6 +668,100 @@ export function registerShipmentRoutes(app: MinimalHttpApp): void {
   });
 
   /**
+   * 管理员：查某票货被删过的轨迹（2026-09-17，推进账本做法）。
+   * 删除接口删之前把原记录整条存进 audit_logs；按父单号查也把子单的一起列出来（9-15 删的「装入柜子」挂在子单上）。
+   * 同一条记录删过多次只列最近一次；已经恢复回去（手动恢复或整柜撤销时自动放回）的标 restored。
+   */
+  app.get("/admin/shipments/track/deleted-logs", async (req, res) => {
+    const auth = requireRole(req, res, ["admin"]);
+    if (!auth) return;
+    const trackingNo = typeof req.query.trackingNo === "string" ? req.query.trackingNo.trim() : "";
+    if (!trackingNo) {
+      fail(res, 400, "BAD_REQUEST", "trackingNo is required");
+      return;
+    }
+    const nos = [trackingNo, ...(await prisma.shipment.findMany({ where: { parentTrackingNo: trackingNo, companyId: auth.companyId }, select: { trackingNo: true } })).map((c) => c.trackingNo)];
+    const rows = await prisma.auditLog.findMany({
+      where: { companyId: auth.companyId, action: "DELETE", resourceType: "StatusLog", remark: { in: nos.map((n) => `删除物流轨迹 ${n}`) } },
+      orderBy: { createdAt: "desc" },
+      take: 200,
+    });
+    const latestByLog = new Map<string, (typeof rows)[number]>();
+    for (const r of rows) if (!latestByLog.has(r.resourceId)) latestByLog.set(r.resourceId, r);
+    const logIds = [...latestByLog.keys()];
+    const stillThere = new Set((await prisma.statusLog.findMany({ where: { id: { in: logIds }, companyId: auth.companyId }, select: { id: true } })).map((l) => l.id));
+    const actorIds = [...new Set([...latestByLog.values()].map((r) => r.actorId))];
+    const names = new Map((await prisma.user.findMany({ where: { id: { in: actorIds }, companyId: auth.companyId }, select: { id: true, name: true } })).map((u) => [u.id, u.name]));
+    ok(res, {
+      items: [...latestByLog.values()].map((r) => {
+        let log: Record<string, unknown> = {};
+        try { log = JSON.parse(r.beforeJson ?? "{}"); } catch { log = {}; }
+        return {
+          auditId: r.id,
+          deletedBy: r.actorId,
+          deletedByName: names.get(r.actorId) ?? "",
+          deletedAt: r.createdAt.toISOString(),
+          restored: stillThere.has(r.resourceId),
+          log,
+        };
+      }),
+    });
+  });
+
+  /**
+   * 管理员：把删掉的轨迹原样恢复（2026-09-17）。只放回记录，不改任何状态。
+   * 这一步已经被整柜撤销撤掉了（记录的状态比货现在靠后）就不许恢复 —— 放回来客户会看到一条跟状态对不上的记录。
+   */
+  app.post("/admin/shipments/track/restore-log", async (req, res) => {
+    const auth = requireRole(req, res, ["admin"]);
+    if (!auth) return;
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const auditId = typeof body.auditId === "string" ? body.auditId.trim() : "";
+    const audit = await prisma.auditLog.findFirst({ where: { id: auditId, companyId: auth.companyId, action: "DELETE", resourceType: "StatusLog" } });
+    let before: any = null;
+    try { before = audit?.beforeJson ? JSON.parse(audit.beforeJson) : null; } catch { before = null; }
+    if (!audit || !before) { fail(res, 404, "NOT_FOUND", "找不到这条删除记录"); return; }
+    const result = await prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM shipments WHERE id = ${before.shipmentId} FOR UPDATE`;
+      const ship = await tx.shipment.findFirst({ where: { id: before.shipmentId, companyId: auth.companyId }, select: { id: true, currentStatus: true, transportMode: true, order: { select: { transportMode: true } } } });
+      if (!ship) throw new BusinessError("这票货已经不在了，没法恢复", 409, "VALIDATION_ERROR");
+      {
+        // 老数据运单自己没填运输方式时按订单的（跟列表同口径）
+        const flow: readonly string[] = (ship.transportMode ?? ship.order?.transportMode) === "land" ? STATUS_FLOW_LAND : STATUS_FLOW;
+        const a = flow.indexOf(before.toStatus);
+        const b = flow.indexOf(ship.currentStatus);
+        if (a >= 0 && b >= 0 && a > b) {
+          throw new BusinessError(`这一步已经被撤销了（货现在是「${SHIPMENT_STATUS_ZH[ship.currentStatus] ?? ship.currentStatus}」），恢复回来会跟状态对不上，不能恢复`, 409, "VALIDATION_ERROR");
+        }
+      }
+      // 状态没变的记录（比如重复的「已封柜」）光比状态挡不住：整柜撤销时把那一步的全部记录 id 记在撤销日志里，在里面就不许恢复
+      {
+        const undos = await tx.auditLog.findMany({
+          where: { companyId: auth.companyId, action: "UNDO", resourceType: "Container", beforeJson: { contains: String(before.id) } },
+          select: { beforeJson: true },
+        });
+        const undone = undos.some((u) => {
+          try { return ((JSON.parse(u.beforeJson ?? "{}").undoneLogIds ?? []) as string[]).includes(String(before.id)); } catch { return false; }
+        });
+        if (undone) {
+          throw new BusinessError("这条记录所在的那一步已经被整柜撤销了，恢复回来会跟柜子对不上，不能恢复", 409, "VALIDATION_ERROR");
+        }
+      }
+      const exists = await tx.statusLog.findUnique({ where: { id: before.id }, select: { id: true } });
+      if (exists) throw new BusinessError("这条记录已经恢复过了", 409, "VALIDATION_ERROR");
+      await tx.statusLog.create({ data: {
+        id: before.id, companyId: before.companyId, shipmentId: before.shipmentId,
+        operatorId: before.operatorId, operatorRole: before.operatorRole, operatorName: before.operatorName ?? "",
+        fromStatus: before.fromStatus, toStatus: before.toStatus, remark: before.remark ?? null, nextStop: before.nextStop ?? null,
+        changedAt: new Date(before.changedAt),
+      } });
+      await tx.auditLog.create({ data: { companyId: auth.companyId, actorId: auth.userId, actorRole: auth.role, action: "RESTORE", resourceType: "StatusLog", resourceId: before.id, afterJson: audit.beforeJson, remark: `恢复物流轨迹 ${before.trackingNo ?? ""}` } });
+      return { restored: true, logId: before.id };
+    });
+    ok(res, result);
+  });
+
+  /**
    * 删掉物流轨迹里的一条（员工和管理员都能用）。
    *
    * 2026-08-07 加的，原来删完会按剩下的最后一条记录把运单状态改回去。
@@ -676,9 +774,14 @@ export function registerShipmentRoutes(app: MinimalHttpApp): void {
    * 状态推错了走正规撤回：柜子推错到「装柜管理」撤销，派送/签收错了在尾端派送里撤。
    *
    * ⚠️ 显示当前状态的最后一条不许删（409）：状态不跟着退，删了它顶上的状态在轨迹里就对不上了。
-   *    同一状态有两条时可以删掉一条。判断和轨迹弹窗共用 isCurrentStatusLog。
+   *    同一状态有两条时可以删掉一条。
    * ⚠️ 派送业务写的记录照旧不许单删（isManagedLastmileLog）。
-   * 回归：scripts/test-track-delete-keeps-status-db.ts（真库按 9-15 操作重现）、test-shipment-track-actions.ts。
+   * ⚠️ 2026-09-17 老板定「推进账本」做法后又加两条：
+   *    · 柜子推进 / 随柜补记里改了状态的记录不许删（isContainerPushTransitionLog），推错用装柜管理撤销；
+   *    · 删之前把原记录整条存进 audit_logs（谁、什么时候删的），管理员能查能恢复，
+   *      整柜撤销退回「已装柜」又找不到记录时会把「装入柜子」自动放回（containers/routes.ts autoRestoreDeletedLogs）。
+   *    三道判断和轨迹弹窗共用 deleteBlockedReasonOf 的口径，顺序一样。
+   * 回归：scripts/test-push-ledger-db.ts、test-track-delete-keeps-status-db.ts（真库按 9-15 操作重现）、test-shipment-track-actions.ts。
    */
   app.post("/staff/shipments/track/delete-log", async (req, res) => {
     const auth = requireRole(req, res, ["staff", "admin"]);
@@ -715,6 +818,9 @@ export function registerShipmentRoutes(app: MinimalHttpApp): void {
       if (isManagedLastmileLog(lockedLog)) {
         throw new BusinessError(MANAGED_LASTMILE_LOG_MESSAGE, 409, "VALIDATION_ERROR");
       }
+      if (isContainerPushTransitionLog(lockedLog)) {
+        throw new BusinessError(CONTAINER_PUSH_LOG_MESSAGE, 409, "VALIDATION_ERROR");
+      }
       const lockedShipment = await tx.shipment.findUnique({
         where: { id: log.shipmentId },
         select: { currentStatus: true },
@@ -728,6 +834,19 @@ export function registerShipmentRoutes(app: MinimalHttpApp): void {
           throw new BusinessError(CURRENT_STATUS_LOG_MESSAGE, 409, "VALIDATION_ERROR");
         }
       }
+      // 删之前把原记录整条存进操作日志：谁、什么时候删的，管理员能原样恢复
+      await tx.auditLog.create({
+        data: {
+          companyId: auth.companyId,
+          actorId: auth.userId,
+          actorRole: auth.role,
+          action: "DELETE",
+          resourceType: "StatusLog",
+          resourceId: logId,
+          beforeJson: JSON.stringify({ ...lockedLog, trackingNo: log.shipment.trackingNo }),
+          remark: `删除物流轨迹 ${log.shipment.trackingNo}`,
+        },
+      });
       await tx.statusLog.delete({ where: { id: logId } });
       return { currentStatus: lockedShipment.currentStatus };
     });

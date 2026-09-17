@@ -1,5 +1,7 @@
 import { partialAheadStatus } from "../../../../../packages/shared-types/shipment-status";
-import { isCurrentStatusLog, isManagedLastmileLog } from "../shipments/managed-lastmile-log";
+import { deleteBlockedReasonOf, isCurrentStatusLog, isManagedLastmileLog } from "../shipments/managed-lastmile-log";
+import { DEFAULT_STATUS_LABELS } from "../ai/ai-config-store";
+import { STATUS_FLOW as SHIP_FLOW, STATUS_FLOW_LAND as SHIP_FLOW_LAND } from "../shipments/status-flow";
 // 任务 #10: Container & 拆柜 API（2026-05-20）
 // 实现湘泰物流 P0 阶段最核心的"出柜追踪"业务能力
 //
@@ -48,6 +50,206 @@ function canContainerTransit(from: string, to: string, transportMode?: string | 
   const toIdx = flow.indexOf(to);
   if (fromIdx < 0 || toIdx < 0) return false;
   return toIdx > fromIdx;
+}
+
+/**
+ * 整柜撤销后，货退回的那一步如果轨迹里一条记录都没有了（员工之前删过，比如 9-15 那种「装入柜子」），
+ * 从删除存底（audit_logs）里把最近删掉的「装入柜子 <本柜号>」原样放回来，并记一条「撤销柜子时自动恢复」。
+ * 这样员工可以放心删排在上面看着乱的「装入柜子」，撤销退回来以后客户顶上的状态照样有对应的一条。
+ * 能被撤销退回、又能被删的记录实际上只有「已装柜」这一步（推进记录、改状态的补记不许删），所以只认装入柜子。
+ * 2026-09-17 对抗测试：随便放回最近删的那条，会把员工故意删掉的写错记录、推进记录「已封柜」放回去（已修）。
+ */
+async function autoRestoreDeletedLogs(
+  tx: any,
+  companyId: string,
+  actor: { userId: string; role: string },
+  targets: Array<{ id: string; trackingNo: string; status: string }>,
+  containerNo: string,
+): Promise<number> {
+  let restored = 0;
+  for (const t of targets) {
+    const has = await tx.statusLog.count({ where: { shipmentId: t.id, toStatus: t.status } });
+    if (has > 0) continue;
+    const audits = await tx.auditLog.findMany({
+      where: { companyId, action: "DELETE", resourceType: "StatusLog", remark: `删除物流轨迹 ${t.trackingNo}` },
+      orderBy: { createdAt: "desc" },
+    });
+    for (const a of audits) {
+      let before: any;
+      try { before = JSON.parse(a.beforeJson ?? "{}"); } catch { continue; }
+      if (before.shipmentId !== t.id || before.toStatus !== t.status) continue;
+      // 只放回「装入柜子 <这个柜号>」（柜号整号对上，后面只允许跟「（分装…）」）：
+      // 员工删掉的写错的记录（柜号对不上）、推进记录（已封柜等）一律不放回。
+      // 线上有一对柜号一个是另一个的开头（2026-09-17 只读查），所以不能只比开头。
+      const rmk = String(before.remark ?? "");
+      const loadRemark = `装入柜子 ${containerNo}`;
+      if (!String(before.id ?? "").startsWith("sl_mnf_") || !(rmk === loadRemark || rmk.startsWith(`${loadRemark}（`))) continue;
+      const exists = await tx.statusLog.findUnique({ where: { id: before.id }, select: { id: true } });
+      if (exists) continue;
+      await tx.statusLog.create({ data: {
+        id: before.id, companyId: before.companyId, shipmentId: before.shipmentId,
+        operatorId: before.operatorId, operatorRole: before.operatorRole, operatorName: before.operatorName ?? "",
+        fromStatus: before.fromStatus, toStatus: before.toStatus, remark: before.remark ?? null, nextStop: before.nextStop ?? null,
+        changedAt: new Date(before.changedAt),
+      } });
+      await tx.auditLog.create({ data: {
+        companyId, actorId: actor.userId, actorRole: actor.role, action: "RESTORE", resourceType: "StatusLog",
+        resourceId: before.id, afterJson: a.beforeJson, remark: `撤销柜子时自动恢复 ${t.trackingNo}`,
+      } });
+      restored++;
+      break;
+    }
+  }
+  return restored;
+}
+
+/** 只认「柜子推进状态」自己写的那批轨迹（说明见 legacyUndoPlan 里的注释） */
+const PUSH_LOG_PREFIX = "sl_ctn_";
+
+/**
+ * 没有推进账本的老柜子（2026-09-17 上线前推的步骤）：这次推进发生在什么时候、上一步是什么。
+ * 整柜撤销和撤销预览共用这一份，两边口径不会走散。
+ */
+async function legacyUndoPlan(
+  container: { currentStatus: string; transportMode: string | null; items: Array<{ shipmentId: string }> },
+  dates: Record<string, string>,
+  companyId: string,
+): Promise<{ shipmentIds: string[]; shipmentStatusOfThisPush: string | null; prevStatus: string | null; changedAt: Date | null }> {
+  const shipmentIds = container.items.map((it) => it.shipmentId);
+  const shipmentStatusOfThisPush: string | null = CONTAINER_TO_SHIPMENT_STATUS[container.currentStatus] ?? null;
+
+  /* ==================================================================
+     2026-08-10 修：撤销在生产上基本全废了。
+     106 个柜子里 102 个点「撤销」都报「这是第一个状态，没有上一步可以退」——
+     而它们明明是「运输中」「已到仓」这种中间状态。
+
+     原因：这里完全依赖柜子身上那张「状态时间表」(statusDates)。那张表是
+     2026-08-06 才加的，**加之前推过的状态一条都没补记**，所以老柜子要么整张表
+     是空的（68 个），要么只有当前这一条（34 个）→ 找不到上一步 → 报了那句错话。
+     而且那句话本身是错的：不是「第一个状态」，是「前面的没记录」。
+
+     现在两级兜底：
+       ① 这次推进是什么时候发生的：先看时间表；没有就去柜内运单的轨迹里，
+          找「最后一次推到这个状态」的那条 —— 那条就是这次推进留下的痕迹。
+       ② 上一步是哪个状态：先看时间表；没有就按流程往回退一格，
+          但**跳过没记录推过的「意外状态」**（滞留/查验/延迟），
+          否则等于把柜子退回一个它从来没到过的状态。
+     ================================================================== */
+
+  /* ⚠️ 只认「柜子推进状态」自己写的那批轨迹。
+     轨迹按来源分好几种，id 前缀不一样（生产实测 2311 条）：
+       sl_ctn_  柜子推进状态   1516 条  ← 只有这种是本次撤销该动的
+       sl_lm_   尾端派送        619 条
+       sl_mnf_  装柜时随柜补记  113 条
+       sl_new_ / sl_fix_ 等老数据
+     不加这个限制的后果（我拿生产数据算过）：68 个「时间表整张空」的柜子里，
+     有 6 个会去删**别人写的**轨迹 —— 1 个删到尾端派送的、3 个删到装柜补记的、
+     2 个删到老数据。那不是撤销，那是破坏。
+     加了之后这 6 个找不到自己的推进记录，就只退柜子状态、不动运单，宁可少做。 */
+
+  // ① 这次推进发生的时间
+  let currentTs: string | null = dates[container.currentStatus] ?? null;
+  if (!currentTs && shipmentStatusOfThisPush && shipmentIds.length > 0) {
+    const lastLog = await prisma.statusLog.findFirst({
+      where: {
+        companyId: companyId,
+        shipmentId: { in: shipmentIds },
+        toStatus: shipmentStatusOfThisPush,
+        id: { startsWith: PUSH_LOG_PREFIX },
+      },
+      orderBy: { changedAt: "desc" },
+      select: { changedAt: true },
+    });
+    if (lastLog) currentTs = lastLog.changedAt.toISOString();
+  }
+
+  // ② 上一步是哪个状态
+  // 2026-09-17：上一步按流程顺序找（柜子只能往前推，流程顺序就是推的顺序），不再按日期猜；
+  // 改过运输方式、时间表里混着两条流程状态的老柜子才退回按日期找
+  let prevStatus: string | null = null;
+  {
+    const flowNow = flowOf(container.transportMode);
+    const curIdx = flowNow.indexOf(container.currentStatus);
+    const mixedModes = Object.keys(dates).some((st) => flowNow.indexOf(st) < 0);
+    if (!mixedModes) {
+      const recorded = Object.keys(dates)
+        .filter((st) => st !== container.currentStatus && flowNow.indexOf(st) >= 0 && flowNow.indexOf(st) < curIdx)
+        .sort((a, b) => flowNow.indexOf(b) - flowNow.indexOf(a));
+      if (curIdx >= 0 && recorded.length > 0) prevStatus = recorded[0]!;
+    } else if (currentTs) {
+      // 改过运输方式的老柜子：两条流程的状态混在时间表里，只能按日期找（原来的做法）
+      const prevEntry = Object.entries(dates)
+        .filter(([status, ts]) => status !== container.currentStatus && new Date(ts).getTime() <= new Date(currentTs!).getTime())
+        .sort((a, b) => new Date(b[1]).getTime() - new Date(a[1]).getTime())[0];
+      if (prevEntry) prevStatus = prevEntry[0];
+    }
+  }
+  if (!prevStatus) {
+    // 先按柜子自己的运输方式找；找不到再按另一条流程找 ——
+    // 有柜子中途改过运输方式，当前状态可能压根不在现在这条流程里
+    // （实测：一个标着「陆运」的柜子停在「运输中」，那是海运才有的环节）。
+    const flows = [flowOf(container.transportMode), flowOf(container.transportMode === "land" ? "sea" : "land")];
+    for (const flow of flows) {
+      const idx = flow.indexOf(container.currentStatus);
+      if (idx < 0) continue;
+      for (let i = idx - 1; i >= 0; i--) {
+        const candidate = flow[i]!;
+        // 没记录推过的意外状态，绝不能退到那里去
+        // ⚠️ 名单按运输方式取 —— 海运柜不能退进「出口已放行」，
+        //    陆运柜不能退进「清关中」，两边的「少数柜才走」不是同一批。
+        if (neverGuessOf(container.transportMode).has(candidate) && !dates[candidate]) continue;
+        prevStatus = candidate;
+        break;
+      }
+      if (prevStatus) break;
+    }
+  }
+  return { shipmentIds, shipmentStatusOfThisPush, prevStatus, changedAt: currentTs ? new Date(currentTs) : null };
+}
+
+/** 撤销预览、撤销结果、推柜子跳过提示里给员工看的货状态中文名（名单唯一来源在 ai-config-store） */
+const SHIPMENT_STATUS_ZH: Record<string, string> = Object.fromEntries(DEFAULT_STATUS_LABELS.map((i) => [i.status, i.labelZh]));
+const shipmentStatusZh = (status: string): string => SHIPMENT_STATUS_ZH[status] ?? status;
+
+/**
+ * 「派送中 / 已签收」不是装柜页推的，是尾端派送那边推的。
+ * 在装柜页撤销会把客户已经签收的单子悄悄退回去，还会删掉尾端派送写的轨迹，必须挡住（撤销和撤销预览共用）。
+ */
+const LASTMILE_ONLY_CONTAINER_STATUSES = new Set(["OUT_FOR_DELIVERY", "SIGNED", "DELIVERING"]);
+
+type LedgerEntry = { id: string; shipmentId: string; fromStatus: string; toStatus: string; statusLogId: string | null };
+type LedgerShip = { id: string; trackingNo: string; currentStatus: string; parentTrackingNo: string | null };
+
+/**
+ * 按推进账本撤最近一笔时，哪些货跟着退、哪些不动（整柜撤销和撤销预览共用，口径不会走散）。
+ *   · 同一票货在这一笔里有多条（卸下又装回），以最后写的那条为准；
+ *   · 还在这个柜里、还停在这一步的跟着退，回到账本记的推之前的状态；
+ *   · 已不在柜里、已经走到别的状态（比如尾端派送签收了）的不动，它们这一步的轨迹也不删。
+ */
+function classifyLedgerUndo(
+  entries: LedgerEntry[],
+  inBox: ReadonlySet<string>,
+  ships: ReadonlyMap<string, LedgerShip>,
+  trackingNoOf: ReadonlyMap<string, string>,
+) {
+  const byShipment = new Map<string, LedgerEntry>();
+  for (const e of [...entries].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))) byShipment.set(e.shipmentId, e);
+  const reverted: Array<{ id: string; trackingNo: string; parentTrackingNo: string | null; from: string; current: string; logId: string | null }> = [];
+  const skipped: Array<{ trackingNo: string; reason: string }> = [];
+  for (const [sid, e] of byShipment) {
+    const s = ships.get(sid);
+    if (!inBox.has(sid) || !s) {
+      // 已经卸下删掉的子单没有单号可给，不列
+      if (trackingNoOf.has(sid)) skipped.push({ trackingNo: trackingNoOf.get(sid)!, reason: "已不在这个柜里" });
+      continue;
+    }
+    if (s.currentStatus !== e.toStatus) {
+      skipped.push({ trackingNo: s.trackingNo, reason: `已经是「${shipmentStatusZh(s.currentStatus)}」，不跟着退` });
+      continue;
+    }
+    reverted.push({ id: s.id, trackingNo: s.trackingNo, parentTrackingNo: s.parentTrackingNo, from: e.fromStatus, current: s.currentStatus, logId: e.statusLogId });
+  }
+  return { reverted, skipped };
 }
 
 function decToNumber(value: Prisma.Decimal | null | undefined): number {
@@ -365,44 +567,44 @@ export function registerContainerRoutes(app: MinimalHttpApp): void {
      */
     const shipmentNextStatus: string | null = CONTAINER_TO_SHIPMENT_STATUS[toStatus] ?? null;
     let affectedShipmentCount = 0;
+    let skippedShipments: Array<{ trackingNo: string; status: string }> = [];
+
+    /**
+     * 2026-09-17（推进账本）：退回/取消的货、比这一步靠后的派送/签收货，推柜子时跳过，不再挡住整柜。
+     * 原来整柜报「不允许流转」，撤销过的柜子（柜里有已签收的货）从此推不回去。
+     */
+    const SKIP_ON_PUSH = new Set(["deliveryBooked", "outForDelivery", "delivered", "returned", "cancelled"]);
+    const shipFlow: readonly string[] = container.transportMode === "land" ? SHIP_FLOW_LAND : SHIP_FLOW;
+    const skipOnPush = (status: string): boolean => {
+      // 退回/取消一律跳过；预约派送/派送中/已签收只在比这一步靠后时跳过（推到派送中、已签收时照样跟着推）
+      if (status === "returned" || status === "cancelled") return true;
+      if (!SKIP_ON_PUSH.has(status) || !shipmentNextStatus) return false;
+      const a = shipFlow.indexOf(status);
+      const b = shipFlow.indexOf(shipmentNextStatus);
+      return a >= 0 && b >= 0 && a > b;
+    };
 
     if (shipmentNextStatus && shipmentIds.length > 0) {
-      // 早点给个好看的提示：真正说了算的那次判断在事务里（见下面 badNow）
       const shipments = await prisma.shipment.findMany({
         where: { id: { in: shipmentIds }, companyId: auth.companyId },
-        select: { id: true, currentStatus: true },
+        select: { id: true, trackingNo: true, currentStatus: true },
       });
       const invalidShipments = shipments.filter(
-        (s) => !canTransitLoose(s.currentStatus, shipmentNextStatus!),
+        (s) => !skipOnPush(s.currentStatus) && !canTransitLoose(s.currentStatus, shipmentNextStatus!),
       );
       if (invalidShipments.length > 0) {
-        const ids = invalidShipments.map((s) => `${s.id}(${s.currentStatus})`).join(", ");
+        const ids = invalidShipments.map((s) => `${s.trackingNo}(${s.currentStatus})`).join(", ");
         fail(res, 400, "VALIDATION_ERROR", `以下运单不允许从当前状态流转到 ${shipmentNextStatus}：${ids}`);
         return;
       }
     }
 
-    /**
-     * 柜子 + 子单 + 轨迹 + 父单，**一个事务全做完**（2026-08-25 合并）。
-     *
-     * 之前是分两个事务：前一个批量写柜子/子单/轨迹，后一个重算父单。
-     * 中间断掉就留下「柜子和子单推进了、父单没推」的半截数据。
-     *
-     * ⚠️ 超时给到 30 秒：一个柜子里可能装着几十票货，父单也可能有好几个，
-     * 默认 5 秒在网络慢的时候不够。maxWait 是「等空闲连接」的时间，跟执行时长无关。
-     */
     await prisma.$transaction(
       async (tx) => {
-        /**
-         * ⚠️ 锁住柜子再复查一遍当前状态（2026-08-27 补）。
-         * 上面 canContainerTransit 那道检查是在事务外面做的：两个员工同时推进同一个柜，
-         * 两边都是从同一个旧状态出发算「能不能推」，结果**两批轨迹都写进去了**，
-         * 状态还可能跳过中间那一步 —— 客户轨迹里就会多出重复或错序的记录。
-         */
         await tx.$queryRaw`SELECT id FROM containers WHERE id = ${container.id} FOR UPDATE`;
         const freshContainer = await tx.container.findUnique({
           where: { id: container.id },
-          select: { currentStatus: true, transportMode: true },
+          select: { currentStatus: true, transportMode: true, statusDates: true, departureDate: true, ata: true },
         });
         if (freshContainer == null) throw new BusinessError("柜子不存在", 404, "NOT_FOUND");
         const nowStatus = freshContainer.currentStatus;
@@ -411,35 +613,10 @@ export function registerContainerRoutes(app: MinimalHttpApp): void {
             `这个柜刚刚被别人推到了「${CONTAINER_STATUS_LABEL[nowStatus] ?? nowStatus}」，本次推进没有执行，请刷新后再看`,
           );
         }
-        /**
-         * ⚠️ 运输方式也要锁后复查（2026-08-31 补）。
-         * 「属不属于这条流程」「能不能这样推」「下一站默认值」都是进门时按当时的
-         * 运输方式算的。改运输方式那个接口（loading-manifests/transport-mode）在
-         * 「已封柜」这类两条流程共有的状态上是放行的，它自己锁后重查了状态，
-         * 推进这边原来没有对称的一道 —— 两人同一瞬间一个推「运输中」一个改成陆运，
-         * 改方式先落地时，陆运柜会被推进海运才有的「运输中」，柜里运单全被写上
-         * 「已开船」轨迹、下一站还是海运的「泰国港口」，海陆就串了。
-         * 这里一拦，进门时算好的 flow / canContainerTransit / nextStop 就都还作数
-         * （运输方式没变，按它算的结果就没过时），不用在锁里再算一遍。
-         */
         if (freshContainer.transportMode !== container.transportMode) {
-          throw new BusinessError(
-            "这个柜刚刚被别人改了运输方式，本次推进没有执行，请刷新后再推",
-          );
+          throw new BusinessError("这个柜刚刚被别人改了运输方式，本次推进没有执行，请刷新后再推");
         }
 
-        /**
-         * ⚠️⚠️ **锁住之后，柜里装了什么必须重新查一遍**（2026-08-28 补）。
-         *
-         * 上面那份 `shipmentIds` 和各运单状态都是**事务外**读的。
-         * 锁只保证「不同时」，不保证「数据没变」——
-         * 从那次读到拿到锁之间，员工完全可以往这个柜里再装一票货。
-         * 用旧清单推进的话，**新装进来的那票不会被推、也不会写轨迹**，
-         * 而推进这条路已经走完不会回头补，那票货就永远停在旧状态。
-         *
-         * 复核实测报的就是这条。现在锁后重查装柜清单和运单状态，
-         * 用重查的结果决定推谁、写哪些轨迹。
-         */
         const freshItems = await tx.shipmentContainerItem.findMany({
           where: { containerId: container.id },
           select: { shipmentId: true },
@@ -448,88 +625,99 @@ export function registerContainerRoutes(app: MinimalHttpApp): void {
 
         await tx.container.update({ where: { id: container.id }, data: updateData });
 
+        // 推进账本：记下这一笔，撤销时原样倒回去
+        const lastBatch = await tx.containerPushBatch.findFirst({
+          where: { containerId: container.id },
+          orderBy: { seq: "desc" },
+          select: { seq: true },
+        });
+        const rand = () => Math.random().toString(36).slice(2, 6);
+        const batchId = `cpb_${Date.now()}_${rand()}`;
+        await tx.containerPushBatch.create({
+          data: {
+            id: batchId,
+            companyId: auth.companyId,
+            containerId: container.id,
+            seq: (lastBatch?.seq ?? 0) + 1,
+            fromContainerStatus: freshContainer.currentStatus,
+            toContainerStatus: toStatus,
+            changedAt: now,
+            prevStatusDates: freshContainer.statusDates,
+            prevDepartureDate: freshContainer.departureDate,
+            prevAta: freshContainer.ata,
+            operatorId: auth.userId,
+          },
+        });
+
         if (shipmentNextStatus && freshShipmentIds.length > 0) {
-          /**
-           * ⚠️ 运单也要锁（2026-08-29 补）。
-           * 上一版只锁了柜子，运单是普通 findMany 读出来的 ——
-           * 别的路径（装柜同步状态、卸柜、泰国签收）可以在读完之后改掉运单状态，
-           * 这边随后把它覆盖回去，那次改动连同它写的轨迹就对不上了。
-           *
-           * ⚠️ **按 id 排序再锁**：两个柜子同时推进、又正好涉及同几张运单时，
-           * 加锁顺序相反会被 PostgreSQL 判定死锁掐掉一个。
-           * 下面锁父单那里用的也是这个办法（按单号排序）。
-           */
-          // 走共用函数：柜子里可能同时装着父单和它的子单
-          // （老的 /admin/containers/load 不检查父子关系，接口 2026-08-31 已删，
-          //   但它以前装进去的数据还在），不能一锅端着排
           await lockShipmentsChildrenFirst(tx, freshShipmentIds, auth.companyId);
           const freshShipments = await tx.shipment.findMany({
             where: { id: { in: freshShipmentIds }, companyId: auth.companyId },
-            select: { id: true, currentStatus: true, parentTrackingNo: true },
+            select: { id: true, trackingNo: true, currentStatus: true, parentTrackingNo: true },
           });
-          // 状态流转合法性也要用**锁后**的状态判断：事务外那次只是早点给个提示
-          const badNow = freshShipments.filter(
+          const moving = freshShipments.filter((sp: { currentStatus: string }) => !skipOnPush(sp.currentStatus));
+          skippedShipments = freshShipments
+            .filter((sp: { currentStatus: string }) => skipOnPush(sp.currentStatus))
+            .map((sp: { trackingNo: string; currentStatus: string }) => ({ trackingNo: sp.trackingNo, status: sp.currentStatus }));
+          const badNow = moving.filter(
             (sp: { currentStatus: string }) => !canTransitLoose(sp.currentStatus, shipmentNextStatus!),
           );
           if (badNow.length > 0) {
             const ids = badNow
-              .map((sp: { id: string; currentStatus: string }) => `${sp.id}(${sp.currentStatus})`)
+              .map((sp: { trackingNo: string; currentStatus: string }) => `${sp.trackingNo}(${sp.currentStatus})`)
               .join(", ");
-            throw new BusinessError(
-              `以下运单刚刚变了状态，本次推进没有执行，请刷新后再看：${ids}`,
-              400,
-              "VALIDATION_ERROR",
-            );
+            throw new BusinessError(`以下运单刚刚变了状态，本次推进没有执行，请刷新后再看：${ids}`, 400, "VALIDATION_ERROR");
           }
-          const freshStatusMap = new Map(
-            freshShipments.map((sp: { id: string; currentStatus: string }) => [sp.id, sp.currentStatus]),
-          );
-
-          await tx.shipment.updateMany({
-            where: { id: { in: freshShipmentIds }, companyId: auth.companyId },
-            data: { currentStatus: shipmentNextStatus, updatedAt: now },
-          });
-
-          // 轨迹按**锁后**的清单和**锁后**的起始状态写；
-          // id 前缀必须保持 sl_ctn_，撤销柜子状态靠它认出「哪些轨迹是柜子推进写的」（红线 2.10）
-          const stamp = Date.now();
-          await tx.statusLog.createMany({
-            data: freshShipmentIds.map((sid: string, i: number) => ({
-              id: `sl_ctn_${stamp}_${i}_${Math.random().toString(36).slice(2, 6)}`,
-              companyId: auth.companyId,
-              shipmentId: sid,
-              operatorId: auth.userId,
-              operatorRole: auth.role,
-              operatorName: auth.name,
-              fromStatus: freshStatusMap.get(sid) ?? "loaded",
-              toStatus: shipmentNextStatus,
-              remark: body.remark?.trim() || `${CONTAINER_STATUS_LABEL[toStatus] ?? toStatus}`,
-              nextStop,
-              changedAt: now,
-            })),
-          });
-
-          parentNosToSync = [
-            ...new Set(
-              freshShipments
-                .filter((sp: { parentTrackingNo: string | null }) => sp.parentTrackingNo)
-                .map((sp: { parentTrackingNo: string | null }) => sp.parentTrackingNo!),
-            ),
-          ];
-          affectedShipmentCount = freshShipmentIds.length;
+          if (moving.length > 0) {
+            const movingIds = moving.map((sp: { id: string }) => sp.id);
+            await tx.shipment.updateMany({
+              where: { id: { in: movingIds }, companyId: auth.companyId },
+              data: { currentStatus: shipmentNextStatus, updatedAt: now },
+            });
+            const stamp = Date.now();
+            const rows = moving.map((sp: { id: string; currentStatus: string }, i: number) => ({
+              logId: `sl_ctn_${stamp}_${i}_${rand()}`,
+              sp,
+              i,
+            }));
+            await tx.statusLog.createMany({
+              data: rows.map(({ logId, sp }: { logId: string; sp: { id: string; currentStatus: string } }) => ({
+                id: logId,
+                companyId: auth.companyId,
+                shipmentId: sp.id,
+                operatorId: auth.userId,
+                operatorRole: auth.role,
+                operatorName: auth.name,
+                fromStatus: sp.currentStatus,
+                toStatus: shipmentNextStatus,
+                remark: body.remark?.trim() || `${CONTAINER_STATUS_LABEL[toStatus] ?? toStatus}`,
+                nextStop,
+                changedAt: now,
+              })),
+            });
+            await tx.containerPushEntry.createMany({
+              data: rows.map(({ logId, sp, i }: { logId: string; sp: { id: string; currentStatus: string }; i: number }) => ({
+                id: `cpe_${stamp}_${String(i).padStart(5, "0")}_${rand()}`,
+                companyId: auth.companyId,
+                batchId,
+                shipmentId: sp.id,
+                fromStatus: sp.currentStatus,
+                toStatus: shipmentNextStatus!,
+                statusLogId: logId,
+                kind: "push",
+              })),
+            });
+            parentNosToSync = [
+              ...new Set(
+                moving
+                  .filter((sp: { parentTrackingNo: string | null }) => sp.parentTrackingNo)
+                  .map((sp: { parentTrackingNo: string | null }) => sp.parentTrackingNo!),
+              ),
+            ];
+          }
+          affectedShipmentCount = moving.length;
         }
 
-        // ⚠️ 排序后再逐个锁父单：两个柜子同时推进、又正好涉及同几张父单时，
-        // 加锁顺序相反会被 PostgreSQL 判定死锁掐掉一个。固定顺序就不会打架。
-        /**
-         * ⚠️ 先按 **id** 把这批父单一次性锁完，再逐个同步（2026-08-29 补）。
-         * 不能直接 `for (const no of [...nos].sort())` —— 那是按**运单号**排，
-         * 而 lockShipmentsChildrenFirst 的父单层按 **id** 排，两把钥匙不一样，
-         * 同一对父单从不同路径进来会锁反。测试库里 id 顺序和运单号顺序
-         * 相反的父单对有 41 对。
-         * 下面循环里 syncParentStatusFromChildren 内部还会再锁一次，
-         * 同一事务重锁是免费的，不用去删。
-         */
         await lockAndSyncParents(tx, parentNosToSync, auth.companyId, syncParentStatusFromChildren);
       },
       { timeout: 30000, maxWait: 10000 },
@@ -540,8 +728,8 @@ export function registerContainerRoutes(app: MinimalHttpApp): void {
       containerNo: container.containerNo,
       fromStatus: container.currentStatus,
       toStatus,
-      // 回给前端的是**真的推了多少票**，不是事务外那份可能过时的清单条数
       affectedShipmentCount,
+      skippedShipments,
       updatedAt: now.toISOString(),
     });
   });
@@ -563,6 +751,98 @@ export function registerContainerRoutes(app: MinimalHttpApp): void {
    * - 每张运单的当前状态按它自己剩下的最后一条轨迹重算；一条不剩就保持不动
    * - 这次推进顺手写进柜子的开船日期/到港日期，如果就是这次写的，也一并撤掉
    */
+  /**
+   * 撤销预览（2026-09-17）：点「撤销」之前告诉员工 —— 柜子会退到哪一步、多少票货跟着退、哪几票不动为什么。
+   * 跟真撤销用同一份判断（classifyLedgerUndo / legacyUndoPlan），只读不写。
+   */
+  app.get("/admin/containers/status/undo-preview", async (req, res) => {
+    const auth = requireRole(req, res, ["admin", "staff"]);
+    if (!auth) return;
+    const id = req.query.id?.trim();
+    if (!id) {
+      fail(res, 400, "BAD_REQUEST", "id is required");
+      return;
+    }
+    const container = await prisma.container.findFirst({
+      where: { id, companyId: auth.companyId },
+      include: { items: { select: { shipmentId: true } } },
+    });
+    if (!container) {
+      fail(res, 404, "NOT_FOUND", "找不到这个柜子");
+      return;
+    }
+    if (LASTMILE_ONLY_CONTAINER_STATUSES.has(container.currentStatus)) {
+      fail(res, 400, "VALIDATION_ERROR", `「${CONTAINER_STATUS_LABEL[container.currentStatus] ?? container.currentStatus}」是尾端派送那边推的，不能在装柜页撤销。要退请到「尾端派送」里操作。`);
+      return;
+    }
+    const inBox = new Set(container.items.map((it) => it.shipmentId));
+    const latestBatch = await prisma.containerPushBatch.findFirst({
+      where: { containerId: container.id, companyId: auth.companyId },
+      orderBy: { seq: "desc" },
+      include: { entries: true },
+    });
+    if (latestBatch) {
+      if (latestBatch.toContainerStatus !== container.currentStatus) {
+        fail(res, 409, "VALIDATION_ERROR", "柜子现在的状态跟推进账本对不上，没法撤销，请联系技术处理");
+        return;
+      }
+      const entryShipmentIds = [...new Set(latestBatch.entries.map((e) => e.shipmentId))];
+      const ships = await prisma.shipment.findMany({
+        where: { id: { in: entryShipmentIds }, companyId: auth.companyId },
+        select: { id: true, trackingNo: true, currentStatus: true, parentTrackingNo: true },
+      });
+      const { reverted, skipped } = classifyLedgerUndo(
+        latestBatch.entries,
+        inBox,
+        new Map(ships.map((s) => [s.id, s])),
+        new Map(ships.map((s) => [s.id, s.trackingNo])),
+      );
+      ok(res, {
+        mode: "ledger",
+        currentStatus: container.currentStatus,
+        prevStatus: latestBatch.fromContainerStatus,
+        revertCount: reverted.filter((r) => r.from !== r.current).length,
+        keep: skipped,
+      });
+      return;
+    }
+    // 没有账本的老柜子（上线前推的步骤）
+    let dates: Record<string, string> = {};
+    try { dates = container.statusDates ? JSON.parse(container.statusDates) : {}; } catch { dates = {}; }
+    const plan = await legacyUndoPlan(container, dates, auth.companyId);
+    if (!plan.prevStatus) {
+      fail(res, 400, "VALIDATION_ERROR", `「${CONTAINER_STATUS_LABEL[container.currentStatus] ?? container.currentStatus}」已经是这个柜子流程里的第一步，没有上一步可以退。`);
+      return;
+    }
+    let revertCount = 0;
+    const keep: Array<{ trackingNo: string; reason: string }> = [];
+    if (plan.changedAt && plan.shipmentStatusOfThisPush && plan.shipmentIds.length > 0) {
+      const pushLogs = await prisma.statusLog.findMany({
+        where: {
+          companyId: auth.companyId,
+          shipmentId: { in: plan.shipmentIds },
+          changedAt: plan.changedAt,
+          toStatus: plan.shipmentStatusOfThisPush,
+          id: { startsWith: PUSH_LOG_PREFIX },
+        },
+        orderBy: { id: "asc" },
+        select: { shipmentId: true, fromStatus: true },
+      });
+      const before = new Map<string, string>();
+      for (const row of pushLogs) if (!before.has(row.shipmentId)) before.set(row.shipmentId, row.fromStatus);
+      const ships = await prisma.shipment.findMany({
+        where: { id: { in: plan.shipmentIds }, companyId: auth.companyId },
+        select: { id: true, trackingNo: true, currentStatus: true },
+      });
+      for (const s of ships) {
+        if (s.currentStatus !== plan.shipmentStatusOfThisPush) keep.push({ trackingNo: s.trackingNo, reason: `已经是「${shipmentStatusZh(s.currentStatus)}」，不跟着退` });
+        else if (!before.has(s.id)) keep.push({ trackingNo: s.trackingNo, reason: "上线前后装进柜的货，没有这一步的推进记录，不跟着退" });
+        else if (before.get(s.id) !== s.currentStatus) revertCount++;
+      }
+    }
+    ok(res, { mode: "legacy", currentStatus: container.currentStatus, prevStatus: plan.prevStatus, revertCount, keep });
+  });
+
   app.post("/admin/containers/status/undo", async (req, res) => {
     const auth = requireRole(req, res, ["admin", "staff"]);
     if (!auth) return;
@@ -583,13 +863,8 @@ export function registerContainerRoutes(app: MinimalHttpApp): void {
       return;
     }
 
-    /* ⚠️ 「派送中 / 已签收」不是装柜页推的，是尾端派送那边推的。
-       在这里撤销会把客户已经签收的单子悄悄退回去，还会删掉尾端派送写的轨迹。
-       2026-08-10 之前这两个状态因为没有时间表记录本来就撤不了，等于被 bug 挡着；
-       现在按流程往回推能算出上一步了，必须显式挡住，否则是「修好一个、放出一个更大的」。
-       生产上现在有 3 个柜子停在「已签收」。 */
-    const LASTMILE_ONLY = new Set(["OUT_FOR_DELIVERY", "SIGNED", "DELIVERING"]);
-    if (LASTMILE_ONLY.has(container.currentStatus)) {
+    // 「派送中 / 已签收」归尾端派送推，装柜页不能撤（生产上有柜子停在「已签收」，见 LASTMILE_ONLY_CONTAINER_STATUSES）
+    if (LASTMILE_ONLY_CONTAINER_STATUSES.has(container.currentStatus)) {
       fail(
         res,
         400,
@@ -602,83 +877,125 @@ export function registerContainerRoutes(app: MinimalHttpApp): void {
     let dates: Record<string, string> = {};
     try { dates = container.statusDates ? JSON.parse(container.statusDates) : {}; } catch { dates = {}; }
 
-    const shipmentIds = container.items.map((it) => it.shipmentId);
-    const shipmentStatusOfThisPush: string | null = CONTAINER_TO_SHIPMENT_STATUS[container.currentStatus] ?? null;
-
-    /* ==================================================================
-       2026-08-10 修：撤销在生产上基本全废了。
-       106 个柜子里 102 个点「撤销」都报「这是第一个状态，没有上一步可以退」——
-       而它们明明是「运输中」「已到仓」这种中间状态。
-
-       原因：这里完全依赖柜子身上那张「状态时间表」(statusDates)。那张表是
-       2026-08-06 才加的，**加之前推过的状态一条都没补记**，所以老柜子要么整张表
-       是空的（68 个），要么只有当前这一条（34 个）→ 找不到上一步 → 报了那句错话。
-       而且那句话本身是错的：不是「第一个状态」，是「前面的没记录」。
-
-       现在两级兜底：
-         ① 这次推进是什么时候发生的：先看时间表；没有就去柜内运单的轨迹里，
-            找「最后一次推到这个状态」的那条 —— 那条就是这次推进留下的痕迹。
-         ② 上一步是哪个状态：先看时间表；没有就按流程往回退一格，
-            但**跳过没记录推过的「意外状态」**（滞留/查验/延迟），
-            否则等于把柜子退回一个它从来没到过的状态。
-       ================================================================== */
-
-    /* ⚠️ 只认「柜子推进状态」自己写的那批轨迹。
-       轨迹按来源分好几种，id 前缀不一样（生产实测 2311 条）：
-         sl_ctn_  柜子推进状态   1516 条  ← 只有这种是本次撤销该动的
-         sl_lm_   尾端派送        619 条
-         sl_mnf_  装柜时随柜补记  113 条
-         sl_new_ / sl_fix_ 等老数据
-       不加这个限制的后果（我拿生产数据算过）：68 个「时间表整张空」的柜子里，
-       有 6 个会去删**别人写的**轨迹 —— 1 个删到尾端派送的、3 个删到装柜补记的、
-       2 个删到老数据。那不是撤销，那是破坏。
-       加了之后这 6 个找不到自己的推进记录，就只退柜子状态、不动运单，宁可少做。 */
-    const PUSH_LOG_PREFIX = "sl_ctn_";
-
-    // ① 这次推进发生的时间
-    let currentTs: string | null = dates[container.currentStatus] ?? null;
-    if (!currentTs && shipmentStatusOfThisPush && shipmentIds.length > 0) {
-      const lastLog = await prisma.statusLog.findFirst({
-        where: {
-          companyId: auth.companyId,
-          shipmentId: { in: shipmentIds },
-          toStatus: shipmentStatusOfThisPush,
-          id: { startsWith: PUSH_LOG_PREFIX },
-        },
-        orderBy: { changedAt: "desc" },
-        select: { changedAt: true },
-      });
-      if (lastLog) currentTs = lastLog.changedAt.toISOString();
+    // 2026-09-17：页面带上它看到的柜子状态，对不上就不撤（页面没刷新连点两次不会多撤一步）
+    const expectStatus = typeof body.expectStatus === "string" ? body.expectStatus.trim() : "";
+    if (expectStatus && expectStatus !== container.currentStatus) {
+      fail(res, 409, "VALIDATION_ERROR", `这个柜子现在是「${CONTAINER_STATUS_LABEL[container.currentStatus] ?? container.currentStatus}」，跟你页面上看到的不一样，可能刚被别人改过。请刷新后再撤销`);
+      return;
     }
 
-    // ② 上一步是哪个状态
-    let prevStatus: string | null = null;
-    if (currentTs) {
-      const prevEntry = Object.entries(dates)
-        .filter(([status, ts]) => status !== container.currentStatus && new Date(ts).getTime() <= new Date(currentTs!).getTime())
-        .sort((a, b) => new Date(b[1]).getTime() - new Date(a[1]).getTime())[0];
-      if (prevEntry) prevStatus = prevEntry[0];
-    }
-    if (!prevStatus) {
-      // 先按柜子自己的运输方式找；找不到再按另一条流程找 ——
-      // 有柜子中途改过运输方式，当前状态可能压根不在现在这条流程里
-      // （实测：一个标着「陆运」的柜子停在「运输中」，那是海运才有的环节）。
-      const flows = [flowOf(container.transportMode), flowOf(container.transportMode === "land" ? "sea" : "land")];
-      for (const flow of flows) {
-        const idx = flow.indexOf(container.currentStatus);
-        if (idx < 0) continue;
-        for (let i = idx - 1; i >= 0; i--) {
-          const candidate = flow[i]!;
-          // 没记录推过的意外状态，绝不能退到那里去
-          // ⚠️ 名单按运输方式取 —— 海运柜不能退进「出口已放行」，
-          //    陆运柜不能退进「清关中」，两边的「少数柜才走」不是同一批。
-          if (neverGuessOf(container.transportMode).has(candidate) && !dates[candidate]) continue;
-          prevStatus = candidate;
-          break;
+    /**
+     * 2026-09-17（推进账本）：有账本就按账本撤 —— 撤掉最近一笔：
+     *   · 柜子回到这一笔记下的「推之前的状态」，时间表、开船/到港日期恢复成推之前的样子；
+     *   · 这一笔里的货，**还在这个柜里、还停在这一步**的，回到各自记下的状态，只删这些货这一步的轨迹；
+     *   · 已经不在柜里、或已经走到别的状态的货不动，它们的轨迹也不删（那是真实发生过的事）。
+     * 不再看日期、不再看轨迹记录，所以同一天推几步、日期填倒了、员工删过记录，都不会退错。
+     */
+    const latestBatch = await prisma.containerPushBatch.findFirst({
+      where: { containerId: container.id, companyId: auth.companyId },
+      orderBy: { seq: "desc" },
+    });
+    if (latestBatch) {
+      const batchResult = await prisma.$transaction(async (tx) => {
+        await tx.$queryRaw`SELECT id FROM containers WHERE id = ${container.id} FOR UPDATE`;
+        const fresh = await tx.container.findUnique({ where: { id: container.id }, select: { currentStatus: true } });
+        const freshBatch = await tx.containerPushBatch.findFirst({
+          where: { containerId: container.id },
+          orderBy: { seq: "desc" },
+          include: { entries: true },
+        });
+        if (!fresh || !freshBatch || freshBatch.id !== latestBatch.id || fresh.currentStatus !== container.currentStatus) {
+          throw new BusinessError("这个柜刚刚被别人改过，撤销没有执行，请刷新后再看");
         }
-        if (prevStatus) break;
-      }
+        if (freshBatch.toContainerStatus !== fresh.currentStatus) {
+          throw new BusinessError("柜子现在的状态跟推进账本对不上，没有撤销，请联系技术处理", 409, "VALIDATION_ERROR");
+        }
+        const items = await tx.shipmentContainerItem.findMany({ where: { containerId: container.id }, select: { shipmentId: true } });
+        const inBox = new Set(items.map((it: { shipmentId: string }) => it.shipmentId));
+        const entryShipmentIds = [...new Set(freshBatch.entries.map((e) => e.shipmentId))];
+        const candidateIds = entryShipmentIds.filter((sid) => inBox.has(sid));
+        // 空数组时函数内部直接返回；不写成「同一行 if + 锁」，那种写法 test-lock-order 第 7 项不认
+        await lockShipmentsChildrenFirst(tx, candidateIds, auth.companyId);
+        const ships = candidateIds.length > 0
+          ? await tx.shipment.findMany({
+              where: { id: { in: candidateIds }, companyId: auth.companyId },
+              select: { id: true, trackingNo: true, currentStatus: true, parentTrackingNo: true },
+            })
+          : [];
+        const trackingNoOf = new Map(
+          (await tx.shipment.findMany({ where: { id: { in: entryShipmentIds }, companyId: auth.companyId }, select: { id: true, trackingNo: true } }))
+            .map((s: { id: string; trackingNo: string }) => [s.id, s.trackingNo]),
+        );
+        const { reverted, skipped } = classifyLedgerUndo(
+          freshBatch.entries,
+          inBox,
+          new Map(ships.map((s: LedgerShip) => [s.id, s])),
+          trackingNoOf,
+        );
+        const idsByStatus = new Map<string, string[]>();
+        for (const r of reverted) {
+          if (r.from === r.current) continue;
+          const list = idsByStatus.get(r.from) ?? [];
+          list.push(r.id);
+          idsByStatus.set(r.from, list);
+        }
+        let changed = 0;
+        for (const [status, ids] of idsByStatus) {
+          await tx.shipment.updateMany({ where: { id: { in: ids }, companyId: auth.companyId }, data: { currentStatus: status, updatedAt: new Date() } });
+          changed += ids.length;
+        }
+        const logIds = reverted.map((r) => r.logId).filter((v): v is string => !!v);
+        const deletedSnap = logIds.length > 0 ? await tx.statusLog.findMany({ where: { id: { in: logIds } } }) : [];
+        const del = logIds.length > 0
+          ? await tx.statusLog.deleteMany({ where: { id: { in: logIds }, companyId: auth.companyId } })
+          : { count: 0 };
+        const autoRestored = await autoRestoreDeletedLogs(tx, auth.companyId, { userId: auth.userId, role: auth.role },
+          reverted.map((r) => ({ id: r.id, trackingNo: r.trackingNo, status: r.from })), container.containerNo);
+        await tx.auditLog.create({
+          data: {
+            companyId: auth.companyId, actorId: auth.userId, actorRole: auth.role,
+            action: "UNDO", resourceType: "Container", resourceId: container.id,
+            // undoneLogIds：这一步撤掉的全部记录 id（含员工之前删掉、已经不在的），管理员恢复删过的记录时靠它挡住（restore-log）
+            beforeJson: JSON.stringify({ batch: { ...freshBatch, entries: undefined }, entries: freshBatch.entries, deletedLogs: deletedSnap, undoneLogIds: logIds }),
+            remark: `撤销柜子 ${container.containerNo} 的「${CONTAINER_STATUS_LABEL[container.currentStatus] ?? container.currentStatus}」`,
+          },
+        });
+        await tx.container.update({
+          where: { id: container.id },
+          data: {
+            currentStatus: freshBatch.fromContainerStatus,
+            statusDates: freshBatch.prevStatusDates,
+            departureDate: freshBatch.prevDepartureDate,
+            ata: freshBatch.prevAta,
+            updatedAt: new Date(),
+          },
+        });
+        await tx.containerPushBatch.delete({ where: { id: freshBatch.id } });
+        // 柜里这批货的父单都按子单重算一遍（跟老柜子那条路一样）：不只退回的，也包括单独往前走了的 ——
+        // 父单是存库的，别处改子单漏了同步时，撤销顺手对齐，不会比原来差
+        const parentNos = [...new Set(ships.map((s: LedgerShip) => s.parentTrackingNo).filter((v): v is string => !!v))];
+        await lockAndSyncParents(tx, parentNos, auth.companyId, syncParentStatusFromChildren);
+        return { prevStatus: freshBatch.fromContainerStatus, deletedLogs: del.count, changed, skipped, restoredLogs: autoRestored };
+      });
+      logger.warn("撤销柜子状态推进（账本）", {
+        操作人: auth.userId, 角色: auth.role, 柜号: container.containerNo,
+        撤掉的状态: container.currentStatus, 退回到: batchResult.prevStatus,
+        删掉轨迹条数: batchResult.deletedLogs, 退回运单数: batchResult.changed, 没跟着退: batchResult.skipped.length,
+      });
+      ok(res, {
+        id: container.id,
+        containerNo: container.containerNo,
+        undoneStatus: container.currentStatus,
+        currentStatus: batchResult.prevStatus,
+        deletedLogs: batchResult.deletedLogs,
+        affectedShipmentCount: batchResult.changed,
+        skippedShipments: batchResult.skipped,
+        restoredLogs: batchResult.restoredLogs,
+      });
+      return;
     }
+
+    const { shipmentIds, shipmentStatusOfThisPush, prevStatus, changedAt } = await legacyUndoPlan(container, dates, auth.companyId);
     if (!prevStatus) {
       fail(
         res,
@@ -691,7 +1008,6 @@ export function registerContainerRoutes(app: MinimalHttpApp): void {
 
     // 找不到推进时间时（老柜子、且运单那边也没留下轨迹）：这次推进没在运单上留下任何痕迹，
     // 所以只退柜子状态，不去删轨迹、不动运单 —— 见下面 changedAt 为 null 的分支。
-    const changedAt: Date | null = currentTs ? new Date(currentTs) : null;
 
     const result = await prisma.$transaction(async (tx) => {
       /**
@@ -728,6 +1044,7 @@ export function registerContainerRoutes(app: MinimalHttpApp): void {
 
       let deletedLogs = 0;
       let affectedShipments = 0;
+      const undoneLogIds: string[] = [];
 
       if (changedAt && shipmentStatusOfThisPush && shipmentIds.length > 0) {
         /**
@@ -768,10 +1085,28 @@ export function registerContainerRoutes(app: MinimalHttpApp): void {
         const pushLogs = await tx.statusLog.findMany({
           where: pushLogWhere,
           orderBy: { id: "asc" },
-          select: { shipmentId: true, fromStatus: true },
+          select: { id: true, shipmentId: true, fromStatus: true },
         });
         const del = await tx.statusLog.deleteMany({ where: pushLogWhere });
         deletedLogs = del.count;
+        undoneLogIds.push(...pushLogs.map((l) => l.id));
+        // 员工之前删掉的、本来也是这次推进写的记录（比如重复的「已封柜」）也算撤掉了，记进撤销日志（跟账本那条路一样）
+        {
+          const idSet = new Set(shipmentIds);
+          const nos = (await tx.shipment.findMany({ where: { id: { in: shipmentIds }, companyId: auth.companyId }, select: { trackingNo: true } }))
+            .map((s) => `删除物流轨迹 ${s.trackingNo}`);
+          const deletedAudits = await tx.auditLog.findMany({
+            where: { companyId: auth.companyId, action: "DELETE", resourceType: "StatusLog", resourceId: { startsWith: PUSH_LOG_PREFIX }, remark: { in: nos } },
+            select: { beforeJson: true },
+          });
+          for (const a of deletedAudits) {
+            let b: any;
+            try { b = JSON.parse(a.beforeJson ?? "{}"); } catch { continue; }
+            if (idSet.has(b.shipmentId) && b.toStatus === shipmentStatusOfThisPush && new Date(b.changedAt).getTime() === changedAt.getTime()) {
+              undoneLogIds.push(String(b.id));
+            }
+          }
+        }
 
         const beforeThisPush = new Map<string, string>();
         for (const row of pushLogs) {
@@ -779,14 +1114,17 @@ export function registerContainerRoutes(app: MinimalHttpApp): void {
         }
         const lockedShipments = await tx.shipment.findMany({
           where: { id: { in: [...beforeThisPush.keys()] }, companyId: auth.companyId },
-          select: { id: true, currentStatus: true },
+          select: { id: true, trackingNo: true, currentStatus: true },
         });
+        const legacyReverted: Array<{ id: string; trackingNo: string; status: string }> = [];
 
         // 按状态分组批量更新，避免几十张运单发几十条 update
         const idsByStatus = new Map<string, string[]>();
         for (const s of lockedShipments) {
           if (s.currentStatus !== shipmentStatusOfThisPush) continue;
           const back = beforeThisPush.get(s.id)!;
+          legacyReverted.push({ id: s.id, trackingNo: s.trackingNo, status: back });
+          if (back === s.currentStatus) continue; // 推之前就是这个状态（比如已装柜→已封柜），不算退回
           const list = idsByStatus.get(back) ?? [];
           list.push(s.id);
           idsByStatus.set(back, list);
@@ -798,6 +1136,7 @@ export function registerContainerRoutes(app: MinimalHttpApp): void {
           });
           affectedShipments += ids.length;
         }
+        await autoRestoreDeletedLogs(tx, auth.companyId, { userId: auth.userId, role: auth.role }, legacyReverted, container.containerNo);
 
         // 父运单当初是跟着一起改的，这里也要跟着退（2026-08-22 改成统一推算）
         //
@@ -830,7 +1169,7 @@ export function registerContainerRoutes(app: MinimalHttpApp): void {
 
       delete dates[container.currentStatus];
       const containerUpdate: Prisma.ContainerUpdateInput = {
-        currentStatus: prevStatus,
+        currentStatus: prevStatus!,
         statusDates: JSON.stringify(dates),
         updatedAt: new Date(),
       };
@@ -845,6 +1184,14 @@ export function registerContainerRoutes(app: MinimalHttpApp): void {
         containerUpdate.ata = null;
       }
       await tx.container.update({ where: { id: container.id }, data: containerUpdate });
+      await tx.auditLog.create({
+        data: {
+          companyId: auth.companyId, actorId: auth.userId, actorRole: auth.role,
+          action: "UNDO", resourceType: "Container", resourceId: container.id,
+          beforeJson: JSON.stringify({ legacy: true, from: container.currentStatus, to: prevStatus, deletedLogs, undoneLogIds }),
+          remark: `撤销柜子 ${container.containerNo} 的「${CONTAINER_STATUS_LABEL[container.currentStatus] ?? container.currentStatus}」（没有推进账本的老柜子）`,
+        },
+      });
 
       return { deletedLogs, affectedShipments };
     });
@@ -968,6 +1315,7 @@ export function registerContainerRoutes(app: MinimalHttpApp): void {
             receiverNameTh: true,
             receiverAddressTh: true,
             cargoType: true,
+            transportMode: true,
             products: {
               select: { itemName: true, packageCount: true },
               orderBy: { sortOrder: "asc" },
@@ -1035,7 +1383,7 @@ export function registerContainerRoutes(app: MinimalHttpApp): void {
     /**
      * 显示当前状态的最后一条不给删（2026-09-17 老板拍板，删除只删记录不改状态）。
      * 按每票货自己的当前状态、自己的记录算 —— 父单页签里混着子单的记录，子单那条看子单的状态。
-     * 跟删除接口共用 isCurrentStatusLog，两边口径必须一样。
+     * 跟删除接口共用 deleteBlockedReasonOf（managed-lastmile-log.ts），两边口径必须一样。
      */
     const sameStatusCountOf = (logs: TrackLog[], currentStatus: string): number =>
       logs.filter((l) => l.toStatus === currentStatus).length;
@@ -1047,13 +1395,15 @@ export function registerContainerRoutes(app: MinimalHttpApp): void {
       // 派送业务的记录本来就不给删，而且推错了要去尾端派送撤，不能提示去装柜管理 —— 不标
       const managed = isManagedLastmileLog(log);
       const isCurrentStatus = !managed && isCurrentStatusLog(log, owner.currentStatus, owner.sameStatusCount);
+      // 为什么不能删（2026-09-17）：lastmile 派送记录 / containerPush 柜子推进改了状态的记录 / currentStatus 当前状态最后一条
+      const deleteBlockedReason = deleteBlockedReasonOf(log, owner.currentStatus, owner.sameStatusCount);
       return hideOperatorIdentity({
         trackingNo,
         // 员工/管理员删「写错的一条」时要靠它定位；跟操作人一样，客户端不下发
         id: isClient ? "" : log.id,
-        canDelete: !isClient && !managed && !isCurrentStatus,
-        // 员工/管理员的弹窗在这条上写「当前状态，推错请到装柜管理撤销」；客户不下发
-        ...(isClient ? {} : { isCurrentStatus }),
+        canDelete: !isClient && deleteBlockedReason === null,
+        // 员工/管理员的弹窗在不能删的那条上写原因（当前状态 / 柜子推进记录 / 派送记录）；客户不下发
+        ...(isClient ? {} : { isCurrentStatus, deleteBlockedReason }),
         fromStatus: log.fromStatus,
         toStatus: log.toStatus,
         remark: sanitizeRemark(log.remark ?? ""),
@@ -1103,7 +1453,8 @@ export function registerContainerRoutes(app: MinimalHttpApp): void {
         shipment.currentStatus,
         childShipments.map((cs) => cs.currentStatus),
         shipment.packageCount,
-        shipment.transportMode,
+        // 老数据运单自己没填运输方式时按订单的（跟四个列表同口径，Codex 第二批复核 P2-1）
+        shipment.transportMode ?? shipment.order?.transportMode,
       ) ?? undefined,
       currentLocation: shipment.currentLocation ?? undefined,
       receiverNameTh: shipment.order?.receiverNameTh ?? null,

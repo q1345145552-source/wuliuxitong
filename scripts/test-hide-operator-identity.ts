@@ -120,7 +120,7 @@ const shipmentLogs = (shipmentId: string): Row[] => [
 const trackParent: Row = {
   id: "s1", companyId: "c1", orderId: "o1", trackingNo: "YW0001", parentTrackingNo: null, batchNo: "ABCU1234567", itemName: "鞋",
   packageCount: 2, volumeM3: 0.4, weightKg: 8, currentStatus: "loaded", currentLocation: null, createdAt: T0, updatedAt: T1,
-  order: { id: "o1", orderNo: "NO1", itemName: "鞋", clientId: CLIENT.userId, receiverNameTh: "收货人", receiverAddressTh: "曼谷", cargoType: "normal", products: [{ itemName: "鞋", packageCount: 4 }] },
+  order: { id: "o1", orderNo: "NO1", itemName: "鞋", clientId: CLIENT.userId, receiverNameTh: "收货人", receiverAddressTh: "曼谷", cargoType: "normal", transportMode: "sea", products: [{ itemName: "鞋", packageCount: 4 }] },
   containerItems: [], statusLogs: shipmentLogs("s1"),
 };
 const trackChild: Row = { ...trackParent, id: "s1c", trackingNo: "YW0001-1", parentTrackingNo: "YW0001", statusLogs: shipmentLogs("s1c") };

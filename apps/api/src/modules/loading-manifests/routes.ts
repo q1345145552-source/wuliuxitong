@@ -755,12 +755,37 @@ export function registerLoadingManifestRoutes(app: MinimalHttpApp): void {
       await tx.shipment.update({ where: { id: loadShipmentId }, data: { currentStatus: finalStatus, updatedAt: now } });
 
       const partial = reqPieces < totalPkg ? `（分装 ${reqPieces}件）` : "";
-      for (let i = 0; i < steps.length; i++) {
-        const s = steps[i]!;
-        const isLast = i === steps.length - 1;
+      const writtenMnf: Array<{ id: string; toStatus: string }> = [];
+      // 柜子已经不在装柜中、而且有推进账本（2026-09-17）：先单独写一条「装入柜子」（已装柜），后面每一步都是随柜补记、挂进账本。
+      // 原来最后一步那条同时当「装入柜子」，撤销那一步时它会跟着删，撤到底这票货一条「已装柜」都不剩（对抗测试 I/J 报的）。
+      // 没有账本的老柜子（上线前推的）照原来的写法：老路子撤销不删随柜补记，单独多写的补记会撤不掉、留在轨迹里跟柜子对不上。
+      const pushBatches = await tx.containerPushBatch.findMany({
+        where: { containerId },
+        orderBy: { seq: "asc" },
+        select: { id: true, fromContainerStatus: true, toContainerStatus: true },
+      });
+      const boxAlreadyMoved = container.currentStatus !== "LOADING" && pushBatches.length > 0;
+      if (boxAlreadyMoved) {
         await tx.statusLog.create({
           data: {
-            id: `sl_mnf_${Date.now()}_${i}_${Math.random().toString(36).slice(2, 6)}`,
+            id: `sl_mnf_${Date.now()}_load_${Math.random().toString(36).slice(2, 6)}`,
+            companyId: auth.companyId, shipmentId: loadShipmentId,
+            operatorId: auth.userId, operatorRole: auth.role, operatorName: auth.name ?? "",
+            fromStatus: "loaded", toStatus: "loaded",
+            remark: `装入柜子 ${container.containerNo}${partial}`,
+            nextStop: nextStopOf("SEALED", container.transportMode),
+            changedAt: new Date(firstAt.getTime() - 1000),
+          },
+        });
+      }
+      for (let i = 0; i < steps.length; i++) {
+        const s = steps[i]!;
+        const isLast = i === steps.length - 1 && !boxAlreadyMoved;
+        const mnfLogId = `sl_mnf_${Date.now()}_${i}_${Math.random().toString(36).slice(2, 6)}`;
+        if (boxAlreadyMoved) writtenMnf.push({ id: mnfLogId, toStatus: s.shipmentStatus });
+        await tx.statusLog.create({
+          data: {
+            id: mnfLogId,
             companyId: auth.companyId, shipmentId: loadShipmentId,
             operatorId: auth.userId, operatorRole: auth.role, operatorName: auth.name ?? "",
             fromStatus: i === 0 ? "loaded" : steps[i - 1]!.shipmentStatus,
@@ -777,6 +802,40 @@ export function registerLoadingManifestRoutes(app: MinimalHttpApp): void {
         });
       }
       const syncStatus = finalStatus;
+
+      /**
+       * 2026-09-17（推进账本）：柜子已经推过的，把这票后装进来的货记进每一笔推进账本，撤销时它也跟着退。
+       * 状态从「第一笔账之前柜子的状态」开始按每一笔柜子状态顺下去；每一步的随柜补记挂上，撤销那一步时一起删。
+       * 「装入柜子」单独一条（上面 boxAlreadyMoved 那段），不挂任何一笔 —— 撤到底它也留着，货确实装进过这个柜。
+       */
+      {
+        const batches = pushBatches;
+        if (batches.length > 0) {
+          const used = new Set<string>();
+          // 起点：第一笔账之前柜子是什么状态，货就是什么状态（上线前已经在路上的柜子不能一律当「已装柜」）
+          let prevSt = CONTAINER_TO_SHIPMENT_STATUS[batches[0]!.fromContainerStatus] ?? "loaded";
+          const entryRows: Array<Record<string, unknown>> = [];
+          const stamp = Date.now();
+          for (const b of batches) {
+            const to = CONTAINER_TO_SHIPMENT_STATUS[b.toContainerStatus] ?? prevSt;
+            const rec = writtenMnf.find((w) => w.toStatus === to && !used.has(w.id));
+            if (rec) used.add(rec.id);
+            const attach = rec ? rec.id : null;
+            entryRows.push({
+              id: `cpe_${stamp}_${String(entryRows.length).padStart(5, "0")}_${Math.random().toString(36).slice(2, 6)}`,
+              companyId: auth.companyId,
+              batchId: b.id,
+              shipmentId: loadShipmentId,
+              fromStatus: prevSt,
+              toStatus: to,
+              statusLogId: attach,
+              kind: "late_add",
+            });
+            prevSt = to;
+          }
+          await tx.containerPushEntry.createMany({ data: entryRows as any });
+        }
+      }
 
       // 同步父运单状态（2026-08-22 改成统一推算）
       //

@@ -13,9 +13,6 @@ export const MANAGED_LASTMILE_LOG_MESSAGE =
  * 记录的状态等于这票货现在的状态，且这票货只剩这一条是这个状态，就不给删。
  * 同一状态有两条（比如「装入柜子」+「已封柜」都是已装柜）时可以删掉其中一条。
  *
- * 轨迹弹窗（containers/routes.ts 的 GET /client/shipments/track）和删除接口
- *（shipments/routes.ts 的 POST /staff/shipments/track/delete-log）共用这一份判断，别各写各的。
- *
  * @param sameStatusCount 这票货身上 toStatus 等于当前状态的记录条数（含这条）
  */
 export function isCurrentStatusLog(
@@ -26,5 +23,38 @@ export function isCurrentStatusLog(
   return log.toStatus === currentStatus && sameStatusCount <= 1;
 }
 
+/**
+ * 柜子推进（sl_ctn_）/ 随柜补记（sl_mnf_）里**真正改了状态**的记录，不许单删（2026-09-17 老板定「推进账本」做法）。
+ *
+ * 这些是柜子真实走过的步骤。推错了用「装柜管理」的撤销 —— 撤销按推进账本把这一步连同记录一起撤掉；
+ * 单删只会让轨迹少一步，还会跟柜子分叉（Codex 第二批复核 P1：删中间「已开船」再连撤两次，
+ * 柜子退到已封柜、货还挂在已开船）。
+ * 状态没变的（「装入柜子」loaded→loaded、重复的「已封柜」）照样能删 —— 线上员工删过的就是这类。
+ */
+export function isContainerPushTransitionLog(log: { id: string; fromStatus: string; toStatus: string }): boolean {
+  return (log.id.startsWith("sl_ctn_") || log.id.startsWith("sl_mnf_")) && log.fromStatus !== log.toStatus;
+}
+
+export const CONTAINER_PUSH_LOG_MESSAGE =
+  "这条是柜子推进时改了状态的记录，不能单删。推错了请到「装柜管理」点「撤销」。";
+
 export const CURRENT_STATUS_LOG_MESSAGE =
   "这条显示的是这票货现在的状态，不能删。状态推错了请到「装柜管理」点「撤销」。";
+
+export type DeleteBlockedReason = "lastmile" | "containerPush" | "currentStatus";
+
+/**
+ * 这条为什么不能删；能删返回 null。
+ * 轨迹弹窗（containers/routes.ts 的 GET /client/shipments/track，给员工看原因）和删除接口
+ *（shipments/routes.ts 的 POST /staff/shipments/track/delete-log）共用这一份、判断顺序一样，别各写各的。
+ */
+export function deleteBlockedReasonOf(
+  log: { id: string; fromStatus: string; toStatus: string },
+  currentStatus: string,
+  sameStatusCount: number,
+): DeleteBlockedReason | null {
+  if (isManagedLastmileLog(log)) return "lastmile";
+  if (isContainerPushTransitionLog(log)) return "containerPush";
+  if (isCurrentStatusLog(log, currentStatus, sameStatusCount)) return "currentStatus";
+  return null;
+}

@@ -1801,7 +1801,14 @@ export async function updateContainerStatus(payload: {
   date?: string;
   /** 「下一站【泰国边境】」，不传则后端按状态取默认值 */
   nextStop?: string;
-}): Promise<{ containerNo: string; fromStatus: string; toStatus: string; affectedShipmentCount: number }> {
+}): Promise<{
+  containerNo: string;
+  fromStatus: string;
+  toStatus: string;
+  affectedShipmentCount: number;
+  /** 已派送/签收（比这一步靠后）、退回、取消的货推柜子时跳过，列在这里（2026-09-17 推进账本） */
+  skippedShipments?: Array<{ trackingNo: string; status: string }>;
+}> {
   const response = await fetch(`${apiBaseUrl()}/admin/containers/status`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeaders() },
@@ -1811,20 +1818,40 @@ export async function updateContainerStatus(payload: {
 }
 
 /**
- * 撤销这个柜子上一次的状态推进：柜子退回上一步，柜里每张运单那一批轨迹一起删掉。
- * 推错了整柜一次撤，不用一张张运单去删。
+ * 撤销预览（2026-09-17 推进账本）：点撤销之前告诉员工柜子退到哪一步、几票货跟着退、哪几票不动为什么。
  */
-export async function undoContainerStatus(id: string): Promise<{
+export async function fetchUndoPreview(id: string): Promise<{
+  mode: "ledger" | "legacy";
+  currentStatus: string;
+  prevStatus: string;
+  revertCount: number;
+  keep: Array<{ trackingNo: string; reason: string }>;
+}> {
+  const response = await fetch(`${apiBaseUrl()}/admin/containers/status/undo-preview?id=${encodeURIComponent(id)}`, {
+    method: "GET",
+    headers: { ...authHeaders() },
+  });
+  return parseApiResponse(response);
+}
+
+/**
+ * 撤销这个柜子上一次的状态推进：柜子退回上一步，柜里还停在这一步的货跟着退、这一步的轨迹一起删掉。
+ * 推错了整柜一次撤，不用一张张运单去删。
+ * expectStatus 传页面上看到的柜子状态：对不上（别人刚撤过 / 推过）后端不撤，页面没刷新连点两下不会多撤一步。
+ */
+export async function undoContainerStatus(id: string, expectStatus?: string): Promise<{
   containerNo: string;
   undoneStatus: string;
   currentStatus: string;
   deletedLogs: number;
   affectedShipmentCount: number;
+  skippedShipments?: Array<{ trackingNo: string; reason: string }>;
+  restoredLogs?: number;
 }> {
   const response = await fetch(`${apiBaseUrl()}/admin/containers/status/undo`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeaders() },
-    body: JSON.stringify({ id }),
+    body: JSON.stringify({ id, ...(expectStatus ? { expectStatus } : {}) }),
   });
   return parseApiResponse(response);
 }

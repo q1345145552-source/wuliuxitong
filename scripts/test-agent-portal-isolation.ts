@@ -497,6 +497,21 @@ async function dbChecks(): Promise<void> {
       assert.equal(direct.status, 404);
     });
 
+    await check("轨迹弹窗「部分已放行」：老数据运单自己没填运输方式时按订单的（陆运单子单到口岸 → 补「部分到达口岸」；员工和代理两个轨迹接口一样，Codex 第二批复核 P2-1）", async () => {
+      // 夹具里运单都没填 transportMode；临时把订单改成陆运、子单推到「到达口岸」，查完改回去
+      await prisma.order.update({ where: { id: `${P}o_a1` }, data: { transportMode: "land" } });
+      await prisma.shipment.update({ where: { id: `${P}s_a1c` }, data: { currentStatus: "atPortCn" } });
+      try {
+        const staffView = await okData(tokens.staff, "/client/shipments/track?trackingNo=ZZB3A1");
+        const agentView = await okData(A, "/agent/shipments/track?trackingNo=ZZB3A1");
+        assert.equal(staffView.partialAhead, "atPortCn");
+        assert.equal(agentView.partialAhead, "atPortCn");
+      } finally {
+        await prisma.order.update({ where: { id: `${P}o_a1` }, data: { transportMode: "sea" } });
+        await prisma.shipment.update({ where: { id: `${P}s_a1c` }, data: { currentStatus: "loaded" } });
+      }
+    });
+
     await check("/agent/shipments/track：派送信息只取这张运单自己那一行（甲乙各看各的司机）", async () => {
       const a = await okData(A, "/agent/shipments/track?trackingNo=ZZB3A1");
       assert.equal(a.lastmile.driverName, "司机王");

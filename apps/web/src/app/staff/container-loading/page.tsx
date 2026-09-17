@@ -17,6 +17,7 @@ import {
   deleteContainer,
   updateContainerStatus,
   undoContainerStatus,
+  fetchUndoPreview,
   setManifestTransportMode,
   type LoadingManifestItem,
   type LoadingManifestDetail,
@@ -347,7 +348,11 @@ export default function StaffContainerLoadingPage() {
       setStatusRemark("");
       setStatusDate("");
       setNextStop("");
-      setToast(`柜子「${result.containerNo}」已推进至 ${STATUS_LABEL[toStatus] ?? toStatus}（影响 ${result.affectedShipmentCount} 个运单）`);
+      const skippedCount = result.skippedShipments?.length ?? 0;
+      setToast(
+        `柜子「${result.containerNo}」已推进至 ${STATUS_LABEL[toStatus] ?? toStatus}（影响 ${result.affectedShipmentCount} 个运单` +
+        (skippedCount > 0 ? `；${skippedCount} 票已派送、签收、退回或取消，没跟着推` : "") + `）`,
+      );
       await loadList();
       await loadDetail(selectedId);
     } catch (e) {
@@ -355,28 +360,47 @@ export default function StaffContainerLoadingPage() {
     }
   };
 
-  /** 推错了：整柜退回上一步，柜里每张运单那一批轨迹一起删掉 */
+  /** 推错了：整柜退回上一步（2026-09-17 起按推进账本撤最近一笔），柜里还停在这一步的运单跟着退、这一步的轨迹一起删掉 */
   const handleUndoStatus = async () => {
     if (!selectedId || !detail || undoing) return;
     // 2026-09-01 竞态全扫：确认弹窗里的状态名来自 detail，撤销动的却是 selectedId ——
     // 详情还没跟上选中柜时两者不是同一个柜子，先拦下（2026-09-02 复核整改：统一走 guardDetailOwner）
     if (!guardDetailOwner(selectedId)) return;
     const nowLabel = STATUS_LABEL[detail.status] ?? detail.status;
+    // 2026-09-17（推进账本）：先问后端这次撤销会怎样，写进确认框，员工点之前就知道退到哪、谁不动
+    let preview: Awaited<ReturnType<typeof fetchUndoPreview>>;
+    try {
+      preview = await fetchUndoPreview(selectedId);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "撤销失败");
+      return;
+    }
+    if (preview.currentStatus !== detail.status) {
+      setError("这个柜子的状态刚被别人改过，已刷新，请再看一下再撤销");
+      await loadDetail(selectedId);
+      return;
+    }
+    const prevLabel = STATUS_LABEL[preview.prevStatus] ?? preview.prevStatus;
+    const keepLines = preview.keep.slice(0, 5).map((k) => `    ${k.trackingNo}：${k.reason}`).join("\n");
     const ok = window.confirm(
       `确定撤销这个柜子的「${nowLabel}」吗？\n\n` +
-      `· 柜子退回上一个状态\n` +
-      `· 柜里每张运单的这条轨迹都会删掉，客户看不到了\n` +
-      `· 柜里的运单退回到这次推进之前的状态（之后已经单独往前走了的不动）\n` +
-      `· 撤了就找不回来了`,
+      `· 柜子退回「${prevLabel}」\n` +
+      `· ${preview.revertCount} 票货跟着退回，这一步写给它们的轨迹一起删掉，客户看不到了\n` +
+      (preview.keep.length > 0
+        ? `· 这 ${preview.keep.length} 票不跟着退：\n${keepLines}${preview.keep.length > 5 ? `\n    ……还有 ${preview.keep.length - 5} 票` : ""}\n`
+        : "") +
+      `· 撤错了可以按原来的日期再推一次（当时手填的备注要重填）`,
     );
     if (!ok) return;
     setUndoing(true);
     try {
-      const result = await undoContainerStatus(selectedId);
+      const result = await undoContainerStatus(selectedId, detail.status);
+      const skippedCount = result.skippedShipments?.length ?? 0;
       setToast(
         `已撤销「${STATUS_LABEL[result.undoneStatus] ?? result.undoneStatus}」，` +
         `柜子退回「${STATUS_LABEL[result.currentStatus] ?? result.currentStatus}」` +
-        `（退回 ${result.affectedShipmentCount} 个运单，删掉 ${result.deletedLogs} 条轨迹）`,
+        `（退回 ${result.affectedShipmentCount} 个运单，删掉 ${result.deletedLogs} 条轨迹` +
+        (skippedCount > 0 ? `，${skippedCount} 票不跟着退` : "") + `）`,
       );
       await loadList();
       await loadDetail(selectedId);
