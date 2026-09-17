@@ -10,8 +10,10 @@
  * ⚠️ 动作是从 before/after 的状态推出来的，不另存一个「动作」字段 —— 免得两处对不上。
  */
 
-/** 只用到 Prisma 的这两个方法，测试用内存桩，所以这里收 any */
-type Db = any;
+import type { Prisma, PrismaClient } from "@prisma/client";
+
+/** 事务里（tx）和事务外（prisma）都能传；写成这个类型是为了让列名、关系名受 tsc 检查（不是 any） */
+type Db = Prisma.TransactionClient | PrismaClient;
 
 export const REBATE_AUDIT_RESOURCE = "AgentRebateStatement";
 /** 撤回原因：必填，去掉两头空格后 1~200 字 */
@@ -91,13 +93,12 @@ export async function loadRebateStatusHistory(
   companyId: string,
   statementId: string,
   take = 50,
-): Promise<Array<{ at: string; actorName: string; actorRole: string; action: RebateAuditAction; reason: string; amount: number | null }>> {
+): Promise<Array<{ at: string; actorName: string; actorRole: string; action: RebateAuditAction; reason: string; amount: number | null; undonePaidAt: string | null }>> {
   const rows = await db.auditLog.findMany({
     where: { companyId, action: "STATUS_CHANGE", resourceType: REBATE_AUDIT_RESOURCE, resourceId: statementId },
     orderBy: { createdAt: "desc" },
     take,
     select: {
-      actorId: true,
       actorRole: true,
       beforeJson: true,
       afterJson: true,
@@ -106,16 +107,22 @@ export async function loadRebateStatusHistory(
       actor: { select: { name: true } },
     },
   });
-  return rows.map((r: any) => {
+  return rows.map((r) => {
     const after = parse(r.afterJson);
+    const before = parse(r.beforeJson);
     const amount = typeof after?.totalRebate === "number" ? after.totalRebate : null;
+    const action = rebateAuditAction(r.beforeJson, r.afterJson);
+    // 撤回把 paid_at / paid_by 清空了，「撤掉的是哪一次已返」只剩在这条流水的 before 里 ——
+    // 一起下发，不然上线前点过已返的老单撤回后就彻底看不到原来是什么时候标的（DeepSeek 复核 2026-09-18 第 1 条）
+    const undonePaidAt = action === "undoPaid" && typeof before?.paidAt === "string" ? before.paidAt : null;
     return {
       at: new Date(r.createdAt).toISOString(),
       actorName: r.actor?.name ?? "",
       actorRole: r.actorRole,
-      action: rebateAuditAction(r.beforeJson, r.afterJson),
+      action,
       reason: r.remark ?? "",
       amount,
+      undonePaidAt,
     };
   });
 }

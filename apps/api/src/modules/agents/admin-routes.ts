@@ -576,7 +576,12 @@ async function changeRebatePaidStatus(
     const row = locked[0];
     if (!row) return { notFound: true as const, changed: false as const, current: { status: "", paidAt: null } };
     const current = { status: row.status, paidAt: row.paid_at ?? null };
-    if (row.status === want) return { notFound: false as const, changed: false as const, current };
+    /**
+     * 只认「未返 → 已返」和「已返 → 未返」这两步。今天 status 只有这两种值，
+     * 但以后要是加了第三种（作废之类），别让这里把它静默改成已返（Opus 复核 2026-09-18 第 7 条）。
+     */
+    const from = want === "paid" ? "unpaid" : "paid";
+    if (row.status !== from) return { notFound: false as const, changed: false as const, current };
 
     const statement = await tx.agentRebateStatement.findFirst({
       where: { id, companyId: auth.companyId },
@@ -603,5 +608,6 @@ async function changeRebatePaidStatus(
       reason,
     });
     return { notFound: false as const, changed: true as const, current };
-  });
+  // 拿行锁的事务都显式给超时（库里另外 7 处同写法，默认 5s/2s 在远端库上偏紧）
+  }, { timeout: 30000, maxWait: 10000 });
 }

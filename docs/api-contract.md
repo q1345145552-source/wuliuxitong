@@ -659,19 +659,6 @@
 - 不按用户备注里是否出现“派送”二字判定来源。
 - 本次不清理历史记录，也不修改签收图片或件数、体积、重量。
 
-## 19. 返现单「已返 / 撤回已返」与操作流水（2026-09-18 老板拍板）
-
-老板原话：「能撤回，但是能看到记录。应该有流水的」。**不加新表**，流水存在已有的 `audit_logs` 里。
-
-- **POST /admin/agents/rebates/mark-paid** `{ id }`（仅管理员）：不变 —— 只改状态、已返时间、操作人，金额和明细一个字不动；重复点返回 `{ alreadyPaid: true }` 且**不写流水**。现在改成**先锁这行（`FOR UPDATE`）→ 锁后重读 → 真要改才写**，改完在**同一个事务**里记一条流水。
-- **POST /admin/agents/rebates/undo-paid** `{ id, reason }`（仅管理员）：撤回「已返」。
-  - `reason` 必填，去掉两头空格后 1～200 字，否则 `400`；别家公司的单 `404`。
-  - 成功：`status` 回到 `unpaid`，`paidAt` / `paidBy` 清空，**金额、方数、明细不动**（还是「出了单就不改」）。返回 `{ id, status: "unpaid", alreadyUnpaid: false }`。
-  - 已经是未返（别人刚撤过）：`{ alreadyUnpaid: true }`，不报错、也不写第二条流水。
-  - 代理端 `/agent/rebates`、`/agent/rebates/detail` 跟着显示回「未返」（代理本来就看得到状态）；**流水不给代理**。
-- **流水**（`audit_logs`）：`action=STATUS_CHANGE`、`resourceType=AgentRebateStatement`、`resourceId=返现单 id`；`beforeJson` / `afterJson` 记「状态 + 已返时间 + 操作人」，`afterJson` 另带 `month` / `agentId` / `totalRebate`；`remark` 记撤回原因（点「已返」是空串）。动作从 before/after 的状态推出来，不另存字段。
-- **GET /admin/agents/rebates/detail?id=** 多返回 `history: [{ at, actorName, actorRole, action: "paid"|"undoPaid"|"other", reason, amount }]`，最近的在最前面，最多 50 条；按 `companyId` 过滤。操作人名字只在这个**只给超管**的接口里给（`operator-visibility.ts` 的规矩）。
-
 ### 18.5 推进账本（2026-09-17 老板定，替代 18.2 / 18.4 的做法）
 
 - **新表**（迁移 `20260917_container_push_ledger`，只增不删）：`container_push_batches`（每推一次柜子状态一笔：seq、柜子推之前/推之后的状态、推之前的 statusDates / 开船日期 / 到港日期）、`container_push_entries`（这一笔里每票货推之前/推之后的状态、这一步写的轨迹 id，kind=`push` / `late_add`）。
@@ -702,3 +689,16 @@
 - 提交非空产品列表时，保存后按锁内完整产品集合的最严货型同步整票；旧行省略货型时保留原值，新行省略则普货。
 - 已有产品行时，仅修改整票货型若与产品最严值不一致，返回 `400`，提示在产品行修改；不偷偷覆盖明细。
 - 不涉及货型的编辑不重新分类历史数据；没有产品行的老单仍可直接修改有效整票货型。
+
+## 19. 返现单「已返 / 撤回已返」与操作流水（2026-09-18 老板拍板）
+
+老板原话：「能撤回，但是能看到记录。应该有流水的」。**不加新表**，流水存在已有的 `audit_logs` 里。
+
+- **POST /admin/agents/rebates/mark-paid** `{ id }`（仅管理员）：不变 —— 只改状态、已返时间、操作人，金额和明细一个字不动；重复点返回 `{ alreadyPaid: true }` 且**不写流水**。现在改成**先锁这行（`FOR UPDATE`）→ 锁后重读 → 真要改才写**，改完在**同一个事务**里记一条流水。
+- **POST /admin/agents/rebates/undo-paid** `{ id, reason }`（仅管理员）：撤回「已返」。
+  - `reason` 必填，去掉两头空格后 1～200 字，否则 `400`；别家公司的单 `404`。
+  - 成功：`status` 回到 `unpaid`，`paidAt` / `paidBy` 清空，**金额、方数、明细不动**（还是「出了单就不改」）。返回 `{ id, status: "unpaid", alreadyUnpaid: false }`。
+  - 已经是未返（别人刚撤过）：`{ alreadyUnpaid: true }`，不报错、也不写第二条流水。
+  - 代理端 `/agent/rebates`、`/agent/rebates/detail` 跟着显示回「未返」（代理本来就看得到状态）；**流水不给代理**。
+- **流水**（`audit_logs`）：`action=STATUS_CHANGE`、`resourceType=AgentRebateStatement`、`resourceId=返现单 id`；`beforeJson` / `afterJson` 记「状态 + 已返时间 + 操作人」，`afterJson` 另带 `month` / `agentId` / `totalRebate`；`remark` 记撤回原因（点「已返」是空串）。动作从 before/after 的状态推出来，不另存字段。
+- **GET /admin/agents/rebates/detail?id=** 多返回 `history: [{ at, actorName, actorRole, action: "paid"|"undoPaid"|"other", reason, amount }]`，最近的在最前面，最多 50 条；按 `companyId` 过滤。操作人名字只在这个**只给超管**的接口里给（`operator-visibility.ts` 的规矩）。

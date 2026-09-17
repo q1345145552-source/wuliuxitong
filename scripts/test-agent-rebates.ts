@@ -169,14 +169,30 @@ async function queryRaw(strings: TemplateStringsArray, ...values: unknown[]): Pr
 }
 
 const txEvents: string[][] = [];
+/** 流水写在事务里的次数（桩把 tx 上的 auditLog.create 单独记一笔，这样「把 tx 改成 prisma」测得出来） */
+let auditWritesInTx = 0;
 const stub: Row = {
   ...models,
   $queryRaw: queryRaw,
-  async $transaction(fn: (tx: Row) => Promise<unknown>) {
+  async $transaction(fn: (tx: Row) => Promise<unknown>, options?: Row) {
+    // 拿行锁的事务必须显式给超时，别用 Prisma 默认的 5s/2s（远端库偏紧）
+    assert.ok(options && options.timeout >= 10000 && options.maxWait >= 5000, `事务要显式给够用的超时，收到 ${JSON.stringify(options ?? null)}`);
     const snapshot = clone(db);
     const before = events.length;
     try {
-      return await fn({ ...models, $queryRaw: queryRaw });
+      const tx = {
+        ...models,
+        auditLog: {
+          ...models.auditLog,
+          async create(args: Row) {
+            const row = await models.auditLog.create(args); // 写成功才计数（失败那次不算）
+            auditWritesInTx += 1;
+            return row;
+          },
+        },
+        $queryRaw: queryRaw,
+      };
+      return await fn(tx);
     } catch (error) {
       db = snapshot;
       throw error;
@@ -575,6 +591,9 @@ async function main(): Promise<void> {
     assert.equal(history[1].reason, "转错账号，钱退回来了", "撤回那条带原因");
     assert.equal(history[0].reason, "", "点已返没有原因");
     assert.equal(history[0].amount, Number(aug.totalRebate), "流水上带金额，对得上单子");
+    // 撤回那条要带「撤掉的是哪一次已返」——老单撤回后 paidAt 被清空，只剩这里能看到
+    assert.ok(typeof history[1].undonePaidAt === "string" && history[1].undonePaidAt.endsWith("Z"), `撤回那条没带被撤掉的已返时间：${history[1].undonePaidAt}`);
+    assert.equal(history[0].undonePaidAt, null, "点「已返」那条不该有这个字段的值");
     // 别家公司读不到这张单的流水
     const other = await call("GET", `/admin/agents/rebates/detail?id=${aug.id}`, tokenFor("zz_admin_c2"));
     assert.equal(other.status, 404);
@@ -583,6 +602,57 @@ async function main(): Promise<void> {
     const mixed = await call("GET", `/admin/agents/rebates/detail?id=${aug.id}`, admin);
     assert.equal((mixed.body.data.history as Row[]).length, 3, "只给本公司那三条");
     db.audits = db.audits.filter((a) => a.id !== "audit_other");
+  });
+
+  await check("12d) 流水写不进去时，状态跟着回滚（不许出现「状态改了但没记录」）；流水必须写在同一个事务里", async () => {
+    const id = db.statements.find((s) => s.agentId === "agent_jia" && s.month === "2026-08")!.id;
+    const before = clone(db.statements.find((s) => s.id === id)!);
+    assert.equal(before.status, "paid", "前置：12c 把它点回了已返");
+    const auditsBefore = db.audits.length;
+    const writesInTxBefore = auditWritesInTx;
+
+    const realCreate = models.auditLog.create;
+    models.auditLog.create = async () => {
+      throw new Error("zz 故意让流水写失败");
+    };
+    try {
+      const r = await call("POST", "/admin/agents/rebates/undo-paid", admin, { id, reason: "流水写失败测试" });
+      assert.equal(r.status, 500, "流水写不进去应该整笔失败");
+    } finally {
+      models.auditLog.create = realCreate;
+    }
+    const after = db.statements.find((s) => s.id === id)!;
+    assert.equal(after.status, "paid", "流水没写成，状态必须回滚成已返");
+    assert.deepEqual(after.paidAt, before.paidAt, "已返时间也要回滚");
+    assert.equal(after.paidBy, before.paidBy);
+    assert.equal(db.audits.length, auditsBefore, "没写成就不该留下半条流水");
+
+    // 修好以后再撤一次：这次要成，而且流水是写在事务里的那条路（tx，不是 prisma）
+    const ok2 = await call("POST", "/admin/agents/rebates/undo-paid", admin, { id, reason: "修好后再撤" });
+    assert.equal(ok2.status, 200);
+    assert.equal(ok2.body.data.alreadyUnpaid, false);
+    assert.equal(db.statements.find((s) => s.id === id)!.status, "unpaid");
+    assert.equal(db.audits.length, auditsBefore + 1);
+    assert.equal(auditWritesInTx, writesInTxBefore + 1, "流水必须通过事务的 tx 写（写在事务外，状态和记录会对不上）");
+    // 收尾：点回已返，后面的用例按已返继续
+    const back = await call("POST", "/admin/agents/rebates/mark-paid", admin, { id });
+    assert.equal(back.status, 200);
+  });
+
+  await check("12e) 状态是第三种值（以后加「作废」之类）时，点「已返」/撤回都不许把它改掉", async () => {
+    const st = db.statements.find((s) => s.agentId === "agent_yi" && s.month === "2026-08")!;
+    st.status = "zz_void";
+    const auditsBefore = db.audits.length;
+    const mark = await call("POST", "/admin/agents/rebates/mark-paid", admin, { id: st.id });
+    assert.equal(mark.status, 200);
+    assert.equal(mark.body.data.alreadyPaid, true, "不是未返就当「已经处理过」，不许改");
+    assert.equal(db.statements.find((s) => s.id === st.id)!.status, "zz_void", "状态被改掉了");
+    const undo = await call("POST", "/admin/agents/rebates/undo-paid", admin, { id: st.id, reason: "试试能不能撤" });
+    assert.equal(undo.status, 200);
+    assert.equal(undo.body.data.alreadyUnpaid, true);
+    assert.equal(db.statements.find((s) => s.id === st.id)!.status, "zz_void");
+    assert.equal(db.audits.length, auditsBefore, "什么都没改就不该写流水");
+    db.statements.find((s) => s.id === st.id)!.status = "unpaid";
   });
 
   await check("13) 返现合计超过 Decimal(12,2) 上限：不抛错、不写半截，这个代理从超限的月份起暂停出单，前面的月份照出，重跑也一样", async () => {

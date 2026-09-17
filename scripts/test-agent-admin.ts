@@ -318,12 +318,13 @@ async function main(): Promise<void> {
     assert.ok(rules.validateAgentLogo({ mime: "image/png", base64: "A".repeat(3 * 1024 * 1024) }), "超过 2MB 拦");
   });
 
-  await check("3) 员工令牌打 8 个代理管理接口全 403；没登录 401", async () => {
+  await check("3) 员工令牌打 9 个代理管理接口全 403；没登录 401", async () => {
     const staff = tokenFor("zz_staff");
     const routes: Array<["GET" | "POST", string]> = [
       ["GET", "/admin/agents/list"], ["POST", "/admin/agents/create"], ["POST", "/admin/agents/update"],
       ["POST", "/admin/agents/login-status"], ["POST", "/admin/agents/reset-password"],
       ["GET", "/admin/agents/rebates"], ["GET", "/admin/agents/rebates/detail?id=x"], ["POST", "/admin/agents/rebates/mark-paid"],
+    ["POST", "/admin/agents/rebates/undo-paid"],
     ];
     for (const [m, p] of routes) {
       const r = await call(m, p, staff, m === "POST" ? { id: "x" } : undefined);

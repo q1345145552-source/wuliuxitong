@@ -51,7 +51,7 @@ check("3) 已返的单上有「撤回」按钮，未返的单上是「已返」�
 
 check("4) 撤回要写原因：没写不许点，前端也自己挡一道", () => {
   assert.match(panel, /disabled=\{paying === undoing\.id \|\| undoReason\.trim\(\) === ""\}/, "原因空着时「确认撤回」没置灰");
-  assert.match(panel, /if \(!reason\) \{[\s\S]{0,200}setError\("撤回要写一句原因/, "前端没挡空原因");
+  assert.match(panel, /if \(!reason\) \{[\s\S]{0,200}setUndoError\("撤回要写一句原因/, "前端没挡空原因（提示也要留在弹框里）");
   assert.match(panel, /maxLength=\{200\}/, "原因没限长（后端是 200）");
 });
 
@@ -61,10 +61,31 @@ check("5) 撤回成功后刷新列表和已经打开的明细（不然还显示�
   const body = panel.slice(start, panel.indexOf("\n  return (", start));
   assert.ok(body.includes("await load()"), "撤回后没刷新列表");
   assert.match(body, /if \(detail\?\.statement\.id === s\.id\) setDetail\(await fetchAgentRebateDetail\(s\.id\)\)/, "撤回后没刷新打开着的明细");
-  assert.match(body, /catch \(e\) \{[\s\S]{0,200}setError\(`撤回失败/, "撤回失败没给红字");
+  assert.match(body, /setUndoError\(`撤回失败/, "撤回失败没给红字");
 });
 
-check("6) 明细弹窗里渲染操作记录（时间 / 操作 / 操作人 / 原因）", () => {
+check("5b) 撤回的报错渲染在弹框里面（不是页面顶部那条，会被弹框遮住）", () => {
+  const modalStart = panel.indexOf("{undoing && (");
+  assert.ok(modalStart > 0, "找不到撤回弹框");
+  const modal = panel.slice(modalStart, panel.indexOf("\n    </div>", modalStart));
+  assert.match(modal, /<ErrorBar message=\{undoError\} \/>/, "撤回弹框里没有 ErrorBar（报错会被弹框压在后面，员工只看到「点了没反应」）");
+  assert.ok(!/setError\(`撤回失败/.test(panel), "撤回失败不许再写到页面顶部那条 error 上");
+  // 打开、关闭、点「算了」都要清掉上一次的报错
+  assert.equal((panel.match(/setUndoError\(""\)/g) ?? []).length >= 4, true, "打开/关闭弹框没清掉上次的报错");
+});
+
+check("5c) 撤回成功后刷新失败，不许说成「撤回失败」", () => {
+  const start = panel.indexOf("const undoPaid = async");
+  const body = panel.slice(start, panel.indexOf("\n  return (", start));
+  assert.match(body, /if \(!done\) return;/, "没把「改数据」和「刷新」分开：刷新失败会被当成撤回失败");
+  assert.match(body, /setError\(`撤回已经成功了，但页面没刷新出来/, "刷新失败的提示说错了（库里已经撤了）");
+  // 点「已返」那条路同样的毛病也要修掉
+  const markStart = panel.indexOf("const markPaid = async");
+  const markBody = panel.slice(markStart, panel.indexOf("\n  /** 撤回", markStart));
+  assert.match(markBody, /if \(!done\) return;/, "点「已返」也要把刷新和改数据分开");
+});
+
+check("6) 明细弹窗里渲染操作记录（时间 / 操作 / 操作人 / 原因）+ 截断和空状态都说实话", () => {
   assert.ok(panel.includes("操作记录"), "没有「操作记录」这一块");
   assert.match(panel, /detail\.history\.map\(/, "history 没被渲染（只拿不显示等于没有）");
   for (const col of ["时间", "操作", "操作人", "金额", "原因"]) {
@@ -72,6 +93,12 @@ check("6) 明细弹窗里渲染操作记录（时间 / 操作 / 操作人 / 原�
   }
   assert.ok(panel.includes("撤回已返"), "操作记录里没有「撤回已返」这个标签");
   assert.match(panel, /detail\.history\.length === 0 \?/, "没有「还没人点过已返」的空状态");
+  // 已返但没有流水（这功能上线之前点的）不能说成「还没有人点过已返」
+  assert.match(panel, /detail\.statement\.status === "paid"[\s\S]{0,120}上线之前点的/, "空状态没按状态分岔，会说反话");
+  // 流水满 50 条要说清只显示最近 50 条（CLAUDE.md #21：不许静默截断）
+  assert.match(panel, /detail\.history\.length >= 50 &&[\s\S]{0,200}只显示最近 50 条/, "流水截断没提示");
+  // 撤回那条要写清撤的是哪一次已返
+  assert.match(panel, /h\.undonePaidAt \?[\s\S]{0,160}撤的是/, "撤回那条没写「撤的是哪一次已返」");
 });
 
 check("7) 点「已返」的确认框不再写「不能撤回」", () => {

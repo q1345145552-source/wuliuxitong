@@ -129,10 +129,16 @@ export interface AgentRebateHistoryItem {
   action: "paid" | "undoPaid" | "other";
   reason: string;
   amount: number | null;
+  /** 撤回那条：被撤掉的那次「已返」是什么时候标的（老单撤回后这信息只剩在流水里） */
+  undonePaidAt: string | null;
 }
 
 export async function fetchAgentRebateDetail(id: string): Promise<{ statement: AgentRebateStatementItem; lines: AgentRebateLineItem[]; history: AgentRebateHistoryItem[] }> {
-  return apiRequest(`${apiBaseUrl()}/admin/agents/rebates/detail?id=${encodeURIComponent(id)}`);
+  const data = await apiRequest<{ statement: AgentRebateStatementItem; lines?: AgentRebateLineItem[]; history?: AgentRebateHistoryItem[] }>(
+    `${apiBaseUrl()}/admin/agents/rebates/detail?id=${encodeURIComponent(id)}`,
+  );
+  // 兜底：前端是新版、后端还是旧进程时没有 history，别让整页崩成「页面加载出错」（DeepSeek 复核 2026-09-18 第 5 条）
+  return { statement: data.statement, lines: data.lines ?? [], history: data.history ?? [] };
 }
 
 export async function markAgentRebatePaid(id: string): Promise<{ id: string; status: "paid"; paidAt: string | null; alreadyPaid: boolean }> {

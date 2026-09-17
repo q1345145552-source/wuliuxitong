@@ -49,9 +49,12 @@ export default function AgentRebatesPanel({ agents }: { agents: AdminAgentItem[]
   const [detail, setDetail] = useState<{ statement: AgentRebateStatementItem; lines: AgentRebateLineItem[]; history: AgentRebateHistoryItem[] } | null>(null);
   const [detailLoading, setDetailLoading] = useState("");
   const [paying, setPaying] = useState("");
-  /** 正在撤回哪张单（要先写原因）；原因框的内容 */
+  /** 正在撤回哪张单（要先写原因）；原因框的内容；撤回弹框里自己的报错 */
   const [undoing, setUndoing] = useState<AgentRebateStatementItem | null>(null);
   const [undoReason, setUndoReason] = useState("");
+  /** ⚠️ 弹框里的报错必须渲染在弹框**里面**：Modal 是 inset:0 + zIndex 9999 的遮罩，
+   *  页面上那条 ErrorBar 会被它压在后面，员工只看到「点了没反应」（Opus 复核 2026-09-18 第 1 条）。 */
+  const [undoError, setUndoError] = useState("");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -80,15 +83,23 @@ export default function AgentRebatesPanel({ agents }: { agents: AdminAgentItem[]
   const markPaid = async (s: AgentRebateStatementItem) => {
     if (!confirm(`确认已经把 ${money(s.totalRebate)} 转给「${s.agentName}」（${s.month} 返现单）？\n\n点了以后这张单显示「已返」。点错了可以撤回，撤回要写原因、会留操作记录。`)) return;
     setPaying(s.id);
+    let done = false;
     try {
       const r = await markAgentRebatePaid(s.id);
       setToast(r.alreadyPaid ? "这张单刚刚已经被点过「已返」了" : `${s.agentName} ${s.month} 已标记已返`);
-      await load();
-      if (detail?.statement.id === s.id) setDetail(await fetchAgentRebateDetail(s.id));
+      done = true;
     } catch (e) {
       setError(`标记失败：${e instanceof Error ? e.message : "未知错误"}`);
     } finally {
       setPaying("");
+    }
+    if (!done) return;
+    // 同撤回：刷新失败不能说成「标记失败」（已返已经记上了）
+    try {
+      await load();
+      if (detail?.statement.id === s.id) setDetail(await fetchAgentRebateDetail(s.id));
+    } catch (e) {
+      setError(`已返已经记上了，但页面没刷新出来（${e instanceof Error ? e.message : "未知错误"}），点一下「刷新」`);
     }
   };
 
@@ -98,22 +109,31 @@ export default function AgentRebatesPanel({ agents }: { agents: AdminAgentItem[]
     const reason = undoReason.trim();
     if (!s) return;
     if (!reason) {
-      setError("撤回要写一句原因（比如「转错账号」），会记进操作记录");
+      setUndoError("撤回要写一句原因（比如「转错账号」），会记进操作记录");
       return;
     }
     setPaying(s.id);
-    setError("");
+    setUndoError("");
+    let done = false;
     try {
       const r = await undoAgentRebatePaid(s.id, reason);
       setToast(r.alreadyUnpaid ? "这张单刚刚已经被撤回了" : `${s.agentName} ${s.month} 已撤回「已返」，回到未返`);
-      setUndoing(null);
-      setUndoReason("");
+      done = true;
+    } catch (e) {
+      // 报错留在弹框里，别关框 —— 员工能看见原因、改完再点
+      setUndoError(`撤回失败：${e instanceof Error ? e.message : "未知错误"}`);
+    } finally {
+      setPaying("");
+    }
+    if (!done) return;
+    setUndoing(null);
+    setUndoReason("");
+    // ⚠️ 刷新失败不能说成「撤回失败」：库里已经改了、流水也写了（Opus 复核 2026-09-18 第 2 条）
+    try {
       await load();
       if (detail?.statement.id === s.id) setDetail(await fetchAgentRebateDetail(s.id));
     } catch (e) {
-      setError(`撤回失败：${e instanceof Error ? e.message : "未知错误"}`);
-    } finally {
-      setPaying("");
+      setError(`撤回已经成功了，但页面没刷新出来（${e instanceof Error ? e.message : "未知错误"}），点一下「刷新」`);
     }
   };
 
@@ -189,7 +209,7 @@ export default function AgentRebatesPanel({ agents }: { agents: AdminAgentItem[]
                       {s.status === "unpaid" ? (
                         <button type="button" onClick={() => void markPaid(s)} disabled={paying === s.id} style={{ ...btnSmall, border: "1px solid var(--c-green)", color: "var(--c-green)" }}>{paying === s.id ? "提交中…" : "已返"}</button>
                       ) : (
-                        <button type="button" onClick={() => { setUndoing(s); setUndoReason(""); }} disabled={paying === s.id} style={{ ...btnSmall, border: "1px solid var(--c-amber)", color: "var(--c-amber-deep)" }}>撤回</button>
+                        <button type="button" onClick={() => { setUndoing(s); setUndoReason(""); setUndoError(""); }} disabled={paying === s.id} style={{ ...btnSmall, border: "1px solid var(--c-amber)", color: "var(--c-amber-deep)" }}>撤回</button>
                       )}
                     </div>
                   </td>
@@ -215,7 +235,7 @@ export default function AgentRebatesPanel({ agents }: { agents: AdminAgentItem[]
               {detail.statement.status === "unpaid" ? (
                 <button type="button" onClick={() => void markPaid(detail.statement)} disabled={paying === detail.statement.id} style={btnConfirm}>已返</button>
               ) : (
-                <button type="button" onClick={() => { setUndoing(detail.statement); setUndoReason(""); }} disabled={paying === detail.statement.id} style={btnCancel}>撤回「已返」</button>
+                <button type="button" onClick={() => { setUndoing(detail.statement); setUndoReason(""); setUndoError(""); }} disabled={paying === detail.statement.id} style={btnCancel}>撤回「已返」</button>
               )}
               <button type="button" onClick={() => setDetail(null)} style={btnCancel}>关闭</button>
             </div>
@@ -259,7 +279,11 @@ export default function AgentRebatesPanel({ agents }: { agents: AdminAgentItem[]
           <div style={{ marginTop: 16 }}>
             <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 6 }}>操作记录</div>
             {detail.history.length === 0 ? (
-              <div style={{ fontSize: 12, color: "var(--t-muted)" }}>还没有人点过「已返」。</div>
+              <div style={{ fontSize: 12, color: "var(--t-muted)" }}>
+                {detail.statement.status === "paid"
+                  ? "没有记录：这张单的「已返」是这个功能上线之前点的，那时候还没开始记。"
+                  : "还没有人点过「已返」。"}
+              </div>
             ) : (
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
                 <thead>
@@ -275,6 +299,9 @@ export default function AgentRebatesPanel({ agents }: { agents: AdminAgentItem[]
                       <td style={{ ...tdS, whiteSpace: "nowrap" }}>{t(h.at)}</td>
                       <td style={tdS}>
                         {h.action === "paid" ? <StatusTag tone="green">已返</StatusTag> : h.action === "undoPaid" ? <StatusTag tone="amber">撤回已返</StatusTag> : <StatusTag tone="grey">改动</StatusTag>}
+                        {h.action === "undoPaid" && h.undonePaidAt ? (
+                          <div style={{ fontSize: 11, color: "var(--t-muted)", marginTop: 2 }}>撤的是 {t(h.undonePaidAt)} 那次</div>
+                        ) : null}
                       </td>
                       <td style={{ ...tdS, whiteSpace: "nowrap" }}>{h.actorName || "—"}</td>
                       <td style={{ ...tdS, whiteSpace: "nowrap" }}>{h.amount === null ? "—" : money(h.amount)}</td>
@@ -284,13 +311,17 @@ export default function AgentRebatesPanel({ agents }: { agents: AdminAgentItem[]
                 </tbody>
               </table>
             )}
+            {detail.history.length >= 50 && (
+              <div style={{ fontSize: 12, color: "var(--t-muted)", marginTop: 6 }}>只显示最近 50 条。</div>
+            )}
           </div>
         </Modal>
       )}
 
       {undoing && (
-        <Modal onClose={() => { setUndoing(null); setUndoReason(""); }}>
+        <Modal onClose={() => { setUndoing(null); setUndoReason(""); setUndoError(""); }}>
           <h3 style={{ margin: "0 0 8px" }}>撤回「已返」</h3>
+          <ErrorBar message={undoError} />
           <div style={{ fontSize: 13, color: "var(--t-muted)", marginBottom: 12 }}>
             {undoing.agentName} · {undoing.month} 返现单 · {money(undoing.totalRebate)}
             <br />
@@ -306,7 +337,7 @@ export default function AgentRebatesPanel({ agents }: { agents: AdminAgentItem[]
             onChange={(e) => setUndoReason(e.target.value)}
           />
           <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 16 }}>
-            <button type="button" onClick={() => { setUndoing(null); setUndoReason(""); }} style={btnCancel}>算了</button>
+            <button type="button" onClick={() => { setUndoing(null); setUndoReason(""); setUndoError(""); }} style={btnCancel}>算了</button>
             <button type="button" onClick={() => void undoPaid()} disabled={paying === undoing.id || undoReason.trim() === ""} style={btnConfirm}>
               {paying === undoing.id ? "提交中…" : "确认撤回"}
             </button>
