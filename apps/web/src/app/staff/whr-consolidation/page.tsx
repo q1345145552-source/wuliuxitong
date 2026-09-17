@@ -6,7 +6,7 @@ import { formatBeijingTime } from "../../../modules/staff/utils";
 import { base64Bytes, compressImageForUpload, formatBytes } from "../../../modules/shared/image-compress";
 import { createRequestGate } from "../../../modules/shared/request-gate";
 import { viewerCanSeeOperator } from "../../../auth/operator-visibility";
-import { unitPriceIssue } from "../../../modules/shared/unit-price";
+import { parseUnitPrice, unitPriceIssue } from "../../../modules/shared/unit-price";
 
 // 选文件时的原图上限。超过这个的多半是选错了（视频/超大扫描件），先挡掉再说。
 const MAX_SOURCE_BYTES = 30 * 1024 * 1024;
@@ -362,9 +362,9 @@ export default function StaffWhrConsolidationPage() {
         body: JSON.stringify({
           planId: selectedPlanId,
           clientId: addClientId,
-          unitPriceNormal: Number(String(addPriceNormal).trim()),
-          unitPriceInspection: Number(String(addPriceInspection).trim()),
-          unitPriceSensitive: Number(String(addPriceSensitive).trim()),
+          unitPriceNormal: parseUnitPrice(addPriceNormal),
+          unitPriceInspection: parseUnitPrice(addPriceInspection),
+          unitPriceSensitive: parseUnitPrice(addPriceSensitive),
         }),
       });
       setToast(r?.unitPriceNormal != null

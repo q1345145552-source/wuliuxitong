@@ -28,14 +28,19 @@ export function navigateToHash(href: string): void {
  * 「#whr → #home」，用户按一次「后退」回到 #whr，页面又把他推回 #home —— **后退永远出不去**。
  * replaceState 是把那条记录改掉，后退直接回到进来之前的页面。
  *
- * 不发 hashchange：调用方（sectionFromHash 那条路）自己已经把分区切好了，
- * 再发一次只是让同一段逻辑空跑一遍。
+ * ⚠️ 改完地址**要补发一次 hashchange**（2026-09-18 第三轮复核第 13 条）：
+ * `replaceState` 本身不发事件，而左边菜单的高亮是外壳（RoleShell）自己监听 hashchange /
+ * popstate 记的。上一版不发事件，菜单能对上纯靠「页面里的 effect 比外壳先注册」这个巧合 ——
+ * 谁动一下依赖或把逻辑挪进外壳，高亮就停在已经关掉的那一格（一个都不高亮）。
+ * 调用方自己那段逻辑会因此空跑一遍（地址已经是目标值，它什么都不会再做），这个代价可以接受。
  */
 export function replaceHash(href: string): void {
   if (typeof window === "undefined") return;
-  const target = new URL(href, window.location.href);
-  if (target.href === window.location.href) return;
+  const oldURL = window.location.href;
+  const target = new URL(href, oldURL);
+  if (target.href === oldURL) return;
   window.history.replaceState(window.history.state, "", target.href);
+  window.dispatchEvent(new HashChangeEvent("hashchange", { oldURL, newURL: window.location.href }));
 }
 
 /** 这个链接是不是「只在当前页面里换 #」（路径、查询串都一样），是的话应当走 navigateToHash。 */

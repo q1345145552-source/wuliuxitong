@@ -63,6 +63,11 @@ async function main(): Promise<void> {
   // ⚠️ 退回必须 replaceHash（改掉这条历史记录）；用 navigateToHash 会新增一条 →
   //    按「后退」回到 #whr，这段又把他推回 #home，后退永远出不去（复核 2026-09-18）
   assert.match(page, /replaceHash\(`\$\{window\.location\.pathname\}\$\{window\.location\.search\}#\$\{next\}`\)/, "旧链接退回首页用的是 pushState 那条路，用户按后退会被死死困在首页");
+  // replaceHash 改完地址要补发 hashchange：外壳（RoleShell）的菜单高亮是靠这个事件记的，
+  // 不发就只能靠「页面里的 effect 比外壳先注册」这个巧合（第三轮复核第 13 条）
+  const nav = read("apps/web/src/modules/layout/navigate-to-hash.ts");
+  const replaceBody = nav.slice(nav.indexOf("export function replaceHash"));
+  assert.match(replaceBody.slice(0, replaceBody.indexOf("\n}")), /dispatchEvent\(new HashChangeEvent\("hashchange"/, "replaceHash 改完地址没补发 hashchange，左边菜单会停在已经关掉的那一格");
   assert.match(page, /section === "rebates" \? <AgentRebates \/>/, "返现单被连带关掉了（这个要留）");
   assert.match(page, /section === "shipments" \? <AgentShipments \/>/, "运单被连带关掉了（这个要留）");
 });
@@ -101,10 +106,21 @@ async function main(): Promise<void> {
     assert.match(admin, /\["planning", "collecting", "loading"\]\.includes\(planDetail\.status\)/, "已发运 / 已完成的柜还显示「改单价」");
     assert.match(admin, /const changed = \(input: string, current: number\)/, "没做「只发改过的档」，会把别人刚改的覆盖回去");
     assert.match(admin, /Number\(v\) > 0 \? String\(v\) : ""/, "老柜里 0 价会被预填成 \"0\"，整次保存会被自己的校验拦死");
-    // 单价校验只许有**一份**（管理员端 / 员工端各抄一份，改了后端规则必漏一边）
-    for (const [who, src] of [["管理员端", admin], ["员工端", staff]] as Array<[string, string]>) {
-      assert.ok(src.includes('from "../../../modules/shared/unit-price"'), `${who}集货页没用公共的单价校验`);
-      assert.ok(!src.includes("function unitPriceIssue("), `${who}集货页自己又抄了一份单价校验`);
+    /**
+     * 单价校验只许有**一份**。2026-09-18 这个文件里原来有三份（管理员端 / 员工端 / 代理端），
+     * 第二轮只换掉两份，代理端那份成了「前端拦、后端收」的漏网之鱼（第三轮复核第 4 条）。
+     * 所以这里按「全项目搜正则」来判，加一份就会红。
+     */
+    const agentClients = read("apps/web/src/components/agent/AgentClients.tsx");
+    for (const [who, src] of [["管理员端", admin], ["员工端", staff], ["代理端", agentClients]] as Array<[string, string]>) {
+      assert.ok(/from "(\.\.\/)+modules\/shared\/unit-price"/.test(src), `${who}没用公共的单价校验`);
+      assert.ok(!src.includes("function unitPriceIssue("), `${who}自己又抄了一份单价校验`);
+      assert.ok(!/\/\^\\d\+\(\\\.\\d\{1,2\}\)\?\$\//.test(src), `${who}里还留着那个老正则（它比后端严，会前端拦后端收）`);
+    }
+    // 发给后端的值也必须走公共那份（校验一份、发出去的值另一份 = 以后后端改了没人跟）
+    for (const [who, src] of [["管理员端", admin], ["员工端", staff], ["代理端", agentClients]] as Array<[string, string]>) {
+      assert.ok(src.includes("parseUnitPrice("), `${who}发给后端的单价没走公共的 parseUnitPrice`);
+      assert.ok(!/Number\(String\((add|c\.unit|draft)/.test(src), `${who}还在自己 Number(String(...)) 转单价`);
     }
     const shared = read("apps/web/src/modules/shared/unit-price.ts");
     assert.match(shared, /value >= 100000000/, "公共校验没卡单价上限（后端是 Decimal(10,2)）");

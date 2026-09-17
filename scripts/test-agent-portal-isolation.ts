@@ -772,6 +772,24 @@ async function dbChecks(): Promise<void> {
         await assertPlanPricesNotBelowAgent(tx, CO, [{ clientId: `${P}cx`, prices: triple(1) }], "admin");
       });
 
+      // ①b 调高代理价那道闸（findClientsBelowNewAgentPrice）也真连库跑一遍：
+      //    它那条嵌套过滤（client.agentId + plan.status）`type Tx = any`，**tsc 一个字都不检查**，
+      //    而作者的内存桩是按同一套 key 手写的 —— 只有真 Prisma 跑一次才算验过（Opus 第三轮复核第 7 条）
+      const { findClientsBelowNewAgentPrice } = await import("../apps/api/src/modules/agents/admin-routes");
+      await prisma.$transaction(async (tx) => {
+        const floor = { normal: 500, inspection: 550, sensitive: 600 }; // 代理甲现在的价
+        // ca1 在 plan1（收货中）600/650/700、ca2 在 plan3（计划中）600/650/700
+        const none = await findClientsBelowNewAgentPrice(tx, `${P}agA`, CO, floor, { normal: 590, inspection: 640, sensitive: 690 });
+        assert.deepEqual(none, [], `没有客户低于新价却报了：${none.join("；")}`);
+        const hit = await findClientsBelowNewAgentPrice(tx, `${P}agA`, CO, floor, { normal: 610, inspection: 550, sensitive: 600 });
+        assert.equal(hit.length, 2, `应该点名 ca1 / ca2 各一处，实际：${hit.join("；")}`);
+        assert.ok(hit.every((line) => /普货 600（新代理价 610）/.test(line)), hit.join("；"));
+        assert.ok(hit.some((line) => line.includes("WHRZZB301")) && hit.some((line) => line.includes("WHRZZB303")), `柜号没点出来：${hit.join("；")}`);
+        // 只调高一档时，另外两档不许被算进来；别家代理的客户（cb1 450/500/550）也不许混进来
+        assert.ok(!hit.some((line) => /商检|敏感/.test(line)), `没调高的档被算进来了：${hit.join("；")}`);
+        assert.ok(!hit.some((line) => line.includes("cb1") || line.includes("SECRETB")), `别家代理的客户混进来了：${hit.join("；")}`);
+      });
+
       // ② 归属闸：代理甲改不了湘泰客户 / 代理乙的客户，一行都不许写
       for (const clientId of [`${P}cx`, `${P}cb1`]) {
         await assert.rejects(

@@ -93,6 +93,8 @@ const LOCK_HELPERS: Record<string, string[]> = {
    * 不登记的话第 1 项会把这三条路当成「没锁就写」误报，第 3 项也看不见 agents 这一站。
    */
   assertPlanPricesNotBelowAgent: ["agents"],
+  /** 上面那个拆出来的「只拿锁读下限」那一半（改单价用它，判断挪到锁计划之后） */
+  lockAgentPriceFloors: ["agents"],
 };
 
 /**
@@ -102,6 +104,12 @@ const LOCK_HELPERS: Record<string, string[]> = {
  * 一处认、一处不认最容易漏，所以下面所有「这一行是不是在加锁」都走这一个常量。
  */
 const LOCK_SQL_RE = /FOR (UPDATE|SHARE)/;
+/**
+ * ⚠️ 但「写这张表之前必须锁住它」那一项（第 7 项）只能认**排他锁**（2026-09-18 第三轮复核第 5 条）。
+ * `FOR SHARE` 之后再 update 同一行是**锁升级**，两个事务一起干必定死锁 —— 那正是第 7 项要抓的东西。
+ * 今天全仓的 FOR SHARE 只在 agents 上（没人写它），所以这条区分是给以后兜底的。
+ */
+const EXCLUSIVE_LOCK_RE = /FOR UPDATE/;
 
 const WRITE_RE = /\btx\.\w+\.(create|update|updateMany|delete|deleteMany|upsert|createMany)\b/;
 /**
@@ -549,7 +557,8 @@ check("7) 改了运单/柜子/订单/派送单的事务，必须先锁住同一�
         // 先记下这一行拿到的锁
         const helper = Object.keys(LOCK_HELPERS).find((h) => l.includes(`${h}(`));
         if (helper) for (const tb of LOCK_HELPERS[helper]) held.add(tb);
-        if (LOCK_SQL_RE.test(l)) {
+        // ⚠️ 这一项只认排他锁：拿了 FOR SHARE 再写，是锁升级，不算「锁住了」
+        if (EXCLUSIVE_LOCK_RE.test(l)) {
           const tb = /FROM\s+(\w+)/.exec(l)?.[1];
           if (tb) held.add(tb);
         }
@@ -902,8 +911,18 @@ check("11) 仓库版集货定价：所有事务都按【客户价排队锁 → �
     })
     .map((x) => `${rel(x.b.file)}:${x.b.line} ${x.b.route}（${x.seq.join(" → ")}）`);
   assert.deepEqual(bad, [], "下面这些事务的锁序跟改长期价那条路反着，会死锁：\n     " + bad.join("\n     "));
-  // ⚠️ 自检：一处都没扫到 = 上面说的两处登记被人退回去了，这一项的绿灯不作数
-  assert.ok(seen.length >= 3, `只扫到 ${seen.length} 处「客户价锁 / 代理行 / 计划」同时出现的事务，比预期少 —— 登记或正则被改窄了，这一项的绿灯不作数`);
+  /**
+   * ⚠️⚠️ 自检必须盯**agents 这一站本身**，不能只数「扫到几个事务」（2026-09-18 两位复核同时实测出来）：
+   * 只要把 LOCK_HELPERS 里那两行登记删掉（或者把 helper 改个名忘了同步），
+   * agents 就从所有 seq 里消失，剩下「客户价锁 + 计划」两站照样 ≥ 3 个事务 ——
+   * 这一项当场变成睁眼瞎，连它本来要抓的「agents 挪到计划后面」都照样全绿。
+   */
+  const withAgents = seen.filter((x) => x.seq.includes("agents"));
+  assert.ok(
+    withAgents.length >= 3,
+    `只扫到 ${withAgents.length} 处 seq 里真有 agents 的事务（建柜 / 加客户 / 改单价 / 改长期价至少 4 处）——`
+      + ` LOCK_HELPERS 里 assertPlanPricesNotBelowAgent / lockAgentPriceFloors 的登记被删了，或者 FOR SHARE 不认了，这一项的绿灯不作数`,
+  );
 });
 
 if (failures.length > 0) {

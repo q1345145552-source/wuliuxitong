@@ -353,6 +353,58 @@ async function main(): Promise<void> {
     assert.deepEqual(writes(), [], `被拦下还写了库：${writes().join(", ")}`);
   });
 
+  await check("5g) 改单价的下限判断用**锁里重读**那一行：事务外看着「另外两档偏低」，锁到之后其实已经被人改好了 → 不许误拦", async () => {
+    /**
+     * 上一版为了锁序（agents 必须排在计划前面），拿**事务外**读到的现价先判了一遍下限。
+     * 场景：柜里普货一度是 400（低于代理价 500），另一个人正在把它改回 600；
+     * 我这次只改敏感货 800 → 750（合法）。事务外那份快照里普货还是 400 → 上一版当场 400 把我拦下来，
+     * 而锁到计划、重读那一行时普货已经是 600 —— 这一拦是错的（Opus 第三轮复核第 10 条）。
+     * 现在拆成「先只拿锁读下限、锁完计划重读之后再判」，这一项就是盯它。
+     */
+    seed();
+    pcRow(PC_A).unitPriceNormal = 400; // 事务外会读到这份「脏」快照
+    mem.onEvent = (e) => {
+      // 客户价排队锁到手那一刻，别人的事务已经提交：普货其实已经改回 600
+      if (e === `lock:client_price:${C_AG}`) pcRow(PC_A).unitPriceNormal = 600;
+    };
+    const r = await callRoute("POST /admin/whr-consolidation/customers/price", ADMIN, {
+      body: { planId: P1, customerId: PC_A, unitPriceSensitive: 750 },
+    });
+    mem.onEvent = null;
+    assert.equal(r.status, 200, `合法的改价被误拦了（用的还是事务外那份快照）：${r.status} ${r.message}`);
+    assert.equal(pcRow(PC_A).unitPriceSensitive, 750);
+    assert.equal(pcRow(PC_A).unitPriceNormal, 600, "别人改回去的那一档不许被覆盖");
+
+    // 反方向必须照旧拦住：锁到之后另一档才被改低 → 这次改动会留下一个低于代理价的柜，必须 400
+    seed();
+    mem.onEvent = (e) => {
+      if (e === `lock:client_price:${C_AG}`) pcRow(PC_A).unitPriceNormal = 400;
+    };
+    const bad = await callRoute("POST /admin/whr-consolidation/customers/price", ADMIN, {
+      body: { planId: P1, customerId: PC_A, unitPriceSensitive: 750 },
+    });
+    mem.onEvent = null;
+    assert.equal(bad.status, 400, `锁里那一份变低了却放行：${bad.status} ${bad.message}`);
+    assert.equal(pcRow(PC_A).unitPriceSensitive, 800, "被拦下还把价改了");
+  });
+
+  await check("5h) 改单价：柜里那一行的客户在 users 表里查不到（归属/公司对不上）→ 400 拦下，不许把下限闸整条跳过", async () => {
+    /**
+     * CLAUDE.md #27：加了过滤必须加「查不到就 return」。上一版这里是 `continue` ——
+     * 柜里那行的 clientId 在 users 里查不到（companyId / role 对不上）时，
+     * 这道算钱的闸整条静默跳过，代理客户的柜价想填多低都行（Opus 第三轮复核第 12 条）。
+     */
+    seed();
+    pcRow(PC_A).clientId = "zz_b1_ghost";
+    const r = await callRoute("POST /admin/whr-consolidation/customers/price", ADMIN, {
+      body: { planId: P1, customerId: PC_A, unitPriceNormal: 1 },
+    });
+    assert.equal(r.status, 400, `客户查不到却放行了：${r.status} ${r.message}`);
+    assert.ok(/查不到/.test(r.message), r.message);
+    assert.equal(pcRow(PC_A).unitPriceNormal, 600, "被拦下还把价改了");
+    assert.deepEqual(writes(), [], `被拦下还写了库：${writes().join(", ")}`);
+  });
+
   await check("5e) 改单价：已付款的单金额和快照一个字不动（只重算没付款的）", async () => {
     seed();
     // 现造一张**已付款**的单：金额和快照在付款那一刻就定死了，改单价不许动它
@@ -581,6 +633,45 @@ async function main(): Promise<void> {
     assert.equal(pcRow(PC_X).unitPriceNormal, 550, "被拦下还把别人家柜里的价改了");
     assert.deepEqual(writes(), [], `被拦下还写了库：${writes().join(", ")}`);
     assert.ok(mem.events.includes(`lock:client_price:${C_XT}`), "归属判断没在客户价锁里做（超管同时改归属就串了）");
+
+    /**
+     * ⑤⑥⑦ 超管那条接口（`POST /admin/clients/whr-price`）的「代理客户超管不许改」那道闸。
+     * ⚠️ 跟代理那条同样的处境：接口进门就被开关拦成 400，这道闸**没有任何请求走得到**，
+     * 所以直接调 `setNonAgentClientWhrPrice`（Opus 第三轮复核第 6 条）。
+     */
+    const { setNonAgentClientWhrPrice, AGENT_CLIENT_PRICE_READONLY_MESSAGE } = await import("../apps/api/src/modules/whr-consolidation/long-term-price");
+    const asAdmin = (clientId: string, prices: Record<"normal" | "inspection" | "sensitive", unknown>) =>
+      setNonAgentClientWhrPrice({ companyId: "c1", clientId, prices, actor: { userId: ADMIN.userId, role: "admin" } });
+
+    // ⑤ 湘泰自己的客户：改得动
+    seed();
+    const xt = await asAdmin(C_XT, { normal: 600, inspection: 700, sensitive: 800 });
+    assert.equal(xt.updatedPlanRows, 1);
+    assert.equal(priceOf(C_XT)!.priceNormal, 600);
+
+    // ⑥ 代理的客户：403，价没动
+    seed();
+    await assert.rejects(
+      () => asAdmin(C_AG, { normal: 900, inspection: 900, sensitive: 900 }),
+      (e: Error) => e.message === AGENT_CLIENT_PRICE_READONLY_MESSAGE,
+      "超管改到了代理客户的长期价",
+    );
+    assert.equal(priceOf(C_AG)!.priceNormal, 600, "被拦下还把价改了");
+
+    // ⑦ 锁里重判：拿到客户价锁那一刻，这个客户刚被改到代理名下 → 照样 403
+    seed();
+    mem.onEvent = (e) => {
+      if (e === `lock:client_price:${C_XT}`) {
+        mem.db.user.find((u: Row) => u.id === C_XT)!.agentId = AGENT_ID;
+      }
+    };
+    await assert.rejects(
+      () => asAdmin(C_XT, { normal: 900, inspection: 900, sensitive: 900 }),
+      (e: Error) => e.message === AGENT_CLIENT_PRICE_READONLY_MESSAGE,
+      "归属是在锁外面判的：锁那一刻客户被改到代理名下就漏了",
+    );
+    mem.onEvent = null;
+    assert.equal(priceOf(C_XT)!.priceNormal, 550, "被拦下还把价改了");
   });
 
   await check("17) 长期价的单价闸：0.001 / 3 位小数 / 缺档在碰数据库之前就拦（parseWhrPriceInput）", async () => {

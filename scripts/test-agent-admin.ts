@@ -501,6 +501,13 @@ async function main(): Promise<void> {
     assert.doesNotMatch(r.body.message, /zz_c_a1（客户一） 在柜 WHR2609001：普货/, "520 ≥ 510 的档不许误报");
     // 提示要告诉他去哪改（柜详情的「改单价」），不是去改那个已经没入口的长期价
     assert.match(r.body.message, /集货拼柜\(仓库版\)|改单价/);
+    /**
+     * ⚠️ 不许再写「等这些柜发运完再调」：柜子的 `shipped` 状态**没有任何代码会写**
+     * （唯一写柜状态的是 utils.ts 的 syncPlanStatus，只写 collecting / loading / completed），
+     * 发运完柜状态还是 loading，按那句话去等会一直等不到（两位复核第三轮同时报的第 1 条）。
+     */
+    assert.doesNotMatch(r.body.message, /发运完/, "提示又写成「等发运完」了，那是个等不到的状态");
+    assert.match(r.body.message, /泰国签收|已完成/, "没告诉他真正的出口（柜里每一票都泰国签收）");
     const a = db.agents.find((x) => x.id === agentId)!;
     assert.equal(a.name, "曼谷代理甲", "被拒时名字也不许改");
     assert.equal(a.priceNormal, 500);
@@ -508,6 +515,27 @@ async function main(): Promise<void> {
     const readAt = events.indexOf("read:whr_plan_customers");
     assert.ok(lockAt >= 0 && readAt > lockAt, `锁序不对：${events.join(" → ")}`);
     assert.ok(!events.some((e) => e.startsWith("write:")), `被拒时不许写：${events.join(" → ")}`);
+  });
+
+  await check("9b) 点名的处数有上限：几十个客户几十个柜也不许拼出一条几千字的报错", async () => {
+    // 一个代理名下 15 个客户，各在一个在跑的柜里，价都低于新代理价
+    db.plans = [];
+    db.planCustomers = [];
+    for (let i = 0; i < 15; i += 1) {
+      const cid = `zz_c_many${i}`;
+      db.users.push({ id: cid, companyId: "c1", role: "client", name: `批量客户${i}`, status: "active", passwordHash: null, agentId: agentId, createdAt: now });
+      db.plans.push({ id: `pl_many${i}`, companyId: "c1", planNo: `WHRM26090${String(i).padStart(2, "0")}`, status: "collecting" });
+      db.planCustomers.push({ id: `pcm${i}`, companyId: "c1", planId: `pl_many${i}`, clientId: cid, unitPriceNormal: 400, unitPriceInspection: 400, unitPriceSensitive: 400 });
+    }
+    const r = await call("POST", "/admin/agents/update", admin, updateBody({ normal: 510, inspection: 560, sensitive: 610 }));
+    assert.equal(r.status, 400, JSON.stringify(r.body));
+    assert.match(r.body.message, /名下有 15 处在跑的柜里/, "总数要说清（CLAUDE.md #21：截断必须写明总数）");
+    assert.match(r.body.message, /还有 5 处（共 15 处）/, "超过 10 处没截断");
+    assert.ok(r.body.message.length < 1200, `报错太长了（${r.body.message.length} 字），弹窗里会刷屏`);
+    // 清掉这批夹具，别影响后面的用例
+    db.users = db.users.filter((u) => !u.id.startsWith("zz_c_many"));
+    db.plans = [];
+    db.planCustomers = [];
   });
 
   await check("10) 调高到不低于所有客户价、或者调低 → 保存成功；只调低不去查客户价", async () => {

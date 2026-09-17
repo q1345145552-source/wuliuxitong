@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback, useRef } from "react";
 import { apiBaseUrl, apiRequest } from "../../../services/core-api";
 import { formatBeijingTime } from "../../../modules/staff/utils";
 import { createRequestGate } from "../../../modules/shared/request-gate";
-import { unitPriceIssue } from "../../../modules/shared/unit-price";
+import { parseUnitPrice, unitPriceIssue } from "../../../modules/shared/unit-price";
 
 const jsonPost = { "Content-Type": "application/json" } as const;
 
@@ -517,9 +517,9 @@ export default function AdminWhrConsolidationPage() {
             totalVolumeM3: Number(String(newTotalVolume).trim()),
             customers: selectedCustomers.map(c => ({
               clientId: c.clientId,
-              unitPriceNormal: Number(String(c.unitPriceNormal).trim()),
-              unitPriceInspection: Number(String(c.unitPriceInspection).trim()),
-              unitPriceSensitive: Number(String(c.unitPriceSensitive).trim()),
+              unitPriceNormal: parseUnitPrice(c.unitPriceNormal),
+              unitPriceInspection: parseUnitPrice(c.unitPriceInspection),
+              unitPriceSensitive: parseUnitPrice(c.unitPriceSensitive),
             })),
           }),
         }
@@ -724,7 +724,7 @@ export default function AdminWhrConsolidationPage() {
       const changed = (input: string, current: number): number | undefined => {
         const text = String(input).trim();
         if (!text) return undefined;
-        const value = Number(text);
+        const value = parseUnitPrice(input);
         return Math.abs(value - Number(current)) < 1e-9 ? undefined : value;
       };
       const payload = {
@@ -768,9 +768,9 @@ export default function AdminWhrConsolidationPage() {
         body: JSON.stringify({
           planId: selectedPlanId,
           clientId: addClientId,
-          unitPriceNormal: Number(String(addPriceNormal).trim()),
-          unitPriceInspection: Number(String(addPriceInspection).trim()),
-          unitPriceSensitive: Number(String(addPriceSensitive).trim()),
+          unitPriceNormal: parseUnitPrice(addPriceNormal),
+          unitPriceInspection: parseUnitPrice(addPriceInspection),
+          unitPriceSensitive: parseUnitPrice(addPriceSensitive),
         }),
       });
       setToast(r?.unitPriceNormal != null

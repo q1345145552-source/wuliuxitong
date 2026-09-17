@@ -20,15 +20,14 @@ import { checkPasswordStrength } from "../auth/password-policy";
 // 重置密码成功后要清登录失败计数（2026-08-31，排查报告第34条），键跟登录接口同一口径
 import { clearLoginFailures } from "../core/rate-limit";
 import {
+  AGENT_CLIENT_PRICE_READONLY_MESSAGE,
   lockClientWhrPrice,
   parseWhrPriceInput,
-  setClientWhrPrice,
+  setNonAgentClientWhrPrice,
   LONG_TERM_PRICE_OFF_MESSAGE,
   LONG_TERM_PRICE_WRITE_ENABLED,
 } from "../whr-consolidation/long-term-price";
 
-/** 超管想改代理客户的长期价时的那句话（确认单 4.7：代理的客户价只有代理能改，超管也不改） */
-const AGENT_CLIENT_PRICE_READONLY_MESSAGE = "这个客户归代理管，价格由代理自己填，超级管理员这里不能改";
 
 /**
  * 开客户 / 改客户时传来的「所属代理」（2026-09-16，确认单 2.2 / 2.3 / 6.2）。
@@ -1326,18 +1325,27 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
               );
             }
             if (target) {
-              // 新代理行拿共享锁（跟 setClientWhrPrice 同一个锁法），再核这个客户现有长期价不低于代理价
-              const agentRows = await tx.$queryRaw<Array<{ name: string; price_normal: unknown; price_inspection: unknown; price_sensitive: unknown }>>`SELECT name, price_normal, price_inspection, price_sensitive FROM agents WHERE id = ${target} AND company_id = ${auth.companyId} FOR SHARE`;
+              /**
+               * 只为确认「选的这个代理真存在、而且是本公司的」，顺手对 agents 那一行拿共享锁
+               * （跟 setClientWhrPrice / assertPlanPricesNotBelowAgent 同一个锁法，锁序一致）。
+               * ⚠️ 这里**不再核任何价格**（原因见下面那段），所以只查 id，别再顺手取那三档价
+               *（取了会让下一个人以为这里还在比价 —— Opus 第三轮复核第 5 条）。
+               */
+              const agentRows = await tx.$queryRaw<Array<{ id: string }>>`SELECT id FROM agents WHERE id = ${target} AND company_id = ${auth.companyId} FOR SHARE`;
               if (!agentRows || agentRows.length === 0) {
                 throw new BusinessError("选的代理不存在，请刷新页面后重新选", 400, "BAD_REQUEST");
               }
               /**
-               * 2026-09-18：这里原来还有一道「客户价不能低于新代理价」的闸（先查长期价，后来改成查柜里单价）。
-               * 现在**没必要也走不到**：上面那道「有业务记录就不许改归属」已经把「进过任何一个仓库版集货柜」
-               * 的客户挡住了（countClientBusinessRecords 数的就是 whr_consolidation_plan_customers），
-               * 能走到这里的客户名下一个柜都没有，也就不存在「柜价低于代理价」。
-               * 留着反而会给出一句做不到的提示（长期价写接口已按老板要求关闭）。
-               * 建柜 / 加客户 / 改单价那三处的下限闸（assertPlanPricesNotBelowAgent）才是现在真正把关的地方。
+               * 2026-09-18：这里原来还有一道闸 ——「这个客户的**长期价**不能低于新代理价」。删掉了，原因：
+               *  ① 长期价那套 9-18 已按老板要求停用（写接口一律 400、前端没入口、没人拿它定价），
+               *     拿一个冻住的数去拦改归属，拦下来也没有人能去把它改高 —— 提示指向一条走不通的路。
+               *  ② 真正要守的是「**柜里**的价不能低于代理价」，而那种客户根本走不到这里：
+               *     上面「有业务记录就不许改归属」已经把「进过任何一个仓库版集货柜」的客户挡住了
+               *     （countClientBusinessRecords 数的就是 whr_consolidation_plan_customers，不分状态）。
+               * ⚠️ 这是**行为变化**，不是纯删死代码（Opus 第三轮复核第 9 条）：
+               *   「有长期价那一行、但一张单一个柜都没有」的客户，以前 409 拦、现在放过。
+               *   这种客户改归属之后不影响算钱（他名下没有柜，新柜的价由建柜 / 加客户当场填并过下限闸）。
+               * 现在真正把关的是建柜 / 加客户 / 改单价那三处的 assertPlanPricesNotBelowAgent。
                */
             }
           }
@@ -1414,19 +1422,17 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
       return;
     }
 
-    const result = await prisma.$transaction(async (tx) => {
-      await lockClientWhrPrice(tx, clientId);
-      const fresh = await tx.user.findFirst({
-        where: { id: clientId, companyId: auth.companyId, role: "client" },
-        select: { agentId: true },
-      });
-      if (!fresh) throw new BusinessError("客户不存在", 404, "NOT_FOUND");
-      if (fresh.agentId) throw new BusinessError(AGENT_CLIENT_PRICE_READONLY_MESSAGE, 403, "FORBIDDEN");
-      return setClientWhrPrice(
-        { companyId: auth.companyId, clientId, prices: rawPrices, actor: { userId: auth.userId, role: auth.role } },
-        tx,
-      );
-    }, { timeout: 30000, maxWait: 10000 });
+    /**
+     * 剩下的（客户价锁 → 锁里重判「是不是代理客户」→ 改价重算）在 long-term-price.ts 的
+     * setNonAgentClientWhrPrice 里，这样功能关着的时候测试还能绕开开关直接测那道闸
+     *（Opus 第三轮复核第 6 条）。
+     */
+    const result = await setNonAgentClientWhrPrice({
+      companyId: auth.companyId,
+      clientId,
+      prices: rawPrices,
+      actor: { userId: auth.userId, role: auth.role },
+    });
 
     ok(res, {
       clientId,

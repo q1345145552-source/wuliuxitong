@@ -25,7 +25,7 @@ import {
   syncPlanStatus,
   toNum,
 } from "./utils";
-import { assertPlanPricesNotBelowAgent, lockClientWhrPrice, REPRICE_PLAN_STATUSES } from "./long-term-price";
+import { assertNotBelowAgentFloors, assertPlanPricesNotBelowAgent, lockAgentPriceFloors, lockClientWhrPrice, REPRICE_PLAN_STATUSES } from "./long-term-price";
 
 /**
  * 2026-09-18 起这个文件不再读客户长期价来定价（`long-term-price.ts` 和 `client_whr_prices` 表都留着，
@@ -520,16 +520,20 @@ export function registerWhrConsolidationRoutes(app: MinimalHttpApp): void {
        * 上一版这里是「先锁计划、闸里才拿 agents」——跟改长期价那条路反着拿，
        * 再碰上「调高代理价」的 FOR UPDATE 排队，三方会绕成死锁（DeepSeek 第二轮复核第 3 条；
        * utils.ts 付款那条路早就踩过同一个坑）。
-       * 所以先用**事务外读到的现价**过一次代理价闸（把 agents 的共享锁拿到手），锁完计划重读之后再用
-       * **锁里的真值**复判一次（那时锁已经在手上，不会再排队）。
+       *
+       * ⚠️ 但**判断不能用事务外那份现价**（Opus 第三轮复核第 10 条）：这次只改一档、其余沿用现价，
+       * 事务外读到的那两档可能已经被别人改低 → 用它判会把本来合法的这一档也拦下来，
+       * 员工看到一条莫名其妙的报错。所以拆成两步：
+       *   ① `lockAgentPriceFloors`：只按锁序把 agents 的共享锁拿到手、读出下限（不判断）；
+       *   ② 锁完计划、重读柜里那一行之后，用**锁里的真值**判一次（`assertNotBelowAgentFloors`，不碰库）。
        */
       await lockClientWhrPrice(tx, customer.clientId);
+      const floors = await lockAgentPriceFloors(tx, auth.companyId, [customer.clientId], auth.role);
       const mergedPrices = (row: { unitPriceNormal: unknown; unitPriceInspection: unknown; unitPriceSensitive: unknown }) => ({
         normal: updateData.unitPriceNormal ?? toNum(row.unitPriceNormal),
         inspection: updateData.unitPriceInspection ?? toNum(row.unitPriceInspection),
         sensitive: updateData.unitPriceSensitive ?? toNum(row.unitPriceSensitive),
       });
-      await assertPlanPricesNotBelowAgent(tx, auth.companyId, [{ clientId: customer.clientId, prices: mergedPrices(customer) }], auth.role);
 
       await lockPlanAliveById(tx, body.planId!.trim());
 
@@ -541,20 +545,23 @@ export function registerWhrConsolidationRoutes(app: MinimalHttpApp): void {
       if (!fresh) throw new BusinessError("这个客户刚刚被移出这个柜了，请刷新后再看", 404, "NOT_FOUND");
 
       /**
-       * 只有还在「计划中 / 收货中 / 装柜中」的柜能改价（跟长期价那条路的 REPRICE_PLAN_STATUSES 同一份名单）。
-       * 已发运 / 已完成的柜里单子都付过款了，改价不会改金额，只会让柜详情显示「付款后柜里单价改过」——
-       * 看起来像账错了（复核第 8 条）。
+       * 只有还在「计划中 / 收货中 / 装柜中」的柜能改价（`REPRICE_PLAN_STATUSES`，跟长期价那条路同一份名单）。
+       * 已完成（每一票都泰国签收）的柜里单子都付过款了，改价不会改金额，只会让柜详情显示
+       * 「付款后柜里单价改过」—— 看起来像账错了（复核第 8 条）；已取消的柜由 lockPlanAliveById 拦。
+       * ⚠️ 别写成「已发运的柜不许改」：柜子的 `shipped` 状态**没有任何代码会写**（唯一写柜状态的是
+       * utils.ts 的 syncPlanStatus，只写 collecting / loading / completed），货发运完柜状态还是 `loading`，
+       * 所以**已发运的柜照样能改单价** —— 这跟 9-16 之前的老行为一致（Opus 第三轮复核第 1 条 d）。
        */
       const planRow = await tx.whrConsolidationPlan.findFirst({
         where: { id: body.planId!.trim(), companyId: auth.companyId },
         select: { status: true },
       });
       if (!planRow || !REPRICE_PLAN_STATUSES.includes(planRow.status)) {
-        throw new BusinessError("这个柜已经发运或完成了，不能再改单价", 400, "BAD_REQUEST");
+        throw new BusinessError("这个柜已经走完了（柜里每一票都泰国签收），不能再改单价", 400, "BAD_REQUEST");
       }
 
-      // 锁里复判一次：上面那次用的是事务外读到的现价，这中间别人可能改过另外两档 / 改过归属
-      await assertPlanPricesNotBelowAgent(tx, auth.companyId, [{ clientId: fresh.clientId, prices: mergedPrices(fresh) }], auth.role);
+      // 用**锁里重读**的那一行算出「改完之后的三档」，再拿上面锁好的下限判一次（不碰库）
+      assertNotBelowAgentFloors(floors, [{ clientId: fresh.clientId, prices: mergedPrices(fresh) }], auth.role);
 
       await tx.whrConsolidationPlanCustomer.update({ where: { id: fresh.id }, data: updateData });
       // 跟长期价那条路同样两句（口径只有一份，见 long-term-price.ts）

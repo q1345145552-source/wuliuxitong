@@ -33,7 +33,7 @@ import { clearLoginFailures } from "../core/rate-limit";
 import { hashPassword } from "../auth/crypto-utils";
 import { checkPasswordStrength } from "../auth/password-policy";
 import { deleteImageFile, saveImageToDisk } from "../orders/image-storage";
-import { parseWhrPriceInput, type WhrPriceTriple } from "../whr-consolidation/long-term-price";
+import { parseWhrPriceInput, REPRICE_PLAN_STATUSES, type WhrPriceTriple } from "../whr-consolidation/long-term-price";
 import { loadRebateStatusHistory, REBATE_UNDO_REASON_MAX, writeRebateStatusAudit } from "./rebate-audit";
 import { toNum } from "../whr-consolidation/utils";
 import {
@@ -98,8 +98,11 @@ function readLogo(body: Record<string, unknown>): { mime: string; base64: string
   return { mime: String(logo.mime), base64: String(logo.base64) };
 }
 
+/** 报错里最多点名几处，多了整条 400 会变成几千字（CLAUDE.md #21：截断要说清总数） */
+const BELOW_LIST_MAX = 10;
+
 /**
- * 调高代理价时，名下哪些客户的长期价会低于新代理价（4.2 附带规则 / 4.3）。
+ * 调高代理价时，名下哪些客户**在跑的柜里**的单价会低于新代理价（4.2 附带规则 / 4.3）。
  * 只看**调高了的那几档**：没调高的档，客户价本来就不低于它（存价时拦过）。
  * ⚠️ 必须在已经 `SELECT ... FROM agents ... FOR UPDATE` 的事务里调 ——
  *    long-term-price.ts 改客户价时拿同一行的 FOR SHARE，两边排队，不会漏掉正在改的价。
@@ -119,7 +122,15 @@ export async function findClientsBelowNewAgentPrice(
    * 再拿它判「名下客户价有没有低于新代理价」等于这道闸是空的：
    * 9-18 之后新开的客户根本没有那一行，直接放行 → 代理价一调高，在跑的柜里客户价就低于代理价，
    * 付款照收、返现算成负数被记 0，湘泰每方少收差价（DeepSeek 第二轮复核第 1 条）。
-   * 只看「计划中 / 收货中 / 装柜中」的柜：已发运 / 已完成的柜金额都结清了，改代理价不影响它们。
+   * 范围就是 `REPRICE_PLAN_STATUSES`（计划中 / 收货中 / 装柜中）—— 跟「哪些柜还能改单价」同一份名单，
+   * 免得两处各写一份、改一处漏一处（Opus 第三轮复核第 11 条）。
+   *
+   * ⚠️ 别照字面理解成「已发运的柜不算」：柜子的 `shipped` 这个状态**全系统没有任何代码会写**
+   * （唯一写柜状态的地方是 utils.ts 的 `syncPlanStatus`，它只写 collecting / loading / completed；
+   *  发运接口改的是预报单的状态）。所以货已经发运的柜状态还是 `loading`，**照样算在这道闸里**，
+   * 一直到每一票都泰国签收、柜子变成 `completed` 才离开。这是**故意偏保守**：
+   * 柜子只要还没走完，客户就可能再往里报新单，新单按柜里的单价收钱，低于代理价就是每方少收。
+   * （2026-09-18 只读查过生产：柜状态只有 collecting / loading / completed，没有 shipped。）
    */
   const rows: Array<{
     clientId: string;
@@ -132,7 +143,7 @@ export async function findClientsBelowNewAgentPrice(
     where: {
       companyId,
       client: { agentId, role: "client", companyId },
-      plan: { status: { in: ["planning", "collecting", "loading"] } },
+      plan: { status: { in: REPRICE_PLAN_STATUSES } },
     },
     select: {
       clientId: true,
@@ -341,10 +352,18 @@ export function registerAgentAdminRoutes(app: MinimalHttpApp): void {
 
           const below = await findClientsBelowNewAgentPrice(tx, id, auth.companyId, oldPrices, prices);
           if (below.length > 0) {
+            /**
+             * ⚠️ 别再写「等这些柜发运完再调」：柜子的 `shipped` 状态没人写，发运完状态还是 `loading`，
+             * 按那句话去等会一直等不到（Opus / DeepSeek 第三轮复核第 1 条）。真正的出口有两个：
+             * 把柜里的单价改上去，或者等柜子走完（每一票都泰国签收 → 柜子变「已完成」）。
+             */
+            const shown = below.slice(0, BELOW_LIST_MAX);
+            const more = below.length > shown.length ? `；……还有 ${below.length - shown.length} 处（共 ${below.length} 处）` : "";
             throw new BusinessError(
               `调不了：名下有 ${below.length} 处在跑的柜里，客户价比新代理价低。`
-                + `请先到「集货拼柜(仓库版)」把这些柜里这位客户的单价改上去（柜详情里点「改单价」），或者等这些柜发运完再调代理价 —— `
-                + below.join("；"),
+                + `请先到「集货拼柜(仓库版)」把这些柜里这位客户的单价改上去（柜详情里点「改单价」），`
+                + `或者等这些柜走完（柜里每一票都泰国签收、柜子变成「已完成」）再调代理价 —— `
+                + shown.join("；") + more,
             );
           }
 

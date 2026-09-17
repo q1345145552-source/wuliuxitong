@@ -9,6 +9,7 @@ import { useState } from "react";
 import EmptyStateCard from "../../modules/layout/EmptyStateCard";
 import { fetchAgentClients, saveAgentClientPrice, type AgentClientItem, type PriceTriple } from "../../services/agent-api";
 import { LoadState, Panel, SectionHeader, TableWrap, btn, btnPrimary, fmtTime, input, priceText, td, th, useAgentLoad } from "./agent-ui";
+import { parseUnitPrice, unitPriceIssue } from "../../modules/shared/unit-price";
 
 const KEYS = [
   { key: "normal", label: "普货" },
@@ -25,13 +26,16 @@ function PriceEditor({ client, agentPrices, onSaved, onCancel }: { client: Agent
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState("");
 
+  // ⚠️ 单价校验用公共那份（modules/shared/unit-price.ts），别在这里再抄一遍正则：
+  //    这个文件 2026-09-18 就是全项目第三份、也是唯一没跟着改的那份，前端拦、后端收（复核第 4 条）
   const localIssue = (): string => {
     const issues: string[] = [];
     for (const { key, label } of KEYS) {
-      const text = draft[key].trim();
-      if (!text) { issues.push(`${label}单价为必填`); continue; }
-      if (!/^\d+(\.\d{1,2})?$/.test(text)) { issues.push(`${label}单价要填数字，最多两位小数`); continue; }
-      if (Math.round(Number(text) * 100) < Math.round(agentPrices[key] * 100)) issues.push(`${label}不能低于湘泰给你的价 ${agentPrices[key]} 元/方`);
+      const issue = unitPriceIssue(label, draft[key]);
+      if (issue) { issues.push(issue); continue; }
+      if (Math.round(parseUnitPrice(draft[key]) * 100) < Math.round(agentPrices[key] * 100)) {
+        issues.push(`${label}不能低于湘泰给你的价 ${agentPrices[key]} 元/方`);
+      }
     }
     return issues.join("；");
   };
@@ -44,7 +48,7 @@ function PriceEditor({ client, agentPrices, onSaved, onCancel }: { client: Agent
     try {
       const r = await saveAgentClientPrice({
         clientId: client.clientId,
-        prices: { normal: Number(draft.normal), inspection: Number(draft.inspection), sensitive: Number(draft.sensitive) },
+        prices: { normal: parseUnitPrice(draft.normal), inspection: parseUnitPrice(draft.inspection), sensitive: parseUnitPrice(draft.sensitive) },
       });
       onSaved(r.updatedPlanRows > 0 ? `已保存。这个客户在 ${r.updatedPlanRows} 个还没发运的柜里没付款的单已按新价重算，已付款的不变。` : "已保存。以后加进柜子时自动带出这个价。");
     } catch (e) {

@@ -126,8 +126,116 @@ export function checkNotBelowAgentPrice(prices: WhrPriceTriple, agentPrices: Whr
   return issues.length > 0 ? issues.join("；") : null;
 }
 
+/** 一位客户的「最低价」：他所属代理那三档价。湘泰自己的客户没有下限（agentId 为空） */
+export interface AgentPriceFloor {
+  agentId: string;
+  clientName: string;
+  floor: WhrPriceTriple;
+}
+
+/**
+ * 【第一步】锁住这些客户所属代理那几行，把「最低价」读出来。
+ *
+ * 为什么要跟判断拆开（Opus 第三轮复核第 10 条）：锁序写死是
+ * 【客户价排队锁 → agents FOR SHARE → 计划行 FOR UPDATE】，
+ * 所以 agents 必须在锁计划**之前**拿；可是「改单价」要比的那三档，得等锁住计划、
+ * **重读**柜里那一行之后才算得出来（只改传上来的档、其余沿用现价）。
+ * 上一版为了顺序对，拿**事务外**读到的现价先判了一遍 ——
+ * 别人刚把另外两档改低，就会给出一个跟锁里复判不一样的结论，把合法的改动拦下来。
+ * 现在：先用这个函数**只拿锁、只读下限**，锁完计划、重读那一行之后再用下面那个函数判。
+ *
+ * 建柜 / 加客户那两条路三档价都来自请求本身、没有「重读之后才知道」的问题，
+ * 可以直接用下面的 `assertPlanPricesNotBelowAgent`（它就是这两步连着做）。
+ */
+export async function lockAgentPriceFloors(
+  tx: Tx,
+  companyId: string,
+  clientIds: string[],
+  /** 看报错的人是谁（同 assertNotBelowAgentFloors 的说明）：这里那句「代理不存在」也要分人说，必填 */
+  viewerRole: string,
+): Promise<Map<string, AgentPriceFloor>> {
+  const out = new Map<string, AgentPriceFloor>();
+  const wanted = [...new Set(clientIds)];
+  if (wanted.length === 0) return out;
+  const clients: Array<{ id: string; name: string; agentId: string | null }> = await tx.user.findMany({
+    where: { id: { in: wanted }, companyId, role: "client" },
+    select: { id: true, name: true, agentId: true },
+  });
+  /**
+   * ⚠️ 查不到就 throw，**不许静默跳过**（CLAUDE.md #27：加了过滤必须加「查不到就 return」）。
+   * 「改单价」那条路的 clientId 是从柜里那一行拿的，users 那行要是 companyId / role 对不上，
+   * 上一版会 `continue` 把这道算钱的闸整条跳过 —— 等于没闸（Opus 第三轮复核第 12 条）。
+   */
+  if (clients.length !== wanted.length) {
+    throw new BusinessError("这几位客户里有查不到的（可能刚被改过），请刷新页面后重试", 400, "BAD_REQUEST");
+  }
+  const agentIds = [...new Set(clients.map((c) => c.agentId).filter((id): id is string => !!id))];
+  const prices = new Map<string, WhrPriceTriple>();
+  // ⚠️ 排序写在循环这一行（`[...x].sort()`）：取锁循环的顺序必须**当场看得见**，
+  //    不能靠「上面那个变量已经排过了」—— 下一个改代码的人看不见就等于没有（test-lock-order.ts 第 6 项）
+  for (const agentId of [...agentIds].sort()) {
+    // 按 id 排序逐个拿共享锁（调高代理价那边拿的是排他锁，两边自然排队）
+    const rows = await tx.$queryRaw<Array<{ price_normal: unknown; price_inspection: unknown; price_sensitive: unknown }>>`SELECT price_normal, price_inspection, price_sensitive FROM agents WHERE id = ${agentId} AND company_id = ${companyId} FOR SHARE`;
+    if (!rows || rows.length === 0) {
+      /**
+       * ⚠️ 这句话也要分人说：原来一律说「这个客户**所属的代理**不存在」，
+       * 等于告诉员工「这个客户归某个代理」—— 跟下面那条下限提示是同一类泄漏（Opus 第三轮复核第 2 条）。
+       */
+      throw new BusinessError(
+        canSeeOperatorIdentity(viewerRole)
+          ? "这个客户所属的代理不存在，请联系管理员"
+          : "这个客户的价格设置有问题，请联系超级管理员",
+        400,
+        "BAD_REQUEST",
+      );
+    }
+    prices.set(agentId, {
+      normal: toNum(rows[0].price_normal),
+      inspection: toNum(rows[0].price_inspection),
+      sensitive: toNum(rows[0].price_sensitive),
+    });
+  }
+  for (const c of clients) {
+    if (!c.agentId) continue; // 湘泰自己的客户不受这道闸管
+    out.set(c.id, { agentId: c.agentId, clientName: c.name, floor: prices.get(c.agentId)! });
+  }
+  return out;
+}
+
+/**
+ * 【第二步】拿上一步读到的下限判这几档价，低了就 400。不碰数据库。
+ *
+ * @param viewerRole 看这条报错的人是谁。员工（staff）**不许看到代理价、也不许知道这个客户归代理**
+ *   （9-15 确认单：员工在任何地方都看不到客户属于哪个代理、代理价、返现；接口返回里有就算泄漏）。
+ *   所以给员工的话里不带数字、不提代理；超管才看得到具体下限（Opus 第二轮复核第 2 条）。
+ *   ⚠️ **必填，不给默认值**：默认成 "admin" 的话，以后谁新加入口漏传，失效方向就是「把代理价报给员工」
+ *   （Opus / DeepSeek 第三轮复核）。
+ */
+export function assertNotBelowAgentFloors(
+  floors: Map<string, AgentPriceFloor>,
+  entries: Array<{ clientId: string; clientName?: string; prices: WhrPriceTriple }>,
+  viewerRole: string,
+): void {
+  const canSeeAgentPrice = canSeeOperatorIdentity(viewerRole); // 只有超管
+  const issues: string[] = [];
+  for (const entry of entries) {
+    const hit = floors.get(entry.clientId);
+    if (!hit) continue; // 湘泰自己的客户不受这道闸管（查不到客户在上一步就 throw 了）
+    for (const key of ["normal", "inspection", "sensitive"] as const) {
+      if (toCents(entry.prices[key]) < toCents(hit.floor[key])) {
+        const who = entry.clientName ?? hit.clientName ?? entry.clientId;
+        issues.push(canSeeAgentPrice
+          ? `${who}的${PRICE_LABEL[key]}单价不能低于给代理的价 ${formatPrice(hit.floor[key])} 元/方`
+          : `${who}的${PRICE_LABEL[key]}单价填低了，这个客户有最低价限制，请联系超级管理员确认后再填`);
+      }
+    }
+  }
+  if (issues.length > 0) throw new BusinessError(issues.join("；"), 400, "BAD_REQUEST");
+}
+
 /**
  * 柜里给客户填的三档价**不能低于湘泰给他所属代理的价**（2026-09-18 恢复「每柜当场填」时补回来）。
+ * 这是上面两步连着做：锁代理行读下限 → 判。三档价来自请求本身的入口（建柜 / 加客户）用它。
  *
  * 9-15 那批定的规矩（确认单 4.7）原来由 `setClientWhrPrice` 把着；价格改成每个柜当场填以后，
  * 建柜 / 加客户 / 改单价这三个入口都要自己把这道闸补上 —— 不然代理客户的柜价能填得比代理价低，
@@ -140,55 +248,11 @@ export async function assertPlanPricesNotBelowAgent(
   tx: Tx,
   companyId: string,
   entries: Array<{ clientId: string; clientName?: string; prices: WhrPriceTriple }>,
-  /**
-   * 看这条报错的人是谁。员工（staff）**不许看到代理价、也不许知道这个客户归代理**
-   *（9-15 确认单：员工在任何地方都看不到客户属于哪个代理、代理价、返现；接口返回里有就算泄漏）。
-   * 所以给员工的话里不带数字、不提代理；超管才看得到具体下限（Opus 第二轮复核第 2 条）。
-   */
-  viewerRole: string = "admin",
+  viewerRole: string,
 ): Promise<void> {
   if (entries.length === 0) return;
-  const clients: Array<{ id: string; name: string; agentId: string | null }> = await tx.user.findMany({
-    where: { id: { in: [...new Set(entries.map((e) => e.clientId))] }, companyId, role: "client" },
-    select: { id: true, name: true, agentId: true },
-  });
-  const agentOf = new Map(clients.map((c) => [c.id, c.agentId]));
-  const nameOf = new Map(clients.map((c) => [c.id, c.name]));
-  const agentIds = [...new Set(clients.map((c) => c.agentId).filter((id): id is string => !!id))].sort();
-  if (agentIds.length === 0) return;
-
-  const agentPrices = new Map<string, WhrPriceTriple>();
-  // ⚠️ 排序写在循环这一行（`[...x].sort()`）：取锁循环的顺序必须**当场看得见**，
-  //    不能靠「上面那个变量已经排过了」—— 下一个改代码的人看不见就等于没有（test-lock-order.ts 第 6 项）
-  for (const agentId of [...agentIds].sort()) {
-    // 按 id 排序逐个拿共享锁（调高代理价那边拿的是排他锁，两边自然排队）
-    const rows = await tx.$queryRaw<Array<{ price_normal: unknown; price_inspection: unknown; price_sensitive: unknown }>>`SELECT price_normal, price_inspection, price_sensitive FROM agents WHERE id = ${agentId} AND company_id = ${companyId} FOR SHARE`;
-    if (!rows || rows.length === 0) {
-      throw new BusinessError("这个客户所属的代理不存在，请联系管理员", 400, "BAD_REQUEST");
-    }
-    agentPrices.set(agentId, {
-      normal: toNum(rows[0].price_normal),
-      inspection: toNum(rows[0].price_inspection),
-      sensitive: toNum(rows[0].price_sensitive),
-    });
-  }
-
-  const canSeeAgentPrice = canSeeOperatorIdentity(viewerRole); // 只有超管
-  const issues: string[] = [];
-  for (const entry of entries) {
-    const agentId = agentOf.get(entry.clientId);
-    if (!agentId) continue; // 湘泰自己的客户不受这道闸管
-    const floor = agentPrices.get(agentId)!;
-    for (const key of ["normal", "inspection", "sensitive"] as const) {
-      if (toCents(entry.prices[key]) < toCents(floor[key])) {
-        const who = entry.clientName ?? nameOf.get(entry.clientId) ?? entry.clientId;
-        issues.push(canSeeAgentPrice
-          ? `${who}的${PRICE_LABEL[key]}单价不能低于给代理的价 ${formatPrice(floor[key])} 元/方`
-          : `${who}的${PRICE_LABEL[key]}单价填低了，这个客户有最低价限制，请联系超级管理员确认后再填`);
-      }
-    }
-  }
-  if (issues.length > 0) throw new BusinessError(issues.join("；"), 400, "BAD_REQUEST");
+  const floors = await lockAgentPriceFloors(tx, companyId, entries.map((e) => e.clientId), viewerRole);
+  assertNotBelowAgentFloors(floors, entries, viewerRole);
 }
 
 export interface SetClientWhrPriceInput {
@@ -332,6 +396,45 @@ export async function setAgentClientWhrPrice(input: {
         select: { id: true },
       });
       if (!owned) throw new BusinessError(input.notFoundMessage ?? "客户不存在或不在你名下", 404, "NOT_FOUND");
+      return setClientWhrPrice(
+        { companyId: input.companyId, clientId: input.clientId, prices: input.prices, actor: input.actor },
+        tx,
+      );
+    },
+    { timeout: 30000, maxWait: 10000 },
+  );
+}
+
+/** 「这个客户归代理管」那句话放这里：超管那条路和测试都从这儿拿，别两处各写一份 */
+export const AGENT_CLIENT_PRICE_READONLY_MESSAGE = "这个客户归代理管，价格由代理自己填，超级管理员这里不能改";
+
+/**
+ * 超管给**湘泰自己的客户**改长期价（`POST /admin/clients/whr-price` 的全部业务逻辑）。
+ *
+ * ⚠️ 跟 `setAgentClientWhrPrice` 同一个理由搬出来（Opus 第三轮复核第 6 条）：
+ * 功能关闭之后接口进门就 400，「代理客户超管不许改」那道闸**再也没有测试走得到**了。
+ * 搬到这里之后测试可以绕开开关直接测它，接口那边只剩「判角色 → 判开关 → 收参数 → 调它」。
+ *
+ * ⚠️ 归属判断必须在锁里做（CLAUDE.md #28）：事务外判完再进来，中间客户被改到代理名下，
+ * 就成了「超管改了代理客户的价」。锁序：客户价排队锁在最前，跟 setClientWhrPrice 一致。
+ */
+export async function setNonAgentClientWhrPrice(input: {
+  companyId: string;
+  clientId: string;
+  prices: Record<keyof WhrPriceTriple, unknown>;
+  actor: { userId: string; role: string };
+}): Promise<{ updatedPlanRows: number }> {
+  // 参数不合法就别碰数据库（跟 setClientWhrPrice 同一套校验）
+  parseWhrPriceInput(input.prices);
+  return prisma.$transaction(
+    async (tx) => {
+      await lockClientWhrPrice(tx, input.clientId);
+      const fresh = await tx.user.findFirst({
+        where: { id: input.clientId, companyId: input.companyId, role: "client" },
+        select: { agentId: true },
+      });
+      if (!fresh) throw new BusinessError("客户不存在", 404, "NOT_FOUND");
+      if (fresh.agentId) throw new BusinessError(AGENT_CLIENT_PRICE_READONLY_MESSAGE, 403, "FORBIDDEN");
       return setClientWhrPrice(
         { companyId: input.companyId, clientId: input.clientId, prices: input.prices, actor: input.actor },
         tx,
