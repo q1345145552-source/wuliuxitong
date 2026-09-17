@@ -62,6 +62,18 @@ for (const [handler, zh] of [["handleUndoStatus", "撤销"], ["handleDelete", "�
   });
 }
 
+for (const [handler, zh] of [["handleUndoStatus", "撤销"], ["handleDelete", "删除柜子"]] as const) {
+  check(`${zh}失败：刷新自己再出错也要把报错显示出来（刷新放在 try 里、setError 放 finally）`, () => {
+    const block = catchBlockOf(handler);
+    const fin = block.indexOf("} finally {");
+    assert.ok(fin >= 0, `${handler} 的 catch 里没有 finally：刷新自己抛错时报错会丢`);
+    const err = block.indexOf("setError(");
+    assert.ok(err > fin, `${handler} 的 setError 不在 finally 里`);
+    const refreshes = [...block.matchAll(/await\s+(loadList|loadDetail|loadShipmentList)\(/g)].map((m) => m.index ?? -1);
+    assert.deepEqual(refreshes.filter((i) => i > fin), [], `${handler} 的 finally 里还有刷新，抛错照样会漏掉 setError`);
+  });
+}
+
 check("撤销失败时不是笼统一句「撤销失败」盖掉后端的话", () => {
   const block = catchBlockOf("handleUndoStatus");
   assert.match(block, /e instanceof Error \? e\.message/, "撤销失败没有把后端说的原话显示出来");

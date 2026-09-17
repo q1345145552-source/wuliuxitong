@@ -410,9 +410,13 @@ export default function StaffContainerLoadingPage() {
       // ⚠️ 刷新完才 setError（2026-09-17 复核报的）：loadList 一进门就清报错，
       // 先写报错的话红字一闪就没了，员工只看到「没反应」，不知道为什么没撤成。
       const message = e instanceof Error ? e.message : "撤销失败";
-      await loadList();
-      await loadDetail(selectedId);
-      setError(message);
+      // 刷新本身也可能失败（网断了），报错照样要显示出来 —— 所以刷新放 try、setError 放 finally（DeepSeek 复核 P3-1）
+      try {
+        await loadList();
+        await loadDetail(selectedId);
+      } finally {
+        setError(message);
+      }
     } finally {
       setUndoing(false);
     }
@@ -450,9 +454,13 @@ export default function StaffContainerLoadingPage() {
       // 页面不刷新的话用户看到的还是旧数字，容易照着旧数字再操作一次。
       // ⚠️ 刷新完才 setError，理由同撤销那处（loadList 会清报错）
       const message = e instanceof Error ? e.message : "删除失败";
-      await loadList();
-      await loadShipmentList();
-      setError(message);
+      // 同上：loadShipmentList 里没有兜底，网断了会抛出来，报错不能跟着丢
+      try {
+        await loadList();
+        await loadShipmentList();
+      } finally {
+        setError(message);
+      }
     }
   };
 
