@@ -12,8 +12,8 @@
  * ⚠️ 不放顶部数字条（老板没点头，记忆：顶部数字要先问他）。
  */
 import { useCallback, useEffect, useState } from "react";
-import { navigateToHash } from "../../modules/layout/navigate-to-hash";
-import { AGENT_WHR_FEATURES_ENABLED, isAgentSectionEnabled } from "../../modules/agent/agent-features";
+import { navigateToHash, replaceHash } from "../../modules/layout/navigate-to-hash";
+import { isAgentSectionEnabled } from "../../modules/agent/agent-features";
 import AgentHome from "../../components/agent/AgentHome";
 import AgentShipments from "../../components/agent/AgentShipments";
 import AgentWhr from "../../components/agent/AgentWhr";
@@ -46,10 +46,12 @@ export default function AgentWorkbenchPage() {
     const sync = () => {
       const next = sectionFromHash();
       setSection(next);
-      // 旧链接（#whr / #wallet …）退回首页时把地址栏也改过来，不然左边菜单一个都不高亮
+      // 旧链接（#whr / #wallet …）退回首页时把地址栏也改过来，不然左边菜单一个都不高亮。
+      // ⚠️ 用 replaceHash（改掉这条记录）不是 navigateToHash（新增一条）：
+      // 新增的话「后退」会回到 #whr，这段又把他推回 #home，**后退就出不去了**（复核 2026-09-18）
       const raw = window.location.hash.replace(/^#/, "");
       if (raw && raw !== next) {
-        navigateToHash(`${window.location.pathname}${window.location.search}#${next}`);
+        replaceHash(`${window.location.pathname}${window.location.search}#${next}`);
       }
     };
     sync();

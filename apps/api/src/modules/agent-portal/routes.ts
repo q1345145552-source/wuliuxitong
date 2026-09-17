@@ -22,7 +22,7 @@ import { fail, ok } from "../core/http-utils";
 import { requireAgent, type AgentAuth } from "../core/agent-scope";
 import { BusinessError } from "../core/business-error";
 import { CONSOLIDATION_CURRENCY } from "../wallet/consolidation-balance";
-import { lockClientWhrPrice, LONG_TERM_PRICE_OFF_MESSAGE, LONG_TERM_PRICE_WRITE_ENABLED, parseWhrPriceInput, setClientWhrPrice } from "../whr-consolidation/long-term-price";
+import { LONG_TERM_PRICE_OFF_MESSAGE, LONG_TERM_PRICE_WRITE_ENABLED, setAgentClientWhrPrice } from "../whr-consolidation/long-term-price";
 import { buildFeeBreakdown, deriveLatestStatus } from "../whr-consolidation/utils";
 import { loadOrderTotalMetrics } from "../shipments/total-metrics";
 import { productNamesLabel } from "../../../../../packages/shared-types/product-names";
@@ -1027,30 +1027,18 @@ export function registerAgentPortalRoutes(app: MinimalHttpApp): void {
       fail(res, 400, "BAD_REQUEST", "请选择客户");
       return;
     }
-    // 参数不合法在碰库之前就 400（BusinessError 由 server.ts 统一转成 400）
-    parseWhrPriceInput(body.prices);
-
-    const result = await prisma.$transaction(
-      async (tx) => {
-        /**
-         * ⚠️ 归属判断必须在锁里做（CLAUDE.md #28）：超管改客户归属也先拿同一把客户价锁，
-         * 事务外判完再进来，中间客户被改到别的代理名下，就成了「A 代理改了 B 代理客户的价」。
-         * 锁序：客户价排队锁在最前，跟 setClientWhrPrice 一致（它里面再拿一次同一把锁，
-         * PostgreSQL 事务级 advisory 锁同一会话可重入，不会自己等自己）。
-         */
-        await lockClientWhrPrice(tx, clientId);
-        const owned = await tx.user.findFirst({
-          where: { id: clientId, agentId: auth.agentId, companyId: auth.companyId, role: "client" },
-          select: { id: true },
-        });
-        if (!owned) throw new BusinessError(`客户${NOT_FOUND}`, 404, "NOT_FOUND");
-        return setClientWhrPrice(
-          { companyId: auth.companyId, clientId, prices: body.prices!, actor: { userId: auth.userId, role: auth.role } },
-          tx,
-        );
-      },
-      { timeout: 30000, maxWait: 10000 },
-    );
+    /**
+     * 剩下的（客户价锁 → 锁里判归属 → 改价重算）在 long-term-price.ts 的 setAgentClientWhrPrice 里，
+     * 这样功能关着的时候测试还能绕开开关直接测那道归属闸（复核 2026-09-18 第 6 条）。
+     */
+    const result = await setAgentClientWhrPrice({
+      companyId: auth.companyId,
+      agentId: auth.agentId,
+      clientId,
+      prices: body.prices!,
+      actor: { userId: auth.userId, role: auth.role },
+      notFoundMessage: `客户${NOT_FOUND}`,
+    });
     const saved = await prisma.clientWhrPrice.findUnique({
       where: { clientId },
       select: { priceNormal: true, priceInspection: true, priceSensitive: true, updatedAt: true },

@@ -743,6 +743,49 @@ async function dbChecks(): Promise<void> {
       }
     });
 
+    await check("定价那两道闸真连库跑一遍：agents 的手写 SQL 语法 + 代理只能改自己名下客户（接口被开关挡着，直接调函数）", async () => {
+      /**
+       * ⚠️ 两个原因必须在**真 PostgreSQL** 上跑：
+       *  ① `assertPlanPricesNotBelowAgent` 里那句 `SELECT ... FROM agents ... FOR SHARE` 是手写 SQL ——
+       *     表名列名写错，tsc / 构建 / 内存桩**全部放行**，只有真连库才会炸（CLAUDE.md #26）。
+       *  ② 长期价接口现在进门就被开关拦成 400，「这个客户是不是你名下的」那道闸没有请求走得到，
+       *     只能直接调函数测，不然哪天开回来它坏了没人知道（复核 2026-09-18 第 6 条）。
+       */
+      const { assertPlanPricesNotBelowAgent, setAgentClientWhrPrice } = await import("../apps/api/src/modules/whr-consolidation/long-term-price");
+      const triple = (n: number) => ({ normal: n, inspection: n + 50, sensitive: n + 100 });
+
+      // ① 代理甲的价是 500/550/600：填 400 要被拦；填 500 放行；湘泰自己的客户不受管
+      await prisma.$transaction(async (tx) => {
+        await assert.rejects(
+          () => assertPlanPricesNotBelowAgent(tx, CO, [{ clientId: `${P}ca2`, prices: triple(400) }], "admin"),
+          /不能低于给代理的价 500/,
+          "低于代理价没被拦（或者提示里没写下限）",
+        );
+        // 员工看到的那句里不许出现代理价和「代理」两个字（9-15 确认单：员工看不到代理信息）
+        await assert.rejects(
+          () => assertPlanPricesNotBelowAgent(tx, CO, [{ clientId: `${P}ca2`, prices: triple(400) }], "staff"),
+          (e: Error) => /最低价限制/.test(e.message) && !/500/.test(e.message) && !/代理/.test(e.message),
+          "员工那句话里泄漏了代理价 / 代理身份",
+        );
+        // 正好等于代理价：放行（边界）。湘泰自己的客户（没代理）也放行
+        await assertPlanPricesNotBelowAgent(tx, CO, [{ clientId: `${P}ca2`, prices: triple(500) }], "admin");
+        await assertPlanPricesNotBelowAgent(tx, CO, [{ clientId: `${P}cx`, prices: triple(1) }], "admin");
+      });
+
+      // ② 归属闸：代理甲改不了湘泰客户 / 代理乙的客户，一行都不许写
+      for (const clientId of [`${P}cx`, `${P}cb1`]) {
+        await assert.rejects(
+          () => setAgentClientWhrPrice({
+            companyId: CO, agentId: `${P}agA`, clientId, prices: triple(900),
+            actor: { userId: `${P}login_a`, role: "agent" }, notFoundMessage: "客户不存在或不在你名下",
+          }),
+          /不在你名下/,
+          `代理甲改到了 ${clientId} 的价`,
+        );
+        assert.equal(await prisma.clientWhrPrice.findUnique({ where: { clientId } }), null, `${clientId} 的长期价被写进去了`);
+      }
+    });
+
     await check("agent 令牌打 /admin/* /staff/* /client/* 一律 403", async () => {
       for (const path of ["/admin/users", "/staff/shipments", "/client/orders", "/client/shipments/track?trackingNo=ZZB3A1", "/client/whr-consolidation/plans"]) {
         const r = await call(A, "GET", path);

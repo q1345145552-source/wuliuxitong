@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback, useRef } from "react";
 import { apiBaseUrl, apiRequest } from "../../../services/core-api";
 import { formatBeijingTime } from "../../../modules/staff/utils";
 import { createRequestGate } from "../../../modules/shared/request-gate";
+import { unitPriceIssue } from "../../../modules/shared/unit-price";
 
 const jsonPost = { "Content-Type": "application/json" } as const;
 
@@ -251,16 +252,6 @@ const fi: React.CSSProperties = { width: "100%", padding: "7px 10px", border: "1
  * 必填、大于 0、最多 2 位小数（按字符串判，别用 1e-6 容差）、小于 1 亿（库里是 Decimal(10,2)）。
  * 返回 null = 没问题。
  */
-function unitPriceIssue(label: string, raw: string): string | null {
-  const text = String(raw ?? "").trim();
-  if (!text) return `${label}单价为必填`;
-  if (!/^\d+(\.\d{1,2})?$/.test(text)) return `${label}单价只能填数字，最多 2 位小数`;
-  const value = Number(text);
-  if (!Number.isFinite(value) || value <= 0) return `${label}单价要填一个大于 0 的数`;
-  if (value >= 100000000) return `${label}单价太大了（最多 8 位整数）`;
-  return null;
-}
-
 export default function AdminWhrConsolidationPage() {
   // --- 列表 ---
   const [plans, setPlans] = useState<PlanItem[]>([]);
@@ -866,7 +857,7 @@ export default function AdminWhrConsolidationPage() {
           <>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
               <h2 style={{ margin: 0, fontSize: 20 }}>集货拼柜（仓库版）</h2>
-              <button onClick={() => { setShowCreate(true); setClientSearch(""); loadClients(); }} style={btnConfirm}>+ 新建计划</button>
+              <button onClick={() => { setModalError(""); setShowCreate(true); setClientSearch(""); loadClients(); }} style={btnConfirm}>+ 新建计划</button>
             </div>
 
             {loading ? (
@@ -1436,7 +1427,7 @@ export default function AdminWhrConsolidationPage() {
               || (cl.phone ?? "").toLowerCase().includes(q)
               || (cl.companyName ?? "").toLowerCase().includes(q));
           return (
-            <Modal onClose={() => setShowAddCustomer(false)}>
+            <Modal onClose={() => { setShowAddCustomer(false); setModalError(""); }}>
               <h3 style={{ marginTop: 0 }}>新增参与客户 - {planDetail.planNo}</h3>
               <div style={{ marginTop: 10 }}>
                 <label style={fl}>选择客户</label>
@@ -1487,7 +1478,7 @@ export default function AdminWhrConsolidationPage() {
         {/* 弹窗：新建计划 */}
         {/* ================================================================ */}
         {showCreate && (
-          <Modal wide onClose={() => setShowCreate(false)}>
+          <Modal wide onClose={() => { setShowCreate(false); setModalError(""); }}>
             <h3 style={{ marginTop: 0 }}>新建拼柜计划</h3>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
               <div>

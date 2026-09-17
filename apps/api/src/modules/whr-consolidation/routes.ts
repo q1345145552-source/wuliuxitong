@@ -100,10 +100,8 @@ async function generatePlanNoInTx(tx: any): Promise<string> {
 }
 
 /*
- * 2026-09-16：原来这里有个 repriceCustomer（改单价后重算），只给「柜详情改单价」用。
- * 改单价那个接口停用了（改价走客户长期价，long-term-price.ts 的 setClientWhrPrice），
- * 它就没有调用方了，按 CLAUDE.md #9 删掉。long-term-price.ts 里直接调的是同样两句
- * （recalcUnpaidPrealertFees + recalcCustomerTotals），口径只剩那一份。
+ * 改单价（2026-09-18 恢复）后的重算就是 recalcUnpaidPrealertFees + recalcCustomerTotals 两句（utils.ts），
+ * 跟 long-term-price.ts 那条路共用同一份口径 —— 别再单独包一个 repriceCustomer 出来。
  */
 
 // ============================================================================
@@ -219,6 +217,7 @@ export function registerWhrConsolidationRoutes(app: MinimalHttpApp): void {
             sensitive: Number(c.unitPriceSensitive),
           },
         })),
+        auth.role,
       );
       const planNo = await generatePlanNoInTx(tx);
       const created = await tx.whrConsolidationPlan.create({
@@ -507,7 +506,7 @@ export function registerWhrConsolidationRoutes(app: MinimalHttpApp): void {
     // 事务外这次查只为早点给提示（说了算的是锁里那一次，CLAUDE.md #28）
     const customer = await prisma.whrConsolidationPlanCustomer.findFirst({
       where: { id: body.customerId.trim(), planId: body.planId.trim(), companyId: auth.companyId },
-      select: { id: true, clientId: true },
+      select: { id: true, clientId: true, unitPriceNormal: true, unitPriceInspection: true, unitPriceSensitive: true },
     });
     if (!customer) {
       fail(res, 404, "NOT_FOUND", "客户记录不存在");
@@ -516,11 +515,25 @@ export function registerWhrConsolidationRoutes(app: MinimalHttpApp): void {
 
     // 改价 + 重算放同一个事务，避免只改了价没重算就崩了
     const result = await prisma.$transaction(async (tx) => {
-      // 锁序：客户价排队锁 → 计划行（整柜取消了就不许改：改一次会把柜里没付款的单全重算）
+      /**
+       * ⚠️ 锁序必须是【客户价排队锁 → agents FOR SHARE → 计划行】，跟本文件头和 long-term-price.ts 一致。
+       * 上一版这里是「先锁计划、闸里才拿 agents」——跟改长期价那条路反着拿，
+       * 再碰上「调高代理价」的 FOR UPDATE 排队，三方会绕成死锁（DeepSeek 第二轮复核第 3 条；
+       * utils.ts 付款那条路早就踩过同一个坑）。
+       * 所以先用**事务外读到的现价**过一次代理价闸（把 agents 的共享锁拿到手），锁完计划重读之后再用
+       * **锁里的真值**复判一次（那时锁已经在手上，不会再排队）。
+       */
       await lockClientWhrPrice(tx, customer.clientId);
+      const mergedPrices = (row: { unitPriceNormal: unknown; unitPriceInspection: unknown; unitPriceSensitive: unknown }) => ({
+        normal: updateData.unitPriceNormal ?? toNum(row.unitPriceNormal),
+        inspection: updateData.unitPriceInspection ?? toNum(row.unitPriceInspection),
+        sensitive: updateData.unitPriceSensitive ?? toNum(row.unitPriceSensitive),
+      });
+      await assertPlanPricesNotBelowAgent(tx, auth.companyId, [{ clientId: customer.clientId, prices: mergedPrices(customer) }], auth.role);
+
       await lockPlanAliveById(tx, body.planId!.trim());
 
-      // 锁后重读这一行：事务外那次查只是提示，这中间客户可能已经被移出柜（DeepSeek 复核第 7 条）
+      // 锁后重读这一行：事务外那次查只是提示，这中间客户可能已经被移出柜（复核第 7 条）
       const fresh = await tx.whrConsolidationPlanCustomer.findFirst({
         where: { id: customer.id, planId: body.planId!.trim(), companyId: auth.companyId },
         select: { id: true, clientId: true, unitPriceNormal: true, unitPriceInspection: true, unitPriceSensitive: true },
@@ -530,7 +543,7 @@ export function registerWhrConsolidationRoutes(app: MinimalHttpApp): void {
       /**
        * 只有还在「计划中 / 收货中 / 装柜中」的柜能改价（跟长期价那条路的 REPRICE_PLAN_STATUSES 同一份名单）。
        * 已发运 / 已完成的柜里单子都付过款了，改价不会改金额，只会让柜详情显示「付款后柜里单价改过」——
-       * 看起来像账错了（DeepSeek 复核 2026-09-18 第 8 条）。
+       * 看起来像账错了（复核第 8 条）。
        */
       const planRow = await tx.whrConsolidationPlan.findFirst({
         where: { id: body.planId!.trim(), companyId: auth.companyId },
@@ -540,15 +553,8 @@ export function registerWhrConsolidationRoutes(app: MinimalHttpApp): void {
         throw new BusinessError("这个柜已经发运或完成了，不能再改单价", 400, "BAD_REQUEST");
       }
 
-      // 代理客户：改完之后的三档价都不能低于给代理的价（没传的档用现价）
-      await assertPlanPricesNotBelowAgent(tx, auth.companyId, [{
-        clientId: fresh.clientId,
-        prices: {
-          normal: updateData.unitPriceNormal ?? toNum(fresh.unitPriceNormal),
-          inspection: updateData.unitPriceInspection ?? toNum(fresh.unitPriceInspection),
-          sensitive: updateData.unitPriceSensitive ?? toNum(fresh.unitPriceSensitive),
-        },
-      }]);
+      // 锁里复判一次：上面那次用的是事务外读到的现价，这中间别人可能改过另外两档 / 改过归属
+      await assertPlanPricesNotBelowAgent(tx, auth.companyId, [{ clientId: fresh.clientId, prices: mergedPrices(fresh) }], auth.role);
 
       await tx.whrConsolidationPlanCustomer.update({ where: { id: fresh.id }, data: updateData });
       // 跟长期价那条路同样两句（口径只有一份，见 long-term-price.ts）
@@ -653,7 +659,7 @@ export function registerWhrConsolidationRoutes(app: MinimalHttpApp): void {
     const created = await prisma.$transaction(async (tx) => {
       // 锁序：客户价排队锁 → 代理价下限（agents FOR SHARE）→ 计划行（顺便拦已取消的柜）
       await lockClientWhrPrice(tx, clientId);
-      await assertPlanPricesNotBelowAgent(tx, auth.companyId, [{ clientId, prices: price }]);
+      await assertPlanPricesNotBelowAgent(tx, auth.companyId, [{ clientId, prices: price }], auth.role);
       await lockPlanAliveById(tx, plan.id);
 
       // 锁完重读计划状态：事务外那道「不能再新增客户」的检查只配当提示

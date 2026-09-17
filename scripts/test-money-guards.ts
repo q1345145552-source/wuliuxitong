@@ -33,6 +33,7 @@ import {
   requireDerivedWithinDecimal,
   requireUnitPrice,
 } from "../apps/api/src/modules/core/decimal-guard";
+import { unitPriceIssue } from "../apps/web/src/modules/shared/unit-price";
 
 type Handler = (req: any, res: any) => Promise<void> | void;
 
@@ -582,11 +583,31 @@ async function main(): Promise<void> {
     assert.ok(!/总重量|体积|方数/.test(ok.message), `正常的一行被派生值闸拦了：${ok.message}`);
   });
 
+  check("16) 页面上的单价校验和后端的判得一模一样（两套规则 = 有的输入前端拦后端收，或者反过来）", () => {
+    /**
+     * ⚠️ 上一版页面用正则 `/^\d+(\.\d{1,2})?$/`，后端用 `Number(trim(x))`：
+     * 员工从别处**复制**一个 " 500 " 过来，页面拦死、后端其实收 —— 他只会以为系统坏了。
+     * 这一项是**真的把两个函数都调一遍**对答案，不是读代码。
+     */
+    const cases = [
+      "500", " 500 ", "+500", ".5", "0.01", "99999999.99",
+      "0.001", "0", "-1", "1.005", "100000000", "abc", "", "1e3", "０",
+    ];
+    for (const raw of cases) {
+      const back = requireUnitPrice(raw, "普货") === null;
+      const front = unitPriceIssue("普货", raw) === null;
+      assert.equal(front, back, `"${raw}"：页面${front ? "收" : "拦"}、后端${back ? "收" : "拦"} —— 两边对不上`);
+    }
+    // 正向对照：这张表里确实有收有拦，别整张表全拦（那样上面那句永远成立）
+    assert.ok(cases.some((r) => unitPriceIssue("普货", r) === null), "整张表全被拦了，这项等于没测");
+    assert.ok(cases.some((r) => unitPriceIssue("普货", r) !== null), "整张表全放行了，这项等于没测");
+  });
+
   if (failures.length > 0) {
-    console.error(`\n${failures.length}/15 项不通过：${failures.join("；")}`);
+    console.error(`\n${failures.length}/16 项不通过：${failures.join("；")}`);
     process.exit(1);
   }
-  console.log("算钱数值校验：15 项全部通过");
+  console.log("算钱数值校验：16 项全部通过");
 }
 
 main().catch((e) => { console.error(e); process.exit(1); });

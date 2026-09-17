@@ -53,6 +53,9 @@ let db = {
   users: [] as Row[],
   agents: [] as Row[],
   prices: [] as Row[],
+  /** 在跑的柜 + 柜里每位客户当场填的三档价（2026-09-18 起这道闸查的是这里，不再查冻住的长期价表） */
+  plans: [] as Row[],
+  planCustomers: [] as Row[],
   statements: [] as Row[],
   lines: [] as Row[],
 };
@@ -147,6 +150,28 @@ const models: Row = {
         })
         .sort((a, b) => (a.clientId < b.clientId ? -1 : 1))
         .map((p) => ({ ...p, client: { name: db.users.find((u) => u.id === p.clientId)!.name } }));
+    },
+  },
+  whrConsolidationPlanCustomer: {
+    async findMany({ where }: Row) {
+      events.push("read:whr_plan_customers");
+      const wantStatus: string[] = where.plan?.status?.in ?? [];
+      return db.planCustomers
+        .filter((pc) => pc.companyId === where.companyId)
+        .filter((pc) => {
+          const c = db.users.find((u) => u.id === pc.clientId);
+          return c && matches(c, where.client);
+        })
+        .filter((pc) => {
+          const pl = db.plans.find((x) => x.id === pc.planId);
+          return pl && wantStatus.includes(pl.status);
+        })
+        .sort((a, b) => (a.clientId === b.clientId ? (a.planId < b.planId ? -1 : 1) : a.clientId < b.clientId ? -1 : 1))
+        .map((pc) => ({
+          ...pc,
+          plan: { planNo: db.plans.find((x) => x.id === pc.planId)!.planNo },
+          client: { name: db.users.find((u) => u.id === pc.clientId)!.name },
+        }));
     },
   },
   agentRebateStatement: {
@@ -443,26 +468,44 @@ async function main(): Promise<void> {
     id: agentId, name: "曼谷代理甲", slug: "bkk-jia", customDomain: "wuliu.example.com", prices, ...extra,
   });
 
-  await check("9) 调高代理价：名下有客户价低于新价 → 400 并列出客户和档位，什么都没写；锁序先锁 agents 再查客户价", async () => {
-    db.prices = [
-      { clientId: "zz_c_a1", companyId: "c1", priceNormal: 520, priceInspection: 570, priceSensitive: 650 },
-      { clientId: "zz_c_a2", companyId: "c1", priceNormal: 505, priceInspection: 560, priceSensitive: 700 },
-      // 湘泰客户价很低，但不是这个代理名下的，不许算进来
-      { clientId: "zz_c_xt", companyId: "c1", priceNormal: 100, priceInspection: 100, priceSensitive: 100 },
+  /**
+   * ⚠️ 2026-09-18 改了这道闸查哪儿：老板把价格改回「每个柜当场填」之后，`client_whr_prices`
+   * 那张表就冻住了（没人写、写接口也关了）。还查它等于闸是空的 —— 9-18 之后新开的客户
+   * 压根没有那一行，代理价一调高，在跑的柜里的客户价就低于代理价，湘泰每方少收差价。
+   * 所以夹具也跟着换成「在跑的柜 + 柜里当场填的价」，并特意留一个**没有长期价行**的客户，
+   * 老口径会把它放过去（DeepSeek 第二轮复核第 1 条）。
+   */
+  await check("9) 调高代理价：名下有在跑的柜里客户价低于新价 → 400 并列出柜号和档位，什么都没写；锁序先锁 agents 再查柜里的价", async () => {
+    db.plans = [
+      { id: "pl_run", companyId: "c1", planNo: "WHR2609001", status: "collecting" },
+      { id: "pl_done", companyId: "c1", planNo: "WHR2608009", status: "shipped" },
     ];
+    db.planCustomers = [
+      { id: "pc1", companyId: "c1", planId: "pl_run", clientId: "zz_c_a1", unitPriceNormal: 520, unitPriceInspection: 570, unitPriceSensitive: 650 },
+      // ⚠️ 这位客户**没有**长期价行：老口径（查 client_whr_prices）会把他整个漏掉
+      { id: "pc2", companyId: "c1", planId: "pl_run", clientId: "zz_c_a2", unitPriceNormal: 505, unitPriceInspection: 560, unitPriceSensitive: 700 },
+      // 已发运的柜：金额都结清了，不该算进来
+      { id: "pc3", companyId: "c1", planId: "pl_done", clientId: "zz_c_a1", unitPriceNormal: 100, unitPriceInspection: 100, unitPriceSensitive: 100 },
+      // 湘泰客户价很低，但不是这个代理名下的，不许算进来
+      { id: "pc4", companyId: "c1", planId: "pl_run", clientId: "zz_c_xt", unitPriceNormal: 100, unitPriceInspection: 100, unitPriceSensitive: 100 },
+    ];
+    db.prices = []; // 长期价表空着也必须拦得住（这就是这次改的原因）
     events = [];
     const r = await call("POST", "/admin/agents/update", admin, updateBody({ normal: 510, inspection: 580, sensitive: 600 }, { name: "改了名字" }));
     assert.equal(r.status, 400, JSON.stringify(r.body));
-    assert.match(r.body.message, /名下有 2 个客户/);
-    assert.match(r.body.message, /zz_c_a1（客户一）：商检货 570（新代理价 580）/, "要写清楚是哪个客户、哪一档");
-    assert.match(r.body.message, /zz_c_a2：普货 505（新代理价 510），商检货 560（新代理价 580）/);
+    assert.match(r.body.message, /名下有 2 处在跑的柜里/);
+    assert.match(r.body.message, /zz_c_a1（客户一） 在柜 WHR2609001：商检货 570（新代理价 580）/, "要写清楚是哪个客户、哪个柜、哪一档");
+    assert.match(r.body.message, /zz_c_a2 在柜 WHR2609001：普货 505（新代理价 510），商检货 560（新代理价 580）/);
     assert.doesNotMatch(r.body.message, /zz_c_xt/);
-    assert.doesNotMatch(r.body.message, /zz_c_a1（客户一）：普货/, "520 ≥ 510 的档不许误报");
+    assert.doesNotMatch(r.body.message, /WHR2608009/, "已发运的柜不许算进来");
+    assert.doesNotMatch(r.body.message, /zz_c_a1（客户一） 在柜 WHR2609001：普货/, "520 ≥ 510 的档不许误报");
+    // 提示要告诉他去哪改（柜详情的「改单价」），不是去改那个已经没入口的长期价
+    assert.match(r.body.message, /集货拼柜\(仓库版\)|改单价/);
     const a = db.agents.find((x) => x.id === agentId)!;
     assert.equal(a.name, "曼谷代理甲", "被拒时名字也不许改");
     assert.equal(a.priceNormal, 500);
     const lockAt = events.indexOf(`lock:agents:${agentId}`);
-    const readAt = events.indexOf("read:client_whr_prices");
+    const readAt = events.indexOf("read:whr_plan_customers");
     assert.ok(lockAt >= 0 && readAt > lockAt, `锁序不对：${events.join(" → ")}`);
     assert.ok(!events.some((e) => e.startsWith("write:")), `被拒时不许写：${events.join(" → ")}`);
   });
@@ -478,7 +521,7 @@ async function main(): Promise<void> {
     events = [];
     r = await call("POST", "/admin/agents/update", admin, updateBody({ normal: 400, inspection: 400, sensitive: 400 }, { name: "曼谷代理甲", slug: "bkk-jia" }));
     assert.equal(r.status, 200);
-    assert.ok(!events.includes("read:client_whr_prices"), "三档都没调高，不用查客户价");
+    assert.ok(!events.includes("read:whr_plan_customers"), "三档都没调高，不用查柜里的价");
   });
 
   await check("11) 编辑：换 logo 删旧文件；removeLogo 清空；别家公司的代理 404；前缀改成保留字拦", async () => {

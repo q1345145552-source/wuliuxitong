@@ -709,14 +709,20 @@
 
 ### 20.1 定价：回到 9-16 之前那套
 
-- **POST /admin/whr-consolidation/plans**（建柜，仅超管）：`customers[]` 重新**收三档单价** `unitPriceNormal` / `unitPriceInspection` / `unitPriceSensitive`，每档必填、`requireUnitPrice`（> 0、最多 2 位小数），缺档或不合法 `400`，整柜不建。**不再读客户长期价**，所以也不再拿「客户价排队锁」；没配过长期价的客户照样能建柜。
-- **POST /admin/whr-consolidation/customers/add**（加客户，超管 + 员工）：同样**当场填三档价**，缺档 / 不合法 `400`。照旧锁计划行、锁后重判计划状态和重复客户。
-- **POST /admin/whr-consolidation/customers/price**（改单价，仅超管）：**恢复**（9-16 到 9-18 之间是 410）。只改传上来的那几档（留空不改）、一档都没传 `400`；事务里先 `lockPlanAliveById`（已取消的柜不许改），改完这位客户**没付款**的单按新价重算（`recalcUnpaidPrealertFees` + `recalcCustomerTotals`，跟长期价那条路同一份口径），已付款的金额不动。
+- **POST /admin/whr-consolidation/plans**（建柜，仅超管）：`customers[]` 重新**收三档单价** `unitPriceNormal` / `unitPriceInspection` / `unitPriceSensitive`，每档必填、`requireUnitPrice`（≥ 0.01、最多 2 位小数、整数部分最多 8 位），缺档或不合法 `400`，整柜不建。**不再读客户长期价**，没配过长期价的客户照样能建柜；但**「客户价排队锁」还是要拿**（按 clientId 排序逐个）—— 改客户归属那条路靠它保证「数完业务记录到改完归属之间不会有人插进来建柜」。
+- **POST /admin/whr-consolidation/customers/add**（加客户，超管 + 员工）：同样**当场填三档价**，缺档 / 不合法 `400`。锁序【客户价排队锁 → 代理价下限 → 计划行】，锁后重判计划状态和重复客户。
+- **POST /admin/whr-consolidation/customers/price**（改单价，仅超管；员工 `403`）：**恢复**（9-16 到 9-18 之间是 410）。只改传上来的那几档（留空不改）、一档都没传 `400`；**只有「计划中 / 收货中 / 装柜中」的柜能改**（`REPRICE_PLAN_STATUSES`，已发运 / 已完成 / 已取消 `400`，前端按钮同步收起来）。锁序【客户价排队锁 → 代理价下限 → 计划行】，**锁到计划之后重读这位客户在柜里那一行**：锁那一刻被移出柜 → `404`「这个客户刚刚被移出这个柜了」（不再 P2025 变 500）；重读之后用「改完之后的三档」再过一次代理价下限。改完这位客户**没付款**的单按新价重算（`recalcUnpaidPrealertFees` + `recalcCustomerTotals`，跟长期价那条路同一份口径），已付款的金额不动。
+- **代理客户的柜价不能低于「湘泰给代理的价」**（9-15 确认单 4.7，原来由长期价那条路把着）：上面三个入口都过 `assertPlanPricesNotBelowAgent` —— 查客户所属代理 → 按 agentId 排序逐个 `SELECT ... FROM agents ... FOR SHARE` → 逐档比分，低了 `400`。**湘泰自己的客户（没代理）不受管**；代理行查不到 `400`「这个客户所属的代理不存在，请联系管理员」。
+  报错文案分人：**超管**看得到具体下限（「…不能低于给代理的价 500 元/方」），**员工**只看到「…单价填低了，这个客户有最低价限制，请联系超级管理员确认后再填」——员工在任何地方都不许看到代理价和客户归哪个代理。
+- **锁序（三个入口统一）**：【客户价排队锁 `pg_advisory_xact_lock(83020, hashtext(clientId))` → `agents` 行 `FOR SHARE` → 计划行 `FOR UPDATE` → 预报单 / plan_customers】。超管**调高代理价**那条路拿的是同一行的 `FOR UPDATE`，两边自然排队；顺序反过来就是反向等待（`scripts/test-lock-order.ts` 第 11 项盯着）。
+- **超管调高代理价**（`/admin/agents/update`）：拦截判断改成查**在跑的柜里当场填的价**（`whr_consolidation_plan_customers`，planning / collecting / loading），不再查已经没人写的长期价表；点名的是柜里那一档，提示指向「集货拼柜(仓库版)」的改单价。
 - **GET /client/whr-consolidation/plans**：不再下发 `hasLongTermPrice`（客户端页顶那句「暂未配对价格，请联系管理员」跟着去掉）；柜里那行的 `myUnitPrice*` 照旧给。
-- **保留但前端没有入口**：`client_whr_prices` 表、`long-term-price.ts`、`POST /admin/clients/whr-price`、`GET /admin/whr-consolidation/client-prices`、代理端那套长期价接口。**以后要重新开这个功能时注意**：`setClientWhrPrice` 会连带改「计划中/收货中/装柜中」柜里这位客户的单价并重算没付款的单 —— 现在没人能调它，重开之前要先想清楚跟「每柜当场填」怎么共存。
+- **保留但前端没有入口**：`client_whr_prices` 表、`long-term-price.ts`、`GET /admin/whr-consolidation/client-prices`（读，还活着）、代理端那套长期价接口。
+- **两个「写长期价」的接口在功能关闭期间一律 `400`**：`POST /admin/clients/whr-price`（超管）和 `POST /agent/clients/price`（代理），开关是 `long-term-price.ts` 的 `LONG_TERM_PRICE_WRITE_ENABLED = false`，提示「客户长期价这个功能暂时关闭了…」。不拦的话谁直接打一次接口，`setClientWhrPrice` 就把这位客户**所有**在跑的柜里当场填的价一次覆盖掉、还重算没付款的单。
+- **以后要重新开这个功能时注意**：① `setClientWhrPrice` 会连带改「计划中/收货中/装柜中」柜里这位客户的单价并重算没付款的单，重开之前先想清楚跟「每柜当场填」怎么共存；② 代理那条接口的业务逻辑（客户价锁 → 锁里判「是不是你名下的客户」→ 改价）在 `long-term-price.ts` 的 `setAgentClientWhrPrice`，接口层只剩判角色 / 判开关 / 收参数，测试直接测那个函数（接口被开关挡着走不到）。
 
 ### 20.2 代理工作台：集货相关分区暂时关闭
 
-- 前端开关 `apps/web/src/modules/agent/agent-features.ts` 的 `AGENT_WHR_FEATURES_ENABLED = false`：菜单和分区里去掉**仓库版集货、客户和价格、集货余额、我的价格**；旧链接（`/agent#whr` 等）回首页；首页那三张集货催单卡片换成一句话，**关着时不发 `/agent/home` 请求**。保留**首页、运单、返现单**。
+- 前端开关 `apps/web/src/modules/agent/agent-features.ts` 的 `AGENT_WHR_FEATURES_ENABLED = false`：菜单和分区里去掉**仓库版集货、客户和价格、集货余额、我的价格**；旧链接（`/agent#whr` 等）回首页（地址栏用 `replaceHash` **换掉**那条历史记录，不是新增一条 —— 新增的话按「后退」又被推回首页，出不去）；首页那三张集货催单卡片换成一句话，**关着时不发 `/agent/home` 请求**。保留**首页、运单、返现单**。
 - **后端一个接口都没删**（`/agent/whr*`、`/agent/wallet*`、`/agent/clients*`、`/agent/me`），改开关就能整套回来。
 - 湘泰自己的客户端集货余额、超管/员工的集货拼柜都不受影响。

@@ -20,7 +20,6 @@ import { checkPasswordStrength } from "../auth/password-policy";
 // 重置密码成功后要清登录失败计数（2026-08-31，排查报告第34条），键跟登录接口同一口径
 import { clearLoginFailures } from "../core/rate-limit";
 import {
-  getClientWhrPrice,
   lockClientWhrPrice,
   parseWhrPriceInput,
   setClientWhrPrice,
@@ -1332,26 +1331,14 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
               if (!agentRows || agentRows.length === 0) {
                 throw new BusinessError("选的代理不存在，请刷新页面后重新选", 400, "BAD_REQUEST");
               }
-              const price = await getClientWhrPrice(id, tx);
-              if (price) {
-                const a = agentRows[0];
-                const low: string[] = [];
-                const pairs: Array<[string, number, number]> = [
-                  ["普货", price.normal, Number(a.price_normal)],
-                  ["商检货", price.inspection, Number(a.price_inspection)],
-                  ["敏感货", price.sensitive, Number(a.price_sensitive)],
-                ];
-                for (const [label, mine, agentPrice] of pairs) {
-                  if (Math.round(mine * 100) < Math.round(agentPrice * 100)) low.push(`${label} ${mine} 低于代理价 ${agentPrice}`);
-                }
-                if (low.length > 0) {
-                  throw new BusinessError(
-                    `这个客户现在的长期价比代理「${a.name}」的价还低（${low.join("；")}），挂到这个代理名下会倒贴返现，改不了。请先把这个客户的长期价改到不低于代理价再改归属。`,
-                    409,
-                    "VALIDATION_ERROR",
-                  );
-                }
-              }
+              /**
+               * 2026-09-18：这里原来还有一道「客户价不能低于新代理价」的闸（先查长期价，后来改成查柜里单价）。
+               * 现在**没必要也走不到**：上面那道「有业务记录就不许改归属」已经把「进过任何一个仓库版集货柜」
+               * 的客户挡住了（countClientBusinessRecords 数的就是 whr_consolidation_plan_customers），
+               * 能走到这里的客户名下一个柜都没有，也就不存在「柜价低于代理价」。
+               * 留着反而会给出一句做不到的提示（长期价写接口已按老板要求关闭）。
+               * 建柜 / 加客户 / 改单价那三处的下限闸（assertPlanPricesNotBelowAgent）才是现在真正把关的地方。
+               */
             }
           }
           return tx.user.update({ where: { id }, data: { ...updateData, agentId: target }, select: selectOut });

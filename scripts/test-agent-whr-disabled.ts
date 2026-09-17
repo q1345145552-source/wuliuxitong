@@ -60,6 +60,9 @@ async function main(): Promise<void> {
   assert.match(page, /isSectionId\(id\) && isAgentSectionEnabled\(id\)/, "旧链接没挡：#whr 这种会渲染半截页面");
   assert.match(page, /if \(!isAgentSectionEnabled\("whr"\)\) return;/, "首页「看明细」那条跳转没判开关");
   assert.match(page, /if \(raw && raw !== next\)/, "旧链接退回首页时没把地址栏的 # 改掉（左边菜单会一个都不高亮）");
+  // ⚠️ 退回必须 replaceHash（改掉这条历史记录）；用 navigateToHash 会新增一条 →
+  //    按「后退」回到 #whr，这段又把他推回 #home，后退永远出不去（复核 2026-09-18）
+  assert.match(page, /replaceHash\(`\$\{window\.location\.pathname\}\$\{window\.location\.search\}#\$\{next\}`\)/, "旧链接退回首页用的是 pushState 那条路，用户按后退会被死死困在首页");
   assert.match(page, /section === "rebates" \? <AgentRebates \/>/, "返现单被连带关掉了（这个要留）");
   assert.match(page, /section === "shipments" \? <AgentShipments \/>/, "运单被连带关掉了（这个要留）");
 });
@@ -94,11 +97,18 @@ async function main(): Promise<void> {
 
   await check("5c) 改单价：只有在跑的柜能改、只发真的改过的那几档、老柜 0 价不预填", () => {
     const admin = read("apps/web/src/app/admin/whr-consolidation/page.tsx");
+    const staff = read("apps/web/src/app/staff/whr-consolidation/page.tsx");
     assert.match(admin, /\["planning", "collecting", "loading"\]\.includes\(planDetail\.status\)/, "已发运 / 已完成的柜还显示「改单价」");
     assert.match(admin, /const changed = \(input: string, current: number\)/, "没做「只发改过的档」，会把别人刚改的覆盖回去");
     assert.match(admin, /Number\(v\) > 0 \? String\(v\) : ""/, "老柜里 0 价会被预填成 \"0\"，整次保存会被自己的校验拦死");
-    assert.match(admin, /function unitPriceIssue\(/, "单价校验没抽出来（要跟后端 requireUnitPrice 对齐）");
-    assert.match(admin, /value >= 100000000/, "页面没卡单价上限（后端是 Decimal(10,2)）");
+    // 单价校验只许有**一份**（管理员端 / 员工端各抄一份，改了后端规则必漏一边）
+    for (const [who, src] of [["管理员端", admin], ["员工端", staff]] as Array<[string, string]>) {
+      assert.ok(src.includes('from "../../../modules/shared/unit-price"'), `${who}集货页没用公共的单价校验`);
+      assert.ok(!src.includes("function unitPriceIssue("), `${who}集货页自己又抄了一份单价校验`);
+    }
+    const shared = read("apps/web/src/modules/shared/unit-price.ts");
+    assert.match(shared, /value >= 100000000/, "公共校验没卡单价上限（后端是 Decimal(10,2)）");
+    assert.match(shared, /value < 0.01/, "公共校验没卡下限 0.01（0.001 会被存成 0，这一柜白送）");
   });
 
   await check("6) 后端接口一个都没删（老板要求保留）", () => {

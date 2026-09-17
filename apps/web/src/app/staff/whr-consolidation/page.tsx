@@ -6,6 +6,7 @@ import { formatBeijingTime } from "../../../modules/staff/utils";
 import { base64Bytes, compressImageForUpload, formatBytes } from "../../../modules/shared/image-compress";
 import { createRequestGate } from "../../../modules/shared/request-gate";
 import { viewerCanSeeOperator } from "../../../auth/operator-visibility";
+import { unitPriceIssue } from "../../../modules/shared/unit-price";
 
 // 选文件时的原图上限。超过这个的多半是选错了（视频/超大扫描件），先挡掉再说。
 const MAX_SOURCE_BYTES = 30 * 1024 * 1024;
@@ -199,16 +200,6 @@ const fi: React.CSSProperties = { width: "100%", padding: "7px 10px", border: "1
  * 必填、大于 0、最多 2 位小数（按字符串判，别用 1e-6 容差）、小于 1 亿（库里是 Decimal(10,2)）。
  * 返回 null = 没问题。
  */
-function unitPriceIssue(label: string, raw: string): string | null {
-  const text = String(raw ?? "").trim();
-  if (!text) return `${label}单价为必填`;
-  if (!/^\d+(\.\d{1,2})?$/.test(text)) return `${label}单价只能填数字，最多 2 位小数`;
-  const value = Number(text);
-  if (!Number.isFinite(value) || value <= 0) return `${label}单价要填一个大于 0 的数`;
-  if (value >= 100000000) return `${label}单价太大了（最多 8 位整数）`;
-  return null;
-}
-
 export default function StaffWhrConsolidationPage() {
   const [activeTab, setActiveTab] = useState<"dispatch" | "operations" | "plans">("dispatch");
   const [toast, setToast] = useState<string>("");

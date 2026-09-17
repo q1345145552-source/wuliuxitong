@@ -86,7 +86,22 @@ const LOCK_HELPERS: Record<string, string[]> = {
    * 第 6 项也认不出「按 clientId 排序逐个锁」那个循环。第 10 项会去函数体里核实锁真的在。
    */
   lockClientWhrPrice: ["advisory_client_whr_price"],
+  /**
+   * ⚠️ 2026-09-18 定价改回「每柜当场填」时新增：柜里给代理客户填的价不能低于给代理的价，
+   * 这个 helper 里对 `agents` 那一行发 `FOR SHARE`（共享锁，超管调高代理价那边发 FOR UPDATE，两边自然排队）。
+   * 锁序：客户价锁 → agents → 计划。建柜 / 加客户 / 改单价三条路都经过它；
+   * 不登记的话第 1 项会把这三条路当成「没锁就写」误报，第 3 项也看不见 agents 这一站。
+   */
+  assertPlanPricesNotBelowAgent: ["agents"],
 };
+
+/**
+ * ⚠️ **共享锁也是锁**（2026-09-18 补）。原来整个扫描器只认 `FOR UPDATE`，
+ * 于是 `SELECT ... FROM agents ... FOR SHARE` 在它眼里根本不存在 ——
+ * 谁把这句挪到锁计划之后（跟改长期价那条路反着拿锁），这个脚本一声不吭。
+ * 一处认、一处不认最容易漏，所以下面所有「这一行是不是在加锁」都走这一个常量。
+ */
+const LOCK_SQL_RE = /FOR (UPDATE|SHARE)/;
 
 const WRITE_RE = /\btx\.\w+\.(create|update|updateMany|delete|deleteMany|upsert|createMany)\b/;
 /**
@@ -155,7 +170,7 @@ function isDeadLine(line: string): boolean {
  */
 function isConditionalLockLine(line: string): boolean {
   const t = line.trim();
-  if (!/FOR UPDATE/.test(t) && !Object.keys(LOCK_HELPERS).some((h) => t.includes(`${h}(`))) {
+  if (!LOCK_SQL_RE.test(t) && !Object.keys(LOCK_HELPERS).some((h) => t.includes(`${h}(`))) {
     return false;
   }
   // 同一行里既有 if( 又有锁，而且 if 没有以 { 收尾（那是块形式，另算）
@@ -187,7 +202,7 @@ function deadBlockEnd(lines: string[], i: number): number {
   }
   return lines.length;
 }
-const RAW_LOCK_RE = /FROM\s+(\w+)\s+WHERE[\s\S]*FOR UPDATE|FOR UPDATE/;
+const RAW_LOCK_RE = /FROM\s+(\w+)\s+WHERE[\s\S]*FOR (UPDATE|SHARE)|FOR (UPDATE|SHARE)/;
 
 interface TxBlock {
   file: string;
@@ -244,7 +259,7 @@ function scanFile(file: string): TxBlock[] {
         if (helper) {
           for (const t of LOCK_HELPERS[helper]) if (!locks.includes(t)) locks.push(t);
           if (firstLockLine === null) firstLockLine = j + 1;
-        } else if (RAW_LOCK_RE.test(l) && l.includes("FOR UPDATE")) {
+        } else if (RAW_LOCK_RE.test(l) && LOCK_SQL_RE.test(l)) {
           const t = /FROM\s+(\w+)/.exec(l)?.[1];
           if (t && !locks.includes(t)) locks.push(t);
           if (firstLockLine === null) firstLockLine = j + 1;
@@ -445,7 +460,7 @@ check("6) 循环里取锁的，必须锁在**排过序**的清单上", () => {
         const t = lines[j].trim();
         if (t.startsWith("}")) break;
         if (t.startsWith("*") || t.startsWith("//")) continue;
-        if (t.includes("FOR UPDATE") || Object.keys(LOCK_HELPERS).some((h) => t.includes(`${h}(`))) {
+        if (LOCK_SQL_RE.test(t) || Object.keys(LOCK_HELPERS).some((h) => t.includes(`${h}(`))) {
           locks = true;
           break;
         }
@@ -534,7 +549,7 @@ check("7) 改了运单/柜子/订单/派送单的事务，必须先锁住同一�
         // 先记下这一行拿到的锁
         const helper = Object.keys(LOCK_HELPERS).find((h) => l.includes(`${h}(`));
         if (helper) for (const tb of LOCK_HELPERS[helper]) held.add(tb);
-        if (l.includes("FOR UPDATE")) {
+        if (LOCK_SQL_RE.test(l)) {
           const tb = /FROM\s+(\w+)/.exec(l)?.[1];
           if (tb) held.add(tb);
         }
@@ -867,8 +882,32 @@ check("5) 「已知没加锁」那张表只许变短，不许变长", () => {
   );
 });
 
+check("11) 仓库版集货定价：所有事务都按【客户价排队锁 → 代理行 → 计划】的顺序加锁", () => {
+  /**
+   * 2026-09-18 定价改回「每柜当场填」之后新出现的一段锁序。三条路都走它：
+   * 建柜、往柜里加客户、柜详情改单价 —— 而超管**调高代理价**那条路拿的是同一行的
+   * `FOR UPDATE`，改长期价那条是【客户价锁 → agents → 计划】。
+   * 谁把 `assertPlanPricesNotBelowAgent` 挪到锁计划之后，两条路就成了反向等待。
+   * ⚠️ 这一项能看见 agents，靠的是 LOCK_HELPERS 里登记了 assertPlanPricesNotBelowAgent
+   *    和 LOCK_SQL_RE 认 FOR SHARE —— 那两处哪个退回去，这一项就变成睁眼瞎。
+   */
+  const ORDER = ["advisory_client_whr_price", "agents", "whr_consolidation_plans"];
+  const seen = allBlocks
+    .map((b) => ({ b, seq: b.locks.filter((t) => ORDER.includes(t)) }))
+    .filter((x) => x.seq.length > 1);
+  const bad = seen
+    .filter((x) => {
+      const idx = x.seq.map((t) => ORDER.indexOf(t));
+      return idx.some((v, i) => i > 0 && v < idx[i - 1]);
+    })
+    .map((x) => `${rel(x.b.file)}:${x.b.line} ${x.b.route}（${x.seq.join(" → ")}）`);
+  assert.deepEqual(bad, [], "下面这些事务的锁序跟改长期价那条路反着，会死锁：\n     " + bad.join("\n     "));
+  // ⚠️ 自检：一处都没扫到 = 上面说的两处登记被人退回去了，这一项的绿灯不作数
+  assert.ok(seen.length >= 3, `只扫到 ${seen.length} 处「客户价锁 / 代理行 / 计划」同时出现的事务，比预期少 —— 登记或正则被改窄了，这一项的绿灯不作数`);
+});
+
 if (failures.length > 0) {
-  console.error(`\n${failures.length}/10 项不通过：${failures.join("；")}`);
+  console.error(`\n${failures.length}/11 项不通过：${failures.join("；")}`);
   process.exit(1);
 }
-console.log(`加锁顺序：10 项全部通过（扫了 ${allBlocks.length} 个会写数据的事务）`);
+console.log(`加锁顺序：11 项全部通过（扫了 ${allBlocks.length} 个会写数据的事务）`);

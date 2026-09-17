@@ -306,8 +306,24 @@ async function main(): Promise<void> {
       body: { planId: P2, clientId: C_AG, unitPriceNormal: 600, unitPriceInspection: 500, unitPriceSensitive: 800 },
     });
     assert.equal(lowAdd.status, 400, `加客户没拦住低于代理价：${lowAdd.status} ${lowAdd.message}`);
-    assert.ok(/商检货单价不能低于给代理的价 600/.test(lowAdd.message), lowAdd.message);
+    /**
+     * ⚠️ 员工看到的这句话**不许带代理价、也不许暴露这个客户归代理**
+     *（9-15 确认单：员工在任何地方都看不到客户属于哪个代理、代理价、返现；Opus 第二轮复核第 2 条）。
+     */
+    assert.ok(/填低了/.test(lowAdd.message), lowAdd.message);
+    assertNoAgentInfo("员工加客户被拦时的报错", { message: lowAdd.message });
+    // 注意：夹具里这个客户的名字就叫「代理客户」，所以只能挑「代理价」这类字眼和那个数字，不能整段搜「代理」
+    assert.ok(!/600/.test(lowAdd.message), `报错把代理价露给员工了：${lowAdd.message}`);
+    assert.ok(!/代理的价|代理价|所属代理/.test(lowAdd.message), `报错跟员工提代理了：${lowAdd.message}`);
     assert.deepEqual(writes(), [], "被拦下还写了库");
+
+    // 超管看同一件事：给具体数字，方便他判断该填多少
+    seed();
+    const lowAddAdmin = await callRoute("POST /admin/whr-consolidation/customers/add", ADMIN, {
+      body: { planId: P2, clientId: C_AG, unitPriceNormal: 600, unitPriceInspection: 500, unitPriceSensitive: 800 },
+    });
+    assert.equal(lowAddAdmin.status, 400, lowAddAdmin.message);
+    assert.ok(/商检货单价不能低于给代理的价 600/.test(lowAddAdmin.message), lowAddAdmin.message);
 
     seed();
     const lowEdit = await callRoute("POST /admin/whr-consolidation/customers/price", ADMIN, {
@@ -537,6 +553,34 @@ async function main(): Promise<void> {
       "代理价下限没拦住",
     );
     assert.equal(priceOf(C_AG)!.priceNormal, 600, "被拦下还把价改了");
+
+    /**
+     * ③④ 代理那条接口的**归属闸**（`setAgentClientWhrPrice`）。
+     * ⚠️ 接口现在进门就被开关拦成 400，这道闸**没有任何请求走得到** ——
+     * 所以直接调函数测，不然哪天开回来它坏了没人知道（复核 2026-09-18 第 6 条）。
+     */
+    const { setAgentClientWhrPrice } = await import("../apps/api/src/modules/whr-consolidation/long-term-price");
+    const asAgent = (clientId: string, prices: Record<"normal" | "inspection" | "sensitive", unknown>) =>
+      setAgentClientWhrPrice({
+        companyId: "c1", agentId: AGENT_ID, clientId, prices,
+        actor: { userId: "zz_b1_agentlogin", role: "agent" },
+        notFoundMessage: "客户不存在或不在你名下",
+      });
+
+    // ③ 自己名下的客户：改得动，柜里跟着改
+    seed();
+    const mine = await asAgent(C_AG, { normal: 620, inspection: 720, sensitive: 820 });
+    assert.equal(mine.updatedPlanRows, 1);
+    assert.equal(priceOf(C_AG)!.priceNormal, 620);
+    assert.equal(pcRow(PC_A).unitPriceNormal, 620);
+
+    // ④ 别人家的客户（湘泰自己的）：404，而且是在**拿了客户价锁之后**判的，一行都没写
+    seed();
+    await assert.rejects(() => asAgent(C_XT, { normal: 900, inspection: 900, sensitive: 900 }), /不在你名下/, "代理改到了不是自己名下的客户");
+    assert.equal(priceOf(C_XT)!.priceNormal, 550, "被拦下还把别人家客户的价改了");
+    assert.equal(pcRow(PC_X).unitPriceNormal, 550, "被拦下还把别人家柜里的价改了");
+    assert.deepEqual(writes(), [], `被拦下还写了库：${writes().join(", ")}`);
+    assert.ok(mem.events.includes(`lock:client_price:${C_XT}`), "归属判断没在客户价锁里做（超管同时改归属就串了）");
   });
 
   await check("17) 长期价的单价闸：0.001 / 3 位小数 / 缺档在碰数据库之前就拦（parseWhrPriceInput）", async () => {
@@ -649,9 +693,20 @@ async function main(): Promise<void> {
     assert.ok(withRecords.message.includes("仓库版集货"), withRecords.message);
     assert.equal(mem.db.user.find((u) => u.id === C_XT)!.agentId, null);
 
+    /**
+     * 2026-09-18：原来这里测「长期价低于代理价 → 409」。价格改成每柜当场填之后这条闸删了 ——
+     * 进过任何一个仓库版集货柜的客户，早就被上面那道「有业务记录」拦住了（柜价低于代理价的前提就是他在柜里），
+     * 真正把关的是建柜 / 加客户 / 改单价那三处的下限闸（本文件 5c）。这里改成钉住「进过柜就拦」这件事。
+     */
+    mem.db.whrConsolidationPlanCustomer.push({
+      id: "zz_b1_pc_low", planId: P1, companyId: "c1", clientId: C_NEW_LOW,
+      unitPriceNormal: 450, unitPriceInspection: 650, unitPriceSensitive: 750,
+      totalVolumeM3: 0, totalPackages: 0, totalPrealerts: 0, totalFee: 0, deliveryAddress: null, createdAt: T0, updatedAt: T0,
+    });
     const low = await callRoute("POST /admin/users/client/update", ADMIN, { body: { id: C_NEW_LOW, agentId: AGENT_ID } });
     assert.equal(low.status, 409, low.message);
-    assert.ok(low.message.includes("低于代理价"), low.message);
+    assert.ok(low.message.includes("仓库版集货"), low.message);
+    assert.equal(mem.db.user.find((u) => u.id === C_NEW_LOW)!.agentId, null, "被拦下还是把归属改了");
 
     mem.events = [];
     const ok = await callRoute("POST /admin/users/client/update", ADMIN, { body: { id: C_NEW, agentId: AGENT_ID } });

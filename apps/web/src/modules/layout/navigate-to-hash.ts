@@ -20,6 +20,24 @@ export function navigateToHash(href: string): void {
   window.dispatchEvent(new HashChangeEvent("hashchange", { oldURL, newURL: window.location.href }));
 }
 
+/**
+ * 把地址栏的 # **换成**另一个（不新增历史记录、不发 hashchange）。
+ *
+ * ⚠️ 「旧链接被退回」这种场景必须用它，不能用 navigateToHash（2026-09-18 复核）：
+ * `/agent#whr` 这种已经关掉的分区会被退回 `#home`，如果用 pushState，历史记录就成了
+ * 「#whr → #home」，用户按一次「后退」回到 #whr，页面又把他推回 #home —— **后退永远出不去**。
+ * replaceState 是把那条记录改掉，后退直接回到进来之前的页面。
+ *
+ * 不发 hashchange：调用方（sectionFromHash 那条路）自己已经把分区切好了，
+ * 再发一次只是让同一段逻辑空跑一遍。
+ */
+export function replaceHash(href: string): void {
+  if (typeof window === "undefined") return;
+  const target = new URL(href, window.location.href);
+  if (target.href === window.location.href) return;
+  window.history.replaceState(window.history.state, "", target.href);
+}
+
 /** 这个链接是不是「只在当前页面里换 #」（路径、查询串都一样），是的话应当走 navigateToHash。 */
 export function isSamePageHashLink(href: string): boolean {
   if (typeof window === "undefined") return false;

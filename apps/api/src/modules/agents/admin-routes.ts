@@ -113,21 +113,47 @@ export async function findClientsBelowNewAgentPrice(
 ): Promise<string[]> {
   const raised = (["normal", "inspection", "sensitive"] as const).filter((k) => toCents(newPrices[k]) > toCents(oldPrices[k]));
   if (raised.length === 0 || !agentId || !companyId) return [];
-  const rows: Array<{ clientId: string; priceNormal: unknown; priceInspection: unknown; priceSensitive: unknown; client: { name: string } | null }> =
-    await tx.clientWhrPrice.findMany({
-      where: { companyId, client: { agentId, role: "client", companyId } },
-      select: { clientId: true, priceNormal: true, priceInspection: true, priceSensitive: true, client: { select: { name: true } } },
-      orderBy: { clientId: "asc" },
-    });
+  /**
+   * ⚠️ 2026-09-18 改成查**在跑的柜里当场填的单价**，不再查 `client_whr_prices`。
+   * 老板把价格改成「每个柜当场填」之后那张表就冻住了（没人写、写接口也关了），
+   * 再拿它判「名下客户价有没有低于新代理价」等于这道闸是空的：
+   * 9-18 之后新开的客户根本没有那一行，直接放行 → 代理价一调高，在跑的柜里客户价就低于代理价，
+   * 付款照收、返现算成负数被记 0，湘泰每方少收差价（DeepSeek 第二轮复核第 1 条）。
+   * 只看「计划中 / 收货中 / 装柜中」的柜：已发运 / 已完成的柜金额都结清了，改代理价不影响它们。
+   */
+  const rows: Array<{
+    clientId: string;
+    unitPriceNormal: unknown;
+    unitPriceInspection: unknown;
+    unitPriceSensitive: unknown;
+    plan: { planNo: string } | null;
+    client: { name: string } | null;
+  }> = await tx.whrConsolidationPlanCustomer.findMany({
+    where: {
+      companyId,
+      client: { agentId, role: "client", companyId },
+      plan: { status: { in: ["planning", "collecting", "loading"] } },
+    },
+    select: {
+      clientId: true,
+      unitPriceNormal: true,
+      unitPriceInspection: true,
+      unitPriceSensitive: true,
+      plan: { select: { planNo: true } },
+      client: { select: { name: true } },
+    },
+    orderBy: [{ clientId: "asc" }, { planId: "asc" }],
+  });
   const out: string[] = [];
   for (const r of rows) {
-    const current: WhrPriceTriple = { normal: toNum(r.priceNormal), inspection: toNum(r.priceInspection), sensitive: toNum(r.priceSensitive) };
+    const current: WhrPriceTriple = { normal: toNum(r.unitPriceNormal), inspection: toNum(r.unitPriceInspection), sensitive: toNum(r.unitPriceSensitive) };
     const parts = raised
       .filter((k) => toCents(current[k]) < toCents(newPrices[k]))
       .map((k) => `${PRICE_LABEL[k]} ${fmtPrice(current[k])}（新代理价 ${fmtPrice(newPrices[k])}）`);
     if (parts.length > 0) {
       const who = r.client?.name && r.client.name !== r.clientId ? `${r.clientId}（${r.client.name}）` : r.clientId;
-      out.push(`${who}：${parts.join("，")}`);
+      const where = r.plan?.planNo ? `柜 ${r.plan.planNo}` : "在跑的柜";
+      out.push(`${who} 在${where}：${parts.join("，")}`);
     }
   }
   return out;
@@ -316,7 +342,9 @@ export function registerAgentAdminRoutes(app: MinimalHttpApp): void {
           const below = await findClientsBelowNewAgentPrice(tx, id, auth.companyId, oldPrices, prices);
           if (below.length > 0) {
             throw new BusinessError(
-              `调不了：名下有 ${below.length} 个客户的价比新代理价低，请代理先把这些客户的价调上去 —— ${below.join("；")}`,
+              `调不了：名下有 ${below.length} 处在跑的柜里，客户价比新代理价低。`
+                + `请先到「集货拼柜(仓库版)」把这些柜里这位客户的单价改上去（柜详情里点「改单价」），或者等这些柜发运完再调代理价 —— `
+                + below.join("；"),
             );
           }
 

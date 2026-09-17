@@ -28,6 +28,7 @@
    ========================================================================== */
 
 import { prisma } from "../../db/prisma";
+import { canSeeOperatorIdentity } from "../core/operator-visibility";
 import { BusinessError } from "../core/business-error";
 import { requireUnitPrice } from "../core/decimal-guard";
 import { recalcCustomerTotals, recalcUnpaidPrealertFees, toNum } from "./utils";
@@ -139,6 +140,12 @@ export async function assertPlanPricesNotBelowAgent(
   tx: Tx,
   companyId: string,
   entries: Array<{ clientId: string; clientName?: string; prices: WhrPriceTriple }>,
+  /**
+   * 看这条报错的人是谁。员工（staff）**不许看到代理价、也不许知道这个客户归代理**
+   *（9-15 确认单：员工在任何地方都看不到客户属于哪个代理、代理价、返现；接口返回里有就算泄漏）。
+   * 所以给员工的话里不带数字、不提代理；超管才看得到具体下限（Opus 第二轮复核第 2 条）。
+   */
+  viewerRole: string = "admin",
 ): Promise<void> {
   if (entries.length === 0) return;
   const clients: Array<{ id: string; name: string; agentId: string | null }> = await tx.user.findMany({
@@ -151,7 +158,9 @@ export async function assertPlanPricesNotBelowAgent(
   if (agentIds.length === 0) return;
 
   const agentPrices = new Map<string, WhrPriceTriple>();
-  for (const agentId of agentIds) {
+  // ⚠️ 排序写在循环这一行（`[...x].sort()`）：取锁循环的顺序必须**当场看得见**，
+  //    不能靠「上面那个变量已经排过了」—— 下一个改代码的人看不见就等于没有（test-lock-order.ts 第 6 项）
+  for (const agentId of [...agentIds].sort()) {
     // 按 id 排序逐个拿共享锁（调高代理价那边拿的是排他锁，两边自然排队）
     const rows = await tx.$queryRaw<Array<{ price_normal: unknown; price_inspection: unknown; price_sensitive: unknown }>>`SELECT price_normal, price_inspection, price_sensitive FROM agents WHERE id = ${agentId} AND company_id = ${companyId} FOR SHARE`;
     if (!rows || rows.length === 0) {
@@ -164,6 +173,7 @@ export async function assertPlanPricesNotBelowAgent(
     });
   }
 
+  const canSeeAgentPrice = canSeeOperatorIdentity(viewerRole); // 只有超管
   const issues: string[] = [];
   for (const entry of entries) {
     const agentId = agentOf.get(entry.clientId);
@@ -172,7 +182,9 @@ export async function assertPlanPricesNotBelowAgent(
     for (const key of ["normal", "inspection", "sensitive"] as const) {
       if (toCents(entry.prices[key]) < toCents(floor[key])) {
         const who = entry.clientName ?? nameOf.get(entry.clientId) ?? entry.clientId;
-        issues.push(`${who}的${PRICE_LABEL[key]}单价不能低于给代理的价 ${formatPrice(floor[key])} 元/方`);
+        issues.push(canSeeAgentPrice
+          ? `${who}的${PRICE_LABEL[key]}单价不能低于给代理的价 ${formatPrice(floor[key])} 元/方`
+          : `${who}的${PRICE_LABEL[key]}单价填低了，这个客户有最低价限制，请联系超级管理员确认后再填`);
       }
     }
   }
@@ -288,4 +300,43 @@ export async function setClientWhrPrice(input: SetClientWhrPriceInput, tx?: Tx):
   }
 
   return { updatedPlanRows: planCustomers.length };
+}
+
+/**
+ * 代理给**自己名下**客户改长期价（`POST /agent/clients/price` 的全部业务逻辑）。
+ *
+ * ⚠️ 为什么从路由里搬出来（2026-09-18 复核第 6 条）：功能关闭之后接口进门就 400，
+ * 「这个客户是不是你名下的」那道闸**再也没有测试走得到**了 —— 等哪天开回来，它坏了没人知道。
+ * 搬到这里之后，测试可以绕开开关直接调这个函数，接口那边只剩「判角色 → 判开关 → 收参数 → 调它」。
+ *
+ * ⚠️ 归属判断必须在锁里做（CLAUDE.md #28）：超管改客户归属也先拿同一把客户价锁，
+ * 事务外判完再进来，中间客户被改到别的代理名下，就成了「A 代理改了 B 代理客户的价」。
+ * 锁序：客户价排队锁在最前，跟 setClientWhrPrice 一致（同一会话可重入，不会自己等自己）。
+ */
+export async function setAgentClientWhrPrice(input: {
+  companyId: string;
+  agentId: string;
+  clientId: string;
+  prices: Record<keyof WhrPriceTriple, unknown>;
+  actor: { userId: string; role: string };
+  /** 查不到时统一的说法：不区分「不存在」和「不是你名下的」 */
+  notFoundMessage?: string;
+}): Promise<{ updatedPlanRows: number }> {
+  // 参数不合法就别碰数据库（跟 setClientWhrPrice 同一套校验）
+  parseWhrPriceInput(input.prices);
+  return prisma.$transaction(
+    async (tx) => {
+      await lockClientWhrPrice(tx, input.clientId);
+      const owned = await tx.user.findFirst({
+        where: { id: input.clientId, agentId: input.agentId, companyId: input.companyId, role: "client" },
+        select: { id: true },
+      });
+      if (!owned) throw new BusinessError(input.notFoundMessage ?? "客户不存在或不在你名下", 404, "NOT_FOUND");
+      return setClientWhrPrice(
+        { companyId: input.companyId, clientId: input.clientId, prices: input.prices, actor: input.actor },
+        tx,
+      );
+    },
+    { timeout: 30000, maxWait: 10000 },
+  );
 }
