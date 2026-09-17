@@ -150,6 +150,13 @@ export function registerLoadingManifestRoutes(app: MinimalHttpApp): void {
       ok(res, { id: container.id, containerNo: container.containerNo, transportMode: mode });
       return;
     }
+    // 没标运输方式的柜子系统本来就按海运走（flowOf(null) 就是海运那条流程），标成海运不改变任何流程，
+    // 下面那几道闸防的是「换一条流程」，这里没换，直接标上（Opus 第 6 轮复核 A 报的：柜里有陆运状态的货时连标海运都被拦）
+    if (!container.transportMode && mode === "sea") {
+      await prisma.container.update({ where: { id: container.id }, data: { transportMode: "sea" } });
+      ok(res, { id: container.id, containerNo: container.containerNo, transportMode: mode });
+      return;
+    }
 
     // 两条流程共有的状态才允许切换；陆运/海运专属状态上不许改
     // ⚠️ 2026-08-13 跟着流程改了两处归属：
@@ -218,8 +225,17 @@ export function registerLoadingManifestRoutes(app: MinimalHttpApp): void {
        * 按时间先后猜归属两头都会错（Codex 第三批第 3、4 轮）。老柜子只剩这种证据时，改运输方式放行，
        * 撤销那一刻再核对柜子和货会不会退进两条流程（containers/routes.ts 的 crossFlowUndoMessage），对不上就不撤。
        */
-      if (fresh.departureDate) walked.add("IN_TRANSIT");
-      if (fresh.ata) walked.add("ARRIVED");
+      // ⚠️ 只在柜子**现在已经走到那一步或更后面**时才算数（Opus 第 6 轮复核报的）：
+      // 老柜子撤销时如果找不到这次推进的时间，开船 / 到港日期不会被清掉，柜子明明已经退回「已封柜」，
+      // 日期还留着，改陆运就被永远拦住。日期对应的是海运流程里的步骤，所以按海运流程比。
+      const seaFlow = flowOf("sea");
+      const walkedPast = (st: string): boolean => {
+        const a = seaFlow.indexOf(st);
+        const b = seaFlow.indexOf(fresh.currentStatus);
+        return a >= 0 && b >= 0 && b >= a;
+      };
+      if (fresh.departureDate && walkedPast("IN_TRANSIT")) walked.add("IN_TRANSIT");
+      if (fresh.ata && walkedPast("ARRIVED")) walked.add("ARRIVED");
       const targetFlow = flowOf(mode);
       const otherOnly = flowOf(mode === "land" ? "sea" : "land").filter((st) => !targetFlow.includes(st));
       const walkedBlocked = [...new Set([...blocked, ...otherOnly])].filter((st) => walked.has(st));

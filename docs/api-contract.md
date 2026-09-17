@@ -663,7 +663,7 @@
 
 - **新表**（迁移 `20260917_container_push_ledger`，只增不删）：`container_push_batches`（每推一次柜子状态一笔：seq、柜子推之前/推之后的状态、推之前的 statusDates / 开船日期 / 到港日期）、`container_push_entries`（这一笔里每票货推之前/推之后的状态、这一步写的轨迹 id，kind=`push` / `late_add`）。
 - **POST /admin/containers/status**：记一笔账。退回/取消的货、比这一步靠后的预约派送/派送中/已签收的货跳过不挡整柜（派送三步单独排先后：这一步不是派送三步就一律跳过，陆运也一样），列在 `skippedShipments: [{ trackingNo, status }]`；推进被挡的提示给运单号。
-- **POST /staff/loading-manifests/transport-mode**：选的跟现在一样直接返回、不做任何事。除了当前状态，柜子**走过的**步骤里有目标运输方式没有的也不许改（提示先撤销回这些步骤之前）。走过的步骤只看柜子自己身上的：时间表的键、推进账本每一笔的前后状态、开船日期（=运输中）/ 到港日期（=已到港）；「目标流程没有的」按两条真流程算。**不看**柜里货的推进记录（`sl_ctn_` 上没记是哪个柜推的），老柜子只剩这种证据时放行，由整柜撤销那一刻核对。柜里的货**现在**停在另一种运输方式才有的状态上（比如撤销后退回「已到港」）也不许改。
+- **POST /staff/loading-manifests/transport-mode**：选的跟现在一样直接返回、不做任何事。除了当前状态，柜子**走过的**步骤里有目标运输方式没有的也不许改（提示先撤销回这些步骤之前）。没标运输方式的柜子标成海运直接放行（本来就按海运走）。走过的步骤只看柜子自己身上的：时间表的键、推进账本每一笔的前后状态、开船日期（=运输中）/ 到港日期（=已到港，两个日期只在柜子现在已经走到那一步或更后面时才算）；「目标流程没有的」按两条真流程算。**不看**柜里货的推进记录（`sl_ctn_` 上没记是哪个柜推的），老柜子只剩这种证据时放行，由整柜撤销那一刻核对。柜里的货**现在**停在另一种运输方式才有的状态上（比如撤销后退回「已到港」）也不许改。
 - **POST /staff/loading-manifests/add-shipment**：柜子已经推过（不在装柜中）且有账本时，先单独写一条「装入柜子 柜号」（loaded→loaded），每一步都写「随柜补记」；并记进每一笔账（`late_add`，起点按第一笔之前柜子的状态），撤销时这票货也跟着退、补记一起删，「装入柜子」不删。没有账本的老柜子照上线前的写法（最后一步那条当「装入柜子」）。
 - **GET /admin/containers/status/undo-preview?id=**（员工/管理员）：`{ mode: "ledger"|"legacy", currentStatus, prevStatus, revertCount, keep: [{ trackingNo, reason }] }`，跟真撤销同一份判断，只读。
 - **POST /admin/containers/status/undo** `{ id, expectStatus? }`：

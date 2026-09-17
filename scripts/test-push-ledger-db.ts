@@ -517,6 +517,39 @@ async function main(): Promise<void> {
       const rSame = await toLand(onlyDeparture.id);
       expect("陆运老柜子带开船日期：原样保存陆运 200（没改就不查）", () => { assert.equal(rSame.status, 200, rSame.message); });
 
+      // 撤销以后开船日期没清掉的老柜子（Opus 第 6 轮复核报的）：柜子已经退回「已封柜」，还没开船，
+      // 这时候改陆运不该被那个残留的开船日期拦住。柜子真的走到「运输中」之后（上面 onlyDeparture 那个停在清关中的）照样拦
+      const staleDate = (await must("POST /staff/loading-manifests", STAFF, { warehouse: `${P}wh`, transportMode: "sea", containerNo: uniq("BOX") })).manifest.id;
+      await pm.container.update({ where: { id: staleDate }, data: { currentStatus: "SEALED", statusDates: null, departureDate: new Date("2026-09-01T00:00:00Z") } });
+      const rStale = await toLand(staleDate);
+      const staleMode = (await pm.container.findUnique({ where: { id: staleDate }, select: { transportMode: true } }))?.transportMode;
+      expect("撤回「已封柜」后开船日期还留着的老柜子：改陆运 200（柜子还没走到运输中）", () => {
+        assert.equal(rStale.status, 200, rStale.message);
+        assert.equal(staleMode, "land");
+      });
+
+      // 没标运输方式的柜子本来就按海运走，标成海运什么都不会变，柜里有陆运状态的货也不该拦（Opus 第 6 轮复核报的）；标陆运照样按规矩查
+      const unlabeled = async (shipStatus: string): Promise<{ id: string; child: string }> => {
+        const pp = await seedShipment();
+        const bid = (await must("POST /staff/loading-manifests", STAFF, { warehouse: `${P}wh`, transportMode: "sea", containerNo: uniq("BOX") })).manifest.id;
+        const cc = await load(bid, pp);
+        await pushAll(bid, [["SEALED", "2026-08-25"]]);
+        await pm.shipment.update({ where: { trackingNo: cc }, data: { currentStatus: shipStatus } });
+        await pm.container.update({ where: { id: bid }, data: { transportMode: null } });
+        return { id: bid, child: cc };
+      };
+      const unlabeledLandShip = await unlabeled("atPortCn");
+      const rLabelSea = await toSea(unlabeledLandShip.id);
+      const labeledMode = (await pm.container.findUnique({ where: { id: unlabeledLandShip.id }, select: { transportMode: true } }))?.transportMode;
+      const unlabeledSeaShip = await unlabeled("departed");
+      const rLabelLand = await toLand(unlabeledSeaShip.id);
+      expect("没标运输方式的柜子：柜里有「到达凭祥口岸」的货也能标成海运；柜里有「已开船」的货标陆运照样被拒", () => {
+        assert.equal(rLabelSea.status, 200, rLabelSea.message);
+        assert.equal(labeledMode, "sea");
+        assert.notEqual(rLabelLand.status, 200, rLabelLand.message);
+        assert.match(rLabelLand.message, /已开船/);
+      });
+
       // 老柜子只剩货的推进记录（sl_ctn_ 上没记是哪个柜推的，按时间猜归属两头都错 —— Codex 第三批第 3、4 轮）：
       // 改运输方式放行；撤销那一刻核对，货要退回「已到港」（海运才有）而柜子现在是陆运 → 预览、撤销都不撤，什么都不动；改回海运再撤就正常
       const onlyLogs = await legacyBox(seaSteps);
