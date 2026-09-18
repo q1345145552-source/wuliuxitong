@@ -80,7 +80,7 @@ export function registerFinanceRoutes(app: MinimalHttpApp): void {
           id: true, taskNo: true, status: true, paymentStatus: true,
           totalFee: true, bookingFee: true, customsFee: true, loadingFee: true,
           createdAt: true,
-          client: { select: { id: true, name: true } },
+          clientId: true,
         },
       }),
       prisma.whrConsolidationPrealert.findMany({
@@ -122,7 +122,8 @@ export function registerFinanceRoutes(app: MinimalHttpApp): void {
         kind: "normal",
         kindLabel: "普通版",
         no: t.taskNo,
-        client: t.client?.name ?? t.client?.id ?? "—",
+        // 显示唛头（账号），不显示客户名字：名字只给内部看，也会重名（2026-09-19）
+        client: t.clientId || "—",
         status: t.status,
         statusZh: TASK_STATUS_ZH[t.status] ?? t.status,
         // 已取消的单不欠也不收，金额显示「—」——否则有人把表里的数加起来会跟上面四个数字对不上

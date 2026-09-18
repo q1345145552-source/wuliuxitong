@@ -894,7 +894,7 @@ export function registerWhrConsolidationClientRoutes(app: MinimalHttpApp): void 
     const customer = await prisma.whrConsolidationPlanCustomer.findFirst({
       where: { planId, clientId: auth.userId, companyId: auth.companyId },
       include: {
-        client: { select: { name: true, phone: true } },
+        client: { select: { phone: true } },
         prealerts: {
           orderBy: { createdAt: "asc" },
           take: 500,
@@ -935,7 +935,8 @@ export function registerWhrConsolidationClientRoutes(app: MinimalHttpApp): void 
 
     ok(res, {
       customerId: customer.id,
-      customerName: customer.client.name,
+      // 顶上显示唛头（账号），不发客户名字：名字是内部录的，只给内部看（2026-09-19）
+      clientId: auth.userId,
       customerPhone: customer.client.phone,
       unitPriceNormal: toNum(customer.unitPriceNormal),
       unitPriceInspection: toNum(customer.unitPriceInspection),

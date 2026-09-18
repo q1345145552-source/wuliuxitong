@@ -133,7 +133,6 @@ export function checkNotBelowAgentPrice(prices: WhrPriceTriple, agentPrices: Whr
  */
 export interface AgentPriceFloor {
   agentId: string | null;
-  clientName: string;
   floor: WhrPriceTriple | null;
 }
 
@@ -161,9 +160,9 @@ export async function lockAgentPriceFloors(
   const out = new Map<string, AgentPriceFloor>();
   const wanted = [...new Set(clientIds)];
   if (wanted.length === 0) return out;
-  const clients: Array<{ id: string; name: string; agentId: string | null }> = await tx.user.findMany({
+  const clients: Array<{ id: string; agentId: string | null }> = await tx.user.findMany({
     where: { id: { in: wanted }, companyId, role: "client" },
-    select: { id: true, name: true, agentId: true },
+    select: { id: true, agentId: true },
   });
   /**
    * ⚠️ 查不到就 throw，**不许静默跳过**（CLAUDE.md #27：加了过滤必须加「查不到就 return」）。
@@ -201,7 +200,7 @@ export async function lockAgentPriceFloors(
   }
   for (const c of clients) {
     // 湘泰自己的客户（agentId 为空）也要进这个表，floor 记 null —— 见 AgentPriceFloor 上面那段
-    out.set(c.id, { agentId: c.agentId, clientName: c.name, floor: c.agentId ? prices.get(c.agentId)! : null });
+    out.set(c.id, { agentId: c.agentId, floor: c.agentId ? prices.get(c.agentId)! : null });
   }
   return out;
 }
@@ -217,7 +216,7 @@ export async function lockAgentPriceFloors(
  */
 export function assertNotBelowAgentFloors(
   floors: Map<string, AgentPriceFloor>,
-  entries: Array<{ clientId: string; clientName?: string; prices: WhrPriceTriple }>,
+  entries: Array<{ clientId: string; prices: WhrPriceTriple }>,
   viewerRole: string,
 ): void {
   const canSeeAgentPrice = canSeeOperatorIdentity(viewerRole); // 只有超管
@@ -262,7 +261,7 @@ export function assertNotBelowAgentFloors(
 export async function assertPlanPricesNotBelowAgent(
   tx: Tx,
   companyId: string,
-  entries: Array<{ clientId: string; clientName?: string; prices: WhrPriceTriple }>,
+  entries: Array<{ clientId: string; prices: WhrPriceTriple }>,
   viewerRole: string,
 ): Promise<void> {
   if (entries.length === 0) return;

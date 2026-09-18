@@ -259,7 +259,8 @@ export function registerAdminOpsRoutes(app: MinimalHttpApp): void {
           trackingNo: item.shipment?.trackingNo ?? item.shipmentId,
           clientId: order?.clientId ?? null,
           clientName: order?.client?.name ?? null,
-          receiverName: order?.receiverNameTh || defaultAddress?.contactName || order?.client?.name || null,
+          // 收货人没填就留空（页面显示「收货人未填写」），不拿客户名字顶上：名字只给内部看、不是收货人（2026-09-19）
+          receiverName: order?.receiverNameTh || defaultAddress?.contactName || null,
           receiverPhone: order?.receiverPhoneTh || defaultAddress?.contactPhone || order?.client?.phone || null,
           receiverAddress: order?.receiverAddressTh || defaultAddress?.addressDetail || null,
           itemName: productNamesLabel(order?.products, item.shipment?.itemName) || null,
@@ -330,7 +331,6 @@ export function registerAdminOpsRoutes(app: MinimalHttpApp): void {
                 receiverAddressTh: true,
                 client: {
                   select: {
-                    name: true,
                     phone: true,
                     addresses: {
                       orderBy: [{ isDefault: "desc" }, { updatedAt: "desc" }],
@@ -378,7 +378,9 @@ export function registerAdminOpsRoutes(app: MinimalHttpApp): void {
 
     const firstOrder = selectedRows[0].shipment.order;
     const defaultAddress = firstOrder?.client?.addresses?.[0];
-    const contactName = firstOrder?.receiverNameTh?.trim() || defaultAddress?.contactName || firstOrder?.client?.name || "";
+    // 收货人没填就留空，让收货人在签收单上现场写；不能退到客户名字——这张单要交给收货人签字，
+    // 客户名字只给内部看（2026-09-19，线上订单全都没填泰国收货人，退到名字的有 265 张）
+    const contactName = firstOrder?.receiverNameTh?.trim() || defaultAddress?.contactName || "";
     const contactPhone = firstOrder?.receiverPhoneTh?.trim() || defaultAddress?.contactPhone || firstOrder?.client?.phone || "";
     const address = firstOrder?.receiverAddressTh?.trim() || defaultAddress?.addressDetail || "";
     const splitParentTrackingNos = new Set<string>();
@@ -505,7 +507,6 @@ export function registerAdminOpsRoutes(app: MinimalHttpApp): void {
       containerNos: [],
       customers: [{
         clientId,
-        clientName: firstOrder?.client?.name ?? clientId,
         contactName,
         contactPhone,
         address,
@@ -1219,7 +1220,6 @@ export function registerAdminOpsRoutes(app: MinimalHttpApp): void {
           customers: {
             select: {
               clientId: true,
-              client: { select: { name: true } },
               prealerts: { select: { trackingNo: true, mark: true, status: true, totalFee: true } },
             },
           },
@@ -1232,7 +1232,7 @@ export function registerAdminOpsRoutes(app: MinimalHttpApp): void {
           containerNo: true, createdAt: true,
           // ⚠️ 单数不能写死 1：生产实测 JH0000001 底下有 2 张预报单
           _count: { select: { prealerts: true } },
-          client: { select: { id: true, name: true } },
+          clientId: true,
         },
       }),
     ]);
@@ -1244,7 +1244,8 @@ export function registerAdminOpsRoutes(app: MinimalHttpApp): void {
      * 只看 orderCount 会把「有单但一张都没报价」显示成 ¥0.00，
      * 跟「报价就是 0 元」混在一起 —— 那是两回事。
      */
-    type Customer = { name: string; received: number; receivable: number; notYet: number; orderCount: number; quotedCount: number };
+    /** clientId = 唛头（账号）。客户明细显示唛头，不显示客户名字：名字只给内部看，也会重名（2026-09-19） */
+    type Customer = { clientId: string; received: number; receivable: number; notYet: number; orderCount: number; quotedCount: number };
     type Row = {
       kind: "normal" | "warehouse";
       kindLabel: string;
@@ -1285,7 +1286,7 @@ export function registerAdminOpsRoutes(app: MinimalHttpApp): void {
         }
         received += cr; receivable += cv; notYet += cn0; orderCount += cn; quotedTotal += quoted;
         customers.push({
-          name: c.client?.name || c.clientId,
+          clientId: c.clientId || "—",
           received: Math.round(cr * 100) / 100,
           receivable: Math.round(cv * 100) / 100,
           notYet: Math.round(cn0 * 100) / 100,
@@ -1310,10 +1311,9 @@ export function registerAdminOpsRoutes(app: MinimalHttpApp): void {
       const b = taskBucket(t.status, t.paymentStatus, t.totalFee != null);
       if (b === "dead") continue;
       const amt = num(t.totalFee);
-      const name = t.client?.name || t.client?.id || "—";
       const quoted = t.totalFee != null ? 1 : 0;
       const one = {
-        name,
+        clientId: t.clientId || "—",
         received: b === "received" ? amt : 0,
         receivable: b === "receivable" ? amt : 0,
         notYet: b === "notYet" ? amt : 0,

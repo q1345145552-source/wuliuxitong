@@ -369,14 +369,14 @@ async function main(): Promise<void> {
      * 直接调函数造这个局面（真实路径今天走不到：plan_customers.clientId 没人改）。
      */
     const { assertNotBelowAgentFloors } = await import("../apps/api/src/modules/whr-consolidation/long-term-price");
-    const floors = new Map([["someone-else", { agentId: null, clientName: "别人", floor: null }]]);
+    const floors = new Map([["someone-else", { agentId: null, floor: null }]]);
     assert.throws(
       () => assertNotBelowAgentFloors(floors, [{ clientId: C_AG, prices: { normal: 1, inspection: 1, sensitive: 1 } }], "admin"),
       /刚刚被换过/,
       "表里没有这个客户却放行了 —— 这道算钱的闸等于没有",
     );
     // 查过、确实没有下限（湘泰客户）要照常放行
-    const xtFloors = new Map([[C_XT, { agentId: null, clientName: "湘泰客户", floor: null }]]);
+    const xtFloors = new Map([[C_XT, { agentId: null, floor: null }]]);
     assertNotBelowAgentFloors(xtFloors, [{ clientId: C_XT, prices: { normal: 1, inspection: 1, sensitive: 1 } }], "admin");
   });
 

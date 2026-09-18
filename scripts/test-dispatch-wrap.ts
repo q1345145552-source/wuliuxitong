@@ -16,7 +16,7 @@ function data(scope: "container" | "customer", itemName: string, count = 1): Las
     containerId: "test-container", containerNo: "TEST", containerType: "40HQ", origin: "测试仓", destination: "测试目的仓", carrierInfo: "测试承运人", deliveryNo: "WDTEST", scope,
     carrierName: "测试承运人", driverName: "测试司机", licensePlate: "TEST", phoneNumber: "0800000000", deliveryDate: "2026-09-12", status: "DELIVERING", customerCount: 1,
     shipmentCount: count, signedCount: 0, totalPackageCount: count * 2, totalVolumeM3: count * 0.048, totalWeightKg: count * 19.76, containerNos: ["TEST"], generatedAt: "2026-09-12T00:00:00Z",
-    customers: [{ clientId: "TESTCLIENT", clientName: "测试客户", contactName: "测试收件人", contactPhone: "0800000000", address: "测试地址", addressLabel: "测试地址",
+    customers: [{ clientId: "TESTCLIENT", contactName: "测试收件人", contactPhone: "0800000000", address: "测试地址", addressLabel: "测试地址",
       shipments: Array.from({ length: count }, (_, i) => ({ lastmileOrderId: `test-lm-${i}`, trackingNo: `TEST${i}`, parentTrackingNo: "", itemName,
         packageCount: 2, packageUnit: "箱", volumeM3: 0.048, weightKg: 19.76, lengthCm: "60/50", widthCm: 40, heightCm: 30, remark: "原样备注", status: "DELIVERING", containerNos: ["TEST"],
         receiverName: "测试收件人", receiverPhone: "0800000000", receiverAddress: "测试地址", products: [] })) }],

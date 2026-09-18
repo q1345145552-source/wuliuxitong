@@ -217,13 +217,13 @@ export default function StaffWhrConsolidationPage() {
   const [opsActionSubmitting, setOpsActionSubmitting] = useState<Record<string, boolean>>({});
 
   // ---- 泰国签收 ----
-  const [thailandTarget, setThailandTarget] = useState<{ planId: string; prealertId: string; planNo: string; trackingNo: string; clientId: string; clientName: string; volumeM3: number } | null>(null);
+  const [thailandTarget, setThailandTarget] = useState<{ planId: string; prealertId: string; planNo: string; trackingNo: string; clientId: string; volumeM3: number } | null>(null);
   const [thailandFiles, setThailandFiles] = useState<{ base64: string; fileName: string; mime: string }[]>([]);
   const [thailandSubmitting, setThailandSubmitting] = useState(false);
   const [thailandCompressing, setThailandCompressing] = useState(false);
 
   // ---- 仓库签收 ----
-  const [signTarget, setSignTarget] = useState<{ planId: string; prealertId: string; planNo: string; trackingNo: string; mark: string; clientId: string; clientName: string; clientPhone?: string; clientCompany?: string; deliveryAddress: string | null; items?: any[]; loading?: boolean } | null>(null);
+  const [signTarget, setSignTarget] = useState<{ planId: string; prealertId: string; planNo: string; trackingNo: string; mark: string; clientId: string; clientPhone?: string; clientCompany?: string; deliveryAddress: string | null; items?: any[]; loading?: boolean } | null>(null);
   const [signFiles, setSignFiles] = useState<{ base64: string; fileName: string; mime: string }[]>([]);
   const [signSubmitting, setSignSubmitting] = useState(false);
   const [signCompressing, setSignCompressing] = useState(false);
@@ -448,7 +448,7 @@ export default function StaffWhrConsolidationPage() {
     // 先弹出弹窗显示基本信息 + loading
     setSignTarget({
       planId, prealertId: pa.prealertId, planNo: pa.planNo || "",
-      trackingNo: pa.trackingNo, mark: pa.mark, clientId: pa.clientId, clientName: pa.clientName,
+      trackingNo: pa.trackingNo, mark: pa.mark, clientId: pa.clientId,
       deliveryAddress: pa.deliveryAddress, loading: true,
     });
     try {
@@ -460,7 +460,6 @@ export default function StaffWhrConsolidationPage() {
       setSignTarget({
         planId, prealertId: pa.prealertId, planNo: pa.planNo || "",
         trackingNo: pa.trackingNo, mark: pa.mark, clientId: pa.clientId,
-        clientName: detail.clientName ?? pa.clientName,
         clientPhone: detail.clientPhone,
         clientCompany: detail.clientCompany,
         deliveryAddress: detail.deliveryAddress ?? pa.deliveryAddress,
@@ -693,7 +692,7 @@ export default function StaffWhrConsolidationPage() {
       const wb = new ExcelJS.Workbook();
       const ws = wb.addWorksheet("尾端拆派");
 
-      const headers = ["计划编号", "仓库", "柜型", "目的地", "客户名", "预报单号", "唛头", "品名", "件数", "长cm", "宽cm", "高cm", "方数(m³)", "重量(kg)", "收货地址", "状态"];
+      const headers = ["计划编号", "仓库", "柜型", "目的地", "客户", "预报单号", "唛头", "品名", "件数", "长cm", "宽cm", "高cm", "方数(m³)", "重量(kg)", "收货地址", "状态"];
       const colCount = headers.length;
 
       const headerRow = ws.addRow(headers);
@@ -731,7 +730,7 @@ export default function StaffWhrConsolidationPage() {
           let customerTotalVol = 0;
 
           if (prealerts.length === 0) {
-            ws.addRow([p.planNo, p.warehouse, p.containerType, p.destinationTh, c.clientName, "", "", "", "", "", "", "", "", "", c.deliveryAddress ?? "", c.status ? (PREALERT_ST_ZH[c.status] ?? c.status) : ""]);
+            ws.addRow([p.planNo, p.warehouse, p.containerType, p.destinationTh, c.clientId, "", "", "", "", "", "", "", "", "", c.deliveryAddress ?? "", c.status ? (PREALERT_ST_ZH[c.status] ?? c.status) : ""]);
             currentRow++;
           } else {
             for (const pa of prealerts) {
@@ -739,7 +738,7 @@ export default function StaffWhrConsolidationPage() {
               let isFirst = true;
 
               if (items.length === 0) {
-                ws.addRow([p.planNo, p.warehouse, p.containerType, p.destinationTh, c.clientName, pa.trackingNo, pa.mark, "", "", "", "", "", "", "", c.deliveryAddress ?? "", PREALERT_ST_ZH[pa.status] ?? pa.status]);
+                ws.addRow([p.planNo, p.warehouse, p.containerType, p.destinationTh, c.clientId, pa.trackingNo, pa.mark, "", "", "", "", "", "", "", c.deliveryAddress ?? "", PREALERT_ST_ZH[pa.status] ?? pa.status]);
                 currentRow++;
               } else {
                 for (const it of items) {
@@ -748,7 +747,7 @@ export default function StaffWhrConsolidationPage() {
                   planTotalVol += vol;
 
                   const dataRow = ws.addRow([
-                    p.planNo, p.warehouse, p.containerType, p.destinationTh, c.clientName,
+                    p.planNo, p.warehouse, p.containerType, p.destinationTh, c.clientId,
                     isFirst ? pa.trackingNo : "",
                     isFirst ? pa.mark : "",
                     it.productName, it.packageCount,
@@ -770,7 +769,7 @@ export default function StaffWhrConsolidationPage() {
             // 单元格数量必须和表头一致（16 列，2026-08-27 加了长宽高三列），
             // 方数写数字而不是字符串，Excel 里才能求和
             const subRow = ws.addRow([
-              "", "", "", "", `${c.clientName} 小计`, "", "", "", "", "", "", "",
+              "", "", "", "", `${c.clientId} 小计`, "", "", "", "", "", "", "",
               Math.round(customerTotalVol * 1000) / 1000, "", "", "",
             ]);
             subRow.getCell(13).numFmt = "0.000";
@@ -1073,7 +1072,7 @@ export default function StaffWhrConsolidationPage() {
                           </div>
                           <div style={{ flexShrink: 0 }}>
                             {/* 2026-09-01 竞态全扫：换单先清掉上一单残留的照片，防止跟错单 */}
-                            <button onClick={() => { /* 2026-09-02 终审整改：点击处同步赋值 owner ref，不等 useEffect */ thailandPrealertIdRef.current = pa.prealertId; setThailandFiles([]); setThailandTarget({ planId: p.planId, prealertId: pa.prealertId, planNo: p.planNo, trackingNo: pa.trackingNo, clientId: pa.clientId, clientName: pa.clientName, volumeM3: pa.volumeM3 }); }} style={btnBlue}>上传签收单</button>
+                            <button onClick={() => { /* 2026-09-02 终审整改：点击处同步赋值 owner ref，不等 useEffect */ thailandPrealertIdRef.current = pa.prealertId; setThailandFiles([]); setThailandTarget({ planId: p.planId, prealertId: pa.prealertId, planNo: p.planNo, trackingNo: pa.trackingNo, clientId: pa.clientId, volumeM3: pa.volumeM3 }); }} style={btnBlue}>上传签收单</button>
                           </div>
                         </div>
                       ))}
@@ -1153,7 +1152,7 @@ export default function StaffWhrConsolidationPage() {
                                   <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                                     <span style={{ color: "var(--t-muted)" }}>{paVol.toFixed(3)}方 · {paPkg}件</span>
                                     {canSign && (
-                                      <button onClick={() => handleOpenSign({ prealertId: pa.id, trackingNo: pa.trackingNo, mark: pa.mark, clientId: c.clientId, clientName: c.clientName, planNo: planDetail.planNo, deliveryAddress: c.deliveryAddress }, selectedPlanId!)} style={{ ...btnBlue, padding: "4px 12px", fontSize: 11 }}>签收</button>
+                                      <button onClick={() => handleOpenSign({ prealertId: pa.id, trackingNo: pa.trackingNo, mark: pa.mark, clientId: c.clientId, planNo: planDetail.planNo, deliveryAddress: c.deliveryAddress }, selectedPlanId!)} style={{ ...btnBlue, padding: "4px 12px", fontSize: 11 }}>签收</button>
                                     )}
                                     {canReview && (
                                       <button onClick={() => {

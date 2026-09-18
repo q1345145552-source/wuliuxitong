@@ -111,8 +111,8 @@ export default function ShippingConfig(props: ShippingConfigProps) {
             <div key={c.id} style={{ border: "1px solid var(--l-soft)", borderRadius: 8, padding: 10, background: hasCustom ? "#fefce8" : "var(--white)" }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                 <div>
-                  <span style={{ fontWeight: 600, fontSize: 14 }}>{c.name}</span>
-                  <span style={{ marginLeft: 8, fontSize: 12, color: "var(--t-muted)", fontFamily: "monospace" }}>{c.id}</span>
+                  {/* 只显示唛头，不带客户名字（2026-09-19） */}
+                  <span style={{ fontWeight: 600, fontSize: 14 }}>{c.id}</span>
                   {hasCustom ? <span style={{ marginLeft: 8, fontSize: 11, color: "#B45309" }}>已配置</span> : <span style={{ marginLeft: 8, fontSize: 11, color: "var(--t-faint)" }}>使用默认</span>}
                   {hasMinDisabled ? <span style={{ marginLeft: 8, fontSize: 11, color: "#1e3a8a" }}>低消已取消</span> : null}
                 </div>

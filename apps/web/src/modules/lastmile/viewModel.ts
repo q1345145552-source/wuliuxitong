@@ -21,7 +21,6 @@ function groupCustomers(orders: LastmileOrderItem[]): LastmileCustomerGroup[] {
   return [...grouped.entries()].map(([clientId, rows]) => ({
     key: clientId,
     clientId,
-    clientName: textOf(rows.find((row) => textOf(row.clientName))?.clientName),
     addressCount: new Set(rows.map(addressKeyOf).filter(Boolean)).size,
     orders: rows,
   }));

@@ -536,7 +536,7 @@ export interface FinanceRow {
   kindLabel: string;
   /** 普通版是任务号 JH…，仓库版是预报单号 WHRP… */
   no: string;
-  /** 普通版是客户名，仓库版是唛头 */
+  /** 普通版是唛头（账号），仓库版是客户下单时自己填的唛头 */
   client: string;
   status: string;
   statusZh: string;
@@ -1560,7 +1560,8 @@ export async function fetchAdminOpsOverview(): Promise<AdminOpsOverview> {
    ⚠️ 这几个类型是手写的，TypeScript 不会去核对后端。
    改后端 ok(res, {...}) 的结构后必须回来同步（CLAUDE.md 第 22 条）。 */
 export interface ContainerRevenueCustomer {
-  name: string;
+  /** 唛头（账号），不是客户名字 */
+  clientId: string;
   received: number;
   receivable: number;
   /** 还没到该收钱的环节（仓库版等收货 / 普通版收集中、已满待报价），不算待收 */

@@ -372,7 +372,6 @@ export function registerLoadingManifestRoutes(app: MinimalHttpApp): void {
                     receiverAddressTh: true,
                     client: {
                       select: {
-                        name: true,
                         phone: true,
                         addresses: {
                           orderBy: [{ isDefault: "desc" }, { updatedAt: "desc" }],
@@ -412,7 +411,6 @@ export function registerLoadingManifestRoutes(app: MinimalHttpApp): void {
 
     const customerMap = new Map<string, {
       clientId: string;
-      clientName: string;
       contactName: string;
       contactPhone: string;
       address: string;
@@ -429,8 +427,8 @@ export function registerLoadingManifestRoutes(app: MinimalHttpApp): void {
       if (!customer) {
         customer = {
           clientId,
-          clientName: order?.client?.name ?? clientId,
-          contactName: order?.receiverNameTh?.trim() || defaultAddress?.contactName || order?.client?.name || "",
+          // 收货人没填就留空，不退到客户名字（签收单要交给收货人，名字只给内部看，2026-09-19）
+          contactName: order?.receiverNameTh?.trim() || defaultAddress?.contactName || "",
           contactPhone: order?.receiverPhoneTh?.trim() || defaultAddress?.contactPhone || order?.client?.phone || "",
           address: order?.receiverAddressTh?.trim() || defaultAddress?.addressDetail || "",
           addressLabel: defaultAddress?.label || "",

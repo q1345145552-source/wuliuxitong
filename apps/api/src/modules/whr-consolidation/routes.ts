@@ -189,7 +189,7 @@ export function registerWhrConsolidationRoutes(app: MinimalHttpApp): void {
     const clientIds = Array.from(seenClientIds);
     const validClients = await prisma.user.findMany({
       where: { id: { in: clientIds }, companyId: auth.companyId, role: "client" },
-      select: { id: true, name: true },
+      select: { id: true },
     });
     if (validClients.length !== clientIds.length) {
       const validSet = new Set(validClients.map((u) => u.id));
@@ -197,7 +197,6 @@ export function registerWhrConsolidationRoutes(app: MinimalHttpApp): void {
       fail(res, 400, "BAD_REQUEST", `以下客户不存在或不属于本公司：${missing.join(", ")}`);
       return;
     }
-    const clientNameOf = new Map(validClients.map((u) => [u.id, u.name]));
 
     // 编号生成和插入放同一个事务，锁才有意义
     const plan = await prisma.$transaction(async (tx) => {
@@ -210,7 +209,6 @@ export function registerWhrConsolidationRoutes(app: MinimalHttpApp): void {
         auth.companyId,
         body.customers!.map((c) => ({
           clientId: c.clientId!.trim(),
-          clientName: clientNameOf.get(c.clientId!.trim()),
           prices: {
             normal: Number(c.unitPriceNormal),
             inspection: Number(c.unitPriceInspection),

@@ -1844,9 +1844,10 @@ export default function AdminHomePage() {
                   >
                     编辑
                   </button>
+                  {/* 确认框里报唛头不报名字：同一个名字底下可能有好几个账号（2026-09-19） */}
                   <button
                     type="button"
-                    onClick={() => void confirmToggleBan(u.id, u.name, u.status, loadClients, "客户")}
+                    onClick={() => void confirmToggleBan(u.id, u.id, u.status, loadClients, "客户")}
                     disabled={loading}
                     style={{ border: `1px solid ${u.status === "inactive" ? "var(--c-green)" : "#fca5a5"}`, color: u.status === "inactive" ? "var(--c-green)" : "var(--c-red-2)", borderRadius: 8, padding: "6px 10px", background: u.status === "inactive" ? "#f0fdf4" : "#fef2f2", cursor: "pointer", fontSize: 13 }}
                   >
@@ -2864,7 +2865,7 @@ export default function AdminHomePage() {
               <div>
                 <label style={{ fontSize: 11, display: "block", marginBottom: 2 }}>客户 *</label>
                 <input list="admin-create-client" value={createForm.clientId} onChange={(e) => setCreateForm(f => ({ ...f, clientId: e.target.value }))} placeholder="输入客户ID搜索" style={{ border: "1px solid var(--l-strong)", borderRadius: 6, padding: "6px 8px", width: "100%", fontSize: 12 }} />
-                <datalist id="admin-create-client">{staffClients.map(c => (<option key={c.id} value={c.id}>{c.id} - {c.name}</option>))}</datalist>
+                <datalist id="admin-create-client">{staffClients.map(c => (<option key={c.id} value={c.id} />))}</datalist>
               </div>
               <div>
                 <label style={{ fontSize: 11, display: "block", marginBottom: 2 }}>仓库</label>

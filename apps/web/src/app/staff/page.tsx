@@ -1048,17 +1048,14 @@ export default function StaffHomePage() {
     marginBottom: 4,
   } as const;
 
+  // 选客户只认唛头，不带客户名字（2026-09-19）
   const allClientOptions = useMemo(() => {
-    const byId = new Map<string, { id: string; name: string }>();
-    staffClients.forEach((item) => byId.set(item.id, item));
+    const byId = new Map<string, { id: string }>();
+    staffClients.forEach((item) => byId.set(item.id, { id: item.id }));
     prealerts.forEach((item) => {
       if (!item.clientId) return;
-      const current = byId.get(item.clientId);
-      if (current) return;
-      byId.set(item.clientId, {
-        id: item.clientId,
-        name: item.clientName ?? item.clientId,
-      });
+      if (byId.has(item.clientId)) return;
+      byId.set(item.clientId, { id: item.clientId });
     });
     return Array.from(byId.values());
   }, [staffClients, prealerts]);
@@ -1066,9 +1063,8 @@ export default function StaffHomePage() {
   const filteredClientOptions = useMemo(() => {
     const keyword = clientSearchKeyword.trim().toLowerCase();
     if (!keyword) return allClientOptions;
-    return allClientOptions.filter(
-      (item) => item.name.toLowerCase().includes(keyword) || item.id.toLowerCase().includes(keyword),
-    );
+    // 下拉只显示唛头，按唛头筛（按名字筛出来浏览器也不会列出来）
+    return allClientOptions.filter((item) => item.id.toLowerCase().includes(keyword));
   }, [allClientOptions, clientSearchKeyword]);
 
   const filteredPrealerts = useMemo(() => {
@@ -1366,20 +1362,19 @@ export default function StaffHomePage() {
               value={clientSearchKeyword}
               onChange={(e) => {
                 setClientSearchKeyword(e.target.value);
-                const match = allClientOptions.find(
-                  (c) => `${c.id} - ${c.name}` === e.target.value
-                );
+                // 下拉里只显示唛头（不带客户名字，2026-09-19），选中后输入框里就是唛头本身
+                const match = allClientOptions.find((c) => c.id === e.target.value.trim());
                 if (match) setForm((v) => ({ ...v, clientId: match.id }));
               }}
               onFocus={() => setClientSearchKeyword("")}
-              placeholder="搜索客户名字或ID…"
+              placeholder="搜索唛头…"
               list="client-options"
               autoComplete="off"
               style={{ ...orderCreateInputStyle, width: "100%" }}
             />
             <datalist id="client-options">
               {filteredClientOptions.map((item) => (
-                <option key={item.id} value={`${item.id} - ${item.name}`} />
+                <option key={item.id} value={item.id} />
               ))}
             </datalist>
           </div>
@@ -2502,10 +2497,10 @@ export default function StaffHomePage() {
             <h3 style={{ margin: "0 0 16px", fontSize: 18, fontWeight: 600 }}>创建订单</h3>
             <div style={{ display: "grid", gap: 8 }}>
               <div style={{ position: "relative" }}>
-                <input value={clientSearchKeyword} onChange={(e) => { setClientSearchKeyword(e.target.value); const match = allClientOptions.find((c) => `${c.id} - ${c.name}` === e.target.value); if (match) setForm((v) => ({ ...v, clientId: match.id })); }} onFocus={() => setClientSearchKeyword("")} placeholder="搜索客户名字或ID…" list="client-options-modal" autoComplete="off" style={{ ...orderCreateInputStyle, width: "100%" }} />
+                <input value={clientSearchKeyword} onChange={(e) => { setClientSearchKeyword(e.target.value); const match = allClientOptions.find((c) => c.id === e.target.value.trim()); if (match) setForm((v) => ({ ...v, clientId: match.id })); }} onFocus={() => setClientSearchKeyword("")} placeholder="搜索唛头…" list="client-options-modal" autoComplete="off" style={{ ...orderCreateInputStyle, width: "100%" }} />
                 <datalist id="client-options-modal">
                   {filteredClientOptions.map((item) => (
-                    <option key={item.id} value={`${item.id} - ${item.name}`} />
+                    <option key={item.id} value={item.id} />
                   ))}
                 </datalist>
               </div>
@@ -2862,7 +2857,7 @@ export default function StaffHomePage() {
                     {batchRows.map((row, idx) => (
                       <tr key={row.trackingNo} style={{ borderBottom: "1px solid var(--s-cool-2)" }}>
                         <td style={{ padding: "6px 4px" }}>{idx + 1}</td>
-                        <td style={{ padding: "6px 4px" }}>{allClientOptions.find((c) => c.id === row.clientId)?.name ?? row.clientId}</td>
+                        <td style={{ padding: "6px 4px" }}>{row.clientId}</td>
                         <td style={{ padding: "6px 4px" }}>{row.trackingNo}</td>
                         <td style={{ padding: "6px 4px" }}>{{"wh_yiwu_01":"义乌仓","wh_guangzhou_01":"广州仓","wh_dongguan_01":"东莞仓","wh_shenzhen_01":"深圳仓"}[row.warehouseId] ?? row.warehouseId}</td>
                         <td style={{ padding: "6px 4px" }}>{row.itemName}（{row.products.length}行）</td>

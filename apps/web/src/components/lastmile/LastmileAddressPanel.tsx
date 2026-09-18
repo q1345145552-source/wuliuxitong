@@ -229,8 +229,8 @@ export function LastmileAddressPanel({ onToast }: LastmileAddressPanelProps) {
             <div key={client.id} style={{ border: "1px solid var(--l-cool)", borderRadius: 8, padding: 12, background: "var(--white)" }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
                 <div>
+                  {/* 只显示唛头，不带客户名字（2026-09-19）；按名字照样能搜 */}
                   <span style={{ fontWeight: 700, fontSize: 15, color: "#14171D", fontFamily: "monospace" }}>{client.id}</span>
-                  <span style={{ marginLeft: 8, fontSize: 13, color: "var(--t-strong)" }}>{client.name}</span>
                 </div>
                 <span style={{ fontSize: 12, color: "var(--t-strong)" }}>{client.phone}</span>
               </div>

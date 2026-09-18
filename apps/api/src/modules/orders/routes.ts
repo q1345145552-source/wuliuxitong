@@ -1226,17 +1226,16 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
         skip: (page - 1) * pageSize,
         take: pageSize,
         include: {
-          client: { select: { name: true } },
           shipments: { orderBy: { createdAt: "desc" }, take: 1, select: { trackingNo: true, currentStatus: true } },
         },
       }),
     ]);
+    // 不发客户名字：名字是内部录的，只给内部看，客户页面也没用它（2026-09-19）
     const items = orders.map((o) => ({
       id: o.id,
       warehouseId: o.warehouseId,
       orderNo: o.orderNo,
       clientId: o.clientId,
-      clientName: o.client?.name ?? null,
       trackingNo: o.shipments[0]?.trackingNo ?? undefined,
       currentStatus: o.shipments[0]?.currentStatus ?? undefined,
       itemName: o.itemName,

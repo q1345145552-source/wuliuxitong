@@ -47,10 +47,6 @@ function addressLabel(order: LastmileOrderItem): string {
   return order.receiverAddress?.trim() || "收货地址未填写";
 }
 
-function displayCustomerName(clientId: string, clientName: string): string {
-  return clientName && clientName !== clientId ? `${clientId} · ${clientName}` : clientId;
-}
-
 export default function LastmileDispatchWorkspace(props: LastmileDispatchWorkspaceProps) {
   const [activeView, setActiveView] = useState<"tasks" | "create">("tasks");
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -721,7 +717,7 @@ function LastmileWdCard(props: WdCardProps) {
             <section key={customer.key} className="lastmile-customer-group">
               <header>
                 <div>
-                  <strong>{displayCustomerName(customer.clientId, customer.clientName)}</strong>
+                  <strong>{customer.clientId}</strong>
                   <span>{customer.orders.length} 票 · {customer.addressCount} 个地址</span>
                 </div>
                 <button

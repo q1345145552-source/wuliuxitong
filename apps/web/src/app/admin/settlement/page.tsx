@@ -106,9 +106,9 @@ export default function AdminSettlementPage() {
                       </td>
                     </tr>
                     {openNo === r.no && r.customers.map((c) => (
-                      <tr key={`${r.no}-${c.name}`} style={{ background: "var(--canvas-soft)" }}>
+                      <tr key={`${r.no}-${c.clientId}`} style={{ background: "var(--canvas-soft)" }}>
                         <td style={td} />
-                        <td style={{ ...td, color: "var(--ink-mute)" }} colSpan={3}>↳ {c.name}</td>
+                        <td style={{ ...td, color: "var(--ink-mute)" }} colSpan={3}>↳ {c.clientId}</td>
                         <td style={tdNum} />
                         <td style={tdNum}>{c.orderCount}</td>
                         <td style={tdNum}>{c.received > 0 ? money(c.received) : "—"}</td>

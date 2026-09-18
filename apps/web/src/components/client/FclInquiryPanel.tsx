@@ -155,7 +155,7 @@ export default function FclInquiryPanel(props: ClientFclInquiryProps) {
             <input disabled={loading} value={selectedClientId} onChange={e => setSelectedClientId(e.target.value)} placeholder="输入客户ID" list="fcl-client-list"
               style={{ border: "1px solid var(--l-strong)", borderRadius: 6, padding: "8px 10px", width: "100%", fontSize: 13 }} />
             <datalist id="fcl-client-list">
-              {(props.clients ?? []).map(c => (<option key={c.id} value={c.id}>{c.id} - {c.name}</option>))}
+              {(props.clients ?? []).map(c => (<option key={c.id} value={c.id} />))}
             </datalist>
           </div>
         )}

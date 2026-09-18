@@ -77,7 +77,7 @@ interface PrealertRow {
   createdAt: string; items: ItemRow[];
 }
 interface MyDetail {
-  customerId: string; customerName: string; customerPhone: string;
+  customerId: string; clientId: string; customerPhone: string;
   unitPriceNormal: number; unitPriceInspection: number; unitPriceSensitive: number;
   totalVolumeM3: number; totalFee: number | null;
   feeBreakdown?: FeeBreakdown | null;
@@ -536,7 +536,7 @@ export default function ClientWhrConsolidationPage() {
             {/* -------- 客户信息 -------- */}
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
               <div>
-                <strong style={{ fontSize: 15 }}>{detail.customerName}</strong>
+                <strong style={{ fontSize: 15 }}>{detail.clientId}</strong>
                 <span style={{ fontSize: 13, color: "var(--t-muted)", marginLeft: 8 }}>{detail.customerPhone}</span>
               </div>
               <span style={{ fontSize: 13, color: "var(--t-muted)" }}>{detail.totalVolumeM3}方 · {detail.totalPackages}件 · {detail.totalPrealerts}个预报单</span>

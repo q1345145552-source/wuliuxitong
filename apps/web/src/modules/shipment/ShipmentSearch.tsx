@@ -39,7 +39,8 @@ type SearchField = keyof ShipmentSearchProps["value"];
 const FILTER_LABELS: Record<SearchField, string> = {
   trackingNo: "运单号",
   domesticTrackingNo: "国内单号",
-  clientName: "客户名",
+  // 这一格按唛头和客户名字都能搜（admin/staff 页面里拼的是「名字 + 唛头」）
+  clientName: "唛头 / 客户名",
   warehouseId: "仓库",
   batchNo: "批次号",
   itemName: "品名",

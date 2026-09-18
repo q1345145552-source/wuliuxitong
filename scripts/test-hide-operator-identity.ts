@@ -296,7 +296,7 @@ function receiptData(count: number): LastmileExportData {
     carrierName: "自营", driverName: "司机张三", licensePlate: "กท-1234", phoneNumber: "0800000000", deliveryDate: "2026-09-15", status: "DELIVERING", customerCount: 1,
     shipmentCount: count, signedCount: 0, totalPackageCount: count * 2, totalVolumeM3: count * 0.1, totalWeightKg: count * 10, containerNos: [], generatedAt: "2026-09-15T00:00:00Z",
     customers: [{
-      clientId: "MARK1", clientName: "客户一", contactName: "收件人", contactPhone: "0811111111", address: "曼谷某路 1 号", addressLabel: "曼谷",
+      clientId: "MARK1", contactName: "收件人", contactPhone: "0811111111", address: "曼谷某路 1 号", addressLabel: "曼谷",
       shipments: Array.from({ length: count }, (_, i) => ({
         lastmileOrderId: `lm${i}`, trackingNo: `YW${String(i + 1).padStart(4, "0")}`, parentTrackingNo: "", itemName: `货品${i + 1}`,
         packageCount: 2, packageUnit: "箱", volumeM3: 0.1, weightKg: 10, lengthCm: 60, widthCm: 40, heightCm: 30, remark: "", status: "DELIVERING", containerNos: [],

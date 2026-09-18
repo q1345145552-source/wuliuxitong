@@ -170,7 +170,6 @@ const models: Row = {
         .map((pc) => ({
           ...pc,
           plan: { planNo: db.plans.find((x) => x.id === pc.planId)!.planNo },
-          client: { name: db.users.find((u) => u.id === pc.clientId)!.name },
         }));
     },
   },
@@ -505,12 +504,14 @@ async function main(): Promise<void> {
     assert.equal(r.status, 400, JSON.stringify(r.body));
     assert.match(r.body.message, /名下有 3 处在跑的柜里/, "收货中 + 装柜中的柜都要算进来（已完成 / 已取消的不算）");
     assert.match(r.body.message, /WHR2609002：普货 505（新代理价 510），商检货 560（新代理价 580）/, "装柜中的柜没算进来（货发运完柜状态就是 loading）");
-    assert.match(r.body.message, /zz_c_a1（客户一） 在柜 WHR2609001：商检货 570（新代理价 580）/, "要写清楚是哪个客户、哪个柜、哪一档");
+    assert.match(r.body.message, /zz_c_a1 在柜 WHR2609001：商检货 570（新代理价 580）/, "要写清楚是哪个客户、哪个柜、哪一档");
+    // 只报唛头，不带客户名字（2026-09-19 老板：显示唛头就行了）
+    assert.doesNotMatch(r.body.message, /客户一/, "报错里带出了客户名字");
     assert.match(r.body.message, /zz_c_a2 在柜 WHR2609001：普货 505（新代理价 510），商检货 560（新代理价 580）/);
     assert.doesNotMatch(r.body.message, /zz_c_xt/);
     assert.doesNotMatch(r.body.message, /WHR2608009/, "已完成的柜不许算进来");
     assert.doesNotMatch(r.body.message, /WHR2608008/, "已取消的柜不许算进来");
-    assert.doesNotMatch(r.body.message, /zz_c_a1（客户一） 在柜 WHR2609001：普货/, "520 ≥ 510 的档不许误报");
+    assert.doesNotMatch(r.body.message, /zz_c_a1 在柜 WHR2609001：普货/, "520 ≥ 510 的档不许误报");
     // 提示要告诉他去哪改（柜详情的「改单价」），不是去改那个已经没入口的长期价
     assert.match(r.body.message, /集货拼柜\(仓库版\)|改单价/);
     /**

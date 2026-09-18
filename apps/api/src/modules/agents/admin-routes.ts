@@ -138,7 +138,6 @@ export async function findClientsBelowNewAgentPrice(
     unitPriceInspection: unknown;
     unitPriceSensitive: unknown;
     plan: { planNo: string } | null;
-    client: { name: string } | null;
   }> = await tx.whrConsolidationPlanCustomer.findMany({
     where: {
       companyId,
@@ -151,7 +150,6 @@ export async function findClientsBelowNewAgentPrice(
       unitPriceInspection: true,
       unitPriceSensitive: true,
       plan: { select: { planNo: true } },
-      client: { select: { name: true } },
     },
     orderBy: [{ clientId: "asc" }, { planId: "asc" }],
   });
@@ -162,7 +160,8 @@ export async function findClientsBelowNewAgentPrice(
       .filter((k) => toCents(current[k]) < toCents(newPrices[k]))
       .map((k) => `${PRICE_LABEL[k]} ${fmtPrice(current[k])}（新代理价 ${fmtPrice(newPrices[k])}）`);
     if (parts.length > 0) {
-      const who = r.client?.name && r.client.name !== r.clientId ? `${r.clientId}（${r.client.name}）` : r.clientId;
+      // 只报唛头，不带客户名字（2026-09-19）
+      const who = r.clientId;
       const where = r.plan?.planNo ? `柜 ${r.plan.planNo}` : "在跑的柜";
       out.push(`${who} 在${where}：${parts.join("，")}`);
     }

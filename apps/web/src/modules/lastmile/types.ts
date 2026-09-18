@@ -34,8 +34,8 @@ export type LastmileOrderItem = {
 
 export type LastmileCustomerGroup = {
   key: string;
+  /** 唛头。卡片标题只显示唛头，不带客户名字（2026-09-19） */
   clientId: string;
-  clientName: string;
   addressCount: number;
   orders: LastmileOrderItem[];
 };

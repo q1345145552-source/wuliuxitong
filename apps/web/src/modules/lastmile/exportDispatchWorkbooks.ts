@@ -40,7 +40,6 @@ export type LastmileExportShipment = {
 
 export type LastmileExportCustomer = {
   clientId: string;
-  clientName: string;
   contactName: string;
   contactPhone: string;
   address: string;

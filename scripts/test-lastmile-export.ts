@@ -54,6 +54,8 @@ function buildData(dims: {
     customers: [
       {
         clientId: "TESTCLIENT",
+        // 导出类型里已经没有客户名字这一项了（2026-09-19 删掉），这里故意塞一个：
+        // 万一后端哪天又把名字发过来，第 18 项要证明生成器也不会把它印到纸上
         clientName: "测试客户",
         contactName: "张三",
         contactPhone: "0800000000",
@@ -500,6 +502,7 @@ async function main(): Promise<void> {
      * 泰文页「ลูกค้า（客户）」那一列原来印的是客户名字（「杨先」这种），
      * 而这张签收单是交给收货人签字的 —— 名字不能出现在往外给的纸上，改印唛头。
      * 夹具里客户名字叫「测试客户」、唛头叫 TESTCLIENT：两页里都不许出现「测试客户」。
+     * 「收货人」那格退到客户名字的那条路在后端（已删，test-mark-display 第 10 项盯着），见下面第 19 项。
      */
     const data = buildDataWithLines(2, {
       scope: "customer",
@@ -519,6 +522,29 @@ async function main(): Promise<void> {
       }
     }
     assert.ok(!shared.includes("测试客户"), "整张签收单的文字里还有客户名字");
+  });
+
+  await checkAsync("19) 客户签收单：泰国收货人和地址簿联系人都没填时，「收货人」那格留空（不印唛头、不印名字）", async () => {
+    /**
+     * 2026-09-19：后端原来在这种情况下退到客户名字（线上 1651 张订单全都没填泰国收货人，265 张会印出名字）。
+     * 现在后端给的收货人就是空的，这一格留给收货人现场写。
+     * 这里按后端真实会给的样子造数据：每票的 receiverName 和客户的 contactName 都是空串。
+     */
+    const data = buildDataWithLines(2, { scope: "customer", deliveryDate: "2026-09-19" }) as any;
+    data.customers[0].contactName = "";
+    for (const s of data.customers[0].shipments) s.receiverName = "";
+    const { sheetOf, shared } = await renderZip(data as LastmileExportData, CUSTOMER_TEMPLATE);
+    const th = await sheetOf("sheet2");
+    assert.equal(cellValue(th, shared, "E31"), "", `泰文页「收货人」没留空，印的是「${cellValue(th, shared, "E31")}」`);
+    assert.ok(!shared.includes("测试客户"), "签收单上出现了客户名字");
+    assert.ok(!/undefined|null/.test(shared), "签收单上印出了 undefined / null");
+
+    // 反过来：填了泰国收货人就照印，别把正常情况也改成空
+    const filled = buildDataWithLines(1, { scope: "customer", deliveryDate: "2026-09-19" }) as any;
+    filled.customers[0].contactName = "";
+    filled.customers[0].shipments[0].receiverName = "李四";
+    const r2 = await renderZip(filled as LastmileExportData, CUSTOMER_TEMPLATE);
+    assert.equal(cellValue(await r2.sheetOf("sheet2"), r2.shared, "E31"), "李四", "填了泰国收货人却没印出来");
   });
 
   await checkAsync("15) 客户签收单：长品名把行高撑开到放得下，短品名行高一个像素不动", async () => {
@@ -576,10 +602,10 @@ async function main(): Promise<void> {
 main()
   .then(() => {
     if (failures.length > 0) {
-      console.error(`\n${failures.length}/18 项不通过：${failures.join("；")}`);
+      console.error(`\n${failures.length}/19 项不通过：${failures.join("；")}`);
       process.exit(1);
     }
-    console.log("整柜拆柜派送清单导出：18 项全部通过");
+    console.log("整柜拆柜派送清单导出：19 项全部通过");
   })
   .catch((error) => {
     console.error(error);
