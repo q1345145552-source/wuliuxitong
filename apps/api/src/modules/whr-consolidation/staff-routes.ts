@@ -47,7 +47,7 @@ export function registerWhrConsolidationStaffRoutes(app: MinimalHttpApp): void {
         customers: {
           take: CUSTOMER_TAKE,
           include: {
-            client: { select: { id: true, name: true, phone: true, companyName: true } },
+            client: { select: { id: true, phone: true, companyName: true } },
             prealerts: {
               where: { status: { not: "cancelled" } },
               take: PREALERT_TAKE,
@@ -88,7 +88,6 @@ export function registerWhrConsolidationStaffRoutes(app: MinimalHttpApp): void {
               status: pa.status,
               clientId: c.clientId,
               customerId: c.id,
-              clientName: c.client.name,
               clientPhone: c.client.phone,
               clientCompany: c.client.companyName,
               deliveryAddress: c.deliveryAddress,
@@ -143,7 +142,7 @@ export function registerWhrConsolidationStaffRoutes(app: MinimalHttpApp): void {
         statusLogs: { orderBy: { createdAt: "desc" }, take: 50 },
         planCustomer: {
           include: {
-            client: { select: { id: true, name: true, phone: true, companyName: true } },
+            client: { select: { id: true, phone: true, companyName: true } },
           },
         },
       },
@@ -182,7 +181,6 @@ export function registerWhrConsolidationStaffRoutes(app: MinimalHttpApp): void {
       cancelReason: pa.cancelReason,
       customerId: c.id,
       clientId: c.clientId,
-      clientName: c.client.name,
       clientPhone: c.client.phone,
       clientCompany: c.client.companyName,
       deliveryAddress: c.deliveryAddress,
@@ -688,7 +686,7 @@ export function registerWhrConsolidationStaffRoutes(app: MinimalHttpApp): void {
         customers: {
           take: CUSTOMER_TAKE,
           include: {
-            client: { select: { id: true, name: true, phone: true, companyName: true } },
+            client: { select: { id: true, phone: true, companyName: true } },
             prealerts: {
               where: { status: { in: ["paid", "loading", "shipped", "thailand_received"] } },
               take: PREALERT_TAKE,
@@ -719,7 +717,6 @@ export function registerWhrConsolidationStaffRoutes(app: MinimalHttpApp): void {
               return {
                 id: c.id,
                 clientId: c.clientId,
-                clientName: c.client.name,
                 clientPhone: c.client.phone,
                 clientCompany: c.client.companyName,
                 // 客户维度的状态由所有预报单推导，不再拿第一条单的状态冒充

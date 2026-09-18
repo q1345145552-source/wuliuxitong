@@ -1787,7 +1787,8 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
           ],
         } : {}),
       },
-      orderBy: { name: "asc" },
+      // 页面上只显示唛头，按唛头排（按名字排看着像乱序，2026-09-19）
+      orderBy: { id: "asc" },
       select: {
         id: true,
         name: true,
@@ -1827,7 +1828,8 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
 
     const users = await prisma.user.findMany({
       where: { companyId: auth.companyId, role: "client" },
-      orderBy: { name: "asc" },
+      // 用到这份名单的下拉只显示唛头，按唛头排（2026-09-19）
+      orderBy: { id: "asc" },
       select: { id: true, name: true },
     });
 

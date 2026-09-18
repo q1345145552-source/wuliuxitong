@@ -177,7 +177,6 @@ interface PrealertItem {
 interface CustomerDetail {
   id: string;
   clientId: string;
-  clientName: string;
   clientPhone: string;
   clientCompany: string;
   unitPriceNormal: number;

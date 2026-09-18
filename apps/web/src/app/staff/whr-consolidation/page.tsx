@@ -136,7 +136,7 @@ interface DispatchCustomerItem {
   productImageFileName: string | null; productImageBase64: string | null; sortOrder: number;
 }
 interface DispatchCustomer {
-  id: string; clientId: string; clientName: string; clientPhone: string; clientCompany: string;
+  id: string; clientId: string; clientPhone: string; clientCompany: string;
   status?: string; unitPriceNormal: number; unitPriceInspection: number; unitPriceSensitive: number;
   totalVolumeM3: number; totalFee: number | null; deliveryAddress: string | null; addressMissing?: boolean;
   totalItems: number; totalPackages: number; createdAt: string; 
@@ -150,7 +150,7 @@ interface DispatchPlan {
 // Operations Tab — 预报单级别
 interface OpsPrealert {
   prealertId: string; trackingNo: string; expressNo?: string | null; mark: string; status: string;
-  clientId: string; customerId?: string; clientName: string; clientPhone: string | null; clientCompany: string | null;
+  clientId: string; customerId?: string; clientPhone: string | null; clientCompany: string | null;
   deliveryAddress: string | null; addressMissing?: boolean;
   itemCount: number; volumeM3: number; packageCount: number;
   totalFee?: number | null;
@@ -1156,7 +1156,7 @@ export default function StaffWhrConsolidationPage() {
                                     )}
                                     {canReview && (
                                       <button onClick={() => {
-                                        const paObj = { prealertId: pa.id, trackingNo: pa.trackingNo, mark: pa.mark, clientName: c.clientName, clientId: c.clientId, clientPhone: c.clientPhone, clientCompany: c.clientCompany, deliveryAddress: c.deliveryAddress, volumeM3: paVol, itemCount: (pa.items ?? []).length, packageCount: paPkg, status: paStatus };
+                                        const paObj = { prealertId: pa.id, trackingNo: pa.trackingNo, mark: pa.mark, clientId: c.clientId, clientPhone: c.clientPhone, clientCompany: c.clientCompany, deliveryAddress: c.deliveryAddress, volumeM3: paVol, itemCount: (pa.items ?? []).length, packageCount: paPkg, status: paStatus };
                                         handleOpenReview(paObj, selectedPlanId!);
                                       }} style={{ ...btnBlue, padding: "4px 12px", fontSize: 11 }}>审核</button>
                                     )}

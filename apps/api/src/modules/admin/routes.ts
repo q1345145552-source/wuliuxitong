@@ -1704,7 +1704,7 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
         reviewedBy: true,
         createdAt: true,
         updatedAt: true,
-        client: { select: { name: true, companyName: true } },
+        client: { select: { companyName: true } },
         reviewer: { select: { name: true } },
       },
     });
@@ -1712,7 +1712,6 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
       recharges: rows.map((r) => ({
         id: r.id,
         clientId: r.clientId,
-        clientName: r.client.name,
         companyName: r.client.companyName,
         currency: r.currency,
         amount: Number(r.amount.toString()),
@@ -1861,11 +1860,11 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
         updatedAt: true,
       },
     });
-    // 查询客户姓名
+    // 查客户公司名（页面上客户只显示唛头，不查名字，2026-09-19）
     const clientIds = [...new Set(accounts.map((a) => a.clientId))];
     const users = await prisma.user.findMany({
       where: { id: { in: clientIds }, companyId: auth.companyId },
-      select: { id: true, name: true, companyName: true },
+      select: { id: true, companyName: true },
     });
     const userMap = new Map(users.map((u) => [u.id, u]));
 
@@ -1881,7 +1880,6 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
     ok(res, {
       balances: [...map.entries()].map(([clientId, b]) => ({
         clientId,
-        clientName: userMap.get(clientId)?.name ?? "",
         companyName: userMap.get(clientId)?.companyName ?? "",
         cny: b.cny,
         thb: b.thb,

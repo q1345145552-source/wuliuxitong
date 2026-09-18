@@ -92,7 +92,7 @@ export function registerFinanceRoutes(app: MinimalHttpApp): void {
           // 整个柜被取消时，底下的预报单状态**不会**跟着变成 cancelled ——
           // 只看预报单自己的状态，这张单还是「已收货待付款」，会被算进待收款去催。
           // 柜子收款页跳过了取消的柜，财务页没跳，两页对不上就是这么来的。
-          planCustomer: { select: { plan: { select: { status: true } } } },
+          planCustomer: { select: { clientId: true, plan: { select: { status: true } } } },
         },
       }),
       prisma.clientWalletAccount.findMany({
@@ -107,6 +107,8 @@ export function registerFinanceRoutes(app: MinimalHttpApp): void {
       kindLabel: string;
       no: string;
       client: string;
+      /** 唛头（账号），只给搜索用：仓库版那一行显示的是客户自填的唛头，跟账号不一样 */
+      clientId: string;
       status: string;
       statusZh: string;
       amount: number | null;
@@ -124,6 +126,7 @@ export function registerFinanceRoutes(app: MinimalHttpApp): void {
         no: t.taskNo,
         // 显示唛头（账号），不显示客户名字：名字只给内部看，也会重名（2026-09-19）
         client: t.clientId || "—",
+        clientId: t.clientId,
         status: t.status,
         statusZh: TASK_STATUS_ZH[t.status] ?? t.status,
         // 已取消的单不欠也不收，金额显示「—」——否则有人把表里的数加起来会跟上面四个数字对不上
@@ -142,6 +145,7 @@ export function registerFinanceRoutes(app: MinimalHttpApp): void {
         no: p.trackingNo,
         // 仓库版这张表上没有客户名，只有唛头；唛头本来就是客户在系统里的标识
         client: p.mark || "—",
+        clientId: p.planCustomer?.clientId ?? "",
         status: p.status,
         statusZh: planDead ? "整柜已取消" : (WHR_STATUS_ZH[p.status] ?? p.status),
         amount: planDead || isDead(p.status) ? null : numOrNull(p.totalFee),

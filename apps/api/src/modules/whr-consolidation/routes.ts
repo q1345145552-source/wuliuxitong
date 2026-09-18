@@ -313,7 +313,7 @@ export function registerWhrConsolidationRoutes(app: MinimalHttpApp): void {
           orderBy: { createdAt: "asc" },
           take: MAX_CUSTOMERS_PER_PLAN,
           include: {
-            client: { select: { id: true, name: true, phone: true, companyName: true } },
+            client: { select: { id: true, phone: true, companyName: true } },
             prealerts: {
               orderBy: { createdAt: "asc" },
               take: 500,
@@ -375,7 +375,6 @@ export function registerWhrConsolidationRoutes(app: MinimalHttpApp): void {
         return {
         id: c.id,
         clientId: c.clientId,
-        clientName: c.client.name,
         clientPhone: c.client.phone,
         clientCompany: c.client.companyName,
         unitPriceNormal: toNum(c.unitPriceNormal),

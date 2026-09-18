@@ -128,7 +128,6 @@ export interface WalletRechargeItem {
 export interface AdminWalletRechargeItem {
   id: string;
   clientId: string;
-  clientName: string;
   companyName: string | null;
   currency: string;
   amount: number;
@@ -145,7 +144,6 @@ export interface AdminWalletRechargeItem {
 
 export interface StaffWalletBalanceItem {
   clientId: string;
-  clientName: string;
   companyName: string | null;
   cny: number;
   thb: number;
@@ -538,6 +536,8 @@ export interface FinanceRow {
   no: string;
   /** 普通版是唛头（账号），仓库版是客户下单时自己填的唛头 */
   client: string;
+  /** 唛头（账号），只给搜索用（仓库版那一行显示的 client 是客户自填的唛头，按账号搜要靠它） */
+  clientId: string;
   status: string;
   statusZh: string;
   /** ⚠️ null = 还没报价，页面上要显示「—」，不能显示 ¥0.00 */
