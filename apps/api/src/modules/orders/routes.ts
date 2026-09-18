@@ -437,7 +437,8 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
         data: {
           id: `sl_new_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
           companyId: auth.companyId, shipmentId,
-          operatorId: auth.userId, operatorRole: auth.role, operatorName: auth.name ?? "",
+          // 客户自己下的预报：操作人记唛头，不记客户名字（2026-09-19，见 operatorNameForDisplay）
+          operatorId: auth.userId, operatorRole: auth.role, operatorName: auth.userId,
           fromStatus: "created", toStatus: "created",
           remark: "客户已提交预报，等待国内仓收货",
           nextStop: "国内仓",

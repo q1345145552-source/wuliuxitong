@@ -21,6 +21,7 @@
 import assert from "node:assert/strict";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
+import { operatorNameForDisplay } from "../apps/api/src/modules/core/operator-visibility";
 
 const ROOT = process.cwd();
 const read = (p: string): string => readFileSync(path.join(ROOT, p), "utf-8");
@@ -151,8 +152,9 @@ const apiFiles = walk("apps/api/src").filter((f) => !API_EXEMPT.test(f));
 const API_FIELD = /\bclientName\w*\b|\bcustomerName\b/;
 const API_NOT_CLIENT: NotClient[] = [
   { file: /./, recv: /^(?:this|target|error|e|err)$/, why: "报错类名" },
-  // ⚠️ 当前登录的人：写进日志的「操作人 / 建柜人」。客户自己操作时这里是客户名字，超管看记录能看到（另议，没在这次改）
-  { file: /./, recv: /^auth$/, why: "当前登录的人" },
+  // 当前登录的人：写进记录的「操作人 / 建柜人」。员工 / 管理员接口里是员工自己的名字；
+  // 客户接口里不许用（客户自己操作记唛头，第 2b 项盯着），老记录显示时走 operatorNameForDisplay（第 11 项）
+  { file: /./, recv: /^auth$/, why: "当前登录的人（员工 / 管理员）" },
   { file: /\/modules\/branding\//, recv: /^(?:brand|row)$/, why: "品牌名" },
   { file: /\/modules\/agents\//, recv: /^(?:a|agent|body|actor)$/, why: "代理名 / 代理管理的输入 / 返现单操作人" },
   { file: /\/modules\/admin\/routes\.ts$/, recv: /^(?:agent|body|updateData|created|updated|reviewer)$/, why: "客户管理 / 员工管理的增改、代理名、审核人" },
@@ -227,8 +229,8 @@ function clientRouteViolations(file: string, src: string): string[] {
     if (!m[1].startsWith("/client/")) return;
     const body = code.slice(m.index!, i + 1 < routes.length ? routes[i + 1].index! : undefined);
     for (const b of body.matchAll(CLIENT_ROUTE_BAD)) {
-      // 当前登录的人自己（写日志的操作人）、/client/brand 的品牌名，不算
-      if (b[1] === "auth" || (m[1] === "/client/brand" && b[1] === "brand")) continue;
+      // /client/brand 的品牌名不算。⚠️ auth.name 也算：客户自己操作时记唛头，不记客户名字（2026-09-19）
+      if (m[1] === "/client/brand" && b[1] === "brand") continue;
       out.push(`${file}:${code.slice(0, m.index! + b.index!).split("\n").length}  ${m[1]}  ${b[0]}`);
     }
   });
@@ -236,7 +238,7 @@ function clientRouteViolations(file: string, src: string): string[] {
 }
 let clientRouteCount = 0;
 
-check("2b) 客户能调的接口（/client/...）：查询里不带名字、不整行带出客户、不读 .name", () => {
+check("2b) 客户能调的接口（/client/...）：查询里不带名字、不整行带出客户、不读 .name（包括写记录时的 auth.name）", () => {
   const bad: string[] = [];
   for (const file of apiFiles) {
     const src = read(file);
@@ -367,8 +369,49 @@ check("10) 自检：扫描真能抓到换了写法的「名字当唛头」（含
   // 已知抓不到的：解构（`({ name }) => name`）。这类写法靠代码复查，不靠这份测试。
 });
 
+check("11) 超管看记录时，客户自己操作的那几步「操作人」显示唛头（2026-09-19 老板：「改吧」）", () => {
+  // 统一规则本身：客户那步给唛头，员工 / 管理员照旧给名字；缺 operatorId 的不瞎编
+  const vis = read("apps/api/src/modules/core/operator-visibility.ts");
+  assert.match(vis, /if \(log\.operatorRole === "client" && log\.operatorId\) return log\.operatorId;\s*return log\.operatorName \?\? "";/, "operatorNameForDisplay 规则被改了");
+  assert.equal(operatorNameForDisplay({ operatorRole: "client", operatorId: "XHH6700", operatorName: "杨先" }), "XHH6700", "客户那步没显示唛头");
+  assert.equal(operatorNameForDisplay({ operatorRole: "staff", operatorId: "u_staff1", operatorName: "小王" }), "小王", "员工那步被改成了账号");
+  assert.equal(operatorNameForDisplay({ operatorRole: "admin", operatorId: "u_admin", operatorName: "老板" }), "老板", "管理员那步被改成了账号");
+  assert.equal(operatorNameForDisplay({ operatorRole: "client", operatorId: "", operatorName: "杨先" }), "杨先", "缺账号时不该显示空白");
+  // 发操作人给页面的每一处都要走这条规则（老记录里存的是客户名字，线上 9 条，库里不改）
+  const uses: Array<[string, RegExp]> = [
+    ["apps/api/src/modules/consolidation/routes.ts", /hideOperatorIdentity\(\{ \.\.\.formatted, operatorName: operatorNameForDisplay\(formatted\) \}, viewerRole\)/],
+    ["apps/api/src/modules/whr-consolidation/routes.ts", /operatorName: canSeeOperatorIdentity\(auth\.role\) \? operatorNameForDisplay\(sl\) : undefined,/],
+    ["apps/api/src/modules/whr-consolidation/staff-routes.ts", /operatorName: canSeeOperatorIdentity\(auth\.role\) \? operatorNameForDisplay\(sl\) : undefined,/],
+    ["apps/api/src/modules/containers/routes.ts", /operatorName: operatorNameForDisplay\(log\),/],
+  ];
+  for (const [file, re] of uses) assert.match(stripComments(read(file)), re, `${file} 发操作人没走 operatorNameForDisplay`);
+  // 除了上面这几处和两处「恢复被删的记录」原样搬回（不是显示），接口里不许再有人直接把 xx.operatorName 发出去
+  const raw: string[] = [];
+  for (const file of apiFiles) {
+    stripComments(read(file)).split("\n").forEach((line, n) => {
+      if (file.endsWith("/core/operator-visibility.ts")) return; // 规则本身
+      // 任何对象上读 operatorName 都算，只放行：恢复被删记录时原样搬回（before.），余额流水写入时透传参数（args.）
+      for (const m of line.matchAll(/([\w$\])]*)\s*[?!]?\.operatorName\b/g)) {
+        if (m[1] === "before" || (m[1] === "args" && file.endsWith("/wallet/consolidation-balance.ts"))) continue;
+        raw.push(`${file}:${n + 1}  ${line.trim()}`);
+      }
+    });
+  }
+  assert.equal(raw.length, 0, `这些地方直接发了记录里存的操作人（客户那步会是名字）：\n${raw.join("\n")}`);
+  // 客户接口写记录：记唛头（第 2b 项已经不许客户接口里出现 auth.name，这里再点名钉住 5 处）
+  const writes: Array<[string, number]> = [
+    ["apps/api/src/modules/orders/routes.ts", 1],
+    ["apps/api/src/modules/consolidation/routes.ts", 2],
+    ["apps/api/src/modules/whr-consolidation/client-routes.ts", 2],
+  ];
+  for (const [file, n] of writes) {
+    const got = [...stripComments(read(file)).matchAll(/operatorName: auth\.userId,/g)].length;
+    assert.equal(got, n, `${file} 客户自己操作时记唛头的地方应该有 ${n} 处，找到 ${got} 处`);
+  }
+});
+
 if (failures > 0) {
   console.log(`❌ 失败 ${failures} 项`);
   process.exit(1);
 }
-console.log("✅ 唛头显示：11 项全部通过");
+console.log("✅ 唛头显示：12 项全部通过");

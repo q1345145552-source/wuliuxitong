@@ -23,7 +23,7 @@ import { syncParentStatusFromChildren } from "../shipments/parent-status";
 import type { MinimalHttpApp } from "../../server";
 import { fail, ok, requireRole } from "../core/http-utils";
 import { sanitizeRemarkForClient } from "../core/client-privacy";
-import { hideOperatorIdentity } from "../core/operator-visibility";
+import { hideOperatorIdentity, operatorNameForDisplay } from "../core/operator-visibility";
 import { productNamesLabel } from "../../../../../packages/shared-types/product-names";
 import { logger } from "../core/logger";
 import { canTransitLoose } from "../shipments/routes";
@@ -1435,7 +1435,7 @@ export function registerContainerRoutes(app: MinimalHttpApp): void {
     const sanitizeRemark = (remark: string): string =>
       sanitizeRemarkForClient(remark, isClient);
 
-    type TrackLog = { id: string; fromStatus: string; toStatus: string; remark: string | null; nextStop?: string | null; changedAt: Date; operatorRole: string; operatorName: string | null };
+    type TrackLog = { id: string; fromStatus: string; toStatus: string; remark: string | null; nextStop?: string | null; changedAt: Date; operatorId: string; operatorRole: string; operatorName: string | null };
     /**
      * 显示当前状态的最后一条不给删（2026-09-17 老板拍板，删除只删记录不改状态）。
      * 按每票货自己的当前状态、自己的记录算 —— 父单页签里混着子单的记录，子单那条看子单的状态。
@@ -1473,7 +1473,8 @@ export function registerContainerRoutes(app: MinimalHttpApp): void {
          * ⚠️ 上面的 id / canDelete / isCurrentStatus 不是操作人身份，员工删「写错的一条」要靠它，别一起摘。
          */
         operatorRole: log.operatorRole,
-        operatorName: log.operatorName ?? "",
+        // 客户自己操作的那步（下预报单）显示唛头，不显示客户名字（2026-09-19）
+        operatorName: operatorNameForDisplay(log),
       }, auth.role);
     };
     const ownerOf = (s: { currentStatus: string; statusLogs: TrackLog[] }) => ({

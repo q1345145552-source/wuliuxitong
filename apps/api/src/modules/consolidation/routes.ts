@@ -5,7 +5,7 @@ import type { MinimalHttpApp } from "../../server";
 import { fail, ok, requireRole } from "../core/http-utils";
 import { logger } from "../core/logger";
 import { BusinessError } from "../core/business-error";
-import { hideOperatorIdentity, hideOperatorInRemark } from "../core/operator-visibility";
+import { hideOperatorIdentity, hideOperatorInRemark, operatorNameForDisplay } from "../core/operator-visibility";
 import { verifyPassword } from "../auth/crypto-utils";
 // 取消任务验管理员密码用的失败限流（2026-08-31 Codex 复核）：复用登录那套内存计数器
 import { rateLimitKey, isFailureBlocked, failureRetryAfterMs, recordFailure, clearFailures } from "../core/rate-limit";
@@ -391,7 +391,9 @@ function formatStatusLog(log: any) {
  * 备注开头代码自己拼的「管理员…」也一并去掉（见 hideOperatorInRemark），库里原文不动。
  */
 function formatStatusLogForViewer(log: any, viewerRole: string) {
-  const base = hideOperatorIdentity(formatStatusLog(log), viewerRole);
+  // 客户自己操作的那步，操作人显示唛头不显示客户名字（operatorNameForDisplay，2026-09-19）
+  const formatted = formatStatusLog(log);
+  const base = hideOperatorIdentity({ ...formatted, operatorName: operatorNameForDisplay(formatted) }, viewerRole);
   return typeof base.remark === "string" ? { ...base, remark: hideOperatorInRemark(base.remark, viewerRole) } : base;
 }
 
@@ -1100,7 +1102,8 @@ export function registerConsolidationRoutes(app: MinimalHttpApp): void {
           refNo: task.taskNo,
           remark: "普通版集货付款",
           operatorId: auth.userId,
-          operatorName: auth.name || auth.userId,
+          // 客户自己付的款：操作人记唛头，不记客户名字（2026-09-19，见 operatorNameForDisplay）
+          operatorName: auth.userId,
         });
         await tx.consolidationTask.update({
           where: { id: task.id },
@@ -1122,7 +1125,7 @@ export function registerConsolidationRoutes(app: MinimalHttpApp): void {
             companyId: auth.companyId,
             operatorId: auth.userId,
             operatorRole: auth.role,
-            operatorName: auth.name || auth.userId,
+            operatorName: auth.userId, // 客户自己付的款：记唛头（2026-09-19）
             fromStatus: "quoted",
             toStatus: "paid",
             remark: `客户用集货余额付款 ¥${amount.toFixed(2)}`,

@@ -4,7 +4,7 @@ import type { MinimalHttpApp } from "../../server";
 import { fail, ok, requireRole } from "../core/http-utils";
 import { saveImageToDisk, deleteImageFile } from "../orders/image-storage";
 import { BusinessError } from "../core/business-error";
-import { canSeeOperatorIdentity, hideOperatorInRemark } from "../core/operator-visibility";
+import { canSeeOperatorIdentity, hideOperatorInRemark, operatorNameForDisplay } from "../core/operator-visibility";
 import { lockPrealertExpecting, lockPlanAliveByPrealert, PlanCancelledError, PlanMissingError } from "./plan-guard";
 import {
   buildFeeBreakdown,
@@ -209,7 +209,8 @@ export function registerWhrConsolidationStaffRoutes(app: MinimalHttpApp): void {
       statusLogs: pa.statusLogs.map((sl) => ({
         id: sl.id,
         // 2026-09-15：操作人只给超级管理员；备注开头的「管理员」也只给超级管理员
-        operatorName: canSeeOperatorIdentity(auth.role) ? sl.operatorName : undefined,
+        // 客户自己操作的那步显示唛头（operatorNameForDisplay，2026-09-19）
+        operatorName: canSeeOperatorIdentity(auth.role) ? operatorNameForDisplay(sl) : undefined,
         operatorRole: canSeeOperatorIdentity(auth.role) ? sl.operatorRole : undefined,
         fromStatus: sl.fromStatus,
         toStatus: sl.toStatus,

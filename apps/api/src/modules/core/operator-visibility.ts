@@ -75,6 +75,24 @@ export function hideOperatorIdentity<T extends object>(
 }
 
 /**
+ * 超管看到的「操作人」写什么（2026-09-19）。
+ *
+ * 客户自己操作的那几步（下预报单、用余额付款），记录里存的 operatorName 是当时登录的**客户名字**。
+ * 老板拍板：唛头=账号，客户名字只在「客户管理」里给内部看，其他地方标识客户一律显示唛头 ——
+ * 所以客户那几步一律显示唛头（operatorId），员工 / 管理员照旧显示名字。
+ * 客户接口从 2026-09-19 起写记录时就记唛头；这里兜住之前记下的老记录（线上只读查过：9 条），库里原文不动。
+ * 只管「显示什么」，「谁能看」照旧走上面的 canSeeOperatorIdentity / hideOperatorIdentity。
+ */
+export function operatorNameForDisplay(log: {
+  operatorRole?: string | null;
+  operatorId?: string | null;
+  operatorName?: string | null;
+}): string {
+  if (log.operatorRole === "client" && log.operatorId) return log.operatorId;
+  return log.operatorName ?? "";
+}
+
+/**
  * 代码自己拼进备注正文里的身份词。
  *
  * 系统里有 8 处模板把「管理员」写在备注开头（生产库 2026-09-15 只读实查：目前 0 行）：

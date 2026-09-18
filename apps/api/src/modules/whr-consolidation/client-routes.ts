@@ -765,7 +765,8 @@ export function registerWhrConsolidationClientRoutes(app: MinimalHttpApp): void 
           refNo: prealert.trackingNo,
           remark: "仓库版集货付款",
           operatorId: auth.userId,
-          operatorName: auth.name || auth.userId,
+          // 客户自己付的款：操作人记唛头，不记客户名字（2026-09-19，见 operatorNameForDisplay）
+          operatorName: auth.userId,
         });
         await tx.whrConsolidationPrealert.update({
           where: { id: prealert.id },
@@ -783,7 +784,7 @@ export function registerWhrConsolidationClientRoutes(app: MinimalHttpApp): void 
             companyId: auth.companyId,
             operatorId: auth.userId,
             operatorRole: "client",
-            operatorName: auth.name || auth.userId,
+            operatorName: auth.userId, // 客户自己付的款：记唛头（2026-09-19）
             fromStatus: "received_pending_payment",
             toStatus: "paid",
             remark: `客户用集货余额付款 ¥${amount.toFixed(2)}`,
