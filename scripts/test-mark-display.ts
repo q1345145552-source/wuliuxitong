@@ -62,9 +62,20 @@ type Hit = { file: string; line: number; text: string };
  */
 const DOT_NAME = /([\w$\])]*)\s*[?!]?\.name\b/g;
 type NotClient = { file: RegExp; recv: RegExp; why: string };
+/**
+ * 不用「.name」也能读到名字的写法（第 3 轮两位实测绕过）：`row["name"]`、`const { name } = row`、`({ name }) => …`。
+ * 现在代码里一处都没有，出现就算可疑（要用就改成唛头，或问过老板后加进允许清单）。
+ */
+const NAME_KEY = String.raw`(?:name|clientName|customerName)`;
+const OTHER_NAME_READ = new RegExp(
+  String.raw`\[\s*["'\x60]` + NAME_KEY + String.raw`["'\x60]\s*\]` +
+  String.raw`|\b(?:const|let|var)\s*\{[^}]*\b` + NAME_KEY + String.raw`\b[^}]*\}\s*=` +
+  String.raw`|\(\s*\{[^}]*\b` + NAME_KEY + String.raw`\b[^}]*\}[^)]*\)\s*=>`,
+);
 function suspiciousLine(file: string, text: string, field: RegExp, notClient: NotClient[]): boolean {
   const exempt = notClient.filter((n) => n.file.test(file));
-  return field.test(text) || [...text.matchAll(DOT_NAME)].some((m) => !exempt.some((n) => n.recv.test(m[1])));
+  return field.test(text) || OTHER_NAME_READ.test(text) ||
+    [...text.matchAll(DOT_NAME)].some((m) => !exempt.some((n) => n.recv.test(m[1])));
 }
 function scan(files: string[], field: RegExp, notClient: NotClient[]): Hit[] {
   const hits: Hit[] = [];
@@ -220,25 +231,43 @@ check("2) 接口里每一处读客户名字的地方都在允许清单里，且�
  * ⚠️ 上面那道扫描只看得见 `.name`，看不见「查询里 select 了 name，再把整个 client 对象原样返回」
  *    —— Opus 第 2 轮实测过这样能绕过（CLAUDE.md #31：接口返回里有就是泄漏）。
  */
-const CLIENT_ROUTE_BAD = /\bname\s*:\s*true\b|\b(?:client|user|users|owner|customer)\s*:\s*true\b|\.\.\.\s*[\w.?]*\bclient\b|([\w$\])]*)\s*[?!]?\.name\b/g;
+const CLIENT_ROUTE_BAD = /\bname\s*:\s*true\b|\b(?:client|user|users|owner|customer)\s*:\s*true\b|\.\.\.\s*[\w.?]*\bclient\b|\[\s*["'\x60]name["'\x60]\s*\]|\{[^}]*\bname\b[^}]*\}\s*=\s*auth\b|([\w$\])]*)\s*[?!]?\.name\b/g;
+/**
+ * 「客户能调的接口」按**放不放客户进来**认：路径以 /client/ 开头，或者 requireRole 的名单里有 "client"
+ * （第 3 轮两位报：/staff/shipments/images、/staff/orders/product-images 这种员工路径也放客户进来，原来只认路径前缀扫不到）。
+ * 另外把名字叫 xxxForClient 的函数整个扫一遍（formatTaskForClient 这类写在接口外面、专给客户用的）。
+ */
+function bodyOfFunction(code: string, start: number): string {
+  const open = code.indexOf("{", start);
+  let depth = 0;
+  for (let i = open; i < code.length; i++) {
+    if (code[i] === "{") depth++;
+    else if (code[i] === "}" && --depth === 0) return code.slice(start, i + 1);
+  }
+  return code.slice(start);
+}
 function clientRouteViolations(file: string, src: string): string[] {
   const code = stripComments(src);
   const routes = [...code.matchAll(/app\.(?:get|post|put|patch|delete)\(\s*"([^"]+)"/g)];
   const out: string[] = [];
-  routes.forEach((m, i) => {
-    if (!m[1].startsWith("/client/")) return;
-    const body = code.slice(m.index!, i + 1 < routes.length ? routes[i + 1].index! : undefined);
+  const scanBody = (label: string, at: number, body: string, isBrand: boolean) => {
     for (const b of body.matchAll(CLIENT_ROUTE_BAD)) {
       // /client/brand 的品牌名不算。⚠️ auth.name 也算：客户自己操作时记唛头，不记客户名字（2026-09-19）
-      if (m[1] === "/client/brand" && b[1] === "brand") continue;
-      out.push(`${file}:${code.slice(0, m.index! + b.index!).split("\n").length}  ${m[1]}  ${b[0]}`);
+      if (isBrand && b[1] === "brand") continue;
+      out.push(`${file}:${code.slice(0, at + b.index!).split("\n").length}  ${label}  ${b[0]}`);
     }
+  };
+  routes.forEach((m, i) => {
+    const body = code.slice(m.index!, i + 1 < routes.length ? routes[i + 1].index! : undefined);
+    const letsClientIn = m[1].startsWith("/client/") || /requireRole\([^)]*\[[^\]]*"client"/.test(body);
+    if (letsClientIn) scanBody(m[1], m.index!, body, m[1] === "/client/brand");
   });
+  for (const f of code.matchAll(/function\s+(\w*ForClient)\s*\(/g)) scanBody(f[1], f.index!, bodyOfFunction(code, f.index!), false);
   return out;
 }
 let clientRouteCount = 0;
 
-check("2b) 客户能调的接口（/client/...）：查询里不带名字、不整行带出客户、不读 .name（包括写记录时的 auth.name）", () => {
+check("2b) 客户能调的接口（/client/... 或放客户进来的）：查询里不带名字、不整行带出客户、不读名字（包括写记录时的 auth.name）", () => {
   const bad: string[] = [];
   for (const file of apiFiles) {
     const src = read(file);
@@ -279,8 +308,9 @@ check("5) 选客户的下拉只显示唛头：选项值就是唛头，选中后�
   const options = [...staff.matchAll(/<option key=\{item\.id\} value=\{([^}]+)\} \/>/g)].map((m) => m[1]);
   assert.equal(options.length, 2, `员工创建订单的两个客户下拉应该各有一处，找到 ${options.length} 处`);
   for (const v of options) assert.equal(v, "item.id", `下拉选项值不是唛头：${v}`);
-  const matchers = [...staff.matchAll(/allClientOptions\.find\(\(c\) => ([^)]*\))\)/g)].map((m) => m[1]);
-  assert.ok(matchers.filter((m) => m.startsWith("c.id === e.target.value")).length === 2, `选中后不是按唛头认的：${matchers.join(" / ")}`);
+  // 跟唛头一字不差才算选中；⚠️ 不能先去空格再比：打到「XPP-0015 」（空格是长账号的一部分）会被当成短账号（Opus 第 3 轮）
+  assert.equal([...staff.matchAll(/allClientOptions\.find\(\(c\) => c\.id === e\.target\.value\)/g)].length, 2, "选中后不是按唛头一字不差认的");
+  assert.ok(!/allClientOptions\.find\(\(c\) => c\.id === e\.target\.value\.trim\(\)\)/.test(staff), "选客户先去了空格再比，打到一半的长账号会被当成短账号");
   // 不是完整唛头就清空「已选唛头」：线上有「XPP-0015」和「XPP-0015 XHH-6698」这种，一个是另一个的开头，
   // 只选不清的话打到一半会停在短的那个账号上（Opus 第 2 轮报）
   assert.equal([...staff.matchAll(/setForm\(\(v\) => \(\{ \.\.\.v, clientId: match \? match\.id : "" \}\)\)/g)].length, 2, "输入框不是完整唛头时没把「已选唛头」清空");
@@ -297,7 +327,7 @@ check("6) 财务、柜子收款、尾端派送工作台、客户自己的仓库�
   assert.match(read("apps/api/src/modules/finance/routes.ts"), /client: t\.clientId \|\| "—",/, "财务页普通版那一行没显示唛头");
   // 仓库版那一行显示的是客户自填的唛头，按账号搜要靠单独发的 clientId
   assert.match(read("apps/api/src/modules/finance/routes.ts"), /clientId: p\.planCustomer\?\.clientId \?\? "",/, "财务页仓库版那一行没带账号，按账号搜不到");
-  assert.match(read("apps/web/src/app/admin/finance/page.tsx"), /r\.clientId\.toLowerCase\(\)\.includes\(kw\)/, "财务页搜索不能按账号搜");
+  assert.match(read("apps/web/src/app/admin/finance/page.tsx"), /\(r\.clientId \?\? ""\)\.toLowerCase\(\)\.includes\(kw\)/, "财务页搜索不能按账号搜");
   const ops = read("apps/api/src/modules/admin-ops/routes.ts");
   assert.match(ops, /clientId: c\.clientId \|\| "—",/, "柜子收款仓库版客户明细没显示唛头");
   assert.match(ops, /clientId: t\.clientId \|\| "—",/, "柜子收款普通版客户明细没显示唛头");
@@ -341,6 +371,10 @@ check("10) 自检：扫描真能抓到换了写法的「名字当唛头」（含
     "const hit = staffClients.find((c) => c.id === id); return hit?.name;",
     "?.name ?? \"\"}",
     "<td>{target.name}</td>",
+    "const zzLeak = (row: any) => <td>{row[\"name\"]}</td>;",
+    "const { name } = row;",
+    "const { id, name: who } = row;",
+    "rows.map(({ name }) => <td>{name}</td>)",
   ]) {
     assert.ok(suspiciousLine(WEB_AT, variant, WEB_FIELD, WEB_NOT_CLIENT), `页面扫描抓不到：${variant}`);
     assert.ok(!WEB_GENERIC.some((g) => g.re.test(variant.trim())), `页面扫描把它当成了类型声明放行：${variant}`);
@@ -363,6 +397,10 @@ check("10) 自检：扫描真能抓到换了写法的「名字当唛头」（含
     'app.get("/client/x", async (req, res) => { const c = await prisma.a.findFirst({ include: { client: { select: { name: true, phone: true } } } }); ok(res, { client: c.client }); });',
     'app.get("/client/x", async (req, res) => { const c = await prisma.a.findFirst({ include: { client: true } }); ok(res, c); });',
     'app.get("/client/x", async (req, res) => { const c = await prisma.a.findFirst({}); ok(res, { ...c.client }); });',
+    'app.get("/client/x", async (req, res) => { const { name } = auth; ok(res, { who: name }); });',
+    'app.get("/client/x", async (req, res) => { ok(res, { who: auth["name"] }); });',
+    'app.get("/staff/x", async (req, res) => { const auth = requireRole(req, res, ["client", "staff"]); ok(res, { who: u.name }); });',
+    'function formatThingForClient(t: any) { return { who: t.client.name }; }',
   ]) {
     assert.ok(clientRouteViolations("x.ts", route).length > 0, `客户接口扫描抓不到：${route}`);
   }
@@ -383,6 +421,8 @@ check("11) 超管看记录时，客户自己操作的那几步「操作人」显
     ["apps/api/src/modules/whr-consolidation/routes.ts", /operatorName: canSeeOperatorIdentity\(auth\.role\) \? operatorNameForDisplay\(sl\) : undefined,/],
     ["apps/api/src/modules/whr-consolidation/staff-routes.ts", /operatorName: canSeeOperatorIdentity\(auth\.role\) \? operatorNameForDisplay\(sl\) : undefined,/],
     ["apps/api/src/modules/containers/routes.ts", /operatorName: operatorNameForDisplay\(log\),/],
+    // 超管「删过的轨迹」：被删那条原样发回，客户那步也要换（第 3 轮 Opus）
+    ["apps/api/src/modules/shipments/routes.ts", /log = \{ \.\.\.log, operatorName: operatorNameForDisplay\(log as /],
   ];
   for (const [file, re] of uses) assert.match(stripComments(read(file)), re, `${file} 发操作人没走 operatorNameForDisplay`);
   // 除了上面这几处和两处「恢复被删的记录」原样搬回（不是显示），接口里不许再有人直接把 xx.operatorName 发出去
@@ -390,10 +430,24 @@ check("11) 超管看记录时，客户自己操作的那几步「操作人」显
   for (const file of apiFiles) {
     stripComments(read(file)).split("\n").forEach((line, n) => {
       if (file.endsWith("/core/operator-visibility.ts")) return; // 规则本身
-      // 任何对象上读 operatorName 都算，只放行：恢复被删记录时原样搬回（before.），余额流水写入时透传参数（args.）
+      // 任何对象上读 operatorName 都算，只放行：恢复被删记录时原样搬回（shipments / containers 两处的 before.），
+      // 余额流水写入时透传参数（args.）
+      const restoreFile = file.endsWith("/shipments/routes.ts") || file.endsWith("/containers/routes.ts");
       for (const m of line.matchAll(/([\w$\])]*)\s*[?!]?\.operatorName\b/g)) {
-        if (m[1] === "before" || (m[1] === "args" && file.endsWith("/wallet/consolidation-balance.ts"))) continue;
+        if ((m[1] === "before" && restoreFile) || (m[1] === "args" && file.endsWith("/wallet/consolidation-balance.ts"))) continue;
         raw.push(`${file}:${n + 1}  ${line.trim()}`);
+      }
+      // 方括号取值、解构（第 3 轮 Opus 实测绕过）
+      if (/\[\s*["'\x60]operatorName["'\x60]\s*\]|\{[^}]*\boperatorName\b[^}]*\}\s*(?:=(?!=)|\)\s*=>)|\(\s*\{[^}]*\boperatorName\b[^}]*\}[^)]*\)\s*=>/.test(line)) raw.push(`${file}:${n + 1}  ${line.trim()}`);
+      // 把一整条记录展开（...log / ...sl）发出去 = 连存的操作人一起带出去（第 3 轮 Opus：这个项目最常见的漏法）。
+      // 现有 4 处逐个核过：普通版 formatStatusLog（后面马上换成 operatorNameForDisplay）、删掉的轨迹（同一行就换）、
+      // 删轨迹时写审计原文（进库不发页面）、客户仓库版时间线（后面逐个字段挑，不带操作人）
+      if (/\.\.\.\s*(?:log|sl|l|row|entry|record|lockedLog|before)\b/.test(line)) {
+        const ok = (file.endsWith("/consolidation/routes.ts") && /^\.\.\.log,$/.test(line.trim())) ||
+          (file.endsWith("/shipments/routes.ts") && /\{ \.\.\.log, operatorName: operatorNameForDisplay\(/.test(line)) ||
+          (file.endsWith("/shipments/routes.ts") && /beforeJson: JSON\.stringify\(\{ \.\.\.lockedLog, /.test(line)) ||
+          (file.endsWith("/whr-consolidation/client-routes.ts") && /\(\{ \.\.\.sl, trackingNo: pa\.trackingNo \}\)/.test(line));
+        if (!ok) raw.push(`${file}:${n + 1}  ${line.trim()}（整条展开）`);
       }
     });
   }

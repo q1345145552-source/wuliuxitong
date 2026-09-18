@@ -1364,8 +1364,9 @@ export default function StaffHomePage() {
                 setClientSearchKeyword(e.target.value);
                 // 下拉里只显示唛头（不带客户名字，2026-09-19），选中后输入框里就是唛头本身。
                 // ⚠️ 不是完整唛头就把「已选唛头」清空：线上有「XPP-0015」和「XPP-0015 XHH-6698」这种一个是另一个开头的账号，
-                // 打到一半会先碰上短的那个，只选不清的话，打错 / 没打完就会停在别人的账号上
-                const match = allClientOptions.find((c) => c.id === e.target.value.trim());
+                // 打到一半会先碰上短的那个，只选不清的话，打错 / 没打完就会停在别人的账号上。
+                // ⚠️ 也不能先去空格再比：打到「XPP-0015 」（后面那个空格是长账号的一部分）会被当成短账号选中（Opus 第 3 轮）
+                const match = allClientOptions.find((c) => c.id === e.target.value);
                 setForm((v) => ({ ...v, clientId: match ? match.id : "" }));
               }}
               onFocus={() => setClientSearchKeyword("")}
@@ -2499,7 +2500,7 @@ export default function StaffHomePage() {
             <h3 style={{ margin: "0 0 16px", fontSize: 18, fontWeight: 600 }}>创建订单</h3>
             <div style={{ display: "grid", gap: 8 }}>
               <div style={{ position: "relative" }}>
-                <input value={clientSearchKeyword} onChange={(e) => { setClientSearchKeyword(e.target.value); const match = allClientOptions.find((c) => c.id === e.target.value.trim()); setForm((v) => ({ ...v, clientId: match ? match.id : "" })); /* 不是完整唛头就清空，理由见上面那个输入框 */ }} onFocus={() => setClientSearchKeyword("")} placeholder="搜索唛头…" list="client-options-modal" autoComplete="off" style={{ ...orderCreateInputStyle, width: "100%" }} />
+                <input value={clientSearchKeyword} onChange={(e) => { setClientSearchKeyword(e.target.value); const match = allClientOptions.find((c) => c.id === e.target.value); setForm((v) => ({ ...v, clientId: match ? match.id : "" })); /* 不是完整唛头就清空，理由见上面那个输入框 */ }} onFocus={() => setClientSearchKeyword("")} placeholder="搜索唛头…" list="client-options-modal" autoComplete="off" style={{ ...orderCreateInputStyle, width: "100%" }} />
                 <datalist id="client-options-modal">
                   {filteredClientOptions.map((item) => (
                     <option key={item.id} value={item.id} />

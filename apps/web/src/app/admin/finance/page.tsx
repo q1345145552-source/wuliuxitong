@@ -37,7 +37,7 @@ export default function AdminFinancePage() {
     if (!data) return [];
     const kw = keyword.trim().toLowerCase();
     return data.rows.filter((r) => {
-      if (kw && !(r.no.toLowerCase().includes(kw) || r.client.toLowerCase().includes(kw) || r.clientId.toLowerCase().includes(kw))) return false;
+      if (kw && !(r.no.toLowerCase().includes(kw) || r.client.toLowerCase().includes(kw) || (r.clientId ?? "").toLowerCase().includes(kw))) return false;
       if (kindFilter !== "ALL" && r.kind !== kindFilter) return false;
       if (payFilter === "PAID" && !r.paid) return false;
       if (payFilter === "UNPAID" && r.paid) return false;

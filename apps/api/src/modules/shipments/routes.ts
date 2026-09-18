@@ -18,7 +18,7 @@ import { loadPartialAhead } from "./partial-status";
 import { CONTAINER_PUSH_LOG_MESSAGE, CURRENT_STATUS_LOG_MESSAGE, deleteBlockedReasonOf, MANAGED_LASTMILE_LOG_MESSAGE } from "./managed-lastmile-log";
 import { findDeletedLogAudits } from "./deleted-log-audits";
 import { BusinessError } from "../core/business-error";
-import { canSeeOperatorIdentity } from "../core/operator-visibility";
+import { canSeeOperatorIdentity, operatorNameForDisplay } from "../core/operator-visibility";
 
 interface Kuaidi100QueryPayload {
   com?: string;
@@ -704,6 +704,9 @@ export function registerShipmentRoutes(app: MinimalHttpApp): void {
       items: [...latestByLog.values()].map((r) => {
         let log: Record<string, unknown> = {};
         try { log = JSON.parse(r.beforeJson ?? "{}"); } catch { log = {}; }
+        // 被删的那条如果是客户自己下预报那步，老记录里存的是客户名字 —— 发给页面前换成唛头（2026-09-19，Opus 第 3 轮）。
+        // 只改发出去的这份，恢复用的是库里的 beforeJson 原文，不受影响
+        if ("operatorName" in log) log = { ...log, operatorName: operatorNameForDisplay(log as Parameters<typeof operatorNameForDisplay>[0]) };
         return {
           auditId: r.id,
           deletedBy: r.actorId,
