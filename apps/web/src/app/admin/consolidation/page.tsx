@@ -166,7 +166,7 @@ export default function AdminConsolidationPage() {
     let list = tasks;
     if (searchText) {
       const s = searchText.trim().toLowerCase();
-      list = list.filter((t) => t.taskNo.toLowerCase().includes(s) || (t.clientName ?? "").toLowerCase().includes(s));
+      list = list.filter((t) => t.taskNo.toLowerCase().includes(s) || (t.clientId ?? "").toLowerCase().includes(s) || (t.clientName ?? "").toLowerCase().includes(s));
     }
     return list;
   }, [tasks, searchText]);
@@ -437,7 +437,7 @@ export default function AdminConsolidationPage() {
               <option value="">全部状态</option>
               {ALL_STATUSES.map((s) => <option key={s} value={s}>{STATUS_ZH[s]}</option>)}
             </select>
-            <input placeholder="搜索任务编号 / 客户名" value={searchText} onChange={(e) => setSearchText(e.target.value)} style={{ padding: "6px 12px", border: "1px solid var(--l-strong)", borderRadius: 6, fontSize: 13, width: 220 }} />
+            <input placeholder="搜索任务编号 / 唛头 / 客户名" value={searchText} onChange={(e) => setSearchText(e.target.value)} style={{ padding: "6px 12px", border: "1px solid var(--l-strong)", borderRadius: 6, fontSize: 13, width: 220 }} />
           </div>
           {loading ? <p style={{ color: "var(--t-muted)" }}>加载中...</p> : filteredTasks.length === 0 ? <p style={{ color: "var(--t-faint)", textAlign: "center", padding: 40 }}>暂无任务</p> : (
             <div style={{ overflowX: "auto" }}>
@@ -459,7 +459,7 @@ export default function AdminConsolidationPage() {
                       onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = "var(--s-alt)"; }}
                       onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = ""; }}>
                       <td onClick={() => selectTask(t.id)} style={{ ...tdS, fontWeight: 600, whiteSpace: "nowrap", minWidth: 140 }}>{t.taskNo}</td>
-                      <td onClick={() => selectTask(t.id)} style={{ ...tdS, minWidth: 80 }}>{t.clientName || "-"}</td>
+                      <td onClick={() => selectTask(t.id)} style={{ ...tdS, minWidth: 80 }}>{t.clientId || "-"}</td>
                       <td onClick={() => selectTask(t.id)} style={{ ...tdS, maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.destinationTh}</td>
                       <td onClick={() => selectTask(t.id)} style={tdS}>
                         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
@@ -494,7 +494,7 @@ export default function AdminConsolidationPage() {
             <button onClick={() => { selectTask(null); setPreviewImage(null); setExpandedPrealerts(new Set()); setEditPrealert(null); setEditMark(""); setEditExpressNo(""); setEditProductRows([]); setEditSubmitting(false); setDeletePrealertId(null); setDeleteTaskId(null); setReviewSubmitting(false); setShowRejectDialog(false); setRejectReason(""); setToast(""); loadTasks(); }} style={{ padding: "6px 14px", border: "1px solid var(--l-strong)", background: "var(--white)", color: "var(--t-muted)", borderRadius: 6, cursor: "pointer", fontSize: 13 }}>← 返回</button>
             <h2 style={{ fontSize: 20, margin: 0 }}>{taskDetail.taskNo}</h2>
             <div style={{ fontSize: 12, color: "var(--t-muted)", marginBottom: 8 }}>创建时间：{formatBeijingTime(taskDetail.createdAt)}</div>
-            <span style={{ color: "var(--t-muted)", fontSize: 13 }}>{taskDetail.clientName}</span>
+            <span style={{ color: "var(--t-muted)", fontSize: 13 }}>{taskDetail.clientId}</span>
             <span style={{ fontSize: 11, padding: "2px 8px", borderRadius: 4, background: "var(--c-blue-bg-2)", color: "var(--c-blue-deep)" }}>{STATUS_ZH[taskDetail.status] || taskDetail.status}</span>
             <div style={{ flex: 1 }} />
             <button onClick={() => { if (taskDetail) { void openDeleteTask(taskDetail.id); selectTask(null); } }} style={{ padding: "6px 14px", border: "1px solid var(--c-red)", color: "var(--c-red)", background: "var(--white)", borderRadius: 6, cursor: "pointer", fontSize: 13 }}>删除任务</button>

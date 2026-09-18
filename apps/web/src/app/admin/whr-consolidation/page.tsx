@@ -454,13 +454,15 @@ export default function AdminWhrConsolidationPage() {
     return () => clearTimeout(t);
   }, [toast]);
 
-  // 客户搜索：本地按姓名/电话/公司过滤，已选中的始终保留在列表里
+  // 客户搜索：本地按唛头/姓名/电话/公司过滤，已选中的始终保留在列表里
+  //（显示一律用唛头 —— 唛头就是账号，名字只在「客户管理」里给内部看，2026-09-18 老板定）
   const filteredClients = (() => {
     const q = clientSearch.trim().toLowerCase();
     if (!q) return clients;
     return clients.filter(
       (cl) =>
         selectedCustomers.some((sc) => sc.clientId === cl.id) ||
+        cl.id.toLowerCase().includes(q) ||
         (cl.name ?? "").toLowerCase().includes(q) ||
         (cl.phone ?? "").toLowerCase().includes(q) ||
         (cl.companyName ?? "").toLowerCase().includes(q),
@@ -495,7 +497,7 @@ export default function AdminWhrConsolidationPage() {
     // 三档单价当场填（2026-09-18）：页面先挡一次，说了算的是后端那道 requireUnitPrice
     for (let i = 0; i < selectedCustomers.length; i++) {
       const c = selectedCustomers[i];
-      const name = clients.find((cl) => cl.id === c.clientId)?.name ?? `第 ${i + 1} 位客户`;
+      const name = c.clientId || `第 ${i + 1} 位客户`;
       const checks: Array<[string, string]> = [["普货", c.unitPriceNormal], ["商检货", c.unitPriceInspection], ["敏感货", c.unitPriceSensitive]];
       for (const [label, raw] of checks) {
         const issue = unitPriceIssue(label, raw);
@@ -787,10 +789,10 @@ export default function AdminWhrConsolidationPage() {
     if (!selectedPlanId) return;
     const paCount = c.prealerts?.length ?? 0;
     if (paCount > 0) {
-      setToast(`${c.clientName} 名下还有 ${paCount} 个预报单，请先逐个取消后再移除`);
+      setToast(`${c.clientId} 名下还有 ${paCount} 个预报单，请先逐个取消后再移除`);
       return;
     }
-    if (!confirm(`确定把「${c.clientName}」从本计划移除？\n\n该客户名下没有预报单，移除后只会删掉这条参与记录。`)) return;
+    if (!confirm(`确定把「${c.clientId}」从本计划移除？\n\n该客户名下没有预报单，移除后只会删掉这条参与记录。`)) return;
     setRemovingCustomerId(c.id);
     try {
       await apiRequest(`${apiBaseUrl()}/admin/whr-consolidation/customers/remove`, {
@@ -798,7 +800,7 @@ export default function AdminWhrConsolidationPage() {
         headers: jsonPost,
         body: JSON.stringify({ planId: selectedPlanId, customerId: c.id }),
       });
-      setToast(`已移除 ${c.clientName}`);
+      setToast(`已移除 ${c.clientId}`);
       loadDetail(selectedPlanId);
     } catch (e: any) { setToast(e?.message ?? "移除失败"); }
     finally { setRemovingCustomerId(""); }
@@ -826,7 +828,7 @@ export default function AdminWhrConsolidationPage() {
         headers: jsonPost,
         body: JSON.stringify({ planId: selectedPlanId, customerId: addressTarget.id, deliveryAddress: v }),
       });
-      setToast(`已保存 ${addressTarget.clientName} 的泰国收货地址`);
+      setToast(`已保存 ${addressTarget.clientId} 的泰国收货地址`);
       setAddressTarget(null);
       loadDetail(selectedPlanId);
     } catch (e: any) {
@@ -964,7 +966,7 @@ export default function AdminWhrConsolidationPage() {
                       {/* 客户卡片头 */}
                       <div onClick={() => setExpandedCustomer(isExpanded ? null : c.id)} style={{ cursor: "pointer", padding: "12px 16px", display: "flex", justifyContent: "space-between", alignItems: "center", background: isExpanded ? "var(--s-alt)" : "white" }}>
                         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                          <span style={{ fontWeight: 600, fontSize: 15 }}>{c.clientName}</span>
+                          <span style={{ fontWeight: 600, fontSize: 15 }}>{c.clientId}</span>
                           <span style={{ fontSize: 12, color: "var(--t-muted)" }}>{c.clientPhone} · {c.clientCompany}</span>
                           <span style={{ fontSize: 12, padding: "2px 8px", borderRadius: 4, background: "var(--s-sunken)", color: "var(--t-muted)" }}>参与客户</span>
                         </div>
@@ -1371,7 +1373,7 @@ export default function AdminWhrConsolidationPage() {
         {/* ================================================================ */}
         {addressTarget && selectedPlanId && (
           <Modal onClose={() => setAddressTarget(null)}>
-            <h3 style={{ marginTop: 0 }}>{addressTarget.deliveryAddress?.trim() ? "改" : "填"}泰国收货地址 - {addressTarget.clientName}</h3>
+            <h3 style={{ marginTop: 0 }}>{addressTarget.deliveryAddress?.trim() ? "改" : "填"}泰国收货地址 - {addressTarget.clientId}</h3>
             <p style={{ fontSize: 13, color: "var(--t-muted)", margin: "0 0 8px", lineHeight: 1.7 }}>
               替客户填这个柜的泰国收货地址，跟客户自己在「集货拼柜（仓库版）」里填的是同一个，客户那边马上能看到。
               这位客户在本柜有货发运之后就不能再改。
@@ -1390,7 +1392,7 @@ export default function AdminWhrConsolidationPage() {
         {/* ================================================================ */}
         {priceTarget && selectedPlanId && (
           <Modal onClose={() => { setPriceTarget(null); setModalError(""); }}>
-            <h3 style={{ marginTop: 0 }}>改单价 - {priceTarget.clientName}</h3>
+            <h3 style={{ marginTop: 0 }}>改单价 - {priceTarget.clientId}</h3>
             <div style={{ fontSize: 13, color: "var(--t-muted)", marginBottom: 10 }}>
               只改这一柜给他的价。改完他<b>没付款</b>的单会按新价重算；已经付过款的单金额不动。留空的那一档不改。
             </div>
@@ -1426,7 +1428,7 @@ export default function AdminWhrConsolidationPage() {
           const joined = new Set(planDetail.customers.map(c => c.clientId));
           const q = addSearch.trim().toLowerCase();
           const options = clients.filter(cl => !joined.has(cl.id)).filter(cl =>
-            !q || (cl.name ?? "").toLowerCase().includes(q)
+            !q || cl.id.toLowerCase().includes(q) || (cl.name ?? "").toLowerCase().includes(q)
               || (cl.phone ?? "").toLowerCase().includes(q)
               || (cl.companyName ?? "").toLowerCase().includes(q));
           return (
@@ -1434,7 +1436,7 @@ export default function AdminWhrConsolidationPage() {
               <h3 style={{ marginTop: 0 }}>新增参与客户 - {planDetail.planNo}</h3>
               <div style={{ marginTop: 10 }}>
                 <label style={fl}>选择客户</label>
-                <input value={addSearch} onChange={e => setAddSearch(e.target.value)} placeholder="搜索客户名 / 电话 / 公司" style={fi} />
+                <input value={addSearch} onChange={e => setAddSearch(e.target.value)} placeholder="搜索唛头 / 客户名 / 电话 / 公司" style={fi} />
                 <div style={{ maxHeight: 220, overflowY: "auto", border: "1px solid var(--l-soft)", borderRadius: 6, marginTop: 6 }}>
                   {clientsLoading ? (
                     <div style={{ padding: "10px 12px", fontSize: 13, color: "var(--t-faint)" }}>加载客户列表中…</div>
@@ -1445,7 +1447,7 @@ export default function AdminWhrConsolidationPage() {
                   ) : options.map(cl => (
                     <label key={cl.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 12px", cursor: "pointer", borderBottom: "1px solid var(--s-sunken)", fontSize: 13 }}>
                       <input type="radio" name="add-whr-client" checked={addClientId === cl.id} onChange={() => setAddClientId(cl.id)} />
-                      <span style={{ fontWeight: 600 }}>{cl.name}</span>
+                      <span style={{ fontWeight: 600 }}>{cl.id}</span>
                       <span style={{ color: "var(--t-muted)", fontSize: 12 }}>{cl.phone}{cl.companyName ? ` · ${cl.companyName}` : ""}</span>
                       {/* 超管页可以标代理名（员工页不标，确认单 4.6） */}
                       {cl.agentName && <span style={{ fontSize: 11, padding: "1px 6px", borderRadius: 4, background: "var(--c-blue-bg-2)", color: "var(--c-blue-deep)" }}>代理：{cl.agentName}</span>}
@@ -1513,14 +1515,14 @@ export default function AdminWhrConsolidationPage() {
             <div style={{ marginTop: 14 }}>
               <label style={fl}>选择客户</label>
               <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
-                <input value={clientSearch} onChange={e => setClientSearch(e.target.value)} placeholder="按姓名 / 电话 / 公司搜索" style={{ ...fi, flex: 1 }} />
+                <input value={clientSearch} onChange={e => setClientSearch(e.target.value)} placeholder="按唛头 / 姓名 / 电话 / 公司搜索" style={{ ...fi, flex: 1 }} />
                 <button onClick={() => loadClients()} style={btnCancel} disabled={clientsLoading}>{clientsLoading ? "刷新中..." : "刷新列表"}</button>
               </div>
               <div style={{ maxHeight: 200, overflowY: "auto", border: "1px solid var(--l-soft)", borderRadius: 6 }}>
                 <table className="a3-table" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
                   <thead><tr style={{ background: "var(--s-sunken)" }}>
                     <th style={{ ...thS, padding: "4px 8px", width: 40 }}></th>
-                    <th style={{ ...thS, padding: "4px 8px" }}>客户名</th>
+                    <th style={{ ...thS, padding: "4px 8px" }}>唛头</th>
                     <th style={{ ...thS, padding: "4px 8px" }}>电话</th>
                     <th style={{ ...thS, padding: "4px 8px" }}>公司</th>
                     <th style={{ ...thS, padding: "4px 8px" }}>所属代理</th>
@@ -1539,7 +1541,7 @@ export default function AdminWhrConsolidationPage() {
                               else setSelectedCustomers([...selectedCustomers, { clientId: cl.id, unitPriceNormal: "", unitPriceInspection: "", unitPriceSensitive: "" }]);
                             }} />
                           </td>
-                          <td style={{ ...tdS, padding: "4px 8px" }}>{cl.name}</td>
+                          <td style={{ ...tdS, padding: "4px 8px" }}>{cl.id}</td>
                           <td style={{ ...tdS, padding: "4px 8px" }}>{cl.phone}</td>
                           <td style={{ ...tdS, padding: "4px 8px" }}>{cl.companyName ?? "-"}</td>
                           <td style={{ ...tdS, padding: "4px 8px" }}>{cl.agentName ?? "-"}</td>
@@ -1556,7 +1558,6 @@ export default function AdminWhrConsolidationPage() {
                 {/* 2026-09-18 老板拍板：每个柜当场填价（每次柜价格都不一样） */}
                 <label style={fl}>这一柜的单价（已选 {selectedCustomers.length} 位客户，元/方，必填）</label>
                 {selectedCustomers.map((sc, idx) => {
-                  const client = clients.find(cl => cl.id === sc.clientId);
                   const setPrice = (field: keyof CreateCustomerForm, value: string) => {
                     const next = [...selectedCustomers];
                     next[idx] = { ...next[idx], [field]: value };
@@ -1564,7 +1565,7 @@ export default function AdminWhrConsolidationPage() {
                   };
                   return (
                     <div key={sc.clientId} style={{ border: "1px solid var(--l-soft)", borderRadius: 6, padding: "8px 12px", marginBottom: 6, fontSize: 13, display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
-                      <span style={{ fontWeight: 600, minWidth: 90 }}>{client?.name ?? sc.clientId}</span>
+                      <span style={{ fontWeight: 600, minWidth: 90 }}>{sc.clientId}</span>
                       {([["普货", "unitPriceNormal"], ["商检货", "unitPriceInspection"], ["敏感货", "unitPriceSensitive"]] as Array<[string, keyof CreateCustomerForm]>).map(([label, field]) => (
                         <label key={field} style={{ display: "flex", alignItems: "center", gap: 4 }}>
                           <span style={{ color: "var(--t-muted)" }}>{label}</span>

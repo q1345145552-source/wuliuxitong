@@ -76,7 +76,6 @@ export type LastmileExportData = {
 
 export type TemplateLine = {
   clientId: string;
-  clientName: string;
   trackingNo: string;
   itemName: string;
   packageCount: number;
@@ -537,7 +536,6 @@ export function expandTemplateLines(data: LastmileExportData): TemplateLine[] {
         const address = shipment.receiverAddress || customer.address;
         lines.push({
           clientId: customer.clientId,
-          clientName: customer.clientName,
           trackingNo: shipment.trackingNo,
           itemName: product.itemName || shipment.itemName,
           packageCount: Number(product.packageCount || 0),
@@ -739,7 +737,9 @@ function patchCustomerThaiTemplate(
   lines.forEach((line, index) => {
     const row = 8 + index;
     xml = setNumberCell(xml, `A${row}`, sequenceStart + index + 1);
-    xml = setTextCell(xml, `B${row}`, line.clientName, strings);
+    // 「ลูกค้า（客户）」这一列原来印客户名字 —— 这张签收单要交给收货人签字，名字只给内部看，改印唛头
+    //（2026-09-18 老板：「唛头=账号，客户名字是只有我们内部看的」）
+    xml = setTextCell(xml, `B${row}`, line.clientId, strings);
     xml = setTextCell(xml, `C${row}`, line.clientId, strings);
     // 品名一行放不下就把行高撑开（2026-09-11：数据早就全了，是纸上被行高切掉）
     xml = setItemNameCell(xml, "D", row, line.itemName, strings, fonts);

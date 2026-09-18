@@ -47,7 +47,7 @@ const utils = load(path.join(root, "modules/staff/utils.ts"));
 const detailPath = path.join(root, "components/admin/AdminShipmentDetail.tsx");
 const { createElement } = requireWeb("react"), { renderToStaticMarkup } = requireWeb("react-dom/server");
 const product = { id: "p1", itemName: "真实渲染产品", packageCount: 2, productQuantity: 17, lengthCm: 60, widthCm: 40, heightCm: 30, weightKg: 9.8765, domesticTrackingNo: "SF0001", cargoType: "inspection" };
-const order = { id: "s1", orderId: "o1", trackingNo: "JL-TEST-01", orderNo: "ORDER0001", clientId: "MARK0001", clientName: "测试唛头", warehouseId: "wh_dongguan_01", currentStatus: "unloading", transportMode: "sea", shipDate: "2026-07-01", createdAt: "2026-07-01T01:00:00Z", packageUnit: "box", packageCount: 2, productQuantity: 34, totalVolumeM3: 1.23456, totalWeightKg: 19.753, volumeM3: 0.1, weightKg: 0.2, itemName: "整单品名", domesticTrackingNo: "ORDER-DOMESTIC", receiverAddressTh: "测试地址", remark: "测试备注", productImages: [], products: [product], batchNo: "NEVER-RENDER-CONTAINER", containerNo: "NEVER-RENDER-CONTAINER", receivableAmountCny: 987654.32 };
+const order = { id: "s1", orderId: "o1", trackingNo: "JL-TEST-01", orderNo: "ORDER0001", clientId: "MARK0001", clientName: "测试客户名", warehouseId: "wh_dongguan_01", currentStatus: "unloading", transportMode: "sea", shipDate: "2026-07-01", createdAt: "2026-07-01T01:00:00Z", packageUnit: "box", packageCount: 2, productQuantity: 34, totalVolumeM3: 1.23456, totalWeightKg: 19.753, volumeM3: 0.1, weightKg: 0.2, itemName: "整单品名", domesticTrackingNo: "ORDER-DOMESTIC", receiverAddressTh: "测试地址", remark: "测试备注", productImages: [], products: [product], batchNo: "NEVER-RENDER-CONTAINER", containerNo: "NEVER-RENDER-CONTAINER", receivableAmountCny: 987654.32 };
 function render(overrides: object = {}, images: Record<string, unknown[]> = {}) {
   return renderToStaticMarkup(createElement(mounted, {
     o: { ...order, ...overrides }, warehouseOptions: [{ id: "wh_dongguan_01", label: "东莞仓" }], orderImagesCache: images,
@@ -65,7 +65,13 @@ test("合计名称统一为总箱数，暂不调整重量标签与取值", () =>
   assert.doesNotMatch(html, /总件数|单箱重量\(kg\)/);
 });
 test("无图片也渲染产品与整票信息，真实页面已挂载", () => {
-  contains(render(), ["真实渲染产品", "物流状态", "正在卸柜", "测试唛头", "东莞仓", "海运", "2026-07-01", "ORDER0001", "测试地址", "测试备注", "产品明细", "暂无产品图片"]);
+  contains(render(), ["真实渲染产品", "物流状态", "正在卸柜", "<dt>唛头</dt><dd>MARK0001</dd>", "东莞仓", "海运", "2026-07-01", "ORDER0001", "测试地址", "测试备注", "产品明细", "暂无产品图片"]);
+});
+test("「唛头」显示账号，不显示客户名字（2026-09-18 老板：唛头=账号，客户名字只给内部看）", () => {
+  // 这份测试原来的夹具把客户名字起名叫「测试唛头」、还断言详情里要显示它 —— 当初就是把名字当成了唛头
+  const html = render();
+  assert.ok(html.includes("<dt>唛头</dt><dd>MARK0001</dd>"), "详情「唛头」没显示账号");
+  assert.ok(!html.includes("测试客户名"), "详情里出现了客户名字");
 });
 test("完整七列产品取值，包括外层已隐藏的单箱数量", () => {
   contains(render(), ["单箱数量", "17个/箱", "2箱", "60×40×30cm", "SF0001", "<td>商检货</td>", "9.88"]);

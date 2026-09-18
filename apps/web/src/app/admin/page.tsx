@@ -2123,7 +2123,7 @@ export default function AdminHomePage() {
                       </button>
                       <button
                         type="button"
-                        onClick={() => openPrintLabel({ marks: o.clientName ?? o.clientId ?? "—", packageCount: o.packageCount ?? "—", trackingNo: o.trackingNo ?? "", itemName: o.itemName, productQuantity: o.productQuantity, transportMode: o.transportMode, products: (o.products ?? []).map(p => ({ itemName: p.itemName, packageCount: p.packageCount })) })}
+                        onClick={() => openPrintLabel({ marks: o.clientId ?? "—", packageCount: o.packageCount ?? "—", trackingNo: o.trackingNo ?? "", itemName: o.itemName, productQuantity: o.productQuantity, transportMode: o.transportMode, products: (o.products ?? []).map(p => ({ itemName: p.itemName, packageCount: p.packageCount })) })}
                         className="row-act"
                       >
                         打印
@@ -2409,7 +2409,7 @@ export default function AdminHomePage() {
                           month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit",
                         })}
                       </td>
-                      <td style={{ padding: "8px 10px", whiteSpace: "nowrap" }}>{r.clientName}{r.companyName ? ` (${r.companyName})` : ""}</td>
+                      <td style={{ padding: "8px 10px", whiteSpace: "nowrap" }}>{r.clientId}{r.companyName ? ` (${r.companyName})` : ""}</td>
                       <td style={{ padding: "8px 10px", textAlign: "right", fontWeight: 600 }}>
                         ¥{r.amount.toFixed(2)}
                       </td>
@@ -2448,7 +2448,7 @@ export default function AdminHomePage() {
                               type="button"
                               disabled={loading}
                               onClick={async () => {
-                                if (!window.confirm(`确认通过 ${r.clientName} 的 ¥${r.amount} 集货余额充值？\n\n通过后钱立刻进入他的集货余额。`)) return;
+                                if (!window.confirm(`确认通过 ${r.clientId} 的 ¥${r.amount} 集货余额充值？\n\n通过后钱立刻进入他的集货余额。`)) return;
                                 setLoading(true);
                                 try {
                                   await approveRecharge(r.id);

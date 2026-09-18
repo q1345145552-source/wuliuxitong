@@ -1078,7 +1078,7 @@ export default function StaffHomePage() {
     return prealerts
       .filter((item) => {
         if (!kw) return true;
-        const searchText = `${item.id} ${item.orderNo ?? ""} ${item.clientName ?? ""}`.toLowerCase();
+        const searchText = `${item.id} ${item.orderNo ?? ""} ${item.clientId ?? ""} ${item.clientName ?? ""}`.toLowerCase();
         return searchText.includes(kw);
       })
       .filter((item) => {
@@ -1922,7 +1922,7 @@ export default function StaffHomePage() {
                             </button>
                             <button
                               type="button"
-                              onClick={() => openPrintLabel({ marks: item.clientName ?? item.clientId ?? "—", packageCount: item.packageCount ?? "—", trackingNo: item.trackingNo ?? "", itemName: item.itemName, productQuantity: item.productQuantity, transportMode: item.transportMode, products: item.products?.map(p => ({ itemName: p.itemName, packageCount: p.packageCount })) })}
+                              onClick={() => openPrintLabel({ marks: item.clientId ?? "—", packageCount: item.packageCount ?? "—", trackingNo: item.trackingNo ?? "", itemName: item.itemName, productQuantity: item.productQuantity, transportMode: item.transportMode, products: item.products?.map(p => ({ itemName: p.itemName, packageCount: p.packageCount })) })}
                               className="row-act"
                             >
                               打印
@@ -2405,7 +2405,7 @@ export default function StaffHomePage() {
           <div style={{ width: "100%", maxWidth: 560, maxHeight: "90vh", overflow: "auto", background: "var(--white)", borderRadius: 12, padding: 24, boxShadow: "0 20px 60px rgba(0,0,0,0.3)" }}>
             <h3 style={{ margin: "0 0 16px", fontSize: 18, fontWeight: 600 }}>审核预报单</h3>
             <div style={{ color: "var(--t-strong)", fontSize: 13, marginBottom: 12 }}>
-              客户：{approvingPrealert.clientName ?? "-"} · {approvingPrealert.createdAt.slice(0, 10)}
+              客户：{approvingPrealert.clientId ?? "-"} · {approvingPrealert.createdAt.slice(0, 10)}
             </div>
             {(approvingPrealert.products?.length ?? 0) > 1 && (
               <div style={{ marginBottom: 10, background: "#fefce8", borderRadius: 6, padding: "8px 10px", fontSize: 12 }}>
@@ -2926,7 +2926,7 @@ export default function StaffHomePage() {
                 <tbody>
                   {walletBalances.map((b) => (
                     <tr key={b.clientId} style={{ borderBottom: "1px solid var(--s-sunken)" }}>
-                      <td style={{ padding: "8px 12px" }}>{b.clientName}</td>
+                      <td style={{ padding: "8px 12px" }}>{b.clientId}</td>
                       <td style={{ padding: "8px 12px", color: "var(--t-muted)" }}>{b.companyName || "—"}</td>
                       <td style={{ padding: "8px 12px", textAlign: "right", fontWeight: 600 }}>¥{b.cny.toFixed(2)}</td>
                     </tr>

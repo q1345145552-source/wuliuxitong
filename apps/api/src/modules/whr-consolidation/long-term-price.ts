@@ -236,7 +236,9 @@ export function assertNotBelowAgentFloors(
     if (!hit.floor) continue; // 湘泰自己的客户：查过了，确实没有下限
     for (const key of ["normal", "inspection", "sensitive"] as const) {
       if (toCents(entry.prices[key]) < toCents(hit.floor[key])) {
-        const who = entry.clientName ?? hit.clientName ?? entry.clientId;
+        // 点名用唛头（就是账号），不用客户名字：名字只给内部在「客户管理」里看，而且有重名（杨先名下 3 个账号）
+        //（2026-09-18 老板：「唛头=账号，客户名字是只有我们内部看的」）
+        const who = entry.clientId;
         issues.push(canSeeAgentPrice
           ? `${who}的${PRICE_LABEL[key]}单价不能低于给代理的价 ${formatPrice(hit.floor[key])} 元/方`
           : `${who}的${PRICE_LABEL[key]}单价填低了，这个客户有最低价限制，请联系超级管理员确认后再填`);

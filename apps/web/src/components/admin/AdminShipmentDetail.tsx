@@ -9,7 +9,7 @@ const display = (value: string | number | null | undefined) =>
   typeof value === "string" ? value.trim() || "—" : value ?? "—";
 
 type DetailOrder = Pick<AdminOrderItem,
-  "orderNo" | "clientName" | "clientId" | "currentStatus" | "transportMode" |
+  "orderNo" | "clientId" | "currentStatus" | "transportMode" |
   "shipDate" | "createdAt" | "packageUnit" | "packageCount" | "productQuantity" |
   "volumeM3" | "weightKg" | "totalVolumeM3" | "totalWeightKg" |
   "products" | "itemName" | "domesticTrackingNo" | "cargoType" | "receiverAddressTh" | "remark"
@@ -17,7 +17,9 @@ type DetailOrder = Pick<AdminOrderItem,
 
 export default function AdminShipmentDetail({ order, warehouseLabel }: { order: DetailOrder; warehouseLabel: string }) {
   const fields = [
-    ["唛头", display(order.clientName?.trim() || order.clientId)],
+    // 唛头就是客户的账号（XHH6700 这种），不是客户名字（2026-09-18 老板：「唛头=账号，客户名字是只有我们内部看的」）。
+    // 原来写成「有名字就显示名字」，XHH6700 显示成了「杨先」—— 而杨先名下有 3 个账号，根本分不清是哪个唛头。
+    ["唛头", display(order.clientId)],
     ["物流状态", shipmentStatusZh(order.currentStatus)],
     ["运输方式", display(transportModeLabel(order.transportMode))],
     ["仓库", display(warehouseLabel)],

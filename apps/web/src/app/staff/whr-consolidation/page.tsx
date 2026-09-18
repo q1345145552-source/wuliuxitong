@@ -217,13 +217,13 @@ export default function StaffWhrConsolidationPage() {
   const [opsActionSubmitting, setOpsActionSubmitting] = useState<Record<string, boolean>>({});
 
   // ---- 泰国签收 ----
-  const [thailandTarget, setThailandTarget] = useState<{ planId: string; prealertId: string; planNo: string; trackingNo: string; clientName: string; volumeM3: number } | null>(null);
+  const [thailandTarget, setThailandTarget] = useState<{ planId: string; prealertId: string; planNo: string; trackingNo: string; clientId: string; clientName: string; volumeM3: number } | null>(null);
   const [thailandFiles, setThailandFiles] = useState<{ base64: string; fileName: string; mime: string }[]>([]);
   const [thailandSubmitting, setThailandSubmitting] = useState(false);
   const [thailandCompressing, setThailandCompressing] = useState(false);
 
   // ---- 仓库签收 ----
-  const [signTarget, setSignTarget] = useState<{ planId: string; prealertId: string; planNo: string; trackingNo: string; mark: string; clientName: string; clientPhone?: string; clientCompany?: string; deliveryAddress: string | null; items?: any[]; loading?: boolean } | null>(null);
+  const [signTarget, setSignTarget] = useState<{ planId: string; prealertId: string; planNo: string; trackingNo: string; mark: string; clientId: string; clientName: string; clientPhone?: string; clientCompany?: string; deliveryAddress: string | null; items?: any[]; loading?: boolean } | null>(null);
   const [signFiles, setSignFiles] = useState<{ base64: string; fileName: string; mime: string }[]>([]);
   const [signSubmitting, setSignSubmitting] = useState(false);
   const [signCompressing, setSignCompressing] = useState(false);
@@ -381,10 +381,10 @@ export default function StaffWhrConsolidationPage() {
     if (!selectedPlanId) return;
     const paCount = (c.prealerts ?? []).length;
     if (paCount > 0) {
-      setToast(`${c.clientName} 名下还有 ${paCount} 个预报单，请先逐个取消后再移除`);
+      setToast(`${c.clientId} 名下还有 ${paCount} 个预报单，请先逐个取消后再移除`);
       return;
     }
-    if (!confirm(`确定把「${c.clientName}」从本计划移除？\n\n该客户名下没有预报单，移除后只会删掉这条参与记录。`)) return;
+    if (!confirm(`确定把「${c.clientId}」从本计划移除？\n\n该客户名下没有预报单，移除后只会删掉这条参与记录。`)) return;
     setRemovingCustomerId(c.id);
     try {
       await apiRequest(`${apiBaseUrl()}/admin/whr-consolidation/customers/remove`, {
@@ -392,7 +392,7 @@ export default function StaffWhrConsolidationPage() {
         headers: jsonPost,
         body: JSON.stringify({ planId: selectedPlanId, customerId: c.id }),
       });
-      setToast(`已移除 ${c.clientName}`);
+      setToast(`已移除 ${c.clientId}`);
       loadPlanDetail(selectedPlanId);
     } catch (e: any) { setToast(e?.message ?? "移除失败"); }
     finally { setRemovingCustomerId(""); }
@@ -448,7 +448,7 @@ export default function StaffWhrConsolidationPage() {
     // 先弹出弹窗显示基本信息 + loading
     setSignTarget({
       planId, prealertId: pa.prealertId, planNo: pa.planNo || "",
-      trackingNo: pa.trackingNo, mark: pa.mark, clientName: pa.clientName,
+      trackingNo: pa.trackingNo, mark: pa.mark, clientId: pa.clientId, clientName: pa.clientName,
       deliveryAddress: pa.deliveryAddress, loading: true,
     });
     try {
@@ -459,7 +459,7 @@ export default function StaffWhrConsolidationPage() {
       if (signPrealertIdRef.current !== pa.prealertId) return;
       setSignTarget({
         planId, prealertId: pa.prealertId, planNo: pa.planNo || "",
-        trackingNo: pa.trackingNo, mark: pa.mark,
+        trackingNo: pa.trackingNo, mark: pa.mark, clientId: pa.clientId,
         clientName: detail.clientName ?? pa.clientName,
         clientPhone: detail.clientPhone,
         clientCompany: detail.clientCompany,
@@ -866,7 +866,7 @@ export default function StaffWhrConsolidationPage() {
                         <div key={c.id} style={{ borderTop: "1px solid var(--l-soft)" }}>
                           <div onClick={() => setExpandedCustomer(cExpanded ? null : c.id)} style={{ cursor: "pointer", padding: "8px 16px", display: "flex", justifyContent: "space-between", alignItems: "center", background: cExpanded ? "#F0F1F4" : "white" }}>
                             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                              <strong style={{ fontSize: 14 }}>{c.clientName}</strong>
+                              <strong style={{ fontSize: 14 }}>{c.clientId}</strong>
                               <span style={{ fontSize: 12, color: "var(--t-muted)" }}>{c.clientPhone} · {c.clientCompany}</span>
                               {/* 客户维度状态由后端按所有预报单推导，不再拿第一条单的状态冒充 */}
                               {c.status && <span style={{ fontSize: 12, padding: "2px 8px", borderRadius: 4, background: TAG[c.status]?.bg ?? "var(--l-soft)", color: TAG[c.status]?.color ?? "var(--t-body)" }}>{PREALERT_ST_ZH[c.status] ?? c.status}</span>}
@@ -940,7 +940,7 @@ export default function StaffWhrConsolidationPage() {
                       {p.sections.pending.map(pa => (
                         <div key={pa.prealertId} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 12px", borderBottom: "1px solid var(--s-sunken)", fontSize: 13 }}>
                           <div style={{ flex: 1 }}>
-                            <strong>{pa.clientName}</strong>
+                            <strong>{pa.clientId}</strong>
                             <span style={{ color: "var(--t-muted)", marginLeft: 8 }}>{pa.trackingNo}</span>
                             <span style={{ color: "var(--t-faint)", marginLeft: 8 }}>唛头：{pa.mark || "-"} · {pa.volumeM3}方 · {pa.itemCount}款 · {pa.packageCount}件</span>
                             {pa.deliveryAddress
@@ -962,7 +962,7 @@ export default function StaffWhrConsolidationPage() {
                       {p.sections.received_pending_payment.map(pa => (
                         <div key={pa.prealertId} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 12px", borderBottom: "1px solid var(--s-sunken)", fontSize: 13 }}>
                           <div style={{ flex: 1 }}>
-                            <strong>{pa.clientName}</strong>
+                            <strong>{pa.clientId}</strong>
                             <span style={{ color: "var(--t-muted)", marginLeft: 8 }}>{pa.trackingNo}</span>
                             <span style={{ color: "var(--t-faint)", marginLeft: 8 }}>唛头：{pa.mark || "-"} · {pa.volumeM3}方 · {pa.itemCount}款 · {pa.packageCount}件</span>
                             {pa.deliveryAddress
@@ -981,7 +981,7 @@ export default function StaffWhrConsolidationPage() {
                       {p.sections.payment_submitted.map(pa => (
                         <div key={pa.prealertId} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 12px", borderBottom: "1px solid var(--s-sunken)", fontSize: 13 }}>
                           <div style={{ flex: 1 }}>
-                            <strong>{pa.clientName}</strong>
+                            <strong>{pa.clientId}</strong>
                             <span style={{ color: "var(--t-muted)", marginLeft: 8 }}>{pa.trackingNo}</span>
                             <span style={{ color: "var(--t-faint)", marginLeft: 8 }}>唛头：{pa.mark || "-"} · {pa.volumeM3}方 · {pa.itemCount}款 · {pa.packageCount}件</span>
                             {pa.deliveryAddress
@@ -1016,7 +1016,7 @@ export default function StaffWhrConsolidationPage() {
                         return (
                           <div key={pa.prealertId} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 12px", borderBottom: "1px solid var(--s-sunken)", fontSize: 13 }}>
                             <div style={{ flex: 1 }}>
-                              <strong>{pa.clientName}</strong>
+                              <strong>{pa.clientId}</strong>
                               <span style={{ color: "var(--t-muted)", marginLeft: 8 }}>{pa.trackingNo}</span>
                               <span style={{ color: "var(--t-faint)", marginLeft: 8 }}>唛头：{pa.mark || "-"} · {pa.volumeM3}方 · {pa.itemCount}款</span>
                               {pa.deliveryAddress
@@ -1042,7 +1042,7 @@ export default function StaffWhrConsolidationPage() {
                         return (
                           <div key={pa.prealertId} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 12px", borderBottom: "1px solid var(--s-sunken)", fontSize: 13 }}>
                             <div style={{ flex: 1 }}>
-                              <strong>{pa.clientName}</strong>
+                              <strong>{pa.clientId}</strong>
                               <span style={{ color: "var(--t-muted)", marginLeft: 8 }}>{pa.trackingNo}</span>
                               <span style={{ color: "var(--t-faint)", marginLeft: 8 }}>唛头：{pa.mark || "-"} · {pa.volumeM3}方 · {pa.itemCount}款</span>
                               {pa.deliveryAddress
@@ -1064,7 +1064,7 @@ export default function StaffWhrConsolidationPage() {
                       {p.sections.shipped.map(pa => (
                         <div key={pa.prealertId} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 12px", borderBottom: "1px solid var(--s-sunken)", fontSize: 13 }}>
                           <div style={{ flex: 1 }}>
-                            <strong>{pa.clientName}</strong>
+                            <strong>{pa.clientId}</strong>
                             <span style={{ color: "var(--t-muted)", marginLeft: 8 }}>{pa.trackingNo}</span>
                             <span style={{ color: "var(--t-faint)", marginLeft: 8 }}>唛头：{pa.mark || "-"} · {pa.volumeM3}方 · {pa.itemCount}款</span>
                             {pa.deliveryAddress
@@ -1073,7 +1073,7 @@ export default function StaffWhrConsolidationPage() {
                           </div>
                           <div style={{ flexShrink: 0 }}>
                             {/* 2026-09-01 竞态全扫：换单先清掉上一单残留的照片，防止跟错单 */}
-                            <button onClick={() => { /* 2026-09-02 终审整改：点击处同步赋值 owner ref，不等 useEffect */ thailandPrealertIdRef.current = pa.prealertId; setThailandFiles([]); setThailandTarget({ planId: p.planId, prealertId: pa.prealertId, planNo: p.planNo, trackingNo: pa.trackingNo, clientName: pa.clientName, volumeM3: pa.volumeM3 }); }} style={btnBlue}>上传签收单</button>
+                            <button onClick={() => { /* 2026-09-02 终审整改：点击处同步赋值 owner ref，不等 useEffect */ thailandPrealertIdRef.current = pa.prealertId; setThailandFiles([]); setThailandTarget({ planId: p.planId, prealertId: pa.prealertId, planNo: p.planNo, trackingNo: pa.trackingNo, clientId: pa.clientId, clientName: pa.clientName, volumeM3: pa.volumeM3 }); }} style={btnBlue}>上传签收单</button>
                           </div>
                         </div>
                       ))}
@@ -1115,7 +1115,7 @@ export default function StaffWhrConsolidationPage() {
                     <div key={c.id} style={{ border: "1px solid var(--l-soft)", borderRadius: 8, padding: "12px 16px", marginBottom: 12 }}>
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                         <div>
-                          <strong>{c.clientName}</strong>
+                          <strong>{c.clientId}</strong>
                           <span style={{ fontSize: 13, color: "var(--t-muted)", marginLeft: 8 }}>{c.clientPhone} · {c.clientCompany}</span>
                         </div>
                         <span style={{ fontSize: 13, color: "var(--t-muted)" }}>{c.totalVolumeM3}方 · {c.totalFee ? `¥${c.totalFee.toLocaleString()}` : ""}</span>
@@ -1153,7 +1153,7 @@ export default function StaffWhrConsolidationPage() {
                                   <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                                     <span style={{ color: "var(--t-muted)" }}>{paVol.toFixed(3)}方 · {paPkg}件</span>
                                     {canSign && (
-                                      <button onClick={() => handleOpenSign({ prealertId: pa.id, trackingNo: pa.trackingNo, mark: pa.mark, clientName: c.clientName, planNo: planDetail.planNo, deliveryAddress: c.deliveryAddress }, selectedPlanId!)} style={{ ...btnBlue, padding: "4px 12px", fontSize: 11 }}>签收</button>
+                                      <button onClick={() => handleOpenSign({ prealertId: pa.id, trackingNo: pa.trackingNo, mark: pa.mark, clientId: c.clientId, clientName: c.clientName, planNo: planDetail.planNo, deliveryAddress: c.deliveryAddress }, selectedPlanId!)} style={{ ...btnBlue, padding: "4px 12px", fontSize: 11 }}>签收</button>
                                     )}
                                     {canReview && (
                                       <button onClick={() => {
@@ -1252,7 +1252,7 @@ export default function StaffWhrConsolidationPage() {
             <h3 style={{ marginTop: 0 }}>仓库签收</h3>
             <p style={{ fontSize: 13, color: "var(--t-muted)" }}>{signTarget.planNo} · 预报单：{signTarget.trackingNo} · 唛头：{signTarget.mark || "-"}</p>
             <p style={{ fontSize: 13, color: "var(--t-body)" }}>
-              客户：{signTarget.clientName}
+              客户：{signTarget.clientId}
               {signTarget.clientCompany && <span style={{ color: "var(--t-muted)", marginLeft: 8 }}>{signTarget.clientCompany}</span>}
               {signTarget.clientPhone && <span style={{ color: "var(--t-muted)", marginLeft: 8 }}>{signTarget.clientPhone}</span>}
             </p>
@@ -1355,7 +1355,7 @@ export default function StaffWhrConsolidationPage() {
                 <h3 style={{ marginTop: 0 }}>审核付款</h3>
                 <div style={{ fontSize: 13 }}>
                   <p style={{ margin: "4px 0" }}>预报单：{reviewTarget.prealert.trackingNo} · 唛头：{reviewTarget.prealert.mark || "-"}</p>
-                  <p style={{ margin: "4px 0" }}>客户：{reviewTarget.prealert.clientName}</p>
+                  <p style={{ margin: "4px 0" }}>客户：{reviewTarget.prealert.clientId}</p>
                   {reviewTarget.prealert.deliveryAddress && <p style={{ margin: "2px 0", color: "var(--t-muted)" }}>收货地址：{reviewTarget.prealert.deliveryAddress}</p>}
 
                   {reviewTarget.prealert.totalFee != null && (
@@ -1431,7 +1431,7 @@ export default function StaffWhrConsolidationPage() {
         {/* ================================================================ */}
         {thailandTarget && (
           <Modal onClose={() => { thailandPrealertIdRef.current = null; /* 2026-09-02 终审整改：关闭处同步清空 owner */ setThailandTarget(null); setThailandFiles([]); }}>
-            <h3 style={{ marginTop: 0 }}>泰国签收 - {thailandTarget.clientName}</h3>
+            <h3 style={{ marginTop: 0 }}>泰国签收 - {thailandTarget.clientId}</h3>
             <p style={{ fontSize: 13, color: "var(--t-muted)" }}>{thailandTarget.planNo} · 预报单：{thailandTarget.trackingNo} · {thailandTarget.volumeM3}方</p>
             <div style={{ marginTop: 14 }}>
               <label style={fl}>签收单文件 *（支持多张）</label>
@@ -1483,13 +1483,13 @@ export default function StaffWhrConsolidationPage() {
           const joined = new Set((planDetail.customers ?? []).map((c: any) => c.clientId));
           const q = addSearch.trim().toLowerCase();
           const options = clientOptions.filter(cl => !joined.has(cl.id))
-            .filter(cl => !q || (cl.name ?? "").toLowerCase().includes(q));
+            .filter(cl => !q || cl.id.toLowerCase().includes(q) || (cl.name ?? "").toLowerCase().includes(q));
           return (
             <Modal onClose={() => { setShowAddCustomer(false); setAddError(""); }}>
               <h3 style={{ marginTop: 0 }}>新增参与客户 - {planDetail.planNo}</h3>
               <div style={{ marginTop: 10 }}>
                 <label style={fl}>选择客户</label>
-                <input value={addSearch} onChange={e => setAddSearch(e.target.value)} placeholder="搜索客户名" style={fi} />
+                <input value={addSearch} onChange={e => setAddSearch(e.target.value)} placeholder="搜索唛头 / 客户名" style={fi} />
                 <div style={{ maxHeight: 220, overflowY: "auto", border: "1px solid var(--l-soft)", borderRadius: 6, marginTop: 6 }}>
                   {clientsLoading ? (
                     <div style={{ padding: "10px 12px", fontSize: 13, color: "var(--t-faint)" }}>加载客户列表中…</div>
@@ -1500,8 +1500,7 @@ export default function StaffWhrConsolidationPage() {
                   ) : options.map(cl => (
                     <label key={cl.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 12px", cursor: "pointer", borderBottom: "1px solid var(--s-sunken)", fontSize: 13 }}>
                       <input type="radio" name="add-whr-client-staff" checked={addClientId === cl.id} onChange={() => setAddClientId(cl.id)} />
-                      <span style={{ fontWeight: 600 }}>{cl.name}</span>
-                      <span style={{ color: "var(--t-muted)", fontSize: 12 }}>{cl.id}</span>
+                      <span style={{ fontWeight: 600 }}>{cl.id}</span>
                     </label>
                   ))}
                 </div>

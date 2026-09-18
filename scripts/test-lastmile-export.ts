@@ -494,6 +494,33 @@ async function main(): Promise<void> {
     }
   });
 
+  await checkAsync("18) 客户签收单上只印唛头、不印客户名字（这张要交给收货人签字）", async () => {
+    /**
+     * 2026-09-18 老板：「唛头=账号，客户名字是只有我们内部看的」。
+     * 泰文页「ลูกค้า（客户）」那一列原来印的是客户名字（「杨先」这种），
+     * 而这张签收单是交给收货人签字的 —— 名字不能出现在往外给的纸上，改印唛头。
+     * 夹具里客户名字叫「测试客户」、唛头叫 TESTCLIENT：两页里都不许出现「测试客户」。
+     */
+    const data = buildDataWithLines(2, {
+      scope: "customer",
+      deliveryDate: "2026-09-18",
+      driverName: "王五",
+      phoneNumber: "0899999999",
+    });
+    const { sheetOf, shared } = await renderZip(data, CUSTOMER_TEMPLATE);
+    const cn = await sheetOf("sheet1");
+    const th = await sheetOf("sheet2");
+    assert.equal(cellValue(th, shared, "B8"), "TESTCLIENT", "泰文页「客户」那列没印唛头");
+    assert.equal(cellValue(th, shared, "C8"), "TESTCLIENT", "泰文页「唛头」那列被改坏了");
+    assert.equal(cellValue(cn, shared, "A6"), "TESTCLIENT", "中文页「唛头」那格被改坏了");
+    for (const [page, xml] of [["中文页", cn], ["泰文页", th]] as Array<[string, string]>) {
+      for (const ref of ["A6", "B8", "C8", "B9", "C9", "C3"]) {
+        assert.notEqual(cellValue(xml, shared, ref), "测试客户", `${page} ${ref} 印了客户名字`);
+      }
+    }
+    assert.ok(!shared.includes("测试客户"), "整张签收单的文字里还有客户名字");
+  });
+
   await checkAsync("15) 客户签收单：长品名把行高撑开到放得下，短品名行高一个像素不动", async () => {
     const { sheetOf, shared } = await renderZip(buildMixedNameData("customer"), CUSTOMER_TEMPLATE);
     const cn = await sheetOf("sheet1");
@@ -549,10 +576,10 @@ async function main(): Promise<void> {
 main()
   .then(() => {
     if (failures.length > 0) {
-      console.error(`\n${failures.length}/17 项不通过：${failures.join("；")}`);
+      console.error(`\n${failures.length}/18 项不通过：${failures.join("；")}`);
       process.exit(1);
     }
-    console.log("整柜拆柜派送清单导出：17 项全部通过");
+    console.log("整柜拆柜派送清单导出：18 项全部通过");
   })
   .catch((error) => {
     console.error(error);

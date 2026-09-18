@@ -162,6 +162,8 @@ jobs:
         run: npm run test:rebate-undo-page
       - name: Test agent whr sections disabled
         run: npm run test:agent-whr-disabled
+      - name: Mark display (唛头=账号, names internal only)
+        run: npm run test:mark-display
 
       # AI 答复的数字校验（2026-08-28 加）。
       # 覆盖三件事：模型润色时改了数字要被拦下、「今天/本月」按北京时间算、

@@ -103,7 +103,7 @@ export default function AdminPrealertsPage() {
     return prealerts
       .filter((item) => {
         if (!kw) return true;
-        const searchText = `${item.trackingNo ?? ""} ${item.orderNo ?? ""} ${item.clientName ?? ""}`.toLowerCase();
+        const searchText = `${item.trackingNo ?? ""} ${item.orderNo ?? ""} ${item.clientId ?? ""} ${item.clientName ?? ""}`.toLowerCase();
         return searchText.includes(kw);
       })
       .filter((item) => {
@@ -193,7 +193,7 @@ export default function AdminPrealertsPage() {
                   <div key={item.id} style={{ border: "1px solid var(--l-soft)", borderRadius: 6, padding: 12, background: "var(--white)" }}>
                     <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 6, color: "var(--t-strong)" }}>
                       <span style={{ fontFamily: "monospace" }}>{item.trackingNo || item.orderNo || "—"}</span>
-                      {" · "}{item.clientName ?? item.clientId ?? "-"}
+                      {" · "}{item.clientId ?? "-"}
                       {" · "}{item.createdAt.slice(0, 10)}
                     </div>
                     {(item.products?.length ?? 0) > 1 && (
