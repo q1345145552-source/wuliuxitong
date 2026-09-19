@@ -6,10 +6,9 @@ import { matchesShipmentListFilter } from "../../../../../packages/shared-types/
 import { productNamesLabel } from "../../../../../packages/shared-types/product-names";
 import { parseCargoType, CARGO_TYPE_HINT, cargoTypeLabel } from "../../../../../packages/shared-types/cargo-type";
 import { AT_WAREHOUSE_STATUSES, COMPLETED_STATUSES, CLIENT_STATUS_GROUP_ZH } from "../../../../../packages/shared-types/shipment-status";
-import { Bar, BarChart, CartesianGrid, Cell, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import type { AiKnowledgeItem } from "../../../../../packages/shared-types/entities";
 import { getOptionalSession, type AuthSession } from "../../auth/auth-session";
-import CountUpNumber from "../../modules/layout/CountUpNumber";
+import AdminOperationsOverview from "../../components/admin/AdminOperationsOverview";
 import { validateProductRows, packageCountForPayload } from "../../modules/orders/productRowGuard";
 import EmptyStateCard from "../../modules/layout/EmptyStateCard";
 import Toast from "../../modules/layout/Toast";
@@ -283,9 +282,13 @@ function decideEditTotals(
 export default function AdminHomePage() {
   const [session, setSession] = useState<AuthSession | null>(null);
   const [loading, setLoading] = useState(false);
-  const [overviewFlash, setOverviewFlash] = useState(false);
   const [overview, setOverview] = useState<AdminOverview | null>(null);
   const [opsOverview, setOpsOverview] = useState<AdminOpsOverview | null>(null);
+  const [overviewError, setOverviewError] = useState(false);
+  const [opsError, setOpsError] = useState(false);
+  // 无参数总览请求只保留一份在途请求，避免慢接口被10秒轮询反复挤掉。
+  const overviewInFlight = useRef(false);
+  const opsOverviewInFlight = useRef(false);
   /* 运单管理顶部那排数字。拉不到就整排不显示 ——
      宁可不显示，也不能显示一个假的 0 让人以为「今天没有延迟的」。 */
   const [shipmentOverview, setShipmentOverview] = useState<StaffShipmentOverview | null>(null);
@@ -303,6 +306,8 @@ export default function AdminHomePage() {
   const [clientSearchInput, setClientSearchInput] = useState("");
   const [clientSearchQuery, setClientSearchQuery] = useState("");
   const [orderList, setOrderList] = useState<AdminOrderItem[]>([]);
+  const [ordersLoaded, setOrdersLoaded] = useState(false);
+  const [ordersError, setOrdersError] = useState(false);
   const [sessionMemoryList, setSessionMemoryList] = useState<AdminAiSessionMemoryItem[]>([]);
   const [knowledgeGapList, setKnowledgeGapList] = useState<AdminAiKnowledgeGapItem[]>([]);
   const [knowledgeGapStatus, setKnowledgeGapStatus] = useState<"open" | "resolved">("open");
@@ -533,10 +538,7 @@ export default function AdminHomePage() {
   const warehouseLabel = warehouseLabelFromId;
 
   /**
-   * 看板状态分布：用于状态卡片与柱状图展示。
-   */
-  /**
-   * 订单状态分布。
+   * 看板运单数量：沿用原状态图的分桶，只把图换成直接可读的数字。
    *
    * ⚠️ 2026-08-21 改：原来只看 statusGroup，凡是「没完成」一律算「在途」——
    * 连**还没装柜发走**的「已创建」也算进去了。结果同一屏上，上面 KPI 的「在途订单」
@@ -546,7 +548,7 @@ export default function AdminHomePage() {
    * 口径按用户的业务说法（交接文档 1.5）：**装柜了 = 发走了**。
    * 所以「已创建 / 暂缓柜」= 货在国内仓还没发走 → 算「处理中」，不算在途。
    */
-  const statusDistribution = useMemo(() => {
+  const shipmentCounts = useMemo(() => {
     const bucket = { delivered: 0, inTransit: 0, atWarehouse: 0, processing: 0, exception: 0 };
     const atWarehouse = new Set<string>(AT_WAREHOUSE_STATUSES);
     const completed = new Set<string>(COMPLETED_STATUSES);
@@ -581,59 +583,49 @@ export default function AdminHomePage() {
         bucket.inTransit += 1;
       }
     });
-    /* 按货实际走的顺序排：还没发走 → 路上 → 到仓 → 签收 → 异常。
-       2026-09-03 加「已到仓」这一格（老板口径），颜色跟客户端那张图对齐。 */
-    return [
-      { name: "处理中", value: bucket.processing, color: "#B45309" },
-      { name: "在途", value: bucket.inTransit, color: "#1e3a8a" },
-      { name: "已到仓", value: bucket.atWarehouse, color: "#0F6E6B" },
-      { name: "已完成", value: bucket.delivered, color: "#15803D" },
-      { name: "异常/其他", value: bucket.exception, color: "#4B5462" },
-    ];
+    // 只换呈现方式，不改原柱状图的状态分桶口径。
+    return bucket;
   }, [orderList]);
-
-  /**
-   * 中泰线路时效趋势 —— 用后端按真实轨迹算出来的天数。
-   *
-   * ⚠️ 2026-08-21 之前这里是**编的**：
-   *     days = 2.5 + 第几个订单 × 0.6 + (海运 4.2 / 陆运 1.4)
-   * 里面一个日期计算都没有，跟真实时效毫无关系，而且因为带着「第几个」这一项，
-   * 曲线**永远单调上升**，换一批订单形状还是那样。页面上却挂着「时效分析图」的名字，
-   * 看的人没法知道它是假的。**别再往这里塞公式，要真数据就从后端拿。**
-   *
-   * 现在后端按「第一次已装柜 → 第一次已到仓」真算（生产实测：海运平均 14.7 天、
-   * 陆运 4.1 天，差 3 倍多，所以两条线分开画）。
-   */
-  const etaTrendData = overview?.transitTrend ?? [];
-
-  /**
-   * ⚠️ 必须用 `?? []` 兜底，不能写 `overview.stalledContainers.length`。
-   *
-   * 部署时 web 容器和 api 容器不是同一秒起来的，中间几秒里新版前端会拿到**旧版后端**
-   * 的返回 —— 那份返回里没有新加的字段，直接读 `.length` 就是
-   * 「Cannot read properties of undefined」**整页白屏**。
-   * 2026-08-21 本地实测崩过一次；CLAUDE.md 第 22 条也是同一类事故（客户首页白屏）。
-   * **凡是读后端新加的数组字段，一律 `?? []`。**
-   */
-  const stalledContainers = overview?.stalledContainers ?? [];
-
-  // 2026-08-07 删除 inTransitContainerCount：原来按「柜号」去重数在途柜子。
-  // 那个柜号是员工在预报单审核里手填的，生产库 357 张在途单只有 1 张填了，
-  // 数出来常年 0 或 1，跟真实的 94 个柜子对不上，而且填什么就数什么。
-  // 现在改由后端直接数 containers 表，分「在路上 / 已到仓 / 已完成」三段返回。
 
   // 判断 hash 是否为有效的功能分区 id。
   const isSectionId = (value: string): value is (typeof SECTION_IDS)[number] =>
     SECTION_IDS.includes(value as (typeof SECTION_IDS)[number]);
 
   const loadOverview = useCallback(async () => {
-    const stats = await fetchAdminOverview();
-    setOverview(stats);
+    if (overviewInFlight.current) return;
+    overviewInFlight.current = true;
+    const controller = new AbortController();
+    // 挂起的请求不能永久占住轮询；超时也保留旧数据并显示更新失败。
+    const timeout = setTimeout(() => controller.abort(), 30_000);
+    try {
+      const stats = await fetchAdminOverview(controller.signal);
+      setOverview(stats);
+      setOverviewError(false);
+    } catch (error) {
+      setOverviewError(true);
+      throw error;
+    } finally {
+      clearTimeout(timeout);
+      overviewInFlight.current = false;
+    }
   }, []);
 
   const loadOpsOverview = useCallback(async () => {
-    const stats = await fetchAdminOpsOverview();
-    setOpsOverview(stats);
+    if (opsOverviewInFlight.current) return;
+    opsOverviewInFlight.current = true;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 30_000);
+    try {
+      const stats = await fetchAdminOpsOverview(controller.signal);
+      setOpsOverview(stats);
+      setOpsError(false);
+    } catch (error) {
+      setOpsError(true);
+      throw error;
+    } finally {
+      clearTimeout(timeout);
+      opsOverviewInFlight.current = false;
+    }
   }, []);
 
   const loadStaff = useCallback(async () => {
@@ -676,6 +668,7 @@ export default function AdminHomePage() {
       list = await fetchAdminOrders();
     } catch (error) {
       if (!orderListGate.isCurrent(ticket)) return "stale"; // 旧请求的失败不许污染新结果
+      setOrdersError(true);
       throw error;
     }
     if (!orderListGate.isCurrent(ticket)) return "stale";
@@ -689,6 +682,8 @@ export default function AdminHomePage() {
       return bn.localeCompare(an);
     });
     setOrderList(list);
+    setOrdersLoaded(true);
+    setOrdersError(false);
     return "applied";
   }, []);
 
@@ -935,13 +930,6 @@ export default function AdminHomePage() {
     }, 10000);
     return () => window.clearInterval(interval);
   }, []);
-
-  useEffect(() => {
-    if (!overview) return;
-    setOverviewFlash(true);
-    const t = window.setTimeout(() => setOverviewFlash(false), 620);
-    return () => window.clearTimeout(t);
-  }, [overview]);
 
   useEffect(() => {
     if (!toast) return;
@@ -1448,187 +1436,14 @@ export default function AdminHomePage() {
     <>
       {/* 1. 运营看板 */}
       <section id="overview" style={{ ...sectionStyle, display: activeSection === "overview" ? "block" : "none" }}>
-        <h2 style={{ marginTop: 0, marginBottom: 16, fontSize: 18 }}>{SECTION_LABELS.overview}</h2>
-        {overview ? (
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
-              gap: 12,
-            }}
-          >
-            <div className={overviewFlash ? "ledger-kpi kpi-flash" : "ledger-kpi"} style={cardStyle}>
-              <div style={{ color: "var(--t-strong)", fontSize: 12 }}>员工账号总人数</div>
-              <div style={{ fontSize: 22, fontWeight: 700 }}>
-                <CountUpNumber value={overview.staffAccountCount} />
-              </div>
-            </div>
-            <div className={overviewFlash ? "ledger-kpi kpi-flash" : "ledger-kpi"} style={cardStyle}>
-              <div style={{ color: "var(--t-strong)", fontSize: 12 }}>客户账号</div>
-              <div style={{ fontSize: 22, fontWeight: 700 }}>
-                <CountUpNumber value={overview.clientAccountCount} />
-              </div>
-            </div>
-            <div className={overviewFlash ? "ledger-kpi kpi-flash" : "ledger-kpi"} style={cardStyle}>
-              <div style={{ color: "var(--t-strong)", fontSize: 12 }}>今日新增订单</div>
-              <div style={{ fontSize: 22, fontWeight: 700 }}>
-                <CountUpNumber value={overview.newOrderCountToday} />
-              </div>
-            </div>
-            <div className={overviewFlash ? "ledger-kpi kpi-flash" : "ledger-kpi"} style={cardStyle}>
-              <div style={{ color: "var(--t-strong)", fontSize: 12 }}>在途运单</div>
-              <div style={{ fontSize: 22, fontWeight: 700 }}>
-                <CountUpNumber value={overview.inTransitOrderCount} />
-              </div>
-            </div>
-            <div className={overviewFlash ? "ledger-kpi kpi-flash" : "ledger-kpi"} style={cardStyle}>
-              <div style={{ color: "var(--t-strong)", fontSize: 12 }}>当日收货总方数</div>
-              <div style={{ fontSize: 22, fontWeight: 700 }}>
-                <CountUpNumber value={overview.receivedVolumeM3Today} decimals={1} />
-              </div>
-            </div>
-          </div>
-        ) : (
-          <p style={{ color: "var(--t-strong)" }}>看板数据加载中…</p>
-        )}
-        <div style={{ marginTop: 14, display: "grid", gap: 12 }}>
-          <div className="dashboard-grid-2">
-            <div className="dashboard-panel">
-              <div className="dashboard-panel-title">中泰线路时效分析图（装柜 → 到仓，天）</div>
-              <div style={{ width: "100%", height: 240 }}>
-                {etaTrendData.length > 0 ? (
-                  <ResponsiveContainer>
-                    <LineChart data={etaTrendData}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#E4E6EC" />
-                      <XAxis dataKey="label" stroke="#8B94A3" />
-                      <YAxis stroke="#8B94A3" />
-                      <Tooltip
-                        formatter={(value, name) => [value == null ? "无数据" : `${String(value)} 天`, String(name)]}
-                      />
-                      <Legend />
-                      {/* connectNulls={false}：某一周没有海运（或陆运）的货时线断开，
-                          不要连成直线假装有数据 */}
-                      <Line type="monotone" dataKey="seaDays" name="海运" stroke="#1e3a8a" strokeWidth={2} connectNulls={false} />
-                      <Line type="monotone" dataKey="landDays" name="陆运" stroke="#B45309" strokeWidth={2} connectNulls={false} />
-                    </LineChart>
-                  </ResponsiveContainer>
-                ) : (
-                  <div style={{ fontSize: 13, color: "var(--t-strong)", padding: "8px 2px" }}>
-                    暂无时效数据（需要运单同时有「已装柜」和「已到仓」两条轨迹才能算）
-                  </div>
-                )}
-              </div>
-            </div>
-            <div className="dashboard-panel">
-              <div className="dashboard-panel-title">运单状态分布</div>
-              <div style={{ width: "100%", height: 240 }}>
-                <ResponsiveContainer>
-                  <BarChart data={statusDistribution}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#E4E6EC" />
-                    <XAxis dataKey="name" stroke="#8B94A3" />
-                    <YAxis stroke="#8B94A3" />
-                    <Tooltip />
-                    {/* ⚠️ isAnimationActive={false} 不是可有可无的样式选项 —— recharts 3.8.1 的进场动画
-                        在这里跑不起来，柱子会永远停在动画起始状态（height=0），整张图看着是空的。
-                        2026-09-03 实测：数据完全正确（客户端那张图 fiber 里读到 未发出=11/在途=10/…），
-                        但 recharts-inactive-bar 那层里一个图形都没有；关掉动画柱子立刻全出来。
-                        开发模式和生产构建都复现，等于线上一直是张空图。别删这个属性。 */}
-                    <Bar dataKey="value" name="单数" radius={[6, 6, 0, 0]} isAnimationActive={false}>
-                      {statusDistribution.map((item) => (
-                        <Cell key={item.name} fill={item.color} />
-                      ))}
-                    </Bar>
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
-            </div>
-          </div>
-          <div className="dashboard-panel">
-            <div className="dashboard-panel-title">中泰海陆运路线概览（简化）</div>
-            <div className="route-map-wrap">
-              <div className="route-point route-point-cn">中国仓</div>
-              <div className="route-line route-line-sea" />
-              <div className="route-line route-line-land" />
-              <div className="route-point route-point-th">泰国仓</div>
-              {/* 2026-08-07：原来这里是「当前在途柜量：N」，N 由前端把未完成订单的
-                  「柜号」去重数出来。那个柜号是员工在预报单审核里手填的，
-                  生产库 357 张在途单里只有 1 张填了，所以这个数常年 0 或 1，
-                  跟真实柜数（94 个）对不上。改成后端直接数 containers 表，分三段。 */}
-              <div className="route-counter">
-                装柜中 {overview?.containerLoadingCount ?? "—"}
-                　·　在路上 {overview?.containerOnTheWayCount ?? "—"}
-                　·　已到仓 {overview?.containerAtWarehouseCount ?? "—"}
-                　·　已完成 {overview?.containerDoneCount ?? "—"}
-                　（共 {overview?.containerTotalCount ?? "—"} 个柜）
-              </div>
-            </div>
-          </div>
-          {/* 卡住的柜子（2026-08-21 新增）。
-              放在关务预警上面：这是目前看板上唯一会主动告诉你「出事了」的地方。
-              判定规则和阈值都在后端 /admin/dashboard/overview 里，那边有详细注释。 */}
-          <div style={{ border: "1px solid var(--l-cool)", borderRadius: 10, padding: 10, background: "var(--s-cool)" }}>
-            <div style={{ fontWeight: 700, marginBottom: 6 }}>
-              卡住的柜子
-              {stalledContainers.length > 0 ? `（${stalledContainers.length} 个）` : ""}
-            </div>
-            {stalledContainers.length > 0 ? (
-              <div style={{ display: "grid", gap: 5 }}>
-                {stalledContainers.map((c) => (
-                  <div key={c.containerNo} style={{ fontSize: 12.5, color: "var(--t-body)" }}>
-                    <b>{c.containerNo}</b>
-                    <span style={{ color: "var(--t-muted)" }}>
-                      （{c.transportMode === "land" ? "陆运" : "海运"} · {c.shipmentCount} 票货 · 现在是「{c.currentStatusZh}」）
-                    </span>
-                    <span style={{ color: "var(--c-red)", marginLeft: 6 }}>
-                      {c.reason === "overdue"
-                        ? `装柜已 ${c.loadedDays} 天还没到仓`
-                        : `已经 ${c.idleDays} 天没推进状态`}
-                    </span>
-                  </div>
-                ))}
-                <div style={{ fontSize: 11, color: "var(--t-faint)", marginTop: 2 }}>
-                  判定：海运装柜超 21 天没到仓 / 超 14 天没推状态；陆运都是超 7 天。已到泰国仓的不算。
-                </div>
-              </div>
-            ) : (
-              <div style={{ fontSize: 13, color: "var(--t-strong)" }}>没有卡住的柜子</div>
-            )}
-          </div>
-          {/* 关务查验预警：没有告警就整块不显示（2026-08-21）。
-              原来无论如何都占一块地方写「暂无查验/待处理告警」，
-              生产上这张表只有 1 条、还没关联运单，等于常年是块空版面。
-              告警类面板的价值在于「出现了就说明有事」，没事就不该占地方。 */}
-          {opsOverview && opsOverview.customsAlerts.length > 0 && (
-            <div style={{ border: "1px solid #fde68a", borderRadius: 10, padding: 10, background: "#fffbeb" }}>
-              <div style={{ fontWeight: 700, marginBottom: 6 }}>关务查验预警</div>
-              <div style={{ display: "grid", gap: 4 }}>
-                {opsOverview.customsAlerts.slice(0, 6).map((item) => (
-                  <div key={item.id} style={{ fontSize: 12, color: "var(--c-amber-deep)" }}>
-                    [{item.status === "inspection" ? "查验" : item.status === "released" ? "放行" : item.status === "pending" ? "待处理" : item.status}] 运单 {item.shipmentTrackingNo ?? item.shipmentId ?? "-"} /{" "}
-                    {item.remark ?? "无备注"}
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-          {/* 供应商报价变化提醒：没有变动就整块不显示（2026-08-21）。
-              ⚠️ 这个面板要出内容，同一条「线路+供应商+运输方式+季节+币种」至少得有 2 条报价记录才比得出变化。
-              生产上整张报价表只有 1 条，所以它**永远**不会有内容 —— 不是坏了，是没数据。 */}
-          {opsOverview && opsOverview.supplierPriceAlerts.length > 0 && (
-            <div style={{ border: "1px solid #E4E6EC", borderRadius: 10, padding: 10, background: "var(--c-blue-bg)" }}>
-              <div style={{ fontWeight: 700, marginBottom: 6 }}>供应商报价变化提醒</div>
-              <div style={{ display: "grid", gap: 4 }}>
-                {opsOverview.supplierPriceAlerts.slice(0, 6).map((item) => (
-                  <div key={`${item.routeCode}-${item.supplierName}-${item.transportMode}-${item.seasonTag}-${item.currency}-${item.updatedAt}`} style={{ fontSize: 12, color: "var(--c-navy)" }}>
-                    {item.routeCode} / {item.supplierName} / {item.transportMode === "land" ? "陆运" : "海运"} / {item.seasonTag} / {item.currency}：{item.previousQuotePrice.toFixed(2)} →{" "}
-                    {item.latestQuotePrice.toFixed(2)}（变动 {item.delta > 0 ? "+" : ""}
-                    {item.delta.toFixed(2)}）
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
+        <AdminOperationsOverview
+          overview={overview}
+          opsOverview={opsOverview}
+          shipmentCounts={ordersLoaded ? shipmentCounts : null}
+          overviewError={overviewError}
+          ordersError={ordersError}
+          opsError={opsError}
+        />
       </section>
 
       {/* 2. 员工管理 */}

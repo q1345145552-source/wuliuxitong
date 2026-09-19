@@ -1233,10 +1233,11 @@ export async function patchStaffShipmentOrderBundle(payload: {
   return parseApiResponse(response);
 }
 
-export async function fetchAdminOverview(): Promise<AdminOverview> {
+export async function fetchAdminOverview(signal?: AbortSignal): Promise<AdminOverview> {
   const response = await fetch(`${apiBaseUrl()}/admin/dashboard/overview`, {
     method: "GET",
     headers: { ...authHeaders() },
+    signal,
   });
   return parseApiResponse(response);
 }
@@ -1545,10 +1546,11 @@ export async function createAdminLastmileOrder(payload: {
 /**
  * 获取管理员运营总控看板数据（毛利/关务预警/报价变动）。
  */
-export async function fetchAdminOpsOverview(): Promise<AdminOpsOverview> {
+export async function fetchAdminOpsOverview(signal?: AbortSignal): Promise<AdminOpsOverview> {
   const response = await fetch(`${apiBaseUrl()}/admin/ops/overview`, {
     method: "GET",
     headers: { ...authHeaders() },
+    signal,
   });
   return parseApiResponse(response);
 }
