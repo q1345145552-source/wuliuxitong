@@ -173,8 +173,8 @@ export default function AdminAgentsPage() {
                         普货 {priceText(a.prices.normal)} · 商检 {priceText(a.prices.inspection)} · 敏感 {priceText(a.prices.sensitive)}
                       </td>
                       <td style={{ ...tdS, fontSize: 12 }}>
-                        {a.slug ? <div style={{ fontFamily: "monospace" }}>/{a.slug}</div> : null}
-                        {a.customDomain ? <div style={{ fontFamily: "monospace" }}>{a.customDomain}</div> : null}
+                        {a.slug ? <div style={{ whiteSpace: "nowrap" }}>前缀：<span style={{ fontFamily: "monospace" }}>/{a.slug}</span></div> : null}
+                        {a.customDomain ? <div style={{ whiteSpace: "nowrap" }}>域名：<span style={{ fontFamily: "monospace" }}>{a.customDomain}</span></div> : null}
                         {!a.slug && !a.customDomain ? <span style={{ color: "var(--t-faint)" }}>没设</span> : null}
                       </td>
                       <td style={tdS}>

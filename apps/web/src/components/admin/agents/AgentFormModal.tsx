@@ -38,6 +38,8 @@ export default function AgentFormModal(props: {
 
   const origin = typeof window !== "undefined" ? window.location.origin : "";
   const slugPreview = slug.trim().toLowerCase();
+  // 跟后端 normalizeAgentDomain 同一口径：去空格、转小写、去掉手抄时带上的 http(s):// 和结尾的 /
+  const domainPreview = customDomain.trim().toLowerCase().replace(/^https?:\/\//, "").replace(/\/+$/, "");
   const pricesRaised = agent != null && (
     Number(priceNormal) > agent.prices.normal || Number(priceInspection) > agent.prices.inspection || Number(priceSensitive) > agent.prices.sensitive
   );
@@ -125,7 +127,10 @@ export default function AgentFormModal(props: {
           <div>
             <label style={fl}>专属域名（选填）</label>
             <input value={customDomain} onChange={(e) => setCustomDomain(e.target.value)} placeholder="例如 wuliu.example.com" style={fi} />
-            <div style={hint}>只填域名本身。填了还要在服务器上另外配好才能用。</div>
+            <div style={hint}>
+              {domainPreview ? <>客户登录网址：<span style={{ fontFamily: "monospace" }}>https://{domainPreview}</span></> : "只填域名本身。填了还要在服务器上另外配好才能用。"}
+              {mode === "edit" && agent?.customDomain && domainPreview !== agent.customDomain ? "（改了以后旧域名打不开）" : ""}
+            </div>
           </div>
         </div>
 
