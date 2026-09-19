@@ -371,8 +371,11 @@ async function main(): Promise<void> {
   await check("5) 前缀保留字 / 格式、域名格式、三档价缺一档都拦", async () => {
     let r = await call("POST", "/admin/agents/create", admin, { ...goodAgent, slug: "admin" });
     assert.equal(r.status, 400); assert.match(r.body.message, /保留/);
+    assert.match(r.body.message, /换一个后缀/, "给用户看的字要写「后缀」（2026-09-19 老板：叫前缀会误导）");
     r = await call("POST", "/admin/agents/create", admin, { ...goodAgent, slug: "bkk_01" });
     assert.equal(r.status, 400); assert.match(r.body.message, /小写字母/);
+    assert.match(r.body.message, /后缀只能用/, "给用户看的字要写「后缀」");
+    assert.doesNotMatch(r.body.message, /前缀/, "报错里不许再出现「前缀」");
     r = await call("POST", "/admin/agents/create", admin, { ...goodAgent, customDomain: "not a domain" });
     assert.equal(r.status, 400); assert.match(r.body.message, /域名格式/);
     r = await call("POST", "/admin/agents/create", admin, { ...goodAgent, prices: { normal: 500, inspection: 550 } });
@@ -409,7 +412,8 @@ async function main(): Promise<void> {
     let r = await call("POST", "/admin/agents/create", admin, { ...goodAgent, slug: "other-1", customDomain: "" });
     assert.equal(r.status, 400); assert.match(r.body.message, /登录账号已经有人用了/);
     r = await call("POST", "/admin/agents/create", admin, { ...goodAgent, loginId: "zz_agent_yi", customDomain: "" });
-    assert.equal(r.status, 400); assert.match(r.body.message, /前缀已经被别的代理用了/);
+    assert.equal(r.status, 400); assert.match(r.body.message, /后缀已经被别的代理用了/);
+    assert.doesNotMatch(r.body.message, /前缀已经被/, "撞名报错也要写「后缀」");
     r = await call("POST", "/admin/agents/create", admin, { ...goodAgent, loginId: "zz_agent_yi", slug: "other-2" });
     assert.equal(r.status, 400); assert.match(r.body.message, /专属域名已经被别的代理用了/);
     assert.equal(db.agents.length, 1);

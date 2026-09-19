@@ -7,7 +7,14 @@
    scripts/test-agent-rebates.ts 直接 import 真代码测，不自己抄一份规则。
    ========================================================================== */
 
-/* ────────────────────────── 前缀（5.1 / 5.5） ────────────────────────── */
+/* ────────────────────────── 后缀（5.1 / 5.5；老叫法「前缀」） ────────────────────────── */
+
+/**
+ * ⚠️ 2026-09-19 老板定：**给用户看的字一律写「后缀」**（原话「应该不叫前缀，叫后缀。改一下，不然很容易误导」）——
+ *    这东西加在网址**末尾**（xianlianth.com/<后缀>），叫「前缀」会误导。
+ *    代码里的标识符（slug、validateAgentSlug、RESERVED_AGENT_SLUGS）和内部注释照旧，不做大范围改名；
+ *    但凡是要显示给人看的字符串（页面标签、保存失败的报错）必须写「后缀」。
+ */
 
 export const AGENT_SLUG_RE = /^[a-z0-9][a-z0-9-]{1,30}$/;
 
@@ -48,9 +55,9 @@ export function normalizeAgentSlug(raw: unknown): string | null {
 export function validateAgentSlug(slug: string | null): string | null {
   if (slug === null) return null;
   if (!AGENT_SLUG_RE.test(slug)) {
-    return "前缀只能用小写字母、数字和横杠，2 到 31 位，开头不能是横杠";
+    return "后缀只能用小写字母、数字和横杠，2 到 31 位，开头不能是横杠";
   }
-  if (RESERVED_AGENT_SLUGS.has(slug)) return `「${slug}」是系统保留的，换一个前缀`;
+  if (RESERVED_AGENT_SLUGS.has(slug)) return `「${slug}」是系统保留的，换一个后缀`;
   return null;
 }
 

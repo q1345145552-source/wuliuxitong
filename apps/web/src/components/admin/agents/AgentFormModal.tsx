@@ -117,10 +117,10 @@ export default function AgentFormModal(props: {
 
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 10 }}>
           <div>
-            <label style={fl}>前缀（选填）</label>
+            <label style={fl}>后缀（选填）</label>
             <input value={slug} onChange={(e) => setSlug(e.target.value)} placeholder="例如 bkk-wuliu" style={fi} maxLength={31} />
             <div style={hint}>
-              小写字母、数字、横杠。{slugPreview ? <>客户登录链接：<span style={{ fontFamily: "monospace" }}>{origin}/{slugPreview}</span></> : "不填就没有专属链接"}
+              加在网址末尾的一小段（小写字母、数字、横杠）。{slugPreview ? <>客户登录链接：<span style={{ fontFamily: "monospace" }}>{origin}/{slugPreview}</span></> : "不填就没有专属链接"}
               {mode === "edit" && agent?.slug && slugPreview !== agent.slug ? "（改了以后旧链接打不开）" : ""}
             </div>
           </div>

@@ -38,7 +38,7 @@ export default function AgentMe() {
               {data.logoUrl ? <img src={data.logoUrl} alt={`${data.name} logo`} style={{ width: 56, height: 56, objectFit: "contain", borderRadius: 8, border: "1px solid var(--l-soft)" }} /> : null}
               <div>
                 <div style={{ fontSize: 15, fontWeight: 700 }}>{data.name}</div>
-                <div style={{ color: "var(--t-muted)", marginTop: 4 }}>客户登录前缀：{data.slug ?? "未设置"}</div>
+                <div style={{ color: "var(--t-muted)", marginTop: 4 }}>客户登录后缀：{data.slug ?? "未设置"}</div>
                 <div style={{ color: "var(--t-muted)" }}>专属域名：{data.customDomain ?? "未设置"}</div>
               </div>
             </div>

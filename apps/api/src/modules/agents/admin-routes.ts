@@ -74,10 +74,10 @@ function uniqueConflictMessage(error: unknown): string | null {
   const e = error as { code?: string; meta?: { target?: unknown } };
   if (e?.code !== "P2002") return null;
   const target = JSON.stringify(e.meta?.target ?? "");
-  if (target.includes("slug")) return "这个前缀已经被别的代理用了，换一个";
+  if (target.includes("slug")) return "这个后缀已经被别的代理用了，换一个";
   if (target.includes("custom_domain") || target.includes("customDomain")) return "这个专属域名已经被别的代理用了";
   if (target.includes("id")) return "这个登录账号已经有人用了，换一个";
-  return "有重复的数据（前缀、域名或登录账号），请检查后再保存";
+  return "有重复的数据（后缀、域名或登录账号），请检查后再保存";
 }
 
 /** 读三档价输入：兼容 { prices: {normal,...} } 和平铺 priceNormal 两种写法 */
@@ -253,7 +253,7 @@ export function registerAgentAdminRoutes(app: MinimalHttpApp): void {
       customDomain ? prisma.agent.findUnique({ where: { customDomain }, select: { id: true } }) : Promise.resolve(null),
     ]);
     if (idTaken) return fail(res, 400, "BAD_REQUEST", "这个登录账号已经有人用了，换一个");
-    if (slugTaken) return fail(res, 400, "BAD_REQUEST", "这个前缀已经被别的代理用了，换一个");
+    if (slugTaken) return fail(res, 400, "BAD_REQUEST", "这个后缀已经被别的代理用了，换一个");
     if (domainTaken) return fail(res, 400, "BAD_REQUEST", "这个专属域名已经被别的代理用了");
 
     let logoPath: string | null = null;
