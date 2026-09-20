@@ -252,10 +252,11 @@ function loadWebModule(relative: string, globals: Record<string, unknown>): Reco
   const cache = new Map<string, Record<string, any>>();
   function load(file: string): Record<string, any> {
     if (cache.has(file)) return cache.get(file)!;
-    const code = ts.transpileModule(fs.readFileSync(file, "utf8"), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX } }).outputText;
+    const code = ts.transpileModule(fs.readFileSync(file, "utf8"), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX, esModuleInterop: true } }).outputText;
     const mod = { exports: {} as Record<string, any> };
     cache.set(file, mod.exports);
     const req = (name: string) => {
+      if (name === "jsbarcode") return webRequire(name); // 使用真实已锁定的编码库，其他外部依赖仍拒绝。
       assert.ok(name.startsWith("."), `不该有外部依赖：${name}`);
       const base = path.resolve(path.dirname(file), name);
       const target = [base, `${base}.ts`, `${base}.tsx`].find((f) => fs.existsSync(f) && fs.statSync(f).isFile());

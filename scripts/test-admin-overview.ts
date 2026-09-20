@@ -1,7 +1,7 @@
 /**
  * 运营看板直观化回归：真编译/渲染页面挂载的组件，执行真实分组与取数回调。
  * 不启动服务器、不发网络请求、不连接数据库；所有请求只用可控内存 Promise。
- * 静态 HTML 能证明显示内容和接线，不能代替真实浏览器的手机布局验收。
+ * 静态 HTML 和真实导航回调能证明显示内容与接线，不能代替浏览器导航/历史和手机布局验收。
  */
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
@@ -9,6 +9,8 @@ import { createRequire } from "node:module";
 import path from "node:path";
 import vm from "node:vm";
 import ts from "typescript";
+import { ok, requireRole } from "../apps/api/src/modules/core/http-utils";
+import { CONTAINER_STATUS_LABEL } from "../apps/api/src/modules/containers/status-flow";
 
 type RecordValue = Record<string, any>;
 const root = path.resolve("apps/web/src");
@@ -16,16 +18,16 @@ const pageFile = path.join(root, "app/admin/page.tsx");
 const componentFile = path.join(root, "components/admin/AdminOperationsOverview.tsx");
 const requireWeb = createRequire(pageFile);
 const cache = new Map<string, RecordValue>();
-function compile(source: string, filename: string, requireFn: (id: string) => any = requireWeb): RecordValue {
+function compile(source: string, filename: string, requireFn: (id: string) => any = requireWeb, globals: RecordValue = {}): RecordValue {
   const output = ts.transpileModule(source, { fileName: filename, compilerOptions: {
     module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX,
   } }).outputText;
   const module = { exports: {} };
-  vm.runInNewContext(`(function(exports,require,module){${output}\n})`, {}, { filename })(module.exports, requireFn, module);
+  vm.runInNewContext(`(function(exports,require,module){${output}\n})`, { Error, ...globals }, { filename })(module.exports, requireFn, module);
   return module.exports;
 }
-function load(filename: string): RecordValue {
-  const previous = cache.get(filename);
+function load(filename: string, globals: RecordValue = {}, moduleCache = cache): RecordValue {
+  const previous = moduleCache.get(filename);
   if (previous) return previous;
   const exports = compile(readFileSync(filename, "utf8"), filename, (id) => {
     if (id.endsWith(".module.css")) {
@@ -35,15 +37,15 @@ function load(filename: string): RecordValue {
       return { default: classes };
     }
     if (!id.startsWith(".")) {
-      assert.ok(["react", "react/jsx-runtime", "react-dom/server"].includes(id), `Unexpected external import: ${id}`);
+      assert.ok(["react", "react/jsx-runtime", "react-dom/server", "next/link"].includes(id), `Unexpected external import: ${id}`);
       return requireWeb(id);
     }
     const base = path.resolve(path.dirname(filename), id);
     const resolved = [base + ".ts", base + ".tsx", base].find(existsSync);
     assert.ok(resolved, `Missing import: ${id}`);
-    return load(resolved);
-  });
-  cache.set(filename, exports);
+    return load(resolved, globals, moduleCache);
+  }, globals);
+  moduleCache.set(filename, exports);
   return exports;
 }
 const pageSource = readFileSync(pageFile, "utf8");
@@ -111,7 +113,7 @@ function test(name: string, body: () => unknown | Promise<unknown>) { tests.push
 // 真服务包装函数也执行：只把最底层 fetch 换成内存桩，证明 signal 没在中间丢掉。
 const apiFile = path.join(root, "services/business-api.ts");
 const apiAst = ts.createSourceFile(apiFile, readFileSync(apiFile, "utf8"), ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
-function serviceWrapper(name: string, bindings: RecordValue): (signal?: AbortSignal) => Promise<unknown> {
+function serviceWrapper(name: string, bindings: RecordValue): (...args: any[]) => Promise<unknown> {
   const declarations = apiAst.statements.filter((node): node is ts.FunctionDeclaration => ts.isFunctionDeclaration(node) && node.name?.text === name);
   assert.equal(declarations.length, 1, `须定位真实 API 包装函数 ${name}`);
   const body = declarations[0].getText(apiAst).replace(/^export\s+/, "");
@@ -189,16 +191,30 @@ test("真实页面分组逐票计数且不改输入，空列表是五个真实 0
   assert.deepEqual(countShipments([]), { processing: 0, inTransit: 0, atWarehouse: 0, delivered: 0, exception: 0 });
 });
 
-function overviewLoader(kind: "overview" | "ops", seed: RecordValue | null = null, failed = false) {
-  const state = { data: seed, error: failed, calls: 0 };
+// 新 helper 缺席时仅为旧版本红测提供空绑定；不替代修复后的真实实现。
+function accountWriteHarness() {
+  const accountWriteState = { current: { revision: 0, active: 0 } };
+  const bindings: RecordValue = { accountWriteState, useCallback: (fn: unknown) => fn };
+  for (const name of ['beginAccountWrite', 'isAccountSnapshotCurrent']) {
+    const present = findNodes((n): n is ts.VariableDeclaration => ts.isVariableDeclaration(n) && n.name.getText(ast) === name).length;
+    bindings[name] = present ? pageExpression(name, bindings) : name === 'beginAccountWrite' ? () => () => {} : () => true;
+  }
+  return bindings;
+}
+function overviewLoader(kind: "overview" | "ops", seed: RecordValue | null = null, failed = false, syncFailure = false) {
+  const state = { data: seed, error: failed, calls: 0, applied: [] as RecordValue[] };
   const ref = { current: false };
+  const account = accountWriteHarness();
+  const refreshPending = { current: false };
+  const refreshPromise = { current: null as Promise<void> | null };
   const clock = fakeClock();
   const requests: Array<ReturnType<typeof deferred<RecordValue>> & { signal?: AbortSignal }> = [];
   const fetch = (signal?: AbortSignal) => {
     state.calls++;
+    if (syncFailure && state.calls === 1) throw new Error('fixture synchronous failure');
     const request = { ...deferred<RecordValue>(), signal };
     requests.push(request);
-    const onAbort = () => { request.reject(new Error("fixture request aborted")); };
+    const onAbort = () => { request.reject(signal?.reason ?? new Error("fixture request aborted")); };
     if (signal?.aborted) onAbort();
     else signal?.addEventListener("abort", onAbort, { once: true });
     void request.promise.then(
@@ -207,17 +223,19 @@ function overviewLoader(kind: "overview" | "ops", seed: RecordValue | null = nul
     );
     return request.promise;
   };
-  const run: () => Promise<unknown> = pageExpression(kind === "overview" ? "loadOverview" : "loadOpsOverview", {
+  const run: (refreshAfterWrite?: boolean) => Promise<unknown> = pageExpression(kind === "overview" ? "loadOverview" : "loadOpsOverview", {
     useCallback: (callback: unknown) => callback,
     AbortController, window: clock, setTimeout: clock.setTimeout, clearTimeout: clock.clearTimeout,
-    overviewInFlight: ref, opsOverviewInFlight: ref,
+    ...account, overviewInFlight: ref, opsOverviewInFlight: ref,
+    overviewRefreshPending: refreshPending, overviewRefreshPromise: refreshPromise,
     fetchAdminOverview: fetch, fetchAdminOpsOverview: fetch,
-    setOverview: (value: RecordValue) => { state.data = value; },
+    setOverview: (value: RecordValue) => { state.data = value; state.applied.push(value); },
     setOpsOverview: (value: RecordValue) => { state.data = value; },
     setOverviewError: (value: boolean) => { state.error = value; },
     setOpsError: (value: boolean) => { state.error = value; },
   });
-  return { state, ref, requests, run, clock };
+  return { state, ref: kind === "overview" ? { get current() { return refreshPromise.current !== null; } } : ref,
+    requests, run, clock, refreshPending, refreshPromise, account };
 }
 for (const kind of ["overview", "ops"] as const) {
   test(`${kind} 首次请求期间不伪造数据，重复调用复用未完成请求`, async () => {
@@ -225,6 +243,7 @@ for (const kind of ["overview", "ops"] as const) {
     const first = loader.run();
     const duplicate = loader.run();
     assert.equal(loader.state.calls, 1, "轮询不应重复发起仍在途的总览请求");
+    if (kind === "overview") assert.equal(first, duplicate, "普通读取必须返回同一个真实 Promise");
     assert.equal(loader.state.data, null);
     assert.equal(loader.state.error, false);
     loader.requests[0].resolve({ fixture: "first" });
@@ -277,7 +296,7 @@ for (const kind of ["overview", "ops"] as const) {
     assert.equal(loader.state.error, false);
     loader.clock.advance(1);
     assert.equal(signal.aborted, true, "达到30秒应主动中断请求");
-    await assert.rejects(first, /fixture request aborted/);
+    await assert.rejects(first, /总览接口 30 秒未响应/);
     assert.equal(loader.state.error, true);
     assert.equal(loader.state.data, previous);
     assert.equal(loader.ref.current, false);
@@ -295,7 +314,7 @@ for (const kind of ["overview", "ops"] as const) {
     const first = firstLoader.run();
     assert.ok(firstLoader.requests[0].signal);
     firstLoader.clock.advance(30000);
-    await assert.rejects(first, /fixture request aborted/);
+    await assert.rejects(first, /总览接口 30 秒未响应/);
     assert.equal(firstLoader.state.data, null);
     assert.equal(firstLoader.state.error, true);
     assert.equal(firstLoader.ref.current, false);
@@ -318,6 +337,482 @@ for (const kind of ["overview", "ops"] as const) {
     }
   });
 }
+
+// 真写回调与真 loader 组合，必须让旧 GET 在写成功时仍未返回；仅测先完成再调用会漏掉丢刷新。
+async function flushMicrotasks() { for (let i = 0; i < 8; i++) await Promise.resolve(); }
+function mutationCaller(kind: "staff" | "client" | "ban" | "edit", loadOverview: (force?: boolean) => Promise<unknown>, options: {
+  account?: RecordValue; write?: (signal?: AbortSignal) => Promise<unknown>; reload?: () => Promise<unknown>;
+  banKind?: "员工" | "客户"; status?: string; confirmedStatus?: string; clock?: ReturnType<typeof fakeClock>;
+} = {}) {
+  const state = { writes: 0, reloads: 0, messages: [] as string[], toasts: [] as string[], loading: false, cleared: 0, signals: [] as (AbortSignal | undefined)[],
+    staff: [{ id: "u-test", status: options.status ?? "active" }], clients: [{ id: "u-test", status: options.status ?? "active" }] };
+  const reload = async () => { state.reloads++; return options.reload?.(); };
+  const write = async (signal?: AbortSignal) => { state.writes++; state.signals.push(signal); return options.write?.(signal); };
+  const clock = options.clock ?? fakeClock();
+  const bindings: RecordValue = {
+    AbortController, setTimeout: clock.setTimeout, clearTimeout: clock.clearTimeout,
+    ...(options.account ?? accountWriteHarness()),
+    loading: false, setLoading: (value: boolean) => { state.loading = value; },
+    setToast: (text: string) => { state.toasts.push(text); }, setMessage: (text: string) => { if (text) state.messages.push(text); },
+    staffForm: { id: "", name: "员工测试", phone: "13000000000", password: "" },
+    clientForm: { id: "", name: "客户测试", companyName: "", phone: "13000000001", email: "", password: "", agentId: "" },
+    editingClientId: "u-test", editingClientAgentId: null, setEditingClientId: () => {}, setEditingClientAgentId: () => {},
+    agentOptions: [], setStaffForm: () => { state.cleared++; }, setClientForm: () => { state.cleared++; }, setShowStaffModal: () => {}, setShowClientModal: () => {},
+    setStaffList: (fn: (rows: typeof state.staff) => typeof state.staff) => { state.staff = fn(state.staff); },
+    setClientList: (fn: (rows: typeof state.clients) => typeof state.clients) => { state.clients = fn(state.clients); },
+    createAdminStaff: (_payload: unknown, signal?: AbortSignal) => write(signal),
+    createAdminClient: (_payload: unknown, signal?: AbortSignal) => write(signal),
+    updateAdminClient: (_payload: unknown, signal?: AbortSignal) => write(signal),
+    toggleUserBan: async (_id: string, signal?: AbortSignal) => { await write(signal); return { id: "u-test", status: options.confirmedStatus ?? "inactive" }; }, window: { confirm: () => true },
+    loadStaff: reload, loadClients: reload, loadOverview,
+  };
+  if (findNodes((n): n is ts.VariableDeclaration => ts.isVariableDeclaration(n) && n.name.getText(ast) === 'runAccountWrite').length) {
+    bindings.runAccountWrite = pageExpression('runAccountWrite', bindings);
+  }
+  if (findNodes((n): n is ts.VariableDeclaration => ts.isVariableDeclaration(n) && n.name.getText(ast) === 'refreshAccountViews').length) {
+    bindings.refreshAccountViews = pageExpression('refreshAccountViews', bindings);
+  }
+  const callback = pageExpression(kind === "staff" ? "submitAddStaff" : kind === "client" ? "submitAddClient" : kind === "edit" ? "submitEditClient" : "confirmToggleBan", bindings);
+  return { state, run: (): Promise<void> => kind === "ban" ? callback("u-test", "测试", options.status ?? "active", reload, options.banKind ?? "员工") : callback() };
+}
+
+for (const kind of ["staff", "client", "ban", "edit"] as const) {
+  test(`${kind}真实写成功发生在旧GET途中：旧响应不落地，补发刷新并等待新响应`, async () => {
+    const seed = { fixture: "last displayed" }, loader = overviewLoader("overview", seed);
+    const old = loader.run();
+    const mutation = mutationCaller(kind, loader.run, { account: loader.account });
+    let completed = false;
+    const written = mutation.run().then(() => { completed = true; });
+    await flushMicrotasks();
+    assert.equal(mutation.state.writes, 1);
+    assert.equal(loader.state.calls, 1, '仍应单飞，写后刷新排队而非并发覆盖');
+    loader.requests[0].resolve({ fixture: "pre-write snapshot" });
+    await flushMicrotasks();
+    assert.equal(loader.state.calls, 2, '旧请求结束后必须真实补发GET，不能等下次10秒轮询');
+    assert.equal(completed, false, '写回调应等待写后的新GET，而不是仅等旧GET或直接返回');
+    assert.equal(loader.state.data, seed);
+    assert.deepEqual(loader.state.applied, [], '已知写前的旧结果不应重新标成最新');
+    loader.requests[1].resolve({ fixture: "post-write snapshot" });
+    await Promise.all([old, written]);
+    assert.deepEqual(loader.state.data, { fixture: "post-write snapshot" });
+    assert.deepEqual(mutation.state.messages, []);
+    assert.equal(loader.ref.current, false);
+    assert.equal(loader.refreshPromise.current, null);
+    assert.equal(loader.clock.pending.size, 0);
+  });
+}
+// 写成功与刷新失败是两类结果；直接执行三个真实调用点，不用假包装替它们吞错。
+for (const kind of ['staff', 'client', 'ban', 'edit'] as const) {
+  for (const failure of ['list', 'overview', 'both'] as const) {
+    test(`${kind}写成功但${failure}刷新失败：仅提示成功后的刷新问题，不提示写失败`, async () => {
+      const loader = overviewLoader('overview');
+      const mutation = mutationCaller(kind, loader.run, { account: loader.account,
+        reload: async () => { if (failure !== 'overview') throw new Error('fixture list unavailable'); },
+      });
+      const done = mutation.run();
+      await flushMicrotasks();
+      if (failure === 'list') loader.requests[0].resolve({ fixture: 'fresh' });
+      else loader.requests[0].reject(new Error('fixture overview unavailable'));
+      await done;
+      assert.equal(mutation.state.writes, 1);
+      assert.equal(mutation.state.toasts.length, 1);
+      assert.equal(mutation.state.cleared, kind === 'ban' ? 0 : 1);
+      assert.equal(mutation.state.messages.length, 1);
+      assert.match(mutation.state.messages[0], /刷新失败/);
+      assert.match(mutation.state.messages[0], /勿重复操作/);
+      assert.doesNotMatch(mutation.state.messages[0], /添加失败|更新失败|封禁失败|10\s*秒|This operation was aborted/);
+      assert.equal(mutation.state.loading, false);
+      assert.equal(loader.refreshPromise.current, null);
+    });
+  }
+  test(`${kind}写失败不清表单/不报成功，释放写标记后允许正常读恢复`, async () => {
+    const loader = overviewLoader('overview');
+    const mutation = mutationCaller(kind, loader.run, { account: loader.account, write: async () => { throw new Error('403 FORBIDDEN'); } });
+    await mutation.run();
+    assert.equal(mutation.state.cleared, 0);
+    assert.equal(mutation.state.toasts.length, 0);
+    assert.match(mutation.state.messages[0], /失败/);
+    assert.equal(mutation.state.loading, false);
+    assert.equal(loader.account.accountWriteState.current.active, 0);
+    const read = loader.run(); loader.requests.at(-1)!.resolve({ fixture: 'recovery' }); await read;
+    assert.equal(loader.state.data?.fixture, 'recovery');
+  });
+  for (const response of ['success', 'error'] as const) {
+    test(`${kind}写已发出但响应未到，旧GET先${response}不得落地；写响应后真实刷新`, async () => {
+      const seed = { fixture: 'last displayed' }, loader = overviewLoader('overview', seed);
+      const old = loader.run(), ack = deferred<void>();
+      const mutation = mutationCaller(kind, loader.run, { account: loader.account, write: () => ack.promise });
+      const done = mutation.run();
+      if (response === 'success') loader.requests[0].resolve({ fixture: 'pre-write' });
+      else loader.requests[0].reject(new Error('pre-write failure'));
+      const result = await Promise.allSettled([old]);
+      assert.equal(loader.state.data, seed, '写响应尚未返回时，也不能显示写前快照');
+      assert.equal(loader.state.error, false, '旧失败不得污染新一轮写入');
+      assert.equal(result[0].status, 'fulfilled');
+      assert.equal(loader.state.calls, 1, '不因写入尚未结束而空转GET');
+      ack.resolve(); await flushMicrotasks();
+      assert.equal(loader.state.calls, 2);
+      loader.requests[1].resolve({ fixture: 'post-write' }); await done;
+      assert.equal(loader.state.data?.fixture, 'post-write');
+      assert.equal(loader.account.accountWriteState.current.active, 0);
+    });
+  }
+}
+for (const kind of ['员工', '客户'] as const) {
+  for (const status of ['active', 'inactive']) {
+    test(`${kind}封禁切换后列表刷新失败仍采用服务器确认的${status}状态`, async () => {
+      const original = status === 'active' ? 'inactive' : 'active';
+      const mutation = mutationCaller('ban', async () => {}, { banKind: kind, status: original, confirmedStatus: status,
+        reload: async () => { throw new Error('list offline'); },
+      });
+      await mutation.run();
+      assert.equal((kind === '员工' ? mutation.state.staff : mutation.state.clients)[0].status, status);
+      assert.equal((kind === '员工' ? mutation.state.clients : mutation.state.staff)[0].status, original, '不能改错另一类列表');
+    });
+  }
+}
+// 实际列表loader要与写入共用失效边界，不能让轮询晚到覆盖已确认的封禁状态。
+for (const kind of ['staff', 'client'] as const) {
+  test(`${kind}列表：写前/写途中GET在写后才返回也不能覆盖，写后新GET正常落地`, async () => {
+    const account = accountWriteHarness(), requests: Array<ReturnType<typeof deferred<any[]>>> = [];
+    let rows = [{ id: 'u-test', status: 'inactive' }];
+    const read = pageExpression(kind === 'staff' ? 'loadStaff' : 'loadClients', { ...account,
+      fetchAdminStaff: () => { const q = deferred<any[]>(); requests.push(q); return q.promise; },
+      fetchAdminClients: () => { const q = deferred<any[]>(); requests.push(q); return q.promise; }, fetchAgentOptions: async () => [],
+      setStaffList: (value: typeof rows) => { rows = value; }, setClientList: (value: typeof rows) => { rows = value; }, setAgentOptions: () => {},
+    });
+    const before = read(), finish = account.beginAccountWrite(), during = read();
+    finish();
+    requests[0].resolve([{ id: 'u-test', status: 'active' }]); await before;
+    assert.equal(rows[0].status, 'inactive');
+    requests[1].resolve([{ id: 'u-test', status: 'active' }]); await during;
+    assert.equal(rows[0].status, 'inactive');
+    const after = read(); requests[2].resolve([{ id: 'u-test', status: 'active' }]); await after;
+    assert.equal(rows[0].status, 'active');
+  });
+}
+test('写期间新起的总览GET不落地；多个重叠写入结束前不展示中间快照', async () => {
+  const loader = overviewLoader('overview'), finishA = loader.account.beginAccountWrite();
+  const finishB = loader.account.beginAccountWrite();
+  const first = loader.run(); finishA();
+  loader.requests[0].resolve({ fixture: 'intermediate' }); await first;
+  assert.equal(loader.state.data, null);
+  finishB();
+  const fresh = loader.run(true); loader.requests[1].resolve({ fixture: 'final' }); await fresh;
+  assert.deepEqual(loader.state.data, { fixture: 'final' });
+  assert.equal(loader.account.accountWriteState.current.active, 0);
+});
+test('写后刷新必须等待两个读取都落定：列表先失败也不能提前解锁再写', async () => {
+  const loader = overviewLoader('overview');
+  const mutation = mutationCaller('staff', loader.run, { account: loader.account, reload: async () => { throw new Error('offline'); } });
+  const done = mutation.run(); await flushMicrotasks();
+  assert.equal(mutation.state.loading, true);
+  loader.requests[0].resolve({ fixture: 'fresh' }); await done;
+  assert.equal(mutation.state.loading, false);
+});
+test('写期间新发GET即使在写响应前完成，也不能显示中间快照', async () => {
+  const loader = overviewLoader('overview'), finish = loader.account.beginAccountWrite();
+  const read = loader.run(); loader.requests[0].resolve({ fixture: 'during write' }); await read;
+  assert.equal(loader.state.data, null);
+  assert.equal(loader.state.error, false);
+  finish();
+  const fresh = loader.run(true); loader.requests[1].resolve({ fixture: 'fresh' }); await fresh;
+  assert.deepEqual(loader.state.data, { fixture: 'fresh' });
+});
+test('写后列表永久挂起时30秒退出等待，迟到拒绝已接住，后续写入仍可用', async () => {
+  const clock = fakeClock(), list = deferred<void>();
+  const mutation = mutationCaller('staff', async () => {}, { clock, reload: () => list.promise });
+  const done = mutation.run(); await flushMicrotasks();
+  assert.equal(mutation.state.loading, true);
+  clock.advance(29999); await flushMicrotasks(); assert.equal(mutation.state.loading, true);
+  clock.advance(1); await done;
+  assert.equal(mutation.state.loading, false);
+  assert.match(mutation.state.messages[0], /员工已添加.*账号列表刷新失败/);
+  assert.equal(clock.pending.size, 0);
+  list.reject(new Error('late list failure')); await flushMicrotasks();
+  const recovery = mutationCaller('staff', async () => {}, { clock }); await recovery.run();
+  assert.equal(recovery.state.messages.length, 0);
+  assert.equal(clock.pending.size, 0);
+});
+test('总览超时不得误报写入失败，写成功后的提示不泄露英文 abort 文案', async () => {
+  const loader = overviewLoader('overview');
+  const mutation = mutationCaller('client', loader.run, { account: loader.account });
+  const done = mutation.run(); await flushMicrotasks(); loader.clock.advance(30000); await done;
+  assert.match(mutation.state.messages[0], /客户已添加.*看板刷新失败/);
+  assert.doesNotMatch(mutation.state.messages[0], /添加失败|aborted/);
+  assert.equal(mutation.state.toasts.length, 1);
+});
+for (const kind of ['staff', 'client', 'ban', 'edit'] as const) {
+  for (const late of ['resolve', 'reject'] as const) {
+    test(`${kind}写请求挂起30秒后解除读冻结，提示结果未确认；迟到${late}不报成功/不重复写`, async () => {
+      const clock = fakeClock(), loader = overviewLoader('overview', { fixture: 'old display' });
+      const ack = deferred<void>();
+      const mutation = mutationCaller(kind, loader.run, { clock, account: loader.account, write: () => ack.promise });
+      const done = mutation.run(); await flushMicrotasks();
+      assert.equal(loader.account.accountWriteState.current.active, 1);
+      clock.advance(29999); await flushMicrotasks();
+      assert.equal(mutation.state.loading, true);
+      clock.advance(1); await done;
+      assert.equal(loader.account.accountWriteState.current.active, 0);
+      assert.equal(mutation.state.loading, false);
+      assert.equal(mutation.state.signals[0]?.aborted, true, '必须把取消信号传到真实写服务');
+      assert.match(mutation.state.messages[0], /结果未确认.*勿重复操作/);
+      assert.doesNotMatch(mutation.state.messages[0], /添加失败|更新失败|封禁失败|成功/);
+      assert.equal(mutation.state.cleared, 0);
+      assert.equal(mutation.state.toasts.length, 0);
+      const recovery = loader.run(); loader.requests.at(-1)!.resolve({ fixture: 'current server snapshot' }); await recovery;
+      assert.equal(loader.state.data?.fixture, 'current server snapshot');
+      if (late === 'resolve') ack.resolve(); else ack.reject(new Error('late write rejection'));
+      await flushMicrotasks();
+      assert.equal(mutation.state.writes, 1, '超时不得自动重试非幂等写入');
+      assert.equal(mutation.state.toasts.length, 0, '迟到写返回不得重入成功流程');
+      assert.equal(mutation.state.cleared, 0);
+      assert.equal(loader.account.accountWriteState.current.active, 0);
+      assert.equal(clock.pending.size, 0);
+    });
+  }
+  test(`${kind}写服务按 AbortSignal 拒绝时，超时仍保留未知结果语义`, async () => {
+    const clock = fakeClock();
+    const mutation = mutationCaller(kind, async () => {}, { clock, write: (signal) => new Promise((_, reject) => {
+      signal?.addEventListener('abort', () => reject(signal.reason), { once: true });
+    }) });
+    const done = mutation.run(); await flushMicrotasks(); clock.advance(30000); await done;
+    assert.match(mutation.state.messages[0], /结果未确认/);
+    assert.equal(mutation.state.toasts.length, 0);
+    assert.equal(mutation.state.loading, false);
+  });
+}
+for (const [name, endpoint] of [
+  ['createAdminStaff', '/admin/users'], ['createAdminClient', '/admin/users/client'],
+  ['updateAdminClient', '/admin/users/client/update'], ['toggleUserBan', '/admin/users/toggle-ban'],
+]) {
+  test(`${name}实际写服务透传取消信号，旧签名、请求体和解包不变且不重试`, async () => {
+    for (const withSignal of [false, true]) {
+      const c = new AbortController(), body = { id: 'u-test', name: '合成', phone: '13000000000' };
+      const response = { raw: true }, parsed = { id: 'u-test', status: 'inactive' }; let count = 0;
+      const call = serviceWrapper(name, { apiBaseUrl: () => 'https://fixture.invalid', authHeaders: () => ({ Authorization: 'Bearer fixture' }),
+        fetch: async (url: string, options: RecordValue) => {
+          count++; assert.equal(url, 'https://fixture.invalid' + endpoint); assert.equal(options.method, 'POST');
+          assert.equal(options.headers.Authorization, 'Bearer fixture'); assert.equal(options.headers['Content-Type'], 'application/json');
+          assert.equal(options.signal, withSignal ? c.signal : undefined);
+          assert.deepEqual(JSON.parse(options.body), name === 'toggleUserBan' ? { id: 'u-test' } : body);
+          return response;
+        }, parseApiResponse: async (value: unknown) => { assert.equal(value, response); return parsed; },
+      });
+      assert.equal(await call(name === 'toggleUserBan' ? 'u-test' : body, withSignal ? c.signal : undefined), parsed);
+      assert.equal(count, 1);
+    }
+  });
+}
+test('真实编辑客户后旧列表晚到不能把新名字盖回去', async () => {
+  const account = accountWriteHarness(), reads: Array<ReturnType<typeof deferred<any[]>>> = [];
+  let rows = [{ id: 'u-test', name: '改前', status: 'active' }];
+  const read = pageExpression('loadClients', { ...account, fetchAdminClients: () => { const q = deferred<any[]>(); reads.push(q); return q.promise; },
+    fetchAgentOptions: async () => [], setClientList: (value: typeof rows) => { rows = value; }, setAgentOptions: () => {},
+  });
+  const old = read();
+  const mutation = mutationCaller('edit', async () => {}, { account, reload: read });
+  const written = mutation.run(); await flushMicrotasks();
+  reads[1].resolve([{ id: 'u-test', name: '改后', status: 'active' }]); await written;
+  assert.equal(rows[0].name, '改后');
+  reads[0].resolve([{ id: 'u-test', name: '改前', status: 'active' }]); await old;
+  assert.equal(rows[0].name, '改后', '编辑客户也必须走写版本边界');
+});
+test('多个写后刷新合并；纯轮询不排队；补发期间再次写入仍补第三次且不落旧值', async () => {
+  const loader = overviewLoader('overview');
+  const pending = [loader.run(), loader.run(true), loader.run(true), loader.run()];
+  loader.requests[0].resolve({ fixture: 'old' });
+  await flushMicrotasks();
+  assert.equal(loader.state.calls, 2);
+  pending.push(loader.run(true), loader.run(true), loader.run());
+  loader.requests[1].resolve({ fixture: 'superseded during followup' });
+  await flushMicrotasks();
+  assert.equal(loader.state.calls, 3);
+  assert.deepEqual(loader.state.applied, []);
+  pending.push(loader.run(), loader.run());
+  loader.requests[2].resolve({ fixture: 'latest' });
+  await Promise.all(pending);
+  assert.equal(loader.state.calls, 3, '纯轮询不得制造无穷补发');
+  assert.deepEqual(loader.state.applied, [{ fixture: 'latest' }]);
+  assert.equal(loader.refreshPending.current, false);
+  assert.equal(loader.clock.pending.size, 0);
+});
+for (const failure of ['error', 'timeout'] as const) {
+  test(`写后排队刷新不被旧请求${failure}吞掉，补发成功可清除旧错误`, async () => {
+    const seed = { fixture: 'last good' }, loader = overviewLoader('overview', seed, true);
+    const old = loader.run(), refresh = loader.run(true);
+    const done = Promise.all([old, refresh]);
+    void done.catch(() => {}); // 旧实现会拒绝；预期红测也不能产生未处理拒绝掩盖断言。
+    if (failure === 'timeout') loader.clock.advance(30000);
+    else loader.requests[0].reject(new Error('stale request failed'));
+    await flushMicrotasks();
+    assert.equal(loader.state.calls, 2);
+    assert.equal(loader.state.data, seed);
+    assert.equal(loader.state.error, true);
+    assert.equal(loader.clock.pending.size, 1, '补发应有独立30秒超时，旧timer已清');
+    loader.requests[1].resolve({ fixture: 'recovered' });
+    await done;
+    assert.equal(loader.state.error, false);
+    assert.equal(loader.ref.current, false);
+    assert.equal(loader.clock.pending.size, 0);
+  });
+}
+test('同步抛错也释放全部状态，后续请求不复用已拒绝的旧Promise', async () => {
+  const loader = overviewLoader('overview', null, false, true);
+  await assert.rejects(loader.run(), /fixture synchronous failure/);
+  assert.equal(loader.ref.current, false);
+  assert.equal(loader.refreshPromise.current, null);
+  assert.equal(loader.clock.pending.size, 0);
+  const next = loader.run(true);
+  assert.equal(loader.state.calls, 2);
+  loader.requests[0].resolve({ fixture: 'recovery' });
+  await next;
+  assert.equal(loader.state.error, false);
+});
+test('旧响应结束的微任务边界遇到新写入，必须开启新请求而非丢进已结束队列', async () => {
+  const loader = overviewLoader('overview');
+  const first = loader.run();
+  loader.requests[0].resolve({ fixture: 'before mutation' });
+  let refresh: Promise<unknown> | undefined;
+  await Promise.resolve().then(() => { refresh = loader.run(true); });
+  await flushMicrotasks();
+  assert.equal(loader.state.calls, 2);
+  loader.requests[1].resolve({ fixture: 'after mutation' });
+  await Promise.all([first, refresh]);
+  assert.deepEqual(loader.state.data, { fixture: 'after mutation' });
+  assert.equal(loader.ref.current, false);
+  assert.equal(loader.refreshPromise.current, null);
+});
+test('补发自身失败须通知所有等待者，保留旧数据并释放闸门，下一次能恢复', async () => {
+  const seed = { fixture: 'last good' }, loader = overviewLoader('overview', seed);
+  const pending = [loader.run(), loader.run(true), loader.run(true)];
+  const rejected = pending.map(promise => assert.rejects(promise, /latest failed/));
+  loader.requests[0].resolve({ fixture: 'stale' });
+  await flushMicrotasks();
+  assert.equal(loader.state.calls, 2);
+  loader.requests[1].reject(new Error('latest failed'));
+  await Promise.all(rejected);
+  assert.equal(loader.state.data, seed);
+  assert.equal(loader.state.error, true);
+  assert.equal(loader.ref.current, false);
+  assert.equal(loader.refreshPromise.current, null);
+  assert.equal(loader.clock.pending.size, 0);
+  const recovery = loader.run(true);
+  loader.requests[2].resolve({ fixture: 'fresh' });
+  await recovery;
+  assert.deepEqual(loader.state.data, { fixture: 'fresh' });
+  assert.equal(loader.state.error, false);
+});
+
+// 直接提取实际注册的 handler，执行真实权限检查/响应封装；仅 Prisma 和统计依赖使用严格内存桩。
+function backendOverview(options: { empty?: boolean; failStalled?: boolean } = {}) {
+  const filename = path.resolve('apps/api/src/modules/admin/routes.ts');
+  const source = readFileSync(filename, 'utf8');
+  const tree = ts.createSourceFile(filename, source, ts.ScriptTarget.Latest, true);
+  const callbacks: ts.Expression[] = [];
+  (function visit(node: ts.Node) {
+    if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression) &&
+      node.expression.getText(tree) === 'app.get' && node.arguments[0] && ts.isStringLiteral(node.arguments[0]) &&
+      node.arguments[0].text === '/admin/dashboard/overview') callbacks.push(node.arguments[1]);
+    ts.forEachChild(node, visit);
+  })(tree);
+  assert.equal(callbacks.length, 1);
+  const seen: Array<{ name: string; args: RecordValue }> = [];
+  const raw: Array<{ sql: string; values: unknown[] }> = [];
+  const companyId = 'fixture-company';
+  function capture(name: string, args: RecordValue) {
+    assert.equal(args.where.companyId, companyId, `${name}公司隔离不能丢失`);
+    seen.push({ name, args });
+  }
+  const prisma = {
+    user: { count: async (args: RecordValue) => { capture('user.count', args); return options.empty ? 0 : args.where.role === 'staff' ? 3 : 111; } },
+    order: { count: async (args: RecordValue) => { capture('order.count', args); return options.empty ? 0 : 7; } },
+    shipment: { aggregate: async (args: RecordValue) => { capture('shipment.aggregate', args); return { _sum: { volumeM3: options.empty ? null : { toString: () => '12.3456' } } }; } },
+    container: { count: async (args: RecordValue) => {
+      capture('container.count', args);
+      if (options.empty) return 0;
+      const status = args.where.currentStatus;
+      if (status === undefined) return 20;
+      if (status === 'LOADING') return 2;
+      if (status === 'SIGNED') return 4;
+      assert.deepEqual(Array.from(status.in), ['IN_WAREHOUSE_TH', 'DELIVERY_BOOKED', 'OUT_FOR_DELIVERY', 'DELIVERING']);
+      return 5;
+    } },
+    $queryRaw: async (parts: TemplateStringsArray, ...values: unknown[]) => {
+      const sql = parts.join('?'); raw.push({ sql, values });
+      assert.doesNotMatch(sql, /date_trunc\s*\(|sea_days|land_days/, '不可再计算已删除的时效趋势');
+      assert.match(sql, /FROM containers c/);
+      assert.match(sql, /c\.company_id = \?/);
+      assert.deepEqual(values, [companyId]);
+      if (options.failStalled) throw new Error('stalled query failed');
+      return options.empty ? [] : [
+        { container_no: 'TEST-SEA', transport_mode: 'sea', current_status: 'SEA_IN_TRANSIT', loaded_days: 35, idle_days: 9, shipment_count: 6n, reason: 'overdue' },
+        { container_no: 'TEST-OLD', transport_mode: 'land', current_status: 'HISTORICAL_STATUS', loaded_days: null, idle_days: null, shipment_count: 2n, reason: 'idle' },
+      ];
+    },
+  };
+  const handler = compile(`export default function bind(ctx: any) {
+    const { prisma, countShipmentOverview, requireRole, ok, CONTAINER_STATUS_LABEL } = ctx;
+    return (${callbacks[0].getText(tree)});
+  }`, filename).default({ prisma, requireRole, ok, CONTAINER_STATUS_LABEL,
+    countShipmentOverview: async (args: RecordValue) => {
+      capture('countShipmentOverview', { where: args }); assert.equal(args.parentTrackingNo, null);
+      return { inTransitCount: options.empty ? 0 : 332 };
+    },
+  });
+  const response = { statusCode: 0, body: null as RecordValue | null, requestId: 'overview-fixture',
+    status(code: number) { this.statusCode = code; return this; }, json(body: RecordValue) { this.body = body; return this; },
+  };
+  return { seen, raw, response, run: (role: string | null = 'admin') => handler({ headers: {}, auth: role ? { role, companyId, userId: 'fixture-user' } : undefined }, response) };
+}
+for (const empty of [false, true]) {
+  test(`真实总览handler移除趋势查询/字段，保留全部计数与柜子预警（empty=${empty}）`, async () => {
+    const api = backendOverview({ empty }); await api.run();
+    assert.equal(api.response.statusCode, 200);
+    assert.equal(api.response.body?.code, 'OK');
+    const data = api.response.body!.data;
+    assert.deepEqual(Object.keys(data).sort(), ['staffAccountCount', 'clientAccountCount', 'newOrderCountToday', 'inTransitOrderCount',
+      'receivedVolumeM3Today', 'containerLoadingCount', 'containerOnTheWayCount', 'containerAtWarehouseCount', 'containerDoneCount', 'containerTotalCount', 'stalledContainers'].sort());
+    for (const [key, value] of Object.entries({ staffAccountCount: 3, clientAccountCount: 111, newOrderCountToday: 7, inTransitOrderCount: 332,
+      receivedVolumeM3Today: 12.346, containerLoadingCount: 2, containerOnTheWayCount: 9, containerAtWarehouseCount: 5, containerDoneCount: 4, containerTotalCount: 20 })) {
+      assert.equal(data[key], empty ? 0 : value, `计数口径不能随移除趋势而变化：${key}`);
+    }
+    assert.equal(api.raw.length, 1, '仅保留卡住柜子的SQL');
+    assert.equal(api.seen.length, 9);
+    const shipment = api.seen.find(x => x.name === 'shipment.aggregate')!.args;
+    assert.equal(shipment.where.parentTrackingNo, null);
+    assert.equal(shipment.where.updatedAt, undefined);
+    assert.equal(shipment.where.createdAt.gte.getUTCHours(), 16, '北京零点为前一日UTC16点');
+    assert.equal(shipment.where.createdAt.gte.getUTCMinutes(), 0);
+    assert.equal(data.stalledContainers.length, empty ? 0 : 2);
+    if (!empty) {
+      assert.equal(data.stalledContainers[0].shipmentCount, 6);
+      assert.equal(data.stalledContainers[0].loadedDays, 35);
+      assert.equal(data.stalledContainers[0].reason, 'overdue');
+      assert.equal(data.stalledContainers[1].currentStatusZh, 'HISTORICAL_STATUS');
+      assert.equal(data.stalledContainers[1].loadedDays, null);
+      assert.equal(data.stalledContainers[1].idleDays, null);
+    }
+  });
+}
+test('总览非管理员/未登录仍拒绝且不查库，预警查询失败不能返回假成功', async () => {
+  for (const role of ['staff', 'client', null]) {
+    const api = backendOverview(); await api.run(role);
+    assert.equal(api.response.statusCode, role ? 403 : 401);
+    assert.equal(api.seen.length, 0); assert.equal(api.raw.length, 0);
+  }
+  const failed = backendOverview({ failStalled: true });
+  await assert.rejects(failed.run(), /stalled query failed/);
+  assert.equal(failed.response.body, null);
+});
+test('已无消费者的时效响应类型与KPI动画/账本样式不再残留', () => {
+  const type = apiAst.statements.find((node): node is ts.InterfaceDeclaration => ts.isInterfaceDeclaration(node) && node.name.text === 'AdminOverview');
+  assert.ok(type);
+  assert.ok(!type.members.some(member => member.name?.getText(apiAst) === 'transitTrend'));
+  for (const file of ['app/globals.css', 'app/ledger.css']) {
+    assert.doesNotMatch(readFileSync(path.join(root, file), 'utf8'), /\.kpi-flash\b|\.ledger-kpi\b|@keyframes\s+kpiFlash\b/);
+  }
+});
 
 function ordersLoader(seed: RecordValue[] = [], loaded = false) {
   const state = { list: seed, loaded, error: false };
@@ -415,12 +910,93 @@ const MountedOverview = compile(`export default function MountedOverview(ctx: an
   return (${sections[0].getText(ast)});
 }`, "mounted-admin-overview.tsx").default;
 const AdminOperationsOverview = load(componentFile).default;
-const { createElement } = requireWeb("react");
+const { createElement, isValidElement, Children } = requireWeb("react");
+// Node 的 next/link 包入口是 dist/client/link（pages 版），不是 App Router 构建 alias 的 app-dir/link。
+// 此处验证真实元素/SSR及本组件onNavigate/helper；框架自己的事件筛选、跨页和历史仍需独立浏览器验收。
+const NextLink = requireWeb("next/link").default;
 const { renderToStaticMarkup } = requireWeb("react-dom/server");
+
+type UiElement = { type: unknown; props: RecordValue };
+function componentLinks(component = AdminOperationsOverview): UiElement[] {
+  const links: UiElement[] = [];
+  function visit(node: unknown) {
+    if (!isValidElement(node)) return;
+    const element = node as UiElement;
+    if (element.type === NextLink || element.type === "a") links.push(element);
+    Children.forEach(element.props.children, visit);
+  }
+  visit(component({ overview, opsOverview, shipmentCounts }));
+  return links;
+}
+
+/** 只替换浏览器边界；组件 onNavigate、共享 navigateToHash、页面 hash 监听均执行真实源码。 */
+function navigationHarness(initialUrl: string) {
+  let currentUrl = new URL(initialUrl);
+  const pushes: Array<{ data: unknown; title: string; url: string }> = [];
+  const events: Array<{ type: string; oldURL: string; newURL: string }> = [];
+  const sequence: string[] = [];
+  const listeners = new Set<() => void>();
+  const sectionChanges: string[] = [];
+  class BoundaryHashChangeEvent {
+    oldURL: string;
+    newURL: string;
+    constructor(public type: string, init: { oldURL: string; newURL: string }) {
+      this.oldURL = init.oldURL;
+      this.newURL = init.newURL;
+    }
+  }
+  const browser = {
+    get location() { return currentUrl; },
+    history: { pushState(data: unknown, title: string, url: string) {
+      sequence.push("pushState");
+      pushes.push({ data, title, url });
+      currentUrl = new URL(url, currentUrl);
+    } },
+    dispatchEvent(event: BoundaryHashChangeEvent) {
+      assert.ok(event instanceof BoundaryHashChangeEvent, "须构造 HashChangeEvent，不能伪造没有 URL 的普通事件");
+      assert.equal(event.type, "hashchange");
+      assert.equal(event.newURL, currentUrl.href, "先写入 URL 再通知页面");
+      sequence.push(event.type);
+      events.push({ type: event.type, oldURL: event.oldURL, newURL: event.newURL });
+      for (const listener of listeners) listener();
+      return true;
+    },
+    addEventListener(type: string, listener: () => void) { assert.equal(type, "hashchange"); listeners.add(listener); },
+    removeEventListener(type: string, listener: () => void) { assert.equal(type, "hashchange"); listeners.delete(listener); },
+  };
+  // 不复写“hash -> 分区”逻辑，提取页面真实 effect 与白名单判定函数。
+  const effects = findNodes((node): node is ts.CallExpression => ts.isCallExpression(node) &&
+    node.expression.getText(ast) === "useEffect" && node.arguments[0]?.getText(ast).includes("const syncSectionByHash") === true);
+  assert.equal(effects.length, 1, "须定位页面实际注册的 hashchange effect");
+  let cleanup: (() => void) | undefined;
+  compile(`export default function bind(ctx: any) {
+    const { window, useEffect, setActiveSection } = ctx;
+    const SECTION_IDS = ${variable("SECTION_IDS").initializer!.getText(ast)};
+    const isSectionId = ${variable("isSectionId").initializer!.getText(ast)};
+    ${effects[0].getText(ast)};
+  }`, "mounted-admin-hash-listener.ts").default({
+    window: browser,
+    useEffect: (effect: () => (() => void)) => { cleanup = effect(); },
+    setActiveSection: (section: string) => { sectionChanges.push(section); },
+  });
+  const component = load(componentFile, { window: browser, URL, HashChangeEvent: BoundaryHashChangeEvent }, new Map()).default;
+  const links = componentLinks(component);
+  const orderLink = links.find((link) => link.props.href === "#orders");
+  assert.ok(orderLink, "运单入口须为相对 fragment，不能丢掉当前查询串或改写路径");
+  function navigateOrders() {
+    assert.equal(typeof orderLink!.props.onNavigate, "function", "同页 Link 必须接入真实导航回调");
+    let prevented = 0;
+    orderLink!.props.onNavigate({ preventDefault() { prevented++; sequence.push("preventDefault"); } });
+    assert.equal(prevented, 1, "须且只须取消一次 Next 默认导航，再交共享 helper 处理");
+  }
+  return { links, orderLink, pushes, events, sequence, sectionChanges, navigateOrders,
+    href: () => currentUrl.href, dispose: () => { cleanup?.(); assert.equal(listeners.size, 0); } };
+}
 
 const overview = {
   staffAccountCount: 3, clientAccountCount: 111, newOrderCountToday: 7, inTransitOrderCount: 332, receivedVolumeM3Today: 12.345,
   containerLoadingCount: 2, containerOnTheWayCount: 71, containerAtWarehouseCount: 220, containerDoneCount: 3, containerTotalCount: 296,
+  // 故意模拟旧接口多余字段：滚动发布时，即使旧API仍返回趋势，新看板也不应显示它。
   transitTrend: [{ label: "NEVER_RENDER_TREND_LABEL", seaDays: 13.1, landDays: null, samples: 17 }],
   stalledContainers: [{ containerNo: "SEA-OVERDUE-01", transportMode: "sea", currentStatus: "ARRIVED_PORT", currentStatusZh: "已到港", loadedDays: 35, idleDays: 9, shipmentCount: 6, reason: "overdue" }],
 };
@@ -444,7 +1020,7 @@ function metricGroups(html: string): Array<Record<string, string>> {
 const emptyOverview = {
   staffAccountCount: 0, clientAccountCount: 0, newOrderCountToday: 0, inTransitOrderCount: 0, receivedVolumeM3Today: 0,
   containerLoadingCount: 0, containerOnTheWayCount: 0, containerAtWarehouseCount: 0, containerDoneCount: 0, containerTotalCount: 0,
-  transitTrend: [], stalledContainers: [],
+  stalledContainers: [],
 };
 const emptyOps = { customsAlerts: [], supplierPriceAlerts: [] };
 const zeroCounts = { processing: 0, inTransit: 0, atWarehouse: 0, delivered: 0, exception: 0 };
@@ -467,7 +1043,57 @@ test("看板移除图表和路线示意，所有数字无需悬停，柜子预�
 });
 test("只有真实存在的运单/装柜入口，标签保留浏览器原生链接语义", () => {
   const links = [...render().matchAll(/<a\b[^>]*href="([^"]+)"/g)].map((match) => match[1]);
-  assert.deepEqual(links, ["/staff/container-loading", "/admin#orders", "/staff/container-loading"]);
+  assert.deepEqual(links, ["/staff/container-loading", "#orders", "/staff/container-loading"]);
+});
+test("真实看板三个入口均为 next/link，而不是只渲染出相同 HTML 的原生 a", () => {
+  const links = componentLinks();
+  assert.equal(links.length, 3);
+  for (const link of links) assert.equal(link.type, NextLink, `入口 ${link.props.href} 仍会绕过 Next 导航`);
+});
+for (const entry of ["/admin#overview", "/admin", "/admin?filter=a%20b&scope=orders#overview", "/admin/?filter=a%20b#overview"]) {
+  test(`真实运单回调从 ${entry} 切分区，保留路径/query且先push再发hashchange`, () => {
+    const initialUrl = new URL(entry, "https://fixture.invalid").href;
+    const nav = navigationHarness(initialUrl);
+    try {
+      const expected = new URL("#orders", initialUrl).href;
+      // href 本身也能用于复制链接/新标签打开；不依赖 onClick 才能拼出目的地址。
+      assert.equal(new URL(nav.orderLink.props.href, initialUrl).href, expected);
+      assert.equal(nav.orderLink.props.onClick, undefined, "不能用无条件 onClick 阻止 Cmd/Ctrl/中键打开");
+      assert.deepEqual(nav.sectionChanges, ["overview"]);
+      nav.navigateOrders();
+      assert.equal(nav.href(), expected);
+      assert.deepEqual(nav.sequence, ["preventDefault", "pushState", "hashchange"]);
+      assert.deepEqual(nav.pushes, [{ data: null, title: "", url: expected }]);
+      assert.deepEqual(nav.events, [{ type: "hashchange", oldURL: initialUrl, newURL: expected }]);
+      assert.deepEqual(nav.sectionChanges, ["overview", "orders"], "真实页面监听必须收到通知并切换显示分区");
+    } finally { nav.dispose(); }
+  });
+}
+test("已在orders重复导航不新增历史/事件；真实页面和地址都保持orders", () => {
+  for (const initialUrl of ["https://fixture.invalid/admin#orders", "https://fixture.invalid/admin/?q=kept#orders"]) {
+    const nav = navigationHarness(initialUrl);
+    try {
+      nav.navigateOrders();
+      nav.navigateOrders();
+      assert.equal(nav.href(), initialUrl);
+      assert.deepEqual(nav.pushes, []);
+      assert.deepEqual(nav.events, []);
+      assert.deepEqual(nav.sequence, ["preventDefault", "preventDefault"]);
+      assert.deepEqual(nav.sectionChanges, ["orders"]);
+    } finally { nav.dispose(); }
+  }
+});
+test("两个跨页入口保留完整href与真实Link默认行为，不被同页hash回调拦截", () => {
+  const links = componentLinks().filter((link) => link.props.href === "/staff/container-loading");
+  assert.equal(links.length, 2);
+  for (const link of links) {
+    assert.equal(link.type, NextLink);
+    assert.equal(link.props.onNavigate, undefined);
+    assert.equal(link.props.onClick, undefined);
+    assert.equal(link.props.replace, undefined, "跨页仍新增历史记录，不能改成replace");
+    assert.equal(new URL(link.props.href, "https://fixture.invalid/admin?q=kept#overview").href,
+      "https://fixture.invalid/staff/container-loading");
+  }
 });
 test("初始未加载：总览/进度均占位，不伪装 0 或无预警", () => {
   const html = render({ overview: null, opsOverview: null, ordersLoaded: false });

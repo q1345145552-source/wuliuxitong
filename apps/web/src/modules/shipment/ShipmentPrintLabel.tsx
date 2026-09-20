@@ -1,5 +1,7 @@
 "use client";
 
+import { renderTrackingBarcode } from "./trackingBarcode";
+
 export interface ShipmentPrintLabelProps {
   marks: string;
   packageCount: number | string;
@@ -11,7 +13,7 @@ export interface ShipmentPrintLabelProps {
 }
 
 /**
- * 运单打印标签：唛头 + 运输方式 + 产品列表 + 箱号 + 单箱数量 + 运单号。
+ * 运单打印标签：唛头 + 运输方式 + 产品列表 + 箱号 + 单箱数量 + 运单号及条形码。
  * 多产品时每行一个产品，标明箱数。
  * 2026-09-15：老板要求去掉底部「湘泰物流网站」那一行（连带 .footer 样式），其余不动。
  */
@@ -19,6 +21,8 @@ export function openPrintLabel(props: ShipmentPrintLabelProps) {
   const win = window.open("", "_blank", "width=340,height=520");
   if (!win) return;
 
+  // 同一运单各箱共用运单条码；箱号仍是文字，不改变扫描后用于查运单的值。
+  const barcodeHtml = renderTrackingBarcode(props.trackingNo);
   const total = Number(props.packageCount) || 1;
   const modeText = props.transportMode
     ? (props.transportMode === "sea" ? "海运" : "陆运")
@@ -36,7 +40,8 @@ export function openPrintLabel(props: ShipmentPrintLabelProps) {
   <div class="row"><span>${escapeHtml(props.marks)}</span><span>${escapeHtml(modeText)}</span></div>
   <div class="row"><span>${escapeHtml(p.itemName)}</span></div>
   <div class="row"><span>箱号：${globalIdx}/${total}</span></div>
-  <div class="row"><span>${escapeHtml(props.trackingNo)}</span></div>
+  <div class="row"><span class="tracking-no">${escapeHtml(props.trackingNo)}</span></div>
+  ${barcodeHtml}
 </div>`;
       }
     }
@@ -47,7 +52,8 @@ export function openPrintLabel(props: ShipmentPrintLabelProps) {
   <div class="row"><span>${escapeHtml(props.marks)}</span><span>${escapeHtml(modeText)}</span></div>
   <div class="row"><span>${escapeHtml(props.itemName ?? "")}</span></div>
   <div class="row"><span>箱号：${i}/${total}</span><span>${props.productQuantity ? `单箱数量：${props.productQuantity}个` : ""}</span></div>
-  <div class="row"><span>${escapeHtml(props.trackingNo)}</span></div>
+  <div class="row"><span class="tracking-no">${escapeHtml(props.trackingNo)}</span></div>
+  ${barcodeHtml}
 </div>`;
     }
   }
@@ -62,6 +68,9 @@ export function openPrintLabel(props: ShipmentPrintLabelProps) {
   .label:last-child { page-break-after: auto; }
   .row { display: flex; font-size: 14px; font-weight: bold; margin: 3px 0; }
   .row span { flex: 1; text-align: center; word-break: break-all; }
+  .tracking-no { white-space: break-spaces; }
+  .barcode { display: block; margin: 6px auto 2px; }
+  .barcode-warning { font-size: 11px; line-height: 1.4; text-align: center; margin-top: 6px; }
   @media print { body { padding: 0; } .label { border: none; } }
 </style></head><body>
 ${labelsHtml}

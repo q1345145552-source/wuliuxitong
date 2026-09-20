@@ -45,6 +45,7 @@
     "test:shipment-list-display": "tsx scripts/test-shipment-list-display.ts",
     "test:admin-shipment-detail": "tsx scripts/test-admin-shipment-detail.ts",
     "test:admin-overview": "tsx scripts/test-admin-overview.ts",
+    "test:shipment-label-barcode": "tsx scripts/test-shipment-label-barcode.ts",
     "test:cargo-regressions": "tsx scripts/test-cargo-regressions.ts",
     "test:dispatch-wrap": "tsx scripts/test-dispatch-wrap.ts",
     "test:shipment-track-actions": "tsx scripts/test-shipment-track-actions.ts",

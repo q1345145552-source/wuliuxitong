@@ -282,46 +282,6 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
     const totalVolume = volumeAgg._sum.volumeM3 ? Number(volumeAgg._sum.volumeM3.toString()) : 0;
 
     /**
-     * 真实时效趋势（2026-08-21 新增，替换掉前端那条编出来的曲线）。
-     *
-     * 原来「中泰线路时效分析图」的数据是前端按 `2.5 + 第几个订单×0.6 + (海运4.2/陆运1.4)`
-     * 算出来的，**一个日期计算都没有**，跟真实时效毫无关系，而且永远单调上升。
-     *
-     * 现在按轨迹真算：同一票货「第一次变成已装柜」到「第一次变成已到仓」隔了几天，
-     * 按到仓那一周聚合，海运陆运分开（两者差 3 倍多，混在一条线里没有意义：
-     * 生产实测海运平均 14.7 天、陆运 4.1 天）。
-     *
-     * ⚠️ 轨迹是写在**子单**上的，所以这里**不能**按 parent_tracking_no IS NULL 过滤 ——
-     * 那样会一条都查不到（CLAUDE.md 第 24 条踩过这个坑）。
-     */
-    const transitRows = await prisma.$queryRaw<
-      Array<{ week_start: Date; sea_days: unknown; land_days: unknown; samples: bigint }>
-    >`
-      WITH t AS (
-        SELECT l.shipment_id,
-               MIN(l.changed_at) FILTER (WHERE l.to_status = 'loaded')        AS loaded_at,
-               MIN(l.changed_at) FILTER (WHERE l.to_status = 'inWarehouseTH') AS arrived_at
-        FROM status_logs l
-        GROUP BY l.shipment_id
-      )
-      SELECT date_trunc('week', t.arrived_at)::date AS week_start,
-             ROUND(AVG(EXTRACT(EPOCH FROM (t.arrived_at - t.loaded_at)) / 86400.0)
-                   FILTER (WHERE s.transport_mode = 'sea')::numeric, 1)  AS sea_days,
-             ROUND(AVG(EXTRACT(EPOCH FROM (t.arrived_at - t.loaded_at)) / 86400.0)
-                   FILTER (WHERE s.transport_mode = 'land')::numeric, 1) AS land_days,
-             COUNT(*) AS samples
-      FROM t
-      JOIN shipments s ON s.id = t.shipment_id
-      WHERE t.loaded_at IS NOT NULL
-        AND t.arrived_at IS NOT NULL
-        AND t.arrived_at > t.loaded_at
-        AND s.company_id = ${auth.companyId}
-      GROUP BY date_trunc('week', t.arrived_at)
-      ORDER BY date_trunc('week', t.arrived_at) DESC
-      LIMIT 8
-    `;
-
-    /**
      * 卡住的柜子（2026-08-21 新增）。
      *
      * 起因：生产上有个柜子 UETU7068621（9 票货）7-22 装柜，中间 28 天没推过任何状态，
@@ -389,25 +349,6 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
       reason: r.reason as "overdue" | "idle",
     }));
 
-    const num = (v: unknown): number | null =>
-      v === null || v === undefined ? null : Number(v.toString());
-
-    // 查出来是倒序（最近的在前），图上要按时间从左到右，所以反过来
-    const transitTrend = transitRows
-      .slice()
-      .reverse()
-      .map((r) => {
-        const d = new Date(r.week_start);
-        const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
-        const dd = String(d.getUTCDate()).padStart(2, "0");
-        return {
-          label: `${mm}-${dd}那周`,
-          seaDays: num(r.sea_days),
-          landDays: num(r.land_days),
-          samples: Number(r.samples),
-        };
-      });
-
     ok(res, {
       staffAccountCount: staff,
       clientAccountCount: client,
@@ -419,7 +360,6 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
       containerAtWarehouseCount: ctnAtWarehouse,
       containerDoneCount: ctnDone,
       containerTotalCount: ctnTotal,
-      transitTrend,
       stalledContainers,
     });
   });

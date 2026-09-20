@@ -287,7 +287,9 @@ export default function AdminHomePage() {
   const [overviewError, setOverviewError] = useState(false);
   const [opsError, setOpsError] = useState(false);
   // 无参数总览请求只保留一份在途请求，避免慢接口被10秒轮询反复挤掉。
-  const overviewInFlight = useRef(false);
+  const overviewRefreshPending = useRef(false);
+  const overviewRefreshPromise = useRef<Promise<void> | null>(null);
+  const accountWriteState = useRef({ revision: 0, active: 0 });
   const opsOverviewInFlight = useRef(false);
   /* 运单管理顶部那排数字。拉不到就整排不显示 ——
      宁可不显示，也不能显示一个假的 0 让人以为「今天没有延迟的」。 */
@@ -591,30 +593,94 @@ export default function AdminHomePage() {
   const isSectionId = (value: string): value is (typeof SECTION_IDS)[number] =>
     SECTION_IDS.includes(value as (typeof SECTION_IDS)[number]);
 
-  const loadOverview = useCallback(async () => {
-    if (overviewInFlight.current) return;
-    overviewInFlight.current = true;
+  // 发写请求前作废旧快照，结束时再作废写入途中发出的读取；不靠响应先后猜库内提交时刻。
+  const beginAccountWrite = useCallback(() => {
+    accountWriteState.current.revision++;
+    accountWriteState.current.active++;
+    return () => {
+      accountWriteState.current.revision++;
+      accountWriteState.current.active--;
+    };
+  }, []);
+
+  const isAccountSnapshotCurrent = useCallback((revision: number) => (
+    accountWriteState.current.active === 0 && accountWriteState.current.revision === revision
+  ), []);
+
+  const runAccountWrite = useCallback(async <T,>(write: (signal: AbortSignal) => Promise<T>): Promise<T> => {
+    const finishWrite = beginAccountWrite();
     const controller = new AbortController();
-    // 挂起的请求不能永久占住轮询；超时也保留旧数据并显示更新失败。
-    const timeout = setTimeout(() => controller.abort(), 30_000);
+    const error = new Error("请求超时，结果未确认，请刷新核对，勿重复操作。");
+    error.name = "AccountWriteTimeoutError";
+    let timeout: ReturnType<typeof setTimeout> | undefined;
     try {
-      const stats = await fetchAdminOverview(controller.signal);
-      setOverview(stats);
-      setOverviewError(false);
-    } catch (error) {
-      setOverviewError(true);
-      throw error;
+      // 中断客户端等待不等于服务端回滚。绝不自动重试这些非幂等写入。
+      return await Promise.race([
+        Promise.resolve().then(() => write(controller.signal)),
+        new Promise<never>((_, reject) => {
+          timeout = setTimeout(() => {
+            controller.abort(error);
+            reject(error);
+          }, 30_000);
+        }),
+      ]);
     } finally {
       clearTimeout(timeout);
-      overviewInFlight.current = false;
+      finishWrite();
     }
-  }, []);
+  }, [beginAccountWrite]);
+
+  const loadOverview = useCallback((refreshAfterWrite = false): Promise<void> => {
+    const inFlight = overviewRefreshPromise.current;
+    if (inFlight) {
+      // 普通轮询只复用；写成功后的刷新必须补做，多个写入合并为一次补发。
+      if (refreshAfterWrite) overviewRefreshPending.current = true;
+      return inFlight;
+    }
+    let resolve!: () => void;
+    let reject!: (error: unknown) => void;
+    const completion = new Promise<void>((yes, no) => { resolve = yes; reject = no; });
+    // 共享 Promise 是唯一在途状态；必须先登记再执行服务调用，不能在两者之间插入 await。
+    overviewRefreshPromise.current = completion;
+    void (async () => {
+      try {
+        do {
+          overviewRefreshPending.current = false;
+          const revision = accountWriteState.current.revision;
+          const controller = new AbortController();
+          const timeout = setTimeout(() => controller.abort(new Error("总览接口 30 秒未响应")), 30_000);
+          try {
+            const stats = await fetchAdminOverview(controller.signal);
+            // 请求途中有写入时，这份结果已过期；等待补发，不能将旧数标成最新。
+            if (!overviewRefreshPending.current && isAccountSnapshotCurrent(revision)) {
+              setOverview(stats);
+              setOverviewError(false);
+            }
+          } catch (error) {
+            // 旧请求失败/超时也不能吞掉待补刷新；最终请求失败才通知所有等待者。
+            if (!overviewRefreshPending.current && isAccountSnapshotCurrent(revision)) {
+              setOverviewError(true);
+              throw error;
+            }
+          } finally {
+            clearTimeout(timeout);
+          }
+        } while (overviewRefreshPending.current);
+        resolve();
+      } catch (error) {
+        reject(error);
+      } finally {
+        overviewRefreshPromise.current = null;
+      }
+    })();
+    return completion;
+  }, [isAccountSnapshotCurrent]);
 
   const loadOpsOverview = useCallback(async () => {
     if (opsOverviewInFlight.current) return;
     opsOverviewInFlight.current = true;
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 30_000);
+    const timeout = setTimeout(() => controller.abort(new Error("运营总览接口 30 秒未响应")), 30_000);
     try {
       const stats = await fetchAdminOpsOverview(controller.signal);
       setOpsOverview(stats);
@@ -629,16 +695,46 @@ export default function AdminHomePage() {
   }, []);
 
   const loadStaff = useCallback(async () => {
+    const revision = accountWriteState.current.revision;
     const list = await fetchAdminStaff();
+    if (!isAccountSnapshotCurrent(revision)) return;
     setStaffList(list);
-  }, []);
+  }, [isAccountSnapshotCurrent]);
 
   const loadClients = useCallback(async () => {
+    const revision = accountWriteState.current.revision;
     // 代理下拉跟客户列表一起拉；代理接口出错时返回空数组，不影响客户列表
     const [list, agents] = await Promise.all([fetchAdminClients(), fetchAgentOptions()]);
+    if (!isAccountSnapshotCurrent(revision)) return;
     setClientList(list);
     setAgentOptions(agents);
-  }, []);
+  }, [isAccountSnapshotCurrent]);
+
+  // 写成功已是事实。刷新错误单独反馈，并等两个读取都落定后才解除操作中的状态。
+  const refreshAccountViews = useCallback(async (reload: () => Promise<unknown>, successMessage: string) => {
+    const refreshList = async () => {
+      let timeout: ReturnType<typeof setTimeout> | undefined;
+      try {
+        // 列表 API 没有超时参数，限制此次等待；不宣称已取消底层请求。
+        await Promise.race([
+          Promise.resolve().then(reload),
+          new Promise<never>((_, reject) => {
+            timeout = setTimeout(() => reject(new Error("账号列表 30 秒未响应")), 30_000);
+          }),
+        ]);
+      } finally {
+        clearTimeout(timeout);
+      }
+    };
+    const results = await Promise.allSettled([
+      refreshList(),
+      Promise.resolve().then(() => loadOverview(true)),
+    ]);
+    const failed = ["账号列表", "看板"].filter((_, index) => results[index].status === "rejected");
+    if (failed.length) {
+      setMessage(`${successMessage}；${failed.join("、")}刷新失败，请刷新核对，勿重复操作。`);
+    }
+  }, [loadOverview]);
 
   /**
    * 按搜索词筛客户。账号、客户名字、公司名字、电话、邮箱 —— 五样里命中任意一样就算。
@@ -997,24 +1093,31 @@ export default function AdminHomePage() {
     setLoading(true);
     setMessage("");
     try {
-      await createAdminStaff({
-        id: staffForm.id.trim() || undefined,
-        name: staffForm.name.trim(),
-        phone: staffForm.phone.trim(),
-        password: staffForm.password.trim() || undefined,
-      });
+      try {
+        await runAccountWrite((signal) => createAdminStaff({
+          id: staffForm.id.trim() || undefined,
+          name: staffForm.name.trim(),
+          phone: staffForm.phone.trim(),
+          password: staffForm.password.trim() || undefined,
+        }, signal));
+      } catch (error) {
+        if (error instanceof Error && error.name === "AccountWriteTimeoutError") {
+          setMessage(error.message);
+          return;
+        }
+        const text = error instanceof Error ? error.message : "添加失败";
+        if (text.includes("permission") || text.includes("FORBIDDEN") || text.includes("403")) {
+          setMessage("添加失败：请使用管理员身份登录（在首页选择 admin 并进入工作台）后再试。");
+        } else {
+          setMessage(`添加失败：${text}`);
+        }
+        return;
+      }
       setStaffForm({ id: "", name: "", phone: "", password: "" });
       setShowStaffModal(false);
       setToast("员工添加成功");
       setMessage("");
-      await Promise.all([loadStaff(), loadOverview()]);
-    } catch (error) {
-      const text = error instanceof Error ? error.message : "添加失败";
-      if (text.includes("permission") || text.includes("FORBIDDEN") || text.includes("403")) {
-        setMessage("添加失败：请使用管理员身份登录（在首页选择 admin 并进入工作台）后再试。");
-      } else {
-        setMessage(`添加失败：${text}`);
-      }
+      await refreshAccountViews(loadStaff, "员工已添加");
     } finally {
       setLoading(false);
     }
@@ -1038,6 +1141,7 @@ export default function AdminHomePage() {
     reload: () => Promise<unknown>,
     kind: "客户" | "员工",
   ) => {
+    if (loading) return;
     const banned = currentStatus === "inactive";
     const word = banned ? "解除封禁" : "封禁";
     const tip = banned
@@ -1048,12 +1152,26 @@ export default function AdminHomePage() {
     setLoading(true);
     setMessage("");
     try {
-      const result = await toggleUserBan(userId);
+      let result: Awaited<ReturnType<typeof toggleUserBan>>;
+      try {
+        result = await runAccountWrite((signal) => toggleUserBan(userId, signal));
+      } catch (error) {
+        if (error instanceof Error && error.name === "AccountWriteTimeoutError") {
+          setMessage(error.message);
+          return;
+        }
+        const text = error instanceof Error ? error.message : `${word}失败`;
+        setMessage(`${word}失败：${text}`);
+        return;
+      }
+      // 使用服务器确认状态，而不是猜测取反；旧列表由同一写入版本边界拦截。
+      const applyStatus = (rows: AdminUserItem[]) => rows.map((row) => (
+        row.id === result.id ? { ...row, status: result.status } : row
+      ));
+      if (kind === "员工") setStaffList(applyStatus);
+      else setClientList(applyStatus);
       setToast(result.status === "active" ? "已解除封禁" : "已封禁，该账号无法再登录");
-      await Promise.all([reload(), loadOverview()]);
-    } catch (error) {
-      const text = error instanceof Error ? error.message : `${word}失败`;
-      setMessage(`${word}失败：${text}`);
+      await refreshAccountViews(reload, result.status === "active" ? "已解除封禁" : "已封禁");
     } finally {
       setLoading(false);
     }
@@ -1090,28 +1208,35 @@ export default function AdminHomePage() {
     setLoading(true);
     setMessage("");
     try {
-      await createAdminClient({
-        id: clientForm.id.trim() || undefined,
-        name: clientForm.name.trim(),
-        companyName: clientForm.companyName.trim() || undefined,
-        phone: clientForm.phone.trim(),
-        email: clientForm.email.trim() || undefined,
-        password: clientForm.password.trim() || undefined,
-        agentId: clientForm.agentId || null,
-      });
+      try {
+        await runAccountWrite((signal) => createAdminClient({
+          id: clientForm.id.trim() || undefined,
+          name: clientForm.name.trim(),
+          companyName: clientForm.companyName.trim() || undefined,
+          phone: clientForm.phone.trim(),
+          email: clientForm.email.trim() || undefined,
+          password: clientForm.password.trim() || undefined,
+          agentId: clientForm.agentId || null,
+        }, signal));
+      } catch (error) {
+        if (error instanceof Error && error.name === "AccountWriteTimeoutError") {
+          setMessage(error.message);
+          return;
+        }
+        const text = error instanceof Error ? error.message : "添加失败";
+        if (text.includes("permission") || text.includes("FORBIDDEN") || text.includes("403")) {
+          setMessage("添加失败：请使用管理员身份登录后再试。");
+        } else {
+          setMessage(`添加失败：${text}`);
+        }
+        return;
+      }
       const agentName = agentOptions.find((a) => a.id === clientForm.agentId)?.name;
       setClientForm({ id: "", name: "", companyName: "", phone: "", email: "", password: "", agentId: "" });
       setShowClientModal(false);
       setToast(agentName ? `客户添加成功，开在代理「${agentName}」名下` : "客户添加成功");
       setMessage("");
-      await Promise.all([loadClients(), loadOverview()]);
-    } catch (error) {
-      const text = error instanceof Error ? error.message : "添加失败";
-      if (text.includes("permission") || text.includes("FORBIDDEN") || text.includes("403")) {
-        setMessage("添加失败：请使用管理员身份登录后再试。");
-      } else {
-        setMessage(`添加失败：${text}`);
-      }
+      await refreshAccountViews(loadClients, "客户已添加");
     } finally {
       setLoading(false);
     }
@@ -1127,30 +1252,37 @@ export default function AdminHomePage() {
     setLoading(true);
     setMessage("");
     try {
-      await updateAdminClient({
-        id: editingClientId,
-        name: clientForm.name.trim(),
-        companyName: clientForm.companyName.trim() || undefined,
-        phone: clientForm.phone.trim(),
-        email: clientForm.email.trim() || undefined,
-        password: clientForm.password.trim() || undefined,
-        // 归属只有真改了才发（后端只许没业务记录的客户改归属，不改就别去碰那道闸）
-        ...(clientForm.agentId !== (editingClientAgentId ?? "") ? { agentId: clientForm.agentId || null } : {}),
-      });
+      try {
+        await runAccountWrite((signal) => updateAdminClient({
+          id: editingClientId,
+          name: clientForm.name.trim(),
+          companyName: clientForm.companyName.trim() || undefined,
+          phone: clientForm.phone.trim(),
+          email: clientForm.email.trim() || undefined,
+          password: clientForm.password.trim() || undefined,
+          // 归属只有真改了才发（后端只许没业务记录的客户改归属，不改就别去碰那道闸）
+          ...(clientForm.agentId !== (editingClientAgentId ?? "") ? { agentId: clientForm.agentId || null } : {}),
+        }, signal));
+      } catch (error) {
+        if (error instanceof Error && error.name === "AccountWriteTimeoutError") {
+          setMessage(error.message);
+          return;
+        }
+        const text = error instanceof Error ? error.message : "更新失败";
+        if (text.includes("permission") || text.includes("FORBIDDEN") || text.includes("403")) {
+          setMessage("更新失败：请使用管理员身份登录后再试。");
+        } else {
+          setMessage(`更新失败：${text}`);
+        }
+        return;
+      }
       setClientForm({ id: "", name: "", companyName: "", phone: "", email: "", password: "", agentId: "" });
       setShowClientModal(false);
       setEditingClientId(null);
       setEditingClientAgentId(null);
       setToast("客户信息已更新");
       setMessage("");
-      await loadClients();
-    } catch (error) {
-      const text = error instanceof Error ? error.message : "更新失败";
-      if (text.includes("permission") || text.includes("FORBIDDEN") || text.includes("403")) {
-        setMessage("更新失败：请使用管理员身份登录后再试。");
-      } else {
-        setMessage(`更新失败：${text}`);
-      }
+      await refreshAccountViews(loadClients, "客户资料已保存");
     } finally {
       setLoading(false);
     }

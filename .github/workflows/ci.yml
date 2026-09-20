@@ -59,6 +59,9 @@ jobs:
       - name: Test shipment list display
         run: npm run test:shipment-list-display
 
+      - name: Test shipment label barcodes
+        run: npm run test:shipment-label-barcode
+
       - name: Test admin shipment detail
         run: npm run test:admin-shipment-detail
 

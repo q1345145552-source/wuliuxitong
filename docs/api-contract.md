@@ -309,6 +309,8 @@
 ### 11.1 GET /admin/dashboard/overview
 用途：管理员运营看板总览
 
+2026-09-20：时效图已移除，本接口不再计算或返回 `transitTrend`。账号/订单统计、柜子分段统计与 `stalledContainers` 预警口径不变；不影响运单轨迹接口。以下仅列基础统计示例。
+
 响应 data：
 {
   "staffAccountCount": 25,

@@ -319,10 +319,6 @@ export default function StaffHomePage() {
     heightCm: "",
     actualWeightKg: "",
   });
-  const [labelDraft, setLabelDraft] = useState({
-    orderOrShipmentId: "",
-    labelType: "fba" as "fba" | "waybill" | "internal-box",
-  });
   const [containerDraft, setContainerDraft] = useState({
     shipmentId: "",
     containerNo: "",
@@ -1541,39 +1537,6 @@ export default function StaffHomePage() {
             <div style={{ marginTop: 6, fontSize: 13, color: "var(--c-green-deep)" }}>
               体积重 = L×W×H/6000 = {volumetricWeightKg.toFixed(2)} kg；计费重 = Max(实重, 体积重) ={" "}
               <strong>{chargeableWeightKg.toFixed(2)} kg</strong>
-            </div>
-          </div>
-
-          <div style={{ border: "1px solid var(--c-blue-bg-2)", borderRadius: 10, padding: 10, background: "var(--c-blue-bg)" }}>
-            <div style={{ fontWeight: 700, marginBottom: 8 }}>标签打印系统</div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(220px,1fr))", gap: 8 }}>
-              <input value={labelDraft.orderOrShipmentId} onChange={(e) => setLabelDraft((v) => ({ ...v, orderOrShipmentId: e.target.value }))} placeholder="订单号/运单号" style={orderCreateInputStyle} />
-              <select value={labelDraft.labelType} onChange={(e) => setLabelDraft((v) => ({ ...v, labelType: e.target.value as "fba" | "waybill" | "internal-box" }))} style={orderCreateInputStyle}>
-                <option value="fba">FBA 标签</option>
-                <option value="waybill">面单</option>
-                <option value="internal-box">内部箱号条码</option>
-              </select>
-              <button
-                type="button"
-                onClick={() => {
-                  const targetId = labelDraft.orderOrShipmentId.trim() || "N/A";
-                  const title = labelDraft.labelType === "fba" ? "FBA 标签" : labelDraft.labelType === "waybill" ? "运单面单" : "内部箱号条码";
-                  const printWindow = window.open("", "_blank", "width=420,height=560");
-                  if (!printWindow) return;
-                  printWindow.document.write(`
-                    <html><body style="font-family:Arial;padding:16px;">
-                      <h2>${title}</h2>
-                      <p>单号：${targetId}</p>
-                      <p>打印时间：${new Date().toLocaleString("zh-CN")}</p>
-                    </body></html>
-                  `);
-                  printWindow.document.close();
-                  printWindow.print();
-                }}
-                style={{ border: "none", borderRadius: 8, padding: "8px 14px", color: "var(--white)", background: "var(--c-blue)" }}
-              >
-                一键打印标签
-              </button>
             </div>
           </div>
 

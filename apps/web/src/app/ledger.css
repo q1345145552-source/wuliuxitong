@@ -278,15 +278,6 @@
 .ledger-shell :is(.client-main-section, .client-query-section, .client-secondary-section)::before { content: none; }
 
 /* Operational dashboard: retain metrics and route data, remove decorative containers. */
-.ledger-shell .kpi-flash { animation: none; box-shadow: none; }
-.ledger-shell .ledger-kpi {
-  background: transparent !important;
-  border: 0 !important;
-  border-left: 1px solid var(--line) !important;
-  border-radius: 0 !important;
-  box-shadow: none !important;
-}
-.ledger-shell .ledger-kpi:first-child { border-left: 0 !important; }
 .ledger-shell .dashboard-panel {
   border: 0;
   border-bottom: 1px solid var(--line);

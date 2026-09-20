@@ -293,17 +293,6 @@ export interface AdminOverview {
   containerDoneCount: number;
   containerTotalCount: number;
   /**
-   * 真实时效趋势（2026-08-21 新增）：按「已装柜 → 已到仓」真算出来的天数，
-   * 按到仓那一周聚合，海运陆运分开。取代前端原来那条按公式编出来的曲线。
-   * 某一周没有对应运输方式的货时，那一项是 null（图上断开，不画成 0）。
-   */
-  transitTrend: Array<{
-    label: string;
-    seaDays: number | null;
-    landDays: number | null;
-    samples: number;
-  }>;
-  /**
    * 卡住的柜子（2026-08-21 新增）：装柜太久还没到仓，或者太久没人推状态。
    * reason: overdue=超期未到仓，idle=长时间没推进。
    */
@@ -1316,9 +1305,10 @@ export async function createAdminStaff(payload: {
   name: string;
   phone: string;
   password?: string;
-}): Promise<{ id: string; name: string; phone: string; createdAt: string }> {
+}, signal?: AbortSignal): Promise<{ id: string; name: string; phone: string; createdAt: string }> {
   const response = await fetch(`${apiBaseUrl()}/admin/users`, {
     method: "POST",
+    signal,
     headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify(payload),
   });
@@ -1359,9 +1349,10 @@ export async function createAdminClient(payload: {
   password?: string;
   /** 2026-09-16：开在哪个代理名下；不传 / null = 湘泰自己的客户 */
   agentId?: string | null;
-}): Promise<{ id: string; name: string; companyName: string | null; phone: string; email: string | null; createdAt: string; agentId: string | null; agentName: string | null }> {
+}, signal?: AbortSignal): Promise<{ id: string; name: string; companyName: string | null; phone: string; email: string | null; createdAt: string; agentId: string | null; agentName: string | null }> {
   const response = await fetch(`${apiBaseUrl()}/admin/users/client`, {
     method: "POST",
+    signal,
     headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify(payload),
   });
@@ -1377,9 +1368,10 @@ export async function updateAdminClient(payload: {
   password?: string;
   /** 2026-09-16：不传 = 不改归属；null = 改回湘泰。客户已有运单/集货记录时后端会拒 */
   agentId?: string | null;
-}): Promise<{ id: string; name: string; companyName: string | null; phone: string; email: string | null; createdAt: string; agentId: string | null }> {
+}, signal?: AbortSignal): Promise<{ id: string; name: string; companyName: string | null; phone: string; email: string | null; createdAt: string; agentId: string | null }> {
   const response = await fetch(`${apiBaseUrl()}/admin/users/client/update`, {
     method: "POST",
+    signal,
     headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify(payload),
   });
@@ -1628,9 +1620,10 @@ export async function fetchFinanceSummary(): Promise<FinanceSummary> {
 /**
  * 禁用/启用用户（管理员）。
  */
-export async function toggleUserBan(userId: string): Promise<{ id: string; status: string }> {
+export async function toggleUserBan(userId: string, signal?: AbortSignal): Promise<{ id: string; status: string }> {
   const response = await fetch(`${apiBaseUrl()}/admin/users/toggle-ban`, {
     method: "POST",
+    signal,
     headers: {
       "Content-Type": "application/json",
       ...authHeaders(),

@@ -1,3 +1,7 @@
+"use client";
+
+import Link from "next/link";
+import { navigateToHash } from "../../modules/layout/navigate-to-hash";
 import type { AdminOpsOverview, AdminOverview } from "../../services/business-api";
 import styles from "./AdminOperationsOverview.module.css";
 
@@ -111,7 +115,7 @@ export default function AdminOperationsOverview({
       <div className={styles.attention} role="region" aria-labelledby="overview-stalled-heading">
         <div className={styles.sectionHeading}>
           <h3 id="overview-stalled-heading">卡住的柜子{stalledContainers?.length ? <span className={styles.count}>展示 {stalledContainers.length} 个</span> : null}</h3>
-          <a className={styles.link} href="/staff/container-loading">查看装柜管理 →</a>
+          <Link className={styles.link} href="/staff/container-loading">查看装柜管理 →</Link>
         </div>
         {stalledContainers == null ? (
           <p className={styles.message}>
@@ -147,7 +151,15 @@ export default function AdminOperationsOverview({
       <div className={styles.progress} role="region" aria-labelledby="overview-shipments-heading">
         <div className={styles.sectionHeading}>
           <h3 id="overview-shipments-heading">运单进度</h3>
-          <a className={styles.link} href="/admin#orders">查看运单管理 →</a>
+          <Link
+            className={styles.link}
+            href="#orders"
+            onNavigate={(event) => {
+              // 与侧边栏一致：只换分区时补发 hashchange；保留当前路径、查询串和 Next 历史标记。
+              event.preventDefault();
+              navigateToHash("#orders");
+            }}
+          >查看运单管理 →</Link>
         </div>
         <p className={styles.note}>按当前已加载的普通运单列表统计，不代表全部柜子的货量。</p>
         {ordersError ? (
@@ -168,7 +180,7 @@ export default function AdminOperationsOverview({
       <div className={styles.progress} role="region" aria-labelledby="overview-containers-heading">
         <div className={styles.sectionHeading}>
           <h3 id="overview-containers-heading">柜子进度<span className={styles.count}>共 {formatNumber(overview?.containerTotalCount)} 个柜</span></h3>
-          <a className={styles.link} href="/staff/container-loading">查看装柜管理 →</a>
+          <Link className={styles.link} href="/staff/container-loading">查看装柜管理 →</Link>
         </div>
         <MetricList
           className={styles.containerMetrics}
