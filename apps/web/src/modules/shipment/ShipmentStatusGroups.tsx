@@ -4,7 +4,8 @@ import { CLIENT_STATUS_GROUP_ZH, type ShipmentListFilter } from "../../../../../
 
 export type ShipmentGroupFilter = ShipmentListFilter;
 
-const GROUPS: { value: ShipmentGroupFilter; label: string }[] = [
+/** 分组选项：列表顶上那排按钮和导出弹窗里的「运单分组」共用同一份（2026-09-23） */
+export const SHIPMENT_GROUP_OPTIONS: { value: ShipmentGroupFilter; label: string }[] = [
   { value: "all", label: "全部订单" },
   { value: "pending", label: CLIENT_STATUS_GROUP_ZH.pending },
   { value: "transit", label: CLIENT_STATUS_GROUP_ZH.transit },
@@ -20,7 +21,7 @@ export default function ShipmentStatusGroups({ value, onChange }: {
   return (
     <div className="shipment-classification">
       <div className="client-status-groups shipment-status-groups" role="group" aria-label="订单状态分组">
-        {GROUPS.map((group) => (
+        {SHIPMENT_GROUP_OPTIONS.map((group) => (
           <button
             key={group.value}
             type="button"

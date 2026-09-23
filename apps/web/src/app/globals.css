@@ -3571,6 +3571,66 @@ button:disabled {
   color: var(--ink-2);
 }
 
+/* 导出弹窗里的筛选条件（2026-09-23：导出不再只有日期，四个端共用 ExportConditionFields） */
+.shipment-export-conditions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+.shipment-export-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px 12px;
+}
+
+.shipment-export-field {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--ink-2);
+}
+
+.shipment-export-field :is(input, select) {
+  box-sizing: border-box;
+  min-width: 0;
+  width: 100%;
+  min-height: 36px;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--ink);
+  font: inherit;
+  line-height: 20px;
+}
+
+.shipment-export-more > summary {
+  cursor: pointer;
+  padding: 6px 0;
+  font-size: 13px;
+  color: var(--ink-2);
+}
+
+.shipment-export-more[open] > summary {
+  margin-bottom: 6px;
+}
+
+.shipment-export-conditions-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  border-top: 1px solid var(--line);
+  padding-top: 10px;
+  font-size: 12px;
+  color: var(--ink-2);
+}
+
 :is(.staff-shipment-workbench, .shipment-workbench) :is(.staff-shipment-scroll-hint, .shipment-scroll-hint) {
   margin: 12px 0 8px;
   color: var(--ink-2);

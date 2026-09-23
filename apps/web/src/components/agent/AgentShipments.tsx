@@ -7,7 +7,7 @@
  *    后端 /agent/shipments/export-data 本来就不发柜号）。「客户」列是唛头。
  * ⚠️ 轨迹弹窗走 /agent/shipments/track（代理令牌打 /client/* 会被服务端 403）。
  */
-import { useMemo, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import EmptyStateCard from "../../modules/layout/EmptyStateCard";
 import ShipmentExportPanel from "../../modules/shipment/ShipmentExportPanel";
 import { openShipmentTrack } from "../../modules/shipment/ShipmentTrackModal";
@@ -21,6 +21,7 @@ import {
   type AgentShipmentQuery,
 } from "../../services/agent-api";
 import { LoadState, Pager, SectionHeader, TableWrap, btn, btnPrimary, fmtM3, input, mono, td, tdNum, th, useAgentLoad } from "./agent-ui";
+import ExportConditionFields, { type ExportFieldDef } from "../../modules/shipment/ExportConditionFields";
 
 const GROUPS: Array<{ value: string; label: string }> = [
   { value: "all", label: "全部" },
@@ -64,15 +65,18 @@ export default function AgentShipments() {
   const [keywordDraft, setKeywordDraft] = useState("");
   const [query, setQuery] = useState<AgentShipmentQuery>({ page: 1, pageSize: PAGE_SIZE, statusGroup: "all" });
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [dateFrom, setDateFrom] = useState("");
-  const [dateTo, setDateTo] = useState("");
+  /* 导出弹窗自己的一套条件（2026-09-23 老板：导出不能只让选日期）。
+     打开弹窗时把列表上的条件带进来，可以改、可以清空；列表本身不受影响。 */
+  const [exportCond, setExportCond] = useState<Record<string, string>>({
+    statusGroup: "all", dateFrom: "", dateTo: "", clientId: "", trackingNo: "", keyword: "",
+  });
   const [exporting, setExporting] = useState(false);
   const [exportFeedback, setExportFeedback] = useState("");
   const exportInFlight = useRef(false);
 
   const { data, loading, error, reload } = useAgentLoad(() => fetchAgentShipments(query), [query]);
   const items = data?.items ?? [];
-  const dateInvalid = Boolean(dateFrom && dateTo && dateFrom > dateTo);
+  const dateInvalid = Boolean(exportCond.dateFrom && exportCond.dateTo && exportCond.dateFrom > exportCond.dateTo);
 
   const updateQuery = (patch: Partial<AgentShipmentQuery>) => {
     setSelected(new Set());
@@ -89,10 +93,25 @@ export default function AgentShipments() {
     });
   };
 
-  const filtersForExport = useMemo(() => {
-    const { page: _p, pageSize: _s, ...rest } = query;
-    return rest;
-  }, [query]);
+  const prefillExportCond = () => {
+    setExportFeedback("");
+    setExportCond({
+      statusGroup: query.statusGroup ?? "all",
+      dateFrom: "",
+      dateTo: "",
+      clientId: query.clientId ?? "",
+      trackingNo: query.trackingNo ?? "",
+      keyword: query.keyword ?? "",
+    });
+  };
+  const exportCommonFields: ExportFieldDef[] = [
+    { key: "statusGroup", label: "运单分组", type: "select", options: GROUPS },
+    { key: "dateFrom", label: "到仓开始日期", type: "date" },
+    { key: "dateTo", label: "到仓截止日期", type: "date" },
+    { key: "clientId", label: "客户", type: "select", options: [{ value: "", label: "全部客户" }, ...(data?.clients ?? []).map((c) => ({ value: c.clientId, label: c.clientId }))] },
+    { key: "trackingNo", label: "运单号（精确）", type: "text" },
+    { key: "keyword", label: "品名 / 国内单号", type: "text" },
+  ];
 
   const handleExport = async () => {
     if (exportInFlight.current || dateInvalid) return;
@@ -101,13 +120,16 @@ export default function AgentShipments() {
     setExportFeedback("");
     try {
       const result = await fetchAgentShipmentExportData({
-        ...filtersForExport,
-        dateFrom: dateFrom || undefined,
-        dateTo: dateTo || undefined,
+        statusGroup: (exportCond.statusGroup || "all") as AgentShipmentQuery["statusGroup"],
+        clientId: exportCond.clientId || undefined,
+        trackingNo: exportCond.trackingNo.trim() || undefined,
+        keyword: exportCond.keyword.trim() || undefined,
+        dateFrom: exportCond.dateFrom || undefined,
+        dateTo: exportCond.dateTo || undefined,
         orderIds: selected.size > 0 ? [...selected] : undefined,
       });
       if (result.items.length === 0) {
-        setExportFeedback(dateFrom || dateTo ? "所选日期范围内没有运单。" : "当前没有可导出的运单。");
+        setExportFeedback(selected.size > 0 ? "勾选的运单里没有符合这些条件的。" : "没有符合这些条件的运单。");
         return;
       }
       const XLSX = await import("xlsx");
@@ -158,12 +180,19 @@ export default function AgentShipments() {
       </div>
 
       <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 10 }}>
-        <ShipmentExportPanel onOpen={() => setExportFeedback("")}>
+        <ShipmentExportPanel onOpen={prefillExportCond}>
           <div role="group" aria-label="导出 Excel" style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-            <label style={{ fontSize: 13 }}>起 <input type="date" style={input} value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} /></label>
-            <label style={{ fontSize: 13 }}>止 <input type="date" style={input} value={dateTo} onChange={(e) => setDateTo(e.target.value)} /></label>
-            <button type="button" style={btnPrimary} disabled={exporting || dateInvalid || (data?.total ?? 0) === 0} onClick={() => void handleExport()}>{exporting ? "导出中…" : "导出 Excel"}</button>
-            <span style={{ fontSize: 12, color: "var(--t-muted)" }}>{selected.size > 0 ? `只导出已勾选的 ${selected.size} 条，再按到仓日期筛选` : "未勾选时导出全部筛选结果，再按到仓日期筛选"}</span>
+            <ExportConditionFields
+              value={exportCond}
+              onChange={(key, next) => { setExportFeedback(""); setExportCond((prev) => ({ ...prev, [key]: next })); }}
+              common={exportCommonFields}
+              onClear={() => { setExportFeedback(""); setExportCond({ statusGroup: "all", dateFrom: "", dateTo: "", clientId: "", trackingNo: "", keyword: "" }); }}
+              hint={selected.size > 0
+                ? `只导出已勾选的 ${selected.size} 条里符合这些条件的；条件是打开弹窗时从上面带过来的，可以改。`
+                : "按上面的条件导出（打开弹窗时从上面的查询条件带过来的，可以改）；勾了单子就只导勾的那些。"}
+            />
+            <button type="button" style={btnPrimary} disabled={exporting || dateInvalid} onClick={() => void handleExport()}>{exporting ? "导出中…" : "导出 Excel"}</button>
+            <span style={{ fontSize: 12, color: "var(--t-muted)" }}>导出的表跟管理员那套一样，没有柜号那一列</span>
           </div>
           {dateInvalid ? <p role="alert" style={{ color: "var(--c-red-dark)", fontSize: 13 }}>起始日期晚于截止日期，请调整。</p> : null}
           <p role="status" aria-live="polite" style={{ margin: exportFeedback ? "12px 0 0" : 0, fontSize: 13 }}>{exportFeedback}</p>

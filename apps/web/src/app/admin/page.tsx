@@ -4,6 +4,8 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "rea
 import * as XLSX from "xlsx";
 import { matchesShipmentListFilter } from "../../../../../packages/shared-types/shipment-status";
 import { productNamesLabel } from "../../../../../packages/shared-types/product-names";
+import ExportConditionFields, { type ExportFieldDef } from "../../modules/shipment/ExportConditionFields";
+import { EMPTY_SHIPMENT_FILTER, adminOrderFilterRow, countShipmentFilters, matchesShipmentFilter, shipmentFilterDateInvalid, type ShipmentFilterValue } from "../../modules/shipment/export-filter";
 import { parseCargoType, CARGO_TYPE_HINT, cargoTypeLabel } from "../../../../../packages/shared-types/cargo-type";
 import { AT_WAREHOUSE_STATUSES, COMPLETED_STATUSES, CLIENT_STATUS_GROUP_ZH } from "../../../../../packages/shared-types/shipment-status";
 import type { AiKnowledgeItem } from "../../../../../packages/shared-types/entities";
@@ -18,7 +20,7 @@ import { openShipmentTrack } from "../../modules/shipment/ShipmentTrackModal";
 import LastmileDispatchWorkspace from "../../modules/lastmile/LastmileDispatchWorkspace";
 import type { LastmileOrderItem, LastmileShipmentOption } from "../../modules/lastmile/types";
 import ShipmentExportPanel from "../../modules/shipment/ShipmentExportPanel";
-import ShipmentStatusGroups, { type ShipmentGroupFilter } from "../../modules/shipment/ShipmentStatusGroups";
+import ShipmentStatusGroups, { SHIPMENT_GROUP_OPTIONS, type ShipmentGroupFilter } from "../../modules/shipment/ShipmentStatusGroups";
 import { ShipmentOverviewStrip } from "../../modules/shipment/ShipmentOverviewStrip";
 import LastmileAddressPanel from "../../components/lastmile/LastmileAddressPanel";
 import DetailModal from "../../modules/layout/DetailModal";
@@ -1294,52 +1296,13 @@ export default function AdminHomePage() {
    * 和服务层的 setAdminClientWhrPrice 都留着，以后要开回来照旧能用。
    */
 
-  const filteredOrderList = useMemo(() => {
-    const s = orderSearch;
-    return orderList.filter((item) => {
-      if (!matchesShipmentListFilter(item.currentStatus, shipmentGroup)) return false;
-      const trackingNo = (item.trackingNo ?? "").toLowerCase();
-      const dn = (item.domesticTrackingNo ?? "").toLowerCase();
-      const cn = `${item.clientName ?? ""} ${item.clientId ?? ""}`.toLowerCase();
-      const wn = (item.warehouseId ?? "").toLowerCase();
-      const bn = (item.batchNo ?? "").toLowerCase();
-      /* 按品名搜要认**全部产品名**（2026-09-11）：item.itemName 只存了第一个产品名，
-         一票「鞋 / 包 / 帽」的货搜「帽」原来搜不到。跟员工端那一处同一个写法。 */
-      const inm = `${productNamesLabel(item.products, item.itemName)} ${item.itemName ?? ""}`.toLowerCase();
-      const pn = (item.packageCount ?? "").toString();
-      const pq = (item.productQuantity ?? "").toString();
-      const wk = (item.weightKg ?? "").toString();
-      const vm = (item.volumeM3 ?? "").toString();
-      const ar = item.shipDate ?? item.createdAt?.slice(0, 10) ?? "";
-      const cnr = (item.containerNo ?? "").toLowerCase();
-      const tm = item.transportMode ?? "";
-      const ra = (item.receiverAddressTh ?? "").toLowerCase();
-      const sd = (item.shipDate ?? "").slice(0, 10);
-      const rc = item.receivableAmountCny != null ? String(item.receivableAmountCny) : "";
-      const sr = (item.currentStatus ?? "").toLowerCase();
-      if (s.trackingNo && !trackingNo.includes(s.trackingNo.toLowerCase())) return false;
-      if (s.domesticTrackingNo && !dn.includes(s.domesticTrackingNo.toLowerCase())) return false;
-      if (s.clientName && !cn.includes(s.clientName.toLowerCase())) return false;
-      if (s.warehouseId && wn !== s.warehouseId) return false;
-      if (s.batchNo && !bn.includes(s.batchNo.toLowerCase())) return false;
-      if (s.itemName && !inm.includes(s.itemName.toLowerCase())) return false;
-      if (s.packageCount && !pn.includes(s.packageCount)) return false;
-      if (s.productQuantity && !pq.includes(s.productQuantity)) return false;
-      if (s.weightKg && !wk.includes(s.weightKg)) return false;
-      if (s.volumeM3 && !vm.includes(s.volumeM3)) return false;
-      if (s.arrivedAtFrom && ar < s.arrivedAtFrom) return false;
-      if (s.arrivedAtTo && ar > s.arrivedAtTo) return false;
-      if (s.logisticsStatus && shipmentStatusLabel(item.currentStatus) !== s.logisticsStatus) return false;
-      if (s.containerNo && !cnr.includes(s.containerNo.toLowerCase())) return false;
-      if (s.transportMode && tm !== s.transportMode) return false;
-      if (s.receiverAddress && !ra.includes(s.receiverAddress.toLowerCase())) return false;
-      if (s.shipDateFrom && sd < s.shipDateFrom) return false;
-      if (s.shipDateTo && sd > s.shipDateTo) return false;
-      if (s.receivableAmount && !rc.includes(s.receivableAmount)) return false;
-      if (s.statusRaw && !sr.includes(s.statusRaw.toLowerCase())) return false;
-      return true;
-    });
-  }, [orderList, orderSearch, shipmentGroup]);
+  /* 列表和导出用**同一份**判断（modules/shipment/export-filter.ts）：
+     2026-09-23 给导出弹窗加了自己的条件，两个地方要按同一套口径筛，抽出去免得以后改一边忘一边。 */
+  const filteredOrderList = useMemo(
+    () => orderList.filter((item) =>
+      matchesShipmentListFilter(item.currentStatus, shipmentGroup) && matchesShipmentFilter(adminOrderFilterRow(item), orderSearch)),
+    [orderList, orderSearch, shipmentGroup],
+  );
 
   // 按当前结果计数；刷新后失去的勾选项不参与导出，也不回退成「导出全部」。
   const selectedResultOrders = useMemo(
@@ -1399,15 +1362,63 @@ export default function AdminHomePage() {
   };
 
   const [orderExportFeedback, setOrderExportFeedback] = useState("");
-  const [exportDateFrom, setExportDateFrom] = useState("");
-  const [exportDateTo, setExportDateTo] = useState("");
+  /* 导出弹窗有自己的一套条件（2026-09-23 老板：导出不能只让选日期）。
+     打开弹窗时把列表上已经筛好的条件带进来，可以改、可以清空；列表本身不受影响。 */
+  const [exportFilter, setExportFilter] = useState<ShipmentFilterValue>(EMPTY_SHIPMENT_FILTER);
+  const [exportGroup, setExportGroup] = useState<ShipmentGroupFilter>("all");
+  const prefillExportFilter = () => {
+    setOrderExportFeedback("");
+    setExportGroup(shipmentGroup);
+    setExportFilter({
+      ...orderSearch,
+      /* 弹窗里只放一组日期（老板 2026-09-23 定：按到仓日期）。列表上那两组日期筛的是同一个字段，
+         所以带进来时合成一组：优先用「发货日期」那组，没填就用「到仓日期」那组。 */
+      shipDateFrom: orderSearch.shipDateFrom || orderSearch.arrivedAtFrom,
+      shipDateTo: orderSearch.shipDateTo || orderSearch.arrivedAtTo,
+      arrivedAtFrom: "",
+      arrivedAtTo: "",
+    });
+  };
+  const exportFieldValues: Record<string, string> = { ...exportFilter, group: exportGroup };
+  const onExportFieldChange = (key: string, next: string) => {
+    setOrderExportFeedback("");
+    if (key === "group") { setExportGroup(next as ShipmentGroupFilter); return; }
+    setExportFilter((prev) => ({ ...prev, [key]: next }));
+  };
+  const exportCommonFields: ExportFieldDef[] = [
+    { key: "group", label: "运单分组", type: "select", options: SHIPMENT_GROUP_OPTIONS },
+    { key: "shipDateFrom", label: "到仓开始日期", type: "date" },
+    { key: "shipDateTo", label: "到仓截止日期", type: "date" },
+    { key: "logisticsStatus", label: "物流状态", type: "select", options: [{ value: "", label: "全部" }, ...logisticsStatusOptions.map((v) => ({ value: v, label: v }))] },
+    { key: "warehouseId", label: "仓库", type: "select", options: [{ value: "", label: "全部" }, ...warehouseOptions.map((w) => ({ value: w.id, label: w.label }))] },
+    { key: "transportMode", label: "运输方式", type: "select", options: [{ value: "", label: "全部" }, { value: "sea", label: "海运" }, { value: "land", label: "陆运" }] },
+    { key: "clientName", label: "唛头 / 客户名", type: "text", placeholder: "唛头或客户名" },
+    { key: "trackingNo", label: "运单号", type: "text", placeholder: "支持部分匹配" },
+  ];
+  const exportMoreFields: ExportFieldDef[] = [
+    { key: "domesticTrackingNo", label: "国内单号", type: "text" },
+    { key: "itemName", label: "品名", type: "text" },
+    { key: "containerNo", label: "柜号", type: "text" },
+    { key: "batchNo", label: "批次号", type: "text" },
+    { key: "packageCount", label: "包裹数量", type: "text" },
+    { key: "productQuantity", label: "产品数量", type: "text" },
+    { key: "weightKg", label: "重量", type: "text" },
+    { key: "volumeM3", label: "体积", type: "text" },
+    { key: "receiverAddress", label: "收货地址", type: "text" },
+    { key: "receivableAmount", label: "加收金额", type: "text" },
+    { key: "statusRaw", label: "状态关键词", type: "text" },
+  ];
 
   const exportOrdersToExcel = () => {
-    let source = selectedOrders.size > 0 ? selectedResultOrders : filteredOrderList;
-    if (source.length === 0) { setMessage("当前没有可导出的订单数据。"); setOrderExportFeedback("当前没有可导出的订单数据。"); return; }
-    if (exportDateFrom) source = source.filter((o) => (o.shipDate ?? "").slice(0,10) >= exportDateFrom);
-    if (exportDateTo) source = source.filter((o) => (o.shipDate ?? "").slice(0,10) <= exportDateTo);
-    if (source.length === 0) { setMessage("所选日期范围内没有订单。"); setOrderExportFeedback("所选日期范围内没有订单。"); return; }
+    /* 按**弹窗里的条件**筛（不是列表的条件，2026-09-23）。勾了单子就只导勾的那些（仍要符合条件）。
+       跟列表用同一份判断（matchesShipmentFilter），口径不会跑偏。 */
+    const matched = orderList.filter((item) =>
+      matchesShipmentListFilter(item.currentStatus, exportGroup) && matchesShipmentFilter(adminOrderFilterRow(item), exportFilter));
+    const source = selectedOrders.size > 0 ? matched.filter((o) => selectedOrders.has(o.id)) : matched;
+    if (source.length === 0) {
+      const why = selectedOrders.size > 0 ? "勾选的运单里没有符合这些条件的。" : "没有符合这些条件的运单。";
+      setMessage(why); setOrderExportFeedback(why); return;
+    }
     const rows = source.map((o) => ({
       // 导出的品名带全部产品名（2026-09-11，同员工端导出口径）
       运单号: o.trackingNo ?? "-", 客户: o.clientId ?? "-", 品名: productNamesLabel(o.products, o.itemName),
@@ -1433,7 +1444,7 @@ export default function AdminHomePage() {
     setOrderExportFeedback(`已导出 ${rows.length} 条`);
   };
 
-  const orderExportDateInvalid = !!(exportDateFrom && exportDateTo && exportDateFrom > exportDateTo);
+  const orderExportDateInvalid = shipmentFilterDateInvalid(exportFilter);
   const handleOrderExport = async () => {
     if (orderExportInFlight.current || orderExportDateInvalid) return;
     orderExportInFlight.current = true;
@@ -1924,17 +1935,22 @@ export default function AdminHomePage() {
               )}
             </div>
             <div className="shipment-results-actions">
-              <ShipmentExportPanel onOpen={() => setOrderExportFeedback("")}>
+              <ShipmentExportPanel onOpen={prefillExportFilter}>
                 <div className="shipment-export" role="group" aria-label="导出 Excel">
-                  <div className="shipment-export-dates">
-                    <label>导出起始日期<input type="date" value={exportDateFrom} onChange={(e) => { setExportDateFrom(e.target.value); setOrderExportFeedback(""); }} /></label>
-                    <span aria-hidden="true">—</span>
-                    <label>导出截止日期<input type="date" value={exportDateTo} onChange={(e) => { setExportDateTo(e.target.value); setOrderExportFeedback(""); }} /></label>
-                  </div>
-                  <button type="button" className="workbench-button" disabled={filteredOrderList.length === 0 || (selectedOrders.size > 0 && selectedResultOrders.length === 0) || orderExporting || orderExportDateInvalid} aria-describedby="admin-export-note" onClick={() => void handleOrderExport()}>{orderExporting ? "导出中…" : "导出 Excel"}</button>
-                  <span className="shipment-export-note" id="admin-export-note">{selectedOrders.size > 0 ? "仅导出当前结果中的已选运单，再按导出日期筛选" : "未勾选时导出全部筛选结果，再按导出日期筛选"}</span>
+                  <ExportConditionFields
+                    value={exportFieldValues}
+                    onChange={onExportFieldChange}
+                    common={exportCommonFields}
+                    more={exportMoreFields}
+                    onClear={() => { setOrderExportFeedback(""); setExportGroup("all"); setExportFilter(EMPTY_SHIPMENT_FILTER); }}
+                    hint={selectedOrders.size > 0
+                      ? `只导出已勾选的 ${selectedOrders.size} 条里符合这些条件的；条件是打开弹窗时从列表带过来的，可以改。`
+                      : "按上面的条件导出（打开弹窗时从列表带过来的，可以改）；勾了单子就只导勾的那些。"}
+                  />
+                  <button type="button" className="workbench-button" disabled={orderExporting || orderExportDateInvalid} aria-describedby="admin-export-note" onClick={() => void handleOrderExport()}>{orderExporting ? "导出中…" : "导出 Excel"}</button>
+                  <span className="shipment-export-note" id="admin-export-note">共 {filteredOrderList.length} 条在列表里；导出按弹窗条件另算</span>
                 </div>
-                {orderExportDateInvalid && <p className="shipment-export-error" role="alert">导出起始日期晚于截止日期，请调整日期范围。</p>}
+                {orderExportDateInvalid && <p className="shipment-export-error" role="alert">起始日期晚于截止日期，请调整日期范围。</p>}
                 <p role="status" aria-live="polite" aria-atomic="true" style={{ margin: orderExportFeedback ? "12px 0 0" : 0, fontSize: 13 }}>{orderExportFeedback}</p>
               </ShipmentExportPanel>
               <nav className="shipment-pagination" aria-label="运单列表分页">

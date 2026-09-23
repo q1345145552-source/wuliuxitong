@@ -26,7 +26,7 @@ export default function ShipmentExportPanel({ children, onOpen }: { children: Re
           <h2 id={titleId}>导出运单</h2>
           <button type="button" className="workbench-button" onClick={() => dialogRef.current?.close()} aria-label="关闭导出设置">关闭</button>
         </div>
-        <p className="shipment-export-dialog-intro">可选日期范围；留空则不限制日期。</p>
+        <p className="shipment-export-dialog-intro">按下面的条件导出；条件是打开时从列表带过来的，可以改、可以清空。留空就是不限制。</p>
         {children}
       </dialog>
     </>

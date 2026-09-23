@@ -137,6 +137,15 @@ const WEB_ALLOW: Allow[] = [
   { file: "apps/web/src/app/staff/page.tsx", re: /^const clientName = `\$\{item\.clientName \?\? ""\} \$\{item\.clientId \?\? ""\}`\.toLowerCase\(\);$/, why: "运单筛选" },
   { file: "apps/web/src/app/staff/page.tsx", re: /^if \(clientNameKeyword && !clientName\.includes\(clientNameKeyword\)\) return false;$/, why: "运单筛选" },
   { file: "apps/web/src/modules/shipment/ShipmentSearch.tsx", re: /^clientName: "唛头 \/ 客户名",$|^const BASIC_FILTER_FIELDS = new Set<SearchField>\(\[.*"clientName".*\]\);$|^\{textField\("clientName"\)\}$/, why: "筛选格子的字段名 / 标签" },
+  // 导出弹窗里的「唛头 / 客户名」那一格（2026-09-23）：跟运单筛选同一个格子，按唛头和名字都能搜，不显示名字
+  { file: "apps/web/src/app/admin/page.tsx", re: /^\{ key: "clientName", label: "唛头 \/ 客户名", type: "text", placeholder: "唛头或客户名" \},$/, why: "导出条件里的搜索格" },
+  { file: "apps/web/src/app/staff/page.tsx", re: /^\{ key: "clientName", label: "唛头 \/ 客户名", type: "text", placeholder: "唛头或客户名" \},$/, why: "导出条件里的搜索格" },
+  /* 筛选判断那份共用模块（modules/shipment/export-filter.ts）：整份都是「拿条件比数据」，不渲染任何东西。
+     它把「名字 + 唛头」拼成一串只为了让搜索两样都能命中 —— 页面上显示什么不归它管。 */
+  { file: "apps/web/src/modules/shipment/export-filter.ts", re: /^trackingNo: "", domesticTrackingNo: "", clientName: "", warehouseId: "", batchNo: "",$/, why: "空条件常量" },
+  { file: "apps/web/src/modules/shipment/export-filter.ts", re: /^if \(has\(s\.clientName\) && !row\.clientName\.includes\(lower\(s\.clientName\)\)\) return false;$/, why: "按「唛头 / 客户名」筛" },
+  { file: "apps/web/src/modules/shipment/export-filter.ts", re: /^clientName: `\$\{item\.clientName \?\? ""\} \$\{item\.clientId \?\? ""\}`\.toLowerCase\(\),$/, why: "搜索用的草堆：名字 + 唛头" },
+  { file: "apps/web/src/modules/shipment/export-filter.ts", re: /^clientName: "",$/, why: "客户端那份没有这一项（客户只看自己的单）" },
 
   // ── 老板点名保留名字的两处（2026-09-18「这两个不要换」）──
   { file: "apps/web/src/app/staff/page.tsx", re: /^归属用户: item\.clientName \?\? item\.clientId \?\? "-",$/, why: "员工运单导出「归属用户」" },

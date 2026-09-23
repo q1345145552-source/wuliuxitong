@@ -240,6 +240,11 @@ jobs:
       - name: Test sidebar expanded groups
         run: npm run test:sidebar-expanded-groups
 
+      # 运单导出（2026-09-23）：列表和导出共用同一份筛选判断；四个端的导出弹窗都带条件；
+      # 客户端那份的列 = 管理员那套去掉柜号（客户不能看柜号）。不连库。
+      - name: Test shipment export
+        run: npm run test:shipment-export
+
       # 代理工作台隔离（2026-09-16，B3）。纯函数部分 CI 里跑；
       # 真接口部分要连测试库（两个代理 + 湘泰客户各造数据，逐个 /agent/* 接口证明只拿到自己的），
       # CI 没有数据库会打印「跳过」—— 本地改了 agent-portal 必须连测试库跑一遍。

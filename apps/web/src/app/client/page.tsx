@@ -12,7 +12,7 @@ import { useCurrentSessionBrand } from "../../modules/branding/useWorkbenchBrand
 import { apiBaseUrl } from "../../services/core-api";
 import { formatMetric, volumeM3FromDimensionsCm, formatVolumeM3String, warehouseLabelFromId } from "../../modules/staff/utils";
 import { productNamesLabel } from "../../../../../packages/shared-types/product-names";
-import { CARGO_TYPES, CARGO_TYPE_ZH, strictestCargoType } from "../../../../../packages/shared-types/cargo-type";
+import { CARGO_TYPES, CARGO_TYPE_ZH, cargoTypeLabel as cargoTypeLabelOf, strictestCargoType } from "../../../../../packages/shared-types/cargo-type";
 import {
   fetchClientAddresses,
   createClientPrealert,
@@ -33,9 +33,13 @@ import {
 import { createRequestGate } from "../../modules/shared/request-gate";
 import { openShipmentTrack } from "../../modules/shipment/ShipmentTrackModal";
 import ShipmentStatusGroups, { type ShipmentGroupFilter } from "../../modules/shipment/ShipmentStatusGroups";
+import ShipmentExportPanel from "../../modules/shipment/ShipmentExportPanel";
+import ExportConditionFields, { type ExportFieldDef } from "../../modules/shipment/ExportConditionFields";
+import { EMPTY_SHIPMENT_FILTER, clientOrderFilterRow, matchesShipmentFilter, shipmentFilterDateInvalid, type ShipmentFilterValue } from "../../modules/shipment/export-filter";
 import { ShipmentOverviewStrip } from "../../modules/shipment/ShipmentOverviewStrip";
 import DetailModal from "../../modules/layout/DetailModal";
 import { shipmentStatusWithPartialZh, shipmentStatusZh, CLIENT_STATUS_ZH_OVERRIDES, SHIPMENT_STATUS_FILTER_OPTIONS } from "../../modules/shipment/shipment-status";
+import { CLIENT_STATUS_GROUP_ZH } from "../../../../../packages/shared-types/shipment-status";
 import {
   GridColgroup,
   ProductDetailCell,
@@ -45,6 +49,17 @@ import {
   totalWeightOf,
 } from "../../modules/shipment/ShipmentTableGrid";
 import FclInquiryPanel from "../../components/client/FclInquiryPanel";
+
+/** 长宽高来自产品行；一票有多个不同尺寸时拼成「60/50」——跟员工端导出同一个口径 */
+function productDim(
+  products: Array<{ lengthCm?: number | null; widthCm?: number | null; heightCm?: number | null }> | undefined,
+  key: "lengthCm" | "widthCm" | "heightCm",
+): number | string {
+  const vals = (products ?? []).map((p) => p[key]).filter((v): v is number => v != null);
+  if (vals.length === 0) return "-";
+  const uniq = Array.from(new Set(vals));
+  return uniq.length === 1 ? uniq[0] : uniq.join("/");
+}
 
 const initialSearch = {
   batchNo: "",
@@ -175,6 +190,88 @@ export default function ClientHomePage() {
   const [openDetailsByOrder, setOpenDetailsByOrder] = useState<Record<string, boolean>>({});
   const [detailImagesCache, setDetailImagesCache] = useState<Record<string, OrderProductImageItem[]>>({});
   const [search, setSearch] = useState(initialSearch);
+  /* 「导出 Excel」（2026-09-23 老板：客户端也要能导，模版跟管理员那套一样、去掉柜号）。
+     弹窗有自己的一套条件，打开时把上面查询区已经填的带进来，可以改、可以清空。 */
+  const [exportFilter, setExportFilter] = useState<ShipmentFilterValue>(EMPTY_SHIPMENT_FILTER);
+  const [exporting, setExporting] = useState(false);
+  const [exportFeedback, setExportFeedback] = useState("");
+  const exportInFlight = useRef(false);
+  const prefillExportFilter = () => {
+    setExportFeedback("");
+    setExportFilter({
+      ...EMPTY_SHIPMENT_FILTER,
+      trackingNo: search.batchNo,
+      domesticTrackingNo: search.domesticTrackingNo,
+      logisticsStatus: search.status,
+      transportMode: search.transportMode,
+      warehouseId: search.warehouseId,
+      // 查询区那组日期筛的是**建单日期**，对应弹窗「更多条件」里的建单日期；导出主用的是到仓日期
+      arrivedAtFrom: search.arrivedDateFrom,
+      arrivedAtTo: search.arrivedDateTo,
+    });
+  };
+  const onExportFieldChange = (key: string, next: string) => {
+    setExportFeedback("");
+    setExportFilter((prev) => ({ ...prev, [key]: next }));
+  };
+  const exportDateInvalid = shipmentFilterDateInvalid(exportFilter);
+  const exportCommonFields: ExportFieldDef[] = [
+    { key: "shipDateFrom", label: "到仓开始日期", type: "date" },
+    { key: "shipDateTo", label: "到仓截止日期", type: "date" },
+    { key: "logisticsStatus", label: "物流状态", type: "select", options: [{ value: "", label: "全部" }, ...clientStatusFilterOptions.map((v) => ({ value: v, label: v }))] },
+    { key: "transportMode", label: "运输方式", type: "select", options: [{ value: "", label: "全部" }, { value: "sea", label: "海运" }, { value: "land", label: "陆运" }] },
+    { key: "warehouseId", label: "仓库", type: "select", options: [{ value: "", label: "全部" }, ...warehouseOptions.map((w) => ({ value: w.id, label: w.label }))] },
+    { key: "trackingNo", label: "运单号", type: "text", placeholder: "支持部分匹配" },
+  ];
+  const exportMoreFields: ExportFieldDef[] = [
+    { key: "domesticTrackingNo", label: "国内快递单号", type: "text" },
+    { key: "itemName", label: "品名", type: "text" },
+    { key: "arrivedAtFrom", label: "建单开始日期", type: "date" },
+    { key: "arrivedAtTo", label: "建单截止日期", type: "date" },
+  ];
+  /** 导出：重新拉一次自己的全部运单，按弹窗条件筛完写成 Excel（列跟管理员那套一样，去掉柜号） */
+  const exportMyOrders = async () => {
+    const all = await fetchClientOrders();
+    const matched = all.filter((item) => matchesShipmentFilter(clientOrderFilterRow(item as any, CLIENT_STATUS_ZH_OVERRIDES), exportFilter));
+    if (matched.length === 0) { setExportFeedback("没有符合这些条件的运单。"); return; }
+    const XLSX = await import("xlsx");
+    const rows = matched.map((o: any) => ({
+      运单号: o.trackingNo ?? "-",
+      唛头: o.clientId ?? "-",
+      品名: productNamesLabel(o.products, o.itemName),
+      货型: cargoTypeLabelOf((o.products ?? []).map((p: any) => p.cargoType), o.cargoType),
+      运输方式: o.transportMode === "sea" ? "海运" : o.transportMode === "land" ? "陆运" : (o.transportMode ?? "-"),
+      国内单号: o.domesticTrackingNo ?? "-",
+      // ⚠️ 没有「柜号」这一列：客户不能看到柜号（老板 2026-08-07 定，代理端导出也是这么做的）
+      审批状态: o.approvalStatus === "pending" ? "待审核" : o.approvalStatus === "approved" ? "已审核" : o.approvalStatus === "shipped" ? "已发货" : (o.approvalStatus ?? "-"),
+      产品数量: o.productQuantity ?? "-", 包裹数量: o.packageCount ?? "-",
+      重量: o.weightKg ?? "-", 体积: o.volumeM3 ?? "-",
+      长cm: productDim(o.products, "lengthCm"), 宽cm: productDim(o.products, "widthCm"), 高cm: productDim(o.products, "heightCm"),
+      到仓日期: o.shipDate ?? "-",
+      物流状态: shipmentStatusZh(o.currentStatus, CLIENT_STATUS_ZH_OVERRIDES),
+      状态组: o.statusGroup ? (CLIENT_STATUS_GROUP_ZH[o.statusGroup as keyof typeof CLIENT_STATUS_GROUP_ZH] ?? o.statusGroup) : "-",
+      创建时间: o.createdAt ?? "-", 更新时间: o.updatedAt ?? "-",
+    }));
+    const ws = XLSX.utils.json_to_sheet(rows);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "我的运单");
+    XLSX.writeFile(wb, `我的运单_${new Date().toISOString().slice(0, 10)}.xlsx`);
+    setExportFeedback(`已导出 ${rows.length} 条`);
+  };
+  const handleExport = async () => {
+    if (exportInFlight.current || exportDateInvalid) return;
+    exportInFlight.current = true;
+    setExporting(true);
+    setExportFeedback("");
+    try {
+      await exportMyOrders();
+    } catch (error) {
+      setExportFeedback(`导出失败：${error instanceof Error ? error.message : "请稍后重试"}`);
+    } finally {
+      exportInFlight.current = false;
+      setExporting(false);
+    }
+  };
   // 代理的客户不给 AI（3.6 / 5.7，后端统一闸也挡着 /client/ai）。还没查到品牌时照旧显示，接口会 403
   const sessionBrand = useCurrentSessionBrand();
   const hideAi = Boolean(sessionBrand);
@@ -1036,6 +1133,23 @@ export default function ClientHomePage() {
               return (
                 <div className="shipment-results">
                   <span className="shipment-results-meta" role="status" aria-live="polite">共 {queriedOrders.length} 条 · 第 {currentPage}/{totalPages} 页</span>
+                  {/* 导出 Excel（2026-09-23 新增）：条件在弹窗里选，导的是自己的全部运单里符合条件的那些 */}
+                  <ShipmentExportPanel onOpen={prefillExportFilter}>
+                    <div className="shipment-export" role="group" aria-label="导出 Excel">
+                      <ExportConditionFields
+                        value={exportFilter as unknown as Record<string, string>}
+                        onChange={onExportFieldChange}
+                        common={exportCommonFields}
+                        more={exportMoreFields}
+                        onClear={() => { setExportFeedback(""); setExportFilter(EMPTY_SHIPMENT_FILTER); }}
+                        hint="按上面的条件导出（打开弹窗时从查询条件带过来的，可以改）。导的是你全部运单里符合条件的那些，不受翻页影响。"
+                      />
+                      <button type="button" className="workbench-button" disabled={exporting || exportDateInvalid} aria-describedby="client-export-note" onClick={() => void handleExport()}>{exporting ? "导出中…" : "导出 Excel"}</button>
+                      <span className="shipment-export-note" id="client-export-note">导出的表跟运单列表同一套内容</span>
+                    </div>
+                    {exportDateInvalid && <p className="shipment-export-error" role="alert">起始日期晚于截止日期，请调整日期范围。</p>}
+                    <p role="status" aria-live="polite" aria-atomic="true" style={{ margin: exportFeedback ? "12px 0 0" : 0, fontSize: 13 }}>{exportFeedback}</p>
+                  </ShipmentExportPanel>
                   <nav className="shipment-pagination" aria-label="我的运单分页">
                     <button type="button" className="workbench-button" onClick={() => setCurrentPage((p) => Math.max(1, p - 1))} disabled={currentPage <= 1}>上一页</button>
                     <button type="button" className="workbench-button" onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))} disabled={currentPage >= totalPages}>下一页</button>

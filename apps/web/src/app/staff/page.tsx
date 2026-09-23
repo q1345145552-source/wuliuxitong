@@ -2,6 +2,8 @@
 
 import { matchesShipmentListFilter } from "../../../../../packages/shared-types/shipment-status";
 import { productNamesLabel } from "../../../../../packages/shared-types/product-names";
+import ExportConditionFields, { type ExportFieldDef } from "../../modules/shipment/ExportConditionFields";
+import { EMPTY_SHIPMENT_FILTER, matchesShipmentFilter, shipmentFilterDateInvalid, staffShipmentFilterRow, type ShipmentFilterValue } from "../../modules/shipment/export-filter";
 import { cargoTypeLabel } from "../../../../../packages/shared-types/cargo-type";
 import { Fragment, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import * as XLSX from "xlsx";
@@ -10,7 +12,7 @@ import ShipmentSearch from "../../modules/shipment/ShipmentSearch";
 import { openPrintLabel } from "../../modules/shipment/ShipmentPrintLabel";
 import { openShipmentTrack } from "../../modules/shipment/ShipmentTrackModal";
 import ShipmentExportPanel from "../../modules/shipment/ShipmentExportPanel";
-import ShipmentStatusGroups, { type ShipmentGroupFilter } from "../../modules/shipment/ShipmentStatusGroups";
+import ShipmentStatusGroups, { SHIPMENT_GROUP_OPTIONS, type ShipmentGroupFilter } from "../../modules/shipment/ShipmentStatusGroups";
 import { ShipmentOverviewStrip } from "../../modules/shipment/ShipmentOverviewStrip";
 import {
   GridColgroup,
@@ -1085,78 +1087,13 @@ export default function StaffHomePage() {
   }, [prealerts, prealertSearch]);
 
 
-  const filteredShipmentList = useMemo(() => {
-    const batchNoKeyword = shipmentSearch.batchNo.trim().toLowerCase();
-    const clientNameKeyword = shipmentSearch.clientName.trim().toLowerCase();
-    const itemNameKeyword = shipmentSearch.itemName.trim().toLowerCase();
-    const trackingNoKeyword = shipmentSearch.trackingNo.trim().toLowerCase();
-    const domesticTrackingKeyword = shipmentSearch.domesticTrackingNo.trim().toLowerCase();
-    const packageCountKeyword = shipmentSearch.packageCount.trim();
-    const productQuantityKeyword = shipmentSearch.productQuantity.trim();
-    const weightKgKeyword = shipmentSearch.weightKg.trim();
-    const volumeM3Keyword = shipmentSearch.volumeM3.trim();
-    const arrivedAtFrom = shipmentSearch.arrivedAtFrom.trim();
-    const arrivedAtTo = shipmentSearch.arrivedAtTo.trim();
-    const warehouseKeyword = shipmentSearch.warehouseId.trim();
-    const logisticsStatusKeyword = shipmentSearch.logisticsStatus.trim();
-    const containerNoKeyword = shipmentSearch.containerNo.trim().toLowerCase();
-    const transportModeKeyword = shipmentSearch.transportMode.trim();
-    const receiverAddressKeyword = shipmentSearch.receiverAddress.trim().toLowerCase();
-    const shipDateFrom = shipmentSearch.shipDateFrom.trim();
-    const shipDateTo = shipmentSearch.shipDateTo.trim();
-    const receivableAmountKeyword = shipmentSearch.receivableAmount.trim();
-    const statusRawKeyword = shipmentSearch.statusRaw.trim().toLowerCase();
-
-    return shipments.filter((item) => {
-      if (!matchesShipmentListFilter(item.currentStatus, shipmentGroup)) return false;
-      const batchNo = (item.batchNo ?? "").toLowerCase();
-      const clientName = `${item.clientName ?? ""} ${item.clientId ?? ""}`.toLowerCase();
-      /* 按品名搜要认**全部产品名**（2026-09-11）：item.itemName 只存了第一个产品名，
-         一票「鞋 / 包 / 帽」的货搜「帽」原来一条都搜不到。存的那个名也留在草堆里，
-         产品行被改过名时老关键词照样能命中。口径跟国内单号那一行一致（上面几行）。 */
-      const itemName = `${productNamesLabel(item.products, item.itemName)} ${item.itemName ?? ""}`.toLowerCase();
-      const trackingNo = (item.trackingNo ?? "").toLowerCase();
-      const domesticTrackingNo = (
-        (item.domesticTrackingNo ?? "") +
-        (item.products?.map(p => p.domesticTrackingNo ?? "").join(" ") ?? "")
-      ).toLowerCase();
-      const packageCount = item.packageCount == null ? "" : String(item.packageCount);
-      const productQuantity = item.productQuantity == null ? "" : String(item.productQuantity);
-      const weightKg = item.weightKg == null ? "" : String(item.weightKg);
-      const volumeM3 = item.volumeM3 == null ? "" : String(item.volumeM3);
-      const arrivedAt = item.arrivedAt ? item.arrivedAt.slice(0, 10) : "";
-      const warehouseId = (item.warehouseId ?? "").toLowerCase();
-      const logisticsStatus = toLogisticsStatus(item.currentStatus);
-      const containerNo = (item.containerNo ?? "").toLowerCase();
-      const receiverAddr = (item.receiverAddressTh ?? "").toLowerCase();
-      const shipDateVal = (item.shipDate ?? "").trim().slice(0, 10);
-      const receivableText =
-        item.receivableAmountCny == null ? "" : item.receivableAmountCny.toFixed(2);
-      const statusRaw = (item.currentStatus ?? "").toLowerCase();
-
-      if (batchNoKeyword && !batchNo.includes(batchNoKeyword)) return false;
-      if (clientNameKeyword && !clientName.includes(clientNameKeyword)) return false;
-      if (itemNameKeyword && !itemName.includes(itemNameKeyword)) return false;
-      if (trackingNoKeyword && !trackingNo.includes(trackingNoKeyword)) return false;
-      if (domesticTrackingKeyword && !domesticTrackingNo.includes(domesticTrackingKeyword)) return false;
-      if (packageCountKeyword && !packageCount.includes(packageCountKeyword)) return false;
-      if (productQuantityKeyword && !productQuantity.includes(productQuantityKeyword)) return false;
-      if (weightKgKeyword && !weightKg.includes(weightKgKeyword)) return false;
-      if (volumeM3Keyword && !volumeM3.includes(volumeM3Keyword)) return false;
-      if (arrivedAtFrom && arrivedAt < arrivedAtFrom) return false;
-      if (arrivedAtTo && arrivedAt > arrivedAtTo) return false;
-      if (warehouseKeyword && warehouseId !== warehouseKeyword.toLowerCase()) return false;
-      if (logisticsStatusKeyword && logisticsStatus !== logisticsStatusKeyword) return false;
-      if (containerNoKeyword && !containerNo.includes(containerNoKeyword)) return false;
-      if (transportModeKeyword && (item.transportMode ?? "") !== transportModeKeyword) return false;
-      if (receiverAddressKeyword && !receiverAddr.includes(receiverAddressKeyword)) return false;
-      if (shipDateFrom && shipDateVal < shipDateFrom) return false;
-      if (shipDateTo && shipDateVal > shipDateTo) return false;
-      if (receivableAmountKeyword && !receivableText.includes(receivableAmountKeyword)) return false;
-      if (statusRawKeyword && !statusRaw.includes(statusRawKeyword)) return false;
-      return true;
-    });
-  }, [shipments, shipmentSearch, shipmentGroup]);
+  /* 列表和导出用**同一份**判断（modules/shipment/export-filter.ts）：
+     2026-09-23 给导出弹窗加了自己的条件，两个地方要按同一套口径筛，抽出去免得以后改一边忘一边。 */
+  const filteredShipmentList = useMemo(
+    () => shipments.filter((item) =>
+      matchesShipmentListFilter(item.currentStatus, shipmentGroup) && matchesShipmentFilter(staffShipmentFilterRow(item), shipmentSearch)),
+    [shipments, shipmentSearch, shipmentGroup],
+  );
 
   // 按当前结果计数；刷新后失去的勾选项不参与导出，也不回退成「导出全部」（2026-09-05 复查：跟管理员端同一道）
   const selectedResultShipments = useMemo(
@@ -1229,16 +1166,63 @@ export default function StaffHomePage() {
   useEffect(() => { setSelectedForExport(new Set()); setCurrentPage(1); }, [shipmentSearch]);
 
   const [shipmentExportFeedback, setShipmentExportFeedback] = useState("");
-  const [exportDateFrom, setExportDateFrom] = useState("");
-  const [exportDateTo, setExportDateTo] = useState("");
+  /* 导出弹窗有自己的一套条件（2026-09-23 老板：导出不能只让选日期）。
+     打开弹窗时把列表上已经筛好的条件带进来，可以改、可以清空；列表本身不受影响。 */
+  const [exportFilter, setExportFilter] = useState<ShipmentFilterValue>(EMPTY_SHIPMENT_FILTER);
+  const [exportGroup, setExportGroup] = useState<ShipmentGroupFilter>("all");
+  const prefillExportFilter = () => {
+    setShipmentExportFeedback("");
+    setExportGroup(shipmentGroup);
+    setExportFilter({
+      ...shipmentSearch,
+      /* 弹窗里只放一组日期（老板 2026-09-23 定：按到仓日期）。列表上那两组日期筛的是同一个字段，
+         带进来时合成一组：优先用「发货日期」那组，没填就用「到仓日期」那组。 */
+      shipDateFrom: shipmentSearch.shipDateFrom || shipmentSearch.arrivedAtFrom,
+      shipDateTo: shipmentSearch.shipDateTo || shipmentSearch.arrivedAtTo,
+      arrivedAtFrom: "",
+      arrivedAtTo: "",
+    });
+  };
+  const exportFieldValues: Record<string, string> = { ...exportFilter, group: exportGroup };
+  const onExportFieldChange = (key: string, next: string) => {
+    setShipmentExportFeedback("");
+    if (key === "group") { setExportGroup(next as ShipmentGroupFilter); return; }
+    setExportFilter((prev) => ({ ...prev, [key]: next }));
+  };
+  const exportCommonFields: ExportFieldDef[] = [
+    { key: "group", label: "运单分组", type: "select", options: SHIPMENT_GROUP_OPTIONS },
+    { key: "shipDateFrom", label: "到仓开始日期", type: "date" },
+    { key: "shipDateTo", label: "到仓截止日期", type: "date" },
+    { key: "logisticsStatus", label: "物流状态", type: "select", options: [{ value: "", label: "全部" }, ...logisticsStatusOptions.map((v) => ({ value: v, label: v }))] },
+    { key: "warehouseId", label: "仓库", type: "select", options: [{ value: "", label: "全部" }, ...warehouseOptions.map((w) => ({ value: w.id, label: w.label }))] },
+    { key: "transportMode", label: "运输方式", type: "select", options: [{ value: "", label: "全部" }, { value: "sea", label: "海运" }, { value: "land", label: "陆运" }] },
+    { key: "clientName", label: "唛头 / 客户名", type: "text", placeholder: "唛头或客户名" },
+    { key: "trackingNo", label: "运单号", type: "text", placeholder: "支持部分匹配" },
+  ];
+  const exportMoreFields: ExportFieldDef[] = [
+    { key: "domesticTrackingNo", label: "国内单号", type: "text" },
+    { key: "itemName", label: "品名", type: "text" },
+    { key: "containerNo", label: "柜号", type: "text" },
+    { key: "batchNo", label: "批次号", type: "text" },
+    { key: "packageCount", label: "包裹数量", type: "text" },
+    { key: "productQuantity", label: "产品数量", type: "text" },
+    { key: "weightKg", label: "重量", type: "text" },
+    { key: "volumeM3", label: "体积", type: "text" },
+    { key: "receiverAddress", label: "收货地址", type: "text" },
+    { key: "receivableAmount", label: "加收金额", type: "text" },
+    { key: "statusRaw", label: "状态关键词", type: "text" },
+  ];
 
   const exportShipmentsToExcel = async () => {
-    let source = selectedForExport.size > 0 ? selectedResultShipments : filteredShipmentList;
-    if (source.length === 0) { setMessage("当前没有可导出的运单数据。"); setShipmentExportFeedback("当前没有可导出的运单数据。"); return; }
-    // 日期筛选
-    if (exportDateFrom) source = source.filter((s) => (s.shipDate ?? s.arrivedAt ?? "").slice(0,10) >= exportDateFrom);
-    if (exportDateTo) source = source.filter((s) => (s.shipDate ?? s.arrivedAt ?? "").slice(0,10) <= exportDateTo);
-    if (source.length === 0) { setMessage("所选日期范围内没有运单。"); setShipmentExportFeedback("所选日期范围内没有运单。"); return; }
+    /* 按**弹窗里的条件**筛（不是列表的条件，2026-09-23）。勾了单子就只导勾的那些（仍要符合条件）。
+       跟列表用同一份判断（matchesShipmentFilter），口径不会跑偏。 */
+    const matched = shipments.filter((item) =>
+      matchesShipmentListFilter(item.currentStatus, exportGroup) && matchesShipmentFilter(staffShipmentFilterRow(item), exportFilter));
+    const source = selectedForExport.size > 0 ? matched.filter((item) => selectedForExport.has(item.trackingNo)) : matched;
+    if (source.length === 0) {
+      const why = selectedForExport.size > 0 ? "勾选的运单里没有符合这些条件的。" : "没有符合这些条件的运单。";
+      setMessage(why); setShipmentExportFeedback(why); return;
+    }
     /* 2026-08-31（排查报告 24）：「计费体积」的低消原来写死海运 0.5 / 陆运 0.2，
        跟管理员「运费配置」里填的数对不上（配置默认陆运就是 0.3，改过就差更多）。
        改成导出前读一次配置（/admin/shipping/config，staff 也有权限）；
@@ -1284,7 +1268,7 @@ export default function StaffHomePage() {
     setShipmentExportFeedback(`已导出 ${rows.length} 条`);
   };
 
-  const exportDateInvalid = !!(exportDateFrom && exportDateTo && exportDateFrom > exportDateTo);
+  const exportDateInvalid = shipmentFilterDateInvalid(exportFilter);
   const handleShipmentExport = async () => {
     // 同一轮渲染连续点击也只生成一次文件；不改原来的选中/日期取数规则。
     if (exportInFlight.current || exportDateInvalid) return;
@@ -1746,18 +1730,23 @@ export default function StaffHomePage() {
             )}
           </div>
           <div className="shipment-results-actions">
-            <ShipmentExportPanel onOpen={() => setShipmentExportFeedback("")}>
+            <ShipmentExportPanel onOpen={prefillExportFilter}>
               <div className="staff-shipment-export" role="group" aria-label="导出 Excel">
-                <div className="staff-shipment-export-dates">
-                  <label>导出起始日期<input type="date" value={exportDateFrom} onChange={(e) => { setExportDateFrom(e.target.value); setShipmentExportFeedback(""); }} /></label>
-                  <span aria-hidden="true">—</span>
-                  <label>导出截止日期<input type="date" value={exportDateTo} onChange={(e) => { setExportDateTo(e.target.value); setShipmentExportFeedback(""); }} /></label>
-                </div>
-                <button type="button" className="staff-workbench-button" disabled={filteredShipmentList.length === 0 || (selectedForExport.size > 0 && selectedResultShipments.length === 0) || exporting || exportDateInvalid} aria-describedby="staff-export-note" onClick={() => void handleShipmentExport()}>{exporting ? "导出中…" : "导出 Excel"}</button>
-                <span className="staff-shipment-export-note" id="staff-export-note">{selectedForExport.size > 0 ? "仅导出当前结果中的已选运单，再按导出日期筛选" : "未勾选时导出全部筛选结果，再按导出日期筛选"}</span>
+                <ExportConditionFields
+                  value={exportFieldValues}
+                  onChange={onExportFieldChange}
+                  common={exportCommonFields}
+                  more={exportMoreFields}
+                  onClear={() => { setShipmentExportFeedback(""); setExportGroup("all"); setExportFilter(EMPTY_SHIPMENT_FILTER); }}
+                  hint={selectedForExport.size > 0
+                    ? `只导出已勾选的 ${selectedForExport.size} 条里符合这些条件的；条件是打开弹窗时从列表带过来的，可以改。`
+                    : "按上面的条件导出（打开弹窗时从列表带过来的，可以改）；勾了单子就只导勾的那些。"}
+                />
+                <button type="button" className="staff-workbench-button" disabled={exporting || exportDateInvalid} aria-describedby="staff-export-note" onClick={() => void handleShipmentExport()}>{exporting ? "导出中…" : "导出 Excel"}</button>
+                <span className="staff-shipment-export-note" id="staff-export-note">共 {filteredShipmentList.length} 条在列表里；导出按弹窗条件另算</span>
               </div>
-              {exportDateInvalid && <p className="staff-shipment-export-error" role="alert">导出起始日期晚于截止日期，请调整日期范围。</p>}
-                <p role="status" aria-live="polite" aria-atomic="true" style={{ margin: shipmentExportFeedback ? "12px 0 0" : 0, fontSize: 13 }}>{shipmentExportFeedback}</p>
+              {exportDateInvalid && <p className="staff-shipment-export-error" role="alert">起始日期晚于截止日期，请调整日期范围。</p>}
+              <p role="status" aria-live="polite" aria-atomic="true" style={{ margin: shipmentExportFeedback ? "12px 0 0" : 0, fontSize: 13 }}>{shipmentExportFeedback}</p>
             </ShipmentExportPanel>
             <nav className="staff-shipment-pagination" aria-label="运单列表分页">
               <button type="button" className="staff-workbench-button" onClick={() => setCurrentPage((p) => Math.max(1, p - 1))} disabled={currentPage <= 1}>上一页</button>
