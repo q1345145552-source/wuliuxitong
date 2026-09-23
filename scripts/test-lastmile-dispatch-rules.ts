@@ -27,6 +27,19 @@ function match(row: Row, where: any = {}): boolean {
     if ("not" in v) return row[k] !== v.not;
     if ("startsWith" in v) return String(row[k]).startsWith(v.startsWith);
     if ("equals" in v) return v.mode === "insensitive" ? String(row[k]).toLowerCase() === String(v.equals).toLowerCase() : row[k] === v.equals;
+    /* 关系上的 some / none / every（2026-09-23 加）。
+       起因：整柜的单不进普通运单列表，/staff/shipments 的 where 里多了
+       `containerItems: { none: { container: { isFcl: true } } }`，
+       这个假 Prisma 原来不认识关系条件，直接抛 Unimplemented。
+       这里按「这一行上挂着的那个数组」来判，数组不存在就当空。 */
+    if ("some" in v || "none" in v || "every" in v) {
+      const list: Row[] = Array.isArray(row[k]) ? row[k] : [];
+      if ("some" in v) return list.some((child) => match(child, v.some));
+      if ("none" in v) return !list.some((child) => match(child, v.none));
+      return list.every((child) => match(child, v.every));
+    }
+    // 关系上直接写条件（`container: { isFcl: true }`）：往下钻一层
+    if (relations.has(k)) return row[k] == null ? false : match(row[k], v);
     throw new Error(`Unimplemented where ${k}: ${JSON.stringify(v)}`);
   });
 }

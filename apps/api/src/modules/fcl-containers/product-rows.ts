@@ -5,7 +5,7 @@
  * 测试脚本隔离加载它会连带去连数据库，只能改成扫源码，而「扫源码证明不了行为」
  * 是这个项目踩过的坑（第十二轮的教训）。纯函数放这儿，测试直接调。
  */
-import { DECIMAL_10_2, DECIMAL_10_3, requireDecimal } from "../core/decimal-guard";
+import { DECIMAL_10_2, DECIMAL_10_3, DECIMAL_10_6, requireDecimal } from "../core/decimal-guard";
 import { parseNumericStrict, requirePositiveInt, requireProductWithinInt, requireSumWithinInt } from "../core/int-guard";
 
 /** 货型取值，跟运单、集货两处保持一致 */
@@ -104,11 +104,18 @@ export function parseFclProductRow(p: FclProductInput, index: number): { error: 
   const cargoType = String(p.cargoType ?? "normal").trim() || "normal";
   if (!CARGO_TYPES.includes(cargoType)) return { error: `${label}的货型只能是普货 / 商检货 / 敏感货` };
 
-  // 体积 = 长×宽×高÷1000000×箱数，口径跟集货和批量下单一致
+  /* 体积 = 长×宽×高÷1000000×箱数，口径跟集货和批量下单一致。
+     ⚠️ 这是**中间量，不入库** —— 只用来加总。所以按 6 位小数留着，
+     不能拿汇总列那 3 位小数去卡它：40×30×37 一箱算出来是 0.0444（4 位），
+     拿 3 位去卡会把这种完全正常的尺寸拒掉，还报一句看不懂的「体积超出范围」
+     （2026-09-23 复核实测：33×33×33、55×45×38 等一批常见尺寸全建不了柜）。
+     真正要守 3 位的是 sumFclRows 里加总之后的那个数。 */
   const volumeM3 = Number(((lengthCm * widthCm * heightCm) / 1_000_000 * packageCount).toFixed(6));
-  const volIssue = requireDecimal(volumeM3, `${label}算出来的体积`, { ...DECIMAL_10_3, min: 0 });
+  const volIssue = requireDecimal(volumeM3, `${label}算出来的体积`, { ...DECIMAL_10_6, min: 0 });
   if (volIssue) return { error: `${label}的长宽高乘出来体积超出范围，请核对` };
 
+  /* 整行总重也是中间量（入库的是上面那个**单箱重**，见 routes.ts 写 order_products 那段）。
+     这里按 2 位留着，只用来加总。 */
   const weightKg = Number((unitWeightKg * packageCount).toFixed(2));
   const rowWeightIssue = requireDecimal(weightKg, `${label}算出来的总重`, { ...DECIMAL_10_2, min: 0 });
   if (rowWeightIssue) return { error: `${label}的单箱重量乘箱数超出范围，请核对` };

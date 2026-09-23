@@ -244,6 +244,10 @@ jobs:
       # 客户端那份的列 = 管理员那套去掉柜号（客户不能看柜号）。不连库。
       - name: Test shipment export
         run: npm run test:shipment-export
+
+      # 整柜管理（2026-09-23）：客户自己包的整柜进系统、全程追踪。
+      # 盯：清单算式、模板表头精确匹配、客户那边一个柜号都不许出现、员工端和超管端共用一个组件。不连库。
+      - name: Test FCL containers
         run: npm run test:fcl-containers
 
       # 代理工作台隔离（2026-09-16，B3）。纯函数部分 CI 里跑；

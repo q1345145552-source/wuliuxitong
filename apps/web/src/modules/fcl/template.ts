@@ -22,6 +22,22 @@ export const FCL_TEMPLATE_HEADERS = [
   "货型（普货/商检货/敏感货，默认普货）",
 ];
 
+/**
+ * 核对表头：客户发来的表格是不是我们那份模板。
+ *
+ * ⚠️ 光靠「读不到就当空」不行（2026-09-23 复核抓到）：
+ * 「货型」那一列表头改一个字，整张表的货型就静默变成普货；
+ * 「单箱重量」表头改一个字，总重静默变成 0 —— 员工完全看不出来。
+ * 所以上传时先整张核一遍，缺哪列就把列名说出来。
+ *
+ * @returns 缺的列名；都在就是空数组。
+ */
+export function missingFclHeaders(row: Record<string, unknown> | undefined): string[] {
+  if (!row) return [...FCL_TEMPLATE_HEADERS];
+  const has = new Set(Object.keys(row).map((k) => k.trim()));
+  return FCL_TEMPLATE_HEADERS.filter((h) => !has.has(h));
+}
+
 /** 表格里一行 → 后端要的那一行。表头精确匹配，找不到的列按空处理 */
 export function fclRowFromSheet(raw: Record<string, unknown>): FclProductInput {
   const pick = (header: string) => {

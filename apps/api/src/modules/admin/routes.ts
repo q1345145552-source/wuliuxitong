@@ -4,6 +4,7 @@ import { parseNumericStrict, requireNonNegativeInt } from "../core/int-guard";
 import { validateProductRows } from "../orders/product-row-guard";
 import { Prisma } from "@prisma/client";
 import { prisma } from "../../db/prisma";
+import { EXCLUDE_FCL_SHIPMENT, FCL_BLOCKED_MESSAGE } from "../core/fcl-scope";
 import type { MinimalHttpApp } from "../../server";
 import { fail, ok, requireRole } from "../core/http-utils";
 import { CONSOLIDATION_CURRENCY, recordRechargeCredit } from "../wallet/consolidation-balance";
@@ -450,7 +451,8 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
 
     const page = parseInt(req.query.page as string) || 1;
     const pageSize = Math.min(parseInt(req.query.pageSize as string) || 50, 500);
-    const where = { companyId: auth.companyId, parentTrackingNo: null } as const;
+    // 整柜的单不进超管「运单管理」（老板 2026-09-23），走「整柜管理」那一页
+    const where = { ...EXCLUDE_FCL_SHIPMENT, companyId: auth.companyId, parentTrackingNo: null } as const;
 
     const [total, rows] = await Promise.all([
       prisma.shipment.count({ where }),
@@ -1559,8 +1561,20 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
       await tx.$queryRaw`SELECT id FROM orders WHERE id = ${orderId} AND company_id = ${auth.companyId} FOR UPDATE`;
       const freshShipments = await tx.shipment.findMany({
         where: { orderId, companyId: auth.companyId },
-        select: { id: true, parentTrackingNo: true },
+        select: {
+          id: true,
+          parentTrackingNo: true,
+          containerItems: { select: { container: { select: { isFcl: true } } } },
+        },
       });
+      /* 整柜的单不许从这里删（2026-09-23 复核抓到）：
+         删完运单和订单，那个 isFcl 的柜子还留着 —— 客户那边整柜当场消失，
+         而柜子状态已经不是「装柜中」、删柜又只允许「装柜中」，
+         于是留下一个永远删不掉的空壳柜，还一直占着柜号。
+         锁内重读判断（CLAUDE.md 第 28 条）。 */
+      if (freshShipments.some((s) => s.containerItems.some((it) => it.container?.isFcl))) {
+        throw new BusinessError(FCL_BLOCKED_MESSAGE, 400, "VALIDATION_ERROR");
+      }
       const shipmentIdsToDelete = freshShipments.map((s) => s.id);
       /**
        * 按 id 排序逐个上锁 —— 顺序必须跟装柜/推进柜子那两条路一致，不然会反向等待。

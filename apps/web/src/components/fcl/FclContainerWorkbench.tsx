@@ -23,7 +23,7 @@ import {
 import { shipmentStatusZh } from "../../modules/shipment/shipment-status";
 import { formatBeijingTime } from "../../modules/staff/utils";
 import EmptyStateCard from "../../modules/layout/EmptyStateCard";
-import { FCL_TEMPLATE_HEADERS, fclRowFromSheet } from "../../modules/fcl/template";
+import { FCL_TEMPLATE_HEADERS, fclRowFromSheet, missingFclHeaders } from "../../modules/fcl/template";
 
 /** 仓库选项，跟运单那边一致 */
 const WAREHOUSES = [
@@ -138,7 +138,28 @@ export default function FclContainerWorkbench() {
       const sheet = wb.Sheets[wb.SheetNames[0]];
       if (!sheet) { setToast("这个表格里没有工作表，请确认用的是整柜货物清单模板"); return; }
       const json = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: "" });
-      const parsed = json.map(fclRowFromSheet).filter((r) => String(r.itemName ?? "").trim() !== "");
+      /* 先核表头：少一列就明说少哪一列。不核的话，「货型」表头改个字整张表静默变普货、
+         「单箱重量」改个字总重静默变 0，员工根本看不出来（2026-09-23 复核抓到）。 */
+      const missing = missingFclHeaders(json[0]);
+      if (missing.length > 0) {
+        setToast(`这个表格不是我们的模板，少了这些列：${missing.join("、")}。请点「下载模板」重新填，表头一个字都不能改。`);
+        return;
+      }
+      const all = json.map(fclRowFromSheet);
+      /* 「整行都空」的是表格尾巴上的空行，直接跳过；
+         「填了箱数/尺寸但没填品名」的必须报出来 —— 静默丢掉就等于少运货（CLAUDE.md 第 19 条）。 */
+      const isBlank = (r: any) => ["itemName", "packageCount", "lengthCm", "widthCm", "heightCm", "unitWeightKg", "domesticTrackingNo"]
+        .every((k) => String(r[k] ?? "").trim() === "");
+      const noName: number[] = [];
+      const parsed = all.filter((r, i) => {
+        if (isBlank(r)) return false;
+        if (String(r.itemName ?? "").trim() === "") { noName.push(i + 2); return false; }  // +2：表头占第 1 行
+        return true;
+      });
+      if (noName.length > 0) {
+        setToast(`表格第 ${noName.join("、")} 行填了数量尺寸但没写品名，这几行没读进来。补上品名再传一次。`);
+        return;
+      }
       if (parsed.length === 0) {
         setToast("没读到有效的货物行。请用「下载模板」那个表格填，表头不能改。");
         return;
@@ -172,7 +193,16 @@ export default function FclContainerWorkbench() {
 
   const submitCreate = async () => {
     if (submitInFlight.current) return;
-    const filled = products.filter((r) => String(r.itemName ?? "").trim() !== "");
+    /* 「整行都空」的是刚加出来还没填的行，跳过；
+       「填了别的但没填品名」的要拦住 —— 静默丢掉等于少运货（2026-09-23 复核抓到）。 */
+    const isBlank = (r: FclProductInput) => ["itemName", "packageCount", "lengthCm", "widthCm", "heightCm", "unitWeightKg", "domesticTrackingNo"]
+      .every((k) => String((r as any)[k] ?? "").trim() === "");
+    const noName = products
+      .map((r, i) => ({ r, no: i + 1 }))
+      .filter(({ r }) => !isBlank(r) && String(r.itemName ?? "").trim() === "")
+      .map(({ no }) => no);
+    if (noName.length > 0) { setToast(`第 ${noName.join("、")} 行没填品名，补上再提交`); return; }
+    const filled = products.filter((r) => !isBlank(r));
     if (filled.length === 0) { setToast("货物清单至少要填一行（品名必填）"); return; }
     submitInFlight.current = true;
     setSubmitting(true);
@@ -185,7 +215,7 @@ export default function FclContainerWorkbench() {
         remark: form.remark.trim() || undefined,
         products: filled,
       });
-      setToast(`整柜已建好：柜号 ${r.containerNo}，运单号 ${r.trackingNo}，${r.rowCount} 行货、${r.packageCount} 箱、${r.volumeM3} 方`);
+      setToast(`整柜已建好：柜号 ${r.containerNo}，提单号 ${r.trackingNo}，${r.rowCount} 行货、${r.packageCount} 箱、${r.volumeM3} 方`);
       setShowCreate(false);
       resetCreate();
       await loadList();
@@ -212,7 +242,7 @@ export default function FclContainerWorkbench() {
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))", gap: 12 }}>
                 <div><span style={fl}>客户唛头</span><div style={{ fontWeight: 600, fontFamily: "monospace" }}>{detail.clientId ?? "—"}</div></div>
-                <div><span style={fl}>运单号</span><div style={{ fontWeight: 600, fontFamily: "monospace" }}>{detail.trackingNo ?? "—"}</div></div>
+                <div><span style={fl}>提单号</span><div style={{ fontWeight: 600, fontFamily: "monospace" }}>{detail.trackingNo ?? "—"}</div></div>
                 <div><span style={fl}>柜型</span><div>{detail.containerType}</div></div>
                 <div><span style={fl}>运输方式</span><div>{detail.transportMode === "land" ? "陆运" : "海运"}</div></div>
                 <div><span style={fl}>仓库</span><div>{WAREHOUSES.find((w) => w.id === detail.warehouseId)?.label ?? detail.warehouseId ?? "—"}</div></div>
@@ -232,7 +262,7 @@ export default function FclContainerWorkbench() {
                   <thead><tr style={{ background: "var(--s-sunken)" }}>
                     <th style={th}>品名</th><th style={th}>箱数</th><th style={th}>每箱数量</th>
                     <th style={th}>长cm</th><th style={th}>宽cm</th><th style={th}>高cm</th>
-                    <th style={th}>总重kg</th><th style={th}>国内单号</th><th style={th}>货型</th>
+                    <th style={th}>单箱重kg</th><th style={th}>国内单号</th><th style={th}>货型</th>
                   </tr></thead>
                   <tbody>
                     {detail.products.map((p) => (
@@ -288,7 +318,7 @@ export default function FclContainerWorkbench() {
       <div style={{ ...card, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "flex-end" }}>
         <div><label style={fl}>客户唛头</label><input style={{ ...fi, width: 150 }} value={search.clientId} onChange={(e) => setSearch((v) => ({ ...v, clientId: e.target.value }))} /></div>
         <div><label style={fl}>柜号</label><input style={{ ...fi, width: 150 }} value={search.containerNo} onChange={(e) => setSearch((v) => ({ ...v, containerNo: e.target.value }))} /></div>
-        <div><label style={fl}>运单号</label><input style={{ ...fi, width: 150 }} value={search.trackingNo} onChange={(e) => setSearch((v) => ({ ...v, trackingNo: e.target.value }))} /></div>
+        <div><label style={fl}>提单号</label><input style={{ ...fi, width: 150 }} value={search.trackingNo} onChange={(e) => setSearch((v) => ({ ...v, trackingNo: e.target.value }))} /></div>
         <button type="button" className="workbench-button" onClick={() => void loadList()} disabled={loading}>{loading ? "查询中…" : "查询"}</button>
         <button type="button" className="workbench-button" onClick={() => setSearch({ clientId: "", containerNo: "", trackingNo: "" })}>清空条件</button>
       </div>
@@ -301,7 +331,7 @@ export default function FclContainerWorkbench() {
           <div style={{ overflowX: "auto" }}>
             <table className="a3-table" style={{ width: "100%", borderCollapse: "collapse" }}>
               <thead><tr style={{ background: "var(--s-sunken)" }}>
-                <th style={th}>柜号</th><th style={th}>客户唛头</th><th style={th}>运单号</th><th style={th}>柜型</th>
+                <th style={th}>柜号</th><th style={th}>客户唛头</th><th style={th}>提单号</th><th style={th}>柜型</th>
                 <th style={th}>运输</th><th style={th}>当前状态</th><th style={th}>箱数</th><th style={th}>体积m³</th>
                 <th style={th}>金额¥</th><th style={th}>建柜时间</th><th style={th}></th>
               </tr></thead>
@@ -343,7 +373,7 @@ export default function FclContainerWorkbench() {
 
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))", gap: 10, marginBottom: 14 }}>
               <div><label style={fl}>客户唛头 *</label><input style={fi} value={form.clientId} onChange={(e) => setForm((v) => ({ ...v, clientId: e.target.value }))} placeholder="如 XHH6700" /></div>
-              <div><label style={fl}>运单号 *（手填）</label><input style={fi} value={form.trackingNo} onChange={(e) => setForm((v) => ({ ...v, trackingNo: e.target.value }))} /></div>
+              <div><label style={fl}>提单号 *（手填）</label><input style={fi} value={form.trackingNo} onChange={(e) => setForm((v) => ({ ...v, trackingNo: e.target.value }))} /></div>
               <div><label style={fl}>柜号 *</label><input style={fi} value={form.containerNo} onChange={(e) => setForm((v) => ({ ...v, containerNo: e.target.value }))} /></div>
               <div><label style={fl}>柜型 *</label>
                 <select style={fi} value={form.containerType} onChange={(e) => setForm((v) => ({ ...v, containerType: e.target.value }))}>

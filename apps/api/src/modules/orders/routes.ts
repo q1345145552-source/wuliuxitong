@@ -6,6 +6,7 @@ import { validateProductRows, validateOrderLevelQuantity } from "./product-row-g
 import crypto from "node:crypto";
 import { Prisma } from "@prisma/client";
 import { prisma } from "../../db/prisma";
+import { EXCLUDE_FCL_ORDER } from "../core/fcl-scope";
 import { getClientIp } from "../core/rate-limit";
 import type { MinimalHttpApp } from "../../server";
 
@@ -1049,6 +1050,10 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
       clientId: auth.userId,
       // 运单号搜索下推到数据库：父单、子单任一命中都算，且 count 与列表口径一致
       ...(trackingNo ? { shipments: { some: { trackingNo } } } : {}),
+      /* 整柜的单不进客户「我的运单」（老板 2026-09-23：不想混在一起），客户看「我的整柜」那一页。
+         ⚠️ 必须写成 AND 一条，不能直接加 `shipments: { none: ... }` ——
+         上面那行搜索条件用的也是 `shipments` 这个键，两个写一起后面的会把前面的整个盖掉。 */
+      AND: [EXCLUDE_FCL_ORDER],
     };
     const [total, orders] = await Promise.all([
       prisma.order.count({ where }),

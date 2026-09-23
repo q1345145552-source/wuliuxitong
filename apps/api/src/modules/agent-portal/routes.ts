@@ -17,6 +17,7 @@
 
 import type { Prisma } from "@prisma/client";
 import { prisma } from "../../db/prisma";
+import { EXCLUDE_FCL_ORDER } from "../core/fcl-scope";
 import type { HttpRequest, MinimalHttpApp } from "../../server";
 import { fail, ok } from "../core/http-utils";
 import { requireAgent, type AgentAuth } from "../core/agent-scope";
@@ -153,6 +154,10 @@ async function listScopedOrderIds(
     companyId: auth.companyId,
     clientId: filters.clientId ? filters.clientId : { in: clientIds },
     approvalStatus: { in: VISIBLE_APPROVAL_STATUSES },
+    /* 整柜的单不进代理端运单列表（老板 2026-09-23：不想混在一起）。
+       ⚠️ 写成 AND 一条：下面 trackingNo 那行用的也是 `shipments` 键，直接加会被盖掉。
+       这个函数同时喂着代理列表和代理导出，两处一起排。 */
+    AND: [EXCLUDE_FCL_ORDER],
     ...(filters.trackingNo ? { shipments: { some: { trackingNo: filters.trackingNo, companyId: auth.companyId } } } : {}),
     ...(filters.keyword
       ? {

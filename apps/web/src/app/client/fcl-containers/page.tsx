@@ -87,7 +87,7 @@ export default function ClientFclContainersPage() {
                   <thead><tr style={{ background: "var(--s-sunken)" }}>
                     <th style={th}>品名</th><th style={th}>箱数</th><th style={th}>每箱数量</th>
                     <th style={th}>长cm</th><th style={th}>宽cm</th><th style={th}>高cm</th>
-                    <th style={th}>总重kg</th><th style={th}>国内单号</th><th style={th}>货型</th>
+                    <th style={th}>单箱重kg</th><th style={th}>国内单号</th><th style={th}>货型</th>
                   </tr></thead>
                   <tbody>
                     {detail.products.map((p) => (
@@ -140,7 +140,7 @@ export default function ClientFclContainersPage() {
             <table className="a3-table" style={{ width: "100%", borderCollapse: "collapse" }}>
               <thead><tr style={{ background: "var(--s-sunken)" }}>
                 {/* ⚠️ 没有「柜号」这一列 */}
-                <th style={th}>运单号</th><th style={th}>柜型</th><th style={th}>运输</th>
+                <th style={th}>提单号</th><th style={th}>柜型</th><th style={th}>运输</th>
                 <th style={th}>当前状态</th><th style={th}>箱数</th><th style={th}>体积m³</th>
                 <th style={th}>金额¥</th><th style={th}>装柜日期</th><th style={th}></th>
               </tr></thead>

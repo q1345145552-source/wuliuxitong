@@ -34,7 +34,8 @@ import { prisma } from "../../db/prisma";
 import type { MinimalHttpApp } from "../../server";
 import { fail, ok, requireRole } from "../core/http-utils";
 import { BusinessError } from "../core/business-error";
-import { hideOperatorIdentity, operatorNameForDisplay } from "../core/operator-visibility";
+import { hideOperatorIdentity, hideOperatorInRemark, operatorNameForDisplay } from "../core/operator-visibility";
+import { sanitizeRemarkForClient } from "../core/client-privacy";
 import { DECIMAL_12_2, requireDecimal } from "../core/decimal-guard";
 import { parseNumericStrict } from "../core/int-guard";
 import {
@@ -47,6 +48,13 @@ import {
   type FclProductInput,
   type FclProductRow,
 } from "./product-rows";
+
+/**
+ * 仓库取值，跟运单那边一致（老板 2026-09-23：整柜也要选仓库，用现有那四个）。
+ * ⚠️ 后端必须按名单卡（2026-09-23 复核抓到）：原来只判非空，
+ * 直接调接口传任意字符串也能写进库，之后列表、导出、派送单上的仓库就是乱的。
+ */
+const WAREHOUSE_IDS = ["wh_yiwu_01", "wh_guangzhou_01", "wh_dongguan_01", "wh_shenzhen_01"];
 
 /** 内部端（员工 / 超管）看到的一个整柜 */
 function formatFclForStaff(container: any, shipment: any) {
@@ -163,8 +171,14 @@ export function registerFclContainerRoutes(app: MinimalHttpApp): void {
 
     if (!clientId) { fail(res, 400, "BAD_REQUEST", "请选择客户唛头"); return; }
     // 老板 2026-09-23：运单号手动填，不自动生成
-    if (!trackingNo) { fail(res, 400, "BAD_REQUEST", "运单号为必填（整柜的运单号是手填的）"); return; }
+    if (!trackingNo) { fail(res, 400, "BAD_REQUEST", "提单号为必填（整柜的提单号是手填的）"); return; }
     if (!containerNo) { fail(res, 400, "BAD_REQUEST", "柜号为必填"); return; }
+    /* 提单号跟柜号不许填成同一个（2026-09-23 复核提的）：提单号客户看得到、柜号客户看不到，
+       填成一样等于把柜号从提单号那一栏发出去了。 */
+    if (trackingNo.toLowerCase() === containerNo.toLowerCase()) {
+      fail(res, 400, "BAD_REQUEST", "提单号不能跟柜号填成同一个（柜号不能让客户看到）");
+      return;
+    }
     if (!CONTAINER_TYPES.includes(containerType)) { fail(res, 400, "BAD_REQUEST", "柜型只能是 20GP 或 40HQ"); return; }
     /* ⚠️ 运输方式必填而且只能是 sea / land（照抄建柜接口 2026-08-27 补的那道）：
        它决定这个柜走海运 23 步还是陆运 17 步，空着会被默认当海运，
@@ -173,8 +187,13 @@ export function registerFclContainerRoutes(app: MinimalHttpApp): void {
       fail(res, 400, "BAD_REQUEST", "请选择运输方式：海运或陆运");
       return;
     }
-    // 老板 2026-09-23：整柜也要选仓库，用现有那四个仓
-    if (!warehouseId) { fail(res, 400, "BAD_REQUEST", "请选择仓库"); return; }
+    /* 老板 2026-09-23：整柜也要选仓库，用现有那四个仓。
+       ⚠️ 只判非空不够（2026-09-23 复核抓到）：直接调接口传任意字符串也能写进库，
+       之后运单列表、导出、派送单上的仓库名就都是空的或乱的。 */
+    if (!WAREHOUSE_IDS.includes(warehouseId)) {
+      fail(res, 400, "BAD_REQUEST", "请选择仓库（义乌 / 广州 / 东莞 / 深圳）");
+      return;
+    }
 
     const productsInput = Array.isArray(body.products) ? body.products : [];
     if (productsInput.length === 0) { fail(res, 400, "BAD_REQUEST", "货物清单至少要有一行"); return; }
@@ -203,6 +222,14 @@ export function registerFclContainerRoutes(app: MinimalHttpApp): void {
     if (body.loadingDate?.trim()) {
       const d = new Date(body.loadingDate.trim());
       if (Number.isNaN(d.getTime())) { fail(res, 400, "BAD_REQUEST", "装柜日期不是有效日期，请写成 2026-09-23 这种格式"); return; }
+      /* 不许填未来（2026-09-23 复核抓到）：装柜日期就是「已装柜」那条轨迹的时间，
+         填成未来的话，后面推开船、到港会排在它前面，客户看到的顺序是乱的。
+         按当天 23:59 放宽，免得时区差一点就把「今天」挡掉。 */
+      const todayEnd = new Date(); todayEnd.setHours(23, 59, 59, 999);
+      if (d.getTime() > todayEnd.getTime()) {
+        fail(res, 400, "BAD_REQUEST", "装柜日期不能填未来的日期");
+        return;
+      }
       loadingDate = d;
     }
 
@@ -240,7 +267,7 @@ export function registerFclContainerRoutes(app: MinimalHttpApp): void {
         const dupContainer = await tx.container.findUnique({ where: { containerNo }, select: { id: true } });
         if (dupContainer) throw new BusinessError(`柜号 ${containerNo} 已存在，请核对`, 409, "VALIDATION_ERROR");
         const dupShipment = await tx.shipment.findUnique({ where: { trackingNo }, select: { id: true } });
-        if (dupShipment) throw new BusinessError(`运单号 ${trackingNo} 已存在，请换一个`, 409, "VALIDATION_ERROR");
+        if (dupShipment) throw new BusinessError(`提单号 ${trackingNo} 已存在，请换一个`, 409, "VALIDATION_ERROR");
 
         await tx.order.create({
           data: {
@@ -283,7 +310,14 @@ export function registerFclContainerRoutes(app: MinimalHttpApp): void {
             productQuantity: r.quantityPerBox,
             cargoType: r.cargoType,
             domesticTrackingNo: r.domesticTrackingNo ?? "货拉拉",
-            weightKg: r.weightKg,
+            /* ⚠️ 这一列的语义是**单箱重**，不是整行总重（2026-09-23 复核抓到，我原来写错了）。
+               全系统都按单箱重用它：
+                 · 校验文案 product-row-guard.ts:74「产品行N的单箱重量(kg)」
+                 · 汇总 orders/routes.ts:325「总重 = Σ(weightKg × packageCount)」
+                 · 客户派送签收单 exportDispatchWorkbooks.ts:531「weightKg × packageCount」
+                   —— 存成整行总重的话，签收单上印的是「单箱重 × 箱数²」，
+                   10 箱 2.5kg 的货会印成 250kg，而那是要给客户签字的纸。 */
+            weightKg: r.unitWeightKg,
             sortOrder: r.sortOrder,
           })),
         });
@@ -371,7 +405,7 @@ export function registerFclContainerRoutes(app: MinimalHttpApp): void {
     } catch (e: any) {
       if (e?.code === "P2002") {
         const target = String(e?.meta?.target ?? "");
-        const what = target.includes("tracking") ? `运单号 ${trackingNo}` : `柜号 ${containerNo}`;
+        const what = target.includes("tracking") ? `提单号 ${trackingNo}` : `柜号 ${containerNo}`;
         fail(res, 409, "VALIDATION_ERROR", `${what} 刚刚被别人录进去了，请核对后换一个`);
         return;
       }
@@ -390,6 +424,19 @@ export function registerFclContainerRoutes(app: MinimalHttpApp): void {
     const where: any = { companyId: auth.companyId, isFcl: true };
     if (q.containerNo?.trim()) where.containerNo = { contains: q.containerNo.trim() };
     if (q.status?.trim()) where.currentStatus = q.status.trim();
+    /* ⚠️ 唛头 / 提单号的筛选必须写进 where，不能拿回来再在内存里筛（2026-09-23 复核抓到）。
+       原来是先 take 500 再在内存里过滤 —— 整柜超过 500 个之后，搜更早的柜会**静默搜不到**，
+       而页面上「共 N 个」写的还是筛完的数，用户根本不知道还有没有。
+       这就是 CLAUDE.md 第 19 条那个坑（前端筛只对「已经全拿到」的数据成立）。
+       两个条件要各自成条进 AND，写成同一个 items 会互相覆盖。 */
+    const and: any[] = [];
+    if (q.clientId?.trim()) {
+      and.push({ items: { some: { shipment: { order: { clientId: { contains: q.clientId.trim(), mode: "insensitive" } } } } } });
+    }
+    if (q.trackingNo?.trim()) {
+      and.push({ items: { some: { shipment: { trackingNo: { contains: q.trackingNo.trim(), mode: "insensitive" } } } } });
+    }
+    if (and.length > 0) where.AND = and;
 
     const containers = await prisma.container.findMany({
       where,
@@ -397,6 +444,7 @@ export function registerFclContainerRoutes(app: MinimalHttpApp): void {
       take: 500,
       include: {
         items: {
+          orderBy: { createdAt: "asc" },
           include: {
             shipment: {
               include: { order: { select: { clientId: true, itemName: true, receivableAmountCny: true } } },
@@ -406,15 +454,15 @@ export function registerFclContainerRoutes(app: MinimalHttpApp): void {
       },
     });
 
-    // 客户唛头 / 运单号的筛选在这里做：它们挂在柜里那张单上，写不进上面的 where
-    const clientFilter = q.clientId?.trim().toLowerCase();
-    const trackingFilter = q.trackingNo?.trim().toLowerCase();
-    const rows = containers
-      .map((c) => formatFclForStaff(c, c.items[0]?.shipment))
-      .filter((r) => !clientFilter || (r.clientId ?? "").toLowerCase().includes(clientFilter))
-      .filter((r) => !trackingFilter || (r.trackingNo ?? "").toLowerCase().includes(trackingFilter));
-
-    ok(res, { items: rows, total: rows.length });
+    const rows = containers.map((c) => formatFclForStaff(c, c.items[0]?.shipment));
+    /* 到顶了要显式说一声，不能静默截断（CLAUDE.md 第 21 条：
+       看不到的数据，用户得有办法知道它存在）。 */
+    ok(res, {
+      items: rows,
+      total: rows.length,
+      truncated: rows.length >= 500,
+      ...(rows.length >= 500 ? { note: "只显示最近 500 个整柜，请用上面的条件缩小范围" } : {}),
+    });
   });
 
   // ==========================================================================
@@ -431,6 +479,7 @@ export function registerFclContainerRoutes(app: MinimalHttpApp): void {
       where: { id: containerId, companyId: auth.companyId, isFcl: true },
       include: {
         items: {
+          orderBy: { createdAt: "asc" },
           include: {
             shipment: {
               include: {
@@ -481,6 +530,7 @@ export function registerFclContainerRoutes(app: MinimalHttpApp): void {
       take: 500,
       include: {
         items: {
+          orderBy: { createdAt: "asc" },
           include: {
             shipment: {
               include: { order: { select: { clientId: true, itemName: true, receivableAmountCny: true } } },
@@ -512,6 +562,7 @@ export function registerFclContainerRoutes(app: MinimalHttpApp): void {
       where: { id: containerId, companyId: auth.companyId, isFcl: true },
       include: {
         items: {
+          orderBy: { createdAt: "asc" },
           include: {
             shipment: {
               include: {
@@ -537,7 +588,11 @@ export function registerFclContainerRoutes(app: MinimalHttpApp): void {
         id: log.id,
         fromStatus: log.fromStatus,
         toStatus: log.toStatus,
-        remark: log.remark,
+        /* ⚠️ 备注要脱敏再给客户（2026-09-23 复核抓到）：员工在「装柜管理」推状态时
+           备注框里写「柜号 MEDU1234567 已封」之类，原样发出去客户就看到柜号了。
+           全系统给客户的备注都过这道（/client/orders、/client/shipments/track、代理端），
+           只有这两个新接口漏了。 */
+        remark: hideOperatorInRemark(sanitizeRemarkForClient(log.remark ?? "", true), "client") || null,
         nextStop: log.nextStop,
         operatorName: operatorNameForDisplay(log),
         operatorId: log.operatorId,

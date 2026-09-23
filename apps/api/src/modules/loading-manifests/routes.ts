@@ -1,5 +1,6 @@
 import { unloadItemFully } from "../shipments/unload-item";
 import { prisma } from "../../db/prisma";
+import { FCL_BLOCKED_MESSAGE } from "../core/fcl-scope";
 import { syncParentStatusFromChildren } from "../shipments/parent-status";
 import { metricByPieceShare, reconcileFamilyMetric } from "../shipments/split-metrics";
 import type { MinimalHttpApp } from "../../server";
@@ -625,6 +626,10 @@ export function registerLoadingManifestRoutes(app: MinimalHttpApp): void {
       await tx.$queryRaw`SELECT id FROM containers WHERE id = ${containerId} FOR UPDATE`;
       const container = await tx.container.findFirst({ where: { id: containerId, companyId: auth.companyId } });
       if (!container) throw new Error("装柜任务不存在");
+      /* 整柜的柜子不许再往里装货（2026-09-23 复核抓到）：
+         整柜是一个客户包的一整柜，塞进来的货会跟着它一路推到「已签收」，
+         柜内统计和整柜页面也会对不上。整柜的事都在「整柜管理」里做。 */
+      if (container.isFcl) throw new Error("这是整柜，不能再往里装货；整柜请到「整柜管理」里处理");
 
       // 先锁再读，防并发 TOCTOU
       const shipment = await tx.shipment.findFirst({
@@ -639,6 +644,14 @@ export function registerLoadingManifestRoutes(app: MinimalHttpApp): void {
       });
       if (!locked) throw new Error("未找到该运单号");
       if (locked.parentTrackingNo) throw new Error("子运单不能再次装柜，请使用父运单号");
+      /* 整柜的运单不许装进别的柜（2026-09-23 复核抓到）：
+         它是父单，上面那道只拦子单拦不住它；装进来会拆出子单、
+         把整柜的件数方数重量扣走，客户那边的整柜就对不上了。 */
+      const inFcl = await tx.shipmentContainerItem.findFirst({
+        where: { shipmentId: shipment.id, container: { isFcl: true } },
+        select: { id: true },
+      });
+      if (inFcl) throw new Error(FCL_BLOCKED_MESSAGE);
       /**
        * ⚠️ 终态运单不许再装柜（2026-08-31 补）。
        * 员工批量粘贴运单号时手滑输错一个（比如输成上个月已签收的单），
@@ -1025,9 +1038,18 @@ export function registerLoadingManifestRoutes(app: MinimalHttpApp): void {
         where: { id: body.itemId, container: { companyId: auth.companyId } },
         // ⚠️ weightKg 必须一起查：2026-08-22 分柜改成从父单扣体积和重量之后，
         // 卸柜就必须把这两样也还回去，否则一装一卸这票货的体积重量会凭空变小。
-        include: { shipment: { select: { id: true, parentTrackingNo: true, packageCount: true, volumeM3: true, weightKg: true } } },
+        include: {
+          shipment: { select: { id: true, parentTrackingNo: true, packageCount: true, volumeM3: true, weightKg: true } },
+          container: { select: { isFcl: true } },
+        },
       });
       if (!item) throw new Error("装柜记录不存在");
+      /* 整柜不许在这里卸（2026-09-23 复核抓到）：
+         卸下来会把柜内记录删掉、把运单写成「已入库」并留一条「退回国内仓」的轨迹 ——
+         客户那边整柜当场消失，而且跟「整柜的货不走仓库收货流程」直接打架；
+         更要命的是柜子还在、状态已经不是「装柜中」，而删柜只允许「装柜中」，
+         于是留下一个永远删不掉的空壳整柜。 */
+      if (item.container?.isFcl) throw new Error(FCL_BLOCKED_MESSAGE);
 
       // 运单的锁已经在上面按【柜 → 运单 → 柜内记录】的顺序拿过了
 
