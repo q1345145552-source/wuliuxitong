@@ -19,6 +19,7 @@ import type { AiOrder, AuthContext, QueryDataSource, QueryScope } from "./ai-typ
 import type { HttpRequest, HttpResponse, MinimalHttpApp } from "../../server";
 import { checkRateLimit, rateLimitKey } from "../core/rate-limit";
 import { logger } from "../core/logger";
+import { EXCLUDE_FCL_ORDER, EXCLUDE_FCL_SHIPMENT } from "../core/fcl-scope";
 
 /**
  * AI 聊天的四道闸（2026-08-28 加，数值经用户确认）：
@@ -75,7 +76,9 @@ function beijingDayKey(): string {
 class PrismaClientScopedDataSource implements QueryDataSource {
   async listOrders(scope: QueryScope): Promise<AiOrder[]> {
     const rows = await prisma.order.findMany({
-      where: { companyId: scope.companyId, clientId: scope.clientId },
+      /* 整柜不算（老板 2026-09-23：整柜单独一块）。不排的话，客户在首页问
+         「我有几票货在途」，AI 说 1 票、下面「我的运单」是 0 条，自己跟自己打架。 */
+      where: { ...EXCLUDE_FCL_ORDER, companyId: scope.companyId, clientId: scope.clientId },
       orderBy: { createdAt: "desc" },
       // 品名统计要看**全部**货品行，不能只看 order.itemName（那只是第一个货品）。
       // 只取 itemName 一列，不会把整张货品行拉回来。
@@ -123,7 +126,8 @@ class PrismaClientScopedDataSource implements QueryDataSource {
   async listShipments(scope: QueryScope): Promise<Shipment[]> {
     // Shipment 上没有 clientId，通过所属订单收窄到该客户
     const rows = await prisma.shipment.findMany({
-      where: { companyId: scope.companyId, order: { clientId: scope.clientId } },
+      // 整柜不算（同上）
+      where: { ...EXCLUDE_FCL_SHIPMENT, companyId: scope.companyId, order: { clientId: scope.clientId } },
       orderBy: { updatedAt: "desc" },
     });
 

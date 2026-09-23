@@ -9,6 +9,7 @@ import type { MinimalHttpApp } from "../../server";
 import { fail, ok, requireRole } from "../core/http-utils";
 import { sanitizeRemarkForClient } from "../core/client-privacy";
 import { productNamesLabel } from "../../../../../packages/shared-types/product-names";
+import { FCL_BLOCKED_MESSAGE, isFclShipment } from "../core/fcl-scope";
 
 /** 同一票货重复进派送单时抛这个，调用方转成 400 而不是 500 */
 class LastmileConflictError extends Error {
@@ -724,10 +725,19 @@ export function registerAdminOpsRoutes(app: MinimalHttpApp): void {
            */
           const ownShipment = await tx.shipment.findFirst({
             where: { id: sid, companyId: auth.companyId },
-            select: { id: true, trackingNo: true, currentStatus: true, parentTrackingNo: true, packageCount: true },
+            select: {
+              id: true, trackingNo: true, currentStatus: true, parentTrackingNo: true, packageCount: true,
+              containerItems: { select: { container: { select: { isFcl: true } } } },
+            },
           });
           if (!ownShipment) {
             throw new LastmileShipmentNotFoundError(`运单 ${sid} 不存在或不属于当前公司`);
+          }
+          /* 整柜的货不走这条尾端派送（老板 2026-09-23：「排除，整柜的尾端单独在页面里弄」）。
+             候选列表那边已经排掉了，页面上点不到；这里再堵一道 ——
+             接口开着就可能被用到（CLAUDE.md 第 8c 条）。 */
+          if (isFclShipment(ownShipment)) {
+            throw new LastmileShipmentNotFoundError(FCL_BLOCKED_MESSAGE);
           }
           // 件数为空也按 0 算（跟前端候选过滤 `(packageCount ?? 0)` 同一口径）
           if (ownShipment.parentTrackingNo == null && (ownShipment.packageCount ?? 0) === 0) {

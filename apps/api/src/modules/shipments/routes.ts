@@ -915,6 +915,9 @@ export function registerShipmentRoutes(app: MinimalHttpApp): void {
     if (!auth) return;
 
     ok(res, await countShipmentOverview({
+      // 整柜不算进顶部数字（老板 2026-09-23：「不算，要分开显示」）。
+      // 必须跟下面列表那个 where 一个口径，否则会出现「列表 0 条、顶上写 1」。
+      ...EXCLUDE_FCL_SHIPMENT,
       companyId: auth.companyId,
       parentTrackingNo: null,
       order: { clientId: auth.userId },
@@ -942,6 +945,8 @@ export function registerShipmentRoutes(app: MinimalHttpApp): void {
 
     // 只数父运单，跟列表口径一致（子运单是分柜拆出来的，会重复计数）
     ok(res, await countShipmentOverview({
+      // 整柜不算（老板 2026-09-23），口径跟 /staff/shipments 那个列表对齐
+      ...EXCLUDE_FCL_SHIPMENT,
       companyId: auth.companyId,
       parentTrackingNo: null,
     }));

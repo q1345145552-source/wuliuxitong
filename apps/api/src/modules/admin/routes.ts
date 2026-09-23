@@ -4,7 +4,7 @@ import { parseNumericStrict, requireNonNegativeInt } from "../core/int-guard";
 import { validateProductRows } from "../orders/product-row-guard";
 import { Prisma } from "@prisma/client";
 import { prisma } from "../../db/prisma";
-import { EXCLUDE_FCL_SHIPMENT, FCL_BLOCKED_MESSAGE } from "../core/fcl-scope";
+import { EXCLUDE_FCL_ORDER, EXCLUDE_FCL_SHIPMENT, FCL_BLOCKED_MESSAGE } from "../core/fcl-scope";
 import type { MinimalHttpApp } from "../../server";
 import { fail, ok, requireRole } from "../core/http-utils";
 import { CONSOLIDATION_CURRENCY, recordRechargeCredit } from "../wallet/consolidation-balance";
@@ -236,7 +236,8 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
       prisma.user.count({ where: { companyId: auth.companyId, role: "staff" } }),
       prisma.user.count({ where: { companyId: auth.companyId, role: "client" } }),
       prisma.order.count({
-        where: { companyId: auth.companyId, createdAt: { gte: startOfToday } },
+        // 整柜不算（老板 2026-09-23：「不算，要分开显示」）
+        where: { ...EXCLUDE_FCL_ORDER, companyId: auth.companyId, createdAt: { gte: startOfToday } },
       }),
       /* ⚠️ 2026-08-21 修：原来数的是 currentStatus === "inTransit"，
          但**系统里根本没有 inTransit 这个状态**，这个数字从上线起一直是 0
@@ -249,6 +250,9 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
          现在直接调顶部那排数字用的同一个函数，取它算出来的在途 —— 两处不可能再分家。
          口径：总数 − 未发出 − 已到仓 − 已完成 − 异常，剩下的全算在途（新状态自动跟上）。 */
       countShipmentOverview({
+        // 整柜不算（老板 2026-09-23）。这里跟运单列表顶部那排数字调的是同一个函数，
+        // 那边也排了整柜，两处口径继续保持一致。
+        ...EXCLUDE_FCL_SHIPMENT,
         companyId: auth.companyId,
         parentTrackingNo: null,
       }).then((o) => o.inTransitCount),
@@ -259,21 +263,24 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
       // 改成「今天新进国内仓的货」= 今天创建的父单方数。
       prisma.shipment.aggregate({
         where: {
+          /* 整柜不算（老板 2026-09-23）。这个数的口径是「今天新进国内仓的货」，
+             而整柜按规格**不走国内仓**，算进来等于凭空多出几十方。 */
+          ...EXCLUDE_FCL_SHIPMENT,
           companyId: auth.companyId,
           parentTrackingNo: null,
           createdAt: { gte: startOfToday },
         },
         _sum: { volumeM3: true },
       }),
-      prisma.container.count({ where: { companyId: auth.companyId } }),
+      prisma.container.count({ where: { companyId: auth.companyId, isFcl: false } }),
       prisma.container.count({
-        where: { companyId: auth.companyId, currentStatus: "LOADING" },
+        where: { companyId: auth.companyId, isFcl: false, currentStatus: "LOADING" },
       }),
       prisma.container.count({
-        where: { companyId: auth.companyId, currentStatus: { in: AT_WAREHOUSE } },
+        where: { companyId: auth.companyId, isFcl: false, currentStatus: { in: AT_WAREHOUSE } },
       }),
       prisma.container.count({
-        where: { companyId: auth.companyId, currentStatus: "SIGNED" },
+        where: { companyId: auth.companyId, isFcl: false, currentStatus: "SIGNED" },
       }),
     ]);
 
@@ -328,6 +335,9 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
       JOIN ld ON ld.container_id = c.id
       JOIN shipment_container_items i ON i.container_id = c.id
       WHERE c.company_id = ${auth.companyId}
+        -- 整柜不算（老板 2026-09-23：整柜单独一块）。不加这条的话，整柜的起点轨迹
+        -- 正好是 to_status='loaded'，封柜满 21 天就会跳进「卡住的柜子」里
+        AND c.is_fcl = false
         AND c.current_status NOT IN ('SIGNED', 'IN_WAREHOUSE_TH', 'DELIVERY_BOOKED', 'OUT_FOR_DELIVERY', 'DELIVERING')
         AND (
           now() - ld.loaded_at > (CASE WHEN c.transport_mode = 'land' THEN interval '7 days'  ELSE interval '21 days' END)
@@ -753,6 +763,23 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
     if (conflict) {
       fail(res, 400, "BAD_REQUEST", "trackingNo already exists");
       return;
+    }
+
+    /* 整柜那张单的提单号不许改成它自己的柜号（2026-09-23 第 2 轮复核抓到）。
+       建整柜时已经拦过一次，但从这条改单的路能绕过去 —— 提单号客户看得到、柜号客户看不到，
+       改成一样等于把柜号从提单号那一栏发出去。
+       ⚠️ 这里**只拦这一种改法**，不把整柜的单整个堵死 ——
+       整柜现在还没有自己的编辑入口，全堵了建错就没法救（整柜的编辑/作废跟
+       「整柜尾端」「整柜看板」一起做，见 docs/复核-整柜管理-第2轮-2026-09-23.md）。 */
+    if (has("trackingNo") && trackingNo) {
+      const fclBox = await prisma.shipmentContainerItem.findFirst({
+        where: { shipmentId: { in: excludeIds }, container: { isFcl: true } },
+        select: { container: { select: { containerNo: true } } },
+      });
+      if (fclBox && fclBox.container.containerNo.toLowerCase() === trackingNo.toLowerCase()) {
+        fail(res, 400, "BAD_REQUEST", "提单号不能跟柜号填成同一个（柜号不能让客户看到）");
+        return;
+      }
     }
 
     let shipDate: string | null | undefined = undefined;

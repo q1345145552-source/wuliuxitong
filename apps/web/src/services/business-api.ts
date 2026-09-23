@@ -2568,7 +2568,7 @@ export async function createFclContainer(payload: {
 /** 员工 / 超管：整柜列表 */
 export async function fetchFclContainers(params?: {
   clientId?: string; containerNo?: string; trackingNo?: string; status?: string;
-}): Promise<{ items: FclContainerRow[]; total: number }> {
+}): Promise<{ items: FclContainerRow[]; total: number; truncated?: boolean; note?: string }> {
   const query = new URLSearchParams();
   if (params?.clientId?.trim()) query.set("clientId", params.clientId.trim());
   if (params?.containerNo?.trim()) query.set("containerNo", params.containerNo.trim());

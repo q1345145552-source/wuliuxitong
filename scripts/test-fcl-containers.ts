@@ -255,25 +255,51 @@ check("10) 建整柜这条路：提单号手填、要选仓库、只有员工和
 check("11) 整柜的单不进普通运单列表（老板 2026-09-23：不想混在一起）", () => {
   /**
    * 老板原话：「不想混在一起，整柜的不要出现在普通运单列表，而是一个单独的板块」；
-   * 问到尾端派送时他答「排除，整柜的尾端单独在页面里弄」。
+   * 问到尾端派送时他答「排除，整柜的尾端单独在页面里弄」；问到顶部数字和看板时答「不算」。
    * ⚠️ /staff/shipments 一个接口喂着三个地方：员工运单列表、装柜管理候选、尾端派送候选 ——
    * 排一处等于排三处（CLAUDE.md 第 12 条）。
+   *
+   * ⚠️⚠️ 必须按**每一个查询自己那一段**去查，不能查「整个文件里有没有出现过」
+   * （2026-09-23 第 2 轮复核批评的，我自检时也确实骗过了自己：
+   *  把超管那处的条件删掉、文件里别处还有，测试照样全绿）。
    */
-  const ends: Array<[string, string, string]> = [
-    ["超管运单管理", "apps/api/src/modules/admin/routes.ts", "EXCLUDE_FCL_SHIPMENT"],
-    ["员工运单管理 / 装柜候选 / 尾端候选", "apps/api/src/modules/shipments/routes.ts", "EXCLUDE_FCL_SHIPMENT"],
-    ["客户我的运单", "apps/api/src/modules/orders/routes.ts", "EXCLUDE_FCL_ORDER"],
-    ["代理端运单列表", "apps/api/src/modules/agent-portal/routes.ts", "EXCLUDE_FCL_ORDER"],
+  const spots: Array<[string, string, string, string, string]> = [
+    // [说明, 文件, 从哪儿开始切, 切到哪儿, 要出现的条件]
+    ["超管运单管理", "apps/api/src/modules/admin/routes.ts",
+      'app.get("/admin/orders"', "prisma.shipment.count", "EXCLUDE_FCL_SHIPMENT"],
+    ["员工运单管理 / 装柜候选 / 尾端候选", "apps/api/src/modules/shipments/routes.ts",
+      'app.get("/staff/shipments"', "prisma.shipment.count", "EXCLUDE_FCL_SHIPMENT"],
+    ["客户运单查询", "apps/api/src/modules/shipments/routes.ts",
+      'app.get("/client/shipments/search"', "orderBy", "EXCLUDE_FCL_SHIPMENT"],
+    ["客户我的运单", "apps/api/src/modules/orders/routes.ts",
+      'app.get("/client/orders"', "prisma.order.count", "EXCLUDE_FCL_ORDER"],
+    ["客户预报单", "apps/api/src/modules/orders/routes.ts",
+      "const prealertWhere", "prisma.order.count", "EXCLUDE_FCL_ORDER"],
+    ["代理端运单列表 / 导出", "apps/api/src/modules/agent-portal/routes.ts",
+      "const where: Prisma.OrderWhereInput", "filters.keyword", "EXCLUDE_FCL_ORDER"],
   ];
-  for (const [who, file, symbol] of ends) {
+  for (const [who, file, from, to, symbol] of spots) {
     const src = read(file);
-    assert.match(src, new RegExp(`from "\\.\\./core/fcl-scope"`), `${who}没有引用整柜隔离条件`);
-    assert.match(src, new RegExp(symbol), `${who}的查询里没排除整柜`);
+    const i = src.indexOf(from);
+    assert.ok(i >= 0, `${who}：找不到「${from}」，这条测试要跟着改`);
+    const j = src.indexOf(to, i);
+    const block = src.slice(i, j > i ? j + 200 : i + 1200);
+    assert.match(block, new RegExp(`\\.\\.\\.${symbol}|AND: \\[${symbol}\\]`),
+      `${who}这个查询的 where 里没排除整柜（光在文件别处 import 不算）`);
   }
-  // 客户端和代理端那两处必须写成 AND 一条：它们的 where 里已经有 shipments 键，直接加会被盖掉
-  for (const [who, file] of [["客户我的运单", "apps/api/src/modules/orders/routes.ts"], ["代理端", "apps/api/src/modules/agent-portal/routes.ts"]] as const) {
-    assert.match(read(file), /AND: \[EXCLUDE_FCL_ORDER\]/, `${who}要写成 AND，不然会跟已有的 shipments 条件互相覆盖`);
-  }
+  // 顶部那排数字要跟列表一个口径，不然会「列表 0 条、顶上写 1」
+  const shipSrc = read("apps/api/src/modules/shipments/routes.ts");
+  const overviewBlock = shipSrc.slice(shipSrc.indexOf('app.get("/client/shipments/overview"'));
+  assert.equal((overviewBlock.match(/\.\.\.EXCLUDE_FCL_SHIPMENT/g) ?? []).length, 2,
+    "客户端和员工端的顶部数字都要排除整柜（老板 2026-09-23：不算）");
+  // 运营看板：柜子那几个数按 isFcl:false 数，「卡住的柜子」那段 SQL 也要带条件
+  const adminSrc = read("apps/api/src/modules/admin/routes.ts");
+  assert.ok((adminSrc.match(/isFcl: false/g) ?? []).length >= 4, "看板的柜子统计没排除整柜");
+  assert.match(adminSrc, /AND c\.is_fcl = false/, "「卡住的柜子」那段 SQL 没排除整柜");
+  // AI 数据源
+  const aiSrc = read("apps/api/src/modules/ai/client-ai-routes.ts");
+  assert.match(aiSrc, /\.\.\.EXCLUDE_FCL_ORDER/, "AI 的订单数据源没排除整柜");
+  assert.match(aiSrc, /\.\.\.EXCLUDE_FCL_SHIPMENT/, "AI 的运单数据源没排除整柜");
 });
 
 check("12) 现有装柜机器不许误动整柜：不能往里装、不能卸、不能删", () => {
@@ -321,8 +347,63 @@ check("13) 上传表格：表头缺列要说出来，有数据没品名的行不
   assert.match(ui, /没写品名|没填品名/, "有数据没品名的行没被显式报出来");
 });
 
+check("14) 整柜不许被现有柜子操作动到：撤销已封柜 / 删柜 / 改运输方式 / 建派送单", () => {
+  /**
+   * 2026-09-23 第 2 轮复核抓到的一串，两边都点名：
+   *   · 整柜建出来时**没有推进账本**，撤销会掉进 legacy 分支：它只删 `sl_ctn_` 前缀的轨迹，
+   *     而整柜起点那条是 `sl_fcl_` —— 柜子退回「装柜中」、货还停在「已装柜」，两边对不上；
+   *     再推一次客户轨迹里就会有两条「已装柜」。
+   *   · 撤销之后柜子正好落在「装柜中」，删柜那道只判这个状态的闸也跟着开了。
+   *   · 改运输方式那道闸只拦「走到对方流程独有的状态」，而整柜起点「已封柜」是海陆共有的，
+   *     正好从缝里漏过去 → 柜子改成陆运、货还记着海运，两套流程就串了。
+   *   · 尾端派送候选虽然排掉了整柜，但直接调建派送单的接口仍然能给整柜建。
+   */
+  const ctn = read("apps/api/src/modules/containers/routes.ts");
+  assert.equal((ctn.match(/if \(container\.isFcl\)/g) ?? []).length, 3,
+    "撤销预览 / 撤销 / 删柜，这三处都要拦住整柜");
+  const lm = read("apps/api/src/modules/loading-manifests/routes.ts");
+  const modeBlock = lm.slice(lm.indexOf('app.post("/staff/loading-manifests/transport-mode"'), lm.indexOf('app.post("/staff/loading-manifests/seal"'));
+  assert.ok(modeBlock.length > 100, "找不到改运输方式那段，这条测试要跟着改");
+  assert.match(modeBlock, /container\.isFcl/, "改运输方式没拦住整柜（「已封柜」是海陆共有状态，会从缝里漏过去）");
+  const ops = read("apps/api/src/modules/admin-ops/routes.ts");
+  assert.match(ops, /isFclShipment\(ownShipment\)/, "建派送单没拦住整柜");
+});
+
+check("15) 表头两头的空格：核对和取值必须同一把尺子", () => {
+  /**
+   * 2026-09-23 第 2 轮复核**实测**抓到：核对表头时 trim 了、取值时没 trim ——
+   * 客户表格的表头末尾多打一个空格，missingFclHeaders 说「没缺列」，
+   * 取值却全落空：品名读成空、单箱重读成空、货型退回普货，一声不吭。
+   */
+  const tplMod = loadModule("apps/web/src/modules/fcl/template.ts");
+  const H: string[] = tplMod.FCL_TEMPLATE_HEADERS;
+  const vals = ["鞋", "10", "20", "60", "40", "30", "2.5", "SF1", "敏感货"];
+  const padded: Record<string, string> = {};
+  H.forEach((h, i) => { padded[h + " "] = vals[i]; });   // 每个表头后面多一个空格
+  assert.deepEqual([...(tplMod.missingFclHeaders(padded) as string[])], [], "表头只是多了空格，不该报缺列");
+  const row = tplMod.fclRowFromSheet(padded);
+  assert.equal(row.itemName, "鞋", "表头多个空格就读不到品名了");
+  assert.equal(String(row.unitWeightKg), "2.5", "表头多个空格就读不到单箱重了");
+  assert.equal(row.cargoType, "sensitive", "表头多个空格，货型就静默退回普货了");
+});
+
+check("16) 空行判断：只动过「每箱数量」或「货型」的行不算空行", () => {
+  /**
+   * 2026-09-23 第 2 轮复核抓到：isBlank 那张清单漏了「每箱数量」，
+   * 只填了那一格、没写品名的行会被当成空行**静默丢掉**（CLAUDE.md 第 19 条）。
+   * 货型有默认值 normal，得按「动过没有」算。
+   */
+  const ui = read("apps/web/src/components/fcl/FclContainerWorkbench.tsx");
+  const blanks = ui.match(/const isBlank[\s\S]*?;\n/g) ?? [];
+  assert.equal(blanks.length, 2, "上传和提交两处都该有空行判断");
+  for (const b of blanks) {
+    assert.match(b, /quantityPerBox/, "空行判断漏了「每箱数量」");
+    assert.match(b, /cargoType \?\? "normal"\) === "normal"/, "空行判断没把「货型动过没有」算进去");
+  }
+});
+
 if (failures > 0) {
   console.log(`❌ 失败 ${failures} 项`);
   process.exit(1);
 }
-console.log("✅ 整柜管理：13 项全部通过");
+console.log("✅ 整柜管理：16 项全部通过");

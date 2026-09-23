@@ -751,10 +751,16 @@ function backendOverview(options: { empty?: boolean; failStalled?: boolean } = {
       ];
     },
   };
+  /* 整柜排除条件（2026-09-23）：老板定的「整柜不算进看板数字」。
+     ⚠️ 从**真模块**里读，不在这儿自己造一份 —— 那样改了源码测试照样绿。 */
+  const fclScope = load(path.resolve('apps/api/src/modules/core/fcl-scope.ts'), {}, new Map());
+  const { EXCLUDE_FCL_ORDER, EXCLUDE_FCL_SHIPMENT } = fclScope as RecordValue;
+  assert.ok(EXCLUDE_FCL_ORDER && EXCLUDE_FCL_SHIPMENT, '整柜排除条件没读到，fcl-scope 是不是改了导出名');
+
   const handler = compile(`export default function bind(ctx: any) {
-    const { prisma, countShipmentOverview, requireRole, ok, CONTAINER_STATUS_LABEL } = ctx;
+    const { prisma, countShipmentOverview, requireRole, ok, CONTAINER_STATUS_LABEL, EXCLUDE_FCL_ORDER, EXCLUDE_FCL_SHIPMENT } = ctx;
     return (${callbacks[0].getText(tree)});
-  }`, filename).default({ prisma, requireRole, ok, CONTAINER_STATUS_LABEL,
+  }`, filename).default({ prisma, requireRole, ok, CONTAINER_STATUS_LABEL, EXCLUDE_FCL_ORDER, EXCLUDE_FCL_SHIPMENT,
     countShipmentOverview: async (args: RecordValue) => {
       capture('countShipmentOverview', { where: args }); assert.equal(args.parentTrackingNo, null);
       return { inTransitCount: options.empty ? 0 : 332 };

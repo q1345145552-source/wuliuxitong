@@ -224,9 +224,15 @@ export function registerFclContainerRoutes(app: MinimalHttpApp): void {
       if (Number.isNaN(d.getTime())) { fail(res, 400, "BAD_REQUEST", "装柜日期不是有效日期，请写成 2026-09-23 这种格式"); return; }
       /* 不许填未来（2026-09-23 复核抓到）：装柜日期就是「已装柜」那条轨迹的时间，
          填成未来的话，后面推开船、到港会排在它前面，客户看到的顺序是乱的。
-         按当天 23:59 放宽，免得时区差一点就把「今天」挡掉。 */
-      const todayEnd = new Date(); todayEnd.setHours(23, 59, 59, 999);
-      if (d.getTime() > todayEnd.getTime()) {
+         ⚠️ 界线放到「服务器明天」那一刻，不是「今天 23:59」（2026-09-23 第 2 轮复核抓到）：
+         生产容器跑在 **UTC**（实查 `docker exec mywebsite-api-1 date` 是 UTC），
+         而人在中国（UTC+8）和泰国（UTC+7）。当地凌晨那几个小时，员工选的「今天」
+         按 UTC 算已经是明天了，会被一句「不能填未来」莫名其妙挡住。
+         放宽一天，真正往后填好几天还是拦得住。 */
+      const tomorrowEnd = new Date();
+      tomorrowEnd.setUTCDate(tomorrowEnd.getUTCDate() + 1);
+      tomorrowEnd.setUTCHours(23, 59, 59, 999);
+      if (d.getTime() > tomorrowEnd.getTime()) {
         fail(res, 400, "BAD_REQUEST", "装柜日期不能填未来的日期");
         return;
       }
@@ -593,7 +599,10 @@ export function registerFclContainerRoutes(app: MinimalHttpApp): void {
            全系统给客户的备注都过这道（/client/orders、/client/shipments/track、代理端），
            只有这两个新接口漏了。 */
         remark: hideOperatorInRemark(sanitizeRemarkForClient(log.remark ?? "", true), "client") || null,
-        nextStop: log.nextStop,
+        /* 「下一站」是员工手填的（最多 50 字），也过一道脱敏（2026-09-23 第 2 轮复核提的）。
+           ⚠️ 现有的 /client/shipments/track 对这个字段是**原样下发**的（containers/routes.ts:1496）——
+           那是全系统的老口径，要不要统一得单独拍板；整柜这边先按严的来。 */
+        nextStop: sanitizeRemarkForClient(log.nextStop ?? "", true) || null,
         operatorName: operatorNameForDisplay(log),
         operatorId: log.operatorId,
         operatorRole: log.operatorRole,

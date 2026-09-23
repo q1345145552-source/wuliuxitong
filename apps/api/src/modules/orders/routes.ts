@@ -1223,6 +1223,10 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
       companyId: auth.companyId,
       approvalStatus: approvalFilter,
       clientId: auth.userId,
+      /* 整柜的单不进客户「预报单」（2026-09-23 第 2 轮复核抓到）：
+         status=all 时 approvalFilter 是 undefined，整柜单（approved）会被列进来，
+         而且状态那格会显示成「已发货」。老板 9-23 定的是整柜单独一个板块、不混在一起。 */
+      AND: [EXCLUDE_FCL_ORDER],
     };
     const [prealertTotal, orders] = await Promise.all([
       prisma.order.count({ where: prealertWhere }),

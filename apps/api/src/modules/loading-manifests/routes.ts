@@ -142,9 +142,16 @@ export function registerLoadingManifestRoutes(app: MinimalHttpApp): void {
     }
     const container = await prisma.container.findFirst({
       where: { id, companyId: auth.companyId },
-      select: { id: true, containerNo: true, currentStatus: true, transportMode: true },
+      select: { id: true, containerNo: true, currentStatus: true, transportMode: true, isFcl: true },
     });
     if (!container) { fail(res, 404, "NOT_FOUND", "柜子不存在"); return; }
+    /* 整柜不许在这里改运输方式（2026-09-23 第 2 轮复核抓到）。
+       下面那道闸只拦「柜子已经走到对方流程独有的状态」，而整柜的起点「已封柜」
+       是**海陆共有**的，正好从缝里漏过去：柜子改成陆运了，这票货的订单和运单
+       还记着海运 —— 柜子按陆运推、客户的轨迹按运单的运输方式显示，两套流程就串了
+       （普通拼柜允许柜货不一致，线上真有 5 个海陆混装柜；但整柜是一票货一个柜，
+       串了就是错的）。整柜要改运输方式得在「整柜管理」里连运单一起改。 */
+    if (container.isFcl) { fail(res, 400, "VALIDATION_ERROR", FCL_BLOCKED_MESSAGE); return; }
     // 没改（选的跟现在一样）：什么都不做。线上有陆运老柜子的货轨迹里带着早年按海运推的「已开船」，
     // 下面「走过对方流程独有步骤」那道闸会把这种原样保存也拦掉
     if (container.transportMode === mode) {

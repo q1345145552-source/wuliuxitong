@@ -19,6 +19,7 @@ import { unloadAllItemsOfContainer } from "../shipments/unload-item";
 import { lockAndSyncParents, lockShipmentsChildrenFirst } from "../shipments/lock-shipments";
 import { Prisma } from "@prisma/client";
 import { prisma } from "../../db/prisma";
+import { FCL_BLOCKED_MESSAGE } from "../core/fcl-scope";
 import { syncParentStatusFromChildren } from "../shipments/parent-status";
 import type { MinimalHttpApp } from "../../server";
 import { fail, ok, requireRole } from "../core/http-utils";
@@ -800,6 +801,16 @@ export function registerContainerRoutes(app: MinimalHttpApp): void {
       fail(res, 404, "NOT_FOUND", "找不到这个柜子");
       return;
     }
+    /* 整柜的事一律在「整柜管理」里做（2026-09-23 第 2 轮复核抓到）。
+       整柜建出来时柜子直接是「已封柜」，**没有推进账本** —— 撤销会掉进 legacy 那条兜底路：
+       它只删 `sl_ctn_` 前缀的轨迹，而整柜起点那条是 `sl_fcl_`，一条都删不掉。
+       结果是柜子退回「装柜中」、货还停在「已装柜」：内部说装柜中、客户说已装柜，两边对不上；
+       员工再按提示推一次，客户轨迹里就会出现两条「已装柜」。
+       撤销之后柜子正好落在「装柜中」，删柜那道只判这个状态的闸也就跟着开了。 */
+    if (container.isFcl) {
+      fail(res, 400, "VALIDATION_ERROR", FCL_BLOCKED_MESSAGE);
+      return;
+    }
     if (LASTMILE_ONLY_CONTAINER_STATUSES.has(container.currentStatus)) {
       fail(res, 400, "VALIDATION_ERROR", `「${CONTAINER_STATUS_LABEL[container.currentStatus] ?? container.currentStatus}」是尾端派送那边推的，不能在装柜页撤销。要退请到「尾端派送」里操作。`);
       return;
@@ -903,6 +914,16 @@ export function registerContainerRoutes(app: MinimalHttpApp): void {
     });
     if (!container) {
       fail(res, 404, "NOT_FOUND", "找不到这个柜子");
+      return;
+    }
+    /* 整柜的事一律在「整柜管理」里做（2026-09-23 第 2 轮复核抓到）。
+       整柜建出来时柜子直接是「已封柜」，**没有推进账本** —— 撤销会掉进 legacy 那条兜底路：
+       它只删 `sl_ctn_` 前缀的轨迹，而整柜起点那条是 `sl_fcl_`，一条都删不掉。
+       结果是柜子退回「装柜中」、货还停在「已装柜」：内部说装柜中、客户说已装柜，两边对不上；
+       员工再按提示推一次，客户轨迹里就会出现两条「已装柜」。
+       撤销之后柜子正好落在「装柜中」，删柜那道只判这个状态的闸也就跟着开了。 */
+    if (container.isFcl) {
+      fail(res, 400, "VALIDATION_ERROR", FCL_BLOCKED_MESSAGE);
       return;
     }
 
@@ -1297,10 +1318,18 @@ export function registerContainerRoutes(app: MinimalHttpApp): void {
 
     const container = await prisma.container.findFirst({
       where: { id, companyId: auth.companyId },
-      select: { id: true, currentStatus: true },
+      select: { id: true, currentStatus: true, isFcl: true },
     });
     if (!container) {
       fail(res, 404, "NOT_FOUND", "container not found");
+      return;
+    }
+    /* 整柜不许从这里删（2026-09-23 第 2 轮复核抓到）：删柜会把柜内的货全卸下来，
+       整柜那张单被写成「已入库」+ 一条「退回国内仓」的假轨迹；柜内记录一删，
+       这张单就不再算整柜，转头冒进客户「我的运单」和预报单里，
+       跟老板「整柜的货不走仓库收货流程」正面冲突。 */
+    if (container.isFcl) {
+      fail(res, 400, "VALIDATION_ERROR", FCL_BLOCKED_MESSAGE);
       return;
     }
     if (container.currentStatus !== "LOADING") {

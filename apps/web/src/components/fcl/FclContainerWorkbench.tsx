@@ -74,6 +74,7 @@ export default function FclContainerWorkbench() {
   const [rows, setRows] = useState<FclContainerRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [toast, setToast] = useState("");
+  const [listNote, setListNote] = useState("");
   const [search, setSearch] = useState({ clientId: "", containerNo: "", trackingNo: "" });
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [detail, setDetail] = useState<FclContainerDetail | null>(null);
@@ -95,6 +96,8 @@ export default function FclContainerWorkbench() {
     try {
       const r = await fetchFclContainers(search);
       setRows(r.items ?? []);
+      // 到顶了要说出来，不能静默截断（CLAUDE.md 第 21 条：看不到的数据，用户得有办法知道它存在）
+      setListNote(r.truncated ? (r.note ?? "只显示最近 500 个整柜，请用上面的条件缩小范围") : "");
     } catch (e) {
       setToast(`加载整柜列表失败：${e instanceof Error ? e.message : "请稍后重试"}`);
     } finally {
@@ -148,8 +151,15 @@ export default function FclContainerWorkbench() {
       const all = json.map(fclRowFromSheet);
       /* 「整行都空」的是表格尾巴上的空行，直接跳过；
          「填了箱数/尺寸但没填品名」的必须报出来 —— 静默丢掉就等于少运货（CLAUDE.md 第 19 条）。 */
-      const isBlank = (r: any) => ["itemName", "packageCount", "lengthCm", "widthCm", "heightCm", "unitWeightKg", "domesticTrackingNo"]
-        .every((k) => String(r[k] ?? "").trim() === "");
+      const isBlank = (r: any) => [
+        // ⚠️ 这张清单要把**所有**能填的格子都列上（2026-09-23 第 2 轮复核抓到）：
+        // 漏了「每箱数量」的话，只动过那一格的行会被当成空行静默丢掉。
+        "itemName", "packageCount", "quantityPerBox", "lengthCm", "widthCm", "heightCm",
+        "unitWeightKg", "domesticTrackingNo",
+      ]
+        .every((k) => String(r[k] ?? "").trim() === "")
+        // 货型有默认值 normal，按「动过没有」算：改成商检/敏感就说明这一行不是空的
+        && String(r.cargoType ?? "normal") === "normal";
       const noName: number[] = [];
       const parsed = all.filter((r, i) => {
         if (isBlank(r)) return false;
@@ -195,8 +205,15 @@ export default function FclContainerWorkbench() {
     if (submitInFlight.current) return;
     /* 「整行都空」的是刚加出来还没填的行，跳过；
        「填了别的但没填品名」的要拦住 —— 静默丢掉等于少运货（2026-09-23 复核抓到）。 */
-    const isBlank = (r: FclProductInput) => ["itemName", "packageCount", "lengthCm", "widthCm", "heightCm", "unitWeightKg", "domesticTrackingNo"]
-      .every((k) => String((r as any)[k] ?? "").trim() === "");
+    const isBlank = (r: FclProductInput) => [
+        // ⚠️ 这张清单要把**所有**能填的格子都列上（2026-09-23 第 2 轮复核抓到）：
+        // 漏了「每箱数量」的话，只动过那一格的行会被当成空行静默丢掉。
+        "itemName", "packageCount", "quantityPerBox", "lengthCm", "widthCm", "heightCm",
+        "unitWeightKg", "domesticTrackingNo",
+      ]
+      .every((k) => String((r as any)[k] ?? "").trim() === "")
+      // 货型有默认值 normal，按「动过没有」算
+      && String(r.cargoType ?? "normal") === "normal";
     const noName = products
       .map((r, i) => ({ r, no: i + 1 }))
       .filter(({ r }) => !isBlank(r) && String(r.itemName ?? "").trim() === "")
@@ -327,7 +344,10 @@ export default function FclContainerWorkbench() {
         <EmptyStateCard title="还没有整柜" description="点右上角「新建整柜」，选客户、填柜号，再把客户那份货物清单传进来。" />
       ) : (
         <div style={card}>
-          <div style={{ fontSize: 13, color: "var(--t-muted)", marginBottom: 8 }}>共 {rows.length} 个整柜</div>
+          <div style={{ fontSize: 13, color: "var(--t-muted)", marginBottom: 8 }}>
+            共 {rows.length} 个整柜
+            {listNote && <span style={{ color: "var(--c-amber-deep)", marginLeft: 8 }}>· {listNote}</span>}
+          </div>
           <div style={{ overflowX: "auto" }}>
             <table className="a3-table" style={{ width: "100%", borderCollapse: "collapse" }}>
               <thead><tr style={{ background: "var(--s-sunken)" }}>

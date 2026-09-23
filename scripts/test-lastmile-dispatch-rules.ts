@@ -32,7 +32,10 @@ function match(row: Row, where: any = {}): boolean {
        `containerItems: { none: { container: { isFcl: true } } }`，
        这个假 Prisma 原来不认识关系条件，直接抛 Unimplemented。
        这里按「这一行上挂着的那个数组」来判，数组不存在就当空。 */
-    if ("some" in v || "none" in v || "every" in v) {
+    /* ⚠️ 只对**认识的关系键**生效（2026-09-23 第 2 轮复核提的）：
+       不加这道的话，where 里把 `containerItems` 写错一个字母，
+       旧代码会抛 Unimplemented（吵，但会红），这里却会静默当成空数组返回 true。 */
+    if (("some" in v || "none" in v || "every" in v) && relations.has(k)) {
       const list: Row[] = Array.isArray(row[k]) ? row[k] : [];
       if ("some" in v) return list.some((child) => match(child, v.some));
       if ("none" in v) return !list.some((child) => match(child, v.none));
@@ -73,6 +76,9 @@ function ship(id: string, count = 2, parent: string | null = null): Row {
   return { id, companyId:"c", orderId:`o${parent ?? id}`, trackingNo:id, parentTrackingNo:parent, packageCount:count,
     currentStatus:"inWarehouseTH", transportMode:"sea", weightKg:8, volumeM3:0.2, updatedAt:new Date(0), createdAt:new Date(0),
     batchNo:null,containerNo:null,domesticTrackingNo:null,currentLocation:null,warehouseId:"wh",remark:null,
+    /* 柜内记录：这些假运单都是没装过柜的普通单（2026-09-23 加）。
+       整柜那条路会给这里塞 [{container:{isFcl:true}}]，建派送单那边据此拦下来。 */
+    containerItems: [] as Row[],
     order:{id:`o${parent ?? id}`,orderNo:null,itemName:"鞋",clientId:"mark",client:{name:"客户"},packageCount:9,
       productQuantity:null,weightKg:36,volumeM3:0.9,transportMode:"sea",shipDate:"2026-09-01",receiverNameTh:"收货人",receiverPhoneTh:"123",receiverAddressTh:"地址",receivableAmountCny:null,receivableCurrency:"CNY",paymentStatus:"unpaid",packageUnit:"box",cargoType:"normal"},
   };
@@ -438,7 +444,22 @@ async function main() {
   assert.equal(accept.toasts.at(-1),"已撤销 WD000001 里 S1 的签收");assert.equal(accept.reloads,1);
  });
 
+ /* 整柜不进尾端派送候选（老板 2026-09-23：「排除，整柜的尾端单独在页面里弄」）。
+    ⚠️ 上面那些假运单的 containerItems 都是空的，所以整柜排除那条在它们身上**等于没测**
+    （2026-09-23 第 2 轮复核点名要补的）。这里专门造一张「装在整柜里」的单，
+    证明 /staff/shipments 的候选真的把它筛掉了 —— 尾端派送的候选走的就是这个接口。 */
+ check("28) 装在整柜里的运单，不出现在尾端派送候选里", async () => {
+  const normal=ship("NORMAL1");const inFcl=ship("INFCL1");
+  (inFcl as any).containerItems=[{container:{isFcl:true}}];
+  reset([normal,inFcl]);
+  const r=await call("GET /staff/shipments",{},{all:"1",status:"inWarehouseTH",pageSize:"500"});
+  assert.equal(r.status,200);
+  const nos=(r.data?.items??[]).map((x:any)=>x.trackingNo);
+  assert.ok(nos.includes("NORMAL1"),`普通单该在候选里，实际拿到 ${JSON.stringify(nos)}`);
+  assert.ok(!nos.includes("INFCL1"),`整柜的单不该出现在尾端派送候选里，实际拿到 ${JSON.stringify(nos)}`);
+ });
+
  let failures=0;for(const [name,fn] of cases){try{await fn();console.log("PASS "+name);}catch(e){failures++;console.log("FAIL "+name+"\n"+(e instanceof Error?e.stack:e));}}
- console.log(`CHECKS ${cases.length}; FAILURES ${failures}`);if(failures)process.exitCode=1;
+console.log(`CHECKS ${cases.length}; FAILURES ${failures}`);if(failures)process.exitCode=1;
 }
 main().catch(e=>{console.error(e);process.exitCode=1;});

@@ -23,6 +23,20 @@ export const FCL_TEMPLATE_HEADERS = [
 ];
 
 /**
+ * 把一行的**列名两头的空格去掉**再用。
+ *
+ * ⚠️ 2026-09-23 第 2 轮复核实测抓到：核对表头时 trim 了、取值时没 trim，
+ * 客户表格的表头末尾多打一个空格，`missingFclHeaders` 说「没缺列」，
+ * 取值却全落空 —— 品名读成空、单箱重读成空、货型退回普货，一声不吭。
+ * 两边必须走同一把尺子，所以核对和取值都先过这一道。
+ */
+function normalizeKeys(raw: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(raw)) out[k.trim()] = v;
+  return out;
+}
+
+/**
  * 核对表头：客户发来的表格是不是我们那份模板。
  *
  * ⚠️ 光靠「读不到就当空」不行（2026-09-23 复核抓到）：
@@ -34,12 +48,14 @@ export const FCL_TEMPLATE_HEADERS = [
  */
 export function missingFclHeaders(row: Record<string, unknown> | undefined): string[] {
   if (!row) return [...FCL_TEMPLATE_HEADERS];
-  const has = new Set(Object.keys(row).map((k) => k.trim()));
+  // 跟 fclRowFromSheet 走同一把尺子（都先去掉列名两头的空格），否则会出现「说齐了、取不到」
+  const has = new Set(Object.keys(normalizeKeys(row)));
   return FCL_TEMPLATE_HEADERS.filter((h) => !has.has(h));
 }
 
-/** 表格里一行 → 后端要的那一行。表头精确匹配，找不到的列按空处理 */
-export function fclRowFromSheet(raw: Record<string, unknown>): FclProductInput {
+/** 表格里一行 → 后端要的那一行。表头精确匹配（两头空格不算），找不到的列按空处理 */
+export function fclRowFromSheet(rawInput: Record<string, unknown>): FclProductInput {
+  const raw = normalizeKeys(rawInput);
   const pick = (header: string) => {
     const v = raw[header];
     return v === undefined || v === null ? "" : String(v).trim();
