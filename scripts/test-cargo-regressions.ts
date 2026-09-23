@@ -61,6 +61,10 @@ function model(name: string) {
 }
 const prisma: Row = strict("prisma", {
   order: model("order"), shipment: model("shipment"), orderProduct: model("orderProduct"),
+  /* 柜内记录（2026-09-24 加）：改单接口现在要查「这张单是不是整柜的」
+     （整柜不许把提单号改成柜号、不许改运输方式）。
+     这些假数据都是没装过柜的普通单，所以这张表是空的。 */
+  shipmentContainerItem: model("shipmentContainerItem"),
   $queryRaw: async (strings: TemplateStringsArray) => {
     assert.match(strings.join("?"), /SELECT id FROM orders .*FOR UPDATE/);
     calls.push("lock:order"); return [{id: "o1"}];
@@ -77,6 +81,7 @@ function reset(cargo: string[] = ["normal", "normal"], orderCargo = "normal") {
   rows = {
     order: [{id: "o1", companyId: fixtureCompany, warehouseId: "wh_yiwu_01", cargoType: orderCargo, batchNo: null, domesticTrackingNo: null, receiverAddressTh: "fixture", packageCount: 5, weightKg: 8, volumeM3: 0.05}],
     shipment: [{id: "s1", companyId: fixtureCompany, orderId: "o1", trackingNo: "YW-CARGO", parentTrackingNo: null, currentStatus: "inWarehouseCN", containerNo: null, packageCount: 5, weightKg: 8, volumeM3: 0.05}],
+    shipmentContainerItem: [],
     orderProduct: cargo.map((cargoType, i) => ({id: `p${i+1}`, orderId: "o1", companyId: fixtureCompany, itemName: `货品${i+1}`, packageCount: i+2, cargoType, sortOrder: i, weightKg: i+1})),
   };
 }

@@ -247,6 +247,7 @@ WITH expected(table_name, column_name) AS (VALUES
   ('containers','container_type'),
   ('containers','transport_mode'),
   ('containers','status_dates'),        -- 2026-08-06 加：每一步实际发生的日期
+  ('containers','is_fcl'),               -- 2026-09-23 加：是不是整柜（整柜管理那套）
   ('containers','warehouse_id'),
   ('containers','carrier_name'),
   ('containers','sealed_at'),

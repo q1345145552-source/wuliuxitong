@@ -31,6 +31,7 @@ export default function ClientFclContainersPage() {
   const [rows, setRows] = useState<FclContainerRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState("");
+  const [listNote, setListNote] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [detail, setDetail] = useState<FclContainerDetail | null>(null);
 
@@ -39,6 +40,7 @@ export default function ClientFclContainersPage() {
     try {
       const r = await fetchMyFclContainers();
       setRows(r.items ?? []);
+      setListNote(r.truncated ? (r.note ?? "只显示最近 500 个整柜") : "");
     } catch (e) {
       setToast(`加载失败：${e instanceof Error ? e.message : "请稍后重试"}`);
     } finally {
@@ -135,7 +137,10 @@ export default function ClientFclContainersPage() {
         <EmptyStateCard title="还没有整柜" description="整柜由我们这边录入，录好之后你在这里就能看到货物清单和全程轨迹。" />
       ) : (
         <div style={card}>
-          <div style={{ fontSize: 13, color: "var(--t-muted)", marginBottom: 8 }}>共 {rows.length} 个整柜</div>
+          <div style={{ fontSize: 13, color: "var(--t-muted)", marginBottom: 8 }}>
+            共 {rows.length} 个整柜
+            {listNote && <span style={{ color: "var(--c-amber-deep)", marginLeft: 8 }}>· {listNote}</span>}
+          </div>
           <div style={{ overflowX: "auto" }}>
             <table className="a3-table" style={{ width: "100%", borderCollapse: "collapse" }}>
               <thead><tr style={{ background: "var(--s-sunken)" }}>

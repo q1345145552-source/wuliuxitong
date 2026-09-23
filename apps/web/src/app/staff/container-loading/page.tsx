@@ -623,7 +623,11 @@ export default function StaffContainerLoadingPage() {
             list.map((item) => (
               <div key={item.id} onClick={() => selectManifest(item.id)} style={{ padding: "12px 16px", cursor: "pointer", borderBottom: "1px solid var(--s-cool-2)", background: selectedId === item.id ? "var(--c-blue-bg)" : "transparent" }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                  <span style={{ fontWeight: 600, fontSize: 14, color: "#14171D" }}>{item.manifestNo}</span>
+                  <span style={{ fontWeight: 600, fontSize: 14, color: "#14171D" }}>
+                    {item.manifestNo}
+                    {/* 整柜在这一页只能推状态，别的操作都不许 —— 先让员工一眼看出来（2026-09-24） */}
+                    {item.isFcl && <span style={{ marginLeft: 6, fontSize: 10, fontWeight: 600, padding: "1px 6px", borderRadius: 999, background: "var(--c-amber-bg)", color: "var(--c-amber-deep)" }}>整柜</span>}
+                  </span>
                   <span style={{ fontSize: 11, fontWeight: 500, color: STATUS_COLOR[item.status] ?? "var(--t-strong)" }}>{STATUS_LABEL[item.status] ?? item.status}</span>
                 </div>
                 <div style={{ fontSize: 12, color: "var(--t-strong)", marginTop: 4 }}>
@@ -664,6 +668,10 @@ export default function StaffContainerLoadingPage() {
                           界面把报错原样弹出来（2026-08-06） */}
                       <select
                         value={detail.transportMode ?? ""}
+                        /* 整柜的运输方式不许在这儿改（后端也拦着）：这里只改柜子，
+                           货还记着原来的方式，海运陆运就对不上了（2026-09-24） */
+                        disabled={detail.isFcl}
+                        title={detail.isFcl ? "整柜的运输方式请到「整柜管理」里处理" : undefined}
                         onChange={async (e) => {
                           const mode = e.target.value;
                           if (!mode) return;
@@ -764,8 +772,15 @@ export default function StaffContainerLoadingPage() {
                         {undoing ? "撤销中…" : `撤销「${STATUS_LABEL[detail.status] ?? detail.status}」`}
                       </button>
                     )}
-                    {detail.status === "LOADING" && (
+                    {/* 整柜不许在这一页删（后端也拦着）：删了会把货退回国内仓、柜子留成空壳，
+                        而且客户那边整柜当场消失。整柜的事在「整柜管理」里做。（2026-09-24） */}
+                    {detail.status === "LOADING" && !detail.isFcl && (
                       <button onClick={handleDelete} style={{ border: "1px solid #fecaca", borderRadius: 6, padding: "8px 16px", background: "#fef2f2", color: "var(--c-red-2)", fontWeight: 500, fontSize: 13, cursor: "pointer" }}>删除柜子</button>
+                    )}
+                    {detail.isFcl && (
+                      <span style={{ fontSize: 12, color: "var(--t-muted)" }}>
+                        这是整柜：这一页只能往前推状态；加货、卸货、删柜、改运输方式都要到「整柜管理」里处理
+                      </span>
                     )}
                   </div>
                 </div>

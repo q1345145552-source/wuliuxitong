@@ -1644,6 +1644,8 @@ export interface LoadingManifestItem {
   status: string;
   /** sea = 海运 | land = 陆运 | null = 2026-08-05 之前建的老柜子，还没标 */
   transportMode: string | null;
+  /** 是不是整柜（2026-09-23）。整柜在这一页只能推状态，加货/卸货/删柜/改运输方式都不许 */
+  isFcl?: boolean;
   carrierInfo: string | null;
   sealedAt: string | null;
   totalBills: number;
@@ -2587,7 +2589,7 @@ export async function fetchFclContainerDetail(containerId: string): Promise<FclC
 }
 
 /** 客户：我的整柜列表（返回里没有柜号） */
-export async function fetchMyFclContainers(): Promise<{ items: FclContainerRow[]; total: number }> {
+export async function fetchMyFclContainers(): Promise<{ items: FclContainerRow[]; total: number; truncated?: boolean; note?: string }> {
   return apiRequest(`${apiBaseUrl()}/client/fcl-containers/list`, { method: "GET" });
 }
 

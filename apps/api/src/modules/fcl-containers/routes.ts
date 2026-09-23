@@ -428,7 +428,9 @@ export function registerFclContainerRoutes(app: MinimalHttpApp): void {
 
     const q = (req.query ?? {}) as { clientId?: string; containerNo?: string; trackingNo?: string; status?: string };
     const where: any = { companyId: auth.companyId, isFcl: true };
-    if (q.containerNo?.trim()) where.containerNo = { contains: q.containerNo.trim() };
+    // 柜号也要忽略大小写（跟下面唛头/提单号一个口径）：柜号是「MEDU1234567」这种大写，
+    // 员工顺手打小写就该搜得到（2026-09-24 上线前自审发现，原来只有这一处漏了 mode）
+    if (q.containerNo?.trim()) where.containerNo = { contains: q.containerNo.trim(), mode: "insensitive" };
     if (q.status?.trim()) where.currentStatus = q.status.trim();
     /* ⚠️ 唛头 / 提单号的筛选必须写进 where，不能拿回来再在内存里筛（2026-09-23 复核抓到）。
        原来是先 take 500 再在内存里过滤 —— 整柜超过 500 个之后，搜更早的柜会**静默搜不到**，
@@ -551,7 +553,13 @@ export function registerFclContainerRoutes(app: MinimalHttpApp): void {
       .filter((c) => c.items[0]?.shipment?.order?.clientId === auth.userId)
       .map((c) => formatFclForClient(c, c.items[0]?.shipment));
 
-    ok(res, { items: rows, total: rows.length });
+    // 到顶了也要说一声，跟内部端一个口径（CLAUDE.md 第 21 条，2026-09-24 复核补）
+    ok(res, {
+      items: rows,
+      total: rows.length,
+      truncated: containers.length >= 500,
+      ...(containers.length >= 500 ? { note: "只显示最近 500 个整柜" } : {}),
+    });
   });
 
   // ==========================================================================

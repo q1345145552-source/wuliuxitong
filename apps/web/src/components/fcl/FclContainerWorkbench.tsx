@@ -141,6 +141,12 @@ export default function FclContainerWorkbench() {
       const sheet = wb.Sheets[wb.SheetNames[0]];
       if (!sheet) { setToast("这个表格里没有工作表，请确认用的是整柜货物清单模板"); return; }
       const json = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: "" });
+      /* 只有表头、一行数据都没填的空模板：单独说一句，别报「少了全部 9 列」把人带偏
+         （2026-09-24 上线前自审发现）。 */
+      if (json.length === 0) {
+        setToast("这个表格里一行货都没填，请把货物填进模板再传。");
+        return;
+      }
       /* 先核表头：少一列就明说少哪一列。不核的话，「货型」表头改个字整张表静默变普货、
          「单箱重量」改个字总重静默变 0，员工根本看不出来（2026-09-23 复核抓到）。 */
       const missing = missingFclHeaders(json[0]);

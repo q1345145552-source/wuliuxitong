@@ -1592,6 +1592,29 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
       return;
     }
 
+    /* 整柜的单从这条路改，有两样不能动（2026-09-24 上线前复核抓到，两家都报了）：
+       ① 提单号不能改成它自己的柜号 —— 提单号客户看得到、柜号客户看不到，
+          改成一样等于把柜号从提单号那一栏发出去（建整柜时拦过一次，这条路能绕过去）；
+       ② 运输方式不能改 —— 这里只改订单和运单，柜子不跟着改，
+          于是柜子按海运推、货记着陆运，两套流程当场分裂（CLAUDE.md：海陆不许串）。
+       其余字段（品名、重量、尺寸…）照旧能改 —— 整柜现在还没有自己的编辑入口，
+       全堵死的话建错就没法救。 */
+    const fclBox = await prisma.shipmentContainerItem.findFirst({
+      where: { shipmentId, container: { isFcl: true } },
+      select: { container: { select: { containerNo: true, transportMode: true } } },
+    });
+    if (fclBox) {
+      if (fclBox.container.containerNo.toLowerCase() === trackingNo.toLowerCase()) {
+        fail(res, 400, "BAD_REQUEST", "提单号不能跟柜号填成同一个（柜号不能让客户看到）");
+        return;
+      }
+      const wantMode = body.transportMode === "land" ? "land" : "sea";
+      if (fclBox.container.transportMode && wantMode !== fclBox.container.transportMode) {
+        fail(res, 400, "BAD_REQUEST", "整柜的运输方式不能在这里改（柜子不会跟着变，海运陆运会对不上）");
+        return;
+      }
+    }
+
     const itemName = body.itemName?.trim();
     if (!itemName) {
       fail(res, 400, "BAD_REQUEST", "itemName is required");

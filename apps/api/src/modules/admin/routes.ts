@@ -771,13 +771,22 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
        ⚠️ 这里**只拦这一种改法**，不把整柜的单整个堵死 ——
        整柜现在还没有自己的编辑入口，全堵了建错就没法救（整柜的编辑/作废跟
        「整柜尾端」「整柜看板」一起做，见 docs/复核-整柜管理-第2轮-2026-09-23.md）。 */
-    if (has("trackingNo") && trackingNo) {
-      const fclBox = await prisma.shipmentContainerItem.findFirst({
-        where: { shipmentId: { in: excludeIds }, container: { isFcl: true } },
-        select: { container: { select: { containerNo: true } } },
-      });
-      if (fclBox && fclBox.container.containerNo.toLowerCase() === trackingNo.toLowerCase()) {
+    const fclBox = await prisma.shipmentContainerItem.findFirst({
+      where: { shipmentId: { in: excludeIds }, container: { isFcl: true } },
+      select: { container: { select: { containerNo: true, transportMode: true } } },
+    });
+    if (fclBox) {
+      if (has("trackingNo") && trackingNo
+        && fclBox.container.containerNo.toLowerCase() === trackingNo.toLowerCase()) {
         fail(res, 400, "BAD_REQUEST", "提单号不能跟柜号填成同一个（柜号不能让客户看到）");
+        return;
+      }
+      /* 运输方式也不能从这条路改（2026-09-24 复核抓到）：这里只改订单和运单，
+         柜子不跟着改 —— 柜子按海运推、货记着陆运，两套流程当场分裂。
+         装柜管理那条改运输方式的路已经拦了整柜，这条是另一个入口。 */
+      if (has("transportMode") && transportMode && fclBox.container.transportMode
+        && transportMode !== fclBox.container.transportMode) {
+        fail(res, 400, "BAD_REQUEST", "整柜的运输方式不能在这里改（柜子不会跟着变，海运陆运会对不上）");
         return;
       }
     }

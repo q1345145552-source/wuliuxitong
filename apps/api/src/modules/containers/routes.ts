@@ -801,15 +801,22 @@ export function registerContainerRoutes(app: MinimalHttpApp): void {
       fail(res, 404, "NOT_FOUND", "找不到这个柜子");
       return;
     }
-    /* 整柜的事一律在「整柜管理」里做（2026-09-23 第 2 轮复核抓到）。
-       整柜建出来时柜子直接是「已封柜」，**没有推进账本** —— 撤销会掉进 legacy 那条兜底路：
-       它只删 `sl_ctn_` 前缀的轨迹，而整柜起点那条是 `sl_fcl_`，一条都删不掉。
-       结果是柜子退回「装柜中」、货还停在「已装柜」：内部说装柜中、客户说已装柜，两边对不上；
-       员工再按提示推一次，客户轨迹里就会出现两条「已装柜」。
-       撤销之后柜子正好落在「装柜中」，删柜那道只判这个状态的闸也就跟着开了。 */
+    /* 整柜：**只拦没有推进账本的那一步**（2026-09-24 复核调整）。
+       整柜的起点「已封柜」是建柜时直接写进去的、没有账本，撤销它会掉进 legacy 分支
+       （那条路只删 sl_ctn_ 前缀的轨迹，而整柜起点那条是 sl_fcl_，一条都删不掉）
+       → 柜子退回「装柜中」、货还停在「已装柜」，内部和客户看到的对不上。
+       但后面那些状态是正常推出来的、**有账本**，撤销走账本路径是安全的 ——
+       上一版一刀切全拦，员工推错「已到港」就再也纠正不了了，太狠。 */
     if (container.isFcl) {
-      fail(res, 400, "VALIDATION_ERROR", FCL_BLOCKED_MESSAGE);
-      return;
+      const hasLedger = await prisma.containerPushBatch.findFirst({
+        where: { containerId: container.id, companyId: auth.companyId },
+        select: { id: true },
+      });
+      if (!hasLedger) {
+        fail(res, 400, "VALIDATION_ERROR",
+          "整柜的「已封柜」是建柜时就定下的，不能在这里撤销；柜子建错了请在「整柜管理」里处理");
+        return;
+      }
     }
     if (LASTMILE_ONLY_CONTAINER_STATUSES.has(container.currentStatus)) {
       fail(res, 400, "VALIDATION_ERROR", `「${CONTAINER_STATUS_LABEL[container.currentStatus] ?? container.currentStatus}」是尾端派送那边推的，不能在装柜页撤销。要退请到「尾端派送」里操作。`);
@@ -916,15 +923,22 @@ export function registerContainerRoutes(app: MinimalHttpApp): void {
       fail(res, 404, "NOT_FOUND", "找不到这个柜子");
       return;
     }
-    /* 整柜的事一律在「整柜管理」里做（2026-09-23 第 2 轮复核抓到）。
-       整柜建出来时柜子直接是「已封柜」，**没有推进账本** —— 撤销会掉进 legacy 那条兜底路：
-       它只删 `sl_ctn_` 前缀的轨迹，而整柜起点那条是 `sl_fcl_`，一条都删不掉。
-       结果是柜子退回「装柜中」、货还停在「已装柜」：内部说装柜中、客户说已装柜，两边对不上；
-       员工再按提示推一次，客户轨迹里就会出现两条「已装柜」。
-       撤销之后柜子正好落在「装柜中」，删柜那道只判这个状态的闸也就跟着开了。 */
+    /* 整柜：**只拦没有推进账本的那一步**（2026-09-24 复核调整）。
+       整柜的起点「已封柜」是建柜时直接写进去的、没有账本，撤销它会掉进 legacy 分支
+       （那条路只删 sl_ctn_ 前缀的轨迹，而整柜起点那条是 sl_fcl_，一条都删不掉）
+       → 柜子退回「装柜中」、货还停在「已装柜」，内部和客户看到的对不上。
+       但后面那些状态是正常推出来的、**有账本**，撤销走账本路径是安全的 ——
+       上一版一刀切全拦，员工推错「已到港」就再也纠正不了了，太狠。 */
     if (container.isFcl) {
-      fail(res, 400, "VALIDATION_ERROR", FCL_BLOCKED_MESSAGE);
-      return;
+      const hasLedger = await prisma.containerPushBatch.findFirst({
+        where: { containerId: container.id, companyId: auth.companyId },
+        select: { id: true },
+      });
+      if (!hasLedger) {
+        fail(res, 400, "VALIDATION_ERROR",
+          "整柜的「已封柜」是建柜时就定下的，不能在这里撤销；柜子建错了请在「整柜管理」里处理");
+        return;
+      }
     }
 
     // 「派送中 / 已签收」归尾端派送推，装柜页不能撤（生产上有柜子停在「已签收」，见 LASTMILE_ONLY_CONTAINER_STATUSES）

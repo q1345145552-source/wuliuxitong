@@ -79,6 +79,10 @@ export function registerLoadingManifestRoutes(app: MinimalHttpApp): void {
         warehouse: c.warehouseId ?? "未知",
         status: c.currentStatus ?? "LOADING",
         transportMode: c.transportMode ?? null,
+        /* 是不是整柜（2026-09-24 复核抓到）：员工要在这一页给整柜推状态，
+           但整柜跟拼柜长得一模一样，只能靠记柜号 —— 点「加货/卸货/删柜/改运输方式」
+           才被后端弹回来。列表上给个标记，顺手把那几个按钮禁掉。 */
+        isFcl: c.isFcl === true,
         carrierInfo: c.carrierName ?? null,
         sealedAt: c.sealedAt?.toISOString() ?? null,
         totalBills: c.items.length,

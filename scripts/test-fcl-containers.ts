@@ -402,8 +402,58 @@ check("16) 空行判断：只动过「每箱数量」或「货型」的行不算
   }
 });
 
+check("17) 两个改单接口：不许把提单号改成柜号、不许改整柜的运输方式", () => {
+  /**
+   * 2026-09-24 上线前复核抓到（Codex 报的，我上一轮只堵了超管那条、漏了员工那条）：
+   *   · 提单号客户看得到、柜号客户看不到，改成一样等于把柜号发出去
+   *   · 改运输方式只改订单和运单、柜子不跟着改 → 柜子按海运推、货记着陆运，两套流程分裂
+   * 其余字段照旧能改 —— 整柜还没有自己的编辑入口，全堵死建错就没法救。
+   */
+  for (const [who, file] of [
+    ["超管改单", "apps/api/src/modules/admin/routes.ts"],
+    ["员工改单", "apps/api/src/modules/orders/routes.ts"],
+  ] as const) {
+    const src = read(file);
+    assert.match(src, /container: \{ isFcl: true \}/, `${who}没查这张单是不是整柜的`);
+    assert.match(src, /提单号不能跟柜号填成同一个/, `${who}没拦「提单号=柜号」`);
+    assert.match(src, /整柜的运输方式不能在这里改/, `${who}没拦「改整柜运输方式」`);
+  }
+});
+
+check("18) 撤销柜子状态：只拦整柜那条没账本的起点，后面的照样能撤", () => {
+  /**
+   * 2026-09-24 复核指出我上一版一刀切全拦太狠：员工推错「已到港」就再也纠正不了。
+   * 只有起点「已封柜」是建柜时直接写的、没有推进账本，撤销它会掉进 legacy 分支出错；
+   * 后面那些是正常推出来的、有账本，撤销是安全的。
+   */
+  const ctn = read("apps/api/src/modules/containers/routes.ts");
+  assert.equal((ctn.match(/const hasLedger = await prisma\.containerPushBatch\.findFirst/g) ?? []).length, 2,
+    "撤销预览和撤销两处都要按「有没有账本」判，而不是见整柜就拦");
+  assert.match(ctn, /整柜的「已封柜」是建柜时就定下的/, "拦下来时要说清楚为什么");
+  // 删柜仍然是**见整柜就拦**（删柜对整柜永远不该做）
+  const delBlock = ctn.slice(ctn.indexOf('app.delete("/admin/containers"'));
+  assert.match(delBlock, /if \(container\.isFcl\) \{[\s\S]{0,200}FCL_BLOCKED_MESSAGE/, "删柜必须见整柜就拦");
+});
+
+check("19) 上线相关：结构体检清单要跟着 schema 走；装柜页认得出整柜", () => {
+  /**
+   * 2026-09-24 复核抓到：schema 加了 containers.is_fcl，但手抄的结构体检清单没同步 ——
+   * 部署结尾会多出一条「B 多余」的假警告。那份文件自己的注释就写着
+   * 「2026-08-05 加 containers.transport_mode 时就漏了一次」，这是第二次。
+   */
+  assert.match(read("scripts/check-schema-drift.sql"), /\('containers','is_fcl'\)/,
+    "结构体检清单漏了 is_fcl，部署结尾会报假警告");
+  // 员工要在「装柜管理」里给整柜推状态，得先认得出哪个是整柜
+  assert.match(read("apps/api/src/modules/loading-manifests/routes.ts"), /isFcl: c\.isFcl === true/,
+    "装柜列表没下发整柜标记");
+  const page = read("apps/web/src/app/staff/container-loading/page.tsx");
+  assert.match(page, /item\.isFcl &&/, "装柜列表上没有「整柜」标记");
+  assert.match(page, /detail\.status === "LOADING" && !detail\.isFcl/, "整柜还能点「删除柜子」");
+  assert.match(page, /disabled=\{detail\.isFcl\}/, "整柜的运输方式下拉没禁用");
+});
+
 if (failures > 0) {
   console.log(`❌ 失败 ${failures} 项`);
   process.exit(1);
 }
-console.log("✅ 整柜管理：16 项全部通过");
+console.log("✅ 整柜管理：19 项全部通过");
