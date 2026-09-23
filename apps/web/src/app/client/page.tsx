@@ -10,7 +10,7 @@ import Toast from "../../modules/layout/Toast";
 import { sendAiMessage } from "../../services/ai-client";
 import { useCurrentSessionBrand } from "../../modules/branding/useWorkbenchBrand";
 import { apiBaseUrl } from "../../services/core-api";
-import { formatMetric, volumeM3FromDimensionsCm, formatVolumeM3String, warehouseLabelFromId } from "../../modules/staff/utils";
+import { formatMetric, productDim, volumeM3FromDimensionsCm, formatVolumeM3String, warehouseLabelFromId } from "../../modules/staff/utils";
 import { productNamesLabel } from "../../../../../packages/shared-types/product-names";
 import { CARGO_TYPES, CARGO_TYPE_ZH, cargoTypeLabel as cargoTypeLabelOf, strictestCargoType } from "../../../../../packages/shared-types/cargo-type";
 import {
@@ -32,7 +32,7 @@ import {
 } from "../../services/business-api";
 import { createRequestGate } from "../../modules/shared/request-gate";
 import { openShipmentTrack } from "../../modules/shipment/ShipmentTrackModal";
-import ShipmentStatusGroups, { type ShipmentGroupFilter } from "../../modules/shipment/ShipmentStatusGroups";
+import ShipmentStatusGroups, { SHIPMENT_GROUP_OPTIONS, type ShipmentGroupFilter } from "../../modules/shipment/ShipmentStatusGroups";
 import ShipmentExportPanel from "../../modules/shipment/ShipmentExportPanel";
 import ExportConditionFields, { type ExportFieldDef } from "../../modules/shipment/ExportConditionFields";
 import { EMPTY_SHIPMENT_FILTER, clientOrderFilterRow, matchesShipmentFilter, shipmentFilterDateInvalid, type ShipmentFilterValue } from "../../modules/shipment/export-filter";
@@ -49,17 +49,6 @@ import {
   totalWeightOf,
 } from "../../modules/shipment/ShipmentTableGrid";
 import FclInquiryPanel from "../../components/client/FclInquiryPanel";
-
-/** 长宽高来自产品行；一票有多个不同尺寸时拼成「60/50」——跟员工端导出同一个口径 */
-function productDim(
-  products: Array<{ lengthCm?: number | null; widthCm?: number | null; heightCm?: number | null }> | undefined,
-  key: "lengthCm" | "widthCm" | "heightCm",
-): number | string {
-  const vals = (products ?? []).map((p) => p[key]).filter((v): v is number => v != null);
-  if (vals.length === 0) return "-";
-  const uniq = Array.from(new Set(vals));
-  return uniq.length === 1 ? uniq[0] : uniq.join("/");
-}
 
 const initialSearch = {
   batchNo: "",
@@ -193,11 +182,13 @@ export default function ClientHomePage() {
   /* 「导出 Excel」（2026-09-23 老板：客户端也要能导，模版跟管理员那套一样、去掉柜号）。
      弹窗有自己的一套条件，打开时把上面查询区已经填的带进来，可以改、可以清空。 */
   const [exportFilter, setExportFilter] = useState<ShipmentFilterValue>(EMPTY_SHIPMENT_FILTER);
+  const [exportGroup, setExportGroup] = useState<ShipmentGroupFilter>("all");
   const [exporting, setExporting] = useState(false);
   const [exportFeedback, setExportFeedback] = useState("");
   const exportInFlight = useRef(false);
   const prefillExportFilter = () => {
     setExportFeedback("");
+    setExportGroup(queryMode ?? "all");
     setExportFilter({
       ...EMPTY_SHIPMENT_FILTER,
       trackingNo: search.batchNo,
@@ -210,12 +201,15 @@ export default function ClientHomePage() {
       arrivedAtTo: search.arrivedDateTo,
     });
   };
+  const exportFieldValues: Record<string, string> = { ...exportFilter, group: exportGroup };
   const onExportFieldChange = (key: string, next: string) => {
     setExportFeedback("");
+    if (key === "group") { setExportGroup(next as ShipmentGroupFilter); return; }
     setExportFilter((prev) => ({ ...prev, [key]: next }));
   };
   const exportDateInvalid = shipmentFilterDateInvalid(exportFilter);
   const exportCommonFields: ExportFieldDef[] = [
+    { key: "group", label: "运单分组", type: "select", options: SHIPMENT_GROUP_OPTIONS },
     { key: "shipDateFrom", label: "到仓开始日期", type: "date" },
     { key: "shipDateTo", label: "到仓截止日期", type: "date" },
     { key: "logisticsStatus", label: "物流状态", type: "select", options: [{ value: "", label: "全部" }, ...clientStatusFilterOptions.map((v) => ({ value: v, label: v }))] },
@@ -231,7 +225,8 @@ export default function ClientHomePage() {
   ];
   /** 导出：重新拉一次自己的全部运单，按弹窗条件筛完写成 Excel（列跟管理员那套一样，去掉柜号） */
   const exportMyOrders = async () => {
-    const all = await fetchClientOrders();
+    // 分组跟上面那排页签是同一套：选了哪个分组就按哪个分组拉（跟列表一个口径，2026-09-23 复核补）
+    const all = await fetchClientOrders(exportGroup === "all" ? undefined : { statusGroup: exportGroup });
     const matched = all.filter((item) => matchesShipmentFilter(clientOrderFilterRow(item as any, CLIENT_STATUS_ZH_OVERRIDES), exportFilter));
     if (matched.length === 0) { setExportFeedback("没有符合这些条件的运单。"); return; }
     const XLSX = await import("xlsx");
@@ -272,6 +267,26 @@ export default function ClientHomePage() {
       setExporting(false);
     }
   };
+  /* 导出面板在两个地方用：有结果时在结果区工具条里，查询结果为 0 时在「无匹配订单」下面。
+     写成一份变量，免得以后改一边忘一边（2026-09-23 复核补）。 */
+  const exportPanel = (
+    <ShipmentExportPanel onOpen={prefillExportFilter}>
+      <div className="shipment-export" role="group" aria-label="导出 Excel">
+        <ExportConditionFields
+          value={exportFieldValues}
+          onChange={onExportFieldChange}
+          common={exportCommonFields}
+          more={exportMoreFields}
+          onClear={() => { setExportFeedback(""); setExportGroup("all"); setExportFilter(EMPTY_SHIPMENT_FILTER); }}
+          hint="按上面的条件导出（打开弹窗时从查询条件带过来的，可以改）。导的是你全部运单里符合条件的那些，不受翻页影响。"
+        />
+        <button type="button" className="workbench-button" disabled={exporting || exportDateInvalid} aria-describedby="client-export-note" onClick={() => void handleExport()}>{exporting ? "导出中…" : "导出 Excel"}</button>
+        <span className="shipment-export-note" id="client-export-note">导出的表跟运单列表同一套内容</span>
+      </div>
+      {exportDateInvalid && <p className="shipment-export-error" role="alert">起始日期晚于截止日期，请调整日期范围。</p>}
+      <p role="status" aria-live="polite" aria-atomic="true" style={{ margin: exportFeedback ? "12px 0 0" : 0, fontSize: 13 }}>{exportFeedback}</p>
+    </ShipmentExportPanel>
+  );
   // 代理的客户不给 AI（3.6 / 5.7，后端统一闸也挡着 /client/ai）。还没查到品牌时照旧显示，接口会 403
   const sessionBrand = useCurrentSessionBrand();
   const hideAi = Boolean(sessionBrand);
@@ -1121,7 +1136,10 @@ export default function ClientHomePage() {
                 description="已自动为你加载“全部订单”，你也可调整条件后点击“执行查询”。"
               />
             ) : queriedOrders.length === 0 ? (
-              <EmptyStateCard title="无匹配订单" description="可调整查询条件后重新查询。" />
+              <>
+                <EmptyStateCard title="无匹配订单" description="可调整查询条件后重新查询。" />
+                <div className="shipment-results">{exportPanel}</div>
+              </>
             ) : null}
           </>
         )}
@@ -1133,23 +1151,7 @@ export default function ClientHomePage() {
               return (
                 <div className="shipment-results">
                   <span className="shipment-results-meta" role="status" aria-live="polite">共 {queriedOrders.length} 条 · 第 {currentPage}/{totalPages} 页</span>
-                  {/* 导出 Excel（2026-09-23 新增）：条件在弹窗里选，导的是自己的全部运单里符合条件的那些 */}
-                  <ShipmentExportPanel onOpen={prefillExportFilter}>
-                    <div className="shipment-export" role="group" aria-label="导出 Excel">
-                      <ExportConditionFields
-                        value={exportFilter as unknown as Record<string, string>}
-                        onChange={onExportFieldChange}
-                        common={exportCommonFields}
-                        more={exportMoreFields}
-                        onClear={() => { setExportFeedback(""); setExportFilter(EMPTY_SHIPMENT_FILTER); }}
-                        hint="按上面的条件导出（打开弹窗时从查询条件带过来的，可以改）。导的是你全部运单里符合条件的那些，不受翻页影响。"
-                      />
-                      <button type="button" className="workbench-button" disabled={exporting || exportDateInvalid} aria-describedby="client-export-note" onClick={() => void handleExport()}>{exporting ? "导出中…" : "导出 Excel"}</button>
-                      <span className="shipment-export-note" id="client-export-note">导出的表跟运单列表同一套内容</span>
-                    </div>
-                    {exportDateInvalid && <p className="shipment-export-error" role="alert">起始日期晚于截止日期，请调整日期范围。</p>}
-                    <p role="status" aria-live="polite" aria-atomic="true" style={{ margin: exportFeedback ? "12px 0 0" : 0, fontSize: 13 }}>{exportFeedback}</p>
-                  </ShipmentExportPanel>
+                  {exportPanel}
                   <nav className="shipment-pagination" aria-label="我的运单分页">
                     <button type="button" className="workbench-button" onClick={() => setCurrentPage((p) => Math.max(1, p - 1))} disabled={currentPage <= 1}>上一页</button>
                     <button type="button" className="workbench-button" onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))} disabled={currentPage >= totalPages}>下一页</button>

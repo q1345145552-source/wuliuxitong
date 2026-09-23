@@ -42,7 +42,7 @@ function loadModule(rel: string): Record<string, any> {
 
 const filter = loadModule("apps/web/src/modules/shipment/export-filter.ts");
 const {
-  EMPTY_SHIPMENT_FILTER, matchesShipmentFilter, countShipmentFilters, shipmentFilterDateInvalid,
+  EMPTY_SHIPMENT_FILTER, matchesShipmentFilter, mergeDateFrom, mergeDateTo, shipmentFilterDateInvalid,
   adminOrderFilterRow, staffShipmentFilterRow, clientOrderFilterRow,
 } = filter;
 
@@ -69,11 +69,16 @@ const adminOrder = {
 
 console.log("运单导出（条件 + 客户端那份）");
 
-check("1) 空条件放行所有单；条件计数和日期反了的判断", () => {
+check("1) 空条件放行所有单；日期反了的判断；两组日期合成一组取交集", () => {
   assert.equal(matchesShipmentFilter(adminOrderFilterRow(adminOrder), EMPTY_SHIPMENT_FILTER), true);
-  assert.equal(countShipmentFilters(EMPTY_SHIPMENT_FILTER), 0);
-  assert.equal(countShipmentFilters(cond({ trackingNo: "SZ", warehouseId: "wh_yiwu_01" })), 2);
-  assert.equal(countShipmentFilters(cond({ trackingNo: "   " })), 0, "只打了空格不算设了条件");
+  // 列表上「到仓日期」和「发货日期」两组筛的是同一个字段，带进弹窗时取交集：起始取晚的、截止取早的
+  assert.equal(mergeDateFrom("2026-09-10", "2026-09-01"), "2026-09-10");
+  assert.equal(mergeDateFrom("", "2026-09-01"), "2026-09-01");
+  assert.equal(mergeDateFrom("2026-09-10", ""), "2026-09-10");
+  assert.equal(mergeDateFrom("", ""), "");
+  assert.equal(mergeDateTo("2026-09-30", "2026-09-20"), "2026-09-20");
+  assert.equal(mergeDateTo("", "2026-09-20"), "2026-09-20");
+  assert.equal(mergeDateTo("2026-09-30", ""), "2026-09-30");
   assert.equal(shipmentFilterDateInvalid(cond({ shipDateFrom: "2026-09-10", shipDateTo: "2026-09-01" })), true);
   assert.equal(shipmentFilterDateInvalid(cond({ arrivedAtFrom: "2026-09-10", arrivedAtTo: "2026-09-01" })), true);
   assert.equal(shipmentFilterDateInvalid(cond({ shipDateFrom: "2026-09-01", shipDateTo: "2026-09-10" })), false);
@@ -164,13 +169,25 @@ check("7) 四个端的导出弹窗都挂了条件组件，而且不是只剩日�
   // 常用条件里要有日期、状态、仓库、运输方式、客户、运单号这几样（超管 / 员工）
   for (const [who, file] of pages.slice(0, 2)) {
     const src = read(file);
-    for (const key of ["shipDateFrom", "shipDateTo", "logisticsStatus", "warehouseId", "transportMode", "clientName", "trackingNo"]) {
+    // 日期这一格必须绑 arrivedAt*：跟列表「到仓日期」同一个口径（没填到仓日期就退到建单日期），
+    // 绑成 shipDate* 会把「列表查得到、导出却漏掉」那种坑带回来（2026-09-23 复核）
+    for (const key of ["arrivedAtFrom", "arrivedAtTo", "logisticsStatus", "warehouseId", "transportMode", "clientName", "trackingNo"]) {
       assert.ok(new RegExp(`key: "${key}"`).test(src), `${who}端导出条件里少了 ${key}`);
     }
     for (const key of ["domesticTrackingNo", "itemName", "containerNo", "receivableAmount"]) {
       assert.ok(new RegExp(`key: "${key}"`).test(src), `${who}端「更多条件」里少了 ${key}`);
     }
+    assert.match(src, /arrivedAtFrom: mergeDateFrom\(/, `${who}端带入列表日期时没取交集`);
+    assert.match(src, /arrivedAtTo: mergeDateTo\(/, `${who}端带入列表日期时没取交集`);
   }
+  // 四个端都要有「运单分组」，客户端也不例外（少了它客户切了页签导出还是全部，2026-09-23 复核）
+  for (const [who, file] of pages) {
+    const src = read(file);
+    assert.ok(/key: "(group|statusGroup)"/.test(src), `${who}端导出条件里少了「运单分组」`);
+  }
+  assert.match(read("apps/web/src/app/client/page.tsx"),
+    /fetchClientOrders\(exportGroup === "all" \? undefined : \{ statusGroup: exportGroup \}\)/,
+    "客户端导出没按弹窗里的分组去拉数据");
 });
 
 check("8) 客户端导出的列 = 管理员那套去掉柜号（老板 2026-09-23：「除了柜号，其他一样」）", () => {
@@ -180,19 +197,25 @@ check("8) 客户端导出的列 = 管理员那套去掉柜号（老板 2026-09-2
     const start = src.indexOf(from);
     assert.ok(start > 0, `找不到导出那段：${from}`);
     const block = src.slice(start, src.indexOf("json_to_sheet", start));
-    // 一行里可能写了好几列（`运输方式: x, 国内单号: y, 柜号: z`），所以整段找「列名:」
-    return [...block.matchAll(/(?:^|[\s,{])([\u4e00-\u9fa5A-Za-z0-9]+):\s/gm)].map((m) => m[1]);
+    /* 一行里可能写了好几列（`运输方式: x, 国内单号: y, 柜号: z`），所以整段找「列名:」。
+       冒号后**不许要求有空格**：写成 `柜号:o.batchNo` 一样是一列，以前的正则会漏掉它（2026-09-23 复核）。
+       注释行先去掉，免得把注释里的「口径:」之类当成列名。 */
+    const code = block.split("\n").filter((line) => !/^\s*(\/\/|\/\*|\*)/.test(line)).join("\n");
+    return [...code.matchAll(/(?:^|[\s,{])([\u4e00-\u9fa5A-Za-z0-9]+)\s*:/gm)].map((m) => m[1]);
   };
   const adminCols = columnsOf(adminPage, "const rows = source.map((o) => ({");
   const clientCols = columnsOf(clientPage, "const rows = matched.map((o: any) => ({");
   assert.ok(adminCols.includes("柜号"), "管理员那套本来就有柜号（口径变了这条测试要跟着改）");
   assert.ok(!clientCols.includes("柜号"), "客户导出里出现了柜号 —— 客户不能看柜号");
   assert.ok(!clientCols.includes("客户"), "客户那份把「客户」列改成了「唛头」，这里不该再有「客户」");
-  // 除了柜号和客户/唛头这两处叫法，管理员有的列客户那份都要有
+  /* 老板原话「除了柜号，其他一样」：两边**双向**比。
+     只比「客户那份少没少」是不够的 —— 多出来的列同样是不一样（2026-09-23 复核）。 */
   const missing = adminCols.filter((c) => !["柜号", "客户"].includes(c) && !clientCols.includes(c));
   assert.deepEqual(missing, [], `客户导出少了这些列：${missing.join("、")}`);
+  const extra = clientCols.filter((c) => c !== "唛头" && !adminCols.includes(c));
+  assert.deepEqual(extra, [], `客户导出比管理员那套多了这些列：${extra.join("、")}`);
   assert.ok(clientCols.includes("唛头"), "客户导出要有唛头那一列");
-  assert.ok(clientCols.includes("物流状态"), "客户导出要能看到自己的物流状态");
+  assert.ok(clientCols.includes("物流状态") && adminCols.includes("物流状态"), "两边都要有物流状态这一列");
   // 客户那份不许把内部字段带出去
   for (const bad of ["加收金额", "备注", "批次号", "操作人", "客户名"]) {
     assert.ok(!clientCols.includes(bad), `客户导出里出现了不该给的列：${bad}`);

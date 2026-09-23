@@ -74,9 +74,21 @@ export const EMPTY_SHIPMENT_FILTER: ShipmentFilterValue = {
 const lower = (value: unknown): string => String(value ?? "").trim().toLowerCase();
 const text = (value: unknown): string => String(value ?? "").trim();
 
-/** 条件里真正填了东西的有几项（弹窗上「已设 N 个条件」用它） */
-export function countShipmentFilters(value: ShipmentFilterValue): number {
-  return Object.values(value).filter((v) => String(v ?? "").trim() !== "").length;
+/* 「已设 N 个条件」由弹窗组件 ExportConditionFields 自己数（它知道哪些下拉的「全部」不算条件），
+   这里不再另写一份计数函数，免得两边口径对不上。 */
+
+/** 两组日期合成一组时用：起始取**晚**的那个（交集），空的那个忽略 */
+export function mergeDateFrom(a: string | undefined, b: string | undefined): string {
+  const x = text(a); const y = text(b);
+  if (!x || !y) return x || y;
+  return x > y ? x : y;
+}
+
+/** 两组日期合成一组时用：截止取**早**的那个（交集），空的那个忽略 */
+export function mergeDateTo(a: string | undefined, b: string | undefined): string {
+  const x = text(a); const y = text(b);
+  if (!x || !y) return x || y;
+  return x < y ? x : y;
 }
 
 /** 日期范围填反了（起始晚于截止）—— 两对日期任意一对反了都算 */

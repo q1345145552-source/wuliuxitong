@@ -90,6 +90,17 @@ export function truncateText(s: string | undefined, max: number): string {
 /**
  * 数字列格式化。
  */
+/** 长宽高来自产品行；一票有多个不同尺寸时拼成「60/50」。员工端、客户端导出共用同一份口径 */
+export function productDim(
+  products: Array<{ lengthCm?: number | null; widthCm?: number | null; heightCm?: number | null }> | undefined,
+  key: "lengthCm" | "widthCm" | "heightCm",
+): number | string {
+  const vals = (products ?? []).map((p) => p[key]).filter((v): v is number => v != null);
+  if (vals.length === 0) return "-";
+  const uniq = Array.from(new Set(vals));
+  return uniq.length === 1 ? uniq[0] : uniq.join("/");
+}
+
 export function formatMetric(n: number | undefined | null, digits = 3): string {
   if (n == null || Number.isNaN(Number(n))) return "—";
   return Number(n).toFixed(digits);

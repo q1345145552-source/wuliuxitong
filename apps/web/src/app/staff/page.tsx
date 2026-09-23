@@ -3,7 +3,7 @@
 import { matchesShipmentListFilter } from "../../../../../packages/shared-types/shipment-status";
 import { productNamesLabel } from "../../../../../packages/shared-types/product-names";
 import ExportConditionFields, { type ExportFieldDef } from "../../modules/shipment/ExportConditionFields";
-import { EMPTY_SHIPMENT_FILTER, matchesShipmentFilter, shipmentFilterDateInvalid, staffShipmentFilterRow, type ShipmentFilterValue } from "../../modules/shipment/export-filter";
+import { EMPTY_SHIPMENT_FILTER, matchesShipmentFilter, mergeDateFrom, mergeDateTo, shipmentFilterDateInvalid, staffShipmentFilterRow, type ShipmentFilterValue } from "../../modules/shipment/export-filter";
 import { cargoTypeLabel } from "../../../../../packages/shared-types/cargo-type";
 import { Fragment, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import * as XLSX from "xlsx";
@@ -27,7 +27,7 @@ import {
   gridTdStyle,
 } from "../../modules/shipment/ShipmentTableGrid";
 import { validateProductRows, packageCountForPayload } from "../../modules/orders/productRowGuard";
-import { optionalIntegerForReceive, optionalNumberForReceive, validateReceiveDraft } from "../../modules/staff/utils";
+import { optionalIntegerForReceive, optionalNumberForReceive, productDim, validateReceiveDraft } from "../../modules/staff/utils";
 import EmptyStateCard from "../../modules/layout/EmptyStateCard";
 import DetailModal from "../../modules/layout/DetailModal";
 import Toast from "../../modules/layout/Toast";
@@ -155,16 +155,6 @@ const EMPTY_SHIPMENT_SEARCH = {
     receivableAmount: "",
     statusRaw: "",
   };
-
-function productDim(
-  products: Array<{ lengthCm?: number | null; widthCm?: number | null; heightCm?: number | null }> | undefined,
-  key: "lengthCm" | "widthCm" | "heightCm",
-): number | string {
-  const vals = (products ?? []).map((p) => p[key]).filter((v): v is number => v != null);
-  if (vals.length === 0) return "-";
-  const uniq = Array.from(new Set(vals));
-  return uniq.length === 1 ? uniq[0] : uniq.join("/");
-}
 
 export default function StaffHomePage() {
   const [staffClients, setStaffClients] = useState<Array<{ id: string; name: string }>>([]);
@@ -1175,12 +1165,12 @@ export default function StaffHomePage() {
     setExportGroup(shipmentGroup);
     setExportFilter({
       ...shipmentSearch,
-      /* 弹窗里只放一组日期（老板 2026-09-23 定：按到仓日期）。列表上那两组日期筛的是同一个字段，
-         带进来时合成一组：优先用「发货日期」那组，没填就用「到仓日期」那组。 */
-      shipDateFrom: shipmentSearch.shipDateFrom || shipmentSearch.arrivedAtFrom,
-      shipDateTo: shipmentSearch.shipDateTo || shipmentSearch.arrivedAtTo,
-      arrivedAtFrom: "",
-      arrivedAtTo: "",
+      /* 弹窗里只放一组日期（老板 2026-09-23 定：按到仓日期）。列表上那两组日期（到仓 / 发货）筛的是同一个字段，
+         带进来时取**交集**（起始取晚的、截止取早的），免得导出比列表宽。 */
+      arrivedAtFrom: mergeDateFrom(shipmentSearch.arrivedAtFrom, shipmentSearch.shipDateFrom),
+      arrivedAtTo: mergeDateTo(shipmentSearch.arrivedAtTo, shipmentSearch.shipDateTo),
+      shipDateFrom: "",
+      shipDateTo: "",
     });
   };
   const exportFieldValues: Record<string, string> = { ...exportFilter, group: exportGroup };
@@ -1191,8 +1181,8 @@ export default function StaffHomePage() {
   };
   const exportCommonFields: ExportFieldDef[] = [
     { key: "group", label: "运单分组", type: "select", options: SHIPMENT_GROUP_OPTIONS },
-    { key: "shipDateFrom", label: "到仓开始日期", type: "date" },
-    { key: "shipDateTo", label: "到仓截止日期", type: "date" },
+    { key: "arrivedAtFrom", label: "到仓开始日期", type: "date" },
+    { key: "arrivedAtTo", label: "到仓截止日期", type: "date" },
     { key: "logisticsStatus", label: "物流状态", type: "select", options: [{ value: "", label: "全部" }, ...logisticsStatusOptions.map((v) => ({ value: v, label: v }))] },
     { key: "warehouseId", label: "仓库", type: "select", options: [{ value: "", label: "全部" }, ...warehouseOptions.map((w) => ({ value: w.id, label: w.label }))] },
     { key: "transportMode", label: "运输方式", type: "select", options: [{ value: "", label: "全部" }, { value: "sea", label: "海运" }, { value: "land", label: "陆运" }] },
@@ -1724,7 +1714,7 @@ export default function StaffHomePage() {
             {selectedForExport.size > 0 && (
               <span className="staff-shipment-selection">
                 已选 {selectedResultShipments.length} 条（含其他页）
-                {selectedForExport.size > selectedResultShipments.length && <span>另有 {selectedForExport.size - selectedResultShipments.length} 条已不在当前结果，不参与导出</span>}
+                {selectedForExport.size > selectedResultShipments.length && <span>另有 {selectedForExport.size - selectedResultShipments.length} 条不在当前结果里（导出按弹窗里的条件算）</span>}
                 <button type="button" onClick={() => setSelectedForExport(new Set())}>取消选择</button>
               </span>
             )}

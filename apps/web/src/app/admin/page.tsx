@@ -5,7 +5,7 @@ import * as XLSX from "xlsx";
 import { matchesShipmentListFilter } from "../../../../../packages/shared-types/shipment-status";
 import { productNamesLabel } from "../../../../../packages/shared-types/product-names";
 import ExportConditionFields, { type ExportFieldDef } from "../../modules/shipment/ExportConditionFields";
-import { EMPTY_SHIPMENT_FILTER, adminOrderFilterRow, countShipmentFilters, matchesShipmentFilter, shipmentFilterDateInvalid, type ShipmentFilterValue } from "../../modules/shipment/export-filter";
+import { EMPTY_SHIPMENT_FILTER, adminOrderFilterRow, matchesShipmentFilter, mergeDateFrom, mergeDateTo, shipmentFilterDateInvalid, type ShipmentFilterValue } from "../../modules/shipment/export-filter";
 import { parseCargoType, CARGO_TYPE_HINT, cargoTypeLabel } from "../../../../../packages/shared-types/cargo-type";
 import { AT_WAREHOUSE_STATUSES, COMPLETED_STATUSES, CLIENT_STATUS_GROUP_ZH } from "../../../../../packages/shared-types/shipment-status";
 import type { AiKnowledgeItem } from "../../../../../packages/shared-types/entities";
@@ -1371,12 +1371,13 @@ export default function AdminHomePage() {
     setExportGroup(shipmentGroup);
     setExportFilter({
       ...orderSearch,
-      /* 弹窗里只放一组日期（老板 2026-09-23 定：按到仓日期）。列表上那两组日期筛的是同一个字段，
-         所以带进来时合成一组：优先用「发货日期」那组，没填就用「到仓日期」那组。 */
-      shipDateFrom: orderSearch.shipDateFrom || orderSearch.arrivedAtFrom,
-      shipDateTo: orderSearch.shipDateTo || orderSearch.arrivedAtTo,
-      arrivedAtFrom: "",
-      arrivedAtTo: "",
+      /* 弹窗里只放一组日期（老板 2026-09-23 定：按到仓日期）。列表上那两组日期（到仓 / 发货）筛的是同一个字段，
+         带进来时取**交集**（起始取晚的、截止取早的），免得导出比列表宽。
+         口径跟列表「到仓日期」那格完全一样（arrivedAt：没填到仓日期就退到建单日期），不然会少导。 */
+      arrivedAtFrom: mergeDateFrom(orderSearch.arrivedAtFrom, orderSearch.shipDateFrom),
+      arrivedAtTo: mergeDateTo(orderSearch.arrivedAtTo, orderSearch.shipDateTo),
+      shipDateFrom: "",
+      shipDateTo: "",
     });
   };
   const exportFieldValues: Record<string, string> = { ...exportFilter, group: exportGroup };
@@ -1387,8 +1388,8 @@ export default function AdminHomePage() {
   };
   const exportCommonFields: ExportFieldDef[] = [
     { key: "group", label: "运单分组", type: "select", options: SHIPMENT_GROUP_OPTIONS },
-    { key: "shipDateFrom", label: "到仓开始日期", type: "date" },
-    { key: "shipDateTo", label: "到仓截止日期", type: "date" },
+    { key: "arrivedAtFrom", label: "到仓开始日期", type: "date" },
+    { key: "arrivedAtTo", label: "到仓截止日期", type: "date" },
     { key: "logisticsStatus", label: "物流状态", type: "select", options: [{ value: "", label: "全部" }, ...logisticsStatusOptions.map((v) => ({ value: v, label: v }))] },
     { key: "warehouseId", label: "仓库", type: "select", options: [{ value: "", label: "全部" }, ...warehouseOptions.map((w) => ({ value: w.id, label: w.label }))] },
     { key: "transportMode", label: "运输方式", type: "select", options: [{ value: "", label: "全部" }, { value: "sea", label: "海运" }, { value: "land", label: "陆运" }] },
@@ -1424,13 +1425,15 @@ export default function AdminHomePage() {
       运单号: o.trackingNo ?? "-", 客户: o.clientId ?? "-", 品名: productNamesLabel(o.products, o.itemName),
       // 货型（2026-09-11 老板点的），口径同员工端导出
       货型: cargoTypeLabel((o.products ?? []).map((p: any) => p.cargoType), o.cargoType),
-      运输方式: o.transportMode, 国内单号: o.domesticTrackingNo ?? "-", 柜号: o.batchNo ?? "-",
+      运输方式: transportModeLabel(o.transportMode), 国内单号: o.domesticTrackingNo ?? "-", 柜号: o.batchNo ?? "-",
       审批状态: o.approvalStatus === "pending" ? "待审核" : o.approvalStatus === "approved" ? "已审核" : o.approvalStatus === "shipped" ? "已发货" : o.approvalStatus,
       产品数量: o.productQuantity ?? "-", 包裹数量: o.packageCount ?? "-",
       重量: o.weightKg ?? "-", 体积: o.volumeM3 ?? "-",
       // 长宽高来自产品行；一张单有多个不同尺寸时后端会拼成 "60/50"（2026-08-27 加）
       长cm: o.lengthCm ?? "-", 宽cm: o.widthCm ?? "-", 高cm: o.heightCm ?? "-",
       到仓日期: o.shipDate ?? "-",
+      // 2026-09-23 复核补：这一列原来只有员工端导出有，客户端那份要跟这套模板一致，补上
+      物流状态: shipmentStatusZh(o.currentStatus),
       /* 2026-09-03：这一列原来导的是英文（而且是数据库里从没更新过的死字段，
          全库都是 unfinished）。现在后端实时算，这里转成中文再导。 */
       状态组: o.statusGroup ? (CLIENT_STATUS_GROUP_ZH[o.statusGroup] ?? o.statusGroup) : "-",
@@ -1929,7 +1932,7 @@ export default function AdminHomePage() {
               {selectedOrders.size > 0 && (
                 <span className="shipment-selection">
                   已选 {selectedResultOrders.length} 条（含其他页）
-                  {selectedOrders.size > selectedResultOrders.length && <span>另有 {selectedOrders.size - selectedResultOrders.length} 条已不在当前结果，不参与导出</span>}
+                  {selectedOrders.size > selectedResultOrders.length && <span>另有 {selectedOrders.size - selectedResultOrders.length} 条不在当前结果里（导出按弹窗里的条件算）</span>}
                   <button type="button" onClick={() => setSelectedOrders(new Set())}>取消选择</button>
                 </span>
               )}
