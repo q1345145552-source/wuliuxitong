@@ -244,6 +244,7 @@ jobs:
       # 客户端那份的列 = 管理员那套去掉柜号（客户不能看柜号）。不连库。
       - name: Test shipment export
         run: npm run test:shipment-export
+        run: npm run test:fcl-containers
 
       # 代理工作台隔离（2026-09-16，B3）。纯函数部分 CI 里跑；
       # 真接口部分要连测试库（两个代理 + 湘泰客户各造数据，逐个 /agent/* 接口证明只拿到自己的），

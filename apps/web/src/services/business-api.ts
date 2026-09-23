@@ -2470,3 +2470,131 @@ export async function adminDeleteConsolidationPrealert(prealertId: string): Prom
     throw new Error(`删除预报单失败：${error instanceof Error ? error.message : "未知错误"}`);
   }
 }
+
+// ============================================================================
+// 整柜管理（2026-09-23）：客户自己包一整柜，我们只追踪
+// ============================================================================
+
+/** 整柜货物清单的一行（员工录入 / 表格解析出来的都是这个形状） */
+export interface FclProductInput {
+  itemName: string;
+  packageCount: number | string;
+  quantityPerBox?: number | string;
+  lengthCm: number | string;
+  widthCm: number | string;
+  heightCm: number | string;
+  unitWeightKg?: number | string;
+  domesticTrackingNo?: string;
+  cargoType?: string;
+}
+
+export interface FclContainerRow {
+  containerId: string;
+  /** ⚠️ 客户那两个接口不返回这个字段（客户不能看柜号，2026-08-07） */
+  containerNo?: string;
+  containerType: string;
+  transportMode: string | null;
+  containerStatus?: string;
+  loadingDate: string | null;
+  departureDate?: string | null;
+  eta?: string | null;
+  ata?: string | null;
+  remark?: string | null;
+  createdAt: string;
+  shipmentId: string | null;
+  trackingNo: string | null;
+  clientId?: string | null;
+  warehouseId?: string | null;
+  shipmentStatus: string | null;
+  itemName: string | null;
+  packageCount: number | null;
+  weightKg: number | null;
+  volumeM3: number | null;
+  amountCny: number | null;
+}
+
+export interface FclProductRow {
+  id: string;
+  itemName: string;
+  packageCount: number;
+  productQuantity: number | null;
+  lengthCm: number | null;
+  widthCm: number | null;
+  heightCm: number | null;
+  weightKg: number | null;
+  domesticTrackingNo: string | null;
+  cargoType: string;
+  sortOrder: number;
+}
+
+export interface FclTimelineRow {
+  id: string;
+  fromStatus: string;
+  toStatus: string;
+  remark: string | null;
+  nextStop: string | null;
+  /** 操作人只有超管看得到（2026-09-19） */
+  operatorName?: string;
+  changedAt: string;
+}
+
+export type FclContainerDetail = FclContainerRow & {
+  products: FclProductRow[];
+  timeline: FclTimelineRow[];
+};
+
+/** 员工 / 超管：建整柜（一次建单 + 建柜 + 装柜） */
+export async function createFclContainer(payload: {
+  clientId: string;
+  trackingNo: string;
+  containerNo: string;
+  containerType: string;
+  transportMode: string;
+  warehouseId: string;
+  loadingDate?: string;
+  amountCny?: number | string;
+  remark?: string;
+  products: FclProductInput[];
+}): Promise<{
+  containerId: string; containerNo: string; shipmentId: string; trackingNo: string;
+  rowCount: number; packageCount: number; volumeM3: number; weightKg: number;
+}> {
+  return apiRequest(`${apiBaseUrl()}/staff/fcl-containers/create`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+/** 员工 / 超管：整柜列表 */
+export async function fetchFclContainers(params?: {
+  clientId?: string; containerNo?: string; trackingNo?: string; status?: string;
+}): Promise<{ items: FclContainerRow[]; total: number }> {
+  const query = new URLSearchParams();
+  if (params?.clientId?.trim()) query.set("clientId", params.clientId.trim());
+  if (params?.containerNo?.trim()) query.set("containerNo", params.containerNo.trim());
+  if (params?.trackingNo?.trim()) query.set("trackingNo", params.trackingNo.trim());
+  if (params?.status?.trim()) query.set("status", params.status.trim());
+  const suffix = query.size > 0 ? `?${query.toString()}` : "";
+  return apiRequest(`${apiBaseUrl()}/staff/fcl-containers/list${suffix}`, { method: "GET" });
+}
+
+/** 员工 / 超管：整柜详情 */
+export async function fetchFclContainerDetail(containerId: string): Promise<FclContainerDetail> {
+  return apiRequest(
+    `${apiBaseUrl()}/staff/fcl-containers/detail?containerId=${encodeURIComponent(containerId)}`,
+    { method: "GET" },
+  );
+}
+
+/** 客户：我的整柜列表（返回里没有柜号） */
+export async function fetchMyFclContainers(): Promise<{ items: FclContainerRow[]; total: number }> {
+  return apiRequest(`${apiBaseUrl()}/client/fcl-containers/list`, { method: "GET" });
+}
+
+/** 客户：我的整柜详情（返回里没有柜号） */
+export async function fetchMyFclContainerDetail(containerId: string): Promise<FclContainerDetail> {
+  return apiRequest(
+    `${apiBaseUrl()}/client/fcl-containers/detail?containerId=${encodeURIComponent(containerId)}`,
+    { method: "GET" },
+  );
+}

@@ -586,6 +586,9 @@ model Container {
   customsClearedAt DateTime? @map("customs_cleared_at") // 清关完成
   currentStatus    String    @default("LOADING") @map("current_status")
   // 状态枚举：LOADING / IN_TRANSIT / ARRIVED / CUSTOMS / DELIVERING / SIGNED
+  /// 整柜（2026-09-23 老板拍板）：true = 客户自己包的一整柜，由「整柜管理」建；
+  /// false = 现在的拼柜，行为完全不变。线上已有的柜子迁移后全是 false。
+  isFcl            Boolean   @default(false) @map("is_fcl")
   remark           String?
   createdAt        DateTime  @default(now()) @map("created_at")
   updatedAt        DateTime  @updatedAt @map("updated_at")
@@ -594,6 +597,7 @@ model Container {
   pushBatches ContainerPushBatch[]
 
   @@index([companyId, currentStatus])
+  @@index([companyId, isFcl])
   @@map("containers")
 }
 

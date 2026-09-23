@@ -13,6 +13,7 @@ import { registerShippingConfigRoutes } from "./modules/shipping-config/routes";
 import { registerOrderRoutes } from "./modules/orders/routes";
 import { registerShipmentRoutes } from "./modules/shipments/routes";
 import { registerFclInquiryRoutes } from "./modules/fcl-inquiries/routes";
+import { registerFclContainerRoutes } from "./modules/fcl-containers/routes";
 import { registerConsolidationRoutes } from "./modules/consolidation/routes";
 import { registerWhrConsolidationRoutes } from "./modules/whr-consolidation/routes";
 import { registerWhrConsolidationStaffRoutes } from "./modules/whr-consolidation/staff-routes";
@@ -57,6 +58,8 @@ registerLoadingManifestRoutes(app);
 registerFinanceRoutes(app);
 registerShippingConfigRoutes(app);
 registerFclInquiryRoutes(app);
+// 整柜管理（2026-09-23）：客户自己包一整柜，我们只追踪
+registerFclContainerRoutes(app);
 registerConsolidationRoutes(app);
   registerWhrConsolidationRoutes(app);
   registerWhrConsolidationStaffRoutes(app);

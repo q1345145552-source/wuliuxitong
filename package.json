@@ -65,7 +65,8 @@
     "test:agent-branding": "tsx scripts/test-agent-branding.ts",
     "test:agent-domain-display": "tsx scripts/test-agent-domain-display.ts",
     "test:sidebar-expanded-groups": "tsx scripts/test-sidebar-expanded-groups.ts",
-    "test:shipment-export": "tsx scripts/test-shipment-export.ts"
+    "test:shipment-export": "tsx scripts/test-shipment-export.ts",
+    "test:fcl-containers": "tsx scripts/test-fcl-containers.ts"
   },
   "devDependencies": {
     "@types/node": "^26.0.1",

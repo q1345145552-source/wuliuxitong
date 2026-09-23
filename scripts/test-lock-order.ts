@@ -87,6 +87,12 @@ const LOCK_HELPERS: Record<string, string[]> = {
    */
   lockClientWhrPrice: ["advisory_client_whr_price"],
   /**
+   * 2026-09-23 整柜管理：建整柜是「先查柜号/运单号重不重 → 不重才建」，
+   * 而那两行这时候还不存在、行锁锁不到，所以用咨询锁 83030 让请求排队
+   * （fcl-containers/routes.ts 的 lockFclCreate）。
+   */
+  lockFclCreate: ["advisory_fcl_create"],
+  /**
    * ⚠️ 2026-09-18 定价改回「每柜当场填」时新增：柜里给代理客户填的价不能低于给代理的价，
    * 这个 helper 里对 `agents` 那一行发 `FOR SHARE`（共享锁，超管调高代理价那边发 FOR UPDATE，两边自然排队）。
    * 锁序：客户价锁 → agents → 计划。建柜 / 加客户 / 改单价三条路都经过它；
@@ -373,6 +379,18 @@ const WRITE_WITHOUT_LOCK_OK: string[] = [
    */
   "orders/routes.ts:%d /client/prealerts（create了 orders",
   "orders/routes.ts:%d /client/prealerts（create了 shipments",
+  /**
+   * 建整柜（2026-09-23）：order / shipment / container 插的都是**全新的行**，
+   * 那三行还不存在、锁不到；柜内记录 shipment_container_items 挂的也是刚建的这两行。
+   * 并发那面靠两条唯一约束顶着：containers.container_no 和 shipments.tracking_no
+   * 都是 @unique，两个员工同时录同一个柜号，后提交的会被数据库拦下来，
+   * 路由接住 P2002 换成「刚刚被别人录进去了，请核对后换一个」。
+   * ⚠️ 豁免串写死「create了」：这条路哪天改成 update / delete，动词对不上、
+   * 豁免自动失效变红，不用指望人记得回来删。
+   */
+  "fcl-containers/routes.ts:%d /staff/fcl-containers/create（create了 orders",
+  "fcl-containers/routes.ts:%d /staff/fcl-containers/create（create了 shipments",
+  "fcl-containers/routes.ts:%d /staff/fcl-containers/create（create了 containers",
 ];
 
 /**

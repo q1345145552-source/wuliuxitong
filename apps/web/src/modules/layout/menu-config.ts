@@ -52,6 +52,7 @@ export const roleFunctionGroups: Record<AuthRole, MenuGroup[]> = {
         { id: "admin-func-prealerts", label: "预报单管理", href: "/admin/prealerts" },
         { id: "admin-func-container", label: "装柜管理", href: "/staff/container-loading" },
         { id: "admin-func-fcl", label: "整柜询价", href: "/staff#staff-fcl" },
+        { id: "admin-func-fcl-containers", label: "整柜管理", href: "/admin/fcl-containers" },
         { id: "admin-func-consolidation", label: "集货拼柜", href: "/admin/consolidation" },
         { id: "admin-func-whr-consolidation", label: "集货拼柜(仓库版)", href: "/admin/whr-consolidation" },
       ],
@@ -107,6 +108,7 @@ export const roleFunctionGroups: Record<AuthRole, MenuGroup[]> = {
           { id: "staff-func-whr-consolidation", label: "集货拼柜(仓库版)", href: "/staff/whr-consolidation" },
         { id: "staff-func-container-loading", label: "装柜管理", href: "/staff/container-loading" },
         { id: "staff-func-fcl", label: "整柜询价", href: "/staff#staff-fcl" },
+        { id: "staff-func-fcl-containers", label: "整柜管理", href: "/staff/fcl-containers" },
         { id: "staff-func-ops-tools", label: "入库与标签工具", href: "/staff#staff-ops-tools" },
       ],
     },
@@ -133,6 +135,7 @@ export const roleFunctionGroups: Record<AuthRole, MenuGroup[]> = {
         { id: "client-func-consolidation", label: "集货拼柜", href: "/client/consolidation" },
           { id: "client-func-whr-consolidation", label: "集货拼柜(仓库版)", href: "/client/whr-consolidation" },
         { id: "client-func-fcl", label: "整柜询价", href: "/client#client-fcl" },
+        { id: "client-func-fcl-containers", label: "我的整柜", href: "/client/fcl-containers" },
         { id: "client-func-imports", label: "批量下单", href: "/client/imports" },
         // 这一页是跳快递100查国内快递，不是查湘泰运单 —— 按实际功能命名（2026-08-11）
         { id: "client-func-track", label: "查国内快递", href: "/client/track" },
