@@ -11,7 +11,7 @@ import FclContainerWorkbench from "../../../components/fcl/FclContainerWorkbench
 export default function AdminFclContainersPage() {
   return (
     <div style={{ maxWidth: "100%", padding: "20px 24px" }}>
-      <FclContainerWorkbench canUnsign />
+      <FclContainerWorkbench canUnsign canDelete />
     </div>
   );
 }

@@ -34,6 +34,8 @@ import { prisma } from "../../db/prisma";
 import type { MinimalHttpApp } from "../../server";
 import { fail, ok, requireRole } from "../core/http-utils";
 import { BusinessError } from "../core/business-error";
+import { logger } from "../core/logger";
+import { lockShipmentsChildrenFirst } from "../shipments/lock-shipments";
 import { hideOperatorIdentity, hideOperatorInRemark, operatorNameForDisplay } from "../core/operator-visibility";
 import { sanitizeRemarkForClient } from "../core/client-privacy";
 import { DECIMAL_12_2, requireDecimal } from "../core/decimal-guard";
@@ -584,6 +586,112 @@ export function registerFclContainerRoutes(app: MinimalHttpApp): void {
         changedAt: log.changedAt instanceof Date ? log.changedAt.toISOString() : log.changedAt,
       }, auth.role)),
     });
+  });
+
+  // ==========================================================================
+  // 超管：删整柜（老板 2026-09-24：「可以删吧」）
+  // ==========================================================================
+  app.post("/admin/fcl-containers/delete", async (req, res) => {
+    /* 只给超管：这一下会把柜子、运单、订单、货物明细、轨迹一起删掉，
+       跟「删运单」那条路同一个权限档（admin/routes.ts 的 /admin/orders/delete）。 */
+    const auth = requireRole(req, res, ["admin"]);
+    if (!auth) return;
+
+    const body = (req.body ?? {}) as { containerId?: string; confirmContainerNo?: string };
+    const containerId = String(body.containerId ?? "").trim();
+    if (!containerId) { fail(res, 400, "BAD_REQUEST", "containerId 为必填"); return; }
+
+    const container = await prisma.container.findFirst({
+      where: { id: containerId, companyId: auth.companyId, isFcl: true },
+      select: {
+        id: true, containerNo: true,
+        items: {
+          orderBy: { createdAt: "asc" },
+          select: { id: true, shipment: { select: { id: true, orderId: true, trackingNo: true, currentStatus: true } } },
+        },
+      },
+    });
+    if (!container) { fail(res, 404, "NOT_FOUND", "整柜不存在"); return; }
+
+    /* ⚠️ 手打柜号确认（防手滑）。跟集货那边「删任务要管理员密码」是同一个用意：
+       这一下删掉的东西找不回来，得让人停一下、看清自己删的是哪个柜。
+       用柜号而不是密码 —— 柜号就在屏幕上，比翻密码顺手，照样防得住误点。 */
+    if (String(body.confirmContainerNo ?? "").trim() !== container.containerNo) {
+      fail(res, 400, "VALIDATION_ERROR", `要删这个整柜，请把柜号 ${container.containerNo} 原样填一遍确认`);
+      return;
+    }
+
+    const shipmentIds = container.items.map((it) => it.shipment?.id).filter((x): x is string => !!x);
+    const orderIds = [...new Set(container.items.map((it) => it.shipment?.orderId).filter((x): x is string => !!x))];
+
+    const deleted = await prisma.$transaction(async (tx) => {
+      /* 锁序跟全系统一致：【柜 → 运单 → 订单】。
+         ⚠️ 只锁柜子不够（2026-09-24 锁序测试抓到）：下面要删运单和订单，
+         两个超管同时删、或者删的同时有人在改那张单，就会撞车。
+         运单走共用的 lockShipmentsChildrenFirst（子单在前、层内按 id 排），
+         跟装柜、删运单那几条路用的是同一把钥匙，不会反向等待。 */
+      await tx.$queryRaw`SELECT id FROM containers WHERE id = ${containerId} FOR UPDATE`;
+      if (shipmentIds.length > 0) {
+        await lockShipmentsChildrenFirst(tx, shipmentIds, auth.companyId);
+      }
+      for (const oid of [...orderIds].sort()) {
+        await tx.$queryRaw`SELECT id FROM orders WHERE id = ${oid} AND company_id = ${auth.companyId} FOR UPDATE`;
+      }
+      /* 锁内重读再判（CLAUDE.md 第 28 条）：这几秒里货可能刚被签收，
+         事务外那份快照说「还没签收」是不算数的。 */
+      const fresh = await tx.shipment.findMany({
+        where: { id: { in: shipmentIds } },
+        select: { id: true, trackingNo: true, currentStatus: true },
+      });
+      const signed = fresh.filter((sp) => sp.currentStatus === "delivered");
+      if (signed.length > 0) {
+        throw new BusinessError(
+          `这个整柜的货已经签收了（${signed.map((x) => x.trackingNo).join("、")}），不能删 —— 删掉等于把交付记录也抹了。`,
+          400, "VALIDATION_ERROR",
+        );
+      }
+      const lm = await tx.adminLastmileOrder.findMany({
+        where: { shipmentId: { in: shipmentIds } },
+        select: { deliveryNo: true },
+      });
+      if (lm.length > 0) {
+        throw new BusinessError(
+          `这个整柜已经排了派送单（${[...new Set(lm.map((x) => x.deliveryNo))].join("、")}），请先在「尾端派送」里把那张单删掉再来删柜。`,
+          400, "VALIDATION_ERROR",
+        );
+      }
+
+      // 清理顺序照抄「删运单」那条路（admin/routes.ts），少一张表都会被外键挡住
+      for (const sid of shipmentIds) {
+        await tx.adminCustomsCase.updateMany({ where: { shipmentId: sid }, data: { shipmentId: null } });
+        await tx.warehouseLocation.updateMany({ where: { shipmentId: sid }, data: { shipmentId: null } });
+        await tx.staffInboundPhoto.deleteMany({ where: { shipmentId: sid } });
+        await tx.statusLog.deleteMany({ where: { shipmentId: sid } });
+        await tx.delivery.deleteMany({ where: { shipmentId: sid } });
+      }
+      await tx.shipmentContainerItem.deleteMany({ where: { containerId } });
+      await tx.containerPushEntry.deleteMany({ where: { batch: { containerId } } });
+      await tx.containerPushBatch.deleteMany({ where: { containerId } });
+      await tx.shipment.deleteMany({ where: { id: { in: shipmentIds } } });
+      for (const oid of orderIds) {
+        await tx.adminCustomsCase.updateMany({ where: { orderId: oid }, data: { orderId: null } });
+        await tx.invoiceLine.updateMany({ where: { orderId: oid }, data: { orderId: null } });
+        await tx.adminSettlementEntry.deleteMany({ where: { orderId: oid } });
+        await tx.orderProductImage.deleteMany({ where: { orderId: oid } });
+        await tx.orderProduct.deleteMany({ where: { orderId: oid } });
+      }
+      await tx.order.deleteMany({ where: { id: { in: orderIds } } });
+      await tx.container.delete({ where: { id: containerId } });
+      return { containerNo: container.containerNo, trackingNos: fresh.map((x) => x.trackingNo) };
+    });
+
+    // 谁删的、删了什么，留一条日志（事后查得到）
+    logger.warn("删除整柜", {
+      操作人: auth.userId, 角色: auth.role,
+      柜号: deleted.containerNo, 提单号: deleted.trackingNos.join("、"),
+    });
+
+    ok(res, { deleted: true, containerNo: deleted.containerNo });
   });
 
   // ==========================================================================

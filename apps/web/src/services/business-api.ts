@@ -2648,3 +2648,17 @@ export async function fetchFclLastmileOrders(): Promise<AdminLastmileItem[]> {
   );
   return data.items ?? [];
 }
+
+/**
+ * 超管删整柜（2026-09-24 老板：「可以删吧」）。
+ * 要把柜号原样填一遍确认；已签收或已排派送单的删不了。
+ */
+export async function deleteFclContainer(payload: {
+  containerId: string;
+  confirmContainerNo: string;
+}): Promise<{ deleted: boolean; containerNo: string }> {
+  return apiRequest(`${apiBaseUrl()}/admin/fcl-containers/delete`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}

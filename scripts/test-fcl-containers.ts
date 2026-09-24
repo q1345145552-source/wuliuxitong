@@ -504,8 +504,33 @@ check("22) 整柜看板：按运单状态算，不是柜子状态", () => {
   assert.match(read("apps/web/src/components/fcl/FclContainerWorkbench.tsx"), /整柜总数/, "整柜页面没显示看板数字");
 });
 
+check("23) 删整柜：只给超管、要手打柜号、已签收或已排派送单的删不了", () => {
+  /**
+   * 老板 2026-09-24：「可以删吧」。建错了要能救，但这一下会把柜子、运单、订单、
+   * 货物清单、轨迹一起删掉，客户那边也会消失 —— 所以三道闸：
+   *   ① 只给超管（跟「删运单」同一个权限档）
+   *   ② 要把柜号原样打一遍（比密码顺手，照样防手滑）
+   *   ③ 已签收的、已排派送单的不许删
+   */
+  const routes = read("apps/api/src/modules/fcl-containers/routes.ts");
+  const block = routes.slice(routes.indexOf('app.post("/admin/fcl-containers/delete"'));
+  assert.ok(block.length > 300, "找不到删整柜那段，这条测试要跟着改");
+  assert.match(block, /requireRole\(req, res, \["admin"\]\)/, "删整柜必须只给超管");
+  assert.match(block, /confirmContainerNo/, "删整柜要手打柜号确认");
+  assert.match(block, /currentStatus === "delivered"/, "已签收的整柜必须拦住");
+  assert.match(block, /adminLastmileOrder\.findMany/, "已排派送单的整柜必须拦住");
+  // 判断要在锁里重做（CLAUDE.md 第 28 条）
+  const txPart = block.slice(block.indexOf("$transaction"));
+  assert.ok(txPart.indexOf("FOR UPDATE") < txPart.indexOf('currentStatus === "delivered"'),
+    "「有没有签收」要在锁里重读判断，不能用事务外的快照");
+  // 前端：只有超管那一页开放
+  assert.match(read("apps/web/src/app/admin/fcl-containers/page.tsx"), /canDelete/, "超管端该能删");
+  assert.ok(!/canDelete/.test(read("apps/web/src/app/staff/fcl-containers/page.tsx")), "员工端不该能删");
+  assert.match(read("apps/web/src/components/fcl/FclContainerWorkbench.tsx"), /canDelete && \(/, "删除按钮没按权限藏起来");
+});
+
 if (failures > 0) {
   console.log(`❌ 失败 ${failures} 项`);
   process.exit(1);
 }
-console.log("✅ 整柜管理：22 项全部通过");
+console.log("✅ 整柜管理：23 项全部通过");

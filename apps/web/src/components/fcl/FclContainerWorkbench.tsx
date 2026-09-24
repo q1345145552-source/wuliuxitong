@@ -19,6 +19,7 @@ import {
   fetchFclOverview,
   fetchFclLastmileShipments,
   fetchFclLastmileOrders,
+  deleteFclContainer,
   type FclContainerRow,
   type FclContainerDetail,
   type FclProductInput,
@@ -76,7 +77,7 @@ const fi: React.CSSProperties = { width: "100%", padding: "7px 10px", border: "1
 const th: React.CSSProperties = { padding: "6px 8px", textAlign: "left", fontSize: 12, whiteSpace: "nowrap" };
 const td: React.CSSProperties = { padding: "5px 8px", fontSize: 12, borderTop: "1px solid var(--l-soft)" };
 
-export default function FclContainerWorkbench({ canUnsign = false }: { canUnsign?: boolean }) {
+export default function FclContainerWorkbench({ canUnsign = false, canDelete = false }: { canUnsign?: boolean; canDelete?: boolean }) {
   /* 两个页签：柜子列表 / 尾端派送（老板 2026-09-23：「整柜的尾端单独在页面里弄」）。
      尾端那块直接用普通尾端派送那个共用组件 —— 建单、签收、撤销、导客户签收单
      全是同一套，员工不用学第二遍；两边分开靠的是各看各的列表（scope=fcl）。 */
@@ -94,6 +95,10 @@ export default function FclContainerWorkbench({ canUnsign = false }: { canUnsign
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [detail, setDetail] = useState<FclContainerDetail | null>(null);
   const [showCreate, setShowCreate] = useState(false);
+  // 删整柜（只有超管有）：要把柜号原样打一遍才给删
+  const [deleting, setDeleting] = useState<{ containerId: string; containerNo: string } | null>(null);
+  const [deleteConfirm, setDeleteConfirm] = useState("");
+  const [deleteBusy, setDeleteBusy] = useState(false);
 
   // ---- 新建整柜的表单 ----
   const [form, setForm] = useState({
@@ -301,7 +306,16 @@ export default function FclContainerWorkbench({ canUnsign = false }: { canUnsign
             <div style={card}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
                 <h2 style={{ fontSize: 20, margin: 0 }}>{detail.containerNo}</h2>
-                <span style={{ padding: "4px 12px", background: "var(--s-cool)", borderRadius: 999, fontSize: 13, fontWeight: 600 }}>{CONTAINER_STATUS_ZH[detail.containerStatus ?? ""] ?? detail.containerStatus}</span>
+                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                  <span style={{ padding: "4px 12px", background: "var(--s-cool)", borderRadius: 999, fontSize: 13, fontWeight: 600 }}>{CONTAINER_STATUS_ZH[detail.containerStatus ?? ""] ?? detail.containerStatus}</span>
+                  {canDelete && (
+                    <button type="button" className="workbench-button"
+                      style={{ borderColor: "var(--c-red)", color: "var(--c-red)" }}
+                      onClick={() => { setDeleting({ containerId: detail.containerId, containerNo: detail.containerNo ?? "" }); setDeleteConfirm(""); }}>
+                      删除整柜
+                    </button>
+                  )}
+                </div>
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))", gap: 12 }}>
                 <div><span style={fl}>客户唛头</span><div style={{ fontWeight: 600, fontFamily: "monospace" }}>{detail.clientId ?? "—"}</div></div>
@@ -486,6 +500,46 @@ export default function FclContainerWorkbench({ canUnsign = false }: { canUnsign
 
       <p role="status" aria-live="polite" style={{ fontSize: 13 }}>{toast}</p>
       </>)}
+
+      {/* ======================= 删除整柜（只有超管看得到） ======================= */}
+      {deleting && (
+        <div role="dialog" aria-modal="true" aria-label="删除整柜"
+          onClick={() => setDeleting(null)}
+          style={{ position: "fixed", inset: 0, zIndex: 9000, background: "rgba(0,0,0,0.4)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <div onClick={(e) => e.stopPropagation()}
+            style={{ background: "var(--white)", borderRadius: 12, padding: 24, maxWidth: 460, width: "90%", boxShadow: "0 8px 32px rgba(0,0,0,0.2)" }}>
+            <h3 style={{ marginTop: 0 }}>删除整柜 {deleting.containerNo}</h3>
+            <p style={{ fontSize: 13, color: "var(--t-body)" }}>
+              这一下会把这个柜、里面那票货、货物清单和全部轨迹**一起删掉，找不回来**；客户那边这个整柜也会消失。
+            </p>
+            <p style={{ fontSize: 12, color: "var(--t-muted)" }}>
+              已经签收的、或者已经排了派送单的整柜删不了 —— 那种要先去「尾端派送」处理。
+            </p>
+            <label style={fl}>把柜号 <strong>{deleting.containerNo}</strong> 原样填一遍确认</label>
+            <input style={fi} value={deleteConfirm} onChange={(e) => setDeleteConfirm(e.target.value)} placeholder={deleting.containerNo} />
+            <div style={{ display: "flex", gap: 10, marginTop: 14 }}>
+              <button type="button" className="workbench-button"
+                style={{ background: "var(--c-red)", color: "var(--white)", borderColor: "var(--c-red)" }}
+                disabled={deleteBusy || deleteConfirm.trim() !== deleting.containerNo}
+                onClick={async () => {
+                  setDeleteBusy(true);
+                  try {
+                    const r = await deleteFclContainer({ containerId: deleting.containerId, confirmContainerNo: deleteConfirm.trim() });
+                    setToast(`整柜 ${r.containerNo} 已删除`);
+                    setDeleting(null);
+                    setSelectedId(null);
+                    setDetail(null);
+                    await loadList();
+                    await loadOverview();
+                  } catch (e) {
+                    setToast(`删不了：${e instanceof Error ? e.message : "请稍后重试"}`);
+                  } finally { setDeleteBusy(false); }
+                }}>{deleteBusy ? "删除中…" : "确认删除"}</button>
+              <button type="button" className="workbench-button" onClick={() => setDeleting(null)}>取消</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ======================= 新建整柜 ======================= */}
       {showCreate && (
