@@ -329,6 +329,11 @@ jobs:
       AGENT_PORTAL_TEST_PORT: "4391"
       # 返现单那一项自己起多进程抢锁，别让后台定时器也跟着出单来捣乱
       AGENT_REBATE_SCHEDULER: "off"
+      # 返现单那一项里有一步要签一个登录令牌，签名需要这个密钥。
+      # ⚠️ 这是**写死在这儿的测试假值**，故意写得一眼能认出来 ——
+      #    线上那把真钥匙只在服务器的 .env 里，GitHub 这边没有、也不许放。
+      #    这里签出来的令牌只在本 job 那个一次性容器里用一下，跑完机器就销毁。
+      AUTH_SECRET: "ci-only-fake-secret-not-a-real-key-do-not-use-in-production"
 
     steps:
       - uses: actions/checkout@v4
