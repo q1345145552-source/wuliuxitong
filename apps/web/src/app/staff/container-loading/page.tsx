@@ -579,7 +579,12 @@ export default function StaffContainerLoadingPage() {
 
       {/* 新建表单 */}
       {showCreate && (
-        <div style={{ border: "1px solid var(--l-soft)", borderRadius: 8, padding: 16, background: "var(--s-cool)", marginBottom: 12, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+        <div style={{ border: "1px solid var(--l-soft)", borderRadius: 8, padding: 16, background: "var(--s-cool)", marginBottom: 12 }}>
+          {/* 走错入口事后改不了（整柜和拼柜是两套，建完不能互转），所以在这儿先提一句（老板 2026-09-24 要的） */}
+          <p style={{ margin: "0 0 10px", fontSize: 12, color: "var(--c-amber-deep)", background: "var(--c-amber-bg)", padding: "6px 10px", borderRadius: 6 }}>
+            这里建的是<strong>拼柜</strong>（好几个客户的货拼一个柜）。客户自己包一整柜的，请到左边菜单「<strong>整柜管理</strong>」里建 —— 建完不能互转。
+          </p>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
           <input value={createForm.containerNo} onChange={(e) => setCreateForm((v) => ({ ...v, containerNo: e.target.value }))} placeholder="柜号" style={{ ...inputStyle, minWidth: 150 }} />
           {/* 必选：后端只认 sea / land，不选会 400 */}
           <select value={createForm.transportMode} onChange={(e) => setCreateForm((v) => ({ ...v, transportMode: e.target.value }))} style={inputStyle} title="这个柜子走海运还是陆运">
@@ -597,6 +602,7 @@ export default function StaffContainerLoadingPage() {
           <button disabled={creating} onClick={handleCreate} style={{ border: "none", borderRadius: 6, padding: "8px 16px", background: "var(--c-blue)", color: "var(--white)", fontWeight: 500, fontSize: 13, cursor: creating ? "not-allowed" : "pointer" }}>
             {creating ? "创建中…" : "创建"}
           </button>
+          </div>
         </div>
       )}
 

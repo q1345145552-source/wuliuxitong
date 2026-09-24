@@ -452,8 +452,22 @@ check("19) 上线相关：结构体检清单要跟着 schema 走；装柜页认�
   assert.match(page, /disabled=\{detail\.isFcl\}/, "整柜的运输方式下拉没禁用");
 });
 
+check("20) 两个建柜入口互相提示，别走错（走错事后不能互转）", () => {
+  /**
+   * 老板 2026-09-24：整柜和拼柜靠「从哪个入口建的」区分，系统不猜
+   * （线上 110 个柜只有一个客户的货，但平均才 3.7 方，按「一个客户=整柜」猜必然错）。
+   * 而建完**不能互转**，所以两边都要在建的时候提一句。
+   */
+  const loading = read("apps/web/src/app/staff/container-loading/page.tsx");
+  assert.match(loading, /整柜管理/, "装柜管理的新建表单里没提示「整柜请到整柜管理建」");
+  assert.match(loading, /不能互转/, "装柜管理没说清楚建完不能互转");
+  const fcl = read("apps/web/src/components/fcl/FclContainerWorkbench.tsx");
+  assert.match(fcl, /装柜管理/, "整柜管理的新建弹窗里没提示「拼柜请到装柜管理建」");
+  assert.match(fcl, /不能互转/, "整柜管理没说清楚建完不能互转");
+});
+
 if (failures > 0) {
   console.log(`❌ 失败 ${failures} 项`);
   process.exit(1);
 }
-console.log("✅ 整柜管理：19 项全部通过");
+console.log("✅ 整柜管理：20 项全部通过");

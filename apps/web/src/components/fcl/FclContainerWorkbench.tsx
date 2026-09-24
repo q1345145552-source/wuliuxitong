@@ -396,6 +396,10 @@ export default function FclContainerWorkbench() {
               <h3 style={{ margin: 0 }}>新建整柜</h3>
               <button type="button" className="workbench-button" onClick={() => setShowCreate(false)}>关闭</button>
             </div>
+            {/* 跟「装柜管理」那边的提示成对：走错入口事后不能互转（老板 2026-09-24 要的） */}
+            <p style={{ margin: "0 0 12px", fontSize: 12, color: "var(--c-amber-deep)", background: "var(--c-amber-bg)", padding: "6px 10px", borderRadius: 6 }}>
+              这里建的是<strong>整柜</strong>（一个客户包一整柜）。好几个客户拼一个柜的，请到「<strong>装柜管理</strong>」里建 —— 建完不能互转。
+            </p>
 
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))", gap: 10, marginBottom: 14 }}>
               <div><label style={fl}>客户唛头 *</label><input style={fi} value={form.clientId} onChange={(e) => setForm((v) => ({ ...v, clientId: e.target.value }))} placeholder="如 XHH6700" /></div>
