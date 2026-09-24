@@ -16,10 +16,16 @@ import {
   createFclContainer,
   fetchFclContainers,
   fetchFclContainerDetail,
+  fetchFclOverview,
+  fetchFclLastmileShipments,
+  fetchFclLastmileOrders,
   type FclContainerRow,
   type FclContainerDetail,
   type FclProductInput,
+  type FclOverview,
 } from "../../services/business-api";
+import LastmileDispatchWorkspace from "../../modules/lastmile/LastmileDispatchWorkspace";
+import type { LastmileOrderItem, LastmileShipmentOption } from "../../modules/lastmile/types";
 import { shipmentStatusZh } from "../../modules/shipment/shipment-status";
 import { formatBeijingTime } from "../../modules/staff/utils";
 import EmptyStateCard from "../../modules/layout/EmptyStateCard";
@@ -70,7 +76,16 @@ const fi: React.CSSProperties = { width: "100%", padding: "7px 10px", border: "1
 const th: React.CSSProperties = { padding: "6px 8px", textAlign: "left", fontSize: 12, whiteSpace: "nowrap" };
 const td: React.CSSProperties = { padding: "5px 8px", fontSize: 12, borderTop: "1px solid var(--l-soft)" };
 
-export default function FclContainerWorkbench() {
+export default function FclContainerWorkbench({ canUnsign = false }: { canUnsign?: boolean }) {
+  /* 两个页签：柜子列表 / 尾端派送（老板 2026-09-23：「整柜的尾端单独在页面里弄」）。
+     尾端那块直接用普通尾端派送那个共用组件 —— 建单、签收、撤销、导客户签收单
+     全是同一套，员工不用学第二遍；两边分开靠的是各看各的列表（scope=fcl）。 */
+  const [tab, setTab] = useState<"containers" | "lastmile">("containers");
+  const [overview, setOverview] = useState<FclOverview | null>(null);
+  const [lmShipments, setLmShipments] = useState<LastmileShipmentOption[]>([]);
+  const [lmOrders, setLmOrders] = useState<LastmileOrderItem[]>([]);
+  const [lmLoading, setLmLoading] = useState(false);
+  const [lmError, setLmError] = useState("");
   const [rows, setRows] = useState<FclContainerRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [toast, setToast] = useState("");
@@ -106,6 +121,31 @@ export default function FclContainerWorkbench() {
   }, [search]);
 
   useEffect(() => { void loadList(); }, [loadList]);
+
+  // 顶上那排数字（整柜自己的看板；普通看板已经把整柜扣掉了）
+  const loadOverview = useCallback(async () => {
+    try { setOverview(await fetchFclOverview()); }
+    catch (e) { console.error(e); }   // 数字加载失败不挡着用，列表照常
+  }, []);
+  useEffect(() => { void loadOverview(); }, [loadOverview]);
+
+  const loadLmOrders = useCallback(async () => {
+    setLmError("");
+    try { setLmOrders((await fetchFclLastmileOrders()) as unknown as LastmileOrderItem[]); }
+    catch (e) { setLmError(e instanceof Error ? e.message : "加载派送单失败"); }
+  }, []);
+  const loadLmShipments = useCallback(async () => {
+    setLmLoading(true);
+    setLmError("");
+    try { setLmShipments((await fetchFclLastmileShipments()) as unknown as LastmileShipmentOption[]); }
+    catch (e) { setLmError(e instanceof Error ? e.message : "加载可派送整柜失败"); }
+    finally { setLmLoading(false); }
+  }, []);
+  useEffect(() => {
+    if (tab !== "lastmile") return;
+    void loadLmOrders();
+    void loadLmShipments();
+  }, [tab, loadLmOrders, loadLmShipments]);
 
   const openDetail = async (containerId: string) => {
     setSelectedId(containerId);
@@ -335,8 +375,69 @@ export default function FclContainerWorkbench() {
     <div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, flexWrap: "wrap", gap: 8 }}>
         <h2 style={{ fontSize: 22, margin: 0 }}>整柜管理</h2>
-        <button type="button" className="workbench-button workbench-button--primary" onClick={() => { setShowCreate(true); setToast(""); }}>+ 新建整柜</button>
+        {tab === "containers" && (
+          <button type="button" className="workbench-button workbench-button--primary" onClick={() => { setShowCreate(true); setToast(""); }}>+ 新建整柜</button>
+        )}
       </div>
+
+      {/* 整柜自己的看板（老板 2026-09-23：「运营看板再单独在整柜里面加一个」）。
+          普通运营看板已经把整柜扣掉了，两边各看各的、不重复计。 */}
+      {overview && (
+        <div style={{ ...card, display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(110px,1fr))", gap: 12 }}>
+          {[
+            ["整柜总数", String(overview.total), ""],
+            ["在路上", String(overview.onTheWay), `${overview.onTheWayVolumeM3} m³`],
+            ["已到仓", String(overview.atWarehouse), ""],
+            ["已签收", String(overview.signed), ""],
+            ["本月新增", String(overview.thisMonth), ""],
+            ["总方数", String(overview.volumeM3), "m³"],
+            ["总箱数", String(overview.packageCount), ""],
+            ["金额合计", overview.amountCny.toLocaleString(), "¥"],
+          ].map(([label, value, unit]) => (
+            <div key={label}>
+              <span style={fl}>{label}</span>
+              <div style={{ fontSize: 20, fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>
+                {value}{unit && <span style={{ fontSize: 12, fontWeight: 400, color: "var(--t-muted)", marginLeft: 3 }}>{unit}</span>}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* 两个页签 */}
+      <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+        {([["containers", "柜子列表"], ["lastmile", "尾端派送"]] as const).map(([key, label]) => (
+          <button key={key} type="button" className="workbench-button"
+            aria-pressed={tab === key}
+            style={tab === key ? { background: "var(--c-blue)", color: "var(--white)", borderColor: "var(--c-blue)" } : undefined}
+            onClick={() => setTab(key)}>{label}</button>
+        ))}
+      </div>
+
+      {tab === "lastmile" && (
+        <div style={card}>
+          <p style={{ margin: "0 0 12px", fontSize: 12, color: "var(--t-muted)" }}>
+            这里只管<strong>整柜</strong>的派送：可选的货是已经到泰国仓的整柜，建单、签收、导客户签收单跟普通尾端派送一模一样。
+            拼柜的派送在左边菜单「尾端派送」里，两边各看各的。
+          </p>
+          <LastmileDispatchWorkspace
+            id="fcl-lastmile"
+            surface="embedded"
+            lmShipments={lmShipments}
+            lmOrderList={lmOrders}
+            shipmentsLoading={lmLoading}
+            shipmentsError={lmError}
+            ordersError={lmError}
+            onToast={setToast}
+            onReloadOrders={loadLmOrders}
+            onLoadShipments={loadLmShipments}
+            canUnsign={canUnsign}
+          />
+          <p role="status" aria-live="polite" style={{ fontSize: 13 }}>{toast}</p>
+        </div>
+      )}
+
+      {tab === "containers" && (<>
 
       <div style={{ ...card, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "flex-end" }}>
         <div><label style={fl}>客户唛头</label><input style={{ ...fi, width: 150 }} value={search.clientId} onChange={(e) => setSearch((v) => ({ ...v, clientId: e.target.value }))} /></div>
@@ -384,6 +485,7 @@ export default function FclContainerWorkbench() {
       )}
 
       <p role="status" aria-live="polite" style={{ fontSize: 13 }}>{toast}</p>
+      </>)}
 
       {/* ======================= 新建整柜 ======================= */}
       {showCreate && (

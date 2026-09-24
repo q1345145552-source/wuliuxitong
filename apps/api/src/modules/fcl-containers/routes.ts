@@ -474,6 +474,72 @@ export function registerFclContainerRoutes(app: MinimalHttpApp): void {
   });
 
   // ==========================================================================
+  // 员工 / 超管：整柜看板（老板 2026-09-23：「运营看板再单独在整柜里面加一个」）
+  // ==========================================================================
+  app.get("/staff/fcl-containers/overview", async (req, res) => {
+    const auth = requireRole(req, res, ["staff", "admin"]);
+    if (!auth) return;
+
+    /* ⚠️ 按**运单状态**分堆，不是柜子状态（2026-09-24 实测发现）。
+       整柜的签收走的是尾端派送，它只把运单推到 delivered，**不动柜子状态** ——
+       柜子会一直停在「已到仓」。按柜子状态统计的话，明明签收了的整柜，
+       看板上还显示「已到仓 1、已签收 0」，跟客户看到的对不上。
+       （普通拼柜不一样：一个柜里好几票货，要全签完柜子才推 SIGNED，
+       所以那边按柜子状态是对的。整柜就一张单，单签收了就是整柜签收了。） */
+    const AT_WAREHOUSE_SHIPMENT = ["inWarehouseTH", "deliveryBooked", "outForDelivery"];
+    const startOfMonth = new Date();
+    startOfMonth.setUTCDate(1);
+    startOfMonth.setUTCHours(0, 0, 0, 0);
+
+    const containers = await prisma.container.findMany({
+      where: { companyId: auth.companyId, isFcl: true },
+      select: {
+        createdAt: true,
+        items: {
+          orderBy: { createdAt: "asc" },
+          take: 1,
+          select: {
+            shipment: {
+              select: {
+                currentStatus: true, volumeM3: true, packageCount: true,
+                order: { select: { receivableAmountCny: true } },
+              },
+            },
+          },
+        },
+      },
+    });
+
+    let atWarehouse = 0, signed = 0, thisMonth = 0;
+    let volumeM3 = 0, onTheWayVolume = 0, packageCount = 0, amountCny = 0;
+    for (const c of containers) {
+      const ship = c.items[0]?.shipment;
+      const st = ship?.currentStatus ?? "";
+      const v = ship?.volumeM3 == null ? 0 : Number(ship.volumeM3);
+      volumeM3 += v;
+      packageCount += ship?.packageCount ?? 0;
+      amountCny += ship?.order?.receivableAmountCny == null ? 0 : Number(ship.order.receivableAmountCny);
+      if (c.createdAt >= startOfMonth) thisMonth += 1;
+      if (st === "delivered") signed += 1;
+      else if (AT_WAREHOUSE_SHIPMENT.includes(st)) atWarehouse += 1;
+      else onTheWayVolume += v;   // 剩下的全算在路上，新状态自动跟上
+    }
+    const total = containers.length;
+
+    ok(res, {
+      total,
+      onTheWay: total - atWarehouse - signed,
+      atWarehouse,
+      signed,
+      thisMonth,
+      volumeM3: Number(volumeM3.toFixed(3)),
+      onTheWayVolumeM3: Number(onTheWayVolume.toFixed(3)),
+      packageCount,
+      amountCny: Number(amountCny.toFixed(2)),
+    });
+  });
+
+  // ==========================================================================
   // 员工 / 超管：整柜详情（货物清单 + 轨迹）
   // ==========================================================================
   app.get("/staff/fcl-containers/detail", async (req, res) => {

@@ -2,7 +2,7 @@
 import { createHash } from "node:crypto";
 import { Prisma } from "@prisma/client";
 import { prisma } from "../../db/prisma";
-import { EXCLUDE_FCL_SHIPMENT } from "../core/fcl-scope";
+import { EXCLUDE_FCL_SHIPMENT, ONLY_FCL_SHIPMENT } from "../core/fcl-scope";
 import type { MinimalHttpApp } from "../../server";
 import { fail, ok, requireRole } from "../core/http-utils";
 import { logger } from "../core/logger";
@@ -467,8 +467,14 @@ export function registerShipmentRoutes(app: MinimalHttpApp): void {
     const includeChildren = req.query.all === "1";
     /* 整柜的单不进普通运单列表（老板 2026-09-23）。
        ⚠️ 这个接口同时喂着三个地方：员工「运单管理」、装柜管理的候选运单、尾端派送的候选运单。
-       老板对尾端也说了「排除，整柜的尾端单独在页面里弄」，所以三处一起排。 */
-    const where: any = { ...EXCLUDE_FCL_SHIPMENT, companyId: auth.companyId };
+       老板对尾端也说了「排除，整柜的尾端单独在页面里弄」。
+       2026-09-24：整柜那一页做好了，它传 scope=fcl 来拿**只有整柜**的候选；
+       其余三处不传，照旧只看普通运单。 */
+    const fclScope = String(req.query.scope ?? "").trim() === "fcl";
+    const where: any = {
+      ...(fclScope ? ONLY_FCL_SHIPMENT : EXCLUDE_FCL_SHIPMENT),
+      companyId: auth.companyId,
+    };
     if (!includeChildren) where.parentTrackingNo = null;
 
     // 2026-08-06：按状态筛（逗号分隔，大小写不敏感）。**尾端派送就是因为没有它才漏货的**：

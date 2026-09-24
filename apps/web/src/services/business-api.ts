@@ -2600,3 +2600,51 @@ export async function fetchMyFclContainerDetail(containerId: string): Promise<Fc
     { method: "GET" },
   );
 }
+
+/** 整柜看板（2026-09-23 老板：「运营看板再单独在整柜里面加一个」） */
+export interface FclOverview {
+  total: number;
+  onTheWay: number;
+  atWarehouse: number;
+  signed: number;
+  thisMonth: number;
+  volumeM3: number;
+  onTheWayVolumeM3: number;
+  packageCount: number;
+  amountCny: number;
+}
+
+export async function fetchFclOverview(): Promise<FclOverview> {
+  return apiRequest(`${apiBaseUrl()}/staff/fcl-containers/overview`, { method: "GET" });
+}
+
+/**
+ * 整柜的可派送运单（尾端派送用）。
+ * 跟普通尾端派送走同一个接口，只是带上 scope=fcl 换成「只要整柜的」。
+ */
+export async function fetchFclLastmileShipments(): Promise<LastmileShipmentItem[]> {
+  const pageSize = 500;
+  const collected: any[] = [];
+  let page = 1;
+  let total = 0;
+  while (page <= 20) {
+    const url = `${apiBaseUrl()}/staff/shipments?pageSize=${pageSize}&page=${page}&all=1&scope=fcl&status=${encodeURIComponent(LASTMILE_STATUSES)}`;
+    const response = await fetch(url, { method: "GET", headers: { ...authHeaders() } });
+    const data = await parseApiResponse<{ items: any[]; total?: number }>(response);
+    const items = data.items ?? [];
+    collected.push(...items);
+    if (typeof data.total === "number") total = data.total;
+    if (items.length < pageSize || (total && page * pageSize >= total)) break;
+    page += 1;
+  }
+  return collected as LastmileShipmentItem[];
+}
+
+/** 整柜的派送单列表（scope=fcl，跟普通尾端各看各的） */
+export async function fetchFclLastmileOrders(): Promise<AdminLastmileItem[]> {
+  const data = await apiRequest<{ items: AdminLastmileItem[] }>(
+    `${apiBaseUrl()}/admin/lastmile/orders?scope=fcl`,
+    { method: "GET" },
+  );
+  return data.items ?? [];
+}

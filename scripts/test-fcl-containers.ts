@@ -267,8 +267,10 @@ check("11) 整柜的单不进普通运单列表（老板 2026-09-23：不想混�
     // [说明, 文件, 从哪儿开始切, 切到哪儿, 要出现的条件]
     ["超管运单管理", "apps/api/src/modules/admin/routes.ts",
       'app.get("/admin/orders"', "prisma.shipment.count", "EXCLUDE_FCL_SHIPMENT"],
+    // 2026-09-24：整柜有了自己的尾端页签，这条改成三元 —— 不传 scope 时照旧排除整柜，
+    // 传 scope=fcl 时只要整柜的（整柜那一页用）。两个分支都要在，缺一个就串。
     ["员工运单管理 / 装柜候选 / 尾端候选", "apps/api/src/modules/shipments/routes.ts",
-      'app.get("/staff/shipments"', "prisma.shipment.count", "EXCLUDE_FCL_SHIPMENT"],
+      'app.get("/staff/shipments"', "prisma.shipment.count", "fclScope \\? ONLY_FCL_SHIPMENT : EXCLUDE_FCL_SHIPMENT"],
     ["客户运单查询", "apps/api/src/modules/shipments/routes.ts",
       'app.get("/client/shipments/search"', "orderBy", "EXCLUDE_FCL_SHIPMENT"],
     ["客户我的运单", "apps/api/src/modules/orders/routes.ts",
@@ -284,7 +286,8 @@ check("11) 整柜的单不进普通运单列表（老板 2026-09-23：不想混�
     assert.ok(i >= 0, `${who}：找不到「${from}」，这条测试要跟着改`);
     const j = src.indexOf(to, i);
     const block = src.slice(i, j > i ? j + 200 : i + 1200);
-    assert.match(block, new RegExp(`\\.\\.\\.${symbol}|AND: \\[${symbol}\\]`),
+    // `...(fclScope ? A : B)` 这种三元要带上左括号才匹配得上
+    assert.match(block, new RegExp(`\\.\\.\\.\\(?${symbol}|AND: \\[${symbol}\\]`),
       `${who}这个查询的 where 里没排除整柜（光在文件别处 import 不算）`);
   }
   // 顶部那排数字要跟列表一个口径，不然会「列表 0 条、顶上写 1」
@@ -365,8 +368,15 @@ check("14) 整柜不许被现有柜子操作动到：撤销已封柜 / 删柜 / 
   const modeBlock = lm.slice(lm.indexOf('app.post("/staff/loading-manifests/transport-mode"'), lm.indexOf('app.post("/staff/loading-manifests/seal"'));
   assert.ok(modeBlock.length > 100, "找不到改运输方式那段，这条测试要跟着改");
   assert.match(modeBlock, /container\.isFcl/, "改运输方式没拦住整柜（「已封柜」是海陆共有状态，会从缝里漏过去）");
+  /* 建派送单那道拦截 2026-09-24 有意去掉了：整柜有了自己的尾端页签，
+     建单/签收/撤销/导客户签收单全走同一套写接口。
+     两边分开靠的是**各看各的列表**，所以这里改成盯那个分流。 */
   const ops = read("apps/api/src/modules/admin-ops/routes.ts");
-  assert.match(ops, /isFclShipment\(ownShipment\)/, "建派送单没拦住整柜");
+  assert.match(ops, /scope === "fcl"[\s\S]{0,120}ONLY_FCL_SHIPMENT/,
+    "派送单列表没按整柜分流（整柜那页要 scope=fcl）");
+  assert.match(ops, /EXCLUDE_FCL_SHIPMENT/, "普通尾端派送的派送单列表没排掉整柜");
+  assert.ok(!/isFclShipment\(ownShipment\)/.test(ops),
+    "建派送单那道拦截该去掉了 —— 整柜现在要从自己的页签建派送单");
 });
 
 check("15) 表头两头的空格：核对和取值必须同一把尺子", () => {
@@ -466,8 +476,36 @@ check("20) 两个建柜入口互相提示，别走错（走错事后不能互转
   assert.match(fcl, /不能互转/, "整柜管理没说清楚建完不能互转");
 });
 
+check("21) 整柜的尾端派送：用同一套组件，两边各看各的列表", () => {
+  /**
+   * 老板 2026-09-23：「排除，整柜的尾端单独在页面里弄」。
+   * 做法是**复用**普通尾端那个共用组件（建单/签收/撤销/导客户签收单全是同一套写接口），
+   * 只把「看什么」分开：整柜那页传 scope=fcl，普通页不传。
+   * ⚠️ 2026-09-24 实测发现过一个坑：签收走尾端派送，它只推运单状态、不动柜子状态，
+   * 所以整柜看板必须按**运单状态**算，按柜子状态会显示「已到仓 1、已签收 0」。
+   */
+  const ui = read("apps/web/src/components/fcl/FclContainerWorkbench.tsx");
+  assert.match(ui, /LastmileDispatchWorkspace/, "整柜尾端没复用共用组件，像是另写了一套");
+  assert.match(ui, /scope=fcl|fetchFclLastmileShipments/, "整柜尾端没按 scope=fcl 取自己的候选");
+  assert.match(ui, /tab === "lastmile"/, "整柜管理没有尾端派送页签");
+  // 撤销误签收只给超管，跟普通尾端同一个规矩
+  assert.match(read("apps/web/src/app/admin/fcl-containers/page.tsx"), /canUnsign/, "超管端该能撤销误签收");
+  assert.ok(!/canUnsign/.test(read("apps/web/src/app/staff/fcl-containers/page.tsx")), "员工端不该能撤销误签收");
+});
+
+check("22) 整柜看板：按运单状态算，不是柜子状态", () => {
+  const routes = read("apps/api/src/modules/fcl-containers/routes.ts");
+  const block = routes.slice(routes.indexOf('app.get("/staff/fcl-containers/overview"'), routes.indexOf('app.get("/staff/fcl-containers/detail"'));
+  assert.ok(block.length > 200, "找不到整柜看板那段，这条测试要跟着改");
+  assert.match(block, /st === "delivered"/, "「已签收」必须按运单状态判（签收不改柜子状态）");
+  assert.match(block, /AT_WAREHOUSE_SHIPMENT/, "「已到仓」也该按运单状态判");
+  assert.ok(!/currentStatus: "SIGNED"/.test(block), "别按柜子状态数已签收 —— 整柜签收后柜子还停在「已到仓」");
+  // 页面上要把这排数字显示出来
+  assert.match(read("apps/web/src/components/fcl/FclContainerWorkbench.tsx"), /整柜总数/, "整柜页面没显示看板数字");
+});
+
 if (failures > 0) {
   console.log(`❌ 失败 ${failures} 项`);
   process.exit(1);
 }
-console.log("✅ 整柜管理：20 项全部通过");
+console.log("✅ 整柜管理：22 项全部通过");
