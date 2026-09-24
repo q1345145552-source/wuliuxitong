@@ -275,3 +275,75 @@ jobs:
         run: npm run build --prefix apps/web
         env:
           NEXT_PUBLIC_API_BASE_URL: http://localhost:3001
+
+  # ════════════════════════════════════════════════════════════════════════
+  # 整柜「改」那一项：CI 里起一个**一次性的 Postgres** 真跑（2026-09-25 老板拍板）
+  # ════════════════════════════════════════════════════════════════════════
+  #
+  # 为什么单独开一个 job，不是塞进上面那个 build：
+  #   上面那 50 项靠「没有 DATABASE_URL」来跳过连库的测试。一旦给整个 job 配上数据库，
+  #   另外 4 项连库测试（track-delete-db / push-ledger-db / agent-portal-isolation /
+  #   agent-rebates-db）会跟着一起真跑起来 —— 老板说的是「先只改整柜那一项」。
+  #   分开之后，万一这一项在 GitHub 这边水土不服，红的只有它，
+  #   不会把整个 CI 拖红、变成没人敢看的那种（CLAUDE.md：CI 从 9-02 起红了一个月没人发现）。
+  #
+  # 为什么值得跑：这一项是「真的建一个整柜 → 真的去改 → 回头查库里变了没有」，
+  # 读源码的那 50 项证明不了「改完库里真的变了」。2026-09-24 四方复核抓到的坑，
+  # 大半是它逮住的。在 CI 里它原来只打印一句「跳过」然后算通过 —— 等于没跑。
+  #
+  # ⚠️ 这里连的是 GitHub 临时起的空库，跑完整台机器销毁，**碰不到生产库、也碰不到
+  #    Neon 测试库**。测试数据自己也带前缀 zz_ 并在结尾清干净。
+  test-fcl-db:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: ci
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: ci
+        ports:
+          - 5432:5432
+        # 等它真能接请求再往下走，不然第一条建表命令会连不上
+        options: >-
+          --health-cmd "pg_isready -U ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgresql://ci:ci@localhost:5432/ci
+      # 这几个连库测试默认「不是 Neon 就不跑」，怕误连生产库。
+      # 这里连的是本 job 临时起的空库，明确放行。
+      AGENT_PORTAL_TEST_ALLOW_DB: "1"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Generate Prisma client
+        run: npm run db:generate
+
+      # 把设计图刷进空库。用 db push 而不是 migrate deploy：
+      # 这是个用完就扔的空库，只要结构对得上就行，不需要迁移历史。
+      # ⚠️ 这条**只对 CI 这个一次性的库**跑，生产库和 Neon 永远不许 db push。
+      - name: Create schema in throwaway DB
+        run: npx prisma db push --schema=apps/api/prisma/schema.prisma --skip-generate
+
+      # ⚠️ 这一步绝不许打印「跳过」——跳过就是没跑，那正是加这个 job 要解决的问题。
+      - name: Test FCL update (real DB)
+        run: |
+          set -o pipefail
+          npm run test:fcl-update-db 2>&1 | tee /tmp/fcl-db.log
+          if grep -q "⚠️ 跳过" /tmp/fcl-db.log; then
+            echo "::error::这一项打印了「跳过」—— 数据库没接上，等于没测"
+            exit 1
+          fi
