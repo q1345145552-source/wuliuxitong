@@ -277,23 +277,29 @@ jobs:
           NEXT_PUBLIC_API_BASE_URL: http://localhost:3001
 
   # ════════════════════════════════════════════════════════════════════════
-  # 整柜「改」那一项：CI 里起一个**一次性的 Postgres** 真跑（2026-09-25 老板拍板）
+  # 要连数据库的那 5 项：CI 里起一个**一次性的 Postgres** 真跑（2026-09-25 老板拍板）
   # ════════════════════════════════════════════════════════════════════════
   #
   # 为什么单独开一个 job，不是塞进上面那个 build：
-  #   上面那 50 项靠「没有 DATABASE_URL」来跳过连库的测试。一旦给整个 job 配上数据库，
-  #   另外 4 项连库测试（track-delete-db / push-ledger-db / agent-portal-isolation /
-  #   agent-rebates-db）会跟着一起真跑起来 —— 老板说的是「先只改整柜那一项」。
-  #   分开之后，万一这一项在 GitHub 这边水土不服，红的只有它，
+  #   上面那 50 项靠「没有 DATABASE_URL」来跳过连库的测试。分开之后这 5 项各跑各的，
+  #   万一哪天在 GitHub 这边水土不服，红的只有这个 job，
   #   不会把整个 CI 拖红、变成没人敢看的那种（CLAUDE.md：CI 从 9-02 起红了一个月没人发现）。
   #
-  # 为什么值得跑：这一项是「真的建一个整柜 → 真的去改 → 回头查库里变了没有」，
-  # 读源码的那 50 项证明不了「改完库里真的变了」。2026-09-24 四方复核抓到的坑，
-  # 大半是它逮住的。在 CI 里它原来只打印一句「跳过」然后算通过 —— 等于没跑。
+  # 为什么值得跑：这 5 项每一项背后都有一次真出过的事，而且**光读代码测不出来**：
+  #   · 整柜改单     —— 「真的建一个柜 → 真的去改 → 回头查库里变了没有」；
+  #                     2026-09-24 四方复核抓到的坑，大半是它逮住的
+  #   · 轨迹删除     —— 2026-09-15 线上那次：员工删了两条轨迹，12 票父单被改成「已创建」
+  #   · 推进账本     —— 撤销柜子状态原来靠猜，会退错或把柜子卡死
+  #   · 代理端隔离   —— 代理只能看自己名下的；柜号 / 员工名 / 内部备注一个字都不许漏
+  #   · 返现单并发   —— 两个进程同时出单会重复算钱，只有真库真多进程测得出来
+  # 在 CI 里它们原来全都只打印一句「跳过」然后算通过 —— 等于没跑。
   #
-  # ⚠️ 这里连的是 GitHub 临时起的空库，跑完整台机器销毁，**碰不到生产库、也碰不到
-  #    Neon 测试库**。测试数据自己也带前缀 zz_ 并在结尾清干净。
-  test-fcl-db:
+  # ⚠️⚠️ **碰不到线上数据库**（老板 2026-09-25 特意交代）。
+  #   下面 DATABASE_URL 指的是 services 里 GitHub 临时起的那个空 postgres，
+  #   跑完整台机器连同库一起销毁。线上库的地址和密码只在服务器的 .env 里，
+  #   GitHub 这边压根没有，连不上。Neon 测试库也碰不到（那是另一个地址）。
+  #   测试数据自己还带 zz_ 前缀并在结尾清干净。
+  test-db:
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -314,10 +320,15 @@ jobs:
           --health-retries 10
 
     env:
+      # ⚠️ 这是上面 services 里那个一次性空库，不是线上库、也不是 Neon 测试库
       DATABASE_URL: postgresql://ci:ci@localhost:5432/ci
       # 这几个连库测试默认「不是 Neon 就不跑」，怕误连生产库。
       # 这里连的是本 job 临时起的空库，明确放行。
       AGENT_PORTAL_TEST_ALLOW_DB: "1"
+      # 代理端隔离那一项会真起一个 HTTP 服务测统一鉴权闸，给它一个固定端口
+      AGENT_PORTAL_TEST_PORT: "4391"
+      # 返现单那一项自己起多进程抢锁，别让后台定时器也跟着出单来捣乱
+      AGENT_REBATE_SCHEDULER: "off"
 
     steps:
       - uses: actions/checkout@v4
@@ -338,12 +349,28 @@ jobs:
       - name: Create schema in throwaway DB
         run: npx prisma db push --schema=apps/api/prisma/schema.prisma --skip-generate
 
-      # ⚠️ 这一步绝不许打印「跳过」——跳过就是没跑，那正是加这个 job 要解决的问题。
+      # ⚠️ 每一项都绝不许打印「跳过」——跳过就是没跑，那正是加这个 job 要解决的问题。
+      #    5 项顺序跑、共用同一个空库：各用各的假公司前缀（zz_fclup_ / zz_ledger_ / …），
+      #    互不干扰，每项跑完自己清干净（本地用 docker 空库实测过一遍，5 项全过）。
       - name: Test FCL update (real DB)
-        run: |
-          set -o pipefail
-          npm run test:fcl-update-db 2>&1 | tee /tmp/fcl-db.log
-          if grep -q "⚠️ 跳过" /tmp/fcl-db.log; then
-            echo "::error::这一项打印了「跳过」—— 数据库没接上，等于没测"
-            exit 1
-          fi
+        run: bash .github/scripts/run-db-test.sh test:fcl-update-db
+
+      # 2026-09-15 线上那次：员工把两条时间排乱的轨迹删掉，12 票父单被改成「已创建」，
+      # 而货其实在泰国清关。老板 9-17 拍板：删记录就只删记录，不许动状态。
+      - name: Test track delete keeps status (real DB)
+        run: bash .github/scripts/run-db-test.sh test:track-delete-db
+
+      # 撤销柜子状态原来靠「猜」上一步，同一天推几步 / 日期填倒了 / 员工删过记录时会退错。
+      # 老板 9-17 定的「记一笔账、按账倒回去」，这一项随机乱点验证柜和货始终对得上。
+      - name: Test container push ledger (real DB)
+        run: bash .github/scripts/run-db-test.sh test:push-ledger-db
+
+      # 代理只能看自己名下客户的：拿别人的单号一律「不存在」，
+      # 柜号 / 员工名 / 内部备注 / 谁改的价，响应里一个字都不许有。
+      - name: Test agent portal isolation (real DB)
+        run: bash .github/scripts/run-db-test.sh test:agent-portal-isolation
+
+      # 月初自动出返现单：同时跑两个进程会给同一个代理出两张、钱算两遍。
+      # 真正挡住的是库里那几道锁，只有真库 + 真多进程测得出来。
+      - name: Test agent rebates concurrency (real DB)
+        run: bash .github/scripts/run-db-test.sh test:agent-rebates-db
