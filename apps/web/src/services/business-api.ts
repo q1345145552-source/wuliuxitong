@@ -2503,6 +2503,8 @@ export interface FclContainerRow {
   ata?: string | null;
   remark?: string | null;
   createdAt: string;
+  /** 版本号：编辑时原样带回去，后端比「你打开之后别人改过没有」。客户那两个接口不返回它 */
+  updatedAt?: string | null;
   shipmentId: string | null;
   trackingNo: string | null;
   clientId?: string | null;
@@ -2562,6 +2564,40 @@ export async function createFclContainer(payload: {
   rowCount: number; packageCount: number; volumeM3: number; weightKg: number;
 }> {
   return apiRequest(`${apiBaseUrl()}/staff/fcl-containers/create`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+/**
+ * 员工 / 超管：改整柜（老板 2026-09-24：「加上编辑功能」）。
+ *
+ * 传的是**整份**（跟建单一个表单），后端拿它跟库里那份逐项比，
+ * 只有真改动了的字段才会碰三道闸：
+ *   ① 已签收的：除了金额和备注什么都改不了
+ *   ② 已排派送单的：货物清单改不了
+ *   ③ 柜子推过状态的：海运 / 陆运改不了
+ */
+export async function updateFclContainer(payload: {
+  containerId: string;
+  /** 打开编辑框时那个柜的 updatedAt。后端比不上就回 409，不闷头覆盖别人刚改的东西 */
+  expectUpdatedAt?: string;
+  clientId: string;
+  trackingNo: string;
+  containerNo: string;
+  containerType: string;
+  transportMode: string;
+  warehouseId: string;
+  loadingDate?: string;
+  amountCny?: number | string;
+  remark?: string;
+  products: FclProductInput[];
+}): Promise<{
+  containerNo: string; trackingNo: string;
+  rowCount: number; packageCount: number; volumeM3: number; weightKg: number;
+  changedFields: string[];
+}> {
+  return apiRequest(`${apiBaseUrl()}/staff/fcl-containers/update`, {
     method: "POST",
     body: JSON.stringify(payload),
   });

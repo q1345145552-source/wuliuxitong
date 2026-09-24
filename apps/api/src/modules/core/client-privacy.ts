@@ -26,10 +26,28 @@
  * @param remark 原始备注
  * @param hide   true=对外（客户/免登录），要抹；false=内部（员工/管理员），原样返回
  */
-export function sanitizeRemarkForClient(remark: string, hide: boolean): string {
+/** 正则转义 —— 柜号里可能有 . - 之类的字符，直接拼进正则会变成通配 */
+function escapeForRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+export function sanitizeRemarkForClient(remark: string, hide: boolean, containerNos: string[] = []): string {
   if (!hide) return remark;
+  /* ③ ⚠️ **按真实柜号精确抹一遍**（2026-09-24 复核抓到，Codex 报的，实测确认）。
+     上面①②那两条正则只认「装入柜子 XXX」和「（随柜 XXX 补记）」两种**固定写法**。
+     可员工推状态时那个备注框是**随便写的**，写成「柜号 MEDU1234567 已开船」
+     或者干脆只填个柜号，两条正则一条都认不出来，原样就发给客户了
+     （2026-09-24 测试库实测：备注和「下一站」两处都漏）。
+     所以调用方把这票货真实装的柜号传进来，按号精确抹 —— 不猜写法，只认号。
+     太短的号不抹：3 个字符以下容易误伤正常文字。 */
+  let out = remark;
+  for (const no of containerNos) {
+    const trimmed = String(no ?? "").trim();
+    if (trimmed.length < 4) continue;
+    out = out.replace(new RegExp(escapeForRegExp(trimmed), "gi"), "柜号已隐藏");
+  }
   return (
-    remark
+    out
       // ① 装柜当时写的：「装入柜子 SELU4640250（分装 30件）」
       .replace(/装入柜子\s*[^\s（(]+/g, "已装柜")
       /**

@@ -250,6 +250,12 @@ jobs:
       - name: Test FCL containers
         run: npm run test:fcl-containers
 
+      # 改整柜（2026-09-24，老板：「加上编辑功能」）。要连测试库 —— 读源码证明不了
+      # 「改完库里真的变了」，而改整柜最容易出的就是「只改了一半」（订单改了运单没改之类）。
+      # CI 没有数据库会打印「跳过」—— 本地改了 fcl-containers 必须连测试库跑一遍。
+      - name: Test FCL update
+        run: npm run test:fcl-update-db
+
       # 代理工作台隔离（2026-09-16，B3）。纯函数部分 CI 里跑；
       # 真接口部分要连测试库（两个代理 + 湘泰客户各造数据，逐个 /agent/* 接口证明只拿到自己的），
       # CI 没有数据库会打印「跳过」—— 本地改了 agent-portal 必须连测试库跑一遍。

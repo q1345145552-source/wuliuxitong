@@ -196,10 +196,16 @@ check("9-a) 写进 order_products 的重量是**单箱重**，不是整行总重
    * 10 箱 2.5kg 的货会印成 250kg，而那是要给客户签字的纸。
    */
   const routes = read("apps/api/src/modules/fcl-containers/routes.ts");
-  const createBlock = routes.slice(routes.indexOf("tx.orderProduct.createMany"), routes.indexOf("tx.shipment.create"));
-  assert.ok(createBlock.length > 50, "找不到写产品行那段，这条测试要跟着改");
-  assert.match(createBlock, /weightKg: r\.unitWeightKg,/, "写进 order_products 的必须是单箱重");
-  assert.ok(!/weightKg: r\.weightKg,/.test(createBlock), "又把整行总重写进单箱重那一列了");
+  /* 2026-09-24 加编辑功能时，这段拼装搬进了共用的 productRowToDb ——
+     建单和改单写的是同一份。所以这里查那个函数，并且盯住两条路**都**在用它：
+     哪天有人在改单里另拼一份（很容易顺手写成整行总重），下面那两句就会红。 */
+  const dbFn = routes.slice(routes.indexOf("function productRowToDb"), routes.indexOf("function fclProductSignature"));
+  assert.ok(dbFn.length > 50, "找不到写产品行那段，这条测试要跟着改");
+  assert.match(dbFn, /weightKg: r\.unitWeightKg,/, "写进 order_products 的必须是单箱重");
+  assert.ok(!/weightKg: r\.weightKg,/.test(dbFn), "又把整行总重写进单箱重那一列了");
+  assert.equal((routes.match(/productRowToDb\(r, auth\.companyId, orderId\)/g) ?? []).length, 2,
+    "建整柜和改整柜都必须走 productRowToDb，不许谁自己另拼一份");
+  assert.ok(!/weightKg: r\.weightKg,/.test(routes), "整柜这个文件里不许把整行总重写进单箱重那一列");
   // 页面上也不能把这一列标成「总重」，不然员工照着改会把两个口径混一起
   for (const f of ["apps/web/src/components/fcl/FclContainerWorkbench.tsx", "apps/web/src/app/client/fcl-containers/page.tsx"]) {
     const src = read(f);
@@ -241,13 +247,19 @@ check("10) 建整柜这条路：提单号手填、要选仓库、只有员工和
   const routes = read("apps/api/src/modules/fcl-containers/routes.ts");
   const createBlock = routes.slice(routes.indexOf('app.post("/staff/fcl-containers/create"'), routes.indexOf('app.get("/staff/fcl-containers/list"'));
   assert.match(createBlock, /requireRole\(req, res, \["staff", "admin"\]\)/, "建整柜的权限不对");
-  assert.match(createBlock, /提单号为必填/, "提单号是手填的，必须校验（老板 2026-09-23：那个号不叫运单号）");
-  assert.match(createBlock, /请选择仓库/, "老板 2026-09-23：整柜也要选仓库");
-  assert.match(createBlock, /请选择运输方式：海运或陆运/, "运输方式必填，它决定走海运还是陆运那套流程");
+  /* 2026-09-24：这几道校验搬进了共用的 parseFclHeader（建单和改单同一份）。
+     所以分两半查：句子在不在共用那份里 + 建单这条路是不是真的调了它。
+     少任何一半都成立不了 —— 只查句子的话，建单绕过校验照样全绿。 */
+  const headerFn = routes.slice(routes.indexOf("function parseFclHeader"), routes.indexOf("function parseFclProducts"));
+  assert.ok(headerFn.length > 200, "找不到 parseFclHeader，这条测试要跟着改");
+  assert.match(headerFn, /提单号为必填/, "提单号是手填的，必须校验（老板 2026-09-23：那个号不叫运单号）");
+  assert.match(headerFn, /请选择仓库/, "老板 2026-09-23：整柜也要选仓库");
+  assert.match(headerFn, /请选择运输方式：海运或陆运/, "运输方式必填，它决定走海运还是陆运那套流程");
+  assert.match(createBlock, /parseFclHeader\(body\)/, "建整柜没走共用校验");
+  assert.match(createBlock, /parseFclProducts\(body\.products\)/, "建整柜没走共用的清单校验");
   // 查重必须在事务里（两个员工同时录同一个柜号/运单号）
   const txBlock = createBlock.slice(createBlock.indexOf("$transaction"));
-  assert.match(txBlock, /tx\.container\.findUnique/, "柜号查重要在事务里做");
-  assert.match(txBlock, /tx\.shipment\.findUnique/, "运单号查重要在事务里做");
+  assert.match(txBlock, /findFclNumberConflict\(tx/, "柜号/提单号查重要在事务里做");
   // 客户不能建
   assert.ok(!/app\.post\("\/client\/fcl-containers/.test(routes), "客户不该有建整柜的接口（老板：我们建）");
 });
@@ -404,20 +416,27 @@ check("16) 空行判断：只动过「每箱数量」或「货型」的行不算
    * 货型有默认值 normal，得按「动过没有」算。
    */
   const ui = read("apps/web/src/components/fcl/FclContainerWorkbench.tsx");
-  const blanks = ui.match(/const isBlank[\s\S]*?;\n/g) ?? [];
-  assert.equal(blanks.length, 2, "上传和提交两处都该有空行判断");
-  for (const b of blanks) {
-    assert.match(b, /quantityPerBox/, "空行判断漏了「每箱数量」");
-    assert.match(b, /cargoType \?\? "normal"\) === "normal"/, "空行判断没把「货型动过没有」算进去");
-  }
+  /* 2026-09-24：原来上传和提交各写一份，加编辑功能后就是第三条路了 ——
+     三份各写各的迟早有一份漏字段，所以合并成 isBlankFclRow 这一份。
+     下面盯两头：那一份写全了没有 + 用到它的地方是不是都在用它（没人再自己写一份）。 */
+  assert.equal((ui.match(/function isBlankFclRow/g) ?? []).length, 1, "空行判断只许有一份");
+  const blank = ui.slice(ui.indexOf("const FCL_ROW_FIELDS"), ui.indexOf("/** 前端先算一遍体积"));
+  assert.match(blank, /quantityPerBox/, "空行判断漏了「每箱数量」");
+  assert.match(blank, /cargoType \?\? "normal"\) === "normal"/, "空行判断没把「货型动过没有」算进去");
+  assert.ok(!/const isBlank\s*=/.test(ui), "又有人在函数里自己写了一份空行判断，会跟共用那份走偏");
+  assert.equal((ui.match(/isBlankFclRow\(/g) ?? []).length, 4,
+    "上传表格 1 处、提交时 2 处（查没品名的 + 挑出填了的）加定义本身，一共该出现 4 次");
 });
 
-check("17) 两个改单接口：不许把提单号改成柜号、不许改整柜的运输方式", () => {
+check("17) 两条老的「改运单」接口：碰到整柜整张拒绝", () => {
   /**
-   * 2026-09-24 上线前复核抓到（Codex 报的，我上一轮只堵了超管那条、漏了员工那条）：
-   *   · 提单号客户看得到、柜号客户看不到，改成一样等于把柜号发出去
-   *   · 改运输方式只改订单和运单、柜子不跟着改 → 柜子按海运推、货记着陆运，两套流程分裂
-   * 其余字段照旧能改 —— 整柜还没有自己的编辑入口，全堵死建错就没法救。
+   * 2026-09-23 那版只拦了「提单号=柜号」和「不许改运输方式」，其余字段放行，
+   * 理由是「整柜还没有自己的编辑入口，全堵死建错就没法救」。
+   * **2026-09-24 编辑入口做出来了，那个理由作废** —— 当天两家复核都实测到：
+   * 拿一票已签收的整柜（「整柜管理」明确拒绝改清单），从这两条老路把箱数改成 999
+   * 照样返回 200，订单和运单变成 999、货物清单和柜内记录还停在 10。
+   * 等于三道闸旁边开着后门，所以现在整张拒绝。
+   * （真的拦不拦得住由真库测试 N5 / N5b 证明，这一项只盯代码里没人偷偷放开。）
    */
   for (const [who, file] of [
     ["超管改单", "apps/api/src/modules/admin/routes.ts"],
@@ -425,9 +444,17 @@ check("17) 两个改单接口：不许把提单号改成柜号、不许改整柜
   ] as const) {
     const src = read(file);
     assert.match(src, /container: \{ isFcl: true \}/, `${who}没查这张单是不是整柜的`);
-    assert.match(src, /提单号不能跟柜号填成同一个/, `${who}没拦「提单号=柜号」`);
-    assert.match(src, /整柜的运输方式不能在这里改/, `${who}没拦「改整柜运输方式」`);
+    assert.match(src, /FCL_EDIT_ELSEWHERE_MESSAGE/, `${who}碰到整柜没整张拒绝`);
+    // 旧的「只拦两样」写法不许再出现 —— 那等于又把后门开回去了
+    assert.ok(!/提单号不能跟柜号填成同一个/.test(src),
+      `${who}还留着「只拦提单号=柜号」那种半拉子拦法，其余字段又能改了`);
+    assert.ok(!/整柜的运输方式不能在这里改/.test(src),
+      `${who}还留着「只拦运输方式」那种半拉子拦法`);
   }
+  // 那句话本身要在共用的地方，两条路说同一句
+  const scope = read("apps/api/src/modules/core/fcl-scope.ts");
+  assert.match(scope, /export const FCL_EDIT_ELSEWHERE_MESSAGE/, "提示语该放在 fcl-scope 里共用");
+  assert.match(scope, /整柜管理.*编辑/s, "提示语要告诉人去哪儿改");
 });
 
 check("18) 撤销柜子状态：只拦整柜那条没账本的起点，后面的照样能撤", () => {
@@ -529,8 +556,225 @@ check("23) 删整柜：只给超管、要手打柜号、已签收或已排派送
   assert.match(read("apps/web/src/components/fcl/FclContainerWorkbench.tsx"), /canDelete && \(/, "删除按钮没按权限藏起来");
 });
 
+check("24) 改整柜：三道闸都在，而且都在锁里重判", () => {
+  /**
+   * 老板 2026-09-24：「加上编辑功能」。改错了比建错了更容易出事 ——
+   * 库里那份数会印到客户签收单上、会变成客户看到的轨迹，所以三道闸：
+   *   ① 已签收的：除了金额和备注什么都改不了（客户手里那张纸上印的就是这些数）
+   *   ② 已排派送单的：货物清单改不了（派送单上的箱数方数是从清单算的）
+   *   ③ 柜子推过状态的：海运 / 陆运改不了（老板那条「海运陆运不许串」）
+   * 三样都必须在**锁里**重判（CLAUDE.md 第 28 条）：从打开页面到点保存这几分钟，
+   * 货可能刚被签收、刚被排进派送单。
+   */
+  const routes = read("apps/api/src/modules/fcl-containers/routes.ts");
+  const block = routes.slice(
+    routes.indexOf('app.post("/staff/fcl-containers/update"'),
+    routes.indexOf('app.post("/admin/fcl-containers/delete"'),
+  );
+  assert.ok(block.length > 500, "找不到改整柜那段，这条测试要跟着改");
+  // 权限：跟「建」同一档（员工 + 超管），不是超管专属
+  assert.match(block, /requireRole\(req, res, \["staff", "admin"\]\)/, "改整柜该跟建整柜同一个权限档");
+  // 三道闸
+  assert.match(block, /currentStatus === "delivered" && changedNames\.length > 0/, "闸①：已签收的只该放行金额和备注");
+  assert.match(block, /adminLastmileOrder\.findMany/, "闸②：已排派送单的清单不许改");
+  /* 闸③要三样一起看：柜子、运单、轨迹条数（2026-09-24 复核实测抓到只看柜子会被绕过：
+     尾端派送只推运单不动柜子，撤销又只撤得回柜子，能凑出「柜子回起点、运单还在派送中」）。 */
+  assert.match(block, /const containerMoved = fresh\.currentStatus !== FCL_START_CONTAINER_STATUS/, "闸③没看柜子状态");
+  assert.match(block, /const shipmentMoved = shipment\.currentStatus !== FCL_START_SHIPMENT_STATUS/, "闸③没看运单状态（只看柜子会被绕过）");
+  assert.match(block, /const hasExtraLogs = shipment\.statusLogs\.length > 1/, "闸③没看轨迹条数");
+  assert.match(block, /if \(containerMoved \|\| shipmentMoved \|\| hasExtraLogs\)/, "闸③那三样要一起判，少一样就有缺口");
+  /* 锁：三把都要在，而且顺序是【柜 → 运单 → 订单】。
+     ⚠️ 原来这里只找「第一个 FOR UPDATE」（2026-09-24 复核抓到是假绿）：
+     把锁运单那一句整段删掉，柜子锁和订单锁还在，这一项照样全绿 ——
+     而闸①「已签收」能跟签收操作排上队，靠的正是那把运单锁。 */
+  const tx = block.slice(block.indexOf("$transaction"));
+  const lockContainer = tx.indexOf("FROM containers WHERE id");
+  const lockShipments = tx.indexOf("lockShipmentsChildrenFirst(tx");
+  const lockOrders = tx.indexOf("FROM orders WHERE id");
+  assert.ok(lockContainer >= 0, "改整柜没锁柜子那一行");
+  assert.ok(lockShipments >= 0, "改整柜没锁运单（闸①要跟签收排队，靠的就是这把锁）");
+  assert.ok(lockOrders >= 0, "改整柜没锁订单");
+  assert.ok(lockContainer < lockShipments && lockShipments < lockOrders,
+    "锁序要跟全系统一致【柜 → 运单 → 订单】，反了会跟别的路互相等");
+  const lockAt = lockContainer;
+  for (const [what, needle] of [
+    ["已签收", 'currentStatus === "delivered"'],
+    ["已排派送单", "adminLastmileOrder.findMany"],
+    ["推过状态", "const containerMoved ="],
+  ] as const) {
+    assert.ok(lockAt < tx.indexOf(needle), `「${what}」这一判要在锁里重做，不能用事务外的快照`);
+  }
+  // 查重走共用的跨表版本，而且把自己那一行排除掉（不然「什么都没改直接保存」会说柜号重复）
+  assert.match(block, /findFclNumberConflict\(tx, \{[\s\S]{0,160}exceptContainerId: containerId/, "改单查重没排除本柜");
+  assert.match(block, /exceptShipmentId: shipment\.id/, "改单查重没排除本单");
+  // 排队锁要跟「建」挤同一个队，不然一个在建一个在改、两边各查各的重复
+  assert.ok(block.indexOf("lockFclCreate(tx)") >= 0, "改整柜要跟建整柜用同一把排队锁");
+  assert.ok(block.indexOf("lockFclCreate(tx)") < lockAt + block.indexOf("$transaction"), "排队锁要排在最前面");
+});
+
+check("25) 改整柜：改了装柜日期，轨迹和柜子上的时间要跟着走", () => {
+  /**
+   * 「已装柜」那条轨迹的时间 = 员工填的装柜日期（建单那边 2026-09-23 实测修过一次）。
+   * 改单这边同样要跟着走，而且三处都要动：
+   *   柜子的 loadingDate / sealedAt、柜子那张「状态时间表」statusDates、那条轨迹的 changedAt
+   * 少动任何一处，客户看到的和员工看到的就对不上（撤销状态还会退错步）。
+   * 另外不许把装柜日期改到后面几步之后 —— 客户轨迹会倒着排，看起来像状态回退。
+   */
+  const routes = read("apps/api/src/modules/fcl-containers/routes.ts");
+  const block = routes.slice(
+    routes.indexOf('app.post("/staff/fcl-containers/update"'),
+    routes.indexOf('app.post("/admin/fcl-containers/delete"'),
+  );
+  assert.match(block, /装柜日期不能晚于后面已经走过的那几步/, "没拦「装柜日期改到后面几步之后」");
+  assert.match(block, /sealedAt, statusDates: JSON\.stringify\(dates\)/, "改了装柜日期，柜子上的封柜时间和状态时间表要跟着改");
+  assert.match(block, /dates\[FCL_START_CONTAINER_STATUS\] = sealedAt\.toISOString\(\)/, "状态时间表里「已封柜」那一格没跟着改");
+  assert.match(block, /tx\.statusLog\.update/, "那条「已装柜」轨迹的时间没跟着改");
+  // 汇总三处都要跟着清单走：订单、运单、柜内记录
+  assert.match(block, /tx\.order\.update/, "清单改了，订单上的汇总要跟着改");
+  assert.match(block, /tx\.shipment\.update/, "清单改了，运单上的汇总要跟着改");
+  assert.match(block, /tx\.shipmentContainerItem\.updateMany/, "清单改了，柜内记录上的方数箱数要跟着改");
+});
+
+check("26) 改整柜的入口：员工和超管都有；客户端没有", () => {
+  const ui = read("apps/web/src/components/fcl/FclContainerWorkbench.tsx");
+  assert.match(ui, /onClick=\{\(\) => openEdit\(detail\)\}/, "详情页没有编辑按钮");
+  // 编辑按钮不许藏在 canDelete 后面 —— 那是超管专属的删除权限
+  const editLine = ui.slice(ui.indexOf("onClick={() => openEdit(detail)}") - 300, ui.indexOf("onClick={() => openEdit(detail)}"));
+  assert.ok(!/canDelete &&\s*\(\s*$/.test(editLine), "编辑按钮被套进了超管专属的删除权限里");
+  // 建和改共用同一个表单（别再出现尾端派送那种两套各写各的，CLAUDE.md 第 20 条）
+  assert.equal((ui.match(/const submitForm/g) ?? []).length, 1, "建和改该共用一个提交");
+  assert.match(ui, /editingId \? "编辑整柜" : "新建整柜"/, "建和改该共用同一个弹窗");
+  // 填回表单时两个字段名字对不上，填错了会静默改数
+  /* ⚠️ 要匹配**整个表达式**到行尾（2026-09-24 复核抓到是假绿）：
+     原来写的是 /unitWeightKg: p\.weightKg/，只比开头 ——
+     把它改成 `p.weightKg * packageCount` 照样能过，而那正是
+     「单箱重 × 箱数²」印上客户签收单那个坑（CLAUDE.md 9-a）。 */
+  assert.match(ui, /quantityPerBox: p\.productQuantity == null \? "" : String\(p\.productQuantity\),/,
+    "填回表单时「每箱数量」取错字段或被加工过了");
+  assert.match(ui, /unitWeightKg: p\.weightKg == null \? "" : String\(p\.weightKg\),/,
+    "填回表单时「单箱重」取错字段或被加工过了（乘了箱数就是那个印错签收单的坑）");
+  /* 开「新建」前必须先清空表单（2026-09-24 复核实测抓到）：
+     建和改共用一份表单，点过「编辑」再关掉，表单里还留着那个柜的全部数据，
+     这时点「新建整柜」，标题写「新建」内容却是别人家的货。 */
+  assert.match(ui, /onClick=\{\(\) => \{ resetCreate\(\); setShowCreate\(true\);/,
+    "「新建整柜」按钮没先清空表单，会带着上一个柜的数据建新柜");
+  /* 编辑要带上打开时的版本号，否则两个人同时改，后保存的把前一个人的整份冲掉 */
+  assert.match(ui, /setEditingVersion\(d\.updatedAt \?\? null\)/, "打开编辑时没记下版本号");
+  assert.match(ui, /expectUpdatedAt: editingVersion \?\? undefined/, "保存时没把版本号带回去");
+
+  // 客户只能看（老板 2026-09-23：我们建）
+  const client = read("apps/web/src/app/client/fcl-containers/page.tsx");
+  assert.ok(!/updateFclContainer|openEdit/.test(client), "客户端不该有改整柜的入口");
+  assert.ok(!/app\.post\("\/client\/fcl-containers/.test(read("apps/api/src/modules/fcl-containers/routes.ts")), "客户不该有写整柜的接口");
+});
+
+check("26-b) 柜号和提单号必须**跨表**查重，而且那两查不许排除自己", () => {
+  /**
+   * 2026-09-24 复核抓到（Codex 和 DeepSeek 两家都报，实测确认）：
+   * 柜号在 containers、提单号在 shipments，两张表的唯一约束互不相干。
+   * 只在各自表里查重的话，这两种改法一路绿灯：
+   *   ① 把本柜的柜号和提单号**对调**
+   *   ② 把提单号填成**另一只柜的柜号**
+   * 结果客户在「提单号」那一栏看到的就是一个真柜号（违反 2026-08-07 那条）。
+   * ⚠️ 而且跨表那两查**不许排除自己** —— 对调时冲突恰恰来自自己的另一个号，
+   *    排除了自己就又查空了（这是第一版修漏的地方，实测才发现）。
+   */
+  const routes = read("apps/api/src/modules/fcl-containers/routes.ts");
+  const fn = routes.slice(routes.indexOf("async function findFclNumberConflict"), routes.indexOf("/** 整票货的摘要品名"));
+  assert.ok(fn.length > 200, "找不到 findFclNumberConflict，这条测试要跟着改");
+  // 四查都在
+  assert.match(fn, /where: \{ containerNo, \.\.\.notContainer \}/, "少了「柜号撞别的柜」那一查");
+  assert.match(fn, /where: \{ trackingNo, \.\.\.notShipment \}/, "少了「提单号撞别的单」那一查");
+  assert.match(fn, /where: \{ containerNo: trackingNo \}/, "少了「提单号是不是某个柜号」那一查（客户会看到柜号）");
+  assert.match(fn, /where: \{ trackingNo: containerNo \}/, "少了「柜号是不是某个提单号」那一查");
+  // 跨表那两查不许带排除条件
+  assert.ok(!/containerNo: trackingNo, \.\.\.notContainer/.test(fn),
+    "「提单号是不是柜号」那一查排除了自己 —— 柜号提单号对调就又能过了");
+  assert.ok(!/trackingNo: containerNo, \.\.\.notShipment/.test(fn),
+    "「柜号是不是提单号」那一查排除了自己");
+  // 建单和改单都得走这一份
+  assert.equal((routes.match(/findFclNumberConflict\(tx/g) ?? []).length, 2,
+    "建整柜和改整柜都必须走同一份跨表查重");
+});
+
+check("26-c) 装柜日期要卡死「没有这一天」的写法", () => {
+  /**
+   * 2026-09-24 复核抓到：`new Date("2026-02-31")` **不报错**，
+   * 它会自己顺延成 2026-03-03 静默收下，之后客户轨迹上就是那个错日期。
+   */
+  const routes = read("apps/api/src/modules/fcl-containers/routes.ts");
+  assert.match(routes, /\^\(\\d\{4\}\)-\(\\d\{2\}\)-\(\\d\{2\}\)\$/, "装柜日期没按 YYYY-MM-DD 卡格式");
+  assert.match(routes, /getUTCFullYear\(\) !== Number\(m\[1\]\)/, "没回头核对年份，2026-02-31 会被顺延收下");
+  assert.match(routes, /没有 \$\{raw\} 这一天/, "没有给人看得懂的提示");
+});
+
+check("26-d) 整柜的起步轨迹不许被单删", () => {
+  /**
+   * 2026-09-24 复核抓到：受保护的前缀只有 sl_ctn_ / sl_mnf_，
+   * 而整柜建单时写的那条「已装柜」是 sl_fcl_ 前缀 —— 柜子往前推过之后
+   * 它就不再是「当前状态」，三道闸一条都拦不住，能被员工单删。
+   * 删掉之后客户轨迹少了第一步，改整柜里靠它同步日期的两段也会整段跳过。
+   */
+  const src = read("apps/api/src/modules/shipments/managed-lastmile-log.ts");
+  assert.match(src, /startsWith\("sl_fcl_"\)/, "整柜起步轨迹没进「不许单删」的名单");
+});
+
+check("27) 弹窗必须放在提前 return 的分支外面（2026-09-24 浏览器实测抓到）", () => {
+  /**
+   * 这一页有两个 return：`if (selectedId) return 详情页` 在前，列表页在后。
+   * 「编辑」和「删除整柜」两个按钮都在**详情页**上，而两个弹窗原来写在**列表页**那个
+   * return 里 —— 点按钮 state 改了，可弹窗那段压根没被渲染，按钮看着能点、什么都不出来。
+   * 删除整柜 2026-09-23 就是带着这个毛病上线的，tsc 全绿、源码扫描全绿，没人发现。
+   * 所以这一条盯死：弹窗定义在**第一个 return 之前**，而且两个分支都挂上。
+   */
+  const ui = read("apps/web/src/components/fcl/FclContainerWorkbench.tsx");
+  const defAt = ui.indexOf("const dialogs = (");
+  const firstReturn = ui.indexOf("if (selectedId) {");
+  assert.ok(defAt > 0, "找不到 dialogs，这条测试要跟着改");
+  assert.ok(defAt < firstReturn, "弹窗定义跑到「详情页」那个提前 return 后面去了，详情页上点按钮不会有反应");
+  assert.equal((ui.match(/\{dialogs\}/g) ?? []).length, 2, "详情页和列表页两个分支都要挂上 {dialogs}");
+  // 两个弹窗都在那一份里，不许有人再往某个分支里单塞一个
+  const block = ui.slice(defAt, ui.indexOf("// ======================= 详情页"));
+  assert.match(block, /\{deleting && \(/, "删除弹窗不在共用那一份里");
+  assert.match(block, /\{\(showCreate \|\| editingId\) && \(/, "新建/编辑弹窗不在共用那一份里");
+});
+
+check("28) 给人看的正文不许混 Markdown 星号（会原样印在页面上）", () => {
+  /**
+   * 2026-09-24 浏览器实测看到的：删除弹窗上印着「……全部轨迹**一起删掉，找不回来**；……」，
+   * 两个星号明晃晃在屏幕上。JSX 的文本节点就是纯文字，加粗得用 <strong>。
+   * 这一条扫整柜这几个文件的 JSX 正文行（注释不算）。
+   */
+  const files = [
+    "apps/web/src/components/fcl/FclContainerWorkbench.tsx",
+    "apps/web/src/app/client/fcl-containers/page.tsx",
+    "apps/web/src/app/staff/fcl-containers/page.tsx",
+    "apps/web/src/app/admin/fcl-containers/page.tsx",
+  ];
+  const bad: string[] = [];
+  for (const f of files) {
+    /* ⚠️ 必须**真的跟踪块注释**，不能只看这一行长什么样（2026-09-24 第一版就栽在这）：
+       多行注释中间那些行既不以 * 开头也不含 /*，一眼看过去跟 JSX 正文一模一样，
+       于是把两条写得好好的注释报成了「星号会印给用户看」。 */
+    let inComment = false;
+    read(f).split("\n").forEach((line, i) => {
+      const s = line.trim();
+      const opens = (s.match(/\/\*/g) ?? []).length;
+      const closes = (s.match(/\*\//g) ?? []).length;
+      const wasInComment = inComment;
+      if (opens > closes) inComment = true;
+      else if (closes > opens) inComment = false;
+      if (wasInComment || inComment) return;                                                 // 注释里的不算
+      if (!s.includes("**")) return;
+      if (/^(\*|\/\/|\/\*|\{\/\*)/.test(s) || s.includes("/*") || s.includes("//")) return;
+      if (/^[^<>{}=]*\*\*[^<>{}=]*$/.test(s)) bad.push(`${f}:${i + 1} ${s.slice(0, 60)}`);    // JSX 正文行
+    });
+  }
+  assert.deepEqual(bad, [], "下面这几行会把星号原样印给用户看：\n     " + bad.join("\n     "));
+});
+
 if (failures > 0) {
   console.log(`❌ 失败 ${failures} 项`);
   process.exit(1);
 }
-console.log("✅ 整柜管理：23 项全部通过");
+console.log("✅ 整柜管理：31 项全部通过");

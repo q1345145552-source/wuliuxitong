@@ -653,6 +653,20 @@ export function registerContainerRoutes(app: MinimalHttpApp): void {
         });
         const freshShipmentIds = [...new Set(freshItems.map((it: { shipmentId: string }) => it.shipmentId))];
 
+        /* ⚠️ 状态时间表要**在锁里按最新那份重拼**（2026-09-24 复核抓到，Codex 和 Opus 两家都报了）。
+           上面那份 `updateData.statusDates` 是在**事务外**拿 `container.statusDates` 拼的。
+           2026-09-24 「改整柜」上线之后，改装柜日期也会写这张表 ——
+           于是「员工推一步状态」和「员工改装柜日期」同时发生时，
+           推进这边会拿进门时那份旧 JSON 整张盖回去，把刚改好的「已封柜」那一格又写回旧日期
+           （实测 4 次并发有 3 次中招）。锁后已经重读了 freshContainer，就按它重拼一遍。 */
+        {
+          let freshDates: Record<string, string> = {};
+          try { freshDates = freshContainer.statusDates ? JSON.parse(freshContainer.statusDates) : {}; }
+          catch { freshDates = {}; }
+          freshDates[toStatus] = now.toISOString();
+          updateData.statusDates = JSON.stringify(freshDates);
+        }
+
         await tx.container.update({ where: { id: container.id }, data: updateData });
 
         // 推进账本：记下这一笔，撤销时原样倒回去

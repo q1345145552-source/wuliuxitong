@@ -32,7 +32,14 @@ export function isCurrentStatusLog(
  * 状态没变的（「装入柜子」loaded→loaded、重复的「已封柜」）照样能删 —— 线上员工删过的就是这类。
  */
 export function isContainerPushTransitionLog(log: { id: string; fromStatus: string; toStatus: string }): boolean {
-  return (log.id.startsWith("sl_ctn_") || log.id.startsWith("sl_mnf_")) && log.fromStatus !== log.toStatus;
+  /* ⚠️ `sl_fcl_` 也算（2026-09-24 复核抓到，Codex 报的）：
+     那是**建整柜时写的那条「已装柜」**，是整柜轨迹的第一步、跟柜子的 SEALED 成对。
+     原来不在名单里，柜子往前推过之后它就不再是「当前状态」，三道闸一条都拦不住，能被单删。
+     删掉之后：客户轨迹少了第一步；「改整柜」里靠它同步装柜日期和做时间顺序检查的两段
+     会因为找不到它而整段跳过（`startLog` 为 null），于是改日期既不报错也不生效。
+     跟 sl_ctn_ 一个性质 —— 推错了去「装柜管理」撤销，不许单删。 */
+  return (log.id.startsWith("sl_ctn_") || log.id.startsWith("sl_mnf_") || log.id.startsWith("sl_fcl_"))
+    && log.fromStatus !== log.toStatus;
 }
 
 export const CONTAINER_PUSH_LOG_MESSAGE =

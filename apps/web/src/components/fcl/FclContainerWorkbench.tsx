@@ -20,6 +20,7 @@ import {
   fetchFclLastmileShipments,
   fetchFclLastmileOrders,
   deleteFclContainer,
+  updateFclContainer,
   type FclContainerRow,
   type FclContainerDetail,
   type FclProductInput,
@@ -60,6 +61,27 @@ const emptyRow = (): FclProductInput => ({
   unitWeightKg: "", domesticTrackingNo: "", cargoType: "normal",
 });
 
+/**
+ * 「这一行整行都没动过」—— 表格尾巴上那些空行，直接跳过。
+ *
+ * ⚠️ 这张清单要把**所有**能填的格子都列上（2026-09-23 第 2 轮复核抓到）：
+ * 漏了「每箱数量」的话，只动过那一格的行会被当成空行**静默丢掉**，
+ * 而静默丢掉一行货就等于少运一批货（CLAUDE.md 第 19 条）。
+ * 货型有默认值 normal，所以按「动过没有」算：改成商检 / 敏感就说明这一行不是空的。
+ *
+ * ⚠️ 只许有这一份（2026-09-24 加编辑功能时合并的）：
+ * 原来上传表格和提交建单各写了一份，现在改整柜是第三条路 ——
+ * 三份各写各的，迟早有一份漏字段，而漏了没人看得出来。
+ */
+const FCL_ROW_FIELDS = [
+  "itemName", "packageCount", "quantityPerBox", "lengthCm", "widthCm", "heightCm",
+  "unitWeightKg", "domesticTrackingNo",
+] as const;
+function isBlankFclRow(r: Record<string, unknown> | FclProductInput): boolean {
+  return FCL_ROW_FIELDS.every((k) => String((r as any)[k] ?? "").trim() === "")
+    && String((r as any).cargoType ?? "normal") === "normal";
+}
+
 /** 前端先算一遍体积和总重，让员工录的时候就能看到数（真正说了算的是后端那一份） */
 function previewRow(r: FclProductInput): { volumeM3: number; weightKg: number } {
   const n = (v: unknown) => {
@@ -95,6 +117,12 @@ export default function FclContainerWorkbench({ canUnsign = false, canDelete = f
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [detail, setDetail] = useState<FclContainerDetail | null>(null);
   const [showCreate, setShowCreate] = useState(false);
+  /* 改整柜（老板 2026-09-24：「加上编辑功能」）。员工和超管都能改 —— 录错了多半是录的人
+     当场发现；删才是超管专属，因为删掉找不回来。有值就是「正在改这个柜」，
+     跟 showCreate 共用同一个弹窗、同一个表单。 */
+  const [editingId, setEditingId] = useState<string | null>(null);
+  /* 打开编辑框那一刻这个柜的版本号（详情接口给的 updatedAt），保存时带回去做冲突检查 */
+  const [editingVersion, setEditingVersion] = useState<string | null>(null);
   // 删整柜（只有超管有）：要把柜号原样打一遍才给删
   const [deleting, setDeleting] = useState<{ containerId: string; containerNo: string } | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState("");
@@ -200,20 +228,11 @@ export default function FclContainerWorkbench({ canUnsign = false, canDelete = f
         return;
       }
       const all = json.map(fclRowFromSheet);
-      /* 「整行都空」的是表格尾巴上的空行，直接跳过；
+      /* 「整行都空」的是表格尾巴上的空行，直接跳过（判断见 isBlankFclRow）；
          「填了箱数/尺寸但没填品名」的必须报出来 —— 静默丢掉就等于少运货（CLAUDE.md 第 19 条）。 */
-      const isBlank = (r: any) => [
-        // ⚠️ 这张清单要把**所有**能填的格子都列上（2026-09-23 第 2 轮复核抓到）：
-        // 漏了「每箱数量」的话，只动过那一格的行会被当成空行静默丢掉。
-        "itemName", "packageCount", "quantityPerBox", "lengthCm", "widthCm", "heightCm",
-        "unitWeightKg", "domesticTrackingNo",
-      ]
-        .every((k) => String(r[k] ?? "").trim() === "")
-        // 货型有默认值 normal，按「动过没有」算：改成商检/敏感就说明这一行不是空的
-        && String(r.cargoType ?? "normal") === "normal";
       const noName: number[] = [];
       const parsed = all.filter((r, i) => {
-        if (isBlank(r)) return false;
+        if (isBlankFclRow(r)) return false;
         if (String(r.itemName ?? "").trim() === "") { noName.push(i + 2); return false; }  // +2：表头占第 1 行
         return true;
       });
@@ -252,49 +271,270 @@ export default function FclContainerWorkbench({ canUnsign = false, canDelete = f
     setProducts([emptyRow()]);
   };
 
-  const submitCreate = async () => {
+  /** 把详情里那一份填回表单 —— 编辑用（老板 2026-09-24：「加上编辑功能」） */
+  const openEdit = (d: FclContainerDetail) => {
+    setForm({
+      clientId: d.clientId ?? "",
+      trackingNo: d.trackingNo ?? "",
+      containerNo: d.containerNo ?? "",
+      containerType: d.containerType,
+      transportMode: d.transportMode ?? "sea",
+      warehouseId: d.warehouseId ?? WAREHOUSES[0].id,
+      loadingDate: d.loadingDate ? d.loadingDate.slice(0, 10) : "",
+      amountCny: d.amountCny == null ? "" : String(d.amountCny),
+      remark: d.remark ?? "",
+    });
+    /* ⚠️ 两个字段名字对不上，别照抄：
+       库里 productQuantity 存的是**每箱数量**、weightKg 存的是**单箱重**
+       （见后端 productRowToDb 那段注释）。填回表单时要落到对应那一格，
+       填错的话保存一次就把数改了，而且页面上看不出来。 */
+    setProducts(d.products.length > 0
+      ? d.products.map((p) => ({
+          itemName: p.itemName,
+          packageCount: String(p.packageCount),
+          quantityPerBox: p.productQuantity == null ? "" : String(p.productQuantity),
+          lengthCm: p.lengthCm == null ? "" : String(p.lengthCm),
+          widthCm: p.widthCm == null ? "" : String(p.widthCm),
+          heightCm: p.heightCm == null ? "" : String(p.heightCm),
+          unitWeightKg: p.weightKg == null ? "" : String(p.weightKg),
+          domesticTrackingNo: p.domesticTrackingNo ?? "",
+          cargoType: p.cargoType ?? "normal",
+        }))
+      : [emptyRow()]);
+    /* 打开这一刻的版本号，保存时原样带回去 —— 后端比一下「你看的时候之后别人改过没有」。
+       不带的话，两个人同时开着这一页，后点保存的会把前一个人的改动整份冲掉
+       （2026-09-24 复核实测：B 加了一行货保存好，A 只改了个金额，B 那行就没了）。 */
+    setEditingVersion(d.updatedAt ?? null);
+    setEditingId(d.containerId);
+    setToast("");
+  };
+
+  /** 建整柜 / 改整柜共用这一个提交（同一个表单、同一套校验，只有最后那一下不一样） */
+  const submitForm = async () => {
     if (submitInFlight.current) return;
-    /* 「整行都空」的是刚加出来还没填的行，跳过；
+    /* 「整行都空」的是刚加出来还没填的行，跳过（判断见 isBlankFclRow）；
        「填了别的但没填品名」的要拦住 —— 静默丢掉等于少运货（2026-09-23 复核抓到）。 */
-    const isBlank = (r: FclProductInput) => [
-        // ⚠️ 这张清单要把**所有**能填的格子都列上（2026-09-23 第 2 轮复核抓到）：
-        // 漏了「每箱数量」的话，只动过那一格的行会被当成空行静默丢掉。
-        "itemName", "packageCount", "quantityPerBox", "lengthCm", "widthCm", "heightCm",
-        "unitWeightKg", "domesticTrackingNo",
-      ]
-      .every((k) => String((r as any)[k] ?? "").trim() === "")
-      // 货型有默认值 normal，按「动过没有」算
-      && String(r.cargoType ?? "normal") === "normal";
     const noName = products
       .map((r, i) => ({ r, no: i + 1 }))
-      .filter(({ r }) => !isBlank(r) && String(r.itemName ?? "").trim() === "")
+      .filter(({ r }) => !isBlankFclRow(r) && String(r.itemName ?? "").trim() === "")
       .map(({ no }) => no);
     if (noName.length > 0) { setToast(`第 ${noName.join("、")} 行没填品名，补上再提交`); return; }
-    const filled = products.filter((r) => !isBlank(r));
+    const filled = products.filter((r) => !isBlankFclRow(r));
     if (filled.length === 0) { setToast("货物清单至少要填一行（品名必填）"); return; }
     submitInFlight.current = true;
     setSubmitting(true);
     setToast("");
+    const payload = {
+      ...form,
+      amountCny: form.amountCny.trim() === "" ? undefined : form.amountCny.trim(),
+      loadingDate: form.loadingDate.trim() || undefined,
+      remark: form.remark.trim() || undefined,
+      products: filled,
+    };
     try {
-      const r = await createFclContainer({
-        ...form,
-        amountCny: form.amountCny.trim() === "" ? undefined : form.amountCny.trim(),
-        loadingDate: form.loadingDate.trim() || undefined,
-        remark: form.remark.trim() || undefined,
-        products: filled,
-      });
-      setToast(`整柜已建好：柜号 ${r.containerNo}，提单号 ${r.trackingNo}，${r.rowCount} 行货、${r.packageCount} 箱、${r.volumeM3} 方`);
-      setShowCreate(false);
-      resetCreate();
+      if (editingId) {
+        const r = await updateFclContainer({ ...payload, containerId: editingId, expectUpdatedAt: editingVersion ?? undefined });
+        setToast(r.changedFields.length > 0
+          ? `已保存：改了${r.changedFields.join("、")}；现在是 ${r.rowCount} 行货、${r.packageCount} 箱、${r.volumeM3} 方`
+          : "已保存（金额 / 备注）");
+        setEditingId(null);
+        setEditingVersion(null);
+        resetCreate();
+        // 改完把详情重新拉一遍，别让页面上还留着旧数（改的就是这一柜）
+        await openDetail(editingId);
+      } else {
+        const r = await createFclContainer(payload);
+        setToast(`整柜已建好：柜号 ${r.containerNo}，提单号 ${r.trackingNo}，${r.rowCount} 行货、${r.packageCount} 箱、${r.volumeM3} 方`);
+        setShowCreate(false);
+        resetCreate();
+      }
       await loadList();
+      // 方数、箱数、金额合计都在顶上那排数字里，改完要跟着刷新
+      await loadOverview();
     } catch (e) {
       // 失败也留在弹窗里，员工改一处就能重提，不用全部重填
-      setToast(`建整柜失败：${e instanceof Error ? e.message : "请稍后重试"}`);
+      const msg = e instanceof Error ? e.message : "请稍后重试";
+      setToast(`${editingId ? "保存失败" : "建整柜失败"}：${msg}`);
+      /* 「别人刚改过」这一种要顺手把详情和版本号刷新一下（2026-09-24 复核提的）：
+         不刷的话，员工关掉弹窗再点「编辑」，拿的还是页面上那份旧详情、旧版本号，
+         照样 409，得退回列表再点一次「详情」才好 —— 白绕一圈。 */
+      if (editingId && /刚刚被别人改过/.test(msg)) {
+        try {
+          const latest = await fetchFclContainerDetail(editingId);
+          setDetail(latest);
+          setEditingVersion(latest.updatedAt ?? null);
+        } catch { /* 刷新失败不盖掉上面那句提示，员工照提示退出去重来就是了 */ }
+      }
     } finally {
       submitInFlight.current = false;
       setSubmitting(false);
     }
   };
+
+  /* ⚠️ 两个弹窗必须放在**分支外面**（2026-09-24 浏览器实测抓到）。
+     原来它们写在「列表页」那个 return 里，而「编辑」「删除整柜」两个按钮在**详情页**上，
+     详情页是提前 return 的 —— 点下去 state 是改了，可弹窗那段压根没被渲染，
+     按钮看着能点、实际什么都不出来（删除整柜 2026-09-23 上线就是这个样子，没人发现）。
+     这种事 tsc 全绿、源码扫描也全绿，只有真去点一下才看得见（CLAUDE.md 第 24 条）。
+     所以拎出来放一份，两个分支都挂上。 */
+  const dialogs = (
+    <>
+  {/* ======================= 删除整柜（只有超管看得到） ======================= */}
+  {deleting && (
+    <div role="dialog" aria-modal="true" aria-label="删除整柜"
+      onClick={() => setDeleting(null)}
+      style={{ position: "fixed", inset: 0, zIndex: 9000, background: "rgba(0,0,0,0.4)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+      <div onClick={(e) => e.stopPropagation()}
+        style={{ background: "var(--white)", borderRadius: 12, padding: 24, maxWidth: 460, width: "90%", boxShadow: "0 8px 32px rgba(0,0,0,0.2)" }}>
+        <h3 style={{ marginTop: 0 }}>删除整柜 {deleting.containerNo}</h3>
+        <p style={{ fontSize: 13, color: "var(--t-body)" }}>
+          {/* ⚠️ 这是给人看的正文，加粗要用 <strong>：写成 Markdown 的 ** 星号会原样印在弹窗上
+              （2026-09-24 浏览器实测看到的，从 2026-09-23 上线起就这样） */}
+          这一下会把这个柜、里面那票货、货物清单和全部轨迹<strong>一起删掉，找不回来</strong>；客户那边这个整柜也会消失。
+        </p>
+        <p style={{ fontSize: 12, color: "var(--t-muted)" }}>
+          已经签收的、或者已经排了派送单的整柜删不了 —— 那种要先去「尾端派送」处理。
+        </p>
+        <label style={fl}>把柜号 <strong>{deleting.containerNo}</strong> 原样填一遍确认</label>
+        <input style={fi} value={deleteConfirm} onChange={(e) => setDeleteConfirm(e.target.value)} placeholder={deleting.containerNo} />
+        <div style={{ display: "flex", gap: 10, marginTop: 14 }}>
+          <button type="button" className="workbench-button"
+            style={{ background: "var(--c-red)", color: "var(--white)", borderColor: "var(--c-red)" }}
+            disabled={deleteBusy || deleteConfirm.trim() !== deleting.containerNo}
+            onClick={async () => {
+              setDeleteBusy(true);
+              try {
+                const r = await deleteFclContainer({ containerId: deleting.containerId, confirmContainerNo: deleteConfirm.trim() });
+                setToast(`整柜 ${r.containerNo} 已删除`);
+                setDeleting(null);
+                setSelectedId(null);
+                setDetail(null);
+                await loadList();
+                await loadOverview();
+              } catch (e) {
+                setToast(`删不了：${e instanceof Error ? e.message : "请稍后重试"}`);
+              } finally { setDeleteBusy(false); }
+            }}>{deleteBusy ? "删除中…" : "确认删除"}</button>
+          <button type="button" className="workbench-button" onClick={() => setDeleting(null)}>取消</button>
+        </div>
+      </div>
+    </div>
+  )}
+
+  {/* ======================= 新建 / 编辑整柜（同一个弹窗、同一个表单） ======================= */}
+  {(showCreate || editingId) && (
+    <div role="dialog" aria-modal="true" aria-label={editingId ? "编辑整柜" : "新建整柜"}
+      onClick={() => { setShowCreate(false); setEditingId(null); setEditingVersion(null); }}
+      style={{ position: "fixed", inset: 0, zIndex: 9000, background: "rgba(0,0,0,0.4)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+      <div onClick={(e) => e.stopPropagation()}
+        style={{ background: "var(--white)", borderRadius: 12, padding: 24, maxWidth: 1100, width: "94%", maxHeight: "88vh", overflowY: "auto", boxShadow: "0 8px 32px rgba(0,0,0,0.2)" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+          <h3 style={{ margin: 0 }}>{editingId ? "编辑整柜" : "新建整柜"}</h3>
+          <button type="button" className="workbench-button" onClick={() => { setShowCreate(false); setEditingId(null); setEditingVersion(null); }}>关闭</button>
+        </div>
+        {editingId ? (
+          /* 改不动的时候后端会说明白为什么，这里先把三条规矩写在明面上，省得员工白改一遍 */
+          <p style={{ margin: "0 0 12px", fontSize: 12, color: "var(--c-amber-deep)", background: "var(--c-amber-bg)", padding: "6px 10px", borderRadius: 6 }}>
+            改哪一项都行，但有三条：货<strong>签收了</strong>就只能改金额和备注；<strong>排了派送单</strong>的货物清单不能改（那张单要给客户签字）；柜子<strong>已经在推状态</strong>的海运 / 陆运不能改。
+          </p>
+        ) : (
+          /* 跟「装柜管理」那边的提示成对：走错入口事后不能互转（老板 2026-09-24 要的） */
+          <p style={{ margin: "0 0 12px", fontSize: 12, color: "var(--c-amber-deep)", background: "var(--c-amber-bg)", padding: "6px 10px", borderRadius: 6 }}>
+            这里建的是<strong>整柜</strong>（一个客户包一整柜）。好几个客户拼一个柜的，请到「<strong>装柜管理</strong>」里建 —— 建完不能互转。
+          </p>
+        )}
+
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))", gap: 10, marginBottom: 14 }}>
+          <div><label style={fl}>客户唛头 *</label><input style={fi} value={form.clientId} onChange={(e) => setForm((v) => ({ ...v, clientId: e.target.value }))} placeholder="如 XHH6700" /></div>
+          <div><label style={fl}>提单号 *（手填）</label><input style={fi} value={form.trackingNo} onChange={(e) => setForm((v) => ({ ...v, trackingNo: e.target.value }))} /></div>
+          <div><label style={fl}>柜号 *</label><input style={fi} value={form.containerNo} onChange={(e) => setForm((v) => ({ ...v, containerNo: e.target.value }))} /></div>
+          <div><label style={fl}>柜型 *</label>
+            <select style={fi} value={form.containerType} onChange={(e) => setForm((v) => ({ ...v, containerType: e.target.value }))}>
+              <option value="40HQ">40HQ</option><option value="20GP">20GP</option>
+            </select>
+          </div>
+          <div><label style={fl}>运输方式 *</label>
+            <select style={fi} value={form.transportMode} onChange={(e) => setForm((v) => ({ ...v, transportMode: e.target.value }))}>
+              <option value="sea">海运</option><option value="land">陆运</option>
+            </select>
+          </div>
+          <div><label style={fl}>仓库 *</label>
+            <select style={fi} value={form.warehouseId} onChange={(e) => setForm((v) => ({ ...v, warehouseId: e.target.value }))}>
+              {WAREHOUSES.map((w) => <option key={w.id} value={w.id}>{w.label}</option>)}
+            </select>
+          </div>
+          <div><label style={fl}>装柜日期</label><input type="date" style={fi} value={form.loadingDate} onChange={(e) => setForm((v) => ({ ...v, loadingDate: e.target.value }))} /></div>
+          <div><label style={fl}>金额 ¥（手填，客户能看到）</label><input style={fi} value={form.amountCny} onChange={(e) => setForm((v) => ({ ...v, amountCny: e.target.value }))} placeholder="不填就空着" /></div>
+          <div style={{ gridColumn: "1 / -1" }}><label style={fl}>备注</label><input style={fi} value={form.remark} onChange={(e) => setForm((v) => ({ ...v, remark: e.target.value }))} /></div>
+        </div>
+
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 10 }}>
+          <h4 style={{ fontSize: 14, margin: 0, flex: 1 }}>货物清单（{products.length} 行 · 合计 {totals.packageCount} 箱 / {totals.volumeM3} m³ / {totals.weightKg} kg）</h4>
+          <button type="button" className="workbench-button" onClick={() => void downloadTemplate()}>下载模板</button>
+          <button type="button" className="workbench-button" onClick={() => fileRef.current?.click()} disabled={parsing}>{parsing ? "读取中…" : "传表格"}</button>
+          <input ref={fileRef} type="file" accept=".xlsx,.xls" style={{ display: "none" }}
+            onChange={(e) => { const f = e.target.files?.[0]; if (f) void onPickFile(f); }} />
+          <button type="button" className="workbench-button" onClick={() => setProducts((p) => [...p, emptyRow()])}>+ 加一行</button>
+        </div>
+        <p style={{ fontSize: 12, color: "var(--t-muted)", marginTop: 0 }}>
+          客户发来的表格必须用上面这个模板填，表头不能改 —— 每家写法不一样的表格系统读不了，那种要员工照模板抄一遍。
+        </p>
+
+        <div style={{ overflowX: "auto", marginBottom: 12 }}>
+          <table className="a3-table" style={{ width: "100%", borderCollapse: "collapse" }}>
+            <thead><tr style={{ background: "var(--s-sunken)" }}>
+              <th style={th}>品名 *</th><th style={th}>箱数 *</th><th style={th}>每箱数量</th>
+              <th style={th}>长cm *</th><th style={th}>宽cm *</th><th style={th}>高cm *</th>
+              <th style={th}>单箱重kg</th><th style={th}>国内单号</th><th style={th}>货型</th>
+              <th style={th}>体积m³</th><th style={th}></th>
+            </tr></thead>
+            <tbody>
+              {products.map((r, i) => {
+                const pv = previewRow(r);
+                const setCell = (k: keyof FclProductInput, val: string) =>
+                  setProducts((list) => list.map((x, idx) => (idx === i ? { ...x, [k]: val } : x)));
+                return (
+                  <tr key={i}>
+                    <td style={td}><input style={{ ...fi, minWidth: 110 }} value={String(r.itemName ?? "")} onChange={(e) => setCell("itemName", e.target.value)} /></td>
+                    <td style={td}><input style={{ ...fi, width: 70 }} value={String(r.packageCount ?? "")} onChange={(e) => setCell("packageCount", e.target.value)} /></td>
+                    <td style={td}><input style={{ ...fi, width: 70 }} value={String(r.quantityPerBox ?? "")} onChange={(e) => setCell("quantityPerBox", e.target.value)} /></td>
+                    <td style={td}><input style={{ ...fi, width: 70 }} value={String(r.lengthCm ?? "")} onChange={(e) => setCell("lengthCm", e.target.value)} /></td>
+                    <td style={td}><input style={{ ...fi, width: 70 }} value={String(r.widthCm ?? "")} onChange={(e) => setCell("widthCm", e.target.value)} /></td>
+                    <td style={td}><input style={{ ...fi, width: 70 }} value={String(r.heightCm ?? "")} onChange={(e) => setCell("heightCm", e.target.value)} /></td>
+                    <td style={td}><input style={{ ...fi, width: 80 }} value={String(r.unitWeightKg ?? "")} onChange={(e) => setCell("unitWeightKg", e.target.value)} /></td>
+                    <td style={td}><input style={{ ...fi, width: 110 }} value={String(r.domesticTrackingNo ?? "")} onChange={(e) => setCell("domesticTrackingNo", e.target.value)} /></td>
+                    <td style={td}>
+                      <select style={{ ...fi, width: 95 }} value={String(r.cargoType ?? "normal")} onChange={(e) => setCell("cargoType", e.target.value)}>
+                        <option value="normal">普货</option><option value="inspection">商检货</option><option value="sensitive">敏感货</option>
+                      </select>
+                    </td>
+                    <td style={td}>{pv.volumeM3 || "—"}</td>
+                    <td style={td}>
+                      <button type="button" className="workbench-button"
+                        onClick={() => setProducts((list) => (list.length === 1 ? [emptyRow()] : list.filter((_, idx) => idx !== i)))}>删</button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+
+        <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+          <button type="button" className="workbench-button workbench-button--primary" onClick={() => void submitForm()} disabled={submitting}>
+            {submitting ? "提交中…" : editingId ? "保存修改" : "建整柜"}
+          </button>
+          <span style={{ fontSize: 12, color: "var(--t-muted)" }}>
+            {editingId
+              ? "改了装柜日期，客户轨迹里「已装柜」那一步的时间会跟着改（不能改到后面几步之后）。"
+              : "建完这个柜就是一个普通柜子，轨迹从「已装柜」起步；往后推状态去「装柜管理」。"}
+          </span>
+        </div>
+        <p role="status" aria-live="polite" style={{ fontSize: 13 }}>{toast}</p>
+      </div>
+    </div>
+  )}    </>
+  );
 
   // ======================= 详情页 =======================
   if (selectedId) {
@@ -308,6 +548,9 @@ export default function FclContainerWorkbench({ canUnsign = false, canDelete = f
                 <h2 style={{ fontSize: 20, margin: 0 }}>{detail.containerNo}</h2>
                 <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                   <span style={{ padding: "4px 12px", background: "var(--s-cool)", borderRadius: 999, fontSize: 13, fontWeight: 600 }}>{CONTAINER_STATUS_ZH[detail.containerStatus ?? ""] ?? detail.containerStatus}</span>
+                  {/* 编辑：员工和超管都有（删才是超管专属）。能不能改得动由后端那三道闸说了算，
+                      改不了的会回一句说明白为什么，不在这里提前灰掉 —— 灰掉了员工不知道为什么。 */}
+                  <button type="button" className="workbench-button" onClick={() => openEdit(detail)}>编辑</button>
                   {canDelete && (
                     <button type="button" className="workbench-button"
                       style={{ borderColor: "var(--c-red)", color: "var(--c-red)" }}
@@ -380,6 +623,7 @@ export default function FclContainerWorkbench({ canUnsign = false, canDelete = f
           </>
         )}
         <p role="status" aria-live="polite" style={{ fontSize: 13 }}>{toast}</p>
+        {dialogs}
       </div>
     );
   }
@@ -389,8 +633,13 @@ export default function FclContainerWorkbench({ canUnsign = false, canDelete = f
     <div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, flexWrap: "wrap", gap: 8 }}>
         <h2 style={{ fontSize: 22, margin: 0 }}>整柜管理</h2>
+        {/* ⚠️ 开「新建」前必须先清空表单（2026-09-24 复核实测抓到）：
+            建和改共用同一份表单，点过某个柜的「编辑」再关掉（不保存），表单里还留着
+            那个柜的**全部**数据 —— 唛头、提单号、柜号、整份货物清单。这时点「新建整柜」，
+            标题写着「新建」内容却是别人家的货，员工只改柜号和提单号就提交，
+            建出来的就是一个抄错清单的柜。 */}
         {tab === "containers" && (
-          <button type="button" className="workbench-button workbench-button--primary" onClick={() => { setShowCreate(true); setToast(""); }}>+ 新建整柜</button>
+          <button type="button" className="workbench-button workbench-button--primary" onClick={() => { resetCreate(); setShowCreate(true); setToast(""); }}>+ 新建整柜</button>
         )}
       </div>
 
@@ -501,150 +750,7 @@ export default function FclContainerWorkbench({ canUnsign = false, canDelete = f
       <p role="status" aria-live="polite" style={{ fontSize: 13 }}>{toast}</p>
       </>)}
 
-      {/* ======================= 删除整柜（只有超管看得到） ======================= */}
-      {deleting && (
-        <div role="dialog" aria-modal="true" aria-label="删除整柜"
-          onClick={() => setDeleting(null)}
-          style={{ position: "fixed", inset: 0, zIndex: 9000, background: "rgba(0,0,0,0.4)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-          <div onClick={(e) => e.stopPropagation()}
-            style={{ background: "var(--white)", borderRadius: 12, padding: 24, maxWidth: 460, width: "90%", boxShadow: "0 8px 32px rgba(0,0,0,0.2)" }}>
-            <h3 style={{ marginTop: 0 }}>删除整柜 {deleting.containerNo}</h3>
-            <p style={{ fontSize: 13, color: "var(--t-body)" }}>
-              这一下会把这个柜、里面那票货、货物清单和全部轨迹**一起删掉，找不回来**；客户那边这个整柜也会消失。
-            </p>
-            <p style={{ fontSize: 12, color: "var(--t-muted)" }}>
-              已经签收的、或者已经排了派送单的整柜删不了 —— 那种要先去「尾端派送」处理。
-            </p>
-            <label style={fl}>把柜号 <strong>{deleting.containerNo}</strong> 原样填一遍确认</label>
-            <input style={fi} value={deleteConfirm} onChange={(e) => setDeleteConfirm(e.target.value)} placeholder={deleting.containerNo} />
-            <div style={{ display: "flex", gap: 10, marginTop: 14 }}>
-              <button type="button" className="workbench-button"
-                style={{ background: "var(--c-red)", color: "var(--white)", borderColor: "var(--c-red)" }}
-                disabled={deleteBusy || deleteConfirm.trim() !== deleting.containerNo}
-                onClick={async () => {
-                  setDeleteBusy(true);
-                  try {
-                    const r = await deleteFclContainer({ containerId: deleting.containerId, confirmContainerNo: deleteConfirm.trim() });
-                    setToast(`整柜 ${r.containerNo} 已删除`);
-                    setDeleting(null);
-                    setSelectedId(null);
-                    setDetail(null);
-                    await loadList();
-                    await loadOverview();
-                  } catch (e) {
-                    setToast(`删不了：${e instanceof Error ? e.message : "请稍后重试"}`);
-                  } finally { setDeleteBusy(false); }
-                }}>{deleteBusy ? "删除中…" : "确认删除"}</button>
-              <button type="button" className="workbench-button" onClick={() => setDeleting(null)}>取消</button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ======================= 新建整柜 ======================= */}
-      {showCreate && (
-        <div role="dialog" aria-modal="true" aria-label="新建整柜"
-          onClick={() => setShowCreate(false)}
-          style={{ position: "fixed", inset: 0, zIndex: 9000, background: "rgba(0,0,0,0.4)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-          <div onClick={(e) => e.stopPropagation()}
-            style={{ background: "var(--white)", borderRadius: 12, padding: 24, maxWidth: 1100, width: "94%", maxHeight: "88vh", overflowY: "auto", boxShadow: "0 8px 32px rgba(0,0,0,0.2)" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-              <h3 style={{ margin: 0 }}>新建整柜</h3>
-              <button type="button" className="workbench-button" onClick={() => setShowCreate(false)}>关闭</button>
-            </div>
-            {/* 跟「装柜管理」那边的提示成对：走错入口事后不能互转（老板 2026-09-24 要的） */}
-            <p style={{ margin: "0 0 12px", fontSize: 12, color: "var(--c-amber-deep)", background: "var(--c-amber-bg)", padding: "6px 10px", borderRadius: 6 }}>
-              这里建的是<strong>整柜</strong>（一个客户包一整柜）。好几个客户拼一个柜的，请到「<strong>装柜管理</strong>」里建 —— 建完不能互转。
-            </p>
-
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))", gap: 10, marginBottom: 14 }}>
-              <div><label style={fl}>客户唛头 *</label><input style={fi} value={form.clientId} onChange={(e) => setForm((v) => ({ ...v, clientId: e.target.value }))} placeholder="如 XHH6700" /></div>
-              <div><label style={fl}>提单号 *（手填）</label><input style={fi} value={form.trackingNo} onChange={(e) => setForm((v) => ({ ...v, trackingNo: e.target.value }))} /></div>
-              <div><label style={fl}>柜号 *</label><input style={fi} value={form.containerNo} onChange={(e) => setForm((v) => ({ ...v, containerNo: e.target.value }))} /></div>
-              <div><label style={fl}>柜型 *</label>
-                <select style={fi} value={form.containerType} onChange={(e) => setForm((v) => ({ ...v, containerType: e.target.value }))}>
-                  <option value="40HQ">40HQ</option><option value="20GP">20GP</option>
-                </select>
-              </div>
-              <div><label style={fl}>运输方式 *</label>
-                <select style={fi} value={form.transportMode} onChange={(e) => setForm((v) => ({ ...v, transportMode: e.target.value }))}>
-                  <option value="sea">海运</option><option value="land">陆运</option>
-                </select>
-              </div>
-              <div><label style={fl}>仓库 *</label>
-                <select style={fi} value={form.warehouseId} onChange={(e) => setForm((v) => ({ ...v, warehouseId: e.target.value }))}>
-                  {WAREHOUSES.map((w) => <option key={w.id} value={w.id}>{w.label}</option>)}
-                </select>
-              </div>
-              <div><label style={fl}>装柜日期</label><input type="date" style={fi} value={form.loadingDate} onChange={(e) => setForm((v) => ({ ...v, loadingDate: e.target.value }))} /></div>
-              <div><label style={fl}>金额 ¥（手填，客户能看到）</label><input style={fi} value={form.amountCny} onChange={(e) => setForm((v) => ({ ...v, amountCny: e.target.value }))} placeholder="不填就空着" /></div>
-              <div style={{ gridColumn: "1 / -1" }}><label style={fl}>备注</label><input style={fi} value={form.remark} onChange={(e) => setForm((v) => ({ ...v, remark: e.target.value }))} /></div>
-            </div>
-
-            <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 10 }}>
-              <h4 style={{ fontSize: 14, margin: 0, flex: 1 }}>货物清单（{products.length} 行 · 合计 {totals.packageCount} 箱 / {totals.volumeM3} m³ / {totals.weightKg} kg）</h4>
-              <button type="button" className="workbench-button" onClick={() => void downloadTemplate()}>下载模板</button>
-              <button type="button" className="workbench-button" onClick={() => fileRef.current?.click()} disabled={parsing}>{parsing ? "读取中…" : "传表格"}</button>
-              <input ref={fileRef} type="file" accept=".xlsx,.xls" style={{ display: "none" }}
-                onChange={(e) => { const f = e.target.files?.[0]; if (f) void onPickFile(f); }} />
-              <button type="button" className="workbench-button" onClick={() => setProducts((p) => [...p, emptyRow()])}>+ 加一行</button>
-            </div>
-            <p style={{ fontSize: 12, color: "var(--t-muted)", marginTop: 0 }}>
-              客户发来的表格必须用上面这个模板填，表头不能改 —— 每家写法不一样的表格系统读不了，那种要员工照模板抄一遍。
-            </p>
-
-            <div style={{ overflowX: "auto", marginBottom: 12 }}>
-              <table className="a3-table" style={{ width: "100%", borderCollapse: "collapse" }}>
-                <thead><tr style={{ background: "var(--s-sunken)" }}>
-                  <th style={th}>品名 *</th><th style={th}>箱数 *</th><th style={th}>每箱数量</th>
-                  <th style={th}>长cm *</th><th style={th}>宽cm *</th><th style={th}>高cm *</th>
-                  <th style={th}>单箱重kg</th><th style={th}>国内单号</th><th style={th}>货型</th>
-                  <th style={th}>体积m³</th><th style={th}></th>
-                </tr></thead>
-                <tbody>
-                  {products.map((r, i) => {
-                    const pv = previewRow(r);
-                    const setCell = (k: keyof FclProductInput, val: string) =>
-                      setProducts((list) => list.map((x, idx) => (idx === i ? { ...x, [k]: val } : x)));
-                    return (
-                      <tr key={i}>
-                        <td style={td}><input style={{ ...fi, minWidth: 110 }} value={String(r.itemName ?? "")} onChange={(e) => setCell("itemName", e.target.value)} /></td>
-                        <td style={td}><input style={{ ...fi, width: 70 }} value={String(r.packageCount ?? "")} onChange={(e) => setCell("packageCount", e.target.value)} /></td>
-                        <td style={td}><input style={{ ...fi, width: 70 }} value={String(r.quantityPerBox ?? "")} onChange={(e) => setCell("quantityPerBox", e.target.value)} /></td>
-                        <td style={td}><input style={{ ...fi, width: 70 }} value={String(r.lengthCm ?? "")} onChange={(e) => setCell("lengthCm", e.target.value)} /></td>
-                        <td style={td}><input style={{ ...fi, width: 70 }} value={String(r.widthCm ?? "")} onChange={(e) => setCell("widthCm", e.target.value)} /></td>
-                        <td style={td}><input style={{ ...fi, width: 70 }} value={String(r.heightCm ?? "")} onChange={(e) => setCell("heightCm", e.target.value)} /></td>
-                        <td style={td}><input style={{ ...fi, width: 80 }} value={String(r.unitWeightKg ?? "")} onChange={(e) => setCell("unitWeightKg", e.target.value)} /></td>
-                        <td style={td}><input style={{ ...fi, width: 110 }} value={String(r.domesticTrackingNo ?? "")} onChange={(e) => setCell("domesticTrackingNo", e.target.value)} /></td>
-                        <td style={td}>
-                          <select style={{ ...fi, width: 95 }} value={String(r.cargoType ?? "normal")} onChange={(e) => setCell("cargoType", e.target.value)}>
-                            <option value="normal">普货</option><option value="inspection">商检货</option><option value="sensitive">敏感货</option>
-                          </select>
-                        </td>
-                        <td style={td}>{pv.volumeM3 || "—"}</td>
-                        <td style={td}>
-                          <button type="button" className="workbench-button"
-                            onClick={() => setProducts((list) => (list.length === 1 ? [emptyRow()] : list.filter((_, idx) => idx !== i)))}>删</button>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-
-            <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-              <button type="button" className="workbench-button workbench-button--primary" onClick={() => void submitCreate()} disabled={submitting}>
-                {submitting ? "提交中…" : "建整柜"}
-              </button>
-              <span style={{ fontSize: 12, color: "var(--t-muted)" }}>
-                建完这个柜就是一个普通柜子，轨迹从「已装柜」起步；往后推状态去「装柜管理」。
-              </span>
-            </div>
-            <p role="status" aria-live="polite" style={{ fontSize: 13 }}>{toast}</p>
-          </div>
-        </div>
-      )}
+      {dialogs}
     </div>
   );
 }

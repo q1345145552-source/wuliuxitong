@@ -6,7 +6,7 @@ import { validateProductRows, validateOrderLevelQuantity } from "./product-row-g
 import crypto from "node:crypto";
 import { Prisma } from "@prisma/client";
 import { prisma } from "../../db/prisma";
-import { EXCLUDE_FCL_ORDER } from "../core/fcl-scope";
+import { EXCLUDE_FCL_ORDER, FCL_EDIT_ELSEWHERE_MESSAGE } from "../core/fcl-scope";
 import { getClientIp } from "../core/rate-limit";
 import type { MinimalHttpApp } from "../../server";
 
@@ -1592,27 +1592,19 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
       return;
     }
 
-    /* 整柜的单从这条路改，有两样不能动（2026-09-24 上线前复核抓到，两家都报了）：
-       ① 提单号不能改成它自己的柜号 —— 提单号客户看得到、柜号客户看不到，
-          改成一样等于把柜号从提单号那一栏发出去（建整柜时拦过一次，这条路能绕过去）；
-       ② 运输方式不能改 —— 这里只改订单和运单，柜子不跟着改，
-          于是柜子按海运推、货记着陆运，两套流程当场分裂（CLAUDE.md：海陆不许串）。
-       其余字段（品名、重量、尺寸…）照旧能改 —— 整柜现在还没有自己的编辑入口，
-       全堵死的话建错就没法救。 */
+    /* 整柜的单从这条路**整张拒绝**（2026-09-24 改，理由见 FCL_EDIT_ELSEWHERE_MESSAGE）。
+       2026-09-23 那版只拦了「提单号=柜号」和「改运输方式」，其余字段（品名、重量、尺寸…）放行，
+       当时的理由是「整柜还没有自己的编辑入口，全堵死建错就没法救」——
+       编辑入口 2026-09-24 做好了，那个理由作废。再放行的话，
+       「整柜管理」那三道闸（已签收只能改金额备注 / 排了派送单不许改清单 / 推过状态不许改海陆）
+       就全能从这条路绕过去，而且只改订单和运单、柜内记录不跟着改，改完对不上。 */
     const fclBox = await prisma.shipmentContainerItem.findFirst({
       where: { shipmentId, container: { isFcl: true } },
-      select: { container: { select: { containerNo: true, transportMode: true } } },
+      select: { id: true },
     });
     if (fclBox) {
-      if (fclBox.container.containerNo.toLowerCase() === trackingNo.toLowerCase()) {
-        fail(res, 400, "BAD_REQUEST", "提单号不能跟柜号填成同一个（柜号不能让客户看到）");
-        return;
-      }
-      const wantMode = body.transportMode === "land" ? "land" : "sea";
-      if (fclBox.container.transportMode && wantMode !== fclBox.container.transportMode) {
-        fail(res, 400, "BAD_REQUEST", "整柜的运输方式不能在这里改（柜子不会跟着变，海运陆运会对不上）");
-        return;
-      }
+      fail(res, 400, "BAD_REQUEST", FCL_EDIT_ELSEWHERE_MESSAGE);
+      return;
     }
 
     const itemName = body.itemName?.trim();

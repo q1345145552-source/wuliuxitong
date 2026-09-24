@@ -72,6 +72,9 @@ function formatFclForStaff(container: any, shipment: any) {
     ata: container.ata instanceof Date ? container.ata.toISOString() : container.ata ?? null,
     remark: container.remark ?? null,
     createdAt: container.createdAt instanceof Date ? container.createdAt.toISOString() : container.createdAt,
+    /* 版本号：编辑时原样带回来，后端比一下「你打开之后别人改过没有」（见改整柜那条路）。
+       只给内部端，客户那份不需要（客户只能看）。 */
+    updatedAt: container.updatedAt instanceof Date ? container.updatedAt.toISOString() : container.updatedAt ?? null,
     shipmentId: shipment?.id ?? null,
     trackingNo: shipment?.trackingNo ?? null,
     clientId: shipment?.order?.clientId ?? null,
@@ -143,6 +146,235 @@ async function lockFclCreate(tx: { $executeRaw: (q: TemplateStringsArray, ...v: 
   await tx.$executeRaw`SELECT pg_advisory_xact_lock(83030)`;
 }
 
+/** 整柜那几个表头字段（货物清单单独走 parseFclProductRow） */
+interface FclHeaderBody {
+  clientId?: string;
+  trackingNo?: string;
+  containerNo?: string;
+  containerType?: string;
+  transportMode?: string;
+  warehouseId?: string;
+  loadingDate?: string;
+  amountCny?: number | string;
+  remark?: string;
+}
+
+interface FclHeader {
+  clientId: string;
+  trackingNo: string;
+  containerNo: string;
+  containerType: string;
+  transportMode: string;
+  warehouseId: string;
+  loadingDate: Date | null;
+  amountCny: number | null;
+  remark: string | null;
+}
+
+/**
+ * 建整柜 / 改整柜**共用**这一份字段校验（2026-09-24 加编辑功能时抽出来的）。
+ *
+ * ⚠️ 必须共用，不许两边各抄一份：建单那边已经为「提单号不能等于柜号」「仓库要按名单卡」
+ * 「装柜日期不能填未来」各补过一次课（都是复核抓到的），抄一份出去就等于把这几课重上一遍，
+ * 而且改单那条路是**后加的**，最容易漏 —— 三端列表条件对不齐那个坑就是这么来的
+ * （CLAUDE.md 第 8b 条）。
+ *
+ * @returns 有问题返回给人看的中文提示；合格返回校验好的值。
+ */
+function parseFclHeader(body: FclHeaderBody): { error: string } | { header: FclHeader } {
+  const clientId = String(body.clientId ?? "").trim();
+  const trackingNo = String(body.trackingNo ?? "").trim();
+  const containerNo = String(body.containerNo ?? "").trim();
+  const containerType = String(body.containerType ?? "").trim();
+  const transportMode = String(body.transportMode ?? "").trim();
+  const warehouseId = String(body.warehouseId ?? "").trim();
+
+  if (!clientId) return { error: "请选择客户唛头" };
+  // 老板 2026-09-23：运单号手动填，不自动生成
+  if (!trackingNo) return { error: "提单号为必填（整柜的提单号是手填的）" };
+  if (!containerNo) return { error: "柜号为必填" };
+  /* 提单号跟柜号不许填成同一个（2026-09-23 复核提的）：提单号客户看得到、柜号客户看不到，
+     填成一样等于把柜号从提单号那一栏发出去了。 */
+  if (trackingNo.toLowerCase() === containerNo.toLowerCase()) {
+    return { error: "提单号不能跟柜号填成同一个（柜号不能让客户看到）" };
+  }
+  if (!CONTAINER_TYPES.includes(containerType)) return { error: "柜型只能是 20GP 或 40HQ" };
+  /* ⚠️ 运输方式必填而且只能是 sea / land（照抄建柜接口 2026-08-27 补的那道）：
+     它决定这个柜走海运 23 步还是陆运 17 步，空着会被默认当海运，
+     陆运柜推「过境越南」会被拒。 */
+  if (transportMode !== "sea" && transportMode !== "land") {
+    return { error: "请选择运输方式：海运或陆运" };
+  }
+  /* 老板 2026-09-23：整柜也要选仓库，用现有那四个仓。
+     ⚠️ 只判非空不够（2026-09-23 复核抓到）：直接调接口传任意字符串也能写进库，
+     之后运单列表、导出、派送单上的仓库名就都是空的或乱的。 */
+  if (!WAREHOUSE_IDS.includes(warehouseId)) {
+    return { error: "请选择仓库（义乌 / 广州 / 东莞 / 深圳）" };
+  }
+
+  // 金额：老板说线下走，系统里手填一个数；不填就空着
+  let amountCny: number | null = null;
+  if (body.amountCny !== undefined && body.amountCny !== null && String(body.amountCny).trim() !== "") {
+    const n = parseNumericStrict(body.amountCny);
+    const issue = requireDecimal(n, "金额", { ...DECIMAL_12_2, min: 0 });
+    if (issue) return { error: issue };
+    amountCny = n;
+  }
+
+  let loadingDate: Date | null = null;
+  if (body.loadingDate?.trim()) {
+    const raw = body.loadingDate.trim();
+    /* ⚠️ 只认 YYYY-MM-DD，而且要回头核对年月日对不对上（2026-09-24 复核实测抓到）。
+       光靠 `new Date()` 判 NaN 挡不住不存在的日期：`new Date("2026-02-31")`
+       **不报错**，它会自己顺延成 2026-03-03 静默收下 ——
+       之后柜子日期、订单发货日期、客户看到的「已装柜」时间全是那个错日期。 */
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(raw);
+    if (!m) return { error: "装柜日期要写成 2026-09-23 这种格式" };
+    const d = new Date(`${raw}T00:00:00.000Z`);
+    if (Number.isNaN(d.getTime())
+      || d.getUTCFullYear() !== Number(m[1])
+      || d.getUTCMonth() + 1 !== Number(m[2])
+      || d.getUTCDate() !== Number(m[3])) {
+      return { error: `没有 ${raw} 这一天，请核对装柜日期` };
+    }
+    /* 不许填未来（2026-09-23 复核抓到）：装柜日期就是「已装柜」那条轨迹的时间，
+       填成未来的话，后面推开船、到港会排在它前面，客户看到的顺序是乱的。
+       ⚠️ 界线放到「服务器明天」那一刻，不是「今天 23:59」（2026-09-23 第 2 轮复核抓到）：
+       生产容器跑在 **UTC**（实查 `docker exec mywebsite-api-1 date` 是 UTC），
+       而人在中国（UTC+8）和泰国（UTC+7）。当地凌晨那几个小时，员工选的「今天」
+       按 UTC 算已经是明天了，会被一句「不能填未来」莫名其妙挡住。
+       放宽一天，真正往后填好几天还是拦得住。 */
+    const tomorrowEnd = new Date();
+    tomorrowEnd.setUTCDate(tomorrowEnd.getUTCDate() + 1);
+    tomorrowEnd.setUTCHours(23, 59, 59, 999);
+    if (d.getTime() > tomorrowEnd.getTime()) {
+      return { error: "装柜日期不能填未来的日期" };
+    }
+    loadingDate = d;
+  }
+
+  return {
+    header: {
+      clientId, trackingNo, containerNo, containerType, transportMode, warehouseId,
+      loadingDate, amountCny, remark: body.remark?.trim() || null,
+    },
+  };
+}
+
+/** 建整柜 / 改整柜共用：把清单逐行算清楚再加总（碰数据库之前做） */
+function parseFclProducts(input: unknown): { error: string } | {
+  rows: FclProductRow[];
+  totals: { packageCount: number; productQuantity: number; weightKg: number; volumeM3: number };
+} {
+  const productsInput = Array.isArray(input) ? (input as FclProductInput[]) : [];
+  if (productsInput.length === 0) return { error: "货物清单至少要有一行" };
+  if (productsInput.length > 500) return { error: "一个柜的货物清单最多 500 行，请分开录" };
+
+  const rows: FclProductRow[] = [];
+  for (let i = 0; i < productsInput.length; i++) {
+    const parsed = parseFclProductRow(productsInput[i], i);
+    if ("error" in parsed) return { error: parsed.error };
+    rows.push(parsed.row);
+  }
+  const totals = sumFclRows(rows);
+  if ("error" in totals) return { error: totals.error };
+  return { rows, totals };
+}
+
+/** 清单里一行货存进库之后长什么样 —— 建单和改单写的是同一份，所以只有这一处在拼 */
+function productRowToDb(r: FclProductRow, companyId: string, orderId: string) {
+  return {
+    companyId,
+    orderId,
+    itemName: r.itemName,
+    packageCount: r.packageCount,
+    lengthCm: r.lengthCm,
+    widthCm: r.widthCm,
+    heightCm: r.heightCm,
+    productQuantity: r.quantityPerBox,
+    cargoType: r.cargoType,
+    domesticTrackingNo: r.domesticTrackingNo ?? "货拉拉",
+    /* ⚠️ 这一列的语义是**单箱重**，不是整行总重（2026-09-23 复核抓到，我原来写错了）。
+       全系统都按单箱重用它：
+         · 校验文案 product-row-guard.ts:74「产品行N的单箱重量(kg)」
+         · 汇总 orders/routes.ts:325「总重 = Σ(weightKg × packageCount)」
+         · 客户派送签收单 exportDispatchWorkbooks.ts:531「weightKg × packageCount」
+           —— 存成整行总重的话，签收单上印的是「单箱重 × 箱数²」，
+           10 箱 2.5kg 的货会印成 250kg，而那是要给客户签字的纸。 */
+    weightKg: r.unitWeightKg,
+    sortOrder: r.sortOrder,
+  };
+}
+
+/** 一柜货的「长相」，用来判断改单时清单到底动过没有（动过才删了重建） */
+function fclProductSignature(rows: Array<{
+  itemName: string; packageCount: number; productQuantity: unknown;
+  lengthCm: unknown; widthCm: unknown; heightCm: unknown; weightKg: unknown;
+  domesticTrackingNo: unknown; cargoType: unknown;
+}>): string {
+  /* ⚠️ 用 JSON 而不是「拿分隔符把字段拼成一条字符串」（2026-09-24 复核抓到）。
+     上一版是用 \u0001 / \u0002 连接的 —— 品名或国内单号里只要混进这两个控制字符，
+     就能拼出「字段错位但整条字符串一模一样」的签名，于是
+     「清单改没改」判成没改，签收闸和派送单闸一起被绕过去，
+     而订单 / 运单 / 柜内记录的汇总照新清单重算，四份数据当场对不上。
+     JSON 自带转义，构造不出这种碰撞。 */
+  const num = (v: unknown) => (v === null || v === undefined ? null : Number(v));
+  return JSON.stringify(rows.map((r) => [
+    r.itemName, r.packageCount, num(r.productQuantity),
+    num(r.lengthCm), num(r.widthCm), num(r.heightCm), num(r.weightKg),
+    String(r.domesticTrackingNo ?? "货拉拉"), String(r.cargoType ?? "normal"),
+  ]));
+}
+
+/**
+ * 柜号 / 提单号的**跨表**查重（2026-09-24 复核抓到，Codex 和 DeepSeek 两家都报了）。
+ *
+ * ⚠️ 光在各自那张表里查重是不够的 —— 柜号在 containers、提单号在 shipments，
+ * 两张表的唯一约束互不相干。于是这两种改法一路绿灯：
+ *   ① 把本柜的柜号和提单号**对调**（柜号=T、提单号=C）
+ *   ② 把提单号填成**另一只柜的柜号**
+ * 两种都通过了「提单号不能等于柜号」那一道（因为那只比本柜自己这两个值），
+ * 也通过了各自表内的查重。结果客户在「提单号」那一栏看到的就是一个真柜号 ——
+ * 正是老板 2026-08-07 定的「客户不能看到柜号」要防的事
+ * （2026-09-24 实测：对调之后客户详情里 trackingNo = 原柜号）。
+ *
+ * 所以两个号都要**两张表一起查**，而且排除自己那一行。
+ * @returns 有冲突返回给人看的中文提示；没冲突返回 null。
+ */
+async function findFclNumberConflict(
+  tx: any,
+  opts: { trackingNo: string; containerNo: string; exceptContainerId?: string; exceptShipmentId?: string },
+): Promise<string | null> {
+  const { trackingNo, containerNo, exceptContainerId, exceptShipmentId } = opts;
+  const notContainer = exceptContainerId ? { NOT: { id: exceptContainerId } } : {};
+  const notShipment = exceptShipmentId ? { NOT: { id: exceptShipmentId } } : {};
+
+  if (await tx.container.findFirst({ where: { containerNo, ...notContainer }, select: { id: true } })) {
+    return `柜号 ${containerNo} 已经被别的柜子用了，请核对`;
+  }
+  if (await tx.shipment.findFirst({ where: { trackingNo, ...notShipment }, select: { id: true } })) {
+    return `提单号 ${trackingNo} 已经被别的单用了，请换一个`;
+  }
+  /* ↓ 跨着查：提单号不许是**任何**一只柜子的柜号（客户看得到提单号）。
+     ⚠️ 这两查**故意不排除自己**（2026-09-24 第一版修漏了，实测抓到）：
+     把本柜的柜号和提单号**对调**时，冲突恰恰来自自己的另一个号 ——
+     排除了自己，这两查就都查空，对调一路绿灯，客户当场在提单号那栏看到原柜号。
+     正常情况下本柜的柜号 ≠ 提单号（建单和改单都拦过），所以不排除也不会自己撞自己。 */
+  if (await tx.container.findFirst({ where: { containerNo: trackingNo }, select: { id: true } })) {
+    return `提单号 ${trackingNo} 是一个柜号，不能拿来当提单号 —— 提单号客户看得到，柜号不能让客户看到`;
+  }
+  // ↓ 反过来：柜号也不许是任何一张单的提单号（免得下次那张单一改就撞上）
+  if (await tx.shipment.findFirst({ where: { trackingNo: containerNo }, select: { id: true } })) {
+    return `柜号 ${containerNo} 已经被某一张单当成提单号在用，请换一个柜号`;
+  }
+  return null;
+}
+
+/** 整票货的摘要品名，建单和改单同一口径 */
+function fclItemNameSummary(rows: FclProductRow[]): string {
+  return rows.length === 1 ? rows[0].itemName : `${rows[0].itemName} 等 ${rows.length} 项`;
+}
+
 export function registerFclContainerRoutes(app: MinimalHttpApp): void {
   // ==========================================================================
   // 员工 / 超管：建整柜
@@ -151,95 +383,17 @@ export function registerFclContainerRoutes(app: MinimalHttpApp): void {
     const auth = requireRole(req, res, ["staff", "admin"]);
     if (!auth) return;
 
-    const body = (req.body ?? {}) as {
-      clientId?: string;
-      trackingNo?: string;
-      containerNo?: string;
-      containerType?: string;
-      transportMode?: string;
-      warehouseId?: string;
-      loadingDate?: string;
-      amountCny?: number | string;
-      remark?: string;
-      products?: FclProductInput[];
-    };
+    const body = (req.body ?? {}) as FclHeaderBody & { products?: FclProductInput[] };
 
-    const clientId = String(body.clientId ?? "").trim();
-    const trackingNo = String(body.trackingNo ?? "").trim();
-    const containerNo = String(body.containerNo ?? "").trim();
-    const containerType = String(body.containerType ?? "").trim();
-    const transportMode = String(body.transportMode ?? "").trim();
-    const warehouseId = String(body.warehouseId ?? "").trim();
+    // 表头字段和货物清单都走共用校验（改整柜那条路用的是同一份，见 parseFclHeader 的注释）
+    const parsedHeader = parseFclHeader(body);
+    if ("error" in parsedHeader) { fail(res, 400, "BAD_REQUEST", parsedHeader.error); return; }
+    const { clientId, trackingNo, containerNo, containerType, transportMode, warehouseId, loadingDate, amountCny } = parsedHeader.header;
+    const remark = parsedHeader.header.remark;
 
-    if (!clientId) { fail(res, 400, "BAD_REQUEST", "请选择客户唛头"); return; }
-    // 老板 2026-09-23：运单号手动填，不自动生成
-    if (!trackingNo) { fail(res, 400, "BAD_REQUEST", "提单号为必填（整柜的提单号是手填的）"); return; }
-    if (!containerNo) { fail(res, 400, "BAD_REQUEST", "柜号为必填"); return; }
-    /* 提单号跟柜号不许填成同一个（2026-09-23 复核提的）：提单号客户看得到、柜号客户看不到，
-       填成一样等于把柜号从提单号那一栏发出去了。 */
-    if (trackingNo.toLowerCase() === containerNo.toLowerCase()) {
-      fail(res, 400, "BAD_REQUEST", "提单号不能跟柜号填成同一个（柜号不能让客户看到）");
-      return;
-    }
-    if (!CONTAINER_TYPES.includes(containerType)) { fail(res, 400, "BAD_REQUEST", "柜型只能是 20GP 或 40HQ"); return; }
-    /* ⚠️ 运输方式必填而且只能是 sea / land（照抄建柜接口 2026-08-27 补的那道）：
-       它决定这个柜走海运 23 步还是陆运 17 步，空着会被默认当海运，
-       陆运柜推「过境越南」会被拒。 */
-    if (transportMode !== "sea" && transportMode !== "land") {
-      fail(res, 400, "BAD_REQUEST", "请选择运输方式：海运或陆运");
-      return;
-    }
-    /* 老板 2026-09-23：整柜也要选仓库，用现有那四个仓。
-       ⚠️ 只判非空不够（2026-09-23 复核抓到）：直接调接口传任意字符串也能写进库，
-       之后运单列表、导出、派送单上的仓库名就都是空的或乱的。 */
-    if (!WAREHOUSE_IDS.includes(warehouseId)) {
-      fail(res, 400, "BAD_REQUEST", "请选择仓库（义乌 / 广州 / 东莞 / 深圳）");
-      return;
-    }
-
-    const productsInput = Array.isArray(body.products) ? body.products : [];
-    if (productsInput.length === 0) { fail(res, 400, "BAD_REQUEST", "货物清单至少要有一行"); return; }
-    if (productsInput.length > 500) { fail(res, 400, "BAD_REQUEST", "一个柜的货物清单最多 500 行，请分开录"); return; }
-
-    // 先把清单逐行算清楚（碰数据库之前，跟集货那边同一个规矩）
-    const rows: FclProductRow[] = [];
-    for (let i = 0; i < productsInput.length; i++) {
-      const parsed = parseFclProductRow(productsInput[i], i);
-      if ("error" in parsed) { fail(res, 400, "BAD_REQUEST", parsed.error); return; }
-      rows.push(parsed.row);
-    }
-    const totals = sumFclRows(rows);
-    if ("error" in totals) { fail(res, 400, "BAD_REQUEST", totals.error); return; }
-
-    // 金额：老板说线下走，系统里手填一个数；不填就空着
-    let amountCny: number | null = null;
-    if (body.amountCny !== undefined && body.amountCny !== null && String(body.amountCny).trim() !== "") {
-      const n = parseNumericStrict(body.amountCny);
-      const issue = requireDecimal(n, "金额", { ...DECIMAL_12_2, min: 0 });
-      if (issue) { fail(res, 400, "BAD_REQUEST", issue); return; }
-      amountCny = n;
-    }
-
-    let loadingDate: Date | null = null;
-    if (body.loadingDate?.trim()) {
-      const d = new Date(body.loadingDate.trim());
-      if (Number.isNaN(d.getTime())) { fail(res, 400, "BAD_REQUEST", "装柜日期不是有效日期，请写成 2026-09-23 这种格式"); return; }
-      /* 不许填未来（2026-09-23 复核抓到）：装柜日期就是「已装柜」那条轨迹的时间，
-         填成未来的话，后面推开船、到港会排在它前面，客户看到的顺序是乱的。
-         ⚠️ 界线放到「服务器明天」那一刻，不是「今天 23:59」（2026-09-23 第 2 轮复核抓到）：
-         生产容器跑在 **UTC**（实查 `docker exec mywebsite-api-1 date` 是 UTC），
-         而人在中国（UTC+8）和泰国（UTC+7）。当地凌晨那几个小时，员工选的「今天」
-         按 UTC 算已经是明天了，会被一句「不能填未来」莫名其妙挡住。
-         放宽一天，真正往后填好几天还是拦得住。 */
-      const tomorrowEnd = new Date();
-      tomorrowEnd.setUTCDate(tomorrowEnd.getUTCDate() + 1);
-      tomorrowEnd.setUTCHours(23, 59, 59, 999);
-      if (d.getTime() > tomorrowEnd.getTime()) {
-        fail(res, 400, "BAD_REQUEST", "装柜日期不能填未来的日期");
-        return;
-      }
-      loadingDate = d;
-    }
+    const parsedProducts = parseFclProducts(body.products);
+    if ("error" in parsedProducts) { fail(res, 400, "BAD_REQUEST", parsedProducts.error); return; }
+    const { rows, totals } = parsedProducts;
 
     // 客户必须是本公司的 client（跟员工建单那条路同一句提示）
     const client = await prisma.user.findFirst({
@@ -257,7 +411,7 @@ export function registerFclContainerRoutes(app: MinimalHttpApp): void {
        （2026-09-23 浏览器实测撞到：装柜日期填 9-20，轨迹却写成录入那天 9-23）。
        口径跟柜子那边一致：装柜时间取柜子日期（见「轨迹时间是回填的」那条）。 */
     const sealedAt = loadingDate ?? now;
-    const itemNameSummary = rows.length === 1 ? rows[0].itemName : `${rows[0].itemName} 等 ${rows.length} 项`;
+    const itemNameSummary = fclItemNameSummary(rows);
 
     /* BusinessError 直接往外抛：server.ts 那层会按它的 httpStatus / code 回给前端。
        这里只额外接一下 P2002（撞唯一约束）——
@@ -272,10 +426,8 @@ export function registerFclContainerRoutes(app: MinimalHttpApp): void {
         /* 查重在锁里做（CLAUDE.md 第 17、28 条）：
            没有上面那把锁的话，两个员工同时录同一个柜号，事务外面查都说「没重复」，
            进来各插一条，后一个撞唯一约束报的是看不懂的「服务器错误」。 */
-        const dupContainer = await tx.container.findUnique({ where: { containerNo }, select: { id: true } });
-        if (dupContainer) throw new BusinessError(`柜号 ${containerNo} 已存在，请核对`, 409, "VALIDATION_ERROR");
-        const dupShipment = await tx.shipment.findUnique({ where: { trackingNo }, select: { id: true } });
-        if (dupShipment) throw new BusinessError(`提单号 ${trackingNo} 已存在，请换一个`, 409, "VALIDATION_ERROR");
+        const conflict = await findFclNumberConflict(tx, { trackingNo, containerNo });
+        if (conflict) throw new BusinessError(conflict, 409, "VALIDATION_ERROR");
 
         await tx.order.create({
           data: {
@@ -306,28 +458,9 @@ export function registerFclContainerRoutes(app: MinimalHttpApp): void {
           },
         });
 
+        // 怎么存见 productRowToDb（改整柜写的是同一份，只有那一处在拼）
         await tx.orderProduct.createMany({
-          data: rows.map((r) => ({
-            companyId: auth.companyId,
-            orderId,
-            itemName: r.itemName,
-            packageCount: r.packageCount,
-            lengthCm: r.lengthCm,
-            widthCm: r.widthCm,
-            heightCm: r.heightCm,
-            productQuantity: r.quantityPerBox,
-            cargoType: r.cargoType,
-            domesticTrackingNo: r.domesticTrackingNo ?? "货拉拉",
-            /* ⚠️ 这一列的语义是**单箱重**，不是整行总重（2026-09-23 复核抓到，我原来写错了）。
-               全系统都按单箱重用它：
-                 · 校验文案 product-row-guard.ts:74「产品行N的单箱重量(kg)」
-                 · 汇总 orders/routes.ts:325「总重 = Σ(weightKg × packageCount)」
-                 · 客户派送签收单 exportDispatchWorkbooks.ts:531「weightKg × packageCount」
-                   —— 存成整行总重的话，签收单上印的是「单箱重 × 箱数²」，
-                   10 箱 2.5kg 的货会印成 250kg，而那是要给客户签字的纸。 */
-            weightKg: r.unitWeightKg,
-            sortOrder: r.sortOrder,
-          })),
+          data: rows.map((r) => productRowToDb(r, auth.companyId, orderId)),
         });
 
         await tx.shipment.create({
@@ -348,7 +481,7 @@ export function registerFclContainerRoutes(app: MinimalHttpApp): void {
             transportMode,
             domesticTrackingNo: null,
             warehouseId,
-            remark: body.remark?.trim() || null,
+            remark,
           },
         });
 
@@ -383,7 +516,7 @@ export function registerFclContainerRoutes(app: MinimalHttpApp): void {
             sealedAt,
             loadingDate,
             warehouseId,
-            remark: body.remark?.trim() || null,
+            remark,
           },
         });
 
@@ -589,6 +722,366 @@ export function registerFclContainerRoutes(app: MinimalHttpApp): void {
   });
 
   // ==========================================================================
+  // 员工 / 超管：改整柜（老板 2026-09-24：「加上编辑功能」）
+  // ==========================================================================
+  app.post("/staff/fcl-containers/update", async (req, res) => {
+    /* 权限跟**建**整柜同一档（员工 + 超管），不是跟删那一档（只给超管）。
+       理由：录错了多半是录的人当场发现，让他自己改最省事；
+       删才要超管 —— 删掉找不回来，改错了还能再改回去，而且下面每一次改都留日志。 */
+    const auth = requireRole(req, res, ["staff", "admin"]);
+    if (!auth) return;
+
+    const body = (req.body ?? {}) as FclHeaderBody & {
+      containerId?: string; products?: FclProductInput[]; expectUpdatedAt?: string;
+    };
+    const containerId = String(body.containerId ?? "").trim();
+    if (!containerId) { fail(res, 400, "BAD_REQUEST", "containerId 为必填"); return; }
+
+    /* 打开这一页时这个柜的版本号（详情接口发的 updatedAt）。带了就在锁里比一下，
+       比不上说明别人刚改过。没带就照旧放行（老页面、脚本不至于一上线全保存不了）。 */
+    let expectUpdatedAt: number | null = null;
+    if (body.expectUpdatedAt !== undefined && String(body.expectUpdatedAt).trim() !== "") {
+      const t = new Date(String(body.expectUpdatedAt).trim()).getTime();
+      if (Number.isNaN(t)) { fail(res, 400, "BAD_REQUEST", "版本号不是有效时间，请刷新页面重试"); return; }
+      expectUpdatedAt = t;
+    }
+
+    // 跟建整柜**同一份**校验（说明见 parseFclHeader）
+    const parsedHeader = parseFclHeader(body);
+    if ("error" in parsedHeader) { fail(res, 400, "BAD_REQUEST", parsedHeader.error); return; }
+    const { clientId, trackingNo, containerNo, containerType, transportMode, warehouseId, loadingDate, amountCny, remark } = parsedHeader.header;
+
+    const parsedProducts = parseFclProducts(body.products);
+    if ("error" in parsedProducts) { fail(res, 400, "BAD_REQUEST", parsedProducts.error); return; }
+    const { rows, totals } = parsedProducts;
+
+    // 客户必须是本公司的 client（跟建单同一句提示）
+    const client = await prisma.user.findFirst({
+      where: { id: clientId, companyId: auth.companyId, role: "client" },
+      select: { id: true },
+    });
+    if (!client) { fail(res, 400, "BAD_REQUEST", "唛头不存在或不属于当前公司，请核对客户唛头"); return; }
+
+    // 先拿 id（为了能早点回 404，也为了知道要锁哪几行）；真正说了算的是下面锁里那次重读
+    const outline = await prisma.container.findFirst({
+      where: { id: containerId, companyId: auth.companyId, isFcl: true },
+      select: { id: true, items: { orderBy: { createdAt: "asc" }, select: { shipment: { select: { id: true, orderId: true } } } } },
+    });
+    if (!outline) { fail(res, 404, "NOT_FOUND", "整柜不存在"); return; }
+    const shipmentIds = outline.items.map((it) => it.shipment?.id).filter((x): x is string => !!x);
+    const orderIds = [...new Set(outline.items.map((it) => it.shipment?.orderId).filter((x): x is string => !!x))];
+
+    try {
+      const result = await prisma.$transaction(async (tx) => {
+        /* 排队锁排在第一句：改柜号 / 提单号跟**建**整柜是同一件事（查重 → 再写），
+           两条路必须挤同一个队（83030），否则「一个在建、一个在改」两边各查各的，
+           都说没重复，后提交那个撞唯一约束报一句看不懂的服务器错误。 */
+        await lockFclCreate(tx);
+
+        // 锁序跟删整柜一致：【柜 → 运单 → 订单】，跟装柜、删单那几条路同一把钥匙
+        await tx.$queryRaw`SELECT id FROM containers WHERE id = ${containerId} FOR UPDATE`;
+        if (shipmentIds.length > 0) {
+          await lockShipmentsChildrenFirst(tx, shipmentIds, auth.companyId);
+        }
+        for (const oid of [...orderIds].sort()) {
+          await tx.$queryRaw`SELECT id FROM orders WHERE id = ${oid} AND company_id = ${auth.companyId} FOR UPDATE`;
+        }
+
+        /* 锁内重读再判（CLAUDE.md 第 28 条）：从页面打开到点保存这几分钟里，
+           货可能已经被签收、已经排了派送单、状态已经被推到下一步 ——
+           事务外那份快照是不算数的。 */
+        const fresh = await tx.container.findFirst({
+          where: { id: containerId, companyId: auth.companyId, isFcl: true },
+          include: {
+            items: {
+              orderBy: { createdAt: "asc" },
+              include: {
+                shipment: {
+                  include: {
+                    order: { select: { id: true, clientId: true, products: { orderBy: { sortOrder: "asc" } } } },
+                    statusLogs: { orderBy: { changedAt: "asc" } },
+                  },
+                },
+              },
+            },
+          },
+        });
+        if (!fresh) throw new BusinessError("整柜不存在", 404, "NOT_FOUND");
+        /* 整柜就是「一个柜 + 一票货」。真出现第二票，说明这个柜被别的流程动过了，
+           那这里算出来的汇总会盖错数 —— 与其盖错不如停下来。 */
+        if (fresh.items.length !== 1) {
+          throw new BusinessError("这个柜里不止一票货，不是标准的整柜，改不了 —— 请联系技术看一下", 400, "VALIDATION_ERROR");
+        }
+        const shipment = fresh.items[0]?.shipment;
+        const order = shipment?.order;
+        if (!shipment || !order) throw new BusinessError("这个整柜的数据不完整（找不到对应的运单），请联系技术", 400, "VALIDATION_ERROR");
+        const orderId = order.id;
+
+        /* 「你打开这一页之后，别人改过没有」（2026-09-24 复核实测抓到）。
+           这个接口是**整份覆盖**：前端把打开时那一份原样发回来。
+           所以两个人同时开着同一个柜时，后点保存的会把前一个人的改动整份冲掉 ——
+           实测 B 加了一行货保存好，A 用自己那份旧表单只改了个金额，B 加的那行就没了。
+           做法照抄「撤销柜子状态」那条路的 expectStatus：前端把打开时的版本号带回来，
+           在锁里比一下，对不上就让人刷新重来，绝不闷头覆盖。
+           ⚠️ 精确到毫秒比（2026-09-24 复核指出上一版留的 1 秒容差没有依据）：
+           这一列库里就是毫秒精度，ISO 字符串来回转一圈也不丢精度 ——
+           留 1 秒的窗口只会让「1 秒内的两次保存」漏检，白白开个口子。 */
+        if (expectUpdatedAt !== null
+          && new Date(fresh.updatedAt).getTime() !== expectUpdatedAt) {
+          throw new BusinessError(
+            "这个整柜刚刚被别人改过了。请先关掉这个框、重新点「详情」看一眼最新的内容，再改 —— 直接保存会把别人刚才的修改覆盖掉。",
+            409, "VALIDATION_ERROR",
+          );
+        }
+
+        // ---- 到底改了哪几样（下面三道闸按「改了才拦」判，没改就放行）----
+        const oldLoadingMs = fresh.loadingDate ? new Date(fresh.loadingDate).getTime() : null;
+        const newLoadingMs = loadingDate ? loadingDate.getTime() : null;
+        const productsChanged = fclProductSignature(rows.map((r) => ({
+          itemName: r.itemName, packageCount: r.packageCount, productQuantity: r.quantityPerBox,
+          lengthCm: r.lengthCm, widthCm: r.widthCm, heightCm: r.heightCm, weightKg: r.unitWeightKg,
+          domesticTrackingNo: r.domesticTrackingNo, cargoType: r.cargoType,
+        }))) !== fclProductSignature(order.products);
+        const changed: Record<string, boolean> = {
+          客户唛头: order.clientId !== clientId,
+          提单号: shipment.trackingNo !== trackingNo,
+          柜号: fresh.containerNo !== containerNo,
+          柜型: fresh.containerType !== containerType,
+          运输方式: fresh.transportMode !== transportMode,
+          仓库: shipment.warehouseId !== warehouseId,
+          装柜日期: oldLoadingMs !== newLoadingMs,
+          货物清单: productsChanged,
+        };
+        const changedNames = Object.entries(changed).filter(([, v]) => v).map(([k]) => k);
+
+        /* 闸 ①：已签收的，除了金额和备注什么都不许改。
+           客户手里那张签收单上印着箱数、方数、品名，货也交出去了 ——
+           这时候再改，系统里的数跟客户签过字的纸就对不上了。 */
+        if (shipment.currentStatus === "delivered" && changedNames.length > 0) {
+          throw new BusinessError(
+            `这个整柜的货已经签收了，只能改金额和备注 —— ${changedNames.join("、")}改不了（客户签收单上印的就是这些数）。`,
+            400, "VALIDATION_ERROR",
+          );
+        }
+
+        /* 闸 ②：已经排了派送单的，货物清单不许改（金额、备注、提单号这些照样能改）。
+           派送单和客户签收单上的箱数方数是从这份清单算出来的。 */
+        if (productsChanged) {
+          const lm = await tx.adminLastmileOrder.findMany({
+            where: { shipmentId: shipment.id },
+            select: { deliveryNo: true },
+          });
+          if (lm.length > 0) {
+            throw new BusinessError(
+              `这个整柜已经排了派送单（${[...new Set(lm.map((x) => x.deliveryNo))].join("、")}），货物清单不能改 —— 那张单上印着箱数方数，要给客户签字。要改先去「尾端派送」把派送单删掉。`,
+              400, "VALIDATION_ERROR",
+            );
+          }
+        }
+
+        /* 闸 ③：这票货只要走过「已装柜」之后的任何一步，海运 / 陆运就不许再改
+           （老板那条「海运陆运不许串」）。两套流程的步骤完全不一样。
+
+           ⚠️ **只看柜子状态是不够的**（2026-09-24 复核实测抓到，我上一版就是这么写的）：
+           尾端派送那条路（建派送单 / 签收）**只推运单状态、不动柜子状态**，
+           而「撤销柜子状态」只撤得回柜子自己推的那几步。于是真能凑出
+           「柜子已经撤回『已封柜』、运单还停在『派送中』」这种局面 ——
+           实测连撤 6 次之后改成陆运照样放行，轨迹里留着
+           已装柜 → 到港 → 泰国清关 → 卸柜 → 派送中 一整串海运的步骤。
+           所以三样一起看：柜子回到起点、运单也回到起点、除了起步那条没有别的轨迹。 */
+        if (changed.运输方式) {
+          const containerMoved = fresh.currentStatus !== FCL_START_CONTAINER_STATUS;
+          const shipmentMoved = shipment.currentStatus !== FCL_START_SHIPMENT_STATUS;
+          const hasExtraLogs = shipment.statusLogs.length > 1;
+          if (containerMoved || shipmentMoved || hasExtraLogs) {
+            throw new BusinessError(
+              "这票货已经走过「已装柜」之后的步骤了，海运 / 陆运不能再改 —— 两套流程的步骤不一样，改了轨迹会串。"
+              /* ⚠️ 别写成「撤销回已封柜就能改」（2026-09-24 复核实测抓到上一版是这么写的）：
+                 尾端派送留下的那两条轨迹（已到仓→派送中、派送中→已到仓）**撤销时不会删**，
+                 员工照提示把状态撤回、把派送单删掉，再来改还是这一句 —— 提示语在骗人。
+                 目前唯一的出路是删了这个柜重建（超管），所以只说这一条。 */
+              + "要改的话只能删了这个柜重新建（找超管）。",
+              400, "VALIDATION_ERROR",
+            );
+          }
+        }
+
+        /* 查重：直接查 + 始终排除自己那一行（CLAUDE.md 第 17 条：不要靠「跟原值不等」先判一道，
+           空格、编码差异会让它误判）。两个号都要跨表查，说明见 findFclNumberConflict。 */
+        const conflict = await findFclNumberConflict(tx, {
+          trackingNo, containerNo, exceptContainerId: containerId, exceptShipmentId: shipment.id,
+        });
+        if (conflict) throw new BusinessError(conflict, 409, "VALIDATION_ERROR");
+
+        /* 「已装柜」那条起步轨迹 —— 装柜日期改了要跟着改它的时间，
+           不然客户看到的还是老日期（跟建单那边同一个口径：装柜时间取柜子日期）。 */
+        const startLog = shipment.statusLogs.find(
+          (l: any) => l.fromStatus === "created" && l.toStatus === FCL_START_SHIPMENT_STATUS,
+        ) ?? null;
+
+        /* ⚠️ 必须带上「这次真改了装柜日期」这个前提（2026-09-24 复核实测抓到）。
+           上一版写的是 `if (loadingDate && startLog)` —— 只要**有**装柜日期就查，
+           不管这次改没改。于是：员工推「已开船」时把日期填成比装柜还早的 9-08
+           （推进接口是允许的），这个柜从此**连只改金额都会被这句话挡住**；
+           签收之后闸 ① 又不让改装柜日期，等于金额永远改不了了。
+           这道检查是拦「把日期往后挪」的，日期没动就不该拦任何人。 */
+        if (changed.装柜日期 && loadingDate && startLog) {
+          /* 不能把装柜日期改到后面那几步之后 —— 客户轨迹会倒着排，看起来像「状态回退」
+             （「轨迹时间是回填的」那条教训：装柜时间跟真实时间混排就会看出假回退）。 */
+          const laterMs = shipment.statusLogs
+            .filter((l: any) => l.id !== startLog.id)
+            .map((l: any) => new Date(l.changedAt).getTime());
+          const earliestAfter = laterMs.length > 0 ? Math.min(...laterMs) : null;
+          if (earliestAfter !== null && loadingDate.getTime() > earliestAfter) {
+            throw new BusinessError(
+              `装柜日期不能晚于后面已经走过的那几步（最早一步是 ${new Date(earliestAfter).toISOString().slice(0, 10)}）—— 这样客户看到的轨迹会倒着排。`,
+              400, "VALIDATION_ERROR",
+            );
+          }
+        }
+        /* 清空装柜日期的话**不动轨迹时间**（轨迹时间不能变成空，也不该改成「现在」——
+           那等于把历史改成录入时刻，正是建单那边踩过的坑）。只把柜子上那个字段清掉。 */
+        const sealedAt = loadingDate ?? null;
+
+        // ---- 开始写 ----
+        /* ⚠️ 汇总那几列**只在清单真改了的时候**才重写（2026-09-24 复核实测抓到）。
+           上一版是无条件写的，于是：这个柜已经排了派送单（闸②本该护着箱数方数不许动），
+           员工只改了个金额，箱数照样被「产品行合计」盖了一遍 ——
+           `changedFields` 还是空的，页面上一点看不出来。
+           派送单和客户签收单上印的就是这个数，它只该跟着清单走。 */
+        await tx.order.update({
+          where: { id: orderId },
+          data: {
+            clientId,
+            warehouseId,
+            // 老板 2026-09-23：钱线下走，这里只记一个手填的数；系统只用人民币
+            receivableAmountCny: amountCny as any,
+            shipDate: loadingDate ? loadingDate.toISOString().slice(0, 10) : null,
+            transportMode,
+            ...(productsChanged ? {
+              itemName: fclItemNameSummary(rows),
+              productQuantity: totals.productQuantity,
+              packageCount: totals.packageCount,
+              weightKg: totals.weightKg as any,
+              volumeM3: totals.volumeM3 as any,
+              cargoType: strictestCargoType(rows.map((r) => r.cargoType)),
+            } : {}),
+          },
+        });
+
+        // 清单动过才删了重建（没动就别白换一遍 id）。怎么存见 productRowToDb
+        if (productsChanged) {
+          await tx.orderProduct.deleteMany({ where: { orderId } });
+          await tx.orderProduct.createMany({
+            data: rows.map((r) => productRowToDb(r, auth.companyId, orderId)),
+          });
+        }
+
+        await tx.shipment.update({
+          where: { id: shipment.id },
+          data: {
+            trackingNo,
+            transportMode,
+            warehouseId,
+            remark,
+            // 同上：汇总只跟着清单走
+            ...(productsChanged ? {
+              packageCount: totals.packageCount,
+              weightKg: totals.weightKg as any,
+              volumeM3: totals.volumeM3 as any,
+            } : {}),
+          },
+        });
+
+        /* 柜子上那张「状态时间表」：装柜日期改了，起步那一格也要跟着改 ——
+           撤销状态那条路就是读它来决定退回哪一步的（containers/routes.ts）。
+           只动 SEALED 这一格，后面推出来的那几格原样留着。 */
+        let dates: Record<string, string> = {};
+        try { dates = fresh.statusDates ? JSON.parse(fresh.statusDates) : {}; } catch { dates = {}; }
+        if (sealedAt) dates[FCL_START_CONTAINER_STATUS] = sealedAt.toISOString();
+
+        await tx.container.update({
+          where: { id: containerId },
+          data: {
+            containerNo,
+            containerType,
+            transportMode,
+            warehouseId,
+            remark,
+            loadingDate,
+            ...(sealedAt ? { sealedAt, statusDates: JSON.stringify(dates) } : {}),
+          },
+        });
+
+        /* 推进账本里存着「推这一步之前那张时间表长什么样」，撤销时会把它**整张**写回去
+           （containers/routes.ts 的 prevStatusDates）。改了装柜日期不把账本里那一格也改掉的话，
+           员工随便撤一步，装柜时间就悄悄退回旧日期 —— 页面上还看不出来
+           （2026-09-24 复核实测：日期改成 9-05，撤一步之后时间表里又变回 9-10）。 */
+        if (sealedAt) {
+          const batches = await tx.containerPushBatch.findMany({
+            where: { containerId }, select: { id: true, prevStatusDates: true },
+          });
+          for (const b of batches) {
+            if (!b.prevStatusDates) continue;
+            let snap: Record<string, string>;
+            try { snap = JSON.parse(b.prevStatusDates); } catch { continue; }
+            if (!snap || typeof snap !== "object" || !(FCL_START_CONTAINER_STATUS in snap)) continue;
+            snap[FCL_START_CONTAINER_STATUS] = sealedAt.toISOString();
+            await tx.containerPushBatch.update({
+              where: { id: b.id }, data: { prevStatusDates: JSON.stringify(snap) },
+            });
+          }
+        }
+
+        // 柜内记录上记的是「这票货装了多少」，清单改了才跟着走（同上，装柜清单和派送单读它）
+        if (productsChanged) {
+          await tx.shipmentContainerItem.updateMany({
+            where: { containerId },
+            data: { loadedVolumeM3: totals.volumeM3 as any, loadedPieceCount: totals.packageCount },
+          });
+        }
+
+        // 起步那条轨迹：日期改了跟着改时间，运输方式改了跟着改「下一站」
+        if (startLog && (sealedAt || changed.运输方式)) {
+          await tx.statusLog.update({
+            where: { id: startLog.id },
+            data: {
+              ...(sealedAt ? { changedAt: sealedAt } : {}),
+              ...(changed.运输方式 ? { nextStop: transportMode === "land" ? "凭祥口岸" : "开船" } : {}),
+            },
+          });
+        }
+
+        return {
+          containerNo, trackingNo,
+          rowCount: rows.length,
+          packageCount: totals.packageCount,
+          volumeM3: totals.volumeM3,
+          weightKg: totals.weightKg,
+          changedFields: changedNames,
+        };
+      });
+
+      // 谁改的、改了哪几样，留一条日志（事后查得到）
+      logger.info("修改整柜", {
+        操作人: auth.userId, 角色: auth.role,
+        柜号: result.containerNo, 提单号: result.trackingNo,
+        改了: result.changedFields.length > 0 ? result.changedFields.join("、") : "只改了金额或备注",
+      });
+
+      ok(res, result);
+    } catch (e: any) {
+      if (e?.code === "P2002") {
+        const target = String(e?.meta?.target ?? "");
+        const what = target.includes("tracking") ? `提单号 ${trackingNo}` : `柜号 ${containerNo}`;
+        fail(res, 409, "VALIDATION_ERROR", `${what} 刚刚被别人用掉了，请核对后换一个`);
+        return;
+      }
+      throw e;
+    }
+  });
+
+  // ==========================================================================
   // 超管：删整柜（老板 2026-09-24：「可以删吧」）
   // ==========================================================================
   app.post("/admin/fcl-containers/delete", async (req, res) => {
@@ -639,6 +1132,23 @@ export function registerFclContainerRoutes(app: MinimalHttpApp): void {
       }
       /* 锁内重读再判（CLAUDE.md 第 28 条）：这几秒里货可能刚被签收，
          事务外那份快照说「还没签收」是不算数的。 */
+      /* ⚠️ **柜号确认也要在锁里重做一遍**（2026-09-24 复核抓到，Codex 报的）。
+         上一版是拿事务外那份快照比的：超管盯着屏幕上的柜号 C 打字确认的同时，
+         另一个人把这个柜改名成 C2 —— 删除照样按旧的确认值执行，
+         删掉的是现在叫 C2 的柜。手打柜号这道「让人停一下看清删的是哪个」当场失效，
+         而这一下是不可逆的。 */
+      const freshContainer = await tx.container.findFirst({
+        where: { id: containerId, companyId: auth.companyId, isFcl: true },
+        select: { containerNo: true },
+      });
+      if (!freshContainer) throw new BusinessError("整柜不存在", 404, "NOT_FOUND");
+      if (freshContainer.containerNo !== container.containerNo) {
+        throw new BusinessError(
+          `这个柜的柜号刚刚被改成了 ${freshContainer.containerNo}（你确认的是 ${container.containerNo}）。`
+          + "请关掉重新看一眼再删 —— 删掉找不回来。",
+          409, "VALIDATION_ERROR",
+        );
+      }
       const fresh = await tx.shipment.findMany({
         where: { id: { in: shipmentIds } },
         select: { id: true, trackingNo: true, currentStatus: true },
@@ -780,11 +1290,13 @@ export function registerFclContainerRoutes(app: MinimalHttpApp): void {
            备注框里写「柜号 MEDU1234567 已封」之类，原样发出去客户就看到柜号了。
            全系统给客户的备注都过这道（/client/orders、/client/shipments/track、代理端），
            只有这两个新接口漏了。 */
-        remark: hideOperatorInRemark(sanitizeRemarkForClient(log.remark ?? "", true), "client") || null,
+        /* 把**本柜的真实柜号**传进去精确抹（2026-09-24 复核抓到）：
+           员工手写的备注 / 下一站里带柜号时，光靠固定写法的正则认不出来。 */
+        remark: hideOperatorInRemark(sanitizeRemarkForClient(log.remark ?? "", true, [container.containerNo]), "client") || null,
         /* 「下一站」是员工手填的（最多 50 字），也过一道脱敏（2026-09-23 第 2 轮复核提的）。
            ⚠️ 现有的 /client/shipments/track 对这个字段是**原样下发**的（containers/routes.ts:1496）——
            那是全系统的老口径，要不要统一得单独拍板；整柜这边先按严的来。 */
-        nextStop: sanitizeRemarkForClient(log.nextStop ?? "", true) || null,
+        nextStop: sanitizeRemarkForClient(log.nextStop ?? "", true, [container.containerNo]) || null,
         operatorName: operatorNameForDisplay(log),
         operatorId: log.operatorId,
         operatorRole: log.operatorRole,
