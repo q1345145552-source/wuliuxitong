@@ -176,8 +176,11 @@ const whrPlan: Row = {
 const inboundPhoto: Row = { id: "ph1", companyId: "c1", shipmentId: "s1", operatorId: STAFF.userId, fileName: "a.jpg", mime: "image/jpeg", contentBase64: "AAAA", note: null, createdAt: T0 };
 const fclRow: Row = {
   id: "f1", companyId: "c1", clientId: CLIENT.userId, productName: "鞋", cargoValue: "1000", cargoWeight: "500", address: "曼谷", containerType: "40HQ",
-  serviceType: "清提派", loadingDate: null, certFileName: null, certFileBase64: null, productImages: null, status: "pending", remark: "内部备注",
+  serviceType: "清提派", loadingDate: null, certFileName: null, certFileBase64: null, productImages: null, status: "accepted", remark: "内部备注",
   createdBy: STAFF.userId, createdByRole: "staff", createdAt: T0,
+  // 2026-09-28 报价：报价人也是操作人身份，只给超管
+  quoteAmountCny: 18000, quoteNote: "含清关", quotedAt: T0, quotedBy: STAFF.userId, acceptedAt: T0,
+  fclContainerId: null, convertedAt: null, convertedBy: null,
 };
 const ledgerRow: Row = {
   id: "led1", companyId: "c1", clientId: CLIENT.userId, type: "refund", amount: 100, balanceAfter: 100, refType: "normal", refId: "t1", refNo: "JH0000001",
@@ -495,6 +498,9 @@ async function main(): Promise<void> {
     }
     assert.equal((await call("GET /client/fcl-inquiries", ADMIN)).wire.items[0].createdByRole, "staff");
     assert.equal((await call("GET /client/fcl-inquiries/detail", ADMIN, { id: "f1" })).wire.createdByRole, "staff");
+    // 2026-09-28：谁报的价同样只给超管
+    assert.equal((await call("GET /client/fcl-inquiries", ADMIN)).wire.items[0].quotedBy, STAFF.userId);
+    assert.equal((await call("GET /client/fcl-inquiries/detail", ADMIN, { id: "f1" })).wire.quotedBy, STAFF.userId);
   });
 
   await check("12) 客户余额流水 GET /client/wallet/ledger：备注开头的「管理员」去掉，操作人不带", async () => {

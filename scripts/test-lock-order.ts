@@ -101,6 +101,16 @@ const LOCK_HELPERS: Record<string, string[]> = {
   assertPlanPricesNotBelowAgent: ["agents"],
   /** 上面那个拆出来的「只拿锁读下限」那一半（改单价用它，判断挪到锁计划之后） */
   lockAgentPriceFloors: ["agents"],
+  /**
+   * 2026-09-28 整柜询价报价：报价 / 客户接受 / 转整柜都先 `SELECT ... FROM fcl_inquiries ... FOR UPDATE`
+   * 锁住这张询价单再判断（fcl-inquiries/routes.ts 的 lockInquiry）。转整柜那条路排在 lockFclCreate 之后。
+   */
+  lockInquiry: ["fcl_inquiries"],
+  /**
+   * 2026-09-28 客服对话：同一个客户的消息排队写（咨询锁 83040，cs-chat/routes.ts 的 lockCsConversation）。
+   * 发消息那个事务是「建对话（如果没有）→ 插一条消息 → 改对话的最新摘要」，第一把锁就是它。第 10 项会去函数体里核实锁在。
+   */
+  lockCsConversation: ["advisory_cs_conversation"],
 };
 
 /**

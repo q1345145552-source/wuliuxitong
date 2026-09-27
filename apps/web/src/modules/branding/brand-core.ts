@@ -31,7 +31,8 @@ export interface WorkbenchBrand {
  * 「整柜询价」「集货拼柜(仓库版)」照常（5.6 / 5.8）。
  * ⚠️ id 必须跟 menu-config.ts 对得上，自测脚本会逐个核（改菜单 id 时这里跟着改）。
  */
-export const AGENT_CLIENT_HIDDEN_MENU_IDS = ["client-func-consolidation"] as const;
+/** 代理的客户看不到的菜单：普通版集货；在线客服（2026-09-28 老板：「代理的不开这个功能」） */
+export const AGENT_CLIENT_HIDDEN_MENU_IDS = ["client-func-consolidation", "client-func-chat"] as const;
 export const AGENT_CLIENT_LABEL_OVERRIDES: Readonly<Record<string, string>> = { "client-func-main": "主页" };
 
 /**

@@ -69,7 +69,9 @@
     "test:fcl-containers": "tsx scripts/test-fcl-containers.ts",
     "test:fcl-update-db": "tsx scripts/test-fcl-update-db.ts",
     "test:audit-0927-source": "tsx scripts/test-audit-0927-source.ts",
-    "test:audit-0927-fixes-db": "tsx scripts/test-audit-0927-fixes-db.ts"
+    "test:audit-0927-fixes-db": "tsx scripts/test-audit-0927-fixes-db.ts",
+    "test:cs-chat-source": "tsx scripts/test-cs-chat-source.ts",
+    "test:cs-chat-db": "tsx scripts/test-cs-chat-db.ts"
   },
   "devDependencies": {
     "@types/node": "^26.0.1",

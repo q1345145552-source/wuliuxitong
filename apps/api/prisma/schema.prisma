@@ -53,6 +53,8 @@ model User {
   invoices                     Invoice[]
   auditLogs                    AuditLog[]                     @relation("ActorAuditLogs")
   fclInquiries                 FclInquiry[]
+  /// 2026-09-28 客服对话：这个客户的那一条对话（只有湘泰直属客户有）
+  csConversations              CsConversation[]
   consolidationTasks           ConsolidationTask[]
   WhrConsolidationPlanCustomer WhrConsolidationPlanCustomer[]
 
@@ -170,7 +172,7 @@ model ContainerPushBatch {
   operatorId          String    @map("operator_id")
   createdAt           DateTime  @default(now()) @map("created_at")
 
-  container Container          @relation(fields: [containerId], references: [id], onDelete: Cascade)
+  container Container            @relation(fields: [containerId], references: [id], onDelete: Cascade)
   entries   ContainerPushEntry[]
 
   @@unique([containerId, seq])
@@ -593,8 +595,10 @@ model Container {
   createdAt        DateTime  @default(now()) @map("created_at")
   updatedAt        DateTime  @updatedAt @map("updated_at")
 
-  items ShipmentContainerItem[]
-  pushBatches ContainerPushBatch[]
+  items        ShipmentContainerItem[]
+  pushBatches  ContainerPushBatch[]
+  /// 2026-09-28：由哪张整柜询价单转来的（只有整柜才可能有）
+  fclInquiries FclInquiry[]
 
   @@index([companyId, currentStatus])
   @@index([companyId, isFcl])
@@ -825,28 +829,89 @@ model ClientNote {
 // 整柜询价
 // ============================================================================
 
-model FclInquiry {
+/// 客服对话（2026-09-28 老板：「类似微信的对话功能」「全部客服都能回」「代理的不开这个功能」）
+/// 一个客户一条对话；员工和超管共用一个收件箱，客户那边对方统一显示「客服」。
+/// 已读用时间点记（不用计数器）：谁读到哪条就把自己那一侧的 *_read_at 推到那条的时间，
+/// 未读 = 对方发的、时间晚于 *_read_at 的条数 —— 读的同时对方又发了一条也不会被算成已读。
+model CsConversation {
+  id                 String    @id @default(cuid())
+  companyId          String    @map("company_id")
+  clientId           String    @map("client_id")
+  lastMessageAt      DateTime? @map("last_message_at")
+  lastMessagePreview String?   @map("last_message_preview")
+  /// client | staff | admin
+  lastSenderRole     String?   @map("last_sender_role")
+  clientReadAt       DateTime? @map("client_read_at")
+  /// 客服这一侧共用一个：任何一个员工 / 超管看过就算客服看过
+  staffReadAt        DateTime? @map("staff_read_at")
+  createdAt          DateTime  @default(now()) @map("created_at")
+  updatedAt          DateTime  @updatedAt @map("updated_at")
+
+  client   User        @relation(fields: [clientId], references: [id])
+  messages CsMessage[]
+
+  @@unique([companyId, clientId])
+  @@index([companyId, lastMessageAt])
+  @@map("cs_conversations")
+}
+
+/// 一条消息：文字、图片二选一或都有（老板：「只要文字信息就行了，然后也可以发图片」）
+model CsMessage {
   id             String   @id @default(cuid())
   companyId      String   @map("company_id")
-  clientId       String   @map("client_id")
-  createdBy      String   @map("created_by") // userId of submitter (staff or client)
-  createdByRole  String   @map("created_by_role") // "staff" | "client"
-  productName    String   @map("product_name") @db.Text
-  cargoValue     String   @map("cargo_value") // 货值（文本）
-  cargoWeight    String   @map("cargo_weight") // 货重（文本）
-  address        String   @db.Text // 地址
-  containerType  String   @default("1*40HQ") @map("container_type") // 柜型
-  serviceType    String   @default("清提派") @map("service_type") // 清提派 | 派送
-  loadingDate    String?  @map("loading_date") // 装柜时间
-  certFileName   String?  @map("cert_file_name") // 认证文件名
-  certFileBase64 String?  @map("cert_file_base64") @db.Text // 认证文件 base64
-  productImages  String?  @map("product_images") @db.Text // JSON 数组 [{fileName, base64}]
-  status         String   @default("pending") // pending | processing | completed
-  remark         String? // 管理员备注
+  conversationId String   @map("conversation_id")
+  senderId       String   @map("sender_id")
+  /// client | staff | admin
+  senderRole     String   @map("sender_role")
+  /// 发送时的名字。员工 / 超管的名字只给超管看，客户那条显示唛头（senderId）
+  senderName     String?  @map("sender_name")
+  content        String?  @db.Text
+  /// /images/xxx.jpg（走 orders/image-storage 存盘，跟收货凭证同一套）
+  imagePath      String?  @map("image_path")
   createdAt      DateTime @default(now()) @map("created_at")
-  updatedAt      DateTime @updatedAt @map("updated_at")
 
-  client User @relation(fields: [clientId], references: [id])
+  conversation CsConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId, createdAt])
+  @@map("cs_messages")
+}
+
+model FclInquiry {
+  id             String    @id @default(cuid())
+  companyId      String    @map("company_id")
+  clientId       String    @map("client_id")
+  createdBy      String    @map("created_by") // userId of submitter (staff or client)
+  createdByRole  String    @map("created_by_role") // "staff" | "client"
+  productName    String    @map("product_name") @db.Text
+  cargoValue     String    @map("cargo_value") // 货值（文本）
+  cargoWeight    String    @map("cargo_weight") // 货重（文本）
+  address        String    @db.Text // 地址
+  containerType  String    @default("1*40HQ") @map("container_type") // 柜型
+  serviceType    String    @default("清提派") @map("service_type") // 清提派 | 派送
+  loadingDate    String?   @map("loading_date") // 装柜时间
+  certFileName   String?   @map("cert_file_name") // 认证文件名
+  certFileBase64 String?   @map("cert_file_base64") @db.Text // 认证文件 base64
+  productImages  String?   @map("product_images") @db.Text // JSON 数组 [{fileName, base64}]
+  /// pending 待处理 | quoted 已报价 | accepted 客户已接受 | converted 已转整柜
+  /// （processing / completed 是 7 月留下的老值，从来没有代码写过）
+  status         String    @default("pending")
+  remark         String? // 管理员备注
+  /// ↓ 2026-09-28 报价进系统（老板：报价在系统里、付款线下；还价在客服对话里谈）。只用人民币
+  quoteAmountCny Decimal?  @map("quote_amount_cny") @db.Decimal(12, 2)
+  quoteNote      String?   @map("quote_note") @db.Text
+  quotedAt       DateTime? @map("quoted_at")
+  /// 谁报的价 —— 操作人身份，只给超管看（core/operator-visibility.ts）
+  quotedBy       String?   @map("quoted_by")
+  acceptedAt     DateTime? @map("accepted_at")
+  /// ↓ 转整柜（柜子装完才能转，建整柜那一步顺手记上）。整柜被删时外键置空，询价单可以重新转
+  fclContainerId String?   @map("fcl_container_id")
+  convertedAt    DateTime? @map("converted_at")
+  convertedBy    String?   @map("converted_by")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+
+  client       User       @relation(fields: [clientId], references: [id])
+  fclContainer Container? @relation(fields: [fclContainerId], references: [id], onDelete: SetNull)
 
   @@index([companyId, status])
   @@index([companyId, createdAt(sort: Desc)])

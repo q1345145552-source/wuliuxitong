@@ -1,8 +1,13 @@
 "use client";
 
 import { useRef, useState } from "react";
+import Link from "next/link";
 import { apiBaseUrl, apiRequest } from "../../services/core-api";
 import { createRequestGate } from "../../modules/shared/request-gate";
+import { getOptionalSession } from "../../auth/auth-session";
+import { useCurrentSessionBrand } from "../../modules/branding/useWorkbenchBrand";
+import DetailModal from "../../modules/layout/DetailModal";
+import { formatBeijingTime } from "../../modules/staff/utils";
 
 /* 2026-08-31（Codex 二轮）：列表接口不再下发 certFileBase64 / productImages 大字段
    （表格根本不显示它们），remark 客户角色也拿不到了——类型跟着后端同步。
@@ -15,7 +20,40 @@ type FclInquiryItem = {
   // createdByRole：只有超级管理员拿得到（2026-09-15），客户和员工的接口返回里没有
   status: string; remark?: string | null; createdByRole?: string;
   createdAt: string;
+  /* ↓ 2026-09-28 报价 / 转整柜（后端 fcl-inquiries/routes.ts 的 quoteFields，逐字段对齐）。
+     status：pending 待处理 / quoted 已报价 / accepted 客户已接受 / converted 已转整柜 */
+  quoteAmountCny: number | null;
+  quoteNote: string | null;
+  quotedAt: string | null;
+  acceptedAt: string | null;
+  convertedAt: string | null;
+  /** 员工 / 超管才有：转成的整柜（柜子 id） */
+  fclContainerId?: string | null;
+  /** 员工 / 超管才有：转过的整柜后来被删了，可以重新转 */
+  fclDeleted?: boolean;
 };
+
+type FclInquiryDetail = FclInquiryItem & {
+  certFileBase64: string | null;
+  productImages: Array<{ fileName?: string; base64?: string }>;
+};
+
+/** 状态显示。客户那边「已报价」多一句提示他去点接受 */
+export function inquiryStatusLabel(status: string, forClient: boolean): string {
+  switch (status) {
+    case "pending": return "待报价";
+    case "quoted": return forClient ? "已报价，等你确认" : "已报价，等客户确认";
+    case "accepted": return forClient ? "已接受报价" : "客户已接受";
+    case "converted": return "已转整柜";
+    case "processing": return "处理中";
+    case "completed": return "完成";
+    default: return status;
+  }
+}
+
+const money = (n: number | null) => (n == null ? "—" : `¥${n.toLocaleString("zh-CN", { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`);
+const statusColor = (status: string) =>
+  status === "quoted" ? "var(--c-amber-deep)" : status === "accepted" ? "var(--c-green-deep)" : status === "converted" ? "var(--c-blue-deep)" : "var(--t-muted)";
 
 export type ClientFclInquiryProps = {
   visible: boolean;
@@ -52,6 +90,19 @@ export default function FclInquiryPanel(props: ClientFclInquiryProps) {
   // 晚到的旧页不许盖新页，页码也只在数据验号通过后才跟着更新
   const listGate = useRef(createRequestGate()).current;
 
+  // ↓ 2026-09-28 报价 / 接受 / 转整柜
+  const brand = useCurrentSessionBrand();
+  const [accepting, setAccepting] = useState<string | null>(null);
+  const [detailId, setDetailId] = useState<string | null>(null);
+  const [detail, setDetail] = useState<FclInquiryDetail | null>(null);
+  const [detailError, setDetailError] = useState("");
+  const [quoteAmount, setQuoteAmount] = useState("");
+  const [quoteNote, setQuoteNote] = useState("");
+  const [quoteSaving, setQuoteSaving] = useState(false);
+  const [quoteMessage, setQuoteMessage] = useState("");
+  const detailIdRef = useRef<string | null>(null);
+  detailIdRef.current = detailId;
+
   const loadList = async (page = listPage) => {
     const ticket = listGate.begin(); // 2026-09-01 竞态全扫：出发时领号
     try {
@@ -71,6 +122,71 @@ export default function FclInquiryPanel(props: ClientFclInquiryProps) {
       setListError(true);
       setListLoaded(true);
     }
+  };
+
+  /** 员工：打开询价单详情（全部信息 + 报价 + 转整柜 + 联系客户） */
+  const openDetail = async (id: string) => {
+    setDetailId(id);
+    setDetail(null);
+    setDetailError("");
+    setQuoteMessage("");
+    try {
+      const d = await apiRequest<FclInquiryDetail>(`${apiBaseUrl()}/client/fcl-inquiries/detail?id=${encodeURIComponent(id)}`);
+      if (detailIdRef.current !== id) return; // 已经换了一张 / 关掉了
+      setDetail(d);
+      setQuoteAmount(d.quoteAmountCny == null ? "" : String(d.quoteAmountCny));
+      setQuoteNote(d.quoteNote ?? "");
+    } catch (e: any) {
+      if (detailIdRef.current !== id) return;
+      setDetailError(e?.message || "加载失败");
+    }
+  };
+
+  const saveQuote = async () => {
+    if (!detail || quoteSaving) return;
+    const id = detail.id;
+    if (!quoteAmount.trim()) { setQuoteMessage("请填报价金额"); return; }
+    setQuoteSaving(true);
+    setQuoteMessage("");
+    try {
+      await apiRequest(`${apiBaseUrl()}/staff/fcl-inquiries/quote`, {
+        method: "POST",
+        body: JSON.stringify({ id, amountCny: quoteAmount.trim(), note: quoteNote.trim() }),
+      });
+      if (detailIdRef.current !== id) return;
+      props.onToast(detail.quotedAt ? "报价已修改，客户要重新点「接受」" : "已报价，客户在「整柜询价」里能看到");
+      await openDetail(id);
+      loadList(listPage);
+    } catch (e: any) {
+      if (detailIdRef.current === id) setQuoteMessage(`报价没保存：${e?.message || "请重试"}`);
+    } finally {
+      setQuoteSaving(false);
+    }
+  };
+
+  /** 客户：接受报价。带上看到的报价时间，客服刚好改了价就会被拒、提示刷新 */
+  const acceptQuote = async (item: FclInquiryItem) => {
+    if (accepting || !item.quotedAt || item.quoteAmountCny == null) return;
+    if (!window.confirm(`确认接受 ${money(item.quoteAmountCny)} 的报价？\n（付款还是线下跟客服对接）`)) return;
+    setAccepting(item.id);
+    try {
+      await apiRequest(`${apiBaseUrl()}/client/fcl-inquiries/accept`, {
+        method: "POST",
+        body: JSON.stringify({ id: item.id, quotedAt: item.quotedAt }),
+      });
+      props.onToast("已接受报价，客服会跟你安排装柜");
+    } catch (e: any) {
+      props.onToast(`没接受成功：${e?.message || "请刷新后重试"}`);
+    } finally {
+      setAccepting(null);
+      loadList(listPage);
+    }
+  };
+
+  /** 转整柜：去「整柜管理」建整柜，表单按这张询价单预填（柜号、提单号那些装完柜才有，员工手填） */
+  const convertHref = (id: string) => {
+    const role = getOptionalSession()?.role;
+    return `${role === "admin" ? "/admin/fcl-containers" : "/staff/fcl-containers"}?fromInquiry=${encodeURIComponent(id)}`;
   };
 
   if (!props.visible) return null;
@@ -248,32 +364,162 @@ export default function FclInquiryPanel(props: ClientFclInquiryProps) {
         <div style={{ overflowX: "auto" }}>
           <table className="a3-table" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
             <thead><tr style={{ borderBottom: "2px solid var(--l-soft)", textAlign: "left" }}>
+              {props.isStaff && <th style={{ padding: "6px 8px" }}>唛头</th>}
               <th style={{ padding: "6px 8px" }}>品名</th>
               <th style={{ padding: "6px 8px" }}>柜型</th>
               <th style={{ padding: "6px 8px" }}>货重</th>
               <th style={{ padding: "6px 8px" }}>服务</th>
               <th style={{ padding: "6px 8px" }}>装柜时间</th>
+              <th style={{ padding: "6px 8px" }}>报价</th>
               <th style={{ padding: "6px 8px" }}>状态</th>
               <th style={{ padding: "6px 8px" }}>提交时间</th>
+              <th style={{ padding: "6px 8px" }}>操作</th>
             </tr></thead>
             <tbody>
               {list.map((item) => (
                 <tr key={item.id} style={{ borderBottom: "1px solid var(--s-cool-2)" }}>
+                  {props.isStaff && <td style={{ padding: "6px 8px", fontFamily: "monospace", fontWeight: 600 }}>{item.clientId}</td>}
                   <td style={{ padding: "6px 8px" }}>{item.productName}</td>
                   <td style={{ padding: "6px 8px" }}>{item.containerType}</td>
                   <td style={{ padding: "6px 8px" }}>{item.cargoWeight || "—"}</td>
                   <td style={{ padding: "6px 8px" }}>{item.serviceType}</td>
                   <td style={{ padding: "6px 8px" }}>{item.loadingDate || "—"}</td>
-                  <td style={{ padding: "6px 8px" }}>
-                    {item.status === "pending" ? "待处理" : item.status === "processing" ? "处理中" : "完成"}
+                  <td style={{ padding: "6px 8px", maxWidth: 220 }}>
+                    <div style={{ fontWeight: item.quoteAmountCny == null ? 400 : 600 }}>{money(item.quoteAmountCny)}</div>
+                    {item.quoteNote ? <div style={{ fontSize: 11, color: "var(--t-muted)", whiteSpace: "pre-wrap" }}>{item.quoteNote}</div> : null}
+                  </td>
+                  <td style={{ padding: "6px 8px", color: statusColor(item.status), fontWeight: 600 }}>
+                    {inquiryStatusLabel(item.status, !props.isStaff)}
+                    {props.isStaff && item.fclDeleted ? <div style={{ fontSize: 11, color: "var(--c-red-deep)", fontWeight: 400 }}>转的整柜已被删，可重新转</div> : null}
                   </td>
                   <td style={{ padding: "6px 8px", fontSize: 11 }}>{item.createdAt.slice(0, 10)}</td>
+                  <td style={{ padding: "6px 8px", whiteSpace: "nowrap" }}>
+                    {props.isStaff ? (
+                      <button type="button" onClick={() => void openDetail(item.id)}
+                        style={{ border: "1px solid var(--c-blue)", color: "var(--c-blue)", background: "var(--white)", borderRadius: 6, padding: "3px 10px", fontSize: 12, cursor: "pointer" }}>
+                        详情 / 报价
+                      </button>
+                    ) : item.status === "quoted" ? (
+                      <button type="button" disabled={accepting === item.id} onClick={() => void acceptQuote(item)}
+                        style={{ border: "none", color: "var(--white)", background: "var(--c-green-3)", borderRadius: 6, padding: "4px 12px", fontSize: 12, cursor: "pointer", fontWeight: 600 }}>
+                        {accepting === item.id ? "提交中…" : "接受报价"}
+                      </button>
+                    ) : item.status === "converted" ? (
+                      <Link href="/client/fcl-containers" style={{ color: "var(--c-blue)", fontSize: 12 }}>去「我的整柜」看</Link>
+                    ) : "—"}
+                  </td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
       )}
+      {/* 还价在对话里谈（老板 2026-09-28）；代理名下的客户没有对话功能，不给这句 */}
+      {!props.isStaff && brand === null && list.some((x) => x.status === "quoted") ? (
+        <p style={{ fontSize: 12, color: "var(--t-muted)", marginTop: 8 }}>
+          对报价有疑问？点左边「<Link href="/client/chat" style={{ color: "var(--c-blue)" }}>在线客服</Link>」跟客服谈，谈好后客服会改报价，你再点「接受报价」。
+        </p>
+      ) : null}
+
+      {props.isStaff && detailId ? (
+        <DetailModal title="整柜询价详情" subtitle={detail ? `唛头 ${detail.clientId}` : undefined} onClose={() => setDetailId(null)} closeOnEsc={false}>
+          {detailError ? <p style={{ color: "var(--c-red-deep)" }}>没加载出来：{detailError}</p> : null}
+          {!detail && !detailError ? <p style={{ color: "var(--t-faint)" }}>加载中…</p> : null}
+          {detail ? (
+            <div style={{ display: "grid", gap: 16, fontSize: 13 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 10 }}>
+                {([
+                  ["客户唛头", detail.clientId],
+                  ["品名", detail.productName],
+                  ["货值", detail.cargoValue || "—"],
+                  ["货重", detail.cargoWeight || "—"],
+                  ["柜型", detail.containerType],
+                  ["服务", detail.serviceType],
+                  ["装柜时间", detail.loadingDate || "—"],
+                  ["提交时间", formatBeijingTime(detail.createdAt)],
+                ] as const).map(([k, v]) => (
+                  <div key={k}><div style={{ fontSize: 11, color: "var(--t-muted)" }}>{k}</div><div style={{ fontWeight: 600, overflowWrap: "anywhere" }}>{v}</div></div>
+                ))}
+                <div style={{ gridColumn: "1/-1" }}><div style={{ fontSize: 11, color: "var(--t-muted)" }}>地址</div><div style={{ fontWeight: 600, overflowWrap: "anywhere" }}>{detail.address}</div></div>
+              </div>
+
+              {detail.certFileBase64 || (detail.productImages ?? []).length > 0 ? (
+                <div style={{ display: "grid", gap: 8 }}>
+                  {detail.certFileBase64 ? (
+                    <div>
+                      <span style={{ fontSize: 11, color: "var(--t-muted)" }}>认证文件：</span>
+                      <a href={`data:application/octet-stream;base64,${detail.certFileBase64}`} download={detail.certFileName || "认证文件"} style={{ color: "var(--c-blue)" }}>
+                        {detail.certFileName || "下载"}
+                      </a>
+                    </div>
+                  ) : null}
+                  {(detail.productImages ?? []).length > 0 ? (
+                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                      {(detail.productImages ?? []).filter((img) => img?.base64).map((img, i) => (
+                        <a key={i} href={`data:image/jpeg;base64,${img.base64}`} target="_blank" rel="noreferrer" title={img.fileName || "产品图片"}>
+                          <img src={`data:image/jpeg;base64,${img.base64}`} alt={img.fileName || `产品图片 ${i + 1}`} style={{ width: 72, height: 72, objectFit: "cover", borderRadius: 6, border: "1px solid var(--l-soft)" }} />
+                        </a>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+
+              <div style={{ border: "1px solid var(--l-soft)", borderRadius: 8, padding: 12, display: "grid", gap: 8 }}>
+                <div style={{ fontWeight: 600 }}>
+                  报价
+                  <span style={{ marginLeft: 8, color: statusColor(detail.status), fontWeight: 600 }}>{inquiryStatusLabel(detail.status, false)}</span>
+                </div>
+                {detail.quotedAt ? (
+                  <div style={{ color: "var(--t-muted)" }}>
+                    当前报价 {money(detail.quoteAmountCny)}{detail.quoteNote ? `（${detail.quoteNote}）` : ""}
+                    {` · ${formatBeijingTime(detail.quotedAt)} 报的`}
+                    {detail.acceptedAt ? ` · 客户 ${formatBeijingTime(detail.acceptedAt)} 接受` : " · 等客户点接受"}
+                  </div>
+                ) : null}
+                {detail.status === "converted" ? (
+                  <div style={{ color: "var(--t-muted)" }}>已经转成整柜，报价不能再改（金额去「整柜管理」里改）。</div>
+                ) : (
+                  <>
+                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                      <label style={{ fontSize: 12 }}>金额 ¥
+                        <input value={quoteAmount} onChange={(e) => setQuoteAmount(e.target.value)} inputMode="decimal" placeholder="如 18000"
+                          style={{ marginLeft: 6, width: 140, border: "1px solid var(--l-strong)", borderRadius: 6, padding: "6px 8px", fontSize: 13 }} />
+                      </label>
+                      <input value={quoteNote} onChange={(e) => setQuoteNote(e.target.value)} maxLength={500} placeholder="说明（可选，客户看得到），如：含清关、不含派送"
+                        style={{ flex: 1, minWidth: 200, border: "1px solid var(--l-strong)", borderRadius: 6, padding: "6px 8px", fontSize: 13 }} />
+                      <button type="button" disabled={quoteSaving} onClick={() => void saveQuote()}
+                        style={{ border: "none", borderRadius: 6, background: "var(--c-blue)", color: "var(--white)", padding: "7px 16px", fontSize: 13, cursor: "pointer", fontWeight: 600 }}>
+                        {quoteSaving ? "保存中…" : detail.quotedAt ? "改报价" : "报价"}
+                      </button>
+                    </div>
+                    {detail.acceptedAt ? <div style={{ fontSize: 12, color: "var(--c-amber-deep)" }}>客户已经接受了现在这个价；改价后客户要重新点「接受」。</div> : null}
+                  </>
+                )}
+                {quoteMessage ? <div role="alert" style={{ color: "var(--c-red-deep)", fontSize: 12 }}>{quoteMessage}</div> : null}
+              </div>
+
+              <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+                {detail.status === "converted" && detail.fclContainerId ? (
+                  <Link href={convertHref(detail.id).replace(/\?.*$/, "")} style={{ color: "var(--c-blue)" }}>已转整柜 · 去「整柜管理」看</Link>
+                ) : (
+                  <>
+                    <Link href={convertHref(detail.id)}
+                      style={{ border: "1px solid var(--c-green-3)", color: "var(--c-green-deep)", borderRadius: 6, padding: "6px 14px", textDecoration: "none", fontWeight: 600 }}>
+                      转整柜
+                    </Link>
+                    <span style={{ fontSize: 12, color: "var(--t-muted)" }}>柜子装完、有了柜号和提单号再点（去「整柜管理」建整柜，客户、品名、柜型、金额自动带过去）</span>
+                  </>
+                )}
+                {detail.fclDeleted ? <span style={{ fontSize: 12, color: "var(--c-red-deep)" }}>原来转的整柜已被删除，可以重新转</span> : null}
+                <Link href={`/staff/chat?clientId=${encodeURIComponent(detail.clientId)}`} style={{ marginLeft: "auto", color: "var(--c-blue)" }}>
+                  联系客户（在线对话）
+                </Link>
+              </div>
+            </div>
+          ) : null}
+        </DetailModal>
+      ) : null}
     </section>
   );
 }

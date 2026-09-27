@@ -7,7 +7,7 @@
 --   B 多余  → 数据库有、设计图没有。一旦跑 prisma db push，这些字段连同里面的数据会被删掉
 --
 -- 什么都不输出 = 完全一致，没问题。
--- 生成自 schema.prisma，共 50 张表 / 626 个字段（2026-09-17 加推进账本后重数：数的是下面 VALUES 的实际行数，用脚本数过，626 行无重复，并跟 schema.prisma 逐表逐字段比过一致）。
+-- 生成自 schema.prisma，共 52 张表 / 653 个字段（2026-09-28 加客服对话两张表 + 询价报价 8 列后重数：用脚本数过 653 行无重复；按新迁移建出来的库跑这份清单输出为空）。
 --
 -- ⚠️ 这份清单是手抄的，schema.prisma 加了字段必须回来同步一行，否则部署时会报
 --    「B 多余」的假警告（2026-08-05 加 containers.transport_mode 时就漏了一次）。
@@ -389,6 +389,33 @@ WITH expected(table_name, column_name) AS (VALUES
   ('fcl_inquiries','remark'),
   ('fcl_inquiries','created_at'),
   ('fcl_inquiries','updated_at'),
+  ('fcl_inquiries','quote_amount_cny'),
+  ('fcl_inquiries','quote_note'),
+  ('fcl_inquiries','quoted_at'),
+  ('fcl_inquiries','quoted_by'),
+  ('fcl_inquiries','accepted_at'),
+  ('fcl_inquiries','fcl_container_id'),
+  ('fcl_inquiries','converted_at'),
+  ('fcl_inquiries','converted_by'),
+  ('cs_conversations','id'),
+  ('cs_conversations','company_id'),
+  ('cs_conversations','client_id'),
+  ('cs_conversations','last_message_at'),
+  ('cs_conversations','last_message_preview'),
+  ('cs_conversations','last_sender_role'),
+  ('cs_conversations','client_read_at'),
+  ('cs_conversations','staff_read_at'),
+  ('cs_conversations','created_at'),
+  ('cs_conversations','updated_at'),
+  ('cs_messages','id'),
+  ('cs_messages','company_id'),
+  ('cs_messages','conversation_id'),
+  ('cs_messages','sender_id'),
+  ('cs_messages','sender_role'),
+  ('cs_messages','sender_name'),
+  ('cs_messages','content'),
+  ('cs_messages','image_path'),
+  ('cs_messages','created_at'),
   ('consolidation_tasks','id'),
   ('consolidation_tasks','task_no'),
   ('consolidation_tasks','company_id'),

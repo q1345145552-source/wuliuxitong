@@ -32,6 +32,18 @@ import { shipmentStatusZh } from "../../modules/shipment/shipment-status";
 import { formatBeijingTime } from "../../modules/staff/utils";
 import EmptyStateCard from "../../modules/layout/EmptyStateCard";
 import { FCL_TEMPLATE_HEADERS, fclRowFromSheet, missingFclHeaders } from "../../modules/fcl/template";
+import { apiBaseUrl, apiRequest } from "../../services/core-api";
+
+/** 从「整柜询价」点「转整柜」带过来的那张询价单（2026-09-28） */
+type FromInquiry = { id: string; clientId: string; productName: string; containerType: string; quoteAmountCny: number | null };
+
+/** 询价单上的柜型（1*40HQ / 1*20GP / 2*40HQ / 1*40GP / 其他）→ 整柜只认的 20GP / 40HQ；对不上的返回 null，让员工自己选 */
+export function fclTypeFromInquiry(raw: string): "20GP" | "40HQ" | null {
+  const t = raw.replace(/\s+/g, "").toUpperCase();
+  if (t === "1*40HQ" || t === "40HQ") return "40HQ";
+  if (t === "1*20GP" || t === "20GP") return "20GP";
+  return null;
+}
 
 /** 仓库选项，跟运单那边一致 */
 const WAREHOUSES = [
@@ -137,6 +149,51 @@ export default function FclContainerWorkbench({ canUnsign = false, canDelete = f
   const [parsing, setParsing] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const submitInFlight = useRef(false);
+  const [fromInquiry, setFromInquiry] = useState<FromInquiry | null>(null);
+  const [inquiryNote, setInquiryNote] = useState("");
+
+  /* 网址带 ?fromInquiry=询价单号（整柜询价详情里点「转整柜」跳过来的）：打开新建表单，
+     客户、品名、柜型、金额按询价单预填；柜号、提单号、装柜日期、货物清单员工照实际装柜的填（老板：柜子装完才能转）。 */
+  useEffect(() => {
+    const id = new URLSearchParams(window.location.search).get("fromInquiry")?.trim();
+    if (!id) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const d = await apiRequest<{ id: string; clientId: string; productName: string; containerType: string; quoteAmountCny: number | null; status: string; fclContainerId?: string | null }>(
+          `${apiBaseUrl()}/client/fcl-inquiries/detail?id=${encodeURIComponent(id)}`,
+        );
+        if (cancelled) return;
+        if (d.status === "converted" && d.fclContainerId) {
+          setToast("这张询价单已经转过整柜了，不用再建");
+          window.history.replaceState(null, "", window.location.pathname);
+          return;
+        }
+        const mapped = fclTypeFromInquiry(d.containerType);
+        setForm({
+          clientId: d.clientId, trackingNo: "", containerNo: "", containerType: mapped ?? "40HQ",
+          transportMode: "sea", warehouseId: WAREHOUSES[0].id, loadingDate: "",
+          amountCny: d.quoteAmountCny == null ? "" : String(d.quoteAmountCny), remark: "",
+        });
+        setProducts([{ ...emptyRow(), itemName: d.productName }]);
+        setFromInquiry({ id: d.id, clientId: d.clientId, productName: d.productName, containerType: d.containerType, quoteAmountCny: d.quoteAmountCny });
+        setInquiryNote(mapped ? "" : `询价单上的柜型是「${d.containerType}」，整柜只分 20GP / 40HQ，请按实际装的选；两个柜的请分开建，询价单只关联第一个。`);
+        setEditingId(null);
+        setShowCreate(true);
+      } catch (e) {
+        if (!cancelled) setToast(`没找到要转的询价单：${e instanceof Error ? e.message : "请回「整柜询价」重新点"}`);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  // 新建弹窗关掉 = 不转了：把询价单关联和网址上的参数一起清掉，免得下次随手新建时误关联
+  useEffect(() => {
+    if (showCreate || !fromInquiry) return;
+    setFromInquiry(null);
+    setInquiryNote("");
+    if (window.location.search.includes("fromInquiry")) window.history.replaceState(null, "", window.location.pathname);
+  }, [showCreate, fromInquiry]);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const loadList = useCallback(async () => {
@@ -331,6 +388,7 @@ export default function FclContainerWorkbench({ canUnsign = false, canDelete = f
       remark: form.remark.trim() || undefined,
       products: filled,
     };
+    const linkInquiry = !editingId && fromInquiry ? fromInquiry : null;
     try {
       if (editingId) {
         const r = await updateFclContainer({ ...payload, containerId: editingId, expectUpdatedAt: editingVersion ?? undefined });
@@ -343,8 +401,8 @@ export default function FclContainerWorkbench({ canUnsign = false, canDelete = f
         // 改完把详情重新拉一遍，别让页面上还留着旧数（改的就是这一柜）
         await openDetail(editingId);
       } else {
-        const r = await createFclContainer(payload);
-        setToast(`整柜已建好：柜号 ${r.containerNo}，提单号 ${r.trackingNo}，${r.rowCount} 行货、${r.packageCount} 箱、${r.volumeM3} 方`);
+        const r = await createFclContainer(linkInquiry ? { ...payload, inquiryId: linkInquiry.id } : payload);
+        setToast(`整柜已建好：柜号 ${r.containerNo}，提单号 ${r.trackingNo}，${r.rowCount} 行货、${r.packageCount} 箱、${r.volumeM3} 方${linkInquiry ? "；询价单已标成「已转整柜」" : ""}`);
         setShowCreate(false);
         resetCreate();
       }
@@ -432,6 +490,19 @@ export default function FclContainerWorkbench({ canUnsign = false, canDelete = f
           <h3 style={{ margin: 0 }}>{editingId ? "编辑整柜" : "新建整柜"}</h3>
           <button type="button" className="workbench-button" onClick={() => { setShowCreate(false); setEditingId(null); setEditingVersion(null); }}>关闭</button>
         </div>
+        {!editingId && fromInquiry ? (
+          <div style={{ margin: "0 0 12px", fontSize: 12, color: "var(--c-blue-deep)", background: "var(--c-blue-bg)", padding: "8px 10px", borderRadius: 6, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+            <span>
+              正在把<strong>整柜询价</strong>（唛头 {fromInquiry.clientId} · {fromInquiry.productName}
+              {fromInquiry.quoteAmountCny != null ? ` · 报价 ¥${fromInquiry.quoteAmountCny.toLocaleString()}` : ""}）转成整柜：
+              建好后询价单自动标成「已转整柜」，客户在「我的整柜」里就能看到。柜号、提单号、装柜日期、货物清单按实际装柜的填。
+            </span>
+            <button type="button" className="workbench-button" onClick={() => { setFromInquiry(null); setInquiryNote(""); window.history.replaceState(null, "", window.location.pathname); }}>
+              不关联询价单
+            </button>
+            {inquiryNote ? <span style={{ color: "var(--c-amber-deep)", width: "100%" }}>{inquiryNote}</span> : null}
+          </div>
+        ) : null}
         {editingId ? (
           /* 改不动的时候后端会说明白为什么，这里先把三条规矩写在明面上，省得员工白改一遍 */
           <p style={{ margin: "0 0 12px", fontSize: 12, color: "var(--c-amber-deep)", background: "var(--c-amber-bg)", padding: "6px 10px", borderRadius: 6 }}>

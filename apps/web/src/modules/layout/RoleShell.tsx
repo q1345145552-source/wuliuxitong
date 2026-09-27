@@ -8,6 +8,7 @@ import { useWorkbenchBrand } from "../branding/useWorkbenchBrand";
 import { changeOwnPassword } from "../../services/auth-api";
 import { apiBaseUrl, apiRequest } from "../../services/core-api";
 import { globalMenus, roleFunctionGroups, roleMenus, type MenuItem } from "./menu-config";
+import { CHAT_MENU_IDS, useChatUnread } from "../cs-chat/useChatUnread";
 import { isSamePageHashLink, navigateToHash } from "./navigate-to-hash";
 // 分组展开的默认值和记忆（代理单独一个键、默认展开「我的客户」，原因见该文件）
 import { defaultExpandedGroups, initialExpandedGroups, saveExpandedGroups } from "./sidebar-expanded-groups";
@@ -114,6 +115,12 @@ export default function RoleShell(props: {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => readOnRemount(readCollapsed, false));
   // 当前地址连 # 一起交给品牌钩子：换页、只换 # 的菜单都再查一次归属（Codex 第四轮）
   const brand = useWorkbenchBrand(session, currentPath + currentHash);
+  // 「在线客服 / 客户消息」旁边的未读红点（2026-09-28）；代理名下的客户菜单藏了，也就不问
+  const chatUnread = useChatUnread(
+    session,
+    CHAT_MENU_IDS.some((id) => brand?.hiddenMenuIds.includes(id)),
+    currentPath + currentHash,
+  );
 
   // 和 globals.css 的抽屉断点一致。窄屏收起的导航退出键盘顺序，桌面仍是正常导航。
   useEffect(() => {
@@ -431,6 +438,14 @@ export default function RoleShell(props: {
       }}
     >
       {menuLabel(item)}
+      {CHAT_MENU_IDS.includes(item.id) && chatUnread > 0 ? (
+        <span
+          aria-label={`${chatUnread} 条未读消息`}
+          style={{ marginLeft: 6, minWidth: 18, height: 18, borderRadius: 9, background: "var(--c-red)", color: "var(--white)", fontSize: 11, lineHeight: "18px", textAlign: "center", padding: "0 5px", display: "inline-block", verticalAlign: "middle" }}
+        >
+          {chatUnread > 99 ? "99+" : chatUnread}
+        </span>
+      ) : null}
     </Link>
   );
 
@@ -501,6 +516,10 @@ export default function RoleShell(props: {
                 {/* 箭头只有一个字符，展开靠 CSS 转 90 度，换字符会丢掉过渡动画 */}
                 <span className="dashboard-sidebar-group-arrow">▸</span>
                 {group.groupLabel}
+                {/* 组收起来时，组名旁边也冒个红点，免得未读消息藏在收起的组里 */}
+                {!isExpanded && chatUnread > 0 && items.some((it) => CHAT_MENU_IDS.includes(it.id)) ? (
+                  <span aria-label="有未读消息" style={{ marginLeft: 6, width: 8, height: 8, borderRadius: 4, background: "var(--c-red)", display: "inline-block", verticalAlign: "middle" }} />
+                ) : null}
               </button>
               {/* 收起时不摘节点，只把外层高度收到 0：摘掉就没法放收起动画了 */}
               <div id={`${navigationId}-group-${groupIndex}`} className="dashboard-sidebar-group-body" aria-hidden={!isExpanded}>

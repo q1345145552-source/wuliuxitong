@@ -259,10 +259,10 @@ async function main(): Promise<void> {
     assert.equal((await call("/agent/brand", { token: tokenFor("zz_b4_agent_ghost") })).status, 404);
   });
 
-  await check("12) 前端外壳品牌：代理的客户藏普通版集货、「主页与AI」改「主页」；代理本人不藏；湘泰账号一律 null", () => {
+  await check("12) 前端外壳品牌：代理的客户藏普通版集货、在线客服（2026-09-28「代理的不开这个功能」），「主页与AI」改「主页」；代理本人不藏；湘泰账号一律 null", () => {
     const info = { name: "A 代理", logoUrl: "/images/x.png" };
     assert.deepEqual(web.toWorkbenchBrand("client", info), {
-      name: "A 代理", logoUrl: "/images/x.png", hiddenMenuIds: ["client-func-consolidation"], labelOverrides: { "client-func-main": "主页" },
+      name: "A 代理", logoUrl: "/images/x.png", hiddenMenuIds: ["client-func-consolidation", "client-func-chat"], labelOverrides: { "client-func-main": "主页" },
     });
     assert.deepEqual(web.toWorkbenchBrand("agent", { name: "A 代理", logoUrl: null }), { name: "A 代理", hiddenMenuIds: [], labelOverrides: {} });
     for (const role of ["admin", "staff"]) assert.equal(web.toWorkbenchBrand(role, info), null, `${role} 永远是湘泰的样子`);

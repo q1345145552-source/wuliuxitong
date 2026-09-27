@@ -18,8 +18,11 @@ type Auth = NonNullable<HttpRequest["auth"]>;
 /** requireAgent 放行后拿到的身份：agentId 一定非空 */
 export type AgentAuth = Auth & { role: "agent"; agentId: string };
 
-/** 代理的客户（client 且 agentId 非空）碰这些前缀一律 403 */
-export const AGENT_CLIENT_BLOCKED_PREFIXES = ["/client/consolidation", "/client/ai"] as const;
+/**
+ * 代理的客户（client 且 agentId 非空）碰这些前缀一律 403。
+ * /client/chat：客服对话，老板 2026-09-28「代理的不开这个功能」。
+ */
+export const AGENT_CLIENT_BLOCKED_PREFIXES = ["/client/consolidation", "/client/ai", "/client/chat"] as const;
 export const AGENT_CLIENT_BLOCKED_MESSAGE = "该功能暂未开放";
 
 /**

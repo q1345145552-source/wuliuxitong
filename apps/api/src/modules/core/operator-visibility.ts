@@ -47,6 +47,11 @@ export const OPERATOR_IDENTITY_FIELDS = [
    */
   "updatedBy",
   "updatedByRole",
+  // FclInquiry 报价 / 转整柜的人（2026-09-28）
+  "quotedBy",
+  "convertedBy",
+  // CsMessage 客服对话里员工 / 超管发消息时的名字（2026-09-28）。接口逐字段下发、不整行展开，这里登记兜底
+  "senderName",
 ] as const;
 
 export type OperatorIdentityField = (typeof OPERATOR_IDENTITY_FIELDS)[number];

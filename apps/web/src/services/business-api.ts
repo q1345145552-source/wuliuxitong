@@ -2562,6 +2562,8 @@ export async function createFclContainer(payload: {
   amountCny?: number | string;
   remark?: string;
   products: FclProductInput[];
+  /** 从「整柜询价」点「转整柜」过来的：建柜同时把那张询价单标成「已转整柜」（2026-09-28） */
+  inquiryId?: string;
 }): Promise<{
   containerId: string; containerNo: string; shipmentId: string; trackingNo: string;
   rowCount: number; packageCount: number; volumeM3: number; weightKg: number;

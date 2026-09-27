@@ -40,6 +40,7 @@ import { hideOperatorIdentity, hideOperatorInRemark, operatorNameForDisplay } fr
 import { sanitizeRemarkForClient } from "../core/client-privacy";
 import { DECIMAL_12_2, requireDecimal } from "../core/decimal-guard";
 import { parseNumericStrict } from "../core/int-guard";
+import { lockInquiry } from "../fcl-inquiries/routes";
 import {
   CONTAINER_TYPES,
   FCL_START_CONTAINER_STATUS,
@@ -383,7 +384,10 @@ export function registerFclContainerRoutes(app: MinimalHttpApp): void {
     const auth = requireRole(req, res, ["staff", "admin"]);
     if (!auth) return;
 
-    const body = (req.body ?? {}) as FclHeaderBody & { products?: FclProductInput[] };
+    const body = (req.body ?? {}) as FclHeaderBody & { products?: FclProductInput[]; inquiryId?: unknown };
+    /* 从「整柜询价」点「转整柜」过来的会带上询价单号（2026-09-28，老板：柜子装完才能转整柜）。
+       建柜和把询价单标成「已转整柜」在同一个事务里：柜建成了询价单一定跟着变，建不成询价单一个字不动。 */
+    const inquiryId = body.inquiryId === undefined || body.inquiryId === null ? "" : String(body.inquiryId).trim();
 
     // 表头字段和货物清单都走共用校验（改整柜那条路用的是同一份，见 parseFclHeader 的注释）
     const parsedHeader = parseFclHeader(body);
@@ -428,6 +432,19 @@ export function registerFclContainerRoutes(app: MinimalHttpApp): void {
            进来各插一条，后一个撞唯一约束报的是看不懂的「服务器错误」。 */
         const conflict = await findFclNumberConflict(tx, { trackingNo, containerNo });
         if (conflict) throw new BusinessError(conflict, 409, "VALIDATION_ERROR");
+
+        /* 询价单锁在建柜排队锁之后（加锁顺序：建柜锁 → 询价单 → 新建的行）。
+           删整柜那条路先锁柜子、删柜子时外键才碰询价单，跟这里不会绕成圈。 */
+        if (inquiryId) {
+          const inq = await lockInquiry(tx, inquiryId);
+          if (!inq || inq.company_id !== auth.companyId) throw new BusinessError("要转的询价单不存在", 404, "NOT_FOUND");
+          if (inq.client_id !== clientId) {
+            throw new BusinessError(`这张询价单是客户 ${inq.client_id} 的，整柜填的唛头是 ${clientId}，对不上`, 400, "VALIDATION_ERROR");
+          }
+          if (inq.status === "converted" && inq.fcl_container_id) {
+            throw new BusinessError("这张询价单已经转过整柜了，别再建一个", 409, "VALIDATION_ERROR");
+          }
+        }
 
         await tx.order.create({
           data: {
@@ -529,6 +546,13 @@ export function registerFclContainerRoutes(app: MinimalHttpApp): void {
             loadedPieceCount: totals.packageCount,
           },
         });
+
+        if (inquiryId) {
+          await tx.fclInquiry.update({
+            where: { id: inquiryId },
+            data: { status: "converted", fclContainerId: container.id, convertedAt: now, convertedBy: auth.userId },
+          });
+        }
 
         return container;
       });
