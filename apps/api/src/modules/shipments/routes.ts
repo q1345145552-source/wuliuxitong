@@ -583,6 +583,11 @@ export function registerShipmentRoutes(app: MinimalHttpApp): void {
         prisma.orderProductImage.findMany({
           where: { companyId: auth.companyId, orderId: { in: orderIds } },
           orderBy: { createdAt: "asc" },
+          /* ⚠️ 只取列表要用的小字段（2026-09-28 审查修复 #5）：原来没写 select，
+             Prisma 会把 content_base64 整列（线上 319 张、94MB）每次列表都读进后端内存，
+             只为了拿文件名和路径。响应里本来就不带 base64，读了纯浪费。
+             照 orders/product-images.ts 的写法。 */
+          select: { id: true, orderId: true, fileName: true, mime: true, filePath: true, createdAt: true },
         }),
       ]);
       const pmap = new Map<string, any[]>();

@@ -174,7 +174,8 @@ export default function ShipmentSearch({
           hidden={workbench ? collapsed : undefined}
           style={workbench ? (collapsed ? { display: "none" } : undefined) : { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 8, marginBottom: 10, padding: 10, border: "1px dashed var(--l-soft)", borderRadius: 8 }}
         >
-          {textField("batchNo")}
+          {/* 「批次号」框去掉（2026-09-28 审查修复 #9）：「柜号」框已经改成查 batchNo（真柜号存在这里），
+              两个框查同一个字段只会让人以为是两样东西。字段留在 value 里，导出弹窗、筛选逻辑共用这份结构。 */}
           {textField("itemName")}
           {textField("packageCount")}
           {textField("productQuantity")}

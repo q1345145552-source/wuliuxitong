@@ -790,6 +790,7 @@ export default function AdminHomePage() {
    */
   const startEditOrder = (order: AdminOrderItem) => {
     setEditingOrderId(order.orderId ?? order.id);
+    setMessage(""); // 弹窗里会显示这条提示（见「保存」按钮上面），打开时先清掉上一回的
     // 记下打开弹窗那一刻的样子，保存时只把改动过的项发出去，
     // 避免把别人在这期间改的字段一起覆盖掉
     setEditSnapshot({
@@ -806,8 +807,10 @@ export default function AdminHomePage() {
         productQuantity: String(order.productQuantity ?? 0),
         packageCount: String(order.packageCount ?? 0),
         packageUnit: order.packageUnit === "bag" ? "bag" : "box",
-        weightKg: order.weightKg === null || order.weightKg === undefined ? "" : String(order.weightKg),
-        volumeM3: order.volumeM3 === null || order.volumeM3 === undefined ? "" : String(order.volumeM3),
+        // 拆过柜的单：列表接口的 weightKg/volumeM3 是父单**剩余量**，整票在 totalWeightKg/totalVolumeM3。
+        // 编辑框必须填整票（后端按整票算，2026-09-28 审查修复 #1：原来预填剩余量，一保存订单总重就被改小）
+        weightKg: (order.totalWeightKg ?? order.weightKg) == null ? "" : String(order.totalWeightKg ?? order.weightKg),
+        volumeM3: (order.totalVolumeM3 ?? order.volumeM3) == null ? "" : String(order.totalVolumeM3 ?? order.volumeM3),
         cargoType: order.cargoType ?? "normal",
         paymentStatus: order.paymentStatus === "paid" ? "paid" : "unpaid",
         shipDate: order.shipDate ?? "",
@@ -828,8 +831,8 @@ export default function AdminHomePage() {
       productQuantity: String(order.productQuantity ?? 0),
       packageCount: String(order.packageCount ?? 0),
       packageUnit: order.packageUnit === "bag" ? "bag" : "box",
-      weightKg: order.weightKg === null || order.weightKg === undefined ? "" : String(order.weightKg),
-      volumeM3: order.volumeM3 === null || order.volumeM3 === undefined ? "" : String(order.volumeM3),
+      weightKg: (order.totalWeightKg ?? order.weightKg) == null ? "" : String(order.totalWeightKg ?? order.weightKg),
+      volumeM3: (order.totalVolumeM3 ?? order.volumeM3) == null ? "" : String(order.totalVolumeM3 ?? order.volumeM3),
       cargoType: order.cargoType ?? "normal",
       paymentStatus: order.paymentStatus === "paid" ? "paid" : "unpaid",
       shipDate: order.shipDate ?? "",
@@ -1399,8 +1402,9 @@ export default function AdminHomePage() {
   const exportMoreFields: ExportFieldDef[] = [
     { key: "domesticTrackingNo", label: "国内单号", type: "text" },
     { key: "itemName", label: "品名", type: "text" },
+    // 「柜号」比的是 batchNo（收货 / 建单填的柜号存这个字段）；原来另有一个「批次号」框才是真柜号、
+    // 而「柜号」框比的是从来没人写的 shipments.containerNo（线上 0 条）—— 2026-09-28 审查修复 #9 合成一个
     { key: "containerNo", label: "柜号", type: "text" },
-    { key: "batchNo", label: "批次号", type: "text" },
     { key: "packageCount", label: "包裹数量", type: "text" },
     { key: "productQuantity", label: "产品数量", type: "text" },
     { key: "weightKg", label: "重量", type: "text" },
@@ -1427,8 +1431,10 @@ export default function AdminHomePage() {
       货型: cargoTypeLabel((o.products ?? []).map((p: any) => p.cargoType), o.cargoType),
       运输方式: transportModeLabel(o.transportMode), 国内单号: o.domesticTrackingNo ?? "-", 柜号: o.batchNo ?? "-",
       审批状态: o.approvalStatus === "pending" ? "待审核" : o.approvalStatus === "approved" ? "已审核" : o.approvalStatus === "shipped" ? "已发货" : o.approvalStatus,
-      产品数量: o.productQuantity ?? "-", 包裹数量: o.packageCount ?? "-",
-      重量: o.weightKg ?? "-", 体积: o.volumeM3 ?? "-",
+      // 拆过柜的单 packageCount/weightKg/volumeM3 都是父单剩余量（超管列表接口按运单给）；
+      // 导出跟列表那几列用同一套函数取整票（2026-09-28 审查修复 #10）
+      产品数量: o.productQuantity ?? "-", 包裹数量: totalPackageCountOf(o) ?? "-",
+      重量: totalWeightOf(o) ?? "-", 体积: totalVolumeOf(o) ?? "-",
       // 长宽高来自产品行；一张单有多个不同尺寸时后端会拼成 "60/50"（2026-08-27 加）
       长cm: o.lengthCm ?? "-", 宽cm: o.widthCm ?? "-", 高cm: o.heightCm ?? "-",
       到仓日期: o.shipDate ?? "-",
@@ -2213,6 +2219,11 @@ export default function AdminHomePage() {
                             <input value={orderEditForm.remark} onChange={(e) => setOrderEditForm((v) => ({ ...v, remark: e.target.value }))} placeholder="备注（可选）" style={{ border: "1px solid var(--l-strong)", borderRadius: 8, padding: "8px 10px", width: "100%", fontSize: 13 }} />
                           </div>
 
+                          {/* 保存失败 / 没填全的提示原来只写在页面最底下，被这个全屏弹窗挡住，点保存像没反应。
+                              拆过柜的单填了比已装走还少的数会被后端拒绝（2026-09-28 审查修复 #1），那句话必须让人看见 */}
+                          {message ? (
+                            <p role="alert" style={{ margin: "0 0 8px", color: message.includes("失败") ? "var(--c-red-deep)" : "var(--c-green-deep)" }}>{message}</p>
+                          ) : null}
                           <div style={{ display: "flex", gap: 8 }}>
                             <button type="button" onClick={() => void submitOrderEdit()} disabled={loading} style={{ border: "none", borderRadius: 6, padding: "9px 18px", color: "var(--white)", background: "var(--c-navy)", cursor: "pointer", fontWeight: 600 }}>保存</button>
                             <button type="button" onClick={() => setEditingOrderId("")} style={{ border: "1px solid #d8d6d1", borderRadius: 6, padding: "9px 18px", background: "var(--white)", cursor: "pointer", color: "#14171D" }}>取消</button>

@@ -133,10 +133,11 @@ export default function StaffConsolidationPage() {
       if (!detailGate.isCurrent(ticket)) return; // 验号：已有更新的详情请求出发，旧响应丢弃
       if (selectedTaskIdRef.current !== taskId) return; // 认主人：用户已切走/返回列表
       setTaskDetail(data);
-      // 预填报价
-      if (data.bookingFee != null) setQuoteBooking(String(data.bookingFee));
-      if (data.customsFee != null) setQuoteCustoms(String(data.customsFee));
-      if (data.loadingFee != null) setQuoteLoading(String(data.loadingFee));
+      // 预填报价：有值填值、没值**清空**（2026-09-28 审查修复 #8：原来只在有值时才 set，
+      // 先看过已报价的任务 A 再打开没报价的任务 B，弹窗里还是 A 的三笔费用，手快就按错价存了）
+      setQuoteBooking(data.bookingFee != null ? String(data.bookingFee) : "");
+      setQuoteCustoms(data.customsFee != null ? String(data.customsFee) : "");
+      setQuoteLoading(data.loadingFee != null ? String(data.loadingFee) : "");
     } catch (e: any) {
       if (!detailGate.isCurrent(ticket)) return; // 旧请求的报错也不许弹
       if (selectedTaskIdRef.current !== taskId) return;

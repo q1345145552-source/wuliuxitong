@@ -326,6 +326,8 @@ export function registerAdminOpsRoutes(app: MinimalHttpApp): void {
             weightKg: true,
             volumeM3: true,
             remark: true,
+            // 只用来抹备注里的柜号（2026-09-28 审查修复 #2 同类）：签收单是给客户签字的，员工手写在备注里的柜号不能印上去
+            containerItems: { select: { container: { select: { containerNo: true } } } },
             order: {
               select: {
                 clientId: true,
@@ -474,7 +476,7 @@ export function registerAdminOpsRoutes(app: MinimalHttpApp): void {
         // 生成器早就会把 null 写成空格子了，问题一直卡在这一句。
         weightKg: weightKg ?? null,
         volumeM3: volumeM3 ?? null,
-        remark: sanitizeRemarkForClient(shipment.remark || "", true),
+        remark: sanitizeRemarkForClient(shipment.remark || "", true, shipment.containerItems.map((it) => it.container.containerNo)),
         status: row.status,
         containerNos: [],
         receiverName: order?.receiverNameTh?.trim() || contactName,

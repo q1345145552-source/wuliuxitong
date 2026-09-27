@@ -48,8 +48,10 @@ function toExcelRow(o: AgentShipmentItem) {
     审批状态: APPROVAL_ZH[o.approvalStatus] ?? o.approvalStatus,
     产品数量: o.productQuantity ?? "-",
     包裹数量: o.packageCount ?? "-",
-    重量: o.weightKg ?? "-",
-    体积: o.volumeM3 ?? "-",
+    // 跟下面列表那两列同一个取数（2026-09-28 审查修复 #10，四个导出一起对齐）。代理接口的 weightKg/volumeM3
+    // 本来就是订单整票；差别只在订单上没填总重/总方的老单 —— 列表显示父子单合计，导出原来是「-」
+    重量: o.totalWeightKg ?? o.weightKg ?? "-",
+    体积: o.totalVolumeM3 ?? o.volumeM3 ?? "-",
     长cm: o.lengthCm ?? "-",
     宽cm: o.widthCm ?? "-",
     高cm: o.heightCm ?? "-",

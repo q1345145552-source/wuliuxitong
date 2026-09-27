@@ -148,6 +148,9 @@ export default function AdminPrealertsPage() {
         volumeM3: optionalNumberForReceive(draft.volumeM3),
         domesticTrackingNo: draft.domesticTrackingNo.trim() || undefined,
         transportMode: draft.transportMode,
+        // 仓库、发货日期：弹窗里能改，以前根本没发出去（2026-09-28 审查修复 #12）
+        warehouseId: draft.warehouseId || undefined,
+        shipDate: draft.shipDate?.trim() || undefined,
         /* 2026-08-31 条目30 → 深夜老板重申「钱只在集货里」：应收金额录入拆除，柜号保留。 */
         batchNo: batchNo || undefined,
       });

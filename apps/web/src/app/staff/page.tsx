@@ -1192,8 +1192,8 @@ export default function StaffHomePage() {
   const exportMoreFields: ExportFieldDef[] = [
     { key: "domesticTrackingNo", label: "国内单号", type: "text" },
     { key: "itemName", label: "品名", type: "text" },
+    // 「柜号」比的是 batchNo；原来另有个「批次号」框才是真柜号（2026-09-28 审查修复 #9 合成一个）
     { key: "containerNo", label: "柜号", type: "text" },
-    { key: "batchNo", label: "批次号", type: "text" },
     { key: "packageCount", label: "包裹数量", type: "text" },
     { key: "productQuantity", label: "产品数量", type: "text" },
     { key: "weightKg", label: "重量", type: "text" },
@@ -1229,6 +1229,9 @@ export default function StaffHomePage() {
       console.error(e); // 拿不到配置时走下面「未按低消调整」的列名，不中断导出
     }
     const billedVolumeCol = minVolumeMap ? "计费体积" : "计费体积(未按低消调整)";
+    /* 拆过柜的父单：item.packageCount / weightKg / volumeM3 都是**剩余量**（员工端列表接口按运单给）。
+       导出跟列表那几列用同一套函数 totalPackageCountOf / totalWeightOf / totalVolumeOf，计费体积也按整票算
+       （2026-09-28 审查修复 #10：原来导出写的是剩余量，拿去对账会少算；件数不跟着改会变成「30 件 100 公斤」）。 */
     const rows = source.map((item) => ({
       // 导出的品名带全部产品名（2026-09-11，同尾端派送单那次的口径）
       运单号: item.trackingNo ?? "-", 品名: productNamesLabel(item.products, item.itemName) || "-",
@@ -1239,11 +1242,11 @@ export default function StaffHomePage() {
       加收金额: item.receivableAmountCny != null ? `${item.receivableCurrency === "THB" ? "THB" : "CNY"} ${item.receivableAmountCny}` : "0",
       运输方式: transportModeLabel(item.transportMode),
       发货时间: item.shipDate ?? formatDateTime(item.arrivedAt, "-"),
-      总件数: item.packageCount ?? "-", 总重量: item.weightKg ?? "-", 总体积: item.volumeM3 ?? "-",
+      总件数: totalPackageCountOf(item) ?? "-", 总重量: totalWeightOf(item) ?? "-", 总体积: totalVolumeOf(item) ?? "-",
       长cm: productDim(item.products, "lengthCm"),
       宽cm: productDim(item.products, "widthCm"),
       高cm: productDim(item.products, "heightCm"),
-      [billedVolumeCol]: item.volumeM3 != null && item.volumeM3 > 0 ? Math.max(item.volumeM3, minVolumeMap?.[item.transportMode ?? ""] ?? 0).toFixed(3) : "-",
+      [billedVolumeCol]: (totalVolumeOf(item) ?? 0) > 0 ? Math.max(totalVolumeOf(item)!, minVolumeMap?.[item.transportMode ?? ""] ?? 0).toFixed(3) : "-",
       所属仓库: warehouseLabelFromId(item.warehouseId),
       收货地址: truncateText(item.receiverAddressTh, 40),
       柜号: item.batchNo ?? "-", 国内单号: item.domesticTrackingNo ?? "-",
@@ -2413,6 +2416,9 @@ export default function StaffHomePage() {
                     volumeM3: optionalNumberForReceive(draft.volumeM3),
                     domesticTrackingNo: draft.domesticTrackingNo,
                     transportMode: draft.transportMode,
+                    // 仓库、发货日期：弹窗里能改，以前根本没发出去（2026-09-28 审查修复 #12）
+                    warehouseId: draft.warehouseId || undefined,
+                    shipDate: draft.shipDate?.trim() || undefined,
                     /* 2026-08-31 排查条目1 → 深夜老板重申「钱只在集货里」：
                        弹窗一度接过「应收金额」，当晚拆除——普通运单不录钱。柜号保留。 */
                     batchNo: batchNo || undefined,

@@ -31,9 +31,13 @@ export function iso(d: Date | null | undefined): string | null {
   return d ? d.toISOString() : null;
 }
 
-/** 轨迹 / 状态日志的备注：柜号抹掉 + 代码拼进去的「管理员…」抹掉。代理看到的跟客户一样 */
-export function remarkForAgent(remark: string | null | undefined): string {
-  return hideOperatorInRemark(sanitizeRemarkForClient(remark ?? "", true), "agent");
+/**
+ * 轨迹 / 状态日志的备注：柜号抹掉 + 代码拼进去的「管理员…」抹掉。代理看到的跟客户一样。
+ * containerNos：这票货真实装过的柜号，按号精确抹（2026-09-28 审查修复 #2；
+ * 光靠固定写法的正则认不出员工手写的「MEDU1234567 今日开船」）。仓库版集货没有真柜号可传，照旧只走固定写法。
+ */
+export function remarkForAgent(remark: string | null | undefined, containerNos: string[] = []): string {
+  return hideOperatorInRemark(sanitizeRemarkForClient(remark ?? "", true, containerNos), "agent");
 }
 
 /**

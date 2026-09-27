@@ -191,11 +191,14 @@ const ledgerRow: Row = {
   }),
   orderProduct: strict("orderProduct", { findMany: async () => [] }),
   orderProductImage: strict("orderProductImage", { findMany: async () => [] }),
+  // 2026-09-28：/client/orders 多查一次这批单装过的柜号，用来抹备注里的柜号（不涉及操作人）
+  shipmentContainerItem: strict("shipmentContainerItem", { findMany: async () => [] }),
   shipment: strict("shipment", {
     findFirst: async (args) => shape(trackParent, args),
     findMany: async (args) => (args?.where?.parentTrackingNo ? shape([trackChild], args) : []),
   }),
-  adminLastmileOrder: strict("adminLastmileOrder", { findFirst: async () => null }),
+  // 2026-09-28：轨迹接口多查一次子单各自的派送单（findMany），父单自己的仍是 findFirst
+  adminLastmileOrder: strict("adminLastmileOrder", { findFirst: async () => null, findMany: async () => [] }),
   consolidationTask: strict("consolidationTask", {
     findFirst: async (args) => shape(taskRow, args),
     findMany: async (args) => shape([taskRow], args),

@@ -1475,11 +1475,50 @@ export function registerContainerRoutes(app: MinimalHttpApp): void {
           where: { parentTrackingNo: shipment.trackingNo, companyId: auth.companyId },
           include: {
             statusLogs: { orderBy: { changedAt: "asc" } },
+            // 子单装在哪个柜：抹备注里的柜号要用（2026-09-28）
+            containerItems: { select: { container: { select: { containerNo: true } } } },
           },
           orderBy: { trackingNo: "asc" },
         });
 
+    /**
+     * 派送单挂在哪张单上就在哪张单上查（2026-09-28 审查修复 #3）：
+     * 尾端派送是按**子单**开的（CLAUDE.md #14），原来这里只查父单自己的派送单，
+     * 客户从「我的运单」点父单看轨迹，派送信息（司机 / 车牌 / 电话 / 签收照）永远是空的 ——
+     * 线上 1477 张派送单里 1440 张挂在子单上。现在子单各自带自己的 lastmile，弹窗按页签显示。
+     */
+    const childLastmileRows = childShipments.length > 0
+      ? await prisma.adminLastmileOrder.findMany({
+          where: { shipmentId: { in: childShipments.map((cs) => cs.id) } },
+          orderBy: { updatedAt: "desc" },
+        })
+      : [];
+    const childLastmileByShipment = new Map<string, (typeof childLastmileRows)[number]>();
+    for (const row of childLastmileRows) {
+      if (!childLastmileByShipment.has(row.shipmentId)) childLastmileByShipment.set(row.shipmentId, row);
+    }
+    const formatLastmile = (lm: (typeof childLastmileRows)[number] | null | undefined) =>
+      lm
+        ? {
+            carrierName: lm.carrierName,
+            driverName: lm.driverName,
+            licensePlate: lm.licensePlate,
+            phoneNumber: lm.phoneNumber,
+            signImageBase64: lm.signImageBase64 ? `data:image/jpeg;base64,${lm.signImageBase64}` : null,
+            status: lm.status,
+          }
+        : null;
+
     const isClient = auth.role === "client";
+    /**
+     * 这票货（父单 + 子单）真实装过的柜号，按号精确抹（2026-09-28 审查修复 #2）。
+     * 整柜那边 9-24 已经这么做了；普通运单这条路一直只认「装入柜子 X」两种固定写法，
+     * 员工推状态时手写「柜号 MEDU1234567 已开船」原样发给客户。
+     */
+    const familyContainerNos = [
+      ...shipment.containerItems.map((it) => it.container.containerNo),
+      ...childShipments.flatMap((cs) => cs.containerItems.map((it) => it.container.containerNo)),
+    ];
 
     /**
      * 装柜时写的日志内容是「装入柜子 <柜号>（分装 N件）」，柜号就藏在正文里。
@@ -1490,7 +1529,7 @@ export function registerContainerRoutes(app: MinimalHttpApp): void {
      * 别再各写各的（CLAUDE.md 第 20 条）。
      */
     const sanitizeRemark = (remark: string): string =>
-      sanitizeRemarkForClient(remark, isClient);
+      sanitizeRemarkForClient(remark, isClient, familyContainerNos);
 
     type TrackLog = { id: string; fromStatus: string; toStatus: string; remark: string | null; nextStop?: string | null; changedAt: Date; operatorId: string; operatorRole: string; operatorName: string | null };
     /**
@@ -1520,8 +1559,9 @@ export function registerContainerRoutes(app: MinimalHttpApp): void {
         fromStatus: log.fromStatus,
         toStatus: log.toStatus,
         remark: sanitizeRemark(log.remark ?? ""),
-        // 「下一站【泰国边境】」，客户看得到货接下来去哪；老轨迹没有这个字段就不显示
-        nextStop: log.nextStop ?? "",
+        // 「下一站【泰国边境】」，客户看得到货接下来去哪；老轨迹没有这个字段就不显示。
+        // 这一格员工也是随手写的，柜号照样按号抹（2026-09-28，同 #2；整柜那边 9-24 起就抹了这一格）
+        nextStop: sanitizeRemark(log.nextStop ?? ""),
         changedAt: log.changedAt.toISOString(),
         /**
          * 操作人是内部信息：只有超级管理员拿得到（2026-09-15 老板拍板，员工也不行）。
@@ -1621,18 +1661,13 @@ export function registerContainerRoutes(app: MinimalHttpApp): void {
               const owner = ownerOf(cs);
               return cs.statusLogs.map((log) => mapLog(log, cs.trackingNo, owner));
             })(),
+            // 这张子单自己的派送单（2026-09-28）；没有就是 null
+            lastmile: formatLastmile(childLastmileByShipment.get(cs.id)),
           }))
         : undefined,
       createdAt: shipment.createdAt.toISOString(),
       updatedAt: shipment.updatedAt.toISOString(),
-      lastmile: lastmileOrder ? {
-        carrierName: lastmileOrder.carrierName,
-        driverName: lastmileOrder.driverName,
-        licensePlate: lastmileOrder.licensePlate,
-        phoneNumber: lastmileOrder.phoneNumber,
-        signImageBase64: lastmileOrder.signImageBase64 ? `data:image/jpeg;base64,${lastmileOrder.signImageBase64}` : null,
-        status: lastmileOrder.status,
-      } : null,
+      lastmile: formatLastmile(lastmileOrder),
     });
   });
 }

@@ -153,7 +153,10 @@ export function adminOrderFilterRow(item: {
     // 管理员端原来的写法：没有到仓日期就退到建单日期
     arrivedAt: item.shipDate ?? item.createdAt?.slice(0, 10) ?? "",
     logisticsStatus: shipmentStatusZh(item.currentStatus ?? undefined),
-    containerNo: lower(item.containerNo),
+    // 「柜号」筛选主要比 batchNo：收货 / 建单填的柜号存这个字段；原来只比 shipments.containerNo（线上 0 条），
+    // 员工按柜号搜永远搜不到（2026-09-28 审查修复 #9）。containerNo 也一起比：超管编辑里「装柜号」那一格写的是它，
+    // 不带上的话那一格填的号就再也搜不到了
+    containerNo: lower([item.batchNo, item.containerNo].filter(Boolean).join(" ")),
     transportMode: text(item.transportMode),
     receiverAddress: lower(item.receiverAddressTh),
     shipDate: (item.shipDate ?? "").slice(0, 10),
@@ -188,7 +191,10 @@ export function staffShipmentFilterRow(item: {
     volumeM3: item.volumeM3 == null ? "" : String(item.volumeM3),
     arrivedAt: item.arrivedAt ? item.arrivedAt.slice(0, 10) : "",
     logisticsStatus: shipmentStatusZh(item.currentStatus ?? undefined),
-    containerNo: lower(item.containerNo),
+    // 「柜号」筛选主要比 batchNo：收货 / 建单填的柜号存这个字段；原来只比 shipments.containerNo（线上 0 条），
+    // 员工按柜号搜永远搜不到（2026-09-28 审查修复 #9）。containerNo 也一起比：超管编辑里「装柜号」那一格写的是它，
+    // 不带上的话那一格填的号就再也搜不到了
+    containerNo: lower([item.batchNo, item.containerNo].filter(Boolean).join(" ")),
     transportMode: text(item.transportMode),
     receiverAddress: lower(item.receiverAddressTh),
     shipDate: (item.shipDate ?? "").trim().slice(0, 10),

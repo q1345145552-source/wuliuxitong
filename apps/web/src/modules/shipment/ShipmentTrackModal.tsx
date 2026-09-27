@@ -48,6 +48,16 @@ interface TimelineItem {
   operatorName?: string;
 }
 
+/** 派送信息（尾端派送单）：父单、子单各自带自己的 */
+interface LastmileInfo {
+  carrierName: string;
+  driverName?: string | null;
+  licensePlate?: string | null;
+  phoneNumber?: string | null;
+  signImageBase64?: string | null;
+  status: string;
+}
+
 interface ChildShipmentData {
   trackingNo: string;
   batchNo: string | null;
@@ -55,6 +65,8 @@ interface ChildShipmentData {
   packageCount: number | null;
   currentStatus: string;
   timeline: TimelineItem[];
+  /** 这张子单自己的派送单（2026-09-28 后端下发；派送是按子单开的，父单自己往往没有） */
+  lastmile?: LastmileInfo | null;
 }
 
 interface TrackData {
@@ -77,14 +89,7 @@ interface TrackData {
   }>;
   timeline: TimelineItem[];
   children?: ChildShipmentData[];
-  lastmile?: {
-    carrierName: string;
-    driverName?: string | null;
-    licensePlate?: string | null;
-    phoneNumber?: string | null;
-    signImageBase64?: string | null;
-    status: string;
-  } | null;
+  lastmile?: LastmileInfo | null;
 }
 
 import { shipmentStatusZh } from "./shipment-status";
@@ -398,8 +403,9 @@ function TrackContent({ data, onReload }: { data: TrackData; onReload?: () => vo
     }
   };
   const allTabs = [
-    { trackingNo: data.trackingNo, currentStatus: data.currentStatus, partialAhead: data.partialAhead, timeline: data.timeline, packageCount: undefined as number | undefined },
-    ...(data.children ?? []).map(c => ({ trackingNo: c.trackingNo, currentStatus: c.currentStatus, partialAhead: undefined as string | undefined, timeline: c.timeline, packageCount: c.packageCount })),
+    { trackingNo: data.trackingNo, currentStatus: data.currentStatus, partialAhead: data.partialAhead, timeline: data.timeline, packageCount: undefined as number | undefined, lastmile: data.lastmile ?? null },
+    // 派送信息按页签各看各的（2026-09-28 审查修复 #3）：派送单开在子单上，原来只读 data.lastmile（父单），客户点父单永远看不到司机
+    ...(data.children ?? []).map(c => ({ trackingNo: c.trackingNo, currentStatus: c.currentStatus, partialAhead: undefined as string | undefined, timeline: c.timeline, packageCount: c.packageCount, lastmile: c.lastmile ?? null })),
   ];
   const tab = allTabs[activeTab] ?? allTabs[0];
   const currentCfg = statusCfg(tab.currentStatus);
@@ -446,20 +452,20 @@ function TrackContent({ data, onReload }: { data: TrackData; onReload?: () => vo
         </div>
       ) : null}
 
-      {/* 尾程派送 */}
-      {data.lastmile ? (
+      {/* 尾程派送：按当前页签（父单 / 某张子单）显示它自己的派送单 */}
+      {tab.lastmile ? (
         <div style={{ marginBottom: 14, fontSize: 13, color: "var(--t-muted)" }}>
           <div style={{ fontWeight: 600, color: "var(--t-body)", marginBottom: 4 }}>派送信息</div>
-          {data.lastmile.driverName ? <div>司机：{data.lastmile.driverName}</div> : null}
-          {data.lastmile.licensePlate ? <div>车牌：{data.lastmile.licensePlate}</div> : null}
-          {data.lastmile.phoneNumber ? <div>电话：{data.lastmile.phoneNumber}</div> : null}
-          <div>状态：{data.lastmile.status === "SIGNED" ? "已签收" : " 派送中"}</div>
-          {data.lastmile.signImageBase64 ? (
+          {tab.lastmile.driverName ? <div>司机：{tab.lastmile.driverName}</div> : null}
+          {tab.lastmile.licensePlate ? <div>车牌：{tab.lastmile.licensePlate}</div> : null}
+          {tab.lastmile.phoneNumber ? <div>电话：{tab.lastmile.phoneNumber}</div> : null}
+          <div>状态：{tab.lastmile.status === "SIGNED" ? "已签收" : " 派送中"}</div>
+          {tab.lastmile.signImageBase64 ? (
             <div style={{ marginTop: 6 }}>
               <img
-                src={data.lastmile.signImageBase64}
+                src={tab.lastmile.signImageBase64}
                 alt="签收凭证"
-                onClick={() => setZoomImage(data.lastmile!.signImageBase64!)}
+                onClick={() => setZoomImage(tab.lastmile!.signImageBase64!)}
                 title="点击查看大图"
                 style={{ maxWidth: 200, maxHeight: 200, borderRadius: 6, border: "1px solid var(--l-soft)", cursor: "zoom-in", display: "block" }}
               />

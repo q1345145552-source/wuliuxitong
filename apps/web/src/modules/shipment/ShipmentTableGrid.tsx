@@ -186,8 +186,10 @@ export function buildProductDetailRows(item: ProductCarrier): string[][] {
  *
  * ⚠️ 员工端千万不能直接退到 packageCount：那张表上的 packageCount 是
  *    **还剩没装**，装走一批就少一批，标成「总箱数」是错的。
- *    管理员端和客户端的 packageCount 是订单上的整单箱数，退到它才对 ——
+ *    客户端的 packageCount 是订单上的整单箱数，退到它才对 ——
  *    两边同名不同义，所以这里必须先看 totalPackageCount。
+ *    （2026-09-28 核对更正：管理员端列表接口给的 packageCount 也是**运单上的**，
+ *    拆过柜的父单同样是剩余量，不是整单箱数。导出一律走这个函数，别直接读 packageCount。）
  */
 export function totalPackageCountOf(
   item: ProductCarrier & { packageCount?: number | null; totalPackageCount?: number | null },

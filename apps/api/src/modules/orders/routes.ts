@@ -83,6 +83,9 @@ function decToNumber(value: Prisma.Decimal | null | undefined): number | null {
   return Number(value.toString());
 }
 
+/** 四个仓库的 id，跟 fcl-containers/routes.ts 的 WAREHOUSE_IDS 一致（收货确认改仓库时按名单卡，2026-09-28） */
+const RECEIVE_WAREHOUSE_IDS = ["wh_yiwu_01", "wh_guangzhou_01", "wh_dongguan_01", "wh_shenzhen_01"];
+
 /**
  * 根据仓库ID返回湘泰运单号前缀。
  */
@@ -476,9 +479,32 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
          弹窗里的柜号随收货保存；「应收金额」一度接进来过，当晚按老板拍板拆除 ——
          普通运单不录钱，跟 2026-08-07「运单不再涉及金额」保持一致。 */
       batchNo?: string;
+      /* 2026-09-28 审查修复 #12：收货弹窗一直能改「仓库」「发货日期」，点确认也提示成功，
+         但接口根本不收这两个字段 —— 员工以为改好了，库里还是老的。现在收，且照建单那套校验。 */
+      warehouseId?: string;
+      shipDate?: string;
     };
     const orderId = body.orderId?.trim();
     if (!orderId) { fail(res, 400, "BAD_REQUEST", "orderId is required"); return; }
+    let receiveWarehouseId: string | undefined;
+    if (body.warehouseId !== undefined && body.warehouseId !== null && String(body.warehouseId).trim() !== "") {
+      const w = String(body.warehouseId).trim();
+      if (!RECEIVE_WAREHOUSE_IDS.includes(w)) { fail(res, 400, "VALIDATION_ERROR", "请选择仓库（义乌 / 广州 / 东莞 / 深圳）"); return; }
+      receiveWarehouseId = w;
+    }
+    let receiveShipDate: string | undefined;
+    if (body.shipDate !== undefined && body.shipDate !== null && String(body.shipDate).trim() !== "") {
+      const raw = String(body.shipDate).trim();
+      // 只认 YYYY-MM-DD 且要回头核对年月日（new Date("2026-02-31") 不报错、会顺延成 3-03，整柜那边 9-24 踩过）
+      const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(raw);
+      const d = m ? new Date(`${raw}T00:00:00.000Z`) : null;
+      if (!m || !d || Number.isNaN(d.getTime())
+        || d.getUTCFullYear() !== Number(m[1]) || d.getUTCMonth() + 1 !== Number(m[2]) || d.getUTCDate() !== Number(m[3])) {
+        fail(res, 400, "VALIDATION_ERROR", `发货日期要写成 2026-09-01 这种格式，而且得是真实存在的日子（收到「${raw}」）`);
+        return;
+      }
+      receiveShipDate = raw;
+    }
 
     /**
      * ⚠️⚠️ **确认收货是「把仓库实收的数字定下来」，写错就一路错到底**（2026-08-29 第九轮收紧）。
@@ -575,6 +601,9 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
     if (body.domesticTrackingNo) updateData.domesticTrackingNo = body.domesticTrackingNo;
     // 2026-08-31（排查报告第 1 条）：柜号传了才写，没传不动
     if (receiveBatchNo !== undefined) updateData.batchNo = receiveBatchNo;
+    // 2026-09-28（#12）：仓库、发货日期同样「传了才写」
+    if (receiveWarehouseId !== undefined) updateData.warehouseId = receiveWarehouseId;
+    if (receiveShipDate !== undefined) updateData.shipDate = receiveShipDate;
 
     /**
      * ⚠️⚠️ **订单 + 运单 + 轨迹必须在同一个事务里**（2026-08-29 第九轮改）。
@@ -631,6 +660,8 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
         if (body.packageUnit) sUpdate.packageUnit = body.packageUnit;
         if (body.transportMode) sUpdate.transportMode = body.transportMode;
         if (body.itemName?.trim()) sUpdate.itemName = body.itemName.trim();
+        // 仓库也要同步到运单：运单列表按 shipment.warehouseId 筛（2026-09-28，#12）
+        if (receiveWarehouseId !== undefined) sUpdate.warehouseId = receiveWarehouseId;
         // 柜号要同步写到运单上：运单列表显示的是 shipment.batchNo（shipments/routes.ts），
         // 只写订单的话，收货时填的柜号在运单列表里看不到——「订单详情」编辑那条路
         // （patch-shipment-bundle）也是两边一起写的，口径保持一致（2026-08-31）
@@ -1045,8 +1076,10 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
       /* 2026-08-31（排查报告第 23 条）：加上 received。
          员工点「确认收货」后订单变成 received，全系统没有任何代码再把它改回来——
          原来这里只认 approved/shipped，单子一被确认到仓就从客户的订单列表、
-         三个分组按钮和首页统计里全部消失，客户会以为单丢了。 */
-      approvalStatus: { in: ["approved", "shipped"] },
+         三个分组按钮和首页统计里全部消失，客户会以为单丢了。
+         ⚠️ 2026-09-03 那次收口径的提交（7a4a17b）把 received 又删掉了、注释却没动，
+         2026-09-28 审查（#4）实跑复现后加回来；scripts/test-audit-0927-fixes-db.ts 钉住。 */
+      approvalStatus: { in: ["approved", "shipped", "received"] },
       clientId: auth.userId,
       // 运单号搜索下推到数据库：父单、子单任一命中都算，且 count 与列表口径一致
       ...(trackingNo ? { shipments: { some: { trackingNo } } } : {}),
@@ -1134,12 +1167,30 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
         })),
     );
 
+    /**
+     * 每张订单（父单 + 子单）真实装过的柜号，备注按号精确抹（2026-09-28 审查修复 #2）。
+     * 原来只认「装入柜子 X」两种固定写法，员工手写的柜号会从 remark / logisticsRecords 漏给客户。
+     */
+    const containerNosByOrderId = new Map<string, string[]>();
+    if (filtered.length > 0) {
+      const ciRows = await prisma.shipmentContainerItem.findMany({
+        where: { shipment: { companyId: auth.companyId, orderId: { in: filtered.map((o) => o.id) } } },
+        select: { shipment: { select: { orderId: true } }, container: { select: { containerNo: true } } },
+      });
+      for (const row of ciRows) {
+        const list = containerNosByOrderId.get(row.shipment.orderId) ?? [];
+        list.push(row.container.containerNo);
+        containerNosByOrderId.set(row.shipment.orderId, list);
+      }
+    }
+
     const items = filtered.map((o) => {
       // orderBy 已保证父单排在最前 + take:1，这里直接取即可
       const ship = o.shipments[0];
       const totalMetrics = totalMetricsByOrderId.get(o.id);
+      const orderContainerNos = containerNosByOrderId.get(o.id) ?? [];
       const logisticsRecords = (ship?.statusLogs ?? []).map((r) => ({
-        remark: sanitizeRemarkForClient(r.remark ?? "", true),
+        remark: sanitizeRemarkForClient(r.remark ?? "", true, orderContainerNos),
         changedAt: r.changedAt.toISOString(),
         fromStatus: r.fromStatus,
         toStatus: r.toStatus,
@@ -1183,7 +1234,7 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
         shipDate: o.shipDate,
         cargoType: o.cargoType ?? "normal",
         latestRemark,
-        remark: ship?.remark == null ? null : sanitizeRemarkForClient(ship.remark, true),
+        remark: ship?.remark == null ? null : sanitizeRemarkForClient(ship.remark, true, orderContainerNos),
         logisticsRecords,
         createdAt: o.createdAt.toISOString(),
         updatedAt: o.updatedAt.toISOString(),

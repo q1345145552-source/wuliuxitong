@@ -21,6 +21,7 @@ import { EXCLUDE_FCL_ORDER } from "../core/fcl-scope";
 import type { HttpRequest, MinimalHttpApp } from "../../server";
 import { fail, ok } from "../core/http-utils";
 import { requireAgent, type AgentAuth } from "../core/agent-scope";
+import { sanitizeRemarkForClient } from "../core/client-privacy";
 import { BusinessError } from "../core/business-error";
 import { CONSOLIDATION_CURRENCY } from "../wallet/consolidation-balance";
 import { LONG_TERM_PRICE_OFF_MESSAGE, LONG_TERM_PRICE_WRITE_ENABLED, setAgentClientWhrPrice } from "../whr-consolidation/long-term-price";
@@ -593,6 +594,8 @@ export function registerAgentPortalRoutes(app: MinimalHttpApp): void {
                 departureDate: true,
                 ata: true,
                 customsClearedAt: true,
+                // ⚠️ 只用来抹备注里的柜号（2026-09-28 审查修复 #2），绝不下发：下面 containers 逐字段映射，没有它
+                containerNo: true,
               },
             },
           },
@@ -629,8 +632,15 @@ export function registerAgentPortalRoutes(app: MinimalHttpApp): void {
               orderBy: { changedAt: "asc" },
               select: { fromStatus: true, toStatus: true, remark: true, nextStop: true, changedAt: true },
             },
+            // 同上：只用来抹柜号，不下发
+            containerItems: { select: { container: { select: { containerNo: true } } } },
           },
         });
+    // 这票货（父单 + 子单）真实装过的柜号，备注按号精确抹（2026-09-28 审查修复 #2）
+    const familyContainerNos = [
+      ...shipment.containerItems.map((it) => it.container.containerNo),
+      ...childShipments.flatMap((cs) => cs.containerItems.map((it) => it.container.containerNo)),
+    ];
 
     // 派送单一车拉多家的货：只取这张运单自己那一行，派送单号（能串到别人）不给
     const lastmile = await prisma.adminLastmileOrder.findFirst({
@@ -646,8 +656,9 @@ export function registerAgentPortalRoutes(app: MinimalHttpApp): void {
       trackingNo: no,
       fromStatus: log.fromStatus,
       toStatus: log.toStatus,
-      remark: remarkForAgent(log.remark),
-      nextStop: log.nextStop ?? "",
+      remark: remarkForAgent(log.remark, familyContainerNos),
+      // 「下一站」员工也是随手写的，柜号照样按号抹（2026-09-28，同 #2；口径同整柜那边）
+      nextStop: sanitizeRemarkForClient(log.nextStop ?? "", true, familyContainerNos),
       changedAt: log.changedAt.toISOString(),
     });
     // 父单轨迹 = 自己 + 全部子单，按时间合并（口径同 /client/shipments/track）

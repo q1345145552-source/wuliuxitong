@@ -134,14 +134,15 @@ interface PrealertItem {
   status: string;
   receivedAt: string | null;
   signedAt?: string | null;
-  warehouseReceiptBase64?: string | null;
+  /** 仓库签收照片（后端字段就叫这个；2026-09-28 修：原来读的 *Base64 单图字段后端从来没有，超管永远看不到图） */
+  warehouseReceiptProofs?: { base64Path: string; fileName: string; mime: string; uploadedAt?: string }[];
   totalFee?: number | null;
   feeBreakdown?: FeeBreakdown | null;
   paymentProofs?: { fileName?: string; mime?: string; base64Path?: string; base64?: string; uploadedAt?: string }[];
   paymentProofUploadedAt?: string | null;
   paymentReviewedAt?: string | null;
   paymentRejectReason?: string | null;
-  thailandReceiptBase64?: string | null;
+  thailandReceiptProofs?: { base64Path: string; fileName: string; mime: string; uploadedAt?: string }[];
   thailandReceivedAt?: string | null;
   createdAt: string;
   items: {
@@ -1081,11 +1082,15 @@ export default function AdminWhrConsolidationPage() {
                                           </div>
                                         )}
 
-                                        {/* 收货凭证 */}
-                                        {pa.warehouseReceiptBase64 && (
+                                        {/* 收货凭证（仓库签收照，可能多张）—— 跟员工页同一个字段 warehouseReceiptProofs */}
+                                        {(pa.warehouseReceiptProofs ?? []).length > 0 && (
                                           <div style={{ marginBottom: 8 }}>
-                                            <div style={{ color: "var(--t-muted)", marginBottom: 4 }}>收货凭证</div>
-                                            <img src={pa.warehouseReceiptBase64} alt="收货凭证" onClick={() => setPreviewImage(pa.warehouseReceiptBase64!)} style={{ maxWidth: "100%", maxHeight: 180, borderRadius: 6, border: "1px solid var(--l-soft)", cursor: "pointer" }} />
+                                            <div style={{ color: "var(--t-muted)", marginBottom: 4 }}>收货凭证（{(pa.warehouseReceiptProofs ?? []).length}张）</div>
+                                            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                                              {(pa.warehouseReceiptProofs ?? []).map((pf, i) => (
+                                                <img key={`wr-${pa.id}-${i}`} src={pf.base64Path} alt={`收货凭证 ${i + 1}`} onClick={() => setPreviewImage(pf.base64Path)} style={{ maxWidth: 160, maxHeight: 120, borderRadius: 6, border: "1px solid var(--l-soft)", cursor: "pointer" }} />
+                                              ))}
+                                            </div>
                                           </div>
                                         )}
 
@@ -1109,11 +1114,15 @@ export default function AdminWhrConsolidationPage() {
                                           </div>
                                         )}
 
-                                        {/* 泰国签收单 */}
-                                        {pa.thailandReceiptBase64 && (
+                                        {/* 泰国签收单（可能多张）—— 跟员工页同一个字段 thailandReceiptProofs（2026-09-28 修，原来读的 *Base64 字段后端没有） */}
+                                        {((pa.thailandReceiptProofs ?? []).length > 0 || pa.thailandReceivedAt) && (
                                           <div style={{ marginBottom: 8 }}>
-                                            <div style={{ color: "var(--t-muted)", marginBottom: 4 }}>泰国签收单</div>
-                                            <img src={pa.thailandReceiptBase64} alt="泰国签收单" onClick={() => setPreviewImage(pa.thailandReceiptBase64!)} style={{ maxWidth: "100%", maxHeight: 180, borderRadius: 6, border: "1px solid var(--l-soft)", cursor: "pointer" }} />
+                                            <div style={{ color: "var(--t-muted)", marginBottom: 4 }}>泰国签收单{(pa.thailandReceiptProofs ?? []).length > 0 ? `（${(pa.thailandReceiptProofs ?? []).length}张）` : ""}</div>
+                                            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                                              {(pa.thailandReceiptProofs ?? []).map((pf, i) => (
+                                                <img key={`th-${pa.id}-${i}`} src={pf.base64Path} alt={`泰国签收单 ${i + 1}`} onClick={() => setPreviewImage(pf.base64Path)} style={{ maxWidth: 160, maxHeight: 120, borderRadius: 6, border: "1px solid var(--c-green-2)", cursor: "pointer" }} />
+                                              ))}
+                                            </div>
                                             {pa.thailandReceivedAt && <div style={{ color: "var(--t-muted)", marginTop: 4 }}>签收时间：{formatBeijingTime(pa.thailandReceivedAt)}</div>}
                                           </div>
                                         )}

@@ -919,6 +919,9 @@ export async function receiveStaffPrealert(payload: {
   cargoType?: string;
   /* 2026-08-31：柜号随收货保存；应收金额一度接过、当晚按老板拍板拆除（钱只在集货里）。 */
   batchNo?: string;
+  /* 2026-09-28（审查修复 #12）：仓库、发货日期随收货保存（四个仓库 id 之一 / YYYY-MM-DD） */
+  warehouseId?: string;
+  shipDate?: string;
 }): Promise<{ orderId: string; status: string; updatedAt: string }> {
   const response = await fetch(`${apiBaseUrl()}/staff/prealerts/receive`, {
     method: "POST",

@@ -923,8 +923,19 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
             (s: number, r: { _sum: { packageCount: number | null } }) => s + (r._sum.packageCount ?? 0),
             0,
           );
+          /**
+           * ⚠️ 传进来的是**整票**的数（页面预填也是整票，2026-09-28 审查修复 #1）。
+           * 填得比已经装走的还少，说明填的不是整票（多半是把父单剩余量当整票填了），
+           * 原来 Math.max(0, …) 会悄悄写成「剩 0」、订单总数也跟着被改小 ——
+           * 实跑复现：100kg 的单装走 70，按 30 保存 → 订单 30、父单 0。现在直接拒绝，一个字不写。
+           */
           if (packageCount !== undefined && alreadyLoaded > 0) {
-            parentPackageCount = Math.max(0, packageCount - alreadyLoaded);
+            if (packageCount < alreadyLoaded) {
+              throw new BusinessError(
+                `整票箱数（${packageCount}）不能小于已经装走的 ${alreadyLoaded} 箱 —— 这张单拆过柜，这里要填整票的数，本次修改都没有保存。`,
+              );
+            }
+            parentPackageCount = packageCount - alreadyLoaded;
           }
           // 舍入位数跟数据库列一致（重量 Decimal(10,2)、体积 Decimal(10,3)），
           // 算法照抄 decimal-guard 的 roundToScale，免得浮点相减带出一串尾数。
@@ -941,9 +952,19 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
             alreadyLoadedVolumeM3 += r._sum.volumeM3 == null ? 0 : Number(r._sum.volumeM3.toString());
           }
           if (typeof weightKg === "number" && alreadyLoadedWeightKg > 0) {
+            if (weightKg + 0.005 < alreadyLoadedWeightKg) {
+              throw new BusinessError(
+                `整票重量（${weightKg} kg）不能小于已经装走的 ${roundToScale(alreadyLoadedWeightKg, 2)} kg —— 这张单拆过柜，这里要填整票的数，本次修改都没有保存。`,
+              );
+            }
             parentWeightKg = Math.max(0, roundToScale(weightKg - alreadyLoadedWeightKg, 2));
           }
           if (typeof volumeM3 === "number" && alreadyLoadedVolumeM3 > 0) {
+            if (volumeM3 + 0.0005 < alreadyLoadedVolumeM3) {
+              throw new BusinessError(
+                `整票体积（${volumeM3} m³）不能小于已经装走的 ${roundToScale(alreadyLoadedVolumeM3, 3)} m³ —— 这张单拆过柜，这里要填整票的数，本次修改都没有保存。`,
+              );
+            }
             parentVolumeM3 = Math.max(0, roundToScale(volumeM3 - alreadyLoadedVolumeM3, 3));
           }
         }
