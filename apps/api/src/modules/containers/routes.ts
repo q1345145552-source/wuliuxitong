@@ -24,6 +24,7 @@ import { syncParentStatusFromChildren } from "../shipments/parent-status";
 import type { MinimalHttpApp } from "../../server";
 import { fail, ok, requireRole } from "../core/http-utils";
 import { sanitizeRemarkForClient } from "../core/client-privacy";
+import { companyContainerNosForMasking } from "../core/container-nos";
 import { hideOperatorIdentity, operatorNameForDisplay } from "../core/operator-visibility";
 import { productNamesLabel } from "../../../../../packages/shared-types/product-names";
 import { logger } from "../core/logger";
@@ -1528,8 +1529,12 @@ export function registerContainerRoutes(app: MinimalHttpApp): void {
      * 2026-08-11：抽到 core/client-privacy.ts，免登录查轨迹那边共用同一份，
      * 别再各写各的（CLAUDE.md 第 20 条）。
      */
+    // 客户看的再加上本公司全部柜号（2026-09-28 Codex 复核：卸柜后原来那个柜号就不在这票货的名单里了）
+    const maskContainerNos = isClient
+      ? [...familyContainerNos, ...(await companyContainerNosForMasking(auth.companyId))]
+      : familyContainerNos;
     const sanitizeRemark = (remark: string): string =>
-      sanitizeRemarkForClient(remark, isClient, familyContainerNos);
+      sanitizeRemarkForClient(remark, isClient, maskContainerNos);
 
     type TrackLog = { id: string; fromStatus: string; toStatus: string; remark: string | null; nextStop?: string | null; changedAt: Date; operatorId: string; operatorRole: string; operatorName: string | null };
     /**

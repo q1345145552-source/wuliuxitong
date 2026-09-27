@@ -22,6 +22,7 @@ import type { HttpRequest, MinimalHttpApp } from "../../server";
 import { fail, ok } from "../core/http-utils";
 import { requireAgent, type AgentAuth } from "../core/agent-scope";
 import { sanitizeRemarkForClient } from "../core/client-privacy";
+import { companyContainerNosForMasking } from "../core/container-nos";
 import { BusinessError } from "../core/business-error";
 import { CONSOLIDATION_CURRENCY } from "../wallet/consolidation-balance";
 import { LONG_TERM_PRICE_OFF_MESSAGE, LONG_TERM_PRICE_WRITE_ENABLED, setAgentClientWhrPrice } from "../whr-consolidation/long-term-price";
@@ -624,6 +625,8 @@ export function registerAgentPortalRoutes(app: MinimalHttpApp): void {
           },
           orderBy: { trackingNo: "asc" },
           select: {
+            // id 只用来查子单自己的派送单，不下发
+            id: true,
             trackingNo: true,
             packageCount: true,
             itemName: true,
@@ -636,18 +639,44 @@ export function registerAgentPortalRoutes(app: MinimalHttpApp): void {
             containerItems: { select: { container: { select: { containerNo: true } } } },
           },
         });
-    // 这票货（父单 + 子单）真实装过的柜号，备注按号精确抹（2026-09-28 审查修复 #2）
+    // 这票货（父单 + 子单）真实装过的柜号 + 本公司全部柜号，备注按号精确抹（2026-09-28 审查修复 #2；Codex 复核后扩到全公司）
     const familyContainerNos = [
       ...shipment.containerItems.map((it) => it.container.containerNo),
       ...childShipments.flatMap((cs) => cs.containerItems.map((it) => it.container.containerNo)),
+      ...(await companyContainerNosForMasking(auth.companyId)),
     ];
 
     // 派送单一车拉多家的货：只取这张运单自己那一行，派送单号（能串到别人）不给
+    const LASTMILE_SELECT = { carrierName: true, driverName: true, licensePlate: true, phoneNumber: true, signImageBase64: true, status: true } as const;
     const lastmile = await prisma.adminLastmileOrder.findFirst({
       where: { shipmentId: shipment.id, companyId: auth.companyId },
       orderBy: { updatedAt: "desc" },
-      select: { carrierName: true, driverName: true, licensePlate: true, phoneNumber: true, signImageBase64: true, status: true },
+      select: LASTMILE_SELECT,
     });
+    /* 子单各自的派送单（2026-09-28 Codex 复核第 10 条）：派送是按子单开的，客户那边上午已经补上，
+       代理这边漏了 —— 代理点父单轨迹、切到子单页签，司机车牌一直是空的。字段跟父单那份一样（不给派送单号）。 */
+    const childLastmileRows = childShipments.length > 0
+      ? await prisma.adminLastmileOrder.findMany({
+          where: { shipmentId: { in: childShipments.map((cs) => cs.id) }, companyId: auth.companyId },
+          orderBy: { updatedAt: "desc" },
+          select: { shipmentId: true, ...LASTMILE_SELECT },
+        })
+      : [];
+    const childLastmileByShipment = new Map<string, (typeof childLastmileRows)[number]>();
+    for (const row of childLastmileRows) {
+      if (!childLastmileByShipment.has(row.shipmentId)) childLastmileByShipment.set(row.shipmentId, row);
+    }
+    const formatLastmile = (lm: { carrierName: string; driverName: string | null; licensePlate: string | null; phoneNumber: string | null; signImageBase64: string | null; status: string } | null | undefined) =>
+      lm
+        ? {
+            carrierName: lm.carrierName,
+            driverName: lm.driverName,
+            licensePlate: lm.licensePlate,
+            phoneNumber: lm.phoneNumber,
+            signImageBase64: lm.signImageBase64 ? `data:image/jpeg;base64,${lm.signImageBase64}` : null,
+            status: lm.status,
+          }
+        : null;
 
     const mapLog = (
       log: { fromStatus: string; toStatus: string; remark: string | null; nextStop: string | null; changedAt: Date },
@@ -704,18 +733,10 @@ export function registerAgentPortalRoutes(app: MinimalHttpApp): void {
               packageCount: cs.packageCount,
               currentStatus: cs.currentStatus,
               timeline: cs.statusLogs.map((l) => mapLog(l, cs.trackingNo)),
+              lastmile: formatLastmile(childLastmileByShipment.get(cs.id)),
             }))
           : undefined,
-      lastmile: lastmile
-        ? {
-            carrierName: lastmile.carrierName,
-            driverName: lastmile.driverName,
-            licensePlate: lastmile.licensePlate,
-            phoneNumber: lastmile.phoneNumber,
-            signImageBase64: lastmile.signImageBase64 ? `data:image/jpeg;base64,${lastmile.signImageBase64}` : null,
-            status: lastmile.status,
-          }
-        : null,
+      lastmile: formatLastmile(lastmile),
       createdAt: shipment.createdAt.toISOString(),
       updatedAt: shipment.updatedAt.toISOString(),
     });

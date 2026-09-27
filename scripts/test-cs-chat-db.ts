@@ -233,6 +233,21 @@ async function main(): Promise<void> {
       assert.equal(await pm.csConversation.count({ where: { clientId: AGENT_CLIENT.userId } }), 0, "给代理名下的客户建出了对话");
     });
 
+    await check("C9b 进门时还是直属客户、写进去之前被划给了代理（进门查的归属过时了）→ 锁里再核一次，403 不写", async () => {
+      await pm.user.update({ where: { id: CLIENT_B.userId }, data: { agentId: AGENT_ID } });
+      try {
+        const before = await pm.csMessage.count({ where: { companyId: CO } });
+        // CLIENT_B 这个 auth 里 agentId 还是 null（模拟进门那一刻查到的）
+        const r = await call("POST /client/chat/send", CLIENT_B, { content: "划走之后还想发" });
+        assert.equal(r.status, 403, `${r.status} ${r.message}`);
+        const s = await call("POST /staff/chat/send", STAFF, { clientId: CLIENT_B.userId, content: "员工这边也不许发" });
+        assert.notEqual(s.status, 200);
+        assert.equal(await pm.csMessage.count({ where: { companyId: CO } }), before, "划给代理以后还写进了消息");
+      } finally {
+        await pm.user.update({ where: { id: CLIENT_B.userId }, data: { agentId: null } });
+      }
+    });
+
     await check("C10 员工能先开口（客户还没聊过）；唛头不存在 404、不是客户 404", async () => {
       await pm.csMessage.deleteMany({ where: { conversation: { clientId: CLIENT_B.userId } } });
       await pm.csConversation.deleteMany({ where: { clientId: CLIENT_B.userId } });
@@ -324,6 +339,15 @@ async function main(): Promise<void> {
       assert.equal((await call("POST /staff/fcl-inquiries/quote", OTHER_STAFF, { id: inq.id, amountCny: 1 })).status, 404, "别家公司的员工改了我们的报价");
     });
 
+    await check("Q4b 同一个价、同一句说明重复报（上次其实存上了、网断了又点一次）：什么都不动，客户的「已接受」不被清掉", async () => {
+      const cur = await pm.fclInquiry.findUnique({ where: { id: inq.id } });
+      assert.equal(cur.status, "accepted");
+      const r = await must("POST /staff/fcl-inquiries/quote", STAFF, { id: inq.id, amountCny: Number(cur.quoteAmountCny), note: cur.quoteNote ?? "" });
+      assert.equal(r.status, "accepted", "同价重报把客户的接受清掉了");
+      const after = await pm.fclInquiry.findUnique({ where: { id: inq.id } });
+      assert.equal(after.quotedAt.toISOString(), cur.quotedAt.toISOString(), "同价重报刷新了报价时间");
+    });
+
     await check("Q5 已接受后员工再改价：回到「已报价」、客户要重新接受", async () => {
       const r = await must("POST /staff/fcl-inquiries/quote", STAFF, { id: inq.id, amountCny: 17000 });
       assert.equal(r.status, "quoted");
@@ -395,6 +419,22 @@ async function main(): Promise<void> {
       assert.equal(s.fclDeleted, false);
     });
 
+    await check("Q7b 从询价单转来的整柜：编辑时唛头改成别的客户 → 400 不写；同一个客户改别的（金额）照常能改", async () => {
+      const body = fclBody();
+      const c = await pm.container.findUnique({ where: { id: containerId }, include: { items: { include: { shipment: true } } } });
+      const base = {
+        containerId, trackingNo: c.items[0].shipment.trackingNo, containerNo: c.containerNo, containerType: "40HQ",
+        transportMode: "sea", warehouseId: "wh_yiwu_01", loadingDate: body.loadingDate, products: body.products,
+      };
+      const bad = await call("POST /staff/fcl-containers/update", STAFF, { ...base, clientId: CLIENT_B.userId, amountCny: "17000" });
+      assert.equal(bad.status, 400, bad.message);
+      assert.match(bad.message, /询价转来的/);
+      const order = await pm.order.findUnique({ where: { id: c.items[0].shipment.orderId } });
+      assert.equal(order.clientId, CLIENT.userId, "唛头被改了");
+      const good = await call("POST /staff/fcl-containers/update", STAFF, { ...base, clientId: CLIENT.userId, amountCny: "17500" });
+      assert.equal(good.status, 200, good.message);
+    });
+
     await check("Q8 转过了：再转一次 409 且不多建柜子；再改报价 409；客户再接受 409", async () => {
       const before = await pm.container.count({ where: { companyId: CO } });
       const r = await call("POST /staff/fcl-containers/create", STAFF, fclBody());
@@ -416,6 +456,24 @@ async function main(): Promise<void> {
       assert.equal(c.status, "accepted");
       const again = await must("POST /staff/fcl-containers/create", STAFF, fclBody());
       assert.equal((await pm.fclInquiry.findUnique({ where: { id: inq.id } })).fclContainerId, again.containerId);
+    });
+
+    await check("Q9b 没接受就转了整柜、后来整柜被删：页面显示「已报价」，客户点接受能成功（不能按库里的 converted 拒绝）", async () => {
+      const inq3 = await pm.fclInquiry.create({ data: {
+        companyId: CO, clientId: CLIENT.userId, createdBy: CLIENT.userId, createdByRole: "client",
+        productName: "没接受就转", cargoValue: "", cargoWeight: "", address: "曼谷", status: "pending",
+      } });
+      const q = await must("POST /staff/fcl-inquiries/quote", STAFF, { id: inq3.id, amountCny: 5000 });
+      const made = await must("POST /staff/fcl-containers/create", STAFF, fclBody({ inquiryId: inq3.id, amountCny: "5000" }));
+      const cn = (await pm.container.findUnique({ where: { id: made.containerId } })).containerNo;
+      await must("POST /admin/fcl-containers/delete", ADMIN, { containerId: made.containerId, confirmContainerNo: cn });
+      const c = (await must("GET /client/fcl-inquiries", CLIENT)).items.find((x: Row) => x.id === inq3.id);
+      assert.equal(c.status, "quoted");
+      const acc = await call("POST /client/fcl-inquiries/accept", CLIENT, { id: inq3.id, quotedAt: q.quotedAt });
+      assert.equal(acc.status, 200, `页面上有「接受」按钮，点了却被拒：${acc.message}`);
+      const db = await pm.fclInquiry.findUnique({ where: { id: inq3.id } });
+      assert.equal(db.status, "accepted");
+      assert.equal(db.convertedAt, null);
     });
 
     await check("Q10 不带询价单号建整柜：跟以前一模一样（不碰任何询价单）", async () => {

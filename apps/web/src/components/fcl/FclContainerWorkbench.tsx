@@ -378,6 +378,17 @@ export default function FclContainerWorkbench({ canUnsign = false, canDelete = f
     if (noName.length > 0) { setToast(`第 ${noName.join("、")} 行没填品名，补上再提交`); return; }
     const filled = products.filter((r) => !isBlankFclRow(r));
     if (filled.length === 0) { setToast("货物清单至少要填一行（品名必填）"); return; }
+    /* 转整柜时金额跟询价单上的报价不一样：问一句（2026-09-28 Codex 复核第 3 条）。
+       客户在「我的整柜」看到的是这里填的数；不问的话，询价单上写着客户接受了 A、整柜上却是 B，没人知道是有意改的。 */
+    if (!editingId && fromInquiry && fromInquiry.quoteAmountCny != null) {
+      const filledAmount = form.amountCny.trim();
+      if (filledAmount === "" || Number(filledAmount) !== fromInquiry.quoteAmountCny) {
+        const ok = window.confirm(
+          `询价单上的报价是 ¥${fromInquiry.quoteAmountCny.toLocaleString()}，这里填的金额是${filledAmount ? ` ¥${filledAmount}` : "空的"}。\n客户在「我的整柜」看到的是这里填的数。确定这样建？`,
+        );
+        if (!ok) return;
+      }
+    }
     submitInFlight.current = true;
     setSubmitting(true);
     setToast("");

@@ -22,6 +22,7 @@ import { fail, ok, requireRole } from "../core/http-utils";
 import { loadProductImagesForOrders, MAX_ORDER_PRODUCT_IMAGES } from "./product-images";
 import { saveImageToDisk, deleteImageFile } from "./image-storage";
 import { sanitizeRemarkForClient } from "../core/client-privacy";
+import { companyContainerNosForMasking } from "../core/container-nos";
 import { canSeeOperatorIdentity } from "../core/operator-visibility";
 import { loadOrderTotalMetrics } from "../shipments/total-metrics";
 
@@ -1168,29 +1169,17 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
     );
 
     /**
-     * 每张订单（父单 + 子单）真实装过的柜号，备注按号精确抹（2026-09-28 审查修复 #2）。
-     * 原来只认「装入柜子 X」两种固定写法，员工手写的柜号会从 remark / logisticsRecords 漏给客户。
+     * 备注里的柜号按「本公司全部柜号」精确抹（2026-09-28 审查修复 #2；Codex 复核后从「这张单装过的柜」扩到全公司：
+     * 卸过柜的货、员工写了别的柜号，原来都会漏）。再加 client-privacy 里按标准柜号样子认的那一道。
      */
-    const containerNosByOrderId = new Map<string, string[]>();
-    if (filtered.length > 0) {
-      const ciRows = await prisma.shipmentContainerItem.findMany({
-        where: { shipment: { companyId: auth.companyId, orderId: { in: filtered.map((o) => o.id) } } },
-        select: { shipment: { select: { orderId: true } }, container: { select: { containerNo: true } } },
-      });
-      for (const row of ciRows) {
-        const list = containerNosByOrderId.get(row.shipment.orderId) ?? [];
-        list.push(row.container.containerNo);
-        containerNosByOrderId.set(row.shipment.orderId, list);
-      }
-    }
+    const maskContainerNos = await companyContainerNosForMasking(auth.companyId);
 
     const items = filtered.map((o) => {
       // orderBy 已保证父单排在最前 + take:1，这里直接取即可
       const ship = o.shipments[0];
       const totalMetrics = totalMetricsByOrderId.get(o.id);
-      const orderContainerNos = containerNosByOrderId.get(o.id) ?? [];
       const logisticsRecords = (ship?.statusLogs ?? []).map((r) => ({
-        remark: sanitizeRemarkForClient(r.remark ?? "", true, orderContainerNos),
+        remark: sanitizeRemarkForClient(r.remark ?? "", true, maskContainerNos),
         changedAt: r.changedAt.toISOString(),
         fromStatus: r.fromStatus,
         toStatus: r.toStatus,
@@ -1234,7 +1223,7 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
         shipDate: o.shipDate,
         cargoType: o.cargoType ?? "normal",
         latestRemark,
-        remark: ship?.remark == null ? null : sanitizeRemarkForClient(ship.remark, true, orderContainerNos),
+        remark: ship?.remark == null ? null : sanitizeRemarkForClient(ship.remark, true, maskContainerNos),
         logisticsRecords,
         createdAt: o.createdAt.toISOString(),
         updatedAt: o.updatedAt.toISOString(),

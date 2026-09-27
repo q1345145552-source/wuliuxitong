@@ -169,6 +169,12 @@ let trackChildren: any[] = [];         // 它的子单
     },
   }),
   orderProductImage: strict("orderProductImage", { async findMany() { return []; } }),
+  // 2026-09-28：签收单 / 轨迹多查一次本公司全部柜号（core/container-nos.ts，抹备注里的柜号用），跟品名无关；只认这一句
+  async $queryRaw(strings: TemplateStringsArray) {
+    const sql = strings.join("?").replace(/\s+/g, " ");
+    assert.match(sql, /SELECT c\.container_no FROM containers c/, `路由多了一句没见过的原生查询：${sql}`);
+    return [];
+  },
   adminLastmileOrder: strict("adminLastmileOrder", {
     async findMany(args) {
       lastmileQueries.push(args); // 记下查询参数，第 2 项直接断言 select（Codex 第二轮 P2-2）

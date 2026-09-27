@@ -30,6 +30,7 @@ export default function StaffChatPage() {
   const [items, setItems] = useState<ChatConversation[]>([]);
   const [listError, setListError] = useState("");
   const [listLoaded, setListLoaded] = useState(false);
+  const [truncated, setTruncated] = useState(false);
   const [search, setSearch] = useState("");
   const [selected, setSelected] = useState<string>("");
   const [startInput, setStartInput] = useState("");
@@ -43,6 +44,7 @@ export default function StaffChatPage() {
       const data = await fetchChatConversations(searchRef.current);
       if (!gate.isCurrent(ticket)) return;
       setItems(data.items ?? []);
+      setTruncated(data.truncated === true);
       setListError("");
     } catch (e) {
       if (!gate.isCurrent(ticket)) return;
@@ -100,6 +102,11 @@ export default function StaffChatPage() {
           {listError ? <div style={{ padding: 16, fontSize: 13, color: "var(--c-red-deep)" }}>列表没取到：{listError}</div> : null}
           {listLoaded && !listError && items.length === 0 ? (
             <div style={{ padding: 16, fontSize: 13, color: "var(--t-faint)" }}>{search.trim() ? "没有这个唛头的对话" : "还没有客户发消息"}</div>
+          ) : null}
+          {truncated ? (
+            <div style={{ padding: "8px 12px", fontSize: 12, color: "var(--c-amber-deep)", background: "var(--c-amber-bg)" }}>
+              只列出最近 500 个对话，更早的请在上面搜唛头
+            </div>
           ) : null}
           {items.map((c) => {
             const active = c.clientId === selected;

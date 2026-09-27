@@ -89,6 +89,8 @@ export default function ChatThread(props: {
   const stickToBottomRef = useRef(true);
   const scopeRef = useRef(scope);
   scopeRef.current = scope;
+  /** 已经成功标过已读的「对方最后一条」的时间：标失败了下一轮会再标；翻上去看旧消息时不标 */
+  const lastMarkedRef = useRef("");
 
   const nearBottom = () => {
     const el = listRef.current;
@@ -98,18 +100,31 @@ export default function ChatThread(props: {
   const scrollToBottom = () => {
     const el = listRef.current;
     if (el) el.scrollTop = el.scrollHeight;
+    stickToBottomRef.current = true;
     setNewBelow(false);
   };
 
-  /** 看到了对方的消息：标已读（只在页面在前台时标，切到别的标签页不算看过） */
+  /**
+   * 看到了对方的消息：标已读。三个条件都要满足才算「看到了」：
+   *   · 页面在前台（切到别的标签页不算）；
+   *   · 停在最底下（2026-09-28 Codex 复核第 5 条：往上翻看旧消息时来了新的，只冒「有新消息」，
+   *     不能标已读 —— 共用收件箱，一标所有员工的红点都没了，容易漏回）；
+   *   · 比上次标过的新（标失败了下一轮会再来，Codex 复核第 6 条）。
+   */
   const markSeen = useCallback((list: ChatMessage[]) => {
     if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
+    if (!stickToBottomRef.current) return;
     const lastOther = [...list].reverse().find((m) => !m.mine);
-    if (!lastOther) return;
+    if (!lastOther || lastOther.createdAt <= lastMarkedRef.current) return;
     const forKey = keyRef.current;
-    markChatRead(scopeRef.current, lastOther.createdAt)
-      .then(() => { if (keyRef.current === forKey) notifyUnreadChanged(); })
-      .catch(() => { /* 标已读失败不打扰人，下一轮再标 */ });
+    const upTo = lastOther.createdAt;
+    markChatRead(scopeRef.current, upTo)
+      .then(() => {
+        if (keyRef.current !== forKey) return;
+        if (upTo > lastMarkedRef.current) lastMarkedRef.current = upTo;
+        notifyUnreadChanged();
+      })
+      .catch(() => { /* 标已读失败不打扰人，下一轮轮询会再标 */ });
   }, []);
 
   // 换对话：清空、重新取最近 50 条
@@ -124,6 +139,7 @@ export default function ChatThread(props: {
     setNewBelow(false);
     serverTimeRef.current = "";
     stickToBottomRef.current = true;
+    lastMarkedRef.current = "";
     fetchChatMessages(scopeRef.current)
       .then((page) => {
         if (cancelled || !gate.isCurrent(ticket)) return;
@@ -158,11 +174,13 @@ export default function ChatThread(props: {
         serverTimeRef.current = page.serverTime;
         const before = messagesRef.current;
         const merged = mergeChatMessages(before, page.messages);
-        if (merged === before) return;
-        stickToBottomRef.current = nearBottom();
-        if (!stickToBottomRef.current) setNewBelow(true);
-        setMessages(merged);
-        if (merged.some((m) => !m.mine && !before.some((b) => b.id === m.id))) markSeen(merged);
+        if (merged !== before) {
+          stickToBottomRef.current = nearBottom();
+          if (!stickToBottomRef.current) setNewBelow(true);
+          setMessages(merged);
+        }
+        // 没有新消息也调一次：上一轮标已读失败的，这一轮补上（停在底部、在前台才真标）
+        markSeen(merged);
       } catch {
         /* 断网 / 服务器重启：这一轮算了，下一轮接着取 */
       }
@@ -259,7 +277,11 @@ export default function ChatThread(props: {
         ref={listRef}
         onScroll={() => {
           stickToBottomRef.current = nearBottom();
-          if (stickToBottomRef.current) setNewBelow(false);
+          if (stickToBottomRef.current) {
+            setNewBelow(false);
+            // 翻回到底了 = 新消息看到了，这时再标已读
+            markSeen(messagesRef.current);
+          }
         }}
         style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "12px 14px", position: "relative" }}
         aria-live="polite"

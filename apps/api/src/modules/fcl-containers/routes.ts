@@ -41,6 +41,7 @@ import { sanitizeRemarkForClient } from "../core/client-privacy";
 import { DECIMAL_12_2, requireDecimal } from "../core/decimal-guard";
 import { parseNumericStrict } from "../core/int-guard";
 import { lockInquiry } from "../fcl-inquiries/routes";
+import { companyContainerNosForMasking } from "../core/container-nos";
 import {
   CONTAINER_TYPES,
   FCL_START_CONTAINER_STATUS,
@@ -878,6 +879,23 @@ export function registerFclContainerRoutes(app: MinimalHttpApp): void {
         };
         const changedNames = Object.entries(changed).filter(([, v]) => v).map(([k]) => k);
 
+        /* 从「整柜询价」转来的整柜（2026-09-28）：唛头不许改成别的客户 ——
+           询价单是原来那个客户的，改了以后他那边显示「已转整柜」、去「我的整柜」却找不到，
+           新客户那边又平白多出一个不是他询的柜。真录错了客户：删掉这个整柜，再从询价单重新转。 */
+        if (changed.客户唛头) {
+          const linkedInquiries = await tx.fclInquiry.findMany({
+            where: { fclContainerId: containerId, companyId: auth.companyId },
+            select: { clientId: true },
+          });
+          const other = linkedInquiries.find((q) => q.clientId !== clientId);
+          if (other) {
+            throw new BusinessError(
+              `这个整柜是从客户 ${other.clientId} 的整柜询价转来的，唛头不能改成别的客户。真录错了客户，请删掉这个整柜，再从询价单重新转。`,
+              400, "VALIDATION_ERROR",
+            );
+          }
+        }
+
         /* 闸 ①：已签收的，除了金额和备注什么都不许改。
            客户手里那张签收单上印着箱数、方数、品名，货也交出去了 ——
            这时候再改，系统里的数跟客户签过字的纸就对不上了。 */
@@ -1303,6 +1321,8 @@ export function registerFclContainerRoutes(app: MinimalHttpApp): void {
       return;
     }
 
+    // 本柜 + 本公司全部柜号一起抹（2026-09-28：员工在备注里写别的柜号也不能漏给客户）
+    const maskNos = [container.containerNo, ...(await companyContainerNosForMasking(auth.companyId))];
     ok(res, {
       ...formatFclForClient(container, shipment),
       products: (shipment?.order?.products ?? []).map(formatProductRow),
@@ -1316,11 +1336,11 @@ export function registerFclContainerRoutes(app: MinimalHttpApp): void {
            只有这两个新接口漏了。 */
         /* 把**本柜的真实柜号**传进去精确抹（2026-09-24 复核抓到）：
            员工手写的备注 / 下一站里带柜号时，光靠固定写法的正则认不出来。 */
-        remark: hideOperatorInRemark(sanitizeRemarkForClient(log.remark ?? "", true, [container.containerNo]), "client") || null,
+        remark: hideOperatorInRemark(sanitizeRemarkForClient(log.remark ?? "", true, maskNos), "client") || null,
         /* 「下一站」是员工手填的（最多 50 字），也过一道脱敏（2026-09-23 第 2 轮复核提的）。
            ⚠️ 现有的 /client/shipments/track 对这个字段是**原样下发**的（containers/routes.ts:1496）——
            那是全系统的老口径，要不要统一得单独拍板；整柜这边先按严的来。 */
-        nextStop: sanitizeRemarkForClient(log.nextStop ?? "", true, [container.containerNo]) || null,
+        nextStop: sanitizeRemarkForClient(log.nextStop ?? "", true, maskNos) || null,
         operatorName: operatorNameForDisplay(log),
         operatorId: log.operatorId,
         operatorRole: log.operatorRole,

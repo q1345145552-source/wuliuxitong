@@ -31,6 +31,7 @@ async function main(): Promise<void> {
   const { prisma } = await import("../apps/api/src/db/prisma");
   const { BusinessError } = await import("../apps/api/src/modules/core/business-error");
   const pm: any = prisma;
+  const { clearContainerNosCache } = await import("../apps/api/src/modules/core/container-nos");
 
   const routes = new Map<string, Function>();
   const app: any = {};
@@ -40,6 +41,7 @@ async function main(): Promise<void> {
   (await import("../apps/api/src/modules/containers/routes")).registerContainerRoutes(app);
   (await import("../apps/api/src/modules/shipments/routes")).registerShipmentRoutes(app);
   (await import("../apps/api/src/modules/admin-ops/routes")).registerAdminOpsRoutes(app);
+  (await import("../apps/api/src/modules/agent-portal/routes")).registerAgentPortalRoutes(app);
 
   async function call(key: string, auth: Auth, body: Row = {}, query: Record<string, string> = {}): Promise<{ status: number; data: any; message: string }> {
     const handler = routes.get(key);
@@ -64,6 +66,7 @@ async function main(): Promise<void> {
     await pm.order.deleteMany({ where: { companyId: CO } });
     await pm.auditLog.deleteMany({ where: { companyId: CO } });
     await pm.user.deleteMany({ where: { companyId: CO } });
+    await pm.agent.deleteMany({ where: { id: "zz_a0927_agent" } });
   }
 
   let passed = 0, failed = 0;
@@ -159,6 +162,44 @@ async function main(): Promise<void> {
       assert.ok(!String(line.remark).includes("MEDU1234567"), `签收单备注还带柜号：${line.remark}`);
       assert.ok(String(line.remark).includes("柜号已隐藏"), `应抹成「柜号已隐藏」：${line.remark}`);
     });
+    await check("#2f 卸过柜（柜内记录删了）以后，备注里原来那个柜号照样抹；手写的标准柜号（系统里没录过、中间带空格）也抹", async () => {
+      await pm.statusLog.create({ data: { id: "zz_a0927_log3", companyId: CO, shipmentId: SP.id, operatorId: STAFF.userId, operatorRole: "staff", fromStatus: "loaded", toStatus: "loaded", remark: "换柜 TGHU 8812345 明天走" } });
+      // 不是标准柜号样子的（线上「Y + 10 位数字」那种），这票货也从没装过它 —— 只能靠「本公司全部柜号」那一道抹
+      const cOther = await pm.container.create({ data: { companyId: CO, containerNo: "Y2609280001", containerType: "40HQ", currentStatus: "LOADING", transportMode: "sea" } });
+      await pm.statusLog.create({ data: { id: "zz_a0927_log5", companyId: CO, shipmentId: SP.id, operatorId: STAFF.userId, operatorRole: "staff", fromStatus: "loaded", toStatus: "loaded", remark: "原计划装 Y2609280001" , nextStop: "Y2609280001 集港" } });
+      const saved = await pm.shipmentContainerItem.findMany({ where: { shipmentId: SC.id } });
+      await pm.shipmentContainerItem.deleteMany({ where: { shipmentId: SC.id } });
+      clearContainerNosCache();
+      try {
+        const r = await call("GET /client/shipments/track", CLIENT, {}, { trackingNo: "ZZA0927P1" });
+        const text = JSON.stringify(r.data);
+        assert.ok(!text.includes("MEDU1234567"), "卸柜后原来那个柜号又露出来了");
+        assert.ok(!/TGHU\s?8812345/.test(text), "手写的标准柜号露出来了");
+        assert.ok(!text.includes("Y2609280001"), "本公司别的柜号（不是标准样子的）露出来了");
+        const list = await call("GET /client/orders", CLIENT, {}, {});
+        assert.ok(!JSON.stringify(list.data).includes("MEDU1234567"), "客户运单列表里卸柜后的柜号露出来了");
+        assert.ok(!JSON.stringify(list.data).includes("Y2609280001"), "客户运单列表里别的柜号露出来了");
+      } finally {
+        await pm.statusLog.delete({ where: { id: "zz_a0927_log5" } });
+        await pm.container.delete({ where: { id: cOther.id } });
+        for (const it of saved) await pm.shipmentContainerItem.create({ data: { shipmentId: it.shipmentId, containerId: it.containerId, loadedVolumeM3: it.loadedVolumeM3, loadedPieceCount: it.loadedPieceCount } });
+        await pm.statusLog.delete({ where: { id: "zz_a0927_log3" } });
+      }
+    });
+    await check("#2g 柜号跟某张运单号一模一样的（线上 24 个「JL…」那种）不抹：那本来就是客户看得到的运单号", async () => {
+      const cSame = await pm.container.create({ data: { companyId: CO, containerNo: "ZZA0927P1-1", containerType: "40HQ", currentStatus: "SEALED", transportMode: "sea" } });
+      await pm.statusLog.create({ data: { id: "zz_a0927_log4", companyId: CO, shipmentId: SP.id, operatorId: STAFF.userId, operatorRole: "staff", fromStatus: "loaded", toStatus: "loaded", remark: "子单 ZZA0927P1-1 已分出" } });
+      clearContainerNosCache();
+      try {
+        const r = await call("GET /client/shipments/track", CLIENT, {}, { trackingNo: "ZZA0927P1" });
+        const remarks = (r.data.timeline ?? []).map((l: Row) => l.remark);
+        assert.ok(remarks.some((x: string) => x.includes("子单 ZZA0927P1-1 已分出")), `运单号被当成柜号抹了：${JSON.stringify(remarks)}`);
+      } finally {
+        await pm.statusLog.delete({ where: { id: "zz_a0927_log4" } });
+        await pm.container.delete({ where: { id: cSame.id } });
+        clearContainerNosCache();
+      }
+    });
     await check("#2c 员工查同一票：备注原样（只对客户抹）", async () => {
       const r = await call("GET /client/shipments/track", STAFF, {}, { trackingNo: "ZZA0927P1" });
       assert.ok(JSON.stringify(r.data.timeline).includes("MEDU1234567"));
@@ -171,6 +212,24 @@ async function main(): Promise<void> {
       assert.ok(Array.isArray(r.data.children) && r.data.children.length === 1);
       assert.equal(r.data.children[0].lastmile?.driverName, "张三");
       assert.equal(r.data.children[0].lastmile?.licensePlate, "京A12345");
+    });
+
+    await check("#3b 代理看父单轨迹：子单页签也带派送信息（Codex 复核第 10 条，客户那边修了、代理这边漏了）；派送单号不给代理", async () => {
+      await pm.agent.create({ data: { id: "zz_a0927_agent", companyId: CO, name: "测试代理", priceNormal: 1, priceInspection: 1, priceSensitive: 1 } });
+      await pm.user.update({ where: { id: CLIENT.userId }, data: { agentId: "zz_a0927_agent" } });
+      try {
+        const AG: any = { userId: "zz_a0927_agent_user", companyId: CO, role: "agent", name: "测试代理", agentId: "zz_a0927_agent" };
+        const r = await call("GET /agent/shipments/track", AG, {}, { trackingNo: "ZZA0927P1" });
+        assert.equal(r.status, 200, r.message);
+        assert.equal(r.data.lastmile, null);
+        assert.equal(r.data.children?.[0]?.lastmile?.driverName, "张三");
+        assert.equal(r.data.children?.[0]?.lastmile?.licensePlate, "京A12345");
+        const text = JSON.stringify(r.data);
+        assert.ok(!text.includes("ZZA0927D1"), "派送单号给了代理（能串到别人家的货）");
+        assert.ok(!text.includes("zz_a0927_sc"), "子单的内部 id 下发了");
+      } finally {
+        await pm.user.update({ where: { id: CLIENT.userId }, data: { agentId: null } });
+      }
     });
 
     // ---------- #4 ----------

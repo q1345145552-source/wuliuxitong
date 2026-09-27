@@ -194,8 +194,8 @@ const ledgerRow: Row = {
   }),
   orderProduct: strict("orderProduct", { findMany: async () => [] }),
   orderProductImage: strict("orderProductImage", { findMany: async () => [] }),
-  // 2026-09-28：/client/orders 多查一次这批单装过的柜号，用来抹备注里的柜号（不涉及操作人）
-  shipmentContainerItem: strict("shipmentContainerItem", { findMany: async () => [] }),
+  // 2026-09-28：/client/orders、客户查轨迹多查一次本公司全部柜号（core/container-nos.ts），用来抹备注里的柜号（不涉及操作人）
+  $queryRaw: async () => [],
   shipment: strict("shipment", {
     findFirst: async (args) => shape(trackParent, args),
     findMany: async (args) => (args?.where?.parentTrackingNo ? shape([trackChild], args) : []),

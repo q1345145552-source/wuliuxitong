@@ -132,6 +132,31 @@ async function main(): Promise<void> {
     }
   });
 
+  await check("S10 收件箱到顶要说出来（CLAUDE.md 第 21 条）；转成整柜的唛头不许改成别的客户", () => {
+    const api = read("apps/api/src/modules/cs-chat/routes.ts");
+    assert.match(api, /take: CONVERSATION_LIST_LIMIT \+ 1/);
+    assert.match(api, /truncated: convs\.length > CONVERSATION_LIST_LIMIT/);
+    const page = read("apps/web/src/app/staff/chat/page.tsx");
+    assert.match(page, /\{truncated \? \(/, "到顶了页面上没写");
+    const fcl = read("apps/api/src/modules/fcl-containers/routes.ts");
+    assert.match(fcl, /if \(changed\.客户唛头\) \{\s*const linkedInquiries/, "编辑整柜没拦「从询价单转来的改唛头」");
+  });
+
+  await check("S11 Codex 复核那几处前端：翻上去看旧消息不标已读、标失败下一轮补标；询价详情关了又开旧响应不盖新；转整柜金额跟报价不一样要问一句", () => {
+    const chat = read("apps/web/src/modules/cs-chat/ChatThread.tsx");
+    const mark = chat.slice(chat.indexOf("const markSeen = useCallback"), chat.indexOf("}, []);", chat.indexOf("const markSeen = useCallback")));
+    assert.match(mark, /if \(!stickToBottomRef\.current\) return;/, "翻上去看旧消息时也标了已读");
+    assert.match(mark, /lastOther\.createdAt <= lastMarkedRef\.current\) return;/, "没按「上次标到哪」去重");
+    assert.match(chat, /\/\/ 没有新消息也调一次[^\n]*\n\s*markSeen\(merged\);/, "轮询没新消息时不补标（标失败就一直不补）");
+    assert.match(chat, /if \(stickToBottomRef\.current\) \{\s*setNewBelow\(false\);[\s\S]{0,80}markSeen\(messagesRef\.current\)/, "翻回到底没补标已读");
+    const panel = read("apps/web/src/components/client/FclInquiryPanel.tsx");
+    assert.match(panel, /const seq = \+\+detailSeqRef\.current;/);
+    assert.equal((panel.match(/if \(detailSeqRef\.current !== seq\) return;/g) ?? []).length, 2, "详情成功 / 失败两个分支都要核序号");
+    assert.match(panel, /onClose=\{closeDetail\}/, "关详情没让序号作废");
+    const wb = read("apps/web/src/components/fcl/FclContainerWorkbench.tsx");
+    assert.match(wb, /Number\(filledAmount\) !== fromInquiry\.quoteAmountCny[\s\S]{0,300}window\.confirm/, "转整柜金额跟报价不一样没问");
+  });
+
   console.log(`\n通过 ${passed} / 失败 ${failed}`);
   if (failed > 0) process.exit(1);
 }

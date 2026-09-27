@@ -102,6 +102,9 @@ export default function FclInquiryPanel(props: ClientFclInquiryProps) {
   const [quoteMessage, setQuoteMessage] = useState("");
   const detailIdRef = useRef<string | null>(null);
   detailIdRef.current = detailId;
+  /** 每打开 / 关掉一次详情就加一：同一张单关了又开，前一次晚到的响应也认得出是旧的（Codex 复核第 12 条） */
+  const detailSeqRef = useRef(0);
+  const closeDetail = () => { detailSeqRef.current += 1; setDetailId(null); };
 
   const loadList = async (page = listPage) => {
     const ticket = listGate.begin(); // 2026-09-01 竞态全扫：出发时领号
@@ -126,18 +129,19 @@ export default function FclInquiryPanel(props: ClientFclInquiryProps) {
 
   /** 员工：打开询价单详情（全部信息 + 报价 + 转整柜 + 联系客户） */
   const openDetail = async (id: string) => {
+    const seq = ++detailSeqRef.current;
     setDetailId(id);
     setDetail(null);
     setDetailError("");
     setQuoteMessage("");
     try {
       const d = await apiRequest<FclInquiryDetail>(`${apiBaseUrl()}/client/fcl-inquiries/detail?id=${encodeURIComponent(id)}`);
-      if (detailIdRef.current !== id) return; // 已经换了一张 / 关掉了
+      if (detailSeqRef.current !== seq) return; // 已经换了一张 / 关掉了 / 关了又开（这份是旧的）
       setDetail(d);
       setQuoteAmount(d.quoteAmountCny == null ? "" : String(d.quoteAmountCny));
       setQuoteNote(d.quoteNote ?? "");
     } catch (e: any) {
-      if (detailIdRef.current !== id) return;
+      if (detailSeqRef.current !== seq) return;
       setDetailError(e?.message || "加载失败");
     }
   };
@@ -422,7 +426,7 @@ export default function FclInquiryPanel(props: ClientFclInquiryProps) {
       ) : null}
 
       {props.isStaff && detailId ? (
-        <DetailModal title="整柜询价详情" subtitle={detail ? `唛头 ${detail.clientId}` : undefined} onClose={() => setDetailId(null)} closeOnEsc={false}>
+        <DetailModal title="整柜询价详情" subtitle={detail ? `唛头 ${detail.clientId}` : undefined} onClose={closeDetail} closeOnEsc={false}>
           {detailError ? <p style={{ color: "var(--c-red-deep)" }}>没加载出来：{detailError}</p> : null}
           {!detail && !detailError ? <p style={{ color: "var(--t-faint)" }}>加载中…</p> : null}
           {detail ? (

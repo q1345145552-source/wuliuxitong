@@ -64,12 +64,15 @@ function quoteFields(r: InquiryQuoteRow, role: string) {
   };
 }
 
-type LockedInquiry = { id: string; company_id: string; client_id: string; status: string; fcl_container_id: string | null; quoted_at: Date | null };
+type LockedInquiry = {
+  id: string; company_id: string; client_id: string; status: string; fcl_container_id: string | null;
+  quoted_at: Date | null; accepted_at: Date | null; quote_amount_cny: Prisma.Decimal | string | null; quote_note: string | null;
+};
 
 /** 锁住这张询价单再判断（CLAUDE.md 第 28 条：判断要在锁里重做）。列名是 fcl_inquiries 的真实列名，已对库核过 */
 export async function lockInquiry(tx: Prisma.TransactionClient, id: string): Promise<LockedInquiry | undefined> {
   const rows = await tx.$queryRaw<LockedInquiry[]>`
-    SELECT id, company_id, client_id, status, fcl_container_id, quoted_at
+    SELECT id, company_id, client_id, status, fcl_container_id, quoted_at, accepted_at, quote_amount_cny, quote_note
     FROM fcl_inquiries WHERE id = ${id} FOR UPDATE`;
   return rows[0];
 }
@@ -249,6 +252,14 @@ export function registerFclInquiryRoutes(app: MinimalHttpApp): void {
       if (inq.status === "converted" && inq.fcl_container_id) {
         throw new BusinessError("这张询价单已经转成整柜了，不能再改报价（金额去「整柜管理」里改）", 409, "VALIDATION_ERROR");
       }
+      /* 价格和说明都没变 = 重复提交（比如上一次其实存上了、只是回来的路上网断了，员工又点了一次），
+         什么都不动（2026-09-28 Codex 复核第 13 条）：不然会刷新报价时间、把客户刚点的「接受」清掉。 */
+      const current = effectiveInquiryStatus({ status: inq.status, fclContainerId: inq.fcl_container_id, acceptedAt: inq.accepted_at, quotedAt: inq.quoted_at });
+      if ((current === "quoted" || current === "accepted")
+        && inq.quote_amount_cny != null && Number(inq.quote_amount_cny.toString()) === amount
+        && (inq.quote_note ?? "") === note) {
+        return tx.fclInquiry.findUniqueOrThrow({ where: { id }, select: { status: true, ...QUOTE_SELECT } });
+      }
       return tx.fclInquiry.update({
         where: { id },
         data: {
@@ -287,9 +298,12 @@ export function registerFclInquiryRoutes(app: MinimalHttpApp): void {
       if (!inq || inq.company_id !== auth.companyId || inq.client_id !== auth.userId) {
         throw new BusinessError("询价记录不存在", 404, "NOT_FOUND");
       }
-      if (inq.status !== "quoted") {
-        const why = inq.status === "accepted" ? "这个报价你已经接受过了"
-          : inq.status === "converted" ? "这张询价单已经转成整柜了"
+      /* 按页面上显示的那个状态判（2026-09-28 Codex 复核第 11 条）：没接受就转了整柜、后来整柜被删的，
+         库里还写着 converted，但对外显示「已报价」、客户页面上有「接受」按钮 —— 这种要能接受。 */
+      const current = effectiveInquiryStatus({ status: inq.status, fclContainerId: inq.fcl_container_id, acceptedAt: inq.accepted_at, quotedAt: inq.quoted_at });
+      if (current !== "quoted") {
+        const why = current === "accepted" ? "这个报价你已经接受过了"
+          : current === "converted" ? "这张询价单已经转成整柜了"
           : "客服还没报价";
         throw new BusinessError(why, 409, "VALIDATION_ERROR");
       }
@@ -298,7 +312,8 @@ export function registerFclInquiryRoutes(app: MinimalHttpApp): void {
       }
       return tx.fclInquiry.update({
         where: { id },
-        data: { status: "accepted", acceptedAt: new Date() },
+        // 整柜被删过的那种一并清掉转整柜的记录，按没转过算
+        data: { status: "accepted", acceptedAt: new Date(), convertedAt: null, convertedBy: null },
         select: { status: true, ...QUOTE_SELECT },
       });
     });

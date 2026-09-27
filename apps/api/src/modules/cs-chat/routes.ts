@@ -27,6 +27,7 @@
 import { randomUUID } from "node:crypto";
 import { prisma } from "../../db/prisma";
 import type { HttpRequest, HttpResponse, MinimalHttpApp } from "../../server";
+import { BusinessError } from "../core/business-error";
 import { fail, ok, requireRole } from "../core/http-utils";
 import { AGENT_CLIENT_BLOCKED_MESSAGE } from "../core/agent-scope";
 import { canSeeOperatorIdentity } from "../core/operator-visibility";
@@ -43,6 +44,8 @@ const PAGE_SIZE = 50;
 const POLL_OVERLAP_MS = 5000;
 /** 客户那边看到的对方名字 */
 export const CS_LABEL = "客服";
+/** 员工收件箱一次最多列多少个对话（按最新消息排）；到顶了页面会写明，更早的用唛头搜 */
+const CONVERSATION_LIST_LIMIT = 500;
 
 type Auth = NonNullable<HttpRequest["auth"]>;
 
@@ -163,6 +166,13 @@ async function sendMessage(opts: {
   try {
     return await prisma.$transaction(async (tx) => {
       await lockCsConversation(tx, opts.companyId, opts.clientId);
+      /* 锁里再核一次这个客户还是不是湘泰直属的（2026-09-28 Codex 复核第 4 条）：
+         请求进门时查的归属到这里可能已经变了 —— 超管正好在这一刻把他划给了代理。
+         FOR SHARE：超管改归属那个事务没提交就等它，提交了按新的判。列名已对 schema 核过（users.agent_id / company_id）。 */
+      const owner = await tx.$queryRaw<Array<{ agent_id: string | null }>>`
+        SELECT agent_id FROM users WHERE id = ${opts.clientId} AND company_id = ${opts.companyId} AND role = 'client' FOR SHARE`;
+      if (!owner[0]) throw new BusinessError("没有这个客户唛头", 404, "NOT_FOUND");
+      if (owner[0].agent_id) throw new BusinessError("这个客户是代理名下的，没有开对话功能", 403, "FORBIDDEN");
       // 时间在拿到锁之后取：排在后面的那条时间一定更晚
       const now = new Date();
       const key = { companyId_clientId: { companyId: opts.companyId, clientId: opts.clientId } };
@@ -349,7 +359,8 @@ export function registerCsChatRoutes(app: MinimalHttpApp): void {
       prisma.csConversation.findMany({
         where: { companyId: auth.companyId, ...(q ? { clientId: { contains: q, mode: "insensitive" } } : {}) },
         orderBy: [{ lastMessageAt: { sort: "desc", nulls: "last" } }, { id: "asc" }],
-        take: 500,
+        // 多取一条判断到没到顶（CLAUDE.md 第 21 条：截断要说出来）
+        take: CONVERSATION_LIST_LIMIT + 1,
         select: {
           id: true, clientId: true, lastMessageAt: true, lastMessagePreview: true, lastSenderRole: true,
           client: { select: { agentId: true } },
@@ -358,7 +369,9 @@ export function registerCsChatRoutes(app: MinimalHttpApp): void {
       staffUnreadByConversation(auth.companyId),
     ]);
     ok(res, {
-      items: convs.map((c) => ({
+      /** 到顶了（只列最近这么多个对话）：页面要写出来，更早的用唛头搜 */
+      truncated: convs.length > CONVERSATION_LIST_LIMIT,
+      items: convs.slice(0, CONVERSATION_LIST_LIMIT).map((c) => ({
         clientId: c.clientId,
         lastMessageAt: c.lastMessageAt?.toISOString() ?? null,
         lastMessagePreview: c.lastMessagePreview ?? "",

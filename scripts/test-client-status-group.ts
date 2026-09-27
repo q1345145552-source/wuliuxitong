@@ -80,8 +80,8 @@ let orderRows: any[] = [];
   shipment: { async findMany() { return []; } },
   orderProductImage: { async findMany() { return []; } },
   orderProduct: { async findMany() { return []; } },
-  // 2026-09-28：/client/orders 多查一次这批单装过的柜号（抹备注里的柜号用），不影响分组
-  shipmentContainerItem: { async findMany() { return []; } },
+  // 2026-09-28：/client/orders 多查一次本公司全部柜号（core/container-nos.ts，抹备注里的柜号用），不影响分组
+  async $queryRaw() { return []; },
 };
 
 function fakeOrder(id: string, currentStatus: string | null): any {

@@ -67,7 +67,7 @@ export function markChatRead(scope: ChatScope, upTo?: string): Promise<{ ok: boo
   return apiRequest(`${apiBaseUrl()}${url}`, { method: "POST", body: JSON.stringify(body) });
 }
 
-export function fetchChatConversations(q?: string): Promise<{ items: ChatConversation[] }> {
+export function fetchChatConversations(q?: string): Promise<{ items: ChatConversation[]; truncated?: boolean }> {
   return apiRequest(`${apiBaseUrl()}/staff/chat/conversations${query({ q: q?.trim() || undefined })}`);
 }
 

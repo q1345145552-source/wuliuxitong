@@ -8,6 +8,7 @@ import { metricByPieceShare, reconcileFamilyMetric } from "../shipments/split-me
 import type { MinimalHttpApp } from "../../server";
 import { fail, ok, requireRole } from "../core/http-utils";
 import { sanitizeRemarkForClient } from "../core/client-privacy";
+import { companyContainerNosForMasking } from "../core/container-nos";
 import { productNamesLabel } from "../../../../../packages/shared-types/product-names";
 import { EXCLUDE_FCL_SHIPMENT, ONLY_FCL_SHIPMENT } from "../core/fcl-scope";
 
@@ -409,6 +410,8 @@ export function registerAdminOpsRoutes(app: MinimalHttpApp): void {
         if (child.volumeM3 == null) splitParentsWithMissingVolume.add(child.parentTrackingNo);
       }
     }
+    // 签收单给客户签字：备注里的柜号按「这票货的柜 + 本公司全部柜号」抹（2026-09-28）
+    const maskContainerNos = await companyContainerNosForMasking(auth.companyId);
     const shipments = selectedRows.map((row) => {
       const shipment = row.shipment;
       const order = shipment.order;
@@ -476,7 +479,7 @@ export function registerAdminOpsRoutes(app: MinimalHttpApp): void {
         // 生成器早就会把 null 写成空格子了，问题一直卡在这一句。
         weightKg: weightKg ?? null,
         volumeM3: volumeM3 ?? null,
-        remark: sanitizeRemarkForClient(shipment.remark || "", true, shipment.containerItems.map((it) => it.container.containerNo)),
+        remark: sanitizeRemarkForClient(shipment.remark || "", true, [...shipment.containerItems.map((it) => it.container.containerNo), ...maskContainerNos]),
         status: row.status,
         containerNos: [],
         receiverName: order?.receiverNameTh?.trim() || contactName,

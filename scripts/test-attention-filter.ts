@@ -74,8 +74,8 @@ async function setupRealRoute(statusAt: (index: number) => string) {
     shipment: { async findMany() { return []; } },
     orderProductImage: { async findMany() { return []; } },
     orderProduct: { async findMany() { return []; } },
-    // 2026-09-28：/client/orders 多查一次这批单装过的柜号（抹备注里的柜号用），不影响筛选
-    shipmentContainerItem: { async findMany() { return []; } },
+    // 2026-09-28：/client/orders 多查一次本公司全部柜号（core/container-nos.ts，抹备注里的柜号用），不影响筛选
+    async $queryRaw() { return []; },
   };
   const routes = new Map<string, (req: any, res: any) => Promise<void> | void>();
   const fakeApp: any = { get(p: string, h: any) { routes.set(`GET ${p}`, h); }, post() {}, put() {}, delete() {}, listen() {} };
