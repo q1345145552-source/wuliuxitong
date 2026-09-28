@@ -18,6 +18,8 @@
  *   —— 整柜询价报价弹窗（components/client/FclInquiryPanel.tsx，同一套假 React）——
  *   U8 同一张单上一次报价还没回来：关了又打开，不许再报（原来能再点，两次请求谁先到库说不准，旧价会盖掉新价）
  *   U9 报价晚回来：刷新的是「现在这一页」列表，不会把员工翻到的第 2 页拽回第 1 页；详情关了也照样提示成败
+ *   U10 询价记录要手点「加载记录」才出来（2026-09-29 老板报「每次都要点加载才能出来」）：切到这一栏就自己拉、
+ *       切回来重拉、藏着时不发请求；加载失败点一下「重试」就真去拉（原来要点两次）
  */
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -388,7 +390,7 @@ async function main(): Promise<void> {
   async function openPanelAndDetail() {
     toasts.length = 0;
     mount(Panel, { visible: true, isStaff: true, onToast: (m: string) => toasts.push(m) });
-    btn("加载记录")[0].props.onClick(); await settle();
+    await settle(); // 一打开就自己拉列表（U10），不用再点「加载记录」
     // 共 120 条（第 1 页 50 条），这里只放一条，够点「详情 / 报价」
     listCalls().pop()!.resolve({ items: [inquiry("A")], total: 120 }); await settle();
     btn("详情 / 报价")[0].props.onClick(); await settle();
@@ -447,6 +449,32 @@ async function main(): Promise<void> {
     modal().props.onClose(); flush();
     quoteCalls().pop()!.reject(new Error("这张单刚被别人改过")); await settle();
     assert.ok(toasts.some((t) => t.includes("报价没保存") && t.includes("刚被别人改过")), `详情关了，报价失败一声不吭：${JSON.stringify(toasts)}`);
+  });
+
+  await check("U10 切到「整柜询价」就自己拉列表、切回来重拉、藏着不拉；加载失败点一下「重试」就真去拉", async () => {
+    toasts.length = 0;
+    const setVisible = (v: boolean) => { compProps = { ...compProps, visible: v }; rerender(); };
+    const n0 = listCalls().length;
+    mount(Panel, { visible: false, isStaff: true, onToast: (m: string) => toasts.push(m) });
+    await settle();
+    assert.equal(listCalls().length, n0, "这一栏还藏着就发了列表请求（整页一打开就白拉一次）");
+    setVisible(true); await settle();
+    assert.equal(listCalls().length, n0 + 1, "切到「整柜询价」没有自己拉列表，还得手点");
+    assert.equal(btn("加载记录").length, 0, "还留着要手点的「加载记录」按钮");
+    assert.ok(findAll((n) => n.type === "p" && textOf(n).includes("加载中")).length > 0, "拉的时候没写「加载中…」");
+    listCalls().pop()!.reject(new Error("网断了")); await settle();
+    assert.ok(toasts.some((t) => t.includes("加载询价记录失败")), `失败没提示：${JSON.stringify(toasts)}`);
+    const retry = btn("加载失败，点击重试")[0];
+    assert.ok(retry, "失败后没有重试按钮");
+    retry.props.onClick(); await settle();
+    assert.equal(listCalls().length, n0 + 2, "点了一次「重试」没真去拉（原来要再点一次「加载记录」）");
+    listCalls().pop()!.resolve({ items: [inquiry("A")], total: 1 }); await settle();
+    assert.equal(btn("详情 / 报价").length, 1, "重试成功后列表没出来");
+    setVisible(false); await settle();
+    assert.equal(listCalls().length, n0 + 2, "切走时不该再拉");
+    setVisible(true); await settle();
+    assert.equal(listCalls().length, n0 + 3, "切回来没重拉（客户新提交的询价要刷新整页才看得到）");
+    assert.ok(listCalls().pop()!.url.includes("page=1"));
   });
 
   console.log(`\n通过 ${passed} / 失败 ${failed}`);

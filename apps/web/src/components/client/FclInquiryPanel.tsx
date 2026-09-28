@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { apiBaseUrl, apiRequest } from "../../services/core-api";
 import { createRequestGate } from "../../modules/shared/request-gate";
@@ -209,6 +209,14 @@ export default function FclInquiryPanel(props: ClientFclInquiryProps) {
     return `${role === "admin" ? "/admin/fcl-containers" : "/staff/fcl-containers"}?fromInquiry=${encodeURIComponent(id)}`;
   };
 
+  /* 2026-09-29 老板：「询价记录每次都要点加载才能出来」—— 7-03 做这个面板起，列表只放了个「加载记录」按钮，从不自己加载。
+     现在每次切到「整柜询价」就自己拉当前这一页；切走再切回来也重拉（客户新提交的询价不用刷新整页就能看到）。
+     面板在页面上一直挂着、只是藏起来（visible=false），所以按 visible 触发、不在挂载时拉：没打开这一栏就不发请求。 */
+  useEffect(() => {
+    if (props.visible) void loadList(listPageRef.current);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [props.visible]);
+
   if (!props.visible) return null;
 
   const readAsBase64 = (file: File): Promise<string> =>
@@ -367,8 +375,9 @@ export default function FclInquiryPanel(props: ClientFclInquiryProps) {
 
       {/* 历史列表 */}
       <h3 style={{ fontSize: 15, marginBottom: 10 }}>询价记录</h3>
-      {!listLoaded && <button onClick={() => loadList(1)} style={{ border: "1px solid var(--l-strong)", borderRadius: 6, padding: "6px 14px", background: "var(--white)", cursor: "pointer", fontSize: 13 }}>加载记录</button>}
-      {listLoaded && listError && <button onClick={() => { setListError(false); setListLoaded(false); }} style={{ border: "1px solid #fca5a5", borderRadius: 6, padding: "6px 14px", background: "var(--white)", color: "var(--c-red-2)", cursor: "pointer", fontSize: 13 }}>加载失败，点击重试</button>}
+      {!listLoaded && <p style={{ color: "var(--t-faint)", fontSize: 13 }}>加载中…</p>}
+      {/* 2026-09-29：原来点「重试」只是把状态退回「没加载」，还得再点一次「加载记录」才真去拉 —— 现在点一下就重拉当前页 */}
+      {listLoaded && listError && <button onClick={() => loadList(listPageRef.current)} style={{ border: "1px solid #fca5a5", borderRadius: 6, padding: "6px 14px", background: "var(--white)", color: "var(--c-red-2)", cursor: "pointer", fontSize: 13 }}>加载失败，点击重试</button>}
       {listLoaded && !listError && list.length === 0 && <p style={{ color: "var(--t-faint)", fontSize: 13 }}>暂无询价记录</p>}
       {/* 2026-08-31（Codex 二轮）：后端翻页，共 N 条用后端 total（照客户预报单列表的写法） */}
       {listLoaded && !listError && listTotal > 0 && (
