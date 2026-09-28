@@ -462,8 +462,9 @@ export function registerShipmentRoutes(app: MinimalHttpApp): void {
     const auth = requireRole(req, res, ["staff", "admin"]);
     if (!auth) return;
 
-    const page = parseInt(req.query.page as string) || 1;
-    const pageSize = Math.min(parseInt(req.query.pageSize as string) || 50, 500);
+    // 页码 / 每页条数夹在合法范围里（2026-09-29 实跑发现：page=-1 时 skip 成负数，接口直接 500；写法同本仓 /staff/prealerts）
+    const page = Math.max(parseInt(req.query.page as string) || 1, 1);
+    const pageSize = Math.min(Math.max(parseInt(req.query.pageSize as string) || 50, 1), 500);
     const includeChildren = req.query.all === "1";
     /* 整柜的单不进普通运单列表（老板 2026-09-23）。
        ⚠️ 这个接口同时喂着三个地方：员工「运单管理」、装柜管理的候选运单、尾端派送的候选运单。

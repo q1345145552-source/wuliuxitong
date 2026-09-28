@@ -33,6 +33,7 @@ import { formatBeijingTime } from "../../modules/staff/utils";
 import EmptyStateCard from "../../modules/layout/EmptyStateCard";
 import { FCL_TEMPLATE_HEADERS, fclRowFromSheet, missingFclHeaders } from "../../modules/fcl/template";
 import { apiBaseUrl, apiRequest } from "../../services/core-api";
+import { beijingDate } from "../../modules/shared/beijing-date";
 
 /** 从「整柜询价」点「转整柜」带过来的那张询价单（2026-09-28） */
 type FromInquiry = { id: string; clientId: string; productName: string; containerType: string; quoteAmountCny: number | null };
@@ -337,7 +338,7 @@ export default function FclContainerWorkbench({ canUnsign = false, canDelete = f
       containerType: d.containerType,
       transportMode: d.transportMode ?? "sea",
       warehouseId: d.warehouseId ?? WAREHOUSES[0].id,
-      loadingDate: d.loadingDate ? d.loadingDate.slice(0, 10) : "",
+      loadingDate: d.loadingDate ? beijingDate(d.loadingDate) : "",
       amountCny: d.amountCny == null ? "" : String(d.amountCny),
       remark: d.remark ?? "",
     });
@@ -648,7 +649,7 @@ export default function FclContainerWorkbench({ canUnsign = false, canDelete = f
                 <div><span style={fl}>柜型</span><div>{detail.containerType}</div></div>
                 <div><span style={fl}>运输方式</span><div>{detail.transportMode === "land" ? "陆运" : "海运"}</div></div>
                 <div><span style={fl}>仓库</span><div>{WAREHOUSES.find((w) => w.id === detail.warehouseId)?.label ?? detail.warehouseId ?? "—"}</div></div>
-                <div><span style={fl}>装柜日期</span><div>{detail.loadingDate ? detail.loadingDate.slice(0, 10) : "—"}</div></div>
+                <div><span style={fl}>装柜日期</span><div>{detail.loadingDate ? beijingDate(detail.loadingDate) : "—"}</div></div>
                 <div><span style={fl}>总箱数</span><div>{detail.packageCount ?? "—"}</div></div>
                 <div><span style={fl}>总体积 (m³)</span><div>{detail.volumeM3 ?? "—"}</div></div>
                 <div><span style={fl}>总重 (kg)</span><div>{detail.weightKg ?? "—"}</div></div>

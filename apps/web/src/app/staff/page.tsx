@@ -83,6 +83,7 @@ import {
   parseStaffBatchRows,
   type StaffBatchOrder,
 } from "../../modules/staff/batchOrderImport";
+import { beijingDate } from "../../modules/shared/beijing-date";
 import {
   shipmentStatusZh,
   warehouseLabelFromId,
@@ -2348,7 +2349,7 @@ export default function StaffHomePage() {
           <div style={{ width: "100%", maxWidth: 560, maxHeight: "90vh", overflow: "auto", background: "var(--white)", borderRadius: 12, padding: 24, boxShadow: "0 20px 60px rgba(0,0,0,0.3)" }}>
             <h3 style={{ margin: "0 0 16px", fontSize: 18, fontWeight: 600 }}>审核预报单</h3>
             <div style={{ color: "var(--t-strong)", fontSize: 13, marginBottom: 12 }}>
-              客户：{approvingPrealert.clientId ?? "-"} · {approvingPrealert.createdAt.slice(0, 10)}
+              客户：{approvingPrealert.clientId ?? "-"} · {beijingDate(approvingPrealert.createdAt)}
             </div>
             {(approvingPrealert.products?.length ?? 0) > 1 && (
               <div style={{ marginBottom: 10, background: "#fefce8", borderRadius: 6, padding: "8px 10px", fontSize: 12 }}>
@@ -2368,7 +2369,7 @@ export default function StaffHomePage() {
               <div>体积：{formatMetric(prealertEditDrafts[approvingPrealert.id]?.volumeM3 ?? approvingPrealert.volumeM3, 3)} m³</div>
               <div>国内单号：{prealertEditDrafts[approvingPrealert.id]?.domesticTrackingNo ?? approvingPrealert.domesticTrackingNo ?? "-"}</div>
               <div>运输方式：{(prealertEditDrafts[approvingPrealert.id]?.transportMode ?? approvingPrealert.transportMode) === "sea" ? "海运" : "陆运"}</div>
-              <div>发货日期：{prealertEditDrafts[approvingPrealert.id]?.shipDate ?? approvingPrealert.shipDate ?? approvingPrealert.createdAt.slice(0, 10)}</div>
+              <div>发货日期：{prealertEditDrafts[approvingPrealert.id]?.shipDate ?? approvingPrealert.shipDate ?? beijingDate(approvingPrealert.createdAt)}</div>
               <div style={{ marginTop: 8, borderTop: "1px solid var(--l-soft)", paddingTop: 8 }}>
                 <div style={{ fontSize: 12, color: "var(--t-strong)", marginBottom: 4 }}>柜号（可选）</div>
                 <input value={prealertBatchDrafts[approvingPrealert.id] ?? ""} onChange={(e) => setPrealertBatchDrafts((prev) => ({ ...prev, [approvingPrealert.id]: e.target.value }))} placeholder="柜号（装柜时填写）" style={prealertEditInputStyle} />

@@ -535,10 +535,7 @@ export function registerConsolidationRoutes(app: MinimalHttpApp): void {
 
     // 这个任务的柜号：轨迹备注里按号精确抹（一次请求只建一份，抹号的正则按这份缓存）
     // 这个任务自己的柜号（连同去掉空格的写法）+ 本公司全部柜号（跟运单那边同一份名单，2026-09-28 分支审查补）
-    const maskNos = [
-      ...(task.containerNo ? [task.containerNo, task.containerNo.replace(/\s+/g, "")] : []),
-      ...(await companyContainerNosForMasking(auth.companyId, [auth.userId])),
-    ];
+    const maskNos = await companyContainerNosForMasking(auth.companyId, [auth.userId], [task.containerNo]);
     ok(res, {
       ...formatTaskForClient(task),
       volumePercent: calcVolumePercent(task),

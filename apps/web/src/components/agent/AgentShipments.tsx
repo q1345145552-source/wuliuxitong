@@ -11,7 +11,7 @@ import { useRef, useState } from "react";
 import EmptyStateCard from "../../modules/layout/EmptyStateCard";
 import ShipmentExportPanel from "../../modules/shipment/ShipmentExportPanel";
 import { openShipmentTrack } from "../../modules/shipment/ShipmentTrackModal";
-import { shipmentStatusZh, transportModeLabel } from "../../modules/staff/utils";
+import { shipmentStatusWithPartialZh, transportModeLabel } from "../../modules/staff/utils";
 import { CLIENT_STATUS_GROUP_ZH, type ClientStatusGroup } from "../../../../../packages/shared-types/shipment-status";
 import { cargoTypeLabel } from "../../../../../packages/shared-types/cargo-type";
 import {
@@ -22,6 +22,7 @@ import {
 } from "../../services/agent-api";
 import { LoadState, Pager, SectionHeader, TableWrap, btn, btnPrimary, fmtM3, input, mono, td, tdNum, th, useAgentLoad } from "./agent-ui";
 import ExportConditionFields, { type ExportFieldDef } from "../../modules/shipment/ExportConditionFields";
+import { beijingToday } from "../../modules/shared/beijing-date";
 
 const GROUPS: Array<{ value: string; label: string }> = [
   { value: "all", label: "全部" },
@@ -139,7 +140,7 @@ export default function AgentShipments() {
       const ws = XLSX.utils.json_to_sheet(result.items.map(toExcelRow));
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, ws, "订单列表");
-      XLSX.writeFile(wb, `运单数据_${new Date().toISOString().slice(0, 10)}.xlsx`);
+      XLSX.writeFile(wb, `运单数据_${beijingToday()}.xlsx`);
       setExportFeedback(`已导出 ${result.items.length} 条`);
     } catch (e) {
       setExportFeedback(`导出失败：${e instanceof Error ? e.message : "请稍后重试"}`);
@@ -235,7 +236,7 @@ export default function AgentShipments() {
                     <td style={td}><input type="checkbox" aria-label={`勾选 ${o.trackingNo ?? o.id}`} checked={selected.has(o.id)} onChange={() => setSelected((prev) => { const next = new Set(prev); if (next.has(o.id)) next.delete(o.id); else next.add(o.id); return next; })} /></td>
                     <td style={{ ...td, whiteSpace: "nowrap" }}>{o.clientId}{o.clientName && o.clientName !== o.clientId ? <div style={{ fontSize: 12, color: "var(--t-faint)" }}>{o.clientName}</div> : null}</td>
                     <td style={{ ...td, ...mono }}>{o.trackingNo ?? "—"}</td>
-                    <td style={{ ...td, whiteSpace: "nowrap" }}>{o.currentStatus ? shipmentStatusZh(o.currentStatus) : "—"}</td>
+                    <td style={{ ...td, whiteSpace: "nowrap" }}>{o.currentStatus ? shipmentStatusWithPartialZh(o.currentStatus, o.partialAhead) : "—"}</td>
                     <td style={{ ...td, whiteSpace: "nowrap" }}>{o.shipDate ?? "—"}</td>
                     <td style={{ ...td, minWidth: 140 }}>{o.productNames || o.itemName}</td>
                     <td style={{ ...td, whiteSpace: "nowrap" }}>{cargoTypeLabel(o.products.map((p) => p.cargoType), o.cargoType)}</td>

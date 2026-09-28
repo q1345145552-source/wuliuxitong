@@ -561,10 +561,21 @@ export function registerContainerRoutes(app: MinimalHttpApp): void {
       ? body.nextStop.trim().slice(0, 50)
       : nextStopOf(toStatus, container.transportMode);
 
-    const customDate = typeof body.date === "string" && body.date.trim()
-      ? new Date(body.date.trim() + "T00:00:00")
-      : null;
-    const now = customDate && !Number.isNaN(customDate.getTime()) ? customDate : new Date();
+    /* 员工手填的日期要是真实存在的日子（2026-09-29 实跑发现）：原来「2026-02-31」照收、顺延成 3 月 3 日写进柜子和轨迹，
+       「abc」这种悄悄换成当前时间。页面的日期框选不出这种日子，只有直接调接口才会；跟确认收货 / 派送日期一样当场 400。 */
+    let customDate: Date | null = null;
+    if (typeof body.date === "string" && body.date.trim()) {
+      const raw = body.date.trim();
+      const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(raw);
+      const d = m ? new Date(raw + "T00:00:00") : null;
+      if (!m || !d || Number.isNaN(d.getTime())
+        || d.getFullYear() !== Number(m[1]) || d.getMonth() + 1 !== Number(m[2]) || d.getDate() !== Number(m[3])) {
+        fail(res, 400, "VALIDATION_ERROR", `日期要写成 2026-09-01 这种格式，而且得是真实存在的日子（收到「${raw}」）`);
+        return;
+      }
+      customDate = d;
+    }
+    const now = customDate ?? new Date();
     const updateData: Prisma.ContainerUpdateInput = {
       currentStatus: toStatus,
       updatedAt: now,
@@ -1536,7 +1547,7 @@ export function registerContainerRoutes(app: MinimalHttpApp): void {
      */
     // 客户看的再加上本公司全部柜号（2026-09-28 Codex 复核：卸柜后原来那个柜号就不在这票货的名单里了）
     const maskContainerNos = isClient
-      ? [...familyContainerNos, ...(await companyContainerNosForMasking(auth.companyId, [auth.userId]))]
+      ? await companyContainerNosForMasking(auth.companyId, [auth.userId], familyContainerNos)
       : familyContainerNos;
     const sanitizeRemark = (remark: string): string =>
       sanitizeRemarkForClient(remark, isClient, maskContainerNos);

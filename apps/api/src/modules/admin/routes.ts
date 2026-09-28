@@ -459,8 +459,9 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
     const auth = requireRole(req, res, ["admin"]);
     if (!auth) return;
 
-    const page = parseInt(req.query.page as string) || 1;
-    const pageSize = Math.min(parseInt(req.query.pageSize as string) || 50, 500);
+    // 页码 / 每页条数夹在合法范围里（2026-09-29 实跑发现：page=-1 时 skip 成负数，接口直接 500；写法同本仓 /staff/prealerts）
+    const page = Math.max(parseInt(req.query.page as string) || 1, 1);
+    const pageSize = Math.min(Math.max(parseInt(req.query.pageSize as string) || 50, 1), 500);
     // 整柜的单不进超管「运单管理」（老板 2026-09-23），走「整柜管理」那一页
     const where = { ...EXCLUDE_FCL_SHIPMENT, companyId: auth.companyId, parentTrackingNo: null } as const;
 

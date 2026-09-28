@@ -19,8 +19,11 @@ import { prisma } from "../../db/prisma";
 /**
  * @param viewerClientIds 看这份备注的是哪些客户（客户自己 = [自己的唛头]；代理 = 名下全部客户；给某个客户签字的签收单 = [那个客户]）。
  *        这些客户自己的运单号不抹；不传 = 一律照抹。
+ * @param extraNos 调用方手上另外要抹的柜号（这票货装过的柜、本任务 / 本整柜的柜号）。**一定要从这里传进来**，
+ *        别在外面自己拼到结果后面 —— 外面拼的绕开了「看的人自己的运单号不抹」（2026-09-29 实跑发现：
+ *        柜号正好是客户自己的运单号、货又装在这个柜里，客户查轨迹时自己的单号被抹成「柜号已隐藏」）。
  */
-export async function companyContainerNosForMasking(companyId: string, viewerClientIds: readonly string[] = []): Promise<string[]> {
+export async function companyContainerNosForMasking(companyId: string, viewerClientIds: readonly string[] = [], extraNos: readonly (string | null | undefined)[] = []): Promise<string[]> {
   /* 2026-09-28 分支审查：柜号不只存在柜子表里 ——
        · 运单 / 订单上「柜号」那一格（batch_no，收货弹窗里填的）；
        · 运单上的「装柜号」（shipments.container_no，超管编辑里那一格；生产目前 0 条，堵以后的口子）；
@@ -52,8 +55,9 @@ export async function companyContainerNosForMasking(companyId: string, viewerCli
     for (const r of mine) if (typeof r.t === "string") own.add(r.t);
   }
   const list: string[] = [];
-  for (const r of rows) {
-    const no = typeof r.container_no === "string" ? r.container_no.trim() : "";
+  const candidates = [...rows.map((r) => r.container_no), ...extraNos];
+  for (const raw of candidates) {
+    const no = typeof raw === "string" ? raw.trim() : "";
     if (!no) continue;
     if (!own.has(no.toLowerCase())) list.push(no);
     // 填的时候中间带了空格（「L26 0821 9129」），备注里常常连着写（「L2608219129」）：两种写法都抹

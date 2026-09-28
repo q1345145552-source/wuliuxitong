@@ -4,6 +4,7 @@ import {
   buildProductDetailRows, PRODUCT_DETAIL_HEADS,
   totalPackageCountOf, totalVolumeOf, totalWeightOf,
 } from "../../modules/shipment/ShipmentTableGrid";
+import { beijingDate } from "../../modules/shared/beijing-date";
 
 const display = (value: string | number | null | undefined) =>
   typeof value === "string" ? value.trim() || "—" : value ?? "—";
@@ -23,7 +24,7 @@ export default function AdminShipmentDetail({ order, warehouseLabel }: { order: 
     ["物流状态", shipmentStatusZh(order.currentStatus)],
     ["运输方式", display(transportModeLabel(order.transportMode))],
     ["仓库", display(warehouseLabel)],
-    ["到仓日期", display(order.shipDate ?? order.createdAt?.slice(0, 10))],
+    ["到仓日期", display(order.shipDate ?? (beijingDate(order.createdAt) || undefined))],
     ["订单号", display(order.orderNo)],
     ["包装", order.packageUnit === "bag" ? "袋" : "箱"],
     ["总箱数", display(totalPackageCountOf(order))],

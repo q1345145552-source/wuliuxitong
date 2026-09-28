@@ -24,6 +24,7 @@ import {
   type LoadingManifestDetail,
   type ShipmentItem,
 } from "../../../services/business-api";
+import { beijingDate } from "../../../modules/shared/beijing-date";
 
 const STATUS_LABEL: Record<string, string> = {
   LOADING: "装柜中",
@@ -643,7 +644,7 @@ export default function StaffContainerLoadingPage() {
                 </div>
                 <div style={{ fontSize: 12, color: "var(--t-strong)", marginTop: 4 }}>
                   <span style={{ color: item.transportMode ? "var(--c-navy)" : "var(--c-red-deep)", fontWeight: 600 }}>{MODE_ZH(item.transportMode)}</span>
-                  {" · "}{WAREHOUSE_ZH[item.warehouse] ?? item.warehouse} · {item.totalBills} 票 · {item.createdAt.slice(0, 10)}
+                  {" · "}{WAREHOUSE_ZH[item.warehouse] ?? item.warehouse} · {item.totalBills} 票 · {beijingDate(item.createdAt)}
                 </div>
               </div>
             ))

@@ -27,9 +27,12 @@ process.env.DATABASE_URL = "postgresql://blocked:blocked@127.0.0.1:1/never?conne
 
 import assert from "node:assert/strict";
 import {
-  validateProductRows as apiValidate,
+  validateProductRows as apiValidateRaw,
   validateOrderLevelQuantity,
 } from "../apps/api/src/modules/orders/product-row-guard";
+/* 2026-09-29 起后端这道闸先看品名是不是文字（真请求一定带品名）；下面这些用例只管箱数 / 每箱几个，
+   样例行没写品名的补一个，别让它们先被「品名不对」拦下、测不到自己要测的那一项 */
+const apiValidate = (rows: Array<Record<string, unknown>>) => apiValidateRaw(rows.map((r) => ("itemName" in r ? r : { itemName: "测试品", ...r })));
 import {
   validateProductRows as webValidate,
   packageCountForPayload,
@@ -65,6 +68,13 @@ check("后端 1) 复核实测那三条非法「每箱几个」全部拦下", () 
   assert.equal(apiValidate([{ packageCount: 2, productQuantity: -3 }]), "产品行1的「每箱几个」必须是正整数");
   // 每箱 1.5 个 × 2 箱 —— 原来存成 3
   assert.equal(apiValidate([{ packageCount: 2, productQuantity: 1.5 }]), "产品行1的「每箱几个」必须是正整数");
+});
+
+check("后端 0) 品名不是文字（数字 / null / 没带）→ 拦下，报第几行（原来三个入口都直接 .trim() 当场 500）", () => {
+  assert.equal(apiValidateRaw([{ itemName: 5, packageCount: 2 }]), "产品行1的品名不对");
+  assert.equal(apiValidateRaw([{ itemName: "鞋", packageCount: 2 }, { itemName: null, packageCount: 2 }]), "产品行2的品名不对");
+  assert.equal(apiValidateRaw([{ packageCount: 2 }]), "产品行1的品名不对");
+  assert.equal(apiValidateRaw([{ itemName: "鞋", packageCount: 2, productQuantity: 1 }]), null);
 });
 
 check("后端 2) 箱数必须是正整数", () => {

@@ -14,6 +14,7 @@
 import { productNamesLabel } from "../../../../../packages/shared-types/product-names";
 import { shipmentStatusZh } from "./shipment-status";
 import { totalPackageCountOf, totalVolumeOf, totalWeightOf } from "./ShipmentTableGrid";
+import { beijingDate } from "../shared/beijing-date";
 
 /**
  * 件数 / 重量 / 体积按列表和导出上**显示的整票数**比（2026-09-28 分支审查）。
@@ -174,7 +175,7 @@ export function adminOrderFilterRow(item: {
     ...displayTotals(item),
     productQuantity: item.productQuantity == null ? "" : String(item.productQuantity),
     // 管理员端原来的写法：没有到仓日期就退到建单日期
-    arrivedAt: item.shipDate ?? item.createdAt?.slice(0, 10) ?? "",
+    arrivedAt: item.shipDate ?? beijingDate(item.createdAt),
     logisticsStatus: shipmentStatusZh(item.currentStatus ?? undefined),
     // 「柜号」筛选主要比 batchNo：收货 / 建单填的柜号存这个字段；原来只比 shipments.containerNo（线上 0 条），
     // 员工按柜号搜永远搜不到（2026-09-28 审查修复 #9）。containerNo 也一起比：超管编辑里「装柜号」那一格写的是它，

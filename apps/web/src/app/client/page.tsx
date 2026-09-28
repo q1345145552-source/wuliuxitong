@@ -49,6 +49,7 @@ import {
   totalWeightOf,
 } from "../../modules/shipment/ShipmentTableGrid";
 import FclInquiryPanel from "../../components/client/FclInquiryPanel";
+import { beijingDate, beijingToday } from "../../modules/shared/beijing-date";
 
 const initialSearch = {
   batchNo: "",
@@ -254,7 +255,7 @@ export default function ClientHomePage() {
     const ws = XLSX.utils.json_to_sheet(rows);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "我的运单");
-    XLSX.writeFile(wb, `我的运单_${new Date().toISOString().slice(0, 10)}.xlsx`);
+    XLSX.writeFile(wb, `我的运单_${beijingToday()}.xlsx`);
     setExportFeedback(`已导出 ${rows.length} 条`);
   };
   const handleExport = async () => {
@@ -581,7 +582,7 @@ export default function ClientHomePage() {
       const result = baseOrders
         .filter((item) => !search.batchNo || (item.trackingNo ?? "").toLowerCase().includes(search.batchNo.toLowerCase()))
         .filter((item) => {
-          const d = item.createdAt.slice(0, 10);
+          const d = beijingDate(item.createdAt); // 按北京时间的日子比（2026-09-29）
           if (search.arrivedDateFrom && d < search.arrivedDateFrom) return false;
           if (search.arrivedDateTo && d > search.arrivedDateTo) return false;
           return true;

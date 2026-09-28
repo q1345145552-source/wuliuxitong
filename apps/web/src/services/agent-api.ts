@@ -98,6 +98,8 @@ export interface AgentShipmentItem {
   shipmentId: string | null;
   trackingNo: string | null;
   currentStatus: string | null;
+  /** 子单进度比主状态快时带上（显示成「（部分已放行）」这种，2026-09-29 起跟客户端一样） */
+  partialAhead?: string;
   statusGroup: "pending" | "transit" | "arrived" | "delivered" | "closed";
   itemName: string;
   productNames: string;

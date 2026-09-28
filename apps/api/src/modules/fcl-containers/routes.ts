@@ -1322,7 +1322,7 @@ export function registerFclContainerRoutes(app: MinimalHttpApp): void {
     }
 
     // 本柜 + 本公司全部柜号一起抹（2026-09-28：员工在备注里写别的柜号也不能漏给客户）
-    const maskNos = [container.containerNo, ...(await companyContainerNosForMasking(auth.companyId, [auth.userId]))];
+    const maskNos = await companyContainerNosForMasking(auth.companyId, [auth.userId], [container.containerNo]);
     ok(res, {
       ...formatFclForClient(container, shipment),
       products: (shipment?.order?.products ?? []).map(formatProductRow),

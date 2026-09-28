@@ -115,6 +115,17 @@ function parseTimeParam(raw: unknown): Date | undefined | null {
 
 type SendBody = { content?: unknown; image?: { fileName?: unknown; mime?: unknown; base64?: unknown } | null };
 
+/** 文件头对不对得上声明的图片类型（jpg FF D8 FF / png 89 50 4E 47 / gif "GIF8" / webp "RIFF....WEBP"） */
+function looksLikeImage(base64: string, mime: string): boolean {
+  const head = Buffer.from(base64.slice(0, 24), "base64");
+  const at = (i: number) => head[i];
+  if (mime === "image/jpeg" || mime === "image/jpg") return at(0) === 0xff && at(1) === 0xd8 && at(2) === 0xff;
+  if (mime === "image/png") return at(0) === 0x89 && at(1) === 0x50 && at(2) === 0x4e && at(3) === 0x47;
+  if (mime === "image/gif") return head.subarray(0, 4).toString("latin1") === "GIF8";
+  if (mime === "image/webp") return head.subarray(0, 4).toString("latin1") === "RIFF" && head.subarray(8, 12).toString("latin1") === "WEBP";
+  return false;
+}
+
 /** 校验要发的内容；通过就返回整理好的文字 + 图片 */
 export function parseSendBody(body: SendBody): { error: string } | { content: string | null; image: { mime: string; base64: string } | null } {
   const content = typeof body.content === "string" ? body.content.replace(/\r\n/g, "\n").trim() : "";
@@ -128,6 +139,8 @@ export function parseSendBody(body: SendBody): { error: string } | { content: st
     if (!base64) return { error: "图片是空的" };
     if (base64.length > CS_MAX_IMAGE_BASE64_LENGTH) return { error: "图片太大了（压缩后仍超过 8MB），请换一张" };
     if (!/^[A-Za-z0-9+/]+={0,2}$/.test(base64)) return { error: "图片内容不对，请重新选一张" };
+    // 看文件头，不只看声明的类型（2026-09-29 实跑发现：一段文字说自己是 image/png 也能发出去）。页面发图会先在浏览器里重新压成图，只有手拼请求才会这样
+    if (!looksLikeImage(base64, mime)) return { error: "图片内容不对，请重新选一张" };
     image = { mime, base64 };
   }
   if (!content && !image) return { error: "不能发空消息" };
@@ -206,7 +219,10 @@ async function sendMessage(opts: {
         data: { lastMessageAt: now, lastMessagePreview: preview, lastSenderRole: opts.sender.role },
       });
       return msg;
-    });
+    /* 事务时限放宽（2026-09-29 实跑发现）：同一个客户的消息按咨询锁排队，排队等锁的时间也算在 Prisma
+       默认的 5 秒里 —— 测试库上同时发 20 条（再开着轮询），排在后面的 1~8 条直接 500、没发出去。
+       仓库里别的要排队的事务都是这个写法（admin / agents 那几处）。 */
+    }, { timeout: 30000, maxWait: 10000 });
   } catch (e) {
     if (imagePath) {
       try { deleteImageFile(imagePath); } catch { /* 删不掉就算了，不影响报错 */ }

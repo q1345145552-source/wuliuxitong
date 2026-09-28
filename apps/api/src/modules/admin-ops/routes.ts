@@ -98,7 +98,8 @@ export function registerAdminOpsRoutes(app: MinimalHttpApp): void {
         supplierCost,
         quotePrice,
         currency: body.currency?.trim() || "CNY",
-        effectiveFrom: body.effectiveFrom?.trim() || new Date().toISOString().slice(0, 10),
+        // 没填生效日就是「北京时间的今天」（原来取 UTC 的今天，北京早上 8 点前填的记成昨天，2026-09-29）
+        effectiveFrom: body.effectiveFrom?.trim() || new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString().slice(0, 10),
         effectiveTo: body.effectiveTo?.trim() || null,
       },
       select: { id: true, updatedAt: true },
@@ -412,7 +413,11 @@ export function registerAdminOpsRoutes(app: MinimalHttpApp): void {
     }
     // 签收单给客户签字：备注里的柜号按「这票货的柜 + 本公司全部柜号」抹（2026-09-28）
     // 签收单是给这个客户签字的：他自己的运单号不抹
-    const maskContainerNos = await companyContainerNosForMasking(auth.companyId, [clientId]);
+    const maskContainerNos = await companyContainerNosForMasking(
+      auth.companyId,
+      [clientId],
+      selectedRows.flatMap((row) => row.shipment.containerItems.map((it) => it.container.containerNo)),
+    );
     const shipments = selectedRows.map((row) => {
       const shipment = row.shipment;
       const order = shipment.order;
@@ -480,7 +485,8 @@ export function registerAdminOpsRoutes(app: MinimalHttpApp): void {
         // 生成器早就会把 null 写成空格子了，问题一直卡在这一句。
         weightKg: weightKg ?? null,
         volumeM3: volumeM3 ?? null,
-        remark: sanitizeRemarkForClient(shipment.remark || "", true, [...shipment.containerItems.map((it) => it.container.containerNo), ...maskContainerNos]),
+        // 这张单装过的柜号已经并进 maskContainerNos（上面按「这个客户自己的运单号不抹」统一过滤过）
+        remark: sanitizeRemarkForClient(shipment.remark || "", true, maskContainerNos),
         status: row.status,
         containerNos: [],
         receiverName: order?.receiverNameTh?.trim() || contactName,
@@ -562,6 +568,11 @@ export function registerAdminOpsRoutes(app: MinimalHttpApp): void {
     const auth = requireRole(req, res, ["staff", "admin"]);
     if (!auth) return;
     const body = (req.body ?? {}) as { shipmentIds?: string[]; driverName?: string; licensePlate?: string; phoneNumber?: string; status?: string; deliveryNo?: string; deliveryDate?: string; moveFromDelivering?: boolean };
+    // 运单列表不是「一串文字」的，当场 400（原来 .map / .trim 直接 500，2026-09-29 实跑发现）；不悄悄丢掉不认识的那几个
+    if (body.shipmentIds !== undefined && (!Array.isArray(body.shipmentIds) || body.shipmentIds.some((s: unknown) => typeof s !== "string"))) {
+      fail(res, 400, "VALIDATION_ERROR", "运单列表格式不对");
+      return;
+    }
     const shipmentIds = [...new Set((body.shipmentIds ?? []).map(s => s.trim()).filter(Boolean))];
     const moveFromDelivering = body.moveFromDelivering === true;
     if (body.moveFromDelivering !== undefined && typeof body.moveFromDelivering !== "boolean") {

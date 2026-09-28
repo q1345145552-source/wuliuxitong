@@ -610,7 +610,8 @@ export function registerLoadingManifestRoutes(app: MinimalHttpApp): void {
     const containerId = req.query.id?.trim();
     if (!containerId) { fail(res, 400, "BAD_REQUEST", "container id is required"); return; }
     const body = (req.body ?? {}) as { trackingNo?: string; pieceCount?: number };
-    if (!body.trackingNo?.trim()) { fail(res, 400, "BAD_REQUEST", "运单号不能为空"); return; }
+    // 运单号不是文字（比如传了个数字）原来 .trim 直接 500（2026-09-29 实跑发现）
+    if (typeof body.trackingNo !== "string" || !body.trackingNo.trim()) { fail(res, 400, "BAD_REQUEST", "运单号不能为空"); return; }
     /**
      * 装柜件数必须是正整数（2026-08-31 收尾补）。
      * 原来只判 typeof === "number" && > 0，填 2.5 能一路穿进事务：

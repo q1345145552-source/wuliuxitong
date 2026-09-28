@@ -10,6 +10,7 @@ import {
   fetchStaffPrealerts,
   type OrderItem,
 } from "../../../services/business-api";
+import { beijingDate } from "../../../modules/shared/beijing-date";
 
 type PrealertEditDraft = {
   warehouseId: string;
@@ -197,7 +198,7 @@ export default function AdminPrealertsPage() {
                     <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 6, color: "var(--t-strong)" }}>
                       <span style={{ fontFamily: "monospace" }}>{item.trackingNo || item.orderNo || "—"}</span>
                       {" · "}{item.clientId ?? "-"}
-                      {" · "}{item.createdAt.slice(0, 10)}
+                      {" · "}{beijingDate(item.createdAt)}
                     </div>
                     {(item.products?.length ?? 0) > 1 && (
                       <div style={{ fontSize: 11, color: "var(--t-strong)", marginBottom: 6, background: "#fefce8", borderRadius: 4, padding: "3px 6px" }}>

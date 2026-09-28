@@ -9,6 +9,8 @@
  *   V4 已收货（received）在客户详情、客户导出、超管导出、代理导出里都写中文
  *   V5 运费低消「保存中」真的会显示、按钮会灰（原来那个状态从来没人置成 true）；后端两个一起存
  *   V6 父单轨迹接口查子单派送单明着写 select（上线自检要求；也免得把用不上的列读出来）
+ *   V7 日期按北京时间：后端时间是 UTC，直接 .slice(0, 10) 会把北京 0~8 点的记录显示成前一天（2026-09-29 实跑发现：
+ *      凌晨 1 点提交的询价列表写 9-28、详情写 9-29）；导出文件名、表单默认日期同理
  */
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -133,6 +135,28 @@ check("V6 父单轨迹查子单派送单：明着写 select，只要派送信息
   const i = src.indexOf("const childLastmileRows = childShipments.length > 0");
   const block = src.slice(i, src.indexOf(": [];", i));
   assert.match(block, /select: \{\s*shipmentId: true, carrierName: true, driverName: true, licensePlate: true,\s*phoneNumber: true, signImageBase64: true, status: true,\s*\}/, "子单派送单没有明着写 select");
+});
+
+check("V7 日期按北京时间：助手函数真跑对；网页里不再有「UTC 时间直接切前 10 位」当日期；后端两处默认日期按北京今天", () => {
+  const d = loadModule("apps/web/src/modules/shared/beijing-date.ts");
+  assert.equal(d.beijingDate("2026-09-28T17:05:00.000Z"), "2026-09-29", "北京 9-29 凌晨 1 点 05 分，应是 9-29");
+  assert.equal(d.beijingDate("2026-09-28T15:59:59.000Z"), "2026-09-28", "北京 9-28 晚 23:59，应是 9-28");
+  assert.equal(d.beijingDate("2026-09-28T16:00:00.000Z"), "2026-09-29", "北京 9-29 零点整，应是 9-29");
+  assert.equal(d.beijingDate("2026-09-28"), "2026-09-28", "本来就是纯日期的不许再换算");
+  assert.equal(d.beijingDate(""), ""); assert.equal(d.beijingDate(null), "");
+  assert.match(d.beijingToday(), /^\d{4}-\d{2}-\d{2}$/);
+  // 扫整个 apps/web/src：时间字段直接切日期、拿 UTC 的今天当日期，一处都不许有
+  // （例外：Excel 序号转日期本来就按 UTC 零点算，那两处是对的）
+  const { execSync } = require("node:child_process");
+  const hits = String(execSync(`grep -rnE "At\\??\\.slice\\(0, 10\\)|new Date\\(\\)\\.toISOString\\(\\)\\.slice\\(0, 10\\)|(loadingDate|departureDate|ata|customsClearedAt)\\.slice\\(0, 10\\)" apps/web/src || true`, { cwd: ROOT }))
+    .split("\n").filter(Boolean)
+    .filter((l) => !/arrivedAt\.slice\(0, 10\)/.test(l)); // arrivedAt 在这几处是订单的到仓日期（本来就是纯日期字符串）
+  assert.deepEqual(hits, [], `还有按 UTC 切日期的地方：\n${hits.join("\n")}`);
+  // 后端：没填日期时的默认值按北京今天
+  const orders = read("apps/api/src/modules/orders/routes.ts");
+  assert.match(orders, /const shipDateText = body\.shipDate\?\.trim\(\) \|\| new Date\(Date\.now\(\) \+ 8 \* 60 \* 60 \* 1000\)\.toISOString\(\)\.slice\(0, 10\);/);
+  const ops = read("apps/api/src/modules/admin-ops/routes.ts");
+  assert.match(ops, /effectiveFrom: body\.effectiveFrom\?\.trim\(\) \|\| new Date\(Date\.now\(\) \+ 8 \* 60 \* 60 \* 1000\)\.toISOString\(\)\.slice\(0, 10\),/);
 });
 
 console.log(`\n通过 ${passed} / 失败 ${failed}`);

@@ -8,6 +8,7 @@ import { getOptionalSession } from "../../auth/auth-session";
 import { useCurrentSessionBrand } from "../../modules/branding/useWorkbenchBrand";
 import DetailModal from "../../modules/layout/DetailModal";
 import { formatBeijingTime } from "../../modules/staff/utils";
+import { beijingDate } from "../../modules/shared/beijing-date";
 
 /* 2026-08-31（Codex 二轮）：列表接口不再下发 certFileBase64 / productImages 大字段
    （表格根本不显示它们），remark 客户角色也拿不到了——类型跟着后端同步。
@@ -411,7 +412,7 @@ export default function FclInquiryPanel(props: ClientFclInquiryProps) {
                     {inquiryStatusLabel(item.status, !props.isStaff)}
                     {props.isStaff && item.fclDeleted ? <div style={{ fontSize: 11, color: "var(--c-red-deep)", fontWeight: 400 }}>转的整柜已被删，可重新转</div> : null}
                   </td>
-                  <td style={{ padding: "6px 8px", fontSize: 11 }}>{item.createdAt.slice(0, 10)}</td>
+                  <td style={{ padding: "6px 8px", fontSize: 11 }}>{beijingDate(item.createdAt)}</td>
                   <td style={{ padding: "6px 8px", whiteSpace: "nowrap" }}>
                     {props.isStaff ? (
                       <button type="button" onClick={() => void openDetail(item.id)}

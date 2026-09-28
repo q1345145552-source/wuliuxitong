@@ -19,6 +19,7 @@ import {
 import { shipmentStatusZh, CLIENT_STATUS_ZH_OVERRIDES } from "../../../modules/shipment/shipment-status";
 import { formatBeijingTime } from "../../../modules/staff/utils";
 import EmptyStateCard from "../../../modules/layout/EmptyStateCard";
+import { beijingDate } from "../../../modules/shared/beijing-date";
 
 const CARGO_TYPE_ZH: Record<string, string> = { normal: "普货", inspection: "商检货", sensitive: "敏感货" };
 
@@ -73,7 +74,7 @@ export default function ClientFclContainersPage() {
                 {/* ⚠️ 这里没有「柜号」这一项，客户不能看柜号 */}
                 <div><span style={fl}>柜型</span><div>{detail.containerType}</div></div>
                 <div><span style={fl}>运输方式</span><div>{detail.transportMode === "land" ? "陆运" : "海运"}</div></div>
-                <div><span style={fl}>装柜日期</span><div>{detail.loadingDate ? detail.loadingDate.slice(0, 10) : "—"}</div></div>
+                <div><span style={fl}>装柜日期</span><div>{detail.loadingDate ? beijingDate(detail.loadingDate) : "—"}</div></div>
                 <div><span style={fl}>总箱数</span><div>{detail.packageCount ?? "—"}</div></div>
                 <div><span style={fl}>总体积 (m³)</span><div>{detail.volumeM3 ?? "—"}</div></div>
                 <div><span style={fl}>总重 (kg)</span><div>{detail.weightKg ?? "—"}</div></div>
@@ -159,7 +160,7 @@ export default function ClientFclContainersPage() {
                     <td style={td}>{r.packageCount ?? "—"}</td>
                     <td style={td}>{r.volumeM3 ?? "—"}</td>
                     <td style={td}>{r.amountCny == null ? "—" : r.amountCny.toLocaleString()}</td>
-                    <td style={td}>{r.loadingDate ? r.loadingDate.slice(0, 10) : "—"}</td>
+                    <td style={td}>{r.loadingDate ? beijingDate(r.loadingDate) : "—"}</td>
                     <td style={td}><button type="button" className="workbench-button" onClick={() => void openDetail(r.containerId)}>详情</button></td>
                   </tr>
                 ))}

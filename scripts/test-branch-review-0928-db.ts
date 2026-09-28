@@ -15,6 +15,12 @@
  *   R11 运单上「装柜号」（shipments.container_no）那一格的号也进抹号名单
  *   R12 确认收货和装柜同时发生不再死锁（订单行改用 FOR NO KEY UPDATE）
  *   R13 父单件数是空的老数据：超管列表不给整票箱数（别变成确定的 0）
+ *   —— 以下是 9-29 在真跑的系统上端到端走查（4 个测试员 + 页面实点）查出来的 ——
+ *   R14 柜号正好是客户自己的运单号、货又装在这个柜里：客户查轨迹 / 代理查轨迹 / 签收单都不抹客户自己的单号
+ *   R15 推柜子状态手填不存在的日子（2 月 31 日）/ 乱写 → 400，柜子不动（原来顺延到 3 月写进去）
+ *   R16 三个运单列表页码传负数不 500
+ *   R17 请求体字段类型不对（数字当文字、null、不是数组）→ 400，不是 500
+ *   R18 代理的运单列表带「（部分已放行）」（partialAhead），跟客户端一个口径
  *
  * 只连测试库：DATABASE_URL 不带 neon.tech 的不跑（一次性 docker 库设 AGENT_PORTAL_TEST_ALLOW_DB=1）；
  * 没有 DATABASE_URL 打印「跳过」。测试数据全在假公司 zz_brv_co 下，开跑前、跑完后都清干净；
@@ -55,6 +61,7 @@ async function main(): Promise<void> {
   (await import("../apps/api/src/modules/agent-portal/routes")).registerAgentPortalRoutes(app);
   (await import("../apps/api/src/modules/consolidation/routes")).registerConsolidationRoutes(app);
   (await import("../apps/api/src/modules/shipping-config/routes")).registerShippingConfigRoutes(app);
+  (await import("../apps/api/src/modules/loading-manifests/routes")).registerLoadingManifestRoutes(app);
 
   async function call(key: string, auth: Auth, body: Row = {}, query: Record<string, string> = {}): Promise<{ status: number; data: any; message: string }> {
     const handler = routes.get(key);
@@ -347,6 +354,89 @@ async function main(): Promise<void> {
       const it = (r.data?.items ?? []).find((x: Row) => x.trackingNo === "ZZBRVR13");
       assert.ok(it, "列表里没这张单");
       assert.equal(it.totalPackageCount, undefined, `件数未知却给了整票箱数 ${it.totalPackageCount}`);
+    });
+
+    // ---------- R14 ----------
+    await mkOrder("zz_brv_r14", CLIENT.userId);
+    await mkShip("zz_brv_r14p", "zz_brv_r14", "ZZBRVR14", "loaded", { packageCount: 0 });
+    await mkShip("zz_brv_r14c", "zz_brv_r14", "ZZBRVR14-1", "loaded", { parentTrackingNo: "ZZBRVR14", remark: "本票单号 ZZBRVR14" });
+    await mkLog("zz_brv_r14l", "zz_brv_r14p", "自己单号 ZZBRVR14", { nextStop: "ZZBRVR14 下一站" });
+    {
+      // 柜号就叫 ZZBRVR14（跟客户自己的运单号一模一样），子单装在这个柜里
+      const c = await pm.container.create({ data: { companyId: CO, containerNo: "ZZBRVR14", containerType: "40HQ", currentStatus: "SEALED", transportMode: "sea" } });
+      await pm.shipmentContainerItem.create({ data: { shipmentId: "zz_brv_r14c", containerId: c.id, loadedVolumeM3: 1, loadedPieceCount: 10 } });
+      await pm.adminLastmileOrder.create({ data: { id: "zz_brv_lm14", companyId: CO, deliveryNo: "ZZBRVD14", shipmentId: "zz_brv_r14c", carrierName: "车队", externalTrackingNo: "X", status: "delivering" } });
+    }
+    await check("R14 柜号正好是客户自己的运单号、货装在这个柜里：客户查轨迹、签收单都不把客户自己的单号抹掉（跟「我的运单」一致）", async () => {
+      const r = await call("GET /client/shipments/track", CLIENT, {}, { trackingNo: "ZZBRVR14" });
+      assert.equal(r.status, 200, r.message);
+      const tl = JSON.stringify(r.data.timeline ?? []);
+      assert.ok(tl.includes("自己单号 ZZBRVR14"), `客户自己的单号被抹了：${tl.slice(0, 300)}`);
+      assert.ok(tl.includes("ZZBRVR14 下一站"), `下一站里客户自己的单号被抹了：${tl.slice(0, 300)}`);
+      const sheet = await call("GET /admin/lastmile/customer-export-data", STAFF, {}, { deliveryNo: "ZZBRVD14", clientId: CLIENT.userId });
+      assert.equal(sheet.status, 200, sheet.message);
+      const line = (sheet.data?.customers?.[0]?.shipments ?? []).find((x: Row) => x.trackingNo === "ZZBRVR14-1");
+      assert.ok(line, "签收单里没这张子单");
+      assert.equal(line.remark, "本票单号 ZZBRVR14", `签收单上客户自己的单号被抹了：${line.remark}`);
+    });
+
+    // ---------- R15 ----------
+    const C15 = await pm.container.create({ data: { companyId: CO, containerNo: "ZZBRVC15", containerType: "40HQ", currentStatus: "LOADING", transportMode: "land" } });
+    await check("R15 推柜子状态手填不存在的日子 / 乱写 → 400，柜子状态和日期一个字不动", async () => {
+      for (const date of ["2026-02-31", "2026-13-01", "abc", "2026/09/01"]) {
+        const r = await call("POST /admin/containers/status", STAFF, { id: C15.id, toStatus: "SEALED", date });
+        assert.equal(r.status, 400, `日期「${date}」没被拦，拿到 ${r.status}`);
+      }
+      const c = await pm.container.findUnique({ where: { id: C15.id } });
+      assert.equal(c.currentStatus, "LOADING", "被拦的请求把柜子推走了");
+      const ok = await call("POST /admin/containers/status", STAFF, { id: C15.id, toStatus: "SEALED", date: "2026-02-28" });
+      assert.equal(ok.status, 200, `正常日期推不动：${ok.message}`);
+    });
+
+    // ---------- R16 ----------
+    await check("R16 三个运单列表页码 / 每页条数传负数：照第 1 页 / 合法条数处理，不 500", async () => {
+      for (const [key, who] of [["GET /admin/orders", ADMIN], ["GET /staff/shipments", STAFF], ["GET /client/orders", CLIENT]] as const) {
+        const qs: Array<Record<string, string>> = [{ page: "-1" }, { page: "-1", pageSize: "-5" }, { page: "0" }];
+        for (const q of qs) {
+          const r = await call(key, who, {}, q);
+          assert.equal(r.status, 200, `${key} ${JSON.stringify(q)} → ${r.status} ${r.message}`);
+        }
+      }
+    });
+
+    // ---------- R17 ----------
+    await check("R17 请求体字段类型不对 → 400（原来 5 处直接 500）", async () => {
+      const cases: Array<[string, Auth, Row, Record<string, string>]> = [
+        ["POST /admin/lastmile/orders", STAFF, { shipmentIds: "x" }, {}],
+        ["POST /admin/lastmile/orders", STAFF, { shipmentIds: [123] }, {}],
+        ["POST /staff/loading-manifests/add-shipment", STAFF, { trackingNo: 123, pieceCount: 1 }, { id: C15.id }],
+        ["POST /staff/prealerts/receive", STAFF, { orderId: 123 }, {}],
+        ["POST /staff/orders", STAFF, { clientId: CLIENT.userId, warehouseId: "wh_yiwu_01", transportMode: "sea", products: [{ itemName: 5, packageCount: 1 }] }, {}],
+        ["POST /client/prealerts", CLIENT, { warehouseId: "wh_yiwu_01", transportMode: "sea", products: [{ itemName: null, packageCount: 1 }] }, {}],
+      ];
+      const bad: string[] = [];
+      for (const [key, who, body, query] of cases) {
+        let r;
+        try { r = await call(key, who, body, query); } catch (e: any) { bad.push(`${key} ${JSON.stringify(body)} → 抛错 ${e?.message}`); continue; }
+        if (r.status !== 400) bad.push(`${key} ${JSON.stringify(body)} → ${r.status} ${r.message}`);
+      }
+      assert.deepEqual(bad, [], bad.join("\n"));
+    });
+
+    // ---------- R18 ----------
+    await mkOrder("zz_brv_r18", AGENT_CLIENT.userId);
+    await mkShip("zz_brv_r18p", "zz_brv_r18", "ZZBRVR18", "inWarehouseCN", { packageCount: 1 });
+    // 海运单：子单已经开船（departed），父单还在国内仓 —— 「过境越南」是陆运的环节，海运单上不算「部分已放行」
+    await mkShip("zz_brv_r18c", "zz_brv_r18", "ZZBRVR18-1", "departed", { parentTrackingNo: "ZZBRVR18", packageCount: 1 });
+    await check("R18 代理的运单列表带「（部分已放行）」：跟同一个客户在客户端看到的一样", async () => {
+      const r = await call("GET /agent/shipments", AGENT, {}, {});
+      assert.equal(r.status, 200, r.message);
+      const it = (r.data?.items ?? []).find((x: Row) => x.trackingNo === "ZZBRVR18");
+      assert.ok(it, "代理列表里没这票");
+      assert.ok(it.partialAhead, `代理列表没带 partialAhead：${JSON.stringify(it).slice(0, 200)}`);
+      const c = await call("GET /client/orders", AGENT_CLIENT, {}, {});
+      const ci = (c.data?.items ?? []).find((x: Row) => x.id === "zz_brv_r18");
+      assert.equal(it.partialAhead, ci?.partialAhead, "代理列表跟客户端的「部分…」不一样");
     });
   } finally {
     await cleanup();

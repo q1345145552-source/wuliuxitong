@@ -7,6 +7,7 @@ import { formatCny } from "../../modules/billing/billing-utils";
 import EmptyStateCard from "../../modules/layout/EmptyStateCard";
 import PrealertSearch from "../../modules/shipment/PrealertSearch";
 import StaffProductImagesPanel from "./StaffProductImagesPanel";
+import { beijingDate } from "../../modules/shared/beijing-date";
 
 /**
  * ⚠️ 这四个数字框的口径（2026-08-29 第十轮之后定的）：
@@ -154,7 +155,7 @@ export default function StaffPrealertList(props: StaffPrealertListProps) {
               return (
                 <div key={item.id} style={{ border: "1px solid var(--l-soft)", borderRadius: 6, padding: 8, background: "var(--white)" }}>
                   <div style={{ fontWeight: 600, fontSize: 12, marginBottom: 4, color: "var(--t-strong)" }}>
-                    <span style={{ fontFamily: "monospace" }}>{item.orderNo || item.id}</span> · {item.clientId ?? "-"} · {item.createdAt.slice(0, 10)}
+                    <span style={{ fontFamily: "monospace" }}>{item.orderNo || item.id}</span> · {item.clientId ?? "-"} · {beijingDate(item.createdAt)}
                   </div>
                   {(item.products?.length ?? 0) > 1 && (
                     <div style={{ fontSize: 11, color: "var(--t-strong)", marginBottom: 6, background: "#fefce8", borderRadius: 4, padding: "3px 6px" }}>

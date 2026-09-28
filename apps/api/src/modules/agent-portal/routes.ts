@@ -28,6 +28,7 @@ import { CONSOLIDATION_CURRENCY } from "../wallet/consolidation-balance";
 import { LONG_TERM_PRICE_OFF_MESSAGE, LONG_TERM_PRICE_WRITE_ENABLED, setAgentClientWhrPrice } from "../whr-consolidation/long-term-price";
 import { buildFeeBreakdown, deriveLatestStatus } from "../whr-consolidation/utils";
 import { loadOrderTotalMetrics } from "../shipments/total-metrics";
+import { loadPartialAhead } from "../shipments/partial-status";
 import { productNamesLabel } from "../../../../../packages/shared-types/product-names";
 import { classifyStatusGroup, matchesShipmentListFilter, partialAheadStatus } from "../../../../../packages/shared-types/shipment-status";
 import {
@@ -252,10 +253,25 @@ async function loadShipmentRows(auth: AgentAuth, orderIds: string[], clientNames
         orderBy: [{ parentTrackingNo: { sort: "asc", nulls: "first" } }, { updatedAt: "desc" }],
         take: 1,
         // ⚠️ 不选 remark（员工写的运单备注是内部的）、batchNo / containerNo（柜号）
-        select: { id: true, trackingNo: true, currentStatus: true, updatedAt: true },
+        select: { id: true, trackingNo: true, currentStatus: true, updatedAt: true, transportMode: true },
       },
     },
   });
+  /* 子单进度不一样时补一句「（部分已放行）」（2026-09-29 实跑发现代理列表漏了：客户 / 员工 / 超管列表和代理自己的
+     轨迹弹窗都有，只有代理列表没有）。算法跟 /client/orders 同一个函数、同一个写法。 */
+  const partialAhead = await loadPartialAhead(
+    auth.companyId,
+    orders
+      .map((o) => ({ ship: o.shipments[0], transportMode: o.transportMode }))
+      .filter((row): row is { ship: NonNullable<typeof row.ship>; transportMode: string } =>
+        !!row.ship && !!row.ship.trackingNo && !!row.ship.currentStatus)
+      .map((row) => ({
+        trackingNo: row.ship.trackingNo,
+        currentStatus: row.ship.currentStatus as string,
+        packageCount: null,
+        transportMode: row.ship.transportMode ?? row.transportMode,
+      })),
+  );
   const metrics = await loadOrderTotalMetrics(
     auth.companyId,
     orders.map((o) => ({ orderId: o.id, orderVolumeM3: o.volumeM3, orderWeightKg: o.weightKg })),
@@ -276,6 +292,7 @@ async function loadShipmentRows(auth: AgentAuth, orderIds: string[], clientNames
         shipmentId: ship?.id ?? null,
         trackingNo: ship?.trackingNo ?? null,
         currentStatus: ship?.currentStatus ?? null,
+        partialAhead: ship?.trackingNo ? partialAhead.get(ship.trackingNo) : undefined,
         statusGroup: classifyStatusGroup(ship?.currentStatus),
         itemName: o.itemName,
         productNames: productNamesLabel(o.products, o.itemName),
@@ -642,12 +659,11 @@ export function registerAgentPortalRoutes(app: MinimalHttpApp): void {
           },
         });
     // 这票货（父单 + 子单）真实装过的柜号 + 本公司全部柜号，备注按号精确抹（2026-09-28 审查修复 #2；Codex 复核后扩到全公司）
-    const familyContainerNos = [
+    // 代理名下客户自己的运单号不抹（有 24 个柜号就是运单号），别家客户的照抹；这票货装过的柜号也走同一道过滤
+    const familyContainerNos = await companyContainerNosForMasking(auth.companyId, clientIds, [
       ...shipment.containerItems.map((it) => it.container.containerNo),
       ...childShipments.flatMap((cs) => cs.containerItems.map((it) => it.container.containerNo)),
-      // 代理名下客户自己的运单号不抹（有 24 个柜号就是运单号），别家客户的照抹
-      ...(await companyContainerNosForMasking(auth.companyId, clientIds)),
-    ];
+    ]);
 
     // 派送单一车拉多家的货：只取这张运单自己那一行，派送单号（能串到别人）不给
     const LASTMILE_SELECT = { carrierName: true, driverName: true, licensePlate: true, phoneNumber: true, signImageBase64: true, status: true } as const;

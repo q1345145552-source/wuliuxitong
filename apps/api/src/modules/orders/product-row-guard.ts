@@ -16,6 +16,7 @@ import { DECIMAL_10_2, requireDecimal, requireSumWithinDecimal } from "../core/d
  */
 
 export interface ProductRowForGuard {
+  itemName?: unknown;
   packageCount?: unknown;
   productQuantity?: unknown;
   weightKg?: unknown;
@@ -43,6 +44,10 @@ export function validateProductRows(rows: ProductRowForGuard[]): string | null {
    * 客户拿到的是一个「看起来很正常」的错数。宁可拦住让他补，也不能猜。
    */
   for (let i = 0; i < rows.length; i += 1) {
+    // 品名不是文字（数字、null、没带）：三个入口后面都直接 .trim()，原来当场 500（2026-09-29 实跑发现）
+    if (typeof rows[i].itemName !== "string") {
+      return `产品行${i + 1}的品名不对`;
+    }
     if (!isPositiveInteger(rows[i].packageCount)) {
       return `产品行${i + 1}的箱数必须是正整数`;
     }

@@ -89,6 +89,7 @@ import {
   type AdminWalletRechargeItem,
   fetchLastmileShipments,
 } from "../../services/business-api";
+import { beijingDate, beijingToday } from "../../modules/shared/beijing-date";
 import {
   createKnowledgeItem,
   deleteKnowledgeItem,
@@ -393,7 +394,7 @@ export default function AdminHomePage() {
 
   const [staffClients, setStaffClients] = useState<Array<{ id: string; name: string }>>([]);
   const [createForm, setCreateForm] = useState({
-    clientId: "", warehouseId: "wh_yiwu_01", arrivedAt: new Date().toISOString().slice(0, 10),
+    clientId: "", warehouseId: "wh_yiwu_01", arrivedAt: beijingToday(),
     transportMode: "sea" as "sea" | "land", domesticTrackingNo: "", batchNo: "", shipDate: "",
     receiverNameTh: "", receiverPhoneTh: "", receiverAddressTh: "",
   });
@@ -1645,7 +1646,7 @@ export default function AdminHomePage() {
                   <span><strong>姓名</strong> {u.name}</span>
                   <span><strong>手机</strong> {u.phone}</span>
                   <span><strong>状态</strong> {u.status === "inactive" ? "已封禁" : "正常"}</span>
-                  <span style={{ color: "var(--t-strong)", fontSize: 12 }}>{u.createdAt.slice(0, 10)}</span>
+                  <span style={{ color: "var(--t-strong)", fontSize: 12 }}>{beijingDate(u.createdAt)}</span>
                   <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                     <button
                       type="button"
@@ -1781,7 +1782,7 @@ export default function AdminHomePage() {
                     后端接口（POST /admin/clients/whr-price）和 client_whr_prices 表都留着，以后要用再开。
                   */}
                   <span><strong>状态</strong> {u.status === "inactive" ? "已封禁" : "正常"}</span>
-                  <span style={{ color: "var(--t-strong)", fontSize: 12 }}>{u.createdAt.slice(0, 10)}</span>
+                  <span style={{ color: "var(--t-strong)", fontSize: 12 }}>{beijingDate(u.createdAt)}</span>
                   <button
                     type="button"
                     onClick={() => { setShowSettingPassword(false); setSettingPasswordValue(""); setSettingPasswordFor(settingPasswordFor === u.id ? null : u.id); }}
@@ -2026,7 +2027,7 @@ export default function AdminHomePage() {
                     </td>
                     <td className="shipment-current-status" style={gridTdStyle}>{shipmentStatusWithPartialZh(o.currentStatus, o.partialAhead)}</td>
                     <td style={{ ...gridTdStyle, color: "var(--t-strong)" }}>
-                      {o.shipDate ?? o.createdAt.slice(0, 10)}
+                      {o.shipDate ?? beijingDate(o.createdAt)}
                     </td>
                     {/* 品名 / 箱数 / 长宽高 / 国内单号 / 货型：合并成一块，固定高度一起滚 */}
                     <ProductListDetailCell rows={detailRows} />
@@ -3057,7 +3058,7 @@ export default function AdminHomePage() {
                     try {
                       await createStaffOrder({
                         clientId: String(r["客户ID"] ?? r.clientId ?? ""), warehouseId: String(r["仓库ID"] ?? r.warehouseId ?? "wh_yiwu_01"),
-                        arrivedAt: String(r["到仓日期"] ?? r.arrivedAt ?? new Date().toISOString().slice(0, 10)),
+                        arrivedAt: String(r["到仓日期"] ?? r.arrivedAt ?? beijingToday()),
                         itemName: String(r["品名"] ?? r.itemName ?? ""),
                         // ⚠️ 不许 `?? 1`（2026-08-29 去掉）：表里没填箱数就该报错让人去补，
                         // 悄悄当成 1 箱会让重量/方数/产品数量三个合计一起错，而且错得很像真的

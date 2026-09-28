@@ -3,6 +3,7 @@
 import { createRoot } from "react-dom/client";
 import { useCallback, useEffect, useState } from "react";
 import { authHeaders, apiBaseUrl, apiRequest, parseApiResponse, fetchWithSession as fetch } from "../../services/core-api";
+import { beijingDate } from "../shared/beijing-date";
 
 // ── Types ──
 
@@ -443,10 +444,10 @@ function TrackContent({ data, onReload }: { data: TrackData; onReload?: () => vo
           <div style={{ fontWeight: 600, color: "var(--t-body)", marginBottom: 4 }}>装柜时间</div>
           {data.containers.map((c, i) => (
             <div key={i} style={{ marginBottom: 4 }}>
-              {c.loadingDate ? <div>装柜：{c.loadingDate.slice(0, 10)}</div> : null}
-              {c.departureDate ? <div>开船：{c.departureDate.slice(0, 10)}</div> : null}
-              {c.ata ? <div>到港：{c.ata.slice(0, 10)}</div> : null}
-              {c.customsClearedAt ? <div>清关放行：{c.customsClearedAt.slice(0, 10)}</div> : null}
+              {c.loadingDate ? <div>装柜：{beijingDate(c.loadingDate)}</div> : null}
+              {c.departureDate ? <div>开船：{beijingDate(c.departureDate)}</div> : null}
+              {c.ata ? <div>到港：{beijingDate(c.ata)}</div> : null}
+              {c.customsClearedAt ? <div>清关放行：{beijingDate(c.customsClearedAt)}</div> : null}
             </div>
           ))}
         </div>

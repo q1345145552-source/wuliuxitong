@@ -183,6 +183,30 @@ async function main(): Promise<void> {
     ]) assert.match(m![1], rule, `手机样式少了一条：${rule}`);
   });
 
+  await check("S13 真跑系统查出来的（2026-09-29）：发图看文件头、不只看声明的类型；发消息的事务时限放宽（排队等锁也算在里面）", () => {
+    const b64 = (buf: Buffer | string) => Buffer.from(buf).toString("base64");
+    const png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC";
+    assert.ok(!("error" in api.parseSendBody({ image: { mime: "image/png", base64: png } })), "真 png 被拒了");
+    const jpg = b64(Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 0x10, 0x4a, 0x46, 0x49, 0x46]));
+    assert.ok(!("error" in api.parseSendBody({ image: { mime: "image/jpeg", base64: jpg } })), "真 jpg 被拒了");
+    const gif = b64("GIF89a\x01\x00\x01\x00");
+    assert.ok(!("error" in api.parseSendBody({ image: { mime: "image/gif", base64: gif } })), "真 gif 被拒了");
+    const webp = b64(Buffer.concat([Buffer.from("RIFF"), Buffer.from([0x24, 0, 0, 0]), Buffer.from("WEBPVP8 ")]));
+    assert.ok(!("error" in api.parseSendBody({ image: { mime: "image/webp", base64: webp } })), "真 webp 被拒了");
+    for (const [mime, base64, why] of [
+      ["image/png", b64("this is plain text not a png"), "一段文字说自己是 png"],
+      ["image/jpeg", png, "png 说自己是 jpg"],
+      ["image/gif", jpg, "jpg 说自己是 gif"],
+      ["image/webp", b64("RIFF1234AVI LIST"), "别的 RIFF 文件说自己是 webp"],
+    ] as const) {
+      assert.ok("error" in api.parseSendBody({ image: { mime, base64 } }), `${why}，照样收了`);
+    }
+    const routes = read("apps/api/src/modules/cs-chat/routes.ts");
+    const i = routes.indexOf("async function sendMessage");
+    const fn = routes.slice(i, routes.indexOf("\n}\n", i));
+    assert.match(fn, /\}, \{ timeout: 30000, maxWait: 10000 \}\);/, "发消息的事务还是默认 5 秒（排队等锁的时间也算在里面，同时发一多后面的就 500）");
+  });
+
   console.log(`\n通过 ${passed} / 失败 ${failed}`);
   if (failed > 0) process.exit(1);
 }

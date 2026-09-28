@@ -347,7 +347,8 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
     }
 
     const now = new Date().toISOString();
-    const shipDateText = body.shipDate?.trim() || now.slice(0, 10);
+    // 没填发货 / 到仓日期就用「北京时间的今天」（2026-09-29 实跑发现）：后端跑在 UTC，原来取 UTC 的今天，北京早上 8 点前建的单记成昨天
+    const shipDateText = body.shipDate?.trim() || new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString().slice(0, 10);
     const shipDate = new Date(`${shipDateText}T00:00:00`);
     if (Number.isNaN(shipDate.getTime())) {
       fail(res, 400, "BAD_REQUEST", "invalid shipDate");
@@ -492,7 +493,8 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
       warehouseId?: string;
       shipDate?: string;
     };
-    const orderId = body.orderId?.trim();
+    // 单号不是文字原来 .trim 直接 500（2026-09-29 实跑发现），按「没传」处理
+    const orderId = typeof body.orderId === "string" ? body.orderId.trim() : "";
     if (!orderId) { fail(res, 400, "BAD_REQUEST", "orderId is required"); return; }
     let receiveWarehouseId: string | undefined;
     if (body.warehouseId !== undefined && body.warehouseId !== null && String(body.warehouseId).trim() !== "") {
@@ -1099,8 +1101,9 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
     const auth = requireRole(req, res, ["client"]);
     if (!auth) return;
 
-    const page = parseInt(req.query.page as string) || 1;
-    const pageSize = Math.min(parseInt(req.query.pageSize as string) || 50, 500);
+    // 页码 / 每页条数夹在合法范围里（2026-09-29 实跑发现：page=-1 时 skip 成负数，接口直接 500；写法同本仓 /staff/prealerts）
+    const page = Math.max(parseInt(req.query.page as string) || 1, 1);
+    const pageSize = Math.min(Math.max(parseInt(req.query.pageSize as string) || 50, 1), 500);
     const statusGroup = req.query.statusGroup?.trim();
     /* 2026-08-31（排查报告第 23 条）：查询参数改收分组值；2026-09-03 多一个 arrived。
        老值兼容：老页面缓存还会发 unfinished / completed ——
@@ -1453,7 +1456,8 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
       mime?: string;
       contentBase64?: string;
     };
-    const orderId = body.orderId?.trim();
+    // 单号不是文字原来 .trim 直接 500（2026-09-29 实跑发现），按「没传」处理
+    const orderId = typeof body.orderId === "string" ? body.orderId.trim() : "";
     const fileName = body.fileName?.trim();
     const mimeType = body.mime?.trim();
     const contentBase64 = body.contentBase64?.trim();
