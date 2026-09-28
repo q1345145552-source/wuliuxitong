@@ -6,6 +6,7 @@ import { fail, ok, requireRole } from "../core/http-utils";
 import { logger } from "../core/logger";
 import { BusinessError } from "../core/business-error";
 import { hideOperatorIdentity, hideOperatorInRemark, operatorNameForDisplay } from "../core/operator-visibility";
+import { sanitizeRemarkForClient } from "../core/client-privacy";
 import { verifyPassword } from "../auth/crypto-utils";
 // 取消任务验管理员密码用的失败限流（2026-08-31 Codex 复核）：复用登录那套内存计数器
 import { rateLimitKey, isFailureBlocked, failureRetryAfterMs, recordFailure, clearFailures } from "../core/rate-limit";
@@ -397,14 +398,20 @@ function formatStatusLogForViewer(log: any, viewerRole: string) {
   return typeof base.remark === "string" ? { ...base, remark: hideOperatorInRemark(base.remark, viewerRole) } : base;
 }
 
-function formatStatusLogForClient(log: any) {
+function formatStatusLogForClient(log: any, containerNos: readonly string[] = []) {
   const base = formatStatusLogForViewer(log, "client");
   const remark: unknown = base?.remark;
-  if (typeof remark === "string" && /柜号\s*[:：]/.test(remark)) {
-    // 整条备注就是柜号 → 换成不含柜号的说法；备注里夹着柜号 → 只抹掉柜号那段
-    return { ...base, remark: remark.replace(/柜号\s*[:：]\s*\S+/g, "柜号（不对外显示）") };
-  }
-  return base;
+  if (typeof remark !== "string") return base;
+  /* 2026-09-28 审查报告：原来只认「柜号: 」后面**第一段不带空格的字**（\S+）——
+     ① 员工填的柜号带空格（「MSKU 123456 7」）→ 只抹掉 MSKU，后面几位原样给客户；
+     ② 「柜号」这两个字没写、备注里直接夹着柜号 → 一个字都不抹。
+     现在：「柜号:」后面一直抹到换行 / 标点为止；再按这个任务真实的柜号 + 标准柜号样子各抹一遍（跟运单那边同一个函数）。 */
+  const masked = sanitizeRemarkForClient(
+    remark.replace(/柜号\s*[:：][^\n，,。；;、]*/g, "柜号（不对外显示）"),
+    true,
+    containerNos,
+  );
+  return masked === remark ? base : { ...base, remark: masked };
 }
 
 // ============================================================================
@@ -525,6 +532,8 @@ export function registerConsolidationRoutes(app: MinimalHttpApp): void {
       return;
     }
 
+    // 这个任务的柜号：轨迹备注里按号精确抹（一次请求只建一份，抹号的正则按这份缓存）
+    const maskNos = task.containerNo ? [task.containerNo] : [];
     ok(res, {
       ...formatTaskForClient(task),
       volumePercent: calcVolumePercent(task),
@@ -533,7 +542,7 @@ export function registerConsolidationRoutes(app: MinimalHttpApp): void {
         ...formatPrealert(pa),
         products: pa.products.map(formatProduct),
       })),
-      statusLogs: task.statusLogs.map(formatStatusLogForClient),
+      statusLogs: task.statusLogs.map((log) => formatStatusLogForClient(log, maskNos)),
     });
   });
 
@@ -1650,9 +1659,8 @@ export function registerConsolidationRoutes(app: MinimalHttpApp): void {
 
 
     const totalFee = parseFloat((cleanFee["订舱费"] + cleanFee["清关费"] + cleanFee["装柜费"]).toFixed(2));
-    const isFirstQuote = task.status === "full_confirmed";
 
-    await prisma.$transaction(async (tx) => {
+    const isFirstQuote = await prisma.$transaction(async (tx) => {
       /**
        * ⚠️ 锁住再复查（2026-08-27 补）。上面那道状态检查在事务外面：
        * 客户正好在这一瞬间付了款，员工这边照样能把已付款任务的金额从 100 改成 999，
@@ -1670,6 +1678,9 @@ export function registerConsolidationRoutes(app: MinimalHttpApp): void {
       if (fresh.status !== "full_confirmed" && fresh.status !== "quoted") {
         throw new BusinessError("这个任务的状态刚刚变了，报价没有保存，请刷新后再看");
       }
+      /* 是不是第一次报价，按**锁后重读**的状态定（2026-09-28 审查报告）。原来按锁外那份：
+         两个员工同时给一个刚满柜的任务报价，两边都以为是第一次，轨迹里就多出一条重复的「已满柜 → 已报价」。 */
+      const isFirstQuote = fresh.status === "full_confirmed";
 
       await tx.consolidationTask.update({
         where: { id: body.taskId },
@@ -1700,7 +1711,7 @@ export function registerConsolidationRoutes(app: MinimalHttpApp): void {
         });
       }
 
-      return null;
+      return isFirstQuote;
     });
 
     ok(res, { success: true, taskId: body.taskId, totalFee, isFirstQuote });

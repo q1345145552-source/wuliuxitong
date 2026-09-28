@@ -19,6 +19,18 @@ import { AT_WAREHOUSE_STATUSES, ATTENTION_STATUSES } from "../../../../../packag
  *
  * ⚠️ 「在途」用**减法**算，不要列举状态名。理由见下面 /staff 那条注释。
  */
+/** 本月已签收（见 countShipmentOverview 里那段说明）。where 跟其余几格同一份，公司、客户、排整柜都照它 */
+async function countSignedThisMonth(where: Record<string, unknown>, startOfMonth: Date): Promise<number> {
+  const companyId = typeof where.companyId === "string" ? where.companyId : undefined;
+  const logs = await prisma.statusLog.findMany({
+    where: { toStatus: "delivered", changedAt: { gte: startOfMonth }, ...(companyId ? { companyId } : {}) },
+    select: { shipment: { select: { trackingNo: true, parentTrackingNo: true } } },
+  });
+  const familyNos = [...new Set(logs.map((l) => l.shipment.parentTrackingNo ?? l.shipment.trackingNo))];
+  if (familyNos.length === 0) return 0;
+  return prisma.shipment.count({ where: { ...where, currentStatus: "delivered", trackingNo: { in: familyNos } } });
+}
+
 export async function countShipmentOverview(where: Record<string, unknown>) {
   const startOfMonth = new Date();
   startOfMonth.setDate(1);
@@ -45,9 +57,12 @@ export async function countShipmentOverview(where: Record<string, unknown>) {
       prisma.shipment.count({ where: { ...where, currentStatus: "outForDelivery" } }),
       prisma.shipment.count({ where: { ...where, currentStatus: { in: [...COMPLETED_STATUSES] } } }),
       prisma.shipment.count({ where: { ...where, currentStatus: { in: ATTENTION_STATUSES } } }),
-      prisma.shipment.count({
-        where: { ...where, currentStatus: "delivered", updatedAt: { gte: startOfMonth } },
-      }),
+      /* 本月已签收：按「真签收」那条轨迹的时间算（2026-09-28 审查报告第 21 条）。
+         原来按 updatedAt（最后修改时间）：改一下三个月前签收的老单的备注，它就算成「本月签收」——
+         生产只读核过：按修改时间 805 张，按真签收时间 688 张，多算 117 张。
+         签收轨迹大多记在**子单**上（1411 张已签收父单里 1372 张父单自己没有签收记录），
+         所以先找本月的签收轨迹，换成它所属的那票货（有父单记父单号，没有记自己），再数这些父单。 */
+      countSignedThisMonth(where, startOfMonth),
       // 2026-09-02 终审整改（P2）：异常单单独数出来，从下面「在途」的减法里扣掉
       prisma.shipment.count({ where: { ...where, currentStatus: "exception" } }),
     ]);

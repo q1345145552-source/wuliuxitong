@@ -82,6 +82,8 @@ export function registerWhrConsolidationStaffRoutes(app: MinimalHttpApp): void {
 
             const row: any = {
               prealertId: pa.id,
+              // 签收弹窗标题要显示计划号（handleOpenSign 读 pa.planNo）；原来这一行没带，从这里点「签收」标题是空的（2026-09-28 审查报告）
+              planNo: p.planNo,
               trackingNo: pa.trackingNo,
               expressNo: pa.expressNo,
               mark: pa.mark,

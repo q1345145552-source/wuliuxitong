@@ -1477,7 +1477,8 @@ export default function ClientHomePage() {
                 <label className="client-prealert-field"><span>总体积（m³）</span><input type="number" step="0.001" value={form.volumeM3} readOnly={formProducts.length > 0} onChange={(e) => setForm((v) => ({ ...v, volumeM3: e.target.value }))} placeholder="总体积（m³）" style={{ border: "1px solid var(--l-strong)", borderRadius: 6, padding: "8px 10px", fontSize: 13 }} /></label>
                 <label className="client-prealert-field"><span>总重量（kg）</span><input type="number" step="0.01" value={form.weightKg ?? ""} onChange={(e) => setForm((v) => ({ ...v, weightKg: e.target.value }))} placeholder="总重量(kg)" style={{ border: "1px solid var(--l-strong)", borderRadius: 6, padding: "8px 10px", fontSize: 13 }} /></label>
               </div>
-              <label className="client-prealert-field"><span>预报单号（留空自动生成）</span><input value={form.trackingNo ?? ""} onChange={(e) => setForm((v) => ({ ...v, trackingNo: e.target.value }))} placeholder="预报单号（留空自动生成）" style={{ border: "1px solid var(--l-strong)", borderRadius: 6, padding: "8px 10px", fontSize: 13 }} /></label>
+              {/* 「预报单号（留空自动生成）」那一格拿掉了（2026-09-28 审查报告）：后端从来不用客户填的号、一律自动生成，
+                  客户填了个号，建完单一看号码不是自己填的那个 */}
               <label className="client-prealert-field"><span>国内快递单号</span><input value={form.domesticTrackingNo} onChange={(e) => setForm((v) => ({ ...v, domesticTrackingNo: e.target.value }))} placeholder="国内快递单号" style={{ border: "1px solid var(--l-strong)", borderRadius: 6, padding: "8px 10px", fontSize: 13 }} /></label>
               <label className="client-prealert-field"><span>运输方式（必填）</span><select value={form.transportMode} onChange={(e) => setForm((v) => ({ ...v, transportMode: e.target.value as "sea"  |  "land" }))} style={{ border: "1px solid var(--l-strong)", borderRadius: 6, padding: "8px 10px", fontSize: 13 }}>
                 <option value="">运输方式 *</option>

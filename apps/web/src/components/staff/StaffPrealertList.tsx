@@ -218,6 +218,13 @@ export default function StaffPrealertList(props: StaffPrealertListProps) {
                     placeholder="柜号（可选，装柜时填写）"
                     style={{ border: "1px solid var(--l-strong)", borderRadius: 6, padding: "5px 8px", width: "100%", fontSize: 12, marginBottom: 4 }}
                   />
+                  {/* 已经收过货的单（列表里本来就连着已收货的一起列）：不再给「修改」「确认收货」——
+                      原来照样给按钮，一点就报「确认收货失败：已确认收货」（2026-09-28 审查报告第 15 条） */}
+                  {item.approvalStatus === "received" ? (
+                    <div style={{ display: "flex", gap: 8 }}>
+                      <span style={{ borderRadius: 8, padding: "8px 14px", background: "var(--c-green-bg)", color: "var(--c-green-deep)", fontWeight: 600 }}>已收货</span>
+                    </div>
+                  ) : (
                   <div style={{ display: "flex", gap: 8 }}>
                     {isEditing ? (
                       <>
@@ -237,6 +244,7 @@ export default function StaffPrealertList(props: StaffPrealertListProps) {
                     )}
                     <button type="button" disabled={props.loading} onClick={() => props.onApprovePrealert(item)} style={{ border: "none", borderRadius: 8, padding: "8px 14px", color: "var(--white)", background: "var(--t-strong)", fontWeight: 600 }}>确认收货</button>
                   </div>
+                  )}
                 </div>
               );
             })}

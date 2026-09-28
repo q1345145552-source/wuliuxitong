@@ -94,7 +94,10 @@ export default function ShippingConfig(props: ShippingConfigProps) {
           try {
             await updateShippingConfig({ sea_min_volume: props.shippingConfigSea, land_min_volume: props.shippingConfigLand });
             props.onToast("配置已保存");
-          } catch { props.onToast("保存失败"); }
+          } catch (e) {
+            // 把后台说的原因带出来（比如「海运低消不能空着」），光说「保存失败」员工不知道改哪（2026-09-28）
+            props.onToast(`保存失败：${e instanceof Error ? e.message : "请重试"}`);
+          }
         }} style={{ border: "none", borderRadius: 6, padding: "8px 16px", background: "var(--c-blue)", color: "var(--white)", fontWeight: 500, fontSize: 13, cursor: "pointer", justifySelf: "start" }}>
           {props.configSaving ? "保存中…" : "保存配置"}
         </button>

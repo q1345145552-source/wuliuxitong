@@ -597,7 +597,8 @@ function ClientConsolidationContent() {
                         集货这页当初是照抄员工页面来的，把这条漏掉了）。
                         管理员端和员工端照常显示，只有客户端不给看。 */}
                     {taskDetail.loadingDate && <div><span style={{ fontSize: 12, color: "var(--t-muted)" }}>装柜日期</span><div style={{ fontWeight: 600 }}>{taskDetail.loadingDate}</div></div>}
-                    {taskDetail.loadingDate && <div><span style={{ fontSize: 12, color: "var(--t-muted)" }}>装柜时间</span><div style={{ fontWeight: 600 }}>{formatBeijingTime(taskDetail.loadingDate)}</div></div>}
+                    {/* 原来这里还有一格「装柜时间」（2026-09-28 审查报告拿掉）：员工只填日期（日期框），
+                        再按时间格式化就凭空多出个「08:00」，客户以为是真实装柜的钟点 */}
                     <div><span style={{ fontSize: 12, color: "var(--t-muted)" }}>物流状态</span><div style={{ fontWeight: 600 }}>{STATUS_ZH[taskDetail.status]}</div></div>
                     {taskDetail.paidAt && <div><span style={{ fontSize: 12, color: "var(--t-muted)" }}>付款时间</span><div style={{ fontWeight: 600 }}>{formatBeijingTime(taskDetail.paidAt)}</div></div>}
                   </div>

@@ -277,6 +277,12 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
       fail(res, 400, "BAD_REQUEST", "missing required prealert fields");
       return;
     }
+    /* 仓库只认那四个（2026-09-28 审查报告）：原来填什么存什么，客户批量导入写成「义乌」（不带「仓」字）
+       就原样存成仓库 id —— 员工按仓库筛运单时这张单哪个仓都筛不出来。跟确认收货那边同一份清单。 */
+    if (!RECEIVE_WAREHOUSE_IDS.includes(body.warehouseId.trim())) {
+      fail(res, 400, "VALIDATION_ERROR", "仓库只能选义乌仓 / 广州仓 / 东莞仓 / 深圳仓");
+      return;
+    }
 
     // 没有产品行的单子，箱数全靠订单级这个字段：正整数 + 不超过 32 位上限
     // ⚠️ 上一版漏了上限，复核实测 2147483648 能过（2026-08-29 补）
@@ -572,7 +578,10 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
     const order = await prisma.order.findFirst({
       where: { id: orderId, companyId: auth.companyId },
       // currentStatus 是写「已入库」轨迹时要用的 fromStatus（2026-08-06；2026-09-02 起还要拿它判断该不该推状态）
-      include: { shipments: { take: 1, select: { id: true, currentStatus: true } } },
+      /* 只拿**父单**（2026-09-28 审查报告）：原来 take: 1 不带条件也不排序，分过柜的单
+         （装柜不看有没有确认收货，客户预报的单先装走再补确认收货是会有的）可能拿到某张子单，
+         收货填的重量、方数、柜号和「已入库」那条轨迹就写到子单上去了，运单列表（只列父单）上看不到。 */
+      include: { shipments: { where: { parentTrackingNo: null }, orderBy: { createdAt: "asc" }, take: 1, select: { id: true, currentStatus: true } } },
     });
     if (!order) { fail(res, 404, "NOT_FOUND", "order not found"); return; }
     if (order.approvalStatus === "received") {

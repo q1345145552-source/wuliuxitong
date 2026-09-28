@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Toast from "../../../modules/layout/Toast";
+import { getOptionalSession } from "../../../auth/auth-session";
 import { openShipmentTrack } from "../../../modules/shipment/ShipmentTrackModal";
 import { createRequestGate } from "../../../modules/shared/request-gate";
 import { shipmentStatusZh } from "../../../modules/shipment/shipment-status";
@@ -136,6 +137,10 @@ export default function StaffContainerLoadingPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [toast, setToast] = useState("");
+  /* 删柜子只有超管能做（接口 DELETE /admin/containers 只许 admin）。员工端原来也显示「删除柜子」，
+     员工点了只会报没权限（2026-09-28 审查报告第 25 条）。挂载后再读登录信息，免得服务端首屏和浏览器对不上。 */
+  const [isAdmin, setIsAdmin] = useState(false);
+  useEffect(() => { setIsAdmin(getOptionalSession()?.role === "admin"); }, []);
   const [showCreate, setShowCreate] = useState(false);
   const [createForm, setCreateForm] = useState({ warehouse: "wh_yiwu_01", transportMode: "sea", voyage: "", vesselName: "", containerNo: "" });
   const [creating, setCreating] = useState(false);
@@ -780,7 +785,7 @@ export default function StaffContainerLoadingPage() {
                     )}
                     {/* 整柜不许在这一页删（后端也拦着）：删了会把货退回国内仓、柜子留成空壳，
                         而且客户那边整柜当场消失。整柜的事在「整柜管理」里做。（2026-09-24） */}
-                    {detail.status === "LOADING" && !detail.isFcl && (
+                    {isAdmin && detail.status === "LOADING" && !detail.isFcl && (
                       <button onClick={handleDelete} style={{ border: "1px solid #fecaca", borderRadius: 6, padding: "8px 16px", background: "#fef2f2", color: "var(--c-red-2)", fontWeight: 500, fontSize: 13, cursor: "pointer" }}>删除柜子</button>
                     )}
                     {detail.isFcl && (

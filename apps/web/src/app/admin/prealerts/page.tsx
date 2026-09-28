@@ -255,7 +255,10 @@ export default function AdminPrealertsPage() {
                       </div>
                     )}
                     <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-                      {isEditing ? (
+                      {/* 已经收过货的单：不再给「编辑」「确认收货」（2026-09-28 审查报告第 15 条，员工端同一处一起改） */}
+                      {item.approvalStatus === "received" ? (
+                        <span style={{ borderRadius: 6, padding: "4px 12px", background: "var(--c-green-bg)", color: "var(--c-green-deep)", fontSize: 12, fontWeight: 600 }}>已收货</span>
+                      ) : isEditing ? (
                         <>
                           <button onClick={() => {
                             setPrealertConfirmedDrafts((prev) => ({ ...prev, [item.id]: draft }));

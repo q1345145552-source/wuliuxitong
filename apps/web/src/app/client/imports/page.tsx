@@ -7,7 +7,10 @@ import { createClientPrealert, type ClientPrealertPayload } from "../../../servi
 import { CARGO_TYPE_HINT, CARGO_TYPE_ZH, parseCargoType, type CargoType } from "../../../../../../packages/shared-types/cargo-type";
 
 interface ImportRow {
-  warehouseId: string;
+  /** null = 仓库那一格没填或认不出来，下面会拦住不让提交（2026-09-28） */
+  warehouseId: string | null;
+  /** 填错时原样回显给客户看 */
+  warehouseRaw: string;
   itemName: string;
   packageCount: number;
   packageUnit: "bag" | "box";
@@ -21,6 +24,14 @@ interface ImportRow {
   /** 填错时原样回显给客户看 */
   cargoTypeRaw: string;
 }
+
+/** 批量导入认的仓库写法：带不带「仓」字、直接写 id 都行（2026-09-28） */
+const WAREHOUSE_ZH: Record<string, string> = {
+  wh_yiwu_01: "义乌仓", wh_guangzhou_01: "广州仓", wh_dongguan_01: "东莞仓", wh_shenzhen_01: "深圳仓",
+};
+const WAREHOUSE_BY_NAME: Record<string, string> = Object.fromEntries(
+  Object.entries(WAREHOUSE_ZH).flatMap(([id, zh]) => [[id, id], [zh, id], [zh.replace(/仓$/, ""), id]]),
+);
 
 function downloadTemplate(): void {
   const worksheet = XLSX.utils.json_to_sheet([
@@ -88,11 +99,10 @@ function normalizeRows(rows: Record<string, unknown>[]): ImportRow[] {
     .map((row) => {
       const transportModeRaw = findCol(row, ["运输方式"]).toLowerCase().replace("海运", "sea").replace("陆运", "land");
       const packageUnitRaw = findCol(row, ["包装类型"]).toLowerCase().replace("箱", "box").replace("袋", "bag");
-      const warehouseNameMap: Record<string, string> = {
-        "义乌仓": "wh_yiwu_01", "广州仓": "wh_guangzhou_01", "东莞仓": "wh_dongguan_01", "深圳仓": "wh_shenzhen_01",
-      };
+      /* 2026-09-28 审查报告：原来只认「义乌仓」这种带「仓」字的全称，写成「义乌」就把「义乌」原样当仓库 id 存进去，
+         员工按仓库筛哪个仓都筛不出这张单。现在带不带「仓」字、直接写 id 都认；认不出来的标红、不让提交。 */
       const rawWarehouse = findCol(row, ["仓库"]);
-      const warehouseId = warehouseNameMap[rawWarehouse] || rawWarehouse;
+      const warehouseId = WAREHOUSE_BY_NAME[rawWarehouse.replace(/\s+/g, "")] ?? null;
       const packageCount = findNum(row, ["箱数"]) ?? 0;
       const perBoxWeight = findNum(row, ["单箱重量"]);
       const weightKg = perBoxWeight != null && packageCount > 0 ? perBoxWeight * packageCount : perBoxWeight;
@@ -111,6 +121,7 @@ function normalizeRows(rows: Record<string, unknown>[]): ImportRow[] {
       }
       return {
         warehouseId,
+        warehouseRaw: rawWarehouse,
         itemName: findCol(row, ["品名"]),
         packageCount,
         packageUnit: (packageUnitRaw.includes("bag") ? "bag" : "box") as "bag" | "box",
@@ -125,7 +136,8 @@ function normalizeRows(rows: Record<string, unknown>[]): ImportRow[] {
         cargoTypeRaw,
       };
     })
-    .filter((item) => item.warehouseId && item.itemName && Number.isFinite(item.packageCount) && item.packageCount > 0);
+    // 仓库没填 / 填错的行不在这里悄悄丢掉（原来会），留下来在预览里标红
+    .filter((item) => item.itemName && Number.isFinite(item.packageCount) && item.packageCount > 0);
 }
 
 const th: React.CSSProperties = { textAlign: "left", padding: "6px 4px", whiteSpace: "nowrap" };
@@ -145,7 +157,8 @@ export default function ClientImportsPage() {
   const [done, setDone] = useState(false);
   const [message, setMessage] = useState("");
 
-  const validCount = useMemo(() => rows.length, [rows]);
+  // 标红（仓库 / 货型认不出来）的行不算有效（2026-09-28：认不出来的行现在留在预览里，不再悄悄丢掉）
+  const validCount = useMemo(() => rows.filter((r) => r.cargoType !== null && r.warehouseId !== null).length, [rows]);
 
   /* 2026-09-01 竞态全扫：记住「当前预览是哪一份」（request-gate 用法二·认主人的快照版）。
      handleSubmit 的循环拿的是点击那一刻的 rows；万一提交期间预览被换成另一份文件，
@@ -180,7 +193,10 @@ export default function ClientImportsPage() {
       setFailCount(0);
       setErrors([]);
       setDone(false);
-      setMessage(`已读取 ${normalized.length} 条有效数据`);
+      const badCount = normalized.filter((r) => r.cargoType === null || r.warehouseId === null).length;
+      setMessage(badCount > 0
+        ? `已读取 ${normalized.length} 条，其中 ${badCount} 条标红的要改（仓库或货型认不出来），改好再上传`
+        : `已读取 ${normalized.length} 条有效数据`);
     } catch {
       // 2026-09-02 终审整改：失败分支同样验号，旧解析的报错不许盖到新解析的提示上
       if (!parseGate.isCurrent(ticket)) return;
@@ -191,10 +207,10 @@ export default function ClientImportsPage() {
     }
   };
 
-  /** 填了认不出来的货型的行（提交前要拦住，不能静默当普货） */
+  /** 填了认不出来的货型的行（提交前要拦住，不能静默当普货）；仓库没填 / 认不出来的也一起拦 */
   const badCargoRows = rows
     .map((row, index) => ({ row, index }))
-    .filter((entry) => entry.row.cargoType === null);
+    .filter((entry) => entry.row.cargoType === null || entry.row.warehouseId === null);
 
   const handleSubmit = async () => {
     // 2026-09-02 终审整改：解析中/提交中/没数据一律拒绝（按钮已 disabled，这里再兜一层）——
@@ -221,7 +237,8 @@ export default function ClientImportsPage() {
       const row = batch[i];
       try {
         const payload: ClientPrealertPayload = {
-          warehouseId: row.warehouseId,
+          // 上面已经拦掉没填 / 认不出来的仓库
+          warehouseId: row.warehouseId ?? "",
           itemName: row.itemName,
           packageCount: row.packageCount,
           packageUnit: row.packageUnit,
@@ -342,7 +359,7 @@ export default function ClientImportsPage() {
               <thead>
                 <tr style={{ borderBottom: "1px solid var(--l-cool)" }}>
                   <th style={th}>#</th>
-                  <th style={th}>仓库ID</th>
+                  <th style={th}>仓库</th>
                   <th style={th}>品名</th>
                   <th style={th}>箱数</th>
                   <th style={th}>运输</th>
@@ -353,7 +370,11 @@ export default function ClientImportsPage() {
                 {rows.map((row, idx) => (
                   <tr key={`${row.itemName}-${idx}`} style={{ borderBottom: "1px solid var(--s-cool-2)" }}>
                     <td style={td}>{idx + 1}</td>
-                    <td style={td}>{row.warehouseId}</td>
+                    <td style={{ ...td, color: row.warehouseId === null ? "var(--c-red-deep)" : undefined }}>
+                      {row.warehouseId === null
+                        ? (row.warehouseRaw ? `「${row.warehouseRaw}」认不出来` : "没填")
+                        : WAREHOUSE_ZH[row.warehouseId]}
+                    </td>
                     <td style={td}>{row.itemName}</td>
                     <td style={td}>{row.packageCount} {row.packageUnit}</td>
                     <td style={td}>{row.transportMode === "sea" ? "海运" : "陆运"}</td>

@@ -35,6 +35,10 @@ const PAGE_TITLES: Record<string, string> = {
   "/admin/lmp": "渠道与价格管理（LMP）",
   "/admin/customs": "关务监控",
   "/admin/agents": "代理管理",
+  // 整柜三页原来没登记，顶上显示成英文「fcl-containers」（2026-09-28 审查报告第 28 条）
+  "/admin/fcl-containers": "整柜管理",
+  "/staff/fcl-containers": "整柜管理",
+  "/client/fcl-containers": "我的整柜",
   "/staff": "员工工作台",
   "/staff/consolidation": "集货拼柜管理",
   "/staff/whr-consolidation": "集货拼柜（仓库版）",

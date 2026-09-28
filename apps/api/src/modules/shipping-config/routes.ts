@@ -1,6 +1,8 @@
 import { prisma } from "../../db/prisma";
 import type { MinimalHttpApp } from "../../server";
 import { fail, ok, requireRole } from "../core/http-utils";
+import { requireDecimal } from "../core/decimal-guard";
+import { parseNumericStrict } from "../core/int-guard";
 import { DEFAULT_SHIPPING_PRICES, INSPECTION_SURCHARGE, SENSITIVE_SURCHARGE } from "../../../../../packages/shared-types/constants";
 
 const DEFAULT_CONFIG = {
@@ -63,15 +65,23 @@ export function registerShippingConfigRoutes(app: MinimalHttpApp): void {
     const auth = requireRole(req, res, ["admin"]);
     if (!auth) return;
     const body = (req.body ?? {}) as {
-      sea_min_volume?: string;
-      land_min_volume?: string;
+      sea_min_volume?: unknown;
+      land_min_volume?: unknown;
     };
-    if (body.sea_min_volume !== undefined) {
-      await saveConfig("sea_min_volume", body.sea_min_volume);
+    /* 低消先两个都校验完再存（2026-09-28 审查报告第 22 条）：原来什么都收，
+       清空也能存成空的 —— 员工导出算「计费体积」时 Number("") 是 0，等于低消悄悄没了。
+       必须是数字、不小于 0（0 = 不设低消）、最多 3 位小数。有一个不对就一个都不存，免得只存了一半。 */
+    const toSave: Array<[string, string]> = [];
+    for (const [key, label] of [["sea_min_volume", "海运低消"], ["land_min_volume", "陆运低消"]] as const) {
+      const raw = body[key];
+      if (raw === undefined) continue;
+      const text = raw === null ? "" : String(raw).trim();
+      if (text === "") { fail(res, 400, "VALIDATION_ERROR", `${label}不能空着（不设低消就填 0）`); return; }
+      const issue = requireDecimal(parseNumericStrict(text), label, { precision: 10, scale: 3, min: 0 });
+      if (issue) { fail(res, 400, "VALIDATION_ERROR", issue); return; }
+      toSave.push([key, text]);
     }
-    if (body.land_min_volume !== undefined) {
-      await saveConfig("land_min_volume", body.land_min_volume);
-    }
+    for (const [key, text] of toSave) await saveConfig(key, text);
     const config = await getConfig();
     ok(res, config);
   });

@@ -82,6 +82,8 @@ let orderRows: any[] = [];
   orderProduct: { async findMany() { return []; } },
   // 2026-09-28：/client/orders 多查一次本公司全部柜号（core/container-nos.ts，抹备注里的柜号用），不影响分组
   async $queryRaw() { return []; },
+  // 2026-09-28：顶部「本月已签收」改按真签收轨迹的时间数（overview-counts.ts），这里没有轨迹 = 0
+  statusLog: { async findMany() { return []; } },
 };
 
 function fakeOrder(id: string, currentStatus: string | null): any {

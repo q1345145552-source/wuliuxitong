@@ -434,7 +434,7 @@ async function main(): Promise<void> {
     assert.ok(handler, "没注册 /client/prealerts");
     for (const { label, row } of BAD_ROWS) {
       const r = await callRoute(handler!, CLIENT, {
-        warehouseId: "w_1", transportMode: "sea", itemName: "耳机", products: [row],
+        warehouseId: "wh_yiwu_01", transportMode: "sea", itemName: "耳机", products: [row],
       });
       assert.equal(
         r.status,
@@ -518,7 +518,7 @@ async function main(): Promise<void> {
     const staff = routeTable.get("POST /staff/orders")!;
     for (const [label, pkg] of BAD_PKG) {
       const c = await callRoute(client, CLIENT, {
-        warehouseId: "w_1", transportMode: "sea", itemName: "耳机", packageCount: pkg,
+        warehouseId: "wh_yiwu_01", transportMode: "sea", itemName: "耳机", packageCount: pkg,
       });
       assert.equal(c.status, 400, `客户建单【箱数 ${label}】没被拦，拿到 ${c.status}`);
       assert.ok(/箱数/.test(c.message), `客户建单【箱数 ${label}】被别的闸拦了：${c.message}`);
@@ -540,7 +540,7 @@ async function main(): Promise<void> {
      */
     const handler = routeTable.get("POST /client/prealerts")!;
     const r = await callRoute(handler, CLIENT, {
-      warehouseId: "w_1", transportMode: "sea", itemName: "耳机",
+      warehouseId: "wh_yiwu_01", transportMode: "sea", itemName: "耳机",
       products: [
         { itemName: "耳机", packageCount: 1500000000, productQuantity: 1 },
         { itemName: "手机壳", packageCount: 1600000000, productQuantity: 1 },

@@ -261,6 +261,11 @@ jobs:
       - name: Test customer-service chat (source)
         run: npm run test:cs-chat-source
 
+      # 9-28 审查报告那批小 bug（页面那几处）：已收货的预报单不给确认收货按钮、装柜页删柜只给超管、
+      # 整柜页标题、客户批量导入认仓库（认不出的标红不许提交）、去掉没用的「预报单号」框和凭空的「装柜时间」。
+      - name: Test audit 0928 small fixes (source)
+        run: npm run test:audit-0928-p3-source
+
       # 改整柜（2026-09-24，老板：「加上编辑功能」）。要连测试库 —— 读源码证明不了
       # 「改完库里真的变了」，而改整柜最容易出的就是「只改了一半」（订单改了运单没改之类）。
       # CI 没有数据库会打印「跳过」—— 本地改了 fcl-containers 必须连测试库跑一遍。
@@ -411,3 +416,9 @@ jobs:
       # 迁移连跑两遍，再跟 schema.prisma 比对必须一点差异都没有、老数据一个字不变。
       - name: Test cs-chat migration file (real DB)
         run: bash .github/scripts/run-db-test.sh test:migration-cs-chat-db
+
+      # 9-28 审查报告那批小 bug（后端）：本月已签收按真签收时间数、装柜详情带整柜标记、
+      # 集货轨迹柜号抹干净、补确认收货写父单、客户建单仓库校验、并发报价不重复记轨迹、
+      # 删计划预览中文状态、仓库版操作列表带计划号、运费低消校验。
+      - name: Test audit 0928 small fixes (real DB)
+        run: bash .github/scripts/run-db-test.sh test:audit-0928-p3-db

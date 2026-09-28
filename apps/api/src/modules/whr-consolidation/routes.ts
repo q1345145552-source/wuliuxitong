@@ -1632,7 +1632,11 @@ export function registerWhrConsolidationRoutes(app: MinimalHttpApp): void {
       blockers.push(`有 ${started.length} 张预报单已付款或已发货（${started.slice(0, 3).map((p) => p.trackingNo).join("、")}${started.length > 3 ? " 等" : ""}）`);
     }
     if (!["planning", "collecting", "cancelled"].includes(plan.status)) {
-      blockers.push(`计划状态已是「${plan.status}」，不是计划中/收货中`);
+      // 状态写中文（2026-09-28 审查报告）：原来直接把 loading / shipped 这种英文码甩给员工看；叫法跟集货页面上的一致
+      const PLAN_STATUS_ZH: Record<string, string> = {
+        planning: "计划中", collecting: "集货中", loading: "装柜中", shipped: "已发运", completed: "已完成", cancelled: "已取消",
+      };
+      blockers.push(`计划状态已是「${PLAN_STATUS_ZH[plan.status] ?? plan.status}」，不是计划中/集货中`);
     }
 
     const willDelete = {

@@ -320,6 +320,9 @@ export function registerLoadingManifestRoutes(app: MinimalHttpApp): void {
       warehouse: container.warehouseId,
       status: container.currentStatus ?? "LOADING",
       transportMode: container.transportMode ?? null,
+      /* 整柜标记（2026-09-28 审查报告）：装柜页详情里「删柜 / 改运输方式」禁用、「整柜请到整柜管理处理」提示
+         全看 detail.isFcl，但这里原来不返回它 —— 前端拿到 undefined，整柜在详情里照样能点删柜、改运输方式 */
+      isFcl: container.isFcl === true,
       carrierInfo: container.carrierName ?? null,
       sealedAt: container.sealedAt?.toISOString() ?? null,
       bills: container.items.map((item) => ({
