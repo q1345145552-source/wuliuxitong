@@ -157,6 +157,32 @@ async function main(): Promise<void> {
     assert.match(wb, /Number\(filledAmount\) !== fromInquiry\.quoteAmountCny[\s\S]{0,300}window\.confirm/, "转整柜金额跟报价不一样没问");
   });
 
+  await check("S12 手机上能用（2026-09-28 手机宽度实测）：图片不伸出气泡；员工「客户消息」窄屏一次一栏、有「‹ 返回」", () => {
+    const chat = read("apps/web/src/modules/cs-chat/ChatThread.tsx");
+    // 220 的上限在按钮上、图片跟着气泡缩 —— 上限写回图片上，手机上横图就伸出聊天框（气泡只有 200 来宽）
+    assert.match(chat, /aria-label="看大图"/);
+    const imgBtn = chat.slice(chat.lastIndexOf("<button", chat.indexOf('aria-label="看大图"')), chat.indexOf("</button>", chat.indexOf('aria-label="看大图"')));
+    assert.match(imgBtn, /^<button type="button" onClick=\{\(\) => setPreview\(m\.imageUrl\)\} style=\{\{ display: "block", maxWidth: 220,/, "图片按钮没有 220 的上限");
+    assert.match(imgBtn, /<img src=\{m\.imageUrl\} alt="图片" onLoad=\{[^\n]*?\} style=\{\{ display: "block", maxWidth: "100%", maxHeight: 220,/, "图片没跟着气泡缩（maxWidth 要写 100%）");
+    // 返回按钮：给了 onBack 才出，带 cs-inbox-back（宽屏靠样式藏掉）
+    assert.match(chat, /\{onBack \? \(\s*<button type="button" className="cs-inbox-back" onClick=\{onBack\}/);
+    const page = read("apps/web/src/app/staff/chat/page.tsx");
+    assert.match(page, /className=\{selected \? "cs-inbox cs-inbox--open" : "cs-inbox"\}/, "页面没按「选没选客户」切一栏 / 两栏");
+    assert.match(page, /<aside className="cs-inbox-list"/);
+    assert.match(page, /<section className="cs-inbox-thread"/);
+    assert.match(page, /onBack=\{\(\) => select\(""\)\}/, "返回没回到客户列表");
+    const css = read("apps/web/src/app/globals.css");
+    assert.match(css, /\.cs-inbox-back \{ display: none; \}/, "宽屏上返回按钮没藏");
+    const m = /@media \(max-width: 640px\) \{([^@]*?\.cs-inbox[\s\S]*?)\n\}/.exec(css);
+    assert.ok(m, "globals.css 没有客户消息的手机样式");
+    for (const rule of [
+      /\.cs-inbox \.cs-inbox-list \{ width: 100% !important; \}/,
+      /\.cs-inbox\.cs-inbox--open \.cs-inbox-list \{ display: none !important; \}/,
+      /\.cs-inbox:not\(\.cs-inbox--open\) \.cs-inbox-thread \{ display: none !important; \}/,
+      /\.cs-inbox-back \{ display: inline-flex; \}/,
+    ]) assert.match(m![1], rule, `手机样式少了一条：${rule}`);
+  });
+
   console.log(`\n通过 ${passed} / 失败 ${failed}`);
   if (failed > 0) process.exit(1);
 }

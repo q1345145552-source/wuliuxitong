@@ -4159,3 +4159,15 @@ table.a3-table.shipment-product-table > tbody > tr > td {
     flex: 1;
   }
 }
+
+/* 员工 / 超管「客户消息」（/staff/chat，2026-09-28 手机实测补）：
+   宽屏左右两栏；手机（窄于 640）一次只显示一栏 —— 没选客户显示列表，选了客户整屏是聊天，
+   聊天标题左边的「‹ 返回」只在这时候露出来。两栏的宽度写在页面的行内样式里，这里要 !important 才盖得住。 */
+.cs-inbox-back { display: none; }
+@media (max-width: 640px) {
+  .cs-inbox { padding: 10px 12px !important; }
+  .cs-inbox .cs-inbox-list { width: 100% !important; }
+  .cs-inbox.cs-inbox--open .cs-inbox-list { display: none !important; }
+  .cs-inbox:not(.cs-inbox--open) .cs-inbox-thread { display: none !important; }
+  .cs-inbox-back { display: inline-flex; }
+}

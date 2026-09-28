@@ -61,8 +61,10 @@ export default function ChatThread(props: {
   closedNotice?: string;
   /** 发出去一条之后（员工那边拿来刷新左边的对话列表） */
   onSent?: () => void;
+  /** 员工「客户消息」在手机上一次只显示一栏：给了这个，标题左边出一个「‹ 返回」回客户列表（宽屏靠样式藏掉） */
+  onBack?: () => void;
 }) {
-  const { scope, title, placeholder, closedNotice, onSent } = props;
+  const { scope, title, placeholder, closedNotice, onSent, onBack } = props;
   const key = scopeKey(scope);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [hasMore, setHasMore] = useState(false);
@@ -269,8 +271,14 @@ export default function ChatThread(props: {
   let lastShown = 0;
   return (
     <div className="cs-chat" style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0, background: "var(--s-sunken)", borderRadius: 10, border: "1px solid var(--l-soft)", overflow: "hidden" }}>
-      <div style={{ padding: "10px 16px", borderBottom: "1px solid var(--l-soft)", background: "var(--white)", fontWeight: 600, fontSize: 15, color: "var(--t-heading)" }}>
-        {title}
+      <div style={{ padding: "10px 16px", borderBottom: "1px solid var(--l-soft)", background: "var(--white)", fontWeight: 600, fontSize: 15, color: "var(--t-heading)", display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
+        {onBack ? (
+          <button type="button" className="cs-inbox-back" onClick={onBack} aria-label="返回客户列表"
+            style={{ border: "1px solid var(--l-strong)", borderRadius: 6, background: "var(--white)", padding: "3px 10px", fontSize: 13, color: "var(--t-strong)", cursor: "pointer", flexShrink: 0 }}>
+            ‹ 返回
+          </button>
+        ) : null}
+        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{title}</span>
       </div>
 
       <div
@@ -332,8 +340,11 @@ export default function ChatThread(props: {
                   title={timeLabel(m.createdAt)}
                 >
                   {m.imageUrl ? (
-                    <button type="button" onClick={() => setPreview(m.imageUrl)} style={{ display: "block", padding: 0, border: "none", background: "transparent", cursor: "zoom-in" }} aria-label="看大图">
-                      <img src={m.imageUrl} alt="图片" onLoad={() => { if (stickToBottomRef.current) scrollToBottom(); }} style={{ display: "block", maxWidth: 220, maxHeight: 220, borderRadius: 6 }} />
+                    /* 220 的上限放在按钮上、图片只写 100%（2026-09-28 手机实测）：原来上限写在图片上，
+                       手机屏窄、气泡只有 200 来宽，横图照样撑到 220，伸出聊天框右边、消息区多出横向滚动条。
+                       这样写电脑上跟原来一模一样（横图 220 宽、竖图按高 220 缩），手机上跟着气泡缩。 */
+                    <button type="button" onClick={() => setPreview(m.imageUrl)} style={{ display: "block", maxWidth: 220, padding: 0, border: "none", background: "transparent", cursor: "zoom-in" }} aria-label="看大图">
+                      <img src={m.imageUrl} alt="图片" onLoad={() => { if (stickToBottomRef.current) scrollToBottom(); }} style={{ display: "block", maxWidth: "100%", maxHeight: 220, borderRadius: 6 }} />
                     </button>
                   ) : null}
                   {m.content ? <div style={m.imageUrl ? { marginTop: 6, padding: "0 7px 4px" } : undefined}>{m.content}</div> : null}

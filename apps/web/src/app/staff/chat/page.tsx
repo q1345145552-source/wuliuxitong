@@ -81,8 +81,11 @@ export default function StaffChatPage() {
   const current = items.find((x) => x.clientId === selected);
 
   return (
-    <div style={{ padding: "16px 20px", height: "calc(100dvh - 72px)", minHeight: 460, display: "flex", gap: 12 }}>
-      <aside style={{ width: 280, flexShrink: 0, display: "flex", flexDirection: "column", border: "1px solid var(--l-soft)", borderRadius: 10, background: "var(--white)", overflow: "hidden" }}>
+    /* 手机上（窄于 640）一次只显示一栏，跟手机微信一样：没选客户看列表，点了客户整屏是聊天，
+       左上「‹ 返回」回列表（样式在 globals.css 的 .cs-inbox）。原来两栏硬挤在一行，
+       手机上聊天那栏只剩十几像素宽，员工根本没法回（2026-09-28 手机实测）。 */
+    <div className={selected ? "cs-inbox cs-inbox--open" : "cs-inbox"} style={{ padding: "16px 20px", height: "calc(100dvh - 72px)", minHeight: 460, display: "flex", gap: 12 }}>
+      <aside className="cs-inbox-list" style={{ width: 280, flexShrink: 0, display: "flex", flexDirection: "column", border: "1px solid var(--l-soft)", borderRadius: 10, background: "var(--white)", overflow: "hidden" }}>
         <div style={{ padding: 10, borderBottom: "1px solid var(--l-soft)", display: "grid", gap: 8 }}>
           <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="搜唛头"
             aria-label="搜唛头"
@@ -135,7 +138,7 @@ export default function StaffChatPage() {
         </div>
       </aside>
 
-      <section style={{ flex: 1, minWidth: 0 }}>
+      <section className="cs-inbox-thread" style={{ flex: 1, minWidth: 0 }}>
         {selected ? (
           <ChatThread
             key={selected}
@@ -143,6 +146,7 @@ export default function StaffChatPage() {
             title={`客户 ${selected}`}
             closedNotice={current?.closed ? "这个客户已经划到代理名下，对话功能不对代理的客户开放，只能看以前的记录。" : undefined}
             onSent={() => { void loadList(); }}
+            onBack={() => select("")}
           />
         ) : (
           <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", border: "1px dashed var(--l-strong)", borderRadius: 10, color: "var(--t-faint)", fontSize: 14 }}>
