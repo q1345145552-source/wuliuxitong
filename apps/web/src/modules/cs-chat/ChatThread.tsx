@@ -47,6 +47,13 @@ function timeLabel(iso: string, now = new Date()): string {
   return sameYear ? `${fmt({ month: "2-digit", day: "2-digit" })} ${hm}` : `${fmt({ year: "numeric", month: "2-digit", day: "2-digit" })} ${hm}`;
 }
 
+/** 一批消息里最新那条的时间（ISO 字符串可以直接比大小）；没有比 fallback 新的就还是 fallback */
+function latestCreatedAt(list: ChatMessage[], fallback: string): string {
+  let latest = fallback;
+  for (const m of list) if (m.createdAt > latest) latest = m.createdAt;
+  return latest;
+}
+
 function scopeKey(scope: ChatScope): string {
   return scope.kind === "client" ? "client" : `staff:${scope.clientId}`;
 }
@@ -76,6 +83,10 @@ export default function ChatThread(props: {
   const [sendError, setSendError] = useState("");
   const [preview, setPreview] = useState<string | null>(null);
   const [newBelow, setNewBelow] = useState(false);
+  /** 首次取消息失败后重取（点「重试」或 5 秒后自己再试）：原来失败一次窗口就一直是死的（2026-09-28 分支审查） */
+  const [reloadTick, setReloadTick] = useState(0);
+  /** 自己重试了几次：最多 3 次（唛头输错这种一直会错的，别每 5 秒闪一次「加载中」）；换对话清零 */
+  const autoRetryRef = useRef(0);
 
   const listRef = useRef<HTMLDivElement | null>(null);
   const fileRef = useRef<HTMLInputElement | null>(null);
@@ -88,6 +99,12 @@ export default function ChatThread(props: {
   messagesRef.current = messages;
   /** 最后一次拿到的服务器时间（对话是空的时候轮询拿它当起点） */
   const serverTimeRef = useRef<string>("");
+  /**
+   * 轮询从哪条之后取：只认「从服务器取回来的」最新一条，自己刚发出去的不算（2026-09-28 分支审查）。
+   * 原来取列表最后一条 —— 轮询断了几秒、恢复后赶在下一轮之前自己发了一句，起点就跳到自己这句，
+   * 对方在断网那几秒发的消息落在「往前多取 5 秒」之外，这个窗口里永远不出来。
+   */
+  const pollSinceRef = useRef<string>("");
   const stickToBottomRef = useRef(true);
   const scopeRef = useRef(scope);
   scopeRef.current = scope;
@@ -129,6 +146,8 @@ export default function ChatThread(props: {
       .catch(() => { /* 标已读失败不打扰人，下一轮轮询会再标 */ });
   }, []);
 
+  useEffect(() => { autoRetryRef.current = 0; }, [key]);
+
   // 换对话：清空、重新取最近 50 条
   useEffect(() => {
     let cancelled = false;
@@ -140,6 +159,7 @@ export default function ChatThread(props: {
     setSendError("");
     setNewBelow(false);
     serverTimeRef.current = "";
+    pollSinceRef.current = "";
     stickToBottomRef.current = true;
     lastMarkedRef.current = "";
     fetchChatMessages(scopeRef.current)
@@ -148,6 +168,7 @@ export default function ChatThread(props: {
         setMessages(page.messages);
         setHasMore(page.hasMore);
         serverTimeRef.current = page.serverTime;
+        pollSinceRef.current = latestCreatedAt(page.messages, "");
         markSeen(page.messages);
       })
       .catch((e: unknown) => {
@@ -158,7 +179,14 @@ export default function ChatThread(props: {
         if (!cancelled && gate.isCurrent(ticket)) setLoading(false);
       });
     return () => { cancelled = true; };
-  }, [key, gate, markSeen]);
+  }, [key, gate, markSeen, reloadTick]);
+
+  // 首次取消息失败：5 秒后自己再试一次（断网、服务器正在重启这种一会儿就好的情况）
+  useEffect(() => {
+    if (!loadError || autoRetryRef.current >= 3) return;
+    const timer = window.setTimeout(() => { autoRetryRef.current += 1; setReloadTick((n) => n + 1); }, 5000);
+    return () => window.clearTimeout(timer);
+  }, [loadError]);
 
   // 轮询新消息
   useEffect(() => {
@@ -167,13 +195,13 @@ export default function ChatThread(props: {
     const forKey = key;
     const tick = async () => {
       if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
-      const list = messagesRef.current;
-      const since = list.length > 0 ? list[list.length - 1].createdAt : serverTimeRef.current;
+      const since = pollSinceRef.current || serverTimeRef.current;
       if (!since) return;
       try {
         const page = await fetchChatMessages(scopeRef.current, { since });
         if (stopped || keyRef.current !== forKey) return;
         serverTimeRef.current = page.serverTime;
+        pollSinceRef.current = latestCreatedAt(page.messages, pollSinceRef.current);
         const before = messagesRef.current;
         const merged = mergeChatMessages(before, page.messages);
         if (merged !== before) {
@@ -225,7 +253,8 @@ export default function ChatThread(props: {
     }
   };
 
-  const send = async (input: { content?: string; file?: File }) => {
+  /** restoreText：发文字时输入框已经先清空了，没发出去就把原话放回去（框里要是已经又打了别的字就不动） */
+  const send = async (input: { content?: string; file?: File; restoreText?: string }) => {
     if (sending || closedNotice) return;
     const forKey = key;
     setSending(true);
@@ -236,26 +265,38 @@ export default function ChatThread(props: {
       if (keyRef.current !== forKey) return;
       stickToBottomRef.current = true;
       setMessages((cur) => mergeChatMessages(cur, [r.message]));
-      if (input.content !== undefined) setText("");
       notifyUnreadChanged();
       onSent?.();
     } catch (e) {
-      if (keyRef.current === forKey) setSendError(e instanceof Error ? `没发出去：${e.message}` : "没发出去，请重试");
+      if (keyRef.current === forKey) {
+        setSendError(e instanceof Error ? `没发出去：${e.message}` : "没发出去，请重试");
+        // 框里空着就原样放回；已经接着打了别的字，就把没发出去的那句放在前面，两句都留着（Codex 复看第 7 条：原来直接丢了）
+        const restore = input.restoreText;
+        if (restore !== undefined) setText((cur) => (cur.trim() === "" ? restore : `${restore}\n${cur}`));
+      }
     } finally {
       if (keyRef.current === forKey) setSending(false);
     }
   };
 
   const sendText = () => {
+    // 上一条还在发：不动输入框（原来这时按回车什么也不做，照旧）
+    if (sending || closedNotice) return;
     const content = text.trim();
     if (!content) return;
     if (content.length > MAX_TEXT) { setSendError(`一条最多 ${MAX_TEXT} 个字，请分几条发`); return; }
-    void send({ content });
+    /* 像微信：一按发送输入框马上清空，接着打下一句（2026-09-28 分支审查）。原来发成功后才整框清空，
+       发送途中接着打的字会被一起清掉。没发出去再把原话放回来。 */
+    const typed = text;
+    setText("");
+    void send({ content, restoreText: typed });
   };
 
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
-    // 中文输入法选字时按的回车不能当发送（composingRef / isComposing 两道都看，Safari 的 isComposing 不准）
-    if (e.key === "Enter" && !e.shiftKey && !composingRef.current && !e.nativeEvent.isComposing) {
+    // 中文输入法选字时按的回车不能当发送（composingRef / isComposing 两道都看，Safari 的 isComposing 不准）。
+    // Safari 是先发 compositionend、后发这次回车的 keydown，前两道都放行 —— 这时 keyCode 是 229，再挡一道
+    // （2026-09-28 分支审查；ShipmentSearch、客户首页、登录页早就这么挡了）
+    if (e.key === "Enter" && !e.shiftKey && !composingRef.current && !e.nativeEvent.isComposing && e.nativeEvent.keyCode !== 229) {
       e.preventDefault();
       sendText();
     }
@@ -265,6 +306,8 @@ export default function ChatThread(props: {
     const file = Array.from(e.clipboardData?.files ?? []).find((f) => f.type.startsWith("image/"));
     if (!file) return;
     e.preventDefault();
+    // 上一条还在发：说一声，不能悄悄吞掉（2026-09-28 分支审查；「图片」按钮这时是灰的，粘贴这条路原来没提示）
+    if (sending) { setSendError("上一条还在发送，等发完再粘贴图片"); return; }
     void send({ file });
   };
 
@@ -298,6 +341,13 @@ export default function ChatThread(props: {
         {loadError ? (
           <div style={{ textAlign: "center", color: "var(--c-red-deep)", fontSize: 13, padding: 24 }}>
             消息没取到：{loadError}
+            <div style={{ marginTop: 8 }}>
+              <button type="button" onClick={() => setReloadTick((n) => n + 1)}
+                style={{ border: "1px solid var(--l-strong)", borderRadius: 6, background: "var(--white)", padding: "4px 14px", fontSize: 12, color: "var(--t-strong)", cursor: "pointer" }}>
+                重试
+              </button>
+              {autoRetryRef.current < 3 ? <span style={{ marginLeft: 8, color: "var(--t-faint)", fontSize: 12 }}>（几秒后也会自己再试）</span> : null}
+            </div>
           </div>
         ) : null}
         {!loading && !loadError && hasMore ? (

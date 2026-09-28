@@ -13,6 +13,29 @@
  */
 import { productNamesLabel } from "../../../../../packages/shared-types/product-names";
 import { shipmentStatusZh } from "./shipment-status";
+import { totalPackageCountOf, totalVolumeOf, totalWeightOf } from "./ShipmentTableGrid";
+
+/**
+ * 件数 / 重量 / 体积按列表和导出上**显示的整票数**比（2026-09-28 分支审查）。
+ * 列表那几列和导出用的是 totalPackageCountOf / totalWeightOf / totalVolumeOf（整票），这里原来比的是父单剩余量 ——
+ * 拆过柜的单，按表上看到的「100」去筛反而筛不到，要填「30」才出来。拿不到整票数的老数据照旧退回原字段。
+ */
+function totalText(total: number | null, fallback: number | string | null | undefined): string {
+  if (total != null) return String(total);
+  return fallback == null ? "" : String(fallback);
+}
+type TotalsCarrier = {
+  products?: ProductLike[] | null; packageCount?: number | string | null; weightKg?: number | string | null; volumeM3?: number | string | null;
+  totalPackageCount?: number | null; totalWeightKg?: number | null; totalVolumeM3?: number | null;
+};
+function displayTotals(item: TotalsCarrier): { packageCount: string; weightKg: string; volumeM3: string } {
+  const it = item as any;
+  return {
+    packageCount: totalText(totalPackageCountOf(it), item.packageCount),
+    weightKg: totalText(totalWeightOf(it), item.weightKg),
+    volumeM3: totalText(totalVolumeOf(it), item.volumeM3),
+  };
+}
 
 /** 筛选条件（跟 ShipmentSearch 那个表单一一对应，全是字符串，空串 = 不限制） */
 export interface ShipmentFilterValue {
@@ -134,6 +157,7 @@ export function adminOrderFilterRow(item: {
   warehouseId?: string | null; batchNo?: string | null; itemName?: string | null; products?: ProductLike[] | null;
   packageCount?: number | string | null; productQuantity?: number | string | null;
   weightKg?: number | string | null; volumeM3?: number | string | null;
+  totalPackageCount?: number | null; totalWeightKg?: number | null; totalVolumeM3?: number | null;
   shipDate?: string | null; createdAt?: string | null; currentStatus?: string | null;
   containerNo?: string | null; transportMode?: string | null; receiverAddressTh?: string | null;
   receivableAmountCny?: number | null;
@@ -146,10 +170,9 @@ export function adminOrderFilterRow(item: {
     batchNo: lower(item.batchNo),
     // 按品名搜要认**全部产品名**（2026-09-11）：itemName 只存了第一个产品名
     itemName: `${productNamesLabel(item.products ?? undefined, item.itemName ?? "")} ${item.itemName ?? ""}`.toLowerCase(),
-    packageCount: item.packageCount == null ? "" : String(item.packageCount),
+    // 件数 / 重量 / 体积：按表上显示的整票数比（见上面 displayTotals）
+    ...displayTotals(item),
     productQuantity: item.productQuantity == null ? "" : String(item.productQuantity),
-    weightKg: item.weightKg == null ? "" : String(item.weightKg),
-    volumeM3: item.volumeM3 == null ? "" : String(item.volumeM3),
     // 管理员端原来的写法：没有到仓日期就退到建单日期
     arrivedAt: item.shipDate ?? item.createdAt?.slice(0, 10) ?? "",
     logisticsStatus: shipmentStatusZh(item.currentStatus ?? undefined),
@@ -171,6 +194,7 @@ export function staffShipmentFilterRow(item: {
   warehouseId?: string | null; batchNo?: string | null; itemName?: string | null; products?: ProductLike[] | null;
   packageCount?: number | string | null; productQuantity?: number | string | null;
   weightKg?: number | string | null; volumeM3?: number | string | null;
+  totalPackageCount?: number | null; totalWeightKg?: number | null; totalVolumeM3?: number | null;
   arrivedAt?: string | null; shipDate?: string | null; currentStatus?: string | null;
   containerNo?: string | null; transportMode?: string | null; receiverAddressTh?: string | null;
   receivableAmountCny?: number | null;
@@ -185,10 +209,9 @@ export function staffShipmentFilterRow(item: {
     warehouseId: lower(item.warehouseId),
     batchNo: lower(item.batchNo),
     itemName: `${productNamesLabel(item.products ?? undefined, item.itemName ?? "")} ${item.itemName ?? ""}`.toLowerCase(),
-    packageCount: item.packageCount == null ? "" : String(item.packageCount),
+    // 件数 / 重量 / 体积：按表上显示的整票数比（见上面 displayTotals）
+    ...displayTotals(item),
     productQuantity: item.productQuantity == null ? "" : String(item.productQuantity),
-    weightKg: item.weightKg == null ? "" : String(item.weightKg),
-    volumeM3: item.volumeM3 == null ? "" : String(item.volumeM3),
     arrivedAt: item.arrivedAt ? item.arrivedAt.slice(0, 10) : "",
     logisticsStatus: shipmentStatusZh(item.currentStatus ?? undefined),
     // 「柜号」筛选主要比 batchNo：收货 / 建单填的柜号存这个字段；原来只比 shipments.containerNo（线上 0 条），

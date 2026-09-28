@@ -29,9 +29,9 @@ async function getConfig(): Promise<Record<string, string>> {
 /**
  * 保存计费配置。
  */
-async function saveConfig(key: string, value: string): Promise<void> {
+async function saveConfig(key: string, value: string, db: { aiStatusLabel: typeof prisma.aiStatusLabel } = prisma): Promise<void> {
   const dbKey = `min_volume_${key}`;
-  await prisma.aiStatusLabel.upsert({
+  await db.aiStatusLabel.upsert({
     where: { status: dbKey },
     create: { status: dbKey, labelZh: value },
     update: { labelZh: value },
@@ -81,7 +81,11 @@ export function registerShippingConfigRoutes(app: MinimalHttpApp): void {
       if (issue) { fail(res, 400, "VALIDATION_ERROR", issue); return; }
       toSave.push([key, text]);
     }
-    for (const [key, text] of toSave) await saveConfig(key, text);
+    /* 两个一起存、要么都存要么都不存（2026-09-28 分支审查）：原来两次单独写，两个管理员同时保存会交错成
+       「甲的海运 + 乙的陆运」，第二个写失败还会只存一半。放进一个事务，两行按同一顺序（海运 → 陆运）上锁，后存的整套覆盖先存的。 */
+    await prisma.$transaction(async (tx) => {
+      for (const [key, text] of toSave) await saveConfig(key, text, tx);
+    });
     const config = await getConfig();
     ok(res, config);
   });

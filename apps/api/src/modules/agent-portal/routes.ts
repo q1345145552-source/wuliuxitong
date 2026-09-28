@@ -47,7 +47,9 @@ import {
 } from "./views";
 
 /** 运单列表口径跟 /client/orders 一致（CLAUDE.md #8b 三端对齐）：只列审过的单 */
-const VISIBLE_APPROVAL_STATUSES = ["approved", "shipped"];
+// 2026-09-28 分支审查：跟 /client/orders 一起加上 received —— 客户那边 9-27 审查修复 #4 已经加了，
+// 这里漏跟，代理名下客户走预报单进来的货一确认收货，代理的运单列表和导出里就整票消失
+const VISIBLE_APPROVAL_STATUSES = ["approved", "shipped", "received"];
 /** 导出一次最多多少条；超过让他缩小日期范围（前端提示），不静默截断（CLAUDE.md #21） */
 const EXPORT_MAX_ROWS = 5000;
 /** 查不到时统一的说法：不区分「不存在」和「不是你名下的」 */
@@ -643,7 +645,8 @@ export function registerAgentPortalRoutes(app: MinimalHttpApp): void {
     const familyContainerNos = [
       ...shipment.containerItems.map((it) => it.container.containerNo),
       ...childShipments.flatMap((cs) => cs.containerItems.map((it) => it.container.containerNo)),
-      ...(await companyContainerNosForMasking(auth.companyId)),
+      // 代理名下客户自己的运单号不抹（有 24 个柜号就是运单号），别家客户的照抹
+      ...(await companyContainerNosForMasking(auth.companyId, clientIds)),
     ];
 
     // 派送单一车拉多家的货：只取这张运单自己那一行，派送单号（能串到别人）不给

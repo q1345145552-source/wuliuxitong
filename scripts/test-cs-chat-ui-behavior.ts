@@ -1,0 +1,456 @@
+/**
+ * 客服对话页面的「真跑」回归（2026-09-28 上线前分支审查补）：不起浏览器，把**仓库里的真组件**跑起来点。
+ *
+ * 做法（审查员 B 在审查时搭的，原样收进来）：
+ *   · 一个极简「假 React」（useState / useRef / useCallback / useMemo / useEffect / useLayoutEffect），
+ *     渲染出 {type, props} 树，测试直接找元素调它的 onChange / onKeyDown / onClick；
+ *   · ChatThread.tsx、staff/chat/page.tsx、cs-chat-api.ts（含 mergeChatMessages）、request-gate 全是真代码（ts 转译后跑）；
+ *   · 只换掉网络（core-api 的 apiRequest，改成手动放行的假请求）、压图（image-compress）和 next/navigation。
+ *
+ * 钉住的 bug（每条都是「把修复改回去就红」）：
+ *   U1 发送途中接着打的字，第一条发成功后被整框清空；没发出去要把原话放回来
+ *   U2 Safari 的输入法回车顺序（compositionend 先到、keydown 后到、keyCode 229）会把拼音字母发出去
+ *   U3 发送中粘贴截图被悄悄吞掉，没有任何提示
+ *   U4 第一次取消息失败后窗口是死的：没有重试、轮询不启动（现在有「重试」，5 秒后自己再试，最多 3 次）
+ *   U5 轮询断了几秒、恢复后赶在下一轮前自己发了一句，对方那几秒的消息永远不出来（轮询起点不能跟着自己发的走）
+ *   U6 员工在「搜唛头」里一过滤，已划给代理的客户窗口「不能再发」的提示就没了
+ *   U7 手机上正聊着某个客户、点菜单「客户消息」（网址变回 /staff/chat）回不到列表
+ *   —— 整柜询价报价弹窗（components/client/FclInquiryPanel.tsx，同一套假 React）——
+ *   U8 同一张单上一次报价还没回来：关了又打开，不许再报（原来能再点，两次请求谁先到库说不准，旧价会盖掉新价）
+ *   U9 报价晚回来：刷新的是「现在这一页」列表，不会把员工翻到的第 2 页拽回第 1 页；详情关了也照样提示成败
+ */
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
+import ts from "typescript";
+
+const SRC = path.join(process.cwd(), "apps/web/src");
+
+// ---------- 假 React ----------
+let hooks: any[] = [];
+let idx = 0;
+let pendingLayout: Array<() => void> = [];
+let pendingEffects: Array<() => void> = [];
+let dirty = false;
+let Comp: ((p: any) => any) | null = null;
+let compProps: any = null;
+let tree: any = null;
+
+function depsChanged(a?: unknown[], b?: unknown[]) {
+  if (!a || !b) return true;
+  if (a.length !== b.length) return true;
+  return a.some((x, i) => !Object.is(x, b[i]));
+}
+function effectHook(fn: any, deps: unknown[] | undefined, queue: Array<() => void>) {
+  const i = idx++;
+  const h = hooks[i];
+  if (!h || depsChanged(h.deps, deps)) {
+    const prevCleanup = h?.cleanup;
+    hooks[i] = { deps, cleanup: undefined };
+    queue.push(() => {
+      if (typeof prevCleanup === "function") prevCleanup();
+      hooks[i].cleanup = fn();
+    });
+  }
+}
+const FakeReact = {
+  useState(init: any) {
+    const i = idx++;
+    if (!(i in hooks)) hooks[i] = { v: typeof init === "function" ? init() : init };
+    const h = hooks[i];
+    const set = (nv: any) => {
+      const val = typeof nv === "function" ? nv(h.v) : nv;
+      if (!Object.is(val, h.v)) { h.v = val; dirty = true; }
+    };
+    return [h.v, set];
+  },
+  useRef(init: any) {
+    const i = idx++;
+    if (!(i in hooks)) hooks[i] = { current: init };
+    return hooks[i];
+  },
+  useCallback(fn: any, deps: unknown[]) {
+    const i = idx++;
+    if (!hooks[i] || depsChanged(hooks[i].deps, deps)) hooks[i] = { fn, deps };
+    return hooks[i].fn;
+  },
+  useMemo(fn: any, deps: unknown[]) {
+    const i = idx++;
+    if (!hooks[i] || depsChanged(hooks[i].deps, deps)) hooks[i] = { v: fn(), deps };
+    return hooks[i].v;
+  },
+  useEffect(fn: any, deps?: unknown[]) { effectHook(fn, deps, pendingEffects); },
+  useLayoutEffect(fn: any, deps?: unknown[]) { effectHook(fn, deps, pendingLayout); },
+  Suspense: "Suspense",
+};
+const jsxRuntime = {
+  jsx: (type: any, props: any, key?: any) => ({ type, props, key }),
+  jsxs: (type: any, props: any, key?: any) => ({ type, props, key }),
+  Fragment: "Fragment",
+};
+function attachRefs(node: any) {
+  if (!node || typeof node !== "object") return;
+  if (Array.isArray(node)) { node.forEach(attachRefs); return; }
+  if (node.props?.ref && typeof node.props.ref === "object" && node.props.ref.current == null) {
+    node.props.ref.current = { scrollHeight: 1000, scrollTop: 600, clientHeight: 400, click() {} };
+  }
+  attachRefs(node.props?.children);
+}
+function renderOnce() {
+  idx = 0;
+  dirty = false;
+  tree = Comp!(compProps);
+  attachRefs(tree);
+  const lay = pendingLayout; pendingLayout = [];
+  lay.forEach((f) => f());
+  const eff = pendingEffects; pendingEffects = [];
+  eff.forEach((f) => f());
+}
+function flush() {
+  let n = 0;
+  while (dirty) { renderOnce(); if (++n > 50) throw new Error("render loop"); }
+}
+/** 外部条件变了（比如网址）要求重画一次 */
+function rerender() { dirty = true; flush(); }
+function mount(c: (p: any) => any, p: any) {
+  hooks = []; pendingLayout = []; pendingEffects = []; Comp = c; compProps = p;
+  renderOnce();
+  flush();
+}
+function unmount() {
+  for (const h of hooks) if (h && typeof h.cleanup === "function") h.cleanup();
+  hooks = [];
+}
+function findAll(pred: (n: any) => boolean, root?: any): any[] {
+  const out: any[] = [];
+  const walk = (node: any) => {
+    if (!node || typeof node !== "object") return;
+    if (Array.isArray(node)) { node.forEach(walk); return; }
+    if (node.type !== undefined && pred(node)) out.push(node);
+    walk(node.props?.children);
+  };
+  walk(root === undefined ? tree : root);
+  return out;
+}
+function textOf(node: any): string {
+  if (node == null || node === false || node === true) return "";
+  if (typeof node === "string" || typeof node === "number") return String(node);
+  if (Array.isArray(node)) return node.map(textOf).join("");
+  return textOf(node.props?.children);
+}
+
+// ---------- 假网络 ----------
+type Call = { url: string; opts: any; resolve: (v: any) => void; reject: (e: any) => void; done?: boolean };
+const calls: Call[] = [];
+const fakeCoreApi = {
+  apiBaseUrl: () => "",
+  apiRequest: (url: string, opts: any = {}) => new Promise((resolve, reject) => { calls.push({ url, opts, resolve, reject }); }),
+};
+const fakeImageCompress = {
+  compressImageForUpload: async (f: any) => ({ fileName: f.name ?? "a.png", mime: "image/png", base64: "AAAA" }),
+};
+
+// ---------- 假浏览器 ----------
+const timers: Array<{ id: number; fn: () => void; ms: number; alive: boolean; once: boolean }> = [];
+let tid = 0;
+const listeners: Record<string, Array<(e: any) => void>> = {};
+const docListeners: Record<string, Array<(e: any) => void>> = {};
+const fakeDocument: any = {
+  visibilityState: "visible",
+  addEventListener: (t: string, f: any) => { (docListeners[t] ??= []).push(f); },
+  removeEventListener: (t: string, f: any) => { docListeners[t] = (docListeners[t] ?? []).filter((x) => x !== f); },
+};
+const fakeWindow: any = {
+  setInterval: (fn: () => void, ms: number) => { const id = ++tid; timers.push({ id, fn, ms, alive: true, once: false }); return id; },
+  clearInterval: (id: number) => { const t = timers.find((x) => x.id === id); if (t) t.alive = false; },
+  setTimeout: (fn: () => void, ms: number) => { const id = ++tid; timers.push({ id, fn, ms, alive: true, once: true }); return id; },
+  clearTimeout: (id: number) => { const t = timers.find((x) => x.id === id); if (t) t.alive = false; },
+  addEventListener: (t: string, f: any) => { (listeners[t] ??= []).push(f); },
+  removeEventListener: (t: string, f: any) => { listeners[t] = (listeners[t] ?? []).filter((x) => x !== f); },
+  dispatchEvent: (e: any) => { (listeners[e.type] ?? []).slice().forEach((f) => f(e)); return true; },
+  location: { search: "", pathname: "/staff/chat", hash: "" },
+  history: { replaceState: (_s: any, _u: any, url: string) => { const u = new URL(url, "http://x"); fakeWindow.location.search = u.search; fakeWindow.location.pathname = u.pathname; } },
+};
+(globalThis as any).window = fakeWindow;
+(globalThis as any).document = fakeDocument;
+(globalThis as any).requestAnimationFrame = (f: () => void) => { f(); return 0; };
+const aliveTimers = () => timers.filter((t) => t.alive);
+async function settle() { for (let i = 0; i < 20; i++) await Promise.resolve(); flush(); }
+/** 到点：所有活着的定时器各跑一次（setTimeout 跑完就死） */
+async function tickTimers(filter: (t: { ms: number; once: boolean }) => boolean = () => true) {
+  for (const t of aliveTimers().filter(filter)) { if (t.once) t.alive = false; t.fn(); }
+  await settle();
+}
+
+// ---------- 模块加载（真代码） ----------
+const modCache = new Map<string, any>();
+function loadModule(abs: string, overrides: Record<string, any>): any {
+  if (modCache.has(abs)) return modCache.get(abs).exports;
+  const out = ts.transpileModule(fs.readFileSync(abs, "utf8"), {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX, esModuleInterop: true },
+    fileName: abs,
+  }).outputText;
+  const mod = { exports: {} as any };
+  modCache.set(abs, mod);
+  const req = (spec: string) => {
+    if (spec in overrides) return overrides[spec];
+    if (spec === "react") return FakeReact;
+    if (spec === "react/jsx-runtime") return jsxRuntime;
+    if (spec.startsWith(".")) {
+      const base = path.resolve(path.dirname(abs), spec);
+      for (const ext of ["", ".ts", ".tsx", "/index.ts", "/index.tsx"]) {
+        const p = base + ext;
+        if (fs.existsSync(p) && fs.statSync(p).isFile()) return p in overrides ? overrides[p] : loadModule(p, overrides);
+      }
+      throw new Error(`cannot resolve ${spec} from ${abs}`);
+    }
+    throw new Error(`unmocked external ${spec} from ${abs}`);
+  };
+  new Function("exports", "require", "module", out)(mod.exports, req, mod);
+  return mod.exports;
+}
+const OVERRIDES: Record<string, any> = {
+  [path.join(SRC, "services/core-api.ts")]: fakeCoreApi,
+  [path.join(SRC, "modules/shared/image-compress.ts")]: fakeImageCompress,
+  "next/navigation": { useSearchParams: () => new URLSearchParams(fakeWindow.location.search) },
+};
+
+let passed = 0, failed = 0;
+async function check(name: string, fn: () => Promise<void>): Promise<void> {
+  try { await fn(); passed++; console.log(`✅ ${name}`); }
+  catch (e: any) { failed++; console.log(`❌ ${name}\n   ${e?.message ?? e}`); }
+  finally { unmount(); calls.length = 0; timers.length = 0; }
+}
+
+async function main(): Promise<void> {
+  const ChatThread = loadModule(path.join(SRC, "modules/cs-chat/ChatThread.tsx"), OVERRIDES).default;
+  const ta = () => findAll((n) => n.type === "textarea")[0];
+  const msg = (id: string, mine: boolean, t: string, content = id) => ({ id, side: mine ? "client" : "cs", mine, senderLabel: mine ? "我" : "客服", content, imageUrl: null, createdAt: t });
+  const lastCall = () => calls[calls.length - 1];
+  const enter = (keyCode = 13, isComposing = false) =>
+    ta().props.onKeyDown({ key: "Enter", shiftKey: false, nativeEvent: { isComposing, keyCode }, preventDefault() {} });
+  const sendCalls = () => calls.filter((c) => c.url.includes("/chat/send"));
+  async function boot() {
+    mount(ChatThread, { scope: { kind: "client" }, title: "客服" });
+    lastCall().resolve({ messages: [msg("a1", false, "2026-09-28T01:00:00.000Z")], hasMore: false, serverTime: "2026-09-28T01:00:05.000Z" });
+    await settle();
+  }
+
+  await check("U1 按回车后输入框马上清空；发送途中接着打的字，发成功后还在；没发出去，原话放回来", async () => {
+    await boot();
+    ta().props.onChange({ target: { value: "第一条" } }); flush();
+    enter(); flush();
+    assert.equal(sendCalls().length, 1);
+    assert.equal(ta().props.value, "", "按了发送输入框没清空");
+    ta().props.onChange({ target: { value: "第二句还没打完" } }); flush();
+    sendCalls()[0].resolve({ message: msg("m1", true, "2026-09-28T01:00:06.000Z", "第一条") });
+    await settle();
+    assert.equal(ta().props.value, "第二句还没打完", "第一条发成功后把后打的字清掉了");
+    // 没发出去：框里空着就把原话放回来
+    ta().props.onChange({ target: { value: "会失败的一句" } }); flush();
+    enter(); flush();
+    sendCalls()[1].reject(new Error("网络断了"));
+    await settle();
+    assert.equal(ta().props.value, "会失败的一句", "没发出去，原话没放回来");
+    assert.ok(findAll((n) => n.props?.role === "alert").map(textOf).some((t) => t.includes("没发出去")), "没发出去没提示");
+    // 没发出去、可框里已经接着打了下一句：两句都要留着（原话放前面），不能把没发出去那句丢了（Codex 复看第 7 条）
+    ta().props.onChange({ target: { value: "又一句会失败的" } }); flush();
+    enter(); flush();
+    ta().props.onChange({ target: { value: "已经在打的下一句" } }); flush();
+    sendCalls()[2].reject(new Error("网络又断了"));
+    await settle();
+    assert.equal(ta().props.value, "又一句会失败的\n已经在打的下一句", `没发出去那句丢了：${JSON.stringify(ta().props.value)}`);
+  });
+
+  await check("U2 输入法回车：Chrome 顺序、Safari 顺序（compositionend 先到、keydown 后到、keyCode 229）都不发送", async () => {
+    await boot();
+    ta().props.onCompositionStart(); ta().props.onChange({ target: { value: "nihao" } }); flush();
+    enter(229, true);
+    ta().props.onCompositionEnd(); flush();
+    assert.equal(sendCalls().length, 0, "Chrome 顺序：选字的回车被当成发送");
+    ta().props.onCompositionStart(); flush();
+    ta().props.onCompositionEnd(); flush();
+    enter(229, false); flush();
+    assert.equal(sendCalls().length, 0, `Safari 顺序：选字的回车把「${ta().props.value}」发出去了`);
+    enter(13, false); flush();
+    assert.equal(sendCalls().length, 1, "正常回车反而发不出去了");
+  });
+
+  await check("U3 发送中粘贴截图：给出提示，不悄悄吞掉", async () => {
+    await boot();
+    ta().props.onChange({ target: { value: "看这个" } }); flush();
+    enter(); flush();
+    const n0 = calls.length;
+    ta().props.onPaste({ clipboardData: { files: [{ type: "image/png", name: "shot.png" }] }, preventDefault() {} });
+    await settle();
+    assert.equal(calls.length, n0, "发送中又发了一个请求");
+    const alerts = findAll((n) => n.props?.role === "alert").map(textOf);
+    assert.ok(alerts.some((t) => t.includes("上一条还在发送")), `没提示：${JSON.stringify(alerts)}`);
+  });
+
+  await check("U4 第一次取消息失败：有「重试」按钮、点了重取；5 秒后自己重试，最多 3 次", async () => {
+    mount(ChatThread, { scope: { kind: "client" }, title: "客服" });
+    lastCall().reject(new Error("网络连接异常"));
+    await settle();
+    const retry = findAll((n) => n.type === "button" && textOf(n) === "重试")[0];
+    assert.ok(retry, "出错了没有「重试」按钮");
+    const n0 = calls.length;
+    retry.props.onClick(); await settle();
+    assert.equal(calls.length, n0 + 1, "点「重试」没有重新取");
+    lastCall().reject(new Error("还是不通")); await settle();
+    // 自己重试：5 秒一次，最多 3 次
+    let auto = 0;
+    for (let i = 0; i < 6; i++) {
+      const before = calls.length;
+      await tickTimers((t) => t.once && t.ms === 5000);
+      if (calls.length > before) { auto++; lastCall().reject(new Error("不通")); await settle(); }
+    }
+    assert.equal(auto, 3, `自己重试了 ${auto} 次，应该正好 3 次`);
+    // 网络好了：点重试能恢复，轮询也起来
+    findAll((n) => n.type === "button" && textOf(n) === "重试")[0].props.onClick(); await settle();
+    lastCall().resolve({ messages: [msg("a1", false, "2026-09-28T01:00:00.000Z")], hasMore: false, serverTime: "2026-09-28T01:00:05.000Z" });
+    await settle();
+    assert.equal(ta().props.disabled, false, "恢复后输入框还是灰的");
+    assert.ok(aliveTimers().some((t) => !t.once && t.ms === 3000), "恢复后没开始轮询");
+  });
+
+  await check("U5 轮询起点不跟着自己发的那条走：断了一阵、恢复后先发了一句，下一轮照样从对方最后一条之后取", async () => {
+    await boot();
+    ta().props.onChange({ target: { value: "我先说一句" } }); flush();
+    enter(); flush();
+    sendCalls()[0].resolve({ message: msg("m1", true, "2026-09-28T01:00:20.000Z", "我先说一句") });
+    await settle();
+    await tickTimers((t) => !t.once && t.ms === 3000);
+    const poll = calls.filter((c) => c.url.includes("/client/chat/messages") && c.url.includes("since=")).pop();
+    assert.ok(poll, "没发轮询请求");
+    const since = new URL(poll!.url, "http://x").searchParams.get("since");
+    assert.equal(since, "2026-09-28T01:00:00.000Z", `轮询起点跳到了自己刚发的那条（${since}），对方这中间发的会落在「往前多取 5 秒」之外`);
+  });
+
+  // ---------- 员工「客户消息」 ----------
+  function ThreadStub(_p: any) { return null; }
+  const stubMod = { __esModule: true, default: ThreadStub, CHAT_UNREAD_EVENT: "xt-chat-unread-changed" };
+  const pageMod = loadModule(path.join(SRC, "app/staff/chat/page.tsx"), { ...OVERRIDES, [path.join(SRC, "modules/cs-chat/ChatThread.tsx")]: stubMod });
+  // 页面默认导出外面包了一层 Suspense（Next 16 用 useSearchParams 的规矩）：取出里面那个组件直接跑
+  const outer = pageMod.default();
+  const Inbox = outer.props.children.type;
+  assert.equal(typeof Inbox, "function", "页面结构变了：Suspense 里面不是一个组件");
+  const conv = (clientId: string, closed: boolean) => ({ clientId, lastMessageAt: "2026-09-28T01:00:00.000Z", lastMessagePreview: "hi", lastFromClient: true, unreadCount: 1, closed });
+  const thread = () => findAll((n) => n.type === ThreadStub)[0];
+  async function answerList(items: any[]) {
+    for (const c of calls.filter((x) => x.url.includes("/staff/chat/conversations") && !x.done)) { c.done = true; c.resolve({ items, truncated: false }); }
+    await settle();
+  }
+
+  await check("U6 已划给代理的客户：搜索框把它过滤掉以后，右边窗口照样是「只能看、不能发」", async () => {
+    fakeWindow.location.search = "";
+    mount(Inbox, {});
+    await answerList([conv("AGT01", true), conv("BB02", false)]);
+    findAll((n) => n.type === "button" && n.key === "AGT01")[0].props.onClick(); flush();
+    assert.ok(thread()?.props.closedNotice, "选中已划走的客户，没有「不能再发」提示");
+    findAll((n) => n.type === "input" && n.props["aria-label"] === "搜唛头")[0].props.onChange({ target: { value: "BB" } }); flush();
+    await answerList([conv("BB02", false)]);
+    assert.equal(thread()?.props.scope.clientId, "AGT01");
+    assert.ok(thread()?.props.closedNotice, "一搜索，「不能再发」提示没了（输入框又冒出来）");
+  });
+
+  await check("U7 网址带 ?clientId= 打开那个客户；点菜单「客户消息」（网址变回 /staff/chat）回到列表", async () => {
+    fakeWindow.location.search = "?clientId=BB02";
+    mount(Inbox, {});
+    await answerList([conv("BB02", false)]);
+    assert.equal(thread()?.props.scope.clientId, "BB02", "网址带的客户没打开");
+    fakeWindow.location.search = "";
+    rerender(); await settle();
+    assert.equal(thread(), undefined, "网址已经回到 /staff/chat，屏幕还停在那个客户的聊天");
+  });
+
+  // ---------- 整柜询价报价弹窗 ----------
+  const toasts: string[] = [];
+  function ModalStub(_p: any) { return null; }
+  const panelMod = loadModule(path.join(SRC, "components/client/FclInquiryPanel.tsx"), {
+    ...OVERRIDES,
+    "next/link": { __esModule: true, default: "a" },
+    [path.join(SRC, "auth/auth-session.ts")]: { getOptionalSession: () => ({ role: "staff", userId: "s1", companyId: "c1", token: "t" }) },
+    [path.join(SRC, "modules/branding/useWorkbenchBrand.ts")]: { useCurrentSessionBrand: () => null },
+    [path.join(SRC, "modules/layout/DetailModal.tsx")]: { __esModule: true, default: ModalStub },
+  });
+  const Panel = panelMod.default;
+  const inquiry = (id: string) => ({
+    id, clientId: "C1", productName: "鞋", cargoValue: "1万", cargoWeight: "5吨", address: "曼谷", containerType: "1*40HQ",
+    serviceType: "清提派", loadingDate: null, certFileName: null, status: "pending", createdAt: "2026-09-28T01:00:00.000Z",
+    quoteAmountCny: null, quoteNote: null, quotedAt: null, acceptedAt: null, convertedAt: null, fclContainerId: null, fclDeleted: false,
+  });
+  const listCalls = () => calls.filter((c) => c.url.includes("/client/fcl-inquiries?"));
+  const detailCalls = () => calls.filter((c) => c.url.includes("/client/fcl-inquiries/detail"));
+  const quoteCalls = () => calls.filter((c) => c.url.includes("/staff/fcl-inquiries/quote"));
+  const btn = (label: string) => findAll((n) => n.type === "button" && textOf(n).trim() === label);
+  const modal = () => findAll((n) => n.type === ModalStub)[0];
+  async function openPanelAndDetail() {
+    toasts.length = 0;
+    mount(Panel, { visible: true, isStaff: true, onToast: (m: string) => toasts.push(m) });
+    btn("加载记录")[0].props.onClick(); await settle();
+    // 共 120 条（第 1 页 50 条），这里只放一条，够点「详情 / 报价」
+    listCalls().pop()!.resolve({ items: [inquiry("A")], total: 120 }); await settle();
+    btn("详情 / 报价")[0].props.onClick(); await settle();
+    detailCalls().pop()!.resolve({ ...inquiry("A"), certFileBase64: null, productImages: [] }); await settle();
+  }
+  const typeAmount = (v: string) => {
+    const input = findAll((n) => n.type === "input" && n.props.placeholder === "如 18000")[0];
+    assert.ok(input, "详情里没有报价金额输入框");
+    input.props.onChange({ target: { value: v } }); flush();
+  };
+  const quoteBtn = () => findAll((n) => n.type === "button" && /^(报价|改报价|保存中…)$/.test(textOf(n).trim()))[0];
+
+  await check("U8 同一张单上一次报价还没回来：关了又打开，报价按钮是「保存中…」、点了也不发第二次", async () => {
+    await openPanelAndDetail();
+    typeAmount("100");
+    quoteBtn().props.onClick(); await settle();
+    assert.equal(quoteCalls().length, 1);
+    modal().props.onClose(); flush();                       // 关掉
+    btn("详情 / 报价")[0].props.onClick(); await settle();    // 又打开同一张
+    detailCalls().pop()!.resolve({ ...inquiry("A"), certFileBase64: null, productImages: [] }); await settle();
+    typeAmount("200");
+    assert.equal(textOf(quoteBtn()).trim(), "保存中…", "上一次还没回来，重新打开后按钮又能点了");
+    assert.equal(quoteBtn().props.disabled, true);
+    quoteBtn().props.onClick(); await settle();             // 就算点到了（按钮灰着点不到，这里硬点）
+    assert.equal(quoteCalls().length, 1, "同一张单发出了第二次报价（晚到的旧价可能盖掉新价）");
+    // 第一次回来之后才能再报
+    quoteCalls()[0].resolve({}); await settle();
+    detailCalls().filter((c) => !c.done).forEach((c) => { c.done = true; c.resolve({ ...inquiry("A"), certFileBase64: null, productImages: [] }); });
+    await settle();
+    typeAmount("200");
+    assert.notEqual(textOf(quoteBtn()).trim(), "保存中…");
+    quoteBtn().props.onClick(); await settle();
+    assert.equal(quoteCalls().length, 2, "第一次回来以后还是报不了");
+  });
+
+  await check("U9 报价晚回来：刷新的是员工现在翻到的第 2 页，不拽回第 1 页；详情关了，成败也照样提示", async () => {
+    await openPanelAndDetail();
+    typeAmount("100");
+    quoteBtn().props.onClick(); await settle();
+    modal().props.onClose(); flush();
+    btn("下一页")[0].props.onClick(); await settle();        // 翻到第 2 页
+    const p2 = listCalls().pop()!;
+    assert.ok(p2.url.includes("page=2"));
+    p2.resolve({ items: [inquiry("B")], total: 120 }); await settle();
+    const before = listCalls().length;
+    quoteCalls()[0].resolve({}); await settle();            // 旧报价这时才回来
+    const reload = listCalls().slice(before);
+    assert.equal(reload.length, 1, "报价成功后没刷新列表");
+    assert.ok(reload[0].url.includes("page=2"), `刷新的是 ${reload[0].url}（把员工拽回了第 1 页）`);
+    assert.ok(toasts.some((t) => t.includes("已报价")), `详情关了，报价成功没提示：${JSON.stringify(toasts)}`);
+    // 再来一次失败的：详情关着，失败要用提示条说出来
+    btn("详情 / 报价")[0].props.onClick(); await settle();
+    detailCalls().pop()!.resolve({ ...inquiry("B"), id: "B", certFileBase64: null, productImages: [] }); await settle();
+    typeAmount("300");
+    quoteBtn().props.onClick(); await settle();
+    modal().props.onClose(); flush();
+    quoteCalls().pop()!.reject(new Error("这张单刚被别人改过")); await settle();
+    assert.ok(toasts.some((t) => t.includes("报价没保存") && t.includes("刚被别人改过")), `详情关了，报价失败一声不吭：${JSON.stringify(toasts)}`);
+  });
+
+  console.log(`\n通过 ${passed} / 失败 ${failed}`);
+  if (failed > 0) process.exit(1);
+}
+
+main().catch((e) => { console.error(e); process.exit(1); });

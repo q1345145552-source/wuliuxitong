@@ -186,6 +186,16 @@ async function main(): Promise<void> {
       const last = all.messages[all.messages.length - 1];
       const r = await must("GET /client/chat/messages", CLIENT, {}, { since: last.createdAt });
       assert.ok(r.messages.some((x: Row) => x.id === last.id), "拿最新那条的时间去轮询，结果里没有它自己（重叠窗口没生效）");
+      /* 真钉住「往前多取 5 秒」（2026-09-28 分支审查：上面那句只靠 >=，把 5 秒改成 0 照样绿）：
+         放一条比 since 早 2 秒的，必须带回来 */
+      const convA = await pm.csConversation.findFirst({ where: { companyId: CO, clientId: CLIENT.userId } });
+      const early = await pm.csMessage.create({ data: {
+        companyId: CO, conversationId: convA.id, senderId: STAFF.userId, senderRole: "staff", senderName: STAFF.name,
+        content: "比 since 早 2 秒", createdAt: new Date(new Date(last.createdAt).getTime() - 2000),
+      } });
+      const r2 = await must("GET /client/chat/messages", CLIENT, {}, { since: last.createdAt });
+      assert.ok(r2.messages.some((x: Row) => x.id === early.id), "比 since 早 2 秒的那条没带回来（往前多取 5 秒没生效）");
+      await pm.csMessage.delete({ where: { id: early.id } });
       const bad = await call("GET /client/chat/messages", CLIENT, {}, { since: "昨天" });
       assert.equal(bad.status, 400);
     });
@@ -217,6 +227,21 @@ async function main(): Promise<void> {
       assert.notEqual(peek.status, 200, "别家公司员工按唛头直接取到了我们客户的对话");
       const send = await call("POST /staff/chat/send", OTHER_STAFF, { clientId: CLIENT.userId, content: "hi" });
       assert.equal(send.status, 404);
+      // 菜单红点也不能把我们客户的未读算进别家公司（2026-09-28 分支审查：原来没测，去掉公司过滤照样绿）
+      const ours = await must("GET /staff/chat/unread", STAFF);
+      assert.ok(ours.count > 0, "前提不成立：我们公司这时应该有未读（客户乙那 55 条）");
+      const theirs = await must("GET /staff/chat/unread", OTHER_STAFF);
+      assert.equal(theirs.count, 0, `别家公司员工的红点算进了我们客户的未读：${theirs.count}`);
+    });
+
+    await check("C8b 表情正好落在第 60 个字（列表摘要截断的位置）：照样发得出去、摘要不劈半个表情（原来整条 500）", async () => {
+      const content = "字".repeat(59) + "👍" + "谢谢";
+      const r = await call("POST /client/chat/send", CLIENT_B, { content });
+      assert.equal(r.status, 200, `发不出去：${r.status} ${r.message}`);
+      const conv = await pm.csConversation.findFirst({ where: { companyId: CO, clientId: CLIENT_B.userId } });
+      assert.equal(conv.lastMessagePreview, "字".repeat(59) + "👍…", `摘要不对：${conv.lastMessagePreview}`);
+      const img = await call("POST /staff/chat/send", STAFF, { clientId: CLIENT_B.userId, content: "😀".repeat(70) });
+      assert.equal(img.status, 200, `员工发 70 个表情发不出去：${img.status}`);
     });
 
     await check("C9 代理的不开：服务端统一闸挡 /client/chat/*；接口自己也挡；员工也不能给代理名下的客户发", async () => {

@@ -7,6 +7,7 @@ import { logger } from "../core/logger";
 import { BusinessError } from "../core/business-error";
 import { hideOperatorIdentity, hideOperatorInRemark, operatorNameForDisplay } from "../core/operator-visibility";
 import { sanitizeRemarkForClient } from "../core/client-privacy";
+import { companyContainerNosForMasking } from "../core/container-nos";
 import { verifyPassword } from "../auth/crypto-utils";
 // 取消任务验管理员密码用的失败限流（2026-08-31 Codex 复核）：复用登录那套内存计数器
 import { rateLimitKey, isFailureBlocked, failureRetryAfterMs, recordFailure, clearFailures } from "../core/rate-limit";
@@ -533,7 +534,11 @@ export function registerConsolidationRoutes(app: MinimalHttpApp): void {
     }
 
     // 这个任务的柜号：轨迹备注里按号精确抹（一次请求只建一份，抹号的正则按这份缓存）
-    const maskNos = task.containerNo ? [task.containerNo] : [];
+    // 这个任务自己的柜号（连同去掉空格的写法）+ 本公司全部柜号（跟运单那边同一份名单，2026-09-28 分支审查补）
+    const maskNos = [
+      ...(task.containerNo ? [task.containerNo, task.containerNo.replace(/\s+/g, "")] : []),
+      ...(await companyContainerNosForMasking(auth.companyId, [auth.userId])),
+    ];
     ok(res, {
       ...formatTaskForClient(task),
       volumePercent: calcVolumePercent(task),

@@ -501,6 +501,22 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
       rows.map((r) => r.orderId).filter((v): v is string => Boolean(v)),
     );
 
+    /* 整票箱数 = 父单剩余 + 全部子单（2026-09-28 分支审查）：员工端 /staff/shipments 一直带 totalPackageCount，
+       这里没带 —— 没有产品行的老单拆过柜，超管列表和导出的「包裹数量」就是父单剩余（30），
+       重量体积却是整票（100 kg），同一张单员工端写 100 件、超管端写 30 件。 */
+    const childPackageSum = new Map<string, number>();
+    const parentNos = rows.filter((r) => r.parentTrackingNo === null).map((r) => r.trackingNo);
+    if (parentNos.length > 0) {
+      const childRows = await prisma.shipment.groupBy({
+        by: ["parentTrackingNo"],
+        where: { companyId: auth.companyId, parentTrackingNo: { in: parentNos } },
+        _sum: { packageCount: true },
+      });
+      for (const c of childRows) {
+        if (c.parentTrackingNo) childPackageSum.set(c.parentTrackingNo, c._sum.packageCount ?? 0);
+      }
+    }
+
     // 同客户端/员工端：子单进度不一样时补一句「（部分已放行）」，主状态和分组不动
     const partialAheadAdmin = await loadPartialAhead(
       auth.companyId,
@@ -525,6 +541,10 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
       itemName: r.order?.itemName ?? undefined,
       domesticTrackingNo: r.domesticTrackingNo ?? undefined,
       packageCount: r.packageCount ?? undefined,
+      // 父单件数是空的（老数据）：整票也说不准，不给这个数，页面照旧退回显示「—」，别变成确定的 0（Codex 复看第 6 条）
+      totalPackageCount: r.parentTrackingNo === null && r.packageCount != null
+        ? r.packageCount + (childPackageSum.get(r.trackingNo) ?? 0)
+        : undefined,
       productQuantity: r.order?.productQuantity ?? undefined,
       weightKg: decToNumber(r.weightKg) ?? undefined,
       volumeM3: decToNumber(r.volumeM3) ?? undefined,
@@ -841,7 +861,11 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
     await prisma.$transaction(async (tx) => {
       // 锁序【订单 → 运单】，跟 orders/routes.ts 确认收货那条路一致。
       // 这个事务下面要 update orders，先锁订单行，两个入口同时改同一张单才会排队。
-      await tx.$queryRaw`SELECT id FROM orders WHERE id = ${orderId} AND company_id = ${auth.companyId} FOR UPDATE`;
+      /* FOR NO KEY UPDATE，不用 FOR UPDATE（2026-09-28 分支审查 Codex 复看第 4 条，一次性库真跑复现过）：
+         装柜是「先锁父运单 → 再插子运单」，插子运单时外键要对这张订单取 KEY SHARE。这里要是 FOR UPDATE，
+         跟装柜同时发生就互相等 —— PostgreSQL 判死锁、中止装柜那一边。这里只改订单的普通列、不改主键，
+         NO KEY UPDATE 够用：两个编辑 / 收货之间照样排队，只是不再挡装柜插子单的外键检查。 */
+      await tx.$queryRaw`SELECT id FROM orders WHERE id = ${orderId} AND company_id = ${auth.companyId} FOR NO KEY UPDATE`;
       const savedProductCargo = async () => {
         const products = await tx.orderProduct.findMany({
           where: { orderId, companyId: auth.companyId },

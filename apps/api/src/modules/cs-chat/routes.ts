@@ -99,7 +99,10 @@ const MESSAGE_SELECT = {
 /** 列表里那一行的摘要：文字取前 60 个字，只有图片就写 [图片] */
 export function previewOf(content: string | null, hasImage: boolean): string {
   const text = (content ?? "").replace(/\s+/g, " ").trim();
-  if (text) return text.length > 60 ? `${text.slice(0, 60)}…` : text;
+  /* 按「字」截，不按 UTF-16 截（2026-09-28 分支审查）：表情是两个 UTF-16 单位，正好落在第 60 位时
+     slice(0, 60) 会把它劈成半个，数据库不收这种半个字符，整条消息 500、怎么重发都发不出去。 */
+  const chars = Array.from(text);
+  if (chars.length) return chars.length > 60 ? `${chars.slice(0, 60).join("")}…` : text;
   return hasImage ? "[图片]" : "";
 }
 

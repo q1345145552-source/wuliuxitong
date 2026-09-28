@@ -98,13 +98,16 @@ export default function FclInquiryPanel(props: ClientFclInquiryProps) {
   const [detailError, setDetailError] = useState("");
   const [quoteAmount, setQuoteAmount] = useState("");
   const [quoteNote, setQuoteNote] = useState("");
-  const [quoteSaving, setQuoteSaving] = useState(false);
+  /** 正在保存报价的询价单（按单号记）：同一张单上一次报价还没回来，不许再报（2026-09-28 分支审查 Codex 复看第 3 条） */
+  const [savingQuoteIds, setSavingQuoteIds] = useState<string[]>([]);
+  const savingQuoteIdsRef = useRef(new Set<string>());
   const [quoteMessage, setQuoteMessage] = useState("");
-  const detailIdRef = useRef<string | null>(null);
-  detailIdRef.current = detailId;
   /** 每打开 / 关掉一次详情就加一：同一张单关了又开，前一次晚到的响应也认得出是旧的（Codex 复核第 12 条） */
   const detailSeqRef = useRef(0);
   const closeDetail = () => { detailSeqRef.current += 1; setDetailId(null); };
+  /** 当前在第几页：报价晚回来时刷新的是「现在这一页」，不是点报价那会儿的那一页（Codex 复看第 9 条） */
+  const listPageRef = useRef(listPage);
+  listPageRef.current = listPage;
 
   const loadList = async (page = listPage) => {
     const ticket = listGate.begin(); // 2026-09-01 竞态全扫：出发时领号
@@ -147,24 +150,36 @@ export default function FclInquiryPanel(props: ClientFclInquiryProps) {
   };
 
   const saveQuote = async () => {
-    if (!detail || quoteSaving) return;
+    if (!detail) return;
     const id = detail.id;
+    /* 同一张单上一次报价还没回来：不许再报。原来关了又打开同一张就能再点，两次请求谁先到库说不准，
+       晚到的旧价会盖掉新价（还会清掉客户对新价的「已接受」） */
+    if (savingQuoteIdsRef.current.has(id)) { setQuoteMessage("这张单上一次报价还在保存，等它回来再改"); return; }
     if (!quoteAmount.trim()) { setQuoteMessage("请填报价金额"); return; }
-    setQuoteSaving(true);
+    /* 认「这一次打开的详情」而不是认单号（2026-09-28 分支审查）：原来只比单号 ——
+       ① 报价还没回来就关了 / 换了一张：保存成功也不刷新列表、不提示；失败了更是什么都不说；
+       ② 关了又打开同一张、刚填了新金额，旧那次保存回来会重新加载详情，把新填的冲掉。
+       现在：成败都给提示、列表总是刷新；只有详情还是出发时那一次打开的，才重新加载详情。 */
+    const seq = detailSeqRef.current;
+    const wasQuoted = Boolean(detail.quotedAt);
+    savingQuoteIdsRef.current.add(id);
+    setSavingQuoteIds([...savingQuoteIdsRef.current]);
     setQuoteMessage("");
     try {
       await apiRequest(`${apiBaseUrl()}/staff/fcl-inquiries/quote`, {
         method: "POST",
         body: JSON.stringify({ id, amountCny: quoteAmount.trim(), note: quoteNote.trim() }),
       });
-      if (detailIdRef.current !== id) return;
-      props.onToast(detail.quotedAt ? "报价已修改，客户要重新点「接受」" : "已报价，客户在「整柜询价」里能看到");
-      await openDetail(id);
-      loadList(listPage);
+      props.onToast(wasQuoted ? "报价已修改，客户要重新点「接受」" : "已报价，客户在「整柜询价」里能看到");
+      loadList(listPageRef.current);
+      if (detailSeqRef.current === seq) await openDetail(id);
     } catch (e: any) {
-      if (detailIdRef.current === id) setQuoteMessage(`报价没保存：${e?.message || "请重试"}`);
+      const msg = `报价没保存：${e?.message || "请重试"}`;
+      if (detailSeqRef.current === seq) setQuoteMessage(msg);
+      else props.onToast(msg);
     } finally {
-      setQuoteSaving(false);
+      savingQuoteIdsRef.current.delete(id);
+      setSavingQuoteIds([...savingQuoteIdsRef.current]);
     }
   };
 
@@ -492,9 +507,9 @@ export default function FclInquiryPanel(props: ClientFclInquiryProps) {
                       </label>
                       <input value={quoteNote} onChange={(e) => setQuoteNote(e.target.value)} maxLength={500} placeholder="说明（可选，客户看得到），如：含清关、不含派送"
                         style={{ flex: 1, minWidth: 200, border: "1px solid var(--l-strong)", borderRadius: 6, padding: "6px 8px", fontSize: 13 }} />
-                      <button type="button" disabled={quoteSaving} onClick={() => void saveQuote()}
+                      <button type="button" disabled={savingQuoteIds.includes(detail.id)} onClick={() => void saveQuote()}
                         style={{ border: "none", borderRadius: 6, background: "var(--c-blue)", color: "var(--white)", padding: "7px 16px", fontSize: 13, cursor: "pointer", fontWeight: 600 }}>
-                        {quoteSaving ? "保存中…" : detail.quotedAt ? "改报价" : "报价"}
+                        {savingQuoteIds.includes(detail.id) ? "保存中…" : detail.quotedAt ? "改报价" : "报价"}
                       </button>
                     </div>
                     {detail.acceptedAt ? <div style={{ fontSize: 12, color: "var(--c-amber-deep)" }}>客户已经接受了现在这个价；改价后客户要重新点「接受」。</div> : null}

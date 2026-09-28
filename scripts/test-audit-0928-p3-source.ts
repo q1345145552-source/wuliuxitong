@@ -73,7 +73,8 @@ check("L 客户批量导入认仓库：义乌 / 义乌仓 / wh_yiwu_01 都认成
     assert.ok(!Object.prototype.hasOwnProperty.call(WAREHOUSE_BY_NAME, raw), `「${raw}」不该认得出来`);
   }
   // 解析时查这张表，认不出来是 null（不是把原文当 id）
-  assert.match(src, /const warehouseId = WAREHOUSE_BY_NAME\[rawWarehouse\.replace\(\/\\s\+\/g, ""\)\] \?\? null;/);
+  // 解析时查这张表只认表里自己的键（constructor / toString / __proto__ 这种写法原来会从对象原型上查出东西来）
+  assert.match(src, /const warehouseKey = rawWarehouse\.replace\(\/\\s\+\/g, ""\);\s*const warehouseId = Object\.prototype\.hasOwnProperty\.call\(WAREHOUSE_BY_NAME, warehouseKey\) \? WAREHOUSE_BY_NAME\[warehouseKey\] : null;/);
 });
 
 check("L 客户批量导入：仓库没填 / 认不出来的行不丢，标红，提交按钮拦住", () => {
@@ -87,7 +88,7 @@ check("L 客户批量导入：仓库没填 / 认不出来的行不丢，标红�
   assert.match(src, /disabled=\{loading \|\| parsing \|\| rows\.length === 0 \|\| badCargoRows\.length > 0\}/);
   assert.match(src, /row\.warehouseId === null\s*\? \(row\.warehouseRaw \? `「\$\{row\.warehouseRaw\}」认不出来` : "没填"\)/, "预览里没把认不出来的仓库标出来");
   // 标红的行不能再算成「有效」（原来的提示「已读取 3 条有效数据」+ 提交按钮却是灰的，客户看不懂）
-  assert.match(src, /const validCount = useMemo\(\(\) => rows\.filter\(\(r\) => r\.cargoType !== null && r\.warehouseId !== null\)\.length/, "「当前有效行」把标红的也算进去了");
+  assert.match(src, /const validCount = useMemo\(\(\) => rows\.filter\(\(r\) => r\.cargoType !== null && r\.warehouseId !== null && r\.transportMode !== null\)\.length/, "「当前有效行」把标红的也算进去了");
   assert.match(src, /其中 \$\{badCount\} 条标红的要改/, "读完文件的提示没说有几条要改");
 });
 

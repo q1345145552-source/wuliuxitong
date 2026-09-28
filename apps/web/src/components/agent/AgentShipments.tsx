@@ -34,7 +34,8 @@ const GROUPS: Array<{ value: string; label: string }> = [
 ];
 const PAGE_SIZE = 50;
 
-const APPROVAL_ZH: Record<string, string> = { pending: "待审核", approved: "已审核", shipped: "已发货" };
+// received：代理的运单列表 9-28 起带已收货的单（跟客户端一个口径），这一列要翻成中文
+const APPROVAL_ZH: Record<string, string> = { pending: "待审核", approved: "已审核", shipped: "已发货", received: "已收货" };
 
 /** 一行运单 → Excel 一行。列名、顺序照管理端 exportOrdersToExcel，去掉柜号 */
 function toExcelRow(o: AgentShipmentItem) {

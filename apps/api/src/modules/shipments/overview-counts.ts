@@ -1,6 +1,7 @@
 import { prisma } from "../../db/prisma";
 import { COMPLETED_STATUSES } from "./status-flow";
 import { AT_WAREHOUSE_STATUSES, ATTENTION_STATUSES } from "../../../../../packages/shared-types/shipment-status";
+import { beijingMonthOf, beijingMonthStart } from "../agents/agent-rules";
 
 /* ==========================================================================
    运单列表顶部那排数字 —— 全系统唯一一份「在途 / 已到仓」计数口径
@@ -32,9 +33,10 @@ async function countSignedThisMonth(where: Record<string, unknown>, startOfMonth
 }
 
 export async function countShipmentOverview(where: Record<string, unknown>) {
-  const startOfMonth = new Date();
-  startOfMonth.setDate(1);
-  startOfMonth.setHours(0, 0, 0, 0);
+  /* 「本月」按北京时间算（2026-09-28 分支审查）：线上后端容器跑在 UTC，原来 setHours(0,0,0,0) 得到的是
+     UTC 零点 = 北京时间 1 号早上 8 点 —— 1 号凌晨签收的算进上个月；10 月 1 号凌晨打开，整个九月都还算「本月」。
+     超管看板「今天」早就按北京时间改过（admin/routes.ts），代理返现按月也用这两个函数。 */
+  const startOfMonth = beijingMonthStart(beijingMonthOf(new Date()));
 
   /* 延迟 / 需要盯的。2026-09-03 改用共享清单 ATTENTION_STATUSES ——
      原来手写的那份漏掉了国内海关查验、泰国海关查验、港口封港三个，

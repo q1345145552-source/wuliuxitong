@@ -411,7 +411,8 @@ export function registerAdminOpsRoutes(app: MinimalHttpApp): void {
       }
     }
     // 签收单给客户签字：备注里的柜号按「这票货的柜 + 本公司全部柜号」抹（2026-09-28）
-    const maskContainerNos = await companyContainerNosForMasking(auth.companyId);
+    // 签收单是给这个客户签字的：他自己的运单号不抹
+    const maskContainerNos = await companyContainerNosForMasking(auth.companyId, [clientId]);
     const shipments = selectedRows.map((row) => {
       const shipment = row.shipment;
       const order = shipment.order;

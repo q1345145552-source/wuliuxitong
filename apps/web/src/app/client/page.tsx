@@ -238,7 +238,8 @@ export default function ClientHomePage() {
       运输方式: o.transportMode === "sea" ? "海运" : o.transportMode === "land" ? "陆运" : (o.transportMode ?? "-"),
       国内单号: o.domesticTrackingNo ?? "-",
       // ⚠️ 没有「柜号」这一列：客户不能看到柜号（老板 2026-08-07 定，代理端导出也是这么做的）
-      审批状态: o.approvalStatus === "pending" ? "待审核" : o.approvalStatus === "approved" ? "已审核" : o.approvalStatus === "shipped" ? "已发货" : (o.approvalStatus ?? "-"),
+      // received 也要翻（2026-09-28 分支审查）：已收货的单 9-27 修复后进了这个列表，原来导出这一列写英文 received
+      审批状态: o.approvalStatus === "pending" ? "待审核" : o.approvalStatus === "approved" ? "已审核" : o.approvalStatus === "shipped" ? "已发货" : o.approvalStatus === "received" ? "已收货" : (o.approvalStatus ?? "-"),
       产品数量: o.productQuantity ?? "-", 包裹数量: o.packageCount ?? "-",
       // 导出跟列表那两列用同一对函数（2026-09-28 审查修复 #10，四个导出一起对齐）。
       // 客户端接口的 weightKg/volumeM3 本来就是订单整票；差别只在订单上没填总重/总方的老单 ——
@@ -1241,7 +1242,7 @@ export default function ClientHomePage() {
                                     后端 /client/orders 已同时不再下发 batchNo，两边一起改，不留半截。 */}
                                 <div><span style={{ color: "var(--t-muted)", fontSize: 12 }}>运单号：</span>{item.trackingNo || "—"}</div>
                                 <div><span style={{ color: "var(--t-muted)", fontSize: 12 }}>预报单号：</span>{item.orderNo || "—"}</div>
-                                <div><span style={{ color: "var(--t-muted)", fontSize: 12 }}>审批状态：</span>{item.approvalStatus === "shipped" ? "已发货" : item.approvalStatus === "approved" ? "已审核" : item.approvalStatus || "—"}</div>
+                                <div><span style={{ color: "var(--t-muted)", fontSize: 12 }}>审批状态：</span>{item.approvalStatus === "shipped" ? "已发货" : item.approvalStatus === "approved" ? "已审核" : item.approvalStatus === "received" ? "已收货" : item.approvalStatus || "—"}</div>
                                 <div><span style={{ color: "var(--t-muted)", fontSize: 12 }}>运输方式：</span>{item.transportMode === "sea" ? "海运" : item.transportMode === "land" ? "陆运" : item.transportMode || "—"}</div>
                                 <div><span style={{ color: "var(--t-muted)", fontSize: 12 }}>国内单号：</span>{(item.products?.length ?? 0) > 0 ? (item.products ?? []).map((p: any) => p.domesticTrackingNo || "—").filter(Boolean).join("、") || "—" : (item.domesticTrackingNo || "—")}</div>
                                 <div><span style={{ color: "var(--t-muted)", fontSize: 12 }}>发货日期：</span>{item.shipDate || "—"}</div>

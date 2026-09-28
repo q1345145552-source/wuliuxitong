@@ -1430,7 +1430,7 @@ export default function AdminHomePage() {
       // 货型（2026-09-11 老板点的），口径同员工端导出
       货型: cargoTypeLabel((o.products ?? []).map((p: any) => p.cargoType), o.cargoType),
       运输方式: transportModeLabel(o.transportMode), 国内单号: o.domesticTrackingNo ?? "-", 柜号: o.batchNo ?? "-",
-      审批状态: o.approvalStatus === "pending" ? "待审核" : o.approvalStatus === "approved" ? "已审核" : o.approvalStatus === "shipped" ? "已发货" : o.approvalStatus,
+      审批状态: o.approvalStatus === "pending" ? "待审核" : o.approvalStatus === "approved" ? "已审核" : o.approvalStatus === "shipped" ? "已发货" : o.approvalStatus === "received" ? "已收货" : o.approvalStatus,
       // 拆过柜的单 packageCount/weightKg/volumeM3 都是父单剩余量（超管列表接口按运单给）；
       // 导出跟列表那几列用同一套函数取整票（2026-09-28 审查修复 #10）
       产品数量: o.productQuantity ?? "-", 包裹数量: totalPackageCountOf(o) ?? "-",

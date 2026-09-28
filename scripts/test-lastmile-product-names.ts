@@ -172,7 +172,10 @@ let trackChildren: any[] = [];         // 它的子单
   // 2026-09-28：签收单 / 轨迹多查一次本公司全部柜号（core/container-nos.ts，抹备注里的柜号用），跟品名无关；只认这一句
   async $queryRaw(strings: TemplateStringsArray) {
     const sql = strings.join("?").replace(/\s+/g, " ");
-    assert.match(sql, /SELECT c\.container_no FROM containers c/, `路由多了一句没见过的原生查询：${sql}`);
+    // 2026-09-28 分支审查后这句还并上了运单 / 订单 / 集货任务的柜号（仍以 container_no 列名返回）；
+    // 另一句取「看的这个客户自己的运单号」（这些不抹）
+    if (/SELECT lower\(s\.tracking_no\) AS t FROM shipments s JOIN orders o ON o\.id = s\.order_id/.test(sql)) return [];
+    assert.match(sql, /SELECT DISTINCT btrim\(v\.no\) AS container_no FROM \( SELECT c\.container_no AS no FROM containers c/, `路由多了一句没见过的原生查询：${sql}`);
     return [];
   },
   adminLastmileOrder: strict("adminLastmileOrder", {

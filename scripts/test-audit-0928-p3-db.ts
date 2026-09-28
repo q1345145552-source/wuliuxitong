@@ -171,13 +171,18 @@ async function main(): Promise<void> {
     // 客户预报的单先装走、分了柜，再补确认收货。子单**先**建（表里排在前面），不带条件取第一张就会拿到子单
     await mkOrder("zz_a0928_k", "shipped");
     await mkShip("zz_a0928_kc", "zz_a0928_k", "ZZA0928K-1", "loaded", { parentTrackingNo: "ZZA0928K", createdAt: new Date(Date.now() - 60_000) });
-    await mkShip("zz_a0928_kp", "zz_a0928_k", "ZZA0928K", "created");
-    await check("K 分过柜的单补确认收货：重量、柜号、「已入库」轨迹都写在父单上，子单一个字没动", async () => {
+    // 真实数据里整票装走后父单剩 0（2026-09-28 分支审查：原来夹具让父单还剩 10 件，照不出「整票写回父单」）
+    await mkShip("zz_a0928_kp", "zz_a0928_k", "ZZA0928K", "created", { packageCount: 0, weightKg: 0, volumeM3: 0 });
+    await check("K 分过柜的单补确认收货：柜号、「已入库」轨迹写在父单上，父单数量 =「整票实收 − 已装走」，子单一个字没动", async () => {
       const r = await call("POST /staff/prealerts/receive", STAFF, { orderId: "zz_a0928_k", packageCount: 10, weightKg: 12.5, volumeM3: 0.2, batchNo: "ZZB0928" });
       assert.equal(r.status, 200, r.message);
       const p = await pm.shipment.findUnique({ where: { id: "zz_a0928_kp" } });
       const c = await pm.shipment.findUnique({ where: { id: "zz_a0928_kc" } });
-      assert.equal(Number(p.weightKg), 12.5, "父单重量没更新");
+      const o = await pm.order.findUnique({ where: { id: "zz_a0928_k" } });
+      assert.equal(Number(o.weightKg), 12.5, "订单（整票）重量没更新");
+      assert.equal(p.packageCount, 0, `父单件数应是 10 − 已装走 10 = 0，实际 ${p.packageCount}（整票写回父单 = 同一批货能再装一次柜）`);
+      assert.equal(Number(p.weightKg), 2.5, `父单重量应是 12.5 − 已装走 10 = 2.5，实际 ${p.weightKg}`);
+      assert.equal(Number(p.volumeM3), 0.1, `父单体积应是 0.2 − 已装走 0.1 = 0.1，实际 ${p.volumeM3}`);
       assert.equal(p.batchNo, "ZZB0928");
       assert.equal(p.currentStatus, "inWarehouseCN");
       assert.equal(Number(c.weightKg), 10, "子单重量被改了");

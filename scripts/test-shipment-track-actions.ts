@@ -103,7 +103,8 @@ const db: any = strict("prisma", {
   async $queryRaw(strings: TemplateStringsArray,...values: any[]) {
     const sql=strings.join("?").replace(/\s+/g," ");
     // 2026-09-28：客户查轨迹多查一次本公司全部柜号（core/container-nos.ts，抹备注里的柜号用），不是锁，跟删轨迹无关
-    if(/SELECT c\.container_no FROM containers c/.test(sql))return [];
+    if(/SELECT DISTINCT btrim\(v\.no\) AS container_no FROM \( SELECT c\.container_no AS no FROM containers c/.test(sql))return [];
+    if(/SELECT lower\(s\.tracking_no\) AS t FROM shipments s JOIN orders o ON o\.id = s\.order_id/.test(sql))return []; // 看的客户自己的运单号（不抹）
     assert.match(sql,/SELECT id FROM (admin_lastmile_orders|shipments).*FOR UPDATE/i);
     let id=values[0];if(sql.includes("tracking_no"))id=ships.find(s=>s.trackingNo===id)?.id;
     const key=`${sql.includes("admin_lastmile_orders")?"lastmile":"shipment"}:${id}`;locks.push(key);afterLock(key);return [{id}];

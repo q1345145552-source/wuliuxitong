@@ -119,13 +119,15 @@ const LOCK_HELPERS: Record<string, string[]> = {
  * 谁把这句挪到锁计划之后（跟改长期价那条路反着拿锁），这个脚本一声不吭。
  * 一处认、一处不认最容易漏，所以下面所有「这一行是不是在加锁」都走这一个常量。
  */
-const LOCK_SQL_RE = /FOR (UPDATE|SHARE)/;
+// 2026-09-28 起编辑订单 / 确认收货对 orders 用 FOR NO KEY UPDATE（不挡装柜插子单的外键 KEY SHARE），也是行锁，照认
+const LOCK_SQL_RE = /FOR (NO KEY UPDATE|UPDATE|SHARE)/;
 /**
  * ⚠️ 但「写这张表之前必须锁住它」那一项（第 7 项）只能认**排他锁**（2026-09-18 第三轮复核第 5 条）。
  * `FOR SHARE` 之后再 update 同一行是**锁升级**，两个事务一起干必定死锁 —— 那正是第 7 项要抓的东西。
  * 今天全仓的 FOR SHARE 只在 agents 上（没人写它），所以这条区分是给以后兜底的。
  */
-const EXCLUSIVE_LOCK_RE = /FOR UPDATE/;
+// NO KEY UPDATE 之后再改同一行的普通列不是锁升级（UPDATE 本身拿的就是这把锁），同样算「锁住了」
+const EXCLUSIVE_LOCK_RE = /FOR (NO KEY )?UPDATE/;
 /**
  * ⚠️ 拿的是**共享锁**的 helper 也要单列（Opus 第四轮复核第 3 条）：上一版只把裸 SQL 分共享/排他，
  * 而 `LOCK_HELPERS` 那条分支不分模式，一律往 `held` 里塞 —— 于是
@@ -769,7 +771,7 @@ check("9) 共用的批量锁函数本身要守住三条：查父子、分两层�
     .map((l, i) => ({ l, i }))
     .filter(({ i }) => {
       const body = src.split("\n").slice(i + 1, i + 3).join("\n");
-      return /for\s*\(\s*const\s+\w+\s+of\s+/.test(src.split("\n")[i]) && /FOR UPDATE/.test(body);
+      return /for\s*\(\s*const\s+\w+\s+of\s+/.test(src.split("\n")[i]) && /FOR (NO KEY )?UPDATE/.test(body);
     });
   assert.ok(lockLoops.length >= 3, `只找到 ${lockLoops.length} 个取锁循环，比预期少 —— 是不是有一层被删了`);
   for (const { l, i } of lockLoops) {

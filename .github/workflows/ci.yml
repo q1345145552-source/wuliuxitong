@@ -266,6 +266,16 @@ jobs:
       - name: Test audit 0928 small fixes (source)
         run: npm run test:audit-0928-p3-source
 
+      # 9-28 上线前整条分支审查（6 个审查员 + Codex）查出来的页面 bug：列表筛选按整票数、批量导入运输方式、
+      # 询价报价弹窗竞态、已收货写中文、低消保存中、子单派送单明写 select。
+      - name: Test branch review 0928 fixes (source)
+        run: npm run test:branch-review-0928-source
+
+      # 客服对话窗口真跑（假 React + 真组件）：发送中打字不被清、Safari 输入法回车、粘贴提示、
+      # 首次加载失败能重试、轮询起点、已划走客户的提示、菜单回到列表。
+      - name: Test customer-service chat UI behavior
+        run: npm run test:cs-chat-ui-behavior
+
       # 改整柜（2026-09-24，老板：「加上编辑功能」）。要连测试库 —— 读源码证明不了
       # 「改完库里真的变了」，而改整柜最容易出的就是「只改了一半」（订单改了运单没改之类）。
       # CI 没有数据库会打印「跳过」—— 本地改了 fcl-containers 必须连测试库跑一遍。
@@ -422,3 +432,8 @@ jobs:
       # 删计划预览中文状态、仓库版操作列表带计划号、运费低消校验。
       - name: Test audit 0928 small fixes (real DB)
         run: bash .github/scripts/run-db-test.sh test:audit-0928-p3-db
+
+      # 9-28 上线前整条分支审查查出来的后端 bug：代理看得到已收货的单、非标准柜号抹除（签收单 / 代理 / 集货 / 运单柜号格）、
+      # 先装柜后补收货父单存剩余、超管整票箱数、本月按北京时间、新柜号马上进抹号名单、低消两个一起存。
+      - name: Test branch review 0928 fixes (real DB)
+        run: bash .github/scripts/run-db-test.sh test:branch-review-0928-db

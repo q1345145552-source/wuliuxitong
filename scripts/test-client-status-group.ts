@@ -432,6 +432,8 @@ async function main(): Promise<void> {
     (globalThis as any).__prisma.shipment.count = async () => 样本.length;
     (globalThis as any).__prisma.shipment.findMany = async () => 样本;
     (globalThis as any).__prisma.orderProduct = { async findMany() { return []; } };
+    // 2026-09-28 分支审查：超管列表多查一次子单件数合计（整票箱数 totalPackageCount），跟状态组无关
+    (globalThis as any).__prisma.shipment.groupBy = async () => [];
 
     const adminMod = await import("../apps/api/src/modules/admin/routes");
     (adminMod as any).registerAdminRoutes(fakeApp);

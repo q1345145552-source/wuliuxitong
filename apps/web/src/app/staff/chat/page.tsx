@@ -9,7 +9,8 @@
  * 还没聊过的客户：上面输唛头点「开始对话」，员工可以先开口。代理名下的客户不开对话（老板定的），后端会挡。
  * 网址带 ?clientId=唛头 直接打开那个客户（整柜询价详情里的「联系客户」就是这么跳过来的）。
  */
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import ChatThread, { CHAT_UNREAD_EVENT } from "../../../modules/cs-chat/ChatThread";
 import { fetchChatConversations, type ChatConversation } from "../../../services/cs-chat-api";
 import { createRequestGate } from "../../../modules/shared/request-gate";
@@ -26,7 +27,20 @@ function shortTime(iso: string | null): string {
   return new Intl.DateTimeFormat("zh-CN", { timeZone: "Asia/Shanghai", ...opts }).format(d);
 }
 
+/**
+ * 网址上的 ?clientId= 用 useSearchParams 读（2026-09-28 分支审查改）：原来只在进页面时读一次 window.location，
+ * 手机上正聊着某个客户、点菜单「客户消息」（网址变回 /staff/chat）页面不重建，屏幕还停在那个客户、回不到列表。
+ * Next 16 规定用 useSearchParams 的组件要包一层 Suspense（不包 next build 会报错）。
+ */
 export default function StaffChatPage() {
+  return (
+    <Suspense fallback={<div style={{ padding: 24, fontSize: 13, color: "var(--t-faint)" }}>加载中…</div>}>
+      <StaffChatInbox />
+    </Suspense>
+  );
+}
+
+function StaffChatInbox() {
   const [items, setItems] = useState<ChatConversation[]>([]);
   const [listError, setListError] = useState("");
   const [listLoaded, setListLoaded] = useState(false);
@@ -37,12 +51,15 @@ export default function StaffChatPage() {
   const gate = useRef(createRequestGate()).current;
   const searchRef = useRef(search);
   searchRef.current = search;
+  /** 哪些客户已经划到代理名下（只能看、不能发）：记下每次列表里见过的，搜索把选中的客户过滤掉了也还认得（2026-09-28 分支审查） */
+  const closedSeenRef = useRef(new Map<string, boolean>());
 
   const loadList = useCallback(async () => {
     const ticket = gate.begin();
     try {
       const data = await fetchChatConversations(searchRef.current);
       if (!gate.isCurrent(ticket)) return;
+      for (const c of data.items ?? []) closedSeenRef.current.set(c.clientId, c.closed === true);
       setItems(data.items ?? []);
       setTruncated(data.truncated === true);
       setListError("");
@@ -56,11 +73,10 @@ export default function StaffChatPage() {
 
   useEffect(() => { void loadList(); }, [loadList, search]);
 
-  // 进页面时读网址上的 ?clientId=（不用 useSearchParams：Next 16 要为它另包一层 Suspense，项目里也没人用它）
-  useEffect(() => {
-    const fromUrl = new URLSearchParams(window.location.search).get("clientId")?.trim();
-    if (fromUrl) setSelected(fromUrl);
-  }, []);
+  // 选中的客户跟着网址走：进页面带 ?clientId= 直接打开；点菜单「客户消息」网址变回 /staff/chat 就回到列表
+  const searchParams = useSearchParams();
+  const urlClientId = searchParams.get("clientId")?.trim() ?? "";
+  useEffect(() => { setSelected(urlClientId); }, [urlClientId]);
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -79,6 +95,7 @@ export default function StaffChatPage() {
   };
 
   const current = items.find((x) => x.clientId === selected);
+  const selectedClosed = current?.closed ?? closedSeenRef.current.get(selected) ?? false;
 
   return (
     /* 手机上（窄于 640）一次只显示一栏，跟手机微信一样：没选客户看列表，点了客户整屏是聊天，
@@ -144,7 +161,7 @@ export default function StaffChatPage() {
             key={selected}
             scope={{ kind: "staff", clientId: selected }}
             title={`客户 ${selected}`}
-            closedNotice={current?.closed ? "这个客户已经划到代理名下，对话功能不对代理的客户开放，只能看以前的记录。" : undefined}
+            closedNotice={selectedClosed ? "这个客户已经划到代理名下，对话功能不对代理的客户开放，只能看以前的记录。" : undefined}
             onSent={() => { void loadList(); }}
             onBack={() => select("")}
           />

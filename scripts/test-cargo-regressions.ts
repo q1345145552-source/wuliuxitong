@@ -66,7 +66,7 @@ const prisma: Row = strict("prisma", {
      这些假数据都是没装过柜的普通单，所以这张表是空的。 */
   shipmentContainerItem: model("shipmentContainerItem"),
   $queryRaw: async (strings: TemplateStringsArray) => {
-    assert.match(strings.join("?"), /SELECT id FROM orders .*FOR UPDATE/);
+    assert.match(strings.join("?"), /SELECT id FROM orders .*FOR (NO KEY )?UPDATE/); // 2026-09-28 起编辑订单用 NO KEY UPDATE（不挡装柜插子单的外键检查）
     calls.push("lock:order"); return [{id: "o1"}];
   },
   $transaction: async (callback: (tx: Row) => Promise<any>) => {

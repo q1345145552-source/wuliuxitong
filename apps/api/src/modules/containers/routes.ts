@@ -1492,6 +1492,11 @@ export function registerContainerRoutes(app: MinimalHttpApp): void {
       ? await prisma.adminLastmileOrder.findMany({
           where: { shipmentId: { in: childShipments.map((cs) => cs.id) } },
           orderBy: { updatedAt: "desc" },
+          // 只要下面 formatLastmile 用到的几列（上线自检也要求列表查询明着写 select，2026-09-28 分支审查）
+          select: {
+            shipmentId: true, carrierName: true, driverName: true, licensePlate: true,
+            phoneNumber: true, signImageBase64: true, status: true,
+          },
         })
       : [];
     const childLastmileByShipment = new Map<string, (typeof childLastmileRows)[number]>();
@@ -1531,7 +1536,7 @@ export function registerContainerRoutes(app: MinimalHttpApp): void {
      */
     // 客户看的再加上本公司全部柜号（2026-09-28 Codex 复核：卸柜后原来那个柜号就不在这票货的名单里了）
     const maskContainerNos = isClient
-      ? [...familyContainerNos, ...(await companyContainerNosForMasking(auth.companyId))]
+      ? [...familyContainerNos, ...(await companyContainerNosForMasking(auth.companyId, [auth.userId]))]
       : familyContainerNos;
     const sanitizeRemark = (remark: string): string =>
       sanitizeRemarkForClient(remark, isClient, maskContainerNos);

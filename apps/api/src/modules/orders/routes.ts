@@ -273,7 +273,8 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
       }
     }
 
-    if (!body.warehouseId?.trim() || (!body.itemName && !body.products?.length) || !body.transportMode) {
+    // 仓库不是字符串（比如传了个对象）原来 .trim() 当场抛错成 500（2026-09-28 分支审查）
+    if (typeof body.warehouseId !== "string" || !body.warehouseId.trim() || (!body.itemName && !body.products?.length) || !body.transportMode) {
       fail(res, 400, "BAD_REQUEST", "missing required prealert fields");
       return;
     }
@@ -629,7 +630,11 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
      *    不能接着用事务外那份 order（CLAUDE.md 第 28 条）。
      */
     await prisma.$transaction(async (tx) => {
-      await tx.$queryRaw`SELECT id FROM orders WHERE id = ${orderId} AND company_id = ${auth.companyId} FOR UPDATE`;
+      /* FOR NO KEY UPDATE，不用 FOR UPDATE（2026-09-28 分支审查 Codex 复看第 4 条，一次性库真跑复现过）：
+         装柜是「先锁父运单 → 再插子运单」，插子运单时外键要对这张订单取 KEY SHARE。这里要是 FOR UPDATE，
+         跟装柜同时发生就互相等 —— PostgreSQL 判死锁、中止装柜那一边。这里只改订单的普通列、不改主键，
+         NO KEY UPDATE 够用：两个编辑 / 收货之间照样排队，只是不再挡装柜插子单的外键检查。 */
+      await tx.$queryRaw`SELECT id FROM orders WHERE id = ${orderId} AND company_id = ${auth.companyId} FOR NO KEY UPDATE`;
       const fresh = await tx.order.findFirst({
         where: { id: orderId, companyId: auth.companyId },
         select: { approvalStatus: true },
@@ -650,13 +655,49 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
        */
       const shipment = order.shipments[0];
       let freshShipmentStatus: string | undefined;
+      /* 这票货已经装走多少（2026-09-28 分支审查）：先装柜、后补确认收货的单，货已经在子单上了。
+         全系统口径是「订单存整票、父单存还剩没装的」（admin/routes.ts 超管编辑那条路同一个算法）。
+         原来这里把收货填的整票数原样写回父单 —— 整票装走（父单剩 0）的单一补确认收货，父单又变回整票，
+         同一批货能再装一个柜，父单状态也从此不跟子单走（parent-status.ts 见父单还有件数就不同步）。 */
+      let loadedPackageCount = 0;
+      let loadedWeightKg = 0;
+      let loadedVolumeM3 = 0;
+      let loadedChildren = 0;
       if (shipment) {
         await tx.$queryRaw`SELECT id FROM shipments WHERE id = ${shipment.id} FOR UPDATE`;
         const s2 = await tx.shipment.findUnique({
           where: { id: shipment.id },
-          select: { currentStatus: true },
+          select: { currentStatus: true, trackingNo: true },
         });
         freshShipmentStatus = s2?.currentStatus ?? shipment.currentStatus;
+        if (s2?.trackingNo) {
+          // 父单已锁：装柜要改父单剩余量，拿不到这把锁就建不了新子单，这里读到的就是准数
+          const loaded = await tx.shipment.aggregate({
+            where: { companyId: auth.companyId, parentTrackingNo: s2.trackingNo },
+            _sum: { packageCount: true, weightKg: true, volumeM3: true },
+            _count: true,
+          });
+          loadedChildren = loaded._count;
+          loadedPackageCount = loaded._sum.packageCount ?? 0;
+          loadedWeightKg = loaded._sum.weightKg == null ? 0 : Number(loaded._sum.weightKg.toString());
+          loadedVolumeM3 = loaded._sum.volumeM3 == null ? 0 : Number(loaded._sum.volumeM3.toString());
+        }
+      }
+      // 舍入位数跟数据库列一致（重量 Decimal(10,2)、体积 Decimal(10,3)），同超管编辑
+      const roundToScale = (n: number, scale: number): number => {
+        const f = 10 ** scale;
+        return Math.round((n + Number.EPSILON) * f) / f;
+      };
+      if (loadedChildren > 0) {
+        if (receivePackageCount !== undefined && receivePackageCount < loadedPackageCount) {
+          throw new BusinessError(`实收箱数（${receivePackageCount}）比已经装柜的 ${loadedPackageCount} 箱还少 —— 这票货先装了柜，这里要填整票实收的数，本次没有保存。`);
+        }
+        if (receiveWeightKg !== undefined && receiveWeightKg + 0.005 < loadedWeightKg) {
+          throw new BusinessError(`实收重量（${receiveWeightKg} kg）比已经装柜的 ${roundToScale(loadedWeightKg, 2)} kg 还少 —— 这票货先装了柜，这里要填整票实收的数，本次没有保存。`);
+        }
+        if (receiveVolumeM3 !== undefined && receiveVolumeM3 + 0.0005 < loadedVolumeM3) {
+          throw new BusinessError(`实收体积（${receiveVolumeM3} m³）比已经装柜的 ${roundToScale(loadedVolumeM3, 3)} m³ 还少 —— 这票货先装了柜，这里要填整票实收的数，本次没有保存。`);
+        }
       }
 
       await tx.order.update({ where: { id: orderId }, data: updateData });
@@ -664,9 +705,16 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
       // 同步更新运单
       if (shipment) {
         const sUpdate: any = { updatedAt: now };
-        if (receiveWeightKg !== undefined) sUpdate.weightKg = receiveWeightKg as any;
-        if (receiveVolumeM3 !== undefined) sUpdate.volumeM3 = receiveVolumeM3 as any;
-        if (receivePackageCount !== undefined) sUpdate.packageCount = receivePackageCount;
+        // 父单存「还剩没装的」：没拆过柜就是整票；拆过的减掉子单已装走的
+        if (receiveWeightKg !== undefined) {
+          sUpdate.weightKg = (loadedChildren > 0 ? Math.max(0, roundToScale(receiveWeightKg - loadedWeightKg, 2)) : receiveWeightKg) as any;
+        }
+        if (receiveVolumeM3 !== undefined) {
+          sUpdate.volumeM3 = (loadedChildren > 0 ? Math.max(0, roundToScale(receiveVolumeM3 - loadedVolumeM3, 3)) : receiveVolumeM3) as any;
+        }
+        if (receivePackageCount !== undefined) {
+          sUpdate.packageCount = loadedChildren > 0 ? receivePackageCount - loadedPackageCount : receivePackageCount;
+        }
         if (body.packageUnit) sUpdate.packageUnit = body.packageUnit;
         if (body.transportMode) sUpdate.transportMode = body.transportMode;
         if (body.itemName?.trim()) sUpdate.itemName = body.itemName.trim();
@@ -1181,7 +1229,7 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
      * 备注里的柜号按「本公司全部柜号」精确抹（2026-09-28 审查修复 #2；Codex 复核后从「这张单装过的柜」扩到全公司：
      * 卸过柜的货、员工写了别的柜号，原来都会漏）。再加 client-privacy 里按标准柜号样子认的那一道。
      */
-    const maskContainerNos = await companyContainerNosForMasking(auth.companyId);
+    const maskContainerNos = await companyContainerNosForMasking(auth.companyId, [auth.userId]);
 
     const items = filtered.map((o) => {
       // orderBy 已保证父单排在最前 + take:1，这里直接取即可
@@ -1712,7 +1760,11 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
     await prisma.$transaction(async (tx) => {
       // 锁序【订单 → 运单】，跟本文件确认收货 / 客户改单那几条路一致（549→571 那段）。
       // 这个事务下面要 update orders，先把订单行锁住，两个编辑入口同时保存才会排队。
-      await tx.$queryRaw`SELECT id FROM orders WHERE id = ${curOrder.id} AND company_id = ${auth.companyId} FOR UPDATE`;
+      /* FOR NO KEY UPDATE，不用 FOR UPDATE（2026-09-28 分支审查 Codex 复看第 4 条，一次性库真跑复现过）：
+         装柜是「先锁父运单 → 再插子运单」，插子运单时外键要对这张订单取 KEY SHARE。这里要是 FOR UPDATE，
+         跟装柜同时发生就互相等 —— PostgreSQL 判死锁、中止装柜那一边。这里只改订单的普通列、不改主键，
+         NO KEY UPDATE 够用：两个编辑 / 收货之间照样排队，只是不再挡装柜插子单的外键检查。 */
+      await tx.$queryRaw`SELECT id FROM orders WHERE id = ${curOrder.id} AND company_id = ${auth.companyId} FOR NO KEY UPDATE`;
       await lockShipmentsChildrenFirst(tx, [shipmentId], auth.companyId);
       // 锁后重读运单号（CLAUDE.md 第 28 条）：拿锁之前那份快照里的
       // trackingNo 可能已被并发编辑改掉，查子单合计要用锁内的值

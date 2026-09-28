@@ -25,6 +25,8 @@ export type ShippingConfigProps = {
 };
 
 export default function ShippingConfig(props: ShippingConfigProps) {
+  /* 保存中（2026-09-28 分支审查）：外面传进来的 configSaving 从来没人置成 true，按钮一直能连点、也不显示「保存中…」 */
+  const [minSaving, setMinSaving] = useState(false);
   const [expandedClientId, setExpandedClientId] = useState<string | null>(null);
   const [clientPrices, setClientPrices] = useState<Record<string, number>>({});
   const [clientMinVolumeDisabled, setClientMinVolumeDisabled] = useState(false);
@@ -90,16 +92,20 @@ export default function ShippingConfig(props: ShippingConfigProps) {
           <div style={{ fontSize: 13, color: "var(--t-strong)", marginBottom: 4 }}>陆运低消（立方米）</div>
           <input value={props.shippingConfigLand} onChange={(e) => props.onLandChange(e.target.value)} type="number" step="0.1" min="0" style={{ border: "1px solid var(--l-strong)", borderRadius: 6, padding: "8px 10px", fontSize: 13, width: "100%" }} />
         </div>
-        <button type="button" disabled={props.configSaving} onClick={async () => {
+        <button type="button" disabled={props.configSaving || minSaving} onClick={async () => {
+          if (minSaving) return;
+          setMinSaving(true);
           try {
             await updateShippingConfig({ sea_min_volume: props.shippingConfigSea, land_min_volume: props.shippingConfigLand });
             props.onToast("配置已保存");
           } catch (e) {
             // 把后台说的原因带出来（比如「海运低消不能空着」），光说「保存失败」员工不知道改哪（2026-09-28）
             props.onToast(`保存失败：${e instanceof Error ? e.message : "请重试"}`);
+          } finally {
+            setMinSaving(false);
           }
         }} style={{ border: "none", borderRadius: 6, padding: "8px 16px", background: "var(--c-blue)", color: "var(--white)", fontWeight: 500, fontSize: 13, cursor: "pointer", justifySelf: "start" }}>
-          {props.configSaving ? "保存中…" : "保存配置"}
+          {props.configSaving || minSaving ? "保存中…" : "保存配置"}
         </button>
       </div>
 

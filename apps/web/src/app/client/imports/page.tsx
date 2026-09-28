@@ -18,7 +18,10 @@ interface ImportRow {
   volumeM3?: number;
   shipDate?: string;
   domesticTrackingNo?: string;
-  transportMode: "sea" | "land";
+  /** null = 运输方式没填或认不出来（2026-09-28），下面会拦住不让提交 —— 原来一律悄悄当海运 */
+  transportMode: "sea" | "land" | null;
+  /** 填错时原样回显给客户看 */
+  transportModeRaw: string;
   /** 货型（2026-09-11）。null = 这一格填了认不出来的字，下面会拦住不让提交 */
   cargoType: CargoType | null;
   /** 填错时原样回显给客户看 */
@@ -97,12 +100,21 @@ function normalizeRows(rows: Record<string, unknown>[]): ImportRow[] {
   }
   return rows
     .map((row) => {
-      const transportModeRaw = findCol(row, ["运输方式"]).toLowerCase().replace("海运", "sea").replace("陆运", "land");
+      /* 运输方式是必填（模板表头带 *）。原来只看「包不包含 land」：没填、写错（比如「空运」「海陆」）一律悄悄当海运建单
+         （2026-09-28 分支审查）。现在只认 海运 / 海 / sea、陆运 / 陆 / land，别的标红不许提交。 */
+      const transportModeRaw = findCol(row, ["运输方式"]);
+      const transportModeKey = transportModeRaw.replace(/\s+/g, "").toLowerCase();
+      const transportMode: "sea" | "land" | null =
+        ["海运", "海", "sea"].includes(transportModeKey) ? "sea"
+        : ["陆运", "陆", "land"].includes(transportModeKey) ? "land"
+        : null;
       const packageUnitRaw = findCol(row, ["包装类型"]).toLowerCase().replace("箱", "box").replace("袋", "bag");
       /* 2026-09-28 审查报告：原来只认「义乌仓」这种带「仓」字的全称，写成「义乌」就把「义乌」原样当仓库 id 存进去，
          员工按仓库筛哪个仓都筛不出这张单。现在带不带「仓」字、直接写 id 都认；认不出来的标红、不让提交。 */
       const rawWarehouse = findCol(row, ["仓库"]);
-      const warehouseId = WAREHOUSE_BY_NAME[rawWarehouse.replace(/\s+/g, "")] ?? null;
+      // 只认表里自己的键：写成 constructor / toString 这种字会从对象原型上查出东西来，不是 null（2026-09-28 分支审查）
+      const warehouseKey = rawWarehouse.replace(/\s+/g, "");
+      const warehouseId = Object.prototype.hasOwnProperty.call(WAREHOUSE_BY_NAME, warehouseKey) ? WAREHOUSE_BY_NAME[warehouseKey] : null;
       const packageCount = findNum(row, ["箱数"]) ?? 0;
       const perBoxWeight = findNum(row, ["单箱重量"]);
       const weightKg = perBoxWeight != null && packageCount > 0 ? perBoxWeight * packageCount : perBoxWeight;
@@ -129,7 +141,8 @@ function normalizeRows(rows: Record<string, unknown>[]): ImportRow[] {
         volumeM3,
         shipDate: shipDate || undefined,
         domesticTrackingNo: findCol(row, ["国内单号"]) || undefined,
-        transportMode: (transportModeRaw.includes("land") ? "land" : "sea") as "sea" | "land",
+        transportMode,
+        transportModeRaw,
         // 货型（2026-09-11）：留空按普货；认不出来的先留 null，预览里标红并禁掉提交，
         // **不许**静默当普货 —— 商检货按普货走，清关要的单据是另一套
         cargoType: parseCargoType(cargoTypeRaw)?.value ?? null,
@@ -158,7 +171,7 @@ export default function ClientImportsPage() {
   const [message, setMessage] = useState("");
 
   // 标红（仓库 / 货型认不出来）的行不算有效（2026-09-28：认不出来的行现在留在预览里，不再悄悄丢掉）
-  const validCount = useMemo(() => rows.filter((r) => r.cargoType !== null && r.warehouseId !== null).length, [rows]);
+  const validCount = useMemo(() => rows.filter((r) => r.cargoType !== null && r.warehouseId !== null && r.transportMode !== null).length, [rows]);
 
   /* 2026-09-01 竞态全扫：记住「当前预览是哪一份」（request-gate 用法二·认主人的快照版）。
      handleSubmit 的循环拿的是点击那一刻的 rows；万一提交期间预览被换成另一份文件，
@@ -193,9 +206,9 @@ export default function ClientImportsPage() {
       setFailCount(0);
       setErrors([]);
       setDone(false);
-      const badCount = normalized.filter((r) => r.cargoType === null || r.warehouseId === null).length;
+      const badCount = normalized.filter((r) => r.cargoType === null || r.warehouseId === null || r.transportMode === null).length;
       setMessage(badCount > 0
-        ? `已读取 ${normalized.length} 条，其中 ${badCount} 条标红的要改（仓库或货型认不出来），改好再上传`
+        ? `已读取 ${normalized.length} 条，其中 ${badCount} 条标红的要改（仓库、运输方式或货型认不出来），改好再上传`
         : `已读取 ${normalized.length} 条有效数据`);
     } catch {
       // 2026-09-02 终审整改：失败分支同样验号，旧解析的报错不许盖到新解析的提示上
@@ -210,7 +223,7 @@ export default function ClientImportsPage() {
   /** 填了认不出来的货型的行（提交前要拦住，不能静默当普货）；仓库没填 / 认不出来的也一起拦 */
   const badCargoRows = rows
     .map((row, index) => ({ row, index }))
-    .filter((entry) => entry.row.cargoType === null || entry.row.warehouseId === null);
+    .filter((entry) => entry.row.cargoType === null || entry.row.warehouseId === null || entry.row.transportMode === null);
 
   const handleSubmit = async () => {
     // 2026-09-02 终审整改：解析中/提交中/没数据一律拒绝（按钮已 disabled，这里再兜一层）——
@@ -246,7 +259,8 @@ export default function ClientImportsPage() {
           volumeM3: row.volumeM3,
           shipDate: row.shipDate,
           domesticTrackingNo: row.domesticTrackingNo,
-          transportMode: row.transportMode,
+          // 上面已经拦掉没填 / 认不出来的运输方式
+          transportMode: row.transportMode ?? "sea",
           // 货型（2026-09-11）：上面已经拦掉认不出来的，这里一定是那三个值之一
           cargoType: row.cargoType ?? "normal",
         };
@@ -377,7 +391,11 @@ export default function ClientImportsPage() {
                     </td>
                     <td style={td}>{row.itemName}</td>
                     <td style={td}>{row.packageCount} {row.packageUnit}</td>
-                    <td style={td}>{row.transportMode === "sea" ? "海运" : "陆运"}</td>
+                    <td style={{ ...td, color: row.transportMode === null ? "var(--c-red-deep)" : undefined }}>
+                      {row.transportMode === null
+                        ? (row.transportModeRaw ? `「${row.transportModeRaw}」认不出来` : "没填")
+                        : row.transportMode === "sea" ? "海运" : "陆运"}
+                    </td>
                     <td style={{ ...td, color: row.cargoType === null ? "var(--c-red-deep)" : undefined }}>
                       {row.cargoType === null ? `「${row.cargoTypeRaw}」认不出来` : CARGO_TYPE_ZH[row.cargoType]}
                     </td>

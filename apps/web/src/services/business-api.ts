@@ -399,6 +399,8 @@ export interface AdminOrderItem {
   widthCm?: number | string;
   heightCm?: number | string;
   volumeM3: number | null;
+  /** 整票箱数 = 父单剩余 + 全部子单（2026-09-28 起跟员工端一样带；子单行上没有） */
+  totalPackageCount?: number;
   totalWeightKg?: number | null;
   totalVolumeM3?: number | null;
   receiverAddressTh?: string;
