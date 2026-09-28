@@ -1221,52 +1221,6 @@ table tbody tr:hover {
   font-variant-numeric: tabular-nums;
 }
 
-.step-guide {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-bottom: 10px;
-}
-
-.step-item {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 10px;
-  border: 1px solid var(--hairline);
-  border-radius: 6px;
-  color: var(--brand);
-  background: rgba(30, 58, 138, 0.04);
-  font-size: 12px;
-}
-
-.step-item-done {
-  border-color: rgba(15, 118, 110, 0.2);
-  background: rgba(15, 118, 110, 0.05);
-  color: var(--c-green-dark);
-}
-
-.step-item-done .step-index {
-  background: var(--success);
-}
-
-.step-check {
-  font-weight: 700;
-  color: var(--success);
-}
-
-.step-index {
-  width: 18px;
-  height: 18px;
-  border-radius: 999px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  font-weight: 700;
-  color: var(--white);
-  background: var(--brand);
-}
-
 .kpi-card {
   border: 1px solid var(--hairline);
   border-radius: 10px;

@@ -63,7 +63,7 @@ const AI_CHAT_MAX_PER_MINUTE = readLimit("AI_CHAT_MAX_PER_MINUTE", 10);
  * 多进程部署时也是各算各的。现在是单进程，够用；哪天上多实例要换成 Redis。
  */
 const AI_CHAT_MAX_PER_DAY = readLimit("AI_CHAT_MAX_PER_DAY", 200);
-/** ⚠️ 改这个值要同步改前端输入框的 maxLength（AiChatWidget.tsx），那边是写死的 500 */
+/** 客户端「AI问答」输入框（app/client/page.tsx）没有限字数，超长全靠这里挡（400 + 中文提示） */
 const AI_CHAT_MAX_MESSAGE_CHARS = readLimit("AI_CHAT_MAX_MESSAGE_CHARS", 500);
 /** sessionId 是客户端自己传的，会被当成 key 写进会话记忆表，必须卡长度 */
 const AI_CHAT_MAX_SESSION_ID_CHARS = 100;

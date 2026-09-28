@@ -135,7 +135,7 @@ grep -rn "被提取的函数名" apps/web/src/app/ --include="*.tsx"  # 看原�
 | 16 | 尾端派送的 `loadLmShipments` 传 `limit=500`，但 API 参数名是 `pageSize`，`limit` 被忽略 → 只加载 50 条运单，唛头不全 | **前端调 API 参数名必须和 API 源码一致**：前后端参数名不匹配不会编译报错，只能靠人工核对 |
 | 17 | 编辑运单保存时 API 先判断 `trackingNo !== shipment.trackingNo` 再查重，但两端值可能因空格/编码差异被判为不等 → 误报 "trackingNo already exists" | **查重不要依赖前置相等判断**：直接查重 + 始终排除自身 ID，避免不可见字符差异导致误判 |
 | 18 | 尾端派送唛头列 `minWidth: 70` + 无 `nowrap`，长 clientId 被换行截断 | **ID/编号类字段至少 100px + `whiteSpace: "nowrap"`**，防止静默截断数据 |
-| 19 | 别人推送新功能（whr-consolidation）到仓库，`deploy.sh` 拉取部署时：① Prisma schema 新增字段但没 db push → API 全 500；② 重建容器丢失 IMAGES_DIR 环境变量 → 图片 404；③ 产品图磁盘文件随容器重建消失 → 279 张图不可见 | **deploy.sh 必须：① 部署前展示 git log 变更；② 等 API 就绪后再 db push（带重试）；③ 部署后检查图片文件数 vs 数据库记录数；④ 发现远程有新提交时立即告知用户** |
+| 19 | 别人推送新功能（whr-consolidation）到仓库，`deploy.sh` 拉取部署时：① Prisma schema 新增字段但没 db push → API 全 500；② 重建容器丢失 IMAGES_DIR 环境变量 → 图片 404；③ 产品图磁盘文件随容器重建消失 → 279 张图不可见 | **deploy.sh 必须：① 部署前展示 git log 变更；② 改表只跑写好的迁移文件（`prisma migrate deploy`，先备份再迁移再切容器）——**绝不用 `db push`**，它会删掉生产库里设计图上没有的字段（2026-07-31 真删过带数据的字段）；③ 部署后检查图片文件数 vs 数据库记录数；④ 发现远程有新提交时立即告知用户** |
 
 ## 部署前强制检查
 
@@ -148,5 +148,5 @@ git fetch origin && git log --oneline HEAD..origin/main
 
 ### 部署后
 1. `curl http://localhost:3001/` 确认 API 返回 `{"status":"ok"}`
-2. `docker compose exec -T api npx prisma db push` 确认数据库同步
+2. `docker compose run --rm -T api npx prisma migrate status --schema=apps/api/prisma/schema.prisma` 确认没有待执行的迁移（**只看不改**；绝不跑 `prisma db push`，理由见上面第 19 条）
 3. `ls /images/ | wc -l` 对比 `SELECT count(*) FROM order_product_images` 确认图片文件完整
