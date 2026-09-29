@@ -122,7 +122,7 @@ async function main(): Promise<void> {
     assert.ok(at > 0);
     const seg = src.slice(at, at + 2500);
     assert.doesNotMatch(seg, /catch \{ \/\* skip \*\/ \}/, "图片上传失败还是被吞掉");
-    assert.match(seg, /failedImages\.push\(`「\$\{file\.name\}」\$\{e instanceof Error \? e\.message : "上传失败"\}`\)/, "没记下哪张、为什么");
+    assert.match(seg, /failedImages\.push\(`「\$\{file\.name\}」\$\{\(e instanceof Error \? e\.message : "上传失败"\)\.replace\(\/\[。\.\\s\]\+\$\/, ""\)\}`\)/, "没记下哪张、为什么（或者原因末尾的句号没去掉，拼起来会「。。」）");
     assert.match(seg, /failedImages\.length === 0\s*\?\s*"预报单创建成功"\s*:\s*`预报单已创建，但有 \$\{failedImages\.length\} 张图片没传上：\$\{failedImages\.join\("；"\)\}/, "提示里没说哪几张没传上");
   });
 

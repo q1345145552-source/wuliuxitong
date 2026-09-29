@@ -1578,7 +1578,8 @@ export default function ClientHomePage() {
                         });
                         await uploadStaffOrderProductImage({ orderId: result.prealertId, fileName: file.name, mime: file.type || "image/jpeg", contentBase64: base64 });
                       } catch (e) {
-                        failedImages.push(`「${file.name}」${e instanceof Error ? e.message : "上传失败"}`);
+                        // 原因末尾自带的句号去掉，下面拼成一整句时才不会出现「。。」（2026-09-29 页面实测看到）
+                        failedImages.push(`「${file.name}」${(e instanceof Error ? e.message : "上传失败").replace(/[。.\s]+$/, "")}`);
                       }
                     }
                   }
