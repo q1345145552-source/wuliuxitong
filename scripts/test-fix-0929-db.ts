@@ -197,6 +197,136 @@ async function main(): Promise<void> {
       assert.equal((await pm.shipment.findUnique({ where: { id: "zz_f29_s8" } })).packageCount, 10, "父单件数没还回来");
     });
 
+    await check("F1 删柜子和排派送单同一刻发生（两票、两个父单，柜内记录的先后跟运单 id 反着）：两边排队、不死锁（dsh 复核：只有这种柜子照得出「整柜先锁齐」那一半）", async () => {
+      const { unloadAllItemsOfContainer } = await import("../apps/api/src/modules/shipments/unload-item");
+      const ctr = await pm.container.create({ data: { companyId: CO, containerNo: "ZZF29RACE2", containerType: "40HQ", currentStatus: "LOADING", transportMode: "sea" } });
+      await mkOrder("zz_f29_o7");
+      await mkShip("zz_f29_r_p1", "zz_f29_o7", "ZZF29R-P1", "loaded", { packageCount: 0, volumeM3: 0, weightKg: 0 });
+      await mkShip("zz_f29_r_p2", "zz_f29_o7", "ZZF29R-P2", "loaded", { packageCount: 0, volumeM3: 0, weightKg: 0 });
+      await mkShip("zz_f29_r_c1", "zz_f29_o7", "ZZF29R-P1-1", "loaded", { parentTrackingNo: "ZZF29R-P1" });
+      await mkShip("zz_f29_r_c2", "zz_f29_o7", "ZZF29R-P2-1", "loaded", { parentTrackingNo: "ZZF29R-P2" });
+      // 柜内记录 id：c2 那条排在前面（删柜按记录 id 走，建派送单按运单 id 锁 —— 两个顺序故意反着）
+      await pm.shipmentContainerItem.create({ data: { id: "zz_f29_ri_a", containerId: ctr.id, shipmentId: "zz_f29_r_c2", loadedPieceCount: 10, loadedVolumeM3: 1 } });
+      await pm.shipmentContainerItem.create({ data: { id: "zz_f29_ri_b", containerId: ctr.id, shipmentId: "zz_f29_r_c1", loadedPieceCount: 10, loadedVolumeM3: 1 } });
+      let reached!: () => void; const reachedP = new Promise<void>((r) => { reached = r; });
+      let resume!: () => void; const resumeP = new Promise<void>((r) => { resume = r; });
+      let paused = false;
+      const deleting = pm.$transaction(async (tx: any) => {
+        await tx.$queryRaw`SELECT id FROM containers WHERE id = ${ctr.id} FOR UPDATE`;
+        const wrapped = new Proxy(tx, { get(tt: any, k: any) {
+          if (k !== "shipmentContainerItem") return tt[k];
+          return new Proxy(tt.shipmentContainerItem, { get(d: any, m: any) {
+            if (m !== "delete") return d[m];
+            return async (a: any) => { if (!paused) { paused = true; reached(); await resumeP; } return d.delete(a); };
+          } });
+        } });
+        await unloadAllItemsOfContainer(wrapped, ctr.id, CO, { userId: ADMIN.userId, role: "admin", name: ADMIN.name });
+        await tx.container.delete({ where: { id: ctr.id } });
+      }, { timeout: 30_000, maxWait: 10_000 }).then(() => null, (e: any) => e);
+      await reachedP;
+      const creating = call("POST /admin/lastmile/orders", ADMIN, { shipmentIds: ["zz_f29_r_c1", "zz_f29_r_c2"], driverName: "司机", phoneNumber: "0800000000", deliveryDate: "2026-09-29" })
+        .then((r) => ({ r, err: null as any }), (err: any) => ({ r: null as any, err }));
+      const early = await Promise.race([creating.then(() => "排上了"), new Promise((r) => setTimeout(() => r("在排队"), 1500))]);
+      resume();
+      const delErr = await deleting;
+      const { r: cr, err: crErr } = await creating;
+      assert.equal(delErr, null, `删柜子失败了：${delErr?.message}`);
+      assert.equal(crErr, null, `排派送单那边直接报错（多半是死锁 40P01）：${crErr?.message}`);
+      assert.equal(early, "在排队", "删柜还没做完，派送单就排上了（两边没有排队）");
+      assert.notEqual(cr.status, 200, "派送单接口说排上了，可货已经随柜子卸掉");
+      assert.match(cr.message, /不存在/, `排派送单那边的提示不对：${cr.message}`);
+      assert.equal(await pm.adminLastmileOrder.count({ where: { shipmentId: { in: ["zz_f29_r_c1", "zz_f29_r_c2"] } } }), 0);
+      assert.equal(await pm.container.findUnique({ where: { id: ctr.id } }), null, "柜子没删掉");
+    });
+
+    await check("F1 父运单自己排进了派送单（派送中 / 已签收）：它的子单整票卸、部分卸、删柜都挡住，父运单和派送单一样不动（Codex 第二轮复核）", async () => {
+      const ctr = await pm.container.create({ data: { companyId: CO, containerNo: "ZZF29PW", containerType: "40HQ", currentStatus: "UNLOADING", transportMode: "land" } });
+      await mkOrder("zz_f29_o5");
+      await mkShip("zz_f29_pw", "zz_f29_o5", "ZZF29PW", "outForDelivery", { packageCount: 4, volumeM3: 0.4, weightKg: 40 });
+      await mkShip("zz_f29_pw_c", "zz_f29_o5", "ZZF29PW-1", "inWarehouseTH", { parentTrackingNo: "ZZF29PW", packageCount: 6, volumeM3: 0.6, weightKg: 60 });
+      const it = await pm.shipmentContainerItem.create({ data: { containerId: ctr.id, shipmentId: "zz_f29_pw_c", loadedPieceCount: 6, loadedVolumeM3: 0.6 } });
+      await pm.adminLastmileOrder.create({ data: { id: "zz_f29_lm_pw", companyId: CO, deliveryNo: "ZZF29DPW", shipmentId: "zz_f29_pw", carrierName: "车队", externalTrackingNo: "X", status: "DELIVERING" } });
+      // 部分卸在前：部分卸不走 unloadItemFully，只靠卸柜路由自己那道
+      for (const body of [{ itemId: it.id, pieceCount: 2 }, { itemId: it.id }]) {
+        const r = await call("POST /staff/loading-manifests/remove-shipment", STAFF, body);
+        assert.notEqual(r.status, 200, `父运单在派送中还是卸了（${JSON.stringify(body)}）：${r.message}`);
+        assert.match(r.message, /运单 ZZF29PW-1 的父运单 ZZF29PW/, r.message);
+        assert.match(r.message, /ZZF29DPW/, r.message);
+      }
+      const p1 = await pm.shipment.findUnique({ where: { id: "zz_f29_pw" } });
+      assert.equal(p1.currentStatus, "outForDelivery", "父运单被退回国内仓了");
+      assert.equal(p1.packageCount, 4, "父运单件数被改了");
+      assert.equal((await pm.shipmentContainerItem.findUnique({ where: { id: it.id } })).loadedPieceCount, 6, "柜内记录被改了");
+      // 已签收：提示里要说先撤销签收；删柜子那条路同样挡
+      await pm.adminLastmileOrder.update({ where: { id: "zz_f29_lm_pw" }, data: { status: "SIGNED" } });
+      await pm.shipment.update({ where: { id: "zz_f29_pw" }, data: { currentStatus: "delivered" } });
+      await pm.container.update({ where: { id: ctr.id }, data: { currentStatus: "LOADING" } });
+      const d = await call("DELETE /admin/containers", ADMIN, {}, { id: ctr.id });
+      assert.equal(d.status, 409, `父运单已签收，柜子照样删了：${d.status} ${d.message}`);
+      assert.match(d.message, /签收了/, d.message);
+      assert.match(d.message, /撤销签收/, d.message);
+      assert.ok(await pm.shipment.findUnique({ where: { id: "zz_f29_pw_c" } }), "子单被删了");
+      assert.equal((await pm.shipment.findUnique({ where: { id: "zz_f29_pw" } })).currentStatus, "delivered");
+      // 派送单删掉以后就能正常卸了（不误挡）
+      await pm.adminLastmileOrder.delete({ where: { id: "zz_f29_lm_pw" } });
+      const ok = await call("POST /staff/loading-manifests/remove-shipment", STAFF, { itemId: it.id });
+      assert.equal(ok.status, 200, `派送单删掉以后还是卸不了：${ok.message}`);
+      assert.equal((await pm.shipment.findUnique({ where: { id: "zz_f29_pw" } })).packageCount, 10, "件数没还给父运单");
+    });
+
+    await check("F1 删柜子：先读的件数在锁上之前被人改了 → 按锁后的新数还给父运单（Codex 第二轮复核：原来拿锁前的旧数，少还的货找不回来）", async () => {
+      const { unloadAllItemsOfContainer } = await import("../apps/api/src/modules/shipments/unload-item");
+      const ctr = await pm.container.create({ data: { companyId: CO, containerNo: "ZZF29STALE", containerType: "40HQ", currentStatus: "LOADING", transportMode: "sea" } });
+      await mkOrder("zz_f29_o4b");
+      await mkShip("zz_f29_st_p", "zz_f29_o4b", "ZZF29ST", "loaded", { packageCount: 0, volumeM3: 0, weightKg: 0 });
+      await mkShip("zz_f29_st_c", "zz_f29_o4b", "ZZF29ST-1", "loaded", { parentTrackingNo: "ZZF29ST", packageCount: 10, volumeM3: 1, weightKg: 100 });
+      await pm.shipmentContainerItem.create({ data: { containerId: ctr.id, shipmentId: "zz_f29_st_c", loadedPieceCount: 10, loadedVolumeM3: 1 } });
+      let reached!: () => void; const reachedP = new Promise<void>((r) => { reached = r; });
+      let resume!: () => void; const resumeP = new Promise<void>((r) => { resume = r; });
+      let paused = false;
+      const deleting = pm.$transaction(async (tx: any) => {
+        await tx.$queryRaw`SELECT id FROM containers WHERE id = ${ctr.id} FOR UPDATE`;
+        // 读完柜里的记录、还没锁运单的那一刻停住
+        const wrapped = new Proxy(tx, { get(tt: any, k: any) {
+          if (k !== "shipment") return tt[k];
+          return new Proxy(tt.shipment, { get(d: any, m: any) {
+            if (m !== "findMany") return d[m];
+            return async (a: any) => { if (!paused) { paused = true; reached(); await resumeP; } return d.findMany(a); };
+          } });
+        } });
+        await unloadAllItemsOfContainer(wrapped, ctr.id, CO, { userId: ADMIN.userId, role: "admin", name: ADMIN.name });
+        await tx.container.delete({ where: { id: ctr.id } });
+      }, { timeout: 30_000, maxWait: 10_000 }).then(() => null, (e: any) => e);
+      await reachedP;
+      await pm.shipment.update({ where: { id: "zz_f29_st_c" }, data: { packageCount: 20, volumeM3: 2, weightKg: 200 } });
+      resume();
+      const delErr = await deleting;
+      assert.equal(delErr, null, `删柜子失败了：${delErr?.message}`);
+      const parent = await pm.shipment.findUnique({ where: { id: "zz_f29_st_p" } });
+      assert.equal(parent.packageCount, 20, `父运单只拿回 ${parent.packageCount} 件（子单锁前 10、锁后 20）`);
+      assert.equal(Number(parent.volumeM3), 2, `方数只还了 ${parent.volumeM3}`);
+      assert.equal(Number(parent.weightKg), 200, `重量只还了 ${parent.weightKg}`);
+    });
+
+    await check("F1 删柜子碰上「多层分柜」的老数据：给中文提示（409），不是英文 500；柜子、货一样不动（dsh 复核）", async () => {
+      const ctr = await pm.container.create({ data: { companyId: CO, containerNo: "ZZF29ML", containerType: "40HQ", currentStatus: "LOADING", transportMode: "sea" } });
+      await mkOrder("zz_f29_o6");
+      await mkShip("zz_f29_m_a", "zz_f29_o6", "ZZF29M-A", "loaded", { packageCount: 0, volumeM3: 0, weightKg: 0 });
+      await mkShip("zz_f29_m_b", "zz_f29_o6", "ZZF29M-B", "loaded", { parentTrackingNo: "ZZF29M-A" });
+      await mkShip("zz_f29_m_c", "zz_f29_o6", "ZZF29M-C", "loaded", { parentTrackingNo: "ZZF29M-B" });
+      await pm.shipmentContainerItem.create({ data: { containerId: ctr.id, shipmentId: "zz_f29_m_b", loadedPieceCount: 10, loadedVolumeM3: 1 } });
+      await pm.shipmentContainerItem.create({ data: { containerId: ctr.id, shipmentId: "zz_f29_m_c", loadedPieceCount: 10, loadedVolumeM3: 1 } });
+      const r = await call("DELETE /admin/containers", ADMIN, {}, { id: ctr.id });
+      assert.equal(r.status, 409, `状态码 ${r.status}：${r.message}`);
+      assert.match(r.message, /多层分柜/, r.message);
+      assert.match(r.message, /ZZF29M-B/, `提示里没写是哪票：${r.message}`);
+      assert.ok(await pm.container.findUnique({ where: { id: ctr.id } }), "柜子没了");
+      assert.equal(await pm.shipmentContainerItem.count({ where: { containerId: ctr.id } }), 2, "柜内记录少了");
+      await pm.shipmentContainerItem.deleteMany({ where: { containerId: ctr.id } });
+      await pm.container.delete({ where: { id: ctr.id } });
+      await pm.shipment.deleteMany({ where: { id: { in: ["zz_f29_m_c", "zz_f29_m_b", "zz_f29_m_a"] } } });
+    });
+
     // ---------- F2 卸柜件数填超 ----------
     const ctrL = await pm.container.create({ data: { companyId: CO, containerNo: "ZZF29LD1", containerType: "40HQ", currentStatus: "LOADING", transportMode: "sea" } });
     await mkOrder("zz_f29_o2");

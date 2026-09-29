@@ -116,9 +116,13 @@ export async function lockShipmentsChildrenFirst(
       rows.some((o: any) => o.parentTrackingNo === r.trackingNo),
   );
   if (middle.length > 0) {
-    throw new Error(
+    // 业务错误（2026-09-29 dsh 复核）：原来是普通 Error，线上会变成一句英文「Internal server error」，
+    // 员工不知道是哪几票货。现在提示原样给到页面（409）；事务照样整体回滚，行为不变。
+    throw new BusinessError(
       `运单 ${middle.map((r: any) => r.trackingNo).join("、")} 既是子单又是父单（多层分柜），` +
         `加锁顺序无法确定，请先联系技术处理这几票货`,
+      409,
+      "VALIDATION_ERROR",
     );
   }
 

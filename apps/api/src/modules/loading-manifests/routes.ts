@@ -1,4 +1,4 @@
-import { assertNotInLastmile, unloadItemFully } from "../shipments/unload-item";
+import { assertNotInLastmile, assertParentNotInLastmile, unloadItemFully } from "../shipments/unload-item";
 import { prisma } from "../../db/prisma";
 import { FCL_BLOCKED_MESSAGE } from "../core/fcl-scope";
 import { syncParentStatusFromChildren } from "../shipments/parent-status";
@@ -1071,6 +1071,11 @@ export function registerLoadingManifestRoutes(app: MinimalHttpApp): void {
       /* 已经排了尾端派送（派送中 / 已签收）的货不许卸，整票和部分都挡（2026-09-29 老板选 A，
          原因和做法见 shipments/unload-item.ts 的 assertNotInLastmile）。运单锁上面已经拿了。 */
       await assertNotInLastmile(tx, item.shipment.id, auth.companyId, item.shipment.trackingNo);
+      /* 父运单自己排进了派送单也不许卸（部分卸、整票卸都会把件数还给它、把它退回国内仓，跟派送单对不上；
+         Codex 第二轮复核）。父运单的锁上面已经拿了。 */
+      if (item.shipment.parentTrackingNo) {
+        await assertParentNotInLastmile(tx, item.shipment.parentTrackingNo, auth.companyId, item.shipment.trackingNo);
+      }
 
       const totalLoaded = item.loadedPieceCount;
       /* 卸柜件数比已装件数还多：挡住（2026-09-29 老板选 A）。原来一律按整票卸 ——

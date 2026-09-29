@@ -59,6 +59,33 @@ export async function assertNotInLastmile(tx: any, shipmentId: string, companyId
   );
 }
 
+/**
+ * 卸子单会把件数还给**父运单**、并把父运单状态退回「国内仓」。父运单自己要是已经排进了尾端派送单
+ * （它留在手里的那部分货单独派了 / 签收了），退回去就跟派送单对不上：派送单写着派送中或已签收，运单却说在国内仓。
+ * Codex 第二轮复核（2026-09-29）用真库复现；测试库里真有这种父运单（自己派送中、子单在柜里）。
+ * 所以老板选 A 的「排了派送的货不许卸」同样管到父运单。调用方必须已经锁住父运单（两条路都在最前面锁了）。
+ */
+export async function assertParentNotInLastmile(tx: any, parentTrackingNo: string, companyId: string, childTrackingNo?: string | null): Promise<void> {
+  const parent = await tx.shipment.findFirst({ where: { trackingNo: parentTrackingNo, companyId }, select: { id: true } });
+  if (!parent) return;
+  const rows: Array<{ deliveryNo: string; status: string }> = await tx.adminLastmileOrder.findMany({
+    where: { shipmentId: parent.id, companyId },
+    select: { deliveryNo: true, status: true },
+    orderBy: { updatedAt: "desc" },
+  });
+  if (rows.length === 0) return;
+  const nos = [...new Set(rows.map((r) => r.deliveryNo))].join("、");
+  const signed = rows.some((r) => r.status === "SIGNED");
+  const whose = childTrackingNo ? `运单 ${childTrackingNo} 的` : "这票货的";
+  throw new BusinessError(
+    `${whose}父运单 ${parentTrackingNo} 已经在尾端派送单 ${nos} 上${signed ? "签收了" : "（派送中）"}，不能卸柜` +
+      `（卸下来会把父运单退回「国内仓」，跟派送单对不上）。确实要卸的话，请先在「尾端派送」把父运单从派送单里删掉` +
+      `${signed ? "（已签收的要先让超级管理员撤销签收）" : ""}，再回来卸柜。`,
+    409,
+    "VALIDATION_ERROR",
+  );
+}
+
 /** 卸一条柜内记录需要的信息（调用方先查好，因为两条路查的方式不一样） */
 export interface UnloadableItem {
   id: string;
@@ -98,6 +125,11 @@ export async function unloadItemFully(
   // 先锁这票货再查（见 assertNotInLastmile 的说明）；调用方已经锁过的话，同一事务再锁一次不花钱。
   await tx.$queryRaw`SELECT id FROM shipments WHERE id = ${item.shipment.id} AND company_id = ${companyId} FOR UPDATE`;
   await assertNotInLastmile(tx, item.shipment.id, companyId, item.shipment.trackingNo);
+  if (item.shipment.parentTrackingNo) {
+    // 父运单自己在派送单上也不许卸（见 assertParentNotInLastmile）。锁序【子单 → 父运单】不变，同一事务重复锁不花钱
+    await tx.$queryRaw`SELECT id FROM shipments WHERE tracking_no = ${item.shipment.parentTrackingNo} AND company_id = ${companyId} FOR UPDATE`;
+    await assertParentNotInLastmile(tx, item.shipment.parentTrackingNo, companyId, item.shipment.trackingNo);
+  }
   await tx.shipmentContainerItem.delete({ where: { id: item.id } });
 
   /**
@@ -261,18 +293,21 @@ export async function unloadAllItemsOfContainer(
   companyId: string,
   operator: UnloadOperator,
 ): Promise<number> {
-  const items = await tx.shipmentContainerItem.findMany({
-    where: { containerId },
-    select: {
-      id: true,
-      shipment: {
-        select: { id: true, trackingNo: true, parentTrackingNo: true, packageCount: true, volumeM3: true, weightKg: true },
+  const readItems = async (): Promise<any[]> => {
+    const rows = await tx.shipmentContainerItem.findMany({
+      where: { containerId },
+      select: {
+        id: true,
+        shipment: {
+          select: { id: true, trackingNo: true, parentTrackingNo: true, packageCount: true, volumeM3: true, weightKg: true },
+        },
       },
-    },
-  });
-  if (items.length === 0) return 0;
-  const ordered = [...items].sort((a: any, b: any) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
-  if (ordered.some((it: any) => !it.shipment)) {
+    });
+    return [...rows].sort((a: any, b: any) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  };
+  const before = await readItems();
+  if (before.length === 0) return 0;
+  if (before.some((it: any) => !it.shipment)) {
     throw new BusinessError("柜内记录指向的运单不存在，请联系技术处理", 400, "VALIDATION_ERROR");
   }
   /**
@@ -280,15 +315,22 @@ export async function unloadAllItemsOfContainer(
    * 不锁的话，「查这票货有没有排派送单」和「删掉它」中间，别人能把它排进派送单，新派送单会被连带删掉。
    * 顺序跟建派送单完全一样（lockShipmentsChildrenFirst：先子单、后父单，各自按 id 排），两边只会排队、不会互相卡死。
    */
-  const parentNos = [...new Set(ordered.flatMap((it: any) => (it.shipment.parentTrackingNo ? [it.shipment.parentTrackingNo] : [])))];
+  const parentNos = [...new Set(before.flatMap((it: any) => (it.shipment.parentTrackingNo ? [it.shipment.parentTrackingNo] : [])))];
   const parents = parentNos.length > 0
     ? await tx.shipment.findMany({ where: { trackingNo: { in: parentNos }, companyId }, select: { id: true } })
     : [];
   await lockShipmentsChildrenFirst(
     tx,
-    [...new Set([...ordered.map((it: any) => it.shipment.id), ...parents.map((r: any) => r.id)])],
+    [...new Set([...before.map((it: any) => it.shipment.id), ...parents.map((r: any) => r.id)])],
     companyId,
   );
+  /* 锁完**重读一遍**再干活（CLAUDE.md 第 28 条；Codex 第二轮复核用真库复现）：上面那份是锁之前读的，
+     读完到锁上之间别人能改子单的件数 / 方数 / 重量，拿旧数还给父运单就少还了，子单一删再也找不回来。
+     柜子已经锁住，柜里的记录不会多也不会少，变的只可能是运单上的数。 */
+  const ordered = await readItems();
+  if (ordered.some((it: any) => !it.shipment)) {
+    throw new BusinessError("柜内记录指向的运单不存在，请联系技术处理", 400, "VALIDATION_ERROR");
+  }
   for (const it of ordered) {
     await unloadItemFully(tx, it as UnloadableItem, companyId, operator);
   }
