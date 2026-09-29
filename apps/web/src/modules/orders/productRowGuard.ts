@@ -88,7 +88,9 @@ export function unnamedFilledRowIssue(rows: Array<Record<string, unknown> & { it
   const filledKeys = ["packageCount", "lengthCm", "widthCm", "heightCm", "weightKg", "productQuantity", "domesticTrackingNo"];
   for (let i = 0; i < rows.length; i += 1) {
     if (String(rows[i].itemName ?? "").trim()) continue;
-    if (filledKeys.some((k) => String(rows[i][k] ?? "").trim() !== "")) {
+    // 货型下拉默认是普货，不算「填了」；改成商检 / 敏感货也算填了 —— 丢掉这行，整票就按普货记了（dsh 第四轮）
+    const cargoChanged = String(rows[i].cargoType ?? "normal").trim() !== "" && String(rows[i].cargoType ?? "normal").trim() !== "normal";
+    if (cargoChanged || filledKeys.some((k) => String(rows[i][k] ?? "").trim() !== "")) {
       return `产品行${i + 1}填了数据但没填品名：请补上品名，或者把这一行删掉`;
     }
   }

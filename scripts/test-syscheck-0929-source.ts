@@ -223,6 +223,12 @@ async function main(): Promise<void> {
       assert.ok(unnamedFilledRowIssue([{ ...blank, [k]: "1" }]), `只填了 ${k} 没填品名，没拦住`);
     }
     assert.equal(unnamedFilledRowIssue([{ ...blank, itemName: "  ", weightKg: "3" }]), "产品行1填了数据但没填品名：请补上品名，或者把这一行删掉", "品名只有空格也算没填");
+    // 货型下拉：默认普货不算填了；改成商检 / 敏感货算填了（dsh 第四轮：原来这行照样被悄悄丢、整票记成普货）
+    for (const cargoType of ["inspection", "sensitive"]) {
+      assert.ok(unnamedFilledRowIssue([{ ...blank, cargoType }]), `没填品名、只把货型改成 ${cargoType} 的行没拦住`);
+    }
+    assert.equal(unnamedFilledRowIssue([{ ...blank, cargoType: "normal" }]), null, "货型是默认的普货，不该拦");
+    assert.equal(unnamedFilledRowIssue([{ itemName: "", packageCount: "" }]), null, "没有货型字段的空白行不该拦");
     // 三个入口都要在「按品名过滤」之前先过这一关
     for (const [f, arr, anchor] of [
       ["apps/web/src/app/client/page.tsx", "formProducts", "const hasProducts = formProducts.length > 0"],

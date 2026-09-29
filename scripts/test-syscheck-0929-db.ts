@@ -184,6 +184,18 @@ async function main(): Promise<void> {
       const adminNull = await call("POST /admin/orders/update", ADMIN, { orderId: "zz_sc29_no_such_order", products: [null] });
       assert.equal(adminNull.status, 400, `超管改单 products:[null]（${adminNull.status}）：${adminNull.message}`);
       assert.match(adminNull.message, /产品行1的数据格式不对/, adminNull.message);
+      // products 整个不是数组：原来读货型那一步 500（dsh 第四轮）
+      for (const [path, auth, extra, bad] of [
+        ["POST /admin/orders/update", ADMIN, { orderId: "zz_sc29_no_such_order" }, "abc"],
+        ["POST /admin/orders/update", ADMIN, { orderId: "zz_sc29_no_such_order" }, { a: 1 }],
+        ["POST /admin/orders/update", ADMIN, { orderId: "zz_sc29_no_such_order" }, 12345],
+        ["POST /client/prealerts", C1, { ...base }, { a: 1 }],
+        ["POST /staff/orders", STAFF, { ...base, clientId: C1.userId, trackingNo: "ZZSC29NOTARR", arrivedAt: "2026-09-20" }, { a: 1 }],
+      ] as const) {
+        const r = await call(path, auth as Auth, { ...extra, products: bad });
+        assert.equal(r.status, 400, `${path} products=${JSON.stringify(bad)}（${r.status}）：${r.message}`);
+        assert.match(r.message, /数据格式不对/, r.message);
+      }
     });
 
     // ---------- S3 ----------

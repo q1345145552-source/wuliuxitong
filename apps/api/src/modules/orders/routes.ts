@@ -2101,6 +2101,8 @@ export function readCargoTypes(
 ): { order: CargoType; products: CargoType[] } | { error: string } {
   /* 产品行本身不是对象（null、字符串）：下面读 .cargoType 会当场抛错成 500。超管改单这条路先走这里、
      后走 validateProductRows，那道中文提示轮不到（dsh 第三轮 2026-09-30）—— 在这里就用同一句话挡住 */
+  // products 整个不是数组（字符串 / 对象 / 数字）：下面 findIndex 就抛错成 500（dsh 第四轮，改前也是 500）
+  if (products !== undefined && products !== null && !Array.isArray(products)) return { error: "产品行的数据格式不对" };
   const badRow = (products ?? []).findIndex((product) => !product || typeof product !== "object");
   if (badRow >= 0) return { error: `产品行${badRow + 1}的数据格式不对` };
   try {
