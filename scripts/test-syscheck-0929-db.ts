@@ -154,9 +154,12 @@ async function main(): Promise<void> {
         await call("POST /staff/orders", STAFF, { clientId: C1.userId, trackingNo: "ZZSC29NEG1", warehouseId: "wh_yiwu_01", itemName: "鞋", packageCount: 2, transportMode: "sea", arrivedAt: "2026-09-20", weightKg: -6 }),
         await call("POST /staff/orders", STAFF, { clientId: C1.userId, trackingNo: "ZZSC29NEG2", warehouseId: "wh_yiwu_01", itemName: "鞋", packageCount: 2, transportMode: "sea", arrivedAt: "2026-09-20", volumeM3: -0.6 }),
       ];
+      // 卡在上限边上：舍到存库精度就是 1 亿 / 1000 万，原来照样放行、写库溢出 500（Codex 复查）
+      bad.push(await call("POST /client/prealerts", C1, { ...base, weightKg: 99999999.999 }));
+      bad.push(await call("POST /client/prealerts", C1, { ...base, volumeM3: 9999999.9999 }));
       bad.forEach((r, i) => {
         assert.equal(r.status, 400, `第 ${i + 1} 个负数请求没挡住（${r.status}）：${r.message}`);
-        assert.match(r.message, /不小于 0/, `第 ${i + 1} 个提示不对：${r.message}`);
+        assert.match(r.message, /不小于 0|太大了/, `第 ${i + 1} 个提示不对：${r.message}`);
       });
       assert.equal(await pm.order.count({ where: { companyId: CO } }), before, "负数的单被建出来了");
       const ok = await call("POST /client/prealerts", C1, { ...base, weightKg: 12.34, volumeM3: 0.5 });
@@ -209,22 +212,25 @@ async function main(): Promise<void> {
     });
 
     // ---------- S5 ----------
-    await check("S5 客户不分产品行下预报单：产品明细里的国内快递单号、长宽高是客户填的；没填单号才是默认「货拉拉」", async () => {
-      const r = await call("POST /client/prealerts", C1, { warehouseId: "wh_yiwu_01", itemName: "鞋", packageCount: 3, transportMode: "sea", domesticTrackingNo: "YT123456", lengthCm: "20", widthCm: 30, heightCm: 40 });
+    await check("S5 客户不分产品行下预报单：产品明细里的国内快递单号是客户填的（没填才是「货拉拉」）；手填的整票体积不被尺寸盖掉、兜底行不带尺寸", async () => {
+      // 页面在不分产品行时也会把整票长宽高带上来（算体积用）；客户手填了实际体积 0.5 方
+      const r = await call("POST /client/prealerts", C1, { warehouseId: "wh_yiwu_01", itemName: "鞋", packageCount: 3, transportMode: "sea", domesticTrackingNo: "YT123456", lengthCm: "20", widthCm: 30, heightCm: 40, volumeM3: 0.5 });
       assert.equal(r.status, 200, r.message);
-      const order = await pm.order.findFirst({ where: { companyId: CO, domesticTrackingNo: "YT123456" }, include: { products: true } });
+      const order = await pm.order.findFirst({ where: { companyId: CO, domesticTrackingNo: "YT123456" }, include: { products: true, shipments: true } });
       assert.ok(order, "订单没建出来");
       assert.equal(order.products.length, 1);
       assert.equal(order.products[0].domesticTrackingNo, "YT123456", `产品明细里的单号是 ${order.products[0].domesticTrackingNo}`);
-      assert.deepEqual([order.products[0].lengthCm, order.products[0].widthCm, order.products[0].heightCm], [20, 30, 40]);
+      // 兜底行不带尺寸（带了的话派送单导出等地方会按尺寸重算方数，CLAUDE.md 第 33 条）；整票体积就是客户填的 0.5
+      assert.deepEqual([order.products[0].lengthCm, order.products[0].widthCm, order.products[0].heightCm], [null, null, null]);
+      assert.equal(Number(order.volumeM3), 0.5, `订单体积被改成了 ${order.volumeM3}（客户填的是 0.5）`);
+      assert.equal(Number(order.shipments[0].volumeM3), 0.5, `运单体积被改成了 ${order.shipments[0].volumeM3}`);
       const r2 = await call("POST /client/prealerts", C1, { warehouseId: "wh_yiwu_01", itemName: "包", packageCount: 1, transportMode: "sea" });
       assert.equal(r2.status, 200, r2.message);
       const o2 = await pm.order.findFirst({ where: { companyId: CO, itemName: "包" }, include: { products: true } });
       assert.equal(o2.products[0].domesticTrackingNo, "货拉拉", "没填单号时应该是默认的「货拉拉」");
-      assert.equal(o2.products[0].lengthCm, null);
     });
 
-    await check("S5b 国内快递单号写成数字照样收下（原来 .trim() 抛错 500）；写成别的类型给中文提示；员工不分产品行时长宽高也进产品明细", async () => {
+    await check("S5b 国内快递单号写成数字照样收下（原来 .trim() 抛错 500）、别的类型给中文提示；产品行尺寸 / 单箱重量写成数字字符串照样收下（原来写库 500）", async () => {
       const num = await call("POST /client/prealerts", C1, { warehouseId: "wh_yiwu_01", itemName: "数字单号", packageCount: 1, transportMode: "sea", domesticTrackingNo: 12345 });
       assert.equal(num.status, 200, `数字单号：${num.status} ${num.message}`);
       const o = await pm.order.findFirst({ where: { companyId: CO, itemName: "数字单号" }, include: { products: true } });
@@ -232,11 +238,17 @@ async function main(): Promise<void> {
       const bad = await call("POST /client/prealerts", C1, { warehouseId: "wh_yiwu_01", itemName: "对象单号", packageCount: 1, transportMode: "sea", domesticTrackingNo: { a: 1 } });
       assert.equal(bad.status, 400, `对象单号：${bad.status} ${bad.message}`);
       assert.match(bad.message, /国内快递单号/);
-      const staffNum = await call("POST /staff/orders", STAFF, { clientId: C1.userId, trackingNo: "ZZSC29DN1", warehouseId: "wh_yiwu_01", itemName: "员工数字单号", packageCount: 2, transportMode: "sea", arrivedAt: "2026-09-20", domesticTrackingNo: 67890, lengthCm: 50, widthCm: 40, heightCm: 30 });
+      const staffNum = await call("POST /staff/orders", STAFF, { clientId: C1.userId, trackingNo: "ZZSC29DN1", warehouseId: "wh_yiwu_01", itemName: "员工数字单号", packageCount: 2, transportMode: "sea", arrivedAt: "2026-09-20", domesticTrackingNo: 67890, volumeM3: 0.8 });
       assert.equal(staffNum.status, 200, `员工数字单号：${staffNum.status} ${staffNum.message}`);
       const so = await pm.order.findFirst({ where: { companyId: CO, itemName: "员工数字单号" }, include: { products: true } });
       assert.equal(so.products[0].domesticTrackingNo, "67890");
-      assert.deepEqual([so.products[0].lengthCm, so.products[0].widthCm, so.products[0].heightCm], [50, 40, 30], "员工不分产品行时长宽高没进产品明细");
+      assert.equal(Number(so.volumeM3), 0.8);
+      for (const [who, path, auth, extra] of [["客户", "POST /client/prealerts", C1, {}], ["员工", "POST /staff/orders", STAFF, { clientId: C1.userId, trackingNo: "ZZSC29STR1", arrivedAt: "2026-09-20" }]] as const) {
+        const r = await call(path, auth as Auth, { warehouseId: "wh_yiwu_01", itemName: `${who}字符串尺寸`, packageCount: 1, transportMode: "sea", ...extra, products: [{ itemName: `${who}字符串尺寸`, packageCount: 1, lengthCm: "12", widthCm: "20", heightCm: "30", weightKg: "1.25" }] });
+        assert.equal(r.status, 200, `${who}产品行尺寸写成数字字符串：${r.status} ${r.message}`);
+        const row = await pm.orderProduct.findFirst({ where: { itemName: `${who}字符串尺寸` } });
+        assert.deepEqual([row.lengthCm, row.widthCm, row.heightCm, Number(row.weightKg)], [12, 20, 30, 1.25]);
+      }
     });
 
     // ---------- S6 ----------

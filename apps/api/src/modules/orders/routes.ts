@@ -226,14 +226,17 @@ export function guardCombinedTotals(totals: {
 export function orderTotalsIssue(weightKg: number | null, volumeM3: number | null): string | null {
   if (weightKg !== null && (!Number.isFinite(weightKg) || weightKg < 0)) return "重量必须是不小于 0 的数字";
   if (volumeM3 !== null && (!Number.isFinite(volumeM3) || volumeM3 < 0)) return "体积必须是不小于 0 的数字";
-  if (weightKg !== null && weightKg >= 10 ** 8) return "重量太大了，请核对（系统最多存 8 位整数）";
-  if (volumeM3 !== null && volumeM3 >= 10 ** 7) return "体积太大了，请核对（系统最多存 7 位整数）";
+  // 按存库时的精度舍入后再比（Codex 复查 2026-09-29）：99,999,999.999 kg 舍到两位是 1 亿，照样溢出 500
+  if (weightKg !== null && Math.round(weightKg * 100) / 100 >= 10 ** 8) return "重量太大了，请核对（系统最多存 8 位整数）";
+  if (volumeM3 !== null && Math.round(volumeM3 * 1000) / 1000 >= 10 ** 7) return "体积太大了，请核对（系统最多存 7 位整数）";
   return null;
 }
 
 /**
- * 建单时的国内快递单号（整票的、每个产品行的）只认文字；数字（直接调接口常这么传）转成文字收下（2026-09-29）。
- * 别的类型给一句中文提示。会改 body 里的值 —— 后面都按文字用。
+ * 建单时先把几样常被写错类型的字段理顺（2026-09-29）：
+ *   · 国内快递单号（整票的、每个产品行的）只认文字；数字（直接调接口常这么传）转成文字收下，别的类型给中文提示；
+ *   · 产品行的长宽高、单箱重量写成数字字符串的转成数字（见下面循环里的说明）。
+ * 会改 body 里的值 —— 后面都按理顺后的用。
  */
 function normalizeDomesticTrackingNos(body: { domesticTrackingNo?: unknown; products?: Array<{ domesticTrackingNo?: unknown }> }): string | null {
   const fix = (v: unknown): { ok: boolean; value?: string } => {
@@ -246,20 +249,24 @@ function normalizeDomesticTrackingNos(body: { domesticTrackingNo?: unknown; prod
   if (!top.ok) return "国内快递单号要填文字或数字";
   if (top.value !== undefined) body.domesticTrackingNo = top.value;
   for (let i = 0; i < (body.products?.length ?? 0); i += 1) {
-    const row = body.products![i];
+    const row = body.products![i] as Record<string, unknown>;
     if (!row || typeof row !== "object") continue;
     const r = fix(row.domesticTrackingNo);
     if (!r.ok) return `产品行${i + 1}的国内快递单号要填文字或数字`;
     if (r.value !== undefined) row.domesticTrackingNo = r.value;
+    /* 长宽高、单箱重量写成「"12"」这种数字字符串（直接调接口 / 老客户端）：转成数字（Codex 复查 2026-09-29）。
+       原来校验放行了字符串，写库那一步 Prisma 要的是数字 → 整单 500。空字符串当没填。
+       转不成数字的原样留着，交给后面的校验给中文提示。 */
+    for (const key of ["lengthCm", "widthCm", "heightCm", "weightKg"]) {
+      const v = row[key];
+      if (typeof v !== "string") continue;
+      const trimmed = v.trim();
+      if (trimmed === "") { delete row[key]; continue; }
+      const n = Number(trimmed);
+      if (Number.isFinite(n)) row[key] = n;
+    }
   }
   return null;
-}
-
-/** 页面上填的尺寸：是正数、能存下就用，否则当没填（不拿它挡单 —— 尺寸本来就是选填的） */
-function positiveDimOrNull(raw: unknown): number | null {
-  if (raw === undefined || raw === null || raw === "") return null;
-  const n = typeof raw === "number" ? raw : typeof raw === "string" ? Number(raw.trim()) : NaN;
-  return Number.isFinite(n) && n > 0 && n < 10 ** 8 ? n : null;
 }
 
 export function registerOrderRoutes(app: MinimalHttpApp): void {
@@ -282,10 +289,6 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
       receiverAddressTh?: string;
       trackingNo?: string;
       remark?: string;
-      /** 没分产品行时页面上填的整票长宽高（cm）。原来后端不收，产品明细里尺寸是空的（2026-09-29） */
-      lengthCm?: unknown;
-      widthCm?: unknown;
-      heightCm?: unknown;
       /** 整票货型（2026-09-11 老板拍板：客户自己报）。只有一种货、没分产品行时用它 */
       cargoType?: string;
       products?: Array<{
@@ -372,10 +375,12 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
       : [{
           itemName: body.itemName!.trim(),
           packageCount: Number(body.packageCount ?? 0),
-          // 客户在页面上填了整票长宽高就存进这一行（2026-09-29 Codex 全系统检查：原来写死空，客户页面按产品行显示，尺寸一栏是空的）
-          lengthCm: positiveDimOrNull(body.lengthCm),
-          widthCm: positiveDimOrNull(body.widthCm),
-          heightCm: positiveDimOrNull(body.heightCm),
+          /* ⚠️ 兜底行**不带**长宽高（2026-09-29 试过带上又撤回，Codex 复查指出）：派送单导出、方数展示那些地方
+             只要产品行有长宽高就按尺寸重算方数 —— 带上以后客户手填的实际体积会被尺寸算出来的数盖掉，
+             分柜后的子单还会按整票箱数算。跟 CLAUDE.md 第 33 条是同一个坑：补显示字段不许顺带改方数。 */
+          lengthCm: null,
+          widthCm: null,
+          heightCm: null,
           productQuantity: null,
           // ⚠️ domesticTrackingNo 必须和**数据库默认值**一模一样（'货拉拉'）——
           // 原来这里根本没写，createMany 传 undefined 时数据库会填默认值；
@@ -394,10 +399,13 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
     // 等于把校验的结果又抹掉一遍（2026-08-29 去掉）
     const totalPkg = products.reduce((s, p) => s + p.packageCount, 0);
     const totalWeight = products.reduce((s, p) => s + (p.weightKg ?? 0) * p.packageCount, 0);
-    const totalVol = products.reduce((s, p) => {
+    /* ⚠️ 只有客户**真的分了产品行**才按产品行的尺寸算整票体积（Codex 复查 2026-09-29，CLAUDE.md 第 33 条同一个坑）：
+       不分产品行时，下面那条兜底行 2026-09-29 起带上了客户填的长宽高（只为了明细里有尺寸可看），
+       要是也拿它重算，客户手填的实际体积（比如量出来 0.5 方）会被尺寸算出来的 0.072 方盖掉。 */
+    const totalVol = body.products?.length ? products.reduce((s, p) => {
       if (p.lengthCm && p.widthCm && p.heightCm) return s + (p.lengthCm * p.widthCm * p.heightCm * p.packageCount) / 1_000_000;
       return s;
-    }, 0);
+    }, 0) : 0;
     const primaryName = products[0].itemName;
 
     if (!body.warehouseId?.trim() || !primaryName || !body.transportMode) {
@@ -854,10 +862,6 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
       receiverAddressTh?: string;
       warehouseId?: string;
       remark?: string;
-      /** 不分产品行时表单上填的整票长宽高（cm），存进兜底产品行（2026-09-29） */
-      lengthCm?: unknown;
-      widthCm?: unknown;
-      heightCm?: unknown;
       products?: Array<{
         itemName: string;
         packageCount: number;
@@ -926,10 +930,10 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
       : body.itemName ? [{
           itemName: body.itemName.trim(),
           packageCount: Number(body.packageCount ?? 0),
-          // 员工在表单上填的整票长宽高也存进这一行（dsh 复核 2026-09-29：客户那条路这次修了，员工这条一样写死空）
-          lengthCm: positiveDimOrNull(body.lengthCm),
-          widthCm: positiveDimOrNull(body.widthCm),
-          heightCm: positiveDimOrNull(body.heightCm),
+          // 不带长宽高，原因同客户那条兜底行（会让下游按尺寸重算方数）
+          lengthCm: null,
+          widthCm: null,
+          heightCm: null,
           productQuantity: null,
           cargoType: staffCargo.order,
           domesticTrackingNo: body.domesticTrackingNo?.trim() || "货拉拉",
@@ -940,10 +944,11 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
     const prName = staffProducts[0]?.itemName ?? body.itemName ?? "";
     const prPkg = staffProducts.reduce((s, p) => s + p.packageCount, 0) || Number(body.packageCount ?? 0);
     const prWeight = staffProducts.reduce((s, p) => s + (p.weightKg ?? 0) * p.packageCount, 0);
-    const prVol = staffProducts.reduce((s, p) => {
+    // 同客户那条：只有真的分了产品行才按尺寸算体积；兜底行带的长宽高只给明细看，不许盖掉员工填的体积（Codex 复查 2026-09-29）
+    const prVol = body.products?.length ? staffProducts.reduce((s, p) => {
       if (p.lengthCm && p.widthCm && p.heightCm) return s + (p.lengthCm * p.widthCm * p.heightCm * p.packageCount) / 1_000_000;
       return s;
-    }, 0);
+    }, 0) : 0;
 
     /**
      * ⚠️ 2026-08-29：原来这里只回一句英文 "missing required fields"，

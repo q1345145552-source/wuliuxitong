@@ -84,6 +84,7 @@ import {
   type StaffBatchOrder,
 } from "../../modules/staff/batchOrderImport";
 import { beijingDate, beijingToday } from "../../modules/shared/beijing-date";
+import { nextAutoTotals } from "../../modules/orders/auto-totals";
 import {
   shipmentStatusZh,
   warehouseLabelFromId,
@@ -724,12 +725,12 @@ export default function StaffHomePage() {
     const auto = autoTotalsRef.current;
     const volStr = totalVol > 0 ? String(totalVol.toFixed(6)) : null;
     const wtStr = totalWt > 0 ? String(totalWt.toFixed(2)) : null;
-    setForm((v) => ({
-      ...v,
-      volumeM3: volStr ?? (auto.volumeM3 !== null && v.volumeM3 === auto.volumeM3 ? "" : v.volumeM3),
-      weightKg: wtStr ?? (auto.weightKg !== null && v.weightKg === auto.weightKg ? "" : v.weightKg),
-    }));
-    autoTotalsRef.current = { volumeM3: volStr, weightKg: wtStr };
+    setForm((v) => {
+      // 怎么填、为什么这样填，见 modules/orders/auto-totals.ts（员工页和客户页共用一份）
+      const next = nextAutoTotals({ volumeM3: v.volumeM3, weightKg: v.weightKg ?? "" }, auto, volStr, wtStr);
+      autoTotalsRef.current = next.memory;
+      return { ...v, volumeM3: next.volumeM3, weightKg: next.weightKg };
+    });
   }, [staffFormProducts]);
 
   const isStaffSectionId = (value: string): value is StaffSectionId =>
@@ -815,12 +816,6 @@ export default function StaffHomePage() {
         cargoType: form.cargoType,
         transportMode: form.transportMode,
         remark: form.remark?.trim() || undefined,
-        // 不分产品行时，表单上的整票长宽高也带过去，存进产品明细（原来算完体积就丢了，dsh 复核 2026-09-29）
-        ...(hasProducts ? {} : {
-          lengthCm: Number(form.lengthCm) > 0 ? Number(form.lengthCm) : undefined,
-          widthCm: Number(form.widthCm) > 0 ? Number(form.widthCm) : undefined,
-          heightCm: Number(form.heightCm) > 0 ? Number(form.heightCm) : undefined,
-        }),
         products: hasProducts ? staffFormProducts.filter(p => p.itemName.trim()).map(p => ({ itemName: p.itemName.trim(), packageCount: packageCountForPayload(p.packageCount), lengthCm: p.lengthCm ? Number(p.lengthCm) : undefined, widthCm: p.widthCm ? Number(p.widthCm) : undefined, heightCm: p.heightCm ? Number(p.heightCm) : undefined, productQuantity: p.productQuantity ? Number(p.productQuantity) : undefined, weightKg: p.weightKg ? Number(p.weightKg) : undefined, cargoType: (p.cargoType || "normal").toLowerCase(), domesticTrackingNo: p.domesticTrackingNo.trim() || "货拉拉" })) : undefined,
       });
       /* 上传产品图片（2026-09-29 Codex 全系统检查）：运单到这里**已经建好了**。
@@ -867,6 +862,7 @@ export default function StaffHomePage() {
         remark: "",
       });
       setStaffFormProducts([]);
+      autoTotalsRef.current = { volumeM3: null, weightKg: null }; // 建完单清空「上次自动填的」记录
       setShowCreateModal(false);
       setClientSearchKeyword("");
       setOrderImageFiles([]);

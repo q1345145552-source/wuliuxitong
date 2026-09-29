@@ -133,17 +133,40 @@ async function main(): Promise<void> {
     assert.match(addr, /删除失败：/);
   });
 
-  await check("P7 产品行清空后，自动填的总重量 / 总体积跟着清空；人手填的不动（员工、客户两页）", () => {
+  await check("P7 自动填的总体积 / 总重量：加行自动填、删光跟着清；手改过的重量不被产品行覆盖（员工、客户两页共用一份）", async () => {
+    const { nextAutoTotals } = await import("../apps/web/src/modules/orders/auto-totals");
+    // 一步步模拟页面上的操作（Codex 复查：上一版只查源码写法，照不到「删光」「手改后再改品名」）
+    let form = { volumeM3: "", weightKg: "" };
+    let mem = { volumeM3: null as string | null, weightKg: null as string | null };
+    const step = (vol: string | null, wt: string | null) => { const n = nextAutoTotals(form, mem, vol, wt); form = { volumeM3: n.volumeM3, weightKg: n.weightKg }; mem = n.memory; };
+    step("0.002000", "6.00");                       // 加一行、填尺寸重量
+    assert.deepEqual(form, { volumeM3: "0.002000", weightKg: "6.00" });
+    step(null, null);                                // 把唯一一行删掉
+    assert.deepEqual(form, { volumeM3: "", weightKg: "" }, "删光产品行后自动填的合计没清");
+    step("0.002000", "6.00");                       // 再加回来
+    form = { ...form, weightKg: "9.5" };             // 按实际称重手改总重量
+    step("0.002000", "6.00");                       // 改一下品名（产品行合计没变）
+    assert.equal(form.weightKg, "9.5", "手改的重量被产品行改回去了");
+    step("0.004000", "12.00");                      // 箱数改了，合计变了
+    assert.equal(form.weightKg, "9.5", "手改的重量被新合计覆盖了");
+    assert.equal(form.volumeM3, "0.004000", "体积框（有产品行时只读）没跟着产品行");
+    step(null, null);                                // 删光
+    assert.equal(form.weightKg, "9.5", "删光产品行时把手填的重量也清了");
+    assert.equal(form.volumeM3, "", "删光后自动填的体积没清");
+    form = { ...form, weightKg: "" };                // 把手填的清掉
+    step(null, "3.00");                              // 再加一行只有重量
+    assert.equal(form.weightKg, "3.00", "框空着时应该用自动算的");
+    // 不分产品行时按整票尺寸算出来的体积（不是产品行自动填的）：加产品行前后都不许被「清空」逻辑误清
+    let f2 = { volumeM3: "0.024000", weightKg: "" }; let m2 = { volumeM3: null as string | null, weightKg: null as string | null };
+    const n2 = nextAutoTotals(f2, m2, null, null);
+    assert.equal(n2.volumeM3, "0.024000", "不是自动填的体积被清了");
+    // 两页都用这一份
     for (const f of ["apps/web/src/app/staff/page.tsx", "apps/web/src/app/client/page.tsx"]) {
       const src = read(f);
-      assert.doesNotMatch(src, /volumeM3: totalVol > 0 \? String\(totalVol\.toFixed\(6\)\) : v\.volumeM3/, `${f} 还是保留旧合计`);
-      assert.match(src, /volumeM3: volStr \?\? \(auto\.volumeM3 !== null && v\.volumeM3 === auto\.volumeM3 \? "" : v\.volumeM3\)/, `${f} 体积没按「自动填的才清」处理`);
-      assert.match(src, /weightKg: wtStr \?\? \(auto\.weightKg !== null && v\.weightKg === auto\.weightKg \? "" : v\.weightKg\)/, `${f} 重量没按「自动填的才清」处理`);
-      assert.match(src, /autoTotalsRef\.current = \{ volumeM3: volStr, weightKg: wtStr \};/);
-      // 产品行全删光时也要走「自动填的才清」（dsh 复核：原来第一行就 return，删光后旧合计留着照样提交）
-      const eff = src.slice(src.indexOf("// Auto-fill volume and weight from multi-product form"), src.indexOf("autoTotalsRef.current = { volumeM3: volStr, weightKg: wtStr };"));
-      assert.ok(eff.length > 0, `${f} 没找到自动合计那段`);
+      const eff = src.slice(src.indexOf("// Auto-fill volume and weight from multi-product form"), src.indexOf("autoTotalsRef.current = next.memory;"));
+      assert.ok(eff.length > 0, `${f} 没用 nextAutoTotals`);
       assert.doesNotMatch(eff, /\.length === 0\) return;/, `${f} 产品行删光时还是直接 return`);
+      assert.match(src, /const next = nextAutoTotals\(\{ volumeM3: v\.volumeM3, weightKg: v\.weightKg \?\? "" \}, auto, volStr, wtStr\);/);
     }
   });
 

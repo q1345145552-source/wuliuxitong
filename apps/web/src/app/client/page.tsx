@@ -50,6 +50,7 @@ import {
 } from "../../modules/shipment/ShipmentTableGrid";
 import FclInquiryPanel from "../../components/client/FclInquiryPanel";
 import { beijingDate, beijingToday } from "../../modules/shared/beijing-date";
+import { nextAutoTotals } from "../../modules/orders/auto-totals";
 
 const initialSearch = {
   batchNo: "",
@@ -529,12 +530,12 @@ export default function ClientHomePage() {
     const auto = autoTotalsRef.current;
     const volStr = totalVol > 0 ? String(totalVol.toFixed(6)) : null;
     const wtStr = totalWt > 0 ? String(totalWt.toFixed(2)) : null;
-    setForm((v) => ({
-      ...v,
-      volumeM3: volStr ?? (auto.volumeM3 !== null && v.volumeM3 === auto.volumeM3 ? "" : v.volumeM3),
-      weightKg: wtStr ?? (auto.weightKg !== null && v.weightKg === auto.weightKg ? "" : v.weightKg),
-    }));
-    autoTotalsRef.current = { volumeM3: volStr, weightKg: wtStr };
+    setForm((v) => {
+      // 怎么填、为什么这样填，见 modules/orders/auto-totals.ts（员工页和客户页共用一份）
+      const next = nextAutoTotals({ volumeM3: v.volumeM3, weightKg: v.weightKg ?? "" }, auto, volStr, wtStr);
+      autoTotalsRef.current = next.memory;
+      return { ...v, volumeM3: next.volumeM3, weightKg: next.weightKg };
+    });
   }, [formProducts]);
 
   useEffect(() => {
@@ -1570,6 +1571,7 @@ export default function ClientHomePage() {
                   setShowCreateModal(false);
                   setForm({ warehouseId: "", itemName: "", packageCount: "", packageUnit: "box" as "bag"  |  "box", lengthCm: "", widthCm: "", heightCm: "", weightKg: "", volumeM3: "", trackingNo: "", domesticTrackingNo: "", transportMode: "" as ""  |  "sea"  |  "land", cargoType: "normal", receiverNameTh: "", receiverPhoneTh: "", receiverAddressTh: "" });
                   setFormProducts([]);
+                  autoTotalsRef.current = { volumeM3: null, weightKg: null }; // 建完单清空「上次自动填的」记录
                   setPrealertImageFiles([]);
                   setPrealertImagePreviews([]);
                   await refreshMainData();
