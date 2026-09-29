@@ -271,6 +271,10 @@ jobs:
       - name: Test branch review 0928 fixes (source)
         run: npm run test:branch-review-0928-source
 
+      # 2026-09-29 全前端扫出来的「要手点才出来」同类毛病：员工客户集货余额、客户仓库版集货详情重试、三端运单页顶上那排数字
+      - name: Test auto-load fixes 0929 (source)
+        run: npm run test:autoload-0929-source
+
       # 客服对话窗口真跑（假 React + 真组件）：发送中打字不被清、Safari 输入法回车、粘贴提示、
       # 首次加载失败能重试、轮询起点、已划走客户的提示、菜单回到列表。
       - name: Test customer-service chat UI behavior

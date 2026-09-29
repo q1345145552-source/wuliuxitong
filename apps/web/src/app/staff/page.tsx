@@ -183,9 +183,19 @@ export default function StaffHomePage() {
   /* 顶部那排数字。拉不到就整排不显示 —— 宁可不显示，
      也不能显示一个假的 0 让人以为「今天没有延迟的」。 */
   const [shipmentOverview, setShipmentOverview] = useState<StaffShipmentOverview | null>(null);
-  useEffect(() => {
-    fetchStaffShipmentOverview().then(setShipmentOverview).catch(() => setShipmentOverview(null));
-  }, []);
+  /* 2026-09-29（老板选 A）：原来只在打开页面时拉一次 —— 员工自己改了状态、建了单，下面的列表变了，这排数字还是旧的。
+     现在跟着列表一起拉（loadPageData 每次都顺带调它，开页那次也是）。
+     拉不到就保留上一次的数（第一次都没拉到就整排不显示，理由同上）；领号验号，慢的旧请求不许盖新的。 */
+  const shipmentOverviewGate = useRef(createRequestGate()).current;
+  const loadShipmentOverview = async () => {
+    const ticket = shipmentOverviewGate.begin();
+    try {
+      const data = await fetchStaffShipmentOverview();
+      if (shipmentOverviewGate.isCurrent(ticket)) setShipmentOverview(data);
+    } catch {
+      /* 保留上一次的数 */
+    }
+  };
   const [shipmentTableExpandedId, setShipmentTableExpandedId] = useState<string | null>(null);
   const [shipmentImagesCache, setShipmentImagesCache] = useState<Record<string, OrderProductImageItem[]>>({});
   const [shipmentOrderEditDrafts, setShipmentOrderEditDrafts] = useState<Record<string, ShipmentOrderEditDraft>>({});
@@ -383,12 +393,33 @@ export default function StaffHomePage() {
 
   // 客户余额
   const [walletBalances, setWalletBalances] = useState<StaffWalletBalanceItem[]>([]);
+  /* 2026-09-29（老板选 A）：原来只有点「刷新」才拉，每次进来都是「暂无数据，点击刷新加载」；
+     拉失败也只在控制台打一行，页面上跟「没数据」一模一样。
+     现在：切到这一栏就自己拉（切回来也重拉）；拉的时候写「加载中…」，失败写原因、「重试」点一下就重拉。 */
+  const [walletLoaded, setWalletLoaded] = useState(false);
+  const [walletLoading, setWalletLoading] = useState(false);
+  const [walletError, setWalletError] = useState("");
+  const walletGate = useRef(createRequestGate()).current;
   const loadWalletBalances = async () => {
+    const ticket = walletGate.begin();
+    setWalletLoading(true);
     try {
       const data = await fetchStaffWalletBalances();
+      if (!walletGate.isCurrent(ticket)) return;
       setWalletBalances(data.balances);
-    } catch (e) { console.error(e); }
+      setWalletError("");
+      setWalletLoaded(true);
+    } catch (e) {
+      if (!walletGate.isCurrent(ticket)) return;
+      setWalletError(e instanceof Error ? e.message : "网络错误");
+    } finally {
+      if (walletGate.isCurrent(ticket)) setWalletLoading(false);
+    }
   };
+  useEffect(() => {
+    if (activeSection === "staff-wallet") void loadWalletBalances();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeSection]);
 
   // 按派送单号分组，检查是否全部签收
   
@@ -461,6 +492,7 @@ export default function StaffHomePage() {
    * 状态更新成功后，将当前附图写入各运单的入库拍照记录。
    */
   const loadPageData = async (): Promise<ShipmentItem[]> => {
+    void loadShipmentOverview(); // 顶上那排数字跟列表一起刷新（2026-09-29）
     const [shipmentItems, prealertItems, clientItems] = await Promise.all([fetchStaffShipments(), fetchStaffPrealerts(), fetchStaffClients()]);
     // 按运单号数字降序
     // 【审查问题 10】同 admin：原来 Number() 超 15 位丢精度，改成按位数+字符串比
@@ -2852,14 +2884,27 @@ export default function StaffHomePage() {
             <h2 style={{ margin: 0, fontSize: 18 }}>客户余额</h2>
             <button
               type="button"
-              onClick={loadWalletBalances}
-              style={{ border: "1px solid var(--l-strong)", borderRadius: 8, padding: "6px 14px", background: "var(--white)", cursor: "pointer", fontSize: 13 }}
+              onClick={() => void loadWalletBalances()}
+              disabled={walletLoading}
+              style={{ border: "1px solid var(--l-strong)", borderRadius: 8, padding: "6px 14px", background: "var(--white)", cursor: walletLoading ? "default" : "pointer", fontSize: 13 }}
             >
-              刷新
+              {walletLoading ? "刷新中…" : "刷新"}
             </button>
           </div>
-          {walletBalances.length === 0 ? (
-            <p style={{ color: "var(--t-muted)", fontSize: 13 }}>暂无数据，点击刷新加载</p>
+          {walletError ? (
+            <p role="alert" style={{ color: "var(--c-red-deep)", fontSize: 13 }}>
+              客户余额没加载出来：{walletError}
+              {walletLoaded ? "（下面是上一次的数）" : ""}
+              <button type="button" onClick={() => void loadWalletBalances()} disabled={walletLoading}
+                style={{ marginLeft: 8, border: "1px solid #fca5a5", borderRadius: 6, padding: "2px 10px", background: "var(--white)", color: "var(--c-red-2)", cursor: "pointer", fontSize: 12 }}>
+                {walletLoading ? "重试中…" : "重试"}
+              </button>
+            </p>
+          ) : null}
+          {!walletLoaded ? (
+            walletError ? null : <p style={{ color: "var(--t-muted)", fontSize: 13 }}>加载中…</p>
+          ) : walletBalances.length === 0 ? (
+            <p style={{ color: "var(--t-muted)", fontSize: 13 }}>暂无客户余额</p>
           ) : (
             <div style={{ overflowX: "auto" }}>
               <table className="a3-table" style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>

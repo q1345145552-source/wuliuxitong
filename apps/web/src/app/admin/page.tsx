@@ -297,9 +297,25 @@ export default function AdminHomePage() {
   /* 运单管理顶部那排数字。拉不到就整排不显示 ——
      宁可不显示，也不能显示一个假的 0 让人以为「今天没有延迟的」。 */
   const [shipmentOverview, setShipmentOverview] = useState<StaffShipmentOverview | null>(null);
-  useEffect(() => {
-    fetchStaffShipmentOverview().then(setShipmentOverview).catch(() => setShipmentOverview(null));
-  }, []);
+  /* 2026-09-29（老板选 A）：原来只在打开页面时拉一次 —— 下面的运单列表 10 秒自己刷新、点「刷新」也会变，这排数字却一直不动，两边对不上。
+     现在跟列表一起：开页、10 秒轮询、「刷新」按钮都顺带拉它。
+     拉不到就保留上一次的数（第一次都没拉到就整排不显示，理由同上），下一轮 10 秒再试；领号验号，慢的旧请求不许盖新的。 */
+  const shipmentOverviewGate = useRef(createRequestGate()).current;
+  /** 最新那一份还没回来。10 秒轮询看到它就跳过这一轮：不然接口慢过 10 秒时，每一份都会被下一轮作废，数字永远出不来 */
+  const shipmentOverviewPending = useRef(false);
+  const loadShipmentOverview = async () => {
+    const ticket = shipmentOverviewGate.begin();
+    shipmentOverviewPending.current = true;
+    try {
+      const data = await fetchStaffShipmentOverview();
+      if (shipmentOverviewGate.isCurrent(ticket)) setShipmentOverview(data);
+    } catch {
+      /* 保留上一次的数 */
+    } finally {
+      if (shipmentOverviewGate.isCurrent(ticket)) shipmentOverviewPending.current = false;
+    }
+  };
+  useEffect(() => { void loadShipmentOverview(); }, []);
   const [staffList, setStaffList] = useState<AdminUserItem[]>([]);
   const [clientList, setClientList] = useState<AdminUserItem[]>([]);
   /**
@@ -1029,6 +1045,7 @@ export default function AdminHomePage() {
       loadStaff().catch(() => {});
       loadClients().catch(() => {});
       loadOrders().catch(() => {});
+      if (!shipmentOverviewPending.current) void loadShipmentOverview(); // 运单管理顶上那排数字跟列表一起刷新（2026-09-29）
     }, 10000);
     return () => window.clearInterval(interval);
   }, []);
@@ -1337,6 +1354,7 @@ export default function AdminHomePage() {
     if (orderRefreshInFlight.current) return;
     orderRefreshInFlight.current = true;
     setOrderRefreshing(true);
+    void loadShipmentOverview(); // 顶上那排数字跟列表一起刷新（2026-09-29）
     try {
       const outcome = await loadOrders();
       // 被更新的一次请求作废时，只说「被替代」——那次请求可能还没回来、也可能失败，这里不许替它宣布「已更新」

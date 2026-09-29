@@ -173,9 +173,24 @@ export default function ClientHomePage() {
   /* 「我的运单查询」顶部那排数字。拉不到就整排不显示 ——
      宁可不显示，也不能显示一个假的 0 让客户以为「没有在途的」。 */
   const [shipmentOverview, setShipmentOverview] = useState<StaffShipmentOverview | null>(null);
-  useEffect(() => {
-    fetchClientShipmentOverview().then(setShipmentOverview).catch(() => setShipmentOverview(null));
-  }, []);
+  /* 2026-09-29（老板选 A）：原来只在打开页面时拉一次 —— 下面的运单列表 10 秒自己刷新，这排数字却一直不动，两边对不上。
+     现在跟列表一起拉：切到「运单查询」、10 秒轮询、执行查询、切分组都顺带拉它。
+     拉不到就保留上一次的数（第一次都没拉到就整排不显示，理由同上）；领号验号，慢的旧请求不许盖新的。 */
+  const shipmentOverviewGate = useRef(createRequestGate()).current;
+  /** 最新那一份还没回来。10 秒轮询看到它就跳过这一轮：不然接口一直慢时，每一份都会被下一轮作废，数字永远出不来 */
+  const shipmentOverviewPending = useRef(false);
+  const loadShipmentOverview = async () => {
+    const ticket = shipmentOverviewGate.begin();
+    shipmentOverviewPending.current = true;
+    try {
+      const data = await fetchClientShipmentOverview();
+      if (shipmentOverviewGate.isCurrent(ticket)) setShipmentOverview(data);
+    } catch {
+      /* 保留上一次的数 */
+    } finally {
+      if (shipmentOverviewGate.isCurrent(ticket)) shipmentOverviewPending.current = false;
+    }
+  };
   const [openLogisticsByOrder, setOpenLogisticsByOrder] = useState<Record<string, boolean>>({});
   const [openDetailsByOrder, setOpenDetailsByOrder] = useState<Record<string, boolean>>({});
   const [detailImagesCache, setDetailImagesCache] = useState<Record<string, OrderProductImageItem[]>>({});
@@ -555,6 +570,7 @@ export default function ClientHomePage() {
   };
 
   const runOrderQuery = async () => {
+    void loadShipmentOverview(); // 顶上那排数字跟列表一起刷新（2026-09-29）
     if (!queryMode) {
       setMessage("请先选择“全部订单”“未发出”“在途”“已到仓”“已签收”或“异常”。");
       return;
@@ -649,6 +665,7 @@ export default function ClientHomePage() {
    * 不许拿旧分组的数据盖住新分组。
    */
   const changeQueryMode = (mode: ShipmentGroupFilter) => {
+    void loadShipmentOverview(); // 顶上那排数字跟列表一起刷新（2026-09-29）
     setQueryMode(mode);
     setSearch(initialSearch);
     setHasQueried(false);
@@ -736,6 +753,12 @@ export default function ClientHomePage() {
   queryModeRef.current = queryMode;
   const hasQueriedRef = useRef(false);
 
+  /* 2026-09-29：切到「运单查询」（含一打开就在这一栏）就拉一次顶上那排数字；数字只在这一栏显示，别的栏不拉 */
+  useEffect(() => {
+    if (activeSection === "client-query") void loadShipmentOverview();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeSection]);
+
   useEffect(() => {
     if (activeSection !== "client-query") return;
     // 有搜索条件时不自动刷新；纯浏览分组（在途/已完成/全部）正常刷新
@@ -745,6 +768,7 @@ export default function ClientHomePage() {
     let cancelled = false;
     const poll = async () => {
       if (cancelled) return;
+      if (!shipmentOverviewPending.current) void loadShipmentOverview(); // 顶上那排数字跟列表一起 10 秒刷新（2026-09-29）
       const mode = queryModeRef.current;
       // 2026-08-31（条目23）：分组值改成 statusGroup 四分类，类型对上后不再需要 as 强转
       if (mode) {

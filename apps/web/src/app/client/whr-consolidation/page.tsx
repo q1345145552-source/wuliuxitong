@@ -207,6 +207,9 @@ export default function ClientWhrConsolidationPage() {
   const [selectedPlanId, setSelectedPlanId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [detailLoading, setDetailLoading] = useState(false);
+  /* 2026-09-29（老板选 A）：详情没拉到时原来只弹一条 5 秒就消失的提示，那一行还高亮着、下面一片空白，
+     客户再点那一行只会取消选中，要点第二下才重拉。现在跟普通版集货一样：写出原因 + 「点击重试」点一下就重拉。 */
+  const [detailError, setDetailError] = useState("");
   const [toast, setToast] = useState("");
   // 2026-09-01 竞态全扫：详情请求「领号验号 + 认主人」。
   // 连点计划 A、B 时，A 的旧响应回来晚，不许把 B 的详情/金额/预报单盖掉。
@@ -291,9 +294,14 @@ export default function ClientWhrConsolidationPage() {
   }, []);
 
   const loadDetail = useCallback(async (planId: string) => {
+    /* 2026-09-29（复核发现的老问题）：先认主人再领号。原来改完 A 的收货地址、保存还没回来就点了 B，
+       A 保存成功后顺手重拉 A 的详情 —— 领号把 B 正在拉的那次作废，A 的结果又因为「不是当前选中的」被丢掉，
+       B 高亮着、下面一片空白，要点两下那一行才出来。现在不是当前选中的计划就不拉，不去作废别人。 */
+    if (selectedPlanIdRef.current !== planId) return;
     // 2026-09-01 竞态全扫：出发领号，落地验号 + 认主人（成功、失败、finally 三个分支都要验）
     const ticket = detailGate.begin();
     setDetailLoading(true);
+    setDetailError("");
     try {
       const data = await apiRequest<MyDetail>(
         `${apiBaseUrl()}/client/whr-consolidation/my-detail?planId=${encodeURIComponent(planId)}`
@@ -301,10 +309,12 @@ export default function ClientWhrConsolidationPage() {
       // 号已作废（后面又发过一次），或用户已换/取消选中计划：旧数据整段作废
       if (!detailGate.isCurrent(ticket) || selectedPlanIdRef.current !== planId) return;
       setDetail(data);
+      setDetailError("");
     } catch (e: any) {
       // 失败分支同样验：旧请求的报错不许安到新界面头上
       if (!detailGate.isCurrent(ticket) || selectedPlanIdRef.current !== planId) return;
       setToast(e?.message ?? "加载详情失败");
+      setDetailError(e?.message || "加载失败");
     }
     finally {
       // 旧请求不许提前掐掉新请求的加载态；只要没有更新的请求在跑，加载态就该收掉
@@ -528,6 +538,14 @@ export default function ClientWhrConsolidationPage() {
         {/* 详情区 */}
         {/* ================================================================ */}
         {selectedPlanId && detailLoading && <p style={{ color: "var(--t-faint)", padding: "20px 0" }}>加载详情中...</p>}
+        {selectedPlanId && !detailLoading && !detail && detailError && (
+          <div style={{ padding: "20px 0" }}>
+            <p style={{ color: "var(--c-red)", fontSize: 14 }}>详情加载失败：{detailError}</p>
+            <button onClick={() => { if (selectedPlanId) loadDetail(selectedPlanId); }} style={{ padding: "6px 16px", border: "1px solid var(--c-blue)", color: "var(--c-blue)", background: "var(--white)", borderRadius: 6, cursor: "pointer", fontSize: 13 }}>
+              点击重试
+            </button>
+          </div>
+        )}
 
         {selectedPlanId && detail && (() => {
           const addressMissing = !detail.deliveryAddress?.trim();

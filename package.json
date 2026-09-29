@@ -76,6 +76,7 @@
     "test:audit-0928-p3-source": "tsx scripts/test-audit-0928-p3-source.ts",
     "test:audit-0928-p3-db": "tsx scripts/test-audit-0928-p3-db.ts",
     "test:branch-review-0928-source": "tsx scripts/test-branch-review-0928-source.ts",
+    "test:autoload-0929-source": "tsx scripts/test-autoload-0929-source.ts",
     "test:branch-review-0928-db": "tsx scripts/test-branch-review-0928-db.ts",
     "test:cs-chat-ui-behavior": "tsx scripts/test-cs-chat-ui-behavior.ts"
   },
