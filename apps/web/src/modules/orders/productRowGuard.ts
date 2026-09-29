@@ -77,6 +77,25 @@ export function validateProductRows(rows: ProductRowInput[]): string | null {
 }
 
 /**
+ * 填了箱数 / 尺寸 / 重量等、却没填品名的产品行（2026-09-30 Codex 第三轮）。
+ *
+ * 三个建单入口（客户预报单、员工建单、超管创建订单）提交时都按「有品名」过滤产品行，
+ * 可页面上的总体积 / 总重量 / 箱数是把所有行都算进去的 —— 客户看到并确认的是 10kg，
+ * 没品名那行被悄悄丢掉，系统存的是 1kg。宁可拦住让人补，不许悄悄丢。
+ * 完全空白的行（刚点「添加产品」还没填）不算，照旧忽略。
+ */
+export function unnamedFilledRowIssue(rows: Array<Record<string, unknown> & { itemName?: string }>): string | null {
+  const filledKeys = ["packageCount", "lengthCm", "widthCm", "heightCm", "weightKg", "productQuantity", "domesticTrackingNo"];
+  for (let i = 0; i < rows.length; i += 1) {
+    if (String(rows[i].itemName ?? "").trim()) continue;
+    if (filledKeys.some((k) => String(rows[i][k] ?? "").trim() !== "")) {
+      return `产品行${i + 1}填了数据但没填品名：请补上品名，或者把这一行删掉`;
+    }
+  }
+  return null;
+}
+
+/**
  * 发送给接口前把箱数转成数字。
  * ⚠️ **不许兜底成 1** —— 这里原来是 `Number(p.packageCount) || 1`，
  * 就是它把「没填」和「填 0」悄悄变成 1 箱的。调用前请先过 validateProductRows。

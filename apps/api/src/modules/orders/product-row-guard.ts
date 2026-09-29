@@ -1,5 +1,5 @@
 import { PG_INT_MAX, requireSumWithinInt } from "../core/int-guard";
-import { DECIMAL_10_2, DECIMAL_10_3, requireDecimal, requireSumWithinDecimal } from "../core/decimal-guard";
+import { DECIMAL_10_2, checkTotalsWritable, requireDecimal, requireSumWithinDecimal } from "../core/decimal-guard";
 
 /**
  * 建单时产品行的校验（纯函数，方便单测）。
@@ -134,15 +134,15 @@ export function validateProductRows(rows: ProductRowForGuard[]): string | null {
   );
   if (wtSum) return wtSum;
   /* 整票体积同理（dsh 复查 2026-09-29）：长 × 宽 × 高 × 箱数 ÷ 1,000,000 写进 Order.volumeM3（Decimal(10,3)），
-     把毫米当厘米填（6000 × 6000 × 6000 × 50 箱）就超了，原来写库溢出 500。只算三个尺寸都是正数的行，跟建单时算整票体积同一口径 */
-  const volSum = requireSumWithinDecimal(
-    rows.map((r) => {
-      const [l, w, h, pkg] = [r.lengthCm, r.widthCm, r.heightCm, r.packageCount].map((x) => (typeof x === "number" ? x : Number(x)));
-      return l > 0 && w > 0 && h > 0 && pkg > 0 ? (l * w * h * pkg) / 1_000_000 : 0;
-    }),
-    "产品行算出来的总体积(m³)",
-    DECIMAL_10_3,
-  );
+     把毫米当厘米填（6000 × 6000 × 6000 × 50 箱）就超了，原来写库溢出 500。只算三个尺寸都是正数的行，跟建单时算整票体积同一口径。
+     ⚠️ 只查上限、不查「舍成 0」（dsh 第三轮 2026-09-30）：第一版用了 requireSumWithinDecimal，
+     7×7×7 厘米的样品盒 = 0.000343 方被当成「填错单位」拦下、单都建不了 —— 这个坑 decimal-guard.ts 的
+     checkTotalsWritable 早写明了（2026-08-29），合计一律走它 */
+  const volTotal = rows.reduce((s, r) => {
+    const [l, w, h, pkg] = [r.lengthCm, r.widthCm, r.heightCm, r.packageCount].map((x) => (typeof x === "number" ? x : Number(x)));
+    return s + (l > 0 && w > 0 && h > 0 && pkg > 0 ? (l * w * h * pkg) / 1_000_000 : 0);
+  }, 0);
+  const volSum = checkTotalsWritable({ volumes: [["产品行算出来的总体积(m³)", volTotal]] });
   if (volSum) return volSum;
 
   return null;

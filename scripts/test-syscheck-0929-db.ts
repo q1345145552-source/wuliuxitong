@@ -175,6 +175,15 @@ async function main(): Promise<void> {
       assert.equal(ok.status, 200, `正常的单建不了：${ok.message}`);
       const ok2 = await call("POST /staff/orders", STAFF, { clientId: C1.userId, trackingNo: "ZZSC29POS1", warehouseId: "wh_yiwu_01", itemName: "鞋", packageCount: 2, transportMode: "sea", arrivedAt: "2026-09-20", weightKg: 6, volumeM3: 0.123456 });
       assert.equal(ok2.status, 200, `员工正常建单（体积带 6 位小数，页面自动算的就是这样）建不了：${ok2.message}`);
+      // 7×7×7 厘米的样品盒 = 0.000343 方：合计只查上限、不查「舍成 0」，照常建单（dsh 第三轮：第一版把它当「填错单位」拦了）
+      for (const [path, auth, extra] of [["POST /client/prealerts", C1, {}], ["POST /staff/orders", STAFF, { clientId: C1.userId, trackingNo: "ZZSC29SMALL1", arrivedAt: "2026-09-20" }]] as const) {
+        const small = await call(path, auth as Auth, { ...base, ...extra, itemName: "样品盒", packageCount: 1, products: [{ itemName: "样品盒", packageCount: 1, lengthCm: 7, widthCm: 7, heightCm: 7, weightKg: 0.2 }] });
+        assert.equal(small.status, 200, `${path} 7×7×7 样品盒建不了（${small.status}）：${small.message}`);
+      }
+      // 超管改单那条路先读货型、后查产品行：products:[null] 原来在读货型时 500（dsh 第三轮）
+      const adminNull = await call("POST /admin/orders/update", ADMIN, { orderId: "zz_sc29_no_such_order", products: [null] });
+      assert.equal(adminNull.status, 400, `超管改单 products:[null]（${adminNull.status}）：${adminNull.message}`);
+      assert.match(adminNull.message, /产品行1的数据格式不对/, adminNull.message);
     });
 
     // ---------- S3 ----------
@@ -256,7 +265,7 @@ async function main(): Promise<void> {
       ] as const) {
         const r = await call("POST /client/prealerts", C1, { warehouseId: "wh_yiwu_01", itemName: label, packageCount: 1, transportMode: "sea", ...extra });
         assert.equal(r.status, 400, `${label}应该拦下：${r.status} ${r.message}`);
-        assert.match(r.message, /国内快递单号要填文字或数字/);
+        assert.match(r.message, /国内快递单号请按文字填写/, `${label}的提示要说清怎么改：${r.message}`);
         assert.equal(await pm.order.count({ where: { companyId: CO, itemName: label } }), 0, `${label}拦了还是建了单`);
       }
       const longStr = await call("POST /client/prealerts", C1, { warehouseId: "wh_yiwu_01", itemName: "文字长单号", packageCount: 1, transportMode: "sea", domesticTrackingNo: "123456789012345678" });

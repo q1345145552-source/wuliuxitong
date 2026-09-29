@@ -26,7 +26,7 @@ import {
   gridThStyle,
   gridTdStyle,
 } from "../../modules/shipment/ShipmentTableGrid";
-import { validateProductRows, packageCountForPayload } from "../../modules/orders/productRowGuard";
+import { validateProductRows, packageCountForPayload, unnamedFilledRowIssue } from "../../modules/orders/productRowGuard";
 import { optionalIntegerForReceive, optionalNumberForReceive, productDim, validateReceiveDraft } from "../../modules/staff/utils";
 import EmptyStateCard from "../../modules/layout/EmptyStateCard";
 import DetailModal from "../../modules/layout/DetailModal";
@@ -725,6 +725,8 @@ export default function StaffHomePage() {
   }, [staffFormProducts]);
   // 产品行算得出总重量时，总重量框只读（后台按产品行存，手改了也不认 —— 页面和系统两个数，dsh 复查 2026-09-29）
   const productWeightLocked = useMemo(() => productRowTotals(staffFormProducts).wtStr !== null, [staffFormProducts]);
+  // 总体积同理：产品行算得出才锁；产品行在、但没填尺寸时能手填（后台算不出就用表单上填的；dsh 第三轮：原来有产品行就锁死、填不进去）
+  const productVolumeLocked = useMemo(() => productRowTotals(staffFormProducts).volStr !== null, [staffFormProducts]);
 
   const isStaffSectionId = (value: string): value is StaffSectionId =>
     STAFF_SECTION_IDS.includes(value as StaffSectionId);
@@ -746,6 +748,8 @@ export default function StaffHomePage() {
 
   const submitOrder = async () => {
     if (loading) return;
+    // 填了数据没填品名的行：页面合计算了它、提交却会丢掉它 —— 先拦住（Codex 第三轮 2026-09-30）
+    { const unnamed = unnamedFilledRowIssue(staffFormProducts); if (unnamed) { setMessage(unnamed); return; } }
     const hasProducts = staffFormProducts.length > 0 && staffFormProducts.some((p) => p.itemName.trim());
     const itemName = hasProducts ? staffFormProducts[0].itemName.trim() : form.itemName.trim();
     const batchNo = form.batchNo.trim();
@@ -2593,7 +2597,7 @@ export default function StaffHomePage() {
                   <option value="box">箱</option>
                   <option value="bag">袋</option>
                 </select>
-                <input type="number" step="0.001" value={form.volumeM3} readOnly={staffFormProducts.length > 0} onChange={(e) => setForm((v) => ({ ...v, volumeM3: e.target.value }))} placeholder="总体积（m³）" style={orderCreateInputStyle} />
+                <input type="number" step="0.001" value={form.volumeM3} readOnly={productVolumeLocked} title={productVolumeLocked ? "按产品行的长宽高自动算，要改请改产品行" : undefined} onChange={(e) => setForm((v) => ({ ...v, volumeM3: e.target.value }))} placeholder={productVolumeLocked ? "总体积（按产品行自动算）" : "总体积（m³）"} style={orderCreateInputStyle} />
                 <input type="number" step="0.01" value={form.weightKg} readOnly={productWeightLocked} title={productWeightLocked ? "按产品行的单箱重量自动算，要改请改产品行" : undefined} onChange={(e) => setForm((v) => ({ ...v, weightKg: e.target.value }))} placeholder={productWeightLocked ? "总重量（按产品行自动算）" : "总重量（kg）"} style={orderCreateInputStyle} />
               </div>
               <select value={form.transportMode} onChange={(e) => setForm((v) => ({ ...v, transportMode: e.target.value as "sea" | "land" }))} style={orderCreateInputStyle}>

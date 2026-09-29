@@ -3,7 +3,7 @@
 
 import { Fragment, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { Bar, BarChart, CartesianGrid, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { validateProductRows, packageCountForPayload } from "../../modules/orders/productRowGuard";
+import { validateProductRows, packageCountForPayload, unnamedFilledRowIssue } from "../../modules/orders/productRowGuard";
 import EmptyStateCard from "../../modules/layout/EmptyStateCard";
 import Toast from "../../modules/layout/Toast";
 // 2026-08-31 收尾清理：formatCny 引入了但全文件没用过（历史遗留死 import），删掉
@@ -528,6 +528,8 @@ export default function ClientHomePage() {
   }, [formProducts]);
   // 产品行算得出总重量时，总重量框只读（后台按产品行存，手改了也不认 —— 页面和系统两个数，dsh 复查 2026-09-29）
   const productWeightLocked = useMemo(() => productRowTotals(formProducts).wtStr !== null, [formProducts]);
+  // 总体积同理：产品行算得出才锁；产品行在、但没填尺寸时能手填（后台算不出就用表单上填的；dsh 第三轮：原来有产品行就锁死、填不进去）
+  const productVolumeLocked = useMemo(() => productRowTotals(formProducts).volStr !== null, [formProducts]);
 
   useEffect(() => {
     const syncSectionByHash = () => {
@@ -1476,7 +1478,7 @@ export default function ClientHomePage() {
                   <option value="bag">袋</option>
                 </select></label>
                 <label className="client-prealert-field"><span>箱/袋数</span><input type="number" value={form.packageCount} onChange={(e) => updateOrderDimensions({ packageCount: e.target.value })} placeholder="箱/袋数" style={{ border: "1px solid var(--l-strong)", borderRadius: 6, padding: "8px 10px", fontSize: 13 }} /></label>
-                <label className="client-prealert-field"><span>总体积（m³）</span><input type="number" step="0.001" value={form.volumeM3} readOnly={formProducts.length > 0} onChange={(e) => setForm((v) => ({ ...v, volumeM3: e.target.value }))} placeholder="总体积（m³）" style={{ border: "1px solid var(--l-strong)", borderRadius: 6, padding: "8px 10px", fontSize: 13 }} /></label>
+                <label className="client-prealert-field"><span>总体积（m³）{productVolumeLocked ? "（按产品行自动算）" : ""}</span><input type="number" step="0.001" value={form.volumeM3} readOnly={productVolumeLocked} onChange={(e) => setForm((v) => ({ ...v, volumeM3: e.target.value }))} placeholder="总体积（m³）" style={{ border: "1px solid var(--l-strong)", borderRadius: 6, padding: "8px 10px", fontSize: 13 }} /></label>
                 <label className="client-prealert-field"><span>总重量（kg）{productWeightLocked ? "（按产品行自动算）" : ""}</span><input type="number" step="0.01" value={form.weightKg ?? ""} readOnly={productWeightLocked} onChange={(e) => setForm((v) => ({ ...v, weightKg: e.target.value }))} placeholder="总重量(kg)" style={{ border: "1px solid var(--l-strong)", borderRadius: 6, padding: "8px 10px", fontSize: 13 }} /></label>
               </div>
               {/* 「预报单号（留空自动生成）」那一格拿掉了（2026-09-28 审查报告）：后端从来不用客户填的号、一律自动生成，
@@ -1517,6 +1519,7 @@ export default function ClientHomePage() {
               <button type="button" disabled={prealertSubmitting} onClick={() => { setShowCreateModal(false); setPrealertImageFiles([]); setPrealertImagePreviews([]); }} style={{ border: "1px solid var(--l-strong)", borderRadius: 6, padding: "8px 16px", fontSize: 13, background: "var(--white)", cursor: "pointer", color: "var(--t-strong)" }}>取消</button>
               <button type="button" disabled={prealertSubmitting} onClick={async () => {
                 if (prealertSubmitInFlight.current) return;
+                { const unnamed = unnamedFilledRowIssue(formProducts); if (unnamed) { setToast(unnamed); return; } }
                 const hasProducts = formProducts.length > 0 && formProducts.some((p) => p.itemName.trim());
                 if (!hasProducts && !form.itemName) { setToast("请填写品名"); return; }
                 if (!form.transportMode || !form.warehouseId) { setToast("请填写必填项"); return; }

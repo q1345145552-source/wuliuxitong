@@ -9,6 +9,7 @@
  *   P6 客户页面：已取消任务进「已完成」、余额没读到不当 0、整柜详情认主人、地址失败要提示
  *   P7 产品行清空后，自动填的总重量 / 总体积跟着清空（员工、客户两页）
  *   P8 其它：服务端 500 中文、快递查询不甩英文、导出文件名北京日期、列表截断写总数、整柜日期上限、价格保存防连点
+ *   P9 填了数据没填品名的产品行：三个建单入口都先拦住（页面合计算了它、提交却会丢掉它）
  */
 process.env.DATABASE_URL = "postgresql://blocked:blocked@127.0.0.1:1/never?connect_timeout=1";
 import assert from "node:assert/strict";
@@ -177,6 +178,10 @@ async function main(): Promise<void> {
       assert.match(eff, /const volToFill = volStr \?\? \(noRows \? orderDimsVolume\(v\) : null\);/, `${f} 删光产品行时没按整票长宽高算体积`);
       assert.match(src, /const productWeightLocked = useMemo\(\(\) => productRowTotals\(/, `${f} 没算「总重量框要不要只读」`);
       assert.match(src, /readOnly=\{productWeightLocked\}/, `${f} 总重量框在产品行算得出时还能手改`);
+      // 总体积框同一个判法：产品行算得出才锁，产品行在但没尺寸时能手填（dsh 第三轮：原来有产品行就锁死）
+      assert.match(src, /const productVolumeLocked = useMemo\(\(\) => productRowTotals\((formProducts|staffFormProducts)\)\.volStr !== null/, `${f} 没算「总体积框要不要只读」`);
+      assert.match(src, /value=\{form\.volumeM3\} readOnly=\{productVolumeLocked\}/, `${f} 总体积框没按「产品行算不算得出」锁`);
+      assert.doesNotMatch(src, /value=\{form\.volumeM3\} readOnly=\{(formProducts|staffFormProducts)\.length > 0\}/, `${f} 总体积框还是「有产品行就锁死」`);
       // 改整票长宽高 / 箱数不许覆盖产品行算的总体积（2026-09-30 自查：原来会改成整票算的数，箱数一改甚至清空）
       const setters = f.endsWith("staff/page.tsx") ? ["const updateOrderDimensions", "const updateModalOrderDimension"] : ["const updateOrderDimensions"];
       for (const name of setters) {
@@ -206,6 +211,30 @@ async function main(): Promise<void> {
     const cfg = read("apps/web/src/components/admin/ShippingConfig.tsx");
     assert.match(cfg, /disabled=\{savingClientPrices\}/);
     assert.match(cfg, /finally \{ setSavingClientPrices\(false\); \}/);
+  });
+
+  await check("P9 填了数据没填品名的产品行：拦住不许悄悄丢（客户预报单、员工建单、超管创建订单三个入口）", async () => {
+    const { unnamedFilledRowIssue } = await import("../apps/web/src/modules/orders/productRowGuard");
+    const blank = { itemName: "", packageCount: "", lengthCm: "", widthCm: "", heightCm: "", productQuantity: "", weightKg: "", cargoType: "normal", domesticTrackingNo: "" };
+    assert.equal(unnamedFilledRowIssue([{ ...blank }]), null, "刚点「添加产品」的空白行不该拦");
+    assert.equal(unnamedFilledRowIssue([{ ...blank, itemName: "鞋", packageCount: "2" }, { ...blank }]), null);
+    assert.equal(unnamedFilledRowIssue([{ ...blank, itemName: "鞋", packageCount: "1", weightKg: "1" }, { ...blank, packageCount: "1", weightKg: "9" }]), "产品行2填了数据但没填品名：请补上品名，或者把这一行删掉");
+    for (const k of ["packageCount", "lengthCm", "widthCm", "heightCm", "weightKg", "productQuantity", "domesticTrackingNo"]) {
+      assert.ok(unnamedFilledRowIssue([{ ...blank, [k]: "1" }]), `只填了 ${k} 没填品名，没拦住`);
+    }
+    assert.equal(unnamedFilledRowIssue([{ ...blank, itemName: "  ", weightKg: "3" }]), "产品行1填了数据但没填品名：请补上品名，或者把这一行删掉", "品名只有空格也算没填");
+    // 三个入口都要在「按品名过滤」之前先过这一关
+    for (const [f, arr, anchor] of [
+      ["apps/web/src/app/client/page.tsx", "formProducts", "const hasProducts = formProducts.length > 0"],
+      ["apps/web/src/app/staff/page.tsx", "staffFormProducts", "const hasProducts = staffFormProducts.length > 0"],
+      ["apps/web/src/app/admin/page.tsx", "createProducts", "const validProducts = createProducts.filter(p => p.itemName.trim());"],
+    ] as const) {
+      const src = read(f);
+      const at = src.indexOf(anchor);
+      assert.ok(at >= 0, `${f} 找不到 ${anchor}`);
+      const before = src.slice(Math.max(0, at - 400), at);
+      assert.match(before, new RegExp(`unnamedFilledRowIssue\\(${arr}\\); if \\(unnamed\\) \\{ set(Toast|Message)\\(unnamed\\); return; \\}`), `${f} 提交前没拦「填了数据没填品名」的行`);
+    }
   });
 
   console.log(`\n通过 ${passed} / 失败 ${failed}`);

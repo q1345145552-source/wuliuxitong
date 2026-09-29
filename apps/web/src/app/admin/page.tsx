@@ -11,7 +11,7 @@ import { AT_WAREHOUSE_STATUSES, COMPLETED_STATUSES, CLIENT_STATUS_GROUP_ZH } fro
 import type { AiKnowledgeItem } from "../../../../../packages/shared-types/entities";
 import { getOptionalSession, type AuthSession } from "../../auth/auth-session";
 import AdminOperationsOverview from "../../components/admin/AdminOperationsOverview";
-import { validateProductRows, packageCountForPayload } from "../../modules/orders/productRowGuard";
+import { validateProductRows, packageCountForPayload, unnamedFilledRowIssue } from "../../modules/orders/productRowGuard";
 import EmptyStateCard from "../../modules/layout/EmptyStateCard";
 import Toast from "../../modules/layout/Toast";
 import ShipmentSearch from "../../modules/shipment/ShipmentSearch";
@@ -2922,6 +2922,7 @@ export default function AdminHomePage() {
               <button disabled={loading} onClick={async () => {
                 if (!createForm.clientId.trim()) { setMessage("请选择客户"); return; }
                 if (!createForm.trackingNo.trim()) { setMessage("请填写运单号"); return; }
+                { const unnamed = unnamedFilledRowIssue(createProducts); if (unnamed) { setMessage(unnamed); return; } }
                 const validProducts = createProducts.filter(p => p.itemName.trim());
                 if (validProducts.length === 0) { setMessage("请至少填写一个产品行"); return; }
                 // ⚠️ 跟另外三个入口同一份口径（箱数正整数、每箱几个全填或全空）

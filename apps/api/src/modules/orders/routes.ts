@@ -239,22 +239,24 @@ export function orderTotalsIssue(weightKg: number | null, volumeM3: number | nul
  * 会改 body 里的值 —— 后面都按理顺后的用。
  */
 function normalizeDomesticTrackingNos(body: { domesticTrackingNo?: unknown; products?: Array<{ domesticTrackingNo?: unknown }> }): string | null {
-  const fix = (v: unknown): { ok: boolean; value?: string } => {
+  const fix = (v: unknown): { ok: boolean; value?: string; why?: string } => {
     if (v === undefined || v === null) return { ok: true };
     if (typeof v === "string") return { ok: true, value: v };
     /* 只收「安全整数」：18 位这种长单号当数字传，JSON 解析那一步末几位就已经变了（123456789012345678 → …680），
        再转文字存进去就是一个错单号、后面查件对不上（Codex 复查 2026-09-30）。长单号必须按文字传 */
     if (typeof v === "number" && Number.isSafeInteger(v) && v >= 0) return { ok: true, value: String(v) };
-    return { ok: false };
+    // 传的就是数字、只是太长 / 负数 / 小数：别再说「要填文字或数字」，直接说怎么改（dsh 第三轮）
+    if (typeof v === "number") return { ok: false, why: "请按文字填写（当数字传，位数太长会被改掉；也不能是负数或小数）" };
+    return { ok: false, why: "要填文字或数字" };
   };
   const top = fix(body.domesticTrackingNo);
-  if (!top.ok) return "国内快递单号要填文字或数字";
+  if (!top.ok) return `国内快递单号${top.why}`;
   if (top.value !== undefined) body.domesticTrackingNo = top.value;
   for (let i = 0; i < (body.products?.length ?? 0); i += 1) {
     const row = body.products![i] as Record<string, unknown>;
     if (!row || typeof row !== "object") continue;
     const r = fix(row.domesticTrackingNo);
-    if (!r.ok) return `产品行${i + 1}的国内快递单号要填文字或数字`;
+    if (!r.ok) return `产品行${i + 1}的国内快递单号${r.why}`;
     if (r.value !== undefined) row.domesticTrackingNo = r.value;
     /* 长宽高、单箱重量写成「"12"」这种数字字符串（直接调接口 / 老客户端）：转成数字（Codex 复查 2026-09-29）。
        原来校验放行了字符串，写库那一步 Prisma 要的是数字 → 整单 500。空字符串当没填。
@@ -2097,6 +2099,10 @@ export function readCargoTypes(
   orderRaw: unknown,
   products: ReadonlyArray<{ cargoType?: string }> | undefined,
 ): { order: CargoType; products: CargoType[] } | { error: string } {
+  /* 产品行本身不是对象（null、字符串）：下面读 .cargoType 会当场抛错成 500。超管改单这条路先走这里、
+     后走 validateProductRows，那道中文提示轮不到（dsh 第三轮 2026-09-30）—— 在这里就用同一句话挡住 */
+  const badRow = (products ?? []).findIndex((product) => !product || typeof product !== "object");
+  if (badRow >= 0) return { error: `产品行${badRow + 1}的数据格式不对` };
   try {
     return {
       order: readCargoType(orderRaw, "整票"),
