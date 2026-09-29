@@ -160,6 +160,43 @@ async function main(): Promise<void> {
       assert.ok(await pm.adminLastmileOrder.findUnique({ where: { id: "zz_f29_lm9" } }), "派送单没了");
     });
 
+    await check("F1 删柜子和排派送单同一刻发生：两边排队，不会「派送单说排上了、马上被删柜连带删掉」（Codex 复核用真库打出来的空档）", async () => {
+      const { unloadAllItemsOfContainer } = await import("../apps/api/src/modules/shipments/unload-item");
+      const ctr = await pm.container.create({ data: { companyId: CO, containerNo: "ZZF29RACE", containerType: "40HQ", currentStatus: "LOADING", transportMode: "sea" } });
+      await mkOrder("zz_f29_o8");
+      await mkShip("zz_f29_s8", "zz_f29_o8", "ZZF29S8", "loaded", { packageCount: 0, volumeM3: 0, weightKg: 0 });
+      await mkShip("zz_f29_s8c", "zz_f29_o8", "ZZF29S8-1", "loaded", { parentTrackingNo: "ZZF29S8" });
+      await pm.shipmentContainerItem.create({ data: { containerId: ctr.id, shipmentId: "zz_f29_s8c", loadedPieceCount: 10, loadedVolumeM3: 1 } });
+      let reached!: () => void; const reachedP = new Promise<void>((r) => { reached = r; });
+      let resume!: () => void; const resumeP = new Promise<void>((r) => { resume = r; });
+      // 删柜子：查完「没排派送」、正要删柜内记录时停住
+      const deleting = pm.$transaction(async (tx: any) => {
+        await tx.$queryRaw`SELECT id FROM containers WHERE id = ${ctr.id} FOR UPDATE`;
+        const paused = new Proxy(tx, { get(tt: any, k: any) {
+          if (k !== "shipmentContainerItem") return tt[k];
+          return new Proxy(tt.shipmentContainerItem, { get(d: any, m: any) {
+            if (m !== "delete") return d[m];
+            return async (a: any) => { reached(); await resumeP; return d.delete(a); };
+          } });
+        } });
+        await unloadAllItemsOfContainer(paused, ctr.id, CO, { userId: ADMIN.userId, role: "admin", name: ADMIN.name });
+        await tx.container.delete({ where: { id: ctr.id } });
+      }, { timeout: 30_000, maxWait: 10_000 });
+      await reachedP;
+      // 这一刻另一个人把这票货排进派送单
+      const creating = call("POST /admin/lastmile/orders", ADMIN, { shipmentIds: ["zz_f29_s8c"], driverName: "司机", phoneNumber: "0800000000", deliveryDate: "2026-09-29" });
+      const early = await Promise.race([creating.then(() => "排上了"), new Promise((r) => setTimeout(() => r("在排队"), 1500))]);
+      resume();
+      await deleting;
+      const cr = await creating;
+      assert.equal(early, "在排队", "删柜还没做完，派送单就排上了（两边没有排队）");
+      assert.notEqual(cr.status, 200, `派送单接口说排上了，可这票货已经随柜子卸掉、派送单被连带删了：${JSON.stringify(cr.data)}`);
+      assert.match(cr.message, /不存在/, `排派送单那边的提示不对：${cr.message}`);
+      assert.equal(await pm.adminLastmileOrder.findFirst({ where: { shipmentId: "zz_f29_s8c" } }), null);
+      assert.equal(await pm.shipment.findUnique({ where: { id: "zz_f29_s8c" } }), null, "子单应该随删柜卸掉");
+      assert.equal((await pm.shipment.findUnique({ where: { id: "zz_f29_s8" } })).packageCount, 10, "父单件数没还回来");
+    });
+
     // ---------- F2 卸柜件数填超 ----------
     const ctrL = await pm.container.create({ data: { companyId: CO, containerNo: "ZZF29LD1", containerType: "40HQ", currentStatus: "LOADING", transportMode: "sea" } });
     await mkOrder("zz_f29_o2");
@@ -283,6 +320,64 @@ async function main(): Promise<void> {
       assert.equal(big.status, 400);
       assert.match(big.message, /图片太大/, `提示不是中文：${big.message}`);
       assert.doesNotMatch(big.message, /too large/i);
+    });
+
+    // ---------- F3 补：另外三种号（Codex 复核指出：原来只真跑了 JH 和 WD，这三种只查了源码里有没有那句话，
+    //            把生成函数改成永远返回同一个号，测试照样全绿） ----------
+    async function seqCase(label: string, create: () => Promise<string>, remove: (no: string) => Promise<void>, num: (no: string) => number): Promise<void> {
+      const a = await create();
+      const b = await create();
+      assert.ok(num(b) > num(a), `${label}：连建两张，第二张 ${b} 不比第一张 ${a} 大`);
+      await remove(b);
+      const c = await create();
+      assert.ok(num(c) > num(b), `${label}：删掉最新的 ${b} 再建，拿到 ${c}（号被回收了）`);
+    }
+    await check("F3 集货预报单号 JH-YW：连建两张号往上走；删掉最新那张再建，不拿回同一个号", async () => {
+      const task = await call("POST /client/consolidation/tasks", C1, { destinationTh: "曼谷" });
+      assert.equal(task.status, 200, task.message);
+      const taskRow = await pm.consolidationTask.findFirst({ where: { companyId: CO, clientId: C1.userId }, orderBy: { createdAt: "desc" } });
+      const product = { productName: "鞋", packageCount: 1, quantityPerBox: 1, unitWeightKg: 1, lengthCm: 10, widthCm: 10, heightCm: 10, material: "布", cargoValue: "10", cargoType: "normal" };
+      await seqCase("JH-YW",
+        async () => {
+          const r = await call("POST /client/consolidation/prealerts", C1, { taskId: taskRow.id, mark: "M", products: [product] });
+          assert.equal(r.status, 200, r.message);
+          return (await pm.consolidationPrealert.findFirst({ where: { companyId: CO, taskId: taskRow.id }, orderBy: { createdAt: "desc" } })).trackingNo;
+        },
+        async (no) => {
+          const row = await pm.consolidationPrealert.findFirst({ where: { companyId: CO, trackingNo: no } });
+          const d = await call("POST /client/consolidation/prealerts/delete", C1, { prealertId: row.id });
+          assert.equal(d.status, 200, d.message);
+        },
+        (no) => Number(no.replace("JH-YW", "")));
+    });
+    await check("F3 仓库版计划号 WHR、预报单号 WHRP：连建两张号往上走；删掉最新那张再建，不拿回同一个号", async () => {
+      const mkPlan = async () => {
+        const r = await call("POST /admin/whr-consolidation/plans", ADMIN, { destinationTh: "曼谷", totalVolumeM3: 68, customers: [{ clientId: C1.userId, unitPriceNormal: 100, unitPriceInspection: 200, unitPriceSensitive: 300 }] });
+        assert.equal(r.status, 200, r.message);
+        return r.data;
+      };
+      await seqCase("WHR",
+        async () => (await mkPlan()).planNo,
+        async (no) => {
+          const pl = await pm.whrConsolidationPlan.findFirst({ where: { companyId: CO, planNo: no } });
+          await pm.whrConsolidationPlanCustomer.deleteMany({ where: { planId: pl.id } });
+          await pm.whrConsolidationPlan.delete({ where: { id: pl.id } });
+        },
+        (no) => Number(no.replace("WHR", "")));
+      const pl = await mkPlan();
+      assert.equal((await call("POST /client/whr-consolidation/address", C1, { planId: pl.id, deliveryAddress: "曼谷一号" })).status, 200);
+      await seqCase("WHRP",
+        async () => {
+          const r = await call("POST /client/whr-consolidation/prealerts", C1, { planId: pl.id, mark: "P" });
+          assert.equal(r.status, 200, r.message);
+          return r.data.trackingNo;
+        },
+        async (no) => {
+          const row = await pm.whrConsolidationPrealert.findFirst({ where: { companyId: CO, trackingNo: no } });
+          await pm.whrConsolidationStatusLog.deleteMany({ where: { prealertId: row.id } });
+          await pm.whrConsolidationPrealert.delete({ where: { id: row.id } });
+        },
+        (no) => Number(no.replace("WHRP", "")));
     });
   } finally {
     await cleanup();

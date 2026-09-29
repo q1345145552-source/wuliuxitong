@@ -1,4 +1,5 @@
 import { BusinessError } from "../core/business-error";
+import { lockShipmentsChildrenFirst } from "./lock-shipments";
 
 /**
  * 把**一条柜内记录**整个卸下来：件数/方数/重量还给父单，然后删掉子单。
@@ -29,8 +30,11 @@ import { BusinessError } from "../core/business-error";
  * 9-02 定的「已签收的货也能卸、状态退回国内仓」从此改成：**先在「尾端派送」撤销签收（只有超管能撤）
  * 或把它从派送单里删掉，再来卸柜**。派送单只有 DELIVERING / SIGNED 两种状态，有一行就挡。
  *
- * ⚠️ 调用方必须已经拿到这票货（运单行）的锁：建派送单那条路也锁运单（lockShipmentsChildrenFirst），
- * 两边排队，不会出现「那边刚把它排进派送单、这边照样卸」。这里只读不加锁，不引入新的锁序。
+ * ⚠️ 查之前必须先锁住这票货（运单行）：建派送单那条路也锁运单（lockShipmentsChildrenFirst），
+ * 两边排队，才不会出现「这边刚查完说没排、那边马上排进派送单、这边照样卸，把新派送单连带删掉」。
+ * 第一版只在「卸柜」那条路先锁了运单，「删柜子」那条路是查完才锁 —— Codex 复核用真库把这个空档打出来了（2026-09-29）。
+ * 现在 unloadItemFully 自己先锁；删柜子那条路另外在最前面按「子单 → 父单、各自按 id」把整柜的运单一次锁齐，
+ * 跟建派送单同一个顺序，不会互相卡死。这里本身只读。
  */
 export async function assertNotInLastmile(tx: any, shipmentId: string, companyId: string, trackingNo?: string | null): Promise<void> {
   const rows: Array<{ deliveryNo: string; status: string }> = await tx.adminLastmileOrder.findMany({
@@ -90,7 +94,9 @@ export async function unloadItemFully(
   companyId: string,
   operator: UnloadOperator,
 ): Promise<{ 还给父单: boolean; 删了子单: boolean }> {
-  // 已经排了尾端派送的货不许卸（2026-09-29）：「删柜子」也走这里，一并挡住
+  // 已经排了尾端派送的货不许卸（2026-09-29）：「删柜子」也走这里，一并挡住。
+  // 先锁这票货再查（见 assertNotInLastmile 的说明）；调用方已经锁过的话，同一事务再锁一次不花钱。
+  await tx.$queryRaw`SELECT id FROM shipments WHERE id = ${item.shipment.id} AND company_id = ${companyId} FOR UPDATE`;
   await assertNotInLastmile(tx, item.shipment.id, companyId, item.shipment.trackingNo);
   await tx.shipmentContainerItem.delete({ where: { id: item.id } });
 
@@ -266,10 +272,24 @@ export async function unloadAllItemsOfContainer(
   });
   if (items.length === 0) return 0;
   const ordered = [...items].sort((a: any, b: any) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  if (ordered.some((it: any) => !it.shipment)) {
+    throw new BusinessError("柜内记录指向的运单不存在，请联系技术处理", 400, "VALIDATION_ERROR");
+  }
+  /**
+   * 先把整柜的运单（连同它们的父单）一次锁齐，再一条条卸（2026-09-29 Codex 复核）。
+   * 不锁的话，「查这票货有没有排派送单」和「删掉它」中间，别人能把它排进派送单，新派送单会被连带删掉。
+   * 顺序跟建派送单完全一样（lockShipmentsChildrenFirst：先子单、后父单，各自按 id 排），两边只会排队、不会互相卡死。
+   */
+  const parentNos = [...new Set(ordered.flatMap((it: any) => (it.shipment.parentTrackingNo ? [it.shipment.parentTrackingNo] : [])))];
+  const parents = parentNos.length > 0
+    ? await tx.shipment.findMany({ where: { trackingNo: { in: parentNos }, companyId }, select: { id: true } })
+    : [];
+  await lockShipmentsChildrenFirst(
+    tx,
+    [...new Set([...ordered.map((it: any) => it.shipment.id), ...parents.map((r: any) => r.id)])],
+    companyId,
+  );
   for (const it of ordered) {
-    if (!it.shipment) {
-      throw new BusinessError("柜内记录指向的运单不存在，请联系技术处理", 400, "VALIDATION_ERROR");
-    }
     await unloadItemFully(tx, it as UnloadableItem, companyId, operator);
   }
   return ordered.length;

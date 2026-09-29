@@ -43,25 +43,47 @@ async function check(name: string, body: () => Promise<void>): Promise<void> {
 /** 第 1～8 项不关心是谁点的，统一用这个人；记没记对人由第 9～14 项盯（2026-09-17 起操作人是必填参数） */
 const 测试员工 = { userId: "STAFF1", role: "staff", name: "测试员工" };
 
+/**
+ * 假的 shipment.findMany（2026-09-29）：删柜子前要先把整柜的运单连同父单一次锁齐（lockShipmentsChildrenFirst），
+ * 会按 id 查一批、按父单号查父单。这里按柜内记录 + 父单拼出来，不理会 select。
+ */
+function 假查运单(items: any[], parent: any) {
+  const all = [
+    ...items.map((i: any) => ({ id: i.shipment.id, trackingNo: i.shipment.trackingNo ?? i.shipment.id, parentTrackingNo: i.shipment.parentTrackingNo ?? null })),
+    ...(parent ? [{ id: parent.id, trackingNo: parent.trackingNo ?? "YW0001", parentTrackingNo: parent.parentTrackingNo ?? null }] : []),
+  ];
+  return async ({ where }: any) => {
+    if (where?.id?.in) return all.filter((r) => where.id.in.includes(r.id));
+    if (where?.trackingNo?.in) return all.filter((r) => where.trackingNo.in.includes(r.trackingNo));
+    return [];
+  };
+}
+
 /** 假 tx：记下所有写操作，不连任何数据库 */
 function makeTx(parent: any, items: any[] = []) {
-  const 记录 = { 删掉的柜内记录: [] as string[], 删掉的运单: [] as string[], 父单更新: null as any, 轨迹: [] as any[] };
+  const 记录 = { 删掉的柜内记录: [] as string[], 删掉的运单: [] as string[], 父单更新: null as any, 轨迹: [] as any[], 先后: [] as string[] };
   return {
     记录,
     tx: {
       // 2026-09-29：卸柜前先查这票货有没有排进尾端派送（assertNotInLastmile）；这些用例里都没排
       adminLastmileOrder: { findMany: async () => [] },
       shipmentContainerItem: {
-        delete: async ({ where }: any) => { 记录.删掉的柜内记录.push(where.id); },
+        delete: async ({ where }: any) => { 记录.删掉的柜内记录.push(where.id); 记录.先后.push(`删柜内记录:${where.id}`); },
         findMany: async () => items,
       },
       shipment: {
         findFirst: async () => parent,
+        findMany: 假查运单(items, parent),
         update: async ({ data }: any) => { 记录.父单更新 = data; return data; },
         delete: async ({ where }: any) => { 记录.删掉的运单.push(where.id); },
       },
       statusLog: { create: async ({ data }: any) => { 记录.轨迹.push(data); } },
-      $queryRaw: async () => [],
+      // 记下按 id 锁运单的先后（「删柜子」要先把整柜运单锁齐，再动任何一条记录）
+      $queryRaw: async (strings: TemplateStringsArray, ...values: any[]) => {
+        const sql = strings.join("?");
+        if (/FROM shipments\s+WHERE id =/.test(sql) && /FOR UPDATE/.test(sql)) 记录.先后.push(`锁运单:${values[0]}`);
+        return [];
+      },
     },
   };
 }
@@ -106,6 +128,7 @@ function 装路由假tx(opts: { item: any; parent?: any }) {
     },
     shipment: {
       findFirst: async () => opts.parent ?? null,
+      findMany: 假查运单(opts.item ? [opts.item] : [], opts.parent),
       delete: async () => {},
       update: async ({ where, data }: any) => {
         记录.运单更新次数 += 1;
@@ -233,6 +256,9 @@ async function main(): Promise<void> {
     assert.equal(n, 3, "没有把柜里三条都卸掉");
     assert.deepEqual(记录.删掉的柜内记录, ["i_a", "i_b", "i_c"], "没有按 id 排序处理 —— 会跟别处反向加锁");
     assert.deepEqual(记录.删掉的运单, ["s_a", "s_b", "s_c"], "子单没删干净 —— 会变成孤儿");
+    // 2026-09-29 Codex 复核：动任何一条之前，先按「子单 → 父单、各自按 id」把整柜的运单锁齐（跟建派送单同一个顺序），
+    // 不然「查有没有排派送」和「删」中间，别人能把货排进派送单，新派送单被连带删掉
+    assert.deepEqual(记录.先后.slice(0, 4), ["锁运单:s_a", "锁运单:s_b", "锁运单:s_c", "锁运单:s_parent"], `没先把整柜运单锁齐：${记录.先后.slice(0, 6).join(" → ")}`);
   });
 
   await check("6) 空柜子直接删，不用做别的", async () => {
@@ -466,6 +492,7 @@ async function main(): Promise<void> {
         },
         shipment: {
           findFirst: async () => ({ id: "s_parent", packageCount: 0, volumeM3: 0, weightKg: 0, currentStatus: "loaded" }),
+          findMany: 假查运单([{ id: "i_1", shipment: 子单({ id: "s_a" }) }, { id: "i_2", shipment: 子单({ id: "s_b" }) }], { id: "s_parent" }),
           update: async ({ data }: any) => data,
           delete: async () => {},
         },

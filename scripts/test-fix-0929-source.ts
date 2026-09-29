@@ -45,20 +45,24 @@ async function main(): Promise<void> {
   await check("G1 请求体超过上限：不发出去，当场报中文（说了多大、让压缩）；没超的照常发", async () => {
     calls.length = 0;
     await assert.rejects(
-      core.fetchWithSession("http://x/staff/orders/product-images", { method: "POST", body: JSON.stringify({ contentBase64: "A".repeat(9_900_000) }) }),
-      (e: any) => /图片太大/.test(e.message) && /压缩/.test(e.message) && /MB/.test(e.message),
+      core.fetchWithSession("http://x/staff/orders/product-images", { method: "POST", body: JSON.stringify({ contentBase64: "A".repeat(10_500_000) }) }),
+      (e: any) => /图片或文件太大/.test(e.message) && /压缩/.test(e.message) && /MB/.test(e.message),
     );
     assert.equal(calls.length, 0, "太大的请求照样发出去了（线上会卡 30 秒再报英文 500）");
     await core.fetchWithSession("http://x/ok", { method: "POST", body: JSON.stringify({ contentBase64: "A".repeat(1000) }) });
     assert.equal(calls.length, 1, "正常大小的请求没发出去");
+    // 1030 万字节：Next 转发实测过得去（10,400,000 字节 0.1 秒到接口），前端不许先挡（第一版 980 万会误挡整柜询价的多图请求）
+    await core.fetchWithSession("http://x/ok", { method: "POST", body: "A".repeat(10_300_000) });
+    assert.equal(calls.length, 2, "1030 万字节本来传得上去，被前端误挡了");
+    calls.length = 1;
     // 走 apiRequest 的上传（整柜询价、客服对话等）：同一句中文原样抛给页面，不被改成「服务器繁忙 / 请求超时」
-    await assert.rejects(core.apiRequest("http://x/api", { method: "POST", body: "A".repeat(9_900_000) }), (e: any) => /图片太大/.test(e.message));
+    await assert.rejects(core.apiRequest("http://x/api", { method: "POST", body: "A".repeat(10_500_000) }), (e: any) => /图片或文件太大/.test(e.message));
     assert.equal(calls.length, 1);
   });
 
   await check("G1 中文字按 UTF-8 算字节（一个汉字 3 个字节），不按字数算", async () => {
     calls.length = 0;
-    await assert.rejects(core.fetchWithSession("http://x/y", { method: "POST", body: "汉".repeat(3_400_000) }), /图片太大/);
+    await assert.rejects(core.fetchWithSession("http://x/y", { method: "POST", body: "汉".repeat(3_500_000) }), /图片或文件太大/);
     assert.equal(calls.length, 0, "3 百多万个汉字（1 千多万字节）照样发出去了");
   });
 
@@ -96,6 +100,10 @@ async function main(): Promise<void> {
     assert.equal(formatBreakdownVolume(2.369), "2.369");
     assert.equal(formatBreakdownVolume(0.057441), "0.057441");
     assert.equal(formatBreakdownVolume(0.0575), "0.0575");
+    // 极小的零头、快进位的值：不许剩个孤零零的小数点「0.」「2.」
+    assert.equal(formatBreakdownVolume(4e-7), "0.000");
+    assert.equal(formatBreakdownVolume(1.9999999), "2.000");
+    assert.equal(formatBreakdownVolume(20.0000004), "20.000");
     for (const f of ["apps/web/src/app/client/whr-consolidation/page.tsx", "apps/web/src/app/admin/whr-consolidation/page.tsx", "apps/web/src/app/staff/whr-consolidation/page.tsx"]) {
       const src = read(f);
       assert.doesNotMatch(src, /r\.volumeM3\.toFixed\(3\)/, `${f} 明细方数还是写死 3 位`);
@@ -114,6 +122,10 @@ async function main(): Promise<void> {
       const bare = read(f).split("\n").filter((l) => /\.toLocaleString\(\)/.test(l) && !/Date|date|time|Time/.test(l));
       assert.equal(bare.length, 0, `${f} 还有裸 toLocaleString()：${bare[0]?.trim().slice(0, 80)}`);
     }
+    // 整柜询价的报价：原来最少 0 位小数（「¥1,534.6」），点「接受报价」的确认框和转整柜那边是「¥1,534.60」（dsh 复核指出）
+    const fcl = read("apps/web/src/components/client/FclInquiryPanel.tsx");
+    assert.doesNotMatch(fcl, /minimumFractionDigits: 0/, "整柜询价的金额还是最少 0 位小数");
+    assert.match(fcl, /const money = \(n: number \| null\) => \(n == null \? "—" : `¥\$\{amount2\(n\)\}`\);/, "整柜询价的 money() 没走 amount2");
   });
 
   await check("G5 客户建预报单时图片没传上：记下是哪张、为什么，提示里说出来（不再吞掉照样说成功）", () => {

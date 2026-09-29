@@ -820,7 +820,8 @@ export function registerWhrConsolidationRoutes(app: MinimalHttpApp): void {
   // 4c. 从计划里移除参与客户（2026-08-07）
   //     ⚠️ 数据库对 whr_consolidation_prealerts 设的是 onDelete: Cascade，
   //     删这一行会把该客户的预报单、货物明细、产品图、状态日志全部级联删掉。
-  //     所以名下只要还有任何一条预报单（含已取消的）就一律不让删。
+  //     所以名下只要还有没取消的预报单就不让删（2026-09-29 起已取消的不算：取消那一刻钱已经退了，
+  //     原来连已取消的也算，客户一取消就永远移除不了）。
   // ==========================================================================
   app.post("/admin/whr-consolidation/customers/remove", async (req, res) => {
     const auth = requireRole(req, res, ["admin", "staff"]);

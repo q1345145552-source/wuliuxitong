@@ -9,6 +9,7 @@ import { useCurrentSessionBrand } from "../../modules/branding/useWorkbenchBrand
 import DetailModal from "../../modules/layout/DetailModal";
 import { formatBeijingTime } from "../../modules/staff/utils";
 import { beijingDate } from "../../modules/shared/beijing-date";
+import { amount2 } from "../../modules/shared/money-format";
 
 /* 2026-08-31（Codex 二轮）：列表接口不再下发 certFileBase64 / productImages 大字段
    （表格根本不显示它们），remark 客户角色也拿不到了——类型跟着后端同步。
@@ -52,7 +53,8 @@ export function inquiryStatusLabel(status: string, forClient: boolean): string {
   }
 }
 
-const money = (n: number | null) => (n == null ? "—" : `¥${n.toLocaleString("zh-CN", { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`);
+// 金额统一两位小数（跟「转整柜」确认框、别的页面一样用 amount2）：原来最少 0 位，1534.60 显示成「¥1,534.6」
+const money = (n: number | null) => (n == null ? "—" : `¥${amount2(n)}`);
 const statusColor = (status: string) =>
   status === "quoted" ? "var(--c-amber-deep)" : status === "accepted" ? "var(--c-green-deep)" : status === "converted" ? "var(--c-blue-deep)" : "var(--t-muted)";
 
