@@ -1,5 +1,5 @@
 import { PG_INT_MAX, requireSumWithinInt } from "../core/int-guard";
-import { DECIMAL_10_2, requireDecimal, requireSumWithinDecimal } from "../core/decimal-guard";
+import { DECIMAL_10_2, DECIMAL_10_3, requireDecimal, requireSumWithinDecimal } from "../core/decimal-guard";
 
 /**
  * 建单时产品行的校验（纯函数，方便单测）。
@@ -47,6 +47,10 @@ export function validateProductRows(rows: ProductRowForGuard[]): string | null {
    * 客户拿到的是一个「看起来很正常」的错数。宁可拦住让他补，也不能猜。
    */
   for (let i = 0; i < rows.length; i += 1) {
+    // 产品行本身不是对象（null、字符串）：下面一读字段就抛错成 500（dsh 复查 2026-09-29）
+    if (!rows[i] || typeof rows[i] !== "object") {
+      return `产品行${i + 1}的数据格式不对`;
+    }
     // 品名不是文字（数字、null、没带）：三个入口后面都直接 .trim()，原来当场 500（2026-09-29 实跑发现）
     if (typeof rows[i].itemName !== "string") {
       return `产品行${i + 1}的品名不对`;
@@ -129,6 +133,17 @@ export function validateProductRows(rows: ProductRowForGuard[]): string | null {
     DECIMAL_10_2,
   );
   if (wtSum) return wtSum;
+  /* 整票体积同理（dsh 复查 2026-09-29）：长 × 宽 × 高 × 箱数 ÷ 1,000,000 写进 Order.volumeM3（Decimal(10,3)），
+     把毫米当厘米填（6000 × 6000 × 6000 × 50 箱）就超了，原来写库溢出 500。只算三个尺寸都是正数的行，跟建单时算整票体积同一口径 */
+  const volSum = requireSumWithinDecimal(
+    rows.map((r) => {
+      const [l, w, h, pkg] = [r.lengthCm, r.widthCm, r.heightCm, r.packageCount].map((x) => (typeof x === "number" ? x : Number(x)));
+      return l > 0 && w > 0 && h > 0 && pkg > 0 ? (l * w * h * pkg) / 1_000_000 : 0;
+    }),
+    "产品行算出来的总体积(m³)",
+    DECIMAL_10_3,
+  );
+  if (volSum) return volSum;
 
   return null;
 }

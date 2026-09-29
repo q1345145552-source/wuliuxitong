@@ -84,7 +84,7 @@ import {
   type StaffBatchOrder,
 } from "../../modules/staff/batchOrderImport";
 import { beijingDate, beijingToday } from "../../modules/shared/beijing-date";
-import { nextAutoTotals } from "../../modules/orders/auto-totals";
+import { nextAutoTotals, orderDimsVolume, productRowTotals } from "../../modules/orders/auto-totals";
 import {
   shipmentStatusZh,
   warehouseLabelFromId,
@@ -280,8 +280,12 @@ export default function StaffHomePage() {
    * 更新长宽高并同步写入由尺寸换算得到的体积（m³）。
    */
   const updateOrderDimensions = (patch: Partial<Pick<typeof form, "lengthCm" | "widthCm" | "heightCm" | "packageCount">>) => {
+    /* 产品行算得出总体积时，总体积以产品行为准（后台也按产品行存）：改整票长宽高 / 箱数只改那一格，
+       不许把总体积改成整票算的数、更不许清空 —— 原来页面显示一个数、系统存另一个数（2026-09-30 自查） */
+    const rowsVolume = productRowTotals(staffFormProducts).volStr;
     setForm((prev) => {
       const next = { ...prev, ...patch };
+      if (rowsVolume !== null) return next;
       const l = Number(String(next.lengthCm).trim());
       const w = Number(String(next.widthCm).trim());
       const h = Number(String(next.heightCm).trim());
@@ -304,8 +308,10 @@ export default function StaffHomePage() {
    * ⚠️ 守卫按**本次输入后**的值判断（不能拿闭包里的旧 form 判，否则填完最后一格不会触发重算）。
    */
   const updateModalOrderDimension = (patch: Partial<Pick<typeof form, "lengthCm" | "widthCm" | "heightCm">>) => {
+    const rowsVolume = productRowTotals(staffFormProducts).volStr; // 同上：产品行算得出总体积就不动它
     setForm((prev) => {
       const next = { ...prev, ...patch };
+      if (rowsVolume !== null) return next;
       const l = Number(String(next.lengthCm).trim());
       const w = Number(String(next.widthCm).trim());
       const h = Number(String(next.heightCm).trim());
@@ -705,33 +711,20 @@ export default function StaffHomePage() {
   const autoTotalsRef = useRef<{ volumeM3: string | null; weightKg: string | null }>({ volumeM3: null, weightKg: null });
   // Auto-fill volume and weight from multi-product form
   useEffect(() => {
-    /* 不再「没有产品行就不管」（dsh 复核 2026-09-29）：把唯一一行产品删掉时，上一次自动填的合计会留在框里、
-       跟着提交进订单。空表按 0 算，走下面「自动填的才清」那条路；人手填的照旧不动。 */
-    const totalVol = staffFormProducts.reduce((s, p) => {
-      const pkg = Number(p.packageCount) || 0;
-      const l = Number(p.lengthCm) || 0;
-      const w = Number(p.widthCm) || 0;
-      const h = Number(p.heightCm) || 0;
-      return s + ((l > 0 && w > 0 && h > 0) ? (l * w * h * pkg) / 1_000_000 : 0);
-    }, 0);
-    const totalWt = staffFormProducts.reduce((s, p) => {
-      const pkg = Number(p.packageCount) || 0;
-      const wt = Number(p.weightKg) || 0;
-      return s + wt * pkg;
-    }, 0);
-    /* 产品行算出来是 0（比如把尺寸、重量清空了）时，原来保留上一次自动填的合计 —— 页面显示 0，
-       提交的却是清空前那个数（2026-09-29 Codex 全系统检查）。现在：上一次是自动填的就跟着清空；
-       是人手填的（跟上次自动填的不一样）就不动。 */
+    /* 产品行一变就重填总体积 / 总重量。怎么填、为什么这样填，见 modules/orders/auto-totals.ts（员工页和客户页共用）：
+       产品行算得出就用产品行的（框只读）；算不出就只清「上一次自动填的」；产品行删光、整票长宽高还在就按整票算体积。 */
     const auto = autoTotalsRef.current;
-    const volStr = totalVol > 0 ? String(totalVol.toFixed(6)) : null;
-    const wtStr = totalWt > 0 ? String(totalWt.toFixed(2)) : null;
+    const { volStr, wtStr } = productRowTotals(staffFormProducts);
+    const noRows = staffFormProducts.length === 0;
     setForm((v) => {
-      // 怎么填、为什么这样填，见 modules/orders/auto-totals.ts（员工页和客户页共用一份）
-      const next = nextAutoTotals({ volumeM3: v.volumeM3, weightKg: v.weightKg ?? "" }, auto, volStr, wtStr);
+      const volToFill = volStr ?? (noRows ? orderDimsVolume(v) : null);
+      const next = nextAutoTotals({ volumeM3: v.volumeM3, weightKg: v.weightKg ?? "" }, auto, volToFill, wtStr);
       autoTotalsRef.current = next.memory;
       return { ...v, volumeM3: next.volumeM3, weightKg: next.weightKg };
     });
   }, [staffFormProducts]);
+  // 产品行算得出总重量时，总重量框只读（后台按产品行存，手改了也不认 —— 页面和系统两个数，dsh 复查 2026-09-29）
+  const productWeightLocked = useMemo(() => productRowTotals(staffFormProducts).wtStr !== null, [staffFormProducts]);
 
   const isStaffSectionId = (value: string): value is StaffSectionId =>
     STAFF_SECTION_IDS.includes(value as StaffSectionId);
@@ -2601,7 +2594,7 @@ export default function StaffHomePage() {
                   <option value="bag">袋</option>
                 </select>
                 <input type="number" step="0.001" value={form.volumeM3} readOnly={staffFormProducts.length > 0} onChange={(e) => setForm((v) => ({ ...v, volumeM3: e.target.value }))} placeholder="总体积（m³）" style={orderCreateInputStyle} />
-                <input type="number" step="0.01" value={form.weightKg} onChange={(e) => setForm((v) => ({ ...v, weightKg: e.target.value }))} placeholder="总重量（kg）" style={orderCreateInputStyle} />
+                <input type="number" step="0.01" value={form.weightKg} readOnly={productWeightLocked} title={productWeightLocked ? "按产品行的单箱重量自动算，要改请改产品行" : undefined} onChange={(e) => setForm((v) => ({ ...v, weightKg: e.target.value }))} placeholder={productWeightLocked ? "总重量（按产品行自动算）" : "总重量（kg）"} style={orderCreateInputStyle} />
               </div>
               <select value={form.transportMode} onChange={(e) => setForm((v) => ({ ...v, transportMode: e.target.value as "sea" | "land" }))} style={orderCreateInputStyle}>
                 <option value="sea">海运</option>

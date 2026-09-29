@@ -242,7 +242,9 @@ function normalizeDomesticTrackingNos(body: { domesticTrackingNo?: unknown; prod
   const fix = (v: unknown): { ok: boolean; value?: string } => {
     if (v === undefined || v === null) return { ok: true };
     if (typeof v === "string") return { ok: true, value: v };
-    if (typeof v === "number" && Number.isFinite(v)) return { ok: true, value: String(v) };
+    /* 只收「安全整数」：18 位这种长单号当数字传，JSON 解析那一步末几位就已经变了（123456789012345678 → …680），
+       再转文字存进去就是一个错单号、后面查件对不上（Codex 复查 2026-09-30）。长单号必须按文字传 */
+    if (typeof v === "number" && Number.isSafeInteger(v) && v >= 0) return { ok: true, value: String(v) };
     return { ok: false };
   };
   const top = fix(body.domesticTrackingNo);

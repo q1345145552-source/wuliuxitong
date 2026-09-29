@@ -1647,7 +1647,12 @@ async function main() {
       const fee = await ask({ shipments: fx, message: "运费多少" });
       assert.ok(!/(总单量|符合条件)：/.test(fee.answer), `「运费多少」不该报单量：\n${fee.answer}`);
       // 带「几件 / 多少件」的服务问题（dsh 复核）：照旧走服务问答，不许回一个无关的单量
-      for (const message of ["破损了几件怎么办", "有几件货破损了怎么赔", "几件货能寄吗", "丢了几件怎么办", "丢件了几件怎么办"]) {
+      // 反过来：带「丢了 / 少件」但问的是数量的，要给数字，不许被服务问答截走、也不许反问（dsh 第二轮复查）
+      for (const message of ["少件的有多少", "丢了多少件", "到了几件", "我有几件货", "我有多少件货", "这个月丢了几单", "少件的有几票"]) {
+        const r = await ask({ shipments: fx, message });
+        assert.ok(/(总单量|符合条件)：/.test(r.answer), `「${message}」问的是数量，应该给数字：\n${r.answer}`);
+      }
+      for (const message of ["破损了几件怎么办", "有几件货破损了怎么赔", "几件货能寄吗", "丢了几件怎么办", "丢件了几件怎么办", "丢了几单怎么赔"]) {
         const r = await ask({ shipments: fx, message });
         assert.ok(!/(总单量|符合条件)：/.test(r.answer), `「${message}」是服务问题，不该报单量：\n${r.answer}`);
         assert.ok(!/还不太确定/.test(r.answer), `「${message}」是服务问题，不该反问「你想看哪一项」：\n${r.answer}`);

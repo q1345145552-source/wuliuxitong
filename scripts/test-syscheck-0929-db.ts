@@ -161,6 +161,15 @@ async function main(): Promise<void> {
         assert.equal(r.status, 400, `第 ${i + 1} 个负数请求没挡住（${r.status}）：${r.message}`);
         assert.match(r.message, /不小于 0|太大了/, `第 ${i + 1} 个提示不对：${r.message}`);
       });
+      // 产品行算出来的总体积超过能存的范围（把毫米当厘米填）、产品行是 null：给中文提示，不许写库 500（dsh 第二轮复查）
+      for (const [path, auth, extra] of [["POST /client/prealerts", C1, {}], ["POST /staff/orders", STAFF, { clientId: C1.userId, trackingNo: "ZZSC29BIG1", arrivedAt: "2026-09-20" }]] as const) {
+        const big = await call(path, auth as Auth, { ...base, ...extra, products: [{ itemName: "鞋", packageCount: 50, lengthCm: 6000, widthCm: 6000, heightCm: 6000 }] });
+        assert.equal(big.status, 400, `${path} 体积溢出没挡住（${big.status}）：${big.message}`);
+        assert.match(big.message, /总体积/, big.message);
+        const nul = await call(path, auth as Auth, { ...base, ...extra, products: [null] });
+        assert.equal(nul.status, 400, `${path} products:[null]（${nul.status}）：${nul.message}`);
+        assert.match(nul.message, /格式不对/, nul.message);
+      }
       assert.equal(await pm.order.count({ where: { companyId: CO } }), before, "负数的单被建出来了");
       const ok = await call("POST /client/prealerts", C1, { ...base, weightKg: 12.34, volumeM3: 0.5 });
       assert.equal(ok.status, 200, `正常的单建不了：${ok.message}`);
@@ -238,6 +247,22 @@ async function main(): Promise<void> {
       const bad = await call("POST /client/prealerts", C1, { warehouseId: "wh_yiwu_01", itemName: "对象单号", packageCount: 1, transportMode: "sea", domesticTrackingNo: { a: 1 } });
       assert.equal(bad.status, 400, `对象单号：${bad.status} ${bad.message}`);
       assert.match(bad.message, /国内快递单号/);
+      // 18 位长单号当数字传：JSON 解析时末几位已经变了，不许存成一个错单号；按文字传的原样存（Codex 复查 2026-09-30）
+      for (const [label, extra] of [
+        ["整单长单号", { domesticTrackingNo: 123456789012345678 }],
+        ["产品行长单号", { products: [{ itemName: "产品行长单号", packageCount: 1, domesticTrackingNo: 123456789012345678 }] }],
+        ["负数单号", { domesticTrackingNo: -5 }],
+        ["小数单号", { domesticTrackingNo: 12.5 }],
+      ] as const) {
+        const r = await call("POST /client/prealerts", C1, { warehouseId: "wh_yiwu_01", itemName: label, packageCount: 1, transportMode: "sea", ...extra });
+        assert.equal(r.status, 400, `${label}应该拦下：${r.status} ${r.message}`);
+        assert.match(r.message, /国内快递单号要填文字或数字/);
+        assert.equal(await pm.order.count({ where: { companyId: CO, itemName: label } }), 0, `${label}拦了还是建了单`);
+      }
+      const longStr = await call("POST /client/prealerts", C1, { warehouseId: "wh_yiwu_01", itemName: "文字长单号", packageCount: 1, transportMode: "sea", domesticTrackingNo: "123456789012345678" });
+      assert.equal(longStr.status, 200, `文字长单号：${longStr.status} ${longStr.message}`);
+      const lo = await pm.order.findFirst({ where: { companyId: CO, itemName: "文字长单号" }, include: { products: true } });
+      assert.equal(lo.products[0].domesticTrackingNo, "123456789012345678", "按文字传的长单号被改了");
       const staffNum = await call("POST /staff/orders", STAFF, { clientId: C1.userId, trackingNo: "ZZSC29DN1", warehouseId: "wh_yiwu_01", itemName: "员工数字单号", packageCount: 2, transportMode: "sea", arrivedAt: "2026-09-20", domesticTrackingNo: 67890, volumeM3: 0.8 });
       assert.equal(staffNum.status, 200, `员工数字单号：${staffNum.status} ${staffNum.message}`);
       const so = await pm.order.findFirst({ where: { companyId: CO, itemName: "员工数字单号" }, include: { products: true } });

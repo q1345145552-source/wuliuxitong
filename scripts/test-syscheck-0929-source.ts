@@ -46,8 +46,14 @@ async function main(): Promise<void> {
     assert.equal(d.packageUnit, "bag");
     assert.equal(d.packageCount, 3);
     assert.deepEqual(readStrictNumber("12cm"), { value: 12, bad: false, raw: "12cm" });
-    assert.equal(readStrictNumber("1,200").value, 1200, "千分位「1,200」应该认成 1200（dsh 复核）");
+    assert.deepEqual(readStrictNumber("1,200"), { value: 1200, bad: false, raw: "1,200" }, "千分位「1,200」应该认成 1200（dsh 复核）");
+    assert.deepEqual(readStrictNumber("12,345.6kg"), { value: 12345.6, bad: false, raw: "12,345.6kg" });
+    assert.equal(readStrictNumber("1，200").value, 1200, "中文逗号的千分位也认");
     assert.equal(readStrictNumber("1,2").bad, true, "「1,2」不是千分位，不许认成 12");
+    // 逗号跑到小数部分：原来删了逗号变成另一个数（1.2,300 → 1.23），还不标红（Codex 复查 2026-09-30）
+    for (const v of ["1.2,300", "1.23,000", "12.34,567", "1,20", "1,2345", ",200", "1,,200"]) {
+      assert.equal(readStrictNumber(v).bad, true, `「${v}」写错了，要标红，不许悄悄认成别的数（认成了 ${readStrictNumber(v).value}）`);
+    }
     assert.equal(readStrictNumber("1.2.3").bad, true);
     assert.equal(readStrictNumber("").bad, false);
   });
@@ -72,6 +78,9 @@ async function main(): Promise<void> {
       const src = read(f);
       assert.doesNotMatch(src, /parseInt\(r\.packageCount\)|parseInt\(r\.quantityPerBox\)|parseFloat\(r\.(unitWeightKg|lengthCm|widthCm|heightCm)\)/, `${f} 还在用只读开头的 parseInt / parseFloat`);
       assert.match(src, /isPositiveIntText\(r\.packageCount\)/, `${f} 件数没整格核对`);
+      // 装箱数量、单件重量、长宽高也要各自接上（Codex 复查：原来只查了件数那一处）
+      assert.match(src, /isPositiveIntText\(r\.quantityPerBox\)/, `${f} 装箱数量没整格核对`);
+      assert.match(src, /for \(const \[label, v\] of \[\["单件重量", r\.unitWeightKg\], \["长", r\.lengthCm\], \["宽", r\.widthCm\], \["高", r\.heightCm\]\] as const\) \{\s*if \(!isPositiveNumberText\(v\)\) \{/, `${f} 单件重量 / 长宽高没整格核对`);
     }
   });
 
@@ -127,46 +136,55 @@ async function main(): Promise<void> {
     const fcl = read("apps/web/src/app/client/fcl-containers/page.tsx");
     assert.match(fcl, /const seq = \+\+detailSeqRef\.current;[\s\S]{0,200}if \(seq !== detailSeqRef\.current\) return;/, "整柜详情没认主人");
     const home = read("apps/web/src/app/client/page.tsx");
-    assert.match(home, /setToast\(error instanceof Error && error\.message \? `创建失败：\$\{error\.message\}` : "创建失败"\);/, "客户建预报单失败还是只弹「创建失败」（后端的中文原因被吞了）");
+    assert.match(home, /const why = error instanceof TypeError \? "网络连接异常，请检查网络后重试" : error instanceof Error \? error\.message : "";\s*setToast\(why \? `创建失败：\$\{why\}` : "创建失败"\);/, "客户建预报单失败还是只弹「创建失败」（后端的中文原因被吞了），或者断网时把英文原文带出来");
         const addr = read("apps/web/src/app/client/address-book/page.tsx");
     assert.match(addr, /设为默认失败：/);
     assert.match(addr, /删除失败：/);
   });
 
-  await check("P7 自动填的总体积 / 总重量：加行自动填、删光跟着清；手改过的重量不被产品行覆盖（员工、客户两页共用一份）", async () => {
-    const { nextAutoTotals } = await import("../apps/web/src/modules/orders/auto-totals");
-    // 一步步模拟页面上的操作（Codex 复查：上一版只查源码写法，照不到「删光」「手改后再改品名」）
+  await check("P7 自动填的总体积 / 总重量：跟后台口径一致（产品行算得出就用产品行的、框只读、改整票尺寸也不动它）；算不出只清自动填的；删光产品行按整票长宽高算体积", async () => {
+    const { nextAutoTotals, productRowTotals, orderDimsVolume } = await import("../apps/web/src/modules/orders/auto-totals");
+    assert.deepEqual(productRowTotals([{ packageCount: "2", lengthCm: "10", widthCm: "10", heightCm: "10", weightKg: "3" }]), { volStr: "0.002000", wtStr: "6.00" });
+    assert.deepEqual(productRowTotals([{ packageCount: "2", lengthCm: "", widthCm: "10", heightCm: "10", weightKg: "" }]), { volStr: null, wtStr: null });
+    assert.equal(orderDimsVolume({ lengthCm: "100", widthCm: "100", heightCm: "100", packageCount: "2" }), "2");
+    assert.equal(orderDimsVolume({ lengthCm: "", widthCm: "100", heightCm: "100", packageCount: "2" }), null);
+    // 一步步模拟页面操作
     let form = { volumeM3: "", weightKg: "" };
     let mem = { volumeM3: null as string | null, weightKg: null as string | null };
     const step = (vol: string | null, wt: string | null) => { const n = nextAutoTotals(form, mem, vol, wt); form = { volumeM3: n.volumeM3, weightKg: n.weightKg }; mem = n.memory; };
-    step("0.002000", "6.00");                       // 加一行、填尺寸重量
-    assert.deepEqual(form, { volumeM3: "0.002000", weightKg: "6.00" });
-    step(null, null);                                // 把唯一一行删掉
+    form = { ...form, weightKg: "9.5" };             // 还没产品行时手填总重量
+    step(null, null);                                // 加了一行但还没填尺寸重量
+    assert.equal(form.weightKg, "9.5", "产品行还算不出重量时，手填的不许动");
+    step("0.002000", "6.00");                       // 产品行填了单箱重量 → 按产品行（后台也按产品行存，框只读）
+    assert.deepEqual(form, { volumeM3: "0.002000", weightKg: "6.00" }, "产品行算得出时没跟产品行（页面显示的跟系统存的会对不上）");
+    step(null, null);                                // 把唯一一行删掉（整票长宽高没填）
     assert.deepEqual(form, { volumeM3: "", weightKg: "" }, "删光产品行后自动填的合计没清");
-    step("0.002000", "6.00");                       // 再加回来
-    form = { ...form, weightKg: "9.5" };             // 按实际称重手改总重量
-    step("0.002000", "6.00");                       // 改一下品名（产品行合计没变）
-    assert.equal(form.weightKg, "9.5", "手改的重量被产品行改回去了");
-    step("0.004000", "12.00");                      // 箱数改了，合计变了
-    assert.equal(form.weightKg, "9.5", "手改的重量被新合计覆盖了");
-    assert.equal(form.volumeM3, "0.004000", "体积框（有产品行时只读）没跟着产品行");
-    step(null, null);                                // 删光
-    assert.equal(form.weightKg, "9.5", "删光产品行时把手填的重量也清了");
-    assert.equal(form.volumeM3, "", "删光后自动填的体积没清");
-    form = { ...form, weightKg: "" };                // 把手填的清掉
-    step(null, "3.00");                              // 再加一行只有重量
-    assert.equal(form.weightKg, "3.00", "框空着时应该用自动算的");
-    // 不分产品行时按整票尺寸算出来的体积（不是产品行自动填的）：加产品行前后都不许被「清空」逻辑误清
-    let f2 = { volumeM3: "0.024000", weightKg: "" }; let m2 = { volumeM3: null as string | null, weightKg: null as string | null };
-    const n2 = nextAutoTotals(f2, m2, null, null);
-    assert.equal(n2.volumeM3, "0.024000", "不是自动填的体积被清了");
-    // 两页都用这一份
+    step("2", null);                                 // 删光时整票长宽高还在：按整票算体积（页面传进来的是 orderDimsVolume）
+    assert.equal(form.volumeM3, "2");
+    form = { volumeM3: "0.024000", weightKg: "" }; mem = { volumeM3: null, weightKg: null };
+    step(null, null);                                // 不是自动填的体积（按整票尺寸算、人手填），不许被清
+    assert.equal(form.volumeM3, "0.024000", "不是自动填的体积被清了");
+    // 两页都用这一份；总重量框在产品行算得出时只读
     for (const f of ["apps/web/src/app/staff/page.tsx", "apps/web/src/app/client/page.tsx"]) {
       const src = read(f);
-      const eff = src.slice(src.indexOf("// Auto-fill volume and weight from multi-product form"), src.indexOf("autoTotalsRef.current = next.memory;"));
-      assert.ok(eff.length > 0, `${f} 没用 nextAutoTotals`);
+      // 两头都要找得到：找不到时 indexOf 是 -1，slice(开头, -1) 照样切出一大段，测试会假绿（Codex 复查 2026-09-30）
+      const effStart = src.indexOf("// Auto-fill volume and weight from multi-product form");
+      const effEnd = src.indexOf("autoTotalsRef.current = next.memory;", effStart);
+      assert.ok(effStart >= 0 && effEnd > effStart, `${f} 自动填合计那段找不到，或者没把这次自动填的值记下来（autoTotalsRef 不更新，下一次就分不清哪个是自动填的）`);
+      const eff = src.slice(effStart, effEnd);
+      assert.match(eff, /nextAutoTotals\(/, `${f} 没用 nextAutoTotals`);
       assert.doesNotMatch(eff, /\.length === 0\) return;/, `${f} 产品行删光时还是直接 return`);
-      assert.match(src, /const next = nextAutoTotals\(\{ volumeM3: v\.volumeM3, weightKg: v\.weightKg \?\? "" \}, auto, volStr, wtStr\);/);
+      assert.match(eff, /const volToFill = volStr \?\? \(noRows \? orderDimsVolume\(v\) : null\);/, `${f} 删光产品行时没按整票长宽高算体积`);
+      assert.match(src, /const productWeightLocked = useMemo\(\(\) => productRowTotals\(/, `${f} 没算「总重量框要不要只读」`);
+      assert.match(src, /readOnly=\{productWeightLocked\}/, `${f} 总重量框在产品行算得出时还能手改`);
+      // 改整票长宽高 / 箱数不许覆盖产品行算的总体积（2026-09-30 自查：原来会改成整票算的数，箱数一改甚至清空）
+      const setters = f.endsWith("staff/page.tsx") ? ["const updateOrderDimensions", "const updateModalOrderDimension"] : ["const updateOrderDimensions"];
+      for (const name of setters) {
+        const at = src.indexOf(name);
+        assert.ok(at >= 0, `${f} 找不到 ${name}`);
+        const body = src.slice(at, src.indexOf("\n  };", at));
+        assert.match(body, /const rowsVolume = productRowTotals\((formProducts|staffFormProducts)\)\.volStr;[\s\S]*const next = \{ \.\.\.prev, \.\.\.patch \};\s*if \(rowsVolume !== null\) return next;/, `${f} ${name} 会把产品行算的总体积改掉`);
+      }
     }
   });
 
