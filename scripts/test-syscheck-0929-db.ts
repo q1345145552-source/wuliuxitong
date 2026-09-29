@@ -132,7 +132,7 @@ async function main(): Promise<void> {
       await pm.adminLastmileOrder.create({ data: { id: "zz_sc29_lm1a", companyId: CO, deliveryNo: "ZZSC29D1A", shipmentId: "zz_sc29_s1", carrierName: "车队", externalTrackingNo: "X", status: "SIGNED", signImageBase64: PNG } });
       await pm.adminLastmileOrder.create({ data: { id: "zz_sc29_lm1b", companyId: CO, deliveryNo: "ZZSC29D1B", shipmentId: "zz_sc29_s1", carrierName: "车队", externalTrackingNo: "X", status: "SIGNED", signImageBase64: PNG } });
       const r = await call("POST /admin/lastmile/unsign", ADMIN, { id: "zz_sc29_lm1a" });
-      assert.notEqual(r.status, 200, "两张都签收了，撤一张照样撤了");
+      assert.equal(r.status, 409, `两张都签收了，撤一张没挡成 409（${r.status}）：${r.message}`);
       assert.match(r.message, /ZZSC29D1B/, `提示里没说另一张是哪张：${r.message}`);
       assert.equal((await pm.shipment.findUnique({ where: { id: "zz_sc29_s1" } })).currentStatus, "delivered", "运单被改回派送中了");
       assert.equal((await pm.adminLastmileOrder.findUnique({ where: { id: "zz_sc29_lm1a" } })).status, "SIGNED");
@@ -222,6 +222,21 @@ async function main(): Promise<void> {
       const o2 = await pm.order.findFirst({ where: { companyId: CO, itemName: "包" }, include: { products: true } });
       assert.equal(o2.products[0].domesticTrackingNo, "货拉拉", "没填单号时应该是默认的「货拉拉」");
       assert.equal(o2.products[0].lengthCm, null);
+    });
+
+    await check("S5b 国内快递单号写成数字照样收下（原来 .trim() 抛错 500）；写成别的类型给中文提示；员工不分产品行时长宽高也进产品明细", async () => {
+      const num = await call("POST /client/prealerts", C1, { warehouseId: "wh_yiwu_01", itemName: "数字单号", packageCount: 1, transportMode: "sea", domesticTrackingNo: 12345 });
+      assert.equal(num.status, 200, `数字单号：${num.status} ${num.message}`);
+      const o = await pm.order.findFirst({ where: { companyId: CO, itemName: "数字单号" }, include: { products: true } });
+      assert.equal(o.products[0].domesticTrackingNo, "12345");
+      const bad = await call("POST /client/prealerts", C1, { warehouseId: "wh_yiwu_01", itemName: "对象单号", packageCount: 1, transportMode: "sea", domesticTrackingNo: { a: 1 } });
+      assert.equal(bad.status, 400, `对象单号：${bad.status} ${bad.message}`);
+      assert.match(bad.message, /国内快递单号/);
+      const staffNum = await call("POST /staff/orders", STAFF, { clientId: C1.userId, trackingNo: "ZZSC29DN1", warehouseId: "wh_yiwu_01", itemName: "员工数字单号", packageCount: 2, transportMode: "sea", arrivedAt: "2026-09-20", domesticTrackingNo: 67890, lengthCm: 50, widthCm: 40, heightCm: 30 });
+      assert.equal(staffNum.status, 200, `员工数字单号：${staffNum.status} ${staffNum.message}`);
+      const so = await pm.order.findFirst({ where: { companyId: CO, itemName: "员工数字单号" }, include: { products: true } });
+      assert.equal(so.products[0].domesticTrackingNo, "67890");
+      assert.deepEqual([so.products[0].lengthCm, so.products[0].widthCm, so.products[0].heightCm], [50, 40, 30], "员工不分产品行时长宽高没进产品明细");
     });
 
     // ---------- S6 ----------

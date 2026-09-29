@@ -231,6 +231,30 @@ export function orderTotalsIssue(weightKg: number | null, volumeM3: number | nul
   return null;
 }
 
+/**
+ * 建单时的国内快递单号（整票的、每个产品行的）只认文字；数字（直接调接口常这么传）转成文字收下（2026-09-29）。
+ * 别的类型给一句中文提示。会改 body 里的值 —— 后面都按文字用。
+ */
+function normalizeDomesticTrackingNos(body: { domesticTrackingNo?: unknown; products?: Array<{ domesticTrackingNo?: unknown }> }): string | null {
+  const fix = (v: unknown): { ok: boolean; value?: string } => {
+    if (v === undefined || v === null) return { ok: true };
+    if (typeof v === "string") return { ok: true, value: v };
+    if (typeof v === "number" && Number.isFinite(v)) return { ok: true, value: String(v) };
+    return { ok: false };
+  };
+  const top = fix(body.domesticTrackingNo);
+  if (!top.ok) return "国内快递单号要填文字或数字";
+  if (top.value !== undefined) body.domesticTrackingNo = top.value;
+  for (let i = 0; i < (body.products?.length ?? 0); i += 1) {
+    const row = body.products![i];
+    if (!row || typeof row !== "object") continue;
+    const r = fix(row.domesticTrackingNo);
+    if (!r.ok) return `产品行${i + 1}的国内快递单号要填文字或数字`;
+    if (r.value !== undefined) row.domesticTrackingNo = r.value;
+  }
+  return null;
+}
+
 /** 页面上填的尺寸：是正数、能存下就用，否则当没填（不拿它挡单 —— 尺寸本来就是选填的） */
 function positiveDimOrNull(raw: unknown): number | null {
   if (raw === undefined || raw === null || raw === "") return null;
@@ -276,6 +300,12 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
         domesticTrackingNo?: string;
       }>;
     };
+
+    // 国内快递单号写成数字、或者不是文字（dsh 复核 2026-09-29）：原来 .trim() 当场抛错成 500。数字转成文字收下，别的给中文提示
+    {
+      const dnIssue = normalizeDomesticTrackingNos(body);
+      if (dnIssue) { fail(res, 400, "VALIDATION_ERROR", dnIssue); return; }
+    }
 
     /**
      * ⚠️⚠️ **客户建单这条路以前完全没有这道校验**（2026-08-29 补）。
@@ -824,6 +854,10 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
       receiverAddressTh?: string;
       warehouseId?: string;
       remark?: string;
+      /** 不分产品行时表单上填的整票长宽高（cm），存进兜底产品行（2026-09-29） */
+      lengthCm?: unknown;
+      widthCm?: unknown;
+      heightCm?: unknown;
       products?: Array<{
         itemName: string;
         packageCount: number;
@@ -836,6 +870,12 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
         domesticTrackingNo?: string;
       }>;
     };
+
+    // 国内快递单号写成数字、或者不是文字（dsh 复核 2026-09-29）：原来 .trim() 当场抛错成 500。数字转成文字收下，别的给中文提示
+    {
+      const dnIssue = normalizeDomesticTrackingNos(body);
+      if (dnIssue) { fail(res, 400, "VALIDATION_ERROR", dnIssue); return; }
+    }
 
     /**
      * 产品行的校验统一交给 product-row-guard（2026-08-29 抽出去了，方便单测）。
@@ -886,9 +926,10 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
       : body.itemName ? [{
           itemName: body.itemName.trim(),
           packageCount: Number(body.packageCount ?? 0),
-          lengthCm: null,
-          widthCm: null,
-          heightCm: null,
+          // 员工在表单上填的整票长宽高也存进这一行（dsh 复核 2026-09-29：客户那条路这次修了，员工这条一样写死空）
+          lengthCm: positiveDimOrNull(body.lengthCm),
+          widthCm: positiveDimOrNull(body.widthCm),
+          heightCm: positiveDimOrNull(body.heightCm),
           productQuantity: null,
           cargoType: staffCargo.order,
           domesticTrackingNo: body.domesticTrackingNo?.trim() || "货拉拉",

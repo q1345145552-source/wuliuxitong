@@ -16,6 +16,7 @@ import {
   type ConsolidationProductItem,
 } from "../../../services/business-api";
 import { formatBeijingTime } from "../../../modules/staff/utils";
+import { isPositiveIntText, isPositiveNumberText } from "../../../modules/shared/number-text";
 import { createRequestGate } from "../../../modules/shared/request-gate";
 
 // ============================================================================
@@ -63,15 +64,21 @@ function emptyProductRow(key: number): ProductFormRow {
   return { key, productName: "", packageCount: "", quantityPerBox: "1", unitWeightKg: "", lengthCm: "", widthCm: "", heightCm: "", material: "", cargoValue: "", cargoType: "normal" };
 }
 
+/** 整格转数字，转不了当 0（预览用；不用只读开头的 parseInt / parseFloat，跟提交口径一致） */
+function wholeNum(v: string): number {
+  const n = Number((v ?? "").trim());
+  return Number.isFinite(n) ? n : 0;
+}
+
 function calcProductRow(r: ProductFormRow) {
-  const pkg = parseInt(r.packageCount) || 0;
-  const qpb = parseInt(r.quantityPerBox) || 0;
+  const pkg = wholeNum(r.packageCount);
+  const qpb = wholeNum(r.quantityPerBox);
   const totalQty = pkg * qpb;
-  const uw = parseFloat(r.unitWeightKg) || 0;
+  const uw = wholeNum(r.unitWeightKg);
   const totalW = parseFloat((uw * totalQty).toFixed(2));
-  const l = parseFloat(r.lengthCm) || 0;
-  const w = parseFloat(r.widthCm) || 0;
-  const h = parseFloat(r.heightCm) || 0;
+  const l = wholeNum(r.lengthCm);
+  const w = wholeNum(r.widthCm);
+  const h = wholeNum(r.heightCm);
   const vol = parseFloat(((l * w * h) / 1_000_000 * pkg).toFixed(6));
   return { totalQty, totalW, vol };
 }
@@ -330,12 +337,16 @@ export default function AdminConsolidationPage() {
     for (let i = 0; i < editProductRows.length; i++) {
       const r = editProductRows[i];
       if (!r.productName.trim()) { setToast(`产品行${i + 1}：产品名称为必填`); return; }
-      if (!r.packageCount || parseInt(r.packageCount) < 1) { setToast(`产品行${i + 1}：件数必须大于0`); return; }
-      if (!r.quantityPerBox || parseInt(r.quantityPerBox) < 1) { setToast(`产品行${i + 1}：装箱数量必须大于0`); return; }
+      // 整格核对（dsh 复核 2026-09-29：客户页这次改了、这里是同一功能的另一套界面，原来 1.9 存成 1、12abc 存成 12）
+      if (!isPositiveIntText(r.packageCount)) { setToast(`产品行${i + 1}：件数要填正整数（现在是「${r.packageCount}」）`); return; }
+      if (!isPositiveIntText(r.quantityPerBox)) { setToast(`产品行${i + 1}：装箱数量要填正整数（现在是「${r.quantityPerBox}」）`); return; }
       if (!r.unitWeightKg) { setToast(`产品行${i + 1}：单件重量为必填`); return; }
       if (!r.lengthCm) { setToast(`产品行${i + 1}：长为必填`); return; }
       if (!r.widthCm) { setToast(`产品行${i + 1}：宽为必填`); return; }
       if (!r.heightCm) { setToast(`产品行${i + 1}：高为必填`); return; }
+      for (const [label, v] of [["单件重量", r.unitWeightKg], ["长", r.lengthCm], ["宽", r.widthCm], ["高", r.heightCm]] as const) {
+        if (!isPositiveNumberText(v)) { setToast(`产品行${i + 1}：${label}要填大于 0 的数字（现在是「${v}」）`); return; }
+      }
       if (!r.material.trim()) { setToast(`产品行${i + 1}：材质为必填`); return; }
       if (!r.cargoValue.trim()) { setToast(`产品行${i + 1}：货值为必填`); return; }
     }
@@ -344,12 +355,12 @@ export default function AdminConsolidationPage() {
       const products = editProductRows.map((r) => ({
         id: r.id,
         productName: r.productName.trim(),
-        packageCount: parseInt(r.packageCount),
-        quantityPerBox: parseInt(r.quantityPerBox),
-        unitWeightKg: parseFloat(r.unitWeightKg),
-        lengthCm: parseFloat(r.lengthCm),
-        widthCm: parseFloat(r.widthCm),
-        heightCm: parseFloat(r.heightCm),
+        packageCount: Number(r.packageCount.trim()),
+        quantityPerBox: Number(r.quantityPerBox.trim()),
+        unitWeightKg: Number(r.unitWeightKg.trim()),
+        lengthCm: Number(r.lengthCm.trim()),
+        widthCm: Number(r.widthCm.trim()),
+        heightCm: Number(r.heightCm.trim()),
         material: r.material.trim(),
         cargoValue: r.cargoValue.trim(),
         cargoType: r.cargoType || "normal",

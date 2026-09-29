@@ -704,7 +704,8 @@ export default function StaffHomePage() {
   const autoTotalsRef = useRef<{ volumeM3: string | null; weightKg: string | null }>({ volumeM3: null, weightKg: null });
   // Auto-fill volume and weight from multi-product form
   useEffect(() => {
-    if (staffFormProducts.length === 0) return;
+    /* 不再「没有产品行就不管」（dsh 复核 2026-09-29）：把唯一一行产品删掉时，上一次自动填的合计会留在框里、
+       跟着提交进订单。空表按 0 算，走下面「自动填的才清」那条路；人手填的照旧不动。 */
     const totalVol = staffFormProducts.reduce((s, p) => {
       const pkg = Number(p.packageCount) || 0;
       const l = Number(p.lengthCm) || 0;
@@ -814,6 +815,12 @@ export default function StaffHomePage() {
         cargoType: form.cargoType,
         transportMode: form.transportMode,
         remark: form.remark?.trim() || undefined,
+        // 不分产品行时，表单上的整票长宽高也带过去，存进产品明细（原来算完体积就丢了，dsh 复核 2026-09-29）
+        ...(hasProducts ? {} : {
+          lengthCm: Number(form.lengthCm) > 0 ? Number(form.lengthCm) : undefined,
+          widthCm: Number(form.widthCm) > 0 ? Number(form.widthCm) : undefined,
+          heightCm: Number(form.heightCm) > 0 ? Number(form.heightCm) : undefined,
+        }),
         products: hasProducts ? staffFormProducts.filter(p => p.itemName.trim()).map(p => ({ itemName: p.itemName.trim(), packageCount: packageCountForPayload(p.packageCount), lengthCm: p.lengthCm ? Number(p.lengthCm) : undefined, widthCm: p.widthCm ? Number(p.widthCm) : undefined, heightCm: p.heightCm ? Number(p.heightCm) : undefined, productQuantity: p.productQuantity ? Number(p.productQuantity) : undefined, weightKg: p.weightKg ? Number(p.weightKg) : undefined, cargoType: (p.cargoType || "normal").toLowerCase(), domesticTrackingNo: p.domesticTrackingNo.trim() || "货拉拉" })) : undefined,
       });
       /* 上传产品图片（2026-09-29 Codex 全系统检查）：运单到这里**已经建好了**。

@@ -1646,6 +1646,11 @@ async function main() {
       assert.ok(!/(总单量|符合条件)：/.test(svc.answer), `服务问题不该报单量：\n${svc.answer}`);
       const fee = await ask({ shipments: fx, message: "运费多少" });
       assert.ok(!/(总单量|符合条件)：/.test(fee.answer), `「运费多少」不该报单量：\n${fee.answer}`);
+      // 带「几件 / 多少件」的服务问题（dsh 复核）：照旧走服务问答，不许回一个无关的单量
+      for (const message of ["破损了几件怎么办", "有几件货破损了怎么赔", "几件货能寄吗"]) {
+        const r = await ask({ shipments: fx, message });
+        assert.ok(!/(总单量|符合条件)：/.test(r.answer), `「${message}」是服务问题，不该报单量：\n${r.answer}`);
+      }
     });
 
   if (failures.length > 0) {

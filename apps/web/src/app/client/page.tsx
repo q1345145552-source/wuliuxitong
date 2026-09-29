@@ -509,7 +509,8 @@ export default function ClientHomePage() {
   const autoTotalsRef = useRef<{ volumeM3: string | null; weightKg: string | null }>({ volumeM3: null, weightKg: null });
   // Auto-fill volume and weight from multi-product form
   useEffect(() => {
-    if (formProducts.length === 0) return;
+    /* 不再「没有产品行就不管」（dsh 复核 2026-09-29）：把唯一一行产品删掉时，上一次自动填的合计会留在框里、
+       跟着提交进订单。空表按 0 算，走下面「自动填的才清」那条路；人手填的照旧不动。 */
     const totalVol = formProducts.reduce((s, p) => {
       const pkg = Number(p.packageCount) || 0;
       const l = Number(p.lengthCm) || 0;
@@ -551,39 +552,6 @@ export default function ClientHomePage() {
     return () => window.removeEventListener("hashchange", syncSectionByHash);
   }, []);
 
-  const submitPrealert = async () => {
-    if (loading) return;
-    setLoading(true);
-    setMessage("");
-    try {
-      if (!form.warehouseId || !form.itemName.trim() || !form.transportMode) {
-        setMessage("请填写仓库、品名、运输方式。");
-        setLoading(false);
-        return;
-      }
-      const result = await createClientPrealert({
-        warehouseId: form.warehouseId,
-        itemName: form.itemName.trim(),
-        packageCount: Number(form.packageCount || 0),
-        packageUnit: form.packageUnit,
-        weightKg: form.weightKg ? Number(form.weightKg) : undefined,
-        volumeM3: form.volumeM3 ? Number(form.volumeM3) : undefined,
-        domesticTrackingNo: form.domesticTrackingNo.trim() || undefined,
-        transportMode: form.transportMode as "sea"  |  "land",
-        receiverNameTh: form.receiverNameTh.trim() || undefined,
-        receiverPhoneTh: form.receiverPhoneTh.trim() || undefined,
-        receiverAddressTh: form.receiverAddressTh.trim() || undefined,
-      });
-      setToast("预报单提交成功");
-      setMessage(`预报单创建成功：${result.prealertId}`);
-      await refreshMainData();
-    } catch (error) {
-      const text = error instanceof Error ? error.message : "提交失败";
-      setMessage(`提交失败：${text}`);
-    } finally {
-      setLoading(false);
-    }
-  };
 
   const runOrderQuery = async () => {
     void loadShipmentOverview(); // 顶上那排数字跟列表一起刷新（2026-09-29）
@@ -1605,7 +1573,10 @@ export default function ClientHomePage() {
                   setPrealertImageFiles([]);
                   setPrealertImagePreviews([]);
                   await refreshMainData();
-                } catch { setToast("创建失败"); }
+                } catch (error) {
+                  // 把后端的中文原因说出来（dsh 复核 2026-09-29：比如「重量必须是不小于 0 的数字」，原来只弹「创建失败」，客户不知道改哪）
+                  setToast(error instanceof Error && error.message ? `创建失败：${error.message}` : "创建失败");
+                }
                 finally { prealertSubmitInFlight.current = false; setPrealertSubmitting(false); }
               }} style={{ border: "none", borderRadius: 6, padding: "8px 16px", fontSize: 13, background: "var(--c-blue)", color: "var(--white)", fontWeight: 500, cursor: "pointer" }}>
                 {prealertSubmitting ? "提交中…" : "提交"}

@@ -46,6 +46,8 @@ async function main(): Promise<void> {
     assert.equal(d.packageUnit, "bag");
     assert.equal(d.packageCount, 3);
     assert.deepEqual(readStrictNumber("12cm"), { value: 12, bad: false, raw: "12cm" });
+    assert.equal(readStrictNumber("1,200").value, 1200, "千分位「1,200」应该认成 1200（dsh 复核）");
+    assert.equal(readStrictNumber("1,2").bad, true, "「1,2」不是千分位，不许认成 12");
     assert.equal(readStrictNumber("1.2.3").bad, true);
     assert.equal(readStrictNumber("").bad, false);
   });
@@ -65,9 +67,12 @@ async function main(): Promise<void> {
     for (const v of ["1.9", "12abc", "", " ", "0", "-1"]) assert.equal(isPositiveIntText(v), false, `「${v}」不该算正整数`);
     assert.equal(isPositiveNumberText("1.25"), true);
     for (const v of ["1.25kg", "abc", "0", "-1", ""]) assert.equal(isPositiveNumberText(v), false, `「${v}」不该算正数`);
-    const src = read("apps/web/src/app/client/consolidation/page.tsx");
-    assert.doesNotMatch(src, /parseInt\(r\.packageCount\)|parseInt\(r\.quantityPerBox\)|parseFloat\(r\.(unitWeightKg|lengthCm|widthCm|heightCm)\)/, "还在用只读开头的 parseInt / parseFloat");
-    assert.match(src, /isPositiveIntText\(r\.packageCount\)/);
+    // 客户页和超管「强制编辑」是同一功能的两套界面（dsh 复核：原来只改了客户那套）
+    for (const f of ["apps/web/src/app/client/consolidation/page.tsx", "apps/web/src/app/admin/consolidation/page.tsx"]) {
+      const src = read(f);
+      assert.doesNotMatch(src, /parseInt\(r\.packageCount\)|parseInt\(r\.quantityPerBox\)|parseFloat\(r\.(unitWeightKg|lengthCm|widthCm|heightCm)\)/, `${f} 还在用只读开头的 parseInt / parseFloat`);
+      assert.match(src, /isPositiveIntText\(r\.packageCount\)/, `${f} 件数没整格核对`);
+    }
   });
 
   await check("P3 老写法的请求（parseApiResponse）：5xx 的英文换成中文，后端写的中文照给，网关的英文网页不原样显示", async () => {
@@ -121,7 +126,9 @@ async function main(): Promise<void> {
     assert.match(wallet, /balance === null \? "—"/, "余额没读到还显示 ¥0.00");
     const fcl = read("apps/web/src/app/client/fcl-containers/page.tsx");
     assert.match(fcl, /const seq = \+\+detailSeqRef\.current;[\s\S]{0,200}if \(seq !== detailSeqRef\.current\) return;/, "整柜详情没认主人");
-    const addr = read("apps/web/src/app/client/address-book/page.tsx");
+    const home = read("apps/web/src/app/client/page.tsx");
+    assert.match(home, /setToast\(error instanceof Error && error\.message \? `创建失败：\$\{error\.message\}` : "创建失败"\);/, "客户建预报单失败还是只弹「创建失败」（后端的中文原因被吞了）");
+        const addr = read("apps/web/src/app/client/address-book/page.tsx");
     assert.match(addr, /设为默认失败：/);
     assert.match(addr, /删除失败：/);
   });
@@ -133,6 +140,10 @@ async function main(): Promise<void> {
       assert.match(src, /volumeM3: volStr \?\? \(auto\.volumeM3 !== null && v\.volumeM3 === auto\.volumeM3 \? "" : v\.volumeM3\)/, `${f} 体积没按「自动填的才清」处理`);
       assert.match(src, /weightKg: wtStr \?\? \(auto\.weightKg !== null && v\.weightKg === auto\.weightKg \? "" : v\.weightKg\)/, `${f} 重量没按「自动填的才清」处理`);
       assert.match(src, /autoTotalsRef\.current = \{ volumeM3: volStr, weightKg: wtStr \};/);
+      // 产品行全删光时也要走「自动填的才清」（dsh 复核：原来第一行就 return，删光后旧合计留着照样提交）
+      const eff = src.slice(src.indexOf("// Auto-fill volume and weight from multi-product form"), src.indexOf("autoTotalsRef.current = { volumeM3: volStr, weightKg: wtStr };"));
+      assert.ok(eff.length > 0, `${f} 没找到自动合计那段`);
+      assert.doesNotMatch(eff, /\.length === 0\) return;/, `${f} 产品行删光时还是直接 return`);
     }
   });
 

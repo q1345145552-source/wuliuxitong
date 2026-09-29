@@ -21,6 +21,10 @@ export interface StaffCreateOrderPayload {
   receiverNameTh?: string;
   receiverPhoneTh?: string;
   receiverAddressTh?: string;
+  /** 不分产品行时的整票长宽高（cm），后端存进兜底产品行（2026-09-29） */
+  lengthCm?: number;
+  widthCm?: number;
+  heightCm?: number;
   products?: Array<{
     itemName: string;
     packageCount: number;

@@ -656,7 +656,9 @@ export class ClientAiService implements AiService {
    * 比「统计意图」窄：不含单独的「多少」—— 「运费多少」「清关要多少天」是服务问题，不能抢过来。
    */
   private isCountQuestion(message: string): boolean {
-    return /(多少单|几单|多少票|几票|多少件|几件|单量|多少个(运)?单|多少个订单)/.test(message);
+    /* 不含「几件 / 多少件」（dsh 复核 2026-09-29）：「破损了几件怎么办」「几件货能寄吗」是服务问题，
+       原来被抢成统计、回一个跟问题无关的单量，知识盲区也不记。问件数的统计照旧由下面的统计意图（「多少」）接住。 */
+    return /(多少单|几单|多少票|几票|单量|多少个(运)?单|多少个订单)/.test(message);
   }
 
   /**

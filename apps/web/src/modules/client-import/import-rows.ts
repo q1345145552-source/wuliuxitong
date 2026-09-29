@@ -55,7 +55,8 @@ export function readStrictNumber(v: unknown): { value?: number; bad: boolean; ra
   if (typeof v === "number") return Number.isFinite(v) ? { value: v, bad: false, raw: String(v) } : { bad: true, raw: String(v) };
   const raw = String(v).trim();
   if (!raw) return { bad: false, raw };
-  const m = /^(-?\d+(?:\.\d+)?)\s*(cm|厘米|公分|kg|公斤|千克|箱|件|个|袋)?$/i.exec(raw.replace(/，/g, ","));
+  // 千分位的逗号当正常写法收下（「1,200」= 1200；dsh 复核 2026-09-29：原来会被标红）
+  const m = /^(-?\d+(?:\.\d+)?)\s*(cm|厘米|公分|kg|公斤|千克|箱|件|个|袋)?$/i.exec(raw.replace(/(\d)[,，](?=\d{3}(?!\d))/g, "$1"));
   if (!m) return { bad: true, raw };
   const n = Number(m[1]);
   return Number.isFinite(n) ? { value: n, bad: false, raw } : { bad: true, raw };
