@@ -42,6 +42,11 @@ export function round3(n: number): number {
   return Math.round((n + Number.EPSILON) * 1000) / 1000;
 }
 
+/** 方数保留 6 位（跟单件货品的方数同一精度，见 calcItemVolumeM3） */
+export function round6(n: number): number {
+  return Math.round((n + Number.EPSILON) * 1_000_000) / 1_000_000;
+}
+
 /** Prisma Decimal | number | null → number */
 export function toNum(v: any): number {
   if (v == null) return 0;
@@ -137,7 +142,10 @@ export function buildFeeBreakdown(
   const rows: FeeBreakdownRow[] = [];
   let totalVolumeM3 = 0;
   for (const cargoType of ["normal", "inspection", "sensitive"]) {
-    const volumeM3 = round3(volumes[cargoType]);
+    /* 2026-09-29（老板选 A）：明细里的方数用精确值（6 位），不再先抹成 3 位 ——
+       金额一直是按精确方数算的，方数先抹再显示，「0.057 方 × 1200 = ¥68.93」客户一乘对不上。
+       怎么显示交给前端 formatBreakdownVolume（整 3 位的照旧写 3 位）。金额一分没动。 */
+    const volumeM3 = round6(volumes[cargoType]);
     totalVolumeM3 += volumes[cargoType];
     if (volumeM3 <= 0) continue;
     rows.push({
@@ -154,7 +162,7 @@ export function buildFeeBreakdown(
 
   return {
     rows,
-    totalVolumeM3: round3(totalVolumeM3),
+    totalVolumeM3: round6(totalVolumeM3),
     computedFee,
     storedFee: stored,
     matchesStored: stored == null ? true : Math.abs(stored - computedFee) < 0.01,
@@ -181,7 +189,7 @@ export function mergeFeeBreakdowns(list: FeeBreakdown[]): FeeBreakdown {
     for (const r of b.rows) {
       const prev = byType.get(r.cargoType);
       if (prev) {
-        prev.volumeM3 = round3(prev.volumeM3 + r.volumeM3);
+        prev.volumeM3 = round6(prev.volumeM3 + r.volumeM3);
         prev.amount = round2(prev.amount + r.amount);
         // 单价理论上一致；万一历史单价不同，这里保留最新的一档，界面上会提示差异
         prev.unitPrice = r.unitPrice;
@@ -194,7 +202,7 @@ export function mergeFeeBreakdowns(list: FeeBreakdown[]): FeeBreakdown {
   const order = ["normal", "inspection", "sensitive"];
   return {
     rows: order.filter((t) => byType.has(t)).map((t) => byType.get(t)!),
-    totalVolumeM3: round3(totalVolumeM3),
+    totalVolumeM3: round6(totalVolumeM3),
     computedFee: round2(computedFee),
     storedFee: hasStored ? round2(storedFee) : null,
     matchesStored,

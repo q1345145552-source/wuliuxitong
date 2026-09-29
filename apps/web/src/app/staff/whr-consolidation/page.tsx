@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useState, useCallback, useRef } from "react";
+import { amount2 } from "../../../modules/shared/money-format";
+import { formatBreakdownVolume } from "../../../modules/shared/volume-format";
 import { apiBaseUrl, apiRequest } from "../../../services/core-api";
 import { formatBeijingTime } from "../../../modules/staff/utils";
 import { base64Bytes, compressImageForUpload, formatBytes } from "../../../modules/shared/image-compress";
@@ -78,12 +80,12 @@ function FeeBreakdownPanel({ bd, title = "费用明细", compact }: { bd?: FeeBr
       <div style={{ fontWeight: 600, color: "var(--t-body)", marginBottom: 4 }}>{title}</div>
       {bd.rows.map(r => (
         <div key={r.cargoType} style={{ display: "flex", justifyContent: "space-between", gap: 8, color: "#4B5462", padding: "1px 0" }}>
-          <span>{r.label}：{r.volumeM3.toFixed(3)} 方 × {r.unitPrice} 元/方</span>
+          <span>{r.label}：{formatBreakdownVolume(r.volumeM3)} 方 × {r.unitPrice} 元/方</span>
           <span style={{ whiteSpace: "nowrap" }}>= {money(r.amount)}</span>
         </div>
       ))}
       <div style={{ borderTop: "1px solid var(--l-soft)", marginTop: 4, paddingTop: 4, display: "flex", justifyContent: "space-between", gap: 8 }}>
-        <span style={{ color: "var(--t-muted)" }}>合计 {bd.totalVolumeM3.toFixed(3)} 方</span>
+        <span style={{ color: "var(--t-muted)" }}>合计 {formatBreakdownVolume(bd.totalVolumeM3)} 方</span>
         <span style={{ fontWeight: 700, fontSize: fs + 2, color: "var(--c-green)", whiteSpace: "nowrap" }}>
           {money(bd.storedFee ?? bd.computedFee)}
         </span>
@@ -1117,7 +1119,7 @@ export default function StaffWhrConsolidationPage() {
                           <strong>{c.clientId}</strong>
                           <span style={{ fontSize: 13, color: "var(--t-muted)", marginLeft: 8 }}>{c.clientPhone} · {c.clientCompany}</span>
                         </div>
-                        <span style={{ fontSize: 13, color: "var(--t-muted)" }}>{c.totalVolumeM3}方 · {c.totalFee ? `¥${c.totalFee.toLocaleString()}` : ""}</span>
+                        <span style={{ fontSize: 13, color: "var(--t-muted)" }}>{c.totalVolumeM3}方 · {c.totalFee ? `¥${amount2(c.totalFee)}` : ""}</span>
                       </div>
                       <div style={{ fontSize: 13, color: "var(--t-muted)", marginTop: 4, display: "flex", alignItems: "center", gap: 10 }}>
                         <span>普货：{c.unitPriceNormal}元/方 · 商检货：{c.unitPriceInspection}元/方 · 敏感货：{c.unitPriceSensitive}元/方</span>

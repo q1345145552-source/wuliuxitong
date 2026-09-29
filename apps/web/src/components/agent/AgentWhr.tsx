@@ -5,6 +5,7 @@
  * 一个柜里混着湘泰和别家的货时，接口只回他名下客户那几行 —— 页面也只画这几行，整柜已用方数不显示。
  */
 import { useEffect, useState } from "react";
+import { formatBreakdownVolume } from "../../modules/shared/volume-format";
 import EmptyStateCard from "../../modules/layout/EmptyStateCard";
 import { fetchAgentWhrPlanDetail, fetchAgentWhrPlans, type AgentWhrPlanDetail, type AgentWhrPrealert } from "../../services/agent-api";
 import {
@@ -90,7 +91,7 @@ function PrealertCard({ pa }: { pa: AgentWhrPrealert }) {
           )}
           {pa.feeBreakdown.rows.length > 0 ? (
             <div style={{ fontSize: 13, marginTop: 8 }}>
-              费用明细：{pa.feeBreakdown.rows.map((r) => `${r.label} ${fmtM3(r.volumeM3)} 方 × ${r.unitPrice} = ${fmtMoney(r.amount)}`).join("；")}
+              费用明细：{pa.feeBreakdown.rows.map((r) => `${r.label} ${formatBreakdownVolume(r.volumeM3)} 方 × ${r.unitPrice} = ${fmtMoney(r.amount)}`).join("；")}
               {/* 付款时没记单价的老单，付款后改过价就算不回总额：写明以实际金额为准（2026-09-15 Codex 审查 P2-2） */}
               {pa.feeBreakdown.matchesStored === false && pa.totalFee != null ? (
                 <div style={{ color: "#b45309", fontSize: 12, marginTop: 2 }}>

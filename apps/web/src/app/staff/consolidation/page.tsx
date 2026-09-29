@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState, useCallback, useRef } from "react";
+import { amount2 } from "../../../modules/shared/money-format";
 import {
   fetchStaffConsolidationTasks,
   fetchStaffConsolidationTaskDetail,
@@ -701,7 +702,7 @@ export default function StaffConsolidationPage() {
                 <div><label style={fl}>订舱费 (¥)</label><input type="number" value={quoteBooking} onChange={(e) => setQuoteBooking(e.target.value)} style={fi} /></div>
                 <div><label style={fl}>清关费 (¥)</label><input type="number" value={quoteCustoms} onChange={(e) => setQuoteCustoms(e.target.value)} style={fi} /></div>
                 <div><label style={fl}>装柜费 (¥)</label><input type="number" value={quoteLoading} onChange={(e) => setQuoteLoading(e.target.value)} style={fi} /></div>
-                <div style={{ borderTop: "2px solid var(--c-green-2)", paddingTop: 8, fontSize: 20, fontWeight: 700, color: "var(--c-green-2)" }}>总价：¥{totalFee.toLocaleString()}</div>
+                <div style={{ borderTop: "2px solid var(--c-green-2)", paddingTop: 8, fontSize: 20, fontWeight: 700, color: "var(--c-green-2)" }}>总价：¥{amount2(totalFee)}</div>
               </div>
               <div style={{ marginTop: 14, display: "flex", gap: 8 }}>
                 <button onClick={handleQuote} disabled={quoteSubmitting} style={{ padding: "8px 18px", background: "var(--c-blue)", color: "var(--white)", border: "none", borderRadius: 6, cursor: "pointer", fontWeight: 600 }}>{quoteSubmitting ? "保存中..." : "保存报价"}</button>

@@ -10,6 +10,7 @@
  * 普通运单那边照旧不显示）。
  */
 import { useCallback, useEffect, useState } from "react";
+import { amount2 } from "../../../modules/shared/money-format";
 import {
   fetchMyFclContainers,
   fetchMyFclContainerDetail,
@@ -78,7 +79,7 @@ export default function ClientFclContainersPage() {
                 <div><span style={fl}>总箱数</span><div>{detail.packageCount ?? "—"}</div></div>
                 <div><span style={fl}>总体积 (m³)</span><div>{detail.volumeM3 ?? "—"}</div></div>
                 <div><span style={fl}>总重 (kg)</span><div>{detail.weightKg ?? "—"}</div></div>
-                <div><span style={fl}>金额 (¥)</span><div style={{ fontWeight: 600 }}>{detail.amountCny == null ? "—" : detail.amountCny.toLocaleString()}</div></div>
+                <div><span style={fl}>金额 (¥)</span><div style={{ fontWeight: 600 }}>{amount2(detail.amountCny)}</div></div>
                 <div><span style={fl}>当前状态</span><div style={{ fontWeight: 600 }}>{shipmentStatusZh(detail.shipmentStatus ?? undefined, CLIENT_STATUS_ZH_OVERRIDES)}</div></div>
               </div>
             </div>
@@ -159,7 +160,7 @@ export default function ClientFclContainersPage() {
                     <td style={td}>{shipmentStatusZh(r.shipmentStatus ?? undefined, CLIENT_STATUS_ZH_OVERRIDES)}</td>
                     <td style={td}>{r.packageCount ?? "—"}</td>
                     <td style={td}>{r.volumeM3 ?? "—"}</td>
-                    <td style={td}>{r.amountCny == null ? "—" : r.amountCny.toLocaleString()}</td>
+                    <td style={td}>{amount2(r.amountCny)}</td>
                     <td style={td}>{r.loadingDate ? beijingDate(r.loadingDate) : "—"}</td>
                     <td style={td}><button type="button" className="workbench-button" onClick={() => void openDetail(r.containerId)}>详情</button></td>
                   </tr>

@@ -21,11 +21,47 @@ import { BusinessError } from "../core/business-error";
  * ⚠️ 一份实现两处调用 —— 这个项目里「N 个入口只修了 M 个」已经犯过五六次。
  */
 
+/**
+ * 已经排了尾端派送（派送中 / 已签收）的货不许卸柜（2026-09-29 老板选 A）。
+ *
+ * 原来照卸：子单一删，数据库顺着外键（admin_lastmile_orders、status_logs 都是 onDelete: Cascade）
+ * 把它的**派送单、签收图、全部轨迹**一起删光，找不回来（测试库实测：卸完派送单 0 行、客户轨迹里「已签收」没了）。
+ * 9-02 定的「已签收的货也能卸、状态退回国内仓」从此改成：**先在「尾端派送」撤销签收（只有超管能撤）
+ * 或把它从派送单里删掉，再来卸柜**。派送单只有 DELIVERING / SIGNED 两种状态，有一行就挡。
+ *
+ * ⚠️ 调用方必须已经拿到这票货（运单行）的锁：建派送单那条路也锁运单（lockShipmentsChildrenFirst），
+ * 两边排队，不会出现「那边刚把它排进派送单、这边照样卸」。这里只读不加锁，不引入新的锁序。
+ */
+export async function assertNotInLastmile(tx: any, shipmentId: string, companyId: string, trackingNo?: string | null): Promise<void> {
+  const rows: Array<{ deliveryNo: string; status: string }> = await tx.adminLastmileOrder.findMany({
+    where: { shipmentId, companyId },
+    select: { deliveryNo: true, status: true },
+    orderBy: { updatedAt: "desc" },
+  });
+  if (rows.length === 0) return;
+  const nos = [...new Set(rows.map((r) => r.deliveryNo))].join("、");
+  const who = trackingNo ? `运单 ${trackingNo}` : "这票货";
+  if (rows.some((r) => r.status === "SIGNED")) {
+    throw new BusinessError(
+      `${who}已经在尾端派送单 ${nos} 上签收了，不能卸柜（卸了会把签收图和派送记录一起删掉）。确实要卸的话，请先让超级管理员在「尾端派送」撤销签收，再把它从派送单里删掉，然后回来卸柜。`,
+      409,
+      "VALIDATION_ERROR",
+    );
+  }
+  throw new BusinessError(
+    `${who}已经排进尾端派送单 ${nos}（派送中），不能卸柜（卸了会把派送记录一起删掉）。确实要卸的话，请先在「尾端派送」把它从派送单里删掉，再回来卸柜。`,
+    409,
+    "VALIDATION_ERROR",
+  );
+}
+
 /** 卸一条柜内记录需要的信息（调用方先查好，因为两条路查的方式不一样） */
 export interface UnloadableItem {
   id: string;
   shipment: {
     id: string;
+    /** 只用来在「已排派送不许卸」的提示里写单号，不传也行 */
+    trackingNo?: string | null;
     parentTrackingNo: string | null;
     packageCount: number | null;
     volumeM3: unknown;
@@ -54,6 +90,8 @@ export async function unloadItemFully(
   companyId: string,
   operator: UnloadOperator,
 ): Promise<{ 还给父单: boolean; 删了子单: boolean }> {
+  // 已经排了尾端派送的货不许卸（2026-09-29）：「删柜子」也走这里，一并挡住
+  await assertNotInLastmile(tx, item.shipment.id, companyId, item.shipment.trackingNo);
   await tx.shipmentContainerItem.delete({ where: { id: item.id } });
 
   /**
@@ -222,7 +260,7 @@ export async function unloadAllItemsOfContainer(
     select: {
       id: true,
       shipment: {
-        select: { id: true, parentTrackingNo: true, packageCount: true, volumeM3: true, weightKg: true },
+        select: { id: true, trackingNo: true, parentTrackingNo: true, packageCount: true, volumeM3: true, weightKg: true },
       },
     },
   });

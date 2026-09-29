@@ -11,6 +11,7 @@ import { sanitizeRemarkForClient } from "../core/client-privacy";
 import { companyContainerNosForMasking } from "../core/container-nos";
 import { productNamesLabel } from "../../../../../packages/shared-types/product-names";
 import { EXCLUDE_FCL_SHIPMENT, ONLY_FCL_SHIPMENT } from "../core/fcl-scope";
+import { nextSequenceValue } from "../core/number-sequence";
 
 /** 同一票货重复进派送单时抛这个，调用方转成 400 而不是 500 */
 class LastmileConflictError extends Error {
@@ -666,7 +667,8 @@ export function registerAdminOpsRoutes(app: MinimalHttpApp): void {
             select: { deliveryNo: true },
           });
           const num = last ? parseInt(last.deliveryNo.replace("WD", ""), 10) || 0 : 0;
-          deliveryNo = `WD${String(num + 1).padStart(6, "0")}`;
+          // 号只往上加、删了也不回收（2026-09-29 老板选 A）：最大号只是底，真正发号看 number_sequences（core/number-sequence.ts）
+          deliveryNo = `WD${String(await nextSequenceValue(tx, "WD", num)).padStart(6, "0")}`;
         }
         const deliveringRows = await tx.adminLastmileOrder.findMany({
           where: { shipmentId: { in: shipmentIds }, companyId: auth.companyId, status: "DELIVERING" },

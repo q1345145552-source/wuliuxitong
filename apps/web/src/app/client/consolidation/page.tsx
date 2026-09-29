@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState, useCallback, useRef } from "react";
+import { amount2 } from "../../../modules/shared/money-format";
 import {
   fetchClientConsolidationTasks,
   fetchClientConsolidationTaskDetail,
@@ -677,10 +678,10 @@ function ClientConsolidationContent() {
                   <h3 style={{ fontSize: 16, marginBottom: 12 }}>费用明细</h3>
                   <table style={{ width: "100%", maxWidth: 400, fontSize: 14 }}>
                     <tbody>
-                      <tr><td style={{ padding: "4px 0", color: "var(--t-muted)" }}>订舱费</td><td style={{ textAlign: "right" }}>¥{taskDetail.bookingFee?.toLocaleString() ?? 0}</td></tr>
-                      <tr><td style={{ padding: "4px 0", color: "var(--t-muted)" }}>清关费</td><td style={{ textAlign: "right" }}>¥{taskDetail.customsFee?.toLocaleString() ?? 0}</td></tr>
-                      <tr><td style={{ padding: "4px 0", color: "var(--t-muted)" }}>装柜费</td><td style={{ textAlign: "right" }}>¥{taskDetail.loadingFee?.toLocaleString() ?? 0}</td></tr>
-                      <tr style={{ borderTop: "2px solid var(--c-green-2)" }}><td style={{ padding: "8px 0", fontWeight: 700 }}>总价</td><td style={{ textAlign: "right", fontSize: 22, fontWeight: 700, color: "var(--c-green-2)" }}>¥{taskDetail.totalFee.toLocaleString()}</td></tr>
+                      <tr><td style={{ padding: "4px 0", color: "var(--t-muted)" }}>订舱费</td><td style={{ textAlign: "right" }}>¥{amount2(taskDetail.bookingFee ?? 0)}</td></tr>
+                      <tr><td style={{ padding: "4px 0", color: "var(--t-muted)" }}>清关费</td><td style={{ textAlign: "right" }}>¥{amount2(taskDetail.customsFee ?? 0)}</td></tr>
+                      <tr><td style={{ padding: "4px 0", color: "var(--t-muted)" }}>装柜费</td><td style={{ textAlign: "right" }}>¥{amount2(taskDetail.loadingFee ?? 0)}</td></tr>
+                      <tr style={{ borderTop: "2px solid var(--c-green-2)" }}><td style={{ padding: "8px 0", fontWeight: 700 }}>总价</td><td style={{ textAlign: "right", fontSize: 22, fontWeight: 700, color: "var(--c-green-2)" }}>¥{amount2(taskDetail.totalFee)}</td></tr>
                     </tbody>
                   </table>
                 </div>
@@ -692,7 +693,7 @@ function ClientConsolidationContent() {
                   {/* 未付款 → 去付款按钮 */}
                   {taskDetail.paymentStatus === "unpaid" && (
                     <button onClick={() => setShowPay(true)} style={{ padding: "10px 28px", background: "var(--c-blue)", color: "var(--white)", border: "none", borderRadius: 8, cursor: "pointer", fontSize: 15, fontWeight: 600 }}>
-                      去付款 ¥{taskDetail.totalFee?.toLocaleString()}
+                      去付款 ¥{amount2(taskDetail.totalFee)}
                     </button>
                   )}
                   {/* 待审核 → 提示 */}
@@ -872,7 +873,7 @@ function ClientConsolidationContent() {
             return (
               <>
                 <h3 style={{ marginTop: 0 }}>用集货余额付款</h3>
-                <p style={{ fontSize: 24, fontWeight: 700, color: "var(--c-navy)", margin: "12px 0" }}>¥{fee.toLocaleString()}</p>
+                <p style={{ fontSize: 24, fontWeight: 700, color: "var(--c-navy)", margin: "12px 0" }}>¥{amount2(fee)}</p>
                 <div style={{ padding: "10px 12px", border: "1px solid var(--l-soft)", borderRadius: 6, marginBottom: 12 }}>
                   <div style={{ fontSize: 13 }}>当前集货余额：<strong>¥{balance.toFixed(2)}</strong></div>
                   {fee > 0 && (

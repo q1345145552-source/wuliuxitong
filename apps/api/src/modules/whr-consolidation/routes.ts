@@ -14,6 +14,7 @@ import {
   refundToConsolidation,
 } from "../wallet/consolidation-balance";
 import {
+  ACTIVE_PREALERT_WHERE,
   CLEARED_PAID_SNAPSHOT,
   NON_CANCELLABLE_STATUSES,
   buildFeeBreakdown,
@@ -26,6 +27,7 @@ import {
   toNum,
 } from "./utils";
 import { assertNotBelowAgentFloors, assertPlanPricesNotBelowAgent, lockAgentPriceFloors, lockClientWhrPrice, REPRICE_PLAN_STATUSES } from "./long-term-price";
+import { nextSequenceValue } from "../core/number-sequence";
 
 /**
  * 2026-09-18 起这个文件不再读客户长期价来定价（`long-term-price.ts` 和 `client_whr_prices` 表都留着，
@@ -95,7 +97,8 @@ async function generatePlanNoInTx(tx: any): Promise<string> {
     FROM whr_consolidation_plans
     WHERE plan_no ~ '^WHR[0-9]+$'
   `;
-  const nextNum = Number(rows?.[0]?.maxno ?? 0) + 1;
+  // 号只往上加、删了也不回收（2026-09-29 老板选 A）：最大号只是底，真正发号看 number_sequences（core/number-sequence.ts）
+  const nextNum = await nextSequenceValue(tx, "WHR", Number(rows?.[0]?.maxno ?? 0));
   return `WHR${String(nextNum).padStart(7, "0")}`;
 }
 
@@ -857,8 +860,11 @@ export function registerWhrConsolidationRoutes(app: MinimalHttpApp): void {
       return;
     }
 
+    /* 2026-09-29（老板选 A）：只数没取消的单。原来连已取消的也算 —— 提示「请先逐个取消这些预报单」，
+       员工照做取消完，这里照样数到、照样挡，客户永远移不出柜（测试库实测）。
+       已取消的单会跟着客户一起删（上面提示本来就这么说）；余额流水只记单号文字、不挂这张表，钱的记录不受影响。 */
     const prealertCount = await prisma.whrConsolidationPrealert.count({
-      where: { customerId: customer.id },
+      where: { customerId: customer.id, ...ACTIVE_PREALERT_WHERE },
     });
     if (prealertCount > 0) {
       fail(
@@ -891,7 +897,7 @@ export function registerWhrConsolidationRoutes(app: MinimalHttpApp): void {
       if (!stillThere) {
         throw new BusinessError("客户记录不存在（可能刚被别人移除了），请刷新后再看", 404, "NOT_FOUND");
       }
-      const countInLock = await tx.whrConsolidationPrealert.count({ where: { customerId: customer.id } });
+      const countInLock = await tx.whrConsolidationPrealert.count({ where: { customerId: customer.id, ...ACTIVE_PREALERT_WHERE } });
       if (countInLock > 0) {
         throw new BusinessError(
           `该客户名下刚刚新建了预报单（现有 ${countInLock} 个），删除会把这些单据连同货物明细、产品图一起删掉。请先逐个取消这些预报单，或者保留该客户。`,

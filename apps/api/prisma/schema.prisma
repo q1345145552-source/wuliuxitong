@@ -876,6 +876,19 @@ model CsMessage {
   @@map("cs_messages")
 }
 
+/// 业务单号「已经发到第几号」（2026-09-29 老板选 A）：号只往上加，删掉最新那张单也不回收。
+/// 原来一律按「现有最大号 + 1」发，删掉最新一张，下一张新单就拿回同一个号 ——
+/// 客户余额流水里同一个单号对着两张不同的单（一张删了退了款、一张还在用），对账看不懂。
+/// name = 号段：JH（集货任务）/ JH-YW（集货预报单）/ WHR（仓库版计划）/ WHRP（仓库版预报单）/ WD（尾端派送单）。
+/// 只经 core/number-sequence.ts 的原生 SQL 读写（INSERT … ON CONFLICT），不走 Prisma 模型方法。
+model NumberSequence {
+  name      String   @id
+  lastValue BigInt   @map("last_value")
+  updatedAt DateTime @default(now()) @map("updated_at")
+
+  @@map("number_sequences")
+}
+
 model FclInquiry {
   id             String    @id @default(cuid())
   companyId      String    @map("company_id")

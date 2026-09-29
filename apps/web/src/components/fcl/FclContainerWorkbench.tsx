@@ -12,6 +12,7 @@
  * 推状态不在这里做 —— 整柜建完就是普通柜子，走现成的「装柜管理」改状态。
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { amount2 } from "../../modules/shared/money-format";
 import {
   createFclContainer,
   fetchFclContainers,
@@ -385,7 +386,7 @@ export default function FclContainerWorkbench({ canUnsign = false, canDelete = f
       const filledAmount = form.amountCny.trim();
       if (filledAmount === "" || Number(filledAmount) !== fromInquiry.quoteAmountCny) {
         const ok = window.confirm(
-          `询价单上的报价是 ¥${fromInquiry.quoteAmountCny.toLocaleString()}，这里填的金额是${filledAmount ? ` ¥${filledAmount}` : "空的"}。\n客户在「我的整柜」看到的是这里填的数。确定这样建？`,
+          `询价单上的报价是 ¥${amount2(fromInquiry.quoteAmountCny)}，这里填的金额是${filledAmount ? ` ¥${filledAmount}` : "空的"}。\n客户在「我的整柜」看到的是这里填的数。确定这样建？`,
         );
         if (!ok) return;
       }
@@ -506,7 +507,7 @@ export default function FclContainerWorkbench({ canUnsign = false, canDelete = f
           <div style={{ margin: "0 0 12px", fontSize: 12, color: "var(--c-blue-deep)", background: "var(--c-blue-bg)", padding: "8px 10px", borderRadius: 6, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
             <span>
               正在把<strong>整柜询价</strong>（唛头 {fromInquiry.clientId} · {fromInquiry.productName}
-              {fromInquiry.quoteAmountCny != null ? ` · 报价 ¥${fromInquiry.quoteAmountCny.toLocaleString()}` : ""}）转成整柜：
+              {fromInquiry.quoteAmountCny != null ? ` · 报价 ¥${amount2(fromInquiry.quoteAmountCny)}` : ""}）转成整柜：
               建好后询价单自动标成「已转整柜」，客户在「我的整柜」里就能看到。柜号、提单号、装柜日期、货物清单按实际装柜的填。
             </span>
             <button type="button" className="workbench-button" onClick={() => { setFromInquiry(null); setInquiryNote(""); window.history.replaceState(null, "", window.location.pathname); }}>
@@ -653,7 +654,7 @@ export default function FclContainerWorkbench({ canUnsign = false, canDelete = f
                 <div><span style={fl}>总箱数</span><div>{detail.packageCount ?? "—"}</div></div>
                 <div><span style={fl}>总体积 (m³)</span><div>{detail.volumeM3 ?? "—"}</div></div>
                 <div><span style={fl}>总重 (kg)</span><div>{detail.weightKg ?? "—"}</div></div>
-                <div><span style={fl}>金额 (¥)</span><div style={{ fontWeight: 600 }}>{detail.amountCny == null ? "—" : detail.amountCny.toLocaleString()}</div></div>
+                <div><span style={fl}>金额 (¥)</span><div style={{ fontWeight: 600 }}>{amount2(detail.amountCny)}</div></div>
               </div>
               {detail.remark && <div style={{ marginTop: 12, fontSize: 13, color: "var(--t-muted)" }}>备注：{detail.remark}</div>}
             </div>
@@ -738,7 +739,7 @@ export default function FclContainerWorkbench({ canUnsign = false, canDelete = f
             ["本月新增", String(overview.thisMonth), ""],
             ["总方数", String(overview.volumeM3), "m³"],
             ["总箱数", String(overview.packageCount), ""],
-            ["金额合计", overview.amountCny.toLocaleString(), "¥"],
+            ["金额合计", amount2(overview.amountCny), "¥"],
           ].map(([label, value, unit]) => (
             <div key={label}>
               <span style={fl}>{label}</span>
@@ -819,7 +820,7 @@ export default function FclContainerWorkbench({ canUnsign = false, canDelete = f
                     <td style={td}>{CONTAINER_STATUS_ZH[r.containerStatus ?? ""] ?? r.containerStatus}</td>
                     <td style={td}>{r.packageCount ?? "—"}</td>
                     <td style={td}>{r.volumeM3 ?? "—"}</td>
-                    <td style={td}>{r.amountCny == null ? "—" : r.amountCny.toLocaleString()}</td>
+                    <td style={td}>{amount2(r.amountCny)}</td>
                     <td style={td}>{formatBeijingTime(r.createdAt)}</td>
                     <td style={td}><button type="button" className="workbench-button" onClick={() => void openDetail(r.containerId)}>详情</button></td>
                   </tr>

@@ -275,6 +275,11 @@ jobs:
       - name: Test auto-load fixes 0929 (source)
         run: npm run test:autoload-0929-source
 
+      # 2026-09-29 测试库真跑后老板三个问题都选 A：请求太大当场中文、仓库版明细方数对得上、金额两位小数、
+      # 客户传图失败说出来、五种单号走 number_sequences（不连库那一半）
+      - name: Test fixes 0929 (source)
+        run: npm run test:fix-0929-source
+
       # 客服对话窗口真跑（假 React + 真组件）：发送中打字不被清、Safari 输入法回车、粘贴提示、
       # 首次加载失败能重试、轮询起点、已划走客户的提示、菜单回到列表。
       - name: Test customer-service chat UI behavior
@@ -441,3 +446,10 @@ jobs:
       # 先装柜后补收货父单存剩余、超管整票箱数、本月按北京时间、新柜号马上进抹号名单、低消两个一起存。
       - name: Test branch review 0928 fixes (real DB)
         run: bash .github/scripts/run-db-test.sh test:branch-review-0928-db
+
+      # 2026-09-29 老板三个问题都选 A（连库那一半）：已排派送不许卸柜 / 删柜、卸柜件数填超挡住、单号不回收、
+      # 仓库版移除客户 / 柜状态 / 取消原因抹柜号、删掉的集货任务 404、入库照片上限和中文提示
+      - name: Test fixes 0929 (real DB)
+        run: bash .github/scripts/run-db-test.sh test:fix-0929-db
+      - name: Test number_sequences migration file (real DB)
+        run: bash .github/scripts/run-db-test.sh test:migration-number-seq-db

@@ -49,6 +49,8 @@ function makeTx(parent: any, items: any[] = []) {
   return {
     记录,
     tx: {
+      // 2026-09-29：卸柜前先查这票货有没有排进尾端派送（assertNotInLastmile）；这些用例里都没排
+      adminLastmileOrder: { findMany: async () => [] },
       shipmentContainerItem: {
         delete: async ({ where }: any) => { 记录.删掉的柜内记录.push(where.id); },
         findMany: async () => items,
@@ -93,6 +95,8 @@ function 装路由假tx(opts: { item: any; parent?: any }) {
     轨迹: [] as any[],
   };
   路由用假tx = {
+    // 2026-09-29：卸柜前先查这票货有没有排进尾端派送（assertNotInLastmile）；这些用例里都没排
+    adminLastmileOrder: { findMany: async () => [] },
     shipmentContainerItem: {
       // 同一个函数要伺候两次 findFirst（锁前的 lockTarget + 锁后重查的 item），
       // 假对象把两边要的字段都带上就行，不用理会 select/include
@@ -449,6 +453,9 @@ async function main(): Promise<void> {
       路由用假柜子 = { id: "ct_1", currentStatus: "LOADING" };
       路由用假tx = {
         $queryRaw: async () => [],
+        // 2026-09-29：卸柜前先查这票货有没有排进尾端派送（assertNotInLastmile）；这些用例里都没排
+        adminLastmileOrder: { findMany: async () => [] },
+
         container: {
           findUnique: async () => ({ currentStatus: "LOADING" }),
           delete: async () => { 记录.删了柜子 = true; },

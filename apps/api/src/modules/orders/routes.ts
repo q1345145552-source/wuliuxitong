@@ -51,6 +51,7 @@ export async function loadOrderProducts(companyId: string, orderIds: string[]): 
 
 import { EXCEPTION_STATUSES } from "../shipments/status-flow";
 import { BusinessError } from "../core/business-error";
+import { UPLOAD_IMAGE_MAX_BASE64, uploadTooLargeMessage } from "../core/upload-limit";
 import { classifyStatusGroup, matchesShipmentListFilter, type ClientStatusGroup } from "../../../../../packages/shared-types/shipment-status";
 import { loadPartialAhead } from "../shipments/partial-status";
 import { productNamesLabel } from "../../../../../packages/shared-types/product-names";
@@ -1469,8 +1470,10 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
       fail(res, 400, "BAD_REQUEST", "only image uploads are allowed");
       return;
     }
-    if (contentBase64.length > 20_000_000) {
-      fail(res, 400, "BAD_REQUEST", "file too large (max 20MB base64)");
+    /* 2026-09-29：提示改中文；上限从 2000 万字收到 950 万字 —— 线上请求要过 Next 转发（10MiB 天花板），
+       超过 950 万字的根本到不了这里，原来那个 2000 万是写着好看的。 */
+    if (contentBase64.length > UPLOAD_IMAGE_MAX_BASE64) {
+      fail(res, 400, "BAD_REQUEST", uploadTooLargeMessage(contentBase64.length));
       return;
     }
     const order = await prisma.order.findFirst({

@@ -1,4 +1,4 @@
-import { unloadItemFully } from "../shipments/unload-item";
+import { assertNotInLastmile, unloadItemFully } from "../shipments/unload-item";
 import { prisma } from "../../db/prisma";
 import { FCL_BLOCKED_MESSAGE } from "../core/fcl-scope";
 import { syncParentStatusFromChildren } from "../shipments/parent-status";
@@ -1054,7 +1054,7 @@ export function registerLoadingManifestRoutes(app: MinimalHttpApp): void {
         // ⚠️ weightKg 必须一起查：2026-08-22 分柜改成从父单扣体积和重量之后，
         // 卸柜就必须把这两样也还回去，否则一装一卸这票货的体积重量会凭空变小。
         include: {
-          shipment: { select: { id: true, parentTrackingNo: true, packageCount: true, volumeM3: true, weightKg: true } },
+          shipment: { select: { id: true, trackingNo: true, parentTrackingNo: true, packageCount: true, volumeM3: true, weightKg: true } },
           container: { select: { isFcl: true } },
         },
       });
@@ -1068,7 +1068,16 @@ export function registerLoadingManifestRoutes(app: MinimalHttpApp): void {
 
       // 运单的锁已经在上面按【柜 → 运单 → 柜内记录】的顺序拿过了
 
+      /* 已经排了尾端派送（派送中 / 已签收）的货不许卸，整票和部分都挡（2026-09-29 老板选 A，
+         原因和做法见 shipments/unload-item.ts 的 assertNotInLastmile）。运单锁上面已经拿了。 */
+      await assertNotInLastmile(tx, item.shipment.id, auth.companyId, item.shipment.trackingNo);
+
       const totalLoaded = item.loadedPieceCount;
+      /* 卸柜件数比已装件数还多：挡住（2026-09-29 老板选 A）。原来一律按整票卸 ——
+         员工想卸 5 件多敲一位变 55，整票就被卸下来了，也不提示。跟装柜那边「超了就报错」一个口径。 */
+      if (typeof body.pieceCount === "number" && body.pieceCount > totalLoaded) {
+        throw new Error(`卸柜件数（${body.pieceCount} 件）超过了这票货已装的 ${totalLoaded} 件，请核对后再卸`);
+      }
       const reqPieces = typeof body.pieceCount === "number" && body.pieceCount > 0 && body.pieceCount < totalLoaded ? body.pieceCount : totalLoaded;
       const childPkg = item.shipment.packageCount ?? 0;
       const childVol = item.shipment.volumeM3 ? Number(item.shipment.volumeM3) : 0;

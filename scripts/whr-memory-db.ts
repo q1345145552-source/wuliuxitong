@@ -38,12 +38,15 @@ export const mem: {
   events: string[];
   onEvent: ((event: string) => void) | null;
   seq: number;
-} = { db: {}, events: [], onEvent: null, seq: 0 };
+  /** number_sequences 表（2026-09-29 单号不回收）：号段 → 已经发到第几号 */
+  numberSeqs: Map<string, number>;
+} = { db: {}, events: [], onEvent: null, seq: 0, numberSeqs: new Map() };
 
 export function resetMemory(): void {
   mem.events = [];
   mem.onEvent = null;
   mem.seq = 0;
+  mem.numberSeqs = new Map();
   for (const m of MODELS) mem.db[m] = [];
 }
 
@@ -330,6 +333,16 @@ async function raw(strings: TemplateStringsArray, ...values: any[]): Promise<any
     emit("lock:plan_no");
     return [];
   }
+  // 发号（2026-09-29，core/number-sequence.ts）：max(已发到的号, 现有最大号) + 1，号只往上加
+  if (/^INSERT INTO number_sequences /.test(sql)) {
+    const name = String(values[0]);
+    const next = Math.max(mem.numberSeqs.get(name) ?? 0, Number(values[1]) || 0) + 1;
+    mem.numberSeqs.set(name, next);
+    return [{ last_value: next }];
+  }
+  // 抹柜号用的「本公司柜号名单」和「看的人自己的运单号」（core/container-nos.ts）：这套内存库里没有柜子，给空名单
+  if (/^SELECT DISTINCT btrim\(v\.no\) AS container_no FROM \(/.test(sql)) return [];
+  if (/^SELECT lower\(s\.tracking_no\) AS t FROM shipments s JOIN orders o/.test(sql)) return [];
   if (/SELECT MAX\(CAST\(SUBSTRING\(plan_no/.test(sql)) return [{ maxno: 0 }];
   if (/FROM whr_consolidation_prealerts pa JOIN/.test(sql)) {
     const pa = find("whrConsolidationPrealert", values[0]);

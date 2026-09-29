@@ -19,6 +19,7 @@ import { loadPartialAhead } from "./partial-status";
 import { CONTAINER_PUSH_LOG_MESSAGE, CURRENT_STATUS_LOG_MESSAGE, deleteBlockedReasonOf, MANAGED_LASTMILE_LOG_MESSAGE } from "./managed-lastmile-log";
 import { findDeletedLogAudits } from "./deleted-log-audits";
 import { BusinessError } from "../core/business-error";
+import { UPLOAD_IMAGE_MAX_BASE64, uploadTooLargeMessage } from "../core/upload-limit";
 import { canSeeOperatorIdentity, operatorNameForDisplay } from "../core/operator-visibility";
 
 interface Kuaidi100QueryPayload {
@@ -174,8 +175,11 @@ export function registerShipmentRoutes(app: MinimalHttpApp): void {
       fail(res, 404, "NOT_FOUND", "shipment not found");
       return;
     }
-    if (contentBase64.length > 4_000_000) {
-      fail(res, 400, "BAD_REQUEST", "file too large (max 4MB base64)");
+    /* 2026-09-29（老板选 A）：原来上限是 400 万个 base64 字（原图才约 2.86MB），普通 3MB 手机照片就传不上，
+       提示还是英文「file too large (max 4MB base64)」。放宽到跟产品图一样（base64 950 万字，原图约 7MB，
+       再大就过不了 Next 转发那一跳的 10MiB），提示改中文。 */
+    if (contentBase64.length > UPLOAD_IMAGE_MAX_BASE64) {
+      fail(res, 400, "BAD_REQUEST", uploadTooLargeMessage(contentBase64.length));
       return;
     }
     const id = `photo_${Date.now()}`;

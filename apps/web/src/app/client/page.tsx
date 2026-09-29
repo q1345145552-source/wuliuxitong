@@ -497,11 +497,14 @@ export default function ClientHomePage() {
     return item.id.toLowerCase().includes(q) || names.includes(q);
   });
 
+  /* 提示停留时间跟着字数走（2026-09-29）：原来一律 2.2 秒，「预报单已创建，但有 N 张图片没传上：……」这种长提示
+     还没看完就没了。短提示照旧 2.2 秒，长的每个字多给 0.12 秒，最长 12 秒。 */
+  const toastDuration = Math.min(12_000, Math.max(2200, toast.length * 120));
   useEffect(() => {
     if (!toast) return;
-    const timer = window.setTimeout(() => setToast(""), 2200);
+    const timer = window.setTimeout(() => setToast(""), toastDuration);
     return () => window.clearTimeout(timer);
-  }, [toast]);
+  }, [toast, toastDuration]);
   // Auto-fill volume and weight from multi-product form
   useEffect(() => {
     if (formProducts.length === 0) return;
@@ -1560,7 +1563,9 @@ export default function ClientHomePage() {
                     payload.cargoType = strictestCargoType(payload.products.map((x: any) => x.cargoType));
                   }
                   const result = await createClientPrealert(payload);
-                  // Upload images
+                  /* 2026-09-29（老板选 A）：图片没传上的要告诉客户是哪张、为什么。
+                     原来 catch 里什么都不做，照样提示「预报单创建成功」—— 客户以为图传好了，员工那边却看不到图。 */
+                  const failedImages: string[] = [];
                   if (prealertImageFiles.length > 0) {
                     for (const file of prealertImageFiles) {
                       try {
@@ -1572,10 +1577,14 @@ export default function ClientHomePage() {
                           reader.readAsDataURL(file);
                         });
                         await uploadStaffOrderProductImage({ orderId: result.prealertId, fileName: file.name, mime: file.type || "image/jpeg", contentBase64: base64 });
-                      } catch { /* skip */ }
+                      } catch (e) {
+                        failedImages.push(`「${file.name}」${e instanceof Error ? e.message : "上传失败"}`);
+                      }
                     }
                   }
-                  setToast("预报单创建成功");
+                  setToast(failedImages.length === 0
+                    ? "预报单创建成功"
+                    : `预报单已创建，但有 ${failedImages.length} 张图片没传上：${failedImages.join("；")}。请把这几张压缩后联系客服补上。`);
                   setShowCreateModal(false);
                   setForm({ warehouseId: "", itemName: "", packageCount: "", packageUnit: "box" as "bag"  |  "box", lengthCm: "", widthCm: "", heightCm: "", weightKg: "", volumeM3: "", trackingNo: "", domesticTrackingNo: "", transportMode: "" as ""  |  "sea"  |  "land", cargoType: "normal", receiverNameTh: "", receiverPhoneTh: "", receiverAddressTh: "" });
                   setFormProducts([]);
@@ -1594,7 +1603,7 @@ export default function ClientHomePage() {
 
       {/* 2026-08-31（条目48）：原来这里有个完整的「编辑预报单」弹窗，
           但 2026-06-28 列表改版后页面上就没有任何按钮能打开它，纯死代码，已删。 */}
-      <Toast open={toast.length > 0} message={toast} />
+      <Toast open={toast.length > 0} message={toast} duration={toastDuration} />
       <section id="client-fcl" style={{ display: activeSection === "client-fcl" ? "block" : "none" }}>
         <FclInquiryPanel visible={activeSection === "client-fcl"} onToast={setToast} />
       </section>

@@ -8,6 +8,8 @@ import { lockPlanAliveById, lockPlanAliveByPrealert, lockPrealertExpecting, Plan
 import { saveImageToDisk, deleteImageFile } from "../orders/image-storage";
 import { BusinessError } from "../core/business-error";
 import { hideOperatorInRemark } from "../core/operator-visibility";
+import { sanitizeRemarkForClient } from "../core/client-privacy";
+import { companyContainerNosForMasking } from "../core/container-nos";
 import {
   ACTIVE_PREALERT_WHERE,
   EDITABLE_PREALERT_STATUS,
@@ -20,8 +22,10 @@ import {
   recalcPrealertFee,
   round3,
   sumPlanUsedVolume,
+  syncPlanStatus,
   toNum,
 } from "./utils";
+import { nextSequenceValue } from "../core/number-sequence";
 
 /** 单张图片 base64 上限（约 8MB 原图），整个请求体上限由 server.ts 控制在 20MB */
 const MAX_IMAGE_BASE64_LENGTH = 8 * 1024 * 1024;
@@ -166,7 +170,8 @@ export function registerWhrConsolidationClientRoutes(app: MinimalHttpApp): void 
         FROM whr_consolidation_prealerts
         WHERE tracking_no ~ '^WHRP[0-9]+$'
       `;
-      const nextNum = Number(rows?.[0]?.maxno ?? 0) + 1;
+      // 号只往上加、删了也不回收（2026-09-29 老板选 A）：最大号只是底，真正发号看 number_sequences（core/number-sequence.ts）
+      const nextNum = await nextSequenceValue(tx, "WHRP", Number(rows?.[0]?.maxno ?? 0));
       const trackingNo = `WHRP${String(nextNum).padStart(4, "0")}`;
 
       const created = await tx.whrConsolidationPrealert.create({
@@ -181,6 +186,10 @@ export function registerWhrConsolidationClientRoutes(app: MinimalHttpApp): void 
       });
       // totalPrealerts 交给统一重算，避免只增不减
       await recalcCustomerTotals(customer.id, tx);
+      /* 2026-09-29（老板选 A）：新单是「待签收」，按 utils.ts syncPlanStatus 的规则柜子该回「集货中」。
+         原来建单这条路漏了同步（其它写路径都调了）—— 柜子里原有的票都签收完变成「装柜中」以后，
+         客户再报一票，柜子一直停在「装柜中」，这段时间员工也加不了客户（测试库实测）。计划锁上面已经拿了。 */
+      await syncPlanStatus(customer.planId, tx);
       return created;
     });
 
@@ -928,6 +937,15 @@ export function registerWhrConsolidationClientRoutes(app: MinimalHttpApp): void 
         .map((pa) => breakdownByPrealert.get(pa.id)!),
     );
 
+    /* 2026-09-29（老板选 A）：员工手写的取消原因 / 付款驳回原因 / 时间线备注里带的柜号，原来原样发给客户
+       （测试库实测：取消原因填「柜号 MSKU1234565 已满」，客户详情里原文照出）。普通版集货 08-28 起就抹，仓库版漏了。
+       跟普通版同一套：「柜号:」后面抹到标点，再按本公司真实柜号 + 标准柜号样子各抹一遍（看的人自己的运单号不抹）。 */
+    const maskNos = await companyContainerNosForMasking(auth.companyId, [auth.userId]);
+    const maskForClient = (text: string | null | undefined): string | null => {
+      if (typeof text !== "string" || text === "") return text ?? null;
+      return sanitizeRemarkForClient(text.replace(/柜号\s*[:：][^\n，,。；;、]*/g, "柜号（不对外显示）"), true, maskNos);
+    };
+
     // 时间线在这里聚合一次即可，不再逐单重复下发一份（原来同一批日志会传两遍）
     const allLogs = customer.prealerts
       .flatMap((pa) => pa.statusLogs.map((sl) => ({ ...sl, trackingNo: pa.trackingNo })))
@@ -962,10 +980,10 @@ export function registerWhrConsolidationClientRoutes(app: MinimalHttpApp): void 
         paymentProofs: pa.paymentProofs ?? [],
         paymentProofUploadedAt: pa.paymentProofUploadedAt?.toISOString() ?? null,
         paymentReviewedAt: pa.paymentReviewedAt?.toISOString() ?? null,
-        paymentRejectReason: pa.paymentRejectReason,
+        paymentRejectReason: maskForClient(pa.paymentRejectReason),
         thailandReceiptProofs: pa.thailandReceiptProofs ?? [],
         thailandReceivedAt: pa.thailandReceivedAt?.toISOString() ?? null,
-        cancelReason: pa.cancelReason,
+        cancelReason: maskForClient(pa.cancelReason),
         cancelledAt: pa.cancelledAt?.toISOString() ?? null,
         createdAt: pa.createdAt.toISOString(),
         items: pa.items.map((it: any) => ({
@@ -995,7 +1013,7 @@ export function registerWhrConsolidationClientRoutes(app: MinimalHttpApp): void 
         // 这里只列要给的字段（上面 `...sl` 带进来的整行不会漏出去）
         fromStatus: sl.fromStatus,
         toStatus: sl.toStatus,
-        remark: hideOperatorInRemark(sl.remark, "client"),
+        remark: maskForClient(hideOperatorInRemark(sl.remark, "client")),
         createdAt: sl.createdAt.toISOString(),
       })),
     });

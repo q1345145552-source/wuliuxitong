@@ -37,8 +37,34 @@ export function authHeaders(): Record<string, string> {
 // 只关联本次请求实际携带的令牌；元数据不写磁盘、不输出，也不改变 Response。
 const responseTokens = new WeakMap<Response, string | null>();
 
+/**
+ * 一次请求最多能发多大（2026-09-29 老板选 A）。
+ * 线上是 nginx → Next 转发 → 接口，**Next 转发那一跳的请求体上限是 10 MiB**（见记忆 upload-size-ceiling-is-nextjs-10mib）。
+ * 超过的请求不会被当场拒绝，而是卡满 30 秒再回英文「Internal Server Error」/「服务器繁忙」/「请求超时」，重试多少次都没用
+ * （测试库实测：9MB 的图走转发 30.4 秒后 500）。图片是 base64 放在 JSON 里发的，原图约 7.3MB 就到顶了。
+ * 所以在发出去之前就量一下，超了当场给一句看得懂的中文。留一点余量给 JSON 外壳。
+ */
+export const REQUEST_BODY_MAX_BYTES = 9_800_000;
+
+/** 请求体（UTF-8）有多少字节。短的直接按字数估（base64 / 英文一字一字节），长的才精确量，省得每个请求都编码一遍 */
+function requestBodyBytes(body: string): number {
+  if (body.length < 3_000_000) return body.length;
+  return new Blob([body]).size;
+}
+
+/** 超了就给的中文提示（导出给测试用） */
+export function requestTooLargeMessage(bytes: number): string {
+  const mb = ((bytes * 3) / 4 / 1024 / 1024).toFixed(1);
+  return `要上传的图片太大了（这次一共约 ${mb} MB），传不上去。请把图片压缩到一次一共 6MB 以内再传。`;
+}
+
 /** 原样透传 fetch，只为后续解析记录请求身份。旧响应不能清除后来建立的新会话。 */
 export async function fetchWithSession(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  // 请求体太大：不发，当场报中文（原因见 REQUEST_BODY_MAX_BYTES）。项目里所有请求都走这里，一处管全部上传入口。
+  if (typeof init?.body === "string") {
+    const bytes = requestBodyBytes(init.body);
+    if (bytes > REQUEST_BODY_MAX_BYTES) throw new Error(requestTooLargeMessage(bytes));
+  }
   const requestHeaders = new Headers(init?.headers ?? (
     typeof Request !== "undefined" && input instanceof Request ? input.headers : undefined
   ));

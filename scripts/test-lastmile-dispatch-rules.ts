@@ -11,6 +11,8 @@ let ships: Row[] = [], deliveries: Row[] = [], logs: Row[] = [];
 const reads: Array<{ model: string; args: any }> = [];
 const locks: string[] = [];
 const writes: string[] = [];
+// number_sequences 表（2026-09-29 单号不回收）：号段 → 已经发到第几号
+const numberSeqs = new Map<string, number>();
 let afterLock: (key: string) => void = () => {};
 const copy = <T>(v: T): T => structuredClone(v);
 const relations = new Set(["order", "client", "products", "shipments", "containerItems", "container", "statusLogs", "addresses"]);
@@ -86,7 +88,7 @@ function ship(id: string, count = 2, parent: string | null = null): Row {
 function delivery(id:string,sid:string,wd:string,status="DELIVERING"): Row {
  return {id,companyId:"c",shipmentId:sid,deliveryNo:wd,status,driverName:"司机",phoneNumber:"123",licensePlate:"车",deliveryDate:"2026-09-10",signImageBase64:null,updatedAt:new Date(0)};
 }
-function reset(list: Row[]) { ships=copy(list);deliveries=[];logs=[];reads.length=0;locks.length=0;writes.length=0;afterLock=()=>{}; }
+function reset(list: Row[]) { ships=copy(list);deliveries=[];logs=[];reads.length=0;locks.length=0;writes.length=0;numberSeqs.clear();afterLock=()=>{}; }
 function list(model: string, rows: Row[], args: any): any[] { reads.push({model,args:copy(args)}); return shape(rows,args); }
 const db: any = strict("prisma", {
   shipment: strict("shipment", {
@@ -109,6 +111,8 @@ const db: any = strict("prisma", {
   statusLog: strict("statusLog", { async create(args: any) { logs.push(copy(args.data));return args.data; } }),
   async $queryRaw(strings: TemplateStringsArray,...values: any[]) {
     const sql=strings.join("?").replace(/\s+/g," ");
+    // 发号（2026-09-29 单号不回收，core/number-sequence.ts）：不是锁，照真库的算法回一个号
+    if(/INSERT INTO number_sequences /.test(sql)){const name=String(values[0]);const next=Math.max(numberSeqs.get(name)??0,Number(values[1])||0)+1;numberSeqs.set(name,next);return [{last_value:next}];}
     assert.match(sql,/SELECT id FROM (admin_lastmile_orders|shipments).*FOR UPDATE/i);
     let id=values[0];if(sql.includes("tracking_no"))id=ships.find(s=>s.trackingNo===id)?.id;
     const key=`${sql.includes("admin_lastmile_orders")?"lastmile":"shipment"}:${id}`;locks.push(key);afterLock(key);return [{id}];

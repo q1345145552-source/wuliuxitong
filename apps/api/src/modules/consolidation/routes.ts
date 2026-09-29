@@ -22,6 +22,7 @@ import {
 import { saveImageToDisk, readImageAsBase64 } from "../orders/image-storage";
 // 客户排队锁：跟「超管改客户归属」同一把，建普通版任务时防止客户同时被改归代理（确认单 4.1）
 import { lockClientWhrPrice } from "../whr-consolidation/long-term-price";
+import { nextSequenceValue } from "../core/number-sequence";
 
 // ============================================================================
 // 辅助函数
@@ -196,7 +197,7 @@ export function checkConsolidationDeletable(input: {
  * 锁要一直握到插入提交，后来的排队拿下一个号，而不是撞号报错。
  */
 async function generateTaskNo(
-  tx: Pick<typeof prisma, "$executeRaw" | "consolidationTask">,
+  tx: Pick<typeof prisma, "$executeRaw" | "$queryRaw" | "consolidationTask">,
 ): Promise<string> {
   await tx.$executeRaw`SELECT pg_advisory_xact_lock(83001)`;
   const last = await tx.consolidationTask.findFirst({
@@ -204,7 +205,8 @@ async function generateTaskNo(
     orderBy: { taskNo: "desc" },
     select: { taskNo: true },
   });
-  const nextNum = last ? parseInt(last.taskNo.replace("JH", ""), 10) + 1 : 1;
+  // 号只往上加、删了也不回收（2026-09-29 老板选 A）：最大号只是底，真正发号看 number_sequences（core/number-sequence.ts）
+  const nextNum = await nextSequenceValue(tx, "JH", last ? parseInt(last.taskNo.replace("JH", ""), 10) || 0 : 0);
   return `JH${String(nextNum).padStart(7, "0")}`;
 }
 
@@ -213,7 +215,7 @@ async function generateTaskNo(
  * ⚠️ 同 generateTaskNo：必须传插入用的那个事务，锁握到插入完成（2026-08-31 改）
  */
 async function generateTrackingNo(
-  tx: Pick<typeof prisma, "$executeRaw" | "consolidationPrealert">,
+  tx: Pick<typeof prisma, "$executeRaw" | "$queryRaw" | "consolidationPrealert">,
 ): Promise<string> {
   await tx.$executeRaw`SELECT pg_advisory_xact_lock(83002)`;
   const last = await tx.consolidationPrealert.findFirst({
@@ -221,7 +223,8 @@ async function generateTrackingNo(
     orderBy: { trackingNo: "desc" },
     select: { trackingNo: true },
   });
-  const nextNum = last ? parseInt(last.trackingNo.replace("JH-YW", ""), 10) + 1 : 1;
+  // 号只往上加、删了也不回收（2026-09-29 老板选 A）：最大号只是底，真正发号看 number_sequences（core/number-sequence.ts）
+  const nextNum = await nextSequenceValue(tx, "JH-YW", last ? parseInt(last.trackingNo.replace("JH-YW", ""), 10) || 0 : 0);
   return `JH-YW${String(nextNum).padStart(7, "0")}`;
 }
 
@@ -528,7 +531,13 @@ export function registerConsolidationRoutes(app: MinimalHttpApp): void {
       },
     });
 
-    if (!task || task.clientId !== auth.userId) {
+    /* 2026-09-29（老板选 A）：查不到（多半是被管理员删了）和「不是你的」分开说。
+       原来合成一句「无权访问该任务」，客户点开一张刚被删掉的任务，还以为自己权限出了问题。 */
+    if (!task) {
+      fail(res, 404, "NOT_FOUND", "这个集货任务不存在或已被删除，请刷新列表");
+      return;
+    }
+    if (task.clientId !== auth.userId) {
       fail(res, 403, "FORBIDDEN", "无权访问该任务");
       return;
     }
