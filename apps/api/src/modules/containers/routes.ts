@@ -1408,7 +1408,11 @@ export function registerContainerRoutes(app: MinimalHttpApp): void {
        */
       await unloadAllItemsOfContainer(tx, id, auth.companyId, { userId: auth.userId, role: auth.role, name: auth.name });
       await tx.container.delete({ where: { id } });
-    });
+    },
+    /* 事务时长随柜里票数涨（每票十几条 SQL；9-29 起先把整柜运单锁齐、每票还要查父运单有没有排派送），
+       Prisma 默认只给 5 秒，大柜子会超时变成「服务器繁忙」、删不掉（dsh 第三轮复核实测）。
+       跟推进柜子状态、建派送单那两个事务一样给 30 秒。 */
+    { timeout: 30000, maxWait: 10000 });
 
     ok(res, { deleted: true, id });
   });

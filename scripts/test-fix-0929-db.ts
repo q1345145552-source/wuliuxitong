@@ -122,11 +122,13 @@ async function main(): Promise<void> {
     await pm.adminLastmileOrder.create({ data: { id: "zz_f29_lm1", companyId: CO, deliveryNo: "ZZF29D1", shipmentId: "zz_f29_s1c", carrierName: "车队", externalTrackingNo: "X", status: "SIGNED", signImageBase64: PNG } });
     await pm.adminLastmileOrder.create({ data: { id: "zz_f29_lm2", companyId: CO, deliveryNo: "ZZF29D2", shipmentId: "zz_f29_s1d", carrierName: "车队", externalTrackingNo: "X", status: "DELIVERING" } });
 
-    await check("F1 已签收的子单整票卸柜 → 挡住（提示先撤销签收），子单、派送单、签收图、柜内记录一样不少", async () => {
+    await check("F1 已签收的子单整票卸柜 → 挡住（提示先从派送单里删掉，说清删了签收图也没了），子单、派送单、签收图、柜内记录一样不少", async () => {
       const r = await call("POST /staff/loading-manifests/remove-shipment", STAFF, { itemId: itSigned.id });
       assert.notEqual(r.status, 200, "已签收的货照样卸掉了");
-      assert.match(r.message, /签收/, `提示里没说是已签收：${r.message}`);
-      assert.match(r.message, /ZZF29D1/, `提示里没写派送单号：${r.message}`);
+      assert.match(r.message, /ZZF29D1（已签收）/, `提示里没写派送单号和状态：${r.message}`);
+      assert.match(r.message, /签收图/, `提示里没说删了签收图也没了：${r.message}`);
+      // 不许再让员工去「撤销签收」：货状态变过就撤不了，照着做会卡住（Codex 第三轮）
+      assert.doesNotMatch(r.message, /撤销签收/, r.message);
       assert.ok(await pm.shipment.findUnique({ where: { id: "zz_f29_s1c" } }), "子单被删了");
       const lm = await pm.adminLastmileOrder.findUnique({ where: { id: "zz_f29_lm1" } });
       assert.equal(lm?.signImageBase64, PNG, "派送单或签收图没了");
@@ -138,7 +140,8 @@ async function main(): Promise<void> {
       for (const body of [{ itemId: itDeliv.id }, { itemId: itDeliv.id, pieceCount: 2 }]) {
         const r = await call("POST /staff/loading-manifests/remove-shipment", STAFF, body);
         assert.notEqual(r.status, 200, `派送中的货照样卸了：${JSON.stringify(body)}`);
-        assert.match(r.message, /派送中/, `提示不对：${r.message}`);
+        assert.match(r.message, /ZZF29D2（派送中）/, `提示不对：${r.message}`);
+        assert.doesNotMatch(r.message, /签收图/, `派送中的不该提签收图：${r.message}`);
       }
       const it = await pm.shipmentContainerItem.findUnique({ where: { id: itDeliv.id } });
       assert.equal(it?.loadedPieceCount, 4, "部分卸柜照样减了件数");
@@ -257,18 +260,25 @@ async function main(): Promise<void> {
       assert.equal(p1.currentStatus, "outForDelivery", "父运单被退回国内仓了");
       assert.equal(p1.packageCount, 4, "父运单件数被改了");
       assert.equal((await pm.shipmentContainerItem.findUnique({ where: { id: it.id } })).loadedPieceCount, 6, "柜内记录被改了");
-      // 已签收：提示里要说先撤销签收；删柜子那条路同样挡
+      // 一张已签收、一张派送中：各自写清状态（原来有一张签收就整句说「签收了」，Codex 第三轮）；删柜子那条路同样挡
       await pm.adminLastmileOrder.update({ where: { id: "zz_f29_lm_pw" }, data: { status: "SIGNED" } });
+      await pm.adminLastmileOrder.create({ data: { id: "zz_f29_lm_pw2", companyId: CO, deliveryNo: "ZZF29DPW2", shipmentId: "zz_f29_pw", carrierName: "车队", externalTrackingNo: "X", status: "DELIVERING" } });
       await pm.shipment.update({ where: { id: "zz_f29_pw" }, data: { currentStatus: "delivered" } });
       await pm.container.update({ where: { id: ctr.id }, data: { currentStatus: "LOADING" } });
       const d = await call("DELETE /admin/containers", ADMIN, {}, { id: ctr.id });
-      assert.equal(d.status, 409, `父运单已签收，柜子照样删了：${d.status} ${d.message}`);
-      assert.match(d.message, /签收了/, d.message);
-      assert.match(d.message, /撤销签收/, d.message);
+      assert.equal(d.status, 409, `父运单在派送单上，柜子照样删了：${d.status} ${d.message}`);
+      assert.match(d.message, /ZZF29DPW（已签收）/, d.message);
+      assert.match(d.message, /ZZF29DPW2（派送中）/, d.message);
+      assert.match(d.message, /这几张派送单/, d.message);
+      assert.match(d.message, /签收图/, d.message);
+      assert.doesNotMatch(d.message, /撤销签收/, d.message);
       assert.ok(await pm.shipment.findUnique({ where: { id: "zz_f29_pw_c" } }), "子单被删了");
       assert.equal((await pm.shipment.findUnique({ where: { id: "zz_f29_pw" } })).currentStatus, "delivered");
-      // 派送单删掉以后就能正常卸了（不误挡）
-      await pm.adminLastmileOrder.delete({ where: { id: "zz_f29_lm_pw" } });
+      // 照提示做：在尾端派送把这两行删掉（走真接口，员工就能删，已签收的也能删）→ 就能正常卸了（不误挡）
+      for (const lmId of ["zz_f29_lm_pw", "zz_f29_lm_pw2"]) {
+        const del = await call("DELETE /admin/lastmile/orders", STAFF, {}, { id: lmId });
+        assert.equal(del.status, 200, `员工删派送单行失败：${del.message}`);
+      }
       const ok = await call("POST /staff/loading-manifests/remove-shipment", STAFF, { itemId: it.id });
       assert.equal(ok.status, 200, `派送单删掉以后还是卸不了：${ok.message}`);
       assert.equal((await pm.shipment.findUnique({ where: { id: "zz_f29_pw" } })).packageCount, 10, "件数没还给父运单");
@@ -281,25 +291,32 @@ async function main(): Promise<void> {
       await mkShip("zz_f29_st_p", "zz_f29_o4b", "ZZF29ST", "loaded", { packageCount: 0, volumeM3: 0, weightKg: 0 });
       await mkShip("zz_f29_st_c", "zz_f29_o4b", "ZZF29ST-1", "loaded", { parentTrackingNo: "ZZF29ST", packageCount: 10, volumeM3: 1, weightKg: 100 });
       await pm.shipmentContainerItem.create({ data: { containerId: ctr.id, shipmentId: "zz_f29_st_c", loadedPieceCount: 10, loadedVolumeM3: 1 } });
-      let reached!: () => void; const reachedP = new Promise<void>((r) => { reached = r; });
-      let resume!: () => void; const resumeP = new Promise<void>((r) => { resume = r; });
-      let paused = false;
+      /* 做法（Codex 第三轮：原来那种「停在锁前、先让别人提交」只证明又读了一遍，
+         把重读挪到加锁之前也照样绿）：改件数的那边先锁住子单、改成 20 件但先不提交 ——
+         删柜读到的还是旧的 10 件，然后卡在锁子单那一步；这时再让改件数的提交。
+         只有「锁上以后才重读」才拿得到 20；重读挪到锁前、或者不重读，都只拿到 10。 */
+      let updated!: () => void; const updatedP = new Promise<void>((r) => { updated = r; });
+      let release!: () => void; const releaseP = new Promise<void>((r) => { release = r; });
+      const updating = pm.$transaction(async (tx: any) => {
+        await tx.$queryRaw`SELECT id FROM shipments WHERE id = ${"zz_f29_st_c"} FOR UPDATE`;
+        await tx.shipment.update({ where: { id: "zz_f29_st_c" }, data: { packageCount: 20, volumeM3: 2, weightKg: 200 } });
+        updated();
+        await releaseP;
+      }, { timeout: 30_000, maxWait: 10_000 });
+      await updatedP;
       const deleting = pm.$transaction(async (tx: any) => {
         await tx.$queryRaw`SELECT id FROM containers WHERE id = ${ctr.id} FOR UPDATE`;
-        // 读完柜里的记录、还没锁运单的那一刻停住
-        const wrapped = new Proxy(tx, { get(tt: any, k: any) {
-          if (k !== "shipment") return tt[k];
-          return new Proxy(tt.shipment, { get(d: any, m: any) {
-            if (m !== "findMany") return d[m];
-            return async (a: any) => { if (!paused) { paused = true; reached(); await resumeP; } return d.findMany(a); };
-          } });
-        } });
-        await unloadAllItemsOfContainer(wrapped, ctr.id, CO, { userId: ADMIN.userId, role: "admin", name: ADMIN.name });
+        await unloadAllItemsOfContainer(tx, ctr.id, CO, { userId: ADMIN.userId, role: "admin", name: ADMIN.name });
         await tx.container.delete({ where: { id: ctr.id } });
       }, { timeout: 30_000, maxWait: 10_000 }).then(() => null, (e: any) => e);
-      await reachedP;
-      await pm.shipment.update({ where: { id: "zz_f29_st_c" }, data: { packageCount: 20, volumeM3: 2, weightKg: 200 } });
-      resume();
+      // 等删柜卡在锁上（数据库里出现一条没拿到的行锁），最多等 10 秒
+      for (let i = 0; i < 100; i++) {
+        const [{ n }] = await pm.$queryRawUnsafe(`SELECT count(*)::int n FROM pg_locks WHERE NOT granted`);
+        if (n > 0) break;
+        await new Promise((r) => setTimeout(r, 100));
+      }
+      release();
+      await updating;
       const delErr = await deleting;
       assert.equal(delErr, null, `删柜子失败了：${delErr?.message}`);
       const parent = await pm.shipment.findUnique({ where: { id: "zz_f29_st_p" } });

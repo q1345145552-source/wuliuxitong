@@ -23,12 +23,31 @@ import { lockShipmentsChildrenFirst } from "./lock-shipments";
  */
 
 /**
+ * 派送单一张张列出来、各自写状态（Codex 第三轮复核）：原来只要有一张已签收就整句写「签收了」，
+ * 派送中和已签收混着的时候说不对。
+ * 处理办法只写「在尾端派送把这几行删掉」：删派送单那一行员工和管理员都能做、已签收的也能直接删（系统原来就允许）。
+ * 第一版写的是「先让超级管理员撤销签收」—— 撤销签收要求运单还是「已签收」，货后来被装柜 / 改过状态就撤不了，
+ * 员工照着做会卡住（Codex 用真路由复现）；而且撤销完再删，签收图一样没了，多这一步没有用。
+ */
+function describeLastmileRows(rows: Array<{ deliveryNo: string; status: string }>): { list: string; signed: boolean; many: boolean } {
+  const seen = new Set<string>();
+  const parts: string[] = [];
+  for (const r of rows) {
+    const label = `${r.deliveryNo}（${r.status === "SIGNED" ? "已签收" : "派送中"}）`;
+    if (!seen.has(label)) { seen.add(label); parts.push(label); }
+  }
+  return { list: parts.join("、"), signed: rows.some((r) => r.status === "SIGNED"), many: new Set(rows.map((r) => r.deliveryNo)).size > 1 };
+}
+
+const SIGNED_DELETE_NOTE = "（已签收的那行删掉后签收图也跟着没了，删之前请确认）";
+
+/**
  * 已经排了尾端派送（派送中 / 已签收）的货不许卸柜（2026-09-29 老板选 A）。
  *
  * 原来照卸：子单一删，数据库顺着外键（admin_lastmile_orders、status_logs 都是 onDelete: Cascade）
  * 把它的**派送单、签收图、全部轨迹**一起删光，找不回来（测试库实测：卸完派送单 0 行、客户轨迹里「已签收」没了）。
- * 9-02 定的「已签收的货也能卸、状态退回国内仓」从此改成：**先在「尾端派送」撤销签收（只有超管能撤）
- * 或把它从派送单里删掉，再来卸柜**。派送单只有 DELIVERING / SIGNED 两种状态，有一行就挡。
+ * 9-02 定的「已签收的货也能卸、状态退回国内仓」从此改成：**先在「尾端派送」把它从派送单里删掉，再来卸柜**
+ * （提示怎么写见 describeLastmileRows）。派送单只有 DELIVERING / SIGNED 两种状态，有一行就挡。
  *
  * ⚠️ 查之前必须先锁住这票货（运单行）：建派送单那条路也锁运单（lockShipmentsChildrenFirst），
  * 两边排队，才不会出现「这边刚查完说没排、那边马上排进派送单、这边照样卸，把新派送单连带删掉」。
@@ -43,17 +62,11 @@ export async function assertNotInLastmile(tx: any, shipmentId: string, companyId
     orderBy: { updatedAt: "desc" },
   });
   if (rows.length === 0) return;
-  const nos = [...new Set(rows.map((r) => r.deliveryNo))].join("、");
-  const who = trackingNo ? `运单 ${trackingNo}` : "这票货";
-  if (rows.some((r) => r.status === "SIGNED")) {
-    throw new BusinessError(
-      `${who}已经在尾端派送单 ${nos} 上签收了，不能卸柜（卸了会把签收图和派送记录一起删掉）。确实要卸的话，请先让超级管理员在「尾端派送」撤销签收，再把它从派送单里删掉，然后回来卸柜。`,
-      409,
-      "VALIDATION_ERROR",
-    );
-  }
+  const { list, signed, many } = describeLastmileRows(rows);
+  const who = trackingNo ? `运单 ${trackingNo} ` : "这票货";
   throw new BusinessError(
-    `${who}已经排进尾端派送单 ${nos}（派送中），不能卸柜（卸了会把派送记录一起删掉）。确实要卸的话，请先在「尾端派送」把它从派送单里删掉，再回来卸柜。`,
+    `${who}已经在尾端派送单 ${list}上，不能卸柜（卸了会把派送记录${signed ? "和签收图" : ""}一起删掉）。` +
+      `确实要卸的话，请先在「尾端派送」把它从${many ? "这几张" : "这张"}派送单里删掉${signed ? SIGNED_DELETE_NOTE : ""}，再回来卸柜。`,
     409,
     "VALIDATION_ERROR",
   );
@@ -74,13 +87,12 @@ export async function assertParentNotInLastmile(tx: any, parentTrackingNo: strin
     orderBy: { updatedAt: "desc" },
   });
   if (rows.length === 0) return;
-  const nos = [...new Set(rows.map((r) => r.deliveryNo))].join("、");
-  const signed = rows.some((r) => r.status === "SIGNED");
+  const { list, signed, many } = describeLastmileRows(rows);
   const whose = childTrackingNo ? `运单 ${childTrackingNo} 的` : "这票货的";
   throw new BusinessError(
-    `${whose}父运单 ${parentTrackingNo} 已经在尾端派送单 ${nos} 上${signed ? "签收了" : "（派送中）"}，不能卸柜` +
-      `（卸下来会把父运单退回「国内仓」，跟派送单对不上）。确实要卸的话，请先在「尾端派送」把父运单从派送单里删掉` +
-      `${signed ? "（已签收的要先让超级管理员撤销签收）" : ""}，再回来卸柜。`,
+    `${whose}父运单 ${parentTrackingNo} 已经在尾端派送单 ${list}上，不能卸柜` +
+      `（卸下来会把父运单退回「国内仓」，跟派送单对不上）。确实要卸的话，请先在「尾端派送」把父运单从${many ? "这几张" : "这张"}派送单里删掉` +
+      `${signed ? SIGNED_DELETE_NOTE : ""}，再回来卸柜。`,
     409,
     "VALIDATION_ERROR",
   );
@@ -305,9 +317,9 @@ export async function unloadAllItemsOfContainer(
     });
     return [...rows].sort((a: any, b: any) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   };
-  const before = await readItems();
-  if (before.length === 0) return 0;
-  if (before.some((it: any) => !it.shipment)) {
+  const preLockItems = await readItems();
+  if (preLockItems.length === 0) return 0;
+  if (preLockItems.some((it: any) => !it.shipment)) {
     throw new BusinessError("柜内记录指向的运单不存在，请联系技术处理", 400, "VALIDATION_ERROR");
   }
   /**
@@ -315,13 +327,13 @@ export async function unloadAllItemsOfContainer(
    * 不锁的话，「查这票货有没有排派送单」和「删掉它」中间，别人能把它排进派送单，新派送单会被连带删掉。
    * 顺序跟建派送单完全一样（lockShipmentsChildrenFirst：先子单、后父单，各自按 id 排），两边只会排队、不会互相卡死。
    */
-  const parentNos = [...new Set(before.flatMap((it: any) => (it.shipment.parentTrackingNo ? [it.shipment.parentTrackingNo] : [])))];
+  const parentNos = [...new Set(preLockItems.flatMap((it: any) => (it.shipment.parentTrackingNo ? [it.shipment.parentTrackingNo] : [])))];
   const parents = parentNos.length > 0
     ? await tx.shipment.findMany({ where: { trackingNo: { in: parentNos }, companyId }, select: { id: true } })
     : [];
   await lockShipmentsChildrenFirst(
     tx,
-    [...new Set([...before.map((it: any) => it.shipment.id), ...parents.map((r: any) => r.id)])],
+    [...new Set([...preLockItems.map((it: any) => it.shipment.id), ...parents.map((r: any) => r.id)])],
     companyId,
   );
   /* 锁完**重读一遍**再干活（CLAUDE.md 第 28 条；Codex 第二轮复核用真库复现）：上面那份是锁之前读的，
