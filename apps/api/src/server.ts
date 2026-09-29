@@ -303,8 +303,9 @@ export function createApp(): MinimalHttpApp {
             error: error instanceof Error ? error.message : String(error),
           });
           const isProduction = process.env.NODE_ENV === "production";
+          // 线上给中文（2026-09-29 Codex 全系统检查：老页面原样显示后端这句话，员工看到的是英文「Internal server error」）
           const message = isProduction
-            ? "Internal server error"
+            ? "服务器出错了，请稍后再试（反复出现请联系技术）"
             : error instanceof Error ? error.message : "internal error";
           fail(res, 500, "INTERNAL_ERROR", message);
         }
@@ -334,8 +335,8 @@ export function createApp(): MinimalHttpApp {
           rawRes.end(
             JSON.stringify({
               code: "INTERNAL_ERROR",
-              message: "Internal server error",
-              errors: [{ reason: "Internal server error" }],
+              message: "服务器出错了，请稍后再试（反复出现请联系技术）",
+              errors: [{ reason: "服务器出错了，请稍后再试（反复出现请联系技术）" }],
               requestId: pipelineRequestId,
               timestamp: new Date().toISOString(),
             }),

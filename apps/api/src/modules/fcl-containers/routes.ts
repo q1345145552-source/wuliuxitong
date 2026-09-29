@@ -246,10 +246,12 @@ function parseFclHeader(body: FclHeaderBody): { error: string } | { header: FclH
        而人在中国（UTC+8）和泰国（UTC+7）。当地凌晨那几个小时，员工选的「今天」
        按 UTC 算已经是明天了，会被一句「不能填未来」莫名其妙挡住。
        放宽一天，真正往后填好几天还是拦得住。 */
-    const tomorrowEnd = new Date();
-    tomorrowEnd.setUTCDate(tomorrowEnd.getUTCDate() + 1);
-    tomorrowEnd.setUTCHours(23, 59, 59, 999);
-    if (d.getTime() > tomorrowEnd.getTime()) {
+    /* 2026-09-29 Codex 全系统检查：上一版「放宽到服务器明天」其实放进了真正的明天 ——
+       下午北京时间 18 点（UTC 10 点）也能填明天，客户轨迹里出现未来的「已装柜」。
+       改成按**北京时间的今天**卡：人在中国（UTC+8）和泰国（UTC+7），北京的日期总是最靠后的那个，
+       当地凌晨选「今天」不会被误挡，填明天挡得住。 */
+    const beijingToday = new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    if (raw > beijingToday) {
       return { error: "装柜日期不能填未来的日期" };
     }
     loadingDate = d;
@@ -647,9 +649,10 @@ export function registerFclContainerRoutes(app: MinimalHttpApp): void {
        （普通拼柜不一样：一个柜里好几票货，要全签完柜子才推 SIGNED，
        所以那边按柜子状态是对的。整柜就一张单，单签收了就是整柜签收了。） */
     const AT_WAREHOUSE_SHIPMENT = ["inWarehouseTH", "deliveryBooked", "outForDelivery"];
-    const startOfMonth = new Date();
-    startOfMonth.setUTCDate(1);
-    startOfMonth.setUTCHours(0, 0, 0, 0);
+    /* 「本月」按北京时间的 1 号零点算（2026-09-29 Codex 全系统检查）：原来用 UTC 的 1 号零点，
+       北京时间 1 号凌晨 0～8 点建的柜整个月都不算「本月」。 */
+    const beijingNow = new Date(Date.now() + 8 * 60 * 60 * 1000);
+    const startOfMonth = new Date(Date.UTC(beijingNow.getUTCFullYear(), beijingNow.getUTCMonth(), 1) - 8 * 60 * 60 * 1000);
 
     const containers = await prisma.container.findMany({
       where: { companyId: auth.companyId, isFcl: true },
@@ -904,6 +907,22 @@ export function registerFclContainerRoutes(app: MinimalHttpApp): void {
             `这个整柜的货已经签收了，只能改金额和备注 —— ${changedNames.join("、")}改不了（客户签收单上印的就是这些数）。`,
             400, "VALIDATION_ERROR",
           );
+        }
+
+        /* 闸 ②-a：已经排了派送单的，客户（唛头）不许换（2026-09-29 Codex 全系统检查）。
+           派送卡片上的收货人、电话、地址是按这票货的客户现查的 —— 原来换了客户，已经排车的派送卡片
+           当场变成另一个客户的地址，原客户还看不到这个柜了。要换先去「尾端派送」把派送单删掉。 */
+        if (changed.客户唛头) {
+          const lmForClient = await tx.adminLastmileOrder.findMany({
+            where: { shipmentId: shipment.id },
+            select: { deliveryNo: true },
+          });
+          if (lmForClient.length > 0) {
+            throw new BusinessError(
+              `这个整柜已经排了派送单（${[...new Set(lmForClient.map((x) => x.deliveryNo))].join("、")}），客户唛头不能改 —— 派送卡片上的收货人和地址是按客户查的，改了就送到别人那去了。要改先去「尾端派送」把派送单删掉。`,
+              400, "VALIDATION_ERROR",
+            );
+          }
         }
 
         /* 闸 ②：已经排了派送单的，货物清单不许改（金额、备注、提单号这些照样能改）。

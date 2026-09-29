@@ -84,17 +84,30 @@ export default function ClientWalletPage() {
     // 全量刷新也占一个序号：还在路上的翻页旧响应不许盖掉刷新结果
     const seq = ++ledgerSeqRef.current;
     try {
-      const [overview, recs, led] = await Promise.all([
+      /* 三样各拉各的（2026-09-29 Codex 全系统检查）：原来 Promise.all 一起等，充值记录那个请求一失败，
+         明明已经拿到的余额也不落地，页面显示 ¥0.00 —— 客户以为钱没了。现在哪样拿到就显示哪样，没拿到的说清楚。 */
+      const [overviewR, recsR, ledR] = await Promise.allSettled([
         fetchClientWalletOverview(),
         fetchClientWalletRecharges(),
         fetchConsolidationLedger({ page: 1, pageSize: LEDGER_PAGE_SIZE }),
       ]);
       // 2026-09-01 竞态全扫：号作废（期间又发起了新一轮刷新）就整段不落地，旧余额不许盖新余额
       if (walletGate.isCurrent(walletTicket)) {
-        setData(overview);
-        setRecharges(recs.recharges);
+        if (overviewR.status === "fulfilled") setData(overviewR.value);
+        if (recsR.status === "fulfilled") setRecharges(recsR.value.recharges);
+        const failedParts = [
+          overviewR.status === "rejected" ? "余额" : "",
+          recsR.status === "rejected" ? "充值记录" : "",
+          ledR.status === "rejected" ? "余额流水" : "",
+        ].filter(Boolean);
+        const firstError = [overviewR, recsR, ledR].find((r) => r.status === "rejected") as PromiseRejectedResult | undefined;
+        if (failedParts.length > 0) {
+          const why = firstError?.reason instanceof Error ? firstError.reason.message : "请稍后重试";
+          setMessage(`${failedParts.join("、")}没加载出来（${why}），请刷新页面再看`);
+        }
       }
-      if (seq === ledgerSeqRef.current) {
+      if (seq === ledgerSeqRef.current && ledR.status === "fulfilled") {
+        const led = ledR.value;
         setLedger(led.items);
         setLedgerTotal(led.total);
         // 全量刷新（首次加载/充值提交后）拿的是第 1 页；用后端回的 page 校准，别跟表格错位
@@ -188,8 +201,9 @@ export default function ClientWalletPage() {
   };
 
   /** 集货余额只有人民币（2026-08-07 起泰铢废弃） */
-  const balance = useMemo(() => {
-    if (!data) return 0;
+  /* null = 余额还没拿到（加载中或加载失败）。原来一律当 0，客户看到 ¥0.00 会以为钱没了（2026-09-29） */
+  const balance = useMemo((): number | null => {
+    if (!data) return null;
     if (typeof (data as any).balance === "number") return (data as any).balance as number;
     return data.accounts.find((item) => item.currency === "CNY")?.balance ?? 0;
   }, [data]);
@@ -219,7 +233,8 @@ export default function ClientWalletPage() {
         {loading ? <p style={{ color: "var(--t-strong)" }}>加载中...</p> : null}
         <div style={{ border: "1px solid var(--l-cool)", borderRadius: 10, padding: "14px 16px", background: "var(--s-cool)", maxWidth: 320 }}>
           <div style={{ color: "var(--t-strong)", fontSize: 12 }}>可用余额（人民币）</div>
-          <div style={{ fontSize: 30, fontWeight: 700 }}>¥{balance.toFixed(2)}</div>
+          <div style={{ fontSize: 30, fontWeight: 700 }}>{balance === null ? "—" : `¥${balance.toFixed(2)}`}</div>
+          {balance === null && !loading ? <div style={{ fontSize: 12, color: "var(--c-red-deep)", marginTop: 4 }}>余额没加载出来，请刷新页面</div> : null}
           <div style={{ fontSize: 12, color: "var(--t-muted)", marginTop: 4 }}>只能用于集货拼柜付款</div>
         </div>
       </section>
@@ -254,7 +269,7 @@ export default function ClientWalletPage() {
                 {ledger.map((r) => (
                   <tr key={r.id} style={{ borderBottom: "1px solid var(--s-sunken)" }}>
                     <td style={{ padding: "8px 12px", whiteSpace: "nowrap" }}>
-                      {new Date(r.createdAt).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })}
+                      {new Date(r.createdAt).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })}
                     </td>
                     <td style={{ padding: "8px 12px", whiteSpace: "nowrap" }}>{r.typeLabel}</td>
                     <td style={{ padding: "8px 12px", whiteSpace: "nowrap" }}>{r.source || "—"}</td>
@@ -297,6 +312,8 @@ export default function ClientWalletPage() {
                     <tr key={r.id} style={{ borderBottom: "1px solid var(--s-sunken)" }}>
                       <td style={{ padding: "8px 12px", whiteSpace: "nowrap" }}>
                         {new Date(r.createdAt).toLocaleString("zh-CN", {
+                          // 按北京时间（2026-09-29：原来按看的人电脑的时区，泰国客户看到的早 1 小时）
+                          timeZone: "Asia/Shanghai",
                           month: "2-digit",
                           day: "2-digit",
                           hour: "2-digit",

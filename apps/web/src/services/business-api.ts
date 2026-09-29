@@ -6,7 +6,8 @@ export interface StaffCreateOrderPayload {
   clientId: string;
   warehouseId: string;
   batchNo?: string;
-  trackingNo?: string;
+  /** 必填（后端 6-05 起要求）。写成必填，漏传的地方编译就过不去（2026-09-29：超管建单 / 批量导入漏了三个多月） */
+  trackingNo: string;
   arrivedAt: string;
   itemName: string;
   productQuantity?: number;

@@ -132,9 +132,13 @@ export default function ClientAddressBookPage() {
                     disabled={loading || item.isDefault}
                     onClick={async () => {
                       setLoading(true);
+                      setMessage("");
                       try {
                         await setDefaultClientAddress(item.id);
                         await reload();
+                      } catch (error) {
+                        // 失败要说出来（2026-09-29 Codex 全系统检查：原来按钮看起来像没反应）
+                        setMessage(`设为默认失败：${error instanceof Error ? error.message : "请稍后重试"}`);
                       } finally {
                         setLoading(false);
                       }
@@ -148,9 +152,12 @@ export default function ClientAddressBookPage() {
                     disabled={loading}
                     onClick={async () => {
                       setLoading(true);
+                      setMessage("");
                       try {
                         await deleteClientAddress(item.id);
                         await reload();
+                      } catch (error) {
+                        setMessage(`删除失败：${error instanceof Error ? error.message : "请稍后重试"}`);
                       } finally {
                         setLoading(false);
                       }

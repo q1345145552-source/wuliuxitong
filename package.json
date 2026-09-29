@@ -79,6 +79,8 @@
     "test:autoload-0929-source": "tsx scripts/test-autoload-0929-source.ts",
     "test:fix-0929-source": "tsx scripts/test-fix-0929-source.ts",
     "test:fix-0929-db": "tsx scripts/test-fix-0929-db.ts",
+    "test:syscheck-0929-source": "TZ=UTC tsx scripts/test-syscheck-0929-source.ts",
+    "test:syscheck-0929-db": "TZ=UTC tsx scripts/test-syscheck-0929-db.ts",
     "test:migration-number-seq-db": "tsx scripts/test-migration-number-seq-db.ts",
     "test:branch-review-0928-db": "tsx scripts/test-branch-review-0928-db.ts",
     "test:cs-chat-ui-behavior": "tsx scripts/test-cs-chat-ui-behavior.ts"

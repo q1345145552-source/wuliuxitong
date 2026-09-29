@@ -165,7 +165,7 @@ async function main() {
     }
   });
   await check("page failure rejects instead of returning a false empty or partial list", async () => {
-    const f = setup(); f.fail(2); await assert.rejects(() => f.service.fetchClientOrders({ statusGroup: "attention" }), /synthetic page failure/);
+    const f = setup(); f.fail(2); await assert.rejects(() => f.service.fetchClientOrders({ statusGroup: "attention" }), /synthetic page failure|服务器出错了/); // 2026-09-29 起 5xx 的英文统一换成中文，要紧的是「报错」而不是返回一份残缺列表
   });
   await check("mutation guard catches missing inspection and normal unloading leakage", () => {
     const real = setup().shared.matchesShipmentListFilter;

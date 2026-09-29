@@ -162,6 +162,8 @@ const whrPrealert: Row = {
   receivedAt: null, signedAt: T1, warehouseReceiptProofs: [], totalFee: 100, paymentProofs: [], paymentProofUploadedAt: null,
   paymentReviewedAt: null, paymentReviewedBy: STAFF.userId, paymentRejectReason: null, thailandReceiptProofs: [], thailandReceivedAt: null,
   cancelReason: null, cancelledAt: null, createdAt: T0, updatedAt: T2, items: [], statusLogs: whrLogs,
+  // 2026-09-29：仓库版详情多带一个「日志一共几条」（只给最近 50 条，页面要说总数）
+  _count: { statusLogs: whrLogs.length },
 };
 const whrCustomer: Row = {
   id: "pc1", planId: "wplan1", companyId: "c1", clientId: CLIENT.userId, unitPriceNormal: 100, unitPriceInspection: 120, unitPriceSensitive: 150,

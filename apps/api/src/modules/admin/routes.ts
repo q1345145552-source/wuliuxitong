@@ -1627,7 +1627,12 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
        * 「锁只保证不同时，不保证数据没变」（CLAUDE.md 第 28 条）：
        * 所以锁完必须**重读**，不能接着用锁之前那份清单。
        */
-      await tx.$queryRaw`SELECT id FROM orders WHERE id = ${orderId} AND company_id = ${auth.companyId} FOR UPDATE`;
+      const lockedOrder = await tx.$queryRaw<{ id: string }[]>`SELECT id FROM orders WHERE id = ${orderId} AND company_id = ${auth.companyId} FOR UPDATE`;
+      /* 锁上时订单已经没了 = 另一个人刚删掉（2026-09-29 Codex 全系统检查：双击或两人同时删，
+         后一个原来一路走到 order.delete 撞「记录不存在」→ 500「服务器繁忙」，其实订单已经删掉了） */
+      if (lockedOrder.length === 0) {
+        throw new BusinessError("这张订单刚刚已经被删掉了，请刷新后再看", 409, "VALIDATION_ERROR");
+      }
       const freshShipments = await tx.shipment.findMany({
         where: { orderId, companyId: auth.companyId },
         select: {

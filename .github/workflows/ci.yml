@@ -279,6 +279,9 @@ jobs:
       # 客户传图失败说出来、五种单号走 number_sequences（不连库那一半）
       - name: Test fixes 0929 (source)
         run: npm run test:fix-0929-source
+      # 2026-09-29 晚 Codex 全系统检查（老板选 A）不连库那一半：批量下单不丢不改行、整格核数字、5xx 中文、轨迹北京时间、超管建单带运单号等
+      - name: Test syscheck 0929 (source)
+        run: npm run test:syscheck-0929-source
 
       # 客服对话窗口真跑（假 React + 真组件）：发送中打字不被清、Safari 输入法回车、粘贴提示、
       # 首次加载失败能重试、轮询起点、已划走客户的提示、菜单回到列表。
@@ -451,5 +454,8 @@ jobs:
       # 仓库版移除客户 / 柜状态 / 取消原因抹柜号、删掉的集货任务 404、入库照片上限和中文提示
       - name: Test fixes 0929 (real DB)
         run: bash .github/scripts/run-db-test.sh test:fix-0929-db
+      # 同上连库那一半：撤销签收第四道闸、负数挡住、整柜派送后不换客户、旧页面保存不丢行、并发删不 500、没填体积不写 0 等
+      - name: Test syscheck 0929 (real DB)
+        run: bash .github/scripts/run-db-test.sh test:syscheck-0929-db
       - name: Test number_sequences migration file (real DB)
         run: bash .github/scripts/run-db-test.sh test:migration-number-seq-db

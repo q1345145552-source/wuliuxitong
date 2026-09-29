@@ -83,7 +83,7 @@ import {
   parseStaffBatchRows,
   type StaffBatchOrder,
 } from "../../modules/staff/batchOrderImport";
-import { beijingDate } from "../../modules/shared/beijing-date";
+import { beijingDate, beijingToday } from "../../modules/shared/beijing-date";
 import {
   shipmentStatusZh,
   warehouseLabelFromId,
@@ -700,6 +700,8 @@ export default function StaffHomePage() {
     const timer = window.setTimeout(() => setToast(""), 2200);
     return () => window.clearTimeout(timer);
   }, [toast]);
+  // 上一次由产品行自动填进总体积 / 总重量的值（用来分辨「自动填的」和「人手填的」）
+  const autoTotalsRef = useRef<{ volumeM3: string | null; weightKg: string | null }>({ volumeM3: null, weightKg: null });
   // Auto-fill volume and weight from multi-product form
   useEffect(() => {
     if (staffFormProducts.length === 0) return;
@@ -715,7 +717,18 @@ export default function StaffHomePage() {
       const wt = Number(p.weightKg) || 0;
       return s + wt * pkg;
     }, 0);
-    setForm((v) => ({ ...v, volumeM3: totalVol > 0 ? String(totalVol.toFixed(6)) : v.volumeM3, weightKg: totalWt > 0 ? String(totalWt.toFixed(2)) : v.weightKg }));
+    /* 产品行算出来是 0（比如把尺寸、重量清空了）时，原来保留上一次自动填的合计 —— 页面显示 0，
+       提交的却是清空前那个数（2026-09-29 Codex 全系统检查）。现在：上一次是自动填的就跟着清空；
+       是人手填的（跟上次自动填的不一样）就不动。 */
+    const auto = autoTotalsRef.current;
+    const volStr = totalVol > 0 ? String(totalVol.toFixed(6)) : null;
+    const wtStr = totalWt > 0 ? String(totalWt.toFixed(2)) : null;
+    setForm((v) => ({
+      ...v,
+      volumeM3: volStr ?? (auto.volumeM3 !== null && v.volumeM3 === auto.volumeM3 ? "" : v.volumeM3),
+      weightKg: wtStr ?? (auto.weightKg !== null && v.weightKg === auto.weightKg ? "" : v.weightKg),
+    }));
+    autoTotalsRef.current = { volumeM3: volStr, weightKg: wtStr };
   }, [staffFormProducts]);
 
   const isStaffSectionId = (value: string): value is StaffSectionId =>
@@ -803,31 +816,36 @@ export default function StaffHomePage() {
         remark: form.remark?.trim() || undefined,
         products: hasProducts ? staffFormProducts.filter(p => p.itemName.trim()).map(p => ({ itemName: p.itemName.trim(), packageCount: packageCountForPayload(p.packageCount), lengthCm: p.lengthCm ? Number(p.lengthCm) : undefined, widthCm: p.widthCm ? Number(p.widthCm) : undefined, heightCm: p.heightCm ? Number(p.heightCm) : undefined, productQuantity: p.productQuantity ? Number(p.productQuantity) : undefined, weightKg: p.weightKg ? Number(p.weightKg) : undefined, cargoType: (p.cargoType || "normal").toLowerCase(), domesticTrackingNo: p.domesticTrackingNo.trim() || "货拉拉" })) : undefined,
       });
-      // 并行上传产品图片
-      if (orderImageFiles.length > 0) {
+      /* 上传产品图片（2026-09-29 Codex 全系统检查）：运单到这里**已经建好了**。
+         原来任何一张图失败就停在建单框里只说「图片上传失败」—— 员工以为没建成再点一次，撞「运单号已存在」；
+         几张里传上了几张、哪张没传上也说不清。现在一张张传、失败的记下名字和原因，
+         不管图片成没成，都按「运单已建好」往下走，提示里说清哪几张要去运单详情里补传。 */
+      const failedImages: string[] = [];
+      const hadImages = orderImageFiles.length > 0;
+      for (const file of orderImageFiles) {
         try {
-          await Promise.all(orderImageFiles.map(async (file) => {
-            const base64 = await new Promise<string>((resolve) => {
-              const reader = new FileReader();
-              reader.onload = () => resolve((reader.result as string).split(",")[1]);
-              reader.readAsDataURL(file);
-            });
-            return uploadStaffOrderProductImage({ orderId: result.orderId, fileName: file.name, mime: file.type || "image/jpeg", contentBase64: base64 });
-          }));
+          const base64 = await new Promise<string>((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve((reader.result as string).split(",")[1]);
+            reader.onerror = () => reject(new Error("图片读取失败"));
+            reader.readAsDataURL(file);
+          });
+          await uploadStaffOrderProductImage({ orderId: result.orderId, fileName: file.name, mime: file.type || "image/jpeg", contentBase64: base64 });
         } catch (e) {
-          setLoading(false);
-          setMessage(`图片上传失败：${e instanceof Error ? e.message : "未知错误"}`);
-          return;
+          failedImages.push(`「${file.name}」${(e instanceof Error ? e.message : "上传失败").replace(/[。.\s]+$/, "")}`);
         }
-        setOrderImageFiles([]);
-        setOrderImagePreviews([]);
       }
       setCreateStepDone(true);
       const displayNo = form.trackingNo.trim() || "已创建";
-      setToast("订单创建成功");
-      setMessage(`订单创建成功：${displayNo}`);
+      if (failedImages.length === 0) {
+        setToast("订单创建成功");
+        setMessage(`订单创建成功：${displayNo}`);
+      } else {
+        setToast(`订单已创建，但有 ${failedImages.length} 张图片没传上`);
+        setMessage(`订单已创建：${displayNo}。但有 ${failedImages.length} 张图片没传上：${failedImages.join("；")}。请在这票货的「订单详情 · 产品图」里点「+ 上传」补传，不要再点创建（会提示运单号已存在）。`);
+      }
       // 刷新产品图缓存
-      if (orderImageFiles.length > 0) {
+      if (hadImages) {
         fetchShipmentImages(result.orderId).then((imgs) => {
           setShipmentImagesCache((c) => ({ ...c, [result.orderId]: imgs }));
         }).catch(() => {});
@@ -1289,7 +1307,8 @@ export default function StaffHomePage() {
     const ws = XLSX.utils.json_to_sheet(rows);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "运单列表");
-    XLSX.writeFile(wb, `运单列表_${new Date().toISOString().slice(0,10)}.xlsx`);
+    // 文件名按北京时间的日期（2026-09-29：原来按 UTC，北京时间早上 8 点前导出会标成前一天）
+    XLSX.writeFile(wb, `运单列表_${beijingToday()}.xlsx`);
     setToast(`已导出 ${rows.length} 条`);
     setShipmentExportFeedback(`已导出 ${rows.length} 条`);
   };

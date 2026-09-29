@@ -323,6 +323,8 @@ export function registerWhrConsolidationRoutes(app: MinimalHttpApp): void {
               include: {
                 items: { orderBy: { sortOrder: "asc" } },
                 statusLogs: { orderBy: { createdAt: "desc" }, take: 50 },
+                // 日志一共几条（2026-09-29 Codex 全系统检查）：上面只取最新 50 条，页面要能说「只显示最新 50 条，共 N 条」
+                _count: { select: { statusLogs: true } },
               },
             },
           },
@@ -411,6 +413,7 @@ export function registerWhrConsolidationRoutes(app: MinimalHttpApp): void {
           cancelReason: pa.cancelReason,
           cancelledAt: pa.cancelledAt?.toISOString() ?? null,
           createdAt: pa.createdAt.toISOString(),
+          statusLogTotal: (pa as any)._count?.statusLogs ?? null,
           items: pa.items.map((it: any) => ({
             id: it.id,
             productName: it.productName,
@@ -1541,7 +1544,11 @@ export function registerWhrConsolidationRoutes(app: MinimalHttpApp): void {
         throw new BusinessError("这是该预报单最后一件货物，不能删。整张不要了请用「取消预报单」");
       }
 
-      await tx.whrConsolidationPrealertItem.delete({ where: { id: item.id } });
+      // 两个人同时删同一件：后一个原来按 id 硬删撞「记录不存在」→ 500。删不到就说清楚（2026-09-29 Codex 全系统检查）
+      const gone = await tx.whrConsolidationPrealertItem.deleteMany({ where: { id: item.id, prealertId: item.prealert.id } });
+      if (gone.count === 0) {
+        throw new BusinessError("这件货物刚刚已经被删掉了，请刷新后再看", 409, "VALIDATION_ERROR");
+      }
 
       await tx.whrConsolidationStatusLog.create({
         data: {

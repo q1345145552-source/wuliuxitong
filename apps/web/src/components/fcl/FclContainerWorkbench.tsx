@@ -34,7 +34,7 @@ import { formatBeijingTime } from "../../modules/staff/utils";
 import EmptyStateCard from "../../modules/layout/EmptyStateCard";
 import { FCL_TEMPLATE_HEADERS, fclRowFromSheet, missingFclHeaders } from "../../modules/fcl/template";
 import { apiBaseUrl, apiRequest } from "../../services/core-api";
-import { beijingDate } from "../../modules/shared/beijing-date";
+import { beijingDate, beijingToday } from "../../modules/shared/beijing-date";
 
 /** 从「整柜询价」点「转整柜」带过来的那张询价单（2026-09-28） */
 type FromInquiry = { id: string; clientId: string; productName: string; containerType: string; quoteAmountCny: number | null };
@@ -547,7 +547,7 @@ export default function FclContainerWorkbench({ canUnsign = false, canDelete = f
               {WAREHOUSES.map((w) => <option key={w.id} value={w.id}>{w.label}</option>)}
             </select>
           </div>
-          <div><label style={fl}>装柜日期</label><input type="date" style={fi} value={form.loadingDate} onChange={(e) => setForm((v) => ({ ...v, loadingDate: e.target.value }))} /></div>
+          <div><label style={fl}>装柜日期</label><input type="date" style={fi} max={beijingToday()} value={form.loadingDate} onChange={(e) => setForm((v) => ({ ...v, loadingDate: e.target.value }))} /></div>
           <div><label style={fl}>金额 ¥（手填，客户能看到）</label><input style={fi} value={form.amountCny} onChange={(e) => setForm((v) => ({ ...v, amountCny: e.target.value }))} placeholder="不填就空着" /></div>
           <div style={{ gridColumn: "1 / -1" }}><label style={fl}>备注</label><input style={fi} value={form.remark} onChange={(e) => setForm((v) => ({ ...v, remark: e.target.value }))} /></div>
         </div>

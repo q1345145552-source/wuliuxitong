@@ -68,12 +68,18 @@ interface StatusLogRow {
   createdAt: string;
 }
 
+/** 客户时间线最多显示几条 */
+const CUSTOMER_TIMELINE_LIMIT = 200;
+
 /** 客户级时间线由所有预报单的日志聚合而成（后端不再重复下发一份） */
-function aggregateCustomerLogs(prealerts: { trackingNo: string; statusLogs?: StatusLogRow[] }[]) {
-  return prealerts
+function aggregateCustomerLogs(prealerts: { trackingNo: string; statusLogs?: StatusLogRow[]; statusLogTotal?: number | null }[]) {
+  const all = prealerts
     .flatMap((pa) => (pa.statusLogs ?? []).map((sl) => ({ ...sl, trackingNo: pa.trackingNo })))
-    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
-    .slice(0, 200);
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  /* 一共有几条（2026-09-29 Codex 全系统检查）：后端每张单只给最新 50 条、这里再截 200 条，
+     原来页面不说，看着像完整历史。总数按后端报的每张单的真实条数加起来。 */
+  const total = prealerts.reduce((s, pa) => s + (typeof pa.statusLogTotal === "number" ? pa.statusLogTotal : (pa.statusLogs ?? []).length), 0);
+  return { logs: all.slice(0, CUSTOMER_TIMELINE_LIMIT), total };
 }
 
 // ============================================================================
@@ -165,6 +171,8 @@ interface PrealertItem {
     productImageBase64: string | null;
     sortOrder: number;
   }[];
+  /** 这张单一共几条日志（statusLogs 只有最新 50 条），2026-09-29 */
+  statusLogTotal?: number | null;
   statusLogs?: {
     id: string;
     operatorName: string;
@@ -1146,7 +1154,12 @@ export default function AdminWhrConsolidationPage() {
                                         {/* 预报单状态日志 */}
                                         {pa.statusLogs && pa.statusLogs.length > 0 && (
                                           <div style={{ marginBottom: 8 }}>
-                                            <div style={{ fontWeight: 600, color: "var(--t-body)", marginBottom: 4 }}>状态日志</div>
+                                            <div style={{ fontWeight: 600, color: "var(--t-body)", marginBottom: 4 }}>
+                                              状态日志
+                                              {typeof pa.statusLogTotal === "number" && pa.statusLogTotal > pa.statusLogs.length && (
+                                                <span style={{ fontWeight: 400, fontSize: 11, color: "var(--c-amber-deep)", marginLeft: 6 }}>共 {pa.statusLogTotal} 条，只显示最近 {pa.statusLogs.length} 条</span>
+                                              )}
+                                            </div>
                                             {pa.statusLogs.map((sl: any) => (
                                               <div key={sl.id} style={{ padding: "2px 0", color: "var(--t-muted)", fontSize: 11 }}>
                                                 <span style={{ color: "var(--t-body)" }}>{PREALERT_STATUS_ZH[sl.fromStatus] ?? sl.fromStatus}</span> → <span style={{ color: "var(--t-body)" }}>{PREALERT_STATUS_ZH[sl.toStatus] ?? sl.toStatus}</span>
@@ -1229,11 +1242,16 @@ export default function AdminWhrConsolidationPage() {
 
                           {/* 客户状态时间线（由该客户所有预报单的日志聚合而来） */}
                           {(() => {
-                            const logs = aggregateCustomerLogs(c.prealerts);
+                            const { logs, total } = aggregateCustomerLogs(c.prealerts);
                             if (logs.length === 0) return null;
                             return (
                               <div>
                                 <div style={{ fontSize: 13, fontWeight: 600, color: "var(--t-body)", marginBottom: 6 }}>状态时间线</div>
+                                {total > logs.length && (
+                                  <div style={{ fontSize: 12, color: "var(--c-amber-deep)", marginBottom: 6 }}>
+                                    共 {total} 条，这里只显示最近的 {logs.length} 条（每张预报单最多看最近 50 条）
+                                  </div>
+                                )}
                                 {logs.map((sl) => (
                                   <div key={sl.id} style={{ fontSize: 12, color: "var(--t-muted)", marginBottom: 6, paddingLeft: 10, borderLeft: "2px solid var(--l-soft)" }}>
                                     <strong style={{ color: "var(--c-blue)", marginRight: 6 }}>{sl.trackingNo}</strong>

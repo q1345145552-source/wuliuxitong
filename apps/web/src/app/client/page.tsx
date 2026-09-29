@@ -505,6 +505,8 @@ export default function ClientHomePage() {
     const timer = window.setTimeout(() => setToast(""), toastDuration);
     return () => window.clearTimeout(timer);
   }, [toast, toastDuration]);
+  // 上一次由产品行自动填进总体积 / 总重量的值（用来分辨「自动填的」和「人手填的」）
+  const autoTotalsRef = useRef<{ volumeM3: string | null; weightKg: string | null }>({ volumeM3: null, weightKg: null });
   // Auto-fill volume and weight from multi-product form
   useEffect(() => {
     if (formProducts.length === 0) return;
@@ -520,7 +522,18 @@ export default function ClientHomePage() {
       const wt = Number(p.weightKg) || 0;
       return s + wt * pkg;
     }, 0);
-    setForm((v) => ({ ...v, volumeM3: totalVol > 0 ? String(totalVol.toFixed(6)) : v.volumeM3, weightKg: totalWt > 0 ? String(totalWt.toFixed(2)) : v.weightKg }));
+    /* 产品行算出来是 0（比如把尺寸、重量清空了）时，原来保留上一次自动填的合计 —— 页面显示 0，
+       提交的却是清空前那个数（2026-09-29 Codex 全系统检查）。现在：上一次是自动填的就跟着清空；
+       是人手填的（跟上次自动填的不一样）就不动。 */
+    const auto = autoTotalsRef.current;
+    const volStr = totalVol > 0 ? String(totalVol.toFixed(6)) : null;
+    const wtStr = totalWt > 0 ? String(totalWt.toFixed(2)) : null;
+    setForm((v) => ({
+      ...v,
+      volumeM3: volStr ?? (auto.volumeM3 !== null && v.volumeM3 === auto.volumeM3 ? "" : v.volumeM3),
+      weightKg: wtStr ?? (auto.weightKg !== null && v.weightKg === auto.weightKg ? "" : v.weightKg),
+    }));
+    autoTotalsRef.current = { volumeM3: volStr, weightKg: wtStr };
   }, [formProducts]);
 
   useEffect(() => {

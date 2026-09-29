@@ -304,6 +304,15 @@ function modelApi(model: string): Row {
       removeRow(model, hit);
       return hit;
     },
+    // 2026-09-29：删货品改成「按条件删、看删了几条」（两个人同时删同一件时不 500），内存库跟着补上
+    async deleteMany(args: Row) {
+      const hits = mem.db[model].filter((r) => matches(model, r, args.where ?? {}));
+      for (const hit of hits) {
+        emit(`delete:${model}:${idOf(hit)}`);
+        removeRow(model, hit);
+      }
+      return { count: hits.length };
+    },
     async groupBy(args: Row) {
       const by = (args.by as string[])[0];
       const groups = new Map<string, number>();

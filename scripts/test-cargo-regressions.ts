@@ -164,6 +164,11 @@ async function clientImport(rawCargo: unknown, boxes = 2, dimensions: number[] |
     if (name.endsWith("/request-gate")) return evalTs(read("apps/web/src/modules/shared/request-gate.ts"));
     if (name.endsWith("/cargo-type")) return cargo;
     if (name.endsWith("/business-api")) return service;
+    // 2026-09-29：读表格那段挪进了这个模块，照样用真代码
+    if (name.endsWith("/client-import/import-rows")) return evalTs(read("apps/web/src/modules/client-import/import-rows.ts"), {require(n: string) {
+      if (n.endsWith("/cargo-type")) return cargo;
+      throw new Error(`Unimplemented frontend require ${n}`);
+    }}, "apps/web/src/modules/client-import/import-rows.ts");
     throw new Error(`Unimplemented frontend require ${name}`);
   }}, clientFile).default;
   const render = () => { cursor = 0; return component(); };

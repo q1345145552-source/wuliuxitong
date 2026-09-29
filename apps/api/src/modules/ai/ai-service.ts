@@ -238,16 +238,22 @@ export class ClientAiService implements AiService {
       // 单号、状态、最近更新时间都是系统查出来的事实，同样不给模型改
       answerHasBusinessData = true;
       nextMemory = { intent: "tracking" };
-    } else if (this.isGreetingMessage(question) || this.acceptModelGreeting(question, modelIntent)) {
+    } else if (
+      /* 问数量的不当成打招呼（2026-09-29 Codex 全系统检查）：「你好，我本月有多少单」原来只回一句欢迎语 */
+      (this.isGreetingMessage(question) || this.acceptModelGreeting(question, modelIntent)) &&
+      !this.isCountQuestion(question)
+    ) {
       answerDraft = this.formatGreetingAnswer();
-    } else if (this.isServiceQaIntent(question)) {
+    } else if (this.isServiceQaIntent(question) && !this.isCountQuestion(question)) {
+      /* 问数量的不进服务问答（同上）：「签收」「派送」既是服务问题的关键词、也是状态词，
+         「本月已签收多少单」「派送中有多少单」原来被当成服务问题，回的是「当前可用知识信息不足」，一个数都没有。 */
       const relevantKnowledge = this.pickRelevantKnowledge(question, knowledgeItems);
       const hasRelevantKnowledge = relevantKnowledge.length > 0;
       answerDraft = this.formatServiceQaAnswer(question, knowledgeItems.length, relevantKnowledge);
       shouldCreateKnowledgeGap = !hasRelevantKnowledge;
     } else if (this.shouldAskClarification(question, modelIntent, trackingNo)) {
       answerDraft = this.formatClarificationAnswer();
-    } else if (this.isSummaryIntent(question) || modelIntent.intent === "summary" || modelIntent.intent === "unknown") {
+    } else if (this.isSummaryIntent(question) || this.isCountQuestion(question) || modelIntent.intent === "summary" || modelIntent.intent === "unknown") {
       /**
        * ⚠️ 时间和状态都是**问句里说了就听问句的**，模型只补客户没说的那部分。
        * 2026-08-28 复核实测：原来模型返回的 timeHint / statusScope 排在前面，
@@ -646,6 +652,14 @@ export class ClientAiService implements AiService {
   }
 
   /**
+   * 明确在问「多少单 / 几票 / 几件」这种**数量**（2026-09-29）。
+   * 比「统计意图」窄：不含单独的「多少」—— 「运费多少」「清关要多少天」是服务问题，不能抢过来。
+   */
+  private isCountQuestion(message: string): boolean {
+    return /(多少单|几单|多少票|几票|多少件|几件|单量|多少个(运)?单|多少个订单)/.test(message);
+  }
+
+  /**
    * 从问句里认状态。
    *
    * ⚠️ 返回 `undefined` 表示**客户压根没提状态**，跟「客户明确说要全部」（`"all"`）是两回事。
@@ -976,7 +990,9 @@ export class ClientAiService implements AiService {
          从问句里剥掉，状态词跟着没了），最后回一句「未查询到品名『已到仓』相关订单」。
          跟 2026-08-28 那个「最近3天异常件」→ 品名「天异常件」是同一个坑，
          这张表必须跟 resolveStatusScope 的词表一起维护。 */
-      /(最近|今天|今日|昨天|昨日|本周|这周|本星期|这星期|这个星期|本月|这个月|这月|当月|在途|路上|运输|完成|未完成|异常|退回|取消|到仓|进仓|到达仓库|泰国仓|国内仓|到货|装柜|发出|发走|什么时候|多少|几单|统计|汇总|有多少|还有|查询范围)/.test(
+      /* 2026-09-29 补「派送|签收」：问数量的句子不再被服务问答截走以后，「派送中有多少单」
+         会走到这里，不补的话「派送中」被当成品名，回「未查询到品名『派送中』」。 */
+      /(最近|今天|今日|昨天|昨日|本周|这周|本星期|这星期|这个星期|本月|这个月|这月|当月|在途|路上|运输|完成|未完成|异常|退回|取消|到仓|进仓|到达仓库|泰国仓|国内仓|到货|装柜|发出|发走|派送|签收|什么时候|多少|几单|统计|汇总|有多少|还有|查询范围)/.test(
         keyword,
       );
     if (fromSentence && looksLikeSentence) return undefined;

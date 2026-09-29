@@ -37,6 +37,8 @@ export default function ShippingConfig(props: ShippingConfigProps) {
      - pricesOwnerRef：clientPrices 里这份价格属于哪个客户（保存前必须和当前客户一致） */
   const expandedClientIdRef = useRef<string | null>(null);
   const pricesOwnerRef = useRef<string | null>(null);
+  // 保存中不许再点（2026-09-29 Codex 全系统检查：连点两下会存出两套价格）
+  const [savingClientPrices, setSavingClientPrices] = useState(false);
 
   if (!props.visible) return null;
 
@@ -165,7 +167,8 @@ export default function ShippingConfig(props: ShippingConfigProps) {
                       </div>
                     );
                   })}
-                  <button type="button" onClick={async () => {
+                  <button type="button" disabled={savingClientPrices} onClick={async () => {
+                    if (savingClientPrices) return;
                     // 2026-09-01 竞态全扫：保存前核对「表单里这份价格是给谁的」。
                     // 价格还没加载完成、加载失败、或刚切换过客户时，这里对不上——拒绝保存，
                     // 防止把 A 客户的价格存到 B 客户名下。
@@ -173,6 +176,7 @@ export default function ShippingConfig(props: ShippingConfigProps) {
                       props.onToast("该客户的价格还没加载完成，请稍候或收起后重新打开再保存");
                       return;
                     }
+                    setSavingClientPrices(true);
                     try {
                       const chk = document.querySelector(`[data-client="${c.id}"] input[type="checkbox"]`) as HTMLInputElement;
                       const disableMin = chk?.checked ?? clientMinVolumeDisabled;
@@ -188,7 +192,8 @@ export default function ShippingConfig(props: ShippingConfigProps) {
                       await loadClientPrices(c.id);
                       props.onToast("已保存");
                     } catch (err) { props.onToast(`保存失败：${err instanceof Error ? err.message : "网络错误"}`); }
-                  }} style={{ border: "none", borderRadius: 6, padding: "8px 16px", background: "var(--c-blue)", color: "var(--white)", fontWeight: 500, fontSize: 13, cursor: "pointer", marginTop: 8 }}>保存客户价格</button>
+                    finally { setSavingClientPrices(false); }
+                  }} style={{ border: "none", borderRadius: 6, padding: "8px 16px", background: "var(--c-blue)", color: "var(--white)", fontWeight: 500, fontSize: 13, cursor: savingClientPrices ? "not-allowed" : "pointer", opacity: savingClientPrices ? 0.6 : 1, marginTop: 8 }}>{savingClientPrices ? "保存中…" : "保存客户价格"}</button>
                 </div>
               ) : null}
             </div>

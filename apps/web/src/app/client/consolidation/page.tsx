@@ -2,6 +2,8 @@
 
 import { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import { amount2 } from "../../../modules/shared/money-format";
+import { beijingDate } from "../../../modules/shared/beijing-date";
+import { isPositiveIntText, isPositiveNumberText } from "../../../modules/shared/number-text";
 import {
   fetchClientConsolidationTasks,
   fetchClientConsolidationTaskDetail,
@@ -67,15 +69,21 @@ function emptyProductRow(key: number): ProductFormRow {
   return { key, productName: "", packageCount: "", quantityPerBox: "1", unitWeightKg: "", lengthCm: "", widthCm: "", heightCm: "", material: "", cargoValue: "", cargoType: "normal" };
 }
 
+/** 整格转数字，转不了当 0（预览用）。不用 parseInt / parseFloat：它们只读开头，「1.9」读成 1，预览跟提交对不上 */
+function wholeNum(v: string): number {
+  const n = Number((v ?? "").trim());
+  return Number.isFinite(n) ? n : 0;
+}
+
 function calcProductRow(r: ProductFormRow) {
-  const pkg = parseInt(r.packageCount) || 0;
-  const qpb = parseInt(r.quantityPerBox) || 0;
+  const pkg = wholeNum(r.packageCount);
+  const qpb = wholeNum(r.quantityPerBox);
   const totalQty = pkg * qpb;
-  const uw = parseFloat(r.unitWeightKg) || 0;
+  const uw = wholeNum(r.unitWeightKg);
   const totalW = parseFloat((uw * totalQty).toFixed(2));
-  const l = parseFloat(r.lengthCm) || 0;
-  const w = parseFloat(r.widthCm) || 0;
-  const h = parseFloat(r.heightCm) || 0;
+  const l = wholeNum(r.lengthCm);
+  const w = wholeNum(r.widthCm);
+  const h = wholeNum(r.heightCm);
   const vol = parseFloat(((l * w * h) / 1_000_000 * pkg).toFixed(6));
   return { totalQty, totalW, vol };
 }
@@ -148,7 +156,8 @@ function ClientConsolidationContent() {
 
   const [showPay, setShowPay] = useState(false);
   // 集货余额（2026-08-07）：付款直接扣这里的钱
-  const [balance, setBalance] = useState(0);
+  /* null = 还没读到（读取中 / 读失败）。原来读失败一律当 0，付款弹窗就说「余额不足」把人拦住（2026-09-29 Codex 全系统检查） */
+  const [balance, setBalance] = useState<number | null>(null);
   const [payProofFileName, setPayProofFileName] = useState("");
   const [payProofMime, setPayProofMime] = useState("");
   const [payLoading, setPayLoading] = useState(false);
@@ -163,11 +172,13 @@ function ClientConsolidationContent() {
 
   // ---- 数据加载 ----
   /** 读集货余额。付款弹窗用它判断够不够，付完刷新。 */
-  const loadBalance = useCallback(async () => {
+  const loadBalance = useCallback(async (): Promise<number | null> => {
     try {
       const r = await fetchClientWalletOverview();
-      setBalance(typeof (r as any).balance === "number" ? (r as any).balance : (r.accounts?.find(a => a.currency === "CNY")?.balance ?? 0));
-    } catch { setBalance(0); }
+      const v = typeof (r as any).balance === "number" ? (r as any).balance : (r.accounts?.find(a => a.currency === "CNY")?.balance ?? 0);
+      setBalance(v);
+      return v;
+    } catch { setBalance(null); return null; }
   }, []);
 
   const loadTasks = useCallback(async () => {
@@ -248,10 +259,14 @@ function ClientConsolidationContent() {
     if (activeTab === "active") {
       list = list.filter((t) => t.status !== "completed" && t.status !== "cancelled");
     } else {
-      list = list.filter((t) => t.status === "completed");
+      /* 已取消的也放这里（2026-09-29 Codex 全系统检查）：原来「进行中」排掉了已取消、「已完成」又只收已完成，
+         已取消的任务两个页签都看不到。员工端一直是放在「已完成」页签的，客户端跟它一致。 */
+      list = list.filter((t) => t.status === "completed" || t.status === "cancelled");
       if (searchTaskNo) list = list.filter((t) => t.taskNo.includes(searchTaskNo.trim()));
-      if (searchDateFrom) list = list.filter((t) => t.createdAt >= searchDateFrom);
-      if (searchDateTo) list = list.filter((t) => t.createdAt <= searchDateTo + "T23:59:59");
+      // 按北京时间的日期比（2026-09-29）：createdAt 是 UTC 的时间串，直接拿「2026-09-29」去比，
+      // 北京时间 0～8 点建的任务会被算到前一天
+      if (searchDateFrom) list = list.filter((t) => beijingDate(t.createdAt) >= searchDateFrom);
+      if (searchDateTo) list = list.filter((t) => beijingDate(t.createdAt) <= searchDateTo);
     }
     return list;
   }, [tasks, activeTab, searchTaskNo, searchDateFrom, searchDateTo]);
@@ -309,12 +324,17 @@ function ClientConsolidationContent() {
     for (let i = 0; i < productRows.length; i++) {
       const r = productRows[i];
       if (!r.productName.trim()) { setToast(`产品行${i + 1}：产品名称为必填`); return; }
-      if (!r.packageCount || parseInt(r.packageCount) < 1) { setToast(`产品行${i + 1}：件数必须大于0`); return; }
-      if (!r.quantityPerBox || parseInt(r.quantityPerBox) < 1) { setToast(`产品行${i + 1}：装箱数量必须大于0`); return; }
+      /* 整格核对，不许「读到哪算哪」（2026-09-29 Codex 全系统检查）：原来 parseInt / parseFloat 只读开头 ——
+         件数填 1.9 存成 1、每箱数量「12abc」存成 12，客户看不到任何提示，件数总数方数全被悄悄改小。 */
+      if (!isPositiveIntText(r.packageCount)) { setToast(`产品行${i + 1}：件数要填正整数（现在是「${r.packageCount}」）`); return; }
+      if (!isPositiveIntText(r.quantityPerBox)) { setToast(`产品行${i + 1}：装箱数量要填正整数（现在是「${r.quantityPerBox}」）`); return; }
       if (!r.unitWeightKg) { setToast(`产品行${i + 1}：单件重量为必填`); return; }
       if (!r.lengthCm) { setToast(`产品行${i + 1}：长为必填`); return; }
       if (!r.widthCm) { setToast(`产品行${i + 1}：宽为必填`); return; }
       if (!r.heightCm) { setToast(`产品行${i + 1}：高为必填`); return; }
+      for (const [label, v] of [["单件重量", r.unitWeightKg], ["长", r.lengthCm], ["宽", r.widthCm], ["高", r.heightCm]] as const) {
+        if (!isPositiveNumberText(v)) { setToast(`产品行${i + 1}：${label}要填大于 0 的数字（现在是「${v}」）`); return; }
+      }
       if (!r.material.trim()) { setToast(`产品行${i + 1}：材质为必填`); return; }
       if (!r.cargoValue.trim()) { setToast(`产品行${i + 1}：货值为必填`); return; }
     }
@@ -327,12 +347,13 @@ function ClientConsolidationContent() {
       const products = productRows.map((r) => ({
         id: r.id,
         productName: r.productName.trim(),
-        packageCount: parseInt(r.packageCount),
-        quantityPerBox: parseInt(r.quantityPerBox),
-        unitWeightKg: parseFloat(r.unitWeightKg),
-        lengthCm: parseFloat(r.lengthCm),
-        widthCm: parseFloat(r.widthCm),
-        heightCm: parseFloat(r.heightCm),
+        // 上面已经整格核对过，这里用 Number 整格转（不再用只读开头的 parseInt / parseFloat）
+        packageCount: Number(r.packageCount.trim()),
+        quantityPerBox: Number(r.quantityPerBox.trim()),
+        unitWeightKg: Number(r.unitWeightKg.trim()),
+        lengthCm: Number(r.lengthCm.trim()),
+        widthCm: Number(r.widthCm.trim()),
+        heightCm: Number(r.heightCm.trim()),
         material: r.material.trim(),
         cargoValue: r.cargoValue.trim(),
         cargoType: r.cargoType || "normal",
@@ -381,7 +402,10 @@ function ClientConsolidationContent() {
   const handlePay = async () => {
     const fee = taskDetail?.totalFee ?? 0;
     if (!(fee > 0)) { setToast("这个任务还没有报价金额，请联系客服"); return; }
-    if (balance < fee) { setToast(`集货余额不足，还差 ¥${(fee - balance).toFixed(2)}，请先去「集货余额」充值`); return; }
+    // 付之前现读一次余额（2026-09-29）：页面开着的时候客户可能刚充过值，拿老数字会误拦
+    const nowBalance = await loadBalance();
+    if (nowBalance === null) { setToast("集货余额没读出来，请稍后再试或刷新页面"); return; }
+    if (nowBalance < fee) { setToast(`集货余额不足，还差 ¥${(fee - nowBalance).toFixed(2)}，请先去「集货余额」充值`); return; }
     if (!confirm(`确认用集货余额支付 ¥${fee.toFixed(2)}？\n\n此次付款不可撤销，误操作请联系客服。`)) return;
     // 2026-09-02 三审整改：操作回调里的刷新一律传「本次操作发生时」的明确任务 id。
     // 用户中途切走时，loadDetail 进门认主人会直接拒收这次刷新，不会作废新任务的在途请求。
@@ -692,7 +716,7 @@ function ClientConsolidationContent() {
                 <div style={{ marginBottom: 24 }}>
                   {/* 未付款 → 去付款按钮 */}
                   {taskDetail.paymentStatus === "unpaid" && (
-                    <button onClick={() => setShowPay(true)} style={{ padding: "10px 28px", background: "var(--c-blue)", color: "var(--white)", border: "none", borderRadius: 8, cursor: "pointer", fontSize: 15, fontWeight: 600 }}>
+                    <button onClick={() => { setShowPay(true); void loadBalance(); }} style={{ padding: "10px 28px", background: "var(--c-blue)", color: "var(--white)", border: "none", borderRadius: 8, cursor: "pointer", fontSize: 15, fontWeight: 600 }}>
                       去付款 ¥{amount2(taskDetail.totalFee)}
                     </button>
                   )}
@@ -713,7 +737,7 @@ function ClientConsolidationContent() {
                     <div style={{ marginTop: 8, padding: "12px 16px", background: "var(--c-red-bg)", borderRadius: 8, border: "1px solid var(--c-red)" }}>
                       <div style={{ color: "var(--c-red-dark)", fontWeight: 600, marginBottom: 4 }}>付款审核不通过</div>
                       <div style={{ color: "#B02A25", fontSize: 13, marginBottom: 8 }}>{taskDetail.paymentRejectReason}</div>
-                      <button onClick={() => setShowPay(true)} style={{ padding: "6px 16px", background: "var(--c-blue)", color: "var(--white)", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 13, fontWeight: 600 }}>去付款</button>
+                      <button onClick={() => { setShowPay(true); void loadBalance(); }} style={{ padding: "6px 16px", background: "var(--c-blue)", color: "var(--white)", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 13, fontWeight: 600 }}>去付款</button>
                     </div>
                   )}
                 </div>
@@ -869,14 +893,14 @@ function ClientConsolidationContent() {
         <Modal onClose={() => setShowPay(false)}>
           {(() => {
             const fee = taskDetail?.totalFee ?? 0;
-            const enough = balance >= fee && fee > 0;
+            const enough = balance !== null && balance >= fee && fee > 0;
             return (
               <>
                 <h3 style={{ marginTop: 0 }}>用集货余额付款</h3>
                 <p style={{ fontSize: 24, fontWeight: 700, color: "var(--c-navy)", margin: "12px 0" }}>¥{amount2(fee)}</p>
                 <div style={{ padding: "10px 12px", border: "1px solid var(--l-soft)", borderRadius: 6, marginBottom: 12 }}>
-                  <div style={{ fontSize: 13 }}>当前集货余额：<strong>¥{balance.toFixed(2)}</strong></div>
-                  {fee > 0 && (
+                  <div style={{ fontSize: 13 }}>当前集货余额：<strong>{balance === null ? "正在读取…（一直读不出来请刷新页面）" : `¥${balance.toFixed(2)}`}</strong></div>
+                  {fee > 0 && balance !== null && (
                     enough
                       ? <div style={{ fontSize: 13, color: "var(--t-body)", marginTop: 4 }}>付款后剩余：¥{(balance - fee).toFixed(2)}</div>
                       : <div style={{ fontSize: 13, color: "var(--c-red-deep)", marginTop: 4 }}>余额不足，还差 ¥{(fee - balance).toFixed(2)}，请先去「集货余额」充值</div>

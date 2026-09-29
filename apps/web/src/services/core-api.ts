@@ -64,6 +64,9 @@ export function requestTooLargeMessage(bytes: number): string {
   return `要上传的图片或文件太大了（这次一共约 ${mb} MB），传不上去。请压缩一下或者少选几个，一次一共 6MB 以内再传。`;
 }
 
+/** 服务器出错（5xx）时给用户看的话 */
+const SERVER_ERROR_TEXT = "服务器出错了，请稍后再试（反复出现请联系技术）";
+
 /** 原样透传 fetch，只为后续解析记录请求身份。旧响应不能清除后来建立的新会话。 */
 export async function fetchWithSession(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
   // 请求体太大：不发，当场报中文（原因见 REQUEST_BODY_MAX_BYTES）。项目里所有请求都走这里，一处管全部上传入口。
@@ -186,11 +189,18 @@ export async function parseApiResponse<T>(response: Response, sentToken?: string
   try {
     payload = text ? (JSON.parse(text) as { code?: string; message?: string; data?: T }) : null;
   } catch {
+    // 5xx 回来的往往是网关的一段英文网页，别原样甩给用户（2026-09-29 Codex 全系统检查）
+    if (response.status >= 500) throw new Error(SERVER_ERROR_TEXT);
     if (!response.ok) throw new Error(`请求失败 ${response.status}${text ? `: ${text.slice(0, 150)}` : ""}`);
-    throw new Error("invalid response");
+    throw new Error("服务器返回的内容看不懂，请刷新后重试");
   }
   if (!response.ok || payload?.code !== "OK") {
-    throw new Error(payload?.message ?? "request failed");
+    /* 项目里还有 90 处直接用 parseApiResponse 的老写法，不走 apiRequest 那道「5xx 换中文」。
+       这里统一兜住：5xx 且后端给的不是中文（比如英文异常原文、上游报错），一律换成中文；
+       后端自己写的中文提示照原样给（2026-09-29 Codex 全系统检查）。 */
+    const raw = payload?.message;
+    if (response.status >= 500 && !(raw && /[\u4e00-\u9fa5]/.test(raw))) throw new Error(SERVER_ERROR_TEXT);
+    throw new Error(raw ?? "请求没有成功，请稍后重试");
   }
   return payload.data as T;
 }

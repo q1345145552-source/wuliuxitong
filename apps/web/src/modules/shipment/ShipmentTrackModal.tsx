@@ -94,6 +94,7 @@ interface TrackData {
 }
 
 import { shipmentStatusZh } from "./shipment-status";
+import { formatTime } from "./track-time";
 
 // ── Status config ──
 
@@ -156,22 +157,6 @@ function statusCfg(s: string) {
     bg: cfg?.bg ?? "var(--s-sunken)",
     icon: cfg?.icon ?? "",
   };
-}
-
-function formatTime(iso: string): string {
-  const d = new Date(iso);
-  const month = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  const hour = String(d.getHours()).padStart(2, "0");
-  const min = String(d.getMinutes()).padStart(2, "0");
-  return `${month}-${day} ${hour}:${min}`;
-}
-
-function formatFullTime(iso: string): string {
-  const d = new Date(iso);
-  const month = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${month}月${day}日`;
 }
 
 // ── Components ──

@@ -951,7 +951,8 @@ const CARGO_COL = "货型（普货/商检/敏感，默认普货）";
   assert.ok(/<select value=\{p\.cargoType/.test(clientPage), "客户端产品行里没有货型下拉");
   assert.ok(/<select value=\{form\.cargoType/.test(clientPage), "客户端没有整票货型下拉（没分产品行时用）");
 
-  const clientImports = fs.readFileSync("apps/web/src/app/client/imports/page.tsx", "utf8");
+  // 2026-09-29：客户批量下单读表格那段挪到了 modules/client-import/import-rows.ts（页面文件不许导出别的函数，测试要直接调）
+  const clientImports = fs.readFileSync("apps/web/src/app/client/imports/page.tsx", "utf8") + fs.readFileSync("apps/web/src/modules/client-import/import-rows.ts", "utf8");
   const header = /"(货型[^"]*)":\s*""/.exec(clientImports);
   assert.ok(header, "客户端批量下单模板里没有货型这一列");
   // 客户端导入那边的表头是**包含匹配**（findCol 用 k.includes），所以只要含「货型」就够

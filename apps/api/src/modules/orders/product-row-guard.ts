@@ -20,6 +20,9 @@ export interface ProductRowForGuard {
   packageCount?: unknown;
   productQuantity?: unknown;
   weightKg?: unknown;
+  lengthCm?: unknown;
+  widthCm?: unknown;
+  heightCm?: unknown;
 }
 
 function isPositiveInteger(v: unknown): v is number {
@@ -78,6 +81,21 @@ export function validateProductRows(rows: ProductRowForGuard[]): string | null {
     if (w === undefined || w === null) continue;
     const issue = requireDecimal(w, `产品行${i + 1}的单箱重量(kg)`, DECIMAL_10_2);
     if (issue) return issue;
+  }
+
+  /* 长宽高填了就不许是负数 / 不是数字（2026-09-29 Codex 全系统检查）：原来 -10 cm 照样存进产品行，
+     算出来的方数是负的。只卡正负和能不能存，不卡小数位 —— 批量导入的表格里常有 3 位小数的尺寸，
+     一直是按列精度四舍五入存的，这里不改那个口径。 */
+  const dimLabels: Array<["lengthCm" | "widthCm" | "heightCm", string]> = [["lengthCm", "长"], ["widthCm", "宽"], ["heightCm", "高"]];
+  for (let i = 0; i < rows.length; i += 1) {
+    for (const [key, label] of dimLabels) {
+      const raw = rows[i][key];
+      if (raw === undefined || raw === null || raw === "") continue;
+      // 数字字符串也认（有的入口传的是 "12"），别因为类型把正常的单挡掉
+      const v = typeof raw === "number" ? raw : typeof raw === "string" ? Number(raw.trim()) : NaN;
+      if (!Number.isFinite(v) || v < 0) return `产品行${i + 1}的${label}(cm)必须是不小于 0 的数字`;
+      if (v >= 10 ** 8) return `产品行${i + 1}的${label}(cm)太大了，请核对`;
+    }
   }
 
   /**

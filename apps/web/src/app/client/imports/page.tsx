@@ -4,37 +4,8 @@ import { useMemo, useRef, useState } from "react";
 import * as XLSX from "xlsx";
 import { createRequestGate } from "../../../modules/shared/request-gate";
 import { createClientPrealert, type ClientPrealertPayload } from "../../../services/business-api";
-import { CARGO_TYPE_HINT, CARGO_TYPE_ZH, parseCargoType, type CargoType } from "../../../../../../packages/shared-types/cargo-type";
-
-interface ImportRow {
-  /** null = 仓库那一格没填或认不出来，下面会拦住不让提交（2026-09-28） */
-  warehouseId: string | null;
-  /** 填错时原样回显给客户看 */
-  warehouseRaw: string;
-  itemName: string;
-  packageCount: number;
-  packageUnit: "bag" | "box";
-  weightKg?: number;
-  volumeM3?: number;
-  shipDate?: string;
-  domesticTrackingNo?: string;
-  /** null = 运输方式没填或认不出来（2026-09-28），下面会拦住不让提交 —— 原来一律悄悄当海运 */
-  transportMode: "sea" | "land" | null;
-  /** 填错时原样回显给客户看 */
-  transportModeRaw: string;
-  /** 货型（2026-09-11）。null = 这一格填了认不出来的字，下面会拦住不让提交 */
-  cargoType: CargoType | null;
-  /** 填错时原样回显给客户看 */
-  cargoTypeRaw: string;
-}
-
-/** 批量导入认的仓库写法：带不带「仓」字、直接写 id 都行（2026-09-28） */
-const WAREHOUSE_ZH: Record<string, string> = {
-  wh_yiwu_01: "义乌仓", wh_guangzhou_01: "广州仓", wh_dongguan_01: "东莞仓", wh_shenzhen_01: "深圳仓",
-};
-const WAREHOUSE_BY_NAME: Record<string, string> = Object.fromEntries(
-  Object.entries(WAREHOUSE_ZH).flatMap(([id, zh]) => [[id, id], [zh, id], [zh.replace(/仓$/, ""), id]]),
-);
+import { CARGO_TYPE_ZH } from "../../../../../../packages/shared-types/cargo-type";
+import { WAREHOUSE_ZH, isRowBad, normalizeRows, type ImportRow } from "../../../modules/client-import/import-rows";
 
 function downloadTemplate(): void {
   const worksheet = XLSX.utils.json_to_sheet([
@@ -73,86 +44,6 @@ function downloadTemplate(): void {
   XLSX.writeFile(workbook, "客户端批量下单模板.xlsx");
 }
 
-function normalizeRows(rows: Record<string, unknown>[]): ImportRow[] {
-  function findCol(row: Record<string, unknown>, keywords: string[]): string {
-    const keys = Object.keys(row);
-    for (const kw of keywords) {
-      const found = keys.find((k) => k.includes(kw));
-      if (found) return String(row[found] ?? "").trim();
-    }
-    return "";
-  }
-  function cleanNum(v: unknown): number | undefined {
-    if (v === undefined || v === "") return undefined;
-    if (typeof v === "number" && Number.isFinite(v)) return v;
-    const cleaned = String(v).replace(/[^0-9.\-]/g, "");
-    if (!cleaned) return undefined;
-    const n = Number(cleaned);
-    return Number.isFinite(n) ? n : undefined;
-  }
-  function findNum(row: Record<string, unknown>, keywords: string[]): number | undefined {
-    const keys = Object.keys(row);
-    for (const kw of keywords) {
-      const found = keys.find((k) => k.includes(kw));
-      if (found) return cleanNum(row[found]);
-    }
-    return undefined;
-  }
-  return rows
-    .map((row) => {
-      /* 运输方式是必填（模板表头带 *）。原来只看「包不包含 land」：没填、写错（比如「空运」「海陆」）一律悄悄当海运建单
-         （2026-09-28 分支审查）。现在只认 海运 / 海 / sea、陆运 / 陆 / land，别的标红不许提交。 */
-      const transportModeRaw = findCol(row, ["运输方式"]);
-      const transportModeKey = transportModeRaw.replace(/\s+/g, "").toLowerCase();
-      const transportMode: "sea" | "land" | null =
-        ["海运", "海", "sea"].includes(transportModeKey) ? "sea"
-        : ["陆运", "陆", "land"].includes(transportModeKey) ? "land"
-        : null;
-      const packageUnitRaw = findCol(row, ["包装类型"]).toLowerCase().replace("箱", "box").replace("袋", "bag");
-      /* 2026-09-28 审查报告：原来只认「义乌仓」这种带「仓」字的全称，写成「义乌」就把「义乌」原样当仓库 id 存进去，
-         员工按仓库筛哪个仓都筛不出这张单。现在带不带「仓」字、直接写 id 都认；认不出来的标红、不让提交。 */
-      const rawWarehouse = findCol(row, ["仓库"]);
-      // 只认表里自己的键：写成 constructor / toString 这种字会从对象原型上查出东西来，不是 null（2026-09-28 分支审查）
-      const warehouseKey = rawWarehouse.replace(/\s+/g, "");
-      const warehouseId = Object.prototype.hasOwnProperty.call(WAREHOUSE_BY_NAME, warehouseKey) ? WAREHOUSE_BY_NAME[warehouseKey] : null;
-      const packageCount = findNum(row, ["箱数"]) ?? 0;
-      const perBoxWeight = findNum(row, ["单箱重量"]);
-      const weightKg = perBoxWeight != null && packageCount > 0 ? perBoxWeight * packageCount : perBoxWeight;
-      const lengthCm = findNum(row, ["长cm", "长"]);
-      const widthCm = findNum(row, ["宽cm", "宽"]);
-      const heightCm = findNum(row, ["高cm", "高"]);
-      let volumeM3: number | undefined;
-      if (lengthCm && widthCm && heightCm && lengthCm > 0 && widthCm > 0 && heightCm > 0) {
-        volumeM3 = (lengthCm * widthCm * heightCm * packageCount) / 1_000_000;
-      }
-      const cargoTypeRaw = findCol(row, ["货型"]);
-      let shipDate = findCol(row, ["发货日期"]);
-      if (/^\d{5}$/.test(shipDate)) {
-        const d = new Date((Number(shipDate) - 25569) * 86400000);
-        shipDate = d.toISOString().slice(0, 10);
-      }
-      return {
-        warehouseId,
-        warehouseRaw: rawWarehouse,
-        itemName: findCol(row, ["品名"]),
-        packageCount,
-        packageUnit: (packageUnitRaw.includes("bag") ? "bag" : "box") as "bag" | "box",
-        weightKg,
-        volumeM3,
-        shipDate: shipDate || undefined,
-        domesticTrackingNo: findCol(row, ["国内单号"]) || undefined,
-        transportMode,
-        transportModeRaw,
-        // 货型（2026-09-11）：留空按普货；认不出来的先留 null，预览里标红并禁掉提交，
-        // **不许**静默当普货 —— 商检货按普货走，清关要的单据是另一套
-        cargoType: parseCargoType(cargoTypeRaw)?.value ?? null,
-        cargoTypeRaw,
-      };
-    })
-    // 仓库没填 / 填错的行不在这里悄悄丢掉（原来会），留下来在预览里标红
-    .filter((item) => item.itemName && Number.isFinite(item.packageCount) && item.packageCount > 0);
-}
-
 const th: React.CSSProperties = { textAlign: "left", padding: "6px 4px", whiteSpace: "nowrap" };
 const td: React.CSSProperties = { padding: "6px 4px" };
 
@@ -171,7 +62,7 @@ export default function ClientImportsPage() {
   const [message, setMessage] = useState("");
 
   // 标红（仓库 / 货型认不出来）的行不算有效（2026-09-28：认不出来的行现在留在预览里，不再悄悄丢掉）
-  const validCount = useMemo(() => rows.filter((r) => r.cargoType !== null && r.warehouseId !== null && r.transportMode !== null).length, [rows]);
+  const validCount = useMemo(() => rows.filter((r) => !isRowBad(r)).length, [rows]);
 
   /* 2026-09-01 竞态全扫：记住「当前预览是哪一份」（request-gate 用法二·认主人的快照版）。
      handleSubmit 的循环拿的是点击那一刻的 rows；万一提交期间预览被换成另一份文件，
@@ -190,6 +81,11 @@ export default function ClientImportsPage() {
     const ticket = parseGate.begin();
     setParsing(true);
     setMessage("正在解析文件…");
+    /* 一换文件就先把上一份预览清掉（2026-09-29 Codex 全系统检查）：原来新文件解析失败时，
+       上一份的预览还留着、「一键提交」还能点 —— 客户以为提交的是新文件，其实是把上一份又下了一遍单。 */
+    previewRef.current = [];
+    setRows([]);
+    setDone(false);
     try {
       const buffer = await file.arrayBuffer();
       const wb = XLSX.read(buffer, { type: "array" });
@@ -206,10 +102,12 @@ export default function ClientImportsPage() {
       setFailCount(0);
       setErrors([]);
       setDone(false);
-      const badCount = normalized.filter((r) => r.cargoType === null || r.warehouseId === null || r.transportMode === null).length;
-      setMessage(badCount > 0
-        ? `已读取 ${normalized.length} 条，其中 ${badCount} 条标红的要改（仓库、运输方式或货型认不出来），改好再上传`
-        : `已读取 ${normalized.length} 条有效数据`);
+      const badCount = normalized.filter(isRowBad).length;
+      setMessage(normalized.length === 0
+        ? "这个文件里没有读到数据（表格是空的），请填好模板再上传"
+        : badCount > 0
+          ? `已读取 ${normalized.length} 条，其中 ${badCount} 条标红的要改（看最右边「要改的地方」），改好再上传`
+          : `已读取 ${normalized.length} 条有效数据`);
     } catch {
       // 2026-09-02 终审整改：失败分支同样验号，旧解析的报错不许盖到新解析的提示上
       if (!parseGate.isCurrent(ticket)) return;
@@ -223,12 +121,14 @@ export default function ClientImportsPage() {
   /** 填了认不出来的货型的行（提交前要拦住，不能静默当普货）；仓库没填 / 认不出来的也一起拦 */
   const badCargoRows = rows
     .map((row, index) => ({ row, index }))
-    .filter((entry) => entry.row.cargoType === null || entry.row.warehouseId === null || entry.row.transportMode === null);
+    .filter((entry) => isRowBad(entry.row));
 
   const handleSubmit = async () => {
     // 2026-09-02 终审整改：解析中/提交中/没数据一律拒绝（按钮已 disabled，这里再兜一层）——
     // 解析期间提交的会是上一份旧预览，等新文件解析完打断循环就只写进半批
     if (loading || parsing || rows.length === 0) return;
+    // 有标红的行整批不交（按钮已 disabled，这里再兜一层）—— 不许「好的先交、坏的悄悄跳过」
+    if (rows.some(isRowBad)) return;
     // 2026-09-01 竞态全扫：记下这次提交的是哪一份预览（点击那一刻的 rows 快照）
     const batch = rows;
     setLoading(true);
@@ -271,7 +171,7 @@ export default function ClientImportsPage() {
         setSuccessCount(success);
       } catch (error) {
         const text = error instanceof Error ? error.message : "提交失败";
-        errs.push(`第${i + 1}行(${row.itemName}): ${text}`);
+        errs.push(`表格第${row.rowNo}行(${row.itemName}): ${text}`);
         // 2026-09-01 竞态全扫：失败分支同样认主人，旧批次的报错不许混进新预览
         if (previewRef.current !== batch) break;
         setFailCount(errs.length);
@@ -378,19 +278,20 @@ export default function ClientImportsPage() {
                   <th style={th}>箱数</th>
                   <th style={th}>运输</th>
                   <th style={th}>货型</th>
+                  <th style={th}>要改的地方</th>
                 </tr>
               </thead>
               <tbody>
                 {rows.map((row, idx) => (
                   <tr key={`${row.itemName}-${idx}`} style={{ borderBottom: "1px solid var(--s-cool-2)" }}>
-                    <td style={td}>{idx + 1}</td>
+                    <td style={td} title={`表格第 ${row.rowNo} 行`}>第{row.rowNo}行</td>
                     <td style={{ ...td, color: row.warehouseId === null ? "var(--c-red-deep)" : undefined }}>
                       {row.warehouseId === null
                         ? (row.warehouseRaw ? `「${row.warehouseRaw}」认不出来` : "没填")
                         : WAREHOUSE_ZH[row.warehouseId]}
                     </td>
-                    <td style={td}>{row.itemName}</td>
-                    <td style={td}>{row.packageCount} {row.packageUnit}</td>
+                    <td style={{ ...td, color: row.itemName ? undefined : "var(--c-red-deep)" }}>{row.itemName || "没填"}</td>
+                    <td style={td}>{row.issues.some((s) => s.startsWith("箱数")) ? (row.packageCountRaw || "—") : `${row.packageCount} ${row.packageUnit === "bag" ? "袋" : "箱"}`}</td>
                     <td style={{ ...td, color: row.transportMode === null ? "var(--c-red-deep)" : undefined }}>
                       {row.transportMode === null
                         ? (row.transportModeRaw ? `「${row.transportModeRaw}」认不出来` : "没填")
@@ -399,6 +300,7 @@ export default function ClientImportsPage() {
                     <td style={{ ...td, color: row.cargoType === null ? "var(--c-red-deep)" : undefined }}>
                       {row.cargoType === null ? `「${row.cargoTypeRaw}」认不出来` : CARGO_TYPE_ZH[row.cargoType]}
                     </td>
+                    <td style={{ ...td, color: "var(--c-red-deep)" }}>{row.issues.join("；")}</td>
                   </tr>
                 ))}
               </tbody>

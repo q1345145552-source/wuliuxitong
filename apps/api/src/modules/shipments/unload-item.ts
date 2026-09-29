@@ -265,7 +265,8 @@ export async function unloadItemFully(
       where: { id: parent.id },
       data: {
         packageCount: newPkg,
-        volumeM3: Number((pv + childVol).toFixed(3)) as any,
+        // 子单体积没填（null）就不动父单体积 —— 别把「还没量」写成 0（2026-09-29，跟装柜那边同一口径）
+        ...(item.shipment.volumeM3 == null ? {} : { volumeM3: Number((pv + childVol).toFixed(3)) as any }),
         ...(pw == null || childWt == null ? {} : { weightKg: Number((pw + childWt).toFixed(2)) as any }),
         ...(要退状态 ? { currentStatus: "inWarehouseCN" } : {}),
         updatedAt: new Date(),

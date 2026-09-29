@@ -703,6 +703,10 @@ export function registerLoadingManifestRoutes(app: MinimalHttpApp): void {
        * 修法：拆的时候父单同步扣减体积和重量，下一次分柜自然按剩余的算。
        */
       const vol = locked?.volumeM3 ? Number(locked.volumeM3) : 0;
+      /* 体积没填（null）要跟「0 方」分开（2026-09-29 Codex 全系统检查）：原来一装柜，
+         父单、子单都被写成 0，「还没量」和「量了是 0」从此分不清。没填的：子单也留空、父单不动；
+         只有柜内记录那一列不许空，照旧记 0（柜子的已装方数本来就只能算量过的）。 */
+      const volUnknown = locked?.volumeM3 == null;
       const weight = locked?.weightKg != null ? Number(locked.weightKg) : null;
       if (reqPieces === 0) throw new Error("装柜件数不能为0");
 
@@ -742,7 +746,7 @@ export function registerLoadingManifestRoutes(app: MinimalHttpApp): void {
             trackingNo: childTrackingNo, parentTrackingNo: shipment.trackingNo,
             batchNo: shipment.batchNo, currentStatus: "loaded",
             packageCount: reqPieces, packageUnit: shipment.packageUnit,
-            weightKg: childWeight, volumeM3: childVolume,
+            weightKg: childWeight, volumeM3: volUnknown ? null : childVolume,
             transportMode: shipment.transportMode, domesticTrackingNo: shipment.domesticTrackingNo,
             warehouseId: shipment.warehouseId, itemName: shipment.itemName,
           },
@@ -753,7 +757,7 @@ export function registerLoadingManifestRoutes(app: MinimalHttpApp): void {
           where: { id: shipment.id },
           data: {
             packageCount: totalPkg - reqPieces,
-            volumeM3: Number((vol - childVolume).toFixed(3)),
+            ...(volUnknown ? {} : { volumeM3: Number((vol - childVolume).toFixed(3)) }),
             ...(weight == null || childWeight == null
               ? {}
               : { weightKg: Number((weight - childWeight).toFixed(2)) }),
@@ -1086,6 +1090,8 @@ export function registerLoadingManifestRoutes(app: MinimalHttpApp): void {
       const reqPieces = typeof body.pieceCount === "number" && body.pieceCount > 0 && body.pieceCount < totalLoaded ? body.pieceCount : totalLoaded;
       const childPkg = item.shipment.packageCount ?? 0;
       const childVol = item.shipment.volumeM3 ? Number(item.shipment.volumeM3) : 0;
+      // 子单体积没填（null）：卸的时候子单、父单的体积都不动，别写成 0（2026-09-29，跟装柜那边同一口径）
+      const childVolUnknown = item.shipment.volumeM3 == null;
       const childWt = item.shipment.weightKg != null ? Number(item.shipment.weightKg) : null;
 
       // 部分卸柜：减装柜件数；有父单的再减子运单本身、把卸掉的还给父运单
@@ -1124,7 +1130,7 @@ export function registerLoadingManifestRoutes(app: MinimalHttpApp): void {
             where: { id: item.shipment.id },
             data: {
               packageCount: newPkg,
-              volumeM3: newVol as any,
+              ...(childVolUnknown ? {} : { volumeM3: newVol as any }),
               ...(newWt == null ? {} : { weightKg: newWt as any }),
               updatedAt: new Date(),
             },
@@ -1156,7 +1162,7 @@ export function registerLoadingManifestRoutes(app: MinimalHttpApp): void {
               where: { id: parent.id },
               data: {
                 packageCount: parentNewPkg,
-                volumeM3: Number((pv + backVol).toFixed(3)) as any,
+                ...(childVolUnknown ? {} : { volumeM3: Number((pv + backVol).toFixed(3)) as any }),
                 ...(pw == null || backWt == null ? {} : { weightKg: Number((pw + backWt).toFixed(2)) as any }),
                 ...(要退状态 ? { currentStatus: "inWarehouseCN" } : {}),
                 updatedAt: new Date(),

@@ -217,6 +217,27 @@ export function guardCombinedTotals(totals: {
   }
 }
 
+/**
+ * 建单时填的总重量 / 总体积（2026-09-29 Codex 全系统检查）：客户建预报单、员工建单两条路原来只做 Number()，
+ * 填 -5 照样存进订单和运单，一路流进方数合计、导出、分柜分摊。超管改单那条路 8-31 已经这么挡了，这里照抄口径：
+ * 不小于 0、是个数，再加上列能存的范围（Decimal(10,2) 重量 < 1 亿、Decimal(10,3) 体积 < 1000 万），不然写库那步炸 500。
+ * ⚠️ 不卡小数位：页面按产品行自动算出来的体积带 6 位小数，库里按列精度四舍五入是一直以来的做法。
+ */
+export function orderTotalsIssue(weightKg: number | null, volumeM3: number | null): string | null {
+  if (weightKg !== null && (!Number.isFinite(weightKg) || weightKg < 0)) return "重量必须是不小于 0 的数字";
+  if (volumeM3 !== null && (!Number.isFinite(volumeM3) || volumeM3 < 0)) return "体积必须是不小于 0 的数字";
+  if (weightKg !== null && weightKg >= 10 ** 8) return "重量太大了，请核对（系统最多存 8 位整数）";
+  if (volumeM3 !== null && volumeM3 >= 10 ** 7) return "体积太大了，请核对（系统最多存 7 位整数）";
+  return null;
+}
+
+/** 页面上填的尺寸：是正数、能存下就用，否则当没填（不拿它挡单 —— 尺寸本来就是选填的） */
+function positiveDimOrNull(raw: unknown): number | null {
+  if (raw === undefined || raw === null || raw === "") return null;
+  const n = typeof raw === "number" ? raw : typeof raw === "string" ? Number(raw.trim()) : NaN;
+  return Number.isFinite(n) && n > 0 && n < 10 ** 8 ? n : null;
+}
+
 export function registerOrderRoutes(app: MinimalHttpApp): void {
   app.post("/client/prealerts", async (req, res) => {
     const auth = requireRole(req, res, ["client"]);
@@ -237,6 +258,10 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
       receiverAddressTh?: string;
       trackingNo?: string;
       remark?: string;
+      /** 没分产品行时页面上填的整票长宽高（cm）。原来后端不收，产品明细里尺寸是空的（2026-09-29） */
+      lengthCm?: unknown;
+      widthCm?: unknown;
+      heightCm?: unknown;
       /** 整票货型（2026-09-11 老板拍板：客户自己报）。只有一种货、没分产品行时用它 */
       cargoType?: string;
       products?: Array<{
@@ -317,9 +342,10 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
       : [{
           itemName: body.itemName!.trim(),
           packageCount: Number(body.packageCount ?? 0),
-          lengthCm: null,
-          widthCm: null,
-          heightCm: null,
+          // 客户在页面上填了整票长宽高就存进这一行（2026-09-29 Codex 全系统检查：原来写死空，客户页面按产品行显示，尺寸一栏是空的）
+          lengthCm: positiveDimOrNull(body.lengthCm),
+          widthCm: positiveDimOrNull(body.widthCm),
+          heightCm: positiveDimOrNull(body.heightCm),
           productQuantity: null,
           // ⚠️ domesticTrackingNo 必须和**数据库默认值**一模一样（'货拉拉'）——
           // 原来这里根本没写，createMany 传 undefined 时数据库会填默认值；
@@ -327,7 +353,9 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
           // 货型 2026-09-11 起改成跟整票一致：客户端没分产品行时会发整票货型，
           // 原来写死 "normal" 会把客户选的「商检」丢掉（空着仍然是 normal）。
           cargoType: cargo.order,
-          domesticTrackingNo: "货拉拉",
+          // 2026-09-29：客户填了国内快递单号就用他填的（跟员工建单那条路一样），没填才是默认的「货拉拉」。
+          // 原来一律写「货拉拉」，客户页面优先显示产品行，看到的就是「货拉拉」而不是自己填的单号。
+          domesticTrackingNo: body.domesticTrackingNo?.trim() || "货拉拉",
           weightKg: null,
           sortOrder: 0,
         }];
@@ -357,6 +385,9 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
     }
     const manualWeightKg = body.weightKg === undefined || body.weightKg === null ? null : Number(body.weightKg);
     const manualVolumeM3 = body.volumeM3 === undefined || body.volumeM3 === null ? null : Number(body.volumeM3);
+    // 负数 / 不是数字 / 超出能存的范围：碰数据库之前挡（2026-09-29 Codex 全系统检查：原来 -12.34 kg、-0.5 方照样存进订单和运单）
+    const totalsIssue = orderTotalsIssue(manualWeightKg, manualVolumeM3);
+    if (totalsIssue) { fail(res, 400, "VALIDATION_ERROR", totalsIssue); return; }
     /* 2026-08-31（排查报告第 5 条）：内部编号加随机后缀。
        原来 orderId / shipmentId 只用当前毫秒数，两个客户（或一个客户双击提交）
        撞同一毫秒就撞主键报错；同文件写轨迹编号（sl_）和派送单号（admin-ops 的 lm_）
@@ -951,6 +982,11 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
     const generatedTrackingNo = manualTrackingNo;
     const weightKg = body.weightKg === undefined || body.weightKg === null ? null : Number(body.weightKg);
     const volumeM3 = body.volumeM3 === undefined || body.volumeM3 === null ? null : Number(body.volumeM3);
+    // 同客户建单那条：负数 / 不是数字 / 超范围当场挡（2026-09-29）
+    {
+      const totalsIssue = orderTotalsIssue(weightKg, volumeM3);
+      if (totalsIssue) { fail(res, 400, "VALIDATION_ERROR", totalsIssue); return; }
+    }
     const batchNo = body.batchNo?.trim() || null;
     // 件数：产品行是明细事实源，整票件数按明细汇总，避免调用方传的合计对不上。
     const packageCountNum = staffProducts.length > 0 ? prPkg : Number(body.packageCount ?? 0);
@@ -1337,7 +1373,10 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
         skip: (page - 1) * pageSize,
         take: pageSize,
         include: {
-          shipments: { orderBy: { createdAt: "desc" }, take: 1, select: { trackingNo: true, currentStatus: true } },
+          /* 父运单优先（2026-09-29 Codex 全系统检查）：原来按创建时间取最新一条 —— 分过柜以后最新的是子单，
+             客户在「预报单」看到的是拆出来那份的单号和状态，跟「我的订单」（父单优先）对不上。
+             口径跟 /client/orders 同一个：parentTrackingNo 为空的排最前，只剩子单时才退回最近更新的那条。 */
+          shipments: { orderBy: [{ parentTrackingNo: { sort: "asc", nulls: "first" } }, { updatedAt: "desc" }], take: 1, select: { trackingNo: true, currentStatus: true } },
         },
       }),
     ]);
@@ -1530,7 +1569,8 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
       ok(res, { id: imageId, orderId, fileName, mime: mimeType, filePath, createdAt: now.toISOString() });
     } catch (err) {
       console.error("[product-image] save failed:", err);
-      fail(res, 500, "INTERNAL_ERROR", `保存图片失败：${err instanceof Error ? err.message : "未知错误"}`);
+      // 原因（磁盘路径、系统报错原文）只记日志，不给页面（2026-09-29 Codex 全系统检查）
+      fail(res, 500, "INTERNAL_ERROR", "图片没存上（服务器出错），请稍后再传一次；反复出现请联系技术");
     }
   });
 

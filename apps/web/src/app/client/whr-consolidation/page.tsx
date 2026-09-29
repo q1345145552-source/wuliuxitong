@@ -268,20 +268,23 @@ export default function ClientWhrConsolidationPage() {
   const [showPay, setShowPay] = useState(false);
   const [currentPayPrealertId, setCurrentPayPrealertId] = useState<string | null>(null);
   // 集货余额（2026-08-07）：付款直接扣这里的钱
-  const [balance, setBalance] = useState(0);
+  /* null = 还没读到（读取中 / 读失败）。原来读失败一律当 0，付款弹窗就说「余额不足」把人拦住（2026-09-29 Codex 全系统检查） */
+  const [balance, setBalance] = useState<number | null>(null);
   const [paySubmitting, setPaySubmitting] = useState(false);
 
   // ==========================================================================
   // 数据加载
   // ==========================================================================
   /** 读集货余额。付款弹窗要用它判断够不够，付完也要刷新。 */
-  const loadBalance = useCallback(async () => {
+  const loadBalance = useCallback(async (): Promise<number | null> => {
     try {
       const r = await apiRequest<{ balance?: number; accounts?: { currency: string; balance: number }[] }>(
         `${apiBaseUrl()}/client/wallet/overview`
       );
-      setBalance(typeof r.balance === "number" ? r.balance : (r.accounts?.find(a => a.currency === "CNY")?.balance ?? 0));
-    } catch { setBalance(0); }
+      const v = typeof r.balance === "number" ? r.balance : (r.accounts?.find(a => a.currency === "CNY")?.balance ?? 0);
+      setBalance(v);
+      return v;
+    } catch { setBalance(null); return null; }
   }, []);
 
 
@@ -445,7 +448,10 @@ export default function ClientWhrConsolidationPage() {
     const payPa = detail?.prealerts.find(pa => pa.id === currentPayPrealertId);
     const fee = payPa?.totalFee ?? 0;
     if (!(fee > 0)) { setToast("这张预报单还没有计费金额，请联系客服"); return; }
-    if (balance < fee) { setToast(`集货余额不足，还差 ¥${(fee - balance).toFixed(2)}，请先去「集货余额」充值`); return; }
+    // 付之前现读一次余额（2026-09-29）：页面开着的时候客户可能刚充过值，拿老数字会误拦
+    const nowBalance = await loadBalance();
+    if (nowBalance === null) { setToast("集货余额没读出来，请稍后再试或刷新页面"); return; }
+    if (nowBalance < fee) { setToast(`集货余额不足，还差 ¥${(fee - nowBalance).toFixed(2)}，请先去「集货余额」充值`); return; }
     if (!confirm(`确认用集货余额支付 ¥${fee.toFixed(2)}？\n\n此次付款不可撤销，误操作请联系客服。`)) return;
     setPaySubmitting(true);
     try {
@@ -626,6 +632,12 @@ export default function ClientWhrConsolidationPage() {
             </div>
 
             {/* ====== 预报单列表 ====== */}
+            {/* 接口最多给 500 张（2026-09-29 Codex 全系统检查：原来超了也不说，页面上「N 个预报单」跟下面的列表对不上） */}
+            {typeof detail.totalPrealerts === "number" && detail.totalPrealerts > detail.prealerts.length && (
+              <p style={{ fontSize: 12, color: "var(--c-amber-deep)", margin: "0 0 8px" }}>
+                一共 {detail.totalPrealerts} 张预报单，这里只列出了 {detail.prealerts.length} 张，看不到的请联系客服查。
+              </p>
+            )}
             {detail.prealerts.length === 0 ? (
               <p style={{ fontSize: 13, color: "var(--t-faint)", padding: "8px 0" }}>暂无预报单，请新建</p>
             ) : (
@@ -681,7 +693,7 @@ export default function ClientWhrConsolidationPage() {
                                 )}
                                 <button onClick={() => {
                                   if (addressMissing) { setToast("请先填写泰国收货地址"); setEditAddress(true); return; }
-                                  setCurrentPayPrealertId(pa.id); setShowPay(true);
+                                  setCurrentPayPrealertId(pa.id); setShowPay(true); void loadBalance();
                                 }} disabled={addressMissing} style={{ ...btnBlue, marginTop: 8, opacity: addressMissing ? 0.5 : 1, cursor: addressMissing ? "not-allowed" : "pointer" }}>重新付款</button>
                               </div>
                             ) : (
@@ -693,7 +705,7 @@ export default function ClientWhrConsolidationPage() {
                                 <div style={{ textAlign: "center", marginTop: 8 }}>
                                   <button onClick={() => {
                                     if (addressMissing) { setToast("请先填写泰国收货地址"); setEditAddress(true); return; }
-                                    setCurrentPayPrealertId(pa.id); setShowPay(true);
+                                    setCurrentPayPrealertId(pa.id); setShowPay(true); void loadBalance();
                                   }} disabled={addressMissing} style={{ ...btnBlue, opacity: addressMissing ? 0.5 : 1, cursor: addressMissing ? "not-allowed" : "pointer" }}>用余额付款</button>
                                   {addressMissing && <div style={{ fontSize: 12, color: "var(--c-red)", marginTop: 4 }}>需先填写收货地址才能付款</div>}
                                 </div>
@@ -975,7 +987,7 @@ export default function ClientWhrConsolidationPage() {
         {showPay && (() => {
           const payPa = detail?.prealerts.find(pa => pa.id === currentPayPrealertId);
           const fee = payPa?.totalFee ?? 0;
-          const enough = balance >= fee && fee > 0;
+          const enough = balance !== null && balance >= fee && fee > 0;
           return (
           <Modal onClose={() => { setShowPay(false); setCurrentPayPrealertId(null); }}>
             <h3 style={{ marginTop: 0 }}>用集货余额付款</h3>
@@ -987,8 +999,8 @@ export default function ClientWhrConsolidationPage() {
             <p style={{ fontSize: 12, color: "var(--t-muted)", marginTop: 8 }}>收货地址：{detail?.deliveryAddress || "未填写"}</p>
 
             <div style={{ marginTop: 12, padding: "10px 12px", border: "1px solid var(--l-soft)", borderRadius: 6 }}>
-              <div style={{ fontSize: 13 }}>当前集货余额：<strong>¥{balance.toFixed(2)}</strong></div>
-              {fee > 0 && (
+              <div style={{ fontSize: 13 }}>当前集货余额：<strong>{balance === null ? "正在读取…（一直读不出来请刷新页面）" : `¥${balance.toFixed(2)}`}</strong></div>
+              {fee > 0 && balance !== null && (
                 enough
                   ? <div style={{ fontSize: 13, color: "var(--t-body)", marginTop: 4 }}>付款后剩余：¥{(balance - fee).toFixed(2)}</div>
                   : <div style={{ fontSize: 13, color: "var(--c-red-deep)", marginTop: 4 }}>余额不足，还差 ¥{(fee - balance).toFixed(2)}，请先去「集货余额」充值</div>

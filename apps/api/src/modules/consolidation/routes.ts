@@ -211,6 +211,28 @@ async function generateTaskNo(
 }
 
 /**
+ * 编辑预报单时，提交上来的「已有行」id 必须现在都还在这张单上、而且不重复（2026-09-29）。
+ * 调用方必须已经锁住这张预报单。对不上抛 409，整个事务回滚（一行都不删、不改）。
+ */
+async function assertPrealertRowsStillThere(tx: any, prealertId: string, keepIds: string[]): Promise<void> {
+  if (keepIds.length === 0) return;
+  if (new Set(keepIds).size !== keepIds.length) {
+    throw new BusinessError("提交的货物明细里有重复的行，请刷新页面后再改", 400, "VALIDATION_ERROR");
+  }
+  const existing = await tx.consolidationPrealertProduct.findMany({
+    where: { prealertId, id: { in: keepIds } },
+    select: { id: true },
+  });
+  if (existing.length !== keepIds.length) {
+    throw new BusinessError(
+      "这张预报单的货物明细刚刚被别人改过（你页面上有一行已经不在了），这次修改没有保存。请刷新页面，看一眼最新的内容再改。",
+      409,
+      "VALIDATION_ERROR",
+    );
+  }
+}
+
+/**
  * 生成预报单运单号 JH-YW + 7位数字（如 JH-YW0000001）
  * ⚠️ 同 generateTaskNo：必须传插入用的那个事务，锁握到插入完成（2026-08-31 改）
  */
@@ -587,10 +609,17 @@ export function registerConsolidationRoutes(app: MinimalHttpApp): void {
       return;
     }
 
-    const updated = await prisma.consolidationTask.update({
-      where: { id: body.taskId },
+    /* 「还是收集中」写进更新条件（2026-09-29 Codex 全系统检查）：上面那道判断在事务外，
+       客户点保存的同一刻员工点了「确认满柜」，原来这里照样按 id 改掉目的地 —— 满柜之后地址还被改了。 */
+    const changedRows = await prisma.consolidationTask.updateMany({
+      where: { id: body.taskId, companyId: auth.companyId, clientId: auth.userId, status: "collecting" },
       data: { destinationTh: body.destinationTh.trim() },
     });
+    if (changedRows.count === 0) {
+      fail(res, 400, "BAD_REQUEST", "这个任务刚刚已经不是「收集中」了（仓库可能已确认满柜），目的地没有修改，请刷新后再看");
+      return;
+    }
+    const updated = await prisma.consolidationTask.findUniqueOrThrow({ where: { id: body.taskId } });
 
     ok(res, formatTaskForClient(updated));
   });
@@ -904,6 +933,11 @@ export function registerConsolidationRoutes(app: MinimalHttpApp): void {
           .map((p) => p.id?.trim())
           .filter((v): v is string => Boolean(v));
 
+        /* 提交上来的「已有行」必须现在还在这张单上（2026-09-29 Codex 全系统检查）：
+           两个页面同时开着改同一张单，前一个删掉了某行，后一个拿着旧页面保存 ——
+           原来先把「没提交的」删掉，再按 id 更新，更新不到的那行（已经不在了）一声不吭地没了，
+           前一个人新加的行也被删掉，最后货物明细少了，页面还说保存成功。现在对不上就整次不存，让人刷新。 */
+        await assertPrealertRowsStillThere(tx, body.prealertId!, keepIds);
         // 只删本次没提交的行
         await tx.consolidationPrealertProduct.deleteMany({
           where: {
@@ -2394,6 +2428,12 @@ export function registerConsolidationRoutes(app: MinimalHttpApp): void {
           .map((p) => p.id?.trim())
           .filter((v): v is string => Boolean(v));
 
+        /* 提交上来的「已有行」必须现在还在这张单上（2026-09-29 Codex 全系统检查）：
+           两个页面同时开着改同一张单，前一个删掉了某行，后一个拿着旧页面保存 ——
+           原来先把「没提交的」删掉，再按 id 更新，更新不到的那行（已经不在了）一声不吭地没了，
+           前一个人新加的行也被删掉，最后货物明细少了，页面还说保存成功。现在对不上就整次不存，让人刷新。 */
+        await assertPrealertRowsStillThere(tx, body.prealertId!, keepIds);
+
         await tx.consolidationPrealertProduct.deleteMany({
           where: {
             prealertId: body.prealertId,
@@ -2587,7 +2627,12 @@ export function registerConsolidationRoutes(app: MinimalHttpApp): void {
         );
       }
 
-      await tx.consolidationPrealertProduct.delete({ where: { id: product.id } });
+      /* 按「还在这张单上」删，删不到就说清楚（2026-09-29 Codex 全系统检查）：两个人同时删同一件，
+         后一个原来按 id 硬删，撞上「记录不存在」变成 500「服务器繁忙」，其实东西已经删掉了。 */
+      const gone = await tx.consolidationPrealertProduct.deleteMany({ where: { id: product.id, prealertId: product.prealertId } });
+      if (gone.count === 0) {
+        throw new BusinessError("这件货物刚刚已经被删掉了，请刷新后再看", 409, "VALIDATION_ERROR");
+      }
       // 任务的总件数/总方数是按已签收预报单汇总出来的，删完必须在同一个事务里重算
       await recalcTaskTotals(product.prealert.taskId, tx);
     });

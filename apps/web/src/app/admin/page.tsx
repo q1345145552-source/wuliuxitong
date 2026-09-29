@@ -38,7 +38,7 @@ import {
 } from "../../modules/shipment/ShipmentTableGrid";
 import { apiBaseUrl, authHeaders, parseApiResponse, fetchWithSession as fetch } from "../../services/core-api";
 import { DEFAULT_SHIPPING_PRICES, INSPECTION_SURCHARGE, SENSITIVE_SURCHARGE } from "../../../../../packages/shared-types/constants";
-import { formatMetric, shipmentStatusWithPartialZh, shipmentStatusZh, transportModeLabel, warehouseLabelFromId } from "../../modules/staff/utils";
+import { formatBeijingTime, formatMetric, shipmentStatusWithPartialZh, shipmentStatusZh, transportModeLabel, warehouseLabelFromId } from "../../modules/staff/utils";
 import { SHIPMENT_STATUS_FILTER_OPTIONS } from "../../modules/shipment/shipment-status";
 import ShippingConfig from "../../components/admin/ShippingConfig";
 import { createRequestGate } from "../../modules/shared/request-gate";
@@ -330,6 +330,8 @@ export default function AdminHomePage() {
   const [ordersLoaded, setOrdersLoaded] = useState(false);
   const [ordersError, setOrdersError] = useState(false);
   const [sessionMemoryList, setSessionMemoryList] = useState<AdminAiSessionMemoryItem[]>([]);
+  // 会话记忆一共几条（接口只给最近 200 条，2026-09-29 起页面说清楚）
+  const [sessionMemoryTotal, setSessionMemoryTotal] = useState(0);
   const [knowledgeGapList, setKnowledgeGapList] = useState<AdminAiKnowledgeGapItem[]>([]);
   const [knowledgeGapStatus, setKnowledgeGapStatus] = useState<"open" | "resolved">("open");
   const [knowledgeItems, setKnowledgeItems] = useState<AiKnowledgeItem[]>([]);
@@ -380,22 +382,25 @@ export default function AdminHomePage() {
       const XLSX = await import("xlsx");
       // 「货型」2026-09-11 加在最后一列：以前没有这一列、代码不传，后端一律兜成普货。
       // 不插在中间 —— 有人是按老列序粘数据的，插中间会整体错位。
-      const headers = ["客户ID", "仓库ID", "品名", "箱数", "包装单位", "运输方式", "到仓日期", "国内单号", "泰国收货人", "泰国收货电话", "泰国收货地址", "货型"];
+      // 「运单号」2026-09-29 加在最后一列（6-05 起运单号必填，模板一直没这一列，整批导入每行都失败）。
+      // 同样只加在最后，不插中间。
+      const headers = ["客户ID", "仓库ID", "品名", "箱数", "包装单位", "运输方式", "到仓日期", "国内单号", "泰国收货人", "泰国收货电话", "泰国收货地址", "货型", "运单号"];
       const ws = XLSX.utils.aoa_to_sheet([headers]);
-      ws["!cols"] = [18, 24, 24, 10, 14, 14, 18, 24, 20, 24, 45, 22].map((wch) => ({ wch }));
+      ws["!cols"] = [18, 24, 24, 10, 14, 14, 18, 24, 20, 24, 45, 22, 22].map((wch) => ({ wch }));
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, ws, "运单导入模板");
       const notes = XLSX.utils.aoa_to_sheet([
         ["管理员批量导入填写说明"],
         ["填写第一个工作表；每行创建一张运单，请勿修改表头。空白行不会导入，模板不含可误导入的示例订单。"],
         ["客户ID填写系统已有的客户ID；品名和箱数请填写完整，箱数为正整数。"],
+        ["最后一列「运单号」必填，不能跟系统里已有的运单号重复；请把这一列的单元格格式设为“文本”。"],
         ["仓库ID：" + warehouseOptions.map((w) => `${w.label} = ${w.id}`).join("；")],
         ["包装单位填写 box（箱）或 bag（袋）；运输方式填写 sea（海运）或 land（陆运），不要填写中文代替这些值。"],
         ["到仓日期按文本填写 YYYY-MM-DD，例如 2026-09-05；不要将单元格改成Excel日期格式。"],
         ["填写前，请将客户ID、国内单号、电话和到仓日期的单元格格式设为“文本”，保留开头的0与日期原文。"],
-        ["国内单号、泰国收货人、泰国收货电话、泰国收货地址按实际信息填写。"],
+        ["国内单号按实际信息填写。泰国收货人、收货电话、收货地址三列系统不保存（6 月起建运单不收收货信息，派送时按客户地址簿），可以留空。"],
         ["货型留空就是普货；商检货填「商检货」，敏感货填「敏感货」。填别的字会让这一行导入失败并在失败明细里说明，不会悄悄变成普货。"],
-        ["此模板仅用于管理员当前12列导入；员工的多产品批量创建请使用员工端模板，两者不可混用。"],
+        ["此模板仅用于管理员当前13列导入；员工的多产品批量创建请使用员工端模板，两者不可混用。"],
         ["填写后上传，先核对预览再确认导入；已成功导入的行请勿重复提交。"],
       ]);
       notes["!cols"] = [{ wch: 110 }];
@@ -412,7 +417,9 @@ export default function AdminHomePage() {
   const [createForm, setCreateForm] = useState({
     clientId: "", warehouseId: "wh_yiwu_01", arrivedAt: beijingToday(),
     transportMode: "sea" as "sea" | "land", domesticTrackingNo: "", batchNo: "", shipDate: "",
-    receiverNameTh: "", receiverPhoneTh: "", receiverAddressTh: "",
+    // 运单号必填（2026-09-29 补：6-05 起后端要求必填，这个弹窗一直没这一项，点「创建」必失败）。
+    // 泰国收货人 / 电话 / 地址三项去掉：6-04 起后端建运单不存收货信息，填了也白填。
+    trackingNo: "",
   });
   /**
    * ⚠️ `packageCount` 存**字符串**（2026-08-29 第八轮改）。
@@ -986,6 +993,7 @@ export default function AdminHomePage() {
   const loadSessionMemory = useCallback(async () => {
     const data = await fetchAdminAiSessionMemory({ limit: 200 });
     setSessionMemoryList(data.items ?? []); // 【审查问题 13】接口少了 items 就会让整页崩掉
+    setSessionMemoryTotal(typeof data.total === "number" ? data.total : (data.items ?? []).length);
   }, []);
 
   // 2026-09-01 竞态全扫：快速切「待处理/已处理」时，先回来的旧响应不许盖掉新页签的列表
@@ -1467,7 +1475,8 @@ export default function AdminHomePage() {
     const ws = XLSX.utils.json_to_sheet(rows);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "订单列表");
-    XLSX.writeFile(wb, `订单数据_${new Date().toISOString().slice(0,10)}.xlsx`);
+    // 文件名按北京时间的日期（2026-09-29：原来按 UTC，北京时间早上 8 点前导出会标成前一天）
+    XLSX.writeFile(wb, `订单数据_${beijingToday()}.xlsx`);
     setToast(`已导出 ${rows.length} 条`);
     setOrderExportFeedback(`已导出 ${rows.length} 条`);
   };
@@ -2567,6 +2576,9 @@ export default function AdminHomePage() {
           <EmptyStateCard title="暂无会话记忆" description="当前没有可排查的 AI 会话记忆记录。" />
         ) : (
           <div style={{ overflowX: "auto" }}>
+            {sessionMemoryTotal > sessionMemoryList.length && (
+              <p style={{ fontSize: 12, color: "var(--c-amber-deep)", margin: "0 0 8px" }}>共 {sessionMemoryTotal} 条，这里只显示最近的 {sessionMemoryList.length} 条</p>
+            )}
             <table className="a3-table" style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
               <thead>
                 <tr style={{ borderBottom: "2px solid var(--l-cool)", textAlign: "left" }}>
@@ -2590,7 +2602,7 @@ export default function AdminHomePage() {
                     <td style={{ padding: "8px 6px" }}>{row.statusScope ?? "-"}</td>
                     <td style={{ padding: "8px 6px" }}>{row.timeHint ?? "-"}</td>
                     <td style={{ padding: "8px 6px" }}>{row.metric ?? "-"}</td>
-                    <td style={{ padding: "8px 6px", color: "var(--t-strong)" }}>{row.updatedAt.slice(0, 16)}</td>
+                    <td style={{ padding: "8px 6px", color: "var(--t-strong)" }}>{formatBeijingTime(row.updatedAt)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -2644,7 +2656,7 @@ export default function AdminHomePage() {
               <tbody>
                 {knowledgeGapList.map((item) => (
                   <tr key={item.id} style={{ borderBottom: "1px solid var(--l-cool)" }}>
-                    <td style={{ padding: "8px 6px", color: "var(--t-strong)" }}>{item.createdAt.slice(0, 16)}</td>
+                    <td style={{ padding: "8px 6px", color: "var(--t-strong)" }}>{formatBeijingTime(item.createdAt)}</td>
                     <td style={{ padding: "8px 6px" }}>{item.userId}</td>
                     <td style={{ padding: "8px 6px", whiteSpace: "pre-wrap" }}>{item.question}</td>
                     <td style={{ padding: "8px 6px" }}>{item.knowledgeCountAtAsk}</td>
@@ -2884,16 +2896,8 @@ export default function AdminHomePage() {
                 <input value={createForm.domesticTrackingNo} onChange={(e) => setCreateForm(f => ({ ...f, domesticTrackingNo: e.target.value }))} placeholder="货拉拉" style={{ border: "1px solid var(--l-strong)", borderRadius: 6, padding: "6px 8px", width: "100%", fontSize: 12 }} />
               </div>
               <div>
-                <label style={{ fontSize: 11, display: "block", marginBottom: 2 }}>泰国收货人</label>
-                <input value={createForm.receiverNameTh} onChange={(e) => setCreateForm(f => ({ ...f, receiverNameTh: e.target.value }))} style={{ border: "1px solid var(--l-strong)", borderRadius: 6, padding: "6px 8px", width: "100%", fontSize: 12 }} />
-              </div>
-              <div>
-                <label style={{ fontSize: 11, display: "block", marginBottom: 2 }}>泰国收货电话</label>
-                <input value={createForm.receiverPhoneTh} onChange={(e) => setCreateForm(f => ({ ...f, receiverPhoneTh: e.target.value }))} style={{ border: "1px solid var(--l-strong)", borderRadius: 6, padding: "6px 8px", width: "100%", fontSize: 12 }} />
-              </div>
-              <div>
-                <label style={{ fontSize: 11, display: "block", marginBottom: 2 }}>泰国收货地址</label>
-                <input value={createForm.receiverAddressTh} onChange={(e) => setCreateForm(f => ({ ...f, receiverAddressTh: e.target.value }))} style={{ border: "1px solid var(--l-strong)", borderRadius: 6, padding: "6px 8px", width: "100%", fontSize: 12 }} />
+                <label style={{ fontSize: 11, display: "block", marginBottom: 2 }}>运单号 *</label>
+                <input value={createForm.trackingNo} onChange={(e) => setCreateForm(f => ({ ...f, trackingNo: e.target.value }))} placeholder="必填，不能跟已有的重复" style={{ border: "1px solid var(--l-strong)", borderRadius: 6, padding: "6px 8px", width: "100%", fontSize: 12 }} />
               </div>
             </div>
             <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 8 }}>产品行</div>
@@ -2917,6 +2921,7 @@ export default function AdminHomePage() {
               <button onClick={() => setShowCreateOrderModal(false)} style={{ border: "1px solid var(--l-strong)", borderRadius: 8, padding: "8px 14px", background: "var(--white)", cursor: "pointer", color: "var(--t-strong)" }}>取消</button>
               <button disabled={loading} onClick={async () => {
                 if (!createForm.clientId.trim()) { setMessage("请选择客户"); return; }
+                if (!createForm.trackingNo.trim()) { setMessage("请填写运单号"); return; }
                 const validProducts = createProducts.filter(p => p.itemName.trim());
                 if (validProducts.length === 0) { setMessage("请至少填写一个产品行"); return; }
                 // ⚠️ 跟另外三个入口同一份口径（箱数正整数、每箱几个全填或全空）
@@ -2928,14 +2933,12 @@ export default function AdminHomePage() {
                 try {
                   await createStaffOrder({
                     clientId: createForm.clientId.trim(),
+                    trackingNo: createForm.trackingNo.trim(),
                     warehouseId: createForm.warehouseId,
                     arrivedAt: createForm.arrivedAt,
                     transportMode: createForm.transportMode,
                     domesticTrackingNo: createForm.domesticTrackingNo.trim() || undefined,
                     batchNo: createForm.batchNo.trim() || undefined,
-                    receiverNameTh: createForm.receiverNameTh.trim() || undefined,
-                    receiverPhoneTh: createForm.receiverPhoneTh.trim() || undefined,
-                    receiverAddressTh: createForm.receiverAddressTh.trim() || undefined,
                     itemName: validProducts[0].itemName.trim(),
                     packageCount: packageCountForPayload(validProducts[0].packageCount),
                     packageUnit: "box",
@@ -2970,7 +2973,7 @@ export default function AdminHomePage() {
           <div style={{ width: "100%", maxWidth: 700, background: "var(--white)", borderRadius: 12, padding: 24, boxShadow: "0 20px 60px rgba(0,0,0,0.3)", maxHeight: "85vh", overflow: "auto" }}>
             <h3 style={{ margin: "0 0 16px", fontSize: 18, fontWeight: 600 }}>批量导入运单</h3>
             <div style={{ marginBottom: 12, fontSize: 12, color: "var(--t-strong)" }}>
-              下载模板 → 填写数据 → 上传文件。表头：客户ID, 仓库ID, 品名, 箱数, 包装单位, 运输方式, 到仓日期, 国内单号, 泰国收货人, 泰国收货电话, 泰国收货地址, 货型
+              下载模板 → 填写数据 → 上传文件。表头：客户ID, 仓库ID, 品名, 箱数, 包装单位, 运输方式, 到仓日期, 国内单号, 泰国收货人, 泰国收货电话, 泰国收货地址, 货型, 运单号（运单号必填）
             </div>
             {!batchConfirmed ? (
               <>
@@ -3084,9 +3087,9 @@ export default function AdminHomePage() {
                         packageUnit: (r["包装单位"] ?? r.packageUnit ?? "box") as "bag" | "box",
                         transportMode: (r["运输方式"] ?? r.transportMode ?? "sea") as "sea" | "land",
                         domesticTrackingNo: String(r["国内单号"] ?? r.domesticTrackingNo ?? ""),
-                        receiverNameTh: String(r["泰国收货人"] ?? r.receiverNameTh ?? ""),
-                        receiverPhoneTh: String(r["泰国收货电话"] ?? r.receiverPhoneTh ?? ""),
-                        receiverAddressTh: String(r["泰国收货地址"] ?? r.receiverAddressTh ?? ""),
+                        // 运单号（2026-09-29 补）：原来没传，后端 6-05 起要求必填 → 整批每行都「运单号为必填」。
+                        // 泰国收货人三列不再往后端传：6-04 起后端建运单一律不存收货信息（传了也是空）。
+                        trackingNo: String(r["运单号"] ?? r.trackingNo ?? "").trim(),
                         // 货型（2026-09-11）：留空按普货；填了认不出来的值让这一行失败，
                         // 不许静默当普货 —— 商检货走普货，清关要的单据是另一套
                         cargoType: (() => {

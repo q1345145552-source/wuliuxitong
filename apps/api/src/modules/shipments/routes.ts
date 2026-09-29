@@ -121,6 +121,15 @@ function mapKuaidi100State(state?: string): string {
   return "未知";
 }
 
+/* 查国内快递（快递100）失败时给用户看的话（2026-09-29 Codex 全系统检查）：
+   原来把对方系统的英文原文（含内网地址、连接错误）原样返回，页面上是一串英文。原文只记日志。 */
+const KUAIDI_FAIL_TEXT = "快递查询暂时查不到（快递公司那边没响应），请稍后再试";
+function kuaidiNoResultText(providerMessage?: string): string {
+  // 对方给的是中文（比如「查询无结果」）就照给；英文或空的换成我们自己的话
+  if (providerMessage && /[\u4e00-\u9fa5]/.test(providerMessage)) return providerMessage;
+  return "没查到这个快递单号的物流信息，请核对单号和快递公司";
+}
+
 export function registerShipmentRoutes(app: MinimalHttpApp): void {
   app.get("/staff/inbound-photos", async (req, res) => {
     const auth = requireRole(req, res, ["staff", "admin"]);
@@ -282,17 +291,18 @@ export function registerShipmentRoutes(app: MinimalHttpApp): void {
         });
         providerData = (await response.json()) as Kuaidi100QueryResponse;
         if (!response.ok) {
-          fail(res, 502, "INTERNAL_ERROR", `kuaidi100 request failed: HTTP ${response.status}`);
+          logger.warn("快递100 查询失败", { http: response.status }); fail(res, 502, "INTERNAL_ERROR", KUAIDI_FAIL_TEXT);
           return;
         }
       } catch (error) {
         const text = error instanceof Error ? error.message : "unknown error";
-        fail(res, 502, "INTERNAL_ERROR", `kuaidi100 request failed: ${text}`);
+        logger.warn("快递100 查询出错", { error: text });
+        fail(res, 502, "INTERNAL_ERROR", KUAIDI_FAIL_TEXT);
         return;
       }
 
       if (providerData?.status !== "200") {
-        fail(res, 400, "BAD_REQUEST", providerData?.message ?? "kuaidi100 query failed");
+        fail(res, 400, "BAD_REQUEST", kuaidiNoResultText(providerData?.message));
         return;
       }
 
@@ -310,7 +320,7 @@ export function registerShipmentRoutes(app: MinimalHttpApp): void {
     }
 
     if (!companyCode) {
-      fail(res, 400, "BAD_REQUEST", "companyCode is required when KUAIDI100 key is not configured");
+      fail(res, 400, "BAD_REQUEST", "请先选快递公司再查询");
       return;
     }
 
@@ -324,17 +334,18 @@ export function registerShipmentRoutes(app: MinimalHttpApp): void {
       });
       webData = (await response.json()) as Kuaidi100WebQueryResponse;
       if (!response.ok) {
-        fail(res, 502, "INTERNAL_ERROR", `kuaidi100 web query failed: HTTP ${response.status}`);
+        logger.warn("快递100 网页查询失败", { http: response.status }); fail(res, 502, "INTERNAL_ERROR", KUAIDI_FAIL_TEXT);
         return;
       }
     } catch (error) {
       const text = error instanceof Error ? error.message : "unknown error";
-      fail(res, 502, "INTERNAL_ERROR", `kuaidi100 web query failed: ${text}`);
+      logger.warn("快递100 网页查询出错", { error: text });
+      fail(res, 502, "INTERNAL_ERROR", KUAIDI_FAIL_TEXT);
       return;
     }
 
     if (webData?.status !== "200") {
-      fail(res, 400, "BAD_REQUEST", webData?.message ?? "kuaidi100 web query failed");
+      fail(res, 400, "BAD_REQUEST", kuaidiNoResultText(webData?.message));
       return;
     }
 

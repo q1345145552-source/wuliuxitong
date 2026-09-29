@@ -142,6 +142,8 @@ export function registerWhrConsolidationStaffRoutes(app: MinimalHttpApp): void {
       include: {
         items: { orderBy: { sortOrder: "asc" } },
         statusLogs: { orderBy: { createdAt: "desc" }, take: 50 },
+        // 一共几条（2026-09-29）：只取最新 50 条，页面要能说清还有更早的
+        _count: { select: { statusLogs: true } },
         planCustomer: {
           include: {
             client: { select: { id: true, phone: true, companyName: true } },
@@ -208,6 +210,7 @@ export function registerWhrConsolidationStaffRoutes(app: MinimalHttpApp): void {
         productImageBase64: it.productImageBase64,
         sortOrder: it.sortOrder,
       })),
+      statusLogTotal: (pa as any)._count?.statusLogs ?? null,
       statusLogs: pa.statusLogs.map((sl) => ({
         id: sl.id,
         // 2026-09-15：操作人只给超级管理员；备注开头的「管理员」也只给超级管理员

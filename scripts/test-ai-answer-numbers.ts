@@ -1611,6 +1611,43 @@ async function main() {
     });
   }
 
+    await check("71) ⭐ 问「已签收 / 派送中 多少单」给数字，不当成服务问题（2026-09-29 Codex 全系统检查）", async () => {
+      /* 「签收」「派送」既是服务问题关键词、也是状态词。原来服务问答排在统计前面，
+         「本月已签收多少单」回的是「当前可用知识信息不足」，数据库里明明有 2 单。 */
+      const now = Date.now();
+      const fx = [
+        shipment({ id: "sg1", createdAtMs: now - 3600_000, updatedAtMs: now - 3600_000, status: "delivered" }),
+        shipment({ id: "sg2", createdAtMs: now - 7200_000, updatedAtMs: now - 7200_000, status: "delivered" }),
+        shipment({ id: "sg3", createdAtMs: now - 7200_000, updatedAtMs: now - 7200_000, status: "outForDelivery" }),
+      ];
+      const signed = await ask({ shipments: fx, message: "本月已签收多少单" });
+      assert.ok(!signed.answer.includes("知识信息不足"), `被当成服务问题了：\n${signed.answer}`);
+      assert.equal(totalCountOf(signed.answer), 2, `已签收应该是 2 单：\n${signed.answer}`);
+      /* 「派送中」没有单独的查询范围（9-03 定的：认不准的状态词退回「全部 + 分项」，宁可不精准也不答反），
+         这里只要求给出数字、不被当成服务问题、也不被当成品名。 */
+      const delivering = await ask({ shipments: fx, message: "派送中有多少单" });
+      assert.ok(!delivering.answer.includes("知识信息不足"), `被当成服务问题了：\n${delivering.answer}`);
+      assert.ok(!delivering.answer.includes("未查询到品名"), `「派送中」被当成品名了：\n${delivering.answer}`);
+      assert.equal(totalCountOf(delivering.answer), 3, `应该按全部 3 单答（附分项）：\n${delivering.answer}`);
+    });
+
+    await check("72) ⭐「你好，我本月有多少单」给数字，不只回欢迎语", async () => {
+      const now = Date.now();
+      const fx = [
+        shipment({ id: "hi1", createdAtMs: now - 3600_000, updatedAtMs: now - 3600_000 }),
+        shipment({ id: "hi2", createdAtMs: now - 3600_000, updatedAtMs: now - 3600_000 }),
+      ];
+      const { answer } = await ask({ shipments: fx, message: "你好，我本月有多少单" });
+      assert.equal(totalCountOf(answer), 2, `应该答本月 2 单：\n${answer}`);
+      // 单纯打招呼照旧回欢迎语；服务问题照旧走服务问答
+      const hello = await ask({ shipments: fx, message: "你好" });
+      assert.ok(!/(总单量|符合条件)：/.test(hello.answer), `单纯打招呼不该报单量：\n${hello.answer}`);
+      const svc = await ask({ shipments: fx, message: "清关要几天" });
+      assert.ok(!/(总单量|符合条件)：/.test(svc.answer), `服务问题不该报单量：\n${svc.answer}`);
+      const fee = await ask({ shipments: fx, message: "运费多少" });
+      assert.ok(!/(总单量|符合条件)：/.test(fee.answer), `「运费多少」不该报单量：\n${fee.answer}`);
+    });
+
   if (failures.length > 0) {
     throw new Error(`${failures.length}/${totalChecks} 项不通过（TZ=${TZ_LABEL}）：${failures.join("；")}`);
   }

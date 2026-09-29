@@ -9,7 +9,7 @@
  * 金额是老板 2026-09-23 定的：钱线下走，但这个手填的数客户能看到（只在这一页，
  * 普通运单那边照旧不显示）。
  */
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { amount2 } from "../../../modules/shared/money-format";
 import {
   fetchMyFclContainers,
@@ -52,12 +52,20 @@ export default function ClientFclContainersPage() {
 
   useEffect(() => { void load(); }, [load]);
 
+  /* 认主人（2026-09-29 Codex 全系统检查）：点开 A、没等回来就返回再点 B，
+     B 先回来、A 后回来 —— 原来 A 会把 B 盖掉，客户选的是 B 看到的是 A 的货和金额。
+     每次点开领一个号，回来时号不是最新的就整个丢掉（报错也不提示、不清掉新的选择）。 */
+  const detailSeqRef = useRef(0);
   const openDetail = async (containerId: string) => {
+    const seq = ++detailSeqRef.current;
     setSelectedId(containerId);
     setDetail(null);
     try {
-      setDetail(await fetchMyFclContainerDetail(containerId));
+      const d = await fetchMyFclContainerDetail(containerId);
+      if (seq !== detailSeqRef.current) return;
+      setDetail(d);
     } catch (e) {
+      if (seq !== detailSeqRef.current) return;
       setToast(`加载失败：${e instanceof Error ? e.message : "请稍后重试"}`);
       setSelectedId(null);
     }
@@ -66,7 +74,7 @@ export default function ClientFclContainersPage() {
   if (selectedId) {
     return (
       <div style={{ maxWidth: "100%", padding: "20px 24px" }}>
-        <button type="button" className="workbench-button" onClick={() => { setSelectedId(null); setDetail(null); }} style={{ marginBottom: 12 }}>← 返回</button>
+        <button type="button" className="workbench-button" onClick={() => { detailSeqRef.current += 1; setSelectedId(null); setDetail(null); }} style={{ marginBottom: 12 }}>← 返回</button>
         {!detail ? <EmptyStateCard title="正在加载" description="正在读这个整柜的货物清单和轨迹。" /> : (
           <>
             <div style={card}>

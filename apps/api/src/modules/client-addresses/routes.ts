@@ -1,5 +1,6 @@
 // B-4c: 已从 node:sqlite 迁移到 Prisma + PostgreSQL（2026-05-20）
 import { prisma } from "../../db/prisma";
+import { BusinessError } from "../core/business-error";
 import type { MinimalHttpApp } from "../../server";
 import { fail, ok, requireRole } from "../core/http-utils";
 
@@ -89,6 +90,10 @@ export function registerClientAddressRoutes(app: MinimalHttpApp): void {
 
     // 事务：若设为默认地址，先把同一客户的所有地址 isDefault 置 0，再插入新地址
     const created = await prisma.$transaction(async (tx) => {
+      /* 先锁这个客户（用户那一行），同一个客户改默认地址的请求排队（2026-09-29 Codex 全系统检查）：
+         原来一个地址都没有时，两个「新增并设为默认」同时进来，各自「把别的清成非默认」都清了个空，
+         然后各插一条默认 —— 地址簿里两个「默认」。 */
+      await tx.$queryRaw`SELECT id FROM users WHERE id = ${auth.userId} AND company_id = ${auth.companyId} FOR UPDATE`;
       if (isDefault === 1) {
         await tx.clientAddress.updateMany({
           where: { companyId: auth.companyId, clientId: auth.userId },
@@ -132,16 +137,20 @@ export function registerClientAddressRoutes(app: MinimalHttpApp): void {
       return;
     }
     const updatedAt = new Date();
-    await prisma.$transaction([
-      prisma.clientAddress.updateMany({
+    await prisma.$transaction(async (tx) => {
+      // 跟新增地址那条同一把锁（先锁这个客户），两边排队（2026-09-29）
+      await tx.$queryRaw`SELECT id FROM users WHERE id = ${auth.userId} AND company_id = ${auth.companyId} FOR UPDATE`;
+      await tx.clientAddress.updateMany({
         where: { companyId: auth.companyId, clientId: auth.userId },
         data: { isDefault: 0 },
-      }),
-      prisma.clientAddress.update({
-        where: { id },
+      });
+      const set = await tx.clientAddress.updateMany({
+        where: { id, companyId: auth.companyId, clientId: auth.userId },
         data: { isDefault: 1, updatedAt },
-      }),
-    ]);
+      });
+      // 这条地址刚被删了：整次回滚（别把别的地址都清成「非默认」却没有新默认）
+      if (set.count === 0) throw new BusinessError("这个地址刚刚已经被删掉了，请刷新后再看", 404, "NOT_FOUND");
+    });
     ok(res, { id, isDefault: true, updatedAt: updatedAt.toISOString() });
   });
 

@@ -220,43 +220,58 @@ export function registerShippingConfigRoutes(app: MinimalHttpApp): void {
     const clientId = body.clientId?.trim();
     if (!clientId) { fail(res, 400, "BAD_REQUEST", "clientId required"); return; }
 
-    // 删除该客户现有所有配置
-    await prisma.pricingRule.deleteMany({
-      where: { companyId: auth.companyId, customerId: clientId },
-    });
-
-    // 保存新价格
+    /* 2026-09-29 Codex 全系统检查：原来是「先删光、再一条条写」，不在一个事务里 ——
+       写到一半出错（比如某个价格太大存不下），旧价格已经没了、新价格只写了一半；
+       两个人同时保存（或连点两下），同一种价格会存成两条。
+       现在：① 碰数据库之前先把每个价格都校验完；② 删和写放进同一个事务、先锁这个客户，两次保存排队。 */
     const prices = body.prices ?? {};
-    const entries = Object.entries(prices).filter(([, v]) => typeof v === "number" && v > 0);
-    for (const [key, price] of entries) {
+    const entries: Array<{ transportMode: string; cargoType: string; price: number }> = [];
+    for (const [key, price] of Object.entries(prices)) {
+      if (!(typeof price === "number" && price > 0)) continue; // 0 / 空 = 这一项不设专属价（原来的口径）
       const [transportMode, cargoType] = key.split("|");
       if (!transportMode || !cargoType) continue;
-      await prisma.pricingRule.create({
-        data: {
-          companyId: auth.companyId,
-          transportMode,
-          cargoType,
-          customerId: clientId,
-          unitPriceCny: price,
-          disableMinVolume: body.disableMinVolume ?? false,
-          effectiveFrom: new Date(),
-        },
-      });
+      const issue = requireDecimal(price, "专属单价", { precision: 10, scale: 2 });
+      if (issue) { fail(res, 400, "VALIDATION_ERROR", issue); return; }
+      entries.push({ transportMode, cargoType, price });
     }
-    // 仅设置低消 flag 但没有价格时：创建占位记录
-    if (body.disableMinVolume && entries.length === 0) {
-      await prisma.pricingRule.create({
-        data: {
-          companyId: auth.companyId,
-          transportMode: "sea",
-          cargoType: "normal",
-          customerId: clientId,
-          unitPriceCny: 0,
-          disableMinVolume: true,
-          effectiveFrom: new Date(),
-        },
+    const client = await prisma.user.findFirst({ where: { id: clientId, companyId: auth.companyId }, select: { id: true } });
+    if (!client) { fail(res, 404, "NOT_FOUND", "客户不存在"); return; }
+
+    await prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM users WHERE id = ${clientId} AND company_id = ${auth.companyId} FOR UPDATE`;
+      // 删除该客户现有所有配置
+      await tx.pricingRule.deleteMany({
+        where: { companyId: auth.companyId, customerId: clientId },
       });
-    }
+      // 保存新价格
+      for (const e of entries) {
+        await tx.pricingRule.create({
+          data: {
+            companyId: auth.companyId,
+            transportMode: e.transportMode,
+            cargoType: e.cargoType,
+            customerId: clientId,
+            unitPriceCny: e.price,
+            disableMinVolume: body.disableMinVolume ?? false,
+            effectiveFrom: new Date(),
+          },
+        });
+      }
+      // 仅设置低消 flag 但没有价格时：创建占位记录
+      if (body.disableMinVolume && entries.length === 0) {
+        await tx.pricingRule.create({
+          data: {
+            companyId: auth.companyId,
+            transportMode: "sea",
+            cargoType: "normal",
+            customerId: clientId,
+            unitPriceCny: 0,
+            disableMinVolume: true,
+            effectiveFrom: new Date(),
+          },
+        });
+      }
+    });
 
     ok(res, { saved: true });
   });

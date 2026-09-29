@@ -76,9 +76,11 @@ check("V1 拆过柜的单（父单剩 30 / 30 kg / 0.3 方，整票 100 / 100 kg
 });
 
 check("V2 客户批量导入：运输方式 海运 / 海 / sea / 陆运 / 陆 / land 认得；没填、「空运」「海陆」认不出 → null（标红、不许提交）", () => {
-  const rel = "apps/web/src/app/client/imports/page.tsx";
+  // 2026-09-29：读表格那段挪到了 modules/client-import/import-rows.ts；提交按钮和预览还在页面里
+  const rel = "apps/web/src/modules/client-import/import-rows.ts";
+  const page = "apps/web/src/app/client/imports/page.tsx";
   const cargo = loadModule("packages/shared-types/cargo-type.ts");
-  const code = topLevelText(rel, ["WAREHOUSE_ZH", "WAREHOUSE_BY_NAME", "normalizeRows"]);
+  const code = topLevelText(rel, ["WAREHOUSE_ZH", "WAREHOUSE_BY_NAME", "readStrictNumber", "isBlankRow", "normalizeRows"]).replace(/^export /gm, "");
   const js = ts.transpileModule(code + "\nmodule.exports = normalizeRows;", { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
   const sandbox: any = { module: { exports: {} }, parseCargoType: cargo.parseCargoType };
   vm.runInNewContext(js, sandbox);
@@ -93,8 +95,9 @@ check("V2 客户批量导入：运输方式 海运 / 海 / sea / 陆运 / 陆 / 
     assert.ok(r, `运输方式「${raw}」这一行被悄悄丢掉了（应留在预览里标红）`);
     assert.equal(r.transportMode, want, `运输方式「${raw}」认成了 ${r.transportMode}`);
   }
-  const src = read(rel);
-  assert.match(src, /entry\.row\.transportMode === null/, "提交按钮没拦认不出来的运输方式");
+  const src = read(page);
+  assert.match(read(rel), /r\.transportMode === null/, "提交按钮没拦认不出来的运输方式");
+  assert.match(src, /\.filter\(\(entry\) => isRowBad\(entry\.row\)\)/, "提交按钮那里没用 isRowBad");
   assert.match(src, /row\.transportMode === null\s*\? \(row\.transportModeRaw \? `「\$\{row\.transportModeRaw\}」认不出来` : "没填"\)/, "预览里没把认不出来的运输方式标出来");
 });
 

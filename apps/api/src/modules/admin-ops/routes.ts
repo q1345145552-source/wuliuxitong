@@ -1072,6 +1072,19 @@ export function registerAdminOpsRoutes(app: MinimalHttpApp): void {
             "请先处理那一张。",
           );
         }
+        /* 第四道闸（2026-09-29 Codex 全系统检查）：同一票货派了两趟、两张都签收了（线上真有「派送两趟」），
+           撤其中一张会把运单改回「派送中」—— 可另一张还写着已签收，两边对不上。
+           这种没法靠撤一张理顺（真签收的那趟货确实交出去了），挡住让人找技术处理。 */
+        const otherSigned = await tx.adminLastmileOrder.findFirst({
+          where: { shipmentId: shipment.id, companyId: auth.companyId, status: "SIGNED", id: { not: own.id } },
+          select: { deliveryNo: true },
+        });
+        if (otherSigned) {
+          throw new LastmileConflictError(
+            `这票货在派送单 ${otherSigned.deliveryNo} 上也签收过（派了两趟），撤销这一张会把运单改回「派送中」，` +
+            "跟那张已签收的对不上，所以撤不了。确实签错了请联系技术处理。",
+          );
+        }
 
         // 派送单退回派送中；签收图**保留**，真签收时会被覆盖
         await tx.adminLastmileOrder.update({ where: { id: own.id }, data: { status: "DELIVERING" } });

@@ -58,11 +58,12 @@ check("E 整柜三页的顶上标题登记了中文", () => {
 });
 
 check("L 客户批量导入认仓库：义乌 / 义乌仓 / wh_yiwu_01 都认成 wh_yiwu_01；乱写的认不出", () => {
-  const src = read("apps/web/src/app/client/imports/page.tsx");
-  const start = src.indexOf("const WAREHOUSE_ZH");
-  const end = src.indexOf("function downloadTemplate");
+  // 2026-09-29：读表格那段挪到了 modules/client-import/import-rows.ts（页面文件不许导出别的函数）
+  const src = read("apps/web/src/modules/client-import/import-rows.ts");
+  const start = src.indexOf("export const WAREHOUSE_ZH");
+  const end = src.indexOf("export function readStrictNumber");
   assert.ok(start > 0 && end > start, "没找到仓库对照表");
-  const js = ts.transpileModule(src.slice(start, end) + "\nmodule.exports = { WAREHOUSE_BY_NAME, WAREHOUSE_ZH };", { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText;
+  const js = ts.transpileModule(src.slice(start, end).replace(/^export /gm, "") + "\nmodule.exports = { WAREHOUSE_BY_NAME, WAREHOUSE_ZH };", { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText;
   const sandbox: any = { module: { exports: {} } };
   vm.runInNewContext(js, sandbox);
   const { WAREHOUSE_BY_NAME } = sandbox.module.exports;
@@ -79,16 +80,18 @@ check("L 客户批量导入认仓库：义乌 / 义乌仓 / wh_yiwu_01 都认成
 
 check("L 客户批量导入：仓库没填 / 认不出来的行不丢，标红，提交按钮拦住", () => {
   const src = read("apps/web/src/app/client/imports/page.tsx");
-  const at = src.indexOf("function normalizeRows(");
+  const mod = read("apps/web/src/modules/client-import/import-rows.ts");
+  const at = mod.indexOf("export function normalizeRows(");
   assert.ok(at > 0, "没找到解析函数 normalizeRows");
-  const filter = /\.filter\(\(item\) => ([^;]+)\);/.exec(src.slice(at));
-  assert.ok(filter, "没找到解析后的过滤");
-  assert.ok(!/warehouseId/.test(filter![1]), `过滤条件还在按仓库丢行：${filter![1]}`);
-  assert.match(src, /entry\.row\.cargoType === null \|\| entry\.row\.warehouseId === null/, "提交前没拦仓库认不出来的行");
+  // 2026-09-29 起只跳过整行空白的，别的问题行一律留下标红（原来还按品名 / 箱数悄悄丢行）
+  assert.match(mod.slice(at), /\.filter\(\(\{ row \}\) => !isBlankRow\(row\)\)/, "没找到「只跳过空白行」");
+  assert.doesNotMatch(mod.slice(at), /\.filter\(\(item\) =>/, "又在解析后按条件丢行");
+  assert.match(mod, /return r\.cargoType === null \|\| r\.warehouseId === null \|\| r\.transportMode === null \|\| r\.issues\.length > 0;/, "提交前没拦仓库认不出来的行");
+  assert.match(src, /\.filter\(\(entry\) => isRowBad\(entry\.row\)\)/, "提交按钮那里没用同一个 isRowBad");
   assert.match(src, /disabled=\{loading \|\| parsing \|\| rows\.length === 0 \|\| badCargoRows\.length > 0\}/);
   assert.match(src, /row\.warehouseId === null\s*\? \(row\.warehouseRaw \? `「\$\{row\.warehouseRaw\}」认不出来` : "没填"\)/, "预览里没把认不出来的仓库标出来");
   // 标红的行不能再算成「有效」（原来的提示「已读取 3 条有效数据」+ 提交按钮却是灰的，客户看不懂）
-  assert.match(src, /const validCount = useMemo\(\(\) => rows\.filter\(\(r\) => r\.cargoType !== null && r\.warehouseId !== null && r\.transportMode !== null\)\.length/, "「当前有效行」把标红的也算进去了");
+  assert.match(src, /const validCount = useMemo\(\(\) => rows\.filter\(\(r\) => !isRowBad\(r\)\)\.length/, "「当前有效行」把标红的也算进去了");
   assert.match(src, /其中 \$\{badCount\} 条标红的要改/, "读完文件的提示没说有几条要改");
 });
 
