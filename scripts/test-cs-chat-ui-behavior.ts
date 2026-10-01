@@ -20,6 +20,11 @@
  *   U9 报价晚回来：刷新的是「现在这一页」列表，不会把员工翻到的第 2 页拽回第 1 页；详情关了也照样提示成败
  *   U10 询价记录要手点「加载记录」才出来（2026-09-29 老板报「每次都要点加载才能出来」）：切到这一栏就自己拉、
  *       切回来重拉、藏着时不发请求；加载失败点一下「重试」就真去拉（原来要点两次）
+ *   —— 2026-10-02 老板：「直接显示已读，每条信息都显示，类似 LINE 那种。然后每个信息都单独显示时间」「还要有消息提示音」——
+ *   U11 我方发的、对方看过的写「已读」（客户那头 / 客服那头，别的员工发的也算我方）；对方的从来不写；对方一看，下一轮就变
+ *   U12 每条都有时间（北京时间）；跨天插一行日期（UTC 16:30 = 北京第二天 00:30，要归到第二天）
+ *   U13 提示音：打开对话时的旧消息不响；轮询来了对方新消息响一次；同一条再带回来不响；我方自己发的、别的员工发的不响
+ *   U14 菜单未读：第一次取回来不响（打开网页前就有的）；有更新的才响；聊天窗口已经为这条响过就不再响；网页切到后台也照样问
  */
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -477,6 +482,155 @@ async function main(): Promise<void> {
     assert.ok(listCalls().pop()!.url.includes("page=1"));
   });
 
+  // ---------- 已读、时间、提示音（2026-10-02） ----------
+  const sound = loadModule(path.join(SRC, "modules/cs-chat/chat-sound.ts"), OVERRIDES);
+  const { useChatUnread } = loadModule(path.join(SRC, "modules/cs-chat/useChatUnread.ts"), OVERRIDES);
+  let dings = 0;
+  class FakeAudioContext {
+    state = "running"; currentTime = 0; destination = {};
+    createOscillator() { return { type: "", frequency: { setValueAtTime() {} }, connect() {}, start() { dings += 0.5; }, stop() {} }; }
+    createGain() { return { gain: { setValueAtTime() {}, exponentialRampToValueAtTime() {} }, connect() {} }; }
+    resume() { return Promise.resolve(); }
+  }
+  fakeWindow.AudioContext = FakeAudioContext;
+  const realNow = Date.now;
+  let clock = 1_000_000;
+  /** 每次响完往后拨 2 秒（提示音 1 秒内只响一次，不拨的话第二声会被当成同一批吞掉） */
+  const passTime = () => { clock += 2000; };
+  Date.now = () => clock;
+  const resetSound = () => { sound.resetChatSoundForTest(); dings = 0; passTime(); };
+  const metas = () => findAll((n) => n.props?.className === "cs-msg-meta").map((n) => textOf(n));
+  const dayRows = () => findAll((n) => n.type === "span" && /^(今天|昨天|\d+年?\d*月?\d+月\d+日 周.|\d+月\d+日 周.)$/.test(textOf(n))).map((n) => textOf(n));
+  const pollCalls = () => calls.filter((c) => c.url.includes("/chat/messages") && c.url.includes("since=") && !c.done);
+  async function answerPoll(body: any) {
+    const c = pollCalls().pop();
+    assert.ok(c, "没发轮询请求");
+    c!.done = true;
+    c!.resolve(body);
+    await settle();
+  }
+  const cs = (id: string, t: string, mine = false) => ({ id, side: "cs", mine, senderLabel: mine ? "我" : "客服", content: id, imageUrl: null, createdAt: t });
+  const cl = (id: string, t: string, mine = false) => ({ id, side: "client", mine, senderLabel: mine ? "我" : "ZZC1", content: id, imageUrl: null, createdAt: t });
+
+  await check("U11 已读：我方发的、对方看过的写「已读」，对方的不写；对方一看，下一轮轮询就变；不会往回退", async () => {
+    resetSound();
+    // 客户那头：自己发的两条，客服看到了第一条那一刻
+    mount(ChatThread, { scope: { kind: "client" }, title: "客服" });
+    lastCall().resolve({
+      messages: [cs("k1", "2026-09-28T00:59:00.000Z"), cl("m1", "2026-09-28T01:00:00.000Z", true), cl("m2", "2026-09-28T01:00:10.000Z", true)],
+      hasMore: false, serverTime: "2026-09-28T01:00:20.000Z", peerReadAt: "2026-09-28T01:00:05.000Z",
+    });
+    await settle();
+    assert.deepEqual(metas(), ["08:59", "已读09:00", "09:00"], `客服的不写、客服看过的写已读、没看的不写：${JSON.stringify(metas())}`);
+    await tickTimers((t) => !t.once && t.ms === 3000);
+    await answerPoll({ messages: [], hasMore: false, serverTime: "2026-09-28T01:00:23.000Z", peerReadAt: "2026-09-28T01:00:10.000Z" });
+    assert.deepEqual(metas(), ["08:59", "已读09:00", "已读09:00"], "客服看过第二条了，下一轮没变已读");
+    await tickTimers((t) => !t.once && t.ms === 3000);
+    await answerPoll({ messages: [], hasMore: false, serverTime: "2026-09-28T01:00:26.000Z", peerReadAt: "2026-09-28T01:00:01.000Z" });
+    assert.deepEqual(metas(), ["08:59", "已读09:00", "已读09:00"], "拿到一个更早的「看到哪」，已读被退回去了");
+    unmount(); calls.length = 0; timers.length = 0;
+    // 客服那头：别的员工发的（左边、不是我）也算我方；客户发的从来不写已读
+    mount(ChatThread, { scope: { kind: "staff", clientId: "ZZC1" }, title: "ZZC1" });
+    lastCall().resolve({
+      messages: [cl("c1", "2026-09-28T01:00:00.000Z"), cs("s1", "2026-09-28T01:01:00.000Z", false), cs("s2", "2026-09-28T01:02:00.000Z", true)],
+      hasMore: false, serverTime: "2026-09-28T01:02:05.000Z", peerReadAt: "2026-09-28T01:01:30.000Z",
+    });
+    await settle();
+    assert.deepEqual(metas(), ["09:00", "已读09:01", "09:02"], `员工那头：${JSON.stringify(metas())}`);
+  });
+
+  await check("U12 每条都带时间（北京时间）；跨天插一行日期，UTC 16:30 算北京第二天 00:30", async () => {
+    resetSound();
+    mount(ChatThread, { scope: { kind: "client" }, title: "客服" });
+    lastCall().resolve({
+      messages: [cs("d1", "2026-09-27T03:00:00.000Z"), cl("d2", "2026-09-27T15:59:00.000Z", true), cs("d3", "2026-09-27T16:30:00.000Z")],
+      hasMore: false, serverTime: "2026-09-27T16:31:00.000Z", peerReadAt: null,
+    });
+    await settle();
+    assert.deepEqual(metas(), ["11:00", "23:59", "00:30"], `每条的时间不对：${JSON.stringify(metas())}`);
+    const days = dayRows();
+    assert.equal(days.length, 2, `应该两行日期（27 号、28 号），实际：${JSON.stringify(days)}`);
+    assert.match(days[0], /9月27日 周日$/);
+    assert.match(days[1], /9月28日 周一$/, "UTC 16:30 是北京第二天，日期行没跟着换");
+  });
+
+  await check("U13 提示音：打开时的旧消息不响；来了对方新消息响一次；同一条再带回来不响；自己发的、别的员工发的不响", async () => {
+    resetSound();
+    mount(ChatThread, { scope: { kind: "client" }, title: "客服" });
+    lastCall().resolve({ messages: [cs("o1", "2026-09-28T01:00:00.000Z")], hasMore: false, serverTime: "2026-09-28T01:00:05.000Z", peerReadAt: null });
+    await settle();
+    assert.equal(dings, 0, "打开对话就响了（那是旧消息）");
+    await tickTimers((t) => !t.once && t.ms === 3000);
+    await answerPoll({ messages: [cs("o1", "2026-09-28T01:00:00.000Z"), cs("n1", "2026-09-28T01:00:07.000Z")], hasMore: false, serverTime: "2026-09-28T01:00:08.000Z", peerReadAt: null });
+    assert.equal(dings, 1, `客服新发来一条，应该响一声，实际 ${dings}`);
+    passTime();
+    await tickTimers((t) => !t.once && t.ms === 3000);
+    await answerPoll({ messages: [cs("n1", "2026-09-28T01:00:07.000Z"), cl("me1", "2026-09-28T01:00:09.000Z", true)], hasMore: false, serverTime: "2026-09-28T01:00:10.000Z", peerReadAt: null });
+    assert.equal(dings, 1, "同一条又带回来、或者自己发的，又响了");
+    unmount(); calls.length = 0; timers.length = 0;
+    // 员工那头：别的员工回的（cs）不响，客户发的响
+    resetSound();
+    mount(ChatThread, { scope: { kind: "staff", clientId: "ZZC1" }, title: "ZZC1" });
+    lastCall().resolve({ messages: [cl("c1", "2026-09-28T01:00:00.000Z")], hasMore: false, serverTime: "2026-09-28T01:00:05.000Z", peerReadAt: null });
+    await settle();
+    await tickTimers((t) => !t.once && t.ms === 3000);
+    await answerPoll({ messages: [cs("other", "2026-09-28T01:00:06.000Z", false)], hasMore: false, serverTime: "2026-09-28T01:00:07.000Z", peerReadAt: null });
+    assert.equal(dings, 0, "别的员工回了一句，员工这边也响了（只有客户发的才该响）");
+    await tickTimers((t) => !t.once && t.ms === 3000);
+    await answerPoll({ messages: [cl("c2", "2026-09-28T01:00:08.000Z")], hasMore: false, serverTime: "2026-09-28T01:00:09.000Z", peerReadAt: null });
+    assert.equal(dings, 1, "客户发来新消息，员工这边没响");
+  });
+
+  await check("U14 菜单未读：第一次取回来不响；有更新的才响；聊天窗口为这条响过就不再响；网页切到后台也照样问", async () => {
+    resetSound();
+    function Probe(p: any) { const n = useChatUnread(p.session, false, p.path); return { type: "i", props: { children: String(n) } }; }
+    const session = { userId: "zz_s1", companyId: "c_001", role: "staff", token: "x" };
+    const unreadCalls = () => calls.filter((c) => c.url.includes("/chat/unread") && !c.done);
+    async function answerUnread(body: any) {
+      const c = unreadCalls().pop();
+      assert.ok(c, "没去问未读");
+      c!.done = true; c!.resolve(body); await settle();
+    }
+    mount(Probe, { session, path: "/staff" });
+    await answerUnread({ count: 3, latestAt: "2026-09-28T01:00:00.000Z" });
+    assert.equal(dings, 0, "一打开网页就响了（那几条是打开前就有的）");
+    await tickTimers((t) => !t.once && t.ms === 30_000);
+    await answerUnread({ count: 3, latestAt: "2026-09-28T01:00:00.000Z" });
+    assert.equal(dings, 0, "没有新消息也响了");
+    // 网页切到后台：照样问；来了新的照样响
+    fakeDocument.visibilityState = "hidden";
+    await tickTimers((t) => !t.once && t.ms === 30_000);
+    assert.equal(unreadCalls().length, 1, "网页切到后台就不问了（后台听不到提示音）");
+    await answerUnread({ count: 4, latestAt: "2026-09-28T01:00:30.000Z" });
+    assert.equal(dings, 1, "后台来了新消息没响");
+    fakeDocument.visibilityState = "visible";
+    passTime();
+    unmount(); calls.length = 0; timers.length = 0;
+    // 聊天窗口先为一条新消息响过，菜单随后取到同一条：不再响
+    mount(ChatThread, { scope: { kind: "staff", clientId: "ZZC1" }, title: "ZZC1" });
+    lastCall().resolve({ messages: [cl("c1", "2026-09-28T01:00:30.000Z")], hasMore: false, serverTime: "2026-09-28T01:00:35.000Z", peerReadAt: null });
+    await settle();
+    await tickTimers((t) => !t.once && t.ms === 3000);
+    await answerPoll({ messages: [cl("c2", "2026-09-28T01:00:40.000Z")], hasMore: false, serverTime: "2026-09-28T01:00:41.000Z", peerReadAt: null });
+    assert.equal(dings, 2, "聊天窗口没为新消息响");
+    passTime();
+    unmount(); calls.length = 0; timers.length = 0;
+    mount(Probe, { session, path: "/staff/chat" });
+    await answerUnread({ count: 1, latestAt: "2026-09-28T01:00:40.000Z" });
+    assert.equal(dings, 2, "聊天窗口已经为这条响过，菜单又响了一次");
+    passTime();
+    unmount(); calls.length = 0; timers.length = 0;
+    // 打开对话时已经看到的那条（菜单还没来得及问到）：菜单随后取到它也不响 —— 人已经在看了
+    mount(ChatThread, { scope: { kind: "staff", clientId: "ZZC2" }, title: "ZZC2" });
+    lastCall().resolve({ messages: [cl("x1", "2026-09-28T01:01:00.000Z")], hasMore: false, serverTime: "2026-09-28T01:01:05.000Z", peerReadAt: null });
+    await settle();
+    unmount(); calls.length = 0; timers.length = 0;
+    mount(Probe, { session, path: "/staff/chat" });
+    await answerUnread({ count: 1, latestAt: "2026-09-28T01:01:00.000Z" });
+    assert.equal(dings, 2, "打开对话时已经看到的消息，菜单取到后又响了");
+  });
+
+  Date.now = realNow;
   console.log(`\n通过 ${passed} / 失败 ${failed}`);
   if (failed > 0) process.exit(1);
 }

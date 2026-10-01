@@ -21,7 +21,16 @@ export type ChatMessage = {
   createdAt: string;
 };
 
-export type ChatPage = { messages: ChatMessage[]; hasMore: boolean; serverTime: string };
+export type ChatPage = {
+  messages: ChatMessage[];
+  hasMore: boolean;
+  serverTime: string;
+  /**
+   * 对方看到了哪一刻（客户看 = 客服这边任何人看过；员工看 = 客户看过）：我方发的、不晚于它的显示「已读」。
+   * 没看过是 null（2026-10-02 老板：「直接显示已读，每条信息都显示，类似 LINE 那种」）
+   */
+  peerReadAt: string | null;
+};
 
 export type ChatConversation = {
   clientId: string;
@@ -71,8 +80,11 @@ export function fetchChatConversations(q?: string): Promise<{ items: ChatConvers
   return apiRequest(`${apiBaseUrl()}/staff/chat/conversations${query({ q: q?.trim() || undefined })}`);
 }
 
-/** 菜单红点用：客户 = 客服发来的未读条数；员工 / 超管 = 所有客户发来的未读条数 */
-export function fetchChatUnread(role: "client" | "staff" | "admin"): Promise<{ count: number }> {
+/**
+ * 菜单红点用：客户 = 客服发来的未读条数；员工 / 超管 = 所有客户发来的未读条数。
+ * latestAt = 最新一条没看的是什么时候发的（没有是 null）：比上次的新就响提示音（2026-10-02）
+ */
+export function fetchChatUnread(role: "client" | "staff" | "admin"): Promise<{ count: number; latestAt: string | null }> {
   const url = role === "client" ? "/client/chat/unread" : "/staff/chat/unread";
   return apiRequest(`${apiBaseUrl()}${url}`);
 }

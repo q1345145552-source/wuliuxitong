@@ -161,6 +161,39 @@ async function main(): Promise<void> {
       assert.equal((await must("GET /client/chat/unread", CLIENT)).count, 0, "拿更早的时间标已读，把已读退回去了");
     });
 
+    await check("C4b 已读（2026-10-02 老板要 LINE 那样）：取消息带回「对方看到哪」，对方一看就变；菜单未读带回最新一条没看的时间", async () => {
+      // C2 员工标过已读到客户第一条：客户取消息时拿到的「客服看到哪」就是那一刻
+      const c = await must("GET /client/chat/messages", CLIENT);
+      assert.equal(c.peerReadAt, firstClientMsgAt, `客户那边拿不到「客服看到哪」：${c.peerReadAt}`);
+      // C4 客户标过已读（读到现在）：员工那条回复对客户来说是已读
+      const s = await must("GET /staff/chat/messages", STAFF2, {}, { clientId: CLIENT.userId });
+      const reply = s.messages.find((x: Row) => x.id === staffMsgId);
+      assert.ok(s.peerReadAt && s.peerReadAt >= reply.createdAt, `员工那边看不到客户已读：peerReadAt=${s.peerReadAt}，回复=${reply.createdAt}`);
+      // 客户再发两句：员工还没看 → 客户这边不能显示已读；员工菜单的「最新未读」= 最后那句
+      await must("POST /client/chat/send", CLIENT, { content: "第二句" });
+      const last = (await must("POST /client/chat/send", CLIENT, { content: "第三句" })).message;
+      const u = await must("GET /staff/chat/unread", STAFF);
+      assert.equal(u.count, 2);
+      assert.equal(u.latestAt, last.createdAt, `员工菜单拿到的「最新未读」不是最后那句：${u.latestAt}`);
+      const c2 = await must("GET /client/chat/messages", CLIENT);
+      assert.ok(c2.peerReadAt < last.createdAt, "员工还没看，客户那边已经算已读了");
+      // 员工看了（共用收件箱，哪个员工看都算）：客户那边变已读，员工菜单没有未读了
+      await must("POST /staff/chat/read", STAFF2, { clientId: CLIENT.userId, upTo: last.createdAt });
+      assert.equal((await must("GET /client/chat/messages", CLIENT)).peerReadAt, last.createdAt, "员工看过了，客户那边没变已读");
+      assert.equal((await must("GET /staff/chat/unread", STAFF)).latestAt, null);
+      // 客服回一句：客户菜单的「最新未读」= 这句；客户看了就没了
+      const r2 = (await must("POST /staff/chat/send", STAFF2, { clientId: CLIENT.userId, content: "收到" })).message;
+      const cu = await must("GET /client/chat/unread", CLIENT);
+      assert.equal(cu.count, 1);
+      assert.equal(cu.latestAt, r2.createdAt);
+      await must("POST /client/chat/read", CLIENT, {});
+      assert.equal((await must("GET /client/chat/unread", CLIENT)).latestAt, null);
+      // 还没聊过的客户：两边都是 null（不是缺字段）
+      const fresh = await must("GET /staff/chat/messages", STAFF, {}, { clientId: CLIENT_B.userId });
+      assert.equal(fresh.peerReadAt, null);
+      assert.equal((await must("GET /client/chat/messages", CLIENT_B)).peerReadAt, null);
+    });
+
     await check("C5 发图片：存成 /images/ 下的文件；只收 jpg/png/gif/webp；空消息、超长文字都拒绝", async () => {
       const r = await must("POST /client/chat/send", CLIENT, { image: { fileName: "a.png", mime: "image/png", base64: PNG_1x1 } });
       assert.match(r.message.imageUrl, /^\/images\/cs_ZZCSA01_[0-9a-f]+\.png$/);
@@ -232,6 +265,8 @@ async function main(): Promise<void> {
       assert.ok(ours.count > 0, "前提不成立：我们公司这时应该有未读（客户乙那 55 条）");
       const theirs = await must("GET /staff/chat/unread", OTHER_STAFF);
       assert.equal(theirs.count, 0, `别家公司员工的红点算进了我们客户的未读：${theirs.count}`);
+      assert.equal(theirs.latestAt, null, "别家公司员工拿到了我们客户最新未读的时间");
+      assert.ok(ours.latestAt, "我们公司有未读，「最新未读」却是空的");
     });
 
     await check("C8b 表情正好落在第 60 个字（列表摘要截断的位置）：照样发得出去、摘要不劈半个表情（原来整条 500）", async () => {

@@ -276,17 +276,20 @@ async function markRead(conversationId: string, side: "client" | "staff", upToRa
   return null;
 }
 
-/** 客服这一侧每条对话的未读数（客户发的、晚于 staff_read_at 的条数）。列名是本次迁移自己建的，已核 */
-async function staffUnreadByConversation(companyId: string): Promise<Map<string, number>> {
-  const rows = await prisma.$queryRaw<Array<{ id: string; unread: number }>>`
-    SELECT c.id, COUNT(m.id)::int AS unread
+/**
+ * 客服这一侧每条对话的未读数（客户发的、晚于 staff_read_at 的条数）。列名是本次迁移自己建的，已核。
+ * latest = 这条对话里最新一条未读的时间：菜单那边拿它判断「有没有新来的」，来了就响提示音（2026-10-02）
+ */
+async function staffUnreadByConversation(companyId: string): Promise<Map<string, { count: number; latest: Date | null }>> {
+  const rows = await prisma.$queryRaw<Array<{ id: string; unread: number; latest: Date | null }>>`
+    SELECT c.id, COUNT(m.id)::int AS unread, MAX(m.created_at) AS latest
     FROM cs_conversations c
     JOIN cs_messages m ON m.conversation_id = c.id
       AND m.sender_role = 'client'
       AND (c.staff_read_at IS NULL OR m.created_at > c.staff_read_at)
     WHERE c.company_id = ${companyId}
     GROUP BY c.id`;
-  return new Map(rows.map((r) => [r.id, Number(r.unread)]));
+  return new Map(rows.map((r) => [r.id, { count: Number(r.unread), latest: r.latest ?? null }]));
 }
 
 /** 客户接口的门：role=client 且不是代理名下的（server.ts 那道闸之外再挡一次） */
@@ -319,12 +322,14 @@ export function registerCsChatRoutes(app: MinimalHttpApp): void {
     if (!auth) return;
     const conv = await prisma.csConversation.findUnique({
       where: { companyId_clientId: { companyId: auth.companyId, clientId: auth.userId } },
-      select: { id: true },
+      select: { id: true, staffReadAt: true },
     });
-    if (!conv) { ok(res, { messages: [], hasMore: false, serverTime: new Date().toISOString() }); return; }
+    if (!conv) { ok(res, { messages: [], hasMore: false, serverTime: new Date().toISOString(), peerReadAt: null }); return; }
     const data = await loadMessages(conv.id, req.query, res, auth);
     if (!data) return;
-    ok(res, { ...data, serverTime: new Date().toISOString() });
+    /* peerReadAt = 客服这边看到了哪一刻（任何一个员工 / 超管看过就算）：客户自己发的、不晚于它的显示「已读」
+       （2026-10-02 老板：「直接显示已读，每条信息都显示，类似 LINE 那种」） */
+    ok(res, { ...data, serverTime: new Date().toISOString(), peerReadAt: conv.staffReadAt?.toISOString() ?? null });
   });
 
   app.post("/client/chat/send", async (req, res) => {
@@ -356,15 +361,18 @@ export function registerCsChatRoutes(app: MinimalHttpApp): void {
       where: { companyId_clientId: { companyId: auth.companyId, clientId: auth.userId } },
       select: { id: true, clientReadAt: true },
     });
-    if (!conv) { ok(res, { count: 0 }); return; }
-    const count = await prisma.csMessage.count({
+    if (!conv) { ok(res, { count: 0, latestAt: null }); return; }
+    const agg = await prisma.csMessage.aggregate({
       where: {
         conversationId: conv.id,
         senderRole: { not: "client" },
         ...(conv.clientReadAt ? { createdAt: { gt: conv.clientReadAt } } : {}),
       },
+      _count: { _all: true },
+      _max: { createdAt: true },
     });
-    ok(res, { count });
+    // latestAt：最新一条没看的客服消息是什么时候发的 —— 菜单拿它判断「有新来的」就响提示音（2026-10-02）
+    ok(res, { count: agg._count._all, latestAt: agg._max.createdAt?.toISOString() ?? null });
   });
 
   // ======================================================================
@@ -395,7 +403,7 @@ export function registerCsChatRoutes(app: MinimalHttpApp): void {
         lastMessageAt: c.lastMessageAt?.toISOString() ?? null,
         lastMessagePreview: c.lastMessagePreview ?? "",
         lastFromClient: c.lastSenderRole === "client",
-        unreadCount: unread.get(c.id) ?? 0,
+        unreadCount: unread.get(c.id)?.count ?? 0,
         // 后来被划到代理名下的客户：记录留着能看，但不能再发
         closed: c.client.agentId !== null,
       })),
@@ -409,18 +417,19 @@ export function registerCsChatRoutes(app: MinimalHttpApp): void {
     if (!clientId) { fail(res, 400, "BAD_REQUEST", "请选择客户唛头"); return; }
     const conv = await prisma.csConversation.findUnique({
       where: { companyId_clientId: { companyId: auth.companyId, clientId } },
-      select: { id: true },
+      select: { id: true, clientReadAt: true },
     });
     if (!conv) {
       // 还没聊过：确认唛头对不对，对就给个空窗口（员工可以先发第一条）
       const found = await findChatClient(auth.companyId, clientId);
       if ("error" in found) { fail(res, found.status, found.status === 404 ? "NOT_FOUND" : "BAD_REQUEST", found.error); return; }
-      ok(res, { messages: [], hasMore: false, serverTime: new Date().toISOString() });
+      ok(res, { messages: [], hasMore: false, serverTime: new Date().toISOString(), peerReadAt: null });
       return;
     }
     const data = await loadMessages(conv.id, req.query, res, auth);
     if (!data) return;
-    ok(res, { ...data, serverTime: new Date().toISOString() });
+    // peerReadAt = 客户看到了哪一刻：客服这边发的（不管哪个员工发的）、不晚于它的显示「已读」（2026-10-02）
+    ok(res, { ...data, serverTime: new Date().toISOString(), peerReadAt: conv.clientReadAt?.toISOString() ?? null });
   });
 
   app.post("/staff/chat/send", async (req, res) => {
@@ -456,7 +465,12 @@ export function registerCsChatRoutes(app: MinimalHttpApp): void {
     if (!auth) return;
     const unread = await staffUnreadByConversation(auth.companyId);
     let count = 0;
-    for (const n of unread.values()) count += n;
-    ok(res, { count, conversations: [...unread.values()].filter((n) => n > 0).length });
+    let latest: Date | null = null;
+    for (const u of unread.values()) {
+      count += u.count;
+      if (u.latest && (!latest || u.latest > latest)) latest = u.latest;
+    }
+    // latestAt：所有客户里最新一条没人看的消息是什么时候发的 —— 菜单拿它判断「有新来的」就响提示音（2026-10-02）
+    ok(res, { count, conversations: [...unread.values()].filter((u) => u.count > 0).length, latestAt: latest?.toISOString() ?? null });
   });
 }

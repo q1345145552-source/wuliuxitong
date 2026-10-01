@@ -4,11 +4,16 @@
  * 左边菜单「在线客服 / 客户消息」旁边的未读红点（2026-09-28）。
  * 30 秒问一次；切回这个标签页、换页、聊天窗口标了已读 / 发了消息（CHAT_UNREAD_EVENT）时马上再问一次。
  * 代理本人、代理名下的客户（菜单已按品牌藏掉）不问 —— 接口会 403，问了也白问。
+ *
+ * 提示音（2026-10-02 老板：「还要有消息提示音」）：有比上次更新的未读就「叮咚」一声（chat-sound.ts）。
+ * 所以**网页切到后台也照样问**（原来切走就不问）—— 客服把系统开在后台干别的，来消息也得听得到。
+ * 后台标签页的定时器浏览器会放慢（最慢一分钟一次），所以后台时最多晚一分钟响。
  */
 import { useEffect, useRef, useState } from "react";
 import type { AuthSession } from "../../auth/auth-session";
 import { CHAT_UNREAD_EVENT, fetchChatUnread } from "../../services/cs-chat-api";
 import { createRequestGate } from "../shared/request-gate";
+import { installChatSoundUnlock, noteUnreadLatest } from "./chat-sound";
 
 /** 菜单里这三个 id 旁边挂红点（menu-config.ts） */
 export const CHAT_MENU_IDS: readonly string[] = ["client-func-chat", "staff-func-chat", "admin-func-chat"];
@@ -25,12 +30,16 @@ export function useChatUnread(session: AuthSession | null, hiddenByBrand: boolea
     const who = role; // 进门已排除没登录和代理本人
 
     let stopped = false;
+    installChatSoundUnlock();
     const load = async () => {
-      if (document.visibilityState !== "visible") return;
+      // 不再「切到后台就不问」：后台也要能响提示音（见文件头）
       const ticket = gate.begin();
       try {
         const r = await fetchChatUnread(who);
-        if (!stopped && gate.isCurrent(ticket)) setCount(Number(r.count) || 0);
+        if (!stopped && gate.isCurrent(ticket)) {
+          setCount(Number(r.count) || 0);
+          noteUnreadLatest(r.latestAt ?? null);
+        }
       } catch {
         /* 问不到就保持原样，不打扰人 */
       }

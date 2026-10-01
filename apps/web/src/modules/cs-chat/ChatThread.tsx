@@ -4,12 +4,18 @@
  * 聊天窗口（2026-09-28，老板：「是直接类似微信的对话功能」「只要文字信息就行了，然后也可以发图片」）。
  * 客户的「在线客服」和员工 / 超管的「客户消息」共用这一个组件（CLAUDE.md 第 20 条：别两边各写一套）。
  *
- * 像微信的地方：自己的在右（绿）、对方的在左（白）；隔了 5 分钟以上中间插一行时间；
+ * 像微信的地方：自己的在右（绿）、对方的在左（白）；
  * 回车发送、Shift+回车换行；能点「图片」选图，也能直接 Ctrl+V 粘贴截图；图片点开看大图；
  * 往上翻到头点「更早的消息」；翻上去看旧消息时来了新的，底下冒一个「有新消息」不强行拉下去。
  *
  * 消息靠轮询：窗口开着、页面在前台时每 3 秒取一次比手里最新那条还新的（后端往前多给 5 秒，这里按 id 去重）。
  * 看到对方的新消息就标已读，并通知左边菜单的红点马上刷新（CHAT_UNREAD_EVENT）。
+ *
+ * 2026-10-02 老板：「直接显示已读，每条信息都显示，类似 LINE 那种。然后每个信息都单独显示时间」「还要有消息提示音」——
+ *   · 每条气泡旁边写发送时间（时:分，北京时间）；跨天的地方中间插一行「今天 / 昨天 / 9月28日 周一」；
+ *   · 我方发的（客户看 = 自己发的；客服看 = 任何一个员工 / 超管发的），对方看过了就在时间上面写「已读」，没看过什么都不写（LINE 就这样）；
+ *     「对方看到哪」用的是后端早就记着的 client_read_at / staff_read_at（随每次取消息一起回来，3 秒内跟着变）；
+ *   · 轮询拿到对方新发来的就「叮咚」一声（chat-sound.ts，跟左边菜单共用一份记录，同一条不响两次）。
  */
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ClipboardEvent, type KeyboardEvent } from "react";
 import {
@@ -23,28 +29,42 @@ import {
 } from "../../services/cs-chat-api";
 import { compressImageForUpload } from "../shared/image-compress";
 import { createRequestGate } from "../shared/request-gate";
+import { installChatSoundUnlock, noteIncomingArrived, noteIncomingShown } from "./chat-sound";
 
 export { CHAT_UNREAD_EVENT };
 /** 轮询间隔（毫秒）。老板要「像微信」，窗口开着时 3 秒一次，对方的消息 3 秒内出来 */
 export const CHAT_POLL_MS = 3000;
 /** 跟后端 CS_MAX_TEXT 一致 */
 const MAX_TEXT = 2000;
-/** 两条消息隔多久中间插一行时间（微信是 5 分钟左右） */
-const TIME_GAP_MS = 5 * 60 * 1000;
 
 function notifyUnreadChanged(): void {
   try { window.dispatchEvent(new Event(CHAT_UNREAD_EVENT)); } catch { /* 老浏览器没有 Event 构造函数就算了 */ }
 }
 
-/** 时间行：今天只写时分，今年写月-日 时分，往年带年份（都按北京时间） */
-function timeLabel(iso: string, now = new Date()): string {
+/* 时间都按北京时间（跟物流轨迹、导出文件名一个口径：泰国客户和员工看到的一样） */
+const BJ = "Asia/Shanghai";
+/** 北京时间的「2026-09-28」，拿来判断是不是同一天 */
+function bjDayKey(d: Date): string {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: BJ, year: "numeric", month: "2-digit", day: "2-digit" }).format(d);
+}
+/** 每条气泡旁边的时间：时:分（hourCycle 写死 h23：有的浏览器 hour12:false 会把零点写成 24:05） */
+function hmLabel(iso: string): string {
+  return new Intl.DateTimeFormat("zh-CN", { timeZone: BJ, hourCycle: "h23", hour: "2-digit", minute: "2-digit" }).format(new Date(iso));
+}
+/** 跨天时中间那一行：今天 / 昨天 / 9月28日 周一；不是今年的带年份 */
+function dayLabel(iso: string, now = new Date()): string {
   const d = new Date(iso);
-  const fmt = (opts: Intl.DateTimeFormatOptions) => new Intl.DateTimeFormat("zh-CN", { timeZone: "Asia/Shanghai", hour12: false, ...opts }).format(d);
-  const dayKey = (x: Date) => new Intl.DateTimeFormat("zh-CN", { timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit" }).format(x);
-  const hm = fmt({ hour: "2-digit", minute: "2-digit" });
-  if (dayKey(d) === dayKey(now)) return hm;
-  const sameYear = fmt({ year: "numeric" }) === new Intl.DateTimeFormat("zh-CN", { timeZone: "Asia/Shanghai", year: "numeric" }).format(now);
-  return sameYear ? `${fmt({ month: "2-digit", day: "2-digit" })} ${hm}` : `${fmt({ year: "numeric", month: "2-digit", day: "2-digit" })} ${hm}`;
+  const key = bjDayKey(d);
+  const today = bjDayKey(now);
+  if (key === today) return "今天";
+  if (key === bjDayKey(new Date(now.getTime() - 24 * 60 * 60 * 1000))) return "昨天";
+  const [y, m, day] = key.split("-").map(Number);
+  const week = new Intl.DateTimeFormat("zh-CN", { timeZone: BJ, weekday: "short" }).format(d);
+  return String(y) === today.slice(0, 4) ? `${m}月${day}日 ${week}` : `${y}年${m}月${day}日 ${week}`;
+}
+/** 鼠标停在气泡上看到的完整时间 */
+function fullTimeLabel(iso: string): string {
+  return `${bjDayKey(new Date(iso))} ${hmLabel(iso)}`;
 }
 
 /** 一批消息里最新那条的时间（ISO 字符串可以直接比大小）；没有比 fallback 新的就还是 fallback */
@@ -56,6 +76,17 @@ function latestCreatedAt(list: ChatMessage[], fallback: string): string {
 
 function scopeKey(scope: ChatScope): string {
   return scope.kind === "client" ? "client" : `staff:${scope.clientId}`;
+}
+
+/** 「我方」是哪一边：客户那头是 client；员工 / 超管那头是 cs（共用收件箱，别的员工发的也算我方） */
+function ourSide(scope: ChatScope): "client" | "cs" {
+  return scope.kind === "client" ? "client" : "cs";
+}
+
+/** 一批消息里对方发的最新那条的时间（没有就空串） */
+function latestIncoming(list: ChatMessage[], scope: ChatScope): string {
+  const side = ourSide(scope);
+  return latestCreatedAt(list.filter((m) => m.side !== side), "");
 }
 
 export default function ChatThread(props: {
@@ -83,6 +114,8 @@ export default function ChatThread(props: {
   const [sendError, setSendError] = useState("");
   const [preview, setPreview] = useState<string | null>(null);
   const [newBelow, setNewBelow] = useState(false);
+  /** 对方看到了哪一刻（ISO）：我方发的、不晚于它的显示「已读」；空串 = 还没看过 */
+  const [peerReadAt, setPeerReadAt] = useState("");
   /** 首次取消息失败后重取（点「重试」或 5 秒后自己再试）：原来失败一次窗口就一直是死的（2026-09-28 分支审查） */
   const [reloadTick, setReloadTick] = useState(0);
   /** 自己重试了几次：最多 3 次（唛头输错这种一直会错的，别每 5 秒闪一次「加载中」）；换对话清零 */
@@ -147,6 +180,8 @@ export default function ChatThread(props: {
   }, []);
 
   useEffect(() => { autoRetryRef.current = 0; }, [key]);
+  // 浏览器要人先点一下页面才让出声：第一次点击 / 按键时把声音通道打开
+  useEffect(() => { installChatSoundUnlock(); }, []);
 
   // 换对话：清空、重新取最近 50 条
   useEffect(() => {
@@ -158,6 +193,7 @@ export default function ChatThread(props: {
     setLoadError("");
     setSendError("");
     setNewBelow(false);
+    setPeerReadAt("");
     serverTimeRef.current = "";
     pollSinceRef.current = "";
     stickToBottomRef.current = true;
@@ -167,8 +203,11 @@ export default function ChatThread(props: {
         if (cancelled || !gate.isCurrent(ticket)) return;
         setMessages(page.messages);
         setHasMore(page.hasMore);
+        setPeerReadAt(page.peerReadAt ?? "");
         serverTimeRef.current = page.serverTime;
         pollSinceRef.current = latestCreatedAt(page.messages, "");
+        // 打开对话时就有的对方消息：只记下、不响（不是新来的）
+        noteIncomingShown(latestIncoming(page.messages, scopeRef.current));
         markSeen(page.messages);
       })
       .catch((e: unknown) => {
@@ -202,7 +241,13 @@ export default function ChatThread(props: {
         if (stopped || keyRef.current !== forKey) return;
         serverTimeRef.current = page.serverTime;
         pollSinceRef.current = latestCreatedAt(page.messages, pollSinceRef.current);
+        // 对方看到哪：只往前走（每轮都带回来，对方一看过，3 秒内这边就变「已读」）
+        const peer = page.peerReadAt;
+        if (peer) setPeerReadAt((cur) => (peer > cur ? peer : cur));
         const before = messagesRef.current;
+        // 对方新发来的（这一轮才出现的）：响一声。往前多取的那 5 秒里的旧消息、我方自己发的都不算
+        const known = new Set(before.map((m) => m.id));
+        noteIncomingArrived(latestIncoming(page.messages.filter((m) => !known.has(m.id)), scopeRef.current));
         const merged = mergeChatMessages(before, page.messages);
         if (merged !== before) {
           stickToBottomRef.current = nearBottom();
@@ -311,7 +356,8 @@ export default function ChatThread(props: {
     void send({ file });
   };
 
-  let lastShown = 0;
+  const side = ourSide(scope);
+  let lastDay = "";
   return (
     <div className="cs-chat" style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0, background: "var(--s-sunken)", borderRadius: 10, border: "1px solid var(--l-soft)", overflow: "hidden" }}>
       <div style={{ padding: "10px 16px", borderBottom: "1px solid var(--l-soft)", background: "var(--white)", fontWeight: 600, fontSize: 15, color: "var(--t-heading)", display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
@@ -362,42 +408,50 @@ export default function ChatThread(props: {
           <div style={{ textAlign: "center", color: "var(--t-faint)", fontSize: 13, padding: 24 }}>还没有消息，发一句试试</div>
         ) : null}
         {messages.map((m) => {
-          const t = new Date(m.createdAt).getTime();
-          const showTime = t - lastShown > TIME_GAP_MS;
-          if (showTime) lastShown = t;
+          const day = bjDayKey(new Date(m.createdAt));
+          const showDay = day !== lastDay;
+          lastDay = day;
+          const read = m.side === side && peerReadAt !== "" && m.createdAt <= peerReadAt;
           return (
             <div key={m.id}>
-              {showTime ? (
+              {showDay ? (
                 <div style={{ textAlign: "center", margin: "10px 0 8px" }}>
-                  <span style={{ fontSize: 11, color: "var(--t-faint)" }}>{timeLabel(m.createdAt)}</span>
+                  <span style={{ fontSize: 11, color: "var(--t-faint)" }}>{dayLabel(m.createdAt)}</span>
                 </div>
               ) : null}
               <div style={{ display: "flex", flexDirection: "column", alignItems: m.mine ? "flex-end" : "flex-start", marginBottom: 10 }}>
                 {!m.mine ? <div style={{ fontSize: 11, color: "var(--t-muted)", margin: "0 4px 3px" }}>{m.senderLabel}</div> : null}
-                <div
-                  style={{
-                    maxWidth: "min(72%, 520px)",
-                    padding: m.content ? "8px 11px" : 4,
-                    borderRadius: 8,
-                    background: m.mine ? "var(--c-green-bg)" : "var(--white)",
-                    border: `1px solid ${m.mine ? "var(--c-green-2)" : "var(--l-soft)"}`,
-                    color: "var(--t-body)",
-                    fontSize: 14,
-                    lineHeight: 1.55,
-                    whiteSpace: "pre-wrap",
-                    overflowWrap: "anywhere",
-                  }}
-                  title={timeLabel(m.createdAt)}
-                >
-                  {m.imageUrl ? (
-                    /* 220 的上限放在按钮上、图片只写 100%（2026-09-28 手机实测）：原来上限写在图片上，
-                       手机屏窄、气泡只有 200 来宽，横图照样撑到 220，伸出聊天框右边、消息区多出横向滚动条。
-                       这样写电脑上跟原来一模一样（横图 220 宽、竖图按高 220 缩），手机上跟着气泡缩。 */
-                    <button type="button" onClick={() => setPreview(m.imageUrl)} style={{ display: "block", maxWidth: 220, padding: 0, border: "none", background: "transparent", cursor: "zoom-in" }} aria-label="看大图">
-                      <img src={m.imageUrl} alt="图片" onLoad={() => { if (stickToBottomRef.current) scrollToBottom(); }} style={{ display: "block", maxWidth: "100%", maxHeight: 220, borderRadius: 6 }} />
-                    </button>
-                  ) : null}
-                  {m.content ? <div style={m.imageUrl ? { marginTop: 6, padding: "0 7px 4px" } : undefined}>{m.content}</div> : null}
+                {/* 气泡 + 旁边的「已读 / 时间」：自己的在气泡左边、对方的在气泡右边，贴着气泡底（LINE 的样子） */}
+                <div style={{ display: "flex", flexDirection: m.mine ? "row-reverse" : "row", alignItems: "flex-end", gap: 5, maxWidth: "min(84%, 600px)" }}>
+                  <div
+                    style={{
+                      minWidth: 0,
+                      padding: m.content ? "8px 11px" : 4,
+                      borderRadius: 8,
+                      background: m.mine ? "var(--c-green-bg)" : "var(--white)",
+                      border: `1px solid ${m.mine ? "var(--c-green-2)" : "var(--l-soft)"}`,
+                      color: "var(--t-body)",
+                      fontSize: 14,
+                      lineHeight: 1.55,
+                      whiteSpace: "pre-wrap",
+                      overflowWrap: "anywhere",
+                    }}
+                    title={fullTimeLabel(m.createdAt)}
+                  >
+                    {m.imageUrl ? (
+                      /* 220 的上限放在按钮上、图片只写 100%（2026-09-28 手机实测）：原来上限写在图片上，
+                         手机屏窄、气泡只有 200 来宽，横图照样撑到 220，伸出聊天框右边、消息区多出横向滚动条。
+                         这样写电脑上跟原来一模一样（横图 220 宽、竖图按高 220 缩），手机上跟着气泡缩。 */
+                      <button type="button" onClick={() => setPreview(m.imageUrl)} style={{ display: "block", maxWidth: 220, padding: 0, border: "none", background: "transparent", cursor: "zoom-in" }} aria-label="看大图">
+                        <img src={m.imageUrl} alt="图片" onLoad={() => { if (stickToBottomRef.current) scrollToBottom(); }} style={{ display: "block", maxWidth: "100%", maxHeight: 220, borderRadius: 6 }} />
+                      </button>
+                    ) : null}
+                    {m.content ? <div style={m.imageUrl ? { marginTop: 6, padding: "0 7px 4px" } : undefined}>{m.content}</div> : null}
+                  </div>
+                  <div className="cs-msg-meta" style={{ display: "flex", flexDirection: "column", alignItems: m.mine ? "flex-end" : "flex-start", flexShrink: 0, fontSize: 11, lineHeight: 1.35, color: "var(--t-faint)", whiteSpace: "nowrap" }}>
+                    {read ? <span style={{ color: "var(--t-muted)" }}>已读</span> : null}
+                    <span>{hmLabel(m.createdAt)}</span>
+                  </div>
                 </div>
               </div>
             </div>
