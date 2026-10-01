@@ -288,6 +288,9 @@ async function staffUnreadByConversation(companyId: string): Promise<Map<string,
       AND m.sender_role = 'client'
       AND (c.staff_read_at IS NULL OR m.created_at > c.staff_read_at)
     WHERE c.company_id = ${companyId}
+      -- 先把「最后一条都不晚于已读」的对话筛掉（有未读的对话，最后一条一定晚于已读，结果不变）：
+      -- 菜单未读现在网页在后台也照样问，别每次都把全公司每条对话的消息扫一遍（dsh 复查 2026-10-02）
+      AND (c.staff_read_at IS NULL OR c.last_message_at > c.staff_read_at)
     GROUP BY c.id`;
   return new Map(rows.map((r) => [r.id, { count: Number(r.unread), latest: r.latest ?? null }]));
 }

@@ -43,9 +43,11 @@ function notifyUnreadChanged(): void {
 
 /* 时间都按北京时间（跟物流轨迹、导出文件名一个口径：泰国客户和员工看到的一样） */
 const BJ = "Asia/Shanghai";
-/** 北京时间的「2026-09-28」，拿来判断是不是同一天 */
+/** 北京时间的「2026-09-28」，拿来判断是不是同一天。按部件拼（不靠某个语言恰好输出 年-月-日 的格式，dsh 复查） */
 function bjDayKey(d: Date): string {
-  return new Intl.DateTimeFormat("en-CA", { timeZone: BJ, year: "numeric", month: "2-digit", day: "2-digit" }).format(d);
+  const parts = new Intl.DateTimeFormat("en-US", { timeZone: BJ, year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(d);
+  const get = (t: string) => parts.find((x) => x.type === t)?.value ?? "";
+  return `${get("year")}-${get("month")}-${get("day")}`;
 }
 /** 每条气泡旁边的时间：时:分（hourCycle 写死 h23：有的浏览器 hour12:false 会把零点写成 24:05） */
 function hmLabel(iso: string): string {
@@ -157,14 +159,17 @@ export default function ChatThread(props: {
   };
 
   /**
-   * 看到了对方的消息：标已读。三个条件都要满足才算「看到了」：
+   * 看到了对方的消息：标已读。几个条件都要满足才算「看到了」：
    *   · 页面在前台（切到别的标签页不算）；
+   *   · 这个浏览器窗口是当前窗口（2026-10-02 dsh 复查：现在「已读」要显示给对方看了 —— 浏览器摆在屏幕边上、
+   *     人在别的软件里干活，原来也照标，对方看到「已读」却没人回。跟 LINE 电脑版一样，点回这个窗口才算看了）；
    *   · 停在最底下（2026-09-28 Codex 复核第 5 条：往上翻看旧消息时来了新的，只冒「有新消息」，
    *     不能标已读 —— 共用收件箱，一标所有员工的红点都没了，容易漏回）；
    *   · 比上次标过的新（标失败了下一轮会再来，Codex 复核第 6 条）。
    */
   const markSeen = useCallback((list: ChatMessage[]) => {
     if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
+    if (typeof document !== "undefined" && typeof document.hasFocus === "function" && !document.hasFocus()) return;
     if (!stickToBottomRef.current) return;
     const lastOther = [...list].reverse().find((m) => !m.mine);
     if (!lastOther || lastOther.createdAt <= lastMarkedRef.current) return;
@@ -182,6 +187,23 @@ export default function ChatThread(props: {
   useEffect(() => { autoRetryRef.current = 0; }, [key]);
   // 浏览器要人先点一下页面才让出声：第一次点击 / 按键时把声音通道打开
   useEffect(() => { installChatSoundUnlock(); }, []);
+  // 点回这个窗口（从别的软件切回来）：马上补标已读，不用等下一轮轮询
+  useEffect(() => {
+    const onFocus = () => markSeen(messagesRef.current);
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, [markSeen]);
+  /* 过了零点重画一次（dsh 复查）：日期行「今天 / 昨天」是画的时候算的，页面开着过夜、又没来新消息，
+     昨天的消息会一直写「今天」。每分钟看一眼北京日期变没变，变了才重画 */
+  const [, setDayTick] = useState(0);
+  useEffect(() => {
+    let shownDay = bjDayKey(new Date());
+    const timer = window.setInterval(() => {
+      const today = bjDayKey(new Date());
+      if (today !== shownDay) { shownDay = today; setDayTick((n) => n + 1); }
+    }, 60_000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   // 换对话：清空、重新取最近 50 条
   useEffect(() => {

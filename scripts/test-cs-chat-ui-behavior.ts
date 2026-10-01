@@ -25,6 +25,11 @@
  *   U12 每条都有时间（北京时间）；跨天插一行日期（UTC 16:30 = 北京第二天 00:30，要归到第二天）
  *   U13 提示音：打开对话时的旧消息不响；轮询来了对方新消息响一次；同一条再带回来不响；我方自己发的、别的员工发的不响
  *   U14 菜单未读：第一次取回来不响（打开网页前就有的）；有更新的才响；聊天窗口已经为这条响过就不再响；网页切到后台也照样问
+ *   —— dsh 复查（2026-10-02）——
+ *   U15 浏览器窗口不是当前窗口（人在别的软件里）：不标已读；点回这个窗口马上标
+ *   U16 1 秒内来了两条不同的新消息：第二声不丢，等满 1 秒补响
+ *   U17 开着好几个标签页：别的标签页已经为这条响过（或者在那边已经看到了），这边不再响
+ *   U18 页面开着过了零点：日期行自己从「今天」变「昨天」，不用等新消息
  */
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -552,6 +557,10 @@ async function main(): Promise<void> {
     assert.equal(days.length, 2, `应该两行日期（27 号、28 号），实际：${JSON.stringify(days)}`);
     assert.match(days[0], /9月27日 周日$/);
     assert.match(days[1], /9月28日 周一$/, "UTC 16:30 是北京第二天，日期行没跟着换");
+    // 零点写法：有的浏览器 hour12:false 会把零点写成 24:05，Node 里测不出来，只能盯住写法（dsh 复查）
+    const src = fs.readFileSync(path.join(SRC, "modules/cs-chat/ChatThread.tsx"), "utf8");
+    assert.match(src, /hourCycle: "h23"/, "时间格式没写死 h23");
+    assert.doesNotMatch(src, /hour12:\s*(true|false)\s*[,}]/, "又用回了 hour12（有的浏览器零点会写成 24:xx）");
   });
 
   await check("U13 提示音：打开时的旧消息不响；来了对方新消息响一次；同一条再带回来不响；自己发的、别的员工发的不响", async () => {
@@ -628,6 +637,95 @@ async function main(): Promise<void> {
     mount(Probe, { session, path: "/staff/chat" });
     await answerUnread({ count: 1, latestAt: "2026-09-28T01:01:00.000Z" });
     assert.equal(dings, 2, "打开对话时已经看到的消息，菜单取到后又响了");
+  });
+
+  await check("U15 窗口不是当前窗口（人在别的软件里）：不标已读；点回这个窗口马上标", async () => {
+    resetSound();
+    let focused = false;
+    fakeDocument.hasFocus = () => focused;
+    try {
+      mount(ChatThread, { scope: { kind: "staff", clientId: "ZZC1" }, title: "ZZC1" });
+      lastCall().resolve({ messages: [cl("c1", "2026-09-28T01:00:00.000Z")], hasMore: false, serverTime: "2026-09-28T01:00:05.000Z", peerReadAt: null });
+      await settle();
+      const reads = () => calls.filter((c) => c.url.includes("/chat/read"));
+      assert.equal(reads().length, 0, "浏览器窗口不在前面（人在别的软件里），客户的消息就被标了已读");
+      await tickTimers((t) => !t.once && t.ms === 3000);
+      assert.equal(reads().length, 0, "轮询时窗口还不在前面，又标了已读");
+      focused = true;
+      (listeners.focus ?? []).forEach((f) => f({ type: "focus" }));
+      await settle();
+      assert.equal(reads().length, 1, "点回这个窗口没有马上标已读");
+      assert.match(reads()[0].opts.body, /"upTo":"2026-09-28T01:00:00.000Z"/);
+    } finally {
+      delete fakeDocument.hasFocus;
+    }
+  });
+
+  await check("U16 1 秒内来了两条不同的新消息：第二声不丢，等满 1 秒补响", async () => {
+    resetSound();
+    mount(ChatThread, { scope: { kind: "client" }, title: "客服" });
+    lastCall().resolve({ messages: [cs("o1", "2026-09-28T01:00:00.000Z")], hasMore: false, serverTime: "2026-09-28T01:00:05.000Z", peerReadAt: null });
+    await settle();
+    await tickTimers((t) => !t.once && t.ms === 3000);
+    await answerPoll({ messages: [cs("n1", "2026-09-28T01:00:06.000Z")], hasMore: false, serverTime: "2026-09-28T01:00:07.000Z", peerReadAt: null });
+    assert.equal(dings, 1);
+    clock += 300; // 0.3 秒后菜单那边报到了另一条
+    sound.noteUnreadLatest("2026-09-28T01:00:06.500Z"); // 第一次：只记基线
+    sound.noteUnreadLatest("2026-09-28T01:00:06.800Z");
+    assert.equal(dings, 1, "1 秒内不该马上响第二声");
+    const pending = aliveTimers().filter((t) => t.once && t.ms > 0 && t.ms <= 1000);
+    assert.equal(pending.length, 1, "第二声没有排着等补响（会被永远吞掉）");
+    clock += 1000;
+    await tickTimers((t) => t.once && t.ms > 0 && t.ms <= 1000);
+    assert.equal(dings, 2, "等满 1 秒后没有补响第二声");
+  });
+
+  await check("U17 开着好几个标签页：别的标签页已经为这条响过、或者在那边看到了，这边不再响", async () => {
+    resetSound();
+    const store = new Map<string, string>();
+    fakeWindow.localStorage = { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => { store.set(k, v); }, removeItem: (k: string) => { store.delete(k); } };
+    try {
+      sound.noteUnreadLatest("2026-09-28T01:00:00.000Z"); // 这个标签页的基线
+      store.set("xt_chat_ding_upto_v1", "2026-09-28T01:00:30.000Z"); // 另一个标签页已经为 01:00:30 这条响过
+      sound.noteUnreadLatest("2026-09-28T01:00:30.000Z");
+      assert.equal(dings, 0, "另一个标签页已经响过这条，这边又响了一声");
+      sound.noteUnreadLatest("2026-09-28T01:00:40.000Z");
+      assert.equal(dings, 1, "更新的一条没有人响过，这边该响");
+      assert.equal(store.get("xt_chat_ding_upto_v1"), "2026-09-28T01:00:40.000Z", "响完没记下来，别的标签页还会再响");
+      passTime();
+      // 在别的标签页打开对话看到了 01:00:50 这条（那边只记不响）→ 这边菜单取到它也不响
+      sound.noteIncomingShown("2026-09-28T01:00:50.000Z");
+      assert.equal(store.get("xt_chat_ding_upto_v1"), "2026-09-28T01:00:50.000Z", "打开对话看到的那条没记进共用记录，别的标签页还会为它响");
+      sound.resetChatSoundForTest(); // 模拟另一个标签页：自己的记录是空的，只有共用的那份
+      sound.noteUnreadLatest("2026-09-28T01:00:00.000Z");
+      sound.noteUnreadLatest("2026-09-28T01:00:50.000Z");
+      assert.equal(dings, 1, "别的标签页已经看到 / 响过的那条，这个标签页又响了");
+    } finally {
+      delete fakeWindow.localStorage;
+    }
+  });
+
+  await check("U18 页面开着过了零点：日期行自己从「今天」变「昨天」，不用等新消息", async () => {
+    resetSound();
+    const RealDate = Date;
+    let fakeMs = RealDate.parse("2026-10-01T15:59:00.000Z"); // 北京 10-01 23:59
+    class FakeDate extends RealDate {
+      constructor(...args: any[]) { if (args.length === 0) super(fakeMs); else super(...(args as [any])); }
+      static now() { return clock; }
+    }
+    (globalThis as any).Date = FakeDate;
+    try {
+      mount(ChatThread, { scope: { kind: "client" }, title: "客服" });
+      lastCall().resolve({ messages: [cs("z1", "2026-10-01T15:00:00.000Z")], hasMore: false, serverTime: "2026-10-01T15:59:00.000Z", peerReadAt: null });
+      await settle();
+      assert.deepEqual(dayRows(), ["今天"]);
+      fakeMs = RealDate.parse("2026-10-01T16:01:00.000Z"); // 北京 10-02 00:01
+      await tickTimers((t) => !t.once && t.ms === 60_000);
+      assert.deepEqual(dayRows(), ["昨天"], "过了零点没有消息进来，昨天的消息还写着「今天」");
+    } finally {
+      (globalThis as any).Date = RealDate;
+      Date.now = () => clock;
+    }
   });
 
   Date.now = realNow;
