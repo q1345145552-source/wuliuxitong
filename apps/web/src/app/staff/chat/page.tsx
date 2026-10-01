@@ -14,7 +14,6 @@ import { useSearchParams } from "next/navigation";
 import ChatThread, { CHAT_UNREAD_EVENT } from "../../../modules/cs-chat/ChatThread";
 import { fetchChatConversations, type ChatConversation } from "../../../services/cs-chat-api";
 import { createRequestGate } from "../../../modules/shared/request-gate";
-import { chatSoundKey, noteUnreadLatest } from "../../../modules/cs-chat/chat-sound";
 
 const LIST_POLL_MS = 5000;
 
@@ -61,13 +60,8 @@ function StaffChatInbox() {
       const data = await fetchChatConversations(searchRef.current);
       if (!gate.isCurrent(ticket)) return;
       for (const c of data.items ?? []) closedSeenRef.current.set(c.clientId, c.closed === true);
-      /* 提示音（dsh 第三轮复查 2026-10-02）：正开着客户甲聊天时客户乙来消息，原来要等左边菜单那 30 秒才响；
-         这个列表本来就 5 秒刷一次，最后一条是客户发的、还没人看的，就拿去报（跟菜单、聊天窗口共用记录，同一条不响两次） */
-      const latest: Record<string, string> = {};
-      for (const c of data.items ?? []) {
-        if (c.lastFromClient && c.unreadCount > 0 && c.lastMessageAt) latest[chatSoundKey(c.clientId)] = c.lastMessageAt;
-      }
-      noteUnreadLatest(latest, "list");
+      /* 这个列表不报提示音（Codex 复查 2026-10-02）：左边菜单已经是 5 秒一次（老板：「当时收的时候响」），
+         列表再报一份只会跟菜单抢「第一次只记不响」，把真新消息悄悄吞掉。正开着客户甲时客户乙来消息，菜单 5 秒内响 */
       setItems(data.items ?? []);
       setTruncated(data.truncated === true);
       setListError("");

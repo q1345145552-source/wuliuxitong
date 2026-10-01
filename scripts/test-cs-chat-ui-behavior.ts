@@ -37,7 +37,12 @@
  *   U14 补客户那头的菜单；U17 补「共用记录写满时刚写进去的那条要留下」「唛头叫 __proto__ 也照样响」
  *   U20 员工聊天页的客户列表（5 秒刷一次）：正开着客户甲聊天时客户乙来了新消息，跟着列表就响，不用等菜单那 30 秒
  *   U21 老板 10-02：「当时收的时候响，而不是之后响」—— 菜单未读在眼前 5 秒问一次（原来 30 秒）；计时放在 Worker 里
- *       （后台久了浏览器会把页面自己的定时器放慢到一分钟一次）；Worker 起不来就退回页面定时器；关页面时 Worker 关掉
+ *       （后台久了浏览器会把页面自己的定时器放慢到一分钟一次）；Worker 起不来就退回页面定时器；关页面时 Worker 关掉；
+ *       真把 public/chat-tick.worker.js 跑一遍（原来只测了假 Worker，文件改成空的也照样绿）
+ *   —— Codex 复查（2026-10-02）——
+ *   U20 改：员工聊天页的客户列表不再报提示音（跟菜单抢「第一次只记不响」，会把真新消息吞掉）；菜单照样响
+ *   U22 服务器慢（一次超过 5 秒）：上一次没回来不发新的，回来了不被作废；中途要求刷新的回来后补问一次
+ *   U23 员工菜单只报最近 50 个：打开网页前就有、后来才排进 50 个的旧未读不响；退出 / 换人登录时清掉提示音记录
  */
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -842,25 +847,19 @@ async function main(): Promise<void> {
     }
   });
 
-  await check("U20 员工聊天页的客户列表（5 秒刷一次）：客户乙来了新消息跟着列表就响；打开页面时就有的不响；最后一条是客服回的不响", async () => {
+  await check("U20 员工聊天页的客户列表不报提示音（不跟菜单抢基线）：列表先刷到新消息，菜单随后照样响", async () => {
     resetSound();
     fakeWindow.location.search = "";
     const item = (clientId: string, at: string, fromClient = true, unread = 1) => ({ clientId, lastMessageAt: at, lastMessagePreview: "hi", lastFromClient: fromClient, unreadCount: unread, closed: false });
-    sound.noteUnreadLatest({}); // 左边菜单先取过一次（当时还没有这两个客户的未读）：列表第一次刷出来的照样只记不响
+    sound.noteUnreadLatest({}); // 左边菜单先取过一次（当时还没有未读）
     mount(Inbox, {});
     await answerList([item("ZZA", "2026-09-28T04:00:00.000Z"), item("ZZB", "2026-09-28T04:00:05.000Z")]);
-    assert.equal(dings, 0, "打开员工聊天页就响了（那两条是打开前就有的）");
     await tickTimers((t) => !t.once && t.ms === 5000);
     await answerList([item("ZZA", "2026-09-28T04:00:00.000Z"), item("ZZB", "2026-09-28T04:00:30.000Z")]);
-    assert.equal(dings, 1, "客户乙来了新消息，列表刷到了却没响（要等菜单那 30 秒）");
-    passTime();
-    await tickTimers((t) => !t.once && t.ms === 5000);
-    await answerList([item("ZZA", "2026-09-28T04:00:40.000Z", false, 0), item("ZZB", "2026-09-28T04:00:30.000Z")]);
-    assert.equal(dings, 1, "最后一条是客服回的 / 同一条又刷到，又响了");
-    // 菜单随后取到同一条：不再响
-    sound.noteUnreadLatest({ [sound.chatSoundKey("ZZB")]: "2026-09-28T04:00:30.000Z" });
-    sound.noteUnreadLatest({ [sound.chatSoundKey("ZZB")]: "2026-09-28T04:00:30.000Z" });
-    assert.equal(dings, 1, "列表已经为这条响过，菜单又响了一次");
+    assert.equal(dings, 0, "客户列表也在报提示音（会跟菜单抢基线）");
+    // 菜单随后取到：照样响（原来列表第一次取回来时把它悄悄记成「报过了」，菜单就不响了）
+    sound.noteUnreadLatest({ [sound.chatSoundKey("ZZA")]: "2026-09-28T04:00:00.000Z", [sound.chatSoundKey("ZZB")]: "2026-09-28T04:00:30.000Z" });
+    assert.equal(dings, 1, "列表先刷到了新消息，菜单随后取到却不响");
   });
 
   await check("U21 菜单未读在眼前 5 秒问一次；计时放在 Worker 里（后台不被浏览器放慢）；Worker 起不来退回页面定时器；关页面关 Worker", async () => {
@@ -882,6 +881,9 @@ async function main(): Promise<void> {
       assert.equal(workers[0].url, "/chat-tick.worker.js");
       assert.deepEqual(workers[0].posted, [5000], "Worker 的间隔不是 5 秒（在别的页面来消息要等太久）");
       assert.equal(aliveTimers().filter((t) => !t.once && t.ms === 5000).length, 0, "有了 Worker 还另开了页面定时器（会问两遍）");
+      // 第一次问未读先回掉（上一次没回来不会发新的）
+      unreadCalls()[0].resolve({ count: 0, latestAt: null, latestByClient: {} });
+      await settle();
       const n0 = unreadCalls().length;
       clock += 5000;
       workers[0].onmessage({ data: 1 });
@@ -897,8 +899,79 @@ async function main(): Promise<void> {
       const w = workers[workers.length - 1];
       unmount();
       assert.equal(w.terminated, true, "页面关了 Worker 还开着，后台一直在问");
+      // 真把 public/chat-tick.worker.js 跑一遍：收到间隔后按间隔给页面发「到点了」；换间隔会先停掉旧的
+      const code = fs.readFileSync(path.join(process.cwd(), "apps/web/public/chat-tick.worker.js"), "utf8");
+      const intervals: Array<{ fn: () => void; ms: number; alive: boolean }> = [];
+      const self: any = { posted: 0, postMessage() { self.posted += 1; } };
+      new Function("self", "setInterval", "clearInterval", code)(
+        self,
+        (fn: () => void, ms: number) => { intervals.push({ fn, ms, alive: true }); return intervals.length; },
+        (id: number) => { if (intervals[id - 1]) intervals[id - 1].alive = false; },
+      );
+      assert.equal(typeof self.onmessage, "function", "Worker 文件没有接页面发来的间隔（文件是空的？）");
+      self.onmessage({ data: 5000 });
+      assert.deepEqual(intervals.map((t) => t.ms), [5000], "Worker 没按页面给的 5 秒计时");
+      intervals[0].fn();
+      assert.equal(self.posted, 1, "Worker 到点了没告诉页面");
+      self.onmessage({ data: 15000 });
+      assert.equal(intervals[0].alive, false, "换间隔没停掉旧的计时器（会叫两遍）");
+      assert.equal(intervals[1].ms, 15000);
     } finally {
       delete (globalThis as any).Worker;
+    }
+  });
+
+  await check("U22 服务器慢（一次超过 5 秒）：上一次没回来不发新的、回来了不作废；中途要求刷新的回来后补问一次", async () => {
+    resetSound();
+    function Probe3(p: any) { const n = useChatUnread(p.session, false, p.path); return { type: "i", props: { children: String(n) } }; }
+    const session = { userId: "zz_s1", companyId: "c_001", role: "staff", token: "x" };
+    const unreadCalls = () => calls.filter((c) => c.url.includes("/chat/unread"));
+    mount(Probe3, { session, path: "/staff" });
+    assert.equal(unreadCalls().length, 1);
+    // 第一次 6 秒还没回来：到点了也不发第二个
+    clock += 5000;
+    await tickTimers((t) => !t.once && t.ms === 5000);
+    assert.equal(unreadCalls().length, 1, "上一次还没回来又发了一个（越堆越多，前一个的结果会被作废）");
+    // 中途聊天窗口发了消息，要求马上刷新：也先记着
+    fakeWindow.dispatchEvent({ type: "xt-chat-unread-changed" });
+    assert.equal(unreadCalls().length, 1);
+    // 第一次回来了：结果要用上（红点变 3），并且立刻补问一次
+    unreadCalls()[0].resolve({ count: 3, latestAt: "2026-09-28T05:00:00.000Z", latestByClient: { ZZA: "2026-09-28T05:00:00.000Z" } });
+    await settle();
+    assert.equal(textOf(tree), "3", "慢回来的结果被作废了，红点没变");
+    assert.equal(unreadCalls().length, 2, "中途要求刷新的，回来后没有补问");
+  });
+
+  await check("U23 员工菜单只报最近 50 个：打开网页前就有、后来才排进 50 个的旧未读不响；退出 / 换人登录时清掉提示音记录", async () => {
+    resetSound();
+    // 打开网页时：50 个未读客户，最新的一条是 06:00:50（第 51 个更早、没报上来）
+    const first: Record<string, string> = {};
+    for (let i = 0; i < 50; i++) first[sound.chatSoundKey(`ZZK${i}`)] = `2026-09-28T06:00:${String(i + 1).padStart(2, "0")}.000Z`;
+    sound.noteUnreadLatest(first);
+    assert.equal(dings, 0);
+    // 有人看了一个，第 51 个（06:00:00 那条，打开网页前就有）挤进来：不响
+    sound.noteUnreadLatest({ [sound.chatSoundKey("ZZOLD51")]: "2026-09-28T06:00:00.000Z" });
+    assert.equal(dings, 0, "打开网页前就有的旧未读，后来排进最近 50 个时响了");
+    // 真新来的照样响
+    sound.noteUnreadLatest({ [sound.chatSoundKey("ZZNEW")]: "2026-09-28T06:01:00.000Z" });
+    assert.equal(dings, 1, "打开网页后真新来的消息没响");
+    // 退出 / 换人登录：提示音记录（里面是客户唛头和时间）跟运单缓存一起清
+    const store = new Map<string, string>([["xt_chat_ding_v2", "{\"c:ZZA\":\"x\"}"], ["xt_chat_ding_upto_v1", "x"], ["xt_orders_ZZA", "[]"], ["auth_session_v1", "{}"]]);
+    fakeWindow.localStorage = {
+      get length() { return store.size; },
+      key: (i: number) => [...store.keys()][i] ?? null,
+      getItem: (k: string) => store.get(k) ?? null,
+      setItem: (k: string, v: string) => { store.set(k, v); },
+      removeItem: (k: string) => { store.delete(k); },
+    };
+    try {
+      const authMod = loadModule(path.join(SRC, "auth/auth-session.ts"), OVERRIDES);
+      authMod.clearClientOrderCaches();
+      assert.ok(!store.has("xt_chat_ding_v2") && !store.has("xt_chat_ding_upto_v1"), `退出后提示音记录还在（公用电脑上下一个人看得到上一个人的客户）：${[...store.keys()]}`);
+      assert.ok(!store.has("xt_orders_ZZA"), "运单缓存没清");
+      assert.ok(store.has("auth_session_v1"), "清缓存把登录状态也清了（这个函数不管登录状态）");
+    } finally {
+      delete fakeWindow.localStorage;
     }
   });
 

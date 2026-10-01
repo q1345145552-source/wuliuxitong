@@ -125,7 +125,8 @@ export function clearClientOrderCaches(): void {
     const doomed: string[] = [];
     for (let i = 0; i < window.localStorage.length; i++) {
       const key = window.localStorage.key(i);
-      if (key && key.startsWith("xt_orders_")) doomed.push(key);
+      // xt_chat_ding_：客服对话提示音的「响到哪条了」（里面是客户唛头和来消息的时间），公用电脑上不能留给下一个人（2026-10-02 Codex 复查）
+      if (key && (key.startsWith("xt_orders_") || key.startsWith("xt_chat_ding_"))) doomed.push(key);
     }
     // 先收集再删：一边遍历一边删会让 localStorage 的下标错位，漏掉相邻的键
     for (const key of doomed) window.localStorage.removeItem(key);

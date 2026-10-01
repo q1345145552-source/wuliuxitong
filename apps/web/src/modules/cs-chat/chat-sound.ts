@@ -11,6 +11,8 @@
  *      客户乙 01:00:05 那条没人看过，拿一个全局时间一比就被当成「报过了」，一声不响、红点却亮着。
  * **开着好几个标签页也只响一次**（dsh 复查）：这份记录同时写进 localStorage，同一个浏览器的标签页共用；
  *   谁先看到新消息谁响，别的标签页看到这个对话已经有人报过就不响。
+ *   退出 / 换人登录时这份记录跟着清掉（auth-session.ts 的 clearClientOrderCaches）：里面有客户唛头和来消息的时间，
+ *   公用电脑上不能留给下一个人看（Codex 复查）。
  *
  * 声音用 Web Audio 现场合成一声「叮咚」，不用下载音频文件。
  * ⚠️ 浏览器规定：网页打开后，人得先在页面上点一下或按一下键，网页才允许出声 ——
@@ -28,8 +30,14 @@ let lastPlayedAt = 0;
 let pendingTimer: number | null = null;
 /** 这个标签页自己的记录 */
 let announced: Seen = {};
-/** 每个来源（左边菜单、员工聊天页的客户列表）第一次取回来时只记下、不响：打开网页时就已经躺着的未读，不算「新来的」 */
-let baselineDone = new Set<string>();
+/** 左边菜单第一次取回来时只记下、不响：打开网页时就已经躺着的未读，不算「新来的」 */
+let unreadBaselineDone = false;
+/**
+ * 第一次取回来那批里最新一条的时间：以后菜单报上来的、不比它新的，都是打开网页前就有的，不响（Codex 复查 2026-10-02）。
+ * 员工那头菜单只报最近 50 个未读客户：打开网页时有 51 个，第 51 个是旧的、当时没报上来；
+ * 后来前 50 个里有人看了，它挤进来 —— 没有这条线就会被当成新来的、突然响一声。
+ */
+let baselineFloor = "";
 /** 同一个浏览器各标签页共用的记录（v1 是全局一个时间，有上面说的毛病，换个名字不读它） */
 const SHARED_KEY = "xt_chat_ding_v2";
 /**
@@ -161,19 +169,32 @@ function arrived(conv: string, at: string | null | undefined): boolean {
 }
 
 /**
- * 未读取回来了：latest = 每个有未读的对话（键用 chatSoundKey），对方最新一条没看的时间。
- * source = 谁报的（左边菜单 "menu"、员工聊天页的客户列表 "list"）：每个来源第一次只记下（打开网页前就有的不算新）；
- * 以后哪个对话有比记下的新的，就响（一次取回来最多响一声）。
+ * 左边菜单的未读取回来了：latest = 每个有未读的对话（键用 chatSoundKey），对方最新一条没看的时间。
+ * 第一次只记下（打开网页前就有的不算新），并记下那批里最新的时间当「打开网页时的线」；
+ * 以后哪个对话有比记下的新、也比那条线新的，就响（一次取回来最多响一声）。
+ * ⚠️ 只有左边菜单一个来源（Codex 复查：原来员工聊天页的客户列表也报、各自一次基线 —— 列表第一次取回来时
+ *    把菜单还没来得及报的真新消息悄悄记成「报过了」，菜单随后就不响了）。
  */
-export function noteUnreadLatest(latest: Record<string, string | null | undefined> | null | undefined, source = "menu"): void {
+export function noteUnreadLatest(latest: Record<string, string | null | undefined> | null | undefined): void {
   const entries = Object.entries(latest ?? {});
-  if (!baselineDone.has(source)) {
-    baselineDone.add(source);
-    for (const [conv, at] of entries) if (at && at > (announced[conv] ?? "")) announced[conv] = at;
+  if (!unreadBaselineDone) {
+    unreadBaselineDone = true;
+    for (const [conv, at] of entries) {
+      if (!at) continue;
+      if (at > (announced[conv] ?? "")) announced[conv] = at;
+      if (at > baselineFloor) baselineFloor = at;
+    }
     return;
   }
   let ring = false;
-  for (const [conv, at] of entries) if (arrived(conv, at)) ring = true;
+  for (const [conv, at] of entries) {
+    if (at && at <= baselineFloor) {
+      // 打开网页前就有的（只是现在才排进最近 50 个）：只记下、不响
+      if (at > (announced[conv] ?? "")) announced[conv] = at;
+      continue;
+    }
+    if (arrived(conv, at)) ring = true;
+  }
   if (ring) playChatDing();
 }
 
@@ -197,5 +218,6 @@ export function resetChatSoundForTest(): void {
   if (pendingTimer !== null) { try { window.clearTimeout(pendingTimer); } catch { /* 测试里的假定时器 */ } }
   pendingTimer = null;
   announced = {};
-  baselineDone = new Set<string>();
+  unreadBaselineDone = false;
+  baselineFloor = "";
 }

@@ -37,7 +37,14 @@ export function useChatUnread(session: AuthSession | null, hiddenByBrand: boolea
     let stopped = false;
     installChatSoundUnlock();
     let lastLoadAt = 0;
+    /* 一次只问一个（Codex 复查 2026-10-02）：改成 5 秒一次以后，服务器一慢（一次超过 5 秒），后一次会把前一次作废，
+       回来的全被丢掉 —— 红点和提示音一直不动，请求还越堆越多。现在：上一次还没回来就不发新的；
+       这期间有人要求马上刷新（聊天窗口标了已读、发了消息），就记一笔，等上一次回来立刻补问一次 */
+    let inFlight = false;
+    let pending = false;
     const load = async () => {
+      if (inFlight) { pending = true; return; }
+      inFlight = true;
       // 不再「切到后台就不问」：后台也要能响提示音（见文件头）
       lastLoadAt = Date.now();
       const ticket = gate.begin();
@@ -52,6 +59,9 @@ export function useChatUnread(session: AuthSession | null, hiddenByBrand: boolea
         }
       } catch {
         /* 问不到就保持原样，不打扰人 */
+      } finally {
+        inFlight = false;
+        if (pending && !stopped) { pending = false; void load(); }
       }
     };
     void load();

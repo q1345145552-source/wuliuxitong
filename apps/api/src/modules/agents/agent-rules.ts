@@ -38,7 +38,7 @@ export const RESERVED_AGENT_SLUGS: ReadonlySet<string> = new Set([
   // Next / 静态文件
   "_next", "api", "static", "public", "assets", "favicon", "favicon.ico", "icon", "icon.png",
   "apple-icon", "apple-icon.png", "robots", "robots.txt", "sitemap", "sitemap.xml", "manifest",
-  "chat-tick", "chat-tick.worker.js",
+  "chat-tick.worker.js",
   "error", "loading", "not-found", "404", "500",
   // B4 的 /a/<slug> 退路、以后可能加的公共入口
   "a", "brand", "health", "logout", "track", "home", "index", "www", "mail", "xiangtai",

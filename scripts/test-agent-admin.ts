@@ -326,6 +326,8 @@ async function main(): Promise<void> {
     assert.equal(rules.normalizeAgentSlug(""), null);
     assert.equal(rules.validateAgentSlug(null), null, "不设前缀是允许的");
     assert.equal(rules.validateAgentSlug("bkk-01"), null);
+    // 保留字只挡真会撞车的：public 下的 chat-tick.worker.js 带点，前缀本来就不许带点；chat-tick 本身不撞，不许误伤（2026-10-02 Codex 复查）
+    assert.equal(rules.validateAgentSlug("chat-tick"), null, "「chat-tick」被误当成保留字了，它跟 /chat-tick.worker.js 不撞");
     assert.match(rules.validateAgentSlug("a")!, /2 到 31 位/);
     assert.match(rules.validateAgentSlug("-bkk")!, /开头不能是横杠/);
     assert.match(rules.validateAgentSlug("bkk_01")!, /小写字母/);
