@@ -38,7 +38,8 @@ export function useChatUnread(session: AuthSession | null, hiddenByBrand: boolea
         const r = await fetchChatUnread(who);
         if (!stopped && gate.isCurrent(ticket)) {
           setCount(Number(r.count) || 0);
-          noteUnreadLatest(r.latestAt ?? null);
+          // 按对话分开报：客户那头只有自己一个对话（「client」，跟聊天窗口同一个叫法）；员工那头按客户唛头
+          noteUnreadLatest(who === "client" ? { client: r.latestAt ?? null } : (r.latestByClient ?? {}));
         }
       } catch {
         /* 问不到就保持原样，不打扰人 */

@@ -175,6 +175,8 @@ async function main(): Promise<void> {
       const u = await must("GET /staff/chat/unread", STAFF);
       assert.equal(u.count, 2);
       assert.equal(u.latestAt, last.createdAt, `员工菜单拿到的「最新未读」不是最后那句：${u.latestAt}`);
+      // 按客户分开报（提示音按客户分开判断，dsh 第二轮复查）：只有这个客户，时间是他最后那句
+      assert.deepEqual(u.latestByClient, { [CLIENT.userId]: last.createdAt }, `员工菜单按客户报的最新未读不对：${JSON.stringify(u.latestByClient)}`);
       const c2 = await must("GET /client/chat/messages", CLIENT);
       assert.ok(c2.peerReadAt < last.createdAt, "员工还没看，客户那边已经算已读了");
       // 员工看了（共用收件箱，哪个员工看都算）：客户那边变已读，员工菜单没有未读了
@@ -266,6 +268,8 @@ async function main(): Promise<void> {
       const theirs = await must("GET /staff/chat/unread", OTHER_STAFF);
       assert.equal(theirs.count, 0, `别家公司员工的红点算进了我们客户的未读：${theirs.count}`);
       assert.equal(theirs.latestAt, null, "别家公司员工拿到了我们客户最新未读的时间");
+      assert.deepEqual(theirs.latestByClient, {}, "别家公司员工拿到了我们客户的唛头和未读时间");
+      assert.ok(ours.latestByClient[CLIENT_B.userId], "我们公司客户乙有未读，按客户报的里面却没有他");
       assert.ok(ours.latestAt, "我们公司有未读，「最新未读」却是空的");
     });
 

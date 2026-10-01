@@ -280,9 +280,9 @@ async function markRead(conversationId: string, side: "client" | "staff", upToRa
  * 客服这一侧每条对话的未读数（客户发的、晚于 staff_read_at 的条数）。列名是本次迁移自己建的，已核。
  * latest = 这条对话里最新一条未读的时间：菜单那边拿它判断「有没有新来的」，来了就响提示音（2026-10-02）
  */
-async function staffUnreadByConversation(companyId: string): Promise<Map<string, { count: number; latest: Date | null }>> {
-  const rows = await prisma.$queryRaw<Array<{ id: string; unread: number; latest: Date | null }>>`
-    SELECT c.id, COUNT(m.id)::int AS unread, MAX(m.created_at) AS latest
+async function staffUnreadByConversation(companyId: string): Promise<Map<string, { count: number; latest: Date | null; clientId: string }>> {
+  const rows = await prisma.$queryRaw<Array<{ id: string; unread: number; latest: Date | null; client_id: string }>>`
+    SELECT c.id, c.client_id, COUNT(m.id)::int AS unread, MAX(m.created_at) AS latest
     FROM cs_conversations c
     JOIN cs_messages m ON m.conversation_id = c.id
       AND m.sender_role = 'client'
@@ -291,8 +291,8 @@ async function staffUnreadByConversation(companyId: string): Promise<Map<string,
       -- 先把「最后一条都不晚于已读」的对话筛掉（有未读的对话，最后一条一定晚于已读，结果不变）：
       -- 菜单未读现在网页在后台也照样问，别每次都把全公司每条对话的消息扫一遍（dsh 复查 2026-10-02）
       AND (c.staff_read_at IS NULL OR c.last_message_at > c.staff_read_at)
-    GROUP BY c.id`;
-  return new Map(rows.map((r) => [r.id, { count: Number(r.unread), latest: r.latest ?? null }]));
+    GROUP BY c.id, c.client_id`;
+  return new Map(rows.map((r) => [r.id, { count: Number(r.unread), latest: r.latest ?? null, clientId: r.client_id }]));
 }
 
 /** 客户接口的门：role=client 且不是代理名下的（server.ts 那道闸之外再挡一次） */
@@ -469,11 +469,15 @@ export function registerCsChatRoutes(app: MinimalHttpApp): void {
     const unread = await staffUnreadByConversation(auth.companyId);
     let count = 0;
     let latest: Date | null = null;
+    /* latestByClient：每个有未读的客户，各自最新一条没人看的是什么时候 —— 菜单按客户分开判断「有没有新来的」
+       （dsh 第二轮复查 2026-10-02：原来只给一个全局最新时间，客户甲刚响过，客户乙稍早那条就再也不响了） */
+    const latestByClient: Record<string, string> = {};
     for (const u of unread.values()) {
       count += u.count;
       if (u.latest && (!latest || u.latest > latest)) latest = u.latest;
+      if (u.latest && u.count > 0) latestByClient[u.clientId] = u.latest.toISOString();
     }
-    // latestAt：所有客户里最新一条没人看的消息是什么时候发的 —— 菜单拿它判断「有新来的」就响提示音（2026-10-02）
-    ok(res, { count, conversations: [...unread.values()].filter((u) => u.count > 0).length, latestAt: latest?.toISOString() ?? null });
+    // latestAt：所有客户里最新一条没人看的消息是什么时候发的（2026-10-02）
+    ok(res, { count, conversations: [...unread.values()].filter((u) => u.count > 0).length, latestAt: latest?.toISOString() ?? null, latestByClient });
   });
 }

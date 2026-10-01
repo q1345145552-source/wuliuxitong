@@ -22,7 +22,7 @@ function shortTime(iso: string | null): string {
   const d = new Date(iso);
   const day = (x: Date) => new Intl.DateTimeFormat("zh-CN", { timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit" }).format(x);
   const opts: Intl.DateTimeFormatOptions = day(d) === day(new Date())
-    ? { hour: "2-digit", minute: "2-digit", hour12: false }
+    ? { hour: "2-digit", minute: "2-digit", hourCycle: "h23" } // 不用 hour12:false：有的浏览器零点会写成 24:05（dsh 复查）
     : { month: "2-digit", day: "2-digit" };
   return new Intl.DateTimeFormat("zh-CN", { timeZone: "Asia/Shanghai", ...opts }).format(d);
 }

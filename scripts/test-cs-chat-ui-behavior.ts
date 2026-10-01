@@ -30,6 +30,9 @@
  *   U16 1 秒内来了两条不同的新消息：第二声不丢，等满 1 秒补响
  *   U17 开着好几个标签页：别的标签页已经为这条响过（或者在那边已经看到了），这边不再响
  *   U18 页面开着过了零点：日期行自己从「今天」变「昨天」，不用等新消息
+ *   —— dsh 第二轮复查（2026-10-02）——
+ *   U17 改成按对话记：客户甲刚响过，客户乙更早、没人看过的那条照样响（原来一个全局时间，一比就当「报过了」）
+ *   U19 换对话那一瞬间窗口获得焦点：不会拿上一个客户的消息时间去标下一个客户的已读
  */
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -108,6 +111,14 @@ function attachRefs(node: any) {
   }
   attachRefs(node.props?.children);
 }
+/** 按住 useEffect 不跑（useLayoutEffect 照跑）：模拟真 React「新的一帧已经画了、passive effect 还没跑」那个空档 */
+let holdEffects = false;
+function runHeldEffects() {
+  holdEffects = false;
+  const eff = pendingEffects; pendingEffects = [];
+  eff.forEach((f) => f());
+  flush();
+}
 function renderOnce() {
   idx = 0;
   dirty = false;
@@ -115,6 +126,7 @@ function renderOnce() {
   attachRefs(tree);
   const lay = pendingLayout; pendingLayout = [];
   lay.forEach((f) => f());
+  if (holdEffects) return;
   const eff = pendingEffects; pendingEffects = [];
   eff.forEach((f) => f());
 }
@@ -561,6 +573,10 @@ async function main(): Promise<void> {
     const src = fs.readFileSync(path.join(SRC, "modules/cs-chat/ChatThread.tsx"), "utf8");
     assert.match(src, /hourCycle: "h23"/, "时间格式没写死 h23");
     assert.doesNotMatch(src, /hour12:\s*(true|false)\s*[,}]/, "又用回了 hour12（有的浏览器零点会写成 24:xx）");
+    // 员工「客户消息」左边客户列表的时间也一样（dsh 第二轮复查）
+    const listSrc = fs.readFileSync(path.join(SRC, "app/staff/chat/page.tsx"), "utf8");
+    assert.doesNotMatch(listSrc, /hour12:\s*(true|false)\s*[,}]/, "员工客户列表的时间还用 hour12（零点会写成 24:xx）");
+    assert.match(listSrc, /hourCycle: "h23"/);
   });
 
   await check("U13 提示音：打开时的旧消息不响；来了对方新消息响一次；同一条再带回来不响；自己发的、别的员工发的不响", async () => {
@@ -601,16 +617,16 @@ async function main(): Promise<void> {
       c!.done = true; c!.resolve(body); await settle();
     }
     mount(Probe, { session, path: "/staff" });
-    await answerUnread({ count: 3, latestAt: "2026-09-28T01:00:00.000Z" });
+    await answerUnread({ count: 3, latestAt: "2026-09-28T01:00:00.000Z", latestByClient: { ZZC1: "2026-09-28T01:00:00.000Z" } });
     assert.equal(dings, 0, "一打开网页就响了（那几条是打开前就有的）");
     await tickTimers((t) => !t.once && t.ms === 30_000);
-    await answerUnread({ count: 3, latestAt: "2026-09-28T01:00:00.000Z" });
+    await answerUnread({ count: 3, latestAt: "2026-09-28T01:00:00.000Z", latestByClient: { ZZC1: "2026-09-28T01:00:00.000Z" } });
     assert.equal(dings, 0, "没有新消息也响了");
     // 网页切到后台：照样问；来了新的照样响
     fakeDocument.visibilityState = "hidden";
     await tickTimers((t) => !t.once && t.ms === 30_000);
     assert.equal(unreadCalls().length, 1, "网页切到后台就不问了（后台听不到提示音）");
-    await answerUnread({ count: 4, latestAt: "2026-09-28T01:00:30.000Z" });
+    await answerUnread({ count: 4, latestAt: "2026-09-28T01:00:30.000Z", latestByClient: { ZZC1: "2026-09-28T01:00:30.000Z" } });
     assert.equal(dings, 1, "后台来了新消息没响");
     fakeDocument.visibilityState = "visible";
     passTime();
@@ -625,7 +641,7 @@ async function main(): Promise<void> {
     passTime();
     unmount(); calls.length = 0; timers.length = 0;
     mount(Probe, { session, path: "/staff/chat" });
-    await answerUnread({ count: 1, latestAt: "2026-09-28T01:00:40.000Z" });
+    await answerUnread({ count: 1, latestAt: "2026-09-28T01:00:40.000Z", latestByClient: { ZZC1: "2026-09-28T01:00:40.000Z" } });
     assert.equal(dings, 2, "聊天窗口已经为这条响过，菜单又响了一次");
     passTime();
     unmount(); calls.length = 0; timers.length = 0;
@@ -635,7 +651,7 @@ async function main(): Promise<void> {
     await settle();
     unmount(); calls.length = 0; timers.length = 0;
     mount(Probe, { session, path: "/staff/chat" });
-    await answerUnread({ count: 1, latestAt: "2026-09-28T01:01:00.000Z" });
+    await answerUnread({ count: 1, latestAt: "2026-09-28T01:01:00.000Z", latestByClient: { ZZC2: "2026-09-28T01:01:00.000Z" } });
     assert.equal(dings, 2, "打开对话时已经看到的消息，菜单取到后又响了");
   });
 
@@ -670,8 +686,8 @@ async function main(): Promise<void> {
     await answerPoll({ messages: [cs("n1", "2026-09-28T01:00:06.000Z")], hasMore: false, serverTime: "2026-09-28T01:00:07.000Z", peerReadAt: null });
     assert.equal(dings, 1);
     clock += 300; // 0.3 秒后菜单那边报到了另一条
-    sound.noteUnreadLatest("2026-09-28T01:00:06.500Z"); // 第一次：只记基线
-    sound.noteUnreadLatest("2026-09-28T01:00:06.800Z");
+    sound.noteUnreadLatest({ client: "2026-09-28T01:00:06.000Z" }); // 第一次：只记基线
+    sound.noteUnreadLatest({ client: "2026-09-28T01:00:06.800Z" });
     assert.equal(dings, 1, "1 秒内不该马上响第二声");
     const pending = aliveTimers().filter((t) => t.once && t.ms > 0 && t.ms <= 1000);
     assert.equal(pending.length, 1, "第二声没有排着等补响（会被永远吞掉）");
@@ -680,26 +696,38 @@ async function main(): Promise<void> {
     assert.equal(dings, 2, "等满 1 秒后没有补响第二声");
   });
 
-  await check("U17 开着好几个标签页：别的标签页已经为这条响过、或者在那边看到了，这边不再响", async () => {
+  await check("U17 开着好几个标签页同一条只响一次；按对话记：客户甲刚响过，客户乙更早、没人看过的那条照样响", async () => {
     resetSound();
     const store = new Map<string, string>();
     fakeWindow.localStorage = { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => { store.set(k, v); }, removeItem: (k: string) => { store.delete(k); } };
+    const shared = () => JSON.parse(store.get("xt_chat_ding_v2") ?? "{}");
     try {
-      sound.noteUnreadLatest("2026-09-28T01:00:00.000Z"); // 这个标签页的基线
-      store.set("xt_chat_ding_upto_v1", "2026-09-28T01:00:30.000Z"); // 另一个标签页已经为 01:00:30 这条响过
-      sound.noteUnreadLatest("2026-09-28T01:00:30.000Z");
+      sound.noteUnreadLatest({ ZZA: "2026-09-28T01:00:00.000Z" }); // 这个标签页的基线
+      store.set("xt_chat_ding_v2", JSON.stringify({ ZZA: "2026-09-28T01:00:30.000Z" })); // 另一个标签页已经为客户甲 01:00:30 响过
+      sound.noteUnreadLatest({ ZZA: "2026-09-28T01:00:30.000Z" });
       assert.equal(dings, 0, "另一个标签页已经响过这条，这边又响了一声");
-      sound.noteUnreadLatest("2026-09-28T01:00:40.000Z");
+      sound.noteUnreadLatest({ ZZA: "2026-09-28T01:00:40.000Z" });
       assert.equal(dings, 1, "更新的一条没有人响过，这边该响");
-      assert.equal(store.get("xt_chat_ding_upto_v1"), "2026-09-28T01:00:40.000Z", "响完没记下来，别的标签页还会再响");
+      assert.equal(shared().ZZA, "2026-09-28T01:00:40.000Z", "响完没记进共用记录，别的标签页还会再响");
       passTime();
-      // 在别的标签页打开对话看到了 01:00:50 这条（那边只记不响）→ 这边菜单取到它也不响
-      sound.noteIncomingShown("2026-09-28T01:00:50.000Z");
-      assert.equal(store.get("xt_chat_ding_upto_v1"), "2026-09-28T01:00:50.000Z", "打开对话看到的那条没记进共用记录，别的标签页还会为它响");
+      // dsh 第二轮：客户乙 01:00:05 那条没人看过 —— 不能因为客户甲已经报到 01:00:40 就不响
+      sound.noteUnreadLatest({ ZZA: "2026-09-28T01:00:40.000Z", ZZB: "2026-09-28T01:00:05.000Z" });
+      assert.equal(dings, 2, "客户乙那条更早、但没人看过，被客户甲的新消息压掉了，一声没响");
+      passTime();
+      // 同一个标签页里：聊天窗口刚为客户甲响过 01:01:10，菜单随后报出客户丙更早的 01:01:05 → 也要响
+      sound.noteIncomingArrived("ZZA", "2026-09-28T01:01:10.000Z");
+      assert.equal(dings, 3);
+      passTime();
+      sound.noteUnreadLatest({ ZZA: "2026-09-28T01:01:10.000Z", ZZB: "2026-09-28T01:00:05.000Z", ZZC: "2026-09-28T01:01:05.000Z" });
+      assert.equal(dings, 4, "聊天窗口为客户甲响过，客户丙更早那条就不响了");
+      passTime();
+      // 另一个标签页打开客户丁的对话、看到了 01:02:00（那边只记不响）→ 这个标签页的菜单取到它不响；客户戊的照样响
+      sound.noteIncomingShown("ZZD", "2026-09-28T01:02:00.000Z");
+      assert.equal(shared().ZZD, "2026-09-28T01:02:00.000Z", "打开对话看到的那条没记进共用记录，别的标签页还会为它响");
       sound.resetChatSoundForTest(); // 模拟另一个标签页：自己的记录是空的，只有共用的那份
-      sound.noteUnreadLatest("2026-09-28T01:00:00.000Z");
-      sound.noteUnreadLatest("2026-09-28T01:00:50.000Z");
-      assert.equal(dings, 1, "别的标签页已经看到 / 响过的那条，这个标签页又响了");
+      sound.noteUnreadLatest({}); // 那个标签页的基线
+      sound.noteUnreadLatest({ ZZD: "2026-09-28T01:02:00.000Z", ZZE: "2026-09-28T01:01:30.000Z" });
+      assert.equal(dings, 5, "客户丁那条别的标签页已经看到了不该响，客户戊那条该响 —— 加起来应该正好一声");
     } finally {
       delete fakeWindow.localStorage;
     }
@@ -725,6 +753,38 @@ async function main(): Promise<void> {
     } finally {
       (globalThis as any).Date = RealDate;
       Date.now = () => clock;
+    }
+  });
+
+  await check("U19 换对话那一瞬间窗口获得焦点：不会拿上一个客户的消息时间去标下一个客户的已读", async () => {
+    resetSound();
+    fakeDocument.hasFocus = () => true;
+    try {
+      mount(ChatThread, { scope: { kind: "staff", clientId: "ZZCA" }, title: "ZZCA" });
+      lastCall().resolve({ messages: [cl("a1", "2026-09-28T01:00:00.000Z")], hasMore: false, serverTime: "2026-09-28T01:00:05.000Z", peerReadAt: null });
+      await settle();
+      // 客户甲那次标已读还没回来（网慢）：lastMarked 还是空的
+      const readsOf = (cid: string) => calls.filter((c) => c.url.includes("/chat/read") && String(c.opts.body).includes(`"clientId":"${cid}"`));
+      assert.equal(readsOf("ZZCA").length, 1, "前提不成立：打开客户甲应该标一次已读");
+      // 点了客户乙：按新客户画了一帧，清空旧消息的 effect 还没跑 —— 这时窗口获得焦点
+      holdEffects = true;
+      compProps = { scope: { kind: "staff", clientId: "ZZCB" }, title: "ZZCB" };
+      rerender();
+      (listeners.focus ?? []).forEach((f) => f({ type: "focus" }));
+      assert.equal(readsOf("ZZCB").length, 0, `拿客户甲的消息时间去标了客户乙的已读：${readsOf("ZZCB").map((c) => c.opts.body).join(" ")}`);
+      runHeldEffects();
+      await settle();
+      // 客户乙自己的消息取回来以后，照常标乙的已读
+      const loadB = calls.filter((c) => c.url.includes("/staff/chat/messages") && c.url.includes("clientId=ZZCB") && !c.done).pop();
+      assert.ok(loadB, "没去取客户乙的消息");
+      loadB!.done = true;
+      loadB!.resolve({ messages: [cl("b1", "2026-09-28T01:05:00.000Z")], hasMore: false, serverTime: "2026-09-28T01:05:05.000Z", peerReadAt: null });
+      await settle();
+      assert.equal(readsOf("ZZCB").length, 1, "客户乙的消息取回来后没有标乙的已读");
+      assert.match(String(readsOf("ZZCB")[0].opts.body), /"upTo":"2026-09-28T01:05:00.000Z"/, "标客户乙已读用的不是乙自己的消息时间");
+    } finally {
+      if (holdEffects) runHeldEffects();
+      delete fakeDocument.hasFocus;
     }
   });
 

@@ -85,6 +85,11 @@ function ourSide(scope: ChatScope): "client" | "cs" {
   return scope.kind === "client" ? "client" : "cs";
 }
 
+/** 提示音按对话分开记：客户那头只有一个对话「client」；员工那头按客户唛头（跟左边菜单未读的 latestByClient 同一个叫法） */
+function soundConv(scope: ChatScope): string {
+  return scope.kind === "client" ? "client" : scope.clientId;
+}
+
 /** 一批消息里对方发的最新那条的时间（没有就空串） */
 function latestIncoming(list: ChatMessage[], scope: ChatScope): string {
   const side = ourSide(scope);
@@ -145,6 +150,12 @@ export default function ChatThread(props: {
   scopeRef.current = scope;
   /** 已经成功标过已读的「对方最后一条」的时间：标失败了下一轮会再标；翻上去看旧消息时不标 */
   const lastMarkedRef = useRef("");
+  /**
+   * 手里这批消息是哪个对话的（取回来那一刻记下）。换对话时，「已经按新客户画了一帧、清空旧消息的 effect 还没跑」
+   * 那一瞬间手里还是上一个客户的消息 —— 这时窗口正好获得焦点，会拿上一个客户的时间去标新客户的已读
+   * （dsh 第二轮复查 2026-10-02）。对不上就不标。
+   */
+  const loadedKeyRef = useRef("");
 
   const nearBottom = () => {
     const el = listRef.current;
@@ -168,6 +179,7 @@ export default function ChatThread(props: {
    *   · 比上次标过的新（标失败了下一轮会再来，Codex 复核第 6 条）。
    */
   const markSeen = useCallback((list: ChatMessage[]) => {
+    if (loadedKeyRef.current !== keyRef.current) return;
     if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
     if (typeof document !== "undefined" && typeof document.hasFocus === "function" && !document.hasFocus()) return;
     if (!stickToBottomRef.current) return;
@@ -220,16 +232,19 @@ export default function ChatThread(props: {
     pollSinceRef.current = "";
     stickToBottomRef.current = true;
     lastMarkedRef.current = "";
+    loadedKeyRef.current = "";
+    const forKey = key;
     fetchChatMessages(scopeRef.current)
       .then((page) => {
         if (cancelled || !gate.isCurrent(ticket)) return;
+        loadedKeyRef.current = forKey;
         setMessages(page.messages);
         setHasMore(page.hasMore);
         setPeerReadAt(page.peerReadAt ?? "");
         serverTimeRef.current = page.serverTime;
         pollSinceRef.current = latestCreatedAt(page.messages, "");
         // 打开对话时就有的对方消息：只记下、不响（不是新来的）
-        noteIncomingShown(latestIncoming(page.messages, scopeRef.current));
+        noteIncomingShown(soundConv(scopeRef.current), latestIncoming(page.messages, scopeRef.current));
         markSeen(page.messages);
       })
       .catch((e: unknown) => {
@@ -269,7 +284,7 @@ export default function ChatThread(props: {
         const before = messagesRef.current;
         // 对方新发来的（这一轮才出现的）：响一声。往前多取的那 5 秒里的旧消息、我方自己发的都不算
         const known = new Set(before.map((m) => m.id));
-        noteIncomingArrived(latestIncoming(page.messages.filter((m) => !known.has(m.id)), scopeRef.current));
+        noteIncomingArrived(soundConv(scopeRef.current), latestIncoming(page.messages.filter((m) => !known.has(m.id)), scopeRef.current));
         const merged = mergeChatMessages(before, page.messages);
         if (merged !== before) {
           stickToBottomRef.current = nearBottom();

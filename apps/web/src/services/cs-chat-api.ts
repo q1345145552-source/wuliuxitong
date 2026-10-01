@@ -84,7 +84,12 @@ export function fetchChatConversations(q?: string): Promise<{ items: ChatConvers
  * 菜单红点用：客户 = 客服发来的未读条数；员工 / 超管 = 所有客户发来的未读条数。
  * latestAt = 最新一条没看的是什么时候发的（没有是 null）：比上次的新就响提示音（2026-10-02）
  */
-export function fetchChatUnread(role: "client" | "staff" | "admin"): Promise<{ count: number; latestAt: string | null }> {
+export function fetchChatUnread(role: "client" | "staff" | "admin"): Promise<{
+  count: number;
+  latestAt: string | null;
+  /** 员工 / 超管才有：每个有未读的客户唛头 → 各自最新一条没看的时间（提示音按客户分开判断，dsh 第二轮复查） */
+  latestByClient?: Record<string, string>;
+}> {
   const url = role === "client" ? "/client/chat/unread" : "/staff/chat/unread";
   return apiRequest(`${apiBaseUrl()}${url}`);
 }
