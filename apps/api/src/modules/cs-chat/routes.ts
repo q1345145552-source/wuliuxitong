@@ -364,7 +364,7 @@ export function registerCsChatRoutes(app: MinimalHttpApp): void {
       where: { companyId_clientId: { companyId: auth.companyId, clientId: auth.userId } },
       select: { id: true, clientReadAt: true },
     });
-    if (!conv) { ok(res, { count: 0, latestAt: null }); return; }
+    if (!conv) { ok(res, { count: 0, latestAt: null, serverTime: new Date().toISOString() }); return; }
     const agg = await prisma.csMessage.aggregate({
       where: {
         conversationId: conv.id,
@@ -375,7 +375,8 @@ export function registerCsChatRoutes(app: MinimalHttpApp): void {
       _max: { createdAt: true },
     });
     // latestAt：最新一条没看的客服消息是什么时候发的 —— 菜单拿它判断「有新来的」就响提示音（2026-10-02）
-    ok(res, { count: agg._count._all, latestAt: agg._max.createdAt?.toISOString() ?? null });
+    // serverTime：前端拿它划「打开网页时的线」（第一次取回来时，这条线往前 10 秒内到的照样响，Codex 第二轮复查）
+    ok(res, { count: agg._count._all, latestAt: agg._max.createdAt?.toISOString() ?? null, serverTime: new Date().toISOString() });
   });
 
   // ======================================================================
@@ -485,6 +486,6 @@ export function registerCsChatRoutes(app: MinimalHttpApp): void {
       .slice(0, 50);
     for (const u of recent) latestByClient[u.clientId] = u.latest!.toISOString();
     // latestAt：所有客户里最新一条没人看的消息是什么时候发的（2026-10-02）
-    ok(res, { count, conversations: [...unread.values()].filter((u) => u.count > 0).length, latestAt: latest?.toISOString() ?? null, latestByClient });
+    ok(res, { count, conversations: [...unread.values()].filter((u) => u.count > 0).length, latestAt: latest?.toISOString() ?? null, latestByClient, serverTime: new Date().toISOString() });
   });
 }

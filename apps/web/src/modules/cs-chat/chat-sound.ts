@@ -38,6 +38,12 @@ let unreadBaselineDone = false;
  * 后来前 50 个里有人看了，它挤进来 —— 没有这条线就会被当成新来的、突然响一声。
  */
 let baselineFloor = "";
+/**
+ * 第一次取回来时，服务器时间往前这么多以内到的，算「打开网页时刚到的」、照样响（Codex 第二轮复查 2026-10-02）：
+ * 第一次问未读要是慢（服务器忙），问的这几秒里对方发来的消息会跟着第一次结果一起回来 ——
+ * 原来第一次的结果一律只记不响，这条就永远不响了。
+ */
+const BASELINE_GRACE_MS = 10_000;
 /** 同一个浏览器各标签页共用的记录（v1 是全局一个时间，有上面说的毛病，换个名字不读它） */
 const SHARED_KEY = "xt_chat_ding_v2";
 /**
@@ -175,10 +181,27 @@ function arrived(conv: string, at: string | null | undefined): boolean {
  * ⚠️ 只有左边菜单一个来源（Codex 复查：原来员工聊天页的客户列表也报、各自一次基线 —— 列表第一次取回来时
  *    把菜单还没来得及报的真新消息悄悄记成「报过了」，菜单随后就不响了）。
  */
-export function noteUnreadLatest(latest: Record<string, string | null | undefined> | null | undefined): void {
+export function noteUnreadLatest(
+  latest: Record<string, string | null | undefined> | null | undefined,
+  /** 服务器回这次结果时的时间（ISO）；老接口没有就按「那批里最新的」划线 */
+  serverTime?: string | null,
+): void {
   const entries = Object.entries(latest ?? {});
   if (!unreadBaselineDone) {
     unreadBaselineDone = true;
+    const st = serverTime ? Date.parse(serverTime) : NaN;
+    if (Number.isFinite(st)) {
+      // 线 = 服务器时间往前 10 秒：比线早的是打开网页前就有的，只记不响；线以后的是这几秒刚到的，照样响
+      baselineFloor = new Date(st - BASELINE_GRACE_MS).toISOString();
+      let ring = false;
+      for (const [conv, at] of entries) {
+        if (!at) continue;
+        if (at <= baselineFloor) { if (at > (announced[conv] ?? "")) announced[conv] = at; continue; }
+        if (arrived(conv, at)) ring = true;
+      }
+      if (ring) playChatDing();
+      return;
+    }
     for (const [conv, at] of entries) {
       if (!at) continue;
       if (at > (announced[conv] ?? "")) announced[conv] = at;

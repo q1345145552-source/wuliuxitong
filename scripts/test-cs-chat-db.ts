@@ -188,6 +188,9 @@ async function main(): Promise<void> {
       const r2 = (await must("POST /staff/chat/send", STAFF2, { clientId: CLIENT.userId, content: "收到" })).message;
       const cu = await must("GET /client/chat/unread", CLIENT);
       assert.equal(cu.count, 1);
+      // 两个未读接口都带服务器时间（前端拿它划「打开网页时的线」，Codex 第二轮）
+      assert.ok(!Number.isNaN(Date.parse(cu.serverTime)), `客户未读没带服务器时间：${cu.serverTime}`);
+      assert.ok(!Number.isNaN(Date.parse((await must("GET /staff/chat/unread", STAFF)).serverTime)), "员工未读没带服务器时间");
       assert.equal(cu.latestAt, r2.createdAt);
       await must("POST /client/chat/read", CLIENT, {});
       assert.equal((await must("GET /client/chat/unread", CLIENT)).latestAt, null);

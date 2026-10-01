@@ -53,9 +53,12 @@ export function useChatUnread(session: AuthSession | null, hiddenByBrand: boolea
         if (!stopped && gate.isCurrent(ticket)) {
           setCount(Number(r.count) || 0);
           // 按对话分开报（chatSoundKey，跟聊天窗口同一个叫法）：客户那头只有自己一个对话；员工那头按客户唛头
-          noteUnreadLatest(who === "client"
-            ? { [chatSoundKey()]: r.latestAt ?? null }
-            : Object.fromEntries(Object.entries(r.latestByClient ?? {}).map(([cid, at]) => [chatSoundKey(cid), at])));
+          noteUnreadLatest(
+            who === "client"
+              ? { [chatSoundKey()]: r.latestAt ?? null }
+              : Object.fromEntries(Object.entries(r.latestByClient ?? {}).map(([cid, at]) => [chatSoundKey(cid), at])),
+            r.serverTime,
+          );
         }
       } catch {
         /* 问不到就保持原样，不打扰人 */

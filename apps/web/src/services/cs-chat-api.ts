@@ -89,6 +89,8 @@ export function fetchChatUnread(role: "client" | "staff" | "admin"): Promise<{
   latestAt: string | null;
   /** 员工 / 超管才有：每个有未读的客户唛头 → 各自最新一条没看的时间（提示音按客户分开判断，dsh 第二轮复查） */
   latestByClient?: Record<string, string>;
+  /** 服务器回这次结果时的时间：提示音拿它划「打开网页时的线」 */
+  serverTime?: string;
 }> {
   const url = role === "client" ? "/client/chat/unread" : "/staff/chat/unread";
   return apiRequest(`${apiBaseUrl()}${url}`);

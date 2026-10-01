@@ -43,6 +43,9 @@
  *   U20 改：员工聊天页的客户列表不再报提示音（跟菜单抢「第一次只记不响」，会把真新消息吞掉）；菜单照样响
  *   U22 服务器慢（一次超过 5 秒）：上一次没回来不发新的，回来了不被作废；中途要求刷新的回来后补问一次
  *   U23 员工菜单只报最近 50 个：打开网页前就有、后来才排进 50 个的旧未读不响；退出 / 换人登录时清掉提示音记录
+ *   —— Codex 第二轮复查（2026-10-02）——
+ *   U22 补：第一次问未读很慢、这期间对方发来的消息跟着第一次结果回来 → 照样响一次（原来第一次结果一律只记不响）；
+ *       补问回来同一条不再响；打开网页前 10 秒以外就有的不响
  */
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -935,11 +938,23 @@ async function main(): Promise<void> {
     // 中途聊天窗口发了消息，要求马上刷新：也先记着
     fakeWindow.dispatchEvent({ type: "xt-chat-unread-changed" });
     assert.equal(unreadCalls().length, 1);
-    // 第一次回来了：结果要用上（红点变 3），并且立刻补问一次
-    unreadCalls()[0].resolve({ count: 3, latestAt: "2026-09-28T05:00:00.000Z", latestByClient: { ZZA: "2026-09-28T05:00:00.000Z" } });
+    // 第一次回来了：结果要用上（红点变 3），并且立刻补问一次。
+    // 客户乙 05:00:04 那条是第一次问的那几秒里刚到的（服务器回结果时 05:00:06）—— 要响；客户甲 04:50:00 那条是打开网页前就有的 —— 不响
+    unreadCalls()[0].resolve({
+      count: 3, latestAt: "2026-09-28T05:00:04.000Z", serverTime: "2026-09-28T05:00:06.000Z",
+      latestByClient: { ZZA: "2026-09-28T04:50:00.000Z", ZZB: "2026-09-28T05:00:04.000Z" },
+    });
     await settle();
     assert.equal(textOf(tree), "3", "慢回来的结果被作废了，红点没变");
+    assert.equal(dings, 1, "第一次问未读很慢、这期间对方发来的消息，跟着第一次结果回来却不响（Codex 第二轮）");
     assert.equal(unreadCalls().length, 2, "中途要求刷新的，回来后没有补问");
+    passTime();
+    unreadCalls()[1].resolve({
+      count: 3, latestAt: "2026-09-28T05:00:04.000Z", serverTime: "2026-09-28T05:00:11.000Z",
+      latestByClient: { ZZA: "2026-09-28T04:50:00.000Z", ZZB: "2026-09-28T05:00:04.000Z" },
+    });
+    await settle();
+    assert.equal(dings, 1, "补问回来的是同一条，又响了一次");
   });
 
   await check("U23 员工菜单只报最近 50 个：打开网页前就有、后来才排进 50 个的旧未读不响；退出 / 换人登录时清掉提示音记录", async () => {
@@ -947,13 +962,13 @@ async function main(): Promise<void> {
     // 打开网页时：50 个未读客户，最新的一条是 06:00:50（第 51 个更早、没报上来）
     const first: Record<string, string> = {};
     for (let i = 0; i < 50; i++) first[sound.chatSoundKey(`ZZK${i}`)] = `2026-09-28T06:00:${String(i + 1).padStart(2, "0")}.000Z`;
-    sound.noteUnreadLatest(first);
-    assert.equal(dings, 0);
+    sound.noteUnreadLatest(first, "2026-09-28T06:05:00.000Z"); // 服务器回结果时 06:05:00，这 50 条都是 10 秒以前的
+    assert.equal(dings, 0, "打开网页时就有的 50 条（都是 10 秒以前到的）响了");
     // 有人看了一个，第 51 个（06:00:00 那条，打开网页前就有）挤进来：不响
     sound.noteUnreadLatest({ [sound.chatSoundKey("ZZOLD51")]: "2026-09-28T06:00:00.000Z" });
     assert.equal(dings, 0, "打开网页前就有的旧未读，后来排进最近 50 个时响了");
     // 真新来的照样响
-    sound.noteUnreadLatest({ [sound.chatSoundKey("ZZNEW")]: "2026-09-28T06:01:00.000Z" });
+    sound.noteUnreadLatest({ [sound.chatSoundKey("ZZNEW")]: "2026-09-28T06:06:00.000Z" });
     assert.equal(dings, 1, "打开网页后真新来的消息没响");
     // 退出 / 换人登录：提示音记录（里面是客户唛头和时间）跟运单缓存一起清
     const store = new Map<string, string>([["xt_chat_ding_v2", "{\"c:ZZA\":\"x\"}"], ["xt_chat_ding_upto_v1", "x"], ["xt_orders_ZZA", "[]"], ["auth_session_v1", "{}"]]);
