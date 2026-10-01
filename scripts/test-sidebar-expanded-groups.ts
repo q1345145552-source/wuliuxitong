@@ -60,19 +60,29 @@ async function main() {
     }
   });
 
-  await check("2) 管理员/员工/客户：键名、默认值跟改之前一字不差", () => {
-    installFakeWindow();
+  await check("2) 管理员/员工/客户：默认展开「运单」和有客服对话的那一组；默认名单里的组都真实存在；老记忆（老组名）不读", () => {
+    const store = installFakeWindow();
+    // 2026-10-02 菜单按业务线重新分组、组名全换了：记忆键换成 _v2，老键里的老组名一个都对不上，读了只会让所有组都收着
+    store.set("xt_sidebar_expanded_groups", JSON.stringify(["运单管理", "我的运单"]));
     for (const role of ["admin", "staff", "client"] as const) {
-      assert.equal(mod.expandedGroupsKey(role), "xt_sidebar_expanded_groups", `${role} 的记忆键被改了，老用户的展开记忆会全丢`);
-      assert.deepEqual([...mod.initialExpandedGroups(role)], ["运单管理", "我的运单"], `${role} 没记忆时的默认展开变了`);
+      assert.equal(mod.expandedGroupsKey(role), "xt_sidebar_expanded_groups_v2", `${role} 还在用老记忆键（里面是老组名，打开后所有组都收着）`);
+      const set = mod.initialExpandedGroups(role);
+      const labels = roleFunctionGroups[role].map((g) => g.groupLabel);
+      assert.ok(set.has("运单") && labels.includes("运单"), `${role} 没记忆时「运单」没展开`);
+      const chatGroup = roleFunctionGroups[role].find((g) => g.items.some((it) => /-func-chat$/.test(it.id)))!;
+      assert.ok(set.has(chatGroup.groupLabel), `${role} 有客服对话的那一组「${chatGroup.groupLabel}」没默认展开（消息红点要一进来就看得到）`);
+      assert.ok(labels.some((l) => set.has(l)), `${role} 默认展开的组一个都不在菜单里`);
     }
-    assert.equal(mod.expandedGroupsKey(null), "xt_sidebar_expanded_groups", "还没读到登录信息时（首屏）要用老键");
+    for (const label of mod.DEFAULT_EXPANDED_GROUPS) {
+      assert.ok(["admin", "staff", "client"].some((r) => roleFunctionGroups[r as "admin"].some((g) => g.groupLabel === label)), `默认展开名单里的「${label}」哪个角色的菜单里都没有（组名改了没跟着改）`);
+    }
+    assert.equal(mod.expandedGroupsKey(null), "xt_sidebar_expanded_groups_v2", "还没读到登录信息时（首屏）也要用新键");
     assert.notEqual(mod.expandedGroupsKey("agent"), mod.expandedGroupsKey("admin"), "代理跟管理员共用记忆键 —— 老板本机测代理号会读到管理端的记忆");
   });
 
   await check("3) 同一浏览器管理员记过「只展开财务」，代理登录照样展开「我的客户」；管理员自己照读原记忆", () => {
     const store = installFakeWindow();
-    store.set("xt_sidebar_expanded_groups", JSON.stringify(["财务"]));
+    store.set("xt_sidebar_expanded_groups_v2", JSON.stringify(["财务"]));
     assert.ok(mod.initialExpandedGroups("agent").has("我的客户"), "管理端的记忆串到代理身上了");
     assert.deepEqual([...mod.initialExpandedGroups("admin")], ["财务"], "管理员原来的记忆被默认值覆盖了");
   });
@@ -83,19 +93,19 @@ async function main() {
     set.delete("我的客户");
     mod.saveExpandedGroups("agent", set);
     assert.equal(mod.initialExpandedGroups("agent").has("我的客户"), false, "代理收起后刷新又被展开了");
-    assert.equal(store.has("xt_sidebar_expanded_groups"), false, "代理的记忆写进了管理员/员工/客户共用的老键");
+    assert.equal(store.has("xt_sidebar_expanded_groups_v2"), false, "代理的记忆写进了管理员/员工/客户共用的键");
     // 老角色同理
     const adminSet = mod.initialExpandedGroups("admin");
-    adminSet.delete("运单管理");
+    adminSet.delete("运单");
     mod.saveExpandedGroups("admin", adminSet);
-    assert.equal(mod.initialExpandedGroups("admin").has("运单管理"), false, "管理员收起后刷新又被展开了");
+    assert.equal(mod.initialExpandedGroups("admin").has("运单"), false, "管理员收起后刷新又被展开了");
     assert.ok(mod.initialExpandedGroups("agent").size === 0, "管理员的记忆串到代理的键上了");
   });
 
   await check("5) localStorage 一碰就抛（Safari 无痕）：不崩，退回默认值；写也不抛", () => {
     installFakeWindow(true);
     assert.ok(mod.initialExpandedGroups("agent").has("我的客户"));
-    assert.deepEqual([...mod.initialExpandedGroups("staff")], ["运单管理", "我的运单"]);
+    assert.deepEqual([...mod.initialExpandedGroups("staff")], [...mod.DEFAULT_EXPANDED_GROUPS]);
     assert.doesNotThrow(() => mod.saveExpandedGroups("agent", new Set(["我的客户"])));
   });
 

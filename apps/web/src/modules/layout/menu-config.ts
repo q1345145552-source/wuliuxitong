@@ -36,7 +36,13 @@ export const roleMenus: Record<AuthRole, MenuItem[]> = {
 
 export const globalMenus: MenuItem[] = [];
 
-/** 分组菜单：运单相关 vs 其他业务分明 */
+/**
+ * 分组菜单（2026-10-02 老板：「把左侧功能区的板块分类一下，现在的太乱了」→ 他选 A）：
+ * 按业务线分 —— 散货运单 / 集货拼柜 / 整柜 / 尾端派送 / 客服 / 钱 / 账号 / 配置，每组 2 到 5 样。
+ * 原来「运单管理」「我的运单」一组塞了八九样（散货、集货、整柜、客服混在一起）。
+ * 只挪位置，每一项的 id、名字、网址都没改（红点、品牌隐藏、测试都按 id 认）。
+ * ⚠️ 组名改了的话，sidebar-expanded-groups.ts 的默认展开名单要跟着改。
+ */
 export const roleFunctionGroups: Record<AuthRole, MenuGroup[]> = {
   admin: [
     {
@@ -46,32 +52,43 @@ export const roleFunctionGroups: Record<AuthRole, MenuGroup[]> = {
       ],
     },
     {
-      groupLabel: "运单管理",
+      groupLabel: "运单",
       items: [
         { id: "admin-func-orders", label: "运单管理", href: "/admin#orders" },
         { id: "admin-func-prealerts", label: "预报单管理", href: "/admin/prealerts" },
         { id: "admin-func-container", label: "装柜管理", href: "/staff/container-loading" },
-        { id: "admin-func-fcl", label: "整柜询价", href: "/staff#staff-fcl" },
-        // 客服对话（2026-09-28）：跟员工共用一个收件箱，页面借员工端的
-        { id: "admin-func-chat", label: "客户消息", href: "/staff/chat" },
-        { id: "admin-func-fcl-containers", label: "整柜管理", href: "/admin/fcl-containers" },
+      ],
+    },
+    {
+      groupLabel: "集货拼柜",
+      items: [
         { id: "admin-func-consolidation", label: "集货拼柜", href: "/admin/consolidation" },
         { id: "admin-func-whr-consolidation", label: "集货拼柜(仓库版)", href: "/admin/whr-consolidation" },
       ],
     },
     {
-      groupLabel: "账号管理",
+      groupLabel: "整柜",
       items: [
-        { id: "admin-func-staff", label: "员工管理", href: "/admin#staff" },
-        { id: "admin-func-clients", label: "客户管理", href: "/admin#clients" },
-        { id: "admin-func-agents", label: "代理管理", href: "/admin/agents" },
+        { id: "admin-func-fcl", label: "整柜询价", href: "/staff#staff-fcl" },
+        { id: "admin-func-fcl-containers", label: "整柜管理", href: "/admin/fcl-containers" },
       ],
     },
     {
-      groupLabel: "尾端运营",
+      groupLabel: "尾端派送",
       items: [
         { id: "admin-func-lastmile", label: "尾端派送", href: "/admin#lastmile" },
         { id: "admin-func-address", label: "尾端地址", href: "/admin#lastmile-address" },
+      ],
+    },
+    {
+      groupLabel: "客服与 AI",
+      items: [
+        // 客服对话（2026-09-28）：跟员工共用一个收件箱，页面借员工端的
+        { id: "admin-func-chat", label: "客户消息", href: "/staff/chat" },
+        { id: "admin-func-ai-feed", label: "AI知识投喂", href: "/admin#knowledge-feed" },
+        { id: "admin-func-ai-list", label: "知识列表", href: "/admin#knowledge-list" },
+        { id: "admin-func-ai-memory", label: "AI会话记忆", href: "/admin#ai-memory" },
+        { id: "admin-func-ai-gap", label: "AI待补知识", href: "/admin#ai-knowledge-gaps" },
       ],
     },
     {
@@ -83,6 +100,14 @@ export const roleFunctionGroups: Record<AuthRole, MenuGroup[]> = {
       ],
     },
     {
+      groupLabel: "账号管理",
+      items: [
+        { id: "admin-func-staff", label: "员工管理", href: "/admin#staff" },
+        { id: "admin-func-clients", label: "客户管理", href: "/admin#clients" },
+        { id: "admin-func-agents", label: "代理管理", href: "/admin/agents" },
+      ],
+    },
+    {
       groupLabel: "系统配置",
       items: [
         { id: "admin-func-shipping", label: "运费配置", href: "/admin#shipping-config" },
@@ -90,68 +115,79 @@ export const roleFunctionGroups: Record<AuthRole, MenuGroup[]> = {
         { id: "admin-func-customs", label: "关务监控", href: "/admin/customs" },
       ],
     },
-    {
-      groupLabel: "AI 知识库",
-      items: [
-        { id: "admin-func-ai-feed", label: "AI知识投喂", href: "/admin#knowledge-feed" },
-        { id: "admin-func-ai-list", label: "知识列表", href: "/admin#knowledge-list" },
-        { id: "admin-func-ai-memory", label: "AI会话记忆", href: "/admin#ai-memory" },
-        { id: "admin-func-ai-gap", label: "AI待补知识", href: "/admin#ai-knowledge-gaps" },
-      ],
-    },
   ],
   staff: [
     {
-      groupLabel: "运单管理",
+      groupLabel: "运单",
       items: [
         { id: "staff-func-order-shipment", label: "运单管理", href: "/staff#staff-order-shipment" },
         { id: "staff-func-prealert", label: "预报单审核", href: "/staff#staff-prealert-review" },
-        { id: "staff-func-consolidation", label: "集货拼柜", href: "/staff/consolidation" },
-          { id: "staff-func-whr-consolidation", label: "集货拼柜(仓库版)", href: "/staff/whr-consolidation" },
         { id: "staff-func-container-loading", label: "装柜管理", href: "/staff/container-loading" },
-        { id: "staff-func-fcl", label: "整柜询价", href: "/staff#staff-fcl" },
-        // 客服对话（2026-09-28，老板：「全部客服都能回」）；放在默认展开的「运单管理」里，一进来就看得到红点
-        { id: "staff-func-chat", label: "客户消息", href: "/staff/chat" },
-        { id: "staff-func-fcl-containers", label: "整柜管理", href: "/staff/fcl-containers" },
         { id: "staff-func-ops-tools", label: "入库与标签工具", href: "/staff#staff-ops-tools" },
       ],
     },
     {
-      groupLabel: "尾端运营",
+      groupLabel: "集货拼柜",
+      items: [
+        { id: "staff-func-consolidation", label: "集货拼柜", href: "/staff/consolidation" },
+        { id: "staff-func-whr-consolidation", label: "集货拼柜(仓库版)", href: "/staff/whr-consolidation" },
+        { id: "staff-func-wallet", label: "客户集货余额", href: "/staff#staff-wallet" },
+      ],
+    },
+    {
+      groupLabel: "整柜",
+      items: [
+        { id: "staff-func-fcl", label: "整柜询价", href: "/staff#staff-fcl" },
+        { id: "staff-func-fcl-containers", label: "整柜管理", href: "/staff/fcl-containers" },
+      ],
+    },
+    {
+      groupLabel: "尾端派送",
       items: [
         { id: "staff-func-lastmile", label: "尾端派送", href: "/staff#staff-lastmile" },
         { id: "staff-func-address", label: "尾端地址", href: "/staff#staff-address" },
       ],
     },
     {
-      groupLabel: "财务",
+      groupLabel: "客服",
       items: [
-        { id: "staff-func-wallet", label: "客户集货余额", href: "/staff#staff-wallet" },
+        // 客服对话（2026-09-28，老板：「全部客服都能回」）；这一组默认展开，一进来就看得到红点
+        { id: "staff-func-chat", label: "客户消息", href: "/staff/chat" },
       ],
     },
   ],
   client: [
     {
-      groupLabel: "我的运单",
+      groupLabel: "运单",
       items: [
         { id: "client-func-query", label: "运单查询", href: "/client#client-query" },
         { id: "client-func-prealert", label: "预报单", href: "/client#client-prealert" },
-        { id: "client-func-consolidation", label: "集货拼柜", href: "/client/consolidation" },
-          { id: "client-func-whr-consolidation", label: "集货拼柜(仓库版)", href: "/client/whr-consolidation" },
-        { id: "client-func-fcl", label: "整柜询价", href: "/client#client-fcl" },
-        // 客服对话（2026-09-28）。代理名下的客户按品牌藏掉（branding/brand-core.ts，老板：「代理的不开这个功能」）
-        { id: "client-func-chat", label: "在线客服", href: "/client/chat" },
-        { id: "client-func-fcl-containers", label: "我的整柜", href: "/client/fcl-containers" },
         { id: "client-func-imports", label: "批量下单", href: "/client/imports" },
         // 这一页是跳快递100查国内快递，不是查湘泰运单 —— 按实际功能命名（2026-08-11）
         { id: "client-func-track", label: "查国内快递", href: "/client/track" },
       ],
     },
     {
-      groupLabel: "其他",
+      groupLabel: "集货拼柜",
+      items: [
+        { id: "client-func-consolidation", label: "集货拼柜", href: "/client/consolidation" },
+        { id: "client-func-whr-consolidation", label: "集货拼柜(仓库版)", href: "/client/whr-consolidation" },
+        { id: "client-func-wallet", label: "集货余额", href: "/client/wallet" },
+      ],
+    },
+    {
+      groupLabel: "整柜",
+      items: [
+        { id: "client-func-fcl", label: "整柜询价", href: "/client#client-fcl" },
+        { id: "client-func-fcl-containers", label: "我的整柜", href: "/client/fcl-containers" },
+      ],
+    },
+    {
+      groupLabel: "服务",
       items: [
         { id: "client-func-main", label: "主页与AI", href: "/client#client-main" },
-        { id: "client-func-wallet", label: "集货余额", href: "/client/wallet" },
+        // 客服对话（2026-09-28）。代理名下的客户按品牌藏掉（branding/brand-core.ts，老板：「代理的不开这个功能」）
+        { id: "client-func-chat", label: "在线客服", href: "/client/chat" },
         { id: "client-func-address", label: "地址库", href: "/client/address-book" },
       ],
     },

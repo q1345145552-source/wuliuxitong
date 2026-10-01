@@ -3,8 +3,14 @@ import type { AuthRole } from "../../auth/auth-session";
 /**
  * 侧边栏哪些功能分组是展开的：默认值 + localStorage 记忆（从 RoleShell 挪出来，方便脚本直接测）。
  */
-export const EXPANDED_GROUPS_KEY = "xt_sidebar_expanded_groups";
-export const DEFAULT_EXPANDED_GROUPS = ["运单管理", "我的运单"];
+/**
+ * 2026-10-02 左边菜单按业务线重新分组（老板选 A），组名全换了：「运单管理 / 我的运单」→「运单」，新增「集货拼柜 / 整柜 / 客服」……
+ * 记忆是按组名记的，老记忆里的组名一个都对不上 —— 不换键的话，老用户第一次打开会看到所有组都收着。
+ * 所以换个键（_v2），所有人从默认值重新开始；老键不读也不删（里面只有组名，没什么）。
+ * 默认展开：「运单」（三端都有）+ 有客服对话的那一组（员工「客服」、超管「客服与 AI」、客户「服务」），一进来就看得到消息红点。
+ */
+export const EXPANDED_GROUPS_KEY = "xt_sidebar_expanded_groups_v2";
+export const DEFAULT_EXPANDED_GROUPS = ["运单", "客服", "客服与 AI", "服务"];
 
 /**
  * 代理的展开记忆单独存、默认展开「我的客户」（2026-09-16 第 2 轮复核）。

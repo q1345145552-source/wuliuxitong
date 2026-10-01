@@ -59,9 +59,10 @@ async function main(): Promise<void> {
       for (const g of roleFunctionGroups[role]) { const it = g.items.find((i) => i.id === id); if (it) return { g: g.groupLabel, ...it }; }
       return null;
     };
-    assert.deepEqual([find("staff", "staff-func-chat")?.g, find("staff", "staff-func-chat")?.href], ["运单管理", "/staff/chat"]);
-    assert.deepEqual([find("admin", "admin-func-chat")?.g, find("admin", "admin-func-chat")?.href], ["运单管理", "/staff/chat"]);
-    assert.deepEqual([find("client", "client-func-chat")?.g, find("client", "client-func-chat")?.href], ["我的运单", "/client/chat"]);
+    // 2026-10-02 菜单按业务线重新分组：客服入口挪到「客服 / 客服与 AI / 服务」，这几组默认展开（sidebar-expanded-groups.ts）
+    assert.deepEqual([find("staff", "staff-func-chat")?.g, find("staff", "staff-func-chat")?.href], ["客服", "/staff/chat"]);
+    assert.deepEqual([find("admin", "admin-func-chat")?.g, find("admin", "admin-func-chat")?.href], ["客服与 AI", "/staff/chat"]);
+    assert.deepEqual([find("client", "client-func-chat")?.g, find("client", "client-func-chat")?.href], ["服务", "/client/chat"]);
     const frame = read("apps/web/src/modules/layout/WorkbenchFrame.tsx");
     assert.match(frame, /"\/staff\/chat": "客户消息"/);
     assert.match(frame, /"\/client\/chat": "在线客服"/);
