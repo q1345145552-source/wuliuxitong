@@ -176,7 +176,8 @@ async function main(): Promise<void> {
       assert.equal(u.count, 2);
       assert.equal(u.latestAt, last.createdAt, `员工菜单拿到的「最新未读」不是最后那句：${u.latestAt}`);
       // 按客户分开报（提示音按客户分开判断，dsh 第二轮复查）：只有这个客户，时间是他最后那句
-      assert.deepEqual(u.latestByClient, { [CLIENT.userId]: last.createdAt }, `员工菜单按客户报的最新未读不对：${JSON.stringify(u.latestByClient)}`);
+      // 按 JSON 比：这里直接调接口函数、没走网络，拿到的是无原型对象（真走网络会变成 JSON）
+      assert.deepEqual(JSON.parse(JSON.stringify(u.latestByClient)), { [CLIENT.userId]: last.createdAt }, `员工菜单按客户报的最新未读不对：${JSON.stringify(u.latestByClient)}`);
       const c2 = await must("GET /client/chat/messages", CLIENT);
       assert.ok(c2.peerReadAt < last.createdAt, "员工还没看，客户那边已经算已读了");
       // 员工看了（共用收件箱，哪个员工看都算）：客户那边变已读，员工菜单没有未读了
@@ -268,9 +269,39 @@ async function main(): Promise<void> {
       const theirs = await must("GET /staff/chat/unread", OTHER_STAFF);
       assert.equal(theirs.count, 0, `别家公司员工的红点算进了我们客户的未读：${theirs.count}`);
       assert.equal(theirs.latestAt, null, "别家公司员工拿到了我们客户最新未读的时间");
-      assert.deepEqual(theirs.latestByClient, {}, "别家公司员工拿到了我们客户的唛头和未读时间");
+      assert.deepEqual(JSON.parse(JSON.stringify(theirs.latestByClient)), {}, "别家公司员工拿到了我们客户的唛头和未读时间");
       assert.ok(ours.latestByClient[CLIENT_B.userId], "我们公司客户乙有未读，按客户报的里面却没有他");
       assert.ok(ours.latestAt, "我们公司有未读，「最新未读」却是空的");
+    });
+
+    await check("C8c 员工菜单按客户报的最新未读：只给最近 50 个（刚来的那条一定在里面）；唛头叫 __proto__ 也照样报出来（dsh 第三轮）", async () => {
+      // 先把已有的未读都标掉，免得前面几项的数据混进来
+      for (const cid of [CLIENT.userId, CLIENT_B.userId]) await must("POST /staff/chat/read", STAFF, { clientId: cid });
+      const base = Date.now() - 600_000;
+      for (let i = 0; i < 55; i++) {
+        const id = `ZZCAP${String(i).padStart(2, "0")}`;
+        await pm.user.create({ data: { id, companyId: CO, role: "client", name: `容量${i}`, passwordHash: "x", phone: `0cap${i}`, status: "active" } });
+        const conv = await pm.csConversation.create({ data: { companyId: CO, clientId: id, lastMessageAt: new Date(base + i * 1000) } });
+        await pm.csMessage.create({ data: { companyId: CO, conversationId: conv.id, senderId: id, senderRole: "client", content: `第${i}个`, createdAt: new Date(base + i * 1000) } });
+      }
+      // 唛头叫 __proto__ 的客户（管理员建号不校验格式）发来最新的一条
+      await pm.user.create({ data: { id: "__proto__", companyId: CO, role: "client", name: "怪唛头", passwordHash: "x", phone: "0proto", status: "active" } });
+      const proto = (await must("POST /staff/chat/send", STAFF, { clientId: "__proto__", content: "先打个招呼" })).message;
+      void proto;
+      const last = (await call("POST /client/chat/send", { userId: "__proto__", companyId: CO, role: "client", name: "怪唛头", agentId: null } as Auth, { content: "在吗" }));
+      assert.equal(last.status, 200, `唛头 __proto__ 的客户发不出消息：${last.status} ${last.message}`);
+      const u = await must("GET /staff/chat/unread", STAFF);
+      // 按走网络后的样子看（JSON 一转）：__proto__ 这个键在 JSON 里要在
+      const json = JSON.stringify(u.latestByClient);
+      assert.match(json, /"__proto__":"/, `转成 JSON 以后唛头 __proto__ 那个客户没了：${json.slice(0, 120)}`);
+      u.latestByClient = JSON.parse(json);
+      const keys = Object.keys(u.latestByClient);
+      assert.equal(u.count >= 56, true, `前提不成立：未读应该至少 56 条，实际 ${u.count}`);
+      assert.equal(keys.length, 50, `按客户报的应该只给最近 50 个，实际 ${keys.length} 个`);
+      assert.ok(Object.prototype.hasOwnProperty.call(u.latestByClient, "__proto__"), `唛头 __proto__ 的客户最新那条被吞掉了：${JSON.stringify(keys.slice(0, 5))}`);
+      assert.equal(u.latestByClient["__proto__"], last.data.message.createdAt);
+      assert.ok(!keys.includes("ZZCAP00"), "最早那个客户也报出来了（没按最近 50 个截）");
+      assert.ok(keys.includes("ZZCAP54"), "最近的客户没报出来");
     });
 
     await check("C8b 表情正好落在第 60 个字（列表摘要截断的位置）：照样发得出去、摘要不劈半个表情（原来整条 500）", async () => {

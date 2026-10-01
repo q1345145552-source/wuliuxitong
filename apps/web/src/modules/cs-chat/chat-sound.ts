@@ -5,8 +5,8 @@
  *   · 左边菜单的未读数（useChatUnread，网页切到后台也照样问；后台浏览器会放慢，最慢约一分钟一次）—— 不在聊天页、或者网页在后台时靠它；
  *   · 聊天窗口的 3 秒轮询（ChatThread）—— 正开着这个对话时靠它，不用等菜单那半分钟。
  *
- * 同一条只响一次：按**对话**分开记「这个对话里对方最新一条，已经报到哪了」（对话 = 客户那头就一个「client」；
- * 员工那头是客户唛头）。同一个对话里消息按时间往后走，所以「不比记下的新 = 已经报过」。
+ * 同一条只响一次：按**对话**分开记「这个对话里对方最新一条，已经报到哪了」（对话的叫法统一用 chatSoundKey：
+ * 客户那头就一个「self」，员工那头是「c:唛头」）。同一个对话里消息按时间往后走，所以「不比记下的新 = 已经报过」。
  *   ⚠️ 不能整个系统共用一个时间（dsh 第二轮复查 2026-10-02）：客户甲 01:00:10 那条刚响过，
  *      客户乙 01:00:05 那条没人看过，拿一个全局时间一比就被当成「报过了」，一声不响、红点却亮着。
  * **开着好几个标签页也只响一次**（dsh 复查）：这份记录同时写进 localStorage，同一个浏览器的标签页共用；
@@ -28,12 +28,25 @@ let lastPlayedAt = 0;
 let pendingTimer: number | null = null;
 /** 这个标签页自己的记录 */
 let announced: Seen = {};
-/** 菜单未读数第一次取回来时只记下、不响：打开网页时就已经躺着的未读，不算「新来的」 */
-let unreadBaselineDone = false;
+/** 每个来源（左边菜单、员工聊天页的客户列表）第一次取回来时只记下、不响：打开网页时就已经躺着的未读，不算「新来的」 */
+let baselineDone = new Set<string>();
 /** 同一个浏览器各标签页共用的记录（v1 是全局一个时间，有上面说的毛病，换个名字不读它） */
 const SHARED_KEY = "xt_chat_ding_v2";
-/** 共用记录最多记这么多个对话（按时间留最新的），免得越攒越大 */
-const SHARED_MAX = 300;
+/**
+ * 共用记录最多记这么多个对话（按时间留最新的），免得越攒越大。比员工收件箱一页（500 个对话）大，
+ * 而且裁的时候**刚写进去的那个一定留下**（dsh 第三轮复查：原来写满 300 个后，打开一个老对话、刚记进去就被自己裁掉，
+ * 别的标签页随后又为这条已经在屏幕上的消息响一声）
+ */
+const SHARED_MAX = 1000;
+
+/**
+ * 对话的叫法：客户那头只有一个对话「self」；员工那头「c:唛头」。
+ * 加前缀是故意的（dsh 第三轮复查）：唛头是管理员自己填的、不校验格式 —— 真有人建了叫 __proto__ / constructor 的唛头，
+ * 拿它直接当对象的键会读到 JS 自带的东西，这个客户就永远不响；有人建了叫 client 的唛头，也会跟客户那头的叫法撞上
+ */
+export function chatSoundKey(clientId?: string): string {
+  return clientId === undefined ? "self" : `c:${clientId}`;
+}
 
 function audioCtor(): AudioCtxCtor | null {
   if (typeof window === "undefined") return null;
@@ -71,10 +84,14 @@ function readShared(): Seen {
   }
 }
 
-function writeShared(seen: Seen): void {
+/** keep = 这次刚写的那个对话：裁的时候一定留下 */
+function writeShared(seen: Seen, keep: string): void {
   try {
     let entries = Object.entries(seen);
-    if (entries.length > SHARED_MAX) entries = entries.sort((a, b) => (a[1] < b[1] ? 1 : -1)).slice(0, SHARED_MAX);
+    if (entries.length > SHARED_MAX) {
+      const others = entries.filter(([k]) => k !== keep).sort((a, b) => (a[1] < b[1] ? 1 : -1)).slice(0, SHARED_MAX - 1);
+      entries = seen[keep] !== undefined ? [...others, [keep, seen[keep]]] : others;
+    }
     window.localStorage.setItem(SHARED_KEY, JSON.stringify(Object.fromEntries(entries)));
   } catch { /* 记不下就算了（隐私模式、被禁）：当只有这一个标签页 */ }
 }
@@ -87,7 +104,7 @@ function claimShared(conv: string, at: string): boolean {
   const seen = readShared();
   if ((seen[conv] ?? "") >= at) return false;
   seen[conv] = at;
-  writeShared(seen);
+  writeShared(seen, conv);
   return true;
 }
 
@@ -96,7 +113,7 @@ function markShared(conv: string, at: string): void {
   const seen = readShared();
   if ((seen[conv] ?? "") < at) {
     seen[conv] = at;
-    writeShared(seen);
+    writeShared(seen, conv);
   }
 }
 
@@ -144,13 +161,14 @@ function arrived(conv: string, at: string | null | undefined): boolean {
 }
 
 /**
- * 菜单未读数取回来了：latest = 每个有未读的对话，对方最新一条没看的时间。
- * 第一次只记下（打开网页前就有的不算新）；以后哪个对话有比记下的新的，就响（一次取回来最多响一声）。
+ * 未读取回来了：latest = 每个有未读的对话（键用 chatSoundKey），对方最新一条没看的时间。
+ * source = 谁报的（左边菜单 "menu"、员工聊天页的客户列表 "list"）：每个来源第一次只记下（打开网页前就有的不算新）；
+ * 以后哪个对话有比记下的新的，就响（一次取回来最多响一声）。
  */
-export function noteUnreadLatest(latest: Record<string, string | null | undefined> | null | undefined): void {
+export function noteUnreadLatest(latest: Record<string, string | null | undefined> | null | undefined, source = "menu"): void {
   const entries = Object.entries(latest ?? {});
-  if (!unreadBaselineDone) {
-    unreadBaselineDone = true;
+  if (!baselineDone.has(source)) {
+    baselineDone.add(source);
     for (const [conv, at] of entries) if (at && at > (announced[conv] ?? "")) announced[conv] = at;
     return;
   }
@@ -179,5 +197,5 @@ export function resetChatSoundForTest(): void {
   if (pendingTimer !== null) { try { window.clearTimeout(pendingTimer); } catch { /* 测试里的假定时器 */ } }
   pendingTimer = null;
   announced = {};
-  unreadBaselineDone = false;
+  baselineDone = new Set<string>();
 }

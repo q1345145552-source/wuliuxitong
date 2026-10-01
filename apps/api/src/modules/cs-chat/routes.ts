@@ -469,14 +469,21 @@ export function registerCsChatRoutes(app: MinimalHttpApp): void {
     const unread = await staffUnreadByConversation(auth.companyId);
     let count = 0;
     let latest: Date | null = null;
-    /* latestByClient：每个有未读的客户，各自最新一条没人看的是什么时候 —— 菜单按客户分开判断「有没有新来的」
-       （dsh 第二轮复查 2026-10-02：原来只给一个全局最新时间，客户甲刚响过，客户乙稍早那条就再也不响了） */
-    const latestByClient: Record<string, string> = {};
     for (const u of unread.values()) {
       count += u.count;
       if (u.latest && (!latest || u.latest > latest)) latest = u.latest;
-      if (u.latest && u.count > 0) latestByClient[u.clientId] = u.latest.toISOString();
     }
+    /* latestByClient：有未读的客户，各自最新一条没人看的是什么时候 —— 菜单按客户分开判断「有没有新来的」
+       （dsh 第二轮复查 2026-10-02：原来只给一个全局最新时间，客户甲刚响过，客户乙稍早那条就再也不响了）。
+       只给最近的 50 个（dsh 第三轮复查：这个接口 30 秒问一次、后台也问，几百个未读全带上一次要 20KB）——
+       刚来的那条一定是最新的，排得进前 50；前端只拿它判断「有没有比记下的新」，更早的用不上。
+       用没有原型的对象装：唛头是管理员自己填的，叫 __proto__ 这种名字的放进普通对象会被吞掉 */
+    const latestByClient: Record<string, string> = Object.create(null);
+    const recent = [...unread.values()]
+      .filter((u) => u.latest && u.count > 0)
+      .sort((a, b) => b.latest!.getTime() - a.latest!.getTime())
+      .slice(0, 50);
+    for (const u of recent) latestByClient[u.clientId] = u.latest!.toISOString();
     // latestAt：所有客户里最新一条没人看的消息是什么时候发的（2026-10-02）
     ok(res, { count, conversations: [...unread.values()].filter((u) => u.count > 0).length, latestAt: latest?.toISOString() ?? null, latestByClient });
   });

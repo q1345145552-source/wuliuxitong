@@ -29,7 +29,7 @@ import {
 } from "../../services/cs-chat-api";
 import { compressImageForUpload } from "../shared/image-compress";
 import { createRequestGate } from "../shared/request-gate";
-import { installChatSoundUnlock, noteIncomingArrived, noteIncomingShown } from "./chat-sound";
+import { chatSoundKey, installChatSoundUnlock, noteIncomingArrived, noteIncomingShown } from "./chat-sound";
 
 export { CHAT_UNREAD_EVENT };
 /** 轮询间隔（毫秒）。老板要「像微信」，窗口开着时 3 秒一次，对方的消息 3 秒内出来 */
@@ -85,9 +85,9 @@ function ourSide(scope: ChatScope): "client" | "cs" {
   return scope.kind === "client" ? "client" : "cs";
 }
 
-/** 提示音按对话分开记：客户那头只有一个对话「client」；员工那头按客户唛头（跟左边菜单未读的 latestByClient 同一个叫法） */
+/** 提示音按对话分开记（chatSoundKey：客户那头「self」，员工那头「c:唛头」，跟左边菜单、员工客户列表同一个叫法） */
 function soundConv(scope: ChatScope): string {
-  return scope.kind === "client" ? "client" : scope.clientId;
+  return scope.kind === "client" ? chatSoundKey() : chatSoundKey(scope.clientId);
 }
 
 /** 一批消息里对方发的最新那条的时间（没有就空串） */

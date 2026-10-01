@@ -33,6 +33,9 @@
  *   —— dsh 第二轮复查（2026-10-02）——
  *   U17 改成按对话记：客户甲刚响过，客户乙更早、没人看过的那条照样响（原来一个全局时间，一比就当「报过了」）
  *   U19 换对话那一瞬间窗口获得焦点：不会拿上一个客户的消息时间去标下一个客户的已读
+ *   —— dsh 第三轮复查（2026-10-02）——
+ *   U14 补客户那头的菜单；U17 补「共用记录写满时刚写进去的那条要留下」「唛头叫 __proto__ 也照样响」
+ *   U20 员工聊天页的客户列表（5 秒刷一次）：正开着客户甲聊天时客户乙来了新消息，跟着列表就响，不用等菜单那 30 秒
  */
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -653,6 +656,30 @@ async function main(): Promise<void> {
     mount(Probe, { session, path: "/staff/chat" });
     await answerUnread({ count: 1, latestAt: "2026-09-28T01:01:00.000Z", latestByClient: { ZZC2: "2026-09-28T01:01:00.000Z" } });
     assert.equal(dings, 2, "打开对话时已经看到的消息，菜单取到后又响了");
+    passTime();
+    unmount(); calls.length = 0; timers.length = 0;
+    // 客户那头（dsh 第三轮：原来一条测试都没有）：菜单第一次不响、有新的响、聊天窗口已经为这条响过就不再响
+    resetSound();
+    const clientSession = { userId: "ZZC1", companyId: "c_001", role: "client", token: "x" };
+    mount(Probe, { session: clientSession, path: "/client" });
+    await answerUnread({ count: 1, latestAt: "2026-09-28T02:00:00.000Z" });
+    assert.equal(dings, 0, "客户一打开网页就响了");
+    await tickTimers((t) => !t.once && t.ms === 30_000);
+    await answerUnread({ count: 2, latestAt: "2026-09-28T02:00:10.000Z" });
+    assert.equal(dings, 1, "客户那头来了新消息，菜单没响");
+    passTime();
+    unmount(); calls.length = 0; timers.length = 0;
+    mount(ChatThread, { scope: { kind: "client" }, title: "客服" });
+    lastCall().resolve({ messages: [cs("k1", "2026-09-28T02:00:10.000Z")], hasMore: false, serverTime: "2026-09-28T02:00:15.000Z", peerReadAt: null });
+    await settle();
+    await tickTimers((t) => !t.once && t.ms === 3000);
+    await answerPoll({ messages: [cs("k2", "2026-09-28T02:00:20.000Z")], hasMore: false, serverTime: "2026-09-28T02:00:21.000Z", peerReadAt: null });
+    assert.equal(dings, 2, "客户聊天窗口来了新消息没响");
+    passTime();
+    unmount(); calls.length = 0; timers.length = 0;
+    mount(Probe, { session: clientSession, path: "/client/chat" });
+    await answerUnread({ count: 1, latestAt: "2026-09-28T02:00:20.000Z" });
+    assert.equal(dings, 2, "客户聊天窗口已经为这条响过，客户菜单又响了（两边对话的叫法对不上）");
   });
 
   await check("U15 窗口不是当前窗口（人在别的软件里）：不标已读；点回这个窗口马上标", async () => {
@@ -728,6 +755,25 @@ async function main(): Promise<void> {
       sound.noteUnreadLatest({}); // 那个标签页的基线
       sound.noteUnreadLatest({ ZZD: "2026-09-28T01:02:00.000Z", ZZE: "2026-09-28T01:01:30.000Z" });
       assert.equal(dings, 5, "客户丁那条别的标签页已经看到了不该响，客户戊那条该响 —— 加起来应该正好一声");
+      passTime();
+      // 共用记录写满（1000 个对话、时间都比较新）：打开一个很久没聊的老客户，刚记进去的那条不能被自己裁掉（dsh 第三轮）
+      const full: Record<string, string> = {};
+      for (let i = 0; i < 1000; i++) full[`c:ZZFULL${i}`] = "2026-09-20T00:00:00.000Z";
+      store.set("xt_chat_ding_v2", JSON.stringify(full));
+      sound.noteIncomingShown("c:ZZOLD", "2026-09-01T01:00:00.000Z");
+      assert.equal(shared()["c:ZZOLD"], "2026-09-01T01:00:00.000Z", "共用记录满了，刚记进去的老客户那条被自己裁掉了，别的标签页还会为它响");
+      assert.ok(Object.keys(shared()).length <= 1000, "共用记录没有裁，越攒越大");
+      sound.resetChatSoundForTest();
+      sound.noteUnreadLatest({});
+      sound.noteUnreadLatest({ "c:ZZOLD": "2026-09-01T01:00:00.000Z" });
+      assert.equal(dings, 5, "那条老客户的消息在别的标签页已经显示了，这边又响");
+      // 唛头叫 __proto__ / constructor（管理员自己填、不校验格式）：照样响
+      sound.noteUnreadLatest({ [sound.chatSoundKey("__proto__")]: "2026-09-28T03:00:00.000Z" });
+      assert.equal(dings, 6, "唛头叫 __proto__ 的客户来消息不响");
+      passTime();
+      sound.noteUnreadLatest({ [sound.chatSoundKey("constructor")]: "2026-09-28T03:00:10.000Z" });
+      assert.equal(dings, 7, "唛头叫 constructor 的客户来消息不响");
+      assert.notEqual(sound.chatSoundKey("client"), sound.chatSoundKey(), "唛头叫 client 的客户，跟客户那头自己的对话撞成一个叫法");
     } finally {
       delete fakeWindow.localStorage;
     }
@@ -786,6 +832,27 @@ async function main(): Promise<void> {
       if (holdEffects) runHeldEffects();
       delete fakeDocument.hasFocus;
     }
+  });
+
+  await check("U20 员工聊天页的客户列表（5 秒刷一次）：客户乙来了新消息跟着列表就响；打开页面时就有的不响；最后一条是客服回的不响", async () => {
+    resetSound();
+    fakeWindow.location.search = "";
+    const item = (clientId: string, at: string, fromClient = true, unread = 1) => ({ clientId, lastMessageAt: at, lastMessagePreview: "hi", lastFromClient: fromClient, unreadCount: unread, closed: false });
+    sound.noteUnreadLatest({}); // 左边菜单先取过一次（当时还没有这两个客户的未读）：列表第一次刷出来的照样只记不响
+    mount(Inbox, {});
+    await answerList([item("ZZA", "2026-09-28T04:00:00.000Z"), item("ZZB", "2026-09-28T04:00:05.000Z")]);
+    assert.equal(dings, 0, "打开员工聊天页就响了（那两条是打开前就有的）");
+    await tickTimers((t) => !t.once && t.ms === 5000);
+    await answerList([item("ZZA", "2026-09-28T04:00:00.000Z"), item("ZZB", "2026-09-28T04:00:30.000Z")]);
+    assert.equal(dings, 1, "客户乙来了新消息，列表刷到了却没响（要等菜单那 30 秒）");
+    passTime();
+    await tickTimers((t) => !t.once && t.ms === 5000);
+    await answerList([item("ZZA", "2026-09-28T04:00:40.000Z", false, 0), item("ZZB", "2026-09-28T04:00:30.000Z")]);
+    assert.equal(dings, 1, "最后一条是客服回的 / 同一条又刷到，又响了");
+    // 菜单随后取到同一条：不再响
+    sound.noteUnreadLatest({ [sound.chatSoundKey("ZZB")]: "2026-09-28T04:00:30.000Z" });
+    sound.noteUnreadLatest({ [sound.chatSoundKey("ZZB")]: "2026-09-28T04:00:30.000Z" });
+    assert.equal(dings, 1, "列表已经为这条响过，菜单又响了一次");
   });
 
   Date.now = realNow;

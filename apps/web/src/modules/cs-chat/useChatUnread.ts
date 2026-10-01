@@ -13,7 +13,7 @@ import { useEffect, useRef, useState } from "react";
 import type { AuthSession } from "../../auth/auth-session";
 import { CHAT_UNREAD_EVENT, fetchChatUnread } from "../../services/cs-chat-api";
 import { createRequestGate } from "../shared/request-gate";
-import { installChatSoundUnlock, noteUnreadLatest } from "./chat-sound";
+import { chatSoundKey, installChatSoundUnlock, noteUnreadLatest } from "./chat-sound";
 
 /** 菜单里这三个 id 旁边挂红点（menu-config.ts） */
 export const CHAT_MENU_IDS: readonly string[] = ["client-func-chat", "staff-func-chat", "admin-func-chat"];
@@ -38,8 +38,10 @@ export function useChatUnread(session: AuthSession | null, hiddenByBrand: boolea
         const r = await fetchChatUnread(who);
         if (!stopped && gate.isCurrent(ticket)) {
           setCount(Number(r.count) || 0);
-          // 按对话分开报：客户那头只有自己一个对话（「client」，跟聊天窗口同一个叫法）；员工那头按客户唛头
-          noteUnreadLatest(who === "client" ? { client: r.latestAt ?? null } : (r.latestByClient ?? {}));
+          // 按对话分开报（chatSoundKey，跟聊天窗口同一个叫法）：客户那头只有自己一个对话；员工那头按客户唛头
+          noteUnreadLatest(who === "client"
+            ? { [chatSoundKey()]: r.latestAt ?? null }
+            : Object.fromEntries(Object.entries(r.latestByClient ?? {}).map(([cid, at]) => [chatSoundKey(cid), at])));
         }
       } catch {
         /* 问不到就保持原样，不打扰人 */
