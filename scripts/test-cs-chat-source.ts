@@ -87,7 +87,9 @@ async function main(): Promise<void> {
     assert.match(src, /whiteSpace: "pre-wrap"/, "换行显示不出来");
     assert.ok(!/dangerouslySetInnerHTML/.test(src), "消息内容不许当 HTML 插（会被客户塞脚本）");
     const hook = read("apps/web/src/modules/cs-chat/useChatUnread.ts");
-    assert.match(hook, /POLL_MS = 30_000/);
+    // 菜单未读：眼前 5 秒、后台 15 秒（2026-10-02 老板：「当时收的时候响，而不是之后响」；原来 30 秒）
+    assert.match(hook, /VISIBLE_MS = 5_000/);
+    assert.match(hook, /HIDDEN_MS = 15_000/);
     assert.match(hook, /CHAT_UNREAD_EVENT/);
   });
 

@@ -36,6 +36,8 @@
  *   —— dsh 第三轮复查（2026-10-02）——
  *   U14 补客户那头的菜单；U17 补「共用记录写满时刚写进去的那条要留下」「唛头叫 __proto__ 也照样响」
  *   U20 员工聊天页的客户列表（5 秒刷一次）：正开着客户甲聊天时客户乙来了新消息，跟着列表就响，不用等菜单那 30 秒
+ *   U21 老板 10-02：「当时收的时候响，而不是之后响」—— 菜单未读在眼前 5 秒问一次（原来 30 秒）；计时放在 Worker 里
+ *       （后台久了浏览器会把页面自己的定时器放慢到一分钟一次）；Worker 起不来就退回页面定时器；关页面时 Worker 关掉
  */
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -622,12 +624,17 @@ async function main(): Promise<void> {
     mount(Probe, { session, path: "/staff" });
     await answerUnread({ count: 3, latestAt: "2026-09-28T01:00:00.000Z", latestByClient: { ZZC1: "2026-09-28T01:00:00.000Z" } });
     assert.equal(dings, 0, "一打开网页就响了（那几条是打开前就有的）");
-    await tickTimers((t) => !t.once && t.ms === 30_000);
+    clock += 5000;
+    await tickTimers((t) => !t.once && t.ms === 5000);
     await answerUnread({ count: 3, latestAt: "2026-09-28T01:00:00.000Z", latestByClient: { ZZC1: "2026-09-28T01:00:00.000Z" } });
     assert.equal(dings, 0, "没有新消息也响了");
     // 网页切到后台：照样问；来了新的照样响
     fakeDocument.visibilityState = "hidden";
-    await tickTimers((t) => !t.once && t.ms === 30_000);
+    clock += 5000;
+    await tickTimers((t) => !t.once && t.ms === 5000);
+    assert.equal(unreadCalls().length, 0, "网页在后台还是 5 秒问一次（后台 15 秒一次就够，少打服务器）");
+    clock += 10000;
+    await tickTimers((t) => !t.once && t.ms === 5000);
     assert.equal(unreadCalls().length, 1, "网页切到后台就不问了（后台听不到提示音）");
     await answerUnread({ count: 4, latestAt: "2026-09-28T01:00:30.000Z", latestByClient: { ZZC1: "2026-09-28T01:00:30.000Z" } });
     assert.equal(dings, 1, "后台来了新消息没响");
@@ -664,7 +671,8 @@ async function main(): Promise<void> {
     mount(Probe, { session: clientSession, path: "/client" });
     await answerUnread({ count: 1, latestAt: "2026-09-28T02:00:00.000Z" });
     assert.equal(dings, 0, "客户一打开网页就响了");
-    await tickTimers((t) => !t.once && t.ms === 30_000);
+    clock += 5000;
+    await tickTimers((t) => !t.once && t.ms === 5000);
     await answerUnread({ count: 2, latestAt: "2026-09-28T02:00:10.000Z" });
     assert.equal(dings, 1, "客户那头来了新消息，菜单没响");
     passTime();
@@ -853,6 +861,45 @@ async function main(): Promise<void> {
     sound.noteUnreadLatest({ [sound.chatSoundKey("ZZB")]: "2026-09-28T04:00:30.000Z" });
     sound.noteUnreadLatest({ [sound.chatSoundKey("ZZB")]: "2026-09-28T04:00:30.000Z" });
     assert.equal(dings, 1, "列表已经为这条响过，菜单又响了一次");
+  });
+
+  await check("U21 菜单未读在眼前 5 秒问一次；计时放在 Worker 里（后台不被浏览器放慢）；Worker 起不来退回页面定时器；关页面关 Worker", async () => {
+    resetSound();
+    const workers: any[] = [];
+    class FakeWorker {
+      url: string; posted: any[] = []; terminated = false; onmessage: any = null; onerror: any = null;
+      constructor(url: string) { this.url = url; workers.push(this); }
+      postMessage(v: any) { this.posted.push(v); }
+      terminate() { this.terminated = true; }
+    }
+    (globalThis as any).Worker = FakeWorker;
+    try {
+      function Probe2(p: any) { const n = useChatUnread(p.session, false, p.path); return { type: "i", props: { children: String(n) } }; }
+      const session = { userId: "zz_s1", companyId: "c_001", role: "staff", token: "x" };
+      const unreadCalls = () => calls.filter((c) => c.url.includes("/chat/unread"));
+      mount(Probe2, { session, path: "/staff" });
+      assert.equal(workers.length, 1, "没有起 Worker 计时器");
+      assert.equal(workers[0].url, "/chat-tick.worker.js");
+      assert.deepEqual(workers[0].posted, [5000], "Worker 的间隔不是 5 秒（在别的页面来消息要等太久）");
+      assert.equal(aliveTimers().filter((t) => !t.once && t.ms === 5000).length, 0, "有了 Worker 还另开了页面定时器（会问两遍）");
+      const n0 = unreadCalls().length;
+      clock += 5000;
+      workers[0].onmessage({ data: 1 });
+      assert.equal(unreadCalls().length, n0 + 1, "Worker 到点了没去问未读");
+      // Worker 起不来（文件没取到）：退回页面自己的定时器
+      workers[0].onerror({});
+      assert.equal(workers[0].terminated, true);
+      assert.equal(aliveTimers().filter((t) => !t.once && t.ms === 5000).length, 1, "Worker 坏了没有退回页面定时器，以后再也不问了");
+      unmount();
+      // 关页面（退出登录、换角色）：Worker 要关掉，不然后台一直在问
+      timers.length = 0; calls.length = 0;
+      mount(Probe2, { session, path: "/staff" });
+      const w = workers[workers.length - 1];
+      unmount();
+      assert.equal(w.terminated, true, "页面关了 Worker 还开着，后台一直在问");
+    } finally {
+      delete (globalThis as any).Worker;
+    }
   });
 
   Date.now = realNow;

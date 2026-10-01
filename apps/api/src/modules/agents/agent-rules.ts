@@ -25,7 +25,7 @@ export const AGENT_SLUG_RE = /^[a-z0-9][a-z0-9-]{1,30}$/;
  *   · apps/web/src/app 顶层：admin agent client staff login register forbidden
  *     （还有 page.tsx 根页、error/loading/not-found 这些 Next 约定文件）
  *   · 同目录的静态文件：favicon.ico icon.png apple-icon.png
- *   · apps/web/public：images templates
+ *   · apps/web/public：images templates chat-tick.worker.js（客服对话提示音的计时器，2026-10-02）
  *   · apps/web/next.config.ts rewrites：auth admin staff client agent images
  *   · Next 自己的：_next（正则本来就不许下划线开头，照样列上）、api
  *   · B4 退路：若 app/[agentSlug] 跟现有路由冲突就改用 /a/<slug>，所以 a 也保留
@@ -38,6 +38,7 @@ export const RESERVED_AGENT_SLUGS: ReadonlySet<string> = new Set([
   // Next / 静态文件
   "_next", "api", "static", "public", "assets", "favicon", "favicon.ico", "icon", "icon.png",
   "apple-icon", "apple-icon.png", "robots", "robots.txt", "sitemap", "sitemap.xml", "manifest",
+  "chat-tick", "chat-tick.worker.js",
   "error", "loading", "not-found", "404", "500",
   // B4 的 /a/<slug> 退路、以后可能加的公共入口
   "a", "brand", "health", "logout", "track", "home", "index", "www", "mail", "xiangtai",
