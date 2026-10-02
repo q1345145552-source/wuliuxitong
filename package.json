@@ -73,6 +73,7 @@
     "test:cs-chat-source": "tsx scripts/test-cs-chat-source.ts",
     "test:cs-chat-db": "tsx scripts/test-cs-chat-db.ts",
     "test:migration-cs-chat-db": "tsx scripts/test-migration-cs-chat-db.ts",
+    "test:migration-cs-chat-push-db": "tsx scripts/test-migration-cs-chat-push-db.ts",
     "test:audit-0928-p3-source": "tsx scripts/test-audit-0928-p3-source.ts",
     "test:audit-0928-p3-db": "tsx scripts/test-audit-0928-p3-db.ts",
     "test:branch-review-0928-source": "tsx scripts/test-branch-review-0928-source.ts",
@@ -87,13 +88,15 @@
   },
   "devDependencies": {
     "@types/node": "^26.0.1",
+    "@types/web-push": "^3.6.4",
     "prisma": "^5.22.0",
     "tsx": "^4.19.2",
     "typescript": "^5.8.3"
   },
   "dependencies": {
     "@prisma/client": "^5.22.0",
-    "ssh2": "^1.17.0"
+    "ssh2": "^1.17.0",
+    "web-push": "^3.6.7"
   },
   "engines": {
     "node": ">=22.0.0"

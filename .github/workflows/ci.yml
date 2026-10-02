@@ -439,6 +439,10 @@ jobs:
       - name: Test cs-chat migration file (real DB)
         run: bash .github/scripts/run-db-test.sh test:migration-cs-chat-db
 
+      # 2026-10-02 客服对话撤回 / 关联运单 / 浏览器系统通知那份迁移：在「上线前的库」上连跑两遍、跟 schema 零差异、体检清单对上
+      - name: Test cs-chat recall/ref/push migration file (real DB)
+        run: bash .github/scripts/run-db-test.sh test:migration-cs-chat-push-db
+
       # 9-28 审查报告那批小 bug（后端）：本月已签收按真签收时间数、装柜详情带整柜标记、
       # 集货轨迹柜号抹干净、补确认收货写父单、客户建单仓库校验、并发报价不重复记轨迹、
       # 删计划预览中文状态、仓库版操作列表带计划号、运费低消校验。

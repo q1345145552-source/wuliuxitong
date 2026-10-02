@@ -869,11 +869,43 @@ model CsMessage {
   /// /images/xxx.jpg（走 orders/image-storage 存盘，跟收货凭证同一套）
   imagePath      String?  @map("image_path")
   createdAt      DateTime @default(now()) @map("created_at")
+  /// 撤回的时间（2026-10-02 老板：发错的能撤回，2 分钟内，同微信）。撤回时文字、图片、关联的单一起清掉
+  recalledAt     DateTime? @map("recalled_at")
+  /// 这条消息说的是哪张单（2026-10-02 老板：「可以选择是哪个运单…整柜的也可以」）：shipment = 普通运单（父单）/ fcl = 整柜
+  refType        String?  @map("ref_type")
+  /// shipment → shipments.id；fcl → containers.id。不加外键：单子删了，消息照样留着、显示发送时记下的单号
+  refId          String?  @map("ref_id")
+  /// 发送时记下的单号：运单号 / 整柜的提单号（⚠️ 绝不是柜号 —— 客户不能看到柜号）
+  refNo          String?  @map("ref_no")
+  /// 发送时记下的品名
+  refTitle       String?  @map("ref_title")
 
   conversation CsConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
 
   @@index([conversationId, createdAt])
   @@map("cs_messages")
+}
+
+/// 浏览器系统通知的订阅（2026-10-02 老板选「浏览器系统通知」：客户没开系统页面也能收到新消息提醒）。
+/// 一个浏览器一行（endpoint 唯一）；同一个浏览器换人登录，这一行改归新的人（重新订阅时按 endpoint 覆盖）。
+/// 客户发的消息推给本公司所有开了通知的员工 / 超管；客服发的推给那个客户。
+model CsPushSubscription {
+  id        String   @id @default(cuid())
+  companyId String   @map("company_id")
+  userId    String   @map("user_id")
+  /// client | staff | admin
+  role      String
+  /// 浏览器推送服务给的地址（谷歌 / 火狐 / 苹果各家的）。等同于这个浏览器的收件地址，不下发给任何页面
+  endpoint  String   @unique
+  /// 加密用的两把公钥（浏览器给的），推送内容按它加密，推送服务看不到内容
+  p256dh    String
+  auth      String
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([companyId, role])
+  @@index([userId])
+  @@map("cs_push_subscriptions")
 }
 
 /// 业务单号「已经发到第几号」（2026-09-29 老板选 A）：号只往上加，删掉最新那张单也不回收。

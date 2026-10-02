@@ -9,6 +9,8 @@
  *               代理名下客户两头都挡、客户之间 / 公司之间看不到、第一条同时发不会建出两条对话
  *   报价 Q1~Q9：金额校验、报价人只给超管、客户按旧价接受被拒、改价要重新接受、
  *               转整柜唛头对不上整单不写、转过不能再转 / 不能再改价、整柜被删后能重新转
+ *   2026-10-02 D1~D5（老板：「这几个都可以做」+「可以选择是哪个运单…整柜的也可以」+ 选了浏览器系统通知、撤回 2 分钟）：
+ *               待回复、员工之间看得到同事名字、撤回、限频、关联运单 / 整柜（只能选自己的、不带柜号、状态现查）、系统通知
  *
  * 只连测试库：DATABASE_URL 不带 neon.tech 的不跑（一次性 docker 库设 AGENT_PORTAL_TEST_ALLOW_DB=1）；
  * 没有 DATABASE_URL 打印「跳过」。测试数据全在假公司 zz_cschat_co / zz_cschat_co2 下，开跑前、跑完后都清干净。
@@ -53,6 +55,7 @@ async function main(): Promise<void> {
   const app: any = {};
   for (const m of ["get", "post", "put", "patch", "delete"]) app[m] = (p: string, h: Function) => routes.set(`${m.toUpperCase()} ${p}`, h);
   (await import("../apps/api/src/modules/cs-chat/routes")).registerCsChatRoutes(app);
+  const push = await import("../apps/api/src/modules/cs-chat/push");
   (await import("../apps/api/src/modules/fcl-inquiries/routes")).registerFclInquiryRoutes(app);
   (await import("../apps/api/src/modules/fcl-containers/routes")).registerFclContainerRoutes(app);
 
@@ -73,6 +76,7 @@ async function main(): Promise<void> {
 
   async function cleanup(): Promise<void> {
     for (const co of [CO, CO2]) {
+      await pm.csPushSubscription.deleteMany({ where: { companyId: co } });
       await pm.csMessage.deleteMany({ where: { companyId: co } });
       await pm.csConversation.deleteMany({ where: { companyId: co } });
       await pm.fclInquiry.deleteMany({ where: { companyId: co } });
@@ -136,7 +140,7 @@ async function main(): Promise<void> {
     });
 
     let staffMsgId = "";
-    await check("C3 员工回复：客户看到的是「客服」，拿不到员工名字；超管看到「客服·名字」；别的员工只看到「客服」；自己看到「我」", async () => {
+    await check("C3 员工回复：客户看到的是「客服」，拿不到员工名字；超管、别的员工都看到「客服·名字」（2026-10-02 放开给内部）；自己看到「我」", async () => {
       const sent = await must("POST /staff/chat/send", STAFF, { clientId: CLIENT.userId, content: "您好，40HQ 到曼谷报价 18000" });
       staffMsgId = sent.message.id;
       assert.equal(sent.message.senderLabel, "我");
@@ -149,8 +153,8 @@ async function main(): Promise<void> {
       const a = await must("GET /staff/chat/messages", ADMIN, {}, { clientId: CLIENT.userId });
       assert.equal(a.messages.find((x: Row) => x.id === staffMsgId).senderLabel, `客服·${STAFF.name}`);
       const s2 = await must("GET /staff/chat/messages", STAFF2, {}, { clientId: CLIENT.userId });
-      assert.equal(s2.messages.find((x: Row) => x.id === staffMsgId).senderLabel, "客服");
-      assert.ok(!JSON.stringify(s2).includes(STAFF.name), "员工之间也不许看到是谁回的（操作人身份只给超管）");
+      // 2026-10-02 老板拍板：员工之间要看得出是哪个同事回的（原来只给超管，容易重复回 / 都以为别人回了）
+      assert.equal(s2.messages.find((x: Row) => x.id === staffMsgId).senderLabel, `客服·${STAFF.name}`, "别的员工看不出是哪个同事回的");
     });
 
     await check("C4 客户未读 1 → 客户标已读后 0；已读只往前推（拿旧时间再标一次不会退回去）", async () => {
@@ -578,6 +582,347 @@ async function main(): Promise<void> {
       const r = await must("POST /staff/fcl-containers/create", STAFF, fclBody({ inquiryId: undefined }));
       assert.ok(r.containerId);
       assert.equal(await pm.fclInquiry.count({ where: { fclContainerId: r.containerId } }), 0);
+    });
+
+    // ======================================================================
+    // 2026-10-02：待回复 / 同事名字 / 撤回 / 限频 / 关联运单整柜 / 系统通知
+    // ======================================================================
+    /** 再造几个干净的客户（不跟上面那些混，未读、限频都各算各的） */
+    const mkClient = async (id: string, agentId: string | null = null): Promise<Auth> => {
+      await pm.user.create({ data: { id, companyId: CO, role: "client", name: `${id}的真名`, passwordHash: "x", phone: `0${id}`, status: "active", agentId } });
+      return { userId: id, companyId: CO, role: "client", name: `${id}的真名`, agentId };
+    };
+    const D1C = await mkClient("ZZD1PEND");
+    const D2C = await mkClient("ZZD2RECA");
+    const D3C = await mkClient("ZZD3REFA");
+    const D3B = await mkClient("ZZD3REFB");
+    const D5C = await mkClient("ZZD5PUSH");
+    const convOf = (cid: string) => pm.csConversation.findFirst({ where: { companyId: CO, clientId: cid } });
+
+    await check("D1 待回复：客户说了话 → 待回复、记下从哪条开始等；员工只看了没回照样待回复；回了就不是；只看待回复的筛得出来；代理名下的不算", async () => {
+      const first = (await must("POST /client/chat/send", D1C, { content: "在吗" })).message;
+      await must("POST /client/chat/send", D1C, { content: "我的货到哪了" });
+      let list = await must("GET /staff/chat/conversations", STAFF);
+      let row = list.items.find((x: Row) => x.clientId === D1C.userId);
+      assert.equal(row.pendingReply, true, "客户说了话，列表没标待回复");
+      assert.equal(row.pendingSince, first.createdAt, `等待起点不是客户第一句：${row.pendingSince}`);
+      assert.equal(row.lastFromUs, false);
+      assert.ok(list.pendingCount >= 1);
+      const before = list.pendingCount;
+      // 员工看了（已读）但没回：还是待回复（这正是老板说的「已读不回容易漏」）
+      await must("POST /staff/chat/read", STAFF, { clientId: D1C.userId });
+      row = (await must("GET /staff/chat/conversations", STAFF2)).items.find((x: Row) => x.clientId === D1C.userId);
+      assert.equal(row.unreadCount, 0);
+      assert.equal(row.pendingReply, true, "看过就不算待回复了 —— 已读不回又会漏");
+      // 只看待回复：有它；别的已经回过的客户（CLIENT 最后一句是超管说的）不在里面
+      const pend = await must("GET /staff/chat/conversations", STAFF, {}, { filter: "pending" });
+      assert.ok(pend.items.some((x: Row) => x.clientId === D1C.userId));
+      assert.ok(pend.items.every((x: Row) => x.pendingReply === true), "「待回复」页签里混进了不用回的");
+      assert.ok(!pend.items.some((x: Row) => x.clientId === CLIENT.userId), "已经回过的客户出现在待回复里");
+      // 回了：不再待回复，列表摘要标「我方」
+      await must("POST /staff/chat/send", STAFF2, { clientId: D1C.userId, content: "在的，我查一下" });
+      list = await must("GET /staff/chat/conversations", STAFF);
+      row = list.items.find((x: Row) => x.clientId === D1C.userId);
+      assert.equal(row.pendingReply, false);
+      assert.equal(row.pendingSince, null);
+      assert.equal(row.lastFromUs, true);
+      assert.equal(list.pendingCount, before - 1, "回完以后待回复的总数没少");
+      // 客户再追问一句：又待回复，等待起点是这句（不是最早那句）
+      const again = (await must("POST /client/chat/send", D1C, { content: "好的谢谢，大概几天？" })).message;
+      row = (await must("GET /staff/chat/conversations", STAFF)).items.find((x: Row) => x.clientId === D1C.userId);
+      assert.equal(row.pendingSince, again.createdAt);
+      // 划给代理以后：列表里还在（只能看），但不算待回复、不进总数
+      const cnt = (await must("GET /staff/chat/conversations", STAFF)).pendingCount;
+      await pm.user.update({ where: { id: D1C.userId }, data: { agentId: AGENT_ID } });
+      try {
+        const l2 = await must("GET /staff/chat/conversations", STAFF);
+        const r2 = l2.items.find((x: Row) => x.clientId === D1C.userId);
+        assert.equal(r2.closed, true);
+        assert.equal(r2.pendingReply, false, "划给代理的客户（回不了）还标着待回复");
+        assert.equal(l2.pendingCount, cnt - 1);
+        const p2 = await must("GET /staff/chat/conversations", STAFF, {}, { filter: "pending" });
+        assert.ok(!p2.items.some((x: Row) => x.clientId === D1C.userId));
+      } finally {
+        await pm.user.update({ where: { id: D1C.userId }, data: { agentId: null } });
+      }
+    });
+
+    await check("D2 撤回：自己发的 2 分钟内能撤；两边都看到「撤回了」、拿不到原文 / 图片；别人的撤不了；超时撤不了；点两下第二次原样返回；图片文件删掉", async () => {
+      const m1 = (await must("POST /client/chat/send", D2C, { content: "发错了的那句" })).message;
+      const img = (await must("POST /client/chat/send", D2C, { image: { fileName: "a.png", mime: "image/png", base64: PNG_1x1 } })).message;
+      const imgFile = path.join(imagesDir, path.basename(img.imageUrl));
+      assert.ok(fs.existsSync(imgFile));
+      // 员工撤不了客户的（哪怕知道 id）
+      const steal = await call("POST /staff/chat/recall", STAFF, { clientId: D2C.userId, messageId: m1.id });
+      assert.equal(steal.status, 403, `员工撤回了客户的消息：${steal.status}`);
+      // 别的客户拿这个 id 撤：当作没有这条
+      assert.equal((await call("POST /client/chat/recall", CLIENT, { messageId: m1.id })).status, 404);
+      const r = await must("POST /client/chat/recall", D2C, { messageId: m1.id });
+      assert.equal(r.message.recalled, true);
+      assert.equal(r.message.content, null);
+      const again = await must("POST /client/chat/recall", D2C, { messageId: m1.id });
+      assert.equal(again.message.recalled, true, "点两下第二次报错了");
+      await must("POST /client/chat/recall", D2C, { messageId: img.id });
+      assert.ok(!fs.existsSync(imgFile), "撤回了图片，文件还留在盘上");
+      const s = await must("GET /staff/chat/messages", STAFF, {}, { clientId: D2C.userId });
+      const seen = s.messages.find((x: Row) => x.id === m1.id);
+      assert.equal(seen.recalled, true);
+      assert.equal(seen.content, null);
+      assert.ok(!JSON.stringify(s).includes("发错了的那句"), "员工那边还拿得到撤回的原文");
+      assert.equal(s.messages.find((x: Row) => x.id === img.id).imageUrl, null);
+      const db = await pm.csMessage.findUnique({ where: { id: m1.id } });
+      assert.equal(db.content, null, "库里还留着撤回的原文");
+      // 撤回的不算未读（员工这边没看过，两条都撤了 → 0）
+      const u = await must("GET /staff/chat/unread", STAFF);
+      assert.ok(!(D2C.userId in JSON.parse(JSON.stringify(u.latestByClient))), "撤回的消息还在算未读 / 还会响提示音");
+      // 超时：放一条 3 分钟前的
+      const old = (await must("POST /client/chat/send", D2C, { content: "三分钟前的" })).message;
+      await pm.csMessage.update({ where: { id: old.id }, data: { createdAt: new Date(Date.now() - 3 * 60_000) } });
+      const late = await call("POST /client/chat/recall", D2C, { messageId: old.id });
+      assert.equal(late.status, 400, `超过 2 分钟还撤回成了：${late.status}`);
+      assert.match(late.message, /2 分钟/);
+      assert.equal((await pm.csMessage.findUnique({ where: { id: old.id } })).content, "三分钟前的");
+      // 员工撤自己的
+      const mine = (await must("POST /staff/chat/send", STAFF2, { clientId: D2C.userId, content: "报错价了" })).message;
+      assert.equal((await must("POST /staff/chat/recall", STAFF2, { clientId: D2C.userId, messageId: mine.id })).message.recalled, true);
+      const c = await must("GET /client/chat/messages", D2C);
+      const cm = c.messages.find((x: Row) => x.id === mine.id);
+      assert.equal(cm.recalled, true);
+      assert.equal(cm.senderLabel, "客服", "客户看撤回的那条也不许带员工名字");
+      assert.ok(!JSON.stringify(c).includes("报错价了"));
+      // 别的员工也撤不了这位员工的
+      const m2 = (await must("POST /staff/chat/send", STAFF2, { clientId: D2C.userId, content: "这句留着" })).message;
+      assert.equal((await call("POST /staff/chat/recall", STAFF, { clientId: D2C.userId, messageId: m2.id })).status, 403);
+    });
+
+    await check("D2b 撤回在轮询里 3 秒内传到对方：拿撤回之前的时间轮询，那条带着「已撤回」回来（哪怕它是早就发的）", async () => {
+      const m = (await must("POST /client/chat/send", D2C, { content: "要撤的" })).message;
+      // 让它看起来是 1 分钟前发的（在撤回时限里，但早于轮询起点往前 5 秒）
+      await pm.csMessage.update({ where: { id: m.id }, data: { createdAt: new Date(Date.now() - 60_000) } });
+      const since = new Date().toISOString();
+      await new Promise((r) => setTimeout(r, 20));
+      await must("POST /client/chat/recall", D2C, { messageId: m.id });
+      const poll = await must("GET /staff/chat/messages", STAFF, {}, { clientId: D2C.userId, since });
+      const got = poll.messages.find((x: Row) => x.id === m.id);
+      assert.ok(got, "撤回的那条没在轮询里带回来（对方屏幕上一直显示原文）");
+      assert.equal(got.recalled, true);
+    });
+
+    await check("D2c 撤回最新那条：列表摘要和「待回复」按前面那条还在的算；一条都不剩写「撤回了一条消息」、不算待回复", async () => {
+      const cid = "ZZD2CSUM";
+      const C = await mkClient(cid);
+      const a = (await must("POST /client/chat/send", C, { content: "就一句" })).message;
+      assert.equal((await must("GET /staff/chat/conversations", STAFF, {}, { q: cid })).items[0].pendingReply, true);
+      await must("POST /client/chat/recall", C, { messageId: a.id });
+      let row = (await must("GET /staff/chat/conversations", STAFF, {}, { q: cid })).items[0];
+      assert.equal(row.lastMessagePreview, "[撤回了一条消息]");
+      assert.equal(row.pendingReply, false, "客户唯一一句撤回了，还挂着待回复");
+      assert.equal(row.lastFromUs, false, "一条都不剩，摘要前面却写「我方」");
+      await must("POST /staff/chat/send", STAFF, { clientId: cid, content: "您好有什么可以帮您" });
+      const b = (await must("POST /client/chat/send", C, { content: "说错了" })).message;
+      assert.equal((await must("GET /staff/chat/conversations", STAFF, {}, { q: cid })).items[0].pendingReply, true);
+      await must("POST /client/chat/recall", C, { messageId: b.id });
+      row = (await must("GET /staff/chat/conversations", STAFF, {}, { q: cid })).items[0];
+      assert.equal(row.lastMessagePreview, "您好有什么可以帮您", "撤回最新那条以后摘要没退回前一条");
+      assert.equal(row.lastFromUs, true);
+      assert.equal(row.pendingReply, false, "客户撤回了追问，还挂着待回复");
+      // 员工撤回了自己的回复：客户之前那句又变成没人回
+      const q1 = (await must("POST /client/chat/send", C, { content: "运费多少" })).message;
+      const reply = (await must("POST /staff/chat/send", STAFF, { clientId: cid, content: "回错了" })).message;
+      assert.equal((await must("GET /staff/chat/conversations", STAFF, {}, { q: cid })).items[0].pendingReply, false);
+      await must("POST /staff/chat/recall", STAFF, { clientId: cid, messageId: reply.id });
+      row = (await must("GET /staff/chat/conversations", STAFF, {}, { q: cid })).items[0];
+      assert.equal(row.pendingReply, true, "员工撤回了唯一的回复，客户那句却不算待回复了");
+      assert.equal(row.pendingSince, q1.createdAt);
+    });
+
+    // 关联运单 / 整柜要用的单子：D3C 两张普通运单（一张父单一张它的子单）、D3B 一张；D3C 一个整柜
+    const mkShipment = async (cid: string, no: string, item: string, over: Row = {}) => {
+      const oid = `zz_cs_o_${no}`;
+      await pm.order.create({ data: {
+        id: oid, companyId: CO, clientId: cid, warehouseId: "wh_yiwu_01", itemName: item, productQuantity: 1, packageCount: 3,
+        packageUnit: "箱", transportMode: "sea", receiverNameTh: "收件人", receiverPhoneTh: "0811111111", receiverAddressTh: "曼谷",
+      } });
+      await pm.shipment.create({ data: { id: `zz_cs_s_${no}`, companyId: CO, orderId: oid, trackingNo: no, currentStatus: "inWarehouseCN", warehouseId: "wh_yiwu_01", packageCount: 3, packageUnit: "箱", ...over } });
+      return `zz_cs_s_${no}`;
+    };
+    const shipA = await mkShipment(D3C.userId, "ZZCSREF001", "蓝牙耳机");
+    await pm.shipment.create({ data: { id: "zz_cs_s_ZZCSREF001-1", companyId: CO, orderId: "zz_cs_o_ZZCSREF001", trackingNo: "ZZCSREF001-1", parentTrackingNo: "ZZCSREF001", currentStatus: "loaded", warehouseId: "wh_yiwu_01" } });
+    const shipA2 = await mkShipment(D3C.userId, "ZZCSREF002", "手机壳");
+    const shipB = await mkShipment(D3B.userId, "ZZCSREF900", "别人的货");
+    const fclMade = await must("POST /staff/fcl-containers/create", STAFF, fclBody({ clientId: D3C.userId, inquiryId: undefined, trackingNo: "ZZCSFCLBL01", containerNo: "ZZCSCNTR777" }));
+    const fclId = fclMade.containerId as string;
+
+    await check("D3 选单子：只列这个客户自己的父单和整柜（子单、别人的不列）；整柜只给提单号、一个柜号字都没有；搜索在后端筛", async () => {
+      const c = await must("GET /client/chat/refs", D3C);
+      assert.deepEqual(c.shipments.map((x: Row) => x.no).sort(), ["ZZCSREF001", "ZZCSREF002"], `运单列错了：${c.shipments.map((x: Row) => x.no)}`);
+      assert.deepEqual(c.fcl.map((x: Row) => x.no), ["ZZCSFCLBL01"]);
+      assert.equal(c.fcl[0].id, fclId);
+      assert.ok(!JSON.stringify(c).includes("ZZCSCNTR777"), "客户选单子的列表里出现了柜号");
+      assert.ok(!c.shipments.some((x: Row) => x.no === "ZZCSFCLBL01"), "整柜的单混进了普通运单");
+      assert.equal(c.shipmentsTruncated, false);
+      const s = await must("GET /staff/chat/refs", STAFF, {}, { clientId: D3C.userId, q: "耳机" });
+      assert.deepEqual(s.shipments.map((x: Row) => x.no), ["ZZCSREF001"], "按品名搜没在后端筛");
+      assert.equal(s.fcl.length, 0);
+      const byNo = await must("GET /staff/chat/refs", STAFF, {}, { clientId: D3C.userId, q: "fclbl" });
+      assert.deepEqual(byNo.fcl.map((x: Row) => x.no), ["ZZCSFCLBL01"], "按提单号（小写）搜不到整柜");
+      const byCntr = await must("GET /staff/chat/refs", STAFF, {}, { clientId: D3C.userId, q: "ZZCSCNTR777" });
+      assert.equal(byCntr.fcl.length, 0, "能按柜号搜到整柜（柜号不进对话）");
+      assert.equal((await call("GET /staff/chat/refs", STAFF, {}, { clientId: AGENT_CLIENT.userId })).status, 400, "代理名下的客户也能列单子");
+      assert.equal((await call("GET /client/chat/refs", AGENT_CLIENT)).status, 403);
+      assert.equal((await call("GET /staff/chat/refs", OTHER_STAFF, {}, { clientId: D3B.userId })).status, 404, "别家公司员工列出了我们客户的单子");
+    });
+
+    await check("D3b 带单子发：两边气泡里有单号、品名、现在的状态；只发单子不写字也行；摘要写 [运单 xxx]；别人的单 / 子单 / 乱写类型都拒、什么都不写", async () => {
+      const r = await must("POST /client/chat/send", D3C, { content: "这票什么时候到", ref: { type: "shipment", id: shipA } });
+      assert.deepEqual(r.message.ref, { type: "shipment", id: shipA, no: "ZZCSREF001", title: "蓝牙耳机", status: "inWarehouseCN", gone: false });
+      const conv = await convOf(D3C.userId);
+      assert.equal(conv.lastMessagePreview, "[运单 ZZCSREF001] 这票什么时候到");
+      const onlyRef = await must("POST /staff/chat/send", STAFF, { clientId: D3C.userId, ref: { type: "fcl", id: fclId } });
+      assert.equal(onlyRef.message.content, null);
+      assert.equal(onlyRef.message.ref.no, "ZZCSFCLBL01");
+      assert.equal(onlyRef.message.ref.type, "fcl");
+      const c = await must("GET /client/chat/messages", D3C);
+      assert.ok(!JSON.stringify(c).includes("ZZCSCNTR777"), "客户的消息里出现了柜号");
+      const fclMsg = c.messages.find((x: Row) => x.id === onlyRef.message.id);
+      assert.equal(fclMsg.ref.title, "鞋子");
+      assert.ok(fclMsg.ref.status, "整柜现在的状态没带出来");
+      const before = await pm.csMessage.count({ where: { companyId: CO } });
+      for (const [who, body, why] of [
+        [D3C, { content: "x", ref: { type: "shipment", id: shipB } }, "别的客户的运单"],
+        [D3C, { content: "x", ref: { type: "shipment", id: "zz_cs_s_ZZCSREF001-1" } }, "子单"],
+        [D3C, { content: "x", ref: { type: "shipment", id: "nope" } }, "不存在的运单"],
+      ] as const) {
+        const bad = await call("POST /client/chat/send", who as Auth, body as Row);
+        assert.equal(bad.status, 404, `${why} 应该 404，实际 ${bad.status} ${bad.message}`);
+      }
+      const staffBad = await call("POST /staff/chat/send", STAFF, { clientId: D3B.userId, ref: { type: "fcl", id: fclId } });
+      assert.equal(staffBad.status, 404, "员工给客户乙发了客户甲的整柜");
+      for (const ref of [{ type: "container", id: fclId }, { type: "shipment", id: "" }, { type: "shipment", id: 123 }]) {
+        assert.equal((await call("POST /client/chat/send", D3C, { ref } as Row)).status, 400, `乱写的单子收了：${JSON.stringify(ref)}`);
+      }
+      assert.equal(await pm.csMessage.count({ where: { companyId: CO } }), before, "被拒的消息写进去了");
+    });
+
+    await check("D3c 状态现查：单子推了状态，气泡跟着变；单子改归别的客户，这边只剩单号（gone），不带别人的状态", async () => {
+      const r = await must("POST /client/chat/send", D3C, { content: "这票呢", ref: { type: "shipment", id: shipA2 } });
+      await pm.shipment.update({ where: { id: shipA2 }, data: { currentStatus: "departed" } });
+      let c = await must("GET /client/chat/messages", D3C);
+      assert.equal(c.messages.find((x: Row) => x.id === r.message.id).ref.status, "departed", "状态没跟着变");
+      await pm.order.update({ where: { id: "zz_cs_o_ZZCSREF002" }, data: { clientId: D3B.userId } });
+      try {
+        c = await must("GET /client/chat/messages", D3C);
+        const ref = c.messages.find((x: Row) => x.id === r.message.id).ref;
+        assert.equal(ref.gone, true, "单子已经不是他的了，还标着在");
+        assert.equal(ref.status, null, "单子已经不是他的了，还把现在的状态带给他");
+        assert.equal(ref.no, "ZZCSREF002", "发送时记下的单号没留住");
+      } finally {
+        await pm.order.update({ where: { id: "zz_cs_o_ZZCSREF002" }, data: { clientId: D3C.userId } });
+      }
+    });
+
+    await check("D3d 撤回带单子的消息：单子一起清掉", async () => {
+      const r = await must("POST /client/chat/send", D3C, { ref: { type: "shipment", id: shipA } });
+      const back = await must("POST /client/chat/recall", D3C, { messageId: r.message.id });
+      assert.equal(back.message.ref, null);
+      const db = await pm.csMessage.findUnique({ where: { id: r.message.id } });
+      assert.deepEqual([db.refType, db.refId, db.refNo, db.refTitle], [null, null, null, null]);
+    });
+
+    await check("D4 限频：一个账号一分钟最多 30 条，第 31 条 429、什么都不写；图片一分钟最多 10 张", async () => {
+      const C = await mkClient("ZZD4RATE");
+      for (let i = 0; i < 30; i++) await must("POST /client/chat/send", C, { content: `第${i}条` });
+      const n = await pm.csMessage.count({ where: { senderId: C.userId } });
+      const r = await call("POST /client/chat/send", C, { content: "第31条" });
+      assert.equal(r.status, 429, `第 31 条没被拦：${r.status}`);
+      assert.match(r.message, /太快/);
+      assert.equal(await pm.csMessage.count({ where: { senderId: C.userId } }), n);
+      const I = await mkClient("ZZD4IMGS");
+      for (let i = 0; i < 10; i++) await must("POST /client/chat/send", I, { image: { fileName: "a.png", mime: "image/png", base64: PNG_1x1 } });
+      const ri = await call("POST /client/chat/send", I, { image: { fileName: "a.png", mime: "image/png", base64: PNG_1x1 } });
+      assert.equal(ri.status, 429, `第 11 张图没被拦：${ri.status}`);
+      assert.equal((await call("POST /client/chat/send", I, { content: "图发不了，打字总行吧" })).status, 200, "图片超了，文字也被拦了");
+      // 别人不受影响
+      assert.equal((await call("POST /client/chat/send", D2C, { content: "我照样能发" })).status, 200);
+    });
+
+    await check("D5 系统通知：开通知只收各家推送服务的地址；客户发 → 本公司员工 / 超管；客服发 → 那个客户；通知里没有员工名字；地址作废（410）就删；没配密钥不开", async () => {
+      const sent: Array<{ endpoint: string; payload: any; topic: string }> = [];
+      const failing = new Set<string>();
+      const cfg = { publicKey: "BPubKeyForTest", privateKey: "priv", subject: "mailto:test@example.com" };
+      push.setPushSenderForTest(async (t, payload, o) => {
+        if (failing.has(t.endpoint)) { const e: any = new Error("gone"); e.statusCode = 410; throw e; }
+        sent.push({ endpoint: t.endpoint, payload: JSON.parse(payload), topic: o.topic });
+        return { statusCode: 201 };
+      }, cfg);
+      try {
+        const keys = { p256dh: "B".repeat(87), auth: "a".repeat(22) };
+        const ep = (n: string) => `https://fcm.googleapis.com/fcm/send/${n}`;
+        assert.deepEqual(await must("GET /client/chat/push/key", D5C), { enabled: true, publicKey: cfg.publicKey });
+        for (const bad of ["http://fcm.googleapis.com/x", "https://127.0.0.1/x", "https://evil.example.com/fcm.googleapis.com", "https://fcm.googleapis.com.evil.com/x", "https://fcm.googleapis.com:8443/x"]) {
+          const r = await call("POST /client/chat/push/subscribe", D5C, { endpoint: bad, keys });
+          assert.equal(r.status, 400, `不认识的通知地址收了：${bad}`);
+        }
+        await must("POST /client/chat/push/subscribe", D5C, { endpoint: ep("client1"), keys });
+        await must("POST /staff/chat/push/subscribe", STAFF, { endpoint: ep("staff1"), keys });
+        await must("POST /staff/chat/push/subscribe", ADMIN, { endpoint: ep("admin1"), keys });
+        await must("POST /staff/chat/push/subscribe", OTHER_STAFF, { endpoint: ep("other1"), keys });
+        assert.equal(await pm.csPushSubscription.count({ where: { endpoint: { in: [ep("client1"), ep("staff1"), ep("admin1")] } } }), 3);
+
+        await must("POST /client/chat/send", D5C, { content: "货到了吗" });
+        await push.waitForPushesForTest();
+        assert.deepEqual(sent.map((x) => x.endpoint).sort(), [ep("admin1"), ep("staff1")], `客户发的推错了人：${sent.map((x) => x.endpoint)}`);
+        assert.equal(sent[0].payload.title, `客户 ${D5C.userId}`);
+        assert.equal(sent[0].payload.body, "货到了吗");
+        assert.equal(sent[0].payload.url, `/staff/chat?clientId=${D5C.userId}`);
+        assert.ok(sent[0].topic.length <= 32 && /^[A-Za-z0-9_-]+$/.test(sent[0].topic), `topic 不合规：${sent[0].topic}`);
+
+        sent.length = 0;
+        // shipA 是 D3C 的，不是 D5C 的 → 404，什么都不推
+        assert.equal((await call("POST /staff/chat/send", STAFF, { clientId: D5C.userId, content: "到曼谷仓了", ref: { type: "shipment", id: shipA } })).status, 404);
+        await push.waitForPushesForTest();
+        assert.equal(sent.length, 0, "发送失败了还推了通知");
+        await must("POST /staff/chat/send", STAFF, { clientId: D5C.userId, content: "到曼谷仓了" });
+        await push.waitForPushesForTest();
+        assert.deepEqual(sent.map((x) => x.endpoint), [ep("client1")], "客服发的没只推给这个客户");
+        assert.equal(sent[0].payload.title, "客服给你发来消息");
+        assert.equal(sent[0].payload.url, "/client/chat");
+        assert.ok(!JSON.stringify(sent).includes(STAFF.name), "推给客户的通知里有员工名字");
+
+        // 同一个浏览器换人登录（客户甲的电脑上员工登了）：订阅改归员工，客户甲不再收到
+        await must("POST /staff/chat/push/subscribe", STAFF2, { endpoint: ep("client1"), keys });
+        sent.length = 0;
+        await must("POST /staff/chat/send", STAFF, { clientId: D5C.userId, content: "再说一句" });
+        await push.waitForPushesForTest();
+        assert.equal(sent.length, 0, "浏览器已经换人登录了，还在给原来的客户推");
+
+        // 地址作废：删掉那一行
+        failing.add(ep("staff1"));
+        await must("POST /client/chat/send", D5C, { content: "在吗" });
+        await push.waitForPushesForTest();
+        assert.equal(await pm.csPushSubscription.count({ where: { endpoint: ep("staff1") } }), 0, "推送服务说地址作废了，没删");
+        // 关通知只删自己的
+        await must("POST /staff/chat/push/unsubscribe", STAFF, { endpoint: ep("admin1") });
+        assert.equal(await pm.csPushSubscription.count({ where: { endpoint: ep("admin1") } }), 1, "员工把超管的订阅删了");
+        await must("POST /staff/chat/push/unsubscribe", ADMIN, { endpoint: ep("admin1") });
+        assert.equal(await pm.csPushSubscription.count({ where: { endpoint: ep("admin1") } }), 0);
+        // 一个账号最多留 10 个浏览器
+        for (let i = 0; i < 12; i++) await must("POST /client/chat/push/subscribe", D5C, { endpoint: ep(`many${i}`), keys });
+        assert.equal(await pm.csPushSubscription.count({ where: { userId: D5C.userId } }), 10);
+        // 代理名下的客户：统一闸挡 /client/chat/push/*，接口自己也挡
+        assert.ok(agentGateRejection({ role: "client", agentId: AGENT_ID }, "/client/chat/push/subscribe"));
+        assert.equal((await call("POST /client/chat/push/subscribe", AGENT_CLIENT, { endpoint: ep("ag"), keys })).status, 403);
+      } finally {
+        push.setPushSenderForTest(null);
+      }
+      // 没配密钥：页面拿到 enabled=false，订阅 400
+      push.setPushSenderForTest(async () => ({ statusCode: 201 }), null);
+      try {
+        assert.deepEqual(await must("GET /staff/chat/push/key", STAFF), { enabled: false, publicKey: null });
+        assert.equal((await call("POST /staff/chat/push/subscribe", STAFF, { endpoint: "https://fcm.googleapis.com/fcm/send/x", keys: { p256dh: "B".repeat(87), auth: "a".repeat(22) } })).status, 400);
+      } finally {
+        push.setPushSenderForTest(null);
+      }
     });
   } finally {
     await cleanup();

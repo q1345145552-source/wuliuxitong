@@ -58,6 +58,10 @@ services:
       AI_CHAT_MAX_PER_MINUTE: ${AI_CHAT_MAX_PER_MINUTE:-}
       AI_CHAT_MAX_PER_DAY: ${AI_CHAT_MAX_PER_DAY:-}
       AI_CHAT_MAX_MESSAGE_CHARS: ${AI_CHAT_MAX_MESSAGE_CHARS:-}
+      # 2026-10-02 客服对话的浏览器系统通知（cs-chat/push.ts）。同上：不在这里透传，改 .env 进不了容器
+      VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY:-}
+      VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:-}
+      VAPID_SUBJECT: ${VAPID_SUBJECT:-}
       IMAGES_DIR: /images
       PORT: "3001"
       DATABASE_URL: postgresql://${POSTGRES_USER:-xiangtai}:${POSTGRES_PASSWORD:-xiangtai_dev}@postgres:5432/${POSTGRES_DB:-xiangtai}?schema=public

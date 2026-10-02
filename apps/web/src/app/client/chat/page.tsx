@@ -13,13 +13,16 @@ import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useVerifiedSessionBrand } from "../../../modules/branding/useWorkbenchBrand";
 import ChatThread from "../../../modules/cs-chat/ChatThread";
+import ChatPushToggle from "../../../modules/cs-chat/ChatPushToggle";
 
 function ClientChatContent() {
   return (
     <div style={{ padding: "16px 20px", height: "calc(100dvh - 72px)", minHeight: 420, display: "flex", flexDirection: "column", gap: 10 }}>
       <div style={{ fontSize: 13, color: "var(--t-muted)" }}>
-        有问题直接在这里问，客服看到就回。报价有疑问也可以在这里谈。
+        有问题直接在这里问，客服看到就回。报价有疑问也可以在这里谈。问某一票货的，点输入框上面的「选运单」选上那一票。
       </div>
+      {/* 浏览器系统通知（2026-10-02）：没开系统页面也能收到客服的回复。服务器没配好就不出现 */}
+      <ChatPushToggle />
       <div style={{ flex: 1, minHeight: 0 }}>
         <ChatThread scope={{ kind: "client" }} title="客服" />
       </div>

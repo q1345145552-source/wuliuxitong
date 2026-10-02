@@ -9,6 +9,7 @@ import { changeOwnPassword } from "../../services/auth-api";
 import { apiBaseUrl, apiRequest } from "../../services/core-api";
 import { globalMenus, roleFunctionGroups, roleMenus, type MenuItem } from "./menu-config";
 import { CHAT_MENU_IDS, useChatUnread } from "../cs-chat/useChatUnread";
+import { dropChatPushOnLogout, syncChatPushOnLoad } from "../cs-chat/chat-push";
 import { isSamePageHashLink, navigateToHash } from "./navigate-to-hash";
 // 分组展开的默认值和记忆（代理单独一个键、默认展开「我的客户」，原因见该文件）
 import { defaultExpandedGroups, initialExpandedGroups, saveExpandedGroups } from "./sidebar-expanded-groups";
@@ -121,6 +122,12 @@ export default function RoleShell(props: {
     CHAT_MENU_IDS.some((id) => brand?.hiddenMenuIds.includes(id)),
     currentPath + currentHash,
   );
+  /* 浏览器系统通知（2026-10-02）：订阅属于这个浏览器、不属于某个账号 —— 进来先核一下是不是现在这个人开的，
+     不是就退掉（换人登录了），是就再交给后端一次（chat-push.ts）。一个身份只核一次 */
+  useEffect(() => {
+    if (!session) return;
+    void syncChatPushOnLoad(session);
+  }, [session?.userId, session?.companyId, session?.role]);
 
   // 和 globals.css 的抽屉断点一致。窄屏收起的导航退出键盘顺序，桌面仍是正常导航。
   useEffect(() => {
@@ -229,6 +236,7 @@ export default function RoleShell(props: {
       window.setTimeout(() => {
         // 改密码这条路不用调 /auth/logout：后端靠令牌里的密码指纹已把旧令牌全作废了。
         // 但运单清单缓存同样要清（2026-08-31，排查报告第 57 条）。
+        // 系统通知的订阅不退（2026-10-02）：还是这个人、马上在这台设备上重新登录，退了他得再点一次「开启通知」
         clearClientOrderCaches();
         clearAuthSession();
         window.location.href = "/login";
@@ -561,7 +569,10 @@ export default function RoleShell(props: {
               //    apiRequest 单次超时要 30 秒，用户点了退出会干等半分钟以为死机。
               //    3 秒等不到就不等了，本地清理照做。
               try {
-                const revoke = apiRequest(`${apiBaseUrl()}/auth/logout`, { method: "POST" });
+                // 先退掉这个浏览器的系统通知订阅（2026-10-02）：公用电脑上下一个人不能收到这个人的消息提醒。
+                // 要在作废令牌之前（后端删订阅要用这张令牌），但最多占 1.5 秒，给作废令牌留够时间（下面共用 3 秒）
+                const dropPush = Promise.race([dropChatPushOnLogout(session), new Promise((r) => window.setTimeout(r, 1500))]);
+                const revoke = dropPush.then(() => apiRequest(`${apiBaseUrl()}/auth/logout`, { method: "POST" }));
                 // 兜底超时后它才失败的话，别在控制台冒「未处理的 Promise 错误」
                 revoke.catch(() => {});
                 await Promise.race([

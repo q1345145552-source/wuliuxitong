@@ -23,20 +23,35 @@ async function main(): Promise<void> {
   const scope = await import("../apps/api/src/modules/core/agent-scope");
   const inquiry = await import("../apps/api/src/modules/fcl-inquiries/routes");
 
-  await check("S1 谁看到谁的名字（toWireMessage 真跑）：客户看员工 =「客服」；员工看员工 =「客服」；超管看员工 =「客服·名字」；看客户 = 唛头；自己 =「我」", () => {
-    const staffMsg = { id: "m1", senderId: "u_staff", senderRole: "staff", senderName: "小李", content: "hi", imagePath: null, createdAt: new Date("2026-09-28T01:00:00Z") };
-    const clientMsg = { id: "m2", senderId: "XHH6700", senderRole: "client", senderName: null, content: "hi", imagePath: null, createdAt: new Date("2026-09-28T01:00:01Z") };
+  await check("S1 谁看到谁的名字（toWireMessage 真跑）：客户看员工 =「客服」；员工 / 超管看员工 =「客服·名字」（2026-10-02 放开给内部）；看客户 = 唛头；自己 =「我」；撤回的不带内容", () => {
+    const base = { recalledAt: null, refType: null, refId: null, refNo: null, refTitle: null };
+    const staffMsg = { id: "m1", senderId: "u_staff", senderRole: "staff", senderName: "小李", content: "hi", imagePath: null, createdAt: new Date("2026-09-28T01:00:00Z"), ...base };
+    const clientMsg = { id: "m2", senderId: "XHH6700", senderRole: "client", senderName: null, content: "hi", imagePath: null, createdAt: new Date("2026-09-28T01:00:01Z"), ...base };
     assert.equal(api.toWireMessage(staffMsg, { userId: "XHH6700", role: "client" }).senderLabel, "客服");
-    assert.equal(api.toWireMessage(staffMsg, { userId: "u_other", role: "staff" }).senderLabel, "客服");
+    // 2026-10-02 老板拍板：员工之间看得出是哪个同事回的（原来只给超管）
+    assert.equal(api.toWireMessage(staffMsg, { userId: "u_other", role: "staff" }).senderLabel, "客服·小李");
     assert.equal(api.toWireMessage(staffMsg, { userId: "u_admin", role: "admin" }).senderLabel, "客服·小李");
     assert.equal(api.toWireMessage(staffMsg, { userId: "u_staff", role: "staff" }).senderLabel, "我");
     assert.equal(api.toWireMessage(clientMsg, { userId: "u_staff", role: "staff" }).senderLabel, "XHH6700");
     const wire = api.toWireMessage(staffMsg, { userId: "XHH6700", role: "client" });
-    assert.deepEqual(Object.keys(wire).sort(), ["content", "createdAt", "id", "imageUrl", "mine", "senderLabel", "side"], "下发字段多了（逐字段列，别把 senderId / senderName 带出去）");
+    assert.deepEqual(Object.keys(wire).sort(), ["content", "createdAt", "id", "imageUrl", "mine", "recalled", "ref", "senderLabel", "side"], "下发字段多了（逐字段列，别把 senderId / senderName 带出去）");
+    // 撤回的：哪怕库里还有内容（不该有），下发也一律空
+    const gone = api.toWireMessage({ ...staffMsg, content: "原文", imagePath: "/images/a.png", refType: "shipment", refId: "s1", refNo: "XT1", recalledAt: new Date() }, { userId: "XHH6700", role: "client" });
+    assert.deepEqual([gone.recalled, gone.content, gone.imageUrl, gone.ref], [true, null, null, null]);
+    // 单子：给了现查结果按它填；现查里没有 = 已删 / 不是他的了（gone），不带状态
+    const withRef = { ...clientMsg, refType: "shipment", refId: "s1", refNo: "XT1", refTitle: "耳机" };
+    assert.deepEqual(api.toWireMessage(withRef, { userId: "u", role: "staff" }, new Map([["shipment:s1", { status: "loaded" }]])).ref, { type: "shipment", id: "s1", no: "XT1", title: "耳机", status: "loaded", gone: false });
+    assert.deepEqual(api.toWireMessage(withRef, { userId: "u", role: "staff" }, new Map()).ref, { type: "shipment", id: "s1", no: "XT1", title: "耳机", status: null, gone: true });
+    assert.equal(api.toWireMessage({ ...withRef, refType: "container" }, { userId: "u", role: "staff" }).ref, null, "不认识的单子类型也下发了");
   });
 
   await check("S2 发什么（parseSendBody 真跑）：文字去首尾空格；空、超 2000 字、非图片、乱码 base64 都拒；图片 + 文字可以一起", () => {
-    assert.deepEqual(api.parseSendBody({ content: "  你好 \r\n 在吗  " }), { content: "你好 \n 在吗", image: null });
+    assert.deepEqual(api.parseSendBody({ content: "  你好 \r\n 在吗  " }), { content: "你好 \n 在吗", image: null, ref: null });
+    // 2026-10-02 只带单子也能发；单子类型只认运单 / 整柜
+    assert.deepEqual(api.parseSendBody({ ref: { type: "fcl", id: " c1 " } }), { content: null, image: null, ref: { type: "fcl", id: "c1" } });
+    for (const ref of [{ type: "container", id: "c1" }, { type: "shipment", id: "" }, { type: "shipment", id: 5 }, { type: "shipment", id: "x".repeat(101) }]) {
+      assert.ok("error" in api.parseSendBody({ ref } as any), `乱写的单子收了：${JSON.stringify(ref).slice(0, 60)}`);
+    }
     for (const bad of [{}, { content: "   " }, { content: "x".repeat(2001) }, { image: { mime: "image/svg+xml", base64: "AAAA" } }, { image: { mime: "image/png", base64: "中文" } }, { content: 5 }]) {
       assert.ok("error" in api.parseSendBody(bad as any), `应该拒：${JSON.stringify(bad).slice(0, 60)}`);
     }
@@ -44,14 +59,20 @@ async function main(): Promise<void> {
     assert.ok(!("error" in both) && both.image?.mime === "image/png" && both.content === "看图");
     assert.equal(api.previewOf(null, true), "[图片]");
     assert.equal(api.previewOf("a".repeat(80), false), `${"a".repeat(60)}…`);
+    assert.equal(api.previewOf("这票呢", false, { type: "shipment", no: "XT1" }), "[运单 XT1] 这票呢");
+    assert.equal(api.previewOf(null, false, { type: "fcl", no: "BL9" }), "[整柜 BL9]");
   });
 
   await check("S3 轮询合并（mergeChatMessages 真跑）：按 id 去重、按时间排；没新东西返回原数组（不白白重画）", () => {
-    const m = (id: string, t: string) => ({ id, side: "client" as const, mine: false, senderLabel: "x", content: id, imageUrl: null, createdAt: t });
+    const m = (id: string, t: string) => ({ id, side: "client" as const, mine: false, senderLabel: "x", content: id, imageUrl: null, createdAt: t, recalled: false, ref: null });
     const cur = [m("a", "2026-09-28T01:00:00.000Z"), m("b", "2026-09-28T01:00:05.000Z")];
     assert.equal(web.mergeChatMessages(cur, [m("b", "2026-09-28T01:00:05.000Z")]), cur, "全是重复的也换了新数组");
     const merged = web.mergeChatMessages(cur, [m("c", "2026-09-28T01:00:03.000Z"), m("b", "2026-09-28T01:00:05.000Z")]);
     assert.deepEqual(merged.map((x) => x.id), ["a", "c", "b"]);
+    // 2026-10-02：同一条撤回了 → 换成新的（对方撤回，这边跟着变）
+    const recalled = web.mergeChatMessages(cur, [{ ...m("b", "2026-09-28T01:00:05.000Z"), content: null, recalled: true }]);
+    assert.notEqual(recalled, cur);
+    assert.equal(recalled.find((x) => x.id === "b")!.recalled, true, "对方撤回了，合并时没换掉手里那条");
   });
 
   await check("S4 菜单：员工 / 超管「客户消息」、客户「在线客服」都放在默认展开的组里；超管借员工端那一页", () => {
@@ -208,6 +229,39 @@ async function main(): Promise<void> {
     const i = routes.indexOf("async function sendMessage");
     const fn = routes.slice(i, routes.indexOf("\n}\n", i));
     assert.match(fn, /\}, \{ timeout: 30000, maxWait: 10000 \}\);/, "发消息的事务还是默认 5 秒（排队等锁的时间也算在里面，同时发一多后面的就 500）");
+  });
+
+  await check("S14 2026-10-02：系统通知只收各家推送服务的地址（真跑）；迁移只加不删、体检清单跟上；docker-compose 透传密钥；没配密钥就不开", async () => {
+    const push = await import("../apps/api/src/modules/cs-chat/push");
+    for (const ok of ["https://fcm.googleapis.com/fcm/send/abc", "https://updates.push.services.mozilla.com/wpush/v2/x", "https://web.push.apple.com/QF1", "https://wns2-par02p.notify.windows.com/w/?token=x", "https://fcm.googleapis.com:443/x"]) {
+      assert.ok(push.isAllowedPushEndpoint(ok), `正常的推送地址被拒了：${ok}`);
+    }
+    for (const bad of ["http://fcm.googleapis.com/x", "https://127.0.0.1/x", "https://localhost/x", "https://fcm.googleapis.com.evil.com/x", "https://evilnotify.windows.com/x", "https://fcm.googleapis.com:8443/x", "https://u:p@fcm.googleapis.com/x", "file:///etc/passwd", "不是网址"]) {
+      assert.ok(!push.isAllowedPushEndpoint(bad), `不该收的地址收了：${bad}`);
+    }
+    assert.equal(push.readPushConfig({} as any), null);
+    assert.equal(push.readPushConfig({ VAPID_PUBLIC_KEY: "a", VAPID_PRIVATE_KEY: "b", VAPID_SUBJECT: "admin@x.com" } as any), null, "VAPID_SUBJECT 不是 mailto: / https:// 也开了");
+    assert.deepEqual(push.readPushConfig({ VAPID_PUBLIC_KEY: " a ", VAPID_PRIVATE_KEY: "b", VAPID_SUBJECT: "mailto:a@x.com" } as any), { publicKey: "a", privateKey: "b", subject: "mailto:a@x.com" });
+    const t = push.pushTopic("c_001:XHH6700:s");
+    assert.ok(t.length <= 32 && /^[A-Za-z0-9_-]+$/.test(t), `topic 不合规（推送服务只收 32 个 URL 安全字符）：${t}`);
+    const mig = "apps/api/prisma/migrations/20261002_cs_chat_recall_ref_push/migration.sql";
+    const sql = read(mig);
+    assert.ok(!/\b(DROP|TRUNCATE|DELETE\s+FROM|ALTER\s+COLUMN)\b/i.test(sql.replace(/--.*$/gm, "")), "迁移里有删 / 改的语句");
+    assert.equal((sql.match(/ADD COLUMN IF NOT EXISTS/g) ?? []).length, 5);
+    assert.equal((sql.match(/CREATE TABLE IF NOT EXISTS/g) ?? []).length, 1);
+    const drift = read("scripts/check-schema-drift.sql");
+    for (const pair of ["('cs_messages','recalled_at')", "('cs_messages','ref_no')", "('cs_push_subscriptions','endpoint')", "('cs_push_subscriptions','p256dh')"]) {
+      assert.ok(drift.includes(pair), `结构体检清单漏了 ${pair}`);
+    }
+    const compose = read("docker-compose.yml");
+    for (const k of ["VAPID_PUBLIC_KEY", "VAPID_PRIVATE_KEY", "VAPID_SUBJECT"]) {
+      assert.match(compose, new RegExp(`${k}: \\$\\{${k}:-\\}`), `docker-compose.yml 没透传 ${k}（改了 .env 进不了容器）`);
+      assert.ok(read("env.example").includes(`${k}=`) && read(".env.example").includes(`${k}=`), `env.example / .env.example 没列 ${k}`);
+    }
+    // 退出登录先退通知订阅，再作废令牌（后端删订阅要用这张令牌）
+    const shell = read("apps/web/src/modules/layout/RoleShell.tsx");
+    assert.match(shell, /const dropPush = Promise\.race\(\[dropChatPushOnLogout\(session\)[\s\S]{0,120}\n\s*const revoke = dropPush\.then\(\(\) => apiRequest\(`\$\{apiBaseUrl\(\)\}\/auth\/logout`/, "退出登录没先退通知订阅");
+    assert.match(shell, /syncChatPushOnLoad\(session\)/, "进来没核对通知订阅是不是这个人开的");
   });
 
   console.log(`\n通过 ${passed} / 失败 ${failed}`);

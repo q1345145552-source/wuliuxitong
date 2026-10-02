@@ -22,6 +22,11 @@ import { PrismaClient } from "@prisma/client";
 const ROOT = path.join(__dirname, "..");
 const SCHEMA = path.join(ROOT, "apps/api/prisma/schema.prisma");
 const MIGRATION = path.join(ROOT, "apps/api/prisma/migrations/20260928_cs_chat_and_inquiry_quote/migration.sql");
+/**
+ * 之后又改过这两张表的迁移（按上线顺序）：拆掉重建的 cs_messages 只有 9-28 那几列，
+ * 生产上 9-28 之后会接着跑这几份，比对 schema.prisma 之前也得照样跑一遍（它们自己另有测试）
+ */
+const LATER_MIGRATIONS = ["20261002_cs_chat_recall_ref_push"].map((d) => path.join(ROOT, `apps/api/prisma/migrations/${d}/migration.sql`));
 
 function prisma(args: string[], url: string): { code: number; out: string } {
   try {
@@ -80,6 +85,10 @@ async function main(): Promise<void> {
     });
 
     await check("M2 跑完以后库跟 schema.prisma 一点差异都没有（索引、唯一约束、外键、类型全对上）", () => {
+      for (const later of LATER_MIGRATIONS) {
+        const l = prisma(["db", "execute", `--schema=${SCHEMA}`, "--file", later], tmpUrl);
+        assert.equal(l.code, 0, `后面那份迁移 ${path.basename(path.dirname(later))} 接着跑失败：${l.out.slice(-400)}`);
+      }
       const r = prisma(["migrate", "diff", "--from-url", tmpUrl, "--to-schema-datamodel", SCHEMA, "--script", "--exit-code"], tmpUrl);
       assert.equal(r.code, 0, `还差这些（迁移漏了 / 写错了）：\n${r.out.split("\n").filter((l) => l.trim() && !l.startsWith("--")).slice(0, 12).join("\n")}`);
     });

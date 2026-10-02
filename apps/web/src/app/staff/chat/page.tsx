@@ -8,10 +8,14 @@
  * 列表 5 秒刷一次（页面在前台时）；右边窗口自己 3 秒取一次新消息（见 ChatThread）。
  * 还没聊过的客户：上面输唛头点「开始对话」，员工可以先开口。代理名下的客户不开对话（老板定的），后端会挡。
  * 网址带 ?clientId=唛头 直接打开那个客户（整柜询价详情里的「联系客户」就是这么跳过来的）。
+ *
+ * 2026-10-02 老板：已读不回容易漏 → 列表上面分「全部 / 待回复」两个页签，待回复的那一行标「待回复 · 等了多久」。
+ * 待回复 = 最新一条还在的消息是客户发的（有人看过也算，看过不回照样挂着）。最上面一行可以开浏览器系统通知（ChatPushToggle）。
  */
 import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import ChatThread, { CHAT_UNREAD_EVENT } from "../../../modules/cs-chat/ChatThread";
+import ChatPushToggle from "../../../modules/cs-chat/ChatPushToggle";
 import { fetchChatConversations, type ChatConversation } from "../../../services/cs-chat-api";
 import { createRequestGate } from "../../../modules/shared/request-gate";
 
@@ -25,6 +29,16 @@ function shortTime(iso: string | null): string {
     ? { hour: "2-digit", minute: "2-digit", hourCycle: "h23" } // 不用 hour12:false：有的浏览器零点会写成 24:05（dsh 复查）
     : { month: "2-digit", day: "2-digit" };
   return new Intl.DateTimeFormat("zh-CN", { timeZone: "Asia/Shanghai", ...opts }).format(d);
+}
+
+/** 待回复等了多久：不到 1 分钟 / x 分钟 / x 小时 / x 天（列表 5 秒刷一次，跟着走） */
+function waitedLabel(since: string | null, now = Date.now()): string {
+  if (!since) return "";
+  const min = Math.floor((now - Date.parse(since)) / 60_000);
+  if (!Number.isFinite(min) || min < 1) return "不到 1 分钟";
+  if (min < 60) return `${min} 分钟`;
+  if (min < 24 * 60) return `${Math.floor(min / 60)} 小时`;
+  return `${Math.floor(min / (24 * 60))} 天`;
 }
 
 /**
@@ -46,24 +60,30 @@ function StaffChatInbox() {
   const [listLoaded, setListLoaded] = useState(false);
   const [truncated, setTruncated] = useState(false);
   const [search, setSearch] = useState("");
+  /** 全部 / 只看待回复（2026-10-02） */
+  const [tab, setTab] = useState<"all" | "pending">("all");
+  const [pendingCount, setPendingCount] = useState(0);
   const [selected, setSelected] = useState<string>("");
   const [startInput, setStartInput] = useState("");
   const gate = useRef(createRequestGate()).current;
   const searchRef = useRef(search);
   searchRef.current = search;
+  const tabRef = useRef(tab);
+  tabRef.current = tab;
   /** 哪些客户已经划到代理名下（只能看、不能发）：记下每次列表里见过的，搜索把选中的客户过滤掉了也还认得（2026-09-28 分支审查） */
   const closedSeenRef = useRef(new Map<string, boolean>());
 
   const loadList = useCallback(async () => {
     const ticket = gate.begin();
     try {
-      const data = await fetchChatConversations(searchRef.current);
+      const data = await fetchChatConversations(searchRef.current, tabRef.current === "pending" ? "pending" : undefined);
       if (!gate.isCurrent(ticket)) return;
       for (const c of data.items ?? []) closedSeenRef.current.set(c.clientId, c.closed === true);
       /* 这个列表不报提示音（Codex 复查 2026-10-02）：左边菜单已经是 5 秒一次（老板：「当时收的时候响」），
          列表再报一份只会跟菜单抢「第一次只记不响」，把真新消息悄悄吞掉。正开着客户甲时客户乙来消息，菜单 5 秒内响 */
       setItems(data.items ?? []);
       setTruncated(data.truncated === true);
+      setPendingCount(Number(data.pendingCount) || 0);
       setListError("");
     } catch (e) {
       if (!gate.isCurrent(ticket)) return;
@@ -73,7 +93,7 @@ function StaffChatInbox() {
     }
   }, [gate]);
 
-  useEffect(() => { void loadList(); }, [loadList, search]);
+  useEffect(() => { void loadList(); }, [loadList, search, tab]);
 
   // 选中的客户跟着网址走：进页面带 ?clientId= 直接打开；点菜单「客户消息」网址变回 /staff/chat 就回到列表
   const searchParams = useSearchParams();
@@ -118,12 +138,24 @@ function StaffChatInbox() {
               开始对话
             </button>
           </form>
+          {/* 全部 / 待回复（2026-10-02 老板：已读不回容易漏）。数字是全公司待回复几个，不跟着搜索走 */}
+          <div role="tablist" aria-label="对话筛选" style={{ display: "flex", gap: 6 }}>
+            {([["all", "全部"], ["pending", `待回复${pendingCount > 0 ? ` ${pendingCount}` : ""}`]] as const).map(([k, label]) => (
+              <button key={k} type="button" role="tab" aria-selected={tab === k} onClick={() => setTab(k)}
+                style={{ flex: 1, border: `1px solid ${tab === k ? "var(--c-blue)" : "var(--l-strong)"}`, background: tab === k ? "var(--c-blue)" : "var(--white)", color: tab === k ? "var(--white)" : k === "pending" && pendingCount > 0 ? "var(--c-amber-deep)" : "var(--t-strong)", borderRadius: 6, padding: "5px 0", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>
+                {label}
+              </button>
+            ))}
+          </div>
+          <ChatPushToggle compact />
         </div>
         <div style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
           {!listLoaded ? <div style={{ padding: 16, fontSize: 13, color: "var(--t-faint)" }}>加载中…</div> : null}
           {listError ? <div style={{ padding: 16, fontSize: 13, color: "var(--c-red-deep)" }}>列表没取到：{listError}</div> : null}
           {listLoaded && !listError && items.length === 0 ? (
-            <div style={{ padding: 16, fontSize: 13, color: "var(--t-faint)" }}>{search.trim() ? "没有这个唛头的对话" : "还没有客户发消息"}</div>
+            <div style={{ padding: 16, fontSize: 13, color: "var(--t-faint)" }}>
+              {tab === "pending" ? (search.trim() ? "这个唛头没有待回复的对话" : "没有待回复的对话，都回过了") : search.trim() ? "没有这个唛头的对话" : "还没有客户发消息"}
+            </div>
           ) : null}
           {truncated ? (
             <div style={{ padding: "8px 12px", fontSize: 12, color: "var(--c-amber-deep)", background: "var(--c-amber-bg)" }}>
@@ -147,9 +179,15 @@ function StaffChatInbox() {
                     ) : null}
                   </span>
                 </div>
+                {/* 待回复：客户说了话、我们还没回（看过也算没回），写上等了多久 */}
+                {c.pendingReply ? (
+                  <div className="cs-pending-tag" style={{ display: "inline-block", marginTop: 4, fontSize: 11, color: "var(--c-amber-deep)", background: "var(--c-amber-bg)", borderRadius: 4, padding: "1px 6px" }}>
+                    待回复 · 等了 {waitedLabel(c.pendingSince)}
+                  </div>
+                ) : null}
                 <div style={{ fontSize: 12, color: "var(--t-muted)", marginTop: 3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                   {c.closed ? "（已划到代理名下，不能再发）" : null}
-                  {c.lastFromClient ? "" : "我方："}{c.lastMessagePreview || "（无内容）"}
+                  {c.lastFromUs ? "我方：" : ""}{c.lastMessagePreview || "（无内容）"}
                 </div>
               </button>
             );

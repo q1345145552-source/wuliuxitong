@@ -16,6 +16,12 @@
  *   · 我方发的（客户看 = 自己发的；客服看 = 任何一个员工 / 超管发的），对方看过了就在时间上面写「已读」，没看过什么都不写（LINE 就这样）；
  *     「对方看到哪」用的是后端早就记着的 client_read_at / staff_read_at（随每次取消息一起回来，3 秒内跟着变）；
  *   · 轮询拿到对方新发来的就「叮咚」一声（chat-sound.ts，跟左边菜单共用一份记录，同一条不响两次）。
+ *
+ * 2026-10-02 老板：「这几个都可以做」+「可以选择是哪个运单，让客服或者客户发起…整柜的也可以」——
+ *   · 撤回：自己发的、2 分钟内，时间旁边出「撤回」（同微信）；撤回后两边都只剩一行「xx 撤回了一条消息」。
+ *     「2 分钟」按服务器的钟算（每次取消息都带回服务器时间，记下跟本机差多少），本机时间不准也不会多给 / 少给；
+ *   · 选运单：输入框左边「选运单」，选一张普通运单或整柜，输入框上方出一个「关于：运单 xxx」，发出去的那条气泡里带一张小卡片
+ *     （单号、品名、现在的状态）。只发卡片不打字也行。客户和客服都能发起。
  */
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ClipboardEvent, type KeyboardEvent } from "react";
 import {
@@ -23,11 +29,15 @@ import {
   fetchChatMessages,
   markChatRead,
   mergeChatMessages,
+  recallChatMessage,
   sendChatMessage,
   type ChatMessage,
+  type ChatRef,
   type ChatScope,
 } from "../../services/cs-chat-api";
 import { compressImageForUpload } from "../shared/image-compress";
+import { CLIENT_STATUS_ZH_OVERRIDES, shipmentStatusZh } from "../shipment/shipment-status";
+import ChatRefPicker, { type PickedRef } from "./ChatRefPicker";
 import { createRequestGate } from "../shared/request-gate";
 import { chatSoundKey, installChatSoundUnlock, noteIncomingArrived, noteIncomingShown } from "./chat-sound";
 
@@ -36,6 +46,10 @@ export { CHAT_UNREAD_EVENT };
 export const CHAT_POLL_MS = 3000;
 /** 跟后端 CS_MAX_TEXT 一致 */
 const MAX_TEXT = 2000;
+/** 撤回时限，跟后端 CS_RECALL_WINDOW_MS 一致（2026-10-02 老板选「2 分钟，同微信」）。真正卡时间的是后端 */
+export const RECALL_WINDOW_MS = 2 * 60 * 1000;
+/** 有能撤回的消息时，多久重画一次（过了 2 分钟「撤回」要自己消失）。别用 5 秒：测试里按 5 秒认菜单的计时器 */
+const RECALL_TICK_MS = 10_000;
 
 function notifyUnreadChanged(): void {
   try { window.dispatchEvent(new Event(CHAT_UNREAD_EVENT)); } catch { /* 老浏览器没有 Event 构造函数就算了 */ }
@@ -90,10 +104,24 @@ function soundConv(scope: ChatScope): string {
   return scope.kind === "client" ? chatSoundKey() : chatSoundKey(scope.clientId);
 }
 
-/** 一批消息里对方发的最新那条的时间（没有就空串） */
+/** 一批消息里对方发的最新那条的时间（没有就空串）。撤回了的不算（发了又马上撤回的，别为它响） */
 function latestIncoming(list: ChatMessage[], scope: ChatScope): string {
   const side = ourSide(scope);
-  return latestCreatedAt(list.filter((m) => m.side !== side), "");
+  return latestCreatedAt(list.filter((m) => m.side !== side && !m.recalled), "");
+}
+
+/** 气泡里那张单：单号、品名、现在的状态（客户看 delivered 叫「已签收」，跟客户别的页面一个叫法）。没有状态要管，直接当函数调 */
+function renderRefCard(r: ChatRef, forClient: boolean, withText: boolean) {
+  return (
+    <div className="cs-ref-card" style={{ border: "1px solid var(--l-soft)", borderRadius: 6, background: "var(--white)", padding: "6px 9px", marginBottom: withText ? 6 : 0, minWidth: 160 }}>
+      <div style={{ fontSize: 11, color: "var(--t-muted)" }}>{r.type === "fcl" ? "整柜" : "运单"}</div>
+      <div style={{ fontFamily: "var(--a3-mono, monospace)", fontWeight: 600, fontSize: 13, color: "var(--t-heading)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{r.no}</div>
+      {r.title ? <div style={{ fontSize: 12, color: "var(--t-body)" }}>{r.title}</div> : null}
+      <div style={{ fontSize: 12, color: r.gone ? "var(--t-faint)" : "var(--c-blue)" }}>
+        {r.gone ? "这张单已删除，或已不在这个账号名下" : r.status ? `现在：${shipmentStatusZh(r.status, forClient ? CLIENT_STATUS_ZH_OVERRIDES : undefined)}` : null}
+      </div>
+    </div>
+  );
 }
 
 export default function ChatThread(props: {
@@ -125,6 +153,15 @@ export default function ChatThread(props: {
   const [peerReadAt, setPeerReadAt] = useState("");
   /** 首次取消息失败后重取（点「重试」或 5 秒后自己再试）：原来失败一次窗口就一直是死的（2026-09-28 分支审查） */
   const [reloadTick, setReloadTick] = useState(0);
+  /** 正在撤回哪一条（按钮写「撤回中」、不让连点） */
+  const [recalling, setRecalling] = useState<string | null>(null);
+  /** 选好了、还没发出去的那张单（输入框上方显示「关于：…」） */
+  const [pendingRef, setPendingRef] = useState<PickedRef | null>(null);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  /** 过了 2 分钟「撤回」要消失：有能撤回的消息时定时重画 */
+  const [, setRecallTick] = useState(0);
+  /** 服务器时间 - 本机时间（毫秒）：「还能不能撤回」按服务器的钟算 */
+  const clockOffsetRef = useRef(0);
   /** 自己重试了几次：最多 3 次（唛头输错这种一直会错的，别每 5 秒闪一次「加载中」）；换对话清零 */
   const autoRetryRef = useRef(0);
 
@@ -168,6 +205,14 @@ export default function ChatThread(props: {
     stickToBottomRef.current = true;
     setNewBelow(false);
   };
+  /** 记下服务器的钟比本机快 / 慢多少（每次取消息都带回服务器时间） */
+  const noteServerClock = (serverTime: string) => {
+    const t = Date.parse(serverTime);
+    if (Number.isFinite(t)) clockOffsetRef.current = t - Date.now();
+  };
+  /** 这条现在还能不能撤回：自己发的、没撤回过、按服务器的钟还在 2 分钟里（真正卡时间的是后端） */
+  const canRecall = (m: ChatMessage) =>
+    m.mine && !m.recalled && !closedNotice && Date.now() + clockOffsetRef.current - Date.parse(m.createdAt) < RECALL_WINDOW_MS;
 
   /**
    * 看到了对方的消息：标已读。几个条件都要满足才算「看到了」：
@@ -216,6 +261,13 @@ export default function ChatThread(props: {
     }, 60_000);
     return () => window.clearInterval(timer);
   }, []);
+  // 有能撤回的消息：定时重画，过了 2 分钟「撤回」自己消失（没有就不开定时器）
+  const hasRecallable = messages.some(canRecall);
+  useEffect(() => {
+    if (!hasRecallable) return;
+    const timer = window.setInterval(() => setRecallTick((n) => n + 1), RECALL_TICK_MS);
+    return () => window.clearInterval(timer);
+  }, [hasRecallable]);
 
   // 换对话：清空、重新取最近 50 条
   useEffect(() => {
@@ -228,6 +280,9 @@ export default function ChatThread(props: {
     setSendError("");
     setNewBelow(false);
     setPeerReadAt("");
+    setPendingRef(null);
+    setPickerOpen(false);
+    setRecalling(null);
     serverTimeRef.current = "";
     pollSinceRef.current = "";
     stickToBottomRef.current = true;
@@ -242,6 +297,7 @@ export default function ChatThread(props: {
         setHasMore(page.hasMore);
         setPeerReadAt(page.peerReadAt ?? "");
         serverTimeRef.current = page.serverTime;
+        noteServerClock(page.serverTime);
         pollSinceRef.current = latestCreatedAt(page.messages, "");
         // 打开对话时就有的对方消息：只记下、不响（不是新来的）
         noteIncomingShown(soundConv(scopeRef.current), latestIncoming(page.messages, scopeRef.current));
@@ -277,6 +333,7 @@ export default function ChatThread(props: {
         const page = await fetchChatMessages(scopeRef.current, { since });
         if (stopped || keyRef.current !== forKey) return;
         serverTimeRef.current = page.serverTime;
+        noteServerClock(page.serverTime);
         pollSinceRef.current = latestCreatedAt(page.messages, pollSinceRef.current);
         // 对方看到哪：只往前走（每轮都带回来，对方一看过，3 秒内这边就变「已读」）
         const peer = page.peerReadAt;
@@ -335,16 +392,21 @@ export default function ChatThread(props: {
     }
   };
 
-  /** restoreText：发文字时输入框已经先清空了，没发出去就把原话放回去（框里要是已经又打了别的字就不动） */
-  const send = async (input: { content?: string; file?: File; restoreText?: string }) => {
+  /**
+   * restoreText：发文字时输入框已经先清空了，没发出去就把原话放回去（框里要是已经又打了别的字就不动）。
+   * ref：带上选好的那张单；发出去了才把输入框上方的「关于：…」去掉（没发出去留着，再按一次发送就行）
+   */
+  const send = async (input: { content?: string; file?: File; restoreText?: string; ref?: PickedRef }) => {
     if (sending || closedNotice) return;
     const forKey = key;
     setSending(true);
     setSendError("");
     try {
       const image = input.file ? await compressImageForUpload(input.file) : undefined;
-      const r = await sendChatMessage(scopeRef.current, { content: input.content, image });
+      const ref = input.ref ? { type: input.ref.type, id: input.ref.id } : undefined;
+      const r = await sendChatMessage(scopeRef.current, { content: input.content, image, ref });
       if (keyRef.current !== forKey) return;
+      if (ref) setPendingRef((cur) => (cur && cur.type === ref.type && cur.id === ref.id ? null : cur));
       stickToBottomRef.current = true;
       setMessages((cur) => mergeChatMessages(cur, [r.message]));
       notifyUnreadChanged();
@@ -365,13 +427,36 @@ export default function ChatThread(props: {
     // 上一条还在发：不动输入框（原来这时按回车什么也不做，照旧）
     if (sending || closedNotice) return;
     const content = text.trim();
-    if (!content) return;
+    // 选了单子没打字：只发那张单（2026-10-02）
+    const ref = pendingRef ?? undefined;
+    if (!content && !ref) return;
     if (content.length > MAX_TEXT) { setSendError(`一条最多 ${MAX_TEXT} 个字，请分几条发`); return; }
+    setPickerOpen(false);
+    if (!content) { void send({ ref }); return; }
     /* 像微信：一按发送输入框马上清空，接着打下一句（2026-09-28 分支审查）。原来发成功后才整框清空，
        发送途中接着打的字会被一起清掉。没发出去再把原话放回来。 */
     const typed = text;
     setText("");
-    void send({ content, restoreText: typed });
+    void send({ content, restoreText: typed, ref });
+  };
+
+  /** 撤回自己发的（2 分钟内）。成功后列表摘要、未读跟着变（通知左边菜单和客户列表马上刷新） */
+  const recall = async (m: ChatMessage) => {
+    if (recalling) return;
+    const forKey = key;
+    setRecalling(m.id);
+    setSendError("");
+    try {
+      const r = await recallChatMessage(scopeRef.current, m.id);
+      if (keyRef.current !== forKey) return;
+      setMessages((cur) => mergeChatMessages(cur, [r.message]));
+      notifyUnreadChanged();
+      onSent?.();
+    } catch (e) {
+      if (keyRef.current === forKey) setSendError(e instanceof Error ? `没撤回成：${e.message}` : "没撤回成，请重试");
+    } finally {
+      if (keyRef.current === forKey) setRecalling(null);
+    }
   };
 
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -394,6 +479,8 @@ export default function ChatThread(props: {
   };
 
   const side = ourSide(scope);
+  /** 有字、或者选了单子（只发单子）就能发 */
+  const canSend = !!text.trim() || pendingRef !== null;
   let lastDay = "";
   return (
     <div className="cs-chat" style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0, background: "var(--s-sunken)", borderRadius: 10, border: "1px solid var(--l-soft)", overflow: "hidden" }}>
@@ -449,13 +536,25 @@ export default function ChatThread(props: {
           const showDay = day !== lastDay;
           lastDay = day;
           const read = m.side === side && peerReadAt !== "" && m.createdAt <= peerReadAt;
+          const dayRow = showDay ? (
+            <div style={{ textAlign: "center", margin: "10px 0 8px" }}>
+              <span style={{ fontSize: 11, color: "var(--t-faint)" }}>{dayLabel(m.createdAt)}</span>
+            </div>
+          ) : null;
+          // 撤回了：居中一行灰字（同微信），不留气泡
+          if (m.recalled) {
+            return (
+              <div key={m.id}>
+                {dayRow}
+                <div className="cs-recalled" style={{ textAlign: "center", margin: "4px 0 10px", fontSize: 12, color: "var(--t-faint)" }} title={fullTimeLabel(m.createdAt)}>
+                  {m.mine ? "你撤回了一条消息" : `${m.senderLabel} 撤回了一条消息`}
+                </div>
+              </div>
+            );
+          }
           return (
             <div key={m.id}>
-              {showDay ? (
-                <div style={{ textAlign: "center", margin: "10px 0 8px" }}>
-                  <span style={{ fontSize: 11, color: "var(--t-faint)" }}>{dayLabel(m.createdAt)}</span>
-                </div>
-              ) : null}
+              {dayRow}
               <div style={{ display: "flex", flexDirection: "column", alignItems: m.mine ? "flex-end" : "flex-start", marginBottom: 10 }}>
                 {!m.mine ? <div style={{ fontSize: 11, color: "var(--t-muted)", margin: "0 4px 3px" }}>{m.senderLabel}</div> : null}
                 {/* 气泡 + 旁边的「已读 / 时间」：自己的在气泡左边、对方的在气泡右边，贴着气泡底（LINE 的样子） */}
@@ -463,7 +562,7 @@ export default function ChatThread(props: {
                   <div
                     style={{
                       minWidth: 0,
-                      padding: m.content ? "8px 11px" : 4,
+                      padding: m.content || m.ref ? "8px 11px" : 4,
                       borderRadius: 8,
                       background: m.mine ? "var(--c-green-bg)" : "var(--white)",
                       border: `1px solid ${m.mine ? "var(--c-green-2)" : "var(--l-soft)"}`,
@@ -483,9 +582,16 @@ export default function ChatThread(props: {
                         <img src={m.imageUrl} alt="图片" onLoad={() => { if (stickToBottomRef.current) scrollToBottom(); }} style={{ display: "block", maxWidth: "100%", maxHeight: 220, borderRadius: 6 }} />
                       </button>
                     ) : null}
+                    {m.ref ? renderRefCard(m.ref, scope.kind === "client", !!m.content) : null}
                     {m.content ? <div style={m.imageUrl ? { marginTop: 6, padding: "0 7px 4px" } : undefined}>{m.content}</div> : null}
                   </div>
                   <div className="cs-msg-meta" style={{ display: "flex", flexDirection: "column", alignItems: m.mine ? "flex-end" : "flex-start", flexShrink: 0, fontSize: 11, lineHeight: 1.35, color: "var(--t-faint)", whiteSpace: "nowrap" }}>
+                    {canRecall(m) ? (
+                      <button type="button" className="cs-recall" onClick={() => void recall(m)} disabled={recalling !== null}
+                        style={{ border: "none", background: "transparent", padding: 0, fontSize: 11, color: "var(--c-blue)", cursor: recalling ? "default" : "pointer" }}>
+                        {recalling === m.id ? "撤回中" : "撤回"}
+                      </button>
+                    ) : null}
                     {read ? <span style={{ color: "var(--t-muted)" }}>已读</span> : null}
                     <span>{hmLabel(m.createdAt)}</span>
                   </div>
@@ -508,16 +614,38 @@ export default function ChatThread(props: {
       {closedNotice ? (
         <div style={{ padding: "12px 16px", borderTop: "1px solid var(--l-soft)", background: "var(--white)", fontSize: 13, color: "var(--t-muted)" }}>{closedNotice}</div>
       ) : (
-        <div style={{ borderTop: "1px solid var(--l-soft)", background: "var(--white)", padding: "8px 12px 10px" }}>
+        <div style={{ position: "relative", borderTop: "1px solid var(--l-soft)", background: "var(--white)", padding: "8px 12px 10px" }}>
+          {pickerOpen ? (
+            <ChatRefPicker scope={scope} onPick={(r) => { setPendingRef(r); setPickerOpen(false); }} onClose={() => setPickerOpen(false)} />
+          ) : null}
           {sendError ? <div role="alert" style={{ color: "var(--c-red-deep)", fontSize: 12, marginBottom: 6 }}>{sendError}</div> : null}
-          <div style={{ display: "flex", gap: 8, alignItems: "flex-end" }}>
+          {/* 工具一行：图片、选运单，选好的单子跟在后面（手机上输入框那一行放不下三个按钮，挪到上面这一行） */}
+          <div className="cs-composer-tools" style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", marginBottom: 6 }}>
             <button type="button" onClick={() => fileRef.current?.click()} disabled={sending || loading || !!loadError}
-              style={{ border: "1px solid var(--l-strong)", borderRadius: 6, background: "var(--white)", padding: "8px 10px", cursor: "pointer", fontSize: 13, color: "var(--t-strong)", flexShrink: 0 }}
+              style={{ border: "1px solid var(--l-strong)", borderRadius: 6, background: "var(--white)", padding: "4px 10px", cursor: "pointer", fontSize: 12, color: "var(--t-strong)", flexShrink: 0 }}
               title="发图片（也可以直接 Ctrl+V 粘贴截图）">
               图片
             </button>
             <input ref={fileRef} type="file" accept="image/*" style={{ display: "none" }}
               onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) void send({ file: f }); }} />
+            <button type="button" onClick={() => setPickerOpen((v) => !v)} disabled={loading || !!loadError} aria-expanded={pickerOpen}
+              style={{ border: "1px solid var(--l-strong)", borderRadius: 6, background: pickerOpen ? "var(--s-sunken)" : "var(--white)", padding: "4px 10px", cursor: "pointer", fontSize: 12, color: "var(--t-strong)", flexShrink: 0 }}
+              title="选一张运单或整柜，对方就知道说的是哪一票">
+              选运单
+            </button>
+            {pendingRef ? (
+              <span className="cs-ref-chip" style={{ display: "inline-flex", alignItems: "center", gap: 6, minWidth: 0, maxWidth: "100%", border: "1px solid var(--c-blue)", borderRadius: 12, padding: "2px 4px 2px 10px", fontSize: 12, color: "var(--c-blue)", background: "var(--white)" }}>
+                <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  关于：{pendingRef.type === "fcl" ? "整柜" : "运单"} {pendingRef.no}{pendingRef.title ? `（${pendingRef.title}）` : ""}
+                </span>
+                <button type="button" onClick={() => setPendingRef(null)} aria-label="不带这张单"
+                  style={{ border: "none", background: "transparent", color: "var(--t-muted)", cursor: "pointer", fontSize: 14, lineHeight: 1, padding: "0 4px", flexShrink: 0 }}>
+                  ×
+                </button>
+              </span>
+            ) : null}
+          </div>
+          <div style={{ display: "flex", gap: 8, alignItems: "flex-end" }}>
             <textarea
               value={text}
               onChange={(e) => setText(e.target.value)}
@@ -525,15 +653,15 @@ export default function ChatThread(props: {
               onPaste={onPaste}
               onCompositionStart={() => { composingRef.current = true; }}
               onCompositionEnd={() => { composingRef.current = false; }}
-              placeholder={placeholder ?? "输入消息，回车发送，Shift+回车换行"}
+              placeholder={pendingRef ? "说说这张单要问什么（不写也能直接发）" : placeholder ?? "输入消息，回车发送，Shift+回车换行"}
               rows={2}
               maxLength={MAX_TEXT}
               disabled={loading || !!loadError}
               aria-label="输入消息"
               style={{ flex: 1, resize: "none", border: "1px solid var(--l-strong)", borderRadius: 6, padding: "8px 10px", fontSize: 14, lineHeight: 1.5, minHeight: 42, maxHeight: 140, fontFamily: "inherit" }}
             />
-            <button type="button" onClick={sendText} disabled={sending || loading || !!loadError || !text.trim()}
-              style={{ border: "none", borderRadius: 6, background: sending || !text.trim() ? "var(--t-faint)" : "var(--c-green-3)", color: "var(--white)", padding: "9px 16px", cursor: sending || !text.trim() ? "default" : "pointer", fontSize: 14, fontWeight: 600, flexShrink: 0 }}>
+            <button type="button" onClick={sendText} disabled={sending || loading || !!loadError || !canSend}
+              style={{ border: "none", borderRadius: 6, background: sending || !canSend ? "var(--t-faint)" : "var(--c-green-3)", color: "var(--white)", padding: "9px 16px", cursor: sending || !canSend ? "default" : "pointer", fontSize: 14, fontWeight: 600, flexShrink: 0 }}>
               {sending ? "发送中" : "发送"}
             </button>
           </div>

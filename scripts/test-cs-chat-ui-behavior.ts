@@ -46,6 +46,17 @@
  *   —— Codex 第二轮复查（2026-10-02）——
  *   U22 补：第一次问未读很慢、这期间对方发来的消息跟着第一次结果回来 → 照样响一次（原来第一次结果一律只记不响）；
  *       补问回来同一条不再响；打开网页前 10 秒以外就有的不响
+ *   —— 2026-10-02 老板：「这几个都可以做」+「可以选择是哪个运单…整柜的也可以」——
+ *   U24 撤回：自己的、按服务器的钟 2 分钟内才有按钮，过了自己消失；点了变「你撤回了一条消息」
+ *   U25 对方撤回：轮询带回同一条（已撤回），这边换成「客服 撤回了一条消息」；发了马上撤回的不响
+ *   U26 选运单：列客户自己的运单 / 整柜（客服那头带上唛头）、搜索交给后端；选了出「关于：…」；只发单子不打字也能发；
+ *       发出去才去掉，没发出去留着
+ *   U27 气泡里的单子卡片：单号、品名、现在的状态（客户看 delivered 叫「已签收」）；删了的写清楚；状态变了跟着变
+ *   U28 员工「客户消息」：「全部 / 待回复」页签、待回复写等了多久、摘要「我方：」按最新一条还在的算
+ *   U29 浏览器系统通知（chat-push.ts）：开 → 交给后端、记下是谁开的；换人登录 → 退掉；退出登录先在浏览器退掉再告诉后端；
+ *       服务器没配 / 被禁止 / 不支持各自的状态
+ *   U29b 推送服务连不上（国内 Chrome 连不上谷歌，一直不回）：20 秒后报中文；无痕窗口的英文报错也换成中文
+ *   U30 push-sw.js 真跑：人正对着网页不弹（苹果照弹）；同一对话互相替换；点通知切到已开的窗口、只认本站地址
  */
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -529,7 +540,15 @@ async function main(): Promise<void> {
   const passTime = () => { clock += 2000; };
   Date.now = () => clock;
   const resetSound = () => { sound.resetChatSoundForTest(); dings = 0; passTime(); };
-  const metas = () => findAll((n) => n.props?.className === "cs-msg-meta").map((n) => textOf(n));
+  /** 气泡旁边那一列的字（「已读」+ 时间）。「撤回」按钮另外测（U24），这里跳过它 */
+  const textSkipping = (node: any, skipClass: string): string => {
+    if (node == null || node === false || node === true) return "";
+    if (typeof node === "string" || typeof node === "number") return String(node);
+    if (Array.isArray(node)) return node.map((x) => textSkipping(x, skipClass)).join("");
+    if (node.props?.className === skipClass) return "";
+    return textSkipping(node.props?.children, skipClass);
+  };
+  const metas = () => findAll((n) => n.props?.className === "cs-msg-meta").map((n) => textSkipping(n, "cs-recall"));
   const dayRows = () => findAll((n) => n.type === "span" && /^(今天|昨天|\d+年?\d*月?\d+月\d+日 周.|\d+月\d+日 周.)$/.test(textOf(n))).map((n) => textOf(n));
   const pollCalls = () => calls.filter((c) => c.url.includes("/chat/messages") && c.url.includes("since=") && !c.done);
   async function answerPoll(body: any) {
@@ -988,6 +1007,353 @@ async function main(): Promise<void> {
     } finally {
       delete fakeWindow.localStorage;
     }
+  });
+
+  // ---------- 2026-10-02：撤回 / 选运单 / 待回复 / 系统通知 ----------
+  const recalledRows = () => findAll((n) => n.props?.className === "cs-recalled").map(textOf);
+  const recallBtns = () => findAll((n) => n.props?.className === "cs-recall");
+  const bodyText = () => textOf(findAll((n) => n.props?.["aria-live"] === "polite")[0]);
+
+  await check("U24 撤回：自己的、按服务器的钟 2 分钟内才有「撤回」，过了自己消失；点了发撤回、这一条变「你撤回了一条消息」", async () => {
+    resetSound();
+    mount(ChatThread, { scope: { kind: "client" }, title: "客服" });
+    // 服务器 01:02:00。本机钟（假的，1970 年）跟服务器差几十年 —— 按钮还对，说明是按服务器的钟算的
+    lastCall().resolve({
+      messages: [cs("k1", "2026-09-28T01:01:00.000Z"), cl("old", "2026-09-28T00:59:59.000Z", true), cl("new", "2026-09-28T01:01:30.000Z", true)],
+      hasMore: false, serverTime: "2026-09-28T01:02:00.000Z", peerReadAt: null,
+    });
+    await settle();
+    assert.equal(recallBtns().length, 1, `只有自己 2 分钟内发的那条该有「撤回」，实际 ${recallBtns().length} 个`);
+    // 过了 1 分钟（服务器的钟跟着走）：new 也超过 2 分钟了，按钮自己消失（有能撤回的消息时 10 秒重画一次）
+    clock += 95_000; // 服务器的钟走到 01:03:35，new（01:01:30）发出超过 2 分钟了
+    await tickTimers((t) => !t.once && t.ms === 10_000);
+    assert.equal(recallBtns().length, 0, "过了 2 分钟「撤回」还在");
+    unmount(); calls.length = 0; timers.length = 0;
+    // 再来：点「撤回」
+    mount(ChatThread, { scope: { kind: "client" }, title: "客服" });
+    lastCall().resolve({ messages: [cl("m9", "2026-09-28T01:01:30.000Z", true)], hasMore: false, serverTime: "2026-09-28T01:02:00.000Z", peerReadAt: null });
+    await settle();
+    recallBtns()[0].props.onClick(); await settle();
+    assert.equal(textOf(recallBtns()[0]), "撤回中");
+    const rc = calls.filter((c) => c.url.includes("/client/chat/recall")).pop();
+    assert.ok(rc, "点了「撤回」没发请求");
+    assert.deepEqual(JSON.parse(rc!.opts.body), { messageId: "m9" });
+    rc!.resolve({ message: { ...cl("m9", "2026-09-28T01:01:30.000Z", true), content: null, recalled: true, ref: null } });
+    await settle();
+    assert.deepEqual(recalledRows(), ["你撤回了一条消息"]);
+    assert.ok(!bodyText().includes("m9"), "撤回以后原文还显示着");
+    // 员工那头撤自己的：请求带上唛头
+    unmount(); calls.length = 0; timers.length = 0;
+    mount(ChatThread, { scope: { kind: "staff", clientId: "ZZC1" }, title: "ZZC1" });
+    lastCall().resolve({ messages: [cs("s9", "2026-09-28T01:01:30.000Z", true), cs("other", "2026-09-28T01:01:40.000Z", false)], hasMore: false, serverTime: "2026-09-28T01:02:00.000Z", peerReadAt: null });
+    await settle();
+    assert.equal(recallBtns().length, 1, "别的员工发的也出了「撤回」");
+    recallBtns()[0].props.onClick(); await settle();
+    const sc = calls.filter((c) => c.url.includes("/staff/chat/recall")).pop();
+    assert.deepEqual(JSON.parse(sc!.opts.body), { clientId: "ZZC1", messageId: "s9" });
+    sc!.reject(new Error("发出超过 2 分钟了，不能撤回")); await settle();
+    assert.ok(findAll((n) => n.props?.role === "alert").map(textOf).some((t) => t.includes("没撤回成")), "撤回失败没提示");
+  });
+
+  await check("U25 对方撤回：轮询带回同一条（已撤回），这边换成「客服 撤回了一条消息」；发了马上就撤回的不响", async () => {
+    resetSound();
+    mount(ChatThread, { scope: { kind: "client" }, title: "客服" });
+    lastCall().resolve({ messages: [cs("p1", "2026-09-28T01:00:00.000Z")], hasMore: false, serverTime: "2026-09-28T01:00:05.000Z", peerReadAt: null });
+    await settle();
+    assert.ok(bodyText().includes("p1"));
+    await tickTimers((t) => !t.once && t.ms === 3000);
+    await answerPoll({ messages: [{ ...cs("p1", "2026-09-28T01:00:00.000Z"), content: null, recalled: true, ref: null }], hasMore: false, serverTime: "2026-09-28T01:00:08.000Z", peerReadAt: null });
+    assert.deepEqual(recalledRows(), ["客服 撤回了一条消息"], `对方撤回了，这边没变：${JSON.stringify(recalledRows())}`);
+    assert.ok(!bodyText().includes("p1"), "对方撤回了，原文还显示着");
+    // 两轮轮询之间发了又撤回的：第一次见到就是已撤回的，不响
+    passTime();
+    await tickTimers((t) => !t.once && t.ms === 3000);
+    await answerPoll({ messages: [{ ...cs("p2", "2026-09-28T01:00:09.000Z"), content: null, recalled: true, ref: null }], hasMore: false, serverTime: "2026-09-28T01:00:11.000Z", peerReadAt: null });
+    assert.equal(dings, 0, "对方发了马上撤回的，也响了");
+  });
+
+  const refList = {
+    shipments: [{ id: "s1", no: "XT001", title: "蓝牙耳机", status: "delivered", packageCount: 3, packageUnit: "箱" }],
+    fcl: [{ id: "f1", no: "BL01", title: "鞋子", status: "departed", packageCount: 10, packageUnit: "箱" }],
+    shipmentsTruncated: false, fclTruncated: true,
+  };
+  const refCalls = () => calls.filter((c) => c.url.includes("/chat/refs") && !c.done);
+  const sendBtn = () => findAll((n) => n.type === "button" && /^(发送|发送中)$/.test(textOf(n)))[0];
+
+  const RefPicker = loadModule(path.join(SRC, "modules/cs-chat/ChatRefPicker.tsx"), OVERRIDES).default;
+  const pickerNode = () => findAll((n) => n.type === RefPicker)[0];
+  const chipText = () => findAll((n) => n.props?.className === "cs-ref-chip").map(textOf)[0];
+
+  await check("U26 选运单：聊天窗口点「选运单」出选单框，选了出「关于：…」；只发单子不打字也能发；发出去才去掉，没发出去留着", async () => {
+    resetSound();
+    await boot();
+    assert.equal(sendBtn().props.disabled, true, "什么都没有，发送按钮却能点");
+    findAll((n) => n.type === "button" && textOf(n) === "选运单")[0].props.onClick(); flush();
+    assert.ok(pickerNode(), "点「选运单」没出选单框");
+    assert.deepEqual(pickerNode().props.scope, { kind: "client" });
+    pickerNode().props.onPick({ type: "fcl", id: "f1", no: "BL01", title: "鞋子" }); flush();
+    assert.equal(pickerNode(), undefined, "选好了框没收起来");
+    assert.ok(chipText()?.includes("关于：整柜 BL01（鞋子）"), `输入框上方没出「关于：…」：${chipText()}`);
+    // 不打字直接发：只带单子
+    assert.equal(sendBtn().props.disabled, false, "选了单子没打字，发送按钮是灰的");
+    sendBtn().props.onClick(); flush();
+    const s1 = sendCalls().pop()!;
+    assert.deepEqual(JSON.parse(s1.opts.body), { ref: { type: "fcl", id: "f1" } });
+    assert.ok(chipText(), "还没发出去就把「关于：…」去掉了");
+    s1.resolve({ message: { ...msg("r1", true, "2026-09-28T01:00:06.000Z"), content: null, recalled: false, ref: { type: "fcl", id: "f1", no: "BL01", title: "鞋子", status: "departed", gone: false } } });
+    await settle();
+    assert.equal(chipText(), undefined, "发出去了「关于：…」还在");
+    // 打字 + 单子一起发；没发出去：单子留着、原话放回来
+    findAll((n) => n.type === "button" && textOf(n) === "选运单")[0].props.onClick(); flush();
+    pickerNode().props.onPick({ type: "shipment", id: "s1", no: "XT001", title: "蓝牙耳机" }); flush();
+    ta().props.onChange({ target: { value: "这票签收了吗" } }); flush();
+    enter(); flush();
+    const s2 = sendCalls().pop()!;
+    assert.deepEqual(JSON.parse(s2.opts.body), { content: "这票签收了吗", ref: { type: "shipment", id: "s1" } });
+    s2.reject(new Error("网络断了")); await settle();
+    assert.ok(chipText(), "没发出去，选好的单子丢了");
+    assert.equal(ta().props.value, "这票签收了吗");
+    // 「×」不带这张单
+    findAll((n) => n.type === "button" && n.props["aria-label"] === "不带这张单")[0].props.onClick(); flush();
+    assert.equal(chipText(), undefined);
+  });
+
+  await check("U26b 选单框（ChatRefPicker 真跑）：列客户自己的运单 / 整柜、状态用客户的叫法、到顶了写出来；搜索停手 300 毫秒交给后端；客服那头带上唛头", async () => {
+    const picked: any[] = [];
+    mount(RefPicker, { scope: { kind: "client" }, onPick: (r: any) => picked.push(r), onClose() {} });
+    await tickTimers((t) => t.once && t.ms === 0);
+    const c1 = refCalls().pop();
+    assert.equal(c1?.url, "/client/chat/refs", `打开没去取单子，或者地址不对：${c1?.url}`);
+    c1!.done = true; c1!.resolve(refList); await settle();
+    const pt = textOf(tree);
+    assert.ok(pt.includes("XT001") && pt.includes("已签收"), `运单那栏不对（客户看 delivered 应叫「已签收」）：${pt}`);
+    assert.ok(pt.includes("BL01") && pt.includes("只列了最近"), "整柜到顶了没写出来");
+    findAll((n) => n.type === "input" && n.props["aria-label"] === "搜运单")[0].props.onChange({ target: { value: "BL" } }); flush();
+    assert.equal(refCalls().length, 0, "一打字就去问了（没等停手）");
+    await tickTimers((t) => t.once && t.ms === 300);
+    const c2 = refCalls().pop();
+    assert.equal(c2?.url, "/client/chat/refs?q=BL", "搜索没交给后端");
+    c2!.done = true; c2!.resolve({ ...refList, shipments: [] }); await settle();
+    findAll((n) => n.type === "button" && n.key === "fcl:f1")[0].props.onClick();
+    assert.deepEqual(picked, [{ type: "fcl", id: "f1", no: "BL01", title: "鞋子" }]);
+    unmount(); calls.length = 0; timers.length = 0;
+    mount(RefPicker, { scope: { kind: "staff", clientId: "ZZ C1" }, onPick() {}, onClose() {} });
+    await tickTimers((t) => t.once && t.ms === 0);
+    assert.equal(refCalls().pop()?.url, "/staff/chat/refs?clientId=ZZ+C1", "客服那头取单子没带唛头");
+  });
+
+  await check("U27 气泡里的单子卡片：单号、品名、现在的状态（客户看 delivered 叫「已签收」，员工叫「派送完成」）；删了的写清楚", async () => {
+    resetSound();
+    const withRef = (id: string, ref: any, mine = false) => ({ ...cs(id, "2026-09-28T01:00:00.000Z", mine), content: null, recalled: false, ref });
+    mount(ChatThread, { scope: { kind: "client" }, title: "客服" });
+    lastCall().resolve({
+      messages: [withRef("a", { type: "shipment", id: "s1", no: "XT001", title: "蓝牙耳机", status: "delivered", gone: false }), withRef("b", { type: "fcl", id: "f1", no: "BL01", title: null, status: null, gone: true })],
+      hasMore: false, serverTime: "2026-09-28T01:00:05.000Z", peerReadAt: null,
+    });
+    await settle();
+    let cards = findAll((n) => n.props?.className === "cs-ref-card").map(textOf);
+    assert.equal(cards.length, 2);
+    assert.ok(cards[0].includes("运单") && cards[0].includes("XT001") && cards[0].includes("蓝牙耳机") && cards[0].includes("现在：已签收"), `卡片不对：${cards[0]}`);
+    assert.ok(cards[1].includes("整柜") && cards[1].includes("BL01") && cards[1].includes("已删除"), `删了的单没写清楚：${cards[1]}`);
+    unmount(); calls.length = 0; timers.length = 0;
+    mount(ChatThread, { scope: { kind: "staff", clientId: "ZZC1" }, title: "ZZC1" });
+    lastCall().resolve({ messages: [withRef("a", { type: "shipment", id: "s1", no: "XT001", title: "蓝牙耳机", status: "delivered", gone: false })], hasMore: false, serverTime: "2026-09-28T01:00:05.000Z", peerReadAt: null });
+    await settle();
+    cards = findAll((n) => n.props?.className === "cs-ref-card").map(textOf);
+    assert.ok(cards[0].includes("现在：派送完成"), `员工那头的叫法不对：${cards[0]}`);
+    // 轮询带回同一条、状态变了：卡片跟着变
+    await tickTimers((t) => !t.once && t.ms === 3000);
+    await answerPoll({ messages: [withRef("a", { type: "shipment", id: "s1", no: "XT001", title: "蓝牙耳机", status: "returned", gone: false })], hasMore: false, serverTime: "2026-09-28T01:00:08.000Z", peerReadAt: null });
+    cards = findAll((n) => n.props?.className === "cs-ref-card").map(textOf);
+    assert.ok(cards[0].includes("现在：已退回"), `状态变了卡片没跟着变：${cards[0]}`);
+  });
+
+  await check("U28 员工「客户消息」：「全部 / 待回复」页签（带上 filter=pending）、待回复写等了多久、摘要「我方：」按最新一条还在的算", async () => {
+    fakeWindow.location.search = "";
+    mount(Inbox, {});
+    const row = (clientId: string, over: any) => ({ clientId, lastMessageAt: "2026-09-28T01:00:00.000Z", lastMessagePreview: "hi", lastFromClient: false, lastFromUs: false, unreadCount: 0, closed: false, pendingReply: false, pendingSince: null, ...over });
+    const answer = async (items: any[], pendingCount: number) => {
+      for (const c of calls.filter((x) => x.url.includes("/staff/chat/conversations") && !x.done)) { c.done = true; c.resolve({ items, truncated: false, pendingCount }); }
+      await settle();
+    };
+    await answer([
+      row("WAIT1", { pendingReply: true, pendingSince: new Date(clock - 5 * 60_000).toISOString(), lastFromClient: true, lastMessagePreview: "货到了吗" }),
+      row("DONE2", { lastFromUs: true, lastMessagePreview: "已经到了" }),
+      row("GONE3", { lastFromUs: false, lastFromClient: false, lastMessagePreview: "[撤回了一条消息]" }),
+    ], 1);
+    const tabs = findAll((n) => n.props?.role === "tab");
+    assert.deepEqual(tabs.map(textOf), ["全部", "待回复 1"]);
+    const tags = findAll((n) => n.props?.className === "cs-pending-tag").map(textOf);
+    assert.deepEqual(tags, ["待回复 · 等了 5 分钟"], `待回复的标签不对：${JSON.stringify(tags)}`);
+    const rowText = (id: string) => textOf(findAll((n) => n.type === "button" && n.key === id)[0]);
+    assert.ok(rowText("DONE2").includes("我方：已经到了"));
+    assert.ok(!rowText("GONE3").includes("我方："), "一条都不剩（全撤回了）的对话，摘要前面写了「我方」");
+    tabs[1].props.onClick(); flush(); await settle();
+    const last = calls.filter((x) => x.url.includes("/staff/chat/conversations")).pop();
+    assert.ok(last && new URL(last.url, "http://x").searchParams.get("filter") === "pending", `点「待回复」没按待回复去取：${last?.url}`);
+    await answer([], 0);
+    const empty = textOf(findAll((n) => n.type === "aside")[0]);
+    assert.ok(empty.includes("没有待回复的对话"), "待回复为空时没说清楚");
+  });
+
+  await check("U29 浏览器系统通知（chat-push.ts 真跑）：开 → 交给后端、记下是谁开的；换人登录 → 退掉；退出先在浏览器退掉再告诉后端；没配 / 被禁止 / 不支持", async () => {
+    const push = loadModule(path.join(SRC, "modules/cs-chat/chat-push.ts"), OVERRIDES);
+    const store = new Map<string, string>();
+    fakeWindow.localStorage = { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => { store.set(k, v); }, removeItem: (k: string) => { store.delete(k); } };
+    const keyB64 = Buffer.alloc(65, 7).toString("base64url");
+    const unsubscribed: string[] = [];
+    let current: any = null;
+    let registered = false;
+    let subscribeOpts: any = null;
+    const mkSub = (endpoint: string) => ({
+      endpoint,
+      options: { applicationServerKey: new Uint8Array(Buffer.alloc(65, 7)).buffer },
+      toJSON: () => ({ endpoint, keys: { p256dh: "P".repeat(87), auth: "A".repeat(22) } }),
+      unsubscribe: async () => { unsubscribed.push(endpoint); current = null; return true; },
+    });
+    const reg = { pushManager: { getSubscription: async () => current, subscribe: async (o: any) => { subscribeOpts = o; current = mkSub("https://fcm.googleapis.com/fcm/send/NEW"); return current; } } };
+    const fakeNavigator = { userAgent: "Mozilla/5.0 Chrome/140", platform: "Win32", maxTouchPoints: 0, serviceWorker: { getRegistration: async () => (registered ? reg : undefined), register: async (p: string, o: any) => { assert.equal(p, "/push-sw.js"); assert.deepEqual(o, { scope: "/" }); registered = true; return reg; }, ready: Promise.resolve(reg) } };
+    const realNavigator = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+    Object.defineProperty(globalThis, "navigator", { value: fakeNavigator, configurable: true, writable: true });
+    const notif: any = { permission: "default", requestPermission: async () => { notif.permission = "granted"; return "granted"; } };
+    fakeWindow.Notification = notif; (globalThis as any).Notification = notif;
+    fakeWindow.PushManager = function PushManager() {};
+    const me = { role: "staff", userId: "zz_s1", companyId: "c_001", token: "t1" };
+    const other = { role: "staff", userId: "zz_s2", companyId: "c_001", token: "t2" };
+    const pushCalls = (part: string) => calls.filter((c) => c.url.includes(`/staff/chat/push/${part}`) && !c.done);
+    /** 一路把后端请求按顺序放行，直到这个异步调用跑完 */
+    async function drive<T>(p: Promise<T>, answers: Record<string, any>): Promise<T> {
+      let done = false; let out: any; let err: any;
+      p.then((v) => { done = true; out = v; }, (e) => { done = true; err = e; });
+      for (let i = 0; i < 30 && !done; i++) {
+        await settle();
+        for (const [part, ans] of Object.entries(answers)) for (const c of pushCalls(part)) { c.done = true; c.resolve(ans); }
+      }
+      if (err) throw err;
+      assert.ok(done, "异步调用没跑完（卡在某个请求上）");
+      return out;
+    }
+    try {
+      assert.equal(await drive(push.readChatPushState(me), { key: { enabled: true, publicKey: keyB64 } }), "off");
+      assert.equal(await drive(push.enableChatPush(me), { key: { enabled: true, publicKey: keyB64 }, subscribe: { ok: true } }), "on");
+      assert.equal(subscribeOpts.userVisibleOnly, true);
+      assert.deepEqual([...subscribeOpts.applicationServerKey], [...Buffer.alloc(65, 7)], "订阅用的公钥不是服务器给的那把");
+      const sub1 = calls.filter((c) => c.url.includes("/staff/chat/push/subscribe")).pop()!;
+      assert.deepEqual(JSON.parse(sub1.opts.body), { endpoint: "https://fcm.googleapis.com/fcm/send/NEW", keys: { p256dh: "P".repeat(87), auth: "A".repeat(22) } });
+      assert.equal(store.get("xt_chat_push_owner"), "c_001:zz_s1");
+      assert.equal(await drive(push.readChatPushState(me), { key: { enabled: true, publicKey: keyB64 } }), "on");
+      // 同一个人再打开页面：再交给后端一次，不退
+      const n0 = calls.filter((c) => c.url.includes("/push/subscribe")).length;
+      await drive(push.syncChatPushOnLoad(me), { subscribe: { ok: true } });
+      assert.equal(calls.filter((c) => c.url.includes("/push/subscribe")).length, n0 + 1, "同一个人打开页面没把订阅再交给后端");
+      assert.equal(unsubscribed.length, 0);
+      // 换人登录（没走退出）：浏览器这边退掉，不帮新的人订
+      assert.equal(await drive(push.readChatPushState(other), { key: { enabled: true, publicKey: keyB64 } }), "off", "换人以后显示成「已开启」（那是上一个人开的）");
+      await drive(push.syncChatPushOnLoad(other), {});
+      assert.deepEqual(unsubscribed, ["https://fcm.googleapis.com/fcm/send/NEW"], "换人登录了，上一个人的订阅没退");
+      assert.ok(!store.has("xt_chat_push_owner"));
+      // 退出登录：先在浏览器退掉（不用等后端），再告诉后端删
+      await drive(push.enableChatPush(me), { key: { enabled: true, publicKey: keyB64 }, subscribe: { ok: true } });
+      unsubscribed.length = 0;
+      const drop = push.dropChatPushOnLogout(me);
+      await settle();
+      assert.equal(unsubscribed.length, 1, "退出时没先在浏览器这边退掉（要等后端回了才退，后端卡住就退不掉）");
+      const del = pushCalls("unsubscribe").pop();
+      assert.ok(del, "退出时没告诉后端删订阅");
+      assert.deepEqual(JSON.parse(del!.opts.body), { endpoint: "https://fcm.googleapis.com/fcm/send/NEW" });
+      del!.done = true; del!.reject(new Error("令牌已作废")); // 后端删不掉也不能卡住退出
+      await drop;
+      assert.ok(!store.has("xt_chat_push_owner"));
+      // 服务器没配密钥 / 浏览器禁止了 / 不支持
+      assert.equal(await drive(push.readChatPushState(me), { key: { enabled: false, publicKey: null } }), "server-off");
+      notif.permission = "denied";
+      assert.equal(await drive(push.readChatPushState(me), { key: { enabled: true, publicKey: keyB64 } }), "denied");
+      delete fakeWindow.PushManager;
+      assert.equal(await drive(push.readChatPushState(me), {}), "unsupported");
+    } finally {
+      delete fakeWindow.localStorage; delete fakeWindow.Notification; delete fakeWindow.PushManager; delete (globalThis as any).Notification;
+      if (realNavigator) Object.defineProperty(globalThis, "navigator", realNavigator); else delete (globalThis as any).navigator;
+    }
+  });
+
+  await check("U29b 开通知时浏览器的推送服务连不上（国内 Chrome 连不上谷歌，一直不回）：20 秒后报中文、不永远「开启中」；无痕窗口直接报错也换成中文", async () => {
+    const push = loadModule(path.join(SRC, "modules/cs-chat/chat-push.ts"), OVERRIDES);
+    const store = new Map<string, string>();
+    fakeWindow.localStorage = { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => { store.set(k, v); }, removeItem: (k: string) => { store.delete(k); } };
+    let mode: "hang" | "reject" = "hang";
+    const reg = { pushManager: { getSubscription: async () => null, subscribe: () => (mode === "hang" ? new Promise(() => {}) : Promise.reject(new Error("Registration failed - permission denied"))) } };
+    const realNavigator = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+    Object.defineProperty(globalThis, "navigator", { value: { userAgent: "Chrome", platform: "Win32", maxTouchPoints: 0, serviceWorker: { getRegistration: async () => reg, register: async () => reg, ready: Promise.resolve(reg) } }, configurable: true, writable: true });
+    const notif: any = { permission: "granted", requestPermission: async () => "granted" };
+    fakeWindow.Notification = notif; (globalThis as any).Notification = notif; fakeWindow.PushManager = function PushManager() {};
+    const me = { role: "client", userId: "ZZC1", companyId: "c_001", token: "t" };
+    const answerKey = () => { for (const c of calls.filter((x) => x.url.includes("/client/chat/push/key") && !x.done)) { c.done = true; c.resolve({ enabled: true, publicKey: Buffer.alloc(65, 7).toString("base64url") }); } };
+    try {
+      let err: any = null; let done = false;
+      push.enableChatPush(me).then(() => { done = true; }, (e: any) => { done = true; err = e; });
+      await settle(); answerKey(); await settle();
+      assert.equal(done, false, "前提：推送服务不回的时候还在等");
+      await tickTimers((t) => t.once && t.ms === 20_000);
+      await settle();
+      assert.ok(done && err, "推送服务一直不回，20 秒后没放弃（按钮会永远「开启中」）");
+      assert.match(err.message, /连不上这个浏览器的推送服务[\s\S]*Edge 或火狐/);
+      mode = "reject"; err = null; done = false;
+      push.enableChatPush(me).then(() => { done = true; }, (e: any) => { done = true; err = e; });
+      await settle(); answerKey(); await settle(); await settle();
+      assert.ok(err && /无痕/.test(err.message) && !/Registration failed/.test(err.message), `浏览器的英文报错原样给人看了：${err?.message}`);
+      assert.ok(!calls.some((c) => c.url.includes("/push/subscribe")), "没订上也去后端存了");
+    } finally {
+      delete fakeWindow.localStorage; delete fakeWindow.Notification; delete fakeWindow.PushManager; delete (globalThis as any).Notification;
+      if (realNavigator) Object.defineProperty(globalThis, "navigator", realNavigator); else delete (globalThis as any).navigator;
+    }
+  });
+
+  await check("U30 push-sw.js 真跑：人正对着网页不弹（苹果照弹）；同一对话互相替换；点通知切到已开的窗口、只认本站地址", async () => {
+    const vm = await import("node:vm");
+    const src = fs.readFileSync(path.join(process.cwd(), "apps/web/public/push-sw.js"), "utf8");
+    async function runSw(ua: string, wins: any[]) {
+      const handlers: Record<string, (e: any) => void> = {};
+      const shown: any[] = [];
+      const opened: string[] = [];
+      const self: any = {
+        navigator: { userAgent: ua },
+        location: { origin: "https://xt.example" },
+        addEventListener: (t: string, f: any) => { handlers[t] = f; },
+        skipWaiting() {},
+        clients: { claim: async () => {}, matchAll: async () => wins, openWindow: async (u: string) => { opened.push(u); } },
+        registration: { showNotification: async (title: string, opts: any) => { shown.push({ title, ...opts }); } },
+      };
+      vm.runInNewContext(src, { self, URL });
+      const fire = async (type: string, ev: any) => { let w: Promise<any> = Promise.resolve(); handlers[type]({ ...ev, waitUntil: (p: Promise<any>) => { w = p; } }); await w; };
+      return { fire, shown, opened };
+    }
+    const payload = { title: "客户 ZZC1", body: "货到了吗", url: "/staff/chat?clientId=ZZC1", tag: "cs-c-ZZC1" };
+    const ev = { data: { json: () => payload } };
+    const chrome = "Mozilla/5.0 Chrome/140 Safari/537.36";
+    let r = await runSw(chrome, [{ url: "https://xt.example/staff", focused: true }]);
+    await r.fire("push", ev);
+    assert.equal(r.shown.length, 0, "人正对着网页（网页自己会响），又弹了系统通知");
+    r = await runSw(chrome, [{ url: "https://xt.example/staff", focused: false }]);
+    await r.fire("push", ev);
+    assert.equal(r.shown.length, 1, "网页不在最前面，没弹");
+    assert.equal(r.shown[0].title, "客户 ZZC1");
+    assert.equal(r.shown[0].tag, "cs-c-ZZC1");
+    assert.equal(r.shown[0].renotify, true);
+    // 沙箱里造的对象原型不同，按 JSON 比
+    assert.deepEqual(JSON.parse(JSON.stringify(r.shown[0].data)), { url: "/staff/chat?clientId=ZZC1" });
+    // 苹果：规定每条都要弹（不弹会被收回推送权限）
+    r = await runSw("Mozilla/5.0 (iPhone) AppleWebKit Version/17 Mobile Safari/604.1", [{ url: "https://xt.example/client/chat", focused: true }]);
+    await r.fire("push", ev);
+    assert.equal(r.shown.length, 1, "苹果上人正对着网页就不弹了（会被收回推送权限）");
+    // 点通知：有开着的窗口就切过去换到那个对话；地址不是本站的一律回首页
+    const navigated: string[] = [];
+    const win = { url: "https://xt.example/staff", focused: false, focus: async () => {}, navigate: async (u: string) => { navigated.push(u); } };
+    r = await runSw(chrome, [win]);
+    await r.fire("notificationclick", { notification: { close() {}, data: { url: "/staff/chat?clientId=ZZC1" } } });
+    assert.deepEqual(navigated, ["https://xt.example/staff/chat?clientId=ZZC1"]);
+    r = await runSw(chrome, []);
+    await r.fire("notificationclick", { notification: { close() {}, data: { url: "https://evil.example/phish" } } });
+    assert.deepEqual(r.opened, ["https://xt.example/"], "通知里的外站地址被打开了");
   });
 
   Date.now = realNow;
