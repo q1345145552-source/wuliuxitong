@@ -236,9 +236,15 @@ async function main(): Promise<void> {
     for (const ok of ["https://fcm.googleapis.com/fcm/send/abc", "https://updates.push.services.mozilla.com/wpush/v2/x", "https://web.push.apple.com/QF1", "https://wns2-par02p.notify.windows.com/w/?token=x", "https://fcm.googleapis.com:443/x"]) {
       assert.ok(push.isAllowedPushEndpoint(ok), `正常的推送地址被拒了：${ok}`);
     }
-    for (const bad of ["http://fcm.googleapis.com/x", "https://127.0.0.1/x", "https://localhost/x", "https://fcm.googleapis.com.evil.com/x", "https://evilnotify.windows.com/x", "https://fcm.googleapis.com:8443/x", "https://u:p@fcm.googleapis.com/x", "file:///etc/passwd", "不是网址"]) {
+    for (const bad of ["http://fcm.googleapis.com/x", "https://127.0.0.1/x", "https://localhost/x", "https://fcm.googleapis.com.evil.com/x", "https://evilnotify.windows.com/x", "https://fcm.googleapis.com:8443/x", "https://u:p@fcm.googleapis.com/x", "file:///etc/passwd", "不是网址",
+      // 2026-10-02 独立复审实测的绕过：new URL 读成「…;x.push.apple.com」（放行），web-push 用的 url.parse 读成内网地址
+      "https://10.0.0.5;x.push.apple.com/", "https://169.254.169.254;x.push.apple.com/latest", "https://api'x.notify.windows.com/",
+      'https://api"x.push.apple.com/', "https://api`x.push.apple.com/", "https://api{x.push.apple.com/"]) {
       assert.ok(!push.isAllowedPushEndpoint(bad), `不该收的地址收了：${bad}`);
     }
+    // 收下的地址：web-push 发请求时（url.parse）读到的主机必须就是名单里那个
+    const { parse } = await import("node:url");
+    for (const ok of ["https://fcm.googleapis.com/fcm/send/abc", "https://web.push.apple.com/QF1"]) assert.equal(parse(ok).hostname, new URL(ok).hostname);
     assert.equal(push.readPushConfig({} as any), null);
     assert.equal(push.readPushConfig({ VAPID_PUBLIC_KEY: "a", VAPID_PRIVATE_KEY: "b", VAPID_SUBJECT: "admin@x.com" } as any), null, "VAPID_SUBJECT 不是 mailto: / https:// 也开了");
     assert.deepEqual(push.readPushConfig({ VAPID_PUBLIC_KEY: " a ", VAPID_PRIVATE_KEY: "b", VAPID_SUBJECT: "mailto:a@x.com" } as any), { publicKey: "a", privateKey: "b", subject: "mailto:a@x.com" });

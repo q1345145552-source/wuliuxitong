@@ -82,7 +82,7 @@ async function main(): Promise<void> {
       assert.equal(r.code, 0, `还差这些（迁移漏了 / 写错了）：\n${r.out.split("\n").filter((l) => l.trim() && !l.startsWith("--")).slice(0, 12).join("\n")}`);
     });
 
-    await check("P3 上线体检 check-schema-drift.sql 一行都不输出（清单里有新加的 14 个字段，也没多写）", async () => {
+    await check("P3 上线体检 check-schema-drift.sql 一行都不输出（清单里有新加的 15 个字段，也没多写）", async () => {
       const rows = await db.$queryRawUnsafe<any[]>(readFileSync(DRIFT, "utf8"));
       assert.equal(rows.length, 0, `体检报了：${JSON.stringify(rows).slice(0, 400)}`);
     });
@@ -93,8 +93,8 @@ async function main(): Promise<void> {
       assert.equal(after.length, 1);
       for (const [k, v] of Object.entries(before[0])) assert.deepEqual(after[0][k], v, `老数据的 ${k} 被改了`);
       for (const col of NEW_MESSAGE_COLUMNS) assert.equal(after[0][col], null, `新列 ${col} 给老数据填了值`);
-      const ins = (id: string, user: string) => db.$executeRawUnsafe(`INSERT INTO "cs_push_subscriptions" (id, company_id, user_id, role, endpoint, p256dh, auth, updated_at)
-        VALUES ('${id}', 'zz_migp_co', '${user}', 'client', 'https://push.example/abc', 'k', 'a', now())
+      const ins = (id: string, user: string) => db.$executeRawUnsafe(`INSERT INTO "cs_push_subscriptions" (id, company_id, user_id, role, endpoint, p256dh, auth, password_fp, updated_at)
+        VALUES ('${id}', 'zz_migp_co', '${user}', 'client', 'https://push.example/abc', 'k', 'a', 'fp', now())
         ON CONFLICT (endpoint) DO UPDATE SET user_id = EXCLUDED.user_id`);
       await ins("zz_p1", "ZZMIGP1");
       await ins("zz_p2", "ZZMIGP2");

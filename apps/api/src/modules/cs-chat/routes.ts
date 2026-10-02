@@ -42,6 +42,7 @@ import { AGENT_CLIENT_BLOCKED_MESSAGE } from "../core/agent-scope";
 import { EXCLUDE_FCL_SHIPMENT } from "../core/fcl-scope";
 import { checkRateLimit, rateLimitKey } from "../core/rate-limit";
 import { deleteImageFile, saveImageToDisk } from "../orders/image-storage";
+import { passwordFingerprint } from "../auth/token";
 import { currentPushConfig, notifyChatMessage, parsePushSubscription } from "./push";
 
 /** 一条文字最多多少字（微信单条上限是几千字；聊天用不到这么长，卡一下防误贴整本文档） */
@@ -436,9 +437,10 @@ async function sendMessage(opts: {
  * 撤回（2026-10-02 老板：发错的 2 分钟内能撤回，同微信）。只能撤回自己发的。
  * 判断全在对话锁里做（CLAUDE.md 第 28 条：先检查后动手中间不能隔着别人）。
  * 撤回后文字、图片、关联的单一起清掉（图片文件在事务提交后删）；同一条点两下第二次原样返回。
+ * 撤回的是这个对话最新的一条（这次真撤回的，不是点第二下）：顺手把对方通知栏里那条原文换掉（push.ts 的 recall）。
  */
 async function recallMessage(opts: { companyId: string; clientId: string; viewer: Pick<Auth, "userId">; messageId: string }): Promise<MessageRow> {
-  const { msg, imagePath } = await prisma.$transaction(async (tx) => {
+  const { msg, imagePath, wasLatest } = await prisma.$transaction(async (tx) => {
     await lockCsConversation(tx, opts.companyId, opts.clientId);
     const conv = await tx.csConversation.findUnique({
       where: { companyId_clientId: { companyId: opts.companyId, clientId: opts.clientId } },
@@ -447,22 +449,26 @@ async function recallMessage(opts: { companyId: string; clientId: string; viewer
     const m = conv ? await tx.csMessage.findFirst({ where: { id: opts.messageId, conversationId: conv.id }, select: MESSAGE_SELECT }) : null;
     if (!conv || !m) throw new BusinessError("没有这条消息", 404, "NOT_FOUND");
     if (m.senderId !== opts.viewer.userId) throw new BusinessError("只能撤回自己发的消息", 403, "FORBIDDEN");
-    if (m.recalledAt) return { msg: m, imagePath: null };
+    if (m.recalledAt) return { msg: m, imagePath: null, wasLatest: false };
     const now = new Date();
     if (now.getTime() - m.createdAt.getTime() > CS_RECALL_WINDOW_MS) {
       throw new BusinessError(`发出超过 ${CS_RECALL_WINDOW_MS / 60_000} 分钟了，不能撤回`, 400, "VALIDATION_ERROR");
     }
+    const newer = await tx.csMessage.count({
+      where: { conversationId: conv.id, OR: [{ createdAt: { gt: m.createdAt } }, { createdAt: m.createdAt, id: { gt: m.id } }] },
+    });
     const updated = await tx.csMessage.update({
       where: { id: m.id },
       data: { recalledAt: now, content: null, imagePath: null, refType: null, refId: null, refNo: null, refTitle: null },
       select: MESSAGE_SELECT,
     });
     await refreshConversationSummary(tx, conv.id);
-    return { msg: updated, imagePath: m.imagePath };
+    return { msg: updated, imagePath: m.imagePath, wasLatest: newer === 0 };
   }, { timeout: 30000, maxWait: 10000 });
   if (imagePath) {
     try { deleteImageFile(imagePath); } catch { /* 文件删不掉不影响撤回（页面已经拿不到这张图的地址了） */ }
   }
+  if (wasLatest) notifyChatMessage({ companyId: opts.companyId, clientId: opts.clientId, fromRole: msg.senderRole, preview: "", recall: true });
   return msg;
 }
 
@@ -663,14 +669,18 @@ async function savePushSubscription(auth: Auth, body: unknown, res: HttpResponse
   if (!currentPushConfig()) { fail(res, 400, "BAD_REQUEST", "服务器还没开通系统通知，请联系管理员"); return; }
   const parsed = parsePushSubscription(body);
   if ("error" in parsed) { fail(res, 400, "VALIDATION_ERROR", parsed.error); return; }
+  // 记下这个账号现在的密码指纹：以后改了密码，这条订阅就作废（发的时候核，见 push.ts 的 filterLiveSubscriptions）
+  const me = await prisma.user.findUnique({ where: { id: auth.userId }, select: { passwordHash: true } });
+  if (!me) { fail(res, 404, "NOT_FOUND", "账号不存在"); return; }
+  const fp = passwordFingerprint(me.passwordHash);
   // 列名是本次迁移自己建的（20261002_cs_chat_recall_ref_push），已核；时间按 UTC 写（跟上面建对话一样）
   await prisma.$executeRaw`
-    INSERT INTO cs_push_subscriptions (id, company_id, user_id, role, endpoint, p256dh, auth, created_at, updated_at)
-    VALUES (${`csp_${randomUUID()}`}, ${auth.companyId}, ${auth.userId}, ${auth.role}, ${parsed.endpoint}, ${parsed.p256dh}, ${parsed.auth},
+    INSERT INTO cs_push_subscriptions (id, company_id, user_id, role, endpoint, p256dh, auth, password_fp, created_at, updated_at)
+    VALUES (${`csp_${randomUUID()}`}, ${auth.companyId}, ${auth.userId}, ${auth.role}, ${parsed.endpoint}, ${parsed.p256dh}, ${parsed.auth}, ${fp},
             (now() AT TIME ZONE 'UTC'), (now() AT TIME ZONE 'UTC'))
     ON CONFLICT (endpoint) DO UPDATE SET
       company_id = EXCLUDED.company_id, user_id = EXCLUDED.user_id, role = EXCLUDED.role,
-      p256dh = EXCLUDED.p256dh, auth = EXCLUDED.auth, updated_at = EXCLUDED.updated_at`;
+      p256dh = EXCLUDED.p256dh, auth = EXCLUDED.auth, password_fp = EXCLUDED.password_fp, updated_at = EXCLUDED.updated_at`;
   const extra = await prisma.csPushSubscription.findMany({
     where: { companyId: auth.companyId, userId: auth.userId },
     orderBy: [{ updatedAt: "desc" }, { id: "asc" }],

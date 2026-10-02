@@ -900,6 +900,8 @@ model CsPushSubscription {
   /// 加密用的两把公钥（浏览器给的），推送内容按它加密，推送服务看不到内容
   p256dh    String
   auth      String
+  /// 存订阅时这个账号的密码指纹（跟登录令牌里的 pv 同一个算法，auth/token.ts）：改过密码就对不上，这条订阅作废、不再推
+  passwordFp String  @map("password_fp")
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 

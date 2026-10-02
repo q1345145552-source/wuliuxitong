@@ -14,15 +14,22 @@ self.addEventListener("push", (event) => {
   try { data = event.data ? event.data.json() : {}; } catch (e) { data = {}; }
   event.waitUntil((async () => {
     if (!IS_APPLE) {
-      // 人正对着系统的网页（窗口在最前面）：网页里的红点和「叮咚」已经提醒了，不再弹一个系统通知
+      // 人正对着系统的网页（窗口在最前面）：网页里的红点和「叮咚」已经提醒了，不再弹一个系统通知。
+      // 撤回（silent）例外：通知栏里还躺着那条原文（之前不在最前面时弹的）就照样换掉，没有就不用弹
       const wins = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
-      if (wins.some((c) => c.focused)) return;
+      if (wins.some((c) => c.focused)) {
+        if (!data.silent) return;
+        const old = await self.registration.getNotifications({ tag: data.tag || "cs-chat" });
+        if (old.length === 0) return;
+      }
     }
     await self.registration.showNotification(data.title || "新消息", {
       body: data.body || "",
-      // 同一个对话的通知互相替换（来十条只留最新一条），renotify 让替换时照样响一下
+      // 同一个对话的通知互相替换（来十条只留最新一条），renotify 让替换时照样响一下。
+      // silent = 撤回：把通知栏里那条原文不出声地换成「撤回了一条消息」（2026-10-02）
       tag: data.tag || "cs-chat",
-      renotify: true,
+      renotify: !data.silent,
+      silent: !!data.silent,
       icon: "/icon.png",
       badge: "/icon.png",
       data: { url: data.url || "/" },

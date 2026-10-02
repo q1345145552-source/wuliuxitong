@@ -15,7 +15,7 @@ ALTER TABLE "cs_messages" ADD COLUMN IF NOT EXISTS "ref_id" TEXT;
 ALTER TABLE "cs_messages" ADD COLUMN IF NOT EXISTS "ref_no" TEXT;
 ALTER TABLE "cs_messages" ADD COLUMN IF NOT EXISTS "ref_title" TEXT;
 
--- ② 系统通知的订阅：一个浏览器一行（endpoint 唯一）
+-- ② 系统通知的订阅：一个浏览器一行（endpoint 唯一）。password_fp = 存订阅时的密码指纹，改了密码这条就不再推
 CREATE TABLE IF NOT EXISTS "cs_push_subscriptions" (
   "id"         TEXT NOT NULL,
   "company_id" TEXT NOT NULL,
@@ -24,6 +24,7 @@ CREATE TABLE IF NOT EXISTS "cs_push_subscriptions" (
   "endpoint"   TEXT NOT NULL,
   "p256dh"     TEXT NOT NULL,
   "auth"       TEXT NOT NULL,
+  "password_fp" TEXT NOT NULL,
   "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
   "updated_at" TIMESTAMP(3) NOT NULL,
   CONSTRAINT "cs_push_subscriptions_pkey" PRIMARY KEY ("id")

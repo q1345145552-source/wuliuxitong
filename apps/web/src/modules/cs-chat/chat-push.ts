@@ -185,19 +185,21 @@ export async function syncChatPushOnLoad(session: AuthSession | null): Promise<v
 
 /**
  * 退出登录时调（要在清掉登录信息之前，后端删订阅要用现在的令牌）。
- * 先在浏览器这边退掉（这一步才是关键：退掉以后推送服务就不再往这台设备送，而且不用联网等后端），
- * 再告诉后端删那一行（删不掉也没关系，下次推送会回「作废」，后端那时删）。出错照样往下退出。
+ * 浏览器这边退订、告诉后端删那一行，**两件同时做**（2026-10-02 独立复审）：
+ *   原来先等浏览器退订完再删后端 —— 浏览器连不上推送服务时退订会卡住（国内 Chrome 连不上谷歌），
+ *   外面只等 1.5 秒就跳去登录页，后端那行就一直留着、照样往这台设备推。
+ * 任何一件做成了这台设备就收不到了；两件都做不成也不卡退出。
  */
 export async function dropChatPushOnLogout(session: AuthSession | null): Promise<void> {
   try {
     const sub = await currentSubscription();
     if (!sub) return;
     const endpoint = sub.endpoint;
-    await sub.unsubscribe();
     writeOwner("");
-    if (session && (session.role === "client" || session.role === "staff" || session.role === "admin")) {
-      try { await deleteChatPushSubscription(session.role, endpoint); } catch { /* 见上 */ }
-    }
+    const tellServer = session && (session.role === "client" || session.role === "staff" || session.role === "admin")
+      ? deleteChatPushSubscription(session.role, endpoint)
+      : Promise.resolve();
+    await Promise.allSettled([sub.unsubscribe(), tellServer]);
   } catch {
     /* 退不掉也不能卡住退出 */
   } finally {

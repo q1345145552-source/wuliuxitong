@@ -7,7 +7,7 @@
 --   B 多余  → 数据库有、设计图没有。一旦跑 prisma db push，这些字段连同里面的数据会被删掉
 --
 -- 什么都不输出 = 完全一致，没问题。
--- 生成自 schema.prisma，共 54 张表 / 671 个字段（2026-10-02 客服对话加撤回 / 关联单号 5 列 + 系统通知订阅一张表 9 个字段；2026-09-29 加 number_sequences 一张表 3 个字段；2026-09-28 加客服对话两张表 + 询价报价 8 列后是 52 张 / 653 个）。
+-- 生成自 schema.prisma，共 54 张表 / 672 个字段（2026-10-02 客服对话加撤回 / 关联单号 5 列 + 系统通知订阅一张表 10 个字段；2026-09-29 加 number_sequences 一张表 3 个字段；2026-09-28 加客服对话两张表 + 询价报价 8 列后是 52 张 / 653 个）。
 --
 -- ⚠️ 这份清单是手抄的，schema.prisma 加了字段必须回来同步一行，否则部署时会报
 --    「B 多余」的假警告（2026-08-05 加 containers.transport_mode 时就漏了一次）。
@@ -428,6 +428,7 @@ WITH expected(table_name, column_name) AS (VALUES
   ('cs_push_subscriptions','endpoint'),
   ('cs_push_subscriptions','p256dh'),
   ('cs_push_subscriptions','auth'),
+  ('cs_push_subscriptions','password_fp'),
   ('cs_push_subscriptions','created_at'),
   ('cs_push_subscriptions','updated_at'),
   ('number_sequences','name'),

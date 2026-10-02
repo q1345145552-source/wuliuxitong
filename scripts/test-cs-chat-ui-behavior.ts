@@ -1264,6 +1264,14 @@ async function main(): Promise<void> {
       del!.done = true; del!.reject(new Error("令牌已作废")); // 后端删不掉也不能卡住退出
       await drop;
       assert.ok(!store.has("xt_chat_push_owner"));
+      // 浏览器退订卡住（国内 Chrome 连不上谷歌）：后端那行照样当场去删，不等它（2026-10-02 独立复审）
+      await drive(push.enableChatPush(me), { key: { enabled: true, publicKey: keyB64 }, subscribe: { ok: true } });
+      current.unsubscribe = () => new Promise(() => {});
+      void push.dropChatPushOnLogout(me);
+      await settle();
+      assert.ok(pushCalls("unsubscribe").length === 1, "浏览器退订卡住时，没同时告诉后端删订阅（外面只等 1.5 秒就跳走，后端那行会一直留着）");
+      for (const c of pushCalls("unsubscribe")) { c.done = true; c.resolve({ ok: true }); }
+      current = null;
       // 服务器没配密钥 / 浏览器禁止了 / 不支持
       assert.equal(await drive(push.readChatPushState(me), { key: { enabled: false, publicKey: null } }), "server-off");
       notif.permission = "denied";
@@ -1315,17 +1323,21 @@ async function main(): Promise<void> {
       const handlers: Record<string, (e: any) => void> = {};
       const shown: any[] = [];
       const opened: string[] = [];
+      const existing: any[] = [];
       const self: any = {
         navigator: { userAgent: ua },
         location: { origin: "https://xt.example" },
         addEventListener: (t: string, f: any) => { handlers[t] = f; },
         skipWaiting() {},
         clients: { claim: async () => {}, matchAll: async () => wins, openWindow: async (u: string) => { opened.push(u); } },
-        registration: { showNotification: async (title: string, opts: any) => { shown.push({ title, ...opts }); } },
+        registration: {
+          showNotification: async (title: string, opts: any) => { shown.push({ title, ...opts }); existing.push({ tag: opts.tag }); },
+          getNotifications: async (q: any) => existing.filter((n) => !q?.tag || n.tag === q.tag),
+        },
       };
       vm.runInNewContext(src, { self, URL });
       const fire = async (type: string, ev: any) => { let w: Promise<any> = Promise.resolve(); handlers[type]({ ...ev, waitUntil: (p: Promise<any>) => { w = p; } }); await w; };
-      return { fire, shown, opened };
+      return { fire, shown, opened, existing };
     }
     const payload = { title: "客户 ZZC1", body: "货到了吗", url: "/staff/chat?clientId=ZZC1", tag: "cs-c-ZZC1" };
     const ev = { data: { json: () => payload } };
@@ -1341,6 +1353,21 @@ async function main(): Promise<void> {
     assert.equal(r.shown[0].renotify, true);
     // 沙箱里造的对象原型不同，按 JSON 比
     assert.deepEqual(JSON.parse(JSON.stringify(r.shown[0].data)), { url: "/staff/chat?clientId=ZZC1" });
+    // 撤回（silent）：不在最前面 → 同一个 tag 不出声地换掉；在最前面、通知栏里还躺着原文 → 也换掉；没有原文 → 不弹
+    const recallEv = { data: { json: () => ({ ...payload, body: "撤回了一条消息", silent: true }) } };
+    r = await runSw(chrome, [{ url: "https://xt.example/staff", focused: false }]);
+    await r.fire("push", ev);
+    await r.fire("push", recallEv);
+    assert.deepEqual([r.shown[1].tag, r.shown[1].silent, r.shown[1].renotify, r.shown[1].body], ["cs-c-ZZC1", true, false, "撤回了一条消息"], "撤回没用同一个 tag 不出声地换掉原文");
+    const focusedWin = { url: "https://xt.example/staff", focused: false };
+    r = await runSw(chrome, [focusedWin]);
+    await r.fire("push", ev);
+    focusedWin.focused = true;
+    await r.fire("push", recallEv);
+    assert.equal(r.shown.length, 2, "人回到网页前了，通知栏里那条原文没换掉");
+    r = await runSw(chrome, [{ url: "https://xt.example/staff", focused: true }]);
+    await r.fire("push", recallEv);
+    assert.equal(r.shown.length, 0, "通知栏里本来就没有原文，又弹了一条「撤回了」");
     // 苹果：规定每条都要弹（不弹会被收回推送权限）
     r = await runSw("Mozilla/5.0 (iPhone) AppleWebKit Version/17 Mobile Safari/604.1", [{ url: "https://xt.example/client/chat", focused: true }]);
     await r.fire("push", ev);

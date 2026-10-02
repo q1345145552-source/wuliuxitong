@@ -846,7 +846,7 @@ async function main(): Promise<void> {
       assert.equal((await call("POST /client/chat/send", D2C, { content: "我照样能发" })).status, 200);
     });
 
-    await check("D5 系统通知：开通知只收各家推送服务的地址；客户发 → 本公司员工 / 超管；客服发 → 那个客户；通知里没有员工名字；地址作废（410）就删；没配密钥不开", async () => {
+    await check("D5 系统通知：开通知只收各家推送服务的地址；客户发 → 本公司员工 / 超管；客服发 → 那个客户；通知里没有员工名字；地址作废（410）就删；封号 / 改密码 / 改角色 / 划给代理不再推；撤回最新那条换掉原文；没配密钥不开", async () => {
       const sent: Array<{ endpoint: string; payload: any; topic: string }> = [];
       const failing = new Set<string>();
       const cfg = { publicKey: "BPubKeyForTest", privateKey: "priv", subject: "mailto:test@example.com" };
@@ -859,7 +859,7 @@ async function main(): Promise<void> {
         const keys = { p256dh: "B".repeat(87), auth: "a".repeat(22) };
         const ep = (n: string) => `https://fcm.googleapis.com/fcm/send/${n}`;
         assert.deepEqual(await must("GET /client/chat/push/key", D5C), { enabled: true, publicKey: cfg.publicKey });
-        for (const bad of ["http://fcm.googleapis.com/x", "https://127.0.0.1/x", "https://evil.example.com/fcm.googleapis.com", "https://fcm.googleapis.com.evil.com/x", "https://fcm.googleapis.com:8443/x"]) {
+        for (const bad of ["http://fcm.googleapis.com/x", "https://127.0.0.1/x", "https://evil.example.com/fcm.googleapis.com", "https://fcm.googleapis.com.evil.com/x", "https://fcm.googleapis.com:8443/x", "https://10.0.0.5;x.push.apple.com/"]) {
           const r = await call("POST /client/chat/push/subscribe", D5C, { endpoint: bad, keys });
           assert.equal(r.status, 400, `不认识的通知地址收了：${bad}`);
         }
@@ -912,6 +912,67 @@ async function main(): Promise<void> {
         // 代理名下的客户：统一闸挡 /client/chat/push/*，接口自己也挡
         assert.ok(agentGateRejection({ role: "client", agentId: AGENT_ID }, "/client/chat/push/subscribe"));
         assert.equal((await call("POST /client/chat/push/subscribe", AGENT_CLIENT, { endpoint: ep("ag"), keys })).status, 403);
+      } finally {
+        push.setPushSenderForTest(null);
+      }
+      // 2026-10-02 独立复审：订阅要按账号「现在」的样子核（封号 / 改密码 / 改角色 / 划给代理都不再推），撤回最新那条要换掉通知栏里的原文
+      push.setPushSenderForTest(async (t, payload) => { sent.push({ endpoint: t.endpoint, payload: JSON.parse(payload), topic: "" }); return { statusCode: 201 }; }, cfg);
+      try {
+        const keys = { p256dh: "B".repeat(87), auth: "a".repeat(22) };
+        const ep = (n: string) => `https://fcm.googleapis.com/fcm/send/${n}`;
+        const BAN = await (async () => { await pm.user.create({ data: { id: "zz_d5_ban", companyId: CO, role: "staff", name: "要离职的", passwordHash: "x", phone: "0ban", status: "active" } }); return { userId: "zz_d5_ban", companyId: CO, role: "staff", name: "要离职的", agentId: null } as Auth; })();
+        const ROLE = await (async () => { await pm.user.create({ data: { id: "zz_d5_role", companyId: CO, role: "staff", name: "要升超管的", passwordHash: "x", phone: "0role", status: "active" } }); return { userId: "zz_d5_role", companyId: CO, role: "staff", name: "要升超管的", agentId: null } as Auth; })();
+        const PWC = await mkClient("ZZD5PWCH");
+        await must("POST /staff/chat/push/subscribe", BAN, { endpoint: ep("ban"), keys });
+        await must("POST /staff/chat/push/subscribe", ROLE, { endpoint: ep("role"), keys });
+        await must("POST /client/chat/push/subscribe", PWC, { endpoint: ep("pwc"), keys });
+        await pm.user.update({ where: { id: BAN.userId }, data: { status: "inactive" } });
+        await pm.user.update({ where: { id: ROLE.userId }, data: { role: "admin" } });
+        sent.length = 0;
+        await must("POST /client/chat/send", PWC, { content: "有人在吗" });
+        await push.waitForPushesForTest();
+        assert.ok(!sent.some((x) => x.endpoint === ep("ban")), "封了号的员工还收到客户消息的通知");
+        assert.ok(!sent.some((x) => x.endpoint === ep("role")), "角色改过的账号，按旧角色登记的订阅还在收");
+        assert.equal(await pm.csPushSubscription.count({ where: { endpoint: { in: [ep("ban"), ep("role")] } } }), 0, "作废的订阅没删");
+        // 客户改了密码（怀疑被盗）：之前登记的订阅（可能是小偷那台）作废
+        await pm.user.update({ where: { id: PWC.userId }, data: { passwordHash: "changed" } });
+        sent.length = 0;
+        await must("POST /staff/chat/send", STAFF, { clientId: PWC.userId, content: "收到" });
+        await push.waitForPushesForTest();
+        assert.equal(sent.length, 0, "客户改了密码，改密码之前登记的设备照样收到客服回复");
+        assert.equal(await pm.csPushSubscription.count({ where: { endpoint: ep("pwc") } }), 0);
+        // 改完密码在自己设备上重新登记：照常收
+        await must("POST /client/chat/push/subscribe", PWC, { endpoint: ep("pwc2"), keys });
+        await must("POST /staff/chat/send", STAFF, { clientId: PWC.userId, content: "再说一句" });
+        await push.waitForPushesForTest();
+        assert.deepEqual(sent.map((x) => x.endpoint), [ep("pwc2")]);
+        // 划给代理以后（客服已经发不了，直接调发通知那一步）：不推
+        await pm.user.update({ where: { id: PWC.userId }, data: { agentId: AGENT_ID } });
+        sent.length = 0;
+        push.notifyChatMessage({ companyId: CO, clientId: PWC.userId, fromRole: "staff", preview: "x" });
+        await push.waitForPushesForTest();
+        assert.equal(sent.length, 0, "划给代理的客户还收到通知");
+        await pm.user.update({ where: { id: PWC.userId }, data: { agentId: null } });
+        // 撤回最新那条：同一个 tag、不出声地换成「撤回了一条消息」；撤回的不是最新那条：不推
+        await must("POST /client/chat/push/subscribe", PWC, { endpoint: ep("pwc3"), keys });
+        sent.length = 0;
+        const wrong = (await must("POST /staff/chat/send", STAFF, { clientId: PWC.userId, content: "发错人的报价 18000" })).message;
+        await push.waitForPushesForTest();
+        sent.length = 0;
+        await must("POST /staff/chat/recall", STAFF, { clientId: PWC.userId, messageId: wrong.id });
+        await push.waitForPushesForTest();
+        assert.equal(sent.length, 1, `撤回最新那条没去换掉通知栏里的原文：${sent.length}`);
+        assert.equal(sent[0].payload.tag, "cs-self");
+        assert.equal(sent[0].payload.silent, true);
+        assert.equal(sent[0].payload.body, "撤回了一条消息");
+        assert.ok(!JSON.stringify(sent).includes("18000"));
+        const a1 = (await must("POST /staff/chat/send", STAFF, { clientId: PWC.userId, content: "第一句" })).message;
+        await must("POST /staff/chat/send", STAFF, { clientId: PWC.userId, content: "第二句" });
+        await push.waitForPushesForTest();
+        sent.length = 0;
+        await must("POST /staff/chat/recall", STAFF, { clientId: PWC.userId, messageId: a1.id });
+        await push.waitForPushesForTest();
+        assert.equal(sent.length, 0, "撤回的不是最新那条（通知栏里显示的是后面那句），也推了一条「撤回了」");
       } finally {
         push.setPushSenderForTest(null);
       }
