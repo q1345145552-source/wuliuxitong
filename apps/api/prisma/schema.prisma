@@ -863,7 +863,7 @@ model CsMessage {
   senderId       String   @map("sender_id")
   /// client | staff | admin
   senderRole     String   @map("sender_role")
-  /// 发送时的名字。员工 / 超管的名字只给超管看，客户那条显示唛头（senderId）
+  /// 发送时的名字。员工 / 超管发的：员工和超管都看得到（2026-10-02 老板放开，看得出是哪个同事回的），客户永远看不到；客户那条显示唛头（senderId）
   senderName     String?  @map("sender_name")
   content        String?  @db.Text
   /// /images/xxx.jpg（走 orders/image-storage 存盘，跟收货凭证同一套）

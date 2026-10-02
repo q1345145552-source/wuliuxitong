@@ -43,16 +43,17 @@ self.addEventListener("notificationclick", (event) => {
   // 只认本站的地址（通知内容是后端给的，这里再兜一道）
   const target = new URL(raw, self.location.origin);
   const url = target.origin === self.location.origin ? target.href : self.location.origin + "/";
+  const targetPath = new URL(url).pathname;
   event.waitUntil((async () => {
     const wins = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
-    // 已经开着系统的网页：切过去、换到那个对话；没开就新开一个
+    // 已经开着聊天页的窗口：切过去、换到那个对话。别的页面（可能正填着一半的表单）一律不动，新开一个（2026-10-02 复核）
     for (const c of wins) {
-      if (new URL(c.url).origin !== self.location.origin) continue;
-      try {
-        await c.focus();
-        if ("navigate" in c) await c.navigate(url);
-        return;
-      } catch (e) { /* 这个窗口切不过去，试下一个 */ }
+      const u = new URL(c.url);
+      if (u.origin !== self.location.origin || u.pathname !== targetPath) continue;
+      try { await c.focus(); } catch (e) { continue; /* 这个窗口切不过去，试下一个 */ }
+      // 换到那个对话。注册通知之前就开着的老页面不归本 SW 管，导航不了 —— 已经切到聊天页了，就停在那，不再另开一个
+      try { if ("navigate" in c) await c.navigate(url); } catch (e) { /* 见上 */ }
+      return;
     }
     await self.clients.openWindow(url);
   })());

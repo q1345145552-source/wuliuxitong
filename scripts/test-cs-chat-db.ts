@@ -56,6 +56,8 @@ async function main(): Promise<void> {
   for (const m of ["get", "post", "put", "patch", "delete"]) app[m] = (p: string, h: Function) => routes.set(`${m.toUpperCase()} ${p}`, h);
   (await import("../apps/api/src/modules/cs-chat/routes")).registerCsChatRoutes(app);
   const push = await import("../apps/api/src/modules/cs-chat/push");
+  (await import("../apps/api/src/modules/auth/routes")).registerAuthRoutes(app);
+  const { passwordFingerprint } = await import("../apps/api/src/modules/auth/token");
   (await import("../apps/api/src/modules/fcl-inquiries/routes")).registerFclInquiryRoutes(app);
   (await import("../apps/api/src/modules/fcl-containers/routes")).registerFclContainerRoutes(app);
 
@@ -123,7 +125,8 @@ async function main(): Promise<void> {
       const conv = list.items.find((x: Row) => x.clientId === CLIENT.userId);
       assert.ok(conv, "收件箱里没有这条对话");
       assert.equal(conv.unreadCount, 1);
-      assert.equal(conv.lastFromClient, true);
+      assert.equal(conv.lastFromUs, false);
+      assert.equal(conv.pendingReply, true);
       assert.match(conv.lastMessagePreview, /整柜价格/);
       assert.ok(!JSON.stringify(list).includes(CLIENT.name), "员工那边不许出现客户名字，只显示唛头");
       const u = await must("GET /staff/chat/unread", STAFF2);
@@ -981,6 +984,56 @@ async function main(): Promise<void> {
       try {
         assert.deepEqual(await must("GET /staff/chat/push/key", STAFF), { enabled: false, publicKey: null });
         assert.equal((await call("POST /staff/chat/push/subscribe", STAFF, { endpoint: "https://fcm.googleapis.com/fcm/send/x", keys: { p256dh: "B".repeat(87), auth: "a".repeat(22) } })).status, 400);
+      } finally {
+        push.setPushSenderForTest(null);
+      }
+    });
+    await check("D6 2026-10-02 复核：撤回按同一边算「最新」；原文和撤回排队发；作废订阅只删读到的那一版；退出登录在同一个请求里删这台设备的订阅", async () => {
+      const C = await mkClient("ZZD6REVW");
+      const keys = { p256dh: "B".repeat(87), auth: "a".repeat(22) };
+      const ep = (n: string) => `https://fcm.googleapis.com/fcm/send/d6-${n}`;
+      const cfg = { publicKey: "BPubKeyForTest", privateKey: "priv", subject: "mailto:test@example.com" };
+      const sent: Array<{ endpoint: string; payload: any }> = [];
+      push.setPushSenderForTest(async (t, payload) => {
+        const p = JSON.parse(payload);
+        // 原文那条故意慢一点（模拟连推送服务慢）：没排队的话撤回会先到、原文后到把它盖回去
+        if (!p.silent) await new Promise((r) => setTimeout(r, 300));
+        sent.push({ endpoint: t.endpoint, payload: p });
+        return { statusCode: 201 };
+      }, cfg);
+      try {
+        await must("POST /client/chat/push/subscribe", C, { endpoint: ep("client"), keys });
+        await must("POST /staff/chat/push/subscribe", STAFF2, { endpoint: ep("staff2"), keys });
+        // ① 客户发错一句 → 员工秒回 → 客户撤回：员工通知栏里是客户那句，要换掉（员工那句回复不推给员工）
+        const wrong = (await must("POST /client/chat/send", C, { content: "发错地方的报价 18000" })).message;
+        await must("POST /staff/chat/send", STAFF, { clientId: C.userId, content: "？" });
+        await push.waitForPushesForTest();
+        sent.length = 0;
+        await must("POST /client/chat/recall", C, { messageId: wrong.id });
+        await push.waitForPushesForTest();
+        const toStaff = sent.filter((x) => x.endpoint === ep("staff2"));
+        assert.equal(toStaff.length, 1, "客户撤回了，员工通知栏里的原文没换（员工自己回了一句就当「不是最新」了）");
+        assert.deepEqual([toStaff[0].payload.tag, toStaff[0].payload.silent, toStaff[0].payload.body], [`cs-c-${C.userId}`, true, "撤回了一条消息"]);
+        // ② 原文和撤回排队：原文慢、撤回快，推送服务那边也得先原文后撤回
+        sent.length = 0;
+        push.notifyChatMessage({ companyId: CO, clientId: C.userId, fromRole: "staff", preview: "原文" });
+        push.notifyChatMessage({ companyId: CO, clientId: C.userId, fromRole: "staff", preview: "", recall: true });
+        await push.waitForPushesForTest();
+        assert.deepEqual(sent.filter((x) => x.endpoint === ep("client")).map((x) => x.payload.body), ["原文", "撤回了一条消息"], "撤回比原文先到了推送服务（原文后到又把它盖回去）");
+        // ③ 作废订阅只删读到的那一版：读的时候是旧密码指纹，这期间本人改完密码重新登记了（同一个地址、新指纹）—— 新的那行不能删
+        const old = await pm.csPushSubscription.findUnique({ where: { endpoint: ep("client") } });
+        await pm.user.update({ where: { id: C.userId }, data: { passwordHash: "d6-new" } });
+        await pm.csPushSubscription.update({ where: { endpoint: ep("client") }, data: { passwordFp: passwordFingerprint("d6-new") } });
+        const live = await push.filterLiveSubscriptions([{ endpoint: old.endpoint, p256dh: old.p256dh, auth: old.auth, userId: old.userId, companyId: old.companyId, role: old.role, passwordFp: old.passwordFp }]);
+        assert.equal(live.length, 0);
+        assert.equal(await pm.csPushSubscription.count({ where: { endpoint: ep("client") } }), 1, "把刚重新登记（新密码指纹）的那行也删了");
+        // ④ 退出登录：/auth/logout 在同一个请求里删这台设备的订阅；只删自己名下的
+        const r = await call("POST /auth/logout", STAFF, { pushEndpoint: ep("client") });
+        assert.equal(r.status, 200);
+        assert.equal(await pm.csPushSubscription.count({ where: { endpoint: ep("client") } }), 1, "退出登录删掉了别人的订阅");
+        await must("POST /auth/logout", STAFF2, { pushEndpoint: ep("staff2") });
+        assert.equal(await pm.csPushSubscription.count({ where: { endpoint: ep("staff2") } }), 0, "退出登录没删掉这台设备的订阅");
+        await must("POST /auth/logout", STAFF2, {});
       } finally {
         push.setPushSenderForTest(null);
       }

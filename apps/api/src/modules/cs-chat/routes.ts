@@ -454,8 +454,12 @@ async function recallMessage(opts: { companyId: string; clientId: string; viewer
     if (now.getTime() - m.createdAt.getTime() > CS_RECALL_WINDOW_MS) {
       throw new BusinessError(`发出超过 ${CS_RECALL_WINDOW_MS / 60_000} 分钟了，不能撤回`, 400, "VALIDATION_ERROR");
     }
+    /* 「最新」按同一边算（2026-10-02 复核）：对方通知栏里那个 tag 只会被**同一边**后来发的消息替换 ——
+       客户发错一句、员工秒回一个「？」、客户再撤回：员工的回复不推给员工，员工通知栏里躺着的还是客户那句原文。
+       原来按两边一起数，有了员工那句就当「不是最新」，不换通知，原文一直留着 */
+    const sameSide = m.senderRole === "client" ? { senderRole: "client" } : { senderRole: { not: "client" } };
     const newer = await tx.csMessage.count({
-      where: { conversationId: conv.id, OR: [{ createdAt: { gt: m.createdAt } }, { createdAt: m.createdAt, id: { gt: m.id } }] },
+      where: { conversationId: conv.id, ...sameSide, OR: [{ createdAt: { gt: m.createdAt } }, { createdAt: m.createdAt, id: { gt: m.id } }] },
     });
     const updated = await tx.csMessage.update({
       where: { id: m.id },
@@ -490,8 +494,12 @@ async function loadMessages(
   let hasMore = false;
   if (since) {
     const from = new Date(since.getTime() - POLL_OVERLAP_MS);
+    /* 撤回只能在发出后 2 分钟内，所以「这段时间里被撤回的」一定是 from 往前 2 分钟以内发的：
+       先按发送时间圈一个下限，查询还能走 (conversation_id, created_at) 索引（2026-10-02 复核：
+       原来 OR 上 recalled_at 没有索引，每 3 秒一次把这个对话的全部消息扫一遍） */
+    const recallFloor = new Date(from.getTime() - CS_RECALL_WINDOW_MS - POLL_OVERLAP_MS);
     rows = await prisma.csMessage.findMany({
-      where: { conversationId: conv.id, OR: [{ createdAt: { gte: from } }, { recalledAt: { gte: from } }] },
+      where: { conversationId: conv.id, createdAt: { gte: recallFloor }, OR: [{ createdAt: { gte: from } }, { recalledAt: { gte: from } }] },
       orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       take: 500,
       select: MESSAGE_SELECT,
@@ -850,7 +858,6 @@ export function registerCsChatRoutes(app: MinimalHttpApp): void {
           clientId: c.clientId,
           lastMessageAt: c.lastMessageAt?.toISOString() ?? null,
           lastMessagePreview: c.lastMessagePreview ?? "",
-          lastFromClient: c.lastSenderRole === "client",
           /** 最新一条还在的是我们（员工 / 超管）发的：列表摘要前面写「我方：」 */
           lastFromUs: c.lastSenderRole !== null && c.lastSenderRole !== "client",
           unreadCount: unread.get(c.id)?.count ?? 0,

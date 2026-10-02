@@ -182,7 +182,8 @@ function StaffChatInbox() {
                 {/* 待回复：客户说了话、我们还没回（看过也算没回），写上等了多久 */}
                 {c.pendingReply ? (
                   <div className="cs-pending-tag" style={{ display: "inline-block", marginTop: 4, fontSize: 11, color: "var(--c-amber-deep)", background: "var(--c-amber-bg)", borderRadius: 4, padding: "1px 6px" }}>
-                    待回复 · 等了 {waitedLabel(c.pendingSince)}
+                    {/* 等待起点偶尔取不到（列表那一刻正好有人回了）：就只写「待回复」，不写半句「等了」 */}
+                    {c.pendingSince ? `待回复 · 等了 ${waitedLabel(c.pendingSince)}` : "待回复"}
                   </div>
                 ) : null}
                 <div style={{ fontSize: 12, color: "var(--t-muted)", marginTop: 3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>

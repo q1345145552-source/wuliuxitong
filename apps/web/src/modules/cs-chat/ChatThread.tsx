@@ -475,7 +475,8 @@ export default function ChatThread(props: {
     e.preventDefault();
     // 上一条还在发：说一声，不能悄悄吞掉（2026-09-28 分支审查；「图片」按钮这时是灰的，粘贴这条路原来没提示）
     if (sending) { setSendError("上一条还在发送，等发完再粘贴图片"); return; }
-    void send({ file });
+    // 选了单子：图片也带上（2026-10-02 复核：原来图片不带，「关于：…」却还挂着，以为照片关联上了）
+    void send({ file, ref: pendingRef ?? undefined });
   };
 
   const side = ourSide(scope);
@@ -627,7 +628,7 @@ export default function ChatThread(props: {
               图片
             </button>
             <input ref={fileRef} type="file" accept="image/*" style={{ display: "none" }}
-              onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) void send({ file: f }); }} />
+              onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) void send({ file: f, ref: pendingRef ?? undefined }); }} />
             <button type="button" onClick={() => setPickerOpen((v) => !v)} disabled={loading || !!loadError} aria-expanded={pickerOpen}
               style={{ border: "1px solid var(--l-strong)", borderRadius: 6, background: pickerOpen ? "var(--s-sunken)" : "var(--white)", padding: "4px 10px", cursor: "pointer", fontSize: 12, color: "var(--t-strong)", flexShrink: 0 }}
               title="选一张运单或整柜，对方就知道说的是哪一票">

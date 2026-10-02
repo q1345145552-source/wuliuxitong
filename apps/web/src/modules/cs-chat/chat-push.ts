@@ -5,7 +5,8 @@
  * 开通知：要人自己点一次「开启通知」（浏览器规定：问权限必须是人点出来的）→ 浏览器问「允许通知吗」→
  *   注册 push-sw.js → 向浏览器的推送服务要一个订阅 → 交给我们后端存起来。
  * 这份订阅属于「这个浏览器」，不属于某个账号，所以要管好「换人」：
- *   · 退出登录：把订阅退掉（dropChatPushOnLogout）—— 公用电脑上下一个人不能收到上一个人的消息提醒；
+ *   · 退出登录：后端那行跟令牌在同一个 /auth/logout 请求里删掉（把 currentChatPushEndpoint 交给它），
+ *     浏览器这边同时退订（unsubscribeChatPushInBrowser）—— 公用电脑上下一个人不能收到上一个人的消息提醒；
  *   · 打开页面时（syncChatPushOnLoad）：浏览器里的订阅不是现在这个人开的（换人登录、没走退出就过期了）→ 退掉，
  *     要通知让他自己再点一次；是他开的 → 再交给后端一次（后端那行可能被清过）。
  *   「是谁开的」记在 localStorage 的 xt_chat_push_owner（公司:账号）。
@@ -104,7 +105,8 @@ export async function readChatPushState(session: AuthSession): Promise<ChatPushS
   if (!key.enabled || !key.publicKey) return "server-off";
   if (Notification.permission === "denied") return "denied";
   const sub = await currentSubscription();
-  return sub && Notification.permission === "granted" && readOwner() === ownerOf(session) ? "on" : "off";
+  // 服务器换过密钥：这份旧订阅已经收不到了，显示「没开」让他重新点
+  return sub && Notification.permission === "granted" && readOwner() === ownerOf(session) && sameKey(sub, key.publicKey) ? "on" : "off";
 }
 
 /** 点「开启通知」：问权限 → 注册 → 订阅 → 交给后端。返回开完以后的状态 */
@@ -176,6 +178,15 @@ export async function syncChatPushOnLoad(session: AuthSession | null): Promise<v
       writeOwner("");
       return;
     }
+    /* 服务器换过密钥（2026-10-02 复核）：旧密钥订的这份已经收不到了，原来照样每次交给后端、页面还显示「已开启」，
+       谁也不会去重新点。现在退掉，页面显示「没开」，他点一下就是新密钥的订阅。服务器没开通知就什么都不动 */
+    const key = await fetchChatPushKey(session.role as ChatPushRole);
+    if (!key.enabled || !key.publicKey) return;
+    if (!sameKey(sub, key.publicKey)) {
+      await sub.unsubscribe();
+      writeOwner("");
+      return;
+    }
     const json = subJson(sub);
     if (json) await saveChatPushSubscription(session.role as ChatPushRole, json);
   } catch {
@@ -184,25 +195,28 @@ export async function syncChatPushOnLoad(session: AuthSession | null): Promise<v
 }
 
 /**
- * 退出登录时调（要在清掉登录信息之前，后端删订阅要用现在的令牌）。
- * 浏览器这边退订、告诉后端删那一行，**两件同时做**（2026-10-02 独立复审）：
- *   原来先等浏览器退订完再删后端 —— 浏览器连不上推送服务时退订会卡住（国内 Chrome 连不上谷歌），
- *   外面只等 1.5 秒就跳去登录页，后端那行就一直留着、照样往这台设备推。
- * 任何一件做成了这台设备就收不到了；两件都做不成也不卡退出。
+ * 退出登录用：这台设备的订阅地址（只读浏览器本地，不联网）。没开过通知是 null。
+ * 交给 /auth/logout，后端在作废令牌的同一个请求里删掉那一行（2026-10-02 复核：原来单独发一个请求、
+ * 等它回来再作废令牌，作废被推迟，网慢时退出请求被跳转掐断，令牌还能用 7 天）。
  */
-export async function dropChatPushOnLogout(session: AuthSession | null): Promise<void> {
+export async function currentChatPushEndpoint(): Promise<string | null> {
+  try {
+    return (await currentSubscription())?.endpoint ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 退出登录用：浏览器这边退订（不联网等后端）。记下的「谁开的」马上清掉。
+ * 退订本身可能卡住（国内 Chrome 连不上谷歌）—— 调用方别等它，后端那行已经跟着退出删了。
+ */
+export async function unsubscribeChatPushInBrowser(): Promise<void> {
+  writeOwner("");
   try {
     const sub = await currentSubscription();
-    if (!sub) return;
-    const endpoint = sub.endpoint;
-    writeOwner("");
-    const tellServer = session && (session.role === "client" || session.role === "staff" || session.role === "admin")
-      ? deleteChatPushSubscription(session.role, endpoint)
-      : Promise.resolve();
-    await Promise.allSettled([sub.unsubscribe(), tellServer]);
+    if (sub) await sub.unsubscribe();
   } catch {
     /* 退不掉也不能卡住退出 */
-  } finally {
-    writeOwner("");
   }
 }

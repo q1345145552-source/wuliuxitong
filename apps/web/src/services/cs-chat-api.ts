@@ -54,7 +54,6 @@ export type ChatConversation = {
   clientId: string;
   lastMessageAt: string | null;
   lastMessagePreview: string;
-  lastFromClient: boolean;
   /** 最新一条还在的是我们发的：摘要前面写「我方：」 */
   lastFromUs: boolean;
   unreadCount: number;
@@ -175,6 +174,9 @@ export function deleteChatPushSubscription(role: "client" | "staff" | "admin", e
 
 /** 同一条消息，手里那份跟新取回来的有没有要紧的不一样：撤回了 / 单子的状态变了 */
 function messageChanged(a: ChatMessage, b: ChatMessage): boolean {
+  /* 撤回只往前走（2026-10-02 复核）：网慢时两轮轮询会交叠，晚回来的那份可能是撤回之前读的 ——
+     拿它一换，已撤回的又变回原文，而且之后再也不会有轮询带回这一条，原文就一直留在屏幕上 */
+  if (a.recalled && !b.recalled) return false;
   if (Boolean(a.recalled) !== Boolean(b.recalled)) return true;
   const ra = a.ref ?? null;
   const rb = b.ref ?? null;

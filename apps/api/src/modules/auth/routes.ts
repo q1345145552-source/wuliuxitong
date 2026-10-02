@@ -190,6 +190,20 @@ export function registerAuthRoutes(app: MinimalHttpApp): void {
   app.post("/auth/logout", async (req, res) => {
     const auth = requireAuth(req, res);
     if (!auth) return;
+    /* 这台设备的客服对话系统通知订阅，跟令牌一起作废（2026-10-02 复核）：
+       原来前端先单独发一个「删订阅」、等它回来再发退出 —— 作废令牌被推迟最多 1.5 秒，网慢时跳去登录页把退出请求掐断，
+       令牌就还能用 7 天（排查报告第 58 条那个问题又回来了）。现在一个请求做完两件事，退出不用等任何别的东西。
+       只删自己名下的；删不掉不影响退出。 */
+    const pushEndpoint = typeof (req.body as { pushEndpoint?: unknown } | undefined)?.pushEndpoint === "string"
+      ? (req.body as { pushEndpoint: string }).pushEndpoint.trim().slice(0, 1000)
+      : "";
+    if (pushEndpoint) {
+      try {
+        await prisma.csPushSubscription.deleteMany({ where: { endpoint: pushEndpoint, userId: auth.userId, companyId: auth.companyId } });
+      } catch (e) {
+        logger.warn("退出登录时没删掉系统通知订阅", { 账号: auth.userId, error: e instanceof Error ? e.message.slice(0, 200) : String(e) });
+      }
+    }
     // 能走到这里说明令牌刚通过认证，这里再解一次只是为了拿原始令牌和它的 exp
     const authHeader = typeof req.headers.authorization === "string" ? req.headers.authorization.trim() : "";
     const token = authHeader.match(/^Bearer\s+(.+)$/i)?.[1]?.trim() ?? "";

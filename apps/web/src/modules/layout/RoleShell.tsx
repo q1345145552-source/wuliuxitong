@@ -9,7 +9,7 @@ import { changeOwnPassword } from "../../services/auth-api";
 import { apiBaseUrl, apiRequest } from "../../services/core-api";
 import { globalMenus, roleFunctionGroups, roleMenus, type MenuItem } from "./menu-config";
 import { CHAT_MENU_IDS, useChatUnread } from "../cs-chat/useChatUnread";
-import { dropChatPushOnLogout, syncChatPushOnLoad } from "../cs-chat/chat-push";
+import { currentChatPushEndpoint, syncChatPushOnLoad, unsubscribeChatPushInBrowser } from "../cs-chat/chat-push";
 import { isSamePageHashLink, navigateToHash } from "./navigate-to-hash";
 // 分组展开的默认值和记忆（代理单独一个键、默认展开「我的客户」，原因见该文件）
 import { defaultExpandedGroups, initialExpandedGroups, saveExpandedGroups } from "./sidebar-expanded-groups";
@@ -569,10 +569,12 @@ export default function RoleShell(props: {
               //    apiRequest 单次超时要 30 秒，用户点了退出会干等半分钟以为死机。
               //    3 秒等不到就不等了，本地清理照做。
               try {
-                // 先退掉这个浏览器的系统通知订阅（2026-10-02）：公用电脑上下一个人不能收到这个人的消息提醒。
-                // 要在作废令牌之前（后端删订阅要用这张令牌），但最多占 1.5 秒，给作废令牌留够时间（下面共用 3 秒）
-                const dropPush = Promise.race([dropChatPushOnLogout(session), new Promise((r) => window.setTimeout(r, 1500))]);
-                const revoke = dropPush.then(() => apiRequest(`${apiBaseUrl()}/auth/logout`, { method: "POST" }));
+                // 这台设备的系统通知订阅（2026-10-02）：公用电脑上下一个人不能收到这个人的消息提醒。
+                // 订阅地址只读浏览器本地（最多等 0.5 秒），跟作废令牌放在同一个请求里让后端删掉 —— 作废令牌不用等它；
+                // 浏览器这边同时退订，不等（国内 Chrome 连不上谷歌时退订会卡住）
+                const pushEndpoint = await Promise.race([currentChatPushEndpoint(), new Promise<null>((r) => window.setTimeout(() => r(null), 500))]);
+                void unsubscribeChatPushInBrowser();
+                const revoke = apiRequest(`${apiBaseUrl()}/auth/logout`, { method: "POST", body: JSON.stringify(pushEndpoint ? { pushEndpoint } : {}) });
                 // 兜底超时后它才失败的话，别在控制台冒「未处理的 Promise 错误」
                 revoke.catch(() => {});
                 await Promise.race([

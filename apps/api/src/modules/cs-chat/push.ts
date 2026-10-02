@@ -113,6 +113,12 @@ const realSender: PushSender = async (target, payload, { topic, config }) => {
 let sender: PushSender = realSender;
 let configOverride: PushConfig | null | undefined;
 const pending = new Set<Promise<void>>();
+/**
+ * 同一个对话、同一个方向的通知排队发（2026-10-02 复核）：原来每条各发各的 —— 发完马上撤回，
+ * 撤回那条（换成「撤回了一条消息」）有可能比原文先到推送服务，原文后到又把它盖回去，通知栏里留的还是原文。
+ * 现在后一条等前一条发完（推送服务回了话）再发。只在这一个 API 进程里排（系统就一个进程）。
+ */
+const chains = new Map<string, Promise<void>>();
 
 /** 只给测试用：换掉真发送（测试环境连不上各家推送服务），配置也可以直接给 */
 export function setPushSenderForTest(s: PushSender | null, config?: PushConfig | null): void {
@@ -155,7 +161,7 @@ type StoredSubscription = { endpoint: string; p256dh: string; auth: string; user
  *   · 地址还在名单里（存进来以后名单收紧了也照样挡）。
  * 不算数的直接删掉（这个人自己的设备下次打开系统会自动重新登记，见前端 chat-push.ts 的 syncChatPushOnLoad）。
  */
-async function filterLiveSubscriptions(subs: StoredSubscription[]): Promise<StoredSubscription[]> {
+export async function filterLiveSubscriptions(subs: StoredSubscription[]): Promise<StoredSubscription[]> {
   if (subs.length === 0) return [];
   const users = await prisma.user.findMany({
     where: { id: { in: [...new Set(subs.map((x) => x.userId))] } },
@@ -163,7 +169,7 @@ async function filterLiveSubscriptions(subs: StoredSubscription[]): Promise<Stor
   });
   const byId = new Map(users.map((u) => [u.id, u]));
   const live: StoredSubscription[] = [];
-  const dead: string[] = [];
+  const dead: StoredSubscription[] = [];
   for (const sub of subs) {
     const u = byId.get(sub.userId);
     const ok = !!u
@@ -173,9 +179,15 @@ async function filterLiveSubscriptions(subs: StoredSubscription[]): Promise<Stor
       && (u.role !== "client" || u.agentId === null)
       && passwordFingerprint(u.passwordHash) === sub.passwordFp
       && isAllowedPushEndpoint(sub.endpoint);
-    if (ok) live.push(sub); else dead.push(sub.endpoint);
+    if (ok) live.push(sub); else dead.push(sub);
   }
-  if (dead.length > 0) await prisma.csPushSubscription.deleteMany({ where: { endpoint: { in: dead } } });
+  /* 按读出来那一刻的样子删（2026-10-02 复核）：只按 endpoint 删的话，这期间本人刚好改完密码重新登记了一次
+     （同一个 endpoint、新的密码指纹），会把新登记的那行也删掉，他的设备显示「已开启」却再也收不到 */
+  if (dead.length > 0) {
+    await prisma.csPushSubscription.deleteMany({
+      where: { OR: dead.map((x) => ({ endpoint: x.endpoint, userId: x.userId, companyId: x.companyId, role: x.role, passwordFp: x.passwordFp })) },
+    });
+  }
   return live;
 }
 
@@ -195,7 +207,8 @@ export function notifyChatMessage(opts: { companyId: string; clientId: string; f
   const payload: PushPayload = opts.recall
     ? { ...base, title: toClient ? "客服" : `客户 ${opts.clientId}`, body: "撤回了一条消息", silent: true }
     : base;
-  const job = (async () => {
+  const chainKey = `${opts.companyId}:${opts.clientId}:${toClient ? "c" : "s"}`;
+  const run = async () => {
     const stored = await prisma.csPushSubscription.findMany({
       where: toClient
         ? { companyId: opts.companyId, userId: opts.clientId, role: "client" }
@@ -203,7 +216,7 @@ export function notifyChatMessage(opts: { companyId: string; clientId: string; f
       select: { endpoint: true, p256dh: true, auth: true, userId: true, companyId: true, role: true, passwordFp: true },
     });
     const targets = await filterLiveSubscriptions(stored);
-    const topic = pushTopic(`${opts.companyId}:${opts.clientId}:${toClient ? "c" : "s"}`);
+    const topic = pushTopic(chainKey);
     const body = JSON.stringify(payload);
     await Promise.all(targets.map(async (t) => {
       try {
@@ -221,9 +234,14 @@ export function notifyChatMessage(opts: { companyId: string; clientId: string; f
         logger.warn("客服对话系统通知没发出去", { host, status, error: e instanceof Error ? e.message.slice(0, 200) : String(e).slice(0, 200) });
       }
     }));
-  })().catch((e) => {
+  };
+  const job = (chains.get(chainKey) ?? Promise.resolve()).then(run).catch((e) => {
     logger.warn("客服对话系统通知出错", { error: e instanceof Error ? e.message.slice(0, 200) : String(e).slice(0, 200) });
   });
+  chains.set(chainKey, job);
   pending.add(job);
-  void job.finally(() => pending.delete(job));
+  void job.finally(() => {
+    pending.delete(job);
+    if (chains.get(chainKey) === job) chains.delete(chainKey);
+  });
 }

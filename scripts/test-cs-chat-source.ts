@@ -73,6 +73,8 @@ async function main(): Promise<void> {
     const recalled = web.mergeChatMessages(cur, [{ ...m("b", "2026-09-28T01:00:05.000Z"), content: null, recalled: true }]);
     assert.notEqual(recalled, cur);
     assert.equal(recalled.find((x) => x.id === "b")!.recalled, true, "对方撤回了，合并时没换掉手里那条");
+    // 撤回只往前走：晚回来的旧轮询（撤回前读的）不能把它变回原文（2026-10-02 复核）
+    assert.equal(web.mergeChatMessages(recalled, [m("b", "2026-09-28T01:00:05.000Z")]), recalled, "旧轮询把已撤回的又换回了原文");
   });
 
   await check("S4 菜单：员工 / 超管「客户消息」、客户「在线客服」都放在默认展开的组里；超管借员工端那一页", () => {
@@ -264,9 +266,14 @@ async function main(): Promise<void> {
       assert.match(compose, new RegExp(`${k}: \\$\\{${k}:-\\}`), `docker-compose.yml 没透传 ${k}（改了 .env 进不了容器）`);
       assert.ok(read("env.example").includes(`${k}=`) && read(".env.example").includes(`${k}=`), `env.example / .env.example 没列 ${k}`);
     }
-    // 退出登录先退通知订阅，再作废令牌（后端删订阅要用这张令牌）
+    // 退出登录（2026-10-02 复核）：订阅地址交给 /auth/logout 跟作废令牌一起删；作废令牌不许排在任何推送相关的请求后面
     const shell = read("apps/web/src/modules/layout/RoleShell.tsx");
-    assert.match(shell, /const dropPush = Promise\.race\(\[dropChatPushOnLogout\(session\)[\s\S]{0,120}\n\s*const revoke = dropPush\.then\(\(\) => apiRequest\(`\$\{apiBaseUrl\(\)\}\/auth\/logout`/, "退出登录没先退通知订阅");
+    assert.match(shell, /const revoke = apiRequest\(`\$\{apiBaseUrl\(\)\}\/auth\/logout`, \{ method: "POST", body: JSON\.stringify\(pushEndpoint \? \{ pushEndpoint \} : \{\}\) \}\);/, "退出登录没把订阅地址交给 /auth/logout");
+    assert.match(shell, /void unsubscribeChatPushInBrowser\(\);/, "退出登录没在浏览器这边退订");
+    assert.ok(!/\.then\(\(\) => apiRequest\(`\$\{apiBaseUrl\(\)\}\/auth\/logout`/.test(shell), "作废令牌又排在别的请求后面了（网慢时退出请求会被跳转掐断）");
+    const authSrc = read("apps/api/src/modules/auth/routes.ts");
+    const logout = authSrc.slice(authSrc.indexOf('app.post("/auth/logout"'), authSrc.indexOf("app.post", authSrc.indexOf('app.post("/auth/logout"') + 10));
+    assert.match(logout, /csPushSubscription\.deleteMany\(\{ where: \{ endpoint: pushEndpoint, userId: auth\.userId, companyId: auth\.companyId \} \}\)[\s\S]*revokeToken\(/, "/auth/logout 没在作废令牌前删掉这台设备的订阅（只删自己的）");
     assert.match(shell, /syncChatPushOnLoad\(session\)/, "进来没核对通知订阅是不是这个人开的");
   });
 
