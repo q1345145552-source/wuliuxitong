@@ -113,8 +113,31 @@ export default function FclInquiryPanel(props: ClientFclInquiryProps) {
   const listPageRef = useRef(listPage);
   listPageRef.current = listPage;
 
+  /* 用户自己点的翻页 / 重试还在路上时，悄悄重拉不去作废它（不然那一下点击像没反应，dsh 复查 2026-10-05）：
+     先记一笔，等它回来再按那时的页码补拉一次 */
+  const listUserLoadsRef = useRef(0);
+  const listRefreshAfterRef = useRef(false);
   /** silent：有变化时悄悄重拉（2026-10-05 实时推送），失败不弹提示 */
   const loadList = async (page = listPage, opts?: { silent?: boolean }) => {
+    const silent = opts?.silent === true;
+    if (silent && listUserLoadsRef.current > 0) {
+      listRefreshAfterRef.current = true;
+      return;
+    }
+    if (!silent) listUserLoadsRef.current += 1;
+    try {
+      await loadListOnce(page, silent);
+    } finally {
+      if (!silent) {
+        listUserLoadsRef.current -= 1;
+        if (listUserLoadsRef.current === 0 && listRefreshAfterRef.current) {
+          listRefreshAfterRef.current = false;
+          void loadList(listPageRef.current, { silent: true });
+        }
+      }
+    }
+  };
+  const loadListOnce = async (page: number, silent: boolean) => {
     const ticket = listGate.begin(); // 2026-09-01 竞态全扫：出发时领号
     try {
       // 2026-08-31（Codex 二轮）：带上 page/pageSize，接口只回当前页 + 真实总数
@@ -129,7 +152,7 @@ export default function FclInquiryPanel(props: ClientFclInquiryProps) {
       setListLoaded(true);
     } catch (e: any) {
       if (!listGate.isCurrent(ticket)) return; // 2026-09-01 竞态全扫：旧请求的报错不许安到新请求头上
-      if (opts?.silent) return;
+      if (silent) return;
       props.onToast("加载询价记录失败：" + (e.message || "网络错误"));
       setListError(true);
       setListLoaded(true);

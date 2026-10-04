@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { apiBaseUrl, authHeaders, parseApiResponse, fetchWithSession as fetch } from "../../services/core-api";
 import { fetchClientNotes } from "../../services/business-api";
 import { useLiveRefresh } from "../../modules/realtime/useRealtime";
+import { createYieldGuard } from "../../modules/realtime/yield-guard";
 
 /* ==========================================================================
    尾端地址面板（员工端 / 管理员端共用）
@@ -76,6 +77,8 @@ export function LastmileAddressPanel({ onToast, active = false }: LastmileAddres
 
   /** 请求序号（2026-08-31 排查条目28）：只让「最后一次发出去的请求」的结果落地 */
   const loadSeqRef = useRef(0);
+  /** 员工打字搜索 / 点重置还在路上时，有变化的悄悄重拉先让路（modules/realtime/yield-guard.ts） */
+  const loadYield = useRef(createYieldGuard()).current;
 
   /** 2026-09-01 竞态全扫：保存/删除地址后的刷新，原来用的是**点保存那一刻**的搜索词。
       保存请求飞着的几秒里用户把搜索词改成了 B，刷新还按旧词 A 去查、又领的是新号，
@@ -91,8 +94,11 @@ export function LastmileAddressPanel({ onToast, active = false }: LastmileAddres
        而输入框里是「A」—— 本地筛又开始缺人。所以每次发请求领一个自增序号，
        响应回来时序号已经不是最新的就整个丢弃（数据、报错、loading 都不动，
        全交给最后那个请求收尾）。 */
+    const silent = opts?.silent === true;
+    if (silent && !loadYield.allowSilent(() => void loadAddresses(keywordRef.current, { silent: true }))) return; // 用户点的请求在路上：先让路，它回来再补（Codex 复查 2026-10-05）
     const seq = ++loadSeqRef.current;
-    if (!opts?.silent) setLoading(true);
+    const endUser = silent ? null : loadYield.begin();
+    if (!silent) setLoading(true);
     try {
       const resp = await fetch(`${apiBaseUrl()}/staff/lastmile/addresses?keyword=${encodeURIComponent(kw)}`, {
         headers: authHeaders(),
@@ -108,6 +114,7 @@ export function LastmileAddressPanel({ onToast, active = false }: LastmileAddres
       say(`地址库加载失败：${e instanceof Error ? e.message : "未知错误"}`);
     } finally {
       if (seq === loadSeqRef.current) setLoading(false);
+      endUser?.();
     }
   }, [say]);
 

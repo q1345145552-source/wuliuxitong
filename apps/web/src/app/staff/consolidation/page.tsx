@@ -21,6 +21,7 @@ import {
 import { formatBeijingTime } from "../../../modules/staff/utils";
 import { createRequestGate } from "../../../modules/shared/request-gate";
 import { useLiveRefresh } from "../../../modules/realtime/useRealtime";
+import { createYieldGuard } from "../../../modules/realtime/yield-guard";
 import { viewerCanSeeOperator } from "../../../auth/operator-visibility";
 
 // ============================================================================
@@ -103,10 +104,14 @@ export default function StaffConsolidationPage() {
   /** 2026-09-01 竞态全扫：状态筛选快速连切会连发请求，旧筛选的响应后到会盖掉新筛选的列表。
       每次出发领号，回来验号——数据、报错、loading 三个分支都只认最新一次请求。 */
   const tasksGate = useRef(createRequestGate()).current;
+  /** 员工切筛选 / 点刷新还在路上时，有变化的悄悄重拉先让路（modules/realtime/yield-guard.ts） */
+  const tasksYield = useRef(createYieldGuard()).current;
   /** silent：有变化时悄悄重拉（2026-10-05 实时推送）——不开「加载中」、失败不弹提示；finally 照旧只认最新一号收加载态 */
   const loadTasks = useCallback(async (opts?: { silent?: boolean }) => {
     const silent = opts?.silent === true;
+    if (silent && !tasksYield.allowSilent(() => void loadTasksRef.current({ silent: true }))) return; // 用户点的请求在路上：先让路，它回来再补（Codex 复查 2026-10-05）
     const ticket = tasksGate.begin();
+    const endUser = silent ? null : tasksYield.begin();
     if (!silent) setLoading(true);
     try {
       const data = await fetchStaffConsolidationTasks(statusFilter || undefined);
@@ -118,8 +123,12 @@ export default function StaffConsolidationPage() {
       setToast(e.message);
     } finally {
       if (tasksGate.isCurrent(ticket)) setLoading(false); // 旧请求不许掐掉新请求的加载态
+      endUser?.();
     }
   }, [statusFilter, tasksGate]);
+  /** 让路以后补的那一次要用最新的筛选（员工可能在等的时候换了筛选），所以经 ref 调最新的 loadTasks */
+  const loadTasksRef = useRef(loadTasks);
+  loadTasksRef.current = loadTasks;
 
   /** 2026-09-02 终审整改（P1）：详情加载配门闩 + 认主人。
       病根：详情是异步取的，旧任务的响应后到会盖掉新任务的详情——页面显示 A，
@@ -128,6 +137,8 @@ export default function StaffConsolidationPage() {
       「当前选中的任务」还是不是出发时那张（selectedTaskIdRef，点击处同步赋值），
       不是就整段丢弃，报错也不许弹。 */
   const detailGate = useRef(createRequestGate()).current;
+  /** 员工点开任务详情还在路上时，悄悄重拉先让路 */
+  const detailYield = useRef(createYieldGuard()).current;
   // 认主人的 ref：必须在用户点击处**同步**赋值，不许等 useEffect——
   // useEffect 晚一拍，异步响应插在中间就核不住（2026-09-02 终审整改）
   const selectedTaskIdRef = useRef<string | null>(null);
@@ -137,7 +148,9 @@ export default function StaffConsolidationPage() {
   /** silent：有变化时悄悄重拉（2026-10-05）——只换详情内容，**不动报价框**（员工可能正在填）、失败不弹提示 */
   const loadDetail = useCallback(async (taskId: string, opts?: { silent?: boolean }) => {
     const silent = opts?.silent === true;
+    if (silent && !detailYield.allowSilent(() => void loadDetail(taskId, { silent: true }))) return; // 用户点的请求在路上：先让路，它回来再补（Codex 复查 2026-10-05）
     const ticket = detailGate.begin(); // 出发时领号
+    const endUser = silent ? null : detailYield.begin();
     try {
       const data = await fetchStaffConsolidationTaskDetail(taskId);
       if (!detailGate.isCurrent(ticket)) return; // 验号：已有更新的详情请求出发，旧响应丢弃
@@ -154,6 +167,8 @@ export default function StaffConsolidationPage() {
       if (selectedTaskIdRef.current !== taskId) return;
       if (silent) return;
       setToast(e.message);
+    } finally {
+      endUser?.();
     }
   }, [detailGate]);
 

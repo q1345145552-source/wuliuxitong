@@ -8,6 +8,7 @@ import { formatBeijingTime } from "../../../modules/staff/utils";
 import { base64Bytes, compressImageForUpload, formatBytes } from "../../../modules/shared/image-compress";
 import { createRequestGate } from "../../../modules/shared/request-gate";
 import { useLiveRefresh } from "../../../modules/realtime/useRealtime";
+import { createYieldGuard } from "../../../modules/realtime/yield-guard";
 import { viewerCanSeeOperator } from "../../../auth/operator-visibility";
 import { parseUnitPrice, unitPriceIssue } from "../../../modules/shared/unit-price";
 
@@ -268,6 +269,8 @@ export default function StaffWhrConsolidationPage() {
   // - 签收/泰国签收照片：压缩是异步的，关 A 开 B 后压完的照片会落进 B 的文件列表 → 回调同样认主人。
   const selectedPlanIdRef = useRef<string | null>(null);
   const planDetailGate = useRef(createRequestGate()).current;
+  /** 员工点开计划详情还在路上时，有变化的悄悄重拉先让路（modules/realtime/yield-guard.ts） */
+  const planDetailYield = useRef(createYieldGuard()).current;
   const signPrealertIdRef = useRef<string | null>(null);
   const reviewPrealertIdRef = useRef<string | null>(null);
   const thailandPrealertIdRef = useRef<string | null>(null);
@@ -310,8 +313,11 @@ export default function StaffWhrConsolidationPage() {
 
   const loadPlanDetail = useCallback(async (planId: string, opts?: { silent?: boolean }) => {
     // 2026-09-01 竞态全扫：出发领号，落地验号 + 认主人（成功、失败、finally 三个分支都要验）
+    const silent = opts?.silent === true;
+    if (silent && !planDetailYield.allowSilent(() => void loadPlanDetail(planId, { silent: true }))) return; // 用户点的请求在路上：先让路，它回来再补（Codex 复查 2026-10-05）
     const ticket = planDetailGate.begin();
-    if (!opts?.silent) setDetailLoading(true); // 悄悄重拉不开「加载中」（开了整块详情会闪成「加载中...」）
+    const endUser = silent ? null : planDetailYield.begin();
+    if (!silent) setDetailLoading(true); // 悄悄重拉不开「加载中」（开了整块详情会闪成「加载中...」）
     try {
       const data = await apiRequest<PlanDetail>(
         `${apiBaseUrl()}/admin/whr-consolidation/plans/detail?planId=${encodeURIComponent(planId)}`
@@ -328,6 +334,7 @@ export default function StaffWhrConsolidationPage() {
     finally {
       // 旧请求不许提前掐掉新请求的加载态；只要没有更新的请求在跑，加载态就该收掉
       if (planDetailGate.isCurrent(ticket)) setDetailLoading(false);
+      endUser?.();
     }
   }, [planDetailGate]);
 

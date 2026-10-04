@@ -9,7 +9,11 @@ export interface LiveRefreshOptions {
    * ⚠️ 别在里面把列表先清空、别开整页的「加载中」，否则别人每改一次你这边就闪一下。
    */
   refresh: (isStillWanted: () => boolean, reason: "push" | "poll") => Promise<unknown> | unknown;
-  /** 实时连接断着的时候，隔多久兜底拉一次（毫秒）；不填 = 不轮询 */
+  /**
+   * 实时连接断着的时候，隔多久兜底拉一次（毫秒）。
+   * 不填 = 按 FALLBACK_POLL_MS（60 秒）兜底，而且只在网页在眼前时拉 —— 推送连不上（公司网络把长连接掐了之类）
+   * 也不会一直停在旧数据上（dsh 复查 2026-10-05）；推送通着就不拉。
+   */
   pollMs?: number;
   /** 实时连接通着的时候，隔多久兜底拉一次；不填 = 不轮询（只靠推送 + 断线重连后补拉） */
   livePollMs?: number;
@@ -25,10 +29,18 @@ export interface LiveRefreshOptions {
  *
  * 返回停止函数。refresh 每次调用时现取（getRefresh），页面每次渲染换了新函数也用得上最新的条件。
  */
+/** 没给 pollMs 的页面，推送断着时多久兜底拉一次 */
+export const FALLBACK_POLL_MS = 60_000;
+
 export function startLiveRefresh(
-  options: Omit<LiveRefreshOptions, "refresh"> & { getRefresh: () => LiveRefreshOptions["refresh"] },
+  options: Omit<LiveRefreshOptions, "refresh"> & {
+    getRefresh: () => LiveRefreshOptions["refresh"];
+    /** 只给测试用：把 60 秒的默认兜底缩短 */
+    fallbackPollMs?: number;
+  },
 ): () => void {
   const { topics, pollMs, livePollMs, getRefresh } = options;
+  const fallbackPollMs = options.fallbackPollMs ?? FALLBACK_POLL_MS;
   let cancelled = false;
   let running = false;
   let again = false;
@@ -40,8 +52,18 @@ export function startLiveRefresh(
     if (timer) clearTimeout(timer);
     timer = null;
     if (cancelled || running) return;
-    const wait = isRealtimeLive() ? livePollMs : pollMs;
-    if (wait && wait > 0) timer = setTimeout(() => void run("poll"), wait);
+    const live = isRealtimeLive();
+    const fallback = !live && pollMs === undefined;
+    const wait = live ? livePollMs : (pollMs ?? fallbackPollMs);
+    if (!wait || wait <= 0) return;
+    timer = setTimeout(() => {
+      // 默认兜底只在网页在眼前时拉（后台的标签页切回来时推送重连会补拉，不用在后台白拉）
+      if (fallback && typeof document !== "undefined" && document.visibilityState !== "visible") {
+        schedule();
+        return;
+      }
+      void run("poll");
+    }, wait);
   };
 
   const run = async (reason: "push" | "poll") => {

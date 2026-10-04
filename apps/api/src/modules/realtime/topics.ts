@@ -17,12 +17,13 @@ export const REALTIME_TOPICS = [
   "chat", // 客服对话
   "wallet", // 集货余额 / 充值
   "accounts", // 账号、代理、代理返佣
-  "config", // 运费 / 状态名 / 清关 / AI 知识库等配置
+  "config", // 运费 / 状态名 / 清关等配置
+  "ai", // AI 知识库、知识缺口、会话记忆（只给员工 / 管理员；客户问 AI 也会写知识缺口和会话记忆）
 ] as const;
 
 export type RealtimeTopic = (typeof REALTIME_TOPICS)[number];
 
-/** 客户能收到的分类（账号类是员工管的，客户收了也没页面用） */
+/** 客户能收到的分类（账号类、AI 后台是员工管的，客户收了也没页面用） */
 export const CLIENT_TOPICS: ReadonlySet<RealtimeTopic> = new Set<RealtimeTopic>([
   "shipping", "consolidation", "whr", "fcl", "chat", "wallet", "config",
 ]);
@@ -38,7 +39,6 @@ const SKIP_EXACT: ReadonlySet<string> = new Set([
   "/auth/login",
   "/auth/logout",
   "/auth/change-password",
-  "/client/ai/chat",
   "/client/chat/push/subscribe",
   "/client/chat/push/unsubscribe",
   "/staff/chat/push/subscribe",
@@ -49,6 +49,8 @@ const SKIP_EXACT: ReadonlySet<string> = new Set([
 export function topicForWrite(path: string): RealtimeTopic | null {
   if (SKIP_EXACT.has(path)) return null;
   if (/^\/(client|staff)\/chat\//.test(path)) return "chat";
+  // 客户问 AI：可能新增知识缺口、更新会话记忆，管理员那几栏要跟着变（Codex 复查 2026-10-05）
+  if (path === "/client/ai/chat" || /^\/admin\/ai(\/|$)/.test(path)) return "ai";
   if (path.includes("/whr-consolidation/") || path === "/admin/clients/whr-price") return "whr";
   if (path.includes("/consolidation/")) return "consolidation";
   if (/\/fcl-(containers|inquiries)(\/|$)/.test(path)) return "fcl";
@@ -56,7 +58,7 @@ export function topicForWrite(path: string): RealtimeTopic | null {
   if (/^\/admin\/(users|clients|agents)(\/|$)/.test(path) || path.startsWith("/agent/") || path === "/auth/register") {
     return "accounts";
   }
-  if (/^\/admin\/(shipping|system|customs|ai|lmp)(\/|$)/.test(path)) return "config";
+  if (/^\/admin\/(shipping|system|customs|lmp)(\/|$)/.test(path)) return "config";
   if (/^\/(admin|staff|client)\//.test(path)) return "shipping";
   return null;
 }

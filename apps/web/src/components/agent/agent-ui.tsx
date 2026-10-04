@@ -6,6 +6,7 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { formatBeijingTime } from "../../modules/staff/utils";
 import { useLiveRefresh } from "../../modules/realtime/useRealtime";
+import { createYieldGuard } from "../../modules/realtime/yield-guard";
 
 export const PREALERT_STATUS_ZH: Record<string, string> = {
   pending: "待签收",
@@ -164,32 +165,40 @@ export function useAgentLoad<T>(loader: () => Promise<T>, deps: unknown[]) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const seq = useRef(0);
+  /** 代理点搜索 / 翻页 / 重试还在路上时，有变化的悄悄重拉先让路（modules/realtime/yield-guard.ts，Codex 复查 2026-10-05） */
+  const userYield = useRef(createYieldGuard()).current;
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const run = useCallback(loader, deps);
   const reload = useCallback(() => {
     const mine = ++seq.current;
+    const endUser = userYield.begin();
     setLoading(true);
     setError("");
     run()
       .then((d) => { if (mine === seq.current) setData(d); })
       .catch((e: unknown) => { if (mine === seq.current) setError(e instanceof Error ? e.message : "请稍后重试"); })
-      .finally(() => { if (mine === seq.current) setLoading(false); });
-  }, [run]);
+      .finally(() => {
+        if (mine === seq.current) setLoading(false);
+        endUser();
+      });
+  }, [run, userYield]);
   useEffect(() => { reload(); }, [reload]);
   /* 实时更新（2026-10-05 老板：「不能有延迟」）：代理端各页都走这个钩子，所以在这里统一接一次 ——
      员工改了运单状态、自己名下客户下了单、返现单出了 / 付了，服务器马上推过来，悄悄重拉：
      不开「加载中」、失败不换成报错（接着显示手上的）；跟 reload 共用序号，谁后出发谁算数。 */
-  useLiveRefresh({
-    topics: ["shipping", "accounts", "config"],
-    refresh: async () => {
-      const mine = ++seq.current;
-      try {
-        const d = await run();
-        if (mine === seq.current) { setData(d); setError(""); }
-      } catch { /* 悄悄重拉失败：接着显示手上的 */ }
-      finally { if (mine === seq.current) setLoading(false); }
-    },
-  });
+  const silentReload = useCallback(async (): Promise<void> => {
+    // 让路以后补的那一次要用最新的条件（代理可能在等的时候改了搜索），所以经 ref 调最新的那个
+    if (!userYield.allowSilent(() => void silentReloadRef.current())) return;
+    const mine = ++seq.current;
+    try {
+      const d = await run();
+      if (mine === seq.current) { setData(d); setError(""); }
+    } catch { /* 悄悄重拉失败：接着显示手上的 */ }
+    finally { if (mine === seq.current) setLoading(false); }
+  }, [run, userYield]);
+  const silentReloadRef = useRef(silentReload);
+  silentReloadRef.current = silentReload;
+  useLiveRefresh({ topics: ["shipping", "accounts", "config"], refresh: () => silentReload() });
   return { data, loading, error, reload };
 }
 

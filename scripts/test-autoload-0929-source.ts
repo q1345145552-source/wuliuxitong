@@ -122,7 +122,8 @@ check("W2 客户「集货拼柜(仓库版)」详情没拉到：记下原因、�
   // 2026-10-05 加了 silent 参数（实时推送时悄悄重拉），下面查的每一条照旧
   const body = block(WHR, "const loadDetail = useCallback(async (planId: string, opts?: { silent?: boolean }) =>");
   // 复核补：先认主人再领号 —— 不是当前选中的计划就不拉，不去作废当前那一份（原来保存 A 时点了 B，B 会一片空白）
-  assert.match(body, /^\{\s*if \(selectedPlanIdRef\.current !== planId\) return;\s*const ticket = detailGate\.begin\(\);/, "没有「先认主人再领号」");
+  // 2026-10-05：认主人和领号中间多了两句（silent 标记、给用户的请求让路 —— 让路时连号都不领），顺序照旧是先认主人
+  assert.match(body, /^\{\s*if \(selectedPlanIdRef\.current !== planId\) return;\s*const silent = opts\?\.silent === true;\s*if \(silent && !detailYield\.allowSilent\([^\n]*\)\) return;\s*const ticket = detailGate\.begin\(\);/, "没有「先认主人再领号」");
   assert.equal((body.match(/if \(!detailGate\.isCurrent\(ticket\) \|\| selectedPlanIdRef\.current !== planId\) return;/g) ?? []).length, 2, "成功、失败两个分支都要验号 + 认主人");
   assert.match(body, /setDetailError\(e\?\.message \|\| "加载失败"\)/, "失败没记下原因（只弹 5 秒就消失的提示）");
   assert.match(body, /setDetailLoading\(true\);\s*setDetailError\(""\);/, "重新拉的时候没把上一次的失败提示清掉");

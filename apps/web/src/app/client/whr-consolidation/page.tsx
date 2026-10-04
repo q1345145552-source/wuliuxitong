@@ -7,6 +7,7 @@ import { formatBeijingTime } from "../../../modules/staff/utils";
 import { base64Bytes, compressImageForUpload, formatBytes } from "../../../modules/shared/image-compress";
 import { createRequestGate } from "../../../modules/shared/request-gate";
 import { useLiveRefresh } from "../../../modules/realtime/useRealtime";
+import { createYieldGuard } from "../../../modules/realtime/yield-guard";
 
 // 选文件时的原图上限。超过这个的多半是选错了（视频/超大扫描件），先挡掉再说。
 const MAX_SOURCE_BYTES = 30 * 1024 * 1024;
@@ -218,6 +219,8 @@ export default function ClientWhrConsolidationPage() {
   // selectedPlanIdRef 在点击处同步赋值（不等 React 提交），响应落地时核对主人用它。
   const selectedPlanIdRef = useRef<string | null>(null);
   const detailGate = useRef(createRequestGate()).current;
+  /** 客户点开计划详情 / 重试还在路上时，有变化的悄悄重拉先让路（modules/realtime/yield-guard.ts） */
+  const detailYield = useRef(createYieldGuard()).current;
 
   // 预览
   const [previewImage, setPreviewImage] = useState<string | null>(null);
@@ -276,8 +279,9 @@ export default function ClientWhrConsolidationPage() {
   // ==========================================================================
   // 数据加载
   // ==========================================================================
-  /** 读集货余额。付款弹窗要用它判断够不够，付完也要刷新。 */
-  const loadBalance = useCallback(async (): Promise<number | null> => {
+  /** 读集货余额。付款弹窗要用它判断够不够，付完也要刷新。
+   *  silent（有变化时悄悄重拉）读失败：保留上一次读到的数，不让正开着的付款框突然变灰（Codex 复查 2026-10-05） */
+  const loadBalance = useCallback(async (opts?: { silent?: boolean }): Promise<number | null> => {
     try {
       const r = await apiRequest<{ balance?: number; accounts?: { currency: string; balance: number }[] }>(
         `${apiBaseUrl()}/client/wallet/overview`
@@ -285,7 +289,10 @@ export default function ClientWhrConsolidationPage() {
       const v = typeof r.balance === "number" ? r.balance : (r.accounts?.find(a => a.currency === "CNY")?.balance ?? 0);
       setBalance(v);
       return v;
-    } catch { setBalance(null); return null; }
+    } catch {
+      if (!opts?.silent) setBalance(null);
+      return null;
+    }
   }, []);
 
 
@@ -309,9 +316,11 @@ export default function ClientWhrConsolidationPage() {
        A 保存成功后顺手重拉 A 的详情 —— 领号把 B 正在拉的那次作废，A 的结果又因为「不是当前选中的」被丢掉，
        B 高亮着、下面一片空白，要点两下那一行才出来。现在不是当前选中的计划就不拉，不去作废别人。 */
     if (selectedPlanIdRef.current !== planId) return;
+    const silent = opts?.silent === true; // 有变化时悄悄重拉（2026-10-05）：不开「加载中」、不清失败提示
+    if (silent && !detailYield.allowSilent(() => void loadDetail(planId, { silent: true }))) return; // 用户点的请求在路上：先让路，它回来再补（Codex 复查 2026-10-05）
     // 2026-09-01 竞态全扫：出发领号，落地验号 + 认主人（成功、失败、finally 三个分支都要验）
     const ticket = detailGate.begin();
-    const silent = opts?.silent === true; // 有变化时悄悄重拉（2026-10-05）：不开「加载中」、不清失败提示
+    const endUser = silent ? null : detailYield.begin();
     if (!silent) {
       setDetailLoading(true);
       setDetailError("");
@@ -334,6 +343,7 @@ export default function ClientWhrConsolidationPage() {
     finally {
       // 旧请求不许提前掐掉新请求的加载态；只要没有更新的请求在跑，加载态就该收掉
       if (detailGate.isCurrent(ticket)) setDetailLoading(false);
+      endUser?.();
     }
   }, [detailGate]);
 
@@ -346,7 +356,7 @@ export default function ClientWhrConsolidationPage() {
     topics: ["whr", "wallet"],
     refresh: async () => {
       const openId = selectedPlanIdRef.current;
-      await Promise.all([loadPlans({ silent: true }), loadBalance(), openId ? loadDetail(openId, { silent: true }) : null]);
+      await Promise.all([loadPlans({ silent: true }), loadBalance({ silent: true }), openId ? loadDetail(openId, { silent: true }) : null]);
     },
   });
 

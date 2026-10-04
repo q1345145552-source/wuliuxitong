@@ -1734,6 +1734,15 @@ export async function setManifestTransportMode(manifestId: string, transportMode
 /**
  * 获取装柜清单详情。
  */
+/** 「哪票运单装在哪个柜」一次拿全（2026-10-05，替掉原来按柜挨个拉详情：线上 353 个柜 = 353 个请求） */
+export async function fetchLoadingShipmentMap(): Promise<Array<{ shipmentId: string; manifestNo: string }>> {
+  const response = await fetch(`${apiBaseUrl()}/staff/loading-manifests/shipment-map`, {
+    headers: { ...authHeaders() },
+  });
+  const data = await parseApiResponse<{ items: Array<{ shipmentId: string; manifestNo: string }> }>(response);
+  return data.items ?? [];
+}
+
 export async function fetchLoadingManifestDetail(manifestId: string): Promise<LoadingManifestDetail> {
   const response = await fetch(`${apiBaseUrl()}/staff/loading-manifests/detail?id=${manifestId}`, {
     method: "GET",

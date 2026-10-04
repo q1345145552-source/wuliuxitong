@@ -69,6 +69,8 @@ export function shouldDeliver(conn: Pick<RealtimeConnection, "userId" | "company
   return false;
 }
 
+/** 被挤掉时断开原因的开头（前端认这个：停下等人点回来，别马上重连） */
+export const EVICTED_PREFIX = "busy:";
 /** 一个账号最多同时开几条（多个标签页 / 手机 + 电脑）。超了挤掉最早那条 */
 export const MAX_CONNECTIONS_PER_USER = 8;
 /** 整个进程最多多少条，防有人刷连接把内存吃光 */
@@ -101,14 +103,16 @@ export class RealtimeHub {
   }
 
   add(conn: RealtimeConnection): void {
-    // 同一个人连太多：挤掉最早的（Map 按插入顺序遍历，先遇到的就是最早的）
+    /* 同一个人连太多：挤掉最早的（Map 按插入顺序遍历，先遇到的就是最早的）。
+       原因以「busy:」开头：前端收到就停下、等那个页面被人点回来才重连 ——
+       不能马上重连，不然它回来又挤掉别人，几个页面轮着每秒互挤（dsh 2026-10-05 实测复现过）。 */
     const mine = [...this.slots.values()].filter((s) => s.conn.userId === conn.userId);
     for (const s of mine.slice(0, Math.max(0, mine.length - MAX_CONNECTIONS_PER_USER + 1))) {
-      s.conn.close("同一账号打开的页面太多，最早的那个已断开实时更新");
+      s.conn.close(`${EVICTED_PREFIX}同一账号打开的页面太多，最早的那个已断开实时更新`);
     }
     if (this.slots.size >= MAX_CONNECTIONS_TOTAL) {
       const oldest = this.slots.values().next().value as Slot | undefined;
-      oldest?.conn.close("服务器实时连接已满");
+      oldest?.conn.close(`${EVICTED_PREFIX}服务器实时连接已满`);
     }
     this.slots.set(conn.id, { conn, pending: new Set(), timer: null });
   }

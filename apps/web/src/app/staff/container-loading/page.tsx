@@ -6,12 +6,14 @@ import { getOptionalSession } from "../../../auth/auth-session";
 import { openShipmentTrack } from "../../../modules/shipment/ShipmentTrackModal";
 import { createRequestGate } from "../../../modules/shared/request-gate";
 import { useLiveRefresh } from "../../../modules/realtime/useRealtime";
+import { createYieldGuard } from "../../../modules/realtime/yield-guard";
 import { shipmentStatusZh } from "../../../modules/shipment/shipment-status";
 import { downloadContainerDispatchWorkbook } from "../../../modules/lastmile/exportDispatchWorkbooks";
 import {
   fetchLoadingManifests,
   createLoadingManifest,
   fetchLoadingManifestDetail,
+  fetchLoadingShipmentMap,
   sealLoadingManifest,
   addShipmentToManifest,
   removeShipmentFromManifest,
@@ -186,19 +188,17 @@ export default function StaffContainerLoadingPage() {
   // 已装柜运单映射：shipmentId → container manifestNo
   const [loadedShipments, setLoadedShipments] = useState<Record<string, string>>({});
 
+  /* 「已装 → 柜号」原来是把每个柜的详情挨个拉一遍拼出来（线上 353 个柜 = 353 个请求），2026-10-05 改成后端一次查出来
+     （/staff/loading-manifests/shipment-map，结果口径一样：同一票在几个柜里取最早建的那个柜）。
+     加了序号：操作完的刷新和有变化时的重拉同时在路上，晚到的旧结果不许盖新的（Codex 复查）。 */
+  const shipmentListSeqRef = useRef(0);
   const loadShipmentList = async () => {
-    const [shipments, manifests] = await Promise.all([
-      fetchStaffShipments(),
-      fetchLoadingManifests({ status: "ALL" }),
-    ]);
+    const seq = ++shipmentListSeqRef.current;
+    const [shipments, map] = await Promise.all([fetchStaffShipments(), fetchLoadingShipmentMap()]);
+    if (seq !== shipmentListSeqRef.current) return;
     setAllShipments(shipments);
     const mapping: Record<string, string> = {};
-    for (const m of manifests) {
-      try {
-        const d = await fetchLoadingManifestDetail(m.id);
-        d.bills.forEach((b) => { mapping[b.shipmentId] = m.manifestNo; });
-      } catch (e) { console.error(e); }
-    }
+    for (const row of map) mapping[row.shipmentId] = row.manifestNo;
     setLoadedShipments(mapping);
   };
 
@@ -236,10 +236,14 @@ export default function StaffContainerLoadingPage() {
   const listGate = useRef(createRequestGate()).current;
   /** 上一次点「搜索」时用的条件。悄悄重拉照这份拉 —— 输入框里打了一半、还没点搜索的字不算数 */
   const appliedFilterRef = useRef<Parameters<typeof fetchLoadingManifests>[0] | null>(null);
+  /** 员工点的「搜索」还在路上时，有变化的悄悄重拉先让路（modules/realtime/yield-guard.ts） */
+  const listYield = useRef(createYieldGuard()).current;
   /** silent：有变化时悄悄重拉（2026-10-05 实时推送）——不开「加载中」、失败时列表照旧不清空、不报错 */
   const loadList = useCallback(async (opts?: { silent?: boolean }) => {
     const silent = opts?.silent === true;
+    if (silent && !listYield.allowSilent(() => void loadList({ silent: true }))) return; // 用户点的请求在路上：先让路，它回来再补（Codex 复查 2026-10-05）
     const ticket = listGate.begin();
+    const endUser = silent ? null : listYield.begin();
     if (!silent) {
       setLoading(true);
       setError("");
@@ -260,6 +264,7 @@ export default function StaffContainerLoadingPage() {
       setList([]);
     } finally {
       if (listGate.isCurrent(ticket)) setLoading(false); // 旧请求不许掐掉新请求的加载态
+      endUser?.();
     }
   }, [query, searchTrackingNo, statusFilter, modeFilter, selectedId, listGate]);
 
@@ -292,6 +297,8 @@ export default function StaffContainerLoadingPage() {
   /** 2026-09-02 三审整改：详情自己的门闩——同一柜子的新旧两次刷新只认最新一票，
       旧票不许提前掐掉新票的加载态（照 client/consolidation 的写法，一份口径）。 */
   const detailGate = useRef(createRequestGate()).current;
+  /** 员工点开柜子 / 重试详情还在路上时，悄悄重拉先让路 */
+  const detailYield = useRef(createYieldGuard()).current;
 
   /** silent：有变化时悄悄重拉（2026-10-05）——不清员工正在填的状态备注、不开「加载中」、失败时接着显示手上的详情 */
   const loadDetail = useCallback(async (id: string, opts?: { silent?: boolean }) => {
@@ -302,7 +309,9 @@ export default function StaffContainerLoadingPage() {
     // （修前的病：这条路照样开了 loading、领了号，响应在下面被认主人丢弃，
     //   finally 又因「主人不符」拒收 loading——柜 B 早已加载完、再没人来收，「加载中…」永远挂着。）
     if (!id || selectedIdRef.current !== id) return;
+    if (silent && !detailYield.allowSilent(() => void loadDetail(id, { silent: true }))) return; // 用户点的请求在路上：先让路，它回来再补（Codex 复查 2026-10-05）
     const ticket = detailGate.begin(); // 认完主人才领号
+    const endUser = silent ? null : detailYield.begin();
     if (!silent) {
       setStatusRemark("");
       setDetailError(""); // 2026-09-02 复核整改：新一轮加载出发，先清上一轮的失败提示
@@ -324,35 +333,26 @@ export default function StaffContainerLoadingPage() {
       // 被作废的旧票在此不碰 loading（不许掐掉新请求的加载态）；最新一票收尾必须把 loading 收掉，
       // 哪怕主人刚换（比如删柜后清空选中、再没有新请求来收），新主人的请求自己会再置 true。
       if (detailGate.isCurrent(ticket)) setLoadingDetail(false);
+      endUser?.();
     }
   }, [detailGate]);
 
   useEffect(() => { if (selectedId) void loadDetail(selectedId); }, [selectedId, loadDetail]);
 
   /* 实时更新（2026-10-05 老板：「不能有延迟」）：同事装柜 / 卸柜 / 封柜 / 推进状态、客户新报的单，服务器马上推过来，
-     柜子列表（按此刻的搜索条件）和正开着的柜子悄悄重拉。
-     「可选运单 + 哪票已装在哪个柜」那份要把每个柜的明细都拉一遍（柜多时几十上百个请求），
-     所以最快 30 秒重算一次：30 秒内又来变化，就等到 30 秒满了再算最后一次（不会漏，只是这一块最多晚半分钟）。 */
+     柜子列表（按上次点搜索的条件）、正开着的柜子、「可选运单 + 已装在哪个柜」一起悄悄重拉。
+     三样放在同一次重拉里：useLiveRefresh 保证同一时间只拉一份、拉的时候又来变化就拉完再补一次，不会叠起来。 */
   const detailRef = useRef(detail);
   detailRef.current = detail;
-  const shipmentListAtRef = useRef(0);
-  const shipmentListTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  useEffect(() => () => { if (shipmentListTimerRef.current) clearTimeout(shipmentListTimerRef.current); }, []);
-  const refreshShipmentListThrottled = () => {
-    if (shipmentListTimerRef.current) return;
-    const wait = Math.max(0, shipmentListAtRef.current + 30_000 - Date.now());
-    shipmentListTimerRef.current = setTimeout(() => {
-      shipmentListTimerRef.current = null;
-      shipmentListAtRef.current = Date.now();
-      loadShipmentList().catch(() => {});
-    }, wait);
-  };
   useLiveRefresh({
     topics: ["shipping"],
     refresh: async () => {
-      refreshShipmentListThrottled();
       const openId = selectedIdRef.current;
-      await Promise.all([loadList({ silent: true }), openId ? loadDetail(openId, { silent: true }) : null]);
+      await Promise.allSettled([
+        loadList({ silent: true }),
+        openId ? loadDetail(openId, { silent: true }) : null,
+        loadShipmentList(),
+      ]);
     },
   });
 

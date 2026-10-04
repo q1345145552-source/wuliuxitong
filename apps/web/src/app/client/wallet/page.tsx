@@ -133,8 +133,18 @@ export default function ClientWalletPage() {
      原来是先 setLedgerPage 再靠 useEffect 发请求——请求失败时表格还是旧页的数据、
      页码却已经跳了，客户看着「第 2 页」实际是第 1 页的流水。现在目标页只存在
      临时变量 targetPage 里，成功才落地（并用后端回的 page 校准）；失败页码不动、给提示。 */
+  /* 客户自己点的翻页还在路上时，悄悄重拉不去作废它（不然那一下点击像没反应，dsh 复查 2026-10-05）：
+     先记一笔，等翻页回来再按那时的页码补拉一次 */
+  const ledgerUserLoadsRef = useRef(0);
+  const ledgerRefreshAfterRef = useRef(false);
   const loadLedgerPage = useCallback(async (targetPage: number, opts?: { silent?: boolean }) => {
+    const silent = opts?.silent === true;
+    if (silent && ledgerUserLoadsRef.current > 0) {
+      ledgerRefreshAfterRef.current = true;
+      return;
+    }
     const seq = ++ledgerSeqRef.current;
+    if (!silent) ledgerUserLoadsRef.current += 1;
     try {
       const res = await fetchConsolidationLedger({ page: targetPage, pageSize: LEDGER_PAGE_SIZE });
       if (seq !== ledgerSeqRef.current) return; // 旧响应后到，丢弃
@@ -143,10 +153,18 @@ export default function ClientWalletPage() {
       setLedgerPage(res.page);
     } catch (error) {
       if (seq !== ledgerSeqRef.current) return; // 过期请求的报错也不提示，免得盖住新请求的结果
-      if (opts?.silent) return; // 有变化时悄悄重拉的：失败不打扰人，表格保持原样
+      if (silent) return; // 有变化时悄悄重拉的：失败不打扰人，表格保持原样
       const text = error instanceof Error ? error.message : "未知错误";
       // 失败时页码和表格都保持原样，只提示；再点一次按钮即可重试
       setMessage(`流水翻页失败：${text}`);
+    } finally {
+      if (!silent) {
+        ledgerUserLoadsRef.current -= 1;
+        if (ledgerUserLoadsRef.current === 0 && ledgerRefreshAfterRef.current) {
+          ledgerRefreshAfterRef.current = false;
+          void loadLedgerPage(ledgerPageRef.current, { silent: true });
+        }
+      }
     }
   }, []);
 

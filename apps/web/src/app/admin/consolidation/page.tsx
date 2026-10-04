@@ -19,6 +19,7 @@ import { formatBeijingTime } from "../../../modules/staff/utils";
 import { isPositiveIntText, isPositiveNumberText } from "../../../modules/shared/number-text";
 import { createRequestGate } from "../../../modules/shared/request-gate";
 import { useLiveRefresh } from "../../../modules/realtime/useRealtime";
+import { createYieldGuard } from "../../../modules/realtime/yield-guard";
 
 // ============================================================================
 // 状态中文
@@ -125,10 +126,14 @@ export default function AdminConsolidationPage() {
   // ======== 数据 ========
   // 2026-09-01 竞态全扫：快速切状态筛选时，先回来的旧响应不许盖掉新筛选的列表
   const tasksGate = useRef(createRequestGate()).current;
+  /** 管理员切筛选 / 点刷新还在路上时，有变化的悄悄重拉先让路（modules/realtime/yield-guard.ts） */
+  const tasksYield = useRef(createYieldGuard()).current;
   /** silent：有变化时悄悄重拉（2026-10-05 实时推送）——不开「加载中」、失败不弹提示；finally 照旧只认最新一号收加载态 */
   const loadTasks = useCallback(async (opts?: { silent?: boolean }) => {
     const silent = opts?.silent === true;
+    if (silent && !tasksYield.allowSilent(() => void loadTasksRef.current({ silent: true }))) return; // 用户点的请求在路上：先让路，它回来再补（Codex 复查 2026-10-05）
     const ticket = tasksGate.begin();
+    const endUser = silent ? null : tasksYield.begin();
     if (!silent) setLoading(true);
     try {
       const data = await fetchAdminConsolidationTasks(statusFilter || undefined);
@@ -140,8 +145,12 @@ export default function AdminConsolidationPage() {
       setToast(e.message);
     } finally {
       if (tasksGate.isCurrent(ticket)) setLoading(false); // 旧请求不许提前掐掉新请求的加载态
+      endUser?.();
     }
   }, [statusFilter, tasksGate]);
+  /** 让路以后补的那一次要用最新的筛选（员工可能在等的时候换了筛选），所以经 ref 调最新的 loadTasks */
+  const loadTasksRef = useRef(loadTasks);
+  loadTasksRef.current = loadTasks;
 
   // 2026-09-01 竞态全扫：详情要认主人——响应回来时核对还是不是当前选中的那个任务
   const selectedTaskIdRef = useRef<string | null>(null);

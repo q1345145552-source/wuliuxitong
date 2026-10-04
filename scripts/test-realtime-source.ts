@@ -55,13 +55,12 @@ async function main(): Promise<void> {
   await check("R1 从源码读到的改数据接口不少于 110 个（读漏了这条测试就没意义）", () => {
     assert.ok(writeRoutes.size >= 110, `只读到 ${writeRoutes.size} 个`);
   });
-  await check("R1 只有写明的 8 个不推，其余全部归了类", () => {
+  await check("R1 只有写明的 7 个不推，其余全部归了类", () => {
     const skipped = [...writeRoutes].filter((p) => topicForWrite(p) === null).sort();
     assert.deepEqual(skipped, [
       "/auth/change-password",
       "/auth/login",
       "/auth/logout",
-      "/client/ai/chat",
       "/client/chat/push/subscribe",
       "/client/chat/push/unsubscribe",
       "/staff/chat/push/subscribe",
@@ -97,6 +96,10 @@ async function main(): Promise<void> {
       "/auth/register": "accounts",
       "/admin/shipping/rates": "config",
       "/admin/system/status-labels": "config",
+      // 客户问 AI 会新增知识缺口 / 改会话记忆（Codex 复查）；AI 后台那几栏订的是 ai
+      "/client/ai/chat": "ai",
+      "/admin/ai/knowledge": "ai",
+      "/admin/ai/knowledge-gaps/resolve": "ai",
     };
     for (const [p, t] of Object.entries(expect)) {
       assert.ok(writeRoutes.has(p), `源码里没有 ${p} 了，测试要跟着改`);
@@ -126,6 +129,10 @@ async function main(): Promise<void> {
     assert.equal(shouldDeliver(me, { companyId: "co1", topic: "shipping", actor: { userId: "c2", role: "client", agentId: null } }), false);
     assert.equal(shouldDeliver(me, { companyId: "co1", topic: "consolidation", actor: { userId: "c1", role: "client", agentId: null } }), true);
     assert.equal(shouldDeliver(me, { companyId: "co1", topic: "accounts", actor: staffActor }), false);
+    // AI 后台那一类只给员工 / 管理员：客户、代理都收不到（客户自己问 AI 也不推回给客户）
+    assert.equal(shouldDeliver(me, { companyId: "co1", topic: "ai", actor: { userId: "c1", role: "client", agentId: null } }), false);
+    assert.equal(shouldDeliver(conn("u_ag1", "agent", "co1", "ag1"), { companyId: "co1", topic: "ai", actor: staffActor }), false);
+    assert.equal(shouldDeliver(conn("s2", "staff"), { companyId: "co1", topic: "ai", actor: { userId: "c1", role: "client", agentId: null } }), true);
   });
   await check("R2 员工回客服：只推给那一个客户", () => {
     const ev = { companyId: "co1", topic: "chat" as const, actor: staffActor, clientIds: ["c1"] };
@@ -178,6 +185,8 @@ async function main(): Promise<void> {
     const mine = Array.from({ length: MAX_CONNECTIONS_PER_USER + 2 }, () => fake(hub, "s1"));
     assert.equal(mine.filter((f) => f.closed).length, 2);
     assert.ok(mine[0].closed && mine[1].closed && !mine[2].closed);
+    // 原因要以 busy: 开头：前端认这个，停下等人点回来，别马上回头再挤别人（dsh 2026-10-05 实测过轮着互挤）
+    assert.ok(mine[0].closed!.startsWith("busy:"), `挤掉的原因没带 busy:：${mine[0].closed}`);
     assert.equal(other.closed, null);
     assert.equal(hub.size, MAX_CONNECTIONS_PER_USER + 1);
   });
@@ -189,6 +198,18 @@ async function main(): Promise<void> {
     await sleep(80);
     assert.equal(a.writes.length, 0);
     assert.equal(hub.size, 0);
+  });
+
+  await check("R3 定时任务出了返现单：推「账号」类，只给那个代理和员工 / 管理员（dsh 复查补：定时任务不走接口，server.ts 推不到）", () => {
+    const src = fs.readFileSync(path.join(API_SRC, "modules/agents/rebate-scheduler.ts"), "utf8");
+    assert.match(src, /const before = result\.statementsCreated;\s*await generateForAgent\(a\.id, now, result\);/);
+    assert.match(src, /if \(result\.statementsCreated > before\) \{[\s\S]{0,400}realtimeHub\.publish\(\{ companyId: a\.companyId, topic: "accounts", actor: \{ userId: "system", role: "agent", agentId: a\.id \} \}\)/);
+    const ev = { companyId: "co1", topic: "accounts" as const, actor: { userId: "system", role: "agent" as const, agentId: "ag1" } };
+    assert.equal(shouldDeliver(conn("u_ag1", "agent", "co1", "ag1"), ev), true);
+    assert.equal(shouldDeliver(conn("u_ag2", "agent", "co1", "ag2"), ev), false);
+    assert.equal(shouldDeliver(conn("s1", "staff"), ev), true);
+    assert.equal(shouldDeliver(conn("a1", "admin"), ev), true);
+    assert.equal(shouldDeliver(conn("c5", "client", "co1", "ag1"), ev), false);
   });
 
   // ---------- R4 ----------
@@ -206,6 +227,21 @@ async function main(): Promise<void> {
     publishAfterWrite({ method: "DELETE", path: "/client/addresses", query: {}, headers: {}, auth }, 200, hub);
     await sleep(40);
     assert.deepEqual(a.writes, [["shipping"]]);
+  });
+  await check("R4 删除前的预览（dryRun）只算不改：不推（Codex 复查：打开删除确认框就让全公司重拉）", async () => {
+    const hub = new RealtimeHub(10);
+    const a = fake(hub, "s1");
+    const auth = { userId: "a1", companyId: "co1", role: "admin" as const, name: "", agentId: null };
+    publishAfterWrite({ method: "POST", path: "/admin/consolidation/tasks/delete", query: {}, headers: {}, auth, body: { taskId: "t1", dryRun: true } }, 200, hub);
+    await sleep(40);
+    assert.deepEqual(a.writes, []);
+    publishAfterWrite({ method: "POST", path: "/admin/consolidation/tasks/delete", query: {}, headers: {}, auth, body: { taskId: "t1" } }, 200, hub);
+    await sleep(40);
+    assert.deepEqual(a.writes, [["consolidation"]]);
+    // 两个删除接口自己就是按 body.dryRun 真值判断只预览的，这里跟它们一个口径
+    for (const f of ["modules/consolidation/routes.ts", "modules/whr-consolidation/routes.ts"]) {
+      assert.match(fs.readFileSync(path.join(API_SRC, f), "utf8"), /if \(body\.dryRun\) \{/);
+    }
   });
   await check("R4 员工客服接口：带上 body.clientId，只推那一个客户", async () => {
     const hub = new RealtimeHub(10);
@@ -319,6 +355,53 @@ async function main(): Promise<void> {
   });
   server.close();
 
+  // ---------- R5b 慢的读者 / 复查不叠（Codex 复查 2026-10-05），用假的请求 / 响应对象跑真代码 ----------
+  const { EventEmitter } = await import("node:events");
+  const { MAX_PENDING_BYTES } = await import("../apps/api/src/realtime-stream");
+  function fakePair() {
+    const req = new EventEmitter() as any;
+    req.headers = { authorization: `Bearer ${token()}` };
+    const res = new EventEmitter() as any;
+    res.statusCode = 0;
+    res.headers = {} as Record<string, string>;
+    res.writableEnded = false;
+    res.writableLength = 0;
+    res.out = "";
+    res.setHeader = (k: string, v: string) => { res.headers[k.toLowerCase()] = v; };
+    res.write = (t: string) => { res.out += t; res.writableLength += Buffer.byteLength(t); return false; }; // 对方一个字节都不读
+    res.end = () => { res.writableEnded = true; };
+    return { req, res };
+  }
+  await check("R5b 对方读不动（攒的没发出去超过 64KB）：断开，不让内存一直涨", async () => {
+    const hub2 = new RealtimeHub(1);
+    const { req, res } = fakePair();
+    const c = openEventStream(req, res, { userId: "s1", companyId: "co1", role: "staff", name: "", agentId: null }, { hub: hub2, heartbeatMs: 60_000, recheckMs: 60_000 })!;
+    assert.ok(c);
+    let n = 0;
+    while (!res.writableEnded && n < 100_000) { c.write(["shipping"]); n++; }
+    assert.equal(res.writableEnded, true, "攒了一大堆还没断");
+    assert.ok(res.writableLength >= MAX_PENDING_BYTES && res.writableLength < MAX_PENDING_BYTES + 1024, `断得太晚：攒了 ${res.writableLength} 字节`);
+    assert.match(res.out, /event: bye\ndata: \{"reason":"对方网络太慢/);
+    assert.equal(hub2.size, 0);
+    req.emit("close");
+  });
+  await check("R5b 复查登录状态：上一次查完才排下一次（数据库慢时一条连接不会叠着查）", async () => {
+    const hub3 = new RealtimeHub(1);
+    const { req, res } = fakePair();
+    let running = 0;
+    let maxRunning = 0;
+    let calls = 0;
+    const c = openEventStream(req, res, { userId: "s1", companyId: "co1", role: "staff", name: "", agentId: null }, {
+      hub: hub3, heartbeatMs: 60_000, recheckMs: 30,
+      checkSession: async () => { calls++; running++; maxRunning = Math.max(maxRunning, running); await sleep(150); running--; return { ok: true, agentId: null }; },
+    })!;
+    await sleep(700);
+    c.close("test");
+    req.emit("close");
+    assert.ok(calls >= 2, `复查次数太少：${calls}`);
+    assert.equal(maxRunning, 1, "同一条连接叠着查了");
+  });
+
   // ---------- R6 ----------
   const serverSrc = fs.readFileSync(path.join(API_SRC, "server.ts"), "utf8");
   await check("R6 长连接在查路由表之前接住、只认 GET；没认出人回 401", () => {
@@ -334,16 +417,30 @@ async function main(): Promise<void> {
   const streamSrc = fs.readFileSync(path.join(API_SRC, "realtime-stream.ts"), "utf8");
   await check("R6 碰原始响应的长连接放在 src/ 管线层（不在 modules/），而且只写 SSE 那几种行、不写 JSON 响应体", () => {
     assert.ok(!fs.existsSync(path.join(API_SRC, "modules/realtime/stream.ts")));
+    // 直接写原始响应的只有：开头那句、send() 里转一手、bye；其余一律经 send()
     const writes = [...streamSrc.matchAll(/rawRes\.(write|end)\(([^)]*)/g)].map((m) => m[2].trim());
-    assert.ok(writes.length >= 4, "没认出写响应的地方（正则坏了）");
-    for (const w of writes) {
-      assert.ok(w === "" || /^["`](retry: |: ping|data: |event: bye)/.test(w), `写了不是 SSE 的东西：${w}`);
+    const sends = [...streamSrc.matchAll(/\bsend\(([^)]*)\)/g)].map((m) => m[1].trim()).filter((a) => !a.startsWith("text: string"));
+    assert.ok(writes.length >= 3 && sends.length >= 2, "没认出写响应的地方（正则坏了）");
+    for (const w of [...writes, ...sends]) {
+      assert.ok(w === "" || w === "text" || /^["`](retry: |: ping|data: |event: bye)/.test(w), `写了不是 SSE 的东西：${w}`);
     }
+    assert.match(streamSrc, /const send = \(text: string\): void => \{/);
   });
   await check("R6 长连接放在 /auth 下（Next 已经转发 /auth/*）", () => {
     assert.match(streamSrc, /REALTIME_STREAM_PATH = "\/auth\/events"/);
     const nextConfig = fs.readFileSync(path.join(ROOT, "apps/web/next.config.ts"), "utf8");
     assert.match(nextConfig, /source: "\/auth\/:path\*"/);
+  });
+
+  await check("R7 装柜页「哪票在哪个柜」一次查出来，口径跟原来一样（同一票在几个柜里取最早建的柜），前端不再按柜挨个拉", () => {
+    const routes = fs.readFileSync(path.join(API_SRC, "modules/loading-manifests/routes.ts"), "utf8");
+    assert.match(routes, /app\.get\("\/staff\/loading-manifests\/shipment-map"/);
+    assert.match(routes, /where: \{ container: \{ companyId: auth\.companyId \} \}/, "没按公司过滤");
+    assert.match(routes, /if \(!cur \|\| at < cur\.createdAt\)/, "不是取最早建的柜");
+    const page = fs.readFileSync(path.join(ROOT, "apps/web/src/app/staff/container-loading/page.tsx"), "utf8");
+    const body = page.slice(page.indexOf("const loadShipmentList = async () =>"), page.indexOf("const loadShipmentList = async () =>") + 600);
+    assert.match(body, /fetchLoadingShipmentMap\(\)/);
+    assert.doesNotMatch(body, /fetchLoadingManifestDetail/, "还在按柜挨个拉详情");
   });
 
   console.log(`\n实时推送（后端）${passed} 项全部通过`);

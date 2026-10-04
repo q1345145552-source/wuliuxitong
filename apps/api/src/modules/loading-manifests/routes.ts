@@ -283,6 +283,28 @@ export function registerLoadingManifestRoutes(app: MinimalHttpApp): void {
     ok(res, { id: container.id, containerNo: container.containerNo, transportMode: mode });
   });
 
+  /**
+   * 「哪票运单装在哪个柜」一次查出来（2026-10-05）。装柜页「可选运单」那张表要标「已装 → 柜号」，
+   * 原来是先拉全部柜子、再把每个柜的详情挨个拉一遍（线上 353 个柜 = 353 个请求，打开一次页面就这么多），
+   * 加了实时更新以后别人一改它还要重算，Codex 复查点名。结果跟原来那套一样：
+   * 同一票在好几个柜里时，原来是按「新柜在前」挨个覆盖、最后留下的是**最早建的那个柜**，这里照样取最早的。
+   */
+  app.get("/staff/loading-manifests/shipment-map", async (req, res) => {
+    const auth = requireRole(req, res, ["staff", "admin"]);
+    if (!auth) return;
+    const rows = await prisma.shipmentContainerItem.findMany({
+      where: { container: { companyId: auth.companyId } },
+      select: { shipmentId: true, container: { select: { containerNo: true, createdAt: true } } },
+    });
+    const oldest = new Map<string, { manifestNo: string; createdAt: number }>();
+    for (const r of rows) {
+      const at = r.container.createdAt.getTime();
+      const cur = oldest.get(r.shipmentId);
+      if (!cur || at < cur.createdAt) oldest.set(r.shipmentId, { manifestNo: r.container.containerNo, createdAt: at });
+    }
+    ok(res, { items: [...oldest].map(([shipmentId, v]) => ({ shipmentId, manifestNo: v.manifestNo })) });
+  });
+
   // 装柜详情
   app.get("/staff/loading-manifests/detail", async (req, res) => {
     const auth = requireRole(req, res, ["staff", "admin"]);

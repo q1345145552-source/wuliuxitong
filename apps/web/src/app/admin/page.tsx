@@ -1644,6 +1644,29 @@ export default function AdminHomePage() {
     enabled: activeSection === "wallet-recharges",
     refresh: () => loadRecharges(),
   });
+  /* 配置类（dsh / Codex 复查 2026-10-05）：别的管理员改了运费，停在这一栏的人也跟着变；知识库、知识缺口订 ai 那一类
+     （客户问 AI 也会新增知识缺口）。只换列表 / 显示用的数据（loadRates 只写 rateItems / rateDefaults；
+     运费配置的输入框不在这里重拉，不会冲掉正在改的）。单独按栏订，别塞进上面那条一次拉 6 个接口的主刷新。 */
+  useLiveRefresh({
+    topics: ["config"],
+    enabled: activeSection === "shipping-config",
+    refresh: () => loadRates(),
+  });
+  useLiveRefresh({
+    topics: ["ai"],
+    enabled: activeSection === "knowledge-list" || activeSection === "knowledge-feed",
+    refresh: () => loadKnowledge(),
+  });
+  useLiveRefresh({
+    topics: ["ai"],
+    enabled: activeSection === "ai-knowledge-gaps",
+    refresh: () => loadKnowledgeGaps(),
+  });
+  useLiveRefresh({
+    topics: ["ai"],
+    enabled: activeSection === "ai-memory",
+    refresh: () => loadSessionMemory(),
+  });
 
   if (!session) return null;
 

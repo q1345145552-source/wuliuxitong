@@ -32,6 +32,12 @@ export const HEARTBEAT_MS = 20_000;
  */
 export const RECHECK_MS = 60_000;
 
+/**
+ * 一条连接最多攒多少字节没发出去（Codex 复查 2026-10-05）。对方网很慢、读不动，Node 会把要写的东西一直攒在内存里；
+ * 平时一条推送几十个字节，攒到 64KB 说明对方早就收不动了 —— 断开，它自己重连时补拉。
+ */
+export const MAX_PENDING_BYTES = 64 * 1024;
+
 export interface StreamOptions {
   hub?: RealtimeHub;
   heartbeatMs?: number;
@@ -74,6 +80,13 @@ export function openEventStream(
 
   let closed = false;
   const checkSession = options.checkSession ?? isSessionStillValid;
+  let recheckTimer: ReturnType<typeof setTimeout> | null = null;
+  /** 只经这里写：写完看一眼攒了多少，对方读不动就断开（不然内存一直涨） */
+  const send = (text: string): void => {
+    if (closed || rawRes.writableEnded) return;
+    rawRes.write(text);
+    if (rawRes.writableLength > MAX_PENDING_BYTES) conn.close("对方网络太慢、收不动，先断开");
+  };
 
   const conn: RealtimeConnection = {
     id: hub.allocateId(),
@@ -82,14 +95,13 @@ export function openEventStream(
     role: auth.role,
     agentId: auth.agentId,
     write(topics: RealtimeTopic[]) {
-      if (closed || rawRes.writableEnded) return;
-      rawRes.write(`data: ${JSON.stringify({ t: topics })}\n\n`);
+      send(`data: ${JSON.stringify({ t: topics })}\n\n`);
     },
     close(reason: string) {
       if (closed) return;
       closed = true;
       clearInterval(heartbeat);
-      clearInterval(recheck);
+      if (recheckTimer) clearTimeout(recheckTimer);
       hub.remove(conn.id);
       if (!rawRes.writableEnded) {
         // 告诉前端为什么断：登录失效的别再重连了
@@ -99,27 +111,30 @@ export function openEventStream(
     },
   };
 
-  const heartbeat = setInterval(() => {
-    if (!closed && !rawRes.writableEnded) rawRes.write(": ping\n\n");
-  }, options.heartbeatMs ?? HEARTBEAT_MS);
+  const heartbeat = setInterval(() => send(": ping\n\n"), options.heartbeatMs ?? HEARTBEAT_MS);
 
-  const recheck = setInterval(() => {
-    void (async () => {
-      if (closed) return;
-      if (isTokenRevoked(token)) return conn.close("auth:登录已退出");
-      if (payload.exp * 1000 <= Date.now()) return conn.close("auth:登录已过期");
-      let live: SessionCheckResult;
-      try {
-        live = await checkSession(payload);
-      } catch (error) {
-        // 数据库一时连不上：别把所有人都断了，下一分钟再查
-        logger.warn("实时连接复查登录状态失败（先不断开）", { 用户: conn.userId, error: error instanceof Error ? error.message : String(error) });
-        return;
-      }
+  /* 复查登录状态：上一次查完才排下一次（数据库慢的时候不会一条连接叠着查好几次），
+     间隔带 ±20% 的随机，几千条连接不会挤在同一秒查库（Codex 复查 2026-10-05） */
+  const recheckMs = options.recheckMs ?? RECHECK_MS;
+  const scheduleRecheck = (): void => {
+    if (closed) return;
+    recheckTimer = setTimeout(() => void recheckOnce(), recheckMs * (0.8 + Math.random() * 0.4));
+  };
+  const recheckOnce = async (): Promise<void> => {
+    if (closed) return;
+    if (isTokenRevoked(token)) return conn.close("auth:登录已退出");
+    if (payload.exp * 1000 <= Date.now()) return conn.close("auth:登录已过期");
+    try {
+      const live = await checkSession(payload);
       if (!live.ok) return conn.close(`auth:${live.reason}`);
       conn.agentId = live.agentId;
-    })();
-  }, options.recheckMs ?? RECHECK_MS);
+    } catch (error) {
+      // 数据库一时连不上：别把所有人都断了，下一轮再查
+      logger.warn("实时连接复查登录状态失败（先不断开）", { 用户: conn.userId, error: error instanceof Error ? error.message : String(error) });
+    }
+    scheduleRecheck();
+  };
+  scheduleRecheck();
 
   // 浏览器关页面 / 断网 / 切后台被系统掐掉：都从这儿收尾
   rawReq.on("close", () => conn.close("对方已断开"));

@@ -24,6 +24,7 @@
 import { prisma } from "../../db/prisma";
 import { checkTotalsWritable } from "../core/decimal-guard";
 import { logger } from "../core/logger";
+import { realtimeHub } from "../realtime/hub";
 import { computeRebate } from "../whr-consolidation/rebate";
 import { planAgentStatements, toCents, toMilliM3 } from "./agent-rules";
 
@@ -267,15 +268,22 @@ export async function generateAgentRebateStatements(
   const result: RebateRunResult = { agents: 0, statementsCreated: 0, linesCreated: 0, skippedPrealerts: [], overflowBlocked: [] };
   // ⚠️ 传了空数组 = 一个都不跑（CLAUDE.md #27：`{ in: [] }` 以外的「空条件」不许变成「不加条件」）
   if (options.agentIds && options.agentIds.length === 0) return result;
-  const agents: Array<{ id: string }> = await prisma.agent.findMany({
+  const agents: Array<{ id: string; companyId: string }> = await prisma.agent.findMany({
     where: options.agentIds ? { id: { in: options.agentIds } } : undefined,
-    select: { id: true },
+    select: { id: true, companyId: true },
     orderBy: { id: "asc" },
   });
   result.agents = agents.length;
   for (const a of agents) {
     try {
+      const before = result.statementsCreated;
       await generateForAgent(a.id, now, result);
+      /* 出了新返现单（事务已提交）：告诉在线的管理员 / 员工和这个代理本人「账号 / 返佣这一类变了」，
+         返佣页马上自己出现新单（2026-10-05 实时推送；定时任务不走接口，server.ts 那道推不到这里，dsh 复查补）。
+         按「这个代理做的」推：别的代理收不到（hub.shouldDeliver 认 agentId）。 */
+      if (result.statementsCreated > before) {
+        realtimeHub.publish({ companyId: a.companyId, topic: "accounts", actor: { userId: "system", role: "agent", agentId: a.id } });
+      }
     } catch (error) {
       const code = (error as { code?: string })?.code;
       if (code === "P2002") {

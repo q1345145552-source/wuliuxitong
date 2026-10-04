@@ -438,8 +438,13 @@ export default function ClientHomePage() {
      ② 翻页失败静默保留旧页数据，页码却已经跳了 → 客户看着「第 2 页」实际还是第 1 页。
      照钱包页 loadLedgerPage 的写法改：目标页只存临时变量，请求成功后页码和数据同一拍落地；
      失败页码不动、给提示；旧响应验号作废。 */
+  /* 客户自己点的翻页还在路上：有变化时的悄悄重拉不去作废它（不然那一下点击像没反应，dsh 复查 2026-10-05），
+     翻页回来以后再补拉一次 */
+  const prealertUserLoadsRef = useRef(0);
+  const prealertRefreshAfterRef = useRef(false);
   const loadPrealertPage = async (targetPage: number, targetPageSize?: number) => {
     const ticket = prealertListGate.begin();
+    prealertUserLoadsRef.current += 1;
     try {
       const result = await fetchClientPrealerts("all", { page: targetPage, pageSize: targetPageSize ?? pageSize });
       if (!prealertListGate.isCurrent(ticket)) return; // 旧响应后到，数据、页码都不许碰
@@ -449,6 +454,12 @@ export default function ClientHomePage() {
     } catch {
       if (!prealertListGate.isCurrent(ticket)) return; // 过期请求的失败也不提示，别盖住新请求
       setToast("预报单翻页失败，页码和数据保持原样"); // 失败时再点一次按钮即可重试
+    } finally {
+      prealertUserLoadsRef.current -= 1;
+      if (prealertUserLoadsRef.current === 0 && prealertRefreshAfterRef.current) {
+        prealertRefreshAfterRef.current = false;
+        prealertLiveRefreshRef.current();
+      }
     }
   };
 
@@ -777,11 +788,34 @@ export default function ClientHomePage() {
   });
 
   /* 主页、预报单这两栏：原来不自动刷新，员工收了货 / 改了状态要客户自己刷新页面。
-     现在有变化就悄悄重拉（refreshMainData 本来就不开「加载中」；搜索池会跟着清掉、正在搜的会自己重建）。 */
+     现在有变化就悄悄重拉这两栏用到的两样：预报单当前页 + 运单（不开「加载中」）。
+     不直接调 refreshMainData：那个还拉余额（结果没用上）和地址簿，员工每改一次全公司客户都多打两个接口（dsh 复查 2026-10-05）。
+     预报单照 refreshMainData 的规矩领号；正在搜索的，搜索池清掉让它按新数据重建。 */
+  const refreshMainSections = async () => {
+    const userPaging = prealertUserLoadsRef.current > 0;
+    if (userPaging) prealertRefreshAfterRef.current = true; // 预报单这次先不拉，等翻页回来补
+    const prealertTicket = userPaging ? null : prealertListGate.begin();
+    const [pre, orders] = await Promise.allSettled([
+      prealertTicket === null ? Promise.reject(new Error("翻页中，稍后补拉")) : fetchClientPrealerts("all", { page: prealertPage, pageSize }),
+      fetchClientOrders(),
+    ]);
+    if (pre.status === "fulfilled" && prealertTicket !== null && prealertListGate.isCurrent(prealertTicket)) {
+      setPrealerts(pre.value.items);
+      setPrealertTotal(pre.value.total);
+      if (prealertSearchRef.current.trim()) {
+        prealertPoolGate.begin();
+        setPrealertSearchPool(null);
+      }
+    }
+    if (orders.status === "fulfilled") setDashboardOrders(orders.value);
+  };
+  /** 给 loadPrealertPage 的 finally 用：翻页回来后补拉一次（它定义在前面，拿不到这里的函数，用 ref 递过去） */
+  const prealertLiveRefreshRef = useRef<() => void>(() => {});
+  prealertLiveRefreshRef.current = () => { void refreshMainSections(); };
   useLiveRefresh({
     topics: ["shipping"],
     enabled: (activeSection === "client-main" || activeSection === "client-prealert") && !dashboardLoading,
-    refresh: () => refreshMainData(),
+    refresh: () => refreshMainSections(),
   });
 
   const statusToneClass = (status?: string): string => {

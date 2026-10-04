@@ -6,6 +6,7 @@ import { apiBaseUrl, apiRequest } from "../../../services/core-api";
 import { formatBeijingTime } from "../../../modules/staff/utils";
 import { createRequestGate } from "../../../modules/shared/request-gate";
 import { useLiveRefresh } from "../../../modules/realtime/useRealtime";
+import { createYieldGuard } from "../../../modules/realtime/yield-guard";
 import { parseUnitPrice, unitPriceIssue } from "../../../modules/shared/unit-price";
 
 const jsonPost = { "Content-Type": "application/json" } as const;
@@ -283,6 +284,8 @@ export default function AdminWhrConsolidationPage() {
   // ref 在点击处同步赋值（不等 React 提交），响应落地时核对主人用它。
   const selectedPlanIdRef = useRef<string | null>(null);
   const detailGate = useRef(createRequestGate()).current;
+  /** 管理员点开计划详情还在路上时，有变化的悄悄重拉先让路（modules/realtime/yield-guard.ts） */
+  const detailYield = useRef(createYieldGuard()).current;
   const [expandedCustomer, setExpandedCustomer] = useState<string | null>(null);
   const [expandedPrealert, setExpandedPrealert] = useState<string | null>(null);
   const [previewImage, setPreviewImage] = useState<string | null>(null);
@@ -361,8 +364,11 @@ export default function AdminWhrConsolidationPage() {
 
   const loadDetail = useCallback(async (planId: string, opts?: { silent?: boolean }) => {
     // 2026-09-01 竞态全扫：出发领号，落地验号 + 认主人（成功、失败、finally 三个分支都要验）
+    const silent = opts?.silent === true;
+    if (silent && !detailYield.allowSilent(() => void loadDetail(planId, { silent: true }))) return; // 用户点的请求在路上：先让路，它回来再补（Codex 复查 2026-10-05）
     const ticket = detailGate.begin();
-    if (!opts?.silent) setDetailLoading(true); // 悄悄重拉不开「加载中」（开了整块详情会闪成「加载中...」）
+    const endUser = silent ? null : detailYield.begin();
+    if (!silent) setDetailLoading(true); // 悄悄重拉不开「加载中」（开了整块详情会闪成「加载中...」）
     try {
       const data = await apiRequest<PlanDetail>(
         `${apiBaseUrl()}/admin/whr-consolidation/plans/detail?planId=${encodeURIComponent(planId)}`
@@ -378,6 +384,7 @@ export default function AdminWhrConsolidationPage() {
     } finally {
       // 旧请求不许提前掐掉新请求的加载态；只要没有更新的请求在跑，加载态就该收掉
       if (detailGate.isCurrent(ticket)) setDetailLoading(false);
+      endUser?.();
     }
   }, [detailGate]);
 

@@ -10,6 +10,9 @@ export function publishAfterWrite(req: HttpRequest, statusCode: number, hub: Rea
   if (req.method !== "POST" && req.method !== "DELETE") return;
   if (statusCode < 200 || statusCode >= 300) return;
   if (!req.auth) return;
+  // 删除前的「预览」（dryRun）只算不改，不推（Codex 复查 2026-10-05：打开删除确认框就让全公司页面重拉一遍）
+  // 跟那两个删除接口同一种认法（它们是 `if (body.dryRun)`，真值就只预览）
+  if ((req.body as { dryRun?: unknown } | undefined)?.dryRun) return;
   const topic = topicForWrite(req.path);
   if (!topic) return;
   const actor = { userId: req.auth.userId, role: req.auth.role, agentId: req.auth.agentId };

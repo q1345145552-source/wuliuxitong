@@ -19,6 +19,7 @@ import {
 import { formatBeijingTime } from "../../../modules/staff/utils";
 import { createRequestGate } from "../../../modules/shared/request-gate";
 import { useLiveRefresh } from "../../../modules/realtime/useRealtime";
+import { createYieldGuard } from "../../../modules/realtime/yield-guard";
 import { useRouter } from "next/navigation";
 import { useVerifiedSessionBrand } from "../../../modules/branding/useWorkbenchBrand";
 
@@ -172,14 +173,19 @@ function ClientConsolidationContent() {
   const [showAllProducts, setShowAllProducts] = useState(false);
 
   // ---- 数据加载 ----
-  /** 读集货余额。付款弹窗用它判断够不够，付完刷新。 */
-  const loadBalance = useCallback(async (): Promise<number | null> => {
+  /** 读集货余额。付款弹窗用它判断够不够，付完刷新。
+   *  silent（有变化时悄悄重拉）读失败：保留上一次读到的数，不变成「读取中」—— 不然正开着的付款框确认按钮会突然变灰
+   *  （Codex 复查 2026-10-05）。付款前那次照旧强制现读，失败照旧 null。 */
+  const loadBalance = useCallback(async (opts?: { silent?: boolean }): Promise<number | null> => {
     try {
       const r = await fetchClientWalletOverview();
       const v = typeof (r as any).balance === "number" ? (r as any).balance : (r.accounts?.find(a => a.currency === "CNY")?.balance ?? 0);
       setBalance(v);
       return v;
-    } catch { setBalance(null); return null; }
+    } catch {
+      if (!opts?.silent) setBalance(null);
+      return null;
+    }
   }, []);
 
   /** silent：有变化时悄悄重拉（2026-10-05 实时推送）——不开「加载中」（不然别人每改一次列表就闪一下）、失败不弹提示 */
@@ -201,6 +207,8 @@ function ClientConsolidationContent() {
   // 响应落地前先核对；再叠加详情自己的门闩，防同一任务的新旧两次刷新互盖。
   const selectedTaskIdRef = useRef<string | null>(null);
   const detailGate = useRef(createRequestGate()).current;
+  /** 客户点开任务详情 / 重试还在路上时，有变化的悄悄重拉先让路（modules/realtime/yield-guard.ts） */
+  const detailYield = useRef(createYieldGuard()).current;
   /** 悄悄重拉失败时，手上已经有这张任务的详情就接着显示，别换成「加载失败」 */
   const taskDetailRef = useRef<ConsolidationTaskItem | null>(null);
   taskDetailRef.current = taskDetail;
@@ -223,7 +231,9 @@ function ClientConsolidationContent() {
     // B 页面就空白且没有任何重试提示。所以不是当前选中的任务直接整段 return——
     // 不领号、不开 loading、不清数据，旧上下文的刷新对新上下文零影响。
     if (taskId !== selectedTaskIdRef.current) return;
+    if (silent && !detailYield.allowSilent(() => void loadDetail(taskId, { silent: true }))) return; // 用户点的请求在路上：先让路，它回来再补（Codex 复查 2026-10-05）
     const ticket = detailGate.begin(); // 2026-09-01 竞态全扫：出发时领号
+    const endUser = silent ? null : detailYield.begin();
     if (!silent) setDetailLoading(true); // 悄悄重拉不开「加载中」：开了详情整块会换成「加载中...」闪一下
     try {
       const data = await fetchClientConsolidationTaskDetail(taskId);
@@ -247,6 +257,7 @@ function ClientConsolidationContent() {
       // 票号本身已足够：被作废的旧票在此不碰 loading（不许掐掉新请求的加载态），
       // 而最新票收尾时必须把 loading 收掉——即便主人换了，新主人的请求自己会再置 true。
       if (detailGate.isCurrent(ticket)) setDetailLoading(false);
+      endUser?.();
     }
   }, [detailGate]);
 
@@ -259,7 +270,7 @@ function ClientConsolidationContent() {
     topics: ["consolidation", "wallet"],
     refresh: async () => {
       const openId = selectedTaskIdRef.current;
-      await Promise.all([loadTasks({ silent: true }), loadBalance(), openId ? loadDetail(openId, { silent: true }) : null]);
+      await Promise.all([loadTasks({ silent: true }), loadBalance({ silent: true }), openId ? loadDetail(openId, { silent: true }) : null]);
     },
   });
 

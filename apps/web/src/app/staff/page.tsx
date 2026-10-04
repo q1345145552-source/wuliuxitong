@@ -34,6 +34,7 @@ import Toast from "../../modules/layout/Toast";
 import { apiBaseUrl, authHeaders, parseApiResponse, fetchWithSession as fetch } from "../../services/core-api";
 import { createRequestGate } from "../../modules/shared/request-gate";
 import { useLiveRefresh } from "../../modules/realtime/useRealtime";
+import { createYieldGuard } from "../../modules/realtime/yield-guard";
 import { viewerCanSeeOperator } from "../../auth/operator-visibility";
 import LastmileAddressPanel from "../../components/lastmile/LastmileAddressPanel";
 import {
@@ -420,12 +421,16 @@ export default function StaffHomePage() {
   const [walletLoading, setWalletLoading] = useState(false);
   const [walletError, setWalletError] = useState("");
   const walletGate = useRef(createRequestGate()).current;
+  /** 员工点「刷新 / 重试」还在路上时，有变化的悄悄重拉先让路（modules/realtime/yield-guard.ts） */
+  const walletYield = useRef(createYieldGuard()).current;
   const walletLoadedRef = useRef(walletLoaded);
   walletLoadedRef.current = walletLoaded;
   /** silent：有变化时悄悄重拉（2026-10-05）——按钮不变「刷新中…」；已经有数据时失败不换成报错 */
   const loadWalletBalances = async (opts?: { silent?: boolean }) => {
     const silent = opts?.silent === true;
+    if (silent && !walletYield.allowSilent(() => void loadWalletBalances({ silent: true }))) return; // 用户点的请求在路上：先让路，它回来再补（Codex 复查 2026-10-05）
     const ticket = walletGate.begin();
+    const endUser = silent ? null : walletYield.begin();
     if (!silent) setWalletLoading(true);
     try {
       const data = await fetchStaffWalletBalances();
@@ -439,6 +444,7 @@ export default function StaffHomePage() {
       setWalletError(e instanceof Error ? e.message : "网络错误");
     } finally {
       if (walletGate.isCurrent(ticket)) setWalletLoading(false);
+      endUser?.();
     }
   };
   useEffect(() => {
