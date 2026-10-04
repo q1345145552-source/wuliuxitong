@@ -52,6 +52,8 @@ import FclInquiryPanel from "../../components/client/FclInquiryPanel";
 import { beijingDate, beijingToday } from "../../modules/shared/beijing-date";
 import { nextAutoTotals, orderDimsVolume, productRowTotals } from "../../modules/orders/auto-totals";
 import { useLiveRefresh } from "../../modules/realtime/useRealtime";
+import { useIsPhone } from "../../modules/layout/useIsPhone";
+import ShipmentPhoneList from "../../modules/shipment/ShipmentPhoneList";
 
 const initialSearch = {
   batchNo: "",
@@ -195,6 +197,10 @@ export default function ClientHomePage() {
   };
   const [openLogisticsByOrder, setOpenLogisticsByOrder] = useState<Record<string, boolean>>({});
   const [openDetailsByOrder, setOpenDetailsByOrder] = useState<Record<string, boolean>>({});
+  /* 手机排版（2026-10-05 老板拍板「1a」）：运单列表一单一块；查询区运单号那一格常驻（8-11 定的「查询框不藏」），
+     其余条件收进「更多条件」 */
+  const isPhone = useIsPhone();
+  const [phoneMoreFilters, setPhoneMoreFilters] = useState(false);
   const [detailImagesCache, setDetailImagesCache] = useState<Record<string, OrderProductImageItem[]>>({});
   const [search, setSearch] = useState(initialSearch);
   /* 「导出 Excel」（2026-09-23 老板：客户端也要能导，模版跟管理员那套一样、去掉柜号）。
@@ -998,7 +1004,7 @@ export default function ClientHomePage() {
           {/* 2026-08-31（条目47）：共 N 条改用后端 total（原来只数拿到的这一页），并补上翻页按钮 */}
           {/* 2026-08-31（条目47收尾）：搜索时换成搜索结果口径、藏起翻页按钮（搜的是一次拉回的 500 条池子，
               页码不起作用）；超过 500 条按条目21 明说只搜了前 500，别让客户以为搜遍了 */}
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+          <div className="client-prealert-pager" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
             {prealertSearchActive ? (
               <div style={{ fontSize: 12, color: "var(--t-strong)" }}>搜到 {visiblePrealerts.length} 条{prealertSearchPool === null ? "（正在加载全部预报单…先只搜当前页）" : prealertTotal > 500 ? `（共 ${prealertTotal} 条，仅搜索前 500 条）` : ""}</div>
             ) : (
@@ -1140,7 +1146,7 @@ export default function ClientHomePage() {
         ) : (
           <>
             {/* batchNo 仅保留旧字段名，实际匹配 trackingNo；日期继续按 createdAt，不改查询语义。 */}
-            <div className="client-order-search" role="search" aria-label="我的运单筛选" onKeyDown={handleOrderSearchKeyDown}>
+            <div className={isPhone && !phoneMoreFilters ? "client-order-search phone-collapsed" : "client-order-search"} role="search" aria-label="我的运单筛选" onKeyDown={handleOrderSearchKeyDown}>
               <label className="client-search-field"><span>运单号</span>
                 <input value={search.batchNo} onChange={(e) => setSearch((v) => ({ ...v, batchNo: e.target.value }))} placeholder="输入运单号" />
               </label>
@@ -1173,6 +1179,14 @@ export default function ClientHomePage() {
               <div className="client-order-search-actions">
                 <button type="button" onClick={() => void runOrderQuery()} disabled={loading} className="workbench-button workbench-button--primary">{loading ? "查询中…" : "执行查询"}</button>
                 <button type="button" onClick={() => changeQueryMode(queryMode ?? "all")} className="workbench-button">清空条件</button>
+                {isPhone ? (() => {
+                  const more = [search.arrivedDateFrom, search.arrivedDateTo, search.domesticTrackingNo, search.status, search.transportMode, search.warehouseId].filter((v) => String(v ?? "").trim() !== "").length;
+                  return (
+                    <button type="button" className="workbench-button" aria-expanded={phoneMoreFilters} onClick={() => setPhoneMoreFilters((v) => !v)}>
+                      {phoneMoreFilters ? "收起条件" : more > 0 ? `更多条件（${more}）` : "更多条件"}
+                    </button>
+                  );
+                })() : null}
               </div>
             </div>
             <p className="client-order-search-hint" id="client-order-date-hint">日期按建单日期筛选，并非泰国到仓日期。修改条件后，点击“执行查询”或按回车更新结果。</p>
@@ -1208,7 +1222,38 @@ export default function ClientHomePage() {
               );
             })()}
             <p className="shipment-scroll-hint" id="client-order-scroll-hint">宽表可左右滚动查看完整列；产品超过 3 项时可在产品明细区域上下滚动。</p>
-            <div className="shipment-table-scroll" tabIndex={0} role="region" aria-label="我的运单列表，可横向与纵向滚动" aria-describedby="client-order-scroll-hint">
+            {isPhone ? (() => {
+              const pageItems = queriedOrders.slice((currentPage - 1) * pageSize, currentPage * pageSize) as any[];
+              return (
+                <ShipmentPhoneList
+                  rows={pageItems.map((item) => ({
+                    id: item.id,
+                    number: item.trackingNo || item.orderNo || "—",
+                    products: item.products,
+                    itemName: item.itemName,
+                    status: item.currentStatus,
+                    statusText: shipmentStatusWithPartialZh(item.currentStatus || "", item.partialAhead, CLIENT_STATUS_ZH_OVERRIDES),
+                    packageCount: item.packageCount ?? null,
+                    packageUnit: item.packageUnit === "bag" ? "袋" : "箱",
+                    volume: totalVolumeOf(item),
+                    weight: totalWeightOf(item),
+                    transport: item.transportMode === "sea" ? "海运" : "陆运",
+                    meta: item.shipDate ? `${warehouseLabel(item.warehouseId)} · 发货 ${item.shipDate}` : warehouseLabel(item.warehouseId),
+                  }))}
+                  onOpen={(id) => {
+                    setOpenDetailsByOrder((prev) => ({ ...prev, [id]: true }));
+                    if (!detailImagesCache[id]) {
+                      fetchShipmentImages(id).then((imgs) => setDetailImagesCache((prev) => ({ ...prev, [id]: imgs }))).catch((e) => console.error("加载产品图失败:", id, e));
+                    }
+                  }}
+                  actions={[{ label: "物流轨迹", onClick: (id) => {
+                    const item = pageItems.find((o) => o.id === id);
+                    if (item?.trackingNo) openShipmentTrack({ trackingNo: item.trackingNo });
+                  } }]}
+                />
+              );
+            })() : null}
+            <div className={isPhone ? "shipment-table-scroll is-phone-hidden" : "shipment-table-scroll"} tabIndex={isPhone ? -1 : 0} role="region" aria-label="我的运单列表，可横向与纵向滚动" aria-describedby="client-order-scroll-hint">
               <table className="a3-table shipment-ledger-table shipment-ledger-table--client" style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, tableLayout: "fixed", minWidth: CLIENT_TABLE_MIN_WIDTH }}>
                 <GridColgroup widths={CLIENT_COL_WIDTHS} flexIndex={CLIENT_FLEX_COL_INDEX} />
                 <thead><tr style={{ borderBottom: "2px solid var(--l-soft)", textAlign: "left", background: "var(--s-cool-2)" }}>
@@ -1268,7 +1313,7 @@ export default function ClientHomePage() {
                           </td>
                         </tr>
                         {isExpanded && (
-                          <tr>
+                          <tr className="shipment-detail-row">
                             {/* 详情改成全屏弹窗：格子只作挂载点，内容用 position:fixed 铺满屏幕，
                                 所以这一行不占高度，表格不会被撑开 */}
                             <td colSpan={CLIENT_COL_WIDTHS.length} style={{ padding: 0, border: "none" }}>

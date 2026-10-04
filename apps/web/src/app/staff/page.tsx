@@ -73,6 +73,9 @@ import {
 import StaffProductImagesPanel from "../../components/staff/StaffProductImagesPanel";
 import ShipmentEditFormField from "../../components/staff/ShipmentEditFormField";
 import StaffPrealertList from "../../components/staff/StaffPrealertList";
+import ShipmentPhoneList from "../../modules/shipment/ShipmentPhoneList";
+import PhoneSearchBar from "../../modules/shipment/PhoneSearchBar";
+import { useIsPhone } from "../../modules/layout/useIsPhone";
 import type { PrealertSearchState } from "../../components/staff/StaffPrealertList";
 import StaffLastmile from "../../components/staff/StaffLastmile";
 import type { LastmileOrderItem, LastmileShipmentOption } from "../../modules/lastmile/types";
@@ -200,6 +203,9 @@ export default function StaffHomePage() {
     }
   };
   const [shipmentTableExpandedId, setShipmentTableExpandedId] = useState<string | null>(null);
+  /* 手机排版（2026-10-05 样板）：手机上运单列表改成一单一块、筛选收进「筛选」按钮；电脑上不变 */
+  const isPhone = useIsPhone();
+  const [phoneFiltersOpen, setPhoneFiltersOpen] = useState(false);
   const [shipmentImagesCache, setShipmentImagesCache] = useState<Record<string, OrderProductImageItem[]>>({});
   const [shipmentOrderEditDrafts, setShipmentOrderEditDrafts] = useState<Record<string, ShipmentOrderEditDraft>>({});
   const [clientSearchKeyword, setClientSearchKeyword] = useState("");
@@ -1798,7 +1804,17 @@ export default function StaffHomePage() {
             setSelectedForExport(new Set());
           }}
         />
-        <ShipmentSearch
+        {isPhone ? (
+          <PhoneSearchBar
+            trackingNo={shipmentSearch.trackingNo}
+            onTrackingNo={(value) => setShipmentSearch((prev) => ({ ...prev, trackingNo: value }))}
+            onEnter={runShipmentListSearch}
+            open={phoneFiltersOpen}
+            onToggle={() => setPhoneFiltersOpen((v) => !v)}
+            moreCount={Object.entries(shipmentSearch).filter(([k, v]) => k !== "trackingNo" && String(v ?? "").trim() !== "").length}
+          />
+        ) : null}
+        {(!isPhone || phoneFiltersOpen) && <ShipmentSearch
           variant="workbench"
           value={shipmentSearch}
           onChange={(key, val) => setShipmentSearch((prev) => ({ ...prev, [key]: val }))}
@@ -1807,7 +1823,7 @@ export default function StaffHomePage() {
           warehouseOptions={warehouseOptions}
           logisticsStatusOptions={logisticsStatusOptions}
           inputStyle={orderCreateInputStyle}
-        />
+        />}
         <div className="staff-shipment-results" id="staff-shipment-list-table-wrap">
           <div className="staff-shipment-results-meta">
             <span role="status" aria-live="polite">共 <strong>{filteredShipmentList.length}</strong> 条 · 第 {currentPage}/{totalPages} 页</span>
@@ -1859,9 +1875,41 @@ export default function StaffHomePage() {
             ) : filteredShipmentList.length === 0 ? (
               <EmptyStateCard title="没有匹配结果" description="请调整搜索条件后重试。" />
             ) : (
+              <>
+              {isPhone ? (
+                <ShipmentPhoneList
+                  rows={pagedShipments.map((item) => ({
+                    id: item.id,
+                    number: item.orderNo || item.trackingNo || "—",
+                    mark: item.clientId ?? "—",
+                    products: item.products,
+                    itemName: item.itemName,
+                    status: item.currentStatus,
+                    statusText: shipmentStatusWithPartialZh(item.currentStatus, item.partialAhead),
+                    packageCount: totalPackageCountOf(item),
+                    packageUnit: "箱",
+                    volume: totalVolumeOf(item),
+                    weight: totalWeightOf(item),
+                    transport: transportModeLabel(item.transportMode),
+                    meta: `${warehouseLabelFromId(item.warehouseId)} · 到仓 ${item.shipDate ?? formatDateTime(item.arrivedAt)}`,
+                  }))}
+                  actions={[{ label: "物流轨迹", onClick: (id) => {
+                    const item = pagedShipments.find((s) => s.id === id);
+                    if (item?.trackingNo) openShipmentTrack({ trackingNo: item.trackingNo });
+                  } }]}
+                  onOpen={(id) => {
+                    const item = pagedShipments.find((s) => s.id === id);
+                    if (!item) return;
+                    setShipmentOrderEditDrafts((d) => ({ ...d, [item.id]: buildShipmentOrderEditDraft(item) }));
+                    const oid = item.orderId;
+                    if (oid) fetchShipmentImages(oid).then((imgs) => setShipmentImagesCache((c) => ({ ...c, [oid]: imgs }))).catch(() => {});
+                    setShipmentTableExpandedId(item.id);
+                  }}
+                />
+              ) : null}
               <div
-                className="table-card staff-shipment-table-scroll"
-                tabIndex={0}
+                className={isPhone ? "table-card staff-shipment-table-scroll is-phone-hidden" : "table-card staff-shipment-table-scroll"}
+                tabIndex={isPhone ? -1 : 0}
                 role="region"
                 aria-label="运单列表，可横向与纵向滚动"
                 aria-describedby="staff-shipment-scroll-hint"
@@ -1970,7 +2018,7 @@ export default function StaffHomePage() {
                           </td>
                         </tr>
                         {shipmentTableExpandedId === item.id ? (
-                          <tr>
+                          <tr className="shipment-detail-row">
                             {/* 详情改成全屏弹窗：这个格子只作挂载点，内容用 position:fixed 铺满屏幕，
                                 所以格子本身不占高度，表格行不会被撑开 */}
                             <td colSpan={SHIPMENT_COL_WIDTHS.length} style={{ padding: 0, border: "none" }}>
@@ -2398,6 +2446,7 @@ export default function StaffHomePage() {
                   </tbody>
                 </table>
               </div>
+              </>
             )}
           </>
       </section>

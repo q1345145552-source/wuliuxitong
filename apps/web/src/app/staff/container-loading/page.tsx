@@ -7,6 +7,7 @@ import { openShipmentTrack } from "../../../modules/shipment/ShipmentTrackModal"
 import { createRequestGate } from "../../../modules/shared/request-gate";
 import { useLiveRefresh } from "../../../modules/realtime/useRealtime";
 import { createYieldGuard } from "../../../modules/realtime/yield-guard";
+import { useIsPhone } from "../../../modules/layout/useIsPhone";
 import { shipmentStatusZh } from "../../../modules/shipment/shipment-status";
 import { downloadContainerDispatchWorkbook } from "../../../modules/lastmile/exportDispatchWorkbooks";
 import {
@@ -187,6 +188,11 @@ export default function StaffContainerLoadingPage() {
   const [unloadCount, setUnloadCount] = useState("");
   // 已装柜运单映射：shipmentId → container manifestNo
   const [loadedShipments, setLoadedShipments] = useState<Record<string, string>>({});
+  /* 手机排版（2026-10-05 老板拍板「1a」）：手机上左边柜子列表、右边柜子详情放不下两栏 ——
+     先只显示柜子列表，员工点了哪个柜才整屏显示那个柜的详情，顶上「‹ 返回柜子列表」回去。
+     不能拿 selectedId 判断：页面一打开会自动选中第一个柜（电脑上要），手机上不能因此直接跳进详情。 */
+  const isPhone = useIsPhone();
+  const [phoneShowDetail, setPhoneShowDetail] = useState(false);
 
   /* 「已装 → 柜号」原来是把每个柜的详情挨个拉一遍拼出来（线上 353 个柜 = 353 个请求），2026-10-05 改成后端一次查出来
      （/staff/loading-manifests/shipment-map，结果口径一样：同一票在几个柜里取最早建的那个柜）。
@@ -658,7 +664,7 @@ export default function StaffContainerLoadingPage() {
 
       {error && <p style={{ color: "var(--c-red-deep)", fontSize: 13, marginBottom: 8 }}>{error}</p>}
 
-      <div style={{ display: "grid", gridTemplateColumns: "320px 1fr", gap: 16, alignItems: "start" }}>
+      <div className="cl-grid" data-phone-view={isPhone ? (phoneShowDetail ? "detail" : "list") : undefined} style={{ display: "grid", gridTemplateColumns: "320px 1fr", gap: 16, alignItems: "start" }}>
         {/* 左侧柜列表
             2026-08-05：柜里最多能装 25 张运单，右边一翻，左边这列柜号就跟着滚没了，
             员工得翻回顶部才能换柜。改成贴住不动（sticky），自己太长时内部滚动。
@@ -672,12 +678,12 @@ export default function StaffContainerLoadingPage() {
             顶栏底边跟着从 y=54 上移到 y=42，实测顶栏高 42px。
             所以这里同步从 68 改成 56（42 + 14 间距），写小了第一个柜号会被顶栏盖住。
             maxHeight 保持 calc(100vh - 92px) 不动：顶栏上移后可用高度只多不少，这个值仍在安全范围内。 */}
-        <div style={{ border: "1px solid var(--l-soft)", borderRadius: 10, overflow: "hidden", background: "var(--white)", position: "sticky", top: 56, maxHeight: "calc(100vh - 92px)", overflowY: "auto" }}>
+        <div className="cl-list" style={{ border: "1px solid var(--l-soft)", borderRadius: 10, overflow: "hidden", background: "var(--white)", position: "sticky", top: 56, maxHeight: "calc(100vh - 92px)", overflowY: "auto" }}>
           {loading ? <p style={{ padding: 20, color: "var(--t-strong)", fontSize: 13 }}>加载中…</p> : list.length === 0 ? (
             <p style={{ padding: 20, color: "var(--t-strong)", fontSize: 13, textAlign: "center" }}>暂无装柜任务，请先创建装柜</p>
           ) : (
             list.map((item) => (
-              <div key={item.id} onClick={() => selectManifest(item.id)} style={{ padding: "12px 16px", cursor: "pointer", borderBottom: "1px solid var(--s-cool-2)", background: selectedId === item.id ? "var(--c-blue-bg)" : "transparent" }}>
+              <div key={item.id} onClick={() => { selectManifest(item.id); if (isPhone) setPhoneShowDetail(true); }} style={{ padding: "12px 16px", cursor: "pointer", borderBottom: "1px solid var(--s-cool-2)", background: selectedId === item.id ? "var(--c-blue-bg)" : "transparent" }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                   <span style={{ fontWeight: 600, fontSize: 14, color: "#14171D" }}>
                     {item.manifestNo}
@@ -696,7 +702,10 @@ export default function StaffContainerLoadingPage() {
         </div>
 
         {/* 右侧详情 + 运单列表 */}
-        <div>
+        <div className="cl-detail">
+          {isPhone ? (
+            <button type="button" className="phone-back" onClick={() => setPhoneShowDetail(false)}>‹ 返回柜子列表</button>
+          ) : null}
           {/* 柜子详情 */}
           <div style={{ border: "1px solid var(--l-soft)", borderRadius: 10, padding: 16, background: "var(--white)", marginBottom: 12 }}>
             {loadingDetail ? <p style={{ color: "var(--t-strong)", fontSize: 13 }}>加载中…</p> : detailError ? (
@@ -715,7 +724,7 @@ export default function StaffContainerLoadingPage() {
               <p style={{ color: "var(--t-strong)", fontSize: 13 }}>选择左侧装柜任务查看详情</p>
             ) : (
               <>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+                <div className="cl-detail-head" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
                   <div>
                     <h2 style={{ margin: 0, fontSize: 18, fontWeight: 700, color: "#14171D" }}>{detail.manifestNo}</h2>
                     <div style={{ fontSize: 13, color: "var(--t-strong)", marginTop: 4, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
@@ -847,7 +856,7 @@ export default function StaffContainerLoadingPage() {
                   <p style={{ color: "var(--t-strong)", fontSize: 13, marginBottom: 12 }}>暂无运单，从下方选择运单添加到本柜</p>
                 ) : (
                   <div style={{ marginBottom: 12 }}>
-                    <div style={{ display: "grid", gridTemplateColumns: "1fr 0.6fr 0.7fr 0.5fr 0.4fr auto", gap: 4, padding: "4px 10px", fontSize: 11, color: "var(--t-muted)", fontWeight: 600, borderBottom: "1px solid var(--l-soft)" }}>
+                    <div className="cl-bill-head" style={{ display: "grid", gridTemplateColumns: "1fr 0.6fr 0.7fr 0.5fr 0.4fr auto", gap: 4, padding: "4px 10px", fontSize: 11, color: "var(--t-muted)", fontWeight: 600, borderBottom: "1px solid var(--l-soft)" }}>
                       <span>运单号 / 父运单</span>
                       <span>唛头</span>
                       <span>产品/件数</span>
@@ -856,7 +865,7 @@ export default function StaffContainerLoadingPage() {
                       <span>操作</span>
                     </div>
                     {detail.bills.map((b) => (
-                      <div key={b.id} style={{ display: "grid", gridTemplateColumns: "1fr 0.6fr 0.7fr 0.5fr 0.4fr auto", gap: 4, padding: "6px 10px", borderBottom: "1px solid var(--s-cool-2)", alignItems: "center", background: "var(--white)", fontSize: 12 }}>
+                      <div key={b.id} className="cl-bill-row" style={{ display: "grid", gridTemplateColumns: "1fr 0.6fr 0.7fr 0.5fr 0.4fr auto", gap: 4, padding: "6px 10px", borderBottom: "1px solid var(--s-cool-2)", alignItems: "center", background: "var(--white)", fontSize: 12 }}>
                         <div>
                           <span style={{ fontWeight: 600, fontFamily: "monospace", color: "var(--c-navy)" }}>{b.trackingNo ?? "—"}</span>
                           {b.parentTrackingNo ? <span style={{ display: "block", fontSize: 10, color: "#1e3a8a" }}>← {b.parentTrackingNo}</span> : null}

@@ -120,7 +120,7 @@ export default function ShippingConfig(props: ShippingConfigProps) {
           const isEdit = expandedClientId === `edit-${c.id}`;
           return (
             <div key={c.id} style={{ border: "1px solid var(--l-soft)", borderRadius: 8, padding: 10, background: hasCustom ? "#fefce8" : "var(--white)" }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div className="client-price-row" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                 <div>
                   {/* 只显示唛头，不带客户名字（2026-09-19） */}
                   <span style={{ fontWeight: 600, fontSize: 14 }}>{c.id}</span>

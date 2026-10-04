@@ -86,7 +86,8 @@
     "test:branch-review-0928-db": "tsx scripts/test-branch-review-0928-db.ts",
     "test:cs-chat-ui-behavior": "tsx scripts/test-cs-chat-ui-behavior.ts",
     "test:realtime-source": "tsx scripts/test-realtime-source.ts",
-    "test:realtime-client": "tsx scripts/test-realtime-client.ts"
+    "test:realtime-client": "tsx scripts/test-realtime-client.ts",
+    "test:phone-layout": "tsx scripts/test-phone-layout.ts"
   },
   "devDependencies": {
     "@types/node": "^26.0.1",

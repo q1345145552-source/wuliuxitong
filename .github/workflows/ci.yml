@@ -295,6 +295,10 @@ jobs:
         run: npm run test:realtime-source
       - name: Test realtime push (frontend connection)
         run: npm run test:realtime-client
+      # 手机排版（2026-10-05 老板拍板「1a2a」：列表一单一块 + 手机底部常用入口）。不连库：
+      # 底部入口照拍板的配、手机样式一条都不漏到电脑上、表格摊平标对列名、运单号查询框不藏。
+      - name: Test phone layout
+        run: npm run test:phone-layout
 
       # 改整柜（2026-09-24，老板：「加上编辑功能」）。要连测试库 —— 读源码证明不了
       # 「改完库里真的变了」，而改整柜最容易出的就是「只改了一半」（订单改了运单没改之类）。

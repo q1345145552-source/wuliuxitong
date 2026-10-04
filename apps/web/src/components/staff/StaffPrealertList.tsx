@@ -116,7 +116,7 @@ export default function StaffPrealertList(props: StaffPrealertListProps) {
         boxShadow: "0 1px 3px rgba(15,23,42,0.06)",
       }}
     >
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+      <div className="staff-prealert-head" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
         <h2 style={{ margin: 0, fontSize: 18, color: "var(--t-heading)" }}>预报单收货确认</h2>
         <button
           type="button"

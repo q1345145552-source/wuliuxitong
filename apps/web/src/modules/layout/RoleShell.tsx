@@ -7,7 +7,10 @@ import { clearAuthSession, clearClientOrderCaches, getOptionalSession, type Auth
 import { useWorkbenchBrand } from "../branding/useWorkbenchBrand";
 import { changeOwnPassword } from "../../services/auth-api";
 import { apiBaseUrl, apiRequest } from "../../services/core-api";
-import { globalMenus, roleFunctionGroups, roleMenus, type MenuItem } from "./menu-config";
+import { DEFAULT_SECTION_HASH, globalMenus, phoneTabs, roleFunctionGroups, roleMenus, type MenuItem } from "./menu-config";
+import PhoneTabBar, { type PhoneTabView } from "./PhoneTabBar";
+import { useIsPhone } from "./useIsPhone";
+import { usePhoneTables } from "./usePhoneTables";
 import { CHAT_MENU_IDS, useChatUnread } from "../cs-chat/useChatUnread";
 import { currentChatPushEndpoint, syncChatPushOnLoad, unsubscribeChatPushInBrowser } from "../cs-chat/chat-push";
 import { isSamePageHashLink, navigateToHash } from "./navigate-to-hash";
@@ -99,6 +102,10 @@ export default function RoleShell(props: {
   }, [identityChanging, allowedRoles.join(",")]);
   const [currentHash, setCurrentHash] = useState(() => readOnRemount(() => window.location.hash, ""));
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  /** 手机宽度：底部那排常用入口只在手机上出（2026-10-05 老板拍板「2a」） */
+  const isPhone = useIsPhone();
+  /** 手机上把普通表格摊成一行一块（老板拍板「1a」；电脑上不动） */
+  usePhoneTables(isPhone);
   const [mobileNavigation, setMobileNavigation] = useState(() => readOnRemount(() => window.matchMedia("(max-width: 900px)").matches, false));
   const navigationId = useId();
   const sidebarRef = useRef<HTMLElement>(null);
@@ -457,11 +464,34 @@ export default function RoleShell(props: {
     </Link>
   );
 
+  /* 手机底部入口：照菜单配置取（品牌藏掉的跟着藏、改的名跟着改）；「当前在哪」按地址 + 默认栏目算 */
+  const phoneTabViews: PhoneTabView[] = (() => {
+    if (!isPhone) return [];
+    const allItems = (roleFunctionGroups[session.role] ?? []).flatMap((g) => g.items);
+    const here = currentPath + (currentHash || DEFAULT_SECTION_HASH[currentPath] || "");
+    const isHere = (item: MenuItem) => (item.href.includes("#") ? here === item.href : currentPath === item.href);
+    return (phoneTabs[session.role] ?? []).flatMap((tab, index) => {
+      const items = (tab.menuIds ?? [])
+        .map((id) => allItems.find((item) => item.id === id))
+        .filter((item): item is MenuItem => !!item && !hiddenMenuIds.has(item.id))
+        .map((item) => ({ ...item, shownLabel: menuLabel(item) }));
+      if (!tab.more && items.length === 0) return []; // 这个品牌把整组都藏了：底部也不出这个入口
+      return [{
+        key: `${index}-${tab.label}`,
+        label: tab.label,
+        items,
+        more: tab.more === true,
+        active: tab.more ? sidebarOpen : items.some(isHere),
+        badge: items.some((item) => CHAT_MENU_IDS.includes(item.id)) ? chatUnread : 0,
+      }];
+    });
+  })();
+
   return (
     <main
       className={`dashboard-layout ledger-shell${variant === "a3" ? " a3-shell" : ""}${
         sidebarCollapsed ? " sidebar-collapsed" : ""
-      }`}
+      }${phoneTabViews.length > 0 ? " has-phone-tabs" : ""}`}
     >
       {/* 手机端遮罩 */}
       <div className={`sidebar-overlay ${sidebarOpen ? "open" : ""}`} onClick={closeSidebar} aria-hidden="true" />
@@ -624,6 +654,7 @@ export default function RoleShell(props: {
         </div>
         {children}
       </div>
+      {phoneTabViews.length > 0 ? <PhoneTabBar tabs={phoneTabViews} onMore={() => setSidebarOpen(true)} /> : null}
 
       {/* 修改密码弹窗：三端共用，改的永远是当前登录的这个账号 */}
       {pwdOpen && (

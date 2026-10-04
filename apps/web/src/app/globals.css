@@ -4125,3 +4125,307 @@ table.a3-table.shipment-product-table > tbody > tr > td {
   .cs-inbox:not(.cs-inbox--open) .cs-inbox-thread { display: none !important; }
   .cs-inbox-back { display: inline-flex; }
 }
+
+/* ==========================================================================
+   手机排版（2026-10-05 做 app 第二块，样板：员工「运单管理」）
+   只在 ≤640px 生效，电脑上一条都不碰。外观照 A3：颜色全用上面的令牌；
+   状态 = 小圆点 + 中文（不用彩色胶囊）；数字等宽；细线分隔；不加阴影、渐变、图标。
+   ========================================================================== */
+@media (max-width: 640px) {
+  .phone-filter-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 10px 0 12px;
+  }
+  .phone-filter-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 40px;
+    padding: 0 14px;
+    border: 1px solid var(--line);
+    border-radius: var(--a3-radius);
+    /* 全局 button 默认是赭红底白字（上面 button:not(...) 那条），这里要压回白底 */
+    background: var(--panel) !important;
+    color: var(--ink) !important;
+    font: inherit;
+    font-size: 14px;
+  }
+  .phone-filter-count {
+    min-width: 18px;
+    height: 18px;
+    padding: 0 5px;
+    border-radius: 9px;
+    background: var(--ink);
+    color: var(--panel);
+    font-size: 11px;
+    line-height: 18px;
+    text-align: center;
+    font-variant-numeric: tabular-nums;
+  }
+  .phone-quick-search {
+    flex: 1 1 auto;
+    min-width: 0;
+    min-height: 40px;
+    padding: 0 12px;
+    border: 1px solid var(--line);
+    border-radius: var(--a3-radius);
+    background: var(--panel);
+    color: var(--ink);
+    font: inherit;
+    font-size: 14px;
+  }
+  .phone-filter-toggle { flex-shrink: 0; }
+  .ship-phone-list { list-style: none; margin: 8px 0 0; padding: 0; border-top: 1px solid var(--line); }
+  .ship-phone-list > li { position: relative; border-bottom: 1px solid var(--line); }
+  /* 右下角的文字按钮（物流轨迹 / 编辑 / 删除）：跟灰字那行同一高度，只有字、不加框 */
+  .ship-phone-actions { position: absolute; right: 2px; bottom: 10px; display: flex; gap: 14px; }
+  .ship-phone-action {
+    padding: 4px 0;
+    border: 0;
+    background: none !important;
+    color: var(--brand) !important;
+    font: inherit;
+    font-size: 13px;
+  }
+  .ship-phone-action--danger { color: var(--bad) !important; }
+  /* 灰字那行给右下角按钮让出位置：按钮几个就让多宽 */
+  .ship-phone-item:has(.ship-phone-actions) .ship-phone-meta { padding-right: calc(var(--ship-actions, 1) * 66px); }
+  .ship-phone-row {
+    display: grid;
+    gap: 6px;
+    width: 100%;
+    padding: 14px 2px;
+    border: 0;
+    border-radius: 0;
+    background: none !important;
+    color: var(--ink) !important;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .ship-phone-row:active { background: var(--line-2) !important; }
+  .ship-phone-top { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+  .ship-phone-no {
+    font-family: var(--a3-mono);
+    font-size: 15px;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+  }
+  .ship-phone-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+    color: var(--ink-2);
+    font-size: 13px;
+    white-space: nowrap;
+  }
+  .ship-phone-status::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--ink-3); }
+  .ship-phone-status--transit::before { background: var(--brand); }
+  .ship-phone-status--arrived::before { background: var(--ink); }
+  .ship-phone-status--delivered::before { background: var(--ok); }
+  .ship-phone-status--attention { color: var(--warn); }
+  .ship-phone-status--attention::before { background: var(--warn); }
+  .ship-phone-status--closed { color: var(--ink-3); }
+  .ship-phone-status--closed::before { background: var(--line); }
+  .ship-phone-who { display: flex; gap: 8px; min-width: 0; font-size: 14px; line-height: 1.4; }
+  .ship-phone-mark { flex-shrink: 0; font-weight: 600; }
+  .ship-phone-goods { min-width: 0; overflow: hidden; color: var(--ink-2); text-overflow: ellipsis; white-space: nowrap; }
+  .ship-phone-metrics { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 16px; color: var(--ink-3); font-size: 12px; }
+  .ship-phone-metrics b {
+    color: var(--ink);
+    font-family: var(--a3-mono);
+    font-size: 13px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+  }
+  .ship-phone-mode { margin-left: auto; color: var(--ink-2); }
+  .ship-phone-meta { color: var(--ink-3); font-size: 12px; }
+
+  /* 电脑那张宽表在手机上收起来，只留「运单详情」弹窗那一行（弹窗是铺满屏幕的，挂在表里） */
+  .is-phone-hidden { height: 0; min-height: 0 !important; padding: 0 !important; border: 0 !important; overflow: visible !important; }
+  .is-phone-hidden > table { width: 0 !important; min-width: 0 !important; table-layout: auto !important; }
+  /* 列宽是写死的（加起来 1700 多像素），不藏掉的话这张看不见的表还是那么宽，苹果手机上能被手指拖得左右晃 */
+  .is-phone-hidden colgroup,
+  .is-phone-hidden thead,
+  .is-phone-hidden tbody > tr:not(.shipment-detail-row) { display: none; }
+  .staff-shipment-scroll-hint, .shipment-scroll-hint { display: none; }
+
+  /* 客户「运单查询」：运单号那一格常驻（8-11 定的查询框不藏），其余条件点「更多条件」才出来 */
+  .client-order-search.phone-collapsed .client-search-field:not(:first-of-type) { display: none; }
+  .client-order-search.phone-collapsed + .client-order-search-hint { display: none; }
+
+  /* ---- 普通表格摊成一行一块（usePhoneTables 标的 phone-stack；老板拍板「1a」） ----
+     第一格当标题（加粗），其余每格左边灰字列名、右边内容；行与行之间一条细线。 */
+  table.phone-stack { display: block; width: 100% !important; min-width: 0 !important; table-layout: auto !important; border: 0 !important; }
+  table.phone-stack > thead { display: none !important; }
+  table.phone-stack > tbody, table.phone-stack > tfoot { display: block; }
+  table.phone-stack > tbody > tr, table.phone-stack > tfoot > tr {
+    display: block;
+    padding: 12px 0;
+    border: 0 !important;
+    border-bottom: 1px solid var(--line) !important;
+    background: none !important;
+  }
+  table.phone-stack > tbody > tr > td, table.phone-stack > tfoot > tr > td {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+    width: auto !important;
+    min-width: 0 !important;
+    max-width: none !important;
+    padding: 3px 0 !important;
+    border: 0 !important;
+    background: none !important;
+    color: var(--ink);
+    font-size: 13px;
+    text-align: right !important;
+    white-space: normal !important;
+    word-break: break-word;
+  }
+  table.phone-stack td::before {
+    content: attr(data-label);
+    flex-shrink: 0;
+    color: var(--ink-3);
+    font-size: 12px;
+    font-weight: 400;
+    text-align: left;
+  }
+  table.phone-stack td[data-label=""]::before { display: none; }
+  table.phone-stack td.phone-cell-title { justify-content: flex-start; padding: 0 0 4px !important; font-size: 15px; font-weight: 600; text-align: left !important; }
+  table.phone-stack td.phone-cell-title::before { display: none; }
+  table.phone-stack td.phone-cell-check { justify-content: flex-start; padding: 0 0 4px !important; }
+  table.phone-stack td.phone-cell-check::before { display: none; }
+  table.phone-stack td.phone-cell-full { display: block; text-align: left !important; }
+  table.phone-stack td.phone-cell-empty { display: none !important; }
+
+  /* ---- 客户主页「预报单」那块的翻页：「共 N 条」一行、按钮另起一行，按钮里的字不折 ---- */
+  .client-prealert-pager { flex-wrap: wrap; gap: 8px; }
+  .client-prealert-pager > :first-child { flex: 1 1 100%; }
+  .client-prealert-pager button { white-space: nowrap; }
+
+  /* ---- 管理员「运费配置」每个客户那一行：按钮放不下就整组换到下一行，按钮里的字不折 ---- */
+  .client-price-row { flex-wrap: wrap; gap: 8px; }
+  .client-price-row button { white-space: nowrap; }
+
+  /* ---- 员工「预报单审核」标题区：手机上标题和「折叠」一行，搜索框另起一行占满 ---- */
+  .staff-prealert-head { flex-wrap: wrap; gap: 10px; }
+  .staff-prealert-head > h2 { flex: 1 1 auto; white-space: nowrap; }
+  .staff-prealert-head > :last-child { flex: 1 1 100%; min-width: 0; }
+
+  /* ---- 装柜管理：手机上先看柜子列表，点了柜子整屏看详情（cl-grid 的 data-phone-view 由页面切） ---- */
+  .cl-grid[data-phone-view] { grid-template-columns: minmax(0, 1fr) !important; }
+  .cl-grid[data-phone-view="list"] > .cl-detail { display: none; }
+  .cl-grid[data-phone-view="detail"] > .cl-list { display: none; }
+  .cl-grid[data-phone-view] > .cl-list { position: static !important; max-height: none !important; }
+  /* 柜子详情顶部：柜号那块一行、推进状态那些控件另起一行占满 */
+  .cl-detail-head { flex-wrap: wrap; gap: 12px; }
+  .cl-detail-head > * { flex: 1 1 100%; min-width: 0; }
+  /* 已装运单：表头不要；每票第一行运单号，第二行唛头 / 件数 / 运输 / 状态，操作按钮靠右 */
+  .cl-bill-head { display: none !important; }
+  .cl-bill-row { display: flex !important; flex-wrap: wrap; align-items: center; gap: 4px 12px !important; padding: 10px 2px !important; }
+  .cl-bill-row > :first-child { flex: 1 1 100%; }
+  .cl-bill-row > :last-child { margin-left: auto; }
+  .phone-back {
+    display: inline-flex;
+    align-items: center;
+    min-height: 36px;
+    margin: 0 0 10px;
+    padding: 0;
+    border: 0;
+    background: none !important;
+    color: var(--ink-2) !important;
+    font: inherit;
+    font-size: 14px;
+  }
+
+  /* ---- 客服对话两页是占满一屏的：手机上再扣掉底部那排入口，不然输入框和「发送」被盖住 ---- */
+  .has-phone-tabs :is(.cs-client-page, .cs-inbox) {
+    height: calc(100dvh - 72px - 60px - env(safe-area-inset-bottom)) !important;
+    min-height: 0 !important;
+  }
+
+  /* ---- 底部常用入口（老板拍板「2a」）：白底、上面一条细线、只有字；当前页字变黑加粗、上面一条短横线 ---- */
+  .has-phone-tabs .dashboard-content { padding-bottom: calc(60px + env(safe-area-inset-bottom)); }
+  .phone-tabbar {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 33; /* 压在弹出那一小块的遮罩上面：弹出时底部这排不跟着变暗 */
+    display: flex;
+    height: calc(56px + env(safe-area-inset-bottom));
+    padding-bottom: env(safe-area-inset-bottom);
+    border-top: 1px solid var(--line);
+    background: var(--panel);
+  }
+  .phone-tab {
+    position: relative;
+    flex: 1 1 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    min-width: 0;
+    border: 0;
+    border-radius: 0;
+    background: none !important;
+    color: var(--ink-3) !important;
+    font: inherit;
+    font-size: 14px;
+    letter-spacing: 0.02em;
+    text-decoration: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .phone-tab:active { background: var(--line-2) !important; }
+  .phone-tab--active { color: var(--ink) !important; font-weight: 600; }
+  .phone-tab--active::before {
+    content: "";
+    position: absolute;
+    top: -1px;
+    left: 50%;
+    width: 22px;
+    height: 2px;
+    margin-left: -11px;
+    background: var(--ink);
+  }
+  .phone-tab-badge {
+    min-width: 16px;
+    height: 16px;
+    padding: 0 4px;
+    border-radius: 8px;
+    background: var(--c-red);
+    color: var(--white);
+    font-size: 10px;
+    font-weight: 500;
+    line-height: 16px;
+    text-align: center;
+  }
+  .phone-tab-sheet-backdrop { position: fixed; inset: 0; z-index: 31; background: rgba(20, 22, 18, 0.28); }
+  .phone-tab-sheet {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: calc(56px + env(safe-area-inset-bottom));
+    z-index: 32;
+    display: grid;
+    padding: 6px 16px 10px;
+    border-top: 1px solid var(--line);
+    background: var(--panel);
+  }
+  .phone-tab-sheet-title { padding: 10px 0 6px; color: var(--ink-3); font-size: 12px; }
+  .phone-tab-sheet-link {
+    display: block;
+    padding: 14px 0;
+    border-bottom: 1px solid var(--line-2);
+    color: var(--ink) !important;
+    font-size: 15px;
+    text-decoration: none;
+  }
+  .phone-tab-sheet-link:last-child { border-bottom: 0; }
+}

@@ -43,6 +43,9 @@ import { SHIPMENT_STATUS_FILTER_OPTIONS } from "../../modules/shipment/shipment-
 import ShippingConfig from "../../components/admin/ShippingConfig";
 import { createRequestGate } from "../../modules/shared/request-gate";
 import { useLiveRefresh } from "../../modules/realtime/useRealtime";
+import { useIsPhone } from "../../modules/layout/useIsPhone";
+import ShipmentPhoneList from "../../modules/shipment/ShipmentPhoneList";
+import PhoneSearchBar from "../../modules/shipment/PhoneSearchBar";
 import {
   fetchAdminOverview,
   fetchStaffShipmentOverview,
@@ -367,6 +370,9 @@ export default function AdminHomePage() {
   const orderRefreshInFlight = useRef(false);
   const [editingOrderId, setEditingOrderId] = useState("");
   const [expandedOrderId, setExpandedOrderId] = useState("");
+  /** 手机排版（2026-10-05 老板拍板「1a」）：运单列表一单一块，详情 / 编辑弹窗照旧 */
+  const isPhone = useIsPhone();
+  const [phoneFiltersOpen, setPhoneFiltersOpen] = useState(false);
 
   const [showCreateOrderModal, setShowCreateOrderModal] = useState(false);
   const [showBatchImport, setShowBatchImport] = useState(false);
@@ -1997,7 +2003,17 @@ export default function AdminHomePage() {
             setSelectedOrders(new Set());
           }}
         />
-          <ShipmentSearch
+          {isPhone ? (
+            <PhoneSearchBar
+              trackingNo={orderSearch.trackingNo}
+              onTrackingNo={(value) => { setCurrentPage(1); setSelectedOrders(new Set()); setOrderSearch((prev) => ({ ...prev, trackingNo: value })); }}
+              onEnter={runOrderSearch}
+              open={phoneFiltersOpen}
+              onToggle={() => setPhoneFiltersOpen((v) => !v)}
+              moreCount={Object.entries(orderSearch).filter(([k, v]) => k !== "trackingNo" && String(v ?? "").trim() !== "").length}
+            />
+          ) : null}
+          {(!isPhone || phoneFiltersOpen) && <ShipmentSearch
             variant="workbench"
             value={orderSearch}
             onChange={(key, val) => {
@@ -2017,7 +2033,7 @@ export default function AdminHomePage() {
             warehouseOptions={warehouseOptions}
             logisticsStatusOptions={logisticsStatusOptions}
             inputStyle={{ border: "1px solid var(--l-strong)", borderRadius: 8, padding: "8px 10px", fontSize: 13 }}
-          />
+          />}
           <div className="shipment-results" id="admin-order-list-results">
             <div className="shipment-results-meta">
               <span role="status" aria-live="polite">共 <strong>{filteredOrderList.length}</strong> 条 · 第 {currentPage}/{totalPages} 页</span>
@@ -2068,7 +2084,38 @@ export default function AdminHomePage() {
         ) : filteredOrderList.length === 0 ? (
           <EmptyStateCard title="没有匹配结果" description="请调整查询条件，或点击「清空条件」重新查看全部运单。" />
         ) : (
-          <div className="table-card shipment-table-scroll" tabIndex={0} role="region" aria-label="运单列表，可横向与纵向滚动" aria-describedby="admin-order-scroll-hint">
+          <>
+          {isPhone ? (
+            <ShipmentPhoneList
+              rows={pagedOrders.map((o) => ({
+                id: o.id,
+                number: o.trackingNo ?? "—",
+                mark: o.clientId ?? "—",
+                products: o.products,
+                itemName: o.itemName,
+                status: o.currentStatus,
+                statusText: shipmentStatusWithPartialZh(o.currentStatus, o.partialAhead),
+                packageCount: totalPackageCountOf(o),
+                packageUnit: "箱",
+                volume: totalVolumeOf(o),
+                weight: totalWeightOf(o),
+                transport: o.transportMode === "sea" ? "海运" : o.transportMode === "land" ? "陆运" : "—",
+                meta: `${warehouseLabelFromId(o.warehouseId)} · 到仓 ${o.shipDate ?? beijingDate(o.createdAt)}`,
+              }))}
+              onOpen={(id) => {
+                const o = pagedOrders.find((x) => x.id === id);
+                if (!o) return;
+                const oid = o.orderId ?? o.id;
+                fetchShipmentImages(oid).then((imgs: any) => setOrderImagesCache((c: any) => ({ ...c, [oid]: imgs }))).catch(() => {});
+                setExpandedOrderId(o.id);
+              }}
+              actions={[
+                { label: "物流轨迹", onClick: (id) => { const o = pagedOrders.find((x) => x.id === id); if (o) openShipmentTrack(o.trackingNo ? { trackingNo: o.trackingNo } : { shipmentId: o.id }); } },
+                { label: "编辑", onClick: (id) => { const o = pagedOrders.find((x) => x.id === id); if (o) startEditOrder(o); } },
+              ]}
+            />
+          ) : null}
+          <div className={isPhone ? "table-card shipment-table-scroll is-phone-hidden" : "table-card shipment-table-scroll"} tabIndex={isPhone ? -1 : 0} role="region" aria-label="运单列表，可横向与纵向滚动" aria-describedby="admin-order-scroll-hint">
             <table className="a3-table shipment-ledger-table shipment-ledger-table--admin" style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, tableLayout: "fixed", minWidth: ORDER_TABLE_MIN_WIDTH }}>
               <GridColgroup widths={ORDER_COL_WIDTHS} flexIndex={ORDER_FLEX_COL_INDEX} />
               <thead>
@@ -2191,7 +2238,7 @@ export default function AdminHomePage() {
                     </td>
                   </tr>
                   {expandedOrderId === o.id ? (
-                    <tr>
+                    <tr className="shipment-detail-row">
                       {/* 详情改成全屏弹窗：格子只作挂载点，内容用 position:fixed 铺满屏幕，
                           所以这一行不占高度，表格不会被撑开 */}
                       <td colSpan={ORDER_COL_WIDTHS.length} style={{ padding: 0, border: "none" }}>
@@ -2233,7 +2280,7 @@ export default function AdminHomePage() {
                     </tr>
                   ) : null}
                   {editingOrderId === (o.orderId ?? o.id) ? (
-                    <tr key={`edit-${o.id}`}>
+                    <tr key={`edit-${o.id}`} className="shipment-detail-row">
                       {/* 编辑表单同样改成全屏弹窗；格子只作挂载点，不占高度 */}
                       <td colSpan={ORDER_COL_WIDTHS.length} style={{ padding: 0, border: "none" }}>
                         <DetailModal
@@ -2325,6 +2372,7 @@ export default function AdminHomePage() {
               </tbody>
             </table>
           </div>
+          </>
         )}
         </div>
       </section>

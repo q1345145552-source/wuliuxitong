@@ -214,3 +214,54 @@ export const roleFunctionGroups: Record<AuthRole, MenuGroup[]> = {
     },
   ],
 };
+
+/**
+ * 手机底部那排常用入口（2026-10-05 老板拍板「2a」：加；入口照我给的那几个）。
+ * 只在手机宽度显示（电脑上照旧只有左边菜单）。
+ * - menuIds：对应上面菜单里的哪几项（品牌藏掉的菜单这里也跟着藏，名字也跟着品牌改）；
+ *   只剩一项就直接跳过去，有好几项（比如两个版本的集货）点了先弹出来让人选。
+ * - more：点了打开左边那个完整菜单（里面还有修改密码、退出）。
+ */
+export interface PhoneTab {
+  label: string;
+  menuIds?: string[];
+  more?: true;
+}
+
+export const phoneTabs: Record<AuthRole, PhoneTab[]> = {
+  client: [
+    { label: "运单", menuIds: ["client-func-query"] },
+    { label: "集货", menuIds: ["client-func-consolidation", "client-func-whr-consolidation"] },
+    { label: "客服", menuIds: ["client-func-chat"] },
+    { label: "我的", more: true },
+  ],
+  staff: [
+    { label: "运单", menuIds: ["staff-func-order-shipment"] },
+    { label: "预报单", menuIds: ["staff-func-prealert"] },
+    { label: "装柜", menuIds: ["staff-func-container-loading"] },
+    { label: "派送", menuIds: ["staff-func-lastmile"] },
+    { label: "消息", menuIds: ["staff-func-chat"] },
+  ],
+  admin: [
+    { label: "首页", menuIds: ["admin-func-overview"] },
+    { label: "运单", menuIds: ["admin-func-orders"] },
+    { label: "集货", menuIds: ["admin-func-consolidation", "admin-func-whr-consolidation"] },
+    { label: "账号", menuIds: ["admin-func-staff", "admin-func-clients", "admin-func-agents"] },
+    { label: "更多", more: true },
+  ],
+  // 代理端（老板没单独点，照同一个规矩配上：首页 / 运单 / 返现单 + 更多）
+  agent: [
+    { label: "首页", menuIds: ["agent-func-home"] },
+    { label: "运单", menuIds: ["agent-func-shipments"] },
+    { label: "返现单", menuIds: ["agent-func-rebates"] },
+    { label: "更多", more: true },
+  ],
+};
+
+/** 地址里没写 # 时各工作台默认打开哪一栏（底部入口判断「当前在哪」用） */
+export const DEFAULT_SECTION_HASH: Record<string, string> = {
+  "/client": "#client-main",
+  "/staff": "#staff-prealert-review",
+  "/admin": "#overview",
+  "/agent": "#home",
+};
