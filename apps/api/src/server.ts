@@ -7,6 +7,8 @@ import { logger } from "./modules/core/logger";
 import { isBusinessError } from "./modules/core/business-error";
 import { fail } from "./modules/core/http-utils";
 import { agentGateRejection } from "./modules/core/agent-scope";
+import { openEventStream, REALTIME_STREAM_PATH } from "./realtime-stream";
+import { publishAfterWrite } from "./modules/realtime/publish";
 import type { UserRole } from "../../../packages/shared-types/role";
 
 export interface HttpRequest {
@@ -243,6 +245,15 @@ export function createApp(): MinimalHttpApp {
           return;
         }
 
+        // 实时推送的长连接（2026-10-05）：要直接拿原始响应往下写，不走 res.json，所以不进路由表
+        if (method === "GET" && path === REALTIME_STREAM_PATH) {
+          const streamAuth = await parseAuth(rawReq.headers, path);
+          if (!streamAuth || !openEventStream(rawReq, rawRes, streamAuth)) {
+            fail(createJsonResponse(rawRes), 401, "UNAUTHORIZED", "请先登录");
+          }
+          return;
+        }
+
         const routeTable =
           method === "POST" ? postRoutes : method === "DELETE" ? deleteRoutes : getRoutes;
         const handler = routeTable[path];
@@ -278,6 +289,8 @@ export function createApp(): MinimalHttpApp {
 
         try {
           await handler(req, res);
+          // 改数据成功了就告诉在线的页面「这一类变了」，它们自己去重拉（见 modules/realtime）
+          publishAfterWrite(req, rawRes.statusCode);
         } catch (error) {
           /**
            * ⚠️ 业务错误统一在这里转成 400，别让它变成 500（2026-08-27 新增）。

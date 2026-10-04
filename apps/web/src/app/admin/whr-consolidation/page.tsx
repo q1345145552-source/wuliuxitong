@@ -5,6 +5,7 @@ import { formatBreakdownVolume } from "../../../modules/shared/volume-format";
 import { apiBaseUrl, apiRequest } from "../../../services/core-api";
 import { formatBeijingTime } from "../../../modules/staff/utils";
 import { createRequestGate } from "../../../modules/shared/request-gate";
+import { useLiveRefresh } from "../../../modules/realtime/useRealtime";
 import { parseUnitPrice, unitPriceIssue } from "../../../modules/shared/unit-price";
 
 const jsonPost = { "Content-Type": "application/json" } as const;
@@ -344,22 +345,24 @@ export default function AdminWhrConsolidationPage() {
   // ==========================================================================
   // 数据加载
   // ==========================================================================
-  const loadPlans = useCallback(async () => {
-    setLoading(true);
+  /** silent：有变化时悄悄重拉（2026-10-05 实时推送）——不开「加载中」、失败不弹提示 */
+  const loadPlans = useCallback(async (opts?: { silent?: boolean }) => {
+    const silent = opts?.silent === true;
+    if (!silent) setLoading(true);
     try {
       const data = await apiRequest<{ items: PlanItem[] }>(`${apiBaseUrl()}/admin/whr-consolidation/plans`);
       setPlans(data.items ?? []);
     } catch (e: any) {
-      setToast(e?.message ?? "加载计划列表失败");
+      if (!silent) setToast(e?.message ?? "加载计划列表失败");
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, []);
 
-  const loadDetail = useCallback(async (planId: string) => {
+  const loadDetail = useCallback(async (planId: string, opts?: { silent?: boolean }) => {
     // 2026-09-01 竞态全扫：出发领号，落地验号 + 认主人（成功、失败、finally 三个分支都要验）
     const ticket = detailGate.begin();
-    setDetailLoading(true);
+    if (!opts?.silent) setDetailLoading(true); // 悄悄重拉不开「加载中」（开了整块详情会闪成「加载中...」）
     try {
       const data = await apiRequest<PlanDetail>(
         `${apiBaseUrl()}/admin/whr-consolidation/plans/detail?planId=${encodeURIComponent(planId)}`
@@ -370,6 +373,7 @@ export default function AdminWhrConsolidationPage() {
     } catch (e: any) {
       // 失败分支同样验：旧请求的报错不许安到新界面头上
       if (!detailGate.isCurrent(ticket) || selectedPlanIdRef.current !== planId) return;
+      if (opts?.silent) return; // 悄悄重拉失败：接着显示手上的
       setToast(e?.message ?? "加载详情失败");
     } finally {
       // 旧请求不许提前掐掉新请求的加载态；只要没有更新的请求在跑，加载态就该收掉
@@ -392,6 +396,16 @@ export default function AdminWhrConsolidationPage() {
   }, []);
 
   useEffect(() => { loadPlans(); }, [loadPlans]);
+
+  /* 实时更新（2026-10-05 老板：「不能有延迟」）：客户报单 / 付款、员工签收 / 装柜，服务器马上推过来，
+     计划列表和正开着的详情悄悄重拉。 */
+  useLiveRefresh({
+    topics: ["whr"],
+    refresh: async () => {
+      const openPlan = selectedPlanIdRef.current;
+      await Promise.all([loadPlans({ silent: true }), openPlan ? loadDetail(openPlan, { silent: true }) : null]);
+    },
+  });
   // ======== 删除整个集货计划（2026-08-07 新增）========
   // 级联链最长：计划 → 计划客户 → 预报单 → 货物明细 + 状态日志。
   // 所以点删除先向后端预检，把「会连带删掉什么」摆给人看；

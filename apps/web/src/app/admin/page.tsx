@@ -42,6 +42,7 @@ import { formatBeijingTime, formatMetric, shipmentStatusWithPartialZh, shipmentS
 import { SHIPMENT_STATUS_FILTER_OPTIONS } from "../../modules/shipment/shipment-status";
 import ShippingConfig from "../../components/admin/ShippingConfig";
 import { createRequestGate } from "../../modules/shared/request-gate";
+import { useLiveRefresh } from "../../modules/realtime/useRealtime";
 import {
   fetchAdminOverview,
   fetchStaffShipmentOverview,
@@ -454,36 +455,48 @@ export default function AdminHomePage() {
   const [lmShipments, setLmShipments] = useState<LastmileShipmentOption[]>([]);
   const [lmShipmentsLoading, setLmShipmentsLoading] = useState(false);
   const [lmShipmentsError, setLmShipmentsError] = useState("");
-  const loadLmShipments = async () => {
+  /** silent：有变化时悄悄重拉（2026-10-05 实时推送）——失败不弹提示、不把已有的列表换成报错 */
+  const loadLmShipments = async (opts?: { silent?: boolean }) => {
+    const silent = opts?.silent === true;
     // 2026-08-06：和员工端犯的是同一个错 —— 只拿第 1 页 500 条再在前端筛状态，
     // 能派送的 571 张里只到 126 张。改为统一走 fetchLastmileShipments()（后端按状态筛 + 翻页拿完）。
-    setLmShipmentsLoading(true);
-    setLmShipmentsError("");
-    try { setLmShipments(await fetchLastmileShipments()); }
+    if (!silent) {
+      setLmShipmentsLoading(true);
+      setLmShipmentsError("");
+    }
+    try {
+      setLmShipments(await fetchLastmileShipments());
+      if (silent) setLmShipmentsError("");
+    }
     catch (e) {
       console.error(e);
+      if (silent) return;
       const reason = e instanceof Error ? e.message : "未知错误";
       setLmShipmentsError(reason);
       setToast(`可派送运单加载失败：${reason}`);
     } finally {
-      setLmShipmentsLoading(false);
+      if (!silent) setLmShipmentsLoading(false);
     }
   };
   const [lmOrders, setLmOrders] = useState<LastmileOrderItem[]>([]);
   const [lmOrdersLoading, setLmOrdersLoading] = useState(false);
   const [lmOrdersError, setLmOrdersError] = useState("");
-  const loadLastmileOrders = async () => {
-    setLmOrdersLoading(true);
-    setLmOrdersError("");
+  const loadLastmileOrders = async (opts?: { silent?: boolean }) => {
+    const silent = opts?.silent === true;
+    if (!silent) {
+      setLmOrdersLoading(true);
+      setLmOrdersError("");
+    }
     try {
       const response = await fetch(`${apiBaseUrl()}/admin/lastmile/orders`, { headers: authHeaders() });
       const data = await parseApiResponse<{ items: LastmileOrderItem[] }>(response);
       setLmOrders(data.items ?? []);
+      if (silent) setLmOrdersError("");
     } catch (e) {
       console.error(e);
-      setLmOrdersError(e instanceof Error ? e.message : "未知错误");
+      if (!silent) setLmOrdersError(e instanceof Error ? e.message : "未知错误");
     } finally {
-      setLmOrdersLoading(false);
+      if (!silent) setLmOrdersLoading(false);
     }
   };
   // 充值审核
@@ -1043,20 +1056,29 @@ export default function AdminHomePage() {
     if (!next) return;
     setSession(next);
     void loadAll(next);
-
-    // 10 秒自动刷新同步。看板的 KPI / 柜量 / 告警必须和运单列表一起刷新，
-    // 否则右侧状态图已经变了，顶部 KPI 还停在首次打开页面时的旧值。
-    const interval = window.setInterval(() => {
-      if (document.hidden) return;
-      loadOverview().catch(() => {});
-      loadOpsOverview().catch(() => {});
-      loadStaff().catch(() => {});
-      loadClients().catch(() => {});
-      loadOrders().catch(() => {});
-      if (!shipmentOverviewPending.current) void loadShipmentOverview(); // 运单管理顶上那排数字跟列表一起刷新（2026-09-29）
-    }, 10000);
-    return () => window.clearInterval(interval);
   }, []);
+
+  /* 10 秒自动刷新同步。看板的 KPI / 柜量 / 告警必须和运单列表一起刷新，
+     否则右侧状态图已经变了，顶部 KPI 还停在首次打开页面时的旧值。
+     2026-10-05（老板要做 app：「不能有延迟」）：任何人一改，服务器马上推过来，这里立刻刷，不等 10 秒；
+     10 秒一次的定时照旧兜底（网页切到后台时定时那次照旧跳过，推送来的照刷 —— 切回来看到的就是新的）。 */
+  useLiveRefresh({
+    topics: ["shipping", "accounts", "consolidation", "whr", "fcl", "wallet"],
+    enabled: session !== null,
+    pollMs: 10000,
+    livePollMs: 10000,
+    refresh: async (_wanted, reason) => {
+      if (reason === "poll" && document.hidden) return;
+      await Promise.allSettled([
+        loadOverview(),
+        loadOpsOverview(),
+        loadStaff(),
+        loadClients(),
+        loadOrders(),
+        shipmentOverviewPending.current ? null : loadShipmentOverview(), // 运单管理顶上那排数字跟列表一起刷新（2026-09-29）
+      ]);
+    },
+  });
 
   useEffect(() => {
     if (!toast) return;
@@ -1609,6 +1631,19 @@ export default function AdminHomePage() {
     void loadRecharges();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeSection, rechargeStatusFilter]);
+
+  /* 实时更新（2026-10-05）：尾端派送、充值审核这两栏原来只在切进来时拉一次。
+     现在同事 / 客户一改就悄悄重拉（不开「加载中」、失败不弹提示）；充值按此刻选着的筛选重拉（loadRecharges 本来就不开加载态）。 */
+  useLiveRefresh({
+    topics: ["shipping"],
+    enabled: activeSection === "lastmile",
+    refresh: () => Promise.all([loadLastmileOrders({ silent: true }), loadLmShipments({ silent: true })]),
+  });
+  useLiveRefresh({
+    topics: ["wallet"],
+    enabled: activeSection === "wallet-recharges",
+    refresh: () => loadRecharges(),
+  });
 
   if (!session) return null;
 
@@ -2355,7 +2390,7 @@ export default function AdminHomePage() {
         {/* ⚠️ 故意**不传** onToast：管理员端那个全局 message 渲染在页面最底部
             （admin/page.tsx 约 2423 行），离这一块很远，报错了容易看不见。
             不传的话面板会把提示显示在自己上方，就在操作的地方。 */}
-        <LastmileAddressPanel />
+        <LastmileAddressPanel active={activeSection === "lastmile-address"} />
       </section>
 
       {/* 充值审核 */}

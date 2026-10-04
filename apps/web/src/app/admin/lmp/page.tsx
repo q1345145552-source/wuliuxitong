@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useLiveRefresh } from "../../../modules/realtime/useRealtime";
 import { createAdminLmpRate, fetchAdminLmpRates, type AdminLmpRateItem } from "../../../services/business-api";
 
 /**
@@ -33,6 +34,9 @@ export default function AdminLmpPage() {
     reload().finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
   }, []);
+
+  // 实时更新（2026-10-05）：别的管理员录了 / 改了，悄悄重拉（reload 本来就不开「加载中」）
+  useLiveRefresh({ topics: ["config"], refresh: () => reload() });
 
   return (
     <>

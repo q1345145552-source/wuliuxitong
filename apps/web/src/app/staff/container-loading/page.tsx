@@ -5,6 +5,7 @@ import Toast from "../../../modules/layout/Toast";
 import { getOptionalSession } from "../../../auth/auth-session";
 import { openShipmentTrack } from "../../../modules/shipment/ShipmentTrackModal";
 import { createRequestGate } from "../../../modules/shared/request-gate";
+import { useLiveRefresh } from "../../../modules/realtime/useRealtime";
 import { shipmentStatusZh } from "../../../modules/shipment/shipment-status";
 import { downloadContainerDispatchWorkbook } from "../../../modules/lastmile/exportDispatchWorkbooks";
 import {
@@ -233,17 +234,28 @@ export default function StaffContainerLoadingPage() {
   /** 2026-09-01 竞态全扫：柜子搜索连发两次（A 条件、B 条件），A 的响应后到会把
       B 条件的结果盖回 A 的——领号验号，数据、报错、loading 三个分支只认最新请求。 */
   const listGate = useRef(createRequestGate()).current;
-  const loadList = useCallback(async () => {
+  /** 上一次点「搜索」时用的条件。悄悄重拉照这份拉 —— 输入框里打了一半、还没点搜索的字不算数 */
+  const appliedFilterRef = useRef<Parameters<typeof fetchLoadingManifests>[0] | null>(null);
+  /** silent：有变化时悄悄重拉（2026-10-05 实时推送）——不开「加载中」、失败时列表照旧不清空、不报错 */
+  const loadList = useCallback(async (opts?: { silent?: boolean }) => {
+    const silent = opts?.silent === true;
     const ticket = listGate.begin();
-    setLoading(true);
-    setError("");
+    if (!silent) {
+      setLoading(true);
+      setError("");
+    }
+    const filter = silent && appliedFilterRef.current
+      ? appliedFilterRef.current
+      : { query: query.trim(), trackingNo: searchTrackingNo.trim(), status: statusFilter, transportMode: modeFilter };
+    if (!silent) appliedFilterRef.current = filter;
     try {
-      const items = await fetchLoadingManifests({ query: query.trim(), trackingNo: searchTrackingNo.trim(), status: statusFilter, transportMode: modeFilter });
+      const items = await fetchLoadingManifests(filter);
       if (!listGate.isCurrent(ticket)) return; // 旧条件的响应后到，丢弃
       setList(items);
       if (!selectedId && items.length > 0) selectManifest(items[0].id); // 2026-09-02 终审整改：走统一入口，同步认主人
     } catch (e) {
       if (!listGate.isCurrent(ticket)) return; // 旧请求的报错不许安到新请求头上
+      if (silent) return;
       setError(e instanceof Error ? e.message : "加载失败");
       setList([]);
     } finally {
@@ -281,7 +293,9 @@ export default function StaffContainerLoadingPage() {
       旧票不许提前掐掉新票的加载态（照 client/consolidation 的写法，一份口径）。 */
   const detailGate = useRef(createRequestGate()).current;
 
-  const loadDetail = useCallback(async (id: string) => {
+  /** silent：有变化时悄悄重拉（2026-10-05）——不清员工正在填的状态备注、不开「加载中」、失败时接着显示手上的详情 */
+  const loadDetail = useCallback(async (id: string, opts?: { silent?: boolean }) => {
+    const silent = opts?.silent === true;
     // 2026-09-02 三审整改（Codex 点名）：入口先认主人——柜 A 的操作回调 await 期间用户切到柜 B，
     // 回调醒来还会拿 A 的 id 来刷新。过期的刷新连号都不该领：不是当前选中柜就整个 return，
     // 不开 loading、不领号，旧上下文的刷新对新上下文零影响。
@@ -289,15 +303,18 @@ export default function StaffContainerLoadingPage() {
     //   finally 又因「主人不符」拒收 loading——柜 B 早已加载完、再没人来收，「加载中…」永远挂着。）
     if (!id || selectedIdRef.current !== id) return;
     const ticket = detailGate.begin(); // 认完主人才领号
-    setStatusRemark("");
-    setDetailError(""); // 2026-09-02 复核整改：新一轮加载出发，先清上一轮的失败提示
-    setLoadingDetail(true);
+    if (!silent) {
+      setStatusRemark("");
+      setDetailError(""); // 2026-09-02 复核整改：新一轮加载出发，先清上一轮的失败提示
+      setLoadingDetail(true);
+    }
     try {
       const d = await fetchLoadingManifestDetail(id);
       if (!detailGate.isCurrent(ticket) || selectedIdRef.current !== id) return; // 号作废或用户已点到别的柜子，A 的详情不落地
       setDetail(d);
     } catch (e) {
       if (!detailGate.isCurrent(ticket) || selectedIdRef.current !== id) return; // 旧柜子的报错也不弹
+      if (silent && detailRef.current?.id === id) return; // 悄悄重拉失败、手上就是这个柜的详情：接着显示
       // 2026-09-02 复核整改：加载失败绝不留上一个柜的详情冒充当前柜——
       // 清空详情，详情区显示「加载失败 + 点击重试」
       setDetail(null);
@@ -311,6 +328,33 @@ export default function StaffContainerLoadingPage() {
   }, [detailGate]);
 
   useEffect(() => { if (selectedId) void loadDetail(selectedId); }, [selectedId, loadDetail]);
+
+  /* 实时更新（2026-10-05 老板：「不能有延迟」）：同事装柜 / 卸柜 / 封柜 / 推进状态、客户新报的单，服务器马上推过来，
+     柜子列表（按此刻的搜索条件）和正开着的柜子悄悄重拉。
+     「可选运单 + 哪票已装在哪个柜」那份要把每个柜的明细都拉一遍（柜多时几十上百个请求），
+     所以最快 30 秒重算一次：30 秒内又来变化，就等到 30 秒满了再算最后一次（不会漏，只是这一块最多晚半分钟）。 */
+  const detailRef = useRef(detail);
+  detailRef.current = detail;
+  const shipmentListAtRef = useRef(0);
+  const shipmentListTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => { if (shipmentListTimerRef.current) clearTimeout(shipmentListTimerRef.current); }, []);
+  const refreshShipmentListThrottled = () => {
+    if (shipmentListTimerRef.current) return;
+    const wait = Math.max(0, shipmentListAtRef.current + 30_000 - Date.now());
+    shipmentListTimerRef.current = setTimeout(() => {
+      shipmentListTimerRef.current = null;
+      shipmentListAtRef.current = Date.now();
+      loadShipmentList().catch(() => {});
+    }, wait);
+  };
+  useLiveRefresh({
+    topics: ["shipping"],
+    refresh: async () => {
+      refreshShipmentListThrottled();
+      const openId = selectedIdRef.current;
+      await Promise.all([loadList({ silent: true }), openId ? loadDetail(openId, { silent: true }) : null]);
+    },
+  });
 
   /** 2026-09-02 复核整改：所有会写库的操作（加运单/卸运单/封柜/推进状态/撤销/删柜/改运输方式）
       动手前核对「当前详情的柜 id」===「即将操作的柜 id」。对不上说明屏幕上的详情和选中柜

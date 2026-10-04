@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { apiBaseUrl, authHeaders, parseApiResponse, fetchWithSession as fetch } from "../../services/core-api";
 import { fetchClientNotes } from "../../services/business-api";
+import { useLiveRefresh } from "../../modules/realtime/useRealtime";
 
 /* ==========================================================================
    尾端地址面板（员工端 / 管理员端共用）
@@ -43,9 +44,11 @@ interface ClientRow {
 export interface LastmileAddressPanelProps {
   /** 有全局 toast 的页面传进来；没传就用面板自己那条提示 */
   onToast?: (message: string) => void;
+  /** 这一栏现在显示着（2026-10-05 实时更新：显示着才跟着别人的改动重拉，藏着的不拉） */
+  active?: boolean;
 }
 
-export function LastmileAddressPanel({ onToast }: LastmileAddressPanelProps) {
+export function LastmileAddressPanel({ onToast, active = false }: LastmileAddressPanelProps) {
   const [keyword, setKeyword] = useState("");
   const [items, setItems] = useState<ClientRow[]>([]);
   const [loading, setLoading] = useState(false);
@@ -81,14 +84,15 @@ export function LastmileAddressPanel({ onToast }: LastmileAddressPanelProps) {
   const keywordRef = useRef("");
   keywordRef.current = keyword;
 
-  const loadAddresses = useCallback(async (kw: string) => {
+  /** silent：有变化时悄悄重拉——不把列表换成「加载中…」、失败不弹提示 */
+  const loadAddresses = useCallback(async (kw: string, opts?: { silent?: boolean }) => {
     /* ⚠️ 快速连删（「ABC」→「AB」→「A」）会连发两个请求，网络上谁先回没有保证。
        若「AB」的响应比「A」的后到，items 和 loadedKeyword 会停在 AB 那份小名单上、
        而输入框里是「A」—— 本地筛又开始缺人。所以每次发请求领一个自增序号，
        响应回来时序号已经不是最新的就整个丢弃（数据、报错、loading 都不动，
        全交给最后那个请求收尾）。 */
     const seq = ++loadSeqRef.current;
-    setLoading(true);
+    if (!opts?.silent) setLoading(true);
     try {
       const resp = await fetch(`${apiBaseUrl()}/staff/lastmile/addresses?keyword=${encodeURIComponent(kw)}`, {
         headers: authHeaders(),
@@ -100,6 +104,7 @@ export function LastmileAddressPanel({ onToast }: LastmileAddressPanelProps) {
       setLoadedKeyword(kw);
     } catch (e) {
       if (seq !== loadSeqRef.current) return; // 过期请求的报错也不弹，免得盖住新请求的结果
+      if (opts?.silent) return;
       say(`地址库加载失败：${e instanceof Error ? e.message : "未知错误"}`);
     } finally {
       if (seq === loadSeqRef.current) setLoading(false);
@@ -119,6 +124,14 @@ export function LastmileAddressPanel({ onToast }: LastmileAddressPanelProps) {
     void loadAddresses("");
     void loadNotes();
   }, [loadAddresses, loadNotes]);
+
+  /* 实时更新（2026-10-05 老板：「不能有延迟」）：同事 / 客户改了地址、改了备注，按输入框里此刻的词悄悄重拉。
+     finally 照旧只认最新序号收「加载中」—— 作废了一次正在转圈的搜索，也由这次收尾。 */
+  useLiveRefresh({
+    topics: ["shipping", "config"],
+    enabled: active,
+    refresh: () => Promise.all([loadAddresses(keywordRef.current, { silent: true }), loadNotes()]),
+  });
 
   const saveNote = async (clientId: string, content: string) => {
     try {

@@ -5,6 +5,7 @@
  */
 import { useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { formatBeijingTime } from "../../modules/staff/utils";
+import { useLiveRefresh } from "../../modules/realtime/useRealtime";
 
 export const PREALERT_STATUS_ZH: Record<string, string> = {
   pending: "待签收",
@@ -175,6 +176,20 @@ export function useAgentLoad<T>(loader: () => Promise<T>, deps: unknown[]) {
       .finally(() => { if (mine === seq.current) setLoading(false); });
   }, [run]);
   useEffect(() => { reload(); }, [reload]);
+  /* 实时更新（2026-10-05 老板：「不能有延迟」）：代理端各页都走这个钩子，所以在这里统一接一次 ——
+     员工改了运单状态、自己名下客户下了单、返现单出了 / 付了，服务器马上推过来，悄悄重拉：
+     不开「加载中」、失败不换成报错（接着显示手上的）；跟 reload 共用序号，谁后出发谁算数。 */
+  useLiveRefresh({
+    topics: ["shipping", "accounts", "config"],
+    refresh: async () => {
+      const mine = ++seq.current;
+      try {
+        const d = await run();
+        if (mine === seq.current) { setData(d); setError(""); }
+      } catch { /* 悄悄重拉失败：接着显示手上的 */ }
+      finally { if (mine === seq.current) setLoading(false); }
+    },
+  });
   return { data, loading, error, reload };
 }
 

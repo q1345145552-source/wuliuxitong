@@ -51,6 +51,7 @@ import {
 import FclInquiryPanel from "../../components/client/FclInquiryPanel";
 import { beijingDate, beijingToday } from "../../modules/shared/beijing-date";
 import { nextAutoTotals, orderDimsVolume, productRowTotals } from "../../modules/orders/auto-totals";
+import { useLiveRefresh } from "../../modules/realtime/useRealtime";
 
 const initialSearch = {
   batchNo: "",
@@ -737,45 +738,51 @@ export default function ClientHomePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeSection]);
 
-  useEffect(() => {
-    if (activeSection !== "client-query") return;
-    // 有搜索条件时不自动刷新；纯浏览分组（在途/已完成/全部）正常刷新
-    const hasFilter = search.batchNo || search.domesticTrackingNo || search.status || search.transportMode || search.warehouseId || search.arrivedDateFrom || search.arrivedDateTo;
-    if (hasFilter || dashboardLoading) return;
-    let timer: ReturnType<typeof setTimeout>;
-    let cancelled = false;
-    const poll = async () => {
-      if (cancelled) return;
-      if (!shipmentOverviewPending.current) void loadShipmentOverview(); // 顶上那排数字跟列表一起 10 秒刷新（2026-09-29）
+  /* 2026-10-05（老板要做 app：「不能有延迟」）：运单有变化服务器马上推过来，这里立刻拉，不等 10 秒；
+     10 秒一次的轮询照旧留着兜底（推送断了也照样更新）。「同一时间只拉一份、拉的过程中又来了就拉完再拉」由 useLiveRefresh 管，
+     原来那条 setTimeout 链换成它，里面每一步照旧（领号验号、核分组、替手动查询收 loading）。 */
+  // 有搜索条件时不自动刷新；纯浏览分组（在途/已完成/全部）正常刷新
+  const queryHasFilter = !!(search.batchNo || search.domesticTrackingNo || search.status || search.transportMode || search.warehouseId || search.arrivedDateFrom || search.arrivedDateTo);
+  useLiveRefresh({
+    topics: ["shipping"],
+    enabled: activeSection === "client-query" && !queryHasFilter && !dashboardLoading,
+    pollMs: 10000,
+    livePollMs: 10000,
+    refresh: async (isStillWanted) => {
+      if (!shipmentOverviewPending.current) void loadShipmentOverview(); // 顶上那排数字跟列表一起刷新（2026-09-29）
       const mode = queryModeRef.current;
       // 2026-08-31（条目23）：分组值改成 statusGroup 四分类，类型对上后不再需要 as 强转
-      if (mode) {
-        /* 2026-09-01 竞态全扫（缺口②）：轮询每一次开火都要重新领号 ——
-           领一次囤着复用的话，第二轮起号就旧了，会把自己的响应永远作废。 */
-        const ticket = orderListGate.begin();
-        try {
-          const orders = mode === "all"
-            ? await fetchClientOrders()
-            : await fetchClientOrders({ statusGroup: mode });
-          // 2026-09-01：除 cancelled 外先验号再核分组——极端时序下 cleanup 还没跑、响应先到
-          if (!cancelled && orderListGate.isCurrent(ticket) && queryModeRef.current === mode) {
-            setQueriedOrders(orders);
-            setHasQueried(true);
-            if (mode === "all") saveOrdersToCache(orders);
-          }
-        } catch { /* silent */ }
-        finally {
-          /* 2026-09-01 竞态全扫：轮询领号可能作废了一份在途的手动查询（那份的 finally
-             验号失败后不再清 loading）；只要轮询自己仍是最新一号，就替它把 loading 收掉，
-             别让「执行查询」按钮一直转圈。 */
-          if (!cancelled && orderListGate.isCurrent(ticket)) setLoading(false);
+      if (!mode) return;
+      /* 2026-09-01 竞态全扫（缺口②）：轮询每一次开火都要重新领号 ——
+         领一次囤着复用的话，第二轮起号就旧了，会把自己的响应永远作废。 */
+      const ticket = orderListGate.begin();
+      try {
+        const orders = mode === "all"
+          ? await fetchClientOrders()
+          : await fetchClientOrders({ statusGroup: mode });
+        // 2026-09-01：除「已经切走」外先验号再核分组——极端时序下 cleanup 还没跑、响应先到
+        if (isStillWanted() && orderListGate.isCurrent(ticket) && queryModeRef.current === mode) {
+          setQueriedOrders(orders);
+          setHasQueried(true);
+          if (mode === "all") saveOrdersToCache(orders);
         }
+      } catch { /* silent */ }
+      finally {
+        /* 2026-09-01 竞态全扫：轮询领号可能作废了一份在途的手动查询（那份的 finally
+           验号失败后不再清 loading）；只要轮询自己仍是最新一号，就替它把 loading 收掉，
+           别让「执行查询」按钮一直转圈。 */
+        if (isStillWanted() && orderListGate.isCurrent(ticket)) setLoading(false);
       }
-      if (!cancelled) timer = setTimeout(poll, 10000);
-    };
-    timer = setTimeout(poll, 10000);
-    return () => { cancelled = true; clearTimeout(timer); };
-  }, [activeSection, queryMode, dashboardLoading, search.batchNo, search.domesticTrackingNo, search.status, search.transportMode, search.warehouseId, search.arrivedDateFrom, search.arrivedDateTo]);
+    },
+  });
+
+  /* 主页、预报单这两栏：原来不自动刷新，员工收了货 / 改了状态要客户自己刷新页面。
+     现在有变化就悄悄重拉（refreshMainData 本来就不开「加载中」；搜索池会跟着清掉、正在搜的会自己重建）。 */
+  useLiveRefresh({
+    topics: ["shipping"],
+    enabled: (activeSection === "client-main" || activeSection === "client-prealert") && !dashboardLoading,
+    refresh: () => refreshMainData(),
+  });
 
   const statusToneClass = (status?: string): string => {
     const value = (status ?? "").toLowerCase();

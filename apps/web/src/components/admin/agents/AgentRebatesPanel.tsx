@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { useLiveRefresh } from "../../../modules/realtime/useRealtime";
 import { formatBeijingTimeShort } from "../../../modules/staff/utils";
 import {
   fetchAgentRebateDetail,
@@ -68,6 +69,17 @@ export default function AgentRebatesPanel({ agents }: { agents: AdminAgentItem[]
     }
   }, [agentId, month, status]);
   useEffect(() => { void load(); }, [load]);
+
+  // 实时更新（2026-10-05）：别的管理员标了付款 / 撤回、返现单新出了，悄悄按此刻的筛选重拉（不开「加载中」、失败接着显示手上的）
+  useLiveRefresh({
+    topics: ["accounts"],
+    refresh: async () => {
+      try {
+        setItems(await fetchAgentRebateStatements({ agentId, month, status }));
+        setError("");
+      } catch { /* 同上 */ }
+    },
+  });
 
   const openDetail = async (id: string) => {
     setDetailLoading(id);

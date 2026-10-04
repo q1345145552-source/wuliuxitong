@@ -18,6 +18,7 @@ import {
   fetchClientWalletOverview,} from "../../../services/business-api";
 import { formatBeijingTime } from "../../../modules/staff/utils";
 import { createRequestGate } from "../../../modules/shared/request-gate";
+import { useLiveRefresh } from "../../../modules/realtime/useRealtime";
 import { useRouter } from "next/navigation";
 import { useVerifiedSessionBrand } from "../../../modules/branding/useWorkbenchBrand";
 
@@ -181,15 +182,17 @@ function ClientConsolidationContent() {
     } catch { setBalance(null); return null; }
   }, []);
 
-  const loadTasks = useCallback(async () => {
-    setLoading(true);
+  /** silent：有变化时悄悄重拉（2026-10-05 实时推送）——不开「加载中」（不然别人每改一次列表就闪一下）、失败不弹提示 */
+  const loadTasks = useCallback(async (opts?: { silent?: boolean }) => {
+    const silent = opts?.silent === true;
+    if (!silent) setLoading(true);
     try {
       const data = await fetchClientConsolidationTasks();
       setTasks(data);
     } catch (e: any) {
-      setToast(e.message);
+      if (!silent) setToast(e.message);
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, []);
 
@@ -198,6 +201,9 @@ function ClientConsolidationContent() {
   // 响应落地前先核对；再叠加详情自己的门闩，防同一任务的新旧两次刷新互盖。
   const selectedTaskIdRef = useRef<string | null>(null);
   const detailGate = useRef(createRequestGate()).current;
+  /** 悄悄重拉失败时，手上已经有这张任务的详情就接着显示，别换成「加载失败」 */
+  const taskDetailRef = useRef<ConsolidationTaskItem | null>(null);
+  taskDetailRef.current = taskDetail;
 
   /** 2026-09-02 终审整改：换选中任务必须在用户点击处**同步**赋值 ref，useEffect 里那句只作兜底。
       只靠 useEffect 的话，点击到 effect 跑起来之间有间隙，旧任务的晚响应在间隙里核对的还是旧 ref，
@@ -209,7 +215,8 @@ function ClientConsolidationContent() {
     setSelectedTaskId(id);
   };
 
-  const loadDetail = useCallback(async (taskId: string) => {
+  const loadDetail = useCallback(async (taskId: string, opts?: { silent?: boolean }) => {
+    const silent = opts?.silent === true;
     // 2026-09-02 三审整改：进门第一件事先认主人——过期上下文的刷新连号都不许领。
     // 场景：任务 A 的操作（付款/删预报单等）完成后回调拿着 A 来刷新，但用户已切到 B：
     // 若此处照常领号，会把 B 还在路上的请求作废；而 A 自己的响应又过不了主人核对被丢弃，
@@ -217,7 +224,7 @@ function ClientConsolidationContent() {
     // 不领号、不开 loading、不清数据，旧上下文的刷新对新上下文零影响。
     if (taskId !== selectedTaskIdRef.current) return;
     const ticket = detailGate.begin(); // 2026-09-01 竞态全扫：出发时领号
-    setDetailLoading(true);
+    if (!silent) setDetailLoading(true); // 悄悄重拉不开「加载中」：开了详情整块会换成「加载中...」闪一下
     try {
       const data = await fetchClientConsolidationTaskDetail(taskId);
       // 2026-09-01 竞态全扫：号作废或主人换了（用户切了任务/回了列表），整段丢弃
@@ -227,6 +234,8 @@ function ClientConsolidationContent() {
     } catch (e: any) {
       // 2026-09-01 竞态全扫：旧请求的报错不许安到新请求头上
       if (!detailGate.isCurrent(ticket) || selectedTaskIdRef.current !== taskId) return;
+      // 悄悄重拉失败、手上已有这张任务的详情：接着显示，等下一次（finally 照旧收 loading）
+      if (silent && taskDetailRef.current?.id === taskId) return;
       // 2026-09-02 终审整改（Codex 点名）：B 加载失败时不许留着 A 的详情冒充 B——
       // 清空详情并明示「加载失败，点击重试」
       setTaskDetail(null);
@@ -243,6 +252,16 @@ function ClientConsolidationContent() {
 
   useEffect(() => { loadTasks(); }, [loadTasks]);
   useEffect(() => { loadBalance(); }, [loadBalance]);
+
+  /* 实时更新（2026-10-05 老板：「不能有延迟」）：集货任务、付款、余额有变化，服务器马上推过来，
+     列表、余额、正开着的那张详情一起悄悄重拉（原来要自己刷新页面才看得到员工报的价、收的货）。 */
+  useLiveRefresh({
+    topics: ["consolidation", "wallet"],
+    refresh: async () => {
+      const openId = selectedTaskIdRef.current;
+      await Promise.all([loadTasks({ silent: true }), loadBalance(), openId ? loadDetail(openId, { silent: true }) : null]);
+    },
+  });
 
   useEffect(() => {
     selectedTaskIdRef.current = selectedTaskId; // 2026-09-01 竞态全扫：先记下当前主人再取数

@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { useLiveRefresh } from "../../../modules/realtime/useRealtime";
 import AgentFormModal from "../../../components/admin/agents/AgentFormModal";
 import AgentRebatesPanel from "../../../components/admin/agents/AgentRebatesPanel";
 import {
@@ -55,6 +56,17 @@ export default function AdminAgentsPage() {
     }
   }, []);
   useEffect(() => { void load(); }, [load]);
+
+  // 实时更新（2026-10-05）：别的管理员开了 / 改了 / 停了代理，悄悄重拉（不开「加载中」、失败接着显示手上的）
+  useLiveRefresh({
+    topics: ["accounts"],
+    refresh: async () => {
+      try {
+        setAgents(await fetchAdminAgents());
+        setError("");
+      } catch { /* 同上 */ }
+    },
+  });
 
   useEffect(() => {
     if (!toast) return;

@@ -17,6 +17,7 @@ import { useSearchParams } from "next/navigation";
 import ChatThread, { CHAT_UNREAD_EVENT } from "../../../modules/cs-chat/ChatThread";
 import ChatPushToggle from "../../../modules/cs-chat/ChatPushToggle";
 import { fetchChatConversations, type ChatConversation } from "../../../services/cs-chat-api";
+import { subscribeRealtime } from "../../../services/realtime";
 import { createRequestGate } from "../../../modules/shared/request-gate";
 
 const LIST_POLL_MS = 5000;
@@ -107,7 +108,9 @@ function StaffChatInbox() {
     // 聊天窗口标了已读 / 发了消息：列表上的红色数字马上跟着变
     const onChanged = () => { void loadList(); };
     window.addEventListener(CHAT_UNREAD_EVENT, onChanged);
-    return () => { window.clearInterval(timer); window.removeEventListener(CHAT_UNREAD_EVENT, onChanged); };
+    // 实时推送（2026-10-05）：哪个客户来了消息，列表马上跟着变，不等 5 秒
+    const unsubscribeRealtime = subscribeRealtime(["chat"], onChanged);
+    return () => { window.clearInterval(timer); window.removeEventListener(CHAT_UNREAD_EVENT, onChanged); unsubscribeRealtime(); };
   }, [loadList]);
 
   // 网址上的 ?clientId= 跟着选中的走（刷新 / 复制链接还在同一个客户）

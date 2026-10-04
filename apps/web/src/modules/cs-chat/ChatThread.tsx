@@ -35,6 +35,7 @@ import {
   type ChatRef,
   type ChatScope,
 } from "../../services/cs-chat-api";
+import { subscribeRealtime } from "../../services/realtime";
 import { compressImageForUpload } from "../shared/image-compress";
 import { CLIENT_STATUS_ZH_OVERRIDES, shipmentStatusZh } from "../shipment/shipment-status";
 import ChatRefPicker, { type PickedRef } from "./ChatRefPicker";
@@ -357,10 +358,13 @@ export default function ChatThread(props: {
     const timer = window.setInterval(() => { void tick(); }, CHAT_POLL_MS);
     const onVisible = () => { if (document.visibilityState === "visible") void tick(); };
     document.addEventListener("visibilitychange", onVisible);
+    // 实时推送（2026-10-05）：对方发了 / 撤回 / 看了，服务器马上推过来，立刻取一次，不等下一个 3 秒
+    const unsubscribeRealtime = subscribeRealtime(["chat"], () => { void tick(); });
     return () => {
       stopped = true;
       window.clearInterval(timer);
       document.removeEventListener("visibilitychange", onVisible);
+      unsubscribeRealtime();
     };
   }, [key, loading, loadError, markSeen]);
 

@@ -10,6 +10,7 @@ import DetailModal from "../../modules/layout/DetailModal";
 import { formatBeijingTime } from "../../modules/staff/utils";
 import { beijingDate } from "../../modules/shared/beijing-date";
 import { amount2 } from "../../modules/shared/money-format";
+import { useLiveRefresh } from "../../modules/realtime/useRealtime";
 
 /* 2026-08-31（Codex 二轮）：列表接口不再下发 certFileBase64 / productImages 大字段
    （表格根本不显示它们），remark 客户角色也拿不到了——类型跟着后端同步。
@@ -112,7 +113,8 @@ export default function FclInquiryPanel(props: ClientFclInquiryProps) {
   const listPageRef = useRef(listPage);
   listPageRef.current = listPage;
 
-  const loadList = async (page = listPage) => {
+  /** silent：有变化时悄悄重拉（2026-10-05 实时推送），失败不弹提示 */
+  const loadList = async (page = listPage, opts?: { silent?: boolean }) => {
     const ticket = listGate.begin(); // 2026-09-01 竞态全扫：出发时领号
     try {
       // 2026-08-31（Codex 二轮）：带上 page/pageSize，接口只回当前页 + 真实总数
@@ -127,6 +129,7 @@ export default function FclInquiryPanel(props: ClientFclInquiryProps) {
       setListLoaded(true);
     } catch (e: any) {
       if (!listGate.isCurrent(ticket)) return; // 2026-09-01 竞态全扫：旧请求的报错不许安到新请求头上
+      if (opts?.silent) return;
       props.onToast("加载询价记录失败：" + (e.message || "网络错误"));
       setListError(true);
       setListLoaded(true);
@@ -218,6 +221,26 @@ export default function FclInquiryPanel(props: ClientFclInquiryProps) {
     if (props.visible) void loadList(listPageRef.current);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [props.visible]);
+
+  /* 实时更新（2026-10-05 老板：「不能有延迟」）：客户新提交、客服报价、客户接受，服务器马上推过来，
+     列表（停在当前页）和正开着的详情悄悄重拉。详情只换内容、不清空、不动员工正在填的报价金额和备注；
+     详情还没出来（openDetail 正在拉）就不碰，序号不加 —— 期间又开 / 关了详情，这份就不落地。 */
+  const detailRef = useRef(detail);
+  detailRef.current = detail;
+  useLiveRefresh({
+    topics: ["fcl"],
+    enabled: props.visible,
+    refresh: async () => {
+      const shown = detailRef.current;
+      const seq = detailSeqRef.current;
+      const detailTask = shown
+        ? apiRequest<FclInquiryDetail>(`${apiBaseUrl()}/client/fcl-inquiries/detail?id=${encodeURIComponent(shown.id)}`)
+            .then((d) => { if (detailSeqRef.current === seq && detailRef.current?.id === d.id) setDetail(d); })
+            .catch(() => { /* 悄悄重拉失败：接着显示手上的 */ })
+        : null;
+      await Promise.all([loadList(listPageRef.current, { silent: true }), detailTask]);
+    },
+  });
 
   if (!props.visible) return null;
 

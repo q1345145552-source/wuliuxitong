@@ -33,6 +33,7 @@ import DetailModal from "../../modules/layout/DetailModal";
 import Toast from "../../modules/layout/Toast";
 import { apiBaseUrl, authHeaders, parseApiResponse, fetchWithSession as fetch } from "../../services/core-api";
 import { createRequestGate } from "../../modules/shared/request-gate";
+import { useLiveRefresh } from "../../modules/realtime/useRealtime";
 import { viewerCanSeeOperator } from "../../auth/operator-visibility";
 import LastmileAddressPanel from "../../components/lastmile/LastmileAddressPanel";
 import {
@@ -363,38 +364,50 @@ export default function StaffHomePage() {
   const [lmShipments, setLmShipments] = useState<LastmileShipmentOption[]>([]);
   const [lmShipmentsLoading, setLmShipmentsLoading] = useState(false);
   const [lmShipmentsError, setLmShipmentsError] = useState("");
-  const loadLmShipments = async () => {
+  /** silent：有变化时悄悄重拉（2026-10-05 实时推送）——失败不弹提示、不把已有的列表换成报错 */
+  const loadLmShipments = async (opts?: { silent?: boolean }) => {
+    const silent = opts?.silent === true;
     // 2026-08-06：原来是自己拼 `?pageSize=500&all=1` 再在前端筛状态 ——
     // 只拿到第 1 页 500 条（所有状态混着排），571 张能派送的里只到 126 张，漏了 445 张。
     // 改为统一走 fetchLastmileShipments()：后端按状态筛 + 翻页拿完。
-    setLmShipmentsLoading(true);
-    setLmShipmentsError("");
-    try { setLmShipments(await fetchLastmileShipments()); }
+    if (!silent) {
+      setLmShipmentsLoading(true);
+      setLmShipmentsError("");
+    }
+    try {
+      setLmShipments(await fetchLastmileShipments());
+      if (silent) setLmShipmentsError("");
+    }
     catch (e) {
       console.error(e);
+      if (silent) return;
       const reason = e instanceof Error ? e.message : "未知错误";
       setLmShipmentsError(reason);
       setToast(`可派送运单加载失败：${reason}`);
     } finally {
-      setLmShipmentsLoading(false);
+      if (!silent) setLmShipmentsLoading(false);
     }
   };
   const [lmOrderList, setLmOrderList] = useState<LastmileOrderItem[]>([]);
   const [lmOrdersLoading, setLmOrdersLoading] = useState(false);
   const [lmOrdersError, setLmOrdersError] = useState("");
   // 【审查问题 3】走 parseApiResponse：401 会自动跳登录页
-  const loadLmOrders = async () => {
-    setLmOrdersLoading(true);
-    setLmOrdersError("");
+  const loadLmOrders = async (opts?: { silent?: boolean }) => {
+    const silent = opts?.silent === true;
+    if (!silent) {
+      setLmOrdersLoading(true);
+      setLmOrdersError("");
+    }
     try {
       const response = await fetch(`${apiBaseUrl()}/admin/lastmile/orders`, { headers: authHeaders() });
       const data = await parseApiResponse<{ items: LastmileOrderItem[] }>(response);
       setLmOrderList(data.items ?? []);
+      if (silent) setLmOrdersError("");
     } catch (e) {
       console.error(e);
-      setLmOrdersError(e instanceof Error ? e.message : "未知错误");
+      if (!silent) setLmOrdersError(e instanceof Error ? e.message : "未知错误");
     } finally {
-      setLmOrdersLoading(false);
+      if (!silent) setLmOrdersLoading(false);
     }
   };
 
@@ -407,9 +420,13 @@ export default function StaffHomePage() {
   const [walletLoading, setWalletLoading] = useState(false);
   const [walletError, setWalletError] = useState("");
   const walletGate = useRef(createRequestGate()).current;
-  const loadWalletBalances = async () => {
+  const walletLoadedRef = useRef(walletLoaded);
+  walletLoadedRef.current = walletLoaded;
+  /** silent：有变化时悄悄重拉（2026-10-05）——按钮不变「刷新中…」；已经有数据时失败不换成报错 */
+  const loadWalletBalances = async (opts?: { silent?: boolean }) => {
+    const silent = opts?.silent === true;
     const ticket = walletGate.begin();
-    setWalletLoading(true);
+    if (!silent) setWalletLoading(true);
     try {
       const data = await fetchStaffWalletBalances();
       if (!walletGate.isCurrent(ticket)) return;
@@ -418,6 +435,7 @@ export default function StaffHomePage() {
       setWalletLoaded(true);
     } catch (e) {
       if (!walletGate.isCurrent(ticket)) return;
+      if (silent && walletLoadedRef.current) return;
       setWalletError(e instanceof Error ? e.message : "网络错误");
     } finally {
       if (walletGate.isCurrent(ticket)) setWalletLoading(false);
@@ -701,6 +719,27 @@ export default function StaffHomePage() {
   }, []);
 
   useEffect(() => { loadLmOrders(); loadLmShipments(); }, []);
+
+  /* 实时更新（2026-10-05 老板：「不能有延迟」）：别人（客户建单、同事收货改状态、装柜派送）一改，服务器马上推过来，
+     正看着的那一栏悄悄重拉。原来运单 / 预报单列表只在打开页面时拉一次（6-28 为了让系统快去掉了 30 秒刷新），
+     现在不用定时拉，只在真有变化时拉，不会像以前那样拖慢系统。
+     loadPageData 本来就不开「加载中」；编辑中的草稿按单号存着、选中的行按单号记着，重拉不会冲掉。 */
+  useLiveRefresh({
+    topics: ["shipping"],
+    enabled: activeSection === "staff-prealert-review" || activeSection === "staff-order-shipment"
+      || activeSection === "staff-create-order" || activeSection === "staff-ops-tools",
+    refresh: () => loadPageData(),
+  });
+  useLiveRefresh({
+    topics: ["shipping"],
+    enabled: activeSection === "staff-lastmile",
+    refresh: () => Promise.all([loadLmOrders({ silent: true }), loadLmShipments({ silent: true })]),
+  });
+  useLiveRefresh({
+    topics: ["wallet", "consolidation", "whr"],
+    enabled: activeSection === "staff-wallet",
+    refresh: () => loadWalletBalances({ silent: true }),
+  });
 
   useEffect(() => {
     if (!toast) return;
@@ -2385,7 +2424,7 @@ export default function StaffHomePage() {
         <h2 style={{ marginTop: 0, fontSize: 18, color: "var(--t-heading)", marginBottom: 12 }}>尾端地址</h2>
         <p style={{ fontSize: 12, color: "var(--t-strong)", marginBottom: 10 }}>客户端注册后自动同步唛头与派送地址。</p>
         {/* 搜索 / 列表 / 添加 / 编辑 / 删除 / 备注 全在这个共用组件里，管理员端用的是同一个 */}
-        <LastmileAddressPanel onToast={setToast} />
+        <LastmileAddressPanel onToast={setToast} active={activeSection === "staff-address"} />
       </section>
 
 

@@ -6,6 +6,7 @@ import { apiBaseUrl, apiRequest } from "../../../services/core-api";
 import { formatBeijingTime } from "../../../modules/staff/utils";
 import { base64Bytes, compressImageForUpload, formatBytes } from "../../../modules/shared/image-compress";
 import { createRequestGate } from "../../../modules/shared/request-gate";
+import { useLiveRefresh } from "../../../modules/realtime/useRealtime";
 
 // 选文件时的原图上限。超过这个的多半是选错了（视频/超大扫描件），先挡掉再说。
 const MAX_SOURCE_BYTES = 30 * 1024 * 1024;
@@ -288,24 +289,33 @@ export default function ClientWhrConsolidationPage() {
   }, []);
 
 
-  const loadPlans = useCallback(async () => {
-    setLoading(true);
+  /** silent：有变化时悄悄重拉（2026-10-05 实时推送）——不开「加载中」、失败不弹提示 */
+  const loadPlans = useCallback(async (opts?: { silent?: boolean }) => {
+    const silent = opts?.silent === true;
+    if (!silent) setLoading(true);
     try {
       const data = await apiRequest<{ items: MyPlan[] }>(`${apiBaseUrl()}/client/whr-consolidation/plans`);
       setPlans(data.items ?? []);
-    } catch (e: any) { setToast(e?.message ?? "加载计划列表失败"); }
-    finally { setLoading(false); }
+    } catch (e: any) { if (!silent) setToast(e?.message ?? "加载计划列表失败"); }
+    finally { if (!silent) setLoading(false); }
   }, []);
 
-  const loadDetail = useCallback(async (planId: string) => {
+  /** 悄悄重拉失败时，手上已有详情（换计划时会清空，所以有就是当前这个计划的）就接着显示 */
+  const detailRef = useRef<MyDetail | null>(null);
+  detailRef.current = detail;
+
+  const loadDetail = useCallback(async (planId: string, opts?: { silent?: boolean }) => {
     /* 2026-09-29（复核发现的老问题）：先认主人再领号。原来改完 A 的收货地址、保存还没回来就点了 B，
        A 保存成功后顺手重拉 A 的详情 —— 领号把 B 正在拉的那次作废，A 的结果又因为「不是当前选中的」被丢掉，
        B 高亮着、下面一片空白，要点两下那一行才出来。现在不是当前选中的计划就不拉，不去作废别人。 */
     if (selectedPlanIdRef.current !== planId) return;
     // 2026-09-01 竞态全扫：出发领号，落地验号 + 认主人（成功、失败、finally 三个分支都要验）
     const ticket = detailGate.begin();
-    setDetailLoading(true);
-    setDetailError("");
+    const silent = opts?.silent === true; // 有变化时悄悄重拉（2026-10-05）：不开「加载中」、不清失败提示
+    if (!silent) {
+      setDetailLoading(true);
+      setDetailError("");
+    }
     try {
       const data = await apiRequest<MyDetail>(
         `${apiBaseUrl()}/client/whr-consolidation/my-detail?planId=${encodeURIComponent(planId)}`
@@ -317,6 +327,7 @@ export default function ClientWhrConsolidationPage() {
     } catch (e: any) {
       // 失败分支同样验：旧请求的报错不许安到新界面头上
       if (!detailGate.isCurrent(ticket) || selectedPlanIdRef.current !== planId) return;
+      if (silent && detailRef.current) return; // 悄悄重拉失败：接着显示手上的，等下一次
       setToast(e?.message ?? "加载详情失败");
       setDetailError(e?.message || "加载失败");
     }
@@ -328,6 +339,16 @@ export default function ClientWhrConsolidationPage() {
 
   useEffect(() => { loadPlans(); }, [loadPlans]);
   useEffect(() => { loadBalance(); }, [loadBalance]);
+
+  /* 实时更新（2026-10-05 老板：「不能有延迟」）：仓库签收、装柜、付款、余额有变化，服务器马上推过来，
+     计划列表、余额、正开着的详情一起悄悄重拉。 */
+  useLiveRefresh({
+    topics: ["whr", "wallet"],
+    refresh: async () => {
+      const openId = selectedPlanIdRef.current;
+      await Promise.all([loadPlans({ silent: true }), loadBalance(), openId ? loadDetail(openId, { silent: true }) : null]);
+    },
+  });
 
   // Toast 自动消失，避免旧提示一直挂在页面顶部
   useEffect(() => {

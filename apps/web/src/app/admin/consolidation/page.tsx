@@ -18,6 +18,7 @@ import {
 import { formatBeijingTime } from "../../../modules/staff/utils";
 import { isPositiveIntText, isPositiveNumberText } from "../../../modules/shared/number-text";
 import { createRequestGate } from "../../../modules/shared/request-gate";
+import { useLiveRefresh } from "../../../modules/realtime/useRealtime";
 
 // ============================================================================
 // 状态中文
@@ -124,15 +125,18 @@ export default function AdminConsolidationPage() {
   // ======== 数据 ========
   // 2026-09-01 竞态全扫：快速切状态筛选时，先回来的旧响应不许盖掉新筛选的列表
   const tasksGate = useRef(createRequestGate()).current;
-  const loadTasks = useCallback(async () => {
+  /** silent：有变化时悄悄重拉（2026-10-05 实时推送）——不开「加载中」、失败不弹提示；finally 照旧只认最新一号收加载态 */
+  const loadTasks = useCallback(async (opts?: { silent?: boolean }) => {
+    const silent = opts?.silent === true;
     const ticket = tasksGate.begin();
-    setLoading(true);
+    if (!silent) setLoading(true);
     try {
       const data = await fetchAdminConsolidationTasks(statusFilter || undefined);
       if (!tasksGate.isCurrent(ticket)) return; // 号作废：旧筛选的数据不许上屏
       setTasks(data);
     } catch (e: any) {
       if (!tasksGate.isCurrent(ticket)) return; // 旧请求的报错也不许乱入
+      if (silent) return;
       setToast(e.message);
     } finally {
       if (tasksGate.isCurrent(ticket)) setLoading(false); // 旧请求不许提前掐掉新请求的加载态
@@ -151,18 +155,32 @@ export default function AdminConsolidationPage() {
     setSelectedTaskId(id);
   };
 
-  const loadDetail = useCallback(async (taskId: string) => {
+  const loadDetail = useCallback(async (taskId: string, opts?: { silent?: boolean }) => {
     try {
       const data = await fetchStaffConsolidationTaskDetail(taskId);
       if (selectedTaskIdRef.current !== taskId) return; // 已切走/已返回列表：A 的详情不许挂在 B 名下
       setTaskDetail(data);
     } catch (e: any) {
       if (selectedTaskIdRef.current !== taskId) return;
+      if (opts?.silent) return; // 悄悄重拉失败：接着显示手上的
       setToast(e.message);
     }
   }, []);
 
   useEffect(() => { loadTasks(); }, [loadTasks]);
+
+  /* 实时更新（2026-10-05 老板：「不能有延迟」）：任何人改了集货任务 / 付款，列表（按此刻的筛选）和正开着的详情悄悄重拉。
+     详情还没出来（刚点开、正在拉）就不碰它。 */
+  const taskDetailRef = useRef(taskDetail);
+  taskDetailRef.current = taskDetail;
+  useLiveRefresh({
+    topics: ["consolidation"],
+    refresh: async () => {
+      const openId = selectedTaskIdRef.current;
+      const detailTask = openId && taskDetailRef.current?.id === openId ? loadDetail(openId, { silent: true }) : null;
+      await Promise.all([loadTasks({ silent: true }), detailTask]);
+    },
+  });
   useEffect(() => {
     selectedTaskIdRef.current = selectedTaskId; // 认主人用：始终指向最新选中的任务
     if (selectedTaskId) loadDetail(selectedTaskId);

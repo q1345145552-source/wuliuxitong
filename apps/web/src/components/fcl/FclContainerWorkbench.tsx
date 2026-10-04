@@ -35,6 +35,7 @@ import EmptyStateCard from "../../modules/layout/EmptyStateCard";
 import { FCL_TEMPLATE_HEADERS, fclRowFromSheet, missingFclHeaders } from "../../modules/fcl/template";
 import { apiBaseUrl, apiRequest } from "../../services/core-api";
 import { beijingDate, beijingToday } from "../../modules/shared/beijing-date";
+import { useLiveRefresh } from "../../modules/realtime/useRealtime";
 
 /** 从「整柜询价」点「转整柜」带过来的那张询价单（2026-09-28） */
 type FromInquiry = { id: string; clientId: string; productName: string; containerType: string; quoteAmountCny: number | null };
@@ -198,17 +199,19 @@ export default function FclContainerWorkbench({ canUnsign = false, canDelete = f
   }, [showCreate, fromInquiry]);
   const fileRef = useRef<HTMLInputElement>(null);
 
-  const loadList = useCallback(async () => {
-    setLoading(true);
+  /** silent：有变化时悄悄重拉（2026-10-05 实时推送）——按钮不变「查询中…」、失败不弹提示 */
+  const loadList = useCallback(async (opts?: { silent?: boolean }) => {
+    const silent = opts?.silent === true;
+    if (!silent) setLoading(true);
     try {
       const r = await fetchFclContainers(search);
       setRows(r.items ?? []);
       // 到顶了要说出来，不能静默截断（CLAUDE.md 第 21 条：看不到的数据，用户得有办法知道它存在）
       setListNote(r.truncated ? (r.note ?? "只显示最近 500 个整柜，请用上面的条件缩小范围") : "");
     } catch (e) {
-      setToast(`加载整柜列表失败：${e instanceof Error ? e.message : "请稍后重试"}`);
+      if (!silent) setToast(`加载整柜列表失败：${e instanceof Error ? e.message : "请稍后重试"}`);
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, [search]);
 
@@ -226,18 +229,48 @@ export default function FclContainerWorkbench({ canUnsign = false, canDelete = f
     try { setLmOrders((await fetchFclLastmileOrders()) as unknown as LastmileOrderItem[]); }
     catch (e) { setLmError(e instanceof Error ? e.message : "加载派送单失败"); }
   }, []);
-  const loadLmShipments = useCallback(async () => {
-    setLmLoading(true);
-    setLmError("");
+  const loadLmShipments = useCallback(async (opts?: { silent?: boolean }) => {
+    const silent = opts?.silent === true;
+    if (!silent) {
+      setLmLoading(true);
+      setLmError("");
+    }
     try { setLmShipments((await fetchFclLastmileShipments()) as unknown as LastmileShipmentOption[]); }
-    catch (e) { setLmError(e instanceof Error ? e.message : "加载可派送整柜失败"); }
-    finally { setLmLoading(false); }
+    catch (e) { if (!silent) setLmError(e instanceof Error ? e.message : "加载可派送整柜失败"); }
+    finally { if (!silent) setLmLoading(false); }
   }, []);
   useEffect(() => {
     if (tab !== "lastmile") return;
     void loadLmOrders();
     void loadLmShipments();
   }, [tab, loadLmOrders, loadLmShipments]);
+
+  /* 实时更新（2026-10-05 老板：「不能有延迟」）：同事建柜 / 改柜 / 派送 / 签收，服务器马上推过来，
+     看板数字、列表（按此刻的条件）、正开着的详情、派送页签悄悄重拉。
+     详情只在已经出来、而且还是同一个柜的时候换内容（openDetail 正在拉就不碰）；编辑框里的东西不动 ——
+     打开编辑框那一刻的版本号照旧留着，别人改过你再存会被拦下，这正是想要的。 */
+  const selectedIdRef = useRef(selectedId);
+  selectedIdRef.current = selectedId;
+  const detailRef = useRef(detail);
+  detailRef.current = detail;
+  useLiveRefresh({
+    topics: ["fcl", "shipping"],
+    refresh: async () => {
+      const openId = selectedIdRef.current;
+      const detailTask = openId && detailRef.current?.containerId === openId
+        ? fetchFclContainerDetail(openId)
+            .then((d) => { if (selectedIdRef.current === openId && detailRef.current?.containerId === openId) setDetail(d); })
+            .catch(() => { /* 悄悄重拉失败：接着显示手上的 */ })
+        : null;
+      await Promise.all([
+        loadList({ silent: true }),
+        loadOverview(),
+        detailTask,
+        tab === "lastmile" ? loadLmOrders() : null,
+        tab === "lastmile" ? loadLmShipments({ silent: true }) : null,
+      ]);
+    },
+  });
 
   const openDetail = async (containerId: string) => {
     setSelectedId(containerId);

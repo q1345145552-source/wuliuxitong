@@ -35,12 +35,13 @@ function stripComments(src: string): string {
   return src.replace(/("(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'|`(?:\\.|[^`\\])*`)|\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, (_m, str) => str ?? "");
 }
 
-/** 从 marker 所在位置往后找第一个「{」，数括号截出整段（含两头的大括号）。marker 必须唯一 */
+/** 从 marker **末尾**往后找第一个「{」，数括号截出整段（含两头的大括号）。marker 必须唯一。
+ *  从末尾找（2026-10-05 改）：参数里带类型的 marker（`(opts?: { silent?: boolean }) =>`）从开头找会先碰到类型的大括号 */
 function block(src: string, marker: string): string {
   const at = src.indexOf(marker);
   assert.ok(at >= 0, `源码里找不到「${marker}」`);
   assert.equal(src.indexOf(marker, at + 1), -1, `「${marker}」出现了不止一次，定位不唯一`);
-  const open = src.indexOf("{", at);
+  const open = src.indexOf("{", at + marker.length);
   let depth = 0;
   for (let i = open; i < src.length; i++) {
     const c = src[i];
@@ -100,7 +101,8 @@ check("W1 员工「客户集货余额」切到这一栏就自己拉（每次切�
 });
 
 check("W1 员工「客户集货余额」拉失败写出原因（不再只打控制台），「重试」点一下就真去拉", () => {
-  const body = block(STAFF, "const loadWalletBalances = async () =>");
+  // 2026-10-05 加了 silent 参数（实时推送时悄悄重拉），下面查的每一条照旧
+  const body = block(STAFF, "const loadWalletBalances = async (opts?: { silent?: boolean }) =>");
   assert.doesNotMatch(body, /console\.error/, "失败还是只在控制台打一行");
   assert.match(body, /setWalletError\(e instanceof Error \? e\.message : "网络错误"\)/, "失败没记下原因");
   assert.match(body, /walletGate\.begin\(\)/, "没领号");
@@ -117,7 +119,8 @@ check("W1 员工「客户集货余额」拉失败写出原因（不再只打控�
 });
 
 check("W2 客户「集货拼柜(仓库版)」详情没拉到：记下原因、写「详情加载失败」，「点击重试」点一下就重拉", () => {
-  const body = block(WHR, "const loadDetail = useCallback(async (planId: string) =>");
+  // 2026-10-05 加了 silent 参数（实时推送时悄悄重拉），下面查的每一条照旧
+  const body = block(WHR, "const loadDetail = useCallback(async (planId: string, opts?: { silent?: boolean }) =>");
   // 复核补：先认主人再领号 —— 不是当前选中的计划就不拉，不去作废当前那一份（原来保存 A 时点了 B，B 会一片空白）
   assert.match(body, /^\{\s*if \(selectedPlanIdRef\.current !== planId\) return;\s*const ticket = detailGate\.begin\(\);/, "没有「先认主人再领号」");
   assert.equal((body.match(/if \(!detailGate\.isCurrent\(ticket\) \|\| selectedPlanIdRef\.current !== planId\) return;/g) ?? []).length, 2, "成功、失败两个分支都要验号 + 认主人");
@@ -132,9 +135,12 @@ check("W2 客户「集货拼柜(仓库版)」详情没拉到：记下原因、�
 
 check("W3 超管运单页顶上那排数字：开页、10 秒轮询、「刷新」按钮都跟列表一起拉", () => {
   assertOverviewLoader(ADMIN, "fetchStaffShipmentOverview", "超管");
-  const interval = block(ADMIN, "const interval = window.setInterval(() =>");
-  assert.match(interval, /loadOrders\(\)/, "（定位错了：这不是列表的 10 秒轮询）");
-  assert.match(interval, /if \(!shipmentOverviewPending\.current\) void loadShipmentOverview\(\)/, "10 秒轮询不刷数字，或者上一轮没回来也照发（接口慢过 10 秒时每一份都被下一轮作废，数字永远出不来）");
+  // 2026-10-05：10 秒轮询换成 useLiveRefresh（有变化马上刷 + 10 秒兜底），里面拉的东西照旧
+  const live = block(ADMIN, "refresh: async (_wanted, reason) =>");
+  assert.match(live, /loadOrders\(\)/, "（定位错了：这不是列表的 10 秒轮询）");
+  assert.match(live, /shipmentOverviewPending\.current \? null : loadShipmentOverview\(\)/, "10 秒轮询不刷数字，或者上一轮没回来也照发（接口慢过 10 秒时每一份都被下一轮作废，数字永远出不来）");
+  const call = ADMIN.slice(ADMIN.lastIndexOf("useLiveRefresh({", ADMIN.indexOf("refresh: async (_wanted, reason) =>")), ADMIN.indexOf("refresh: async (_wanted, reason) =>"));
+  assert.match(call, /pollMs: 10000,\s*livePollMs: 10000,/, "兜底轮询不是 10 秒了");
   assertPendingClears(ADMIN, "超管");
   const refresh = block(ADMIN, "const refreshOrderList = async () =>");
   assert.match(refresh, /void loadShipmentOverview\(\)/, "点「刷新」只刷列表、不刷数字");
@@ -151,7 +157,8 @@ check("W3 员工运单页顶上那排数字：跟列表一起拉（loadPageData 
 
 check("W3 客户运单查询顶上那排数字：切到「运单查询」、10 秒轮询、执行查询、切分组都跟列表一起拉", () => {
   assertOverviewLoader(CLIENT, "fetchClientShipmentOverview", "客户");
-  const poll = block(CLIENT, "const poll = async () =>");
+  // 2026-10-05：10 秒轮询换成 useLiveRefresh（有变化马上拉 + 10 秒兜底），里面每一步照旧
+  const poll = block(CLIENT, "refresh: async (isStillWanted) =>");
   assert.match(poll, /fetchClientOrders/, "（定位错了：这不是运单列表的 10 秒轮询）");
   assert.match(poll, /if \(!shipmentOverviewPending\.current\) void loadShipmentOverview\(\)/, "10 秒轮询不刷数字，或者上一轮没回来也照发");
   assertPendingClears(CLIENT, "客户");

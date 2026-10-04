@@ -2,6 +2,7 @@
 
 import { Fragment, useCallback, useEffect, useState } from "react";
 import { fetchContainerRevenue, type ContainerRevenueSummary } from "../../../services/business-api";
+import { useLiveRefresh } from "../../../modules/realtime/useRealtime";
 
 /* 2026-08-27 重做：这一页原来是「结算与利润」——手工填应收/应付/税费再算利润，
    生产上 0 条数据、从没人用过。老板定的新口径：不算利润，就看这条柜收客户多少钱。 */
@@ -26,6 +27,17 @@ export default function AdminSettlementPage() {
     catch { setError("无法加载柜子收款数据"); }
   }, []);
   useEffect(() => { void load(); }, [load]);
+
+  // 实时更新（2026-10-05）：付款、装柜有变化就悄悄重拉；失败接着显示手上的，不换成「无法加载」
+  useLiveRefresh({
+    topics: ["consolidation", "whr", "wallet", "fcl", "shipping"],
+    refresh: async (isStillWanted) => {
+      try {
+        const next = await fetchContainerRevenue();
+        if (isStillWanted()) { setData(next); setError(""); }
+      } catch { /* 同上 */ }
+    },
+  });
 
   const td = { padding: "10px 12px" } as const;
   const th = { padding: "10px 12px", textAlign: "left", fontWeight: 500, color: "var(--ink-mute)" } as const;

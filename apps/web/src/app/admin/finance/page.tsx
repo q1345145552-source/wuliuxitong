@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { fetchFinanceSummary, type FinanceSummary } from "../../../services/business-api";
+import { useLiveRefresh } from "../../../modules/realtime/useRealtime";
 
 /* 2026-08-27 重做：这一页只看集货拼柜的两个功能，不再统计运单。
    老板口径：运单跟钱无关，钱只在集货那两个功能里。 */
@@ -32,6 +33,17 @@ export default function AdminFinancePage() {
   }, []);
 
   useEffect(() => { void load(); }, [load]);
+
+  // 实时更新（2026-10-05）：报价、付款、退款、装柜有变化就悄悄重拉；失败接着显示手上的，不换成「无法加载」
+  useLiveRefresh({
+    topics: ["consolidation", "whr", "wallet", "fcl", "shipping"],
+    refresh: async (isStillWanted) => {
+      try {
+        const next = await fetchFinanceSummary();
+        if (isStillWanted()) { setData(next); setError(""); }
+      } catch { /* 同上 */ }
+    },
+  });
 
   const filtered = useMemo(() => {
     if (!data) return [];

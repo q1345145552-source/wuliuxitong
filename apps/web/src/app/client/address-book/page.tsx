@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useLiveRefresh } from "../../../modules/realtime/useRealtime";
 import {
   createClientAddress,
   deleteClientAddress,
@@ -46,6 +47,9 @@ export default function ClientAddressBookPage() {
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
   }, []);
+
+  // 实时更新（2026-10-05）：员工在后台替客户改了地址，这里马上跟着变（reload 本来就不开「加载中」）
+  useLiveRefresh({ topics: ["shipping"], enabled: !loading, refresh: () => reload() });
 
   return (
     <>

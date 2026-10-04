@@ -11,6 +11,7 @@ import {
   type OrderItem,
 } from "../../../services/business-api";
 import { beijingDate } from "../../../modules/shared/beijing-date";
+import { useLiveRefresh } from "../../../modules/realtime/useRealtime";
 
 type PrealertEditDraft = {
   warehouseId: string;
@@ -90,6 +91,18 @@ export default function AdminPrealertsPage() {
   };
 
   useEffect(() => { const c = { current: false }; loadPrealerts(c); return () => { c.current = true; }; }, []);
+
+  /* 实时更新（2026-10-05 老板：「不能有延迟」）：客户新报单、同事收货，服务器马上推过来，悄悄重拉 ——
+     不开 loading（开了「刷新」「确认收货」会闪成不能点）、失败不出提示；编辑中的草稿按单号存着，不会被冲掉。 */
+  useLiveRefresh({
+    topics: ["shipping"],
+    refresh: async (isStillWanted) => {
+      try {
+        const items = await fetchStaffPrealerts();
+        if (isStillWanted()) setPrealerts(items);
+      } catch { /* 悄悄重拉失败：接着显示手上的 */ }
+    },
+  });
 
   useEffect(() => {
     if (!toast) return;

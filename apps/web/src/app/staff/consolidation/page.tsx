@@ -20,6 +20,7 @@ import {
 } from "../../../services/business-api";
 import { formatBeijingTime } from "../../../modules/staff/utils";
 import { createRequestGate } from "../../../modules/shared/request-gate";
+import { useLiveRefresh } from "../../../modules/realtime/useRealtime";
 import { viewerCanSeeOperator } from "../../../auth/operator-visibility";
 
 // ============================================================================
@@ -102,15 +103,18 @@ export default function StaffConsolidationPage() {
   /** 2026-09-01 竞态全扫：状态筛选快速连切会连发请求，旧筛选的响应后到会盖掉新筛选的列表。
       每次出发领号，回来验号——数据、报错、loading 三个分支都只认最新一次请求。 */
   const tasksGate = useRef(createRequestGate()).current;
-  const loadTasks = useCallback(async () => {
+  /** silent：有变化时悄悄重拉（2026-10-05 实时推送）——不开「加载中」、失败不弹提示；finally 照旧只认最新一号收加载态 */
+  const loadTasks = useCallback(async (opts?: { silent?: boolean }) => {
+    const silent = opts?.silent === true;
     const ticket = tasksGate.begin();
-    setLoading(true);
+    if (!silent) setLoading(true);
     try {
       const data = await fetchStaffConsolidationTasks(statusFilter || undefined);
       if (!tasksGate.isCurrent(ticket)) return; // 旧筛选的响应后到，丢弃
       setTasks(data);
     } catch (e: any) {
       if (!tasksGate.isCurrent(ticket)) return; // 旧请求的报错也不弹，别盖住新请求
+      if (silent) return;
       setToast(e.message);
     } finally {
       if (tasksGate.isCurrent(ticket)) setLoading(false); // 旧请求不许掐掉新请求的加载态
@@ -127,13 +131,19 @@ export default function StaffConsolidationPage() {
   // 认主人的 ref：必须在用户点击处**同步**赋值，不许等 useEffect——
   // useEffect 晚一拍，异步响应插在中间就核不住（2026-09-02 终审整改）
   const selectedTaskIdRef = useRef<string | null>(null);
-  const loadDetail = useCallback(async (taskId: string) => {
+  /** 详情现在显示的是哪张（实时重拉时判断「详情是不是已经出来了」） */
+  const taskDetailRef = useRef(taskDetail);
+  taskDetailRef.current = taskDetail;
+  /** silent：有变化时悄悄重拉（2026-10-05）——只换详情内容，**不动报价框**（员工可能正在填）、失败不弹提示 */
+  const loadDetail = useCallback(async (taskId: string, opts?: { silent?: boolean }) => {
+    const silent = opts?.silent === true;
     const ticket = detailGate.begin(); // 出发时领号
     try {
       const data = await fetchStaffConsolidationTaskDetail(taskId);
       if (!detailGate.isCurrent(ticket)) return; // 验号：已有更新的详情请求出发，旧响应丢弃
       if (selectedTaskIdRef.current !== taskId) return; // 认主人：用户已切走/返回列表
       setTaskDetail(data);
+      if (silent) return;
       // 预填报价：有值填值、没值**清空**（2026-09-28 审查修复 #8：原来只在有值时才 set，
       // 先看过已报价的任务 A 再打开没报价的任务 B，弹窗里还是 A 的三笔费用，手快就按错价存了）
       setQuoteBooking(data.bookingFee != null ? String(data.bookingFee) : "");
@@ -142,6 +152,7 @@ export default function StaffConsolidationPage() {
     } catch (e: any) {
       if (!detailGate.isCurrent(ticket)) return; // 旧请求的报错也不许弹
       if (selectedTaskIdRef.current !== taskId) return;
+      if (silent) return;
       setToast(e.message);
     }
   }, [detailGate]);
@@ -159,6 +170,19 @@ export default function StaffConsolidationPage() {
   };
 
   useEffect(() => { loadTasks(); }, [loadTasks]);
+
+  /* 实时更新（2026-10-05 老板：「不能有延迟」）：客户报单、付款，同事收货、报价、推进状态，服务器马上推过来，
+     列表（按此刻的筛选）和正开着的详情悄悄重拉。 */
+  useLiveRefresh({
+    topics: ["consolidation"],
+    refresh: async () => {
+      const openId = selectedTaskIdRef.current;
+      // 详情还没出来（刚点开、正在拉）就不碰：领号会把那一次作废，自己的也只换内容不预填，报价框就空着了
+      const detailTask = openId && taskDetailRef.current?.id === openId ? loadDetail(openId, { silent: true }) : null;
+      await Promise.all([loadTasks({ silent: true }), detailTask]);
+    },
+  });
+
   useEffect(() => {
     if (selectedTaskId) loadDetail(selectedTaskId);
     else { setTaskDetail(null); setCancelStep(0); setCancelPwdPrompt(""); setCancelPassword(""); }

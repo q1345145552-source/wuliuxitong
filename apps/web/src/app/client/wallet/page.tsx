@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createRequestGate } from "../../../modules/shared/request-gate";
+import { useLiveRefresh } from "../../../modules/realtime/useRealtime";
 import {
   fetchClientWalletOverview,
   fetchClientWalletRecharges,
@@ -132,7 +133,7 @@ export default function ClientWalletPage() {
      原来是先 setLedgerPage 再靠 useEffect 发请求——请求失败时表格还是旧页的数据、
      页码却已经跳了，客户看着「第 2 页」实际是第 1 页的流水。现在目标页只存在
      临时变量 targetPage 里，成功才落地（并用后端回的 page 校准）；失败页码不动、给提示。 */
-  const loadLedgerPage = useCallback(async (targetPage: number) => {
+  const loadLedgerPage = useCallback(async (targetPage: number, opts?: { silent?: boolean }) => {
     const seq = ++ledgerSeqRef.current;
     try {
       const res = await fetchConsolidationLedger({ page: targetPage, pageSize: LEDGER_PAGE_SIZE });
@@ -142,11 +143,33 @@ export default function ClientWalletPage() {
       setLedgerPage(res.page);
     } catch (error) {
       if (seq !== ledgerSeqRef.current) return; // 过期请求的报错也不提示，免得盖住新请求的结果
+      if (opts?.silent) return; // 有变化时悄悄重拉的：失败不打扰人，表格保持原样
       const text = error instanceof Error ? error.message : "未知错误";
       // 失败时页码和表格都保持原样，只提示；再点一次按钮即可重试
       setMessage(`流水翻页失败：${text}`);
     }
   }, []);
+
+  /* 实时更新（2026-10-05 老板：「不能有延迟」）：充值审核、付款扣款、退款有变化，服务器马上推过来，
+     余额、充值记录、流水（停在客户正看的那一页）一起悄悄重拉 —— 不开「加载中」、失败不弹提示。
+     跟 loadData 用同一个门闩：谁后出发谁算数，晚到的旧余额不许盖新余额。 */
+  const ledgerPageRef = useRef(ledgerPage);
+  ledgerPageRef.current = ledgerPage;
+  useLiveRefresh({
+    topics: ["wallet", "consolidation", "whr"],
+    refresh: async () => {
+      const walletTicket = walletGate.begin();
+      const ledgerTask = loadLedgerPage(ledgerPageRef.current, { silent: true });
+      const [overviewR, recsR] = await Promise.allSettled([fetchClientWalletOverview(), fetchClientWalletRecharges()]);
+      if (walletGate.isCurrent(walletTicket)) {
+        if (overviewR.status === "fulfilled") setData(overviewR.value);
+        if (recsR.status === "fulfilled") setRecharges(recsR.value.recharges);
+        // 万一作废了一次正在转圈的 loadData：它的 finally 验号不过、不会收「加载中」，这里替它收
+        setLoading(false);
+      }
+      await ledgerTask;
+    },
+  });
 
   // 处理付款凭证上传
   const handleProofUpload = (e: React.ChangeEvent<HTMLInputElement>) => {

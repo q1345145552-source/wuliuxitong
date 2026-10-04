@@ -21,6 +21,7 @@ import { shipmentStatusZh, CLIENT_STATUS_ZH_OVERRIDES } from "../../../modules/s
 import { formatBeijingTime } from "../../../modules/staff/utils";
 import EmptyStateCard from "../../../modules/layout/EmptyStateCard";
 import { beijingDate } from "../../../modules/shared/beijing-date";
+import { useLiveRefresh } from "../../../modules/realtime/useRealtime";
 
 const CARGO_TYPE_ZH: Record<string, string> = { normal: "普货", inspection: "商检货", sensitive: "敏感货" };
 
@@ -37,16 +38,18 @@ export default function ClientFclContainersPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [detail, setDetail] = useState<FclContainerDetail | null>(null);
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  /** silent：有变化时悄悄重拉（2026-10-05 实时推送）——不开「加载中」、失败不弹提示 */
+  const load = useCallback(async (opts?: { silent?: boolean }) => {
+    const silent = opts?.silent === true;
+    if (!silent) setLoading(true);
     try {
       const r = await fetchMyFclContainers();
       setRows(r.items ?? []);
       setListNote(r.truncated ? (r.note ?? "只显示最近 500 个整柜") : "");
     } catch (e) {
-      setToast(`加载失败：${e instanceof Error ? e.message : "请稍后重试"}`);
+      if (!silent) setToast(`加载失败：${e instanceof Error ? e.message : "请稍后重试"}`);
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, []);
 
@@ -70,6 +73,29 @@ export default function ClientFclContainersPage() {
       setSelectedId(null);
     }
   };
+
+  /* 实时更新（2026-10-05 老板：「不能有延迟」）：整柜状态、派送、签收有变化，服务器马上推过来，
+     列表和正开着的详情悄悄重拉 —— 详情不清空（清空会闪「正在加载」），领号认主人跟 openDetail 同一套。 */
+  const selectedIdRef = useRef(selectedId);
+  selectedIdRef.current = selectedId;
+  const detailRef = useRef(detail);
+  detailRef.current = detail;
+  useLiveRefresh({
+    topics: ["fcl", "shipping"],
+    refresh: async () => {
+      const openId = selectedIdRef.current;
+      const detailTask = (async () => {
+        // 详情还没出来 = openDetail 正在拉：别领号把它作废（作废了它、自己又认不上主人，就会一直「正在加载」）
+        if (!openId || !detailRef.current) return;
+        const seq = ++detailSeqRef.current;
+        try {
+          const d = await fetchMyFclContainerDetail(openId);
+          if (seq === detailSeqRef.current && selectedIdRef.current === openId) setDetail(d);
+        } catch { /* 悄悄重拉失败：接着显示手上的 */ }
+      })();
+      await Promise.all([load({ silent: true }), detailTask]);
+    },
+  });
 
   if (selectedId) {
     return (

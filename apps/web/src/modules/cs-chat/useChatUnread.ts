@@ -10,11 +10,15 @@
  * 多久问一次：网页在眼前 5 秒（原来 30 秒，在别的页面来消息最多晚半分钟才响）；在后台 15 秒（少打点服务器）。
  * 计时放在 Worker 里（public/chat-tick.worker.js）：网页在后台待久了，浏览器会把页面自己的定时器放慢到一分钟一次，
  * Worker 里的不受这个限制。Worker 起不来（老浏览器、文件没取到）就退回页面自己的定时器。
+ *
+ * 实时推送（2026-10-05，老板「不能有延迟」）：有人发了 / 撤回 / 看了消息，服务器马上推一句「chat 变了」，
+ * 这里收到就立刻问一次 —— 不用等 5 / 15 秒。上面的定时还留着兜底（推送断了照样能更新）。
  */
 import { useEffect, useRef, useState } from "react";
 import type { AuthSession } from "../../auth/auth-session";
 import { CHAT_UNREAD_EVENT, fetchChatUnread } from "../../services/cs-chat-api";
 import { createRequestGate } from "../shared/request-gate";
+import { subscribeRealtime } from "../../services/realtime";
 import { chatSoundKey, installChatSoundUnlock, noteUnreadLatest } from "./chat-sound";
 
 /** 菜单里这三个 id 旁边挂红点（menu-config.ts） */
@@ -92,8 +96,10 @@ export function useChatUnread(session: AuthSession | null, hiddenByBrand: boolea
     const onChanged = () => { void load(); };
     document.addEventListener("visibilitychange", onVisible);
     window.addEventListener(CHAT_UNREAD_EVENT, onChanged);
+    const unsubscribeRealtime = subscribeRealtime(["chat"], onChanged);
     return () => {
       stopped = true;
+      unsubscribeRealtime();
       worker?.terminate();
       if (timer !== null) window.clearInterval(timer);
       document.removeEventListener("visibilitychange", onVisible);

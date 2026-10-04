@@ -288,6 +288,14 @@ jobs:
       - name: Test customer-service chat UI behavior
         run: npm run test:cs-chat-ui-behavior
 
+      # 实时推送（2026-10-05 老板做 app：「数据都能连接上，不能有延迟」）。不连库：
+      # 全部改数据接口都归了类、谁收得到谁收不到、真 HTTP 长连接（不缓冲 / 心跳 / 退出登录和封号会断开）、
+      # 前端一条连接大家共用、断线重连后补拉、登录失效就停不反复敲门。
+      - name: Test realtime push (backend)
+        run: npm run test:realtime-source
+      - name: Test realtime push (frontend connection)
+        run: npm run test:realtime-client
+
       # 改整柜（2026-09-24，老板：「加上编辑功能」）。要连测试库 —— 读源码证明不了
       # 「改完库里真的变了」，而改整柜最容易出的就是「只改了一半」（订单改了运单没改之类）。
       # CI 没有数据库会打印「跳过」—— 本地改了 fcl-containers 必须连测试库跑一遍。
