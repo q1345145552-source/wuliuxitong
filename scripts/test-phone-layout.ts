@@ -257,6 +257,15 @@ async function main(): Promise<void> {
     assert.equal((read("app/staff/page.tsx").match(/openPrintLabel\(/g) ?? []).length, 1, "员工打印逻辑应该只有一份");
   });
 
+  await check("M4 运单号再长也看得全：放不下时状态换行、单号自己折行，不被挤出屏幕（2026-10-06 老板：长单号看不到）", () => {
+    const css = fs.readFileSync(path.join(WEB, "app/globals.css"), "utf8");
+    const phone = css.slice(css.indexOf("手机排版（2026-10-05"));
+    assert.match(phone, /\.ship-phone-top \{[^}]*flex-wrap: wrap;/, "单号和状态那一行要能换行");
+    assert.match(phone, /\.ship-phone-no \{[^}]*min-width: 0;[^}]*overflow-wrap: anywhere;/, "单号太长要能自己折行");
+    assert.match(phone, /\.ship-phone-status \{[^}]*margin-left: auto;/, "状态换到下一行时靠右");
+    assert.ok(!/\.ship-phone-no \{[^}]*(text-overflow: ellipsis|overflow: hidden)/.test(phone), "单号不许截断成省略号");
+  });
+
   // ---------- M5 ----------
   await check("M5 客服两页手机上扣掉底部那排的高度", () => {
     const css = fs.readFileSync(path.join(WEB, "app/globals.css"), "utf8");

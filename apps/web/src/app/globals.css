@@ -4215,14 +4215,18 @@ table.a3-table.shipment-product-table > tbody > tr > td {
     -webkit-tap-highlight-color: transparent;
   }
   .ship-phone-row:active { background: var(--line-2) !important; }
-  .ship-phone-top { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+  /* 运单号放不下时状态换到下一行（靠右），单号自己占满一行；再长也自动折行，不会被挤出屏幕（2026-10-06 老板：长单号看不到） */
+  .ship-phone-top { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 2px 12px; }
   .ship-phone-no {
+    min-width: 0;
+    overflow-wrap: anywhere;
     font-family: var(--a3-mono);
     font-size: 15px;
     font-weight: 600;
     letter-spacing: 0.01em;
   }
   .ship-phone-status {
+    margin-left: auto;
     display: inline-flex;
     align-items: center;
     gap: 6px;
