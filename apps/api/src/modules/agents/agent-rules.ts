@@ -44,6 +44,8 @@ export const RESERVED_AGENT_SLUGS: ReadonlySet<string> = new Set([
   // B4 的 /a/<slug> 退路、以后可能加的公共入口
   "a", "brand", "health", "logout", "track", "home", "index", "www", "mail", "xiangtai",
   "agents", "rebates", "null", "undefined",
+  // 安卓 app 下载页 /app 和安装包 /download/…（2026-10-05；当时线上唯一的代理没设前缀，不撞）
+  "app", "download",
 ]);
 
 /** 前缀规整：去空格、转小写。空串返回 null（= 不设前缀） */

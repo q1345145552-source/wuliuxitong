@@ -4467,3 +4467,62 @@ table.a3-table.shipment-product-table > tbody > tr > td {
   }
   .phone-tab-sheet-link:last-child { border-bottom: 0; }
 }
+
+/* ==========================================================================
+   安卓 app 下载页 /app（2026-10-05 老板选「C」）。只有这一页用这些类名；外观照 A3：白底、细线、不加阴影渐变
+   ========================================================================== */
+.app-dl {
+  display: flex;
+  justify-content: center;
+  min-height: 100vh;
+  min-height: 100dvh;
+  padding: 48px 16px;
+  box-sizing: border-box;
+  background: var(--bg-page);
+  color: var(--ink);
+}
+.app-dl-card {
+  width: 100%;
+  max-width: 420px;
+  padding: 32px 24px;
+  border: 1px solid var(--line);
+  border-radius: var(--a3-radius-lg);
+  background: var(--panel);
+  text-align: center;
+  align-self: flex-start;
+}
+.app-dl-logo { display: block; margin: 0 auto 12px; }
+.app-dl-title { margin: 0; font-size: 22px; font-weight: 600; }
+.app-dl-meta { margin: 6px 0 20px; color: var(--ink-3); font-size: 13px; }
+.app-dl-notice {
+  margin: 0 0 16px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--a3-radius);
+  background: var(--bg-page);
+  color: var(--ink);
+  font-size: 14px;
+  line-height: 1.6;
+  text-align: left;
+}
+.app-dl-button {
+  display: block;
+  padding: 14px 0;
+  border-radius: var(--a3-radius);
+  background: var(--brand);
+  color: #fff;
+  font-size: 16px;
+  font-weight: 600;
+  text-decoration: none;
+}
+.app-dl-steps {
+  margin: 24px 0 0;
+  padding-left: 20px;
+  color: var(--ink-2);
+  font-size: 14px;
+  line-height: 1.7;
+  text-align: left;
+}
+.app-dl-steps li + li { margin-top: 6px; }
+.app-dl-foot { margin: 20px 0 0; color: var(--ink-3); font-size: 12px; line-height: 1.7; text-align: left; }
+.app-dl-foot a { color: var(--brand); }

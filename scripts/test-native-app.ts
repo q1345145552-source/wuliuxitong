@@ -12,6 +12,7 @@
  *   A5 提示条走浏览器顶层（popover），不然被导出弹窗（<dialog>.showModal）盖住
  *   A6 打开 app 时已登录就直接进工作台：认登录页本身（代理前缀 /<slug> 也算）、跟登录页用同一份「角色 → 工作台」
  *   A7 客服页「开启通知」那行 app 里不出（app 开不了浏览器通知，「换 Chrome」对 app 用户是错的）
+ *   A9 下载页 /app：安装包真在、路径版本对得上、代理域名不出、微信里提示换浏览器
  *   A8 外壳配置：打开线上网站、连不上有自己的页、调试口只在测试包开；安卓那边：打印登记在 onCreate 之前、
  *      上传图片能拍照（不申请相机权限）、固定浅色
  */
@@ -201,6 +202,24 @@ async function main(): Promise<void> {
     const chrome = read("mobile/android/app/src/main/java/com/xianlianth/app/XtWebChromeClient.java");
     assert.match(chrome, /cameraFile\.length\(\) > 0/, "相机没写进文件时别把 0 字节交给网页");
     assert.match(chrome, /if \(!usedCamera && cameraFile != null\)/, "选了相册 / 取消时预建的拍照文件要删");
+  });
+
+  await check("A9 下载页 /app：安装包真在、跟页面写的路径对得上；代理域名不出；微信 / QQ 里提示换浏览器；app、download 是保留前缀", () => {
+    const conf = read("apps/web/src/modules/app-shell/app-download.ts");
+    const apkPath = /APK_PATH = "([^"]+)"/.exec(conf)?.[1];
+    assert.ok(apkPath && apkPath.startsWith("/download/"), "安装包要放在 public/download/ 下");
+    const apk = path.join(ROOT, "apps/web/public", apkPath!);
+    assert.ok(fs.existsSync(apk), `页面指向的安装包不存在：${apkPath}`);
+    assert.ok(fs.statSync(apk).size > 1_000_000, "安装包小得不对劲");
+    assert.equal(fs.readFileSync(apk).subarray(0, 2).toString("latin1"), "PK", "不是安装包（apk 是 zip 格式，开头应是 PK）");
+    const version = /APP_VERSION = "([^"]+)"/.exec(conf)?.[1];
+    assert.ok(apkPath!.includes(version!), "安装包文件名里的版本跟 APP_VERSION 对不上");
+    const page = read("apps/web/src/app/app/page.tsx");
+    assert.match(page, /if \(\(await getBrandByRequestHost\(\)\) \?\? \(await getBrandByLoginCookie\(\)\)\) notFound\(\);/, "代理的专属域名、前缀代理的客户都不能看到湘泰的下载页");
+    const view = read("apps/web/src/modules/app-shell/AppDownloadView.tsx");
+    assert.match(view, /MicroMessenger\|\\bQQ\\\//, "微信 / QQ 内置浏览器下不了安装包，要提示换浏览器");
+    const rules = read("apps/api/src/modules/agents/agent-rules.ts");
+    assert.match(rules, /"app", "download"/, "代理前缀不能用 app / download（会盖住下载页）");
   });
 
   console.log(`\nApp 外壳 ${passed} 项全部通过`);

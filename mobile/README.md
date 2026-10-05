@@ -28,6 +28,13 @@ npm run apk:release   # 正式包：android/app/build/outputs/apk/release/app-re
 
 每次发新版外壳，把 `android/app/build.gradle` 里的 `versionCode` 加 1（`versionName` 写给人看的版本号）。
 
+## 发新版安装包（网站下载页 xianlianth.com/app）
+
+只有改了 `mobile/` 外壳才需要（网站更新 app 自动跟着变，不用发新包）：
+1. `android/app/build.gradle` 里 `versionCode` 加 1、`versionName` 改成新版本号；`npm run apk:release`。
+2. 把 `android/app/build/outputs/apk/release/app-release.apk` 拷成 `apps/web/public/download/xiangtai-<版本>.apk`，删掉旧的。
+3. 改 `apps/web/src/modules/app-shell/app-download.ts` 里的版本、路径、大小、保存名。随网站一起上线。
+
 ## 本机模拟器测试
 
 ```bash
