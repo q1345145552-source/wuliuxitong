@@ -6,7 +6,7 @@
   "scripts": {
     "sync": "node scripts-prepare.mjs && cap sync android",
     "apk:debug": "npm run sync && . ./android-env.sh && cd android && ./gradlew assembleDebug",
-    "apk:release": "npm run sync && . ./android-env.sh && cd android && ./gradlew assembleRelease"
+    "apk:release": "XT_APP_URL=https://xianlianth.com npm run sync && . ./android-env.sh && cd android && ./gradlew assembleRelease"
   },
   "dependencies": {
     "@capacitor/android": "^8.5.2",

@@ -479,3 +479,44 @@ jobs:
         run: bash .github/scripts/run-db-test.sh test:syscheck-0929-db
       - name: Test number_sequences migration file (real DB)
         run: bash .github/scripts/run-db-test.sh test:migration-number-seq-db
+
+  # 安卓 app 外壳（mobile/，2026-10-05 Codex 复审：原来 CI 只读源码不编译，Java / 资源 / 清单写错了要到打包机上才知道）。
+  # 只打测试包（不需要签名钥匙，钥匙在老板电脑上、GitHub 这边没有）+ 跑模板里的单元测试；
+  # 再故意用测试网址同步一次去打正式包，app/build.gradle 的正式包闸门必须把它拦下来。
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: mobile
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # Capacitor 8 要 Java 21（GitHub 的机器自带安卓 SDK，在 ANDROID_HOME）
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Sync web assets into the Android project
+        run: npm run sync
+
+      - name: Build debug APK + unit tests
+        working-directory: mobile/android
+        run: ./gradlew assembleDebug testDebugUnitTest --no-daemon
+
+      - name: Release gate rejects a test URL
+        run: |
+          XT_APP_URL=http://10.0.2.2:3019 npx cap sync android
+          if (cd android && ./gradlew preReleaseBuild --no-daemon); then
+            echo "正式包闸门没拦住测试网址"; exit 1
+          fi
+          echo "正式包闸门拦住了测试网址（应该的）"

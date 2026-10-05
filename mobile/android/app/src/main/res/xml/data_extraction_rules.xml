@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 云备份、换机迁移都不带任何 app 数据（2026-10-05 Codex 复审）：登录令牌存在 app 的网页存储里，
+     业务数据全在服务器上，换手机重新登录就行，别让令牌跟着备份跑到别的手机上。
+     安卓 12 起光写 allowBackup="false" 挡不住设备间迁移，所以两样都写。 -->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="root" path="." />
+        <exclude domain="file" path="." />
+        <exclude domain="database" path="." />
+        <exclude domain="sharedpref" path="." />
+        <exclude domain="external" path="." />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="root" path="." />
+        <exclude domain="file" path="." />
+        <exclude domain="database" path="." />
+        <exclude domain="sharedpref" path="." />
+        <exclude domain="external" path="." />
+    </device-transfer>
+</data-extraction-rules>

@@ -1,5 +1,12 @@
 # 项目交接日志
 
+## 2026-10-05：做 app 三块（实时推送已上线；手机排版、安卓外壳本地完成，未上线）
+
+- 老板要「做成 app、数据都能连接上、不能有延迟、要做就做整体的」。① 实时推送 ca52f7a + 复查 0dce70e 已上线；② 手机排版 e015eb2 + 复查 2b7ad9f（≤640px 才生效，电脑逐像素不变）；③ 安卓外壳 b013e78 + 本次复查修复（`mobile/`，Capacitor 8 打开线上网站 https://xianlianth.com，网站里 `modules/app-shell/native-app.ts` 补存文件 / 打印 / 返回键 / 拍照 / 已登录直接进）。②③ 没推没上线。
+- 外壳的安全边界写在 `mobile/README.md`「安全边界」：桥只开给 xianlianth.com；调试口只在测试包（正式包打包前 gradle 闸门再查）；不备份（allowBackup=false + data_extraction_rules）；FileProvider 只放行拍照 / 导出那几个文件夹；签名钥匙在仓库外 `~/.xiangtai-app/`（要老板备份）。
+- 验证：安卓 16 模拟器逐项实测（导出→存 Documents/湘泰物流→分享、打印、返回键、拍照、键盘、断网重试、冷启动直进、登录页返回收后台）；test:native-app、test:phone-layout 进 CI；CI 新增 android 任务（编测试包 + 单元测试 + 正式包闸门负向测试，本机模拟通过，GitHub 上还没跑过）。
+- 没验：国产 ROM 真机、代理前缀登录页冷启动（测试库没有代理）、苹果版（要 Xcode）、锁屏推送（要厂商通道）、上架（国内商店要大陆服务器 + 备案 + 软著）。复查报告在 `.audit/2026-10-05/{dsh,codex}-review-{phone,app}/`。
+
 ## 2026-09-20：条码与看板修补8841141已上线、专用收尾完成
 
 - 用户执行两段与reviewed-cleanup，UTC13:52:18–13:52:55切换；2026-09-20T14:17:31.033392+00:00独立再核GitHub/服务器/API/Web同目标，4容器healthy/restarts0，无误回退。员工可正常操作，无需再发命令。

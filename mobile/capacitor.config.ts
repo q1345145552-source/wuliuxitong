@@ -8,7 +8,7 @@ import type { CapacitorConfig } from "@capacitor/cli";
  * 网页在 app 里做不到的几件事（存 Excel、打印标签、看付款凭证这种「开新窗口」、手机返回键）
  * 由网站里的 modules/app-shell/native-app.ts 在 app 里接过来，交给这里装的几个原生功能。
  *
- * 本机模拟器测试：XT_APP_URL=http://10.0.2.2:3019 npx cap sync android（10.0.2.2 = 模拟器眼里的这台 Mac）
+ * 本机模拟器测试：XT_APP_URL=http://10.0.2.2:3019 npm run apk:debug（10.0.2.2 = 模拟器眼里的这台 Mac）
  */
 const appUrl = process.env.XT_APP_URL || "https://xianlianth.com";
 
@@ -29,10 +29,8 @@ const config: CapacitorConfig = {
     // 状态栏 / 底部手势条：浅底深色字（网站是浅色的）。页面自动让开这两条，不会被盖住
     SystemBars: { style: "LIGHT" },
   },
-  android: {
-    // 测试包可以用电脑 Chrome 远程看页面报错；正式包关掉
-    webContentsDebuggingEnabled: process.env.XT_APP_DEBUG === "1",
-  },
+  // 网页调试口故意不写：Capacitor 不写这项就按安装包类型定 —— 测试包（debuggable）开、正式包关，
+  // 谁在终端里设了什么环境变量都改不了正式包（Codex 10-05 复审）。正式包打包时 app/build.gradle 还会再查一遍。
 };
 
 export default config;

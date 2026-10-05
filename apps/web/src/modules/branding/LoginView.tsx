@@ -80,7 +80,8 @@ export default function LoginView({ brand }: { brand: PublicBrandInfo | null }) 
   };
 
   return (
-    <div className="auth-shell">
+    // data-xt-login：湘泰 app 认「这是登录页」用（/login、代理前缀 /<slug>、代理专属域名都是这一个组件），见 app-shell/native-app.ts
+    <div className="auth-shell" data-xt-login="">
       {/* 代理登录页不用湘泰那张背景图：图上船身印着 XT 标和「CN-TH LOGISTICS」（5.4 写着公司的都要换掉） */}
       <div className="auth-visual" style={brand ? AGENT_VISUAL_STYLE : undefined}>
         <div className="auth-visual-text">

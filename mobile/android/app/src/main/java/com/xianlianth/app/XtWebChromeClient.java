@@ -7,6 +7,7 @@ import android.net.Uri;
 import android.provider.MediaStore;
 import android.webkit.ValueCallback;
 import android.webkit.WebView;
+import android.widget.Toast;
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.core.content.FileProvider;
@@ -34,6 +35,7 @@ public class XtWebChromeClient extends BridgeWebChromeClient {
     private final ActivityResultLauncher<Intent> chooserLauncher;
     private ValueCallback<Uri[]> pendingCallback;
     private Uri cameraUri;
+    private File cameraFile;
 
     public XtWebChromeClient(Bridge bridge) {
         super(bridge);
@@ -51,11 +53,20 @@ public class XtWebChromeClient extends BridgeWebChromeClient {
                     for (int i = 0; i < clip.getItemCount(); i++) uris.add(clip.getItemAt(i).getUri());
                 } else if (data != null && data.getData() != null) {
                     uris.add(data.getData());
-                } else if (cameraUri != null) {
+                } else if (cameraUri != null && cameraFile != null && cameraFile.length() > 0) {
                     // 拍照：相机把照片写进了我们给的文件，返回的 data 是空的
                     uris.add(cameraUri);
+                } else if (cameraUri != null) {
+                    // 有的手机相机不往我们给的文件里写、只回一张缩略图：文件是空的，别把 0 字节的「照片」交给网页（dsh 10-05）
+                    Toast.makeText(bridge.getContext(), "没拿到照片，请改用「从相册选」", Toast.LENGTH_LONG).show();
                 }
                 if (!uris.isEmpty()) picked = uris.toArray(new Uri[0]);
+            }
+            // 没用上拍照（选了相册 / 取消 / 相机没写进来）：预先建的那个空文件当场删掉
+            boolean usedCamera = picked != null && picked.length == 1 && picked[0].equals(cameraUri);
+            if (!usedCamera && cameraFile != null) {
+                //noinspection ResultOfMethodCallIgnored
+                cameraFile.delete();
             }
             callback.onReceiveValue(picked);
         });
@@ -75,6 +86,19 @@ public class XtWebChromeClient extends BridgeWebChromeClient {
         return any;
     }
 
+    /** 拍照的临时文件：网页早就传完了，一天以前的删掉，别越攒越多 */
+    private static void deleteOldPhotos(File dir) {
+        File[] old = dir.listFiles();
+        if (old == null) return;
+        long cutoff = System.currentTimeMillis() - 24L * 60 * 60 * 1000;
+        for (File f : old) {
+            if (f.lastModified() < cutoff) {
+                //noinspection ResultOfMethodCallIgnored
+                f.delete();
+            }
+        }
+    }
+
     @Override
     public boolean onShowFileChooser(WebView webView, ValueCallback<Uri[]> filePathCallback, FileChooserParams fileChooserParams) {
         if (fileChooserParams.isCaptureEnabled() || !onlyImages(fileChooserParams.getAcceptTypes())) {
@@ -89,12 +113,15 @@ public class XtWebChromeClient extends BridgeWebChromeClient {
         Intent chooser = Intent.createChooser(pick, "选择图片");
 
         cameraUri = null;
+        cameraFile = null;
         Intent camera = new Intent(MediaStore.ACTION_IMAGE_CAPTURE);
         if (camera.resolveActivity(bridge.getActivity().getPackageManager()) != null) {
             try {
                 File dir = new File(bridge.getContext().getCacheDir(), "xt-camera");
                 if (!dir.exists() && !dir.mkdirs()) throw new IllegalStateException("建不了拍照临时目录");
+                deleteOldPhotos(dir);
                 File photo = File.createTempFile("photo_", ".jpg", dir);
+                cameraFile = photo;
                 cameraUri = FileProvider.getUriForFile(bridge.getContext(), bridge.getContext().getPackageName() + ".fileprovider", photo);
                 camera.putExtra(MediaStore.EXTRA_OUTPUT, cameraUri);
                 camera.addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION | Intent.FLAG_GRANT_READ_URI_PERMISSION);

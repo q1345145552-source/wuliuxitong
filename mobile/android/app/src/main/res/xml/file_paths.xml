@@ -1,5 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- 能交给别的 app（相机、分享目标）的文件只限这几个文件夹（2026-10-05 Codex 复审：原来是整个存储和整个缓存） -->
 <paths xmlns:android="http://schemas.android.com/apk/res/android">
-    <external-path name="my_images" path="." />
-    <cache-path name="my_cache_images" path="." />
+    <!-- 上传图片时调系统相机拍的临时照片（XtWebChromeClient） -->
+    <cache-path name="xt_camera" path="xt-camera/" />
+    <!-- 存不进 Documents 的手机，导出的文件先放这里再分享（native-app.ts） -->
+    <cache-path name="xt_files" path="xt-files/" />
+    <!-- 导出的文件存到 Documents/湘泰物流 再分享（native-app.ts） -->
+    <external-path name="xt_documents" path="Documents/" />
+    <!-- Capacitor 自带的「写了 capture 的上传框」拍照放这里（getExternalFilesDir(Pictures)） -->
+    <external-files-path name="captures" path="Pictures/" />
 </paths>

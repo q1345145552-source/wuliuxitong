@@ -25,7 +25,9 @@ android {
     signingConfigs {
         release {
             if (keystoreProps["storeFile"]) {
-                storeFile file(keystoreProps["storeFile"])
+                // storeFile 写相对路径就按 keystore.properties 所在的文件夹找（换电脑时两个文件放一起就行）
+                def store = new File(keystoreProps["storeFile"])
+                storeFile store.isAbsolute() ? store : new File(keystorePropsFile.parentFile, keystoreProps["storeFile"])
                 storePassword keystoreProps["storePassword"]
                 keyAlias keystoreProps["keyAlias"]
                 keyPassword keystoreProps["keyPassword"]
@@ -60,6 +62,20 @@ dependencies {
 }
 
 apply from: 'capacitor.build.gradle'
+
+// 正式包闸门（Codex 10-05 复审）：打正式包前查一遍要装进包里的 capacitor.config.json，
+// 网址不是线上、开了明文、开了网页调试口，一律不让打（测试时在终端里设的 XT_APP_URL 忘了清，也打不出错包）
+tasks.matching { it.name == "preReleaseBuild" }.configureEach {
+    doFirst {
+        def cfgFile = file("src/main/assets/capacitor.config.json")
+        def cfg = new groovy.json.JsonSlurper().parse(cfgFile)
+        def problems = []
+        if (cfg.server?.url != "https://xianlianth.com") problems << "打开的网址是 ${cfg.server?.url}"
+        if (cfg.server?.cleartext) problems << "开了明文 http"
+        if (cfg.android?.webContentsDebuggingEnabled) problems << "开了网页调试口"
+        if (!problems.isEmpty()) throw new GradleException("正式包配置不对：" + problems.join("；") + "。请用 npm run apk:release 打包")
+    }
+}
 
 try {
     def servicesJSON = file('google-services.json')
