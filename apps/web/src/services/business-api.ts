@@ -873,6 +873,26 @@ export async function fetchClientOrders(params?: {
     : orders;
 }
 
+/** 物流轨迹里「现在什么状态、最近一条到哪了」要用的那几样（客服对话里点运单卡片看详情顶上那一行，2026-10-06） */
+export interface ShipmentTrackBrief {
+  trackingNo: string;
+  currentStatus: string;
+  /** 拆了子单、有的子单走得快：快的那批到了哪一步 */
+  partialAhead?: string;
+  /** 从早到晚；父单这份已经并进了子单的记录 */
+  timeline: Array<{ toStatus: string; remark: string; nextStop?: string; changedAt: string }>;
+}
+
+/** 跟「物流轨迹」弹窗同一个接口（客户、员工都走它，后端按身份管能看什么）。查不到返回 null */
+export async function fetchShipmentTrackBrief(trackingNo: string): Promise<ShipmentTrackBrief | null> {
+  const response = await fetch(`${apiBaseUrl()}/client/shipments/track?trackingNo=${encodeURIComponent(trackingNo)}`, {
+    method: "GET",
+    headers: { ...authHeaders() },
+  });
+  const data = await parseApiResponse<ShipmentTrackBrief | null>(response);
+  return data && data.trackingNo ? data : null;
+}
+
 /**
  * 客户那头：客服对话里点运单卡片看详情（2026-10-06），按运单号精确找自己的这一票。
  * 跟「运单查询」同一个接口、同一套处理（柜号不给客户看之类全在后端），只认单号完全对得上的那条。

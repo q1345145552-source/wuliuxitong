@@ -1228,6 +1228,7 @@ async function main(): Promise<void> {
         fetchClientOrderByTrackingNo: later("client"),
         fetchStaffShipmentById: later("staff"),
         fetchShipmentImages: later("images"),
+        fetchShipmentTrackBrief: later("track"),
       },
       [path.join(SRC, "modules/shipment/ShipmentTrackModal.tsx")]: { openShipmentTrack: (t: any) => tracks.push(t) },
       [path.join(SRC, "modules/layout/DetailModal.tsx")]: { __esModule: true, default: DetailStub },
@@ -1242,25 +1243,37 @@ async function main(): Promise<void> {
     flush();
     assert.ok(textOf(findAll((n) => n.type === "p")[0]).includes("正在取"), "取的时候没写在取");
     const c1 = take("client"); assert.equal(c1.arg, "XT001");
-    c1.resolve({ id: "o1", trackingNo: "XT001", approvalStatus: "received", products: [] }); await settle();
+    c1.resolve({ id: "o1", trackingNo: "XT001", approvalStatus: "received", currentStatus: "arrivedTH", products: [] }); await settle();
     const i1 = take("images"); assert.equal(i1.arg, "o1", "客户的产品图要按订单 id 取（跟运单查询一样）");
     i1.resolve([{ id: "img1", fileName: "a.jpg", imageUrl: "/images/a.jpg" }]); await settle();
+    // 「当前状态 + 最新动态」（2026-10-06「状态没有吗？或货物到哪了？」→「加」）：跟物流轨迹同一个接口，按单号取
+    const t1 = take("track"); assert.equal(t1.arg, "XT001");
+    t1.resolve({ trackingNo: "XT001", currentStatus: "delivered", timeline: [
+      { toStatus: "arrivedTH", remark: "", changedAt: "2026-10-05T14:39:00.000Z" },
+      { toStatus: "delivered", remark: "已签收（客户自提）", nextStop: "", changedAt: "2026-10-06T02:00:00.000Z" },
+    ] }); await settle();
+    const now = textOf(findAll((n) => n.props?.className === "chat-ref-detail-now")[0] ?? { props: {} });
+    assert.ok(now.startsWith("当前状态已签收"), `当前状态没写、或客户那头叫法不对（delivered 客户叫「已签收」）：${now}`);
+    assert.ok(now.includes("最新动态：10-06 10:00") && now.includes("已签收（客户自提）"), `最新动态不对（要北京时间、写最新那一条）：${now}`);
     assert.equal(body().props.item.trackingNo, "XT001");
     assert.equal(body().props.images.length, 1);
     assert.deepEqual(body().props.extraFields, [], "客户那头不该多唛头那格");
     findAll((n) => n.type === "button" && textOf(n) === "查看物流轨迹")[0].props.onClick();
     assert.deepEqual(tracks.pop(), { trackingNo: "XT001" });
-    unmount();
+    unmount(); pending.length = 0; // 上一个场景没理会的请求清掉，免得下面认错
 
     // 员工：按 id 查（跟「运单管理」同一个接口），前面多一格唛头；图片没取到不挡详情
     mount(RefDetail, { chatRef: ref, forClient: false, onClose() {} });
     flush();
     const s1 = take("staff"); assert.equal(s1.arg, "s1");
-    s1.resolve({ id: "s1", orderId: "o1", trackingNo: "XT001", clientId: "ZZC1", products: [] }); await settle();
+    s1.resolve({ id: "s1", orderId: "o1", trackingNo: "XT001", clientId: "ZZC1", currentStatus: "delivered", products: [] }); await settle();
     take("images").reject(new Error("图挂了")); await settle();
+    take("track").reject(new Error("轨迹挂了")); await settle();
+    const nowStaff = textOf(findAll((n) => n.props?.className === "chat-ref-detail-now")[0] ?? { props: {} });
+    assert.ok(nowStaff.startsWith("当前状态派送完成") && !nowStaff.includes("最新动态"), `轨迹没取到时应该退回运单自己的状态（员工叫法）、不写最新动态：${nowStaff}`);
     assert.deepEqual(body().props.extraFields.map((f: any) => [f.label, f.value]), [["唛头", "ZZC1"]]);
     assert.deepEqual(body().props.images, [], "图片没取到应该当没有图，不能挡住详情");
-    unmount();
+    unmount(); pending.length = 0; // 上一个场景没理会的请求清掉，免得下面认错
 
     // 客户那头图片没取到也不挡详情
     mount(RefDetail, { chatRef: ref, forClient: true, onClose() {} });
@@ -1269,7 +1282,17 @@ async function main(): Promise<void> {
     take("images").reject(new Error("图挂了")); await settle();
     assert.ok(body(), "客户那头图片没取到，整个详情都没出来");
     assert.deepEqual(body().props.images, []);
-    unmount();
+    unmount(); pending.length = 0; // 上一个场景没理会的请求清掉，免得下面认错
+
+    // 最新一条带下一站：写出来
+    mount(RefDetail, { chatRef: ref, forClient: true, onClose() {} });
+    flush();
+    take("client").resolve({ id: "o1", trackingNo: "XT001", currentStatus: "customsCleared", products: [] }); await settle();
+    take("images").resolve([]); await settle();
+    take("track").resolve({ trackingNo: "XT001", currentStatus: "customsCleared", timeline: [{ toStatus: "customsCleared", remark: "清关已放行", nextStop: "泰国仓库", changedAt: "2026-08-06T14:39:00.000Z" }] }); await settle();
+    const nowNext = textOf(findAll((n) => n.props?.className === "chat-ref-detail-now")[0] ?? { props: {} });
+    assert.ok(nowNext.includes("08-06 22:39") && nowNext.includes("下一站【泰国仓库】"), `下一站没写出来：${nowNext}`);
+    unmount(); pending.length = 0; // 上一个场景没理会的请求清掉，免得下面认错
 
     // 查不到（删了 / 不在名下 / 老后端不认 id）
     mount(RefDetail, { chatRef: ref, forClient: true, onClose() {} });
@@ -1277,7 +1300,7 @@ async function main(): Promise<void> {
     take("client").resolve(null); await settle();
     assert.ok(findAll((n) => n.type === "p").map(textOf).some((t) => t.includes("没找到这票货")), "查不到没写清楚");
     assert.equal(body(), undefined);
-    unmount();
+    unmount(); pending.length = 0; // 上一个场景没理会的请求清掉，免得下面认错
 
     // 出错：写原因 + 重试，重试真的再取一次
     mount(RefDetail, { chatRef: ref, forClient: true, onClose() {} });
