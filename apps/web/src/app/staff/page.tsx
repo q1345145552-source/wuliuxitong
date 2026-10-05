@@ -1238,6 +1238,11 @@ export default function StaffHomePage() {
     });
   };
 
+  /** 运单行的「打印」：电脑宽表和手机一单一块共用 */
+  const printShipmentLabel = (item: (typeof filteredShipmentList)[number]) => {
+    openPrintLabel({ marks: item.clientId ?? "—", packageCount: item.packageCount ?? "—", trackingNo: item.trackingNo ?? "", itemName: item.itemName, productQuantity: item.productQuantity, transportMode: item.transportMode, products: item.products?.map(p => ({ itemName: p.itemName, packageCount: p.packageCount })) });
+  };
+
   const toggleSelectAll = () => {
     if (allResultShipmentsSelected) {
       setSelectedForExport(new Set());
@@ -1868,7 +1873,8 @@ export default function StaffHomePage() {
           </div>
         </div>
         <p className="staff-shipment-scroll-hint" id="staff-shipment-scroll-hint">宽表可左右滚动查看完整列；产品超过 3 项时，在产品明细区域上下滚动。</p>
-        <div className="staff-shipment-copy-notice" role="status" aria-live="polite" aria-atomic="true">{copyNotice}</div>
+        {/* 手机上这句是底部一闪而过的小条（globals.css 手机那段），换一句就重新挂一次、重新闪；电脑上照旧 */}
+        <div key={isPhone ? copyNotice : "notice"} className="staff-shipment-copy-notice" role="status" aria-live="polite" aria-atomic="true">{copyNotice}</div>
           <>
             {shipments.length === 0 ? (
               <EmptyStateCard title="暂无运单数据" description="先创建订单或等待系统分配运单后，这里会展示可操作记录。" />
@@ -1893,10 +1899,32 @@ export default function StaffHomePage() {
                     transport: transportModeLabel(item.transportMode),
                     meta: `${warehouseLabelFromId(item.warehouseId)} · 到仓 ${item.shipDate ?? formatDateTime(item.arrivedAt)}`,
                   }))}
-                  actions={[{ label: "物流轨迹", onClick: (id) => {
-                    const item = pagedShipments.find((s) => s.id === id);
-                    if (item?.trackingNo) openShipmentTrack({ trackingNo: item.trackingNo });
-                  } }]}
+                  actions={[
+                    { label: "物流轨迹", onClick: (id) => {
+                      const item = pagedShipments.find((s) => s.id === id);
+                      if (item?.trackingNo) openShipmentTrack({ trackingNo: item.trackingNo });
+                    } },
+                    // 跟电脑宽表那一行同样的事：点单号复制、打印（详情 = 点整块）
+                    { label: "复制单号", onClick: (id) => {
+                      const item = pagedShipments.find((s) => s.id === id);
+                      if (item) void copyShipmentNumber(item.orderNo || item.trackingNo);
+                    } },
+                    { label: "打印", onClick: (id) => {
+                      const item = pagedShipments.find((s) => s.id === id);
+                      if (item) printShipmentLabel(item);
+                    } },
+                  ]}
+                  selection={{
+                    isSelected: (id) => {
+                      const item = pagedShipments.find((s) => s.id === id);
+                      return !!item && selectedForExport.has(item.trackingNo);
+                    },
+                    onToggle: (id) => {
+                      const item = pagedShipments.find((s) => s.id === id);
+                      if (item) toggleSelectShipment(item.trackingNo);
+                    },
+                    all: { checked: allResultShipmentsSelected, partial: selectedResultShipments.length > 0, total: filteredShipmentList.length, onToggle: toggleSelectAll },
+                  }}
                   onOpen={(id) => {
                     const item = pagedShipments.find((s) => s.id === id);
                     if (!item) return;
@@ -2010,7 +2038,7 @@ export default function StaffHomePage() {
                             </button>
                             <button
                               type="button"
-                              onClick={() => openPrintLabel({ marks: item.clientId ?? "—", packageCount: item.packageCount ?? "—", trackingNo: item.trackingNo ?? "", itemName: item.itemName, productQuantity: item.productQuantity, transportMode: item.transportMode, products: item.products?.map(p => ({ itemName: p.itemName, packageCount: p.packageCount })) })}
+                              onClick={() => printShipmentLabel(item)}
                               className="row-act"
                             >
                               打印

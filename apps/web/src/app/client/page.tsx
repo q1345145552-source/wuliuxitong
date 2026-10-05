@@ -1190,7 +1190,8 @@ export default function ClientHomePage() {
               </div>
             </div>
             <p className="client-order-search-hint" id="client-order-date-hint">日期按建单日期筛选，并非泰国到仓日期。修改条件后，点击“执行查询”或按回车更新结果。</p>
-            <div className="shipment-copy-notice" role="status" aria-live="polite" aria-atomic="true">{copyNotice}</div>
+            {/* 手机上这句是底部一闪而过的小条（globals.css 手机那段），换一句就重新挂一次、重新闪；电脑上照旧 */}
+            <div key={isPhone ? copyNotice : "notice"} className="shipment-copy-notice" role="status" aria-live="polite" aria-atomic="true">{copyNotice}</div>
 
             {!hasQueried ? (
               <EmptyStateCard
@@ -1246,10 +1247,17 @@ export default function ClientHomePage() {
                       fetchShipmentImages(id).then((imgs) => setDetailImagesCache((prev) => ({ ...prev, [id]: imgs }))).catch((e) => console.error("加载产品图失败:", id, e));
                     }
                   }}
-                  actions={[{ label: "物流轨迹", onClick: (id) => {
-                    const item = pageItems.find((o) => o.id === id);
-                    if (item?.trackingNo) openShipmentTrack({ trackingNo: item.trackingNo });
-                  } }]}
+                  actions={[
+                    { label: "物流轨迹", onClick: (id) => {
+                      const item = pageItems.find((o) => o.id === id);
+                      if (item?.trackingNo) openShipmentTrack({ trackingNo: item.trackingNo });
+                    } },
+                    // 跟电脑宽表一样能点单号复制（详情 = 点整块）
+                    { label: "复制单号", onClick: (id) => {
+                      const item = pageItems.find((o) => o.id === id);
+                      if (item?.trackingNo) void copyOrderNumber(item.trackingNo);
+                    } },
+                  ]}
                 />
               );
             })() : null}

@@ -11,14 +11,16 @@ import { useEffect } from "react";
  * 电脑上这个钩子什么都不做，表格一个字不动。
  *
  * 不碰的表：带 data-phone="keep" 的（自己有手机写法，或者本来就该横着看的小表），
- * 以及放在 .is-phone-hidden 里的（那张宽表手机上已经换成别的列表了）。
+ * 以及放在 .is-phone-hidden 里的（那张宽表手机上已经换成别的列表了；但它详情弹窗里的表照常摊）。
  */
 
 const HANDLED = "phoneStack";
 
 /** 导出给测试用（scripts/test-phone-layout.ts 拿假的表格跑） */
 export function labelTable(table: HTMLTableElement): void {
-  if (table.dataset.phone === "keep" || table.closest(".is-phone-hidden")) return;
+  if (table.dataset.phone === "keep") return;
+  // 收起来的电脑宽表（以及它普通行里的小表）不碰；但宽表「详情」那一行里挂的弹窗是看得见的，里面的表（货物明细）照常摊
+  if (table.closest(".is-phone-hidden") && !table.closest(".shipment-detail-row")) return;
   const headRow = table.tHead?.rows[table.tHead.rows.length - 1];
   if (!headRow) return; // 没有表头的不摊：不知道每格叫什么
   const labels: string[] = [];
@@ -27,11 +29,18 @@ export function labelTable(table: HTMLTableElement): void {
     for (let i = 0; i < Math.max(1, th.colSpan); i++) labels.push(text);
   }
   for (const body of Array.from(table.tBodies)) {
+    // 上面行用 rowSpan 占住的列（集货签收那种「唛头 / 运单号跨好几行」的表）：这些列号下面几行要跳过，
+    // 不然第 2 行起列名整体错位（dsh 10-05 复审抓到）。occupied[列号] = 还要被占几行
+    let occupied: number[] = [];
     for (const row of Array.from(body.rows)) {
+      const nextOccupied = occupied.map((n) => (n > 0 ? n - 1 : 0));
       let col = 0;
       let titled = false;
       for (const cell of Array.from(row.cells)) {
+        while ((occupied[col] ?? 0) > 0) col++;
         const span = Math.max(1, cell.colSpan);
+        const rowSpan = Math.max(1, cell.rowSpan || 1);
+        if (rowSpan > 1) for (let k = 0; k < span; k++) nextOccupied[col + k] = rowSpan - 1;
         if (span > 1 && span >= labels.length - 1) {
           // 跨满整行的格子（展开的明细、空表提示）：整块显示，不配列名
           cell.dataset.label = "";
@@ -51,6 +60,7 @@ export function labelTable(table: HTMLTableElement): void {
         }
         col += span;
       }
+      occupied = nextOccupied;
     }
   }
   if (table.dataset[HANDLED] !== "1") {

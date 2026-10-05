@@ -37,6 +37,7 @@ class FakeClassList {
 class FakeCell {
   dataset: Record<string, string> = {};
   classList = new FakeClassList();
+  rowSpan = 1;
   constructor(public textContent: string, public colSpan = 1, public inner: string[] = []) {}
   querySelector(sel: string) {
     const wanted = sel.split(",").map((s) => s.trim().replace(/\[.*\]/, ""));
@@ -51,14 +52,18 @@ class FakeTable {
   classList = new FakeClassList();
   tHead: { rows: FakeRow[] } | null;
   tBodies: Array<{ rows: FakeRow[] }>;
-  constructor(head: FakeCell[] | null, body: FakeCell[][], public hiddenParent = false) {
+  /** 祖先身上有哪些类（只认 labelTable 会问的那两个：.is-phone-hidden / .shipment-detail-row） */
+  ancestors: Set<string>;
+  constructor(head: FakeCell[] | null, body: FakeCell[][], hiddenParent: boolean | string[] = false) {
     this.tHead = head ? { rows: [new FakeRow(head)] } : null;
     this.tBodies = [{ rows: body.map((cells) => new FakeRow(cells)) }];
+    this.ancestors = new Set(hiddenParent === true ? [".is-phone-hidden"] : hiddenParent === false ? [] : hiddenParent);
   }
-  closest(sel: string) { return sel === ".is-phone-hidden" && this.hiddenParent ? {} : null; }
+  closest(sel: string) { return this.ancestors.has(sel) ? {} : null; }
 }
 const th = (t: string, span = 1) => new FakeCell(t, span);
 const td = (t: string, inner: string[] = [], span = 1) => new FakeCell(t, span, inner);
+const tdRows = (t: string, rowSpan: number) => Object.assign(new FakeCell(t), { rowSpan });
 
 async function main(): Promise<void> {
   // ---------- M1 ----------
@@ -151,6 +156,24 @@ async function main(): Promise<void> {
     assert.equal(c.dataset.label, "");
     assert.ok(c.classList.contains("phone-cell-full"));
   });
+  await check("M3 上面行跨行占住的列（集货签收：唛头 / 运单号跨好几行），下面几行列名不错位（dsh 10-05）", () => {
+    const t = new FakeTable(
+      [th("唛头"), th("运单号"), th("产品名称"), th("件数"), th("体积")],
+      [
+        [tdRows("XHH-1", 3), tdRows("YW001", 3), td("产品一"), td("5"), td("0.1")],
+        [td("产品二"), td("8"), td("0.2")],
+        [td("产品三"), td("2"), td("0.3")],
+        [td("XHH-2"), td("YW002"), td("产品四"), td("1"), td("0.4")], // 跨行结束后下一票从第 0 列重新数
+      ],
+    );
+    labelTable(t as unknown as HTMLTableElement);
+    const rows = t.tBodies[0].rows.map((r) => r.cells.map((c) => c.dataset.label));
+    assert.deepEqual(rows[0], ["唛头", "运单号", "产品名称", "件数", "体积"]);
+    assert.deepEqual(rows[1], ["产品名称", "件数", "体积"]);
+    assert.deepEqual(rows[2], ["产品名称", "件数", "体积"]);
+    assert.deepEqual(rows[3], ["唛头", "运单号", "产品名称", "件数", "体积"]);
+    assert.ok(t.tBodies[0].rows[1].cells[0].classList.contains("phone-cell-title"), "第 2 件货以产品名当标题");
+  });
   await check("M3 不碰的表：data-phone=keep、放在 .is-phone-hidden 里的、没表头的", () => {
     const keep = new FakeTable([th("A")], [[td("1")]]);
     keep.dataset.phone = "keep";
@@ -161,6 +184,14 @@ async function main(): Promise<void> {
       assert.ok(!t.classList.contains("phone-stack"));
       assert.equal(t.tBodies[0].rows[0].cells[0].dataset.label, undefined);
     }
+  });
+  await check("M3 收起的宽表「详情」那一行弹窗里的表（货物明细）照常摊；宽表普通行里的小表不碰（Codex 10-05）", () => {
+    const inDetail = new FakeTable([th("#"), th("品名")], [[td("1"), td("玩具")]], [".is-phone-hidden", ".shipment-detail-row"]);
+    labelTable(inDetail as unknown as HTMLTableElement);
+    assert.ok(inDetail.classList.contains("phone-stack"), "详情弹窗里的货物明细没摊开");
+    const inRow = new FakeTable([th("#"), th("品名")], [[td("1"), td("玩具")]], [".is-phone-hidden"]);
+    labelTable(inRow as unknown as HTMLTableElement);
+    assert.ok(!inRow.classList.contains("phone-stack"));
   });
   await check("M3 数据变了再标一次：标题跟着换、上一轮的空标记撤掉", () => {
     const cells = [td("—"), td("JH2")];
@@ -201,12 +232,66 @@ async function main(): Promise<void> {
     assert.match(client, /<label className="client-search-field"><span>运单号<\/span>/, "客户端查询区第一格不是运单号了，上面那条规则会藏错");
   });
 
+  await check("M4 电脑那一行能做的事手机上一样不少：员工 勾选 + 打印；管理员 勾选 + 编辑 / 打印 / 删除（dsh 10-05）", () => {
+    const phoneBlock = (src: string) => {
+      const at = src.indexOf("<ShipmentPhoneList");
+      assert.ok(at > 0);
+      return src.slice(at, src.indexOf("/>", src.indexOf("selection={{", at)) + 2);
+    };
+    const staff = phoneBlock(read("app/staff/page.tsx"));
+    for (const label of ["物流轨迹", "打印"]) assert.ok(staff.includes(`label: "${label}"`), `员工手机列表少了「${label}」`);
+    assert.match(staff, /toggleSelectShipment\(item\.trackingNo\)/, "员工手机列表不能勾选");
+    assert.match(staff, /onToggle: toggleSelectAll/, "员工手机列表没有「选择全部筛选结果」");
+    const admin = phoneBlock(read("app/admin/page.tsx"));
+    for (const label of ["物流轨迹", "编辑", "打印", "删除"]) assert.ok(admin.includes(`label: "${label}"`), `管理员手机列表少了「${label}」`);
+    assert.match(admin, /onToggle: toggleSelectOrder/, "管理员手机列表不能勾选");
+    assert.match(admin, /onToggle: toggleSelectAllOrders/);
+    // 电脑上点单号能复制，三端手机上也要有
+    assert.ok(staff.includes('label: "复制单号"') && staff.includes("copyShipmentNumber("), "员工手机列表少了「复制单号」");
+    assert.ok(admin.includes('label: "复制单号"') && admin.includes("copyOrderNumber("), "管理员手机列表少了「复制单号」");
+    const client = read("app/client/page.tsx");
+    const clientBlock = client.slice(client.indexOf("<ShipmentPhoneList"), client.indexOf("/>", client.indexOf("<ShipmentPhoneList")) + 2);
+    assert.ok(clientBlock.includes('label: "复制单号"') && clientBlock.includes("copyOrderNumber("), "客户手机列表少了「复制单号」");
+    // 电脑和手机走同一个打印 / 删除，不是抄两份
+    assert.equal((read("app/admin/page.tsx").match(/deleteAdminOrder\(/g) ?? []).length, 1, "删除运单的逻辑应该只有一份");
+    assert.equal((read("app/staff/page.tsx").match(/openPrintLabel\(/g) ?? []).length, 1, "员工打印逻辑应该只有一份");
+  });
+
   // ---------- M5 ----------
   await check("M5 客服两页手机上扣掉底部那排的高度", () => {
     const css = fs.readFileSync(path.join(WEB, "app/globals.css"), "utf8");
     assert.match(css, /\.has-phone-tabs :is\(\.cs-client-page, \.cs-inbox\) \{\s*height: calc\(100dvh - 72px - 60px - env\(safe-area-inset-bottom\)\) !important;/);
     assert.match(read("app/client/chat/page.tsx"), /className="cs-client-page"/);
     assert.match(read("app/staff/chat/page.tsx"), /"cs-inbox cs-inbox--open" : "cs-inbox"/);
+  });
+  await check("M5 底部留白压得过 ledger.css（它后加载、两个类；我们要三个类，不然拉到底的按钮被底部那排盖住，dsh 10-05）", () => {
+    const css = fs.readFileSync(path.join(WEB, "app/globals.css"), "utf8");
+    assert.match(css, /\.dashboard-layout\.has-phone-tabs \.dashboard-content \{ padding-bottom: calc\(60px/);
+    const ledger = fs.readFileSync(path.join(WEB, "app/ledger.css"), "utf8");
+    for (const m of ledger.matchAll(/^\s*([^{}\n]*\.dashboard-content)\s*\{[^}]*padding/gm)) {
+      const classes = (m[1].match(/\.[\w-]+/g) ?? []).length;
+      assert.ok(classes < 3, `ledger.css 的「${m[1].trim()}」有 ${classes} 个类，会盖掉手机底部留白`);
+    }
+    const layout = read("app/layout.tsx");
+    assert.ok(layout.indexOf('"./globals.css"') < layout.indexOf('"./ledger.css"'), "加载顺序变了，上面那条推理要重看");
+  });
+  await check("M2 收起宽表只藏它自己的表头 / 行（一律「>」），不许写成后代选择器把详情弹窗里的表一起藏掉（Codex 10-05）", () => {
+    const css = fs.readFileSync(path.join(WEB, "app/globals.css"), "utf8");
+    const phone = css.slice(css.indexOf("手机排版（2026-10-05"));
+    const bad = phone.split("\n").find((line) => /\.is-phone-hidden\s+(thead|tbody|tr|colgroup|td|th|table)\b/.test(line));
+    assert.equal(bad, undefined, `有后代选择器会伤到详情弹窗里的表：${bad}`);
+    assert.match(phone, /\.is-phone-hidden > table > tbody > tr:not\(\.shipment-detail-row\) \{ display: none; \}/);
+  });
+  await check("M5 底部弹出那一小块：按返回键 / 地址变了也收起（外壳换页不卸载，dsh 10-05）", () => {
+    const bar = read("modules/layout/PhoneTabBar.tsx");
+    assert.match(bar, /addEventListener\("popstate", close\)/);
+    assert.match(bar, /addEventListener\("hashchange", close\)/);
+  });
+  await check("M2 手机样式不用 :has()（老安卓 WebView 不认，整条会被丢掉）", () => {
+    const css = fs.readFileSync(path.join(WEB, "app/globals.css"), "utf8");
+    const phone = css.slice(css.indexOf("手机排版（2026-10-05"));
+    const hit = phone.split("\n").find((line) => line.includes(":has(") && !line.trim().startsWith("/*"));
+    assert.equal(hit, undefined, `手机样式里还有 :has()：${hit}`);
   });
 
   console.log(`\n手机排版 ${passed} 项全部通过`);

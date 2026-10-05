@@ -50,12 +50,20 @@ export default function PhoneTabBar({ tabs, onMore }: { tabs: PhoneTabView[]; on
   const [sheetKey, setSheetKey] = useState<string | null>(null);
   const sheet = tabs.find((t) => t.key === sheetKey) ?? null;
 
-  // 弹出来的那一小块：按返回键 / Esc 收起
+  // 弹出来的那一小块：按 Esc、按手机返回键、地址变了都收起
+  // （外壳挂在根布局、换页不卸载，不监听返回键的话这一小块会跟着人到上一页，dsh 10-05 复审抓到）
   useEffect(() => {
     if (!sheet) return;
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setSheetKey(null); };
+    const close = () => setSheetKey(null);
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") close(); };
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    window.addEventListener("popstate", close);
+    window.addEventListener("hashchange", close);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("popstate", close);
+      window.removeEventListener("hashchange", close);
+    };
   }, [sheet]);
 
   return (

@@ -4191,8 +4191,15 @@ table.a3-table.shipment-product-table > tbody > tr > td {
     font-size: 13px;
   }
   .ship-phone-action--danger { color: var(--bad) !important; }
-  /* 灰字那行给右下角按钮让出位置：按钮几个就让多宽 */
-  .ship-phone-item:has(.ship-phone-actions) .ship-phone-meta { padding-right: calc(var(--ship-actions, 1) * 66px); }
+  /* 灰字那行给右下角按钮让出位置：按钮几个就让多宽（用类名不用 :has()，老安卓 WebView 不认 :has） */
+  .ship-phone-item--actions .ship-phone-meta { padding-right: calc(var(--ship-actions, 1) * 66px); }
+  /* 按钮多（管理员：物流轨迹 / 编辑 / 打印 / 删除）就单独一行靠右，不挤灰字 */
+  .ship-phone-item--actions-row .ship-phone-actions { position: static; justify-content: flex-end; margin-top: -8px; padding: 0 2px 10px; }
+  /* 勾选（员工、管理员）：勾选框放在每块左上角，整块内容往右让一点 */
+  .ship-phone-item--selectable .ship-phone-row { padding-left: 34px; }
+  .ship-phone-check { position: absolute; left: 0; top: 10px; z-index: 1; display: flex; align-items: center; justify-content: center; width: 30px; height: 30px; }
+  .ship-phone-check input, .ship-phone-select-all input { width: 18px; height: 18px; margin: 0; accent-color: var(--ink); }
+  .ship-phone-select-all { display: flex; align-items: center; gap: 10px; padding: 10px 6px; color: var(--ink-2); font-size: 13px; }
   .ship-phone-row {
     display: grid;
     gap: 6px;
@@ -4249,11 +4256,32 @@ table.a3-table.shipment-product-table > tbody > tr > td {
   /* 电脑那张宽表在手机上收起来，只留「运单详情」弹窗那一行（弹窗是铺满屏幕的，挂在表里） */
   .is-phone-hidden { height: 0; min-height: 0 !important; padding: 0 !important; border: 0 !important; overflow: visible !important; }
   .is-phone-hidden > table { width: 0 !important; min-width: 0 !important; table-layout: auto !important; }
-  /* 列宽是写死的（加起来 1700 多像素），不藏掉的话这张看不见的表还是那么宽，苹果手机上能被手指拖得左右晃 */
-  .is-phone-hidden colgroup,
-  .is-phone-hidden thead,
-  .is-phone-hidden tbody > tr:not(.shipment-detail-row) { display: none; }
+  /* 列宽是写死的（加起来 1700 多像素），不藏掉的话这张看不见的表还是那么宽，苹果手机上能被手指拖得左右晃。
+     只藏外面那张宽表自己的表头 / 行（一律用「>」）：详情弹窗里也有表（货物明细），写成后代选择器会把它们一起藏掉（Codex 10-05） */
+  .is-phone-hidden > table > colgroup,
+  .is-phone-hidden > table > thead,
+  .is-phone-hidden > table > tbody > tr:not(.shipment-detail-row) { display: none; }
   .staff-shipment-scroll-hint, .shipment-scroll-hint { display: none; }
+
+  /* 「已复制单号」那句：电脑上在列表上面；手机上人往往已经往下翻了看不到，改成底部入口上方一闪而过的小条
+     （页面给这句挂了 key，换一句就重新挂、重新闪；原来这句不会自己消失，所以要靠动画收掉） */
+  .dashboard-layout :is(.staff-shipment-copy-notice, .shipment-copy-notice):not(:empty) {
+    position: fixed;
+    left: 16px;
+    right: 16px;
+    bottom: calc(68px + env(safe-area-inset-bottom));
+    z-index: 34;
+    margin: 0;
+    padding: 10px 14px;
+    border-radius: var(--a3-radius);
+    background: var(--ink);
+    color: var(--panel);
+    font-size: 13px;
+    text-align: center;
+    pointer-events: none;
+    animation: phone-toast 2.4s ease forwards;
+  }
+  @keyframes phone-toast { 0%, 80% { opacity: 1; } 100% { opacity: 0; visibility: hidden; } }
 
   /* 客户「运单查询」：运单号那一格常驻（8-11 定的查询框不藏），其余条件点「更多条件」才出来 */
   .client-order-search.phone-collapsed .client-search-field:not(:first-of-type) { display: none; }
@@ -4351,7 +4379,9 @@ table.a3-table.shipment-product-table > tbody > tr > td {
   }
 
   /* ---- 底部常用入口（老板拍板「2a」）：白底、上面一条细线、只有字；当前页字变黑加粗、上面一条短横线 ---- */
-  .has-phone-tabs .dashboard-content { padding-bottom: calc(60px + env(safe-area-inset-bottom)); }
+  /* 要写三个类：ledger.css 在 globals.css 后面加载，它的「.ledger-shell .dashboard-content」把留白压回 20px，
+     底部那排就盖住页面最后 36px（拉到底的按钮点不到，dsh 10-05 复审抓到） */
+  .dashboard-layout.has-phone-tabs .dashboard-content { padding-bottom: calc(60px + env(safe-area-inset-bottom)); }
   .phone-tabbar {
     position: fixed;
     left: 0;

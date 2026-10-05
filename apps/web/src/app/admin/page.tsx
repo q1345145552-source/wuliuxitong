@@ -1419,6 +1419,21 @@ export default function AdminHomePage() {
     else setSelectedOrders(new Set(filteredOrderList.map((o) => o.id)));
   };
 
+  /** 运单行的「删除」「打印」：电脑宽表和手机一单一块共用 */
+  const deleteOrderRow = async (o: (typeof filteredOrderList)[number]) => {
+    if (!confirm(`确定删除运单 ${o.trackingNo ?? "—"}（${o.itemName ?? ""}）？\n\n此操作不可撤销，将级联删除运单、状态日志、产品行等所有关联数据。`)) return;
+    try {
+      await deleteAdminOrder(o.orderId ?? o.id);
+      setToast(`已删除：${o.trackingNo ?? o.itemName ?? "—"}`);
+      await loadOrders();
+    } catch (err) {
+      setMessage(`删除失败：${err instanceof Error ? err.message : "未知错误"}`);
+    }
+  };
+  const printOrderLabel = (o: (typeof filteredOrderList)[number]) => {
+    openPrintLabel({ marks: o.clientId ?? "—", packageCount: o.packageCount ?? "—", trackingNo: o.trackingNo ?? "", itemName: o.itemName, productQuantity: o.productQuantity, transportMode: o.transportMode, products: (o.products ?? []).map(p => ({ itemName: p.itemName, packageCount: p.packageCount })) });
+  };
+
   const [orderExportFeedback, setOrderExportFeedback] = useState("");
   /* 导出弹窗有自己的一套条件（2026-09-23 老板：导出不能只让选日期）。
      打开弹窗时把列表上已经筛好的条件带进来，可以改、可以清空；列表本身不受影响。 */
@@ -2078,7 +2093,8 @@ export default function AdminHomePage() {
             </div>
           </div>
           <p className="shipment-scroll-hint" id="admin-order-scroll-hint">宽表可左右滚动查看完整列；产品超过 3 项时，在产品明细区域上下滚动。调整查询条件会清空勾选并回到第 1 页。</p>
-          <div className="shipment-copy-notice" role="status" aria-live="polite" aria-atomic="true">{orderCopyNotice}</div>
+          {/* 手机上这句是底部一闪而过的小条（globals.css 手机那段），换一句就重新挂一次、重新闪；电脑上照旧 */}
+          <div key={isPhone ? orderCopyNotice : "notice"} className="shipment-copy-notice" role="status" aria-live="polite" aria-atomic="true">{orderCopyNotice}</div>
         {orderList.length === 0 ? (
           <EmptyStateCard title="暂无运单数据" description="创建订单或刷新后，这里会展示运单记录。" />
         ) : filteredOrderList.length === 0 ? (
@@ -2112,7 +2128,16 @@ export default function AdminHomePage() {
               actions={[
                 { label: "物流轨迹", onClick: (id) => { const o = pagedOrders.find((x) => x.id === id); if (o) openShipmentTrack(o.trackingNo ? { trackingNo: o.trackingNo } : { shipmentId: o.id }); } },
                 { label: "编辑", onClick: (id) => { const o = pagedOrders.find((x) => x.id === id); if (o) startEditOrder(o); } },
+                // 跟电脑宽表那一行一样：点单号复制、打印、删除（详情 = 点整块）
+                { label: "复制单号", onClick: (id) => { const o = pagedOrders.find((x) => x.id === id); if (o?.trackingNo) void copyOrderNumber(o.trackingNo); } },
+                { label: "打印", onClick: (id) => { const o = pagedOrders.find((x) => x.id === id); if (o) printOrderLabel(o); } },
+                { label: "删除", danger: true, onClick: (id) => { const o = pagedOrders.find((x) => x.id === id); if (o) void deleteOrderRow(o); } },
               ]}
+              selection={{
+                isSelected: (id) => selectedOrders.has(id),
+                onToggle: toggleSelectOrder,
+                all: { checked: allResultOrdersSelected, partial: selectedResultOrders.length > 0, total: filteredOrderList.length, onToggle: toggleSelectAllOrders },
+              }}
             />
           ) : null}
           <div className={isPhone ? "table-card shipment-table-scroll is-phone-hidden" : "table-card shipment-table-scroll"} tabIndex={isPhone ? -1 : 0} role="region" aria-label="运单列表，可横向与纵向滚动" aria-describedby="admin-order-scroll-hint">
@@ -2206,16 +2231,7 @@ export default function AdminHomePage() {
                       </button>
                       <button
                         type="button"
-                        onClick={async () => {
-                          if (!confirm(`确定删除运单 ${o.trackingNo ?? "—"}（${o.itemName ?? ""}）？\n\n此操作不可撤销，将级联删除运单、状态日志、产品行等所有关联数据。`)) return;
-                          try {
-                            await deleteAdminOrder(o.orderId ?? o.id);
-                            setToast(`已删除：${o.trackingNo ?? o.itemName ?? "—"}`);
-                            await loadOrders();
-                          } catch (err) {
-                            setMessage(`删除失败：${err instanceof Error ? err.message : "未知错误"}`);
-                          }
-                        }}
+                        onClick={() => void deleteOrderRow(o)}
                         style={{ border: "1px solid #fecaca", borderRadius: 8, padding: "4px 10px", background: "#fef2f2", color: "var(--c-red-2)", cursor: "pointer", fontWeight: 700 }}
                       >
                         删除
@@ -2229,7 +2245,7 @@ export default function AdminHomePage() {
                       </button>
                       <button
                         type="button"
-                        onClick={() => openPrintLabel({ marks: o.clientId ?? "—", packageCount: o.packageCount ?? "—", trackingNo: o.trackingNo ?? "", itemName: o.itemName, productQuantity: o.productQuantity, transportMode: o.transportMode, products: (o.products ?? []).map(p => ({ itemName: p.itemName, packageCount: p.packageCount })) })}
+                        onClick={() => printOrderLabel(o)}
                         className="row-act"
                       >
                         打印

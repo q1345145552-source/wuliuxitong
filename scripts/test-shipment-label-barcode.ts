@@ -351,25 +351,38 @@ for (const role of ['staff', 'admin'] as const) {
       !!node.importClause?.namedBindings && ts.isNamedImports(node.importClause.namedBindings) &&
       node.importClause.namedBindings.elements.some((entry) => entry.name.text === 'openPrintLabel'));
     assert.equal(imports.length, 1, `${role}须继续引用共用正式标签实现`);
-    const calls = astNodes(section, (node): node is ts.CallExpression => ts.isCallExpression(node) &&
-      ts.isIdentifier(node.expression) && node.expression.text === 'openPrintLabel');
+    // 2026-10-05 手机排版：打印抽成一个共用函数，电脑宽表那一行的「打印」和手机一单一块的「打印」都调它。
+    // 所以改成：整页只许一处 openPrintLabel、就在这个函数里；这一栏里调这个函数的正好两处（电脑一行 + 手机一块），
+    // 电脑那一处挂在写着「打印」的按钮 onClick 上；再拿真实字段跑这个函数，标签和条码不变。
+    const helperName = role === 'staff' ? 'printShipmentLabel' : 'printOrderLabel';
+    const isOpenPrint = (node: ts.Node): node is ts.CallExpression => ts.isCallExpression(node) &&
+      ts.isIdentifier(node.expression) && node.expression.text === 'openPrintLabel';
+    const calls = astNodes(page, isOpenPrint);
     assert.equal(calls.length, 1, `${role}正式运单列表打印入口不能误删或重复`);
-    let node: ts.Node | undefined = calls[0];
-    while (node && !ts.isJsxAttribute(node)) node = node.parent;
-    assert.ok(node && ts.isJsxAttribute(node) && node.name.getText(page) === 'onClick');
-    const attribute = node;
-    assert.ok(attribute.initializer && ts.isJsxExpression(attribute.initializer) && attribute.initializer.expression);
-    const button = attribute.parent.parent.parent;
-    assert.ok(ts.isJsxElement(button) && button.openingElement.tagName.getText(page) === 'button');
-    assert.ok(jsxTexts(button).includes('打印'));
+    const helpers = astNodes(page, (node): node is ts.VariableDeclaration => ts.isVariableDeclaration(node) && node.name.getText(page) === helperName);
+    assert.equal(helpers.length, 1, `${role}找不到共用打印函数 ${helperName}`);
+    const helper = helpers[0];
+    assert.ok(helper.initializer && ts.isArrowFunction(helper.initializer));
+    let owner: ts.Node | undefined = calls[0];
+    while (owner && owner !== helper) owner = owner.parent;
+    assert.ok(owner, `${role}的 openPrintLabel 必须在 ${helperName} 里`);
+    const uses = astNodes(section, (node): node is ts.CallExpression => ts.isCallExpression(node) &&
+      ts.isIdentifier(node.expression) && node.expression.text === helperName);
+    assert.equal(uses.length, 2, `${role}运单栏里调 ${helperName} 的应该正好两处（电脑那一行 + 手机一单一块）`);
+    const rowButtons = uses.map((use) => {
+      let node: ts.Node | undefined = use;
+      while (node && !ts.isJsxAttribute(node)) node = node.parent;
+      if (!node || !ts.isJsxAttribute(node) || node.name.getText(page) !== 'onClick') return null;
+      const button = node.parent.parent.parent;
+      return ts.isJsxElement(button) && button.openingElement.tagName.getText(page) === 'button' && jsxTexts(button).includes('打印') ? button : null;
+    }).filter(Boolean);
+    assert.equal(rowButtons.length, 1, `${role}电脑宽表那一行的「打印」按钮没接 ${helperName}`);
     for (const multi of [false, true]) {
       const view = harness();
       const row = { ...base, clientId: base.marks, packageCount: 3,
         ...(multi ? { products: [{ itemName: '鞋', packageCount: 2 }, { itemName: '包', packageCount: 1 }] } : {}) };
-      const onClick = evaluatePageExpression(attribute.initializer.expression, page, {
-        [role === 'staff' ? 'item' : 'o']: row, openPrintLabel: view.open,
-      });
-      onClick();
+      const print = evaluatePageExpression(helper.initializer, page, { openPrintLabel: view.open });
+      print(row);
       const labels = labelBlocks(view.html());
       assert.equal(labels.length, 3);
       assert.equal(view.calls.length, 1);
