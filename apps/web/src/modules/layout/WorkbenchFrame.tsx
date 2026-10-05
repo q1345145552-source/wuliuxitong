@@ -44,6 +44,7 @@ const PAGE_TITLES: Record<string, string> = {
   "/staff/whr-consolidation": "集货拼柜（仓库版）",
   "/staff/container-loading": "装柜管理",
   "/staff/chat": "客户消息",
+  "/staff/arrival-notices": "到货通知",
   "/client": "客户端工作台",
   "/client/imports": "客户端批量下单",
   "/client/consolidation": "集货拼柜",

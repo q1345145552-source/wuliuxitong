@@ -54,6 +54,8 @@ export const roleFunctionGroups: Record<AuthRole, MenuGroup[]> = {
     {
       groupLabel: "运单",
       items: [
+        // 到货通知（2026-10-06）：国内仓到货 → 通知客户 → 转运单，排在运单管理前面（先有它才有运单）；页面借员工端的
+        { id: "admin-func-arrival", label: "到货通知", href: "/staff/arrival-notices" },
         { id: "admin-func-orders", label: "运单管理", href: "/admin#orders" },
         { id: "admin-func-prealerts", label: "预报单管理", href: "/admin/prealerts" },
         { id: "admin-func-container", label: "装柜管理", href: "/staff/container-loading" },
@@ -120,6 +122,8 @@ export const roleFunctionGroups: Record<AuthRole, MenuGroup[]> = {
     {
       groupLabel: "运单",
       items: [
+        // 到货通知（2026-10-06）：国内仓到货 → 通知客户 → 转运单
+        { id: "staff-func-arrival", label: "到货通知", href: "/staff/arrival-notices" },
         { id: "staff-func-order-shipment", label: "运单管理", href: "/staff#staff-order-shipment" },
         { id: "staff-func-prealert", label: "预报单审核", href: "/staff#staff-prealert-review" },
         { id: "staff-func-container-loading", label: "装柜管理", href: "/staff/container-loading" },

@@ -5,6 +5,7 @@ import { validateProductRows } from "../orders/product-row-guard";
 import { Prisma } from "@prisma/client";
 import { prisma } from "../../db/prisma";
 import { EXCLUDE_FCL_ORDER, EXCLUDE_FCL_SHIPMENT, FCL_BLOCKED_MESSAGE, FCL_EDIT_ELSEWHERE_MESSAGE } from "../core/fcl-scope";
+import { PENDING_INBOUND, PENDING_INBOUND_EDIT_ELSEWHERE_MESSAGE } from "../arrival-notices/rules";
 import type { MinimalHttpApp } from "../../server";
 import { fail, ok, requireRole } from "../core/http-utils";
 import { CONSOLIDATION_CURRENCY, recordRechargeCredit } from "../wallet/consolidation-balance";
@@ -796,6 +797,15 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
     });
     if (fclBox) {
       fail(res, 400, "BAD_REQUEST", FCL_EDIT_ELSEWHERE_MESSAGE);
+      return;
+    }
+    // 2026-10-06「待入库」的单不从这里改：底稿在「到货通知」那一行，理由见 PENDING_INBOUND_EDIT_ELSEWHERE_MESSAGE
+    const pendingInboundShip = await prisma.shipment.findFirst({
+      where: { id: { in: excludeIds }, currentStatus: PENDING_INBOUND },
+      select: { id: true },
+    });
+    if (pendingInboundShip) {
+      fail(res, 400, "BAD_REQUEST", PENDING_INBOUND_EDIT_ELSEWHERE_MESSAGE);
       return;
     }
 

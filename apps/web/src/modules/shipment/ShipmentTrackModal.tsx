@@ -103,6 +103,8 @@ const STATUS_CONFIG: Record<string, { zh: string; color: string; bg: string; ico
   // 前半段（2026-08-06 起才写轨迹）：客户预报 → 货入国内仓
   // 2026-09-02 起 inWarehouseCN 是流程里的正式一步，中文「已入库」（文案走 shipment-status.ts）
   inwarehousecn:  { zh: "已入库", color: "#1e3a8a", bg: "#EEF2FB", icon: "" },
+  // 2026-10-06 到货通知「转待入库」：货到了、资料还没补全，给琥珀色（跟暂缓柜一类，等人处理）
+  pendinginbound: { zh: "待入库", color: "#b45309", bg: "var(--c-amber-bg)", icon: "" },
   receivedcn:     { zh: "国内仓已收货", color: "#1e3a8a", bg: "#EEF2FB", icon: "" },
   pickedup:       { zh: "已揽收",     color: "var(--t-muted)", bg: "var(--s-sunken)", icon: "" },
   loaded:         { zh: "已装柜",     color: "#1e3a8a", bg: "#EEF2FB", icon: "" },
@@ -186,6 +188,12 @@ const DELETE_BLOCKED_HINT: Record<"currentStatus" | "containerPush" | "lastmile"
   lastmile: "派送记录，在尾端派送里处理",
 };
 
+/** 「待入库」（2026-10-06 到货通知转过来的）不是装柜推出来的，别叫人去装柜管理撤销 */
+function blockedHint(reason: keyof typeof DELETE_BLOCKED_HINT, toStatus: string | null | undefined): string {
+  if (reason === "currentStatus" && toStatus === "pendingInbound") return "当前状态，资料补全后到「到货通知」转正式运单";
+  return DELETE_BLOCKED_HINT[reason];
+}
+
 /**
  * 一条轨迹记录。样式参考主流快递的物流详情：
  * 左侧圆点竖线，右侧「状态 + 时间」一行、备注一行，不用卡片和色块。
@@ -261,9 +269,9 @@ function TimelineNode({ item, isLast, isChild, index, tabTrackingNo, hideOperato
         {/* 删掉写错的一条（员工/管理员）。客户端后端根本不下发 id，这里不会出现。
             显示当前状态的那条不给删：删除只删记录、不改状态（2026-09-17），状态推错了要去装柜管理撤销 */}
         {canEdit && item.deleteBlockedReason ? (
-          <span style={{ marginLeft: "auto", fontSize: 12, color: "var(--t-faint)" }}>{DELETE_BLOCKED_HINT[item.deleteBlockedReason]}</span>
+          <span style={{ marginLeft: "auto", fontSize: 12, color: "var(--t-faint)" }}>{blockedHint(item.deleteBlockedReason, item.toStatus)}</span>
         ) : canEdit && item.isCurrentStatus ? (
-          <span style={{ marginLeft: "auto", fontSize: 12, color: "var(--t-faint)" }}>{DELETE_BLOCKED_HINT.currentStatus}</span>
+          <span style={{ marginLeft: "auto", fontSize: 12, color: "var(--t-faint)" }}>{blockedHint("currentStatus", item.toStatus)}</span>
         ) : onDelete && item.id ? (
           <button
             type="button"

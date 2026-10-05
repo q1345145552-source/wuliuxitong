@@ -7,7 +7,7 @@
 --   B 多余  → 数据库有、设计图没有。一旦跑 prisma db push，这些字段连同里面的数据会被删掉
 --
 -- 什么都不输出 = 完全一致，没问题。
--- 生成自 schema.prisma，共 54 张表 / 672 个字段（2026-10-02 客服对话加撤回 / 关联单号 5 列 + 系统通知订阅一张表 10 个字段；2026-09-29 加 number_sequences 一张表 3 个字段；2026-09-28 加客服对话两张表 + 询价报价 8 列后是 52 张 / 653 个）。
+-- 生成自 schema.prisma，共 56 张表 / 704 个字段（2026-10-06 到货通知加两张表 arrival_notices 23 个字段、arrival_notice_images 9 个字段；2026-10-02 客服对话加撤回 / 关联单号 5 列 + 系统通知订阅一张表 10 个字段；2026-09-29 加 number_sequences 一张表 3 个字段；2026-09-28 加客服对话两张表 + 询价报价 8 列后是 52 张 / 653 个）。
 --
 -- ⚠️ 这份清单是手抄的，schema.prisma 加了字段必须回来同步一行，否则部署时会报
 --    「B 多余」的假警告（2026-08-05 加 containers.transport_mode 时就漏了一次）。
@@ -431,6 +431,38 @@ WITH expected(table_name, column_name) AS (VALUES
   ('cs_push_subscriptions','password_fp'),
   ('cs_push_subscriptions','created_at'),
   ('cs_push_subscriptions','updated_at'),
+  ('arrival_notices','id'),
+  ('arrival_notices','company_id'),
+  ('arrival_notices','client_id'),
+  ('arrival_notices','tracking_no'),
+  ('arrival_notices','item_name'),
+  ('arrival_notices','package_count'),
+  ('arrival_notices','weight_kg'),
+  ('arrival_notices','volume_m3'),
+  ('arrival_notices','transport_mode'),
+  ('arrival_notices','domestic_tracking_no'),
+  ('arrival_notices','warehouse_id'),
+  ('arrival_notices','arrived_at'),
+  ('arrival_notices','remark'),
+  ('arrival_notices','notified_at'),
+  ('arrival_notices','notified_by'),
+  ('arrival_notices','notified_by_name'),
+  ('arrival_notices','converted_to'),
+  ('arrival_notices','shipment_id'),
+  ('arrival_notices','converted_at'),
+  ('arrival_notices','created_by'),
+  ('arrival_notices','created_by_name'),
+  ('arrival_notices','created_at'),
+  ('arrival_notices','updated_at'),
+  ('arrival_notice_images','id'),
+  ('arrival_notice_images','company_id'),
+  ('arrival_notice_images','notice_id'),
+  ('arrival_notice_images','file_name'),
+  ('arrival_notice_images','mime'),
+  ('arrival_notice_images','file_path'),
+  ('arrival_notice_images','order_image_id'),
+  ('arrival_notice_images','uploaded_by'),
+  ('arrival_notice_images','created_at'),
   ('number_sequences','name'),
   ('number_sequences','last_value'),
   ('number_sequences','updated_at'),

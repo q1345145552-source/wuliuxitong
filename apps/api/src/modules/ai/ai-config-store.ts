@@ -11,6 +11,8 @@ export const DEFAULT_STATUS_LABELS: StatusLabelConfig[] = [
   { status: "created", labelZh: "已创建" },
   // 2026-09-02 进流程的新状态（货到国内仓）
   { status: "inWarehouseCN", labelZh: "已入库" },
+  // 2026-10-06 到货通知「转待入库」：货到了国内仓、资料还没补全
+  { status: "pendingInbound", labelZh: "待入库" },
   { status: "holdLoading", labelZh: "暂缓柜" },
   { status: "loaded", labelZh: "已装柜" },
   { status: "customsInspectCn", labelZh: "国内海关查验" },

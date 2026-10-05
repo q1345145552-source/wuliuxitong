@@ -1360,3 +1360,69 @@ model AgentRebateLine {
   @@index([statementId])
   @@map("agent_rebate_lines")
 }
+
+/// 到货通知（2026-10-06 老板：「国内仓库到货后，同事把货物记录在『到货通知』里面，由客服在系统直接复制文案、图片去告知客户。
+/// 通知完成之后可以修改状态为『已通知客户』，然后还可以转入到运单列表里面」）。
+/// 转运单由员工自己选「转正式运单」还是「转待入库」（老板：「我个人偏向员工手动来分类，怕系统出错」），
+/// 系统只在转的时候查必填项：转正式要齐（同「创建订单」），转待入库至少要有唛头 + 运单号（老板 10-06「必须填运单号才能转」）。
+/// 每一项都能先空着存。转成「待入库」以后，这一行仍是补资料的地方，存的时候同步改那张运单；转成正式运单后就只读了。
+/// 只给员工 / 超管用，客户和代理看不到这张表（客户看得到的是转出去的那张运单）。
+model ArrivalNotice {
+  id                 String    @id
+  companyId          String    @map("company_id")
+  /// 唛头 = 客户账号 id（users.id）；不知道是谁的货先空着，空着的不能转运单
+  clientId           String?   @map("client_id")
+  /// 运单号（员工手填，跟「创建订单」一样）；转运单时必须有
+  trackingNo         String?   @map("tracking_no")
+  itemName           String?   @map("item_name")
+  /// 件数（箱数）
+  packageCount       Int?      @map("package_count")
+  weightKg           Decimal?  @map("weight_kg") @db.Decimal(10, 2)
+  volumeM3           Decimal?  @map("volume_m3") @db.Decimal(10, 3)
+  /// sea | land
+  transportMode      String?   @map("transport_mode")
+  domesticTrackingNo String?   @map("domestic_tracking_no")
+  warehouseId        String?   @map("warehouse_id")
+  /// 到仓日期 YYYY-MM-DD（跟 orders.ship_date 同一种写法）
+  arrivedAt          String?   @map("arrived_at")
+  /// 内部备注，不进给客户的文案
+  remark             String?
+  /// 点了「已通知客户」的时间和人；改回「未通知」就清空
+  notifiedAt         DateTime? @map("notified_at")
+  notifiedBy         String?   @map("notified_by")
+  notifiedByName     String?   @map("notified_by_name")
+  /// 转到哪了：空 = 还没转 / inbound = 待入库 / formal = 正式运单
+  convertedTo        String?   @map("converted_to")
+  /// 转出去的那张运单（shipments.id）。不加外键：运单在「运单管理」里被删了，这一行回到「没转」，可以重转
+  shipmentId         String?   @map("shipment_id")
+  convertedAt        DateTime? @map("converted_at")
+  createdBy          String    @map("created_by")
+  createdByName      String?   @map("created_by_name")
+  createdAt          DateTime  @default(now()) @map("created_at")
+  updatedAt          DateTime  @updatedAt @map("updated_at")
+
+  images ArrivalNoticeImage[]
+
+  @@index([companyId, createdAt])
+  @@index([shipmentId])
+  @@map("arrival_notices")
+}
+
+/// 到货照片。文件存盘（跟产品图同一套 /images/），转运单时复制一份成那张运单的「产品图片」（orderImageId 记着是哪张）。
+model ArrivalNoticeImage {
+  id           String   @id
+  companyId    String   @map("company_id")
+  noticeId     String   @map("notice_id")
+  fileName     String   @map("file_name")
+  mime         String
+  filePath     String   @map("file_path")
+  /// 复制到运单产品图片后那张的 id（order_product_images.id）；还没复制 / 运单没了为空
+  orderImageId String?  @map("order_image_id")
+  uploadedBy   String   @map("uploaded_by")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  notice ArrivalNotice @relation(fields: [noticeId], references: [id], onDelete: Cascade)
+
+  @@index([noticeId, createdAt])
+  @@map("arrival_notice_images")
+}

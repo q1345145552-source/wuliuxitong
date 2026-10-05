@@ -303,6 +303,10 @@ jobs:
       # 存文件不靠 fetch（CSP 会拦）、只接管空白窗口、返回键先后、已登录直接进、正式包不开调试口、拍照不申请相机权限。
       - name: Test native app shell
         run: npm run test:native-app
+      # 到货通知（2026-10-06 老板拍板）。不连库：给客户的文案样子、菜单入口、「待入库」算未发出且不进流程表、
+      # 装柜 / 运单管理几道闸还在、接口网址比页面多一段、页面「还缺什么」跟后端同一张单子。
+      - name: Test arrival notices (source)
+        run: npm run test:arrival-notice-source
 
       # 改整柜（2026-09-24，老板：「加上编辑功能」）。要连测试库 —— 读源码证明不了
       # 「改完库里真的变了」，而改整柜最容易出的就是「只改了一半」（订单改了运单没改之类）。
@@ -458,6 +462,15 @@ jobs:
       # 2026-10-02 客服对话撤回 / 关联运单 / 浏览器系统通知那份迁移：在「上线前的库」上连跑两遍、跟 schema 零差异、体检清单对上
       - name: Test cs-chat recall/ref/push migration file (real DB)
         run: bash .github/scripts/run-db-test.sh test:migration-cs-chat-push-db
+
+      # 到货通知（2026-10-06）：真 handler + 真库 19 项 —— 登记 / 填错拦 / 运单号查重 / 已通知开关、
+      # 转待入库（客户看得到、算未发出）、待入库时改资料和照片同步到运单、运单管理和装柜都挡、
+      # 待入库转正式（同一张单写轨迹）、直接转正式跟「创建订单」写出来一模一样、公司隔离、两人同时点只建一张。
+      - name: Test arrival notices (real DB)
+        run: bash .github/scripts/run-db-test.sh test:arrival-notices-db
+      # 到货通知那份迁移：在「上线前的库」上连跑两遍、跟 schema 零差异、体检清单对上、外键在
+      - name: Test arrival notices migration file (real DB)
+        run: bash .github/scripts/run-db-test.sh test:migration-arrival-notices-db
 
       # 9-28 审查报告那批小 bug（后端）：本月已签收按真签收时间数、装柜详情带整柜标记、
       # 集货轨迹柜号抹干净、补确认收货写父单、客户建单仓库校验、并发报价不重复记轨迹、

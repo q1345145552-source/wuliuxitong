@@ -6,6 +6,11 @@ export type ShipmentStatus =
   //   ⚠️ 这个状态名不是新造的 —— 老数据轨迹里早就有 inWarehouseCN（确认收货那条路
   //   2026-08-06 起只写轨迹不改 currentStatus），现在把它转正进流程表。
   | "inWarehouseCN"
+  // ↓ 2026-10-06 新增：待入库（中文「待入库」）。货已经到了国内仓，但资料不全（到货通知里员工选了「转待入库」），
+  //   补全后员工在「到货通知」里点「转正式运单」才变成「已入库」。
+  //   ⚠️ 故意**不进**下面两条流程表：不进流程就推不动 —— 装柜、柜子推进（canTransitLoose 只认流程表里的）都碰不到它，
+  //   老板说的「待入库不能装柜」靠的就是这个（装柜接口另外还挡了一道）。唯一的出口是到货通知的「转正式运单」。
+  | "pendingInbound"
   | "delayDeparted"
   | "departed"
   | "delayInTransit"
@@ -162,9 +167,12 @@ export const AT_WAREHOUSE_STATUSES: ShipmentStatus[] = [
 /**
  * 「未发出」= 货还在国内仓、还没装柜发走（2026-09-03 抽出来）。
  * 已入库 = 货到了国内仓，口径同「已创建/暂缓柜」，都还没上路。
+ * ⚠️ 全系统数「未发出」都要从这里取（2026-10-06 加待入库时把两处手写的名单改成引用它）。
  */
 export const PENDING_STATUSES: ShipmentStatus[] = [
   "created",
+  // 2026-10-06：待入库 = 货在国内仓、资料还没补全，同样还没发走（客户「未发出」那格、顶部「未发出」那个数都算它）
+  "pendingInbound",
   "inWarehouseCN",
   "holdLoading",
 ];

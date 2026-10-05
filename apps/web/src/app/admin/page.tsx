@@ -7,7 +7,7 @@ import { productNamesLabel } from "../../../../../packages/shared-types/product-
 import ExportConditionFields, { type ExportFieldDef } from "../../modules/shipment/ExportConditionFields";
 import { EMPTY_SHIPMENT_FILTER, adminOrderFilterRow, matchesShipmentFilter, mergeDateFrom, mergeDateTo, shipmentFilterDateInvalid, type ShipmentFilterValue } from "../../modules/shipment/export-filter";
 import { parseCargoType, CARGO_TYPE_HINT, cargoTypeLabel } from "../../../../../packages/shared-types/cargo-type";
-import { AT_WAREHOUSE_STATUSES, COMPLETED_STATUSES, CLIENT_STATUS_GROUP_ZH } from "../../../../../packages/shared-types/shipment-status";
+import { AT_WAREHOUSE_STATUSES, COMPLETED_STATUSES, CLIENT_STATUS_GROUP_ZH, PENDING_STATUSES } from "../../../../../packages/shared-types/shipment-status";
 import type { AiKnowledgeItem } from "../../../../../packages/shared-types/entities";
 import { getOptionalSession, type AuthSession } from "../../auth/auth-session";
 import AdminOperationsOverview from "../../components/admin/AdminOperationsOverview";
@@ -600,7 +600,8 @@ export default function AdminHomePage() {
     const atWarehouse = new Set<string>(AT_WAREHOUSE_STATUSES);
     const completed = new Set<string>(COMPLETED_STATUSES);
     // 2026-09-03：还没发走的那几个（口径跟后端 classifyClientStatusGroup 的 pending 一致）
-    const notShipped = new Set<string>(["", "created", "inWarehouseCN", "holdLoading"]);
+    // 2026-10-06 加「待入库」时改成引用共享名单（原来手写，新状态会掉进「在途」）
+    const notShipped = new Set<string>(["", ...PENDING_STATUSES]);
     orderList.forEach((item) => {
       // ⚠️ 不要先按「订单审核状态」分流。原来的写法是「没审核 → 一律处理中」，
       // 结果一张已经在泰国「正在卸柜」的货，因为订单标着未审核，被算成了处理中，

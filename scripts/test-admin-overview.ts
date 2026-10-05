@@ -154,12 +154,16 @@ function countShipments(rows: RecordValue[]) {
     useMemo: (callback: () => unknown) => callback(), orderList: rows,
     AT_WAREHOUSE_STATUSES: sharedStatus.AT_WAREHOUSE_STATUSES,
     COMPLETED_STATUSES: sharedStatus.COMPLETED_STATUSES,
+    // 2026-10-06：「未发出」改成引用共享名单（加「待入库」时，原来手写三个）
+    PENDING_STATUSES: sharedStatus.PENDING_STATUSES,
   });
   return JSON.parse(JSON.stringify(count));
 }
 type Bucket = "processing" | "inTransit" | "atWarehouse" | "delivered" | "exception";
 const expectedGroups: Record<string, Bucket> = {
   "": "processing", created: "processing", inWarehouseCN: "processing", holdLoading: "processing",
+  // 2026-10-06 到货通知「转待入库」：货在国内仓、资料没补全，算未发出（不在流程表里，所以这里单独点名）
+  pendingInbound: "processing",
   loaded: "inTransit", customsInspectCn: "inTransit", inspectClearedCn: "inTransit", exportCleared: "inTransit",
   delayDeparted: "inTransit", etaUpdated: "inTransit", portClosed: "inTransit", berthed: "inTransit",
   departed: "inTransit", delayInTransit: "inTransit", arrivedPort: "inTransit", customsInspectTh: "inTransit",

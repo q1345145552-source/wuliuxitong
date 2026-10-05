@@ -14,6 +14,7 @@ import { registerOrderRoutes } from "./modules/orders/routes";
 import { registerShipmentRoutes } from "./modules/shipments/routes";
 import { registerFclInquiryRoutes } from "./modules/fcl-inquiries/routes";
 import { registerCsChatRoutes } from "./modules/cs-chat/routes";
+import { registerArrivalNoticeRoutes } from "./modules/arrival-notices/routes";
 import { registerFclContainerRoutes } from "./modules/fcl-containers/routes";
 import { registerConsolidationRoutes } from "./modules/consolidation/routes";
 import { registerWhrConsolidationRoutes } from "./modules/whr-consolidation/routes";
@@ -61,6 +62,8 @@ registerShippingConfigRoutes(app);
 registerFclInquiryRoutes(app);
 // 客服对话（2026-09-28）
 registerCsChatRoutes(app);
+// 到货通知（2026-10-06）
+registerArrivalNoticeRoutes(app);
 // 整柜管理（2026-09-23）：客户自己包一整柜，我们只追踪
 registerFclContainerRoutes(app);
 registerConsolidationRoutes(app);

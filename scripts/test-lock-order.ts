@@ -111,6 +111,14 @@ const LOCK_HELPERS: Record<string, string[]> = {
    * 发消息那个事务是「建对话（如果没有）→ 插一条消息 → 改对话的最新摘要」，第一把锁就是它。第 10 项会去函数体里核实锁在。
    */
   lockCsConversation: ["advisory_cs_conversation"],
+  /**
+   * 2026-10-06 到货通知（arrival-notices/routes.ts）：改 / 转 / 删 / 传删照片都先 lockNotice
+   * （`SELECT ... FROM arrival_notices ... FOR UPDATE` 再重读），再 lockLinkedShipment
+   * （转过运单的才 `SELECT ... FROM shipments ... FOR UPDATE` 锁那张运单，之后才同步订单 / 运单）。
+   * 锁序固定：到货通知 → 运单 → 订单；别的模块都不碰 arrival_notices，不会反着拿。
+   */
+  lockNotice: ["arrival_notices"],
+  lockLinkedShipment: ["shipments"],
 };
 
 /**
@@ -403,6 +411,14 @@ const WRITE_WITHOUT_LOCK_OK: string[] = [
   "fcl-containers/routes.ts:%d /staff/fcl-containers/create（create了 orders",
   "fcl-containers/routes.ts:%d /staff/fcl-containers/create（create了 shipments",
   "fcl-containers/routes.ts:%d /staff/fcl-containers/create（create了 containers",
+  /**
+   * 到货通知转运单（2026-10-06）：没转过的那条路 order / shipment 插的是**全新的行**，锁不到；
+   * 并发那面靠先锁住到货通知那一行（lockNotice，两个人同时点「转」只有一个进得去，另一个读到已转就报错），
+   * 再加上 shipments.tracking_no 唯一约束兜底（撞了换成「运单号刚刚被用掉了」）。
+   * 待入库再转正式那条路是 update，前面有 lockLinkedShipment，不在这里豁免。
+   */
+  "arrival-notices/routes.ts:%d /staff/arrival-notices/convert（create了 orders",
+  "arrival-notices/routes.ts:%d /staff/arrival-notices/convert（create了 shipments",
 ];
 
 /**

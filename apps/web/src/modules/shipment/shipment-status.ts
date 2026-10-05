@@ -20,6 +20,9 @@ export const SHIPMENT_STATUS_ZH: Record<string, string> = {
      老轨迹里的 inWarehouseCN 会跟着改叫「已入库」，意思一样。
      receivedcn 是另一个只在老数据里出现的状态，保持旧叫法不动。 */
   inwarehousecn: "已入库",
+  /* 2026-10-06：到货通知里「转待入库」的运单 —— 货到了国内仓、资料还没补全。
+     客户在「运单查询」里也看得到这个字（老板选 3B：「我认为看得到好一点」）。 */
+  pendinginbound: "待入库",
   receivedcn: "国内仓已收货",
   customspending: "报关中",
   holdloading: "暂缓柜",
@@ -108,6 +111,8 @@ export const SHIPMENT_STATUS_FILTER_OPTIONS: string[] = (() => {
   };
   // 「已创建」是两条流程的第一步，先放它，再插老数据那三个，顺序才像话
   push(shipmentStatusZh(SHIPMENT_STATUS_FLOW[0]));
+  // 2026-10-06：待入库不在流程表里（故意的，见 packages/shared-types/shipment-status.ts），手动排在「已创建」后面
+  push(shipmentStatusZh("pendingInbound"));
   LEGACY_FILTER_STATUSES.forEach(push);
   SHIPMENT_STATUS_FLOW.forEach((s) => push(shipmentStatusZh(s)));
   SHIPMENT_STATUS_FLOW_LAND.forEach((s) => push(shipmentStatusZh(s)));

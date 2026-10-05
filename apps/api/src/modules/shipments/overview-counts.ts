@@ -1,6 +1,6 @@
 import { prisma } from "../../db/prisma";
 import { COMPLETED_STATUSES } from "./status-flow";
-import { AT_WAREHOUSE_STATUSES, ATTENTION_STATUSES } from "../../../../../packages/shared-types/shipment-status";
+import { AT_WAREHOUSE_STATUSES, ATTENTION_STATUSES, PENDING_STATUSES } from "../../../../../packages/shared-types/shipment-status";
 import { beijingMonthOf, beijingMonthStart } from "../agents/agent-rules";
 
 /* ==========================================================================
@@ -49,7 +49,8 @@ export async function countShipmentOverview(where: Record<string, unknown>) {
       // 「未发出」：已创建 + 已入库 + 暂缓装柜（2026-09-02 复核对齐：客户端四分类的
       // pending 就是这三个，暂缓装柜的货同样躺在国内仓，不能掉进减法算出的「在途」。
       // 货都还在国内仓，绝不能掉进下面减法算出的「在途」里）
-      prisma.shipment.count({ where: { ...where, currentStatus: { in: ["created", "inWarehouseCN", "holdLoading"] } } }),
+      // 2026-10-06 加「待入库」时改成引用共享名单 PENDING_STATUSES（原来手写三个，新状态会被减法算进「在途」）
+      prisma.shipment.count({ where: { ...where, currentStatus: { in: [...PENDING_STATUSES] } } }),
       /* 2026-09-03 老板拍板：「已到仓」= 进了泰国仓之后、客户签收之前的**整段**，
          含预约派送和尾端派送中 —— 跟客户端分组按钮的 arrived 一字不差。
          原来这格只数 inWarehouseTH，顶部显示 119、点按钮出来 159，同一批货两个数。

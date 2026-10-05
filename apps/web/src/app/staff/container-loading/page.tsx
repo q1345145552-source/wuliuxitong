@@ -944,11 +944,13 @@ export default function StaffContainerLoadingPage() {
                     const totalPkg = s.totalPackageCount ?? remaining;
                     const children = isParent ? allShipments.filter(c => c.parentTrackingNo === s.trackingNo) : [];
                     const loadedChildren = children.filter(c => loadedShipments[c.id]);
+                    // 2026-10-06「待入库」（资料没补全）不许装柜，勾不上；后端装柜接口也挡着
+                    const pendingInbound = s.currentStatus === "pendingInbound";
                     return (
                       <div key={s.id} style={{ padding: "8px 10px", borderBottom: "1px solid var(--s-cool-2)", opacity: alreadyIn ? 0.5 : 1, background: isSelected ? "var(--c-blue-bg)" : "transparent" }}>
                         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                          <input type="checkbox" checked={isSelected || alreadyIn} disabled={alreadyIn || (isParent && remaining === 0)} onChange={() => {
-                            if (alreadyIn || (isParent && remaining === 0)) return;
+                          <input type="checkbox" checked={isSelected || alreadyIn} disabled={alreadyIn || pendingInbound || (isParent && remaining === 0)} title={pendingInbound ? "待入库的货要先到「到货通知」里补全资料、转成正式运单才能装柜" : undefined} onChange={() => {
+                            if (alreadyIn || pendingInbound || (isParent && remaining === 0)) return;
                             if (isSelected) { const n = { ...selectedShipments }; delete n[s.trackingNo]; setSelectedShipments(n); }
                             else { setBulkPieceDialog(s.trackingNo); setBulkPieceCount(String(remaining)); }
                           }} />

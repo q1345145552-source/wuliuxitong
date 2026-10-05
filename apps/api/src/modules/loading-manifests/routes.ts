@@ -701,6 +701,11 @@ export function registerLoadingManifestRoutes(app: MinimalHttpApp): void {
       if (TERMINAL_ZH[locked.currentStatus]) {
         throw new Error(`这张单已经「${TERMINAL_ZH[locked.currentStatus]}」，已完结的运单不能再装柜`);
       }
+      /* 2026-10-06「待入库」不许装柜：到货通知转过来、资料还没补全的货（老板定的流程是补全后转正式运单才算入库）。
+         它不在流程表里，柜子推进本来就推不动它；这里是装柜这一步的闸，同样用锁内重读的状态判断。 */
+      if (locked.currentStatus === "pendingInbound") {
+        throw new Error("这票货还是「待入库」（资料没补全），请先到「到货通知」里补全资料、转成正式运单再装柜");
+      }
       const totalPkg = locked?.packageCount ?? 0;
       const reqPieces = typeof body.pieceCount === "number" && body.pieceCount > 0 ? body.pieceCount : totalPkg;
       if (reqPieces > totalPkg) throw new Error(`装柜件数(${reqPieces})超过运单总件数(${totalPkg})`);

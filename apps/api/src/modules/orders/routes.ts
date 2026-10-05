@@ -7,6 +7,8 @@ import crypto from "node:crypto";
 import { Prisma } from "@prisma/client";
 import { prisma } from "../../db/prisma";
 import { EXCLUDE_FCL_ORDER, FCL_EDIT_ELSEWHERE_MESSAGE } from "../core/fcl-scope";
+import { PENDING_INBOUND, PENDING_INBOUND_EDIT_ELSEWHERE_MESSAGE } from "../arrival-notices/rules";
+import { buildNewOrderRows } from "./new-order-rows";
 import { getClientIp } from "../core/rate-limit";
 import type { MinimalHttpApp } from "../../server";
 
@@ -1081,101 +1083,40 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
         : Number(body.productQuantity ?? 0);
     const packageUnit = body.packageUnit ?? "box";
 
-    // 事务前计算应收金额（按产品行分别计价求和）
-
+    // 订单 / 运单 / 第一条轨迹 / 产品行：2026-10-06 抽到 new-order-rows.ts，到货通知「转运单」也走同一份
+    const rows = buildNewOrderRows({
+      companyId: auth.companyId,
+      operator: { userId: auth.userId, role: auth.role, name: auth.name ?? "" },
+      orderId,
+      shipmentId,
+      clientId,
+      warehouseId,
+      trackingNo: generatedTrackingNo,
+      transportMode,
+      itemName: body.itemName?.trim() || prName,
+      productQuantity: productQuantityNum,
+      packageCount: packageCountNum,
+      packageUnit,
+      weightKg: prWeight > 0 ? prWeight : weightKg,
+      volumeM3: prVol > 0 ? prVol : volumeM3,
+      shipDate: arrivedAtText,
+      domesticTrackingNo: body.domesticTrackingNo ?? null,
+      // 有产品行时取最严的那个（敏感 > 商检 > 普货），跟批量导入和客户预报单同一个口径
+      cargoType: body.products?.length ? strictestCargoType(staffCargo.products) : staffCargo.order,
+      batchNo,
+      remark: body.remark?.trim() || null,
+      products: staffProducts,
+      initialStatus: "inWarehouseCN",
+      now: new Date(),
+    });
     const txOps: any[] = [
-      prisma.order.create({
-        data: {
-          id: orderId,
-          companyId: auth.companyId,
-          clientId,
-          warehouseId,
-          batchNo,
-          orderNo: null,
-          approvalStatus: "approved",
-          itemName: body.itemName?.trim() || prName,
-          productQuantity: productQuantityNum,
-          packageCount: packageCountNum,
-          packageUnit,
-          weightKg: prWeight > 0 ? (prWeight as unknown as Prisma.Decimal) : (weightKg as unknown as Prisma.Decimal | null),
-          volumeM3: prVol > 0 ? (prVol as unknown as Prisma.Decimal) : (volumeM3 as unknown as Prisma.Decimal | null),
-          receivableCurrency: "CNY",
-          shipDate: arrivedAtText,
-          domesticTrackingNo: body.domesticTrackingNo ?? null,
-          transportMode,
-          // 有产品行时取最严的那个（敏感 > 商检 > 普货），跟批量导入和客户预报单同一个口径
-          cargoType: body.products?.length ? strictestCargoType(staffCargo.products) : staffCargo.order,
-          receiverNameTh: "",
-          receiverPhoneTh: "",
-          receiverAddressTh: "",
-          statusGroup: "unfinished",
-        },
-      }),
-      prisma.shipment.create({
-        data: {
-          id: shipmentId,
-          companyId: auth.companyId,
-          orderId,
-          trackingNo: generatedTrackingNo,
-          batchNo,
-          /* 2026-09-02 老板拍板：录单就是货到了仓库才录单 ——
-             员工建单的运单起始状态直接是「已入库」，不是「已创建」。
-             （客户预报那条路不一样：报单时货还在路上，仍从 created 起。） */
-          currentStatus: "inWarehouseCN",
-          currentLocation: null,
-          weightKg: prWeight > 0 ? (prWeight as unknown as Prisma.Decimal) : (weightKg as unknown as Prisma.Decimal | null),
-          volumeM3: prVol > 0 ? (prVol as unknown as Prisma.Decimal) : (volumeM3 as unknown as Prisma.Decimal | null),
-          packageCount: packageCountNum,
-          packageUnit,
-          transportMode,
-          domesticTrackingNo: body.domesticTrackingNo ?? null,
-          warehouseId,
-          remark: body.remark?.trim() || null,
-        },
-      }),
-      // 2026-08-06：轨迹起点。员工直接建单的这条路原来也不写轨迹，
-      // 和客户预报那条路一样，客户查件最早只能看到「已装柜」。
-      prisma.statusLog.create({
-        data: {
-          id: `sl_new_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-          companyId: auth.companyId,
-          shipmentId,
-          operatorId: auth.userId,
-          operatorRole: auth.role,
-          operatorName: auth.name ?? "",
-          /* 2026-09-02 老板拍板落地：员工建单=货已到仓，运单直接从「已入库」起步，
-             首条轨迹写 created → inWarehouseCN，客户一眼看到货已进仓。
-             录单那一刻货已经在仓里，下一站是「装柜」（跟确认收货那条轨迹同一口径）。
-             ⚠️ 客户报预报单那条路（remark「等待国内仓收货」那处）仍是 created → created、
-             下一站「国内仓」—— 那时货还在路上，是对的，别顺手改。 */
-          fromStatus: "created",
-          toStatus: "inWarehouseCN",
-          remark: "货已到国内仓，等待装柜",
-          nextStop: "装柜",
-          changedAt: new Date(),
-        },
-      }),
+      prisma.order.create({ data: rows.order }),
+      prisma.shipment.create({ data: rows.shipment }),
+      prisma.statusLog.create({ data: rows.statusLog }),
     ];
     // 保存产品行
-    if (staffProducts.length > 0) {
-      txOps.push(
-        prisma.orderProduct.createMany({
-          data: staffProducts.map((p) => ({
-            companyId: auth.companyId,
-            orderId,
-            itemName: p.itemName,
-            packageCount: p.packageCount,
-            lengthCm: p.lengthCm,
-            widthCm: p.widthCm,
-            heightCm: p.heightCm,
-            productQuantity: p.productQuantity,
-            cargoType: p.cargoType,
-            domesticTrackingNo: p.domesticTrackingNo,
-            weightKg: p.weightKg,
-            sortOrder: p.sortOrder,
-          })),
-        }),
-      );
+    if (rows.products.length > 0) {
+      txOps.push(prisma.orderProduct.createMany({ data: rows.products }));
     }
     await prisma.$transaction(txOps);
 
@@ -1798,6 +1739,11 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
     });
     if (fclBox) {
       fail(res, 400, "BAD_REQUEST", FCL_EDIT_ELSEWHERE_MESSAGE);
+      return;
+    }
+    // 2026-10-06「待入库」的单不从这里改：底稿在「到货通知」那一行，理由见 PENDING_INBOUND_EDIT_ELSEWHERE_MESSAGE
+    if (shipment.currentStatus === PENDING_INBOUND) {
+      fail(res, 400, "BAD_REQUEST", PENDING_INBOUND_EDIT_ELSEWHERE_MESSAGE);
       return;
     }
 
