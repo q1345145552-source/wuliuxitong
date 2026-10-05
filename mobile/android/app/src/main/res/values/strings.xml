@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">湘泰物流</string>
+    <string name="title_activity_main">湘泰物流</string>
+    <string name="package_name">com.xianlianth.app</string>
+    <string name="custom_url_scheme">com.xianlianth.app</string>
+</resources>

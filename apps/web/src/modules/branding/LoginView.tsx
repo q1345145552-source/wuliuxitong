@@ -6,6 +6,7 @@ import { login } from "../../services/auth-api";
 import { AGENT_VISUAL_STYLE, type PublicBrandInfo } from "./brand-core";
 import { applyDocumentBrand } from "./document-brand";
 import { primeBrandAfterLogin } from "./useWorkbenchBrand";
+import { ROLE_HOME_PATH } from "./role-home";
 
 /**
  * 登录表单（2026-09-16 从 app/login/page.tsx 原样搬过来，B4）。
@@ -14,12 +15,6 @@ import { primeBrandAfterLogin } from "./useWorkbenchBrand";
  * · brand 有值 → 左边写代理名字和 logo，不显示「申请开通」（那一页写死湘泰的客服微信）
  */
 
-const roleRouteMap: Record<string, string> = {
-  admin: "/admin",
-  staff: "/staff",
-  client: "/client",
-  agent: "/agent",
-};
 
 export default function LoginView({ brand }: { brand: PublicBrandInfo | null }) {
   const [ready, setReady] = useState(false);
@@ -74,7 +69,7 @@ export default function LoginView({ brand }: { brand: PublicBrandInfo | null }) 
         role: result.user.role,
         token: result.token,
       });
-      window.location.href = roleRouteMap[result.user.role] || "/";
+      window.location.href = ROLE_HOME_PATH[result.user.role] || "/";
     } catch (error) {
       const text = error instanceof Error ? error.message : "请稍后重试";
       setMessage(`登录失败：${text}`);

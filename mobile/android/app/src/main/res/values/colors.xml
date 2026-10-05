@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 网站页面底色（globals.css 的 bg-page）：状态栏、底部手势条那两条跟页面连成一片 -->
+    <color name="xt_page_bg">#FAFAF8</color>
+</resources>

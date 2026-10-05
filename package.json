@@ -87,7 +87,8 @@
     "test:cs-chat-ui-behavior": "tsx scripts/test-cs-chat-ui-behavior.ts",
     "test:realtime-source": "tsx scripts/test-realtime-source.ts",
     "test:realtime-client": "tsx scripts/test-realtime-client.ts",
-    "test:phone-layout": "tsx scripts/test-phone-layout.ts"
+    "test:phone-layout": "tsx scripts/test-phone-layout.ts",
+    "test:native-app": "tsx scripts/test-native-app.ts"
   },
   "devDependencies": {
     "@types/node": "^26.0.1",

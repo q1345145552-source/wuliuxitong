@@ -1,0 +1,21 @@
+{
+  "name": "xiangtai-mobile",
+  "private": true,
+  "version": "1.0.0",
+  "description": "湘泰物流 app 外壳（Capacitor）：打开线上网站，补上网页在 app 里做不到的几件事（下载文件、打印标签、返回键）",
+  "scripts": {
+    "sync": "node scripts-prepare.mjs && cap sync android",
+    "apk:debug": "npm run sync && . ./android-env.sh && cd android && ./gradlew assembleDebug",
+    "apk:release": "npm run sync && . ./android-env.sh && cd android && ./gradlew assembleRelease"
+  },
+  "dependencies": {
+    "@capacitor/android": "^8.5.2",
+    "@capacitor/app": "^8.1.2",
+    "@capacitor/core": "^8.5.2",
+    "@capacitor/filesystem": "^8.1.4",
+    "@capacitor/share": "^8.0.3"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^8.5.2"
+  }
+}

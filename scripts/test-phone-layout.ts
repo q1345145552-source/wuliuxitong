@@ -115,7 +115,7 @@ async function main(): Promise<void> {
     assert.ok(end > 0, "手机排版那段括号没配平");
     const before = css.slice(0, start);
     const after = tail.slice(end + 1);
-    const phoneOnly = /\.(phone-|ship-phone|cl-grid|cl-list|cl-detail|cl-bill|staff-prealert-head|client-prealert-pager|client-price-row|is-phone-hidden|cs-client-page|has-phone-tabs)/;
+    const phoneOnly = /\.(phone-|ship-phone|cl-grid|cl-list|cl-detail|cl-bill|staff-prealert-head|client-prealert-pager|client-price-row|xt-keyboard-open|is-phone-hidden|cs-client-page|has-phone-tabs)/;
     for (const [where, text] of [["手机排版那段前面", before], ["手机排版那段后面", after]] as const) {
       const hit = text.split("\n").find((line) => phoneOnly.test(line) && !line.trim().startsWith("/*") && !line.trim().startsWith("*"));
       assert.equal(hit, undefined, `${where}有手机专用样式写在 @media 外面（电脑上也会生效）：${hit}`);

@@ -1,0 +1,3 @@
+node_modules/
+# 由 scripts-prepare.mjs 按 XT_APP_URL 生成（模板是 offline.template.html）
+www/offline.html

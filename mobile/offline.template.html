@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>湘泰物流</title>
+<style>
+  :root { --ink: #1f2420; --ink-3: #7b8079; --line: #e3e4df; --brand: #a44727; --bg: #fafaf8; }
+  html, body { height: 100%; margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.6 -apple-system, "PingFang SC", "Noto Sans CJK SC", sans-serif; }
+  main { display: flex; flex-direction: column; justify-content: center; min-height: 100%; padding: 0 28px; box-sizing: border-box; }
+  h1 { margin: 0 0 8px; font-size: 20px; font-weight: 600; }
+  p { margin: 0 0 24px; color: var(--ink-3); }
+  button { align-self: flex-start; min-height: 44px; padding: 0 22px; border: 0; border-radius: 6px; background: var(--brand); color: #fff; font: inherit; }
+</style>
+</head>
+<body>
+<main>
+  <h1>网络连不上</h1>
+  <p>请检查手机网络（Wi-Fi 或流量），然后点下面重试。</p>
+  <button type="button" id="retry">重试</button>
+</main>
+<script>window.XT_APP_URL = "__XT_APP_URL__";</script>
+<script>
+  document.getElementById("retry").addEventListener("click", function () {
+    location.replace(window.XT_APP_URL || "https://xianlianth.com");
+  });
+</script>
+</body>
+</html>

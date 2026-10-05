@@ -4378,6 +4378,14 @@ table.a3-table.shipment-product-table > tbody > tr > td {
     min-height: 0 !important;
   }
 
+  /* ---- 左边菜单收起时多推出去 2px：像素密度 2.625 这类安卓手机上，正好推到 -100% 会在屏幕最左边留一根菜单边线 ---- */
+  .dashboard-sidebar:not(.open) { transform: translateX(calc(-100% - 2px)); }
+
+  /* ---- 湘泰 app 里键盘弹起来时（native-app.ts 挂的 xt-keyboard-open）：底部那排先收起，客服两页把那 60px 还回来 ---- */
+  .xt-keyboard-open .phone-tabbar { display: none; }
+  .xt-keyboard-open .dashboard-layout.has-phone-tabs .dashboard-content { padding-bottom: 0; }
+  .xt-keyboard-open .has-phone-tabs :is(.cs-client-page, .cs-inbox) { height: calc(100dvh - 72px) !important; }
+
   /* ---- 底部常用入口（老板拍板「2a」）：白底、上面一条细线、只有字；当前页字变黑加粗、上面一条短横线 ---- */
   /* 要写三个类：ledger.css 在 globals.css 后面加载，它的「.ledger-shell .dashboard-content」把留白压回 20px，
      底部那排就盖住页面最后 36px（拉到底的按钮点不到，dsh 10-05 复审抓到） */

@@ -8,6 +8,7 @@
 import { useEffect, useState } from "react";
 import { getOptionalSession } from "../../auth/auth-session";
 import { disableChatPush, enableChatPush, ensureIosManifest, readChatPushState, type ChatPushRole, type ChatPushState } from "./chat-push";
+import { isNativeApp } from "../app-shell/native-app";
 
 const HINT: Record<Exclude<ChatPushState, "on" | "off" | "server-off">, string> = {
   denied: "这个浏览器禁止了本网站的通知。要开的话：点地址栏左边的小锁 / 设置图标，把「通知」改成「允许」，再刷新页面。",
@@ -33,7 +34,8 @@ export default function ChatPushToggle(props: { compact?: boolean } = {}) {
     return () => { cancelled = true; };
   }, []);
 
-  if (state === null || state === "server-off") return null;
+  // 湘泰 app 里整行不出：app 里的网页开不了浏览器系统通知，那句「换 Chrome」对 app 用户是错的（2026-10-05）
+  if (state === null || state === "server-off" || isNativeApp()) return null;
 
   const run = async (fn: typeof enableChatPush) => {
     const session = getOptionalSession();

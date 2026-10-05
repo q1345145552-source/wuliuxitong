@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import type { ReactNode } from "react";
 import { EARLY_TAB_BRAND_SCRIPT } from "../modules/branding/early-tab-brand";
 import WorkbenchFrame from "../modules/layout/WorkbenchFrame";
+import NativeAppBridge from "../modules/app-shell/NativeAppBridge";
 import "./globals.css";
 import "./ledger.css";
 
@@ -27,6 +28,8 @@ export default function RootLayout({
       <body>
         {/* 工作台外壳（左边菜单）挂在这里，换页时不卸载；非工作台路径原样渲染 */}
         <WorkbenchFrame>{children}</WorkbenchFrame>
+        {/* 在湘泰 app（安卓外壳）里打开时补上存文件 / 打印 / 返回键；浏览器里不做事 */}
+        <NativeAppBridge />
       </body>
     </html>
   );
