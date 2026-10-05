@@ -125,7 +125,8 @@ export type WireMessage = {
 };
 
 /** 单子现在的状态：键 = `${type}:${id}`；不在表里 = 查不到（删了 / 不是这个客户的了） */
-type RefLive = Map<string, { status: string | null }>;
+/** no：运单现在的单号（发出后员工改过单号的话，卡片跟着显示新单号；点开看详情也按它查，2026-10-06） */
+type RefLive = Map<string, { status: string | null; no?: string }>;
 
 export function toWireMessage(m: MessageRow, viewer: Pick<Auth, "userId" | "role">, live?: RefLive): WireMessage {
   const side: "client" | "cs" = m.senderRole === "client" ? "client" : "cs";
@@ -142,7 +143,7 @@ export function toWireMessage(m: MessageRow, viewer: Pick<Auth, "userId" | "role
   let ref: WireRef | null = null;
   if (!recalled && m.refId && m.refNo && (m.refType === "shipment" || m.refType === "fcl")) {
     const now = live?.get(`${m.refType}:${m.refId}`);
-    ref = { type: m.refType, id: m.refId, no: m.refNo, title: m.refTitle, status: now?.status ?? null, gone: live ? !now : false };
+    ref = { type: m.refType, id: m.refId, no: now?.no ?? m.refNo, title: m.refTitle, status: now?.status ?? null, gone: live ? !now : false };
   }
   return {
     id: m.id,
@@ -315,7 +316,7 @@ async function loadRefLive(companyId: string, clientId: string, rows: MessageRow
   const [ships, conts] = await Promise.all([
     shipmentIds.length === 0 ? [] : prisma.shipment.findMany({
       where: { ...EXCLUDE_FCL_SHIPMENT, id: { in: shipmentIds }, companyId, parentTrackingNo: null, order: { clientId } },
-      select: { id: true, currentStatus: true },
+      select: { id: true, currentStatus: true, trackingNo: true },
     }),
     fclIds.length === 0 ? [] : prisma.container.findMany({
       where: { id: { in: fclIds }, companyId, isFcl: true },
@@ -325,7 +326,7 @@ async function loadRefLive(companyId: string, clientId: string, rows: MessageRow
       },
     }),
   ]);
-  for (const s of ships) live.set(`shipment:${s.id}`, { status: s.currentStatus });
+  for (const s of ships) live.set(`shipment:${s.id}`, { status: s.currentStatus, no: s.trackingNo });
   for (const c of conts) {
     const ship = c.items[0]?.shipment;
     if (ship && ship.order?.clientId === clientId) live.set(`fcl:${c.id}`, { status: ship.currentStatus });

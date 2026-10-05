@@ -9,8 +9,8 @@ import Toast from "../../modules/layout/Toast";
 // 2026-08-31 收尾清理：formatCny 引入了但全文件没用过（历史遗留死 import），删掉
 import { sendAiMessage } from "../../services/ai-client";
 import { useCurrentSessionBrand } from "../../modules/branding/useWorkbenchBrand";
-import { apiBaseUrl } from "../../services/core-api";
-import { formatMetric, productDim, volumeM3FromDimensionsCm, formatVolumeM3String, warehouseLabelFromId } from "../../modules/staff/utils";
+import { productDim, volumeM3FromDimensionsCm, formatVolumeM3String, warehouseLabelFromId } from "../../modules/staff/utils";
+import ShipmentDetailBody from "../../modules/shipment/ShipmentDetailBody";
 import { productNamesLabel } from "../../../../../packages/shared-types/product-names";
 import { CARGO_TYPES, CARGO_TYPE_ZH, cargoTypeLabel as cargoTypeLabelOf, strictestCargoType } from "../../../../../packages/shared-types/cargo-type";
 import {
@@ -102,9 +102,6 @@ const clientStatusFilterOptions: string[] = SHIPMENT_STATUS_FILTER_OPTIONS.map((
    「编辑」「删除」「打印预报单」三个按钮一起被删了，这个组件从那天起
    没有任何地方渲染过。全文件 grep 过只剩定义没有使用。 */
 
-function imgSrc(img: { imageUrl?: string | null }): string {
-  return img.imageUrl ? apiBaseUrl() + img.imageUrl : "";
-}
 
 // ── localStorage 运单缓存 ──
 const ORDERS_CACHE_PREFIX = "xt_orders_";
@@ -1280,7 +1277,6 @@ export default function ClientHomePage() {
                         ])
                       : [[item.itemName || "未填品名", "—"]];
                     const isExpanded = !!openDetailsByOrder[item.id];
-                    const cargoTypeLabel = item.cargoType === "inspection" ? "商检货" : item.cargoType === "sensitive" ? "敏感货" : "普货";
                     const images = detailImagesCache[item.id] ?? [];
                     const totalVolumeM3 = totalVolumeOf(item);
                     const totalWeightKg = totalWeightOf(item);
@@ -1330,64 +1326,8 @@ export default function ClientHomePage() {
                                 subtitle={item.trackingNo ?? item.orderNo ?? "—"}
                                 onClose={() => setOpenDetailsByOrder((prev) => ({ ...prev, [item.id]: false }))}
                               >
-                                  <div>
-                              {/* 基本信息 */}
-                              <h4 style={{ margin: "0 0 8px", fontSize: 14, color: "var(--t-body)" }}>基本信息</h4>
-                              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "6px 16px", marginBottom: 12 }}>
-                                <div><span style={{ color: "var(--t-muted)", fontSize: 12 }}>仓库：</span>{warehouseLabel(item.warehouseId)}</div>
-                                {/* 2026-08-07 删除「批次号」：它存的就是柜号，用户要求客户不能看到柜号。
-                                    后端 /client/orders 已同时不再下发 batchNo，两边一起改，不留半截。 */}
-                                <div><span style={{ color: "var(--t-muted)", fontSize: 12 }}>运单号：</span>{item.trackingNo || "—"}</div>
-                                <div><span style={{ color: "var(--t-muted)", fontSize: 12 }}>预报单号：</span>{item.orderNo || "—"}</div>
-                                <div><span style={{ color: "var(--t-muted)", fontSize: 12 }}>审批状态：</span>{item.approvalStatus === "shipped" ? "已发货" : item.approvalStatus === "approved" ? "已审核" : item.approvalStatus === "received" ? "已收货" : item.approvalStatus || "—"}</div>
-                                <div><span style={{ color: "var(--t-muted)", fontSize: 12 }}>运输方式：</span>{item.transportMode === "sea" ? "海运" : item.transportMode === "land" ? "陆运" : item.transportMode || "—"}</div>
-                                <div><span style={{ color: "var(--t-muted)", fontSize: 12 }}>国内单号：</span>{(item.products?.length ?? 0) > 0 ? (item.products ?? []).map((p: any) => p.domesticTrackingNo || "—").filter(Boolean).join("、") || "—" : (item.domesticTrackingNo || "—")}</div>
-                                <div><span style={{ color: "var(--t-muted)", fontSize: 12 }}>发货日期：</span>{item.shipDate || "—"}</div>
-                                <div><span style={{ color: "var(--t-muted)", fontSize: 12 }}>货型：</span>{cargoTypeLabel}</div>
-                                <div><span style={{ color: "var(--t-muted)", fontSize: 12 }}>收货地址：</span>{item.receiverAddressTh || "—"}</div>
-                              </div>
-                              {/* 产品明细 */}
-                              {(item.products?.length ?? 0) > 0 ? (
-                                <div style={{ marginBottom: 12 }}>
-                                  <h4 style={{ margin: "0 0 8px", fontSize: 14, color: "var(--t-body)" }}>产品明细</h4>
-                                  <table className="a3-table" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-                                    <thead><tr style={{ background: "var(--s-cool-2)" }}>
-                                      <th style={{ padding: "4px 6px", textAlign: "left" }}>品名</th>
-                                      <th style={{ padding: "4px 6px", textAlign: "center" }}>件数</th>
-                                      <th style={{ padding: "4px 6px", textAlign: "center" }}>单箱数量</th>
-                                      <th style={{ padding: "4px 6px", textAlign: "center" }}>尺寸(cm)</th>
-                                      <th style={{ padding: "4px 6px", textAlign: "center" }}>重量(kg)</th>
-                                      <th style={{ padding: "4px 6px", textAlign: "center" }}>货型</th>
-                                      <th style={{ padding: "4px 6px", textAlign: "center" }}>国内单号</th>
-                                    </tr></thead>
-                                    <tbody>
-                                      {(item.products ?? []).map((p: any, i: number) => (
-                                        <tr key={p.id || i} style={{ borderBottom: "1px solid var(--l-soft)" }}>
-                                          <td style={{ padding: "4px 6px" }}>{p.itemName}</td>
-                                          <td style={{ padding: "4px 6px", textAlign: "center" }}>{p.packageCount}</td>
-                                          <td style={{ padding: "4px 6px", textAlign: "center" }}>{p.productQuantity ?? "—"}</td>
-                                          <td style={{ padding: "4px 6px", textAlign: "center", fontSize: 11 }}>{p.lengthCm && p.widthCm && p.heightCm ? `${p.lengthCm}×${p.widthCm}×${p.heightCm}` : "—"}</td>
-                                          <td style={{ padding: "4px 6px", textAlign: "center" }}>{formatMetric(p.weightKg, 2)}</td>
-                                          <td style={{ padding: "4px 6px", textAlign: "center" }}>{p.cargoType === "inspection" ? "商检货" : p.cargoType === "sensitive" ? "敏感货" : "普货"}</td>
-                                          <td style={{ padding: "4px 6px", textAlign: "center", fontSize: 11 }}>{p.domesticTrackingNo || "—"}</td>
-                                        </tr>
-                                      ))}
-                                    </tbody>
-                                  </table>
-                                </div>
-                              ) : null}
-                              {/* 产品图片 */}
-                              <div>
-                                <h4 style={{ margin: "0 0 8px", fontSize: 14, color: "var(--t-body)" }}>产品图片</h4>
-                                {images.length === 0 ? <span style={{ fontSize: 12, color: "var(--t-faint)" }}>暂无</span> : (
-                                  <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-                                    {images.map((img) => (
-                                      <img key={img.id} src={imgSrc(img)} alt={img.fileName} onClick={() => setPreviewImage({ src: imgSrc(img), alt: img.fileName })} style={{ width: 80, height: 80, objectFit: "cover", borderRadius: 6, border: "1px solid var(--l-soft)", cursor: "pointer" }} />
-                                    ))}
-                                  </div>
-                                )}
-                              </div>
-                                  </div>
+                                {/* 正文抽到 ShipmentDetailBody 共用（客服对话里点运单卡片弹的也是这一份，2026-10-06） */}
+                                <ShipmentDetailBody item={item} images={images} onPreview={(src, alt) => setPreviewImage({ src, alt })} />
                               </DetailModal>
                             </td>
                           </tr>

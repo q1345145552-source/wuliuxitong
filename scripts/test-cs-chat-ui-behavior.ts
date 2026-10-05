@@ -257,7 +257,11 @@ function loadModule(abs: string, overrides: Record<string, any>): any {
   new Function("exports", "require", "module", out)(mod.exports, req, mod);
   return mod.exports;
 }
+/** 气泡里点运单卡片弹的详情（ChatRefDetail）：聊天窗口的测试里换成替身，只看它拿到了什么；它自己在 U27c 真跑 */
+function StubRefDetail(_props: any) { return null; }
 const OVERRIDES: Record<string, any> = {
+  // __esModule：被 `import X from` 默认导入的替身要带上，不然转出来的代码会再包一层 { default: … }
+  [path.join(SRC, "modules/cs-chat/ChatRefDetail.tsx")]: { __esModule: true, default: StubRefDetail },
   [path.join(SRC, "services/core-api.ts")]: fakeCoreApi,
   [path.join(SRC, "modules/shared/image-compress.ts")]: fakeImageCompress,
   "next/navigation": { useSearchParams: () => new URLSearchParams(fakeWindow.location.search) },
@@ -1169,7 +1173,8 @@ async function main(): Promise<void> {
       hasMore: false, serverTime: "2026-09-28T01:00:05.000Z", peerReadAt: null,
     });
     await settle();
-    let cards = findAll((n) => n.props?.className === "cs-ref-card").map(textOf);
+    const isCard = (n: any) => String(n.props?.className ?? "").split(" ").includes("cs-ref-card");
+    let cards = findAll(isCard).map(textOf);
     assert.equal(cards.length, 2);
     assert.ok(cards[0].includes("运单") && cards[0].includes("XT001") && cards[0].includes("蓝牙耳机") && cards[0].includes("现在：已签收"), `卡片不对：${cards[0]}`);
     assert.ok(cards[1].includes("整柜") && cards[1].includes("BL01") && cards[1].includes("已删除"), `删了的单没写清楚：${cards[1]}`);
@@ -1177,13 +1182,113 @@ async function main(): Promise<void> {
     mount(ChatThread, { scope: { kind: "staff", clientId: "ZZC1" }, title: "ZZC1" });
     lastCall().resolve({ messages: [withRef("a", { type: "shipment", id: "s1", no: "XT001", title: "蓝牙耳机", status: "delivered", gone: false })], hasMore: false, serverTime: "2026-09-28T01:00:05.000Z", peerReadAt: null });
     await settle();
-    cards = findAll((n) => n.props?.className === "cs-ref-card").map(textOf);
+    cards = findAll(isCard).map(textOf);
     assert.ok(cards[0].includes("现在：派送完成"), `员工那头的叫法不对：${cards[0]}`);
     // 轮询带回同一条、状态变了：卡片跟着变
     await tickTimers((t) => !t.once && t.ms === 3000);
     await answerPoll({ messages: [withRef("a", { type: "shipment", id: "s1", no: "XT001", title: "蓝牙耳机", status: "returned", gone: false })], hasMore: false, serverTime: "2026-09-28T01:00:08.000Z", peerReadAt: null });
-    cards = findAll((n) => n.props?.className === "cs-ref-card").map(textOf);
+    cards = findAll(isCard).map(textOf);
     assert.ok(cards[0].includes("现在：已退回"), `状态变了卡片没跟着变：${cards[0]}`);
+  });
+
+  await check("U27b 点气泡里的运单卡片弹「运单详情」（老板 2026-10-06「1A，2 要」）：客户、员工两头都能点；删了的、整柜的不能点；关了就没了", async () => {
+    resetSound();
+    const withRef = (id: string, ref: any) => ({ ...cs(id, "2026-09-28T01:00:00.000Z", false), content: null, recalled: false, ref });
+    const live = { type: "shipment", id: "s1", no: "XT001", title: "蓝牙耳机", status: "loaded", gone: false };
+    const msgs = [withRef("a", live), withRef("b", { ...live, id: "s2", no: "XT002", gone: true }), withRef("c", { type: "fcl", id: "f1", no: "BL01", title: "鞋子", status: "departed", gone: false })];
+    for (const [scope, forClient] of [[{ kind: "client" }, true], [{ kind: "staff", clientId: "ZZC1" }, false]] as const) {
+      unmount(); calls.length = 0; timers.length = 0;
+      mount(ChatThread, { scope, title: "x" });
+      lastCall().resolve({ messages: msgs, hasMore: false, serverTime: "2026-09-28T01:00:05.000Z", peerReadAt: null });
+      await settle();
+      const openers = findAll((n) => n.type === "button" && String(n.props?.className ?? "").includes("cs-ref-card--open"));
+      assert.equal(openers.length, 1, `能点开的卡片应该只有还在的那张运单（删了的、整柜的不能点），实际 ${openers.length} 张`);
+      assert.ok(textOf(openers[0]).includes("XT001") && textOf(openers[0]).includes("查看详情"), `能点的卡片上没写「查看详情」：${textOf(openers[0])}`);
+      assert.equal(findAll((n) => n.type === StubRefDetail).length, 0, "还没点就弹了");
+      openers[0].props.onClick(); flush();
+      const shown = findAll((n) => n.type === StubRefDetail)[0];
+      assert.ok(shown, "点了卡片没弹详情");
+      assert.equal(shown.props.chatRef.id, "s1");
+      assert.equal(shown.props.forClient, forClient, "客户 / 员工两头弄反了");
+      shown.props.onClose(); flush();
+      assert.equal(findAll((n) => n.type === StubRefDetail).length, 0, "关了详情还挂着");
+    }
+  });
+
+  await check("U27c 运单详情弹窗（ChatRefDetail 真跑）：客户按单号查自己的、员工按 id 查并多一格唛头；产品图另取；查不到写清楚；出错能重试；「查看物流轨迹」按单号开", async () => {
+    const pending: Array<{ name: string; arg: string; resolve: (v: any) => void; reject: (e: any) => void }> = [];
+    const later = (name: string) => (arg: string) => new Promise((resolve, reject) => { pending.push({ name, arg, resolve, reject }); });
+    const tracks: any[] = [];
+    function DetailStub(p: any) { return jsxRuntime.jsx("div", { "data-title": p.title, "data-subtitle": p.subtitle, children: p.children }); }
+    function BodyStub(_p: any) { return null; }
+    const { [path.join(SRC, "modules/cs-chat/ChatRefDetail.tsx")]: _stubbed, ...baseOverrides } = OVERRIDES;
+    const RefDetail = loadModule(path.join(SRC, "modules/cs-chat/ChatRefDetail.tsx"), {
+      ...baseOverrides,
+      [path.join(SRC, "services/business-api.ts")]: {
+        fetchClientOrderByTrackingNo: later("client"),
+        fetchStaffShipmentById: later("staff"),
+        fetchShipmentImages: later("images"),
+      },
+      [path.join(SRC, "modules/shipment/ShipmentTrackModal.tsx")]: { openShipmentTrack: (t: any) => tracks.push(t) },
+      [path.join(SRC, "modules/layout/DetailModal.tsx")]: { __esModule: true, default: DetailStub },
+      [path.join(SRC, "modules/shipment/ShipmentDetailBody.tsx")]: { __esModule: true, default: BodyStub },
+    }).default;
+    const ref = { type: "shipment", id: "s1", no: "XT001", title: "蓝牙耳机", status: "loaded", gone: false };
+    const take = (name: string) => { const i = pending.findIndex((p) => p.name === name); assert.ok(i >= 0, `没去取 ${name}（取了：${pending.map((p) => p.name).join("、")}）`); return pending.splice(i, 1)[0]; };
+    const body = () => findAll((n) => n.type === BodyStub)[0];
+
+    // 客户：按单号查（跟「运单查询」同一个接口），再按订单 id 取图
+    mount(RefDetail, { chatRef: ref, forClient: true, onClose() {} });
+    flush();
+    assert.ok(textOf(findAll((n) => n.type === "p")[0]).includes("正在取"), "取的时候没写在取");
+    const c1 = take("client"); assert.equal(c1.arg, "XT001");
+    c1.resolve({ id: "o1", trackingNo: "XT001", approvalStatus: "received", products: [] }); await settle();
+    const i1 = take("images"); assert.equal(i1.arg, "o1", "客户的产品图要按订单 id 取（跟运单查询一样）");
+    i1.resolve([{ id: "img1", fileName: "a.jpg", imageUrl: "/images/a.jpg" }]); await settle();
+    assert.equal(body().props.item.trackingNo, "XT001");
+    assert.equal(body().props.images.length, 1);
+    assert.deepEqual(body().props.extraFields, [], "客户那头不该多唛头那格");
+    findAll((n) => n.type === "button" && textOf(n) === "查看物流轨迹")[0].props.onClick();
+    assert.deepEqual(tracks.pop(), { trackingNo: "XT001" });
+    unmount();
+
+    // 员工：按 id 查（跟「运单管理」同一个接口），前面多一格唛头；图片没取到不挡详情
+    mount(RefDetail, { chatRef: ref, forClient: false, onClose() {} });
+    flush();
+    const s1 = take("staff"); assert.equal(s1.arg, "s1");
+    s1.resolve({ id: "s1", orderId: "o1", trackingNo: "XT001", clientId: "ZZC1", products: [] }); await settle();
+    take("images").reject(new Error("图挂了")); await settle();
+    assert.deepEqual(body().props.extraFields.map((f: any) => [f.label, f.value]), [["唛头", "ZZC1"]]);
+    assert.deepEqual(body().props.images, [], "图片没取到应该当没有图，不能挡住详情");
+    unmount();
+
+    // 客户那头图片没取到也不挡详情
+    mount(RefDetail, { chatRef: ref, forClient: true, onClose() {} });
+    flush();
+    take("client").resolve({ id: "o1", trackingNo: "XT001", products: [] }); await settle();
+    take("images").reject(new Error("图挂了")); await settle();
+    assert.ok(body(), "客户那头图片没取到，整个详情都没出来");
+    assert.deepEqual(body().props.images, []);
+    unmount();
+
+    // 查不到（删了 / 不在名下 / 老后端不认 id）
+    mount(RefDetail, { chatRef: ref, forClient: true, onClose() {} });
+    flush();
+    take("client").resolve(null); await settle();
+    assert.ok(findAll((n) => n.type === "p").map(textOf).some((t) => t.includes("没找到这票货")), "查不到没写清楚");
+    assert.equal(body(), undefined);
+    unmount();
+
+    // 出错：写原因 + 重试，重试真的再取一次
+    mount(RefDetail, { chatRef: ref, forClient: true, onClose() {} });
+    flush();
+    take("client").reject(new Error("网络断了")); await settle();
+    const alert = findAll((n) => n.props?.role === "alert")[0];
+    assert.ok(alert && textOf(alert).includes("网络断了"), "出错没写原因");
+    findAll((n) => n.type === "button" && textOf(n) === "重试")[0].props.onClick(); flush(); await settle();
+    take("client").resolve({ id: "o1", trackingNo: "XT001", products: [] }); await settle();
+    take("images").resolve([]); await settle();
+    assert.ok(body(), "重试之后没出详情");
   });
 
   await check("U28 员工「客户消息」：「全部 / 待回复」页签（带上 filter=pending）、待回复写等了多久、摘要「我方：」按最新一条还在的算", async () => {

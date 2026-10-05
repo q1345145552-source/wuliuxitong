@@ -39,6 +39,7 @@ import { subscribeRealtime } from "../../services/realtime";
 import { compressImageForUpload } from "../shared/image-compress";
 import { CLIENT_STATUS_ZH_OVERRIDES, shipmentStatusZh } from "../shipment/shipment-status";
 import ChatRefPicker, { type PickedRef } from "./ChatRefPicker";
+import ChatRefDetail from "./ChatRefDetail";
 import { createRequestGate } from "../shared/request-gate";
 import { chatSoundKey, installChatSoundUnlock, noteIncomingArrived, noteIncomingShown } from "./chat-sound";
 
@@ -111,17 +112,31 @@ function latestIncoming(list: ChatMessage[], scope: ChatScope): string {
   return latestCreatedAt(list.filter((m) => m.side !== side && !m.recalled), "");
 }
 
-/** 气泡里那张单：单号、品名、现在的状态（客户看 delivered 叫「已签收」，跟客户别的页面一个叫法）。没有状态要管，直接当函数调 */
-function renderRefCard(r: ChatRef, forClient: boolean, withText: boolean) {
-  return (
-    <div className="cs-ref-card" style={{ border: "1px solid var(--l-soft)", borderRadius: 6, background: "var(--white)", padding: "6px 9px", marginBottom: withText ? 6 : 0, minWidth: 160 }}>
+/**
+ * 气泡里那张单：单号、品名、现在的状态（客户看 delivered 叫「已签收」，跟客户别的页面一个叫法）。没有状态要管，直接当函数调。
+ * 给了 onOpen（运单、还在）就是一个按钮：点了弹「运单详情」（老板 2026-10-06「客户点一下就会展示出运单详情」，见 ChatRefDetail）；
+ * 整柜的卡片这次不动（老板没说要）。
+ */
+function renderRefCard(r: ChatRef, forClient: boolean, withText: boolean, onOpen?: () => void) {
+  // 背景写 var(--white)：全局「按钮默认赭红底」那条按行内 background 放过白底按钮
+  const style = { border: "1px solid var(--l-soft)", borderRadius: 6, background: "var(--white)", padding: "6px 9px", marginBottom: withText ? 6 : 0, minWidth: 160 };
+  const inner = (
+    <>
       <div style={{ fontSize: 11, color: "var(--t-muted)" }}>{r.type === "fcl" ? "整柜" : "运单"}</div>
       <div style={{ fontFamily: "var(--a3-mono, monospace)", fontWeight: 600, fontSize: 13, color: "var(--t-heading)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{r.no}</div>
       {r.title ? <div style={{ fontSize: 12, color: "var(--t-body)" }}>{r.title}</div> : null}
       <div style={{ fontSize: 12, color: r.gone ? "var(--t-faint)" : "var(--c-blue)" }}>
         {r.gone ? "这张单已删除，或已不在这个账号名下" : r.status ? `现在：${shipmentStatusZh(r.status, forClient ? CLIENT_STATUS_ZH_OVERRIDES : undefined)}` : null}
       </div>
-    </div>
+      {onOpen ? <div className="cs-ref-open" style={{ marginTop: 2, fontSize: 12, color: "var(--brand)" }}>查看详情 ›</div> : null}
+    </>
+  );
+  if (!onOpen) return <div className="cs-ref-card" style={style}>{inner}</div>;
+  return (
+    <button type="button" className="cs-ref-card cs-ref-card--open" onClick={onOpen} aria-label={`查看运单 ${r.no} 的详情`}
+      style={{ ...style, display: "block", width: "100%", textAlign: "left", color: "var(--t-body)", font: "inherit", lineHeight: 1.55, cursor: "pointer" }}>
+      {inner}
+    </button>
   );
 }
 
@@ -158,6 +173,8 @@ export default function ChatThread(props: {
   const [recalling, setRecalling] = useState<string | null>(null);
   /** 选好了、还没发出去的那张单（输入框上方显示「关于：…」） */
   const [pendingRef, setPendingRef] = useState<PickedRef | null>(null);
+  /** 点开看详情的那张单（气泡里的运单卡片，2026-10-06） */
+  const [openRef, setOpenRef] = useState<ChatRef | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
   /** 过了 2 分钟「撤回」要消失：有能撤回的消息时定时重画 */
   const [, setRecallTick] = useState(0);
@@ -587,7 +604,8 @@ export default function ChatThread(props: {
                         <img src={m.imageUrl} alt="图片" onLoad={() => { if (stickToBottomRef.current) scrollToBottom(); }} style={{ display: "block", maxWidth: "100%", maxHeight: 220, borderRadius: 6 }} />
                       </button>
                     ) : null}
-                    {m.ref ? renderRefCard(m.ref, scope.kind === "client", !!m.content) : null}
+                    {m.ref ? renderRefCard(m.ref, scope.kind === "client", !!m.content,
+                      m.ref.type === "shipment" && !m.ref.gone ? () => setOpenRef(m.ref) : undefined) : null}
                     {m.content ? <div style={m.imageUrl ? { marginTop: 6, padding: "0 7px 4px" } : undefined}>{m.content}</div> : null}
                   </div>
                   <div className="cs-msg-meta" style={{ display: "flex", flexDirection: "column", alignItems: m.mine ? "flex-end" : "flex-start", flexShrink: 0, fontSize: 11, lineHeight: 1.35, color: "var(--t-faint)", whiteSpace: "nowrap" }}>
@@ -679,6 +697,8 @@ export default function ChatThread(props: {
           <img src={preview} alt="大图" style={{ maxWidth: "92vw", maxHeight: "92vh", borderRadius: 6 }} />
         </div>
       ) : null}
+
+      {openRef ? <ChatRefDetail chatRef={openRef} forClient={scope.kind === "client"} onClose={() => setOpenRef(null)} /> : null}
     </div>
   );
 }

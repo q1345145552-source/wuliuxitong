@@ -492,6 +492,9 @@ export function registerShipmentRoutes(app: MinimalHttpApp): void {
       companyId: auth.companyId,
     };
     if (!includeChildren) where.parentTrackingNo = null;
+    // 只要某一张（客服对话里点运单卡片看详情，2026-10-06）：按 id 精确取，照样只在本公司里找；不传跟以前一样
+    const onlyId = String(req.query.id ?? "").trim();
+    if (onlyId) where.id = onlyId;
 
     // 2026-08-06：按状态筛（逗号分隔，大小写不敏感）。**尾端派送就是因为没有它才漏货的**：
     // 页面原来拿「按更新时间排的前 500 条（所有状态混在一起）」回去自己筛，

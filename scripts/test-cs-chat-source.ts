@@ -277,6 +277,25 @@ async function main(): Promise<void> {
     assert.match(shell, /syncChatPushOnLoad\(session\)/, "进来没核对通知订阅是不是这个人开的");
   });
 
+  await check("S15 2026-10-06：点聊天里的运单卡片看详情 —— 卡片单号跟着运单现在的单号走；员工那头按 id 精确取（同运单管理的接口，只在本公司里）；客户那头按单号查自己的（同运单查询的接口）", () => {
+    const routes = read("apps/api/src/modules/cs-chat/routes.ts");
+    assert.match(routes, /select: \{ id: true, currentStatus: true, trackingNo: true \}/, "查卡片现状时没带上现在的单号");
+    assert.match(routes, /live\.set\(`shipment:\$\{s\.id\}`, \{ status: s\.currentStatus, no: s\.trackingNo \}\)/);
+    assert.match(routes, /no: now\?\.no \?\? m\.refNo/, "卡片单号没跟着运单现在的单号走（员工改过单号就按旧号查不到）");
+    const ship = read("apps/api/src/modules/shipments/routes.ts");
+    const list = ship.slice(ship.indexOf('app.get("/staff/shipments"'), ship.indexOf("prisma.shipment.findMany", ship.indexOf('app.get("/staff/shipments"')));
+    assert.match(list, /companyId: auth\.companyId,/, "运单列表不按公司过滤了");
+    assert.match(list, /const onlyId = String\(req\.query\.id \?\? ""\)\.trim\(\);\n    if \(onlyId\) where\.id = onlyId;/, "按 id 取一张的参数没了");
+    const api = read("apps/web/src/services/business-api.ts");
+    assert.match(api, /\/staff\/shipments\?id=\$\{encodeURIComponent\(id\)\}/);
+    assert.match(api, /\.find\(\(item\) => item\.id === id\) \?\? null/, "员工那头没核对拿回来的是不是这一张（老后端不认 id 会随便回一张）");
+    assert.match(api, /\/client\/orders\?trackingNo=\$\{encodeURIComponent\(trackingNo\)\}/);
+    assert.match(api, /\.find\(\(item\) => item\.trackingNo === trackingNo\) \?\? null/, "客户那头没核对单号完全对得上");
+    // 客户「运单查询」的详情跟聊天里弹的是同一份正文
+    assert.match(read("apps/web/src/app/client/page.tsx"), /<ShipmentDetailBody item=\{item\} images=\{images\}/);
+    assert.match(read("apps/web/src/modules/cs-chat/ChatRefDetail.tsx"), /<ShipmentDetailBody/);
+  });
+
   console.log(`\n通过 ${passed} / 失败 ${failed}`);
   if (failed > 0) process.exit(1);
 }

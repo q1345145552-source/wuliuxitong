@@ -4530,3 +4530,7 @@ table.a3-table.shipment-product-table > tbody > tr > td {
 .app-dl-steps li + li { margin-top: 6px; }
 .app-dl-foot { margin: 20px 0 0; color: var(--ink-3); font-size: 12px; line-height: 1.7; text-align: left; }
 .app-dl-foot a { color: var(--brand); }
+
+/* 客服对话里点运单卡片弹的「运单详情」（2026-10-06，ChatRefDetail）：上面那个「查看物流轨迹」按钮 */
+.chat-ref-detail-track { min-height: 36px; padding: 0 16px; border: 0; border-radius: var(--a3-radius); font-size: 14px; }
+.chat-ref-detail-retry { padding: 2px 10px; border: 0; border-radius: var(--a3-radius); font-size: 12px; }

@@ -874,6 +874,19 @@ export async function fetchClientOrders(params?: {
 }
 
 /**
+ * 客户那头：客服对话里点运单卡片看详情（2026-10-06），按运单号精确找自己的这一票。
+ * 跟「运单查询」同一个接口、同一套处理（柜号不给客户看之类全在后端），只认单号完全对得上的那条。
+ */
+export async function fetchClientOrderByTrackingNo(trackingNo: string): Promise<OrderItem | null> {
+  const response = await fetch(`${apiBaseUrl()}/client/orders?trackingNo=${encodeURIComponent(trackingNo)}&pageSize=5`, {
+    method: "GET",
+    headers: { ...authHeaders() },
+  });
+  const data = await parseApiResponse<{ items: OrderItem[] }>(response);
+  return (data.items ?? []).find((item) => item.trackingNo === trackingNo) ?? null;
+}
+
+/**
  * 获取客户端预报单列表
  * @param status 预报单状态：pending(待审核), approved(已审核/待发货), shipped(已发货), all(全部)
  */
@@ -986,6 +999,19 @@ async function fetchAllPages<T>(path: string): Promise<T[]> {
 
 export async function fetchStaffShipments(): Promise<ShipmentItem[]> {
   return fetchAllPages<ShipmentItem>("/staff/shipments");
+}
+
+/**
+ * 员工那头：客服对话里点运单卡片看详情（2026-10-06），按运单 id 取这一张。
+ * 跟「运单管理」同一个接口（带产品明细、产品图）；后端认 id 参数前是老版本也不会拿错 —— 只认 id 对得上的那条。
+ */
+export async function fetchStaffShipmentById(id: string): Promise<ShipmentItem | null> {
+  const response = await fetch(`${apiBaseUrl()}/staff/shipments?id=${encodeURIComponent(id)}&pageSize=1`, {
+    method: "GET",
+    headers: { ...authHeaders() },
+  });
+  const data = await parseApiResponse<{ items: ShipmentItem[] }>(response);
+  return (data.items ?? []).find((item) => item.id === id) ?? null;
 }
 
 /** 运单列表顶部那排数字（A3 方案 §3.2）。三端同一套字段，口径一致。
