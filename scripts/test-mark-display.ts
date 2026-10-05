@@ -180,6 +180,8 @@ const API_NOT_CLIENT: NotClient[] = [
   { file: /\/modules\/admin\/routes\.ts$/, recv: /^(?:agent|body|updateData|created|updated|reviewer)$/, why: "客户管理 / 员工管理的增改、代理名、审核人" },
   { file: /\/modules\/shipments\/routes\.ts$/, recv: /^u$/, why: "轨迹操作人名字表" },
   { file: /\/modules\/shipments\/unload-item\.ts$/, recv: /^operator$/, why: "卸柜操作人（员工）" },
+  // 2026-10-06 从 /staff/orders 抽出来的建单拼装：operator 是调用方传进来的当前登录员工（auth），写轨迹「操作人」用
+  { file: /\/modules\/orders\/new-order-rows\.ts$/, recv: /^operator$/, why: "建单 / 到货通知转运单的员工（轨迹操作人）" },
 ];
 /**
  * 接口里允许出现客户名字的只有这些：都是**员工 / 超管**的列表接口，给上面那些「按名字也能搜」和老板保留的两处用。

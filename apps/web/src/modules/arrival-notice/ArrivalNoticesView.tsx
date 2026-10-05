@@ -332,7 +332,8 @@ function NoticeCard(props: {
         </div>
         <div className="an-chips">
           {n.notifiedAt
-            ? <span className="an-chip an-chip-ok">已通知 · {n.notifiedByName ?? ""} {shortTime(n.notifiedAt)}</span>
+            // 谁通知的只有超管看得到（后端给员工不带名字，老板 2026-09-15 定的）
+            ? <span className="an-chip an-chip-ok">已通知 · {[n.notifiedByName, shortTime(n.notifiedAt)].filter(Boolean).join(" ")}</span>
             : <span className="an-chip an-chip-warn">未通知</span>}
           {formal ? <span className="an-chip an-chip-ok">已转运单{n.shipmentStatus && n.shipmentStatus !== "inWarehouseCN" ? ` · ${shipmentStatusZh(n.shipmentStatus)}` : ""}</span> : null}
           {inbound ? <span className="an-chip an-chip-warn">待入库</span> : null}
@@ -371,7 +372,7 @@ function NoticeCard(props: {
       ) : null}
 
       <footer className="an-actions">
-        <span className="an-who">{n.createdByName ?? ""} 登记于 {shortTime(n.createdAt)}</span>
+        <span className="an-who">{n.createdByName ? `${n.createdByName} ` : ""}登记于 {shortTime(n.createdAt)}</span>
         <button type="button" className="an-btn" disabled={busy} onClick={props.onToggleNotified}>{n.notifiedAt ? "改回未通知" : "标为已通知客户"}</button>
         {!formal ? <button type="button" className="an-btn" disabled={busy} onClick={props.onEdit}>修改</button> : null}
         {!formal ? <button type="button" className="an-btn an-btn-go" disabled={busy} onClick={() => props.onConvert("formal")}>转正式运单</button> : null}

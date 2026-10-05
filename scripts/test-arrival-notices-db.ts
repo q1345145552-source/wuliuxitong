@@ -116,13 +116,16 @@ async function main(): Promise<void> {
     }
 
     let blankId = "";
-    await check("N1 什么都不填也能先存；列表「待通知」里有它，登记人是员工名", async () => {
+    await check("N1 什么都不填也能先存；列表「待通知」里有它；登记人名字只给超管看（员工拿到的是空）", async () => {
       const item = await save(STAFF, {});
       blankId = item.id;
       assert.equal(item.clientId, null);
       assert.equal(item.convertedTo, null);
       assert.equal(item.notifiedAt, null);
-      assert.equal(item.createdByName, STAFF.name);
+      assert.equal(item.createdByName, null, "员工不能看到是谁登记的（老板 2026-09-15：操作人只给超管）");
+      const asAdmin = (await list(ADMIN)).items.find((x: Row) => x.id === blankId);
+      assert.equal(asAdmin.createdByName, STAFF.name, "超管看得到登记人");
+      assert.equal(await pm.arrivalNotice.count({ where: { id: blankId, createdByName: STAFF.name, createdBy: STAFF.userId } }), 1, "库里照样记着");
       const l = await list(STAFF, { tab: "todo" });
       assert.ok(l.items.some((x: Row) => x.id === blankId));
       assert.equal(l.counts.todo, 1);
@@ -166,10 +169,12 @@ async function main(): Promise<void> {
       assert.equal(again.itemName, "LED 灯具", "改自己那条、运单号没变，不能说重");
     });
 
-    await check("N4 「已通知客户」开关：标上记时间和人，改回清空；页签数字跟着变", async () => {
+    await check("N4 「已通知客户」开关：标上记时间和人（人名只给超管看），改回清空；页签数字跟着变", async () => {
       const on = (await must("POST /staff/arrival-notices/notify", STAFF2, { id: fullId, notified: true })).item;
       assert.ok(on.notifiedAt);
-      assert.equal(on.notifiedByName, STAFF2.name);
+      assert.equal(on.notifiedByName, null, "员工拿不到是谁通知的");
+      assert.equal((await list(ADMIN)).items.find((x: Row) => x.id === fullId).notifiedByName, STAFF2.name, "超管看得到");
+      assert.equal(await pm.arrivalNotice.count({ where: { id: fullId, notifiedBy: STAFF2.userId, notifiedByName: STAFF2.name } }), 1, "库里记着是谁");
       let l = await list(STAFF);
       assert.equal(l.counts.todo, 1);
       assert.equal(l.counts.notified, 1);

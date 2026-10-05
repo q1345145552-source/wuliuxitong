@@ -52,6 +52,10 @@ export const OPERATOR_IDENTITY_FIELDS = [
   "convertedBy",
   // CsMessage 客服对话里员工 / 超管发消息时的名字（2026-09-28）。接口逐字段下发、不整行展开，这里登记兜底
   "senderName",
+  // ArrivalNotice 到货通知：谁登记的、谁点的「已通知客户」（2026-10-06）。接口逐字段下发，这里登记兜底
+  "createdByName",
+  "notifiedBy",
+  "notifiedByName",
 ] as const;
 
 export type OperatorIdentityField = (typeof OPERATOR_IDENTITY_FIELDS)[number];

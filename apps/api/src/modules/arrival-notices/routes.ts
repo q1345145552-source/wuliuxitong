@@ -4,6 +4,7 @@ import { prisma } from "../../db/prisma";
 import type { HttpRequest, HttpResponse, MinimalHttpApp } from "../../server";
 import { fail, ok, requireRole } from "../core/http-utils";
 import { BusinessError } from "../core/business-error";
+import { canSeeOperatorIdentity } from "../core/operator-visibility";
 import { parseNumericStrict, requirePositiveInt } from "../core/int-guard";
 import { DECIMAL_10_2, DECIMAL_10_3, requireDecimal } from "../core/decimal-guard";
 import { UPLOAD_IMAGE_MAX_BASE64, uploadTooLargeMessage } from "../core/upload-limit";
@@ -345,8 +346,12 @@ function translateUniqueClash(e: unknown): never {
   throw e;
 }
 
-/** 列表 / 存完返回给页面的一行 */
-function toDto(n: NoticeRow, ship: { currentStatus: string } | null | undefined) {
+/**
+ * 列表 / 存完返回给页面的一行。
+ * 登记人、通知人只给超管（老板 2026-09-15：员工也不能看到是哪个账号操作的，core/operator-visibility.ts）。
+ */
+function toDto(n: NoticeRow, ship: { currentStatus: string } | null | undefined, viewerRole: string) {
+  const showWho = canSeeOperatorIdentity(viewerRole);
   // 转过、但那张运单已经被删了：当作没转（页面上提示一句，可以重转）
   const shipmentGone = Boolean(n.convertedTo && n.shipmentId && !ship);
   return {
@@ -363,26 +368,26 @@ function toDto(n: NoticeRow, ship: { currentStatus: string } | null | undefined)
     arrivedAt: n.arrivedAt,
     remark: n.remark,
     notifiedAt: n.notifiedAt?.toISOString() ?? null,
-    notifiedByName: n.notifiedByName,
+    notifiedByName: showWho ? n.notifiedByName : null,
     convertedTo: shipmentGone ? null : (n.convertedTo as "inbound" | "formal" | null),
     shipmentId: shipmentGone ? null : n.shipmentId,
     shipmentStatus: shipmentGone ? null : (ship?.currentStatus ?? null),
     shipmentGone,
     convertedAt: shipmentGone ? null : (n.convertedAt?.toISOString() ?? null),
-    createdByName: n.createdByName,
+    createdByName: showWho ? n.createdByName : null,
     createdAt: n.createdAt.toISOString(),
     updatedAt: n.updatedAt.toISOString(),
     images: n.images.map((i) => ({ id: i.id, fileName: i.fileName, imageUrl: i.filePath })),
   };
 }
 
-async function loadDto(companyId: string, id: string) {
+async function loadDto(companyId: string, id: string, viewerRole: string) {
   const n = await prisma.arrivalNotice.findFirst({ where: { id, companyId }, include: { images: { orderBy: { createdAt: "asc" } } } });
   if (!n) return null;
   const ship = n.shipmentId
     ? await prisma.shipment.findFirst({ where: { id: n.shipmentId, companyId }, select: { currentStatus: true } })
     : null;
-  return toDto(n, ship);
+  return toDto(n, ship, viewerRole);
 }
 
 /** 页签：待通知 / 已通知（还没转）/ 待入库 / 已转正式 / 全部 */
@@ -443,7 +448,7 @@ export function registerArrivalNoticeRoutes(app: MinimalHttpApp): void {
       : [];
     const shipMap = new Map(ships.map((s) => [s.id, s]));
     ok(res, {
-      items: rows.map((r) => toDto(r, r.shipmentId ? shipMap.get(r.shipmentId) : null)),
+      items: rows.map((r) => toDto(r, r.shipmentId ? shipMap.get(r.shipmentId) : null, auth.role)),
       total,
       page,
       pageSize,
@@ -476,7 +481,7 @@ export function registerArrivalNoticeRoutes(app: MinimalHttpApp): void {
           createdByName: auth.name || null,
         },
       });
-      ok(res, { item: await loadDto(auth.companyId, newId) });
+      ok(res, { item: await loadDto(auth.companyId, newId, auth.role) });
       return;
     }
 
@@ -507,7 +512,7 @@ export function registerArrivalNoticeRoutes(app: MinimalHttpApp): void {
     } catch (e) {
       translateUniqueClash(e);
     }
-    ok(res, { item: await loadDto(auth.companyId, id) });
+    ok(res, { item: await loadDto(auth.companyId, id, auth.role) });
   });
 
   /** 「已通知客户」开关：notified=true 标上，false 改回未通知 */
@@ -526,7 +531,7 @@ export function registerArrivalNoticeRoutes(app: MinimalHttpApp): void {
         : { notifiedAt: null, notifiedBy: null, notifiedByName: null },
     });
     if (r.count === 0) { fail(res, 404, "NOT_FOUND", "这条到货通知不存在了（可能刚被同事删掉），请刷新"); return; }
-    ok(res, { item: await loadDto(auth.companyId, id) });
+    ok(res, { item: await loadDto(auth.companyId, id, auth.role) });
   });
 
   /**
@@ -625,7 +630,7 @@ export function registerArrivalNoticeRoutes(app: MinimalHttpApp): void {
       removeFiles(created);
       translateUniqueClash(e);
     }
-    ok(res, { item: await loadDto(auth.companyId, id) });
+    ok(res, { item: await loadDto(auth.companyId, id, auth.role) });
   });
 
   /** 删除：只能删还没转运单的（转了的删运单要去「运单管理」） */
@@ -682,7 +687,7 @@ export function registerArrivalNoticeRoutes(app: MinimalHttpApp): void {
       removeFiles(created);
       throw e;
     }
-    ok(res, { item: await loadDto(auth.companyId, noticeId) });
+    ok(res, { item: await loadDto(auth.companyId, noticeId, auth.role) });
   });
 
   /** 删一张到货照片（待入库的单，运单那边的副本一起删） */
@@ -714,7 +719,7 @@ export function registerArrivalNoticeRoutes(app: MinimalHttpApp): void {
       return toDelete;
     }, { timeout: 30000, maxWait: 10000 });
     removeFiles(files);
-    ok(res, { item: await loadDto(auth.companyId, img.noticeId) });
+    ok(res, { item: await loadDto(auth.companyId, img.noticeId, auth.role) });
   });
 }
 
