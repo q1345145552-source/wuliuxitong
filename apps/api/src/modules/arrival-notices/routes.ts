@@ -174,6 +174,38 @@ export function changedSinceOpened(base: NoticeFields, now: NoticeFields): strin
   return (Object.keys(FIELD_ZH) as Array<keyof NoticeFields>).filter((k) => base[k] !== now[k]).map((k) => FIELD_ZH[k]);
 }
 
+/**
+ * 读页面传上来的 base：只做「跟库里比」要的整理（空串当没填、文字去空格、数字转数字），**不做填写校验**。
+ * 不能拿 readNoticeFields 读：base 是库里原样的旧值，哪天仓库名单 / 字数上限改了，老记录的 base 过不了校验，
+ * 会被当成「读不懂」一直挡、怎么存都存不上。读不成对象才算读不懂。
+ */
+export function readOpenedBase(raw: unknown): NoticeFields | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const b = raw as Record<string, unknown>;
+  const text = (v: unknown): string | null => {
+    if (typeof v === "number" && Number.isFinite(v)) return String(v);
+    return typeof v === "string" && v.trim() ? v.trim() : null;
+  };
+  const numeric = (v: unknown): number | null => {
+    if (v === undefined || v === null || (typeof v === "string" && !v.trim())) return null;
+    return typeof v === "number" || typeof v === "string" ? Number(v) : NaN; // NaN 跟谁都不相等 = 算变了
+  };
+  return {
+    // 唛头不去空格（同 readNoticeFields）
+    clientId: typeof b.clientId === "string" && b.clientId.trim() ? b.clientId : null,
+    trackingNo: text(b.trackingNo),
+    itemName: text(b.itemName),
+    packageCount: numeric(b.packageCount),
+    weightKg: numeric(b.weightKg),
+    volumeM3: numeric(b.volumeM3),
+    transportMode: b.transportMode === "sea" || b.transportMode === "land" ? b.transportMode : null,
+    domesticTrackingNo: text(b.domesticTrackingNo),
+    warehouseId: text(b.warehouseId),
+    arrivedAt: text(b.arrivedAt),
+    remark: text(b.remark),
+  };
+}
+
 function fieldsOf(n: NoticeRow): NoticeFields {
   return {
     clientId: n.clientId,
@@ -542,10 +574,7 @@ export function registerArrivalNoticeRoutes(app: MinimalHttpApp): void {
     /* 页面把打开弹窗时看到的那份一起传上来（base，跟 body 同一种写法）。没传 = 上线前打开的老页面，不比（照旧整份存）；
        传了但读不懂 = 当成冲突，让他重开（不能因为读不懂就放过去盖掉别人的） */
     let base: NoticeFields | "unreadable" | null = null;
-    if (body.base !== undefined && body.base !== null) {
-      const b = body.base && typeof body.base === "object" && !Array.isArray(body.base) ? readNoticeFields(body.base as Record<string, unknown>) : null;
-      base = b && "fields" in b ? b.fields : "unreadable";
-    }
+    if (body.base !== undefined && body.base !== null) base = readOpenedBase(body.base) ?? "unreadable";
 
     try {
       await prisma.$transaction(async (tx) => {

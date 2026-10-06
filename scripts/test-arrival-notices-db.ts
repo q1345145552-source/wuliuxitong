@@ -525,7 +525,12 @@ async function main(): Promise<void> {
       assert.equal(old.packageCount, 15);
       // base 读不懂的：当成冲突挡掉，不能因为读不懂就放过去
       await refuse(SAVE, STAFF, { ...baseOf(old), id: n.id, base: "乱写" }, /刚刚被同事改过/);
-      await refuse(SAVE, STAFF, { ...baseOf(old), id: n.id, base: { ...baseOf(old), packageCount: 0 } }, /刚刚被同事改过/);
+      await refuse(SAVE, STAFF, { ...baseOf(old), id: n.id, base: { ...baseOf(old), packageCount: 0 } }, /刚刚被同事改过（件数变了）/);
+      // 哪天仓库名单改了：库里是名单外的老仓库。base 只拿来比、不做填写校验，照样认得；把仓库改成名单里的能存上（不能被一直挡住）
+      await pm.arrivalNotice.update({ where: { id: n.id }, data: { warehouseId: "wh_retired_zz" } });
+      const retired = { ...baseOf(old), warehouseId: "wh_retired_zz" };
+      const moved = await save(STAFF, { ...retired, id: n.id, warehouseId: "wh_yiwu_01", base: retired });
+      assert.equal(moved.warehouseId, "wh_yiwu_01");
 
       // 待入库的单：被挡的那次也不许同步到运单上
       const latest = (await list(STAFF, { keyword: NO("EDIT1") })).items[0];
