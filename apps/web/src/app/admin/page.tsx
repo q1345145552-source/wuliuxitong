@@ -2276,19 +2276,28 @@ export default function AdminHomePage() {
                                 {(orderImagesCache[o.orderId ?? o.id] ?? o.productImages ?? []).map((img: any) => (
                                   <div key={img.id} style={{ position: "relative" }}>
                                     <img src={img.imageUrl ? `${apiBaseUrl()}${img.imageUrl}` : ""} alt={img.fileName} style={{ width: 88, height: 88, objectFit: "cover", borderRadius: 8, border: "1px solid var(--l-soft)" }} />
-                                    <button type="button" onClick={async () => { await deleteStaffOrderProductImage(img.id); const oid = o.orderId ?? o.id; const imgs = await fetchShipmentImages(oid); setOrderImagesCache((c) => ({ ...c, [oid]: imgs })); }} style={{ position: "absolute", top: -4, right: -4, width: 18, height: 18, borderRadius: "50%", background: "var(--c-red-2)", color: "var(--white)", border: "none", cursor: "pointer", fontSize: 11, lineHeight: 1 }}>×</button>
+                                    {o.currentStatus === "pendingInbound" ? null : <button type="button" onClick={async () => { try { await deleteStaffOrderProductImage(img.id); const oid = o.orderId ?? o.id; const imgs = await fetchShipmentImages(oid); setOrderImagesCache((c) => ({ ...c, [oid]: imgs })); } catch (err) { setMessage("删除失败：" + (err instanceof Error ? err.message : "未知错误")); } }} style={{ position: "absolute", top: -4, right: -4, width: 18, height: 18, borderRadius: "50%", background: "var(--c-red-2)", color: "var(--white)", border: "none", cursor: "pointer", fontSize: 11, lineHeight: 1 }}>×</button>}
                                   </div>
                                 ))}
                               </div>
+                              {/* 2026-10-06「待入库」的单照片在到货通知里传删（那边是底稿），这里只看（跟员工端一样） */}
+                              {o.currentStatus === "pendingInbound" ? (
+                                <div style={{ marginTop: 8, fontSize: 12, color: "var(--t-strong)" }}>这票货还是「待入库」，照片请到「到货通知」里传或删</div>
+                              ) : (
                               <div style={{ marginTop: 8 }}>
                                 <input aria-label="上传产品图片" type="file" accept="image/*" onChange={async (e) => { const f = e.target.files?.[0]; if (!f) return; const oid = o.orderId ?? o.id; try { const toBase64 = (file: File) => new Promise<string>((resolve, reject) => { const r = new FileReader(); r.onloadend = () => resolve((r.result as string).split(",")[1]); r.onerror = () => reject(new Error("文件读取失败")); r.readAsDataURL(file); }); const base64 = await toBase64(f); await uploadStaffOrderProductImage({ orderId: oid, fileName: f.name, mime: f.type, contentBase64: base64 }); const imgs = await fetchShipmentImages(oid); setOrderImagesCache((c) => ({ ...c, [oid]: imgs })); setToast("产品图已上传"); } catch (err) { setMessage("上传失败：" + (err instanceof Error ? err.message : "未知错误")); } }} style={{ fontSize: 12 }} />
                               </div>
+                              )}
                             </div>
                           ) : (
                             <div style={{ marginBottom: 10 }}>
                               <h3 style={{ margin: "0 0 8px", fontSize: 14, fontWeight: 600 }}>产品图片</h3>
                               <p style={{ margin: "0 0 10px", fontSize: 13, color: "var(--t-muted)" }}>暂无产品图片</p>
-                              <input aria-label="上传产品图片" type="file" accept="image/*" onChange={async (e) => { const f = e.target.files?.[0]; if (!f) return; const oid = o.orderId ?? o.id; try { const toBase64 = (file: File) => new Promise<string>((resolve, reject) => { const r = new FileReader(); r.onloadend = () => resolve((r.result as string).split(",")[1]); r.onerror = () => reject(new Error("文件读取失败")); r.readAsDataURL(file); }); const base64 = await toBase64(f); await uploadStaffOrderProductImage({ orderId: oid, fileName: f.name, mime: f.type, contentBase64: base64 }); const imgs = await fetchShipmentImages(oid); setOrderImagesCache((c) => ({ ...c, [oid]: imgs })); setToast("产品图已上传"); } catch (err) { setMessage("上传失败：" + (err instanceof Error ? err.message : "未知错误")); } }} style={{ fontSize: 12, color: "var(--c-blue)" }} />
+                              {o.currentStatus === "pendingInbound" ? (
+                                <div style={{ fontSize: 12, color: "var(--t-strong)" }}>这票货还是「待入库」，照片请到「到货通知」里传</div>
+                              ) : (
+                                <input aria-label="上传产品图片" type="file" accept="image/*" onChange={async (e) => { const f = e.target.files?.[0]; if (!f) return; const oid = o.orderId ?? o.id; try { const toBase64 = (file: File) => new Promise<string>((resolve, reject) => { const r = new FileReader(); r.onloadend = () => resolve((r.result as string).split(",")[1]); r.onerror = () => reject(new Error("文件读取失败")); r.readAsDataURL(file); }); const base64 = await toBase64(f); await uploadStaffOrderProductImage({ orderId: oid, fileName: f.name, mime: f.type, contentBase64: base64 }); const imgs = await fetchShipmentImages(oid); setOrderImagesCache((c) => ({ ...c, [oid]: imgs })); setToast("产品图已上传"); } catch (err) { setMessage("上传失败：" + (err instanceof Error ? err.message : "未知错误")); } }} style={{ fontSize: 12, color: "var(--c-blue)" }} />
+                              )}
                             </div>
                           )}
                         </div>

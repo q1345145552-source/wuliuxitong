@@ -277,7 +277,7 @@ export default function ArrivalNoticesView() {
           clients={clients}
           onClose={() => setEditor(null)}
           onSaved={(message) => { setEditor(null); say(message); void load(true); }}
-          onChanged={() => void load(true)}
+          onChanged={() => load(true)}
         />
       ) : null}
 
@@ -392,7 +392,7 @@ function NoticeEditor(props: {
   onClose: () => void;
   onSaved: (message: string) => void;
   /** 修改时当场删了照片：列表跟着刷新 */
-  onChanged: () => void;
+  onChanged: () => void | Promise<unknown>;
 }) {
   const editing = props.editor.mode === "edit" ? props.editor.item : null;
   const [draft, setDraft] = useState<ArrivalNoticeDraft>(() => (editing ? draftOf(editing) : emptyDraft()));
@@ -453,10 +453,11 @@ function NoticeEditor(props: {
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : "没保存上");
-      setSaving(false);
       /* 没存上（比如被同事抢先改了）：列表马上刷一次，关掉重开「修改」拿到的才是最新的。
-         不刷的话，自动刷新没赶上（页面在后台时推送是断开的）列表还是旧的，重开还是旧的、再存又被挡，转圈出不去（10-06 实点发现） */
-      props.onChanged();
+         不刷的话，自动刷新没赶上（页面在后台时推送是断开的）列表还是旧的，重开还是旧的、再存又被挡，转圈出不去（10-06 实点发现）。
+         **等刷完**再放开按钮（「取消」在保存中是灰的）：不等的话网慢时点「取消」马上重开，拿到的还是旧的（Codex 第二轮 S2） */
+      try { await props.onChanged(); } catch { /* 刷新失败就算了，上面的提示照旧 */ }
+      setSaving(false);
       return;
     }
     const todo = [...queuedRef.current];

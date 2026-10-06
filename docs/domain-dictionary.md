@@ -188,6 +188,7 @@ created -> pickedUp -> inWarehouseCN -> customsPending -> inTransit -> customsTH
 - referencedOrderIds?: string[]
 - referencedShipmentIds?: string[]
 - queriedAt: string (ISO datetime)
+
 ## 14. 到货通知 ArrivalNotice（2026-10-06）
 
 国内仓到货后员工登记 → 客服复制文案 / 照片通知客户 → 标「已通知客户」→ 员工自己选「转正式运单」或「转待入库」。表 `arrival_notices`、照片表 `arrival_notice_images`，规则写在 `apps/api/src/modules/arrival-notices/routes.ts` 开头。

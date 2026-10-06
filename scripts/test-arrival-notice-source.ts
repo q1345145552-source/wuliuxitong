@@ -123,6 +123,30 @@ async function main(): Promise<void> {
     assert.deepEqual(missingForTarget({ ...full, clientId: null, trackingNo: null, itemName: null }, "inbound"), ["运单号", "唛头"], "转待入库只要运单号 + 唛头");
   });
 
+  await check("A7 保存回给页面的那一行在锁里读（页面拿它当下次的 base）；列表在同一个快照里查", () => {
+    const routes = read("apps/api/src/modules/arrival-notices/routes.ts");
+    const saveStart = routes.indexOf('app.post("/staff/arrival-notices/save"');
+    const saveEnd = routes.indexOf("app.post(", saveStart + 10);
+    assert.ok(saveStart > 0 && saveEnd > saveStart, "找不到保存接口了");
+    const save = routes.slice(saveStart, saveEnd);
+    /* 2026-10-06 Codex 第二轮 M3：原来事务提交以后再 loadDto 去库里读，提交和读之间同事又存了一次，
+       页面就把同事那份当成 base，下次保存比对通过、把同事的盖掉。所以保存接口里不许再出现事务外的 loadDto */
+    assert.ok(!save.includes("loadDto("), "保存接口里不许用 loadDto（事务提交后再读），要回事务里读的那份");
+    assert.match(save, /saved = await prisma\.\$transaction/, "修改那条路要把事务里读的那份带出来");
+    assert.match(save, /return toDto\(row,/, "事务里用刚 update 出来的那行出 DTO");
+    assert.match(save, /ok\(res, \{ item: saved \}\)/);
+    assert.match(save, /ok\(res, \{ item: toDto\(created, null, auth\.role\) \}\)/, "新登记回的就是刚插进去的那一行");
+    // 页面：存上以后 base 换成回来的那份
+    const view = read("apps/web/src/modules/arrival-notice/ArrivalNoticesView.tsx");
+    assert.match(view, /saveArrivalNotice\(id, draft, base\)/);
+    assert.match(view, /setBase\(draftOf\(item\)\)/);
+    // Codex 第二轮 S1：列表的 gone / 数页签 / 拉这一页 / 查运单状态在同一个「可重复读」快照里
+    const listStart = routes.indexOf('app.get("/staff/arrival-notices/list"');
+    const list = routes.slice(listStart, routes.indexOf("app.post(", listStart));
+    assert.match(list, /isolationLevel: Prisma\.TransactionIsolationLevel\.RepeatableRead/, "列表要在同一个快照里查");
+    assert.ok(!/\bprisma\.(arrivalNotice|shipment|\$queryRaw)/.test(list), "列表里的查询都要走快照事务 tx，不许夹着直接用 prisma 的");
+  });
+
   console.log(`\n到货通知（不连库）${passed} 项全部通过`);
   // 后端 routes 一 import 就带上了 prisma，不连库也会挂着句柄，直接退出
   process.exit(0);

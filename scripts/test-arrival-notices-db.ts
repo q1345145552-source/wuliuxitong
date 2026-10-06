@@ -53,7 +53,8 @@ async function main(): Promise<void> {
   const routes = new Map<string, Function>();
   const app: any = {};
   for (const m of ["get", "post", "put", "patch", "delete"]) app[m] = (p: string, h: Function) => routes.set(`${m.toUpperCase()} ${p}`, h);
-  (await import("../apps/api/src/modules/arrival-notices/routes")).registerArrivalNoticeRoutes(app);
+  const { registerArrivalNoticeRoutes, translateUniqueClash } = await import("../apps/api/src/modules/arrival-notices/routes");
+  registerArrivalNoticeRoutes(app);
   (await import("../apps/api/src/modules/orders/routes")).registerOrderRoutes(app);
   (await import("../apps/api/src/modules/admin/routes")).registerAdminRoutes(app);
   (await import("../apps/api/src/modules/loading-manifests/routes")).registerLoadingManifestRoutes(app);
@@ -454,6 +455,45 @@ async function main(): Promise<void> {
       assert.equal((await pm.arrivalNotice.findUnique({ where: { id: n.id } })).convertedTo, null);
     });
 
+    await check("N19f 待入库 → 转正式：已复制到运单上的照片要核实还在；运单那份丢了从到货照片补，两份都丢了整个不转", async () => {
+      const file = (url: string) => path.join(imagesDir, path.basename(url));
+      const opiOf = async (orderId: string) => pm.orderProductImage.findMany({ where: { orderId }, select: { id: true, filePath: true } });
+      const prep = async (no: string) => {
+        const n = await save(STAFF, { ...full, trackingNo: NO(no), itemName: `补图${no}` });
+        const withImg = (await must("POST /staff/arrival-notices/images", STAFF, { noticeId: n.id, fileName: `${no}.png`, mime: "image/png", contentBase64: PNG_1x1 })).item;
+        await must("POST /staff/arrival-notices/convert", STAFF, { id: n.id, to: "inbound" });
+        const ship = await pm.shipment.findFirst({ where: { trackingNo: NO(no) } });
+        const opis = await opiOf(ship.orderId);
+        assert.equal(opis.length, 1, "转待入库时照片已经复制到运单上");
+        return { n, ship, src: file(withImg.images[0].imageUrl), copy: file(opis[0].filePath) };
+      };
+
+      // ① 运单那份文件丢了、到货照片还在：转正式成功，运单上重新有一张能打开的图（坏记录删掉、不留裂图）
+      const a = await prep("IMG1");
+      fs.rmSync(a.copy);
+      await must("POST /staff/arrival-notices/convert", STAFF, { id: a.n.id, to: "formal" });
+      let opis = await opiOf(a.ship.orderId);
+      assert.equal(opis.length, 1, "坏的那条删掉、补一条新的，运单上还是一张");
+      assert.ok(fs.existsSync(file(opis[0].filePath)), "补上的那张文件在");
+      assert.equal((await pm.shipment.findUnique({ where: { id: a.ship.id } })).currentStatus, "inWarehouseCN");
+
+      // ② 运单那份和到货照片都丢了：整个不转，点名是哪张；运单还是待入库，坏记录也没被删（整个回滚）
+      const b = await prep("IMG2");
+      fs.rmSync(b.copy);
+      fs.rmSync(b.src);
+      await refuse("POST /staff/arrival-notices/convert", STAFF, { id: b.n.id, to: "formal" }, /照片「IMG2\.png」的文件找不到了/);
+      assert.equal((await pm.shipment.findUnique({ where: { id: b.ship.id } })).currentStatus, "pendingInbound");
+      assert.equal((await opiOf(b.ship.orderId)).length, 1, "回滚了，原来那条记录还在");
+
+      // ③ 只是到货照片丢了、运单那份好好的：照样转正式（运单上的图是全的）
+      const c = await prep("IMG3");
+      fs.rmSync(c.src);
+      await must("POST /staff/arrival-notices/convert", STAFF, { id: c.n.id, to: "formal" });
+      opis = await opiOf(c.ship.orderId);
+      assert.equal(opis.length, 1);
+      assert.ok(fs.existsSync(file(opis[0].filePath)));
+    });
+
     await check("N19c 两个人同时登记同一个运单号：只进得去一条，另一个被告知（数据库唯一约束兜底，不出 500）", async () => {
       const [a, b] = await Promise.all([
         call("POST /staff/arrival-notices/save", STAFF, { trackingNo: NO("DUP1") }),
@@ -463,8 +503,27 @@ async function main(): Promise<void> {
       assert.equal(oks.length, 1, `应该只有一条成功：${a.status} ${a.message} / ${b.status} ${b.message}`);
       assert.match([a, b].find((r) => r.status !== 200)!.message, /另一条到货通知/);
       assert.equal(await pm.arrivalNotice.count({ where: { companyId: CO, trackingNo: NO("DUP1") } }), 1);
+      /* 上面那段两个请求要是恰好排成先后，第二个会先被应用层查重挡住、提示一模一样 —— 没有唯一索引也能过（dsh 第二轮 C）。
+         所以再绕过应用层直接往库里插一条同公司同号的：必须被数据库自己挡下（P2002），证明唯一约束真的在；
+         同号别家公司、两条都没填号的，照样插得进去（只管「同公司 + 有号」） */
+      let clash: any = null;
+      try {
+        await pm.arrivalNotice.create({ data: { id: `an_zz_dup_${Date.now()}`, companyId: CO, trackingNo: NO("DUP1"), createdBy: STAFF.userId } });
+      } catch (e) { clash = e; }
+      assert.equal(clash?.code, "P2002", "数据库上必须有「同公司 + 运单号」唯一约束");
+      // 拿这个真的 P2002 喂给接口里翻中文的那个函数：两个请求真撞到数据库那一步时，员工看到的是这句，不是 500（不靠时机）
+      assert.throws(
+        () => translateUniqueClash(clash),
+        (e: any) => e instanceof BusinessError && /另一条到货通知/.test(e.message),
+        "撞了唯一约束要翻成「另一条到货通知」那句中文",
+      );
+      await pm.arrivalNotice.create({ data: { id: `an_zz_dup_other_${Date.now()}`, companyId: CO2, trackingNo: NO("DUP1"), createdBy: OTHER_STAFF.userId } });
+      await pm.arrivalNotice.create({ data: { id: `an_zz_null_a_${Date.now()}`, companyId: CO, trackingNo: null, createdBy: STAFF.userId } });
+      await pm.arrivalNotice.create({ data: { id: `an_zz_null_b_${Date.now()}`, companyId: CO, trackingNo: null, createdBy: STAFF.userId } });
+      await pm.arrivalNotice.deleteMany({ where: { id: { startsWith: "an_zz_" } } });
     });
 
+    // ⚠️ 死锁是看时机的，4 轮不保证每次都撞上 —— 这一项只是兜底。锁序真正的防线是 test:lock-order 第 12 项（去函数体里核锁的先后）
     await check("N19d 「转正式」和超管「删订单」同时点同一张待入库的单：不死锁、不出 500（锁序跟删订单一样先订单后运单）", async () => {
       for (let i = 0; i < 4; i++) {
         const n = await save(STAFF, { ...full, trackingNo: NO(`DL${i}`), itemName: `并发${i}` });

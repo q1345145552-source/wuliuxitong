@@ -362,12 +362,20 @@ async function syncToPendingShipment(tx: Tx, companyId: string, f: NoticeFields,
  * 到货照片复制一份成运单的「产品图片」（运单详情、客户「运单查询」里看得到；客户本来就收到了这些照片）。
  * 复制文件而不是共用：运单那边删产品图会连文件一起删（orders/routes.ts DELETE product-images），共用的话到货通知这边就裂图了。
  *   mode=all：新建的运单，每张都复制（之前转过、运单被删了的那些 orderImageId 是死的，一起重来）；
- *   mode=uncopied：只补还没复制过的。复制过、又在运单那边被删掉的不补回来 —— 那是有人特意删的。
+ *   mode=uncopied：待入库那张运单上已有的就不重复复制，但要**核实那份真的还在**（记录在、文件在）才算数
+ *     （2026-10-06 Codex 第二轮 M1：原来见了 orderImageId 就跳过，运单那份文件丢了照样转正式，正式运单永远缺这张图）。
+ *     那份没了就从到货照片重新复制一份；到货照片的文件也没了，整个转运单不做、点名是哪张。
+ *     （待入库的单在「运单管理」那边删不了产品图 —— 后端挡了 —— 所以「那份没了」只会是异常，不是有人特意删的。）
  * created 收集新写的文件，事务失败时调用方负责删掉。
  */
 async function copyImagesToOrder(tx: Tx, n: NoticeRow, orderId: string, uploadedBy: string, mode: "all" | "uncopied", created: string[]): Promise<void> {
   for (const img of n.images) {
-    if (mode === "uncopied" && img.orderImageId) continue;
+    if (mode === "uncopied" && img.orderImageId) {
+      const copy = await tx.orderProductImage.findFirst({ where: { id: img.orderImageId, companyId: n.companyId, orderId }, select: { id: true, filePath: true } });
+      if (copy?.filePath && readImageAsBase64(copy.filePath) !== null) continue; // 运单那份好好的
+      // 记录还在、文件没了：先删掉这条坏记录（不然运单详情里一直挂着一张裂图），下面重新复制
+      if (copy) await tx.orderProductImage.delete({ where: { id: copy.id } });
+    }
     const b64 = readImageAsBase64(img.filePath);
     /* 文件在盘上找不到了：整个转运单回滚、说清楚是哪张（Codex 审查：原来跳过这张照样转成功，
        转完到货通知就只读了，运单永远缺这张图，谁也不知道） */
@@ -405,10 +413,11 @@ function removeFiles(paths: string[]): void {
  *   · 到货通知自己的（同公司同一个号只能登记一条）：两个人同时登记 / 改成同一个号；
  *   · 运单的（shipments.tracking_no 全局唯一）：查重和写库之间被别人用掉。
  */
-function translateUniqueClash(e: unknown): never {
+export function translateUniqueClash(e: unknown): never {
   if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") {
     const meta = (e.meta ?? {}) as { modelName?: string; target?: unknown };
-    if (meta.modelName === "ArrivalNotice" || String(meta.target ?? "").includes("company_id")) {
+    // Prisma 5 的 target 是字段名数组（["companyId","trackingNo"]），也可能是列名 / 索引名，两种写法都认（dsh 第二轮：原来只认 company_id 那半是死的）
+    if (meta.modelName === "ArrivalNotice" || /companyId|company_id/.test(String(meta.target ?? ""))) {
       throw new BusinessError("这个运单号刚刚被另一条到货通知登记了，换一个号或核对一下");
     }
     throw new BusinessError("这个运单号刚刚被用掉了，换一个号再转");
@@ -506,29 +515,32 @@ export function registerArrivalNoticeRoutes(app: MinimalHttpApp): void {
           ],
         }
       : {};
-    // 转过、但运单已经被删了的（通常一条都没有）：只读查一下，页签按「没转」算
-    const goneRows = await prisma.$queryRaw<Array<{ id: string }>>`
-      SELECT n.id FROM arrival_notices n
-      LEFT JOIN shipments s ON s.id = n.shipment_id
-      WHERE n.company_id = ${auth.companyId} AND n.converted_to IS NOT NULL AND n.shipment_id IS NOT NULL AND s.id IS NULL`;
-    const gone = goneRows.map((r) => r.id);
-    const where: Prisma.ArrivalNoticeWhereInput = { AND: [base, search, tabWhere(tab, gone)] };
-    const [total, rows, ...counts] = await Promise.all([
-      prisma.arrivalNotice.count({ where }),
-      prisma.arrivalNotice.findMany({
+    /* 转过、但运单已经被删了的（通常一条都没有）：页签按「没转」算。
+       下面这几句放在同一个「可重复读」快照里：不然算 gone、数页签、拉这一页、查运单状态之间正好有人删 / 转了一张，
+       同一次返回里页签数字和行上的说法会打架（2026-10-06 Codex 第二轮 S1；只读，不锁任何行） */
+    const { total, rows, counts, shipMap } = await prisma.$transaction(async (tx) => {
+      const goneRows = await tx.$queryRaw<Array<{ id: string }>>`
+        SELECT n.id FROM arrival_notices n
+        LEFT JOIN shipments s ON s.id = n.shipment_id
+        WHERE n.company_id = ${auth.companyId} AND n.converted_to IS NOT NULL AND n.shipment_id IS NOT NULL AND s.id IS NULL`;
+      const gone = goneRows.map((r) => r.id);
+      const where: Prisma.ArrivalNoticeWhereInput = { AND: [base, search, tabWhere(tab, gone)] };
+      const total = await tx.arrivalNotice.count({ where });
+      const rows = await tx.arrivalNotice.findMany({
         where,
         orderBy: [{ createdAt: "desc" }, { id: "desc" }],
         skip: (page - 1) * pageSize,
         take: pageSize,
         include: { images: { orderBy: { createdAt: "asc" } } },
-      }),
-      ...TABS.map((t) => prisma.arrivalNotice.count({ where: { AND: [base, search, tabWhere(t, gone)] } })),
-    ]);
-    const shipIds = rows.map((r) => r.shipmentId).filter((v): v is string => Boolean(v));
-    const ships = shipIds.length
-      ? await prisma.shipment.findMany({ where: { id: { in: shipIds }, companyId: auth.companyId }, select: { id: true, currentStatus: true } })
-      : [];
-    const shipMap = new Map(ships.map((s) => [s.id, s]));
+      });
+      const counts: number[] = [];
+      for (const t of TABS) counts.push(await tx.arrivalNotice.count({ where: { AND: [base, search, tabWhere(t, gone)] } }));
+      const shipIds = rows.map((r) => r.shipmentId).filter((v): v is string => Boolean(v));
+      const ships = shipIds.length
+        ? await tx.shipment.findMany({ where: { id: { in: shipIds }, companyId: auth.companyId }, select: { id: true, currentStatus: true } })
+        : [];
+      return { total, rows, counts, shipMap: new Map(ships.map((s) => [s.id, s])) };
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead, timeout: 15000, maxWait: 10000 });
     ok(res, {
       items: rows.map((r) => toDto(r, r.shipmentId ? shipMap.get(r.shipmentId) : null, auth.role)),
       total,
@@ -554,8 +566,9 @@ export function registerArrivalNoticeRoutes(app: MinimalHttpApp): void {
       // 两个人同一瞬间登记同一个号，由表上的唯一约束（公司 + 运单号）兜底，撞了翻成中文
       const newId = `an_${Date.now()}_${crypto.randomBytes(4).toString("hex")}`;
       if (f.trackingNo) await assertTrackingNoFree(prisma, auth.companyId, f.trackingNo, null, null);
+      let created: NoticeRow;
       try {
-        await prisma.arrivalNotice.create({
+        created = await prisma.arrivalNotice.create({
           data: {
             id: newId,
             companyId: auth.companyId,
@@ -563,11 +576,13 @@ export function registerArrivalNoticeRoutes(app: MinimalHttpApp): void {
             createdBy: auth.userId,
             createdByName: auth.name || null,
           },
+          include: { images: { orderBy: { createdAt: "asc" } } },
         });
       } catch (e) {
         translateUniqueClash(e);
       }
-      ok(res, { item: await loadDto(auth.companyId, newId, auth.role) });
+      // 回给页面的就是刚插进去的那一行（页面拿它当下次保存的 base，见下面修改那段的说明）
+      ok(res, { item: toDto(created, null, auth.role) });
       return;
     }
 
@@ -576,8 +591,12 @@ export function registerArrivalNoticeRoutes(app: MinimalHttpApp): void {
     let base: NoticeFields | "unreadable" | null = null;
     if (body.base !== undefined && body.base !== null) base = readOpenedBase(body.base) ?? "unreadable";
 
+    /* 回给页面的那一行必须是**这次存进去的那份**、在锁里读的：页面拿它当下次保存的 base。
+       原来是事务提交以后再去库里读 —— 提交和读之间同事又存了一次的话，读到的是同事那份，页面把它当 base、
+       手里的却还是自己那份，照片没传完再点「保存」时比对就通过了，把同事的整份盖掉（2026-10-06 Codex 第二轮 M3）。 */
+    let saved: ReturnType<typeof toDto>;
     try {
-      await prisma.$transaction(async (tx) => {
+      saved = await prisma.$transaction(async (tx) => {
         const n = await lockNotice(tx, auth.companyId, id);
         // 锁住以后再比（CLAUDE.md 第 28 条：判断用锁里读到的）
         if (base !== null) {
@@ -598,19 +617,22 @@ export function registerArrivalNoticeRoutes(app: MinimalHttpApp): void {
           if (missing.length) throw new BusinessError(`已经转成待入库了，${missing.join("、")}不能空着`);
           await syncToPendingShipment(tx, auth.companyId, f, ship);
         }
-        await tx.arrivalNotice.update({
+        const row = await tx.arrivalNotice.update({
           where: { id: n.id },
           data: {
             ...noticeData(f),
             // 转出去的运单已经被删了：这次存的时候顺手把「转过」的记号清掉
             ...(n.convertedTo && !ship ? { convertedTo: null, shipmentId: null, convertedAt: null } : {}),
           },
+          include: { images: { orderBy: { createdAt: "asc" } } },
         });
+        // 运单这次只改资料不改状态（转正式不走这里），锁里读到的状态就是现在的
+        return toDto(row, ship ? { currentStatus: ship.currentStatus } : null, auth.role);
       }, { timeout: 30000, maxWait: 10000 });
     } catch (e) {
       translateUniqueClash(e);
     }
-    ok(res, { item: await loadDto(auth.companyId, id, auth.role) });
+    ok(res, { item: saved });
   });
 
   /** 「已通知客户」开关：notified=true 标上，false 改回未通知 */

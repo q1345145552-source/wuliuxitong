@@ -995,8 +995,58 @@ check("11) 仓库版集货定价：所有事务都按【客户价排队锁 → �
   }
 });
 
+check("12) 登记成真表的锁 helper，函数体里的锁语句顺序必须跟登记的一样", () => {
+  /**
+   * ⚠️ 2026-10-06 到货通知第二轮审查（dsh 建议 B）：LOCK_HELPERS 对真表 helper 也是「见名给分」——
+   * 把 lockLinkedShipment 里「锁订单」「锁运单」两句对调（退回第一轮那个跟删订单反着的锁序，会死锁），
+   * 前面 11 项照样全绿，因为扫描器只在调用方按登记顺序记账，从不看 helper 自己怎么锁。
+   * 这一项补上：去函数体里按出现顺序抽出 `FROM <表> ... FOR ...`（注释、死块不算，口径同第 10 项），
+   * 去重后必须等于登记的顺序。
+   * 有些 helper 是靠调别的 helper / 多行 SQL 加锁的，函数体里抽不出来，那种这里核不了（第 1/7 项照常管）；
+   * 但下面 MUST_VERIFY 这几个现在抽得出来，必须一直抽得出来 —— 不然哪天改成多行写法，这一项就悄悄不管它们了。
+   */
+  const MUST_VERIFY = [
+    "lockPlanAliveById", "lockPrealertExpecting", "lockShipmentsChildrenFirst", "lockParentsByTrackingNo",
+    "lockAgentPriceFloors", "lockInquiry", "lockNotice", "lockLinkedShipment",
+  ];
+  const files = walk(ROOT);
+  const realHelpers = Object.entries(LOCK_HELPERS).filter(([, tables]) => tables.every((t) => !t.startsWith("advisory_")));
+  for (const name of MUST_VERIFY) {
+    assert.ok(realHelpers.some(([n]) => n === name), `${name} 不在 LOCK_HELPERS 里了 —— 删登记要连这里一起改`);
+  }
+  for (const [name, tables] of realHelpers) {
+    const defs = files
+      .map((f) => ({ f, body: functionBody(fs.readFileSync(f, "utf-8").split("\n"), name) }))
+      .filter((x) => x.body !== null);
+    if (defs.length !== 1) {
+      assert.ok(!MUST_VERIFY.includes(name), `${name} 在模块里有 ${defs.length} 处定义，核不了函数体里的锁序`);
+      continue;
+    }
+    const body = defs[0].body!;
+    const seen: string[] = [];
+    let k = 0;
+    while (k < body.length) {
+      const t = body[k].trim();
+      if (t.startsWith("*") || t.startsWith("//") || t.startsWith("/*")) { k += 1; continue; }
+      if (isDeadLine(body[k])) { k = deadBlockEnd(body, k); continue; }
+      const m = /FROM\s+"?(\w+)"?[\s\S]*?FOR (NO KEY UPDATE|UPDATE|SHARE)/.exec(body[k]);
+      if (m && !seen.includes(m[1])) seen.push(m[1]);
+      k += 1;
+    }
+    if (seen.length === 0) {
+      assert.ok(!MUST_VERIFY.includes(name), `${rel(defs[0].f)} 的 ${name}：函数体里抽不出锁语句了（被删了，或改成了多行写法 —— 改回一行写，或者改这一项）`);
+      continue;
+    }
+    assert.deepEqual(
+      seen,
+      tables,
+      `${rel(defs[0].f)} 的 ${name}：登记的锁序是 ${tables.join(" → ")}，函数体里实际是 ${seen.join(" → ")}`,
+    );
+  }
+});
+
 if (failures.length > 0) {
-  console.error(`\n${failures.length}/11 项不通过：${failures.join("；")}`);
+  console.error(`\n${failures.length}/12 项不通过：${failures.join("；")}`);
   process.exit(1);
 }
-console.log(`加锁顺序：11 项全部通过（扫了 ${allBlocks.length} 个会写数据的事务）`);
+console.log(`加锁顺序：12 项全部通过（扫了 ${allBlocks.length} 个会写数据的事务）`);
