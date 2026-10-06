@@ -136,6 +136,17 @@ async function main(): Promise<void> {
     assert.match(save, /return toDto\(row,/, "事务里用刚 update 出来的那行出 DTO");
     assert.match(save, /ok\(res, \{ item: saved \}\)/);
     assert.match(save, /ok\(res, \{ item: toDto\(created, null, auth\.role\) \}\)/, "新登记回的就是刚插进去的那一行");
+    /* Codex 第三轮建议 2：光禁 loadDto 这个名字不够 —— 事务结束后换个写法再 prisma.arrivalNotice.findFirst 一次、
+       再 saved = toDto(那份) 照样把竞态带回来。所以：修改那条路事务结束以后、新登记 create 之后，都不许再碰数据库；saved 只许赋值一次 */
+    const txEnd = save.indexOf("}, { timeout: 30000, maxWait: 10000 });");
+    assert.ok(txEnd > 0, "找不到修改那条路的事务结尾了");
+    assert.ok(!/\bprisma\./.test(save.slice(txEnd)), "保存事务结束以后不许再查库（回给页面的必须是事务里那份）");
+    assert.equal((save.match(/\bsaved\s*=/g) ?? []).length, 1, "saved 只许由事务赋值那一次");
+    const cStart = save.indexOf("created = await prisma");
+    const cEnd = save.indexOf("ok(res, { item: toDto(created", cStart);
+    assert.ok(cStart > 0 && cEnd > cStart, "找不到新登记那条路了");
+    assert.ok(!/\bprisma\./.test(save.slice(cStart + "created = await prisma".length, cEnd)), "新登记 create 之后、回给页面之前不许再查库");
+    assert.equal((save.match(/\bcreated\s*=/g) ?? []).length, 1, "created 只许由 create 赋值那一次");
     // 页面：存上以后 base 换成回来的那份
     const view = read("apps/web/src/modules/arrival-notice/ArrivalNoticesView.tsx");
     assert.match(view, /saveArrivalNotice\(id, draft, base\)/);
@@ -145,6 +156,19 @@ async function main(): Promise<void> {
     const list = routes.slice(listStart, routes.indexOf("app.post(", listStart));
     assert.match(list, /isolationLevel: Prisma\.TransactionIsolationLevel\.RepeatableRead/, "列表要在同一个快照里查");
     assert.ok(!/\bprisma\.(arrivalNotice|shipment|\$queryRaw)/.test(list), "列表里的查询都要走快照事务 tx，不许夹着直接用 prisma 的");
+  });
+
+  await check("A8 超管端运单详情：待入库的单产品图只能看（没有删除叉、没有上传框）、有提示；删图失败有提示", () => {
+    // 2026-10-06 第二轮（dsh A / Codex S3）：员工端改成只读了，超管端漏了；后端两道闸挡着，这里钉住页面
+    const admin = read("apps/web/src/app/admin/page.tsx");
+    const start = admin.indexOf("<AdminShipmentDetail");
+    const panel = admin.slice(start, admin.indexOf("</DetailModal>", start));
+    assert.ok(start > 0 && panel.length > 0, "找不到超管端运单详情的产品图那一块了");
+    assert.equal((panel.match(/o\.currentStatus === "pendingInbound"/g) ?? []).length, 3, "删除叉、有图时的上传框、没图时的上传框三处都要看待入库");
+    assert.match(panel, /\{o\.currentStatus === "pendingInbound" \? null : <button[^>]*onClick=\{async \(\) => \{ try \{ await deleteStaffOrderProductImage/, "待入库不给删除叉；删图要 try");
+    assert.match(panel, /catch \(err\) \{ setMessage\("删除失败：/, "删图失败要有提示（原来没接，点了没反应）");
+    assert.equal((panel.match(/这票货还是「待入库」，照片请到「到货通知」里传/g) ?? []).length, 2, "有图 / 没图两种都给提示");
+    assert.equal((panel.match(/type="file"/g) ?? []).length, 2, "上传框还是两个（只是待入库时换成提示）");
   });
 
   console.log(`\n到货通知（不连库）${passed} 项全部通过`);

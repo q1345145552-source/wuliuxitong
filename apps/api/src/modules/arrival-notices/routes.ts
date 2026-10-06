@@ -8,7 +8,7 @@ import { canSeeOperatorIdentity } from "../core/operator-visibility";
 import { parseNumericStrict, requirePositiveInt } from "../core/int-guard";
 import { DECIMAL_10_2, DECIMAL_10_3, requireDecimal } from "../core/decimal-guard";
 import { UPLOAD_IMAGE_MAX_BASE64, uploadTooLargeMessage } from "../core/upload-limit";
-import { deleteImageFile, readImageAsBase64, saveImageToDisk } from "../orders/image-storage";
+import { deleteImageFile, imageFileUsable, readImageAsBase64, saveImageToDisk } from "../orders/image-storage";
 import { buildNewOrderRows } from "../orders/new-order-rows";
 import { DEFAULT_STATUS_LABELS } from "../ai/ai-config-store";
 import { ARRIVAL_WAREHOUSE_IDS, PENDING_INBOUND } from "./rules";
@@ -372,7 +372,7 @@ async function copyImagesToOrder(tx: Tx, n: NoticeRow, orderId: string, uploaded
   for (const img of n.images) {
     if (mode === "uncopied" && img.orderImageId) {
       const copy = await tx.orderProductImage.findFirst({ where: { id: img.orderImageId, companyId: n.companyId, orderId }, select: { id: true, filePath: true } });
-      if (copy?.filePath && readImageAsBase64(copy.filePath) !== null) continue; // 运单那份好好的
+      if (copy?.filePath && imageFileUsable(copy.filePath)) continue; // 运单那份好好的（文件在、不是空的；只看大小不读整张图）
       // 记录还在、文件没了：先删掉这条坏记录（不然运单详情里一直挂着一张裂图），下面重新复制
       if (copy) await tx.orderProductImage.delete({ where: { id: copy.id } });
     }

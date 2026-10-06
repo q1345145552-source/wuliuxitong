@@ -39,6 +39,20 @@ export function readImageAsBase64(filePath: string): string | null {
   return buffer.toString("base64");
 }
 
+/**
+ * 这张图的文件在不在、是不是空的（只看大小，不把整张图读进内存）。
+ * 2026-10-06 到货通知转正式时核「运单上那份还在不在」用：0 字节的坏文件算不在（跟读图时 `!b64` 一个口径）。
+ */
+export function imageFileUsable(filePath: string): boolean {
+  const fullPath = path.join(getImagesDir(), path.basename(filePath));
+  try {
+    const st = fs.statSync(fullPath);
+    return st.isFile() && st.size > 0;
+  } catch {
+    return false;
+  }
+}
+
 /** Delete an image file from disk. */
 export function deleteImageFile(filePath: string): void {
   const fullPath = path.join(getImagesDir(), path.basename(filePath));

@@ -485,6 +485,34 @@ async function main(): Promise<void> {
       assert.equal((await pm.shipment.findUnique({ where: { id: b.ship.id } })).currentStatus, "pendingInbound");
       assert.equal((await opiOf(b.ship.orderId)).length, 1, "回滚了，原来那条记录还在");
 
+      // ②b 运单那份变成 0 字节的坏文件（文件在、但是空的）：也算丢了，从到货照片补（dsh 第三轮 C：原来只看「在不在」）
+      const z = await prep("IMG0");
+      fs.writeFileSync(z.copy, Buffer.alloc(0));
+      await must("POST /staff/arrival-notices/convert", STAFF, { id: z.n.id, to: "formal" });
+      const zo = await opiOf(z.ship.orderId);
+      assert.equal(zo.length, 1);
+      assert.ok(fs.statSync(file(zo[0].filePath)).size > 0, "补上的那张不是空文件");
+
+      // ②c 两张照片：第一张运单那份丢了（会先补出一个新文件），第二张两份都丢了 → 整个回滚，
+      //     先补出来的那个新文件也要删掉、不留孤儿（Codex 第三轮建议 3：单张的场景照不到这条清理路）
+      const d = await save(STAFF, { ...full, trackingNo: NO("IMG4"), itemName: "两张" });
+      await must("POST /staff/arrival-notices/images", STAFF, { noticeId: d.id, fileName: "IMG4a.png", mime: "image/png", contentBase64: PNG_1x1 });
+      await must("POST /staff/arrival-notices/images", STAFF, { noticeId: d.id, fileName: "IMG4b.png", mime: "image/png", contentBase64: PNG_1x1 });
+      await must("POST /staff/arrival-notices/convert", STAFF, { id: d.id, to: "inbound" });
+      const dShip = await pm.shipment.findFirst({ where: { trackingNo: NO("IMG4") } });
+      const nImgs = await pm.arrivalNoticeImage.findMany({ where: { noticeId: d.id }, orderBy: { createdAt: "asc" } });
+      assert.deepEqual(nImgs.map((i: Row) => i.fileName), ["IMG4a.png", "IMG4b.png"]);
+      const copyOf = async (opiId: string) => file((await pm.orderProductImage.findUnique({ where: { id: opiId } })).filePath);
+      fs.rmSync(await copyOf(nImgs[0].orderImageId));          // 第一张：运单那份丢了、到货照片还在 → 会先补一个新文件
+      fs.rmSync(await copyOf(nImgs[1].orderImageId));          // 第二张：两份都丢了 → 抛错
+      fs.rmSync(file(nImgs[1].filePath));
+      const before = fs.readdirSync(imagesDir).sort();
+      await refuse("POST /staff/arrival-notices/convert", STAFF, { id: d.id, to: "formal" }, /照片「IMG4b\.png」的文件找不到了/);
+      assert.deepEqual(fs.readdirSync(imagesDir).sort(), before, "回滚以后图片目录跟转之前一模一样（先补出来的那个新文件删掉了）");
+      assert.equal((await pm.shipment.findUnique({ where: { id: dShip.id } })).currentStatus, "pendingInbound");
+      assert.equal((await opiOf(dShip.orderId)).length, 2, "两条产品图记录都回滚回来了");
+      assert.deepEqual((await pm.arrivalNoticeImage.findMany({ where: { noticeId: d.id }, orderBy: { createdAt: "asc" } })).map((i: Row) => i.orderImageId), nImgs.map((i: Row) => i.orderImageId), "到货照片记的运单副本 id 也没变");
+
       // ③ 只是到货照片丢了、运单那份好好的：照样转正式（运单上的图是全的）
       const c = await prep("IMG3");
       fs.rmSync(c.src);

@@ -456,7 +456,8 @@ function NoticeEditor(props: {
       /* 没存上（比如被同事抢先改了）：列表马上刷一次，关掉重开「修改」拿到的才是最新的。
          不刷的话，自动刷新没赶上（页面在后台时推送是断开的）列表还是旧的，重开还是旧的、再存又被挡，转圈出不去（10-06 实点发现）。
          **等刷完**再放开按钮（「取消」在保存中是灰的）：不等的话网慢时点「取消」马上重开，拿到的还是旧的（Codex 第二轮 S2） */
-      try { await props.onChanged(); } catch { /* 刷新失败就算了，上面的提示照旧 */ }
+      // 最多等 5 秒：网慢 / 请求卡住时别让「取消」一直灰着（右上角 ✕ 本来就一直能点）—— dsh 第三轮 A
+      try { await Promise.race([props.onChanged(), new Promise((r) => window.setTimeout(r, 5000))]); } catch { /* 刷新失败就算了，上面的提示照旧 */ }
       setSaving(false);
       return;
     }

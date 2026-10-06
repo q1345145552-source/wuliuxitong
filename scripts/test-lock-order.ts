@@ -995,48 +995,71 @@ check("11) 仓库版集货定价：所有事务都按【客户价排队锁 → �
   }
 });
 
-check("12) 登记成真表的锁 helper，函数体里的锁语句顺序必须跟登记的一样", () => {
+/**
+ * 一个锁 helper 的函数体里，按出现顺序都锁了哪些表（第 12 项用）。认两种写法：
+ *   ① 自己写的锁 SQL：整段 `...` 模板里有 FOR UPDATE / NO KEY UPDATE / SHARE —— 多行写法也认；
+ *      `FOR UPDATE OF pl` 这种按别名找回表名（plan-guard.ts 那两个就是这么写的），否则取第一个 FROM 的表；
+ *   ② 调了别的已登记 helper（lockAndSyncParents → lockParentsByTrackingNo）：算它登记的那几张表。
+ * 注释、死块不算（口径同第 10 项）。
+ */
+function lockSequenceOf(body: string[], self: string): string[] {
+  const live: string[] = [];
+  let k = 0;
+  while (k < body.length) {
+    const t = body[k].trim();
+    if (t.startsWith("*") || t.startsWith("//") || t.startsWith("/*")) { k += 1; continue; }
+    if (isDeadLine(body[k])) { k = deadBlockEnd(body, k); continue; }
+    live.push(body[k]);
+    k += 1;
+  }
+  const lines = live.slice(1); // 第一行是 `async function 名字(` 定义本身，不算调用
+  const text = lines.join("\n");
+  /* 「同一行 if + 锁」不算锁（口径同第 10 项 hasLiveAdvisoryLock / 主扫描器）：`if (Boolean(0)) await tx.$queryRaw\`... FOR UPDATE\``
+     这种实际不执行，算进去就会给反着拿锁的写法发绿灯（Codex 第三轮建议 4）。真要条件锁就写成块形式。
+     按「这个锁 / 这次调用是从哪一行开始的」判断，多行 SQL 也照样认。 */
+  const lineStarts: number[] = [];
+  for (let i = 0, pos = 0; i < lines.length; pos += lines[i].length + 1, i += 1) lineStarts.push(pos);
+  const lineAt = (at: number) => { let i = 0; while (i + 1 < lineStarts.length && lineStarts[i + 1] <= at) i += 1; return lines[i]; };
+  const conditional = (at: number) => { const t = lineAt(at).trim(); return /\bif\s*\(/.test(t) && !/\{\s*$/.test(t); };
+  const hits: Array<{ at: number; tables: string[] }> = [];
+  for (const m of text.matchAll(/`([^`]*)`/g)) {
+    const sql = m[1];
+    if (!LOCK_SQL_RE.test(sql)) continue;
+    if (conditional(m.index ?? 0)) continue;
+    const alias = /FOR (?:NO KEY UPDATE|UPDATE|SHARE)\s+OF\s+"?(\w+)"?/.exec(sql)?.[1];
+    const table = alias
+      ? new RegExp(`(?:FROM|JOIN)\\s+"?(\\w+)"?\\s+(?:AS\\s+)?"?${alias}"?\\b`).exec(sql)?.[1] ?? alias
+      : /FROM\s+"?(\w+)"?/.exec(sql)?.[1];
+    if (table) hits.push({ at: m.index ?? 0, tables: [table] });
+  }
+  for (const [name, tables] of Object.entries(LOCK_HELPERS)) {
+    if (name === self) continue;
+    for (const m of text.matchAll(new RegExp(`\\b${name}\\(`, "g"))) if (!conditional(m.index ?? 0)) hits.push({ at: m.index ?? 0, tables });
+  }
+  const seq: string[] = [];
+  for (const h of hits.sort((a, b) => a.at - b.at)) for (const t of h.tables) if (!seq.includes(t)) seq.push(t);
+  return seq;
+}
+
+check("12) 登记成真表的锁 helper，函数体里锁表的先后必须跟登记的一样", () => {
   /**
    * ⚠️ 2026-10-06 到货通知第二轮审查（dsh 建议 B）：LOCK_HELPERS 对真表 helper 也是「见名给分」——
    * 把 lockLinkedShipment 里「锁订单」「锁运单」两句对调（退回第一轮那个跟删订单反着的锁序，会死锁），
    * 前面 11 项照样全绿，因为扫描器只在调用方按登记顺序记账，从不看 helper 自己怎么锁。
-   * 这一项补上：去函数体里按出现顺序抽出 `FROM <表> ... FOR ...`（注释、死块不算，口径同第 10 项），
-   * 去重后必须等于登记的顺序。
-   * 有些 helper 是靠调别的 helper / 多行 SQL 加锁的，函数体里抽不出来，那种这里核不了（第 1/7 项照常管）；
-   * 但下面 MUST_VERIFY 这几个现在抽得出来，必须一直抽得出来 —— 不然哪天改成多行写法，这一项就悄悄不管它们了。
+   * 这一项去函数体里按出现顺序抽出它真锁了哪些表（lockSequenceOf），必须等于登记的顺序。
+   * 第三轮（dsh B）：第一版只认「一行里 FROM … FOR UPDATE」，多行 SQL、FOR UPDATE OF 别名、调别的 helper 的那 5 个抽不出来就放过了
+   * （把 syncParentStatusFromChildren 的锁整句删掉照样绿）。现在**每一个**登记成真表的 helper 都必须抽得出来、而且对得上。
    */
-  const MUST_VERIFY = [
-    "lockPlanAliveById", "lockPrealertExpecting", "lockShipmentsChildrenFirst", "lockParentsByTrackingNo",
-    "lockAgentPriceFloors", "lockInquiry", "lockNotice", "lockLinkedShipment",
-  ];
   const files = walk(ROOT);
   const realHelpers = Object.entries(LOCK_HELPERS).filter(([, tables]) => tables.every((t) => !t.startsWith("advisory_")));
-  for (const name of MUST_VERIFY) {
-    assert.ok(realHelpers.some(([n]) => n === name), `${name} 不在 LOCK_HELPERS 里了 —— 删登记要连这里一起改`);
-  }
+  assert.ok(realHelpers.length >= 13, `只有 ${realHelpers.length} 个登记成真表的 helper，比预期少 —— 是不是有人把登记删了`);
   for (const [name, tables] of realHelpers) {
     const defs = files
       .map((f) => ({ f, body: functionBody(fs.readFileSync(f, "utf-8").split("\n"), name) }))
       .filter((x) => x.body !== null);
-    if (defs.length !== 1) {
-      assert.ok(!MUST_VERIFY.includes(name), `${name} 在模块里有 ${defs.length} 处定义，核不了函数体里的锁序`);
-      continue;
-    }
-    const body = defs[0].body!;
-    const seen: string[] = [];
-    let k = 0;
-    while (k < body.length) {
-      const t = body[k].trim();
-      if (t.startsWith("*") || t.startsWith("//") || t.startsWith("/*")) { k += 1; continue; }
-      if (isDeadLine(body[k])) { k = deadBlockEnd(body, k); continue; }
-      const m = /FROM\s+"?(\w+)"?[\s\S]*?FOR (NO KEY UPDATE|UPDATE|SHARE)/.exec(body[k]);
-      if (m && !seen.includes(m[1])) seen.push(m[1]);
-      k += 1;
-    }
-    if (seen.length === 0) {
-      assert.ok(!MUST_VERIFY.includes(name), `${rel(defs[0].f)} 的 ${name}：函数体里抽不出锁语句了（被删了，或改成了多行写法 —— 改回一行写，或者改这一项）`);
-      continue;
-    }
+    assert.equal(defs.length, 1, `${name} 在模块里有 ${defs.length} 处定义 —— 登记表按名字给分，撞名或找不到都核不了`);
+    const seen = lockSequenceOf(defs[0].body!, name);
+    assert.ok(seen.length > 0, `${rel(defs[0].f)} 的 ${name}：登记了锁 ${tables.join(" → ")}，函数体里却一把锁都抽不出来（被删了？）`);
     assert.deepEqual(
       seen,
       tables,
