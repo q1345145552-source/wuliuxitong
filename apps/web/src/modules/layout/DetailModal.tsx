@@ -26,9 +26,14 @@ export default function DetailModal(props: {
   onClose: () => void;
   /** 表单类弹窗传 false：填表时误按 ESC 会丢掉已输入的内容 */
   closeOnEsc?: boolean;
+  /**
+   * 点 ✕ / 按 ESC 关之前先问一句，返回 false 就不关（比如还有照片没传上）。
+   * 必须在这里问、不能放进 onClose 里问：onClose 是关闭动画放完才调的，那时弹窗已经在消失了。
+   */
+  confirmClose?: () => boolean;
   children: ReactNode;
 }) {
-  const { title, subtitle, onClose, closeOnEsc = true, children } = props;
+  const { title, subtitle, onClose, closeOnEsc = true, confirmClose, children } = props;
   const [closing, setClosing] = useState(false);
   const titleId = useId();
   const subtitleId = useId();
@@ -38,12 +43,13 @@ export default function DetailModal(props: {
 
   const requestClose = useCallback(() => {
     if (closedRef.current) return;
+    if (confirmClose && !confirmClose()) return;
     closedRef.current = true;
     setClosing(true);
     // 必须和 globals.css 里 pageTurnOut / overlayFadeOut 的时长一致，
     // 短了会在动画放完前就把节点摘掉，看起来像"闪一下没了"
     closeTimerRef.current = window.setTimeout(onClose, 200);
-  }, [onClose]);
+  }, [onClose, confirmClose]);
 
   useEffect(() => {
     const panel = panelRef.current;

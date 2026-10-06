@@ -488,6 +488,57 @@ async function main(): Promise<void> {
       }
     });
 
+    await check("N19e 两个人同时改同一条：后存的被挡、不会把先存的盖掉；同事点「标已通知」/ 传照片不算冲突；老页面不带 base 照旧能存", async () => {
+      // 跟页面 draftToBody(draftOf(item)) 一个样：数字是文字、空的是 null
+      const s = (v: unknown) => (v === null || v === undefined ? null : String(v));
+      const baseOf = (it: Row) => ({
+        clientId: it.clientId, trackingNo: it.trackingNo, itemName: it.itemName, packageCount: s(it.packageCount), weightKg: s(it.weightKg),
+        volumeM3: s(it.volumeM3), transportMode: it.transportMode, domesticTrackingNo: it.domesticTrackingNo, warehouseId: it.warehouseId,
+        arrivedAt: it.arrivedAt, remark: it.remark,
+      });
+      const SAVE = "POST /staff/arrival-notices/save";
+      const n = await save(STAFF, { ...full, trackingNo: NO("EDIT1"), itemName: "原品名" });
+      const opened = baseOf(n); // 甲、乙同时点开「修改」
+      const b1 = await save(STAFF2, { ...opened, id: n.id, itemName: "乙改的", base: opened });
+      assert.equal(b1.itemName, "乙改的", "乙先存：没人动过，能存");
+      await refuse(SAVE, STAFF, { ...opened, id: n.id, weightKg: "99", base: opened }, /刚刚被同事改过（品名变了）/);
+      let row = await pm.arrivalNotice.findUnique({ where: { id: n.id } });
+      assert.equal(row.itemName, "乙改的", "甲后存被挡，乙改的品名还在");
+      assert.equal(Number(row.weightKg), 85.5, "甲的改动一个字都没写进去");
+
+      // 同事这时「标已通知」、传一张照片：资料没变，正在改的人照样能存
+      await must("POST /staff/arrival-notices/notify", STAFF, { id: n.id, notified: true });
+      await must("POST /staff/arrival-notices/images", STAFF, { noticeId: n.id, fileName: "a.png", mime: "image/png", contentBase64: PNG_1x1 });
+      const b2 = await save(STAFF2, { ...baseOf(b1), id: n.id, remark: "乙又改了备注", base: baseOf(b1) });
+      assert.equal(b2.remark, "乙又改了备注");
+
+      // 两个人拿同一份 base 同一瞬间存：只进得去一个（锁住以后才比）
+      const [r1, r2] = await Promise.all([
+        call(SAVE, STAFF, { ...baseOf(b2), id: n.id, packageCount: "13", base: baseOf(b2) }),
+        call(SAVE, STAFF2, { ...baseOf(b2), id: n.id, packageCount: "14", base: baseOf(b2) }),
+      ]);
+      assert.equal([r1, r2].filter((r) => r.status === 200).length, 1, `应该只有一个存上：${r1.status} ${r1.message} / ${r2.status} ${r2.message}`);
+      assert.match([r1, r2].find((r) => r.status !== 200)!.message, /件数变了/);
+
+      // 上线前打开的老页面不带 base：照旧整份存（不挡）
+      const old = await save(STAFF, { ...baseOf(b2), id: n.id, packageCount: "15" });
+      assert.equal(old.packageCount, 15);
+      // base 读不懂的：当成冲突挡掉，不能因为读不懂就放过去
+      await refuse(SAVE, STAFF, { ...baseOf(old), id: n.id, base: "乱写" }, /刚刚被同事改过/);
+      await refuse(SAVE, STAFF, { ...baseOf(old), id: n.id, base: { ...baseOf(old), packageCount: 0 } }, /刚刚被同事改过/);
+
+      // 待入库的单：被挡的那次也不许同步到运单上
+      const latest = (await list(STAFF, { keyword: NO("EDIT1") })).items[0];
+      await must("POST /staff/arrival-notices/convert", STAFF, { id: n.id, to: "inbound" });
+      const stale = baseOf(latest);
+      await save(STAFF2, { ...stale, id: n.id, itemName: "乙在待入库时改", base: stale });
+      await refuse(SAVE, STAFF, { ...stale, id: n.id, itemName: "甲拿旧的改", base: stale }, /品名变了/);
+      const ship = await pm.shipment.findFirst({ where: { trackingNo: NO("EDIT1") }, include: { order: true } });
+      assert.equal(ship.order.itemName, "乙在待入库时改", "运单那边是乙的，没被甲盖掉");
+      row = await pm.arrivalNotice.findUnique({ where: { id: n.id } });
+      assert.equal(row.itemName, "乙在待入库时改");
+    });
+
     await check("N19 两个员工同时点「转正式」：只建出一张运单，另一个被告知已经转过", async () => {
       const n = await save(STAFF, { ...full, trackingNo: NO("RACE1"), itemName: "并发" });
       const [r1, r2] = await Promise.all([

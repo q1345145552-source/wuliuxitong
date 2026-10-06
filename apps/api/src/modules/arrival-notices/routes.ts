@@ -160,6 +160,20 @@ export function missingForTarget(f: NoticeFields, to: "formal" | "inbound"): str
   return missing;
 }
 
+const FIELD_ZH: Record<keyof NoticeFields, string> = {
+  clientId: "唛头", trackingNo: "运单号", itemName: "品名", packageCount: "件数", weightKg: "重量", volumeM3: "体积",
+  transportMode: "运输方式", domesticTrackingNo: "国内快递单号", warehouseId: "仓库", arrivedAt: "到仓日期", remark: "备注",
+};
+
+/**
+ * 打开「修改」弹窗那一刻看到的资料（base）跟库里现在的比，哪几项被别人改了（中文名）。
+ * 防两个人同时改、后保存的把先保存的整份盖掉（2026-10-06 dsh 审查 S1）。
+ * 只比这 11 项资料、不比 updatedAt：同事这时点「标已通知」或传照片不算冲突，不该挡住正在改资料的人。
+ */
+export function changedSinceOpened(base: NoticeFields, now: NoticeFields): string[] {
+  return (Object.keys(FIELD_ZH) as Array<keyof NoticeFields>).filter((k) => base[k] !== now[k]).map((k) => FIELD_ZH[k]);
+}
+
 function fieldsOf(n: NoticeRow): NoticeFields {
   return {
     clientId: n.clientId,
@@ -525,9 +539,24 @@ export function registerArrivalNoticeRoutes(app: MinimalHttpApp): void {
       return;
     }
 
+    /* 页面把打开弹窗时看到的那份一起传上来（base，跟 body 同一种写法）。没传 = 上线前打开的老页面，不比（照旧整份存）；
+       传了但读不懂 = 当成冲突，让他重开（不能因为读不懂就放过去盖掉别人的） */
+    let base: NoticeFields | "unreadable" | null = null;
+    if (body.base !== undefined && body.base !== null) {
+      const b = body.base && typeof body.base === "object" && !Array.isArray(body.base) ? readNoticeFields(body.base as Record<string, unknown>) : null;
+      base = b && "fields" in b ? b.fields : "unreadable";
+    }
+
     try {
       await prisma.$transaction(async (tx) => {
         const n = await lockNotice(tx, auth.companyId, id);
+        // 锁住以后再比（CLAUDE.md 第 28 条：判断用锁里读到的）
+        if (base !== null) {
+          const changed = base === "unreadable" ? [] : changedSinceOpened(base, fieldsOf(n));
+          if (base === "unreadable" || changed.length > 0) {
+            throw new BusinessError(`这条刚刚被同事改过${changed.length ? `（${changed.join("、")}变了）` : ""}，你这次没有保存。请点「取消」关掉，重新点「修改」看最新的再改`);
+          }
+        }
         const ship = await lockLinkedShipment(tx, n);
         if (n.convertedTo === "formal" && ship) {
           throw new BusinessError("这条已经转成正式运单了，这里不能再改；要改运单请到「运单管理」");

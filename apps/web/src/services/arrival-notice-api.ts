@@ -101,8 +101,12 @@ export function draftToBody(d: ArrivalNoticeDraft): Record<string, string | null
   };
 }
 
-export function saveArrivalNotice(id: string | null, draft: ArrivalNoticeDraft): Promise<{ item: ArrivalNotice }> {
-  return post("/staff/arrival-notices/save", { ...(id ? { id } : {}), ...draftToBody(draft) });
+/**
+ * base = 打开「修改」弹窗那一刻看到的资料（新登记不传）。后端拿它跟库里现在的比，
+ * 有人在这期间改过就不存、告诉他重开（防两个人同时改、后存的把先存的盖掉）。
+ */
+export function saveArrivalNotice(id: string | null, draft: ArrivalNoticeDraft, base?: ArrivalNoticeDraft | null): Promise<{ item: ArrivalNotice }> {
+  return post("/staff/arrival-notices/save", { ...(id ? { id } : {}), ...draftToBody(draft), ...(id && base ? { base: draftToBody(base) } : {}) });
 }
 
 export function setArrivalNoticeNotified(id: string, notified: boolean): Promise<{ item: ArrivalNotice }> {

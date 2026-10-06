@@ -43,6 +43,15 @@ created -> pickedUp -> inWarehouseCN -> customsPending -> inTransit -> customsTH
 - returned
 - cancelled
 
+> ⚠️ 上面这条是早期写的，现在完整的状态和海运 / 陆运两条流程以 `packages/shared-types/shipment-status.ts` 为准（`SHIPMENT_STATUS_FLOW` / `SHIPMENT_STATUS_FLOW_LAND`）。
+
+### 4.1 待入库 pendingInbound（2026-10-06，到货通知）
+- 中文「待入库」。货已经到了国内仓，但资料没补全：员工在「到货通知」里自己选「转待入库」生成的运单。
+- 算「未发出」（`PENDING_STATUSES`）；客户在「运单查询」里看得到，显示「待入库」（老板 10-06 选的）。
+- **故意不进**海运 / 陆运两条流程表：不进流程就推不动，装柜、柜子推进都碰不到它。⚠️ 以后别把它加进流程表。
+- 能改它的只有「到货通知」（那边是底稿，改了同一事务同步到运单）。运单管理改单、预报单「确认收货」、运单产品图上传 / 删除、尾端派送建单、老的设柜号接口都挡了待入库。
+- 唯一出口：到货通知里点「转正式运单」→ 同一张运单变「已入库」`inWarehouseCN`，写一条轨迹。
+
 ## 5. 一致性规则
 1. 新增状态必须先改本文件，再改代码。
 2. 三个端显示的状态中文名必须一致。
@@ -179,3 +188,15 @@ created -> pickedUp -> inWarehouseCN -> customsPending -> inTransit -> customsTH
 - referencedOrderIds?: string[]
 - referencedShipmentIds?: string[]
 - queriedAt: string (ISO datetime)
+## 14. 到货通知 ArrivalNotice（2026-10-06）
+
+国内仓到货后员工登记 → 客服复制文案 / 照片通知客户 → 标「已通知客户」→ 员工自己选「转正式运单」或「转待入库」。表 `arrival_notices`、照片表 `arrival_notice_images`，规则写在 `apps/api/src/modules/arrival-notices/routes.ts` 开头。
+
+- 登记项：唛头 clientId、运单号 trackingNo、品名 itemName、件数 packageCount、重量 weightKg、体积 volumeM3、运输方式 transportMode（sea / land）、国内快递单号 domesticTrackingNo、仓库 warehouseId、到仓日期 arrivedAt（YYYY-MM-DD）、备注 remark（内部看，不进给客户的文案、不进运单）+ 照片。**每一项都能先空着存。**
+- 同一家公司里一个运单号只能登记一条（唯一约束，空着的不算）；运单号也不能跟已有运单重。
+- 已通知客户 notifiedAt：一个开关，跟转没转运单无关。
+- 转正式运单：必须齐「创建订单」的必填项 —— 运单号、唛头、品名、仓库、运输方式、到仓日期、件数、重量、体积；运单状态「已入库」。
+- 转待入库：至少要有运单号和唛头；运单状态「待入库」（见 4.1）。
+- 转了正式后这一条只读（除了「已通知客户」开关）；转出去的运单在「运单管理」里被删了，这一条当作「没转」，可以重新转。
+- 只给员工、超管用；客户、代理看不到。登记人 / 通知人名字只给超管看（2026-09-15 规矩）。
+- 有预报单的货照旧走「预报单审核 → 确认收货」，到货通知只登记没预报单的货。

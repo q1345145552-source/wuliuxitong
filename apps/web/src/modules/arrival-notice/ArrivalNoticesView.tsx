@@ -398,6 +398,8 @@ function NoticeEditor(props: {
   const [draft, setDraft] = useState<ArrivalNoticeDraft>(() => (editing ? draftOf(editing) : emptyDraft()));
   /** 新登记存过一次之后就有 id 了：照片没传完再点「保存」是接着传，不能再登记出一条新的 */
   const [savedId, setSavedId] = useState<string | null>(editing?.id ?? null);
+  /** 库里那份（打开时 / 每次存上以后）：保存时一起传，后端比一下有没有人在这期间改过 */
+  const [base, setBase] = useState<ArrivalNoticeDraft | null>(() => (editing ? draftOf(editing) : null));
   const [images, setImages] = useState<ArrivalNoticeImage[]>(editing?.images ?? []);
   const [queued, setQueued] = useState<Array<{ file: File; url: string }>>([]);
   const [saving, setSaving] = useState(false);
@@ -440,9 +442,11 @@ function NoticeEditor(props: {
     setSaving(true);
     let id = savedId;
     try {
-      const { item } = await saveArrivalNotice(id, draft);
+      const { item } = await saveArrivalNotice(id, draft, base);
       id = item.id;
       setSavedId(item.id);
+      // 存上了：库里现在就是这份。照片没传完再点「保存」时拿它比，不会把自己刚存的当成别人改的
+      setBase(draftOf(item));
       setImages(item.images);
       if (draft.warehouseId) {
         try { window.localStorage.setItem(LAST_WAREHOUSE_KEY, draft.warehouseId); } catch { /* 记不住就算了 */ }
@@ -476,8 +480,16 @@ function NoticeEditor(props: {
     props.onSaved(editing ? "已保存" : "已登记，可以复制文案通知客户了");
   };
 
+  /** 还有照片没传上就关：先问一句（那几张只在这个弹窗里，关了就没了 —— dsh 审查 S2）。返回 false = 不关 */
+  const confirmClose = () =>
+    queuedRef.current.length === 0 || window.confirm(`还有 ${queuedRef.current.length} 张照片没传上，关掉就没了。确定关掉吗？`);
+  const close = () => {
+    if (savedId && !editing) props.onChanged();
+    props.onClose();
+  };
+
   return (
-    <DetailModal title={editing ? "修改到货通知" : "登记到货"} subtitle={editing?.trackingNo ?? null} onClose={() => { if (savedId && !editing) props.onChanged(); props.onClose(); }} closeOnEsc={false}>
+    <DetailModal title={editing ? "修改到货通知" : "登记到货"} subtitle={editing?.trackingNo ?? null} onClose={close} confirmClose={confirmClose} closeOnEsc={false}>
       {editing?.convertedTo === "inbound" ? (
         <p className="an-note">这票货已经转成「待入库」运单，这里保存会同步改那张运单；资料齐了回列表点「转正式运单」。</p>
       ) : null}
@@ -567,7 +579,7 @@ function NoticeEditor(props: {
       {error ? <p role="alert" className="an-error">{error}</p> : null}
       <div className="an-form-actions">
         {progress ? <span className="an-muted">{progress}</span> : null}
-        <button type="button" className="an-btn" onClick={() => { if (savedId && !editing) props.onChanged(); props.onClose(); }} disabled={saving}>{savedId && !editing ? "关闭" : "取消"}</button>
+        <button type="button" className="an-btn" onClick={() => { if (confirmClose()) close(); }} disabled={saving}>{savedId && !editing ? "关闭" : "取消"}</button>
         <button type="button" className="an-btn an-btn-primary" onClick={() => void submit()} disabled={saving}>{saving ? "保存中…" : "保存"}</button>
       </div>
     </DetailModal>

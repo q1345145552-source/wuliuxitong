@@ -755,3 +755,33 @@
 ### 21.2 GET /staff/loading-manifests/shipment-map
 - 员工 / 管理员。返回本公司「哪票运单装在哪个柜」：`{ items: [{ shipmentId, manifestNo }] }`。同一票在好几个柜里时取**最早建的那个柜**（跟原来前端把每个柜详情挨个拉一遍拼出来的结果一样）。
 - 给装柜页「可选运单」那张表标「已装 → 柜号」用，替掉原来的按柜逐个拉详情（线上 353 个柜 = 353 个请求）。
+
+## 22. 到货通知（2026-10-06）
+
+全部只给员工 / 管理员（客户、代理 `403`），一律只看本公司（别家的 id `404`）。业务规则见 `docs/domain-dictionary.md` 第 14 节和 4.1 节。
+⚠️ 网址都比页面 `/staff/arrival-notices` 多一段（Next 先匹配页面再转发接口，`GET /staff/arrival-notices` 会被页面接走）。
+
+### 22.1 GET /staff/arrival-notices/list
+- 查询参数：`tab`（`todo` 待通知 / `notified` 已通知没转 / `inbound` 待入库 / `formal` 已转正式 / `all`，默认 all）、`keyword`（唛头、运单号、国内快递单号、品名模糊搜）、`page`、`pageSize`（默认 50，最多 200）。
+- 返回：`{ items, total, page, pageSize, counts: { todo, notified, inbound, formal, all } }`。每条带登记的各项 + `images[{ id, fileName, imageUrl }]`、`notifiedAt`、`convertedTo`（null / inbound / formal）、`shipmentId`、`shipmentStatus`、`shipmentGone`（转过但运单已被删，按「没转」算，页签也这么分）、`createdAt`、`updatedAt`；`createdByName` / `notifiedByName` 只有超管拿得到，员工拿到 null。
+
+### 22.2 POST /staff/arrival-notices/save
+- 不带 `id` = 新登记，带 `id` = 修改。各项都能传 null / 空串（当没填）；填了的按「创建订单」同一套规则校验，填错 `400` 中文说清哪项。
+- `base`（修改时传）：打开「修改」弹窗那一刻看到的那份资料，写法跟请求体一样。服务器锁住这一行后跟库里现在的比，有人在这期间改过就**不存**，回 `400`「这条刚刚被同事改过（品名变了）…」。只比资料那 11 项：同事点「标已通知」、传照片不算冲突。不传 = 不比（上线前打开的老页面）；传了读不懂按冲突处理。
+- 已转正式的不能改；待入库的改了同一事务同步到那张运单，运单号 / 唛头不能清空。
+- 返回 `{ item }`（同 22.1 的一条）。
+
+### 22.3 POST /staff/arrival-notices/notify
+- `{ id, notified: true | false }`：标「已通知客户」/ 改回未通知。返回 `{ item }`。
+
+### 22.4 POST /staff/arrival-notices/convert
+- `{ id, to: "formal" | "inbound" }`。缺必填项 `400`「转正式运单还缺：品名、重量…」。转正式 = 新建订单 + 运单（已入库）+ 第一条轨迹，跟 `POST /staff/orders` 用同一份 `buildNewOrderRows`；待入库再转正式 = 同一张运单改成已入库并写一条轨迹。照片复制一份成运单的产品图片；照片文件找不到整个回滚。两人同时点只成功一个。返回 `{ item }`。
+
+### 22.5 POST /staff/arrival-notices/delete
+- `{ id }`。只能删还没转运单的（转了的去「运单管理」删运单）。照片记录和文件一起删。返回 `{ deleted: true, id }`。
+
+### 22.6 POST /staff/arrival-notices/images
+- `{ noticeId, fileName, mime, contentBase64 }`，一次一张，页面先压缩；大小上限同其它图片上传。一条最多 20 张。已转正式的不能传；待入库的同时进那张运单的产品图片。返回 `{ item }`。
+
+### 22.7 POST /staff/arrival-notices/images/delete
+- `{ id }`（照片 id）。待入库的连运单那份副本一起删；已转正式的不能删。返回 `{ item }`。
