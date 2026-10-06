@@ -12,6 +12,7 @@ import { companyContainerNosForMasking } from "../core/container-nos";
 import { productNamesLabel } from "../../../../../packages/shared-types/product-names";
 import { EXCLUDE_FCL_SHIPMENT, ONLY_FCL_SHIPMENT } from "../core/fcl-scope";
 import { nextSequenceValue } from "../core/number-sequence";
+import { PENDING_INBOUND } from "../arrival-notices/rules";
 
 /** 同一票货重复进派送单时抛这个，调用方转成 400 而不是 500 */
 class LastmileConflictError extends Error {
@@ -758,6 +759,11 @@ export function registerAdminOpsRoutes(app: MinimalHttpApp): void {
           });
           if (!ownShipment) {
             throw new LastmileShipmentNotFoundError(`运单 ${sid} 不存在或不属于当前公司`);
+          }
+          /* 2026-10-06「待入库」（到货通知转过来、资料没补全，货还在国内仓）不能派送。
+             页面候选列表本来就选不到它，这里挡直接调接口的（审查抓到）；用锁后重读的状态判断。 */
+          if (ownShipment.currentStatus === PENDING_INBOUND) {
+            throw new LastmileConflictError(`运单 ${ownShipment.trackingNo} 还是「待入库」（货在国内仓、资料没补全），不能派送`);
           }
           /* 2026-09-24：整柜现在有自己的尾端入口了（「整柜管理 → 尾端派送」页签），
              所以这里**不再拦**整柜 —— 建单、签收、撤销、导客户签收单全走这一套。

@@ -81,6 +81,18 @@ function classifyClientStatusGroup(
   return classifyStatusGroup(currentStatus);
 }
 
+/**
+ * 这张订单的运单是不是「待入库」（2026-10-06 到货通知）。产品图上传 / 删除用：待入库的单底稿在到货通知。
+ * 只会从「待入库」变走（到货通知转正式），不会有别的路把运单变成待入库，所以事务外查一次就够。
+ */
+async function isPendingInboundOrder(companyId: string, orderId: string): Promise<boolean> {
+  const hit = await prisma.shipment.findFirst({
+    where: { companyId, orderId, currentStatus: PENDING_INBOUND },
+    select: { id: true },
+  });
+  return Boolean(hit);
+}
+
 /** Prisma 的 Decimal | null 转 number | null（用于返回前端）。 */
 function decToNumber(value: Prisma.Decimal | null | undefined): number | null {
   if (value === null || value === undefined) return null;
@@ -667,6 +679,11 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
       fail(res, 400, "VALIDATION_ERROR", "已确认收货");
       return;
     }
+    // 2026-10-06：待入库的单先挡一道给个好看的提示，真正说了算的是事务里锁内重读那道
+    if (order.shipments[0]?.currentStatus === PENDING_INBOUND) {
+      fail(res, 400, "BAD_REQUEST", PENDING_INBOUND_EDIT_ELSEWHERE_MESSAGE);
+      return;
+    }
 
     const now = new Date();
     const updateData: any = {
@@ -748,6 +765,9 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
           select: { currentStatus: true, trackingNo: true },
         });
         freshShipmentStatus = s2?.currentStatus ?? shipment.currentStatus;
+        /* 2026-10-06「待入库」的单不从这里收货：它是到货通知转过来的、底稿在到货通知（审查抓到这是第四个能改它的口子）。
+           用锁内重读的状态判断（CLAUDE.md 第 28 条）。 */
+        if (freshShipmentStatus === PENDING_INBOUND) throw new BusinessError(PENDING_INBOUND_EDIT_ELSEWHERE_MESSAGE);
         if (s2?.trackingNo) {
           // 父单已锁：装柜要改父单剩余量，拿不到这把锁就建不了新子单，这里读到的就是准数
           const loaded = await tx.shipment.aggregate({
@@ -1522,6 +1542,11 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
       fail(res, 403, "FORBIDDEN", "cross warehouse update is not allowed");
       return;
     }
+    // 2026-10-06「待入库」的单照片在到货通知里传（那边是底稿，传了会自动同步到这里）。这里再开一个口子，两边就对不上了
+    if (await isPendingInboundOrder(auth.companyId, orderId)) {
+      fail(res, 400, "BAD_REQUEST", PENDING_INBOUND_EDIT_ELSEWHERE_MESSAGE);
+      return;
+    }
     const count = await prisma.orderProductImage.count({
       where: { companyId: auth.companyId, orderId },
     });
@@ -1592,6 +1617,11 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
       return;
     }
     // 先删DB记录，再删磁盘文件（倒序避免悬空引用）
+    // 2026-10-06 同上：待入库的单删照片也去到货通知删（删这里的副本，到货通知那张还在，转正式时就补不回来了）
+    if (await isPendingInboundOrder(auth.companyId, image.orderId)) {
+      fail(res, 400, "BAD_REQUEST", PENDING_INBOUND_EDIT_ELSEWHERE_MESSAGE);
+      return;
+    }
     const result = await prisma.orderProductImage.deleteMany({
       where: { id, companyId: auth.companyId },
     });

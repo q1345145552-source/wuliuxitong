@@ -58,6 +58,8 @@ async function main(): Promise<void> {
   (await import("../apps/api/src/modules/admin/routes")).registerAdminRoutes(app);
   (await import("../apps/api/src/modules/loading-manifests/routes")).registerLoadingManifestRoutes(app);
   (await import("../apps/api/src/modules/containers/routes")).registerContainerRoutes(app);
+  (await import("../apps/api/src/modules/admin-ops/routes")).registerAdminOpsRoutes(app);
+  (await import("../apps/api/src/modules/shipments/routes")).registerShipmentRoutes(app);
 
   async function call(key: string, auth: Auth, body: Row = {}, query: Record<string, string> = {}): Promise<{ status: number; data: any; message: string }> {
     const handler = routes.get(key);
@@ -89,6 +91,7 @@ async function main(): Promise<void> {
       const cs = await pm.container.findMany({ where: { companyId: co }, select: { id: true } });
       await pm.shipmentContainerItem.deleteMany({ where: { containerId: { in: cs.map((c: Row) => c.id) } } });
       await pm.container.deleteMany({ where: { companyId: co } });
+      await pm.adminLastmileOrder.deleteMany({ where: { companyId: co } });
       await pm.statusLog.deleteMany({ where: { companyId: co } });
       await pm.orderProductImage.deleteMany({ where: { companyId: co } });
       await pm.orderProduct.deleteMany({ where: { companyId: co } });
@@ -305,6 +308,27 @@ async function main(): Promise<void> {
       assert.ok(!fs.existsSync(path.join(imagesDir, path.basename(copy.filePath))), "运单那份副本文件也要删");
     });
 
+    await check("N12b 待入库的单另外几个口子也改不了：确认收货、运单详情传 / 删产品图、建派送单、老的设柜号", async () => {
+      await refuse("POST /staff/prealerts/receive", STAFF, { orderId: pendingOrderId, packageCount: 5, weightKg: 40, volumeM3: 0.3, itemName: "偷改" }, /还是「待入库」.*到货通知/);
+      await refuse("POST /staff/orders/product-images", STAFF, { orderId: pendingOrderId, fileName: "x.png", mime: "image/png", contentBase64: PNG_1x1 }, /还是「待入库」.*到货通知/);
+      await refuse("POST /staff/orders/product-images", CLIENT, { orderId: pendingOrderId, fileName: "x.png", mime: "image/png", contentBase64: PNG_1x1 }, /还是「待入库」.*到货通知/);
+      const copy = await pm.orderProductImage.findFirst({ where: { orderId: pendingOrderId } });
+      assert.ok(copy, "前面 N7 复制过来的那张还在");
+      const del = await call("DELETE /staff/orders/product-images", STAFF, {}, { id: copy.id });
+      assert.equal(del.status, 400, del.message);
+      assert.match(del.message, /还是「待入库」/);
+      const lm = await call("POST /admin/lastmile/orders", ADMIN, { shipmentIds: [pendingShipId], driverName: "司机", deliveryDate: "2026-10-06" });
+      assert.ok(lm.status >= 400 && lm.status < 500, `建派送单应被挡，实际 ${lm.status}：${lm.message}`);
+      assert.match(lm.message, /待入库/);
+      await refuse("POST /staff/shipments/set-container", STAFF, { shipmentId: pendingShipId, containerNo: "ZZ-CTN" }, /还是「待入库」/);
+      const after = await pm.shipment.findUnique({ where: { id: pendingShipId }, include: { order: true } });
+      assert.equal(after.currentStatus, "pendingInbound");
+      assert.equal(after.order.approvalStatus, "approved", "确认收货那条路一个字都没改到");
+      assert.equal(after.containerNo, null);
+      assert.equal(await pm.adminLastmileOrder.count({ where: { shipmentId: pendingShipId } }), 0);
+      assert.equal(await pm.orderProductImage.count({ where: { orderId: pendingOrderId } }), 1);
+    });
+
     await check("N13 待入库 → 正式：缺项挡；补齐后同一张运单变「已入库」、写一条轨迹；之后到货通知只读（已通知开关除外）", async () => {
       await refuse("POST /staff/arrival-notices/convert", STAFF, { id: blankId, to: "formal" }, /转正式运单还缺：到仓日期、体积/);
       await save(STAFF, { id: blankId, trackingNo: NO("P001B"), clientId: CLIENT.userId, packageCount: 5, itemName: "玩具", weightKg: 40, volumeM3: 0.3, transportMode: "land", warehouseId: "wh_guangzhou_01", arrivedAt: "2026-10-05", domesticTrackingNo: "YT998877" });
@@ -379,6 +403,10 @@ async function main(): Promise<void> {
       assert.equal(row.shipmentGone, true);
       assert.equal(row.convertedTo, null);
       assert.equal(row.shipmentId, null);
+      // 页签跟行上的说法一致：回到「待通知」（没点过已通知），不再算在「待入库」里
+      assert.equal(l.counts.todo, 1, "运单被删了，这条要回到「待通知」页签");
+      assert.equal(l.counts.inbound, 0, "运单被删了，「待入库」页签不能还数着它");
+      assert.ok((await list(STAFF, { keyword: NO("G001"), tab: "todo" })).items.some((x: Row) => x.id === n.id));
       const again = (await must("POST /staff/arrival-notices/convert", STAFF, { id: n.id, to: "inbound" })).item;
       assert.equal(again.convertedTo, "inbound");
       assert.equal(again.shipmentGone, false);
@@ -413,6 +441,49 @@ async function main(): Promise<void> {
         for (const key of ["GET /staff/arrival-notices/list", "POST /staff/arrival-notices/save", "POST /staff/arrival-notices/notify", "POST /staff/arrival-notices/convert", "POST /staff/arrival-notices/delete", "POST /staff/arrival-notices/images", "POST /staff/arrival-notices/images/delete"]) {
           const r = await call(key, who, {});
           assert.equal(r.status, 403, `${who.role} 调 ${key} 应 403，实际 ${r.status}`);
+        }
+      }
+    });
+
+    await check("N19b 转运单时照片文件丢了：整个转运单不做，说清楚是哪张（不许悄悄少一张图转过去）", async () => {
+      const n = await save(STAFF, { ...full, trackingNo: NO("LOST1"), itemName: "丢图" });
+      const withImg = (await must("POST /staff/arrival-notices/images", STAFF, { noticeId: n.id, fileName: "侧面照.png", mime: "image/png", contentBase64: PNG_1x1 })).item;
+      fs.rmSync(path.join(imagesDir, path.basename(withImg.images[0].imageUrl)));
+      await refuse("POST /staff/arrival-notices/convert", STAFF, { id: n.id, to: "formal" }, /照片「侧面照\.png」的文件找不到了/);
+      assert.equal(await pm.shipment.count({ where: { trackingNo: NO("LOST1") } }), 0, "转运单要整个回滚");
+      assert.equal((await pm.arrivalNotice.findUnique({ where: { id: n.id } })).convertedTo, null);
+    });
+
+    await check("N19c 两个人同时登记同一个运单号：只进得去一条，另一个被告知（数据库唯一约束兜底，不出 500）", async () => {
+      const [a, b] = await Promise.all([
+        call("POST /staff/arrival-notices/save", STAFF, { trackingNo: NO("DUP1") }),
+        call("POST /staff/arrival-notices/save", STAFF2, { trackingNo: NO("DUP1") }),
+      ]);
+      const oks = [a, b].filter((r) => r.status === 200);
+      assert.equal(oks.length, 1, `应该只有一条成功：${a.status} ${a.message} / ${b.status} ${b.message}`);
+      assert.match([a, b].find((r) => r.status !== 200)!.message, /另一条到货通知/);
+      assert.equal(await pm.arrivalNotice.count({ where: { companyId: CO, trackingNo: NO("DUP1") } }), 1);
+    });
+
+    await check("N19d 「转正式」和超管「删订单」同时点同一张待入库的单：不死锁、不出 500（锁序跟删订单一样先订单后运单）", async () => {
+      for (let i = 0; i < 4; i++) {
+        const n = await save(STAFF, { ...full, trackingNo: NO(`DL${i}`), itemName: `并发${i}` });
+        await must("POST /staff/arrival-notices/convert", STAFF, { id: n.id, to: "inbound" });
+        const ship = await pm.shipment.findFirst({ where: { trackingNo: NO(`DL${i}`) } });
+        const [c, d] = await Promise.all([
+          call("POST /staff/arrival-notices/convert", STAFF2, { id: n.id, to: "formal" }),
+          call("POST /admin/orders/delete", ADMIN, { orderId: ship.orderId }),
+        ]);
+        for (const r of [c, d]) assert.ok(r.status < 500, `第 ${i} 轮出了 ${r.status}：${r.message}`);
+        const row = (await list(STAFF, { keyword: NO(`DL${i}`) })).items[0];
+        const alive = await pm.shipment.findFirst({ where: { trackingNo: NO(`DL${i}`) } });
+        // 两种先后都对：删在前 → 转正式重建了一张正式运单；转在前 → 正式运单又被删了，这条回到「没转」
+        if (alive) {
+          assert.equal(alive.currentStatus, "inWarehouseCN");
+          assert.equal(row.convertedTo, "formal");
+        } else {
+          assert.equal(row.shipmentGone, true);
+          assert.equal(row.convertedTo, null);
         }
       }
     });

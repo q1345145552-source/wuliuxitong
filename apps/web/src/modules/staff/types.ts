@@ -7,6 +7,8 @@ export type OrderProductImagesPanelProps = {
   orderId: string;
   images: OrderProductImageItem[];
   canManage: boolean;
+  /** 不能管理时下面那行小字（不传 = 原来那句「无本仓库操作权限」） */
+  readOnlyHint?: string;
   busy: boolean;
   onSelectFile: (file: File) => void | Promise<void>;
   onDelete: (imageId: string) => void | Promise<void>;

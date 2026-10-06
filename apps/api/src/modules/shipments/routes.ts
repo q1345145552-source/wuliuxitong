@@ -21,6 +21,7 @@ import { findDeletedLogAudits } from "./deleted-log-audits";
 import { BusinessError } from "../core/business-error";
 import { UPLOAD_IMAGE_MAX_BASE64, uploadTooLargeMessage } from "../core/upload-limit";
 import { canSeeOperatorIdentity, operatorNameForDisplay } from "../core/operator-visibility";
+import { PENDING_INBOUND, PENDING_INBOUND_EDIT_ELSEWHERE_MESSAGE } from "../arrival-notices/rules";
 
 interface Kuaidi100QueryPayload {
   com?: string;
@@ -220,10 +221,15 @@ export function registerShipmentRoutes(app: MinimalHttpApp): void {
     }
     const shipment = await prisma.shipment.findFirst({
       where: { id: shipmentId, companyId: auth.companyId },
-      select: { id: true, warehouseId: true },
+      select: { id: true, warehouseId: true, currentStatus: true },
     });
     if (!shipment) {
       fail(res, 404, "NOT_FOUND", "shipment not found");
+      return;
+    }
+    // 2026-10-06「待入库」不能装柜，柜号也不许从这个老口子写上去（审查抓到）
+    if (shipment.currentStatus === PENDING_INBOUND) {
+      fail(res, 400, "BAD_REQUEST", PENDING_INBOUND_EDIT_ELSEWHERE_MESSAGE);
       return;
     }
     const updated = await prisma.shipment.update({

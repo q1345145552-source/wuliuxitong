@@ -2427,7 +2427,9 @@ export default function StaffHomePage() {
                                   <StaffProductImagesPanel
                                     orderId={item.orderId}
                                     images={item.productImages ?? shipmentImagesCache[item.orderId] ?? []}
-                                    canManage={true}
+                                    // 2026-10-06「待入库」的单照片在到货通知里传删（那边是底稿），这里只看
+                                    canManage={item.currentStatus !== "pendingInbound"}
+                                    readOnlyHint={item.currentStatus === "pendingInbound" ? "这票货还是「待入库」，照片请到「到货通知」里传或删" : undefined}
                                     busy={loading}
                                     onSelectFile={(file) => uploadOrderProductImageAndReload(item.orderId!, file)}
                                     onDelete={(imageId) => deleteOrderProductImageAndReload(imageId)}

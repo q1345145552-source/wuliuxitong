@@ -114,11 +114,12 @@ const LOCK_HELPERS: Record<string, string[]> = {
   /**
    * 2026-10-06 到货通知（arrival-notices/routes.ts）：改 / 转 / 删 / 传删照片都先 lockNotice
    * （`SELECT ... FROM arrival_notices ... FOR UPDATE` 再重读），再 lockLinkedShipment
-   * （转过运单的才 `SELECT ... FROM shipments ... FOR UPDATE` 锁那张运单，之后才同步订单 / 运单）。
-   * 锁序固定：到货通知 → 运单 → 订单；别的模块都不碰 arrival_notices，不会反着拿。
+   * （转过运单的才锁：先订单 FOR NO KEY UPDATE、再运单 FOR UPDATE，之后才同步订单 / 运单）。
+   * 锁序固定：到货通知 → 订单 → 运单，跟删订单 / 改单 / 确认收货的「订单 → 运单」同向；
+   * 别的模块都不碰 arrival_notices，不会反着拿。（第一版是「运单 → 订单」，跟删订单反着，审查抓到的）
    */
   lockNotice: ["arrival_notices"],
-  lockLinkedShipment: ["shipments"],
+  lockLinkedShipment: ["orders", "shipments"],
 };
 
 /**

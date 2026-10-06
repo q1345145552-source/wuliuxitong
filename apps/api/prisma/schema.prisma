@@ -1403,6 +1403,8 @@ model ArrivalNotice {
 
   images ArrivalNoticeImage[]
 
+  /// 同一家公司里一个运单号只能登记一条（两个人同时登记同一个号，后到的被数据库挡下；运单号空着的不算重复，PostgreSQL 里 NULL 互不相等）
+  @@unique([companyId, trackingNo])
   @@index([companyId, createdAt])
   @@index([shipmentId])
   @@map("arrival_notices")

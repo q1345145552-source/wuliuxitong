@@ -88,7 +88,7 @@ export default function StaffProductImagesPanel(props: OrderProductImagesPanelPr
           ) : null}
         </div>
       )}
-      {!props.canManage ? <div style={{ fontSize: 12, color: "var(--t-strong)", marginTop: 6 }}>仅展示；无本仓库操作权限时不可修改（与上传接口校验的订单仓库一致）。</div> : null}
+      {!props.canManage ? <div style={{ fontSize: 12, color: "var(--t-strong)", marginTop: 6 }}>{props.readOnlyHint ?? "仅展示；无本仓库操作权限时不可修改（与上传接口校验的订单仓库一致）。"}</div> : null}
     </div>
   );
 }

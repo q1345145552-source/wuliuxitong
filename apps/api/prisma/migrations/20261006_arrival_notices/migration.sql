@@ -38,6 +38,8 @@ CREATE TABLE IF NOT EXISTS "arrival_notices" (
 );
 CREATE INDEX IF NOT EXISTS "arrival_notices_company_id_created_at_idx" ON "arrival_notices"("company_id", "created_at");
 CREATE INDEX IF NOT EXISTS "arrival_notices_shipment_id_idx" ON "arrival_notices"("shipment_id");
+-- 同一家公司一个运单号只登记一条：两人同时登记同一个号，后到的被挡下（运单号空着的 NULL 不算重复）
+CREATE UNIQUE INDEX IF NOT EXISTS "arrival_notices_company_id_tracking_no_key" ON "arrival_notices"("company_id", "tracking_no");
 
 -- ② 到货照片
 CREATE TABLE IF NOT EXISTS "arrival_notice_images" (

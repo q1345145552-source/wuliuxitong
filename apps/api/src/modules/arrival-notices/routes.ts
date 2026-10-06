@@ -242,14 +242,28 @@ async function lockNotice(tx: Tx, companyId: string, id: string): Promise<Notice
   return n;
 }
 
-/** 转出去的那张运单（锁住）；运单已经被删了返回 null */
+/**
+ * 转出去的那张运单（连它的订单一起锁住）；运单已经被删了返回 null。
+ *
+ * ⚠️ 锁序跟全系统一样「订单 → 运单」（删订单、改单、确认收货都是先锁订单再锁运单）。
+ * 第一版是「运单 → 订单」（先锁运单，同步时再去改订单），跟删订单正好反着，两人同时点会死锁
+ * （2026-10-06 dsh / Codex 审查都报了）。所以先不加锁读出它挂在哪张订单上，锁订单，再锁运单，最后重读核对。
+ * 订单用 FOR NO KEY UPDATE：不挡装柜插子单时对订单的外键检查（同 orders/routes.ts 确认收货那处）。
+ */
 async function lockLinkedShipment(tx: Tx, n: NoticeRow) {
   if (!n.convertedTo || !n.shipmentId) return null;
+  const peek = await tx.shipment.findFirst({ where: { id: n.shipmentId, companyId: n.companyId }, select: { orderId: true } });
+  if (!peek) return null;
+  await tx.$queryRaw`SELECT id FROM orders WHERE id = ${peek.orderId} AND company_id = ${n.companyId} FOR NO KEY UPDATE`;
   await tx.$queryRaw`SELECT id FROM shipments WHERE id = ${n.shipmentId} AND company_id = ${n.companyId} FOR UPDATE`;
-  return tx.shipment.findFirst({
+  const ship = await tx.shipment.findFirst({
     where: { id: n.shipmentId, companyId: n.companyId },
     select: { id: true, orderId: true, currentStatus: true, trackingNo: true },
   });
+  // 读订单号和上锁之间运单被删了：当作已删（下面按「没转」处理）
+  if (!ship) return null;
+  if (ship.orderId !== peek.orderId) throw new BusinessError("这张运单刚刚被别人改动过，请刷新后再试");
+  return ship;
 }
 
 /** 运单不在「待入库」了（比如轨迹被删、状态被改）：到货通知不能再往它身上写 */
@@ -309,7 +323,9 @@ async function copyImagesToOrder(tx: Tx, n: NoticeRow, orderId: string, uploaded
   for (const img of n.images) {
     if (mode === "uncopied" && img.orderImageId) continue;
     const b64 = readImageAsBase64(img.filePath);
-    if (!b64) continue; // 文件在盘上找不到了：跳过这一张，不挡转运单
+    /* 文件在盘上找不到了：整个转运单回滚、说清楚是哪张（Codex 审查：原来跳过这张照样转成功，
+       转完到货通知就只读了，运单永远缺这张图，谁也不知道） */
+    if (!b64) throw new BusinessError(`照片「${img.fileName}」的文件找不到了，请点「修改」把这张删掉重新传，再转`);
     const filePath = saveImageToDisk(orderId, img.mime, b64);
     created.push(filePath);
     const opiId = `opi_${Date.now()}_${crypto.randomBytes(4).toString("hex")}`;
@@ -338,9 +354,17 @@ function removeFiles(paths: string[]): void {
   }
 }
 
-/** 运单号撞了数据库唯一约束（两个人同时转、或者查重和写库之间被别人用掉）→ 说人话 */
+/**
+ * 运单号撞了数据库唯一约束 → 说人话。两种：
+ *   · 到货通知自己的（同公司同一个号只能登记一条）：两个人同时登记 / 改成同一个号；
+ *   · 运单的（shipments.tracking_no 全局唯一）：查重和写库之间被别人用掉。
+ */
 function translateUniqueClash(e: unknown): never {
   if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") {
+    const meta = (e.meta ?? {}) as { modelName?: string; target?: unknown };
+    if (meta.modelName === "ArrivalNotice" || String(meta.target ?? "").includes("company_id")) {
+      throw new BusinessError("这个运单号刚刚被另一条到货通知登记了，换一个号或核对一下");
+    }
     throw new BusinessError("这个运单号刚刚被用掉了，换一个号再转");
   }
   throw e;
@@ -393,11 +417,17 @@ async function loadDto(companyId: string, id: string, viewerRole: string) {
 /** 页签：待通知 / 已通知（还没转）/ 待入库 / 已转正式 / 全部 */
 const TABS = ["todo", "notified", "inbound", "formal", "all"] as const;
 type Tab = (typeof TABS)[number];
-function tabWhere(tab: Tab): Prisma.ArrivalNoticeWhereInput {
-  if (tab === "todo") return { convertedTo: null, notifiedAt: null };
-  if (tab === "notified") return { convertedTo: null, notifiedAt: { not: null } };
-  if (tab === "inbound") return { convertedTo: "inbound" };
-  if (tab === "formal") return { convertedTo: "formal" };
+/**
+ * 页签条件。gone = 转过、但那张运单已经在「运单管理」里被删了的那几条：按「没转」算，
+ * 跟每一行 toDto 的显示同一个口径（Codex 审查：原来页签按库里的 convertedTo 分，它们卡在「待入库 / 已转运单」里，
+ * 行上却显示「可以重新转」，两边说法打架）。
+ */
+function tabWhere(tab: Tab, gone: string[]): Prisma.ArrivalNoticeWhereInput {
+  const notConverted: Prisma.ArrivalNoticeWhereInput = { OR: [{ convertedTo: null }, { id: { in: gone } }] };
+  if (tab === "todo") return { AND: [notConverted, { notifiedAt: null }] };
+  if (tab === "notified") return { AND: [notConverted, { notifiedAt: { not: null } }] };
+  if (tab === "inbound") return { convertedTo: "inbound", id: { notIn: gone } };
+  if (tab === "formal") return { convertedTo: "formal", id: { notIn: gone } };
   return {};
 }
 
@@ -430,7 +460,13 @@ export function registerArrivalNoticeRoutes(app: MinimalHttpApp): void {
           ],
         }
       : {};
-    const where: Prisma.ArrivalNoticeWhereInput = { AND: [base, search, tabWhere(tab)] };
+    // 转过、但运单已经被删了的（通常一条都没有）：只读查一下，页签按「没转」算
+    const goneRows = await prisma.$queryRaw<Array<{ id: string }>>`
+      SELECT n.id FROM arrival_notices n
+      LEFT JOIN shipments s ON s.id = n.shipment_id
+      WHERE n.company_id = ${auth.companyId} AND n.converted_to IS NOT NULL AND n.shipment_id IS NOT NULL AND s.id IS NULL`;
+    const gone = goneRows.map((r) => r.id);
+    const where: Prisma.ArrivalNoticeWhereInput = { AND: [base, search, tabWhere(tab, gone)] };
     const [total, rows, ...counts] = await Promise.all([
       prisma.arrivalNotice.count({ where }),
       prisma.arrivalNotice.findMany({
@@ -440,7 +476,7 @@ export function registerArrivalNoticeRoutes(app: MinimalHttpApp): void {
         take: pageSize,
         include: { images: { orderBy: { createdAt: "asc" } } },
       }),
-      ...TABS.map((t) => prisma.arrivalNotice.count({ where: { AND: [base, search, tabWhere(t)] } })),
+      ...TABS.map((t) => prisma.arrivalNotice.count({ where: { AND: [base, search, tabWhere(t, gone)] } })),
     ]);
     const shipIds = rows.map((r) => r.shipmentId).filter((v): v is string => Boolean(v));
     const ships = shipIds.length
@@ -469,18 +505,22 @@ export function registerArrivalNoticeRoutes(app: MinimalHttpApp): void {
 
     if (!id) {
       // 新登记是纯插入一行：不用事务、也没有行可锁。运单号查重是「先提个醒」，
-      // 两个人同一瞬间登记同一个号挡不住 —— 真正兜底的是转运单那一步（锁住这一行 + shipments.tracking_no 唯一约束）
+      // 两个人同一瞬间登记同一个号，由表上的唯一约束（公司 + 运单号）兜底，撞了翻成中文
       const newId = `an_${Date.now()}_${crypto.randomBytes(4).toString("hex")}`;
       if (f.trackingNo) await assertTrackingNoFree(prisma, auth.companyId, f.trackingNo, null, null);
-      await prisma.arrivalNotice.create({
-        data: {
-          id: newId,
-          companyId: auth.companyId,
-          ...noticeData(f),
-          createdBy: auth.userId,
-          createdByName: auth.name || null,
-        },
-      });
+      try {
+        await prisma.arrivalNotice.create({
+          data: {
+            id: newId,
+            companyId: auth.companyId,
+            ...noticeData(f),
+            createdBy: auth.userId,
+            createdByName: auth.name || null,
+          },
+        });
+      } catch (e) {
+        translateUniqueClash(e);
+      }
       ok(res, { item: await loadDto(auth.companyId, newId, auth.role) });
       return;
     }
