@@ -454,6 +454,9 @@ function NoticeEditor(props: {
     } catch (e) {
       setError(e instanceof Error ? e.message : "没保存上");
       setSaving(false);
+      /* 没存上（比如被同事抢先改了）：列表马上刷一次，关掉重开「修改」拿到的才是最新的。
+         不刷的话，自动刷新没赶上（页面在后台时推送是断开的）列表还是旧的，重开还是旧的、再存又被挡，转圈出不去（10-06 实点发现） */
+      props.onChanged();
       return;
     }
     const todo = [...queuedRef.current];
