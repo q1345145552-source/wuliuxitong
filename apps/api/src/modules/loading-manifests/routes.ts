@@ -2,12 +2,12 @@ import { assertNotInLastmile, assertParentNotInLastmile, unloadItemFully } from 
 import { prisma } from "../../db/prisma";
 import { FCL_BLOCKED_MESSAGE } from "../core/fcl-scope";
 import { syncParentStatusFromChildren } from "../shipments/parent-status";
-import { metricByPieceShare, reconcileFamilyMetric } from "../shipments/split-metrics";
+import { holdsWholeOrder, metricByPieceShare, reconcileFamilyMetric } from "../shipments/split-metrics";
 import type { MinimalHttpApp } from "../../server";
 import { fail, ok, requireRole } from "../core/http-utils";
 import { BusinessError } from "../core/business-error";
 import { requirePositiveInt } from "../core/int-guard";
-import { loadOrderProductDims } from "../orders/routes";
+import { summarizeOrderProductDims } from "../orders/routes";
 import { productNamesLabel } from "../../../../../packages/shared-types/product-names";
 // 柜子状态流程只在 containers/status-flow.ts 定义一处，本文件不再自己抄
 import {
@@ -370,7 +370,8 @@ export function registerLoadingManifestRoutes(app: MinimalHttpApp): void {
    * 给尾端拆柜仓的整柜派送清单数据。
    *
    * 入口放在装柜管理，所以唯一主键就是 Container.id：不生成 WD，也不读取司机/车辆。
-   * 一票装柜记录输出一行，严格使用该柜实际装入的件数和方数，避免分柜子单被按原订单重复计算。
+   * 一票装柜记录给一条，严格使用该柜实际装入的件数和方数，避免分柜子单被按原订单重复计算；
+   * 整张订单都装在这一票里时带上产品行，Excel 里按产品一行一行列出（2026-10-07）。
    */
   app.get("/staff/loading-manifests/export-data", async (req, res) => {
     const auth = requireRole(req, res, ["staff", "admin"]);
@@ -397,13 +398,24 @@ export function registerLoadingManifestRoutes(app: MinimalHttpApp): void {
                 currentStatus: true,
                 order: {
                   select: {
-                    // 取订单 id 是为了查它的产品行长宽高（2026-08-27 加）
-                    id: true,
                     clientId: true,
                     itemName: true,
                     packageCount: true,
                     weightKg: true,
                     volumeM3: true,
+                    // 产品行：长宽高、品名拼进合并行；整票都在这柜时按产品一行一行展开（2026-10-07）
+                    products: {
+                      orderBy: { sortOrder: "asc" },
+                      select: {
+                        itemName: true,
+                        packageCount: true,
+                        lengthCm: true,
+                        widthCm: true,
+                        heightCm: true,
+                        weightKg: true,
+                        sortOrder: true,
+                      },
+                    },
                     receiverNameTh: true,
                     receiverPhoneTh: true,
                     receiverAddressTh: true,
@@ -436,16 +448,6 @@ export function registerLoadingManifestRoutes(app: MinimalHttpApp): void {
     if (!container) { fail(res, 404, "NOT_FOUND", "装柜任务不存在"); return; }
     if (container.items.length === 0) { fail(res, 400, "VALIDATION_ERROR", "空柜没有可导出的货物"); return; }
 
-    /**
-     * 先把柜里这些货所属订单的长宽高一次性查出来（2026-08-27 加）。
-     * 长宽高记在「产品行」上，运单本身没有；导出要用，所以这里批量取，
-     * 不在循环里一条条查（那样有多少票货就查多少次）。
-     */
-    const dimsByOrderId = await loadOrderProductDims(
-      auth.companyId,
-      container.items.map((it) => it.shipment.order?.id).filter((v): v is string => Boolean(v)),
-    );
-
     const customerMap = new Map<string, {
       clientId: string;
       contactName: string;
@@ -458,6 +460,9 @@ export function registerLoadingManifestRoutes(app: MinimalHttpApp): void {
     for (const item of container.items) {
       const shipment = item.shipment;
       const order = shipment.order;
+      const products = order?.products ?? [];
+      // 长宽高记在「产品行」上，运单本身没有（2026-08-27）；产品行随柜子一起查回来了，这里直接拼
+      const productDims = summarizeOrderProductDims(products);
       const clientId = order?.clientId ?? "未关联客户";
       const defaultAddress = order?.client?.addresses?.[0];
       let customer = customerMap.get(clientId);
@@ -521,13 +526,19 @@ export function registerLoadingManifestRoutes(app: MinimalHttpApp): void {
           shipmentPackageCount,
           2,
         ) ?? orderShareWeight);
+      const wholeOrder = holdsWholeOrder(
+        shipment.trackingNo,
+        item.loadedPieceCount,
+        order?.shipments ?? [],
+        products,
+      );
       customer.shipments.push({
         lastmileOrderId: item.id,
         trackingNo: shipment.trackingNo,
         parentTrackingNo: shipment.parentTrackingNo ?? "",
-        // 清单一行一票、products 故意不展开（见下），所以品名这一格必须把全部产品名带上；
+        // 不展开产品行时清单一行一票（见下面 products），所以品名这一格必须把全部产品名带上；
         // 运单的 itemName 只存了第一个产品名（2026-09-10，老板反馈「品类不全」）
-        itemName: (order?.id ? dimsByOrderId.get(order.id)?.names : undefined) || shipment.itemName || order?.itemName || "",
+        itemName: productDims?.names || shipment.itemName || order?.itemName || "",
         packageCount: item.loadedPieceCount,
         packageUnit: shipment.packageUnit || "",
         // ⚠️ 同 admin-ops：没填就是没填，不要变成 0（2026-08-26 修）
@@ -535,17 +546,32 @@ export function registerLoadingManifestRoutes(app: MinimalHttpApp): void {
         volumeM3: Number(item.loadedVolumeM3),
         // 长宽高（2026-08-27 加）：来自订单的产品行；
         // 同一票有多个不同尺寸时是 "60/50" 这样的字符串，没填就是 null
-        lengthCm: (order?.id ? dimsByOrderId.get(order.id)?.lengthCm : undefined) ?? null,
-        widthCm: (order?.id ? dimsByOrderId.get(order.id)?.widthCm : undefined) ?? null,
-        heightCm: (order?.id ? dimsByOrderId.get(order.id)?.heightCm : undefined) ?? null,
+        lengthCm: productDims?.lengthCm ?? null,
+        widthCm: productDims?.widthCm ?? null,
+        heightCm: productDims?.heightCm ?? null,
         remark: shipment.remark || "",
         status: shipment.currentStatus,
         containerNos: [container.containerNo],
         receiverName,
         receiverPhone,
         receiverAddress,
-        // 柜内通常是分柜后的子运单，产品行属于原订单，直接展开会把件数重复算回整票。
-        products: [],
+        /**
+         * 按产品展开（2026-10-07，老板：「导出没有分详细」）。
+         * 柜里都是分柜子单，产品行挂在原订单上：货拆到了几个柜时展开，每个柜都会印出整张订单的件数，
+         * 所以只在「整张订单的货全在这一票」时展开（判断见 holdsWholeOrder），否则照旧一票一行。
+         * 方数、重量仍是上面算好的本柜实际装入数，由前端按产品分摊、合计不变（见 productLinesKeepTotals）。
+         */
+        products: wholeOrder
+          ? products.map((product) => ({
+            itemName: product.itemName,
+            packageCount: product.packageCount,
+            lengthCm: product.lengthCm,
+            widthCm: product.widthCm,
+            heightCm: product.heightCm,
+            weightKg: product.weightKg,
+          }))
+          : [],
+        productLinesKeepTotals: wholeOrder,
       });
     }
 

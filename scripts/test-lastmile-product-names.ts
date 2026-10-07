@@ -6,7 +6,11 @@
  * 下游把它当整票品名用的地方，这里**真调路由**（Prisma 换成内存桩）逐个盯：
  *   ① 尾端派送卡片      GET /admin/lastmile/orders
  *   ② 客户签收单导出    GET /admin/lastmile/customer-export-data（分柜单不展开产品行那条路）
- *   ③ 整柜拆柜派送清单  GET /staff/loading-manifests/export-data（products 故意为空）
+ *   ③ 整柜拆柜派送清单  GET /staff/loading-manifests/export-data（货拆在几个柜时不展开产品行）
+ *
+ * 2026-10-07 起（老板：整柜派送清单「没有分详细」）②③ 两个导出在「整张订单的货全在这一票」时
+ * 也按产品展开 —— 现在整票装柜也会切出 -1 子单，原来一律不展开，等于所有装过柜的货都被压成一行。
+ * 第 3c、4、4a、4c 项盯这条：整票的展开、拆开的不展开、合计数不变。
  *   ④ 可派送运单候选    真前端 fetchLastmileShipments → 真 GET /staff/shipments?all=1（翻两页）
  *   ⑤ 卡片上的「物流轨迹」子单页签  GET /client/shipments/track 的 children[]（Codex 2026-09-10 复核 P1）
  *
@@ -145,6 +149,18 @@ const childShipment = {
     shipments: [
       { trackingNo: "YW0001", parentTrackingNo: null, packageCount: 4, weightKg: 8, volumeM3: 0.288 },
       { trackingNo: "YW0001-1", parentTrackingNo: "YW0001", packageCount: 2, weightKg: 4, volumeM3: 0.144 },
+    ],
+  },
+};
+/** 整票装柜：现在装柜一律切子单，整票装也会切出 -1，父单剩 0 件（2026-10-07） */
+const wholeChild = {
+  ...wholeShipment,
+  id: "s1w", trackingNo: "YW0001-1", parentTrackingNo: "YW0001",
+  order: {
+    ...orderBase,
+    shipments: [
+      { trackingNo: "YW0001", parentTrackingNo: null, packageCount: 0, weightKg: 0, volumeM3: 0 },
+      { trackingNo: "YW0001-1", parentTrackingNo: "YW0001", packageCount: 6, weightKg: 12, volumeM3: 0.432 },
     ],
   },
 };
@@ -341,27 +357,81 @@ async function main(): Promise<void> {
     assert.equal(lines.reduce((s, l) => s + l.packageCount, 0), 6, "展开后件数合计仍是整票 6");
   });
 
-  await check("4) 整柜拆柜派送清单（GET /staff/loading-manifests/export-data）：一票一行，品名三个全拼，数字不动", async () => {
+  await check("3c) 客户签收单（整票装柜切出的 -1 子单，父单剩 0 件）：照样按产品展开，合计还是子单自己的", async () => {
+    lastmileRows = [{
+      id: "lm5", carrierName: "自营", driverName: "", licensePlate: "", phoneNumber: "",
+      deliveryDate: "", status: "DELIVERING", shipment: wholeChild,
+    }];
+    const r = await call("GET /admin/lastmile/customer-export-data", { deliveryNo: "WD000005", clientId: "MARK1" });
+    assert.equal(r.status, 200, `应该 200，实际 ${r.status}：${JSON.stringify(r.data).slice(0, 200)}`);
+    const shipment = r.data.customers[0].shipments[0];
+    assert.equal(shipment.products.length, 4, "整张订单都在这张子单里，要展开");
+    assert.equal(shipment.productLinesKeepTotals, true, "分柜单展开要带标记，方数/重量按本票合计分摊");
+    const lines = exporter.expandTemplateLines(r.data);
+    assert.deepEqual(lines.map((l) => l.itemName), ["鞋", "包", "帽", "鞋"]);
+    assert.equal(lines.reduce((s, l) => s + l.packageCount, 0), 6);
+    assert.equal(Math.round(lines.reduce((s, l) => s + (l.volumeM3 ?? 0), 0) * 1000) / 1000, 0.432, "方数合计变了");
+    assert.equal(lines.reduce((s, l) => s + (l.weightKg ?? 0), 0), 12, "重量合计变了");
+  });
+
+  await check("4) 整柜拆柜派送清单：整票装柜（-1 子单、父单 0 件）按产品一行一行展开，件数/方数/重量合计不变", async () => {
     containerRow = {
       id: "ct1", containerNo: "CT-2026-001", containerType: "40HQ", warehouseId: "wh_yiwu_01", transportMode: "sea",
       carrierName: "班次A", currentStatus: "loaded",
-      items: [{ id: "ci1", loadedPieceCount: 6, loadedVolumeM3: 0.432, createdAt: new Date(0), shipment: wholeShipment }],
+      items: [{ id: "ci1", loadedPieceCount: 6, loadedVolumeM3: 0.432, createdAt: new Date(0), shipment: wholeChild }],
     };
     const r = await call("GET /staff/loading-manifests/export-data", { id: "ct1" });
     assert.equal(r.status, 200, `应该 200，实际 ${r.status}：${JSON.stringify(r.data).slice(0, 200)}`);
     const shipment = r.data.customers[0].shipments[0];
-    assert.deepEqual(shipment.products, [], "整柜清单本来就不展开产品行");
+    assert.equal(shipment.products.length, 4, "整张订单都在这一票，要带产品行");
+    assert.equal(shipment.productLinesKeepTotals, true);
+    // 合并行那几个字段照旧给（品名全拼、60/50 并排），件数 / 方数 / 重量是本柜实际装入的
     assert.equal(shipment.itemName, EXPECTED, `清单品名不对：${shipment.itemName}`);
-    // 长宽高那条老逻辑没被带坏：60 和 50 两种长度并排；件数 / 方数 / 重量是本柜实际装入的
     assert.equal(shipment.lengthCm, "60/50");
     assert.equal(shipment.widthCm, 40);
     assert.equal(shipment.packageCount, 6);
     assert.equal(shipment.volumeM3, 0.432);
     assert.equal(shipment.weightKg, 12);
     const lines = exporter.expandTemplateLines(r.data);
+    assert.deepEqual(lines.map((l) => l.itemName), ["鞋", "包", "帽", "鞋"]);
+    assert.deepEqual(lines.map((l) => l.packageCount), [2, 2, 1, 1]);
+    assert.deepEqual(lines.map((l) => l.lengthCm), [60, 60, 60, 50], "每行是产品自己的长，不再是「60/50」");
+    // 按「件数×长×宽×高」占比分 0.432：144000 : 144000 : 72000 : 60000
+    assert.deepEqual(lines.map((l) => l.volumeM3), [0.148, 0.148, 0.074, 0.062]);
+    assert.deepEqual(lines.map((l) => l.weightKg), [4, 4, 2, 2]);
+  });
+
+  await check("4a) 整柜清单：货拆在两个柜（这柜 2 件、父单还剩 4 件）→ 不展开，一行，数字是这柜自己的", async () => {
+    containerRow = {
+      id: "ct3", containerNo: "CT-2026-003", containerType: "40HQ", warehouseId: "wh_yiwu_01", transportMode: "sea",
+      carrierName: "", currentStatus: "loaded",
+      items: [{ id: "ci3", loadedPieceCount: 2, loadedVolumeM3: 0.144, createdAt: new Date(0), shipment: childShipment }],
+    };
+    const r = await call("GET /staff/loading-manifests/export-data", { id: "ct3" });
+    assert.equal(r.status, 200);
+    const shipment = r.data.customers[0].shipments[0];
+    assert.deepEqual(shipment.products, [], "拆在两个柜的不许展开（会把整张订单 6 件印进这个只装了 2 件的柜）");
+    assert.equal(shipment.productLinesKeepTotals, false);
+    const lines = exporter.expandTemplateLines(r.data);
     assert.equal(lines.length, 1);
     assert.equal(lines[0].itemName, EXPECTED);
-    assert.equal(lines[0].packageCount, 6, "件数还是本柜实际装入的 6");
+    assert.equal(lines[0].packageCount, 2);
+    assert.equal(lines[0].volumeM3, 0.144);
+  });
+
+  await check("4c) 判断「整张订单都在这一票」的边界：别处件数没填 / 产品行件数对不上 / 没产品行，一律不展开", async () => {
+    const { holdsWholeOrder } = await import("../apps/api/src/modules/shipments/split-metrics");
+    const family = [
+      { trackingNo: "P", packageCount: 0 },
+      { trackingNo: "P-1", packageCount: 6 },
+    ];
+    assert.equal(holdsWholeOrder("P-1", 6, family, PRODUCTS), true);
+    assert.equal(holdsWholeOrder("P-1", 6, [{ trackingNo: "P", packageCount: null }, family[1]], PRODUCTS), false, "父单件数没填 = 不知道货在不在别处");
+    assert.equal(holdsWholeOrder("P-1", 6, [...family, { trackingNo: "P-2", packageCount: 1 }], PRODUCTS), false, "别的子单还有货");
+    assert.equal(holdsWholeOrder("P-1", 5, family, PRODUCTS), false, "装柜件数 ≠ 产品行合计");
+    assert.equal(holdsWholeOrder("P-1", 6, family, []), false, "没产品行没得展开");
+    assert.equal(holdsWholeOrder("P-1", 0, family, []), false);
+    assert.equal(holdsWholeOrder("P-1", null, family, PRODUCTS), false);
   });
 
   await check("4b) 整柜清单里没有产品行的老运单：品名退回运单自己的，长宽高照旧留空", async () => {

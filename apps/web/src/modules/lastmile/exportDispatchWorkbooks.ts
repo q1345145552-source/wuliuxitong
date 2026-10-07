@@ -14,9 +14,11 @@ export type LastmileExportShipment = {
   volumeM3: number | null;
   /**
    * 这一票货的长/宽/高（2026-08-27 加）。
-   * 装柜导出返回的 products 一直是空数组（柜里放的是分柜后的子运单，
+   * 装柜导出原来 products 一直是空数组（柜里放的是分柜后的子运单，
    * 产品行属于原订单，展开会把件数重复算回整票），
    * 结果就是清单上那三列**从来没填过东西**。现在后端在运单这一层直接给尺寸。
+   * （2026-10-07 起整张订单都在这一票时会带产品行、按产品展开，见 productLinesKeepTotals；
+   *  货拆在几个柜时仍是空数组，走这里的运单级尺寸。）
    * 一票货有多个不同尺寸时后端会给 "60/50" 这样的字符串，那种情况留空（打印表格的格子放不下）。
    */
   lengthCm?: number | string | null;
@@ -36,6 +38,13 @@ export type LastmileExportShipment = {
     heightCm: number | null;
     weightKg: number | null;
   }>;
+  /**
+   * true = 这是分柜后的单，因为整张订单的货都在这一票里才展开了产品行（2026-10-07 加）。
+   * 这时每行的方数/重量**不按产品行自己重算**，而是把本票的 volumeM3 / weightKg 按产品分摊 ——
+   * 展开前印的是哪个合计，展开后加起来还是哪个（整柜清单上那是实际装柜体积，CLAUDE.md 第 33 条）。
+   * 不传 / false：照旧（没分过柜的整票按产品行自己算）。
+   */
+  productLinesKeepTotals?: boolean;
 };
 
 export type LastmileExportCustomer = {
@@ -480,6 +489,34 @@ function round(value: number, digits: number): number {
   return Math.round((value + Number.EPSILON) * factor) / factor;
 }
 
+/**
+ * 把一票的合计按占比分给它的各个产品行（2026-10-07 加，给 productLinesKeepTotals 用）。
+ *
+ * 累计取整：各行加起来**严格等于**合计，不会因为每行各自四舍五入多出或少掉 0.001。
+ * preferred 是首选占比（方数用「件数×长×宽×高」、重量用「件数×单件重」），
+ * 有一行缺了（null / 不大于 0）就整票退回按件数分 —— 两种口径混着用会把占比算歪。
+ * 件数为 0 的行本来就分不到东西，不拿它去否决整票。
+ */
+function allocateTotal(total: number, preferred: Array<number | null>, pieces: number[], digits: number): number[] {
+  const usable = (value: number | null): value is number => value != null && Number.isFinite(value) && value > 0;
+  const preferredOk = preferred.every((value, index) => pieces[index] <= 0 || usable(value));
+  const shares = preferred.map((value, index) => (pieces[index] <= 0 ? 0 : (preferredOk ? Number(value) : pieces[index])));
+  const shareSum = shares.reduce((sum, share) => sum + share, 0);
+  const factor = 10 ** digits;
+  const totalUnits = Math.round(total * factor);
+  let cumulative = 0;
+  let allocated = 0;
+  return shares.map((share, index) => {
+    cumulative += share;
+    const target = shareSum > 0
+      ? Math.round((totalUnits * cumulative) / shareSum)
+      : (index === shares.length - 1 ? totalUnits : 0);
+    const units = target - allocated;
+    allocated = target;
+    return units / factor;
+  });
+}
+
 /** 导出给自测脚本用（scripts/test-lastmile-export.ts）—— 这一层是纯计算，不碰网络不碰 DOM */
 export function expandTemplateLines(data: LastmileExportData): TemplateLine[] {
   const lines: TemplateLine[] = [];
@@ -515,7 +552,34 @@ export function expandTemplateLines(data: LastmileExportData): TemplateLine[] {
         weightKg: null,
       }];
       const packageTotal = products.reduce((sum, product) => sum + Number(product.packageCount || 0), 0) || 1;
-      products.forEach((product) => {
+      /**
+       * 分柜单展开的产品行（productLinesKeepTotals）：方数/重量**只分摊、不重算**（2026-10-07）。
+       * 本票合计是后端算好的（整柜清单上是实际装柜体积），展开成几行后加起来必须还是它，
+       * 否则同一票货在清单上和系统里是两个数。方数保留 3 位、重量 2 位，跟数据库存的位数一致。
+       */
+      const keepTotals = !usingFallback && shipment.productLinesKeepTotals === true;
+      const pieces = products.map((product) => Number(product.packageCount || 0));
+      const keptVolumes = keepTotals && shipment.volumeM3 != null
+        ? allocateTotal(
+          Number(shipment.volumeM3),
+          products.map((product, index) => (
+            typeof product.lengthCm === "number" && typeof product.widthCm === "number" && typeof product.heightCm === "number"
+              ? pieces[index] * product.lengthCm * product.widthCm * product.heightCm
+              : null
+          )),
+          pieces,
+          3,
+        )
+        : null;
+      const keptWeights = keepTotals && shipment.weightKg != null
+        ? allocateTotal(
+          Number(shipment.weightKg),
+          products.map((product, index) => (product.weightKg == null ? null : pieces[index] * Number(product.weightKg))),
+          pieces,
+          2,
+        )
+        : null;
+      products.forEach((product, index) => {
         const share = Number(product.packageCount || 0) / packageTotal;
         // ⚠️ shipment.volumeM3 可能是 null（这票货没填）。`null * share` 在 JS 里等于 0，
         // 直接算就会把「没填」变成「0 方」，所以必须先判空。重量同理。
@@ -524,12 +588,16 @@ export function expandTemplateLines(data: LastmileExportData): TemplateLine[] {
           typeof product.lengthCm === "number" &&
           typeof product.widthCm === "number" &&
           typeof product.heightCm === "number";
-        const volume = !usingFallback && dimsAreNumbers && product.lengthCm && product.widthCm && product.heightCm
-          ? Number(product.packageCount || 0) * Number(product.lengthCm) * Number(product.widthCm) * Number(product.heightCm) / 1_000_000
-          : (shipment.volumeM3 == null ? null : Number(shipment.volumeM3) * share);
-        const weight = product.weightKg == null
-          ? (shipment.weightKg == null ? null : Number(shipment.weightKg) * share)
-          : Number(product.weightKg) * Number(product.packageCount || 0);
+        const volume = keepTotals
+          ? (keptVolumes ? keptVolumes[index] : null)
+          : (!usingFallback && dimsAreNumbers && product.lengthCm && product.widthCm && product.heightCm
+            ? Number(product.packageCount || 0) * Number(product.lengthCm) * Number(product.widthCm) * Number(product.heightCm) / 1_000_000
+            : (shipment.volumeM3 == null ? null : Number(shipment.volumeM3) * share));
+        const weight = keepTotals
+          ? (keptWeights ? keptWeights[index] : null)
+          : (product.weightKg == null
+            ? (shipment.weightKg == null ? null : Number(shipment.weightKg) * share)
+            : Number(product.weightKg) * Number(product.packageCount || 0));
         const receiverName = shipment.receiverName || customer.contactName;
         const phone = shipment.receiverPhone || customer.contactPhone;
         const address = shipment.receiverAddress || customer.address;

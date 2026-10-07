@@ -4,7 +4,7 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "../../db/prisma";
 import { syncParentStatusFromChildren } from "../shipments/parent-status";
 import { whrBucket, taskBucket, isDead } from "../finance/money-rules";
-import { metricByPieceShare, reconcileFamilyMetric } from "../shipments/split-metrics";
+import { holdsWholeOrder, metricByPieceShare, reconcileFamilyMetric } from "../shipments/split-metrics";
 import type { MinimalHttpApp } from "../../server";
 import { fail, ok, requireRole } from "../core/http-utils";
 import { sanitizeRemarkForClient } from "../core/client-privacy";
@@ -471,12 +471,21 @@ export function registerAdminOpsRoutes(app: MinimalHttpApp): void {
         : (shipment.volumeM3 == null
           ? metricByPieceShare(order?.volumeM3, packageCount, order?.packageCount, 3)
           : decToNumber(shipment.volumeM3)));
+      /**
+       * 产品行展不展开：
+       *   · 没分过柜的整票 → 展开（一直如此）；
+       *   · 分柜的子单 / 父单 → 原来一律不展开（货拆在几处时会把整张订单的件数重复印出来）。
+       *     但现在装柜一律切子单，整票装柜的货也成了子单，于是全被压成一行（2026-10-07，老板：「导出没有分详细」）。
+       *     整张订单的货全在这一票时照样展开（判断见 holdsWholeOrder），合计数用本票自己的，前端按产品分摊。
+       */
+      const unsplit = !shipment.parentTrackingNo && !isSplitParent;
+      const splitButWhole = !unsplit
+        && holdsWholeOrder(shipment.trackingNo, packageCount, order?.shipments ?? [], order?.products ?? []);
       return {
         lastmileOrderId: row.id,
         trackingNo: shipment.trackingNo,
         parentTrackingNo: shipment.parentTrackingNo ?? "",
-        // 分柜的子单 / 父单下面 products 故意不展开（会把件数重复算回整票），
-        // 那种情况整票只有一行，品名必须把全部产品名带上，不能只印第一个（2026-09-10）
+        // 不展开产品行时整票只有一行，品名必须把全部产品名带上，不能只印第一个（2026-09-10）
         itemName: productNamesLabel(order?.products, shipment.itemName || order?.itemName || ""),
         packageCount,
         packageUnit: shipment.packageUnit || order?.packageUnit || "",
@@ -494,7 +503,7 @@ export function registerAdminOpsRoutes(app: MinimalHttpApp): void {
         receiverName: order?.receiverNameTh?.trim() || contactName,
         receiverPhone: order?.receiverPhoneTh?.trim() || contactPhone,
         receiverAddress: order?.receiverAddressTh?.trim() || address,
-        products: (shipment.parentTrackingNo || isSplitParent ? [] : (order?.products ?? [])).map((product) => ({
+        products: (unsplit || splitButWhole ? (order?.products ?? []) : []).map((product) => ({
           itemName: product.itemName,
           packageCount: product.packageCount,
           lengthCm: product.lengthCm,
@@ -502,6 +511,8 @@ export function registerAdminOpsRoutes(app: MinimalHttpApp): void {
           heightCm: product.heightCm,
           weightKg: product.weightKg,
         })),
+        // 新展开的分柜单：方数/重量用本票合计按产品分摊，跟不展开时印的合计一模一样（没分过柜的照旧按产品行自己算）
+        productLinesKeepTotals: splitButWhole,
       };
     });
     const first = selectedRows[0];

@@ -194,3 +194,28 @@ export function reconcileFamilyMetric(
   }
   return result;
 }
+
+/**
+ * 这一票是不是装着「整张订单的全部货」（2026-10-07，老板：整柜派送清单「没有分详细」）。
+ *
+ * 产品行挂在订单上，不挂在运单上。现在装柜一律切子单（整票装也会切出 -1），
+ * 所以以前两种导出看到子单就不展开产品行 —— 怕货拆到两个柜时，
+ * 每个柜都把整张订单的产品件数印一遍。结果整票装柜的货也全被压成一行。
+ *
+ * 判断「可以放心展开」要三条同时成立：
+ *   ① 订单有产品行；
+ *   ② 产品行件数合计 = 这一票要印的件数（装柜件数 / 派送件数）；
+ *   ③ 订单下其它运单（父单、别的子单）件数都是 0 —— 货没有留在别处。
+ * 件数没填（null）的一律当「不知道」，不展开，宁可照旧合并成一行。
+ */
+export function holdsWholeOrder(
+  trackingNo: string,
+  pieceCount: number | null | undefined,
+  orderShipments: ReadonlyArray<{ trackingNo: string; packageCount: number | null }>,
+  products: ReadonlyArray<{ packageCount: number }>,
+): boolean {
+  if (products.length === 0 || !Number.isInteger(pieceCount) || Number(pieceCount) <= 0) return false;
+  const productPieces = products.reduce((sum, product) => sum + Number(product.packageCount || 0), 0);
+  if (productPieces !== pieceCount) return false;
+  return orderShipments.every((part) => part.trackingNo === trackingNo || part.packageCount === 0);
+}

@@ -2108,13 +2108,6 @@ export async function loadOrderProductDims(
     orderBy: { sortOrder: "asc" },
   });
 
-  const pick = (vals: Array<number | null>): number | string | undefined => {
-    const nums = vals.filter((v): v is number => v != null);
-    if (nums.length === 0) return undefined;
-    const uniq = Array.from(new Set(nums));
-    return uniq.length === 1 ? uniq[0] : uniq.join("/");
-  };
-
   const grouped = new Map<string, typeof rows>();
   for (const r of rows) {
     const arr = grouped.get(r.orderId) ?? [];
@@ -2122,16 +2115,40 @@ export async function loadOrderProductDims(
     grouped.set(r.orderId, arr);
   }
   for (const [orderId, list] of grouped) {
-    const entry: OrderProductDims = {};
-    const l = pick(list.map((x) => (x.lengthCm == null ? null : Number(x.lengthCm))));
-    const w = pick(list.map((x) => (x.widthCm == null ? null : Number(x.widthCm))));
-    const h = pick(list.map((x) => (x.heightCm == null ? null : Number(x.heightCm))));
-    if (l !== undefined) entry.lengthCm = l;
-    if (w !== undefined) entry.widthCm = w;
-    if (h !== undefined) entry.heightCm = h;
-    const names = productNamesLabel(list);
-    if (names) entry.names = names;
-    if (Object.keys(entry).length > 0) out.set(orderId, entry);
+    const entry = summarizeOrderProductDims(list);
+    if (entry) out.set(orderId, entry);
   }
   return out;
+}
+
+/**
+ * 一张订单的产品行 → 拼好的长/宽/高/品名（loadOrderProductDims 的计算部分，2026-10-07 拆出来）。
+ * 整柜清单自己已经把产品行查回来了（要按产品展开），直接用这个算，不用再查一遍。
+ * 全空返回 undefined。
+ */
+export function summarizeOrderProductDims(
+  list: ReadonlyArray<{
+    lengthCm: number | null;
+    widthCm: number | null;
+    heightCm: number | null;
+    itemName: string;
+    sortOrder: number;
+  }>,
+): OrderProductDims | undefined {
+  const pick = (vals: Array<number | null>): number | string | undefined => {
+    const nums = vals.filter((v): v is number => v != null);
+    if (nums.length === 0) return undefined;
+    const uniq = Array.from(new Set(nums));
+    return uniq.length === 1 ? uniq[0] : uniq.join("/");
+  };
+  const entry: OrderProductDims = {};
+  const l = pick(list.map((x) => (x.lengthCm == null ? null : Number(x.lengthCm))));
+  const w = pick(list.map((x) => (x.widthCm == null ? null : Number(x.widthCm))));
+  const h = pick(list.map((x) => (x.heightCm == null ? null : Number(x.heightCm))));
+  if (l !== undefined) entry.lengthCm = l;
+  if (w !== undefined) entry.widthCm = w;
+  if (h !== undefined) entry.heightCm = h;
+  const names = productNamesLabel(list);
+  if (names) entry.names = names;
+  return Object.keys(entry).length > 0 ? entry : undefined;
 }

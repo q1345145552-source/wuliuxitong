@@ -7,6 +7,7 @@
  * 根因链条（三环，缺一环这三列就是空的）：
  *   ① 后端 loading-manifests/routes.ts:397 给每票货的 products 恒定是空数组
  *      （柜内多是分柜子单，展开产品行会把件数重复算回整票）；
+ *      —— 2026-10-07 起整张订单都在一票时会带产品行按产品展开，见第 20~24 项；
  *   ② 于是前端只能用**运单级**的长宽高，而后端把一票货里的多个尺寸合并成
  *      「60/50」这种字符串（orders/routes.ts:1657）；
  *   ③ 前端原来「只认数字」，字符串一律丢成 null → 三格空白。
@@ -37,7 +38,7 @@ function check(name: string, body: () => void): void {
   }
 }
 
-/** 造一份跟后端 /loading-manifests 返回结构一致的数据（products 恒为空，跟真实一致） */
+/** 造一份跟后端 /loading-manifests 返回结构一致的数据（products 为空 = 货拆在几个柜、不展开产品行的那种） */
 function buildData(dims: {
   lengthCm: number | string | null;
   widthCm: number | string | null;
@@ -77,7 +78,7 @@ function buildData(dims: {
             receiverName: "李四",
             receiverPhone: "0811111111",
             receiverAddress: "曼谷某路 2 号",
-            // ⚠️ 后端就是恒定空数组，测试必须照着真实情况来，不能自己填一份产品行
+            // 不展开产品行时后端给的就是空数组（整张订单的货全在这一票时才会带产品行，见第 20 项起）
             products: [],
           },
         ],
@@ -192,6 +193,77 @@ function sharedText(shared: string, index: number): string {
   return items[index] ?? "";
 }
 
+
+// ══════════════════════════════════════════════════════════════════════
+// 第 20~24 项：按产品展开（2026-10-07，老板：整柜派送清单「没有分详细」）
+//   分柜子单只要「整张订单的货全在这一票」，后端就带上产品行 + productLinesKeepTotals，
+//   Excel 里一个产品一行。方数/重量只分摊、不重算 —— 加起来必须还是本票的合计。
+//   数字取自 TRHU4325852 柜的 YW0001585：镀膜剂 50 箱 + 喷头 4 箱，2.334 方、1140 kg。
+// ══════════════════════════════════════════════════════════════════════
+
+function buildSplitWholeData(
+  over: Record<string, unknown> = {},
+  products?: Array<Record<string, unknown>>,
+): LastmileExportData {
+  const data = buildData({ lengthCm: "51.5/56.5", widthCm: "34/43", heightCm: "22.5/37.5" }) as any;
+  Object.assign(data.customers[0].shipments[0], {
+    trackingNo: "YW0001585-1",
+    parentTrackingNo: "YW0001585",
+    itemName: "镀膜剂 / 喷头",
+    packageCount: 54,
+    volumeM3: 2.334,
+    weightKg: 1140,
+    products: products ?? [
+      { itemName: "镀膜剂", packageCount: 50, lengthCm: 51.5, widthCm: 34, heightCm: 22.5, weightKg: 22 },
+      { itemName: "喷头", packageCount: 4, lengthCm: 56.5, widthCm: 43, heightCm: 37.5, weightKg: 10 },
+    ],
+    productLinesKeepTotals: true,
+    ...over,
+  });
+  return data as LastmileExportData;
+}
+/** 按 3 位小数比合计（方数在库里就是 3 位），避免 0.1+0.2 这种浮点尾巴 */
+const total3 = (values: Array<number | null>): number => Math.round(values.reduce<number>((sum, v) => sum + (v ?? 0), 0) * 1000) / 1000;
+
+check("20) 整票在一柜的分柜单：一个产品一行，件数/长宽高是产品自己的，方数/重量合计一分不差", () => {
+  const lines = expandTemplateLines(buildSplitWholeData());
+  assert.deepEqual(lines.map((l) => l.itemName), ["镀膜剂", "喷头"]);
+  assert.deepEqual(lines.map((l) => l.packageCount), [50, 4]);
+  assert.deepEqual(lines.map((l) => [l.lengthCm, l.widthCm, l.heightCm]), [[51.5, 34, 22.5], [56.5, 43, 37.5]], "长宽高要按产品配好对，不能再是「51.5/56.5」");
+  assert.deepEqual(lines.map((l) => l.trackingNo), ["YW0001585-1", "YW0001585-1"]);
+  // 方数按各产品「件数×长×宽×高」占比分：镀膜剂 1.969875、喷头 0.364425 → 分 2.334
+  assert.deepEqual(lines.map((l) => l.volumeM3), [1.97, 0.364]);
+  assert.equal(total3(lines.map((l) => l.volumeM3)), 2.334, "方数合计变了（应是本票的实际装柜体积）");
+  // 重量按「件数×单件重」占比分：1100 : 40
+  assert.deepEqual(lines.map((l) => l.weightKg), [1100, 40]);
+  assert.equal(total3(lines.map((l) => l.weightKg)), 1140, "重量合计变了");
+});
+
+check("21) 有产品缺尺寸 / 缺单件重：整票退回按件数分，合计照样不差（除不尽的也不多不少）", () => {
+  const lines = expandTemplateLines(buildSplitWholeData({ packageCount: 10, volumeM3: 1.001, weightKg: 10 }, [
+    { itemName: "A", packageCount: 3, lengthCm: 40, widthCm: 30, heightCm: 20, weightKg: 1 },
+    { itemName: "B", packageCount: 3, lengthCm: null, widthCm: 30, heightCm: 20, weightKg: null },
+    { itemName: "C", packageCount: 4, lengthCm: 40, widthCm: 30, heightCm: 20, weightKg: 1 },
+  ]));
+  // 按件数 3:3:4 分 1.001 → 0.3 / 0.301 / 0.4（累计取整，最后一行不吃全部零头）
+  assert.deepEqual(lines.map((l) => l.volumeM3), [0.3, 0.301, 0.4]);
+  assert.equal(total3(lines.map((l) => l.volumeM3)), 1.001);
+  assert.deepEqual(lines.map((l) => l.weightKg), [3, 3, 4]);
+  assert.equal(lines[1].lengthCm, null, "没填的长就是空，不编");
+});
+
+check("22) 本票方数/重量本来就没填：展开后每行也留空，不许印成 0", () => {
+  const lines = expandTemplateLines(buildSplitWholeData({ volumeM3: null, weightKg: null }));
+  assert.equal(lines.length, 2);
+  assert.deepEqual(lines.map((l) => l.volumeM3), [null, null]);
+  assert.deepEqual(lines.map((l) => l.weightKg), [null, null]);
+});
+
+check("23) 不带标记的产品行（没分过柜的整票）照旧按产品行自己算 —— 老路不许被改", () => {
+  const lines = expandTemplateLines(buildSplitWholeData({ productLinesKeepTotals: undefined }));
+  assert.deepEqual(lines.map((l) => l.volumeM3), [1.969875, 0.364425], "老路的方数是按尺寸重算的");
+  assert.deepEqual(lines.map((l) => l.weightKg), [1100, 40]);
+});
 
 // ══════════════════════════════════════════════════════════════════════
 // 第 10~13 项：复核独立变异实测出来的两块**没有任何测试**的地方
@@ -583,6 +655,28 @@ async function main(): Promise<void> {
     assert.equal(rowHeight(sheet, 34), 60, "空白明细行的行高被动了");
   });
 
+  await checkAsync("24) 真模板：整柜清单按产品一行一行写，运单号/唛头每行都有，方数合计还是本票的", async () => {
+    const data = buildSplitWholeData() as any;
+    // 再放一票不展开的，确认它接在产品行后面、没被挤掉
+    data.customers[0].shipments.push({ ...buildData({ lengthCm: 60, widthCm: 40, heightCm: 30 }).customers[0].shipments[0] });
+    const { sheetOf, shared } = await renderZip(data, TEMPLATE);
+    const sheet = await sheetOf("sheet1");
+    assert.equal(cellValue(sheet, shared, "C10"), "镀膜剂");
+    assert.equal(cellValue(sheet, shared, "C11"), "喷头");
+    assert.equal(cellValue(sheet, shared, "C12"), "耳机", "后面那票不展开的被挤掉了");
+    for (const row of [10, 11]) {
+      assert.equal(cellValue(sheet, shared, `B${row}`), "YW0001585-1", `第 ${row} 行运单号丢了`);
+      assert.equal(cellValue(sheet, shared, `A${row}`), "TESTCLIENT", `第 ${row} 行唛头丢了`);
+    }
+    assert.equal(cellValue(sheet, shared, "D10"), "50");
+    assert.equal(cellValue(sheet, shared, "D11"), "4");
+    assert.equal(cellValue(sheet, shared, "G11"), "56.5", "喷头的长要是它自己的，不是「51.5/56.5」");
+    assert.equal(cellValue(sheet, shared, "L3"), "2", "总票数按运单号数，展开成几行也还是 2 票");
+    assert.equal(cellValue(sheet, shared, "L5"), "61", "总件数 54 + 7");
+    assert.equal(Number(cellValue(sheet, shared, "E35")), 4.262, "方数合计应是 2.334 + 1.928");
+    assert.equal(Number(cellValue(sheet, shared, "F35")), 1228, "重量合计应是 1140 + 88");
+  });
+
   await checkAsync("17) 撑开行高不许把 row 标签写坏：customHeight 在、序号件数合计照旧", async () => {
     const { sheetOf, shared } = await renderZip(buildMixedNameData("customer"), CUSTOMER_TEMPLATE);
     const cn = await sheetOf("sheet1");
@@ -602,10 +696,10 @@ async function main(): Promise<void> {
 main()
   .then(() => {
     if (failures.length > 0) {
-      console.error(`\n${failures.length}/19 项不通过：${failures.join("；")}`);
+      console.error(`\n${failures.length}/24 项不通过：${failures.join("；")}`);
       process.exit(1);
     }
-    console.log("整柜拆柜派送清单导出：19 项全部通过");
+    console.log("整柜拆柜派送清单导出：24 项全部通过");
   })
   .catch((error) => {
     console.error(error);
