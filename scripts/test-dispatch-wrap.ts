@@ -34,6 +34,22 @@ async function build(scope: "container" | "customer", itemName: string, count = 
   return { output, book, zip: await JSZip.loadAsync(output) };
 }
 const rowHeight = (sheet: XLSX.WorkSheet, row: number) => Number(sheet["!rows"]?.[row - 1]?.hpt);
+/**
+ * 样式表只许在 borders / cellXfs 末尾追加条目，别的一个字不许动（2026-10-07 起：合并区域里面去边框、统一底色
+ * 靠追加克隆样式，见 exportDispatchWorkbooks.ts 的 CellStyleEditor）。
+ * 单元格是按「第几个样式」引用的，原有条目改一个字，模板里引用它的格子全跟着变。
+ */
+function assertStylesOnlyAppended(after: string, before: string, label: string): void {
+  const blocks: Array<[string, string]> = [["borders", "border"], ["cellXfs", "xf"]];
+  const strip = (xml: string) => blocks.reduce((x, [b]) => x.replace(new RegExp(`<(?:\\w+:)?${b}\\b[\\s\\S]*?<\\/(?:\\w+:)?${b}>`), `<${b}/>`), xml);
+  assert.equal(strip(after), strip(before), `${label}：样式表 borders / cellXfs 以外的部分被动了`);
+  for (const [b, item] of blocks) {
+    const list = (xml: string) => [...(new RegExp(`<(?:\\w+:)?${b}\\b[^>]*>([\\s\\S]*?)<\\/(?:\\w+:)?${b}>`).exec(xml)?.[1] ?? "")
+      .matchAll(new RegExp(`<(?:\\w+:)?${item}\\b[^>]*?(?:\\/>|>[\\s\\S]*?<\\/(?:\\w+:)?${item}>)`, "g"))].map((m) => m[0]);
+    const original = list(before);
+    assert.deepEqual(list(after).slice(0, original.length), original, `${label}：样式表 ${b} 原有条目被改了`);
+  }
+}
 async function check(name: string, run: () => Promise<void>) {
   checks += 1;
   try { await run(); console.log(`PASS ${name}`); }
@@ -63,17 +79,25 @@ async function main() {
     const { book } = await build("customer", input); const s = book.Sheets[book.SheetNames[0]];
     assert.equal(s.D6.v, input); assert.ok(rowHeight(s, 6) >= 210, `显式空行/自动折行漏计 ${rowHeight(s, 6)}`);
   });
-  await check("4 short names preserve original row heights, styles and print geometry", async () => {
+  await check("4 short names preserve row heights and print geometry; styles only appended; receipt merges untouched, container adds only C3:C4/C5:C6", async () => {
     for (const scope of ["customer", "container"] as const) {
       const source = await template(scope), original = XLSX.read(source, { type: "buffer", cellStyles: true }), originalZip = await JSZip.loadAsync(source);
       const { book, zip } = await build(scope, "鞋 / 包 / 帽");
-      assert.equal(await zip.file("xl/styles.xml")!.async("string"), await originalZip.file("xl/styles.xml")!.async("string"));
+      const styles = await zip.file("xl/styles.xml")!.async("string"), originalStyles = await originalZip.file("xl/styles.xml")!.async("string");
+      // 两种单子都要去掉合并区域里面的边框，样式表只许在末尾追加（2026-10-07）
+      assertStylesOnlyAppended(styles, originalStyles, scope);
       for (let i = 0; i < book.SheetNames.length; i++) {
         assert.deepEqual(book.Sheets[book.SheetNames[i]]["!rows"], original.Sheets[original.SheetNames[i]]["!rows"]);
         const a = await zip.file(`xl/worksheets/sheet${i + 1}.xml`)!.async("string"), b = await originalZip.file(`xl/worksheets/sheet${i + 1}.xml`)!.async("string");
         for (const tag of ["cols", "mergeCells", "pageMargins", "pageSetup", "printOptions", "rowBreaks", "colBreaks"]) {
           const re = new RegExp(`<(?:\\w+:)?${tag}\\b[^>]*(?:\\/>|>[\\s\\S]*?<\\/(?:\\w+:)?${tag}>)`);
-          assert.equal(re.exec(a)?.[0], re.exec(b)?.[0], `${scope}/${tag} 发生额外改动`);
+          let expected = re.exec(b)?.[0];
+          // 整柜清单表头 C3:C4、C5:C6 模板里漏合并（第 3~6 行别的列都合并了），导出时补上 —— 只许多这两个（2026-10-07）
+          if (scope === "container" && tag === "mergeCells" && expected) {
+            const count = Number(/\bcount="(\d+)"/.exec(expected)?.[1]);
+            expected = expected.replace(/\bcount="\d+"/, `count="${count + 2}"`).replace("</mergeCells>", '<mergeCell ref="C3:C4"/><mergeCell ref="C5:C6"/></mergeCells>');
+          }
+          assert.equal(re.exec(a)?.[0], expected, `${scope}/${tag} 发生额外改动`);
         }
       }
     }

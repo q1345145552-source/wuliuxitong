@@ -333,6 +333,23 @@ function allSharedCellTexts(sheetXml: string, texts: string[]): string[] {
     .map((m) => texts[Number(m[2])] ?? "");
 }
 
+/**
+ * 样式表只许在 borders / cellXfs 末尾追加条目，别的一个字不许动（2026-10-07 起：合并区域里面去边框、统一底色
+ * 靠追加克隆样式，见 exportDispatchWorkbooks.ts 的 CellStyleEditor）。
+ * 单元格是按「第几个样式」引用的，原有条目改一个字，模板里引用它的格子全跟着变。
+ */
+function assertStylesOnlyAppended(after: string, before: string, label: string): void {
+  const blocks: Array<[string, string]> = [["borders", "border"], ["cellXfs", "xf"]];
+  const strip = (xml: string) => blocks.reduce((x, [b]) => x.replace(new RegExp(`<(?:\\w+:)?${b}\\b[\\s\\S]*?<\\/(?:\\w+:)?${b}>`), `<${b}/>`), xml);
+  assert.equal(strip(after), strip(before), `${label}：样式表 borders / cellXfs 以外的部分被动了`);
+  for (const [b, item] of blocks) {
+    const list = (xml: string) => [...(new RegExp(`<(?:\\w+:)?${b}\\b[^>]*>([\\s\\S]*?)<\\/(?:\\w+:)?${b}>`).exec(xml)?.[1] ?? "")
+      .matchAll(new RegExp(`<(?:\\w+:)?${item}\\b[^>]*?(?:\\/>|>[\\s\\S]*?<\\/(?:\\w+:)?${item}>)`, "g"))].map((m) => m[0]);
+    const original = list(before);
+    assert.deepEqual(list(after).slice(0, original.length), original, `${label}：样式表 ${b} 原有条目被改了`);
+  }
+}
+
 async function main(): Promise<void> {
   const routes = new Map<string, Handler>();
   const fakeApp: any = {};
@@ -611,7 +628,8 @@ async function main(): Promise<void> {
     const merges = (xml: string) => /<(?:\w+:)?mergeCells\b[\s\S]*?<\/(?:\w+:)?mergeCells>/.exec(xml)?.[0];
     assert.equal(merges(cn), merges(cnTemplate), "中文页合并区域被动了");
     assert.equal(merges(th), merges(thTemplate), "泰文页合并区域被动了");
-    assert.equal(await out.file("xl/styles.xml")!.async("string"), await templateZip.file("xl/styles.xml")!.async("string"), "样式表被动了");
+    // 2026-10-07 起导出要去掉合并区域里面的边框（老板：签收单也「合并去线」），样式表只许在末尾追加，原有条目一个字不改
+    assertStylesOnlyAppended(await out.file("xl/styles.xml")!.async("string"), await templateZip.file("xl/styles.xml")!.async("string"), "客户签收单");
   });
 
   await check("17) 模板里写死的公司名「新泓瀚」导出时换成「我司」（2026-09-15 老板：代理的客户也会拿到这张单）", async () => {
