@@ -169,7 +169,8 @@ async function listScopedOrderIds(
           OR: [
             { itemName: { contains: filters.keyword } },
             { domesticTrackingNo: { contains: filters.keyword } },
-            { products: { some: { itemName: { contains: filters.keyword } } } },
+            { products: { some: { OR: [{ itemName: { contains: filters.keyword } }, { domesticTrackingNo: { contains: filters.keyword } }] } } },
+            { shipments: { some: { parentTrackingNo: null, currentStatus: "pendingInbound", domesticTrackingNo: { contains: filters.keyword } } } },
           ],
         }
       : {}),
@@ -253,7 +254,7 @@ async function loadShipmentRows(auth: AgentAuth, orderIds: string[], clientNames
         orderBy: [{ parentTrackingNo: { sort: "asc", nulls: "first" } }, { updatedAt: "desc" }],
         take: 1,
         // ⚠️ 不选 remark（员工写的运单备注是内部的）、batchNo / containerNo（柜号）
-        select: { id: true, trackingNo: true, currentStatus: true, updatedAt: true, transportMode: true },
+        select: { id: true, trackingNo: true, currentStatus: true, updatedAt: true, transportMode: true, domesticTrackingNo: true },
       },
     },
   });
@@ -307,7 +308,7 @@ async function loadShipmentRows(auth: AgentAuth, orderIds: string[], clientNames
         widthCm: joinDims(o.products.map((p) => p.widthCm)),
         heightCm: joinDims(o.products.map((p) => p.heightCm)),
         transportMode: o.transportMode,
-        domesticTrackingNo: o.domesticTrackingNo,
+        domesticTrackingNo: ship?.currentStatus === "pendingInbound" ? ship.domesticTrackingNo : o.domesticTrackingNo,
         cargoType: o.cargoType,
         shipDate: o.shipDate,
         receiverNameTh: o.receiverNameTh,

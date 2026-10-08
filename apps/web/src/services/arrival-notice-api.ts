@@ -5,7 +5,8 @@
  */
 import { apiBaseUrl, apiRequest } from "./core-api";
 import type { UploadImage } from "../modules/shared/image-compress";
-import type { CargoType } from "../../../../packages/shared-types/cargo-type";
+import { strictestCargoType, type CargoType } from "../../../../packages/shared-types/cargo-type";
+import { isBlankNoticeProduct, noticeLegacySummary } from "../../../../packages/shared-types/arrival-notice-products";
 
 export type ArrivalNoticeTab = "todo" | "notified" | "inbound" | "formal" | "all";
 
@@ -35,13 +36,35 @@ export interface PrealertMatch {
   received: boolean;
 }
 
+/**
+ * 一款产品（2026-10-09 多款，老板 10-08：「到货通知只能填一款产品，很多时候有好几款」）。按页面上的顺序排好，不带 id。
+ * weightKg 是**单箱重**（同「创建订单」的产品行），不是这一款的总重。
+ */
+export interface ArrivalNoticeProduct {
+  itemName: string | null;
+  packageCount: number | null;
+  lengthCm: number | null;
+  widthCm: number | null;
+  heightCm: number | null;
+  /** 单箱数量（每箱多少个） */
+  productQuantity: number | null;
+  /** 单箱重（公斤） */
+  weightKg: number | null;
+  cargoType: CargoType;
+  domesticTrackingNo: string | null;
+}
+
 export interface ArrivalNotice {
   id: string;
   clientId: string | null;
   /** 转过单、运单还在：运单**现在**的号（「运单管理」里可能改过，F06）；没转 / 运单被删了：登记的号 */
   trackingNo: string | null;
+  /** 产品明细（多款）。老后端不回 = undefined —— 读的时候一律走 noticeProductsOf，别直接读 */
+  products?: ArrivalNoticeProduct[];
+  /** ↓ 品名 / 件数 / 货型 / 国内单号：各款的汇总（品名拼起来、件数合计…），只给没刷新的老页面用。新页面一律看 products */
   itemName: string | null;
   packageCount: number | null;
+  /** 整票总重量 / 总体积（产品行算得出时就是产品行的合计） */
   weightKg: number | null;
   volumeM3: number | null;
   transportMode: string | null;
@@ -78,21 +101,81 @@ export interface ArrivalNoticePage {
   counts: Record<ArrivalNoticeTab, number>;
 }
 
+/**
+ * 修改弹窗里的一款（空串 = 没填）。key 只给页面当 React 的 key 用，发给后端前去掉。
+ * weightKg 是单箱重。
+ */
+export interface DraftProduct {
+  key: string;
+  itemName: string;
+  packageCount: string;
+  lengthCm: string;
+  widthCm: string;
+  heightCm: string;
+  productQuantity: string;
+  weightKg: string;
+  domesticTrackingNo: string;
+  /** 货型（F11）：新加的一款默认普货 */
+  cargoType: CargoType;
+}
+
 /** 登记 / 修改时填的那几项（空串 = 没填） */
 export interface ArrivalNoticeDraft {
   clientId: string;
   trackingNo: string;
-  itemName: string;
-  packageCount: string;
+  /** 整票总重量 / 总体积（产品行算得出时页面上只读、后端也按产品行重算） */
   weightKg: string;
   volumeM3: string;
   transportMode: "" | "sea" | "land";
-  /** 货型（F11）：新登记默认普货 */
-  cargoType: CargoType;
-  domesticTrackingNo: string;
   warehouseId: string;
   arrivedAt: string;
   remark: string;
+  /** 至少一款（页面上删到只剩一款就不给删了）；全空的那款后端会丢掉 */
+  products: DraftProduct[];
+}
+
+/** 发给后端的一款：空串当没填（null），数字框原样传文字，后端严格校验 */
+export interface ArrivalNoticeProductBody {
+  itemName: string | null;
+  packageCount: string | null;
+  lengthCm: string | null;
+  widthCm: string | null;
+  heightCm: string | null;
+  productQuantity: string | null;
+  weightKg: string | null;
+  cargoType: CargoType;
+  domesticTrackingNo: string | null;
+}
+
+export interface ArrivalNoticeSaveBody {
+  clientId: string | null;
+  trackingNo: string | null;
+  weightKg: string | null;
+  volumeM3: string | null;
+  transportMode: "sea" | "land" | null;
+  warehouseId: string | null;
+  arrivedAt: string | null;
+  remark: string | null;
+  products: ArrivalNoticeProductBody[];
+  /* ↓ 平铺镜像：只给回滚后的旧后端看（旧后端只认这四项）。新后端只要看到 products 就一律不读、不校验它们 */
+  itemName: string | null;
+  packageCount: string | null;
+  domesticTrackingNo: string | null;
+  cargoType: CargoType;
+}
+
+/**
+ * 一条到货通知的各款产品。新后端给 products 就用它；老后端（回滚 / 部署窗口）不回 products 时，
+ * 平铺的品名 / 件数 / 国内单号 / 货型有一项有值就当一款，全空就是一款都没有。
+ */
+export function noticeProductsOf(n: Pick<ArrivalNotice, "products" | "itemName" | "packageCount" | "domesticTrackingNo" | "cargoType">): ArrivalNoticeProduct[] {
+  if (Array.isArray(n.products)) return n.products;
+  const cargo: CargoType = n.cargoType === "inspection" || n.cargoType === "sensitive" ? n.cargoType : "normal";
+  if (n.itemName === null && n.packageCount === null && n.domesticTrackingNo === null && cargo === "normal") return [];
+  return [{
+    itemName: n.itemName, packageCount: n.packageCount, lengthCm: null, widthCm: null, heightCm: null,
+    productQuantity: null, weightKg: null, cargoType: cargo, domesticTrackingNo: n.domesticTrackingNo,
+  }];
 }
 
 const JSON_HEADERS = { "Content-Type": "application/json" };
@@ -109,24 +192,45 @@ export function fetchArrivalNotices(opts: { tab: ArrivalNoticeTab; keyword?: str
   return apiRequest<ArrivalNoticePage>(`${apiBaseUrl()}/staff/arrival-notices/list?${q.toString()}`);
 }
 
-/** 草稿 → 接口要的样子：空串当没填（null），数字框原样传文字，后端严格校验 */
-export function draftToBody(d: ArrivalNoticeDraft): Record<string, string | null> {
+/**
+ * 草稿 → 接口要的样子：空串当没填（null），数字框原样传文字，后端严格校验。
+ * - products **每款都发、空白的那款也发**：后端报「第N款…」用的是数组里的位置，跟页面上的顺序对得上；全空的款后端校验完自己丢掉。
+ * - 每款的货型明着传（普货也传 "normal"）。
+ * - 另外附上平铺镜像（品名拼起来、件数每款都填了才写合计、国内单号用「、」拼、货型取最严）：只给回滚后的旧后端用，
+ *   新后端看到 products 就不读它们。
+ */
+export function draftToBody(d: ArrivalNoticeDraft): ArrivalNoticeSaveBody {
   const v = (s: string) => (s.trim() === "" ? null : s.trim());
+  const products: ArrivalNoticeProductBody[] = d.products.map((p) => ({
+    itemName: v(p.itemName),
+    packageCount: v(p.packageCount),
+    lengthCm: v(p.lengthCm),
+    widthCm: v(p.widthCm),
+    heightCm: v(p.heightCm),
+    productQuantity: v(p.productQuantity),
+    weightKg: v(p.weightKg),
+    cargoType: p.cargoType,
+    domesticTrackingNo: v(p.domesticTrackingNo),
+  }));
+  // 镜像不算全空的那款（跟新后端一样丢掉），不然末尾多一行空白就把件数合计算成 null
+  const filled = products.filter((p) => !isBlankNoticeProduct(p));
+  const legacy = noticeLegacySummary(filled);
   return {
     // 唛头不去空格：有「XPP-0015 XHH-6698」这种带空格的账号（同「创建订单」的唛头框）
     clientId: d.clientId.trim() === "" ? null : d.clientId,
     trackingNo: v(d.trackingNo),
-    itemName: v(d.itemName),
-    packageCount: v(d.packageCount),
     weightKg: v(d.weightKg),
     volumeM3: v(d.volumeM3),
     transportMode: d.transportMode || null,
-    // 普货也明着传 "normal"（后端存成 null）：不传这个键后端会当成老页面、沿用库里的货型
-    cargoType: d.cargoType,
-    domesticTrackingNo: v(d.domesticTrackingNo),
     warehouseId: d.warehouseId || null,
     arrivedAt: v(d.arrivedAt),
     remark: v(d.remark),
+    products,
+    itemName: legacy.itemName,
+    packageCount: legacy.packageCount === null ? null : String(legacy.packageCount),
+    domesticTrackingNo: legacy.domesticTrackingNo,
+    // 普货也明着传 "normal"：旧后端不传这个键会当成更老的页面、沿用库里的货型
+    cargoType: strictestCargoType(filled.map((p) => p.cargoType)),
   };
 }
 

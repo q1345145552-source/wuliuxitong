@@ -1249,7 +1249,7 @@ export default function StaffHomePage() {
   /** 运单行的「打印」：电脑宽表和手机一单一块共用 */
   const printShipmentLabel = (item: (typeof filteredShipmentList)[number]) => {
     // 分母传整票件数（修复审查）：item.packageCount 是父单「剩余」件数，拆柜 / 部分装柜后是 0 或比整票少，会打出「101/71」或被误拦
-    const blocked = openPrintLabel({ marks: item.clientId ?? "—", packageCount: totalPackageCountOf(item) ?? "—", trackingNo: item.trackingNo ?? "", itemName: item.itemName, productQuantity: item.productQuantity, transportMode: item.transportMode, products: item.products?.map(p => ({ itemName: p.itemName, packageCount: p.packageCount })), wholePackageCount: item.totalPackageCount });
+    const blocked = openPrintLabel({ marks: item.clientId ?? "—", packageCount: totalPackageCountOf(item) ?? "—", trackingNo: item.trackingNo ?? "", itemName: item.itemName, productQuantity: item.productQuantity, transportMode: item.transportMode, products: item.products?.map(p => ({ itemName: p.itemName, packageCount: p.packageCount })), wholePackageCount: item.totalPackageCount, currentStatus: item.currentStatus });
     // 件数是空的或 0 排不出箱号（2026-10-08 到货通知审查 F07）：不开窗口，说清楚去哪补
     if (blocked) setToast(item.currentStatus === "pendingInbound" ? `${blocked}（待入库的货在「到货通知」里补）` : blocked);
   };

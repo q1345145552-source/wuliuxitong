@@ -4602,6 +4602,21 @@ table.a3-table.shipment-product-table > tbody > tr > td {
 .an-form input, .an-form select, .an-form textarea { box-sizing: border-box; width: 100%; min-height: 36px; padding: 6px 10px; border: 1px solid var(--line); border-radius: var(--a3-radius); background: var(--panel); color: var(--ink); font: inherit; font-size: 14px; }
 .an-form-wide { grid-column: 1 / -1; }
 .an-form .an-field { display: grid; gap: 4px; min-width: 0; color: var(--ink-2); font-size: 12px; }
+/* 产品明细（2026-10-09 多款）：一款一块，第一行品名 / 件数 / 货型 / 国内单号，第二行选填的长宽高 / 单箱数量 / 单箱重 */
+.an-prods { display: grid; gap: 10px; min-width: 0; }
+.an-prod { display: grid; gap: 8px; min-width: 0; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--a3-radius); background: var(--ground); }
+.an-prod-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 26px; color: var(--ink); font-size: 13px; }
+.an-prod-main { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) minmax(0, 1fr) minmax(0, 2fr); gap: 8px 10px; }
+.an-prod-extra { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px 10px; }
+.an-prod-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; }
+.an-prod-sum { color: var(--ink-2); font-size: 12px; }
+.an-prods > .an-warn { font-size: 12px; }
+.an-auto { margin-left: 6px; color: var(--t-faint); font-size: 11px; }
+.an-form input[readonly] { background: var(--ground); color: var(--ink-2); }
+/* 卡片上的产品列表：一款一行 */
+.an-products { display: grid; gap: 2px; margin: 0; padding-left: 22px; color: var(--ink); font-size: 13px; }
+.an-products li { overflow-wrap: anywhere; }
+.an-products-empty { margin: 0; color: var(--t-faint); font-size: 12px; }
 
 /* 唛头选择框（MarkPicker，2026-10-08 老板：原来浏览器自带的 datalist 下拉「太丑了」） */
 .mark-picker { position: relative; min-width: 0; }
@@ -4644,6 +4659,14 @@ table.a3-table.shipment-product-table > tbody > tr > td {
   .an-who { width: 100%; }
   .an-form { grid-template-columns: 1fr; }
   .an-form input, .an-form select, .an-form textarea { min-height: 42px; font-size: 16px; }
+  /* 手机：品名一行；件数 + 货型两列；国内单号一行；长宽高三列；单箱数量 + 单箱重两列 */
+  .an-prod { padding: 10px; }
+  .an-prod-main { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .an-prod-main > .an-prod-wide { grid-column: 1 / -1; }
+  .an-prod-extra { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+  .an-prod-extra > label { grid-column: span 2; }
+  .an-prod-extra > .an-prod-half { grid-column: span 3; }
+  .an-prod-head .an-link { min-height: 36px; font-size: 13px; }
   .mark-picker-option { min-height: 44px; }
   .mark-picker-list { max-height: 50vh; }
 }

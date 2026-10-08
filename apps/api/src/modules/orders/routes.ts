@@ -1257,6 +1257,7 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
               id: true,
               trackingNo: true,
               currentStatus: true,
+              domesticTrackingNo: true,
               remark: true,
               // 「（部分已放行）」要按这票货自己的运输方式比快慢（2026-09-18 复核：这里原来只用订单的，
               // 跟员工端 / 管理员端 / 轨迹弹窗那三处的「运单的 ?? 订单的」口径不一样）
@@ -1344,7 +1345,7 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
         orderNo: o.orderNo,
         itemName: o.itemName,
         transportMode: o.transportMode,
-        domesticTrackingNo: o.domesticTrackingNo,
+        domesticTrackingNo: ship?.currentStatus === "pendingInbound" ? ship.domesticTrackingNo : o.domesticTrackingNo,
         // 2026-08-07 移除 batchNo：这个字段存的就是柜号（员工在「预报单审核」里填的
         // 那个「柜号（可选，装柜时填写）」输入框），用户明确要求客户不能看到柜号。
         // 原来这里照发，客户端运单详情直接显示成「批次号：CAB-2026-A01」—— 实测泄漏。

@@ -9,6 +9,7 @@ export interface ShipmentPrintLabelProps {
   itemName?: string;
   productQuantity?: number;
   transportMode?: string;
+  currentStatus?: string;
   products?: Array<{ itemName: string; packageCount: number }>;
   /**
    * 后端算好的整票件数（列表接口的 totalPackageCount = 父单剩余 + 全部子单），只拿来跟产品行之和对账，不当分母。
@@ -33,7 +34,7 @@ function positiveInt(n: unknown): number | null {
  * 箱数宁可拦住让人补，绝不猜（同 productRowGuard 的规矩）。能打印返回 null。
  * 文案说「空的或 0」而不是「还没填」：拆柜后父单剩 0、又没有产品行的老数据也会被这句挡住。
  */
-export function printLabelBlockedReason(props: Pick<ShipmentPrintLabelProps, "packageCount" | "products" | "wholePackageCount">): string | null {
+export function printLabelBlockedReason(props: Pick<ShipmentPrintLabelProps, "packageCount" | "products" | "wholePackageCount" | "currentStatus">): string | null {
   const products = props.products ?? [];
   if (products.length > 0) {
     const bad = products.find((p) => positiveInt(p.packageCount) == null);
@@ -46,7 +47,11 @@ export function printLabelBlockedReason(props: Pick<ShipmentPrintLabelProps, "pa
       ? `产品行箱数合计 ${sum} 箱，跟这票货的件数 ${whole} 箱对不上（收货或改单时改了件数、产品行没跟着改），先请超管在运单管理把产品行箱数改对再打印`
       : null;
   }
-  return positiveInt(props.packageCount) == null ? "这票货的件数是空的或 0，排不出箱号，补上件数再打印" : null;
+  if (positiveInt(props.packageCount) == null) return "这票货的件数是空的或 0，排不出箱号，补上件数再打印";
+  if (props.currentStatus === "pendingInbound") {
+    return "这票待入库的货产品明细没填齐，请在「到货通知」补齐每款品名和件数再打印";
+  }
+  return null;
 }
 
 /** 打开打印窗口。件数不全时不开窗口，返回给人看的原因；其余情况（包括浏览器拦了弹窗）返回 null。 */

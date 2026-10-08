@@ -13,6 +13,8 @@
  *   5. 老运单一个字没变；删到货通知时照片记录跟着删（外键 ON DELETE CASCADE）；删掉临时库。
  *   （修复第 3 轮）回填跳过的那几条，部署后的只读体检 check-arrival-notice-tracking-no.sql 要正好列出来。
  *   （修复第 4 轮）末尾再回填唛头：订单被改给别的客户的老到货通知跟上订单现在的客户、清掉「已通知」（M1d）。
+ *   （2026-10-09 多款产品）再跑 20261009 那份（建产品子表 + 把老数据回填成一款），也连跑两遍（M1e）；
+ *   部署后的只读体检 check-arrival-notice-products.sql 迁移后零行、能照出部署窗口里旧代码登记 / 修改的那两种。
  */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
@@ -25,6 +27,9 @@ const SCHEMA = path.join(ROOT, "apps/api/prisma/schema.prisma");
 const MIGRATION = path.join(ROOT, "apps/api/prisma/migrations/20261006_arrival_notices/migration.sql");
 /** 2026-10-08 第四轮审查加的两列（货型、照片小图）：上线顺序是先 20261006 再它，这里也照这个顺序跑 */
 const MIGRATION_1008 = path.join(ROOT, "apps/api/prisma/migrations/20261008_arrival_notice_fixes/migration.sql");
+/** 2026-10-09 多款产品：产品子表 + 回填。上线顺序 1006 → 1008 → 1009 */
+const MIGRATION_1009 = path.join(ROOT, "apps/api/prisma/migrations/20261009_arrival_notice_products/migration.sql");
+const PRODUCTS_CHECK = path.join(ROOT, "scripts/check-arrival-notice-products.sql");
 const DRIFT = path.join(ROOT, "scripts/check-schema-drift.sql");
 
 function prisma(args: string[], url: string): { code: number; out: string } {
@@ -62,7 +67,8 @@ async function main(): Promise<void> {
   try {
     const push = prisma(["db", "push", `--schema=${SCHEMA}`, "--skip-generate"], tmpUrl);
     assert.equal(push.code, 0, `临时库建结构失败：${push.out.slice(-400)}`);
-    // 回到上线前的样子：拆掉这份迁移自己加的两张表
+    // 回到上线前的样子：拆掉这几份迁移自己加的三张表（产品子表是 20261009 加的，外键指着到货通知，先删）
+    await db.$executeRawUnsafe(`DROP TABLE "arrival_notice_products"`);
     await db.$executeRawUnsafe(`DROP TABLE "arrival_notice_images"`);
     await db.$executeRawUnsafe(`DROP TABLE "arrival_notices"`);
     // 一条老数据：上线前就在的一张运单
@@ -205,12 +211,102 @@ async function main(): Promise<void> {
       await ins(`DELETE FROM "orders" WHERE id = 'zz_miga_o40'`);
     });
 
+    await check("M1e 10-09 那份（多款产品：建产品子表 + 老数据回填成一款）在「已经上了 10-06、10-08」的库上能跑通、连跑两遍不多插；每条有产品信息的老通知恰好一款、各列对得上，整票重量不抄进产品行，货型空的写普货、国内单号空的还是空；全空的不建；主表一个字不变；已经有产品行的不动；体检零行、能照出部署窗口那两种", async () => {
+      const exists = await db.$queryRawUnsafe<any[]>(`SELECT to_regclass('public.arrival_notice_products')::text AS t`);
+      assert.equal(exists[0].t, null, "跑 10-09 之前库里就有产品表了：这一项没测到「从 10-08 升上来」");
+      const ins = (sql: string) => db.$executeRawUnsafe(sql);
+      await ins(`INSERT INTO "arrival_notices" (id, company_id, created_by, updated_at, tracking_no, item_name, package_count, weight_kg, volume_m3, domestic_tracking_no, cargo_type) VALUES
+        ('zz_miga_e1', 'zz_miga_co', 'u', '2026-10-08 01:02:03', 'ZZMIGA-E1', '灯具', 12, 85.5, 0.6, 'SF1234567890', 'sensitive'),
+        ('zz_miga_e2', 'zz_miga_co', 'u', '2026-10-08 01:02:03', 'ZZMIGA-E2', NULL, NULL, 40, 0.3, NULL, NULL),
+        ('zz_miga_e3', 'zz_miga_co', 'u', '2026-10-08 01:02:03', 'ZZMIGA-E3', NULL, 3, NULL, NULL, NULL, NULL),
+        ('zz_miga_e4', 'zz_miga_co', 'u', '2026-10-08 01:02:03', 'ZZMIGA-E4', NULL, NULL, NULL, NULL, NULL, 'inspection'),
+        ('zz_miga_e5', 'zz_miga_co2', 'u', '2026-10-08 01:02:03', 'ZZMIGA-E5', NULL, NULL, NULL, NULL, 'YT0000000001', NULL),
+        ('zz_miga_e6', 'zz_miga_co', 'u', '2026-10-08 01:02:03', 'ZZMIGA-E6', NULL, NULL, NULL, NULL, NULL, 'normal')`);
+      const noticesBefore = await db.$queryRawUnsafe<any[]>(`SELECT * FROM "arrival_notices" WHERE id LIKE 'zz_miga_e%' ORDER BY id`);
+      const snap = () => db.$queryRawUnsafe<any[]>(`SELECT id, company_id, notice_id, item_name, package_count, length_cm, width_cm, height_cm, product_quantity, weight_kg, cargo_type, domestic_tracking_no, sort_order FROM "arrival_notice_products" WHERE notice_id LIKE 'zz_miga_e%' ORDER BY notice_id`);
+      const row = (id: string, co: string, item: string | null, pkg: number | null, cargo: string, dom: string | null) => ({
+        id: `${id}:p0`, company_id: co, notice_id: id, item_name: item, package_count: pkg, length_cm: null, width_cm: null, height_cm: null, product_quantity: null, weight_kg: null, cargo_type: cargo, domestic_tracking_no: dom, sort_order: 0,
+      });
+      const expected = [
+        row("zz_miga_e1", "zz_miga_co", "灯具", 12, "sensitive", "SF1234567890"), // 整票重量 85.5 不抄成单箱重
+        row("zz_miga_e3", "zz_miga_co", null, 3, "normal", null),                  // 货型空 = 普货；国内单号空着还是空（不写货拉拉）
+        row("zz_miga_e4", "zz_miga_co", null, null, "inspection", null),
+        row("zz_miga_e5", "zz_miga_co2", null, null, "normal", "YT0000000001"),    // 公司跟着通知走
+        // e2 只有整票重量体积、e6 只有一个「普货」：都不建（不建空白产品）
+      ];
+      for (const n of [1, 2]) {
+        const r = prisma(["db", "execute", `--schema=${SCHEMA}`, "--file", MIGRATION_1009], tmpUrl);
+        assert.equal(r.code, 0, `第 ${n} 遍失败：${r.out.slice(-400)}`);
+        assert.deepEqual(await snap(), expected, `第 ${n} 遍跑完产品行不对`);
+      }
+      const noticesAfter = await db.$queryRawUnsafe<any[]>(`SELECT *, 'after' AS zz_phase FROM "arrival_notices" WHERE id LIKE 'zz_miga_e%' ORDER BY id`);
+      assert.equal(noticesAfter.length, noticesBefore.length);
+      noticesBefore.forEach((b, i) => { for (const [k, v] of Object.entries(b)) assert.deepEqual(noticesAfter[i][k], v, `${b.id} 的 ${k} 被改了（主表一列都不该动）`); });
+      // 回填那一句单独再执行一次：0 行（幂等）
+      const sql = readFileSync(MIGRATION_1009, "utf8");
+      const from = sql.indexOf('INSERT INTO "arrival_notice_products"');
+      assert.ok(from > 0, "迁移里找不到回填那一句");
+      assert.equal(await db.$executeRawUnsafe(sql.slice(from, sql.indexOf(";", from))), 0, "回填不是幂等的");
+      // 已经有产品行的（新代码存过的）不动：e1 换成新代码存的两款，再跑一遍迁移，还是这两款
+      await ins(`DELETE FROM "arrival_notice_products" WHERE notice_id = 'zz_miga_e1'`);
+      await ins(`INSERT INTO "arrival_notice_products" (id, company_id, notice_id, item_name, package_count, sort_order) VALUES ('zz_miga_np1', 'zz_miga_co', 'zz_miga_e1', '灯具', 7, 0), ('zz_miga_np2', 'zz_miga_co', 'zz_miga_e1', '鞋', 5, 1)`);
+      await ins(`UPDATE "arrival_notices" SET item_name = '灯具 / 鞋', package_count = 12, domestic_tracking_no = NULL, cargo_type = NULL WHERE id = 'zz_miga_e1'`);
+      const r3 = prisma(["db", "execute", `--schema=${SCHEMA}`, "--file", MIGRATION_1009], tmpUrl);
+      assert.equal(r3.code, 0, r3.out.slice(-400));
+      assert.deepEqual((await db.$queryRawUnsafe<any[]>(`SELECT id FROM "arrival_notice_products" WHERE notice_id = 'zz_miga_e1' ORDER BY sort_order`)).map((x) => x.id), ["zz_miga_np1", "zz_miga_np2"]);
+
+      // 部署后的只读体检：迁移跑完、新代码存过的都对得上 = 零行（多款的汇总也对得上：品名「 / 」拼、件数合计）
+      const checkSql = readFileSync(PRODUCTS_CHECK, "utf8");
+      assert.match(checkSql, /回滚后再次上线[\s\S]*开放编辑前[\s\S]*再次/);
+      assert.ok(!/\b(UPDATE|DELETE|INSERT|ALTER|DROP|TRUNCATE|CREATE)\b/i.test(checkSql.replace(/--.*$/gm, "")), "体检必须纯只读");
+      assert.ok(!/check-arrival-notice-products/.test(readFileSync(path.join(ROOT, "deploy.sh"), "utf8")), "deploy.sh 不跑这份体检（一次性的，部署后手工跑）");
+      const mine = async () => (await db.$queryRawUnsafe<any[]>(checkSql)).filter((r) => String(r.notice_id).startsWith("zz_miga_e"));
+      assert.deepEqual(await mine(), [], "迁移后体检要零行");
+      // 部署窗口里旧代码新登记的（只有镜像列）、旧代码改了镜像列没动产品行的（单款、多款各一条）：都要列出来
+      await ins(`INSERT INTO "arrival_notices" (id, company_id, created_by, updated_at, tracking_no, item_name, package_count) VALUES ('zz_miga_e7', 'zz_miga_co', 'u', now(), 'ZZMIGA-E7', '旧容器登记', 2)`);
+      await ins(`UPDATE "arrival_notices" SET item_name = '旧容器改了品名' WHERE id = 'zz_miga_e3'`);
+      await ins(`UPDATE "arrival_notices" SET package_count = 13 WHERE id = 'zz_miga_e1'`);
+      const found = await mine();
+      assert.deepEqual(found.map((r) => [r.kind, r.notice_id]), [["mismatch", "zz_miga_e1"], ["mismatch", "zz_miga_e3"], ["no_products", "zz_miga_e7"]], JSON.stringify(found, (_k, v) => (typeof v === "bigint" ? Number(v) : v)));
+      const e1 = found.find((r) => r.notice_id === "zz_miga_e1");
+      assert.equal(e1.products_item_name, "灯具 / 鞋");
+      assert.equal(Number(e1.products_package_count), 12);
+      assert.equal(Number(e1.product_count), 2);
+      // 回滚期间旧代码改了镜像，再上线不重跑迁移；即使手工重跑也不会更新已有产品行。
+      // 必须再次体检且保留两边数据，不能拿「迁移幂等」当作已经同步。
+      const rerun = prisma(["db", "execute", `--schema=${SCHEMA}`, "--file", MIGRATION_1009], tmpUrl);
+      assert.equal(rerun.code, 0, rerun.out.slice(-400));
+      assert.deepEqual((await mine()).filter((r) => r.kind === "mismatch"), found.filter((r) => r.kind === "mismatch"));
+
+      // 旧代码只改总重 / 总体积也要照出来；没有可算产品行的手填值不能误报。
+      await ins(`UPDATE arrival_notices SET package_count=12 WHERE id='zz_miga_e1'`);
+      await ins(`UPDATE arrival_notice_products SET weight_kg=5, length_cm=51,width_cm=41,height_cm=31 WHERE id='zz_miga_np1'`);
+      await ins(`UPDATE arrival_notices SET weight_kg=36,volume_m3=0.455 WHERE id='zz_miga_e1'`);
+      let totalDrift=(await mine()).find((r)=>r.notice_id==='zz_miga_e1');
+      assert.ok(totalDrift,"仅总重 / 体积不一致必须体检报告，不能静默覆盖");
+      assert.equal(Number(totalDrift.products_weight_kg),35);
+      assert.equal(Number(totalDrift.products_volume_m3),0.454);
+      await ins(`UPDATE arrival_notices SET weight_kg=35,volume_m3=0.454 WHERE id='zz_miga_e1'`);
+      assert.ok(!(await mine()).some((r)=>r.notice_id==='zz_miga_e1'),"部分行可算也按现行规则，正确合计不误报");
+
+      // SQL 的 numeric round 会把 float8 的近半值修成精确半值，跟页面 JS 算法可能差 0.001。
+      const { noticeProductTotals } = await import("../packages/shared-types/arrival-notice-products");
+      const edge = noticeProductTotals([{lengthCm:59,widthCm:69,heightCm:25,packageCount:20}]).volumeM3;
+      await ins(`UPDATE arrival_notice_products SET package_count=20,length_cm=59,width_cm=69,height_cm=25 WHERE id='zz_miga_np1'`);
+      await ins(`UPDATE arrival_notices SET package_count=25,weight_kg=100,volume_m3=${edge} WHERE id='zz_miga_e1'`);
+      assert.ok(!(await mine()).some((r)=>r.notice_id==='zz_miga_e1'),"真实 JS 保存值不能被 SQL numeric round 误报成冲突");
+
+      // 删到货通知：产品行跟着删（外键 ON DELETE CASCADE）
+      await ins(`DELETE FROM "arrival_notices" WHERE id LIKE 'zz_miga_e%'`);
+      assert.equal((await db.$queryRawUnsafe<any[]>(`SELECT id FROM "arrival_notice_products" WHERE notice_id LIKE 'zz_miga_e%'`)).length, 0, "删了到货通知，产品行还在（外键没建上）");
+    });
+
     await check("M2 跑完以后库跟 schema.prisma 一点差异都没有（列、类型、索引、外键全对上）", () => {
       const r = prisma(["migrate", "diff", "--from-url", tmpUrl, "--to-schema-datamodel", SCHEMA, "--script", "--exit-code"], tmpUrl);
       assert.equal(r.code, 0, `还差这些（迁移漏了 / 写错了）：\n${r.out.split("\n").filter((l) => l.trim() && !l.startsWith("--")).slice(0, 12).join("\n")}`);
     });
 
-    await check("M3 上线体检 check-schema-drift.sql 一行都不输出（清单里有新加的两张表，也没多写）", async () => {
+    await check("M3 上线体检 check-schema-drift.sql 一行都不输出（清单里有新加的三张表，也没多写）", async () => {
       const rows = await db.$queryRawUnsafe<any[]>(readFileSync(DRIFT, "utf8"));
       assert.equal(rows.length, 0, `体检报了：${JSON.stringify(rows).slice(0, 400)}`);
     });

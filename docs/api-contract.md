@@ -762,14 +762,23 @@
 ⚠️ 网址都比页面 `/staff/arrival-notices` 多一段（Next 先匹配页面再转发接口，`GET /staff/arrival-notices` 会被页面接走）。
 
 ### 22.1 GET /staff/arrival-notices/list
-- 查询参数：`tab`（`todo` 待通知 = 还没标已通知的，**转没转运单都算**（2026-10-08 F02），所以它的数字会和待入库、已转正式重叠，前端只显示不相加 / `notified` 已通知没转 / `inbound` 待入库 / `formal` 已转正式 / `all`，默认 all）、`keyword`（唛头、运单号、国内快递单号、品名模糊搜）、`page`、`pageSize`（默认 50，最多 200）。
+- 查询参数：`tab`（`todo` 待通知 = 还没标已通知的，**转没转运单都算**（2026-10-08 F02），所以它的数字会和待入库、已转正式重叠，前端只显示不相加 / `notified` 已通知没转 / `inbound` 待入库 / `formal` 已转正式 / `all`，默认 all）、`keyword`（唛头、运单号、国内快递单号、品名模糊搜；国内单号和品名按**任何一款产品**都能搜到，2026-10-09）、`page`、`pageSize`（默认 50，最多 200）。
 - 返回：`{ items, total, page, pageSize, counts: { todo, notified, inbound, formal, all } }`。每条带登记的各项（含 `cargoType`：`"inspection" | "sensitive" | null`，null = 普货）+ `images[{ id, fileName, imageUrl, thumbUrl? }]`（`thumbUrl` 是列表用的小图，没有小图时等于 `imageUrl`；大图 / 复制 / 保存一律用 `imageUrl`）、`prealertMatches[]`（见 22.8，空数组 = 没撞上）、`notifiedAt`、`convertedTo`（null / inbound / formal）、`shipmentId`、`shipmentStatus`、`shipmentGone`（转过但运单已被删，按「没转」算，页签也这么分）、`createdAt`、`updatedAt`。`trackingNo`：转过单且运单还在 = 运单**现在**的号（运单管理里改了号会跟着变，按新号能搜到，旧号不再被占），否则 = 登记的号（2026-10-08 F06）。`createdByName` / `notifiedByName` 只有超管拿得到，员工拿到 null。
+- 产品（2026-10-09 多款，见 22.10）：每条带 `products: [{ itemName, packageCount, lengthCm, widthCm, heightCm, productQuantity, weightKg, cargoType, domesticTrackingNo }]`，按顺序，不带 id；`weightKg` 是**单箱重**，`cargoType` 是 `"normal" | "inspection" | "sensitive"`。顶层的 `itemName` / `packageCount` / `domesticTrackingNo` / `cargoType` 保留，是各款的**汇总**（只给没刷新的老页面看）：品名「灯具 / 鞋」、件数每款都填了才有合计、国内单号用「、」拼、货型取最严（普货是 null）。顶层 `weightKg` / `volumeM3` 是整票总重量、总体积。
 
 ### 22.2 POST /staff/arrival-notices/save
 - 不带 `id` = 新登记，带 `id` = 修改。各项都能传 null / 空串（当没填）；填了的按「创建订单」同一套规则校验，填错 `400` 中文说清哪项。
-- `base`（修改时传）：打开「修改」弹窗那一刻看到的那份资料，写法跟请求体一样。服务器锁住这一行后跟库里现在的比，有人在这期间改过就**不存**，回 `400`「这条刚刚被同事改过（品名变了）…」。只比资料那 11 项：同事点「标已通知」、传照片不算冲突。不传 = 不比（上线前打开的老页面）；传了读不懂按冲突处理。
+- 请求体（2026-10-09 多款）：`{ id?, clientId, trackingNo, weightKg, volumeM3, transportMode, warehouseId, arrivedAt, remark, products: [{ itemName, packageCount, lengthCm, widthCm, heightCm, productQuantity, weightKg /*单箱*/, cargoType, domesticTrackingNo }], itemName, packageCount, domesticTrackingNo, cargoType /*平铺镜像*/, base? }`。
+  - `products: []` 合法（一款都没登记）；这个键在但不是数组、或里面有不是对象的 → `400`「产品明细格式不对，请刷新页面」；超过 50 款 → `400`「一条到货通知最多 50 款产品」。
+  - 每款：品名 ≤ 200 字、国内单号 ≤ 100 字、件数 / 单箱数量正整数、单箱重同「创建订单」的 Decimal(10,2)、长宽高 ≥ 0 且 < 1 亿、货型空着 = 普货、认不出 `400`。**没写品名的款也能存**。合计（件数、单箱数量 × 件数、单箱重 × 件数、体积）不许超库里能存的上限。
+  - 报错带「第N款」：**请求里有两款及以上**才加，序号按请求数组里原来的位置（先校验、后丢空白款）；只有一款时提示跟改版前一字不差。
+  - 完全空白的款（除货型外都没填、货型是普货）校验完丢掉，剩下的 `sort_order` 从 0 重新编。
+  - 整票重量 / 体积**后端一定重算**：产品行算得出（Σ 单箱重 × 件数、Σ 长 × 宽 × 高 × 件数 ÷ 1e6，只算填了的款）就用算出来的，算不出才用手填的（同「创建订单」）。
+  - 平铺的 `itemName` / `packageCount` / `domesticTrackingNo` / `cargoType` 只给回滚后的旧后端看：带了 `products` 时**一律不读、不校验**。
+- 没刷新的老页面（请求体里**没有 `products` 这个键**）：新登记把平铺那四项拼成一款；修改时在锁里看库里：已经两款及以上 → `400`「这条到货通知现在有 N 款产品，你的页面是旧版的、只显示得了一款，这次没有保存。请刷新页面后再改」（排在 base 比对之前）；0 / 1 款 → 平铺四项盖到那一款上，长宽高、单箱数量、单箱重沿用库里的，没传货型这个键就沿用库里的货型。
+- `base`（修改时传）：打开「修改」弹窗那一刻看到的那份资料，写法跟请求体一样。服务器锁住这一行后跟库里现在的比，有人在这期间改过就**不存**，回 `400`「这条刚刚被同事改过（产品明细变了）…」。比的是唛头、运单号、产品明细（整份比，去掉空白款、数字和文字整理成同一种写法；任何一款任何一项变了或顺序变了都算）、重量、体积、运输方式、仓库、到仓日期、备注：同事点「标已通知」、传照片不算冲突。不传 = 不比（上线前打开的老页面）；传了读不懂（包括 `products` 不是数组）按冲突处理；base 里没有 `products`（老页面）按上一条的办法拼成一款再比。
 - 已转正式的不能改；待入库的改了同一事务同步到那张运单，运单号 / 唛头不能清空。
-- `cargoType`（2026-10-08 F11）：`"normal"` / 空串 / null 都存成 null（普货）；请求体里**没有这个键**时修改沿用库里的、新登记按普货；别的值 `400`「货型只能选普货、商检货、敏感货」。转运单时订单和产品行用它（null 写 normal）。
+- `cargoType`（2026-10-08 F11；2026-10-09 起按款记，在 `products[].cargoType`）：空串 / null = 普货；别的值 `400`「货型只能选普货、商检货、敏感货」（多款时带「第N款」）。老页面平铺的那个见上面的兼容规则。
 - 改唛头（2026-10-08 G01）：原来有唛头、这次换成别的或清空 → 在锁里一起清掉「已通知」（`notifiedAt` / `notifiedBy` / `notifiedByName`），回包 `item.notifiedAt` 是 null。原来没唛头、这次补上的不动。
 - 返回 `{ item }`（同 22.1 的一条）。
 
@@ -778,9 +787,15 @@
 - `clientId`（2026-10-08 G01，可选，只在 `notified: true` 且请求体里有这个键时生效）：页面上看到的唛头。跟库里现在的对不上（同事刚改了唛头）→ `409`「这条的唛头刚被同事改成「X」了，没有标已通知…」，什么都不改。
 
 ### 22.4 POST /staff/arrival-notices/convert
-- `{ id, to: "formal" | "inbound" }`。缺必填项 `400`「转正式运单还缺：品名、重量…」。转正式 = 新建订单 + 运单（已入库）+ 第一条轨迹，跟 `POST /staff/orders` 用同一份 `buildNewOrderRows`；待入库再转正式 = 同一张运单改成已入库并写一条轨迹。照片复制一份成运单的产品图片，复制时到货照片的文件找不到（或是空的）就整个回滚、点名哪张。待入库再转正式：已经复制到运单上的照片只核实运单那份还在（记录在、文件不空）—— 在就算数；不在就从到货照片补一份，到货照片也没了才整个回滚。两人同时点只成功一个。返回 `{ item }`。
+- `{ id, to: "formal" | "inbound" }`。缺必填项 `400`「转正式运单还缺：品名、重量…」；多款时按款点名：「转正式运单还缺：第2款件数、重量…」（顺序：运单号、唛头、品名、仓库、运输方式、到仓日期、件数、单箱数量（有一款填了，没填的各报一条）、重量、体积；规则在 `packages/shared-types/arrival-notice-products.ts` 的 `missingForFormalNotice`，页面同一份）。转正式 = 新建订单 + 运单（已入库）+ 第一条轨迹，跟 `POST /staff/orders` 用同一份 `buildNewOrderRows`；待入库再转正式 = 同一张运单改成已入库并写一条轨迹。照片复制一份成运单的产品图片，复制时到货照片的文件找不到（或是空的）就整个回滚、点名哪张。待入库再转正式：已经复制到运单上的照片只核实运单那份还在（记录在、文件不空）—— 在就算数；不在就从到货照片补一份，到货照片也没了才整个回滚。两人同时点只成功一个。返回 `{ item }`。
 - `acknowledgedPrealertIds?: string[]`（2026-10-08 F01）：员工在确认框里看过、确认是两票不同货的预报单（填 `prealertMatches[].orderId`）。服务器在锁里重查一遍撞上的预报单，只要有一张不在这个列表里就 `409`「国内单号 X 客户报过预报单（…）…请刷新后再点转、在确认框里确认」，什么都不建。待入库再转正式也照样查。
 - 转待入库时没填的件数：运单 `package_count` 存 **null**，订单 `package_count` 存 0（这列不许空，0 = 没填），没件数就不建产品行（补上件数或转正式时再建）；品名没填存空串（2026-10-08 F03）。
+- 多款（2026-10-09）转出去的订单 / 运单 / 产品行（新建和待入库同步同一份）：
+  - 产品行**要么全建、要么全不建**：每款都有品名和件数才每款建一行（长宽高、单箱数量、单箱重、货型照抄本款，国内单号空着写「货拉拉」），否则一行都不建。
+  - 订单品名：建了产品行取第一款的；没建取各款品名拼起来「灯具 / 鞋」。件数：每款都填了才是合计，否则运单 null、订单 0。重量 / 体积：到货通知存的整票数。
+  - 订单 `productQuantity`：建了产品行才是 Σ 单箱数量 × 件数（单箱数量没填全是 0），否则 0（原来新建写死 0、待入库同步不写）。
+  - 订单 / 运单的国内单号取**第一个非空**的那款（不拼起来）；货型取各款最严的。
+  - 转正式时要建的产品行再过一遍「创建订单」的 `validateProductRows`，不过 `400`「转正式运单前请先改：…」（正常情况上面的缺项已经拦住）。
 
 ### 22.5 POST /staff/arrival-notices/delete
 - `{ id }`。只能删还没转运单的（转了的去「运单管理」删运单）。照片记录和文件一起删。返回 `{ deleted: true, id }`。
@@ -795,6 +810,8 @@
 ### 22.8 `prealertMatches`：撞上的预报单（2026-10-08 F01）
 - `[{ orderId, trackingNo, clientId, domesticTrackingNo, received }]`：同公司里，国内单号整号相等的预报单（`approvalStatus` 是 shipped 或 received；不管唛头是否相同）。`received: true` = 预报单已经在「预报单审核」确认收货。
 - 拆号规则：国内单号按空白和 `,，、;；/` 拆开、转大写，只留 6 位以上且带数字的号（中间带空格的会被当成两个号）。
+- 多款（2026-10-09）：每款的国内单号各自拆号（每款最多 10 个），合并去重后一起比，合并后不再截断 —— 第二款的号撞上照样提醒。
+- 候选每批 200 条，按创建时间和 id 稳定翻页查完，不能把截断当作「没撞单」；列表和转换共用查询。
 - 只是提醒，不硬拦：转运单时员工在确认框里确认后带 `acknowledgedPrealertIds` 才转（22.4）。
 
 ### 22.9 其它接口跟着改的（2026-10-08 到货通知审查 19 条）
@@ -810,3 +827,13 @@
 - 客户「预报单」列表状态格（前端 `prealertApprovalZh`）：approved 写「已审核」（原来员工建的单一律写「已发货」），跟详情、导出一致。
 - 预报单「确认收货」改了件数：只有一行产品时产品行件数跟着改成实收数；多行产品合计对不上时打标签会拦下并提示。
 - 上线后手工体检：`scripts/check-arrival-notice-tracking-no.sql`（只读），列出迁移回填跳过的、号对不上的老到货通知。
+
+### 22.10 多款产品（2026-10-09，老板 10-08「到货通知只能填一款产品，很多时候有好几款」）
+- 产品存在子表 `arrival_notice_products`（迁移 `20261009_arrival_notice_products`：建表 + 把老数据回填成一款，品名 / 件数 / 国内单号 / 货型照抄，**整票重量体积不抄**，国内单号空着还是空），删通知时跟着删。
+- 主表 `arrival_notices` 的 `item_name` / `package_count` / `domestic_tracking_no` / `cargo_type` 留着当**镜像列**：新代码每次保存按各款汇总写一遍，只给回滚后的旧代码 / 部署期间的旧容器看；新代码自己读产品行。例外：一条通知**没有产品行但镜像列有值**（部署窗口里旧代码登记的），读的时候把镜像列当一款。
+- 上线后手工体检：`scripts/check-arrival-notice-products.sql`（只读，不进 deploy.sh），列出「没有产品行但镜像列有值」（`no_products`）和「镜像列跟产品行汇总对不上」（`mismatch`，部署窗口里旧代码改过的）。有输出先给老板看，修不修老板定。
+- 自动合计最后统一舍入：重量 2 位、体积 3 位（各款先求和再舍入）；后端有自动值时忽略请求的整票合计，手填的精度校验保持。微小正体积舍成 0 仍作为自动合计保存，不退回手填值。
+- 待入库没有完整产品行时：运单级国内单号保留各款去重后的「、」拼接串，订单级仍是第一款；补齐产品行后恢复各行独立存号。无产品行的待入库单不许打印，提示到「到货通知」补品名和件数。
+- 客户真实主页面 `/client/orders` 和代理列表、导出在待入库时取父运单的国内单号；代理搜索也查待入库父单汇总号和产品行国内号，名下范围不变。
+- 回滚后再次上线，开放编辑前再次手工跑产品体检；迁移不会自动同步旧版期间改过的镜像。`mismatch` 包括镜像四项和可由产品行算出的总重量、总体积（部分行合计规则不变，纯手填无派生值的不比较）。保存、转单入口在通知行锁内核对，不一致即 `409`，两边都不写，堵住手工体检前的覆盖窗口；不自动回写，处理前要老板同意。
+- 前后端共用的纯函数：`packages/shared-types/arrival-notice-products.ts`（`noticeProductTotals` / `noticeLegacySummary` / `missingForFormalNotice` / `noticeFieldLabel` / `isBlankNoticeProduct` / `noticeProductsComplete` / `firstDomesticTrackingNo`，`MAX_NOTICE_PRODUCTS = 50`）。

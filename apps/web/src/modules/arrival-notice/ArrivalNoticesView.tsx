@@ -27,11 +27,14 @@ import {
   deleteArrivalNoticeImage,
   fetchArrivalNotices,
   saveArrivalNotice,
+  noticeProductsOf,
   setArrivalNoticeNotified,
   uploadArrivalNoticeImage,
   type ArrivalNotice,
   type ArrivalNoticeDraft,
   type ArrivalNoticeImage,
+  type ArrivalNoticeProduct,
+  type DraftProduct,
   type ArrivalNoticePage,
   type ArrivalNoticeTab,
   type PrealertMatch,
@@ -41,7 +44,9 @@ import { missingForFormal } from "./missing";
 import { copyImage, copyText, saveImage } from "./copy-helpers";
 import { CLIENT_CHANGED_NOTE, MAX_NOTICE_IMAGES, photoFailMessage, photoSlotsLeft, pickPhotos, uploadQueuedPhotos } from "./photo-upload";
 import { makeThumb } from "./photo-thumb";
+import { nextAutoTotals, type AutoTotalsMemory } from "../orders/auto-totals";
 import { CARGO_TYPES, CARGO_TYPE_ZH, type CargoType } from "../../../../../packages/shared-types/cargo-type";
+import { MAX_NOTICE_PRODUCTS, isBlankNoticeProduct, noticeProductTotals } from "../../../../../packages/shared-types/arrival-notice-products";
 
 const PAGE_SIZE = 30;
 
@@ -89,32 +94,82 @@ function prealertLabel(m: PrealertMatch): string {
   return `${m.trackingNo ?? "（没有单号）"}（唛头 ${m.clientId}，国内单号 ${m.domesticTrackingNo}${m.received ? "，已确认收货" : ""}）`;
 }
 
+/** 产品行的 React key（只在页面里用，draftToBody 会去掉） */
+let productKeySeq = 0;
+function emptyProduct(): DraftProduct {
+  productKeySeq += 1;
+  return {
+    key: `p${productKeySeq}`, itemName: "", packageCount: "", lengthCm: "", widthCm: "", heightCm: "",
+    productQuantity: "", weightKg: "", domesticTrackingNo: "", cargoType: "normal",
+  };
+}
+
 function emptyDraft(): ArrivalNoticeDraft {
   let warehouseId = "";
   try { warehouseId = window.localStorage.getItem(LAST_WAREHOUSE_KEY) ?? ""; } catch { /* 隐私模式读不了就算了 */ }
   if (!WAREHOUSE_ZH[warehouseId]) warehouseId = "";
   return {
-    clientId: "", trackingNo: "", itemName: "", packageCount: "", weightKg: "", volumeM3: "",
-    transportMode: "", cargoType: "normal", domesticTrackingNo: "", warehouseId, arrivedAt: beijingToday(), remark: "",
+    clientId: "", trackingNo: "", weightKg: "", volumeM3: "",
+    transportMode: "", warehouseId, arrivedAt: beijingToday(), remark: "",
+    products: [emptyProduct()], // 默认一款空的
   };
 }
 
 function draftOf(n: ArrivalNotice): ArrivalNoticeDraft {
   const s = (v: string | number | null) => (v === null || v === undefined ? "" : String(v));
+  // 新后端给 products；老后端没给、平铺的有值就拼成一款（noticeProductsOf）；一款都没有就给一款空的
+  const products = noticeProductsOf(n).map((p): DraftProduct => ({
+    ...emptyProduct(),
+    itemName: s(p.itemName),
+    packageCount: s(p.packageCount),
+    lengthCm: s(p.lengthCm),
+    widthCm: s(p.widthCm),
+    heightCm: s(p.heightCm),
+    productQuantity: s(p.productQuantity),
+    weightKg: s(p.weightKg),
+    domesticTrackingNo: s(p.domesticTrackingNo),
+    cargoType: cargoTypeOf(p.cargoType),
+  }));
   return {
     clientId: n.clientId ?? "",
     trackingNo: s(n.trackingNo),
-    itemName: s(n.itemName),
-    packageCount: s(n.packageCount),
     weightKg: s(n.weightKg),
     volumeM3: s(n.volumeM3),
     transportMode: n.transportMode === "sea" || n.transportMode === "land" ? n.transportMode : "",
-    cargoType: cargoTypeOf(n.cargoType),
-    domesticTrackingNo: s(n.domesticTrackingNo),
     warehouseId: n.warehouseId ?? "",
     arrivedAt: s(n.arrivedAt),
     remark: s(n.remark),
+    products: products.length > 0 ? products : [emptyProduct()],
   };
+}
+
+/** 卡片上一款怎么写：「灯具 × 12 件 · 敏感货 · 国内单号 SF123 · 60×40×30cm · 单箱 5kg · 每箱 10 个」，空的项不写 */
+function productLine(p: ArrivalNoticeProduct): string {
+  const cargo = cargoTypeOf(p.cargoType);
+  const dims = p.lengthCm !== null || p.widthCm !== null || p.heightCm !== null
+    ? `${p.lengthCm ?? "?"}×${p.widthCm ?? "?"}×${p.heightCm ?? "?"}cm`
+    : "";
+  return [
+    `${p.itemName || "品名未填"}${p.packageCount !== null ? ` × ${p.packageCount} 件` : ""}`,
+    p.packageCount === null ? "件数未填" : "",
+    cargo !== "normal" ? CARGO_TYPE_ZH[cargo] : "",
+    p.domesticTrackingNo ? `国内单号 ${p.domesticTrackingNo}` : "",
+    dims,
+    p.weightKg !== null ? `单箱 ${p.weightKg}kg` : "",
+    p.productQuantity !== null ? `每箱 ${p.productQuantity} 个` : "",
+  ].filter(Boolean).join(" · ");
+}
+
+/** 给客户的文案：各款走 noticeProductsOf（老后端没回 products 也拼得出一款） */
+function noticeText(n: ArrivalNotice): string {
+  return buildArrivalNoticeText({ ...n, products: noticeProductsOf(n) });
+}
+
+/** 卡片标题上的件数：合计（每款都有件数才算）/「件数没填全」/「件数未填」 */
+function packageCountLabel(products: ReadonlyArray<ArrivalNoticeProduct>): string {
+  const total = noticeProductTotals(products).packageCount;
+  if (total !== null) return `${total} 件`;
+  return products.some((p) => p.packageCount !== null) ? "件数没填全" : "件数未填";
 }
 
 /** seq：每打开一次弹窗领一个号。关 / 存完只关「自己那一个」，晚到的回调关不掉后来打开的（F05） */
@@ -212,7 +267,7 @@ export default function ArrivalNoticesView() {
   };
 
   const onCopyText = async (n: ArrivalNotice) => {
-    const okCopy = await copyText(buildArrivalNoticeText(n));
+    const okCopy = await copyText(noticeText(n));
     say(okCopy ? "文案已复制，去微信 / LINE 粘贴发给客户" : "没复制上，请手动选中上面的文字复制", okCopy ? "success" : "error");
   };
   const onCopyImage = async (img: ArrivalNoticeImage) => {
@@ -386,7 +441,8 @@ function NoticeCard(props: {
   onDelete: () => void;
 }) {
   const { n, busy } = props;
-  const text = useMemo(() => buildArrivalNoticeText(n), [n]);
+  const text = useMemo(() => noticeText(n), [n]);
+  const products = useMemo(() => noticeProductsOf(n), [n]);
   const missing = missingForFormal(n);
   const formal = n.convertedTo === "formal";
   const inbound = n.convertedTo === "inbound";
@@ -395,14 +451,12 @@ function NoticeCard(props: {
   const trackShipmentId = formal || inbound ? n.shipmentId : null;
   // F01：同一个国内单号客户报过预报单（老后端不回 = 没有）
   const prealerts = n.prealertMatches ?? [];
+  // 品名 / 货型 / 国内单号按款写在下面的产品列表里（2026-10-09 多款），这里只放整票的
   const meta: Array<[string, string]> = [
     ["运单号", n.trackingNo ?? ""],
-    ["品名", n.itemName ?? ""],
-    ["重量", n.weightKg !== null ? `${n.weightKg} kg` : ""],
-    ["体积", n.volumeM3 !== null ? `${n.volumeM3} m³` : ""],
+    ["总重量", n.weightKg !== null ? `${n.weightKg} kg` : ""],
+    ["总体积", n.volumeM3 !== null ? `${n.volumeM3} m³` : ""],
     ["运输方式", mode],
-    ["货型", CARGO_TYPE_ZH[cargoTypeOf(n.cargoType)]],
-    ["国内单号", n.domesticTrackingNo ?? ""],
     ["到仓日期", n.arrivedAt ?? ""],
   ];
 
@@ -412,7 +466,7 @@ function NoticeCard(props: {
         <div className="an-card-title">
           <strong>{n.clientId ?? "唛头未填"}</strong>
           <span>{n.warehouseId ? (WAREHOUSE_ZH[n.warehouseId] ?? n.warehouseId) : "仓库未选"}</span>
-          <span>{n.packageCount !== null ? `${n.packageCount} 件` : "件数未填"}</span>
+          <span>{packageCountLabel(products)}{products.length >= 2 ? ` · ${products.length} 款` : ""}</span>
         </div>
         <div className="an-chips">
           {n.notifiedAt
@@ -446,6 +500,11 @@ function NoticeCard(props: {
         </div>
       </div>
 
+      {products.length > 0 ? (
+        <ol className="an-products" aria-label="产品明细">
+          {products.map((p, i) => <li key={i}>{productLine(p)}</li>)}
+        </ol>
+      ) : <p className="an-products-empty">产品未登记（品名、件数都没填）</p>}
       <dl className="an-meta">
         {meta.map(([k, v]) => (
           <div key={k}><dt>{k}</dt><dd className={v ? "" : "is-empty"}>{v || "未填"}</dd></div>
@@ -520,6 +579,54 @@ function NoticeEditor(props: {
   }, []);
 
   const set = <K extends keyof ArrivalNoticeDraft>(k: K, v: ArrivalNoticeDraft[K]) => setDraft((d) => ({ ...d, [k]: v }));
+  /* 产品行（2026-10-09 多款）：按 key 改那一款；加一款（最多 MAX_NOTICE_PRODUCTS 款）；删一款（至少留一款） */
+  const setProduct = <K extends Exclude<keyof DraftProduct, "key">>(key: string, k: K, v: DraftProduct[K]) =>
+    setDraft((d) => ({ ...d, products: d.products.map((p) => (p.key === key ? { ...p, [k]: v } : p)) }));
+  const addProduct = () => setDraft((d) => (d.products.length >= MAX_NOTICE_PRODUCTS ? d : { ...d, products: [...d.products, emptyProduct()] }));
+  const removeProduct = (p: DraftProduct, index: number) => {
+    // 填过东西的那款删前问一句（手机上点错就没了）；空白的直接删
+    if (!isBlankNoticeProduct(p) && !window.confirm(`删除第 ${index + 1} 款${p.itemName.trim() ? `（${p.itemName.trim()}）` : ""}？`)) return;
+    setDraft((d) => (d.products.length <= 1 ? d : { ...d, products: d.products.filter((x) => x.key !== p.key) }));
+  };
+
+  /* 总重量 / 总体积跟「创建订单」一样（modules/orders/auto-totals.ts，同 staff/page.tsx 那段）：
+     产品行算得出就用产品行的、框只读（后端保存时也按产品行重算，手改了也不认）；
+     算不出就只清掉「上一次自动填的」，人手填的不动。 */
+  const autoTotalsRef = useRef<AutoTotalsMemory>({ volumeM3: null, weightKg: null });
+  const { volStr, wtStr } = useMemo(() => {
+    const totals = noticeProductTotals(draft.products);
+    return { volStr: totals.volumeM3 === null ? null : totals.volumeM3.toFixed(3), wtStr: totals.weightKg === null ? null : totals.weightKg.toFixed(2) };
+  }, [draft.products]);
+  useEffect(() => {
+    const auto = autoTotalsRef.current;
+    setDraft((d) => {
+      const next = nextAutoTotals({ volumeM3: d.volumeM3, weightKg: d.weightKg }, auto, volStr, wtStr);
+      autoTotalsRef.current = next.memory;
+      return next.volumeM3 === d.volumeM3 && next.weightKg === d.weightKg ? d : { ...d, volumeM3: next.volumeM3, weightKg: next.weightKg };
+    });
+  }, [volStr, wtStr]);
+  /* 只有几款填了单箱重 / 长宽高时，合计只算了填了的那几款（同「创建订单」）：点名没算进去的是第几款。
+     只看有件数的款（没件数的款本来就算不进去，合计行会写「件数没填全」） */
+  const productHints = useMemo(() => {
+    const rows = draft.products
+      .map((p, i) => ({ p, no: i + 1 }))
+      .filter(({ p }) => !isBlankNoticeProduct(p) && Number(p.packageCount) > 0);
+    const hasWt = ({ p }: { p: DraftProduct }) => Number(p.weightKg) > 0;
+    const hasDims = ({ p }: { p: DraftProduct }) => Number(p.lengthCm) > 0 && Number(p.widthCm) > 0 && Number(p.heightCm) > 0;
+    const out: string[] = [];
+    const noWt = rows.filter((r) => !hasWt(r));
+    if (wtStr !== null && noWt.length > 0) out.push(`第 ${noWt.map((r) => r.no).join("、")} 款没填单箱重，总重量只算了其余几款`);
+    const noDims = rows.filter((r) => !hasDims(r));
+    if (volStr !== null && noDims.length > 0) out.push(`第 ${noDims.map((r) => r.no).join("、")} 款没填齐长宽高，总体积只算了其余几款`);
+    return out;
+  }, [draft.products, wtStr, volStr]);
+  /** 产品区下面那行合计：「合计：2 款，17 件」（空白的那款不算） */
+  const productSummary = useMemo(() => {
+    const filled = draft.products.filter((p) => !isBlankNoticeProduct(p));
+    if (filled.length === 0) return "还没填产品";
+    const total = noticeProductTotals(filled).packageCount;
+    return `合计：${filled.length} 款，${total !== null ? `${total} 件` : "件数没填全"}`;
+  }, [draft.products]);
   const clientKnown = !draft.clientId || props.clients.length === 0 || props.clients.some((c) => c.id === draft.clientId);
   /* F15：唛头下拉不截断（原来 .slice(0, 50)）—— MarkPicker 用 filterMarkOptions，空查询给全部 */
   /* G01：这条已标「已通知客户」、又把原来的唛头换成别的（或清空）—— 新唛头的客户其实没被通知过，保存时后端会改回「未通知」。
@@ -672,21 +779,75 @@ function NoticeEditor(props: {
           <span>运单号</span>
           <input disabled={saving} value={draft.trackingNo} onChange={(e) => set("trackingNo", e.target.value)} placeholder="转运单时必须有" />
         </label>
+        <div className="an-form-wide an-prods">
+          {draft.products.map((p, i) => (
+            <div key={p.key} className="an-prod" role="group" aria-label={`第 ${i + 1} 款`}>
+              <div className="an-prod-head">
+                <strong>第 {i + 1} 款</strong>
+                {/* 只剩一款时不给删（至少一款） */}
+                {draft.products.length > 1 ? (
+                  <button type="button" className="an-link an-link-danger" disabled={saving} onClick={() => removeProduct(p, i)}>删除这一款</button>
+                ) : null}
+              </div>
+              <div className="an-prod-main">
+                <label className="an-prod-wide">
+                  <span>品名</span>
+                  <input disabled={saving} value={p.itemName} onChange={(e) => setProduct(p.key, "itemName", e.target.value)} />
+                </label>
+                <label>
+                  <span>件数</span>
+                  <input disabled={saving} value={p.packageCount} onChange={(e) => setProduct(p.key, "packageCount", e.target.value)} inputMode="numeric" />
+                </label>
+                <label>
+                  <span>货型</span>
+                  <select disabled={saving} value={p.cargoType} onChange={(e) => setProduct(p.key, "cargoType", cargoTypeOf(e.target.value))}>
+                    {CARGO_TYPES.map((c) => <option key={c} value={c}>{CARGO_TYPE_ZH[c]}</option>)}
+                  </select>
+                </label>
+                <label className="an-prod-wide">
+                  <span>国内快递单号</span>
+                  <input disabled={saving} value={p.domesticTrackingNo} onChange={(e) => setProduct(p.key, "domesticTrackingNo", e.target.value)} />
+                </label>
+              </div>
+              <div className="an-prod-extra">
+                <label>
+                  <span>长（cm）</span>
+                  <input disabled={saving} value={p.lengthCm} onChange={(e) => setProduct(p.key, "lengthCm", e.target.value)} inputMode="decimal" placeholder="选填" />
+                </label>
+                <label>
+                  <span>宽（cm）</span>
+                  <input disabled={saving} value={p.widthCm} onChange={(e) => setProduct(p.key, "widthCm", e.target.value)} inputMode="decimal" placeholder="选填" />
+                </label>
+                <label>
+                  <span>高（cm）</span>
+                  <input disabled={saving} value={p.heightCm} onChange={(e) => setProduct(p.key, "heightCm", e.target.value)} inputMode="decimal" placeholder="选填" />
+                </label>
+                <label className="an-prod-half">
+                  <span>单箱数量</span>
+                  <input disabled={saving} value={p.productQuantity} onChange={(e) => setProduct(p.key, "productQuantity", e.target.value)} inputMode="numeric" placeholder="选填" />
+                </label>
+                <label className="an-prod-half">
+                  <span>单箱重（kg）</span>
+                  <input disabled={saving} value={p.weightKg} onChange={(e) => setProduct(p.key, "weightKg", e.target.value)} inputMode="decimal" placeholder="选填" />
+                </label>
+              </div>
+            </div>
+          ))}
+          <div className="an-prod-foot">
+            {draft.products.length < MAX_NOTICE_PRODUCTS ? (
+              <button type="button" className="an-btn an-prod-add" disabled={saving} onClick={addProduct}>＋ 加一款</button>
+            ) : <span className="an-muted">最多 {MAX_NOTICE_PRODUCTS} 款</span>}
+            <span className="an-prod-sum">{productSummary}</span>
+          </div>
+          {productHints.map((h) => <small key={h} className="an-warn">{h}</small>)}
+        </div>
         <label>
-          <span>品名</span>
-          <input disabled={saving} value={draft.itemName} onChange={(e) => set("itemName", e.target.value)} />
+          <span>总重量（公斤）{wtStr !== null ? <small className="an-auto">按产品行算的</small> : null}</span>
+          <input disabled={saving} readOnly={wtStr !== null} value={draft.weightKg} onChange={(e) => set("weightKg", e.target.value)} inputMode="decimal" />
         </label>
         <label>
-          <span>件数</span>
-          <input disabled={saving} value={draft.packageCount} onChange={(e) => set("packageCount", e.target.value)} inputMode="numeric" />
-        </label>
-        <label>
-          <span>重量（公斤）</span>
-          <input disabled={saving} value={draft.weightKg} onChange={(e) => set("weightKg", e.target.value)} inputMode="decimal" />
-        </label>
-        <label>
-          <span>体积（立方）</span>
-          <input disabled={saving} value={draft.volumeM3} onChange={(e) => set("volumeM3", e.target.value)} inputMode="decimal" />
+          <span>总体积（立方）{volStr !== null ? <small className="an-auto">按产品行算的</small> : null}</span>
+          <input disabled={saving} readOnly={volStr !== null} value={draft.volumeM3} onChange={(e) => set("volumeM3", e.target.value)} inputMode="decimal" />
         </label>
         <label>
           <span>运输方式</span>
@@ -694,12 +855,6 @@ function NoticeEditor(props: {
             <option value="">还没定</option>
             <option value="sea">海运</option>
             <option value="land">陆运</option>
-          </select>
-        </label>
-        <label>
-          <span>货型</span>
-          <select disabled={saving} value={draft.cargoType} onChange={(e) => set("cargoType", cargoTypeOf(e.target.value))}>
-            {CARGO_TYPES.map((c) => <option key={c} value={c}>{CARGO_TYPE_ZH[c]}</option>)}
           </select>
         </label>
         <label>
@@ -712,10 +867,6 @@ function NoticeEditor(props: {
         <label>
           <span>到仓日期</span>
           <input disabled={saving} type="date" value={draft.arrivedAt} onChange={(e) => set("arrivedAt", e.target.value)} />
-        </label>
-        <label>
-          <span>国内快递单号</span>
-          <input disabled={saving} value={draft.domesticTrackingNo} onChange={(e) => set("domesticTrackingNo", e.target.value)} />
         </label>
         <label className="an-form-wide">
           <span>备注（内部看，不进给客户的文案）</span>

@@ -151,6 +151,19 @@ check("F07 打印：件数是空的或 0 不开打印窗口、返回原因；员
   }
 });
 
+check("多款待入库：品名没齐、没有产品明细时不许把合并品名打成每一箱的标签", () => {
+  let opened = 0;
+  const { mod } = loadTsx("apps/web/src/modules/shipment/ShipmentPrintLabel.tsx", { window: { open: () => { opened++; return null; } } });
+  const props = { marks: "ZZ", trackingNo: "ZZLABEL", packageCount: 20, itemName: "灯具 / 包", currentStatus: "pendingInbound", products: [] };
+  assert.match(mod.openPrintLabel(props), /产品明细.*到货通知/);
+  assert.equal(opened, 0);
+  assert.equal(mod.printLabelBlockedReason({ ...props, currentStatus: "inWarehouseCN" }), null, "正式老单的无产品行打印不受影响");
+  assert.equal(mod.printLabelBlockedReason({ ...props, products: [{ itemName: "灯具", packageCount: 20 }] }), null, "完整待入库行仍能打印");
+  for (const [file, v] of [[STAFF, "item"], [ADMIN, "o"]] as const) {
+    assert.match(read(file), new RegExp(`openPrintLabel\\(\\{[^\\n]*currentStatus: ${v}\\.currentStatus`), "两端都须传状态");
+  }
+});
+
 check("F10 物流轨迹弹窗 / 客服选运单：品名空串显示「—」/「（没填品名）」，件数只拼正数", () => {
   const src = read("apps/web/src/modules/shipment/ShipmentTrackModal.tsx");
   assert.ok(!/itemName \?\? "—"/.test(src), "还在用 `?? \"—\"`，挡不住空串");

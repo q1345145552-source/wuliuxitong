@@ -7,7 +7,7 @@
 --   B 多余  → 数据库有、设计图没有。一旦跑 prisma db push，这些字段连同里面的数据会被删掉
 --
 -- 什么都不输出 = 完全一致，没问题。
--- 生成自 schema.prisma，共 56 张表 / 706 个字段（2026-10-08 到货通知第四轮审查加 arrival_notices.cargo_type、arrival_notice_images.thumb_path 两列；2026-10-06 到货通知加两张表 arrival_notices 23 个字段、arrival_notice_images 9 个字段；2026-10-02 客服对话加撤回 / 关联单号 5 列 + 系统通知订阅一张表 10 个字段；2026-09-29 加 number_sequences 一张表 3 个字段；2026-09-28 加客服对话两张表 + 询价报价 8 列后是 52 张 / 653 个）。
+-- 生成自 schema.prisma，共 57 张表 / 720 个字段（2026-10-09 到货通知多款产品加一张表 arrival_notice_products 14 个字段；2026-10-08 到货通知第四轮审查加 arrival_notices.cargo_type、arrival_notice_images.thumb_path 两列；2026-10-06 到货通知加两张表 arrival_notices 23 个字段、arrival_notice_images 9 个字段；2026-10-02 客服对话加撤回 / 关联单号 5 列 + 系统通知订阅一张表 10 个字段；2026-09-29 加 number_sequences 一张表 3 个字段；2026-09-28 加客服对话两张表 + 询价报价 8 列后是 52 张 / 653 个）。
 --
 -- ⚠️ 这份清单是手抄的，schema.prisma 加了字段必须回来同步一行，否则部署时会报
 --    「B 多余」的假警告（2026-08-05 加 containers.transport_mode 时就漏了一次）。
@@ -465,6 +465,20 @@ WITH expected(table_name, column_name) AS (VALUES
   ('arrival_notice_images','order_image_id'),
   ('arrival_notice_images','uploaded_by'),
   ('arrival_notice_images','created_at'),
+  ('arrival_notice_products','id'),
+  ('arrival_notice_products','company_id'),
+  ('arrival_notice_products','notice_id'),
+  ('arrival_notice_products','item_name'),
+  ('arrival_notice_products','package_count'),
+  ('arrival_notice_products','length_cm'),
+  ('arrival_notice_products','width_cm'),
+  ('arrival_notice_products','height_cm'),
+  ('arrival_notice_products','product_quantity'),
+  ('arrival_notice_products','weight_kg'),
+  ('arrival_notice_products','cargo_type'),
+  ('arrival_notice_products','domestic_tracking_no'),
+  ('arrival_notice_products','sort_order'),
+  ('arrival_notice_products','created_at'),
   ('number_sequences','name'),
   ('number_sequences','last_value'),
   ('number_sequences','updated_at'),

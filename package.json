@@ -92,6 +92,7 @@
     "test:phone-layout": "tsx scripts/test-phone-layout.ts",
     "test:native-app": "tsx scripts/test-native-app.ts",
     "test:arrival-notice-source": "tsx scripts/test-arrival-notice-source.ts",
+    "test:arrival-notice-editor": "tsx scripts/test-arrival-notice-editor.ts",
     "test:arrival-notices-db": "tsx scripts/test-arrival-notices-db.ts",
     "test:migration-arrival-notices-db": "tsx scripts/test-migration-arrival-notices-db.ts",
     "test:sim-fixes-1008-source": "tsx scripts/test-sim-fixes-1008-source.ts",

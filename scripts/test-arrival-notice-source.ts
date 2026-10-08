@@ -15,6 +15,8 @@
  *   A18 修复审查：G01 那句「改回未通知」在照片没传完那两条路上不许丢
  *   A14b / A19 修复第 1 轮：选照片 HEIC / 认不出的不悄悄丢；「正在处理」按 id 各管各的
  *   A20 / A21 修复第 2 轮：保存中整张表锁住；选照片 / 上传接口只收电脑上显示得了的格式（同一份白名单）
+ *   A22 2026-10-09 多款（老板 10-08「到货通知只能填一款产品，很多时候有好几款」）：产品行能加能删、至少一款；
+ *       合计算得出时总重量 / 总体积只读；卡片按款列出；老后端没回 products 时拼成一款
  */
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -37,10 +39,10 @@ async function main(): Promise<void> {
   const { SHIPMENT_STATUS_ZH, SHIPMENT_STATUS_FILTER_OPTIONS, shipmentStatusZh } = await import("../apps/web/src/modules/shipment/shipment-status");
   const { roleFunctionGroups } = await import("../apps/web/src/modules/layout/menu-config");
 
-  await check("A1 文案：齐的时候一字不差；没登记的行不出现；没唛头 / 没仓库 / 没件数有兜底说法；备注不进文案", () => {
+  await check("A1 文案：一款时跟原来一字不差；没登记的行不出现；没唛头 / 没仓库 / 没件数有兜底说法；备注不进文案；多款按款列出", async () => {
     const full = {
-      clientId: "ABC-001", warehouseId: "wh_yiwu_01", packageCount: 12, itemName: "灯具",
-      weightKg: 85, volumeM3: 0.62, domesticTrackingNo: "SF1234567890", arrivedAt: "2026-10-06",
+      clientId: "ABC-001", warehouseId: "wh_yiwu_01", weightKg: 85, volumeM3: 0.62, arrivedAt: "2026-10-06",
+      products: [{ itemName: "灯具", packageCount: 12, domesticTrackingNo: "SF1234567890" }],
     };
     assert.equal(buildArrivalNoticeText(full), [
       "您好！唛头 ABC-001 的货已到义乌仓，共 12 件。",
@@ -50,13 +52,59 @@ async function main(): Promise<void> {
       "到仓日期：10月6日",
       "如需安排发货或有疑问，请随时联系我们，谢谢！",
     ].join("\n"), "跟发给老板看的那一版不一样了");
-    const bare = { clientId: null, warehouseId: null, packageCount: null, itemName: null, weightKg: null, volumeM3: null, domesticTrackingNo: null, arrivedAt: null };
+    const bare = { clientId: null, warehouseId: null, weightKg: null, volumeM3: null, arrivedAt: null, products: [] };
     assert.equal(buildArrivalNoticeText(bare), "您好！您的货已到仓。\n如需安排发货或有疑问，请随时联系我们，谢谢！");
     const onlyVolume = buildArrivalNoticeText({ ...bare, clientId: "XPP-0015 XHH-6698", warehouseId: "wh_shenzhen_01", volumeM3: 1.5 });
     assert.equal(onlyVolume.split("\n")[0], "您好！唛头 XPP-0015 XHH-6698 的货已到深圳仓。", "带空格的唛头原样写");
     assert.equal(onlyVolume.split("\n")[1], "体积：1.5 立方", "只有体积时只写体积");
     const withRemark = buildArrivalNoticeText({ ...full, remark: "内部：外箱破了" } as never);
     assert.ok(!withRemark.includes("外箱破了"), "内部备注不许进给客户的文案");
+    // 一款、件数没填：第一句不写件数（同原来）
+    assert.equal(buildArrivalNoticeText({ ...full, products: [{ itemName: "灯具", packageCount: null, domesticTrackingNo: null }] }).split("\n")[0], "您好！唛头 ABC-001 的货已到义乌仓。");
+
+    // 老后端（回滚 / 部署窗口）没回 products：平铺的拼成一款，文案跟原来一字不差（统一方案验收第 10 条）
+    const { noticeProductsOf } = await import("../apps/web/src/services/arrival-notice-api");
+    const oldDto = { products: undefined, itemName: "灯具", packageCount: 12, domesticTrackingNo: "SF1234567890", cargoType: null };
+    assert.deepEqual(noticeProductsOf(oldDto), [{ itemName: "灯具", packageCount: 12, lengthCm: null, widthCm: null, heightCm: null, productQuantity: null, weightKg: null, cargoType: "normal", domesticTrackingNo: "SF1234567890" }]);
+    assert.equal(buildArrivalNoticeText({ ...full, products: noticeProductsOf(oldDto) }), buildArrivalNoticeText(full));
+    assert.deepEqual(noticeProductsOf({ products: undefined, itemName: null, packageCount: null, domesticTrackingNo: null, cargoType: null }), [], "老后端平铺全空 = 一款都没有");
+    assert.equal(noticeProductsOf({ products: undefined, itemName: null, packageCount: null, domesticTrackingNo: null, cargoType: "sensitive" }).length, 1, "只选了货型也算一款（不丢货型）");
+    assert.deepEqual(noticeProductsOf({ products: [], itemName: "X", packageCount: 1, domesticTrackingNo: null, cargoType: null }), [], "新后端给了 products（哪怕是空的）就只认它");
+
+    // 多款：统一方案第 4 节的示例，逐字
+    const two = {
+      ...full,
+      products: [
+        { itemName: "灯具", packageCount: 12, domesticTrackingNo: "SF1234567890" },
+        { itemName: "鞋", packageCount: 5, domesticTrackingNo: "YT9876543210" },
+      ],
+    };
+    assert.equal(buildArrivalNoticeText(two), [
+      "您好！唛头 ABC-001 的货已到义乌仓，共 2 款、17 件。",
+      "1. 灯具 × 12 件　国内快递单号：SF1234567890",
+      "2. 鞋 × 5 件　国内快递单号：YT9876543210",
+      "合计：17 件　重量：85 公斤　体积：0.62 立方",
+      "到仓日期：10月6日",
+      "如需安排发货或有疑问，请随时联系我们，谢谢！",
+    ].join("\n"), "多款文案跟方案第 4 节示例不一样了");
+    // 有一款没件数：第一句只说几款、合计行不写件数；那一款不写「× N 件」
+    const partial = buildArrivalNoticeText({ ...two, products: [two.products[0], { itemName: "鞋", packageCount: null, domesticTrackingNo: null }] });
+    assert.equal(partial.split("\n")[0], "您好！唛头 ABC-001 的货已到义乌仓，共 2 款。");
+    assert.equal(partial.split("\n")[2], "2. 鞋", "没件数去掉「× N 件」，没单号去掉后半句");
+    assert.equal(partial.split("\n")[3], "合计：重量：85 公斤　体积：0.62 立方", "件数合计是 null 时合计行只写有值的");
+    // 没品名写「品名未登记」；合计行一项都没有就整行不写
+    const noName = buildArrivalNoticeText({ ...bare, products: [{ itemName: null, packageCount: 3, domesticTrackingNo: null }, { itemName: "鞋", packageCount: null, domesticTrackingNo: "YT1" }] });
+    assert.equal(noName, [
+      "您好！您的货已到仓，共 2 款。",
+      "1. 品名未登记 × 3 件",
+      "2. 鞋　国内快递单号：YT1",
+      "如需安排发货或有疑问，请随时联系我们，谢谢！",
+    ].join("\n"));
+    // 件数齐、没有重量体积：合计行只写件数
+    assert.ok(buildArrivalNoticeText({ ...two, weightKg: null, volumeM3: null }).includes("\n合计：17 件\n"));
+    // 货型、单箱重、尺寸都不进文案（就算传进来也不写）
+    const extra = buildArrivalNoticeText({ ...two, products: two.products.map((p) => ({ ...p, cargoType: "sensitive", weightKg: 5, lengthCm: 60 })) } as never);
+    assert.equal(extra, buildArrivalNoticeText(two));
   });
 
   await check("A2 菜单：员工、超管「运单」组第一项都是「到货通知」→ /staff/arrival-notices；顶栏标题登记了", () => {
@@ -118,15 +166,54 @@ async function main(): Promise<void> {
     assert.equal((routes.match(/requireRole\(req, res, \["staff", "admin"\]\)/g) ?? []).length, 7, "每个接口都只给员工 / 超管");
   });
 
-  await check("A6 页面「还缺什么」跟后端 missingForTarget 同一张单子、同一个顺序", async () => {
+  await check("A6 页面「还缺什么」跟后端 missingForTarget 同一套规则（共享 missingForFormalNotice）；多款点名「第N款」；老后端平铺也照旧", async () => {
+    // 两边都转调共享的那一份，不许各写一份
+    const missingSrc = read("apps/web/src/modules/arrival-notice/missing.ts");
+    assert.match(missingSrc, /return missingForFormalNotice\(\{/, "页面的 missingForFormal 要转调共享的 missingForFormalNotice");
+    assert.match(missingSrc, /products: noticeProductsOf\(n\),/, "老后端没回 products 时要拼成一款");
+    assert.ok(!/out\.push\(/.test(missingSrc), "页面里又自己写了一份缺项规则");
+    const routes = read("apps/api/src/modules/arrival-notices/routes.ts");
+    assert.match(routes, /missingForFormalNotice\(/, "后端 missingForTarget 要用共享的 missingForFormalNotice");
+
     const { missingForTarget } = await import("../apps/api/src/modules/arrival-notices/routes");
-    const full = { clientId: "A", trackingNo: "T", itemName: "I", packageCount: 1, weightKg: 1, volumeM3: 1, transportMode: "sea" as const, domesticTrackingNo: null, warehouseId: "wh_yiwu_01", arrivedAt: "2026-10-06", cargoType: null, remark: null };
-    const keys = ["clientId", "trackingNo", "itemName", "packageCount", "weightKg", "volumeM3", "transportMode", "warehouseId", "arrivedAt"] as const;
-    const cases = [full, ...keys.map((k) => ({ ...full, [k]: null })), Object.fromEntries(Object.entries(full).map(([k, v]) => [k, k === "remark" || k === "domesticTrackingNo" ? v : null])) as typeof full];
-    for (const c of cases) {
-      assert.deepEqual(missingForFormal(c), missingForTarget(c, "formal"), JSON.stringify(c));
+    const prod = (o: Record<string, unknown> = {}) => ({ itemName: "灯具", packageCount: 12, lengthCm: null, widthCm: null, heightCm: null, productQuantity: null, weightKg: null, cargoType: "normal" as const, domesticTrackingNo: null, ...o });
+    const whole = { clientId: "A", trackingNo: "T", weightKg: 1, volumeM3: 1, transportMode: "sea" as const, warehouseId: "wh_yiwu_01", arrivedAt: "2026-10-06", remark: null };
+    const dto = (w: typeof whole, products: ReturnType<typeof prod>[]) => ({ ...w, products, itemName: null, packageCount: null, domesticTrackingNo: null, cargoType: null });
+    const productCases: Array<[ReturnType<typeof prod>[], string[]]> = [
+      [[prod()], []],
+      [[], ["品名", "件数"]],
+      [[prod({ itemName: null })], ["品名"]],
+      [[prod({ packageCount: null })], ["件数"]],
+      [[prod(), prod({ itemName: "鞋", packageCount: null })], ["第2款件数"]],
+      [[prod({ itemName: null }), prod({ itemName: "鞋", packageCount: null })], ["第1款品名", "第2款件数"]],
+      [[prod({ productQuantity: 10 }), prod({ itemName: "鞋" }), prod({ itemName: "包", productQuantity: 2 })], ["第2款单箱数量"]],
+    ];
+    const wholeCases = [whole, ...(Object.keys(whole) as Array<keyof typeof whole>).filter((k) => k !== "remark").map((k) => ({ ...whole, [k]: null }))];
+    for (const [products, expectProducts] of productCases) {
+      for (const w of wholeCases) {
+        const page = missingForFormal(dto(w, products));
+        assert.deepEqual(page, missingForTarget({ ...w, products } as never, "formal"), `前后端不一致：${JSON.stringify({ w, products })}`);
+        if (w === whole) assert.deepEqual(page, expectProducts, JSON.stringify(products));
+      }
     }
-    assert.deepEqual(missingForTarget({ ...full, clientId: null, trackingNo: null, itemName: null }, "inbound"), ["运单号", "唛头"], "转待入库只要运单号 + 唛头");
+    // 顺序：运单号、唛头、品名、仓库、运输方式、到仓日期、件数、单箱数量、重量、体积（同「创建订单」弹窗）
+    const allNull = { clientId: null, trackingNo: null, weightKg: null, volumeM3: null, transportMode: null, warehouseId: null, arrivedAt: null, remark: null };
+    assert.deepEqual(missingForFormal(dto(allNull as never, [prod({ itemName: null, packageCount: null, productQuantity: 1 }), prod({ itemName: null, packageCount: null })])),
+      ["运单号", "唛头", "第1款品名", "第2款品名", "仓库", "运输方式", "到仓日期", "第1款件数", "第2款件数", "第2款单箱数量", "重量", "体积"]);
+    // 老后端没回 products：平铺的拼成一款，结果跟原来单款时一字不差（原来那 11 种情况）
+    const oldFull = { clientId: "A", trackingNo: "T", itemName: "I", packageCount: 1, weightKg: 1, volumeM3: 1, transportMode: "sea", domesticTrackingNo: null, warehouseId: "wh_yiwu_01", arrivedAt: "2026-10-06", cargoType: null };
+    const oldKeys = ["clientId", "trackingNo", "itemName", "packageCount", "weightKg", "volumeM3", "transportMode", "warehouseId", "arrivedAt"] as const;
+    const oldExpect: Record<string, string[]> = {
+      "": [], clientId: ["唛头"], trackingNo: ["运单号"], itemName: ["品名"], packageCount: ["件数"], weightKg: ["重量"], volumeM3: ["体积"],
+      transportMode: ["运输方式"], warehouseId: ["仓库"], arrivedAt: ["到仓日期"],
+    };
+    for (const k of ["", ...oldKeys]) {
+      const c = k ? { ...oldFull, [k]: null } : oldFull;
+      assert.deepEqual(missingForFormal(c), oldExpect[k], `老后端平铺（缺 ${k || "无"}）`);
+    }
+    assert.deepEqual(missingForFormal(Object.fromEntries(Object.entries(oldFull).map(([k, v]) => [k, k === "domesticTrackingNo" ? v : null])) as never),
+      ["运单号", "唛头", "品名", "仓库", "运输方式", "到仓日期", "件数", "重量", "体积"], "全空跟原来一样");
+    assert.deepEqual(missingForTarget({ ...whole, clientId: null, trackingNo: null, products: [] } as never, "inbound"), ["运单号", "唛头"], "转待入库只要运单号 + 唛头");
   });
 
   await check("A7 保存回给页面的那一行在锁里读（页面拿它当下次的 base）；列表在同一个快照里查", () => {
@@ -373,9 +460,41 @@ async function main(): Promise<void> {
 
   await check("A16 F01 / F02 / F11 / G01 页面那半：预报单提醒 + 确认后带 orderId 转、不藏按钮；没通知就转先提醒；货型能选并传给后端；换唛头提醒、标已通知带唛头", async () => {
     const api = await import("../apps/web/src/services/arrival-notice-api");
-    const d = { clientId: "A", trackingNo: "T", itemName: "", packageCount: "", weightKg: "", volumeM3: "", transportMode: "" as const, cargoType: "sensitive" as const, domesticTrackingNo: "", warehouseId: "", arrivedAt: "", remark: "" };
-    assert.equal(api.draftToBody(d).cargoType, "sensitive", "货型要传给后端（原来一律普货）");
-    assert.equal(api.draftToBody({ ...d, cargoType: "normal" }).cargoType, "normal", "普货也要明着传（不传后端会当老页面、沿用库里的）");
+    const dp = (o: Partial<import("../apps/web/src/services/arrival-notice-api").DraftProduct>) => ({
+      key: "k", itemName: "", packageCount: "", lengthCm: "", widthCm: "", heightCm: "", productQuantity: "", weightKg: "", domesticTrackingNo: "", cargoType: "normal" as const, ...o,
+    });
+    const d = { clientId: "A", trackingNo: "T", weightKg: "", volumeM3: "", transportMode: "" as const, warehouseId: "", arrivedAt: "", remark: "", products: [dp({ key: "p1", cargoType: "sensitive" })] };
+    assert.equal(api.draftToBody(d).products[0].cargoType, "sensitive", "每款的货型要传给后端（原来一律普货）");
+    assert.equal(api.draftToBody({ ...d, products: [dp({})] }).products[0].cargoType, "normal", "普货也要明着传");
+    // 2026-10-09 多款：products 每款都发（空白的也发，后端报「第N款」的序号跟页面一致）、去掉 key、空串当 null、数字原样传文字
+    const multi = api.draftToBody({
+      ...d, weightKg: " 85 ", volumeM3: "",
+      products: [
+        dp({ key: "p1", itemName: " 灯具 ", packageCount: "12", lengthCm: "60", widthCm: "40", heightCm: "30", productQuantity: "10", weightKg: "5", domesticTrackingNo: "SF1", cargoType: "inspection" }),
+        dp({ key: "p2" }),
+        dp({ key: "p3", itemName: "鞋", packageCount: "5", domesticTrackingNo: "YT2", cargoType: "sensitive" }),
+      ],
+    });
+    assert.deepEqual(multi.products, [
+      { itemName: "灯具", packageCount: "12", lengthCm: "60", widthCm: "40", heightCm: "30", productQuantity: "10", weightKg: "5", cargoType: "inspection", domesticTrackingNo: "SF1" },
+      { itemName: null, packageCount: null, lengthCm: null, widthCm: null, heightCm: null, productQuantity: null, weightKg: null, cargoType: "normal", domesticTrackingNo: null },
+      { itemName: "鞋", packageCount: "5", lengthCm: null, widthCm: null, heightCm: null, productQuantity: null, weightKg: null, cargoType: "sensitive", domesticTrackingNo: "YT2" },
+    ]);
+    assert.ok(!JSON.stringify(multi).includes('"key"'), "key 只给页面用，不许发给后端");
+    assert.equal(multi.weightKg, "85");
+    assert.equal(multi.volumeM3, null);
+    // 平铺镜像（只给回滚后的旧后端）：品名拼起来、件数每款都填了才写合计（空白款不算）、国内单号「、」拼、货型最严
+    assert.deepEqual([multi.itemName, multi.packageCount, multi.domesticTrackingNo, multi.cargoType], ["灯具 / 鞋", "17", "SF1、YT2", "sensitive"]);
+    const half = api.draftToBody({ ...d, products: [dp({ itemName: "灯具", packageCount: "3" }), dp({ itemName: "鞋" })] });
+    assert.deepEqual([half.itemName, half.packageCount, half.domesticTrackingNo, half.cargoType], ["灯具 / 鞋", null, null, "normal"], "有一款没件数：镜像件数是 null；普货也明着传");
+    // 保存：base 用同一个函数转，也带 products
+    const saved = await captureBodies(async () => { await api.saveArrivalNotice("n9", d, { ...d, products: [dp({ key: "b1", itemName: "旧" })] }); });
+    assert.equal(saved.length, 1);
+    const sb = saved[0].body as { id: string; products: unknown[]; base: { products: Array<{ itemName: string }> } };
+    assert.equal(sb.id, "n9");
+    assert.equal(sb.products.length, 1);
+    assert.equal(sb.base.products[0].itemName, "旧");
+    assert.ok(!JSON.stringify(sb).includes('"key"'));
     // 发给后端的请求体
     const bodies = await captureBodies(async () => {
       await api.convertArrivalNotice("n1", "formal", ["o1", "o2"]);
@@ -394,9 +513,10 @@ async function main(): Promise<void> {
     assert.ok(bodies.every((b) => b.url.includes("/staff/arrival-notices/")));
     const v = view();
     // F11
+    assert.match(v, /<select disabled=\{saving\} value=\{p\.cargoType\} onChange=\{\(e\) => setProduct\(p\.key, "cargoType", cargoTypeOf\(e\.target\.value\)\)\}>/, "每款能选货型");
     assert.match(v, /CARGO_TYPES\.map\(\(c\) => <option key=\{c\} value=\{c\}>\{CARGO_TYPE_ZH\[c\]\}<\/option>\)/);
-    assert.match(v, /cargoType: cargoTypeOf\(n\.cargoType\),/, "修改时带出库里的货型");
-    assert.match(v, /\["货型", CARGO_TYPE_ZH\[cargoTypeOf\(n\.cargoType\)\]\]/, "卡片上显示货型");
+    assert.match(v, /cargoType: cargoTypeOf\(p\.cargoType\),/, "修改时带出库里每款的货型");
+    assert.match(v, /cargo !== "normal" \? CARGO_TYPE_ZH\[cargo\] : ""/, "卡片上每款写货型（普货不写）");
     // F01：卡片提醒、确认框列出来、确认后带 orderId 转；按钮不藏（R2）
     assert.match(v, /const prealerts = n\.prealertMatches \?\? \[\];/);
     assert.match(v, /const matches = n\.prealertMatches \?\? \[\];/);
@@ -476,18 +596,66 @@ async function main(): Promise<void> {
     assert.match(v, /const savedNoteRef = useRef\(""\);/);
   });
 
-  await check("A20 修复第 2 轮：保存 / 传照片期间修改弹窗里的每一个输入框、下拉、备注都是灰的（传照片那几十秒改的字存不上、还会提示「已保存」）", () => {
+  await check("A20 修复第 2 轮：保存 / 传照片期间修改弹窗里的每一个输入框、下拉、备注、产品行按钮都是灰的（传照片那几十秒改的字存不上、还会提示「已保存」）", () => {
     const v = view();
     const form = sliceBetween(v, '<div className="an-form">', '<div className="an-form-photos">');
-    // 一个控件写在一行里（onChange 里有「=>」，不能拿 [^>]* 截标签）
-    const controls = form.split("\n").filter((line) => /<(input|select|textarea)\b/.test(line));
-    // 10-08 唛头换成 MarkPicker（不是原生 input 了）：11 个原生控件 + 1 个 MarkPicker，也要保存中变灰
-    assert.equal(controls.length, 11, `表里的输入控件数变了（${controls.length}），对一下这条测试`);
+    // 一个控件写在一行里（onChange 里有「=>」，不能拿 [^>]* 截标签）—— 标签名后面直接换行就截不到了，不许
+    assert.ok(!/<(input|select|textarea|button)\s*\n/.test(form), "控件要写在一行里（这条测试按行查 disabled）");
+    const controls = form.split("\n").filter((line) => /<(input|select|textarea|button)\b/.test(line));
+    // 2026-10-09 多款：产品行是动态的，不再数个数；整票 7 个 + 每款 9 个（品名 / 件数 / 货型 / 国内单号 / 长宽高 / 单箱数量 / 单箱重）+ 删除 / 加一款两个按钮
+    assert.ok(controls.length >= 18, `表里的控件少了（${controls.length}），对一下这条测试`);
+    for (const re of [/value=\{p\.itemName\}/, /value=\{p\.packageCount\}/, /value=\{p\.cargoType\}/, /value=\{p\.domesticTrackingNo\}/, /value=\{p\.lengthCm\}/, /value=\{p\.widthCm\}/, /value=\{p\.heightCm\}/, /value=\{p\.productQuantity\}/, /value=\{p\.weightKg\}/, /删除这一款/, /＋ 加一款/, /value=\{draft\.weightKg\}/, /value=\{draft\.volumeM3\}/, /value=\{draft\.remark\}/]) {
+      assert.equal(controls.filter((c) => re.test(c)).length, 1, `找不到控件 ${re}`);
+    }
     const pickers = form.split("\n").filter((line) => /<MarkPicker\b/.test(line));
     assert.equal(pickers.length, 1, "唛头的 MarkPicker 不见了");
     assert.ok(pickers[0].includes("disabled={saving}"), "保存中唛头还能改");
     const loose = controls.filter((c) => !c.includes("disabled={saving}"));
     assert.deepEqual(loose, [], "保存中还能改的控件");
+  });
+
+  await check("A22 2026-10-09 多款：产品行能加能删、至少一款、最多 50 款；合计算得出时总重量 / 总体积只读并点名没算进去的款；卡片按款列出", async () => {
+    const v = view();
+    const form = sliceBetween(v, '<div className="an-form">', '<div className="an-form-photos">');
+    // 只剩一款时没有「删除这一款」；删的时候也兜一道（至少留一款）
+    assert.match(form, /\{draft\.products\.length > 1 \? \(\s*<button [^\n]*>删除这一款<\/button>\s*\) : null\}/, "只剩一款时不许出现「删除这一款」");
+    assert.match(v, /setDraft\(\(d\) => \(d\.products\.length <= 1 \? d : \{ \.\.\.d, products: d\.products\.filter\(\(x\) => x\.key !== p\.key\) \}\)\);/, "删除要兜住「至少一款」");
+    const { MAX_NOTICE_PRODUCTS } = await import("../packages/shared-types/arrival-notice-products");
+    assert.equal(MAX_NOTICE_PRODUCTS, 50);
+    assert.match(form, /\{draft\.products\.length < MAX_NOTICE_PRODUCTS \? \(\s*<button [^\n]*onClick=\{addProduct\}>＋ 加一款<\/button>\s*\) : <span className="an-muted">最多 \{MAX_NOTICE_PRODUCTS\} 款<\/span>\}/, "到 50 款换成文字");
+    assert.match(v, /const addProduct = \(\) => setDraft\(\(d\) => \(d\.products\.length >= MAX_NOTICE_PRODUCTS \? d :/);
+    assert.match(v, /products: \[emptyProduct\(\)\], \/\/ 默认一款空的/, "新登记默认一款空产品");
+    assert.match(v, /products: products\.length > 0 \? products : \[emptyProduct\(\)\],/, "库里一款都没有时修改弹窗也给一款空的");
+    // 总重量 / 总体积：跟「创建订单」同一套（auto-totals.ts），算得出就只读
+    assert.match(v, /const totals = noticeProductTotals\(draft\.products\);/);
+    assert.match(v, /nextAutoTotals\(\{ volumeM3: d\.volumeM3, weightKg: d\.weightKg \}, auto, volStr, wtStr\)/);
+    assert.match(form, /<input disabled=\{saving\} readOnly=\{wtStr !== null\} value=\{draft\.weightKg\}/, "算得出总重量时框只读");
+    assert.match(form, /<input disabled=\{saving\} readOnly=\{volStr !== null\} value=\{draft\.volumeM3\}/, "算得出总体积时框只读");
+    assert.equal((form.match(/按产品行算的/g) ?? []).length, 2);
+    assert.match(v, /款没填单箱重，总重量只算了其余几款/);
+    assert.match(v, /款没填齐长宽高，总体积只算了其余几款/);
+    // 合计行
+    assert.match(v, /return `合计：\$\{filled\.length\} 款，\$\{total !== null \? `\$\{total\} 件` : "件数没填全"\}`;/);
+    // 每款的输入框按 key 改那一款
+    assert.match(v, /const setProduct = <K extends Exclude<keyof DraftProduct, "key">>\(key: string, k: K, v: DraftProduct\[K\]\) =>/);
+    assert.match(form, /\{draft\.products\.map\(\(p, i\) => \(\s*<div key=\{p\.key\} className="an-prod"/, "产品行用 key 当 React key（不是下标，删中间那款时输入框不串）");
+    // 卡片：产品列表、标题件数 + 几款、meta 不再有品名 / 货型 / 国内单号
+    const card = sliceBetween(v, "function NoticeCard(", "function NoticeEditor(");
+    assert.match(card, /const products = useMemo\(\(\) => noticeProductsOf\(n\), \[n\]\);/);
+    assert.match(card, /<ol className="an-products" aria-label="产品明细">\s*\{products\.map\(\(p, i\) => <li key=\{i\}>\{productLine\(p\)\}<\/li>\)\}/);
+    assert.match(card, /\{packageCountLabel\(products\)\}\{products\.length >= 2 \? ` · \$\{products\.length\} 款` : ""\}/);
+    assert.ok(!/\["(品名|货型|国内单号)",/.test(card), "meta 里不许再有单值的品名 / 货型 / 国内单号");
+    assert.match(card, /\["总重量", /);
+    assert.match(card, /\["总体积", /);
+    // 文案、缺项都走 noticeProductsOf（老后端没回 products 也拼得出一款）
+    assert.match(v, /return buildArrivalNoticeText\(\{ \.\.\.n, products: noticeProductsOf\(n\) \}\);/);
+    assert.ok(!/buildArrivalNoticeText\(n\)/.test(v), "文案不许直接拿 n（products 可能没回）");
+    // 手机：产品行的排法在 globals.css 的 .an-* 段
+    const css = read("apps/web/src/app/globals.css");
+    const mobile = css.slice(css.indexOf("@media (max-width: 640px) {\n  .an-toolbar"));
+    for (const rule of [".an-prod-main { grid-template-columns: repeat(2, minmax(0, 1fr)); }", ".an-prod-main > .an-prod-wide { grid-column: 1 / -1; }", ".an-prod-extra { grid-template-columns: repeat(6, minmax(0, 1fr)); }", ".an-prod-extra > .an-prod-half { grid-column: span 3; }"]) {
+      assert.ok(mobile.includes(rule), `手机布局少了：${rule}`);
+    }
   });
 
   await check("A21 修复第 2 轮：选照片只收电脑上显示得了的格式（TIFF / SVG 不加、说清原因）；后端上传接口同一份白名单兜底", async () => {
@@ -505,6 +673,32 @@ async function main(): Promise<void> {
     // 白名单里每一种 image-storage.ts 都认得扩展名（认不出的会被存成 .jpg、按 image/jpeg 发出去）
     const storage = read("apps/api/src/modules/orders/image-storage.ts");
     for (const t of PHOTO_MIME_ALLOWED) assert.ok(storage.includes(`"${t}":`), `image-storage.ts 不认 ${t}`);
+  });
+
+  await check("A23 自动总体积按三位小数，旧页面六位合计不挡保存；手填和产品行的校验不能放松", async () => {
+    const { readNoticeFields } = await import("../apps/api/src/modules/arrival-notices/routes");
+    const { noticeProductTotals } = await import("../packages/shared-types/arrival-notice-products");
+    for (const [lengthCm, widthCm, heightCm, packageCount, expected] of [
+      [51, 41, 31, 1, 0.065], [45.5, 32, 28, 3, 0.122], [5, 5, 5, 1, 0],
+      [10, 10, 5, 1, 0.001], [10, 10, 5, 3, 0.002],
+    ]) {
+      const products = [{ itemName: "灯具", lengthCm, widthCm, heightCm, packageCount, weightKg: 0.29 }];
+      const rawVolume = lengthCm * widthCm * heightCm * packageCount / 1e6;
+      assert.equal(noticeProductTotals(products).volumeM3, expected);
+      const parsed = readNoticeFields({ products, volumeM3: rawVolume.toFixed(6), weightKg: "页面旧合计" });
+      assert.ok(!("error" in parsed), JSON.stringify(parsed));
+      if ("fields" in parsed) {
+        assert.equal(parsed.fields.volumeM3, expected);
+        assert.equal(parsed.fields.weightKg, Math.round(0.29 * packageCount * 100) / 100);
+      }
+    }
+    // 两款先求和、最后只舍入一次；不能逐款舍入后再加。
+    assert.equal(noticeProductTotals(Array.from({ length: 2 }, () => ({ lengthCm: 10, widthCm: 10, heightCm: 4, packageCount: 1 }))).volumeM3, 0.001);
+    for (const body of [
+      { products: [], volumeM3: "0.064821" }, { products: [], volumeM3: 0 },
+      { products: [{ packageCount: 1, weightKg: 0.001 }], weightKg: 100 },
+      { products: [{ packageCount: 1, lengthCm: 99999999, widthCm: 99999999, heightCm: 99999999 }] },
+    ]) assert.ok("error" in readNoticeFields(body), `填错的仍须拦住：${JSON.stringify(body)}`);
   });
 
   console.log(`\n到货通知（不连库）${passed} 项全部通过`);

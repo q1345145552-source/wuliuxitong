@@ -313,6 +313,8 @@ jobs:
       # 装柜 / 运单管理几道闸还在、接口网址比页面多一段、页面「还缺什么」跟后端同一张单子。
       - name: Test arrival notices (source)
         run: npm run test:arrival-notice-source
+      - name: Test arrival notice editor behavior
+        run: npm run test:arrival-notice-editor
       # 2026-10-08 模拟数据测试查出来的页面接线（不连库）：列表排序带 id 兜底、超管待入库到仓日期、袋装单位、改单带打开时的剩余件数
       - name: Test simulated-data fixes 1008 (source)
         run: npm run test:sim-fixes-1008-source

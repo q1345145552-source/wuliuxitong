@@ -1403,7 +1403,11 @@ model ArrivalNotice {
   createdAt          DateTime  @default(now()) @map("created_at")
   updatedAt          DateTime  @updatedAt @map("updated_at")
 
-  images ArrivalNoticeImage[]
+  images   ArrivalNoticeImage[]
+  /// 产品明细（2026-10-09 多款产品）。上面的 itemName / packageCount / domesticTrackingNo / cargoType 从此是「镜像列」：
+  /// 新代码每次保存按各款汇总写一遍（packages/shared-types/arrival-notice-products.ts 的 noticeLegacySummary），只给回滚后的旧代码 / 部署期间的旧容器看；
+  /// weightKg / volumeM3 仍是真正的整票总重量、总体积
+  products ArrivalNoticeProduct[]
 
   /// 同一家公司里一个运单号只能登记一条（两个人同时登记同一个号，后到的被数据库挡下；运单号空着的不算重复，PostgreSQL 里 NULL 互不相等）
   @@unique([companyId, trackingNo])
@@ -1431,4 +1435,34 @@ model ArrivalNoticeImage {
 
   @@index([noticeId, createdAt])
   @@map("arrival_notice_images")
+}
+
+/// 到货通知的一款产品（2026-10-09，老板 10-08「到货通知只能填一款产品，很多时候有好几款」）。
+/// 字段跟 order_products 一一对应（转运单时照抄过去）；不同的是每一项都能空着（到货登记时可能还没数清）。
+/// 每一列都显式写 @map（CLAUDE.md 第 26 条：这个库的列名映射不统一，手写 SQL 别靠猜）。
+model ArrivalNoticeProduct {
+  id                 String   @id @default(cuid())
+  companyId          String   @map("company_id")
+  noticeId           String   @map("notice_id")
+  itemName           String?  @map("item_name")
+  /// 件数（箱数）；可以先空着
+  packageCount       Int?     @map("package_count")
+  lengthCm           Float?   @map("length_cm")
+  widthCm            Float?   @map("width_cm")
+  heightCm           Float?   @map("height_cm")
+  /// 单箱数量
+  productQuantity    Int?     @map("product_quantity")
+  /// 单箱重（同 order_products.weight_kg，不是这一款的总重）
+  weightKg           Float?   @map("weight_kg")
+  /// normal | inspection | sensitive
+  cargoType          String   @default("normal") @map("cargo_type")
+  /// 空就是空（不写「货拉拉」；转运单写进产品行时才补「货拉拉」，同「创建订单」）
+  domesticTrackingNo String?  @map("domestic_tracking_no")
+  sortOrder          Int      @default(0) @map("sort_order")
+  createdAt          DateTime @default(now()) @map("created_at")
+
+  notice ArrivalNotice @relation(fields: [noticeId], references: [id], onDelete: Cascade)
+
+  @@index([noticeId, sortOrder])
+  @@map("arrival_notice_products")
 }

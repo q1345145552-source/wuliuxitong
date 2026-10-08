@@ -16,6 +16,9 @@
  *           照片格式白名单
  *   N34~N35 修复第 3 轮：改号和登记同一瞬间用同一个号只能成一边；跟号写的是运单当时的号、不写回读到的旧号
  *   N36     修复第 4 轮：跨公司（运单号全库唯一）改号也不许撞别家没转的到货通知，号锁不分公司排队
+ *   N37~N49 2026-10-09 多款产品：两款存取 / 镜像列、每款校验报「第N款」、没品名能存转正式点名、待入库要么全建要么全不建、
+ *           两款转正式跟「创建订单」一样、产品行算重量体积、冲突检测「产品明细变了」、老页面兼容（1 款能存 / 2 款挡）、
+ *           平铺镜像不校验、第二款撞预报单、按第二款搜、部署窗口兜底、单箱数量全填或全空
  *
  * 只连测试库：DATABASE_URL 不带 neon.tech 的不跑（一次性 docker 库设 AGENT_PORTAL_TEST_ALLOW_DB=1）；
  * 没有 DATABASE_URL 打印「跳过」。测试数据全在假公司 zz_arrival_co / zz_arrival_co2 下，开跑前、跑完后都清干净。
@@ -61,6 +64,7 @@ async function main(): Promise<void> {
   for (const m of ["get", "post", "put", "patch", "delete"]) app[m] = (p: string, h: Function) => routes.set(`${m.toUpperCase()} ${p}`, h);
   const { registerArrivalNoticeRoutes, translateUniqueClash } = await import("../apps/api/src/modules/arrival-notices/routes");
   registerArrivalNoticeRoutes(app);
+  (await import("../apps/api/src/modules/agent-portal/routes")).registerAgentPortalRoutes(app);
   (await import("../apps/api/src/modules/orders/routes")).registerOrderRoutes(app);
   (await import("../apps/api/src/modules/admin/routes")).registerAdminRoutes(app);
   (await import("../apps/api/src/modules/loading-manifests/routes")).registerLoadingManifestRoutes(app);
@@ -107,6 +111,7 @@ async function main(): Promise<void> {
       await pm.order.deleteMany({ where: { companyId: co } });
       await pm.auditLog.deleteMany({ where: { companyId: co } });
       await pm.user.deleteMany({ where: { companyId: co } });
+      await pm.agent.deleteMany({ where: { companyId: co } });
     }
   }
 
@@ -595,7 +600,8 @@ async function main(): Promise<void> {
       const opened = baseOf(n); // 甲、乙同时点开「修改」
       const b1 = await save(STAFF2, { ...opened, id: n.id, itemName: "乙改的", base: opened });
       assert.equal(b1.itemName, "乙改的", "乙先存：没人动过，能存");
-      await refuse(SAVE, STAFF, { ...opened, id: n.id, weightKg: "99", base: opened }, /刚刚被同事改过（品名变了）/);
+      // 2026-10-09 多款产品：品名 / 件数 / 国内单号 / 货型都归「产品明细」，冲突提示统一说「产品明细变了」
+      await refuse(SAVE, STAFF, { ...opened, id: n.id, weightKg: "99", base: opened }, /刚刚被同事改过（产品明细变了）/);
       let row = await pm.arrivalNotice.findUnique({ where: { id: n.id } });
       assert.equal(row.itemName, "乙改的", "甲后存被挡，乙改的品名还在");
       assert.equal(Number(row.weightKg), 85.5, "甲的改动一个字都没写进去");
@@ -612,14 +618,14 @@ async function main(): Promise<void> {
         call(SAVE, STAFF2, { ...baseOf(b2), id: n.id, packageCount: "14", base: baseOf(b2) }),
       ]);
       assert.equal([r1, r2].filter((r) => r.status === 200).length, 1, `应该只有一个存上：${r1.status} ${r1.message} / ${r2.status} ${r2.message}`);
-      assert.match([r1, r2].find((r) => r.status !== 200)!.message, /件数变了/);
+      assert.match([r1, r2].find((r) => r.status !== 200)!.message, /产品明细变了/);
 
       // 上线前打开的老页面不带 base：照旧整份存（不挡）
       const old = await save(STAFF, { ...baseOf(b2), id: n.id, packageCount: "15" });
       assert.equal(old.packageCount, 15);
       // base 读不懂的：当成冲突挡掉，不能因为读不懂就放过去
       await refuse(SAVE, STAFF, { ...baseOf(old), id: n.id, base: "乱写" }, /刚刚被同事改过/);
-      await refuse(SAVE, STAFF, { ...baseOf(old), id: n.id, base: { ...baseOf(old), packageCount: 0 } }, /刚刚被同事改过（件数变了）/);
+      await refuse(SAVE, STAFF, { ...baseOf(old), id: n.id, base: { ...baseOf(old), packageCount: 0 } }, /刚刚被同事改过（产品明细变了）/);
       // 哪天仓库名单改了：库里是名单外的老仓库。base 只拿来比、不做填写校验，照样认得；把仓库改成名单里的能存上（不能被一直挡住）
       await pm.arrivalNotice.update({ where: { id: n.id }, data: { warehouseId: "wh_retired_zz" } });
       const retired = { ...baseOf(old), warehouseId: "wh_retired_zz" };
@@ -631,7 +637,7 @@ async function main(): Promise<void> {
       await must("POST /staff/arrival-notices/convert", STAFF, { id: n.id, to: "inbound" });
       const stale = baseOf(latest);
       await save(STAFF2, { ...stale, id: n.id, itemName: "乙在待入库时改", base: stale });
-      await refuse(SAVE, STAFF, { ...stale, id: n.id, itemName: "甲拿旧的改", base: stale }, /品名变了/);
+      await refuse(SAVE, STAFF, { ...stale, id: n.id, itemName: "甲拿旧的改", base: stale }, /产品明细变了/);
       const ship = await pm.shipment.findFirst({ where: { trackingNo: NO("EDIT1") }, include: { order: true } });
       assert.equal(ship.order.itemName, "乙在待入库时改", "运单那边是乙的，没被甲盖掉");
       row = await pm.arrivalNotice.findUnique({ where: { id: n.id } });
@@ -1156,6 +1162,364 @@ async function main(): Promise<void> {
           assert.equal(shipNow, before, `${tag}：挡下来的改号没写进运单`);
           assert.equal(foreignHolders, 1, tag);
         }
+      }
+    });
+    /* ====================== 2026-10-09 多款产品（老板 10-08「到货通知只能填一款产品，很多时候有好几款」） ====================== */
+    // 一款产品（页面 draftToBody 发的样子：没填的是 null）
+    const P = (o: Row = {}): Row => ({ itemName: null, packageCount: null, lengthCm: null, widthCm: null, heightCm: null, productQuantity: null, weightKg: null, cargoType: "normal", domesticTrackingNo: null, ...o });
+    const ticket = { clientId: CLIENT.userId, transportMode: "sea", warehouseId: "wh_yiwu_01", arrivedAt: "2026-10-09" };
+    const SAVE_URL = "POST /staff/arrival-notices/save";
+    const dbProducts = (noticeId: string) => pm.arrivalNoticeProduct.findMany({ where: { noticeId }, orderBy: { sortOrder: "asc" } });
+
+    await check("N37 两款保存：回包 / 列表按顺序带两款；主表镜像列 = 品名拼起来、件数合计、国内单号用「、」拼（旧代码拆得开）、货型取最严；调换顺序重存；删通知产品行跟着删", async () => {
+      const n = await save(STAFF, { ...ticket, trackingNo: NO("MP1"), weightKg: 85, volumeM3: 0.62, products: [
+        P({ itemName: "灯具", packageCount: "12", domesticTrackingNo: "SF1234567890" }),
+        P({ itemName: "鞋", packageCount: 5, cargoType: "sensitive", domesticTrackingNo: "YT9876543210" }),
+      ] });
+      assert.deepEqual(n.products.map((p: Row) => [p.itemName, p.packageCount, p.cargoType, p.domesticTrackingNo]), [["灯具", 12, "normal", "SF1234567890"], ["鞋", 5, "sensitive", "YT9876543210"]]);
+      assert.deepEqual(Object.keys(n.products[0]).sort(), ["cargoType", "domesticTrackingNo", "heightCm", "itemName", "lengthCm", "packageCount", "productQuantity", "weightKg", "widthCm"], "产品不带 id");
+      assert.equal(n.itemName, "灯具 / 鞋", "顶层品名给老页面看：拼起来");
+      assert.equal(n.packageCount, 17);
+      assert.equal(n.domesticTrackingNo, "SF1234567890、YT9876543210");
+      assert.equal(n.cargoType, "sensitive", "顶层货型取最严");
+      assert.equal(n.weightKg, 85, "没填单箱重：整票重量用手填的");
+      assert.equal(n.volumeM3, 0.62);
+      const row = await pm.arrivalNotice.findUnique({ where: { id: n.id } });
+      assert.equal(row.itemName, "灯具 / 鞋");
+      assert.equal(row.packageCount, 17);
+      assert.equal(row.domesticTrackingNo, "SF1234567890、YT9876543210");
+      assert.equal(row.cargoType, "sensitive");
+      const { domesticNoTokens } = await import("../apps/api/src/modules/arrival-notices/routes");
+      assert.deepEqual(domesticNoTokens(row.domesticTrackingNo), ["SF1234567890", "YT9876543210"], "回滚后旧代码撞预报单要拆得开");
+      const rows = await dbProducts(n.id);
+      assert.deepEqual(rows.map((p: Row) => [p.sortOrder, p.companyId, p.itemName]), [[0, CO, "灯具"], [1, CO, "鞋"]]);
+      const listed = (await list(STAFF, { keyword: NO("MP1") })).items.find((x: Row) => x.id === n.id);
+      assert.deepEqual(listed.products, n.products, "列表跟回包一样");
+      const swapped = await save(STAFF, { ...ticket, id: n.id, trackingNo: NO("MP1"), weightKg: 85, volumeM3: 0.62, products: [...n.products].reverse() });
+      assert.deepEqual(swapped.products.map((p: Row) => p.itemName), ["鞋", "灯具"]);
+      assert.deepEqual((await dbProducts(n.id)).map((p: Row) => [p.sortOrder, p.itemName]), [[0, "鞋"], [1, "灯具"]]);
+      const gone = await save(STAFF, { products: [P({ itemName: "要删的" }), P({ itemName: "要删的2" })] });
+      await must("POST /staff/arrival-notices/delete", STAFF, { id: gone.id });
+      assert.equal(await pm.arrivalNoticeProduct.count({ where: { noticeId: gone.id } }), 0, "删通知产品行跟着删");
+    });
+
+    await check("N38 每款的校验：两款及以上报「第N款」（按请求里原来的位置，空白款也数）、只有一款跟原来一字不差；第 51 款拒；格式不对拒；合计溢出拒；空白款丢掉、sort_order 重编", async () => {
+      const before = await pm.arrivalNotice.count({ where: { companyId: CO } });
+      const bad: Array<[Row, RegExp]> = [
+        [{ products: [P({ itemName: "灯具", packageCount: 1 }), P({ packageCount: 0 })] }, /^第2款件数必须是正整数$/],
+        [{ products: [P(), P({ packageCount: 2.5 })] }, /^第2款件数必须是正整数$/],
+        [{ products: [P({ itemName: "灯具" }), P({ weightKg: "0.001" })] }, /^第2款单箱重不能小于 0\.01/],
+        [{ products: [P(), P({ lengthCm: -1 })] }, /^第2款长\(cm\)必须是不小于 0 的数字$/],
+        [{ products: [P(), P(), P({ heightCm: 1e8 })] }, /^第3款高\(cm\)太大了/],
+        [{ products: [P({ productQuantity: "1.5" }), P()] }, /^第1款单箱数量必须是正整数$/],
+        [{ products: [P({ cargoType: "dangerous" }), P()] }, /^第1款货型只能选普货、商检货、敏感货$/],
+        [{ products: [P(), P({ domesticTrackingNo: "x".repeat(101) })] }, /^第2款国内快递单号太长了/],
+        [{ products: [P({ itemName: "x".repeat(201) })] }, /^品名太长了（最多 200 个字）$/],
+        [{ products: [P({ packageCount: 0 })] }, /^件数必须是正整数$/],
+        [{ products: Array.from({ length: 51 }, () => P()) }, /一条到货通知最多 50 款产品/],
+        [{ products: "灯具" }, /产品明细格式不对，请刷新页面/],
+        [{ products: { itemName: "灯具" } }, /产品明细格式不对/],
+        [{ products: [P({ itemName: "灯具" }), null] }, /产品明细格式不对/],
+        [{ products: [["灯具"]] }, /产品明细格式不对/],
+        [{ products: [P({ itemName: "a", packageCount: 2000000000 }), P({ itemName: "b", packageCount: 2000000000 })] }, /件数合计 4000000000 超过了系统上限/],
+        [{ products: [P({ itemName: "a", packageCount: 2000, weightKg: 99999999 })] }, /总重量算出来是/],
+      ];
+      for (const [body, re] of bad) await refuse(SAVE_URL, STAFF, body, re);
+      assert.equal(await pm.arrivalNotice.count({ where: { companyId: CO } }), before, "填错的一条都不能存进去");
+      // 正好 50 款能存
+      const fifty = await save(STAFF, { products: Array.from({ length: 50 }, (_, i) => P({ itemName: `款${i + 1}` })) });
+      assert.equal(fifty.products.length, 50);
+      // 空白款：页面「＋ 加一款」后什么都没填的那几行丢掉，剩下的从 0 重新编号
+      const n = await save(STAFF, { products: [P(), P({ itemName: "灯具", packageCount: 2 }), P({ domesticTrackingNo: "   " }), P({ cargoType: "inspection" })] });
+      assert.deepEqual(n.products.map((p: Row) => [p.itemName, p.cargoType]), [["灯具", "normal"], [null, "inspection"]], "只有货型不是普货的那款不算空白");
+      assert.deepEqual((await dbProducts(n.id)).map((p: Row) => p.sortOrder), [0, 1]);
+      // products: [] 合法 = 一款都没登记
+      const none = await save(STAFF, { products: [] });
+      assert.deepEqual(none.products, []);
+      assert.equal(none.itemName, null);
+      assert.equal(none.packageCount, null);
+    });
+
+    await check("N39 没品名的款能存；转正式时按款点名（第2款品名），什么都不建", async () => {
+      const n = await save(STAFF, { ...ticket, trackingNo: NO("MP3"), weightKg: 10, volumeM3: 0.1, products: [P({ itemName: "灯具", packageCount: 2 }), P({ packageCount: 3 })] });
+      assert.deepEqual(n.products.map((p: Row) => [p.itemName, p.packageCount]), [["灯具", 2], [null, 3]]);
+      await refuse("POST /staff/arrival-notices/convert", STAFF, { id: n.id, to: "formal" }, /^转正式运单还缺：第2款品名。先点「修改」补上再转$/);
+      const m = await save(STAFF, { ...ticket, trackingNo: NO("MP3B"), products: [P({ itemName: "灯具" }), P({ packageCount: 3 })] });
+      await refuse("POST /staff/arrival-notices/convert", STAFF, { id: m.id, to: "formal" }, /^转正式运单还缺：第2款品名、第1款件数、重量、体积。/);
+      assert.equal(await pm.shipment.count({ where: { trackingNo: { in: [NO("MP3"), NO("MP3B")] } } }), 0);
+    });
+
+    await check("N40 待入库时第 2 款没件数：运单件数 null、订单件数 0、一行产品都不建（不只建齐的那款）、订单品名「灯具 / 鞋」；补上件数后两行、件数 17、订单品名「灯具」、产品数量 / 货型 / 国内单号跟上", async () => {
+      const n = await save(STAFF, { clientId: CLIENT.userId, trackingNo: NO("MP4"), products: [P({ itemName: "灯具", packageCount: 12, domesticTrackingNo: "SF4440001" }), P({ itemName: "鞋" })] });
+      assert.equal(n.packageCount, null, "有一款没件数：合计是 null");
+      await must("POST /staff/arrival-notices/convert", STAFF, { id: n.id, to: "inbound" });
+      const load = () => pm.shipment.findFirst({ where: { trackingNo: NO("MP4") }, include: { order: { include: { products: { orderBy: { sortOrder: "asc" } } } } } });
+      let ship = await load();
+      assert.equal(ship.packageCount, null);
+      assert.equal(ship.order.packageCount, 0);
+      assert.equal(ship.order.products.length, 0, "要么全建要么全不建：只建灯具那行会少打标签、件数被当成 12");
+      assert.equal(ship.order.itemName, "灯具 / 鞋", "没建产品行：订单品名拼起来，列表看得到全部品名");
+      assert.equal(ship.order.productQuantity, 0);
+      assert.equal(ship.order.domesticTrackingNo, "SF4440001", "订单国内单号取第一个非空的");
+      await save(STAFF, { id: n.id, clientId: CLIENT.userId, trackingNo: NO("MP4"), products: [
+        P({ itemName: "灯具", packageCount: 12, productQuantity: 10, domesticTrackingNo: "SF4440001" }),
+        P({ itemName: "鞋", packageCount: 5, productQuantity: 2, cargoType: "inspection" }),
+      ] });
+      ship = await load();
+      assert.equal(ship.packageCount, 17);
+      assert.equal(ship.order.packageCount, 17);
+      assert.equal(ship.order.itemName, "灯具", "建了产品行：订单品名取第一款（同「创建订单」）");
+      assert.equal(ship.order.productQuantity, 130, "Σ 单箱数量 × 件数（原来同步时不写产品数量）");
+      assert.equal(ship.order.cargoType, "inspection", "最严的货型");
+      assert.deepEqual(ship.order.products.map((p: Row) => [p.itemName, p.packageCount, p.productQuantity, p.cargoType, p.domesticTrackingNo, p.sortOrder]),
+        [["灯具", 12, 10, "normal", "SF4440001", 0], ["鞋", 5, 2, "inspection", "货拉拉", 1]], "国内单号空着写「货拉拉」（同「创建订单」）");
+      const st = (await must("GET /staff/shipments", STAFF, {}, { pageSize: "500" })).items.find((x: Row) => x.trackingNo === NO("MP4"));
+      assert.equal(st.totalPackageCount, 17);
+    });
+
+    await check("N41 两款转正式：订单 / 运单 / 产品行跟员工「创建订单」两款建单逐项一样（品名、件数、重量、体积、产品数量、最严货型、每行字段）；单箱重和尺寸盖掉手填的重量体积", async () => {
+      const prods = [
+        { itemName: "灯具", packageCount: 12, lengthCm: 60, widthCm: 40, heightCm: 30, productQuantity: 10, weightKg: 5, cargoType: "normal", domesticTrackingNo: "SF1234560001" },
+        { itemName: "鞋", packageCount: 5, lengthCm: 50, widthCm: 40, heightCm: 30, productQuantity: 2, weightKg: 5, cargoType: "sensitive", domesticTrackingNo: "YT9876540002" },
+      ];
+      const n = await save(STAFF, { ...ticket, trackingNo: NO("MPT"), weightKg: 999, volumeM3: 9, products: prods.map((p) => P({ ...p, packageCount: String(p.packageCount), lengthCm: String(p.lengthCm) })) });
+      assert.equal(n.weightKg, 85, "Σ 单箱重 × 件数 = 5×12 + 5×5，盖掉手填的 999");
+      assert.equal(n.volumeM3, 1.164, "Σ 长×宽×高×件数 = 0.864 + 0.3，盖掉手填的 9");
+      await must("POST /staff/arrival-notices/convert", STAFF, { id: n.id, to: "formal" });
+      await must("POST /staff/orders", STAFF, { ...ticket, trackingNo: NO("MPTW"), weightKg: 999, volumeM3: 9, domesticTrackingNo: prods[0].domesticTrackingNo, products: prods });
+      const load = (no: string) => pm.shipment.findFirst({ where: { trackingNo: no }, include: { statusLogs: true, order: { include: { products: { orderBy: { sortOrder: "asc" } } } } } });
+      const a = await load(NO("MPT"));
+      const b = await load(NO("MPTW"));
+      const pick = (o: Row, keys: string[]) => Object.fromEntries(keys.map((k) => [k, o[k] instanceof Object && "toFixed" in o[k] ? String(o[k]) : o[k]]));
+      // 同 N14 那份清单
+      const orderKeys = ["clientId", "warehouseId", "batchNo", "orderNo", "approvalStatus", "itemName", "productQuantity", "packageCount", "packageUnit", "weightKg", "volumeM3", "receivableCurrency", "shipDate", "domesticTrackingNo", "transportMode", "cargoType", "receiverNameTh", "receiverPhoneTh", "receiverAddressTh", "statusGroup", "paymentStatus"];
+      assert.deepEqual(pick(a.order, orderKeys), pick(b.order, orderKeys), "订单");
+      assert.equal(a.order.itemName, "灯具");
+      assert.equal(a.order.packageCount, 17);
+      assert.equal(a.order.productQuantity, 130);
+      assert.equal(a.order.cargoType, "sensitive");
+      assert.equal(Number(a.order.weightKg), 85);
+      assert.equal(Number(a.order.volumeM3), 1.164);
+      const shipKeys = ["batchNo", "currentStatus", "currentLocation", "weightKg", "volumeM3", "packageCount", "packageUnit", "transportMode", "domesticTrackingNo", "warehouseId", "remark", "parentTrackingNo"];
+      const logKeys = ["fromStatus", "toStatus", "remark", "nextStop", "operatorRole", "operatorName"];
+      assert.deepEqual(pick(a.statusLogs[0], logKeys), pick(b.statusLogs[0], logKeys), "轨迹");
+      assert.deepEqual(pick(a, shipKeys), pick(b, shipKeys), "运单");
+      const prodKeys = ["itemName", "packageCount", "lengthCm", "widthCm", "heightCm", "productQuantity", "cargoType", "domesticTrackingNo", "weightKg", "sortOrder"];
+      assert.equal(a.order.products.length, 2);
+      assert.deepEqual(a.order.products.map((p: Row) => pick(p, prodKeys)), b.order.products.map((p: Row) => pick(p, prodKeys)), "产品行");
+    });
+
+    await check("N42 只有部分款填了单箱重 / 尺寸：只算填了的款（同「创建订单」）；都没填时手填的重量体积留着；清掉单箱重回到手填的", async () => {
+      const base = { ...ticket, trackingNo: NO("MP5"), weightKg: 20, volumeM3: 0.5 };
+      const n = await save(STAFF, { ...base, products: [P({ itemName: "灯具", packageCount: 2 }), P({ itemName: "鞋", packageCount: 3 })] });
+      assert.equal(n.weightKg, 20);
+      assert.equal(n.volumeM3, 0.5);
+      const w = await save(STAFF, { ...base, id: n.id, products: [P({ itemName: "灯具", packageCount: 2, weightKg: 1.25 }), P({ itemName: "鞋", packageCount: 3, lengthCm: 100, widthCm: 50, heightCm: 20 })] });
+      assert.equal(w.weightKg, 2.5, "只有第 1 款有单箱重：2 × 1.25");
+      assert.equal(w.volumeM3, 0.3, "只有第 2 款有尺寸：1 × 0.5 × 0.2 × 3");
+      const back = await save(STAFF, { ...base, id: n.id, weightKg: "33", products: [P({ itemName: "灯具", packageCount: 2 }), P({ itemName: "鞋", packageCount: 3 })] });
+      assert.equal(back.weightKg, 33, "算不出来：用这次手填的");
+      assert.equal(back.volumeM3, 0.5);
+      // 有单箱重但那款没件数：算不进去
+      const noPkg = await save(STAFF, { ...base, id: n.id, weightKg: "7", products: [P({ itemName: "灯具", weightKg: 3 })] });
+      assert.equal(noPkg.weightKg, 7);
+    });
+
+    await check("N43 冲突检测：同事改了任何一款 → 「产品明细变了」、库里还是同事那份；页面上有一行空白产品、库里一款都没有时不误报；base 的产品明细读不懂当冲突", async () => {
+      const n = await save(STAFF, { ...ticket, trackingNo: NO("MP6"), products: [P({ itemName: "灯具", packageCount: 12 }), P({ itemName: "鞋", packageCount: 5 })] });
+      const baseOf = (it: Row) => ({ clientId: it.clientId, trackingNo: it.trackingNo, weightKg: it.weightKg, volumeM3: it.volumeM3, transportMode: it.transportMode, warehouseId: it.warehouseId, arrivedAt: it.arrivedAt, remark: it.remark,
+        products: it.products.map((p: Row) => ({ ...p, packageCount: p.packageCount === null ? "" : String(p.packageCount) })) });
+      const opened = baseOf(n);
+      await save(STAFF2, { ...opened, id: n.id, products: [opened.products[0], { ...opened.products[1], packageCount: "6" }], base: opened });
+      await refuse(SAVE_URL, STAFF, { ...opened, id: n.id, remark: "甲改备注", base: opened }, /刚刚被同事改过（产品明细变了）/);
+      assert.deepEqual((await dbProducts(n.id)).map((p: Row) => p.packageCount), [12, 6], "乙改的还在");
+      assert.equal((await pm.arrivalNotice.findUnique({ where: { id: n.id } })).remark, null, "甲的一个字都没写进去");
+      // 同事只是把两款调了个顺序：也算变了（顺序就是页面上的「第几款」）
+      const now1 = (await list(STAFF, { keyword: NO("MP6") })).items[0];
+      const o2 = baseOf(now1);
+      await save(STAFF2, { ...o2, id: n.id, products: [...o2.products].reverse(), base: o2 });
+      await refuse(SAVE_URL, STAFF, { ...o2, id: n.id, base: o2 }, /产品明细变了/);
+      // 空白行：库里 0 款，页面 base 里一行空白产品（页面默认给一款空的）—— 不许误报
+      const m = await save(STAFF, { clientId: CLIENT.userId, trackingNo: NO("MP6B"), products: [] });
+      const mBase = { ...baseOf(m), products: [P({ packageCount: "" })] };
+      const m2 = await save(STAFF, { ...mBase, id: m.id, products: [P(), P({ itemName: "后补的" })], base: mBase });
+      assert.deepEqual(m2.products.map((p: Row) => p.itemName), ["后补的"]);
+      // base 的数字写成 "12"、库里是 12：同一个数，不算变
+      const k = await save(STAFF, { clientId: CLIENT.userId, trackingNo: NO("MP6C"), products: [P({ itemName: "灯具", packageCount: 12, lengthCm: 60, weightKg: 1.5 })] });
+      const kBase = { ...baseOf(k), products: [{ ...k.products[0], packageCount: "12", lengthCm: "60", weightKg: "1.50" }] };
+      await save(STAFF, { ...kBase, id: k.id, remark: "能存", base: kBase });
+      // 读不懂：products 不是数组 / 里面有不是对象的
+      for (const products of ["乱写", [null]]) await refuse(SAVE_URL, STAFF, { ...kBase, id: k.id, base: { ...kBase, products } }, /刚刚被同事改过/);
+    });
+
+    await check("N44 没刷新的老页面（不带 products）：库里 1 款时能存、长宽高 / 单箱数量 / 单箱重保留、不传货型沿用库里的；库里 2 款时挡住叫他刷新、库里不变；老页面新登记建出 1 款", async () => {
+      const a = await save(STAFF, { ...ticket, trackingNo: NO("MP7"), weightKg: 1, volumeM3: 9, products: [P({ itemName: "灯具", packageCount: 2, lengthCm: 60, widthCm: 40, heightCm: 30, productQuantity: 10, weightKg: 5, cargoType: "sensitive", domesticTrackingNo: "SF7770001" })] });
+      // 老页面的 base（draftOf 拿的是顶层那几项、数字是文字；F11 之前的页面还没有货型）
+      const oldBase = { clientId: a.clientId, trackingNo: a.trackingNo, itemName: a.itemName, packageCount: String(a.packageCount), weightKg: String(a.weightKg), volumeM3: String(a.volumeM3), transportMode: a.transportMode, domesticTrackingNo: a.domesticTrackingNo, warehouseId: a.warehouseId, arrivedAt: a.arrivedAt, remark: a.remark };
+      const kept = await save(STAFF, { ...oldBase, id: a.id, itemName: "灯具改", packageCount: "3", base: oldBase });
+      assert.deepEqual(kept.products, [{ itemName: "灯具改", packageCount: 3, lengthCm: 60, widthCm: 40, heightCm: 30, productQuantity: 10, weightKg: 5, cargoType: "sensitive", domesticTrackingNo: "SF7770001" }], "老页面看不到的几项不能被抹掉");
+      assert.equal(kept.weightKg, 15, "单箱重还在：按 5 × 3 重算");
+      assert.equal(kept.volumeM3, 0.216);
+      // 老页面带了货型（F11 之后、多款之前的页面）：照它的
+      const typed = await save(STAFF, { ...oldBase, id: a.id, itemName: "灯具改", packageCount: "3", cargoType: "normal" });
+      assert.equal(typed.products[0].cargoType, "normal");
+      // 库里两款：老页面只看得到一款，存了就把第二款抹掉 —— 挡住（排在 base 比对之前，base 对不上也说这一句）
+      const b = await save(STAFF, { ...ticket, trackingNo: NO("MP8"), products: [P({ itemName: "灯具", packageCount: 1 }), P({ itemName: "鞋", packageCount: 2 })] });
+      await refuse(SAVE_URL, STAFF, { ...ticket, id: b.id, trackingNo: NO("MP8"), itemName: "灯具", packageCount: 1 }, /^这条到货通知现在有 2 款产品，你的页面是旧版的、只显示得了一款，这次没有保存。请刷新页面后再改$/);
+      await refuse(SAVE_URL, STAFF, { ...ticket, id: b.id, trackingNo: NO("MP8"), itemName: "灯具", base: { itemName: "对不上" } }, /现在有 2 款产品，你的页面是旧版的/);
+      assert.deepEqual((await dbProducts(b.id)).map((p: Row) => [p.itemName, p.packageCount]), [["灯具", 1], ["鞋", 2]], "库里两款一个字不变");
+      // 老页面新登记：平铺那四项拼成一款
+      const c = await save(STAFF, { clientId: CLIENT.userId, trackingNo: NO("MP9"), itemName: "老页面登记", packageCount: 4, domesticTrackingNo: "SF9990009", cargoType: "inspection" });
+      assert.deepEqual((await dbProducts(c.id)).map((p: Row) => [p.itemName, p.packageCount, p.domesticTrackingNo, p.cargoType]), [["老页面登记", 4, "SF9990009", "inspection"]]);
+      assert.equal(c.products.length, 1);
+    });
+
+    await check("N45 带 products 时平铺的镜像一律不读、不校验：拼起来超过 200 字的品名、乱写的件数 / 货型都不报 400", async () => {
+      const n = await save(STAFF, { trackingNo: NO("MP10"), itemName: "长".repeat(300), packageCount: "abc", domesticTrackingNo: "x".repeat(300), cargoType: "乱写", products: [P({ itemName: "灯具" })] });
+      assert.equal(n.itemName, "灯具");
+      assert.equal(n.packageCount, null);
+      assert.equal(n.domesticTrackingNo, null);
+    });
+
+    await check("N46 第二款的国内单号撞上客户预报单：保存回包 / 列表带提醒；转运单不确认 409、确认后能转", async () => {
+      const pa = await must("POST /client/prealerts", CLIENT, { warehouseId: "wh_yiwu_01", itemName: "预报鞋", packageCount: 2, transportMode: "sea", domesticTrackingNo: "JD7770001234" });
+      const paOrder = await pm.order.findFirst({ where: { companyId: CO, orderNo: pa.trackingNo } });
+      const n = await save(STAFF, { ...ticket, trackingNo: NO("MP11"), weightKg: 3, volumeM3: 0.1, products: [P({ itemName: "灯具", packageCount: 1, domesticTrackingNo: "SF0000000001" }), P({ itemName: "鞋", packageCount: 1, domesticTrackingNo: " jd7770001234 " })] });
+      assert.deepEqual(n.prealertMatches.map((m: Row) => [m.orderId, m.domesticTrackingNo]), [[paOrder.id, "JD7770001234"]], "第二款的号也要比");
+      const row = (await list(STAFF, { keyword: NO("MP11") })).items[0];
+      assert.equal(row.prealertMatches.length, 1, "列表也带");
+      const r = await call("POST /staff/arrival-notices/convert", STAFF, { id: n.id, to: "formal" });
+      assert.equal(r.status, 409, r.message);
+      assert.match(r.message, /国内单号 JD7770001234 客户报过预报单/);
+      await must("POST /staff/arrival-notices/convert", STAFF, { id: n.id, to: "formal", acknowledgedPrealertIds: [paOrder.id] });
+      // 新登记时第二款撞：回包就有
+      const fresh = await save(STAFF, { products: [P({ itemName: "a" }), P({ domesticTrackingNo: "JD7770001234" })] });
+      assert.equal(fresh.prealertMatches.length, 1);
+    });
+
+    await check("N47 搜索：按第二款的品名、第二款的国内单号都搜得到", async () => {
+      const n = await save(STAFF, { clientId: CLIENT.userId, trackingNo: NO("MP12"), products: [P({ itemName: "普通灯", domesticTrackingNo: "SF1112223" }), P({ itemName: "第二款专搜品名", domesticTrackingNo: "ZT5550009999" })] });
+      for (const kw of ["第二款专搜", "zt555000"]) {
+        const l = await list(STAFF, { keyword: kw });
+        assert.deepEqual(l.items.map((x: Row) => x.id), [n.id], `搜「${kw}」`);
+      }
+    });
+
+    await check("N48 部署窗口兜底：旧代码登记的（只有主表那几列、没有产品行）列表当一款显示、按它的品名搜得到；新页面一保存就写出产品行", async () => {
+      await pm.$executeRawUnsafe(`INSERT INTO arrival_notices (id, company_id, created_by, updated_at, tracking_no, client_id, item_name, package_count, domestic_tracking_no, cargo_type)
+        VALUES ('zz_an_mirror', '${CO}', '${STAFF.userId}', now(), '${NO("MP13")}', '${CLIENT.userId}', '旧容器登记的', 6, 'SF6660006', 'inspection')`);
+      const it = (await list(STAFF, { keyword: "旧容器登记" })).items.find((x: Row) => x.id === "zz_an_mirror");
+      assert.ok(it, "按主表那列品名搜得到");
+      assert.deepEqual(it.products, [{ itemName: "旧容器登记的", packageCount: 6, lengthCm: null, widthCm: null, heightCm: null, productQuantity: null, weightKg: null, cargoType: "inspection", domesticTrackingNo: "SF6660006" }]);
+      assert.equal(it.packageCount, 6);
+      const base = { clientId: it.clientId, trackingNo: it.trackingNo, weightKg: it.weightKg, volumeM3: it.volumeM3, transportMode: it.transportMode, warehouseId: it.warehouseId, arrivedAt: it.arrivedAt, remark: it.remark, products: it.products };
+      await save(STAFF, { ...base, id: "zz_an_mirror", products: [...it.products, P({ itemName: "新加一款", packageCount: 1 })], base });
+      assert.deepEqual((await dbProducts("zz_an_mirror")).map((p: Row) => [p.itemName, p.packageCount, p.cargoType]), [["旧容器登记的", 6, "inspection"], ["新加一款", 1, "normal"]]);
+      // 转运单也认兜底那一款（没有产品行时 fieldsOf 拿主表那几列）
+      await pm.$executeRawUnsafe(`INSERT INTO arrival_notices (id, company_id, created_by, updated_at, tracking_no, client_id, item_name, package_count)
+        VALUES ('zz_an_mirror2', '${CO}', '${STAFF.userId}', now(), '${NO("MP14")}', '${CLIENT.userId}', '旧容器2', 3)`);
+      await must("POST /staff/arrival-notices/convert", STAFF, { id: "zz_an_mirror2", to: "inbound" });
+      const ship = await pm.shipment.findFirst({ where: { trackingNo: NO("MP14") }, include: { order: { include: { products: true } } } });
+      assert.equal(ship.packageCount, 3);
+      assert.deepEqual(ship.order.products.map((p: Row) => [p.itemName, p.packageCount]), [["旧容器2", 3]]);
+    });
+
+    await check("N49 单箱数量只填了一部分：转正式时缺的那几款被点名（同「创建订单」全填或全空）；全空照转", async () => {
+      const n = await save(STAFF, { ...ticket, trackingNo: NO("MP15"), weightKg: 3, volumeM3: 0.1, products: [P({ itemName: "灯具", packageCount: 2, productQuantity: 10 }), P({ itemName: "鞋", packageCount: 3 }), P({ itemName: "帽", packageCount: 1 })] });
+      await refuse("POST /staff/arrival-notices/convert", STAFF, { id: n.id, to: "formal" }, /^转正式运单还缺：第2款单箱数量、第3款单箱数量。/);
+      const all = await save(STAFF, { ...ticket, id: n.id, trackingNo: NO("MP15"), weightKg: 3, volumeM3: 0.1, products: [P({ itemName: "灯具", packageCount: 2 }), P({ itemName: "鞋", packageCount: 3 }), P({ itemName: "帽", packageCount: 1 })] });
+      assert.equal(all.products.length, 3);
+      await must("POST /staff/arrival-notices/convert", STAFF, { id: n.id, to: "formal" });
+      const o = await pm.order.findFirst({ where: { shipments: { some: { trackingNo: NO("MP15") } } }, include: { products: true } });
+      assert.equal(o.products.length, 3);
+      assert.equal(o.productQuantity, 0);
+    });
+    await check("N51 待入库无产品行：每款国内单号留在运单供查询、显示；订单仍第一款；修改和补齐同步", async () => {
+      // scripts 的 tsc 不编 JSX；运行时加载真前端模块（与现有前端行为测试一样，不手抄算法）。
+      await pm.agent.create({data:{id:AGENT.agentId,companyId:CO,name:"测试代理",priceNormal:1,priceInspection:1,priceSensitive:1}});
+      await pm.user.update({where:{id:CLIENT.userId},data:{agentId:AGENT.agentId}});
+      const frontModule = (name: string) => import(path.resolve("apps/web/src/modules/shipment", name));
+      const { staffShipmentFilterRow, matchesShipmentFilter, EMPTY_SHIPMENT_FILTER } = await frontModule("export-filter.ts");
+      const { buildProductDetailRows } = await frontModule("ShipmentTableGrid.tsx");
+      const products = [P({ itemName: "灯具", packageCount: 12, domesticTrackingNo: "ZZDOMFIRST" }), P({ itemName: "鞋", domesticTrackingNo: "ZZDOMSECOND" })];
+      const body = { ...ticket, trackingNo: NO("DOMS"), products };
+      const n = await save(STAFF, body);
+      await must("POST /staff/arrival-notices/convert", STAFF, { id: n.id, to: "inbound" });
+      async function verify(no: string, expected: string, complete = false) {
+        const ship = await pm.shipment.findFirst({ where: { trackingNo: NO("DOMS") }, include: { order: { include: { products: true } } } });
+        assert.equal(ship.domesticTrackingNo, expected);
+        assert.equal(ship.order.domesticTrackingNo, "ZZDOMFIRST", "订单整串相等筛选口径不改");
+        assert.equal(ship.order.products.length, complete ? 2 : 0, "仍然全建或全不建");
+        const staff = (await must("GET /staff/shipments", STAFF, {}, { pageSize: "500" })).items.find((s: Row) => s.trackingNo === NO("DOMS"));
+        assert.ok(staff);
+        assert.equal(matchesShipmentFilter(staffShipmentFilterRow(staff), { ...EMPTY_SHIPMENT_FILTER, domesticTrackingNo: no }), true);
+        assert.ok(JSON.stringify(buildProductDetailRows(staff)).includes(no), "列表产品明细要显示第二款单号");
+        const clientPage = await must("GET /client/orders", CLIENT, {}, { pageSize:"500" });
+        const clientRow = clientPage.items.find((s:Row)=>s.trackingNo===NO("DOMS"));
+        assert.ok(clientRow, "真实客户主页面接口有这票");
+        assert.ok(clientRow.domesticTrackingNo?.includes(no) || clientRow.products.some((p:Row)=>p.domesticTrackingNo?.includes(no)), "客户主页面能按第二号筛到");
+        for(const route of ["GET /agent/shipments","GET /agent/shipments/export-data"]){
+          const page=await must(route,AGENT,{}, {keyword:no});
+          const row=page.items.find((s:Row)=>s.trackingNo===NO("DOMS"));
+          assert.ok(row, route+" 按第二号有结果");
+          assert.ok(row.domesticTrackingNo?.includes(no) || row.products.some((p:Row)=>p.domesticTrackingNo?.includes(no)));
+          const none=await must(route,{...AGENT,agentId:"zz_unowned_agent"},{},{keyword:no});
+          assert.equal(none.items.length,0,"代理隔离");
+        }
+        const found = await must("GET /client/shipments/search", CLIENT, {}, { domesticTrackingNo: no });
+        assert.ok(found.items.some((s: Row) => s.trackingNo === NO("DOMS")), "客户按第二款国内单号搜得到");
+        const other = await must("GET /client/shipments/search", CLIENT_B, {}, { domesticTrackingNo: no });
+        assert.equal(other.items.some((s: Row) => s.trackingNo === NO("DOMS")), false);
+      }
+      await verify("ZZDOMSECOND", "ZZDOMFIRST、ZZDOMSECOND");
+      products[1].domesticTrackingNo = "ZZDOMCHANGED";
+      await save(STAFF, { ...body, id: n.id });
+      await verify("ZZDOMCHANGED", "ZZDOMFIRST、ZZDOMCHANGED");
+      products[1].packageCount = 5;
+      await save(STAFF, { ...body, id: n.id });
+      await verify("ZZDOMCHANGED", "ZZDOMFIRST", true);
+    });
+
+    await check("N52 回滚旧代码改了镜像或总重体积：新页面保存 / 转换必须拒绝，原数据原样保留", async () => {
+      for (const [key,value] of [["itemName","旧版修正名称"],["packageCount",8],["domesticTrackingNo","ZZOLDCHANGED"],["cargoType","sensitive"],["weightKg",12],["volumeM3",0.8]] as const) {
+        const body={...ticket,trackingNo:NO("DRIFT"+key),products:[P({itemName:"灯",packageCount:2,weightKg:5,lengthCm:51,widthCm:41,heightCm:31})]};
+        const n=await save(STAFF,body);
+        await pm.arrivalNotice.update({where:{id:n.id},data:{[key]:value}});
+        const before=await pm.arrivalNotice.findUnique({where:{id:n.id},include:{products:true}});
+        await refuse("POST /staff/arrival-notices/save",STAFF,{...body,id:n.id,remark:"只改备注"},/数据不一致.*管理员/,409);
+        await refuse("POST /staff/arrival-notices/convert",STAFF,{id:n.id,to:"inbound"},/数据不一致.*管理员/,409);
+        assert.deepEqual(await pm.arrivalNotice.findUnique({where:{id:n.id},include:{products:true}}),before,"不许猜哪边对，不许覆盖");
+      }
+    });
+    await check("N53 单张通知第二号的精确匹配在粗筛第 201 条以后：列表仍提醒，转运单未确认必须挡", async () => {
+      const tag="ZZDEEP7654321";
+      const rows=Array.from({length:205},(_,i)=>({id:"zz_an_deep_"+i,companyId:CO,orderNo:"ZZDEEP"+i,clientId:CLIENT.userId,warehouseId:"wh_yiwu_01",receiverNameTh:"",receiverPhoneTh:"",receiverAddressTh:"",itemName:"预报",productQuantity:0,packageCount:1,packageUnit:"box",transportMode:"sea",statusGroup:"unfinished",approvalStatus:"shipped",domesticTrackingNo:i===0?tag:"X"+tag+"Y"+i,createdAt:new Date(1700000000000+i*1000)}));
+      await pm.order.createMany({data:rows});
+      const n=await save(STAFF,{...ticket,trackingNo:NO("DEEP"),products:[P({itemName:"灯",packageCount:1,domesticTrackingNo:"ZZFIRST98765"}),P({itemName:"鞋",packageCount:1,domesticTrackingNo:tag})]});
+      assert.deepEqual(n.prealertMatches.map((r:Row)=>r.orderId),["zz_an_deep_0"]);
+      const page=await list(STAFF,{keyword:NO("DEEP")});
+      assert.deepEqual(page.items[0].prealertMatches.map((r:Row)=>r.orderId),["zz_an_deep_0"]);
+      await refuse("POST /staff/arrival-notices/convert",STAFF,{id:n.id,to:"inbound"},/客户报过预报单/,409);
+      await must("POST /staff/arrival-notices/convert",STAFF,{id:n.id,to:"inbound",acknowledgedPrealertIds:["zz_an_deep_0"]});
+      await pm.order.deleteMany({where:{id:{startsWith:"zz_an_deep_"}}});
+    });
+
+    await check("N50 六位自动体积：新建、只改备注、待入库同步、转正式都存三位；小体积舍成零仍能保存", async () => {
+      for (const [suffix, lengthCm, widthCm, heightCm, raw, expected] of [
+        ["ROUND", 51, 41, 31, "0.064821", 0.065], ["TINY", 5, 5, 5, "0.000125", 0],
+      ] as const) {
+        const products = [P({ itemName: "灯具", packageCount: 1, lengthCm, widthCm, heightCm, weightKg: 2 })];
+        const body = { ...ticket, trackingNo: NO(suffix), products, volumeM3: raw, weightKg: 2 };
+        const n = await save(STAFF, body);
+        assert.equal(n.volumeM3, expected);
+        await must("POST /staff/arrival-notices/convert", STAFF, { id: n.id, to: "inbound" });
+        const edited = await save(STAFF, { ...body, id: n.id, base: n, remark: "只改备注" });
+        assert.equal(edited.volumeM3, expected);
+        const shipment = await pm.shipment.findFirst({ where: { trackingNo: NO(suffix) }, include: { order: true } });
+        assert.equal(Number(shipment.volumeM3), expected);
+        assert.equal(Number(shipment.order.volumeM3), expected);
+        await must("POST /staff/arrival-notices/convert", STAFF, { id: n.id, to: "formal" });
+        assert.equal(Number((await pm.arrivalNotice.findUnique({ where: { id: n.id } })).volumeM3), expected);
       }
     });
   } finally {
