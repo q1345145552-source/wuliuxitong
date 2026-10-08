@@ -13,6 +13,11 @@ import { createRequestGate } from "../shared/request-gate";
 
 export type PickedRef = { type: "shipment" | "fcl"; id: string; no: string; title: string | null };
 
+/** 件数单位：后端给的是 box / bag，原来直接拼成「3box」 */
+function unitZh(unit: string | null): string {
+  return unit === "box" ? "箱" : unit === "bag" ? "袋" : unit ?? "";
+}
+
 /** 搜索框停手多久再去问（毫秒） */
 const SEARCH_DEBOUNCE_MS = 300;
 
@@ -47,7 +52,8 @@ export default function ChatRefPicker(props: { scope: ChatScope; onPick: (ref: P
         <span style={{ fontSize: 11, color: "var(--c-blue)", whiteSpace: "nowrap" }}>{shipmentStatusZh(o.status, forClient ? CLIENT_STATUS_ZH_OVERRIDES : undefined)}</span>
       </div>
       <div style={{ fontSize: 12, color: "var(--t-muted)", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-        {o.title ?? "（没填品名）"}{o.packageCount != null ? ` · ${o.packageCount}${o.packageUnit ?? ""}` : ""}
+        {/* 到货通知转的「待入库」品名可能是空串、件数是 0（没填）：空串也算没填品名，件数只拼正数（2026-10-08 审查 F10） */}
+        {o.title || "（没填品名）"}{typeof o.packageCount === "number" && o.packageCount > 0 ? ` · ${o.packageCount}${unitZh(o.packageUnit)}` : ""}
       </div>
     </button>
   );

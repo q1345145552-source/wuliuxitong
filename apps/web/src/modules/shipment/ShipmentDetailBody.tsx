@@ -97,7 +97,7 @@ export default function ShipmentDetailBody({ item, images, onPreview, extraField
               {(item.products ?? []).map((p, i) => (
                 <tr key={p.id || i} style={{ borderBottom: "1px solid var(--l-soft)" }}>
                   <td style={{ padding: "4px 6px" }}>{p.itemName}</td>
-                  <td style={{ padding: "4px 6px", textAlign: "center" }}>{p.packageCount}</td>
+                  <td style={{ padding: "4px 6px", textAlign: "center" }}>{typeof p.packageCount === "number" && p.packageCount > 0 ? p.packageCount : "—"}</td>
                   <td style={{ padding: "4px 6px", textAlign: "center" }}>{p.productQuantity ?? "—"}</td>
                   <td style={{ padding: "4px 6px", textAlign: "center", fontSize: 11 }}>{p.lengthCm && p.widthCm && p.heightCm ? `${p.lengthCm}×${p.widthCm}×${p.heightCm}` : "—"}</td>
                   <td style={{ padding: "4px 6px", textAlign: "center" }}>{formatMetric(p.weightKg as number | null | undefined, 2)}</td>

@@ -1249,6 +1249,8 @@ export async function patchStaffShipmentOrderBundle(payload: {
   itemName: string;
   productQuantity: number;
   packageCount: number;
+  /** 打开编辑框时看到的剩余件数；后端锁里跟运单现在的对不上就拦（2026-10-08） */
+  basePackageCount?: number | null;
   packageUnit: "bag" | "box";
   weightKg?: number | null;
   volumeM3?: number | null;

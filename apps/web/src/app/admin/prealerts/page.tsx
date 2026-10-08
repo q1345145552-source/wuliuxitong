@@ -215,7 +215,7 @@ export default function AdminPrealertsPage() {
                     </div>
                     {(item.products?.length ?? 0) > 1 && (
                       <div style={{ fontSize: 11, color: "var(--t-strong)", marginBottom: 6, background: "#fefce8", borderRadius: 4, padding: "3px 6px" }}>
-                        {(item.products ?? []).map((p) => `${p.itemName}×${p.packageCount}箱`).join(" | ")}
+                        {(item.products ?? []).map((p) => `${p.itemName}×${p.packageCount}${item.packageUnit === "bag" ? "袋" : "箱"}`).join(" | ")}
                       </div>
                     )}
                     <div style={{ marginBottom: 8, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 4 }}>

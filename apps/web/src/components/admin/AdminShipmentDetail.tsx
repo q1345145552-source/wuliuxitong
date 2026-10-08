@@ -1,10 +1,10 @@
 import type { AdminOrderItem } from "../../services/business-api";
 import { formatMetric, shipmentStatusZh, transportModeLabel } from "../../modules/staff/utils";
 import {
-  buildProductDetailRows, PRODUCT_DETAIL_HEADS,
+  buildProductDetailRows, packageUnitZh, PRODUCT_DETAIL_HEADS,
   totalPackageCountOf, totalVolumeOf, totalWeightOf,
 } from "../../modules/shipment/ShipmentTableGrid";
-import { beijingDate } from "../../modules/shared/beijing-date";
+import { adminArrivedDate } from "../../modules/shipment/export-filter";
 
 const display = (value: string | number | null | undefined) =>
   typeof value === "string" ? value.trim() || "—" : value ?? "—";
@@ -24,11 +24,13 @@ export default function AdminShipmentDetail({ order, warehouseLabel }: { order: 
     ["物流状态", shipmentStatusZh(order.currentStatus)],
     ["运输方式", display(transportModeLabel(order.transportMode))],
     ["仓库", display(warehouseLabel)],
-    ["到仓日期", display(order.shipDate ?? (beijingDate(order.createdAt) || undefined))],
+    ["到仓日期", display(adminArrivedDate(order) || undefined)],
     ["订单号", display(order.orderNo)],
     ["包装", order.packageUnit === "bag" ? "袋" : "箱"],
     ["总箱数", display(totalPackageCountOf(order))],
-    ["产品数量", display(order.productQuantity)],
+    // 没填（客户预报单建的单整单写 0）显示「—」，跟员工预报单审核一个口径（2026-10-08 模拟数据测试第 2 轮）：
+    // 原来显示「0」，下面产品行明明写着 24个/袋、49个/袋
+    ["产品数量", order.productQuantity ? order.productQuantity : "—"],
     ["总体积 (m³)", formatMetric(totalVolumeOf(order), 3)],
     ["总重量 (kg)", formatMetric(totalWeightOf(order), 2)],
   ];
@@ -53,7 +55,7 @@ export default function AdminShipmentDetail({ order, warehouseLabel }: { order: 
             <tbody>{rows.map((cells, index) => {
               const product = order.products?.[index];
               return <tr key={product?.id ?? index}>
-                {cells.map((value, column) => <td key={column}>{column === 2 && product?.productQuantity != null ? `${product.productQuantity}个/箱` : display(value)}</td>)}
+                {cells.map((value, column) => <td key={column}>{column === 2 && product?.productQuantity != null ? `${product.productQuantity}个/${packageUnitZh(order.packageUnit)}` : display(value)}</td>)}
                 <td>{formatMetric(product?.weightKg, 2)}</td>
               </tr>;
             })}</tbody>

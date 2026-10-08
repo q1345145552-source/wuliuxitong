@@ -6,10 +6,13 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "../../db/prisma";
 import { EXCLUDE_FCL_ORDER, EXCLUDE_FCL_SHIPMENT, FCL_BLOCKED_MESSAGE, FCL_EDIT_ELSEWHERE_MESSAGE } from "../core/fcl-scope";
 import { PENDING_INBOUND, PENDING_INBOUND_EDIT_ELSEWHERE_MESSAGE } from "../arrival-notices/rules";
+import { arrivalNoticeHoldingMessage, followShipmentClientIds, followShipmentTrackingNos, followStaleArrivalNoticeHolding, lockTrackingNoForArrivalNotice } from "../arrival-notices/follow-tracking-no";
+import { logger } from "../core/logger";
 import type { MinimalHttpApp } from "../../server";
 import { fail, ok, requireRole } from "../core/http-utils";
 import { CONSOLIDATION_CURRENCY, recordRechargeCredit } from "../wallet/consolidation-balance";
 import { loadProductImagesForOrders } from "../orders/product-images";
+import { deleteImageFile } from "../orders/image-storage";
 import { loadOrderProducts, readCargoTypes } from "../orders/routes";
 import { hashPassword } from "../auth/crypto-utils";
 import { countShipmentOverview } from "../shipments/overview-counts";
@@ -232,6 +235,13 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
     // 上面那条注释早就警告过「加了新状态要回来同步」，还是漏了 —— 这就是写死清单的代价。
     const AT_WAREHOUSE = ["IN_WAREHOUSE_TH", "DELIVERY_BOOKED", "OUT_FOR_DELIVERY", "DELIVERING"];
 
+    /* 今天在「到货通知」里转正式的运单（G02，2026-10-08）：先转「待入库」那天就建了运单（体积常常还空着），
+       隔天补齐再转正式 —— 按「今天建的单」算，这票哪天都算不进去。它们按转正式那天算「今天进仓」。 */
+    const formalTodayShipmentIds = (await prisma.arrivalNotice.findMany({
+      where: { companyId: auth.companyId, convertedTo: "formal", convertedAt: { gte: startOfToday }, shipmentId: { not: null } },
+      select: { shipmentId: true },
+    })).map((n) => n.shipmentId).filter((v): v is string => Boolean(v));
+
     const [staff, client, newOrder, inTransit, volumeAgg,
            ctnTotal, ctnLoading, ctnAtWarehouse, ctnDone] = await Promise.all([
       prisma.user.count({ where: { companyId: auth.companyId, role: "staff" } }),
@@ -269,7 +279,13 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
           ...EXCLUDE_FCL_SHIPMENT,
           companyId: auth.companyId,
           parentTrackingNo: null,
-          createdAt: { gte: startOfToday },
+          /* 两种算「今天进仓」（一张单只算一次，OR 是并集；2026-10-08 G02）：
+             ① 今天建的单，但还在「待入库」的不算（资料没齐、货没点）；
+             ② 今天在到货通知里转正式的（不管哪天建的单）。 */
+          OR: [
+            { createdAt: { gte: startOfToday }, currentStatus: { not: PENDING_INBOUND } },
+            ...(formalTodayShipmentIds.length ? [{ id: { in: formalTodayShipmentIds } }] : []),
+          ],
         },
         _sum: { volumeM3: true },
       }),
@@ -466,11 +482,17 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
     // 整柜的单不进超管「运单管理」（老板 2026-09-23），走「整柜管理」那一页
     const where = { ...EXCLUDE_FCL_SHIPMENT, companyId: auth.companyId, parentTrackingNo: null } as const;
 
-    const [total, rows] = await Promise.all([
-      prisma.shipment.count({ where }),
-      prisma.shipment.findMany({
+    /* 2026-10-08 模拟数据测试两处：
+       ① 排序加 id 兜底：装柜 / 推柜子状态是 updateMany 一次写同一个 updatedAt，一大批运单时间完全一样；
+          只按 updatedAt 排时 PostgreSQL 每页（top-N 堆排 / 快排 / 索引扫）给并列行排的先后不一样，
+          并列那批正好跨页就有的出现两次、有的一次都不出现（实测 2688 张父单翻 500 一页丢 95 张，条数照样对得上）。
+       ② count 和 findMany 放进同一个「可重复读」只读事务（同到货通知列表、/staff/shipments）：Prisma 先查运单、再另一句查订单，
+          中间超管删了一张单，就是「运单有、订单没有」→ Field order is required … got null，整个列表 500 */
+    const [total, rows] = await prisma.$transaction(async (tx) => [
+      await tx.shipment.count({ where }),
+      await tx.shipment.findMany({
         where,
-        orderBy: { updatedAt: "desc" },
+        orderBy: [{ updatedAt: "desc" }, { id: "desc" }],
         skip: (page - 1) * pageSize,
         take: pageSize,
         include: {
@@ -481,7 +503,7 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
           },
         },
       }),
-    ]);
+    ] as const, { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead, timeout: 15000, maxWait: 10000 });
 
     const totalMetricsByOrderId = await loadOrderTotalMetrics(
       auth.companyId,
@@ -540,7 +562,8 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
       containerNo: r.containerNo ?? undefined,
       clientId: r.order?.clientId ?? undefined,
       clientName: r.order?.client?.name ?? undefined,
-      itemName: r.order?.itemName ?? undefined,
+      // 品名空串（待入库还没填，订单那一列不许空）当没有：页面显示「—」不是空白（F10）
+      itemName: r.order?.itemName || undefined,
       domesticTrackingNo: r.domesticTrackingNo ?? undefined,
       packageCount: r.packageCount ?? undefined,
       // 父单件数是空的（老数据）：整票也说不准，不给这个数，页面照旧退回显示「—」，别变成确定的 0（Codex 复看第 6 条）
@@ -568,7 +591,8 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
       paymentStatus: (r.order?.paymentStatus === "paid" ? "paid" : "unpaid") as "paid" | "unpaid",
       packageUnit: ((r.order?.packageUnit === "bag" ? "bag" : "box") as "bag" | "box"),
       cargoType: r.order?.cargoType ?? "normal",
-      canEdit: true,
+      // 待入库的单改不了（/admin/orders/update 会挡，底稿在到货通知）：前端据此不给「编辑」（F08）
+      canEdit: r.currentStatus !== PENDING_INBOUND,
       approvalStatus: r.order?.approvalStatus ?? undefined,
       remark: r.remark ?? undefined,
       /* 2026-09-03 修：原来直接发数据库 orders.status_group 那一列，
@@ -771,7 +795,7 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
     // 查重：排除当前订单下的所有运单
     const orderShipments = await prisma.shipment.findMany({
       where: { orderId: orderId, companyId: auth.companyId },
-      select: { id: true },
+      select: { id: true, trackingNo: true, parentTrackingNo: true },
     });
     const excludeIds = orderShipments.map(s => s.id);
     const conflict = await prisma.shipment.findFirst({
@@ -785,6 +809,18 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
     if (conflict) {
       fail(res, 400, "BAD_REQUEST", "trackingNo already exists");
       return;
+    }
+    /* 新号被另一条到货通知登记着：也挡（2026-10-08 修复第 1 轮，同 patch-shipment-bundle）。
+       只在这次真要改号（下面只写父运单）、且有父运单的号要变时查：号没变不因为别处的到货通知拦住别的修改。
+       ⚠️ 这里只是先给个提示；说了算的是下面事务里拿了号锁以后那次重查（修复第 3 轮：两人同一瞬间一个改号、一个登记，两边都放行过） */
+    if (has("trackingNo") && orderShipments.some((s) => s.parentTrackingNo === null && s.trackingNo !== trackingNo)) {
+      // 先让「早已转过、只是存的号没跟上」的老到货通知跟上它运单现在的号（模拟数据测试第 3 轮，理由见函数注释）；事务外、手里没锁
+      await followStaleArrivalNoticeHolding(auth.companyId, trackingNo);
+      const held = await arrivalNoticeHoldingMessage(prisma, auth.companyId, trackingNo, excludeIds);
+      if (held) {
+        fail(res, 400, "BAD_REQUEST", held);
+        return;
+      }
     }
 
     /* 整柜的单从这条路**整张拒绝**（2026-09-24 改，理由见 FCL_EDIT_ELSEWHERE_MESSAGE）。
@@ -870,13 +906,23 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
 
     // 事务：锁父运单 → 锁内重算剩余件数 → 订单 + 关联运单 + 产品行一致更新
     await prisma.$transaction(async (tx) => {
+      /* 改号先跟「到货通知登记 / 改号」按这个号排队（修复第 3 轮，理由见 lockTrackingNoForArrivalNotice）：
+         必须是事务第一句、在锁订单之前 —— 拿这把锁时手里不能有行锁。下面锁完父运单再在锁里重查到货通知占没占这个号 */
+      if (has("trackingNo") && trackingNo !== null) {
+        await lockTrackingNoForArrivalNotice(tx, trackingNo);
+      }
       // 锁序【订单 → 运单】，跟 orders/routes.ts 确认收货那条路一致。
       // 这个事务下面要 update orders，先锁订单行，两个入口同时改同一张单才会排队。
       /* FOR NO KEY UPDATE，不用 FOR UPDATE（2026-09-28 分支审查 Codex 复看第 4 条，一次性库真跑复现过）：
          装柜是「先锁父运单 → 再插子运单」，插子运单时外键要对这张订单取 KEY SHARE。这里要是 FOR UPDATE，
          跟装柜同时发生就互相等 —— PostgreSQL 判死锁、中止装柜那一边。这里只改订单的普通列、不改主键，
          NO KEY UPDATE 够用：两个编辑 / 收货之间照样排队，只是不再挡装柜插子单的外键检查。 */
-      await tx.$queryRaw`SELECT id FROM orders WHERE id = ${orderId} AND company_id = ${auth.companyId} FOR NO KEY UPDATE`;
+      const lockedOrder = await tx.$queryRaw<{ id: string }[]>`SELECT id FROM orders WHERE id = ${orderId} AND company_id = ${auth.companyId} FOR NO KEY UPDATE`;
+      /* 锁上时订单已经没了 = 另一个超管刚把它删掉（2026-10-08 模拟数据测试）：原来不看返回几行，一路走到 order.update
+         撞「记录不存在」→ 500。写法同下面删单那条路 */
+      if (lockedOrder.length === 0) {
+        throw new BusinessError("这张订单刚刚已经被删掉了，请刷新后再看", 409, "VALIDATION_ERROR");
+      }
       const savedProductCargo = async () => {
         const products = await tx.orderProduct.findMany({
           where: { orderId, companyId: auth.companyId },
@@ -928,6 +974,19 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
             where: { id: { in: parents.map((p) => p.id) }, companyId: auth.companyId },
             select: { trackingNo: true },
           });
+          /* 锁里重查新号是不是被另一条到货通知登记着（修复第 3 轮）：事务外那次查完到这里，同事可能刚用这个号登记了一条。
+             号锁在手，登记那边要么已经提交（这里查得到）、要么排在后面（它在锁里会查到这张运单的新号）。号没变照旧不查 */
+          if (has("trackingNo") && trackingNo !== null && lockedParents.some((p) => p.trackingNo !== trackingNo)) {
+            /* 锁里重查运单表（2026-10-08 模拟数据测试）：两张单同时改成同一个新号，号锁让两人排队，
+               后到的醒来只重查了到货通知、没重查运单表，下面 updateMany 必撞唯一约束 → 500。全库查（tracking_no 全库唯一） */
+            const taken = await tx.shipment.findFirst({
+              where: { trackingNo, NOT: { id: { in: parents.map((p) => p.id) } } },
+              select: { id: true },
+            });
+            if (taken) throw new BusinessError("trackingNo already exists");
+            const held = await arrivalNoticeHoldingMessage(tx, auth.companyId, trackingNo, excludeIds);
+            if (held) throw new BusinessError(held);
+          }
           const loadedRows = await tx.shipment.groupBy({
             by: ["parentTrackingNo"],
             where: {
@@ -1101,6 +1160,16 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
         }
       }
     });
+    /* 到货通知转出来的单改了号：那条到货通知跟着改（F06，2026-10-08）。
+       改了唛头：那条到货通知的唛头跟着改、「已通知」清掉（修复第 2 轮）。
+       事务提交后单独一句、出错只记日志（不放进上面的事务：锁序会反，理由见 follow-tracking-no.ts） */
+    const followIds = await prisma.shipment.findMany({ where: { orderId, companyId: auth.companyId, parentTrackingNo: null }, select: { id: true } })
+      .then((rows) => rows.map((x) => x.id))
+      .catch((e) => { logger.warn("arrival notice follow: load shipments failed", { orderId, error: String(e) }); return [] as string[]; });
+    await followShipmentTrackingNos(auth.companyId, followIds)
+      .catch((e) => logger.warn("arrival notice follow trackingNo failed", { orderId, error: String(e) }));
+    await followShipmentClientIds(auth.companyId, followIds)
+      .catch((e) => logger.warn("arrival notice follow clientId failed", { orderId, error: String(e) }));
 
     ok(res, {
       orderId,
@@ -1622,8 +1691,8 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
       return;
     }
 
-    // 事务：级联清理所有关联记录后删除订单
-    await prisma.$transaction(async (tx) => {
+    // 事务：级联清理所有关联记录后删除订单；返回这张订单产品图的文件路径，提交以后再删盘上的文件
+    const imageFiles = await prisma.$transaction(async (tx) => {
       /**
        * ⚠️⚠️ **先锁订单，再把运单清单在锁里重读一遍**（2026-08-29 补）。
        *
@@ -1709,10 +1778,26 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
       await tx.adminCustomsCase.updateMany({ where: { orderId }, data: { orderId: null } });
       await tx.invoiceLine.updateMany({ where: { orderId }, data: { orderId: null } });
       await tx.adminSettlementEntry.deleteMany({ where: { orderId } });
+      /* 产品图的文件也要删（2026-10-08 模拟数据测试）：原来只删记录、文件留在盘上没人引用；
+         到货通知转单会把到货照片另存一份成运单的产品图，「删运单 → 到货通知重转」每来一次就多留一份。
+         锁里（订单已锁）读出路径，事务提交以后再删文件（回滚了文件还在） */
+      const images = await tx.orderProductImage.findMany({ where: { orderId }, select: { filePath: true } });
       await tx.orderProductImage.deleteMany({ where: { orderId } });
       await tx.orderProduct.deleteMany({ where: { orderId } });
       await tx.order.delete({ where: { id: orderId } });
+      return images.map((i) => i.filePath).filter((p): p is string => Boolean(p));
     });
+    // 别的记录还指着同一个文件的不删（现在每条都是另存的新文件，兜一道）；删不掉只记日志，不影响删单本身
+    for (const filePath of imageFiles) {
+      try {
+        const stillUsed =
+          (await prisma.orderProductImage.count({ where: { filePath } })) +
+          (await prisma.arrivalNoticeImage.count({ where: { OR: [{ filePath }, { thumbPath: filePath }] } }));
+        if (stillUsed === 0) deleteImageFile(filePath);
+      } catch (e) {
+        logger.warn("order delete: image file not removed", { orderId, filePath, error: String(e) });
+      }
+    }
 
     ok(res, { deleted: true, orderId, itemName: order.itemName });
   });

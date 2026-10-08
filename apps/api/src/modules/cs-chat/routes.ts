@@ -44,6 +44,14 @@ import { checkRateLimit, rateLimitKey } from "../core/rate-limit";
 import { deleteImageFile, saveImageToDisk } from "../orders/image-storage";
 import { passwordFingerprint } from "../auth/token";
 import { currentPushConfig, notifyChatMessage, parsePushSubscription } from "./push";
+import { productNamesLabel } from "../../../../../packages/shared-types/product-names";
+
+/** 订单上产品行的名字（只要名字和顺序）：「选运单」的标题按全部产品名拼，跟三端运单列表同一个口径（2026-10-08 模拟数据测试） */
+const ORDER_TITLE_SELECT = { itemName: true, products: { select: { itemName: true, sortOrder: true } } } as const;
+/** 订单 itemName 只存了第一个产品名；有产品行就把全部名字拼起来（productNamesLabel），空品名当没有（F10） */
+function refTitleOf(order: { itemName: string | null; products: Array<{ itemName: string | null; sortOrder: number | null }> } | null | undefined, shipmentItemName: string | null | undefined): string | null {
+  return productNamesLabel(order?.products, order?.itemName || shipmentItemName || "") || null;
+}
 
 /** 一条文字最多多少字（微信单条上限是几千字；聊天用不到这么长，卡一下防误贴整本文档） */
 export const CS_MAX_TEXT = 2000;
@@ -143,7 +151,7 @@ export function toWireMessage(m: MessageRow, viewer: Pick<Auth, "userId" | "role
   let ref: WireRef | null = null;
   if (!recalled && m.refId && m.refNo && (m.refType === "shipment" || m.refType === "fcl")) {
     const now = live?.get(`${m.refType}:${m.refId}`);
-    ref = { type: m.refType, id: m.refId, no: now?.no ?? m.refNo, title: m.refTitle, status: now?.status ?? null, gone: live ? !now : false };
+    ref = { type: m.refType, id: m.refId, no: now?.no ?? m.refNo, title: m.refTitle || null, status: now?.status ?? null, gone: live ? !now : false };
   }
   return {
     id: m.id,
@@ -281,10 +289,10 @@ async function resolveChatRef(tx: Tx, companyId: string, clientId: string, ref: 
   if (ref.type === "shipment") {
     const s = await tx.shipment.findFirst({
       where: { ...EXCLUDE_FCL_SHIPMENT, id: ref.id, companyId, parentTrackingNo: null, order: { clientId } },
-      select: { id: true, trackingNo: true, itemName: true, order: { select: { itemName: true } } },
+      select: { id: true, trackingNo: true, itemName: true, order: { select: ORDER_TITLE_SELECT } },
     });
     if (!s) throw new BusinessError("没找到这张运单（可能已经删了，或者不是这个客户的），请重新选", 404, "NOT_FOUND");
-    return { refType: "shipment", refId: s.id, refNo: s.trackingNo, refTitle: s.order?.itemName ?? s.itemName ?? null };
+    return { refType: "shipment", refId: s.id, refNo: s.trackingNo, refTitle: refTitleOf(s.order, s.itemName) }; // 空品名当没有（F10）
   }
   const c = await tx.container.findFirst({
     where: { id: ref.id, companyId, isFcl: true },
@@ -293,7 +301,7 @@ async function resolveChatRef(tx: Tx, companyId: string, clientId: string, ref: 
       items: {
         orderBy: { createdAt: "asc" },
         take: 1,
-        select: { shipment: { select: { trackingNo: true, itemName: true, order: { select: { clientId: true, itemName: true } } } } },
+        select: { shipment: { select: { trackingNo: true, itemName: true, order: { select: { clientId: true, ...ORDER_TITLE_SELECT } } } } },
       },
     },
   });
@@ -301,7 +309,7 @@ async function resolveChatRef(tx: Tx, companyId: string, clientId: string, ref: 
   if (!c || !ship || ship.order?.clientId !== clientId) {
     throw new BusinessError("没找到这个整柜（可能已经删了，或者不是这个客户的），请重新选", 404, "NOT_FOUND");
   }
-  return { refType: "fcl", refId: c.id, refNo: ship.trackingNo, refTitle: ship.order?.itemName ?? ship.itemName ?? null };
+  return { refType: "fcl", refId: c.id, refNo: ship.trackingNo, refTitle: refTitleOf(ship.order, ship.itemName) };
 }
 
 /**
@@ -622,13 +630,15 @@ async function listChatRefs(companyId: string, clientId: string, qRaw: unknown) 
             { trackingNo: like },
             { domesticTrackingNo: like },
             { order: { itemName: like } },
+            // 品名按全部产品名搜（订单 itemName 只存了第一个），同运单列表的筛选（export-filter）
+            { order: { products: { some: { itemName: like } } } },
             { order: { products: { some: { domesticTrackingNo: like } } } },
           ],
         } : {}),
       },
       orderBy: [{ updatedAt: "desc" }, { id: "asc" }],
       take: REF_LIST_LIMIT + 1,
-      select: { id: true, trackingNo: true, currentStatus: true, packageCount: true, packageUnit: true, itemName: true, order: { select: { itemName: true } } },
+      select: { id: true, trackingNo: true, currentStatus: true, packageCount: true, packageUnit: true, itemName: true, order: { select: ORDER_TITLE_SELECT } },
     }),
     prisma.container.findMany({
       where: {
@@ -636,7 +646,7 @@ async function listChatRefs(companyId: string, clientId: string, qRaw: unknown) 
         isFcl: true,
         AND: [
           { items: { some: { shipment: { order: { clientId } } } } },
-          ...(q ? [{ items: { some: { shipment: { OR: [{ trackingNo: like }, { order: { itemName: like } }] } } } }] : []),
+          ...(q ? [{ items: { some: { shipment: { OR: [{ trackingNo: like }, { order: { itemName: like } }, { order: { products: { some: { itemName: like } } } }] } } } }] : []),
         ],
       },
       orderBy: [{ createdAt: "desc" }, { id: "asc" }],
@@ -646,22 +656,36 @@ async function listChatRefs(companyId: string, clientId: string, qRaw: unknown) 
         items: {
           orderBy: { createdAt: "asc" },
           take: 1,
-          select: { shipment: { select: { trackingNo: true, currentStatus: true, packageCount: true, packageUnit: true, itemName: true, order: { select: { clientId: true, itemName: true } } } } },
+          select: { shipment: { select: { trackingNo: true, currentStatus: true, packageCount: true, packageUnit: true, itemName: true, order: { select: { clientId: true, ...ORDER_TITLE_SELECT } } } } },
         },
       },
     }),
   ]);
+  /* 件数给「整票」：父单的 packageCount 是装柜后剩下的（每装一次柜就减掉，loading-manifests），
+     要加回全部子单的件数 —— 跟 /staff/shipments 的 totalPackageCount 同一口径（2026-10-08 修复审查第 2 轮）。
+     自己件数是空的、又没分过柜（待入库还没点数）：给 null，页面不显示件数，别变成确定的 0 */
+  const shown = ships.slice(0, REF_LIST_LIMIT);
+  const childSum = new Map<string, number>();
+  if (shown.length > 0) {
+    const childRows = await prisma.shipment.findMany({
+      where: { companyId, parentTrackingNo: { in: shown.map((s) => s.trackingNo) } },
+      select: { parentTrackingNo: true, packageCount: true },
+    });
+    for (const c of childRows) childSum.set(c.parentTrackingNo!, (childSum.get(c.parentTrackingNo!) ?? 0) + (c.packageCount ?? 0));
+  }
+  const wholePackageCount = (s: { trackingNo: string; packageCount: number | null }) =>
+    s.packageCount == null && !childSum.has(s.trackingNo) ? null : (s.packageCount ?? 0) + (childSum.get(s.trackingNo) ?? 0);
   const fcl = conts
     // 再兜一道：柜里第一张单确实是这个客户的（跟客户「我的整柜」同一个口径）
     .filter((c) => c.items[0]?.shipment?.order?.clientId === clientId)
     .slice(0, REF_LIST_LIMIT)
     .map((c) => {
       const s = c.items[0]!.shipment;
-      return { id: c.id, no: s.trackingNo, title: s.order?.itemName ?? s.itemName ?? null, status: s.currentStatus, packageCount: s.packageCount, packageUnit: s.packageUnit };
+      return { id: c.id, no: s.trackingNo, title: refTitleOf(s.order, s.itemName), status: s.currentStatus, packageCount: s.packageCount, packageUnit: s.packageUnit };
     });
   return {
-    shipments: ships.slice(0, REF_LIST_LIMIT).map((s) => ({
-      id: s.id, no: s.trackingNo, title: s.order?.itemName ?? s.itemName ?? null, status: s.currentStatus, packageCount: s.packageCount, packageUnit: s.packageUnit,
+    shipments: shown.map((s) => ({
+      id: s.id, no: s.trackingNo, title: refTitleOf(s.order, s.itemName), status: s.currentStatus, packageCount: wholePackageCount(s), packageUnit: s.packageUnit,
     })),
     fcl,
     /** 到顶了（只列了最近 REF_LIST_LIMIT 张）：页面要写出来，更早的靠搜 */

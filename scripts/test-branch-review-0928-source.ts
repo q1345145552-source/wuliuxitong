@@ -117,7 +117,9 @@ check("V3 整柜询价报价（写法钉子；真点的在 test-cs-chat-ui-behav
 
 check("V4 已收货（received）写中文：客户详情、客户导出、超管导出、代理导出", () => {
   const client = read("apps/web/src/app/client/page.tsx");
-  assert.match(client, /审批状态: [^\n]*o\.approvalStatus === "received" \? "已收货"/, "客户导出");
+  // 客户导出 2026-10-08 修复第 1 轮改走共用的 prealertApprovalZh（预报单表状态格也用它），到那里去认
+  assert.match(client, /审批状态: prealertApprovalZh\(o\.approvalStatus, "-"\),/, "客户导出");
+  assert.match(read("apps/web/src/modules/orders/prealert-status.ts"), /received: "已收货"/, "客户导出");
   // 客户「运单查询」的详情正文 2026-10-06 抽到 ShipmentDetailBody（客服对话里点运单卡片也用它），到那里去认
   assert.match(client, /<ShipmentDetailBody item=\{item\}/, "客户详情没用共用的那份正文");
   assert.match(read("apps/web/src/modules/shipment/ShipmentDetailBody.tsx"), /审批状态：<\/span>\{[^\n]*item\.approvalStatus === "received" \? "已收货"/, "客户详情");

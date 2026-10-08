@@ -1623,8 +1623,12 @@ export function registerContainerRoutes(app: MinimalHttpApp): void {
       trackingNo: shipment.trackingNo,
       orderId: shipment.order?.id ?? null,
       orderNo: shipment.order?.orderNo ?? null,
-      itemName: shipment.order?.itemName ?? null,
+      // 品名空串（待入库还没填，订单那一列不许空）当没有：弹窗显示「品名：—」不是空白（F10）
+      itemName: shipment.order?.itemName || null,
       products: shipment.order?.products?.map(p => ({ itemName: p.itemName, packageCount: p.packageCount })) ?? [],
+      // 产品行「×16袋 / ×16箱」的单位（2026-10-08：原来弹窗写死「箱」，袋装的单跟客户列表对不上）。
+      // 取运单自己那一列（include 已经带着，建单 / 改单两边一起写），不往订单的 select 里加字段
+      packageUnit: shipment.packageUnit ?? null,
       cargoType: shipment.order?.cargoType ?? null,
       currentStatus: shipment.currentStatus,
       // 子单进度不一样时，弹窗头部也补一句「（部分已放行）」——跟三端列表同一份算法（2026-09-16）

@@ -76,6 +76,8 @@ interface TrackData {
   trackingNo: string;
   itemName?: string;
   products?: Array<{ itemName: string; packageCount: number }>;
+  /** 整票包装单位 bag / box（2026-10-08 后端下发；老接口没有就按箱） */
+  packageUnit?: string | null;
   currentStatus: string;
   /** 子单进度不一样时，最快的那批走到哪了（2026-09-16，后端下发） */
   partialAhead?: string;
@@ -475,15 +477,15 @@ function TrackContent({ data, onReload }: { data: TrackData; onReload?: () => vo
           <>
             {data.products && data.products.length > 1 ? (
               data.products.map((p, i) => (
-                <div key={i}>{p.itemName} ×{p.packageCount}箱</div>
+                <div key={i}>{p.itemName} ×{p.packageCount}{data.packageUnit === "bag" ? "袋" : "箱"}</div>
               ))
             ) : (
-              <span>品名：{data.itemName ?? "—"}</span>
+              <span>品名：{data.itemName || "—"}</span>
             )}
             <div style={{ marginTop: 2 }}>分装：{data.children?.length ?? 0}个子单</div>
           </>
         ) : data.children?.[activeTab - 1] ? (
-          <span>{data.children[activeTab - 1].itemName ?? "—"} ｜ {data.children[activeTab - 1].packageCount ?? "—"} 件{data.containers?.[0]?.containerNo && data.children[activeTab - 1].batchNo ? ` ｜ 柜号：${data.children[activeTab - 1].batchNo}` : ""}</span>
+          <span>{data.children[activeTab - 1].itemName || "—"} ｜ {data.children[activeTab - 1].packageCount ?? "—"} 件{data.containers?.[0]?.containerNo && data.children[activeTab - 1].batchNo ? ` ｜ 柜号：${data.children[activeTab - 1].batchNo}` : ""}</span>
         ) : null}
       </div>
 

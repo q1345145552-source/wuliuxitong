@@ -1146,8 +1146,17 @@ async function main(): Promise<void> {
     await tickTimers((t) => t.once && t.ms === 0);
     const c1 = refCalls().pop();
     assert.equal(c1?.url, "/client/chat/refs", `打开没去取单子，或者地址不对：${c1?.url}`);
-    c1!.done = true; c1!.resolve(refList); await settle();
+    // 到货通知转的「待入库」：没填品名存空串、没填件数存 0、单位是后端原样的 box（2026-10-08 审查 F10）；
+    // 正常单单位 box 要翻成「箱」，不再拼成「2box」
+    c1!.done = true; c1!.resolve({ ...refList, shipments: [...refList.shipments,
+      { id: "s9", no: "ZZPEND1", title: "", status: "pendingInbound", packageCount: 0, packageUnit: "box" },
+      { id: "s10", no: "ZZBOX1", title: "台灯", status: "inWarehouseCN", packageCount: 2, packageUnit: "box" }] }); await settle();
     const pt = textOf(tree);
+    const pendingRow = textOf(findAll((n) => n.type === "button" && n.key === "shipment:s9")[0]);
+    assert.ok(pendingRow.includes("（没填品名）"), `品名空串显示成空白：${pendingRow}`);
+    assert.ok(!/0\s*(box|箱)/.test(pendingRow) && !pendingRow.includes("·"), `件数没填显示成了 0：${pendingRow}`);
+    const boxRow = textOf(findAll((n) => n.type === "button" && n.key === "shipment:s10")[0]);
+    assert.ok(boxRow.includes("台灯 · 2箱") && !boxRow.includes("box"), `单位没翻成中文：${boxRow}`);
     assert.ok(pt.includes("XT001") && pt.includes("已签收"), `运单那栏不对（客户看 delivered 应叫「已签收」）：${pt}`);
     assert.ok(pt.includes("BL01") && pt.includes("只列了最近"), "整柜到顶了没写出来");
     findAll((n) => n.type === "input" && n.props["aria-label"] === "搜运单")[0].props.onChange({ target: { value: "BL" } }); flush();

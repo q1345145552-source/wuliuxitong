@@ -332,14 +332,18 @@ export async function unloadAllItemsOfContainer(
   const parents = parentNos.length > 0
     ? await tx.shipment.findMany({ where: { trackingNo: { in: parentNos }, companyId }, select: { id: true } })
     : [];
+  /* allowGone（2026-10-08 模拟数据测试第 3 轮）：读完柜里记录到锁上运单之间，同事删单可能已经把其中几票连同柜里的记录一起删掉提交了
+     （删单只锁订单和运单、不锁柜子）。下面锁完会重读、只卸还在的，这几票不在了正好不用卸 —— 不该因此整个删柜报 404 让人再点一次 */
   await lockShipmentsChildrenFirst(
     tx,
     [...new Set([...preLockItems.map((it: any) => it.shipment.id), ...parents.map((r: any) => r.id)])],
     companyId,
+    { allowGone: true },
   );
   /* 锁完**重读一遍**再干活（CLAUDE.md 第 28 条；Codex 第二轮复核用真库复现）：上面那份是锁之前读的，
      读完到锁上之间别人能改子单的件数 / 方数 / 重量，拿旧数还给父运单就少还了，子单一删再也找不回来。
-     柜子已经锁住，柜里的记录不会多也不会少，变的只可能是运单上的数。 */
+     柜子锁住以后不会再有记录装进来；但删单不锁柜子、会连同柜里的记录一起删（2026-10-08 更正：原来这里写「不会多也不会少」，说过头了），
+     所以记录只可能变少 —— 以重读的为准，运单都已经在上面锁住，读到的数就是真的。 */
   const ordered = await readItems();
   if (ordered.some((it: any) => !it.shipment)) {
     throw new BusinessError("柜内记录指向的运单不存在，请联系技术处理", 400, "VALIDATION_ERROR");

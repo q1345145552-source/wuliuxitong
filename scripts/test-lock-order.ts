@@ -116,10 +116,18 @@ const LOCK_HELPERS: Record<string, string[]> = {
    * （`SELECT ... FROM arrival_notices ... FOR UPDATE` 再重读），再 lockLinkedShipment
    * （转过运单的才锁：先订单 FOR NO KEY UPDATE、再运单 FOR UPDATE，之后才同步订单 / 运单）。
    * 锁序固定：到货通知 → 订单 → 运单，跟删订单 / 改单 / 确认收货的「订单 → 运单」同向；
-   * 别的模块都不碰 arrival_notices，不会反着拿。（第一版是「运单 → 订单」，跟删订单反着，审查抓到的）
+   * 改号的两条路（/admin/orders/update、/staff/orders/patch-shipment-bundle）在**事务提交后**单独改到货通知的运单号
+   * （arrival-notices/follow-tracking-no.ts，2026-10-08 F06），不在任何锁链里；别的模块不碰 arrival_notices，不会反着拿。
+   * （第一版是「运单 → 订单」，跟删订单反着，审查抓到的）
    */
   lockNotice: ["arrival_notices"],
   lockLinkedShipment: ["orders", "shipments"],
+  /**
+   * 2026-10-08 到货通知修复第 3 轮：「运单管理改号」和「到货通知登记 / 改号」按同一个号排队（咨询锁 83050，
+   * arrival-notices/follow-tracking-no.ts 的 lockTrackingNoForArrivalNotice）。两边都是事务第一句、拿它时手里没有行锁，
+   * 所以不进表顺序比对；第 10 项会去函数体里核实锁真的在。
+   */
+  lockTrackingNoForArrivalNotice: ["advisory_arrival_tracking_no"],
 };
 
 /**
@@ -420,6 +428,14 @@ const WRITE_WITHOUT_LOCK_OK: string[] = [
    */
   "arrival-notices/routes.ts:%d /staff/arrival-notices/convert（create了 orders",
   "arrival-notices/routes.ts:%d /staff/arrival-notices/convert（create了 shipments",
+  /**
+   * 员工建单（2026-10-08 模拟数据测试改成交互式事务，原来是批量事务、这个扫描器看不见）：order / shipment 插的是**全新的行**，锁不到；
+   * 并发那面先拿号锁（lockTrackingNoForArrivalNotice，跟改号 / 到货通知登记同一把）再在锁里查运单表和到货通知，
+   * 再加上 shipments.tracking_no 唯一约束兜底（撞了接住 P2002 回 409）。
+   * ⚠️ 豁免串写死「create了」：这条路哪天改成 update / delete，动词对不上、豁免自动失效变红。
+   */
+  "orders/routes.ts:%d /staff/orders（create了 orders",
+  "orders/routes.ts:%d /staff/orders（create了 shipments",
 ];
 
 /**

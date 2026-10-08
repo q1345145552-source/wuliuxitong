@@ -10,6 +10,11 @@ export interface ShipmentPrintLabelProps {
   productQuantity?: number;
   transportMode?: string;
   products?: Array<{ itemName: string; packageCount: number }>;
+  /**
+   * 后端算好的整票件数（列表接口的 totalPackageCount = 父单剩余 + 全部子单），只拿来跟产品行之和对账，不当分母。
+   * 不传 / 空 = 不对账（2026-10-08 修复第 2 轮）。
+   */
+  wholePackageCount?: number | null;
 }
 
 /**
@@ -17,17 +22,51 @@ export interface ShipmentPrintLabelProps {
  * 多产品时每行一个产品，标明箱数。
  * 2026-09-15：老板要求去掉底部「湘泰物流网站」那一行（连带 .footer 样式），其余不动。
  */
-export function openPrintLabel(props: ShipmentPrintLabelProps) {
+function positiveInt(n: unknown): number | null {
+  const v = typeof n === "string" && n.trim() !== "" ? Number(n) : n;
+  return typeof v === "number" && Number.isInteger(v) && v > 0 ? v : null;
+}
+
+/**
+ * 件数排不出箱号时不打（2026-10-08 到货通知审查 F07）。
+ * 原来没件数按 1 箱打（「箱号 1/1」，贴上去就是错的），产品行件数 0 一张都不出（空白页）。
+ * 箱数宁可拦住让人补，绝不猜（同 productRowGuard 的规矩）。能打印返回 null。
+ * 文案说「空的或 0」而不是「还没填」：拆柜后父单剩 0、又没有产品行的老数据也会被这句挡住。
+ */
+export function printLabelBlockedReason(props: Pick<ShipmentPrintLabelProps, "packageCount" | "products" | "wholePackageCount">): string | null {
+  const products = props.products ?? [];
+  if (products.length > 0) {
+    const bad = products.find((p) => positiveInt(p.packageCount) == null);
+    if (bad) return `「${bad.itemName || "未填品名"}」这一行的件数是空的或 0，排不出箱号，补上件数再打印`;
+    /* 产品行之和跟整票件数对不上也不打（2026-10-08 修复第 2 轮）：确认收货 / 改单时改了整票件数、产品行没跟着改
+       （多产品行的单确认收货只改订单和运单），原来按产品行打出「1/7…7/7」—— 实收 9 箱少 2 张标签，标签上却像打全了。 */
+    const sum = products.reduce((s, p) => s + (positiveInt(p.packageCount) ?? 0), 0);
+    const whole = positiveInt(props.wholePackageCount);
+    return whole != null && whole !== sum
+      ? `产品行箱数合计 ${sum} 箱，跟这票货的件数 ${whole} 箱对不上（收货或改单时改了件数、产品行没跟着改），先请超管在运单管理把产品行箱数改对再打印`
+      : null;
+  }
+  return positiveInt(props.packageCount) == null ? "这票货的件数是空的或 0，排不出箱号，补上件数再打印" : null;
+}
+
+/** 打开打印窗口。件数不全时不开窗口，返回给人看的原因；其余情况（包括浏览器拦了弹窗）返回 null。 */
+export function openPrintLabel(props: ShipmentPrintLabelProps): string | null {
+  const blocked = printLabelBlockedReason(props);
+  if (blocked) return blocked;
   const win = window.open("", "_blank", "width=340,height=520");
-  if (!win) return;
+  if (!win) return null;
 
   // 同一运单各箱共用运单条码；箱号仍是文字，不改变扫描后用于查运单的值。
   const barcodeHtml = renderTrackingBarcode(props.trackingNo);
-  const total = Number(props.packageCount) || 1;
+  const hasProducts = (props.products?.length ?? 0) > 0;
+  // 有产品行时标签张数 = 产品行件数之和（上面已确认每行都是正整数），分母也一律用这个和：
+  // 张数和分母同一个数，不会出现「101/71」（调用方传的件数可能是拆柜 / 部分装柜后的剩余数，2026-10-08 修复审查）。
+  // 没有产品行时分母 = 调用方传的整票件数（员工 / 超管传 totalPackageCountOf）
+  const productSum = (props.products ?? []).reduce((s, p) => s + (positiveInt(p.packageCount) ?? 0), 0);
+  const total = hasProducts ? productSum : (positiveInt(props.packageCount) ?? 0);
   const modeText = props.transportMode
     ? (props.transportMode === "sea" ? "海运" : "陆运")
     : "";
-  const hasProducts = (props.products?.length ?? 0) > 0;
 
   let labelsHtml = "";
   let globalIdx = 0;
@@ -77,6 +116,7 @@ ${labelsHtml}
 <script>window.print();</script></body></html>`);
 
   win.document.close();
+  return null;
 }
 
 /* 2026-08-31（复查条目24 / 条目48收尾）：openPrintPrealert 和 PrealertPrintProps 已删 ——

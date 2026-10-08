@@ -72,6 +72,8 @@ const EXPECT: Record<string, Group> = {
 
 let orderRows: any[] = [];
 (globalThis as any).__prisma = {
+  // 2026-10-08：/admin/orders 把 count + findMany 放进一个可重复读事务；事务里用的还是这个假库
+  async $transaction(fn: any) { return typeof fn === "function" ? fn((globalThis as any).__prisma) : Promise.all(fn); },
   order: {
     async count() { return orderRows.length; },
     async findMany() { return orderRows; },

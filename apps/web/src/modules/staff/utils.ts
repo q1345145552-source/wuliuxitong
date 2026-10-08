@@ -71,11 +71,12 @@ export function warehouseLabelFromId(warehouseId: string | undefined): string {
 
 /**
  * 运输方式展示。
+ * 到货通知转「待入库」时允许还没定运输方式，库里存的是空串 —— 空串也显示「—」，别显示成空白。
  */
-export function transportModeLabel(mode: string | undefined): string {
+export function transportModeLabel(mode: string | undefined | null): string {
   if (mode === "sea") return "海运";
   if (mode === "land") return "陆运";
-  return mode ?? "—";
+  return mode || "—";
 }
 
 /**
@@ -249,6 +250,7 @@ export function buildShipmentOrderEditDraft(item: ShipmentItem): ShipmentOrderEd
     domesticTrackingNo: item.domesticTrackingNo ?? "",
     productQuantity: item.productQuantity != null ? String(item.productQuantity) : "",
     packageCount: item.packageCount != null ? String(item.packageCount) : "",
+    basePackageCount: item.packageCount ?? null,
     packageUnit: item.packageUnit === "bag" ? "bag" : "box",
     weightKg: item.weightKg != null ? String(item.weightKg) : "",
     volumeM3: item.volumeM3 != null ? String(item.volumeM3) : "",

@@ -731,6 +731,8 @@ function backendOverview(options: { empty?: boolean; failStalled?: boolean } = {
   const prisma = {
     user: { count: async (args: RecordValue) => { capture('user.count', args); return options.empty ? 0 : args.where.role === 'staff' ? 3 : 111; } },
     order: { count: async (args: RecordValue) => { capture('order.count', args); return options.empty ? 0 : 7; } },
+    // G02（2026-10-08）：今天在到货通知里转正式的运单，按转正式那天算「今天进仓」（空的 shipmentId 要丢掉）
+    arrivalNotice: { findMany: async (args: RecordValue) => { capture('arrivalNotice.findMany', args); return options.empty ? [] : [{ shipmentId: 's_formal_today' }, { shipmentId: null }]; } },
     shipment: { aggregate: async (args: RecordValue) => { capture('shipment.aggregate', args); return { _sum: { volumeM3: options.empty ? null : { toString: () => '12.3456' } } }; } },
     container: { count: async (args: RecordValue) => {
       capture('container.count', args);
@@ -760,11 +762,14 @@ function backendOverview(options: { empty?: boolean; failStalled?: boolean } = {
   const fclScope = load(path.resolve('apps/api/src/modules/core/fcl-scope.ts'), {}, new Map());
   const { EXCLUDE_FCL_ORDER, EXCLUDE_FCL_SHIPMENT } = fclScope as RecordValue;
   assert.ok(EXCLUDE_FCL_ORDER && EXCLUDE_FCL_SHIPMENT, '整柜排除条件没读到，fcl-scope 是不是改了导出名');
+  // 「待入库」状态值同样从真模块读（G02：今天建的单里还在待入库的不算进今日收货体积）
+  const { PENDING_INBOUND } = load(path.resolve('apps/api/src/modules/arrival-notices/rules.ts'), {}, new Map()) as RecordValue;
+  assert.equal(PENDING_INBOUND, 'pendingInbound', '待入库状态值没读到，arrival-notices/rules 是不是改了导出名');
 
   const handler = compile(`export default function bind(ctx: any) {
-    const { prisma, countShipmentOverview, requireRole, ok, CONTAINER_STATUS_LABEL, EXCLUDE_FCL_ORDER, EXCLUDE_FCL_SHIPMENT } = ctx;
+    const { prisma, countShipmentOverview, requireRole, ok, CONTAINER_STATUS_LABEL, EXCLUDE_FCL_ORDER, EXCLUDE_FCL_SHIPMENT, PENDING_INBOUND } = ctx;
     return (${callbacks[0].getText(tree)});
-  }`, filename).default({ prisma, requireRole, ok, CONTAINER_STATUS_LABEL, EXCLUDE_FCL_ORDER, EXCLUDE_FCL_SHIPMENT,
+  }`, filename).default({ prisma, requireRole, ok, CONTAINER_STATUS_LABEL, EXCLUDE_FCL_ORDER, EXCLUDE_FCL_SHIPMENT, PENDING_INBOUND,
     countShipmentOverview: async (args: RecordValue) => {
       capture('countShipmentOverview', { where: args }); assert.equal(args.parentTrackingNo, null);
       return { inTransitCount: options.empty ? 0 : 332 };
@@ -788,12 +793,22 @@ for (const empty of [false, true]) {
       assert.equal(data[key], empty ? 0 : value, `计数口径不能随移除趋势而变化：${key}`);
     }
     assert.equal(api.raw.length, 1, '仅保留卡住柜子的SQL');
-    assert.equal(api.seen.length, 9);
+    assert.equal(api.seen.length, 10);
     const shipment = api.seen.find(x => x.name === 'shipment.aggregate')!.args;
     assert.equal(shipment.where.parentTrackingNo, null);
     assert.equal(shipment.where.updatedAt, undefined);
-    assert.equal(shipment.where.createdAt.gte.getUTCHours(), 16, '北京零点为前一日UTC16点');
-    assert.equal(shipment.where.createdAt.gte.getUTCMinutes(), 0);
+    // G02（2026-10-08）：「今天建的单」挪进 OR 第一支，外层不能再有（不然转正式那支被它卡掉）
+    assert.equal(shipment.where.createdAt, undefined, '外层不能再有 createdAt 条件');
+    const [built, formal] = shipment.where.OR;
+    assert.equal(built.createdAt.gte.getUTCHours(), 16, '北京零点为前一日UTC16点');
+    assert.equal(built.createdAt.gte.getUTCMinutes(), 0);
+    assert.equal(built.currentStatus.not, 'pendingInbound', '今天建的单里还在待入库的不算今天进仓');
+    const notices = api.seen.find(x => x.name === 'arrivalNotice.findMany')!.args;
+    assert.equal(notices.where.convertedTo, 'formal');
+    assert.equal(notices.where.shipmentId.not, null, '没挂运单的到货通知不取');
+    assert.equal(notices.where.convertedAt.gte.getTime(), built.createdAt.gte.getTime(), '转正式的也按北京今天零点');
+    if (empty) assert.equal(shipment.where.OR.length, 1, '今天没人转正式：OR 里只有一支');
+    else assert.deepEqual(Array.from(formal.id.in), ['s_formal_today'], '今天转正式的那几张按 id 算进来（空的 shipmentId 丢掉）');
     assert.equal(data.stalledContainers.length, empty ? 0 : 2);
     if (!empty) {
       assert.equal(data.stalledContainers[0].shipmentCount, 6);

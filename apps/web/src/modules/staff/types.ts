@@ -28,6 +28,8 @@ export type ShipmentOrderEditDraft = {
   domesticTrackingNo: string;
   productQuantity: string;
   packageCount: string;
+  /** 打开编辑框那一刻运单上「还剩多少没装柜」，保存时原样带上去让后端核对（2026-10-08：编辑期间有人装柜，旧剩余数会把订单件数加多） */
+  basePackageCount: number | null;
   packageUnit: "bag" | "box";
   weightKg: string;
   volumeM3: string;

@@ -71,6 +71,7 @@ export type ChatRefOption = {
   no: string;
   title: string | null;
   status: string;
+  /** 整票件数（运单 = 父单剩余 + 全部子单，跟员工列表 totalPackageCount 同口径）；null = 还没点数 */
   packageCount: number | null;
   packageUnit: string | null;
 };

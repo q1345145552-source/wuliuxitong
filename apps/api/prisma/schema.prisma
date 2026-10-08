@@ -1385,6 +1385,8 @@ model ArrivalNotice {
   warehouseId        String?   @map("warehouse_id")
   /// 到仓日期 YYYY-MM-DD（跟 orders.ship_date 同一种写法）
   arrivedAt          String?   @map("arrived_at")
+  /// 货型 normal | inspection | sensitive；空 = 普货（同「创建订单」默认普货、不是必填；2026-10-08 F11 补：原来转出去一律普货）
+  cargoType          String?   @map("cargo_type")
   /// 内部备注，不进给客户的文案
   remark             String?
   /// 点了「已通知客户」的时间和人；改回「未通知」就清空
@@ -1418,6 +1420,8 @@ model ArrivalNoticeImage {
   fileName     String   @map("file_name")
   mime         String
   filePath     String   @map("file_path")
+  /// 小图（页面上传时顺手压一张长边 360 的，列表卡片只显示它；老照片 / 老页面传的没有，显示原图）—— 2026-10-08 G03
+  thumbPath    String?  @map("thumb_path")
   /// 复制到运单产品图片后那张的 id（order_product_images.id）；还没复制 / 运单没了为空
   orderImageId String?  @map("order_image_id")
   uploadedBy   String   @map("uploaded_by")

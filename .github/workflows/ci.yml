@@ -62,6 +62,10 @@ jobs:
       - name: Test shipment label barcodes
         run: npm run test:shipment-label-barcode
 
+      # 到货通知转「待入库」的货：件数 / 运输方式 / 品名没填时各端显示「—」、打印拦住、超管编辑拦住（2026-10-08 审查）
+      - name: Test pending-inbound display
+        run: npm run test:pending-inbound-display
+
       - name: Test admin shipment detail
         run: npm run test:admin-shipment-detail
 
@@ -307,6 +311,9 @@ jobs:
       # 装柜 / 运单管理几道闸还在、接口网址比页面多一段、页面「还缺什么」跟后端同一张单子。
       - name: Test arrival notices (source)
         run: npm run test:arrival-notice-source
+      # 2026-10-08 模拟数据测试查出来的页面接线（不连库）：列表排序带 id 兜底、超管待入库到仓日期、袋装单位、改单带打开时的剩余件数
+      - name: Test simulated-data fixes 1008 (source)
+        run: npm run test:sim-fixes-1008-source
 
       # 改整柜（2026-09-24，老板：「加上编辑功能」）。要连测试库 —— 读源码证明不了
       # 「改完库里真的变了」，而改整柜最容易出的就是「只改了一半」（订单改了运单没改之类）。
@@ -471,6 +478,10 @@ jobs:
       # 到货通知那份迁移：在「上线前的库」上连跑两遍、跟 schema 零差异、体检清单对上、外键在
       - name: Test arrival notices migration file (real DB)
         run: bash .github/scripts/run-db-test.sh test:migration-arrival-notices-db
+      # 2026-10-08 模拟数据测试（多人同时操作）查出来的：建单查到货通知占号、同号并发不 500、删单 vs 装柜不死锁、
+      # 删单那一刻看列表不 500、改单遇删单 409、编辑期间被装柜拦旧剩余数、删单删图片文件、到货通知搜索转义 / 按显示的号搜、客服选运单全品名
+      - name: Test simulated-data fixes 1008 (real DB)
+        run: bash .github/scripts/run-db-test.sh test:sim-fixes-1008-db
 
       # 9-28 审查报告那批小 bug（后端）：本月已签收按真签收时间数、装柜详情带整柜标记、
       # 集货轨迹柜号抹干净、补确认收货写父单、客户建单仓库校验、并发报价不重复记轨迹、

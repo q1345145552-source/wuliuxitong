@@ -194,8 +194,46 @@ test('空products保持原单产品分支，缺运输方式不擅自打印海运
   assert.equal(labelBlocks(view.html()).length, 1); verifySvg(svgBlocks(view.html())[0], base.trackingNo);
   assert.doesNotMatch(labelBlocks(view.html())[0], /海运|陆运/); assert.ok(view.html().includes('单箱数量：12个'));
 });
-test('原 packageCount=0 的1张回退行为不因条码变更，条码仍可用', () => {
-  const view = harness(); view.open({ ...base, packageCount: 0 }); assert.equal(labelBlocks(view.html()).length, 1); verifySvg(svgBlocks(view.html())[0], base.trackingNo);
+// 2026-10-08 到货通知审查 F07：原来件数 0 回退成打 1 张「箱号 1/1」，产品行件数 0 打出空白页 —— 改成不开窗口、返回原因
+test('F07 件数是空的或 0（运单 0 / 「—」/ null、产品行 0 或空）不开打印窗口、返回原因，不再猜成「1/1」或打出空白页', () => {
+  for (const props of [
+    { ...base, packageCount: 0 }, { ...base, packageCount: '—' }, { ...base, packageCount: null },
+    { ...base, packageCount: 0, products: [{ itemName: '灯具', packageCount: 0 }] },
+    { ...base, packageCount: 3, products: [{ itemName: '鞋', packageCount: 3 }, { itemName: '包', packageCount: null }] },
+  ]) {
+    const view = harness(); const reason = view.open(props) as unknown;
+    assert.match(String(reason), /排不出箱号/, `没返回原因：${JSON.stringify(props)}`);
+    assert.equal(view.openCalls.length, 0, `件数没填还开了打印窗口：${JSON.stringify(props)}`);
+    assert.equal(view.html(), '');
+  }
+  const view = harness(); assert.match(String(view.open({ ...base, packageCount: 2, products: [{ itemName: '灯具', packageCount: 0 }] }) as unknown), /「灯具」这一行的件数是空的或 0/);
+});
+test('F07 有产品行、运单件数取不到正数（拆柜后剩 0）时分母用产品行合计，不再写「x/1」', () => {
+  const view = harness(); const reason = view.open({ ...base, packageCount: 0, products: [{ itemName: '鞋', packageCount: 2 }] }) as unknown;
+  assert.equal(reason, null); assert.equal(view.openCalls.length, 1);
+  const labels = labelBlocks(view.html()); assert.equal(labels.length, 2);
+  labels.forEach((label, index) => { assert.ok(label.includes(`箱号：${index + 1}/2`)); verifySvg(svgBlocks(label)[0], base.trackingNo); });
+});
+// 2026-10-08 修复审查：部分装柜后父单剩 71、产品行合计 101，原来打出 101 张「1/71…101/71」。有产品行时分母一律用产品行合计
+test('有产品行时分母一律用产品行合计（张数和分母同一个数），不用传进来的剩余件数', () => {
+  const view = harness(); const reason = view.open({ ...base, packageCount: 71, products: [{ itemName: '鞋', packageCount: 60 }, { itemName: '包', packageCount: 41 }] }) as unknown;
+  assert.equal(reason, null);
+  const labels = labelBlocks(view.html()); assert.equal(labels.length, 101);
+  assert.ok(labels[0].includes('箱号：1/101'), labels[0]); assert.ok(labels[100].includes('箱号：101/101'));
+  assert.doesNotMatch(view.html(), /\/71</, '分母还是剩余件数 71');
+});
+// 修复第 2 轮：产品行合计跟整票件数（wholePackageCount）对不上不打；对得上、或不传整票数照常打
+test('修复第 2 轮 产品行合计 7、整票 9（收货改了件数、产品行没跟）不开窗口并说清楚；对得上 / 没传整票数照常打', () => {
+  const products = [{ itemName: '玩具', packageCount: 3 }, { itemName: '文具', packageCount: 4 }];
+  for (const whole of [9, 5]) {
+    const view = harness(); const reason = view.open({ ...base, packageCount: 7, products, wholePackageCount: whole }) as unknown;
+    assert.match(String(reason), new RegExp(`产品行箱数合计 7 箱，跟这票货的件数 ${whole} 箱对不上`));
+    assert.equal(view.openCalls.length, 0); assert.equal(view.html(), '');
+  }
+  for (const whole of [7, null, undefined, 0]) {
+    const view = harness(); assert.equal(view.open({ ...base, packageCount: 7, products, wholePackageCount: whole }) as unknown, null);
+    assert.equal(labelBlocks(view.html()).length, 7);
+  }
 });
 for (const trackingNo of ['', ' ', '   ', '\t\n']) {
   test(`空白号 ${JSON.stringify(trackingNo)} 明示未提供，不生成错码`, () => {
@@ -298,6 +336,15 @@ function sectionById(page: ts.SourceFile, id: string): ts.JsxElement {
 function jsxTexts(node: ts.Node): string[] {
   return astNodes(node, ts.isJsxText).map((text) => text.text.replace(/\s+/g, ' ').trim()).filter(Boolean);
 }
+/** 页面打印函数里用到的真 totalPackageCountOf（ShipmentTableGrid 只有 import type，转成 CJS 后只 require react/jsx-runtime） */
+function loadTotalPackageCountOf(): (item: Row) => number | null {
+  const file = path.resolve('apps/web/src/modules/shipment/ShipmentTableGrid.tsx');
+  const out = ts.transpileModule(readFileSync(file, 'utf8'), { fileName: file, compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX, esModuleInterop: true } }).outputText;
+  const mod = { exports: {} as Row };
+  new vm.Script(`(function(exports,require,module){${out}\n})`, { filename: file }).runInNewContext({}, { timeout: 1000 })(mod.exports, createRequire(file), mod);
+  assert.equal(typeof mod.exports.totalPackageCountOf, 'function');
+  return mod.exports.totalPackageCountOf;
+}
 function evaluatePageExpression(expression: ts.Expression, page: ts.SourceFile, bindings: Row): any {
   const code = ts.transpileModule(`export function evaluate(ctx: any) {
     const { ${Object.keys(bindings).join(', ')} } = ctx;
@@ -381,7 +428,7 @@ for (const role of ['staff', 'admin'] as const) {
       const view = harness();
       const row = { ...base, clientId: base.marks, packageCount: 3,
         ...(multi ? { products: [{ itemName: '鞋', packageCount: 2 }, { itemName: '包', packageCount: 1 }] } : {}) };
-      const print = evaluatePageExpression(helper.initializer, page, { openPrintLabel: view.open });
+      const print = evaluatePageExpression(helper.initializer, page, { openPrintLabel: view.open, totalPackageCountOf: loadTotalPackageCountOf(), setToast: () => assert.fail('能打印的单不该弹提示') });
       print(row);
       const labels = labelBlocks(view.html());
       assert.equal(labels.length, 3);
@@ -391,6 +438,38 @@ for (const role of ['staff', 'admin'] as const) {
         verifySvg(svgBlocks(label)[0], base.trackingNo);
       });
     }
+  });
+}
+// 2026-10-08 修复审查：页面传的是父单「剩余」件数 —— 没有产品行的老单全部装柜后剩 0，被拦下并提示「补上件数」（其实整票 30 箱）；
+// 有产品行的单部分装柜后打出「101/71」。改成传整票件数 totalPackageCountOf
+for (const role of ['staff', 'admin'] as const) {
+  test(`${role}打印按整票件数排箱号：没产品行的老单装完柜（剩 0、整票 30）打 1/30…30/30；有产品行剩 71 合计 101 打 1/101…101/101；待入库没件数照样拦`, () => {
+    const page = readPage(role);
+    const helperName = role === 'staff' ? 'printShipmentLabel' : 'printOrderLabel';
+    const helper = astNodes(page, (node): node is ts.VariableDeclaration => ts.isVariableDeclaration(node) && node.name.getText(page) === helperName)[0];
+    assert.ok(helper?.initializer);
+    const totalPackageCountOf = loadTotalPackageCountOf();
+    const run = (row: Row) => {
+      const view = harness(); const toasts: string[] = [];
+      evaluatePageExpression(helper.initializer!, page, { openPrintLabel: view.open, totalPackageCountOf, setToast: (t: string) => toasts.push(t) })(row);
+      return { labels: view.html() ? labelBlocks(view.html()) : [], toasts };
+    };
+    const old = run({ ...base, clientId: base.marks, packageCount: 0, totalPackageCount: 30, products: [] });
+    assert.deepEqual(old.toasts, [], `整票 30 箱却被拦：${old.toasts.join('；')}`);
+    assert.equal(old.labels.length, 30);
+    assert.ok(old.labels[0].includes('箱号：1/30')); assert.ok(old.labels[29].includes('箱号：30/30'));
+    const partial = run({ ...base, clientId: base.marks, packageCount: 71, totalPackageCount: 101, products: [{ itemName: '鞋', packageCount: 101 }] });
+    assert.equal(partial.labels.length, 101);
+    assert.ok(partial.labels[0].includes('箱号：1/101')); assert.ok(partial.labels[100].includes('箱号：101/101'), partial.labels[100]);
+    const pending = run({ ...base, clientId: base.marks, packageCount: undefined, totalPackageCount: undefined, products: [], currentStatus: 'pendingInbound' });
+    assert.equal(pending.labels.length, 0); assert.equal(pending.toasts.length, 1); assert.match(pending.toasts[0], /排不出箱号.*到货通知/);
+    // 修复第 2 轮：多产品行的预报单确认收货时改了件数（报 3 + 4 = 7、实收 9），产品行没跟着改 ——
+    // 原来打出 7 张「1/7…7/7」，少 2 张标签看着却像打全了。现在整票数跟产品行合计对不上就不打、说清楚
+    const recv9 = run({ ...base, clientId: base.marks, packageCount: 9, totalPackageCount: 9, products: [{ itemName: '玩具', packageCount: 3 }, { itemName: '文具', packageCount: 4 }] });
+    assert.equal(recv9.labels.length, 0, `产品行合计 7、实收 9 还打出了 ${recv9.labels.length} 张`);
+    assert.equal(recv9.toasts.length, 1); assert.match(recv9.toasts[0], /产品行箱数合计 7 箱，跟这票货的件数 9 箱对不上/);
+    // 页面不许再把剩余件数直接当分母
+    assert.doesNotMatch(helper.initializer!.getText(page), /packageCount: (item|o)\.packageCount/);
   });
 }
 test('全部测试未尝试真实打印/网络/定时器等副作用', () => assert.deepEqual(forbidden, []));

@@ -114,6 +114,13 @@ check("4) 三个端各自的口径：到仓日期、国内单号、加收金额"
   const noShipDate = adminOrderFilterRow({ ...adminOrder, shipDate: null });
   assert.equal(noShipDate.arrivedAt, "2026-09-12", "管理员端没到仓日期就用建单日期");
   assert.equal(noShipDate.shipDate, "", "但「到仓日期」那一格是空的，不拿建单日期冒充");
+  // 2026-10-08 模拟数据测试：「待入库」的单没填到仓日期就是空 —— 建单日期是转待入库那天，不是货到仓那天（员工 / 代理端、超管导出都是「—」）
+  const pending = adminOrderFilterRow({ ...adminOrder, shipDate: null, currentStatus: "pendingInbound" });
+  assert.equal(pending.arrivedAt, "", "待入库没填到仓日期：筛选不能拿转单那天当到仓日期");
+  assert.equal(matchesShipmentFilter(pending, cond({ arrivedAtFrom: "2026-09-12", arrivedAtTo: "2026-09-12" })), false);
+  assert.equal(filter.adminArrivedDate({ shipDate: null, createdAt: "2026-09-12T03:00:00.000Z", currentStatus: "pendingInbound" }), "");
+  assert.equal(filter.adminArrivedDate({ shipDate: null, createdAt: "2026-09-12T03:00:00.000Z", currentStatus: "inWarehouseCN" }), "2026-09-12");
+  assert.equal(filter.adminArrivedDate({ shipDate: "2026-09-10", createdAt: "2026-09-12T03:00:00.000Z", currentStatus: "pendingInbound" }), "2026-09-10");
   // 员工端：产品行上的国内单号也要能搜到；加收金额按两位小数比
   const staffRow = staffShipmentFilterRow({ ...adminOrder, arrivedAt: "2026-09-08T00:00:00.000Z" });
   assert.equal(matchesShipmentFilter(staffRow, cond({ domesticTrackingNo: "SF0002" })), true, "员工端要能搜产品行的国内单号");

@@ -152,6 +152,18 @@ export function matchesShipmentFilter(row: ShipmentFilterRow, s: ShipmentFilterV
 
 type ProductLike = { itemName?: string | null; sortOrder?: number | null; domesticTrackingNo?: string | null };
 
+/**
+ * 管理员端「到仓日期」（列表、手机列表、详情、筛选共用这一份）：没填到仓日期就退到建单日期（管理员端原来的写法）。
+ * ⚠️ 「待入库」的单例外，没填就是空（2026-10-08 模拟数据测试）：到货通知转待入库时可以不填到仓日期，
+ *    建单日期是「转待入库那天」不是货到仓那天 —— 原来超管显示成转单那天，员工端 / 代理端 / 超管导出都是「—」，
+ *    按到仓日期筛也筛错。返回空串，页面显示「—」。
+ */
+export function adminArrivedDate(item: { shipDate?: string | null; createdAt?: string | null; currentStatus?: string | null }): string {
+  if (item.shipDate) return item.shipDate;
+  if (item.currentStatus === "pendingInbound") return "";
+  return beijingDate(item.createdAt);
+}
+
 /** 管理员端「运单管理」一行（/admin/orders 的形状） */
 export function adminOrderFilterRow(item: {
   trackingNo?: string | null; domesticTrackingNo?: string | null; clientName?: string | null; clientId?: string | null;
@@ -174,8 +186,8 @@ export function adminOrderFilterRow(item: {
     // 件数 / 重量 / 体积：按表上显示的整票数比（见上面 displayTotals）
     ...displayTotals(item),
     productQuantity: item.productQuantity == null ? "" : String(item.productQuantity),
-    // 管理员端原来的写法：没有到仓日期就退到建单日期
-    arrivedAt: item.shipDate ?? beijingDate(item.createdAt),
+    // 管理员端原来的写法：没有到仓日期就退到建单日期（待入库的除外，见 adminArrivedDate）
+    arrivedAt: adminArrivedDate(item),
     logisticsStatus: shipmentStatusZh(item.currentStatus ?? undefined),
     // 「柜号」筛选主要比 batchNo：收货 / 建单填的柜号存这个字段；原来只比 shipments.containerNo（线上 0 条），
     // 员工按柜号搜永远搜不到（2026-09-28 审查修复 #9）。containerNo 也一起比：超管编辑里「装柜号」那一格写的是它，

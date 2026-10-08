@@ -1,4 +1,5 @@
 import { assertNotInLastmile, assertParentNotInLastmile, unloadItemFully } from "../shipments/unload-item";
+import { Prisma } from "@prisma/client";
 import { prisma } from "../../db/prisma";
 import { FCL_BLOCKED_MESSAGE } from "../core/fcl-scope";
 import { syncParentStatusFromChildren } from "../shipments/parent-status";
@@ -39,6 +40,30 @@ async function issueManifestNo(now: Date): Promise<string> {
     if (!Number.isNaN(n) && n > max) max = n;
   }
   return `${prefix}${String(max + 1).padStart(3, "0")}`;
+}
+
+/** Prisma / 数据库抛的错（不是本文件自己 throw new Error 的业务提示） */
+function isPrismaError(e: unknown): boolean {
+  return e instanceof Prisma.PrismaClientKnownRequestError ||
+    e instanceof Prisma.PrismaClientUnknownRequestError ||
+    e instanceof Prisma.PrismaClientRustPanicError ||
+    e instanceof Prisma.PrismaClientInitializationError ||
+    e instanceof Prisma.PrismaClientValidationError;
+}
+
+/** 死锁 / 串行化冲突：P2034（Prisma 普通写法），P2010 + 40P01/40001（$queryRaw），或者 ConnectorError 原文里带 40P01 */
+function isDbConflict(e: unknown): boolean {
+  if (e instanceof Prisma.PrismaClientKnownRequestError) {
+    if (e.code === "P2034") return true;
+    const pg = String((e.meta as { code?: unknown } | undefined)?.code ?? "");
+    if (pg === "40P01" || pg === "40001") return true;
+  }
+  return isPrismaError(e) && /40P01|40001|deadlock detected/.test(String((e as Error).message ?? ""));
+}
+
+/** 撞唯一约束（P2002） */
+function isUniqueClash(e: unknown): boolean {
+  return e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002";
 }
 
 /**
@@ -104,23 +129,40 @@ export function registerLoadingManifestRoutes(app: MinimalHttpApp): void {
       fail(res, 400, "BAD_REQUEST", "请选择运输方式：海运或陆运");
       return;
     }
-    const containerNo = body.containerNo?.trim() || await issueManifestNo(new Date());
-    // 查重
-    const existed = await prisma.container.findUnique({ where: { containerNo }, select: { id: true } });
-    if (existed) { fail(res, 409, "VALIDATION_ERROR", `柜号 ${containerNo} 已存在`); return; }
-    const container = await prisma.container.create({
-      data: {
-        id: `ctr_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-        companyId: auth.companyId,
-        containerNo,
-        containerType: body.warehouse === "wh_dongguan_01" ? "40HQ" : "20GP",
-        warehouseId: body.warehouse,
-        transportMode,
-        currentStatus: "LOADING",
-        carrierName: body.carrierInfo?.trim() || null,
-      },
-    });
-    ok(res, { message: "装柜任务已创建", manifest: { id: container.id, manifestNo: container.containerNo } });
+    const manualNo = body.containerNo?.trim() || "";
+    /* 自动取号是「查最大 + 1 → 插」，两个员工同时点「新建装柜」会取到同一个号，后到的撞唯一约束 500（2026-10-08 模拟数据测试）。
+       自动取的号撞了就重新取号再插（最多 5 次）；员工自己填的号撞了说「已存在」 */
+    for (let attempt = 0; ; attempt++) {
+      const containerNo = manualNo || await issueManifestNo(new Date());
+      // 查重
+      const existed = await prisma.container.findUnique({ where: { containerNo }, select: { id: true } });
+      if (existed) {
+        if (!manualNo && attempt < 5) continue;
+        fail(res, 409, "VALIDATION_ERROR", `柜号 ${containerNo} 已存在`);
+        return;
+      }
+      try {
+        const container = await prisma.container.create({
+          data: {
+            id: `ctr_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+            companyId: auth.companyId,
+            containerNo,
+            containerType: body.warehouse === "wh_dongguan_01" ? "40HQ" : "20GP",
+            warehouseId: body.warehouse,
+            transportMode,
+            currentStatus: "LOADING",
+            carrierName: body.carrierInfo?.trim() || null,
+          },
+        });
+        ok(res, { message: "装柜任务已创建", manifest: { id: container.id, manifestNo: container.containerNo } });
+        return;
+      } catch (e) {
+        if (!isUniqueClash(e)) throw e;
+        if (!manualNo && attempt < 5) continue;
+        fail(res, 409, "VALIDATION_ERROR", `柜号 ${containerNo} 已存在（刚刚被别人建了），请刷新后再看`);
+        return;
+      }
+    }
   });
 
   /**
@@ -700,12 +742,31 @@ export function registerLoadingManifestRoutes(app: MinimalHttpApp): void {
       });
       if (!shipment) throw new Error("未找到该运单号");
 
+      /* 先对订单拿 KEY SHARE，再锁运单（2026-10-08 模拟数据测试）：下面插子单时外键本来就要对这张订单拿 KEY SHARE，
+         原来是「锁运单 → 插子单才拿订单」，跟删运单（admin/orders/delete：订单 FOR UPDATE → 运单）反着，
+         两人同时操作同一张单 PostgreSQL 判死锁（实测 30 次 12 次）。提前拿，锁序就成了全系统统一的「订单 → 运单」；
+         KEY SHARE 不挡改单 / 收货的 FOR NO KEY UPDATE，只跟删单排队。
+         ⚠️ 整柜的单要在拿订单锁**之前**先挡掉：改 / 删整柜的锁序是「柜 → 运单 → 订单（FOR UPDATE）」，
+         这里先拿订单再等运单会跟它们反着。整柜的运单都是建整柜时新插的，不会半路变成整柜，所以锁前这一道就够；下面锁后照样再判一次 */
+      const fclEarly = await tx.shipmentContainerItem.findFirst({
+        where: { shipmentId: shipment.id, container: { isFcl: true } },
+        select: { id: true },
+      });
+      if (fclEarly) throw new Error(FCL_BLOCKED_MESSAGE);
+      await tx.$queryRaw`SELECT id FROM orders WHERE id = ${shipment.orderId} FOR KEY SHARE`;
       await tx.$queryRaw`SELECT id FROM shipments WHERE id = ${shipment.id} FOR UPDATE`;
       const locked = await tx.shipment.findUnique({
         where: { id: shipment.id },
-        select: { currentStatus: true, packageCount: true, volumeM3: true, parentTrackingNo: true, orderId: true, batchNo: true, packageUnit: true, weightKg: true, transportMode: true, domesticTrackingNo: true, warehouseId: true, itemName: true },
+        select: { trackingNo: true, currentStatus: true, packageCount: true, volumeM3: true, parentTrackingNo: true, orderId: true, batchNo: true, packageUnit: true, weightKg: true, transportMode: true, domesticTrackingNo: true, warehouseId: true, itemName: true },
       });
       if (!locked) throw new Error("未找到该运单号");
+      /* 锁前按号读到的这张单，等锁期间可能被同事改了号（2026-10-08 模拟数据测试第 2 轮，第 28 条「锁后重读」）：
+         原来锁后重读不读 trackingNo，下面查子单、起子单号、写 parentTrackingNo、同步父单全用锁前那份旧号 ——
+         改号先提交的话，插出一张挂在旧号 X 下面的子单（X 已经不存在），父单 Y 的件数却被扣了；之后卸柜按旧号找不到父单，件数永久丢。
+         号变了就不装：员工刷新后按新号重装。下面建子单 / 扣父单用到的字段也一律用锁里读到的 locked.*，不用锁前那份 */
+      if (locked.trackingNo !== shipment.trackingNo) {
+        throw new Error(`这张运单刚刚被改了单号（现在是 ${locked.trackingNo}），请刷新后按新单号再装柜；本次没有装柜`);
+      }
       if (locked.parentTrackingNo) throw new Error("子运单不能再次装柜，请使用父运单号");
       /* 整柜的运单不许装进别的柜（2026-09-23 复核抓到）：
          它是父单，上面那道只拦子单拦不住它；装进来会拆出子单、
@@ -764,14 +825,14 @@ export function registerLoadingManifestRoutes(app: MinimalHttpApp): void {
       if (reqPieces === 0) throw new Error("装柜件数不能为0");
 
       let loadShipmentId = shipment.id;
-      let loadTrackingNo = shipment.trackingNo;
+      let loadTrackingNo = locked.trackingNo;
       // 这一票实际装进柜子的体积 —— 由下面切分子单时算出，装柜记录直接复用同一个数
       let childVolumeForItem = 0;
 
       // 全部走子运单，不再区分部分装/全部装
       {
         const children = await tx.shipment.findMany({
-          where: { parentTrackingNo: shipment.trackingNo, companyId: auth.companyId },
+          where: { parentTrackingNo: locked.trackingNo, companyId: auth.companyId },
           select: { trackingNo: true },
           orderBy: { trackingNo: "asc" },
         });
@@ -780,7 +841,7 @@ export function registerLoadingManifestRoutes(app: MinimalHttpApp): void {
           const match = c.trackingNo.match(/-(\d+)$/);
           if (match) { const n = parseInt(match[1]); if (n >= nextSeq) nextSeq = n + 1; }
         }
-        const childTrackingNo = `${shipment.trackingNo}-${nextSeq}`;
+        const childTrackingNo = `${locked.trackingNo}-${nextSeq}`;
         // 子单 id 补随机后缀（2026-08-31）：只用毫秒时间戳的话，两个员工同一毫秒
         // 各自装柜会撞出一模一样的 id，后写的整单回滚报数据库错。
         // 写法对齐同文件的 sci_ / 运单模块拆单的 s_（shipments/routes.ts 的手工分柜路由（2026-08-31 已删，见该文件注释）当年的同款写法）。
@@ -793,17 +854,26 @@ export function registerLoadingManifestRoutes(app: MinimalHttpApp): void {
           ? null
           : (reqPieces === totalPkg ? Number(weight.toFixed(2)) : Number(((weight * reqPieces) / totalPkg).toFixed(2)));
 
-        await tx.shipment.create({
-          data: {
-            id: childId, companyId: auth.companyId, orderId: shipment.orderId,
-            trackingNo: childTrackingNo, parentTrackingNo: shipment.trackingNo,
-            batchNo: shipment.batchNo, currentStatus: "loaded",
-            packageCount: reqPieces, packageUnit: shipment.packageUnit,
-            weightKg: childWeight, volumeM3: volUnknown ? null : childVolume,
-            transportMode: shipment.transportMode, domesticTrackingNo: shipment.domesticTrackingNo,
-            warehouseId: shipment.warehouseId, itemName: shipment.itemName,
-          },
-        });
+        try {
+          await tx.shipment.create({
+            data: {
+              id: childId, companyId: auth.companyId, orderId: locked.orderId,
+              trackingNo: childTrackingNo, parentTrackingNo: locked.trackingNo,
+              batchNo: locked.batchNo, currentStatus: "loaded",
+              packageCount: reqPieces, packageUnit: locked.packageUnit,
+              weightKg: childWeight, volumeM3: volUnknown ? null : childVolume,
+              transportMode: locked.transportMode, domesticTrackingNo: locked.domesticTrackingNo,
+              warehouseId: locked.warehouseId, itemName: locked.itemName,
+            },
+          });
+        } catch (e: any) {
+          /* 子单号被一张普通运单占着（员工手填过「X-1」这种号，建单不拦这个格式；2026-10-08 模拟数据测试第 2 轮）：
+             原来撞唯一约束抛 Prisma 原错 → 外层按 500「服务器繁忙」，员工不知道是号撞了、一直重试。翻成能照做的一句 */
+          if (e?.code === "P2002" && /tracking/i.test(String(e?.meta?.target ?? ""))) {
+            throw new Error(`拆出来的子单号 ${childTrackingNo} 已经被另一张运单占用了，请先核对那张单（改号或删掉）再装柜；本次没有装柜`);
+          }
+          throw e;
+        }
 
         // 父单同步扣减：件数、体积、重量三样一起减，缺一样下次分柜就会算错
         await tx.shipment.update({
@@ -1011,7 +1081,7 @@ export function registerLoadingManifestRoutes(app: MinimalHttpApp): void {
       // 现在交给 syncParentStatusFromChildren：父单自己还有货就不动它，
       // 货全在子单上时按**最慢的子单**推算。
       if (loadShipmentId !== shipment.id) {
-        await syncParentStatusFromChildren(tx, shipment.trackingNo, auth.companyId);
+        await syncParentStatusFromChildren(tx, locked.trackingNo, auth.companyId);
       }
 
       // 2026-08-05：柜子和运单的运输方式对不上时给个提醒，**但不拦**。
@@ -1022,7 +1092,7 @@ export function registerLoadingManifestRoutes(app: MinimalHttpApp): void {
           ? { containerMode: container.transportMode, shipmentMode: locked.transportMode }
           : null;
 
-      return { loadTrackingNo, isPartial: reqPieces < totalPkg, parentTrackingNo: shipment.trackingNo, modeMismatch };
+      return { loadTrackingNo, isPartial: reqPieces < totalPkg, parentTrackingNo: locked.trackingNo, modeMismatch };
     });
 
     const ZH: Record<string, string> = { sea: "海运", land: "陆运" };
@@ -1036,6 +1106,13 @@ export function registerLoadingManifestRoutes(app: MinimalHttpApp): void {
         : null,
     });
     } catch (e: any) {
+      /* 数据库自己的错（死锁 / 别的 Prisma 报错）不把英文原文甩给员工（2026-10-08 模拟数据测试：
+         原来弹一大段「ConnectorError … deadlock detected」）。死锁 / 并发冲突给一句能照做的，其余交给外层按 500 处理 */
+      if (isDbConflict(e)) {
+        fail(res, 409, "VALIDATION_ERROR", "刚好有人在改这张运单，请稍后重试；本次没有装柜");
+        return;
+      }
+      if (isPrismaError(e)) throw e;
       fail(res, 400, "BAD_REQUEST", e.message ?? "装柜失败");
     }
   });

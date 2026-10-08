@@ -516,11 +516,17 @@ export function registerShipmentRoutes(app: MinimalHttpApp): void {
       where.OR = statusFilter.map((s) => ({ currentStatus: { equals: s, mode: "insensitive" } }));
     }
 
-    const [total, rows] = await Promise.all([
-      prisma.shipment.count({ where }),
-      prisma.shipment.findMany({
+    /* 2026-10-08 模拟数据测试两处：
+       ① 排序加 id 兜底：装柜 / 推柜子状态是 updateMany 一次写同一个 updatedAt，一大批运单时间完全一样；
+          只按 updatedAt 排时 PostgreSQL 每页（top-N 堆排 / 快排 / 索引扫）给并列行排的先后不一样，
+          并列那批正好跨页就有的出现两次、有的一次都不出现（实测 2688 张父单翻 500 一页丢 95 张，条数照样对得上）。
+       ② count 和 findMany 放进同一个「可重复读」只读事务（同到货通知列表）：Prisma 先查运单、再另一句查订单，
+          中间超管删了一张单，就是「运单有、订单没有」→ Field order is required … got null，整个列表 500 */
+    const [total, rows] = await prisma.$transaction(async (tx) => [
+      await tx.shipment.count({ where }),
+      await tx.shipment.findMany({
         where,
-        orderBy: { updatedAt: "desc" },
+        orderBy: [{ updatedAt: "desc" }, { id: "desc" }],
         skip: (page - 1) * pageSize,
         take: pageSize,
         include: {
@@ -531,7 +537,7 @@ export function registerShipmentRoutes(app: MinimalHttpApp): void {
           },
         },
       }),
-    ]);
+    ] as const, { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead, timeout: 15000, maxWait: 10000 });
 
     const totalMetricsByOrderId = await loadOrderTotalMetrics(
       auth.companyId,
@@ -563,7 +569,8 @@ export function registerShipmentRoutes(app: MinimalHttpApp): void {
       containerNo: r.containerNo ?? undefined,
       clientId: r.order?.clientId ?? undefined,
       clientName: r.order?.client?.name ?? undefined,
-      itemName: r.order?.itemName ?? undefined,
+      // 品名空串（待入库还没填，订单那一列不许空）当没有：页面显示「—」不是空白（F10）
+      itemName: r.order?.itemName || undefined,
       domesticTrackingNo: r.domesticTrackingNo ?? undefined,
       packageCount: r.packageCount ?? undefined,
       productQuantity: r.order?.productQuantity ?? undefined,
@@ -591,7 +598,8 @@ export function registerShipmentRoutes(app: MinimalHttpApp): void {
       paymentStatus: (r.order?.paymentStatus === "paid" ? "paid" : "unpaid") as "paid" | "unpaid",
       packageUnit: ((r.order?.packageUnit === "bag" ? "bag" : "box") as "bag" | "box"),
       cargoType: r.order?.cargoType ?? "normal",
-      canEdit: auth.role === "admin",
+      // 待入库的单在「运单管理」改不了（底稿在到货通知，后端两条改单路都挡）：别给编辑按钮（F08）
+      canEdit: auth.role === "admin" && r.currentStatus !== PENDING_INBOUND,
       remark: r.remark ?? undefined,
       productImages: undefined as any[] | undefined,
       products: undefined as any[] | undefined,
@@ -651,7 +659,11 @@ export function registerShipmentRoutes(app: MinimalHttpApp): void {
       }
       for (const item of items) {
         if (!item.parentTrackingNo) {
-          (item as any).totalPackageCount = (item.packageCount ?? 0) + (childSum.get(item.trackingNo) ?? 0);
+          /* 自己件数是空的、又没分过柜（待入库还没点数，F03）：整票说不准，不给这个数，页面显示「—」，别变成确定的 0。
+             有子单的老数据照旧按「父剩余 + 子单」算，口径不动 */
+          (item as any).totalPackageCount = item.packageCount == null && !childSum.has(item.trackingNo)
+            ? undefined
+            : (item.packageCount ?? 0) + (childSum.get(item.trackingNo) ?? 0);
         }
       }
     }
@@ -787,9 +799,16 @@ export function registerShipmentRoutes(app: MinimalHttpApp): void {
         const cur = ship.currentStatus;
         let comparable = rec === cur;
         let ahead = false;
+        /* 「待入库」故意不进流程表（柜子推进推不动它），但先后是清楚的：「已创建」之后、「已入库」之前（到货通知 2026-10-06）。
+           原来比不出先后一律不许恢复，误删的「待入库」那条永远放不回去（F09，2026-10-08）。只在这里给它一个位置，流程表本身不动 */
+        const rankIn = (flow: readonly string[], st: string): number => {
+          if (st !== PENDING_INBOUND) return flow.indexOf(st);
+          const inWh = flow.indexOf("inWarehouseCN");
+          return inWh >= 0 ? inWh - 0.5 : -1;
+        };
         for (const flow of [STATUS_FLOW, STATUS_FLOW_LAND] as ReadonlyArray<readonly string[]>) {
-          const a = flow.indexOf(rec);
-          const b = flow.indexOf(cur);
+          const a = rankIn(flow, rec);
+          const b = rankIn(flow, cur);
           if (a >= 0 && b >= 0) {
             comparable = true;
             if (a > b) ahead = true;

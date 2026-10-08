@@ -35,7 +35,7 @@ import { BusinessError } from "../core/business-error";
  * 员工看到「运单 xxx 不存在」才知道该去改什么。
  */
 export class ShipmentsNotFoundError extends BusinessError {
-  constructor(public readonly missingIds: string[]) {
+  constructor(public readonly missingIds: string[], message?: string) {
     /**
      * ⚠️ **必须继承 BusinessError**（2026-08-29 第十轮改）。
      *
@@ -49,16 +49,25 @@ export class ShipmentsNotFoundError extends BusinessError {
      * 「加四段 try/catch 治标不治本，下次再加一道闸门还是会有人忘」——
      * 我加了一道新闸门，然后又忘了。继承它，最外层自动翻，忘不了。
      */
-    super(`运单不存在或不属于当前公司：${missingIds.join("、")}`, 404, "NOT_FOUND");
+    super(message ?? `运单不存在或不属于当前公司：${missingIds.join("、")}`, 404, "NOT_FOUND");
     this.missingIds = missingIds;
   }
 }
 
-/** 锁完之后返回按锁定顺序排好的 id（调用方一般用不上，测试和排查时有用） */
+/**
+ * 锁完之后返回按锁定顺序排好的 id（调用方一般用不上，测试和排查时有用）。
+ *
+ * opts.allowGone（2026-10-08 模拟数据测试第 3 轮）：查不到 / 等锁期间被删掉的运单**跳过**、不报错，只锁还在的那些。
+ * ⚠️ 只给「锁完会自己按库里现状重读、重读结果说了算」的调用方用 —— 现在只有删柜（unloadAllItemsOfContainer）：
+ * 它锁完 readItems() 重读柜里还剩哪些记录，被别人删单带走的那几条自然不在里面。
+ * 第 2 轮给 FOR UPDATE 加了「拿到 0 行就 404」以后，删柜跟删单同一瞬间撞上，删柜从原来的 200 变成 404「运单 X-1 已经不存在了」，
+ * 员工删的是柜子、提示说的是运单，还得再点一次（实测 3/3）。别的调用方（删订单、建派送单……）手里那份 id 就是要动的东西，照旧严格报 404。
+ */
 export async function lockShipmentsChildrenFirst(
   tx: any,
   shipmentIds: string[],
   companyId: string,
+  opts: { allowGone?: boolean } = {},
 ): Promise<string[]> {
   if (shipmentIds.length === 0) return [];
 
@@ -86,7 +95,7 @@ export async function lockShipmentsChildrenFirst(
    */
   const foundIds = new Set<string>(rows.map((r: any) => r.id));
   const missing = [...new Set(shipmentIds)].filter((id) => !foundIds.has(id));
-  if (missing.length > 0) {
+  if (missing.length > 0 && !opts.allowGone) {
     throw new ShipmentsNotFoundError(missing);
   }
 
@@ -136,14 +145,29 @@ export async function lockShipmentsChildrenFirst(
   const childIds = rows.filter((r: any) => r.parentTrackingNo).map((r: any) => r.id);
   const parentIds = rows.filter((r: any) => !r.parentTrackingNo).map((r: any) => r.id);
 
+  /**
+   * ⚠️ 每一把 FOR UPDATE 都要看拿没拿到行（2026-10-08 模拟数据测试第 2 轮）。
+   * 上面那句 findMany 不加锁：查完到这里排上锁之间，同事把子单卸柜 / 删柜（卸柜会删子单）并提交了，
+   * FOR UPDATE 就拿到 0 行。原来不看，调用方接着往下跑 —— 删订单走到 tx.shipment.delete 报 P2025「Record to delete does not exist」→ 500「服务器繁忙」。
+   * 行没了跟上面「查不到」是同一回事，抛同一个类型（调用方已有的 404 处理照样接得住），只是换一句能照做的话。
+   */
+  const trackingNoOf = new Map<string, string>(rows.map((r: any) => [r.id, r.trackingNo]));
+  /** 拿到行返回 true；没拿到：allowGone 时返回 false（调用方跳过这一票），否则抛 404 */
+  const stillThere = (got: unknown, sid: string): boolean => {
+    if (Array.isArray(got) && got.length === 0) {
+      if (opts.allowGone) return false;
+      throw new ShipmentsNotFoundError([sid], `运单 ${trackingNoOf.get(sid) ?? sid} 已经不存在了（刚刚被别人卸柜或删掉），请刷新后再操作；本次没有改动`);
+    }
+    return true;
+  };
   const ordered: string[] = [];
   for (const sid of [...childIds].sort()) {
-    await tx.$queryRaw`SELECT id FROM shipments WHERE id = ${sid} FOR UPDATE`;
-    ordered.push(sid);
+    const got = await tx.$queryRaw`SELECT id FROM shipments WHERE id = ${sid} FOR UPDATE`;
+    if (stillThere(got, sid)) ordered.push(sid);
   }
   for (const sid of [...parentIds].sort()) {
-    await tx.$queryRaw`SELECT id FROM shipments WHERE id = ${sid} FOR UPDATE`;
-    ordered.push(sid);
+    const got = await tx.$queryRaw`SELECT id FROM shipments WHERE id = ${sid} FOR UPDATE`;
+    if (stillThere(got, sid)) ordered.push(sid);
   }
   return ordered;
 }

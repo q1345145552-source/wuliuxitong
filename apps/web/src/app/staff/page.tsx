@@ -20,9 +20,11 @@ import {
   PRODUCT_LIST_COL_WIDTHS,
   PRODUCT_DETAIL_HEADS,
   buildProductDetailRows,
+  packageUnitZh,
   totalPackageCountOf,
   totalVolumeOf,
   totalWeightOf,
+  shipmentDetailTotalsText,
   gridThStyle,
   gridTdStyle,
 } from "../../modules/shipment/ShipmentTableGrid";
@@ -681,6 +683,7 @@ export default function StaffHomePage() {
         itemName: draft.itemName.trim(),
         productQuantity,
         packageCount,
+        basePackageCount: draft.basePackageCount,
         packageUnit: draft.packageUnit,
         weightKg,
         volumeM3,
@@ -702,6 +705,17 @@ export default function StaffHomePage() {
     } catch (error) {
       const text = error instanceof Error ? error.message : "保存失败";
       setMessage(`保存失败：${text}`);
+      /* 失败也按最新数据重建草稿（2026-10-08 模拟数据测试第 2 轮）：后端 409「刚刚有人装柜或卸柜」比的是草稿里打开时的剩余件数，
+         不重建的话再点几次都是同一个 409，关掉弹窗重开也没用（重开用的是没刷新的列表）。弹窗里字段全是只读，重建不会丢别的修改 */
+      try {
+        const shipmentItems = await loadPageData();
+        const updated = shipmentItems.find((s) => s.id === shipmentId);
+        if (updated) {
+          setShipmentOrderEditDrafts((prev) => ({ ...prev, [shipmentId]: buildShipmentOrderEditDraft(updated) }));
+        }
+      } catch {
+        // 刷新也失败就算了：上面那句「保存失败」照样留着，员工手动刷新页面
+      }
     } finally {
       setLoading(false);
     }
@@ -1240,7 +1254,10 @@ export default function StaffHomePage() {
 
   /** 运单行的「打印」：电脑宽表和手机一单一块共用 */
   const printShipmentLabel = (item: (typeof filteredShipmentList)[number]) => {
-    openPrintLabel({ marks: item.clientId ?? "—", packageCount: item.packageCount ?? "—", trackingNo: item.trackingNo ?? "", itemName: item.itemName, productQuantity: item.productQuantity, transportMode: item.transportMode, products: item.products?.map(p => ({ itemName: p.itemName, packageCount: p.packageCount })) });
+    // 分母传整票件数（修复审查）：item.packageCount 是父单「剩余」件数，拆柜 / 部分装柜后是 0 或比整票少，会打出「101/71」或被误拦
+    const blocked = openPrintLabel({ marks: item.clientId ?? "—", packageCount: totalPackageCountOf(item) ?? "—", trackingNo: item.trackingNo ?? "", itemName: item.itemName, productQuantity: item.productQuantity, transportMode: item.transportMode, products: item.products?.map(p => ({ itemName: p.itemName, packageCount: p.packageCount })), wholePackageCount: item.totalPackageCount });
+    // 件数是空的或 0 排不出箱号（2026-10-08 到货通知审查 F07）：不开窗口，说清楚去哪补
+    if (blocked) setToast(item.currentStatus === "pendingInbound" ? `${blocked}（待入库的货在「到货通知」里补）` : blocked);
   };
 
   const toggleSelectAll = () => {
@@ -1893,7 +1910,7 @@ export default function StaffHomePage() {
                     status: item.currentStatus,
                     statusText: shipmentStatusWithPartialZh(item.currentStatus, item.partialAhead),
                     packageCount: totalPackageCountOf(item),
-                    packageUnit: "箱",
+                    packageUnit: packageUnitZh(item.packageUnit),
                     volume: totalVolumeOf(item),
                     weight: totalWeightOf(item),
                     transport: transportModeLabel(item.transportMode),
@@ -1931,6 +1948,7 @@ export default function StaffHomePage() {
                     setShipmentOrderEditDrafts((d) => ({ ...d, [item.id]: buildShipmentOrderEditDraft(item) }));
                     const oid = item.orderId;
                     if (oid) fetchShipmentImages(oid).then((imgs) => setShipmentImagesCache((c) => ({ ...c, [oid]: imgs }))).catch(() => {});
+                    setMessage(""); // 弹窗里会显示 message，别把上一次别处的提示带进来
                     setShipmentTableExpandedId(item.id);
                   }}
                 />
@@ -1995,7 +2013,7 @@ export default function StaffHomePage() {
                           <td className="shipment-metric" style={{ ...gridTdStyle, fontWeight: 600 }}>
                             {(() => {
                               const total = totalPackageCountOf(item);
-                              return total != null ? `${total} 箱` : "—";
+                              return total != null ? `${total} ${packageUnitZh(item.packageUnit)}` : "—";
                             })()}
                           </td>
                           <td style={gridTdStyle} className="shipment-metric">{formatMetric(totalVolumeOf(item), 3)}</td>
@@ -2011,6 +2029,7 @@ export default function StaffHomePage() {
                             <button
                               type="button"
                               onClick={() => {
+                                setMessage(""); // 弹窗里会显示 message，别把上一次别处的提示带进来
                                 setShipmentTableExpandedId((prev) => {
                                   if (prev === item.id) return null;
                                   setShipmentOrderEditDrafts((d) => ({ ...d, [item.id]: buildShipmentOrderEditDraft(item) }));
@@ -2067,6 +2086,8 @@ export default function StaffHomePage() {
                                 <div style={{ fontWeight: 700, marginBottom: 12, color: "#14171D" }}>运单详情（只读）</div>
                                 {(() => {
                                   const draft = shipmentOrderEditDrafts[item.id] ?? buildShipmentOrderEditDraft(item);
+                                  /* 件数 / 重量 / 体积按整票显示（修复第 1 轮）：草稿里的是父单剩余量，拆柜 / 部分装柜后跟列表「总箱数」对不上 */
+                                  const totals = shipmentDetailTotalsText(item);
                                   /** 员工端运单列表统一只读，禁止在此处修改任何字段。 */
                                   const formDisabled = true;
                                   const inputInCard = { ...orderCreateInputStyle, marginBottom: 0 } as const;
@@ -2269,8 +2290,8 @@ export default function StaffHomePage() {
                                           </ShipmentEditFormField>
                                           <ShipmentEditFormField label="总体积 (m³)">
                                             <input
-                                              value={draft.volumeM3}
-                                              onChange={(e) => mergeShipmentOrderDraft(item.id, item, { volumeM3: e.target.value })}
+                                              value={totals.volumeM3}
+                                              readOnly
                                               disabled={formDisabled}
                                               style={inputInCard}
                                               placeholder="如 0.08"
@@ -2278,8 +2299,8 @@ export default function StaffHomePage() {
                                           </ShipmentEditFormField>
                                           <ShipmentEditFormField label="计费体积 (m³)">
                                             <input
-                                              value={draft.volumeM3}
-                                              onChange={(e) => mergeShipmentOrderDraft(item.id, item, { volumeM3: e.target.value })}
+                                              value={totals.volumeM3}
+                                              readOnly
                                               disabled={formDisabled}
                                               style={inputInCard}
                                               placeholder="与总体积一致时可填相同值"
@@ -2295,8 +2316,9 @@ export default function StaffHomePage() {
                                             />
                                           </ShipmentEditFormField>
                                           <ShipmentEditFormField label="运输方式" required>
+                                            {/* 待入库还没定运输方式（库里是空串）时显示「—」，别让草稿兜底的「海运」冒充真数据（2026-10-08 审查 F04）。这个表单恒为只读 */}
                                             <select
-                                              value={draft.transportMode}
+                                              value={item.transportMode === "sea" || item.transportMode === "land" ? draft.transportMode : ""}
                                               onChange={(e) =>
                                                 mergeShipmentOrderDraft(item.id, item, {
                                                   transportMode: e.target.value as "sea" | "land",
@@ -2305,6 +2327,7 @@ export default function StaffHomePage() {
                                               disabled={formDisabled}
                                               style={inputInCard}
                                             >
+                                              {item.transportMode === "sea" || item.transportMode === "land" ? null : <option value="">—</option>}
                                               <option value="sea">海运</option>
                                               <option value="land">陆运</option>
                                             </select>
@@ -2314,10 +2337,10 @@ export default function StaffHomePage() {
                                               <input
                                                 type="number"
                                                 min={0}
-                                                value={draft.packageCount}
-                                                onChange={(e) =>
-                                                  mergeShipmentOrderDraft(item.id, item, { packageCount: e.target.value })
-                                                }
+                                                /* 整票件数（修复第 1 轮）；待入库没填件数（订单表只能存 0）显示空、提示「未填」，别显示成 0 箱（2026-10-08 审查 F03）—— totals 里 0 / null 本来就是空串 */
+                                                value={totals.packageCount}
+                                                placeholder={item.currentStatus === "pendingInbound" ? "未填" : undefined}
+                                                readOnly
                                                 disabled={formDisabled}
                                                 style={{ ...inputInCard, flex: 1 }}
                                               />
@@ -2352,18 +2375,17 @@ export default function StaffHomePage() {
                                             <input
                                               type="number"
                                               min={0}
-                                              value={draft.packageCount}
-                                              onChange={(e) =>
-                                                mergeShipmentOrderDraft(item.id, item, { packageCount: e.target.value })
-                                              }
+                                              value={totals.packageCount}
+                                              placeholder={item.currentStatus === "pendingInbound" ? "未填" : undefined}
+                                              readOnly
                                               disabled={formDisabled}
                                               style={inputInCard}
                                             />
                                           </ShipmentEditFormField>
                                           <ShipmentEditFormField label="总重量 (kg)">
                                             <input
-                                              value={draft.weightKg}
-                                              onChange={(e) => mergeShipmentOrderDraft(item.id, item, { weightKg: e.target.value })}
+                                              value={totals.weightKg}
+                                              readOnly
                                               disabled={formDisabled}
                                               style={inputInCard}
                                               placeholder="如 14.1"
@@ -2435,8 +2457,14 @@ export default function StaffHomePage() {
                                     onDelete={(imageId) => deleteOrderProductImageAndReload(imageId)}
                                   />
                                 ) : null}
+                                {/* 保存失败的提示原来只写在页面最底下，被这个全屏弹窗挡住，点保存像没反应（同超管端编辑弹窗 2026-09-28 修过的那个；
+                                    2026-10-08 模拟数据测试第 2 轮：「刚刚有人装柜或卸柜」的 409、号被占的 400 在这里都看不见） */}
+                                {message ? (
+                                  <p role="alert" style={{ margin: "10px 0 0", color: message.includes("成功") ? "var(--c-green-deep)" : "var(--c-red-deep)" }}>{message}</p>
+                                ) : null}
                                 <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
-                                  {item.canEdit ? (
+                                  {/* 待入库的货资料在「到货通知」里补，这里保存后端也会拒（2026-10-08 审查 F08；超管用员工页时才有这个按钮） */}
+                                  {item.canEdit && item.currentStatus !== "pendingInbound" ? (
                                     <>
                                       <button
                                         type="button"

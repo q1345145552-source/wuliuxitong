@@ -36,7 +36,8 @@ export interface NewOrderInput {
   /** 订单上的品名（有产品行时通常是第一行的品名） */
   itemName: string;
   productQuantity: number;
-  packageCount: number;
+  /** 件数。null 只有到货通知「转待入库」会传（还没点数，F03）：运单存 null，订单那一列不许空存 0（= 没填） */
+  packageCount: number | null;
   packageUnit: string;
   /** 已经按产品行汇总 / 取员工填的那个，最后要写进库的值 */
   weightKg: number | null;
@@ -92,7 +93,7 @@ export function buildNewOrderRows(input: NewOrderInput): NewOrderRows {
       approvalStatus: "approved",
       itemName: input.itemName,
       productQuantity: input.productQuantity,
-      packageCount: input.packageCount,
+      packageCount: input.packageCount ?? 0,
       packageUnit: input.packageUnit,
       weightKg: weight,
       volumeM3: volume,

@@ -659,7 +659,7 @@ async function main(): Promise<void> {
     );
 
     /** 假 tx：findMany 只返回 present 里那几行，$queryRaw 记下锁了谁 */
-    const makeTx = (present: Array<{ id: string; trackingNo: string; parentTrackingNo: string | null }>) => {
+    const makeTx = (present: Array<{ id: string; trackingNo: string; parentTrackingNo: string | null }>, vanished = new Set<string>()) => {
       const locked: string[] = [];
       return {
         locked,
@@ -667,7 +667,9 @@ async function main(): Promise<void> {
           shipment: { findMany: async () => present },
           $queryRaw: async (strings: TemplateStringsArray, ...vals: unknown[]) => {
             locked.push(String(vals[0]));
-            return [];
+            // 跟真库一样：锁到了就返回那一行（2026-10-08 起共用锁函数会看拿没拿到行）；
+            // vanished 里的模拟「查完到锁上之间被别人删掉了」，FOR UPDATE 拿到 0 行
+            return vanished.has(String(vals[0])) ? [] : [{ id: vals[0] }];
           },
         },
       };
@@ -718,6 +720,20 @@ async function main(): Promise<void> {
         () => lockShipmentsChildrenFirst(tx as any, ["s_1", "s_2", "s_3"], "c_test"),
         /多层分柜/,
         "中间单（既是子单又是父单）没被拦住",
+      );
+    }
+
+    // ⑤ 查的时候还在、排上锁时已经被别人卸柜 / 删掉了（FOR UPDATE 拿到 0 行）→ 必须抛，不许接着往下跑
+    //    （2026-10-08 模拟数据测试第 2 轮：原来不看，删单走到 tx.shipment.delete 报 P2025 → 500）
+    {
+      const { tx } = makeTx([
+        { id: "s_a", trackingNo: "TH_P", parentTrackingNo: null },
+        { id: "s_b", trackingNo: "TH_C", parentTrackingNo: "TH_P" },
+      ], new Set(["s_b"]));
+      await assert.rejects(
+        () => lockShipmentsChildrenFirst(tx as any, ["s_a", "s_b"], "c_test"),
+        (e: unknown) => e instanceof ShipmentsNotFoundError && /运单 TH_C 已经不存在了/.test((e as Error).message),
+        "锁上时运单已经没了却没报错 —— 调用方会拿着已删掉的运单接着干活（删单 500）",
       );
     }
   });

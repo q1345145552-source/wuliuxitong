@@ -159,7 +159,7 @@ export default function StaffPrealertList(props: StaffPrealertListProps) {
                   </div>
                   {(item.products?.length ?? 0) > 1 && (
                     <div style={{ fontSize: 11, color: "var(--t-strong)", marginBottom: 6, background: "#fefce8", borderRadius: 4, padding: "3px 6px" }}>
-                      {(item.products ?? []).map((p: any) => `${p.itemName}×${p.packageCount}箱`).join(" | ")}
+                      {(item.products ?? []).map((p: any) => `${p.itemName}×${p.packageCount}${item.packageUnit === "bag" ? "袋" : "箱"}`).join(" | ")}
                     </div>
                   )}
                   <div style={{ marginBottom: 6, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 4 }}>
@@ -195,8 +195,9 @@ export default function StaffPrealertList(props: StaffPrealertListProps) {
                       <>
                         <InfoItem label="品名" value={displayDraft.itemName} />
                         <InfoItem label="仓库" value={props.warehouseOptions.find((w) => w.id === displayDraft.warehouseId)?.label ?? displayDraft.warehouseId ?? "-"} />
-                        <InfoItem label="箱数/袋数" value={`${displayDraft.packageCount} ${displayDraft.packageUnit}`} />
-                        <InfoItem label="产品数量" value={String(displayDraft.productQuantity)} />
+                        {/* 单位写中文（2026-10-08：原来直接显示 bag / box）；产品数量没填显示「—」不是 0 */}
+                        <InfoItem label="箱数/袋数" value={`${displayDraft.packageCount} ${displayDraft.packageUnit === "bag" ? "袋" : "箱"}`} />
+                        <InfoItem label="产品数量" value={displayDraft.productQuantity ? String(displayDraft.productQuantity) : "—"} />
                         <InfoItem label="重量" value={`${formatMetric(displayDraft.weightKg, 2)} kg`} />
                         <InfoItem label="体积" value={`${formatMetric(displayDraft.volumeM3, 3)} m3`} />
                         <InfoItem label="国内快递单号" value={displayDraft.domesticTrackingNo ?? "-"} />

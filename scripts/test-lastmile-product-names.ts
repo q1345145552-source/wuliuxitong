@@ -185,6 +185,8 @@ let trackChildren: any[] = [];         // 它的子单
     },
   }),
   orderProductImage: strict("orderProductImage", { async findMany() { return []; } }),
+  // 2026-10-08：/staff/shipments 把 count + findMany 放进一个可重复读事务（删单那一刻看列表不 500）；事务里还是这几张表
+  async $transaction(fn: any) { return typeof fn === "function" ? fn((globalThis as any).__prisma) : Promise.all(fn); },
   // 2026-09-28：签收单 / 轨迹多查一次本公司全部柜号（core/container-nos.ts，抹备注里的柜号用），跟品名无关；只认这一句
   async $queryRaw(strings: TemplateStringsArray) {
     const sql = strings.join("?").replace(/\s+/g, " ");

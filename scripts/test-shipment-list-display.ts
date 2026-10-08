@@ -73,6 +73,28 @@ test("原始单箱数量和整票合计不因隐藏列变化", () => {
   assert.equal(grid.totalWeightOf(item), 9.8765);
 });
 
+test("F03 件数 0 / 空 = 没填：总箱数、产品行箱数、品名都不显示成 0 或空白", () => {
+  assert.equal(grid.knownPackageCount(0), null);
+  assert.equal(grid.knownPackageCount(null), null);
+  assert.equal(grid.knownPackageCount(undefined), null);
+  assert.equal(grid.knownPackageCount(-1), null);
+  assert.equal(grid.knownPackageCount(Number.NaN), null);
+  assert.equal(grid.knownPackageCount(3), 3);
+  assert.equal(grid.packageCountText(0, "箱"), "—");
+  assert.equal(grid.packageCountText(null, "箱"), "—");
+  assert.equal(grid.packageCountText(5, "袋"), "5 袋");
+  // 到货通知转待入库：老数据有一条件数 0 的产品行；新数据运单件数 null、订单件数 0、没有产品行
+  assert.equal(grid.totalPackageCountOf({ products: [{ itemName: "灯具", packageCount: 0 }], packageCount: 0, totalPackageCount: 0 }), null);
+  assert.equal(grid.totalPackageCountOf({ products: [], packageCount: 0, totalPackageCount: 0 }), null);
+  assert.equal(grid.totalPackageCountOf({ packageCount: null }), null);
+  assert.equal(grid.totalPackageCountOf({ packageCount: undefined, totalPackageCount: undefined }), null);
+  assert.equal(JSON.stringify(grid.buildProductDetailRows({ products: [{ itemName: "灯具", packageCount: 0 }] })[0].slice(0, 2)), JSON.stringify(["灯具", "—"]));
+  assert.equal(grid.buildProductDetailRows({ itemName: "", cargoType: "normal" })[0][0], "—");
+  // 原来正常的数不受影响：拆过柜的父单剩 0 件、子单 30 件 → 整票 30
+  assert.equal(grid.totalPackageCountOf({ packageCount: 0, totalPackageCount: 30 }), 30);
+  assert.equal(grid.totalPackageCountOf({ products: [{ packageCount: 60 }, { packageCount: 40 }], packageCount: 0, totalPackageCount: 100 }), 100);
+});
+
 function classText(node: ts.JsxElement): string {
   const attribute = node.openingElement.attributes.properties.find((a): a is ts.JsxAttribute => ts.isJsxAttribute(a) && a.name.getText() === "className");
   return attribute?.initializer && ts.isStringLiteral(attribute.initializer) ? attribute.initializer.text : "";
@@ -117,11 +139,59 @@ for (const role of ["admin", "staff", "client"]) test(`${role}真实页面的三
     const labels = text("th"), numbers = text("td");
     assert.deepEqual([...labels].sort(), ["体积(m³)", "总箱数", "重量(kg)"].sort());
     for (let i = 0; i < labels.length; i++) {
-      const expected = labels[i] === "总箱数" ? (zero ? "0箱" : "2箱") : labels[i].startsWith("体积") ? (zero ? "0.000" : "1.235") : (zero ? "0.00" : "19.75");
+      // 件数 0 = 没填（2026-10-08 到货通知审查 F03）：显示「—」；体积 / 重量的显式 0 照旧是有效值
+      const expected = labels[i] === "总箱数" ? (zero ? "—" : "2箱") : labels[i].startsWith("体积") ? (zero ? "0.000" : "1.235") : (zero ? "0.00" : "19.75");
       assert.equal(numbers[i], expected, `${role} ${labels[i]} 取值/精度保持`);
     }
     assert.equal(JSON.stringify(item), before);
   }
+});
+
+test("修复第 1 轮 员工详情件数 / 重量 / 体积按整票（跟列表「总箱数」一致），不显示父单剩余量；没有的给空串", () => {
+  // 没产品行、全部装柜：父单剩 0，整票 10
+  // 组件在 vm 里跑（另一套 Object 原型），先摊开再比
+  assert.deepEqual({ ...grid.shipmentDetailTotalsText({ packageCount: 0, totalPackageCount: 10, weightKg: 0, totalWeightKg: 120, volumeM3: 0, totalVolumeM3: 1.5 }) }, { packageCount: "10", weightKg: "120", volumeM3: "1.5" });
+  // 部分装柜：剩 4，整票 10
+  assert.equal(grid.shipmentDetailTotalsText({ packageCount: 4, totalPackageCount: 10 }).packageCount, "10");
+  // 有产品行 6 + 4，父单剩 4、子单装走 6（整票 10）：跟产品行合计是同一个数
+  assert.equal(grid.shipmentDetailTotalsText({ packageCount: 4, totalPackageCount: 10, products: [{ packageCount: 6 }, { packageCount: 4 }] }).packageCount, "10");
+  // 有产品行、后端没给整票数：按产品行合计
+  assert.equal(grid.shipmentDetailTotalsText({ packageCount: 4, products: [{ packageCount: 6 }, { packageCount: 4 }] }).packageCount, "10");
+  // 跟列表同一个函数
+  const item = { packageCount: 4, totalPackageCount: 10 };
+  assert.equal(grid.shipmentDetailTotalsText(item).packageCount, String(grid.totalPackageCountOf(item)));
+  // 待入库没填件数（0 / null）：空串，页面挂「未填」占位
+  assert.deepEqual({ ...grid.shipmentDetailTotalsText({ packageCount: 0, totalPackageCount: 0, weightKg: null, volumeM3: null }) }, { packageCount: "", weightKg: "", volumeM3: "" });
+});
+
+test("修复第 2 轮 预报单确认收货改了件数（客户报 3 + 4 = 7、实收 9）、产品行没跟着改：详情「总件数」显示实收的 9，不是产品行合计 7", () => {
+  // 列表接口给的样子：父单 / 订单 9，totalPackageCount 9，产品行还是客户报的 3 + 4
+  const item = { packageCount: 9, totalPackageCount: 9, products: [{ itemName: "玩具", packageCount: 3 }, { itemName: "文具", packageCount: 4 }] };
+  assert.equal(grid.shipmentDetailTotalsText(item).packageCount, "9", "详情要显示仓库实收的整票数");
+});
+
+test("修复第 3 轮 同一张「产品行合计 7、实收 9」的单：员工列表 / 导出 / 超管列表 / 超管详情（都走 totalPackageCountOf）跟员工详情一样写 9，不再一个 7 一个 9", () => {
+  const item = { packageCount: 9, totalPackageCount: 9, products: [{ itemName: "玩具", packageCount: 3 }, { itemName: "文具", packageCount: 4 }] };
+  assert.equal(grid.totalPackageCountOf(item), 9, "列表「总箱数」/ 导出「总件数」/ 超管详情「总箱数」要跟详情一样是实收 9（原来按产品行合计写 7）");
+  assert.equal(grid.shipmentDetailTotalsText(item).packageCount, String(grid.totalPackageCountOf(item)), "详情和列表同一个数");
+  // 产品行那几格照旧是客户报的 3、4（不替人改产品行）
+  assert.deepEqual(grid.buildProductDetailRows(item).map((r: string[]) => r[1]), ["3箱", "4箱"]);
+  // 没受影响的几类：后端没给整票数（客户端 / 老接口）照旧按产品行；待入库没件数照旧空；拆过柜没产品行照旧整票
+  assert.equal(grid.totalPackageCountOf({ packageCount: 9, products: [{ packageCount: 3 }, { packageCount: 4 }] }), 7);
+  assert.equal(grid.totalPackageCountOf({ packageCount: null, totalPackageCount: undefined, products: [] }), null);
+  assert.equal(grid.shipmentDetailTotalsText({ packageCount: null, totalPackageCount: undefined }).packageCount, "");
+  assert.equal(grid.totalPackageCountOf({ packageCount: 0, totalPackageCount: 30, products: [] }), 30);
+  // 部分装柜（父单剩 4、子单 6，产品行 6 + 4）：两种算法同一个数
+  assert.equal(grid.totalPackageCountOf({ packageCount: 4, totalPackageCount: 10, products: [{ packageCount: 6 }, { packageCount: 4 }] }), 10);
+});
+
+test("2026-10-08 袋装的单：产品明细写「袋」不写「箱」（客户端一直写袋，员工 / 超管写死箱，三端对不上）", () => {
+  const bag = { packageUnit: "bag", products: [{ itemName: "电饭煲", packageCount: 16, productQuantity: 2 }] };
+  // vm 里出来的数组原型不同，按 JSON 比（同本文件上面的写法）
+  assert.equal(JSON.stringify(grid.buildProductDetailRows(bag)[0].slice(0, 3)), JSON.stringify(["电饭煲", "16袋", "2个/袋"]));
+  assert.equal(JSON.stringify(grid.buildProductDetailRows({ ...bag, packageUnit: "box" })[0].slice(0, 3)), JSON.stringify(["电饭煲", "16箱", "2个/箱"]));
+  assert.equal(grid.packageUnitZh("bag"), "袋");
+  assert.equal(grid.packageUnitZh(undefined), "箱", "没填按箱（后端默认 box）");
 });
 
 console.log(`SUMMARY ${passed}/${passed} passed`);

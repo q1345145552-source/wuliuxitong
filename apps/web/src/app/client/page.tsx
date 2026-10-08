@@ -9,9 +9,10 @@ import Toast from "../../modules/layout/Toast";
 // 2026-08-31 收尾清理：formatCny 引入了但全文件没用过（历史遗留死 import），删掉
 import { sendAiMessage } from "../../services/ai-client";
 import { useCurrentSessionBrand } from "../../modules/branding/useWorkbenchBrand";
-import { productDim, volumeM3FromDimensionsCm, formatVolumeM3String, warehouseLabelFromId } from "../../modules/staff/utils";
+import { productDim, volumeM3FromDimensionsCm, formatVolumeM3String, transportModeLabel, warehouseLabelFromId } from "../../modules/staff/utils";
 import ShipmentDetailBody from "../../modules/shipment/ShipmentDetailBody";
 import { productNamesLabel } from "../../../../../packages/shared-types/product-names";
+import { prealertApprovalZh, prealertStatusTag } from "../../modules/orders/prealert-status";
 import { CARGO_TYPES, CARGO_TYPE_ZH, cargoTypeLabel as cargoTypeLabelOf, strictestCargoType } from "../../../../../packages/shared-types/cargo-type";
 import {
   fetchClientAddresses,
@@ -45,6 +46,8 @@ import {
   ProductDetailCell,
   gridThStyle,
   gridTdStyle,
+  knownPackageCount,
+  packageCountText,
   totalVolumeOf,
   totalWeightOf,
 } from "../../modules/shipment/ShipmentTableGrid";
@@ -54,6 +57,12 @@ import { nextAutoTotals, orderDimsVolume, productRowTotals } from "../../modules
 import { useLiveRefresh } from "../../modules/realtime/useRealtime";
 import { useIsPhone } from "../../modules/layout/useIsPhone";
 import ShipmentPhoneList from "../../modules/shipment/ShipmentPhoneList";
+
+/** 运输方式标签：只有 sea / land 才画彩色标签；到货通知转「待入库」时还没定（库里是空串）显示「—」（2026-10-08 审查 F04） */
+function transportTag(mode: string | null | undefined) {
+  if (mode !== "sea" && mode !== "land") return "—";
+  return <span className={mode === "sea" ? "tag tag-sea" : "tag tag-land"}>{transportModeLabel(mode)}</span>;
+}
 
 const initialSearch = {
   batchNo: "",
@@ -254,14 +263,14 @@ export default function ClientHomePage() {
     const rows = matched.map((o: any) => ({
       运单号: o.trackingNo ?? "-",
       唛头: o.clientId ?? "-",
-      品名: productNamesLabel(o.products, o.itemName),
+      品名: productNamesLabel(o.products, o.itemName) || "-",
       货型: cargoTypeLabelOf((o.products ?? []).map((p: any) => p.cargoType), o.cargoType),
-      运输方式: o.transportMode === "sea" ? "海运" : o.transportMode === "land" ? "陆运" : (o.transportMode ?? "-"),
+      运输方式: transportModeLabel(o.transportMode),
       国内单号: o.domesticTrackingNo ?? "-",
       // ⚠️ 没有「柜号」这一列：客户不能看到柜号（老板 2026-08-07 定，代理端导出也是这么做的）
       // received 也要翻（2026-09-28 分支审查）：已收货的单 9-27 修复后进了这个列表，原来导出这一列写英文 received
-      审批状态: o.approvalStatus === "pending" ? "待审核" : o.approvalStatus === "approved" ? "已审核" : o.approvalStatus === "shipped" ? "已发货" : o.approvalStatus === "received" ? "已收货" : (o.approvalStatus ?? "-"),
-      产品数量: o.productQuantity ?? "-", 包裹数量: o.packageCount ?? "-",
+      审批状态: prealertApprovalZh(o.approvalStatus, "-"),
+      产品数量: o.productQuantity ?? "-", 包裹数量: knownPackageCount(o.packageCount) ?? "-",
       // 导出跟列表那两列用同一对函数（2026-09-28 审查修复 #10，四个导出一起对齐）。
       // 客户端接口的 weightKg/volumeM3 本来就是订单整票；差别只在订单上没填总重/总方的老单 ——
       // 列表显示父子单合计，导出原来是「-」
@@ -1050,22 +1059,20 @@ export default function ClientHomePage() {
                       搜索词非空时筛的是一次拉回的前 500 条池子，不再只筛当前页。 */}
                   {visiblePrealerts.map((item) => {
                     const isShipped = item.approvalStatus === "shipped";
-                    const isReceived = item.approvalStatus === "received";
-                    const sLabel = isReceived ? "已收货" : "已发货";
-                    const sColor = isReceived ? "var(--c-green-3)" : "#1e3a8a";
-                    const sBg = isReceived ? "#dcfce7" : "#EEF2FB";
+                    // 状态格按审批状态四种分开说（修复第 1 轮）：员工建的 / 到货通知转出来的是「已审核」，不是「已发货」
+                    const { label: sLabel, color: sColor, bg: sBg } = prealertStatusTag(item.approvalStatus);
                     return (
                       <tr key={item.id} style={{ borderBottom: "1px solid var(--l-soft)" }}>
                         <td style={{ padding: "6px 8px", fontFamily: "monospace", color: "#14171D", fontSize: 12 }}>{item.clientId || "—"}</td>
                         <td style={{ padding: "6px 8px", fontFamily: "monospace", fontSize: 11 }}>{item.orderNo || "—"}<br /><span style={{ fontSize: 10, color: "var(--t-muted)" }}>{item.trackingNo || ""}</span></td>
                         {/* 品名带全部产品名（2026-09-11）：itemName 只存了第一个产品名，
                             一票「鞋 / 包 / 帽」的预报单原来只显示「鞋」。右边尺寸那列本来就是按产品行拼的。 */}
-                        <td style={{ padding: "6px 8px" }}>{productNamesLabel(item.products, item.itemName)}</td>
+                        <td style={{ padding: "6px 8px" }}>{productNamesLabel(item.products, item.itemName) || "—"}</td>
                         <td style={{ padding: "6px 8px", fontSize: 11, whiteSpace: "nowrap" }}>{(() => { const dims = (item.products ?? []).map((p: any) => (p.lengthCm && p.widthCm && p.heightCm ? p.lengthCm + "×" + p.widthCm + "×" + p.heightCm : null)).filter(Boolean).join(", "); return dims || "—"; })()}</td>
                         <td style={{ padding: "6px 8px", whiteSpace: "nowrap" }} className="col-num">{item.volumeM3 != null ? Number(item.volumeM3).toFixed(3) : "—"}</td>
                         <td style={{ padding: "6px 8px", whiteSpace: "nowrap" }} className="col-num">{item.weightKg != null ? Number(item.weightKg).toFixed(2) : "—"}</td>
-                        <td style={{ padding: "6px 8px", whiteSpace: "nowrap" }} className="col-num">{item.packageCount} {item.packageUnit === "box" ? "箱" : "袋"}</td>
-                        <td style={{ padding: "6px 8px" }}><span className={item.transportMode === "sea" ? "tag tag-sea" : "tag tag-land"}>{item.transportMode === "sea" ? "海运" : "陆运"}</span></td>
+                        <td style={{ padding: "6px 8px", whiteSpace: "nowrap" }} className="col-num">{packageCountText(item.packageCount, item.packageUnit === "box" ? "箱" : "袋")}</td>
+                        <td style={{ padding: "6px 8px" }}>{transportTag(item.transportMode)}</td>
                         <td style={{ padding: "6px 8px" }}><span style={{ fontSize: 11, fontWeight: 500, color: sColor, background: sBg, padding: "2px 6px", borderRadius: 4 }}>{sLabel}</span></td>
                         <td style={{ padding: "6px 8px", fontSize: 12, maxWidth: 80, overflow: "hidden", textOverflow: "ellipsis" }} title={item.remark || ""}>{item.remark || ""}</td>
                         <td style={{ padding: "6px 8px", whiteSpace: "nowrap" }}>
@@ -1235,7 +1242,7 @@ export default function ClientHomePage() {
                     packageUnit: item.packageUnit === "bag" ? "袋" : "箱",
                     volume: totalVolumeOf(item),
                     weight: totalWeightOf(item),
-                    transport: item.transportMode === "sea" ? "海运" : "陆运",
+                    transport: transportModeLabel(item.transportMode),
                     meta: item.shipDate ? `${warehouseLabel(item.warehouseId)} · 发货 ${item.shipDate}` : warehouseLabel(item.warehouseId),
                   }))}
                   onOpen={(id) => {
@@ -1295,8 +1302,9 @@ export default function ClientHomePage() {
                           <ProductDetailCell widths={CLIENT_DETAIL_COL_WIDTHS} rows={detailRows} />
                           <td style={gridTdStyle} className="col-num shipment-metric">{totalVolumeM3 != null ? totalVolumeM3.toFixed(3) : "—"}</td>
                           <td style={gridTdStyle} className="col-num shipment-metric">{totalWeightKg != null ? totalWeightKg.toFixed(2) : "—"}</td>
-                          <td style={gridTdStyle} className="col-num shipment-metric">{item.packageCount} {item.packageUnit === "box" ? "箱" : "袋"}</td>
-                          <td style={gridTdStyle}><span className={item.transportMode === "sea" ? "tag tag-sea" : "tag tag-land"}>{item.transportMode === "sea" ? "海运" : "陆运"}</span></td>
+                          <td style={gridTdStyle} className="col-num shipment-metric">{packageCountText(item.packageCount, item.packageUnit === "box" ? "箱" : "袋")}</td>
+                          {/* 待入库的票可能还没定运输方式（库里是空串）—— 原来「不是海运就是陆运」，客户会看到假的「陆运」 */}
+                          <td style={gridTdStyle}>{transportTag(item.transportMode)}</td>
                           <td style={{ ...gridTdStyle, fontSize: 12 }} title={item.remark || ""}>{item.remark || ""}</td>
                           {/* 详情挪到最右边，和物流轨迹并排横着放；原来它在最左边只有 30px 宽，
                               「详情」两个字被挤成上下两行 */}
@@ -1393,22 +1401,20 @@ export default function ClientHomePage() {
                       搜索词非空时筛的是一次拉回的前 500 条池子，不再只筛当前页。 */}
                   {visiblePrealerts.map((item) => {
                     const isShipped = item.approvalStatus === "shipped";
-                    const isReceived = item.approvalStatus === "received";
-                    const sLabel = isReceived ? "已收货" : "已发货";
-                    const sColor = isReceived ? "var(--c-green-3)" : "#1e3a8a";
-                    const sBg = isReceived ? "#dcfce7" : "#EEF2FB";
+                    // 状态格按审批状态四种分开说（修复第 1 轮）：员工建的 / 到货通知转出来的是「已审核」，不是「已发货」
+                    const { label: sLabel, color: sColor, bg: sBg } = prealertStatusTag(item.approvalStatus);
                     return (
                       <tr key={item.id} style={{ borderBottom: "1px solid var(--l-soft)" }}>
                         <td style={{ padding: "6px 8px", fontFamily: "monospace", color: "#14171D", fontSize: 12 }}>{item.clientId || "—"}</td>
                         <td style={{ padding: "6px 8px", fontFamily: "monospace", fontSize: 11 }}>{item.orderNo || "—"}<br /><span style={{ fontSize: 10, color: "var(--t-muted)" }}>{item.trackingNo || ""}</span></td>
                         {/* 品名带全部产品名（2026-09-11）：itemName 只存了第一个产品名，
                             一票「鞋 / 包 / 帽」的预报单原来只显示「鞋」。右边尺寸那列本来就是按产品行拼的。 */}
-                        <td style={{ padding: "6px 8px" }}>{productNamesLabel(item.products, item.itemName)}</td>
+                        <td style={{ padding: "6px 8px" }}>{productNamesLabel(item.products, item.itemName) || "—"}</td>
                         <td style={{ padding: "6px 8px", fontSize: 11, whiteSpace: "nowrap" }}>{(() => { const dims = (item.products ?? []).map((p: any) => (p.lengthCm && p.widthCm && p.heightCm ? p.lengthCm + "×" + p.widthCm + "×" + p.heightCm : null)).filter(Boolean).join(", "); return dims || "—"; })()}</td>
                         <td style={{ padding: "6px 8px", whiteSpace: "nowrap" }} className="col-num">{item.volumeM3 != null ? Number(item.volumeM3).toFixed(3) : "—"}</td>
                         <td style={{ padding: "6px 8px", whiteSpace: "nowrap" }} className="col-num">{item.weightKg != null ? Number(item.weightKg).toFixed(2) : "—"}</td>
-                        <td style={{ padding: "6px 8px", whiteSpace: "nowrap" }} className="col-num">{item.packageCount} {item.packageUnit === "box" ? "箱" : "袋"}</td>
-                        <td style={{ padding: "6px 8px" }}><span className={item.transportMode === "sea" ? "tag tag-sea" : "tag tag-land"}>{item.transportMode === "sea" ? "海运" : "陆运"}</span></td>
+                        <td style={{ padding: "6px 8px", whiteSpace: "nowrap" }} className="col-num">{packageCountText(item.packageCount, item.packageUnit === "box" ? "箱" : "袋")}</td>
+                        <td style={{ padding: "6px 8px" }}>{transportTag(item.transportMode)}</td>
                         <td style={{ padding: "6px 8px" }}><span style={{ fontSize: 11, fontWeight: 500, color: sColor, background: sBg, padding: "2px 6px", borderRadius: 4 }}>{sLabel}</span></td>
                         <td style={{ padding: "6px 8px", fontSize: 12, maxWidth: 80, overflow: "hidden", textOverflow: "ellipsis" }} title={item.remark || ""}>{item.remark || ""}</td>
                         <td style={{ padding: "6px 8px", whiteSpace: "nowrap" }}>

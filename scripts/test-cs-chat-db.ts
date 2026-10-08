@@ -776,6 +776,32 @@ async function main(): Promise<void> {
       assert.equal((await call("GET /staff/chat/refs", OTHER_STAFF, {}, { clientId: D3B.userId })).status, 404, "别家公司员工列出了我们客户的单子");
     });
 
+    await check("D3e 选单子的件数是整票（父单剩余 + 全部子单）：部分装柜不显示剩余数，全部装完不变成 0；没分过柜的照旧", async () => {
+      const childId = "zz_cs_s_ZZCSREF001-1";
+      const countOf = (d: Row, no: string) => d.shipments.find((x: Row) => x.no === no)?.packageCount;
+      try {
+        // 101 箱装了 30：父单剩 71，子单 30
+        await pm.shipment.update({ where: { id: shipA }, data: { packageCount: 71 } });
+        await pm.shipment.update({ where: { id: childId }, data: { packageCount: 30 } });
+        let c = await must("GET /client/chat/refs", D3C);
+        assert.equal(countOf(c, "ZZCSREF001"), 101, `部分装柜的单显示的不是整票件数：${countOf(c, "ZZCSREF001")}`);
+        assert.equal(countOf(c, "ZZCSREF002"), 3, "没分过柜的单件数变了");
+        const s = await must("GET /staff/chat/refs", STAFF, {}, { clientId: D3C.userId });
+        assert.equal(countOf(s, "ZZCSREF001"), 101, "客服那头也要是整票件数");
+        // 全部装完：父单剩 0
+        await pm.shipment.update({ where: { id: shipA }, data: { packageCount: 0 } });
+        c = await must("GET /client/chat/refs", D3C);
+        assert.equal(countOf(c, "ZZCSREF001"), 30, `全部装完的单件数成了 ${countOf(c, "ZZCSREF001")}（应是子单合计 30）`);
+        // 父单件数是空的但分过柜：按子单合计，不给 null
+        await pm.shipment.update({ where: { id: shipA }, data: { packageCount: null } });
+        c = await must("GET /client/chat/refs", D3C);
+        assert.equal(countOf(c, "ZZCSREF001"), 30);
+      } finally {
+        await pm.shipment.update({ where: { id: shipA }, data: { packageCount: 3 } });
+        await pm.shipment.update({ where: { id: childId }, data: { packageCount: null } });
+      }
+    });
+
     await check("D3b 带单子发：两边气泡里有单号、品名、现在的状态；只发单子不写字也行；摘要写 [运单 xxx]；别人的单 / 子单 / 乱写类型都拒、什么都不写", async () => {
       const r = await must("POST /client/chat/send", D3C, { content: "这票什么时候到", ref: { type: "shipment", id: shipA } });
       assert.deepEqual(r.message.ref, { type: "shipment", id: shipA, no: "ZZCSREF001", title: "蓝牙耳机", status: "inWarehouseCN", gone: false });

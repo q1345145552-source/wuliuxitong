@@ -762,26 +762,51 @@
 ⚠️ 网址都比页面 `/staff/arrival-notices` 多一段（Next 先匹配页面再转发接口，`GET /staff/arrival-notices` 会被页面接走）。
 
 ### 22.1 GET /staff/arrival-notices/list
-- 查询参数：`tab`（`todo` 待通知 / `notified` 已通知没转 / `inbound` 待入库 / `formal` 已转正式 / `all`，默认 all）、`keyword`（唛头、运单号、国内快递单号、品名模糊搜）、`page`、`pageSize`（默认 50，最多 200）。
-- 返回：`{ items, total, page, pageSize, counts: { todo, notified, inbound, formal, all } }`。每条带登记的各项 + `images[{ id, fileName, imageUrl }]`、`notifiedAt`、`convertedTo`（null / inbound / formal）、`shipmentId`、`shipmentStatus`、`shipmentGone`（转过但运单已被删，按「没转」算，页签也这么分）、`createdAt`、`updatedAt`；`createdByName` / `notifiedByName` 只有超管拿得到，员工拿到 null。
+- 查询参数：`tab`（`todo` 待通知 = 还没标已通知的，**转没转运单都算**（2026-10-08 F02），所以它的数字会和待入库、已转正式重叠，前端只显示不相加 / `notified` 已通知没转 / `inbound` 待入库 / `formal` 已转正式 / `all`，默认 all）、`keyword`（唛头、运单号、国内快递单号、品名模糊搜）、`page`、`pageSize`（默认 50，最多 200）。
+- 返回：`{ items, total, page, pageSize, counts: { todo, notified, inbound, formal, all } }`。每条带登记的各项（含 `cargoType`：`"inspection" | "sensitive" | null`，null = 普货）+ `images[{ id, fileName, imageUrl, thumbUrl? }]`（`thumbUrl` 是列表用的小图，没有小图时等于 `imageUrl`；大图 / 复制 / 保存一律用 `imageUrl`）、`prealertMatches[]`（见 22.8，空数组 = 没撞上）、`notifiedAt`、`convertedTo`（null / inbound / formal）、`shipmentId`、`shipmentStatus`、`shipmentGone`（转过但运单已被删，按「没转」算，页签也这么分）、`createdAt`、`updatedAt`。`trackingNo`：转过单且运单还在 = 运单**现在**的号（运单管理里改了号会跟着变，按新号能搜到，旧号不再被占），否则 = 登记的号（2026-10-08 F06）。`createdByName` / `notifiedByName` 只有超管拿得到，员工拿到 null。
 
 ### 22.2 POST /staff/arrival-notices/save
 - 不带 `id` = 新登记，带 `id` = 修改。各项都能传 null / 空串（当没填）；填了的按「创建订单」同一套规则校验，填错 `400` 中文说清哪项。
 - `base`（修改时传）：打开「修改」弹窗那一刻看到的那份资料，写法跟请求体一样。服务器锁住这一行后跟库里现在的比，有人在这期间改过就**不存**，回 `400`「这条刚刚被同事改过（品名变了）…」。只比资料那 11 项：同事点「标已通知」、传照片不算冲突。不传 = 不比（上线前打开的老页面）；传了读不懂按冲突处理。
 - 已转正式的不能改；待入库的改了同一事务同步到那张运单，运单号 / 唛头不能清空。
+- `cargoType`（2026-10-08 F11）：`"normal"` / 空串 / null 都存成 null（普货）；请求体里**没有这个键**时修改沿用库里的、新登记按普货；别的值 `400`「货型只能选普货、商检货、敏感货」。转运单时订单和产品行用它（null 写 normal）。
+- 改唛头（2026-10-08 G01）：原来有唛头、这次换成别的或清空 → 在锁里一起清掉「已通知」（`notifiedAt` / `notifiedBy` / `notifiedByName`），回包 `item.notifiedAt` 是 null。原来没唛头、这次补上的不动。
 - 返回 `{ item }`（同 22.1 的一条）。
 
 ### 22.3 POST /staff/arrival-notices/notify
-- `{ id, notified: true | false }`：标「已通知客户」/ 改回未通知。返回 `{ item }`。
+- `{ id, notified: true | false, clientId? }`：标「已通知客户」/ 改回未通知。返回 `{ item }`。
+- `clientId`（2026-10-08 G01，可选，只在 `notified: true` 且请求体里有这个键时生效）：页面上看到的唛头。跟库里现在的对不上（同事刚改了唛头）→ `409`「这条的唛头刚被同事改成「X」了，没有标已通知…」，什么都不改。
 
 ### 22.4 POST /staff/arrival-notices/convert
 - `{ id, to: "formal" | "inbound" }`。缺必填项 `400`「转正式运单还缺：品名、重量…」。转正式 = 新建订单 + 运单（已入库）+ 第一条轨迹，跟 `POST /staff/orders` 用同一份 `buildNewOrderRows`；待入库再转正式 = 同一张运单改成已入库并写一条轨迹。照片复制一份成运单的产品图片，复制时到货照片的文件找不到（或是空的）就整个回滚、点名哪张。待入库再转正式：已经复制到运单上的照片只核实运单那份还在（记录在、文件不空）—— 在就算数；不在就从到货照片补一份，到货照片也没了才整个回滚。两人同时点只成功一个。返回 `{ item }`。
+- `acknowledgedPrealertIds?: string[]`（2026-10-08 F01）：员工在确认框里看过、确认是两票不同货的预报单（填 `prealertMatches[].orderId`）。服务器在锁里重查一遍撞上的预报单，只要有一张不在这个列表里就 `409`「国内单号 X 客户报过预报单（…）…请刷新后再点转、在确认框里确认」，什么都不建。待入库再转正式也照样查。
+- 转待入库时没填的件数：运单 `package_count` 存 **null**，订单 `package_count` 存 0（这列不许空，0 = 没填），没件数就不建产品行（补上件数或转正式时再建）；品名没填存空串（2026-10-08 F03）。
 
 ### 22.5 POST /staff/arrival-notices/delete
 - `{ id }`。只能删还没转运单的（转了的去「运单管理」删运单）。照片记录和文件一起删。返回 `{ deleted: true, id }`。
 
 ### 22.6 POST /staff/arrival-notices/images
-- `{ noticeId, fileName, mime, contentBase64 }`，一次一张，页面先压缩；大小上限同其它图片上传。一条最多 20 张。已转正式的不能传；待入库的同时进那张运单的产品图片。返回 `{ item }`。
+- `{ noticeId, fileName, mime, contentBase64, thumbBase64?, thumbMime? }`，一次一张，页面先压缩；大小上限同其它图片上传。一条最多 20 张（前端 `photo-upload.ts` 的 `MAX_NOTICE_IMAGES` 跟后端同一个数，测试 A9 比对）。
+- 小图（2026-10-08 G03）：页面用 canvas 画一张小图（先铺白底），`thumbMime` 以 `image/` 开头、`thumbBase64` 非空且不超过 `THUMB_MAX_BASE64 = 200_000` 才带；带了不合格 `400`「照片小图不对，请刷新页面后重新传」。删照片 / 删整条时小图文件一起删；转运单只复制原图。已转正式的不能传；待入库的同时进那张运单的产品图片。返回 `{ item }`。
 
 ### 22.7 POST /staff/arrival-notices/images/delete
 - `{ id }`（照片 id）。待入库的连运单那份副本一起删；已转正式的不能删。返回 `{ item }`。
+
+### 22.8 `prealertMatches`：撞上的预报单（2026-10-08 F01）
+- `[{ orderId, trackingNo, clientId, domesticTrackingNo, received }]`：同公司里，国内单号整号相等的预报单（`approvalStatus` 是 shipped 或 received；不管唛头是否相同）。`received: true` = 预报单已经在「预报单审核」确认收货。
+- 拆号规则：国内单号按空白和 `,，、;；/` 拆开、转大写，只留 6 位以上且带数字的号（中间带空格的会被当成两个号）。
+- 只是提醒，不硬拦：转运单时员工在确认框里确认后带 `acknowledgedPrealertIds` 才转（22.4）。
+
+### 22.9 其它接口跟着改的（2026-10-08 到货通知审查 19 条）
+- `/staff/shipments`、`/admin/orders`：待入库的单 `canEdit: false`（超管运单管理点「编辑」只出提示，资料到「到货通知」里补，F08）；`packageCount` 为空给 undefined，`/staff/shipments` 的 `totalPackageCount` 在父单件数为空且没有子单时给 undefined；`itemName` 空串给 undefined（F10）。
+- `/client/orders`、`/client/prealerts`、`/agent/shipments`：`packageCount` 照旧是数字，**0 = 没填**，前端一律用 `knownPackageCount()` 判断、显示「—」（F03 / 裁决 R6）。
+- `/client/shipments/track`、`/agent/shipments/track` 的 `itemName` 空串给 null；`/client/chat/refs` 的 `title`、聊天消息里 `ref.title` 空串给 null（F10）。
+- `GET /admin/dashboard/overview` 的 `receivedVolumeM3Today`：字段名不变，口径改成「今天新建且不是待入库的」并上「今天在到货通知里转正式的」，一张单只算一次（G02）。
+- `POST /admin/shipments/track/restore-log`：「待入库」那条轨迹可以恢复了（排在「已入库」前面，F09）。
+- `/admin/orders/update`、运单管理改号（patch-shipment-bundle）：事务提交后把转过单的到货通知的运单号跟着改（`arrival-notices/follow-tracking-no.ts`，撞号或失败只记警告、不影响改号本身，F06）。
+- 改号占号检查（修复第 1~4 轮）：运单管理 / 超管改号时，新号若被一条**还没转**的到货通知登记着（含别家公司的），改号 `400` 并点名那条；改号和登记到货通知按号排队（号锁），不会两边都成功。
+- `/admin/orders/update` 改了订单客户：事务提交后到货通知的唛头跟着改、「已通知」清掉（`followShipmentClientIds`）。
+- `POST /staff/arrival-notices/images` 只收 `PHOTO_MIME_ALLOWED`（jpeg / png / gif / webp / bmp），HEIC / TIFF / SVG 之类电脑浏览器看不了的 `400`；页面选照片时就列出来不收。
+- 客户「预报单」列表状态格（前端 `prealertApprovalZh`）：approved 写「已审核」（原来员工建的单一律写「已发货」），跟详情、导出一致。
+- 预报单「确认收货」改了件数：只有一行产品时产品行件数跟着改成实收数；多行产品合计对不上时打标签会拦下并提示。
+- 上线后手工体检：`scripts/check-arrival-notice-tracking-no.sql`（只读），列出迁移回填跳过的、号对不上的老到货通知。

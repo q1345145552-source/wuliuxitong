@@ -600,6 +600,7 @@ export function registerAgentPortalRoutes(app: MinimalHttpApp): void {
             transportMode: true,
             receiverNameTh: true,
             receiverAddressTh: true,
+            packageUnit: true,
             products: { orderBy: { sortOrder: "asc" }, select: { itemName: true, packageCount: true, sortOrder: true } },
           },
         },
@@ -720,8 +721,9 @@ export function registerAgentPortalRoutes(app: MinimalHttpApp): void {
       trackingNo: shipment.trackingNo,
       orderNo: shipment.order.orderNo ?? null,
       clientId: shipment.order.clientId,
-      itemName: shipment.order.itemName ?? null,
+      itemName: shipment.order.itemName || null, // 空串当没有（F10，同 /client/shipments/track）
       products: shipment.order.products.map((p) => ({ itemName: p.itemName, packageCount: p.packageCount })),
+      packageUnit: shipment.order.packageUnit ?? null, // 同 /client/shipments/track（2026-10-08）
       cargoType: shipment.order.cargoType ?? null,
       currentStatus: shipment.currentStatus,
       // 子单进度不一样时，弹窗头部也补一句「（部分已放行）」——跟三端列表同一份算法（2026-09-16）

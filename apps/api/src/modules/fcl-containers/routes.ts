@@ -36,6 +36,7 @@ import { fail, ok, requireRole } from "../core/http-utils";
 import { BusinessError } from "../core/business-error";
 import { logger } from "../core/logger";
 import { lockShipmentsChildrenFirst } from "../shipments/lock-shipments";
+import { arrivalNoticeHoldingMessage, followStaleArrivalNoticeHolding, lockTrackingNoForArrivalNotice } from "../arrival-notices/follow-tracking-no";
 import { hideOperatorIdentity, hideOperatorInRemark, operatorNameForDisplay } from "../core/operator-visibility";
 import { sanitizeRemarkForClient } from "../core/client-privacy";
 import { DECIMAL_12_2, requireDecimal } from "../core/decimal-guard";
@@ -147,6 +148,13 @@ function formatProductRow(p: any) {
 async function lockFclCreate(tx: { $executeRaw: (q: TemplateStringsArray, ...v: unknown[]) => Promise<unknown> }): Promise<void> {
   await tx.$executeRaw`SELECT pg_advisory_xact_lock(83030)`;
 }
+
+/**
+ * 改 / 删整柜锁柜子时没锁到行 = 等锁期间别人刚把这个柜删掉了（2026-10-08 模拟数据测试第 3 轮）。
+ * 原来不看这句拿到几行、接着去锁运单，锁运单那一步查不到运单，员工看到的是「运单不存在或不属于当前公司：s_fcl_…」，
+ * 内部 id、看不出是柜子没了（两个超管同时删 5/5、一个改一个删 5/5 都是这句）。
+ */
+const FCL_GONE_MESSAGE = "这个整柜刚刚已经被别人删掉了，请刷新页面；本次没有改动";
 
 /** 整柜那几个表头字段（货物清单单独走 parseFclProductRow） */
 interface FclHeaderBody {
@@ -425,8 +433,13 @@ export function registerFclContainerRoutes(app: MinimalHttpApp): void {
        两个员工同时录同一个柜号 / 运单号时，两边的查重都说「没重复」，
        后提交的那个会被数据库拦住。数据是对的，但不接的话前端看到的是
        一句看不懂的「服务器错误」，员工不知道该改什么（CLAUDE.md 第 17 条的教训）。 */
+    // 提单号被一条「早已转过、只是存的号没跟上」的到货通知占着（迁移老数据）：先让它跟上，见 followStaleArrivalNoticeHolding。手里没锁时调
+    await followStaleArrivalNoticeHolding(auth.companyId, trackingNo);
     try {
       const created = await prisma.$transaction(async (tx) => {
+        /* 先跟「到货通知登记 / 运单建单 / 改号」按这个号排队（2026-10-08 模拟数据测试第 3 轮，理由见 lockTrackingNoForArrivalNotice）。
+           必须是事务第一句：拿这把锁时手里不能有任何行锁；排在 lockFclCreate 前面（别处没有先 83030 后 83050 的，不会反着等） */
+        await lockTrackingNoForArrivalNotice(tx, trackingNo);
         // 排队锁排在所有写语句前面（说明见 lockFclCreate）
         await lockFclCreate(tx);
 
@@ -435,6 +448,11 @@ export function registerFclContainerRoutes(app: MinimalHttpApp): void {
            进来各插一条，后一个撞唯一约束报的是看不懂的「服务器错误」。 */
         const conflict = await findFclNumberConflict(tx, { trackingNo, containerNo });
         if (conflict) throw new BusinessError(conflict, 409, "VALIDATION_ERROR");
+        /* 提单号被一条还没转的到货通知登记着：挡（2026-10-08 模拟数据测试第 3 轮）。
+           原来整柜只查运单表和柜号，放行以后「运单 X + 没转的到货通知 X」同号，那条到货通知再点转运单永远「已经有运单了」。
+           员工建单、两条改号路早就这么挡了，整柜这两条漏了 */
+        const held = await arrivalNoticeHoldingMessage(tx, auth.companyId, trackingNo, [], "create");
+        if (held) throw new BusinessError(held, 409, "VALIDATION_ERROR");
 
         /* 询价单锁在建柜排队锁之后（加锁顺序：建柜锁 → 询价单 → 新建的行）。
            删整柜那条路先锁柜子、删柜子时外键才碰询价单，跟这里不会绕成圈。 */
@@ -799,15 +817,21 @@ export function registerFclContainerRoutes(app: MinimalHttpApp): void {
     const shipmentIds = outline.items.map((it) => it.shipment?.id).filter((x): x is string => !!x);
     const orderIds = [...new Set(outline.items.map((it) => it.shipment?.orderId).filter((x): x is string => !!x))];
 
+    // 同建整柜：新提单号被「早已转过、只是存的号没跟上」的到货通知占着就先让它跟上（没有这种老数据时这句什么都不改）
+    await followStaleArrivalNoticeHolding(auth.companyId, trackingNo);
     try {
       const result = await prisma.$transaction(async (tx) => {
-        /* 排队锁排在第一句：改柜号 / 提单号跟**建**整柜是同一件事（查重 → 再写），
+        /* 号锁排第一句（2026-10-08 模拟数据测试第 3 轮，同建整柜）：号变没变要锁里重读才知道，所以每次都拿（只是排个队）。
+           拿它时手里不能有行锁，所以在 lockFclCreate 和柜子 / 运单锁之前 */
+        await lockTrackingNoForArrivalNotice(tx, trackingNo);
+        /* 排队锁排在 lockFclCreate 之后的第一句：改柜号 / 提单号跟**建**整柜是同一件事（查重 → 再写），
            两条路必须挤同一个队（83030），否则「一个在建、一个在改」两边各查各的，
            都说没重复，后提交那个撞唯一约束报一句看不懂的服务器错误。 */
         await lockFclCreate(tx);
 
         // 锁序跟删整柜一致：【柜 → 运单 → 订单】，跟装柜、删单那几条路同一把钥匙
-        await tx.$queryRaw`SELECT id FROM containers WHERE id = ${containerId} FOR UPDATE`;
+        const lockedCtr = await tx.$queryRaw<{ id: string }[]>`SELECT id FROM containers WHERE id = ${containerId} FOR UPDATE`;
+        if (lockedCtr.length === 0) throw new BusinessError(FCL_GONE_MESSAGE, 404, "NOT_FOUND");
         if (shipmentIds.length > 0) {
           await lockShipmentsChildrenFirst(tx, shipmentIds, auth.companyId);
         }
@@ -973,6 +997,12 @@ export function registerFclContainerRoutes(app: MinimalHttpApp): void {
           trackingNo, containerNo, exceptContainerId: containerId, exceptShipmentId: shipment.id,
         });
         if (conflict) throw new BusinessError(conflict, 409, "VALIDATION_ERROR");
+        /* 新提单号被另一条到货通知登记着：挡（2026-10-08 模拟数据测试第 3 轮，同员工端两条改号路）。
+           号锁在事务第一句已经拿了，这里查到的是准的。只在提单号真要变时查：号没变不因为别处的到货通知拦住改别的 */
+        if (changed.提单号) {
+          const held = await arrivalNoticeHoldingMessage(tx, auth.companyId, trackingNo, [shipment.id]);
+          if (held) throw new BusinessError(held, 409, "VALIDATION_ERROR");
+        }
 
         /* 「已装柜」那条起步轨迹 —— 装柜日期改了要跟着改它的时间，
            不然客户看到的还是老日期（跟建单那边同一个口径：装柜时间取柜子日期）。 */
@@ -1184,7 +1214,8 @@ export function registerFclContainerRoutes(app: MinimalHttpApp): void {
          两个超管同时删、或者删的同时有人在改那张单，就会撞车。
          运单走共用的 lockShipmentsChildrenFirst（子单在前、层内按 id 排），
          跟装柜、删运单那几条路用的是同一把钥匙，不会反向等待。 */
-      await tx.$queryRaw`SELECT id FROM containers WHERE id = ${containerId} FOR UPDATE`;
+      const lockedCtr = await tx.$queryRaw<{ id: string }[]>`SELECT id FROM containers WHERE id = ${containerId} FOR UPDATE`;
+      if (lockedCtr.length === 0) throw new BusinessError(FCL_GONE_MESSAGE, 404, "NOT_FOUND");
       if (shipmentIds.length > 0) {
         await lockShipmentsChildrenFirst(tx, shipmentIds, auth.companyId);
       }

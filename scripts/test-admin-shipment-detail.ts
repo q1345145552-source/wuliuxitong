@@ -89,7 +89,20 @@ test("旧单无products时保留品名、国内单号、整单数量及合计", 
 });
 test("显式0不当成缺失，空字符串有占位", () => {
   const html = render({ receiverAddressTh: "  ", remark: "", clientName: "", totalWeightKg: 0, totalVolumeM3: 0, products: [{ ...product, packageCount: 0, productQuantity: 0, weightKg: 0 }] });
-  contains(html, ["0.000", "0.00", "0个/箱", "0箱", "MARK0001", "<dd>—</dd>"]);
+  contains(html, ["0.000", "0.00", "0个/箱", "MARK0001", "<dd>—</dd>"]);
+  // 件数例外：箱数只可能是正整数，0 = 没填（到货通知转待入库，2026-10-08 审查 F03 / 裁决 R6），
+  // 产品行箱数显示「—」不显示「0箱」；其余显式 0（体积、重量、单箱数量）照旧显示 0
+  assert.ok(!html.includes("0箱"), "产品行件数 0 还显示成「0箱」");
+  assert.match(html, /<td>真实渲染产品<\/td><td>—<\/td><td>0个\/箱<\/td>/, "产品行件数 0 那一格没显示「—」");
+});
+test("袋装的单：产品行单箱数量写「个/袋」，跟同一行的「N袋」一致（2026-10-08 模拟数据测试第 2 轮；旧：写死个/箱）", () => {
+  const html = render({ packageUnit: "bag", products: [{ ...product, packageCount: 7, productQuantity: 24 }] });
+  assert.match(html, /<td>真实渲染产品<\/td><td>7袋<\/td><td>24个\/袋<\/td>/);
+  assert.ok(!html.includes("个/箱"), "袋装的单还出现「个/箱」");
+});
+test("整单产品数量没填（0）显示「—」，不显示 0（旧：0，下面产品行却写着每箱几个）", () => {
+  assert.ok(render({ productQuantity: 0 }).includes("<dt>产品数量</dt><dd>—</dd>"), "产品数量 0 没显示成「—」");
+  assert.ok(render({ productQuantity: 34 }).includes("<dt>产品数量</dt><dd>34</dd>"));
 });
 test("缺失合计时沿用运单值，不编造产品行重量", () => {
   contains(render({ totalVolumeM3: undefined, totalWeightKg: undefined, products: [{ ...product, weightKg: null }] }), ["0.100", "0.20", "<td>—</td>"]);

@@ -5,7 +5,7 @@ import * as XLSX from "xlsx";
 import { matchesShipmentListFilter } from "../../../../../packages/shared-types/shipment-status";
 import { productNamesLabel } from "../../../../../packages/shared-types/product-names";
 import ExportConditionFields, { type ExportFieldDef } from "../../modules/shipment/ExportConditionFields";
-import { EMPTY_SHIPMENT_FILTER, adminOrderFilterRow, matchesShipmentFilter, mergeDateFrom, mergeDateTo, shipmentFilterDateInvalid, type ShipmentFilterValue } from "../../modules/shipment/export-filter";
+import { EMPTY_SHIPMENT_FILTER, adminArrivedDate, adminOrderFilterRow, matchesShipmentFilter, mergeDateFrom, mergeDateTo, shipmentFilterDateInvalid, type ShipmentFilterValue } from "../../modules/shipment/export-filter";
 import { parseCargoType, CARGO_TYPE_HINT, cargoTypeLabel } from "../../../../../packages/shared-types/cargo-type";
 import { AT_WAREHOUSE_STATUSES, COMPLETED_STATUSES, CLIENT_STATUS_GROUP_ZH, PENDING_STATUSES } from "../../../../../packages/shared-types/shipment-status";
 import type { AiKnowledgeItem } from "../../../../../packages/shared-types/entities";
@@ -30,6 +30,7 @@ import {
   ProductListDetailCell,
   PRODUCT_LIST_COL_WIDTHS,
   buildProductDetailRows,
+  packageUnitZh,
   totalPackageCountOf,
   totalVolumeOf,
   totalWeightOf,
@@ -833,6 +834,12 @@ export default function AdminHomePage() {
    * 载入待编辑订单到表单，便于管理员修改客户端订单信息。
    */
   const startEditOrder = (order: AdminOrderItem) => {
+    /* 待入库的货资料以「到货通知」为准，这里改了后端也会整单拒（admin/routes.ts 的待入库拦截，文案同 PENDING_INBOUND_EDIT_ELSEWHERE_MESSAGE）。
+       电脑那一行和手机那一块都走这里，先在这里拦住，别让超管白填（2026-10-08 审查 F08） */
+    if (order.currentStatus === "pendingInbound") {
+      setToast("这票货还是「待入库」，资料请到「到货通知」里补，补全后点「转正式运单」");
+      return;
+    }
     setEditingOrderId(order.orderId ?? order.id);
     setMessage(""); // 弹窗里会显示这条提示（见「保存」按钮上面），打开时先清掉上一回的
     // 记下打开弹窗那一刻的样子，保存时只把改动过的项发出去，
@@ -1432,7 +1439,10 @@ export default function AdminHomePage() {
     }
   };
   const printOrderLabel = (o: (typeof filteredOrderList)[number]) => {
-    openPrintLabel({ marks: o.clientId ?? "—", packageCount: o.packageCount ?? "—", trackingNo: o.trackingNo ?? "", itemName: o.itemName, productQuantity: o.productQuantity, transportMode: o.transportMode, products: (o.products ?? []).map(p => ({ itemName: p.itemName, packageCount: p.packageCount })) });
+    // 分母传整票件数（修复审查）：o.packageCount 是父单「剩余」件数，拆柜 / 部分装柜后是 0 或比整票少，会打出「101/71」或被误拦
+    const blocked = openPrintLabel({ marks: o.clientId ?? "—", packageCount: totalPackageCountOf(o) ?? "—", trackingNo: o.trackingNo ?? "", itemName: o.itemName, productQuantity: o.productQuantity, transportMode: o.transportMode, products: (o.products ?? []).map(p => ({ itemName: p.itemName, packageCount: p.packageCount })), wholePackageCount: o.totalPackageCount });
+    // 件数是空的或 0 排不出箱号（2026-10-08 到货通知审查 F07）：不开窗口，说清楚去哪补
+    if (blocked) setToast(o.currentStatus === "pendingInbound" ? `${blocked}（待入库的货在「到货通知」里补）` : blocked);
   };
 
   const [orderExportFeedback, setOrderExportFeedback] = useState("");
@@ -1497,7 +1507,7 @@ export default function AdminHomePage() {
     }
     const rows = source.map((o) => ({
       // 导出的品名带全部产品名（2026-09-11，同员工端导出口径）
-      运单号: o.trackingNo ?? "-", 客户: o.clientId ?? "-", 品名: productNamesLabel(o.products, o.itemName),
+      运单号: o.trackingNo ?? "-", 客户: o.clientId ?? "-", 品名: productNamesLabel(o.products, o.itemName) || "-",
       // 货型（2026-09-11 老板点的），口径同员工端导出
       货型: cargoTypeLabel((o.products ?? []).map((p: any) => p.cargoType), o.cargoType),
       运输方式: transportModeLabel(o.transportMode), 国内单号: o.domesticTrackingNo ?? "-", 柜号: o.batchNo ?? "-",
@@ -2113,11 +2123,11 @@ export default function AdminHomePage() {
                 status: o.currentStatus,
                 statusText: shipmentStatusWithPartialZh(o.currentStatus, o.partialAhead),
                 packageCount: totalPackageCountOf(o),
-                packageUnit: "箱",
+                packageUnit: packageUnitZh(o.packageUnit),
                 volume: totalVolumeOf(o),
                 weight: totalWeightOf(o),
                 transport: o.transportMode === "sea" ? "海运" : o.transportMode === "land" ? "陆运" : "—",
-                meta: `${warehouseLabelFromId(o.warehouseId)} · 到仓 ${o.shipDate ?? beijingDate(o.createdAt)}`,
+                meta: `${warehouseLabelFromId(o.warehouseId)} · 到仓 ${adminArrivedDate(o) || "—"}`,
               }))}
               onOpen={(id) => {
                 const o = pagedOrders.find((x) => x.id === id);
@@ -2185,7 +2195,7 @@ export default function AdminHomePage() {
                     </td>
                     <td className="shipment-current-status" style={gridTdStyle}>{shipmentStatusWithPartialZh(o.currentStatus, o.partialAhead)}</td>
                     <td style={{ ...gridTdStyle, color: "var(--t-strong)" }}>
-                      {o.shipDate ?? beijingDate(o.createdAt)}
+                      {adminArrivedDate(o) || "—"}
                     </td>
                     {/* 品名 / 箱数 / 长宽高 / 国内单号 / 货型：合并成一块，固定高度一起滚 */}
                     <ProductListDetailCell rows={detailRows} />
@@ -2193,7 +2203,7 @@ export default function AdminHomePage() {
                     <td className="shipment-metric" style={{ ...gridTdStyle, fontWeight: 600 }}>
                       {(() => {
                         const total = totalPackageCountOf(o);
-                        return total != null ? `${total} 箱` : "—";
+                        return total != null ? `${total} ${packageUnitZh(o.packageUnit)}` : "—";
                       })()}
                     </td>
                     <td style={gridTdStyle} className="shipment-metric">{formatMetric(totalVolumeOf(o), 3)}</td>

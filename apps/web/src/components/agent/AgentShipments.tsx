@@ -11,6 +11,7 @@ import { useRef, useState } from "react";
 import EmptyStateCard from "../../modules/layout/EmptyStateCard";
 import ShipmentExportPanel from "../../modules/shipment/ShipmentExportPanel";
 import { openShipmentTrack } from "../../modules/shipment/ShipmentTrackModal";
+import { knownPackageCount } from "../../modules/shipment/ShipmentTableGrid";
 import { shipmentStatusWithPartialZh, transportModeLabel } from "../../modules/staff/utils";
 import { CLIENT_STATUS_GROUP_ZH, type ClientStatusGroup } from "../../../../../packages/shared-types/shipment-status";
 import { cargoTypeLabel } from "../../../../../packages/shared-types/cargo-type";
@@ -45,11 +46,12 @@ function toExcelRow(o: AgentShipmentItem) {
     客户: o.clientId ?? "-",
     品名: o.productNames || o.itemName || "-",
     货型: cargoTypeLabel(o.products.map((p) => p.cargoType), o.cargoType),
-    运输方式: o.transportMode,
+    运输方式: transportModeLabel(o.transportMode),
     国内单号: o.domesticTrackingNo ?? "-",
     审批状态: APPROVAL_ZH[o.approvalStatus] ?? o.approvalStatus,
     产品数量: o.productQuantity ?? "-",
-    包裹数量: o.packageCount ?? "-",
+    // 件数 0 = 没填（到货通知转待入库，订单表只能存 0），导出「-」（2026-10-08 审查 F03）
+    包裹数量: knownPackageCount(o.packageCount) ?? "-",
     // 跟下面列表那两列同一个取数（2026-09-28 审查修复 #10，四个导出一起对齐）。代理接口的 weightKg/volumeM3
     // 本来就是订单整票；差别只在订单上没填总重/总方的老单 —— 列表显示父子单合计，导出原来是「-」
     重量: o.totalWeightKg ?? o.weightKg ?? "-",
@@ -238,9 +240,9 @@ export default function AgentShipments() {
                     <td style={{ ...td, ...mono }}>{o.trackingNo ?? "—"}</td>
                     <td style={{ ...td, whiteSpace: "nowrap" }}>{o.currentStatus ? shipmentStatusWithPartialZh(o.currentStatus, o.partialAhead) : "—"}</td>
                     <td style={{ ...td, whiteSpace: "nowrap" }}>{o.shipDate ?? "—"}</td>
-                    <td style={{ ...td, minWidth: 140 }}>{o.productNames || o.itemName}</td>
+                    <td style={{ ...td, minWidth: 140 }}>{o.productNames || o.itemName || "—"}</td>
                     <td style={{ ...td, whiteSpace: "nowrap" }}>{cargoTypeLabel(o.products.map((p) => p.cargoType), o.cargoType)}</td>
-                    <td style={tdNum}>{o.packageCount}</td>
+                    <td style={tdNum}>{knownPackageCount(o.packageCount) ?? "—"}</td>
                     <td style={tdNum}>{fmtM3(o.totalVolumeM3 ?? o.volumeM3)}</td>
                     <td style={tdNum}>{o.totalWeightKg ?? o.weightKg ?? "—"}</td>
                     <td style={{ ...td, whiteSpace: "nowrap" }}>{transportModeLabel(o.transportMode)}</td>

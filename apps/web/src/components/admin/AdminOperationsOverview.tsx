@@ -110,7 +110,8 @@ export default function AdminOperationsOverview({
           { label: "当前在途运单", value: overview?.inTransitOrderCount, unit: "票" },
         ]}
       />
-      <p className={styles.note}>收货体积按今日新建的普通父运单统计；当前在途为全部普通父运单中的在途数量。</p>
+      {/* 口径跟后端 receivedVolumeM3Today 一致（2026-10-08 到货通知审查 G02：先转待入库、后转正式的货按转正式那天算） */}
+      <p className={styles.note}>收货体积按今天进仓的普通父运单统计（今天新建的，或今天在到货通知里转正式的；待入库的不算）；当前在途为全部普通父运单中的在途数量。</p>
 
       <div className={styles.attention} role="region" aria-labelledby="overview-stalled-heading">
         <div className={styles.sectionHeading}>

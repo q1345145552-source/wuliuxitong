@@ -109,7 +109,8 @@ export default function ShipmentPhoneList({ rows, onOpen, actions = [], selectio
               <span className="ship-phone-goods">{productNamesLabel(row.products ?? undefined, row.itemName ?? undefined) || "—"}</span>
             </span>
             <span className="ship-phone-metrics">
-              <span><b>{row.packageCount ?? "—"}</b> {row.packageUnit}</span>
+              {/* 件数 0 = 没填（到货通知转待入库时可以先空着；订单表只能存 0），显示「—」不显示「0」（2026-10-08 审查 F03） */}
+              <span><b>{row.packageCount != null && row.packageCount > 0 ? row.packageCount : "—"}</b> {row.packageUnit}</span>
               <span><b>{num(row.volume, 3)}</b> m³</span>
               <span><b>{num(row.weight, 2)}</b> kg</span>
               <span className="ship-phone-mode">{row.transport}</span>

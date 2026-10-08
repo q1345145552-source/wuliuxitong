@@ -8,6 +8,8 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "../../db/prisma";
 import { EXCLUDE_FCL_ORDER, FCL_EDIT_ELSEWHERE_MESSAGE } from "../core/fcl-scope";
 import { PENDING_INBOUND, PENDING_INBOUND_EDIT_ELSEWHERE_MESSAGE } from "../arrival-notices/rules";
+import { arrivalNoticeHoldingMessage, followShipmentTrackingNos, followStaleArrivalNoticeHolding, lockTrackingNoForArrivalNotice } from "../arrival-notices/follow-tracking-no";
+import { logger } from "../core/logger";
 import { buildNewOrderRows } from "./new-order-rows";
 import { getClientIp } from "../core/rate-limit";
 import type { MinimalHttpApp } from "../../server";
@@ -800,6 +802,21 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
 
       await tx.order.update({ where: { id: orderId }, data: updateData });
 
+      /* 改了箱数、而这票只有一个产品行：那一行跟着改成实收数（2026-10-08 到货通知修复第 2 轮）。
+         原来只改订单和运单，产品行还是客户报的数 —— 列表「总箱数」、详情、打印标签都按产品行算，
+         客户报 7、实收 9 就打出「1/7…7/7」，少 2 张标签看着却像打全了。
+         多个产品行时分不清是哪一行多了 / 少了，不替人猜：产品行不动，打印那边对不上会拦住，提示去运单管理按产品行改。
+         订单行上面已锁（FOR NO KEY UPDATE），产品行在锁内读、锁内改。 */
+      if (receivePackageCount !== undefined) {
+        const productRows = await tx.orderProduct.findMany({
+          where: { orderId, companyId: auth.companyId },
+          select: { id: true, packageCount: true },
+        });
+        if (productRows.length === 1 && productRows[0].packageCount !== receivePackageCount) {
+          await tx.orderProduct.update({ where: { id: productRows[0].id }, data: { packageCount: receivePackageCount } });
+        }
+      }
+
       // 同步更新运单
       if (shipment) {
         const sUpdate: any = { updatedAt: now };
@@ -1037,6 +1054,7 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
     const orderId = `o_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
     const shipmentId = `s_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
     const manualTrackingNo = body.trackingNo?.trim();
+    // 这里只是先给个提示；说了算的是下面写库事务里拿了号锁以后那次重查（2026-10-08 模拟数据测试）
     if (manualTrackingNo) {
       const clash = await prisma.shipment.findFirst({
         where: { trackingNo: manualTrackingNo, companyId: auth.companyId },
@@ -1129,16 +1147,41 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
       initialStatus: "inWarehouseCN",
       now: new Date(),
     });
-    const txOps: any[] = [
-      prisma.order.create({ data: rows.order }),
-      prisma.shipment.create({ data: rows.shipment }),
-      prisma.statusLog.create({ data: rows.statusLog }),
-    ];
-    // 保存产品行
-    if (rows.products.length > 0) {
-      txOps.push(prisma.orderProduct.createMany({ data: rows.products }));
+    /* 2026-10-08 模拟数据测试：查重和写库放进同一个事务、先拿号锁（同两条改号路 / 到货通知登记，理由见 lockTrackingNoForArrivalNotice）。
+       原来事务外只查本公司 shipments 有没有这个号就批量写：
+       ① 不查到货通知 —— 员工 A 在「到货通知」登记了 X（还没转），员工 B 用 X 建单照样 200，A 那条从此转不了，一票货挂两个客户；
+       ② 查完到写之间没排队 —— 双击 / 两人批量导入同一个号，后到的撞唯一约束 500。
+       现在：号锁 → 锁里全库查运单（tracking_no 全库唯一，不只查本公司）→ 查到货通知占号 → 写；撞唯一约束兜成 409 */
+    // 这个号被一条「早已转过、只是存的号没跟上」的到货通知占着（迁移老数据）：先让它跟上（模拟数据测试第 3 轮，理由见函数注释）。手里没锁时调
+    await followStaleArrivalNoticeHolding(auth.companyId, generatedTrackingNo);
+    try {
+      await prisma.$transaction(async (tx) => {
+        await lockTrackingNoForArrivalNotice(tx, generatedTrackingNo);
+        const taken = await tx.shipment.findFirst({ where: { trackingNo: generatedTrackingNo }, select: { companyId: true } });
+        if (taken) {
+          throw new BusinessError(
+            taken.companyId === auth.companyId ? `运单号 ${generatedTrackingNo} 已存在` : `运单号 ${generatedTrackingNo} 已经被用过了，换一个号`,
+            409,
+            "VALIDATION_ERROR",
+          );
+        }
+        const held = await arrivalNoticeHoldingMessage(tx, auth.companyId, generatedTrackingNo, [], "create");
+        if (held) throw new BusinessError(held);
+        await tx.order.create({ data: rows.order });
+        await tx.shipment.create({ data: rows.shipment });
+        await tx.statusLog.create({ data: rows.statusLog });
+        // 保存产品行
+        if (rows.products.length > 0) {
+          await tx.orderProduct.createMany({ data: rows.products });
+        }
+      });
+    } catch (e) {
+      if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") {
+        fail(res, 409, "VALIDATION_ERROR", `运单号 ${generatedTrackingNo} 已存在（刚刚被别人用掉了，或者重复提交了）；本次没有建单`);
+        return;
+      }
+      throw e;
     }
-    await prisma.$transaction(txOps);
 
     ok(res, { orderId, createdAt: now });
   });
@@ -1657,6 +1700,8 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
       /** 同步更新订单与运单的归属仓库（员工须对新仓库有编辑权限）。 */
       warehouseId?: string;
       remark?: string;
+      /** 打开编辑框时看到的「还剩多少没装柜」（2026-10-08 模拟数据测试）；不传 = 老页面，不核对 */
+      basePackageCount?: number | null;
     };
 
     const shipmentId = body.shipmentId?.trim();
@@ -1756,6 +1801,18 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
       fail(res, 400, "BAD_REQUEST", "trackingNo already exists");
       return;
     }
+    /* 新号被另一条到货通知登记着：也挡（2026-10-08 修复第 1 轮）。原来只查 shipments 表，改号放行后那条到货通知永远转不了。
+       只在号真要变时查：号没变不因为别处的到货通知拦住改重量这类修改。
+       ⚠️ 这里只是先给个提示；说了算的是下面事务里拿了号锁以后那次重查（修复第 3 轮：两人同一瞬间一个改号、一个登记，两边都放行过） */
+    if (trackingNo !== shipment.trackingNo) {
+      // 先让「早已转过、只是存的号没跟上」的老到货通知跟上它运单现在的号（模拟数据测试第 3 轮，理由见函数注释）；事务外、手里没锁
+      await followStaleArrivalNoticeHolding(auth.companyId, trackingNo);
+      const held = await arrivalNoticeHoldingMessage(prisma, auth.companyId, trackingNo, [shipmentId]);
+      if (held) {
+        fail(res, 400, "BAD_REQUEST", held);
+        return;
+      }
+    }
 
     /* 整柜的单从这条路**整张拒绝**（2026-09-24 改，理由见 FCL_EDIT_ELSEWHERE_MESSAGE）。
        2026-09-23 那版只拦了「提单号=柜号」和「改运输方式」，其余字段（品名、重量、尺寸…）放行，
@@ -1831,6 +1888,9 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
        拿来做决定的数字必须锁后重读）。照管理员端编辑那条路的修法：
        先把本运单锁住（跟装柜/分柜排同一个队），锁到手再查子单合计、再算、再写。 */
     await prisma.$transaction(async (tx) => {
+      /* 先跟「到货通知登记 / 改号」按这个号排队（修复第 3 轮，理由见 lockTrackingNoForArrivalNotice）：
+         必须是事务第一句、在锁订单之前 —— 拿这把锁时手里不能有行锁。号变没变要锁里才知道，所以每次都拿（只是排个队） */
+      await lockTrackingNoForArrivalNotice(tx, trackingNo);
       // 锁序【订单 → 运单】，跟本文件确认收货 / 客户改单那几条路一致（549→571 那段）。
       // 这个事务下面要 update orders，先把订单行锁住，两个编辑入口同时保存才会排队。
       /* FOR NO KEY UPDATE，不用 FOR UPDATE（2026-09-28 分支审查 Codex 复看第 4 条，一次性库真跑复现过）：
@@ -1848,6 +1908,29 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
       if (!lockedShipment) {
         // 预读到拿锁之间被并发硬删了 —— 跟锁函数内部一个语义，按 404 报
         throw new ShipmentsNotFoundError([shipmentId]);
+      }
+      /* 锁里重查新号是不是被另一条到货通知登记着（修复第 3 轮）：事务外那次查完到这里，同事可能刚用这个号登记了一条。
+         号锁在手，登记那边要么已经提交（这里查得到）、要么排在后面（它在锁里会查到这张运单的新号）。号没变照旧不查 */
+      if (trackingNo !== lockedShipment.trackingNo) {
+        /* 锁里重查运单表（2026-10-08 模拟数据测试）：两张运单同时改成同一个新号，号锁让两人排队，
+           后到的醒来只重查了到货通知、没重查运单表，下面 update 必撞唯一约束 → 500。全库查（tracking_no 全库唯一） */
+        const taken = await tx.shipment.findFirst({ where: { trackingNo, NOT: { id: shipmentId } }, select: { id: true } });
+        if (taken) throw new BusinessError("trackingNo already exists");
+        const held = await arrivalNoticeHoldingMessage(tx, auth.companyId, trackingNo, [shipmentId]);
+        if (held) throw new BusinessError(held);
+      }
+      /* 编辑框是打开时那一刻的「剩余件数」（2026-10-08 模拟数据测试）：打开以后有人装柜 / 卸柜，
+         框里还是旧的剩余数，下面「剩余 + 已装走」一加就凭空多出（或少掉）那几件 —— 实测打开时剩 19、别人装走 2，
+         只改备注保存，订单从 21 变 23。页面把打开时看到的剩余数一起传上来，锁里跟父单现在的剩余数对不上就整单拦下 */
+      if (body.basePackageCount !== undefined && body.basePackageCount !== null) {
+        const fresh = await tx.shipment.findFirst({ where: { id: shipmentId, companyId: auth.companyId }, select: { packageCount: true } });
+        if ((fresh?.packageCount ?? null) !== Number(body.basePackageCount)) {
+          throw new BusinessError(
+            `这张运单刚刚有人装柜或卸柜，还没装柜的件数已经从 ${body.basePackageCount} 变成 ${fresh?.packageCount ?? "—"} 了，请刷新后再改；本次修改都没有保存`,
+            409,
+            "VALIDATION_ERROR",
+          );
+        }
       }
       const loadedForOrder = await tx.shipment.aggregate({
         where: { parentTrackingNo: lockedShipment.trackingNo, companyId: auth.companyId },
@@ -1958,6 +2041,10 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
         },
       });
     });
+    /* 到货通知转出来的单改了号：那条到货通知跟着改（F06，2026-10-08）。
+       事务提交后单独一句、出错只记日志（不放进上面的事务：锁序会反，理由见 follow-tracking-no.ts） */
+    await followShipmentTrackingNos(auth.companyId, [shipmentId])
+      .catch((e) => logger.warn("arrival notice follow trackingNo failed", { shipmentId, error: String(e) }));
 
     ok(res, {
       shipmentId,

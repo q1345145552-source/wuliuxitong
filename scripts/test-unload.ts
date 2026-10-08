@@ -81,7 +81,10 @@ function makeTx(parent: any, items: any[] = []) {
       // 记下按 id 锁运单的先后（「删柜子」要先把整柜运单锁齐，再动任何一条记录）
       $queryRaw: async (strings: TemplateStringsArray, ...values: any[]) => {
         const sql = strings.join("?");
-        if (/FROM shipments\s+WHERE id =/.test(sql) && /FOR UPDATE/.test(sql)) 记录.先后.push(`锁运单:${values[0]}`);
+        if (/FROM shipments\s+WHERE id =/.test(sql) && /FOR UPDATE/.test(sql)) {
+          记录.先后.push(`锁运单:${values[0]}`);
+          return [{ id: values[0] }]; // 跟真库一样：锁到了就返回那一行（共用锁函数 2026-10-08 起会看拿没拿到行）
+        }
         return [];
       },
     },
@@ -478,7 +481,9 @@ async function main(): Promise<void> {
       const 记录 = { 轨迹: [] as any[], 删了柜子: false };
       路由用假柜子 = { id: "ct_1", currentStatus: "LOADING" };
       路由用假tx = {
-        $queryRaw: async () => [],
+        // 按 id 锁运单时跟真库一样返回那一行（2026-10-08 起共用锁函数会看拿没拿到行），别的锁照旧空数组
+        $queryRaw: async (strings: TemplateStringsArray, ...values: any[]) =>
+          /FROM shipments\s+WHERE id =/.test(strings.join("?")) && /FOR UPDATE/.test(strings.join("?")) ? [{ id: values[0] }] : [],
         // 2026-09-29：卸柜前先查这票货有没有排进尾端派送（assertNotInLastmile）；这些用例里都没排
         adminLastmileOrder: { findMany: async () => [] },
 

@@ -12,6 +12,8 @@ import { deleteImageFile, imageFileUsable, readImageAsBase64, saveImageToDisk } 
 import { buildNewOrderRows } from "../orders/new-order-rows";
 import { DEFAULT_STATUS_LABELS } from "../ai/ai-config-store";
 import { ARRIVAL_WAREHOUSE_IDS, PENDING_INBOUND } from "./rules";
+import { lockTrackingNoForArrivalNotice } from "./follow-tracking-no";
+import { CARGO_TYPES, type CargoType } from "../../../../../packages/shared-types/cargo-type";
 
 /**
  * 到货通知（2026-10-06 老板拍板）。规格原话见 schema.prisma 里 ArrivalNotice 那段注释，这里说怎么做的：
@@ -43,7 +45,13 @@ function statusZh(status: string): string {
 /** 一条通知最多几张照片（够拍一票货的各个面；再多就是传错了） */
 export const MAX_NOTICE_IMAGES = 20;
 
+/** 到货照片只收这几种（电脑浏览器显示得了、image-storage.ts 认得扩展名）；跟页面 photo-upload.ts 的 DISPLAYABLE_PHOTO_TYPES 同一份（测试钉住） */
+export const PHOTO_MIME_ALLOWED: readonly string[] = ["image/jpeg", "image/png", "image/gif", "image/webp", "image/bmp"];
+
 const TEXT_LIMITS = { trackingNo: 64, itemName: 200, domesticTrackingNo: 100, remark: 500 } as const;
+
+/** 照片小图（G03）最大多少（base64 字符数）：页面压成长边 360 的 JPEG，一般 20~40KB；超了说明传的不是小图，不收 */
+export const THUMB_MAX_BASE64 = 200_000;
 
 /** 存进库之前、校验过的一行（null = 没填） */
 interface NoticeFields {
@@ -57,6 +65,8 @@ interface NoticeFields {
   domesticTrackingNo: string | null;
   warehouseId: string | null;
   arrivedAt: string | null;
+  /** 货型（F11）；null = 没选 = 普货（同「创建订单」默认普货、不是必填） */
+  cargoType: CargoType | null;
   remark: string | null;
 }
 
@@ -141,6 +151,12 @@ export function readNoticeFields(body: Record<string, unknown>): { fields: Notic
   if ("error" in date) return date;
   out.arrivedAt = date.value;
 
+  // 货型（F11）：不选 = 普货。选普货也存成 null，「没选」和「普货」一个意思，免得两人同时改时被当成「货型变了」
+  const cargo = body.cargoType;
+  if (cargo === undefined || cargo === null || cargo === "" || cargo === "normal") out.cargoType = null;
+  else if (typeof cargo === "string" && (CARGO_TYPES as readonly string[]).includes(cargo)) out.cargoType = cargo as CargoType;
+  else return { error: "货型只能选普货、商检货、敏感货" };
+
   return { fields: out as NoticeFields };
 }
 
@@ -162,7 +178,7 @@ export function missingForTarget(f: NoticeFields, to: "formal" | "inbound"): str
 
 const FIELD_ZH: Record<keyof NoticeFields, string> = {
   clientId: "唛头", trackingNo: "运单号", itemName: "品名", packageCount: "件数", weightKg: "重量", volumeM3: "体积",
-  transportMode: "运输方式", domesticTrackingNo: "国内快递单号", warehouseId: "仓库", arrivedAt: "到仓日期", remark: "备注",
+  transportMode: "运输方式", domesticTrackingNo: "国内快递单号", warehouseId: "仓库", arrivedAt: "到仓日期", cargoType: "货型", remark: "备注",
 };
 
 /**
@@ -202,6 +218,8 @@ export function readOpenedBase(raw: unknown): NoticeFields | null {
     domesticTrackingNo: text(b.domesticTrackingNo),
     warehouseId: text(b.warehouseId),
     arrivedAt: text(b.arrivedAt),
+    // 老页面不带货型 = 没选（普货）；普货也当没选（同 readNoticeFields）
+    cargoType: b.cargoType === "inspection" || b.cargoType === "sensitive" ? b.cargoType : null,
     remark: text(b.remark),
   };
 }
@@ -218,6 +236,7 @@ function fieldsOf(n: NoticeRow): NoticeFields {
     domesticTrackingNo: n.domesticTrackingNo,
     warehouseId: n.warehouseId,
     arrivedAt: n.arrivedAt,
+    cargoType: n.cargoType === "inspection" || n.cargoType === "sensitive" ? n.cargoType : null,
     remark: n.remark,
   };
 }
@@ -255,7 +274,10 @@ function orderValuesOf(f: NoticeFields) {
     clientId: f.clientId!,
     trackingNo: f.trackingNo!,
     itemName: f.itemName ?? "",
-    packageCount: f.packageCount ?? 0,
+    /* 件数没填 = null（F03）：运单这一列存 null（页面显示「—」）；订单那一列不许空，写库时再落成 0
+       （syncToPendingShipment / buildNewOrderRows 里 `?? 0`）。0 在全系统都不是合法件数（各入口都要求正整数），
+       所以订单上的 0 只会是「没填」，页面一律按「没填」显示（knownPackageCount），接口照旧给 0（统一方案 R6） */
+    packageCount: f.packageCount,
     weightKg: f.weightKg,
     volumeM3: f.volumeM3,
     // 待入库时可能还没填：订单这两列不许空，先存空串（列表上显示「—」），转正式时一定齐
@@ -263,16 +285,20 @@ function orderValuesOf(f: NoticeFields) {
     warehouseId: f.warehouseId ?? "",
     shipDate: f.arrivedAt,
     domesticTrackingNo: f.domesticTrackingNo,
+    // 货型（F11）：没选 = 普货（同「创建订单」）。原来写死普货，敏感货 / 商检货转出去也是普货
+    cargoType: f.cargoType ?? "normal",
     /* 产品行：跟「创建订单」没分产品行时那条兜底行一样 —— 有品名才建一行，
-       国内单号空着写「货拉拉」，不带长宽高（带了下游会按尺寸重算方数，CLAUDE.md 第 33 条） */
-    products: f.itemName ? [{
+       国内单号空着写「货拉拉」，不带长宽高（带了下游会按尺寸重算方数，CLAUDE.md 第 33 条）。
+       件数还没填就先不建（F03）：产品行的件数不许空，建了只能写 0，客户详情里就是「0 箱」；
+       品名照样在订单上（列表没有产品行时显示订单的品名），补上件数那次保存 / 转正式时再建 */
+    products: f.itemName && f.packageCount !== null ? [{
       itemName: f.itemName,
-      packageCount: f.packageCount ?? 0,
+      packageCount: f.packageCount,
       lengthCm: null,
       widthCm: null,
       heightCm: null,
       productQuantity: null,
-      cargoType: "normal",
+      cargoType: f.cargoType ?? "normal",
       domesticTrackingNo: f.domesticTrackingNo || "货拉拉",
       weightKg: null,
       sortOrder: 0,
@@ -331,12 +357,13 @@ async function syncToPendingShipment(tx: Tx, companyId: string, f: NoticeFields,
       clientId: v.clientId,
       warehouseId: v.warehouseId,
       itemName: v.itemName,
-      packageCount: v.packageCount,
+      packageCount: v.packageCount ?? 0, // 订单这一列不许空：0 = 还没填（见 orderValuesOf）
       weightKg: weight,
       volumeM3: volume,
       shipDate: v.shipDate,
       domesticTrackingNo: v.domesticTrackingNo,
       transportMode: v.transportMode,
+      cargoType: v.cargoType, // F11：原来漏写，待入库时改了货型订单上不跟
     },
   });
   await tx.shipment.update({
@@ -426,17 +453,102 @@ export function translateUniqueClash(e: unknown): never {
 }
 
 /**
+ * 同一个国内快递单号，客户已经报过预报单（F01，2026-10-08）。
+ * 老板 5A：有预报单的货在「预报单审核」点「确认收货」，到货通知只登记没预报单的货 —— 原来全靠员工自己记，
+ * 记漏了就会同一票货两张运单（客户看到两票、装柜能装两遍）。这里只提醒不拦（规则 1：系统不替员工分）：
+ * 卡片上一直挂着，转运单要在确认框里点「确定」、带着这几张预报单的 id 来。
+ * 只比「客户预报单」（approvalStatus shipped = 还没确认收货、received = 已经确认收货），不比员工「创建订单」建的单（原来就不查，不在这次范围）。
+ */
+export interface PrealertMatch {
+  orderId: string;
+  /** 预报单的运单号（YWYB…）；老数据没有运单时用订单号 */
+  trackingNo: string | null;
+  /** 预报单的唛头（可能跟这条到货通知填的不一样 —— 那多半是唛头填错了） */
+  clientId: string;
+  /** 撞上的那个国内单号（已大写） */
+  domesticTrackingNo: string;
+  /** true = 那张预报单已经在「预报单审核」确认收货了（再转就是第二张运单） */
+  received: boolean;
+}
+
+/**
+ * 国内单号拆成几个号来比：客户有时一格里填好几个（空格 / 逗号 / 顿号 / 分号 / 斜杠隔开）。
+ * 不带数字的（「货拉拉」「无」）、短于 6 位的不拿去比，免得乱撞。统一大写，整号相等才算撞上。
+ */
+export function domesticNoTokens(raw: string | null | undefined): string[] {
+  if (!raw) return [];
+  return [...new Set(raw.split(/[\s,，、;；/]+/).map((t) => t.trim().toUpperCase()).filter((t) => t.length >= 6 && /\d/.test(t)))].slice(0, 10);
+}
+
+/** 一批到货通知各自撞上了哪些预报单（列表一页一次查完；只读、不加锁） */
+export async function findPrealertMatches(
+  db: Tx | typeof prisma,
+  companyId: string,
+  notices: ReadonlyArray<{ id: string; domesticTrackingNo: string | null }>,
+): Promise<Map<string, PrealertMatch[]>> {
+  const out = new Map<string, PrealertMatch[]>();
+  const tokensById = new Map(notices.map((n) => [n.id, domesticNoTokens(n.domesticTrackingNo)]));
+  const all = [...new Set([...tokensById.values()].flat())];
+  if (all.length === 0) return out;
+  // 先用 contains 粗筛（预报单那一格也可能写了好几个号），下面再按整号比。
+  // take 200：粗筛命中太多时真撞上的那张别被截掉（短号当子串能命中一堆长号）
+  const PREALERT_SCAN_LIMIT = 200;
+  const orders = await db.order.findMany({
+    where: {
+      companyId,
+      approvalStatus: { in: ["shipped", "received"] },
+      OR: all.flatMap((t) => [
+        { domesticTrackingNo: { contains: t, mode: "insensitive" as const } },
+        { products: { some: { companyId, domesticTrackingNo: { contains: t, mode: "insensitive" as const } } } },
+      ]),
+    },
+    orderBy: { createdAt: "desc" },
+    take: PREALERT_SCAN_LIMIT,
+    select: {
+      id: true, clientId: true, orderNo: true, approvalStatus: true, domesticTrackingNo: true,
+      products: { where: { companyId }, select: { domesticTrackingNo: true } },
+      shipments: { where: { parentTrackingNo: null }, orderBy: { createdAt: "asc" }, take: 1, select: { trackingNo: true } },
+    },
+  });
+  /* 整页共用的这一次粗筛被 take 截断了：改成一条一条各查一次（2026-10-08 修复第 2 轮）。
+     列表是一页一起查、转运单是锁里只查那一条 —— 别的到货通知的号命中一大堆较新的预报单，会把这一条整号相等的
+     那张较老的预报单挤出共用的 200 条：列表上没提醒、确认框列不出来，转单却 409 要求先确认，刷新也没用，转不了。
+     逐条查跟转运单那边是同一个查询（同一个 notices=[n]），两边看到的一定一样；没截断时一次查到的已经是全集，结果相同。 */
+  if (orders.length >= PREALERT_SCAN_LIMIT && notices.length > 1) {
+    for (const n of notices) {
+      if ((tokensById.get(n.id) ?? []).length === 0) continue;
+      const hits = (await findPrealertMatches(db, companyId, [n])).get(n.id);
+      if (hits) out.set(n.id, hits);
+    }
+    return out;
+  }
+  for (const [id, tokens] of tokensById) {
+    if (tokens.length === 0) continue;
+    const hits: PrealertMatch[] = [];
+    for (const o of orders) {
+      const theirs = new Set([o.domesticTrackingNo, ...o.products.map((p) => p.domesticTrackingNo)].flatMap((v) => domesticNoTokens(v)));
+      const hit = tokens.find((t) => theirs.has(t));
+      if (hit) hits.push({ orderId: o.id, trackingNo: o.shipments[0]?.trackingNo ?? o.orderNo, clientId: o.clientId, domesticTrackingNo: hit, received: o.approvalStatus === "received" });
+    }
+    if (hits.length) out.set(id, hits);
+  }
+  return out;
+}
+
+/**
  * 列表 / 存完返回给页面的一行。
  * 登记人、通知人只给超管（老板 2026-09-15：员工也不能看到是哪个账号操作的，core/operator-visibility.ts）。
  */
-function toDto(n: NoticeRow, ship: { currentStatus: string } | null | undefined, viewerRole: string) {
+function toDto(n: NoticeRow, ship: { currentStatus: string; trackingNo?: string } | null | undefined, viewerRole: string, prealertMatches: PrealertMatch[] = []) {
   const showWho = canSeeOperatorIdentity(viewerRole);
   // 转过、但那张运单已经被删了：当作没转（页面上提示一句，可以重转）
   const shipmentGone = Boolean(n.convertedTo && n.shipmentId && !ship);
   return {
     id: n.id,
     clientId: n.clientId,
-    trackingNo: n.trackingNo,
+    /* 转出去的运单还在：显示运单**现在**的号（F06）—— 转正式后在「运单管理」改过号，这里还写旧号，
+       按新号搜不到、点「物流轨迹」也对不上。没转 / 运单被删了：显示自己登记的那个 */
+    trackingNo: !shipmentGone && ship?.trackingNo ? ship.trackingNo : n.trackingNo,
     itemName: n.itemName,
     packageCount: n.packageCount,
     weightKg: num(n.weightKg),
@@ -445,6 +557,8 @@ function toDto(n: NoticeRow, ship: { currentStatus: string } | null | undefined,
     domesticTrackingNo: n.domesticTrackingNo,
     warehouseId: n.warehouseId,
     arrivedAt: n.arrivedAt,
+    /** 货型（F11）；null = 普货（只会是 inspection / sensitive / null，同 fieldsOf） */
+    cargoType: fieldsOf(n).cargoType,
     remark: n.remark,
     notifiedAt: n.notifiedAt?.toISOString() ?? null,
     notifiedByName: showWho ? n.notifiedByName : null,
@@ -456,7 +570,10 @@ function toDto(n: NoticeRow, ship: { currentStatus: string } | null | undefined,
     createdByName: showWho ? n.createdByName : null,
     createdAt: n.createdAt.toISOString(),
     updatedAt: n.updatedAt.toISOString(),
-    images: n.images.map((i) => ({ id: i.id, fileName: i.fileName, imageUrl: i.filePath })),
+    // thumbUrl（G03）：列表卡片显示小图；老照片 / 老页面传的没有小图，给原图
+    images: n.images.map((i) => ({ id: i.id, fileName: i.fileName, imageUrl: i.filePath, thumbUrl: i.thumbPath ?? i.filePath })),
+    /** 同一国内单号的客户预报单（F01）；空数组 = 没撞上 */
+    prealertMatches,
   };
 }
 
@@ -464,12 +581,13 @@ async function loadDto(companyId: string, id: string, viewerRole: string) {
   const n = await prisma.arrivalNotice.findFirst({ where: { id, companyId }, include: { images: { orderBy: { createdAt: "asc" } } } });
   if (!n) return null;
   const ship = n.shipmentId
-    ? await prisma.shipment.findFirst({ where: { id: n.shipmentId, companyId }, select: { currentStatus: true } })
+    ? await prisma.shipment.findFirst({ where: { id: n.shipmentId, companyId }, select: { currentStatus: true, trackingNo: true } })
     : null;
-  return toDto(n, ship, viewerRole);
+  const matches = await findPrealertMatches(prisma, companyId, [n]);
+  return toDto(n, ship, viewerRole, matches.get(n.id) ?? []);
 }
 
-/** 页签：待通知 / 已通知（还没转）/ 待入库 / 已转正式 / 全部 */
+/** 页签：待通知（没通知的全部，转没转都算）/ 已通知（还没转）/ 待入库 / 已转正式 / 全部。待通知跟后两个会有重叠，数字加起来不等于全部 */
 const TABS = ["todo", "notified", "inbound", "formal", "all"] as const;
 type Tab = (typeof TABS)[number];
 /**
@@ -479,7 +597,10 @@ type Tab = (typeof TABS)[number];
  */
 function tabWhere(tab: Tab, gone: string[]): Prisma.ArrivalNoticeWhereInput {
   const notConverted: Prisma.ArrivalNoticeWhereInput = { OR: [{ convertedTo: null }, { id: { in: gone } }] };
-  if (tab === "todo") return { AND: [notConverted, { notifiedAt: null }] };
+  /* 待通知 = 还没点「已通知客户」的全部（F02，2026-10-08）：转了单不等于通知了客户 ——
+     先转单、后通知是允许的（老板「然后还可以转」，不卡先后），原来转过单的就从这里消失，客服按这个页签干活会漏发。
+     已通知 / 待入库 / 已转运单三个页签不变（已通知 = 通知过、还等着转的那批） */
+  if (tab === "todo") return { notifiedAt: null };
   if (tab === "notified") return { AND: [notConverted, { notifiedAt: { not: null } }] };
   if (tab === "inbound") return { convertedTo: "inbound", id: { notIn: gone } };
   if (tab === "formal") return { convertedTo: "formal", id: { notIn: gone } };
@@ -505,25 +626,47 @@ export function registerArrivalNoticeRoutes(app: MinimalHttpApp): void {
     const page = Math.max(parseInt(req.query.page ?? "", 10) || 1, 1);
     const pageSize = Math.min(Math.max(parseInt(req.query.pageSize ?? "", 10) || 50, 1), 200);
     const base: Prisma.ArrivalNoticeWhereInput = { companyId: auth.companyId };
-    const search: Prisma.ArrivalNoticeWhereInput = keyword
-      ? {
-          OR: [
-            { clientId: { contains: keyword, mode: "insensitive" } },
-            { trackingNo: { contains: keyword, mode: "insensitive" } },
-            { domesticTrackingNo: { contains: keyword, mode: "insensitive" } },
-            { itemName: { contains: keyword, mode: "insensitive" } },
-          ],
-        }
-      : {};
+    /* 搜索词里的 % _ \ 按字面算（2026-10-08 模拟数据测试）：Prisma 的 contains 不转义，原样拼进 ILIKE，
+       搜一个「_」或「%」几乎全出来。PostgreSQL 的 LIKE 默认用反斜杠转义 */
+    const like = keyword.replace(/[\\%_]/g, "\\$&");
     /* 转过、但运单已经被删了的（通常一条都没有）：页签按「没转」算。
        下面这几句放在同一个「可重复读」快照里：不然算 gone、数页签、拉这一页、查运单状态之间正好有人删 / 转了一张，
        同一次返回里页签数字和行上的说法会打架（2026-10-06 Codex 第二轮 S1；只读，不锁任何行） */
-    const { total, rows, counts, shipMap } = await prisma.$transaction(async (tx) => {
+    const { total, rows, counts, shipMap, matches } = await prisma.$transaction(async (tx) => {
       const goneRows = await tx.$queryRaw<Array<{ id: string }>>`
         SELECT n.id FROM arrival_notices n
         LEFT JOIN shipments s ON s.id = n.shipment_id
         WHERE n.company_id = ${auth.companyId} AND n.converted_to IS NOT NULL AND n.shipment_id IS NOT NULL AND s.id IS NULL`;
       const gone = goneRows.map((r) => r.id);
+      /* 运单号按卡片上**显示**的那个号搜（2026-10-08 模拟数据测试）：转出去的运单还在时，卡片显示运单现在的号（toDto，F06），
+         原来却只比到货通知自己存的号 —— 迁移跳过的老数据（两张运单互换了号、改成了另一条到货通知登记着的号）
+         按卡片上的号搜不到，或者搜出另一张卡。现在：运单还在的按运单现在的号比；没转 / 运单被删了按自己存的号比（同 toDto 的判断） */
+      /* ⚠️ 不能把「运单现在的号搜得上的已转通知」整串 id 带进下面 7 句（2026-10-08 模拟数据测试第 2 轮）：
+         关键词一宽（输个「2」「YW」），已转的几乎全命中，id 清单随数据量线性变长 —— 实测 8 千条慢 5 倍，
+         3.3 万条撞 Prisma 绑定参数上限 32767 直接 500，已转的到货通知只增不减，早晚撞上。
+         改成只把「存的号跟运单现在的号对不上」的那几条单独拎出来（正常情况下 followShipmentTrackingNos 一直跟着，只有迁移跳过的老数据，个位数）：
+         对得上的照旧按自己存的号比（跟按运单号比是一回事）；对不上的按运单现在的号比，由 staleHit 带进去。 */
+      const staleRows = keyword
+        ? await tx.$queryRaw<Array<{ id: string; hit: boolean }>>`
+            SELECT n.id, (s.company_id = n.company_id AND s.tracking_no ILIKE ${`%${like}%`}) AS hit
+            FROM arrival_notices n
+            JOIN shipments s ON s.id = n.shipment_id
+            WHERE n.company_id = ${auth.companyId} AND n.converted_to IS NOT NULL
+              AND (s.company_id <> n.company_id OR s.tracking_no IS DISTINCT FROM n.tracking_no)`
+        : [];
+      const staleIds = staleRows.map((r) => r.id);
+      const staleHit = staleRows.filter((r) => r.hit).map((r) => r.id);
+      const search: Prisma.ArrivalNoticeWhereInput = keyword
+        ? {
+            OR: [
+              { clientId: { contains: like, mode: "insensitive" } },
+              { id: { in: staleHit } },
+              { trackingNo: { contains: like, mode: "insensitive" }, ...(staleIds.length ? { id: { notIn: staleIds } } : {}) },
+              { domesticTrackingNo: { contains: like, mode: "insensitive" } },
+              { itemName: { contains: like, mode: "insensitive" } },
+            ],
+          }
+        : {};
       const where: Prisma.ArrivalNoticeWhereInput = { AND: [base, search, tabWhere(tab, gone)] };
       const total = await tx.arrivalNotice.count({ where });
       const rows = await tx.arrivalNotice.findMany({
@@ -537,12 +680,13 @@ export function registerArrivalNoticeRoutes(app: MinimalHttpApp): void {
       for (const t of TABS) counts.push(await tx.arrivalNotice.count({ where: { AND: [base, search, tabWhere(t, gone)] } }));
       const shipIds = rows.map((r) => r.shipmentId).filter((v): v is string => Boolean(v));
       const ships = shipIds.length
-        ? await tx.shipment.findMany({ where: { id: { in: shipIds }, companyId: auth.companyId }, select: { id: true, currentStatus: true } })
+        ? await tx.shipment.findMany({ where: { id: { in: shipIds }, companyId: auth.companyId }, select: { id: true, currentStatus: true, trackingNo: true } })
         : [];
-      return { total, rows, counts, shipMap: new Map(ships.map((s) => [s.id, s])) };
+      const matches = await findPrealertMatches(tx, auth.companyId, rows);
+      return { total, rows, counts, shipMap: new Map(ships.map((s) => [s.id, s])), matches };
     }, { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead, timeout: 15000, maxWait: 10000 });
     ok(res, {
-      items: rows.map((r) => toDto(r, r.shipmentId ? shipMap.get(r.shipmentId) : null, auth.role)),
+      items: rows.map((r) => toDto(r, r.shipmentId ? shipMap.get(r.shipmentId) : null, auth.role, matches.get(r.id) ?? [])),
       total,
       page,
       pageSize,
@@ -558,31 +702,44 @@ export function registerArrivalNoticeRoutes(app: MinimalHttpApp): void {
     const id = idOf(body.id);
     const parsed = readNoticeFields(body);
     if ("error" in parsed) { fail(res, 400, "VALIDATION_ERROR", parsed.error); return; }
-    const f = parsed.fields;
+    let f = parsed.fields;
     if (f.clientId) await assertClient(prisma, auth.companyId, f.clientId);
+    /* 上线前打开的老页面不带货型（F11 新加的一项）：body 里没有这个键 = 「这次没动货型」，下面锁里沿用库里的，
+       不能当成「改成普货」把同事选的敏感货抹掉；base 里没有这个键也不拿它比（不然老页面每次都被挡「货型变了」） */
+    const cargoOmitted = !Object.prototype.hasOwnProperty.call(body, "cargoType");
+    const baseCargoOmitted = !body.base || typeof body.base !== "object" || !Object.prototype.hasOwnProperty.call(body.base, "cargoType");
 
     if (!id) {
-      // 新登记是纯插入一行：不用事务、也没有行可锁。运单号查重是「先提个醒」，
-      // 两个人同一瞬间登记同一个号，由表上的唯一约束（公司 + 运单号）兜底，撞了翻成中文
+      /* 新登记是插入一行，没有现成的行可锁。两个人同一瞬间登记同一个号，由表上的唯一约束（公司 + 运单号）兜底，撞了翻成中文。
+         但「运单表里有没有这个号」没有唯一约束兜（两张表各管各的）：同事在「运单管理」把某张运单改成这个号的同一瞬间，
+         两边各查各的都放行，运单和这条到货通知就成了同一个号，这条从此转不了（修复第 3 轮实测 15 次 14~15 次复现）。
+         所以带运单号的登记先拿号锁（跟两条改号路同一把，lockTrackingNoForArrivalNotice），在锁里查重、插入，到提交才放 */
       const newId = `an_${Date.now()}_${crypto.randomBytes(4).toString("hex")}`;
-      if (f.trackingNo) await assertTrackingNoFree(prisma, auth.companyId, f.trackingNo, null, null);
+      // 撞没撞预报单只看国内单号：在 create 之前查（create 之后到回给页面之间不许再碰库，测试 A7）
+      const newMatches = (await findPrealertMatches(prisma, auth.companyId, [{ id: newId, domesticTrackingNo: f.domesticTrackingNo }])).get(newId) ?? [];
       let created: NoticeRow;
       try {
-        created = await prisma.arrivalNotice.create({
-          data: {
-            id: newId,
-            companyId: auth.companyId,
-            ...noticeData(f),
-            createdBy: auth.userId,
-            createdByName: auth.name || null,
-          },
-          include: { images: { orderBy: { createdAt: "asc" } } },
+        created = await prisma.$transaction(async (tx) => {
+          if (f.trackingNo) {
+            await lockTrackingNoForArrivalNotice(tx, f.trackingNo);
+            await assertTrackingNoFree(tx, auth.companyId, f.trackingNo, null, null);
+          }
+          return tx.arrivalNotice.create({
+            data: {
+              id: newId,
+              companyId: auth.companyId,
+              ...noticeData(f),
+              createdBy: auth.userId,
+              createdByName: auth.name || null,
+            },
+            include: { images: { orderBy: { createdAt: "asc" } } },
+          });
         });
       } catch (e) {
         translateUniqueClash(e);
       }
       // 回给页面的就是刚插进去的那一行（页面拿它当下次保存的 base，见下面修改那段的说明）
-      ok(res, { item: toDto(created, null, auth.role) });
+      ok(res, { item: toDto(created, null, auth.role, newMatches) });
       return;
     }
 
@@ -597,9 +754,15 @@ export function registerArrivalNoticeRoutes(app: MinimalHttpApp): void {
     let saved: ReturnType<typeof toDto>;
     try {
       saved = await prisma.$transaction(async (tx) => {
+        // 号锁先拿、在锁这条到货通知之前（拿它时手里不能有行锁）：跟两条改号路按同一个号排队，下面 assertTrackingNoFree 在锁里查（修复第 3 轮，同新登记）
+        if (f.trackingNo) {
+          await lockTrackingNoForArrivalNotice(tx, f.trackingNo);
+        }
         const n = await lockNotice(tx, auth.companyId, id);
+        if (cargoOmitted) f = { ...f, cargoType: fieldsOf(n).cargoType };
         // 锁住以后再比（CLAUDE.md 第 28 条：判断用锁里读到的）
         if (base !== null) {
+          if (base !== "unreadable" && baseCargoOmitted) base = { ...base, cargoType: fieldsOf(n).cargoType };
           const changed = base === "unreadable" ? [] : changedSinceOpened(base, fieldsOf(n));
           if (base === "unreadable" || changed.length > 0) {
             throw new BusinessError(`这条刚刚被同事改过${changed.length ? `（${changed.join("、")}变了）` : ""}，你这次没有保存。请点「取消」关掉，重新点「修改」看最新的再改`);
@@ -617,17 +780,22 @@ export function registerArrivalNoticeRoutes(app: MinimalHttpApp): void {
           if (missing.length) throw new BusinessError(`已经转成待入库了，${missing.join("、")}不能空着`);
           await syncToPendingShipment(tx, auth.companyId, f, ship);
         }
+        /* 唛头换了人（原来有唛头、这次改成别的或清空）：原来那次「已通知」通知的是旧唛头的客户，新唛头的客户没收到 ——
+           改回「未通知」，回到「待通知」页签等客服重新通知（G01，2026-10-08）。原来没唛头、这次补上的不动 */
+        const clientChanged = n.clientId !== null && n.clientId !== f.clientId;
         const row = await tx.arrivalNotice.update({
           where: { id: n.id },
           data: {
             ...noticeData(f),
+            ...(clientChanged && n.notifiedAt ? { notifiedAt: null, notifiedBy: null, notifiedByName: null } : {}),
             // 转出去的运单已经被删了：这次存的时候顺手把「转过」的记号清掉
             ...(n.convertedTo && !ship ? { convertedTo: null, shipmentId: null, convertedAt: null } : {}),
           },
           include: { images: { orderBy: { createdAt: "asc" } } },
         });
-        // 运单这次只改资料不改状态（转正式不走这里），锁里读到的状态就是现在的
-        return toDto(row, ship ? { currentStatus: ship.currentStatus } : null, auth.role);
+        const matches = (await findPrealertMatches(tx, auth.companyId, [row])).get(row.id) ?? [];
+        // 运单这次只改资料不改状态（转正式不走这里），锁里读到的状态就是现在的；号是这次同步过去的那个
+        return toDto(row, ship ? { currentStatus: ship.currentStatus, trackingNo: f.trackingNo ?? ship.trackingNo } : null, auth.role, matches);
       }, { timeout: 30000, maxWait: 10000 });
     } catch (e) {
       translateUniqueClash(e);
@@ -644,13 +812,23 @@ export function registerArrivalNoticeRoutes(app: MinimalHttpApp): void {
     if (!id) { fail(res, 400, "BAD_REQUEST", "缺少到货通知 id"); return; }
     if (typeof body.notified !== "boolean") { fail(res, 400, "BAD_REQUEST", "notified 要传 true 或 false"); return; }
     const notified = body.notified;
+    /* 页面带上「我看到的唛头」（G01）：标已通知那一刻唛头刚被同事改了，就别标 —— 客服通知的是旧唛头的客户。
+       没带（老页面）照旧。放在 updateMany 的条件里，一句话判断 + 写，不用锁 */
+    const expectsClient = notified && Object.prototype.hasOwnProperty.call(body, "clientId");
+    if (expectsClient && body.clientId !== null && typeof body.clientId !== "string") { fail(res, 400, "BAD_REQUEST", "clientId 要传唛头或 null"); return; }
+    const expectedClient = expectsClient ? ((body.clientId as string | null) || null) : undefined;
     const r = await prisma.arrivalNotice.updateMany({
-      where: { id, companyId: auth.companyId },
+      where: { id, companyId: auth.companyId, ...(expectsClient ? { clientId: expectedClient } : {}) },
       data: notified
         ? { notifiedAt: new Date(), notifiedBy: auth.userId, notifiedByName: auth.name || null }
         : { notifiedAt: null, notifiedBy: null, notifiedByName: null },
     });
-    if (r.count === 0) { fail(res, 404, "NOT_FOUND", "这条到货通知不存在了（可能刚被同事删掉），请刷新"); return; }
+    if (r.count === 0) {
+      const still = expectsClient ? await prisma.arrivalNotice.findFirst({ where: { id, companyId: auth.companyId }, select: { clientId: true } }) : null;
+      if (still) { fail(res, 409, "VALIDATION_ERROR", `这条的唛头刚被同事改成「${still.clientId ?? "空"}」了，没有标已通知。请刷新看最新的，通知过新唛头的客户再点`); return; }
+      fail(res, 404, "NOT_FOUND", "这条到货通知不存在了（可能刚被同事删掉），请刷新");
+      return;
+    }
     ok(res, { item: await loadDto(auth.companyId, id, auth.role) });
   });
 
@@ -680,6 +858,21 @@ export function registerArrivalNoticeRoutes(app: MinimalHttpApp): void {
         }
         await assertClient(tx, auth.companyId, f.clientId!);
         await assertTrackingNoFree(tx, auth.companyId, f.trackingNo!, n.id, ship?.id ?? null);
+        /* 撞上客户预报单（F01）：只提醒不拦 —— 页面确认框里列出来、员工点了「确定」才带着这几张预报单的 id 来。
+           锁里重查：页面打开以后客户才报的预报单、或者没带确认的老页面，都要先说一声。待入库转正式也照样查 */
+        const matches = (await findPrealertMatches(tx, auth.companyId, [n])).get(n.id) ?? [];
+        const acked = new Set(Array.isArray(body.acknowledgedPrealertIds) ? body.acknowledgedPrealertIds.filter((v): v is string => typeof v === "string") : []);
+        const unacked = matches.filter((m) => !acked.has(m.orderId));
+        if (unacked.length) {
+          throw new BusinessError(
+            `国内单号 ${unacked[0].domesticTrackingNo} 客户报过预报单（${unacked.map((m) => `${m.trackingNo ?? "预报单"}，唛头 ${m.clientId}${m.received ? "，已确认收货" : ""}`).join("；")}）。` +
+            // 待入库 → 正式用的是同一张运单（下面 if (ship) 那段），不会再多一张：别说「再转会多出一张」（修复第 1 轮）
+            (ship
+              ? "转待入库时已经建过运单，现在可能有两张运单；转正式用的是同一张、不会再多建，转完请到「运单管理」核对、删掉多的那张。请刷新后再点转、在确认框里确认"
+              : "有预报单的货应在「预报单审核」点「确认收货」，这里再转会多出一张运单。确定是两票不同的货，请刷新后再点转、在确认框里确认"),
+            409, "VALIDATION_ERROR",
+          );
+        }
         const now = new Date();
         let shipmentId: string;
         if (ship) {
@@ -727,7 +920,7 @@ export function registerArrivalNoticeRoutes(app: MinimalHttpApp): void {
             volumeM3: v.volumeM3,
             shipDate: v.shipDate,
             domesticTrackingNo: v.domesticTrackingNo,
-            cargoType: "normal",
+            cargoType: v.cargoType, // F11：原来写死普货
             batchNo: null,
             // 内部备注不进运单：运单的备注员工端「运单管理」看得到，到货通知的备注留在到货通知里
             remark: null,
@@ -764,7 +957,7 @@ export function registerArrivalNoticeRoutes(app: MinimalHttpApp): void {
       const ship = await lockLinkedShipment(tx, n);
       if (ship) throw new BusinessError("这条已经转成运单了，不能删；要删请到「运单管理」删那张运单");
       await tx.arrivalNotice.delete({ where: { id: n.id } }); // 照片记录跟着删（外键 ON DELETE CASCADE）
-      return n.images.map((i) => i.filePath);
+      return n.images.flatMap((i) => (i.thumbPath ? [i.filePath, i.thumbPath] : [i.filePath])); // 小图文件一起删（G03）
     }, { timeout: 30000, maxWait: 10000 });
     removeFiles(files);
     ok(res, { deleted: true, id });
@@ -777,12 +970,26 @@ export function registerArrivalNoticeRoutes(app: MinimalHttpApp): void {
     const body = bodyOf(req);
     const noticeId = idOf(body.noticeId);
     const fileName = typeof body.fileName === "string" ? body.fileName.trim().slice(0, 200) : "";
-    const mime = typeof body.mime === "string" ? body.mime.trim() : "";
+    // 类型统一小写（MIME 不分大小写）：下面白名单按小写比，存盘时扩展名也按小写认（image-storage.ts 的 mimeToExt）
+    const mime = typeof body.mime === "string" ? body.mime.trim().toLowerCase() : "";
     const contentBase64 = typeof body.contentBase64 === "string" ? body.contentBase64.trim() : "";
     if (!noticeId || !fileName || !mime || !contentBase64) { fail(res, 400, "BAD_REQUEST", "照片没传全，请重新选一次"); return; }
     if (!mime.startsWith("image/")) { fail(res, 400, "BAD_REQUEST", "只能传图片"); return; }
+    /* HEIC（苹果手机原图）：电脑浏览器显示不了，存下来卡片 / 大图都是破图、也复制不了（修复第 1 轮）。
+       页面选图时已经挡了（photo-upload.ts 的 pickPhotos），这里兜住上线前打开的老页面 */
+    if (/^image\/hei[cf]/i.test(mime)) { fail(res, 400, "BAD_REQUEST", "这张是 HEIC 格式（苹果手机原图），电脑浏览器显示不了。请在手机上直接传，或先转成 JPG 再传"); return; }
+    /* 别的电脑上显示不了的格式（TIFF、SVG……）同样挡（修复第 2 轮）：原来只挡 HEIC，.tif / .svg 照样存进来，
+       认不出的类型一律存成 .jpg、按 image/jpeg 发出去，卡片 / 大图破图、复制不了。跟页面 photo-upload.ts 的 DISPLAYABLE_PHOTO_TYPES 同一份 */
+    if (!PHOTO_MIME_ALLOWED.includes(mime)) { fail(res, 400, "BAD_REQUEST", `这张图片的格式（${mime}）电脑上显示不了，只能传 JPG / PNG / GIF / WebP / BMP。请先转成 JPG 再传`); return; }
     if (contentBase64.length > UPLOAD_IMAGE_MAX_BASE64) { fail(res, 400, "BAD_REQUEST", uploadTooLargeMessage(contentBase64.length)); return; }
     if (Buffer.from(contentBase64, "base64").length === 0) { fail(res, 400, "BAD_REQUEST", "这张图片是空的，请换一张"); return; }
+    /* 小图（G03）：页面顺手压的一张长边 360 的，列表卡片只显示它。可以不带（老页面 / 压小图失败），带了就得像样 */
+    const thumbBase64 = typeof body.thumbBase64 === "string" ? body.thumbBase64.trim() : "";
+    const thumbMime = typeof body.thumbMime === "string" ? body.thumbMime.trim() : "";
+    if (thumbBase64 && (!thumbMime.startsWith("image/") || thumbBase64.length > THUMB_MAX_BASE64 || Buffer.from(thumbBase64, "base64").length === 0)) {
+      fail(res, 400, "BAD_REQUEST", "照片小图不对，请刷新页面后重新传");
+      return;
+    }
     const created: string[] = [];
     try {
       await prisma.$transaction(async (tx) => {
@@ -793,9 +1000,11 @@ export function registerArrivalNoticeRoutes(app: MinimalHttpApp): void {
         if (n.convertedTo === "inbound" && ship) assertStillPendingInbound(ship);
         const filePath = saveImageToDisk(noticeId, mime, contentBase64);
         created.push(filePath);
+        const thumbPath = thumbBase64 ? saveImageToDisk(noticeId, thumbMime, thumbBase64) : null;
+        if (thumbPath) created.push(thumbPath);
         const imageId = `ani_${Date.now()}_${crypto.randomBytes(4).toString("hex")}`;
         await tx.arrivalNoticeImage.create({
-          data: { id: imageId, companyId: auth.companyId, noticeId, fileName, mime, filePath, uploadedBy: auth.userId },
+          data: { id: imageId, companyId: auth.companyId, noticeId, fileName, mime, filePath, thumbPath, uploadedBy: auth.userId },
         });
         // 已经是待入库的单：同一张照片也进那张运单的产品图片
         if (n.convertedTo === "inbound" && ship) {
@@ -824,7 +1033,7 @@ export function registerArrivalNoticeRoutes(app: MinimalHttpApp): void {
       if (n.convertedTo === "formal" && ship) throw new BusinessError("这条已经转成正式运单了，照片请到「运单管理」那张运单里删");
       const row = n.images.find((i) => i.id === imageId);
       if (!row) throw new BusinessError("这张照片不存在了（可能刚被同事删掉），请刷新", 404, "NOT_FOUND");
-      const toDelete = [row.filePath];
+      const toDelete = row.thumbPath ? [row.filePath, row.thumbPath] : [row.filePath]; // 小图文件一起删（G03）
       if (n.convertedTo === "inbound" && ship) {
         assertStillPendingInbound(ship);
         if (row.orderImageId) {
@@ -856,6 +1065,7 @@ function noticeData(f: NoticeFields) {
     domesticTrackingNo: f.domesticTrackingNo,
     warehouseId: f.warehouseId,
     arrivedAt: f.arrivedAt,
+    cargoType: f.cargoType,
     remark: f.remark,
   };
 }
