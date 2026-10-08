@@ -7,6 +7,7 @@ import { createRequestGate } from "../../modules/shared/request-gate";
 import { getOptionalSession } from "../../auth/auth-session";
 import { useCurrentSessionBrand } from "../../modules/branding/useWorkbenchBrand";
 import DetailModal from "../../modules/layout/DetailModal";
+import MarkPicker from "../../modules/layout/MarkPicker";
 import { formatBeijingTime } from "../../modules/staff/utils";
 import { beijingDate } from "../../modules/shared/beijing-date";
 import { amount2 } from "../../modules/shared/money-format";
@@ -344,11 +345,9 @@ export default function FclInquiryPanel(props: ClientFclInquiryProps) {
         {props.isStaff && (
           <div style={{ gridColumn: "1/-1" }}>
             <label style={{ fontSize: 12, display: "block", marginBottom: 4 }}>选择客户 *</label>
-            <input disabled={loading} value={selectedClientId} onChange={e => setSelectedClientId(e.target.value)} placeholder="输入客户ID" list="fcl-client-list"
-              style={{ border: "1px solid var(--l-strong)", borderRadius: 6, padding: "8px 10px", width: "100%", fontSize: 13 }} />
-            <datalist id="fcl-client-list">
-              {(props.clients ?? []).map(c => (<option key={c.id} value={c.id} />))}
-            </datalist>
+            {/* 唛头用自己画的下拉（2026-10-08，替掉浏览器自带的 datalist）；只显示唛头 */}
+            <MarkPicker disabled={loading} value={selectedClientId} onChange={setSelectedClientId} options={(props.clients ?? []).map((c) => ({ id: c.id }))} placeholder="输入唛头搜索"
+              inputStyle={{ border: "1px solid var(--l-strong)", borderRadius: 6, padding: "8px 10px", width: "100%", fontSize: 13 }} />
           </div>
         )}
         <div>

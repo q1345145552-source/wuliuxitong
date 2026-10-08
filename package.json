@@ -56,6 +56,7 @@
     "test:rebate-undo-page": "tsx scripts/test-agent-rebate-undo-page.ts",
     "test:agent-whr-disabled": "tsx scripts/test-agent-whr-disabled.ts",
     "test:mark-display": "tsx scripts/test-mark-display.ts",
+    "test:mark-picker-behavior": "tsx scripts/test-mark-picker-behavior.ts",
     "test:hide-operator-identity": "tsx scripts/test-hide-operator-identity.ts",
     "test:agent-foundation": "tsx scripts/test-agent-foundation.ts",
     "test:agent-portal-isolation": "tsx scripts/test-agent-portal-isolation.ts",

@@ -24,6 +24,7 @@ import ShipmentStatusGroups, { SHIPMENT_GROUP_OPTIONS, type ShipmentGroupFilter 
 import { ShipmentOverviewStrip } from "../../modules/shipment/ShipmentOverviewStrip";
 import LastmileAddressPanel from "../../components/lastmile/LastmileAddressPanel";
 import DetailModal from "../../modules/layout/DetailModal";
+import MarkPicker from "../../modules/layout/MarkPicker";
 import AdminShipmentDetail from "../../components/admin/AdminShipmentDetail";
 import {
   GridColgroup,
@@ -2327,8 +2328,8 @@ export default function AdminHomePage() {
                         >
                         <div style={{ display: "grid", gap: 8 }}>
                           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 8 }}>
-                            <input value={orderEditForm.clientId} onChange={(e) => setOrderEditForm((v) => ({ ...v, clientId: e.target.value }))} placeholder="唛头" list="admin-client-options" autoComplete="off" style={{ border: "1px solid var(--l-strong)", borderRadius: 8, padding: "8px 10px" }} />
-                            <datalist id="admin-client-options">{clientList.map((c) => (<option key={c.id} value={c.id}>{c.id}</option>))}</datalist>
+                            {/* 唛头用自己画的下拉（2026-10-08，替掉浏览器自带的 datalist）；只显示唛头 */}
+                            <MarkPicker value={orderEditForm.clientId} onChange={(v) => setOrderEditForm((f) => ({ ...f, clientId: v }))} options={clientList.map((c) => ({ id: c.id }))} placeholder="唛头" inputStyle={{ border: "1px solid var(--l-strong)", borderRadius: 8, padding: "8px 10px" }} />
                             <input value={orderEditForm.trackingNo} onChange={(e) => setOrderEditForm((v) => ({ ...v, trackingNo: e.target.value.toUpperCase() }))} placeholder="运单号" style={{ border: "1px solid var(--l-strong)", borderRadius: 8, padding: "8px 10px" }} />
                             <input value={orderEditForm.batchNo} onChange={(e) => setOrderEditForm((v) => ({ ...v, batchNo: e.target.value }))} placeholder="柜号" style={{ border: "1px solid var(--l-strong)", borderRadius: 8, padding: "8px 10px" }} />
                             <select value={orderEditForm.warehouseId} onChange={(e) => setOrderEditForm((v) => ({ ...v, warehouseId: e.target.value }))} style={{ border: "1px solid var(--l-strong)", borderRadius: 8, padding: "8px 10px" }}><option value="wh_yiwu_01">义乌仓</option><option value="wh_guangzhou_01">广州仓</option><option value="wh_dongguan_01">东莞仓</option><option value="wh_shenzhen_01">深圳仓</option></select>
@@ -3009,13 +3010,13 @@ export default function AdminHomePage() {
 创建订单弹窗 */}
       {showCreateOrderModal && (
         <div style={{ position: "fixed", inset: 0, zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(0,0,0,0.4)", padding: 16 }}>
-          <div style={{ width: "100%", maxWidth: 640, background: "var(--white)", borderRadius: 12, padding: 24, boxShadow: "0 20px 60px rgba(0,0,0,0.3)", maxHeight: "85vh", overflow: "auto" }}>
+          {/* minHeight：唛头下拉（MarkPicker）是浮在弹窗里的，弹窗内容少时下拉伸出底边会被 overflow:auto 裁掉（2026-10-08 审查） */}
+          <div style={{ width: "100%", maxWidth: 640, minHeight: "min(480px, 85vh)", background: "var(--white)", borderRadius: 12, padding: 24, boxShadow: "0 20px 60px rgba(0,0,0,0.3)", maxHeight: "85vh", overflow: "auto" }}>
             <h3 style={{ margin: "0 0 16px", fontSize: 18, fontWeight: 600 }}>创建订单</h3>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 8, marginBottom: 12 }}>
               <div>
                 <label style={{ fontSize: 11, display: "block", marginBottom: 2 }}>客户 *</label>
-                <input list="admin-create-client" value={createForm.clientId} onChange={(e) => setCreateForm(f => ({ ...f, clientId: e.target.value }))} placeholder="输入客户ID搜索" style={{ border: "1px solid var(--l-strong)", borderRadius: 6, padding: "6px 8px", width: "100%", fontSize: 12 }} />
-                <datalist id="admin-create-client">{staffClients.map(c => (<option key={c.id} value={c.id} />))}</datalist>
+                <MarkPicker value={createForm.clientId} onChange={(v) => setCreateForm(f => ({ ...f, clientId: v }))} options={staffClients.map((c) => ({ id: c.id }))} placeholder="输入唛头搜索" inputStyle={{ border: "1px solid var(--l-strong)", borderRadius: 6, padding: "6px 8px", width: "100%", fontSize: 12 }} />
               </div>
               <div>
                 <label style={{ fontSize: 11, display: "block", marginBottom: 2 }}>仓库</label>

@@ -20,6 +20,7 @@ import { openShipmentTrack } from "../shipment/ShipmentTrackModal";
 import { shipmentStatusZh } from "../shipment/shipment-status";
 import { apiBaseUrl } from "../../services/core-api";
 import { fetchStaffClients } from "../../services/business-api";
+import MarkPicker, { type MarkOption } from "../layout/MarkPicker";
 import {
   convertArrivalNotice,
   deleteArrivalNotice,
@@ -133,7 +134,8 @@ export default function ArrivalNoticesView() {
   const [editor, setEditor] = useState<Editor | null>(null);
   const [preview, setPreview] = useState<{ src: string; alt: string } | null>(null);
   const [toast, setToast] = useState<{ seq: number; message: string; tone: "success" | "error" }>({ seq: 0, message: "", tone: "success" });
-  const [clients, setClients] = useState<string[]>([]);
+  const [clients, setClients] = useState<MarkOption[]>([]);
+  const [clientsFailed, setClientsFailed] = useState(false);
   const gate = useRef(createRequestGate());
   /** 屏幕上这份列表是哪个页签 / 搜索词 / 页码的（F12：悄悄重拉失败时判断要不要报错） */
   const shownKeyRef = useRef<string | null>(null);
@@ -195,7 +197,8 @@ export default function ArrivalNoticesView() {
 
   useEffect(() => {
     let cancelled = false;
-    fetchStaffClients().then((items) => { if (!cancelled) setClients(items.map((c) => c.id)); }).catch(() => { /* 唛头下拉没有也能手输 */ });
+    // 唛头下拉只要唛头（显示唛头不带客户名字，老板 09-19）；拿不到也能手输
+    fetchStaffClients().then((items) => { if (!cancelled) setClients(items.map((c) => ({ id: c.id }))); }).catch(() => { if (!cancelled) setClientsFailed(true); });
     return () => { cancelled = true; };
   }, []);
 
@@ -349,6 +352,7 @@ export default function ArrivalNoticesView() {
           key={`editor-${editor.seq}`}
           editor={editor}
           clients={clients}
+          clientsFailed={clientsFailed}
           onClose={() => closeEditor(editor.seq)}
           onSaved={(message) => { closeEditor(editor.seq); say(message); void reloadLatest(); }}
           onChanged={reloadLatest}
@@ -476,7 +480,8 @@ function NoticeCard(props: {
 
 function NoticeEditor(props: {
   editor: Editor;
-  clients: string[];
+  clients: MarkOption[];
+  clientsFailed: boolean;
   onClose: () => void;
   onSaved: (message: string) => void;
   /** 修改时当场删了照片：列表跟着刷新 */
@@ -515,12 +520,8 @@ function NoticeEditor(props: {
   }, []);
 
   const set = <K extends keyof ArrivalNoticeDraft>(k: K, v: ArrivalNoticeDraft[K]) => setDraft((d) => ({ ...d, [k]: v }));
-  const clientKnown = !draft.clientId || props.clients.length === 0 || props.clients.includes(draft.clientId);
-  /* F15：不截断（原来 .slice(0, 50)，后面的客户在下拉里找不到也不说）。跟「创建订单」的唛头框一样全列 */
-  const clientOptions = useMemo(() => {
-    const q = draft.clientId.toLowerCase();
-    return q ? props.clients.filter((c) => c.toLowerCase().includes(q)) : props.clients;
-  }, [props.clients, draft.clientId]);
+  const clientKnown = !draft.clientId || props.clients.length === 0 || props.clients.some((c) => c.id === draft.clientId);
+  /* F15：唛头下拉不截断（原来 .slice(0, 50)）—— MarkPicker 用 filterMarkOptions，空查询给全部 */
   /* G01：这条已标「已通知客户」、又把原来的唛头换成别的（或清空）—— 新唛头的客户其实没被通知过，保存时后端会改回「未通知」。
      原来没唛头、这次补上的后端不动，这里也不提醒（R8），不然页面说「会改回未通知」结果没改 */
   const savedClient = base ? (base.clientId.trim() === "" ? null : base.clientId) : null;
@@ -660,15 +661,13 @@ function NoticeEditor(props: {
       {/* 保存 / 传照片期间整张表锁住（修复第 2 轮）：保存发出去的是点「保存」那一刻的资料，传照片那几十秒里再改的字
           不会存上，传完照样关窗说「已保存」—— 改了等于白改、还没人知道。跟「加照片」「移除」一样，保存中不让动 */}
       <div className="an-form">
-        <label>
+        {/* 不用 <label> 包：label 里点下拉的某一行，浏览器会把点击转给输入框，刚选完下拉又弹开 */}
+        <div className="an-field">
           <span>唛头</span>
-          <input disabled={saving} value={draft.clientId} onChange={(e) => set("clientId", e.target.value)} list="an-client-options" autoComplete="off" placeholder="搜索唛头…" />
+          <MarkPicker disabled={saving} value={draft.clientId} onChange={(v) => set("clientId", v)} options={props.clients} loadFailed={props.clientsFailed} placeholder="输入唛头搜索" />
           {!clientKnown ? <small className="an-warn">系统里没有这个唛头，要选下拉里已有的</small> : null}
           {clientChangedAfterNotify ? <small className="an-warn">这条已标「已通知客户」（通知的是 {savedClient}）。换了唛头，保存后会改回「未通知」，记得通知新客户</small> : null}
-          <datalist id="an-client-options">
-            {clientOptions.map((c) => <option key={c} value={c} />)}
-          </datalist>
-        </label>
+        </div>
         <label>
           <span>运单号</span>
           <input disabled={saving} value={draft.trackingNo} onChange={(e) => set("trackingNo", e.target.value)} placeholder="转运单时必须有" />

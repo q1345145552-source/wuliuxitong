@@ -4601,6 +4601,32 @@ table.a3-table.shipment-product-table > tbody > tr > td {
 .an-form label { display: grid; gap: 4px; min-width: 0; color: var(--ink-2); font-size: 12px; }
 .an-form input, .an-form select, .an-form textarea { box-sizing: border-box; width: 100%; min-height: 36px; padding: 6px 10px; border: 1px solid var(--line); border-radius: var(--a3-radius); background: var(--panel); color: var(--ink); font: inherit; font-size: 14px; }
 .an-form-wide { grid-column: 1 / -1; }
+.an-form .an-field { display: grid; gap: 4px; min-width: 0; color: var(--ink-2); font-size: 12px; }
+
+/* 唛头选择框（MarkPicker，2026-10-08 老板：原来浏览器自带的 datalist 下拉「太丑了」） */
+.mark-picker { position: relative; min-width: 0; }
+.mark-picker-control { position: relative; display: flex; align-items: center; }
+.mark-picker-control input { box-sizing: border-box; width: 100%; }
+.mark-picker-control input:focus { outline: none; border-color: var(--brand); box-shadow: 0 0 0 3px var(--brand-soft); }
+/* 全局 button:not(...) 规则会刷成品牌色实心块（选择器分高），这两个小按钮要透明，跟 .an-btn-primary 一样用 !important 压住 */
+.mark-picker-clear, .mark-picker-toggle { position: absolute !important; top: 50%; display: inline-flex; align-items: center; justify-content: center; width: 26px !important; height: 26px !important; min-height: 0 !important; margin: 0; padding: 0 !important; border: 0 !important; border-radius: var(--a3-radius) !important; background: transparent !important; color: var(--t-faint) !important; box-shadow: none !important; cursor: pointer; transform: translateY(-50%); }
+.mark-picker-clear { right: 32px; font-size: 18px; line-height: 1; }
+.mark-picker-toggle { right: 6px; }
+.mark-picker-clear:hover, .mark-picker-toggle:hover:not(:disabled) { background: var(--line-2) !important; color: var(--ink) !important; }
+.mark-picker-toggle span { width: 7px; height: 7px; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; transform: translateY(-2px) rotate(45deg); transition: transform 0.15s; }
+.mark-picker.is-open .mark-picker-toggle span { transform: translateY(2px) rotate(-135deg); }
+.mark-picker.is-disabled .mark-picker-toggle { cursor: default; opacity: 0.5; }
+/* 窄格子里（超管编辑运单一行三栏）面板也要放得下长唛头：至少 240px，可以比输入框宽 */
+.mark-picker-panel { position: absolute; top: calc(100% + 4px); left: 0; width: max(100%, 240px); max-width: calc(100vw - 32px); z-index: 30; overflow: hidden; border: 1px solid var(--line); border-radius: var(--a3-radius-lg); background: var(--panel); box-shadow: var(--shadow-lg); }
+.mark-picker-panel.is-up { top: auto; bottom: calc(100% + 4px); }
+.mark-picker-count { padding: 7px 12px; border-bottom: 1px solid var(--line-2); color: var(--t-faint); font-size: 12px; }
+.mark-picker-list { max-height: 264px; margin: 0; padding: 4px; overflow-y: auto; list-style: none; overscroll-behavior: contain; }
+.mark-picker-option { display: flex; align-items: center; min-height: 36px; padding: 8px 10px; border-radius: var(--a3-radius); color: var(--ink); cursor: pointer; }
+.mark-picker-option:hover, .mark-picker-option.is-active { background: var(--brand-soft); }
+.mark-picker-option.is-selected .mark-picker-id { color: var(--brand); }
+.mark-picker-id { flex: none; font-size: 14px; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.mark-picker-option mark { padding: 0; background: transparent; color: var(--brand); font-weight: 700; }
+.mark-picker-empty { padding: 14px 12px; color: var(--t-faint); font-size: 13px; text-align: center; }
 .an-form-photos { display: grid; gap: 6px; margin-top: 14px; }
 .an-form-label { color: var(--ink-2); font-size: 12px; }
 .an-form-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; margin-top: 16px; }
@@ -4618,4 +4644,6 @@ table.a3-table.shipment-product-table > tbody > tr > td {
   .an-who { width: 100%; }
   .an-form { grid-template-columns: 1fr; }
   .an-form input, .an-form select, .an-form textarea { min-height: 42px; font-size: 16px; }
+  .mark-picker-option { min-height: 44px; }
+  .mark-picker-list { max-height: 50vh; }
 }

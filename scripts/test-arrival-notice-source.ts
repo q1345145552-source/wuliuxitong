@@ -269,12 +269,29 @@ async function main(): Promise<void> {
     assert.match(v, /if \(!silent \|\| shownKeyRef\.current !== key\) setLoadError/, "手上列的是别的页签时，悄悄重拉失败也要报");
   });
 
-  await check("A12 F15：唛头下拉不截断（跟「创建订单」一样全列）", () => {
-    const dl = sliceBetween(view(), '<datalist id="an-client-options">', "</datalist>");
-    assert.ok(!/\.slice\(/.test(dl), "唛头下拉又被截断了");
-    assert.match(dl, /clientOptions\.map/);
-    const memo = sliceBetween(view(), "const clientOptions = useMemo(", "}, [props.clients, draft.clientId]);");
-    assert.ok(!/\.slice\(/.test(memo), "筛选那段也不许截断");
+  await check("A12 F15 + 10-08 换样式：唛头用自己画的下拉（MarkPicker），全部客户都能翻到、按唛头筛、只显示唛头不带名字、不在 label 里", async () => {
+    const v = view();
+    // 老板 10-08「唛头换个方式显示，太丑了」：不再用浏览器自带的 datalist
+    assert.ok(!/<datalist/.test(v) && !/list="an-client-options"/.test(v), "到货通知的唛头又回到浏览器自带的 datalist 了");
+    assert.match(v, /<MarkPicker disabled=\{saving\} value=\{draft\.clientId\} onChange=\{\(v\) => set\("clientId", v\)\} options=\{props\.clients\}/, "唛头框要用 MarkPicker，值仍是 draft.clientId");
+    // 显示唛头时旁边不带客户名字（老板 2026-09-19「显示唛头就行了」；test:mark-display 也管）
+    assert.match(v, /items\.map\(\(c\) => \(\{ id: c\.id \}\)\)/, "唛头下拉只要唛头");
+    assert.ok(!/\.name\b/.test(read("apps/web/src/modules/layout/MarkPicker.tsx")) && !/\bname\b/.test(read("apps/web/src/modules/layout/mark-options.ts")), "唛头下拉不许带客户名字");
+    // label 里点下拉的某一行，浏览器会把点击转给输入框，刚选完又弹开
+    const field = sliceBetween(v, '<div className="an-field">', "</div>");
+    assert.match(field, /<MarkPicker /);
+    assert.ok(!/<label>\s*<span>唛头<\/span>/.test(v), "唛头框不许再包在 <label> 里");
+    const picker = read("apps/web/src/modules/layout/MarkPicker.tsx");
+    assert.match(picker, /const shown = useMemo\(\(\) => filterMarkOptions\(options, query\), \[options, query\]\);/, "下拉显示的就是 filterMarkOptions 的结果");
+    assert.match(picker, /\{shown\.map\(\(o, i\) =>/, "下拉要把筛出来的全部画出来");
+    assert.ok(!/(shown|options)\.slice\(/.test(picker), "唛头下拉又被截断了");
+    assert.ok(!/\.slice\(/.test(read("apps/web/src/modules/layout/mark-options.ts")), "筛选那段也不许截断");
+    const { filterMarkOptions } = await import("../apps/web/src/modules/layout/mark-options");
+    const opts = Array.from({ length: 120 }, (_, i) => ({ id: `C-${String(i).padStart(3, "0")}` }));
+    assert.equal(filterMarkOptions(opts, "").length, 120, "空查询要给全部（不截断）");
+    assert.equal(filterMarkOptions(opts, "   ").length, 120, "只有空格也算空查询");
+    assert.deepEqual(filterMarkOptions(opts, "c-11").map((o) => o.id), ["C-110", "C-111", "C-112", "C-113", "C-114", "C-115", "C-116", "C-117", "C-118", "C-119"], "唛头不分大小写包含");
+    assert.deepEqual(filterMarkOptions([{ id: "XPP-0015 XHH-6698" }], " xhh-6698 ").map((o) => o.id), ["XPP-0015 XHH-6698"], "带空格的唛头、两头空格");
   });
 
   await check("A13 G03：卡片和修改弹窗里的小方块用小图、滚到了才下；大图 / 复制 / 保存仍用原图", () => {
@@ -464,7 +481,11 @@ async function main(): Promise<void> {
     const form = sliceBetween(v, '<div className="an-form">', '<div className="an-form-photos">');
     // 一个控件写在一行里（onChange 里有「=>」，不能拿 [^>]* 截标签）
     const controls = form.split("\n").filter((line) => /<(input|select|textarea)\b/.test(line));
-    assert.equal(controls.length, 12, `表里的输入控件数变了（${controls.length}），对一下这条测试`);
+    // 10-08 唛头换成 MarkPicker（不是原生 input 了）：11 个原生控件 + 1 个 MarkPicker，也要保存中变灰
+    assert.equal(controls.length, 11, `表里的输入控件数变了（${controls.length}），对一下这条测试`);
+    const pickers = form.split("\n").filter((line) => /<MarkPicker\b/.test(line));
+    assert.equal(pickers.length, 1, "唛头的 MarkPicker 不见了");
+    assert.ok(pickers[0].includes("disabled={saving}"), "保存中唛头还能改");
     const loose = controls.filter((c) => !c.includes("disabled={saving}"));
     assert.deepEqual(loose, [], "保存中还能改的控件");
   });

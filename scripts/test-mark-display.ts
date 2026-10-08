@@ -316,15 +316,24 @@ check("4) 超管运单详情、打印标签（超管、员工）上的唛头是�
 
 check("5) 选客户的下拉只显示唛头：选项值就是唛头，选中后按唛头认", () => {
   const staff = read("apps/web/src/app/staff/page.tsx");
-  const options = [...staff.matchAll(/<option key=\{item\.id\} value=\{([^}]+)\} \/>/g)].map((m) => m[1]);
-  assert.equal(options.length, 2, `员工创建订单的两个客户下拉应该各有一处，找到 ${options.length} 处`);
-  for (const v of options) assert.equal(v, "item.id", `下拉选项值不是唛头：${v}`);
+  // 2026-10-08 起唛头下拉换成自己画的 MarkPicker（老板：浏览器自带的 datalist「太丑了」）。选项只有唛头：mark-options.ts 的 MarkOption 只有 id
+  const pickers = [...staff.matchAll(/<MarkPicker\b[\s\S]*?\/>/g)].map((m) => m[0]);
+  assert.equal(pickers.length, 2, `员工创建订单的两个客户下拉应该各有一处，找到 ${pickers.length} 处`);
+  for (const p of pickers) assert.match(p, /options=\{allClientOptions\}/, "员工创建订单的唛头下拉选项不是 allClientOptions（只含唛头）");
+  assert.match(staff, /staffClients\.forEach\(\(item\) => byId\.set\(item\.id, \{ id: item\.id \}\)\)/, "allClientOptions 里带了唛头以外的东西");
+  assert.match(read("apps/web/src/modules/layout/mark-options.ts"), /export type MarkOption = \{ id: string \};/, "唛头下拉的选项不能带客户名字");
+  assert.ok(!/\.name\b/.test(stripComments(read("apps/web/src/modules/layout/MarkPicker.tsx"))), "唛头下拉组件里在读名字");
   // 跟唛头一字不差才算选中；⚠️ 不能先去空格再比：打到「XPP-0015 」（空格是长账号的一部分）会被当成短账号（Opus 第 3 轮）
-  assert.equal([...staff.matchAll(/allClientOptions\.find\(\(c\) => c\.id === e\.target\.value\)/g)].length, 2, "选中后不是按唛头一字不差认的");
-  assert.ok(!/allClientOptions\.find\(\(c\) => c\.id === e\.target\.value\.trim\(\)\)/.test(staff), "选客户先去了空格再比，打到一半的长账号会被当成短账号");
+  assert.equal([...staff.matchAll(/allClientOptions\.find\(\(c\) => c\.id === v\)/g)].length, 2, "选中后不是按唛头一字不差认的");
+  assert.ok(!/allClientOptions\.find\(\(c\) => c\.id === v\.trim\(\)\)/.test(staff), "选客户先去了空格再比，打到一半的长账号会被当成短账号");
   // 不是完整唛头就清空「已选唛头」：线上有「XPP-0015」和「XPP-0015 XHH-6698」这种，一个是另一个的开头，
   // 只选不清的话打到一半会停在短的那个账号上（Opus 第 2 轮报）
-  assert.equal([...staff.matchAll(/setForm\(\(v\) => \(\{ \.\.\.v, clientId: match \? match\.id : "" \}\)\)/g)].length, 2, "输入框不是完整唛头时没把「已选唛头」清空");
+  assert.equal([...staff.matchAll(/setForm\(\(f\) => \(\{ \.\.\.f, clientId: match \? match\.id : "" \}\)\)/g)].length, 2, "输入框不是完整唛头时没把「已选唛头」清空");
+  // 超管两处、整柜询价一处：选项也只给唛头
+  const admin = read("apps/web/src/app/admin/page.tsx");
+  assert.match(admin, /<MarkPicker value=\{orderEditForm\.clientId\}[^\n]*options=\{clientList\.map\(\(c\) => \(\{ id: c\.id \}\)\)\}/, "超管编辑运单的唛头下拉选项不是只有唛头");
+  assert.match(admin, /<MarkPicker value=\{createForm\.clientId\}[^\n]*options=\{staffClients\.map\(\(c\) => \(\{ id: c\.id \}\)\)\}/, "超管创建订单的唛头下拉选项不是只有唛头");
+  assert.match(read("apps/web/src/components/client/FclInquiryPanel.tsx"), /options=\{\(props\.clients \?\? \[\]\)\.map\(\(c\) => \(\{ id: c\.id \}\)\)\}/, "整柜询价的唛头下拉选项不是只有唛头");
   // 下拉里一个字都不许拼名字（`${id} - ${name}`、`{c.id} - {c.name}` 这种）
   for (const file of ["apps/web/src/app/staff/page.tsx", "apps/web/src/app/admin/page.tsx", "apps/web/src/components/client/FclInquiryPanel.tsx"]) {
     const src = stripComments(read(file));
