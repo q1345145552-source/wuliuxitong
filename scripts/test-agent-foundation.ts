@@ -61,6 +61,9 @@ function pick(row: Row | undefined, select?: Row): Row | null {
   return out;
 }
 
+/** 长期价桩 upsert 回的固定时间 */
+const UPSERT_AT = new Date("2026-10-11T08:00:00.000Z");
+
 const stub: Row = {
   user: {
     async findUnique({ where, select }: Row) {
@@ -101,8 +104,11 @@ const stub: Row = {
       dbCalls += 1;
       events.push(`write:client_whr_prices`);
       const hit = db.prices.find((p) => p.clientId === where.clientId);
-      if (hit) Object.assign(hit, update);
-      else db.prices.push({ ...create });
+      // 跟 Prisma 一样把写完的那一行还回去（带 updatedAt），setClientWhrPrice 回给路由的时间就取它
+      if (hit) { Object.assign(hit, update, { updatedAt: UPSERT_AT }); return { ...hit }; }
+      const row = { ...create, updatedAt: UPSERT_AT };
+      db.prices.push(row);
+      return { ...row };
     },
   },
   whrConsolidationPlanCustomer: {
@@ -138,6 +144,7 @@ const stub: Row = {
           unitPriceNormal: pc.unitPriceNormal,
           unitPriceInspection: pc.unitPriceInspection,
           unitPriceSensitive: pc.unitPriceSensitive,
+          unitPriceSpecial: pc.unitPriceSpecial,
         },
         items: pa.items,
       };
@@ -168,7 +175,7 @@ const stub: Row = {
     if (/FROM agents WHERE/.test(sql) && /FOR SHARE/.test(sql)) {
       events.push(`lock:agent:${values[0]}`);
       const a = db.agents.find((x) => x.id === values[0] && x.companyId === values[1]);
-      return a ? [{ price_normal: a.priceNormal, price_inspection: a.priceInspection, price_sensitive: a.priceSensitive }] : [];
+      return a ? [{ price_normal: a.priceNormal, price_inspection: a.priceInspection, price_sensitive: a.priceSensitive, price_special: a.priceSpecial }] : [];
     }
     if (/FROM whr_consolidation_plans WHERE/.test(sql) && /FOR UPDATE/.test(sql)) {
       const planId = String(values[0]);
@@ -199,14 +206,14 @@ function resetFixtures(): void {
     { id: "zz_c_xt", companyId: "c1", role: "client", status: "active", passwordHash: "h_cx", agentId: null },
     { id: "zz_admin", companyId: "c1", role: "admin", status: "active", passwordHash: "h_admin", agentId: null },
   ];
-  db.agents = [{ id: "zz_agent1", companyId: "c1", priceNormal: 500, priceInspection: 600, priceSensitive: 700 }];
+  db.agents = [{ id: "zz_agent1", companyId: "c1", priceNormal: 500, priceInspection: 600, priceSensitive: 700, priceSpecial: 1250 }];
   // 故意让候选顺序是 P2 在前，锁的时候必须按排序 P1 → P2
   db.plans = [
     { id: "zz_P2", status: "collecting" },
     { id: "zz_P1", status: "loading" },
     { id: "zz_P3", status: "shipped" },
   ];
-  const oldPrices = { unitPriceNormal: 800, unitPriceInspection: 800, unitPriceSensitive: 800 };
+  const oldPrices = { unitPriceNormal: 800, unitPriceInspection: 800, unitPriceSensitive: 800, unitPriceSpecial: 1300 };
   db.planCustomers = [
     { id: "zz_pc2", planId: "zz_P2", companyId: "c1", clientId: "zz_c_agent", ...oldPrices, totalFee: 0 },
     { id: "zz_pc1", planId: "zz_P1", companyId: "c1", clientId: "zz_c_agent", ...oldPrices, totalFee: 0 },
@@ -394,9 +401,9 @@ async function main(): Promise<void> {
   });
 
   await check("10) computeRebate：10 方普货 × (600−500) = 1000", () => {
-    const r = computeRebate([{ cargoType: "normal", volumeM3: 10 }], { normal: 600, inspection: 0, sensitive: 0 }, { normal: 500, inspection: 0, sensitive: 0 });
+    const r = computeRebate([{ cargoType: "normal", volumeM3: 10 }], { normal: 600, inspection: 0, sensitive: 0, special: 0 }, { normal: 500, inspection: 0, sensitive: 0, special: 0 });
     assert.equal(r.rebateAmount, 1000);
-    assert.deepEqual(r.volumes, { normal: 10, inspection: 0, sensitive: 0 });
+    assert.deepEqual(r.volumes, { normal: 10, inspection: 0, sensitive: 0, special: 0 });
   });
 
   await check("11) computeRebate：三档混装逐档算，方数回 3 位", () => {
@@ -407,18 +414,18 @@ async function main(): Promise<void> {
         { cargoType: "sensitive", volumeM3: 0.333333 }, // × 100 = 33.3333
         { cargoType: null, volumeM3: null }, // 没量尺寸 → 0，按普货
       ],
-      { normal: 600, inspection: 700, sensitive: 800 },
-      { normal: 500, inspection: 650, sensitive: 700 },
+      { normal: 600, inspection: 700, sensitive: 800, special: 0 },
+      { normal: 500, inspection: 650, sensitive: 700, special: 0 },
     );
     assert.equal(r.rebateAmount, 181.79);
-    assert.deepEqual(r.volumes, { normal: 1.235, inspection: 0.5, sensitive: 0.333 });
+    assert.deepEqual(r.volumes, { normal: 1.235, inspection: 0.5, sensitive: 0.333, special: 0 });
   });
 
   await check("12) computeRebate：分的四舍五入不吃浮点误差（1.005 元要进成 1.01，浮点会算成 1.00）", () => {
     assert.equal(Math.round(1.005 * 100) / 100, 1, "前提：浮点确实会算错，否则这条测不出东西");
-    const r = computeRebate([{ cargoType: "normal", volumeM3: 1.005 }], { normal: 501, inspection: 0, sensitive: 0 }, { normal: 500, inspection: 0, sensitive: 0 });
+    const r = computeRebate([{ cargoType: "normal", volumeM3: 1.005 }], { normal: 501, inspection: 0, sensitive: 0, special: 0 }, { normal: 500, inspection: 0, sensitive: 0, special: 0 });
     assert.equal(r.rebateAmount, 1.01);
-    const r2 = computeRebate([{ cargoType: "normal", volumeM3: 0.004999 }], { normal: 501, inspection: 0, sensitive: 0 }, { normal: 500, inspection: 0, sensitive: 0 });
+    const r2 = computeRebate([{ cargoType: "normal", volumeM3: 0.004999 }], { normal: 501, inspection: 0, sensitive: 0, special: 0 }, { normal: 500, inspection: 0, sensitive: 0, special: 0 });
     assert.equal(r2.rebateAmount, 0);
   });
 
@@ -428,11 +435,11 @@ async function main(): Promise<void> {
         { cargoType: "weird", volumeM3: new Prisma.Decimal("2.500000") },
         { cargoType: "sensitive", volumeM3: "1" },
       ],
-      { normal: new Prisma.Decimal("550.00"), inspection: "600", sensitive: "900.50" },
-      { normal: "500.00", inspection: 600, sensitive: new Prisma.Decimal("700") },
+      { normal: new Prisma.Decimal("550.00"), inspection: "600", sensitive: "900.50", special: 0 },
+      { normal: "500.00", inspection: 600, sensitive: new Prisma.Decimal("700"), special: 0 },
     );
     assert.equal(r.rebateAmount, 2.5 * 50 + 200.5);
-    assert.throws(() => computeRebate([{ cargoType: "normal", volumeM3: "abc" }], { normal: 1, inspection: 1, sensitive: 1 }, { normal: 1, inspection: 1, sensitive: 1 }));
+    assert.throws(() => computeRebate([{ cargoType: "normal", volumeM3: "abc" }], { normal: 1, inspection: 1, sensitive: 1, special: 0 }, { normal: 1, inspection: 1, sensitive: 1, special: 0 }));
   });
 
   const actor = { userId: "zz_agent_login", role: "agent" };
@@ -472,21 +479,27 @@ async function main(): Promise<void> {
     resetFixtures();
     const r = await ltp.setClientWhrPrice({ companyId: "c1", clientId: "zz_c_agent", prices: { normal: 550, inspection: 650, sensitive: 750 }, actor });
     assert.equal(stub.lastTransactionOptions?.timeout, 30000, "不传 tx 要自己开事务");
-    assert.deepEqual(r, { updatedPlanRows: 2 });
+    assert.equal(r.updatedPlanRows, 2);
+    // 返回锁里真正存进去的四档（没传特别货：新建长期价用默认 1250）—— 路由直接回这份，不再在事务外补读
+    assert.deepEqual(r.prices, { normal: 550, inspection: 650, sensitive: 750, special: 1250 });
+    // 时间也是同一次写入拿回来的（Codex 第 3、4 轮）
+    assert.equal(r.updatedAt?.toISOString(), UPSERT_AT.toISOString());
     const locks = events.filter((e) => e.startsWith("lock:"));
     assert.deepEqual(locks, ["lock:client_price:zz_c_agent", "lock:agent:zz_agent1", "lock:plan:zz_P1", "lock:plan:zz_P2"]);
     const firstWrite = events.findIndex((e) => e.startsWith("write:"));
     const lastLock = events.map((e) => e.startsWith("lock:")).lastIndexOf(true);
     assert.ok(firstWrite > lastLock, `第一次写必须在全部锁之后：${events.join(" ")}`);
 
+    // 特别货没传（老调用方只传三档）：新建长期价那一行用默认 1250；柜里原来的特别货价不动
     assert.deepEqual(db.prices[0], {
-      clientId: "zz_c_agent", companyId: "c1", priceNormal: 550, priceInspection: 650, priceSensitive: 750,
-      updatedBy: "zz_agent_login", updatedByRole: "agent",
+      clientId: "zz_c_agent", companyId: "c1", priceNormal: 550, priceInspection: 650, priceSensitive: 750, priceSpecial: 1250,
+      updatedBy: "zz_agent_login", updatedByRole: "agent", updatedAt: UPSERT_AT,
     });
     const pc = (id: string) => db.planCustomers.find((x) => x.id === id)!;
     assert.equal(pc("zz_pc1").unitPriceNormal, 550);
     assert.equal(pc("zz_pc2").unitPriceInspection, 650);
     assert.equal(pc("zz_pc3").unitPriceNormal, 800, "已发运的柜价格不许动");
+    assert.equal(pc("zz_pc1").unitPriceSpecial, 1300, "没传特别货价：柜里原来的特别货价不许被冲回 1250");
     const pa = (id: string) => db.prealerts.find((x) => x.id === id)!;
     assert.equal(pa("zz_pa_unpaid").totalFee, 1.5 * 550 + 0.5 * 750, "未付款的单按新价重算");
     assert.equal(pa("zz_pa_paid").totalFee, 999, "已付款的金额不许变（4.14）");
@@ -499,7 +512,7 @@ async function main(): Promise<void> {
     resetFixtures();
     statusOnLock = { zz_P2: "shipped" };
     const r = await ltp.setClientWhrPrice({ companyId: "c1", clientId: "zz_c_agent", prices: { normal: 550, inspection: 650, sensitive: 750 }, actor }, stub);
-    assert.deepEqual(r, { updatedPlanRows: 1 });
+    assert.equal(r.updatedPlanRows, 1);
     assert.equal(db.planCustomers.find((x) => x.id === "zz_pc2")!.unitPriceInspection, 800);
     assert.equal(db.prealerts.find((x) => x.id === "zz_pa_p2")!.totalFee, 0);
   });
@@ -507,19 +520,63 @@ async function main(): Promise<void> {
   await check("18) setClientWhrPrice：湘泰自己的客户没有代理价下限、不碰代理行；客户不存在 / 别家公司 → 404", async () => {
     resetFixtures();
     const r = await ltp.setClientWhrPrice({ companyId: "c1", clientId: "zz_c_xt", prices: { normal: 100, inspection: 100, sensitive: 100 }, actor: { userId: "zz_admin", role: "admin" } }, stub);
-    assert.deepEqual(r, { updatedPlanRows: 0 });
+    assert.equal(r.updatedPlanRows, 0);
     assert.ok(!events.some((e) => e.startsWith("lock:agent")));
-    assert.deepEqual(await ltp.getClientWhrPrice("zz_c_xt", stub), { normal: 100, inspection: 100, sensitive: 100 });
+    assert.deepEqual(await ltp.getClientWhrPrice("zz_c_xt", stub), { normal: 100, inspection: 100, sensitive: 100, special: 1250 });
     await expectBusiness(() => ltp.setClientWhrPrice({ companyId: "c2", clientId: "zz_c_xt", prices: { normal: 600, inspection: 600, sensitive: 600 }, actor }, stub), /客户不存在/, 404);
     await expectBusiness(() => ltp.setClientWhrPrice({ companyId: "c1", clientId: "zz_agent_login", prices: { normal: 600, inspection: 600, sensitive: 600 }, actor }, stub), /客户不存在/, 404);
     assert.equal(await ltp.getClientWhrPrice("zz_c_agent", stub), null);
-    assert.deepEqual(await ltp.getAgentPrices("zz_agent1", stub), { normal: 500, inspection: 600, sensitive: 700 });
+    assert.deepEqual(await ltp.getAgentPrices("zz_agent1", stub), { normal: 500, inspection: 600, sensitive: 700, special: 1250 });
     assert.equal(await ltp.getAgentPrices("", stub), null);
   });
 
   await check("19) 客户价等于代理价放行（下限是「不低于」不是「高于」）", () => {
-    assert.equal(ltp.checkNotBelowAgentPrice({ normal: 500, inspection: 600, sensitive: 700 }, { normal: 500, inspection: 600, sensitive: 700 }), null);
-    assert.match(ltp.checkNotBelowAgentPrice({ normal: 500, inspection: 599.99, sensitive: 700 }, { normal: 500, inspection: 600, sensitive: 700 })!, /^商检货不能低于湘泰给你的价 600 元\/方$/);
+    assert.equal(ltp.checkNotBelowAgentPrice({ normal: 500, inspection: 600, sensitive: 700, special: 0 }, { normal: 500, inspection: 600, sensitive: 700, special: 0 }), null);
+    assert.match(ltp.checkNotBelowAgentPrice({ normal: 500, inspection: 599.99, sensitive: 700, special: 0 }, { normal: 500, inspection: 600, sensitive: 700, special: 0 })!, /^商检货不能低于湘泰给你的价 600 元\/方$/);
+  });
+
+  await check("20) 特别货（2026-10-11）：传了特别货价 → 长期价和在跑的柜一起改、未付款的特别货按新价算；低于代理特别货价 → 拒，点名特别货", async () => {
+    resetFixtures();
+    db.prealerts.find((x) => x.id === "zz_pa_unpaid")!.items = [
+      { cargoType: "normal", volumeM3: 1, packageCount: 1 },
+      { cargoType: "special", volumeM3: 2, packageCount: 1 },
+    ];
+    await expectBusiness(
+      () => ltp.setClientWhrPrice({ companyId: "c1", clientId: "zz_c_agent", prices: { normal: 550, inspection: 650, sensitive: 750, special: 1249.99 }, actor }),
+      /^特别货不能低于湘泰给你的价 1250 元\/方$/,
+      400,
+    );
+    assert.equal(db.prices.length, 0);
+    const r = await ltp.setClientWhrPrice({ companyId: "c1", clientId: "zz_c_agent", prices: { normal: 550, inspection: 650, sensitive: 750, special: 1400 }, actor });
+    assert.equal(r.updatedPlanRows, 2);
+    assert.equal(db.prices[0].priceSpecial, 1400);
+    const pc = (id: string) => db.planCustomers.find((x) => x.id === id)!;
+    assert.equal(pc("zz_pc1").unitPriceSpecial, 1400);
+    assert.equal(pc("zz_pc2").unitPriceSpecial, 1400);
+    assert.equal(pc("zz_pc3").unitPriceSpecial, 1300, "已发运的柜价格不许动");
+    assert.equal(db.prealerts.find((x) => x.id === "zz_pa_unpaid")!.totalFee, 1 * 550 + 2 * 1400);
+  });
+
+  await check("21) 特别货（2026-10-11）：只传三档（老页面）→ 已有长期价的特别货价原样留着，下限也按留着的价判", async () => {
+    resetFixtures();
+    db.prices = [{ clientId: "zz_c_agent", companyId: "c1", priceNormal: 600, priceInspection: 700, priceSensitive: 800, priceSpecial: 1500 }];
+    const kept = await ltp.setClientWhrPrice({ companyId: "c1", clientId: "zz_c_agent", prices: { normal: 560, inspection: 660, sensitive: 760 }, actor });
+    assert.equal(db.prices[0].priceNormal, 560);
+    assert.equal(kept.prices.special, 1500, "返回给页面的特别货价应是留着的原值，不是默认 1250");
+    assert.equal(db.prices[0].priceSpecial, 1500, "没传特别货：长期价里原来的 1500 不许变成 1250");
+    assert.equal(db.planCustomers.find((x) => x.id === "zz_pc1")!.unitPriceSpecial, 1300, "没传特别货：柜里的特别货价不动");
+    // 代理特别货价调到 1300（比默认 1250 高、比他留着的 1500 低）：只改三档要放行 —— 下限按留着的 1500 判，不按默认 1250 判
+    db.agents[0].priceSpecial = 1300;
+    await ltp.setClientWhrPrice({ companyId: "c1", clientId: "zz_c_agent", prices: { normal: 570, inspection: 670, sensitive: 770 }, actor });
+    assert.equal(db.prices[0].priceNormal, 570);
+    assert.equal(db.prices[0].priceSpecial, 1500);
+    // 代理特别货价调到 1600（比他留着的 1500 高）：只改三档也照样被下限挡住，不会悄悄放过
+    db.agents[0].priceSpecial = 1600;
+    await expectBusiness(
+      () => ltp.setClientWhrPrice({ companyId: "c1", clientId: "zz_c_agent", prices: { normal: 560, inspection: 660, sensitive: 760 }, actor }),
+      /^特别货不能低于湘泰给你的价 1600 元\/方$/,
+      400,
+    );
   });
 
   console.log(`\n共 ${total} 项，失败 ${failures.length} 项`);

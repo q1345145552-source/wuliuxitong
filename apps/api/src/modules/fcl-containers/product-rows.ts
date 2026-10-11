@@ -7,9 +7,10 @@
  */
 import { DECIMAL_10_2, DECIMAL_10_3, DECIMAL_10_6, requireDecimal } from "../core/decimal-guard";
 import { parseNumericStrict, requirePositiveInt, requireProductWithinInt, requireSumWithinInt } from "../core/int-guard";
+import { CARGO_TYPES as SHARED_CARGO_TYPES, strictestCargoType as sharedStrictest, type CargoType } from "../../../../../packages/shared-types/cargo-type";
 
-/** 货型取值，跟运单、集货两处保持一致 */
-export const CARGO_TYPES = ["normal", "inspection", "sensitive"];
+/** 货型取值：直接用共享那一份（2026-10-11 加特别货时收过来，原来这里抄了一份三个值的） */
+export const CARGO_TYPES: readonly string[] = SHARED_CARGO_TYPES;
 
 /** 柜型取值，跟「柜子管理」一致 */
 export const CONTAINER_TYPES = ["20GP", "40HQ"];
@@ -102,7 +103,7 @@ export function parseFclProductRow(p: FclProductInput, index: number): { error: 
   if (weightIssue) return { error: weightIssue };
 
   const cargoType = String(p.cargoType ?? "normal").trim() || "normal";
-  if (!CARGO_TYPES.includes(cargoType)) return { error: `${label}的货型只能是普货 / 商检货 / 敏感货` };
+  if (!CARGO_TYPES.includes(cargoType)) return { error: `${label}的货型只能是普货 / 商检货 / 敏感货 / 特别货` };
 
   /* 体积 = 长×宽×高÷1000000×箱数，口径跟集货和批量下单一致。
      ⚠️ 这是**中间量，不入库** —— 只用来加总。所以按 6 位小数留着，
@@ -163,10 +164,8 @@ export function sumFclRows(rows: FclProductRow[]): { error: string } | {
   };
 }
 
-/** 一柜多行货时整票货型取最严的那个（敏感 > 商检 > 普货），跟建单、批量导入同一口径 */
+/** 一柜多行货时整票货型取最严的那个（特别 > 敏感 > 商检 > 普货），跟建单、批量导入同一口径（就是共享那一份） */
 export function strictestCargoType(types: string[]): string {
-  if (types.includes("sensitive")) return "sensitive";
-  if (types.includes("inspection")) return "inspection";
-  return "normal";
+  return sharedStrictest(types.filter((t): t is CargoType => CARGO_TYPES.includes(t)));
 }
 

@@ -25,7 +25,7 @@ import { ErrorBar, Modal, StatusTag, btnCancel, btnConfirm, btnSmall, fi, fl, mo
  * 「已返」和「撤回」都记进操作记录，在明细弹窗最下面一条一条列出来。
  */
 
-const BUCKETS: Array<[keyof AgentPriceTriple, string]> = [["normal", "普货"], ["inspection", "商检"], ["sensitive", "敏感"]];
+const BUCKETS: Array<[keyof AgentPriceTriple, string]> = [["normal", "普货"], ["inspection", "商检"], ["sensitive", "敏感"], ["special", "特别"]];
 
 /** 这一票有哪几种货型（方数大于 0 的档） */
 function cargoLabel(v: AgentPriceTriple): string {

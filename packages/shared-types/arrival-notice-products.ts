@@ -10,7 +10,7 @@
  *
  * 纯函数，不碰库、不碰 DOM。
  */
-import { strictestCargoType, type CargoType } from "./cargo-type";
+import { CARGO_TYPES, strictestCargoType, type CargoType } from "./cargo-type";
 import { productNamesLabel } from "./product-names";
 
 /** 一条到货通知最多几款（再多就是填错了 / 页面出毛病了） */
@@ -124,7 +124,8 @@ export function firstDomesticTrackingNo(ps: ReadonlyArray<{ domesticTrackingNo?:
 
 /** 认得的货型；认不出 / 没填一律按普货（这里只做汇总，填错的拦截在后端校验那一步） */
 function cargoOf(v: Loose): CargoType {
-  return v === "inspection" || v === "sensitive" ? v : "normal";
+  // 2026-10-11 加特别货：认得的四种原样，其余按普货（原来写死「商检 / 敏感」两个，加一种就会漏）
+  return typeof v === "string" && (CARGO_TYPES as readonly string[]).includes(v) ? (v as CargoType) : "normal";
 }
 
 /**
@@ -137,7 +138,7 @@ function cargoOf(v: Loose): CargoType {
 export function noticeLegacySummary(ps: ReadonlyArray<{
   itemName?: Loose; packageCount?: Loose; lengthCm?: Loose; widthCm?: Loose; heightCm?: Loose;
   productQuantity?: Loose; weightKg?: Loose; cargoType?: Loose; domesticTrackingNo?: Loose;
-}>): { itemName: string | null; packageCount: number | null; domesticTrackingNo: string | null; cargoType: "inspection" | "sensitive" | null } {
+}>): { itemName: string | null; packageCount: number | null; domesticTrackingNo: string | null; cargoType: Exclude<CargoType, "normal"> | null } {
   const name = productNamesLabel(ps.map((p) => ({ itemName: isEmptyValue(p.itemName) ? null : String(p.itemName) })));
   const nos = domesticNos(ps);
   const cargo = strictestCargoType(ps.map((p) => cargoOf(p.cargoType)));

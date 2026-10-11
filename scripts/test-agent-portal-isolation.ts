@@ -370,6 +370,7 @@ async function dbChecks(): Promise<void> {
   const { signAuthToken } = await import("../apps/api/src/modules/auth/token");
   const { registerAgentPortalRoutes, AGENT_PORTAL_LIST_LIMITS } = await import("../apps/api/src/modules/agent-portal/routes");
   const { registerAdminRoutes } = await import("../apps/api/src/modules/admin/routes");
+  const { registerAgentAdminRoutes } = await import("../apps/api/src/modules/agents/admin-routes");
   const { registerShipmentRoutes } = await import("../apps/api/src/modules/shipments/routes");
   const { registerOrderRoutes } = await import("../apps/api/src/modules/orders/routes");
   const { registerContainerRoutes } = await import("../apps/api/src/modules/containers/routes");
@@ -383,6 +384,7 @@ async function dbChecks(): Promise<void> {
     const app = createApp();
     registerAgentPortalRoutes(app);
     registerAdminRoutes(app);
+    registerAgentAdminRoutes(app);
     registerShipmentRoutes(app);
     registerOrderRoutes(app);
     registerContainerRoutes(app);
@@ -418,15 +420,16 @@ async function dbChecks(): Promise<void> {
 
     await check("/agent/me：只有自己的名字、logo、代理价", async () => {
       const d = await okData(A, "/agent/me");
-      assert.deepEqual(d, { name: "代理甲ZZB3", logoUrl: "/images/zz_b3_logo.png", slug: null, customDomain: null, prices: { normal: 500, inspection: 550, sensitive: 600 } });
+      assert.deepEqual(d, { name: "代理甲ZZB3", logoUrl: "/images/zz_b3_logo.png", slug: null, customDomain: null, prices: { normal: 500, inspection: 550, sensitive: 600, special: 1250 } });
     });
 
     await check("/agent/clients：只有名下两个客户，价格不带操作人", async () => {
       const d = await okData(A, "/agent/clients");
       assert.deepEqual(d.items.map((i: any) => i.clientId), [`${P}ca1`, `${P}ca2`]);
-      assert.deepEqual(d.agentPrices, { normal: 500, inspection: 550, sensitive: 600 });
+      // 特别货：代理行建的时候没填，库默认 1250（2026-10-11）
+      assert.deepEqual(d.agentPrices, { normal: 500, inspection: 550, sensitive: 600, special: 1250 });
       const ca1 = d.items.find((i: any) => i.clientId === `${P}ca1`);
-      assert.deepEqual(Object.keys(ca1.price).sort(), ["inspection", "normal", "sensitive", "updatedAt"]);
+      assert.deepEqual(Object.keys(ca1.price).sort(), ["inspection", "normal", "sensitive", "special", "updatedAt"]);
       assert.equal(d.items.find((i: any) => i.clientId === `${P}ca2`).price, null, "没填价的给 null，页面标「未填价」");
     });
 
@@ -694,9 +697,9 @@ async function dbChecks(): Promise<void> {
     await check("/agent/me、/agent/clients：代理乙拿到的是乙自己的名字和价，不是甲的", async () => {
       const me = await okData(B, "/agent/me");
       assert.equal(me.name, "代理乙SECRETB");
-      assert.deepEqual(me.prices, { normal: 400, inspection: 450, sensitive: 500 });
+      assert.deepEqual(me.prices, { normal: 400, inspection: 450, sensitive: 500, special: 1250 });
       const cl = await okData(B, "/agent/clients");
-      assert.deepEqual(cl.agentPrices, { normal: 400, inspection: 450, sensitive: 500 });
+      assert.deepEqual(cl.agentPrices, { normal: 400, inspection: 450, sensitive: 500, special: 1250 });
       assert.deepEqual(cl.items.map((i: any) => i.clientId), [`${P}cb1`]);
     });
 
@@ -752,7 +755,8 @@ async function dbChecks(): Promise<void> {
        *     只能直接调函数测，不然哪天开回来它坏了没人知道（复核 2026-09-18 第 6 条）。
        */
       const { assertPlanPricesNotBelowAgent, setAgentClientWhrPrice } = await import("../apps/api/src/modules/whr-consolidation/long-term-price");
-      const triple = (n: number) => ({ normal: n, inspection: n + 50, sensitive: n + 100 });
+      // 特别货（2026-10-11）：代理特别货价是库默认 1250，triple(500) 正好等于它
+      const triple = (n: number) => ({ normal: n, inspection: n + 50, sensitive: n + 100, special: n + 750 });
 
       // ① 代理甲的价是 500/550/600：填 400 要被拦；填 500 放行；湘泰自己的客户不受管
       await prisma.$transaction(async (tx) => {
@@ -777,11 +781,11 @@ async function dbChecks(): Promise<void> {
       //    而作者的内存桩是按同一套 key 手写的 —— 只有真 Prisma 跑一次才算验过（Opus 第三轮复核第 7 条）
       const { findClientsBelowNewAgentPrice } = await import("../apps/api/src/modules/agents/admin-routes");
       await prisma.$transaction(async (tx) => {
-        const floor = { normal: 500, inspection: 550, sensitive: 600 }; // 代理甲现在的价
+        const floor = { normal: 500, inspection: 550, sensitive: 600, special: 1250 }; // 代理甲现在的价
         // ca1 在 plan1（收货中）600/650/700、ca2 在 plan3（计划中）600/650/700
-        const none = await findClientsBelowNewAgentPrice(tx, `${P}agA`, CO, floor, { normal: 590, inspection: 640, sensitive: 690 });
+        const none = await findClientsBelowNewAgentPrice(tx, `${P}agA`, CO, floor, { normal: 590, inspection: 640, sensitive: 690, special: 1250 });
         assert.deepEqual(none, [], `没有客户低于新价却报了：${none.join("；")}`);
-        const hit = await findClientsBelowNewAgentPrice(tx, `${P}agA`, CO, floor, { normal: 610, inspection: 550, sensitive: 600 });
+        const hit = await findClientsBelowNewAgentPrice(tx, `${P}agA`, CO, floor, { normal: 610, inspection: 550, sensitive: 600, special: 1250 });
         assert.equal(hit.length, 2, `应该点名 ca1 / ca2 各一处，实际：${hit.join("；")}`);
         assert.ok(hit.every((line) => /普货 600（新代理价 610）/.test(line)), hit.join("；"));
         assert.ok(hit.some((line) => line.includes("WHRZZB301")) && hit.some((line) => line.includes("WHRZZB303")), `柜号没点出来：${hit.join("；")}`);
@@ -798,8 +802,8 @@ async function dbChecks(): Promise<void> {
       await prisma.whrConsolidationPlan.update({ where: { id: `${P}plan3` }, data: { status: "completed" } });
       try {
         await prisma.$transaction(async (tx) => {
-          const floor = { normal: 500, inspection: 550, sensitive: 600 };
-          const hit = await findClientsBelowNewAgentPrice(tx, `${P}agA`, CO, floor, { normal: 610, inspection: 550, sensitive: 600 });
+          const floor = { normal: 500, inspection: 550, sensitive: 600, special: 1250 };
+          const hit = await findClientsBelowNewAgentPrice(tx, `${P}agA`, CO, floor, { normal: 610, inspection: 550, sensitive: 600, special: 1250 });
           assert.ok(!hit.some((line) => line.includes("WHRZZB303")), `已完成的柜还算在闸里：${hit.join("；")}`);
           assert.equal(hit.length, 1, `只该剩 plan1 那一处，实际：${hit.join("；")}`);
         });
@@ -890,6 +894,32 @@ async function dbChecks(): Promise<void> {
       } finally {
         release();
         await orderTx.catch(() => undefined);
+      }
+    });
+
+    /**
+     * 特别货（2026-10-11，dsh 审查）：改代理价那条路里有一句手写 SQL（SELECT … price_special … FROM agents … FOR UPDATE），
+     * test-agent-admin 走的是内存桩、认不出列名写错，这里用真库真调一次路由。
+     * 只动代理乙、只往低调（不碰「客户价不能低于代理价」那道闸），跑完改回原样。
+     */
+    await check("改代理价（真库）：四档一起改 → 特别货价落库；只传三档（老页面）→ 特别货价原样留着；改回原值", async () => {
+      const before = await prisma.agent.findUnique({ where: { id: `${P}agB` } });
+      assert.ok(before, "夹具里没有代理乙");
+      const body = (prices: Record<string, number>) => ({ id: `${P}agB`, name: before!.name, slug: before!.slug ?? "", customDomain: before!.customDomain ?? "", prices });
+      try {
+        let r = await call(tokens.admin, "POST", "/admin/agents/update", body({ normal: 390, inspection: 440, sensitive: 490, special: 1200 }));
+        assert.equal(r.status, 200, r.text.slice(0, 300));
+        let row = await prisma.agent.findUnique({ where: { id: `${P}agB` } });
+        assert.deepEqual([Number(row!.priceNormal), Number(row!.priceSpecial)], [390, 1200]);
+        r = await call(tokens.admin, "POST", "/admin/agents/update", body({ normal: 380, inspection: 440, sensitive: 490 }));
+        assert.equal(r.status, 200, r.text.slice(0, 300));
+        row = await prisma.agent.findUnique({ where: { id: `${P}agB` } });
+        assert.deepEqual([Number(row!.priceNormal), Number(row!.priceSpecial)], [380, 1200], "只传三档时特别货价被冲掉了");
+      } finally {
+        await prisma.agent.update({
+          where: { id: `${P}agB` },
+          data: { priceNormal: before!.priceNormal, priceInspection: before!.priceInspection, priceSensitive: before!.priceSensitive, priceSpecial: before!.priceSpecial },
+        });
       }
     });
 

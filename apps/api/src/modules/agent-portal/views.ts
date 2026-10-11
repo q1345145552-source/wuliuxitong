@@ -137,12 +137,15 @@ export function mapRebateLine(l: {
   volumeNormalM3: unknown;
   volumeInspectionM3: unknown;
   volumeSensitiveM3: unknown;
+  volumeSpecialM3: unknown;
   clientPriceNormal: unknown;
   clientPriceInspection: unknown;
   clientPriceSensitive: unknown;
+  clientPriceSpecial: unknown;
   agentPriceNormal: unknown;
   agentPriceInspection: unknown;
   agentPriceSensitive: unknown;
+  agentPriceSpecial: unknown;
   rebateAmount: unknown;
   prealertCreatedAt: Date;
   signedAt: Date | null;
@@ -158,9 +161,9 @@ export function mapRebateLine(l: {
     clientId: l.clientId,
     mark: l.mark,
     productNames: l.productNames,
-    volumes: { normal: num(l.volumeNormalM3), inspection: num(l.volumeInspectionM3), sensitive: num(l.volumeSensitiveM3) },
-    clientPrices: { normal: num(l.clientPriceNormal), inspection: num(l.clientPriceInspection), sensitive: num(l.clientPriceSensitive) },
-    agentPrices: { normal: num(l.agentPriceNormal), inspection: num(l.agentPriceInspection), sensitive: num(l.agentPriceSensitive) },
+    volumes: { normal: num(l.volumeNormalM3), inspection: num(l.volumeInspectionM3), sensitive: num(l.volumeSensitiveM3), special: num(l.volumeSpecialM3) },
+    clientPrices: { normal: num(l.clientPriceNormal), inspection: num(l.clientPriceInspection), sensitive: num(l.clientPriceSensitive), special: num(l.clientPriceSpecial) },
+    agentPrices: { normal: num(l.agentPriceNormal), inspection: num(l.agentPriceInspection), sensitive: num(l.agentPriceSensitive), special: num(l.agentPriceSpecial) },
     rebateAmount: num(l.rebateAmount),
     prealertCreatedAt: l.prealertCreatedAt.toISOString(),
     signedAt: iso(l.signedAt),

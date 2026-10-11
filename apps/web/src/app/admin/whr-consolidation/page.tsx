@@ -8,6 +8,7 @@ import { createRequestGate } from "../../../modules/shared/request-gate";
 import { useLiveRefresh } from "../../../modules/realtime/useRealtime";
 import { createYieldGuard } from "../../../modules/realtime/yield-guard";
 import { parseUnitPrice, unitPriceIssue } from "../../../modules/shared/unit-price";
+import { CARGO_TYPES, CARGO_TYPE_ZH, cargoTypeZh, SPECIAL_CARGO_DEFAULT_PRICE } from "../../../../../../packages/shared-types/cargo-type";
 
 const jsonPost = { "Content-Type": "application/json" } as const;
 
@@ -194,6 +195,7 @@ interface CustomerDetail {
   unitPriceNormal: number;
   unitPriceInspection: number;
   unitPriceSensitive: number;
+  unitPriceSpecial: number;
   totalVolumeM3: number;
   totalFee: number | null;
   feeBreakdown?: FeeBreakdown | null;
@@ -227,11 +229,12 @@ interface ClientOption {
   status?: string | null;
   /** 2026-09-16：/admin/users?role=client 只给超管，带所属代理和长期价（员工页那套接口没有） */
   agentName?: string | null;
-  whrPrice?: { normal: number; inspection: number; sensitive: number } | null;
+  whrPrice?: { normal: number; inspection: number; sensitive: number; special?: number } | null;
 }
 
 /**
- * 2026-09-18 老板拍板改回来：建柜时**每位客户当场填三档单价**（每个柜价格都不一样）。
+ * 2026-09-18 老板拍板改回来：建柜时**每位客户当场填各档单价**（每个柜价格都不一样）。
+ * 2026-10-11 多了第四档特别货：先填好默认 1250，能改（老板「1a」）。
  * 9-16 到 9-18 之间是「按客户长期价自动带出」，那套不用了（长期价的表和接口留着，只是没人读）。
  */
 interface CreateCustomerForm {
@@ -239,10 +242,14 @@ interface CreateCustomerForm {
   unitPriceNormal: string;
   unitPriceInspection: string;
   unitPriceSensitive: string;
+  unitPriceSpecial: string;
 }
 
-const priceText = (p: { normal: number; inspection: number; sensitive: number }) =>
-  `普货 ${p.normal} · 商检货 ${p.inspection} · 敏感货 ${p.sensitive} 元/方`;
+/** 特别货那一格预填的默认价（2026-10-11 老板「1a」：默认 1250、能改） */
+const SPECIAL_PRICE_PREFILL = String(SPECIAL_CARGO_DEFAULT_PRICE);
+
+const priceText = (p: { normal: number; inspection: number; sensitive: number; special?: number }) =>
+  `普货 ${p.normal} · 商检货 ${p.inspection} · 敏感货 ${p.sensitive}${p.special != null ? ` · 特别货 ${p.special}` : ""} 元/方`;
 
 // ============================================================================
 // 共用样式
@@ -321,17 +328,19 @@ export default function AdminWhrConsolidationPage() {
   /**
    * --- 改单价（2026-09-18 老板拍板恢复：「每次柜价格都不一样的」）---
    * 9-16 到 9-18 之间这块停用过（那阵子改价走客户长期价）。现在回到老规矩：
-   * 在柜详情里改这位客户的三档价，改完他**没付款**的单按新价重算（已付款的不动）。
+   * 在柜详情里改这位客户的各档价，改完他**没付款**的单按新价重算（已付款的不动）。
    */
   const [priceTarget, setPriceTarget] = useState<CustomerDetail | null>(null);
   const [editPriceNormal, setEditPriceNormal] = useState("");
   const [editPriceInspection, setEditPriceInspection] = useState("");
   const [editPriceSensitive, setEditPriceSensitive] = useState("");
+  const [editPriceSpecial, setEditPriceSpecial] = useState("");
   const [priceSubmitting, setPriceSubmitting] = useState(false);
-  // 加客户时当场填的三档价（2026-09-18）
+  // 加客户时当场填的各档价（2026-09-18）
   const [addPriceNormal, setAddPriceNormal] = useState("");
   const [addPriceInspection, setAddPriceInspection] = useState("");
   const [addPriceSensitive, setAddPriceSensitive] = useState("");
+  const [addPriceSpecial, setAddPriceSpecial] = useState(SPECIAL_PRICE_PREFILL);
   // 撤销付款（2026-08-07）
   const [revokingId, setRevokingId] = useState("");
   // 新增 / 移除参与客户（2026-08-07）
@@ -524,11 +533,16 @@ export default function AdminWhrConsolidationPage() {
         return;
       }
     }
-    // 三档单价当场填（2026-09-18）：页面先挡一次，说了算的是后端那道 requireUnitPrice
+    // 各档单价当场填（2026-09-18）：页面先挡一次，说了算的是后端那道 requireUnitPrice
     for (let i = 0; i < selectedCustomers.length; i++) {
       const c = selectedCustomers[i];
       const name = c.clientId || `第 ${i + 1} 位客户`;
-      const checks: Array<[string, string]> = [["普货", c.unitPriceNormal], ["商检货", c.unitPriceInspection], ["敏感货", c.unitPriceSensitive]];
+      const checks: Array<[string, string]> = [
+        ["普货", c.unitPriceNormal],
+        ["商检货", c.unitPriceInspection],
+        ["敏感货", c.unitPriceSensitive],
+        ["特别货", c.unitPriceSpecial],
+      ];
       for (const [label, raw] of checks) {
         const issue = unitPriceIssue(label, raw);
         if (issue) { setModalError(`${name}的${issue}`); return; }
@@ -552,6 +566,7 @@ export default function AdminWhrConsolidationPage() {
               unitPriceNormal: parseUnitPrice(c.unitPriceNormal),
               unitPriceInspection: parseUnitPrice(c.unitPriceInspection),
               unitPriceSensitive: parseUnitPrice(c.unitPriceSensitive),
+              unitPriceSpecial: parseUnitPrice(c.unitPriceSpecial),
             })),
           }),
         }
@@ -732,13 +747,19 @@ export default function AdminWhrConsolidationPage() {
     setAddPriceNormal("");
     setAddPriceInspection("");
     setAddPriceSensitive("");
+    setAddPriceSpecial(SPECIAL_PRICE_PREFILL);
     loadClients();
   };
 
   /** 改这位客户在本柜的单价：改完他没付款的单按新价重算（2026-09-18 恢复） */
   const handleUpdatePrice = async () => {
     if (!priceTarget || !selectedPlanId) return;
-    const checks: Array<[string, string]> = [["普货", editPriceNormal], ["商检货", editPriceInspection], ["敏感货", editPriceSensitive]];
+    const checks: Array<[string, string]> = [
+      ["普货", editPriceNormal],
+      ["商检货", editPriceInspection],
+      ["敏感货", editPriceSensitive],
+      ["特别货", editPriceSpecial],
+    ];
     let filled = 0;
     for (const [label, raw] of checks) {
       if (!String(raw).trim()) continue; // 留空 = 这一档不改
@@ -750,8 +771,8 @@ export default function AdminWhrConsolidationPage() {
     setPriceSubmitting(true);
     try {
       /**
-       * ⚠️ 只发**真的改过**的那几档：弹窗打开时三档都预填着，全发过去的话，
-       * 我开着弹窗这段时间别人改了另外两档，我一保存就把人家的改动覆盖回去了（复核第 11 条）。
+       * ⚠️ 只发**真的改过**的那几档：弹窗打开时各档都预填着，全发过去的话，
+       * 我开着弹窗这段时间别人改了另外几档，我一保存就把人家的改动覆盖回去了（复核第 11 条）。
        */
       const changed = (input: string, current: number): number | undefined => {
         const text = String(input).trim();
@@ -765,9 +786,15 @@ export default function AdminWhrConsolidationPage() {
         unitPriceNormal: changed(editPriceNormal, priceTarget.unitPriceNormal),
         unitPriceInspection: changed(editPriceInspection, priceTarget.unitPriceInspection),
         unitPriceSensitive: changed(editPriceSensitive, priceTarget.unitPriceSensitive),
+        unitPriceSpecial: changed(editPriceSpecial, priceTarget.unitPriceSpecial),
       };
-      if (payload.unitPriceNormal === undefined && payload.unitPriceInspection === undefined && payload.unitPriceSensitive === undefined) {
-        setModalError("三档价都跟原来一样，没什么要改的");
+      if (
+        payload.unitPriceNormal === undefined &&
+        payload.unitPriceInspection === undefined &&
+        payload.unitPriceSensitive === undefined &&
+        payload.unitPriceSpecial === undefined
+      ) {
+        setModalError("各档价都跟原来一样，没什么要改的");
         setPriceSubmitting(false);
         return;
       }
@@ -786,15 +813,20 @@ export default function AdminWhrConsolidationPage() {
   const handleAddCustomer = async () => {
     if (!selectedPlanId) return;
     if (!addClientId) { setModalError("请选择客户"); return; }
-    // 三档单价当场填（2026-09-18 老板拍板）。页面先挡一次，说了算的是后端那道 requireUnitPrice
-    const priceChecks: Array<[string, string]> = [["普货", addPriceNormal], ["商检货", addPriceInspection], ["敏感货", addPriceSensitive]];
+    // 各档单价当场填（2026-09-18 老板拍板）。页面先挡一次，说了算的是后端那道 requireUnitPrice
+    const priceChecks: Array<[string, string]> = [
+      ["普货", addPriceNormal],
+      ["商检货", addPriceInspection],
+      ["敏感货", addPriceSensitive],
+      ["特别货", addPriceSpecial],
+    ];
     for (const [label, raw] of priceChecks) {
       const issue = unitPriceIssue(label, raw);
       if (issue) { setModalError(issue); return; }
     }
     setAddSubmitting(true);
     try {
-      const r = await apiRequest<{ unitPriceNormal?: number; unitPriceInspection?: number; unitPriceSensitive?: number }>(`${apiBaseUrl()}/admin/whr-consolidation/customers/add`, {
+      const r = await apiRequest<{ unitPriceNormal?: number; unitPriceInspection?: number; unitPriceSensitive?: number; unitPriceSpecial?: number }>(`${apiBaseUrl()}/admin/whr-consolidation/customers/add`, {
         method: "POST",
         headers: jsonPost,
         body: JSON.stringify({
@@ -803,10 +835,11 @@ export default function AdminWhrConsolidationPage() {
           unitPriceNormal: parseUnitPrice(addPriceNormal),
           unitPriceInspection: parseUnitPrice(addPriceInspection),
           unitPriceSensitive: parseUnitPrice(addPriceSensitive),
+          unitPriceSpecial: parseUnitPrice(addPriceSpecial),
         }),
       });
       setToast(r?.unitPriceNormal != null
-        ? `客户已加入本计划，单价：${priceText({ normal: r.unitPriceNormal, inspection: r.unitPriceInspection ?? 0, sensitive: r.unitPriceSensitive ?? 0 })}`
+        ? `客户已加入本计划，单价：${priceText({ normal: r.unitPriceNormal, inspection: r.unitPriceInspection ?? 0, sensitive: r.unitPriceSensitive ?? 0, special: r.unitPriceSpecial })}`
         : "客户已加入本计划");
       setShowAddCustomer(false);
       loadDetail(selectedPlanId);
@@ -1017,6 +1050,7 @@ export default function AdminWhrConsolidationPage() {
                             <span>普货：{c.unitPriceNormal} 元/方</span>
                             <span>商检货：{c.unitPriceInspection} 元/方</span>
                             <span>敏感货：{c.unitPriceSensitive} 元/方</span>
+                            <span>特别货：{c.unitPriceSpecial} 元/方</span>
                             {/* 2026-09-18 老板拍板恢复：柜里能改单价（每个柜价格都不一样）。
                                 只有还在「计划中 / 收货中 / 装柜中」的柜能改（跟后端 REPRICE_PLAN_STATUSES 同一份名单）：
                                 「已完成」的柜里每一票都泰国签收、都付过款了，改价不会改金额，
@@ -1034,6 +1068,7 @@ export default function AdminWhrConsolidationPage() {
                                   setEditPriceNormal(prefill(c.unitPriceNormal));
                                   setEditPriceInspection(prefill(c.unitPriceInspection));
                                   setEditPriceSensitive(prefill(c.unitPriceSensitive));
+                                  setEditPriceSpecial(prefill(c.unitPriceSpecial));
                                 }}
                                 style={{ ...btnCancel, padding: "4px 12px", fontSize: 12 }}
                               >改单价</button>
@@ -1220,12 +1255,10 @@ export default function AdminWhrConsolidationPage() {
                                                           onChange={(e) => { e.stopPropagation(); handleChangeItemCargoType(it.id, e.target.value); }}
                                                           style={{ fontSize: 11, padding: "1px 2px" }}
                                                         >
-                                                          <option value="normal">普货</option>
-                                                          <option value="inspection">商检货</option>
-                                                          <option value="sensitive">敏感货</option>
+                                                          {CARGO_TYPES.map((c) => <option key={c} value={c}>{CARGO_TYPE_ZH[c]}</option>)}
                                                         </select>
                                                       ) : (
-                                                        it.cargoType === "inspection" ? "商检货" : it.cargoType === "sensitive" ? "敏感货" : "普货"
+                                                        cargoTypeZh(it.cargoType)
                                                       )}
                                                     </td>
                                                     <td style={{ ...tdS, padding: "3px 5px", fontSize: 11 }}>{it.material}</td>
@@ -1332,7 +1365,7 @@ export default function AdminWhrConsolidationPage() {
                             <td style={{ ...tdS, padding: "3px 6px", fontSize: 11 }}>{it.packageCount}</td>
                             <td style={{ ...tdS, padding: "3px 6px", fontSize: 11 }}>{it.volumeM3 != null ? (typeof it.volumeM3 === "number" ? it.volumeM3.toFixed(3) : it.volumeM3) : "-"}</td>
                             <td style={{ ...tdS, padding: "3px 6px", fontSize: 11 }}>{it.totalWeightKg != null ? it.totalWeightKg : "-"}</td>
-                            <td style={{ ...tdS, padding: "3px 6px", fontSize: 11 }}>{it.cargoType === "inspection" ? "商检货" : it.cargoType === "sensitive" ? "敏感货" : "普货"}</td>
+                            <td style={{ ...tdS, padding: "3px 6px", fontSize: 11 }}>{cargoTypeZh(it.cargoType)}</td>
                           </tr>
                         ))}
                       </tbody>
@@ -1444,7 +1477,7 @@ export default function AdminWhrConsolidationPage() {
             <div style={{ fontSize: 13, color: "var(--t-muted)", marginBottom: 10 }}>
               只改这一柜给他的价。改完他<b>没付款</b>的单会按新价重算；已经付过款的单金额不动。留空的那一档不改。
             </div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginTop: 10 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: 8, marginTop: 10 }}>
               <div>
                 <label style={fl}>普货单价 (元/方)</label>
                 <input type="number" min="0" step="0.01" value={editPriceNormal} onChange={e => setEditPriceNormal(e.target.value)} style={fi} />
@@ -1456,6 +1489,10 @@ export default function AdminWhrConsolidationPage() {
               <div>
                 <label style={fl}>敏感货单价 (元/方)</label>
                 <input type="number" min="0" step="0.01" value={editPriceSensitive} onChange={e => setEditPriceSensitive(e.target.value)} style={fi} />
+              </div>
+              <div>
+                <label style={fl}>特别货单价 (元/方)</label>
+                <input type="number" min="0" step="0.01" value={editPriceSpecial} onChange={e => setEditPriceSpecial(e.target.value)} style={fi} />
               </div>
             </div>
             {modalError && (
@@ -1504,11 +1541,11 @@ export default function AdminWhrConsolidationPage() {
                 </div>
                 <div style={{ fontSize: 12, color: "var(--t-muted)", marginTop: 4 }}>共 {options.length} 位可选</div>
               </div>
-              {/* 2026-09-18 老板拍板：加客户也当场填这一柜的三档单价 */}
+              {/* 2026-09-18 老板拍板：加客户也当场填这一柜的各档单价（10-11 起特别货先填 1250，能改） */}
               <div style={{ marginTop: 12 }}>
                 <label style={fl}>这一柜给他的单价（元/方，必填）</label>
                 <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-                  {([["普货", addPriceNormal, setAddPriceNormal], ["商检货", addPriceInspection, setAddPriceInspection], ["敏感货", addPriceSensitive, setAddPriceSensitive]] as Array<[string, string, (v: string) => void]>).map(([label, value, setter]) => (
+                  {([["普货", addPriceNormal, setAddPriceNormal], ["商检货", addPriceInspection, setAddPriceInspection], ["敏感货", addPriceSensitive, setAddPriceSensitive], ["特别货", addPriceSpecial, setAddPriceSpecial]] as Array<[string, string, (v: string) => void]>).map(([label, value, setter]) => (
                     <label key={label} style={{ display: "flex", alignItems: "center", gap: 4 }}>
                       <span style={{ color: "var(--t-muted)", fontSize: 13 }}>{label}</span>
                       <input type="number" min="0" step="0.01" value={value} onChange={(e) => setter(e.target.value)} style={{ ...fi, width: 100, padding: "4px 8px" }} />
@@ -1586,7 +1623,7 @@ export default function AdminWhrConsolidationPage() {
                           <td style={{ ...tdS, padding: "4px 8px", textAlign: "center" }}>
                             <input type="checkbox" checked={isChecked} onChange={() => {
                               if (isChecked) setSelectedCustomers(selectedCustomers.filter(sc => sc.clientId !== cl.id));
-                              else setSelectedCustomers([...selectedCustomers, { clientId: cl.id, unitPriceNormal: "", unitPriceInspection: "", unitPriceSensitive: "" }]);
+                              else setSelectedCustomers([...selectedCustomers, { clientId: cl.id, unitPriceNormal: "", unitPriceInspection: "", unitPriceSensitive: "", unitPriceSpecial: SPECIAL_PRICE_PREFILL }]);
                             }} />
                           </td>
                           <td style={{ ...tdS, padding: "4px 8px" }}>{cl.id}</td>
@@ -1614,7 +1651,7 @@ export default function AdminWhrConsolidationPage() {
                   return (
                     <div key={sc.clientId} style={{ border: "1px solid var(--l-soft)", borderRadius: 6, padding: "8px 12px", marginBottom: 6, fontSize: 13, display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
                       <span style={{ fontWeight: 600, minWidth: 90 }}>{sc.clientId}</span>
-                      {([["普货", "unitPriceNormal"], ["商检货", "unitPriceInspection"], ["敏感货", "unitPriceSensitive"]] as Array<[string, keyof CreateCustomerForm]>).map(([label, field]) => (
+                      {([["普货", "unitPriceNormal"], ["商检货", "unitPriceInspection"], ["敏感货", "unitPriceSensitive"], ["特别货", "unitPriceSpecial"]] as Array<[string, keyof CreateCustomerForm]>).map(([label, field]) => (
                         <label key={field} style={{ display: "flex", alignItems: "center", gap: 4 }}>
                           <span style={{ color: "var(--t-muted)" }}>{label}</span>
                           <input

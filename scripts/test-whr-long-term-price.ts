@@ -80,8 +80,8 @@ const prealertRow = (id: string, customerId: string, trackingNo: string, status:
   receivedAt: T0, signedAt: T0, warehouseReceiptProofs: [], paymentProofs: [], paymentProofUploadedAt: null, totalFee,
   paymentReviewedAt: null, paymentReviewedBy: null, paymentRejectReason: null, thailandReceiptProofs: [], thailandReceivedAt: null,
   cancelReason: null, cancelledAt: null,
-  paidPriceNormal: null, paidPriceInspection: null, paidPriceSensitive: null, paidAgentId: null,
-  paidAgentPriceNormal: null, paidAgentPriceInspection: null, paidAgentPriceSensitive: null, rebateAmount: null,
+  paidPriceNormal: null, paidPriceInspection: null, paidPriceSensitive: null, paidPriceSpecial: null, paidAgentId: null,
+  paidAgentPriceNormal: null, paidAgentPriceInspection: null, paidAgentPriceSensitive: null, paidAgentPriceSpecial: null, rebateAmount: null,
   createdAt: T0, updatedAt: T1,
 });
 
@@ -108,13 +108,14 @@ function seed(): void {
   );
   db.agent.push({
     id: AGENT_ID, companyId: "c1", name: AGENT_NAME, logoPath: null, slug: null, customDomain: null,
-    priceNormal: 500, priceInspection: 600, priceSensitive: 700, createdAt: T0, updatedAt: T0,
+    // 特别货（2026-10-11）：库里默认 1250（迁移 20261011_special_cargo_type），内存库不会自己补默认值，夹具里写上
+    priceNormal: 500, priceInspection: 600, priceSensitive: 700, priceSpecial: 1250, createdAt: T0, updatedAt: T0,
   });
   db.clientWhrPrice.push(
-    { clientId: C_AG, companyId: "c1", priceNormal: 600, priceInspection: 700, priceSensitive: 800, updatedBy: "zz_b1_agentlogin", updatedByRole: "agent", createdAt: T0, updatedAt: T0 },
+    { clientId: C_AG, companyId: "c1", priceNormal: 600, priceInspection: 700, priceSensitive: 800, priceSpecial: 1250, updatedBy: "zz_b1_agentlogin", updatedByRole: "agent", createdAt: T0, updatedAt: T0 },
     // 上线回填的行：操作人为空
-    { clientId: C_XT, companyId: "c1", priceNormal: 550, priceInspection: 650, priceSensitive: 750, updatedBy: null, updatedByRole: null, createdAt: T0, updatedAt: T0 },
-    { clientId: C_NEW_LOW, companyId: "c1", priceNormal: 450, priceInspection: 650, priceSensitive: 750, updatedBy: ADMIN.userId, updatedByRole: "admin", createdAt: T0, updatedAt: T0 },
+    { clientId: C_XT, companyId: "c1", priceNormal: 550, priceInspection: 650, priceSensitive: 750, priceSpecial: 1250, updatedBy: null, updatedByRole: null, createdAt: T0, updatedAt: T0 },
+    { clientId: C_NEW_LOW, companyId: "c1", priceNormal: 450, priceInspection: 650, priceSensitive: 750, priceSpecial: 1250, updatedBy: ADMIN.userId, updatedByRole: "admin", createdAt: T0, updatedAt: T0 },
   );
   const plan = (id: string, planNo: string, status: string): Row => ({
     id, companyId: "c1", planNo, warehouse: "义乌", containerType: "40HQ", destinationTh: "曼谷", totalVolumeM3: 68,
@@ -123,6 +124,7 @@ function seed(): void {
   db.whrConsolidationPlan.push(plan(P1, "WHR0009001", "collecting"), plan(P2, "WHR0009002", "collecting"));
   const pc = (id: string, clientId: string, prices: [number, number, number], address: string): Row => ({
     id, planId: P1, companyId: "c1", clientId, unitPriceNormal: prices[0], unitPriceInspection: prices[1], unitPriceSensitive: prices[2],
+    unitPriceSpecial: 1250,
     totalVolumeM3: 0, totalFee: null, deliveryAddress: address, totalPrealerts: 1, totalPackages: 4, createdAt: T0, updatedAt: T0,
   });
   db.whrConsolidationPlanCustomer.push(pc(PC_A, C_AG, [600, 700, 800], "曼谷一号路"), pc(PC_X, C_XT, [550, 650, 750], "曼谷二号路"));
@@ -371,13 +373,13 @@ async function main(): Promise<void> {
     const { assertNotBelowAgentFloors } = await import("../apps/api/src/modules/whr-consolidation/long-term-price");
     const floors = new Map([["someone-else", { agentId: null, floor: null }]]);
     assert.throws(
-      () => assertNotBelowAgentFloors(floors, [{ clientId: C_AG, prices: { normal: 1, inspection: 1, sensitive: 1 } }], "admin"),
+      () => assertNotBelowAgentFloors(floors, [{ clientId: C_AG, prices: { normal: 1, inspection: 1, sensitive: 1, special: 1 } }], "admin"),
       /刚刚被换过/,
       "表里没有这个客户却放行了 —— 这道算钱的闸等于没有",
     );
     // 查过、确实没有下限（湘泰客户）要照常放行
     const xtFloors = new Map([[C_XT, { agentId: null, floor: null }]]);
-    assertNotBelowAgentFloors(xtFloors, [{ clientId: C_XT, prices: { normal: 1, inspection: 1, sensitive: 1 } }], "admin");
+    assertNotBelowAgentFloors(xtFloors, [{ clientId: C_XT, prices: { normal: 1, inspection: 1, sensitive: 1, special: 1 } }], "admin");
   });
 
   await check("5d) 改单价：锁之前这个客户被移出柜了 → 锁里重读拦下，404 不报服务器错误、什么都没写", async () => {
@@ -817,6 +819,32 @@ async function main(): Promise<void> {
     assert.equal(mem.db.user.find((u) => u.id === "zz_b1_new3")!.agentId, null);
   });
 
+  await check("24b) 建客户号密码必填（2026-10-11 Codex 两轮审查）：两个开户入口不传 / 空白密码都 400、什么都不建；员工号密码照旧选填", async () => {
+    seed();
+    for (const password of [undefined, "", "   "]) {
+      const r = await callRoute("POST /admin/users/client", ADMIN, { body: { id: "zz_b1_nopw1", name: "新客户", phone: "0811", ...(password === undefined ? {} : { password }) } });
+      assert.equal(r.status, 400, `/admin/users/client 密码=${JSON.stringify(password)} 没挡住：${r.message}`);
+      assert.match(r.message, /登录密码为必填/);
+      const r2 = await callRoute("POST /admin/users", ADMIN, { body: { id: "zz_b1_nopw2", role: "client", name: "新客户", phone: "0811", ...(password === undefined ? {} : { password }) } });
+      assert.equal(r2.status, 400, `/admin/users(role=client) 密码=${JSON.stringify(password)} 没挡住：${r2.message}`);
+      assert.match(r2.message, /登录密码为必填/, "报错被别的原因（比如代理）盖住了");
+    }
+    // 代理填错 + 没密码：先报密码（dsh 第 3 轮：注定被拒的请求别先查代理）
+    const both = await callRoute("POST /admin/users", ADMIN, { body: { id: "zz_b1_nopw3", role: "client", name: "新客户", phone: "0811", agentId: "zz_nope" } });
+    assert.equal(both.status, 400);
+    assert.match(both.message, /登录密码为必填/);
+    assert.ok(!mem.db.user.some((u) => ["zz_b1_nopw1", "zz_b1_nopw2", "zz_b1_nopw3"].includes(u.id)), "被挡了还建出了号");
+    const staff = await callRoute("POST /admin/users", ADMIN, { body: { id: "zz_b1_staffnopw", name: "新员工", phone: "0812" } });
+    assert.equal(staff.status, 200, `员工号不填密码应照旧能建：${staff.message}`);
+    // 正例：这个入口带密码开客户照常能建，而且是客户、密码能验
+    const okClient = await callRoute("POST /admin/users", ADMIN, { body: { id: "zz_b1_pwok", role: "client", name: "新客户", phone: "0813", password: "  Pw123456  " } });
+    assert.equal(okClient.status, 200, okClient.message);
+    const row = mem.db.user.find((u) => u.id === "zz_b1_pwok")!;
+    assert.equal(row.role, "client");
+    const { verifyPassword } = await import("../apps/api/src/modules/auth/crypto-utils");
+    assert.ok(verifyPassword("Pw123456", row.passwordHash), "存进去的密码（去掉两头空格后）验不过");
+  });
+
   await check("25) 改归属：有业务记录 409；长期价低于代理价 409；干净的客户能改（先拿客户价锁再写）；只改名字不碰这道闸", async () => {
     seed();
     const withRecords = await callRoute("POST /admin/users/client/update", ADMIN, { body: { id: C_XT, agentId: AGENT_ID } });
@@ -1080,6 +1108,144 @@ async function main(): Promise<void> {
     const r = await callRoute("POST /admin/whr-consolidation/address", ADMIN, { body: { planId: P1, customerId: PC_A, deliveryAddress: "新地址" } });
     assert.equal(r.status, 404, `${r.status} ${r.message}`);
     assert.deepEqual(writes(), [], "客户被移出柜了还写了东西");
+  });
+
+  /* ───────────── 特别货（2026-10-11 老板「新增一个货型，叫特别货」→ 价格「1a2a」） ───────────── */
+
+  await check("S1) 建柜：特别货价不传按 1250（老页面）、传了按填的存；0.001 照样拦；代理客户的特别货价不能低于代理特别货价", async () => {
+    seed();
+    const r = await callRoute("POST /admin/whr-consolidation/plans", ADMIN, {
+      body: {
+        destinationTh: "曼谷",
+        customers: [
+          { clientId: C_XT, unitPriceNormal: 520, unitPriceInspection: 620, unitPriceSensitive: 720 },
+          { clientId: C_NOPRICE, unitPriceNormal: 520, unitPriceInspection: 620, unitPriceSensitive: 720, unitPriceSpecial: 1300 },
+        ],
+      },
+    });
+    assert.equal(r.status, 200, r.message);
+    const rows = mem.db.whrConsolidationPlanCustomer.filter((x) => x.planId === r.data.id);
+    const special = Object.fromEntries(rows.map((x) => [x.clientId, x.unitPriceSpecial]));
+    assert.equal(special[C_XT], 1250, "没传特别货价要按默认 1250");
+    assert.equal(special[C_NOPRICE], 1300, "传了特别货价要按填的存");
+    seed();
+    const tiny = await callRoute("POST /admin/whr-consolidation/plans", ADMIN, {
+      body: { destinationTh: "曼谷", customers: [{ clientId: C_XT, unitPriceNormal: 520, unitPriceInspection: 620, unitPriceSensitive: 720, unitPriceSpecial: 0.001 }] },
+    });
+    assert.equal(tiny.status, 400);
+    assert.match(tiny.message, /特别货单价/);
+    assert.deepEqual(writes().filter((w) => w.startsWith("write:whrConsolidationPlan")), [], "被拦下还建了柜");
+    // 代理特别货价调到 1300：代理客户特别货价默认 1250 低于它 → 拦，点名特别货；填 1300 放行
+    seed();
+    mem.db.agent[0].priceSpecial = 1300;
+    const low = await callRoute("POST /admin/whr-consolidation/plans", ADMIN, {
+      body: { destinationTh: "曼谷", customers: [{ clientId: C_AG, unitPriceNormal: 600, unitPriceInspection: 700, unitPriceSensitive: 800 }] },
+    });
+    assert.equal(low.status, 400, low.message);
+    assert.match(low.message, /特别货/);
+    const okAg = await callRoute("POST /admin/whr-consolidation/plans", ADMIN, {
+      body: { destinationTh: "曼谷", customers: [{ clientId: C_AG, unitPriceNormal: 600, unitPriceInspection: 700, unitPriceSensitive: 800, unitPriceSpecial: 1300 }] },
+    });
+    assert.equal(okAg.status, 200, okAg.message);
+  });
+
+  await check("S2) 加客户：特别货价不传按 1250、传了按填的；存进去也回给前端", async () => {
+    seed();
+    const r = await callRoute("POST /admin/whr-consolidation/customers/add", STAFF, {
+      body: { planId: P2, clientId: C_NOPRICE, unitPriceNormal: 500, unitPriceInspection: 600, unitPriceSensitive: 700 },
+    });
+    assert.equal(r.status, 200, r.message);
+    const row = mem.db.whrConsolidationPlanCustomer.find((x) => x.planId === P2 && x.clientId === C_NOPRICE)!;
+    assert.equal(row.unitPriceSpecial, 1250);
+    assert.equal(r.data.unitPriceSpecial, 1250);
+    seed();
+    const r2 = await callRoute("POST /admin/whr-consolidation/customers/add", STAFF, {
+      body: { planId: P2, clientId: C_NOPRICE, unitPriceNormal: 500, unitPriceInspection: 600, unitPriceSensitive: 700, unitPriceSpecial: 1350 },
+    });
+    assert.equal(r2.status, 200, r2.message);
+    assert.equal(mem.db.whrConsolidationPlanCustomer.find((x) => x.planId === P2 && x.clientId === C_NOPRICE)!.unitPriceSpecial, 1350);
+    assert.equal(r2.data.unitPriceSpecial, 1350);
+  });
+
+  await check("S3) 改货型成特别货：按特别货价重算（2 普 + 1 特：2×550 + 1250 = 2350）；只改特别货价：没付款的单跟着重算（→ 2400），另外三档不动", async () => {
+    seed();
+    const r = await callRoute("POST /admin/whr-consolidation/prealerts/item-cargo-type", ADMIN, { body: { itemId: "zz_b1_iX2", cargoType: "special" } });
+    assert.equal(r.status, 200, r.message);
+    assert.equal(Number(pa(PA_X).totalFee), 2350);
+    const p = await callRoute("POST /admin/whr-consolidation/customers/price", ADMIN, { body: { planId: P1, customerId: PC_X, unitPriceSpecial: 1300 } });
+    assert.equal(p.status, 200, p.message);
+    assert.deepEqual(
+      [pcRow(PC_X).unitPriceNormal, pcRow(PC_X).unitPriceInspection, pcRow(PC_X).unitPriceSensitive, pcRow(PC_X).unitPriceSpecial],
+      [550, 650, 750, 1300],
+    );
+    assert.equal(Number(pa(PA_X).totalFee), 2400);
+    // 特别货价 0.001 照样拦
+    const tiny = await callRoute("POST /admin/whr-consolidation/customers/price", ADMIN, { body: { planId: P1, customerId: PC_X, unitPriceSpecial: 0.001 } });
+    assert.equal(tiny.status, 400);
+    // 认不出来的货型照样拦
+    const bad = await callRoute("POST /admin/whr-consolidation/prealerts/item-cargo-type", ADMIN, { body: { itemId: "zz_b1_iX2", cargoType: "weird" } });
+    assert.equal(bad.status, 400);
+  });
+
+  await check("S4) 客户看得到特别货：柜详情给特别货单价、费用明细写「特别货」那一行（1 方 × 1250）；客户列表给自己的特别货价", async () => {
+    seed();
+    mem.db.whrConsolidationPrealertItem.find((x) => x.id === "zz_b1_iX2")!.cargoType = "special";
+    pa(PA_X).totalFee = 2 * 550 + 1250;
+    const d = await callRoute("GET /client/whr-consolidation/my-detail", CLIENT_XT, { query: { planId: P1 } });
+    assert.equal(d.status, 200, d.message);
+    assert.equal(d.data.unitPriceSpecial, 1250);
+    const row = d.data.feeBreakdown.rows.find((x: Row) => x.cargoType === "special");
+    assert.ok(row, `费用明细里没有特别货那一行：${JSON.stringify(d.data.feeBreakdown)}`);
+    assert.deepEqual([row.label, row.unitPrice, row.amount], ["特别货", 1250, 1250]);
+    assert.equal(d.data.feeBreakdown.matchesStored, true, "明细加起来要跟单子金额对得上");
+    const list = await callRoute("GET /client/whr-consolidation/plans", CLIENT_XT, { query: {} });
+    assert.equal(list.status, 200, list.message);
+    assert.equal(list.data.items.find((x: Row) => x.planId === P1).myUnitPriceSpecial, 1250);
+  });
+
+  await check("S4b) 客户自己报货：货型能选特别货（存 special）；认不出来的货型 400 什么都不写", async () => {
+    seed();
+    const PA_P = "zz_b1_paP";
+    mem.db.whrConsolidationPrealert.push(prealertRow(PA_P, PC_X, "WHRP9003", "pending", null));
+    const line = (cargoType: string): Row => ({
+      productName: "特别的货", packageCount: 1, quantityPerBox: 1, lengthCm: 100, widthCm: 100, heightCm: 100,
+      material: "铁", cargoValue: "500", cargoType,
+    });
+    const bad = await callRoute("POST /client/whr-consolidation/prealerts/items", CLIENT_XT, { body: { planId: P1, prealertId: PA_P, items: [line("weird")] } });
+    assert.equal(bad.status, 400, bad.message);
+    assert.match(bad.message, /货物类型不合法/);
+    assert.deepEqual(writes(), [], "被拦下还写了库");
+    const r = await callRoute("POST /client/whr-consolidation/prealerts/items", CLIENT_XT, { body: { planId: P1, prealertId: PA_P, items: [line("special")] } });
+    assert.equal(r.status, 200, r.message);
+    const items = mem.db.whrConsolidationPrealertItem.filter((x) => x.prealertId === PA_P);
+    assert.deepEqual(items.map((x) => x.cargoType), ["special"]);
+  });
+
+  await check("S5) 代理客户付款：特别货也记快照（客户 1300 / 代理 1250），返现 = 1.5×100 + 0.5×50 = 175；撤销付款特别货快照一起清", async () => {
+    seed();
+    mem.db.whrConsolidationPrealertItem.find((x) => x.id === "zz_b1_iA2")!.cargoType = "special";
+    pcRow(PC_A).unitPriceSpecial = 1300;
+    pa(PA_A).totalFee = 1.5 * 600 + 0.5 * 1300; // 1550
+    const r = await callRoute("POST /client/whr-consolidation/pay", CLIENT_AG, { body: { planId: P1, prealertId: PA_A } });
+    assert.equal(r.status, 200, r.message);
+    const row = pa(PA_A);
+    assert.deepEqual([row.paidPriceSpecial, row.paidAgentPriceSpecial], [1300, 1250]);
+    assert.equal(row.rebateAmount, 175);
+    assert.equal(balanceOf(C_AG), 5000 - 1550);
+    assertNoAgentInfo("客户付款的返回", r.wire);
+    const rv = await callRoute("POST /admin/whr-consolidation/payments/revoke", ADMIN, { body: { prealertId: PA_A, reason: "点错了" } });
+    assert.equal(rv.status, 200, rv.message);
+    assert.deepEqual([pa(PA_A).paidPriceSpecial, pa(PA_A).paidAgentPriceSpecial], [null, null], "撤销付款后特别货快照没清");
+  });
+
+  await check("S6) 付款最后一道闸也认特别货：代理客户单子金额跟柜里特别货价对不上 → 409 不扣钱", async () => {
+    seed();
+    mem.db.whrConsolidationPrealertItem.find((x) => x.id === "zz_b1_iA2")!.cargoType = "special";
+    pa(PA_A).totalFee = 1.5 * 600 + 0.5 * 800; // 还是按敏感货算的旧金额，跟特别货 1250 对不上
+    const r = await callRoute("POST /client/whr-consolidation/pay", CLIENT_AG, { body: { planId: P1, prealertId: PA_A } });
+    assert.equal(r.status, 409, `${r.status} ${r.message}`);
+    assert.equal(balanceOf(C_AG), 5000);
+    assert.equal(pa(PA_A).status, "received_pending_payment");
   });
 
   if (failures.length > 0) {

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState, useCallback, useRef } from "react";
+import { CARGO_TYPES, CARGO_TYPE_ZH, cargoTypeZh } from "../../../../../../packages/shared-types/cargo-type";
 import {
   fetchAdminConsolidationTasks,
   fetchStaffConsolidationTaskDetail,
@@ -784,9 +785,7 @@ export default function AdminConsolidationPage() {
                       <td style={tdS}><input value={r.cargoValue} onChange={(e) => { const next = [...editProductRows]; next[i] = { ...next[i], cargoValue: e.target.value }; setEditProductRows(next); }} style={miniInput} /></td>
                       <td style={tdS}>
                         <select value={r.cargoType} onChange={(e) => { const next = [...editProductRows]; next[i] = { ...next[i], cargoType: e.target.value }; setEditProductRows(next); }} style={{ ...miniInput, width: 70 }}>
-                          <option value="normal">普货</option>
-                          <option value="inspection">商检货</option>
-                          <option value="sensitive">敏感货</option>
+                          {CARGO_TYPES.map((c) => <option key={c} value={c}>{CARGO_TYPE_ZH[c]}</option>)}
                         </select>
                       </td>
                       <td style={{ ...tdS, color: "var(--t-muted)" }}>{totalQty || "-"}</td>
@@ -940,7 +939,7 @@ function AdminPrealertRow({
                   <td style={tdS}>{p.volume?.toFixed(4)}</td>
                   <td style={tdS}>{p.material}</td>
                   <td style={tdS}>{p.cargoValue}</td>
-                  <td style={tdS}>{p.cargoType === "inspection" ? "商检货" : p.cargoType === "sensitive" ? "敏感货" : "普货"}</td>
+                  <td style={tdS}>{cargoTypeZh(p.cargoType)}</td>
                   <td style={{ ...tdS, textAlign: "center" }}>
                     {p.productImageBase64 ? (
                       <button

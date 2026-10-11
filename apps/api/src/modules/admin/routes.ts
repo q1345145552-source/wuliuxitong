@@ -436,7 +436,7 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
         agentId: true,
         agent: { select: { name: true } },
         whrPrice: {
-          select: { priceNormal: true, priceInspection: true, priceSensitive: true, updatedByRole: true, updatedAt: true },
+          select: { priceNormal: true, priceInspection: true, priceSensitive: true, priceSpecial: true, updatedByRole: true, updatedAt: true },
         },
       },
     });
@@ -461,6 +461,7 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
                     normal: Number(r.whrPrice.priceNormal),
                     inspection: Number(r.whrPrice.priceInspection),
                     sensitive: Number(r.whrPrice.priceSensitive),
+                    special: Number(r.whrPrice.priceSpecial),
                     // 谁填的：admin / agent；null = 上线时按最近一个柜的价自动回填的那批
                     filledByRole: r.whrPrice.updatedByRole ?? null,
                     updatedAt: r.whrPrice.updatedAt.toISOString(),
@@ -1195,6 +1196,14 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
       fail(res, 400, "BAD_REQUEST", "name and phone are required");
       return;
     }
+    const targetRole = body.role === "client" ? "client" : "staff";
+    const rawPassword = typeof body.password === "string" ? body.password.trim() : "";
+    // 这个入口也能开客户（role=client）：客户号没密码就谁都登不进，跟 /admin/users/client 一样必填（2026-10-11 Codex 第 2 轮）。
+    // 员工号照旧选填（建好后再「设置密码」）。排在查代理之前（dsh 第 3 轮：注定被拒的请求别先查库，报错也别被代理那句盖住）。
+    if (targetRole === "client" && !rawPassword) {
+      fail(res, 400, "BAD_REQUEST", "登录密码为必填");
+      return;
+    }
     // 2026-09-16：这个入口开客户时也认「所属代理」（设计文档第 3 节：两个开客户入口都要带）；开员工不认
     const agentInput = body.role === "client" ? await readAgentIdInput(body.agentId, auth.companyId) : undefined;
     if (agentInput && "error" in agentInput) {
@@ -1204,8 +1213,6 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
 
     const rawId = typeof body.id === "string" ? body.id.trim() : "";
     const id = rawId || `u_${body.role === "client" ? "client" : "staff"}_${Date.now()}`;
-    const targetRole = body.role === "client" ? "client" : "staff";
-    const rawPassword = typeof body.password === "string" ? body.password.trim() : "";
 
     // 新开的员工账号不许用弱口令（客户账号不管，见 set-password 那里的说明）
     if (targetRole === "staff" && rawPassword) {
@@ -1259,6 +1266,12 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
     const phone = typeof body.phone === "string" ? body.phone.trim() : "";
     if (!name || !phone) {
       fail(res, 400, "BAD_REQUEST", "客户名字和电话号码为必填");
+      return;
+    }
+    /* 2026-10-11（Codex 审查）：原来不填密码也能建，建出来的号 password_hash 是空的，用什么密码都登不进 ——
+       跟老板报的「建了号登不上」是同一个样子。弹窗本来就标着「登录密码 *」，后端这里补上真正的必填。 */
+    if (typeof body.password !== "string" || !body.password.trim()) {
+      fail(res, 400, "BAD_REQUEST", "登录密码为必填");
       return;
     }
     const agentInput = await readAgentIdInput(body.agentId, auth.companyId);
@@ -1480,17 +1493,23 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
       unitPriceNormal?: unknown;
       unitPriceInspection?: unknown;
       unitPriceSensitive?: unknown;
+      unitPriceSpecial?: unknown;
     };
     const clientId = typeof body.clientId === "string" ? body.clientId.trim() : "";
     if (!clientId) {
       fail(res, 400, "BAD_REQUEST", "请选择客户");
       return;
     }
-    const rawPrices = { normal: body.unitPriceNormal, inspection: body.unitPriceInspection, sensitive: body.unitPriceSensitive };
+    const rawPrices = {
+      normal: body.unitPriceNormal,
+      inspection: body.unitPriceInspection,
+      sensitive: body.unitPriceSensitive,
+      // 特别货（2026-10-11）：没传就不动原来的特别货价（见 setClientWhrPrice）
+      special: body.unitPriceSpecial,
+    };
     // 价不合法就别碰数据库（跟 setClientWhrPrice 同一套校验）
-    let prices;
     try {
-      prices = parseWhrPriceInput(rawPrices);
+      parseWhrPriceInput(rawPrices);
     } catch (e) {
       if (e instanceof BusinessError) {
         fail(res, 400, "BAD_REQUEST", e.message);
@@ -1524,9 +1543,10 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
       actor: { userId: auth.userId, role: auth.role },
     });
 
+    // 回锁里真正存进去的那份（特别货没传时是原值，不是默认 1250；也不在事务外补读，免得拼出别人的价）
     ok(res, {
       clientId,
-      whrPrice: { normal: prices.normal, inspection: prices.inspection, sensitive: prices.sensitive },
+      whrPrice: result.prices,
       updatedPlanRows: result.updatedPlanRows,
     });
   });

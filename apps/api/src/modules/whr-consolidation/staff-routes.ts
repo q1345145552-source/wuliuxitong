@@ -14,6 +14,7 @@ import {
   round3,
   syncPlanStatus,
   toNum,
+  UNIT_PRICE_SELECT,
 } from "./utils";
 
 /** 单张凭证 base64 上限（约 8MB 原图） */
@@ -164,6 +165,7 @@ export function registerWhrConsolidationStaffRoutes(app: MinimalHttpApp): void {
         unitPriceNormal: c.unitPriceNormal,
         unitPriceInspection: c.unitPriceInspection,
         unitPriceSensitive: c.unitPriceSensitive,
+        unitPriceSpecial: c.unitPriceSpecial,
       },
       pa.totalFee,
     );
@@ -191,6 +193,7 @@ export function registerWhrConsolidationStaffRoutes(app: MinimalHttpApp): void {
       unitPriceNormal: toNum(c.unitPriceNormal),
       unitPriceInspection: toNum(c.unitPriceInspection),
       unitPriceSensitive: toNum(c.unitPriceSensitive),
+      unitPriceSpecial: toNum(c.unitPriceSpecial),
       items: pa.items.map((it: any) => ({
         id: it.id,
         productName: it.productName,
@@ -263,12 +266,7 @@ export function registerWhrConsolidationStaffRoutes(app: MinimalHttpApp): void {
       },
       include: {
         planCustomer: {
-          select: {
-            id: true,
-            unitPriceNormal: true,
-            unitPriceInspection: true,
-            unitPriceSensitive: true,
-          },
+          select: { id: true, ...UNIT_PRICE_SELECT },
         },
         items: { select: { cargoType: true, volumeM3: true } },
       },
@@ -338,7 +336,7 @@ export function registerWhrConsolidationStaffRoutes(app: MinimalHttpApp): void {
           select: {
             status: true,
             planCustomer: {
-              select: { unitPriceNormal: true, unitPriceInspection: true, unitPriceSensitive: true },
+              select: UNIT_PRICE_SELECT,
             },
             items: { select: { cargoType: true, volumeM3: true } },
           },
@@ -730,6 +728,7 @@ export function registerWhrConsolidationStaffRoutes(app: MinimalHttpApp): void {
                 unitPriceNormal: toNum(c.unitPriceNormal),
                 unitPriceInspection: toNum(c.unitPriceInspection),
                 unitPriceSensitive: toNum(c.unitPriceSensitive),
+                unitPriceSpecial: toNum(c.unitPriceSpecial),
                 totalVolumeM3: round3(allItems.reduce((s, it) => s + toNum(it.volumeM3), 0)),
                 totalFee: c.totalFee == null ? null : toNum(c.totalFee),
                 deliveryAddress: c.deliveryAddress,

@@ -28,7 +28,7 @@ export const PLAN_STATUS_ZH: Record<string, string> = {
   cancelled: "已取消",
 };
 
-export const CARGO_ZH: Record<string, string> = { normal: "普货", inspection: "商检货", sensitive: "敏感货" };
+export const CARGO_ZH: Record<string, string> = { normal: "普货", inspection: "商检货", sensitive: "敏感货", special: "特别货" };
 
 const TAG: Record<string, { bg: string; color: string }> = {
   planning: { bg: "#EEF2FB", color: "#1e3a8a" },
@@ -73,8 +73,8 @@ export function fmtM3(n: number | null | undefined): string {
   if (n == null || !Number.isFinite(n)) return "—";
   return String(Number(n.toFixed(3)));
 }
-export function priceText(p: { normal: number; inspection: number; sensitive: number }): string {
-  return `普货 ${p.normal} / 商检 ${p.inspection} / 敏感 ${p.sensitive} 元/方`;
+export function priceText(p: { normal: number; inspection: number; sensitive: number; special?: number }): string {
+  return `普货 ${p.normal} / 商检 ${p.inspection} / 敏感 ${p.sensitive}${p.special != null ? ` / 特别 ${p.special}` : ""} 元/方`;
 }
 
 export function SectionHeader({ title, desc, actions }: { title: string; desc?: string; actions?: ReactNode }) {

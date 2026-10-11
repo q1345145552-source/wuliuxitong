@@ -10,6 +10,7 @@
  * 普通运单那边照旧不显示）。
  */
 import { useCallback, useEffect, useRef, useState } from "react";
+import { CARGO_TYPE_ZH as SHARED_CARGO_TYPE_ZH } from "../../../../../../packages/shared-types/cargo-type";
 import { amount2 } from "../../../modules/shared/money-format";
 import {
   fetchMyFclContainers,
@@ -23,7 +24,8 @@ import EmptyStateCard from "../../../modules/layout/EmptyStateCard";
 import { beijingDate } from "../../../modules/shared/beijing-date";
 import { useLiveRefresh } from "../../../modules/realtime/useRealtime";
 
-const CARGO_TYPE_ZH: Record<string, string> = { normal: "普货", inspection: "商检货", sensitive: "敏感货" };
+// 货型中文：用共享那一份（2026-10-11 加特别货时收过来，原来这里抄了三个）
+const CARGO_TYPE_ZH: Record<string, string> = SHARED_CARGO_TYPE_ZH;
 
 const card: React.CSSProperties = { background: "var(--white)", border: "1px solid var(--l-soft)", borderRadius: 10, padding: 16, marginBottom: 16 };
 const fl: React.CSSProperties = { display: "block", fontSize: 12, color: "var(--t-muted)", marginBottom: 4 };

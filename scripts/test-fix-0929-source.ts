@@ -73,7 +73,7 @@ async function main(): Promise<void> {
 
   await check("G3 仓库版费用明细：每一行「方数 × 单价」四舍五入到分正好等于金额；合并后同样对得上", async () => {
     const utils = await import("../apps/api/src/modules/whr-consolidation/utils");
-    const prices = { unitPriceNormal: 850, unitPriceInspection: 950, unitPriceSensitive: 1200 };
+    const prices = { unitPriceNormal: 850, unitPriceInspection: 950, unitPriceSensitive: 1200, unitPriceSpecial: 1250 };
     // 33.3×22.2×11.1cm × 7 件 = 0.057441 方（测试员实测那一票）
     const items = [
       { cargoType: "sensitive", volumeM3: 0.057441 },

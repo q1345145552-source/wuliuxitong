@@ -1,8 +1,9 @@
 /**
- * 货型（普货 / 商检货 / 敏感货）—— 2026-09-11 老板：「批量上传运单的模板不正确，
+ * 货型（普货 / 商检货 / 敏感货 / 特别货）—— 2026-09-11 老板：「批量上传运单的模板不正确，
  * 需要加一个货型，不然默认普货。」
+ * 2026-10-11 老板：「新增一个货型，叫特别货」，存 `special`；混装时排最严（他回「按建议」）。
  *
- * 库里存的是 `normal` / `inspection` / `sensitive`（schema.prisma 上就写着这三个），
+ * 库里存的是 `normal` / `inspection` / `sensitive` / `special`（2026-10-11 起四个），
  * 人填的是中文。批量导入原来**根本没有这一列**，一律写死 `cargoType: "normal"`，
  * 所以仓库表里填了「商检」的货导进系统全变普货，要人工一张张改回来。
  *
@@ -10,7 +11,8 @@
  * 商检货被当普货走掉是真会出事的（清关要的单据完全不同），
  * 跟这个仓库其它地方一个规矩：宁可拦住让人改，也不偷偷填一个数。
  */
-export const CARGO_TYPES = ["normal", "inspection", "sensitive"] as const;
+/** ⚠️ 顺序就是各处下拉的顺序：新加的往后放，别插在中间 */
+export const CARGO_TYPES = ["normal", "inspection", "sensitive", "special"] as const;
 export type CargoType = (typeof CARGO_TYPES)[number];
 
 /** 存的值 → 中文（跟 ShipmentTableGrid 的 cargoTypeLabelOf 一致） */
@@ -18,7 +20,25 @@ export const CARGO_TYPE_ZH: Record<CargoType, string> = {
   normal: "普货",
   inspection: "商检货",
   sensitive: "敏感货",
+  special: "特别货",
 };
+
+/**
+ * 特别货的默认单价，元/方（2026-10-11 老板：「特别货的价格是1250」→「1a2a」）—— 只有仓库版集货按货型算钱：
+ *   · 建柜 / 加客户时特别货那一格先填 1250，能改（1A）；后端没收到这一格（老页面）也按 1250；
+ *   · 新建代理时给代理的特别货价也默认 1250（2A，= 默认不产生返现，代理管理里能改）。
+ * 库里那几列的默认值也是 1250（迁移 20261011_special_cargo_type），改这里要连迁移的默认值一起想。
+ */
+export const SPECIAL_CARGO_DEFAULT_PRICE = 1250;
+
+/**
+ * 存的值 → 中文。认不出来 / 没填按普货显示（各处原来各写一个三元表达式，加特别货时收成这一个，
+ * 免得哪处漏了把特别货显示成普货）。
+ */
+export function cargoTypeZh(value: string | null | undefined): string {
+  const zh = CARGO_TYPE_ZH as Record<string, string>;
+  return zh[(value ?? "").trim().toLowerCase()] ?? CARGO_TYPE_ZH.normal;
+}
 
 /** Excel 里可能出现的各种写法。全角、空格、大小写都先抹平再比。 */
 const CARGO_TYPE_ALIASES: Record<string, CargoType> = {
@@ -34,6 +54,9 @@ const CARGO_TYPE_ALIASES: Record<string, CargoType> = {
   敏感: "sensitive",
   敏感货: "sensitive",
   sensitive: "sensitive",
+  特别: "special",
+  特别货: "special",
+  special: "special",
 };
 
 export type CargoTypeParse = {
@@ -64,15 +87,17 @@ export function parseCargoType(raw: unknown): CargoTypeParse | null {
 }
 
 /** 填错时给人看的那句话 —— 三处调用方共用一份，别各写一句 */
-export const CARGO_TYPE_HINT = "货型只能填「普货」「商检货」「敏感货」之一，留空按普货";
+export const CARGO_TYPE_HINT = "货型只能填「普货」「商检货」「敏感货」「特别货」之一，留空按普货";
 
 /**
  * 一张运单上多条产品行货型不一样时，运单这一层记哪个。
  *
- * 取**最严**的那个（敏感 > 商检 > 普货）：少报一张商检单会卡在清关，
+ * 取**最严**的那个（特别 > 敏感 > 商检 > 普货）：少报一张商检单会卡在清关，
  * 多报一张只是多准备材料。跟父单状态取「最慢」是同一个保守方向。
+ * 2026-10-11 特别货排最前（老板「按建议」：一票里只要有一件特别货，整票就算特别货）。
  */
 export function strictestCargoType(values: readonly CargoType[]): CargoType {
+  if (values.includes("special")) return "special";
   if (values.includes("sensitive")) return "sensitive";
   if (values.includes("inspection")) return "inspection";
   return "normal";

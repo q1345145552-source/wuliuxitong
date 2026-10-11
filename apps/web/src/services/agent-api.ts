@@ -11,6 +11,8 @@ export interface PriceTriple {
   normal: number;
   inspection: number;
   sensitive: number;
+  /** 特别货（2026-10-11 加） */
+  special: number;
 }
 
 function qs(params: Record<string, string | number | undefined | null>): string {
@@ -272,7 +274,7 @@ export function fetchAgentClients(): Promise<{ agentPrices: PriceTriple; items: 
 }
 export function saveAgentClientPrice(input: { clientId: string; prices: PriceTriple }): Promise<{
   clientId: string;
-  price: (PriceTriple & { updatedAt: string }) | null;
+  price: (PriceTriple & { updatedAt: string | null }) | null;
   updatedPlanRows: number;
 }> {
   return apiRequest(`${apiBaseUrl()}/agent/clients/price`, {

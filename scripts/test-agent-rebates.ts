@@ -335,6 +335,30 @@ async function main(): Promise<void> {
     assert.equal(gen.buildRebateLine(prealert("p4", { paidAgentPriceInspection: null }) as any), null);
   });
 
+  await check("4b) 特别货（2026-10-11）：老快照没有特别货那格 → 没特别货的票照常进单（补 0）；有特别货却没特别货快照 → 不进单；有快照 → 按特别货差价算", () => {
+    // 加特别货之前付的款：快照里没有特别货两格（库里是空），货里也没有特别货 → 照常进单，特别货记 0
+    const old = gen.buildRebateLine(prealert("s1", { paidPriceSpecial: null, paidAgentPriceSpecial: null, rebateAmount: null }) as any)!;
+    assert.ok(old, "老单不许因为没有特别货快照就从返现单里消失");
+    assert.equal(old.rebateAmount, 20);
+    assert.deepEqual([old.volumeSpecialM3, old.clientPriceSpecial, old.agentPriceSpecial], [0, 0, 0]);
+    // 有特别货、快照里却没有特别货价：数据不全，跟别的档缺快照一样不进单
+    assert.equal(
+      gen.buildRebateLine(prealert("s2", { paidPriceSpecial: null, paidAgentPriceSpecial: null, items: [{ productName: "x", cargoType: "special", volumeM3: 1 }] }) as any),
+      null,
+    );
+    // 有特别货、快照齐：2 方特别货 × (1400 − 1250) + 1 方普货 × (520 − 500) = 300 + 20 = 320
+    const sp = gen.buildRebateLine(prealert("s3", {
+      rebateAmount: null,
+      paidPriceSpecial: "1400.00",
+      paidAgentPriceSpecial: "1250.00",
+      items: [{ productName: "x", cargoType: "special", volumeM3: 2 }, { productName: "y", cargoType: "normal", volumeM3: 1 }],
+    }) as any)!;
+    assert.equal(sp.rebateAmount, 320);
+    assert.deepEqual([sp.volumeSpecialM3, sp.volumeNormalM3], [2, 1]);
+    assert.equal(sp.clientPriceSpecial, "1400.00");
+    assert.equal(sp.agentPriceSpecial, "1250.00");
+  });
+
   // ── 端到端：跑生成器 ──
   db.agents = [
     { id: "agent_jia", companyId: "c1", name: "代理甲" },
@@ -476,8 +500,9 @@ async function main(): Promise<void> {
     for (const key of ["mark", "productNames", "volumes", "clientPrices", "agentPrices", "rebateAmount", "prealertCreatedAt", "signedAt", "paidAt", "loadedAt", "shippedAt", "thailandReceivedAt", "trackingNo", "planNo"]) {
       assert.ok(line[key] !== undefined && line[key] !== null, `明细缺 ${key}`);
     }
-    assert.deepEqual(line.clientPrices, { normal: 520, inspection: 600, sensitive: 650 });
-    assert.deepEqual(line.agentPrices, { normal: 500, inspection: 550, sensitive: 600 });
+    // 夹具是加特别货（2026-10-11）之前的老快照：特别货那一格是空的，明细里补 0（那时不可能有特别货）
+    assert.deepEqual(line.clientPrices, { normal: 520, inspection: 600, sensitive: 650, special: 0 });
+    assert.deepEqual(line.agentPrices, { normal: 500, inspection: 550, sensitive: 600, special: 0 });
     assert.ok(!("containerNo" in line), "不给柜号（3.11 暂缓）");
     const other = await call("GET", `/admin/agents/rebates/detail?id=${aug.id}`, tokenFor("zz_admin_c2"));
     assert.equal(other.status, 404, "别家公司看不到");

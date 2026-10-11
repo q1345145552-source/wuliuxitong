@@ -52,7 +52,7 @@ const ui = load(path.join(root, "components/admin/agents/agent-ui.tsx"));
 const AgentFormModal = load(modalEntry).default;
 const agent = {
   id: "a1", name: "雨江测试", slug: "yujiang", customDomain: "yujiang.xianlianth.com",
-  loginId: "yujiang", loginStatus: "active", clientCount: 3, logoUrl: "", prices: { normal: 6, inspection: 7, sensitive: 8 },
+  loginId: "yujiang", loginStatus: "active", clientCount: 3, logoUrl: "", prices: { normal: 6, inspection: 7, sensitive: 8, special: 9 },
 };
 const renderModal = (props: object) => renderToStaticMarkup(createElement(AgentFormModal, { onClose() {}, onSaved() {}, ...props }));
 

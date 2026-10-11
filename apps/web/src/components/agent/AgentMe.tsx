@@ -28,6 +28,7 @@ export default function AgentMe() {
                   <tr><td style={td}>普货</td><td style={tdNum}>{data.prices.normal}</td></tr>
                   <tr><td style={td}>商检货</td><td style={tdNum}>{data.prices.inspection}</td></tr>
                   <tr><td style={td}>敏感货</td><td style={tdNum}>{data.prices.sensitive}</td></tr>
+                  <tr><td style={td}>特别货</td><td style={tdNum}>{data.prices.special}</td></tr>
                 </tbody>
               </table>
             </TableWrap>

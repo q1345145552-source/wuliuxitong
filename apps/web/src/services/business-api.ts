@@ -50,7 +50,7 @@ export interface ClientPrealertPayload {
   receiverPhoneTh?: string;
   receiverAddressTh?: string;
   trackingNo?: string;
-  /** 整票货型（2026-09-11）：normal / inspection / sensitive，不传按普货 */
+  /** 整票货型（2026-09-11）：normal / inspection / sensitive / special（特别货，10-11 加），不传按普货 */
   cargoType?: string;
   products?: Array<{
     itemName: string;
@@ -334,6 +334,8 @@ export interface AdminClientWhrPrice {
   normal: number;
   inspection: number;
   sensitive: number;
+  /** 特别货（2026-10-11 加，默认 1250） */
+  special: number;
   /** 谁填的：admin / agent；null = 上线时按这个客户最近一个柜的价自动填的 */
   filledByRole: string | null;
   updatedAt: string;
@@ -367,7 +369,9 @@ export async function setAdminClientWhrPrice(payload: {
   unitPriceNormal: number;
   unitPriceInspection: number;
   unitPriceSensitive: number;
-}): Promise<{ clientId: string; whrPrice: { normal: number; inspection: number; sensitive: number }; updatedPlanRows: number }> {
+  /** 特别货：不传就不动原来的特别货价 */
+  unitPriceSpecial?: number;
+}): Promise<{ clientId: string; whrPrice: { normal: number; inspection: number; sensitive: number; special: number }; updatedPlanRows: number }> {
   return apiRequest(`${apiBaseUrl()}/admin/clients/whr-price`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -1400,7 +1404,8 @@ export async function createAdminClient(payload: {
   companyName?: string;
   phone: string;
   email?: string;
-  password?: string;
+  /** 2026-10-11 起必填：不填建出来的号谁都登不进，后端会回 400 */
+  password: string;
   /** 2026-09-16：开在哪个代理名下；不传 / null = 湘泰自己的客户 */
   agentId?: string | null;
 }, signal?: AbortSignal): Promise<{ id: string; name: string; companyName: string | null; phone: string; email: string | null; createdAt: string; agentId: string | null; agentName: string | null }> {
@@ -2020,7 +2025,7 @@ export interface ConsolidationProductItem {
   volume: number | null;
   material: string;
   cargoValue: string;
-  /** 货型：normal | inspection | sensitive。只作记录，不参与计价 */
+  /** 货型：normal | inspection | sensitive | special。只作记录，不参与计价 */
   cargoType: string;
   productImageFileName: string | null;
   productImageMime: string | null;

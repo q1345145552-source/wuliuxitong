@@ -1,8 +1,8 @@
 /* ==========================================================================
    仓库版集货：客户长期价（2026-09-16，确认单 4.3 / 4.4 / 4.7 / 4.14 / 4.19）
    --------------------------------------------------------------------------
-   原来每进一个柜当场手填三档价；现在每个客户填一次长期价，加进柜子时自动带出。
-   改了长期价以后：这个客户在「计划中/收货中/装柜中」柜里的三档价跟着改，
+   原来每进一个柜当场手填各档价；现在每个客户填一次长期价，加进柜子时自动带出。
+   改了长期价以后：这个客户在「计划中/收货中/装柜中」柜里的各档价跟着改，
    只重算**没付款**的单（已付款的金额在付款那一刻就定死了，4.14）。
 
    ⚠️ 这里**不管调用者权限**：谁能改谁的价（超管只改湘泰客户、代理只改自己名下客户、
@@ -32,11 +32,14 @@ import { canSeeOperatorIdentity } from "../core/operator-visibility";
 import { BusinessError } from "../core/business-error";
 import { requireUnitPrice } from "../core/decimal-guard";
 import { recalcCustomerTotals, recalcUnpaidPrealertFees, toNum } from "./utils";
+import { CARGO_BUCKETS, SPECIAL_CARGO_DEFAULT_PRICE } from "./rebate";
 
+/** 各档价（名字沿用「Triple」，2026-10-11 起是四档：多了特别货 special） */
 export interface WhrPriceTriple {
   normal: number;
   inspection: number;
   sensitive: number;
+  special: number;
 }
 
 type Tx = any;
@@ -61,6 +64,7 @@ const PRICE_LABEL: Record<keyof WhrPriceTriple, string> = {
   normal: "普货",
   inspection: "商检货",
   sensitive: "敏感货",
+  special: "特别货",
 };
 
 const toCents = (n: number): number => Math.round(n * 100);
@@ -71,21 +75,21 @@ export async function getClientWhrPrice(clientId: string, tx: Tx = prisma): Prom
   if (!clientId) return null;
   const row = await tx.clientWhrPrice.findUnique({
     where: { clientId },
-    select: { priceNormal: true, priceInspection: true, priceSensitive: true },
+    select: { priceNormal: true, priceInspection: true, priceSensitive: true, priceSpecial: true },
   });
   if (!row) return null;
-  return { normal: toNum(row.priceNormal), inspection: toNum(row.priceInspection), sensitive: toNum(row.priceSensitive) };
+  return { normal: toNum(row.priceNormal), inspection: toNum(row.priceInspection), sensitive: toNum(row.priceSensitive), special: toNum(row.priceSpecial) };
 }
 
-/** 湘泰给代理的三档价；代理不存在返回 null */
+/** 湘泰给代理的各档价；代理不存在返回 null */
 export async function getAgentPrices(agentId: string, tx: Tx = prisma): Promise<WhrPriceTriple | null> {
   if (!agentId) return null;
   const row = await tx.agent.findUnique({
     where: { id: agentId },
-    select: { priceNormal: true, priceInspection: true, priceSensitive: true },
+    select: { priceNormal: true, priceInspection: true, priceSensitive: true, priceSpecial: true },
   });
   if (!row) return null;
-  return { normal: toNum(row.priceNormal), inspection: toNum(row.priceInspection), sensitive: toNum(row.priceSensitive) };
+  return { normal: toNum(row.priceNormal), inspection: toNum(row.priceInspection), sensitive: toNum(row.priceSensitive), special: toNum(row.priceSpecial) };
 }
 
 /**
@@ -97,13 +101,15 @@ export async function lockClientWhrPrice(tx: Tx, clientId: string): Promise<void
 }
 
 /**
- * 三档价校验（不碰数据库）：都必填、都过 requireUnitPrice。
- * 返回 number 三档；不合法抛 BusinessError（最外层转 400）。
+ * 各档价校验（不碰数据库）：都过 requireUnitPrice。普货 / 商检 / 敏感必填；
+ * 特别货（2026-10-11）没传按默认 1250（老页面不会传这一档，老板定的默认就是 1250），传了照样校验。
+ * 返回 number 各档；不合法抛 BusinessError（最外层转 400）。
  */
-export function parseWhrPriceInput(prices: Record<keyof WhrPriceTriple, unknown> | null | undefined): WhrPriceTriple {
+export function parseWhrPriceInput(prices: Partial<Record<keyof WhrPriceTriple, unknown>> | null | undefined): WhrPriceTriple {
   const out = {} as WhrPriceTriple;
-  for (const key of ["normal", "inspection", "sensitive"] as const) {
-    const raw = prices?.[key];
+  for (const key of CARGO_BUCKETS) {
+    const given = prices?.[key];
+    const raw = key === "special" && (given == null || given === "") ? SPECIAL_CARGO_DEFAULT_PRICE : given;
     const label = `${PRICE_LABEL[key]}单价`;
     const issue = raw == null || raw === "" ? `${label}为必填` : requireUnitPrice(raw, label);
     if (issue) throw new BusinessError(issue, 400, "BAD_REQUEST");
@@ -118,7 +124,7 @@ export function parseWhrPriceInput(prices: Record<keyof WhrPriceTriple, unknown>
  */
 export function checkNotBelowAgentPrice(prices: WhrPriceTriple, agentPrices: WhrPriceTriple): string | null {
   const issues: string[] = [];
-  for (const key of ["normal", "inspection", "sensitive"] as const) {
+  for (const key of CARGO_BUCKETS) {
     if (toCents(prices[key]) < toCents(agentPrices[key])) {
       issues.push(`${PRICE_LABEL[key]}不能低于湘泰给你的价 ${formatPrice(agentPrices[key])} 元/方`);
     }
@@ -178,7 +184,7 @@ export async function lockAgentPriceFloors(
   //    不能靠「上面那个变量已经排过了」—— 下一个改代码的人看不见就等于没有（test-lock-order.ts 第 6 项）
   for (const agentId of [...agentIds].sort()) {
     // 按 id 排序逐个拿共享锁（调高代理价那边拿的是排他锁，两边自然排队）
-    const rows = await tx.$queryRaw<Array<{ price_normal: unknown; price_inspection: unknown; price_sensitive: unknown }>>`SELECT price_normal, price_inspection, price_sensitive FROM agents WHERE id = ${agentId} AND company_id = ${companyId} FOR SHARE`;
+    const rows = await tx.$queryRaw<Array<{ price_normal: unknown; price_inspection: unknown; price_sensitive: unknown; price_special: unknown }>>`SELECT price_normal, price_inspection, price_sensitive, price_special FROM agents WHERE id = ${agentId} AND company_id = ${companyId} FOR SHARE`;
     if (!rows || rows.length === 0) {
       /**
        * ⚠️ 这句话也要分人说：原来一律说「这个客户**所属的代理**不存在」，
@@ -196,6 +202,7 @@ export async function lockAgentPriceFloors(
       normal: toNum(rows[0].price_normal),
       inspection: toNum(rows[0].price_inspection),
       sensitive: toNum(rows[0].price_sensitive),
+      special: toNum(rows[0].price_special),
     });
   }
   for (const c of clients) {
@@ -233,7 +240,7 @@ export function assertNotBelowAgentFloors(
       throw new BusinessError("这个客户刚刚被换过了（可能被移出柜或改了归属），请刷新页面后重试", 400, "BAD_REQUEST");
     }
     if (!hit.floor) continue; // 湘泰自己的客户：查过了，确实没有下限
-    for (const key of ["normal", "inspection", "sensitive"] as const) {
+    for (const key of CARGO_BUCKETS) {
       if (toCents(entry.prices[key]) < toCents(hit.floor[key])) {
         // 点名用唛头（就是账号），不用客户名字：名字只给内部在「客户管理」里看，而且有重名（杨先名下 3 个账号）
         //（2026-09-18 老板：「唛头=账号，客户名字是只有我们内部看的」）
@@ -272,7 +279,7 @@ export async function assertPlanPricesNotBelowAgent(
 export interface SetClientWhrPriceInput {
   companyId: string;
   clientId: string;
-  prices: Record<keyof WhrPriceTriple, unknown>;
+  prices: Partial<Record<keyof WhrPriceTriple, unknown>>;
   actor: { userId: string; role: string };
 }
 
@@ -280,11 +287,17 @@ export interface SetClientWhrPriceInput {
  * 填 / 改客户长期价，并把没付款的单按新价重算。
  *
  * 不传 tx 就自己开事务；传了就在调用方的事务里做（调用方负责它前面拿的锁不违反锁序）。
- * @returns updatedPlanRows 改了几个柜里这位客户的那一行
+ * @returns updatedPlanRows 改了几个柜里这位客户的那一行；
+ *          prices 锁里最终存进长期价的四档（2026-10-11 Codex 审查：没传特别货时是锁里读到的原值。
+ *          路由直接回这份，别在事务外再补读 —— 那样可能读到别人刚改的特别货价，拼出一组从没存在过的价）；
+ *          updatedAt 同一次写入的时间（Codex 第 3 轮：时间戳也别事务外补读）
  */
-export async function setClientWhrPrice(input: SetClientWhrPriceInput, tx?: Tx): Promise<{ updatedPlanRows: number }> {
+export async function setClientWhrPrice(input: SetClientWhrPriceInput, tx?: Tx): Promise<{ updatedPlanRows: number; prices: WhrPriceTriple; updatedAt: Date | null }> {
   // 参数不合法就别碰数据库
-  const prices = parseWhrPriceInput(input.prices);
+  const parsed = parseWhrPriceInput(input.prices);
+  /* 特别货（2026-10-11）那一档到底传没传：没传（只会传三档的老页面 / 老接口调用）就**不动**长期价和柜里已有的特别货价，
+     免得把别人填过的特别货价冲回默认 1250。新建长期价那一行时才用默认值。 */
+  const specialGiven = !(input.prices?.special === undefined || input.prices?.special === null || input.prices?.special === "");
   if (!input.companyId || !input.clientId) {
     throw new BusinessError("客户不存在", 404, "NOT_FOUND");
   }
@@ -302,9 +315,16 @@ export async function setClientWhrPrice(input: SetClientWhrPriceInput, tx?: Tx):
   });
   if (!client) throw new BusinessError("客户不存在", 404, "NOT_FOUND");
 
+  // 特别货没传：拿库里原来的长期价顶上（没有长期价才用默认），下限检查和存库都按它，不按默认 1250
+  let prices = parsed;
+  if (!specialGiven) {
+    const existing = await tx.clientWhrPrice.findUnique({ where: { clientId: client.id }, select: { priceSpecial: true } });
+    if (existing) prices = { ...parsed, special: toNum(existing.priceSpecial) };
+  }
+
   // ② 客户归代理：代理行拿共享锁（调高代理价那边拿排他锁），再判下限
   if (client.agentId) {
-    const agentRows = await tx.$queryRaw<Array<{ price_normal: unknown; price_inspection: unknown; price_sensitive: unknown }>>`SELECT price_normal, price_inspection, price_sensitive FROM agents WHERE id = ${client.agentId} AND company_id = ${input.companyId} FOR SHARE`;
+    const agentRows = await tx.$queryRaw<Array<{ price_normal: unknown; price_inspection: unknown; price_sensitive: unknown; price_special: unknown }>>`SELECT price_normal, price_inspection, price_sensitive, price_special FROM agents WHERE id = ${client.agentId} AND company_id = ${input.companyId} FOR SHARE`;
     if (!agentRows || agentRows.length === 0) {
       throw new BusinessError("这个客户所属的代理不存在，请联系管理员", 400, "BAD_REQUEST");
     }
@@ -312,6 +332,7 @@ export async function setClientWhrPrice(input: SetClientWhrPriceInput, tx?: Tx):
       normal: toNum(agentRows[0].price_normal),
       inspection: toNum(agentRows[0].price_inspection),
       sensitive: toNum(agentRows[0].price_sensitive),
+      special: toNum(agentRows[0].price_special),
     };
     const belowIssue = checkNotBelowAgentPrice(prices, agentPrices);
     if (belowIssue) throw new BusinessError(belowIssue, 400, "BAD_REQUEST");
@@ -329,8 +350,8 @@ export async function setClientWhrPrice(input: SetClientWhrPriceInput, tx?: Tx):
     if (planRows[0] && REPRICE_PLAN_STATUSES.includes(planRows[0].status)) livePlanIds.push(planId);
   }
 
-  // ④ 存长期价
-  await tx.clientWhrPrice.upsert({
+  // ④ 存长期价（拿回这一行的 updatedAt：跟 prices 是同一次写入，页面要显示「什么时候改的」就用它）
+  const savedRow = await tx.clientWhrPrice.upsert({
     where: { clientId: client.id },
     create: {
       clientId: client.id,
@@ -338,6 +359,7 @@ export async function setClientWhrPrice(input: SetClientWhrPriceInput, tx?: Tx):
       priceNormal: prices.normal,
       priceInspection: prices.inspection,
       priceSensitive: prices.sensitive,
+      priceSpecial: prices.special,
       updatedBy: input.actor.userId,
       updatedByRole: input.actor.role,
     },
@@ -346,12 +368,14 @@ export async function setClientWhrPrice(input: SetClientWhrPriceInput, tx?: Tx):
       priceNormal: prices.normal,
       priceInspection: prices.inspection,
       priceSensitive: prices.sensitive,
+      ...(specialGiven ? { priceSpecial: prices.special } : {}),
       updatedBy: input.actor.userId,
       updatedByRole: input.actor.role,
     },
   });
 
-  if (livePlanIds.length === 0) return { updatedPlanRows: 0 };
+  const updatedAt: Date | null = savedRow?.updatedAt instanceof Date ? savedRow.updatedAt : null;
+  if (livePlanIds.length === 0) return { updatedPlanRows: 0, prices, updatedAt };
 
   // ⑤ 锁里重查柜里这位客户的行，改价 → 只重算没付款的单 → 重算客户汇总（跟原 repriceCustomer 同一套）
   const planCustomers: Array<{ id: string; planId: string }> = await tx.whrConsolidationPlanCustomer.findMany({
@@ -366,6 +390,7 @@ export async function setClientWhrPrice(input: SetClientWhrPriceInput, tx?: Tx):
         unitPriceNormal: prices.normal,
         unitPriceInspection: prices.inspection,
         unitPriceSensitive: prices.sensitive,
+        ...(specialGiven ? { unitPriceSpecial: prices.special } : {}),
       },
     });
     /**
@@ -377,7 +402,7 @@ export async function setClientWhrPrice(input: SetClientWhrPriceInput, tx?: Tx):
     await recalcCustomerTotals(pc.id, tx);
   }
 
-  return { updatedPlanRows: planCustomers.length };
+  return { updatedPlanRows: planCustomers.length, prices, updatedAt };
 }
 
 /**
@@ -395,11 +420,11 @@ export async function setAgentClientWhrPrice(input: {
   companyId: string;
   agentId: string;
   clientId: string;
-  prices: Record<keyof WhrPriceTriple, unknown>;
+  prices: Partial<Record<keyof WhrPriceTriple, unknown>>;
   actor: { userId: string; role: string };
   /** 查不到时统一的说法：不区分「不存在」和「不是你名下的」 */
   notFoundMessage?: string;
-}): Promise<{ updatedPlanRows: number }> {
+}): Promise<{ updatedPlanRows: number; prices: WhrPriceTriple; updatedAt: Date | null }> {
   // 参数不合法就别碰数据库（跟 setClientWhrPrice 同一套校验）
   parseWhrPriceInput(input.prices);
   return prisma.$transaction(
@@ -435,9 +460,9 @@ export const AGENT_CLIENT_PRICE_READONLY_MESSAGE = "这个客户归代理管，�
 export async function setNonAgentClientWhrPrice(input: {
   companyId: string;
   clientId: string;
-  prices: Record<keyof WhrPriceTriple, unknown>;
+  prices: Partial<Record<keyof WhrPriceTriple, unknown>>;
   actor: { userId: string; role: string };
-}): Promise<{ updatedPlanRows: number }> {
+}): Promise<{ updatedPlanRows: number; prices: WhrPriceTriple; updatedAt: Date | null }> {
   // 参数不合法就别碰数据库（跟 setClientWhrPrice 同一套校验）
   parseWhrPriceInput(input.prices);
   return prisma.$transaction(

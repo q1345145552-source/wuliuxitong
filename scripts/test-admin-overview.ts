@@ -347,8 +347,12 @@ async function flushMicrotasks() { for (let i = 0; i < 8; i++) await Promise.res
 function mutationCaller(kind: "staff" | "client" | "ban" | "edit", loadOverview: (force?: boolean) => Promise<unknown>, options: {
   account?: RecordValue; write?: (signal?: AbortSignal) => Promise<unknown>; reload?: () => Promise<unknown>;
   banKind?: "员工" | "客户"; status?: string; confirmedStatus?: string; clock?: ReturnType<typeof fakeClock>;
+  /** 客户表单里的密码。默认：建号带一个测试密码（2026-10-11 起必填），编辑留空（= 不改密码，这条路必须照常能存） */
+  clientPassword?: string;
+  /** 名字留空（测「请填写…」那两条校验） */
+  blankName?: boolean;
 } = {}) {
-  const state = { writes: 0, reloads: 0, messages: [] as string[], toasts: [] as string[], loading: false, cleared: 0, signals: [] as (AbortSignal | undefined)[],
+  const state = { writes: 0, reloads: 0, messages: [] as string[], toasts: [] as string[], loading: false, cleared: 0, signals: [] as (AbortSignal | undefined)[], payloads: [] as unknown[],
     staff: [{ id: "u-test", status: options.status ?? "active" }], clients: [{ id: "u-test", status: options.status ?? "active" }] };
   const reload = async () => { state.reloads++; return options.reload?.(); };
   const write = async (signal?: AbortSignal) => { state.writes++; state.signals.push(signal); return options.write?.(signal); };
@@ -358,15 +362,16 @@ function mutationCaller(kind: "staff" | "client" | "ban" | "edit", loadOverview:
     ...(options.account ?? accountWriteHarness()),
     loading: false, setLoading: (value: boolean) => { state.loading = value; },
     setToast: (text: string) => { state.toasts.push(text); }, setMessage: (text: string) => { if (text) state.messages.push(text); },
-    staffForm: { id: "", name: "员工测试", phone: "13000000000", password: "" },
-    clientForm: { id: "", name: "客户测试", companyName: "", phone: "13000000001", email: "", password: "", agentId: "" },
+    staffForm: { id: "", name: options.blankName ? "" : "员工测试", phone: "13000000000", password: "" },
+    // 2026-10-11 起建客户号密码必填（Codex 审查：不填建出来的号登不进）；编辑客户留空 = 不改密码（Codex 第 2 轮：别让夹具把这条路盖住）
+    clientForm: { id: "", name: options.blankName ? "" : "客户测试", companyName: "", phone: "13000000001", email: "", password: options.clientPassword ?? (kind === "edit" ? "" : "Abc12345"), agentId: "" },
     editingClientId: "u-test", editingClientAgentId: null, setEditingClientId: () => {}, setEditingClientAgentId: () => {},
     agentOptions: [], setStaffForm: () => { state.cleared++; }, setClientForm: () => { state.cleared++; }, setShowStaffModal: () => {}, setShowClientModal: () => {},
     setStaffList: (fn: (rows: typeof state.staff) => typeof state.staff) => { state.staff = fn(state.staff); },
     setClientList: (fn: (rows: typeof state.clients) => typeof state.clients) => { state.clients = fn(state.clients); },
     createAdminStaff: (_payload: unknown, signal?: AbortSignal) => write(signal),
     createAdminClient: (_payload: unknown, signal?: AbortSignal) => write(signal),
-    updateAdminClient: (_payload: unknown, signal?: AbortSignal) => write(signal),
+    updateAdminClient: (payload: unknown, signal?: AbortSignal) => { state.payloads.push(payload); return write(signal); },
     toggleUserBan: async (_id: string, signal?: AbortSignal) => { await write(signal); return { id: "u-test", status: options.confirmedStatus ?? "inactive" }; }, window: { confirm: () => true },
     loadStaff: reload, loadClients: reload, loadOverview,
   };
@@ -379,6 +384,59 @@ function mutationCaller(kind: "staff" | "client" | "ban" | "edit", loadOverview:
   const callback = pageExpression(kind === "staff" ? "submitAddStaff" : kind === "client" ? "submitAddClient" : kind === "edit" ? "submitEditClient" : "confirmToggleBan", bindings);
   return { state, run: (): Promise<void> => kind === "ban" ? callback("u-test", "测试", options.status ?? "active", reload, options.banKind ?? "员工") : callback() };
 }
+
+for (const pw of ["", "   "]) {
+  test(`建客户号密码${pw ? "全是空格" : "留空"}：不发请求、提示「请填写登录密码」（画在弹窗里）（2026-10-11）`, async () => {
+    const loader = overviewLoader("overview", { fixture: "x" });
+    const mutation = mutationCaller("client", loader.run, { account: loader.account, clientPassword: pw });
+    await mutation.run();
+    assert.equal(mutation.state.writes, 0, "空密码还是把建号请求发出去了");
+    assert.deepEqual(mutation.state.messages, ["请填写登录密码。"]);
+    assert.equal(mutation.state.cleared, 0, "被挡时不许清表单");
+  });
+}
+for (const [kind, text] of [["staff", "请填写员工姓名和手机号。"], ["client", "请填写客户名字和电话号码。"], ["edit", "请填写客户名字和电话号码。"]] as const) {
+  test(`${kind}名字留空：不发请求、提示「${text}」（画在弹窗里）（2026-10-11）`, async () => {
+    const loader = overviewLoader("overview", { fixture: "x" });
+    const mutation = mutationCaller(kind, loader.run, { account: loader.account, blankName: true });
+    await mutation.run();
+    assert.equal(mutation.state.writes, 0);
+    assert.deepEqual(mutation.state.messages, [text]);
+  });
+}
+test("建员工 / 建客户（含编辑）两个账号弹窗里都画了报错条，且请求进行中不许取消（2026-10-11 dsh 第 2–4 轮、Codex 第 4 轮）", () => {
+  // 源码检查的边界（dsh 第 4 轮）：只按弹窗根节点 `{showXxxModal && (` 切片，证明报错条写在这个条件块里面；
+  // 真正显不显示、颜色对不对，靠上面那几条行为测试（messages）+ 浏览器实测
+  const src = readFileSync(path.join(__dirname, "../apps/web/src/app/admin/page.tsx"), "utf8");
+  const staffStart = src.indexOf("{showStaffModal && (");
+  const clientStart = src.indexOf("{showClientModal && (");
+  const clientEnd = src.indexOf("{showCreateOrderModal && (", clientStart);
+  assert.ok(staffStart > 0 && clientStart > staffStart && clientEnd > clientStart, "找不到两个账号弹窗的根节点");
+  const staffModal = src.slice(staffStart, clientStart), clientModal = src.slice(clientStart, clientEnd);
+  for (const [name, block, submit] of [["员工", staffModal, "submitAddStaff()"], ["客户", clientModal, "submitEditClient() : submitAddClient()"]] as const) {
+    assert.ok(block.includes(submit), `${name}弹窗切片不对（没找到 ${submit}）`);
+    assert.ok(/\{message && \(/.test(block), `${name}弹窗里没有报错条`);
+    assert.ok(/disabled=\{loading\} onClick=\{\(\) => \{ setShow(Staff|Client)Modal\(false\)/.test(block), `${name}弹窗的「取消」在请求进行中还能点（旧请求的报错会写进重开的弹窗）`);
+  }
+  // 外面两个「创建账号」入口也要灰（Codex / dsh 第 5 轮：成功关窗后刷新还没完，那段时间能开另一个弹窗接到旧提示）
+  for (const opener of ["setShowStaffModal(true)", "setShowClientModal(true)"]) {
+    const at = src.indexOf(`onClick={() => { ${opener}`);
+    assert.ok(at > 0, `找不到入口 ${opener}`);
+    assert.ok(/disabled=\{loading\}\s*$/.test(src.slice(Math.max(0, at - 80), at)), `${opener} 那个「创建账号」按钮在请求进行中还能点`);
+  }
+});
+test("编辑客户密码留空：照常保存，而且发出去的请求里没有密码（= 不改密码），不被建号的必填规则误挡（2026-10-11）", async () => {
+  const loader = overviewLoader("overview", { fixture: "x" });
+  const mutation = mutationCaller("edit", loader.run, { account: loader.account, clientPassword: "" });
+  const done = mutation.run();
+  for (let i = 0; i < 6; i++) {
+    await flushMicrotasks();
+    loader.requests.forEach((r) => r.resolve({ fixture: "y" }));
+  }
+  await done;
+  assert.equal(mutation.state.writes, 1, "编辑客户留空密码被挡住了");
+  assert.equal((mutation.state.payloads[0] as { password?: unknown }).password, undefined, "留空密码却发了密码过去（会把客户密码改掉）");
+});
 
 for (const kind of ["staff", "client", "ban", "edit"] as const) {
   test(`${kind}真实写成功发生在旧GET途中：旧响应不落地，补发刷新并等待新响应`, async () => {
@@ -592,7 +650,8 @@ for (const [name, endpoint] of [
 ]) {
   test(`${name}实际写服务透传取消信号，旧签名、请求体和解包不变且不重试`, async () => {
     for (const withSignal of [false, true]) {
-      const c = new AbortController(), body = { id: 'u-test', name: '合成', phone: '13000000000' };
+      // 建客户号的请求体带上密码（2026-10-11 起必填，后端不带会 400；Codex 第 2 轮：夹具要用合法请求体）
+      const c = new AbortController(), body = { id: 'u-test', name: '合成', phone: '13000000000', ...(name === 'createAdminClient' ? { password: 'Abc12345' } : {}) };
       const response = { raw: true }, parsed = { id: 'u-test', status: 'inactive' }; let count = 0;
       const call = serviceWrapper(name, { apiBaseUrl: () => 'https://fixture.invalid', authHeaders: () => ({ Authorization: 'Bearer fixture' }),
         fetch: async (url: string, options: RecordValue) => {

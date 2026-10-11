@@ -3,6 +3,7 @@
 import type { ReactNode } from "react";
 import { formatMetric, warehouseLabelFromId } from "../staff/utils";
 import { apiBaseUrl } from "../../services/core-api";
+import { cargoTypeZh } from "../../../../../packages/shared-types/cargo-type";
 
 /**
  * 「运单详情」弹窗里的正文：基本信息、产品明细、产品图片。
@@ -56,7 +57,7 @@ export default function ShipmentDetailBody({ item, images, onPreview, extraField
   /** 基本信息最前面多加的几格（员工那头的唛头） */
   extraFields?: Array<{ label: string; value: ReactNode }>;
 }) {
-  const cargoTypeLabel = item.cargoType === "inspection" ? "商检货" : item.cargoType === "sensitive" ? "敏感货" : "普货";
+  const cargoTypeLabel = cargoTypeZh(item.cargoType);
   return (
     <div>
       {/* 基本信息 */}
@@ -101,7 +102,7 @@ export default function ShipmentDetailBody({ item, images, onPreview, extraField
                   <td style={{ padding: "4px 6px", textAlign: "center" }}>{p.productQuantity ?? "—"}</td>
                   <td style={{ padding: "4px 6px", textAlign: "center", fontSize: 11 }}>{p.lengthCm && p.widthCm && p.heightCm ? `${p.lengthCm}×${p.widthCm}×${p.heightCm}` : "—"}</td>
                   <td style={{ padding: "4px 6px", textAlign: "center" }}>{formatMetric(p.weightKg as number | null | undefined, 2)}</td>
-                  <td style={{ padding: "4px 6px", textAlign: "center" }}>{p.cargoType === "inspection" ? "商检货" : p.cargoType === "sensitive" ? "敏感货" : "普货"}</td>
+                  <td style={{ padding: "4px 6px", textAlign: "center" }}>{cargoTypeZh(p.cargoType)}</td>
                   <td style={{ padding: "4px 6px", textAlign: "center", fontSize: 11 }}>{p.domesticTrackingNo || "—"}</td>
                 </tr>
               ))}

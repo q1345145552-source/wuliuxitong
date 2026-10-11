@@ -15,7 +15,7 @@
    接口：
      GET  /admin/agents/list                代理列表（B1 客户管理「选归属」也读它，只用 id / name）
      POST /admin/agents/create              开代理（agents 行 + users(role=agent) 行，一次嵌套写入 = 一个事务）
-     POST /admin/agents/update              改名字 / logo / 前缀 / 域名 / 三档代理价
+     POST /admin/agents/update              改名字 / logo / 前缀 / 域名 / 各档代理价
      POST /admin/agents/login-status        停用 / 启用代理登录号（客户照常登录，2.7）
      POST /admin/agents/reset-password      重置代理密码（卡强度，2.9）
      GET  /admin/agents/rebates             返现单列表（按代理、按月、按状态筛）
@@ -34,6 +34,7 @@ import { hashPassword } from "../auth/crypto-utils";
 import { checkPasswordStrength } from "../auth/password-policy";
 import { deleteImageFile, saveImageToDisk } from "../orders/image-storage";
 import { parseWhrPriceInput, REPRICE_PLAN_STATUSES, type WhrPriceTriple } from "../whr-consolidation/long-term-price";
+import { CARGO_BUCKETS } from "../whr-consolidation/rebate";
 import { loadRebateStatusHistory, REBATE_UNDO_REASON_MAX, writeRebateStatusAudit } from "./rebate-audit";
 import { toNum } from "../whr-consolidation/utils";
 import {
@@ -49,7 +50,7 @@ import {
 
 type Tx = any;
 
-const PRICE_LABEL: Record<keyof WhrPriceTriple, string> = { normal: "普货", inspection: "商检货", sensitive: "敏感货" };
+const PRICE_LABEL: Record<keyof WhrPriceTriple, string> = { normal: "普货", inspection: "商检货", sensitive: "敏感货", special: "特别货" };
 const fmtPrice = (n: number): string => String(Number(n.toFixed(2)));
 const str = (v: unknown): string => (typeof v === "string" ? v.trim() : "");
 const iso = (d: Date | null | undefined): string | null => (d ? d.toISOString() : null);
@@ -80,14 +81,21 @@ function uniqueConflictMessage(error: unknown): string | null {
   return "有重复的数据（后缀、域名或登录账号），请检查后再保存";
 }
 
-/** 读三档价输入：兼容 { prices: {normal,...} } 和平铺 priceNormal 两种写法 */
-function readPrices(body: Record<string, unknown>): WhrPriceTriple {
+/**
+ * 读各档价输入：兼容 { prices: {normal,...} } 和平铺 priceNormal 两种写法。
+ * 特别货（2026-10-11）：没传时 parseWhrPriceInput 按默认 1250；`specialGiven` 告诉调用方这一档到底传没传 ——
+ * 改代理那条路没传就**沿用原来的**（开着没刷新的老页面只会传三档，不能把老板改过的特别货价冲回 1250）。
+ */
+function readPrices(body: Record<string, unknown>): WhrPriceTriple & { specialGiven: boolean } {
   const p = (body.prices ?? {}) as Record<string, unknown>;
-  return parseWhrPriceInput({
+  const special = p.special ?? body.priceSpecial;
+  const prices = parseWhrPriceInput({
     normal: p.normal ?? body.priceNormal,
     inspection: p.inspection ?? body.priceInspection,
     sensitive: p.sensitive ?? body.priceSensitive,
+    special,
   });
+  return { ...prices, specialGiven: !(special === undefined || special === null || special === "") };
 }
 
 function readLogo(body: Record<string, unknown>): { mime: string; base64: string } | null {
@@ -114,7 +122,7 @@ export async function findClientsBelowNewAgentPrice(
   oldPrices: WhrPriceTriple,
   newPrices: WhrPriceTriple,
 ): Promise<string[]> {
-  const raised = (["normal", "inspection", "sensitive"] as const).filter((k) => toCents(newPrices[k]) > toCents(oldPrices[k]));
+  const raised = CARGO_BUCKETS.filter((k) => toCents(newPrices[k]) > toCents(oldPrices[k]));
   if (raised.length === 0 || !agentId || !companyId) return [];
   /**
    * ⚠️ 2026-09-18 改成查**在跑的柜里当场填的单价**，不再查 `client_whr_prices`。
@@ -137,6 +145,7 @@ export async function findClientsBelowNewAgentPrice(
     unitPriceNormal: unknown;
     unitPriceInspection: unknown;
     unitPriceSensitive: unknown;
+    unitPriceSpecial: unknown;
     plan: { planNo: string } | null;
   }> = await tx.whrConsolidationPlanCustomer.findMany({
     where: {
@@ -149,13 +158,14 @@ export async function findClientsBelowNewAgentPrice(
       unitPriceNormal: true,
       unitPriceInspection: true,
       unitPriceSensitive: true,
+      unitPriceSpecial: true,
       plan: { select: { planNo: true } },
     },
     orderBy: [{ clientId: "asc" }, { planId: "asc" }],
   });
   const out: string[] = [];
   for (const r of rows) {
-    const current: WhrPriceTriple = { normal: toNum(r.unitPriceNormal), inspection: toNum(r.unitPriceInspection), sensitive: toNum(r.unitPriceSensitive) };
+    const current: WhrPriceTriple = { normal: toNum(r.unitPriceNormal), inspection: toNum(r.unitPriceInspection), sensitive: toNum(r.unitPriceSensitive), special: toNum(r.unitPriceSpecial) };
     const parts = raised
       .filter((k) => toCents(current[k]) < toCents(newPrices[k]))
       .map((k) => `${PRICE_LABEL[k]} ${fmtPrice(current[k])}（新代理价 ${fmtPrice(newPrices[k])}）`);
@@ -179,7 +189,7 @@ export function registerAgentAdminRoutes(app: MinimalHttpApp): void {
       where: { companyId: auth.companyId },
       select: {
         id: true, name: true, slug: true, customDomain: true, logoPath: true,
-        priceNormal: true, priceInspection: true, priceSensitive: true, createdAt: true, updatedAt: true,
+        priceNormal: true, priceInspection: true, priceSensitive: true, priceSpecial: true, createdAt: true, updatedAt: true,
       },
       orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     });
@@ -205,7 +215,7 @@ export function registerAgentAdminRoutes(app: MinimalHttpApp): void {
         clientCount: mine.filter((u) => u.role === "client").length,
         loginId: login?.id ?? "",
         loginStatus: login?.status === "active" ? "active" : "inactive",
-        prices: { normal: toNum(a.priceNormal), inspection: toNum(a.priceInspection), sensitive: toNum(a.priceSensitive) },
+        prices: { normal: toNum(a.priceNormal), inspection: toNum(a.priceInspection), sensitive: toNum(a.priceSensitive), special: toNum(a.priceSpecial) },
         createdAt: a.createdAt.toISOString(),
         updatedAt: a.updatedAt.toISOString(),
       };
@@ -281,6 +291,8 @@ export function registerAgentAdminRoutes(app: MinimalHttpApp): void {
           priceNormal: prices.normal,
           priceInspection: prices.inspection,
           priceSensitive: prices.sensitive,
+          // 新建代理：特别货没传就是默认 1250（老板 10-11「2a」）
+          priceSpecial: prices.special,
           users: {
             create: [{
               id: loginId,
@@ -344,12 +356,19 @@ export function registerAgentAdminRoutes(app: MinimalHttpApp): void {
       await prisma.$transaction(
         async (tx: Tx) => {
           // 先锁代理行（long-term-price.ts 改客户价拿同一行 FOR SHARE），锁里重读旧价再判
-          const lockedRows = await tx.$queryRaw`SELECT id, logo_path, price_normal, price_inspection, price_sensitive FROM agents WHERE id = ${id} AND company_id = ${auth.companyId} FOR UPDATE`;
-          const row = (lockedRows as Array<{ logo_path: string | null; price_normal: unknown; price_inspection: unknown; price_sensitive: unknown }>)[0];
+          const lockedRows = await tx.$queryRaw`SELECT id, logo_path, price_normal, price_inspection, price_sensitive, price_special FROM agents WHERE id = ${id} AND company_id = ${auth.companyId} FOR UPDATE`;
+          const row = (lockedRows as Array<{ logo_path: string | null; price_normal: unknown; price_inspection: unknown; price_sensitive: unknown; price_special: unknown }>)[0];
           if (!row) throw new BusinessError("代理不存在", 404, "NOT_FOUND");
-          const oldPrices: WhrPriceTriple = { normal: toNum(row.price_normal), inspection: toNum(row.price_inspection), sensitive: toNum(row.price_sensitive) };
+          const oldPrices: WhrPriceTriple = { normal: toNum(row.price_normal), inspection: toNum(row.price_inspection), sensitive: toNum(row.price_sensitive), special: toNum(row.price_special) };
+          // 特别货没传（没刷新的老页面）：沿用锁里读到的原价，别冲回默认 1250
+          const newPrices: WhrPriceTriple = {
+            normal: prices.normal,
+            inspection: prices.inspection,
+            sensitive: prices.sensitive,
+            special: prices.specialGiven ? prices.special : oldPrices.special,
+          };
 
-          const below = await findClientsBelowNewAgentPrice(tx, id, auth.companyId, oldPrices, prices);
+          const below = await findClientsBelowNewAgentPrice(tx, id, auth.companyId, oldPrices, newPrices);
           if (below.length > 0) {
             /**
              * ⚠️ 别再写「等这些柜发运完再调」：柜子的 `shipped` 状态没人写，发运完状态还是 `loading`，
@@ -375,9 +394,10 @@ export function registerAgentAdminRoutes(app: MinimalHttpApp): void {
               slug,
               customDomain,
               logoPath,
-              priceNormal: prices.normal,
-              priceInspection: prices.inspection,
-              priceSensitive: prices.sensitive,
+              priceNormal: newPrices.normal,
+              priceInspection: newPrices.inspection,
+              priceSensitive: newPrices.sensitive,
+              priceSpecial: newPrices.special,
             },
           });
           return true;
@@ -535,9 +555,9 @@ export function registerAgentAdminRoutes(app: MinimalHttpApp): void {
         clientId: l.clientId,
         mark: l.mark,
         productNames: l.productNames,
-        volumes: { normal: toNum(l.volumeNormalM3), inspection: toNum(l.volumeInspectionM3), sensitive: toNum(l.volumeSensitiveM3) },
-        clientPrices: { normal: toNum(l.clientPriceNormal), inspection: toNum(l.clientPriceInspection), sensitive: toNum(l.clientPriceSensitive) },
-        agentPrices: { normal: toNum(l.agentPriceNormal), inspection: toNum(l.agentPriceInspection), sensitive: toNum(l.agentPriceSensitive) },
+        volumes: { normal: toNum(l.volumeNormalM3), inspection: toNum(l.volumeInspectionM3), sensitive: toNum(l.volumeSensitiveM3), special: toNum(l.volumeSpecialM3) },
+        clientPrices: { normal: toNum(l.clientPriceNormal), inspection: toNum(l.clientPriceInspection), sensitive: toNum(l.clientPriceSensitive), special: toNum(l.clientPriceSpecial) },
+        agentPrices: { normal: toNum(l.agentPriceNormal), inspection: toNum(l.agentPriceInspection), sensitive: toNum(l.agentPriceSensitive), special: toNum(l.agentPriceSpecial) },
         rebateAmount: toNum(l.rebateAmount),
         prealertCreatedAt: l.prealertCreatedAt.toISOString(),
         signedAt: iso(l.signedAt),

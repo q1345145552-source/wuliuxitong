@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState, useCallback, useRef } from "react";
+import { cargoTypeZh } from "../../../../../../packages/shared-types/cargo-type";
 import { amount2 } from "../../../modules/shared/money-format";
 import {
   fetchStaffConsolidationTasks,
@@ -848,7 +849,7 @@ export default function StaffConsolidationPage() {
                     <td style={tdS}>{p.volume?.toFixed(4)}</td>
                     <td style={tdS}>{p.material}</td>
                     <td style={tdS}>{p.cargoValue}</td>
-                    <td style={tdS}>{p.cargoType === "inspection" ? "商检货" : p.cargoType === "sensitive" ? "敏感货" : "普货"}</td>
+                    <td style={tdS}>{cargoTypeZh(p.cargoType)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -1010,7 +1011,7 @@ function StaffPrealertRow({
                   <td style={tdS}>{p.volume?.toFixed(4)}</td>
                   <td style={tdS}>{p.material}</td>
                   <td style={tdS}>{p.cargoValue}</td>
-                  <td style={tdS}>{p.cargoType === "inspection" ? "商检货" : p.cargoType === "sensitive" ? "敏感货" : "普货"}</td>
+                  <td style={tdS}>{cargoTypeZh(p.cargoType)}</td>
                   <td style={{ ...tdS, textAlign: "center" }}>
                     {p.productImageBase64 ? (
                       <button

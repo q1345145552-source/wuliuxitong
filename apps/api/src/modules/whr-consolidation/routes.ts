@@ -25,8 +25,10 @@ import {
   recalcUnpaidPrealertFees,
   syncPlanStatus,
   toNum,
+  CARGO_TYPE_LABEL, UNIT_PRICE_SELECT,
 } from "./utils";
 import { assertNotBelowAgentFloors, assertPlanPricesNotBelowAgent, lockAgentPriceFloors, lockClientWhrPrice, REPRICE_PLAN_STATUSES } from "./long-term-price";
+import { CARGO_BUCKETS, SPECIAL_CARGO_DEFAULT_PRICE } from "./rebate";
 import { nextSequenceValue } from "../core/number-sequence";
 
 /**
@@ -64,8 +66,9 @@ const PLAN_LIST_TAKE = 500;
 const MAX_CUSTOMERS_PER_PLAN = 100;
 
 /** 货型取值 */
-const CARGO_TYPES = ["normal", "inspection", "sensitive"];
-const CARGO_TYPE_ZH: Record<string, string> = { normal: "普货", inspection: "商检货", sensitive: "敏感货" };
+// 2026-10-11 加特别货：跟算钱那份（rebate.ts 的 CARGO_BUCKETS）同一个名单，中文用 utils.ts 那份
+const CARGO_TYPES: readonly string[] = CARGO_BUCKETS;
+const CARGO_TYPE_ZH: Record<string, string> = CARGO_TYPE_LABEL;
 
 /**
  * 允许管理员改货型 / 删单件货物的状态（用户 2026-08-15 拍板）。
@@ -120,7 +123,7 @@ export function registerWhrConsolidationRoutes(app: MinimalHttpApp): void {
     if (!auth) return;
 
     /**
-     * 2026-09-18 老板拍板改回来：**每个柜当场填三档单价**（他原话：「不要去设置价格，之前的逻辑是正确的，
+     * 2026-09-18 老板拍板改回来：**每个柜当场填各档单价**（他原话：「不要去设置价格，之前的逻辑是正确的，
      * 每次柜价格都不一样的。所以所有人都不需要设置价格」）。9-16 那套「客户长期价自动带出」不再用 ——
      * 长期价的表和代码都留着（long-term-price.ts），只是没有任何地方读它来定价了。
      */
@@ -129,7 +132,7 @@ export function registerWhrConsolidationRoutes(app: MinimalHttpApp): void {
       containerType?: string;
       destinationTh?: string;
       totalVolumeM3?: number;
-      customers?: { clientId?: string; unitPriceNormal?: number; unitPriceInspection?: number; unitPriceSensitive?: number }[];
+      customers?: { clientId?: string; unitPriceNormal?: number; unitPriceInspection?: number; unitPriceSensitive?: number; unitPriceSpecial?: number }[];
     };
 
     // 校验必填字段
@@ -172,10 +175,13 @@ export function registerWhrConsolidationRoutes(app: MinimalHttpApp): void {
         return;
       }
       seenClientIds.add(c.clientId.trim());
+      // 特别货（2026-10-11 老板「1a」）：没传按默认 1250（老页面不会传这一档），传了照样校验
+      if (c.unitPriceSpecial == null) c.unitPriceSpecial = SPECIAL_CARGO_DEFAULT_PRICE;
       const priceChecks: Array<[string, number | undefined]> = [
         ["普货", c.unitPriceNormal],
         ["商检货", c.unitPriceInspection],
         ["敏感货", c.unitPriceSensitive],
+        ["特别货", c.unitPriceSpecial],
       ];
       for (const [label, val] of priceChecks) {
         // ⚠️ 用 requireUnitPrice（2026-08-29）：只判「大于 0」不够 ——
@@ -216,6 +222,7 @@ export function registerWhrConsolidationRoutes(app: MinimalHttpApp): void {
             normal: Number(c.unitPriceNormal),
             inspection: Number(c.unitPriceInspection),
             sensitive: Number(c.unitPriceSensitive),
+            special: Number(c.unitPriceSpecial),
           },
         })),
         auth.role,
@@ -243,6 +250,7 @@ export function registerWhrConsolidationRoutes(app: MinimalHttpApp): void {
           unitPriceNormal: Number(c.unitPriceNormal),
           unitPriceInspection: Number(c.unitPriceInspection),
           unitPriceSensitive: Number(c.unitPriceSensitive),
+          unitPriceSpecial: Number(c.unitPriceSpecial),
         })),
       });
 
@@ -369,6 +377,7 @@ export function registerWhrConsolidationRoutes(app: MinimalHttpApp): void {
           unitPriceNormal: c.unitPriceNormal,
           unitPriceInspection: c.unitPriceInspection,
           unitPriceSensitive: c.unitPriceSensitive,
+          unitPriceSpecial: c.unitPriceSpecial,
         };
         const breakdownByPrealert = new Map<string, ReturnType<typeof buildFeeBreakdown>>();
         for (const pa of c.prealerts) {
@@ -385,6 +394,7 @@ export function registerWhrConsolidationRoutes(app: MinimalHttpApp): void {
         unitPriceNormal: toNum(c.unitPriceNormal),
         unitPriceInspection: toNum(c.unitPriceInspection),
         unitPriceSensitive: toNum(c.unitPriceSensitive),
+        unitPriceSpecial: toNum(c.unitPriceSpecial),
         totalVolumeM3: toNum(c.totalVolumeM3),
         totalFee: c.totalFee == null ? null : toNum(c.totalFee),
         feeBreakdown: customerBreakdown,
@@ -471,6 +481,7 @@ export function registerWhrConsolidationRoutes(app: MinimalHttpApp): void {
       unitPriceNormal?: number;
       unitPriceInspection?: number;
       unitPriceSensitive?: number;
+      unitPriceSpecial?: number;
     };
 
     if (!body.planId?.trim()) {
@@ -491,6 +502,7 @@ export function registerWhrConsolidationRoutes(app: MinimalHttpApp): void {
       ["unitPriceNormal", "普货单价", body.unitPriceNormal],
       ["unitPriceInspection", "商检货单价", body.unitPriceInspection],
       ["unitPriceSensitive", "敏感货单价", body.unitPriceSensitive],
+      ["unitPriceSpecial", "特别货单价", body.unitPriceSpecial],
     ];
     for (const [field, label, raw] of priceFields) {
       if (raw == null) continue;
@@ -537,10 +549,11 @@ export function registerWhrConsolidationRoutes(app: MinimalHttpApp): void {
        */
       await lockClientWhrPrice(tx, customer.clientId);
       const floors = await lockAgentPriceFloors(tx, auth.companyId, [customer.clientId], auth.role);
-      const mergedPrices = (row: { unitPriceNormal: unknown; unitPriceInspection: unknown; unitPriceSensitive: unknown }) => ({
+      const mergedPrices = (row: { unitPriceNormal: unknown; unitPriceInspection: unknown; unitPriceSensitive: unknown; unitPriceSpecial: unknown }) => ({
         normal: updateData.unitPriceNormal ?? toNum(row.unitPriceNormal),
         inspection: updateData.unitPriceInspection ?? toNum(row.unitPriceInspection),
         sensitive: updateData.unitPriceSensitive ?? toNum(row.unitPriceSensitive),
+        special: updateData.unitPriceSpecial ?? toNum(row.unitPriceSpecial),
       });
 
       await lockPlanAliveById(tx, body.planId!.trim());
@@ -548,7 +561,7 @@ export function registerWhrConsolidationRoutes(app: MinimalHttpApp): void {
       // 锁后重读这一行：事务外那次查只是提示，这中间客户可能已经被移出柜（复核第 7 条）
       const fresh = await tx.whrConsolidationPlanCustomer.findFirst({
         where: { id: customer.id, planId: body.planId!.trim(), companyId: auth.companyId },
-        select: { id: true, clientId: true, unitPriceNormal: true, unitPriceInspection: true, unitPriceSensitive: true },
+        select: { id: true, clientId: true, ...UNIT_PRICE_SELECT },
       });
       if (!fresh) throw new BusinessError("这个客户刚刚被移出这个柜了，请刷新后再看", 404, "NOT_FOUND");
 
@@ -590,7 +603,7 @@ export function registerWhrConsolidationRoutes(app: MinimalHttpApp): void {
     if (!auth) return;
 
     /**
-     * 2026-09-18 老板拍板改回来：加客户时**当场填三档单价**（每个柜价格都不一样）。
+     * 2026-09-18 老板拍板改回来：加客户时**当场填各档单价**（每个柜价格都不一样）。
      * 9-16 那套「按客户长期价自动带出」不再用，长期价的表和代码留着但没人读它定价。
      */
     const body = (req.body ?? {}) as {
@@ -599,6 +612,7 @@ export function registerWhrConsolidationRoutes(app: MinimalHttpApp): void {
       unitPriceNormal?: number;
       unitPriceInspection?: number;
       unitPriceSensitive?: number;
+      unitPriceSpecial?: number;
     };
 
     if (!body.planId?.trim()) {
@@ -615,6 +629,8 @@ export function registerWhrConsolidationRoutes(app: MinimalHttpApp): void {
       ["普货单价", body.unitPriceNormal],
       ["商检货单价", body.unitPriceInspection],
       ["敏感货单价", body.unitPriceSensitive],
+      // 特别货（2026-10-11 老板「1a」）：没传按默认 1250（老页面不会传这一档），传了照样校验
+      ["特别货单价", body.unitPriceSpecial ?? SPECIAL_CARGO_DEFAULT_PRICE],
     ];
     const prices: Record<string, number> = {};
     for (const [label, raw] of priceChecks) {
@@ -629,6 +645,7 @@ export function registerWhrConsolidationRoutes(app: MinimalHttpApp): void {
       normal: prices["普货单价"],
       inspection: prices["商检货单价"],
       sensitive: prices["敏感货单价"],
+      special: prices["特别货单价"],
     };
 
     const plan = await prisma.whrConsolidationPlan.findFirst({
@@ -709,6 +726,7 @@ export function registerWhrConsolidationRoutes(app: MinimalHttpApp): void {
           unitPriceNormal: price.normal,
           unitPriceInspection: price.inspection,
           unitPriceSensitive: price.sensitive,
+          unitPriceSpecial: price.special,
         },
         select: { id: true },
       });
@@ -721,6 +739,7 @@ export function registerWhrConsolidationRoutes(app: MinimalHttpApp): void {
       unitPriceNormal: created.price.normal,
       unitPriceInspection: created.price.inspection,
       unitPriceSensitive: created.price.sensitive,
+      unitPriceSpecial: created.price.special,
     });
   });
 
@@ -735,7 +754,7 @@ export function registerWhrConsolidationRoutes(app: MinimalHttpApp): void {
 
     const rows = await prisma.clientWhrPrice.findMany({
       where: { companyId: auth.companyId, client: { companyId: auth.companyId, role: "client" } },
-      select: { clientId: true, priceNormal: true, priceInspection: true, priceSensitive: true },
+      select: { clientId: true, priceNormal: true, priceInspection: true, priceSensitive: true, priceSpecial: true },
       orderBy: { clientId: "asc" },
     });
     ok(res, {
@@ -744,6 +763,7 @@ export function registerWhrConsolidationRoutes(app: MinimalHttpApp): void {
         unitPriceNormal: toNum(r.priceNormal),
         unitPriceInspection: toNum(r.priceInspection),
         unitPriceSensitive: toNum(r.priceSensitive),
+        unitPriceSpecial: toNum(r.priceSpecial),
       })),
     });
   });

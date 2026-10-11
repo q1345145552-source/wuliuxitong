@@ -6,7 +6,7 @@ import { matchesShipmentListFilter } from "../../../../../packages/shared-types/
 import { productNamesLabel } from "../../../../../packages/shared-types/product-names";
 import ExportConditionFields, { type ExportFieldDef } from "../../modules/shipment/ExportConditionFields";
 import { EMPTY_SHIPMENT_FILTER, adminArrivedDate, adminOrderFilterRow, matchesShipmentFilter, mergeDateFrom, mergeDateTo, shipmentFilterDateInvalid, type ShipmentFilterValue } from "../../modules/shipment/export-filter";
-import { parseCargoType, CARGO_TYPE_HINT, cargoTypeLabel } from "../../../../../packages/shared-types/cargo-type";
+import { parseCargoType, CARGO_TYPE_HINT, CARGO_TYPES, CARGO_TYPE_ZH, cargoTypeLabel } from "../../../../../packages/shared-types/cargo-type";
 import { AT_WAREHOUSE_STATUSES, COMPLETED_STATUSES, CLIENT_STATUS_GROUP_ZH, PENDING_STATUSES } from "../../../../../packages/shared-types/shipment-status";
 import type { AiKnowledgeItem } from "../../../../../packages/shared-types/entities";
 import { getOptionalSession, type AuthSession } from "../../auth/auth-session";
@@ -408,7 +408,7 @@ export default function AdminHomePage() {
         ["到仓日期按文本填写 YYYY-MM-DD，例如 2026-09-05；不要将单元格改成Excel日期格式。"],
         ["填写前，请将客户ID、国内单号、电话和到仓日期的单元格格式设为“文本”，保留开头的0与日期原文。"],
         ["国内单号按实际信息填写。泰国收货人、收货电话、收货地址三列系统不保存（6 月起建运单不收收货信息，派送时按客户地址簿），可以留空。"],
-        ["货型留空就是普货；商检货填「商检货」，敏感货填「敏感货」。填别的字会让这一行导入失败并在失败明细里说明，不会悄悄变成普货。"],
+        ["货型留空就是普货；商检货填「商检货」，敏感货填「敏感货」，特别货填「特别货」。填别的字会让这一行导入失败并在失败明细里说明，不会悄悄变成普货。"],
         ["此模板仅用于管理员当前13列导入；员工的多产品批量创建请使用员工端模板，两者不可混用。"],
         ["填写后上传，先核对预览再确认导入；已成功导入的行请勿重复提交。"],
       ]);
@@ -563,6 +563,13 @@ export default function AdminHomePage() {
   const [clientForm, setClientForm] = useState({ id: "", name: "", companyName: "", phone: "", email: "", password: "", agentId: "" });
   const [showStaffModal, setShowStaffModal] = useState(false);
   const [showClientModal, setShowClientModal] = useState(false);
+  /**
+   * 建号 / 编辑客户弹窗里「显示密码」（2026-10-11）。老板两次「创建账号」后用新号登录都报密码不对，
+   * 同一个浏览器里「设置密码」（有「显示密码」勾）改完马上能登 —— 建号框只显示圆点、看不见打了什么，
+   * 也没标「新密码」，浏览器会把它当登录框乱填。加上能看见、并标成 new-password。
+   */
+  // 老板 10-11：「创建账号的时候能看到密码」→ 默认就显示，想遮住再去掉勾
+  const [showNewAccountPassword, setShowNewAccountPassword] = useState(true);
   const [editingClientId, setEditingClientId] = useState<string | null>(null);
   // 2026-09-16 代理账号：开客户选归属（确认单 2.2 / 6.2）、卡片上填/改长期价（4.19，代理的客户只读 4.7）
   const [agentOptions, setAgentOptions] = useState<AgentOption[]>([]);
@@ -1155,14 +1162,15 @@ export default function AdminHomePage() {
   const submitAddStaff = async () => {
     if (loading) return;
     if (!staffForm.name.trim() || !staffForm.phone.trim()) {
-      setMessage("请填写员工姓名和手机号。");
+      setMessage("请填写员工姓名和手机号。"); // 画在弹窗里（见弹窗底部红条）
       return;
     }
     setLoading(true);
     setMessage("");
+    let created: { id: string } | null = null;
     try {
       try {
-        await runAccountWrite((signal) => createAdminStaff({
+        created = await runAccountWrite((signal) => createAdminStaff({
           id: staffForm.id.trim() || undefined,
           name: staffForm.name.trim(),
           phone: staffForm.phone.trim(),
@@ -1181,9 +1189,12 @@ export default function AdminHomePage() {
         }
         return;
       }
+      // 员工建号密码是选填的：没填就说清楚要先「设置密码」才能登（在清空表单之前读）
+      const staffPwHint = staffForm.password.trim() ? "" : "（还没设密码，要先点「设置密码」才能登录）";
       setStaffForm({ id: "", name: "", phone: "", password: "" });
       setShowStaffModal(false);
-      setToast("员工添加成功");
+      // 登录只认账号（不认名字）；账号留空时是系统起的，必须当场告诉他（2026-10-11）
+      setToast(created?.id ? `员工添加成功，登录账号：${created.id}${staffPwHint}` : "员工添加成功");
       setMessage("");
       await refreshAccountViews(loadStaff, "员工已添加");
     } finally {
@@ -1269,21 +1280,28 @@ export default function AdminHomePage() {
 
   const submitAddClient = async () => {
     if (loading) return;
+    // 校验提示画在弹窗里（见弹窗底部红条）
     if (!clientForm.name.trim() || !clientForm.phone.trim()) {
       setMessage("请填写客户名字和电话号码。");
       return;
     }
+    // 不填密码建出来的号登不进（2026-10-11 Codex 审查），后端也挡
+    if (!clientForm.password.trim()) {
+      setMessage("请填写登录密码。");
+      return;
+    }
     setLoading(true);
     setMessage("");
+    let created: { id: string } | null = null;
     try {
       try {
-        await runAccountWrite((signal) => createAdminClient({
+        created = await runAccountWrite((signal) => createAdminClient({
           id: clientForm.id.trim() || undefined,
           name: clientForm.name.trim(),
           companyName: clientForm.companyName.trim() || undefined,
           phone: clientForm.phone.trim(),
           email: clientForm.email.trim() || undefined,
-          password: clientForm.password.trim() || undefined,
+          password: clientForm.password.trim(), // 上面已挡空密码
           agentId: clientForm.agentId || null,
         }, signal));
       } catch (error) {
@@ -1302,7 +1320,9 @@ export default function AdminHomePage() {
       const agentName = agentOptions.find((a) => a.id === clientForm.agentId)?.name;
       setClientForm({ id: "", name: "", companyName: "", phone: "", email: "", password: "", agentId: "" });
       setShowClientModal(false);
-      setToast(agentName ? `客户添加成功，开在代理「${agentName}」名下` : "客户添加成功");
+      // 登录只认账号（不认名字）；账号留空时是系统起的，必须当场告诉他（2026-10-11）
+      const loginHint = created?.id ? `，登录账号：${created.id}` : "";
+      setToast(agentName ? `客户添加成功，开在代理「${agentName}」名下${loginHint}` : `客户添加成功${loginHint}`);
       setMessage("");
       await refreshAccountViews(loadClients, "客户已添加");
     } finally {
@@ -1746,7 +1766,8 @@ export default function AdminHomePage() {
         <div style={{ marginBottom: 12 }}>
           <button
             type="button"
-            onClick={() => { setShowStaffModal(true); setStaffForm({ id: "", name: "", phone: "", password: "" }); }}
+            disabled={loading}
+            onClick={() => { setShowStaffModal(true); setShowNewAccountPassword(true); setMessage(""); setStaffForm({ id: "", name: "", phone: "", password: "" }); }}
             style={{ border: "none", borderRadius: 8, padding: "8px 14px", background: "var(--c-blue)", color: "var(--white)", fontWeight: 600, cursor: "pointer" }}
           >
             创建账号
@@ -1788,6 +1809,7 @@ export default function AdminHomePage() {
                   <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px solid var(--l-soft)", display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
                     <input
                       type={showSettingPassword ? "text" : "password"}
+                      autoComplete="new-password"
                       value={settingPasswordValue}
                       onChange={(e) => setSettingPasswordValue(e.target.value)}
                       placeholder="新密码：至少 8 位，不能全是数字"
@@ -1838,7 +1860,8 @@ export default function AdminHomePage() {
         <div style={{ marginBottom: 12, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
           <button
             type="button"
-            onClick={() => { setShowClientModal(true); setEditingClientId(null); setClientForm({ id: "", name: "", companyName: "", phone: "", email: "", password: "", agentId: "" }); }}
+            disabled={loading}
+            onClick={() => { setShowClientModal(true); setShowNewAccountPassword(true); setMessage(""); setEditingClientId(null); setClientForm({ id: "", name: "", companyName: "", phone: "", email: "", password: "", agentId: "" }); }}
             style={{ border: "none", borderRadius: 8, padding: "8px 14px", background: "var(--c-blue)", color: "var(--white)", fontWeight: 600, cursor: "pointer" }}
           >
             创建账号
@@ -1923,6 +1946,8 @@ export default function AdminHomePage() {
                         password: "",
                         agentId: u.agentId ?? "",
                       });
+                      setShowNewAccountPassword(true);
+                      setMessage("");
                       setShowClientModal(true);
                     }}
                     disabled={loading}
@@ -1944,6 +1969,7 @@ export default function AdminHomePage() {
                   <div style={{ marginTop: 8, paddingTop: 8, borderTop: "1px solid var(--l-soft)", display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
                     <input
                       type={showSettingPassword ? "text" : "password"}
+                      autoComplete="new-password"
                       value={settingPasswordValue}
                       onChange={(e) => setSettingPasswordValue(e.target.value)}
                       placeholder="输入新密码"
@@ -2364,9 +2390,7 @@ export default function AdminHomePage() {
                                 <input type="number" value={p.productQuantity} onChange={(e) => { const n = [...editProducts]; n[i] = { ...n[i], productQuantity: e.target.value }; setEditProducts(n); }} placeholder="单箱数量" style={{ border: "1px solid var(--l-strong)", borderRadius: 4, padding: "4px 6px", fontSize: 12 }} />
                                 <input type="number" step="0.01" value={p.weightKg} onChange={(e) => { const n = [...editProducts]; n[i] = { ...n[i], weightKg: e.target.value }; setEditProducts(n); }} placeholder="单箱重kg" style={{ border: "1px solid var(--l-strong)", borderRadius: 4, padding: "4px 6px", fontSize: 12 }} />
                                 <select value={(p.cargoType || "normal").toLowerCase()} onChange={(e) => { const n = [...editProducts]; n[i] = { ...n[i], cargoType: e.target.value }; setEditProducts(n); }} style={{ border: "1px solid var(--l-strong)", borderRadius: 4, padding: "4px 6px", fontSize: 12, background: "var(--white)" }}>
-                                  <option value="normal">普货</option>
-                                  <option value="inspection">商检货</option>
-                                  <option value="sensitive">敏感货</option>
+                                  {CARGO_TYPES.map((c) => <option key={c} value={c}>{CARGO_TYPE_ZH[c]}</option>)}
                                 </select>
                                 <input value={p.domesticTrackingNo || ""} onChange={(e) => { const n = [...editProducts]; n[i] = { ...n[i], domesticTrackingNo: e.target.value }; setEditProducts(n); }} placeholder="货拉拉" style={{ border: "1px solid var(--l-strong)", borderRadius: 4, padding: "4px 6px", fontSize: 12 }} />
                                 <button type="button" onClick={() => setEditProducts((v) => v.filter((_, j) => j !== i))} style={{ border: "1px solid #fca5a5", borderRadius: 4, padding: "4px 6px", fontSize: 11, background: "var(--white)", color: "var(--c-red-2)", cursor: "pointer" }}>X</button>
@@ -2917,12 +2941,12 @@ export default function AdminHomePage() {
       {/* 创建员工弹窗 */}
       {showStaffModal && (
         <div style={{ position: "fixed", inset: 0, zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(0,0,0,0.4)", padding: 16 }}>
-          <div style={{ width: "100%", maxWidth: 440, background: "var(--white)", borderRadius: 12, padding: 24, boxShadow: "0 20px 60px rgba(0,0,0,0.3)" }}>
+          <div style={{ width: "100%", maxWidth: 440, maxHeight: "calc(100dvh - 32px)", overflowY: "auto", background: "var(--white)", borderRadius: 12, padding: 24, boxShadow: "0 20px 60px rgba(0,0,0,0.3)" }}>
             <h3 style={{ margin: "0 0 16px", fontSize: 18, fontWeight: 600 }}>创建员工账号</h3>
             <div style={{ display: "grid", gap: 10 }}>
               <div>
                 <label style={{ fontSize: 12, color: "var(--t-strong)", display: "block", marginBottom: 4 }}>账号（选填）</label>
-                <input value={staffForm.id} onChange={(e) => setStaffForm((f) => ({ ...f, id: e.target.value }))} placeholder="留空自动生成" style={{ border: "1px solid var(--l-strong)", borderRadius: 8, padding: "8px 10px", width: "100%", fontSize: 13 }} />
+                <input value={staffForm.id} onChange={(e) => setStaffForm((f) => ({ ...f, id: e.target.value }))} placeholder="留空自动生成" autoComplete="off" style={{ border: "1px solid var(--l-strong)", borderRadius: 8, padding: "8px 10px", width: "100%", fontSize: 13 }} />
               </div>
               <div>
                 <label style={{ fontSize: 12, color: "var(--t-strong)", display: "block", marginBottom: 4 }}>姓名 *</label>
@@ -2934,11 +2958,20 @@ export default function AdminHomePage() {
               </div>
               <div>
                 <label style={{ fontSize: 12, color: "var(--t-strong)", display: "block", marginBottom: 4 }}>登录密码</label>
-                <input type="password" value={staffForm.password} onChange={(e) => setStaffForm((f) => ({ ...f, password: e.target.value }))} placeholder="密码（可选，填就要至少 8 位、不能全是数字）" style={{ border: "1px solid var(--l-strong)", borderRadius: 8, padding: "8px 10px", width: "100%", fontSize: 13 }} />
+                <input type={showNewAccountPassword ? "text" : "password"} autoComplete="new-password" value={staffForm.password} onChange={(e) => setStaffForm((f) => ({ ...f, password: e.target.value }))} placeholder="密码（可选，填就要至少 8 位、不能全是数字）" style={{ border: "1px solid var(--l-strong)", borderRadius: 8, padding: "8px 10px", width: "100%", fontSize: 13 }} />
+                <label style={{ display: "inline-flex", alignItems: "center", gap: 4, marginTop: 6, fontSize: 12, color: "var(--t-strong)", cursor: "pointer" }}>
+                  <input type="checkbox" checked={showNewAccountPassword} onChange={(e) => setShowNewAccountPassword(e.target.checked)} style={{ cursor: "pointer" }} />
+                  显示密码（建好后用「账号」+ 这个密码登录）
+                </label>
               </div>
             </div>
+            {/* 校验没过 / 后端拒绝（账号重复、弱密码、代理失效…）的原因画在弹窗里：页面底部那行被遮罩压着看不见（2026-10-11 dsh 第 2、3 轮）。
+                请求进行中「取消」和外面的「创建账号」都是灰的：不然取消后马上重开，旧请求晚到的报错会写进新弹窗（Codex 第 4 轮） */}
+            {message && (
+              <div role="alert" style={{ marginTop: 12, padding: "8px 10px", background: "var(--c-red-bg)", color: "var(--c-red-deep)", borderRadius: 8, fontSize: 13, whiteSpace: "pre-wrap" }}>{message}</div>
+            )}
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 16 }}>
-              <button type="button" onClick={() => setShowStaffModal(false)} style={{ border: "1px solid var(--l-strong)", borderRadius: 8, padding: "8px 14px", background: "var(--white)", cursor: "pointer", color: "var(--t-strong)", fontSize: 13 }}>取消</button>
+              <button type="button" disabled={loading} onClick={() => { setShowStaffModal(false); setMessage(""); }} style={{ border: "1px solid var(--l-strong)", borderRadius: 8, padding: "8px 14px", background: "var(--white)", cursor: "pointer", color: "var(--t-strong)", fontSize: 13 }}>取消</button>
               <button type="button" disabled={loading} onClick={() => void submitAddStaff()} style={{ border: "none", borderRadius: 8, padding: "8px 14px", background: loading ? "var(--t-strong)" : "var(--c-blue)", color: "var(--white)", fontWeight: 600, cursor: loading ? "not-allowed" : "pointer", fontSize: 13 }}>{loading ? "提交中…" : "创建"}</button>
             </div>
           </div>
@@ -2948,12 +2981,12 @@ export default function AdminHomePage() {
       {/* 创建/编辑客户弹窗 */}
       {showClientModal && (
         <div style={{ position: "fixed", inset: 0, zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(0,0,0,0.4)", padding: 16 }}>
-          <div style={{ width: "100%", maxWidth: 440, background: "var(--white)", borderRadius: 12, padding: 24, boxShadow: "0 20px 60px rgba(0,0,0,0.3)" }}>
+          <div style={{ width: "100%", maxWidth: 440, maxHeight: "calc(100dvh - 32px)", overflowY: "auto", background: "var(--white)", borderRadius: 12, padding: 24, boxShadow: "0 20px 60px rgba(0,0,0,0.3)" }}>
             <h3 style={{ margin: "0 0 16px", fontSize: 18, fontWeight: 600 }}>{editingClientId ? "编辑客户账号" : "创建客户账号"}</h3>
             <div style={{ display: "grid", gap: 10 }}>
               <div>
                 <label style={{ fontSize: 12, color: "var(--t-strong)", display: "block", marginBottom: 4 }}>账号{editingClientId ? "" : "（选填，不填则自动生成）"}</label>
-                <input value={clientForm.id} onChange={(e) => setClientForm((f) => ({ ...f, id: e.target.value }))} placeholder={editingClientId ? undefined : "留空自动生成"} disabled={!!editingClientId} style={{ border: "1px solid var(--l-strong)", borderRadius: 8, padding: "8px 10px", width: "100%", fontSize: 13, background: editingClientId ? "var(--s-sunken)" : "var(--white)", color: editingClientId ? "var(--t-muted)" : "var(--t-strong)" }} />
+                <input value={clientForm.id} onChange={(e) => setClientForm((f) => ({ ...f, id: e.target.value }))} placeholder={editingClientId ? undefined : "留空自动生成"} autoComplete="off" disabled={!!editingClientId} style={{ border: "1px solid var(--l-strong)", borderRadius: 8, padding: "8px 10px", width: "100%", fontSize: 13, background: editingClientId ? "var(--s-sunken)" : "var(--white)", color: editingClientId ? "var(--t-muted)" : "var(--t-strong)" }} />
               </div>
               <div>
                 <label style={{ fontSize: 12, color: "var(--t-strong)", display: "block", marginBottom: 4 }}>客户名字 *</label>
@@ -2996,11 +3029,20 @@ export default function AdminHomePage() {
               </div>
               <div>
                 <label style={{ fontSize: 12, color: "var(--t-strong)", display: "block", marginBottom: 4 }}>{editingClientId ? "登录密码（留空不修改）" : "登录密码 *"}</label>
-                <input type="password" value={clientForm.password} onChange={(e) => setClientForm((f) => ({ ...f, password: e.target.value }))} placeholder={editingClientId ? "留空不修改密码" : "密码（必填）"} style={{ border: "1px solid var(--l-strong)", borderRadius: 8, padding: "8px 10px", width: "100%", fontSize: 13 }} />
+                <input type={showNewAccountPassword ? "text" : "password"} autoComplete="new-password" value={clientForm.password} onChange={(e) => setClientForm((f) => ({ ...f, password: e.target.value }))} placeholder={editingClientId ? "留空不修改密码" : "密码（必填）"} style={{ border: "1px solid var(--l-strong)", borderRadius: 8, padding: "8px 10px", width: "100%", fontSize: 13 }} />
+                <label style={{ display: "inline-flex", alignItems: "center", gap: 4, marginTop: 6, fontSize: 12, color: "var(--t-strong)", cursor: "pointer" }}>
+                  <input type="checkbox" checked={showNewAccountPassword} onChange={(e) => setShowNewAccountPassword(e.target.checked)} style={{ cursor: "pointer" }} />
+                  {editingClientId ? "显示密码（留空表示不改密码）" : "显示密码（建好后用「账号」+ 这个密码登录）"}
+                </label>
               </div>
             </div>
+            {/* 校验没过 / 后端拒绝（账号重复、弱密码、代理失效…）的原因画在弹窗里：页面底部那行被遮罩压着看不见（2026-10-11 dsh 第 2、3 轮）。
+                请求进行中「取消」和外面的「创建账号」都是灰的：不然取消后马上重开，旧请求晚到的报错会写进新弹窗（Codex 第 4 轮） */}
+            {message && (
+              <div role="alert" style={{ marginTop: 12, padding: "8px 10px", background: "var(--c-red-bg)", color: "var(--c-red-deep)", borderRadius: 8, fontSize: 13, whiteSpace: "pre-wrap" }}>{message}</div>
+            )}
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 16 }}>
-              <button type="button" onClick={() => { setShowClientModal(false); setEditingClientId(null); setClientForm({ id: "", name: "", companyName: "", phone: "", email: "", password: "", agentId: "" }); }} style={{ border: "1px solid var(--l-strong)", borderRadius: 8, padding: "8px 14px", background: "var(--white)", cursor: "pointer", color: "var(--t-strong)", fontSize: 13 }}>取消</button>
+              <button type="button" disabled={loading} onClick={() => { setShowClientModal(false); setMessage(""); setEditingClientId(null); setClientForm({ id: "", name: "", companyName: "", phone: "", email: "", password: "", agentId: "" }); }} style={{ border: "1px solid var(--l-strong)", borderRadius: 8, padding: "8px 14px", background: "var(--white)", cursor: "pointer", color: "var(--t-strong)", fontSize: 13 }}>取消</button>
               <button type="button" disabled={loading} onClick={() => void (editingClientId ? submitEditClient() : submitAddClient())} style={{ border: "none", borderRadius: 8, padding: "8px 14px", background: loading ? "var(--t-strong)" : "var(--c-blue)", color: "var(--white)", fontWeight: 600, cursor: loading ? "not-allowed" : "pointer", fontSize: 13 }}>{loading ? "提交中…" : editingClientId ? "保存" : "创建"}</button>
             </div>
           </div>
@@ -3051,7 +3093,7 @@ export default function AdminHomePage() {
                 <input value={p.productQuantity} onChange={(e) => { const n = [...createProducts]; n[i].productQuantity = e.target.value; setCreateProducts(n); }} placeholder="数量/箱" style={{ border: "1px solid var(--l-strong)", borderRadius: 6, padding: "4px 6px", fontSize: 11 }} />
                 <input value={`${p.lengthCm}×${p.widthCm}×${p.heightCm}`} onChange={(e) => { const parts = e.target.value.split("×"); const n = [...createProducts]; n[i].lengthCm = parts[0] || ""; n[i].widthCm = parts[1] || ""; n[i].heightCm = parts[2] || ""; setCreateProducts(n); }} placeholder="L×W×H cm" style={{ border: "1px solid var(--l-strong)", borderRadius: 6, padding: "4px 6px", fontSize: 11 }} />
                 <select value={p.cargoType} onChange={(e) => { const n = [...createProducts]; n[i].cargoType = e.target.value; setCreateProducts(n); }} style={{ border: "1px solid var(--l-strong)", borderRadius: 6, padding: "4px 6px", fontSize: 11 }}>
-                  <option value="normal">普货</option><option value="inspection">商检货</option><option value="sensitive">敏感货</option>
+                  {CARGO_TYPES.map((c) => <option key={c} value={c}>{CARGO_TYPE_ZH[c]}</option>)}
                 </select>
                 <div style={{ display: "flex", gap: 4 }}>
                   <input value={p.domesticTrackingNo} onChange={(e) => { const n = [...createProducts]; n[i].domesticTrackingNo = e.target.value; setCreateProducts(n); }} placeholder="国内单号" style={{ border: "1px solid var(--l-strong)", borderRadius: 6, padding: "4px 6px", fontSize: 11, flex: 1 }} />

@@ -127,7 +127,7 @@ async function clientImport(rawCargo: unknown, boxes = 2, dimensions: number[] |
   evalTs(sourceFunction(clientFile, "downloadTemplate") + "\nmodule.exports=downloadTemplate;", {XLSX: xlsx})();
   assert.ok(workbook);
   const downloadedHeaders: string[] = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]], {header: 1})[0];
-  assert.equal(downloadedHeaders.find(h => h.includes("货型")), "货型（普货/商检货/敏感货，默认普货）");
+  assert.equal(downloadedHeaders.find(h => h.includes("货型")), "货型（普货/商检货/敏感货/特别货，默认普货）");
   const headers: string[] = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]], {header: 1})[0].filter((h: string) => !legacy || !h.includes("货型"));
   const values = headers.map(h => {
     if (h.includes("货型")) return rawCargo;
@@ -182,12 +182,15 @@ async function clientImport(rawCargo: unknown, boxes = 2, dimensions: number[] |
 }
 async function main() {
   await check("货型统一全称，旧简称/新全称输入映射相同且最严口径不变", () => {
-    assert.deepEqual(CARGO_TYPE_ZH, {normal: "普货", inspection: "商检货", sensitive: "敏感货"});
-    assert.equal(cargoTypeLabel(["normal", "inspection", "sensitive", "inspection"]), "普货 / 商检货 / 敏感货");
-    assert.equal(CARGO_TYPE_HINT, "货型只能填「普货」「商检货」「敏感货」之一，留空按普货");
-    for (const [raw, value] of [["商检", "inspection"], ["商检货", "inspection"], ["敏感", "sensitive"], ["敏感货", "sensitive"]]) {
+    // 2026-10-11 加特别货（老板：「新增一个货型，叫特别货」；混装排最严，他回「按建议」）
+    assert.deepEqual(CARGO_TYPE_ZH, {normal: "普货", inspection: "商检货", sensitive: "敏感货", special: "特别货"});
+    assert.equal(cargoTypeLabel(["normal", "inspection", "sensitive", "inspection", "special"]), "普货 / 商检货 / 敏感货 / 特别货");
+    assert.equal(CARGO_TYPE_HINT, "货型只能填「普货」「商检货」「敏感货」「特别货」之一，留空按普货");
+    for (const [raw, value] of [["商检", "inspection"], ["商检货", "inspection"], ["敏感", "sensitive"], ["敏感货", "sensitive"], ["特别", "special"], ["特别货", "special"], ["ＳＰＥＣＩＡＬ", "special"]]) {
       assert.equal(parseCargoType(raw)?.value, value);
     }
+    assert.equal(strictestCargoType(["normal", "inspection", "sensitive", "special"]), "special", "特别货最严");
+    assert.equal(strictestCargoType(["special", "normal"]), "special");
     assert.equal(strictestCargoType(["normal", "inspection", "sensitive"]), "sensitive");
     assert.equal(strictestCargoType(["normal", "inspection"]), "inspection");
   });

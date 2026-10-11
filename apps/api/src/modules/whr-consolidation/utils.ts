@@ -2,7 +2,7 @@ import { BusinessError } from "../core/business-error";
 import { checkTotalsWritable } from "../core/decimal-guard";
 import { logger } from "../core/logger";
 import { prisma } from "../../db/prisma";
-import { computeRebate } from "./rebate";
+import { CARGO_BUCKETS, bucketOf, computeRebate, type CargoBucket } from "./rebate";
 
 // ============================================================================
 // 常量
@@ -60,7 +60,28 @@ interface UnitPrices {
   unitPriceNormal: any;
   unitPriceInspection: any;
   unitPriceSensitive: any;
+  /**
+   * 特别货（2026-10-11）。**必须带上**（dsh 审查：写成可选的话，哪处查价漏了这一列，特别货就悄悄按 0 元/方算，
+   * 少收钱还不报错；库里老行迁移时已补 1250，不存在「真的没有」的情况）。
+   */
+  unitPriceSpecial: any;
 }
+
+/** 柜里这位客户的各档单价 → 按档取（2026-10-11 加特别货时收成一个，免得各处各写一遍） */
+export function unitPriceOf(prices: UnitPrices, bucket: CargoBucket): number {
+  if (bucket === "inspection") return toNum(prices.unitPriceInspection);
+  if (bucket === "sensitive") return toNum(prices.unitPriceSensitive);
+  if (bucket === "special") return toNum(prices.unitPriceSpecial);
+  return toNum(prices.unitPriceNormal);
+}
+
+/** 查柜里客户单价时 select 这几列（四档） */
+export const UNIT_PRICE_SELECT = {
+  unitPriceNormal: true,
+  unitPriceInspection: true,
+  unitPriceSensitive: true,
+  unitPriceSpecial: true,
+} as const;
 
 interface FeeItem {
   cargoType: string | null;
@@ -72,26 +93,19 @@ interface FeeItem {
  * 纯函数，不碰数据库，方便三处调用点（签收计费 / 改单价重算 / 审核重算）保持一致口径。
  */
 export function calcFeeFromItems(items: FeeItem[], prices: UnitPrices): number {
-  let volNormal = 0;
-  let volInspection = 0;
-  let volSensitive = 0;
-  for (const it of items) {
-    const v = toNum(it.volumeM3);
-    if (it.cargoType === "inspection") volInspection += v;
-    else if (it.cargoType === "sensitive") volSensitive += v;
-    else volNormal += v;
-  }
-  return round2(
-    volNormal * toNum(prices.unitPriceNormal) +
-      volInspection * toNum(prices.unitPriceInspection) +
-      volSensitive * toNum(prices.unitPriceSensitive),
-  );
+  // 各档方数先加总，再各乘各的单价（认不出来的货型按普货，跟返现 rebate.ts 同一个口径）
+  const vol: Record<CargoBucket, number> = { normal: 0, inspection: 0, sensitive: 0, special: 0 };
+  for (const it of items) vol[bucketOf(it.cargoType)] += toNum(it.volumeM3);
+  let fee = 0;
+  for (const bucket of CARGO_BUCKETS) fee += vol[bucket] * unitPriceOf(prices, bucket);
+  return round2(fee);
 }
 
 export const CARGO_TYPE_LABEL: Record<string, string> = {
   normal: "普货",
   inspection: "商检货",
   sensitive: "敏感货",
+  special: "特别货",
 };
 
 export interface FeeBreakdownRow {
@@ -117,7 +131,7 @@ export interface FeeBreakdown {
 /**
  * 生成「总费用是怎么算出来的」明细，给三端展示用。
  *
- * 单价取的是客户当前的三档单价。对未付款的单子，改单价会触发重算，
+ * 单价取的是客户当前的各档单价（2026-10-11 起四档，多了特别货）。对未付款的单子，改单价会触发重算，
  * 所以 computedFee 和 storedFee 一定相等；已付款的单子金额是锁死的，
  * 若之后管理员调过价，这里会用 matchesStored=false 把差异显式标出来，
  * 而不是让两个数字在界面上各说各话。
@@ -127,21 +141,12 @@ export function buildFeeBreakdown(
   prices: UnitPrices,
   storedFee: any,
 ): FeeBreakdown {
-  const volumes: Record<string, number> = { normal: 0, inspection: 0, sensitive: 0 };
-  for (const it of items) {
-    const key = it.cargoType === "inspection" || it.cargoType === "sensitive" ? it.cargoType : "normal";
-    volumes[key] += toNum(it.volumeM3);
-  }
-
-  const priceOf: Record<string, number> = {
-    normal: toNum(prices.unitPriceNormal),
-    inspection: toNum(prices.unitPriceInspection),
-    sensitive: toNum(prices.unitPriceSensitive),
-  };
+  const volumes: Record<CargoBucket, number> = { normal: 0, inspection: 0, sensitive: 0, special: 0 };
+  for (const it of items) volumes[bucketOf(it.cargoType)] += toNum(it.volumeM3);
 
   const rows: FeeBreakdownRow[] = [];
   let totalVolumeM3 = 0;
-  for (const cargoType of ["normal", "inspection", "sensitive"]) {
+  for (const cargoType of CARGO_BUCKETS) {
     /* 2026-09-29（老板选 A）：明细里的方数用精确值（6 位），不再先抹成 3 位 ——
        金额一直是按精确方数算的，方数先抹再显示，「0.057 方 × 1200 = ¥68.93」客户一乘对不上。
        怎么显示交给前端 formatBreakdownVolume（整 3 位的照旧写 3 位）。金额一分没动。 */
@@ -152,8 +157,8 @@ export function buildFeeBreakdown(
       cargoType,
       label: CARGO_TYPE_LABEL[cargoType],
       volumeM3,
-      unitPrice: priceOf[cargoType],
-      amount: round2(volumes[cargoType] * priceOf[cargoType]),
+      unitPrice: unitPriceOf(prices, cargoType),
+      amount: round2(volumes[cargoType] * unitPriceOf(prices, cargoType)),
     });
   }
 
@@ -199,9 +204,8 @@ export function mergeFeeBreakdowns(list: FeeBreakdown[]): FeeBreakdown {
     }
   }
 
-  const order = ["normal", "inspection", "sensitive"];
   return {
-    rows: order.filter((t) => byType.has(t)).map((t) => byType.get(t)!),
+    rows: CARGO_BUCKETS.filter((t) => byType.has(t)).map((t) => byType.get(t)!),
     totalVolumeM3: round6(totalVolumeM3),
     computedFee: round2(computedFee),
     storedFee: hasStored ? round2(storedFee) : null,
@@ -237,7 +241,7 @@ export async function recalcPrealertFee(prealertId: string, tx: any = prisma): P
     select: {
       status: true,
       planCustomer: {
-        select: { unitPriceNormal: true, unitPriceInspection: true, unitPriceSensitive: true },
+        select: UNIT_PRICE_SELECT,
       },
       items: { select: { cargoType: true, volumeM3: true } },
     },
@@ -292,10 +296,12 @@ export const CLEARED_PAID_SNAPSHOT = {
   paidPriceNormal: null,
   paidPriceInspection: null,
   paidPriceSensitive: null,
+  paidPriceSpecial: null,
   paidAgentId: null,
   paidAgentPriceNormal: null,
   paidAgentPriceInspection: null,
   paidAgentPriceSensitive: null,
+  paidAgentPriceSpecial: null,
   rebateAmount: null,
 } as const;
 
@@ -303,15 +309,17 @@ export interface PaidSnapshot {
   paidPriceNormal: number;
   paidPriceInspection: number;
   paidPriceSensitive: number;
+  paidPriceSpecial: number;
   paidAgentId: string | null;
   paidAgentPriceNormal: number | null;
   paidAgentPriceInspection: number | null;
   paidAgentPriceSensitive: number | null;
+  paidAgentPriceSpecial: number | null;
   rebateAmount: number | null;
 }
 
 /**
- * 算「付款那一刻」的价格快照：客户三档价 + 客户所属代理 + 代理三档价 + 这票返现。
+ * 算「付款那一刻」的价格快照：客户各档价 + 客户所属代理 + 代理各档价 + 这票返现（2026-10-11 起四档，多了特别货）。
  *
  * ⚠️ **必须在调用方已经锁住计划和这张预报单之后调**（付款那条路的锁序是【计划 → 预报单 → 钱包】）：
  *    · 客户价读的是柜里这位客户那一行（plan_customers）—— 改长期价那边改这一行之前也要先锁计划，
@@ -333,25 +341,28 @@ export async function buildPaidSnapshot(prealertId: string, tx: any, chargedAmou
       companyId: true,
       items: { select: { cargoType: true, volumeM3: true } },
       planCustomer: {
-        select: { clientId: true, unitPriceNormal: true, unitPriceInspection: true, unitPriceSensitive: true },
+        select: { clientId: true, ...UNIT_PRICE_SELECT },
       },
     },
   });
   if (!pa) throw new BusinessError("预报单不存在", 404, "NOT_FOUND");
 
-  const clientPrices = {
-    normal: toNum(pa.planCustomer.unitPriceNormal),
-    inspection: toNum(pa.planCustomer.unitPriceInspection),
-    sensitive: toNum(pa.planCustomer.unitPriceSensitive),
+  const clientPrices: Record<CargoBucket, number> = {
+    normal: unitPriceOf(pa.planCustomer, "normal"),
+    inspection: unitPriceOf(pa.planCustomer, "inspection"),
+    sensitive: unitPriceOf(pa.planCustomer, "sensitive"),
+    special: unitPriceOf(pa.planCustomer, "special"),
   };
   const snapshot: PaidSnapshot = {
     paidPriceNormal: clientPrices.normal,
     paidPriceInspection: clientPrices.inspection,
     paidPriceSensitive: clientPrices.sensitive,
+    paidPriceSpecial: clientPrices.special,
     paidAgentId: null,
     paidAgentPriceNormal: null,
     paidAgentPriceInspection: null,
     paidAgentPriceSensitive: null,
+    paidAgentPriceSpecial: null,
     rebateAmount: null,
   };
 
@@ -394,7 +405,7 @@ export async function buildPaidSnapshot(prealertId: string, tx: any, chargedAmou
   snapshot.paidAgentId = client.agentId;
   const agent = await tx.agent.findFirst({
     where: { id: client.agentId, companyId: pa.companyId },
-    select: { priceNormal: true, priceInspection: true, priceSensitive: true },
+    select: { priceNormal: true, priceInspection: true, priceSensitive: true, priceSpecial: true },
   });
   if (!agent) {
     // 外键是 RESTRICT，正常删不掉代理；真查不到说明数据坏了，记下来但不拦付款
@@ -402,14 +413,16 @@ export async function buildPaidSnapshot(prealertId: string, tx: any, chargedAmou
     snapshot.rebateAmount = 0;
     return snapshot;
   }
-  const agentPrices = {
+  const agentPrices: Record<CargoBucket, number> = {
     normal: toNum(agent.priceNormal),
     inspection: toNum(agent.priceInspection),
     sensitive: toNum(agent.priceSensitive),
+    special: toNum(agent.priceSpecial),
   };
   snapshot.paidAgentPriceNormal = agentPrices.normal;
   snapshot.paidAgentPriceInspection = agentPrices.inspection;
   snapshot.paidAgentPriceSensitive = agentPrices.sensitive;
+  snapshot.paidAgentPriceSpecial = agentPrices.special;
 
   const { rebateAmount } = computeRebate(pa.items, clientPrices, agentPrices);
   if (rebateAmount < 0) {

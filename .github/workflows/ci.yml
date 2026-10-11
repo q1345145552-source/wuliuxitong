@@ -482,6 +482,9 @@ jobs:
       # 到货通知那份迁移：在「上线前的库」上连跑两遍、跟 schema 零差异、体检清单对上、外键在
       - name: Test arrival notices migration file (real DB)
         run: bash .github/scripts/run-db-test.sh test:migration-arrival-notices-db
+      # 特别货（2026-10-11）那份迁移：上线前的库上连跑两遍、跟 schema 零差异、体检清单对上、老代理特别货价自动 1250
+      - name: Test special cargo type migration file (real DB)
+        run: bash .github/scripts/run-db-test.sh test:migration-special-cargo-type-db
       # 2026-10-08 模拟数据测试（多人同时操作）查出来的：建单查到货通知占号、同号并发不 500、删单 vs 装柜不死锁、
       # 删单那一刻看列表不 500、改单遇删单 409、编辑期间被装柜拦旧剩余数、删单删图片文件、到货通知搜索转义 / 按显示的号搜、客服选运单全品名
       - name: Test simulated-data fixes 1008 (real DB)

@@ -199,7 +199,7 @@ async function queryRaw(strings: TemplateStringsArray, ...values: unknown[]): Pr
   if (/FROM agents WHERE id = \? AND company_id = \? FOR UPDATE/.test(sql)) {
     events.push(`lock:agents:${values[0]}`);
     const a = db.agents.find((x) => x.id === values[0] && x.companyId === values[1]);
-    return a ? [{ id: a.id, logo_path: a.logoPath, price_normal: a.priceNormal, price_inspection: a.priceInspection, price_sensitive: a.priceSensitive }] : [];
+    return a ? [{ id: a.id, logo_path: a.logoPath, price_normal: a.priceNormal, price_inspection: a.priceInspection, price_sensitive: a.priceSensitive, price_special: a.priceSpecial }] : [];
   }
   throw new Error(`桩没实现这句 SQL：${sql}`);
 }
@@ -453,14 +453,14 @@ async function main(): Promise<void> {
 
   await check("8) GET /admin/agents：形状符合给 B1 的约定；客户数只数客户不数登录号；别家公司看不到", async () => {
     fixAgentIds();
-    db.agents.push({ id: "agent_other_co", companyId: "c2", name: "别家代理", slug: "c2-agent", customDomain: null, logoPath: null, priceNormal: 1, priceInspection: 1, priceSensitive: 1, createdAt: now, updatedAt: now });
+    db.agents.push({ id: "agent_other_co", companyId: "c2", name: "别家代理", slug: "c2-agent", customDomain: null, logoPath: null, priceNormal: 1, priceInspection: 1, priceSensitive: 1, priceSpecial: 1, createdAt: now, updatedAt: now });
     const r = await call("GET", "/admin/agents/list", admin);
     assert.equal(r.status, 200);
     assert.equal(r.body.data.items.length, 1);
     const it = r.body.data.items[0];
     assert.deepEqual(
       { id: it.id, name: it.name, slug: it.slug, clientCount: it.clientCount, loginId: it.loginId, loginStatus: it.loginStatus, prices: it.prices },
-      { id: agentId, name: "曼谷代理甲", slug: "bkk-jia", clientCount: 2, loginId: "zz_agent_jia", loginStatus: "active", prices: { normal: 500, inspection: 550, sensitive: 600 } },
+      { id: agentId, name: "曼谷代理甲", slug: "bkk-jia", clientCount: 2, loginId: "zz_agent_jia", loginStatus: "active", prices: { normal: 500, inspection: 550, sensitive: 600, special: 1250 } },
     );
     assert.equal(typeof it.logoUrl, "string");
     assert.equal(it.customDomain, "wuliu.example.com");
@@ -493,16 +493,16 @@ async function main(): Promise<void> {
       { id: "pl_cxl", companyId: "c1", planNo: "WHR2608008", status: "cancelled" },
     ];
     db.planCustomers = [
-      { id: "pc1", companyId: "c1", planId: "pl_run", clientId: "zz_c_a1", unitPriceNormal: 520, unitPriceInspection: 570, unitPriceSensitive: 650 },
+      { id: "pc1", companyId: "c1", planId: "pl_run", clientId: "zz_c_a1", unitPriceNormal: 520, unitPriceInspection: 570, unitPriceSensitive: 650, unitPriceSpecial: 1250 },
       // ⚠️ 这位客户**没有**长期价行：老口径（查 client_whr_prices）会把他整个漏掉
-      { id: "pc2", companyId: "c1", planId: "pl_run", clientId: "zz_c_a2", unitPriceNormal: 505, unitPriceInspection: 560, unitPriceSensitive: 700 },
+      { id: "pc2", companyId: "c1", planId: "pl_run", clientId: "zz_c_a2", unitPriceNormal: 505, unitPriceInspection: 560, unitPriceSensitive: 700, unitPriceSpecial: 1250 },
       // 装柜中的柜也在这道闸范围内（货可能已经发运，但柜状态就是 loading）
-      { id: "pc5", companyId: "c1", planId: "pl_load", clientId: "zz_c_a1", unitPriceNormal: 505, unitPriceInspection: 560, unitPriceSensitive: 650 },
+      { id: "pc5", companyId: "c1", planId: "pl_load", clientId: "zz_c_a1", unitPriceNormal: 505, unitPriceInspection: 560, unitPriceSensitive: 650, unitPriceSpecial: 1250 },
       // 已完成 / 已取消的柜：不该算进来
-      { id: "pc3", companyId: "c1", planId: "pl_done", clientId: "zz_c_a1", unitPriceNormal: 100, unitPriceInspection: 100, unitPriceSensitive: 100 },
-      { id: "pc6", companyId: "c1", planId: "pl_cxl", clientId: "zz_c_a2", unitPriceNormal: 100, unitPriceInspection: 100, unitPriceSensitive: 100 },
+      { id: "pc3", companyId: "c1", planId: "pl_done", clientId: "zz_c_a1", unitPriceNormal: 100, unitPriceInspection: 100, unitPriceSensitive: 100, unitPriceSpecial: 1250 },
+      { id: "pc6", companyId: "c1", planId: "pl_cxl", clientId: "zz_c_a2", unitPriceNormal: 100, unitPriceInspection: 100, unitPriceSensitive: 100, unitPriceSpecial: 1250 },
       // 湘泰客户价很低，但不是这个代理名下的，不许算进来
-      { id: "pc4", companyId: "c1", planId: "pl_run", clientId: "zz_c_xt", unitPriceNormal: 100, unitPriceInspection: 100, unitPriceSensitive: 100 },
+      { id: "pc4", companyId: "c1", planId: "pl_run", clientId: "zz_c_xt", unitPriceNormal: 100, unitPriceInspection: 100, unitPriceSensitive: 100, unitPriceSpecial: 1250 },
     ];
     db.prices = []; // 长期价表空着也必须拦得住（这就是这次改的原因）
     events = [];
@@ -552,7 +552,7 @@ async function main(): Promise<void> {
       const cid = `zz_c_many${i}`;
       db.users.push({ id: cid, companyId: "c1", role: "client", name: `批量客户${i}`, status: "active", passwordHash: null, agentId: agentId, createdAt: now });
       db.plans.push({ id: `pl_many${i}`, companyId: "c1", planNo: `WHRM26090${String(i).padStart(2, "0")}`, status: "collecting" });
-      db.planCustomers.push({ id: `pcm${i}`, companyId: "c1", planId: `pl_many${i}`, clientId: cid, unitPriceNormal: 400, unitPriceInspection: 400, unitPriceSensitive: 400 });
+      db.planCustomers.push({ id: `pcm${i}`, companyId: "c1", planId: `pl_many${i}`, clientId: cid, unitPriceNormal: 400, unitPriceInspection: 400, unitPriceSensitive: 400, unitPriceSpecial: 1250 });
     }
     const r = await call("POST", "/admin/agents/update", admin, updateBody({ normal: 510, inspection: 560, sensitive: 610 }));
     assert.equal(r.status, 400, JSON.stringify(r.body));
@@ -582,6 +582,33 @@ async function main(): Promise<void> {
     r = await call("POST", "/admin/agents/update", admin, updateBody({ normal: 400, inspection: 400, sensitive: 400 }, { name: "曼谷代理甲", slug: "bkk-jia" }));
     assert.equal(r.status, 200);
     assert.ok(!events.includes("read:whr_plan_customers"), "三档都没调高，不用查柜里的价");
+  });
+
+  await check("10b) 特别货（2026-10-11）：新开代理没传特别货价 → 1250；调高特别货价也要过「柜里客户价不能低于代理价」那道闸；只传三档的老页面不许把特别货价冲回 1250", async () => {
+    // 新开代理（goodAgent 只传了三档）：特别货价 = 默认 1250（老板「2a」）—— 第 8 项的列表形状里也核过
+    const before = db.agents.find((x) => x.id === agentId)!;
+    const savedName = before.name;
+    events = [];
+    // 柜里这几位客户的特别货价都是 1250（库默认值），代理特别货价调到 1300 → 拦，点名特别货
+    let r = await call("POST", "/admin/agents/update", admin, updateBody({ normal: 400, inspection: 400, sensitive: 400, special: 1300 }));
+    assert.equal(r.status, 400, JSON.stringify(r.body));
+    assert.match(r.body.message, /特别货 1250（新代理价 1300）/);
+    assert.ok(!events.some((e) => e.startsWith("write:")), `被拒时不许写：${events.join(" → ")}`);
+    // 调低到 1200 → 成功
+    r = await call("POST", "/admin/agents/update", admin, updateBody({ normal: 400, inspection: 400, sensitive: 400, special: 1200 }));
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.equal(db.agents.find((x) => x.id === agentId)!.priceSpecial, 1200);
+    // 开着没刷新的老页面只传三档 → 特别货价留着 1200，不许变回 1250
+    r = await call("POST", "/admin/agents/update", admin, updateBody({ normal: 401, inspection: 400, sensitive: 400 }));
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    const a = db.agents.find((x) => x.id === agentId)!;
+    assert.deepEqual([a.priceNormal, a.priceSpecial], [401, 1200]);
+    // 特别货价不合法照样拦（跟另外三档同一套校验）
+    r = await call("POST", "/admin/agents/update", admin, updateBody({ normal: 400, inspection: 400, sensitive: 400, special: 0.001 }));
+    assert.equal(r.status, 400);
+    assert.match(r.body.message, /特别货/);
+    // 还原（后面几项按三档 400 写）
+    await call("POST", "/admin/agents/update", admin, updateBody({ normal: 400, inspection: 400, sensitive: 400, special: 1250 }, { name: savedName }));
   });
 
   await check("11) 编辑：换 logo 删旧文件；removeLogo 清空；别家公司的代理 404；前缀改成保留字拦", async () => {

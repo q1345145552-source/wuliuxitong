@@ -356,6 +356,14 @@ check("13) 上传表格：表头缺列要说出来，有数据没品名的行不
   broken["货型"] = "敏感货";
   assert.deepEqual(flat(tplMod.missingFclHeaders(broken)), [tplMod.FCL_TEMPLATE_HEADERS[8]], "表头改坏了要指名少哪一列");
   assert.equal(flat(tplMod.missingFclHeaders(undefined)).length, tplMod.FCL_TEMPLATE_HEADERS.length, "空表要报全部缺");
+  // 2026-10-11 加特别货：新表头写上特别货；旧模板（货型表头还是「普货/商检货/敏感货」那句）照样认、货型读得到
+  const legacy: Record<string, string> = { ...full };
+  delete legacy[tplMod.FCL_TEMPLATE_HEADERS[8]];
+  legacy["货型（普货/商检货/敏感货，默认普货）"] = "敏感货";
+  assert.deepEqual(flat(tplMod.missingFclHeaders(legacy)), [], "旧模板的货型表头要照样认");
+  assert.equal(tplMod.fclRowFromSheet(legacy).cargoType, "sensitive", "旧模板的货型要读得到");
+  assert.equal(tplMod.fclRowFromSheet({ ...full, [tplMod.FCL_TEMPLATE_HEADERS[8]]: "特别货" }).cargoType, "special", "特别货要认得");
+  assert.match(tplMod.FCL_TEMPLATE_HEADERS[8], /特别货/, "新模板表头要写上特别货");
 
   const ui = read("apps/web/src/components/fcl/FclContainerWorkbench.tsx");
   assert.match(ui, /missingFclHeaders/, "上传时没核对表头");

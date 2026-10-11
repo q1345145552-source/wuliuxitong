@@ -11,6 +11,7 @@ import { useLiveRefresh } from "../../../modules/realtime/useRealtime";
 import { createYieldGuard } from "../../../modules/realtime/yield-guard";
 import { viewerCanSeeOperator } from "../../../auth/operator-visibility";
 import { parseUnitPrice, unitPriceIssue } from "../../../modules/shared/unit-price";
+import { cargoTypeZh, SPECIAL_CARGO_DEFAULT_PRICE } from "../../../../../../packages/shared-types/cargo-type";
 
 // 选文件时的原图上限。超过这个的多半是选错了（视频/超大扫描件），先挡掉再说。
 const MAX_SOURCE_BYTES = 30 * 1024 * 1024;
@@ -142,6 +143,7 @@ interface DispatchCustomerItem {
 interface DispatchCustomer {
   id: string; clientId: string; clientPhone: string; clientCompany: string;
   status?: string; unitPriceNormal: number; unitPriceInspection: number; unitPriceSensitive: number;
+  unitPriceSpecial?: number;
   totalVolumeM3: number; totalFee: number | null; deliveryAddress: string | null; addressMissing?: boolean;
   totalItems: number; totalPackages: number; createdAt: string; 
   prealerts?: { id: string; trackingNo: string; mark: string; expressNo: string | null; status: string; warehouseReceiptProofs?: { base64Path: string; fileName: string; mime: string; uploadedAt?: string }[]; thailandReceiptProofs?: { base64Path: string; fileName: string; mime: string; uploadedAt?: string }[]; items: DispatchCustomerItem[] }[];
@@ -252,6 +254,8 @@ export default function StaffWhrConsolidationPage() {
   const [addPriceNormal, setAddPriceNormal] = useState("");
   const [addPriceInspection, setAddPriceInspection] = useState("");
   const [addPriceSensitive, setAddPriceSensitive] = useState("");
+  // 特别货（2026-10-11 老板「1a」）：先填默认 1250，能改
+  const [addPriceSpecial, setAddPriceSpecial] = useState(String(SPECIAL_CARGO_DEFAULT_PRICE));
   const [addSubmitting, setAddSubmitting] = useState(false);
   /** 加客户弹窗里的报错：画在弹窗里面，页面顶部那条会被遮罩压住、5 秒还自动消失（复核 2026-09-18 第 3 条） */
   const [addError, setAddError] = useState("");
@@ -345,7 +349,7 @@ export default function StaffWhrConsolidationPage() {
   /** 客户下拉用 /staff/clients（员工有权限），管理员端那套 /admin/users 员工调不了 */
   const openAddCustomer = async () => {
     setAddClientId(""); setAddSearch(""); setAddError("");
-    setAddPriceNormal(""); setAddPriceInspection(""); setAddPriceSensitive("");
+    setAddPriceNormal(""); setAddPriceInspection(""); setAddPriceSensitive(""); setAddPriceSpecial(String(SPECIAL_CARGO_DEFAULT_PRICE));
     setShowAddCustomer(true);
     if (clientOptions.length > 0) return;
     setClientsLoading(true);
@@ -360,14 +364,19 @@ export default function StaffWhrConsolidationPage() {
     if (!selectedPlanId) return;
     if (!addClientId) { setAddError("请选择客户"); return; }
     // 三档单价当场填（2026-09-18）：页面先挡一次，说了算的是后端那道 requireUnitPrice
-    const priceChecks: Array<[string, string]> = [["普货", addPriceNormal], ["商检货", addPriceInspection], ["敏感货", addPriceSensitive]];
+    const priceChecks: Array<[string, string]> = [
+      ["普货", addPriceNormal],
+      ["商检货", addPriceInspection],
+      ["敏感货", addPriceSensitive],
+      ["特别货", addPriceSpecial],
+    ];
     for (const [label, raw] of priceChecks) {
       const issue = unitPriceIssue(label, raw);
       if (issue) { setAddError(issue); return; }
     }
     setAddSubmitting(true);
     try {
-      const r = await apiRequest<{ unitPriceNormal?: number; unitPriceInspection?: number; unitPriceSensitive?: number }>(`${apiBaseUrl()}/admin/whr-consolidation/customers/add`, {
+      const r = await apiRequest<{ unitPriceNormal?: number; unitPriceInspection?: number; unitPriceSensitive?: number; unitPriceSpecial?: number }>(`${apiBaseUrl()}/admin/whr-consolidation/customers/add`, {
         method: "POST",
         headers: jsonPost,
         body: JSON.stringify({
@@ -376,10 +385,11 @@ export default function StaffWhrConsolidationPage() {
           unitPriceNormal: parseUnitPrice(addPriceNormal),
           unitPriceInspection: parseUnitPrice(addPriceInspection),
           unitPriceSensitive: parseUnitPrice(addPriceSensitive),
+          unitPriceSpecial: parseUnitPrice(addPriceSpecial),
         }),
       });
       setToast(r?.unitPriceNormal != null
-        ? `客户已加入本计划，单价：普货 ${r.unitPriceNormal} · 商检货 ${r.unitPriceInspection} · 敏感货 ${r.unitPriceSensitive} 元/方`
+        ? `客户已加入本计划，单价：普货 ${r.unitPriceNormal} · 商检货 ${r.unitPriceInspection} · 敏感货 ${r.unitPriceSensitive}${r.unitPriceSpecial != null ? ` · 特别货 ${r.unitPriceSpecial}` : ""} 元/方`
         : "客户已加入本计划");
       setShowAddCustomer(false);
       loadPlanDetail(selectedPlanId);
@@ -559,6 +569,7 @@ export default function StaffWhrConsolidationPage() {
         unitPriceNormal: detail.unitPriceNormal,
         unitPriceInspection: detail.unitPriceInspection,
         unitPriceSensitive: detail.unitPriceSensitive,
+        unitPriceSpecial: detail.unitPriceSpecial,
       };
       setReviewTarget({
         planId,
@@ -917,7 +928,7 @@ export default function StaffWhrConsolidationPage() {
                                     <td style={{ ...tdS, padding: "4px 8px", fontSize: 11 }}>{it.packageCount}</td>
                                     <td style={{ ...tdS, padding: "4px 8px", fontSize: 11 }}>{it.volumeM3 != null ? it.volumeM3 : "-"}</td>
                                     <td style={{ ...tdS, padding: "4px 8px", fontSize: 11 }}>{it.totalWeightKg != null ? it.totalWeightKg : "-"}</td>
-                                    <td style={{ ...tdS, padding: "4px 8px", fontSize: 11 }}>{it.cargoType === "inspection" ? "商检货" : it.cargoType === "sensitive" ? "敏感货" : "普货"}</td>
+                                    <td style={{ ...tdS, padding: "4px 8px", fontSize: 11 }}>{cargoTypeZh(it.cargoType)}</td>
                                   </tr>
                                 ))}</tbody>
                               </table>
@@ -1146,7 +1157,7 @@ export default function StaffWhrConsolidationPage() {
                         <span style={{ fontSize: 13, color: "var(--t-muted)" }}>{c.totalVolumeM3}方 · {c.totalFee ? `¥${amount2(c.totalFee)}` : ""}</span>
                       </div>
                       <div style={{ fontSize: 13, color: "var(--t-muted)", marginTop: 4, display: "flex", alignItems: "center", gap: 10 }}>
-                        <span>普货：{c.unitPriceNormal}元/方 · 商检货：{c.unitPriceInspection}元/方 · 敏感货：{c.unitPriceSensitive}元/方</span>
+                        <span>普货：{c.unitPriceNormal}元/方 · 商检货：{c.unitPriceInspection}元/方 · 敏感货：{c.unitPriceSensitive}元/方{c.unitPriceSpecial != null ? ` · 特别货：${c.unitPriceSpecial}元/方` : ""}</span>
                         {/* 已装柜/已发运的计划不给动参与名单，和「新增客户」同一条口径 */}
                         {["planning", "collecting"].includes(planDetail.status) && (
                           <button onClick={() => handleRemoveCustomer(c)} disabled={removingCustomerId === c.id} style={{ ...btnGray, padding: "3px 10px", fontSize: 12, color: "var(--c-red-deep)", borderColor: "#fecaca" }}>{removingCustomerId === c.id ? "移除中..." : "移除客户"}</button>
@@ -1201,7 +1212,7 @@ export default function StaffWhrConsolidationPage() {
                                           <td style={{ ...tdS, padding: "3px 6px", fontSize: 11 }}>{it.productName}</td>
                                           <td style={{ ...tdS, padding: "3px 6px", fontSize: 11 }}>{it.packageCount}</td>
                                           <td style={{ ...tdS, padding: "3px 6px", fontSize: 11 }}>{it.volumeM3 != null ? (typeof it.volumeM3 === "number" ? it.volumeM3.toFixed(4) : it.volumeM3) : "-"}</td>
-                                          <td style={{ ...tdS, padding: "3px 6px", fontSize: 11 }}>{it.cargoType === "inspection" ? "商检货" : it.cargoType === "sensitive" ? "敏感货" : "普货"}</td>
+                                          <td style={{ ...tdS, padding: "3px 6px", fontSize: 11 }}>{cargoTypeZh(it.cargoType)}</td>
                                         </tr>
                                       ))}
                                     </tbody>
@@ -1302,7 +1313,7 @@ export default function StaffWhrConsolidationPage() {
                             <td style={{ ...tdS, padding: "3px 6px", fontSize: 11 }}>{it.packageCount}</td>
                             <td style={{ ...tdS, padding: "3px 6px", fontSize: 11 }}>{it.volumeM3 != null ? (typeof it.volumeM3 === "number" ? it.volumeM3.toFixed(4) : it.volumeM3) : "-"}</td>
                             <td style={{ ...tdS, padding: "3px 6px", fontSize: 11 }}>{it.material || "-"}</td>
-                            <td style={{ ...tdS, padding: "3px 6px", fontSize: 11 }}>{it.cargoType === "inspection" ? "商检货" : it.cargoType === "sensitive" ? "敏感货" : "普货"}</td>
+                            <td style={{ ...tdS, padding: "3px 6px", fontSize: 11 }}>{cargoTypeZh(it.cargoType)}</td>
                           </tr>
                         ))}
                       </tbody>
@@ -1406,7 +1417,7 @@ export default function StaffWhrConsolidationPage() {
                                   <td style={{ ...tdS, padding: "3px 6px", fontSize: 11 }}>{it.packageCount}</td>
                                   <td style={{ ...tdS, padding: "3px 6px", fontSize: 11 }}>{it.volumeM3 != null ? (typeof it.volumeM3 === "number" ? it.volumeM3.toFixed(3) : it.volumeM3) : "-"}</td>
                                   <td style={{ ...tdS, padding: "3px 6px", fontSize: 11 }}>{it.totalWeightKg != null ? it.totalWeightKg : "-"}</td>
-                                  <td style={{ ...tdS, padding: "3px 6px", fontSize: 11 }}>{it.cargoType === "inspection" ? "商检货" : it.cargoType === "sensitive" ? "敏感货" : "普货"}</td>
+                                  <td style={{ ...tdS, padding: "3px 6px", fontSize: 11 }}>{cargoTypeZh(it.cargoType)}</td>
                                 </tr>
                               ))}
                             </tbody>
@@ -1535,7 +1546,7 @@ export default function StaffWhrConsolidationPage() {
               <div style={{ marginTop: 12 }}>
                 <label style={fl}>这一柜给他的单价（元/方，必填）</label>
                 <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-                  {([["普货", addPriceNormal, setAddPriceNormal], ["商检货", addPriceInspection, setAddPriceInspection], ["敏感货", addPriceSensitive, setAddPriceSensitive]] as Array<[string, string, (v: string) => void]>).map(([label, value, setter]) => (
+                  {([["普货", addPriceNormal, setAddPriceNormal], ["商检货", addPriceInspection, setAddPriceInspection], ["敏感货", addPriceSensitive, setAddPriceSensitive], ["特别货", addPriceSpecial, setAddPriceSpecial]] as Array<[string, string, (v: string) => void]>).map(([label, value, setter]) => (
                     <label key={label} style={{ display: "flex", alignItems: "center", gap: 4 }}>
                       <span style={{ color: "var(--t-muted)", fontSize: 13 }}>{label}</span>
                       <input type="number" min="0" step="0.01" value={value} onChange={(e) => setter(e.target.value)} style={{ ...fi, width: 100, padding: "4px 8px" }} />

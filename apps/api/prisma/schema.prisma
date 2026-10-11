@@ -1122,6 +1122,8 @@ model WhrConsolidationPlanCustomer {
   unitPriceNormal     Decimal  @map("unit_price_normal") @db.Decimal(10, 2) // 普货单价 元/方
   unitPriceInspection Decimal  @map("unit_price_inspection") @db.Decimal(10, 2) // 商检单价 元/方
   unitPriceSensitive  Decimal  @map("unit_price_sensitive") @db.Decimal(10, 2) // 敏感单价 元/方
+  /// 特别货单价 元/方（2026-10-11 老板「1a」：建柜加客户时默认 1250、能改，跟另外三种一样每柜当场填）
+  unitPriceSpecial    Decimal  @default(1250) @map("unit_price_special") @db.Decimal(10, 2)
   totalVolumeM3       Decimal  @default(0) @map("total_volume_m3") @db.Decimal(10, 3)
   totalFee            Decimal? @map("total_fee") @db.Decimal(12, 2)
   deliveryAddress     String?  @map("delivery_address") @db.Text
@@ -1183,11 +1185,14 @@ model WhrConsolidationPrealert {
   paidPriceNormal          Decimal? @map("paid_price_normal") @db.Decimal(10, 2)
   paidPriceInspection      Decimal? @map("paid_price_inspection") @db.Decimal(10, 2)
   paidPriceSensitive       Decimal? @map("paid_price_sensitive") @db.Decimal(10, 2)
+  /// 特别货（2026-10-11）。加特别货之前付的款这一格是空的（那时不可能有特别货）
+  paidPriceSpecial         Decimal? @map("paid_price_special") @db.Decimal(10, 2)
   /// 付款时客户归哪个代理；湘泰自己的客户为空（下面代理价、返现也为空）
   paidAgentId              String?  @map("paid_agent_id")
   paidAgentPriceNormal     Decimal? @map("paid_agent_price_normal") @db.Decimal(10, 2)
   paidAgentPriceInspection Decimal? @map("paid_agent_price_inspection") @db.Decimal(10, 2)
   paidAgentPriceSensitive  Decimal? @map("paid_agent_price_sensitive") @db.Decimal(10, 2)
+  paidAgentPriceSpecial    Decimal? @map("paid_agent_price_special") @db.Decimal(10, 2)
   rebateAmount             Decimal? @map("rebate_amount") @db.Decimal(12, 2)
 
   createdAt DateTime @default(now()) @map("created_at")
@@ -1268,10 +1273,12 @@ model Agent {
   /// 前缀登录：网址/<slug>
   slug            String?  @unique
   customDomain    String?  @unique @map("custom_domain")
-  /// 湘泰给代理的三档价 元/方
+  /// 湘泰给代理的四档价 元/方
   priceNormal     Decimal  @map("price_normal") @db.Decimal(10, 2)
   priceInspection Decimal  @map("price_inspection") @db.Decimal(10, 2)
   priceSensitive  Decimal  @map("price_sensitive") @db.Decimal(10, 2)
+  /// 特别货（2026-10-11 老板「2a」：默认 1250 = 跟客户默认价一样、默认不产生返现；代理管理里能改）
+  priceSpecial    Decimal  @default(1250) @map("price_special") @db.Decimal(10, 2)
   createdAt       DateTime @default(now()) @map("created_at")
   updatedAt       DateTime @updatedAt @map("updated_at")
 
@@ -1289,6 +1296,8 @@ model ClientWhrPrice {
   priceNormal     Decimal  @map("price_normal") @db.Decimal(10, 2)
   priceInspection Decimal  @map("price_inspection") @db.Decimal(10, 2)
   priceSensitive  Decimal  @map("price_sensitive") @db.Decimal(10, 2)
+  /// 特别货（2026-10-11，默认 1250）。长期价 9-18 起前端停用、后端保留，跟着补一列免得四档类型对不上
+  priceSpecial    Decimal  @default(1250) @map("price_special") @db.Decimal(10, 2)
   /// 操作人只给超管看（沿用 canSeeOperatorIdentity）；上线回填的行为空
   updatedBy       String?  @map("updated_by")
   updatedByRole   String?  @map("updated_by_role")
@@ -1339,12 +1348,16 @@ model AgentRebateLine {
   volumeNormalM3        Decimal   @map("volume_normal_m3") @db.Decimal(12, 3)
   volumeInspectionM3    Decimal   @map("volume_inspection_m3") @db.Decimal(12, 3)
   volumeSensitiveM3     Decimal   @map("volume_sensitive_m3") @db.Decimal(12, 3)
+  /// 特别货（2026-10-11）；加特别货之前生成的返现明细是 0
+  volumeSpecialM3       Decimal   @default(0) @map("volume_special_m3") @db.Decimal(12, 3)
   clientPriceNormal     Decimal   @map("client_price_normal") @db.Decimal(10, 2)
   clientPriceInspection Decimal   @map("client_price_inspection") @db.Decimal(10, 2)
   clientPriceSensitive  Decimal   @map("client_price_sensitive") @db.Decimal(10, 2)
+  clientPriceSpecial    Decimal   @default(0) @map("client_price_special") @db.Decimal(10, 2)
   agentPriceNormal      Decimal   @map("agent_price_normal") @db.Decimal(10, 2)
   agentPriceInspection  Decimal   @map("agent_price_inspection") @db.Decimal(10, 2)
   agentPriceSensitive   Decimal   @map("agent_price_sensitive") @db.Decimal(10, 2)
+  agentPriceSpecial     Decimal   @default(0) @map("agent_price_special") @db.Decimal(10, 2)
   rebateAmount          Decimal   @map("rebate_amount") @db.Decimal(12, 2)
   /// 6 个时间：建单 / 仓库签收 / 付款 / 装柜 / 发运 / 泰国签收
   prealertCreatedAt     DateTime  @map("prealert_created_at")

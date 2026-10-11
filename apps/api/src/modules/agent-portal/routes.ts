@@ -367,6 +367,7 @@ export function registerAgentPortalRoutes(app: MinimalHttpApp): void {
         priceNormal: true,
         priceInspection: true,
         priceSensitive: true,
+        priceSpecial: true,
       },
     });
     if (!agent) {
@@ -378,7 +379,7 @@ export function registerAgentPortalRoutes(app: MinimalHttpApp): void {
       logoUrl: agent.logoPath ?? null,
       slug: agent.slug ?? null,
       customDomain: agent.customDomain ?? null,
-      prices: { normal: num(agent.priceNormal), inspection: num(agent.priceInspection), sensitive: num(agent.priceSensitive) },
+      prices: { normal: num(agent.priceNormal), inspection: num(agent.priceInspection), sensitive: num(agent.priceSensitive), special: num(agent.priceSpecial) },
     });
   });
 
@@ -795,6 +796,7 @@ export function registerAgentPortalRoutes(app: MinimalHttpApp): void {
         unitPriceNormal: true,
         unitPriceInspection: true,
         unitPriceSensitive: true,
+        unitPriceSpecial: true,
         totalVolumeM3: true,
         deliveryAddress: true,
         // ⚠️ 不选 plan.totalVolumeM3 / 已用方数（整柜用了多少会暴露别人的货量）、createdBy / creatorName（员工）
@@ -833,7 +835,7 @@ export function registerAgentPortalRoutes(app: MinimalHttpApp): void {
         customerId: r.id,
         clientId: r.clientId,
         clientName: clientNames.get(r.clientId) ?? "",
-        unitPrices: { normal: num(r.unitPriceNormal), inspection: num(r.unitPriceInspection), sensitive: num(r.unitPriceSensitive) },
+        unitPrices: { normal: num(r.unitPriceNormal), inspection: num(r.unitPriceInspection), sensitive: num(r.unitPriceSensitive), special: num(r.unitPriceSpecial) },
         totalVolumeM3: num(r.totalVolumeM3),
         totalFee: active.length > 0 ? Math.round(active.reduce((s, p) => s + num(p.totalFee), 0) * 100) / 100 : null,
         prealertCount: active.length,
@@ -872,6 +874,7 @@ export function registerAgentPortalRoutes(app: MinimalHttpApp): void {
             unitPriceNormal: true,
             unitPriceInspection: true,
             unitPriceSensitive: true,
+            unitPriceSpecial: true,
             totalVolumeM3: true,
             totalFee: true,
             totalPackages: true,
@@ -892,10 +895,11 @@ export function registerAgentPortalRoutes(app: MinimalHttpApp): void {
                 signedAt: true,
                 warehouseReceiptProofs: true,
                 totalFee: true,
-                // 付款那一刻记下的客户价：已付款的单按它解释费用明细（Codex 审查 P2-2）。只拿客户价三列，代理价不在这里给
+                // 付款那一刻记下的客户价：已付款的单按它解释费用明细（Codex 审查 P2-2）。只拿客户价那几列（2026-10-11 起四列，多了特别货），代理价不在这里给
                 paidPriceNormal: true,
                 paidPriceInspection: true,
                 paidPriceSensitive: true,
+                paidPriceSpecial: true,
                 paymentReviewedAt: true,
                 paymentRejectReason: true,
                 thailandReceiptProofs: true,
@@ -955,12 +959,13 @@ export function registerAgentPortalRoutes(app: MinimalHttpApp): void {
           unitPriceNormal: c.unitPriceNormal,
           unitPriceInspection: c.unitPriceInspection,
           unitPriceSensitive: c.unitPriceSensitive,
+          unitPriceSpecial: c.unitPriceSpecial,
         };
         return {
           customerId: c.id,
           clientId: c.clientId,
           clientName: clientNames.get(c.clientId) ?? "",
-          unitPrices: { normal: num(c.unitPriceNormal), inspection: num(c.unitPriceInspection), sensitive: num(c.unitPriceSensitive) },
+          unitPrices: { normal: num(c.unitPriceNormal), inspection: num(c.unitPriceInspection), sensitive: num(c.unitPriceSensitive), special: num(c.unitPriceSpecial) },
           totalVolumeM3: num(c.totalVolumeM3),
           totalFee: numOrNull(c.totalFee),
           totalPackages: c.totalPackages,
@@ -973,9 +978,16 @@ export function registerAgentPortalRoutes(app: MinimalHttpApp): void {
              * 柜里这一行的单价已经是新价，拿它解释旧金额就成了「1.5 方 × 800 = 1200」，加起来跟总额对不上。
              * 没有快照（没付款，或者上线前付的老单）才用柜里现在的单价；matchesStored 把对不上的标出来给页面提示。
              */
+            /* 特别货那一列 2026-10-11 才有：之前付的单没有这格快照，但那时还没有特别货，这一格用不上 ——
+               所以只看老三格判断有没有快照，特别货缺了就拿柜里现在的价顶上（明细只列有方数的货型）。 */
             const paidPrices =
               pa.paidPriceNormal != null && pa.paidPriceInspection != null && pa.paidPriceSensitive != null
-                ? { unitPriceNormal: pa.paidPriceNormal, unitPriceInspection: pa.paidPriceInspection, unitPriceSensitive: pa.paidPriceSensitive }
+                ? {
+                    unitPriceNormal: pa.paidPriceNormal,
+                    unitPriceInspection: pa.paidPriceInspection,
+                    unitPriceSensitive: pa.paidPriceSensitive,
+                    unitPriceSpecial: pa.paidPriceSpecial ?? c.unitPriceSpecial,
+                  }
                 : null;
             const bd = buildFeeBreakdown(pa.items, paidPrices ?? prices, pa.totalFee);
             return {
@@ -1035,7 +1047,7 @@ export function registerAgentPortalRoutes(app: MinimalHttpApp): void {
     if (!auth) return;
     const agent = await prisma.agent.findFirst({
       where: { id: auth.agentId, companyId: auth.companyId },
-      select: { priceNormal: true, priceInspection: true, priceSensitive: true },
+      select: { priceNormal: true, priceInspection: true, priceSensitive: true, priceSpecial: true },
     });
     if (!agent) {
       fail(res, 404, "NOT_FOUND", `代理${NOT_FOUND}`);
@@ -1051,11 +1063,11 @@ export function registerAgentPortalRoutes(app: MinimalHttpApp): void {
         status: true,
         createdAt: true,
         // ⚠️ 不选 updatedBy / updatedByRole（谁改的价只给超管看）
-        whrPrice: { select: { priceNormal: true, priceInspection: true, priceSensitive: true, updatedAt: true } },
+        whrPrice: { select: { priceNormal: true, priceInspection: true, priceSensitive: true, priceSpecial: true, updatedAt: true } },
       },
     });
     ok(res, {
-      agentPrices: { normal: num(agent.priceNormal), inspection: num(agent.priceInspection), sensitive: num(agent.priceSensitive) },
+      agentPrices: { normal: num(agent.priceNormal), inspection: num(agent.priceInspection), sensitive: num(agent.priceSensitive), special: num(agent.priceSpecial) },
       items: rows.map((u) => ({
         clientId: u.id,
         name: u.name,
@@ -1067,6 +1079,7 @@ export function registerAgentPortalRoutes(app: MinimalHttpApp): void {
               normal: num(u.whrPrice.priceNormal),
               inspection: num(u.whrPrice.priceInspection),
               sensitive: num(u.whrPrice.priceSensitive),
+              special: num(u.whrPrice.priceSpecial),
               updatedAt: u.whrPrice.updatedAt.toISOString(),
             }
           : null,
@@ -1080,7 +1093,7 @@ export function registerAgentPortalRoutes(app: MinimalHttpApp): void {
     // 长期价功能暂时关闭（2026-09-18 老板拍板，代码保留）：不拦的话代理一打这个接口，
     // 他名下客户在跑的柜里当场填的价会被一次覆盖掉
     if (!LONG_TERM_PRICE_WRITE_ENABLED) return fail(res, 400, "BAD_REQUEST", LONG_TERM_PRICE_OFF_MESSAGE);
-    const body = (req.body ?? {}) as { clientId?: unknown; prices?: Record<"normal" | "inspection" | "sensitive", unknown> };
+    const body = (req.body ?? {}) as { clientId?: unknown; prices?: Partial<Record<"normal" | "inspection" | "sensitive" | "special", unknown>> };
     const clientId = typeof body.clientId === "string" ? body.clientId.trim() : "";
     if (!clientId || clientId.length > 100) {
       fail(res, 400, "BAD_REQUEST", "请选择客户");
@@ -1098,15 +1111,11 @@ export function registerAgentPortalRoutes(app: MinimalHttpApp): void {
       actor: { userId: auth.userId, role: auth.role },
       notFoundMessage: `客户${NOT_FOUND}`,
     });
-    const saved = await prisma.clientWhrPrice.findUnique({
-      where: { clientId },
-      select: { priceNormal: true, priceInspection: true, priceSensitive: true, updatedAt: true },
-    });
+    // 价格和时间都用锁里那一次写入的结果（result），不在事务外补读 —— 不然可能拼出「我的三档 + 别人刚改的特别货 / 别人的时间」
+    //（2026-10-11 dsh 第 2 轮、Codex 第 3 轮）
     ok(res, {
       clientId,
-      price: saved
-        ? { normal: num(saved.priceNormal), inspection: num(saved.priceInspection), sensitive: num(saved.priceSensitive), updatedAt: saved.updatedAt.toISOString() }
-        : null,
+      price: { ...result.prices, updatedAt: result.updatedAt ? result.updatedAt.toISOString() : null },
       updatedPlanRows: result.updatedPlanRows,
     });
   });
@@ -1222,12 +1231,15 @@ export function registerAgentPortalRoutes(app: MinimalHttpApp): void {
         volumeNormalM3: true,
         volumeInspectionM3: true,
         volumeSensitiveM3: true,
+        volumeSpecialM3: true,
         clientPriceNormal: true,
         clientPriceInspection: true,
         clientPriceSensitive: true,
+        clientPriceSpecial: true,
         agentPriceNormal: true,
         agentPriceInspection: true,
         agentPriceSensitive: true,
+        agentPriceSpecial: true,
         rebateAmount: true,
         prealertCreatedAt: true,
         signedAt: true,

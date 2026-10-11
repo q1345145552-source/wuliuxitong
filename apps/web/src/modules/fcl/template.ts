@@ -7,7 +7,8 @@
  */
 import type { FclProductInput } from "../../services/business-api";
 
-const CARGO_ZH_TO_CODE: Record<string, string> = { 普货: "normal", 商检货: "inspection", 敏感货: "sensitive" };
+// 2026-10-11 加特别货
+const CARGO_ZH_TO_CODE: Record<string, string> = { 普货: "normal", 商检货: "inspection", 敏感货: "sensitive", 特别货: "special" };
 
 /** 整柜货物清单模板的表头。⚠️ 新列只能加在最后（2026-09-11 的规矩），表头是精确匹配 */
 export const FCL_TEMPLATE_HEADERS = [
@@ -19,8 +20,14 @@ export const FCL_TEMPLATE_HEADERS = [
   "高cm *",
   "单箱重量kg（选填）",
   "国内单号（选填）",
-  "货型（普货/商检货/敏感货，默认普货）",
+  "货型（普货/商检货/敏感货/特别货，默认普货）",
 ];
+
+/**
+ * 加特别货之前的「货型」表头（2026-10-11 改表头前的写法）。客户 / 员工手里下载过的旧模板还是这一句，
+ * 表头又是精确匹配 —— 不认它的话旧模板一上传就报「少一列」。读表时把它当成新表头。
+ */
+const LEGACY_CARGO_HEADERS = ["货型（普货/商检货/敏感货，默认普货）"];
 
 /**
  * 把一行的**列名两头的空格去掉**再用。
@@ -32,7 +39,16 @@ export const FCL_TEMPLATE_HEADERS = [
  */
 function normalizeKeys(raw: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {};
-  for (const [k, v] of Object.entries(raw)) out[k.trim()] = v;
+  const cargoHeader = FCL_TEMPLATE_HEADERS[8];
+  for (const [k, v] of Object.entries(raw)) {
+    const key = k.trim();
+    // 旧模板的货型表头当成新表头（新旧两列同时在的话，以新表头那列为准）
+    if (LEGACY_CARGO_HEADERS.includes(key)) {
+      if (!(cargoHeader in out)) out[cargoHeader] = v;
+      continue;
+    }
+    out[key] = v;
+  }
   return out;
 }
 

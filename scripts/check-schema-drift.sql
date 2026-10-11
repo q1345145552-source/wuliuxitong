@@ -7,7 +7,7 @@
 --   B 多余  → 数据库有、设计图没有。一旦跑 prisma db push，这些字段连同里面的数据会被删掉
 --
 -- 什么都不输出 = 完全一致，没问题。
--- 生成自 schema.prisma，共 57 张表 / 720 个字段（2026-10-09 到货通知多款产品加一张表 arrival_notice_products 14 个字段；2026-10-08 到货通知第四轮审查加 arrival_notices.cargo_type、arrival_notice_images.thumb_path 两列；2026-10-06 到货通知加两张表 arrival_notices 23 个字段、arrival_notice_images 9 个字段；2026-10-02 客服对话加撤回 / 关联单号 5 列 + 系统通知订阅一张表 10 个字段；2026-09-29 加 number_sequences 一张表 3 个字段；2026-09-28 加客服对话两张表 + 询价报价 8 列后是 52 张 / 653 个）。
+-- 生成自 schema.prisma，共 57 张表 / 728 个字段（2026-10-11 特别货加 8 列：柜里客户单价、付款快照两列、代理价、客户长期价、返现明细三列；2026-10-09 到货通知多款产品加一张表 arrival_notice_products 14 个字段；2026-10-08 到货通知第四轮审查加 arrival_notices.cargo_type、arrival_notice_images.thumb_path 两列；2026-10-06 到货通知加两张表 arrival_notices 23 个字段、arrival_notice_images 9 个字段；2026-10-02 客服对话加撤回 / 关联单号 5 列 + 系统通知订阅一张表 10 个字段；2026-09-29 加 number_sequences 一张表 3 个字段；2026-09-28 加客服对话两张表 + 询价报价 8 列后是 52 张 / 653 个）。
 --
 -- ⚠️ 这份清单是手抄的，schema.prisma 加了字段必须回来同步一行，否则部署时会报
 --    「B 多余」的假警告（2026-08-05 加 containers.transport_mode 时就漏了一次）。
@@ -573,6 +573,7 @@ WITH expected(table_name, column_name) AS (VALUES
   ('whr_consolidation_plan_customers','unit_price_normal'),
   ('whr_consolidation_plan_customers','unit_price_inspection'),
   ('whr_consolidation_plan_customers','unit_price_sensitive'),
+  ('whr_consolidation_plan_customers','unit_price_special'),
   ('whr_consolidation_plan_customers','total_volume_m3'),
   ('whr_consolidation_plan_customers','total_fee'),
   ('whr_consolidation_plan_customers','delivery_address'),
@@ -652,10 +653,12 @@ WITH expected(table_name, column_name) AS (VALUES
   ('whr_consolidation_prealerts','paid_price_normal'),
   ('whr_consolidation_prealerts','paid_price_inspection'),
   ('whr_consolidation_prealerts','paid_price_sensitive'),
+  ('whr_consolidation_prealerts','paid_price_special'),
   ('whr_consolidation_prealerts','paid_agent_id'),
   ('whr_consolidation_prealerts','paid_agent_price_normal'),
   ('whr_consolidation_prealerts','paid_agent_price_inspection'),
   ('whr_consolidation_prealerts','paid_agent_price_sensitive'),
+  ('whr_consolidation_prealerts','paid_agent_price_special'),
   ('whr_consolidation_prealerts','rebate_amount'),
   ('agents','id'),
   ('agents','company_id'),
@@ -666,6 +669,7 @@ WITH expected(table_name, column_name) AS (VALUES
   ('agents','price_normal'),
   ('agents','price_inspection'),
   ('agents','price_sensitive'),
+  ('agents','price_special'),
   ('agents','created_at'),
   ('agents','updated_at'),
   ('client_whr_prices','client_id'),
@@ -673,6 +677,7 @@ WITH expected(table_name, column_name) AS (VALUES
   ('client_whr_prices','price_normal'),
   ('client_whr_prices','price_inspection'),
   ('client_whr_prices','price_sensitive'),
+  ('client_whr_prices','price_special'),
   ('client_whr_prices','updated_by'),
   ('client_whr_prices','updated_by_role'),
   ('client_whr_prices','created_at'),
@@ -700,12 +705,15 @@ WITH expected(table_name, column_name) AS (VALUES
   ('agent_rebate_lines','volume_normal_m3'),
   ('agent_rebate_lines','volume_inspection_m3'),
   ('agent_rebate_lines','volume_sensitive_m3'),
+  ('agent_rebate_lines','volume_special_m3'),
   ('agent_rebate_lines','client_price_normal'),
   ('agent_rebate_lines','client_price_inspection'),
   ('agent_rebate_lines','client_price_sensitive'),
+  ('agent_rebate_lines','client_price_special'),
   ('agent_rebate_lines','agent_price_normal'),
   ('agent_rebate_lines','agent_price_inspection'),
   ('agent_rebate_lines','agent_price_sensitive'),
+  ('agent_rebate_lines','agent_price_special'),
   ('agent_rebate_lines','rebate_amount'),
   ('agent_rebate_lines','prealert_created_at'),
   ('agent_rebate_lines','signed_at'),

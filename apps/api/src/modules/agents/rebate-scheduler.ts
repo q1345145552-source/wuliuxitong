@@ -25,7 +25,7 @@ import { prisma } from "../../db/prisma";
 import { checkTotalsWritable } from "../core/decimal-guard";
 import { logger } from "../core/logger";
 import { realtimeHub } from "../realtime/hub";
-import { computeRebate } from "../whr-consolidation/rebate";
+import { bucketOf, computeRebate } from "../whr-consolidation/rebate";
 import { planAgentStatements, toCents, toMilliM3 } from "./agent-rules";
 
 type Tx = any;
@@ -43,9 +43,12 @@ interface PrealertForRebate {
   paidPriceNormal: unknown;
   paidPriceInspection: unknown;
   paidPriceSensitive: unknown;
+  /** 特别货（2026-10-11）。加特别货之前付的款这一格是空的 */
+  paidPriceSpecial: unknown;
   paidAgentPriceNormal: unknown;
   paidAgentPriceInspection: unknown;
   paidAgentPriceSensitive: unknown;
+  paidAgentPriceSpecial: unknown;
   rebateAmount: unknown;
   planCustomer: { clientId: string; plan: { planNo: string } };
   items: Array<{ productName: string; cargoType: string | null; volumeM3: unknown }>;
@@ -73,12 +76,15 @@ export function buildRebateLine(pa: PrealertForRebate): {
   volumeNormalM3: number;
   volumeInspectionM3: number;
   volumeSensitiveM3: number;
+  volumeSpecialM3: number;
   clientPriceNormal: unknown;
   clientPriceInspection: unknown;
   clientPriceSensitive: unknown;
+  clientPriceSpecial: unknown;
   agentPriceNormal: unknown;
   agentPriceInspection: unknown;
   agentPriceSensitive: unknown;
+  agentPriceSpecial: unknown;
   rebateAmount: number;
   prealertCreatedAt: Date;
   signedAt: Date | null;
@@ -87,8 +93,15 @@ export function buildRebateLine(pa: PrealertForRebate): {
   shippedAt: Date | null;
   thailandReceivedAt: Date;
 } | null {
-  const clientPrices = { normal: pa.paidPriceNormal, inspection: pa.paidPriceInspection, sensitive: pa.paidPriceSensitive };
-  const agentPrices = { normal: pa.paidAgentPriceNormal, inspection: pa.paidAgentPriceInspection, sensitive: pa.paidAgentPriceSensitive };
+  const clientPrices = { normal: pa.paidPriceNormal, inspection: pa.paidPriceInspection, sensitive: pa.paidPriceSensitive, special: pa.paidPriceSpecial };
+  const agentPrices = { normal: pa.paidAgentPriceNormal, inspection: pa.paidAgentPriceInspection, sensitive: pa.paidAgentPriceSensitive, special: pa.paidAgentPriceSpecial };
+  /* 加特别货（2026-10-11）之前付的款，快照里没有特别货那两格（空）—— 那时根本不可能有特别货，按 0 补上照常进返现单；
+     不补的话这些老单会被下面那句当成「快照不全」，从返现单里悄悄消失。
+     真有特别货的货、快照里却没有特别货价，才算缺数据（照旧跳过、留日志）。 */
+  if (!pa.items.some((i) => bucketOf(i.cargoType) === "special")) {
+    if (clientPrices.special === null || clientPrices.special === undefined) clientPrices.special = 0;
+    if (agentPrices.special === null || agentPrices.special === undefined) agentPrices.special = 0;
+  }
   if ([...Object.values(clientPrices), ...Object.values(agentPrices)].some((v) => v === null || v === undefined)) return null;
 
   const computed = computeRebate(pa.items, clientPrices, agentPrices);
@@ -115,12 +128,15 @@ export function buildRebateLine(pa: PrealertForRebate): {
     volumeNormalM3: computed.volumes.normal,
     volumeInspectionM3: computed.volumes.inspection,
     volumeSensitiveM3: computed.volumes.sensitive,
+    volumeSpecialM3: computed.volumes.special,
     clientPriceNormal: clientPrices.normal,
     clientPriceInspection: clientPrices.inspection,
     clientPriceSensitive: clientPrices.sensitive,
+    clientPriceSpecial: clientPrices.special,
     agentPriceNormal: agentPrices.normal,
     agentPriceInspection: agentPrices.inspection,
     agentPriceSensitive: agentPrices.sensitive,
+    agentPriceSpecial: agentPrices.special,
     rebateAmount: rebate,
     // 6 个时间（4.20）：建单 / 仓库签收 / 付款 / 装柜 / 发运 / 泰国签收
     prealertCreatedAt: pa.createdAt,
@@ -166,9 +182,11 @@ async function generateForAgent(agentId: string, now: Date, result: RebateRunRes
           paidPriceNormal: true,
           paidPriceInspection: true,
           paidPriceSensitive: true,
+          paidPriceSpecial: true,
           paidAgentPriceNormal: true,
           paidAgentPriceInspection: true,
           paidAgentPriceSensitive: true,
+          paidAgentPriceSpecial: true,
           rebateAmount: true,
           planCustomer: { select: { clientId: true, plan: { select: { planNo: true } } } },
           items: { select: { productName: true, cargoType: true, volumeM3: true }, orderBy: { sortOrder: "asc" } },
@@ -202,7 +220,7 @@ async function generateForAgent(agentId: string, now: Date, result: RebateRunRes
       for (const plan of planAgentStatements(pool, existingMonths, now)) {
         const lineCount = plan.items.length;
         const totalMilli = plan.items.reduce(
-          (s, p) => s + toMilliM3(p.line.volumeNormalM3) + toMilliM3(p.line.volumeInspectionM3) + toMilliM3(p.line.volumeSensitiveM3),
+          (s, p) => s + toMilliM3(p.line.volumeNormalM3) + toMilliM3(p.line.volumeInspectionM3) + toMilliM3(p.line.volumeSensitiveM3) + toMilliM3(p.line.volumeSpecialM3),
           0,
         );
         const totalCents = plan.items.reduce((s, p) => s + toCents(p.line.rebateAmount), 0);

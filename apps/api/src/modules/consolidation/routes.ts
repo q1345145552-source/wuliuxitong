@@ -23,13 +23,14 @@ import { saveImageToDisk, readImageAsBase64 } from "../orders/image-storage";
 // 客户排队锁：跟「超管改客户归属」同一把，建普通版任务时防止客户同时被改归代理（确认单 4.1）
 import { lockClientWhrPrice } from "../whr-consolidation/long-term-price";
 import { nextSequenceValue } from "../core/number-sequence";
+import { CARGO_TYPES as SHARED_CARGO_TYPES, cargoTypeZh } from "../../../../../packages/shared-types/cargo-type";
 
 // ============================================================================
 // 辅助函数
 // ============================================================================
 
-/** 货型取值，与仓库版集货保持一致。普通版只记录，不参与计价。 */
-const CARGO_TYPES = ["normal", "inspection", "sensitive"];
+/** 货型取值：用共享那一份（2026-10-11 加特别货时收过来，原来这里抄了三个值）。普通版只记录，不参与计价。 */
+const CARGO_TYPES: readonly string[] = SHARED_CARGO_TYPES;
 
 /**
  * 任务走到这几档之后就不许再删货了（2026-08-15）。
@@ -2133,7 +2134,7 @@ export function registerConsolidationRoutes(app: MinimalHttpApp): void {
           material: p.material,
           cargoValue: p.cargoValue,
           // 直接给中文：这是导出到 Excel 的展示数据，全中文系统不能漏英文值出去
-          cargoType: p.cargoType === "inspection" ? "商检货" : p.cargoType === "sensitive" ? "敏感货" : "普货",
+          cargoType: cargoTypeZh(p.cargoType),
           productImageBase64: (() => {
             if (!p.productImageBase64) return null;
             if (p.productImageBase64.startsWith("data:image/")) return p.productImageBase64;

@@ -12,6 +12,7 @@
  * 推状态不在这里做 —— 整柜建完就是普通柜子，走现成的「装柜管理」改状态。
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { CARGO_TYPES, CARGO_TYPE_ZH as SHARED_CARGO_TYPE_ZH } from "../../../../../packages/shared-types/cargo-type";
 import { amount2 } from "../../modules/shared/money-format";
 import {
   createFclContainer,
@@ -56,7 +57,8 @@ const WAREHOUSES = [
   { id: "wh_shenzhen_01", label: "深圳仓" },
 ];
 
-const CARGO_TYPE_ZH: Record<string, string> = { normal: "普货", inspection: "商检货", sensitive: "敏感货" };
+// 货型中文：用共享那一份（2026-10-11 加特别货时收过来，原来这里抄了三个）
+const CARGO_TYPE_ZH: Record<string, string> = SHARED_CARGO_TYPE_ZH;
 
 /** 柜子状态中文（跟「装柜管理」同一套说法） */
 const CONTAINER_STATUS_ZH: Record<string, string> = {
@@ -622,7 +624,7 @@ export default function FclContainerWorkbench({ canUnsign = false, canDelete = f
                     <td style={td}><input style={{ ...fi, width: 110 }} value={String(r.domesticTrackingNo ?? "")} onChange={(e) => setCell("domesticTrackingNo", e.target.value)} /></td>
                     <td style={td}>
                       <select style={{ ...fi, width: 95 }} value={String(r.cargoType ?? "normal")} onChange={(e) => setCell("cargoType", e.target.value)}>
-                        <option value="normal">普货</option><option value="inspection">商检货</option><option value="sensitive">敏感货</option>
+                        {CARGO_TYPES.map((c) => <option key={c} value={c}>{SHARED_CARGO_TYPE_ZH[c]}</option>)}
                       </select>
                     </td>
                     <td style={td}>{pv.volumeM3 || "—"}</td>

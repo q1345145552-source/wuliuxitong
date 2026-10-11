@@ -12,6 +12,8 @@ export interface AgentPriceTriple {
   normal: number;
   inspection: number;
   sensitive: number;
+  /** 特别货（2026-10-11 加）。新建代理默认 1250 */
+  special: number;
 }
 
 export interface AdminAgentItem {

@@ -5,7 +5,7 @@
  */
 import { apiBaseUrl, apiRequest } from "./core-api";
 import type { UploadImage } from "../modules/shared/image-compress";
-import { strictestCargoType, type CargoType } from "../../../../packages/shared-types/cargo-type";
+import { CARGO_TYPES, strictestCargoType, type CargoType } from "../../../../packages/shared-types/cargo-type";
 import { isBlankNoticeProduct, noticeLegacySummary } from "../../../../packages/shared-types/arrival-notice-products";
 
 export type ArrivalNoticeTab = "todo" | "notified" | "inbound" | "formal" | "all";
@@ -68,7 +68,7 @@ export interface ArrivalNotice {
   weightKg: number | null;
   volumeM3: number | null;
   transportMode: string | null;
-  /** 货型（F11）：null = 普货；只会是 "inspection" | "sensitive" | null。老后端不回 = undefined，按普货显示 */
+  /** 货型（F11）：null = 普货；其余是 "inspection" | "sensitive" | "special"。老后端不回 = undefined，按普货显示 */
   cargoType?: string | null;
   domesticTrackingNo: string | null;
   warehouseId: string | null;
@@ -170,7 +170,8 @@ export interface ArrivalNoticeSaveBody {
  */
 export function noticeProductsOf(n: Pick<ArrivalNotice, "products" | "itemName" | "packageCount" | "domesticTrackingNo" | "cargoType">): ArrivalNoticeProduct[] {
   if (Array.isArray(n.products)) return n.products;
-  const cargo: CargoType = n.cargoType === "inspection" || n.cargoType === "sensitive" ? n.cargoType : "normal";
+  // 认得的四种原样，其余按普货（2026-10-11 加特别货：原来只认商检 / 敏感，特别货会被当成普货）
+  const cargo: CargoType = typeof n.cargoType === "string" && (CARGO_TYPES as readonly string[]).includes(n.cargoType) ? (n.cargoType as CargoType) : "normal";
   if (n.itemName === null && n.packageCount === null && n.domesticTrackingNo === null && cargo === "normal") return [];
   return [{
     itemName: n.itemName, packageCount: n.packageCount, lengthCm: null, widthCm: null, heightCm: null,

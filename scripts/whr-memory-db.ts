@@ -388,7 +388,7 @@ async function raw(strings: TemplateStringsArray, ...values: any[]): Promise<any
     emit(`lock:agent_share:${values[0]}`);
     const a = mem.db.agent.find((x) => x.id === values[0] && x.companyId === values[1]);
     return a
-      ? [{ name: a.name, price_normal: a.priceNormal, price_inspection: a.priceInspection, price_sensitive: a.priceSensitive }]
+      ? [{ name: a.name, price_normal: a.priceNormal, price_inspection: a.priceInspection, price_sensitive: a.priceSensitive, price_special: a.priceSpecial }]
       : [];
   }
   if (/FROM client_wallet_accounts/.test(sql) && /FOR UPDATE/.test(sql)) {

@@ -1,6 +1,7 @@
 /* 产品列共用固定宽度及 24px 行高；三行以内居中，更多产品由同一内表滚动。 */
 
 import type { OrderProductItem } from "../../services/business-api";
+import { cargoTypeZh } from "../../../../../packages/shared-types/cargo-type";
 
 /** 小表每行的高度；和可见行数一起决定每张运单占多高 */
 export const DETAIL_ROW_HEIGHT = 24;
@@ -117,10 +118,9 @@ export function ProductDetailCell({ widths, rows }: { widths: readonly number[];
   );
 }
 
-/** 货型的中文名，三端口径一致 */
+/** 货型的中文名，三端口径一致（2026-10-11 加特别货时改成用共享那一份，认不出来的按普货） */
 export function cargoTypeLabelOf(value?: string | null) {
-  const v = (value ?? "normal").toLowerCase();
-  return v === "inspection" ? "商检货" : v === "sensitive" ? "敏感货" : "普货";
+  return cargoTypeZh(value);
 }
 
 /* -------------------------------------------------------------------------

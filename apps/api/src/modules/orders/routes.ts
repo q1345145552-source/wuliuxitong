@@ -482,7 +482,7 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
           transportMode: body.transportMode!,
           // 订单这一层的货型（2026-09-11 补）：原来这条路**根本没写这个字段**，
           // 一律吃数据库默认的 normal，客户选了商检也看不出来。
-          // 有产品行时取最严的那个（敏感 > 商检 > 普货），跟批量导入同一个口径。
+          // 有产品行时取最严的那个（特别 > 敏感 > 商检 > 普货），跟批量导入同一个口径。
           cargoType: body.products?.length ? strictestCargoType(cargo.products) : cargo.order,
           receiverNameTh: body.receiverNameTh?.trim() || "",
           receiverPhoneTh: body.receiverPhoneTh?.trim() || "",
@@ -1139,7 +1139,7 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
       volumeM3: prVol > 0 ? prVol : volumeM3,
       shipDate: arrivedAtText,
       domesticTrackingNo: body.domesticTrackingNo ?? null,
-      // 有产品行时取最严的那个（敏感 > 商检 > 普货），跟批量导入和客户预报单同一个口径
+      // 有产品行时取最严的那个（特别 > 敏感 > 商检 > 普货），跟批量导入和客户预报单同一个口径
       cargoType: body.products?.length ? strictestCargoType(staffCargo.products) : staffCargo.order,
       batchNo,
       remark: body.remark?.trim() || null,

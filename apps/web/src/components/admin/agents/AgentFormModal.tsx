@@ -7,6 +7,7 @@ import {
   type AdminAgentItem,
   type AgentLogoUpload,
 } from "../../../services/agents-admin-api";
+import { SPECIAL_CARGO_DEFAULT_PRICE } from "../../../../../../packages/shared-types/cargo-type";
 import { Modal, ErrorBar, btnCancel, btnConfirm, btnSmall, fi, fl, hint, readLogoFile } from "./agent-ui";
 
 /**
@@ -27,6 +28,8 @@ export default function AgentFormModal(props: {
   const [priceNormal, setPriceNormal] = useState(agent ? String(agent.prices.normal) : "");
   const [priceInspection, setPriceInspection] = useState(agent ? String(agent.prices.inspection) : "");
   const [priceSensitive, setPriceSensitive] = useState(agent ? String(agent.prices.sensitive) : "");
+  // 特别货（2026-10-11 老板「2a」）：新开代理先填 1250（= 默认不产生返现），能改
+  const [priceSpecial, setPriceSpecial] = useState(agent ? String(agent.prices.special) : String(SPECIAL_CARGO_DEFAULT_PRICE));
   const [loginId, setLoginId] = useState("");
   const [password, setPassword] = useState("");
   const [phone, setPhone] = useState("");
@@ -41,7 +44,10 @@ export default function AgentFormModal(props: {
   // 跟后端 normalizeAgentDomain 同一口径：去空格、转小写、去掉手抄时带上的 http(s):// 和结尾的 /
   const domainPreview = customDomain.trim().toLowerCase().replace(/^https?:\/\//, "").replace(/\/+$/, "");
   const pricesRaised = agent != null && (
-    Number(priceNormal) > agent.prices.normal || Number(priceInspection) > agent.prices.inspection || Number(priceSensitive) > agent.prices.sensitive
+    Number(priceNormal) > agent.prices.normal ||
+    Number(priceInspection) > agent.prices.inspection ||
+    Number(priceSensitive) > agent.prices.sensitive ||
+    Number(priceSpecial) > agent.prices.special
   );
 
   const handleLogo = async (file: File | undefined) => {
@@ -59,9 +65,9 @@ export default function AgentFormModal(props: {
 
   const submit = async () => {
     if (!name.trim()) { setError("请填代理名字"); return; }
-    const prices = { normal: Number(priceNormal), inspection: Number(priceInspection), sensitive: Number(priceSensitive) };
-    if ([priceNormal, priceInspection, priceSensitive].some((v) => v.trim() === "") || Object.values(prices).some((v) => !Number.isFinite(v) || v <= 0)) {
-      setError("三档代理价都要填，而且要大于 0");
+    const prices = { normal: Number(priceNormal), inspection: Number(priceInspection), sensitive: Number(priceSensitive), special: Number(priceSpecial) };
+    if ([priceNormal, priceInspection, priceSensitive, priceSpecial].some((v) => v.trim() === "") || Object.values(prices).some((v) => !Number.isFinite(v) || v <= 0)) {
+      setError("四种货型的代理价都要填，而且要大于 0");
       return;
     }
     if (mode === "create") {
@@ -136,11 +142,12 @@ export default function AgentFormModal(props: {
 
         <div>
           <label style={fl}>湘泰给代理的价（元/方）</label>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(100px, 1fr))", gap: 8 }}>
             {([
               ["普货", priceNormal, setPriceNormal],
               ["商检货", priceInspection, setPriceInspection],
               ["敏感货", priceSensitive, setPriceSensitive],
+              ["特别货", priceSpecial, setPriceSpecial],
             ] as const).map(([label, value, set]) => (
               <div key={label}>
                 <div style={{ fontSize: 12, color: "var(--t-muted)", marginBottom: 2 }}>{label}</div>

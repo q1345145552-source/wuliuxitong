@@ -15,6 +15,7 @@ const KEYS = [
   { key: "normal", label: "普货" },
   { key: "inspection", label: "商检货" },
   { key: "sensitive", label: "敏感货" },
+  { key: "special", label: "特别货" },
 ] as const;
 
 function PriceEditor({ client, agentPrices, onSaved, onCancel }: { client: AgentClientItem; agentPrices: PriceTriple; onSaved: (msg: string) => void; onCancel: () => void }) {
@@ -22,6 +23,7 @@ function PriceEditor({ client, agentPrices, onSaved, onCancel }: { client: Agent
     normal: client.price ? String(client.price.normal) : "",
     inspection: client.price ? String(client.price.inspection) : "",
     sensitive: client.price ? String(client.price.sensitive) : "",
+    special: client.price ? String(client.price.special) : "",
   });
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState("");
@@ -48,7 +50,7 @@ function PriceEditor({ client, agentPrices, onSaved, onCancel }: { client: Agent
     try {
       const r = await saveAgentClientPrice({
         clientId: client.clientId,
-        prices: { normal: parseUnitPrice(draft.normal), inspection: parseUnitPrice(draft.inspection), sensitive: parseUnitPrice(draft.sensitive) },
+        prices: { normal: parseUnitPrice(draft.normal), inspection: parseUnitPrice(draft.inspection), sensitive: parseUnitPrice(draft.sensitive), special: parseUnitPrice(draft.special) },
       });
       onSaved(r.updatedPlanRows > 0 ? `已保存。这个客户在 ${r.updatedPlanRows} 个还没发运的柜里没付款的单已按新价重算，已付款的不变。` : "已保存。以后加进柜子时自动带出这个价。");
     } catch (e) {
@@ -82,7 +84,7 @@ export default function AgentClients() {
 
   return (
     <section>
-      <SectionHeader title="客户和价格" desc="给名下客户填仓库版集货的价（按方、分三档）。⚠️ 2026-09-18 起价格改成每个柜当场填，这一页连同集货相关分区暂时关闭（开关见 modules/agent/agent-features.ts），开回来之前这段说明要重写。" />
+      <SectionHeader title="客户和价格" desc="给名下客户填仓库版集货的价（按方、按货型分档）。⚠️ 2026-09-18 起价格改成每个柜当场填，这一页连同集货相关分区暂时关闭（开关见 modules/agent/agent-features.ts），开回来之前这段说明要重写。" />
       <LoadState loading={loading && !data} error={error} onRetry={reload} />
       {notice ? <div role="status" style={{ padding: "8px 12px", borderRadius: 8, background: "var(--c-green-bg)", color: "var(--c-green-deep)", fontSize: 13, marginBottom: 12 }}>{notice}</div> : null}
       {data ? (

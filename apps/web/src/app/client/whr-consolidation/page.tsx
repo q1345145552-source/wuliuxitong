@@ -8,6 +8,7 @@ import { base64Bytes, compressImageForUpload, formatBytes } from "../../../modul
 import { createRequestGate } from "../../../modules/shared/request-gate";
 import { useLiveRefresh } from "../../../modules/realtime/useRealtime";
 import { createYieldGuard } from "../../../modules/realtime/yield-guard";
+import { CARGO_TYPES, CARGO_TYPE_ZH, cargoTypeZh } from "../../../../../../packages/shared-types/cargo-type";
 
 // 选文件时的原图上限。超过这个的多半是选错了（视频/超大扫描件），先挡掉再说。
 const MAX_SOURCE_BYTES = 30 * 1024 * 1024;
@@ -53,6 +54,7 @@ interface MyPlan {
   totalVolumeM3: number; usedVolumeM3: number;
   myTotalVolumeM3: number; myTotalFee: number | null;
   myUnitPriceNormal: number; myUnitPriceInspection: number; myUnitPriceSensitive: number;
+  myUnitPriceSpecial?: number;
   prealertCount: number; cancelledCount?: number; latestStatus: string;
   deliveryAddress: string | null;
   createdAt: string;
@@ -82,6 +84,7 @@ interface PrealertRow {
 interface MyDetail {
   customerId: string; clientId: string; customerPhone: string;
   unitPriceNormal: number; unitPriceInspection: number; unitPriceSensitive: number;
+  unitPriceSpecial?: number;
   totalVolumeM3: number; totalFee: number | null;
   feeBreakdown?: FeeBreakdown | null;
   deliveryAddress: string | null;
@@ -564,6 +567,7 @@ export default function ClientWhrConsolidationPage() {
                     </td>
                     <td style={{ ...tdS, fontSize: 12, color: "var(--t-muted)" }}>
                       普{p.myUnitPriceNormal} · 商{p.myUnitPriceInspection} · 敏{p.myUnitPriceSensitive}
+                      {p.myUnitPriceSpecial != null ? ` · 特${p.myUnitPriceSpecial}` : ""}
                     </td>
                   </tr>
                 );
@@ -600,7 +604,7 @@ export default function ClientWhrConsolidationPage() {
 
             {/* -------- 价格信息 -------- */}
             <div style={{ fontSize: 13, color: "var(--t-muted)", marginBottom: 8 }}>
-              普货：{detail.unitPriceNormal}元/方 · 商检货：{detail.unitPriceInspection}元/方 · 敏感货：{detail.unitPriceSensitive}元/方
+              普货：{detail.unitPriceNormal}元/方 · 商检货：{detail.unitPriceInspection}元/方 · 敏感货：{detail.unitPriceSensitive}元/方{detail.unitPriceSpecial != null ? ` · 特别货：${detail.unitPriceSpecial}元/方` : ""}
             </div>
 
             {/* -------- 总费用及其算式 -------- */}
@@ -826,7 +830,7 @@ export default function ClientWhrConsolidationPage() {
                                     <td style={{ ...tdS, padding: "3px 6px", fontSize: 11 }}>{it.volumeM3 != null ? it.volumeM3.toFixed(3) : "-"}</td>
                                     <td style={{ ...tdS, padding: "3px 6px", fontSize: 11 }}>{it.material}</td>
                                     <td style={{ ...tdS, padding: "3px 6px", fontSize: 11 }}>{it.cargoValue}</td>
-                                    <td style={{ ...tdS, padding: "3px 6px", fontSize: 11 }}>{it.cargoType === "inspection" ? "商检货" : it.cargoType === "sensitive" ? "敏感货" : "普货"}</td>
+                                    <td style={{ ...tdS, padding: "3px 6px", fontSize: 11 }}>{cargoTypeZh(it.cargoType)}</td>
                                     <td style={{ ...tdS, padding: "3px 6px", fontSize: 11 }}>
                                       {it.productImageBase64
                                         ? <button onClick={() => setPreviewImage(it.productImageBase64)} style={{ ...btnGray, padding: "2px 8px", fontSize: 11 }}>查看图片</button>
@@ -943,9 +947,7 @@ export default function ClientWhrConsolidationPage() {
                       <div>
                         <label style={{ fontSize: 11, color: "var(--t-muted)" }}>类型</label>
                         <select value={row.cargoType} onChange={e => { const cp = [...itemForms]; cp[idx] = { ...cp[idx], cargoType: e.target.value }; setItemForms(cp); }} style={{ ...fi, marginTop: 2 }}>
-                          <option value="normal">普货</option>
-                          <option value="inspection">商检货</option>
-                          <option value="sensitive">敏感货</option>
+                          {CARGO_TYPES.map((c) => <option key={c} value={c}>{CARGO_TYPE_ZH[c]}</option>)}
                         </select>
                       </div>
                     </div>

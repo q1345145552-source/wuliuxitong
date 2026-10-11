@@ -144,6 +144,12 @@ function blankRaw(v: unknown): boolean {
   return v === undefined || v === null || v === "";
 }
 
+/** 库里 / 请求里的货型 → 认得的四种原样，其余按普货（只用来整理、比对；填写校验在 readProduct）。
+ *  2026-10-11 加特别货时收成这一个 —— 原来三处各写「商检 || 敏感」，特别货会被悄悄当成普货 */
+function knownCargo(v: unknown): CargoType {
+  return typeof v === "string" && (CARGO_TYPES as readonly string[]).includes(v) ? (v as CargoType) : "normal";
+}
+
 /**
  * 读一款产品（只做「填了的填得对不对」，不管必填）。
  * index / count 只用来在报错里写「第几款」：count 是**请求里原来的款数**（空白款也算），两款及以上才加「第N款」，
@@ -187,7 +193,7 @@ function readProduct(raw: Record<string, unknown>, index: number, count: number)
   let cargoType: CargoType;
   if (cargo === undefined || cargo === null || cargo === "") cargoType = "normal";
   else if (typeof cargo === "string" && (CARGO_TYPES as readonly string[]).includes(cargo)) cargoType = cargo as CargoType;
-  else return { error: `${label("货型")}只能选普货、商检货、敏感货` };
+  else return { error: `${label("货型")}只能选普货、商检货、敏感货、特别货` };
 
   return {
     value: {
@@ -378,7 +384,7 @@ function baseProduct(b: Record<string, unknown>): NoticeProductValues {
     productQuantity: baseNumber(b.productQuantity),
     weightKg: baseNumber(b.weightKg),
     // 认不出的货型按普货整理（这里只拿来比，填写校验在 readProduct）
-    cargoType: b.cargoType === "inspection" || b.cargoType === "sensitive" ? b.cargoType : "normal",
+    cargoType: knownCargo(b.cargoType),
     domesticTrackingNo: baseText(b.domesticTrackingNo),
   };
 }
@@ -430,7 +436,7 @@ function productOfRow(p: NoticeRow["products"][number]): NoticeProductValues {
     heightCm: p.heightCm,
     productQuantity: p.productQuantity,
     weightKg: p.weightKg,
-    cargoType: p.cargoType === "inspection" || p.cargoType === "sensitive" ? p.cargoType : "normal",
+    cargoType: knownCargo(p.cargoType),
     domesticTrackingNo: p.domesticTrackingNo,
   };
 }
@@ -447,7 +453,7 @@ function fieldsOf(n: NoticeRow): NoticeFields {
       itemName: n.itemName,
       packageCount: n.packageCount,
       domesticTrackingNo: n.domesticTrackingNo,
-      cargoType: n.cargoType === "inspection" || n.cargoType === "sensitive" ? n.cargoType : "normal",
+      cargoType: knownCargo(n.cargoType),
     };
     if (!isBlankNoticeProduct(mirror)) products = [mirror];
   }
@@ -560,7 +566,7 @@ function orderValuesOf(f: NoticeFields) {
     domesticTrackingNo: firstDomesticTrackingNo(f.products),
     // 不完整时没有订单产品行可供查询：运单保留全部单号，订单仍只存第一款（兼容其整串相等筛选）。
     shipmentDomesticTrackingNo: complete ? firstDomesticTrackingNo(f.products) : noticeLegacySummary(f.products).domesticTrackingNo,
-    // 货型（F11）：各款取最严的（敏感 > 商检 > 普货），没有产品就是普货（同「创建订单」）
+    // 货型（F11）：各款取最严的（特别 > 敏感 > 商检 > 普货），没有产品就是普货（同「创建订单」）
     cargoType: strictestCargoType(f.products.map((p) => p.cargoType)),
     products,
   };

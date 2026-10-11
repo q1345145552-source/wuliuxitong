@@ -26,6 +26,7 @@ import {
   toNum,
 } from "./utils";
 import { nextSequenceValue } from "../core/number-sequence";
+import { CARGO_BUCKETS } from "./rebate";
 
 /** 单张图片 base64 上限（约 8MB 原图），整个请求体上限由 server.ts 控制在 20MB */
 const MAX_IMAGE_BASE64_LENGTH = 8 * 1024 * 1024;
@@ -91,6 +92,7 @@ export function registerWhrConsolidationClientRoutes(app: MinimalHttpApp): void 
           myUnitPriceNormal: toNum(c.unitPriceNormal),
           myUnitPriceInspection: toNum(c.unitPriceInspection),
           myUnitPriceSensitive: toNum(c.unitPriceSensitive),
+          myUnitPriceSpecial: toNum(c.unitPriceSpecial),
           prealertCount: activePrealerts.length,
           cancelledCount: c.prealerts.length - activePrealerts.length,
           latestStatus: deriveLatestStatus(c.prealerts.map((pa) => pa.status)),
@@ -373,7 +375,8 @@ export function registerWhrConsolidationClientRoutes(app: MinimalHttpApp): void 
         fail(res, 400, "BAD_REQUEST", `第 ${row} 行货值为必填`);
         return;
       }
-      if (it.cargoType && !["normal", "inspection", "sensitive"].includes(it.cargoType)) {
+      // 第四种「特别货」2026-10-11 加，名单统一从 rebate.ts 的 CARGO_BUCKETS 来
+      if (it.cargoType && !(CARGO_BUCKETS as readonly string[]).includes(it.cargoType)) {
         fail(res, 400, "BAD_REQUEST", `第 ${row} 行货物类型不合法`);
         return;
       }
@@ -925,6 +928,7 @@ export function registerWhrConsolidationClientRoutes(app: MinimalHttpApp): void 
       unitPriceNormal: customer.unitPriceNormal,
       unitPriceInspection: customer.unitPriceInspection,
       unitPriceSensitive: customer.unitPriceSensitive,
+      unitPriceSpecial: customer.unitPriceSpecial,
     };
     const breakdownByPrealert = new Map<string, ReturnType<typeof buildFeeBreakdown>>();
     for (const pa of customer.prealerts) {
@@ -960,6 +964,7 @@ export function registerWhrConsolidationClientRoutes(app: MinimalHttpApp): void 
       unitPriceNormal: toNum(customer.unitPriceNormal),
       unitPriceInspection: toNum(customer.unitPriceInspection),
       unitPriceSensitive: toNum(customer.unitPriceSensitive),
+      unitPriceSpecial: toNum(customer.unitPriceSpecial),
       totalVolumeM3: toNum(customer.totalVolumeM3),
       totalFee: customer.totalFee == null ? null : toNum(customer.totalFee),
       feeBreakdown: customerBreakdown,

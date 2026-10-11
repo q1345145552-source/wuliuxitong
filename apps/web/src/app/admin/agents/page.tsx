@@ -182,7 +182,7 @@ export default function AdminAgentsPage() {
                       <td style={tdS}>{a.loginStatus === "active" ? <StatusTag tone="green">正常</StatusTag> : <StatusTag tone="grey">已停用</StatusTag>}</td>
                       <td style={{ ...tdS, textAlign: "right" }}>{a.clientCount}</td>
                       <td style={{ ...tdS, whiteSpace: "nowrap" }}>
-                        普货 {priceText(a.prices.normal)} · 商检 {priceText(a.prices.inspection)} · 敏感 {priceText(a.prices.sensitive)}
+                        普货 {priceText(a.prices.normal)} · 商检 {priceText(a.prices.inspection)} · 敏感 {priceText(a.prices.sensitive)} · 特别 {priceText(a.prices.special)}
                       </td>
                       <td style={{ ...tdS, fontSize: 12 }}>
                         {a.slug ? <div style={{ whiteSpace: "nowrap" }}>后缀：<span style={{ fontFamily: "monospace" }}>/{a.slug}</span></div> : null}

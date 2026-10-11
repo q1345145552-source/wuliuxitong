@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState, useCallback, useRef } from "react";
+import { CARGO_TYPES, CARGO_TYPE_ZH, cargoTypeZh } from "../../../../../../packages/shared-types/cargo-type";
 import { amount2 } from "../../../modules/shared/money-format";
 import { beijingDate } from "../../../modules/shared/beijing-date";
 import { isPositiveIntText, isPositiveNumberText } from "../../../modules/shared/number-text";
@@ -859,9 +860,7 @@ function ClientConsolidationContent() {
                       <td style={tdStyle}><input value={r.cargoValue} onChange={(e) => { const next = [...productRows]; next[i] = { ...next[i], cargoValue: e.target.value }; setProductRows(next); }} style={miniInput} /></td>
                       <td style={tdStyle}>
                         <select value={r.cargoType} onChange={(e) => { const next = [...productRows]; next[i] = { ...next[i], cargoType: e.target.value }; setProductRows(next); }} style={{ ...miniInput, width: 70 }}>
-                          <option value="normal">普货</option>
-                          <option value="inspection">商检货</option>
-                          <option value="sensitive">敏感货</option>
+                          {CARGO_TYPES.map((c) => <option key={c} value={c}>{CARGO_TYPE_ZH[c]}</option>)}
                         </select>
                       </td>
                       <td style={{ ...tdStyle, color: "var(--t-muted)" }}>{totalQty || "-"}</td>
@@ -1058,7 +1057,7 @@ function PrealertCard({
                   <td style={tdStyle}>{p.volume?.toFixed(4)}</td>
                   <td style={tdStyle}>{p.material}</td>
                   <td style={tdStyle}>{p.cargoValue}</td>
-                  <td style={tdStyle}>{p.cargoType === "inspection" ? "商检货" : p.cargoType === "sensitive" ? "敏感货" : "普货"}</td>
+                  <td style={tdStyle}>{cargoTypeZh(p.cargoType)}</td>
                   <td style={{ ...tdStyle, textAlign: "center" }}>
                     {p.productImageBase64 ? (
                       <button

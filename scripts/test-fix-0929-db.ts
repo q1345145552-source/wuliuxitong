@@ -455,6 +455,22 @@ async function main(): Promise<void> {
     // ---------- F8 上传大小 ----------
     await mkOrder("zz_f29_o4");
     await mkShip("zz_f29_s4", "zz_f29_o4", "ZZF29S4", "inWarehouseCN");
+    await check("F5s 特别货（2026-10-11）：建柜没传特别货价 → 柜里按默认 1250；客户报 1 方特别货 → 员工签收真按 1250 计费（签收是单独的计费入口，Codex 审查要求真跑一次）", async () => {
+      const cust = await pm.whrConsolidationPlanCustomer.findFirst({ where: { planId, clientId: C1.userId } });
+      assert.equal(Number(cust.unitPriceSpecial), 1250, "建柜没传特别货价，柜里应是默认 1250");
+      const a = await call("POST /client/whr-consolidation/prealerts", C1, { planId, mark: "P3SP" });
+      assert.equal(a.status, 200, a.message);
+      const p3 = a.data?.id;
+      const items = await call("POST /client/whr-consolidation/prealerts/items", C1, { prealertId: p3, items: [{ productName: "特别的货", packageCount: 1, quantityPerBox: 1, lengthCm: 100, widthCm: 100, heightCm: 100, unitWeightKg: 5, material: "铁", cargoValue: "1000", cargoType: "special" }] });
+      assert.equal(items.status, 200, items.message);
+      const sign = await call("POST /staff/whr-consolidation/prealert-sign", STAFF, { planId, prealertId: p3, receiptProofs: [{ fileName: "a.png", mime: "image/png", base64: PNG }] });
+      assert.equal(sign.status, 200, sign.message);
+      assert.equal(Number(sign.data?.totalFee), 1250, `签收返回的金额不对：${JSON.stringify(sign.data)}`);
+      const row = await pm.whrConsolidationPrealert.findUnique({ where: { id: p3 } });
+      assert.equal(row.status, "received_pending_payment");
+      assert.equal(Number(row.totalFee), 1250, "1 方特别货 × 1250 应该是 1250");
+    });
+
     await check("F8 入库照片：约 3MB 的照片能传；太大的给中文提示（原来 400 万字就挡、英文）", async () => {
       const ok3 = await call("POST /staff/inbound-photos", STAFF, { shipmentId: "zz_f29_s4", fileName: "a.jpg", mime: "image/jpeg", contentBase64: "A".repeat(4_200_000) });
       assert.equal(ok3.status, 200, `3MB 照片传不上：${ok3.message}`);

@@ -1,7 +1,7 @@
 /* ==========================================================================
    代理返现怎么算（2026-09-16，确认单 4.10 / 4.14 / 4.20）
    --------------------------------------------------------------------------
-   返现 = Σ 该货型方数 ×（该货型客户价 − 该货型给代理的价），按货型分三档算，四舍五入到分。
+   返现 = Σ 该货型方数 ×（该货型客户价 − 该货型给代理的价），按货型分档算（2026-10-11 起四档：多了特别货），四舍五入到分。
 
    ⚠️ 纯函数，不碰数据库。付款写快照（B1）、返现单明细（B2）都调它，口径只有一份。
    ⚠️ 用整数（BigInt）算，不用浮点：方数库里是 6 位小数、价是 2 位小数，
@@ -13,9 +13,18 @@
    ⚠️ 这个文件是 B 阶段共享只读的：要改写进报告由编排者改。
    ========================================================================== */
 
-export type CargoBucket = "normal" | "inspection" | "sensitive";
+export type CargoBucket = "normal" | "inspection" | "sensitive" | "special";
 
-/** 三档价：number / 数字字符串 / Prisma Decimal 都行 */
+/**
+ * 仓库版集货按货型分的档，顺序就是各处列出来的顺序（2026-10-11 加特别货 special，老板「1a2a」）。
+ * ⚠️ 算钱、列明细、记快照都按这一份走，别在别处再写一遍三个 / 四个的名单。
+ */
+export const CARGO_BUCKETS: readonly CargoBucket[] = ["normal", "inspection", "sensitive", "special"];
+
+/** 特别货默认单价 1250 元/方：定义在共享模块（页面预填也用它），这里转出去给后端各处用 */
+export { SPECIAL_CARGO_DEFAULT_PRICE } from "../../../../../packages/shared-types/cargo-type";
+
+/** 各档价：number / 数字字符串 / Prisma Decimal 都行 */
 export type PriceTripleLike = Record<CargoBucket, unknown>;
 
 export interface RebateItem {
@@ -27,15 +36,15 @@ export interface RebateItem {
 export interface RebateResult {
   /** 返现金额，元，已四舍五入到分 */
   rebateAmount: number;
-  /** 三档方数，已四舍五入到 3 位（返现单明细列是 Decimal(12,3)） */
+  /** 各档方数，已四舍五入到 3 位（返现单明细列是 Decimal(12,3)） */
   volumes: Record<CargoBucket, number>;
 }
 
 const VOLUME_SCALE = 6; // 方数按 6 位小数算（库里 Decimal(10,6)）
 const PRICE_SCALE = 2;
 
-function bucketOf(cargoType: string | null | undefined): CargoBucket {
-  return cargoType === "inspection" || cargoType === "sensitive" ? cargoType : "normal";
+export function bucketOf(cargoType: string | null | undefined): CargoBucket {
+  return (CARGO_BUCKETS as readonly string[]).includes(cargoType ?? "") ? (cargoType as CargoBucket) : "normal";
 }
 
 /** 四舍五入的整除（远离 0 进位），n / d */
@@ -83,21 +92,21 @@ export function toScaledInt(value: unknown, scale: number, label = "数值"): bi
 /**
  * 算一票货的返现。
  * @param items 这票货的货品行（货型 + 方数）
- * @param clientPrices 付款那一刻的客户三档价
- * @param agentPrices 付款那一刻给代理的三档价
+ * @param clientPrices 付款那一刻的客户各档价
+ * @param agentPrices 付款那一刻给代理的各档价
  */
 export function computeRebate(
   items: readonly RebateItem[],
   clientPrices: PriceTripleLike,
   agentPrices: PriceTripleLike,
 ): RebateResult {
-  const vol: Record<CargoBucket, bigint> = { normal: 0n, inspection: 0n, sensitive: 0n };
+  const vol: Record<CargoBucket, bigint> = { normal: 0n, inspection: 0n, sensitive: 0n, special: 0n };
   for (const it of items) {
     vol[bucketOf(it.cargoType)] += toScaledInt(it.volumeM3, VOLUME_SCALE, "方数");
   }
 
   let total = 0n; // 单位 10^-(6+2) 元
-  for (const bucket of ["normal", "inspection", "sensitive"] as const) {
+  for (const bucket of CARGO_BUCKETS) {
     if (vol[bucket] === 0n) continue;
     const diff =
       toScaledInt(clientPrices[bucket], PRICE_SCALE, "客户价") - toScaledInt(agentPrices[bucket], PRICE_SCALE, "代理价");
@@ -110,6 +119,6 @@ export function computeRebate(
 
   return {
     rebateAmount: Number(cents) / 100,
-    volumes: { normal: toM3(vol.normal), inspection: toM3(vol.inspection), sensitive: toM3(vol.sensitive) },
+    volumes: { normal: toM3(vol.normal), inspection: toM3(vol.inspection), sensitive: toM3(vol.sensitive), special: toM3(vol.special) },
   };
 }

@@ -1575,7 +1575,7 @@ export default function ClientHomePage() {
                   if (hasProducts) {
                     payload.products = formProducts.filter((p) => p.itemName.trim()).map((p) => ({ itemName: p.itemName.trim(), packageCount: packageCountForPayload(p.packageCount), lengthCm: p.lengthCm ? Number(p.lengthCm) : undefined, widthCm: p.widthCm ? Number(p.widthCm) : undefined, heightCm: p.heightCm ? Number(p.heightCm) : undefined, productQuantity: p.productQuantity ? Number(p.productQuantity) : undefined, weightKg: p.weightKg ? Number(p.weightKg) : undefined, domesticTrackingNo: p.domesticTrackingNo?.trim() || "货拉拉", cargoType: p.cargoType || "normal" }));
                     payload.itemName = payload.products[0].itemName;
-                    // 整票记最严的那个（敏感 > 商检 > 普货），跟批量导入同一个口径
+                    // 整票记最严的那个（特别 > 敏感 > 商检 > 普货），跟批量导入同一个口径
                     payload.cargoType = strictestCargoType(payload.products.map((x: any) => x.cargoType));
                   }
                   const result = await createClientPrealert(payload);
