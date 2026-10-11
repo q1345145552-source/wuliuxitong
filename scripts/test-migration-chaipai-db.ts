@@ -79,6 +79,15 @@ async function main(): Promise<void> {
       assert.equal(rows.length, 0, `体检报了：${JSON.stringify(rows).slice(0, 400)}`);
     });
 
+    await check("M5 只跑过早一版迁移的库（少 handover_tracking_no、公司编号必填）：再跑一遍就补齐，跟 schema 零差异", async () => {
+      await db.$executeRawUnsafe(`ALTER TABLE "chaipai_shipment_states" DROP COLUMN "handover_tracking_no"`);
+      await db.$executeRawUnsafe(`ALTER TABLE "chaipai_callback_events" ALTER COLUMN "company_id" SET NOT NULL`);
+      const r = prisma(["db", "execute", `--schema=${SCHEMA}`, "--file", MIGRATION], tmpUrl);
+      assert.equal(r.code, 0, `升级失败：${r.out.slice(-400)}`);
+      const d = prisma(["migrate", "diff", "--from-url", tmpUrl, "--to-schema-datamodel", SCHEMA, "--script", "--exit-code"], tmpUrl);
+      assert.equal(d.code, 0, `还差：\n${d.out.split("\n").filter((l) => l.trim() && !l.startsWith("--")).slice(0, 8).join("\n")}`);
+    });
+
     await check("M4 删运单：每票最后状态跟着删（不挡老流程）；消息记录、清单版本没有外键，照样留着", async () => {
       await db.$executeRawUnsafe(`INSERT INTO users (id, company_id, role, name, phone, status) VALUES ('ZZC', 'c_zz', 'client', '测试客户', '000', 'active')`);
       await db.$executeRawUnsafe(`INSERT INTO orders (id, company_id, client_id, warehouse_id, item_name, product_quantity, package_count, package_unit,

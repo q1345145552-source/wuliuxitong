@@ -43,12 +43,12 @@ async function test(label: string, fn: () => Promise<void>): Promise<void> {
 
 /** 假拆派仓只读接口：按运单 id 配好详情和照片 */
 interface FakePhoto { id: string; createdAt: string; status?: number; bytes?: Buffer; type?: string }
-interface FakeShipment { status?: number; route?: Row | null; handover?: Row | null; photos?: FakePhoto[]; slowBody?: boolean }
+interface FakeShipment { status?: number; route?: Row | null; handover?: Row | null; photos?: FakePhoto[]; slowBody?: boolean; pageDelayMs?: number }
 const fake = new Map<string, FakeShipment>();
 const fakeHits: string[] = [];
 
 function startFake(): Promise<Server> {
-  const server = createServer((req, res) => {
+  const server = createServer(async (req, res) => {
     fakeHits.push(req.url ?? "");
     if (req.headers.authorization !== `Bearer ${READ}`) { res.statusCode = 401; res.end("{}"); return; }
     const u = new URL(req.url ?? "/", "http://x");
@@ -67,6 +67,7 @@ function startFake(): Promise<Server> {
       res.end(p.bytes ?? Buffer.from(`JPEG-${p.id}`));
       return;
     }
+    if (s.pageDelayMs) await new Promise((r) => setTimeout(r, s.pageDelayMs));
     const after = u.searchParams.get("afterPhoto");
     const rest = photos.filter((p) => !after || p.id > after);
     const page = rest.slice(0, 20).map((p) => ({ id: p.id, createdAt: p.createdAt }));
@@ -275,7 +276,13 @@ async function main(): Promise<void> {
       assert.equal((await send(S1, "ARRIVED", { companyId: "other" })).status, 409);
       const r = await send(`${P}nosuch`, "ARRIVED");
       assert.deepEqual([r.status, r.raw], [200, { eventId: r.body.eventId, result: "IGNORED_OLDER" }]);
-      assert.equal(await pm.chaipaiCallbackEvent.count({ where: { eventId: r.body.eventId } }), 0);
+      // 回了「收到」就留底（公司编号空着），同一编号再来认得出：一样的回 DUPLICATE、换了内容回 409
+      const row = await pm.chaipaiCallbackEvent.findUnique({ where: { eventId: r.body.eventId } });
+      assert.deepEqual([row?.result, row?.companyId], ["IGNORED_OLDER", null]);
+      const again = await call("POST /integrations/chaipai/v2/events", { body: r.body, authorization: `Bearer ${CB}` });
+      assert.equal(again.raw.result, "DUPLICATE");
+      const changed = await call("POST /integrations/chaipai/v2/events", { body: { ...r.body, batchNo: "其它批次" }, authorization: `Bearer ${CB}` });
+      assert.equal(changed.status, 409);
     });
     await test("R2 ARRIVED：卸柜中 → 已到泰国仓，轨迹「已到泰国仓，实到 3 件」，时间用 occurredAt；记了消息和每票状态；回裸 JSON APPLIED", async () => {
       const r = await send(S1, "ARRIVED", { actualBoxCount: 3, shortage: false });
@@ -634,6 +641,83 @@ async function main(): Promise<void> {
       const no = (await rowsOf(SO))[0].deliveryNo;
       assert.notEqual(no, "WDZZV15");
       assert.match(no, /^WD\d{6}$/);
+    });
+    await test("V16 换趟：上一趟是转交、这趟换成自己的车（中间「回仓」没收到）→ 自动单撤旧发新 WD", async () => {
+      const S16 = await fresh("V16");
+      fake.set(S16, { route: null, handover: { carrierName: "Kerry", trackingNo: "K16" }, photos: [] });
+      await send(S16, "OUT_FOR_DELIVERY");
+      const oldNo = (await rowsOf(S16))[0].deliveryNo;
+      fake.set(S16, { route: { ...routeA, id: `${P}routeV16` }, handover: null, photos: [] });
+      await send(S16, "OUT_FOR_DELIVERY", {}, { seq: (seqOf.get(S16) ?? 0) + 2 });
+      const rows = await rowsOf(S16);
+      assert.equal(rows.length, 1);
+      assert.notEqual(rows[0].deliveryNo, oldNo);
+      assert.deepEqual([rows[0].carrierName, rows[0].driverName, rows[0].externalTrackingNo], ["自营", "张三", ""]);
+    });
+    await test("V17 换趟：上一趟是自己的车、这趟转交给别的物流 → 撤旧发新 WD，司机车牌不留上一趟的", async () => {
+      const S17 = await fresh("V17");
+      fake.set(S17, { route: { ...routeA, id: `${P}routeV17` }, photos: [] });
+      await send(S17, "OUT_FOR_DELIVERY");
+      const oldNo = (await rowsOf(S17))[0].deliveryNo;
+      fake.set(S17, { route: null, handover: { carrierName: "Flash", trackingNo: "F17" }, photos: [] });
+      await send(S17, "OUT_FOR_DELIVERY", {}, { seq: (seqOf.get(S17) ?? 0) + 2 });
+      const rows = await rowsOf(S17);
+      assert.equal(rows.length, 1);
+      assert.notEqual(rows[0].deliveryNo, oldNo);
+      assert.deepEqual([rows[0].carrierName, rows[0].externalTrackingNo, rows[0].driverName, rows[0].licensePlate], ["Flash", "F17", "", ""]);
+    });
+    await test("V18 换趟后那条「派送中」丢了、直接收到已签收 → 旧趟的自动单撤掉，按这一趟登记已签收（新 WD）", async () => {
+      const S18 = await fresh("V18");
+      fake.set(S18, { route: { ...routeA, id: `${P}routeV18a` }, photos: [] });
+      await send(S18, "OUT_FOR_DELIVERY");
+      const oldNo = (await rowsOf(S18))[0].deliveryNo;
+      fake.set(S18, { route: { ...routeA, id: `${P}routeV18b`, driverName: "赵六" }, photos: [{ id: "p18", createdAt: "2026-10-12T03:00:00.000Z" }] });
+      await send(S18, "DELIVERED", {}, { seq: (seqOf.get(S18) ?? 0) + 3 });
+      const rows = await rowsOf(S18);
+      assert.equal(rows.length, 1);
+      assert.deepEqual([rows[0].status, rows[0].driverName, rows[0].deliveryNo !== oldNo, !!rows[0].signImageBase64], ["SIGNED", "赵六", true, true]);
+      assert.equal((await shipmentOf(S18)).currentStatus, "delivered");
+    });
+    await test("V19 一票同时挂两张派送中的单（老数据）：派送中 / 已签收都 503、一个字不写，交人工", async () => {
+      const S19 = await fresh("V19", "outForDelivery");
+      await manualRow("v19a", S19, "WDZZV19A", "DELIVERING");
+      await manualRow("v19b", S19, "WDZZV19B", "DELIVERING");
+      fake.set(S19, { route: { ...routeA, id: `${P}routeV19` }, photos: [{ id: "p19", createdAt: "2026-10-12T03:00:00.000Z" }] });
+      for (const st of ["OUT_FOR_DELIVERY", "DELIVERED"]) {
+        const r = await send(S19, st);
+        assert.equal(r.status, 503, st);
+        assert.equal(await pm.chaipaiCallbackEvent.count({ where: { eventId: r.body.eventId } }), 0);
+      }
+      assert.deepEqual([(await shipmentOf(S19)).currentStatus, (await rowsOf(S19)).map((r: Row) => r.status)], ["outForDelivery", ["DELIVERING", "DELIVERING"]]);
+    });
+    await test("V20 拉清单真的拿同柜排队锁：别人拿着这把锁时，拉清单要等它放开（删了那句锁这项就红）", async () => {
+      const ctn = await pm.container.findFirst({ where: { containerNo: ctnNo }, select: { id: true } });
+      let released = 0;
+      const holder = pm.$transaction(async (tx: any) => {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(83060, hashtext(${ctn.id}))`;
+        await new Promise((r) => setTimeout(r, 1500));
+        released = Date.now();
+      }, { timeout: 10000 });
+      await new Promise((r) => setTimeout(r, 200));
+      const r = await pull(ctnNo);
+      const doneAt = Date.now();
+      await holder;
+      assert.equal(r.status, 200);
+      assert.ok(released > 0 && doneAt >= released, "拉清单没等那把锁就回来了");
+    });
+    await test("V21 照片多、拆派仓每页慢：在时间预算里翻完就照常签收；翻不完按时回 503（不拖过 10 秒）", async () => {
+      const S21 = await fresh("V21");
+      const photos = Array.from({ length: 250 }, (_, i) => ({ id: `w${String(i).padStart(3, "0")}`, createdAt: new Date(Date.UTC(2026, 9, 12, 1, 0, i)).toISOString() }));
+      fake.set(S21, { route: routeA, photos, pageDelayMs: 300 });
+      const ok = await send(S21, "DELIVERED");
+      assert.equal(ok.raw.result, "APPLIED");
+      const S21b = await fresh("V21b");
+      fake.set(S21b, { route: routeA, photos, pageDelayMs: 900 });
+      const t0 = Date.now();
+      const slow = await send(S21b, "DELIVERED");
+      assert.equal(slow.status, 503);
+      assert.ok(Date.now() - t0 < 10000, `拖了 ${Date.now() - t0}ms`);
+      assert.equal((await rowsOf(S21b)).length, 0);
     });
     await test("V14 走真的 HTTP 服务（createApp）：回传带 JSON 正文 → 裸 JSON 回复；清单也是裸 JSON；不带密钥 401", async () => {
       const { createApp } = await import("../apps/api/src/server");

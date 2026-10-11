@@ -144,7 +144,7 @@ check("M4 分份：按批次号分、批次号空的统一 NO-BATCH；501 票切
   assert.equal(b[2].items[0].sourceShipmentId, "s_0500");
 });
 
-check("M4b 批次按湘泰原文分组：清洗 / 截断后显示一样的两个批次不会被并成一批（batchKey 不同）", () => {
+check("M4b 批次按湘泰原文分组、合规矩就原文发：清洗 / 截断后显示一样的两个批次不会被并成一批（batchKey 不同）", () => {
   const long = "B".repeat(128);
   const b = planBatches("xiangtai", "c", [
     row({ shipmentId: "s1", batchNo: `${long}1` }),
@@ -155,6 +155,9 @@ check("M4b 批次按湘泰原文分组：清洗 / 截断后显示一样的两个
   assert.equal(b.length, 4);
   assert.equal(new Set(b.map((x) => x.batchKey)).size, 4);
   assert.ok(b.every((x) => x.batchNo.length <= 128 && !/[\x00-\x1f]/.test(x.batchNo)), "显示的批次号照样要合拆派仓的规矩");
+  // 合规矩的批次号原样发（中间两个空格、前后空格都不动）
+  const ok = planBatches("xiangtai", "c", [row({ shipmentId: "s5", batchNo: " X  Y " })]);
+  assert.equal(ok[0].batchNo, " X  Y ");
 });
 
 check("M5 内容摘要：件数 / 方数 / 唛头 / 选填字段 / 批次变了摘要就变；没变就不变", () => {
@@ -217,14 +220,18 @@ check("E2 到仓件数选填：不带 / 格式不对当没带（不拒收）；�
   assert.equal(p({ shortage: true }).shortage, true);
 });
 
-check("E3 摘要跟字段先后无关、只看关键字段（拆派仓重发同一份内容摘要必定一样）", () => {
-  const a = parseChaipaiEvent(ev(), "xiangtai");
-  const b = parseChaipaiEvent(Object.fromEntries(Object.entries(ev({ batchNo: "changed" })).reverse()), "xiangtai");
-  assert.ok(a.ok && b.ok);
-  assert.equal(eventHashOf(a.event), eventHashOf(b.event));
-  const c = parseChaipaiEvent(ev({ sequence: 4 }), "xiangtai");
-  assert.ok(c.ok);
-  assert.notEqual(eventHashOf(c.event), eventHashOf(a.event));
+check("E3 摘要跟字段先后无关；协议里认得的字段任一变了摘要就变（同一编号换内容回 409），认不得的扩展字段不算", () => {
+  const hashOf = (raw: Record<string, unknown>) => { const r = parseChaipaiEvent(raw, "xiangtai"); assert.ok(r.ok); return eventHashOf(r.event); };
+  const exec = { status: "ON_HOLD", holdReason: "SHORTAGE", failureReason: null };
+  const base = hashOf(ev({ execution: exec }));
+  // 键的先后（顶层和 execution 里面）不影响
+  assert.equal(hashOf(Object.fromEntries(Object.entries(ev({ execution: { failureReason: null, holdReason: "SHORTAGE", status: "ON_HOLD" } })).reverse())), base);
+  // 认不得的扩展字段不算
+  assert.equal(hashOf(ev({ execution: exec, someFutureField: 1 })), base);
+  for (const over of [{ sequence: 4 }, { batchNo: "changed" }, { waybillNo: "X" }, { parentWaybillNo: "X" }, { sourceUpdatedAt: "2026-10-12T02:00:00.000Z" },
+    { batchKey: "k2" }, { containerNo: "M2" }, { execution: { ...exec, holdReason: "OVERAGE" } }]) {
+    assert.notEqual(hashOf(ev({ execution: exec, ...over })), base, JSON.stringify(over));
+  }
 });
 
 check("E4 目标状态（第 244、253 条）：已装车只在已到泰国仓之前才提上来、别的一律不动；派送中 / 签收后再来已到仓 = 拉回仓", () => {
@@ -299,6 +306,12 @@ check("W2 接线：只有拆派仓那两条精确路径不跑登录解析；Next
   assert.match(read("apps/api/src/main.ts"), /registerChaipaiRoutes\(app\)/);
   const routes = read("apps/api/src/modules/chaipai/routes.ts");
   for (const fn of ["registerChaipaiManifestRoutes", "registerChaipaiEventRoutes", "registerChaipaiPhotoRoutes"]) assert.ok(routes.includes(`${fn}(app)`), fn);
+});
+
+check("W2b 拉清单的事务第一句就是同柜排队锁（删了这句静态锁扫描看不见，这里点名查）", () => {
+  const src = read("apps/api/src/modules/chaipai/manifest-routes.ts");
+  assert.match(src, /await prisma\.\$transaction\(async \(tx\) => \{\n\s*await lockChaipaiManifest\(tx, container\.id\);/);
+  assert.match(src, /async function lockChaipaiManifest\(tx: any, containerId: string\): Promise<void> \{\n\s*await tx\.\$executeRaw`SELECT pg_advisory_xact_lock\(83060, hashtext\(\$\{containerId\}\)\)`;/);
 });
 
 check("W3 派送照片只给员工 / 管理员（第 256 条）：后端 requireRole staff/admin；弹窗只在员工 / 管理员打开时挂", () => {

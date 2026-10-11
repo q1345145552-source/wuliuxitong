@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { authHeaders, apiBaseUrl, parseApiResponse, fetchWithSession as fetch } from "../../services/core-api";
 import { formatTime } from "./track-time";
 
@@ -51,21 +51,29 @@ export function ChaipaiPhotos({ trackingNo, onZoom }: { trackingNo: string; onZo
     return () => { alive = false; };
   }, [trackingNo]);
 
-  // 取前 limit 张的原图（已经取过的不再取）
-  const wanted = items.slice(0, limit);
-  const wantedKey = wanted.map((p) => p.id).join(",");
+  /*
+   * 取原图走一条共用的队：全程最多 PARALLEL 张同时下，排过队 / 下着的不再排（10-12 Codex 审查：
+   * 原来每点一次「再显示」就新起一批，连点几下会同时下好几张、还重复下同一张）。
+   * 这个组件按运单号挂 key（换页签就是新组件），所以队不用跟着运单号清。
+   */
+  const mounted = useRef(true);
+  // 开发模式（StrictMode）会挂上 → 卸下 → 再挂上一次，所以挂上时要设回 true
   useEffect(() => {
-    if (wanted.length === 0) return;
-    let alive = true;
-    const todo = wanted.filter((p) => !thumbs[p.id]);
-    let next = 0;
-    const worker = async () => {
-      while (alive && next < todo.length) {
-        const photo = todo[next++];
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
+  const queue = useRef<string[]>([]);
+  const queued = useRef(new Set<string>());
+  const active = useRef(0);
+  const pump = useCallback(() => {
+    while (active.current < PARALLEL && queue.current.length > 0) {
+      const photoId = queue.current.shift()!;
+      active.current += 1;
+      void (async () => {
         let thumb: Thumb;
         try {
           const res = await fetch(
-            `${apiBaseUrl()}/staff/shipments/chaipai-photo?trackingNo=${encodeURIComponent(trackingNo)}&photoId=${encodeURIComponent(photo.id)}`,
+            `${apiBaseUrl()}/staff/shipments/chaipai-photo?trackingNo=${encodeURIComponent(trackingNo)}&photoId=${encodeURIComponent(photoId)}`,
             { headers: { ...authHeaders() } },
           );
           if (res.status === 410) thumb = { error: "照片已过保留期" };
@@ -77,15 +85,29 @@ export function ChaipaiPhotos({ trackingNo, onZoom }: { trackingNo: string; onZo
         } catch {
           thumb = { error: "暂时取不到" };
         }
-        if (!alive) return;
-        setThumbs((prev) => ({ ...prev, [photo.id]: thumb }));
-      }
-    };
-    void Promise.all(Array.from({ length: Math.min(PARALLEL, todo.length) }, worker));
-    return () => { alive = false; };
-    // 只在要取的那批变了时重跑（thumbs 变化不触发，避免取完一张又从头扫）
+        active.current -= 1;
+        if (!mounted.current) return;
+        setThumbs((prev) => ({ ...prev, [photoId]: thumb }));
+        pump();
+      })();
+    }
+  }, [trackingNo]);
+
+  // 前 limit 张排进队（已经排过的跳过）
+  const wanted = items.slice(0, limit);
+  const wantedKey = wanted.map((p) => p.id).join(",");
+  useEffect(() => {
+    for (const p of wanted) {
+      if (queued.current.has(p.id)) continue;
+      queued.current.add(p.id);
+      queue.current.push(p.id);
+    }
+    pump();
+    // 只在要取的那批变了时排队
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [trackingNo, wantedKey]);
+  }, [wantedKey, pump]);
+  /** 这一批还没下完时不给点「再显示」 */
+  const batchLoading = wanted.some((p) => !thumbs[p.id]);
 
   if (state === "loading" || state === "none" || state === "disabled") return null;
 
@@ -124,8 +146,9 @@ export function ChaipaiPhotos({ trackingNo, onZoom }: { trackingNo: string; onZo
           {items.length > limit ? (
             <button
               type="button"
+              disabled={batchLoading}
               onClick={() => setLimit((n) => n + PAGE)}
-              style={{ marginTop: 6, fontSize: 12, padding: "4px 10px", borderRadius: 6, border: "1px solid var(--l-soft)", background: "var(--white)", color: "var(--t-body)", cursor: "pointer" }}
+              style={{ marginTop: 6, fontSize: 12, padding: "4px 10px", borderRadius: 6, border: "1px solid var(--l-soft)", background: "var(--white)", color: "var(--t-body)", cursor: batchLoading ? "default" : "pointer", opacity: batchLoading ? 0.6 : 1 }}
             >
               再显示 {Math.min(PAGE, items.length - limit)} 张（还有 {items.length - limit} 张）
             </button>

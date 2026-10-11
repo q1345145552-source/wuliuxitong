@@ -1492,8 +1492,8 @@ model ArrivalNoticeProduct {
 /// 不加指向运单的外键 —— 运单删了，消息记录也要留着查。
 model ChaipaiCallbackEvent {
   eventId         String   @id @map("event_id")
-  /// 湘泰的公司编号（从运单上取）
-  companyId       String   @map("company_id")
+  /// 湘泰的公司编号（从运单上取）；湘泰没有这票时是空的（照样记下，同一编号再来能认出来）
+  companyId       String?  @map("company_id")
   /// 拆派仓发来的公司编号（xiangtai）
   sourceCompanyId String   @map("source_company_id")
   shipmentId      String   @map("shipment_id")

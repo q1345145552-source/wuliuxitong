@@ -11,7 +11,7 @@
 
 CREATE TABLE IF NOT EXISTS "chaipai_callback_events" (
     "event_id" TEXT NOT NULL,
-    "company_id" TEXT NOT NULL,
+    "company_id" TEXT,
     "source_company_id" TEXT NOT NULL,
     "shipment_id" TEXT NOT NULL,
     "sequence" INTEGER NOT NULL,
@@ -51,6 +51,10 @@ CREATE TABLE IF NOT EXISTS "chaipai_manifest_versions" (
     "updated_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT "chaipai_manifest_versions_pkey" PRIMARY KEY ("shipment_id")
 );
+
+-- 只在 Neon 测试库跑过的早一版没有这一列、消息记录的公司编号是必填：补上 / 放开（新库上这两句什么都不做；10-12 两家审查）
+ALTER TABLE "chaipai_shipment_states" ADD COLUMN IF NOT EXISTS "handover_tracking_no" TEXT;
+ALTER TABLE "chaipai_callback_events" ALTER COLUMN "company_id" DROP NOT NULL;
 
 CREATE INDEX IF NOT EXISTS "chaipai_callback_events_shipment_id_sequence_idx" ON "chaipai_callback_events"("shipment_id", "sequence");
 CREATE INDEX IF NOT EXISTS "chaipai_shipment_states_company_id_idx" ON "chaipai_shipment_states"("company_id");

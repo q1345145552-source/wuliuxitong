@@ -40,8 +40,14 @@ export function cleanOptionalText(value: string | null | undefined, max: number)
   return v.length > max ? v.slice(0, max).trimEnd() : v;
 }
 
-/** 批次号：去首尾、控制字符换空格、截 128；空的用 NO-BATCH */
+/**
+ * 发给拆派仓的批次号：合拆派仓规矩（≤128 字、没有控制字符）就发湘泰原文（修改清单：batchNo = Shipment.batchNo）；
+ * 不合规矩才清洗截断 —— 原样发会让拆派仓**整次**拒收（manifest-v2.validation 的 text()），整柜拉不下来。空的用 NO-BATCH。
+ * 分组和 batchKey 一律按原文（见 batchKeyOf），清洗后同名的两批不会被并成一批。
+ */
 export function normalizeBatchNo(raw: string | null | undefined): string {
+  if (raw == null || !raw.trim()) return NO_BATCH;
+  if (raw.length <= 128 && !/[\x00-\x1f\x7f]/.test(raw)) return raw;
   return cleanOptionalText(raw, 128) ?? NO_BATCH;
 }
 

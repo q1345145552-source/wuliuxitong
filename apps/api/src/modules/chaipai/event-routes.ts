@@ -40,6 +40,8 @@ type EventResult = "APPLIED" | "DUPLICATE" | "IGNORED_OLDER";
 
 /** 派送中 / 已签收要用的拆派仓资料（事务外先取好，事务里不发网络请求） */
 interface LastmileInfo {
+  /** 只读接口查到了这票（404 = 没查到，司机车牌转交都不知道，不拿来判断换没换车） */
+  found: boolean;
   route: ChaipaiDetail["route"];
   handover: ChaipaiDetail["handover"];
   /** 签收图（base64，不带 data: 前缀，跟员工手工签收存的一样） */
@@ -52,12 +54,16 @@ const rand4 = (): string => Math.random().toString(36).slice(2, 6);
  * 派送中 / 已签收：先去拆派仓只读接口取司机、车牌、转交、签收照片。
  * 取不到（网络、5xx、超时）抛 RetryLaterError；拆派仓说没这票（404）就照常办、司机车牌留空。
  */
+/** 去拆派仓取资料的总时间（详情 + 照片一起算）：拆派仓等回复 10 秒，留点余量给写库 */
+const READ_BUDGET_MS = 8500;
+
 async function prepareLastmileInfo(cfg: ChaipaiConfig, ev: ChaipaiEvent): Promise<LastmileInfo> {
+  const deadline = Date.now() + READ_BUDGET_MS;
   // 派送中只要司机车牌（第一页就有）；签收要挑最新的照片，得翻完全部（每页 20 张，最多 50 页）
-  const detail = await fetchChaipaiDetail(cfg, ev.sourceShipmentId, { maxPages: ev.status === "DELIVERED" ? 50 : 1 });
+  const detail = await fetchChaipaiDetail(cfg, ev.sourceShipmentId, { maxPages: ev.status === "DELIVERED" ? 50 : 1, timeoutMs: READ_BUDGET_MS });
   if (detail.kind === "notFound") {
     logger.warn("拆派仓回传：只读接口查不到这票，派送单不填司机车牌", { eventId: ev.eventId, sourceShipmentId: ev.sourceShipmentId });
-    return { route: null, handover: null, signImageBase64: null };
+    return { found: false, route: null, handover: null, signImageBase64: null };
   }
   if (detail.kind !== "ok") throw new RetryLaterError(`取司机车牌失败：${detail.kind === "error" ? detail.reason : detail.kind}`);
   let signImageBase64: string | null = null;
@@ -66,13 +72,16 @@ async function prepareLastmileInfo(cfg: ChaipaiConfig, ev: ChaipaiEvent): Promis
     if (detail.value.truncated) throw new RetryLaterError("照片超过 1000 张没翻完");
     const photoId = pickSignPhoto(detail.value.photos, ev.occurredAt);
     if (photoId) {
-      const photo = await fetchChaipaiPhoto(cfg, ev.sourceShipmentId, photoId);
+      // 照片用剩下的时间（10-12 两家审查：原来详情 6 秒 + 照片 8 秒，最坏 14 秒，超过拆派仓的 10 秒）
+      const left = deadline - Date.now();
+      if (left < 500) throw new RetryLaterError("取签收照片没时间了");
+      const photo = await fetchChaipaiPhoto(cfg, ev.sourceShipmentId, photoId, { timeoutMs: left });
       if (photo.kind === "ok") signImageBase64 = photo.value.bytes.toString("base64");
       else if (photo.kind === "error") throw new RetryLaterError(`取签收照片失败：${photo.reason}`);
       else logger.warn("拆派仓回传：签收照片已不在（404/410），签收不放图", { eventId: ev.eventId, photoId });
     }
   }
-  return { route: detail.value.route, handover: detail.value.handover, signImageBase64 };
+  return { found: true, route: detail.value.route, handover: detail.value.handover, signImageBase64 };
 }
 
 /**
@@ -108,7 +117,6 @@ async function applyEvent(
       await tx.$queryRaw`SELECT id FROM admin_lastmile_orders WHERE id = ${rowId} FOR UPDATE`;
     }
     const lockedShipment = await tx.$queryRaw<Array<{ id: string }>>`SELECT id FROM shipments WHERE id = ${sid} AND company_id = ${companyId} FOR UPDATE`;
-    if (lockedShipment.length === 0) return { result: "IGNORED_OLDER" as const, changed: false, clientId: null };
 
     // 去重：同一编号再来回 DUPLICATE；编号一样内容不一样是对方出错，回 409
     const seen = await tx.chaipaiCallbackEvent.findUnique({ where: { eventId: ev.eventId }, select: { payloadHash: true } });
@@ -122,6 +130,11 @@ async function applyEvent(
         status: ev.status, occurredAt, payloadHash: hash, payload: payload as Prisma.InputJsonValue, result,
       },
     });
+    // 等锁的工夫这票被删了：照样记下再回 IGNORED_OLDER（回了「收到」就得留底，10-12 Codex 审查）
+    if (lockedShipment.length === 0) {
+      await ledger("IGNORED_OLDER");
+      return { result: "IGNORED_OLDER" as const, changed: false, clientId: null };
+    }
     const state = await tx.chaipaiShipmentState.findUnique({ where: { shipmentId: sid } });
     // 判新旧：序号只认比存过的大（会跳号，不要求连号）
     if (state && ev.sequence <= state.lastSequence) {
@@ -166,6 +179,22 @@ async function applyEvent(
     let handoverTrackingNo = state?.handoverTrackingNo ?? null;
     /** 自动登记的派送单 id 带 lm_cp_ 前缀：只有这种才由回传更新司机车牌、换车时撤掉；员工手工登记的只接手状态，资料不动 */
     const isAuto = (id: string) => id.startsWith("lm_cp_");
+    /**
+     * 这是哪一趟：拆派仓自己的车按 route.id 认，转交给别的物流算「转交」那一趟。
+     * 自动登记的单碰上趟次变了（中间那条「回仓」没收到：换车、自营↔转交、派送中那条丢了直接签收），
+     * 旧单照「改派」撤掉、按新的一趟登记，别让两趟共用一个 WD（10-12 两家审查）。只读接口没查到这票时不判断。
+     */
+    const tripOf = (route: string | null | undefined, carrier: string | null | undefined) => route ? `route:${route}` : carrier ? "handover" : null;
+    const prevTrip = tripOf(state?.routeId, state?.handoverCarrier);
+    const newTrip = info?.found ? tripOf(info.route?.id, info.handover?.carrierName) : null;
+    const tripChanged = (row: { id: string }) => isAuto(row.id) && !!prevTrip && !!newTrip && prevTrip !== newTrip;
+    /** 一票同时挂着两张以上派送中的单（老数据）：分不清是哪一趟，交人工 */
+    const assertSingleDelivering = () => {
+      const delivering = live.filter((r) => r.status === "DELIVERING");
+      if (delivering.length > 1) {
+        throw new NeedsManualError(`这票同时有 ${delivering.length} 张派送中的派送单（${delivering.map((r) => r.deliveryNo).join("、")}），分不清是哪一趟`);
+      }
+    };
     let live = rows;
     const removeRow = async (id: string) => {
       await tx.adminLastmileOrder.delete({ where: { id } });
@@ -256,17 +285,16 @@ async function applyEvent(
       }
     } else if (ev.status === "OUT_FOR_DELIVERY") {
       if (fromStatus === "delivered") await unsignSigned();
+      assertSingleDelivering();
       const newCarrier = info?.handover?.carrierName ?? null;
       const newHandoverNo = newCarrier ? (info?.handover?.trackingNo ?? null) : null;
-      const handoverChanged = newCarrier !== handoverCarrier || newHandoverNo !== handoverTrackingNo;
+      const handoverChanged = !!info?.found && (newCarrier !== handoverCarrier || newHandoverNo !== handoverTrackingNo);
       const remarkFor = (no: string) => departRemark({
         driverName: info?.route?.driverName ?? "", deliveryNo: no, handoverCarrier: newCarrier, handoverTrackingNo: newHandoverNo,
       });
       const current = live.find((r) => r.status === "DELIVERING" && r.id === lastmileOrderId)
         ?? live.find((r) => r.status === "DELIVERING");
-      // 换了一趟车（中间那条「回仓」没收到）：自动登记的旧单照「改派」撤掉，按新的一趟车登记（10-12 Codex 审查）
-      const routeChanged = !!current && isAuto(current.id) && !!info?.route && !!state?.routeId && info.route.id !== state.routeId;
-      if (current && routeChanged) {
+      if (current && tripChanged(current)) {
         const oldNo = current.deliveryNo;
         await removeRow(current.id);
         const created = await createRow("DELIVERING");
@@ -293,17 +321,27 @@ async function applyEvent(
         deliveryNo = created.deliveryNo;
         await writeLog("sl_lm_cp_", "outForDelivery", remarkFor(created.deliveryNo));
       }
-      // 记着这趟车只为「同车同号」和「换车」用，所以只有自动登记的单才记；接手员工手工单时不记
-      routeId = lastmileOrderId && isAuto(lastmileOrderId) ? (info?.route?.id ?? routeId) : null;
-      handoverCarrier = newCarrier;
-      handoverTrackingNo = newHandoverNo;
+      // 记着这趟车只为「同车同号」和「换车」用，所以只有自动登记的单才记；接手员工手工单时不记。
+      // 只读接口没查到这票（404）就不知道这趟是什么，照旧
+      if (!(lastmileOrderId && isAuto(lastmileOrderId))) routeId = null;
+      else if (info?.found) routeId = info.route?.id ?? null;
+      if (info?.found) {
+        handoverCarrier = newCarrier;
+        handoverTrackingNo = newHandoverNo;
+      }
     } else {
       // DELIVERED：签当前这趟 —— 先找派送中的（跟踪的那张优先），没有才找跟踪的 / 最近一张已签收的（员工先手工签了），
       // 都没有就直接建一张已签收的。签收图一律换成拆派仓这票最新一张（老板：签收单放拆派仓的照片）
-      const target = live.find((r) => r.status === "DELIVERING" && r.id === lastmileOrderId)
+      assertSingleDelivering();
+      let target = live.find((r) => r.status === "DELIVERING" && r.id === lastmileOrderId)
         ?? live.find((r) => r.status === "DELIVERING")
         ?? live.find((r) => r.id === lastmileOrderId)
         ?? live.find((r) => r.status === "SIGNED");
+      // 派送中那条没收到、签收时已经是另一趟了：自动登记的旧单撤掉，按这一趟直接登记已签收
+      if (target && target.status === "DELIVERING" && tripChanged(target)) {
+        await removeRow(target.id);
+        target = undefined;
+      }
       let signedNo: string;
       if (target) {
         await tx.adminLastmileOrder.update({
@@ -316,7 +354,9 @@ async function applyEvent(
         const created = await createRow("SIGNED");
         lastmileOrderId = created.id;
         signedNo = created.deliveryNo;
-        routeId = info?.route?.id ?? routeId;
+        routeId = info?.route?.id ?? null;
+        handoverCarrier = info?.handover?.carrierName ?? null;
+        handoverTrackingNo = handoverCarrier ? (info?.handover?.trackingNo ?? null) : null;
       }
       deliveryNo = signedNo;
       if (status !== "delivered" || coarseChanged) {
@@ -395,6 +435,21 @@ export function registerChaipaiEventRoutes(app: MinimalHttpApp): void {
     });
     if (!shipment) {
       logger.warn("拆派仓回传：湘泰没有这票，当旧消息收下", { eventId: ev.eventId, sourceShipmentId: ev.sourceShipmentId, waybillNo: ev.waybillNo });
+      // 回了「收到」就得留底（同一编号再来能认出来；10-12 Codex 审查）；湘泰没这票，公司编号空着
+      try {
+        await prisma.chaipaiCallbackEvent.create({
+          data: {
+            eventId: ev.eventId, companyId: null, sourceCompanyId: ev.companyId, shipmentId: ev.sourceShipmentId, sequence: ev.sequence,
+            status: ev.status, occurredAt: new Date(ev.occurredAt), payloadHash: hash, payload: req.body as Prisma.InputJsonValue, result: "IGNORED_OLDER",
+          },
+        });
+      } catch (error) {
+        if ((error as { code?: string })?.code !== "P2002") throw error;
+        const again = await prisma.chaipaiCallbackEvent.findUnique({ where: { eventId: ev.eventId }, select: { payloadHash: true } });
+        if (again?.payloadHash !== hash) { fail(res, 409, "VALIDATION_ERROR", "这个 eventId 已经用来发过别的内容"); return; }
+        reply("DUPLICATE");
+        return;
+      }
       reply("IGNORED_OLDER");
       return;
     }

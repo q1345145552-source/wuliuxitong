@@ -26,6 +26,20 @@ export interface ChaipaiEvent {
   shortage: boolean | null;
   /** 只用来记日志 */
   waybillNo: string | null;
+  /** 协议里其余认得的字段原样（只进摘要：同一 eventId 这些变了也算「换了内容」） */
+  extras: Record<string, unknown>;
+}
+
+/** 协议里认得、但湘泰不靠它办事的字段（照拆派仓 outbox.service.ts 的 recordOnTransition） */
+const KNOWN_EXTRA_FIELDS = ["waybillNo", "parentWaybillNo", "sourceUpdatedAt", "batchKey", "batchNo", "containerNo", "execution"] as const;
+
+/** 键排好序再转 JSON（对象里键的先后不影响摘要） */
+function canonical(v: unknown): unknown {
+  if (Array.isArray(v)) return v.map(canonical);
+  if (v && typeof v === "object") {
+    return Object.fromEntries(Object.keys(v as object).sort().map((k) => [k, canonical((v as Record<string, unknown>)[k])]));
+  }
+  return v === undefined ? null : v;
 }
 
 export type ParseResult =
@@ -64,16 +78,21 @@ export function parseChaipaiEvent(raw: unknown, companyId: string): ParseResult 
   const actualBoxCount = status === "ARRIVED" && typeof box === "number" && Number.isSafeInteger(box) && box >= 0 && box <= 2147483647 ? box : null;
   const shortage = status === "ARRIVED" && typeof v.shortage === "boolean" ? v.shortage : null;
   const waybillNo = typeof v.waybillNo === "string" ? v.waybillNo.slice(0, 128) : null;
+  const extras = Object.fromEntries(KNOWN_EXTRA_FIELDS.map((k) => [k, canonical(v[k])]));
   return {
     ok: true,
-    event: { eventId, companyId, sourceShipmentId, sequence, status: status as ChaipaiStatus, occurredAt, actualBoxCount, shortage, waybillNo },
+    event: { eventId, companyId, sourceShipmentId, sequence, status: status as ChaipaiStatus, occurredAt, actualBoxCount, shortage, waybillNo, extras },
   };
 }
 
-/** 关键字段摘要：拆派仓重发的是发件箱里同一份内容，所以同一 eventId 摘要必定一样；不一样 = 编号被拿去发别的内容 */
+/**
+ * 内容摘要：拆派仓重发的是发件箱里同一份内容，所以同一 eventId 摘要必定一样；不一样 = 编号被拿去发别的内容（回 409）。
+ * 协议里认得的字段全算进去（10-12 Codex 审查：原来只算办事用的几个，改了批次号 / 运单号照样当重复收下）；认不得的扩展字段不算。
+ */
 export function eventHashOf(e: ChaipaiEvent): string {
   return createHash("sha256").update(JSON.stringify([
     e.eventId, e.companyId, e.sourceShipmentId, e.sequence, e.status, e.occurredAt, e.actualBoxCount, e.shortage,
+    KNOWN_EXTRA_FIELDS.map((k) => e.extras[k] ?? null),
   ])).digest("hex");
 }
 
