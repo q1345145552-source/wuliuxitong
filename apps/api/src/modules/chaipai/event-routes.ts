@@ -182,13 +182,16 @@ async function applyEvent(
     let lastmileOrderId = state?.lastmileOrderId ?? null;
     let handoverCarrier = state?.handoverCarrier ?? null;
     let handoverTrackingNo = state?.handoverTrackingNo ?? null;
-    let releasedRouteId = state?.releasedRouteId ?? null;
-    let releasedDeliveryNo = state?.releasedDeliveryNo ?? null;
-    /** 系统自己撤掉一张自动单时，记下「这趟车 → 号」（见 sameRouteNo） */
+    const prevReleased = state?.releasedRoutes;
+    const releasedRoutes: Record<string, string> = prevReleased && typeof prevReleased === "object" && !Array.isArray(prevReleased)
+      ? Object.fromEntries(Object.entries(prevReleased as Record<string, unknown>).filter((e): e is [string, string] => typeof e[1] === "string"))
+      : {};
+    let releasedChanged = false;
+    /** 系统自己撤掉一张自动单时，按车记下「这趟车 → 号」（见 sameRouteNo）；一票被拉回好几趟也各记各的（10-12 第 9 轮） */
     const rememberRelease = (row: { id: string; deliveryNo: string }) => {
       if (isAuto(row.id) && routeId) {
-        releasedRouteId = routeId;
-        releasedDeliveryNo = row.deliveryNo;
+        releasedRoutes[routeId] = row.deliveryNo;
+        releasedChanged = true;
       }
     };
     /** 自动登记的派送单 id 带 lm_cp_ 前缀：只有这种才由回传更新司机车牌、换车时撤掉；员工手工登记的只接手状态，资料不动 */
@@ -250,8 +253,8 @@ async function applyEvent(
             AND EXISTS (SELECT 1 FROM admin_lastmile_orders o
                         WHERE o.id = s.lastmile_order_id AND o.delivery_no = s.delivery_no AND o.company_id = s.company_id)
           UNION ALL
-          SELECT s.released_delivery_no, 1 AS rank, s.created_at, s.shipment_id FROM chaipai_shipment_states s
-          WHERE s.company_id = ${companyId} AND s.released_route_id = ${routeIdToFind} AND s.released_delivery_no IS NOT NULL
+          SELECT s.released_routes ->> ${routeIdToFind}, 1 AS rank, s.created_at, s.shipment_id FROM chaipai_shipment_states s
+          WHERE s.company_id = ${companyId} AND (s.released_routes ->> ${routeIdToFind}) IS NOT NULL
             AND s.shipment_id <> ${sid}
         ) t
         ORDER BY t.rank ASC, t.created_at ASC, t.shipment_id ASC
@@ -466,7 +469,8 @@ async function applyEvent(
     const stateData = {
       companyId, lastSequence: ev.sequence, lastEventId: ev.eventId, thaiStatus: ev.status, occurredAt,
       ...(ev.status === "ARRIVED" && ev.actualBoxCount != null ? { actualBoxCount: ev.actualBoxCount, shortage: ev.shortage } : {}),
-      routeId, deliveryNo, lastmileOrderId, handoverCarrier, handoverTrackingNo, releasedRouteId, releasedDeliveryNo,
+      routeId, deliveryNo, lastmileOrderId, handoverCarrier, handoverTrackingNo,
+      ...(releasedChanged ? { releasedRoutes } : {}),
     };
     await tx.chaipaiShipmentState.upsert({
       where: { shipmentId: sid },

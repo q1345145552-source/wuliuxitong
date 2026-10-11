@@ -7,7 +7,7 @@
 --   B 多余  → 数据库有、设计图没有。一旦跑 prisma db push，这些字段连同里面的数据会被删掉
 --
 -- 什么都不输出 = 完全一致，没问题。
--- 生成自 schema.prisma，共 60 张表 / 761 个字段（2026-10-12 对接拆派仓加三张表 chaipai_callback_events 11 个字段、chaipai_shipment_states 17 个字段、chaipai_manifest_versions 5 个字段；2026-10-11 特别货加 8 列：柜里客户单价、付款快照两列、代理价、客户长期价、返现明细三列；2026-10-09 到货通知多款产品加一张表 arrival_notice_products 14 个字段；2026-10-08 到货通知第四轮审查加 arrival_notices.cargo_type、arrival_notice_images.thumb_path 两列；2026-10-06 到货通知加两张表 arrival_notices 23 个字段、arrival_notice_images 9 个字段；2026-10-02 客服对话加撤回 / 关联单号 5 列 + 系统通知订阅一张表 10 个字段；2026-09-29 加 number_sequences 一张表 3 个字段；2026-09-28 加客服对话两张表 + 询价报价 8 列后是 52 张 / 653 个）。
+-- 生成自 schema.prisma，共 60 张表 / 760 个字段（2026-10-12 对接拆派仓加三张表 chaipai_callback_events 11 个字段、chaipai_shipment_states 16 个字段、chaipai_manifest_versions 5 个字段；2026-10-11 特别货加 8 列：柜里客户单价、付款快照两列、代理价、客户长期价、返现明细三列；2026-10-09 到货通知多款产品加一张表 arrival_notice_products 14 个字段；2026-10-08 到货通知第四轮审查加 arrival_notices.cargo_type、arrival_notice_images.thumb_path 两列；2026-10-06 到货通知加两张表 arrival_notices 23 个字段、arrival_notice_images 9 个字段；2026-10-02 客服对话加撤回 / 关联单号 5 列 + 系统通知订阅一张表 10 个字段；2026-09-29 加 number_sequences 一张表 3 个字段；2026-09-28 加客服对话两张表 + 询价报价 8 列后是 52 张 / 653 个）。
 --
 -- ⚠️ 这份清单是手抄的，schema.prisma 加了字段必须回来同步一行，否则部署时会报
 --    「B 多余」的假警告（2026-08-05 加 containers.transport_mode 时就漏了一次）。
@@ -503,8 +503,7 @@ WITH expected(table_name, column_name) AS (VALUES
   ('chaipai_shipment_states','lastmile_order_id'),
   ('chaipai_shipment_states','handover_carrier'),
   ('chaipai_shipment_states','handover_tracking_no'),
-  ('chaipai_shipment_states','released_route_id'),
-  ('chaipai_shipment_states','released_delivery_no'),
+  ('chaipai_shipment_states','released_routes'),
   ('chaipai_shipment_states','created_at'),
   ('chaipai_shipment_states','updated_at'),
   ('chaipai_manifest_versions','shipment_id'),

@@ -74,13 +74,13 @@ async function main(): Promise<void> {
       assert.equal(r.code, 0, `还差这些（迁移漏了 / 写错了）：\n${r.out.split("\n").filter((l) => l.trim() && !l.startsWith("--")).slice(0, 12).join("\n")}`);
     });
 
-    await check("M3 上线体检 check-schema-drift.sql 一行都不输出（清单里有这 3 张表 33 个字段，也没多写）", async () => {
+    await check("M3 上线体检 check-schema-drift.sql 一行都不输出（清单里有这 3 张表 32 个字段，也没多写）", async () => {
       const rows = await db.$queryRawUnsafe<any[]>(readFileSync(DRIFT, "utf8"));
       assert.equal(rows.length, 0, `体检报了：${JSON.stringify(rows).slice(0, 400)}`);
     });
 
     await check("M5 只跑过早一版迁移的库（少 handover_tracking_no 等列、公司编号必填）：再跑一遍就补齐，跟 schema 零差异", async () => {
-      await db.$executeRawUnsafe(`ALTER TABLE "chaipai_shipment_states" DROP COLUMN "handover_tracking_no", DROP COLUMN "released_route_id", DROP COLUMN "released_delivery_no"`);
+      await db.$executeRawUnsafe(`ALTER TABLE "chaipai_shipment_states" DROP COLUMN "handover_tracking_no", DROP COLUMN "released_routes"`);
       await db.$executeRawUnsafe(`ALTER TABLE "chaipai_callback_events" ALTER COLUMN "company_id" SET NOT NULL`);
       const r = prisma(["db", "execute", `--schema=${SCHEMA}`, "--file", MIGRATION], tmpUrl);
       assert.equal(r.code, 0, `升级失败：${r.out.slice(-400)}`);

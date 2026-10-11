@@ -912,6 +912,28 @@ async function main(): Promise<void> {
       assert.equal(again.raw.result, "APPLIED");
       assert.equal((await rowsOf(B))[0].deliveryNo, noA);
     });
+    await test("V38 A 在 R 车被拉回仓、又上 S 车再被拉回仓，B 在 R 车的派送中最后才到 → B 还是 R 车原来的号（记号不互相覆盖）", async () => {
+      const routeR = { ...routeA, id: `${P}routeV38R` };
+      const routeS = { ...routeA, id: `${P}routeV38S` };
+      const A = await fresh("V38a");
+      const B = await fresh("V38b");
+      fake.set(A, { route: routeR, photos: [] });
+      await send(A, "OUT_FOR_DELIVERY");
+      const noR = (await rowsOf(A))[0].deliveryNo;
+      fake.set(B, { status: 503 });
+      const late = await send(B, "OUT_FOR_DELIVERY");
+      assert.equal(late.status, 503);
+      await send(A, "ARRIVED");
+      fake.set(A, { route: routeS, photos: [] });
+      await send(A, "OUT_FOR_DELIVERY");
+      const noS = (await rowsOf(A))[0].deliveryNo;
+      assert.notEqual(noS, noR);
+      await send(A, "ARRIVED");
+      fake.set(B, { route: routeR, photos: [] });
+      const again = await call("POST /integrations/chaipai/v2/events", { body: late.body, authorization: `Bearer ${CB}` });
+      assert.equal(again.raw.result, "APPLIED");
+      assert.equal((await rowsOf(B))[0].deliveryNo, noR);
+    });
     await test("V19 一票同时挂两张派送中的单（老数据）：派送中 / 已签收都 503、一个字不写，交人工", async () => {
       const S19 = await fresh("V19", "outForDelivery");
       await manualRow("v19a", S19, "WDZZV19A", "DELIVERING");
