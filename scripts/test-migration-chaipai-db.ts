@@ -88,6 +88,27 @@ async function main(): Promise<void> {
       assert.equal(d.code, 0, `还差：\n${d.out.split("\n").filter((l) => l.trim() && !l.startsWith("--")).slice(0, 8).join("\n")}`);
     });
 
+    await check("M6 跑过更早一稿的库（撤单号是两列 released_route_id / released_delivery_no）：再跑一遍并进 released_routes、旧两列删掉、零差异", async () => {
+      await db.$executeRawUnsafe(`INSERT INTO users (id, company_id, role, name, phone, status) VALUES ('ZZC6', 'c_zz', 'client', '测试客户6', '000', 'active')`);
+      await db.$executeRawUnsafe(`INSERT INTO orders (id, company_id, client_id, warehouse_id, item_name, product_quantity, package_count, package_unit,
+          receiver_name_th, receiver_phone_th, receiver_address_th, transport_mode, updated_at)
+        VALUES ('zz_o6', 'c_zz', 'ZZC6', 'wh', '鞋', 1, 1, '箱', '收货人', '000', '地址', 'sea', now())`);
+      await db.$executeRawUnsafe(`INSERT INTO shipments (id, company_id, order_id, tracking_no, current_status, warehouse_id, updated_at)
+        VALUES ('zz_s6', 'c_zz', 'zz_o6', 'ZZT6', 'inWarehouseTH', 'wh', now())`);
+      await db.$executeRawUnsafe(`ALTER TABLE "chaipai_shipment_states" DROP COLUMN "released_routes", ADD COLUMN "released_route_id" TEXT, ADD COLUMN "released_delivery_no" TEXT`);
+      await db.$executeRawUnsafe(`INSERT INTO chaipai_shipment_states (shipment_id, company_id, last_sequence, last_event_id, thai_status, occurred_at, updated_at, released_route_id, released_delivery_no)
+        VALUES ('zz_s6', 'c_zz', 3, 'e6', 'ARRIVED', now(), now(), 'route-R', 'WD000101')`);
+      const r = prisma(["db", "execute", `--schema=${SCHEMA}`, "--file", MIGRATION], tmpUrl);
+      assert.equal(r.code, 0, `升级失败：${r.out.slice(-400)}`);
+      const rows = await db.$queryRawUnsafe<Array<{ r: unknown }>>(`SELECT released_routes AS r FROM chaipai_shipment_states WHERE shipment_id = 'zz_s6'`);
+      assert.deepEqual(rows[0].r, { "route-R": "WD000101" }, "旧的撤单号没并进来");
+      const d = prisma(["migrate", "diff", "--from-url", tmpUrl, "--to-schema-datamodel", SCHEMA, "--script", "--exit-code"], tmpUrl);
+      assert.equal(d.code, 0, `还差：\n${d.out.split("\n").filter((l) => l.trim() && !l.startsWith("--")).slice(0, 8).join("\n")}`);
+      const drift = await db.$queryRawUnsafe<any[]>(readFileSync(DRIFT, "utf8"));
+      assert.equal(drift.length, 0, `体检报了：${JSON.stringify(drift).slice(0, 300)}`);
+      await db.$executeRawUnsafe(`DELETE FROM shipments WHERE id = 'zz_s6'`);
+    });
+
     await check("M4 删运单：每票最后状态跟着删（不挡老流程）；消息记录、清单版本没有外键，照样留着", async () => {
       await db.$executeRawUnsafe(`INSERT INTO users (id, company_id, role, name, phone, status) VALUES ('ZZC', 'c_zz', 'client', '测试客户', '000', 'active')`);
       await db.$executeRawUnsafe(`INSERT INTO orders (id, company_id, client_id, warehouse_id, item_name, product_quantity, package_count, package_unit,

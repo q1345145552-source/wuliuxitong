@@ -56,6 +56,16 @@ CREATE TABLE IF NOT EXISTS "chaipai_manifest_versions" (
 -- 只在 Neon 测试库跑过的早一版没有这一列、消息记录的公司编号是必填：补上 / 放开（新库上这两句什么都不做；10-12 两家审查）
 ALTER TABLE "chaipai_shipment_states" ADD COLUMN IF NOT EXISTS "handover_tracking_no" TEXT;
 ALTER TABLE "chaipai_shipment_states" ADD COLUMN IF NOT EXISTS "released_routes" JSONB;
+-- 更早一稿（也只在 Neon 测试库跑过）用两列 released_route_id / released_delivery_no 记撤单号，后来换成按车攒的 released_routes：
+-- 有旧两列就把记号并进 released_routes 再删掉两列（全新库、生产从来没有这两列，这几句什么都不做）
+DO $$ BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'chaipai_shipment_states' AND column_name = 'released_route_id') THEN
+    UPDATE "chaipai_shipment_states"
+       SET "released_routes" = COALESCE("released_routes", '{}'::jsonb) || jsonb_build_object("released_route_id", "released_delivery_no")
+     WHERE "released_route_id" IS NOT NULL AND "released_delivery_no" IS NOT NULL;
+  END IF;
+END $$;
+ALTER TABLE "chaipai_shipment_states" DROP COLUMN IF EXISTS "released_route_id", DROP COLUMN IF EXISTS "released_delivery_no";
 ALTER TABLE "chaipai_callback_events" ALTER COLUMN "company_id" DROP NOT NULL;
 
 CREATE INDEX IF NOT EXISTS "chaipai_callback_events_shipment_id_sequence_idx" ON "chaipai_callback_events"("shipment_id", "sequence");
