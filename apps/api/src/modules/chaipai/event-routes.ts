@@ -231,19 +231,16 @@ async function applyEvent(
      * 有好几个号时取最早登记的那票的号，两边先后恢复都收到同一个号上。
      */
     const sameRouteNo = async (routeIdToFind: string): Promise<string | null> => {
-      const states = await tx.chaipaiShipmentState.findMany({
-        where: { companyId, routeId: routeIdToFind, deliveryNo: { not: null }, lastmileOrderId: { startsWith: "lm_cp_" }, shipmentId: { not: sid } },
-        orderBy: { createdAt: "asc" },
-        take: 50,
-        select: { deliveryNo: true, lastmileOrderId: true },
-      });
-      if (states.length === 0) return null;
-      const alive = await tx.adminLastmileOrder.findMany({
-        where: { companyId, id: { in: states.map((x) => x.lastmileOrderId!) } },
-        select: { id: true, deliveryNo: true },
-      });
-      const ok = new Set(alive.map((r) => `${r.id}|${r.deliveryNo}`));
-      return states.find((x) => ok.has(`${x.lastmileOrderId}|${x.deliveryNo}`))?.deliveryNo ?? null;
+      // 一句 SQL 里连带核对「那张自动单还在、还是这个号」，不先截前几条再筛（10-12 第 7 轮：一趟车可能远超 50 票）
+      const rows = await tx.$queryRaw<Array<{ delivery_no: string }>>`
+        SELECT s.delivery_no FROM chaipai_shipment_states s
+        WHERE s.company_id = ${companyId} AND s.route_id = ${routeIdToFind} AND s.delivery_no IS NOT NULL
+          AND s.lastmile_order_id LIKE 'lm_cp_%' AND s.shipment_id <> ${sid}
+          AND EXISTS (SELECT 1 FROM admin_lastmile_orders o WHERE o.id = s.lastmile_order_id AND o.delivery_no = s.delivery_no)
+        ORDER BY s.created_at ASC, s.shipment_id ASC
+        LIMIT 1
+      `;
+      return rows[0]?.delivery_no ?? null;
     };
     /**
      * 自动单原来不知道是哪趟车（派送中那次只读接口 404，单号是单独发的），这次知道了：
@@ -265,13 +262,17 @@ async function applyEvent(
     };
 
     /** 同一趟车用同一个 WD 号：先找这趟车登记过的号，没有就照手工建单那条发新号（号只往上加） */
+    const ownAutoNo = state?.deliveryNo && state.lastmileOrderId && isAuto(state.lastmileOrderId) ? state.deliveryNo : null;
     const deliveryNoForRoute = async (): Promise<string> => {
       if (info?.route) {
-        // 本票自己在这趟车上登记过号（员工把那张自动单删了又来消息）就用回自己的，别换新号（10-12 Codex 第 6 轮）
-        if (state?.routeId === info.route.id && state.deliveryNo && state.lastmileOrderId && isAuto(state.lastmileOrderId)) return state.deliveryNo;
-        // 同车别的票的号（只认还在的自动单，见 sameRouteNo）
+        // 先用同车别的票现在用着的号（只认还在的自动单，见 sameRouteNo）；同车没有活号，
+        // 本票自己在这趟车上登记过（员工把那张自动单删了又来消息）就用回自己的（10-12 第 6、7 轮：顺序不能反，反了一趟车又拆两个号）
         const sameRoute = await sameRouteNo(info.route.id);
         if (sameRoute) return sameRoute;
+        if (state?.routeId === info.route.id && ownAutoNo) return ownAutoNo;
+      } else if (!info?.found && ownAutoNo && state?.thaiStatus === "OUT_FOR_DELIVERY" && ev.sequence === state.lastSequence + 1) {
+        // 只读接口这回查不到、上一条正是这票的派送中且序号连着：就是同一趟，用回原来的号（10-12 Codex 第 7 轮）
+        return ownAutoNo;
       }
       const last = await tx.adminLastmileOrder.findFirst({
         where: { deliveryNo: { startsWith: "WD" } },
@@ -293,6 +294,10 @@ async function applyEvent(
     /** 新登记一张自动派送单（派送中，或签收时还没有派送单就直接已签收） */
     const createRow = async (rowStatus: "DELIVERING" | "SIGNED"): Promise<{ id: string; deliveryNo: string }> => {
       const no = await deliveryNoForRoute();
+      // 这趟车本票原来登记的是另一个号（那张单被员工删了），现在并到同车的号：照「改派」交代一句
+      if (info?.route && state?.routeId === info.route.id && ownAutoNo && ownAutoNo !== no) {
+        await writeLog("sl_lm_cp_", status, `改派：从 ${ownAutoNo} 转到 ${no}`);
+      }
       const fields = {
         ...infoFields(),
         phoneNumber: "",
@@ -327,6 +332,12 @@ async function applyEvent(
       if (coarseChanged || plan.targetStatus !== fromStatus) {
         await writeLog("sl_cp_", plan.targetStatus, arrivedRemark(ev.actualBoxCount, ev.shortage));
       }
+      // 货在仓里就不在哪趟车上了：记着的趟次和派送单一律清掉（员工先把单删了、运单已经退回仓的情况也是；10-12 Codex 第 7 轮）
+      routeId = null;
+      deliveryNo = null;
+      lastmileOrderId = null;
+      handoverCarrier = null;
+      handoverTrackingNo = null;
     } else if (ev.status === "LOADED") {
       if (coarseChanged || plan.targetStatus !== fromStatus) {
         await writeLog("sl_cp_", plan.targetStatus, LOADED_REMARK);
@@ -413,9 +424,12 @@ async function applyEvent(
         const created = await createRow("SIGNED");
         lastmileOrderId = created.id;
         signedNo = created.deliveryNo;
-        routeId = info?.route?.id ?? null;
-        handoverCarrier = info?.handover?.carrierName ?? null;
-        handoverTrackingNo = handoverCarrier ? (info?.handover?.trackingNo ?? null) : null;
+        // 只读接口这回查不到就不知道是哪一趟，原来记着的趟次留着（别清空，10-12 Codex 第 7 轮）
+        if (info?.found) {
+          routeId = info.route?.id ?? null;
+          handoverCarrier = info.handover?.carrierName ?? null;
+          handoverTrackingNo = handoverCarrier ? (info.handover?.trackingNo ?? null) : null;
+        }
       }
       deliveryNo = signedNo;
       if (status !== "delivered" || coarseChanged) {
