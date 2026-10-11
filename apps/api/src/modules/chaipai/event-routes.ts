@@ -195,7 +195,8 @@ async function applyEvent(
     const newTrip = info?.found ? tripOf(info.route?.id, info.handover?.carrierName) : null;
     /* 转交这一趟里拆派仓不会再发别的消息（转交 → 签收，或撤回 → 回仓），所以两次都是转交、中间又跳了号 = 漏了一次撤回，
        就算是同一家物流也是新的一趟（10-12 第 4 轮两家审查：原来所有转交都当同一趟）。同一趟里只改单号（序号连着）照旧算同一趟。 */
-    const seqGap = !!state && ev.sequence > state.lastSequence + 1;
+    // 同理：上一条已经不是「派送中」了（中间收到过已装车之类）又来转交，也是新的一趟（10-12 dsh 第 5 轮）
+    const seqGap = !!state && (ev.sequence > state.lastSequence + 1 || state.thaiStatus !== "OUT_FOR_DELIVERY");
     const tripChanged = (row: { id: string }) => isAuto(row.id) && !!prevTrip && !!newTrip
       && (prevTrip !== newTrip || (prevTrip.startsWith("handover:") && seqGap));
     /** 一票同时挂着两张以上派送中的单（老数据）：分不清是哪一趟，交人工 */
@@ -224,15 +225,35 @@ async function applyEvent(
       await writeLog("sl_lmunsign_cp_", "outForDelivery", unsignRemark(signed[0].deliveryNo));
     };
 
+    /**
+     * 这趟车（别的票）登记过的 WD 号：只认自动登记的单（lm_cp_；接手的员工手工单是员工自己的号）、不算本票，
+     * 取最早登记的那一个当准（本票刚改过也不会挑回自己的临时号；10-12 第 5 轮）
+     */
+    const sameRouteNo = (routeIdToFind: string) => tx.chaipaiShipmentState.findFirst({
+      where: { companyId, routeId: routeIdToFind, deliveryNo: { not: null }, lastmileOrderId: { startsWith: "lm_cp_" }, shipmentId: { not: sid } },
+      orderBy: { createdAt: "asc" },
+      select: { deliveryNo: true },
+    });
+    /**
+     * 自动单原来不知道是哪趟车（派送中那次只读接口 404，单号是单独发的），这次知道了：
+     * 同车别的票已经有号就并过去，别让一趟车拆成两张派送单（10-12 Codex 第 5 轮）。返回这行最后的单号。
+     */
+    const alignToRouteNo = async (row: { id: string; deliveryNo: string }): Promise<string> => {
+      if (!isAuto(row.id) || !info?.found || !info.route || state?.routeId === info.route.id) return row.deliveryNo;
+      const same = await sameRouteNo(info.route.id);
+      if (!same?.deliveryNo || same.deliveryNo === row.deliveryNo) return row.deliveryNo;
+      // 本票在那张单里已经有一行（@@unique）就不动，免得撞
+      if (live.some((r) => r.id !== row.id && r.deliveryNo === same.deliveryNo)) return row.deliveryNo;
+      await tx.adminLastmileOrder.update({ where: { id: row.id }, data: { deliveryNo: same.deliveryNo } });
+      row.deliveryNo = same.deliveryNo;
+      return same.deliveryNo;
+    };
+
     /** 同一趟车用同一个 WD 号：先找这趟车登记过的号，没有就照手工建单那条发新号（号只往上加） */
     const deliveryNoForRoute = async (): Promise<string> => {
       if (info?.route) {
         // 只认自动登记的单（lm_cp_）：接手的员工手工单是员工自己的号，别把同车别的票并进去（10-12 测试抓到）
-        const sameRoute = await tx.chaipaiShipmentState.findFirst({
-          where: { companyId, routeId: info.route.id, deliveryNo: { not: null }, lastmileOrderId: { startsWith: "lm_cp_" } },
-          orderBy: { updatedAt: "desc" },
-          select: { deliveryNo: true },
-        });
+        const sameRoute = await sameRouteNo(info.route.id);
         if (sameRoute?.deliveryNo) return sameRoute.deliveryNo;
       }
       const last = await tx.adminLastmileOrder.findFirst({
@@ -317,6 +338,7 @@ async function applyEvent(
         if (isAuto(current.id) && info?.found) {
           // 这一趟是什么就写什么：转交那一趟没有司机车牌，也要清掉（10-12 dsh 第 3 轮）
           await tx.adminLastmileOrder.update({ where: { id: current.id }, data: infoFields() });
+          await alignToRouteNo(current);
         }
         lastmileOrderId = current.id;
         deliveryNo = current.deliveryNo;
@@ -363,7 +385,7 @@ async function applyEvent(
           },
         });
         lastmileOrderId = target.id;
-        signedNo = target.deliveryNo;
+        signedNo = await alignToRouteNo(target);
         if (!isAuto(target.id)) routeId = null;
         else if (info?.found) {
           routeId = info.route?.id ?? null;

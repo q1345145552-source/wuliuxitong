@@ -736,6 +736,49 @@ async function main(): Promise<void> {
       assert.deepEqual([row.status, row.driverName, row.licensePlate], ["SIGNED", "张三", "1กข1234"]);
       assert.equal((await pm.chaipaiShipmentState.findUnique({ where: { shipmentId: S } })).routeId, `${P}routeV25`);
     });
+    await test("V26 同一趟车两票：一票派送中那次查不到（单独发了号）、另一票正常；前者签收时查到了这趟车 → 并到同车那个号", async () => {
+      const route26 = { ...routeA, id: `${P}routeV26` };
+      const A = await fresh("V26a");
+      const B = await fresh("V26b");
+      fake.delete(A);
+      await send(A, "OUT_FOR_DELIVERY");
+      fake.set(B, { route: route26, photos: [] });
+      await send(B, "OUT_FOR_DELIVERY");
+      const noB = (await rowsOf(B))[0].deliveryNo;
+      assert.notEqual((await rowsOf(A))[0].deliveryNo, noB, "前提：两票先各是各的号");
+      fake.set(A, { route: route26, photos: [{ id: "p26", createdAt: "2026-10-12T03:00:00.000Z" }] });
+      await send(A, "DELIVERED");
+      const rowA = (await rowsOf(A))[0];
+      assert.deepEqual([rowA.deliveryNo, rowA.status], [noB, "SIGNED"]);
+      const logs = await logsOf(A);
+      assert.equal(logs[logs.length - 1].remark, `尾程派送已签收（${noB}）`);
+      // 同车再来一票，还是这个号
+      const C = await fresh("V26c");
+      fake.set(C, { route: route26, photos: [] });
+      await send(C, "OUT_FOR_DELIVERY");
+      assert.equal((await rowsOf(C))[0].deliveryNo, noB);
+    });
+    await test("V27 同一家物流转交两次、中间撤回丢了（序号跳了）、第二次派送中到了 → 新的一趟（新 WD、新单号）", async () => {
+      const S = await fresh("V27");
+      fake.set(S, { route: null, handover: { carrierName: "Kerry", trackingNo: "K1" }, photos: [] });
+      await send(S, "OUT_FOR_DELIVERY");
+      const wd1 = (await rowsOf(S))[0].deliveryNo;
+      fake.set(S, { route: null, handover: { carrierName: "Kerry", trackingNo: "K2" }, photos: [] });
+      await send(S, "OUT_FOR_DELIVERY", {}, { seq: (seqOf.get(S) ?? 0) + 2 });
+      const rows = await rowsOf(S);
+      assert.deepEqual([rows.length, rows[0].deliveryNo !== wd1, rows[0].externalTrackingNo], [1, true, "K2"]);
+    });
+    await test("V28 转交之后收到过已装车（撤回那条丢了）、又转交同一家（序号连着）→ 也是新的一趟", async () => {
+      const S = await fresh("V28");
+      fake.set(S, { route: null, handover: { carrierName: "Kerry", trackingNo: "K1" }, photos: [] });
+      await send(S, "OUT_FOR_DELIVERY");
+      const wd1 = (await rowsOf(S))[0].deliveryNo;
+      await send(S, "LOADED");
+      fake.set(S, { route: null, handover: { carrierName: "Kerry", trackingNo: "K5" }, photos: [] });
+      await send(S, "OUT_FOR_DELIVERY");
+      const rows = await rowsOf(S);
+      assert.deepEqual([rows.length, rows[0].deliveryNo !== wd1, rows[0].externalTrackingNo], [1, true, "K5"]);
+    });
     await test("V19 一票同时挂两张派送中的单（老数据）：派送中 / 已签收都 503、一个字不写，交人工", async () => {
       const S19 = await fresh("V19", "outForDelivery");
       await manualRow("v19a", S19, "WDZZV19A", "DELIVERING");

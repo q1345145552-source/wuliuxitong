@@ -775,8 +775,20 @@ function ShipmentTrackModal({ target, onClose, endpoint = "/client/shipments/tra
 
 // ── Public API ──
 
+/** 现在开着的那个弹窗：再开一个之前先正经卸掉旧的（只删节点不卸 React，里面还在下的照片请求停不下来；10-12 Codex 第 5 轮） */
+let currentTrackModal: { root: ReturnType<typeof createRoot>; overlay: HTMLElement } | null = null;
+
+function closeCurrentTrackModal() {
+  const cur = currentTrackModal;
+  currentTrackModal = null;
+  if (!cur) return;
+  try { cur.root.unmount(); } catch { /* 已经卸过 */ }
+  cur.overlay.remove();
+}
+
 export function openShipmentTrack(target: ShipmentTrackTarget, options: ShipmentTrackOptions = {}) {
   // 移除旧弹窗
+  closeCurrentTrackModal();
   const old = document.getElementById("track-modal-root");
   if (old) old.remove();
 
@@ -786,11 +798,14 @@ export function openShipmentTrack(target: ShipmentTrackTarget, options: Shipment
 
   try {
     const root = createRoot(overlay);
+    const mine = { root, overlay };
+    currentTrackModal = mine;
     root.render(
       <ShipmentTrackModal
         target={target}
         endpoint={options.endpoint}
         onClose={() => {
+          if (currentTrackModal === mine) currentTrackModal = null;
           root.unmount();
           overlay.remove();
         }}

@@ -105,7 +105,10 @@ export function ChaipaiPhotos({ trackingNo, onZoom }: { trackingNo: string; onZo
         active.current -= 1;
         if (!mounted.current) return;
         const done = thumb;
-        if (done) setThumbs((prev) => ({ ...prev, [photoId]: done }));
+        if (done) {
+          doneIds.current.add(photoId);
+          setThumbs((prev) => ({ ...prev, [photoId]: done }));
+        }
         pump();
       })();
     }
@@ -114,9 +117,11 @@ export function ChaipaiPhotos({ trackingNo, onZoom }: { trackingNo: string; onZo
   // 前 limit 张排进队（已经排过的跳过）
   const wanted = items.slice(0, limit);
   const wantedKey = wanted.map((p) => p.id).join(",");
+  /** 已经下好的（开发模式卸下再挂上时 thumbs 还在，别重下） */
+  const doneIds = useRef(new Set<string>());
   useEffect(() => {
     for (const p of wanted) {
-      if (queued.current.has(p.id)) continue;
+      if (queued.current.has(p.id) || doneIds.current.has(p.id)) continue;
       queued.current.add(p.id);
       queue.current.push(p.id);
     }
