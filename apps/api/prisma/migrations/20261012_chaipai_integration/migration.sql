@@ -38,6 +38,8 @@ CREATE TABLE IF NOT EXISTS "chaipai_shipment_states" (
     "lastmile_order_id" TEXT,
     "handover_carrier" TEXT,
     "handover_tracking_no" TEXT,
+    "released_route_id" TEXT,
+    "released_delivery_no" TEXT,
     "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updated_at" TIMESTAMP(3) NOT NULL,
     CONSTRAINT "chaipai_shipment_states_pkey" PRIMARY KEY ("shipment_id")
@@ -54,6 +56,8 @@ CREATE TABLE IF NOT EXISTS "chaipai_manifest_versions" (
 
 -- 只在 Neon 测试库跑过的早一版没有这一列、消息记录的公司编号是必填：补上 / 放开（新库上这两句什么都不做；10-12 两家审查）
 ALTER TABLE "chaipai_shipment_states" ADD COLUMN IF NOT EXISTS "handover_tracking_no" TEXT;
+ALTER TABLE "chaipai_shipment_states" ADD COLUMN IF NOT EXISTS "released_route_id" TEXT;
+ALTER TABLE "chaipai_shipment_states" ADD COLUMN IF NOT EXISTS "released_delivery_no" TEXT;
 ALTER TABLE "chaipai_callback_events" ALTER COLUMN "company_id" DROP NOT NULL;
 
 CREATE INDEX IF NOT EXISTS "chaipai_callback_events_shipment_id_sequence_idx" ON "chaipai_callback_events"("shipment_id", "sequence");

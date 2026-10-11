@@ -895,6 +895,23 @@ async function main(): Promise<void> {
       await send(S, "OUT_FOR_DELIVERY");
       assert.equal((await rowsOf(S))[0].deliveryNo, liveNo);
     });
+    await test("V37 同一趟车：A 先被拉回仓（系统撤了单）、B 的派送中晚到 → B 照样用这趟车原来的号（没有员工动手）", async () => {
+      const route37 = { ...routeA, id: `${P}routeV37` };
+      const A = await fresh("V37a");
+      const B = await fresh("V37b");
+      fake.set(A, { route: route37, photos: [] });
+      await send(A, "OUT_FOR_DELIVERY");
+      const noA = (await rowsOf(A))[0].deliveryNo;
+      fake.set(B, { status: 503 });
+      const late = await send(B, "OUT_FOR_DELIVERY");
+      assert.equal(late.status, 503, "前提：B 这条先没办成");
+      await send(A, "ARRIVED");
+      assert.equal((await rowsOf(A)).length, 0, "前提：A 的单被系统撤了");
+      fake.set(B, { route: route37, photos: [] });
+      const again = await call("POST /integrations/chaipai/v2/events", { body: late.body, authorization: `Bearer ${CB}` });
+      assert.equal(again.raw.result, "APPLIED");
+      assert.equal((await rowsOf(B))[0].deliveryNo, noA);
+    });
     await test("V19 一票同时挂两张派送中的单（老数据）：派送中 / 已签收都 503、一个字不写，交人工", async () => {
       const S19 = await fresh("V19", "outForDelivery");
       await manualRow("v19a", S19, "WDZZV19A", "DELIVERING");

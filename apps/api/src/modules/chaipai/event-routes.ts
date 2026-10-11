@@ -182,6 +182,15 @@ async function applyEvent(
     let lastmileOrderId = state?.lastmileOrderId ?? null;
     let handoverCarrier = state?.handoverCarrier ?? null;
     let handoverTrackingNo = state?.handoverTrackingNo ?? null;
+    let releasedRouteId = state?.releasedRouteId ?? null;
+    let releasedDeliveryNo = state?.releasedDeliveryNo ?? null;
+    /** 系统自己撤掉一张自动单时，记下「这趟车 → 号」（见 sameRouteNo） */
+    const rememberRelease = (row: { id: string; deliveryNo: string }) => {
+      if (isAuto(row.id) && routeId) {
+        releasedRouteId = routeId;
+        releasedDeliveryNo = row.deliveryNo;
+      }
+    };
     /** 自动登记的派送单 id 带 lm_cp_ 前缀：只有这种才由回传更新司机车牌、换车时撤掉；员工手工登记的只接手状态，资料不动 */
     const isAuto = (id: string) => id.startsWith("lm_cp_");
     /**
@@ -232,12 +241,20 @@ async function applyEvent(
      */
     const sameRouteNo = async (routeIdToFind: string): Promise<string | null> => {
       // 一句 SQL 里连带核对「那张自动单还在、还是这个号」，不先截前几条再筛（10-12 第 7 轮：一趟车可能远超 50 票）
+      // 先认还在用的；没有再认系统撤单时留下的「这趟车 → 号」（同车的票被拉回仓了、别的票晚到也并回来；10-12 Codex 第 8 轮）
       const rows = await tx.$queryRaw<Array<{ delivery_no: string }>>`
-        SELECT s.delivery_no FROM chaipai_shipment_states s
-        WHERE s.company_id = ${companyId} AND s.route_id = ${routeIdToFind} AND s.delivery_no IS NOT NULL
-          AND s.lastmile_order_id LIKE 'lm_cp_%' AND s.shipment_id <> ${sid}
-          AND EXISTS (SELECT 1 FROM admin_lastmile_orders o WHERE o.id = s.lastmile_order_id AND o.delivery_no = s.delivery_no)
-        ORDER BY s.created_at ASC, s.shipment_id ASC
+        SELECT t.delivery_no FROM (
+          SELECT s.delivery_no, 0 AS rank, s.created_at, s.shipment_id FROM chaipai_shipment_states s
+          WHERE s.company_id = ${companyId} AND s.route_id = ${routeIdToFind} AND s.delivery_no IS NOT NULL
+            AND s.lastmile_order_id LIKE 'lm_cp_%' AND s.shipment_id <> ${sid}
+            AND EXISTS (SELECT 1 FROM admin_lastmile_orders o
+                        WHERE o.id = s.lastmile_order_id AND o.delivery_no = s.delivery_no AND o.company_id = s.company_id)
+          UNION ALL
+          SELECT s.released_delivery_no, 1 AS rank, s.created_at, s.shipment_id FROM chaipai_shipment_states s
+          WHERE s.company_id = ${companyId} AND s.released_route_id = ${routeIdToFind} AND s.released_delivery_no IS NOT NULL
+            AND s.shipment_id <> ${sid}
+        ) t
+        ORDER BY t.rank ASC, t.created_at ASC, t.shipment_id ASC
         LIMIT 1
       `;
       return rows[0]?.delivery_no ?? null;
@@ -321,7 +338,10 @@ async function applyEvent(
       // 再把派送中的单全撤掉（照「改派」删旧行）。不看运单现在是派送中还是已签收 —— 员工签过一趟又派一趟也是这样（10-12 dsh 审查）
       await unsignSigned();
       const delivering = live.filter((r) => r.status === "DELIVERING");
-      for (const r of delivering) await removeRow(r.id);
+      for (const r of delivering) {
+        if (r.id === lastmileOrderId) rememberRelease(r);
+        await removeRow(r.id);
+      }
       await writeLog(delivering.length > 0 ? "sl_lmdel_cp_" : "sl_cp_", "inWarehouseTH", RETURN_REMARK);
       routeId = null;
       deliveryNo = null;
@@ -355,6 +375,7 @@ async function applyEvent(
         ?? live.find((r) => r.status === "DELIVERING");
       if (current && tripChanged(current)) {
         const oldNo = current.deliveryNo;
+        rememberRelease(current);
         await removeRow(current.id);
         const created = await createRow("DELIVERING");
         lastmileOrderId = created.id;
@@ -398,6 +419,7 @@ async function applyEvent(
         ?? live.find((r) => r.status === "SIGNED");
       // 派送中那条没收到、签收时已经是另一趟了：自动登记的旧单（不管员工有没有先手工签过）撤掉，按这一趟直接登记已签收
       if (target && tripChanged(target)) {
+        rememberRelease(target);
         await removeRow(target.id);
         target = undefined;
       }
@@ -444,7 +466,7 @@ async function applyEvent(
     const stateData = {
       companyId, lastSequence: ev.sequence, lastEventId: ev.eventId, thaiStatus: ev.status, occurredAt,
       ...(ev.status === "ARRIVED" && ev.actualBoxCount != null ? { actualBoxCount: ev.actualBoxCount, shortage: ev.shortage } : {}),
-      routeId, deliveryNo, lastmileOrderId, handoverCarrier, handoverTrackingNo,
+      routeId, deliveryNo, lastmileOrderId, handoverCarrier, handoverTrackingNo, releasedRouteId, releasedDeliveryNo,
     };
     await tx.chaipaiShipmentState.upsert({
       where: { shipmentId: sid },

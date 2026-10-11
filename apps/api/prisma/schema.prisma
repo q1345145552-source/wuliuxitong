@@ -1532,6 +1532,10 @@ model ChaipaiShipmentState {
   /// 最后一次登记的转交物流和对方单号（转交了才有），任一变了才补一条轨迹
   handoverCarrier    String?  @map("handover_carrier")
   handoverTrackingNo String?  @map("handover_tracking_no")
+  /// 系统撤单（送不成拉回仓、换趟）时留下的「上一趟车 → 派送单号」：单子没了，同车晚到的票照样认这个号
+  /// （员工手工删单不写这两列，废掉的号不会被捡回来）
+  releasedRouteId    String?  @map("released_route_id")
+  releasedDeliveryNo String?  @map("released_delivery_no")
   createdAt       DateTime @default(now()) @map("created_at")
   updatedAt       DateTime @updatedAt @map("updated_at")
 
