@@ -42,7 +42,7 @@ async function test(label: string, fn: () => Promise<void>): Promise<void> {
 }
 
 /** 假拆派仓只读接口：按运单 id 配好详情和照片 */
-interface FakePhoto { id: string; createdAt: string; status?: number; bytes?: Buffer; type?: string }
+interface FakePhoto { id: string; createdAt: string; status?: number; bytes?: Buffer; type?: string; delayMs?: number }
 interface FakeShipment { status?: number; route?: Row | null; handover?: Row | null; photos?: FakePhoto[]; slowBody?: boolean; pageDelayMs?: number }
 const fake = new Map<string, FakeShipment>();
 const fakeHits: string[] = [];
@@ -63,6 +63,8 @@ function startFake(): Promise<Server> {
       const p = photos.find((x) => x.id === decodeURIComponent(m[2]));
       if (!p) { res.statusCode = 404; res.end("{}"); return; }
       if (p.status && p.status !== 200) { res.statusCode = p.status; res.end("{}"); return; }
+      if (p.delayMs) await new Promise((r) => setTimeout(r, p.delayMs));
+      if (res.destroyed) return;
       res.setHeader("content-type", p.type ?? "image/jpeg");
       res.end(p.bytes ?? Buffer.from(`JPEG-${p.id}`));
       return;
@@ -678,6 +680,26 @@ async function main(): Promise<void> {
       assert.deepEqual([rows[0].status, rows[0].driverName, rows[0].deliveryNo !== oldNo, !!rows[0].signImageBase64], ["SIGNED", "赵六", true, true]);
       assert.equal((await shipmentOf(S18)).currentStatus, "delivered");
     });
+    await test("V18b 旧趟的自动单员工已经手工签过、新一趟直接收到已签收 → 旧单撤掉，按新一趟登记已签收（新 WD）", async () => {
+      const S = await fresh("V18b");
+      fake.set(S, { route: { ...routeA, id: `${P}routeV18c` }, photos: [] });
+      await send(S, "OUT_FOR_DELIVERY");
+      const old = (await rowsOf(S))[0];
+      await pm.adminLastmileOrder.update({ where: { id: old.id }, data: { status: "SIGNED" } });
+      await pm.shipment.update({ where: { id: S }, data: { currentStatus: "delivered" } });
+      fake.set(S, { route: { ...routeA, id: `${P}routeV18d`, driverName: "钱七" }, photos: [{ id: "p18b", createdAt: "2026-10-12T03:00:00.000Z" }] });
+      await send(S, "DELIVERED", {}, { seq: (seqOf.get(S) ?? 0) + 3 });
+      const rows = await rowsOf(S);
+      assert.equal(rows.length, 1);
+      assert.deepEqual([rows[0].status, rows[0].driverName, rows[0].deliveryNo !== old.deliveryNo], ["SIGNED", "钱七", true]);
+    });
+    await test("V22 过时的「派送中」（拆派仓查得到这票、但现在不在车上也没转交）→ 503 不登记认不出趟次的单", async () => {
+      const S = await fresh("V22");
+      fake.set(S, { route: null, handover: null, photos: [] });
+      const r = await send(S, "OUT_FOR_DELIVERY");
+      assert.equal(r.status, 503);
+      assert.deepEqual([(await rowsOf(S)).length, (await shipmentOf(S)).currentStatus], [0, "inWarehouseTH"]);
+    });
     await test("V19 一票同时挂两张派送中的单（老数据）：派送中 / 已签收都 503、一个字不写，交人工", async () => {
       const S19 = await fresh("V19", "outForDelivery");
       await manualRow("v19a", S19, "WDZZV19A", "DELIVERING");
@@ -693,12 +715,15 @@ async function main(): Promise<void> {
     await test("V20 拉清单真的拿同柜排队锁：别人拿着这把锁时，拉清单要等它放开（删了那句锁这项就红）", async () => {
       const ctn = await pm.container.findFirst({ where: { containerNo: ctnNo }, select: { id: true } });
       let released = 0;
+      let gotLock!: () => void;
+      const locked = new Promise<void>((r) => { gotLock = r; });
       const holder = pm.$transaction(async (tx: any) => {
         await tx.$executeRaw`SELECT pg_advisory_xact_lock(83060, hashtext(${ctn.id}))`;
+        gotLock(); // 真拿到锁了才放拉清单出发（不靠猜时间）
         await new Promise((r) => setTimeout(r, 1500));
         released = Date.now();
       }, { timeout: 10000 });
-      await new Promise((r) => setTimeout(r, 200));
+      await locked;
       const r = await pull(ctnNo);
       const doneAt = Date.now();
       await holder;
@@ -711,6 +736,15 @@ async function main(): Promise<void> {
       fake.set(S21, { route: routeA, photos, pageDelayMs: 300 });
       const ok = await send(S21, "DELIVERED");
       assert.equal(ok.raw.result, "APPLIED");
+      // 翻页把时间用掉大半、取照片又卡住：照样在 10 秒内回 503、一个字不写
+      const S21c = await fresh("V21c");
+      const slowPhotos = photos.map((p) => ({ ...p, delayMs: 6000 }));
+      fake.set(S21c, { route: routeA, photos: slowPhotos, pageDelayMs: 400 });
+      const t1 = Date.now();
+      const blocked = await send(S21c, "DELIVERED");
+      assert.equal(blocked.status, 503);
+      assert.ok(Date.now() - t1 < 10000, `详情 + 照片拖了 ${Date.now() - t1}ms`);
+      assert.equal((await rowsOf(S21c)).length, 0);
       const S21b = await fresh("V21b");
       fake.set(S21b, { route: routeA, photos, pageDelayMs: 900 });
       const t0 = Date.now();

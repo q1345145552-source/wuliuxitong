@@ -66,6 +66,11 @@ async function prepareLastmileInfo(cfg: ChaipaiConfig, ev: ChaipaiEvent): Promis
     return { found: false, route: null, handover: null, signImageBase64: null };
   }
   if (detail.kind !== "ok") throw new RetryLaterError(`取司机车牌失败：${detail.kind === "error" ? detail.reason : detail.kind}`);
+  /* 派送中在拆派仓一定挂着一趟车或一个转交；查到这票却两样都没有 = 这条「派送中」已经过时（货已经回仓了，
+     后面那条消息还没到）。不拿它登记一张认不出是哪一趟的单，等后面的消息先到（10-12 Codex 第 3 轮） */
+  if (ev.status === "OUT_FOR_DELIVERY" && !detail.value.route && !detail.value.handover) {
+    throw new RetryLaterError("拆派仓这票现在不在车上也没转交，这条派送中已经过时");
+  }
   let signImageBase64: string | null = null;
   if (ev.status === "DELIVERED") {
     // 照片列表没翻完就挑不准「最新一张」，宁可等会儿重发也不拿旧图当签收单
@@ -304,10 +309,8 @@ async function applyEvent(
       } else if (current) {
         // 已经有派送中的单：不新建。自动登记的那张跟着拆派仓更新司机车牌 / 转交；员工手工登记的资料不动
         if (isAuto(current.id) && info) {
-          await tx.adminLastmileOrder.update({
-            where: { id: current.id },
-            data: info.route ? infoFields() : { carrierName: infoFields().carrierName, externalTrackingNo: infoFields().externalTrackingNo },
-          });
+          // 这一趟是什么就写什么：转交那一趟没有司机车牌，也要清掉（10-12 dsh 第 3 轮）
+          await tx.adminLastmileOrder.update({ where: { id: current.id }, data: infoFields() });
         }
         lastmileOrderId = current.id;
         deliveryNo = current.deliveryNo;
@@ -337,8 +340,8 @@ async function applyEvent(
         ?? live.find((r) => r.status === "DELIVERING")
         ?? live.find((r) => r.id === lastmileOrderId)
         ?? live.find((r) => r.status === "SIGNED");
-      // 派送中那条没收到、签收时已经是另一趟了：自动登记的旧单撤掉，按这一趟直接登记已签收
-      if (target && target.status === "DELIVERING" && tripChanged(target)) {
+      // 派送中那条没收到、签收时已经是另一趟了：自动登记的旧单（不管员工有没有先手工签过）撤掉，按这一趟直接登记已签收
+      if (target && tripChanged(target)) {
         await removeRow(target.id);
         target = undefined;
       }

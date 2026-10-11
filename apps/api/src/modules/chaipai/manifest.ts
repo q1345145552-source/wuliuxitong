@@ -209,9 +209,11 @@ export function envelopeProblem(envelope: ManifestEnvelope): string | null {
   const total = envelope.manifests.reduce((sum, m) => sum + m.shipments.length, 0);
   if (envelope.manifests.length > MANIFEST_MAX_BATCHES) return `批次份数 ${envelope.manifests.length} 超过 ${MANIFEST_MAX_BATCHES}`;
   if (total > MANIFEST_MAX_SHIPMENTS) return `合计 ${total} 票超过 ${MANIFEST_MAX_SHIPMENTS}`;
-  if (!envelope.containerNo.trim() || envelope.containerNo.length > 128 || /[\x00-\x1f\x7f]/.test(envelope.containerNo)) {
-    return "柜号含控制字符或超过 128 字";
-  }
+  // 跟拆派仓 manifest-v2.validation 的 text() 同一套：去空白后不能空、≤128 字、没有控制字符；有一处不合整次就会被拒
+  const badText = (v: string) => !v.trim() || v.length > 128 || /[\x00-\x1f\x7f]/.test(v);
+  if (badText(envelope.containerNo)) return "柜号含控制字符或超过 128 字";
+  const badBatch = envelope.manifests.find((m) => badText(m.batchNo));
+  if (badBatch) return `批次号不合规：${JSON.stringify(badBatch.batchNo).slice(0, 60)}`;
   const bytes = Buffer.byteLength(JSON.stringify(envelope), "utf8");
   if (bytes > MANIFEST_MAX_BYTES) return `清单 ${bytes} 字节超过 5MB`;
   return null;

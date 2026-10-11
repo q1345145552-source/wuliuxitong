@@ -57,10 +57,16 @@ export function ChaipaiPhotos({ trackingNo, onZoom }: { trackingNo: string; onZo
    * 这个组件按运单号挂 key（换页签就是新组件），所以队不用跟着运单号清。
    */
   const mounted = useRef(true);
+  /** 正在下的请求：关掉弹窗 / 切到别的页签时全部取消，别让旧的跟新的叠在一起（10-12 两家第 3 轮） */
+  const inflight = useRef(new Set<AbortController>());
   // 开发模式（StrictMode）会挂上 → 卸下 → 再挂上一次，所以挂上时要设回 true
   useEffect(() => {
     mounted.current = true;
-    return () => { mounted.current = false; };
+    return () => {
+      mounted.current = false;
+      for (const c of inflight.current) c.abort();
+      inflight.current.clear();
+    };
   }, []);
   const queue = useRef<string[]>([]);
   const queued = useRef(new Set<string>());
@@ -71,10 +77,12 @@ export function ChaipaiPhotos({ trackingNo, onZoom }: { trackingNo: string; onZo
       active.current += 1;
       void (async () => {
         let thumb: Thumb;
+        const controller = new AbortController();
+        inflight.current.add(controller);
         try {
           const res = await fetch(
             `${apiBaseUrl()}/staff/shipments/chaipai-photo?trackingNo=${encodeURIComponent(trackingNo)}&photoId=${encodeURIComponent(photoId)}`,
-            { headers: { ...authHeaders() } },
+            { headers: { ...authHeaders() }, signal: controller.signal },
           );
           if (res.status === 410) thumb = { error: "照片已过保留期" };
           else if (res.status === 404) thumb = { error: "照片已不存在" };
@@ -84,6 +92,8 @@ export function ChaipaiPhotos({ trackingNo, onZoom }: { trackingNo: string; onZo
           }
         } catch {
           thumb = { error: "暂时取不到" };
+        } finally {
+          inflight.current.delete(controller);
         }
         active.current -= 1;
         if (!mounted.current) return;

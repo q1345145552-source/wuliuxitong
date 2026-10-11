@@ -182,6 +182,9 @@ check("M6 整次上限：51 份 / 5001 票 / 柜号有控制字符 → 先挡住
   const big = planBatches("xiangtai", "c", Array.from({ length: 5001 }, (_, i) => row({ shipmentId: `s${i}`, batchNo: `B${i % 11}` })));
   assert.match(envelopeProblem(buildEnvelope("xiangtai", "M", big, () => "x"))!, /5000/);
   assert.match(envelopeProblem(buildEnvelope("xiangtai", "M\u0001", one, () => "x"))!, /柜号/);
+  // 批次号也是整次拒收的（兜底自检：正常情况下 normalizeBatchNo 已经洗干净）
+  assert.match(envelopeProblem(buildEnvelope("xiangtai", "M", [{ ...one[0], batchNo: "   " }], () => "x"))!, /批次号/);
+  assert.match(envelopeProblem(buildEnvelope("xiangtai", "M", [{ ...one[0], batchNo: "B".repeat(129) }], () => "x"))!, /批次号/);
   // 5MB 两边：每票备注 700 个汉字（约 2.3KB），2300 票超、2150 票不超（按真实 JSON 字节算）
   const fat = (n: number) => planBatches("xiangtai", "c", Array.from({ length: n }, (_, i) => row({ shipmentId: `s${String(i).padStart(5, "0")}`, batchNo: `B${i % 10}`, remark: "备".repeat(700) })));
   const big5 = buildEnvelope("xiangtai", "M", fat(2300), () => "2026-10-12T03:00:00.000Z");
