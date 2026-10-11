@@ -148,6 +148,8 @@ model Shipment {
   inboundPhotos     StaffInboundPhoto[]
   customsCases      AdminCustomsCase[]
   lastmileOrders    AdminLastmileOrder[]
+  /// 拆派仓回传到这票的最后状态（2026-10-12 对接拆派仓；没收到过回传就没有这一行）
+  chaipaiState      ChaipaiShipmentState?
 
   @@index([companyId, currentStatus])
   @@index([companyId, updatedAt])
@@ -1478,4 +1480,75 @@ model ArrivalNoticeProduct {
 
   @@index([noticeId, sortOrder])
   @@map("arrival_notice_products")
+}
+
+// ============================================================================
+// 对接拆派仓（2026-10-12，老板「4:同意加」三张对接用的表，只加不删）
+// 拆派仓到货扫码时来拉清单、回传状态（已到泰国仓 / 泰国已装车 / 派送中 / 已签收）。
+// 每一列都显式写 @map（CLAUDE.md 第 26 条）。
+// ============================================================================
+
+/// 拆派仓回传消息记录：按 eventId 去重（同一编号再来回 DUPLICATE）。
+/// 不加指向运单的外键 —— 运单删了，消息记录也要留着查。
+model ChaipaiCallbackEvent {
+  eventId         String   @id @map("event_id")
+  /// 湘泰的公司编号（从运单上取）
+  companyId       String   @map("company_id")
+  /// 拆派仓发来的公司编号（xiangtai）
+  sourceCompanyId String   @map("source_company_id")
+  shipmentId      String   @map("shipment_id")
+  sequence        Int
+  /// ARRIVED / LOADED / OUT_FOR_DELIVERY / DELIVERED
+  status          String
+  occurredAt      DateTime @map("occurred_at")
+  /// 关键字段的摘要：同一编号内容不同 → 409
+  payloadHash     String   @map("payload_hash")
+  payload         Json
+  /// APPLIED / IGNORED_OLDER
+  result          String
+  receivedAt      DateTime @default(now()) @map("received_at")
+
+  @@index([shipmentId, sequence])
+  @@map("chaipai_callback_events")
+}
+
+/// 每票最后一次拆派仓状态：判新旧（sequence 只认更大的）+ 记着自动登记的尾端派送单。
+model ChaipaiShipmentState {
+  shipmentId      String   @id @map("shipment_id")
+  companyId       String   @map("company_id")
+  lastSequence    Int      @default(0) @map("last_sequence")
+  lastEventId     String   @map("last_event_id")
+  /// 拆派仓最后的粗状态：ARRIVED / LOADED / OUT_FOR_DELIVERY / DELIVERED
+  thaiStatus      String   @map("thai_status")
+  occurredAt      DateTime @map("occurred_at")
+  /// 到仓时拆派仓点到的件数、是否少件（拆派仓有数才带）
+  actualBoxCount  Int?     @map("actual_box_count")
+  shortage        Boolean?
+  /// 拆派仓那一趟车（route.id）：同一趟车的票用同一个派送单号
+  routeId         String?  @map("route_id")
+  /// 这票自动登记 / 接手的那张尾端派送单的派送单号和行 id
+  deliveryNo      String?  @map("delivery_no")
+  lastmileOrderId String?  @map("lastmile_order_id")
+  /// 最后一次登记的转交物流（转交了才有），变了才补一条轨迹
+  handoverCarrier String?  @map("handover_carrier")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  shipment Shipment @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+
+  @@index([companyId])
+  @@index([routeId])
+  @@map("chaipai_shipment_states")
+}
+
+/// 给拆派仓的清单每票的版本：内容没变版本时间就不变，内容变了版本时间就变大（拆派仓靠它判断要不要更新）。
+/// 故意不加外键（拉清单时一条语句批量写几千行，不跟运单行锁搅在一起）。
+model ChaipaiManifestVersion {
+  shipmentId  String   @id @map("shipment_id")
+  companyId   String   @map("company_id")
+  contentHash String   @map("content_hash")
+  versionAt   DateTime @map("version_at")
+  updatedAt   DateTime @default(now()) @map("updated_at")
+
+  @@map("chaipai_manifest_versions")
 }

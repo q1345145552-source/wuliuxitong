@@ -3,7 +3,7 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "../../db/prisma";
 import { FCL_BLOCKED_MESSAGE } from "../core/fcl-scope";
 import { syncParentStatusFromChildren } from "../shipments/parent-status";
-import { holdsWholeOrder, metricByPieceShare, reconcileFamilyMetric } from "../shipments/split-metrics";
+import { holdsWholeOrder, loadedWeightKg } from "../shipments/split-metrics";
 import type { MinimalHttpApp } from "../../server";
 import { fail, ok, requireRole } from "../core/http-utils";
 import { BusinessError } from "../core/business-error";
@@ -523,51 +523,8 @@ export function registerLoadingManifestRoutes(app: MinimalHttpApp): void {
       const receiverName = order?.receiverNameTh?.trim() || customer.contactName;
       const receiverPhone = order?.receiverPhoneTh?.trim() || customer.contactPhone;
       const receiverAddress = order?.receiverAddressTh?.trim() || customer.address;
-      const shipmentPackageCount = shipment.packageCount
-        ?? (shipment.parentTrackingNo ? item.loadedPieceCount : (order?.packageCount ?? 0));
-      const familyKey = shipment.parentTrackingNo ?? shipment.trackingNo;
-      const familyRows = (order?.shipments ?? [])
-        .filter((part) => (part.parentTrackingNo ?? part.trackingNo) === familyKey)
-        .map((part) => ({ ...part, key: part.trackingNo, isParent: !part.parentTrackingNo }));
-      if (!familyRows.some((part) => part.key === shipment.trackingNo)) {
-        familyRows.push({
-          trackingNo: shipment.trackingNo,
-          parentTrackingNo: shipment.parentTrackingNo,
-          packageCount: shipmentPackageCount,
-          weightKg: shipment.weightKg,
-          key: shipment.trackingNo,
-          isParent: !shipment.parentTrackingNo,
-        });
-      }
-      const familyHasChildren = familyRows.some((part) => !!part.parentTrackingNo);
-      const weightFamily = reconcileFamilyMetric(
-        order?.weightKg,
-        order?.packageCount,
-        familyRows.map((part) => ({ ...part, pieceCount: part.packageCount, value: part.weightKg })),
-        2,
-      );
-      // 整柜重量必须和客户单使用同一票货口径，同时再按本柜实际装入件数缩放。
-      // 历史缺重量的分柜家族从订单总量按“实际装入件数/订单件数”计算；
-      // 新子单已有分配重量时，则按“实际装入件数/子单件数”计算。
-      const orderShareWeight = metricByPieceShare(
-        order?.weightKg,
-        item.loadedPieceCount,
-        order?.packageCount,
-        2,
-      );
-      const shipmentFamilyWeight = familyHasChildren
-        ? weightFamily[shipment.trackingNo]
-        : (shipment.weightKg == null
-          ? metricByPieceShare(order?.weightKg, shipmentPackageCount, order?.packageCount, 2)
-          : Number(shipment.weightKg));
-      const loadedWeight = shipmentFamilyWeight == null
-        ? orderShareWeight
-        : (metricByPieceShare(
-          shipmentFamilyWeight,
-          item.loadedPieceCount,
-          shipmentPackageCount,
-          2,
-        ) ?? orderShareWeight);
+      // 这一票在本柜里的重量：口径抽到 split-metrics.ts 的 loadedWeightKg，拆派仓拉清单共用（2026-10-12）
+      const loadedWeight = loadedWeightKg({ shipment, order, loadedPieceCount: item.loadedPieceCount });
       const wholeOrder = holdsWholeOrder(
         shipment.trackingNo,
         item.loadedPieceCount,

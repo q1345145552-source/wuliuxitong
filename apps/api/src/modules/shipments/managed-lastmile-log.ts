@@ -48,7 +48,18 @@ export const CONTAINER_PUSH_LOG_MESSAGE =
 export const CURRENT_STATUS_LOG_MESSAGE =
   "这条显示的是这票货现在的状态，不能删。状态推错了请到「装柜管理」点「撤销」。";
 
-export type DeleteBlockedReason = "lastmile" | "containerPush" | "currentStatus";
+/**
+ * 拆派仓回传写的「已到泰国仓」「泰国已装车」「未送达，已回泰国仓」（sl_cp_，2026-10-12）不许单删（老板第 254 条：跟推柜子写的一样）。
+ * 跟柜子推进不同：状态没变的那条（比如「泰国已装车」）也不许删 —— 那是拆派仓真实走过的一步。
+ * 派送中 / 签收 / 撤单那几条用的是尾端派送的前缀（sl_lm_cp_ / sl_lmdel_cp_ / sl_lmunsign_cp_），上面 isManagedLastmileLog 已经管住。
+ */
+export function isChaipaiLog(log: { id: string }): boolean {
+  return log.id.startsWith("sl_cp_");
+}
+
+export const CHAIPAI_LOG_MESSAGE = "这条是拆派仓自动同步的记录，不能单删。";
+
+export type DeleteBlockedReason = "lastmile" | "containerPush" | "chaipai" | "currentStatus";
 
 /**
  * 这条为什么不能删；能删返回 null。
@@ -62,6 +73,7 @@ export function deleteBlockedReasonOf(
 ): DeleteBlockedReason | null {
   if (isManagedLastmileLog(log)) return "lastmile";
   if (isContainerPushTransitionLog(log)) return "containerPush";
+  if (isChaipaiLog(log)) return "chaipai";
   if (isCurrentStatusLog(log, currentStatus, sameStatusCount)) return "currentStatus";
   return null;
 }

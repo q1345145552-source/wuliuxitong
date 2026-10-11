@@ -30,6 +30,8 @@ const nextConfig: NextConfig = {
       // rewrites 默认在页面匹配之后才生效，所以 /agent 这一页本身不会被转走（/admin 同理）。
       { source: "/agent/:path*", destination: `${API_PROXY_TARGET}/agent/:path*` },
       { source: "/images/:path*", destination: `${API_PROXY_TARGET}/images/:path*` },
+      // 对接接口（2026-10-12 拆派仓来拉清单、回传状态）：不是页面，原样转给后台
+      { source: "/integrations/:path*", destination: `${API_PROXY_TARGET}/integrations/:path*` },
     ];
   },
   async headers() {

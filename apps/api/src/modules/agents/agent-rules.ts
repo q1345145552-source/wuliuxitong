@@ -27,7 +27,7 @@ export const AGENT_SLUG_RE = /^[a-z0-9][a-z0-9-]{1,30}$/;
  *   · 同目录的静态文件：favicon.ico icon.png apple-icon.png
  *   · apps/web/public：images templates chat-tick.worker.js（客服对话提示音的计时器，2026-10-02）
  *     push-sw.js chat-client.webmanifest chat-staff.webmanifest（客服对话的浏览器系统通知，2026-10-02）
- *   · apps/web/next.config.ts rewrites：auth admin staff client agent images
+ *   · apps/web/next.config.ts rewrites：auth admin staff client agent images integrations
  *   · Next 自己的：_next（正则本来就不许下划线开头，照样列上）、api
  *   · B4 退路：若 app/[agentSlug] 跟现有路由冲突就改用 /a/<slug>，所以 a 也保留
  * scripts/test-agent-admin.ts 会扫 app 目录顶层和 next.config.ts 的 rewrites，
@@ -36,6 +36,8 @@ export const AGENT_SLUG_RE = /^[a-z0-9][a-z0-9-]{1,30}$/;
 export const RESERVED_AGENT_SLUGS: ReadonlySet<string> = new Set([
   // 现有页面 / 转发前缀
   "admin", "staff", "client", "agent", "login", "register", "forbidden", "auth", "images", "templates",
+  // 对接接口转发前缀（2026-10-12 拆派仓）
+  "integrations",
   // Next / 静态文件
   "_next", "api", "static", "public", "assets", "favicon", "favicon.ico", "icon", "icon.png",
   "apple-icon", "apple-icon.png", "robots", "robots.txt", "sitemap", "sitemap.xml", "manifest",

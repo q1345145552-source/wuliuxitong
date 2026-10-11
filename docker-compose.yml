@@ -62,6 +62,13 @@ services:
       VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY:-}
       VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:-}
       VAPID_SUBJECT: ${VAPID_SUBJECT:-}
+      # 2026-10-12 对接拆派仓（modules/chaipai/config.ts）。同上：不在这里透传，改 .env 进不了容器
+      CHAIPAI_ENABLED: ${CHAIPAI_ENABLED:-}
+      CHAIPAI_COMPANY_ID: ${CHAIPAI_COMPANY_ID:-}
+      CHAIPAI_PULL_SECRET: ${CHAIPAI_PULL_SECRET:-}
+      CHAIPAI_CALLBACK_SECRET: ${CHAIPAI_CALLBACK_SECRET:-}
+      CHAIPAI_READ_SECRET: ${CHAIPAI_READ_SECRET:-}
+      CHAIPAI_API_BASE: ${CHAIPAI_API_BASE:-}
       IMAGES_DIR: /images
       PORT: "3001"
       DATABASE_URL: postgresql://${POSTGRES_USER:-xiangtai}:${POSTGRES_PASSWORD:-xiangtai_dev}@postgres:5432/${POSTGRES_DB:-xiangtai}?schema=public

@@ -15,6 +15,7 @@ import { registerShipmentRoutes } from "./modules/shipments/routes";
 import { registerFclInquiryRoutes } from "./modules/fcl-inquiries/routes";
 import { registerCsChatRoutes } from "./modules/cs-chat/routes";
 import { registerArrivalNoticeRoutes } from "./modules/arrival-notices/routes";
+import { registerChaipaiRoutes } from "./modules/chaipai/routes";
 import { registerFclContainerRoutes } from "./modules/fcl-containers/routes";
 import { registerConsolidationRoutes } from "./modules/consolidation/routes";
 import { registerWhrConsolidationRoutes } from "./modules/whr-consolidation/routes";
@@ -64,6 +65,8 @@ registerFclInquiryRoutes(app);
 registerCsChatRoutes(app);
 // 到货通知（2026-10-06）
 registerArrivalNoticeRoutes(app);
+// 对接拆派仓（2026-10-12）：拆派仓来拉清单、回传状态；员工看派送照片。总开关 CHAIPAI_ENABLED 默认关
+registerChaipaiRoutes(app);
 // 整柜管理（2026-09-23）：客户自己包一整柜，我们只追踪
 registerFclContainerRoutes(app);
 registerConsolidationRoutes(app);

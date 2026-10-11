@@ -16,7 +16,7 @@ const SHIPMENT_STATUS_ZH: Record<string, string> = Object.fromEntries(DEFAULT_ST
 import { loadOrderTotalMetrics } from "./total-metrics";
 import { countShipmentOverview } from "./overview-counts";
 import { loadPartialAhead } from "./partial-status";
-import { CONTAINER_PUSH_LOG_MESSAGE, CURRENT_STATUS_LOG_MESSAGE, deleteBlockedReasonOf, MANAGED_LASTMILE_LOG_MESSAGE } from "./managed-lastmile-log";
+import { CHAIPAI_LOG_MESSAGE, CONTAINER_PUSH_LOG_MESSAGE, CURRENT_STATUS_LOG_MESSAGE, deleteBlockedReasonOf, MANAGED_LASTMILE_LOG_MESSAGE } from "./managed-lastmile-log";
 import { findDeletedLogAudits } from "./deleted-log-audits";
 import { BusinessError } from "../core/business-error";
 import { UPLOAD_IMAGE_MAX_BASE64, uploadTooLargeMessage } from "../core/upload-limit";
@@ -862,7 +862,7 @@ export function registerShipmentRoutes(app: MinimalHttpApp): void {
    *
    * ⚠️ 显示当前状态的最后一条不许删（409）：状态不跟着退，删了它顶上的状态在轨迹里就对不上了。
    *    同一状态有两条时可以删掉一条。
-   * ⚠️ 派送业务写的记录照旧不许单删（isManagedLastmileLog）。
+   * ⚠️ 派送业务写的记录照旧不许单删（isManagedLastmileLog）；拆派仓回传写的也不许（isChaipaiLog，2026-10-12 第 254 条）。
    * ⚠️ 2026-09-17 老板定「推进账本」做法后又加两条：
    *    · 柜子推进 / 随柜补记里改了状态的记录不许删（isContainerPushTransitionLog），推错用装柜管理撤销；
    *    · 删之前把原记录整条存进 audit_logs（谁、什么时候删的），管理员能查能恢复，
@@ -922,7 +922,9 @@ export function registerShipmentRoutes(app: MinimalHttpApp): void {
           ? MANAGED_LASTMILE_LOG_MESSAGE
           : blockedReason === "containerPush"
             ? CONTAINER_PUSH_LOG_MESSAGE
-            : CURRENT_STATUS_LOG_MESSAGE;
+            : blockedReason === "chaipai"
+              ? CHAIPAI_LOG_MESSAGE
+              : CURRENT_STATUS_LOG_MESSAGE;
         throw new BusinessError(message, 409, "VALIDATION_ERROR");
       }
       // 删之前把原记录整条存进操作日志：谁、什么时候删的，管理员能原样恢复

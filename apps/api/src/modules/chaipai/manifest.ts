@@ -1,0 +1,197 @@
+import { createHash } from "node:crypto";
+
+/**
+ * 给拆派仓的柜子清单（纯函数，不碰库，方便不连库测试）。2026-10-12。
+ *
+ * 拆派仓到货扫码台填柜号点「从湘泰物流系统拉清单」，来 GET /integrations/chaipai/v2/container-manifest。
+ * 格式和上限照拆派仓源码（xtpull-20261011）核过：
+ *   domestic-pull.service.ts  信封：protocolVersion 2、companyId 一字不差、柜号去空白转大写后一致、份数 ≤50、合计 ≤5000
+ *   manifest-v2.validation.ts 每份 1～500 票；每票文本非空 ≤128、不含控制字符；件数 / 方数 / 重量 > 0，方数 ≤3 位小数、重量 ≤2 位
+ *   domestic-pull.transport.ts 整个响应 ≤5MB
+ * 逐票不合规（运单号带空格、重量没填……）拆派仓只退那一票、在拉取结果里列出来，所以原样发；
+ * 会让**整次**拒收的（份数、票数、大小、柜号）湘泰自己先查。
+ */
+
+export const MANIFEST_MAX_PER_BATCH = 500;
+export const MANIFEST_MAX_BATCHES = 50;
+export const MANIFEST_MAX_SHIPMENTS = 5000;
+export const MANIFEST_MAX_BYTES = 5 * 1024 * 1024;
+/** 批次号为空的统一用这个（同一柜同一批次 batchKey 必须永远一样） */
+export const NO_BATCH = "NO-BATCH";
+
+/** 柜号比对口径，跟拆派仓 domestic-pull.service.ts 的 containerKey 一字不差：去掉全部空白、转大写 */
+export function containerKey(value: string): string {
+  return value.replace(/\s/g, "").toUpperCase();
+}
+
+/** 员工填的柜号（拆派仓已去首尾空格）：1～64 字、不含控制字符（同拆派仓 domestic-pull.service.ts:48） */
+export function validContainerNoInput(raw: unknown): string | null {
+  if (typeof raw !== "string") return null;
+  const v = raw.trim();
+  if (!v || v.length > 64 || /[\x00-\x1f\x7f-\x9f]/.test(raw)) return null;
+  return v;
+}
+
+/** 选填文本：控制字符换空格、连续空白合一、去首尾、截长度；清完是空的返回 null（不放这个键） */
+export function cleanOptionalText(value: string | null | undefined, max: number): string | null {
+  if (value == null) return null;
+  const v = value.replace(/[\x00-\x1f\x7f]/g, " ").replace(/\s+/g, " ").trim();
+  if (!v) return null;
+  return v.length > max ? v.slice(0, max).trimEnd() : v;
+}
+
+/** 批次号：去首尾、控制字符换空格、截 128；空的用 NO-BATCH */
+export function normalizeBatchNo(raw: string | null | undefined): string {
+  return cleanOptionalText(raw, 128) ?? NO_BATCH;
+}
+
+/** batchKey = "xt-c1-" + sha256(JSON[公司编号, 柜子 id, 批次号])，同一柜同一批次永远一样（同 9-20 旧适配器） */
+export function batchKeyOf(companyId: string, containerId: string, batchNo: string): string {
+  return "xt-c1-" + createHash("sha256").update(JSON.stringify([companyId, containerId, batchNo])).digest("hex");
+}
+
+const TRANSPORT_MODE_ZH: Record<string, string> = { sea: "海运", land: "陆运" };
+
+/** 一票在柜里的资料（路由查库、算好重量后交进来） */
+export interface ManifestSourceRow {
+  shipmentId: string;
+  trackingNo: string;
+  parentTrackingNo: string | null;
+  batchNo: string | null;
+  /** 唛头 = Order.clientId */
+  clientId: string;
+  loadedPieceCount: number;
+  loadedVolumeM3: number;
+  /** 这票在本柜的重量（loadedWeightKg 算的）；没填是 null */
+  weightKg: number | null;
+  transportMode: string | null;
+  itemName: string | null;
+  remark: string | null;
+}
+
+/** 每票发给拆派仓的字段（不含版本时间） */
+export interface ManifestItemBody {
+  sourceShipmentId: string;
+  waybillNo: string;
+  parentWaybillNo: string;
+  customerCode: string;
+  boxCount: number;
+  volumeM3: number;
+  weightKg: number;
+  transportMode?: string;
+  itemName?: string;
+  remark?: string;
+}
+
+export interface ManifestItem extends ManifestItemBody {
+  sourceUpdatedAt: string;
+}
+
+export interface PlannedBatch {
+  batchKey: string;
+  batchNo: string;
+  items: ManifestItemBody[];
+}
+
+export function itemBodyOf(row: ManifestSourceRow): ManifestItemBody {
+  const body: ManifestItemBody = {
+    sourceShipmentId: row.shipmentId,
+    // 运单号、父单号、唛头原文发，不改大小写不去空格 —— 不合规的拆派仓逐票退回、员工看得到是哪票
+    waybillNo: row.trackingNo,
+    parentWaybillNo: row.parentTrackingNo ?? row.trackingNo,
+    customerCode: row.clientId,
+    boxCount: row.loadedPieceCount,
+    // Decimal 一定要转成数字（字符串整票会被判不合规）
+    volumeM3: Math.round(row.loadedVolumeM3 * 1000) / 1000,
+    // 没填重量发 0，拆派仓会把这票退回「必须为正数」
+    weightKg: row.weightKg == null ? 0 : Math.round(row.weightKg * 100) / 100,
+  };
+  const mode = row.transportMode ? (TRANSPORT_MODE_ZH[row.transportMode] ?? row.transportMode) : null;
+  const transportMode = cleanOptionalText(mode, 200);
+  const itemName = cleanOptionalText(row.itemName, 200);
+  const remark = cleanOptionalText(row.remark, 2000);
+  if (transportMode) body.transportMode = transportMode;
+  if (itemName) body.itemName = itemName;
+  if (remark) body.remark = remark;
+  return body;
+}
+
+/** 内容摘要：这些字段有一个变了，版本时间就要变大 */
+export function contentHashOf(batchKey: string, batchNo: string, item: ManifestItemBody): string {
+  return createHash("sha256").update(JSON.stringify([
+    batchKey, batchNo, item.waybillNo, item.parentWaybillNo, item.customerCode,
+    item.boxCount, item.volumeM3, item.weightKg,
+    item.transportMode ?? null, item.itemName ?? null, item.remark ?? null,
+  ])).digest("hex");
+}
+
+/**
+ * 按批次号分份：份按批次号排，份内按运单 id 排；每 500 票切一份，切出来的几份 batchKey、batchNo 相同。
+ */
+export function planBatches(companyId: string, containerId: string, rows: ManifestSourceRow[]): PlannedBatch[] {
+  const groups = new Map<string, ManifestSourceRow[]>();
+  for (const row of rows) {
+    const batchNo = normalizeBatchNo(row.batchNo);
+    const list = groups.get(batchNo) ?? [];
+    list.push(row);
+    groups.set(batchNo, list);
+  }
+  const out: PlannedBatch[] = [];
+  for (const batchNo of [...groups.keys()].sort()) {
+    const batchKey = batchKeyOf(companyId, containerId, batchNo);
+    const items = groups.get(batchNo)!
+      .sort((a, b) => (a.shipmentId < b.shipmentId ? -1 : a.shipmentId > b.shipmentId ? 1 : 0))
+      .map(itemBodyOf);
+    for (let i = 0; i < items.length; i += MANIFEST_MAX_PER_BATCH) {
+      out.push({ batchKey, batchNo, items: items.slice(i, i + MANIFEST_MAX_PER_BATCH) });
+    }
+  }
+  return out;
+}
+
+export interface ManifestEnvelope {
+  protocolVersion: 2;
+  companyId: string;
+  containerNo: string;
+  manifests: Array<{
+    companyId: string;
+    batchKey: string;
+    batchNo: string;
+    containerNo: string;
+    shipments: ManifestItem[];
+  }>;
+}
+
+/** 填上版本时间，拼成整个响应 */
+export function buildEnvelope(
+  companyId: string,
+  containerNo: string,
+  batches: PlannedBatch[],
+  versionOf: (shipmentId: string) => string,
+): ManifestEnvelope {
+  return {
+    protocolVersion: 2,
+    companyId,
+    containerNo,
+    manifests: batches.map((b) => ({
+      companyId,
+      batchKey: b.batchKey,
+      batchNo: b.batchNo,
+      containerNo,
+      shipments: b.items.map((item) => ({ ...item, sourceUpdatedAt: versionOf(item.sourceShipmentId) })),
+    })),
+  };
+}
+
+/** 会让拆派仓整次拒收的情况，湘泰先挡住；没问题返回 null */
+export function envelopeProblem(envelope: ManifestEnvelope): string | null {
+  const total = envelope.manifests.reduce((sum, m) => sum + m.shipments.length, 0);
+  if (envelope.manifests.length > MANIFEST_MAX_BATCHES) return `批次份数 ${envelope.manifests.length} 超过 ${MANIFEST_MAX_BATCHES}`;
+  if (total > MANIFEST_MAX_SHIPMENTS) return `合计 ${total} 票超过 ${MANIFEST_MAX_SHIPMENTS}`;
+  if (!envelope.containerNo.trim() || envelope.containerNo.length > 128 || /[\x00-\x1f\x7f]/.test(envelope.containerNo)) {
+    return "柜号含控制字符或超过 128 字";
+  }
+  const bytes = Buffer.byteLength(JSON.stringify(envelope), "utf8");
+  if (bytes > MANIFEST_MAX_BYTES) return `清单 ${bytes} 字节超过 5MB`;
+  return null;
+}

@@ -30,9 +30,9 @@ interface TimelineItem {
   isCurrentStatus?: boolean;
   /**
    * 为什么不能删（2026-09-17 推进账本）：currentStatus 当前状态最后一条 / containerPush 柜子推进改了状态的记录 /
-   * lastmile 派送记录；能删是 null。只发给员工和管理员
+   * lastmile 派送记录 / chaipai 拆派仓回传写的（2026-10-12）；能删是 null。只发给员工和管理员
    */
-  deleteBlockedReason?: "currentStatus" | "containerPush" | "lastmile" | null;
+  deleteBlockedReason?: "currentStatus" | "containerPush" | "lastmile" | "chaipai" | null;
   /** 该条记录来自哪张运单。父运单标签里会混入子运单的记录，用它区分是哪一件货 */
   trackingNo?: string;
   fromStatus: string;
@@ -97,6 +97,7 @@ interface TrackData {
 
 import { shipmentStatusZh } from "./shipment-status";
 import { formatTime } from "./track-time";
+import { ChaipaiPhotos } from "./ChaipaiPhotos";
 
 // ── Status config ──
 
@@ -184,10 +185,11 @@ function LoadingSkeleton() {
 }
 
 /** 员工/管理员看到的「这条为什么不能删」（2026-09-17 推进账本） */
-const DELETE_BLOCKED_HINT: Record<"currentStatus" | "containerPush" | "lastmile", string> = {
+const DELETE_BLOCKED_HINT: Record<"currentStatus" | "containerPush" | "lastmile" | "chaipai", string> = {
   currentStatus: "当前状态，推错请到装柜管理撤销",
   containerPush: "推进记录，推错请到装柜管理撤销",
   lastmile: "派送记录，在尾端派送里处理",
+  chaipai: "拆派仓同步的记录，不能单删",
 };
 
 /** 「待入库」（2026-10-06 到货通知转过来的）不是装柜推出来的，别叫人去装柜管理撤销 */
@@ -470,6 +472,9 @@ function TrackContent({ data, onReload }: { data: TrackData; onReload?: () => vo
           ) : null}
         </div>
       ) : null}
+
+      {/* 拆派仓的派送照片（2026-10-12）：只给员工 / 管理员看（老板第 256 条），按页签各查各的；没经过拆派仓的票整块不显示 */}
+      {canEditTimeline ? <ChaipaiPhotos key={tab.trackingNo} trackingNo={tab.trackingNo} onZoom={setZoomImage} /> : null}
 
       {/* 产品信息 */}
       <div style={{ marginBottom: 14, fontSize: 13, color: "var(--t-muted)" }}>

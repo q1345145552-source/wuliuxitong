@@ -270,7 +270,9 @@ export function createApp(): MinimalHttpApp {
           query,
           headers: rawReq.headers,
           body: method === "POST" || method === "DELETE" ? await readJsonBody(rawReq) : undefined,
-          auth: await parseAuth(rawReq.headers, path),
+          /* 对接接口（/integrations/，2026-10-12 拆派仓）不是用户登录：带的 Bearer 是对接密钥，各接口自己核对。
+             不跑登录解析，免得每次都记一条「认证失败：令牌没通过」。 */
+          auth: path.startsWith("/integrations/") ? undefined : await parseAuth(rawReq.headers, path),
         };
 
         /**

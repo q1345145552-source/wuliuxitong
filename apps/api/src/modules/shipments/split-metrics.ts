@@ -219,3 +219,65 @@ export function holdsWholeOrder(
   if (productPieces !== pieceCount) return false;
   return orderShipments.every((part) => part.trackingNo === trackingNo || part.packageCount === 0);
 }
+
+type FamilyShipmentRow = {
+  trackingNo: string;
+  parentTrackingNo: string | null;
+  packageCount: number | null;
+  weightKg: NumericMetric;
+};
+
+/**
+ * 一票货「在这个柜里」的重量（kg，2 位小数；没填就是 null，不当成 0）。
+ *
+ * 2026-10-12 从装柜清单导出（loading-manifests/routes.ts 的 export-data）原样抽出来：
+ * 拆派仓拉清单也要报每票在柜里的重量，两边必须同一个口径，别各算各的。
+ * 口径：整票重量先按「父 + 子」家族归一（reconcileFamilyMetric），再按本柜实际装入件数缩放；
+ * 历史缺重量的分柜家族从订单总量按「实际装入件数 / 订单件数」补算。
+ */
+export function loadedWeightKg(input: {
+  shipment: FamilyShipmentRow;
+  order: {
+    weightKg: NumericMetric;
+    packageCount: number | null;
+    shipments: ReadonlyArray<FamilyShipmentRow>;
+  } | null | undefined;
+  loadedPieceCount: number;
+}): number | null {
+  const { shipment, order, loadedPieceCount } = input;
+  const shipmentPackageCount = shipment.packageCount
+    ?? (shipment.parentTrackingNo ? loadedPieceCount : (order?.packageCount ?? 0));
+  const familyKey = shipment.parentTrackingNo ?? shipment.trackingNo;
+  const familyRows = (order?.shipments ?? [])
+    .filter((part) => (part.parentTrackingNo ?? part.trackingNo) === familyKey)
+    .map((part) => ({ ...part, key: part.trackingNo, isParent: !part.parentTrackingNo }));
+  if (!familyRows.some((part) => part.key === shipment.trackingNo)) {
+    familyRows.push({
+      trackingNo: shipment.trackingNo,
+      parentTrackingNo: shipment.parentTrackingNo,
+      packageCount: shipmentPackageCount,
+      weightKg: shipment.weightKg,
+      key: shipment.trackingNo,
+      isParent: !shipment.parentTrackingNo,
+    });
+  }
+  const familyHasChildren = familyRows.some((part) => !!part.parentTrackingNo);
+  const weightFamily = reconcileFamilyMetric(
+    order?.weightKg,
+    order?.packageCount,
+    familyRows.map((part) => ({ ...part, pieceCount: part.packageCount, value: part.weightKg })),
+    2,
+  );
+  // 整柜重量必须和客户单使用同一票货口径，同时再按本柜实际装入件数缩放。
+  // 历史缺重量的分柜家族从订单总量按“实际装入件数/订单件数”计算；
+  // 新子单已有分配重量时，则按“实际装入件数/子单件数”计算。
+  const orderShareWeight = metricByPieceShare(order?.weightKg, loadedPieceCount, order?.packageCount, 2);
+  const shipmentFamilyWeight = familyHasChildren
+    ? weightFamily[shipment.trackingNo]
+    : (shipment.weightKg == null
+      ? metricByPieceShare(order?.weightKg, shipmentPackageCount, order?.packageCount, 2)
+      : Number(shipment.weightKg));
+  return shipmentFamilyWeight == null
+    ? orderShareWeight
+    : (metricByPieceShare(shipmentFamilyWeight, loadedPieceCount, shipmentPackageCount, 2) ?? orderShareWeight);
+}
