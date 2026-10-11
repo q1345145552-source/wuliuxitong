@@ -779,6 +779,64 @@ async function main(): Promise<void> {
       const rows = await rowsOf(S);
       assert.deepEqual([rows.length, rows[0].deliveryNo !== wd1, rows[0].externalTrackingNo], [1, true, "K5"]);
     });
+    await test("V29 同 V26 但恢复发生在再一次「派送中」：并到同车的号、补一条「改派」轨迹、状态表也跟着改", async () => {
+      const route29 = { ...routeA, id: `${P}routeV29` };
+      const A = await fresh("V29a");
+      const B = await fresh("V29b");
+      fake.delete(A);
+      await send(A, "OUT_FOR_DELIVERY");
+      const noA = (await rowsOf(A))[0].deliveryNo;
+      fake.set(B, { route: route29, photos: [] });
+      await send(B, "OUT_FOR_DELIVERY");
+      const noB = (await rowsOf(B))[0].deliveryNo;
+      fake.set(A, { route: route29, photos: [] });
+      await send(A, "OUT_FOR_DELIVERY");
+      assert.equal((await rowsOf(A))[0].deliveryNo, noB);
+      const logs = await logsOf(A);
+      assert.equal(logs[logs.length - 1].remark, `改派：从 ${noA} 转到 ${noB}`);
+      assert.equal((await pm.chaipaiShipmentState.findUnique({ where: { shipmentId: A } })).deliveryNo, noB);
+    });
+    await test("V30 员工把自动建的派送中单删了、同一趟车又来签收 → 用回这票原来的 WD，不换新号", async () => {
+      const S = await fresh("V30");
+      const route30 = { ...routeA, id: `${P}routeV30` };
+      fake.set(S, { route: route30, photos: [] });
+      await send(S, "OUT_FOR_DELIVERY");
+      const row = (await rowsOf(S))[0];
+      const del = await call("DELETE /admin/lastmile/orders", { auth: STAFF, query: { id: row.id } });
+      assert.equal(del.status, 200);
+      fake.set(S, { route: route30, photos: [{ id: "p30", createdAt: "2026-10-12T03:00:00.000Z" }] });
+      await send(S, "DELIVERED");
+      const rows = await rowsOf(S);
+      assert.deepEqual([rows.length, rows[0].deliveryNo, rows[0].status], [1, row.deliveryNo, "SIGNED"]);
+    });
+    await test("V31 要并到同车的号、可这票在那张单里已经有一行（以前那趟签收的）→ 分不清，503 交人工、一个字不写", async () => {
+      const route31 = { ...routeA, id: `${P}routeV31` };
+      const B = await fresh("V31b");
+      fake.set(B, { route: route31, photos: [] });
+      await send(B, "OUT_FOR_DELIVERY");
+      const noB = (await rowsOf(B))[0].deliveryNo;
+      const A = await fresh("V31a");
+      await manualRow("v31", A, noB, "SIGNED");
+      fake.delete(A);
+      await send(A, "OUT_FOR_DELIVERY");
+      fake.set(A, { route: route31, photos: [{ id: "p31", createdAt: "2026-10-12T03:00:00.000Z" }] });
+      const r = await send(A, "DELIVERED");
+      assert.equal(r.status, 503);
+      assert.equal(await pm.chaipaiCallbackEvent.count({ where: { eventId: r.body.eventId } }), 0);
+      assert.equal((await shipmentOf(A)).currentStatus, "outForDelivery");
+    });
+    await test("V32 同车另一票的自动单已被员工删掉 / 改派：不把那个废了的号捡回来给别的票", async () => {
+      const route32 = { ...routeA, id: `${P}routeV32` };
+      const B = await fresh("V32b");
+      fake.set(B, { route: route32, photos: [] });
+      await send(B, "OUT_FOR_DELIVERY");
+      const rowB = (await rowsOf(B))[0];
+      await call("DELETE /admin/lastmile/orders", { auth: STAFF, query: { id: rowB.id } });
+      const A = await fresh("V32a");
+      fake.set(A, { route: route32, photos: [] });
+      await send(A, "OUT_FOR_DELIVERY");
+      assert.notEqual((await rowsOf(A))[0].deliveryNo, rowB.deliveryNo);
+    });
     await test("V19 一票同时挂两张派送中的单（老数据）：派送中 / 已签收都 503、一个字不写，交人工", async () => {
       const S19 = await fresh("V19", "outForDelivery");
       await manualRow("v19a", S19, "WDZZV19A", "DELIVERING");
