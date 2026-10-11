@@ -74,7 +74,7 @@ async function main(): Promise<void> {
       assert.equal(r.code, 0, `还差这些（迁移漏了 / 写错了）：\n${r.out.split("\n").filter((l) => l.trim() && !l.startsWith("--")).slice(0, 12).join("\n")}`);
     });
 
-    await check("M3 上线体检 check-schema-drift.sql 一行都不输出（清单里有这 3 张表 30 个字段，也没多写）", async () => {
+    await check("M3 上线体检 check-schema-drift.sql 一行都不输出（清单里有这 3 张表 31 个字段，也没多写）", async () => {
       const rows = await db.$queryRawUnsafe<any[]>(readFileSync(DRIFT, "utf8"));
       assert.equal(rows.length, 0, `体检报了：${JSON.stringify(rows).slice(0, 400)}`);
     });

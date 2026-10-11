@@ -30,7 +30,8 @@ export function registerChaipaiPhotoRoutes(app: MinimalHttpApp): void {
     if (!cfg) { ok(res, { state: "disabled", items: [], truncated: false }); return; }
     // 拆派仓从没回传过这票 = 没经过拆派仓，省掉每次打开轨迹都去查一次
     if (!shipment.chaipaiState) { ok(res, { state: "none", items: [], truncated: false }); return; }
-    const detail = await fetchChaipaiDetail(cfg, shipment.id, { allPhotos: true, timeoutMs: 8000 });
+    // 员工看的列表最多翻 10 页（200 张），多了页面上写「只显示了前 N 张」
+    const detail = await fetchChaipaiDetail(cfg, shipment.id, { maxPages: 10, timeoutMs: 10000 });
     if (detail.kind === "notFound") { ok(res, { state: "none", items: [], truncated: false }); return; }
     if (detail.kind !== "ok") {
       logger.warn("派送照片：拆派仓暂时取不到", { shipmentId: shipment.id, 原因: detail.kind === "error" ? detail.reason : detail.kind });

@@ -37,13 +37,13 @@ async function test(label: string, fn: () => Promise<void>): Promise<void> {
     console.log(`  ✅ ${label}`);
   } catch (e) {
     failures++;
-    console.log(`  ❌ ${label}\n     ${e instanceof Error ? e.message.split("\n").slice(0, 3).join("\n     ") : String(e)}`);
+    console.log(`  ❌ ${label}\n     ${e instanceof Error ? e.message.split("\n").slice(0, 12).join("\n     ") : String(e)}`);
   }
 }
 
 /** 假拆派仓只读接口：按运单 id 配好详情和照片 */
 interface FakePhoto { id: string; createdAt: string; status?: number; bytes?: Buffer; type?: string }
-interface FakeShipment { status?: number; route?: Row | null; handover?: Row | null; photos?: FakePhoto[] }
+interface FakeShipment { status?: number; route?: Row | null; handover?: Row | null; photos?: FakePhoto[]; slowBody?: boolean }
 const fake = new Map<string, FakeShipment>();
 const fakeHits: string[] = [];
 
@@ -56,6 +56,8 @@ function startFake(): Promise<Server> {
     const s = m ? fake.get(decodeURIComponent(m[1])) : undefined;
     if (!m || !s) { res.statusCode = 404; res.end("{}"); return; }
     if (s.status && s.status !== 200) { res.statusCode = s.status; res.end("{}"); return; }
+    // 先回头、内容迟迟不发完（考读响应体也有超时）
+    if (s.slowBody && !m[2]) { res.writeHead(200, { "content-type": "application/json" }); res.write('{"code":"OK","data":'); return; }
     const photos = [...(s.photos ?? [])].sort((a, b) => (a.id < b.id ? -1 : 1)); // 拆派仓按 id 升序
     if (m[2]) {
       const p = photos.find((x) => x.id === decodeURIComponent(m[2]));
@@ -105,6 +107,7 @@ async function main(): Promise<void> {
   (await import("../apps/api/src/modules/chaipai/routes")).registerChaipaiRoutes(app);
   (await import("../apps/api/src/modules/containers/routes")).registerContainerRoutes(app);
   (await import("../apps/api/src/modules/shipments/routes")).registerShipmentRoutes(app);
+  (await import("../apps/api/src/modules/admin-ops/routes")).registerAdminOpsRoutes(app);
 
   async function call(key: string, opts: { auth?: Auth; body?: unknown; query?: Record<string, string>; authorization?: string } = {}): Promise<{ status: number; raw: any }> {
     const handler = routes.get(key);
@@ -466,6 +469,192 @@ async function main(): Promise<void> {
       assert.equal((await shipmentOf(SV)).currentStatus, "delivered");
     });
 
+
+    console.log("\n【审查补的（10-12 Codex / dsh 第 1 轮）】");
+    const fresh = async (tag: string, status = "inWarehouseTH") => {
+      const o = await seedOrder("ZZCPA", 1, 5);
+      return seedShipment({ orderId: o, trackingNo: `ZZCPT${stamp}${tag}`, pieces: 1, status });
+    };
+    const manualRow = (id: string, shipmentId: string, deliveryNo: string, status: string, extra: Row = {}) =>
+      pm.adminLastmileOrder.create({ data: { id: `${P}${id}`, companyId: CO, deliveryNo, shipmentId, carrierName: "自营",
+        externalTrackingNo: "", driverName: "员工司机", licensePlate: "X1", phoneNumber: "0991", deliveryDate: "2026-10-12", status, ...extra } });
+
+    await test("V1 派送中之后收到已装车：状态不动、派送单不撤，只记「泰国已装车」（不当成拉回仓）", async () => {
+      const SV1 = await fresh("V1");
+      fake.set(SV1, { route: { ...routeA, id: `${P}routeV1` }, photos: [] });
+      await send(SV1, "OUT_FOR_DELIVERY");
+      await send(SV1, "LOADED");
+      const rows = await rowsOf(SV1);
+      const logs = await logsOf(SV1);
+      assert.deepEqual([(await shipmentOf(SV1)).currentStatus, rows.length, rows[0].status, logs[logs.length - 1].remark, logs[logs.length - 1].toStatus],
+        ["outForDelivery", 1, "DELIVERING", "泰国已装车", "outForDelivery"]);
+    });
+    await test("V2 员工签过一趟又派一趟、拆派仓说已到仓：那张已签收照「撤销误签收」退回再一起撤掉，不留「在仓 + 已签收」", async () => {
+      const SV2 = await fresh("V2", "outForDelivery");
+      await manualRow("v2a", SV2, "WDZZV2A", "SIGNED", { signImageBase64: "AAAA" });
+      await manualRow("v2b", SV2, "WDZZV2B", "DELIVERING");
+      await send(SV2, "ARRIVED");
+      assert.equal((await shipmentOf(SV2)).currentStatus, "inWarehouseTH");
+      assert.equal((await rowsOf(SV2)).length, 0, "不能留下已签收的单");
+      const logs = (await logsOf(SV2)).slice(-2);
+      assert.match(logs[0].remark, /^撤销误签收（WDZZV2A）/);
+      assert.equal(logs[1].remark, "未送达，已回泰国仓");
+    });
+    await test("V3 签收过两张（派了两趟都签）又说已到仓：分不清撤哪张 → 503、一个字不写（同手工撤销签收第四道闸）", async () => {
+      const SV3 = await fresh("V3", "delivered");
+      await manualRow("v3a", SV3, "WDZZV3A", "SIGNED");
+      await manualRow("v3b", SV3, "WDZZV3B", "SIGNED");
+      const r = await send(SV3, "ARRIVED");
+      assert.equal(r.status, 503);
+      assert.deepEqual([(await shipmentOf(SV3)).currentStatus, (await rowsOf(SV3)).length, await pm.chaipaiCallbackEvent.count({ where: { eventId: r.body.eventId } })],
+        ["delivered", 2, 0]);
+    });
+    await test("V4 签收时优先签派送中的那张（跟踪的旧单员工已签过、又手工派了一趟），不会留一张派送中", async () => {
+      const SV4 = await fresh("V4");
+      fake.set(SV4, { route: { ...routeA, id: `${P}routeV4` }, photos: [{ id: "v4p", createdAt: "2026-10-12T03:00:00.000Z" }] });
+      await send(SV4, "OUT_FOR_DELIVERY");
+      const auto = (await rowsOf(SV4))[0];
+      await pm.adminLastmileOrder.update({ where: { id: auto.id }, data: { status: "SIGNED" } });
+      await manualRow("v4b", SV4, "WDZZV4B", "DELIVERING");
+      await send(SV4, "DELIVERED");
+      const rows = await rowsOf(SV4);
+      assert.deepEqual(rows.map((r: Row) => r.status).sort(), ["SIGNED", "SIGNED"]);
+      assert.equal(rows.find((r: Row) => r.id === `${P}v4b`).status, "SIGNED");
+    });
+    await test("V5 换了一趟车（中间「回仓」没收到）：自动登记的旧单照「改派」撤掉，按新车发新 WD，同车的票共用新号", async () => {
+      const SV5 = await fresh("V5");
+      const SV5b = await fresh("V5b");
+      fake.set(SV5, { route: { ...routeA, id: `${P}routeV5a` }, photos: [] });
+      await send(SV5, "OUT_FOR_DELIVERY");
+      const oldNo = (await rowsOf(SV5))[0].deliveryNo;
+      fake.set(SV5, { route: { ...routeA, id: `${P}routeV5b`, driverName: "王五" }, photos: [] });
+      await send(SV5, "OUT_FOR_DELIVERY", {}, { seq: (seqOf.get(SV5) ?? 0) + 2 });
+      const rows = await rowsOf(SV5);
+      assert.equal(rows.length, 1);
+      assert.notEqual(rows[0].deliveryNo, oldNo);
+      assert.equal(rows[0].driverName, "王五");
+      const logs = await logsOf(SV5);
+      assert.equal(logs[logs.length - 1].remark, `改派：从 ${oldNo} 转到 ${rows[0].deliveryNo}，司机【王五】正在为您派送，请注意查收`);
+      fake.set(SV5b, { route: { ...routeA, id: `${P}routeV5b`, driverName: "王五" }, photos: [] });
+      await send(SV5b, "OUT_FOR_DELIVERY");
+      assert.equal((await rowsOf(SV5b))[0].deliveryNo, rows[0].deliveryNo);
+    });
+    await test("V6 接手员工手工单后再来派送中：员工填的司机车牌承运商都不改，也不重复写「正在派送」", async () => {
+      const SV6 = await fresh("V6", "outForDelivery");
+      await manualRow("v6", SV6, "WDZZV6", "DELIVERING");
+      fake.set(SV6, { route: { ...routeA, id: `${P}routeV6` }, handover: { carrierName: "Kerry", trackingNo: "K9" }, photos: [] });
+      const before = (await logsOf(SV6)).length;
+      await send(SV6, "OUT_FOR_DELIVERY");
+      await send(SV6, "OUT_FOR_DELIVERY");
+      const row = (await rowsOf(SV6))[0];
+      assert.deepEqual([row.id, row.driverName, row.licensePlate, row.carrierName, row.externalTrackingNo], [`${P}v6`, "员工司机", "X1", "自营", ""]);
+      assert.equal((await logsOf(SV6)).length, before, "接手员工单不该再写派送中");
+    });
+    await test("V7 员工已手工签收（带了图），拆派仓签收到了：图换成拆派仓最新那张；没跟踪也不再建第二张已签收", async () => {
+      const SV7 = await fresh("V7", "delivered");
+      await manualRow("v7", SV7, "WDZZV7", "SIGNED", { signImageBase64: "AAAA" });
+      fake.set(SV7, { route: routeA, photos: [{ id: "v7p", createdAt: "2026-10-12T03:00:00.000Z", bytes: Buffer.from("CHAIPAI-V7") }] });
+      await send(SV7, "DELIVERED", {}, { occurredAt: "2026-10-12T04:00:00.000Z" });
+      const rows = await rowsOf(SV7);
+      assert.deepEqual(rows.map((r: Row) => [r.id, r.status, r.signImageBase64]), [[`${P}v7`, "SIGNED", Buffer.from("CHAIPAI-V7").toString("base64")]]);
+    });
+    await test("V8 转交单号改了（承运商没变）：派送单换成新单号、补一条轨迹", async () => {
+      const SV8 = await fresh("V8");
+      fake.set(SV8, { route: null, handover: { carrierName: "Kerry", trackingNo: "K1" }, photos: [] });
+      await send(SV8, "OUT_FOR_DELIVERY");
+      fake.set(SV8, { route: null, handover: { carrierName: "Kerry", trackingNo: "K2" }, photos: [] });
+      await send(SV8, "OUT_FOR_DELIVERY");
+      const row = (await rowsOf(SV8))[0];
+      const logs = await logsOf(SV8);
+      assert.deepEqual([row.externalTrackingNo, logs[logs.length - 1].remark], ["K2", "已交给【Kerry】派送，单号 K2，请注意查收"]);
+    });
+    await test("V9 拆派仓回了头、内容迟迟不发完：照样按时断开回 503，一个字不写", async () => {
+      const SV9 = await fresh("V9");
+      fake.set(SV9, { slowBody: true });
+      const t0 = Date.now();
+      const r = await send(SV9, "OUT_FOR_DELIVERY");
+      assert.equal(r.status, 503);
+      assert.ok(Date.now() - t0 < 9000, `等了 ${Date.now() - t0}ms，超过拆派仓的 10 秒`);
+      assert.equal((await rowsOf(SV9)).length, 0);
+    });
+    await test("V10 照片 250 张（超过以前的 200 张上限）：签收照样翻完全部、挑到最新那张", async () => {
+      const SV10 = await fresh("V10");
+      const photos = Array.from({ length: 250 }, (_, i) => ({ id: `q${String(i).padStart(3, "0")}`, createdAt: new Date(Date.UTC(2026, 9, 12, 1, 0, i)).toISOString(),
+        bytes: Buffer.from(`P${i}`) }));
+      photos[7].createdAt = "2026-10-12T02:59:00.000Z"; // 最新的那张在 id 排序里很靠前，时间最晚
+      photos[240].createdAt = "2026-10-12T02:58:00.000Z";
+      fake.set(SV10, { route: routeA, photos });
+      await send(SV10, "DELIVERED", {}, { occurredAt: "2026-10-12T03:00:00.000Z" });
+      assert.equal((await rowsOf(SV10))[0].signImageBase64, Buffer.from("P7").toString("base64"));
+    });
+    await test("V11 空柜（柜子在、里面没货）→ 200 + manifests: []；整柜号跟拼柜号只差空格 → 409 不给错柜子", async () => {
+      const emptyNo = `ZZCPE${stamp}`;
+      await seedContainer(emptyNo);
+      const r = await pull(emptyNo);
+      assert.deepEqual([r.status, r.raw.manifests], [200, []]);
+      await seedContainer(`ZZCPF ${stamp}`, true);
+      await seedContainer(`ZZCPF${stamp}`);
+      assert.equal((await pull(`ZZCPF${stamp}`)).status, 409);
+    });
+    await test("V12 同一个柜两个人同时拉：两边拿到的版本时间一样（排队锁）", async () => {
+      const [a, b] = await Promise.all([pull(ctnNo), pull(ctnNo)]);
+      const va = a.raw.manifests.flatMap((m: Row) => m.shipments).map((x: Row) => `${x.sourceShipmentId}@${x.sourceUpdatedAt}`).sort();
+      const vb = b.raw.manifests.flatMap((m: Row) => m.shipments).map((x: Row) => `${x.sourceShipmentId}@${x.sourceUpdatedAt}`).sort();
+      assert.deepEqual([a.status, b.status], [200, 200]);
+      assert.deepEqual(va, vb);
+    });
+    await test("V13 回传和员工手工建派送单同时来（各 5 回合）：不死锁、不报 500，这票最多一张派送中", async () => {
+      for (let i = 0; i < 5; i++) {
+        const SC = await fresh(`C${i}`);
+        fake.set(SC, { route: { ...routeA, id: `${P}routeC${i}` }, photos: [] });
+        const [ev, manual] = await Promise.all([
+          send(SC, "OUT_FOR_DELIVERY"),
+          call("POST /admin/lastmile/orders", { auth: STAFF, body: { shipmentIds: [SC], driverName: "手工司机" } }),
+        ]);
+        assert.ok([200, 503].includes(ev.status), `回传 ${ev.status}`);
+        assert.ok([200, 409].includes(manual.status), `手工建单 ${manual.status} ${manual.raw?.message ?? ""}`);
+        if (ev.status === 503) {
+          const again = await call("POST /integrations/chaipai/v2/events", { body: ev.body, authorization: `Bearer ${CB}` });
+          assert.equal(again.raw.result, "APPLIED");
+        }
+        const rows = await rowsOf(SC);
+        assert.equal(rows.filter((r: Row) => r.status === "DELIVERING").length, 1, `第 ${i} 回合派送中 ${rows.length} 张`);
+        assert.equal((await shipmentOf(SC)).currentStatus, "outForDelivery");
+      }
+    });
+    await test("V15 同一趟车里有一票接手了员工手工单：同车别的票不会并进员工那张单的号", async () => {
+      const SM = await fresh("V15m", "outForDelivery");
+      await manualRow("v15", SM, "WDZZV15", "DELIVERING");
+      const route15 = { ...routeA, id: `${P}routeV15` };
+      fake.set(SM, { route: route15, photos: [] });
+      await send(SM, "OUT_FOR_DELIVERY");
+      const SO = await fresh("V15o");
+      fake.set(SO, { route: route15, photos: [] });
+      await send(SO, "OUT_FOR_DELIVERY");
+      const no = (await rowsOf(SO))[0].deliveryNo;
+      assert.notEqual(no, "WDZZV15");
+      assert.match(no, /^WD\d{6}$/);
+    });
+    await test("V14 走真的 HTTP 服务（createApp）：回传带 JSON 正文 → 裸 JSON 回复；清单也是裸 JSON；不带密钥 401", async () => {
+      const { createApp } = await import("../apps/api/src/server");
+      const net = await import("node:net");
+      const port: number = await new Promise((resolve) => { const srv = net.createServer(); srv.listen(0, "127.0.0.1", () => { const p2 = (srv.address() as AddressInfo).port; srv.close(() => resolve(p2)); }); });
+      process.env.BIND_HOST = "127.0.0.1";
+      const real = createApp();
+      (await import("../apps/api/src/modules/chaipai/routes")).registerChaipaiRoutes(real);
+      await new Promise<void>((resolve) => real.listen(port, () => resolve()));
+      const base = `http://127.0.0.1:${port}`;
+      const SH = await fresh("HTTP");
+      const body = { eventId: `${P}http1`, protocolVersion: 2, companyId: "xiangtai", sourceShipmentId: SH, sequence: 1, status: "ARRIVED", occurredAt: "2026-10-12T03:00:00.000Z" };
+      const r1 = await fetch(`${base}/integrations/chaipai/v2/events`, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${CB}` }, body: JSON.stringify(body) });
+      assert.deepEqual([r1.status, await r1.json()], [200, { eventId: `${P}http1`, result: "APPLIED" }]);
+      const r2 = await fetch(`${base}/integrations/chaipai/v2/container-manifest?containerNo=${encodeURIComponent(ctnNo.toLowerCase())}`, { headers: { authorization: `Bearer ${PULL}` } });
+      const j2 = await r2.json();
+      assert.deepEqual([r2.status, j2.protocolVersion, "code" in j2], [200, 2, false]);
+      const r3 = await fetch(`${base}/integrations/chaipai/v2/events`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+      assert.equal(r3.status, 401);
+    });
+
     console.log("\n【派送照片（只给员工）】");
     await test("F1 员工：25 张照片翻两页取全、按拍照时间排；客户调这个接口 403；没经过拆派仓的票是 none；开关关着是 disabled", async () => {
       const photos = Array.from({ length: 25 }, (_, i) => ({ id: `f${String(i).padStart(2, "0")}`, createdAt: new Date(Date.UTC(2026, 9, 12, 0, 59 - i)).toISOString() }));
@@ -503,7 +692,8 @@ async function main(): Promise<void> {
     server.close();
   }
   console.log(failures === 0 ? "\n全部通过" : `\n${failures} 项不通过`);
-  if (failures > 0) process.exit(1);
+  // 真 HTTP 那项起的服务没有关的口子，这里直接结束
+  process.exit(failures > 0 ? 1 : 0);
 }
 
 main().catch((e) => { console.error(e); process.exit(1); });

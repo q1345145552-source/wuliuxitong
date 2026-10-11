@@ -23,13 +23,18 @@ import {
 } from "./events";
 import { fetchChaipaiDetail, fetchChaipaiPhoto, type ChaipaiDetail } from "./read-client";
 
-export const EVENTS_PATH = "/integrations/chaipai/v2/events";
+import { EVENTS_PATH } from "./paths";
 
 /** 轨迹上的操作人：只有超级管理员看得到（hideOperatorIdentity），备注里不出现「拆派仓」（第 255 条） */
 const OPERATOR = { operatorId: "chaipai", operatorRole: "system", operatorName: "拆派仓" } as const;
 
 /** 只读接口暂时取不到 / 派送单刚被别人动过：回 503，拆派仓过一会儿重发（同一 eventId 没写过任何东西） */
 class RetryLaterError extends Error {}
+/**
+ * 系统分不清该动哪张派送单（这票签收过不止一张）：不自动处理，回 503 并记错误日志，等人工理顺后在拆派仓「补发」。
+ * 同员工那边「撤销误签收」的第四道闸（admin-ops/routes.ts：派了两趟都签收的撤不了，找技术处理）。
+ */
+class NeedsManualError extends Error {}
 
 type EventResult = "APPLIED" | "DUPLICATE" | "IGNORED_OLDER";
 
@@ -48,7 +53,8 @@ const rand4 = (): string => Math.random().toString(36).slice(2, 6);
  * 取不到（网络、5xx、超时）抛 RetryLaterError；拆派仓说没这票（404）就照常办、司机车牌留空。
  */
 async function prepareLastmileInfo(cfg: ChaipaiConfig, ev: ChaipaiEvent): Promise<LastmileInfo> {
-  const detail = await fetchChaipaiDetail(cfg, ev.sourceShipmentId, { allPhotos: ev.status === "DELIVERED" });
+  // 派送中只要司机车牌（第一页就有）；签收要挑最新的照片，得翻完全部（每页 20 张，最多 50 页）
+  const detail = await fetchChaipaiDetail(cfg, ev.sourceShipmentId, { maxPages: ev.status === "DELIVERED" ? 50 : 1 });
   if (detail.kind === "notFound") {
     logger.warn("拆派仓回传：只读接口查不到这票，派送单不填司机车牌", { eventId: ev.eventId, sourceShipmentId: ev.sourceShipmentId });
     return { route: null, handover: null, signImageBase64: null };
@@ -56,6 +62,8 @@ async function prepareLastmileInfo(cfg: ChaipaiConfig, ev: ChaipaiEvent): Promis
   if (detail.kind !== "ok") throw new RetryLaterError(`取司机车牌失败：${detail.kind === "error" ? detail.reason : detail.kind}`);
   let signImageBase64: string | null = null;
   if (ev.status === "DELIVERED") {
+    // 照片列表没翻完就挑不准「最新一张」，宁可等会儿重发也不拿旧图当签收单
+    if (detail.value.truncated) throw new RetryLaterError("照片超过 1000 张没翻完");
     const photoId = pickSignPhoto(detail.value.photos, ev.occurredAt);
     if (photoId) {
       const photo = await fetchChaipaiPhoto(cfg, ev.sourceShipmentId, photoId);
@@ -129,7 +137,7 @@ async function applyEvent(
     const rows = await tx.adminLastmileOrder.findMany({
       where: { shipmentId: sid, companyId },
       orderBy: { updatedAt: "desc" },
-      select: { id: true, deliveryNo: true, status: true, carrierName: true, signImageBase64: true },
+      select: { id: true, deliveryNo: true, status: true },
     });
     const locked = new Set(rowIdsBefore);
     if (rows.some((r) => !locked.has(r.id))) {
@@ -155,21 +163,35 @@ async function applyEvent(
     let deliveryNo = state?.deliveryNo ?? null;
     let lastmileOrderId = state?.lastmileOrderId ?? null;
     let handoverCarrier = state?.handoverCarrier ?? null;
+    let handoverTrackingNo = state?.handoverTrackingNo ?? null;
+    /** 自动登记的派送单 id 带 lm_cp_ 前缀：只有这种才由回传更新司机车牌、换车时撤掉；员工手工登记的只接手状态，资料不动 */
+    const isAuto = (id: string) => id.startsWith("lm_cp_");
+    let live = rows;
+    const removeRow = async (id: string) => {
+      await tx.adminLastmileOrder.delete({ where: { id } });
+      live = live.filter((r) => r.id !== id);
+    };
 
-    /** 已签收的那张退回派送中（照「撤销误签收」：签收图不删） */
-    const unsignLatest = async () => {
-      const signed = rows.find((r) => r.status === "SIGNED");
-      if (!signed) return;
-      await tx.adminLastmileOrder.update({ where: { id: signed.id }, data: { status: "DELIVERING" } });
-      signed.status = "DELIVERING";
-      await writeLog("sl_lmunsign_cp_", "outForDelivery", unsignRemark(signed.deliveryNo));
+    /**
+     * 已签收的那张退回派送中（照「撤销误签收」：签收图不删）。
+     * 签收过不止一张（派了两趟都签收）分不清撤哪张 —— 不猜，交人工（同手工撤销签收第四道闸）。
+     */
+    const unsignSigned = async () => {
+      const signed = live.filter((r) => r.status === "SIGNED");
+      if (signed.length === 0) return;
+      if (signed.length > 1) throw new NeedsManualError(`这票有 ${signed.length} 张已签收的派送单（${signed.map((r) => r.deliveryNo).join("、")}），分不清撤哪张`);
+      await tx.adminLastmileOrder.update({ where: { id: signed[0].id }, data: { status: "DELIVERING" } });
+      signed[0].status = "DELIVERING";
+      await writeLog("sl_lmunsign_cp_", "outForDelivery", unsignRemark(signed[0].deliveryNo));
     };
 
     /** 同一趟车用同一个 WD 号：先找这趟车登记过的号，没有就照手工建单那条发新号（号只往上加） */
     const deliveryNoForRoute = async (): Promise<string> => {
       if (info?.route) {
+        // 只认自动登记的单（lm_cp_）：接手的员工手工单是员工自己的号，别把同车别的票并进去（10-12 测试抓到）
         const sameRoute = await tx.chaipaiShipmentState.findFirst({
-          where: { companyId, routeId: info.route.id, deliveryNo: { not: null } },
+          where: { companyId, routeId: info.route.id, deliveryNo: { not: null }, lastmileOrderId: { startsWith: "lm_cp_" } },
+          orderBy: { updatedAt: "desc" },
           select: { deliveryNo: true },
         });
         if (sameRoute?.deliveryNo) return sameRoute.deliveryNo;
@@ -183,42 +205,47 @@ async function applyEvent(
       return `WD${String(await nextSequenceValue(tx, "WD", num)).padStart(6, "0")}`;
     };
 
+    /** 拆派仓给的资料（自动登记 / 更新自动单时写） */
+    const infoFields = () => ({
+      carrierName: info?.handover?.carrierName ?? "自营",
+      externalTrackingNo: info?.handover?.trackingNo ?? "",
+      driverName: info?.route?.driverName ?? "",
+      licensePlate: info?.route?.plateNo ?? "",
+    });
+
     /** 新登记一张自动派送单（派送中，或签收时还没有派送单就直接已签收） */
     const createRow = async (rowStatus: "DELIVERING" | "SIGNED"): Promise<{ id: string; deliveryNo: string }> => {
       const no = await deliveryNoForRoute();
       const fields = {
-        carrierName: info?.handover?.carrierName ?? "自营",
-        externalTrackingNo: info?.handover?.trackingNo ?? "",
-        driverName: info?.route?.driverName ?? "",
-        licensePlate: info?.route?.plateNo ?? "",
+        ...infoFields(),
         phoneNumber: "",
-        deliveryDate: bangkokDate(info?.route?.departedAt ?? ev.occurredAt),
+        deliveryDate: bangkokDate(info?.route?.departedAt, ev.occurredAt),
         status: rowStatus,
         ...(rowStatus === "SIGNED" && info?.signImageBase64 ? { signImageBase64: info.signImageBase64 } : {}),
       };
       // 同一张单里同一票只能一行（@@unique）：这趟车以前登记过这票就改那一行
-      const existing = rows.find((r) => r.deliveryNo === no);
+      const existing = live.find((r) => r.deliveryNo === no);
       if (existing) {
         await tx.adminLastmileOrder.update({ where: { id: existing.id }, data: fields });
         return { id: existing.id, deliveryNo: no };
       }
-      const id = `lm_${Date.now()}_${rand4()}`;
+      const id = `lm_cp_${Date.now()}_${rand4()}`;
       await tx.adminLastmileOrder.create({ data: { id, companyId, deliveryNo: no, shipmentId: sid, ...fields } });
       return { id, deliveryNo: no };
     };
 
     if (plan.isReturn) {
-      // 送不成拉回仓：已签收的先照「撤销误签收」退回派送中，再把派送中的单撤掉（照「改派」删旧行）
-      if (fromStatus === "delivered") await unsignLatest();
-      const delivering = rows.filter((r) => r.status === "DELIVERING");
-      for (const r of delivering) {
-        await tx.adminLastmileOrder.delete({ where: { id: r.id } });
-      }
+      // 送不成拉回仓：还挂着已签收的单就先照「撤销误签收」退回派送中（货回了仓，那张签收不成立），
+      // 再把派送中的单全撤掉（照「改派」删旧行）。不看运单现在是派送中还是已签收 —— 员工签过一趟又派一趟也是这样（10-12 dsh 审查）
+      await unsignSigned();
+      const delivering = live.filter((r) => r.status === "DELIVERING");
+      for (const r of delivering) await removeRow(r.id);
       await writeLog(delivering.length > 0 ? "sl_lmdel_cp_" : "sl_cp_", "inWarehouseTH", RETURN_REMARK);
       routeId = null;
       deliveryNo = null;
       lastmileOrderId = null;
       handoverCarrier = null;
+      handoverTrackingNo = null;
     } else if (ev.status === "ARRIVED") {
       if (coarseChanged || plan.targetStatus !== fromStatus) {
         await writeLog("sl_cp_", plan.targetStatus, arrivedRemark(ev.actualBoxCount, ev.shortage));
@@ -228,51 +255,60 @@ async function applyEvent(
         await writeLog("sl_cp_", plan.targetStatus, LOADED_REMARK);
       }
     } else if (ev.status === "OUT_FOR_DELIVERY") {
-      if (fromStatus === "delivered") await unsignLatest();
-      const delivering = rows.find((r) => r.status === "DELIVERING" && r.id === lastmileOrderId)
-        ?? rows.find((r) => r.status === "DELIVERING");
+      if (fromStatus === "delivered") await unsignSigned();
       const newCarrier = info?.handover?.carrierName ?? null;
-      if (delivering) {
-        // 已经有派送中的单（自动登记的，或员工手工登记的）：不新建。自动登记的那张跟着更新转交信息
-        if (delivering.id === lastmileOrderId && info) {
+      const newHandoverNo = newCarrier ? (info?.handover?.trackingNo ?? null) : null;
+      const handoverChanged = newCarrier !== handoverCarrier || newHandoverNo !== handoverTrackingNo;
+      const remarkFor = (no: string) => departRemark({
+        driverName: info?.route?.driverName ?? "", deliveryNo: no, handoverCarrier: newCarrier, handoverTrackingNo: newHandoverNo,
+      });
+      const current = live.find((r) => r.status === "DELIVERING" && r.id === lastmileOrderId)
+        ?? live.find((r) => r.status === "DELIVERING");
+      // 换了一趟车（中间那条「回仓」没收到）：自动登记的旧单照「改派」撤掉，按新的一趟车登记（10-12 Codex 审查）
+      const routeChanged = !!current && isAuto(current.id) && !!info?.route && !!state?.routeId && info.route.id !== state.routeId;
+      if (current && routeChanged) {
+        const oldNo = current.deliveryNo;
+        await removeRow(current.id);
+        const created = await createRow("DELIVERING");
+        lastmileOrderId = created.id;
+        deliveryNo = created.deliveryNo;
+        await writeLog("sl_lm_cp_", "outForDelivery", `改派：从 ${oldNo} 转到 ${created.deliveryNo}，${remarkFor(created.deliveryNo)}`);
+      } else if (current) {
+        // 已经有派送中的单：不新建。自动登记的那张跟着拆派仓更新司机车牌 / 转交；员工手工登记的资料不动
+        if (isAuto(current.id) && info) {
           await tx.adminLastmileOrder.update({
-            where: { id: delivering.id },
-            data: {
-              carrierName: newCarrier ?? "自营",
-              externalTrackingNo: info?.handover?.trackingNo ?? "",
-              ...(info?.route ? { driverName: info.route.driverName, licensePlate: info.route.plateNo } : {}),
-            },
+            where: { id: current.id },
+            data: info.route ? infoFields() : { carrierName: infoFields().carrierName, externalTrackingNo: infoFields().externalTrackingNo },
           });
         }
-        lastmileOrderId = delivering.id;
-        deliveryNo = delivering.deliveryNo;
-        if (status !== "outForDelivery" || coarseChanged || newCarrier !== handoverCarrier) {
-          await writeLog("sl_lm_cp_", "outForDelivery", departRemark({
-            driverName: info?.route?.driverName ?? "", deliveryNo: delivering.deliveryNo,
-            handoverCarrier: newCarrier, handoverTrackingNo: info?.handover?.trackingNo ?? null,
-          }));
+        lastmileOrderId = current.id;
+        deliveryNo = current.deliveryNo;
+        // 员工手工登记时已经写过「正在派送」，接手时不再重复写；自动单转交信息变了补一条
+        if (status !== "outForDelivery" || (isAuto(current.id) && (coarseChanged || handoverChanged))) {
+          await writeLog("sl_lm_cp_", "outForDelivery", remarkFor(current.deliveryNo));
         }
       } else {
         const created = await createRow("DELIVERING");
         lastmileOrderId = created.id;
         deliveryNo = created.deliveryNo;
-        await writeLog("sl_lm_cp_", "outForDelivery", departRemark({
-          driverName: info?.route?.driverName ?? "", deliveryNo: created.deliveryNo,
-          handoverCarrier: newCarrier, handoverTrackingNo: info?.handover?.trackingNo ?? null,
-        }));
+        await writeLog("sl_lm_cp_", "outForDelivery", remarkFor(created.deliveryNo));
       }
-      routeId = info?.route?.id ?? routeId;
+      // 记着这趟车只为「同车同号」和「换车」用，所以只有自动登记的单才记；接手员工手工单时不记
+      routeId = lastmileOrderId && isAuto(lastmileOrderId) ? (info?.route?.id ?? routeId) : null;
       handoverCarrier = newCarrier;
+      handoverTrackingNo = newHandoverNo;
     } else {
-      // DELIVERED：跟踪的那张（没有就这票派送中的那张；都没有就直接建一张已签收的）改成已签收、放签收图
-      const target = rows.find((r) => r.id === lastmileOrderId) ?? rows.find((r) => r.status === "DELIVERING");
+      // DELIVERED：签当前这趟 —— 先找派送中的（跟踪的那张优先），没有才找跟踪的 / 最近一张已签收的（员工先手工签了），
+      // 都没有就直接建一张已签收的。签收图一律换成拆派仓这票最新一张（老板：签收单放拆派仓的照片）
+      const target = live.find((r) => r.status === "DELIVERING" && r.id === lastmileOrderId)
+        ?? live.find((r) => r.status === "DELIVERING")
+        ?? live.find((r) => r.id === lastmileOrderId)
+        ?? live.find((r) => r.status === "SIGNED");
       let signedNo: string;
       if (target) {
-        // 员工手工签收时已经放了图的不盖（拆派仓那张照样在员工「派送照片」里看得到）
-        const keepImage = target.status === "SIGNED" && !!target.signImageBase64;
         await tx.adminLastmileOrder.update({
           where: { id: target.id },
-          data: { status: "SIGNED", ...(info?.signImageBase64 && !keepImage ? { signImageBase64: info.signImageBase64 } : {}) },
+          data: { status: "SIGNED", ...(info?.signImageBase64 ? { signImageBase64: info.signImageBase64 } : {}) },
         });
         lastmileOrderId = target.id;
         signedNo = target.deliveryNo;
@@ -295,7 +331,7 @@ async function applyEvent(
     const stateData = {
       companyId, lastSequence: ev.sequence, lastEventId: ev.eventId, thaiStatus: ev.status, occurredAt,
       ...(ev.status === "ARRIVED" && ev.actualBoxCount != null ? { actualBoxCount: ev.actualBoxCount, shortage: ev.shortage } : {}),
-      routeId, deliveryNo, lastmileOrderId, handoverCarrier,
+      routeId, deliveryNo, lastmileOrderId, handoverCarrier, handoverTrackingNo,
     };
     await tx.chaipaiShipmentState.upsert({
       where: { shipmentId: sid },
@@ -308,7 +344,9 @@ async function applyEvent(
       await syncParentStatusFromChildren(tx, shipment.parentTrackingNo, companyId);
     }
     return { result: "APPLIED" as const, changed: changed || logSeq > 0, clientId: shipment.order?.clientId ?? null };
-  }, { timeout: 8000, maxWait: 3000 });
+  /* 跟员工手工建派送单那个事务一样放宽（10-12 dsh 审查）：两边抢同一把 2901 号锁，手工建一大车时可能握好几秒；
+     超过拆派仓 10 秒等不到回复也没关系 —— 它重发时这边已经记下了，回 DUPLICATE */
+  }, { timeout: 30000, maxWait: 10000 });
 }
 
 class EventIdReusedError extends Error {}
@@ -378,6 +416,11 @@ export function registerChaipaiEventRoutes(app: MinimalHttpApp): void {
       }
       reply(out.result);
     } catch (error) {
+      if (error instanceof NeedsManualError) {
+        logger.error("拆派仓回传：要人工处理，先不办（理顺后请拆派仓补发这条）", { eventId: ev.eventId, sourceShipmentId: ev.sourceShipmentId, 原因: error.message });
+        fail(res, 503, "INTERNAL_ERROR", "这票要人工处理，请稍后重发");
+        return;
+      }
       if (error instanceof RetryLaterError) {
         logger.warn("拆派仓回传：暂时办不了，让拆派仓过一会儿重发", { eventId: ev.eventId, 原因: error.message });
         fail(res, 503, "INTERNAL_ERROR", "暂时办不了，请稍后重发");

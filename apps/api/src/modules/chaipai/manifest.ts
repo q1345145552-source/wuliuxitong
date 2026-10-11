@@ -45,9 +45,17 @@ export function normalizeBatchNo(raw: string | null | undefined): string {
   return cleanOptionalText(raw, 128) ?? NO_BATCH;
 }
 
-/** batchKey = "xt-c1-" + sha256(JSON[公司编号, 柜子 id, 批次号])，同一柜同一批次永远一样（同 9-20 旧适配器） */
-export function batchKeyOf(companyId: string, containerId: string, batchNo: string): string {
-  return "xt-c1-" + createHash("sha256").update(JSON.stringify([companyId, containerId, batchNo])).digest("hex");
+/**
+ * batchKey = "xt-c1-" + sha256(JSON[公司编号, 柜子 id, 批次号原文])，同一柜同一批次永远一样（同 9-20 旧适配器）。
+ * ⚠️ 用湘泰里的**原文**算（空的是 null），不用清洗截断后的显示值 —— 两个不同批次清洗后可能一样，会被拆派仓并成一批（10-12 Codex 审查）。
+ */
+export function batchKeyOf(companyId: string, containerId: string, rawBatchNo: string | null): string {
+  return "xt-c1-" + createHash("sha256").update(JSON.stringify([companyId, containerId, rawBatchNo])).digest("hex");
+}
+
+/** 分组用的批次原文：空白当没有（null） */
+function rawBatchOf(raw: string | null | undefined): string | null {
+  return raw == null || !raw.trim() ? null : raw;
 }
 
 const TRANSPORT_MODE_ZH: Record<string, string> = { sea: "海运", land: "陆运" };
@@ -129,17 +137,24 @@ export function contentHashOf(batchKey: string, batchNo: string, item: ManifestI
  * 按批次号分份：份按批次号排，份内按运单 id 排；每 500 票切一份，切出来的几份 batchKey、batchNo 相同。
  */
 export function planBatches(companyId: string, containerId: string, rows: ManifestSourceRow[]): PlannedBatch[] {
-  const groups = new Map<string, ManifestSourceRow[]>();
+  // 按批次原文分组（JSON 化当键，null 和字符串 "null" 分得开）
+  const groups = new Map<string, { raw: string | null; rows: ManifestSourceRow[] }>();
   for (const row of rows) {
-    const batchNo = normalizeBatchNo(row.batchNo);
-    const list = groups.get(batchNo) ?? [];
-    list.push(row);
-    groups.set(batchNo, list);
+    const raw = rawBatchOf(row.batchNo);
+    const key = JSON.stringify(raw);
+    const g = groups.get(key) ?? { raw, rows: [] };
+    g.rows.push(row);
+    groups.set(key, g);
   }
+  const ordered = [...groups.values()].sort((a, b) => {
+    const la = normalizeBatchNo(a.raw), lb = normalizeBatchNo(b.raw);
+    return la < lb ? -1 : la > lb ? 1 : JSON.stringify(a.raw) < JSON.stringify(b.raw) ? -1 : 1;
+  });
   const out: PlannedBatch[] = [];
-  for (const batchNo of [...groups.keys()].sort()) {
-    const batchKey = batchKeyOf(companyId, containerId, batchNo);
-    const items = groups.get(batchNo)!
+  for (const g of ordered) {
+    const batchNo = normalizeBatchNo(g.raw);
+    const batchKey = batchKeyOf(companyId, containerId, g.raw);
+    const items = g.rows
       .sort((a, b) => (a.shipmentId < b.shipmentId ? -1 : a.shipmentId > b.shipmentId ? 1 : 0))
       .map(itemBodyOf);
     for (let i = 0; i < items.length; i += MANIFEST_MAX_PER_BATCH) {

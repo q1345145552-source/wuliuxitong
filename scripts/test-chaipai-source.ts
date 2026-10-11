@@ -36,6 +36,7 @@ import {
 } from "../apps/api/src/modules/chaipai/events";
 import { deleteBlockedReasonOf } from "../apps/api/src/modules/shipments/managed-lastmile-log";
 import { RESERVED_AGENT_SLUGS } from "../apps/api/src/modules/agents/agent-rules";
+import { INTEGRATION_PATHS } from "../apps/api/src/modules/chaipai/paths";
 
 const ROOT = path.join(__dirname, "..");
 const read = (p: string) => readFileSync(path.join(ROOT, p), "utf8");
@@ -122,6 +123,7 @@ check("M2 每票字段：Decimal 变数字、父单号兜底自己、唛头原�
 check("M3 batchKey 固定规则（写死一个值核对），同柜同批次永远一样，换柜 / 换批次就不一样", () => {
   const k = batchKeyOf("xiangtai", "ctn_1", "B1");
   assert.equal(k, "xt-c1-" + createHash("sha256").update(JSON.stringify(["xiangtai", "ctn_1", "B1"])).digest("hex"));
+  assert.notEqual(batchKeyOf("xiangtai", "ctn_1", null), batchKeyOf("xiangtai", "ctn_1", "NO-BATCH"), "没批次和批次号恰好叫 NO-BATCH 要分开");
   assert.equal(k.length, 70);
   assert.equal(batchKeyOf("xiangtai", "ctn_1", "B1"), k);
   assert.notEqual(batchKeyOf("xiangtai", "ctn_2", "B1"), k);
@@ -140,6 +142,19 @@ check("M4 分份：按批次号分、批次号空的统一 NO-BATCH；501 票切
   assert.equal(b[1].batchKey, b[2].batchKey);
   assert.equal(b[1].items[0].sourceShipmentId, "s_0000");
   assert.equal(b[2].items[0].sourceShipmentId, "s_0500");
+});
+
+check("M4b 批次按湘泰原文分组：清洗 / 截断后显示一样的两个批次不会被并成一批（batchKey 不同）", () => {
+  const long = "B".repeat(128);
+  const b = planBatches("xiangtai", "c", [
+    row({ shipmentId: "s1", batchNo: `${long}1` }),
+    row({ shipmentId: "s2", batchNo: `${long}2` }),
+    row({ shipmentId: "s3", batchNo: "X\tY" }),
+    row({ shipmentId: "s4", batchNo: "X Y" }),
+  ]);
+  assert.equal(b.length, 4);
+  assert.equal(new Set(b.map((x) => x.batchKey)).size, 4);
+  assert.ok(b.every((x) => x.batchNo.length <= 128 && !/[\x00-\x1f]/.test(x.batchNo)), "显示的批次号照样要合拆派仓的规矩");
 });
 
 check("M5 内容摘要：件数 / 方数 / 唛头 / 选填字段 / 批次变了摘要就变；没变就不变", () => {
@@ -164,6 +179,13 @@ check("M6 整次上限：51 份 / 5001 票 / 柜号有控制字符 → 先挡住
   const big = planBatches("xiangtai", "c", Array.from({ length: 5001 }, (_, i) => row({ shipmentId: `s${i}`, batchNo: `B${i % 11}` })));
   assert.match(envelopeProblem(buildEnvelope("xiangtai", "M", big, () => "x"))!, /5000/);
   assert.match(envelopeProblem(buildEnvelope("xiangtai", "M\u0001", one, () => "x"))!, /柜号/);
+  // 5MB 两边：每票备注 700 个汉字（约 2.3KB），2300 票超、2150 票不超（按真实 JSON 字节算）
+  const fat = (n: number) => planBatches("xiangtai", "c", Array.from({ length: n }, (_, i) => row({ shipmentId: `s${String(i).padStart(5, "0")}`, batchNo: `B${i % 10}`, remark: "备".repeat(700) })));
+  const big5 = buildEnvelope("xiangtai", "M", fat(2300), () => "2026-10-12T03:00:00.000Z");
+  const small5 = buildEnvelope("xiangtai", "M", fat(2150), () => "2026-10-12T03:00:00.000Z");
+  assert.ok(Buffer.byteLength(JSON.stringify(big5)) > 5 * 1024 * 1024 && Buffer.byteLength(JSON.stringify(small5)) <= 5 * 1024 * 1024, "造的数据没跨过 5MB 边界");
+  assert.match(envelopeProblem(big5)!, /5MB/);
+  assert.equal(envelopeProblem(small5), null);
 });
 
 const ev = (over: Record<string, unknown> = {}) => ({
@@ -205,7 +227,7 @@ check("E3 摘要跟字段先后无关、只看关键字段（拆派仓重发同�
   assert.notEqual(eventHashOf(c.event), eventHashOf(a.event));
 });
 
-check("E4 目标状态（第 244、253 条）：已装车只在已到泰国仓之前才提上来；派送中 / 签收后再来已到仓或已装车 = 拉回仓", () => {
+check("E4 目标状态（第 244、253 条）：已装车只在已到泰国仓之前才提上来、别的一律不动；派送中 / 签收后再来已到仓 = 拉回仓", () => {
   assert.deepEqual(planForEvent("ARRIVED", "unloading"), { targetStatus: "inWarehouseTH", isReturn: false });
   assert.deepEqual(planForEvent("ARRIVED", "deliveryBooked"), { targetStatus: "inWarehouseTH", isReturn: false });
   assert.deepEqual(planForEvent("ARRIVED", "outForDelivery"), { targetStatus: "inWarehouseTH", isReturn: true });
@@ -214,7 +236,9 @@ check("E4 目标状态（第 244、253 条）：已装车只在已到泰国仓�
   assert.deepEqual(planForEvent("LOADED", "departed"), { targetStatus: "inWarehouseTH", isReturn: false });
   assert.deepEqual(planForEvent("LOADED", "inWarehouseTH"), { targetStatus: "inWarehouseTH", isReturn: false });
   assert.deepEqual(planForEvent("LOADED", "deliveryBooked"), { targetStatus: "deliveryBooked", isReturn: false });
-  assert.deepEqual(planForEvent("LOADED", "outForDelivery"), { targetStatus: "inWarehouseTH", isReturn: true });
+  // 已经在泰国段（含派送中、已签收）收到已装车一律不动，不当成拉回仓（修改清单表格「否则不变」）
+  assert.deepEqual(planForEvent("LOADED", "outForDelivery"), { targetStatus: "outForDelivery", isReturn: false });
+  assert.deepEqual(planForEvent("LOADED", "delivered"), { targetStatus: "delivered", isReturn: false });
   assert.deepEqual(planForEvent("OUT_FOR_DELIVERY", "unloading"), { targetStatus: "outForDelivery", isReturn: false });
   assert.deepEqual(planForEvent("DELIVERED", "inWarehouseTH"), { targetStatus: "delivered", isReturn: false });
 });
@@ -238,8 +262,11 @@ check("E5 轨迹备注不出现「拆派仓」（第 255 条）；司机没名�
 });
 
 check("E6 派送日期按曼谷时间取日子；签收图取签收前最新一张（都在之后就取最新）", () => {
-  assert.equal(bangkokDate("2026-10-11T17:30:00.000Z"), "2026-10-12");
-  assert.equal(bangkokDate("2026-10-11T16:59:00.000Z"), "2026-10-11");
+  assert.equal(bangkokDate("2026-10-11T17:30:00.000Z", "2000-01-01T00:00:00.000Z"), "2026-10-12");
+  assert.equal(bangkokDate("2026-10-11T16:59:00.000Z", "2000-01-01T00:00:00.000Z"), "2026-10-11");
+  // 出发时间认不出来 / 没有：用回传时间，不炸
+  assert.equal(bangkokDate("not-a-date", "2026-10-11T17:30:00.000Z"), "2026-10-12");
+  assert.equal(bangkokDate(null, "2026-10-11T17:30:00.000Z"), "2026-10-12");
   const photos = [
     { id: "b", createdAt: "2026-10-12T02:00:00.000Z" },
     { id: "a", createdAt: "2026-10-12T03:30:00.000Z" },
@@ -264,8 +291,9 @@ check("W1 拆派仓写的轨迹不许单删（第 254 条）：已到仓 / 已�
   assert.match(modal, /chaipai: "拆派仓同步的记录，不能单删"/);
 });
 
-check("W2 接线：/integrations 不跑登录解析；Next 原样转发；代理前缀保留 integrations；三个接口都注册了", () => {
-  assert.match(read("apps/api/src/server.ts"), /auth: path\.startsWith\("\/integrations\/"\) \? undefined : await parseAuth/);
+check("W2 接线：只有拆派仓那两条精确路径不跑登录解析；Next 原样转发；代理前缀保留 integrations；三个接口都注册了", () => {
+  assert.match(read("apps/api/src/server.ts"), /auth: INTEGRATION_PATHS\.has\(path\) \? undefined : await parseAuth/);
+  assert.deepEqual([...INTEGRATION_PATHS].sort(), ["/integrations/chaipai/v2/container-manifest", "/integrations/chaipai/v2/events"]);
   assert.match(read("apps/web/next.config.ts"), /source: "\/integrations\/:path\*", destination: `\$\{API_PROXY_TARGET\}\/integrations\/:path\*`/);
   assert.ok(RESERVED_AGENT_SLUGS.has("integrations"));
   assert.match(read("apps/api/src/main.ts"), /registerChaipaiRoutes\(app\)/);

@@ -37,6 +37,7 @@ CREATE TABLE IF NOT EXISTS "chaipai_shipment_states" (
     "delivery_no" TEXT,
     "lastmile_order_id" TEXT,
     "handover_carrier" TEXT,
+    "handover_tracking_no" TEXT,
     "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updated_at" TIMESTAMP(3) NOT NULL,
     CONSTRAINT "chaipai_shipment_states_pkey" PRIMARY KEY ("shipment_id")

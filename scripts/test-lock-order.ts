@@ -128,6 +128,11 @@ const LOCK_HELPERS: Record<string, string[]> = {
    * 所以不进表顺序比对；第 10 项会去函数体里核实锁真的在。
    */
   lockTrackingNoForArrivalNotice: ["advisory_arrival_tracking_no"],
+  /**
+   * 2026-10-12 对接拆派仓：同一个柜的拉清单排队（咨询锁 83060，chaipai/manifest-routes.ts 的 lockChaipaiManifest）。
+   * 拉清单那个事务的第一句、手里没有行锁；事务里只读业务表、只写对接用的清单版本表（不在任何锁链里）。第 10 项会去函数体里核实锁在。
+   */
+  lockChaipaiManifest: ["advisory_chaipai_manifest"],
 };
 
 /**

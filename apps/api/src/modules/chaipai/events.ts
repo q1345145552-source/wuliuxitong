@@ -79,7 +79,7 @@ export function eventHashOf(e: ChaipaiEvent): string {
 
 /** 已到泰国仓及以后（泰国段）的几个湘泰状态 */
 const TH_STAGE = new Set(["inWarehouseTH", "deliveryBooked", "outForDelivery", "delivered"]);
-/** 已经出车 / 签收的两个状态：拆派仓再说「已到仓 / 已装车」就是货拉回来了 */
+/** 已经出车 / 签收的两个状态：拆派仓再说「已到仓」就是货拉回来了 */
 const OUT_OR_SIGNED = new Set(["outForDelivery", "delivered"]);
 
 export interface EventPlan {
@@ -91,9 +91,9 @@ export interface EventPlan {
 
 /**
  * 拆派仓状态 → 湘泰运单状态（老板第 244、253 条：以拆派仓为准、往回走也跟；只改成已到泰国仓 / 派送中 / 已签收）。
- *   ARRIVED          → 已到泰国仓
- *   LOADED           → 还在已到泰国仓之前（清关、卸柜……）就提到已到泰国仓；已经出车 / 签收了也回已到泰国仓
- *                      （说明中间那条「回仓」丢了）；已到泰国仓 / 已预约派送就不动
+ *   ARRIVED          → 已到泰国仓（湘泰已经是派送中 / 已签收 = 送不成拉回仓）
+ *   LOADED           → 只有还在已到泰国仓之前（清关、卸柜……）才提到已到泰国仓；已经在泰国段（含派送中、已签收）一律不动，
+ *                      只记一条「泰国已装车」（修改清单第二节第 3 条表格：「否则不变」；10-12 Codex 审查纠正）
  *   OUT_FOR_DELIVERY → 派送中
  *   DELIVERED        → 已签收
  */
@@ -102,7 +102,6 @@ export function planForEvent(status: ChaipaiStatus, currentStatus: string): Even
     case "ARRIVED":
       return { targetStatus: "inWarehouseTH", isReturn: OUT_OR_SIGNED.has(currentStatus) };
     case "LOADED":
-      if (OUT_OR_SIGNED.has(currentStatus)) return { targetStatus: "inWarehouseTH", isReturn: true };
       return { targetStatus: TH_STAGE.has(currentStatus) ? currentStatus : "inWarehouseTH", isReturn: false };
     case "OUT_FOR_DELIVERY":
       return { targetStatus: "outForDelivery", isReturn: false };
@@ -142,9 +141,10 @@ export function unsignRemark(deliveryNo: string): string {
   return `撤销误签收（${deliveryNo}）：这票货还没送到，退回派送中`;
 }
 
-/** 派送日期（尾端派送单那一格是纯文本 YYYY-MM-DD）：按曼谷时间取日子 */
-export function bangkokDate(iso: string): string {
-  return new Date(Date.parse(iso) + 7 * 60 * 60 * 1000).toISOString().slice(0, 10);
+/** 派送日期（尾端派送单那一格是纯文本 YYYY-MM-DD）：按曼谷时间取日子；第一个时间认不出来就用第二个（回传的 occurredAt 校验过） */
+export function bangkokDate(iso: string | null | undefined, fallbackIso: string): string {
+  const t = iso ? Date.parse(iso) : NaN;
+  return new Date((Number.isFinite(t) ? t : Date.parse(fallbackIso)) + 7 * 60 * 60 * 1000).toISOString().slice(0, 10);
 }
 
 /** 签收图：拆派仓先拍照才能签收，取签收那一刻之前最新的一张；都在之后（时钟差）就取最新一张 */

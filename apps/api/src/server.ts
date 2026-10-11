@@ -7,6 +7,7 @@ import { logger } from "./modules/core/logger";
 import { isBusinessError } from "./modules/core/business-error";
 import { fail } from "./modules/core/http-utils";
 import { agentGateRejection } from "./modules/core/agent-scope";
+import { INTEGRATION_PATHS } from "./modules/chaipai/paths";
 import { openEventStream, REALTIME_STREAM_PATH } from "./realtime-stream";
 import { publishAfterWrite } from "./modules/realtime/publish";
 import type { UserRole } from "../../../packages/shared-types/role";
@@ -270,9 +271,9 @@ export function createApp(): MinimalHttpApp {
           query,
           headers: rawReq.headers,
           body: method === "POST" || method === "DELETE" ? await readJsonBody(rawReq) : undefined,
-          /* 对接接口（/integrations/，2026-10-12 拆派仓）不是用户登录：带的 Bearer 是对接密钥，各接口自己核对。
-             不跑登录解析，免得每次都记一条「认证失败：令牌没通过」。 */
-          auth: path.startsWith("/integrations/") ? undefined : await parseAuth(rawReq.headers, path),
+          /* 拆派仓那两个对接接口（2026-10-12）不是用户登录：带的 Bearer 是对接密钥，接口自己核对。
+             只对这两条精确路径不跑登录解析（免得每次都记一条「认证失败：令牌没通过」），别的路照旧。 */
+          auth: INTEGRATION_PATHS.has(path) ? undefined : await parseAuth(rawReq.headers, path),
         };
 
         /**

@@ -1529,8 +1529,9 @@ model ChaipaiShipmentState {
   /// 这票自动登记 / 接手的那张尾端派送单的派送单号和行 id
   deliveryNo      String?  @map("delivery_no")
   lastmileOrderId String?  @map("lastmile_order_id")
-  /// 最后一次登记的转交物流（转交了才有），变了才补一条轨迹
-  handoverCarrier String?  @map("handover_carrier")
+  /// 最后一次登记的转交物流和对方单号（转交了才有），任一变了才补一条轨迹
+  handoverCarrier    String?  @map("handover_carrier")
+  handoverTrackingNo String?  @map("handover_tracking_no")
   createdAt       DateTime @default(now()) @map("created_at")
   updatedAt       DateTime @updatedAt @map("updated_at")
 
