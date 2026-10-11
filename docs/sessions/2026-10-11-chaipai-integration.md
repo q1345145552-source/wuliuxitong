@@ -13,7 +13,11 @@
 - [x] 10-12 动手做完（分支 feat/chaipai-integration，未提交时见 git status）：模块 `apps/api/src/modules/chaipai/`（config / manifest / manifest-routes / events / read-client / event-routes / photo-routes / routes）、迁移 `20261012_chaipai_integration`（Neon 测试库已执行，生产没动）、前端 `ChaipaiPhotos.tsx` + 轨迹弹窗挂载、不许单删新原因 `chaipai`、重量口径抽成 `split-metrics.ts` 的 `loadedWeightKg`（装柜清单导出共用）。
 - [x] 测试：test:chaipai-source 20 项、test:chaipai-db 22 项（真库 + 本机假拆派仓；3 个变异都能抓到）、test:migration-chaipai-db 4 项（本机一次性库）；已进 package.json + ci.yml。
 - [x] 本机联调（拆派仓源码复制到会话临时目录跑，原件没动）：扫码台拉清单（柜号带空格小写也对上；5 票、没填重量那票被拆派仓退回；再拉「没变化 4」）→ 扫码到仓（含少件）→ 排线 → 装车 → 出车 → 司机拍照签收 / 一站送不成拉回仓。湘泰这边：状态、轨迹、自动派送单（同一趟车同一个 WD、自营、司机车牌、曼谷日期）、签收图、撤单全对；客户轨迹弹窗看得到签收单、看不到「派送照片」和「拆派仓」字样；管理员看得到「派送照片」和操作人；尾端派送页显示正常；控制台无报错。
-- [ ] 全套测试 → Codex + dsh 审 → 汇报 → 等「上」（带迁移）→ 上线开关关着 → 交两个接口地址。
+- [x] 全套 83 项第一遍全过（51fd1ae）。
+- [x] 第 1 轮审查（`.audit/2026-10-12/chaipai/codex-r1.md`、`dsh-r1.md`）→ 修了一批，提交 99bf78a；处理清单见 `review-prompt-r2.md`。
+- [x] 第 2 轮 → b04d5d7；第 3 轮 → 748451d；第 4 轮 → 本次提交（每轮原文 `.audit/2026-10-12/chaipai/{codex,dsh}-rN.md`、处理说明 `review-prompt-rN.md`）。dsh 第 2 轮起「没有必须修」；Codex 每轮还在挑换趟 / 404 这类边角，逐条核对后真的都修了、补了测试和变异。
+- 不改的（理由在 review-prompt-r2/r3/r4）：挂两柜的票剔除（生产 0 票）；连库测试库闸照仓库约定；PNG 标 jpeg（Chromium 实测正常、手工签收本来如此）；体检 SQL 只核字段；迁移未被任何库登记过所以就地改；回传不比对运单号（员工能改号）。
+- [ ] 第 5 轮审查 → 汇报 → 等「上」（带迁移）→ 上线开关关着 → 交两个接口地址（生产 nginx：xianlianth.com 走 Next 转发、api.xianlianth.com 直通后台，两个都能到）。
 
 ## 老板已定（不用再问）
 - 拆派仓来拉清单，湘泰不推；唛头 = `Order.clientId`；公司编号 xiangtai。

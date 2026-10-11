@@ -189,10 +189,15 @@ async function applyEvent(
      * 自动登记的单碰上趟次变了（中间那条「回仓」没收到：换车、自营↔转交、派送中那条丢了直接签收），
      * 旧单照「改派」撤掉、按新的一趟登记，别让两趟共用一个 WD（10-12 两家审查）。只读接口没查到这票时不判断。
      */
-    const tripOf = (route: string | null | undefined, carrier: string | null | undefined) => route ? `route:${route}` : carrier ? "handover" : null;
+    const tripOf = (route: string | null | undefined, carrier: string | null | undefined) =>
+      route ? `route:${route}` : carrier ? `handover:${carrier}` : null;
     const prevTrip = tripOf(state?.routeId, state?.handoverCarrier);
     const newTrip = info?.found ? tripOf(info.route?.id, info.handover?.carrierName) : null;
-    const tripChanged = (row: { id: string }) => isAuto(row.id) && !!prevTrip && !!newTrip && prevTrip !== newTrip;
+    /* 转交这一趟里拆派仓不会再发别的消息（转交 → 签收，或撤回 → 回仓），所以两次都是转交、中间又跳了号 = 漏了一次撤回，
+       就算是同一家物流也是新的一趟（10-12 第 4 轮两家审查：原来所有转交都当同一趟）。同一趟里只改单号（序号连着）照旧算同一趟。 */
+    const seqGap = !!state && ev.sequence > state.lastSequence + 1;
+    const tripChanged = (row: { id: string }) => isAuto(row.id) && !!prevTrip && !!newTrip
+      && (prevTrip !== newTrip || (prevTrip.startsWith("handover:") && seqGap));
     /** 一票同时挂着两张以上派送中的单（老数据）：分不清是哪一趟，交人工 */
     const assertSingleDelivering = () => {
       const delivering = live.filter((r) => r.status === "DELIVERING");
@@ -307,8 +312,9 @@ async function applyEvent(
         deliveryNo = created.deliveryNo;
         await writeLog("sl_lm_cp_", "outForDelivery", `改派：从 ${oldNo} 转到 ${created.deliveryNo}，${remarkFor(created.deliveryNo)}`);
       } else if (current) {
-        // 已经有派送中的单：不新建。自动登记的那张跟着拆派仓更新司机车牌 / 转交；员工手工登记的资料不动
-        if (isAuto(current.id) && info) {
+        // 已经有派送中的单：不新建。自动登记的那张跟着拆派仓更新司机车牌 / 转交（真查到了才算数，404 时原样不动）；
+        // 员工手工登记的资料不动
+        if (isAuto(current.id) && info?.found) {
           // 这一趟是什么就写什么：转交那一趟没有司机车牌，也要清掉（10-12 dsh 第 3 轮）
           await tx.adminLastmileOrder.update({ where: { id: current.id }, data: infoFields() });
         }
@@ -349,10 +355,21 @@ async function applyEvent(
       if (target) {
         await tx.adminLastmileOrder.update({
           where: { id: target.id },
-          data: { status: "SIGNED", ...(info?.signImageBase64 ? { signImageBase64: info.signImageBase64 } : {}) },
+          data: {
+            status: "SIGNED",
+            ...(info?.signImageBase64 ? { signImageBase64: info.signImageBase64 } : {}),
+            // 自动登记的单、这次真查到了：司机车牌 / 转交按拆派仓现在的补齐（派送中那次可能没查到；10-12 第 4 轮）
+            ...(isAuto(target.id) && info?.found ? infoFields() : {}),
+          },
         });
         lastmileOrderId = target.id;
         signedNo = target.deliveryNo;
+        if (!isAuto(target.id)) routeId = null;
+        else if (info?.found) {
+          routeId = info.route?.id ?? null;
+          handoverCarrier = info.handover?.carrierName ?? null;
+          handoverTrackingNo = handoverCarrier ? (info.handover?.trackingNo ?? null) : null;
+        }
       } else {
         const created = await createRow("SIGNED");
         lastmileOrderId = created.id;

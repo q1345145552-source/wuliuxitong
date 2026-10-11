@@ -30,6 +30,8 @@ export function ChaipaiPhotos({ trackingNo, onZoom }: { trackingNo: string; onZo
 
   useEffect(() => {
     let alive = true;
+    // 关掉弹窗 / 切页签时连照片列表那一下也取消（拆派仓那边可能要翻好几页）
+    const controller = new AbortController();
     setState("loading");
     setItems([]);
     setThumbs({});
@@ -38,6 +40,7 @@ export function ChaipaiPhotos({ trackingNo, onZoom }: { trackingNo: string; onZo
       try {
         const res = await fetch(`${apiBaseUrl()}/staff/shipments/chaipai-photos?trackingNo=${encodeURIComponent(trackingNo)}`, {
           headers: { ...authHeaders() },
+          signal: controller.signal,
         });
         const body = await parseApiResponse<{ state: ListState; items: PhotoRef[]; truncated: boolean }>(res);
         if (!alive) return;
@@ -48,7 +51,7 @@ export function ChaipaiPhotos({ trackingNo, onZoom }: { trackingNo: string; onZo
         if (alive) setState("unavailable");
       }
     })();
-    return () => { alive = false; };
+    return () => { alive = false; controller.abort(); };
   }, [trackingNo]);
 
   /*
@@ -66,6 +69,9 @@ export function ChaipaiPhotos({ trackingNo, onZoom }: { trackingNo: string; onZo
       mounted.current = false;
       for (const c of inflight.current) c.abort();
       inflight.current.clear();
+      // 排着的也清掉：开发模式会卸下再挂上，挂上时重新排（被取消的那几张不会卡在「加载中」）
+      queue.current = [];
+      queued.current.clear();
     };
   }, []);
   const queue = useRef<string[]>([]);
@@ -76,7 +82,7 @@ export function ChaipaiPhotos({ trackingNo, onZoom }: { trackingNo: string; onZo
       const photoId = queue.current.shift()!;
       active.current += 1;
       void (async () => {
-        let thumb: Thumb;
+        let thumb: Thumb | null = null;
         const controller = new AbortController();
         inflight.current.add(controller);
         try {
@@ -91,13 +97,15 @@ export function ChaipaiPhotos({ trackingNo, onZoom }: { trackingNo: string; onZo
             thumb = { src: `data:${body.contentType};base64,${body.dataBase64}` };
           }
         } catch {
-          thumb = { error: "暂时取不到" };
+          // 自己取消的不算失败（卸下时取消的，重新挂上会重新排队）
+          if (!controller.signal.aborted) thumb = { error: "暂时取不到" };
         } finally {
           inflight.current.delete(controller);
         }
         active.current -= 1;
         if (!mounted.current) return;
-        setThumbs((prev) => ({ ...prev, [photoId]: thumb }));
+        const done = thumb;
+        if (done) setThumbs((prev) => ({ ...prev, [photoId]: done }));
         pump();
       })();
     }
