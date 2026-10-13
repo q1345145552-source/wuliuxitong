@@ -113,8 +113,12 @@ async function main(): Promise<void> {
   })();
   console.log(`跟数据库一来一回约 ${rttMs.toFixed(1)} 毫秒`);
   // 远端库（Neon）上一次按运单号取票要来回约 30 趟、1 秒多；几条请求排同一个柜就可能排过 4.5 秒的时限、照设计回 503「正忙」。
-  // 本机 / CI 的库（来回不到 1 毫秒）上并发用例照旧要求全 200（死锁也是 503，快库上才分得出来）
-  const slowDb = rttMs > 10;
+  // 本机 / CI 的库（来回不到 1 毫秒）上并发用例照旧要求全 200（死锁也是 503，快库上才分得出来）。
+  // 按地址认 Neon（原主机名带 neon.tech，IPv4 绕法带 options=endpoint=…），不按测出来的快慢猜 —— 猜错了最严的断言会被悄悄跳过（dsh 10-13 第 8 轮）
+  const slowDb = /neon\.tech|options=endpoint%3D/.test(url);
+  /** 慢库才加网络余量（每趟来回 × 次数）；快库照旧用固定上限，断言强度不打折（Codex 10-13 第 8 轮） */
+  const netSlack = (trips: number) => (slowDb ? trips * rttMs : 0);
+  if (!slowDb && rttMs > 10) console.log(`⚠️ 不是 Neon 却来回 ${rttMs.toFixed(1)} 毫秒，并发用例照快库标准判，红了先看是不是这台机器 / 库太慢`);
   const routes = new Map<string, Function>();
   const app: any = {};
   for (const m of ["get", "post", "put", "patch", "delete"]) app[m] = (p: string, h: Function) => routes.set(`${m.toUpperCase()} ${p}`, h);
@@ -378,17 +382,20 @@ async function main(): Promise<void> {
       const K4 = await seedShipment({ orderId: oP, trackingNo: `${parentNo}-4`, parent: parentNo, pieces: 2, status: "departed", batchNo: "B2", weightKg: 20 });
       await load(C2, K4, 2, 1.0);
       try {
+        let waybillOk = 0;
         for (let round = 0; round < 3; round++) {
           const all = await Promise.all([byNo(parentNo), pull(`ZZCP${stamp}02`), pull(ctnNo), byNo(`${parentNo}-4`), byNo(parentNo), pull(`ZZCP${stamp}02`)]);
           const isPull = [false, true, true, false, false, true];
           if (!slowDb) assert.deepEqual(all.map((x) => x.status), [200, 200, 200, 200, 200, 200], `第 ${round + 1} 轮`);
           else assert.ok(all.every((x, i) => (isPull[i] ? x.status === 200 : x.status === 200 || x.status === 503)), `第 ${round + 1} 轮：${JSON.stringify(all.map((x) => x.status))}`);
           const rs = all.filter((x) => x.status === 200);
+          waybillOk += all.filter((x, i) => !isPull[i] && x.status === 200).length;
           for (const id of [K1, K4]) {
             const v = rs.map((x) => (x.raw.manifests as Row[]).flatMap((m) => m.shipments).find((s: Row) => s.sourceShipmentId === id)?.sourceUpdatedAt).filter(Boolean);
             assert.ok(v.length >= (slowDb ? 1 : 3) && new Set(v).size === 1, `${id} 版本不一致：${JSON.stringify(v)}`);
           }
         }
+        assert.ok(waybillOk > 0, "三轮里按运单号一次都没取到（跨两柜的路径整体 503）");
       } finally {
         await pm.chaipaiManifestVersion.deleteMany({ where: { shipmentId: K4 } });
         await pm.shipmentContainerItem.deleteMany({ where: { shipmentId: K4 } });
@@ -556,7 +563,7 @@ async function main(): Promise<void> {
         const ms = Date.now() - t0;
         clearTimeout(timer);
         assert.equal(r.status, 503, JSON.stringify(r.raw));
-        assert.ok(ms >= 3800 && ms < 6000 + 30 * rttMs, `用了 ${ms} 毫秒（应在柜锁放开后、总截止 4.5 秒左右回）`);
+        assert.ok(ms >= 3800 && ms < 6000 + netSlack(30), `用了 ${ms} 毫秒（应在柜锁放开后、总截止 4.5 秒左右回）`);
       } finally {
         for (const r of releases) r();
         await Promise.all(holders.map((h) => h.catch(() => undefined)));
@@ -581,7 +588,7 @@ async function main(): Promise<void> {
         const r = await byNo(`${parentNo}-1`);
         const ms = Date.now() - t0;
         assert.deepEqual([r.status, r.raw?.message], [503, "正忙，请稍后再扫一次"]);
-        assert.ok(ms < 6000 + 30 * rttMs, `用了 ${ms} 毫秒`);
+        assert.ok(ms < 6000 + netSlack(30), `用了 ${ms} 毫秒`);
       } finally {
         release();
         await holder.catch(() => undefined);
@@ -607,7 +614,7 @@ async function main(): Promise<void> {
         const ms = Date.now() - t0;
         clearTimeout(timer);
         assert.deepEqual([r.status, r.raw?.message], [503, "正忙，请稍后再扫一次"]);
-        assert.ok(ms < 1500 + 30 * rttMs, `用了 ${ms} 毫秒（每句应只有剩余时间的 1/8，约 0.56 秒）`);
+        assert.ok(ms < 1500 + netSlack(30), `用了 ${ms} 毫秒（每句应只有剩余时间的 1/8，约 0.56 秒）`);
       } finally {
         for (const r of releases) r();
         await Promise.all(holders.map((h) => h.catch(() => undefined)));
@@ -656,7 +663,7 @@ async function main(): Promise<void> {
         clearTimeout(timer);
         assert.ok(reachedProducts, "请求应当走到第二句（产品表）并卡在那里");
         assert.deepEqual([r.status, r.raw?.message], [503, "正忙，请稍后再扫一次"]);
-        assert.ok(ms < 1500 + 30 * rttMs, `用了 ${ms} 毫秒`);
+        assert.ok(ms < 1500 + netSlack(30), `用了 ${ms} 毫秒`);
       } finally {
         for (const r of releases) r();
         await Promise.all(holders.map((h) => h.catch(() => undefined)));
@@ -746,14 +753,18 @@ async function main(): Promise<void> {
             if (!waited) await new Promise((r) => setTimeout(r, 30));
           }
           assert.ok(waited, "前提：请求卡在柜锁上");
+          let settled = false;
+          void pending.then(() => { settled = true; });
           await addKids(200, 202); // 排队期间同柜又装进 2 张 → 203 张候选
+          // 放锁之前请求必须还在等：要是它已经自己等锁超时回了 503，就不是「重读发现触顶」，这项就成了假绿（dsh 10-13 第 8 轮）
+          assert.equal(settled, false, "放锁之前请求就回来了（自己超时了），不是重读触顶回的 503");
           const releasedAt = Date.now();
           h2.release();
           await h2.done;
           const r = await pending;
           assert.deepEqual([r.status, r.raw?.message], [503, "正忙，请稍后再扫一次"]);
           // 放锁以后很快就回，说明是拿到锁、重读发现触顶回的 503，不是自己等锁等到超时（dsh 10-13 第 7 轮）
-          assert.ok(Date.now() - releasedAt < 1500 + 30 * rttMs, `放锁后 ${Date.now() - releasedAt} 毫秒才回`);
+          assert.ok(Date.now() - releasedAt < 1500 + netSlack(30), `放锁后 ${Date.now() - releasedAt} 毫秒才回`);
         } finally {
           h2.release();
           await h2.done.catch(() => undefined);
@@ -767,7 +778,7 @@ async function main(): Promise<void> {
           const t0 = Date.now();
           const r = await byNo(big);
           assert.equal(r.status, 422);
-          assert.ok(Date.now() - t0 < 1000 + 10 * rttMs, "不该等柜锁");
+          assert.ok(Date.now() - t0 < 1000 + netSlack(10), "不该等柜锁");
         } finally {
           h1.release();
           await h1.done.catch(() => undefined);
