@@ -544,6 +544,30 @@ async function main(): Promise<void> {
       }
       assert.equal((await byNo(`${parentNo}-1`)).status, 200, "锁都放了以后照常能取");
     });
+    await test("N13 普通查询（不是裸 SQL）被数据库限时掐断，Prisma 包的错误形态不一样，也要认出来回 503、不能变 500（dsh 10-13 第 4 轮）", async () => {
+      let release!: () => void;
+      const hold = new Promise<void>((r) => { release = r; });
+      let gotLock!: () => void;
+      const locked = new Promise<void>((r) => { gotLock = r; });
+      // 整张装柜明细表锁死：找候选票那句（带装柜明细的普通查询）一定卡住，到点被数据库掐断
+      const holder = pm.$transaction(async (tx: any) => {
+        await tx.$executeRawUnsafe("LOCK TABLE shipment_container_items IN ACCESS EXCLUSIVE MODE");
+        gotLock();
+        await hold;
+      }, { timeout: 20000 });
+      await locked;
+      try {
+        const t0 = Date.now();
+        const r = await byNo(`${parentNo}-1`);
+        const ms = Date.now() - t0;
+        assert.deepEqual([r.status, r.raw?.message], [503, "正忙，请稍后再扫一次"]);
+        assert.ok(ms < 6000, `用了 ${ms} 毫秒`);
+      } finally {
+        release();
+        await holder.catch(() => undefined);
+      }
+      assert.equal((await byNo(`${parentNo}-1`)).status, 200, "表锁放了以后照常能取");
+    });
 
     console.log("\n【收回传：状态和轨迹】");
     await test("R1 密钥不对 401；格式不对 400；公司编号不对 409；湘泰没有这票 → IGNORED_OLDER 什么都不写", async () => {
