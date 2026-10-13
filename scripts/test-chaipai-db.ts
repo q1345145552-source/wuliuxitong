@@ -514,6 +514,36 @@ async function main(): Promise<void> {
       }
       assert.equal((await byNo(`${parentNo}-1`)).status, 200, "锁放了以后照常能取");
     });
+    await test("N12 先在柜锁上等了 3.8 秒、接着写版本又碰上别人锁着那一行：按总截止时间掐断，6 秒内回 503（每把锁各算 4 秒的话要等 7.8 秒；Codex 10-13 第 3 轮）", async () => {
+      const ctn = await pm.container.findFirst({ where: { containerNo: ctnNo }, select: { id: true } });
+      const releases: Array<() => void> = [];
+      const holders: Promise<unknown>[] = [];
+      const holdLock = (sql: (tx: any) => Promise<unknown>) => new Promise<void>((ready) => {
+        holders.push(pm.$transaction(async (tx: any) => {
+          await sql(tx);
+          ready();
+          await new Promise<void>((r) => releases.push(r));
+        }, { timeout: 20000 }));
+      });
+      try {
+        // 先让这次取票一定要写版本行（内容变了）
+        await pm.shipmentContainerItem.updateMany({ where: { shipmentId: K1, containerId: C1 }, data: { loadedVolumeM3: 1.3 } });
+        await holdLock((tx) => tx.$executeRaw`SELECT pg_advisory_xact_lock(83060, hashtext(${ctn.id}))`);
+        await holdLock((tx) => tx.$queryRaw`SELECT 1 FROM chaipai_manifest_versions WHERE shipment_id = ${K1} FOR UPDATE`);
+        const timer = setTimeout(() => releases[0](), 3800); // 柜锁 3.8 秒后放，版本行一直不放
+        const t0 = Date.now();
+        const r = await byNo(`${parentNo}-1`);
+        const ms = Date.now() - t0;
+        clearTimeout(timer);
+        assert.equal(r.status, 503, JSON.stringify(r.raw));
+        assert.ok(ms >= 3800 && ms < 6000, `用了 ${ms} 毫秒（应在柜锁放开后、总截止 4.5 秒左右回）`);
+      } finally {
+        for (const r of releases) r();
+        await Promise.all(holders.map((h) => h.catch(() => undefined)));
+        await pm.shipmentContainerItem.updateMany({ where: { shipmentId: K1, containerId: C1 }, data: { loadedVolumeM3: 1.0 } });
+      }
+      assert.equal((await byNo(`${parentNo}-1`)).status, 200, "锁都放了以后照常能取");
+    });
 
     console.log("\n【收回传：状态和轨迹】");
     await test("R1 密钥不对 401；格式不对 400；公司编号不对 409；湘泰没有这票 → IGNORED_OLDER 什么都不写", async () => {

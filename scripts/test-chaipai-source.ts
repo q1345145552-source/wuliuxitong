@@ -323,17 +323,22 @@ check("W2b 拉清单的事务第一句就是同柜排队锁（删了这句静态
 
 check("W2c 按运单号取票（10-13）：先按这几票挂过的柜子排好序一个一个排队，再重读；跟按柜拉同一把锁、同一份取数代码", () => {
   const src = read("apps/api/src/modules/chaipai/manifest-routes.ts");
-  // 每把锁前按剩余时间设 lock_timeout（等锁不受事务时限管，10-13 实测），再拿锁；拿完才读
-  assert.match(src, /for \(const id of \[\.\.\.lockIds\]\.sort\(\)\) \{\n\s*await tx\.\$executeRaw`SELECT set_config\('lock_timeout', \$\{String\(Math\.max\(50, lockDeadline - Date\.now\(\)\)\)\}, true\)`;\n\s*await lockChaipaiManifest\(tx, id\);\n\s*\}\n\s*const snap = await readSnapshot\(tx, lockIds\);/);
-  assert.match(src, /const readSnapshot = async \(tx: any, lockIds: string\[\]\): Promise<Snapshot> => \{\n\s*const fresh: Candidate\[\] = await findCandidates\(tx\);/);
+  // 总截止时间：每句碰数据库的语句之前都把 statement_timeout / lock_timeout 改成离截止还剩多少（Codex 10-13 第 3 轮）
+  assert.match(src, /const deadline = Date\.now\(\) \+ 4500;\n\s*const guard = async \(\) => \{\n\s*const ms = String\(Math\.max\(50, deadline - Date\.now\(\)\)\);\n\s*await tx\.\$executeRaw`SELECT set_config\('statement_timeout', \$\{ms\}, true\), set_config\('lock_timeout', \$\{ms\}, true\)`;\n\s*\};\n\s*await guard\(\);\n\s*const candidates: Candidate\[\] = await findCandidates\(tx\);/);
+  assert.match(src, /for \(const id of \[\.\.\.lockIds\]\.sort\(\)\) \{\n\s*await guard\(\);\n\s*await lockChaipaiManifest\(tx, id\);\n\s*\}\n\s*const snap = await readSnapshot\(tx, lockIds, guard\);/);
+  assert.match(src, /const readSnapshot = async \(tx: any, lockIds: string\[\], guard: \(\) => Promise<void>\): Promise<Snapshot> => \{\n\s*await guard\(\);\n\s*const fresh: Candidate\[\] = await findCandidates\(tx\);/);
+  assert.match(src, /\n\s*await guard\(\);\n\s*const items = await tx\.shipmentContainerItem\.findMany\(\{\n\s*where: \{ shipmentId: \{ in: fresh\.map/);
+  assert.match(src, /const nowIso = new Date\(\)\.toISOString\(\);\n\s*await guard\?\.\(\);\n\s*await tx\.\$executeRaw`\n\s*INSERT INTO chaipai_manifest_versions/);
+  // 产品名排序写死（sortOrder 可重复），前后两次读拼出来的品名才一样（dsh / Codex 10-13 第 3 轮）
+  assert.match(src, /products: \{ select: \{ itemName: true, sortOrder: true \}, orderBy: \[\{ sortOrder: "asc" \}, \{ id: "asc" \}\]/);
   assert.match(src, /const lockIds = \[\.\.\.new Set\(candidates\.flatMap\(\(c\) => c\.containerItems\.map\(\(i\) => i\.containerId\)\)\)\]\.sort\(\);/);
   // 两条路都用 MANIFEST_SHIPMENT_SELECT + sourceRowOf，不各抄一份
   assert.equal((src.match(/shipment: \{ select: MANIFEST_SHIPMENT_SELECT \}/g) ?? []).length, 2);
   assert.equal((src.match(/sourceRowOf\(item\)/g) ?? []).length, 2);
   // 被挪柜、事务超时、序列化冲突都回 503 让拆派仓再扫（拆派仓只认 200 / 404 / 401，别的当连不上）；拆派仓等约 8 秒
-  assert.match(src, /if \(error instanceof ScanAgainError \|\| code === "P2028" \|\| code === "P2034" \|\| code === "P2024" \|\| isLockTimeout\(error\)\) \{[\s\S]{0,300}fail\(res, 503, "INTERNAL_ERROR", "正忙，请稍后再扫一次"\);/);
+  assert.match(src, /if \(error instanceof ScanAgainError \|\| code === "P2028" \|\| code === "P2034" \|\| code === "P2024" \|\| isDbTimeout\(error\)\) \{[\s\S]{0,300}fail\(res, 503, "INTERNAL_ERROR", "正忙，请稍后再扫一次"\);/);
   // 版本写下以后、提交以前原样再读一遍、比「挂的柜 + 内容摘要」（Codex 10-13 两轮）
-  assert.match(src, /const versions = await versionsFor\(tx, snap\.groups\);\n(\s*\/\/[^\n]*\n)*\s*if \(\(await readSnapshot\(tx, lockIds\)\)\.signature !== snap\.signature\) throw new ScanAgainError\(\);\n\s*return \{ picked: snap\.picked/);
+  assert.match(src, /const versions = await versionsFor\(tx, snap\.groups, guard\);\n(\s*\/\/[^\n]*\n)*\s*if \(\(await readSnapshot\(tx, lockIds, guard\)\)\.signature !== snap\.signature\) throw new ScanAgainError\(\);\n\s*return \{ picked: snap\.picked/);
   assert.match(src, /signature: `\$\{placement\}\|\$\{hashes\}`/);
   assert.match(src, /if \(items\.some\(\(it: \{ containerId: string \}\) => !lockIds\.includes\(it\.containerId\)\)\) throw new ScanAgainError\(\);/);
   // 拿锁后重读那一道（DB 用例 N8 里它跟上面那道互相兜，单删一道 N8 不红，这里点名查；dsh 10-13 第 2 轮）

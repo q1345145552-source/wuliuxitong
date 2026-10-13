@@ -35,7 +35,8 @@ const MANIFEST_SHIPMENT_SELECT = {
   order: {
     select: {
       clientId: true, itemName: true, packageCount: true, weightKg: true, transportMode: true,
-      products: { select: { itemName: true, sortOrder: true } },
+      // 排序写死（sortOrder 可能重复）：产品名拼串前后两次读必须一样，不然提交前那道比对会误报「正忙」（dsh 10-13 第 3 轮）
+      products: { select: { itemName: true, sortOrder: true }, orderBy: [{ sortOrder: "asc" }, { id: "asc" }] as Prisma.OrderProductOrderByWithRelationInput[] },
       shipments: { select: { trackingNo: true, parentTrackingNo: true, packageCount: true, weightKg: true } },
     },
   },
@@ -62,13 +63,17 @@ function sourceRowOf(item: { loadedPieceCount: number; loadedVolumeM3: { toStrin
 }
 
 /** 一批票的版本时间（按公司分开记；清单版本表的 company_id 是湘泰内部的公司） */
-async function versionsFor(tx: any, groups: Array<{ companyId: string; entries: Array<{ shipmentId: string; hash: string }> }>): Promise<Map<string, string>> {
+async function versionsFor(
+  tx: any,
+  groups: Array<{ companyId: string; entries: Array<{ shipmentId: string; hash: string }> }>,
+  guard?: () => Promise<void>,
+): Promise<Map<string, string>> {
   const out = new Map<string, string>();
   const byCompany = new Map<string, Array<{ shipmentId: string; hash: string }>>();
   for (const g of groups) byCompany.set(g.companyId, [...(byCompany.get(g.companyId) ?? []), ...g.entries]);
   for (const [companyId, entries] of byCompany) {
     if (entries.length === 0) continue;
-    for (const [id, v] of await stableVersions(tx, companyId, entries)) out.set(id, v);
+    for (const [id, v] of await stableVersions(tx, companyId, entries, guard)) out.set(id, v);
   }
   return out;
 }
@@ -90,11 +95,18 @@ async function lockChaipaiManifest(tx: any, containerId: string): Promise<void> 
  * 内容摘要没变就沿用原来的版本时间，变了就取 max(现在, 原值 + 1 毫秒)。
  * 在拿着柜子排队锁的事务里调；这张表故意没有外键，不碰运单行锁。
  */
-async function stableVersions(tx: any, companyId: string, entries: Array<{ shipmentId: string; hash: string }>): Promise<Map<string, string>> {
+async function stableVersions(
+  tx: any,
+  companyId: string,
+  entries: Array<{ shipmentId: string; hash: string }>,
+  /** 按运单号取票传进来：每句之前把数据库时限改成离截止还剩多少（按柜拉不传） */
+  guard?: () => Promise<void>,
+): Promise<Map<string, string>> {
   const ids = entries.map((e) => e.shipmentId);
   const hashes = entries.map((e) => e.hash);
   const want = new Map(entries.map((e) => [e.shipmentId, e.hash]));
   const nowIso = new Date().toISOString();
+  await guard?.();
   await tx.$executeRaw`
     INSERT INTO chaipai_manifest_versions (shipment_id, company_id, content_hash, version_at, updated_at)
     SELECT t.id, ${companyId}, t.hash, ${nowIso}::timestamp(3), ${nowIso}::timestamp(3)
@@ -106,6 +118,7 @@ async function stableVersions(tx: any, companyId: string, entries: Array<{ shipm
       updated_at = EXCLUDED.updated_at
     WHERE chaipai_manifest_versions.content_hash <> EXCLUDED.content_hash
   `;
+  await guard?.();
   const rows: Array<{ shipment_id: string; content_hash: string; version_at: Date }> = await tx.$queryRaw`
     SELECT shipment_id, content_hash, version_at FROM chaipai_manifest_versions WHERE shipment_id = ANY(${ids}::text[])
   `;
@@ -243,9 +256,11 @@ export function registerChaipaiManifestRoutes(app: MinimalHttpApp): void {
      * 拿着锁读一遍：重读候选票、取装柜明细、挑最近的柜、按柜排批次、算内容摘要。
      * 排队期间票被挪进没排队的柜（重读时、取明细时各核一次，10-13 dsh 审查）就让拆派仓再扫。
      */
-    const readSnapshot = async (tx: any, lockIds: string[]): Promise<Snapshot> => {
+    const readSnapshot = async (tx: any, lockIds: string[], guard: () => Promise<void>): Promise<Snapshot> => {
+      await guard();
       const fresh: Candidate[] = await findCandidates(tx);
       if (fresh.some((c) => c.containerItems.some((i) => !lockIds.includes(i.containerId)))) throw new ScanAgainError();
+      await guard();
       const items = await tx.shipmentContainerItem.findMany({
         where: { shipmentId: { in: fresh.map((c) => c.id) } },
         orderBy: [{ shipmentId: "asc" }, { createdAt: "desc" }, { containerId: "desc" }],
@@ -291,36 +306,42 @@ export function registerChaipaiManifestRoutes(app: MinimalHttpApp): void {
     type Found = { picked: Picked[]; skipped: Array<{ trackingNo: string; reason: string }>; versions: Map<string, string>; parts: Part[] };
     let result: Found | { notFound: string } | { tooMany: number };
     try {
-      // 整个过程（连最开始找票那一句）都在这一个事务里：等连接最多 0.5 秒 + 事务 5.5 秒，
-      // 最坏 6 秒内一定有回复，给拆派仓约 8 秒的等待留出传输时间（maxWait 跟 timeout 是加起来算的；10-13 Codex / dsh 审查）。
+      // 整个过程（连最开始找票那一句）都在这一个事务里：等连接最多 0.5 秒；事务里每句都按「总截止 4.5 秒」由数据库掐断，
+      // Prisma 的 5.5 秒只是兜底 —— 最坏 5 秒多一点有回复，给拆派仓约 8 秒的等待留出传输时间（10-13 Codex / dsh 三轮审查）。
       // 隔离级别写死「读已提交」：每一句都看得到别人刚提交的改动，下面「前后读两遍比一比」才成立，不靠数据库默认设置（Codex 10-13 第 2 轮）
       result = await prisma.$transaction(async (tx): Promise<Found | { notFound: string } | { tooMany: number }> => {
+        // 总截止时间（Codex 10-13 第 3 轮）：数据库的 lock_timeout / statement_timeout 都是「这一句」自己计时，
+        // 等完柜锁再等版本行锁会各等一遍；Prisma 的事务时限又管不住卡在数据库里的那一句（10-13 实测别人占锁 9 秒就陪等 9 秒）。
+        // 所以每一句会碰数据库的语句之前，都把两个时限改成「离截止还剩多少」，到点由数据库自己掐断（55P03 / 57014）→ 503
+        const deadline = Date.now() + 4500;
+        const guard = async () => {
+          const ms = String(Math.max(50, deadline - Date.now()));
+          await tx.$executeRaw`SELECT set_config('statement_timeout', ${ms}, true), set_config('lock_timeout', ${ms}, true)`;
+        };
+        await guard();
         const candidates: Candidate[] = await findCandidates(tx);
         if (candidates.length === 0) return { notFound: "没有这个运单号" };
         // 按这几票挂过的全部柜子排队（按 id 排好、一个一个拿，跟按柜拉同一把锁、不会互相卡死）
         const lockIds = [...new Set(candidates.flatMap((c) => c.containerItems.map((i) => i.containerId)))].sort();
         if (lockIds.length === 0) return { notFound: "这票还没装柜" };
-        // 事务时限管不住「卡在等锁」：别人占着柜子不放，查询会一直等到锁放开（10-13 实测 9 秒才回）。
-        // 所以让数据库自己限时：每拿一把锁之前把这次事务剩下的时间设成 lock_timeout，等不到就报 55P03 → 回 503
-        const lockDeadline = Date.now() + 4000;
         for (const id of [...lockIds].sort()) {
-          await tx.$executeRaw`SELECT set_config('lock_timeout', ${String(Math.max(50, lockDeadline - Date.now()))}, true)`;
+          await guard();
           await lockChaipaiManifest(tx, id);
         }
-        const snap = await readSnapshot(tx, lockIds);
+        const snap = await readSnapshot(tx, lockIds, guard);
         // 超过拆派仓一次能收的票数：不写版本、不发（拆派仓收到也会整次拒收）
         if (snap.picked.length > WAYBILL_MAX_SHIPMENTS) return { tooMany: snap.picked.length };
-        const versions = await versionsFor(tx, snap.groups);
+        const versions = await versionsFor(tx, snap.groups, guard);
         // 版本写下以后、提交以前原样再读一遍：中间票被挪了柜（哪怕挪走又挪回）或内容被改了，这次发的就是旧内容，
         // 写下的版本却可能比别处拉到的新内容还大（拆派仓按版本收，旧的盖掉新的）—— 整次撤回、让拆派仓再扫（10-13 Codex 两轮审查）
-        if ((await readSnapshot(tx, lockIds)).signature !== snap.signature) throw new ScanAgainError();
+        if ((await readSnapshot(tx, lockIds, guard)).signature !== snap.signature) throw new ScanAgainError();
         return { picked: snap.picked, skipped: snap.skipped, versions, parts: snap.parts };
       }, { timeout: 5500, maxWait: 500, isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted });
     } catch (error) {
       const code = (error as { code?: string })?.code;
       // P2028 等不到连接 / 事务超时，P2034 写冲突或死锁，P2024 连接池等超时：都让拆派仓稍后再扫；别的照常 500
-      if (error instanceof ScanAgainError || code === "P2028" || code === "P2034" || code === "P2024" || isLockTimeout(error)) {
-        logger.warn("拆派仓按运单号取票：正忙，让拆派仓再扫一次", { waybillNo, 原因: error instanceof ScanAgainError ? "票刚被挪柜" : isLockTimeout(error) ? "等锁超时" : code });
+      if (error instanceof ScanAgainError || code === "P2028" || code === "P2034" || code === "P2024" || isDbTimeout(error)) {
+        logger.warn("拆派仓按运单号取票：正忙，让拆派仓再扫一次", { waybillNo, 原因: error instanceof ScanAgainError ? "票刚被挪柜或改过" : isDbTimeout(error) ? "数据库限时到了" : code });
         fail(res, 503, "INTERNAL_ERROR", "正忙，请稍后再扫一次");
         return;
       }
@@ -357,9 +378,12 @@ export function registerChaipaiManifestRoutes(app: MinimalHttpApp): void {
 /** 排队期间票被挪到别的柜：不硬取，让拆派仓再扫一次 */
 class ScanAgainError extends Error {}
 
-/** 数据库报「等锁超时」（SQLSTATE 55P03，lock_timeout 到了）；裸 SQL 出错时 Prisma 包成 P2010、原因放在 meta 里 */
-function isLockTimeout(error: unknown): boolean {
+/**
+ * 数据库按时限掐断了这一句：等锁超时（SQLSTATE 55P03，lock_timeout）或整句超时（57014，statement_timeout）。
+ * 裸 SQL 出错时 Prisma 包成 P2010、原因放在 meta 里；普通查询的原因在 message 里。
+ */
+function isDbTimeout(error: unknown): boolean {
   const e = error as { code?: string; message?: string; meta?: unknown };
   const text = `${e?.message ?? ""} ${JSON.stringify(e?.meta ?? "")}`;
-  return /55P03|lock timeout/i.test(text);
+  return /55P03|57014|lock timeout|statement timeout/i.test(text);
 }
