@@ -104,6 +104,17 @@ async function main(): Promise<void> {
   const { prisma } = await import("../apps/api/src/db/prisma");
   const { BusinessError } = await import("../apps/api/src/modules/core/business-error");
   const pm: any = prisma;
+  // 跟库一来一回的网络时间：本机 / CI 的库不到 1 毫秒，Neon 测试库约 36 毫秒。下面按运单号取票的时间断言都留出「来回次数 × 它」的余量
+  const rttMs = await (async () => {
+    await pm.$queryRaw`SELECT 1`;
+    const xs: number[] = [];
+    for (let i = 0; i < 7; i++) { const t = performance.now(); await pm.$queryRaw`SELECT 1`; xs.push(performance.now() - t); }
+    return xs.sort((a, b) => a - b)[3];
+  })();
+  console.log(`跟数据库一来一回约 ${rttMs.toFixed(1)} 毫秒`);
+  // 远端库（Neon）上一次按运单号取票要来回约 30 趟、1 秒多；几条请求排同一个柜就可能排过 4.5 秒的时限、照设计回 503「正忙」。
+  // 本机 / CI 的库（来回不到 1 毫秒）上并发用例照旧要求全 200（死锁也是 503，快库上才分得出来）
+  const slowDb = rttMs > 10;
   const routes = new Map<string, Function>();
   const app: any = {};
   for (const m of ["get", "post", "put", "patch", "delete"]) app[m] = (p: string, h: Function) => routes.set(`${m.toUpperCase()} ${p}`, h);
@@ -348,8 +359,14 @@ async function main(): Promise<void> {
       await pm.shipmentContainerItem.updateMany({ where: { containerId: C1, shipmentId: S1 }, data: { loadedVolumeM3: 1.5 } });
     });
     await test("N6 同一个柜同时来几次（按运单号 + 按柜拉混着）都 200、版本一致，不死锁", async () => {
-      const rs = await Promise.all([byNo(parentNo), pull(ctnNo), byNo(`${parentNo}-2`), byNo(parentNo), pull(ctnNo)]);
-      assert.deepEqual(rs.map((x) => x.status), [200, 200, 200, 200, 200]);
+      const all = await Promise.all([byNo(parentNo), pull(ctnNo), byNo(`${parentNo}-2`), byNo(parentNo), pull(ctnNo)]);
+      const isPull = [false, true, false, false, true];
+      if (!slowDb) assert.deepEqual(all.map((x) => x.status), [200, 200, 200, 200, 200]);
+      else {
+        assert.ok(all.every((x, i) => (isPull[i] ? x.status === 200 : x.status === 200 || x.status === 503)), JSON.stringify(all.map((x) => x.status)));
+        assert.ok(all.some((x, i) => !isPull[i] && x.status === 200), "慢库上也至少要有一条按运单号取到");
+      }
+      const rs = all.filter((x) => x.status === 200);
       const k2 = rs.map((x) => (x.raw.manifests as Row[]).flatMap((m) => m.shipments).find((s: Row) => s.sourceShipmentId === K2)?.sourceUpdatedAt);
       assert.ok(k2.every(Boolean), `每个回复里都要有 K2：${JSON.stringify(k2)}`);
       const k2Batch = rs.map((x) => (x.raw.manifests as Row[]).find((m) => m.shipments.some((s: Row) => s.sourceShipmentId === K2)));
@@ -362,11 +379,14 @@ async function main(): Promise<void> {
       await load(C2, K4, 2, 1.0);
       try {
         for (let round = 0; round < 3; round++) {
-          const rs = await Promise.all([byNo(parentNo), pull(`ZZCP${stamp}02`), pull(ctnNo), byNo(`${parentNo}-4`), byNo(parentNo), pull(`ZZCP${stamp}02`)]);
-          assert.deepEqual(rs.map((x) => x.status), [200, 200, 200, 200, 200, 200], `第 ${round + 1} 轮`);
+          const all = await Promise.all([byNo(parentNo), pull(`ZZCP${stamp}02`), pull(ctnNo), byNo(`${parentNo}-4`), byNo(parentNo), pull(`ZZCP${stamp}02`)]);
+          const isPull = [false, true, true, false, false, true];
+          if (!slowDb) assert.deepEqual(all.map((x) => x.status), [200, 200, 200, 200, 200, 200], `第 ${round + 1} 轮`);
+          else assert.ok(all.every((x, i) => (isPull[i] ? x.status === 200 : x.status === 200 || x.status === 503)), `第 ${round + 1} 轮：${JSON.stringify(all.map((x) => x.status))}`);
+          const rs = all.filter((x) => x.status === 200);
           for (const id of [K1, K4]) {
             const v = rs.map((x) => (x.raw.manifests as Row[]).flatMap((m) => m.shipments).find((s: Row) => s.sourceShipmentId === id)?.sourceUpdatedAt).filter(Boolean);
-            assert.ok(v.length >= 3 && new Set(v).size === 1, `${id} 版本不一致：${JSON.stringify(v)}`);
+            assert.ok(v.length >= (slowDb ? 1 : 3) && new Set(v).size === 1, `${id} 版本不一致：${JSON.stringify(v)}`);
           }
         }
       } finally {
@@ -536,7 +556,7 @@ async function main(): Promise<void> {
         const ms = Date.now() - t0;
         clearTimeout(timer);
         assert.equal(r.status, 503, JSON.stringify(r.raw));
-        assert.ok(ms >= 3800 && ms < 6000, `用了 ${ms} 毫秒（应在柜锁放开后、总截止 4.5 秒左右回）`);
+        assert.ok(ms >= 3800 && ms < 6000 + 30 * rttMs, `用了 ${ms} 毫秒（应在柜锁放开后、总截止 4.5 秒左右回）`);
       } finally {
         for (const r of releases) r();
         await Promise.all(holders.map((h) => h.catch(() => undefined)));
@@ -561,7 +581,7 @@ async function main(): Promise<void> {
         const r = await byNo(`${parentNo}-1`);
         const ms = Date.now() - t0;
         assert.deepEqual([r.status, r.raw?.message], [503, "正忙，请稍后再扫一次"]);
-        assert.ok(ms < 6000, `用了 ${ms} 毫秒`);
+        assert.ok(ms < 6000 + 30 * rttMs, `用了 ${ms} 毫秒`);
       } finally {
         release();
         await holder.catch(() => undefined);
@@ -587,7 +607,7 @@ async function main(): Promise<void> {
         const ms = Date.now() - t0;
         clearTimeout(timer);
         assert.deepEqual([r.status, r.raw?.message], [503, "正忙，请稍后再扫一次"]);
-        assert.ok(ms < 1500, `用了 ${ms} 毫秒（每句应只有剩余时间的 1/8，约 0.56 秒）`);
+        assert.ok(ms < 1500 + 30 * rttMs, `用了 ${ms} 毫秒（每句应只有剩余时间的 1/8，约 0.56 秒）`);
       } finally {
         for (const r of releases) r();
         await Promise.all(holders.map((h) => h.catch(() => undefined)));
@@ -636,7 +656,7 @@ async function main(): Promise<void> {
         clearTimeout(timer);
         assert.ok(reachedProducts, "请求应当走到第二句（产品表）并卡在那里");
         assert.deepEqual([r.status, r.raw?.message], [503, "正忙，请稍后再扫一次"]);
-        assert.ok(ms < 1500, `用了 ${ms} 毫秒`);
+        assert.ok(ms < 1500 + 30 * rttMs, `用了 ${ms} 毫秒`);
       } finally {
         for (const r of releases) r();
         await Promise.all(holders.map((h) => h.catch(() => undefined)));
@@ -727,10 +747,13 @@ async function main(): Promise<void> {
           }
           assert.ok(waited, "前提：请求卡在柜锁上");
           await addKids(200, 202); // 排队期间同柜又装进 2 张 → 203 张候选
+          const releasedAt = Date.now();
           h2.release();
           await h2.done;
           const r = await pending;
           assert.deepEqual([r.status, r.raw?.message], [503, "正忙，请稍后再扫一次"]);
+          // 放锁以后很快就回，说明是拿到锁、重读发现触顶回的 503，不是自己等锁等到超时（dsh 10-13 第 7 轮）
+          assert.ok(Date.now() - releasedAt < 1500 + 30 * rttMs, `放锁后 ${Date.now() - releasedAt} 毫秒才回`);
         } finally {
           h2.release();
           await h2.done.catch(() => undefined);
@@ -744,7 +767,7 @@ async function main(): Promise<void> {
           const t0 = Date.now();
           const r = await byNo(big);
           assert.equal(r.status, 422);
-          assert.ok(Date.now() - t0 < 1000, "不该等柜锁");
+          assert.ok(Date.now() - t0 < 1000 + 10 * rttMs, "不该等柜锁");
         } finally {
           h1.release();
           await h1.done.catch(() => undefined);
