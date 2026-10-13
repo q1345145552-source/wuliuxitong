@@ -1,3 +1,4 @@
+import { Prisma } from "@prisma/client";
 import { prisma } from "../../db/prisma";
 import type { MinimalHttpApp } from "../../server";
 import { fail } from "../core/http-utils";
@@ -14,6 +15,7 @@ import {
   planBatches,
   validContainerNoInput,
   validWaybillNoInput,
+  WAYBILL_MAX_SHIPMENTS,
   type ManifestPart,
   type ManifestSourceRow,
   type PlannedBatch,
@@ -207,7 +209,8 @@ export function registerChaipaiManifestRoutes(app: MinimalHttpApp): void {
    *     一票都不剩回 404。
    *   - 一个父单的子单分在不同柜（生产 50 单）：每个柜各一份，各带自己的柜号，拆派仓自己按柜分开。
    * 每份的 batchKey / batchNo / 每票的字段、版本时间跟按柜拉**同一套代码**（sourceRowOf、planBatches、contentHashOf、清单版本表）。
-   * 拆派仓扫码时最多等 8 秒左右：事务只给 7 秒，柜子排队等不到就回 503（拆派仓提示员工稍后再扫）。
+   * 拆派仓扫码时最多等 8 秒左右：等连接 0.5 秒 + 事务 5.5 秒，柜子排队等不到就回 503（拆派仓提示员工稍后再扫）。
+   * 提交前发现票被挪了柜也回 503；提交后那几毫秒里才挪的，这次发的是旧柜的内容，下一次取版本会更大、自己纠正过来。
    */
   app.get(WAYBILL_MANIFEST_PATH, async (req, res) => {
     const cfg = chaipaiConfig();
@@ -226,85 +229,109 @@ export function registerChaipaiManifestRoutes(app: MinimalHttpApp): void {
       select: { id: true, trackingNo: true, containerItems: { select: { containerId: true } } },
     });
     type Candidate = { id: string; trackingNo: string; containerItems: Array<{ containerId: string }> };
-    /** 这几票现在各挂在哪些柜（「票 id:柜 id」排好序），前后一比就知道中间有没有人装柜 / 卸柜 / 挪柜 */
-    const placementOf = async (db: any, ids: string[]): Promise<string> => {
-      const rows: Array<{ shipmentId: string; containerId: string }> = await db.shipmentContainerItem.findMany({
-        where: { shipmentId: { in: ids } }, select: { shipmentId: true, containerId: true },
+    type Picked = { containerId: string; containerNo: string; companyId: string; row: ManifestSourceRow };
+    type Part = { containerNo: string; companyId: string; batches: PlannedBatch[] };
+    type Snapshot = {
+      picked: Picked[];
+      skipped: Array<{ trackingNo: string; reason: string }>;
+      parts: Part[];
+      groups: Array<{ companyId: string; entries: Array<{ shipmentId: string; hash: string }> }>;
+      /** 这几票挂在哪些柜 + 每票要发的内容摘要；前后两次一比，中间有人挪柜 / 改货就看得出来 */
+      signature: string;
+    };
+    /**
+     * 拿着锁读一遍：重读候选票、取装柜明细、挑最近的柜、按柜排批次、算内容摘要。
+     * 排队期间票被挪进没排队的柜（重读时、取明细时各核一次，10-13 dsh 审查）就让拆派仓再扫。
+     */
+    const readSnapshot = async (tx: any, lockIds: string[]): Promise<Snapshot> => {
+      const fresh: Candidate[] = await findCandidates(tx);
+      if (fresh.some((c) => c.containerItems.some((i) => !lockIds.includes(i.containerId)))) throw new ScanAgainError();
+      const items = await tx.shipmentContainerItem.findMany({
+        where: { shipmentId: { in: fresh.map((c) => c.id) } },
+        orderBy: [{ shipmentId: "asc" }, { createdAt: "desc" }, { containerId: "desc" }],
+        select: {
+          loadedPieceCount: true, loadedVolumeM3: true, containerId: true,
+          container: { select: { containerNo: true, companyId: true, isFcl: true } },
+          shipment: { select: MANIFEST_SHIPMENT_SELECT },
+        },
       });
-      return rows.map((r) => `${r.shipmentId}:${r.containerId}`).sort().join(",");
+      if (items.some((it: { containerId: string }) => !lockIds.includes(it.containerId))) throw new ScanAgainError();
+      const picked: Picked[] = [];
+      const skipped: Array<{ trackingNo: string; reason: string }> = [];
+      const seen = new Set<string>();
+      for (const item of items) {
+        // 同一票按装柜时间倒排，第一条就是最近装的柜
+        if (seen.has(item.shipment.id)) continue;
+        seen.add(item.shipment.id);
+        if (item.container.isFcl) { skipped.push({ trackingNo: item.shipment.trackingNo, reason: "整柜" }); continue; }
+        if (item.loadedPieceCount <= 0) { skipped.push({ trackingNo: item.shipment.trackingNo, reason: "本柜 0 件" }); continue; }
+        picked.push({ containerId: item.containerId, containerNo: item.container.containerNo, companyId: item.container.companyId, row: sourceRowOf(item) });
+      }
+      for (const c of fresh) if (!seen.has(c.id)) skipped.push({ trackingNo: c.trackingNo, reason: "没装过柜" });
+
+      // 按柜分开排批次（同按柜拉：batchKey 只跟柜子 id 和批次号原文有关），柜子按柜号排
+      const byContainer = new Map<string, { containerNo: string; companyId: string; rows: ManifestSourceRow[] }>();
+      for (const p of picked) {
+        const g = byContainer.get(p.containerId) ?? { containerNo: p.containerNo, companyId: p.companyId, rows: [] };
+        g.rows.push(p.row);
+        byContainer.set(p.containerId, g);
+      }
+      const parts = [...byContainer.entries()]
+        .sort((a, b) => (a[1].containerNo < b[1].containerNo ? -1 : a[1].containerNo > b[1].containerNo ? 1 : a[0] < b[0] ? -1 : 1))
+        .map(([containerId, g]) => ({ containerNo: g.containerNo, companyId: g.companyId, batches: planBatches(cfg.companyId, containerId, g.rows) }));
+      const groups = parts.map((p) => ({
+        companyId: p.companyId,
+        entries: p.batches.flatMap((b) => b.items.map((item) => ({ shipmentId: item.sourceShipmentId, hash: contentHashOf(b.batchKey, b.batchNo, item) }))),
+      }));
+      const placement = items.map((it: { shipment: { id: string }; containerId: string }) => `${it.shipment.id}:${it.containerId}`).sort().join(",");
+      const hashes = groups.flatMap((g) => g.entries.map((e) => `${e.shipmentId}:${e.hash}`)).sort().join(",");
+      return { picked, skipped, parts, groups, signature: `${placement}|${hashes}` };
     };
 
-    type Picked = { containerId: string; containerNo: string; companyId: string; row: ManifestSourceRow };
-    type Found = { picked: Picked[]; skipped: Array<{ trackingNo: string; reason: string }>; versions: Map<string, string>; parts: Array<{ containerNo: string; companyId: string; batches: PlannedBatch[] }> };
-    let result: Found | { notFound: string };
+    type Found = { picked: Picked[]; skipped: Array<{ trackingNo: string; reason: string }>; versions: Map<string, string>; parts: Part[] };
+    let result: Found | { notFound: string } | { tooMany: number };
     try {
       // 整个过程（连最开始找票那一句）都在这一个事务里：等连接最多 0.5 秒 + 事务 5.5 秒，
-      // 最坏 6 秒内一定有回复，给拆派仓约 8 秒的等待留出传输时间（maxWait 跟 timeout 是加起来算的；10-13 Codex / dsh 审查）
-      result = await prisma.$transaction(async (tx): Promise<Found | { notFound: string }> => {
+      // 最坏 6 秒内一定有回复，给拆派仓约 8 秒的等待留出传输时间（maxWait 跟 timeout 是加起来算的；10-13 Codex / dsh 审查）。
+      // 隔离级别写死「读已提交」：每一句都看得到别人刚提交的改动，下面「前后读两遍比一比」才成立，不靠数据库默认设置（Codex 10-13 第 2 轮）
+      result = await prisma.$transaction(async (tx): Promise<Found | { notFound: string } | { tooMany: number }> => {
         const candidates: Candidate[] = await findCandidates(tx);
         if (candidates.length === 0) return { notFound: "没有这个运单号" };
         // 按这几票挂过的全部柜子排队（按 id 排好、一个一个拿，跟按柜拉同一把锁、不会互相卡死）
         const lockIds = [...new Set(candidates.flatMap((c) => c.containerItems.map((i) => i.containerId)))].sort();
         if (lockIds.length === 0) return { notFound: "这票还没装柜" };
-        for (const id of lockIds) await lockChaipaiManifest(tx, id);
-        // 拿到锁以后重读：排队这段时间有人装柜 / 卸柜把票挪到没排队的柜里，就让拆派仓再扫一次
-        const fresh: Candidate[] = await findCandidates(tx);
-        if (fresh.some((c) => c.containerItems.some((i) => !lockIds.includes(i.containerId)))) throw new ScanAgainError();
-        const items = await tx.shipmentContainerItem.findMany({
-          where: { shipmentId: { in: fresh.map((c) => c.id) } },
-          orderBy: [{ shipmentId: "asc" }, { createdAt: "desc" }, { containerId: "desc" }],
-          select: {
-            loadedPieceCount: true, loadedVolumeM3: true, containerId: true,
-            container: { select: { containerNo: true, companyId: true, isFcl: true } },
-            shipment: { select: MANIFEST_SHIPMENT_SELECT },
-          },
-        });
-        // 上一句重读和这一句之间票也可能刚被挪进没排队的柜（10-13 dsh 审查）：取到的明细也得全在排了队的柜里
-        if (items.some((it) => !lockIds.includes(it.containerId))) throw new ScanAgainError();
-        const placement = items.map((it) => `${it.shipment.id}:${it.containerId}`).sort().join(",");
-        const picked: Picked[] = [];
-        const skipped: Array<{ trackingNo: string; reason: string }> = [];
-        const seen = new Set<string>();
-        for (const item of items) {
-          // 同一票按装柜时间倒排，第一条就是最近装的柜
-          if (seen.has(item.shipment.id)) continue;
-          seen.add(item.shipment.id);
-          if (item.container.isFcl) { skipped.push({ trackingNo: item.shipment.trackingNo, reason: "整柜" }); continue; }
-          if (item.loadedPieceCount <= 0) { skipped.push({ trackingNo: item.shipment.trackingNo, reason: "本柜 0 件" }); continue; }
-          picked.push({ containerId: item.containerId, containerNo: item.container.containerNo, companyId: item.container.companyId, row: sourceRowOf(item) });
+        // 事务时限管不住「卡在等锁」：别人占着柜子不放，查询会一直等到锁放开（10-13 实测 9 秒才回）。
+        // 所以让数据库自己限时：每拿一把锁之前把这次事务剩下的时间设成 lock_timeout，等不到就报 55P03 → 回 503
+        const lockDeadline = Date.now() + 4000;
+        for (const id of [...lockIds].sort()) {
+          await tx.$executeRaw`SELECT set_config('lock_timeout', ${String(Math.max(50, lockDeadline - Date.now()))}, true)`;
+          await lockChaipaiManifest(tx, id);
         }
-        for (const c of fresh) if (!seen.has(c.id)) skipped.push({ trackingNo: c.trackingNo, reason: "没装过柜" });
-
-        // 按柜分开排批次（同按柜拉：batchKey 只跟柜子 id 和批次号原文有关），柜子按柜号排
-        const byContainer = new Map<string, { containerNo: string; companyId: string; rows: ManifestSourceRow[] }>();
-        for (const p of picked) {
-          const g = byContainer.get(p.containerId) ?? { containerNo: p.containerNo, companyId: p.companyId, rows: [] };
-          g.rows.push(p.row);
-          byContainer.set(p.containerId, g);
-        }
-        const parts = [...byContainer.entries()]
-          .sort((a, b) => (a[1].containerNo < b[1].containerNo ? -1 : a[1].containerNo > b[1].containerNo ? 1 : a[0] < b[0] ? -1 : 1))
-          .map(([containerId, g]) => ({ containerNo: g.containerNo, companyId: g.companyId, batches: planBatches(cfg.companyId, containerId, g.rows) }));
-        const versions = await versionsFor(tx, parts.map((p) => ({
-          companyId: p.companyId,
-          entries: p.batches.flatMap((b) => b.items.map((item) => ({ shipmentId: item.sourceShipmentId, hash: contentHashOf(b.batchKey, b.batchNo, item) }))),
-        })));
-        // 版本写下以后、提交以前再核一次：明细读完到现在票要是被挪了柜，这次发的是旧柜的内容，
-        // 写下的版本却会比新柜那边拉到的新内容还大（拆派仓按版本收，旧的盖掉新的）—— 整次撤回、让拆派仓再扫（10-13 Codex 审查）
-        if (await placementOf(tx, fresh.map((c) => c.id)) !== placement) throw new ScanAgainError();
-        return { picked, skipped, versions, parts };
-      }, { timeout: 5500, maxWait: 500 });
+        const snap = await readSnapshot(tx, lockIds);
+        // 超过拆派仓一次能收的票数：不写版本、不发（拆派仓收到也会整次拒收）
+        if (snap.picked.length > WAYBILL_MAX_SHIPMENTS) return { tooMany: snap.picked.length };
+        const versions = await versionsFor(tx, snap.groups);
+        // 版本写下以后、提交以前原样再读一遍：中间票被挪了柜（哪怕挪走又挪回）或内容被改了，这次发的就是旧内容，
+        // 写下的版本却可能比别处拉到的新内容还大（拆派仓按版本收，旧的盖掉新的）—— 整次撤回、让拆派仓再扫（10-13 Codex 两轮审查）
+        if ((await readSnapshot(tx, lockIds)).signature !== snap.signature) throw new ScanAgainError();
+        return { picked: snap.picked, skipped: snap.skipped, versions, parts: snap.parts };
+      }, { timeout: 5500, maxWait: 500, isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted });
     } catch (error) {
       const code = (error as { code?: string })?.code;
       // P2028 等不到连接 / 事务超时，P2034 写冲突或死锁，P2024 连接池等超时：都让拆派仓稍后再扫；别的照常 500
-      if (error instanceof ScanAgainError || code === "P2028" || code === "P2034" || code === "P2024") {
-        logger.warn("拆派仓按运单号取票：正忙，让拆派仓再扫一次", { waybillNo, 原因: error instanceof ScanAgainError ? "票刚被挪柜" : code });
+      if (error instanceof ScanAgainError || code === "P2028" || code === "P2034" || code === "P2024" || isLockTimeout(error)) {
+        logger.warn("拆派仓按运单号取票：正忙，让拆派仓再扫一次", { waybillNo, 原因: error instanceof ScanAgainError ? "票刚被挪柜" : isLockTimeout(error) ? "等锁超时" : code });
         fail(res, 503, "INTERNAL_ERROR", "正忙，请稍后再扫一次");
         return;
       }
       throw error;
     }
     if ("notFound" in result) { fail(res, 404, "NOT_FOUND", result.notFound); return; }
+    if ("tooMany" in result) {
+      logger.error("拆派仓按运单号取票：票数超出拆派仓一次能收的上限，没发", { waybillNo, 票数: result.tooMany });
+      fail(res, 422, "VALIDATION_ERROR", `这个号下面有 ${result.tooMany} 票，超过拆派仓一次能收的 ${WAYBILL_MAX_SHIPMENTS} 票`);
+      return;
+    }
 
     if (result.skipped.length > 0) logger.info("拆派仓按运单号取票：这些票没给", { waybillNo, 剔除: result.skipped });
     if (result.picked.length === 0) {
@@ -329,3 +356,10 @@ export function registerChaipaiManifestRoutes(app: MinimalHttpApp): void {
 
 /** 排队期间票被挪到别的柜：不硬取，让拆派仓再扫一次 */
 class ScanAgainError extends Error {}
+
+/** 数据库报「等锁超时」（SQLSTATE 55P03，lock_timeout 到了）；裸 SQL 出错时 Prisma 包成 P2010、原因放在 meta 里 */
+function isLockTimeout(error: unknown): boolean {
+  const e = error as { code?: string; message?: string; meta?: unknown };
+  const text = `${e?.message ?? ""} ${JSON.stringify(e?.meta ?? "")}`;
+  return /55P03|lock timeout/i.test(text);
+}

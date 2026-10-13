@@ -330,7 +330,7 @@ async function main(): Promise<void> {
       assert.deepEqual([back.length, back[0]._containerNo], [1, ctnNo]);
     });
     await test("N5 整柜的票 404；没装过柜的票 404；再取一次版本时间不变、改了件数才变大", async () => {
-      assert.equal((await byNo(`ZZCPT${stamp}5`)).status, 404);
+      assert.deepEqual(Object.values(await byNo(`ZZCPT${stamp}5`)).map((v: any) => v?.message ?? v), [404, "整柜的货不走拆派仓"]);
       const oX = await seedOrder("ZZCPA", 2, 20);
       const notLoaded = await seedShipment({ orderId: oX, trackingNo: `ZZCPT${stamp}6`, pieces: 2, status: "inWarehouseCN" });
       try {
@@ -387,20 +387,25 @@ async function main(): Promise<void> {
         await hold;
       }, { timeout: 15000 });
       await locked;
-      const pending = byNo(`${parentNo}-1`); // 先读到 K1 在 C1，然后卡在 C1 的锁上
-      // 等它真的卡在锁上（看数据库里有没有一个还没拿到的 83060 咨询锁），不靠猜时间
-      for (let i = 0; i < 100; i++) {
-        const w: Row[] = await pm.$queryRaw`SELECT 1 FROM pg_locks WHERE locktype = 'advisory' AND classid = 83060 AND NOT granted`;
-        if (w.length > 0) break;
-        await new Promise((r) => setTimeout(r, 30));
-      }
-      await pm.shipmentContainerItem.updateMany({ where: { shipmentId: K1, containerId: C1 }, data: { containerId: C2 } });
       try {
+        const pending = byNo(`${parentNo}-1`); // 先读到 K1 在 C1，然后卡在 C1 的锁上
+        // 等它真的卡在锁上（看数据库里有没有一个还没拿到的 83060 咨询锁），不靠猜时间
+        let waited = false;
+        for (let i = 0; i < 100; i++) {
+          const w: Row[] = await pm.$queryRaw`SELECT 1 FROM pg_locks WHERE locktype = 'advisory' AND classid = 83060 AND NOT granted`;
+          if (w.length > 0) { waited = true; break; }
+          await new Promise((r) => setTimeout(r, 30));
+        }
+        assert.ok(waited, "前提：取票真的卡在 C1 的排队锁上");
+        await pm.shipmentContainerItem.updateMany({ where: { shipmentId: K1, containerId: C1 }, data: { containerId: C2 } });
         release();
         await holder;
         const r = await pending;
         assert.deepEqual([r.status, r.raw?.message], [503, "正忙，请稍后再扫一次"]);
       } finally {
+        // 出错也一定放锁、挪回来，别让后面的用例排队（dsh 10-13 第 2 轮）
+        release();
+        await holder.catch(() => undefined);
         await pm.shipmentContainerItem.updateMany({ where: { shipmentId: K1, containerId: C2 }, data: { containerId: C1 } });
       }
       assert.equal((await byNo(`${parentNo}-1`)).status, 200, "挪回来以后照常能取");
@@ -419,18 +424,18 @@ async function main(): Promise<void> {
         await hold;
       }, { timeout: 15000 });
       await locked;
-      // 先改一下内容（件数方数），让这次取票一定要去写版本（内容没变的话 ON CONFLICT 也会锁这一行，这里双保险）
-      await pm.shipmentContainerItem.updateMany({ where: { shipmentId: K1, containerId: C1 }, data: { loadedVolumeM3: 1.1 } });
-      const pending = byNo(`${parentNo}-1`);
-      let waited = false;
-      for (let i = 0; i < 150; i++) {
-        const w: Row[] = await pm.$queryRaw`SELECT 1 FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND query ILIKE '%chaipai_manifest_versions%' AND query NOT ILIKE '%FOR UPDATE%'`;
-        if (w.length > 0) { waited = true; break; }
-        await new Promise((r) => setTimeout(r, 30));
-      }
-      assert.ok(waited, "前提：取票真的停在写版本那一步");
-      await pm.shipmentContainerItem.updateMany({ where: { shipmentId: K1, containerId: C1 }, data: { containerId: C2 } });
       try {
+        // 先改一下内容（件数方数），让这次取票一定要去写版本（内容没变的话 ON CONFLICT 也会锁这一行，这里双保险）
+        await pm.shipmentContainerItem.updateMany({ where: { shipmentId: K1, containerId: C1 }, data: { loadedVolumeM3: 1.1 } });
+        const pending = byNo(`${parentNo}-1`);
+        let waited = false;
+        for (let i = 0; i < 150; i++) {
+          const w: Row[] = await pm.$queryRaw`SELECT 1 FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND query ILIKE '%chaipai_manifest_versions%' AND query NOT ILIKE '%FOR UPDATE%'`;
+          if (w.length > 0) { waited = true; break; }
+          await new Promise((r) => setTimeout(r, 30));
+        }
+        assert.ok(waited, "前提：取票真的停在写版本那一步");
+        await pm.shipmentContainerItem.updateMany({ where: { shipmentId: K1, containerId: C1 }, data: { containerId: C2 } });
         release();
         await holder;
         const r = await pending;
@@ -438,9 +443,76 @@ async function main(): Promise<void> {
         const after = await pm.chaipaiManifestVersion.findUnique({ where: { shipmentId: K1 } });
         assert.deepEqual([after.contentHash, after.versionAt.toISOString()], [before.contentHash, before.versionAt.toISOString()], "这次写的版本要整个撤回");
       } finally {
-        await pm.shipmentContainerItem.updateMany({ where: { shipmentId: K1, containerId: C2 }, data: { containerId: C1, loadedVolumeM3: 1.0 } });
+        release();
+        await holder.catch(() => undefined);
+        await pm.shipmentContainerItem.updateMany({ where: { shipmentId: K1, containerId: { in: [C1, C2] } }, data: { containerId: C1, loadedVolumeM3: 1.0 } });
       }
       assert.equal((await byNo(`${parentNo}-1`)).status, 200, "挪回来以后照常能取");
+    });
+    await test("N10 没挪柜、只是取票途中这票的件数被改了（也盖住「挪走又挪回」那种交错）→ 提交前重读发现内容摘要变了：503、版本撤回", async () => {
+      const before = await pm.chaipaiManifestVersion.findUnique({ where: { shipmentId: K1 } });
+      let release!: () => void;
+      const hold = new Promise<void>((r) => { release = r; });
+      let gotLock!: () => void;
+      const locked = new Promise<void>((r) => { gotLock = r; });
+      const holder = pm.$transaction(async (tx: any) => {
+        await tx.$queryRaw`SELECT 1 FROM chaipai_manifest_versions WHERE shipment_id = ${K1} FOR UPDATE`;
+        gotLock();
+        await hold;
+      }, { timeout: 15000 });
+      await locked;
+      try {
+        await pm.shipmentContainerItem.updateMany({ where: { shipmentId: K1, containerId: C1 }, data: { loadedVolumeM3: 1.2 } });
+        const pending = byNo(`${parentNo}-1`);
+        let waited = false;
+        for (let i = 0; i < 150; i++) {
+          const w: Row[] = await pm.$queryRaw`SELECT 1 FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND query ILIKE '%chaipai_manifest_versions%' AND query NOT ILIKE '%FOR UPDATE%'`;
+          if (w.length > 0) { waited = true; break; }
+          await new Promise((r) => setTimeout(r, 30));
+        }
+        assert.ok(waited, "前提：取票停在写版本那一步");
+        // 柜子不动，只改件数（方数照旧）
+        await pm.shipmentContainerItem.updateMany({ where: { shipmentId: K1, containerId: C1 }, data: { loadedPieceCount: 3 } });
+        release();
+        await holder;
+        const r = await pending;
+        assert.deepEqual([r.status, r.raw?.message], [503, "正忙，请稍后再扫一次"]);
+        const after = await pm.chaipaiManifestVersion.findUnique({ where: { shipmentId: K1 } });
+        assert.deepEqual([after.contentHash, after.versionAt.toISOString()], [before.contentHash, before.versionAt.toISOString()], "这次写的版本要整个撤回");
+        // 再扫一次拿到的就是新件数
+        const again = shipsOf((await byNo(`${parentNo}-1`)).raw)[0];
+        assert.deepEqual([again.boxCount, again.volumeM3], [3, 1.2]);
+      } finally {
+        release();
+        await holder.catch(() => undefined);
+        await pm.shipmentContainerItem.updateMany({ where: { shipmentId: K1, containerId: C1 }, data: { loadedPieceCount: 2, loadedVolumeM3: 1.0 } });
+      }
+    });
+    await test("N11 别人占着这个柜的排队锁一直不放（比如 9 秒）：取票按自己的时限回 503，不陪着等，8 秒内一定有回复", async () => {
+      const ctn = await pm.container.findFirst({ where: { containerNo: ctnNo }, select: { id: true } });
+      let release!: () => void;
+      const hold = new Promise<void>((r) => { release = r; });
+      let gotLock!: () => void;
+      const locked = new Promise<void>((r) => { gotLock = r; });
+      const holder = pm.$transaction(async (tx: any) => {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(83060, hashtext(${ctn.id}))`;
+        gotLock();
+        await hold;
+      }, { timeout: 20000 });
+      await locked;
+      const timer = setTimeout(() => release(), 9000);
+      try {
+        const t0 = Date.now();
+        const r = await byNo(`${parentNo}-1`);
+        const ms = Date.now() - t0;
+        assert.equal(r.status, 503, JSON.stringify(r.raw));
+        assert.ok(ms < 7500, `用了 ${ms} 毫秒，超过拆派仓能等的时间`);
+      } finally {
+        clearTimeout(timer);
+        release();
+        await holder.catch(() => undefined);
+      }
+      assert.equal((await byNo(`${parentNo}-1`)).status, 200, "锁放了以后照常能取");
     });
 
     console.log("\n【收回传：状态和轨迹】");
