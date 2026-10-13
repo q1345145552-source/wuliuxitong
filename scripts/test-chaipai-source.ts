@@ -324,10 +324,11 @@ check("W2b 拉清单的事务第一句就是同柜排队锁（删了这句静态
 check("W2c 按运单号取票（10-13）：先按这几票挂过的柜子排好序一个一个排队，再重读；跟按柜拉同一把锁、同一份取数代码", () => {
   const src = read("apps/api/src/modules/chaipai/manifest-routes.ts");
   // 总截止时间：每句碰数据库的语句之前都把 statement_timeout / lock_timeout 改成离截止还剩多少（Codex 10-13 第 3 轮）
-  assert.match(src, /const deadline = Date\.now\(\) \+ 4500;\n\s*const guard = async \(\) => \{\n\s*const ms = String\(Math\.max\(50, deadline - Date\.now\(\)\)\);\n\s*await tx\.\$executeRaw`SELECT set_config\('statement_timeout', \$\{ms\}, true\), set_config\('lock_timeout', \$\{ms\}, true\)`;\n\s*\};\n\s*await guard\(\);\n\s*const candidates: Candidate\[\] = await findCandidates\(tx\);/);
-  assert.match(src, /for \(const id of \[\.\.\.lockIds\]\.sort\(\)\) \{\n\s*await guard\(\);\n\s*await lockChaipaiManifest\(tx, id\);\n\s*\}\n\s*const snap = await readSnapshot\(tx, lockIds, guard\);/);
-  assert.match(src, /const readSnapshot = async \(tx: any, lockIds: string\[\], guard: \(\) => Promise<void>\): Promise<Snapshot> => \{\n\s*await guard\(\);\n\s*const fresh: Candidate\[\] = await findCandidates\(tx\);/);
-  assert.match(src, /\n\s*await guard\(\);\n\s*const items = await tx\.shipmentContainerItem\.findMany\(\{\n\s*where: \{ shipmentId: \{ in: fresh\.map/);
+  // 剩余时间按这次调用 Prisma 会发几句平分（带关系的查询逐表发、每句各算时限；Codex 10-13 第 4 轮），到点就不再发
+  assert.match(src, /const deadline = performance\.now\(\) \+ 4500;[^\n]*\n\s*const budget: Budget = \{\n\s*guard: async \(statements = 1\) => \{\n\s*const left = deadline - performance\.now\(\);\n\s*if \(left <= 0\) throw new DeadlineError\(\);\n\s*const ms = String\(Math\.max\(1, Math\.floor\(left \/ statements\)\)\);\n\s*await tx\.\$executeRaw`SELECT set_config\('statement_timeout', \$\{ms\}, true\), set_config\('lock_timeout', \$\{ms\}, true\)`;\n\s*\},\n\s*check: \(\) => \{ if \(performance\.now\(\) >= deadline\) throw new DeadlineError\(\); \},\n\s*\};\n\s*await budget\.guard\(2\);\n\s*const candidates: Candidate\[\] = await findCandidates\(tx\);\n\s*budget\.check\(\);/);
+  assert.match(src, /for \(const id of \[\.\.\.lockIds\]\.sort\(\)\) \{\n\s*await budget\.guard\(\);\n\s*await lockChaipaiManifest\(tx, id\);\n\s*budget\.check\(\);\n\s*\}\n\s*const snap = await readSnapshot\(tx, lockIds, budget\);/);
+  assert.match(src, /const readSnapshot = async \(tx: any, lockIds: string\[\], budget: Budget\): Promise<Snapshot> => \{\n\s*await budget\.guard\(2\);[^\n]*\n\s*const fresh: Candidate\[\] = await findCandidates\(tx\);\n\s*budget\.check\(\);/);
+  assert.match(src, /\n\s*await budget\.guard\(8\);[^\n]*\n\s*const items = await tx\.shipmentContainerItem\.findMany\(\{\n\s*where: \{ shipmentId: \{ in: fresh\.map/);
   assert.match(src, /const nowIso = new Date\(\)\.toISOString\(\);\n\s*await guard\?\.\(\);\n\s*await tx\.\$executeRaw`\n\s*INSERT INTO chaipai_manifest_versions/);
   // 产品名排序写死（sortOrder 可重复），前后两次读拼出来的品名才一样（dsh / Codex 10-13 第 3 轮）
   assert.match(src, /products: \{ select: \{ itemName: true, sortOrder: true \}, orderBy: \[\{ sortOrder: "asc" \}, \{ id: "asc" \}\]/);
@@ -336,9 +337,9 @@ check("W2c 按运单号取票（10-13）：先按这几票挂过的柜子排好�
   assert.equal((src.match(/shipment: \{ select: MANIFEST_SHIPMENT_SELECT \}/g) ?? []).length, 2);
   assert.equal((src.match(/sourceRowOf\(item\)/g) ?? []).length, 2);
   // 被挪柜、事务超时、序列化冲突都回 503 让拆派仓再扫（拆派仓只认 200 / 404 / 401，别的当连不上）；拆派仓等约 8 秒
-  assert.match(src, /if \(error instanceof ScanAgainError \|\| code === "P2028" \|\| code === "P2034" \|\| code === "P2024" \|\| isDbTimeout\(error\)\) \{[\s\S]{0,300}fail\(res, 503, "INTERNAL_ERROR", "正忙，请稍后再扫一次"\);/);
+  assert.match(src, /if \(error instanceof ScanAgainError \|\| error instanceof DeadlineError \|\| code === "P2028" \|\| code === "P2034" \|\| code === "P2024" \|\| isDbTimeout\(error\)\) \{[\s\S]{0,300}fail\(res, 503, "INTERNAL_ERROR", "正忙，请稍后再扫一次"\);/);
   // 版本写下以后、提交以前原样再读一遍、比「挂的柜 + 内容摘要」（Codex 10-13 两轮）
-  assert.match(src, /const versions = await versionsFor\(tx, snap\.groups, guard\);\n(\s*\/\/[^\n]*\n)*\s*if \(\(await readSnapshot\(tx, lockIds, guard\)\)\.signature !== snap\.signature\) throw new ScanAgainError\(\);\n\s*return \{ picked: snap\.picked/);
+  assert.match(src, /const versions = await versionsFor\(tx, snap\.groups, \(\) => budget\.guard\(\)\);\n\s*budget\.check\(\);\n(\s*\/\/[^\n]*\n)*\s*if \(\(await readSnapshot\(tx, lockIds, budget\)\)\.signature !== snap\.signature\) throw new ScanAgainError\(\);\n\s*budget\.check\(\);\n\s*return \{ picked: snap\.picked/);
   assert.match(src, /signature: `\$\{placement\}\|\$\{hashes\}`/);
   assert.match(src, /if \(items\.some\(\(it: \{ containerId: string \}\) => !lockIds\.includes\(it\.containerId\)\)\) throw new ScanAgainError\(\);/);
   // 拿锁后重读那一道（DB 用例 N8 里它跟上面那道互相兜，单删一道 N8 不红，这里点名查；dsh 10-13 第 2 轮）

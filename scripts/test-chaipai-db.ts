@@ -568,6 +568,47 @@ async function main(): Promise<void> {
       }
       assert.equal((await byNo(`${parentNo}-1`)).status, 200, "表锁放了以后照常能取");
     });
+    await test("N14 一次带关系的查询里先后两张表被锁（订单表 3.8 秒后放、产品表一直锁）：剩余时间按句数平分，6 秒内回 503（每句各给满剩余时间要 8 秒多；Codex 10-13 第 4 轮）", async () => {
+      const releases: Array<() => void> = [];
+      const holders: Promise<unknown>[] = [];
+      const holdTable = (table: string) => new Promise<void>((ready) => {
+        holders.push(pm.$transaction(async (tx: any) => {
+          await tx.$executeRawUnsafe(`LOCK TABLE ${table} IN ACCESS EXCLUSIVE MODE`);
+          ready();
+          await new Promise<void>((r) => releases.push(r));
+        }, { timeout: 20000 }));
+      });
+      try {
+        await holdTable("orders");
+        await holdTable("order_products");
+        const timer = setTimeout(() => releases[0](), 3800);
+        const t0 = Date.now();
+        const r = await byNo(`${parentNo}-1`);
+        const ms = Date.now() - t0;
+        clearTimeout(timer);
+        assert.deepEqual([r.status, r.raw?.message], [503, "正忙，请稍后再扫一次"]);
+        assert.ok(ms < 6000, `用了 ${ms} 毫秒`);
+      } finally {
+        for (const r of releases) r();
+        await Promise.all(holders.map((h) => h.catch(() => undefined)));
+      }
+      assert.equal((await byNo(`${parentNo}-1`)).status, 200, "表锁都放了以后照常能取");
+    });
+    await test("N15 同一订单两个产品排序号一样（都是 0）：品名按 id 定序，按柜拉、按运单号取拼出来一样，再取版本不变", async () => {
+      // 先插 id 大的、后插 id 小的：不写死排序的话数据库多半按插入顺序回「乙品 / 甲品」
+      await pm.orderProduct.create({ data: { id: `${P}prod_b`, companyId: CO, orderId: oP, itemName: "乙品", sortOrder: 0 } });
+      await pm.orderProduct.create({ data: { id: `${P}prod_a`, companyId: CO, orderId: oP, itemName: "甲品", sortOrder: 0 } });
+      try {
+        const viaNo = shipsOf((await byNo(`${parentNo}-1`)).raw)[0];
+        const viaCtn = shipsOf((await pull(ctnNo)).raw).find((s: Row) => s.sourceShipmentId === K1);
+        assert.deepEqual([viaNo.itemName, viaCtn.itemName], ["甲品 / 乙品", "甲品 / 乙品"]);
+        assert.equal(viaNo.sourceUpdatedAt, viaCtn.sourceUpdatedAt);
+        const again = shipsOf((await byNo(`${parentNo}-1`)).raw)[0];
+        assert.equal(again.sourceUpdatedAt, viaNo.sourceUpdatedAt, "内容没变版本不能变");
+      } finally {
+        await pm.orderProduct.deleteMany({ where: { id: { in: [`${P}prod_a`, `${P}prod_b`] } } });
+      }
+    });
 
     console.log("\n【收回传：状态和轨迹】");
     await test("R1 密钥不对 401；格式不对 400；公司编号不对 409；湘泰没有这票 → IGNORED_OLDER 什么都不写", async () => {
