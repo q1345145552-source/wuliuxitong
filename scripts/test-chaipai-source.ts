@@ -323,11 +323,17 @@ check("W2b 拉清单的事务第一句就是同柜排队锁（删了这句静态
 
 check("W2c 按运单号取票（10-13）：先按这几票挂过的柜子排好序一个一个排队，再重读；跟按柜拉同一把锁、同一份取数代码", () => {
   const src = read("apps/api/src/modules/chaipai/manifest-routes.ts");
-  assert.match(src, /result = await prisma\.\$transaction\(async \(tx\) => \{\n\s*for \(const id of lockIds\) await lockChaipaiManifest\(tx, id\);/);
+  assert.match(src, /if \(lockIds\.length === 0\) return \{ notFound: "这票还没装柜" \};\n\s*for \(const id of lockIds\) await lockChaipaiManifest\(tx, id\);\n\s*\/\/[^\n]*\n\s*const fresh: Candidate\[\] = await findCandidates\(tx\);/);
   assert.match(src, /const lockIds = \[\.\.\.new Set\(candidates\.flatMap\(\(c\) => c\.containerItems\.map\(\(i\) => i\.containerId\)\)\)\]\.sort\(\);/);
   // 两条路都用 MANIFEST_SHIPMENT_SELECT + sourceRowOf，不各抄一份
   assert.equal((src.match(/shipment: \{ select: MANIFEST_SHIPMENT_SELECT \}/g) ?? []).length, 2);
   assert.equal((src.match(/sourceRowOf\(item\)/g) ?? []).length, 2);
+  // 被挪柜、事务超时、序列化冲突都回 503 让拆派仓再扫（拆派仓只认 200 / 404 / 401，别的当连不上）；拆派仓等约 8 秒
+  assert.match(src, /if \(error instanceof ScanAgainError \|\| code === "P2028" \|\| code === "P2034" \|\| code === "P2024"\) \{[\s\S]{0,200}fail\(res, 503, "INTERNAL_ERROR", "正忙，请稍后再扫一次"\);/);
+  // 版本写下以后、提交以前再核一次票挂在哪些柜（Codex 10-13）
+  assert.match(src, /if \(await placementOf\(tx, fresh\.map\(\(c\) => c\.id\)\) !== placement\) throw new ScanAgainError\(\);\n\s*return \{ picked, skipped, versions, parts \};/);
+  assert.match(src, /if \(items\.some\(\(it\) => !lockIds\.includes\(it\.containerId\)\)\) throw new ScanAgainError\(\);/);
+  assert.match(src, /\}, \{ timeout: 5500, maxWait: 500 \}\);/);
 });
 
 check("W3 派送照片只给员工 / 管理员（第 256 条）：后端 requireRole staff/admin；弹窗只在员工 / 管理员打开时挂", () => {
@@ -366,6 +372,11 @@ check("M9 按运单号取票的入参和信封（10-13）：只去首尾空格�
   assert.deepEqual(viaContainer.manifests, parts);
   assert.match(envelopeProblem({ ...env, waybillNo: "A\u0001" }) ?? "", /运单号/);
   assert.match(envelopeProblem({ ...env, manifests: [{ ...parts[0], containerNo: "C\u0002" }] }) ?? "", /柜号/);
+  // 拆派仓按单号取票一次最多 200 票：200 放行、201 挡（按柜拉仍是 5000）
+  const many = (n: number) => [{ ...parts[0], shipments: Array.from({ length: n }, (_, i) => ({ ...parts[0].shipments[0], sourceShipmentId: `s_${i}` })) }];
+  assert.equal(envelopeProblem({ ...env, manifests: many(200) }), null);
+  assert.match(envelopeProblem({ ...env, manifests: many(201) }) ?? "", /超过 200/);
+  assert.equal(envelopeProblem({ ...viaContainer, manifests: many(201) }), null);
 });
 
 console.log(`\n通过 ${passed} / 失败 ${failed}`);

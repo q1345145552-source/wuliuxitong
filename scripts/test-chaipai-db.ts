@@ -351,7 +351,96 @@ async function main(): Promise<void> {
       const rs = await Promise.all([byNo(parentNo), pull(ctnNo), byNo(`${parentNo}-2`), byNo(parentNo), pull(ctnNo)]);
       assert.deepEqual(rs.map((x) => x.status), [200, 200, 200, 200, 200]);
       const k2 = rs.map((x) => (x.raw.manifests as Row[]).flatMap((m) => m.shipments).find((s: Row) => s.sourceShipmentId === K2)?.sourceUpdatedAt);
+      assert.ok(k2.every(Boolean), `每个回复里都要有 K2：${JSON.stringify(k2)}`);
+      const k2Batch = rs.map((x) => (x.raw.manifests as Row[]).find((m) => m.shipments.some((s: Row) => s.sourceShipmentId === K2)));
+      assert.ok(k2Batch.every((m) => m && m.batchKey && m.batchNo === "B2" && m.containerNo === ctnNo), "批次身份要齐全");
+      assert.equal(new Set(k2Batch.map((m) => m!.batchKey)).size, 1, "两条路的 batchKey 要一样");
       assert.equal(new Set(k2).size, 1, JSON.stringify(k2));
+    });
+    await test("N7 父单子票跨两个柜（要拿两把锁）跟两个柜各自按柜拉、按子单号取一起来：全 200、同一票版本一致，不死锁", async () => {
+      const K4 = await seedShipment({ orderId: oP, trackingNo: `${parentNo}-4`, parent: parentNo, pieces: 2, status: "departed", batchNo: "B2", weightKg: 20 });
+      await load(C2, K4, 2, 1.0);
+      try {
+        for (let round = 0; round < 3; round++) {
+          const rs = await Promise.all([byNo(parentNo), pull(`ZZCP${stamp}02`), pull(ctnNo), byNo(`${parentNo}-4`), byNo(parentNo), pull(`ZZCP${stamp}02`)]);
+          assert.deepEqual(rs.map((x) => x.status), [200, 200, 200, 200, 200, 200], `第 ${round + 1} 轮`);
+          for (const id of [K1, K4]) {
+            const v = rs.map((x) => (x.raw.manifests as Row[]).flatMap((m) => m.shipments).find((s: Row) => s.sourceShipmentId === id)?.sourceUpdatedAt).filter(Boolean);
+            assert.ok(v.length >= 3 && new Set(v).size === 1, `${id} 版本不一致：${JSON.stringify(v)}`);
+          }
+        }
+      } finally {
+        await pm.chaipaiManifestVersion.deleteMany({ where: { shipmentId: K4 } });
+        await pm.shipmentContainerItem.deleteMany({ where: { shipmentId: K4 } });
+        await pm.shipment.delete({ where: { id: K4 } });
+      }
+    });
+    await test("N8 排队期间票被挪进没排队的柜 → 503「正忙，请稍后再扫一次」，不硬取（删了拿锁后的那两道检查这项就红）", async () => {
+      const ctn = await pm.container.findFirst({ where: { containerNo: ctnNo }, select: { id: true } });
+      let release!: () => void;
+      const hold = new Promise<void>((r) => { release = r; });
+      let gotLock!: () => void;
+      const locked = new Promise<void>((r) => { gotLock = r; });
+      const holder = pm.$transaction(async (tx: any) => {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(83060, hashtext(${ctn.id}))`;
+        gotLock();
+        await hold;
+      }, { timeout: 15000 });
+      await locked;
+      const pending = byNo(`${parentNo}-1`); // 先读到 K1 在 C1，然后卡在 C1 的锁上
+      // 等它真的卡在锁上（看数据库里有没有一个还没拿到的 83060 咨询锁），不靠猜时间
+      for (let i = 0; i < 100; i++) {
+        const w: Row[] = await pm.$queryRaw`SELECT 1 FROM pg_locks WHERE locktype = 'advisory' AND classid = 83060 AND NOT granted`;
+        if (w.length > 0) break;
+        await new Promise((r) => setTimeout(r, 30));
+      }
+      await pm.shipmentContainerItem.updateMany({ where: { shipmentId: K1, containerId: C1 }, data: { containerId: C2 } });
+      try {
+        release();
+        await holder;
+        const r = await pending;
+        assert.deepEqual([r.status, r.raw?.message], [503, "正忙，请稍后再扫一次"]);
+      } finally {
+        await pm.shipmentContainerItem.updateMany({ where: { shipmentId: K1, containerId: C2 }, data: { containerId: C1 } });
+      }
+      assert.equal((await byNo(`${parentNo}-1`)).status, 200, "挪回来以后照常能取");
+    });
+    await test("N9 明细读完、版本都写下了票才被挪柜 → 提交前再核一次发现变了：503、这次写的版本整个撤回（Codex 10-13；删了最后那道检查这项就红）", async () => {
+      const before = await pm.chaipaiManifestVersion.findUnique({ where: { shipmentId: K1 } });
+      assert.ok(before, "前提：K1 已经有版本记录");
+      // 把 K1 这行版本记录先锁住：取票走到写版本那一步就停在那里（此时明细已经读完）
+      let release!: () => void;
+      const hold = new Promise<void>((r) => { release = r; });
+      let gotLock!: () => void;
+      const locked = new Promise<void>((r) => { gotLock = r; });
+      const holder = pm.$transaction(async (tx: any) => {
+        await tx.$queryRaw`SELECT 1 FROM chaipai_manifest_versions WHERE shipment_id = ${K1} FOR UPDATE`;
+        gotLock();
+        await hold;
+      }, { timeout: 15000 });
+      await locked;
+      // 先改一下内容（件数方数），让这次取票一定要去写版本（内容没变的话 ON CONFLICT 也会锁这一行，这里双保险）
+      await pm.shipmentContainerItem.updateMany({ where: { shipmentId: K1, containerId: C1 }, data: { loadedVolumeM3: 1.1 } });
+      const pending = byNo(`${parentNo}-1`);
+      let waited = false;
+      for (let i = 0; i < 150; i++) {
+        const w: Row[] = await pm.$queryRaw`SELECT 1 FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND query ILIKE '%chaipai_manifest_versions%' AND query NOT ILIKE '%FOR UPDATE%'`;
+        if (w.length > 0) { waited = true; break; }
+        await new Promise((r) => setTimeout(r, 30));
+      }
+      assert.ok(waited, "前提：取票真的停在写版本那一步");
+      await pm.shipmentContainerItem.updateMany({ where: { shipmentId: K1, containerId: C1 }, data: { containerId: C2 } });
+      try {
+        release();
+        await holder;
+        const r = await pending;
+        assert.deepEqual([r.status, r.raw?.message], [503, "正忙，请稍后再扫一次"]);
+        const after = await pm.chaipaiManifestVersion.findUnique({ where: { shipmentId: K1 } });
+        assert.deepEqual([after.contentHash, after.versionAt.toISOString()], [before.contentHash, before.versionAt.toISOString()], "这次写的版本要整个撤回");
+      } finally {
+        await pm.shipmentContainerItem.updateMany({ where: { shipmentId: K1, containerId: C2 }, data: { containerId: C1, loadedVolumeM3: 1.0 } });
+      }
+      assert.equal((await byNo(`${parentNo}-1`)).status, 200, "挪回来以后照常能取");
     });
 
     console.log("\n【收回传：状态和轨迹】");
@@ -1089,6 +1178,13 @@ async function main(): Promise<void> {
       assert.deepEqual([r2.status, j2.protocolVersion, "code" in j2], [200, 2, false]);
       const r3 = await fetch(`${base}/integrations/chaipai/v2/events`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
       assert.equal(r3.status, 401);
+      // 按运单号取票（10-13）：不走登录解析也能进、裸 JSON、顶层 waybillNo 原样回（带空格）；不带密钥 401
+      const wb = ` ${parentNo}-1 `;
+      const r4 = await fetch(`${base}/integrations/chaipai/v2/waybill-manifest?waybillNo=${encodeURIComponent(wb)}`, { headers: { authorization: `Bearer ${PULL}` } });
+      const j4 = await r4.json();
+      assert.deepEqual([r4.status, "code" in j4, j4.waybillNo, j4.manifests[0].shipments[0].waybillNo], [200, false, wb, `${parentNo}-1`]);
+      const r5 = await fetch(`${base}/integrations/chaipai/v2/waybill-manifest?waybillNo=${encodeURIComponent(wb)}`);
+      assert.equal(r5.status, 401);
     });
 
     console.log("\n【派送照片（只给员工）】");

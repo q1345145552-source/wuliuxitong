@@ -16,6 +16,8 @@ export const MANIFEST_MAX_PER_BATCH = 500;
 export const MANIFEST_MAX_BATCHES = 50;
 export const MANIFEST_MAX_SHIPMENTS = 5000;
 export const MANIFEST_MAX_BYTES = 5 * 1024 * 1024;
+/** 按运单号取一票（10-13）：拆派仓那边一次最多收 200 票（它的按单号取票校验），湘泰先挡，别回 200 再被整次拒收 */
+export const WAYBILL_MAX_SHIPMENTS = 200;
 /** 批次号为空的统一用这个（同一柜同一批次 batchKey 必须永远一样） */
 export const NO_BATCH = "NO-BATCH";
 
@@ -235,6 +237,7 @@ export function envelopeProblem(envelope: ManifestEnvelope | WaybillManifestEnve
   const total = envelope.manifests.reduce((sum, m) => sum + m.shipments.length, 0);
   if (envelope.manifests.length > MANIFEST_MAX_BATCHES) return `批次份数 ${envelope.manifests.length} 超过 ${MANIFEST_MAX_BATCHES}`;
   if (total > MANIFEST_MAX_SHIPMENTS) return `合计 ${total} 票超过 ${MANIFEST_MAX_SHIPMENTS}`;
+  if ("waybillNo" in envelope && total > WAYBILL_MAX_SHIPMENTS) return `按运单号取的 ${total} 票超过 ${WAYBILL_MAX_SHIPMENTS}`;
   // 跟拆派仓 manifest-v2.validation 的 text() 同一套：去空白后不能空、≤128 字、没有控制字符；有一处不合整次就会被拒
   const badText = (v: string) => !v.trim() || v.length > 128 || /[\x00-\x1f\x7f]/.test(v);
   if ("containerNo" in envelope ? badText(envelope.containerNo) : badText(envelope.waybillNo)) {

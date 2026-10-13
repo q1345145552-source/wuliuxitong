@@ -226,18 +226,28 @@ export function registerChaipaiManifestRoutes(app: MinimalHttpApp): void {
       select: { id: true, trackingNo: true, containerItems: { select: { containerId: true } } },
     });
     type Candidate = { id: string; trackingNo: string; containerItems: Array<{ containerId: string }> };
-    const candidates: Candidate[] = await findCandidates(prisma);
-    if (candidates.length === 0) { fail(res, 404, "NOT_FOUND", "没有这个运单号"); return; }
-    // 先按这几票挂过的全部柜子排队（按 id 排好、一个一个拿，跟按柜拉同一把锁、不会互相卡死）
-    const lockIds = [...new Set(candidates.flatMap((c) => c.containerItems.map((i) => i.containerId)))].sort();
-    if (lockIds.length === 0) { fail(res, 404, "NOT_FOUND", "这票还没装柜"); return; }
+    /** 这几票现在各挂在哪些柜（「票 id:柜 id」排好序），前后一比就知道中间有没有人装柜 / 卸柜 / 挪柜 */
+    const placementOf = async (db: any, ids: string[]): Promise<string> => {
+      const rows: Array<{ shipmentId: string; containerId: string }> = await db.shipmentContainerItem.findMany({
+        where: { shipmentId: { in: ids } }, select: { shipmentId: true, containerId: true },
+      });
+      return rows.map((r) => `${r.shipmentId}:${r.containerId}`).sort().join(",");
+    };
 
     type Picked = { containerId: string; containerNo: string; companyId: string; row: ManifestSourceRow };
-    let result: { picked: Picked[]; skipped: Array<{ trackingNo: string; reason: string }>; versions: Map<string, string>; parts: Array<{ containerNo: string; companyId: string; batches: PlannedBatch[] }> };
+    type Found = { picked: Picked[]; skipped: Array<{ trackingNo: string; reason: string }>; versions: Map<string, string>; parts: Array<{ containerNo: string; companyId: string; batches: PlannedBatch[] }> };
+    let result: Found | { notFound: string };
     try {
-      result = await prisma.$transaction(async (tx) => {
+      // 整个过程（连最开始找票那一句）都在这一个事务里：等连接最多 0.5 秒 + 事务 5.5 秒，
+      // 最坏 6 秒内一定有回复，给拆派仓约 8 秒的等待留出传输时间（maxWait 跟 timeout 是加起来算的；10-13 Codex / dsh 审查）
+      result = await prisma.$transaction(async (tx): Promise<Found | { notFound: string }> => {
+        const candidates: Candidate[] = await findCandidates(tx);
+        if (candidates.length === 0) return { notFound: "没有这个运单号" };
+        // 按这几票挂过的全部柜子排队（按 id 排好、一个一个拿，跟按柜拉同一把锁、不会互相卡死）
+        const lockIds = [...new Set(candidates.flatMap((c) => c.containerItems.map((i) => i.containerId)))].sort();
+        if (lockIds.length === 0) return { notFound: "这票还没装柜" };
         for (const id of lockIds) await lockChaipaiManifest(tx, id);
-        // 拿到锁以后重读：这段时间有人装柜 / 卸柜把票挪到没排队的柜里，就让拆派仓再扫一次
+        // 拿到锁以后重读：排队这段时间有人装柜 / 卸柜把票挪到没排队的柜里，就让拆派仓再扫一次
         const fresh: Candidate[] = await findCandidates(tx);
         if (fresh.some((c) => c.containerItems.some((i) => !lockIds.includes(i.containerId)))) throw new ScanAgainError();
         const items = await tx.shipmentContainerItem.findMany({
@@ -249,6 +259,9 @@ export function registerChaipaiManifestRoutes(app: MinimalHttpApp): void {
             shipment: { select: MANIFEST_SHIPMENT_SELECT },
           },
         });
+        // 上一句重读和这一句之间票也可能刚被挪进没排队的柜（10-13 dsh 审查）：取到的明细也得全在排了队的柜里
+        if (items.some((it) => !lockIds.includes(it.containerId))) throw new ScanAgainError();
+        const placement = items.map((it) => `${it.shipment.id}:${it.containerId}`).sort().join(",");
         const picked: Picked[] = [];
         const skipped: Array<{ trackingNo: string; reason: string }> = [];
         const seen = new Set<string>();
@@ -276,22 +289,28 @@ export function registerChaipaiManifestRoutes(app: MinimalHttpApp): void {
           companyId: p.companyId,
           entries: p.batches.flatMap((b) => b.items.map((item) => ({ shipmentId: item.sourceShipmentId, hash: contentHashOf(b.batchKey, b.batchNo, item) }))),
         })));
+        // 版本写下以后、提交以前再核一次：明细读完到现在票要是被挪了柜，这次发的是旧柜的内容，
+        // 写下的版本却会比新柜那边拉到的新内容还大（拆派仓按版本收，旧的盖掉新的）—— 整次撤回、让拆派仓再扫（10-13 Codex 审查）
+        if (await placementOf(tx, fresh.map((c) => c.id)) !== placement) throw new ScanAgainError();
         return { picked, skipped, versions, parts };
-      }, { timeout: 7000, maxWait: 3000 });
+      }, { timeout: 5500, maxWait: 500 });
     } catch (error) {
       const code = (error as { code?: string })?.code;
-      if (error instanceof ScanAgainError || code === "P2028" || code === "P2034") {
+      // P2028 等不到连接 / 事务超时，P2034 写冲突或死锁，P2024 连接池等超时：都让拆派仓稍后再扫；别的照常 500
+      if (error instanceof ScanAgainError || code === "P2028" || code === "P2034" || code === "P2024") {
         logger.warn("拆派仓按运单号取票：正忙，让拆派仓再扫一次", { waybillNo, 原因: error instanceof ScanAgainError ? "票刚被挪柜" : code });
         fail(res, 503, "INTERNAL_ERROR", "正忙，请稍后再扫一次");
         return;
       }
       throw error;
     }
+    if ("notFound" in result) { fail(res, 404, "NOT_FOUND", result.notFound); return; }
 
     if (result.skipped.length > 0) logger.info("拆派仓按运单号取票：这些票没给", { waybillNo, 剔除: result.skipped });
     if (result.picked.length === 0) {
       const reasons = new Set(result.skipped.map((s) => s.reason));
-      fail(res, 404, "NOT_FOUND", reasons.has("整柜") && reasons.size === 1 ? "整柜的货不走拆派仓" : "这票还没装柜");
+      // 扫父单号时父单自己（0 件汇总、没装柜）总在剔除里，所以只看有没有「整柜」
+      fail(res, 404, "NOT_FOUND", reasons.has("整柜") ? "整柜的货不走拆派仓" : "这票还没装柜");
       return;
     }
     const manifests: ManifestPart[] = result.parts.flatMap((p) => manifestParts(cfg.companyId, p.containerNo, p.batches, (id) => result.versions.get(id)!));
