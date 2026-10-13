@@ -271,6 +271,89 @@ async function main(): Promise<void> {
       }
     });
 
+    console.log("\n【按运单号取一票（10-13）】");
+    const byNo = (waybillNo: string, secret = PULL) =>
+      call("GET /integrations/chaipai/v2/waybill-manifest", { query: { waybillNo }, authorization: `Bearer ${secret}` });
+    const shipsOf = (raw: Row) => raw.manifests.flatMap((m: Row) => m.shipments.map((s: Row) => ({ ...s, _containerNo: m.containerNo, _batchKey: m.batchKey, _batchNo: m.batchNo })));
+    await test("N1 密钥不对 401（拉清单密钥以外的都不认）；开关关着 503；没这个号 404；空的 / 控制字符 400", async () => {
+      assert.equal((await byNo(`ZZCPT${stamp}1`, "wrong-secret-wrong-secret-wrong-secret")).status, 401);
+      assert.equal((await byNo(`ZZCPT${stamp}1`, CB)).status, 401);
+      process.env.CHAIPAI_ENABLED = "false";
+      assert.equal((await byNo(`ZZCPT${stamp}1`)).status, 503);
+      enable();
+      assert.equal((await byNo(`ZZCPNOSUCH${stamp}`)).status, 404);
+      assert.equal((await byNo("   ")).status, 400);
+      assert.equal((await byNo("A\u0001B")).status, 400);
+    });
+    await test("N2 子单号 → 只回这一张；跟按柜拉的同一份（batchKey、batchNo、柜号、字段、版本时间一字不差）；首尾空格能对上、顶层原样回", async () => {
+      const viaCtn = shipsOf((await pull(ctnNo)).raw);
+      const r = await byNo(`  ${parentNo}-1 `);
+      assert.equal(r.status, 200, JSON.stringify(r.raw).slice(0, 200));
+      assert.deepEqual([r.raw.code, r.raw.protocolVersion, r.raw.companyId, r.raw.waybillNo, "containerNo" in r.raw], [undefined, 2, "xiangtai", `  ${parentNo}-1 `, false]);
+      const got = shipsOf(r.raw);
+      assert.deepEqual(got.map((s: Row) => s.sourceShipmentId), [K1]);
+      assert.deepEqual(got[0], viaCtn.find((s: Row) => s.sourceShipmentId === K1));
+      assert.equal(r.raw.manifests[0].containerNo, ctnNo);
+    });
+    await test("N3 父单号 → 回它下面全部子票（0 件的汇总父单不放）；大小写不一样对不上（湘泰运单号区分大小写）", async () => {
+      const r = await byNo(parentNo);
+      assert.equal(r.status, 200);
+      assert.deepEqual(shipsOf(r.raw).map((s: Row) => s.sourceShipmentId).sort(), [K1, K2].sort());
+      assert.ok(shipsOf(r.raw).every((s: Row) => s.parentWaybillNo === parentNo && s._batchNo === "B2"));
+      assert.equal((await byNo(parentNo.toLowerCase())).status, 404);
+    });
+    await test("N4 子单分在两个柜 → 每个柜一份、各带自己的柜号；挂两个柜的票取最近装的那个柜（件数是那个柜的）", async () => {
+      const K3 = await seedShipment({ orderId: oP, trackingNo: `${parentNo}-3`, parent: parentNo, pieces: 4, status: "departed", batchNo: "B2", weightKg: 44 });
+      await load(C2, K3, 4, 2.0);
+      try {
+        const r = await byNo(parentNo);
+        assert.equal(r.status, 200);
+        const byCtn = Object.fromEntries(r.raw.manifests.map((m: Row) => [m.containerNo, m.shipments.map((s: Row) => s.sourceShipmentId).sort()]));
+        assert.deepEqual(byCtn, { [ctnNo]: [K1, K2].sort(), [`ZZCP${stamp}02`]: [K3] });
+        // 同一个父单在两个柜里 batchKey 不一样（跟按柜拉一样：batchKey 跟柜子 id 走）
+        assert.notEqual(r.raw.manifests[0].batchKey, r.raw.manifests[1].batchKey);
+      } finally {
+        await pm.chaipaiManifestVersion.deleteMany({ where: { shipmentId: K3 } });
+        await pm.shipmentContainerItem.deleteMany({ where: { shipmentId: K3 } });
+        await pm.shipment.delete({ where: { id: K3 } });
+      }
+      // MULTI 挂 C1、C2 两个柜：按装柜时间取最近的那个（两个方向都试，不靠插入先后）
+      const setLoadedAt = (containerId: string, at: Date) => pm.shipmentContainerItem.updateMany({ where: { shipmentId: MULTI, containerId }, data: { createdAt: at } });
+      await setLoadedAt(C1, new Date(Date.UTC(2026, 9, 1)));
+      await setLoadedAt(C2, new Date(Date.UTC(2026, 9, 5)));
+      const m = await byNo(`ZZCPT${stamp}4`);
+      assert.equal(m.status, 200);
+      const one = shipsOf(m.raw);
+      assert.deepEqual([one.length, one[0].sourceShipmentId, one[0]._containerNo, one[0].boxCount], [1, MULTI, `ZZCP${stamp}02`, 1]);
+      await setLoadedAt(C1, new Date(Date.UTC(2026, 9, 9)));
+      const back = shipsOf((await byNo(`ZZCPT${stamp}4`)).raw);
+      assert.deepEqual([back.length, back[0]._containerNo], [1, ctnNo]);
+    });
+    await test("N5 整柜的票 404；没装过柜的票 404；再取一次版本时间不变、改了件数才变大", async () => {
+      assert.equal((await byNo(`ZZCPT${stamp}5`)).status, 404);
+      const oX = await seedOrder("ZZCPA", 2, 20);
+      const notLoaded = await seedShipment({ orderId: oX, trackingNo: `ZZCPT${stamp}6`, pieces: 2, status: "inWarehouseCN" });
+      try {
+        assert.equal((await byNo(`ZZCPT${stamp}6`)).status, 404);
+      } finally {
+        await pm.shipment.delete({ where: { id: notLoaded } });
+      }
+      const v1 = shipsOf((await byNo(`ZZCPT${stamp}1`)).raw)[0].sourceUpdatedAt;
+      assert.equal(shipsOf((await byNo(`ZZCPT${stamp}1`)).raw)[0].sourceUpdatedAt, v1);
+      assert.equal(shipsOf((await pull(ctnNo)).raw).find((s: Row) => s.sourceShipmentId === S1).sourceUpdatedAt, v1, "跟按柜拉同一个版本");
+      await pm.shipmentContainerItem.updateMany({ where: { containerId: C1, shipmentId: S1 }, data: { loadedVolumeM3: 1.6 } });
+      const v2 = shipsOf((await byNo(`ZZCPT${stamp}1`)).raw)[0];
+      assert.ok(v2.sourceUpdatedAt > v1, "内容变了版本要变大");
+      assert.equal(v2.volumeM3, 1.6);
+      await pm.shipmentContainerItem.updateMany({ where: { containerId: C1, shipmentId: S1 }, data: { loadedVolumeM3: 1.5 } });
+    });
+    await test("N6 同一个柜同时来几次（按运单号 + 按柜拉混着）都 200、版本一致，不死锁", async () => {
+      const rs = await Promise.all([byNo(parentNo), pull(ctnNo), byNo(`${parentNo}-2`), byNo(parentNo), pull(ctnNo)]);
+      assert.deepEqual(rs.map((x) => x.status), [200, 200, 200, 200, 200]);
+      const k2 = rs.map((x) => (x.raw.manifests as Row[]).flatMap((m) => m.shipments).find((s: Row) => s.sourceShipmentId === K2)?.sourceUpdatedAt);
+      assert.equal(new Set(k2).size, 1, JSON.stringify(k2));
+    });
+
     console.log("\n【收回传：状态和轨迹】");
     await test("R1 密钥不对 401；格式不对 400；公司编号不对 409；湘泰没有这票 → IGNORED_OLDER 什么都不写", async () => {
       assert.equal((await call("POST /integrations/chaipai/v2/events", { body: {}, authorization: "Bearer nope" })).status, 401);
@@ -852,7 +935,8 @@ async function main(): Promise<void> {
       fake.set(A, { route: route33, photos: [{ id: "p33", createdAt: "2026-10-12T03:00:00.000Z" }] });
       await send(A, "DELIVERED");
       assert.equal((await rowsOf(A))[0].deliveryNo, noB);
-      const logs = (await logsOf(A)).slice(-2).map((l: Row) => l.remark);
+      // 只看拆派仓写的那几条：员工删单那条记的是真实时间，测试里回传用的是写死的 10-12 时间，日子一过它就排到最后（10-13 踩到）
+      const logs = (await logsOf(A)).filter((l: Row) => l.operatorName === "拆派仓").slice(-2).map((l: Row) => l.remark);
       assert.deepEqual(logs, [`改派：从 ${rowA.deliveryNo} 转到 ${noB}`, `尾程派送已签收（${noB}）`]);
     });
     await test("V34 员工删了自动单、下一条（序号连着的）签收这回只读接口 404 → 用回原来的号、记着的趟次不清", async () => {

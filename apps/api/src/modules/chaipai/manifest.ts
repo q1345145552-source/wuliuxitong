@@ -32,6 +32,17 @@ export function validContainerNoInput(raw: unknown): string | null {
   return v;
 }
 
+/**
+ * 拆派仓扫到的湘泰运单号（10-13 按运单号取一票）：去首尾空格后 1～128 字（拆派仓运单号上限），原文不含控制字符。
+ * 只去首尾空格、不改大小写 —— 湘泰运单号区分大小写，比对用原文精确匹配。返回比对用的号；不合格返回 null。
+ */
+export function validWaybillNoInput(raw: unknown): string | null {
+  if (typeof raw !== "string") return null;
+  const v = raw.trim();
+  if (!v || raw.length > 128 || /[\x00-\x1f\x7f-\x9f]/.test(raw)) return null;
+  return v;
+}
+
 /** 选填文本：控制字符换空格、连续空白合一、去首尾、截长度；清完是空的返回 null（不放这个键） */
 export function cleanOptionalText(value: string | null | undefined, max: number): string | null {
   if (value == null) return null;
@@ -170,17 +181,43 @@ export function planBatches(companyId: string, containerId: string, rows: Manife
   return out;
 }
 
+export interface ManifestPart {
+  companyId: string;
+  batchKey: string;
+  batchNo: string;
+  containerNo: string;
+  shipments: ManifestItem[];
+}
+
 export interface ManifestEnvelope {
   protocolVersion: 2;
   companyId: string;
   containerNo: string;
-  manifests: Array<{
-    companyId: string;
-    batchKey: string;
-    batchNo: string;
-    containerNo: string;
-    shipments: ManifestItem[];
-  }>;
+  manifests: ManifestPart[];
+}
+
+/** 按运单号取一票的信封（10-13）：跟按柜拉的一样，只是顶层的 containerNo 换成 waybillNo（原样回拆派仓扫的号）；每份各带自己的柜号 */
+export interface WaybillManifestEnvelope {
+  protocolVersion: 2;
+  companyId: string;
+  waybillNo: string;
+  manifests: ManifestPart[];
+}
+
+/** 一个柜的几份清单填上版本时间（按柜拉、按运单号取共用） */
+export function manifestParts(
+  companyId: string,
+  containerNo: string,
+  batches: PlannedBatch[],
+  versionOf: (shipmentId: string) => string,
+): ManifestPart[] {
+  return batches.map((b) => ({
+    companyId,
+    batchKey: b.batchKey,
+    batchNo: b.batchNo,
+    containerNo,
+    shipments: b.items.map((item) => ({ ...item, sourceUpdatedAt: versionOf(item.sourceShipmentId) })),
+  }));
 }
 
 /** 填上版本时间，拼成整个响应 */
@@ -190,28 +227,22 @@ export function buildEnvelope(
   batches: PlannedBatch[],
   versionOf: (shipmentId: string) => string,
 ): ManifestEnvelope {
-  return {
-    protocolVersion: 2,
-    companyId,
-    containerNo,
-    manifests: batches.map((b) => ({
-      companyId,
-      batchKey: b.batchKey,
-      batchNo: b.batchNo,
-      containerNo,
-      shipments: b.items.map((item) => ({ ...item, sourceUpdatedAt: versionOf(item.sourceShipmentId) })),
-    })),
-  };
+  return { protocolVersion: 2, companyId, containerNo, manifests: manifestParts(companyId, containerNo, batches, versionOf) };
 }
 
 /** 会让拆派仓整次拒收的情况，湘泰先挡住；没问题返回 null */
-export function envelopeProblem(envelope: ManifestEnvelope): string | null {
+export function envelopeProblem(envelope: ManifestEnvelope | WaybillManifestEnvelope): string | null {
   const total = envelope.manifests.reduce((sum, m) => sum + m.shipments.length, 0);
   if (envelope.manifests.length > MANIFEST_MAX_BATCHES) return `批次份数 ${envelope.manifests.length} 超过 ${MANIFEST_MAX_BATCHES}`;
   if (total > MANIFEST_MAX_SHIPMENTS) return `合计 ${total} 票超过 ${MANIFEST_MAX_SHIPMENTS}`;
   // 跟拆派仓 manifest-v2.validation 的 text() 同一套：去空白后不能空、≤128 字、没有控制字符；有一处不合整次就会被拒
   const badText = (v: string) => !v.trim() || v.length > 128 || /[\x00-\x1f\x7f]/.test(v);
-  if (badText(envelope.containerNo)) return "柜号含控制字符或超过 128 字";
+  if ("containerNo" in envelope ? badText(envelope.containerNo) : badText(envelope.waybillNo)) {
+    return "containerNo" in envelope ? "柜号含控制字符或超过 128 字" : "运单号含控制字符或超过 128 字";
+  }
+  // 按运单号取时每份的柜号来自湘泰的柜子（按柜拉时等于顶层柜号，上面已查）
+  const badContainer = envelope.manifests.find((m) => badText(m.containerNo));
+  if (badContainer) return `柜号不合规：${JSON.stringify(badContainer.containerNo).slice(0, 60)}`;
   const badBatch = envelope.manifests.find((m) => badText(m.batchNo));
   if (badBatch) return `批次号不合规：${JSON.stringify(badBatch.batchNo).slice(0, 60)}`;
   const bytes = Buffer.byteLength(JSON.stringify(envelope), "utf8");

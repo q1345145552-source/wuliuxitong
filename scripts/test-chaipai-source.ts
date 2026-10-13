@@ -21,8 +21,10 @@ import {
   contentHashOf,
   envelopeProblem,
   itemBodyOf,
+  manifestParts,
   planBatches,
   validContainerNoInput,
+  validWaybillNoInput,
   type ManifestSourceRow,
 } from "../apps/api/src/modules/chaipai/manifest";
 import {
@@ -301,9 +303,11 @@ check("W1 拆派仓写的轨迹不许单删（第 254 条）：已到仓 / 已�
   assert.match(modal, /chaipai: "拆派仓同步的记录，不能单删"/);
 });
 
-check("W2 接线：只有拆派仓那两条精确路径不跑登录解析；Next 原样转发；代理前缀保留 integrations；三个接口都注册了", () => {
+check("W2 接线：只有拆派仓那三条精确路径不跑登录解析；Next 原样转发；代理前缀保留 integrations；三个接口都注册了", () => {
   assert.match(read("apps/api/src/server.ts"), /auth: INTEGRATION_PATHS\.has\(path\) \? undefined : await parseAuth/);
-  assert.deepEqual([...INTEGRATION_PATHS].sort(), ["/integrations/chaipai/v2/container-manifest", "/integrations/chaipai/v2/events"]);
+  assert.deepEqual([...INTEGRATION_PATHS].sort(), [
+    "/integrations/chaipai/v2/container-manifest", "/integrations/chaipai/v2/events", "/integrations/chaipai/v2/waybill-manifest",
+  ]);
   assert.match(read("apps/web/next.config.ts"), /source: "\/integrations\/:path\*", destination: `\$\{API_PROXY_TARGET\}\/integrations\/:path\*`/);
   assert.ok(RESERVED_AGENT_SLUGS.has("integrations"));
   assert.match(read("apps/api/src/main.ts"), /registerChaipaiRoutes\(app\)/);
@@ -315,6 +319,15 @@ check("W2b 拉清单的事务第一句就是同柜排队锁（删了这句静态
   const src = read("apps/api/src/modules/chaipai/manifest-routes.ts");
   assert.match(src, /await prisma\.\$transaction\(async \(tx\) => \{\n\s*await lockChaipaiManifest\(tx, container\.id\);/);
   assert.match(src, /async function lockChaipaiManifest\(tx: any, containerId: string\): Promise<void> \{\n\s*await tx\.\$executeRaw`SELECT pg_advisory_xact_lock\(83060, hashtext\(\$\{containerId\}\)\)`;/);
+});
+
+check("W2c 按运单号取票（10-13）：先按这几票挂过的柜子排好序一个一个排队，再重读；跟按柜拉同一把锁、同一份取数代码", () => {
+  const src = read("apps/api/src/modules/chaipai/manifest-routes.ts");
+  assert.match(src, /result = await prisma\.\$transaction\(async \(tx\) => \{\n\s*for \(const id of lockIds\) await lockChaipaiManifest\(tx, id\);/);
+  assert.match(src, /const lockIds = \[\.\.\.new Set\(candidates\.flatMap\(\(c\) => c\.containerItems\.map\(\(i\) => i\.containerId\)\)\)\]\.sort\(\);/);
+  // 两条路都用 MANIFEST_SHIPMENT_SELECT + sourceRowOf，不各抄一份
+  assert.equal((src.match(/shipment: \{ select: MANIFEST_SHIPMENT_SELECT \}/g) ?? []).length, 2);
+  assert.equal((src.match(/sourceRowOf\(item\)/g) ?? []).length, 2);
 });
 
 check("W3 派送照片只给员工 / 管理员（第 256 条）：后端 requireRole staff/admin；弹窗只在员工 / 管理员打开时挂", () => {
@@ -335,6 +348,24 @@ check("W4 六个环境变量：两份样板都有、docker-compose 透传、前�
   try { hits = execFileSync("grep", ["-rln", "CHAIPAI_", path.join(ROOT, "apps/web/src")], { encoding: "utf8" }).trim(); }
   catch (e: any) { if (e.status !== 1) throw e; } // grep 没找到时退出码 1
   assert.equal(hits, "", `前端出现了密钥变量：${hits}`);
+});
+
+check("M9 按运单号取票的入参和信封（10-13）：只去首尾空格、不改大小写；控制字符 / 超长 / 空的不收；顶层 waybillNo，每份带自己的柜号", () => {
+  assert.equal(validWaybillNoInput("  GZ260902267-1 "), "GZ260902267-1");
+  assert.equal(validWaybillNoInput("gz260902267-1"), "gz260902267-1");
+  assert.equal(validWaybillNoInput("GZ 2609"), "GZ 2609");
+  for (const bad of [undefined, null, 5, "", "   ", "A\nB", "A\u0085B", "x".repeat(129)]) assert.equal(validWaybillNoInput(bad), null, JSON.stringify(bad));
+  assert.equal(validWaybillNoInput("x".repeat(128)), "x".repeat(128));
+  const batches = planBatches("xiangtai", "ctr_1", [row({ shipmentId: "s_k1", trackingNo: "P1-1", parentTrackingNo: "P1" })]);
+  const parts = manifestParts("xiangtai", "CTN-A", batches, () => "2026-10-13T00:00:00.000Z");
+  const env = { protocolVersion: 2 as const, companyId: "xiangtai", waybillNo: " P1 ", manifests: parts };
+  assert.equal(envelopeProblem(env), null);
+  assert.deepEqual([parts[0].containerNo, parts[0].batchKey, parts[0].shipments[0].parentWaybillNo], ["CTN-A", batchKeyOf("xiangtai", "ctr_1", row().batchNo), "P1"]);
+  // 同一票、同一柜：按运单号取和按柜拉出来的 batchKey、内容摘要一模一样（拆派仓里进同一个批次、版本不乱跳）
+  const viaContainer = buildEnvelope("xiangtai", "CTN-A", batches, () => "2026-10-13T00:00:00.000Z");
+  assert.deepEqual(viaContainer.manifests, parts);
+  assert.match(envelopeProblem({ ...env, waybillNo: "A\u0001" }) ?? "", /运单号/);
+  assert.match(envelopeProblem({ ...env, manifests: [{ ...parts[0], containerNo: "C\u0002" }] }) ?? "", /柜号/);
 });
 
 console.log(`\n通过 ${passed} / 失败 ${failed}`);
