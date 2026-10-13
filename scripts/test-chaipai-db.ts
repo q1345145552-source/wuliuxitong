@@ -642,7 +642,7 @@ async function main(): Promise<void> {
         await Promise.all(holders.map((h) => h.catch(() => undefined)));
       }
     });
-    await test("N17 一个号下面正好 200 票照常给；201 票、202 票都在写版本之前回 422（拆派仓一次最多收 200 票），版本表一行都没多写", async () => {
+    await test("N17 一个号下面正好 200 票照常给；201 票在写版本之前回 422；父单本身 + 201 张子单（202 张候选）也 422；父单 + 200 张子单（201 张候选）照常给（拆派仓一次最多收 200 票）", async () => {
       const big = `ZZCPBIG${stamp}`;
       const ctnBig = await seedContainer(`ZZCPBIGC${stamp}`);
       const oBig = await seedOrder("ZZCPA", 1, 1);
@@ -662,16 +662,99 @@ async function main(): Promise<void> {
         await addKids(mk(200, 201));
         const r201 = await byNo(big);
         assert.equal(r201.status, 422, JSON.stringify(r201.raw).slice(0, 200));
-        await addKids(mk(201, 202));
+        assert.equal(await pm.chaipaiManifestVersion.count({ where: { shipmentId: { startsWith: `${P}s_${big}` } } }), versionsAt200, "超了上限不许写版本");
+        // 父单号本身也是一票（0 件汇总、不装柜）：父单 + 201 张子单 = 202 张候选 → 找票那一步就挡
+        await pm.shipment.create({ data: {
+          id: `${P}s_${big}`, companyId: CO, orderId: oBig, trackingNo: big, parentTrackingNo: null, currentStatus: "customsTH",
+          warehouseId: `${P}wh`, packageCount: 0, volumeM3: 0, weightKg: 0, transportMode: "sea", itemName: "测试鞋",
+        } });
         const r202 = await byNo(big);
         assert.equal(r202.status, 422, JSON.stringify(r202.raw).slice(0, 200));
-        assert.equal(await pm.chaipaiManifestVersion.count({ where: { shipmentId: { startsWith: `${P}s_${big}` } } }), versionsAt200, "超了上限不许写版本");
+        // 去掉一张子单：父单 + 200 张子单 = 201 张候选，父单不放、200 张照常给（封顶是 +2 不是 +1）
+        const last = `${P}s_${big}-201`;
+        await pm.shipmentContainerItem.deleteMany({ where: { shipmentId: last } });
+        await pm.shipment.delete({ where: { id: last } });
+        const ok201 = await byNo(big);
+        assert.deepEqual([ok201.status, shipsOf(ok201.raw).length], [200, 200]);
       } finally {
-        const ids = (await pm.shipment.findMany({ where: { parentTrackingNo: big }, select: { id: true } })).map((x: Row) => x.id);
+        const ids = (await pm.shipment.findMany({ where: { OR: [{ parentTrackingNo: big }, { trackingNo: big }] }, select: { id: true } })).map((x: Row) => x.id);
         await pm.chaipaiManifestVersion.deleteMany({ where: { shipmentId: { in: ids } } });
         await pm.shipmentContainerItem.deleteMany({ where: { shipmentId: { in: ids } } });
         await pm.shipment.deleteMany({ where: { id: { in: ids } } });
         await pm.container.delete({ where: { id: ctnBig } });
+      }
+    });
+    await test("N18 候选触顶的两种并发：① 202 张候选、柜锁被别人占着 → 不排队，直接 422；② 初查 201 张、排队时同柜又装进 2 张 → 重读发现触顶回 503，再扫回 422（Codex 10-13 第 6 轮）", async () => {
+      const big = `ZZCPBIH${stamp}`;
+      const ctnId = await seedContainer(`ZZCPBIHC${stamp}`);
+      const oBig = await seedOrder("ZZCPA", 1, 1);
+      const kid = (n: number) => `${P}s_${big}-${n}`;
+      const addKids = async (from: number, to: number) => {
+        const ids = Array.from({ length: to - from }, (_, i) => kid(from + i + 1));
+        await pm.shipment.createMany({ data: ids.map((id) => ({
+          id, companyId: CO, orderId: oBig, trackingNo: id.slice(P.length + 2), parentTrackingNo: big, currentStatus: "customsTH",
+          warehouseId: `${P}wh`, packageCount: 1, volumeM3: 0.01, weightKg: 1, transportMode: "sea", itemName: "测试鞋",
+        })) });
+        await pm.shipmentContainerItem.createMany({ data: ids.map((id) => ({ containerId: ctnId, shipmentId: id, loadedPieceCount: 1, loadedVolumeM3: 0.01 })) });
+      };
+      const holdCtn = () => {
+        let release!: () => void;
+        let ready!: () => void;
+        const got = new Promise<void>((r) => { ready = r; });
+        const done = pm.$transaction(async (tx: any) => {
+          await tx.$executeRaw`SELECT pg_advisory_xact_lock(83060, hashtext(${ctnId}))`;
+          ready();
+          await new Promise<void>((r) => { release = r; });
+        }, { timeout: 20000 });
+        return { got, done, release: () => release?.() };
+      };
+      try {
+        await pm.shipment.create({ data: {
+          id: `${P}s_${big}`, companyId: CO, orderId: oBig, trackingNo: big, parentTrackingNo: null, currentStatus: "customsTH",
+          warehouseId: `${P}wh`, packageCount: 0, volumeM3: 0, weightKg: 0, transportMode: "sea", itemName: "测试鞋",
+        } });
+        // ② 父单 + 200 张子单 = 201 张候选
+        await addKids(0, 200);
+        const h2 = holdCtn();
+        await h2.got;
+        try {
+          const pending = byNo(big);
+          let waited = false;
+          for (let i = 0; i < 100 && !waited; i++) {
+            const w: Row[] = await pm.$queryRaw`SELECT 1 FROM pg_locks WHERE locktype = 'advisory' AND classid = 83060 AND NOT granted`;
+            waited = w.length > 0;
+            if (!waited) await new Promise((r) => setTimeout(r, 30));
+          }
+          assert.ok(waited, "前提：请求卡在柜锁上");
+          await addKids(200, 202); // 排队期间同柜又装进 2 张 → 203 张候选
+          h2.release();
+          await h2.done;
+          const r = await pending;
+          assert.deepEqual([r.status, r.raw?.message], [503, "正忙，请稍后再扫一次"]);
+        } finally {
+          h2.release();
+          await h2.done.catch(() => undefined);
+        }
+        const again = await byNo(big);
+        assert.deepEqual([again.status, again.raw?.message], [422, `这个号下面有至少 202 票，超过拆派仓一次能收的 200 票`]);
+        // ① 柜锁被占着时，触顶的号不排队：找票那一步就回 422
+        const h1 = holdCtn();
+        await h1.got;
+        try {
+          const t0 = Date.now();
+          const r = await byNo(big);
+          assert.equal(r.status, 422);
+          assert.ok(Date.now() - t0 < 1000, "不该等柜锁");
+        } finally {
+          h1.release();
+          await h1.done.catch(() => undefined);
+        }
+      } finally {
+        const ids = (await pm.shipment.findMany({ where: { OR: [{ parentTrackingNo: big }, { trackingNo: big }] }, select: { id: true } })).map((x: Row) => x.id);
+        await pm.chaipaiManifestVersion.deleteMany({ where: { shipmentId: { in: ids } } });
+        await pm.shipmentContainerItem.deleteMany({ where: { shipmentId: { in: ids } } });
+        await pm.shipment.deleteMany({ where: { id: { in: ids } } });
+        await pm.container.delete({ where: { id: ctnId } });
       }
     });
 
