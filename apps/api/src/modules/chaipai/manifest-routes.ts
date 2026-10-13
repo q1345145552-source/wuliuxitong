@@ -237,7 +237,12 @@ export function registerChaipaiManifestRoutes(app: MinimalHttpApp): void {
     const waybillNo = validWaybillNoInput(rawNo);
     if (!waybillNo) { fail(res, 400, "BAD_REQUEST", "运单号要填，1～128 字，不能有控制字符"); return; }
 
+    // 最多取到「拆派仓上限 + 2」张（父单本身 + 200 张 + 1 张用来判断超了）：IN 列表有界，Prisma 不会再把查询拆成更多句，
+    // 下面按句数分时间才算数（Codex 10-13 第 5 轮；线上一个父单最多 4 张子单）
+    const CANDIDATE_CAP = WAYBILL_MAX_SHIPMENTS + 2;
     const findCandidates = (db: any) => db.shipment.findMany({
+      take: CANDIDATE_CAP,
+      orderBy: { id: "asc" },
       where: { OR: [{ trackingNo: waybillNo }, { parentTrackingNo: waybillNo }] },
       select: { id: true, trackingNo: true, containerItems: { select: { containerId: true } } },
     });
@@ -257,6 +262,8 @@ export function registerChaipaiManifestRoutes(app: MinimalHttpApp): void {
      * Prisma 一次带关系的查询会按表拆成好几句顺序发出去，每句各算各的时限，按句数平分才不会加起来超（Codex 10-13 第 4 轮）；
      * 已经到点就不再发，直接 503。check() 在每次调用回来以后看一眼是不是已经过了截止。
      */
+    // ⚠️ 传进去的句数必须 ≥ Prisma 这次实际会发的句数（硬依赖：少报了，同一次调用里的几句就会各拿一大份、加起来超时）；
+    //    第二遍读快照时剩余时间已经少了，每句分到的比第一遍更紧 —— 要加余量只许把总截止往后挪（仍要 < 拆派仓的 8 秒），不许把句数报小（dsh 10-13 第 5 轮）
     type Budget = { guard: (statements?: number) => Promise<void>; check: () => void };
     /**
      * 拿着锁读一遍：重读候选票、取装柜明细、挑最近的柜、按柜排批次、算内容摘要。
@@ -308,6 +315,7 @@ export function registerChaipaiManifestRoutes(app: MinimalHttpApp): void {
       }));
       const placement = items.map((it: { shipment: { id: string }; containerId: string }) => `${it.shipment.id}:${it.containerId}`).sort().join(",");
       const hashes = groups.flatMap((g) => g.entries.map((e) => `${e.shipmentId}:${e.hash}`)).sort().join(",");
+      budget.check();
       return { picked, skipped, parts, groups, signature: `${placement}|${hashes}` };
     };
 
@@ -324,10 +332,16 @@ export function registerChaipaiManifestRoutes(app: MinimalHttpApp): void {
         const deadline = performance.now() + 4500; // 单调时钟，不受改系统时间影响
         const budget: Budget = {
           guard: async (statements = 1) => {
-            const left = deadline - performance.now();
-            if (left <= 0) throw new DeadlineError();
-            const ms = String(Math.max(1, Math.floor(left / statements)));
-            await tx.$executeRaw`SELECT set_config('statement_timeout', ${ms}, true), set_config('lock_timeout', ${ms}, true)`;
+            // 设时限这一句本身也花时间：设完再看一次钟，花得超过 SLACK 就按新的剩余重设 ——
+            // 这样后面那几句最晚在「截止 + SLACK」结束，不会拿着过期的时限跑（Codex 10-13 第 5 轮）
+            for (;;) {
+              const before = performance.now();
+              const left = deadline - before;
+              if (left <= 0) throw new DeadlineError();
+              const ms = String(Math.max(1, Math.floor(left / statements)));
+              await tx.$executeRaw`SELECT set_config('statement_timeout', ${ms}, true), set_config('lock_timeout', ${ms}, true)`;
+              if (performance.now() - before <= GUARD_SLACK_MS) return;
+            }
           },
           check: () => { if (performance.now() >= deadline) throw new DeadlineError(); },
         };
@@ -335,6 +349,7 @@ export function registerChaipaiManifestRoutes(app: MinimalHttpApp): void {
         const candidates: Candidate[] = await findCandidates(tx);
         budget.check();
         if (candidates.length === 0) return { notFound: "没有这个运单号" };
+        if (candidates.length >= CANDIDATE_CAP) return { tooMany: candidates.length };
         // 按这几票挂过的全部柜子排队（按 id 排好、一个一个拿，跟按柜拉同一把锁、不会互相卡死）
         const lockIds = [...new Set(candidates.flatMap((c) => c.containerItems.map((i) => i.containerId)))].sort();
         if (lockIds.length === 0) return { notFound: "这票还没装柜" };
@@ -345,6 +360,7 @@ export function registerChaipaiManifestRoutes(app: MinimalHttpApp): void {
         }
         const snap = await readSnapshot(tx, lockIds, budget);
         // 超过拆派仓一次能收的票数：不写版本、不发（拆派仓收到也会整次拒收）
+        budget.check();
         if (snap.picked.length > WAYBILL_MAX_SHIPMENTS) return { tooMany: snap.picked.length };
         const versions = await versionsFor(tx, snap.groups, () => budget.guard());
         budget.check();
@@ -357,7 +373,7 @@ export function registerChaipaiManifestRoutes(app: MinimalHttpApp): void {
     } catch (error) {
       const code = (error as { code?: string })?.code;
       // P2028 等不到连接 / 事务超时，P2034 写冲突或死锁，P2024 连接池等超时：都让拆派仓稍后再扫；别的照常 500
-      if (error instanceof ScanAgainError || error instanceof DeadlineError || code === "P2028" || code === "P2034" || code === "P2024" || isDbTimeout(error)) {
+      if (error instanceof ScanAgainError || error instanceof DeadlineError || (error as { name?: string })?.name === "DeadlineError" || code === "P2028" || code === "P2034" || code === "P2024" || isDbTimeout(error)) {
         const why = error instanceof ScanAgainError ? "票刚被挪柜或改过" : error instanceof DeadlineError ? "超过时限" : isDbTimeout(error) ? "数据库限时到了" : code;
         logger.warn("拆派仓按运单号取票：正忙，让拆派仓再扫一次", { waybillNo, 原因: why });
         fail(res, 503, "INTERNAL_ERROR", "正忙，请稍后再扫一次");
@@ -396,8 +412,14 @@ export function registerChaipaiManifestRoutes(app: MinimalHttpApp): void {
 /** 排队期间票被挪到别的柜：不硬取，让拆派仓再扫一次 */
 class ScanAgainError extends Error {}
 
+/** 按运单号取票：设时限那一句允许花的时间（超过就重设），也就是总截止最多被超出多少毫秒 */
+const GUARD_SLACK_MS = 25;
+
 /** 这次取票的总时限到了（拆派仓约 8 秒就不等了）：不再发新的语句，回 503 让拆派仓稍后再扫 */
-class DeadlineError extends Error {}
+class DeadlineError extends Error {
+  // 万一 Prisma 以后把回调里抛的错包一层、instanceof 认不出来，还能按名字认（dsh 10-13 第 5 轮）
+  override name = "DeadlineError";
+}
 
 /**
  * 数据库按时限掐断了这一句：等锁超时（SQLSTATE 55P03，lock_timeout）或整句超时（57014，statement_timeout）。

@@ -568,7 +568,7 @@ async function main(): Promise<void> {
       }
       assert.equal((await byNo(`${parentNo}-1`)).status, 200, "表锁放了以后照常能取");
     });
-    await test("N14 一次带关系的查询里先后两张表被锁（订单表 3.8 秒后放、产品表一直锁）：剩余时间按句数平分，6 秒内回 503（每句各给满剩余时间要 8 秒多；Codex 10-13 第 4 轮）", async () => {
+    await test("N14 一次带关系的查询里先后两张表被锁（订单表 0.8 秒后放、产品表一直锁）：剩余时间按 8 句平分、每句约 0.56 秒，订单那句就被掐，1.5 秒内回 503（只按 5 句以下分就会撑过 0.8 秒、再在产品那句叠一份 → 红；Codex / dsh 10-13 第 4、5 轮）", async () => {
       const releases: Array<() => void> = [];
       const holders: Promise<unknown>[] = [];
       const holdTable = (table: string) => new Promise<void>((ready) => {
@@ -581,13 +581,13 @@ async function main(): Promise<void> {
       try {
         await holdTable("orders");
         await holdTable("order_products");
-        const timer = setTimeout(() => releases[0](), 3800);
+        const timer = setTimeout(() => releases[0](), 800);
         const t0 = Date.now();
         const r = await byNo(`${parentNo}-1`);
         const ms = Date.now() - t0;
         clearTimeout(timer);
         assert.deepEqual([r.status, r.raw?.message], [503, "正忙，请稍后再扫一次"]);
-        assert.ok(ms < 6000, `用了 ${ms} 毫秒`);
+        assert.ok(ms < 1500, `用了 ${ms} 毫秒（每句应只有剩余时间的 1/8，约 0.56 秒）`);
       } finally {
         for (const r of releases) r();
         await Promise.all(holders.map((h) => h.catch(() => undefined)));
@@ -607,6 +607,71 @@ async function main(): Promise<void> {
         assert.equal(again.sourceUpdatedAt, viaNo.sourceUpdatedAt, "内容没变版本不能变");
       } finally {
         await pm.orderProduct.deleteMany({ where: { id: { in: [`${P}prod_a`, `${P}prod_b`] } } });
+      }
+    });
+    await test("N16 订单表在一份时限内放开、产品表一直锁：请求确实走到了第二句（看得到它卡在产品表上），两句加起来仍在时限里回 503（Codex 10-13 第 5 轮）", async () => {
+      const releases: Array<() => void> = [];
+      const holders: Promise<unknown>[] = [];
+      const holdTable = (table: string) => new Promise<void>((ready) => {
+        holders.push(pm.$transaction(async (tx: any) => {
+          await tx.$executeRawUnsafe(`LOCK TABLE ${table} IN ACCESS EXCLUSIVE MODE`);
+          ready();
+          await new Promise<void>((r) => releases.push(r));
+        }, { timeout: 20000 }));
+      });
+      try {
+        await holdTable("orders");
+        await holdTable("order_products");
+        const timer = setTimeout(() => releases[0](), 250); // 比每句约 0.56 秒的份额短：订单那句等得过去
+        const t0 = Date.now();
+        const pending = byNo(`${parentNo}-1`);
+        let reachedProducts = false;
+        for (let i = 0; i < 60 && !reachedProducts; i++) {
+          const w: Row[] = await pm.$queryRaw`SELECT 1 FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND query ILIKE '%order_products%' AND query NOT ILIKE '%LOCK TABLE%'`;
+          reachedProducts = w.length > 0;
+          if (!reachedProducts) await new Promise((r) => setTimeout(r, 20));
+        }
+        const r = await pending;
+        const ms = Date.now() - t0;
+        clearTimeout(timer);
+        assert.ok(reachedProducts, "请求应当走到第二句（产品表）并卡在那里");
+        assert.deepEqual([r.status, r.raw?.message], [503, "正忙，请稍后再扫一次"]);
+        assert.ok(ms < 1500, `用了 ${ms} 毫秒`);
+      } finally {
+        for (const r of releases) r();
+        await Promise.all(holders.map((h) => h.catch(() => undefined)));
+      }
+    });
+    await test("N17 一个号下面正好 200 票照常给；201 票、202 票都在写版本之前回 422（拆派仓一次最多收 200 票），版本表一行都没多写", async () => {
+      const big = `ZZCPBIG${stamp}`;
+      const ctnBig = await seedContainer(`ZZCPBIGC${stamp}`);
+      const oBig = await seedOrder("ZZCPA", 1, 1);
+      const mk = (from: number, to: number) => Array.from({ length: to - from }, (_, i) => `${P}s_${big}-${from + i + 1}`);
+      const addKids = async (ids: string[]) => {
+        await pm.shipment.createMany({ data: ids.map((id) => ({
+          id, companyId: CO, orderId: oBig, trackingNo: id.slice(P.length + 2), parentTrackingNo: big, currentStatus: "customsTH",
+          warehouseId: `${P}wh`, packageCount: 1, volumeM3: 0.01, weightKg: 1, transportMode: "sea", itemName: "测试鞋",
+        })) });
+        await pm.shipmentContainerItem.createMany({ data: ids.map((id) => ({ containerId: ctnBig, shipmentId: id, loadedPieceCount: 1, loadedVolumeM3: 0.01 })) });
+      };
+      try {
+        await addKids(mk(0, 200));
+        const ok200 = await byNo(big);
+        assert.deepEqual([ok200.status, shipsOf(ok200.raw).length], [200, 200]);
+        const versionsAt200 = await pm.chaipaiManifestVersion.count({ where: { shipmentId: { startsWith: `${P}s_${big}` } } });
+        await addKids(mk(200, 201));
+        const r201 = await byNo(big);
+        assert.equal(r201.status, 422, JSON.stringify(r201.raw).slice(0, 200));
+        await addKids(mk(201, 202));
+        const r202 = await byNo(big);
+        assert.equal(r202.status, 422, JSON.stringify(r202.raw).slice(0, 200));
+        assert.equal(await pm.chaipaiManifestVersion.count({ where: { shipmentId: { startsWith: `${P}s_${big}` } } }), versionsAt200, "超了上限不许写版本");
+      } finally {
+        const ids = (await pm.shipment.findMany({ where: { parentTrackingNo: big }, select: { id: true } })).map((x: Row) => x.id);
+        await pm.chaipaiManifestVersion.deleteMany({ where: { shipmentId: { in: ids } } });
+        await pm.shipmentContainerItem.deleteMany({ where: { shipmentId: { in: ids } } });
+        await pm.shipment.deleteMany({ where: { id: { in: ids } } });
+        await pm.container.delete({ where: { id: ctnBig } });
       }
     });
 
