@@ -313,6 +313,10 @@ async function main(): Promise<void> {
     // ⚠️ 放在最后、用到才加载 typescript：它一载进来内存大好几倍，前面计时的项强制回收会慢到超时；解析几秒还会让测试服务器
     // 空闲 5 秒关掉的连接正好被下一项复用 → fetch failed（10-14 第 2 轮改完在 Node 22 上压力测试 32 遍全红，就是这个）
     const ts: typeof TS = (await import("typescript")).default;
+    // 它只是防手滑的绊线，不是完整的数据流分析；真正夹住修复的是上面实际发请求的各项（Node 22 上改坏 5 种全红）。
+    // 已知认不出（Codex / dsh 第 4 轮列的，判定不再追）：init.redirect = "error" 这种事后赋值、const K = "redirect" 的计算属性、
+    // r.clone().json()、const b = r.body 再读、const { fetch: f } = globalThis 改名、响应传给别的函数再读；
+    // 同一文件不同函数里同名变量会被当成同一个响应（可能误报，报错会指到行号）。
     const root = path.join(__dirname, "../apps/api/src");
     const walk = (dir: string): string[] => readdirSync(dir).flatMap((n) => {
       const f = path.join(dir, n);

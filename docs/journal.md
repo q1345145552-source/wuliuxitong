@@ -1,5 +1,10 @@
 # 项目交接日志
 
+## 2026-10-14 修拆派仓回传「偶发挂 5 分钟」（本地，没推没上线）
+- 老板「修一下那个5分钟的问题」（10-12 CI 的 V9 等了 300333ms）。查实：线上 / CI 是 Node 22.23.3（undici 6.28.1），本机 Node 24；带 redirect:"error" 的 fetch 收到响应头后读 body 时碰上一次垃圾回收，abort() 就失灵、挂到 300 秒（undici index.js:1079 置空 processResponse + 1386-1387 不复制 fetchParams，子代理改源码验证）。全系统只有拆派仓只读接口带它；DeepSeek / 汇率实测不受影响没改。
+- 修法：core/fetch-deadline.ts（等头、读 body 跟自己的 signal 赛跑，没读完就 cancel），read-client.ts 改用它，返回值不变。新测试 test:fetch-deadline（进 CI）+ V9 强制回收。Node 22 容器里改坏 5 种全红、连库 79 项新过旧红、8 份并发 × 0.3 核压力全过。
+- 审查 4 轮（Codex + dsh，第 1 轮另派 3 个子代理）：产品代码从头到尾没有必须修；修的都是测试（计时起点、热身、版本无关用例、源码检查、V9 时限按 10 秒）。全套 86 项连 Neon 全过。详见 docs/sessions/2026-10-11-chaipai-integration.md 末节、CLAUDE.md 教训 44，证据 .audit/2026-10-14/v9-fix/。
+
 ## 2026-10-13 拆派仓按运单号取一票上线（eaaa6f6）
 - 老板「不是全部的货都走拆派仓」→ 拆派仓关了按柜拉，改成扫到湘泰运单号来取 `GET /integrations/chaipai/v2/waybill-manifest`（拉清单那把密钥）。找票 = 运单号 ∪ 以它为父单号的子票；最近装的柜；没装柜 / 整柜 / 0 件不给；跟按柜拉共用取数 / 批次 / 版本；总截止 4.5 秒（按句数分时间、预扣网络来回、拿锁后和提交前各重读一次），候选最多 202 张。
 - Codex + dsh 8 轮审查，两家最后都没有必须修；连库 79 项（本机 docker / Neon 都过），全套 85 项（3 项 Neon 偶发超时、单独重跑过）。本机跟拆派仓联调过。10-13 12:10 上线、已核。详见 docs/sessions/2026-10-11-chaipai-integration.md 末节。
