@@ -111,7 +111,7 @@ check("没改过时间就不发（后端用服务器的当前时间），改过�
 check("推之前用 checkPushTime 判断（没填完整 / 将来先拦，比上一步早先问），检查之前不清目标状态", () => {
   assert.match(pushBlock, /checkPushTime\(statusTime, detail\.statusChangedAt\)/, "没用共用的判断，或没把上一步的时间传进去");
   for (const kind of ["incomplete", "future"]) {
-    assert.match(pushBlock, new RegExp(`timeCheck\\.kind === "${kind}"\\) \\{ setError\\([^)]*\\); return; \\}`), `「${kind}」没拦下`);
+    assert.match(pushBlock, new RegExp(`timeCheck\\.kind === "${kind}"\\) \\{ pushError\\(pushId, [^)]*\\); return; \\}`), `「${kind}」没拦下，或没记成推进自己的报错`);
   }
   assert.match(pushBlock, /timeCheck\.kind === "earlier"\) \{\s*const ok = window\.confirm\([\s\S]*?if \(!ok\) return;/, "比上一步早没先问，或问了不管答案");
   const check = pushBlock.indexOf("checkPushTime(");
@@ -151,9 +151,13 @@ check("推进：按柜记「推进中」防连点；请求一落地就放开；�
   assert.ok(release > send, "请求落地后没放开「推进中」");
   assert.match(pushBlock, /const fromStatus = detail\.status;/, "没记下推之前页面看到的状态");
   assert.match(pushBlock, /expectStatus: fromStatus/, "没带页面看到的柜子状态（超时后再点一次会多写一条）");
-  assert.match(pushBlock, /if \(result\) \{\s*if \(stillHere\) \{[\s\S]{0,120}?const ownError = pushErrorRef\.current;\s*if \(ownError\) setError\(\(cur\) => \(cur === ownError \? "" : cur\)\);/,
+  assert.match(pushBlock, /if \(result\) \{\s*if \(stillHere\) \{[\s\S]{0,120}?const own = pushErrorRef\.current;\s*if \(own && own\.containerId === pushId\) setError\(\(cur\) => \(cur === own\.message \? "" : cur\)\);/,
     "推成功没清上一次推失败的红字，或连别的操作的报错一起清了，或没认柜子");
-  assert.match(pushBlock, /\} else if \(stillHere\) \{\s*pushErrorRef\.current = failure;/, "推失败没记下是推进自己写的报错");
+  assert.match(pushBlock, /\} else if \(stillHere\) \{\s*pushError\(pushId, failure\);/, "推失败没记下是推进自己写的报错");
+  // 推进里所有的报错都走 pushError（记下哪个柜、什么话），推成功才清得掉（Codex / dsh 第 8 轮：当场拦下的两条原来没记）
+  assert.equal((pushBlock.match(/pushError\(/g) ?? []).length, 3, "推进里该有 3 处走 pushError：没填完整、将来、请求失败");
+  assert.equal((pushBlock.match(/\bsetError\(/g) ?? []).length, 1, "推进里绕开 pushError 直接写了报错（推成功清不掉）");
+  assert.match(source, /const pushError = \(containerId: string, message: string\) => \{\s*pushErrorRef\.current = \{ containerId, message \};\s*setError\(message\);/, "pushError 没同时记下柜子和那句话");
   // 清输入看「员工亲手改过几次」，不按值比（Codex 第 7 轮：实时刷新先清掉目标状态，按值比会误判成员工改过，备注、时间留在框里）
   assert.match(pushBlock, /const editsAtSend = draftEditsRef\.current;/, "发请求时没记下员工改过几次");
   assert.match(pushBlock, /if \(draftEditsRef\.current === editsAtSend\) \{\s*setTargetStatus\(""\);\s*setStatusRemark\(""\);\s*setNextStop\(""\);\s*setStatusTime\(""\);/,
@@ -173,7 +177,7 @@ check("推进：按柜记「推进中」防连点；请求一落地就放开；�
   assert.doesNotMatch(pushBlock, /new Date\(\)\.toISOString\(\)/, "又拿本机时间当这一步的时间了（应该用后端返回的 updatedAt）");
   assert.equal((pushBlock.match(/setTargetStatus\(/g) ?? []).length, 1, "推进里别处又清了目标状态（推失败也得重选）");
   assert.ok(pushBlock.indexOf("setTargetStatus(") > pushBlock.indexOf("if (result) {"), "目标状态不是推成功才清");
-  assert.match(pushBlock, /\} else if \(stillHere\) \{\s*pushErrorRef\.current = failure;\s*setError\(failure\);/, "失败没马上报");
+  assert.match(pushBlock, /\} else if \(stillHere\) \{\s*pushError\(pushId, failure\);/, "失败没马上报");
   assert.match(pushBlock, /\} else \{\s*setToast\(`柜子「\$\{pushNo\}」没推成：\$\{failure\}`\);/, "换了柜之后旧柜失败一点反馈都没有");
   assert.match(pushBlock, /void loadList\(\{ silent: true \}\);\s*if \(selectedIdRef\.current === pushId\) void loadDetail\(pushId, \{ silent: true \}\);/, "推完的刷新不是静默不等（非静默会清备注、清报错，卡住还压着）");
   assert.match(source, /if \(detail && targetStatus && !pushOptions\.includes\(targetStatus\)\) \{\s*setTargetStatus\(""\);/, "目标状态作废只藏起来没清（以后撤销回去旧选择会冒出来）");
@@ -191,7 +195,7 @@ check("「现在」和最晚可选时间一起刷（refreshNow），每个该刷
   const sites: Array<[RegExp, string]> = [
     [/onFocus=\{refreshNow\}/, "点进时间框"],
     [/onBlur=\{refreshNow\}/, "离开时间框"],
-    [/setStatusTime\(""\);\s*refreshNow\(\);\s*setError\(""\);[^\n]*\n\s*\}, \[selectedId, refreshNow\]\);/, "换柜子"],
+    [/setStatusTime\(""\);\s*refreshNow\(\);\s*setError\(""\);[^\n]*\n\s*pushErrorRef\.current = null;\s*\}, \[selectedId, refreshNow\]\);/, "换柜子"],
     [/onClick=\{\(\) => \{ bumpDraft\(\); setStatusTime\(""\); refreshNow\(\); \}\}/, "改回现在"],
     [/setNextStop\(nextStopDefault\(e\.target\.value, detail\.transportMode\)\);\s*refreshNow\(\);/, "选目标状态"],
     [/const tick = \(\) => \{ if \(document\.activeElement === timeInputRef\.current\) setMaxNow\(beijingNowMinute\(\)\); else refreshNow\(\); \};/, "每 30 秒（有焦点只走最晚可选时间）"],

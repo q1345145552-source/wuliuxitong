@@ -197,8 +197,13 @@ export default function StaffContainerLoadingPage() {
   const bumpDraft = () => { draftEditsRef.current += 1; };
   /** 详情被换过几次（每次加载落地 +1）：推成功先改页面状态时，只在这期间详情没被刷新过才改（防 A→B→A 那种状态绕回来，Codex 第 7 轮） */
   const detailRevRef = useRef(0);
-  /** 推进失败时写的那条报错：推成功只清它，不误清这期间导出、卸柜等别的操作的报错（Codex 第 7 轮） */
-  const pushErrorRef = useRef("");
+  /** 推进自己写的那条报错（哪个柜、什么话）：推成功只清它，不误清这期间导出、卸柜等别的操作的报错（Codex 第 7 轮）。
+      推之前当场拦下的「时间没填完整 / 不能晚于现在」也算，全走 pushError()（Codex / dsh 第 8 轮：原来只记了请求失败那条） */
+  const pushErrorRef = useRef<{ containerId: string; message: string } | null>(null);
+  const pushError = (containerId: string, message: string) => {
+    pushErrorRef.current = { containerId, message };
+    setError(message);
+  };
   /** 推进可选的目标状态：当前状态之后的那几步（按运输方式）；没标运输方式 / 状态不在流程里时为空 */
   const pushOptions = useMemo<readonly string[]>(() => {
     if (!detail?.transportMode) return [];
@@ -230,6 +235,7 @@ export default function StaffContainerLoadingPage() {
     setStatusTime("");
     refreshNow();
     setError(""); // 上一个柜的报错别挂到这个柜上（dsh 10-14 第 6 轮）
+    pushErrorRef.current = null;
   }, [selectedId, refreshNow]);
     
   // 运单列表搜索
@@ -460,8 +466,8 @@ export default function StaffContainerLoadingPage() {
     // 客户轨迹按时间排，这一步会排到上一步前面（线上有过 12 次）。（2026-10-14）
     // 判断规矩在 modules/staff/container-push-time.ts（测试真跑它）：没改时间也要看上一步是不是记在将来
     const timeCheck = checkPushTime(statusTime, detail.statusChangedAt);
-    if (timeCheck.kind === "incomplete") { setError("时间没填完整"); return; }
-    if (timeCheck.kind === "future") { setError("时间不能晚于现在 —— 推状态记的是已经发生的事"); return; }
+    if (timeCheck.kind === "incomplete") { pushError(pushId, "时间没填完整"); return; }
+    if (timeCheck.kind === "future") { pushError(pushId, "时间不能晚于现在 —— 推状态记的是已经发生的事"); return; }
     if (timeCheck.kind === "earlier") {
       const ok = window.confirm(
         `${statusTime ? "你填的时间" : "现在"}（${formatTime(new Date(timeCheck.atMs).toISOString())}）` +
@@ -498,9 +504,9 @@ export default function StaffContainerLoadingPage() {
     if (result) {
       if (stillHere) {
         // 上一次推失败的红字别跟成功提示一起挂着；只清推进自己写的那条（Codex / dsh 第 6、7 轮）
-        const ownError = pushErrorRef.current;
-        if (ownError) setError((cur) => (cur === ownError ? "" : cur));
-        pushErrorRef.current = "";
+        const own = pushErrorRef.current;
+        if (own && own.containerId === pushId) setError((cur) => (cur === own.message ? "" : cur));
+        pushErrorRef.current = null;
         // 推进中员工没亲手动过这一排，四格全清；动过就一格都不清（Codex 第 5～7 轮）
         if (draftEditsRef.current === editsAtSend) {
           setTargetStatus("");
@@ -522,8 +528,7 @@ export default function StaffContainerLoadingPage() {
         (skippedCount > 0 ? `；${skippedCount} 票已派送、签收、退回或取消，没跟着推` : "") + `）`,
       );
     } else if (stillHere) {
-      pushErrorRef.current = failure;
-      setError(failure); // 下面是静默刷新，不会把它清掉
+      pushError(pushId, failure); // 下面是静默刷新，不会把它清掉
     } else {
       setToast(`柜子「${pushNo}」没推成：${failure}`); // 人已经在别的柜上了，不往那个柜的报错区写（dsh 第 5 轮：原来一点反馈都没有）
     }
