@@ -505,8 +505,10 @@ export default function StaffContainerLoadingPage() {
       if (stillHere) {
         // 上一次推失败的红字别跟成功提示一起挂着；只清推进自己写的那条（Codex / dsh 第 6、7 轮）
         const own = pushErrorRef.current;
-        if (own && own.containerId === pushId) setError((cur) => (cur === own.message ? "" : cur));
-        pushErrorRef.current = null;
+        if (own && own.containerId === pushId) {
+          setError((cur) => (cur === own.message ? "" : cur));
+          pushErrorRef.current = null; // 只清这个柜自己的记录（dsh 第 9 轮）
+        }
         // 推进中员工没亲手动过这一排，四格全清；动过就一格都不清（Codex 第 5～7 轮）
         if (draftEditsRef.current === editsAtSend) {
           setTargetStatus("");

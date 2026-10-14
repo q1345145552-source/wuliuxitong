@@ -1,7 +1,7 @@
 /**
  * 装柜管理页面：操作失败时红字报错不能被刷新冲掉（2026-09-17，Opus 第 6 轮复核 B 报的）。
  *
- * 页面里 loadList / loadDetail / loadShipmentList 一进门就 setError("")（清掉上一次的报错）。
+ * 页面里 loadList / loadShipmentList 一进门（非静默时）就 setError("")（清掉上一次的报错；loadDetail 清的是 detailError，不清它）。
  * 撤销、删除这两个 handler 失败时「先 setError 再刷新」，结果报错一闪就没了 ——
  * 员工点了撤销没反应、也不知道为什么（后端这时候会说「刚刚被别人改过，请刷新后再看」这种要紧的话）。
  * 所以这两处必须**先刷新、最后 setError**。
@@ -151,7 +151,7 @@ check("推进：按柜记「推进中」防连点；请求一落地就放开；�
   assert.ok(release > send, "请求落地后没放开「推进中」");
   assert.match(pushBlock, /const fromStatus = detail\.status;/, "没记下推之前页面看到的状态");
   assert.match(pushBlock, /expectStatus: fromStatus/, "没带页面看到的柜子状态（超时后再点一次会多写一条）");
-  assert.match(pushBlock, /if \(result\) \{\s*if \(stillHere\) \{[\s\S]{0,120}?const own = pushErrorRef\.current;\s*if \(own && own\.containerId === pushId\) setError\(\(cur\) => \(cur === own\.message \? "" : cur\)\);/,
+  assert.match(pushBlock, /if \(result\) \{\s*if \(stillHere\) \{[\s\S]{0,120}?const own = pushErrorRef\.current;\s*if \(own && own\.containerId === pushId\) \{\s*setError\(\(cur\) => \(cur === own\.message \? "" : cur\)\);\s*pushErrorRef\.current = null;[^\n]*\n\s*\}/,
     "推成功没清上一次推失败的红字，或连别的操作的报错一起清了，或没认柜子");
   assert.match(pushBlock, /\} else if \(stillHere\) \{\s*pushError\(pushId, failure\);/, "推失败没记下是推进自己写的报错");
   // 推进里所有的报错都走 pushError（记下哪个柜、什么话），推成功才清得掉（Codex / dsh 第 8 轮：当场拦下的两条原来没记）
