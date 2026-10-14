@@ -1878,12 +1878,13 @@ export async function updateContainerStatus(payload: {
   /** 已派送/签收（比这一步靠后）、退回、取消的货推柜子时跳过，列在这里（2026-09-17 推进账本） */
   skippedShipments?: Array<{ trackingNo: string; status: string }>;
 }> {
-  const response = await fetch(`${apiBaseUrl()}/admin/containers/status`, {
+  // 走 apiRequest（单次 30 秒超时、429 等一下再试）：原来裸 fetch 没超时，网络半死不活时装柜管理的「推进中…」
+  // 会一直卡着（Codex / dsh 10-14 第 4 轮）。超时只说明回话没收到，页面会刷新详情看到底推没推上
+  return apiRequest(`${apiBaseUrl()}/admin/containers/status`, {
     method: "POST",
-    headers: { "Content-Type": "application/json", ...authHeaders() },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });
-  return parseApiResponse(response);
 }
 
 /**

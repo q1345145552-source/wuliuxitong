@@ -167,9 +167,10 @@ export default function StaffContainerLoadingPage() {
   /** 时间框能选的最晚时间（现在） */
   const [maxNow, setMaxNow] = useState(() => beijingNowMinute());
   const timeInputRef = useRef<HTMLInputElement>(null);
-  /** 推进请求在路上：按钮变灰显示「推进中…」，防连点推两次（ref 管同一拍里的连点，state 管按钮样子） */
-  const [pushing, setPushing] = useState(false);
-  const pushingRef = useRef(false);
+  /** 推进请求在路上的柜子：那个柜的按钮变灰显示「推进中…」，防连点推两次。按柜记 —— 柜 A 在推时切到柜 B 照样能推 B
+      （ref 管同一拍里的连点，state 管按钮样子；Codex / dsh 10-14 第 4 轮：原来整页一个开关，A 卡住 B 也推不了） */
+  const [pushingIds, setPushingIds] = useState<string[]>([]);
+  const pushingRef = useRef(new Set<string>());
   /** 「现在」和最晚可选时间一起取最新的 —— 两个分开刷会短暂出现框里的值晚于最晚可选（Codex 10-14 第 2 轮） */
   const refreshNow = useCallback(() => {
     const now = beijingNowMinute();
@@ -427,7 +428,8 @@ export default function StaffContainerLoadingPage() {
     // 2026-09-01 竞态全扫：刚点了别的柜子、详情还没跟上时，别拿 B 的 id 配 A 的详情去推状态
     // （2026-09-02 复核整改：统一走 guardDetailOwner）
     if (!guardDetailOwner(selectedId)) return;
-    if (pushingRef.current) return;
+    const pushId = selectedId;
+    if (pushingRef.current.has(pushId)) return;
     // 改过时间才发（没改 = 现在，后端用服务器当前时间）。填成将来的先拦；比上一步还早的先问 ——
     // 客户轨迹按时间排，这一步会排到上一步前面（线上有过 12 次）。（2026-10-14）
     // 判断规矩在 modules/staff/container-push-time.ts（测试真跑它）：没改时间也要看上一步是不是记在将来
@@ -442,29 +444,45 @@ export default function StaffContainerLoadingPage() {
       );
       if (!ok) return;
     }
-    // 推成功才清目标状态；被拦下、点了取消、后端报错（网络断了等），选好的状态都留着，改完直接再点（Codex / dsh 10-14 第 1、3 轮）。
-    // 连点靠 pushing 挡（原来是先清目标状态让按钮变灰，代价是推失败也得重选）
-    pushingRef.current = true;
-    setPushing(true);
+    /* 推成功才清目标状态；被拦下、点了取消、后端报错，选好的状态留着，改完直接再点（Codex / dsh 10-14 第 1、3 轮）。
+       请求一落地（成功、失败、30 秒超时）就放开「推进中」，刷新列表 / 详情放在后面 —— 刷新卡住也不锁按钮（第 4 轮）。
+       回来时员工已经换到别的柜：不清那个柜上填的东西、不在那个柜上报这个柜的错（第 4 轮）。 */
+    pushingRef.current.add(pushId);
+    setPushingIds((ids) => [...ids, pushId]);
+    let result: Awaited<ReturnType<typeof updateContainerStatus>> | null = null;
+    let failure = "";
     try {
-      const result = await updateContainerStatus({ id: selectedId, toStatus, remark: statusRemark.trim() || undefined, date: statusTime || undefined, nextStop: nextStop.trim() || undefined });
-      setTargetStatus("");
-      setStatusRemark("");
-      setStatusTime("");
-      refreshNow();
-      setNextStop("");
+      result = await updateContainerStatus({ id: pushId, toStatus, remark: statusRemark.trim() || undefined, date: statusTime || undefined, nextStop: nextStop.trim() || undefined });
+    } catch (e) {
+      failure = e instanceof Error ? e.message : "状态更新失败";
+    } finally {
+      pushingRef.current.delete(pushId);
+      setPushingIds((ids) => ids.filter((id) => id !== pushId));
+    }
+    const stillHere = selectedIdRef.current === pushId;
+    if (result) {
+      if (stillHere) {
+        setTargetStatus("");
+        setStatusRemark("");
+        setStatusTime("");
+        refreshNow();
+        setNextStop("");
+      }
       const skippedCount = result.skippedShipments?.length ?? 0;
       setToast(
         `柜子「${result.containerNo}」已推进至 ${STATUS_LABEL[toStatus] ?? toStatus}（影响 ${result.affectedShipmentCount} 个运单` +
         (skippedCount > 0 ? `；${skippedCount} 票已派送、签收、退回或取消，没跟着推` : "") + `）`,
       );
+    }
+    // 成功、失败都刷新：失败可能是别人刚推过、或其实写进去了只是回话丢了（超时），页面要看到最新状态；
+    // 留着的目标状态要是已经不在可选里，按钮自己变灰（targetOk）。刷新完才报错 —— loadList 一进门会清报错
+    try {
       await loadList();
-      await loadDetail(selectedId);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "状态更新失败");
+      if (selectedIdRef.current === pushId) await loadDetail(pushId);
+    } catch {
+      // 刷新自己出错会自己报；这里不盖住推进的报错
     } finally {
-      pushingRef.current = false;
-      setPushing(false);
+      if (failure && selectedIdRef.current === pushId) setError(failure);
     }
   };
 
@@ -878,10 +896,13 @@ export default function StaffContainerLoadingPage() {
                       const currentIdx = flow.indexOf(detail.status);
                       if (currentIdx < 0 || currentIdx >= flow.length - 1) return null;
                       const options = flow.slice(currentIdx + 1);
+                      // 选好的目标状态还在可选里才算数（推失败后刷新发现柜子已经被推过了，旧的选择就作废）
+                      const targetOk = options.includes(targetStatus);
+                      const busy = pushingIds.includes(detail.id);
                       return (
                         <>
                           <select
-                            value={targetStatus}
+                            value={targetOk ? targetStatus : ""}
                             onChange={(e) => {
                               setTargetStatus(e.target.value);
                               // 换目标状态时把下一站换成该状态的默认值，员工再决定要不要改
@@ -896,11 +917,11 @@ export default function StaffContainerLoadingPage() {
                             ))}
                           </select>
                           <button
-                            disabled={!targetStatus || pushing}
-                            onClick={() => { if (targetStatus) void handlePushStatus(targetStatus); }}
-                            style={{ border: "none", borderRadius: 6, padding: "8px 16px", background: targetStatus && !pushing ? "var(--c-blue)" : "#8B94A3", color: "var(--white)", fontWeight: 500, fontSize: 13, cursor: targetStatus && !pushing ? "pointer" : "not-allowed", whiteSpace: "nowrap" }}
+                            disabled={!targetOk || busy}
+                            onClick={() => { if (targetOk && !busy) void handlePushStatus(targetStatus); }}
+                            style={{ border: "none", borderRadius: 6, padding: "8px 16px", background: targetOk && !busy ? "var(--c-blue)" : "#8B94A3", color: "var(--white)", fontWeight: 500, fontSize: 13, cursor: targetOk && !busy ? "pointer" : "not-allowed", whiteSpace: "nowrap" }}
                           >
-                            {pushing ? "推进中…" : "确认推进"}
+                            {busy ? "推进中…" : "确认推进"}
                           </button>
                         </>
                       );

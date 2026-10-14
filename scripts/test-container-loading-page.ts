@@ -140,17 +140,24 @@ check("判断规矩真跑：改过的时间严格比上一步；没改时只在�
   assert.equal(checkPushTime("2026-10-13T15:30:45", prev, now).kind, "ok", "浏览器给带秒的值也要认");
 });
 
-check("推成功才清目标状态（被拦下、取消、后端报错都留着）；推的过程中按钮变灰防连点", () => {
+check("推进：按柜记「推进中」防连点；请求一落地就放开（刷新卡住不锁按钮）；推成功且还在这个柜才清输入；失败刷新完才报错、换了柜不报", () => {
   const send = pushBlock.indexOf("await updateContainerStatus(");
-  const clear = pushBlock.indexOf('setTargetStatus("")');
-  const catchAt = pushBlock.lastIndexOf("} catch (e) {");
-  assert.ok(send >= 0 && clear > send && clear < catchAt, "目标状态不是在推成功之后才清（推失败也得重选）");
-  assert.equal((pushBlock.match(/setTargetStatus\(/g) ?? []).length, 1, "推进里别处又清了目标状态");
-  assert.match(pushBlock, /if \(pushingRef\.current\) return;/, "推进中再点没挡");
-  const mark = pushBlock.indexOf("pushingRef.current = true");
-  assert.ok(mark >= 0 && mark < send, "发请求前没标「推进中」");
-  assert.match(pushBlock, /\} finally \{\s*pushingRef\.current = false;\s*setPushing\(false\);/, "推完（成功或失败）没把「推进中」放开");
-  assert.match(source, /disabled=\{!targetStatus \|\| pushing\}/, "推进中按钮没变灰");
+  assert.ok(send >= 0, "找不到发请求那句");
+  assert.match(pushBlock, /const pushId = selectedId;\s*if \(pushingRef\.current\.has\(pushId\)\) return;/, "同一个柜推进中再点没挡");
+  const add = pushBlock.indexOf("pushingRef.current.add(pushId)");
+  assert.ok(add >= 0 && add < send, "发请求前没标这个柜「推进中」");
+  const release = pushBlock.search(/\} finally \{\s*pushingRef\.current\.delete\(pushId\);/);
+  const refresh = pushBlock.indexOf("await loadList()");
+  assert.ok(release > send && refresh > release, "「推进中」要在请求落地后马上放开、在刷新之前 —— 刷新卡住会把按钮一直锁着");
+  assert.match(pushBlock, /if \(result\) \{\s*if \(stillHere\) \{\s*setTargetStatus\(""\);/, "推成功清输入没认柜子（换了柜会把新柜上填的东西清掉）");
+  assert.equal((pushBlock.match(/setTargetStatus\(/g) ?? []).length, 1, "推进里别处又清了目标状态（推失败也得重选）");
+  assert.match(pushBlock, /\} finally \{\s*if \(failure && selectedIdRef\.current === pushId\) setError\(failure\);/, "失败的报错没放在刷新之后，或换了柜还报");
+  assert.match(source, /const targetOk = options\.includes\(targetStatus\);/, "没核对选好的目标状态还在不在可选里");
+  assert.match(source, /const busy = pushingIds\.includes\(detail\.id\);/, "「推进中」不是按柜算的");
+  assert.match(source, /disabled=\{!targetOk \|\| busy\}/, "推进中 / 目标状态作废时按钮没变灰");
+  const api = readFileSync(path.join(process.cwd(), "apps/web/src/services/business-api.ts"), "utf-8");
+  const fn = api.slice(api.indexOf("export async function updateContainerStatus("), api.indexOf("export async function", api.indexOf("export async function updateContainerStatus(") + 10));
+  assert.match(fn, /return apiRequest\(/, "推柜子状态没走 apiRequest（没有超时，网络卡住按钮会一直「推进中…」）");
 });
 
 check("「现在」和最晚可选时间一起刷（refreshNow），每个该刷的地方都调它；框有焦点时只走最晚可选时间", () => {
