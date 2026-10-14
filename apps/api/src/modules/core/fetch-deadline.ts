@@ -7,7 +7,7 @@
  * 原因（10-14 子代理按 undici 6.28.1 源码查实，把第 1079 行注释掉重编后 10 次卡 0 次）：我们 signal 上 undici 只挂一个监听，
  * 它用 WeakRef 指着 Request 内部自己的 AbortController（request.js:423）；这个 controller 只靠 fetch() 的闭包拉住，闭包又只靠
  * fetchParams.processResponse 拉住，收到响应头后 index.js:1079 把它置空。带 redirect:"error" 时网络层拿的就是这同一个 fetchParams
- *（index.js:1386，不复制），置空后没人再拉住，回收时 FinalizationRegistry（request.js:35）顺手摘掉我们 signal 上的监听。
+ *（index.js:1386-1387，不复制），置空后没人再拉住，回收时 FinalizationRegistry（request.js:35）顺手摘掉我们 signal 上的监听。
  * 不带 "error" 时网络层拿的是副本（index.js:1396），副本里的 processResponse 不置空，所以没事 —— DeepSeek、汇率没带这个设置，
  * 实测不受影响，没改；请求方法、有没有请求体、压不压缩都无关。证据：.audit/2026-10-14/v9-fix/。
  *

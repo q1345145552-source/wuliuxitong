@@ -319,31 +319,84 @@ async function main(): Promise<void> {
       return statSync(f).isDirectory() ? walk(f) : /\.[cm]?[jt]s$/.test(f) && !f.endsWith(".d.ts") ? [f] : [];
     });
     const helper = path.join(root, "modules/core/fetch-deadline.ts");
-    const READ_BODY = new Set(["getReader", "json", "text", "arrayBuffer", "blob", "formData", "bytes", "pipeTo", "pipeThrough", "tee"]);
     let hits = 0;
     for (const f of walk(root)) {
       if (f === helper) continue;
       const sf = ts.createSourceFile(f, readFileSync(f, "utf8"), ts.ScriptTarget.Latest, true);
+      const at = (n: TS.Node) => `第 ${sf.getLineAndCharacterOfPosition(n.getStart(sf)).line + 1} 行`;
+      const unwrap = (e: TS.Expression): TS.Expression => {
+        while (ts.isAsExpression(e) || ts.isParenthesizedExpression(e) || ts.isSatisfiesExpression(e)
+          || ts.isTypeAssertionExpression(e) || ts.isNonNullExpression(e) || ts.isAwaitExpression(e)) e = e.expression;
+        return e;
+      };
+      const nameOf = (name: TS.Node): string | null => {
+        if (ts.isIdentifier(name) || ts.isStringLiteralLike(name)) return name.text;
+        if (ts.isComputedPropertyName(name)) { const v = unwrap(name.expression); return ts.isStringLiteralLike(v) ? v.text : null; }
+        return null;
+      };
+      /** 是不是调了 fetchWithDeadline（直接调或 xx.fetchWithDeadline） */
+      const isHelperCall = (e: TS.Expression): boolean => {
+        const c = unwrap(e);
+        if (!ts.isCallExpression(c)) return false;
+        const callee = unwrap(c.expression);
+        return (ts.isIdentifier(callee) && callee.text === "fetchWithDeadline")
+          || (ts.isPropertyAccessExpression(callee) && callee.name.text === "fetchWithDeadline");
+      };
+      const inType = (n: TS.Node) => { for (let p = n.parent; p; p = p.parent) if (ts.isTypeNode(p)) return true; return false; };
+      const isDeclName = (n: TS.Identifier) => {
+        const p = n.parent;
+        if (ts.isPropertyAccessExpression(p)) return p.name === n;
+        if ((ts.isBindingElement(p) || ts.isImportSpecifier(p) || ts.isExportSpecifier(p)) && p.propertyName === n) return true;
+        return (ts.isPropertyAssignment(p) || ts.isBindingElement(p) || ts.isVariableDeclaration(p) || ts.isParameter(p)
+          || ts.isFunctionDeclaration(p) || ts.isMethodDeclaration(p) || ts.isMethodSignature(p) || ts.isPropertySignature(p)
+          || ts.isPropertyDeclaration(p) || ts.isImportSpecifier(p) || ts.isExportSpecifier(p)) && p.name === n;
+      };
+
+      // 第一遍：这份文件带不带 redirect:"error"；哪些变量装着 fetchWithDeadline 拿回来的响应
+      // redirect 的值能确定是别的字面量（"follow" / "manual"）才不算；"error"、as const、常量、变量、简写都算候选，宁可多查（dsh / Codex 第 3 轮）
       let redirectError = false;
       let usesHelper = false;
-      const bad: string[] = [];
-      const at = (n: TS.Node) => `第 ${sf.getLineAndCharacterOfPosition(n.getStart(sf)).line + 1} 行`;
-      const visit = (n: TS.Node): void => {
-        if (ts.isPropertyAssignment(n) && (ts.isIdentifier(n.name) || ts.isStringLiteral(n.name)) && n.name.text === "redirect"
-          && ts.isStringLiteralLike(n.initializer) && n.initializer.text === "error") redirectError = true;
-        if (ts.isIdentifier(n) && n.text === "fetchWithDeadline" && ts.isCallExpression(n.parent) && n.parent.expression === n) usesHelper = true;
-        // 任何地方提到 fetch 这个值（直接调、globalThis.fetch、window["fetch"]、const f = fetch）都算
-        if (ts.isIdentifier(n) && n.text === "fetch" && !(ts.isPropertyAccessExpression(n.parent) && n.parent.name === n)
-          && !(ts.isPropertyAssignment(n.parent) && n.parent.name === n)) bad.push(`${at(n)}直接用了 fetch`);
-        if (ts.isPropertyAccessExpression(n) && n.name.text === "fetch") bad.push(`${at(n)}用了 ${n.getText(sf)}`);
-        if (ts.isElementAccessExpression(n) && ts.isStringLiteralLike(n.argumentExpression) && n.argumentExpression.text === "fetch") bad.push(`${at(n)}用了 ${n.getText(sf)}`);
-        if (ts.isCallExpression(n) && ts.isPropertyAccessExpression(n.expression) && READ_BODY.has(n.expression.name.text)) bad.push(`${at(n)}自己读响应体 .${n.expression.name.text}()`);
-        if (ts.isForOfStatement(n) && n.awaitModifier) bad.push(`${at(n)}用 for await 读流`);
-        ts.forEachChild(n, visit);
+      const responses = new Set<string>();
+      const scan = (n: TS.Node): void => {
+        if (ts.isPropertyAssignment(n) && nameOf(n.name) === "redirect") {
+          const v = unwrap(n.initializer);
+          if (!(ts.isStringLiteralLike(v) && v.text !== "error")) redirectError = true;
+        }
+        if (ts.isShorthandPropertyAssignment(n) && n.name.text === "redirect") redirectError = true;
+        if (ts.isCallExpression(n) && isHelperCall(n)) usesHelper = true;
+        if (ts.isVariableDeclaration(n) && ts.isIdentifier(n.name) && n.initializer && isHelperCall(n.initializer)) responses.add(n.name.text);
+        if (ts.isBinaryExpression(n) && n.operatorToken.kind === ts.SyntaxKind.EqualsToken && ts.isIdentifier(n.left) && isHelperCall(n.right)) responses.add(n.left.text);
+        ts.forEachChild(n, scan);
       };
-      visit(sf);
+      scan(sf);
       if (!redirectError) continue;
       hits++;
+
+      // 第二遍：绕开 fetch-deadline 的写法。读 body 只看上面那些响应（和它的 .body），服务端自己的 res.json() 不算（dsh 第 3 轮）
+      const READ_BODY = new Set(["getReader", "json", "text", "arrayBuffer", "blob", "formData", "bytes", "pipeTo", "pipeThrough", "tee"]);
+      const isResponse = (e: TS.Expression): boolean => {
+        const r = unwrap(e);
+        if (ts.isIdentifier(r)) return responses.has(r.text);
+        if (ts.isPropertyAccessExpression(r) && r.name.text === "body") return isResponse(r.expression);
+        return isHelperCall(r);
+      };
+      const bad: string[] = [];
+      const check2 = (n: TS.Node): void => {
+        // 任何值位置提到 fetch（直接调、const f = fetch、{ fetch }）
+        if (ts.isIdentifier(n) && n.text === "fetch" && !isDeclName(n) && !inType(n)) bad.push(`${at(n)}直接用了 fetch`);
+        if (ts.isPropertyAccessExpression(n) && n.name.text === "fetch" && !inType(n)) bad.push(`${at(n)}用了 ${n.getText(sf)}`);
+        if (ts.isElementAccessExpression(n) && nameOf(n.argumentExpression) === "fetch") bad.push(`${at(n)}用了 ${n.getText(sf)}`);
+        if (ts.isCallExpression(n)) {
+          const callee = unwrap(n.expression);
+          const method = ts.isPropertyAccessExpression(callee) ? callee.name.text
+            : ts.isElementAccessExpression(callee) ? nameOf(callee.argumentExpression) : null;
+          const receiver = ts.isPropertyAccessExpression(callee) || ts.isElementAccessExpression(callee) ? callee.expression : null;
+          if (method && receiver && READ_BODY.has(method) && isResponse(receiver)) bad.push(`${at(n)}自己读响应体 ${n.getText(sf).slice(0, 60)}`);
+        }
+        if (ts.isForOfStatement(n) && n.awaitModifier && isResponse(n.expression)) bad.push(`${at(n)}用 for await 读响应体`);
+        ts.forEachChild(n, check2);
+      };
+      check2(sf);
       const rel = path.relative(root, f);
       assert.ok(usesHelper, `${rel} 带 redirect:"error" 却没用 fetchWithDeadline`);
       assert.deepEqual(bad, [], `${rel} 带 redirect:"error"，又绕开了 fetch-deadline —— Node 22 上读 body 碰上回收会挂 300 秒`);
