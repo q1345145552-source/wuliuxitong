@@ -107,7 +107,7 @@ check("没改过时间就不发（后端用服务器的当前时间），改过�
   assert.doesNotMatch(pushBlock, /date: [^,}]*nowShown/, "把页面上显示的「现在」发出去了 —— 页面开着放久了就不是现在了");
 });
 
-check("推之前用 checkPushTime 判断（没填完整 / 将来先拦，比上一步早先问），过了检查才清目标状态", () => {
+check("推之前用 checkPushTime 判断（没填完整 / 将来先拦，比上一步早先问），检查之前不清目标状态", () => {
   assert.match(pushBlock, /checkPushTime\(statusTime, detail\.statusChangedAt\)/, "没用共用的判断，或没把上一步的时间传进去");
   for (const kind of ["incomplete", "future"]) {
     assert.match(pushBlock, new RegExp(`timeCheck\\.kind === "${kind}"\\) \\{ setError\\([^)]*\\); return; \\}`), `「${kind}」没拦下`);
@@ -115,8 +115,7 @@ check("推之前用 checkPushTime 判断（没填完整 / 将来先拦，比上�
   assert.match(pushBlock, /timeCheck\.kind === "earlier"\) \{\s*const ok = window\.confirm\([\s\S]*?if \(!ok\) return;/, "比上一步早没先问，或问了不管答案");
   const check = pushBlock.indexOf("checkPushTime(");
   const clear = pushBlock.indexOf('setTargetStatus("")');
-  const send = pushBlock.indexOf("await updateContainerStatus(");
-  assert.ok(check >= 0 && clear > check && send > clear, "目标状态要在检查过了之后、发请求之前清（被拦下或取消时选好的状态得留着）");
+  assert.ok(check >= 0 && clear > check, "目标状态在检查之前就清了（被拦下或取消时选好的状态得留着）");
   const buttonLine = source.split("\n").find((line) => /onClick=\{.*handlePushStatus\(targetStatus\)/.test(line));
   assert.ok(buttonLine, "找不到「确认推进」按钮的 onClick");
   assert.doesNotMatch(buttonLine, /setTargetStatus\(/, "按钮上又直接清目标状态了：被拦下或点取消，员工得重选状态");
@@ -141,12 +140,33 @@ check("判断规矩真跑：改过的时间严格比上一步；没改时只在�
   assert.equal(checkPushTime("2026-10-13T15:30:45", prev, now).kind, "ok", "浏览器给带秒的值也要认");
 });
 
-check("推失败（后端报错）时 catch 里也不清目标状态；「现在」和最晚可选时间只走 refreshNow 一起刷", () => {
-  const catchPart = pushBlock.slice(pushBlock.lastIndexOf("} catch (e) {"));
-  assert.doesNotMatch(catchPart, /setTargetStatus\(/, "推失败时又清了目标状态");
+check("推成功才清目标状态（被拦下、取消、后端报错都留着）；推的过程中按钮变灰防连点", () => {
+  const send = pushBlock.indexOf("await updateContainerStatus(");
+  const clear = pushBlock.indexOf('setTargetStatus("")');
+  const catchAt = pushBlock.lastIndexOf("} catch (e) {");
+  assert.ok(send >= 0 && clear > send && clear < catchAt, "目标状态不是在推成功之后才清（推失败也得重选）");
+  assert.equal((pushBlock.match(/setTargetStatus\(/g) ?? []).length, 1, "推进里别处又清了目标状态");
+  assert.match(pushBlock, /if \(pushingRef\.current\) return;/, "推进中再点没挡");
+  const mark = pushBlock.indexOf("pushingRef.current = true");
+  assert.ok(mark >= 0 && mark < send, "发请求前没标「推进中」");
+  assert.match(pushBlock, /\} finally \{\s*pushingRef\.current = false;\s*setPushing\(false\);/, "推完（成功或失败）没把「推进中」放开");
+  assert.match(source, /disabled=\{!targetStatus \|\| pushing\}/, "推进中按钮没变灰");
+});
+
+check("「现在」和最晚可选时间一起刷（refreshNow），每个该刷的地方都调它；框有焦点时只走最晚可选时间", () => {
   assert.match(source, /const refreshNow = useCallback\(\(\) => \{\s*const now = beijingNowMinute\(\);\s*setNowShown\(now\);\s*setMaxNow\(now\);/, "refreshNow 没把两个一起刷");
   assert.equal((source.match(/setNowShown\(/g) ?? []).length, 1, "别处单独刷了「现在」，跟最晚可选时间会对不上");
-  assert.match(source, /addEventListener\("visibilitychange"/, "标签页切回来没刷新");
+  const sites: Array<[RegExp, string]> = [
+    [/onFocus=\{refreshNow\}/, "点进时间框"],
+    [/onBlur=\{refreshNow\}/, "离开时间框"],
+    [/setStatusTime\(""\);\s*refreshNow\(\);\s*\}, \[selectedId, refreshNow\]\);/, "换柜子"],
+    [/onClick=\{\(\) => \{ setStatusTime\(""\); refreshNow\(\); \}\}/, "改回现在"],
+    [/setNextStop\(nextStopDefault\(e\.target\.value, detail\.transportMode\)\);\s*refreshNow\(\);/, "选目标状态"],
+    [/const tick = \(\) => \{ if \(document\.activeElement === timeInputRef\.current\) setMaxNow\(beijingNowMinute\(\)\); else refreshNow\(\); \};/, "每 30 秒（有焦点只走最晚可选时间）"],
+    [/addEventListener\("visibilitychange", onVisible\)/, "标签页切回来"],
+  ];
+  for (const [re, where] of sites) assert.match(source, re, `${where}没调 refreshNow（或写法变了）`);
+  assert.match(pushBlock, /setStatusTime\(""\);\s*refreshNow\(\);/, "推成功后没调 refreshNow");
 });
 
 check("换柜子、推完一次都把时间清回「现在」（别把上一个柜填的时间带到下一个柜）", () => {
