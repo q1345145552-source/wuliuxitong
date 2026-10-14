@@ -28,7 +28,8 @@ import {
   type LoadingManifestDetail,
   type ShipmentItem,
 } from "../../../services/business-api";
-import { beijingDate, beijingLocalToMs, beijingNowMinute } from "../../../modules/shared/beijing-date";
+import { beijingDate, beijingNowMinute } from "../../../modules/shared/beijing-date";
+import { checkPushTime } from "../../../modules/staff/container-push-time";
 import { formatTime } from "../../../modules/shipment/track-time";
 
 const STATUS_LABEL: Record<string, string> = {
@@ -163,6 +164,19 @@ export default function StaffContainerLoadingPage() {
   const [statusTime, setStatusTime] = useState("");
   /** 时间框没改过时显示的「现在」：换柜子、选状态、点进框里、推完一次都重新取（不每秒跳，免得员工正在选的时候框里的值变了） */
   const [nowShown, setNowShown] = useState(() => beijingNowMinute());
+  /** 时间框能选的最晚时间（现在） */
+  const [maxNow, setMaxNow] = useState(() => beijingNowMinute());
+  const timeInputRef = useRef<HTMLInputElement>(null);
+  /* 框里的「现在」和能选的最晚时间每 30 秒跟着走，页面开着放久了也不显示半小时前的时间（Codex / dsh 10-14 第 1 轮）；
+     员工点进框里正在选的时候不动它，免得选到一半值变了 */
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      const now = beijingNowMinute();
+      setMaxNow(now);
+      if (document.activeElement !== timeInputRef.current) setNowShown(now);
+    }, 30_000);
+    return () => window.clearInterval(timer);
+  }, []);
   const [targetStatus, setTargetStatus] = useState("");
   /** 下一站（2026-08-06）：选目标状态时自动填默认值，员工可改 */
   const [nextStop, setNextStop] = useState("");
@@ -406,19 +420,20 @@ export default function StaffContainerLoadingPage() {
     if (!guardDetailOwner(selectedId)) return;
     // 改过时间才发（没改 = 现在，后端用服务器当前时间）。填成将来的先拦；比上一步还早的先问 ——
     // 客户轨迹按时间排，这一步会排到上一步前面（线上有过 12 次）。（2026-10-14）
-    if (statusTime) {
-      const at = beijingLocalToMs(statusTime);
-      if (at === null) { setError("时间没填完整"); return; }
-      if (at > Date.now() + 10 * 60 * 1000) { setError("时间不能晚于现在 —— 推状态记的是已经发生的事"); return; }
-      const prevAt = detail.statusChangedAt ? Date.parse(detail.statusChangedAt) : Number.NaN;
-      if (!Number.isNaN(prevAt) && at < prevAt) {
-        const ok = window.confirm(
-          `你填的时间（${formatTime(new Date(at).toISOString())}）比上一步「${STATUS_LABEL[detail.status] ?? detail.status}」` +
-          `（${formatTime(new Date(prevAt).toISOString())}）还早，\n客户的物流轨迹里这一步会排到上一步前面。\n\n确定按这个时间推吗？`,
-        );
-        if (!ok) return;
-      }
+    // 判断规矩在 modules/staff/container-push-time.ts（测试真跑它）：没改时间也要看上一步是不是记在将来
+    const timeCheck = checkPushTime(statusTime, detail.statusChangedAt);
+    if (timeCheck.kind === "incomplete") { setError("时间没填完整"); return; }
+    if (timeCheck.kind === "future") { setError("时间不能晚于现在 —— 推状态记的是已经发生的事"); return; }
+    if (timeCheck.kind === "earlier") {
+      const ok = window.confirm(
+        `${statusTime ? "你填的时间" : "现在"}（${formatTime(new Date(timeCheck.atMs).toISOString())}）` +
+        `比上一步「${STATUS_LABEL[detail.status] ?? detail.status}」记的时间（${formatTime(new Date(timeCheck.prevMs).toISOString())}）还早，\n` +
+        `客户的物流轨迹里这一步会排到上一步前面。\n\n确定按这个时间推吗？`,
+      );
+      if (!ok) return;
     }
+    // 过了检查才清目标状态（按钮跟着变灰，防连点推两次）；被拦下或点了取消，选好的状态留着，改完时间直接再点（Codex / dsh 10-14 第 1 轮）
+    setTargetStatus("");
     try {
       const result = await updateContainerStatus({ id: selectedId, toStatus, remark: statusRemark.trim() || undefined, date: statusTime || undefined, nextStop: nextStop.trim() || undefined });
       setStatusRemark("");
@@ -814,8 +829,9 @@ export default function StaffContainerLoadingPage() {
                       <input
                         type="datetime-local"
                         value={statusTime || nowShown}
-                        max={beijingNowMinute()}
-                        onFocus={() => { if (!statusTime) setNowShown(beijingNowMinute()); }}
+                        ref={timeInputRef}
+                        max={maxNow}
+                        onFocus={() => { const now = beijingNowMinute(); setMaxNow(now); if (!statusTime) setNowShown(now); }}
                         // 没填完整（某一段被退格清掉）时浏览器给的是空串：不当回事，框里留着上一次完整的时间。
                         // 原来直接存空串，框会一下跳回「现在」—— 先改了日、再在月上按退格，日就被冲回今天，推上去是错的日子（10-14 实测）
                         onChange={(e) => { if (e.target.value) setStatusTime(e.target.value); }}
@@ -864,7 +880,7 @@ export default function StaffContainerLoadingPage() {
                           </select>
                           <button
                             disabled={!targetStatus}
-                            onClick={() => { if (targetStatus) handlePushStatus(targetStatus); setTargetStatus(""); }}
+                            onClick={() => { if (targetStatus) void handlePushStatus(targetStatus); }}
                             style={{ border: "none", borderRadius: 6, padding: "8px 16px", background: targetStatus ? "var(--c-blue)" : "#8B94A3", color: "var(--white)", fontWeight: 500, fontSize: 13, cursor: targetStatus ? "pointer" : "not-allowed", whiteSpace: "nowrap" }}
                           >
                             确认推进

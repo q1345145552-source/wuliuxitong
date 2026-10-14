@@ -566,6 +566,12 @@ export function registerContainerRoutes(app: MinimalHttpApp): void {
        要是真实存在的日子（2026-09-29 实跑发现：原来「2026-02-31」照收、顺延成 3 月 3 日写进柜子和轨迹，
        「abc」这种悄悄换成当前时间）；也不能填成将来。页面选不出这种值，只有直接调接口才会；当场 400。 */
     let customDate: Date | null = null;
+    // 传了却不是字符串（123、数组、对象）：原来当成「没填」、悄悄按现在推（Codex 10-14 第 1 轮）
+    const rawDate: unknown = (req.body as { date?: unknown } | null)?.date;
+    if (rawDate !== undefined && rawDate !== null && typeof rawDate !== "string") {
+      fail(res, 400, "VALIDATION_ERROR", "时间要写成 2026-09-01 14:30 这种格式");
+      return;
+    }
     if (typeof body.date === "string" && body.date.trim()) {
       const raw = body.date.trim();
       const parsed = parseStatusTime(raw);

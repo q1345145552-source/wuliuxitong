@@ -31,10 +31,16 @@ export function beijingNowMinute(nowMs: number = Date.now()): string {
   return new Date(nowMs + BEIJING_OFFSET_MS).toISOString().slice(0, 16);
 }
 
-/** 把时间框里的北京时间（2026-10-14T15:30）换成真正的时刻（毫秒）；格式不对给 null */
+/**
+ * 把时间框里的北京时间（2026-10-14T15:30）换成真正的时刻（毫秒）；格式不对、不是真实存在的日子（2 月 30 日）、时分越界给 null。
+ * 个别浏览器给的值带秒（…T15:30:00）也认，秒丢掉（dsh 10-14 第 1 轮）。跟后端 containers/status-time.ts 的规矩一样。
+ */
 export function beijingLocalToMs(text: string): number | null {
-  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/.exec(text);
+  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?$/.exec(text);
   if (!m) return null;
-  const ms = Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]), Number(m[4]), Number(m[5])) - BEIJING_OFFSET_MS;
-  return Number.isNaN(ms) ? null : ms;
+  const [y, mo, d, hh, mm] = [Number(m[1]), Number(m[2]), Number(m[3]), Number(m[4]), Number(m[5])];
+  if (hh > 23 || mm > 59 || (m[6] !== undefined && Number(m[6]) > 59)) return null;
+  const day = new Date(Date.UTC(y, mo - 1, d));
+  if (day.getUTCFullYear() !== y || day.getUTCMonth() + 1 !== mo || day.getUTCDate() !== d) return null;
+  return Date.UTC(y, mo - 1, d, hh, mm) - BEIJING_OFFSET_MS;
 }

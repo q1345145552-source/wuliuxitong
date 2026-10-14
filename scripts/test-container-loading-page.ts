@@ -13,6 +13,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { beijingLocalToMs, beijingNowMinute } from "../apps/web/src/modules/shared/beijing-date";
 import { isFutureStatusTime, parseStatusTime } from "../apps/api/src/modules/containers/status-time";
+import { checkPushTime } from "../apps/web/src/modules/staff/container-push-time";
 
 const file = path.join(process.cwd(), "apps/web/src/app/staff/container-loading/page.tsx");
 const source = readFileSync(file, "utf-8");
@@ -106,11 +107,38 @@ check("没改过时间就不发（后端用服务器的当前时间），改过�
   assert.doesNotMatch(pushBlock, /date: [^,}]*nowShown/, "把页面上显示的「现在」发出去了 —— 页面开着放久了就不是现在了");
 });
 
-check("填成将来的先拦下；比上一步还早的先问一句（轨迹会倒着排）", () => {
-  assert.match(pushBlock, /at > Date\.now\(\)[^;]*\)\s*\{\s*setError\(/, "填成将来没拦");
-  assert.match(pushBlock, /detail\.statusChangedAt/, "没拿上一步的时间比");
-  assert.match(pushBlock, /window\.confirm\(/, "比上一步早时没先问");
-  assert.ok(pushBlock.indexOf("window.confirm(") < pushBlock.indexOf("await updateContainerStatus("), "先推了才问");
+check("推之前用 checkPushTime 判断（没填完整 / 将来先拦，比上一步早先问），过了检查才清目标状态", () => {
+  assert.match(pushBlock, /checkPushTime\(statusTime, detail\.statusChangedAt\)/, "没用共用的判断，或没把上一步的时间传进去");
+  for (const kind of ["incomplete", "future"]) {
+    assert.match(pushBlock, new RegExp(`timeCheck\\.kind === "${kind}"\\) \\{ setError\\([^)]*\\); return; \\}`), `「${kind}」没拦下`);
+  }
+  assert.match(pushBlock, /timeCheck\.kind === "earlier"\) \{\s*const ok = window\.confirm\([\s\S]*?if \(!ok\) return;/, "比上一步早没先问，或问了不管答案");
+  const check = pushBlock.indexOf("checkPushTime(");
+  const clear = pushBlock.indexOf('setTargetStatus("")');
+  const send = pushBlock.indexOf("await updateContainerStatus(");
+  assert.ok(check >= 0 && clear > check && send > clear, "目标状态要在检查过了之后、发请求之前清（被拦下或取消时选好的状态得留着）");
+  const buttonLine = source.split("\n").find((line) => /onClick=\{.*handlePushStatus\(targetStatus\)/.test(line));
+  assert.ok(buttonLine, "找不到「确认推进」按钮的 onClick");
+  assert.doesNotMatch(buttonLine, /setTargetStatus\(/, "按钮上又直接清目标状态了：被拦下或点取消，员工得重选状态");
+});
+
+check("判断规矩真跑：改过的时间严格比上一步；没改时只在上一步明显记在将来（10 分钟以上）才问，不怕员工电脑慢几分钟", () => {
+  const now = Date.UTC(2026, 9, 14, 8, 0); // 北京 10-14 16:00
+  const iso = (bj: string) => new Date(Date.UTC(+bj.slice(0, 4), +bj.slice(5, 7) - 1, +bj.slice(8, 10), +bj.slice(11, 13) - 8, +bj.slice(14, 16))).toISOString();
+  const prev = iso("2026-10-13T10:00");
+  assert.equal(checkPushTime("2026-10-13T09:59", prev, now).kind, "earlier", "改成比上一步早 1 分钟没问");
+  assert.equal(checkPushTime("2026-10-13T10:00", prev, now).kind, "ok", "跟上一步同一分钟不该问");
+  assert.equal(checkPushTime("2026-10-13T15:30", prev, now).kind, "ok");
+  assert.equal(checkPushTime("", prev, now).kind, "ok", "没改、上一步在过去，不该问");
+  assert.equal(checkPushTime("", iso("2026-10-14T16:05"), now).kind, "ok", "上一步只比现在晚 5 分钟（电脑时钟差）不该问");
+  const legacy = checkPushTime("", iso("2026-10-15T08:00"), now);
+  assert.equal(legacy.kind, "earlier", "上一步记在将来（旧页面只给日期记成北京 8 点 / 10-30 那种），没改直接推没问");
+  if (legacy.kind === "earlier") assert.deepEqual([legacy.atMs, Date.parse(iso("2026-10-15T08:00"))], [now, legacy.prevMs]);
+  assert.equal(checkPushTime("2026-10-14T16:09", prev, now).kind, "ok", "晚 9 分钟（时钟快一点）不该拦");
+  assert.equal(checkPushTime("2026-10-14T16:11", prev, now).kind, "future", "晚 11 分钟该拦");
+  assert.equal(checkPushTime("2026-10-13T09:00", null, now).kind, "ok", "老柜子没有上一步的时间，不比");
+  assert.equal(checkPushTime("2026-02-30T10:00", prev, now).kind, "incomplete", "2 月 30 日没拦");
+  assert.equal(checkPushTime("2026-10-13T15:30:45", prev, now).kind, "ok", "浏览器给带秒的值也要认");
 });
 
 check("换柜子、推完一次都把时间清回「现在」（别把上一个柜填的时间带到下一个柜）", () => {
@@ -128,7 +156,9 @@ check("北京时间换算：页面和后端各一份，对同一个时间要换�
     assert.equal(parsed.at.getTime(), ms, `「${text}」两边换出来不一样`);
     assert.equal(beijingNowMinute(ms), text, `「${text}」换过去再换回来对不上`);
   }
-  for (const bad of ["2026-10-14", "2026-10-14 10:00", "abc"]) assert.equal(beijingLocalToMs(bad), null, `页面认了「${bad}」`);
+  for (const bad of ["2026-10-14", "2026-10-14 10:00", "abc", "2026-02-30T10:00", "2026-10-14T24:00", "2026-10-14T10:60"]) assert.equal(beijingLocalToMs(bad), null, `页面认了「${bad}」`);
+  assert.equal(beijingLocalToMs("2026-10-14T00:30:59"), beijingLocalToMs("2026-10-14T00:30"), "页面带秒的值没把秒丢掉");
+  assert.equal(parseStatusTime("2026-10-14T00:30:59")?.at.getTime(), beijingLocalToMs("2026-10-14T00:30"), "后端带秒的值没把秒丢掉");
   for (const bad of ["2026-02-30T10:00", "2026-10-14T24:00", "2026-10-14T10:60", "2026/10/14", "abc"]) {
     assert.equal(parseStatusTime(bad), null, `后端认了「${bad}」`);
   }

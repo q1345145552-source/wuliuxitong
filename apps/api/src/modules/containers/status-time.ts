@@ -3,7 +3,7 @@
  * 也可以去改时间，因为有时候会有一两天的误差」）。
  *
  * 两种写法都认：
- *   「2026-10-12T14:30」（T 也可以是空格）：页面现在发的，按**北京时间**解（系统里所有时间都按北京时间显示，轨迹也是）
+ *   「2026-10-12T14:30」（T 也可以是空格，带秒也认、秒丢掉）：页面现在发的，按**北京时间**解（系统里所有时间都按北京时间显示，轨迹也是）
  *   「2026-10-12」：只给日期的老写法（上线那几秒还开着旧页面的人、测试脚本），照旧记成那天 0 点（服务器时区，
  *    线上是 UTC，轨迹里显示北京 08:00）—— 跟 2026-09-29 以来的行为一模一样
  * 不是真实存在的日子（2 月 31 日）、时分越界、别的格式（2026/09/01、abc）→ null，调用方回 400。
@@ -22,7 +22,8 @@ export interface StatusTime {
 }
 
 export function parseStatusTime(raw: string): StatusTime | null {
-  const m = /^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2}))?$/.exec(raw);
+  // 带秒的也认（个别浏览器时间框给 …T15:30:00），秒丢掉（dsh 10-14 第 1 轮）
+  const m = /^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2}))?)?$/.exec(raw);
   if (!m) return null;
   const y = Number(m[1]);
   const mo = Number(m[2]);
@@ -37,7 +38,7 @@ export function parseStatusTime(raw: string): StatusTime | null {
   }
   const hh = Number(m[4]);
   const mm = Number(m[5]);
-  if (hh > 23 || mm > 59) return null;
+  if (hh > 23 || mm > 59 || (m[6] !== undefined && Number(m[6]) > 59)) return null;
   return { at: new Date(Date.UTC(y, mo - 1, d, hh, mm) - BEIJING_OFFSET_MS), dateOnly: false, beijingDate: ymd };
 }
 

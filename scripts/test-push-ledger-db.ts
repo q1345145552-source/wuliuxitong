@@ -785,14 +785,21 @@ async function main(): Promise<void> {
         assert.equal(b2.departureDate?.toISOString(), "2026-10-11T01:05:00.000Z");
       });
 
-      // 将来、乱填：400，柜子不动
-      const future = [bj(Date.now() + 60 * 60_000), bj(Date.now() + 26 * 3600_000).slice(0, 10), "2026-10-10T24:00", "2026-10-10T14:60", "2026-02-30T10:00", "2026-10-10T1:00", "2026-10-10T14:30:00", "2026/10/10 14:30"];
+      // 将来、乱填、不是字符串：400，柜子、时间表、账本、轨迹一个字不动（Codex 10-14 第 1 轮：原来只看了状态）
+      const snapshot = async () => JSON.stringify({
+        box: await pm.container.findUnique({ where: { id: box18.id }, select: { currentStatus: true, statusDates: true, departureDate: true, ata: true, updatedAt: true } }),
+        batches: await pm.containerPushBatch.count({ where: { containerId: box18.id } }),
+        logs: await pm.statusLog.count({ where: { companyId: CO, shipment: { trackingNo: child18 } } }),
+      });
+      const before3 = await snapshot();
+      const future: unknown[] = [bj(Date.now() + 60 * 60_000), bj(Date.now() + 26 * 3600_000).slice(0, 10), "2026-10-10T24:00", "2026-10-10T14:60", "2026-02-30T10:00",
+        "2026-10-10T1:00", "2026-10-10T14:30:60", "2026/10/10 14:30", 1760000000000, ["2026-10-10"], { date: "2026-10-10" }, true];
       const bad: Array<[string, number]> = [];
-      for (const date of future) bad.push([date, (await push(box18.id, "ARRIVED", date)).status]);
-      const b3 = await box();
-      expect("填成将来（1 小时后、明天的日期）或乱填（24 点、60 分、2 月 30、少位数、带秒、斜杠）→ 400，柜子还在已开船", () => {
-        for (const [date, status] of bad) assert.equal(status, 400, `「${date}」没被拦，拿到 ${status}`);
-        assert.equal(b3.currentStatus, "IN_TRANSIT");
+      for (const date of future) bad.push([JSON.stringify(date), (await call("POST /admin/containers/status", ADMIN, { id: box18.id, toStatus: "ARRIVED", date })).status]);
+      const after3 = await snapshot();
+      expect("填成将来（1 小时后、明天的日期）、乱填（24 点、60 分、60 秒、2 月 30、少位数、斜杠）、不是字符串（数字、数组、对象、true）→ 400，柜子 / 时间表 / 账本 / 轨迹一个字不动", () => {
+        for (const [date, status] of bad) assert.equal(status, 400, `${date} 没被拦，拿到 ${status}`);
+        assert.equal(after3, before3);
       });
 
       // 电脑时钟快几分钟：5 分钟后还收
@@ -800,6 +807,12 @@ async function main(): Promise<void> {
       expect("比现在晚 5 分钟以内照收（员工电脑时钟可能快一点）", () => assert.equal(r4.status, 200, r4.message));
 
       // 老写法：只给日期 → 那天 0 点（服务器时区，线上 UTC）；北京今天的日期不算将来
+      const r45 = await push(box18.id, "CUSTOMS_INSPECT_TH", "2026-10-12T20:15:45");
+      const b45 = await box();
+      expect("带秒的也认，秒丢掉（北京 10-12 20:15:45 → UTC 12:15:00）", () => {
+        assert.equal(r45.status, 200, r45.message);
+        assert.equal(JSON.parse(b45.statusDates ?? "{}").CUSTOMS_INSPECT_TH, "2026-10-12T12:15:00.000Z");
+      });
       const r5 = await push(box18.id, "CUSTOMS", "2026-10-12");
       const today = bj(Date.now()).slice(0, 10);
       const r6 = await push(box18.id, "CUSTOMS_CLEARED", today);
