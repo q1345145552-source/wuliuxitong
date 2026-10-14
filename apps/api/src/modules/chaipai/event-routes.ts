@@ -427,6 +427,10 @@ async function applyEvent(
         target = undefined;
       }
       let signedNo: string;
+      /* 员工已经在湘泰把这同一张派送单点了签收（手工签收那条路已写过「尾程派送已签收（WD…）」）：
+         拆派仓的签收后到，派送单照样换图 / 补司机，但轨迹别再写一条一模一样的（2026-10-14 全系统审查；
+         派送中那一支对员工手工单早就不重复写，见上面 current 那段）。号变了（并到同车的号）照写，那是新信息。 */
+      const signedBefore = target?.status === "SIGNED" ? target.deliveryNo : null;
       if (target) {
         await tx.adminLastmileOrder.update({
           where: { id: target.id },
@@ -457,7 +461,8 @@ async function applyEvent(
         }
       }
       deliveryNo = signedNo;
-      if (status !== "delivered" || coarseChanged) {
+      const alreadyLogged = status === "delivered" && signedBefore !== null && signedBefore === signedNo;
+      if (status !== "delivered" || (coarseChanged && !alreadyLogged)) {
         await writeLog("sl_lm_cp_", "delivered", signedRemark(signedNo));
       }
     }

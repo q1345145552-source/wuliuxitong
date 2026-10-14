@@ -1,6 +1,6 @@
 "use client";
 
-import { optionalIntegerForReceive, optionalNumberForReceive, validateReceiveDraft } from "../../../modules/staff/utils";
+import { optionalIntegerForReceive, optionalNumberForReceive, receiveDomesticFields, validateReceiveDraft } from "../../../modules/staff/utils";
 import { useEffect, useMemo, useState } from "react";
 import PrealertSearch from "../../../modules/shipment/PrealertSearch";
 import EmptyStateCard from "../../../modules/layout/EmptyStateCard";
@@ -22,6 +22,8 @@ type PrealertEditDraft = {
   weightKg: number;
   volumeM3: number;
   domesticTrackingNo: string;
+  /** 草稿建出来那一刻的国内单号（2026-10-14，见 staff/utils 的 receiveDomesticNoToSend） */
+  domesticTrackingNoBase?: string;
   transportMode: "sea" | "land";
   shipDate: string;
 };
@@ -52,6 +54,7 @@ function buildPrealertDraft(item: OrderItem): PrealertEditDraft {
     weightKg: item.weightKg ?? 0,
     volumeM3: item.volumeM3 ?? 0,
     domesticTrackingNo: (firstProduct?.domesticTrackingNo || item.domesticTrackingNo) ?? "",
+    domesticTrackingNoBase: (firstProduct?.domesticTrackingNo || item.domesticTrackingNo) ?? "",
     transportMode: (item.transportMode as "sea" | "land") ?? "sea",
     shipDate: item.shipDate?.slice(0, 10) ?? "",
   };
@@ -160,7 +163,8 @@ export default function AdminPrealertsPage() {
         // 空着或 0 → 不发这个字段（后端语义是「没传 = 不改」）
         weightKg: optionalNumberForReceive(draft.weightKg),
         volumeM3: optionalNumberForReceive(draft.volumeM3),
-        domesticTrackingNo: draft.domesticTrackingNo.trim() || undefined,
+        // 国内单号超管真改了才发（2026-10-14 全系统审查，跟员工端共用 receiveDomesticNoToSend）
+        ...receiveDomesticFields(draft),
         transportMode: draft.transportMode,
         // 仓库、发货日期：弹窗里能改，以前根本没发出去（2026-09-28 审查修复 #12）
         warehouseId: draft.warehouseId || undefined,

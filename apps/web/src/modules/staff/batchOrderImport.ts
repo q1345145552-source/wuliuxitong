@@ -88,6 +88,16 @@ export const WAREHOUSE_NAME_MAP: Record<string, string> = {
 const WAREHOUSE_IDS = new Set(Object.values(WAREHOUSE_NAME_MAP));
 const WAREHOUSE_NAMES = Object.keys(WAREHOUSE_NAME_MAP).filter((n) => n.endsWith("仓"));
 
+/**
+ * 仓库：中文名（义乌仓 / 义乌）或 id（wh_yiwu_01）都认，认不出来给 undefined。
+ * 超管「批量导入运单」也用（2026-10-14 全系统审查：那边原来原样传，填「义乌仓」就把中文存进库）。
+ */
+export function normalizeWarehouseId(raw: string): string | undefined {
+  const value = raw.trim();
+  return WAREHOUSE_NAME_MAP[value] ?? (WAREHOUSE_IDS.has(value) ? value : undefined);
+}
+export const WAREHOUSE_NAME_HINT = WAREHOUSE_NAMES.join(" / ");
+
 /* ==========================================================================
    全角 → 半角
    --------------------------------------------------------------------------
@@ -372,17 +382,35 @@ function parseDateCell(raw: unknown): { value?: string; badText?: string } {
   return { value: `${y}-${pad2(mo)}-${pad2(d)}` };
 }
 
-function normalizeTransport(raw: string): "sea" | "land" | undefined {
+export function normalizeTransport(raw: string): "sea" | "land" | undefined {
   const value = raw.toLowerCase();
   if (value.includes("海运") || value === "sea") return "sea";
   if (value.includes("陆运") || value === "land") return "land";
   return undefined;
 }
 
-function normalizePackageUnit(raw: string): "bag" | "box" | undefined {
+export function normalizePackageUnit(raw: string): "bag" | "box" | undefined {
   const value = raw.toLowerCase();
   if (value.includes("袋") || value === "bag") return "bag";
   if (value.includes("箱") || value === "box") return "box";
+  return undefined;
+}
+
+/**
+ * 超管「批量导入运单」用的严格版（2026-10-14 Codex 第 7 轮）：只认准确的写法，别的一律认不出来。
+ * 上面那两个是员工批量导入一直在用的「包含就算」，「陆运/海运」会被猜成海运、「袋/箱」猜成袋 —— 运输方式猜错就走错流程。
+ * 员工那边没动（原来就这样，改了怕挡住员工已经习惯的写法）；客户批量导入本来就是精确的（import-rows.ts）。
+ */
+export function strictTransport(raw: string): "sea" | "land" | undefined {
+  const value = raw.replace(/\s+/g, "").toLowerCase();
+  if (["海运", "海", "sea"].includes(value)) return "sea";
+  if (["陆运", "陆", "land"].includes(value)) return "land";
+  return undefined;
+}
+export function strictPackageUnit(raw: string): "bag" | "box" | undefined {
+  const value = raw.replace(/\s+/g, "").toLowerCase();
+  if (["箱", "box"].includes(value)) return "box";
+  if (["袋", "bag"].includes(value)) return "bag";
   return undefined;
 }
 

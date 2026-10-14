@@ -91,3 +91,20 @@ export function sanitizeRemarkForClient(remark: string, hide: boolean, container
       .replace(/\(随柜\s*[^\s）)]+\s*补记\)/g, "（随柜补记）")
   );
 }
+
+/**
+ * 员工 / 管理员**手写**的一段话里写着「柜号: XXX」：从「柜号:」抹到换行 / 标点为止
+ * （柜号带空格、系统里没录过的写法都能盖住）。普通版集货 08-28、仓库版 09-29 起就这么抹，这里是同一条正则。
+ */
+export function maskLabeledContainerNo(text: string): string {
+  return text.replace(/柜号\s*[:：][^\n，,。；;、]*/g, "柜号（不对外显示）");
+}
+
+/**
+ * 员工 / 管理员手写、要给客户或代理看的一段话（取消原因、撤销付款原因、驳回原因……）抹柜号：
+ * 先抹「柜号: …」，再按真实柜号 + 标准柜号样子各抹一遍。containerNos 用 core/container-nos.ts 取。
+ * 2026-10-14 全系统审查：客户钱包流水的备注、代理仓库版集货详情的取消 / 驳回原因原来没走这一道，柜号原样给了出去。
+ */
+export function maskFreeTextForClient(text: string, containerNos: readonly string[] = []): string {
+  return sanitizeRemarkForClient(maskLabeledContainerNo(text), true, containerNos);
+}

@@ -248,6 +248,9 @@ export default function StaffContainerLoadingPage() {
   const [unloadCount, setUnloadCount] = useState("");
   // 已装柜运单映射：shipmentId → container manifestNo
   const [loadedShipments, setLoadedShipments] = useState<Record<string, string>>({});
+  /* 父单号 → 它装进柜子的子单（2026-10-14 全系统审查）：下面「可选运单」只有父单，子单不在 allShipments 里，
+     原来按 allShipments 找子单永远找不到，父单下面那行「X-1: N件 → 柜号」从来不显示 */
+  const [loadedChildrenByParent, setLoadedChildrenByParent] = useState<Record<string, Array<{ shipmentId: string; trackingNo: string; packageCount: number | null; manifestNo: string }>>>({});
   /* 手机排版（2026-10-05 老板拍板「1a」）：手机上左边柜子列表、右边柜子详情放不下两栏 ——
      先只显示柜子列表，员工点了哪个柜才整屏显示那个柜的详情，顶上「‹ 返回柜子列表」回去。
      不能拿 selectedId 判断：页面一打开会自动选中第一个柜（电脑上要），手机上不能因此直接跳进详情。 */
@@ -264,8 +267,16 @@ export default function StaffContainerLoadingPage() {
     if (seq !== shipmentListSeqRef.current) return;
     setAllShipments(shipments);
     const mapping: Record<string, string> = {};
-    for (const row of map) mapping[row.shipmentId] = row.manifestNo;
+    const byParent: Record<string, Array<{ shipmentId: string; trackingNo: string; packageCount: number | null; manifestNo: string }>> = {};
+    for (const row of map) {
+      mapping[row.shipmentId] = row.manifestNo;
+      if (row.parentTrackingNo && row.trackingNo) {
+        (byParent[row.parentTrackingNo] ??= []).push({ shipmentId: row.shipmentId, trackingNo: row.trackingNo, packageCount: row.packageCount ?? null, manifestNo: row.manifestNo });
+      }
+    }
+    for (const list of Object.values(byParent)) list.sort((a, b) => a.trackingNo.localeCompare(b.trackingNo, "zh-CN", { numeric: true }));
     setLoadedShipments(mapping);
+    setLoadedChildrenByParent(byParent);
   };
 
   // 加载运单列表 + 已装柜信息
@@ -1092,13 +1103,15 @@ export default function StaffContainerLoadingPage() {
                   <p style={{ padding: 16, color: "var(--t-strong)", fontSize: 13, textAlign: "center" }}>暂无匹配运单</p>
                 ) : filteredShipments.map((s) => {
                     const alreadyIn = existingShipmentIds.has(s.id);
-                    const loadedContainer = loadedShipments[s.id];
                     const isSelected = s.trackingNo in selectedShipments;
                     const remaining = s.packageCount ?? 0;
                     const isParent = !s.parentTrackingNo;
                     const totalPkg = s.totalPackageCount ?? remaining;
-                    const children = isParent ? allShipments.filter(c => c.parentTrackingNo === s.trackingNo) : [];
-                    const loadedChildren = children.filter(c => loadedShipments[c.id]);
+                    const loadedChildren = isParent ? (loadedChildrenByParent[s.trackingNo] ?? []) : [];
+                    /* 「已装柜(柜号)」：父单自己整票装过（老数据）按父单 id 找；现在装柜一律切子单，就按它的子单装进了哪几个柜写
+                       （2026-10-14 dsh 复核第 2 轮：原来按父单 id 找子单 id，永远空）。只改这一格字，勾选照旧 —— 剩下的件数还能再装 */
+                    const loadedContainer = loadedShipments[s.id]
+                      ?? (loadedChildren.length > 0 ? [...new Set(loadedChildren.map((c) => c.manifestNo))].join("、") : undefined);
                     // 2026-10-06「待入库」（资料没补全）不许装柜，勾不上；后端装柜接口也挡着
                     const pendingInbound = s.currentStatus === "pendingInbound";
                     return (
@@ -1122,7 +1135,7 @@ export default function StaffContainerLoadingPage() {
                         {loadedChildren.length > 0 && (
                           <div style={{ paddingLeft: 28, fontSize: 11, color: "var(--t-muted)", marginTop: 3 }}>
                             {loadedChildren.map(c => (
-                              <span key={c.id} style={{ marginRight: 14 }}>{c.trackingNo}: {c.packageCount}件 → {loadedShipments[c.id]}</span>
+                              <span key={c.shipmentId} style={{ marginRight: 14 }}>{c.trackingNo}: {c.packageCount ?? "—"}件 → {c.manifestNo}</span>
                             ))}
                           </div>
                         )}

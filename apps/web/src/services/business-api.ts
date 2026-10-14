@@ -1,4 +1,4 @@
-import { matchesShipmentListFilter, type ClientStatusGroup } from "../../../../packages/shared-types/shipment-status";
+import { LASTMILE_DISPATCHABLE_STATUSES, matchesShipmentListFilter, type ClientStatusGroup } from "../../../../packages/shared-types/shipment-status";
 import { productNamesLabel } from "../../../../packages/shared-types/product-names";
 import { authHeaders, apiBaseUrl, parseApiResponse, apiRequest, fetchWithSession as fetch } from "./core-api";
 
@@ -231,6 +231,8 @@ export interface OrderItem {
   /** 子单进度不一样时，最快的那批走到哪了（2026-09-16）。空 = 没有子单或进度一致 */
   partialAhead?: string;
   id: string;
+  /** 客户端 /client/orders 才有：列表这一行那张运单（父单）的 id（2026-10-14） */
+  shipmentId?: string | null;
   orderNo?: string;
   clientId?: string;
   clientName?: string;
@@ -898,7 +900,27 @@ export async function fetchShipmentTrackBrief(trackingNo: string): Promise<Shipm
 }
 
 /**
- * 客户那头：客服对话里点运单卡片看详情（2026-10-06），按运单号精确找自己的这一票。
+ * 客户那头：按运单 id 找自己的这一票（2026-10-14）。客服对话卡片上的号可能是改号前的旧号，按 id 找不受影响。
+ * 只认 shipmentId 对得上的那条。supported = 后端认不认这个参数（后端回包里明说 supportsShipmentIdQuery: true；老版本不认，
+ * 会把客户别的单当成整页回来）（Codex 第 9 轮：要分清「老后端不认」和「真没有这票」——
+ * 后者不能再退回按旧单号找，旧号可能已经被这位客户的另一票用了，会打开另一票）。
+ */
+export async function fetchClientOrderByShipmentId(shipmentId: string): Promise<{ item: OrderItem | null; supported: boolean }> {
+  const response = await fetch(`${apiBaseUrl()}/client/orders?shipmentId=${encodeURIComponent(shipmentId)}&pageSize=5`, {
+    method: "GET",
+    headers: { ...authHeaders() },
+  });
+  const data = await parseApiResponse<{ items: OrderItem[]; supportsShipmentIdQuery?: boolean }>(response);
+  const items = data.items ?? [];
+  return {
+    item: items.find((item) => item.shipmentId === shipmentId) ?? null,
+    // 后端明说认不认（dsh 第 10 轮：原来看条目里有没有 shipmentId 这个键，哪天后端收紧字段就会误判）
+    supported: data.supportsShipmentIdQuery === true,
+  };
+}
+
+/**
+ * 客户那头：客服对话里点运单卡片看详情（2026-10-06），按运单号精确找自己的这一票（2026-10-14 起先按运单 id 找，这个留作后端老版本不认 id 时的退路）。
  * 跟「运单查询」同一个接口、同一套处理（柜号不给客户看之类全在后端），只认单号完全对得上的那条。
  */
 export async function fetchClientOrderByTrackingNo(trackingNo: string): Promise<OrderItem | null> {
@@ -955,6 +977,8 @@ export async function receiveStaffPrealert(payload: {
   weightKg?: number;
   volumeM3?: number;
   domesticTrackingNo?: string;
+  /** 员工真改过国内单号（2026-10-14）：带了它后端才把号同步到运单、唯一那行产品；老页面不带，后端照旧只改订单 */
+  domesticTrackingNoEdited?: boolean;
   transportMode?: "sea" | "land";
   cargoType?: string;
   /* 2026-08-31：柜号随收货保存；应收金额一度接过、当晚按老板拍板拆除（钱只在集货里）。 */
@@ -1089,8 +1113,9 @@ export async function fetchClientShipmentOverview(): Promise<StaffShipmentOvervi
  * ⚠️ 2026-08-13 补上 deliveryBooked（预约派送）。加这个状态时漏了这里，
  *    结果是**推到「预约派送」的货在尾端派送页面上直接消失**，员工找不到就发不出去。
  *    跟 2026-08-06「445 张运单选不到」是同一个坑：状态清单写死在好几处，加状态要全找一遍。
+ * 2026-10-14 起清单放在 shared-types（LASTMILE_DISPATCHABLE_STATUSES），后端建派送单用同一份复查。
  */
-const LASTMILE_STATUSES = "inWarehouseTH,deliveryBooked,outForDelivery,delivered";
+const LASTMILE_STATUSES = LASTMILE_DISPATCHABLE_STATUSES.join(",");
 
 export interface LastmileShipmentItem {
   id: string;
@@ -1790,11 +1815,20 @@ export async function setManifestTransportMode(manifestId: string, transportMode
  * 获取装柜清单详情。
  */
 /** 「哪票运单装在哪个柜」一次拿全（2026-10-05，替掉原来按柜挨个拉详情：线上 353 个柜 = 353 个请求） */
-export async function fetchLoadingShipmentMap(): Promise<Array<{ shipmentId: string; manifestNo: string }>> {
+/** 装进过柜子的每一张运单（基本都是子单）→ 最早装进的那个柜。trackingNo / parentTrackingNo / packageCount 2026-10-14 起才有 */
+export interface LoadingShipmentMapRow {
+  shipmentId: string;
+  manifestNo: string;
+  trackingNo?: string;
+  parentTrackingNo?: string | null;
+  packageCount?: number | null;
+}
+
+export async function fetchLoadingShipmentMap(): Promise<LoadingShipmentMapRow[]> {
   const response = await fetch(`${apiBaseUrl()}/staff/loading-manifests/shipment-map`, {
     headers: { ...authHeaders() },
   });
-  const data = await parseApiResponse<{ items: Array<{ shipmentId: string; manifestNo: string }> }>(response);
+  const data = await parseApiResponse<{ items: LoadingShipmentMapRow[] }>(response);
   return data.items ?? [];
 }
 
@@ -2191,6 +2225,8 @@ export async function updateConsolidationPrealert(payload: {
     cargoType?: string;
     productImage?: { fileName?: string; mime?: string; base64?: string };
   }>;
+  /** 打开编辑框那一刻这张单上有哪几行（2026-10-14）：后端据此认出「别人刚加的行」，不会把它删掉 */
+  baseProductIds?: string[];
 }): Promise<ConsolidationPrealertItem> {
   try {
     return await apiRequest<ConsolidationPrealertItem>(
@@ -2514,6 +2550,8 @@ export async function adminForceEditConsolidationPrealert(payload: {
     cargoType?: string;
     productImage?: { fileName?: string; mime?: string; base64?: string };
   }>;
+  /** 打开编辑框那一刻这张单上有哪几行（2026-10-14）：后端据此认出「别人刚加的行」，不会把它删掉 */
+  baseProductIds?: string[];
 }): Promise<{ success: boolean; prealertId: string }> {
   try {
     return await apiRequest<{ success: boolean; prealertId: string }>(

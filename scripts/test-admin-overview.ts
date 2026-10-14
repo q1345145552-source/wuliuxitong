@@ -792,7 +792,15 @@ function backendOverview(options: { empty?: boolean; failStalled?: boolean } = {
     order: { count: async (args: RecordValue) => { capture('order.count', args); return options.empty ? 0 : 7; } },
     // G02（2026-10-08）：今天在到货通知里转正式的运单，按转正式那天算「今天进仓」（空的 shipmentId 要丢掉）
     arrivalNotice: { findMany: async (args: RecordValue) => { capture('arrivalNotice.findMany', args); return options.empty ? [] : [{ shipmentId: 's_formal_today' }, { shipmentId: null }]; } },
-    shipment: { aggregate: async (args: RecordValue) => { capture('shipment.aggregate', args); return { _sum: { volumeM3: options.empty ? null : { toString: () => '12.3456' } } }; } },
+    /* 2026-10-14 全系统审查：今日收货体积按整票算（父单存的是剩余，当天装走就变 0）。
+       o1 今天整票装走了：父单剩 0、整票 10 方；o2 没有整票数，退回父单自己的 2.3456 → 合计 12.3456 */
+    shipment: { findMany: async (args: RecordValue) => {
+      capture('shipment.findMany', args);
+      return options.empty ? [] : [
+        { orderId: 'o1', volumeM3: { toString: () => '0' }, order: { volumeM3: '10', weightKg: '100' } },
+        { orderId: 'o2', volumeM3: { toString: () => '2.3456' }, order: { volumeM3: null, weightKg: null } },
+      ];
+    } },
     container: { count: async (args: RecordValue) => {
       capture('container.count', args);
       if (options.empty) return 0;
@@ -825,10 +833,16 @@ function backendOverview(options: { empty?: boolean; failStalled?: boolean } = {
   const { PENDING_INBOUND } = load(path.resolve('apps/api/src/modules/arrival-notices/rules.ts'), {}, new Map()) as RecordValue;
   assert.equal(PENDING_INBOUND, 'pendingInbound', '待入库状态值没读到，arrival-notices/rules 是不是改了导出名');
 
+  const totalsCalls: Array<{ companyId: string; sources: RecordValue[] }> = [];
   const handler = compile(`export default function bind(ctx: any) {
-    const { prisma, countShipmentOverview, requireRole, ok, CONTAINER_STATUS_LABEL, EXCLUDE_FCL_ORDER, EXCLUDE_FCL_SHIPMENT, PENDING_INBOUND } = ctx;
+    const { prisma, countShipmentOverview, requireRole, ok, CONTAINER_STATUS_LABEL, EXCLUDE_FCL_ORDER, EXCLUDE_FCL_SHIPMENT, PENDING_INBOUND, loadOrderTotalMetrics } = ctx;
     return (${callbacks[0].getText(tree)});
   }`, filename).default({ prisma, requireRole, ok, CONTAINER_STATUS_LABEL, EXCLUDE_FCL_ORDER, EXCLUDE_FCL_SHIPMENT, PENDING_INBOUND,
+    // 整票数跟运单列表「总体积」同一个函数（订单合计优先）；这里只看它被喂了什么、按它的结果合计
+    loadOrderTotalMetrics: async (cid: string, sources: RecordValue[]) => {
+      totalsCalls.push({ companyId: cid, sources });
+      return new Map(sources.filter((x) => x.orderVolumeM3 != null).map((x) => [x.orderId, { totalVolumeM3: Number(x.orderVolumeM3) }]));
+    },
     countShipmentOverview: async (args: RecordValue) => {
       capture('countShipmentOverview', { where: args }); assert.equal(args.parentTrackingNo, null);
       return { inTransitCount: options.empty ? 0 : 332 };
@@ -837,7 +851,7 @@ function backendOverview(options: { empty?: boolean; failStalled?: boolean } = {
   const response = { statusCode: 0, body: null as RecordValue | null, requestId: 'overview-fixture',
     status(code: number) { this.statusCode = code; return this; }, json(body: RecordValue) { this.body = body; return this; },
   };
-  return { seen, raw, response, run: (role: string | null = 'admin') => handler({ headers: {}, auth: role ? { role, companyId, userId: 'fixture-user' } : undefined }, response) };
+  return { seen, raw, response, totalsCalls, run: (role: string | null = 'admin') => handler({ headers: {}, auth: role ? { role, companyId, userId: 'fixture-user' } : undefined }, response) };
 }
 for (const empty of [false, true]) {
   test(`真实总览handler移除趋势查询/字段，保留全部计数与柜子预警（empty=${empty}）`, async () => {
@@ -853,8 +867,12 @@ for (const empty of [false, true]) {
     }
     assert.equal(api.raw.length, 1, '仅保留卡住柜子的SQL');
     assert.equal(api.seen.length, 10);
-    const shipment = api.seen.find(x => x.name === 'shipment.aggregate')!.args;
+    const shipment = api.seen.find(x => x.name === 'shipment.findMany')!.args;
     assert.equal(shipment.where.parentTrackingNo, null);
+    assert.equal(shipment.select.order.select.volumeM3, true, '要取订单上的整票体积');
+    assert.equal(api.totalsCalls.length, 1);
+    assert.equal(api.totalsCalls[0].companyId, 'fixture-company');
+    if (!empty) assert.deepEqual(api.totalsCalls[0].sources.map((x) => [x.orderId, x.orderVolumeM3]), [['o1', '10'], ['o2', null]]);
     assert.equal(shipment.where.updatedAt, undefined);
     // G02（2026-10-08）：「今天建的单」挪进 OR 第一支，外层不能再有（不然转正式那支被它卡掉）
     assert.equal(shipment.where.createdAt, undefined, '外层不能再有 createdAt 条件');

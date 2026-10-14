@@ -1096,9 +1096,19 @@ async function main(): Promise<void> {
       const SV7 = await fresh("V7", "delivered");
       await manualRow("v7", SV7, "WDZZV7", "SIGNED", { signImageBase64: "AAAA" });
       fake.set(SV7, { route: routeA, photos: [{ id: "v7p", createdAt: "2026-10-12T03:00:00.000Z", bytes: Buffer.from("CHAIPAI-V7") }] });
+      // 员工手工签收那条路会写一条「尾程派送已签收（WDZZV7）」—— 照真实情况先造出来（Codex 第 6 轮：原来夹具没造，验的是 0 → 0）
+      await pm.statusLog.create({ data: {
+        id: `sl_lm_${P}v7`, companyId: CO, shipmentId: SV7, operatorId: "zz_staff", operatorRole: "staff", operatorName: "员工",
+        fromStatus: "outForDelivery", toStatus: "delivered", remark: "尾程派送已签收（WDZZV7）", changedAt: new Date("2026-10-12T03:30:00.000Z"),
+      } });
+      const deliveredLogs = async () => (await logsOf(SV7)).filter((l: Row) => l.toStatus === "delivered").map((l: Row) => l.remark);
+      const deliveredBefore = await deliveredLogs();
+      assert.deepEqual(deliveredBefore, ["尾程派送已签收（WDZZV7）"], "（前提）员工手工签收的那条轨迹");
       await send(SV7, "DELIVERED", {}, { occurredAt: "2026-10-12T04:00:00.000Z" });
       const rows = await rowsOf(SV7);
       assert.deepEqual(rows.map((r: Row) => [r.id, r.status, r.signImageBase64]), [[`${P}v7`, "SIGNED", Buffer.from("CHAIPAI-V7").toString("base64")]]);
+      // 2026-10-14 全系统审查：员工手工签收那条路已写过「尾程派送已签收（WDZZV7）」，拆派仓签收后到别再写一条一模一样的
+      assert.deepEqual(await deliveredLogs(), deliveredBefore, "员工已签过同一张派送单，客户轨迹里又多出一条「已签收」");
     });
     await test("V8 转交单号改了（承运商没变）：派送单换成新单号、补一条轨迹", async () => {
       const SV8 = await fresh("V8");

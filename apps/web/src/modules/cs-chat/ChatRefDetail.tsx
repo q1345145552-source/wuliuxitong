@@ -6,7 +6,7 @@ import ShipmentDetailBody, { type ShipmentDetailData, type ShipmentDetailImage }
 import { openShipmentTrack } from "../shipment/ShipmentTrackModal";
 import { CLIENT_STATUS_ZH_OVERRIDES, shipmentStatusZh } from "../shipment/shipment-status";
 import { formatTime } from "../shipment/track-time";
-import { fetchClientOrderByTrackingNo, fetchShipmentImages, fetchShipmentTrackBrief, fetchStaffShipmentById, type ShipmentTrackBrief } from "../../services/business-api";
+import { fetchClientOrderByShipmentId, fetchClientOrderByTrackingNo, fetchShipmentImages, fetchShipmentTrackBrief, fetchStaffShipmentById, type ShipmentTrackBrief } from "../../services/business-api";
 import type { ChatRef } from "../../services/cs-chat-api";
 
 /**
@@ -41,21 +41,30 @@ export default function ChatRefDetail({ chatRef, forClient, onClose }: {
   useEffect(() => {
     let cancelled = false;
     setTrack(null);
-    void fetchShipmentTrackBrief(chatRef.no)
-      .then((brief) => { if (!cancelled) setTrack(brief); })
-      .catch(() => undefined);
+    /* 最新动态按**取回来的这票现在的号**查（2026-10-14 全系统审查）：卡片上的号可能是改号前的旧号，
+       按旧号查不到。详情没取到（不在了 / 出错）就不查动态 */
+    const loadBrief = (trackingNo: string) => {
+      void fetchShipmentTrackBrief(trackingNo)
+        .then((brief) => { if (!cancelled) setTrack(brief); })
+        .catch(() => undefined);
+    };
     setState({ kind: "loading" });
     void (async () => {
       try {
         if (forClient) {
-          const item = await fetchClientOrderByTrackingNo(chatRef.no);
+          // 按运单 id 找（改过号也找得到）；只有后端还是老版本、不认 id 时才退回按号找 —— 后端认 id 却没找到 = 这票真没了，
+          // 不能再按旧号找（旧号可能已经被这位客户的另一票用了，Codex 第 9 轮）
+          const byId = await fetchClientOrderByShipmentId(chatRef.id);
+          const item = byId.item ?? (byId.supported ? null : await fetchClientOrderByTrackingNo(chatRef.no));
           if (!item) { if (!cancelled) setState({ kind: "missing" }); return; }
+          if (!cancelled && item.trackingNo) loadBrief(item.trackingNo);
           // 产品图跟「运单查询」一样单独取；图没取到不挡详情
           const images = await fetchShipmentImages(item.id).catch(() => []);
           if (!cancelled) setState({ kind: "ok", data: { item, images } });
         } else {
           const item = await fetchStaffShipmentById(chatRef.id);
           if (!item) { if (!cancelled) setState({ kind: "missing" }); return; }
+          if (!cancelled && item.trackingNo) loadBrief(item.trackingNo);
           const images = item.orderId ? await fetchShipmentImages(item.orderId).catch(() => []) : [];
           if (!cancelled) setState({ kind: "ok", data: { item, images, mark: item.clientId } });
         }
@@ -76,7 +85,7 @@ export default function ChatRefDetail({ chatRef, forClient, onClose }: {
 
   return (
     <>
-      <DetailModal title="运单详情" subtitle={chatRef.no} onClose={onClose}>
+      <DetailModal title="运单详情" subtitle={trackingNo ?? chatRef.no} onClose={onClose}>
         {state.kind === "loading" ? <p style={{ margin: 0, color: "var(--t-muted)", fontSize: 13 }}>正在取这票货的详情…</p> : null}
         {state.kind === "missing" ? (
           <p style={{ margin: 0, color: "var(--t-muted)", fontSize: 13 }}>没找到这票货：可能已经删了，或者已经不在这个账号名下。</p>

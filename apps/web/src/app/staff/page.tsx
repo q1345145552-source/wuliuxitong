@@ -107,6 +107,7 @@ import {
   formatRepairShipmentOrderLinkToast,
   buildShipmentOrderEditDraft,
   buildPrealertDraft,
+  receiveDomesticFields,
   SHIPMENT_STATUS_FLOW,
   SHIPMENT_EXCEPTION_STATUSES,
   shipmentStatusWithPartialZh,
@@ -2604,7 +2605,8 @@ export default function StaffHomePage() {
                      */
                     weightKg: optionalNumberForReceive(draft.weightKg),
                     volumeM3: optionalNumberForReceive(draft.volumeM3),
-                    domesticTrackingNo: draft.domesticTrackingNo,
+                    // 国内单号员工真改了才发（2026-10-14 全系统审查，见 receiveDomesticNoToSend）；改了的号后端连运单一起改
+                    ...receiveDomesticFields(draft),
                     transportMode: draft.transportMode,
                     // 仓库、发货日期：弹窗里能改，以前根本没发出去（2026-09-28 审查修复 #12）
                     warehouseId: draft.warehouseId || undefined,

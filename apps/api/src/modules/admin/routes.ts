@@ -242,7 +242,7 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
       select: { shipmentId: true },
     })).map((n) => n.shipmentId).filter((v): v is string => Boolean(v));
 
-    const [staff, client, newOrder, inTransit, volumeAgg,
+    const [staff, client, newOrder, inTransit, todayVolume,
            ctnTotal, ctnLoading, ctnAtWarehouse, ctnDone] = await Promise.all([
       prisma.user.count({ where: { companyId: auth.companyId, role: "staff" } }),
       prisma.user.count({ where: { companyId: auth.companyId, role: "client" } }),
@@ -272,7 +272,10 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
       // 生产实测：显示 526.478 方，去掉子单只有 295.332 方。
       // 现在按用户的业务口径（交接文档 1.5「运单出现在运单列表 = 货已经到国内仓库了」）
       // 改成「今天新进国内仓的货」= 今天创建的父单方数。
-      prisma.shipment.aggregate({
+      /* 2026-10-14 全系统审查：原来对父单的 volumeM3 求和 —— 父单存的是「还剩没装的」，
+         当天进仓、当天就装柜的货一装走这个数就往下掉（整票装走就算 0）。现在按整票算（订单合计优先，
+         缺了合计父子单，跟运单列表「总体积」同一个函数）。 */
+      prisma.shipment.findMany({
         where: {
           /* 整柜不算（老板 2026-09-23）。这个数的口径是「今天新进国内仓的货」，
              而整柜按规格**不走国内仓**，算进来等于凭空多出几十方。 */
@@ -287,7 +290,12 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
             ...(formalTodayShipmentIds.length ? [{ id: { in: formalTodayShipmentIds } }] : []),
           ],
         },
-        _sum: { volumeM3: true },
+        select: { orderId: true, volumeM3: true, order: { select: { volumeM3: true, weightKg: true } } },
+      }).then(async (parents) => {
+        const totals = await loadOrderTotalMetrics(auth.companyId, parents.map((p) => ({ orderId: p.orderId, orderVolumeM3: p.order?.volumeM3, orderWeightKg: p.order?.weightKg })));
+        let sum = 0;
+        for (const p of parents) sum += totals.get(p.orderId)?.totalVolumeM3 ?? (p.volumeM3 == null ? 0 : Number(p.volumeM3.toString()));
+        return sum;
       }),
       prisma.container.count({ where: { companyId: auth.companyId, isFcl: false } }),
       prisma.container.count({
@@ -304,7 +312,7 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
     // 剩下的全算「在路上」——这样任何没被上面三类认领的状态都不会凭空消失
     const ctnOnWay = ctnTotal - ctnLoading - ctnAtWarehouse - ctnDone;
 
-    const totalVolume = volumeAgg._sum.volumeM3 ? Number(volumeAgg._sum.volumeM3.toString()) : 0;
+    const totalVolume = Number(todayVolume.toFixed(3));
 
     /**
      * 卡住的柜子（2026-08-21 新增）。

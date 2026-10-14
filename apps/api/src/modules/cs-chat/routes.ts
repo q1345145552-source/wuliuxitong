@@ -330,14 +330,15 @@ async function loadRefLive(companyId: string, clientId: string, rows: MessageRow
       where: { id: { in: fclIds }, companyId, isFcl: true },
       select: {
         id: true,
-        items: { orderBy: { createdAt: "asc" }, take: 1, select: { shipment: { select: { currentStatus: true, order: { select: { clientId: true } } } } } },
+        items: { orderBy: { createdAt: "asc" }, take: 1, select: { shipment: { select: { currentStatus: true, trackingNo: true, order: { select: { clientId: true } } } } } },
       },
     }),
   ]);
   for (const s of ships) live.set(`shipment:${s.id}`, { status: s.currentStatus, no: s.trackingNo });
   for (const c of conts) {
     const ship = c.items[0]?.shipment;
-    if (ship && ship.order?.clientId === clientId) live.set(`fcl:${c.id}`, { status: ship.currentStatus });
+    // 号也给现在的（2026-10-14 全系统审查）：整柜改过提单号，卡片原来一直显示发消息那一刻的旧号
+    if (ship && ship.order?.clientId === clientId) live.set(`fcl:${c.id}`, { status: ship.currentStatus, no: ship.trackingNo });
   }
   return live;
 }

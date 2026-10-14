@@ -291,6 +291,52 @@ async function main() {
     assert.equal(noDimensions.requests.length, 1); assert.equal(noDimensions.requests[0].volumeM3, undefined);
     assert.equal(noDimensions.requests[0].weightKg, 8);
   });
+  await check("超管批量导入：仓库 / 包装单位 / 运输方式写中文换成内部值；没填照旧；认不出来这一行失败、不发请求（2026-10-14 全系统审查）", async () => {
+    const cargoModule = await import("../packages/shared-types/cargo-type");
+    const staffModule = await import("../apps/web/src/modules/staff/batchOrderImport");
+    const handler = sourceNode("apps/web/src/app/admin/page.tsx", n => ts.isArrowFunction(n) && n.getText().includes("await createStaffOrder({") && n.getText().includes("setBatchFailures(failures)"));
+    const run = async (rows: Row[]) => {
+      const requests: Row[] = []; let errors: Row[] = [];
+      await evalTs("module.exports=" + handler + ";", {
+        ...cargoModule, ...staffModule, batchRows: rows, setBatchLoading() {}, setBatchProgress() {}, beijingToday: () => "2026-10-15",
+        setBatchFailures(value: Row[]) {errors = value;}, setBatchDone() {}, setToast() {}, setShowBatchImport() {}, setBatchRows() {}, setBatchConfirmed() {},
+        loadOrders: async () => {}, createStaffOrder: async (payload: Row) => {requests.push(JSON.parse(JSON.stringify(payload)));},
+      })();
+      return { requests, errors };
+    };
+    const base = { "客户ID": "fixture_client", "品名": "鞋", "箱数": 2, "运单号": "YW-FIXTURE", "到仓日期": "2026-10-14" };
+    const pick = (r: Row) => [r.warehouseId, r.packageUnit, r.transportMode];
+    const zh = await run([{ ...base, "仓库ID": "深圳仓", "包装单位": "袋", "运输方式": "陆运" }]);
+    assert.equal(zh.errors.length, 0, JSON.stringify(zh.errors));
+    assert.deepEqual(pick(zh.requests[0]), ["wh_shenzhen_01", "bag", "land"], "中文没换成内部值（原来原样发，「陆运」存进库按海运流程走）");
+    const codes = await run([{ ...base, "仓库ID": "wh_dongguan_01", "包装单位": "box", "运输方式": "sea" }]);
+    const spaced = await run([{ ...base, "仓库ID": "义乌", "包装单位": " BAG ", "运输方式": " 陆 " }]);
+    assert.deepEqual(pick(spaced.requests[0]), ["wh_yiwu_01", "bag", "land"], "准确写法带空格 / 大写 / 简写要照认");
+    assert.deepEqual(pick(codes.requests[0]), ["wh_dongguan_01", "box", "sea"]);
+    const blank = await run([{ ...base }]);
+    assert.deepEqual(pick(blank.requests[0]), ["wh_yiwu_01", "box", "sea"], "表里没这三列：照旧当义乌仓 / 箱 / 海运");
+    const empty = await run([{ ...base, "仓库ID": "", "包装单位": "", "运输方式": "" }]);
+    assert.deepEqual(pick(empty.requests[0]), ["", "box", ""], "格子空着：仓库、运输方式不许猜（交给后端报缺少必填项），包装单位当箱");
+    // 真表格：表头有这几列、这一行没填过的格子在 xlsx 里根本没有（不是空字符串）。页面读表必须带 defval: ""，
+    // 不然这几格整个不出现在行里，跟「老模板没这一列」分不清，被悄悄当成义乌仓 / 海运（Codex 第 3 轮）
+    const adminSrc = fs.readFileSync(path.join(process.cwd(), "apps/web/src/app/admin/page.tsx"), "utf8");
+    assert.match(adminSrc, /const rows = XLSX\.utils\.sheet_to_json<any>\(ws, \{ defval: "" \}\);/, "超管批量导入读表没带 defval: \"\"");
+    const sheet = XLSX.utils.aoa_to_sheet([["客户ID", "仓库ID", "品名", "箱数", "包装单位", "运输方式", "到仓日期", "运单号"], ["fixture_client", null, "鞋", 2, null, null, null, "YW-FIXTURE"]]);
+    const reread = XLSX.read(XLSX.write({ SheetNames: ["s"], Sheets: { s: sheet } }, { type: "buffer", bookType: "xlsx" }), { type: "buffer" });
+    const parsed: Row[] = XLSX.utils.sheet_to_json(reread.Sheets.s, { defval: "" });
+    const real = await run(parsed);
+    assert.deepEqual(pick(real.requests[0]), ["", "box", ""], "真表格里没填的仓库 / 运输方式被当成了默认值");
+    assert.equal(real.requests[0].arrivedAt, "2026-10-15", "到仓日期空着应该照旧当今天");
+    // 两个合法词都带的不许猜（Codex 第 7 轮：原来「陆运/海运」被猜成海运、「袋/箱」猜成袋）
+    for (const [key, value, re] of [["仓库ID", "杭州仓", /仓库填的是「杭州仓」/], ["包装单位", "桶", /包装单位填的是「桶」/], ["运输方式", "空运", /运输方式填的是「空运」/],
+      ["运输方式", "海运/陆运", /运输方式填的是「海运\/陆运」/], ["运输方式", "陆运/海运", /运输方式填的是/], ["运输方式", "海运陆运", /运输方式填的是/], ["包装单位", "袋/箱", /包装单位填的是「袋\/箱」/], ["包装单位", "箱袋", /包装单位填的是/]] as Array<[string, string, RegExp]>) {
+      const r = await run([{ ...base, [key]: value }]);
+      assert.equal(r.requests.length, 0, `${key}填「${value}」照样发了请求`);
+      assert.equal(r.errors.length, 1);
+      assert.match(r.errors[0].reason, re);
+    }
+  });
+
   await check("员工/管理员真实模板 XLSX 往返：全称表头、新旧货型兼容、constructor 拒绝", async () => {
     const cargoModule = await import("../packages/shared-types/cargo-type");
     const staffModule = await import("../apps/web/src/modules/staff/batchOrderImport");
@@ -338,7 +384,8 @@ async function main() {
           const requests: Row[] = []; let errors: Row[] = [];
           const handler = sourceNode(file, n => ts.isArrowFunction(n) && n.getText().includes("await createStaffOrder({") && n.getText().includes("setBatchFailures(failures)"));
           await evalTs("module.exports=" + handler + ";", {
-            ...cargoModule, batchRows: rawRows, setBatchLoading() {}, setBatchProgress() {},
+            // 仓库 / 包装 / 运输方式的中文换内部值（2026-10-14）用的是员工批量导入那几个函数
+            ...cargoModule, ...staffModule, batchRows: rawRows, setBatchLoading() {}, setBatchProgress() {},
             setBatchFailures(value: Row[]) {errors = value;}, setBatchDone() {}, setToast() {}, setShowBatchImport() {}, setBatchRows() {}, setBatchConfirmed() {},
             loadOrders: async () => {}, createStaffOrder: async (payload: Row) => {requests.push(JSON.parse(JSON.stringify(payload)));},
           })();

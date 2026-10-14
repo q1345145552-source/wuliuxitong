@@ -29,6 +29,7 @@ import {
   type FclOverview,
 } from "../../services/business-api";
 import LastmileDispatchWorkspace from "../../modules/lastmile/LastmileDispatchWorkspace";
+import { createQueryGate } from "../../modules/shared/request-gate";
 import type { LastmileOrderItem, LastmileShipmentOption } from "../../modules/lastmile/types";
 import { shipmentStatusZh } from "../../modules/shipment/shipment-status";
 import { formatBeijingTime } from "../../modules/staff/utils";
@@ -202,20 +203,34 @@ export default function FclContainerWorkbench({ canUnsign = false, canDelete = f
   const fileRef = useRef<HTMLInputElement>(null);
 
   /** silent：有变化时悄悄重拉（2026-10-05 实时推送）——按钮不变「查询中…」、失败不弹提示 */
+  /* 认主人（2026-10-14 全系统审查）：连着换条件查，几个请求同时在路上，原来谁后回来谁算数 —— 旧条件的结果会盖掉新条件的。
+     成功回来的结果，只要还是现在的查询条件、而且不比已经显示的那份旧才用；失败的请求谁也不作废
+     （Codex 第 2 轮：只认最新一次的话，后启动又失败的静默刷新会把刚查成功的前台结果扔掉，列表停在上一个条件、也不报错）。
+     「查询中…」按还在路上的前台请求个数算，旧的回来不会提前把新的那次的「查询中」关掉。 */
+  const listGate = useRef(createQueryGate<typeof search>()).current;
+  const LIST_LOAD_FAILED = "加载整柜列表失败";
+  const searchRef = useRef(search);
+  searchRef.current = search;
+  const pendingListRef = useRef(0);
   const loadList = useCallback(async (opts?: { silent?: boolean }) => {
     const silent = opts?.silent === true;
-    if (!silent) setLoading(true);
+    const ticket = listGate.begin(search);
+    if (!silent) { pendingListRef.current += 1; setLoading(true); }
     try {
       const r = await fetchFclContainers(search);
+      if (!listGate.accept(ticket, searchRef.current)) return;
       setRows(r.items ?? []);
+      // 前面那次失败弹过「加载整柜列表失败」、这次成功了：把那句收掉（别的提示不动，Codex 第 11 轮）
+      setToast((prev) => (prev.startsWith(LIST_LOAD_FAILED) ? "" : prev));
       // 到顶了要说出来，不能静默截断（CLAUDE.md 第 21 条：看不到的数据，用户得有办法知道它存在）
       setListNote(r.truncated ? (r.note ?? "只显示最近 500 个整柜，请用上面的条件缩小范围") : "");
     } catch (e) {
-      if (!silent) setToast(`加载整柜列表失败：${e instanceof Error ? e.message : "请稍后重试"}`);
+      // 失败只在「还是现在的条件」、而且没有更新的结果已经显示出来时提示；不动列表、不作废别的请求
+      if (!silent && Object.is(ticket.key, searchRef.current) && !listGate.superseded(ticket)) setToast(`${LIST_LOAD_FAILED}：${e instanceof Error ? e.message : "请稍后重试"}`);
     } finally {
-      if (!silent) setLoading(false);
+      if (!silent) { pendingListRef.current -= 1; if (pendingListRef.current === 0) setLoading(false); }
     }
-  }, [search]);
+  }, [search, listGate]);
 
   useEffect(() => { void loadList(); }, [loadList]);
 
@@ -253,16 +268,39 @@ export default function FclContainerWorkbench({ canUnsign = false, canDelete = f
      打开编辑框那一刻的版本号照旧留着，别人改过你再存会被拦下，这正是想要的。 */
   const selectedIdRef = useRef(selectedId);
   selectedIdRef.current = selectedId;
-  const detailRef = useRef(detail);
-  detailRef.current = detail;
+  /* 取详情的门闩（三条路共用，见下面 openDetail 那段说明）。条件是「这一次查看」：每点开一次详情记一个新编号
+     （柜 id + 第几次点开），返回列表 / 删柜 / 加载失败都清掉（Codex 第 5 轮：只按柜 id 认的话，点开 A → 没等回来就返回 →
+     再点开 A，第一次的请求晚到也算数 —— 它失败了会把第二次打开的 A 踢回列表，第二次的结果回来也被扔掉） */
+  const detailGate = useRef(createQueryGate<string | null>()).current;
+  const detailVisitRef = useRef(0);
+  const detailViewRef = useRef<string | null>(null);
+  /* 「最后用上的那份详情」，跟页面上的 detail 同步写（Codex 第 9 轮）：原来靠渲染时 detailRef.current = detail 跟上，
+     setDetail 之后、页面重新渲染之前那一下读到的还是旧的 —— 冲突后补版本号时会补成旧版本，员工再存又被拦。
+     所有改详情的地方都走 applyDetail（全文件 setDetail 只许出现在这里，T4 钉住） */
+  const detailRef = useRef<FclContainerDetail | null>(null);
+  const applyDetail = (next: FclContainerDetail | null) => {
+    detailRef.current = next;
+    setDetail(next);
+  };
+  const closeDetail = () => {
+    detailViewRef.current = null;
+    selectedIdRef.current = null;
+    setSelectedId(null);
+    applyDetail(null);
+  };
   useLiveRefresh({
     topics: ["fcl", "shipping"],
     refresh: async () => {
       const openId = selectedIdRef.current;
-      const detailTask = openId && detailRef.current?.containerId === openId
-        ? fetchFclContainerDetail(openId)
-            .then((d) => { if (selectedIdRef.current === openId && detailRef.current?.containerId === openId) setDetail(d); })
-            .catch(() => { /* 悄悄重拉失败：接着显示手上的 */ })
+      const view = detailViewRef.current;
+      // 跟点开详情、保存冲突后的刷新共用一道门闩（2026-10-14 Codex 第 4、5 轮）：晚到的旧结果不许盖掉已经显示的新结果，也不许跨「这一次查看」
+      const detailTask = openId && view && detailRef.current?.containerId === openId
+        ? (() => {
+            const ticket = detailGate.begin(view);
+            return fetchFclContainerDetail(openId)
+              .then((d) => { if (detailRef.current?.containerId === openId && detailGate.accept(ticket, detailViewRef.current)) applyDetail(d); })
+              .catch(() => { /* 悄悄重拉失败：接着显示手上的 */ });
+          })()
         : null;
       await Promise.all([
         loadList({ silent: true }),
@@ -274,14 +312,26 @@ export default function FclContainerWorkbench({ canUnsign = false, canDelete = f
     },
   });
 
+  /* 认主人（2026-10-14 全系统审查）：点开 A、没等回来就返回再点 B，B 先回来、A 后回来 —— 原来 A 盖掉 B，
+     选的是 B、看到和能改 / 删的却是 A；A 报错晚到还把人从 B 踢回列表。
+     取详情有三条路：点开详情、实时推送悄悄重拉、保存撞上「别人刚改过」后重拉，三条共用这一道门闩（Codex 第 4 轮：
+     原来只管了点开那条，另两条晚到照样盖 —— 冲突后重拉 A 的结果晚到，会把已经换成 B 的详情换回 A，编辑 / 删除按的就是 A）。
+     回来时：不是现在选中的柜、或者更新的结果已经显示了，就整个丢掉。 */
   const openDetail = async (containerId: string) => {
+    const view = `${containerId}#${++detailVisitRef.current}`;
+    detailViewRef.current = view;
+    selectedIdRef.current = containerId;
+    const ticket = detailGate.begin(view);
     setSelectedId(containerId);
-    setDetail(null);
+    applyDetail(null);
     try {
-      setDetail(await fetchFclContainerDetail(containerId));
+      const d = await fetchFclContainerDetail(containerId);
+      if (!detailGate.accept(ticket, detailViewRef.current)) return;
+      applyDetail(d);
     } catch (e) {
+      if (ticket.key !== detailViewRef.current || detailGate.superseded(ticket)) return;
       setToast(`加载详情失败：${e instanceof Error ? e.message : "请稍后重试"}`);
-      setSelectedId(null);
+      closeDetail();
     }
   };
 
@@ -464,11 +514,20 @@ export default function FclContainerWorkbench({ canUnsign = false, canDelete = f
       /* 「别人刚改过」这一种要顺手把详情和版本号刷新一下（2026-09-24 复核提的）：
          不刷的话，员工关掉弹窗再点「编辑」，拿的还是页面上那份旧详情、旧版本号，
          照样 409，得退回列表再点一次「详情」才好 —— 白绕一圈。 */
-      if (editingId && /刚刚被别人改过/.test(msg)) {
+      const view = detailViewRef.current;
+      if (editingId && view && selectedIdRef.current === editingId && /刚刚被别人改过/.test(msg)) {
+        const ticket = detailGate.begin(view);
         try {
           const latest = await fetchFclContainerDetail(editingId);
-          setDetail(latest);
-          setEditingVersion(latest.updatedAt ?? null);
+          // 回来时已经换了别的柜 / 返回过列表 / 更新的结果已经显示了：不盖（Codex 第 4、5 轮）
+          if (detailGate.accept(ticket, detailViewRef.current)) {
+            applyDetail(latest);
+            setEditingVersion(latest.updatedAt ?? null);
+          } else if (detailGate.covered(ticket, detailViewRef.current)) {
+            /* 实时推送抢先把更新的详情拉回来了（dsh 第 9 轮）：详情不用再换，但版本号照样要跟上，
+               不然员工在弹窗里直接再点保存，带的还是打开时的旧版本号，又被拦一次。取正显示着的那份（不比这次拉的旧） */
+            setEditingVersion(detailRef.current?.updatedAt ?? latest.updatedAt ?? null);
+          }
         } catch { /* 刷新失败不盖掉上面那句提示，员工照提示退出去重来就是了 */ }
       }
     } finally {
@@ -513,8 +572,7 @@ export default function FclContainerWorkbench({ canUnsign = false, canDelete = f
                 const r = await deleteFclContainer({ containerId: deleting.containerId, confirmContainerNo: deleteConfirm.trim() });
                 setToast(`整柜 ${r.containerNo} 已删除`);
                 setDeleting(null);
-                setSelectedId(null);
-                setDetail(null);
+                closeDetail();
                 await loadList();
                 await loadOverview();
               } catch (e) {
@@ -659,7 +717,7 @@ export default function FclContainerWorkbench({ canUnsign = false, canDelete = f
   if (selectedId) {
     return (
       <div>
-        <button type="button" className="workbench-button" onClick={() => { setSelectedId(null); setDetail(null); }} style={{ marginBottom: 12 }}>← 返回整柜列表</button>
+        <button type="button" className="workbench-button" onClick={closeDetail} style={{ marginBottom: 12 }}>← 返回整柜列表</button>
         {!detail ? <EmptyStateCard title="正在加载" description="正在读这个整柜的货物清单和轨迹。" /> : (
           <>
             <div style={card}>

@@ -66,6 +66,8 @@ export type PrealertEditDraft = {
   weightKg: number;
   volumeM3: number;
   domesticTrackingNo: string;
+  /** 这份草稿建出来那一刻的国内单号（2026-10-14）：确认收货时跟它比，员工真动过这一格才发，见 receiveDomesticNoToSend */
+  domesticTrackingNoBase?: string;
   transportMode: "sea" | "land";
   shipDate: string;
 };

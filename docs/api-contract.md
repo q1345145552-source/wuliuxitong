@@ -143,11 +143,13 @@
 - transportMode? (sea | land)
 - trackingNo?
 - domesticTrackingNo?
+- shipmentId?（2026-10-14：按运单 id 找这一票，客服卡片用；只认自己名下的）
 - page
 - pageSize
 
 返回补充字段：
 - paymentStatus: "unpaid" | "paid" （付款状态，由员工确认）
+- 每条 `shipmentId`（列表这一行那张父运单的 id）；回包顶层 `supportsShipmentIdQuery: true`（2026-10-14，页面靠它分清后端认不认按 id 找）
 - paidAt?: string （确认付款时间）
 - paidBy?: string （确认付款的员工ID）
 
@@ -754,7 +756,7 @@
 - 只在一个 API 进程的内存里；哪天开第二个 API 容器要换成 Redis 发布订阅。
 
 ### 21.2 GET /staff/loading-manifests/shipment-map
-- 员工 / 管理员。返回本公司「哪票运单装在哪个柜」：`{ items: [{ shipmentId, manifestNo }] }`。同一票在好几个柜里时取**最早建的那个柜**（跟原来前端把每个柜详情挨个拉一遍拼出来的结果一样）。
+- 员工 / 管理员。返回本公司「哪票运单装在哪个柜」：`{ items: [{ shipmentId, manifestNo, trackingNo, parentTrackingNo, packageCount }] }`（后三项 2026-10-14 加：装柜一律切子单，页面按 `parentTrackingNo` 把已装子单归到父单那一行）。同一票在好几个柜里时取**最早建的那个柜**（跟原来前端把每个柜详情挨个拉一遍拼出来的结果一样）。
 - 给装柜页「可选运单」那张表标「已装 → 柜号」用，替掉原来的按柜逐个拉详情（线上 353 个柜 = 353 个请求）。
 
 ## 22. 到货通知（2026-10-06）
@@ -838,3 +840,17 @@
 - 客户真实主页面 `/client/orders` 和代理列表、导出在待入库时取父运单的国内单号；代理搜索也查待入库父单汇总号和产品行国内号，名下范围不变。
 - 回滚后再次上线，开放编辑前再次手工跑产品体检；迁移不会自动同步旧版期间改过的镜像。`mismatch` 包括镜像四项和可由产品行算出的总重量、总体积（部分行合计规则不变，纯手填无派生值的不比较）。保存、转单入口在通知行锁内核对，不一致即 `409`，两边都不写，堵住手工体检前的覆盖窗口；不自动回写，处理前要老板同意。
 - 前后端共用的纯函数：`packages/shared-types/arrival-notice-products.ts`（`noticeProductTotals` / `noticeLegacySummary` / `missingForFormalNotice` / `noticeFieldLabel` / `isBlankNoticeProduct` / `noticeProductsComplete` / `firstDomesticTrackingNo`，`MAX_NOTICE_PRODUCTS = 50`）。
+
+## 23. 2026-10-14 全系统审查修复（接口口径变化）
+
+清单和核实依据：`.audit/2026-10-14/full-review/核实结果.md`；修复过程 `docs/sessions/2026-10-14-full-review-fixes.md`。
+- `GET /client/wallet/ledger` 的 `remark`、`GET /client/wallet/recharges` 的 `reviewRemark`、`GET /agent/whr/plan-detail` 的 `cancelReason` / `paymentRejectReason` / `statusLogs[].remark`：员工手写的柜号抹掉（`core/client-privacy.ts` 的 `maskFreeTextForClient`，「柜号:」后抹到标点 + 本公司柜号名单 + 标准柜号样子）。
+- `POST /admin/lastmile/orders`：锁后重读的运单状态不在「已到仓 / 预约派送 / 派送中 / 已签收」（`LASTMILE_DISPATCHABLE_STATUSES`）就 `409`，整车不建；已经在这张派送单里的票不查。
+- `POST /client/consolidation/prealerts/update`、`POST /admin/consolidation/prealerts/force-edit`：可带 `baseProductIds: string[]`（打开编辑框那一刻的行 id）；单上有既不在它里面、也不在提交里的行 → `409`「这张预报单上有你页面上没有的货物行…请刷新」，一行不动。不带 = 老页面照旧；带了但不是字符串数组（含 null）→ `400`。
+- `POST /admin/consolidation/prealerts/delete`、`force-edit`：锁后预报单已经不在 → `404`「刚刚已经被删掉了」（原来 500）。`POST /staff/consolidation/tasks/cancel` 记的原状态用锁后重读的。
+- `POST /staff/orders`：`warehouseId` 只认四个仓库 id、`transportMode` 只认 sea / land、`packageUnit` 只认 box / bag，别的 `400`。`POST /client/prealerts`：`transportMode` / `packageUnit` 同样；`shipDate` 只认 `YYYY-MM-DD` 且得是真有的日子，不是文字 `400`（没传 / null / 空照旧当北京今天）。`POST /staff/prealerts/receive`：传了 `transportMode` / `packageUnit` 同样只认内部值。
+- `POST /staff/prealerts/receive`：带 `domesticTrackingNoEdited: true` 时国内单号同步到运单和唯一那行产品；不带（老页面）照旧只改订单那一格。
+- `GET /admin/dashboard/overview` 的 `receivedVolumeM3Today`：按整票算（订单合计优先，缺了合计父子单），当天装柜不再往下掉。
+- 客服对话：整柜卡片 `ref.no` 给现在的提单号。
+- 装柜单号不填柜号时自动编号按北京日期。
+

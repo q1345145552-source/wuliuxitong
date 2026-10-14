@@ -64,6 +64,14 @@ export function readStrictNumber(v: unknown): { value?: number; bad: boolean; ra
   return Number.isFinite(n) ? { value: n, bad: false, raw } : { bad: true, raw };
 }
 
+/** YYYY-MM-DD 而且年月日对得上（2026-02-31 这种会被 Date 顺延成 3 月，要回头核） */
+function isRealYmd(text: string): boolean {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(text);
+  if (!m) return false;
+  const d = new Date(`${text}T00:00:00.000Z`);
+  return !Number.isNaN(d.getTime()) && d.getUTCFullYear() === Number(m[1]) && d.getUTCMonth() + 1 === Number(m[2]) && d.getUTCDate() === Number(m[3]);
+}
+
 function isBlankRow(row: Record<string, unknown>): boolean {
   return Object.values(row).every((v) => v === undefined || v === null || String(v).trim() === "");
 }
@@ -143,6 +151,8 @@ export function normalizeRows(rows: Record<string, unknown>[]): ImportRow[] {
         const d = new Date((Number(shipDate) - 25569) * 86400000);
         shipDate = d.toISOString().slice(0, 10);
       }
+      // 跟后端同一个规矩（2026-10-14）：只认 2026-08-29 这种写法、而且得是真有的日子 —— 预览里就标红，别等提交了这一行才失败
+      if (shipDate && !isRealYmd(shipDate)) issues.push(`发货日期「${shipDate}」看不懂（请写成 2026-08-29 这种格式）`);
       return {
         rowNo,
         issues,

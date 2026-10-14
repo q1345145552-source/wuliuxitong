@@ -318,6 +318,10 @@ jobs:
       # 2026-10-08 模拟数据测试查出来的页面接线（不连库）：列表排序带 id 兜底、超管待入库到仓日期、袋装单位、改单带打开时的剩余件数
       - name: Test simulated-data fixes 1008 (source)
         run: npm run test:sim-fixes-1008-source
+      # 2026-10-14 全系统审查修复（不连库）：手写原因抹柜号、客服卡片改号、尾端派送状态清单只一份、整柜管理认主人、
+      # 装柜可选运单归拢已装子单、确认收货国内单号改了才发、集货取消记锁后状态
+      - name: Test full review 1014 fixes (source)
+        run: npm run test:review-1014-source
       # 对接拆派仓（2026-10-12）不连库那一半：配置门槛、清单分份 / 字段 / 上限、回传校验 / 目标状态 / 备注不出现「拆派仓」、
       # 签收图挑哪张、拆派仓写的轨迹不许单删、派送照片只给员工、六个环境变量不进前端
       - name: Test chaipai integration (source)
@@ -505,6 +509,11 @@ jobs:
       # 删单那一刻看列表不 500、改单遇删单 409、编辑期间被装柜拦旧剩余数、删单删图片文件、到货通知搜索转义 / 按显示的号搜、客服选运单全品名
       - name: Test simulated-data fixes 1008 (real DB)
         run: bash .github/scripts/run-db-test.sh test:sim-fixes-1008-db
+      # 2026-10-14 全系统审查修复（连库）：钱包流水 / 代理柜详情抹柜号、建派送单复查泰国仓、集货编辑不删别人刚加的行、
+      # 集货同时删除 / 强制编辑遇删除 404、取消记锁后状态、建单三项只认内部值、发货日期核年月日、收货国内单号同步、
+      # 今日收货体积按整票、装柜映射带父单号、客户按运单 id 找、整柜卡片现号、自动柜号按北京日期
+      - name: Test full review 1014 fixes (real DB)
+        run: bash .github/scripts/run-db-test.sh test:review-1014-db
 
       # 9-28 审查报告那批小 bug（后端）：本月已签收按真签收时间数、装柜详情带整柜标记、
       # 集货轨迹柜号抹干净、补确认收货写父单、客户建单仓库校验、并发报价不重复记轨迹、

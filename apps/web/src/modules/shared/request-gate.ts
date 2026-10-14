@@ -52,3 +52,45 @@ export function createRequestGate(): RequestGate {
     cancel: () => { seq += 1; },
   };
 }
+
+/**
+ * 用法三（列表 + 后台静默刷新拉的是同一份数据，2026-10-14 全系统审查 Codex 第 2 轮）：
+ * 用法一「只认最新一次」在这里会出事 —— 员工刚按新条件查（前台），实时推送又触发一次静默刷新（后台），
+ * 后台那次排在后面领号，前台成功回来验号不过被扔掉；后台那次偏偏失败了、又不报错，列表就停在上一个条件。
+ * 这里改成：**成功**回来的结果，只要还是「现在的查询条件」、而且不比已经显示的那份旧，就用；失败的请求谁也不作废。
+ *   const gate = useRef(createQueryGate<Cond>()).current;
+ *   const t = gate.begin(cond);                         // 出发时领号，记下按什么条件查的
+ *   const data = await fetchXxx(cond);
+ *   if (!gate.accept(t, currentCondRef.current)) return; // 条件已经换了 / 有更新的已经显示了 → 扔
+ *   setList(data);
+ * 条件按「同一个对象」比（React 的 state 每次 set 都是新对象），所以条件要用 state / ref 里那一份，别现拼。
+ */
+export interface QueryTicket<K> { readonly seq: number; readonly key: K }
+export interface QueryGate<K> {
+  /** 出发时领号 */
+  begin(key: K): QueryTicket<K>;
+  /** 成功回来时问一声能不能用；能用就记下「已经显示到这一号」 */
+  accept(ticket: QueryTicket<K>, currentKey: K): boolean;
+  /** 失败回来时问一声：比它新的结果是不是已经显示了？是的话它的报错也不用说了（Codex 第 3 轮） */
+  superseded(ticket: QueryTicket<K>): boolean;
+  /**
+   * 现在显示的，是不是「不比这一次请求旧」—— 还是同一个条件，而且它自己或者比它后发的成功结果已经显示了（Codex 第 7 轮）。
+   * 用来回答「我要的刷新到底刷到没有」：后发的悄悄重拉抢先把新数据拉回来了，这一次自己被扔掉，也算刷到了。
+   */
+  covered(ticket: QueryTicket<K>, currentKey: K): boolean;
+}
+
+export function createQueryGate<K>(): QueryGate<K> {
+  let seq = 0;
+  let applied = 0;
+  return {
+    begin: (key) => ({ seq: ++seq, key }),
+    accept: (ticket, currentKey) => {
+      if (ticket.seq <= applied || !Object.is(ticket.key, currentKey)) return false;
+      applied = ticket.seq;
+      return true;
+    },
+    superseded: (ticket) => ticket.seq <= applied,
+    covered: (ticket, currentKey) => Object.is(ticket.key, currentKey) && ticket.seq <= applied,
+  };
+}

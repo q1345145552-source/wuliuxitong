@@ -269,6 +269,7 @@ export function buildShipmentOrderEditDraft(item: ShipmentItem): ShipmentOrderEd
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function buildPrealertDraft(item: any): PrealertEditDraft {
   const firstProduct = item.products?.[0];
+  const domesticTrackingNo = (firstProduct?.domesticTrackingNo || item.domesticTrackingNo) ?? "";
   return {
     warehouseId: item.warehouseId ?? "",
     itemName: item.itemName ?? "",
@@ -277,10 +278,36 @@ export function buildPrealertDraft(item: any): PrealertEditDraft {
     productQuantity: item.productQuantity ?? 0,
     weightKg: item.weightKg ?? 0,
     volumeM3: item.volumeM3 ?? 0,
-    domesticTrackingNo: (firstProduct?.domesticTrackingNo || item.domesticTrackingNo) ?? "",
+    domesticTrackingNo,
+    domesticTrackingNoBase: domesticTrackingNo,
     transportMode: (item.transportMode as "sea" | "land") ?? "sea",
     shipDate: item.shipDate?.slice(0, 10) ?? "",
   };
+}
+
+/**
+ * 确认收货要不要带国内单号（2026-10-14 全系统审查，员工「预报单审核」和超管「预报单管理」共用）：
+ * 只有员工真的改了这一格才发，跟这份草稿建出来那一刻的号比 —— 不能跟实时刷新后的新数据比
+ * （Codex 第 2 轮：页面开着期间同事把号改成真号，草稿还是旧的，一比就「不一样」，旧号会被当成改过发回去，
+ * 后端再把它同步到运单，真号就被盖掉）。框里默认带的是第一行产品的号（客户没填时是「货拉拉」），不改不发。
+ * 改成空也不发（后端本来就不收空号）。
+ */
+export function receiveDomesticNoToSend(draft: { domesticTrackingNo: string; domesticTrackingNoBase?: string }): string | undefined {
+  const now = draft.domesticTrackingNo.trim();
+  if (!now) return undefined;
+  // 没记下起点 = 不知道改没改，宁可不发（dsh 第 8 轮：当成空的话，框里默认的「货拉拉」会被当成改过、盖掉运单上的真号）
+  if (draft.domesticTrackingNoBase === undefined) return undefined;
+  return now !== draft.domesticTrackingNoBase.trim() ? now : undefined;
+}
+
+/**
+ * 确认收货请求里国内单号那两格（2026-10-14 Codex 第 4 轮）：改过才带号，并且带上「员工真改过」的标记 ——
+ * 后端只认带标记的才把号同步到运单和唯一那行产品。上线那一刻还开着的老页面不带标记（它不管改没改都发号，
+ * 默认就是第一行产品的「货拉拉」），后端照旧只改订单那一格，不会拿它把运单上的真号盖掉。
+ */
+export function receiveDomesticFields(draft: { domesticTrackingNo: string; domesticTrackingNoBase?: string }): { domesticTrackingNo?: string; domesticTrackingNoEdited?: true } {
+  const no = receiveDomesticNoToSend(draft);
+  return no === undefined ? {} : { domesticTrackingNo: no, domesticTrackingNoEdited: true };
 }
 
 /**

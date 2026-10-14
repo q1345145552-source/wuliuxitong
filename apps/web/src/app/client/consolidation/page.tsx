@@ -152,6 +152,8 @@ function ClientConsolidationContent() {
 
   const [showCreatePrealert, setShowCreatePrealert] = useState(false);
   const [editPrealertId, setEditPrealertId] = useState<string | null>(null);
+  /** 打开编辑框那一刻这张单上有哪几行（2026-10-14）：保存时带上，别人在这期间新加的行后端会认出来、不会被我删掉 */
+  const [editBaseProductIds, setEditBaseProductIds] = useState<string[]>([]);
   const [prealertMark, setPrealertMark] = useState("");
   const [prealertExpressNo, setPrealertExpressNo] = useState("");
   const [productRows, setProductRows] = useState<ProductFormRow[]>([emptyProductRow(Date.now())]);
@@ -323,6 +325,7 @@ function ClientConsolidationContent() {
   const openPrealertForm = (prealert?: ConsolidationPrealertItem) => {
     if (prealert) {
       setEditPrealertId(prealert.id);
+      setEditBaseProductIds(prealert.products.map((p) => p.id));
       setPrealertMark(prealert.mark);
       setPrealertExpressNo(prealert.expressNo || "");
       setProductRows(
@@ -392,13 +395,18 @@ function ClientConsolidationContent() {
       }));
 
       if (editPrealertId) {
-        await updateConsolidationPrealert({ prealertId: editPrealertId, mark: prealertMark.trim(), expressNo: prealertExpressNo.trim() || undefined, products });
+        await updateConsolidationPrealert({ prealertId: editPrealertId, mark: prealertMark.trim(), expressNo: prealertExpressNo.trim() || undefined, products, baseProductIds: editBaseProductIds });
       } else {
         await createConsolidationPrealert({ taskId: opTaskId!, mark: prealertMark.trim(), expressNo: prealertExpressNo.trim() || undefined, products });
       }
-      setShowCreatePrealert(false);
-      setToast(editPrealertId ? "预报单已更新" : "预报单已创建");
-      if (opTaskId) await loadDetail(opTaskId); // 2026-09-02 三审整改：刷新传明确的操作任务 id
+      /* 先把详情刷新回来再关编辑框（2026-10-14 dsh 第 5 轮）：原来先关、后刷新，这一来一回之间马上再点「编辑」，
+         拿到的还是刷新前那份货物明细，自己刚加的行不在「打开时有哪几行」里，保存会被当成「别人刚加的」报 409 */
+      try {
+        if (opTaskId) await loadDetail(opTaskId); // 2026-09-02 三审整改：刷新传明确的操作任务 id
+      } finally {
+        setShowCreatePrealert(false);
+        setToast(editPrealertId ? "预报单已更新" : "预报单已创建");
+      }
       await loadTasks();
     } catch (e: any) {
       setToast(e.message);

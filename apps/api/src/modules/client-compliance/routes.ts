@@ -6,6 +6,8 @@ import { parseNumericStrict } from "../core/int-guard";
 import { fail, ok, requireRole } from "../core/http-utils";
 import { CONSOLIDATION_CURRENCY } from "../wallet/consolidation-balance";
 import { hideOperatorInRemark } from "../core/operator-visibility";
+import { maskFreeTextForClient } from "../core/client-privacy";
+import { companyContainerNosForMasking } from "../core/container-nos";
 
 /**
  * 2026-08-31 Codex 二轮：充值金额列的规格。
@@ -170,6 +172,9 @@ export function registerClientComplianceRoutes(app: MinimalHttpApp): void {
         },
       }),
     ]);
+    /* 2026-10-14 全系统审查：退款流水的备注里拼着员工填的「作废原因」、管理员填的「撤销付款原因」，
+       写了柜号客户就原样看到。跟仓库版集货详情一样抹（看的人自己的运单号不抹）。 */
+    const maskNos = rows.some((r) => r.remark) ? await companyContainerNosForMasking(auth.companyId, [auth.userId]) : [];
     const typeZh: Record<string, string> = { recharge: "充值到账", pay: "集货付款", refund: "撤销退款" };
     const refZh: Record<string, string> = { whr: "仓库版集货", normal: "普通版集货", recharge: "充值单" };
     ok(res, {
@@ -182,7 +187,7 @@ export function registerClientComplianceRoutes(app: MinimalHttpApp): void {
         source: r.refType ? (refZh[r.refType] ?? r.refType) : "",
         refNo: r.refNo ?? "",
         // 2026-09-15：「管理员删除集货任务…」这类代码拼的备注，开头的「管理员」不给客户（库里原文不动）
-        remark: hideOperatorInRemark(r.remark ?? "", "client"),
+        remark: hideOperatorInRemark(maskFreeTextForClient(r.remark ?? "", maskNos), "client"),
         createdAt: r.createdAt.toISOString(),
       })),
       page,
@@ -211,6 +216,8 @@ export function registerClientComplianceRoutes(app: MinimalHttpApp): void {
         updatedAt: true,
       },
     });
+    // 管理员审核充值时手写的备注同样抹柜号（2026-10-14 全系统审查，跟钱包流水同一套）
+    const reviewMaskNos = rows.some((r) => r.reviewRemark) ? await companyContainerNosForMasking(auth.companyId, [auth.userId]) : [];
     ok(res, {
       recharges: rows.map((r) => ({
         id: r.id,
@@ -219,7 +226,7 @@ export function registerClientComplianceRoutes(app: MinimalHttpApp): void {
         paymentMethod: r.paymentMethod,
         status: r.status,
         remark: r.remark,
-        reviewRemark: r.reviewRemark,
+        reviewRemark: r.reviewRemark ? maskFreeTextForClient(r.reviewRemark, reviewMaskNos) : r.reviewRemark,
         createdAt: r.createdAt.toISOString(),
         updatedAt: r.updatedAt.toISOString(),
       })),

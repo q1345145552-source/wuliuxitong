@@ -147,6 +147,13 @@ export const AT_WAREHOUSE_STATUSES: ShipmentStatus[] = [
 ];
 
 /**
+ * 尾端派送能挑的运单状态：已到仓 / 预约派送 / 派送中 / 已签收（签收完再派一趟是正常业务，08-14 拍板）。
+ * 页面候选列表（services/business-api.ts）和后端建派送单（admin-ops POST /admin/lastmile/orders）共用这一份 ——
+ * 2026-10-14 全系统审查：原来只有页面按它筛，后端不复查，页面上残留的勾选能把不在泰国仓的货改成「派送中」。
+ */
+export const LASTMILE_DISPATCHABLE_STATUSES: ShipmentStatus[] = [...AT_WAREHOUSE_STATUSES, "delivered"];
+
+/**
  * 「在途」= 从国内仓发出、还没进泰国仓的全部状态（2026-08-21 新增）。
  *
  * ⚠️ **从两条流程表自动推导，不要手写清单。**

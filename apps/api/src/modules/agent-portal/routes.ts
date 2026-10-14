@@ -21,7 +21,7 @@ import { EXCLUDE_FCL_ORDER } from "../core/fcl-scope";
 import type { HttpRequest, MinimalHttpApp } from "../../server";
 import { fail, ok } from "../core/http-utils";
 import { requireAgent, type AgentAuth } from "../core/agent-scope";
-import { sanitizeRemarkForClient } from "../core/client-privacy";
+import { maskFreeTextForClient, maskLabeledContainerNo, sanitizeRemarkForClient } from "../core/client-privacy";
 import { companyContainerNosForMasking } from "../core/container-nos";
 import { BusinessError } from "../core/business-error";
 import { CONSOLIDATION_CURRENCY } from "../wallet/consolidation-balance";
@@ -944,6 +944,10 @@ export function registerAgentPortalRoutes(app: MinimalHttpApp): void {
       return;
     }
     const plan = customers[0].plan;
+    /* 2026-10-14 全系统审查：取消原因 / 驳回原因是员工手写的，写了柜号原来原样给代理（客户那边 09-29 起就抹）。
+       状态记录同理，原来只认固定写法和标准柜号样子，「柜号：L2608219129」这种照样露。跟客户那边同一套抹法。 */
+    const maskNos = await companyContainerNosForMasking(auth.companyId, clientIds);
+    const maskText = (text: string | null): string | null => (text == null || text === "" ? text : maskFreeTextForClient(text, maskNos));
     ok(res, {
       planId,
       planNo: plan.planNo,
@@ -1001,10 +1005,10 @@ export function registerAgentPortalRoutes(app: MinimalHttpApp): void {
               totalFee: numOrNull(pa.totalFee),
               feeBreakdown: { rows: bd.rows, totalVolumeM3: bd.totalVolumeM3, matchesStored: bd.matchesStored },
               paidAt: iso(pa.paymentReviewedAt),
-              paymentRejectReason: pa.paymentRejectReason,
+              paymentRejectReason: maskText(pa.paymentRejectReason),
               thailandReceiptProofs: mapProofs(pa.thailandReceiptProofs),
               thailandReceivedAt: iso(pa.thailandReceivedAt),
-              cancelReason: pa.cancelReason,
+              cancelReason: maskText(pa.cancelReason),
               cancelledAt: iso(pa.cancelledAt),
               // 这一单他赚多少（3.4）：付款那一刻冻结的；没付款 / 不是记在他名下的给 null
               rebateAmount: pa.paidAgentId === auth.agentId ? numOrNull(pa.rebateAmount) : null,
@@ -1031,7 +1035,7 @@ export function registerAgentPortalRoutes(app: MinimalHttpApp): void {
                 id: sl.id,
                 fromStatus: sl.fromStatus,
                 toStatus: sl.toStatus,
-                remark: remarkForAgent(sl.remark),
+                remark: remarkForAgent(maskLabeledContainerNo(sl.remark ?? ""), maskNos),
                 createdAt: sl.createdAt.toISOString(),
               })),
             };

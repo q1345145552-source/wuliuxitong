@@ -13,6 +13,7 @@ import { productNamesLabel } from "../../../../../packages/shared-types/product-
 import { EXCLUDE_FCL_SHIPMENT, ONLY_FCL_SHIPMENT } from "../core/fcl-scope";
 import { nextSequenceValue } from "../core/number-sequence";
 import { PENDING_INBOUND } from "../arrival-notices/rules";
+import { LASTMILE_DISPATCHABLE_STATUSES } from "../../../../../packages/shared-types/shipment-status";
 
 /** 同一票货重复进派送单时抛这个，调用方转成 400 而不是 500 */
 class LastmileConflictError extends Error {
@@ -797,6 +798,12 @@ export function registerAdminOpsRoutes(app: MinimalHttpApp): void {
           if (inTarget) {
             skipped.push(ownShipment.trackingNo);
             continue;
+          }
+          /* 2026-10-14 全系统审查：能不能派送原来只在页面上判断（候选列表只放这几种状态）。页面开着期间别人撤了柜子状态 /
+             卸了柜，残留的勾选照样提交，这里就把还在路上、甚至还在国内仓的货改成「派送中」，客户轨迹也写上。
+             用锁后重读的状态判断；已经在这张派送单里的（上面 skipped）不管。 */
+          if (!(LASTMILE_DISPATCHABLE_STATUSES as string[]).includes(ownShipment.currentStatus)) {
+            throw new LastmileConflictError(`运单 ${ownShipment.trackingNo} 现在不在泰国仓（可能柜子状态刚被撤回，或者刚卸柜），不能派送，这一车都没有建。请刷新页面重新勾选。`);
           }
           const toMove = movableRows.filter((row) => row.shipmentId === sid);
           const busy = await tx.adminLastmileOrder.findFirst({

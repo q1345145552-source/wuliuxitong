@@ -343,7 +343,22 @@ export default function ChatThread(props: {
     if (loading || loadError) return;
     let stopped = false;
     const forKey = key;
-    const tick = async () => {
+    /* 同一时间只取一次（2026-10-14 全系统审查 Codex 第 3 轮）：3 秒定时、切回标签页、实时推送三路都会叫 tick，
+       原来会同时发好几次，回来的先后会颠倒 —— 晚回来的那份是更早读的，单子刚改的新号 / 新状态会被它换回旧的。
+       上一次还没回来又叫到：记一笔，回来以后马上再取一次（不丢这次推送）。 */
+    let running = false;
+    let again = false;
+    const tick = async (): Promise<void> => {
+      if (running) { again = true; return; }
+      running = true;
+      try {
+        await pollOnce();
+      } finally {
+        running = false;
+        if (again && !stopped) { again = false; void tick(); }
+      }
+    };
+    const pollOnce = async () => {
       if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
       const since = pollSinceRef.current || serverTimeRef.current;
       if (!since) return;

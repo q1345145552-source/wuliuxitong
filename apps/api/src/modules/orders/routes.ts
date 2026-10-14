@@ -363,6 +363,15 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
       fail(res, 400, "VALIDATION_ERROR", "仓库只能选义乌仓 / 广州仓 / 东莞仓 / 深圳仓");
       return;
     }
+    // 运输方式 / 包装单位同理只认内部值（2026-10-14 全系统审查，跟员工建单一起补）
+    if (body.transportMode !== "sea" && body.transportMode !== "land") {
+      fail(res, 400, "VALIDATION_ERROR", "运输方式只能选海运或陆运");
+      return;
+    }
+    if (body.packageUnit !== undefined && body.packageUnit !== null && body.packageUnit !== "box" && body.packageUnit !== "bag") {
+      fail(res, 400, "VALIDATION_ERROR", "包装单位只能选箱或袋");
+      return;
+    }
 
     // 没有产品行的单子，箱数全靠订单级这个字段：正整数 + 不超过 32 位上限
     // ⚠️ 上一版漏了上限，复核实测 2147483648 能过（2026-08-29 补）
@@ -435,10 +444,24 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
 
     const now = new Date().toISOString();
     // 没填发货 / 到仓日期就用「北京时间的今天」（2026-09-29 实跑发现）：后端跑在 UTC，原来取 UTC 的今天，北京早上 8 点前建的单记成昨天
-    const shipDateText = body.shipDate?.trim() || new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString().slice(0, 10);
-    const shipDate = new Date(`${shipDateText}T00:00:00`);
-    if (Number.isNaN(shipDate.getTime())) {
-      fail(res, 400, "BAD_REQUEST", "invalid shipDate");
+    // 不是文字（数字、对象……）先 400（Codex 第 10 轮：原来直接 .trim() 抛错成 500）；没传 / 空着照旧当北京今天
+    const rawShipDate: unknown = body.shipDate;
+    if (rawShipDate !== undefined && rawShipDate !== null && typeof rawShipDate !== "string") {
+      fail(res, 400, "BAD_REQUEST", "发货日期格式不对，请写成 2026-08-29 这种格式");
+      return;
+    }
+    const shipDateText = (typeof rawShipDate === "string" ? rawShipDate.trim() : "") || new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    /* 只认 YYYY-MM-DD，而且回头核对年月日（2026-10-14 全系统审查）：原来只判 new Date 是不是 NaN，
+       「2026-02-31」会被顺延成 3 月 3 日、不算错，库里就存着原文「2026-02-31」。员工建单那条路 08-29 起就这么核了 */
+    const shipDateParts = /^(\d{4})-(\d{2})-(\d{2})$/.exec(shipDateText);
+    const shipDate = shipDateParts ? new Date(`${shipDateText}T00:00:00.000Z`) : new Date(NaN);
+    if (
+      !shipDateParts || Number.isNaN(shipDate.getTime()) ||
+      shipDate.getUTCFullYear() !== Number(shipDateParts[1]) ||
+      shipDate.getUTCMonth() + 1 !== Number(shipDateParts[2]) ||
+      shipDate.getUTCDate() !== Number(shipDateParts[3])
+    ) {
+      fail(res, 400, "BAD_REQUEST", `发货日期「${shipDateText}」不是有效日期，请写成 2026-08-29 这种格式`);
       return;
     }
     const manualWeightKg = body.weightKg === undefined || body.weightKg === null ? null : Number(body.weightKg);
@@ -572,6 +595,8 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
       volumeM3?: number;
       productQuantity?: number;
       domesticTrackingNo?: string;
+      /** 员工真改过国内单号（2026-10-14）：带了才同步到运单 / 唯一那行产品；不带（老页面）照旧只改订单 */
+      domesticTrackingNoEdited?: boolean;
       transportMode?: "sea" | "land";
       cargoType?: string;
       /* 2026-08-31（排查报告第 1 条 → 深夜老板重申「钱只在集货里」）：
@@ -586,6 +611,15 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
     // 单号不是文字原来 .trim 直接 500（2026-09-29 实跑发现），按「没传」处理
     const orderId = typeof body.orderId === "string" ? body.orderId.trim() : "";
     if (!orderId) { fail(res, 400, "BAD_REQUEST", "orderId is required"); return; }
+    // 运输方式 / 包装单位传了就只认内部值（2026-10-14 全系统审查，跟建单一起补）；没传照旧不动
+    if (body.transportMode && body.transportMode !== "sea" && body.transportMode !== "land") {
+      fail(res, 400, "VALIDATION_ERROR", "运输方式只能选海运或陆运");
+      return;
+    }
+    if (body.packageUnit && body.packageUnit !== "box" && body.packageUnit !== "bag") {
+      fail(res, 400, "VALIDATION_ERROR", "包装单位只能选箱或袋");
+      return;
+    }
     let receiveWarehouseId: string | undefined;
     if (body.warehouseId !== undefined && body.warehouseId !== null && String(body.warehouseId).trim() !== "") {
       const w = String(body.warehouseId).trim();
@@ -706,7 +740,8 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
       if ("error" in edited) { fail(res, 400, "VALIDATION_ERROR", edited.error); return; }
       updateData.cargoType = edited.order;
     }
-    if (body.domesticTrackingNo) updateData.domesticTrackingNo = body.domesticTrackingNo;
+    // 去首尾空格再存（2026-10-14：跟同步到运单 / 产品行的是同一个值）
+    if (typeof body.domesticTrackingNo === "string" && body.domesticTrackingNo.trim()) updateData.domesticTrackingNo = body.domesticTrackingNo.trim();
     // 2026-08-31（排查报告第 1 条）：柜号传了才写，没传不动
     if (receiveBatchNo !== undefined) updateData.batchNo = receiveBatchNo;
     // 2026-09-28（#12）：仓库、发货日期同样「传了才写」
@@ -816,6 +851,20 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
           await tx.orderProduct.update({ where: { id: productRows[0].id }, data: { packageCount: receivePackageCount } });
         }
       }
+      /* 国内单号：只有一行产品时产品行跟着改（2026-10-14 全系统审查）。原来只写订单那一格，
+         员工 / 超管运单列表、搜索、导出读的是运单和产品行上的号，改了等于没改。多行产品分不清改的是哪一行，产品行不动。
+         ⚠️ 只认带了「员工真改过」标记的（Codex 第 4 轮）：上线那一刻还开着的老页面不管改没改都发号（默认是第一行产品的
+         「货拉拉」），不认标记的话会拿它把运单上的真号盖掉；不带标记照旧只改订单那一格 */
+      const receiveDomesticNo = body.domesticTrackingNoEdited === true && typeof body.domesticTrackingNo === "string" ? body.domesticTrackingNo.trim() : "";
+      if (receiveDomesticNo) {
+        const productRows = await tx.orderProduct.findMany({
+          where: { orderId, companyId: auth.companyId },
+          select: { id: true },
+        });
+        if (productRows.length === 1) {
+          await tx.orderProduct.update({ where: { id: productRows[0].id }, data: { domesticTrackingNo: receiveDomesticNo } });
+        }
+      }
 
       // 同步更新运单
       if (shipment) {
@@ -833,6 +882,8 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
         if (body.packageUnit) sUpdate.packageUnit = body.packageUnit;
         if (body.transportMode) sUpdate.transportMode = body.transportMode;
         if (body.itemName?.trim()) sUpdate.itemName = body.itemName.trim();
+        // 国内单号同步到运单（2026-10-14 全系统审查，见上面产品行那段）
+        if (receiveDomesticNo) sUpdate.domesticTrackingNo = receiveDomesticNo;
         // 仓库也要同步到运单：运单列表按 shipment.warehouseId 筛（2026-09-28，#12）
         if (receiveWarehouseId !== undefined) sUpdate.warehouseId = receiveWarehouseId;
         // 柜号要同步写到运单上：运单列表显示的是 shipment.batchNo（shipments/routes.ts），
@@ -1008,6 +1059,21 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
     ].filter(Boolean);
     if (missingFields.length > 0) {
       fail(res, 400, "BAD_REQUEST", `缺少必填项：${missingFields.join("、")}`);
+      return;
+    }
+    /* 仓库 / 运输方式 / 包装单位只认内部值（2026-10-14 全系统审查）：原来只判非空，超管批量导入填「义乌仓」「陆运」「袋」
+       原样存进库 —— 全系统按 === "land" 判断，填「陆运」的这票按海运流程走；按仓库筛选哪个仓都筛不出来。
+       客户建预报单那条路 09-28 起就卡仓库名单了。线上只读核过（10-14）：三列现有的值全在名单里。 */
+    if (!RECEIVE_WAREHOUSE_IDS.includes(String(body.warehouseId))) {
+      fail(res, 400, "BAD_REQUEST", `仓库「${body.warehouseId}」不对，只能是义乌仓 / 广州仓 / 东莞仓 / 深圳仓（${RECEIVE_WAREHOUSE_IDS.join(" / ")}）`);
+      return;
+    }
+    if (body.transportMode !== "sea" && body.transportMode !== "land") {
+      fail(res, 400, "BAD_REQUEST", `运输方式「${body.transportMode}」不对，只能是海运（sea）或陆运（land）`);
+      return;
+    }
+    if (body.packageUnit !== undefined && body.packageUnit !== null && body.packageUnit !== "box" && body.packageUnit !== "bag") {
+      fail(res, 400, "BAD_REQUEST", `包装单位「${body.packageUnit}」不对，只能是箱（box）或袋（bag）`);
       return;
     }
     // 上面已经逐项挡过空值了，这里取出来让类型也确定下来（原来是靠一个大 if 收窄的）
@@ -1222,6 +1288,8 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
     const trackingNo = req.query.trackingNo?.trim();
     const orderNo = req.query.orderNo?.trim();
     const domesticTrackingNo = req.query.domesticTrackingNo?.trim();
+    /* 按运单 id 找这一票（2026-10-14 全系统审查）：客服对话里点运单卡片，卡片上的号可能是改号前的旧号，按号找会「没找到这票货」 */
+    const shipmentIdQuery = req.query.shipmentId?.trim();
 
     const where: Prisma.OrderWhereInput = {
       companyId: auth.companyId,
@@ -1240,6 +1308,8 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
          上面那行搜索条件用的也是 `shipments` 这个键，两个写一起后面的会把前面的整个盖掉。 */
       AND: [EXCLUDE_FCL_ORDER],
     };
+    // 按运单 id 找（见上面 shipmentIdQuery）：跟上面那行运单号搜索同用 shipments 这个键，只能另放一条进 AND
+    if (shipmentIdQuery) (where.AND as Prisma.OrderWhereInput[]).push({ shipments: { some: { id: shipmentIdQuery } } });
     const [total, orders] = await Promise.all([
       prisma.order.count({ where }),
       prisma.order.findMany({
@@ -1339,6 +1409,8 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
       const latestRemark = logisticsRecords.at(-1)?.remark ?? null;
       return {
         id: o.id,
+        // 列表里显示的那张运单（父单）的 id：客服对话卡片按它找回这一票（2026-10-14）
+        shipmentId: ship?.id ?? null,
         clientId: o.clientId,
         warehouseId: o.warehouseId,
         receiverAddressTh: o.receiverAddressTh,
@@ -1391,7 +1463,8 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
       products: productsMap.get(item.id) ?? [],
     }));
 
-    ok(res, { items: itemsWithImages, page, pageSize, total });
+    // supportsShipmentIdQuery：告诉页面「我认按运单 id 找」（2026-10-14 dsh 第 10 轮）——客服卡片靠它分清老后端，比看条目里有没有某个字段稳
+    ok(res, { items: itemsWithImages, page, pageSize, total, supportsShipmentIdQuery: true });
   });
 
   // ===== 客户端付款 =====

@@ -41,6 +41,7 @@ import {
 import { apiBaseUrl, authHeaders, parseApiResponse, fetchWithSession as fetch } from "../../services/core-api";
 import { DEFAULT_SHIPPING_PRICES, INSPECTION_SURCHARGE, SENSITIVE_SURCHARGE } from "../../../../../packages/shared-types/constants";
 import { formatBeijingTime, formatMetric, shipmentStatusWithPartialZh, shipmentStatusZh, transportModeLabel, warehouseLabelFromId } from "../../modules/staff/utils";
+import { normalizeWarehouseId, strictPackageUnit, strictTransport, WAREHOUSE_NAME_HINT } from "../../modules/staff/batchOrderImport";
 import { SHIPMENT_STATUS_FILTER_OPTIONS } from "../../modules/shipment/shipment-status";
 import ShippingConfig from "../../components/admin/ShippingConfig";
 import { createRequestGate } from "../../modules/shared/request-gate";
@@ -403,8 +404,9 @@ export default function AdminHomePage() {
         ["填写第一个工作表；每行创建一张运单，请勿修改表头。空白行不会导入，模板不含可误导入的示例订单。"],
         ["客户ID填写系统已有的客户ID；品名和箱数请填写完整，箱数为正整数。"],
         ["最后一列「运单号」必填，不能跟系统里已有的运单号重复；请把这一列的单元格格式设为“文本”。"],
-        ["仓库ID：" + warehouseOptions.map((w) => `${w.label} = ${w.id}`).join("；")],
-        ["包装单位填写 box（箱）或 bag（袋）；运输方式填写 sea（海运）或 land（陆运），不要填写中文代替这些值。"],
+        ["仓库ID：" + warehouseOptions.map((w) => `${w.label} = ${w.id}`).join("；") + "（写仓库名或 id 都行；空着这一行导入失败）"],
+        // 2026-10-14 起中文也认（导入时换成内部值，认不出来这一行失败并说明）；仓库、运输方式空着不再悄悄当义乌仓 / 海运
+        ["包装单位填 箱 / 袋（或 box / bag，空着当箱）；运输方式填 海运 / 陆运（或 sea / land），必填，空着这一行导入失败。"],
         ["到仓日期按文本填写 YYYY-MM-DD，例如 2026-09-05；不要将单元格改成Excel日期格式。"],
         ["填写前，请将客户ID、国内单号、电话和到仓日期的单元格格式设为“文本”，保留开头的0与日期原文。"],
         ["国内单号按实际信息填写。泰国收货人、收货电话、收货地址三列系统不保存（6 月起建运单不收收货信息，派送时按客户地址簿），可以留空。"],
@@ -3183,7 +3185,10 @@ export default function AdminHomePage() {
                     const wb = XLSX.read(data);
                     const ws = wb.Sheets[wb.SheetNames[0]];
                     if (!ws) throw new Error("文件中没有工作表");
-                    const rows = XLSX.utils.sheet_to_json<any>(ws);
+                    /* defval: ""（2026-10-14 全系统审查 Codex 第 3 轮）：不加的话没填过的格子整个不出现在这一行里，
+                       跟「表里压根没这一列」分不清 —— 仓库、运输方式空着就被悄悄当成义乌仓 / 海运。加了以后空格子是 ""，
+                       下面按「格子空着」交给后端报缺少必填项（跟员工批量导入一样）；老模板整列没有的照旧用默认值 */
+                    const rows = XLSX.utils.sheet_to_json<any>(ws, { defval: "" });
                     setBatchRows(rows);
                     if (rows.length === 0) setBatchFileError("文件中没有可导入的数据，请填写模板后重新上传。");
                   } catch {
@@ -3263,15 +3268,31 @@ export default function AdminHomePage() {
                   for (let i = 0; i < batchRows.length; i++) {
                     const r = batchRows[i];
                     try {
+                      /* 仓库 / 包装单位 / 运输方式：中文和内部值都认，认不出来这一行失败（2026-10-14 全系统审查：
+                         原来原样传，填「陆运」存成中文，全系统按 === "land" 判断，这票就按海运流程走）。
+                         表里压根没这一列：照旧当义乌仓 / 箱 / 海运；有这一列但格子空着：仓库、运输方式照旧交给后端报
+                         「缺少必填项」（海运陆运不能猜），包装单位空着当箱（原来存成空串，页面也是按箱显示） */
+                      const cellOf = (v: unknown, whenMissing: string) => (v === undefined || v === null ? whenMissing : String(v).trim());
+                      const rawWarehouse = cellOf(r["仓库ID"] ?? r.warehouseId, "wh_yiwu_01");
+                      const warehouseId = rawWarehouse === "" ? "" : normalizeWarehouseId(rawWarehouse);
+                      if (warehouseId === undefined) throw new Error(`仓库填的是「${rawWarehouse}」，只能填：${WAREHOUSE_NAME_HINT}`);
+                      const rawUnit = cellOf(r["包装单位"] ?? r.packageUnit, "box");
+                      const packageUnit = rawUnit === "" ? "box" : strictPackageUnit(rawUnit);
+                      if (!packageUnit) throw new Error(`包装单位填的是「${rawUnit}」，只能填箱或袋`);
+                      const rawTransport = cellOf(r["运输方式"] ?? r.transportMode, "sea");
+                      const transportMode = rawTransport === "" ? "" : strictTransport(rawTransport);
+                      if (transportMode === undefined) throw new Error(`运输方式填的是「${rawTransport}」，只能填海运或陆运`);
                       await createStaffOrder({
-                        clientId: String(r["客户ID"] ?? r.clientId ?? ""), warehouseId: String(r["仓库ID"] ?? r.warehouseId ?? "wh_yiwu_01"),
-                        arrivedAt: String(r["到仓日期"] ?? r.arrivedAt ?? beijingToday()),
+                        clientId: String(r["客户ID"] ?? r.clientId ?? ""), warehouseId,
+                        // 到仓日期空着照旧当今天（读表加了 defval 以后空格子是 ""，不是没有这个键）
+                        arrivedAt: String(r["到仓日期"] ?? r.arrivedAt ?? "").trim() || beijingToday(),
                         itemName: String(r["品名"] ?? r.itemName ?? ""),
                         // ⚠️ 不许 `?? 1`（2026-08-29 去掉）：表里没填箱数就该报错让人去补，
                         // 悄悄当成 1 箱会让重量/方数/产品数量三个合计一起错，而且错得很像真的
                         packageCount: Number(r["箱数"] ?? r.packageCount ?? NaN),
-                        packageUnit: (r["包装单位"] ?? r.packageUnit ?? "box") as "bag" | "box",
-                        transportMode: (r["运输方式"] ?? r.transportMode ?? "sea") as "sea" | "land",
+                        packageUnit,
+                        // 空串 = 格子空着，后端报「缺少必填项：运输方式」（跟原来一样）
+                        transportMode: transportMode as "sea" | "land",
                         domesticTrackingNo: String(r["国内单号"] ?? r.domesticTrackingNo ?? ""),
                         // 运单号（2026-09-29 补）：原来没传，后端 6-05 起要求必填 → 整批每行都「运单号为必填」。
                         // 泰国收货人三列不再往后端传：6-04 起后端建运单一律不存收货信息（传了也是空）。

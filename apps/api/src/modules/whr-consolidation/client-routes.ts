@@ -8,7 +8,7 @@ import { lockPlanAliveById, lockPlanAliveByPrealert, lockPrealertExpecting, Plan
 import { saveImageToDisk, deleteImageFile } from "../orders/image-storage";
 import { BusinessError } from "../core/business-error";
 import { hideOperatorInRemark } from "../core/operator-visibility";
-import { sanitizeRemarkForClient } from "../core/client-privacy";
+import { maskFreeTextForClient } from "../core/client-privacy";
 import { companyContainerNosForMasking } from "../core/container-nos";
 import {
   ACTIVE_PREALERT_WHERE,
@@ -947,7 +947,7 @@ export function registerWhrConsolidationClientRoutes(app: MinimalHttpApp): void 
     const maskNos = await companyContainerNosForMasking(auth.companyId, [auth.userId]);
     const maskForClient = (text: string | null | undefined): string | null => {
       if (typeof text !== "string" || text === "") return text ?? null;
-      return sanitizeRemarkForClient(text.replace(/柜号\s*[:：][^\n，,。；;、]*/g, "柜号（不对外显示）"), true, maskNos);
+      return maskFreeTextForClient(text, maskNos); // 跟普通版集货、钱包流水同一个函数（2026-10-14 收进 core/client-privacy）
     };
 
     // 时间线在这里聚合一次即可，不再逐单重复下发一份（原来同一批日志会传两遍）

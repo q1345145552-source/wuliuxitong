@@ -6,7 +6,7 @@ import { fail, ok, requireRole } from "../core/http-utils";
 import { logger } from "../core/logger";
 import { BusinessError } from "../core/business-error";
 import { hideOperatorIdentity, hideOperatorInRemark, operatorNameForDisplay } from "../core/operator-visibility";
-import { sanitizeRemarkForClient } from "../core/client-privacy";
+import { maskFreeTextForClient } from "../core/client-privacy";
 import { companyContainerNosForMasking } from "../core/container-nos";
 import { verifyPassword } from "../auth/crypto-utils";
 // 取消任务验管理员密码用的失败限流（2026-08-31 Codex 复核）：复用登录那套内存计数器
@@ -214,8 +214,24 @@ async function generateTaskNo(
 /**
  * 编辑预报单时，提交上来的「已有行」id 必须现在都还在这张单上、而且不重复（2026-09-29）。
  * 调用方必须已经锁住这张预报单。对不上抛 409，整个事务回滚（一行都不删、不改）。
+ *
+ * baseIds = 页面打开编辑框那一刻这张单上有哪几行（2026-10-14 全系统审查）：原来只核「我提交的老行还在」，
+ * 别人在我打开之后**新加**的行不在我的表单里，下面 deleteMany(notIn keepIds) 就把它删了，还回保存成功。
+ * 现在：要删掉的行必须是我打开时就看得到的；不是 = 别人刚加的，整次不存。没传 baseIds（老页面）照旧。
  */
-async function assertPrealertRowsStillThere(tx: any, prealertId: string, keepIds: string[]): Promise<void> {
+async function assertPrealertRowsStillThere(tx: any, prealertId: string, keepIds: string[], baseIds?: readonly string[] | null): Promise<void> {
+  if (baseIds) {
+    const seen = new Set([...baseIds, ...keepIds]);
+    const current = await tx.consolidationPrealertProduct.findMany({ where: { prealertId }, select: { id: true } });
+    if (current.some((r: { id: string }) => !seen.has(r.id))) {
+      throw new BusinessError(
+        // 措辞中性（Codex 第 6 轮）：也可能是自己刚加的、只是页面还没刷新过来
+        "这张预报单上有你页面上没有的货物行（可能是别人刚加的，也可能是页面还没刷新），这次修改没有保存。请刷新页面，看一眼最新的内容再改。",
+        409,
+        "VALIDATION_ERROR",
+      );
+    }
+  }
   if (keepIds.length === 0) return;
   if (new Set(keepIds).size !== keepIds.length) {
     throw new BusinessError("提交的货物明细里有重复的行，请刷新页面后再改", 400, "VALIDATION_ERROR");
@@ -231,6 +247,16 @@ async function assertPrealertRowsStillThere(tx: any, prealertId: string, keepIds
       "VALIDATION_ERROR",
     );
   }
+}
+
+/**
+ * 编辑预报单时页面带上来的「打开编辑框那一刻有哪几行」（2026-10-14）。完全没带 = 老页面，返回 null 照旧；
+ * 带了就必须是一串文字，否则 400（不能悄悄当成没传，那样就又不拦了 —— 带 null 也算带了，Codex 第 8 轮）。
+ */
+function readBaseProductIds(raw: unknown): { ok: true; ids: string[] | null } | { ok: false } {
+  if (raw === undefined) return { ok: true, ids: null };
+  if (!Array.isArray(raw) || raw.some((v) => typeof v !== "string")) return { ok: false };
+  return { ok: true, ids: raw.map((v: string) => v.trim()).filter(Boolean) };
 }
 
 /**
@@ -433,11 +459,8 @@ function formatStatusLogForClient(log: any, containerNos: readonly string[] = []
      ① 员工填的柜号带空格（「MSKU 123456 7」）→ 只抹掉 MSKU，后面几位原样给客户；
      ② 「柜号」这两个字没写、备注里直接夹着柜号 → 一个字都不抹。
      现在：「柜号:」后面一直抹到换行 / 标点为止；再按这个任务真实的柜号 + 标准柜号样子各抹一遍（跟运单那边同一个函数）。 */
-  const masked = sanitizeRemarkForClient(
-    remark.replace(/柜号\s*[:：][^\n，,。；;、]*/g, "柜号（不对外显示）"),
-    true,
-    containerNos,
-  );
+  // 「柜号:」抹到标点 + 按真实柜号 / 标准柜号样子抹，全系统同一个函数（2026-10-14 收进 core/client-privacy）
+  const masked = maskFreeTextForClient(remark, containerNos);
   return masked === remark ? base : { ...base, remark: masked };
 }
 
@@ -828,10 +851,17 @@ export function registerConsolidationRoutes(app: MinimalHttpApp): void {
         /** 只有本次真的换了图才传；不传表示沿用原图 */
         productImage?: { fileName?: string; mime?: string; base64?: string };
       }>;
+      /** 页面打开编辑框那一刻这张单上有哪几行（2026-10-14，见 assertPrealertRowsStillThere） */
+      baseProductIds?: unknown;
     };
 
     if (!body.prealertId?.trim()) {
       fail(res, 400, "BAD_REQUEST", "prealertId 为必填");
+      return;
+    }
+    const baseProductIds = readBaseProductIds(body.baseProductIds);
+    if (!baseProductIds.ok) {
+      fail(res, 400, "BAD_REQUEST", "baseProductIds 格式不对");
       return;
     }
     /**
@@ -938,7 +968,7 @@ export function registerConsolidationRoutes(app: MinimalHttpApp): void {
            两个页面同时开着改同一张单，前一个删掉了某行，后一个拿着旧页面保存 ——
            原来先把「没提交的」删掉，再按 id 更新，更新不到的那行（已经不在了）一声不吭地没了，
            前一个人新加的行也被删掉，最后货物明细少了，页面还说保存成功。现在对不上就整次不存，让人刷新。 */
-        await assertPrealertRowsStillThere(tx, body.prealertId!, keepIds);
+        await assertPrealertRowsStillThere(tx, body.prealertId!, keepIds, baseProductIds.ids);
         // 只删本次没提交的行
         await tx.consolidationPrealertProduct.deleteMany({
           where: {
@@ -2064,7 +2094,8 @@ export function registerConsolidationRoutes(app: MinimalHttpApp): void {
           operatorId: auth.userId,
           operatorRole: auth.role,
           operatorName: auth.name || auth.userId,
-          fromStatus: task.status,
+          // 锁后重读的状态（2026-10-14 全系统审查）：点取消到拿到锁之间别人确认了满柜 / 报了价，原来记成点取消那一刻的旧状态
+          fromStatus: fresh.status,
           toStatus: "cancelled",
         },
       });
@@ -2366,10 +2397,17 @@ export function registerConsolidationRoutes(app: MinimalHttpApp): void {
         /** 只有本次真的换了图才传；不传表示沿用原图 */
         productImage?: { fileName?: string; mime?: string; base64?: string };
       }>;
+      /** 页面打开编辑框那一刻这张单上有哪几行（2026-10-14，见 assertPrealertRowsStillThere） */
+      baseProductIds?: unknown;
     };
 
     if (!body.prealertId?.trim()) {
       fail(res, 400, "BAD_REQUEST", "prealertId 为必填");
+      return;
+    }
+    const baseProductIds = readBaseProductIds(body.baseProductIds);
+    if (!baseProductIds.ok) {
+      fail(res, 400, "BAD_REQUEST", "baseProductIds 格式不对");
       return;
     }
     // ⚠️ 空清单要当场拦（2026-08-31 补，排查报告第26条）：
@@ -2421,6 +2459,10 @@ export function registerConsolidationRoutes(app: MinimalHttpApp): void {
        */
       await tx.$queryRaw`SELECT id FROM consolidation_tasks WHERE id = ${pa.taskId} FOR UPDATE`;
       await tx.$queryRaw`SELECT id FROM consolidation_prealerts WHERE id = ${pa.id} FOR UPDATE`;
+      /* 锁后重读还在不在（2026-10-14 全系统审查）：保存的同一刻别人把这张单删了，FOR UPDATE 锁到 0 行也不报错，
+         往下改它 / 给它加货物行就撞 P2025 / 外键 → 「服务器出错了」 */
+      const paStillThere = await tx.consolidationPrealert.findUnique({ where: { id: pa.id }, select: { id: true } });
+      if (!paStillThere) throw new BusinessError("这张预报单刚刚已经被删掉了，修改没有保存，请刷新页面", 404, "NOT_FOUND");
 
       if (body.products) {
         // 产品行按行增量同步，不再整批删除重建（重建会把没重传的图片弄丢）
@@ -2433,7 +2475,7 @@ export function registerConsolidationRoutes(app: MinimalHttpApp): void {
            两个页面同时开着改同一张单，前一个删掉了某行，后一个拿着旧页面保存 ——
            原来先把「没提交的」删掉，再按 id 更新，更新不到的那行（已经不在了）一声不吭地没了，
            前一个人新加的行也被删掉，最后货物明细少了，页面还说保存成功。现在对不上就整次不存，让人刷新。 */
-        await assertPrealertRowsStillThere(tx, body.prealertId!, keepIds);
+        await assertPrealertRowsStillThere(tx, body.prealertId!, keepIds, baseProductIds.ids);
 
         await tx.consolidationPrealertProduct.deleteMany({
           where: {
@@ -2549,6 +2591,10 @@ export function registerConsolidationRoutes(app: MinimalHttpApp): void {
         taskStatus: fresh.status,
       });
       if (!verdict.ok) throw new BusinessError(verdict.message, 400, "BAD_REQUEST");
+      /* 锁后重读这张预报单还在不在（2026-10-14 全系统审查）：两个管理员同时删同一张，后一个醒来时它已经没了，
+         原来照样 delete → Prisma P2025 → 「服务器出错了」 */
+      const stillThere = await tx.consolidationPrealert.findFirst({ where: { id: pa.id, taskId: pa.taskId }, select: { id: true } });
+      if (!stillThere) throw new BusinessError("这张预报单刚刚已经被删掉了，请刷新页面", 404, "NOT_FOUND");
 
       await tx.consolidationPrealert.delete({ where: { id: body.prealertId } });
       // 总件数/总方数按已签收预报单汇总，必须**在同一个事务里**重算，

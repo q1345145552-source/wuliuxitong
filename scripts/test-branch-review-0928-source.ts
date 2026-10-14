@@ -161,7 +161,7 @@ check("V7 日期按北京时间：助手函数真跑对；网页里不再有「U
   assert.deepEqual(hits, [], `还有按 UTC 切日期的地方：\n${hits.join("\n")}`);
   // 后端：没填日期时的默认值按北京今天
   const orders = read("apps/api/src/modules/orders/routes.ts");
-  assert.match(orders, /const shipDateText = body\.shipDate\?\.trim\(\) \|\| new Date\(Date\.now\(\) \+ 8 \* 60 \* 60 \* 1000\)\.toISOString\(\)\.slice\(0, 10\);/);
+  assert.match(orders, /const shipDateText = \(typeof rawShipDate === "string" \? rawShipDate\.trim\(\) : ""\) \|\| new Date\(Date\.now\(\) \+ 8 \* 60 \* 60 \* 1000\)\.toISOString\(\)\.slice\(0, 10\);/);
   const ops = read("apps/api/src/modules/admin-ops/routes.ts");
   assert.match(ops, /effectiveFrom: body\.effectiveFrom\?\.trim\(\) \|\| new Date\(Date\.now\(\) \+ 8 \* 60 \* 60 \* 1000\)\.toISOString\(\)\.slice\(0, 10\),/);
 });

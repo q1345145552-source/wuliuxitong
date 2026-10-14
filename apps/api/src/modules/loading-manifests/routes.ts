@@ -25,10 +25,19 @@ import { DEFAULT_STATUS_LABELS } from "../ai/ai-config-store";
 const SHIPMENT_STATUS_ZH: Record<string, string> = Object.fromEntries(DEFAULT_STATUS_LABELS.map((i) => [i.status, i.labelZh]));
 
 /**
+ * 装柜单号里的日期：按北京日期 YYYYMMDD（2026-10-14 全系统审查）。原来 getFullYear / getMonth / getDate 取的是
+ * 服务器时区（线上 UTC），北京 0～8 点建的柜号日期是前一天。系统里别的「今天」09-29 起都按北京时间了。
+ * 单独拿出来是为了测试能用固定时刻验，不靠跑测试那一刻的钟点。
+ */
+export function manifestDateKey(now: Date): string {
+  return new Date(now.getTime() + 8 * 60 * 60 * 1000).toISOString().slice(0, 10).replace(/-/g, "");
+}
+
+/**
  * 生成装柜单号：CN-TH-YYYYMMDDNNN。
  */
 async function issueManifestNo(now: Date): Promise<string> {
-  const dateKey = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, "0")}${String(now.getDate()).padStart(2, "0")}`;
+  const dateKey = manifestDateKey(now);
   const prefix = `CN-TH-${dateKey}`;
   const list = await prisma.container.findMany({
     where: { containerNo: { startsWith: prefix } },
@@ -334,17 +343,34 @@ export function registerLoadingManifestRoutes(app: MinimalHttpApp): void {
   app.get("/staff/loading-manifests/shipment-map", async (req, res) => {
     const auth = requireRole(req, res, ["staff", "admin"]);
     if (!auth) return;
+    /* 2026-10-14 全系统审查：装柜一律切出子单，这里的键全是子单 id；页面「可选运单」只有父单，
+       原来按父单 id 对不上，「已装柜(柜号)」和父单下面那行已装子单从来不显示。现在把子单号、属于哪张父单、几件一起给，
+       页面按父单号归拢。 */
     const rows = await prisma.shipmentContainerItem.findMany({
       where: { container: { companyId: auth.companyId } },
-      select: { shipmentId: true, container: { select: { containerNo: true, createdAt: true } } },
+      select: {
+        shipmentId: true,
+        container: { select: { containerNo: true, createdAt: true } },
+        shipment: { select: { trackingNo: true, parentTrackingNo: true, packageCount: true } },
+      },
     });
-    const oldest = new Map<string, { manifestNo: string; createdAt: number }>();
+    type MapRow = { manifestNo: string; createdAt: number; trackingNo: string; parentTrackingNo: string | null; packageCount: number | null };
+    const oldest = new Map<string, MapRow>();
     for (const r of rows) {
       const at = r.container.createdAt.getTime();
       const cur = oldest.get(r.shipmentId);
-      if (!cur || at < cur.createdAt) oldest.set(r.shipmentId, { manifestNo: r.container.containerNo, createdAt: at });
+      if (!cur || at < cur.createdAt) {
+        oldest.set(r.shipmentId, {
+          manifestNo: r.container.containerNo, createdAt: at,
+          trackingNo: r.shipment.trackingNo, parentTrackingNo: r.shipment.parentTrackingNo, packageCount: r.shipment.packageCount,
+        });
+      }
     }
-    ok(res, { items: [...oldest].map(([shipmentId, v]) => ({ shipmentId, manifestNo: v.manifestNo })) });
+    ok(res, {
+      items: [...oldest].map(([shipmentId, v]) => ({
+        shipmentId, manifestNo: v.manifestNo, trackingNo: v.trackingNo, parentTrackingNo: v.parentTrackingNo, packageCount: v.packageCount,
+      })),
+    });
   });
 
   // 装柜详情

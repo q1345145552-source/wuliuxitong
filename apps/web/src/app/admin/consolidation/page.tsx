@@ -18,7 +18,7 @@ import {
 } from "../../../services/business-api";
 import { formatBeijingTime } from "../../../modules/staff/utils";
 import { isPositiveIntText, isPositiveNumberText } from "../../../modules/shared/number-text";
-import { createRequestGate } from "../../../modules/shared/request-gate";
+import { createQueryGate, createRequestGate } from "../../../modules/shared/request-gate";
 import { useLiveRefresh } from "../../../modules/realtime/useRealtime";
 import { createYieldGuard } from "../../../modules/realtime/yield-guard";
 
@@ -159,23 +159,38 @@ export default function AdminConsolidationPage() {
   /** 2026-09-02 终审整改：换选中任务必须在用户点击处**同步**赋值 ref，useEffect 里那句只作兜底。
       只靠 useEffect 的话，点击到 effect 跑起来之间有间隙，旧任务的晚响应在间隙里核对的还是旧 ref，
       会照样落地盖到错的任务上。所有改选中任务的入口一律走这里。 */
+  /* 详情按「这一次查看」认先后（2026-10-14 Codex 第 6 轮）：原来只核是不是这个任务，同一个任务里实时推送的悄悄重拉
+     （改之前读的）晚到，会盖掉保存后刚拉回来的新明细 —— 再点「编辑」拿的是旧明细，保存被当成「有没见过的行」拦下。
+     每点开一次任务记一个查看编号；成功回来的只要还是这一次查看、而且不比已经显示的旧才用；失败的谁也不作废（同整柜管理）。 */
+  const detailVisitRef = useRef(0);
+  const detailViewRef = useRef<string | null>(null);
+  const detailGate = useRef(createQueryGate<string | null>()).current;
   const selectTask = (id: string | null) => {
     selectedTaskIdRef.current = id; // 点击处同步认主人，晚到的旧响应立刻失效
+    detailViewRef.current = id ? `${id}#${++detailVisitRef.current}` : null;
     setTaskDetail(null);            // 旧任务的详情内容不许在新任务名下多留一帧
     setSelectedTaskId(id);
   };
 
-  const loadDetail = useCallback(async (taskId: string, opts?: { silent?: boolean }) => {
+  /** 返回「现在显示的明细不比这次请求旧」（保存后要知道明细到底刷新了没有）：这次自己用上了，或者后发的悄悄重拉抢先用上了都算 */
+  const loadDetail = useCallback(async (taskId: string, opts?: { silent?: boolean }): Promise<boolean> => {
+    const view = detailViewRef.current;
+    if (!view || selectedTaskIdRef.current !== taskId) return false; // 已切走 / 已返回列表：不领号
+    const ticket = detailGate.begin(view);
     try {
       const data = await fetchStaffConsolidationTaskDetail(taskId);
-      if (selectedTaskIdRef.current !== taskId) return; // 已切走/已返回列表：A 的详情不许挂在 B 名下
+      // 切走了 / 更新的已经显示了：A 的详情不许挂在 B 名下、旧的不许盖新的（更新的已经显示了照样算刷新到了，Codex 第 7 轮）
+      if (!detailGate.accept(ticket, detailViewRef.current)) return detailGate.covered(ticket, detailViewRef.current);
       setTaskDetail(data);
+      return true;
     } catch (e: any) {
-      if (selectedTaskIdRef.current !== taskId) return;
-      if (opts?.silent) return; // 悄悄重拉失败：接着显示手上的
+      if (detailGate.covered(ticket, detailViewRef.current)) return true; // 自己失败了，但更新的已经显示了
+      if (ticket.key !== detailViewRef.current) return false;
+      if (opts?.silent) return false; // 悄悄重拉失败：接着显示手上的
       setToast(e.message);
+      return false;
     }
-  }, []);
+  }, [detailGate]);
 
   useEffect(() => { loadTasks(); }, [loadTasks]);
 
@@ -394,10 +409,16 @@ export default function AdminConsolidationPage() {
         cargoType: r.cargoType || "normal",
         productImage: r.productImage,
       }));
-      await adminForceEditConsolidationPrealert({ prealertId: editPrealert.id, mark: editMark.trim(), expressNo: editExpressNo.trim() || undefined, products });
-      setEditPrealert(null);
-      setToast("预报单已更新");
-      if (selectedTaskId) await loadDetail(selectedTaskId);
+      await adminForceEditConsolidationPrealert({ prealertId: editPrealert.id, mark: editMark.trim(), expressNo: editExpressNo.trim() || undefined, products, baseProductIds: editPrealert.products.map((p) => p.id) });
+      // 先把详情刷新回来再关编辑框（2026-10-14 dsh 第 5 轮，同客户页）：不然马上再点「编辑」拿的是刷新前的货物明细，保存会误报 409。
+      // 明细没刷新出来要说清楚（Codex 第 6 轮）：保存是成功的，但下面显示的还是旧的，别拿它接着改
+      let refreshed = !selectedTaskId;
+      try {
+        if (selectedTaskId) refreshed = await loadDetail(selectedTaskId);
+      } finally {
+        setEditPrealert(null);
+        setToast(refreshed ? "预报单已更新" : "预报单已更新，但下面的明细没刷新出来，请点「返回」再进来，看一眼最新的再改");
+      }
       await loadTasks();
     } catch (e: any) { setToast(e.message); } finally { setEditSubmitting(false); }
   };

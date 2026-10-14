@@ -52,6 +52,7 @@
  *   U26 选运单：列客户自己的运单 / 整柜（客服那头带上唛头）、搜索交给后端；选了出「关于：…」；只发单子不打字也能发；
  *       发出去才去掉，没发出去留着
  *   U27 气泡里的单子卡片：单号、品名、现在的状态（客户看 delivered 叫「已签收」）；删了的写清楚；状态变了跟着变
+ *   U31 轮询同一时间只取一次（回来的先后不会颠倒），没回来又到点就回来后补取一次
  *   U28 员工「客户消息」：「全部 / 待回复」页签、待回复写等了多久、摘要「我方：」按最新一条还在的算
  *   U29 浏览器系统通知（chat-push.ts）：开 → 交给后端、记下是谁开的；换人登录 → 退掉；退出登录先在浏览器退掉再告诉后端；
  *       服务器没配 / 被禁止 / 不支持各自的状态
@@ -1224,7 +1225,7 @@ async function main(): Promise<void> {
     }
   });
 
-  await check("U27c 运单详情弹窗（ChatRefDetail 真跑）：客户按单号查自己的、员工按 id 查并多一格唛头；产品图另取；查不到写清楚；出错能重试；「查看物流轨迹」按单号开", async () => {
+  await check("U27c 运单详情弹窗（ChatRefDetail 真跑）：客户按运单 id 查自己的（老后端不认 id 退回按单号）、员工按 id 查并多一格唛头；产品图另取；最新动态按取回来的现在的号查；查不到写清楚；出错能重试；「查看物流轨迹」按单号开", async () => {
     const pending: Array<{ name: string; arg: string; resolve: (v: any) => void; reject: (e: any) => void }> = [];
     const later = (name: string) => (arg: string) => new Promise((resolve, reject) => { pending.push({ name, arg, resolve, reject }); });
     const tracks: any[] = [];
@@ -1234,6 +1235,7 @@ async function main(): Promise<void> {
     const RefDetail = loadModule(path.join(SRC, "modules/cs-chat/ChatRefDetail.tsx"), {
       ...baseOverrides,
       [path.join(SRC, "services/business-api.ts")]: {
+        fetchClientOrderByShipmentId: later("clientById"),
         fetchClientOrderByTrackingNo: later("client"),
         fetchStaffShipmentById: later("staff"),
         fetchShipmentImages: later("images"),
@@ -1247,12 +1249,13 @@ async function main(): Promise<void> {
     const take = (name: string) => { const i = pending.findIndex((p) => p.name === name); assert.ok(i >= 0, `没去取 ${name}（取了：${pending.map((p) => p.name).join("、")}）`); return pending.splice(i, 1)[0]; };
     const body = () => findAll((n) => n.type === BodyStub)[0];
 
-    // 客户：按单号查（跟「运单查询」同一个接口），再按订单 id 取图
+    // 客户：按运单 id 查（跟「运单查询」同一个接口；2026-10-14 起按 id，卡片上的号可能是改号前的），再按订单 id 取图
     mount(RefDetail, { chatRef: ref, forClient: true, onClose() {} });
     flush();
     assert.ok(textOf(findAll((n) => n.type === "p")[0]).includes("正在取"), "取的时候没写在取");
-    const c1 = take("client"); assert.equal(c1.arg, "XT001");
-    c1.resolve({ id: "o1", trackingNo: "XT001", approvalStatus: "received", currentStatus: "arrivedTH", products: [] }); await settle();
+    assert.ok(!pending.some((p) => p.name === "client"), "先按 id 查，不该一上来就按（可能过时的）单号查");
+    const c1 = take("clientById"); assert.equal(c1.arg, "s1");
+    c1.resolve({ supported: true, item: { id: "o1", trackingNo: "XT001", approvalStatus: "received", currentStatus: "arrivedTH", products: [] } }); await settle();
     const i1 = take("images"); assert.equal(i1.arg, "o1", "客户的产品图要按订单 id 取（跟运单查询一样）");
     i1.resolve([{ id: "img1", fileName: "a.jpg", imageUrl: "/images/a.jpg" }]); await settle();
     // 「当前状态 + 最新动态」（2026-10-06「状态没有吗？或货物到哪了？」→「加」）：跟物流轨迹同一个接口，按单号取
@@ -1287,7 +1290,7 @@ async function main(): Promise<void> {
     // 客户那头图片没取到也不挡详情
     mount(RefDetail, { chatRef: ref, forClient: true, onClose() {} });
     flush();
-    take("client").resolve({ id: "o1", trackingNo: "XT001", products: [] }); await settle();
+    take("clientById").resolve({ supported: true, item: { id: "o1", trackingNo: "XT001", products: [] } }); await settle();
     take("images").reject(new Error("图挂了")); await settle();
     assert.ok(body(), "客户那头图片没取到，整个详情都没出来");
     assert.deepEqual(body().props.images, []);
@@ -1296,17 +1299,26 @@ async function main(): Promise<void> {
     // 最新一条带下一站：写出来
     mount(RefDetail, { chatRef: ref, forClient: true, onClose() {} });
     flush();
-    take("client").resolve({ id: "o1", trackingNo: "XT001", currentStatus: "customsCleared", products: [] }); await settle();
+    take("clientById").resolve({ supported: true, item: { id: "o1", trackingNo: "XT001", currentStatus: "customsCleared", products: [] } }); await settle();
     take("images").resolve([]); await settle();
     take("track").resolve({ trackingNo: "XT001", currentStatus: "customsCleared", timeline: [{ toStatus: "customsCleared", remark: "清关已放行", nextStop: "泰国仓库", changedAt: "2026-08-06T14:39:00.000Z" }] }); await settle();
     const nowNext = textOf(findAll((n) => n.props?.className === "chat-ref-detail-now")[0] ?? { props: {} });
     assert.ok(nowNext.includes("08-06 22:39") && nowNext.includes("下一站【泰国仓库】"), `下一站没写出来：${nowNext}`);
     unmount(); pending.length = 0; // 上一个场景没理会的请求清掉，免得下面认错
 
-    // 查不到（删了 / 不在名下 / 老后端不认 id）
+    // 查不到（删了 / 不在名下）：后端认 id、确实没有 —— 不许再按旧单号找（旧号可能被这位客户的另一票用了，Codex 第 9 轮）
     mount(RefDetail, { chatRef: ref, forClient: true, onClose() {} });
     flush();
-    take("client").resolve(null); await settle();
+    take("clientById").resolve({ supported: true, item: null }); await settle();
+    assert.ok(!pending.some((p) => p.name === "client"), "后端认 id 却没找到，还按旧单号去找了（会打开另一票）");
+    assert.ok(findAll((n) => n.type === "p").map(textOf).some((t) => t.includes("没找到这票货")), "查不到没写清楚");
+    unmount(); pending.length = 0;
+    // 后端还是老版本（不认 id，回来的单上没有 shipmentId）：退回按单号找，也没有
+    mount(RefDetail, { chatRef: ref, forClient: true, onClose() {} });
+    flush();
+    take("clientById").resolve({ supported: false, item: null }); await settle();
+    const byNo = take("client"); assert.equal(byNo.arg, "XT001", "老后端不认 id 要退回按单号");
+    byNo.resolve(null); await settle();
     assert.ok(findAll((n) => n.type === "p").map(textOf).some((t) => t.includes("没找到这票货")), "查不到没写清楚");
     assert.equal(body(), undefined);
     unmount(); pending.length = 0; // 上一个场景没理会的请求清掉，免得下面认错
@@ -1314,13 +1326,50 @@ async function main(): Promise<void> {
     // 出错：写原因 + 重试，重试真的再取一次
     mount(RefDetail, { chatRef: ref, forClient: true, onClose() {} });
     flush();
-    take("client").reject(new Error("网络断了")); await settle();
+    take("clientById").reject(new Error("网络断了")); await settle();
     const alert = findAll((n) => n.props?.role === "alert")[0];
     assert.ok(alert && textOf(alert).includes("网络断了"), "出错没写原因");
     findAll((n) => n.type === "button" && textOf(n) === "重试")[0].props.onClick(); flush(); await settle();
-    take("client").resolve({ id: "o1", trackingNo: "XT001", products: [] }); await settle();
+    take("clientById").resolve({ supported: true, item: { id: "o1", trackingNo: "XT001", products: [] } }); await settle();
     take("images").resolve([]); await settle();
     assert.ok(body(), "重试之后没出详情");
+    unmount(); pending.length = 0;
+
+    // 2026-10-14 全系统审查：卡片上的号是改号前的旧号 XT001，这票现在叫 XT009 —— 按 id 照样找到，
+    // 标题和「最新动态」都按现在的号（原来按旧号查：客户那头「没找到这票货」，最新动态也取不到）
+    for (const forClient of [true, false]) {
+      mount(RefDetail, { chatRef: ref, forClient, onClose() {} });
+      flush();
+      assert.ok(!pending.some((p) => p.name === "track"), "取到这票之前不该按卡片上的旧号去查最新动态");
+      const found = { id: forClient ? "o1" : "s1", orderId: "o1", trackingNo: "XT009", clientId: "ZZC1", products: [] };
+      take(forClient ? "clientById" : "staff").resolve(forClient ? { supported: true, item: found } : found); await settle();
+      const tr = take("track"); assert.equal(tr.arg, "XT009", `${forClient ? "客户" : "员工"}那头最新动态按旧号查了：${tr.arg}`);
+      take("images").resolve([]); await settle();
+      const detail = findAll((n) => n.type === DetailStub)[0];
+      assert.equal(detail?.props.subtitle, "XT009", `标题还写着旧号：${detail?.props.subtitle}`);
+      unmount(); pending.length = 0;
+    }
+  });
+
+  await check("U31 轮询同一时间只取一次：上一次没回来又到点，不再并发发；回来以后马上补取一次 —— 先后颠倒的旧结果不会把卡片上的新号换回去（2026-10-14 Codex 第 3 轮）", async () => {
+    resetSound();
+    const withRef = (no: string) => ({ ...cs("r1", "2026-09-28T01:00:00.000Z"), content: null, recalled: false, ref: { type: "shipment", id: "s1", no, title: "蓝牙耳机", status: "loaded", gone: false } });
+    const cardText = () => findAll((n: any) => String(n.props?.className ?? "").split(" ").includes("cs-ref-card")).map(textOf).join(" | ");
+    mount(ChatThread, { scope: { kind: "client" }, title: "客服" });
+    lastCall().resolve({ messages: [withRef("XT001")], hasMore: false, serverTime: "2026-09-28T01:00:05.000Z", peerReadAt: null });
+    await settle();
+    await tickTimers((t) => !t.once && t.ms === 3000);
+    assert.equal(pollCalls().length, 1, "（前提）到点该取一次");
+    await tickTimers((t) => !t.once && t.ms === 3000);
+    assert.equal(pollCalls().length, 1, "上一次还没回来又发了一次 —— 两份回来的先后会颠倒，晚到的旧号会盖掉新号");
+    // 第一次回来时，号已经改成 XT009
+    await answerPoll({ messages: [withRef("XT009")], hasMore: false, serverTime: "2026-09-28T01:00:08.000Z", peerReadAt: null });
+    assert.ok(cardText().includes("XT009"), `卡片没换成新号：${cardText()}`);
+    assert.equal(pollCalls().length, 1, "在路上那会儿又到过一次点，回来以后没补取（这次推送 / 到点被丢了）");
+    await answerPoll({ messages: [withRef("XT009")], hasMore: false, serverTime: "2026-09-28T01:00:09.000Z", peerReadAt: null });
+    assert.equal(pollCalls().length, 0, "补取完不该再自己接着取（等下一次到点）");
+    assert.ok(cardText().includes("XT009") && !cardText().includes("XT001"));
+    unmount(); calls.length = 0; timers.length = 0;
   });
 
   await check("U28 员工「客户消息」：「全部 / 待回复」页签（带上 filter=pending）、待回复写等了多久、摘要「我方：」按最新一条还在的算", async () => {
