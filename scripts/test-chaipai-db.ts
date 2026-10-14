@@ -1120,7 +1120,8 @@ async function main(): Promise<void> {
       const r = await Promise.race([send(SV9, "OUT_FOR_DELIVERY"), new Promise<null>((ok) => setTimeout(() => ok(null), 15000))]);
       assert.ok(r, `等了 ${Date.now() - t0}ms 还没回 —— 读响应体没按时断开（老毛病会挂到 300 秒）`);
       assert.equal(r.status, 503);
-      assert.ok(Date.now() - t0 < 9000, `等了 ${Date.now() - t0}ms，超过拆派仓的 10 秒`);
+      // 按拆派仓实际等的 10 秒判（原来写 9 秒，取资料预算 8.5 秒只剩 0.5 秒余量，慢机器上会误报；Codex 10-14 第 2 轮）
+      assert.ok(Date.now() - t0 < 10000, `等了 ${Date.now() - t0}ms，超过拆派仓的 10 秒`);
       assert.equal((await rowsOf(SV9)).length, 0);
     });
     await test("V10 照片 250 张（超过以前的 200 张上限）：签收照样翻完全部、挑到最新那张", async () => {

@@ -16,6 +16,7 @@ import type { AddressInfo } from "node:net";
 import v8 from "node:v8";
 import vm from "node:vm";
 import path from "node:path";
+import type TS from "typescript";
 
 v8.setFlagsFromString("--expose-gc");
 const forceGc = vm.runInNewContext("gc") as () => void;
@@ -129,25 +130,6 @@ async function main(): Promise<void> {
     const warm = await fetch(`${base}/warm?tag=warm`, { redirect });
     await warm.arrayBuffer();
   }
-
-  await check("S1 后台代码里凡是带 redirect:\"error\" 的文件，都只走 fetchWithDeadline / readBodyWithDeadline（不直接 fetch、不自己读 body）", async () => {
-    const root = path.join(__dirname, "../apps/api/src");
-    const walk = (dir: string): string[] => readdirSync(dir).flatMap((n) => {
-      const f = path.join(dir, n);
-      return statSync(f).isDirectory() ? walk(f) : f.endsWith(".ts") ? [f] : [];
-    });
-    const code = (f: string) => readFileSync(f, "utf8").replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, ""); // 去掉注释再看
-    const helper = path.join(root, "modules/core/fetch-deadline.ts");
-    const hits = walk(root).filter((f) => f !== helper && /redirect:\s*["']error["']/.test(code(f)));
-    assert.ok(hits.length > 0, "一个都没找到 —— 拆派仓只读接口应该带着 redirect:\"error\"，检查规则失效了");
-    for (const f of hits) {
-      const src = code(f);
-      const rel = path.relative(root, f);
-      assert.ok(src.includes("fetchWithDeadline("), `${rel} 带 redirect:"error" 却没用 fetchWithDeadline`);
-      assert.ok(!/(?<![\w.$])fetch\(/.test(src), `${rel} 带 redirect:"error" 又直接调 fetch() —— Node 22 上读 body 碰上回收会挂 300 秒`);
-      assert.ok(!/\.getReader\(\)|\.(?:json|text|arrayBuffer|blob|formData)\(\)/.test(src), `${rel} 带 redirect:"error" 又自己读响应体 —— 要用 readBodyWithDeadline`);
-    }
-  });
 
   /** 跟拆派仓只读接口一样带 redirect:"error"（就是这个设置在 Node 22 上触发老毛病），请求挂着时回收一次内存 */
   async function timedRead(path: string, tag: string, timeoutMs: number) {
@@ -305,10 +287,74 @@ async function main(): Promise<void> {
     }
   });
 
+  await check("C6 时限用的是传进来的值（假 fetch 不发完）：给 300ms 的明显早于给 1500ms 的，详情、照片都是", async () => {
+    const run = async (kind: "detail" | "photo", timeoutMs: number) => {
+      fakeStalledFetch(kind === "detail" ? "application/json" : "image/jpeg", new Uint8Array(16));
+      try {
+        return await within<unknown>(8600, () => kind === "detail"
+          ? fetchChaipaiDetail(cfg, `c6-${timeoutMs}`, { maxPages: 1, timeoutMs })
+          : fetchChaipaiPhoto(cfg, `c6-${timeoutMs}`, "p1", { timeoutMs }));
+      } finally {
+        globalThis.fetch = realFetch;
+      }
+    };
+    for (const kind of ["detail", "photo"] as const) {
+      const short = await run(kind, 300);
+      const long = await run(kind, 1500);
+      for (const r of [short, long]) assert.deepEqual(r.value, { kind: "error", reason: "超时" });
+      // 「到点没断开」由别的项管（上限 +4 秒）；这里只管「用的是不是传进来的值」：300 的要在 1500 的下限（1200）之前回
+      assert.ok(short.ms >= 240 && short.ms < 1200, `${kind} 给 300ms 却等了 ${Math.round(short.ms)}ms —— 没用传进来的时限`);
+      assert.ok(long.ms >= 1200, `${kind} 给 1500ms 却 ${Math.round(long.ms)}ms 就断了 —— 没用传进来的时限`);
+    }
+  });
+
+  await check("S1 后台代码里凡是带 redirect:\"error\" 的文件，都只走 fetchWithDeadline / readBodyWithDeadline（不直接碰 fetch、不自己读 body）", async () => {
+    // 按语法树查，不用正则（Codex 10-14 第 2 轮：去注释的正则会把字符串里的 https:// 当注释、漏掉 globalThis.fetch / 别名 / for await）。
+    // ⚠️ 放在最后、用到才加载 typescript：它一载进来内存大好几倍，前面计时的项强制回收会慢到超时；解析几秒还会让测试服务器
+    // 空闲 5 秒关掉的连接正好被下一项复用 → fetch failed（10-14 第 2 轮改完在 Node 22 上压力测试 32 遍全红，就是这个）
+    const ts: typeof TS = (await import("typescript")).default;
+    const root = path.join(__dirname, "../apps/api/src");
+    const walk = (dir: string): string[] => readdirSync(dir).flatMap((n) => {
+      const f = path.join(dir, n);
+      return statSync(f).isDirectory() ? walk(f) : /\.[cm]?[jt]s$/.test(f) && !f.endsWith(".d.ts") ? [f] : [];
+    });
+    const helper = path.join(root, "modules/core/fetch-deadline.ts");
+    const READ_BODY = new Set(["getReader", "json", "text", "arrayBuffer", "blob", "formData", "bytes", "pipeTo", "pipeThrough", "tee"]);
+    let hits = 0;
+    for (const f of walk(root)) {
+      if (f === helper) continue;
+      const sf = ts.createSourceFile(f, readFileSync(f, "utf8"), ts.ScriptTarget.Latest, true);
+      let redirectError = false;
+      let usesHelper = false;
+      const bad: string[] = [];
+      const at = (n: TS.Node) => `第 ${sf.getLineAndCharacterOfPosition(n.getStart(sf)).line + 1} 行`;
+      const visit = (n: TS.Node): void => {
+        if (ts.isPropertyAssignment(n) && (ts.isIdentifier(n.name) || ts.isStringLiteral(n.name)) && n.name.text === "redirect"
+          && ts.isStringLiteralLike(n.initializer) && n.initializer.text === "error") redirectError = true;
+        if (ts.isIdentifier(n) && n.text === "fetchWithDeadline" && ts.isCallExpression(n.parent) && n.parent.expression === n) usesHelper = true;
+        // 任何地方提到 fetch 这个值（直接调、globalThis.fetch、window["fetch"]、const f = fetch）都算
+        if (ts.isIdentifier(n) && n.text === "fetch" && !(ts.isPropertyAccessExpression(n.parent) && n.parent.name === n)
+          && !(ts.isPropertyAssignment(n.parent) && n.parent.name === n)) bad.push(`${at(n)}直接用了 fetch`);
+        if (ts.isPropertyAccessExpression(n) && n.name.text === "fetch") bad.push(`${at(n)}用了 ${n.getText(sf)}`);
+        if (ts.isElementAccessExpression(n) && ts.isStringLiteralLike(n.argumentExpression) && n.argumentExpression.text === "fetch") bad.push(`${at(n)}用了 ${n.getText(sf)}`);
+        if (ts.isCallExpression(n) && ts.isPropertyAccessExpression(n.expression) && READ_BODY.has(n.expression.name.text)) bad.push(`${at(n)}自己读响应体 .${n.expression.name.text}()`);
+        if (ts.isForOfStatement(n) && n.awaitModifier) bad.push(`${at(n)}用 for await 读流`);
+        ts.forEachChild(n, visit);
+      };
+      visit(sf);
+      if (!redirectError) continue;
+      hits++;
+      const rel = path.relative(root, f);
+      assert.ok(usesHelper, `${rel} 带 redirect:"error" 却没用 fetchWithDeadline`);
+      assert.deepEqual(bad, [], `${rel} 带 redirect:"error"，又绕开了 fetch-deadline —— Node 22 上读 body 碰上回收会挂 300 秒`);
+    }
+    assert.ok(hits > 0, "一个都没找到 —— 拆派仓只读接口应该带着 redirect:\"error\"，检查规则失效了");
+  });
+
   server.close();
   cpServer.close();
   if (failures.length) throw new Error(`${failures.length} 项不通过：${failures.join("；")}`);
-  console.log("拆派仓只读接口到点就走：13 项全部通过");
+  console.log("拆派仓只读接口到点就走：14 项全部通过");
 }
 
 main().then(() => process.exit(0), (error) => {
