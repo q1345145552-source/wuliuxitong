@@ -1,13 +1,15 @@
 /**
  * 往外发请求「到点就走」（2026-10-14，拆派仓只读接口在用）。
  *
- * ⚠️ 坑：线上和 CI 跑的 Node 22 自带 fetch（undici 6.28），请求带 `redirect: "error"` 时走的是另一条路（不复制请求，
- * undici lib/web/fetch/index.js 第 1386 行那个分支）。这条路上一次垃圾回收之后，再 abort() 什么也不触发 ——
- * 对方回了响应头、内容迟迟不发完时，读响应体（reader.read() / response.json() 都一样）会一直挂到 undici 自己的
- * bodyTimeout：300 秒。握着 Response 也没用。
- *   10-12 CI 的 V9（拆派仓回传取司机车牌）就这样等了 300333 毫秒；本机 Node 24（undici 7）没有这个问题，所以本机一直测不出来。
- *   复现：.audit/2026-10-14/v9-fix/repro-gc.mjs（Node 22.23.3 强制回收一次：带 redirect:"error" 20 次卡 20 次；
- *   不设 / manual / follow 都是 0 次；等响应头那一步不受影响）。DeepSeek、汇率接口没带这个设置，实测不受影响，没改。
+ * ⚠️ 坑：线上和 CI 跑的 Node 22 自带 fetch（undici 6.28），请求带 `redirect: "error"` 时，响应头已经到了、正在读响应体，
+ * 这时碰上一次垃圾回收，之后 abort() 就什么也不触发 —— 对方内容迟迟不发完时，读响应体（reader.read() / response.json()
+ * 都一样）会一直挂到 undici 自己的 bodyTimeout：300 秒，连接也一直占着。等响应头那一步 abort 照常生效；握着 Response 也没用。
+ * 原因（10-14 子代理按 undici 6.28.1 源码查实，把第 1079 行注释掉重编后 10 次卡 0 次）：我们 signal 上 undici 只挂一个监听，
+ * 它用 WeakRef 指着 Request 内部自己的 AbortController（request.js:423）；这个 controller 只靠 fetch() 的闭包拉住，闭包又只靠
+ * fetchParams.processResponse 拉住，收到响应头后 index.js:1079 把它置空。带 redirect:"error" 时网络层拿的就是这同一个 fetchParams
+ *（index.js:1386，不复制），置空后没人再拉住，回收时 FinalizationRegistry（request.js:35）顺手摘掉我们 signal 上的监听。
+ * 不带 "error" 时网络层拿的是副本（index.js:1396），副本里的 processResponse 不置空，所以没事 —— DeepSeek、汇率没带这个设置，
+ * 实测不受影响，没改；请求方法、有没有请求体、压不压缩都无关。证据：.audit/2026-10-14/v9-fix/。
  *
  * 做法：不指望 undici 响应 abort。等响应头、读响应体的每一步都跟「我们自己的」signal 赛跑，signal 一中止就抛 signal.reason
  * （不带参数的 abort() 给的是 AbortError，跟 fetch 自己中止时一样）；没读完就放弃的响应体一律 cancel 掉，连接跟着断，不留着等 300 秒。
@@ -32,7 +34,8 @@ export async function fetchWithDeadline(url: string, init: RequestInit & { signa
   const pending = fetch(url, init);
   const stop = whenAborted(init.signal);
   try {
-    return await Promise.race([stop.promise, pending]); // 两边都已落定时中止优先
+    // signal 已经中止的话这里马上走；fetch 拿到响应和到点落在同一拍时可能是响应赢，后面读 body 那一步会兜住（回「超时」）
+    return await Promise.race([stop.promise, pending]);
   } catch (error) {
     pending.then((late) => late.body?.cancel().catch(() => undefined), () => undefined);
     throw error;

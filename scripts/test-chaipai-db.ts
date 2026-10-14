@@ -63,8 +63,13 @@ function startFake(): Promise<Server> {
     const s = m ? fake.get(decodeURIComponent(m[1])) : undefined;
     if (!m || !s) { res.statusCode = 404; res.end("{}"); return; }
     if (s.status && s.status !== 200) { res.statusCode = s.status; res.end("{}"); return; }
-    // 先回头、内容迟迟不发完（考读响应体也有超时）
-    if (s.slowBody && !m[2]) { res.writeHead(200, { "content-type": "application/json" }); res.write('{"code":"OK","data":'); return; }
+    // 先回头、内容迟迟不发完（考读响应体也有超时）。发出这一截以后湘泰就在读响应体了，这时强制回收几次内存（V9）——
+    // 跟前面查库快慢无关，一定碰得上「读响应体」那一段（Codex / dsh 10-14 第 1 轮：原来从测试开始计时，远端库上可能全落在查库那段）
+    if (s.slowBody && !m[2]) {
+      res.writeHead(200, { "content-type": "application/json" }); res.write('{"code":"OK","data":');
+      for (const ms of [50, 150, 300, 1000]) setTimeout(collectGarbage, ms);
+      return;
+    }
     const photos = [...(s.photos ?? [])].sort((a, b) => (a.id < b.id ? -1 : 1)); // 拆派仓按 id 升序
     if (m[2]) {
       const p = photos.find((x) => x.id === decodeURIComponent(m[2]));
@@ -1109,10 +1114,9 @@ async function main(): Promise<void> {
       const SV9 = await fresh("V9");
       fake.set(SV9, { slowBody: true });
       const t0 = Date.now();
-      // 10-12 CI 这项偶发等了 300333ms：Node 22 的 fetch 带 redirect:"error" 时，读响应体中途碰上一次垃圾回收，abort() 就失灵
-      //（core/fetch-deadline.ts）。这里在读响应体时强制回收几次（远端库前面几趟查询慢，单一个时间点可能还没开始读），
-      // 让老毛病每次都现形；最多等 15 秒，别真陪它等 300 秒
-      for (const ms of [300, 1000, 2500]) setTimeout(collectGarbage, ms);
+      // 10-12 CI 这项偶发等了 300333ms：Node 22 的 fetch 带 redirect:"error" 时，读响应体中途碰上一次垃圾回收，到点就断不开
+      //（core/fetch-deadline.ts）。假拆派仓发出半截内容后会强制回收几次（startFake 的 slowBody），让老毛病每次都现形；
+      // 最多等 15 秒，别真陪它等 300 秒
       const r = await Promise.race([send(SV9, "OUT_FOR_DELIVERY"), new Promise<null>((ok) => setTimeout(() => ok(null), 15000))]);
       assert.ok(r, `等了 ${Date.now() - t0}ms 还没回 —— 读响应体没按时断开（老毛病会挂到 300 秒）`);
       assert.equal(r.status, 503);
