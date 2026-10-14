@@ -1879,8 +1879,8 @@ export async function updateContainerStatus(payload: {
   affectedShipmentCount: number;
   /** 已派送/签收（比这一步靠后）、退回、取消的货推柜子时跳过，列在这里（2026-09-17 推进账本） */
   skippedShipments?: Array<{ trackingNo: string; status: string }>;
-  /** 这一步记的时间（填了用填的，没填是服务器当前时间） */
-  updatedAt?: string;
+  /** 这一步记的时间（填了用填的，没填是服务器当前时间）。必填：页面拿它当下一步「比上一步早」的基准，不许用本机时间顶替 */
+  updatedAt: string;
 }> {
   // 走 apiRequest（单次 30 秒超时、429 等一下再试）：原来裸 fetch 没超时，网络半死不活时装柜管理的「推进中…」
   // 会一直卡着（Codex / dsh 10-14 第 4 轮）。超时只说明回话没收到，页面会刷新详情看到底推没推上

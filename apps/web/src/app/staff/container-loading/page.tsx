@@ -190,9 +190,15 @@ export default function StaffContainerLoadingPage() {
   const [targetStatus, setTargetStatus] = useState("");
   /** 下一站（2026-08-06）：选目标状态时自动填默认值，员工可改 */
   const [nextStop, setNextStop] = useState("");
-  /** 推进那一排现在填的内容（渲染时更新）：推成功回来时跟发出去的整份比，员工推进中动过任何一格就一格都不清 */
-  const draftRef = useRef({ target: "", remark: "", time: "", nextStop: "" });
-  draftRef.current = { target: targetStatus, remark: statusRemark, time: statusTime, nextStop };
+  /** 员工亲手改推进那一排（选状态、备注、下一站、时间、改回现在）的次数。程序自己清的（换柜、目标作废、实时刷新）不算 ——
+      推成功回来时这个数没变才把四格全清；员工推进中动过手就一格都不清（Codex 10-14 第 7 轮：原来按值整份比，
+      实时刷新先清掉目标状态就被当成「员工改过」，备注和改过的时间留在框里，下一步会接着用） */
+  const draftEditsRef = useRef(0);
+  const bumpDraft = () => { draftEditsRef.current += 1; };
+  /** 详情被换过几次（每次加载落地 +1）：推成功先改页面状态时，只在这期间详情没被刷新过才改（防 A→B→A 那种状态绕回来，Codex 第 7 轮） */
+  const detailRevRef = useRef(0);
+  /** 推进失败时写的那条报错：推成功只清它，不误清这期间导出、卸柜等别的操作的报错（Codex 第 7 轮） */
+  const pushErrorRef = useRef("");
   /** 推进可选的目标状态：当前状态之后的那几步（按运输方式）；没标运输方式 / 状态不在流程里时为空 */
   const pushOptions = useMemo<readonly string[]>(() => {
     if (!detail?.transportMode) return [];
@@ -374,6 +380,7 @@ export default function StaffContainerLoadingPage() {
     try {
       const d = await fetchLoadingManifestDetail(id);
       if (!detailGate.isCurrent(ticket) || selectedIdRef.current !== id) return; // 号作废或用户已点到别的柜子，A 的详情不落地
+      detailRevRef.current += 1;
       setDetail(d);
     } catch (e) {
       if (!detailGate.isCurrent(ticket) || selectedIdRef.current !== id) return; // 旧柜子的报错也不弹
@@ -469,7 +476,9 @@ export default function StaffContainerLoadingPage() {
        带上页面看到的状态：超时后其实已经推上去、员工又点一次，后端核对不上就不写（Codex 第 5 轮）。 */
     const pushNo = detail.manifestNo;
     const fromStatus = detail.status;
-    const sent = { target: toStatus, remark: statusRemark, time: statusTime, nextStop };
+    const sent = { remark: statusRemark, time: statusTime, nextStop };
+    const editsAtSend = draftEditsRef.current;
+    const detailRevAtSend = detailRevRef.current;
     pushingRef.current.add(pushId);
     setPushingIds((ids) => [...ids, pushId]);
     let result: Awaited<ReturnType<typeof updateContainerStatus>> | null = null;
@@ -488,10 +497,12 @@ export default function StaffContainerLoadingPage() {
     const stillHere = selectedIdRef.current === pushId;
     if (result) {
       if (stillHere) {
-        setError(""); // 上一次失败的红字别跟成功提示一起挂着（Codex / dsh 第 6 轮）
-        // 只清推的时候填的那一份，而且整份比：推进中员工动过任何一格（或切走再切回来重新填了），一格都不清（Codex 第 5、6 轮）
-        const d = draftRef.current;
-        if (d.target === sent.target && d.remark === sent.remark && d.time === sent.time && d.nextStop === sent.nextStop) {
+        // 上一次推失败的红字别跟成功提示一起挂着；只清推进自己写的那条（Codex / dsh 第 6、7 轮）
+        const ownError = pushErrorRef.current;
+        if (ownError) setError((cur) => (cur === ownError ? "" : cur));
+        pushErrorRef.current = "";
+        // 推进中员工没亲手动过这一排，四格全清；动过就一格都不清（Codex 第 5～7 轮）
+        if (draftEditsRef.current === editsAtSend) {
           setTargetStatus("");
           setStatusRemark("");
           setNextStop("");
@@ -499,10 +510,11 @@ export default function StaffContainerLoadingPage() {
         }
         refreshNow();
         // 详情是静默刷新、不等，先把页面上的状态改成新的：马上推下一步时带的「页面看到的状态」才对，不会被误拦（Codex / dsh 第 6 轮）。
-        // 只在详情还停在这次推之前的状态时改，别盖掉实时推送带来的更新的状态
-        setDetail((cur) => (cur && cur.id === pushId && cur.status === fromStatus
-          ? { ...cur, status: toStatus, statusChangedAt: result?.updatedAt ?? new Date().toISOString() }
-          : cur));
+        // 只在这期间详情没被刷新过（实时推送已经带来更新的状态就用它的）、而且还停在推之前的状态时改（Codex 第 7 轮）
+        const updatedAt = result.updatedAt;
+        if (detailRevRef.current === detailRevAtSend) {
+          setDetail((cur) => (cur && cur.id === pushId && cur.status === fromStatus ? { ...cur, status: toStatus, statusChangedAt: updatedAt } : cur));
+        }
       }
       const skippedCount = result.skippedShipments?.length ?? 0;
       setToast(
@@ -510,6 +522,7 @@ export default function StaffContainerLoadingPage() {
         (skippedCount > 0 ? `；${skippedCount} 票已派送、签收、退回或取消，没跟着推` : "") + `）`,
       );
     } else if (stillHere) {
+      pushErrorRef.current = failure;
       setError(failure); // 下面是静默刷新，不会把它清掉
     } else {
       setToast(`柜子「${pushNo}」没推成：${failure}`); // 人已经在别的柜上了，不往那个柜的报错区写（dsh 第 5 轮：原来一点反馈都没有）
@@ -876,11 +889,11 @@ export default function StaffContainerLoadingPage() {
                     >
                       {exportingContainerId === detail.id ? "导出中…" : "导出整柜派送清单"}
                     </button>
-                    <input value={statusRemark} onChange={(e) => setStatusRemark(e.target.value)} placeholder="备注（选填）" style={{ ...inputStyle, minWidth: 200, flex: 1 }} />
+                    <input value={statusRemark} onChange={(e) => { bumpDraft(); setStatusRemark(e.target.value); }} placeholder="备注（选填）" style={{ ...inputStyle, minWidth: 200, flex: 1 }} />
                     {/* 下一站：选了目标状态就自动填上默认值，员工想改可以直接改（2026-08-06） */}
                     <input
                       value={nextStop}
-                      onChange={(e) => setNextStop(e.target.value)}
+                      onChange={(e) => { bumpDraft(); setNextStop(e.target.value); }}
                       placeholder="下一站（选填）"
                       title="客户在物流轨迹里会看到「下一站【xxx】」。选了状态会自动填，可以改"
                       style={{ ...inputStyle, maxWidth: 160 }}
@@ -901,14 +914,14 @@ export default function StaffContainerLoadingPage() {
                         onBlur={refreshNow}
                         // 没填完整（某一段被退格清掉）时浏览器给的是空串：不当回事，框里留着上一次完整的时间。
                         // 原来直接存空串，框会一下跳回「现在」—— 先改了日、再在月上按退格，日就被冲回今天，推上去是错的日子（10-14 实测）
-                        onChange={(e) => { if (e.target.value) setStatusTime(e.target.value); }}
+                        onChange={(e) => { if (e.target.value) { bumpDraft(); setStatusTime(e.target.value); } }}
                         style={{ ...inputStyle, maxWidth: 200 }}
                       />
                     </label>
                     {statusTime && (
                       <button
                         type="button"
-                        onClick={() => { setStatusTime(""); refreshNow(); }}
+                        onClick={() => { bumpDraft(); setStatusTime(""); refreshNow(); }}
                         style={{ border: "none", background: "none", color: "var(--c-blue)", fontSize: 12, cursor: "pointer", padding: 0, whiteSpace: "nowrap" }}
                       >
                         改回现在
@@ -936,6 +949,7 @@ export default function StaffContainerLoadingPage() {
                           <select
                             value={targetOk ? targetStatus : ""}
                             onChange={(e) => {
+                              bumpDraft();
                               setTargetStatus(e.target.value);
                               // 换目标状态时把下一站换成该状态的默认值，员工再决定要不要改
                               setNextStop(nextStopDefault(e.target.value, detail.transportMode));
