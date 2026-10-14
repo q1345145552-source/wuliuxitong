@@ -40,6 +40,7 @@ import {
   flowOf,
   neverGuessOf,
 } from "./status-flow";
+import { isFutureStatusTime, parseStatusTime } from "./status-time";
 
 /**
  * 判断状态切换是否合法（只能往前推进，不能倒退；可同状态续写）。
@@ -561,19 +562,22 @@ export function registerContainerRoutes(app: MinimalHttpApp): void {
       ? body.nextStop.trim().slice(0, 50)
       : nextStopOf(toStatus, container.transportMode);
 
-    /* 员工手填的日期要是真实存在的日子（2026-09-29 实跑发现）：原来「2026-02-31」照收、顺延成 3 月 3 日写进柜子和轨迹，
-       「abc」这种悄悄换成当前时间。页面的日期框选不出这种日子，只有直接调接口才会；跟确认收货 / 派送日期一样当场 400。 */
+    /* 员工手填的时间（2026-10-14 起页面发「北京时间 2026-10-12T14:30」，不填 = 现在；老的只给日期照旧认，见 status-time.ts）。
+       要是真实存在的日子（2026-09-29 实跑发现：原来「2026-02-31」照收、顺延成 3 月 3 日写进柜子和轨迹，
+       「abc」这种悄悄换成当前时间）；也不能填成将来。页面选不出这种值，只有直接调接口才会；当场 400。 */
     let customDate: Date | null = null;
     if (typeof body.date === "string" && body.date.trim()) {
       const raw = body.date.trim();
-      const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(raw);
-      const d = m ? new Date(raw + "T00:00:00") : null;
-      if (!m || !d || Number.isNaN(d.getTime())
-        || d.getFullYear() !== Number(m[1]) || d.getMonth() + 1 !== Number(m[2]) || d.getDate() !== Number(m[3])) {
-        fail(res, 400, "VALIDATION_ERROR", `日期要写成 2026-09-01 这种格式，而且得是真实存在的日子（收到「${raw}」）`);
+      const parsed = parseStatusTime(raw);
+      if (!parsed) {
+        fail(res, 400, "VALIDATION_ERROR", `时间要写成 2026-09-01 14:30 这种格式，而且得是真实存在的日子（收到「${raw}」）`);
         return;
       }
-      customDate = d;
+      if (isFutureStatusTime(parsed)) {
+        fail(res, 400, "VALIDATION_ERROR", `时间不能晚于现在（收到「${raw}」）—— 推状态记的是已经发生的事`);
+        return;
+      }
+      customDate = parsed.at;
     }
     const now = customDate ?? new Date();
     const updateData: Prisma.ContainerUpdateInput = {

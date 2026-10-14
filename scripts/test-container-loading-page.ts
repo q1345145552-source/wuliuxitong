@@ -11,6 +11,8 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import { beijingLocalToMs, beijingNowMinute } from "../apps/web/src/modules/shared/beijing-date";
+import { isFutureStatusTime, parseStatusTime } from "../apps/api/src/modules/containers/status-time";
 
 const file = path.join(process.cwd(), "apps/web/src/app/staff/container-loading/page.tsx");
 const source = readFileSync(file, "utf-8");
@@ -77,6 +79,68 @@ for (const [handler, zh] of [["handleUndoStatus", "撤销"], ["handleDelete", "�
 check("撤销失败时不是笼统一句「撤销失败」盖掉后端的话", () => {
   const block = catchBlockOf("handleUndoStatus");
   assert.match(block, /e instanceof Error \? e\.message/, "撤销失败没有把后端说的原话显示出来");
+});
+
+// ---------------- 改状态填时间（2026-10-14 老板：「装柜管理那里修改状态的时候，加个时间吧。默认状态的时间是现在，也可以去改时间」） ----------------
+console.log("\n装柜管理页面：改状态的「时间」");
+
+const pushBlock = (() => {
+  const start = source.indexOf("const handlePushStatus = async");
+  assert.ok(start >= 0, "找不到 handlePushStatus");
+  return source.slice(start, source.indexOf("\n  const ", start + 10));
+})();
+
+check("时间框带「时间」两个字、能选到分钟（datetime-local），没改过就显示「现在」", () => {
+  assert.match(source, /时间\(北京\)\s*<input\s+type="datetime-local"/, "时间框前面没有「时间(北京)」字样，或不是能选时分的框");
+  assert.match(source, /value=\{statusTime \|\| nowShown\}/, "时间框没改过时不是显示「现在」");
+  assert.doesNotMatch(source, /type="date"/, "还留着原来只有年月日、没写字的日期框");
+});
+
+check("时间框某一段被退格清掉（浏览器给空串）时不跳回「现在」，留着上一次完整的时间", () => {
+  assert.match(source, /onChange=\{\(e\) => \{ if \(e\.target\.value\) setStatusTime\(e\.target\.value\); \}\}/,
+    "空串也存进去了：先改了日、再在月上按退格，日会被冲回今天，推上去是错的日子");
+});
+
+check("没改过时间就不发（后端用服务器的当前时间），改过才发员工填的", () => {
+  assert.match(pushBlock, /date: statusTime \|\| undefined/, "推状态时发的不是员工改过的时间");
+  assert.doesNotMatch(pushBlock, /date: [^,}]*nowShown/, "把页面上显示的「现在」发出去了 —— 页面开着放久了就不是现在了");
+});
+
+check("填成将来的先拦下；比上一步还早的先问一句（轨迹会倒着排）", () => {
+  assert.match(pushBlock, /at > Date\.now\(\)[^;]*\)\s*\{\s*setError\(/, "填成将来没拦");
+  assert.match(pushBlock, /detail\.statusChangedAt/, "没拿上一步的时间比");
+  assert.match(pushBlock, /window\.confirm\(/, "比上一步早时没先问");
+  assert.ok(pushBlock.indexOf("window.confirm(") < pushBlock.indexOf("await updateContainerStatus("), "先推了才问");
+});
+
+check("换柜子、推完一次都把时间清回「现在」（别把上一个柜填的时间带到下一个柜）", () => {
+  const effect = source.slice(source.indexOf("useEffect(() => {\n    setTargetStatus(\"\");"), source.indexOf("}, [selectedId]);"));
+  assert.match(effect, /setStatusTime\(""\)/, "换柜子没清时间");
+  assert.match(pushBlock, /setStatusTime\(""\)/, "推完没清时间");
+});
+
+check("北京时间换算：页面和后端各一份，对同一个时间要换出同一个时刻", () => {
+  assert.equal(beijingNowMinute(Date.UTC(2026, 9, 13, 16, 30, 59)), "2026-10-14T00:30", "UTC 10-13 16:30 应该是北京 10-14 00:30");
+  for (const text of ["2026-10-14T00:30", "2026-12-31T23:59", "2026-03-01T08:00"]) {
+    const ms = beijingLocalToMs(text);
+    const parsed = parseStatusTime(text);
+    assert.ok(ms !== null && parsed, `「${text}」有一边认不出`);
+    assert.equal(parsed.at.getTime(), ms, `「${text}」两边换出来不一样`);
+    assert.equal(beijingNowMinute(ms), text, `「${text}」换过去再换回来对不上`);
+  }
+  for (const bad of ["2026-10-14", "2026-10-14 10:00", "abc"]) assert.equal(beijingLocalToMs(bad), null, `页面认了「${bad}」`);
+  for (const bad of ["2026-02-30T10:00", "2026-10-14T24:00", "2026-10-14T10:60", "2026/10/14", "abc"]) {
+    assert.equal(parseStatusTime(bad), null, `后端认了「${bad}」`);
+  }
+});
+
+check("填成将来：带时分的留 10 分钟余量；只给日期的按北京日期比", () => {
+  const now = Date.UTC(2026, 9, 14, 7, 0); // 北京 10-14 15:00
+  const p = (t: string) => { const r = parseStatusTime(t); assert.ok(r, `认不出「${t}」`); return r; };
+  assert.equal(isFutureStatusTime(p("2026-10-14T15:09"), now), false, "晚 9 分钟（电脑时钟快一点）不该拦");
+  assert.equal(isFutureStatusTime(p("2026-10-14T15:11"), now), true, "晚 11 分钟该拦");
+  assert.equal(isFutureStatusTime(p("2026-10-14"), Date.UTC(2026, 9, 13, 17, 0)), false, "北京 10-14 凌晨 1 点选「10-14」不该拦");
+  assert.equal(isFutureStatusTime(p("2026-10-15"), now), true, "明天的日期该拦");
 });
 
 console.log(`\nCHECKS ${failures === 0 ? "全过" : `失败 ${failures} 项`}`);

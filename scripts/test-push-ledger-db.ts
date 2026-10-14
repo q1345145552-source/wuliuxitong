@@ -751,6 +751,75 @@ async function main(): Promise<void> {
         assert.equal(s2, "deliveryBooked");
       });
     } catch (e) { failures++; console.log(`  ❌ 这个场景中途出错，后面几步没跑完：${e instanceof Error ? e.message.split("\n")[0] : String(e)}`); }
+
+    console.log("\n【18 改状态填时间（2026-10-14 老板：默认现在、可以改，常差一两天）：北京时间带时分照填进柜子、轨迹、账本；只给日期的老写法照旧；不填 = 现在；将来 / 乱填 400 一个字不动；详情给出当前这一步的时间】");
+    try {
+      const t18 = await seedShipment(2);
+      const box18 = await newBox();
+      const child18 = await load(box18.id, t18);
+      const bj = (ms: number) => new Date(ms + 8 * 3600_000).toISOString().slice(0, 16); // 北京时间「2026-10-14T15:30」
+      const box = async () => pm.container.findUnique({ where: { id: box18.id }, select: { currentStatus: true, statusDates: true, departureDate: true } });
+      const lastBatch = async () => pm.containerPushBatch.findFirst({ where: { containerId: box18.id }, orderBy: { seq: "desc" }, select: { changedAt: true, toContainerStatus: true } });
+      const childLogAt = async (at: string) => pm.statusLog.count({ where: { companyId: CO, shipment: { trackingNo: child18 }, changedAt: new Date(at) } });
+
+      const r1 = await push(box18.id, "SEALED", "2026-10-10T14:30");
+      const b1 = await box();
+      expect("带时分的北京时间照填：北京 10-10 14:30 → 柜子记 UTC 06:30（轨迹里显示 10-10 14:30）", () => {
+        assert.equal(r1.status, 200, r1.message);
+        assert.equal(JSON.parse(b1.statusDates ?? "{}").SEALED, "2026-10-10T06:30:00.000Z");
+      });
+      const batch1 = await lastBatch();
+      const log1 = await childLogAt("2026-10-10T06:30:00.000Z");
+      expect("推进账本和这票的轨迹也是这个时间", () => {
+        assert.equal(batch1?.changedAt.toISOString(), "2026-10-10T06:30:00.000Z");
+        assert.ok(log1 >= 1, "这票没有 10-10 06:30Z 的轨迹");
+      });
+      const d1 = await must("GET /staff/loading-manifests/detail", STAFF, {}, { id: box18.id });
+      expect("详情给出当前这一步（已封柜）的时间", () => assert.equal(d1.statusChangedAt, "2026-10-10T06:30:00.000Z"));
+
+      const r2 = await push(box18.id, "IN_TRANSIT", "2026-10-11 09:05");
+      const b2 = await box();
+      expect("日期和时分之间用空格也认；开船时间跟着填", () => {
+        assert.equal(r2.status, 200, r2.message);
+        assert.equal(JSON.parse(b2.statusDates ?? "{}").IN_TRANSIT, "2026-10-11T01:05:00.000Z");
+        assert.equal(b2.departureDate?.toISOString(), "2026-10-11T01:05:00.000Z");
+      });
+
+      // 将来、乱填：400，柜子不动
+      const future = [bj(Date.now() + 60 * 60_000), bj(Date.now() + 26 * 3600_000).slice(0, 10), "2026-10-10T24:00", "2026-10-10T14:60", "2026-02-30T10:00", "2026-10-10T1:00", "2026-10-10T14:30:00", "2026/10/10 14:30"];
+      const bad: Array<[string, number]> = [];
+      for (const date of future) bad.push([date, (await push(box18.id, "ARRIVED", date)).status]);
+      const b3 = await box();
+      expect("填成将来（1 小时后、明天的日期）或乱填（24 点、60 分、2 月 30、少位数、带秒、斜杠）→ 400，柜子还在已开船", () => {
+        for (const [date, status] of bad) assert.equal(status, 400, `「${date}」没被拦，拿到 ${status}`);
+        assert.equal(b3.currentStatus, "IN_TRANSIT");
+      });
+
+      // 电脑时钟快几分钟：5 分钟后还收
+      const r4 = await push(box18.id, "ARRIVED", bj(Date.now() + 5 * 60_000));
+      expect("比现在晚 5 分钟以内照收（员工电脑时钟可能快一点）", () => assert.equal(r4.status, 200, r4.message));
+
+      // 老写法：只给日期 → 那天 0 点（服务器时区，线上 UTC）；北京今天的日期不算将来
+      const r5 = await push(box18.id, "CUSTOMS", "2026-10-12");
+      const today = bj(Date.now()).slice(0, 10);
+      const r6 = await push(box18.id, "CUSTOMS_CLEARED", today);
+      const b5 = await box();
+      expect("只给日期的老写法照旧记那天 0 点；北京今天的日期照收", () => {
+        assert.equal(r5.status, 200, r5.message);
+        assert.equal(JSON.parse(b5.statusDates ?? "{}").CUSTOMS, new Date("2026-10-12T00:00:00").toISOString());
+        assert.equal(r6.status, 200, r6.message);
+      });
+
+      // 不填 = 现在
+      const before = Date.now();
+      const r7 = await push(box18.id, "IN_WAREHOUSE_TH");
+      const b7 = await box();
+      const at7 = Date.parse(JSON.parse(b7.statusDates ?? "{}").IN_WAREHOUSE_TH ?? "");
+      expect("不填时间 = 现在", () => {
+        assert.equal(r7.status, 200, r7.message);
+        assert.ok(at7 >= before - 1000 && at7 <= Date.now() + 1000, `记的是 ${new Date(at7).toISOString()}`);
+      });
+    } catch (e) { failures++; console.log(`  ❌ 这个场景中途出错，后面几步没跑完：${e instanceof Error ? e.message.split("\n")[0] : String(e)}`); }
   } finally {
     await cleanup();
     const left = (await pm.shipment.count({ where: { companyId: CO } })) + (await pm.container.count({ where: { companyId: CO } }))

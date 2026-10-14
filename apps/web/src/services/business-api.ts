@@ -1712,6 +1712,8 @@ export interface LoadingManifestItem {
 }
 
 export interface LoadingManifestDetail extends LoadingManifestItem {
+  /** 当前这一步是什么时候推的（2026-10-14，后端取柜子 statusDates）；老柜子没有记录是 null */
+  statusChangedAt?: string | null;
   bills: Array<{
     id: string;
     shipmentId: string;
@@ -1864,6 +1866,7 @@ export async function updateContainerStatus(payload: {
   id: string;
   toStatus: string;
   remark?: string;
+  /** 这一步发生的时间，北京时间「2026-10-12T14:30」；不传 = 现在（2026-10-14 起；以前只传日期，后端照旧认） */
   date?: string;
   /** 「下一站【泰国边境】」，不传则后端按状态取默认值 */
   nextStop?: string;

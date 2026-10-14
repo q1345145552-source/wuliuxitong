@@ -378,11 +378,20 @@ export function registerLoadingManifestRoutes(app: MinimalHttpApp): void {
       },
     });
     if (!container) { fail(res, 404, "NOT_FOUND", "装柜任务不存在"); return; }
+    /* 当前这一步是什么时候推的（2026-10-14）：推下一步时员工可以改时间，填得比这一步还早，客户轨迹会倒着排
+       （线上有 12 次），页面拿它先提醒一句。statusDates 是每次推进记的时间（撤销会还原）；老柜子没有就给 null，页面不提醒 */
+    let statusChangedAt: string | null = null;
+    try {
+      const dates = container.statusDates ? JSON.parse(container.statusDates) as Record<string, unknown> : {};
+      const at = dates[container.currentStatus ?? ""];
+      statusChangedAt = typeof at === "string" && !Number.isNaN(Date.parse(at)) ? new Date(at).toISOString() : null;
+    } catch { statusChangedAt = null; }
     ok(res, {
       id: container.id,
       manifestNo: container.containerNo,
       warehouse: container.warehouseId,
       status: container.currentStatus ?? "LOADING",
+      statusChangedAt,
       transportMode: container.transportMode ?? null,
       /* 整柜标记（2026-09-28 审查报告）：装柜页详情里「删柜 / 改运输方式」禁用、「整柜请到整柜管理处理」提示
          全看 detail.isFcl，但这里原来不返回它 —— 前端拿到 undefined，整柜在详情里照样能点删柜、改运输方式 */

@@ -22,3 +22,19 @@ export function beijingDate(value: string | null | undefined): string {
 export function beijingToday(): string {
   return new Date(Date.now() + BEIJING_OFFSET_MS).toISOString().slice(0, 10);
 }
+
+/**
+ * 北京时间的「现在」，精确到分钟，写成 2026-10-14T15:30（时间输入框 datetime-local 要的格式）。
+ * 装柜管理改状态的「时间」框默认就是它（2026-10-14 老板：默认现在、可以改）。
+ */
+export function beijingNowMinute(nowMs: number = Date.now()): string {
+  return new Date(nowMs + BEIJING_OFFSET_MS).toISOString().slice(0, 16);
+}
+
+/** 把时间框里的北京时间（2026-10-14T15:30）换成真正的时刻（毫秒）；格式不对给 null */
+export function beijingLocalToMs(text: string): number | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/.exec(text);
+  if (!m) return null;
+  const ms = Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]), Number(m[4]), Number(m[5])) - BEIJING_OFFSET_MS;
+  return Number.isNaN(ms) ? null : ms;
+}

@@ -28,7 +28,8 @@ import {
   type LoadingManifestDetail,
   type ShipmentItem,
 } from "../../../services/business-api";
-import { beijingDate } from "../../../modules/shared/beijing-date";
+import { beijingDate, beijingLocalToMs, beijingNowMinute } from "../../../modules/shared/beijing-date";
+import { formatTime } from "../../../modules/shipment/track-time";
 
 const STATUS_LABEL: Record<string, string> = {
   LOADING: "装柜中",
@@ -158,7 +159,10 @@ export default function StaffContainerLoadingPage() {
   const [detailError, setDetailError] = useState("");
   const [adding, setAdding] = useState(false);
   const [statusRemark, setStatusRemark] = useState("");
-  const [statusDate, setStatusDate] = useState("");
+  /** 这一步发生的时间（北京时间 2026-10-14T15:30）。空 = 没改过，按「现在」推（2026-10-14 老板：默认现在、可以改，常差一两天） */
+  const [statusTime, setStatusTime] = useState("");
+  /** 时间框没改过时显示的「现在」：换柜子、选状态、点进框里、推完一次都重新取（不每秒跳，免得员工正在选的时候框里的值变了） */
+  const [nowShown, setNowShown] = useState(() => beijingNowMinute());
   const [targetStatus, setTargetStatus] = useState("");
   /** 下一站（2026-08-06）：选目标状态时自动填默认值，员工可改 */
   const [nextStop, setNextStop] = useState("");
@@ -175,7 +179,8 @@ export default function StaffContainerLoadingPage() {
     setTargetStatus("");
     setNextStop("");
     setStatusRemark("");
-    setStatusDate("");
+    setStatusTime("");
+    setNowShown(beijingNowMinute());
   }, [selectedId]);
     
   // 运单列表搜索
@@ -399,10 +404,26 @@ export default function StaffContainerLoadingPage() {
     // 2026-09-01 竞态全扫：刚点了别的柜子、详情还没跟上时，别拿 B 的 id 配 A 的详情去推状态
     // （2026-09-02 复核整改：统一走 guardDetailOwner）
     if (!guardDetailOwner(selectedId)) return;
+    // 改过时间才发（没改 = 现在，后端用服务器当前时间）。填成将来的先拦；比上一步还早的先问 ——
+    // 客户轨迹按时间排，这一步会排到上一步前面（线上有过 12 次）。（2026-10-14）
+    if (statusTime) {
+      const at = beijingLocalToMs(statusTime);
+      if (at === null) { setError("时间没填完整"); return; }
+      if (at > Date.now() + 10 * 60 * 1000) { setError("时间不能晚于现在 —— 推状态记的是已经发生的事"); return; }
+      const prevAt = detail.statusChangedAt ? Date.parse(detail.statusChangedAt) : Number.NaN;
+      if (!Number.isNaN(prevAt) && at < prevAt) {
+        const ok = window.confirm(
+          `你填的时间（${formatTime(new Date(at).toISOString())}）比上一步「${STATUS_LABEL[detail.status] ?? detail.status}」` +
+          `（${formatTime(new Date(prevAt).toISOString())}）还早，\n客户的物流轨迹里这一步会排到上一步前面。\n\n确定按这个时间推吗？`,
+        );
+        if (!ok) return;
+      }
+    }
     try {
-      const result = await updateContainerStatus({ id: selectedId, toStatus, remark: statusRemark.trim() || undefined, date: statusDate || undefined, nextStop: nextStop.trim() || undefined });
+      const result = await updateContainerStatus({ id: selectedId, toStatus, remark: statusRemark.trim() || undefined, date: statusTime || undefined, nextStop: nextStop.trim() || undefined });
       setStatusRemark("");
-      setStatusDate("");
+      setStatusTime("");
+      setNowShown(beijingNowMinute());
       setNextStop("");
       const skippedCount = result.skippedShipments?.length ?? 0;
       setToast(
@@ -445,7 +466,7 @@ export default function StaffContainerLoadingPage() {
       (preview.keep.length > 0
         ? `· 这 ${preview.keep.length} 票不跟着退：\n${keepLines}${preview.keep.length > 5 ? `\n    ……还有 ${preview.keep.length - 5} 票` : ""}\n`
         : "") +
-      `· 撤错了可以按原来的日期再推一次（当时手填的备注要重填）`,
+      `· 撤错了可以再推一次：时间框改回原来的时间，当时手填的备注要重填`,
     );
     if (!ok) return;
     setUndoing(true);
@@ -783,7 +804,33 @@ export default function StaffContainerLoadingPage() {
                       title="客户在物流轨迹里会看到「下一站【xxx】」。选了状态会自动填，可以改"
                       style={{ ...inputStyle, maxWidth: 160 }}
                     />
-                    <input type="date" value={statusDate} onChange={(e) => setStatusDate(e.target.value)} style={{ ...inputStyle, maxWidth: 150 }} title="选择日期（不选则为当天）" />
+                    {/* 这一步发生的时间（2026-10-14 老板要的）：默认现在，货实际哪天、几点到 / 走的可以改（常差一两天）。
+                        按北京时间 —— 系统里、客户轨迹里显示的都是北京时间 */}
+                    <label
+                      title="默认是现在（北京时间）。货实际哪天、几点到 / 走的，可以改成那个时间，客户的物流轨迹里就显示这个时间"
+                      style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 13, color: "var(--t-strong)", whiteSpace: "nowrap" }}
+                    >
+                      时间(北京)
+                      <input
+                        type="datetime-local"
+                        value={statusTime || nowShown}
+                        max={beijingNowMinute()}
+                        onFocus={() => { if (!statusTime) setNowShown(beijingNowMinute()); }}
+                        // 没填完整（某一段被退格清掉）时浏览器给的是空串：不当回事，框里留着上一次完整的时间。
+                        // 原来直接存空串，框会一下跳回「现在」—— 先改了日、再在月上按退格，日就被冲回今天，推上去是错的日子（10-14 实测）
+                        onChange={(e) => { if (e.target.value) setStatusTime(e.target.value); }}
+                        style={{ ...inputStyle, maxWidth: 200 }}
+                      />
+                    </label>
+                    {statusTime && (
+                      <button
+                        type="button"
+                        onClick={() => { setStatusTime(""); setNowShown(beijingNowMinute()); }}
+                        style={{ border: "none", background: "none", color: "var(--c-blue)", fontSize: 12, cursor: "pointer", padding: 0, whiteSpace: "nowrap" }}
+                      >
+                        改回现在
+                      </button>
+                    )}
                     {(() => {
                       // 没标运输方式的柜子先别给状态选项 —— 先选海运还是陆运，
                       // 再选对应的状态，两边的状态不放在一起（2026-08-06 用户要求）
@@ -806,6 +853,7 @@ export default function StaffContainerLoadingPage() {
                               setTargetStatus(e.target.value);
                               // 换目标状态时把下一站换成该状态的默认值，员工再决定要不要改
                               setNextStop(nextStopDefault(e.target.value, detail.transportMode));
+                              if (!statusTime) setNowShown(beijingNowMinute()); // 时间没改过的话，「现在」取最新的
                             }}
                             style={inputStyle}
                           >
