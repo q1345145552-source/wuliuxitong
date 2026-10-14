@@ -1,4 +1,5 @@
 import type { ChaipaiConfig } from "./config";
+import { fetchWithDeadline, readBodyWithDeadline } from "../core/fetch-deadline";
 
 /**
  * 湘泰后台去拆派仓只读接口取资料（2026-10-12）。密钥只在后台用，不下发浏览器。
@@ -47,34 +48,12 @@ function shipmentUrl(cfg: ChaipaiConfig, sourceShipmentId: string): string {
   return `${cfg.apiBase}/integrations/domestic/v2/shipments/${encodeURIComponent(sourceShipmentId)}`;
 }
 
-/** 读完整个响应体（边读边数字节）；超过上限返回 null。调用方的 AbortController 管着超时，读 body 也在里面 */
-async function readBody(response: Response, maxBytes: number, controller: AbortController): Promise<Buffer | null> {
-  if (!response.body) return Buffer.alloc(0);
-  const reader = response.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let size = 0;
-  try {
-    for (;;) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      size += value.byteLength;
-      if (size > maxBytes) {
-        controller.abort();
-        await reader.cancel().catch(() => undefined);
-        return null;
-      }
-      chunks.push(value);
-    }
-  } finally {
-    reader.releaseLock();
-  }
-  return Buffer.concat(chunks, size);
-}
-
 /**
  * 取一票的详情（司机、车牌、转交、照片列表）。
  * ⚠️ 整个调用（翻的每一页、连同读响应体）共用一个截止时间：拆派仓先回头再迟迟不发完内容，也会按时断开
  *（10-12 Codex 审查：原来计时器在 fetch 返回后就清了，读 JSON 那一步不受控）。
+ * ⚠️ 等头、读 body 都走 core/fetch-deadline.ts（跟我们自己的 signal 赛跑）：Node 22 的 fetch 带 redirect:"error" 时，
+ *   读 body 中途碰上一次垃圾回收 abort() 就失灵，直接 await reader.read() 会挂到 300 秒（10-12 CI 的 V9，10-14 查清）。
  * maxPages：最多翻几页（每页 20 张）；翻不完 truncated=true，签收挑图的调用方见到 truncated 必须当失败。
  */
 export async function fetchChaipaiDetail(
@@ -94,14 +73,14 @@ export async function fetchChaipaiDetail(
       const url = shipmentUrl(cfg, sourceShipmentId) + (cursor ? `?afterPhoto=${encodeURIComponent(cursor)}` : "");
       let body: Buffer | null;
       try {
-        const response = await fetch(url, {
+        const response = await fetchWithDeadline(url, {
           headers: { Authorization: `Bearer ${cfg.readSecret}`, Accept: "application/json" },
           redirect: "error",
           signal: controller.signal,
         });
         if (response.status === 404) { await response.body?.cancel().catch(() => undefined); return { kind: "notFound" }; }
         if (response.status !== 200) { await response.body?.cancel().catch(() => undefined); return { kind: "error", reason: `HTTP ${response.status}` }; }
-        body = await readBody(response, DETAIL_MAX_BYTES, controller);
+        body = await readBodyWithDeadline(response, controller.signal, DETAIL_MAX_BYTES);
       } catch (error) {
         return { kind: "error", reason: controller.signal.aborted ? "超时" : error instanceof Error ? error.name : "network" };
       }
@@ -155,7 +134,7 @@ export async function fetchChaipaiPhoto(
   try {
     let response: Response;
     try {
-      response = await fetch(url, {
+      response = await fetchWithDeadline(url, {
         headers: { Authorization: `Bearer ${cfg.readSecret}`, Accept: "image/*" },
         redirect: "error",
         signal: controller.signal,
@@ -176,7 +155,7 @@ export async function fetchChaipaiPhoto(
     }
     let bytes: Buffer | null;
     try {
-      bytes = await readBody(response, PHOTO_MAX_BYTES, controller);
+      bytes = await readBodyWithDeadline(response, controller.signal, PHOTO_MAX_BYTES);
     } catch {
       return { kind: "error", reason: controller.signal.aborted ? "超时" : "读取中断" };
     }

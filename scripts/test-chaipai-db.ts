@@ -17,6 +17,13 @@ process.env.TZ = "UTC";
 import assert from "node:assert/strict";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
+import v8 from "node:v8";
+import vm from "node:vm";
+
+v8.setFlagsFromString("--expose-gc");
+const forceGc = vm.runInNewContext("gc") as () => void;
+/** 强制回收一次内存（V9 用：Node 22 的 fetch 回收后 abort() 失灵的老毛病，见 core/fetch-deadline.ts） */
+const collectGarbage = () => { forceGc(); forceGc(); };
 
 type Row = Record<string, any>;
 type Auth = { userId: string; companyId: string; role: string; name: string };
@@ -1098,11 +1105,16 @@ async function main(): Promise<void> {
       const logs = await logsOf(SV8);
       assert.deepEqual([row.externalTrackingNo, logs[logs.length - 1].remark], ["K2", "已交给【Kerry】派送，单号 K2，请注意查收"]);
     });
-    await test("V9 拆派仓回了头、内容迟迟不发完：照样按时断开回 503，一个字不写", async () => {
+    await test("V9 拆派仓回了头、内容迟迟不发完（中途回收一次内存）：照样按时断开回 503，一个字不写", async () => {
       const SV9 = await fresh("V9");
       fake.set(SV9, { slowBody: true });
       const t0 = Date.now();
-      const r = await send(SV9, "OUT_FOR_DELIVERY");
+      // 10-12 CI 这项偶发等了 300333ms：Node 22 的 fetch 带 redirect:"error" 时，读响应体中途碰上一次垃圾回收，abort() 就失灵
+      //（core/fetch-deadline.ts）。这里在读响应体时强制回收几次（远端库前面几趟查询慢，单一个时间点可能还没开始读），
+      // 让老毛病每次都现形；最多等 15 秒，别真陪它等 300 秒
+      for (const ms of [300, 1000, 2500]) setTimeout(collectGarbage, ms);
+      const r = await Promise.race([send(SV9, "OUT_FOR_DELIVERY"), new Promise<null>((ok) => setTimeout(() => ok(null), 15000))]);
+      assert.ok(r, `等了 ${Date.now() - t0}ms 还没回 —— 读响应体没按时断开（老毛病会挂到 300 秒）`);
       assert.equal(r.status, 503);
       assert.ok(Date.now() - t0 < 9000, `等了 ${Date.now() - t0}ms，超过拆派仓的 10 秒`);
       assert.equal((await rowsOf(SV9)).length, 0);

@@ -322,6 +322,11 @@ jobs:
       # 签收图挑哪张、拆派仓写的轨迹不许单删、派送照片只给员工、六个环境变量不进前端
       - name: Test chaipai integration (source)
         run: npm run test:chaipai-source
+      # 拆派仓只读接口到点就走（2026-10-14）：Node 22 的 fetch 带 redirect:"error" 时，读响应体中途碰上垃圾回收 abort() 就失灵、
+      # 一挂 300 秒（10-12 这里 V9 等了 300333ms）。不连库：假服务器 + 强制回收内存，看是不是按时断开、连接真断了。
+      # ⚠️ 只有 Node 22 照得出老毛病（本机 Node 24 照不出），所以这项必须在 CI 跑
+      - name: Test fetch deadline (chaipai read client)
+        run: npm run test:fetch-deadline
 
       # 改整柜（2026-09-24，老板：「加上编辑功能」）。要连测试库 —— 读源码证明不了
       # 「改完库里真的变了」，而改整柜最容易出的就是「只改了一半」（订单改了运单没改之类）。
