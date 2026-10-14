@@ -167,16 +167,21 @@ export default function StaffContainerLoadingPage() {
   /** 时间框能选的最晚时间（现在） */
   const [maxNow, setMaxNow] = useState(() => beijingNowMinute());
   const timeInputRef = useRef<HTMLInputElement>(null);
-  /* 框里的「现在」和能选的最晚时间每 30 秒跟着走，页面开着放久了也不显示半小时前的时间（Codex / dsh 10-14 第 1 轮）；
-     员工点进框里正在选的时候不动它，免得选到一半值变了 */
-  useEffect(() => {
-    const timer = window.setInterval(() => {
-      const now = beijingNowMinute();
-      setMaxNow(now);
-      if (document.activeElement !== timeInputRef.current) setNowShown(now);
-    }, 30_000);
-    return () => window.clearInterval(timer);
+  /** 「现在」和最晚可选时间一起取最新的 —— 两个分开刷会短暂出现框里的值晚于最晚可选（Codex 10-14 第 2 轮） */
+  const refreshNow = useCallback(() => {
+    const now = beijingNowMinute();
+    setNowShown(now);
+    setMaxNow(now);
   }, []);
+  /* 每 30 秒跟着走、标签页切回来也刷一次，页面开着放久了也不显示半小时前的时间（Codex / dsh 10-14 第 1、2 轮）；
+     员工点进框里正在选的时候两个都不动，免得选到一半值变了 */
+  useEffect(() => {
+    const tick = () => { if (document.activeElement !== timeInputRef.current) refreshNow(); };
+    const timer = window.setInterval(tick, 30_000);
+    const onVisible = () => { if (document.visibilityState === "visible") tick(); };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => { window.clearInterval(timer); document.removeEventListener("visibilitychange", onVisible); };
+  }, [refreshNow]);
   const [targetStatus, setTargetStatus] = useState("");
   /** 下一站（2026-08-06）：选目标状态时自动填默认值，员工可改 */
   const [nextStop, setNextStop] = useState("");
@@ -194,8 +199,8 @@ export default function StaffContainerLoadingPage() {
     setNextStop("");
     setStatusRemark("");
     setStatusTime("");
-    setNowShown(beijingNowMinute());
-  }, [selectedId]);
+    refreshNow();
+  }, [selectedId, refreshNow]);
     
   // 运单列表搜索
   const [allShipments, setAllShipments] = useState<ShipmentItem[]>([]);
@@ -438,7 +443,7 @@ export default function StaffContainerLoadingPage() {
       const result = await updateContainerStatus({ id: selectedId, toStatus, remark: statusRemark.trim() || undefined, date: statusTime || undefined, nextStop: nextStop.trim() || undefined });
       setStatusRemark("");
       setStatusTime("");
-      setNowShown(beijingNowMinute());
+      refreshNow();
       setNextStop("");
       const skippedCount = result.skippedShipments?.length ?? 0;
       setToast(
@@ -831,7 +836,7 @@ export default function StaffContainerLoadingPage() {
                         value={statusTime || nowShown}
                         ref={timeInputRef}
                         max={maxNow}
-                        onFocus={() => { const now = beijingNowMinute(); setMaxNow(now); if (!statusTime) setNowShown(now); }}
+                        onFocus={refreshNow}
                         // 没填完整（某一段被退格清掉）时浏览器给的是空串：不当回事，框里留着上一次完整的时间。
                         // 原来直接存空串，框会一下跳回「现在」—— 先改了日、再在月上按退格，日就被冲回今天，推上去是错的日子（10-14 实测）
                         onChange={(e) => { if (e.target.value) setStatusTime(e.target.value); }}
@@ -841,7 +846,7 @@ export default function StaffContainerLoadingPage() {
                     {statusTime && (
                       <button
                         type="button"
-                        onClick={() => { setStatusTime(""); setNowShown(beijingNowMinute()); }}
+                        onClick={() => { setStatusTime(""); refreshNow(); }}
                         style={{ border: "none", background: "none", color: "var(--c-blue)", fontSize: 12, cursor: "pointer", padding: 0, whiteSpace: "nowrap" }}
                       >
                         改回现在
@@ -869,7 +874,7 @@ export default function StaffContainerLoadingPage() {
                               setTargetStatus(e.target.value);
                               // 换目标状态时把下一站换成该状态的默认值，员工再决定要不要改
                               setNextStop(nextStopDefault(e.target.value, detail.transportMode));
-                              if (!statusTime) setNowShown(beijingNowMinute()); // 时间没改过的话，「现在」取最新的
+                              refreshNow(); // 时间框没改过的话，显示的「现在」取最新的
                             }}
                             style={inputStyle}
                           >

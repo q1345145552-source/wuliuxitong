@@ -141,8 +141,19 @@ check("判断规矩真跑：改过的时间严格比上一步；没改时只在�
   assert.equal(checkPushTime("2026-10-13T15:30:45", prev, now).kind, "ok", "浏览器给带秒的值也要认");
 });
 
+check("推失败（后端报错）时 catch 里也不清目标状态；「现在」和最晚可选时间只走 refreshNow 一起刷", () => {
+  const catchPart = pushBlock.slice(pushBlock.lastIndexOf("} catch (e) {"));
+  assert.doesNotMatch(catchPart, /setTargetStatus\(/, "推失败时又清了目标状态");
+  assert.match(source, /const refreshNow = useCallback\(\(\) => \{\s*const now = beijingNowMinute\(\);\s*setNowShown\(now\);\s*setMaxNow\(now\);/, "refreshNow 没把两个一起刷");
+  assert.equal((source.match(/setNowShown\(/g) ?? []).length, 1, "别处单独刷了「现在」，跟最晚可选时间会对不上");
+  assert.match(source, /addEventListener\("visibilitychange"/, "标签页切回来没刷新");
+});
+
 check("换柜子、推完一次都把时间清回「现在」（别把上一个柜填的时间带到下一个柜）", () => {
-  const effect = source.slice(source.indexOf("useEffect(() => {\n    setTargetStatus(\"\");"), source.indexOf("}, [selectedId]);"));
+  const from = source.indexOf("useEffect(() => {\n    setTargetStatus(\"\");");
+  const to = source.indexOf("}, [selectedId, refreshNow]);");
+  assert.ok(from >= 0 && to > from, "找不到「换柜子清输入」那个 effect（写法变了就来改测试，别让这条空过）");
+  const effect = source.slice(from, to);
   assert.match(effect, /setStatusTime\(""\)/, "换柜子没清时间");
   assert.match(pushBlock, /setStatusTime\(""\)/, "推完没清时间");
 });
