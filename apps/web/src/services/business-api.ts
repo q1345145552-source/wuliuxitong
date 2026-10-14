@@ -1870,6 +1870,8 @@ export async function updateContainerStatus(payload: {
   date?: string;
   /** 「下一站【泰国边境】」，不传则后端按状态取默认值 */
   nextStop?: string;
+  /** 页面看到的柜子状态；跟柜子现在的对不上后端回 409、什么都不写（防超时后重点一次多写一条，2026-10-14） */
+  expectStatus?: string;
 }): Promise<{
   containerNo: string;
   fromStatus: string;

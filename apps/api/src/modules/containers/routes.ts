@@ -514,7 +514,7 @@ export function registerContainerRoutes(app: MinimalHttpApp): void {
     const auth = requireRole(req, res, ["admin", "staff"]);
     if (!auth) return;
 
-    const body = (req.body ?? {}) as { id?: string; toStatus?: string; remark?: string; date?: string; nextStop?: string };
+    const body = (req.body ?? {}) as { id?: string; toStatus?: string; remark?: string; date?: string; nextStop?: string; expectStatus?: string };
     const id = body.id?.trim();
     const toStatus = body.toStatus?.trim();
     if (!id || !toStatus) {
@@ -528,6 +528,20 @@ export function registerContainerRoutes(app: MinimalHttpApp): void {
     });
     if (!container) {
       fail(res, 404, "NOT_FOUND", "container not found");
+      return;
+    }
+
+    /* 页面看到的柜子状态（2026-10-14，Codex 第 5 轮）：跟柜子现在的对不上就不推、什么都不写。
+       页面等 30 秒超时后，后端那次其实可能已经推上去了；员工再点一次，「同状态续写」会让轨迹里多一条一样的。
+       不传照旧（老页面、测试脚本）；锁里还有一道「刚刚被别人推到了」兜住两次请求挨着进来的情况。 */
+    const expectStatus = typeof body.expectStatus === "string" && body.expectStatus.trim() ? body.expectStatus.trim() : null;
+    if (expectStatus && container.currentStatus !== expectStatus) {
+      fail(
+        res,
+        409,
+        "VALIDATION_ERROR",
+        `这个柜子现在是「${CONTAINER_STATUS_LABEL[container.currentStatus] ?? container.currentStatus}」，跟你页面上看到的「${CONTAINER_STATUS_LABEL[expectStatus] ?? expectStatus}」不一样（可能刚推过、或被别人改过），本次推进没有执行。请刷新后再看`,
+      );
       return;
     }
 

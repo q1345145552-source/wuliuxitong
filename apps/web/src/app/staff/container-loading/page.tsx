@@ -190,6 +190,21 @@ export default function StaffContainerLoadingPage() {
   const [targetStatus, setTargetStatus] = useState("");
   /** 下一站（2026-08-06）：选目标状态时自动填默认值，员工可改 */
   const [nextStop, setNextStop] = useState("");
+  /** 推进可选的目标状态：当前状态之后的那几步（按运输方式）；没标运输方式 / 状态不在流程里时为空 */
+  const pushOptions = useMemo<readonly string[]>(() => {
+    if (!detail?.transportMode) return [];
+    const flow: readonly string[] = detail.transportMode === "land" ? STATUS_FLOW_LAND : STATUS_FLOW;
+    const i = flow.indexOf(detail.status);
+    return i < 0 ? [] : flow.slice(i + 1);
+  }, [detail?.transportMode, detail?.status]);
+  /* 柜子状态变了（别人推过、推失败后刷新）而选好的目标已经不在可选里：真的清掉，不只是藏起来 ——
+     不然以后撤销回更早的状态，旧选择会自己冒出来（Codex 10-14 第 5 轮） */
+  useEffect(() => {
+    if (detail && targetStatus && !pushOptions.includes(targetStatus)) {
+      setTargetStatus("");
+      setNextStop("");
+    }
+  }, [detail, targetStatus, pushOptions]);
 
   /**
    * 换柜子时把这一排推进用的输入清空。
@@ -445,14 +460,20 @@ export default function StaffContainerLoadingPage() {
       if (!ok) return;
     }
     /* 推成功才清目标状态；被拦下、点了取消、后端报错，选好的状态留着，改完直接再点（Codex / dsh 10-14 第 1、3 轮）。
-       请求一落地（成功、失败、30 秒超时）就放开「推进中」，刷新列表 / 详情放在后面 —— 刷新卡住也不锁按钮（第 4 轮）。
-       回来时员工已经换到别的柜：不清那个柜上填的东西、不在那个柜上报这个柜的错（第 4 轮）。 */
+       请求一落地（成功、失败、30 秒超时）就放开「推进中」；刷新列表 / 详情是静默的、不等它 —— 刷新卡住也不锁按钮、不压报错，
+       也不会把员工填的备注清掉（非静默刷新会清，dsh 第 5 轮）。回来时员工已经换到别的柜：不动那个柜上填的东西（第 4 轮）。
+       带上页面看到的状态：超时后其实已经推上去、员工又点一次，后端核对不上就不写（Codex 第 5 轮）。 */
+    const pushNo = detail.manifestNo;
+    const sent = { remark: statusRemark, time: statusTime, nextStop };
     pushingRef.current.add(pushId);
     setPushingIds((ids) => [...ids, pushId]);
     let result: Awaited<ReturnType<typeof updateContainerStatus>> | null = null;
     let failure = "";
     try {
-      result = await updateContainerStatus({ id: pushId, toStatus, remark: statusRemark.trim() || undefined, date: statusTime || undefined, nextStop: nextStop.trim() || undefined });
+      result = await updateContainerStatus({
+        id: pushId, toStatus, expectStatus: detail.status,
+        remark: sent.remark.trim() || undefined, date: sent.time || undefined, nextStop: sent.nextStop.trim() || undefined,
+      });
     } catch (e) {
       failure = e instanceof Error ? e.message : "状态更新失败";
     } finally {
@@ -462,28 +483,25 @@ export default function StaffContainerLoadingPage() {
     const stillHere = selectedIdRef.current === pushId;
     if (result) {
       if (stillHere) {
-        setTargetStatus("");
-        setStatusRemark("");
-        setStatusTime("");
+        // 只清推的时候填的那一份：推进中员工又改了（或切走再切回来重新填了），新填的留着（Codex 第 5 轮）
+        setTargetStatus((cur) => (cur === toStatus ? "" : cur));
+        setStatusRemark((cur) => (cur === sent.remark ? "" : cur));
+        setNextStop((cur) => (cur === sent.nextStop ? "" : cur));
+        setStatusTime((cur) => (cur === sent.time ? "" : cur));
         refreshNow();
-        setNextStop("");
       }
       const skippedCount = result.skippedShipments?.length ?? 0;
       setToast(
         `柜子「${result.containerNo}」已推进至 ${STATUS_LABEL[toStatus] ?? toStatus}（影响 ${result.affectedShipmentCount} 个运单` +
         (skippedCount > 0 ? `；${skippedCount} 票已派送、签收、退回或取消，没跟着推` : "") + `）`,
       );
+    } else if (stillHere) {
+      setError(failure); // 下面是静默刷新，不会把它清掉
+    } else {
+      setToast(`柜子「${pushNo}」没推成：${failure}`); // 人已经在别的柜上了，不往那个柜的报错区写（dsh 第 5 轮：原来一点反馈都没有）
     }
-    // 成功、失败都刷新：失败可能是别人刚推过、或其实写进去了只是回话丢了（超时），页面要看到最新状态；
-    // 留着的目标状态要是已经不在可选里，按钮自己变灰（targetOk）。刷新完才报错 —— loadList 一进门会清报错
-    try {
-      await loadList();
-      if (selectedIdRef.current === pushId) await loadDetail(pushId);
-    } catch {
-      // 刷新自己出错会自己报；这里不盖住推进的报错
-    } finally {
-      if (failure && selectedIdRef.current === pushId) setError(failure);
-    }
+    void loadList({ silent: true });
+    if (selectedIdRef.current === pushId) void loadDetail(pushId, { silent: true });
   };
 
   /** 推错了：整柜退回上一步（2026-09-17 起按推进账本撤最近一笔），柜里还停在这一步的运单跟着退、这一步的轨迹一起删掉 */

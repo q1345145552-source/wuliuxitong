@@ -833,6 +833,37 @@ async function main(): Promise<void> {
         assert.ok(at7 >= before - 1000 && at7 <= Date.now() + 1000, `记的是 ${new Date(at7).toISOString()}`);
       });
     } catch (e) { failures++; console.log(`  ❌ 这个场景中途出错，后面几步没跑完：${e instanceof Error ? e.message.split("\n")[0] : String(e)}`); }
+
+    console.log("\n【19 带上页面看到的柜子状态（expectStatus，2026-10-14 Codex 第 5 轮）：对不上就 409 一个字不写 —— 页面超时后其实已经推上去、员工再点一次不会多一条；同状态续写照旧】");
+    try {
+      const t19 = await seedShipment(1);
+      const box19 = await newBox();
+      const child19 = await load(box19.id, t19);
+      const snap19 = async () => JSON.stringify({
+        box: await pm.container.findUnique({ where: { id: box19.id }, select: { currentStatus: true, statusDates: true, departureDate: true, updatedAt: true } }),
+        batches: await pm.containerPushBatch.count({ where: { containerId: box19.id } }),
+        logs: await pm.statusLog.count({ where: { companyId: CO, shipment: { trackingNo: child19 } } }),
+      });
+      const req = { id: box19.id, toStatus: "SEALED", expectStatus: "LOADING", date: "2026-10-12T09:00" };
+      const first = await call("POST /admin/containers/status", ADMIN, req);
+      const afterFirst = await snap19();
+      const retry = await call("POST /admin/containers/status", ADMIN, req); // 页面超时后员工又点了一次，原样再发
+      const afterRetry = await snap19();
+      expect("第一次推上去；同一个请求再发（页面看到的还是装柜中）→ 409，柜子 / 账本 / 轨迹一个字不多", () => {
+        assert.equal(first.status, 200, first.message);
+        assert.equal(retry.status, 409, `重发没被拦：${retry.status} ${retry.message}`);
+        assert.match(String(retry.message), /现在是「已封柜」.*页面上看到的「装柜中」/);
+        assert.equal(afterRetry, afterFirst);
+      });
+      const same = await call("POST /admin/containers/status", ADMIN, { id: box19.id, toStatus: "SEALED", expectStatus: "SEALED", remark: "补一句" });
+      const next = await call("POST /admin/containers/status", ADMIN, { id: box19.id, toStatus: "IN_TRANSIT", expectStatus: "SEALED" });
+      const noExpect = await call("POST /admin/containers/status", ADMIN, { id: box19.id, toStatus: "ARRIVED" });
+      expect("页面看到的跟柜子一样：同状态续写、往前推都照旧；不带 expectStatus 的老写法照旧", () => {
+        assert.equal(same.status, 200, same.message);
+        assert.equal(next.status, 200, next.message);
+        assert.equal(noExpect.status, 200, noExpect.message);
+      });
+    } catch (e) { failures++; console.log(`  ❌ 这个场景中途出错，后面几步没跑完：${e instanceof Error ? e.message.split("\n")[0] : String(e)}`); }
   } finally {
     await cleanup();
     const left = (await pm.shipment.count({ where: { companyId: CO } })) + (await pm.container.count({ where: { companyId: CO } }))
