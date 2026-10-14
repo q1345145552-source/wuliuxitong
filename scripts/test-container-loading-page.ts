@@ -103,7 +103,7 @@ check("时间框某一段被退格清掉（浏览器给空串）时不跳回「�
 });
 
 check("没改过时间就不发（后端用服务器的当前时间），改过才发员工填的", () => {
-  assert.match(pushBlock, /const sent = \{ remark: statusRemark, time: statusTime, nextStop \};/, "推的时候没记下员工改过的时间");
+  assert.match(pushBlock, /const sent = \{ target: toStatus, remark: statusRemark, time: statusTime, nextStop \};/, "推的时候没记下员工改过的时间");
   assert.match(pushBlock, /date: sent\.time \|\| undefined/, "推状态时发的不是员工改过的时间");
   assert.doesNotMatch(pushBlock, /date: [^,}]*nowShown/, "把页面上显示的「现在」发出去了 —— 页面开着放久了就不是现在了");
 });
@@ -149,12 +149,15 @@ check("推进：按柜记「推进中」防连点；请求一落地就放开；�
   assert.ok(add >= 0 && add < send, "发请求前没标这个柜「推进中」");
   const release = pushBlock.search(/\} finally \{\s*pushingRef\.current\.delete\(pushId\);/);
   assert.ok(release > send, "请求落地后没放开「推进中」");
-  assert.match(pushBlock, /expectStatus: detail\.status/, "没带页面看到的柜子状态（超时后再点一次会多写一条）");
-  assert.match(pushBlock, /if \(result\) \{\s*if \(stillHere\) \{\s*\/\/[^\n]*\n\s*setTargetStatus\(\(cur\) => \(cur === toStatus \? "" : cur\)\);/, "推成功清输入没认柜子，或不是只清推的时候那一份");
-  for (const [setter, key] of [["setStatusRemark", "remark"], ["setNextStop", "nextStop"], ["setStatusTime", "time"]]) {
-    assert.match(pushBlock, new RegExp(`${setter}\\(\\(cur\\) => \\(cur === sent\\.${key} \\? "" : cur\\)\\);`), `${setter} 不是只清推的时候那一份（推进中又改的会被清掉）`);
-  }
+  assert.match(pushBlock, /const fromStatus = detail\.status;/, "没记下推之前页面看到的状态");
+  assert.match(pushBlock, /expectStatus: fromStatus/, "没带页面看到的柜子状态（超时后再点一次会多写一条）");
+  assert.match(pushBlock, /if \(result\) \{\s*if \(stillHere\) \{\s*setError\(""\);/, "推成功没清上一次失败的红字，或没认柜子");
+  assert.match(pushBlock, /if \(d\.target === sent\.target && d\.remark === sent\.remark && d\.time === sent\.time && d\.nextStop === sent\.nextStop\) \{\s*setTargetStatus\(""\);\s*setStatusRemark\(""\);\s*setNextStop\(""\);\s*setStatusTime\(""\);/,
+    "推成功清输入不是整份比（推进中动过任何一格就该一格都不清）");
+  assert.match(source, /draftRef\.current = \{ target: targetStatus, remark: statusRemark, time: statusTime, nextStop \};/, "比的不是渲染后最新的输入");
+  assert.match(pushBlock, /setDetail\(\(cur\) => \(cur && cur\.id === pushId && cur\.status === fromStatus\s*\? \{ \.\.\.cur, status: toStatus, statusChangedAt: result\?\.updatedAt/, "推成功没先把页面上的状态改成新的（马上推下一步会被误拦），或没认原来的状态");
   assert.equal((pushBlock.match(/setTargetStatus\(/g) ?? []).length, 1, "推进里别处又清了目标状态（推失败也得重选）");
+  assert.ok(pushBlock.indexOf("setTargetStatus(") > pushBlock.indexOf("if (result) {"), "目标状态不是推成功才清");
   assert.match(pushBlock, /\} else if \(stillHere\) \{\s*setError\(failure\);/, "失败没马上报");
   assert.match(pushBlock, /\} else \{\s*setToast\(`柜子「\$\{pushNo\}」没推成：\$\{failure\}`\);/, "换了柜之后旧柜失败一点反馈都没有");
   assert.match(pushBlock, /void loadList\(\{ silent: true \}\);\s*if \(selectedIdRef\.current === pushId\) void loadDetail\(pushId, \{ silent: true \}\);/, "推完的刷新不是静默不等（非静默会清备注、清报错，卡住还压着）");
@@ -173,14 +176,14 @@ check("「现在」和最晚可选时间一起刷（refreshNow），每个该刷
   const sites: Array<[RegExp, string]> = [
     [/onFocus=\{refreshNow\}/, "点进时间框"],
     [/onBlur=\{refreshNow\}/, "离开时间框"],
-    [/setStatusTime\(""\);\s*refreshNow\(\);\s*\}, \[selectedId, refreshNow\]\);/, "换柜子"],
+    [/setStatusTime\(""\);\s*refreshNow\(\);\s*setError\(""\);[^\n]*\n\s*\}, \[selectedId, refreshNow\]\);/, "换柜子"],
     [/onClick=\{\(\) => \{ setStatusTime\(""\); refreshNow\(\); \}\}/, "改回现在"],
     [/setNextStop\(nextStopDefault\(e\.target\.value, detail\.transportMode\)\);\s*refreshNow\(\);/, "选目标状态"],
     [/const tick = \(\) => \{ if \(document\.activeElement === timeInputRef\.current\) setMaxNow\(beijingNowMinute\(\)\); else refreshNow\(\); \};/, "每 30 秒（有焦点只走最晚可选时间）"],
     [/addEventListener\("visibilitychange", onVisible\)/, "标签页切回来"],
   ];
   for (const [re, where] of sites) assert.match(source, re, `${where}没调 refreshNow（或写法变了）`);
-  assert.match(pushBlock, /setStatusTime\(\(cur\) => \(cur === sent\.time \? "" : cur\)\);\s*refreshNow\(\);/, "推成功后没调 refreshNow");
+  assert.match(pushBlock, /setStatusTime\(""\);\s*\}\s*refreshNow\(\);/, "推成功后没调 refreshNow");
 });
 
 check("换柜子、推完一次都把时间清回「现在」（别把上一个柜填的时间带到下一个柜）", () => {
@@ -189,7 +192,8 @@ check("换柜子、推完一次都把时间清回「现在」（别把上一个�
   assert.ok(from >= 0 && to > from, "找不到「换柜子清输入」那个 effect（写法变了就来改测试，别让这条空过）");
   const effect = source.slice(from, to);
   assert.match(effect, /setStatusTime\(""\)/, "换柜子没清时间");
-  assert.match(pushBlock, /setStatusTime\(\(cur\) => \(cur === sent\.time \? "" : cur\)\);/, "推完没清时间");
+  assert.match(pushBlock, /setStatusTime\(""\);/, "推完没清时间");
+  assert.match(effect, /setError\(""\);/, "换柜子没清上一个柜的报错");
 });
 
 check("北京时间换算：页面和后端各一份，对同一个时间要换出同一个时刻", () => {

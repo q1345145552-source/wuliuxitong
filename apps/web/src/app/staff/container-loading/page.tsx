@@ -190,6 +190,9 @@ export default function StaffContainerLoadingPage() {
   const [targetStatus, setTargetStatus] = useState("");
   /** 下一站（2026-08-06）：选目标状态时自动填默认值，员工可改 */
   const [nextStop, setNextStop] = useState("");
+  /** 推进那一排现在填的内容（渲染时更新）：推成功回来时跟发出去的整份比，员工推进中动过任何一格就一格都不清 */
+  const draftRef = useRef({ target: "", remark: "", time: "", nextStop: "" });
+  draftRef.current = { target: targetStatus, remark: statusRemark, time: statusTime, nextStop };
   /** 推进可选的目标状态：当前状态之后的那几步（按运输方式）；没标运输方式 / 状态不在流程里时为空 */
   const pushOptions = useMemo<readonly string[]>(() => {
     if (!detail?.transportMode) return [];
@@ -220,6 +223,7 @@ export default function StaffContainerLoadingPage() {
     setStatusRemark("");
     setStatusTime("");
     refreshNow();
+    setError(""); // 上一个柜的报错别挂到这个柜上（dsh 10-14 第 6 轮）
   }, [selectedId, refreshNow]);
     
   // 运单列表搜索
@@ -464,14 +468,15 @@ export default function StaffContainerLoadingPage() {
        也不会把员工填的备注清掉（非静默刷新会清，dsh 第 5 轮）。回来时员工已经换到别的柜：不动那个柜上填的东西（第 4 轮）。
        带上页面看到的状态：超时后其实已经推上去、员工又点一次，后端核对不上就不写（Codex 第 5 轮）。 */
     const pushNo = detail.manifestNo;
-    const sent = { remark: statusRemark, time: statusTime, nextStop };
+    const fromStatus = detail.status;
+    const sent = { target: toStatus, remark: statusRemark, time: statusTime, nextStop };
     pushingRef.current.add(pushId);
     setPushingIds((ids) => [...ids, pushId]);
     let result: Awaited<ReturnType<typeof updateContainerStatus>> | null = null;
     let failure = "";
     try {
       result = await updateContainerStatus({
-        id: pushId, toStatus, expectStatus: detail.status,
+        id: pushId, toStatus, expectStatus: fromStatus,
         remark: sent.remark.trim() || undefined, date: sent.time || undefined, nextStop: sent.nextStop.trim() || undefined,
       });
     } catch (e) {
@@ -483,12 +488,21 @@ export default function StaffContainerLoadingPage() {
     const stillHere = selectedIdRef.current === pushId;
     if (result) {
       if (stillHere) {
-        // 只清推的时候填的那一份：推进中员工又改了（或切走再切回来重新填了），新填的留着（Codex 第 5 轮）
-        setTargetStatus((cur) => (cur === toStatus ? "" : cur));
-        setStatusRemark((cur) => (cur === sent.remark ? "" : cur));
-        setNextStop((cur) => (cur === sent.nextStop ? "" : cur));
-        setStatusTime((cur) => (cur === sent.time ? "" : cur));
+        setError(""); // 上一次失败的红字别跟成功提示一起挂着（Codex / dsh 第 6 轮）
+        // 只清推的时候填的那一份，而且整份比：推进中员工动过任何一格（或切走再切回来重新填了），一格都不清（Codex 第 5、6 轮）
+        const d = draftRef.current;
+        if (d.target === sent.target && d.remark === sent.remark && d.time === sent.time && d.nextStop === sent.nextStop) {
+          setTargetStatus("");
+          setStatusRemark("");
+          setNextStop("");
+          setStatusTime("");
+        }
         refreshNow();
+        // 详情是静默刷新、不等，先把页面上的状态改成新的：马上推下一步时带的「页面看到的状态」才对，不会被误拦（Codex / dsh 第 6 轮）。
+        // 只在详情还停在这次推之前的状态时改，别盖掉实时推送带来的更新的状态
+        setDetail((cur) => (cur && cur.id === pushId && cur.status === fromStatus
+          ? { ...cur, status: toStatus, statusChangedAt: result?.updatedAt ?? new Date().toISOString() }
+          : cur));
       }
       const skippedCount = result.skippedShipments?.length ?? 0;
       setToast(
