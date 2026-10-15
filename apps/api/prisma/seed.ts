@@ -24,7 +24,8 @@ const COMPANY_ID = "c_001";
 const CURRENT_WAREHOUSE_IDS = ["wh_yiwu_01", "wh_guangzhou_01", "wh_dongguan_01"];
 
 // demo 账号密码：只从环境变量读，代码里不留明文。没设就不往下跑。
-const DEFAULT_PASSWORD = process.env.SEED_PASSWORD ?? "";
+// 去首尾空格（2026-10-15）：登录页会去掉首尾空格再发，存了带空格的就登不进
+const DEFAULT_PASSWORD = (process.env.SEED_PASSWORD ?? "").trim();
 if (!DEFAULT_PASSWORD) {
   console.error("❌ 没有设置 SEED_PASSWORD，为避免建出弱口令账号，seed 已中止。");
   console.error("   正确用法：SEED_PASSWORD=你自己定的密码 npm run db:seed");

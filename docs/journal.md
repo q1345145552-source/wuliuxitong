@@ -1,5 +1,12 @@
 # 项目交接日志
 
+## 2026-10-15 修「密码首尾带空格就登不进」（本地，未推未上线）
+- 老板 10-11 被问过没回，10-15 说「那你修吧」。登录页提交前去掉密码首尾空格，但开代理、重置代理密码、自己改密码（所有角色共用）三处存的时候不去 → 新密码首尾多敲一个空格，这个号就永远登不进。
+- 改法：三处存之前 trim（自己改密码的旧密码也 trim 后比）；审查后补：登录接口后端也 trim、三处管理员确认密码（员工取消集货、普通版 / 仓库版删除）比对用 trim 后的值、seed 的 SEED_PASSWORD trim；页面三处（开代理弹窗、重置代理密码、改密码弹窗）也先 trim 再判空 / 判长度 / 比两次 / 发送。不改表。
+- 测试：test-agent-admin 14～18（真走 /auth/login、/auth/change-password；异常密码 401 且记账号失败；页面和 seed 源码检查用 TypeScript 词法剥注释）、test-delete-after-shipped 11（三条确认密码路，员工取消逐次核失败计数）。P1～P26 改回去全红（.audit/2026-10-15/pw-trim/mutations4-result.txt）；本机 CI build 67 / test-db 23 全过。
+- Codex + dsh 审 3 轮，三轮都没有必须修；建议（登录后端 trim、确认密码、seed、测试去注释 / IP 桶 / 失败计数）都照改了，最后一轮的建议只动测试，改完没再送审。没改：非字符串确认密码 / 超管设置密码传非文字会 500（跟空格无关的老问题）。
+- 线上只有 1 个代理号（liuyujiang，9-17 建）；已存成带空格的老号没有自动救法，超管在「代理管理」点「重置密码」重设一次就好。
+
 ## 2026-10-15 12:58（北京）上线 1508d98：全系统审查 15 条修复
 - 老板「上线吧」。推 GitHub ad68984..1508d98（470ebd1 文档 + 1508d98 修复），服务器 `bash deploy.sh` 退出 0：没有待执行迁移、跳过备份，结构与迁移账本一致；04:58:38 UTC 换容器。
 - 核对：服务器 HEAD = GitHub = 1508d98；两个容器 healthy、重启 0；API 错误日志 0；后台里有 maskFreeTextForClient / LASTMILE_DISPATCHABLE / domesticTrackingNoEdited / supportsShipmentIdQuery /「有你页面上没有的货物行」；前端包里有「预报单已更新，但下面的明细没刷新出来」、domesticTrackingNoEdited、supportsShipmentIdQuery；健康检查 ok，四个接口不带登录 401，登录页 200。切换那 5 秒（04:58:36～41）8 次 502、1 次 500，全是页面自动刷新（订单、未读消息、登录事件），之后 0。GitHub 自动检查（1508d98）success。

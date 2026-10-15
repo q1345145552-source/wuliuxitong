@@ -94,11 +94,11 @@ export default function AdminAgentsPage() {
 
   const submitReset = async () => {
     if (!resetFor) return;
-    if (!newPassword) { setResetError("请填新密码"); return; }
+    if (!newPassword.trim()) { setResetError("请填新密码"); return; }
     setBusyId(resetFor.id);
     setResetError("");
     try {
-      const r = await resetAdminAgentPassword(resetFor.id, newPassword);
+      const r = await resetAdminAgentPassword(resetFor.id, newPassword.trim());
       setToast(`${resetFor.name} 的密码已重置（账号 ${r.loginId}），代理手上已登录的页面会被要求重新登录`);
       setResetFor(null);
       setNewPassword("");

@@ -218,22 +218,25 @@ export default function RoleShell(props: {
 
   const submitPwd = async () => {
     if (pwdSubmitting) return;
-    if (!oldPwd || !newPwd) {
+    // 首尾空格去掉再比、再发（2026-10-15）：登录页也是去掉首尾空格才提交，口径要一样
+    const oldTrim = oldPwd.trim();
+    const newTrim = newPwd.trim();
+    if (!oldTrim || !newTrim) {
       setPwdError("请把旧密码和新密码都填上");
       return;
     }
-    if (newPwd.length < 8) {
+    if (newTrim.length < 8) {
       setPwdError("新密码至少 8 位");
       return;
     }
-    if (newPwd !== confirmPwd) {
+    if (newTrim !== confirmPwd.trim()) {
       setPwdError("两次输入的新密码不一样");
       return;
     }
     setPwdSubmitting(true);
     setPwdError("");
     try {
-      await changeOwnPassword({ oldPassword: oldPwd, newPassword: newPwd });
+      await changeOwnPassword({ oldPassword: oldTrim, newPassword: newTrim });
       // 改完必须重新登录：2026-08-25 起后端会把改密码之前签发的令牌全部作废
       //（包括这个人在别的设备上登着的），留着也用不了。
       setPwdDone(true);

@@ -248,7 +248,8 @@ export function registerAgentAdminRoutes(app: MinimalHttpApp): void {
     if (loginIssue) return fail(res, 400, "BAD_REQUEST", loginIssue);
 
     // 2.9：代理账号能看名下所有客户和返现，密码太简单一律拦
-    const password = typeof body.password === "string" ? body.password : "";
+    // 首尾空格去掉再存（2026-10-15）：登录页提交前会去掉首尾空格，存了带空格的这个号就永远登不进
+    const password = typeof body.password === "string" ? body.password.trim() : "";
     if (!password) return fail(res, 400, "BAD_REQUEST", "请填代理登录密码");
     const weak = checkPasswordStrength(password, undefined, loginId);
     if (weak) return fail(res, 400, "BAD_REQUEST", weak);
@@ -446,7 +447,8 @@ export function registerAgentAdminRoutes(app: MinimalHttpApp): void {
     if (!auth) return;
     const body = (req.body ?? {}) as Record<string, unknown>;
     const id = str(body.id);
-    const password = typeof body.password === "string" ? body.password : "";
+    // 首尾空格去掉再存，原因同开代理（2026-10-15）
+    const password = typeof body.password === "string" ? body.password.trim() : "";
     if (!id) return fail(res, 400, "BAD_REQUEST", "缺少代理 id");
     if (!password) return fail(res, 400, "BAD_REQUEST", "请填新密码");
 

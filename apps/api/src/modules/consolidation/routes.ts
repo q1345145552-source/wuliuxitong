@@ -2008,7 +2008,7 @@ export function registerConsolidationRoutes(app: MinimalHttpApp): void {
             select: { passwordHash: true },
           })
         : null;
-      if (!admin || !verifyPassword(body.confirmPassword, admin.passwordHash ?? "")) {
+      if (!admin || !verifyPassword(body.confirmPassword.trim(), admin.passwordHash ?? "")) {
         recordFailure(cancelPwLimitKey, CANCEL_PW_FAIL_WINDOW_MS);
         // ⚠️ 密码错也要留痕（2026-08-31 补，复查报告）：限流只挡当场硬猜，
         // 谁在拿谁的任务反复试管理员密码，事后还是靠这条日志查。
@@ -2776,7 +2776,7 @@ export function registerConsolidationRoutes(app: MinimalHttpApp): void {
         where: { id: auth.userId },
         select: { passwordHash: true },
       });
-      if (!admin || !verifyPassword(body.confirmPassword, admin.passwordHash ?? "")) {
+      if (!admin || !verifyPassword(body.confirmPassword.trim(), admin.passwordHash ?? "")) {
         fail(res, 403, "FORBIDDEN", "管理员密码不对，没有删除");
         return;
       }

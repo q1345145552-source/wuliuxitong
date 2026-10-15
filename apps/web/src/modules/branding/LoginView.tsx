@@ -43,7 +43,7 @@ export default function LoginView({ brand }: { brand: PublicBrandInfo | null }) 
     const account = String(form.get("account") ?? "").trim();
     /**
      * 密码两端空格要去掉（2026-09-05 复查恢复）。
-     * 后端管理员设密码/重置密码存的是 trim 过的哈希（admin/routes.ts），登录路由按原样比对；
+     * 后端所有存密码的入口存的都是 trim 过的哈希，登录路由 2026-10-15 起也会再 trim 一次；
      * 客户密码就是唛头本身、常从聊天记录复制，尾巴带个空格是常态——前端不 trim 就登不进去。
      */
     const password = String(form.get("password") ?? "").trim();

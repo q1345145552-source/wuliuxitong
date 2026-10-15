@@ -40,9 +40,11 @@ export function registerAuthRoutes(app: MinimalHttpApp): void {
     // 登录是完全对公网开放的入口，任何人都能随手打崩它一次，必须先卡类型。
     const raw = (req.body ?? {}) as Record<string, unknown>;
     const asStr = (v: unknown): string => (typeof v === "string" ? v.trim() : "");
+    // 密码也去首尾空格（2026-10-15）：所有存密码的入口都是去掉首尾空格才存，登录页也去了再发；
+    // 后端这里再去一次，不靠每个调用方自觉。
     const body = {
       account: asStr(raw.account),
-      password: typeof raw.password === "string" ? raw.password : "",
+      password: asStr(raw.password),
       role: asStr(raw.role),
     };
     if (!body.account) {
@@ -235,8 +237,10 @@ export function registerAuthRoutes(app: MinimalHttpApp): void {
 
     // 和登录接口同样的理由：字段传成数字/数组时 .trim 不是函数会直接 500。
     const raw = (req.body ?? {}) as Record<string, unknown>;
-    const oldPassword = typeof raw.oldPassword === "string" ? raw.oldPassword : "";
-    const newPassword = typeof raw.newPassword === "string" ? raw.newPassword : "";
+    // 首尾空格去掉（2026-10-15）：登录页提交前会去掉首尾空格，新密码存了带空格的就再也登不进；
+    // 旧密码也按登录的口径比，存着的密码本来就不带首尾空格（带了的号登不进，走不到这里）。
+    const oldPassword = typeof raw.oldPassword === "string" ? raw.oldPassword.trim() : "";
+    const newPassword = typeof raw.newPassword === "string" ? raw.newPassword.trim() : "";
     if (!oldPassword || !newPassword) {
       fail(res, 400, "BAD_REQUEST", "请填写旧密码和新密码");
       return;

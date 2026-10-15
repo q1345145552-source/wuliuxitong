@@ -72,14 +72,14 @@ export default function AgentFormModal(props: {
     }
     if (mode === "create") {
       if (!loginId.trim()) { setError("请填登录账号"); return; }
-      if (!password) { setError("请填登录密码"); return; }
+      if (!password.trim()) { setError("请填登录密码"); return; }
     }
     setSaving(true);
     setError("");
     try {
       if (mode === "create") {
         const r = await createAdminAgent({
-          name: name.trim(), slug, customDomain, prices, loginId: loginId.trim(), password, phone: phone.trim(), logo,
+          name: name.trim(), slug, customDomain, prices, loginId: loginId.trim(), password: password.trim(), phone: phone.trim(), logo,
         });
         onSaved(`代理已开好，登录账号 ${r.loginId}`);
       } else if (agent) {

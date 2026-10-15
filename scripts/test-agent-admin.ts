@@ -23,6 +23,7 @@ process.env.BIND_HOST = "127.0.0.1";
 
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import ts from "typescript";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
@@ -232,6 +233,24 @@ async function freePort(): Promise<number> {
   });
 }
 
+/**
+ * 用 TypeScript 自己的词法把注释换成空格（2026-10-15，Codex / dsh 第 3 轮）：
+ * 源码检查只认真代码，写在任何位置的注释（整行、行尾、紧贴着的 //）都不算数。
+ */
+function blankComments(text: string, fileName: string): string {
+  const sf = ts.createSourceFile(fileName, text, ts.ScriptTarget.Latest, true, fileName.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
+  const ranges: Array<[number, number]> = [];
+  const visit = (node: ts.Node): void => {
+    for (const r of ts.getLeadingCommentRanges(text, node.getFullStart()) ?? []) ranges.push([r.pos, r.end]);
+    for (const r of ts.getTrailingCommentRanges(text, node.getEnd()) ?? []) ranges.push([r.pos, r.end]);
+    for (const child of node.getChildren(sf)) visit(child);
+  };
+  visit(sf);
+  const chars = text.split("");
+  for (const [a, b] of ranges) for (let i = a; i < b; i += 1) if (chars[i] !== "\n") chars[i] = " ";
+  return chars.join("");
+}
+
 /* ────────────────────────── 开测 ────────────────────────── */
 
 async function main(): Promise<void> {
@@ -252,8 +271,12 @@ async function main(): Promise<void> {
     return signAuthToken({ userId, companyId: u.companyId, role: u.role, userName: u.name, passwordHash: u.passwordHash });
   };
 
+  const { registerAuthRoutes } = await import("../apps/api/src/modules/auth/routes");
+
   const app = createApp();
   registerAgentAdminRoutes(app);
+  // 14～16 项要真走 /auth/login、/auth/change-password（2026-10-15 密码首尾空格）
+  registerAuthRoutes(app);
   const port = await freePort();
   await new Promise<void>((resolve) => app.listen(port, resolve));
   const call = async (method: "GET" | "POST", p: string, token: string | null, body?: unknown): Promise<{ status: number; body: any }> => {
@@ -669,6 +692,136 @@ async function main(): Promise<void> {
     for (const c of ["zz_c_a1", "zz_c_a2"]) assert.equal(db.users.find((u) => u.id === c)!.passwordHash, null, "客户密码不许被连带改");
     r = await call("POST", "/admin/agents/reset-password", admin, { id: "agent_other_co", password: "New#Agent2026" });
     assert.equal(r.status, 404);
+  });
+
+  /*
+   * 14～16（2026-10-15）：密码首尾空格。登录页（LoginView）提交前会去掉首尾空格，
+   * 原来开代理、重置代理密码、自己改密码这三处存的时候不去，存了带空格的号就永远登不进。
+   * 「登得进」都是真走 /auth/login，发的是去掉空格的密码 —— 跟登录页发的一样。
+   */
+  // 每次登录用不同的 X-Real-IP：登录有「每个 IP 每分钟 10 次」的闸，共用一个桶以后加用例就会撞上 429（IP 限流有自己的测试）
+  let loginIpSeq = 0;
+  const loginRaw = async (body: unknown): Promise<{ status: number; body: any }> => {
+    loginIpSeq += 1;
+    const r = await fetch(`http://127.0.0.1:${port}/auth/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Real-IP": `10.88.0.${loginIpSeq}` },
+      body: JSON.stringify(body),
+    });
+    return { status: r.status, body: await r.json() };
+  };
+  const loginAs = (account: string, password: string) => loginRaw({ account, password });
+  const rl = await import("../apps/api/src/modules/core/rate-limit");
+
+  await check("14) 开代理密码首尾带空格：存去掉空格的、拿它真能登；全是空格 / 靠空格凑够 8 位都拦，而且什么都没建", async () => {
+    const kong = { ...goodAgent, name: "曼谷代理空", slug: "bkk-kong", customDomain: "kong.example.com", loginId: "zz_agent_kong", logo: undefined };
+    let r = await call("POST", "/admin/agents/create", admin, { ...kong, password: "     " });
+    assert.equal(r.status, 400);
+    assert.match(r.body.message, /请填代理登录密码/);
+    r = await call("POST", "/admin/agents/create", admin, { ...kong, password: "  1234567 " });
+    assert.equal(r.status, 400, "去掉空格只有 7 位，必须拦");
+    assert.match(r.body.message, /至少 8 位/);
+    assert.equal(db.users.some((u) => u.id === "zz_agent_kong"), false, "被拦时不许建出号来");
+    assert.equal(db.agents.some((a) => a.slug === "bkk-kong"), false);
+
+    r = await call("POST", "/admin/agents/create", admin, { ...kong, password: "  Kong#Agent2026  " });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    const hash = db.users.find((u) => u.id === "zz_agent_kong")!.passwordHash;
+    assert.ok(verifyPassword("Kong#Agent2026", hash), "存的必须是去掉首尾空格的");
+    assert.equal(verifyPassword("  Kong#Agent2026  ", hash), false);
+    r = await loginAs("zz_agent_kong", "Kong#Agent2026");
+    assert.equal(r.status, 200, `新开的代理号登不进：${JSON.stringify(r.body)}`);
+    // 登录接口后端自己也去首尾空格（不靠页面）：直接发带空格的也能登
+    r = await loginAs("zz_agent_kong", "  Kong#Agent2026  ");
+    assert.equal(r.status, 200, `登录接口没去首尾空格：${JSON.stringify(r.body)}`);
+    // 空的、全是空格的、不是文字的密码：照旧当登录失败（401），不许 500、更不许放进去；每次都记一笔账号失败
+    const failKey = rl.loginFailureKey("zz_agent_kong");
+    assert.equal(rl.isFailureBlocked(failKey, 1), false, "刚登录成功，账号失败计数应是 0");
+    const bads: unknown[] = ["", "     ", 12345678, { a: 1 }];
+    for (const [i, bad] of bads.entries()) {
+      r = await loginRaw({ account: "zz_agent_kong", password: bad });
+      assert.equal(r.status, 401, `密码 ${JSON.stringify(bad)}：${r.status} ${JSON.stringify(r.body)}`);
+      assert.equal(rl.isFailureBlocked(failKey, i + 1), true, `密码 ${JSON.stringify(bad)} 没记账号失败`);
+      assert.equal(rl.isFailureBlocked(failKey, i + 2), false, `密码 ${JSON.stringify(bad)} 多记了`);
+    }
+    r = await loginAs("zz_agent_kong", " Kong#Agent2026 ");
+    assert.equal(r.status, 200);
+    assert.equal(rl.isFailureBlocked(failKey, 1), false, "登录成功要把账号失败计数清零");
+  });
+
+  await check("15) 重置代理密码首尾带空格：存去掉空格的、拿它真能登；全是空格 / 靠空格凑够 8 位的拦、密码不动", async () => {
+    const before = db.users.find((u) => u.id === "zz_agent_jia")!.passwordHash;
+    let r = await call("POST", "/admin/agents/reset-password", admin, { id: agentId, password: "     " });
+    assert.equal(r.status, 400);
+    assert.match(r.body.message, /请填新密码/);
+    assert.equal(db.users.find((u) => u.id === "zz_agent_jia")!.passwordHash, before);
+    r = await call("POST", "/admin/agents/reset-password", admin, { id: agentId, password: "  1234567 " });
+    assert.equal(r.status, 400);
+    assert.match(r.body.message, /至少 8 位/);
+    assert.equal(db.users.find((u) => u.id === "zz_agent_jia")!.passwordHash, before);
+    r = await call("POST", "/admin/agents/reset-password", admin, { id: agentId, password: "  Reset#Agent2027 " });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    const hash = db.users.find((u) => u.id === "zz_agent_jia")!.passwordHash;
+    assert.ok(verifyPassword("Reset#Agent2027", hash));
+    assert.equal(verifyPassword("  Reset#Agent2027 ", hash), false);
+    r = await loginAs("zz_agent_jia", "Reset#Agent2027");
+    assert.equal(r.status, 200, `重置后登不进：${JSON.stringify(r.body)}`);
+  });
+
+  await check("16) 自己改密码（各角色共用）首尾带空格：旧密码多敲空格也认；新密码存去掉空格的、拿它真能登；全是空格 / 靠空格凑够 8 位的拦", async () => {
+    const before = db.users.find((u) => u.id === "zz_staff")!.passwordHash;
+    const staffToken = tokenFor("zz_staff");
+    let r = await call("POST", "/auth/change-password", staffToken, { oldPassword: " Staff#2026x ", newPassword: "      " });
+    assert.equal(r.status, 400);
+    assert.match(r.body.message, /请填写旧密码和新密码/);
+    assert.equal(db.users.find((u) => u.id === "zz_staff")!.passwordHash, before);
+    r = await call("POST", "/auth/change-password", staffToken, { oldPassword: " Staff#2026x ", newPassword: "  1234567 " });
+    assert.equal(r.status, 400);
+    assert.match(r.body.message, /至少 8 位/);
+    assert.equal(db.users.find((u) => u.id === "zz_staff")!.passwordHash, before);
+    r = await call("POST", "/auth/change-password", staffToken, { oldPassword: " Staff#2026x ", newPassword: "  Self#Staff2028  " });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    const hash = db.users.find((u) => u.id === "zz_staff")!.passwordHash;
+    assert.ok(verifyPassword("Self#Staff2028", hash));
+    assert.equal(verifyPassword("  Self#Staff2028  ", hash), false);
+    r = await loginAs("zz_staff", "Self#Staff2028");
+    assert.equal(r.status, 200, `改完登不进：${JSON.stringify(r.body)}`);
+  });
+
+  await check("17) 页面三处也先去首尾空格再判空 / 判长度 / 比两次 / 发送（源码检查：开代理弹窗、重置代理密码、改密码弹窗）", () => {
+    const read = (rel: string): string => blankComments(fs.readFileSync(path.join(ROOT, rel), "utf-8"), rel);
+    // read 已经把注释换成空格：注释里写着 password.trim() 不算数
+    const sliceFn = (text: string, start: string, end: string): string => {
+      const i = text.indexOf(start);
+      assert.ok(i >= 0, `找不到 ${start}`);
+      const j = text.indexOf(end, i);
+      assert.ok(j > i, `找不到 ${start} 后面的 ${end}`);
+      return text.slice(i, j);
+    };
+    const modal = sliceFn(read("apps/web/src/components/admin/agents/AgentFormModal.tsx"), "const submit = async", "onSaved(`代理已开好");
+    assert.match(modal, /if \(!password\.trim\(\)\) \{ setError\("请填登录密码"\)/, "开代理：全是空格要当场提示必填");
+    assert.match(modal, /createAdminAgent\(\{[^}]*password: password\.trim\(\)/, "开代理：发出去的密码要去首尾空格");
+    const reset = sliceFn(read("apps/web/src/app/admin/agents/page.tsx"), "const submitReset = async", "setToast(");
+    assert.match(reset, /if \(!newPassword\.trim\(\)\) \{ setResetError\("请填新密码"\)/, "重置代理密码：全是空格要当场提示必填");
+    assert.match(reset, /resetAdminAgentPassword\(resetFor\.id, newPassword\.trim\(\)\)/, "重置代理密码：发出去的密码要去首尾空格");
+    const shell = sliceFn(read("apps/web/src/modules/layout/RoleShell.tsx"), "const submitPwd = async", "setPwdDone(true)");
+    assert.match(shell, /const oldTrim = oldPwd\.trim\(\);/);
+    assert.match(shell, /const newTrim = newPwd\.trim\(\);/);
+    assert.match(shell, /if \(!oldTrim \|\| !newTrim\)/, "改密码：判空要用去空格后的");
+    assert.match(shell, /if \(newTrim\.length < 8\)/, "改密码：长度要按去空格后的算");
+    assert.match(shell, /if \(newTrim !== confirmPwd\.trim\(\)\)/, "改密码：两次输入按去空格后的比");
+    assert.match(shell, /changeOwnPassword\(\{ oldPassword: oldTrim, newPassword: newTrim \}\)/, "改密码：发出去的要去首尾空格");
+    assert.equal((shell.match(/\b(oldPwd|newPwd)\b(?!\.trim\(\))/g) ?? []).length, 0, "改密码：除了取 trim，不许再直接用 oldPwd / newPwd 原值");
+  });
+
+  await check("18) 初始化脚本 seed 的演示账号密码也去首尾空格再存（源码检查；seed 只手工跑）", () => {
+    const seed = blankComments(fs.readFileSync(path.join(ROOT, "apps/api/prisma/seed.ts"), "utf-8"), "seed.ts");
+    assert.match(seed, /const DEFAULT_PASSWORD = \(process\.env\.SEED_PASSWORD \?\? ""\)\.trim\(\);/);
+    assert.match(seed, /const DEMO_HASH = hashPassword\(DEFAULT_PASSWORD\);/, "seed 存的要是去了空格的那个");
+    const hashes = [...seed.matchAll(/passwordHash:\s*([^,\n}]+)/g)].map((m) => m[1].trim());
+    assert.ok(hashes.length >= 1, "seed 里一个 passwordHash 都没读到，正则读窄了");
+    assert.deepEqual([...new Set(hashes)], ["DEMO_HASH"], `seed 里有账号的密码不是用去了空格的 DEMO_HASH：${hashes.join(", ")}`);
+    assert.equal((seed.match(/hashPassword\(/g) ?? []).length, 2, "seed 里只该有定义 hashPassword 和算 DEMO_HASH 两处");
   });
 
   fs.rmSync(IMAGES_DIR, { recursive: true, force: true });

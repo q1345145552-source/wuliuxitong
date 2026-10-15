@@ -187,6 +187,41 @@ async function main(): Promise<void> {
     assert.ok(/hardBlocked\?: boolean/.test(api), "business-api.ts 的删除预览类型没加 hardBlocked");
   });
 
+  await check("11) 管理员确认密码首尾多敲了空格也认（2026-10-15，跟登录同一口径）：两个删除、员工取消任务三条路", async () => {
+    const padded = `  ${PASSWORD} `;
+    seedWhr("loading", "paid");
+    let r = await callRoute("POST /admin/whr-consolidation/plans/delete", ADMIN, { body: { planId: "zz_b1_P", confirmPassword: padded } });
+    assert.equal(r.status, 200, `仓库版删除：${r.status} ${r.message}`);
+    assert.ok(!planExists());
+    seedTask("loading");
+    r = await callRoute("POST /admin/consolidation/tasks/delete", ADMIN, { body: { taskId: "zz_b1_T", confirmPassword: padded } });
+    assert.equal(r.status, 200, `普通版删除：${r.status} ${r.message}`);
+    assert.ok(!taskExists());
+    // 员工取消：有已签收的预报单才要管理员密码；这条路有「30 分钟错 5 次」的失败计数，逐次核对
+    const rl = await import("../apps/api/src/modules/core/rate-limit");
+    rl.__resetFailureStoreForTest();
+    seedTask("collecting");
+    mem.db.consolidationTask[0].paymentStatus = "unpaid"; // 付过款的不让取消，跟密码无关
+    const STAFF = { userId: "zz_b1_staff", companyId: "c1", role: "staff", name: "员工", agentId: null };
+    const cancelKey = rl.rateLimitKey(STAFF.userId, "cancel-pw");
+    mem.db.user.push({ id: STAFF.userId, companyId: "c1", role: "staff", name: STAFF.name, passwordHash: null, status: "active" });
+    // 全是空格 = 没填密码：照旧 409 要密码，不当成填错（403）
+    r = await callRoute("POST /staff/consolidation/tasks/cancel", STAFF, { body: { taskId: "zz_b1_T", adminAccount: ADMIN.userId, confirmPassword: "    " } });
+    assert.equal(r.status, 409, `员工取消（全是空格）：${r.status} ${r.message}`);
+    assert.equal(rl.isFailureBlocked(cancelKey, 1), false, "全是空格当没填，不许记成一次填错");
+    // 填错照旧 403
+    r = await callRoute("POST /staff/consolidation/tasks/cancel", STAFF, { body: { taskId: "zz_b1_T", adminAccount: ADMIN.userId, confirmPassword: " wrong-password " } });
+    assert.equal(r.status, 403, `员工取消（填错）：${r.status} ${r.message}`);
+    assert.equal(rl.isFailureBlocked(cancelKey, 1), true, "填错要记一笔");
+    assert.equal(rl.isFailureBlocked(cancelKey, 2), false, "填错一次只记一笔");
+    assert.ok(taskExists() && mem.db.consolidationTask[0].status === "collecting", "被拦下还动了任务");
+    r = await callRoute("POST /staff/consolidation/tasks/cancel", STAFF, { body: { taskId: "zz_b1_T", adminAccount: ADMIN.userId, confirmPassword: padded } });
+    assert.notEqual(r.status, 403, `员工取消：带空格的管理员密码被当成错的：${r.message}`);
+    assert.equal(r.status, 200, `员工取消：${r.status} ${r.message}`);
+    assert.equal(mem.db.consolidationTask.find((t) => t.id === "zz_b1_T")?.status, "cancelled", "取消没生效");
+    assert.equal(rl.isFailureBlocked(cancelKey, 1), false, "密码对了要把失败计数清零");
+  });
+
   if (failures.length > 0) {
     console.error(`\n${failures.length}/${total} 项不通过：${failures.join("；")}`);
     process.exit(1);

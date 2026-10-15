@@ -1710,7 +1710,7 @@ export function registerWhrConsolidationRoutes(app: MinimalHttpApp): void {
         where: { id: auth.userId },
         select: { passwordHash: true },
       });
-      if (!admin || !verifyPassword(body.confirmPassword, admin.passwordHash ?? "")) {
+      if (!admin || !verifyPassword(body.confirmPassword.trim(), admin.passwordHash ?? "")) {
         fail(res, 403, "FORBIDDEN", "管理员密码不对，没有删除");
         return;
       }
