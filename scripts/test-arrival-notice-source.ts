@@ -159,11 +159,17 @@ async function main(): Promise<void> {
     assert.ok(front.every((rest) => rest.startsWith("/")), `有裸网址：${front.join(",")}`);
     const routes = read("apps/api/src/modules/arrival-notices/routes.ts");
     const back = [...routes.matchAll(/app\.(get|post|delete|put)\("([^"]+)"/g)].map((m) => m[2]);
-    assert.equal(back.length, 7);
+    assert.equal(back.length, 9);
     assert.ok(back.every((p) => p.startsWith("/staff/arrival-notices/")), back.join(","));
     for (const p of back) assert.ok(api.includes(p), `前端没调 ${p}`);
     assert.match(routes, /requireRole\(req, res, \["staff", "admin"\]\)/);
-    assert.equal((routes.match(/requireRole\(req, res, \["staff", "admin"\]\)/g) ?? []).length, 7, "每个接口都只给员工 / 超管");
+    assert.equal((routes.match(/requireRole\(req, res, \["staff", "admin"\]\)/g) ?? []).length, 7, "原来那 7 个接口给员工 / 超管");
+    // 2026-10-16 超管改已转正式运单：这两个只给超管（员工照旧不能改已转正式的）
+    for (const p of ["/staff/arrival-notices/converted-detail", "/staff/arrival-notices/converted-refresh"]) {
+      const at = routes.indexOf(`"${p}"`);
+      assert.ok(at >= 0, `没有 ${p}`);
+      assert.match(routes.slice(at, at + 300), /requireRole\(req, res, \["admin"\]\)/, `${p} 要只给超管`);
+    }
   });
 
   await check("A6 页面「还缺什么」跟后端 missingForTarget 同一套规则（共享 missingForFormalNotice）；多款点名「第N款」；老后端平铺也照旧", async () => {
@@ -515,7 +521,8 @@ async function main(): Promise<void> {
     // F11
     assert.match(v, /<select disabled=\{saving\} value=\{p\.cargoType\} onChange=\{\(e\) => setProduct\(p\.key, "cargoType", cargoTypeOf\(e\.target\.value\)\)\}>/, "每款能选货型");
     assert.match(v, /CARGO_TYPES\.map\(\(c\) => <option key=\{c\} value=\{c\}>\{CARGO_TYPE_ZH\[c\]\}<\/option>\)/);
-    assert.match(v, /cargoType: cargoTypeOf\(p\.cargoType\),/, "修改时带出库里每款的货型");
+    // 2026-10-16 草稿函数（draftOf）挪到 draft.ts（组件带 JSX，测试要直接调）
+    assert.match(read("apps/web/src/modules/arrival-notice/draft.ts"), /cargoType: cargoTypeOf\(p\.cargoType\),/, "修改时带出库里每款的货型");
     assert.match(v, /cargo !== "normal" \? CARGO_TYPE_ZH\[cargo\] : ""/, "卡片上每款写货型（普货不写）");
     // F01：卡片提醒、确认框列出来、确认后带 orderId 转；按钮不藏（R2）
     assert.match(v, /const prealerts = n\.prealertMatches \?\? \[\];/);
@@ -625,12 +632,13 @@ async function main(): Promise<void> {
     assert.match(form, /\{draft\.products\.length < MAX_NOTICE_PRODUCTS \? \(\s*<button [^\n]*onClick=\{addProduct\}>＋ 加一款<\/button>\s*\) : <span className="an-muted">最多 \{MAX_NOTICE_PRODUCTS\} 款<\/span>\}/, "到 50 款换成文字");
     assert.match(v, /const addProduct = \(\) => setDraft\(\(d\) => \(d\.products\.length >= MAX_NOTICE_PRODUCTS \? d :/);
     assert.match(v, /products: \[emptyProduct\(\)\], \/\/ 默认一款空的/, "新登记默认一款空产品");
-    assert.match(v, /products: products\.length > 0 \? products : \[emptyProduct\(\)\],/, "库里一款都没有时修改弹窗也给一款空的");
+    assert.match(read("apps/web/src/modules/arrival-notice/draft.ts"), /products: products\.length > 0 \? products : \[emptyProduct\(\)\],/, "库里一款都没有时修改弹窗也给一款空的");
     // 总重量 / 总体积：跟「创建订单」同一套（auto-totals.ts），算得出就只读
     assert.match(v, /const totals = noticeProductTotals\(draft\.products\);/);
     assert.match(v, /nextAutoTotals\(\{ volumeM3: d\.volumeM3, weightKg: d\.weightKg \}, auto, volStr, wtStr\)/);
-    assert.match(form, /<input disabled=\{saving\} readOnly=\{wtStr !== null\} value=\{draft\.weightKg\}/, "算得出总重量时框只读");
-    assert.match(form, /<input disabled=\{saving\} readOnly=\{volStr !== null\} value=\{draft\.volumeM3\}/, "算得出总体积时框只读");
+    // 2026-10-16 已转正式运单（超管）那种修改总数按「运单管理」的裁决、框不只读；普通的登记 / 修改照旧
+    assert.match(form, /<input disabled=\{saving\} readOnly=\{!converted && wtStr !== null\} value=\{draft\.weightKg\}/, "算得出总重量时框只读");
+    assert.match(form, /<input disabled=\{saving\} readOnly=\{!converted && volStr !== null\} value=\{draft\.volumeM3\}/, "算得出总体积时框只读");
     assert.equal((form.match(/按产品行算的/g) ?? []).length, 2);
     assert.match(v, /款没填单箱重，总重量只算了其余几款/);
     assert.match(v, /款没填齐长宽高，总体积只算了其余几款/);

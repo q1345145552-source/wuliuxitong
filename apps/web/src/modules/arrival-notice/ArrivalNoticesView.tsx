@@ -19,13 +19,15 @@ import { compressImageForUpload } from "../shared/image-compress";
 import { openShipmentTrack } from "../shipment/ShipmentTrackModal";
 import { shipmentStatusZh } from "../shipment/shipment-status";
 import { apiBaseUrl } from "../../services/core-api";
-import { fetchStaffClients } from "../../services/business-api";
+import { fetchStaffClients, updateAdminOrder } from "../../services/business-api";
 import MarkPicker, { type MarkOption } from "../layout/MarkPicker";
 import {
   convertArrivalNotice,
   deleteArrivalNotice,
   deleteArrivalNoticeImage,
   fetchArrivalNotices,
+  fetchConvertedNoticeDetail,
+  refreshConvertedNotice,
   saveArrivalNotice,
   noticeProductsOf,
   setArrivalNoticeNotified,
@@ -37,15 +39,18 @@ import {
   type DraftProduct,
   type ArrivalNoticePage,
   type ArrivalNoticeTab,
+  type ConvertedNoticeDetail,
   type PrealertMatch,
 } from "../../services/arrival-notice-api";
+import { buildAdminOrderPatch, convertedDraftIssue, convertedTotals, sameConvertedDraft } from "./converted-edit";
+import { cargoTypeOf, convertedDraftOf, draftOf, emptyProduct } from "./draft";
 import { buildArrivalNoticeText } from "./notice-text";
 import { missingForFormal } from "./missing";
 import { copyImage, copyText, saveImage } from "./copy-helpers";
 import { CLIENT_CHANGED_NOTE, MAX_NOTICE_IMAGES, photoFailMessage, photoSlotsLeft, pickPhotos, uploadQueuedPhotos } from "./photo-upload";
 import { makeThumb } from "./photo-thumb";
 import { nextAutoTotals, type AutoTotalsMemory } from "../orders/auto-totals";
-import { CARGO_TYPES, CARGO_TYPE_ZH, type CargoType } from "../../../../../packages/shared-types/cargo-type";
+import { CARGO_TYPES, CARGO_TYPE_ZH } from "../../../../../packages/shared-types/cargo-type";
 import { MAX_NOTICE_PRODUCTS, isBlankNoticeProduct, noticeProductTotals } from "../../../../../packages/shared-types/arrival-notice-products";
 
 const PAGE_SIZE = 30;
@@ -84,25 +89,12 @@ function thumbSrc(img: ArrivalNoticeImage): string {
   return apiBaseUrl() + (img.thumbUrl ?? img.imageUrl);
 }
 
-/** 认不出来的值（含 null = 普货）一律按普货 */
-function cargoTypeOf(v: string | null | undefined): CargoType {
-  return (CARGO_TYPES as readonly string[]).includes(v ?? "") ? (v as CargoType) : "normal";
-}
 
 /** 一张撞上的预报单怎么说（F01）：「YWYB…（唛头 X，国内单号 Y，已确认收货）」 */
 function prealertLabel(m: PrealertMatch): string {
   return `${m.trackingNo ?? "（没有单号）"}（唛头 ${m.clientId}，国内单号 ${m.domesticTrackingNo}${m.received ? "，已确认收货" : ""}）`;
 }
 
-/** 产品行的 React key（只在页面里用，draftToBody 会去掉） */
-let productKeySeq = 0;
-function emptyProduct(): DraftProduct {
-  productKeySeq += 1;
-  return {
-    key: `p${productKeySeq}`, itemName: "", packageCount: "", lengthCm: "", widthCm: "", heightCm: "",
-    productQuantity: "", weightKg: "", domesticTrackingNo: "", cargoType: "normal",
-  };
-}
 
 function emptyDraft(): ArrivalNoticeDraft {
   let warehouseId = "";
@@ -115,33 +107,6 @@ function emptyDraft(): ArrivalNoticeDraft {
   };
 }
 
-function draftOf(n: ArrivalNotice): ArrivalNoticeDraft {
-  const s = (v: string | number | null) => (v === null || v === undefined ? "" : String(v));
-  // 新后端给 products；老后端没给、平铺的有值就拼成一款（noticeProductsOf）；一款都没有就给一款空的
-  const products = noticeProductsOf(n).map((p): DraftProduct => ({
-    ...emptyProduct(),
-    itemName: s(p.itemName),
-    packageCount: s(p.packageCount),
-    lengthCm: s(p.lengthCm),
-    widthCm: s(p.widthCm),
-    heightCm: s(p.heightCm),
-    productQuantity: s(p.productQuantity),
-    weightKg: s(p.weightKg),
-    domesticTrackingNo: s(p.domesticTrackingNo),
-    cargoType: cargoTypeOf(p.cargoType),
-  }));
-  return {
-    clientId: n.clientId ?? "",
-    trackingNo: s(n.trackingNo),
-    weightKg: s(n.weightKg),
-    volumeM3: s(n.volumeM3),
-    transportMode: n.transportMode === "sea" || n.transportMode === "land" ? n.transportMode : "",
-    warehouseId: n.warehouseId ?? "",
-    arrivedAt: s(n.arrivedAt),
-    remark: s(n.remark),
-    products: products.length > 0 ? products : [emptyProduct()],
-  };
-}
 
 /** 卡片上一款怎么写：「灯具 × 12 件 · 敏感货 · 国内单号 SF123 · 60×40×30cm · 单箱 5kg · 每箱 10 个」，空的项不写 */
 function productLine(p: ArrivalNoticeProduct): string {
@@ -173,7 +138,12 @@ function packageCountLabel(products: ReadonlyArray<ArrivalNoticeProduct>): strin
 }
 
 /** seq：每打开一次弹窗领一个号。关 / 存完只关「自己那一个」，晚到的回调关不掉后来打开的（F05） */
-type Editor = { mode: "new"; seq: number } | { mode: "edit"; item: ArrivalNotice; seq: number };
+
+type Editor =
+  | { mode: "new"; seq: number }
+  | { mode: "edit"; item: ArrivalNotice; seq: number }
+  /** 超管改已转正式运单的那条：改的是运单（2026-10-16 老板「让超管在到货通知里也能改」） */
+  | { mode: "converted"; item: ArrivalNotice; detail: ConvertedNoticeDetail; seq: number };
 
 export default function ArrivalNoticesView() {
   const [tab, setTab] = useState<ArrivalNoticeTab>("todo");
@@ -238,7 +208,7 @@ export default function ArrivalNoticesView() {
   useLayoutEffect(() => { loadRef.current = load; }, [load]);
   const reloadLatest = useCallback(() => loadRef.current(true), []);
 
-  const openEditor = (e: { mode: "new" } | { mode: "edit"; item: ArrivalNotice }) => {
+  const openEditor = (e: { mode: "new" } | { mode: "edit"; item: ArrivalNotice } | { mode: "converted"; item: ArrivalNotice; detail: ConvertedNoticeDetail }) => {
     editorSeq.current += 1;
     setEditor({ ...e, seq: editorSeq.current });
   };
@@ -265,6 +235,13 @@ export default function ArrivalNoticesView() {
       setBusyIds((cur) => { const next = new Set(cur); next.delete(id); return next; });
     }
   };
+
+  /* 已转正式运单（超管）：先读运单现在的样子再开弹窗 —— 卡片上的可能是老的（运单管理刚改过还没刷到），
+     拿老的开弹窗再存，会把别人刚改的盖回去 */
+  const onEditConverted = (n: ArrivalNotice) => run(n.id, async () => {
+    const detail = await fetchConvertedNoticeDetail(n.id);
+    openEditor({ mode: "converted", item: detail.item, detail });
+  });
 
   const onCopyText = async (n: ArrivalNotice) => {
     const okCopy = await copyText(noticeText(n));
@@ -385,7 +362,7 @@ export default function ArrivalNoticesView() {
             onSaveImage={(img) => void onSaveImage(img)}
             onPreview={(img) => setPreview({ src: imgSrc(img), alt: img.fileName })}
             onToggleNotified={() => void onToggleNotified(n)}
-            onEdit={() => openEditor({ mode: "edit", item: n })}
+            onEdit={() => (n.convertedTo === "formal" ? void onEditConverted(n) : openEditor({ mode: "edit", item: n }))}
             onConvert={(to) => onConvert(n, to)}
             onDelete={() => onDelete(n)}
           />
@@ -525,7 +502,8 @@ function NoticeCard(props: {
       <footer className="an-actions">
         <span className="an-who">{n.createdByName ? `${n.createdByName} ` : ""}登记于 {shortTime(n.createdAt)}</span>
         <button type="button" className="an-btn" disabled={busy} onClick={props.onToggleNotified}>{n.notifiedAt ? "改回未通知" : "标为已通知客户"}</button>
-        {!formal ? <button type="button" className="an-btn" disabled={busy} onClick={props.onEdit}>修改</button> : null}
+        {/* 已转正式运单：只给超管（canEditConverted，后端按身份给），改的是那张运单（2026-10-16）；员工照旧只读 */}
+        {!formal || n.canEditConverted ? <button type="button" className="an-btn" disabled={busy} onClick={props.onEdit}>修改</button> : null}
         {!formal ? <button type="button" className="an-btn an-btn-go" disabled={busy} onClick={() => props.onConvert("formal")}>转正式运单</button> : null}
         {!formal && !inbound ? <button type="button" className="an-btn" disabled={busy} onClick={() => props.onConvert("inbound")}>转待入库</button> : null}
         {trackShipmentId ? (
@@ -546,12 +524,15 @@ function NoticeEditor(props: {
   /** 修改时当场删了照片：列表跟着刷新 */
   onChanged: () => void | Promise<unknown>;
 }) {
-  const editing = props.editor.mode === "edit" ? props.editor.item : null;
-  const [draft, setDraft] = useState<ArrivalNoticeDraft>(() => (editing ? draftOf(editing) : emptyDraft()));
+  const editing = props.editor.mode === "edit" || props.editor.mode === "converted" ? props.editor.item : null;
+  /** 超管改已转正式运单的那条（2026-10-16）：草稿是运单现在的样子，保存走超管「运单管理」改单那条路 */
+  const converted = props.editor.mode === "converted" ? props.editor.detail : null;
+  const initialDraft = (): ArrivalNoticeDraft => (converted ? convertedDraftOf(converted) : editing ? draftOf(editing) : emptyDraft());
+  const [draft, setDraft] = useState<ArrivalNoticeDraft>(initialDraft);
   /** 新登记存过一次之后就有 id 了：照片没传完再点「保存」是接着传，不能再登记出一条新的 */
   const [savedId, setSavedId] = useState<string | null>(editing?.id ?? null);
   /** 库里那份（打开时 / 每次存上以后）：保存时一起传，后端比一下有没有人在这期间改过 */
-  const [base, setBase] = useState<ArrivalNoticeDraft | null>(() => (editing ? draftOf(editing) : null));
+  const [base, setBase] = useState<ArrivalNoticeDraft | null>(() => (editing ? initialDraft() : null));
   const [images, setImages] = useState<ArrivalNoticeImage[]>(editing?.images ?? []);
   /** 库里这条现在算不算「已通知」（存上以后跟着接口回来的那份走）—— G01 换唛头提醒用 */
   const [notifiedAt, setNotifiedAt] = useState<string | null>(editing?.notifiedAt ?? null);
@@ -598,13 +579,15 @@ function NoticeEditor(props: {
     return { volStr: totals.volumeM3 === null ? null : totals.volumeM3.toFixed(3), wtStr: totals.weightKg === null ? null : totals.weightKg.toFixed(2) };
   }, [draft.products]);
   useEffect(() => {
+    // 已转正式运单：总数按「运单管理」那套裁决（converted-edit.ts 的 convertedTotals），这里不自动改框里的数
+    if (converted) return;
     const auto = autoTotalsRef.current;
     setDraft((d) => {
       const next = nextAutoTotals({ volumeM3: d.volumeM3, weightKg: d.weightKg }, auto, volStr, wtStr);
       autoTotalsRef.current = next.memory;
       return next.volumeM3 === d.volumeM3 && next.weightKg === d.weightKg ? d : { ...d, volumeM3: next.volumeM3, weightKg: next.weightKg };
     });
-  }, [volStr, wtStr]);
+  }, [volStr, wtStr, converted]);
   /* 只有几款填了单箱重 / 长宽高时，合计只算了填了的那几款（同「创建订单」）：点名没算进去的是第几款。
      只看有件数的款（没件数的款本来就算不进去，合计行会写「件数没填全」） */
   const productHints = useMemo(() => {
@@ -620,6 +603,8 @@ function NoticeEditor(props: {
     if (volStr !== null && noDims.length > 0) out.push(`第 ${noDims.map((r) => r.no).join("、")} 款没填齐长宽高，总体积只算了其余几款`);
     return out;
   }, [draft.products, wtStr, volStr]);
+  /** 已转正式运单：总重量 / 总体积最后存多少、听谁的（同超管「运单管理」编辑弹窗的说明） */
+  const convertedNotes = useMemo(() => (converted ? convertedTotals(draft).notes : []), [converted, draft]);
   /** 产品区下面那行合计：「合计：2 款，17 件」（空白的那款不算） */
   const productSummary = useMemo(() => {
     const filled = draft.products.filter((p) => !isBlankNoticeProduct(p));
@@ -661,7 +646,48 @@ function NoticeEditor(props: {
     }
   };
 
+  /**
+   * 已转正式运单（超管，2026-10-16）：
+   * 1. 先重读运单现在的样子，跟打开弹窗时的比 —— 这期间有人在「运单管理」或这里改过就不存（防把别人刚改的盖掉）；
+   * 2. 走超管「运单管理」改单那条路（/admin/orders/update，同一套闸），只发改过的项；
+   * 3. 这张卡片对齐成运单现在的样子、存备注（converted-refresh）。第 3 步失败时运单已经改好了，照实说。
+   */
+  const submitConverted = async (detail: ConvertedNoticeDetail) => {
+    setError("");
+    if (detail.blockedReason) { setError(detail.blockedReason); return; }
+    const issue = convertedDraftIssue(draft);
+    if (issue) { setError(issue); return; }
+    if (!base) return;
+    setSaving(true);
+    try {
+      const fresh = await fetchConvertedNoticeDetail(detail.item.id);
+      if (fresh.blockedReason) throw new Error(fresh.blockedReason);
+      if (!sameConvertedDraft(base, convertedDraftOf(fresh))) {
+        throw new Error("这票刚刚被别人改过（超管端「运单管理」或别的超管），你这次没有保存。请点「取消」关掉，重新点「修改」看最新的再改");
+      }
+      const { patch, changed } = buildAdminOrderPatch(fresh.shipmentId, base, draft);
+      if (changed) await updateAdminOrder(patch);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "没保存上");
+      // 同 submit：被挡多半是别人刚改过，刷一下列表，关掉重开拿到的才是最新的（最多等 5 秒）
+      try { await Promise.race([props.onChanged(), new Promise((r) => window.setTimeout(r, 5000))]); } catch { /* 刷新失败就算了 */ }
+      setSaving(false);
+      return;
+    }
+    let message = "已保存，那张运单也改好了";
+    try {
+      const { item } = await refreshConvertedNotice(detail.item.id, draft.remark);
+      // G01：换了唛头，原来那次「已通知」通知的是旧客户 —— 按接口真回来的说
+      if (clientChangedAfterNotify && !item.notifiedAt) message += `。${CLIENT_CHANGED_NOTE}`;
+    } catch (e) {
+      message = `运单已经改好了，但到货通知这张卡片没刷新成新的（${e instanceof Error ? e.message : "刷新失败"}），点一下刷新再看`;
+    }
+    if (cancelledRef.current) { void props.onChanged(); return; }
+    props.onSaved(message);
+  };
+
   const submit = async () => {
+    if (converted) { await submitConverted(converted); return; }
     setError("");
     setSaving(true);
     let id = savedId;
@@ -765,6 +791,10 @@ function NoticeEditor(props: {
       {editing?.convertedTo === "inbound" ? (
         <p className="an-note">这票货已经转成「待入库」运单，这里保存会同步改那张运单；资料齐了回列表点「转正式运单」。</p>
       ) : null}
+      {converted ? (
+        <p className="an-note">这票已经转成正式运单。下面是那张运单现在的内容，保存就是改这张运单（跟超管端「运单管理」点「编辑」同样的规矩），这张卡片也会跟着变成新的。照片请到「运单管理」那张运单里改。</p>
+      ) : null}
+      {converted?.blockedReason ? <p role="alert" className="an-error">{converted.blockedReason}</p> : null}
       {/* 保存 / 传照片期间整张表锁住（修复第 2 轮）：保存发出去的是点「保存」那一刻的资料，传照片那几十秒里再改的字
           不会存上，传完照样关窗说「已保存」—— 改了等于白改、还没人知道。跟「加照片」「移除」一样，保存中不让动 */}
       <div className="an-form">
@@ -839,16 +869,21 @@ function NoticeEditor(props: {
             ) : <span className="an-muted">最多 {MAX_NOTICE_PRODUCTS} 款</span>}
             <span className="an-prod-sum">{productSummary}</span>
           </div>
-          {productHints.map((h) => <small key={h} className="an-warn">{h}</small>)}
+          {/* 已转正式运单：总数按「运单管理」那套裁决，说明在总数框下面 */}
+          {converted ? null : productHints.map((h) => <small key={h} className="an-warn">{h}</small>)}
         </div>
         <label>
-          <span>总重量（公斤）{wtStr !== null ? <small className="an-auto">按产品行算的</small> : null}</span>
-          <input disabled={saving} readOnly={wtStr !== null} value={draft.weightKg} onChange={(e) => set("weightKg", e.target.value)} inputMode="decimal" />
+          <span>总重量（公斤）{!converted && wtStr !== null ? <small className="an-auto">按产品行算的</small> : null}</span>
+          <input disabled={saving} readOnly={!converted && wtStr !== null} value={draft.weightKg} onChange={(e) => set("weightKg", e.target.value)} inputMode="decimal" />
         </label>
         <label>
-          <span>总体积（立方）{volStr !== null ? <small className="an-auto">按产品行算的</small> : null}</span>
-          <input disabled={saving} readOnly={volStr !== null} value={draft.volumeM3} onChange={(e) => set("volumeM3", e.target.value)} inputMode="decimal" />
+          <span>总体积（立方）{!converted && volStr !== null ? <small className="an-auto">按产品行算的</small> : null}</span>
+          <input disabled={saving} readOnly={!converted && volStr !== null} value={draft.volumeM3} onChange={(e) => set("volumeM3", e.target.value)} inputMode="decimal" />
         </label>
+        {convertedNotes.length > 0 ? (
+          // 一句一行（两句并排时挤成一长串看不清，10-16 浏览器实点发现）
+          <div className="an-form-wide">{convertedNotes.map((h) => <div key={h}><small className="an-warn">{h}</small></div>)}</div>
+        ) : null}
         <label>
           <span>运输方式</span>
           <select disabled={saving} value={draft.transportMode} onChange={(e) => set("transportMode", e.target.value as ArrivalNoticeDraft["transportMode"])}>
@@ -875,13 +910,15 @@ function NoticeEditor(props: {
       </div>
 
       <div className="an-form-photos">
-        <span className="an-form-label">照片（一条最多 {MAX_NOTICE_IMAGES} 张，现在 {images.length + queued.length} 张）</span>
+        <span className="an-form-label">{converted
+          ? `照片（${images.length} 张，到货那天登记的；已转正式运单，照片请到「运单管理」那张运单里传 / 删）`
+          : `照片（一条最多 ${MAX_NOTICE_IMAGES} 张，现在 ${images.length + queued.length} 张）`}</span>
         <div className="an-photos">
           {images.map((img) => (
             <figure key={img.id} className="an-photo">
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img src={thumbSrc(img)} alt={img.fileName} loading="lazy" decoding="async" />
-              <figcaption><button type="button" className="an-link an-link-danger" onClick={() => void removeExisting(img)}>删除</button></figcaption>
+              {converted ? null : <figcaption><button type="button" className="an-link an-link-danger" onClick={() => void removeExisting(img)}>删除</button></figcaption>}
             </figure>
           ))}
           {queued.map((q) => (
@@ -894,7 +931,7 @@ function NoticeEditor(props: {
               </figcaption>
             </figure>
           ))}
-          {slotsLeft > 0
+          {converted ? null : slotsLeft > 0
             // 保存 / 传照片途中不许再加：那批是开传时拍的快照，途中加的不会传，传完弹窗一关就丢了（F05）
             ? <button type="button" className="an-photo-add" disabled={saving} onClick={() => fileRef.current?.click()}>＋ 加照片</button>
             : <span className="an-muted">已满 {MAX_NOTICE_IMAGES} 张</span>}
@@ -907,7 +944,7 @@ function NoticeEditor(props: {
       <div className="an-form-actions">
         {progress ? <span className="an-muted">{progress}</span> : null}
         <button type="button" className="an-btn" onClick={() => { if (confirmClose()) close(); }} disabled={saving}>{savedId && !editing ? "关闭" : "取消"}</button>
-        <button type="button" className="an-btn an-btn-primary" onClick={() => void submit()} disabled={saving}>{saving ? "保存中…" : "保存"}</button>
+        <button type="button" className="an-btn an-btn-primary" onClick={() => void submit()} disabled={saving || Boolean(converted?.blockedReason)}>{saving ? "保存中…" : "保存"}</button>
       </div>
     </DetailModal>
   );

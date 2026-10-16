@@ -7,6 +7,7 @@ import { prisma } from "../../db/prisma";
 import { EXCLUDE_FCL_ORDER, EXCLUDE_FCL_SHIPMENT, FCL_BLOCKED_MESSAGE, FCL_EDIT_ELSEWHERE_MESSAGE } from "../core/fcl-scope";
 import { PENDING_INBOUND, PENDING_INBOUND_EDIT_ELSEWHERE_MESSAGE } from "../arrival-notices/rules";
 import { arrivalNoticeHoldingMessage, followShipmentClientIds, followShipmentTrackingNos, followStaleArrivalNoticeHolding, lockTrackingNoForArrivalNotice } from "../arrival-notices/follow-tracking-no";
+import { syncConvertedNoticesFromShipments } from "../arrival-notices/routes";
 import { logger } from "../core/logger";
 import type { MinimalHttpApp } from "../../server";
 import { fail, ok, requireRole } from "../core/http-utils";
@@ -1179,6 +1180,10 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
       .catch((e) => logger.warn("arrival notice follow trackingNo failed", { orderId, error: String(e) }));
     await followShipmentClientIds(auth.companyId, followIds)
       .catch((e) => logger.warn("arrival notice follow clientId failed", { orderId, error: String(e) }));
+    /* 已转正式运单的到货通知：卡片对齐成运单改完的样子（2026-10-16 老板「让超管在到货通知里也能改」；
+       原来只有号和唛头跟着走，改了重量 / 产品，回到货通知看还是老的）。同上：提交后单独做、出错只记日志 */
+    await syncConvertedNoticesFromShipments(auth.companyId, followIds)
+      .catch((e) => logger.warn("arrival notice sync converted failed", { orderId, error: String(e) }));
 
     ok(res, {
       orderId,

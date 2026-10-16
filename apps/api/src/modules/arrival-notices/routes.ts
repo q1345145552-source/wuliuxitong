@@ -13,6 +13,7 @@ import { buildNewOrderRows } from "../orders/new-order-rows";
 import { validateProductRows } from "../orders/product-row-guard";
 import { DEFAULT_STATUS_LABELS } from "../ai/ai-config-store";
 import { ARRIVAL_WAREHOUSE_IDS, PENDING_INBOUND } from "./rules";
+import { FCL_EDIT_ELSEWHERE_MESSAGE } from "../core/fcl-scope";
 import { lockTrackingNoForArrivalNotice } from "./follow-tracking-no";
 import { CARGO_TYPES, strictestCargoType, type CargoType } from "../../../../../packages/shared-types/cargo-type";
 import { productNamesLabel } from "../../../../../packages/shared-types/product-names";
@@ -653,6 +654,148 @@ async function syncToPendingShipment(tx: Tx, companyId: string, f: NoticeFields,
   }
 }
 
+/* ─────────────── 已转正式运单：超管在到货通知里也能改（2026-10-16 老板「让超管在到货通知里也能改」） ───────────────
+ * 转成正式运单以后，这票货真正的资料在运单上（订单 + 运单 + 订单产品行）；到货通知这一行原来是登记那一刻的底稿，从此不动，
+ * 结果超管在「运单管理」改完，回到货通知看还是老样子（10-16 老板问「管理员端改不了？」就是这么来的）。现在：
+ * - 超管在到货通知点「修改」：弹窗打开时读运单**现在**的样子（GET converted-detail，不读这一行存的老底稿 ——
+ *   读老底稿再存回去会把别人在「运单管理」刚改的盖掉）；保存走超管「运单管理」改单同一条路（/admin/orders/update），
+ *   同一套闸（整柜拒、已装柜的件数重量体积不能改得比装进去的少、号不能撞……），不另写一套；
+ *   存完再调 converted-refresh：把这一行对齐成运单现在的样子，顺手存备注（备注是到货通知自己的，内部看，不进运单）。
+ * - 「运单管理」改了运单（超管端 /admin/orders/update、员工页的 patch-shipment-bundle）：改完也把这一行对齐
+ *   （syncConvertedNoticesFromShipments：事务提交后单独做，出错只记日志，同 follow-tracking-no.ts 那两个跟着走）。
+ *   卡片、给客户的文案、搜索看到的就都是运单现在的样子。
+ * - 照片不动：转正式时已经复制了一份给运单（copyImagesToOrder），运单那份在「运单管理」里改；这一行的照片是到货那天拍的。
+ * - 员工照旧不能改已转正式的（员工端「运单管理」4-01 起就只能看，老规矩不动）；待入库的照旧在这里改（syncToPendingShipment）。
+ */
+
+/** 订单产品行上「国内单号空着」写的是「货拉拉」（orderValuesOf / 创建订单同一个写法）：对回到货通知这边当没填 */
+const BLANK_DOMESTIC_PLACEHOLDER = "货拉拉";
+
+/** YYYY-MM-DD 才认（订单上的 shipDate 是文字列，老数据什么写法都有）；认不出当没填 */
+function ymdOrNull(v: string | null | undefined): string | null {
+  const t = (v ?? "").trim();
+  return /^\d{4}-\d{2}-\d{2}$/.test(t) ? t : null;
+}
+
+/** 转正式后运单又被改回「待入库」这种异常（正常走不到）：这时候底稿在到货通知，不能拿运单盖它 */
+const PENDING_INBOUND_HERE_MESSAGE = "那张运单现在是「待入库」，请刷新后在这里按待入库的方式改";
+
+export interface ConvertedTruth {
+  orderId: string;
+  shipmentId: string;
+  currentStatus: string;
+  /** 运单现在的样子，翻成到货通知那几项（备注不在里面：备注是到货通知自己的） */
+  fields: Omit<NoticeFields, "remark">;
+  /** 跟 fields.products 一一对应的订单产品行 id（超管改单时带回去：留着的改、没带的删、不带 id 的新加）；没有产品行时是空数组 */
+  productIds: string[];
+  /** 这票从到货通知这里改不了的原因（整柜的单要去「整柜管理」）；能改是 null */
+  blockedReason: string | null;
+}
+
+/** 读运单现在的样子（ship 是锁住 / 查到的那张父运单）。调用方在事务里调就是事务里的读法 */
+async function readConvertedTruth(tx: Tx | typeof prisma, companyId: string, ship: { id: string; orderId: string; currentStatus: string; trackingNo: string }): Promise<ConvertedTruth> {
+  const order = await tx.order.findFirst({
+    where: { id: ship.orderId, companyId },
+    select: {
+      clientId: true, warehouseId: true, itemName: true, packageCount: true, weightKg: true, volumeM3: true,
+      shipDate: true, domesticTrackingNo: true, transportMode: true, cargoType: true,
+    },
+  });
+  if (!order) throw new BusinessError("这张运单的订单不见了，请刷新后再看", 409, "VALIDATION_ERROR");
+  const rows = await tx.orderProduct.findMany({
+    where: { orderId: ship.orderId, companyId },
+    orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }, { id: "asc" }],
+  });
+  const domestic = (v: string | null | undefined) => {
+    const t = (v ?? "").trim();
+    return !t || t === BLANK_DOMESTIC_PLACEHOLDER ? null : t;
+  };
+  const products: NoticeProductValues[] = rows.length > 0
+    ? rows.map((p) => ({
+        itemName: p.itemName.trim() || null,
+        packageCount: p.packageCount > 0 ? p.packageCount : null,
+        lengthCm: p.lengthCm ?? null,
+        widthCm: p.widthCm ?? null,
+        heightCm: p.heightCm ?? null,
+        productQuantity: p.productQuantity ?? null,
+        weightKg: p.weightKg ?? null,
+        cargoType: knownCargo(p.cargoType),
+        domesticTrackingNo: domestic(p.domesticTrackingNo),
+      }))
+    // 没有产品行的老订单：按订单那几列当一款（订单上的件数 0 = 没填，同 orderValuesOf 的说法）
+    : [{
+        itemName: order.itemName.trim() || null,
+        packageCount: order.packageCount > 0 ? order.packageCount : null,
+        lengthCm: null, widthCm: null, heightCm: null, productQuantity: null, weightKg: null,
+        cargoType: knownCargo(order.cargoType),
+        domesticTrackingNo: domestic(order.domesticTrackingNo),
+      }].filter((p) => !isBlankNoticeProduct(p));
+  const siblings = await tx.shipment.findMany({ where: { orderId: ship.orderId, companyId }, select: { id: true } });
+  const fcl = await tx.shipmentContainerItem.findFirst({
+    where: { shipmentId: { in: siblings.map((s) => s.id) }, container: { isFcl: true } },
+    select: { id: true },
+  });
+  return {
+    orderId: ship.orderId,
+    shipmentId: ship.id,
+    currentStatus: ship.currentStatus,
+    fields: {
+      clientId: order.clientId.trim() ? order.clientId : null,
+      trackingNo: ship.trackingNo.trim() ? ship.trackingNo : null,
+      weightKg: num(order.weightKg),
+      volumeM3: num(order.volumeM3),
+      transportMode: order.transportMode === "sea" || order.transportMode === "land" ? order.transportMode : null,
+      warehouseId: order.warehouseId.trim() ? order.warehouseId : null,
+      arrivedAt: ymdOrNull(order.shipDate),
+      products,
+    },
+    productIds: rows.map((p) => p.id),
+    blockedReason: fcl ? FCL_EDIT_ELSEWHERE_MESSAGE : ship.currentStatus === PENDING_INBOUND ? PENDING_INBOUND_HERE_MESSAGE : null,
+  };
+}
+
+/**
+ * 已转正式运单的这一行对齐成运单现在的样子；remark 传了就顺手存（undefined = 备注不动）。
+ * 不是已转正式 / 运单已经被删了：返回 null，什么都不写。资料跟运单一样就不写（不白白改 updatedAt）。
+ * 锁序同「修改」：先这一行，再订单、运单（lockLinkedShipment）。
+ * ⚠️ 运单号、唛头**不在这里改**，照旧归 followShipmentTrackingNos / followShipmentClientIds 管（改单那两条路先调它们）：
+ *    运单号有「新号被另一条到货通知登记着就不跟」那条规矩（到货通知表同一公司运单号唯一，硬改会撞唯一约束 ——
+ *    2026-10-16 老测试 N24 当场抓到）；唛头换人要清「已通知」也在那边。卡片上的号本来就显示运单现在的（toDto，F06）。
+ */
+async function refreshConvertedNotice(companyId: string, noticeId: string, remark?: string | null): Promise<NoticeRow | null> {
+  return prisma.$transaction(async (tx) => {
+    const n = await lockNotice(tx, companyId, noticeId);
+    if (n.convertedTo !== "formal") return null;
+    const ship = await lockLinkedShipment(tx, n);
+    if (!ship) return null;
+    const truth = await readConvertedTruth(tx, companyId, ship);
+    if (truth.currentStatus === PENDING_INBOUND) return null;
+    const f: NoticeFields = { ...truth.fields, trackingNo: n.trackingNo, clientId: n.clientId, remark: remark === undefined ? n.remark : remark };
+    const now = fieldsOf(n);
+    const same = JSON.stringify(noticeData(now)) === JSON.stringify(noticeData(f)) && productsKey(now.products) === productsKey(f.products);
+    if (same) return n;
+    return tx.arrivalNotice.update({
+      where: { id: n.id },
+      data: { ...noticeData(f), products: { deleteMany: {}, create: productRowsOf(companyId, f) } },
+      include: NOTICE_INCLUDE,
+    });
+  }, { timeout: 30000, maxWait: 10000 });
+}
+
+/**
+ * 「运单管理」改完运单之后调：这几张运单转出来的到货通知（已转正式的）对齐成运单现在的样子。
+ * 跟 followShipmentTrackingNos 一样：调用方在**事务提交以后**单独调、出错只记日志（每条一个短事务，锁序同上）。
+ */
+export async function syncConvertedNoticesFromShipments(companyId: string, shipmentIds: string[]): Promise<void> {
+  if (shipmentIds.length === 0) return;
+  const notices = await prisma.arrivalNotice.findMany({
+    where: { companyId, convertedTo: "formal", shipmentId: { in: shipmentIds } },
+    select: { id: true },
+    orderBy: { id: "asc" },
+  });
+  for (const n of notices) await refreshConvertedNotice(companyId, n.id);
+}
+
 /**
  * 到货照片复制一份成运单的「产品图片」（运单详情、客户「运单查询」里看得到；客户本来就收到了这些照片）。
  * 复制文件而不是共用：运单那边删产品图会连文件一起删（orders/routes.ts DELETE product-images），共用的话到货通知这边就裂图了。
@@ -850,6 +993,8 @@ function toDto(n: NoticeRow, ship: { currentStatus: string; trackingNo?: string 
     shipmentId: shipmentGone ? null : n.shipmentId,
     shipmentStatus: shipmentGone ? null : (ship?.currentStatus ?? null),
     shipmentGone,
+    /** 已转正式运单、运单还在，而且看的人是超管：卡片上给「修改」（改的是那张运单，2026-10-16）。员工照旧只读 */
+    canEditConverted: viewerRole === "admin" && !shipmentGone && n.convertedTo === "formal" && Boolean(ship),
     convertedAt: shipmentGone ? null : (n.convertedAt?.toISOString() ?? null),
     createdByName: showWho ? n.createdByName : null,
     createdAt: n.createdAt.toISOString(),
@@ -1359,6 +1504,60 @@ export function registerArrivalNoticeRoutes(app: MinimalHttpApp): void {
     }, { timeout: 30000, maxWait: 10000 });
     removeFiles(files);
     ok(res, { item: await loadDto(auth.companyId, img.noticeId, auth.role) });
+  });
+
+  /**
+   * 已转正式运单：超管点「修改」时读运单**现在**的样子（2026-10-16，规矩见 readConvertedTruth 上面那段）。
+   * item 跟列表里的一条同一个形状，只是资料换成了运单现在的；productIds 跟 item.products 一一对应（保存时带回 /admin/orders/update）。
+   */
+  app.get("/staff/arrival-notices/converted-detail", async (req: HttpRequest, res: HttpResponse) => {
+    const auth = requireRole(req, res, ["admin"]);
+    if (!auth) return;
+    const id = idOf(req.query.id);
+    if (!id) { fail(res, 400, "BAD_REQUEST", "缺少到货通知 id"); return; }
+    const n = await prisma.arrivalNotice.findFirst({ where: { id, companyId: auth.companyId }, include: NOTICE_INCLUDE });
+    if (!n) { fail(res, 404, "NOT_FOUND", "这条到货通知不存在了（可能刚被同事删掉），请刷新"); return; }
+    const ship = n.convertedTo === "formal" && n.shipmentId
+      ? await prisma.shipment.findFirst({ where: { id: n.shipmentId, companyId: auth.companyId }, select: { id: true, orderId: true, currentStatus: true, trackingNo: true } })
+      : null;
+    if (!ship) { fail(res, 400, "BAD_REQUEST", "这条现在不是「已转正式运单」了（可能运单刚被删掉），请刷新后再改"); return; }
+    const truth = await readConvertedTruth(prisma, auth.companyId, ship);
+    const matches = await findPrealertMatches(prisma, auth.companyId, [prealertKeyOf(n)]);
+    const base = toDto(n, ship, auth.role, matches.get(n.id) ?? []);
+    const legacy = noticeLegacySummary(truth.fields.products);
+    ok(res, {
+      item: {
+        ...base,
+        ...truth.fields,
+        itemName: legacy.itemName,
+        packageCount: legacy.packageCount,
+        domesticTrackingNo: legacy.domesticTrackingNo,
+        cargoType: legacy.cargoType,
+        products: truth.fields.products,
+      },
+      orderId: truth.orderId,
+      shipmentId: truth.shipmentId,
+      productIds: truth.productIds,
+      blockedReason: truth.blockedReason,
+    });
+  });
+
+  /**
+   * 超管在到货通知里改完已转正式运单（运单那边已经由 /admin/orders/update 存好）之后调：
+   * 这一行对齐成运单现在的样子，备注照页面上的存（备注是到货通知自己的，不进运单）。
+   */
+  app.post("/staff/arrival-notices/converted-refresh", async (req: HttpRequest, res: HttpResponse) => {
+    const auth = requireRole(req, res, ["admin"]);
+    if (!auth) return;
+    const body = bodyOf(req);
+    const id = idOf(body.id);
+    if (!id) { fail(res, 400, "BAD_REQUEST", "缺少到货通知 id"); return; }
+    const remark = readText(body.remark, "备注", TEXT_LIMITS.remark);
+    if ("error" in remark) { fail(res, 400, "VALIDATION_ERROR", remark.error); return; }
+    // 没带 remark 这个键 = 备注不动（别把原来的备注清掉）；带了空串 = 清掉
+    const row = await refreshConvertedNotice(auth.companyId, id, body.remark === undefined ? undefined : remark.value);
+    if (!row) { fail(res, 400, "BAD_REQUEST", "这条现在不是「已转正式运单」了（可能运单刚被删掉），请刷新后再看"); return; }
+    ok(res, { item: await loadDto(auth.companyId, id, auth.role) });
   });
 }
 

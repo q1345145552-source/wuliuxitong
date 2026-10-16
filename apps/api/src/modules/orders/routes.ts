@@ -9,6 +9,7 @@ import { prisma } from "../../db/prisma";
 import { EXCLUDE_FCL_ORDER, FCL_EDIT_ELSEWHERE_MESSAGE } from "../core/fcl-scope";
 import { PENDING_INBOUND, PENDING_INBOUND_EDIT_ELSEWHERE_MESSAGE } from "../arrival-notices/rules";
 import { arrivalNoticeHoldingMessage, followShipmentTrackingNos, followStaleArrivalNoticeHolding, lockTrackingNoForArrivalNotice } from "../arrival-notices/follow-tracking-no";
+import { syncConvertedNoticesFromShipments } from "../arrival-notices/routes";
 import { logger } from "../core/logger";
 import { buildNewOrderRows } from "./new-order-rows";
 import { getClientIp } from "../core/rate-limit";
@@ -2119,6 +2120,9 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
        事务提交后单独一句、出错只记日志（不放进上面的事务：锁序会反，理由见 follow-tracking-no.ts） */
     await followShipmentTrackingNos(auth.companyId, [shipmentId])
       .catch((e) => logger.warn("arrival notice follow trackingNo failed", { shipmentId, error: String(e) }));
+    // 已转正式运单的到货通知：卡片对齐成运单改完的样子（2026-10-16，同 admin/orders/update）
+    await syncConvertedNoticesFromShipments(auth.companyId, [shipmentId])
+      .catch((e) => logger.warn("arrival notice sync converted failed", { shipmentId, error: String(e) }));
 
     ok(res, {
       shipmentId,

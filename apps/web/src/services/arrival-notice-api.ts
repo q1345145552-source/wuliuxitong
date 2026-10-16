@@ -84,6 +84,11 @@ export interface ArrivalNotice {
   shipmentStatus: string | null;
   /** 转过、但那张运单已经在「运单管理」里被删了（可以重新转） */
   shipmentGone: boolean;
+  /**
+   * 已转正式运单、看的人是超管：卡片上给「修改」，改的是那张运单（2026-10-16 老板「让超管在到货通知里也能改」）。
+   * 员工照旧只读。老后端不回 = undefined = 不给改
+   */
+  canEditConverted?: boolean;
   convertedAt: string | null;
   createdByName: string | null;
   createdAt: string;
@@ -117,6 +122,11 @@ export interface DraftProduct {
   domesticTrackingNo: string;
   /** 货型（F11）：新加的一款默认普货 */
   cargoType: CargoType;
+  /**
+   * 已转正式运单那种修改（2026-10-16）：这一款对应的订单产品行 id，保存时带回超管改单那条路（留着的改、没带的删、没有 id 的新加）。
+   * 普通的登记 / 修改不用它（draftToBody 不发）
+   */
+  orderProductId?: string;
 }
 
 /** 登记 / 修改时填的那几项（空串 = 没填） */
@@ -241,6 +251,25 @@ export function draftToBody(d: ArrivalNoticeDraft): ArrivalNoticeSaveBody {
  */
 export function saveArrivalNotice(id: string | null, draft: ArrivalNoticeDraft, base?: ArrivalNoticeDraft | null): Promise<{ item: ArrivalNotice }> {
   return post("/staff/arrival-notices/save", { ...(id ? { id } : {}), ...draftToBody(draft), ...(id && base ? { base: draftToBody(base) } : {}) });
+}
+
+/** 已转正式运单：超管点「修改」时读运单现在的样子（item 的资料换成了运单的；productIds 跟 item.products 一一对应） */
+export interface ConvertedNoticeDetail {
+  item: ArrivalNotice;
+  orderId: string;
+  shipmentId: string;
+  productIds: string[];
+  /** 从这里改不了的原因（整柜的单要去「整柜管理」）；能改是 null */
+  blockedReason: string | null;
+}
+
+export function fetchConvertedNoticeDetail(id: string): Promise<ConvertedNoticeDetail> {
+  return apiRequest<ConvertedNoticeDetail>(`${apiBaseUrl()}/staff/arrival-notices/converted-detail?${new URLSearchParams({ id }).toString()}`);
+}
+
+/** 运单已经改好之后调：这条到货通知对齐成运单现在的样子，备注照页面上的存 */
+export function refreshConvertedNotice(id: string, remark: string): Promise<{ item: ArrivalNotice }> {
+  return post("/staff/arrival-notices/converted-refresh", { id, remark: remark.trim() });
 }
 
 /**
