@@ -841,6 +841,20 @@
 - 回滚后再次上线，开放编辑前再次手工跑产品体检；迁移不会自动同步旧版期间改过的镜像。`mismatch` 包括镜像四项和可由产品行算出的总重量、总体积（部分行合计规则不变，纯手填无派生值的不比较）。保存、转单入口在通知行锁内核对，不一致即 `409`，两边都不写，堵住手工体检前的覆盖窗口；不自动回写，处理前要老板同意。
 - 前后端共用的纯函数：`packages/shared-types/arrival-notice-products.ts`（`noticeProductTotals` / `noticeLegacySummary` / `missingForFormalNotice` / `noticeFieldLabel` / `isBlankNoticeProduct` / `noticeProductsComplete` / `firstDomesticTrackingNo`，`MAX_NOTICE_PRODUCTS = 50`）。
 
+### 22.11 超管在到货通知里改「已转正式运单」的那条（2026-10-16）
+- 列表每条多 `canEditConverted: boolean`：看的人是超管、已转正式、运单还在 → `true`（卡片给「修改」）；员工一律 `false`。老后端不回 = 不给改。
+- `GET /staff/arrival-notices/converted-detail?id=&v=2`（**只给超管**，员工 `403`）：在一个只读快照里读运单现在的样子。**不带 `v=2` → `409`「你的页面是旧版的…请刷新」**（698ea50 那版页面不带版本核对，挡在这里它就走不到改运单那一步）。返回 `{ item, orderId, shipmentId, orderUpdatedAt, productIds, blockedReason }`：
+  - `item` 跟列表一条同形状，资料换成运单的（订单 + 运单 + 订单产品行；产品行上「货拉拉」当没填；没有产品行的老单按订单那几列当一款），备注 / 照片 / 已通知仍是到货通知自己的；
+  - `productIds` 跟 `item.products` 一一对应（订单产品行 id）；`orderUpdatedAt` 是订单现在的 updatedAt；
+  - `blockedReason`：整柜的单 = `FCL_EDIT_ELSEWHERE_MESSAGE`（去「整柜管理」改），能改是 `null`；
+  - 这条没转 / 转的是待入库 / 运单被删了 → `400`；别家公司 / 不存在 → `404`。（转正式后运单又被改回「待入库」这种异常：照常 `200`，`blockedReason` 说请刷新后按待入库的方式改。）
+- 页面保存：先重读 converted-detail 跟打开时比（只比运单那几项和产品行号）→ `POST /admin/orders/update`（同超管「运单管理」编辑：只发改过的项；产品行带 `id`；订单那一格国内单号不跟产品行改；带 `expectedOrderUpdatedAt`）→ `POST /staff/arrival-notices/converted-refresh`。
+- `POST /admin/orders/update` 多一个可选 `expectedOrderUpdatedAt`：锁住订单后核对 `updatedAt`，对不上 `409`「这票刚刚被别人改过…」什么都不改。不带 = 跟原来一样（运单管理自己的弹窗不带）。
+- `POST /staff/arrival-notices/converted-refresh`（**只给超管**）：`{ id, remark?, expectedRemark? }`。锁这一行 → 订单 → 运单，把资料对齐成运单现在的样子（一样就不写）；**运单号、唛头不动**（仍归 follow-tracking-no.ts）。`remark` 不带 = 备注不动，带了空串 = 清掉；**带了 `remark` 就必须带 `expectedRemark`**（打开时看到的；不带 = 老页面 → `409`），锁里对不上 `409`。没转 / 运单被删了 → `400`。返回 `{ item }`。
+- 运单管理改完卡片跟着变：`/admin/orders/update`、`/staff/orders/patch-shipment-bundle` 事务提交后调 `syncConvertedNoticesFromShipments`（只管已转正式的，一条一个短事务，失败记警告接着做下一条，不影响改单本身）。整柜管理改单不调（到货通知转出来的单不会是整柜）。
+- `/staff/orders/patch-shipment-bundle` 改成**只给超管**（员工端运单管理 4-01 起只能看，原来接口漏挡，员工 `403`）。
+- `POST /staff/prealerts/receive`（确认收货）：**只认客户报的、还没收货的预报单（`approvalStatus = shipped`）**，锁外锁里都核；员工建的单、到货通知转出来的单（approved）→ `400`「这张单不是客户报的待收货预报单…」（预报单页本来只列 shipped / received，原来接口漏挡，员工能拿别的单号来改资料）。
+
 ## 23. 2026-10-14 全系统审查修复（接口口径变化）
 
 清单和核实依据：`.audit/2026-10-14/full-review/核实结果.md`；修复过程 `docs/sessions/2026-10-14-full-review-fixes.md`。

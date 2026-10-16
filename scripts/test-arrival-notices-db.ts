@@ -288,7 +288,7 @@ async function main(): Promise<void> {
 
     await check("N10 运单管理两条改单路都不许改待入库的单（底稿在到货通知）", async () => {
       await refuse("POST /admin/orders/update", ADMIN, { orderId: pendingOrderId, itemName: "偷改", trackingNo: NO("P001B") }, /还是「待入库」.*到货通知/);
-      await refuse("POST /staff/orders/patch-shipment-bundle", STAFF, { shipmentId: pendingShipId, trackingNo: NO("P001B"), itemName: "偷改", productQuantity: 1, packageCount: 1, orderCreatedDate: "2026-10-06", transportMode: "sea", receiverAddressTh: "" }, /还是「待入库」.*到货通知/);
+      await refuse("POST /staff/orders/patch-shipment-bundle", ADMIN, { shipmentId: pendingShipId, trackingNo: NO("P001B"), itemName: "偷改", productQuantity: 1, packageCount: 1, orderCreatedDate: "2026-10-06", transportMode: "sea", receiverAddressTh: "" }, /还是「待入库」.*到货通知/);
       const o = await pm.order.findUnique({ where: { id: pendingOrderId } });
       assert.equal(o.itemName, "玩具");
     });
@@ -790,7 +790,7 @@ async function main(): Promise<void> {
       // 修复第 1 轮：再改回 RN1 = 撞上刚登记、还没转的那条到货通知。两条改号路都要挡、什么都不改（原来放行，那条从此转不了）
       const patchBody = { shipmentId: ship.id, itemName: "改号", productQuantity: 1, packageCount: 12, orderCreatedDate: "2026-10-06", transportMode: "sea", receiverAddressTh: "" };
       for (const [route, who, body] of [
-        ["POST /staff/orders/patch-shipment-bundle", STAFF, { ...patchBody, trackingNo: NO("RN1") }],
+        ["POST /staff/orders/patch-shipment-bundle", ADMIN, { ...patchBody, trackingNo: NO("RN1") }],
         ["POST /admin/orders/update", ADMIN, { orderId: ship.orderId, itemName: "改号", trackingNo: NO("RN1") }],
       ] as const) {
         const r = await call(route, who, body);
@@ -802,9 +802,9 @@ async function main(): Promise<void> {
       assert.equal((await pm.arrivalNotice.findUnique({ where: { id: again.id } })).trackingNo, NO("RN1"));
       // 号没变、只改别的：不因为到货通知拦（超管不带 trackingNo / 员工带着原号）
       await must("POST /admin/orders/update", ADMIN, { orderId: ship.orderId, itemName: "只改品名" });
-      await must("POST /staff/orders/patch-shipment-bundle", STAFF, { ...patchBody, trackingNo: NO("RN1X") });
+      await must("POST /staff/orders/patch-shipment-bundle", ADMIN, { ...patchBody, trackingNo: NO("RN1X") });
       // 员工改号那条路
-      await must("POST /staff/orders/patch-shipment-bundle", STAFF, { shipmentId: ship.id, trackingNo: NO("RN1Y"), itemName: "改号", productQuantity: 1, packageCount: 12, orderCreatedDate: "2026-10-06", transportMode: "sea", receiverAddressTh: "" });
+      await must("POST /staff/orders/patch-shipment-bundle", ADMIN, { shipmentId: ship.id, trackingNo: NO("RN1Y"), itemName: "改号", productQuantity: 1, packageCount: 12, orderCreatedDate: "2026-10-06", transportMode: "sea", receiverAddressTh: "" });
       assert.equal((await pm.arrivalNotice.findUnique({ where: { id: n.id } })).trackingNo, NO("RN1Y"), "员工改号：到货通知跟着改");
       // 上线前就对不上的老记录：库里还是旧号，列表按运单现在的号显示
       await pm.arrivalNotice.update({ where: { id: n.id }, data: { trackingNo: NO("RN1OLD") } });
@@ -825,7 +825,7 @@ async function main(): Promise<void> {
       (process.stderr as any).write = (c: unknown) => { logs.push(String(c)); return true; };
       (process.stdout as any).write = (c: unknown) => { logs.push(String(c)); return true; };
       try {
-        await must("POST /staff/orders/patch-shipment-bundle", STAFF, { ...patchBody, trackingNo: NO("RN1Y"), itemName: "老数据" });
+        await must("POST /staff/orders/patch-shipment-bundle", ADMIN, { ...patchBody, trackingNo: NO("RN1Y"), itemName: "老数据" });
       } finally {
         console.error = origErr; console.warn = origWarn; console.log = origLog;
         (process.stderr as any).write = origStderr; (process.stdout as any).write = origStdout;
@@ -834,7 +834,7 @@ async function main(): Promise<void> {
       assert.ok(!logs.some((l) => l.includes("prisma:error")), `跟号不许去撞唯一约束：\n${logs.join("\n")}`);
       assert.ok(logs.some((l) => l.includes("zz_an_squatter")), `跳过要点名是哪条占着：\n${logs.join("\n")}`);
       await pm.arrivalNotice.delete({ where: { id: squatter.id } });
-      await must("POST /staff/orders/patch-shipment-bundle", STAFF, { ...patchBody, trackingNo: NO("RN1Y"), itemName: "老数据" });
+      await must("POST /staff/orders/patch-shipment-bundle", ADMIN, { ...patchBody, trackingNo: NO("RN1Y"), itemName: "老数据" });
       assert.equal((await pm.arrivalNotice.findUnique({ where: { id: n.id } })).trackingNo, NO("RN1Y"), "占着的那条没了，再存一次就跟上");
     });
 
@@ -1054,7 +1054,7 @@ async function main(): Promise<void> {
         const pre = route.endsWith("-edit") ? await save(STAFF2, { clientId: CLIENT_B.userId, trackingNo: NO(`R3B${i}`) }) : null;
         const rename = () => route.startsWith("admin")
           ? call("POST /admin/orders/update", ADMIN, { orderId: ship.orderId, trackingNo: X })
-          : call("POST /staff/orders/patch-shipment-bundle", STAFF, { shipmentId: ship.id, trackingNo: X, itemName: "灯具", productQuantity: 1, packageCount: 12, orderCreatedDate: "2026-10-06", transportMode: "sea", receiverAddressTh: "" });
+          : call("POST /staff/orders/patch-shipment-bundle", ADMIN, { shipmentId: ship.id, trackingNo: X, itemName: "灯具", productQuantity: 1, packageCount: 12, orderCreatedDate: "2026-10-06", transportMode: "sea", receiverAddressTh: "" });
         const register = () => call("POST /staff/arrival-notices/save", STAFF2, { ...(pre ? { id: pre.id } : {}), clientId: CLIENT_B.userId, trackingNo: X });
         const [ren, reg] = await Promise.all([rename(), sleep(delay).then(register)]);
         const tag = `${route}@${delay}ms#${k}: 改号 ${ren.status} / 登记 ${reg.status}`;
@@ -1119,7 +1119,7 @@ async function main(): Promise<void> {
       const patchBody = { shipmentId: ship.id, itemName: "灯具", productQuantity: 1, packageCount: 12, orderCreatedDate: "2026-10-06", transportMode: "sea", receiverAddressTh: "" };
       const renameVia = (route: "admin" | "staff", no: string) => route === "admin"
         ? call("POST /admin/orders/update", ADMIN, { orderId: ship.orderId, trackingNo: no })
-        : call("POST /staff/orders/patch-shipment-bundle", STAFF, { ...patchBody, trackingNo: no });
+        : call("POST /staff/orders/patch-shipment-bundle", ADMIN, { ...patchBody, trackingNo: no });
       // ① 别家登记了、还没转：两条改号路都挡（原来放行，别家那条从此转正式 / 转待入库都报「已经被用过了」）
       const foreign = await save(OTHER_STAFF, { clientId: OTHER_CLIENT.userId, trackingNo: NO("XCO") });
       // ② 别家转出的运单已经被删了（到货通知回到「没转」、可以按这个号重转）：也挡
@@ -1137,7 +1137,7 @@ async function main(): Promise<void> {
       // ③ 别家转过、运单还在，只是库里的号是旧的（运单后来改了号）：这个旧号不挡 —— 别家那条显示的是它运单现在的号，不会再按旧号转
       const otherShip = await pm.shipment.findFirst({ where: { trackingNo: NO("XCO") } });
       await pm.arrivalNotice.create({ data: { id: "zz_an_xc_stale", companyId: CO2, clientId: OTHER_CLIENT.userId, trackingNo: NO("XCS"), convertedTo: "inbound", shipmentId: otherShip.id, createdBy: OTHER_STAFF.userId } });
-      await must("POST /staff/orders/patch-shipment-bundle", STAFF, { ...patchBody, trackingNo: NO("XCS") });
+      await must("POST /staff/orders/patch-shipment-bundle", ADMIN, { ...patchBody, trackingNo: NO("XCS") });
       assert.equal((await pm.shipment.findUnique({ where: { id: ship.id } })).trackingNo, NO("XCS"));
       await pm.arrivalNotice.deleteMany({ where: { id: { in: ["zz_an_xc_gone", "zz_an_xc_stale"] } } });
 

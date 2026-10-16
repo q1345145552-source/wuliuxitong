@@ -126,7 +126,7 @@ npm run dev:web:public
 - `GET /staff/prealerts` — 待审核预报单列表
 - `POST /staff/prealerts/approve` — 审核通过预报单（自动创建 Shipment）
 - `POST /staff/orders` — 创建正式订单
-- `POST /staff/orders/patch-shipment-bundle` — 更新运单信息
+- `POST /staff/orders/patch-shipment-bundle` — 更新运单信息（**只给超管**，2026-10-16 起；员工端运单管理只能看）
 - `POST /staff/shipments/update-status` — 推进运单状态
 - `GET /staff/loading-manifests` — 装柜列表
 - `POST /staff/loading-manifests` — 创建装柜

@@ -6,7 +6,10 @@
  * （apps/web/src/app/admin/page.tsx 的保存那段）：
  *   - 只发改过的项（没改的不发，后端就不动它，两个人改不同的项不会互相盖）；
  *   - 产品行动过就整份发，带上原来的行号 id（留着的改、没带的删、不带 id 的新加），同时发品名（第一款）、件数合计、
- *     产品数量合计（单箱数量 × 件数）；国内单号空着写「货拉拉」（同「创建订单」）；订单那一格国内单号取第一款真有的号；
+ *     产品数量合计（单箱数量 × 件数；一款都没填单箱数量、原来也没有就不发，别把老单的产品数量清成 0）；
+ *     产品行上国内单号空着写「货拉拉」（同「创建订单」）；**订单那一格国内单号不跟着产品行改**
+ *     （同运单管理：那一格只在它自己的框改了才发；原来我拿第一款的号去盖，会把超管单独填的号改掉 —— 2026-10-16 Codex / dsh 审查）；
+ *   - 带上打开时订单的 updatedAt（expectedOrderUpdatedAt），后端锁住订单后核对，期间有人改过就不存；
  *   - 总重量 / 总体积按「运单管理」那一套裁决（decideEditTotals：每行尺寸 / 单箱重都填齐 → 按产品行算；没填齐 → 以手填的为准），
  *     算出来跟运单原来的不一样、或者产品行动过，就发。到货通知弹窗平时那套「有几行能算就按产品行算」这里不用 ——
  *     不然别人在「运单管理」手填的总数，打开这里存一下就被悄悄换掉。
@@ -43,10 +46,10 @@ export interface AdminOrderPatch {
   itemName?: string;
   packageCount?: number;
   productQuantity?: number;
-  domesticTrackingNo?: string;
   weightKg?: number | null;
   volumeM3?: number | null;
   products?: AdminOrderPatchProduct[];
+  expectedOrderUpdatedAt?: string;
 }
 
 const t = (s: string | undefined | null) => (s ?? "").trim();
@@ -115,8 +118,16 @@ export function sameConvertedDraft(a: ArrivalNoticeDraft, b: ArrivalNoticeDraft)
     && productsKey(a) === productsKey(b);
 }
 
-/** 草稿 → 超管改单那条路的请求（只放改过的项）。changed=false 表示运单这边什么都没改（可能只改了备注） */
-export function buildAdminOrderPatch(shipmentId: string, base: ArrivalNoticeDraft, draft: ArrivalNoticeDraft): { patch: AdminOrderPatch; changed: boolean } {
+/** 备注改没改（备注是到货通知自己的，单独存） */
+export function remarkChanged(base: ArrivalNoticeDraft, draft: ArrivalNoticeDraft): boolean {
+  return t(base.remark) !== t(draft.remark);
+}
+
+/**
+ * 草稿 → 超管改单那条路的请求（只放改过的项）。changed=false 表示运单这边什么都没改（可能只改了备注）。
+ * expectedOrderUpdatedAt：保存前重读到的订单 updatedAt，有改动时带上，后端锁里核对。
+ */
+export function buildAdminOrderPatch(shipmentId: string, base: ArrivalNoticeDraft, draft: ArrivalNoticeDraft, expectedOrderUpdatedAt?: string): { patch: AdminOrderPatch; changed: boolean } {
   const patch: AdminOrderPatch = { orderId: shipmentId };
   if (t(draft.clientId) !== t(base.clientId)) patch.clientId = t(draft.clientId);
   if (t(draft.trackingNo) !== t(base.trackingNo)) patch.trackingNo = t(draft.trackingNo);
@@ -142,10 +153,12 @@ export function buildAdminOrderPatch(shipmentId: string, base: ArrivalNoticeDraf
     }));
     patch.itemName = t(ps[0]?.itemName);
     patch.packageCount = ps.reduce((s, p) => s + Number(t(p.packageCount)), 0);
-    // 「单箱数量」是每箱几个，合计要乘件数（同超管编辑弹窗，2026-08-28 那条）
-    patch.productQuantity = ps.reduce((s, p) => s + (Number(t(p.productQuantity)) || 0) * Number(t(p.packageCount)), 0);
-    // 订单那一格国内单号：第一款真有的号（同转运单时 orderValuesOf 的 firstDomesticTrackingNo）；都没有就清空
-    patch.domesticTrackingNo = ps.map((p) => t(p.domesticTrackingNo)).find((v) => v && v !== BLANK_DOMESTIC_PLACEHOLDER) ?? "";
+    /* 「单箱数量」是每箱几个，合计要乘件数（同超管编辑弹窗，2026-08-28 那条）。
+       一款都没填、打开时也一款都没有：不发（没有产品行的老单订单上可能有产品数量，发 0 会把它清掉 —— Codex 审查） */
+    const anyQty = (d: ArrivalNoticeDraft) => filledProducts(d).some((p) => t(p.productQuantity) !== "");
+    if (anyQty(draft) || anyQty(base)) {
+      patch.productQuantity = ps.reduce((s, p) => s + (Number(t(p.productQuantity)) || 0) * Number(t(p.packageCount)), 0);
+    }
   }
   // 总数：按「运单管理」的裁决算出最后存多少，跟运单原来的比（重量到分、体积到 0.001 方，同库里的小数位）
   const { finalWeight, finalVolume } = convertedTotals(draft);
@@ -153,5 +166,7 @@ export function buildAdminOrderPatch(shipmentId: string, base: ArrivalNoticeDraf
   const round = (v: number | null, digits: number) => (v === null ? null : Math.round(v * 10 ** digits) / 10 ** digits);
   if (productsChanged || round(finalWeight, 2) !== round(asNum(base.weightKg), 2)) patch.weightKg = finalWeight;
   if (productsChanged || round(finalVolume, 3) !== round(asNum(base.volumeM3), 3)) patch.volumeM3 = finalVolume;
-  return { patch, changed: Object.keys(patch).length > 1 };
+  const changed = Object.keys(patch).length > 1;
+  if (changed && expectedOrderUpdatedAt) patch.expectedOrderUpdatedAt = expectedOrderUpdatedAt;
+  return { patch, changed };
 }

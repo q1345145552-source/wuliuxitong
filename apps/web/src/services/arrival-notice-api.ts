@@ -258,18 +258,25 @@ export interface ConvertedNoticeDetail {
   item: ArrivalNotice;
   orderId: string;
   shipmentId: string;
+  /** 订单现在的 updatedAt：保存时带回超管改单那条路（expectedOrderUpdatedAt），锁里核对有没有人改过。老后端不回 = undefined */
+  orderUpdatedAt?: string;
   productIds: string[];
   /** 从这里改不了的原因（整柜的单要去「整柜管理」）；能改是 null */
   blockedReason: string | null;
 }
 
 export function fetchConvertedNoticeDetail(id: string): Promise<ConvertedNoticeDetail> {
-  return apiRequest<ConvertedNoticeDetail>(`${apiBaseUrl()}/staff/arrival-notices/converted-detail?${new URLSearchParams({ id }).toString()}`);
+  // v=2：后端只认带版本核对的新页面（698ea50 那版不带，会被叫去刷新）
+  return apiRequest<ConvertedNoticeDetail>(`${apiBaseUrl()}/staff/arrival-notices/converted-detail?${new URLSearchParams({ id, v: "2" }).toString()}`);
 }
 
-/** 运单已经改好之后调：这条到货通知对齐成运单现在的样子，备注照页面上的存 */
-export function refreshConvertedNotice(id: string, remark: string): Promise<{ item: ArrivalNotice }> {
-  return post("/staff/arrival-notices/converted-refresh", { id, remark: remark.trim() });
+/**
+ * 运单已经改好之后调：这条到货通知对齐成运单现在的样子。
+ * 备注**改了才带**，同时带打开时看到的那份（expectedRemark）—— 后端锁里核对，同事这期间改过备注就 409，不拿旧的盖（2026-10-16 Codex 审查）。
+ * 没改备注就都不带，后端备注不动。
+ */
+export function refreshConvertedNotice(id: string, remark?: { value: string; expected: string }): Promise<{ item: ArrivalNotice }> {
+  return post("/staff/arrival-notices/converted-refresh", remark ? { id, remark: remark.value.trim(), expectedRemark: remark.expected.trim() } : { id });
 }
 
 /**

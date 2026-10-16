@@ -558,7 +558,7 @@ async function main(): Promise<void> {
     /* ⚠️ 参数必须填到「拿掉整柜拒绝之后真能写进库」的程度（2026-09-24 复核抓到假绿）：
        上一版少了 orderCreatedDate，请求先被参数校验挡住，
        于是把整柜拒绝删掉、N5c 照样绿 —— 等于没测到这条路。 */
-    const b = await call("POST /staff/orders/patch-shipment-bundle", STAFF, {
+    const b = await call("POST /staff/orders/patch-shipment-bundle", ADMIN, {
       shipmentId: f.shipmentId, trackingNo: f.trackingNo, itemName: "被改的品名",
       packageCount: 999, productQuantity: 999, packageUnit: "box", transportMode: "sea",
       orderCreatedDate: "2026-09-01", weightKg: 1, volumeM3: 1,

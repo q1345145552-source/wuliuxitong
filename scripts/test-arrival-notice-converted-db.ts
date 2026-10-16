@@ -63,7 +63,8 @@ async function main(): Promise<void> {
     return r.data;
   }
   const listItem = async (auth: Auth, id: string) => (await must("GET /staff/arrival-notices/list", auth, {}, { tab: "all", pageSize: "200" })).items.find((x: Row) => x.id === id);
-  const detail = (id: string) => must("GET /staff/arrival-notices/converted-detail", ADMIN, {}, { id });
+  // v=2 = 新页面（698ea50 那版不带，后端叫它刷新）
+  const detail = (id: string) => must("GET /staff/arrival-notices/converted-detail", ADMIN, {}, { id, v: "2" });
 
   async function cleanup(): Promise<void> {
     const ns = await pm.arrivalNotice.findMany({ where: { companyId: CO }, select: { id: true } });
@@ -116,7 +117,7 @@ async function main(): Promise<void> {
     });
 
     await check("D2 converted-detail：只给超管（员工 403）；读的是运单现在的样子，行号跟订单产品行一一对应；没转的 400", async () => {
-      const r = await call("GET /staff/arrival-notices/converted-detail", STAFF, {}, { id: A.id });
+      const r = await call("GET /staff/arrival-notices/converted-detail", STAFF, {}, { id: A.id, v: "2" });
       assert.equal(r.status, 403);
       const d = await detail(A.id);
       const { ps, o } = await orderOf(A.shipmentId);
@@ -127,7 +128,8 @@ async function main(): Promise<void> {
       assert.equal(d.item.remark, "外箱有破损", "备注是到货通知自己的");
       assert.equal(d.blockedReason, null);
       assert.equal(d.shipmentId, A.shipmentId);
-      const bad = await call("GET /staff/arrival-notices/converted-detail", ADMIN, {}, { id: blank.id });
+      assert.equal(d.orderUpdatedAt, o.updatedAt.toISOString(), "带上订单现在的版本");
+      const bad = await call("GET /staff/arrival-notices/converted-detail", ADMIN, {}, { id: blank.id, v: "2" });
       assert.equal(bad.status, 400);
     });
 
@@ -161,10 +163,11 @@ async function main(): Promise<void> {
       const draft = { ...base, remark: "改成一款", products: [{ ...base.products[0], packageCount: "4" }] };
       const fresh = await detail(A.id);
       assert.equal(sameConvertedDraft(base, convertedDraftOf(fresh)), true);
-      const { patch, changed } = buildAdminOrderPatch(fresh.shipmentId, base, draft);
+      const { patch, changed } = buildAdminOrderPatch(fresh.shipmentId, base, draft, fresh.orderUpdatedAt);
       assert.equal(changed, true);
+      assert.equal(patch.expectedOrderUpdatedAt, fresh.orderUpdatedAt);
       await must("POST /admin/orders/update", ADMIN, patch as Row);
-      const refreshed = (await must("POST /staff/arrival-notices/converted-refresh", ADMIN, { id: A.id, remark: draft.remark })).item;
+      const refreshed = (await must("POST /staff/arrival-notices/converted-refresh", ADMIN, { id: A.id, remark: draft.remark, expectedRemark: base.remark })).item;
       const { ps, o } = await orderOf(A.shipmentId);
       assert.equal(ps.length, 1, "删掉的那款订单上也要删掉");
       assert.equal(ps[0].packageCount, 4);
@@ -184,15 +187,15 @@ async function main(): Promise<void> {
     });
 
     await check("D6 converted-refresh：员工 403；不带备注 = 备注不动；带空串 = 清掉；没转的 400；什么都没变时不白改 updatedAt", async () => {
-      assert.equal((await call("POST /staff/arrival-notices/converted-refresh", STAFF, { id: A.id, remark: "x" })).status, 403);
+      assert.equal((await call("POST /staff/arrival-notices/converted-refresh", STAFF, { id: A.id, remark: "x", expectedRemark: "外箱有破损" })).status, 403);
       const before = await pm.arrivalNotice.findFirst({ where: { id: A.id } });
       await must("POST /staff/arrival-notices/converted-refresh", ADMIN, { id: A.id });
       const after = await pm.arrivalNotice.findFirst({ where: { id: A.id } });
       assert.equal(after.remark, before.remark);
       assert.equal(after.updatedAt.getTime(), before.updatedAt.getTime(), "资料跟运单一样时不该写库");
-      await must("POST /staff/arrival-notices/converted-refresh", ADMIN, { id: A.id, remark: "" });
+      await must("POST /staff/arrival-notices/converted-refresh", ADMIN, { id: A.id, remark: "", expectedRemark: after.remark ?? "" });
       assert.equal((await pm.arrivalNotice.findFirst({ where: { id: A.id } })).remark, null);
-      assert.equal((await call("POST /staff/arrival-notices/converted-refresh", ADMIN, { id: blank.id, remark: "x" })).status, 400);
+      assert.equal((await call("POST /staff/arrival-notices/converted-refresh", ADMIN, { id: blank.id, remark: "x", expectedRemark: "还没转" })).status, 400);
     });
 
     await check("D7 已通知过、在运单管理换了唛头：卡片唛头跟着换、「已通知」清掉（G01）", async () => {
@@ -258,6 +261,148 @@ async function main(): Promise<void> {
       assert.equal((await listItem(ADMIN, E.id)).trackingNo, s.trackingNo, "卡片照旧显示运单现在的号（F06）");
     });
 
+    await check("D13 员工直接调员工页那条改单接口（patch-shipment-bundle）：403，运单和卡片都不动（员工端运单管理 4-01 起只能看）", async () => {
+      const { s, o } = await orderOf(A.shipmentId);
+      const before = await listItem(ADMIN, A.id);
+      const r = await call("POST /staff/orders/patch-shipment-bundle", STAFF, {
+        shipmentId: A.shipmentId, trackingNo: s.trackingNo, itemName: o.itemName, packageCount: o.packageCount, productQuantity: o.productQuantity,
+        packageUnit: "box", weightKg: 1, volumeM3: Number(s.volumeM3), transportMode: o.transportMode, shipDate: o.shipDate,
+        warehouseId: o.warehouseId, receiverAddressTh: "", orderCreatedDate: o.createdAt.toISOString().slice(0, 10),
+      });
+      assert.equal(r.status, 403);
+      assert.equal(Number((await orderOf(A.shipmentId)).o.weightKg), Number(o.weightKg), "员工改不动运单");
+      assert.equal((await listItem(ADMIN, A.id)).weightKg, before.weightKg);
+    });
+
+    await check("D14 打开以后同事在运单管理存过（订单版本对不上）：超管改单那条路锁里核对，409 什么都不改；版本对得上照常存", async () => {
+      const d = await detail(A.id);
+      await must("POST /admin/orders/update", ADMIN, { orderId: A.shipmentId, weightKg: 70 }); // 同事先存了一次
+      const stale = await call("POST /admin/orders/update", ADMIN, { orderId: A.shipmentId, weightKg: 71, expectedOrderUpdatedAt: d.orderUpdatedAt });
+      assert.equal(stale.status, 409, stale.message);
+      assert.match(stale.message, /刚刚被别人改过/);
+      assert.equal(Number((await orderOf(A.shipmentId)).o.weightKg), 70);
+      const fresh = await detail(A.id);
+      await must("POST /admin/orders/update", ADMIN, { orderId: A.shipmentId, weightKg: 72, expectedOrderUpdatedAt: fresh.orderUpdatedAt });
+      assert.equal(Number((await orderOf(A.shipmentId)).o.weightKg), 72);
+    });
+
+    await check("D15 备注：同事这期间改过备注，带着旧的 expectedRemark 来存 → 409 不改；对得上照常存", async () => {
+      await must("POST /staff/arrival-notices/converted-refresh", ADMIN, { id: A.id, remark: "同事写的", expectedRemark: "" });
+      const r = await call("POST /staff/arrival-notices/converted-refresh", ADMIN, { id: A.id, remark: "我写的", expectedRemark: "" });
+      assert.equal(r.status, 409, r.message);
+      assert.equal((await pm.arrivalNotice.findFirst({ where: { id: A.id } })).remark, "同事写的");
+      await must("POST /staff/arrival-notices/converted-refresh", ADMIN, { id: A.id, remark: "我写的", expectedRemark: "同事写的" });
+      assert.equal((await pm.arrivalNotice.findFirst({ where: { id: A.id } })).remark, "我写的");
+    });
+
+    await check("D16 运单上单独填过的国内单号：在到货通知里只改产品品名，订单 / 运单那一格不被产品行的号盖掉（同运单管理）", async () => {
+      await must("POST /admin/orders/update", ADMIN, { orderId: A.shipmentId, domesticTrackingNo: "MANUAL-TOP" });
+      const before = await orderOf(A.shipmentId);
+      assert.equal(before.o.domesticTrackingNo, "MANUAL-TOP");
+      const d = await detail(A.id);
+      const base = convertedDraftOf(d);
+      const draft = { ...base, products: base.products.map((p, i) => (i === 0 ? { ...p, itemName: "冰敷袋（新）" } : p)) };
+      const { patch } = buildAdminOrderPatch(d.shipmentId, base, draft, d.orderUpdatedAt);
+      await must("POST /admin/orders/update", ADMIN, patch as Row);
+      const after = await orderOf(A.shipmentId);
+      assert.equal(after.o.domesticTrackingNo, "MANUAL-TOP");
+      const parent = await pm.shipment.findFirst({ where: { id: A.shipmentId }, select: { domesticTrackingNo: true } });
+      assert.equal(parent.domesticTrackingNo, "MANUAL-TOP", "父运单那一格也不许被盖");
+      assert.equal(after.ps[0].itemName, "冰敷袋（新）");
+    });
+
+    await check("D17 到货通知转出来的单不能「确认收货」（员工、超管都不行，资料不动；客户报的预报单照常能收，老测试测着）", async () => {
+      const { o } = await orderOf(A.shipmentId);
+      for (const who of [STAFF, ADMIN]) {
+        const r = await call("POST /staff/prealerts/receive", who, { orderId: o.id, packageCount: 1, weightKg: 1, volumeM3: 0.01 });
+        assert.equal(r.status, 400, `${who.role}：${r.status} ${r.message}`);
+        assert.match(r.message, /不是客户报的待收货预报单/);
+      }
+      assert.equal((await orderOf(A.shipmentId)).o.packageCount, o.packageCount, "被拦下还改了资料");
+      assert.equal((await pm.order.findFirst({ where: { id: o.id } })).approvalStatus, "approved");
+    });
+
+    await check("D18 老页面（698ea50 那版）：读运单不带 v=2 → 409 叫它刷新；带了备注不带 expectedRemark → 409，备注不动", async () => {
+      const r = await call("GET /staff/arrival-notices/converted-detail", ADMIN, {}, { id: A.id });
+      assert.equal(r.status, 409);
+      assert.match(r.message, /页面是旧版的/);
+      const before = (await pm.arrivalNotice.findFirst({ where: { id: A.id } })).remark;
+      const r2 = await call("POST /staff/arrival-notices/converted-refresh", ADMIN, { id: A.id, remark: "老页面写的" });
+      assert.equal(r2.status, 409);
+      assert.equal((await pm.arrivalNotice.findFirst({ where: { id: A.id } })).remark, before);
+    });
+
+    /** 另开一个事务先把行锁住、改掉、挂着不提交，等 release 被调用才提交 —— 用来制造「请求已经出发、正在等锁」的交错 */
+    async function holdLockAndChange(lockSql: (tx: any) => Promise<unknown>, change: (tx: any) => Promise<unknown>) {
+      let release!: () => void; let locked!: () => void;
+      const gate = new Promise<void>((r) => { release = r; });
+      const lockedP = new Promise<void>((r) => { locked = r; });
+      const done = prisma.$transaction(async (tx: any) => { await lockSql(tx); await change(tx); locked(); await gate; }, { timeout: 30000 });
+      await lockedP;
+      return { release, done };
+    }
+    /** 现在有几个连接卡在锁上（同 test-review-1014-db.ts）：确认被测请求真的已经在等那把锁，再放锁 / 改数（Codex / dsh 第 3 轮：固定睡 400 毫秒在慢机器上会假绿） */
+    async function lockWaiters(): Promise<number> {
+      const r = await pm.$queryRaw`SELECT count(*)::int AS n FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock'`;
+      return r[0].n;
+    }
+    async function waitForLockWaiters(n: number): Promise<void> {
+      for (let i = 0; i < 400; i++) { if ((await lockWaiters()) >= n) return; await new Promise((r) => setTimeout(r, 25)); }
+      throw new Error(`等了 10 秒也没等到 ${n} 个请求卡在锁上`);
+    }
+
+    await check("D19 版本核对在锁之后：同事那次改单锁着订单还没提交时我就出发了 → 等他提交后我锁里重读，409，留下的是同事的", async () => {
+      const d = await detail(A.id);
+      const { o } = await orderOf(A.shipmentId);
+      const h = await holdLockAndChange(
+        (tx: any) => tx.$queryRaw`SELECT id FROM orders WHERE id = ${o.id} FOR NO KEY UPDATE`,
+        (tx: any) => tx.order.update({ where: { id: o.id }, data: { weightKg: 81 } }),
+      );
+      let mine: Promise<{ status: number; data: any; message: string }>;
+      try {
+        mine = call("POST /admin/orders/update", ADMIN, { orderId: A.shipmentId, weightKg: 82, expectedOrderUpdatedAt: d.orderUpdatedAt });
+        await waitForLockWaiters(1); // 我这次已经卡在订单锁上
+      } finally { h.release(); await h.done; }
+      const r = await mine!;
+      assert.equal(r.status, 409, `${r.status} ${r.message}`);
+      assert.match(r.message, /刚刚被别人改过/);
+      assert.equal(Number((await orderOf(A.shipmentId)).o.weightKg), 81);
+    });
+
+    await check("D20 备注核对在锁之后：同事锁着这一行改备注还没提交时我就出发了 → 他提交后我锁里核对，409，留下同事的备注", async () => {
+      const cur = (await pm.arrivalNotice.findFirst({ where: { id: A.id } })).remark ?? "";
+      const h = await holdLockAndChange(
+        (tx: any) => tx.$queryRaw`SELECT id FROM arrival_notices WHERE id = ${A.id} FOR UPDATE`,
+        (tx: any) => tx.arrivalNotice.update({ where: { id: A.id }, data: { remark: "同事锁着写的" } }),
+      );
+      let mine: Promise<{ status: number; data: any; message: string }>;
+      try {
+        mine = call("POST /staff/arrival-notices/converted-refresh", ADMIN, { id: A.id, remark: "我写的2", expectedRemark: cur });
+        await waitForLockWaiters(1); // 已经卡在这一行的锁上
+      } finally { h.release(); await h.done; }
+      const r = await mine!;
+      assert.equal(r.status, 409, `${r.status} ${r.message}`);
+      assert.match(r.message, /备注刚刚被别人改过/);
+      assert.equal((await pm.arrivalNotice.findFirst({ where: { id: A.id } })).remark, "同事锁着写的");
+    });
+
+    await check("D21 后到的旧同步不盖新的：同步先在等这一行的锁，这期间运单又被改了 → 它拿到锁才读运单，写进去的是最新的", async () => {
+      const { s } = await orderOf(A.shipmentId);
+      await pm.orderProduct.updateMany({ where: { orderId: s.orderId }, data: { packageCount: 7 } });
+      const h = await holdLockAndChange(
+        (tx: any) => tx.$queryRaw`SELECT id FROM arrival_notices WHERE id = ${A.id} FOR UPDATE`,
+        async () => undefined,
+      );
+      let late: Promise<void>;
+      try {
+        late = arrival.syncConvertedNoticesFromShipments(CO, [A.shipmentId]); // 读到的若是锁前的运单，就是 7
+        await waitForLockWaiters(1); // 同步已经卡在这一行的锁上
+        await pm.orderProduct.updateMany({ where: { orderId: s.orderId }, data: { packageCount: 9 } });
+      } finally { h.release(); await h.done; }
+      await late!;
+      assert.deepEqual((await listItem(ADMIN, A.id)).products.map((p: Row) => p.packageCount), [9]);
+    });
+
     await check("D11 运单被删了：卡片不再给超管「能改」，converted-detail 400（当作没转、可以重转）", async () => {
       const C = await makeConverted("ZZCV0003");
       const { s } = await orderOf(C.shipmentId);
@@ -271,7 +416,7 @@ async function main(): Promise<void> {
       const it = await listItem(ADMIN, C.id);
       assert.equal(it.shipmentGone, true);
       assert.equal(it.canEditConverted, false);
-      assert.equal((await call("GET /staff/arrival-notices/converted-detail", ADMIN, {}, { id: C.id })).status, 400);
+      assert.equal((await call("GET /staff/arrival-notices/converted-detail", ADMIN, {}, { id: C.id, v: "2" })).status, 400);
     });
   } finally {
     await cleanup();

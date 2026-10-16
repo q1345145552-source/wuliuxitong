@@ -1343,6 +1343,8 @@ export async function fetchAdminOrders(): Promise<AdminOrderItem[]> {
 export async function updateAdminOrder(payload: {
   orderId: string;
   // 除 orderId 外全部可选：只传本次改动过的项，没传的后端不会去动
+  /** 到货通知里改已转正式运单时带（2026-10-16）：打开时订单的 updatedAt，后端锁里核对，对不上 409 */
+  expectedOrderUpdatedAt?: string;
   clientId?: string;
   itemName?: string;
   cargoType?: string;

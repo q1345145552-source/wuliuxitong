@@ -42,7 +42,7 @@ import {
   type ConvertedNoticeDetail,
   type PrealertMatch,
 } from "../../services/arrival-notice-api";
-import { buildAdminOrderPatch, convertedDraftIssue, convertedTotals, sameConvertedDraft } from "./converted-edit";
+import { buildAdminOrderPatch, convertedDraftIssue, convertedTotals, remarkChanged, sameConvertedDraft } from "./converted-edit";
 import { cargoTypeOf, convertedDraftOf, draftOf, emptyProduct } from "./draft";
 import { buildArrivalNoticeText } from "./notice-text";
 import { missingForFormal } from "./missing";
@@ -208,12 +208,16 @@ export default function ArrivalNoticesView() {
   useLayoutEffect(() => { loadRef.current = load; }, [load]);
   const reloadLatest = useCallback(() => loadRef.current(true), []);
 
+  /* 打开弹窗只认最后一次（2026-10-16 Codex 审查）：已转正式运单要先读一次运单再开，连着点 A、B 两条的「修改」时，
+     A 慢回来不能把 B 的弹窗换成 A（员工以为在改 B、其实存到 A）。任何一次打开 / 关闭都作废还在路上的那次 */
+  const openGate = useRef(createRequestGate());
   const openEditor = (e: { mode: "new" } | { mode: "edit"; item: ArrivalNotice } | { mode: "converted"; item: ArrivalNotice; detail: ConvertedNoticeDetail }) => {
+    openGate.current.cancel();
     editorSeq.current += 1;
     setEditor({ ...e, seq: editorSeq.current });
   };
   /** 只关 seq 这一个弹窗；已经换成别的弹窗了就不动（F05） */
-  const closeEditor = (seq: number) => setEditor((cur) => (cur && cur.seq === seq ? null : cur));
+  const closeEditor = (seq: number) => { openGate.current.cancel(); setEditor((cur) => (cur && cur.seq === seq ? null : cur)); };
 
   useLiveRefresh({
     topics: ["shipping"],
@@ -238,10 +242,20 @@ export default function ArrivalNoticesView() {
 
   /* 已转正式运单（超管）：先读运单现在的样子再开弹窗 —— 卡片上的可能是老的（运单管理刚改过还没刷到），
      拿老的开弹窗再存，会把别人刚改的盖回去 */
-  const onEditConverted = (n: ArrivalNotice) => run(n.id, async () => {
-    const detail = await fetchConvertedNoticeDetail(n.id);
-    openEditor({ mode: "converted", item: detail.item, detail });
-  });
+  const onEditConverted = (n: ArrivalNotice) => {
+    const ticket = openGate.current.begin();
+    return run(n.id, async () => {
+      let detail: ConvertedNoticeDetail;
+      try {
+        detail = await fetchConvertedNoticeDetail(n.id);
+      } catch (e) {
+        if (!openGate.current.isCurrent(ticket)) return; // 作废了的那次失败也不报（不把 A 的错报在 B 的弹窗上，Codex 第 2 轮）
+        throw e;
+      }
+      if (!openGate.current.isCurrent(ticket)) return; // 这期间又点了别的 / 开了别的弹窗：这次作废
+      openEditor({ mode: "converted", item: detail.item, detail });
+    });
+  };
 
   const onCopyText = async (n: ArrivalNotice) => {
     const okCopy = await copyText(noticeText(n));
@@ -665,7 +679,12 @@ function NoticeEditor(props: {
       if (!sameConvertedDraft(base, convertedDraftOf(fresh))) {
         throw new Error("这票刚刚被别人改过（超管端「运单管理」或别的超管），你这次没有保存。请点「取消」关掉，重新点「修改」看最新的再改");
       }
-      const { patch, changed } = buildAdminOrderPatch(fresh.shipmentId, base, draft);
+      // 自己改了备注、同事这期间也改了备注：不存（没改备注就不管别人改没改）
+      if (remarkChanged(base, draft) && (fresh.item.remark ?? "").trim() !== base.remark.trim()) {
+        throw new Error("这条的备注刚刚被别人改过，你这次没有保存。请点「取消」关掉，重新点「修改」看最新的再改");
+      }
+      // 带上刚重读到的订单版本：后端锁住订单后再核一遍（这里重读到发请求之间还有空档）
+      const { patch, changed } = buildAdminOrderPatch(fresh.shipmentId, base, draft, fresh.orderUpdatedAt);
       if (changed) await updateAdminOrder(patch);
     } catch (e) {
       setError(e instanceof Error ? e.message : "没保存上");
@@ -676,7 +695,7 @@ function NoticeEditor(props: {
     }
     let message = "已保存，那张运单也改好了";
     try {
-      const { item } = await refreshConvertedNotice(detail.item.id, draft.remark);
+      const { item } = await refreshConvertedNotice(detail.item.id, remarkChanged(base, draft) ? { value: draft.remark, expected: base.remark } : undefined);
       // G01：换了唛头，原来那次「已通知」通知的是旧客户 —— 按接口真回来的说
       if (clientChangedAfterNotify && !item.notifiedAt) message += `。${CLIENT_CHANGED_NOTE}`;
     } catch (e) {

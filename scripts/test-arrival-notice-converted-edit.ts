@@ -34,7 +34,7 @@ function makeDetail(over: Record<string, unknown> = {}, products: any[] = [P1, P
       images: [{ id: "img1", fileName: "a.jpg", imageUrl: "/images/a.jpg", thumbUrl: "/images/a.jpg" }], prealertMatches: [],
       ...over,
     },
-    orderId: "o1", shipmentId: "ship1", productIds, blockedReason,
+    orderId: "o1", shipmentId: "ship1", orderUpdatedAt: "2026-10-16T09:51:50.000Z", productIds, blockedReason,
   } as any;
 }
 
@@ -64,10 +64,15 @@ const fakeReact = {
 let calls: string[] = [];
 let freshDetail: any = null;
 let patches: any[] = [];
-let refreshRemarks: string[] = [];
+let refreshRemarks: Array<string | null> = [];
+let refreshExpected: Array<string | null> = [];
 let refreshFail = false;
 let refreshNotifiedAt: string | null = null;
 let updateFail: string | null = null;
+/** 整页测试（G*）：按到货通知 id 挂起的详情请求，测试自己决定先回哪个 */
+const pendingDetails = new Map<string, { resolve: (v: any) => void; reject: (e: unknown) => void }>();
+let deferDetails = false;
+let listItems: any[] = [];
 const runtime = { jsx: (type: any, p: any, key: any) => ({ type, props: p, key }), jsxs: (type: any, p: any, key: any) => ({ type, props: p, key }) };
 const file = path.resolve("apps/web/src/modules/arrival-notice/ArrivalNoticesView.tsx");
 const realRequire = createRequire(file);
@@ -82,18 +87,24 @@ new Function("exports", "require", "module", out)(mod.exports, (id: string) => {
   if (id === "../../services/arrival-notice-api") {
     return {
       ...real,
-      fetchConvertedNoticeDetail: async () => { calls.push("fetch"); return freshDetail; },
-      refreshConvertedNotice: async (_id: string, remark: string) => {
-        calls.push("refresh"); refreshRemarks.push(remark);
+      fetchConvertedNoticeDetail: async (id: string) => {
+        calls.push("fetch");
+        if (deferDetails) return new Promise((resolve, reject) => pendingDetails.set(id, { resolve, reject }));
+        return freshDetail;
+      },
+      fetchArrivalNotices: async () => ({ items: listItems, total: listItems.length, page: 1, pageSize: 30, counts: { todo: 0, notified: 0, inbound: 0, formal: listItems.length, all: listItems.length } }),
+      refreshConvertedNotice: async (_id: string, remark?: { value: string; expected: string }) => {
+        calls.push("refresh"); refreshRemarks.push(remark ? remark.value : null); refreshExpected.push(remark ? remark.expected : null);
         if (refreshFail) throw new Error("网断了");
-        return { item: { ...freshDetail.item, remark, notifiedAt: refreshNotifiedAt } };
+        return { item: { ...freshDetail.item, remark: remark ? remark.value : freshDetail.item.remark, notifiedAt: refreshNotifiedAt } };
       },
       saveArrivalNotice: async () => { calls.push("save-notice"); throw new Error("已转正式运单不该走到货通知自己的保存"); },
     };
   }
   if (id === "../../services/business-api") {
-    return { ...real, updateAdminOrder: async (patch: any) => { calls.push("update"); patches.push(patch); if (updateFail) throw new Error(updateFail); return { orderId: "o1" }; } };
+    return { ...real, fetchStaffClients: async () => [], updateAdminOrder: async (patch: any) => { calls.push("update"); patches.push(patch); if (updateFail) throw new Error(updateFail); return { orderId: "o1" }; } };
   }
+  if (id === "../realtime/useRealtime") return { useLiveRefresh() {} };
   return real;
 }, mod);
 
@@ -124,7 +135,7 @@ function field(label: string, root = tree): any {
 function change(label: string, value: string, root = tree) { field(label, root).props.onChange({ target: { value } }); flush(); }
 function button(label: string): any { return nodes((n) => n.type === "button" && text(n) === label)[0]; }
 function mountConverted(detail: any, fresh: any = detail) {
-  hooks = []; effects = []; calls = []; patches = []; refreshRemarks = []; refreshFail = false; refreshNotifiedAt = null; updateFail = null; savedMessage = null;
+  hooks = []; effects = []; calls = []; patches = []; refreshRemarks = []; refreshExpected = []; refreshFail = false; refreshNotifiedAt = null; updateFail = null; savedMessage = null;
   freshDetail = fresh;
   props = {
     editor: { mode: "converted", item: detail.item, detail, seq: 1 },
@@ -140,6 +151,25 @@ async function save() {
   await new Promise<void>((r) => setImmediate(r)); flush();
 }
 const errorText = () => text(nodes((n) => n.props?.role === "alert"));
+
+/* 整页（ArrivalNoticesView）跑起来：卡片、弹窗都是元素（不往下渲染），从元素的 props 里拿 onEdit、看开的是哪个弹窗 */
+let viewTree: any;
+function renderView() {
+  for (let n = 0; n < 30; n++) {
+    index = 0; dirty = false; viewTree = mod.exports.default({});
+    const queue = effects; effects = []; queue.forEach((fn) => fn());
+    if (!dirty) return;
+  }
+  throw new Error("整页无限重画");
+}
+const settle = async () => { for (let i = 0; i < 5; i++) { await new Promise<void>((r) => setImmediate(r)); renderView(); } };
+const cards = () => nodes((n) => n.type === mod.exports.NoticeCard, viewTree);
+const openedEditor = () => nodes((n) => n.type === mod.exports.NoticeEditor, viewTree)[0]?.props.editor ?? null;
+const errorToasts = () => nodes((n) => n.props?.tone === "error" && n.props?.open, viewTree).map((n) => n.props.message);
+async function mountView(items: any[]) {
+  hooks = []; effects = []; calls = []; pendingDetails.clear(); deferDetails = true; listItems = items;
+  renderView(); await settle();
+}
 
 async function main(): Promise<void> {
   console.log("超管改已转正式运单（不连库）");
@@ -160,7 +190,7 @@ async function main(): Promise<void> {
     assert.deepEqual(patch, { orderId: "ship1", warehouseId: "wh_guangzhou_01", shipDate: "2026-10-15" });
   });
 
-  await check("F3 改了一款的件数：产品整份发、带原来的行号；件数合计、品名、国内单号（第一款真有的）、总数（按产品行算）一起发", () => {
+  await check("F3 改了一款的件数：产品整份发、带原来的行号；件数合计、品名、总数（按产品行算）一起发；订单那一格国内单号不发", () => {
     const base = convertedDraftOf(makeDetail());
     const draft = { ...base, products: base.products.map((p, i) => (i === 1 ? { ...p, packageCount: "3" } : p)) };
     const { patch } = buildAdminOrderPatch("ship1", base, draft);
@@ -169,7 +199,7 @@ async function main(): Promise<void> {
     assert.equal(patch.products![1].domesticTrackingNo, "货拉拉", "空着的国内单号写「货拉拉」（同创建订单 / 运单管理）");
     assert.equal(patch.packageCount, 5);
     assert.equal(patch.itemName, "冰敷袋");
-    assert.equal(patch.domesticTrackingNo, "S665");
+    assert.equal((patch as any).domesticTrackingNo, undefined, "订单那一格国内单号不跟着产品行改（同运单管理；不然会把超管单独填的号盖掉）");
     assert.equal(patch.weightKg, 2 * 13 + 3 * 7);
     assert.ok(Math.abs((patch.volumeM3 as number) - (2 * 42 * 42 * 41 + 3 * 38 * 37.5 * 38) / 1e6) < 1e-9);
     assert.equal(patch.clientId, undefined); assert.equal(patch.trackingNo, undefined);
@@ -214,6 +244,25 @@ async function main(): Promise<void> {
     assert.equal(sameConvertedDraft(a, convertedDraftOf(makeDetail({}, [P1, P2], ["op1", "op9"]))), false, "产品行被换过（行号变了）也算改过");
   });
 
+  await check("F8 产品数量：一款都没填单箱数量、打开时也没有 → 不发（老单订单上的产品数量不清零）；原来有、清空了 → 发 0；填了 → 发合计", () => {
+    const base = convertedDraftOf(makeDetail());
+    const draft = { ...base, products: base.products.map((p, i) => (i === 0 ? { ...p, itemName: "改名" } : p)) };
+    assert.equal(buildAdminOrderPatch("ship1", base, draft).patch.productQuantity, undefined);
+    const withQty = convertedDraftOf(makeDetail({}, [{ ...P1, productQuantity: 10 }, { ...P2, productQuantity: 4 }]));
+    const cleared = { ...withQty, products: withQty.products.map((p) => ({ ...p, productQuantity: "" })) };
+    assert.equal(buildAdminOrderPatch("ship1", withQty, cleared).patch.productQuantity, 0);
+    const filled = { ...base, products: base.products.map((p) => ({ ...p, productQuantity: "3" })) };
+    assert.equal(buildAdminOrderPatch("ship1", base, filled).patch.productQuantity, 3 * 2 + 3 * 1);
+  });
+
+  await check("F9 带上订单版本（expectedOrderUpdatedAt）：有改动才带；只改备注不碰运单、也不带", () => {
+    const base = convertedDraftOf(makeDetail());
+    assert.equal(buildAdminOrderPatch("ship1", base, { ...base, warehouseId: "wh_guangzhou_01" }, "V1").patch.expectedOrderUpdatedAt, "V1");
+    const only = buildAdminOrderPatch("ship1", base, { ...base, remark: "x" }, "V1");
+    assert.equal(only.changed, false);
+    assert.equal(only.patch.expectedOrderUpdatedAt, undefined);
+  });
+
   /* ───────────── 二、弹窗 ───────────── */
   await check("B1 打开：写明改的是运单；照片只读（没有删除 / 加照片）；总数框不只读、没有「按产品行算的」", () => {
     mountConverted(makeDetail());
@@ -237,6 +286,9 @@ async function main(): Promise<void> {
     assert.deepEqual(patches[0].products.map((p: any) => [p.id, p.packageCount]), [["op1", 2], ["op2", 3]]);
     assert.equal(patches[0].orderId, "ship1");
     assert.deepEqual(refreshRemarks, ["改成 3 箱"]);
+    assert.deepEqual(refreshExpected, ["内部备注"], "改了备注要带上打开时看到的那份，后端锁里核对");
+    assert.equal(patches[0].expectedOrderUpdatedAt, "2026-10-16T09:51:50.000Z", "带上重读到的订单版本");
+    assert.equal(patches[0].domesticTrackingNo, undefined);
     assert.match(savedMessage ?? "", /^已保存，那张运单也改好了/);
   });
 
@@ -255,6 +307,34 @@ async function main(): Promise<void> {
     await save();
     assert.deepEqual(calls, ["fetch", "refresh"]);
     assert.deepEqual(refreshRemarks, ["新备注"]);
+    assert.deepEqual(refreshExpected, ["内部备注"]);
+  });
+
+  await check("B10 没改备注：刷新卡片时不带备注（后端备注不动 —— 不拿自己手上那份旧备注去盖别人刚改的）", async () => {
+    mountConverted(makeDetail());
+    change("总重量", "33"); // 等于没改
+    const second = nodes((n) => n.props?.className === "an-prod")[1];
+    change("件数", "2", second);
+    await save();
+    assert.deepEqual(calls, ["fetch", "update", "refresh"]);
+    assert.deepEqual(refreshRemarks, [null]);
+  });
+
+  await check("B11 自己改了备注、同事这期间也改了备注：不存（运单也不改），叫他重开", async () => {
+    mountConverted(makeDetail(), makeDetail({ remark: "同事刚写的" }));
+    change("备注", "我写的");
+    await save();
+    assert.deepEqual(calls, ["fetch"]);
+    assert.match(errorText(), /备注刚刚被别人改过/);
+  });
+
+  await check("B12 同事改了备注、我没碰备注只改件数：照常存运单，刷新卡片不带备注（同事的备注留着）", async () => {
+    mountConverted(makeDetail(), makeDetail({ remark: "同事刚写的" }));
+    const second = nodes((n) => n.props?.className === "an-prod")[1];
+    change("件数", "2", second);
+    await save();
+    assert.deepEqual(calls, ["fetch", "update", "refresh"]);
+    assert.deepEqual(refreshRemarks, [null]);
   });
 
   await check("B5 整柜的单（blockedReason）：一打开就说去「整柜管理」，保存按钮是灰的", () => {
@@ -314,12 +394,80 @@ async function main(): Promise<void> {
     assert.equal(hasEdit({ ...base, canEditConverted: false }), false);
     assert.equal(hasEdit({ ...base, canEditConverted: undefined }), false, "老后端不回这个字段 = 不给改");
     assert.equal(hasEdit({ ...base, convertedTo: null, shipmentId: null, canEditConverted: false }), true);
+    // 按钮真接着 onEdit（不光是父组件传了，Codex 第 3 轮）
+    let clicked = 0;
+    hooks = []; index = 0;
+    const t = mod.exports.NoticeCard({ n: { ...base, canEditConverted: true }, busy: false, busyIds: new Set(), onCopyText() {}, onCopyImage() {}, onSaveImage() {}, onPreview() {}, onToggleNotified() {}, onEdit() { clicked += 1; }, onConvert() {}, onDelete() {} });
+    nodes((x) => x.type === "button" && text(x) === "修改", t)[0].props.onClick();
+    assert.equal(clicked, 1, "卡片上的「修改」按钮没接到 onEdit");
   });
 
-  await check("C2 列表点「修改」：已转正式的先读运单现在的样子再开弹窗（onEditConverted），没转的照旧", () => {
+  await check("C2 列表点「修改」：已转正式的先读运单现在的样子再开弹窗（onEditConverted，只认最后一次），没转的照旧", () => {
     const src = fs.readFileSync(file, "utf8");
     assert.match(src, /onEdit=\{\(\) => \(n\.convertedTo === "formal" \? void onEditConverted\(n\) : openEditor\(\{ mode: "edit", item: n \}\)\)\}/);
-    assert.match(src, /const detail = await fetchConvertedNoticeDetail\(n\.id\);\s*openEditor\(\{ mode: "converted", item: detail\.item, detail \}\);/);
+    assert.match(src, /const ticket = openGate\.current\.begin\(\);[\s\S]{0,200}detail = await fetchConvertedNoticeDetail\(n\.id\);[\s\S]{0,200}if \(!openGate\.current\.isCurrent\(ticket\)\) return;[^\n]*\n\s*throw e;[\s\S]{0,80}if \(!openGate\.current\.isCurrent\(ticket\)\) return;[^\n]*\n\s*openEditor\(\{ mode: "converted", item: detail\.item, detail \}\);/, "连点两条：只认最后一次（成功、失败都看门闩）");
+    assert.match(src, /const openEditor = [^\n]*\n\s*openGate\.current\.cancel\(\);/, "开别的弹窗要作废还在路上的那次");
+    assert.match(src, /const closeEditor = \(seq: number\) => \{ openGate\.current\.cancel\(\);/, "关弹窗也作废");
+  });
+
+  /* ───────────── 四、整页：连点两条「修改」 ───────────── */
+  const A = { ...makeDetail().item, id: "nA", clientId: "ZZA01" };
+  const B = { ...makeDetail().item, id: "nB", clientId: "ZZB02" };
+  const detailOf = (item: any) => ({ ...makeDetail(), item });
+  const clickEdit = (id: string) => cards().find((c) => c.props.n.id === id)!.props.onEdit();
+
+  await check("G1 先点 A 再点 B，B 先回来：开的是 B；A 晚回来也不把弹窗换成 A", async () => {
+    await mountView([A, B]);
+    assert.equal(cards().length, 2, "列表没出来");
+    clickEdit("nA"); clickEdit("nB"); await settle();
+    pendingDetails.get("nB")!.resolve(detailOf(B)); await settle();
+    assert.equal(openedEditor()?.item.id, "nB");
+    pendingDetails.get("nA")!.resolve(detailOf(A)); await settle();
+    assert.equal(openedEditor()?.item.id, "nB", "A 晚回来把弹窗换成了 A");
+  });
+
+  await check("G2 先点 A 再点 B：B 开着，A 晚回来是失败 —— 不在页面上报 A 的错", async () => {
+    await mountView([A, B]);
+    clickEdit("nA"); clickEdit("nB"); await settle();
+    pendingDetails.get("nB")!.resolve(detailOf(B)); await settle();
+    pendingDetails.get("nA")!.reject(new Error("A 那条的错")); await settle();
+    assert.equal(openedEditor()?.item.id, "nB");
+    assert.deepEqual(errorToasts(), []);
+  });
+
+  await check("G3 点了 A（还在读）就去点「登记到货」：A 回来不把新登记的弹窗换掉；只点 A 时照常打开 A、失败照常报", async () => {
+    await mountView([A, B]);
+    clickEdit("nA"); await settle();
+    nodes((n) => n.type === "button" && text(n) === "＋ 登记到货", viewTree)[0].props.onClick(); await settle();
+    pendingDetails.get("nA")!.resolve(detailOf(A)); await settle();
+    assert.equal(openedEditor()?.mode, "new");
+    await mountView([A, B]);
+    clickEdit("nA"); await settle();
+    pendingDetails.get("nA")!.resolve(detailOf(A)); await settle();
+    assert.equal(openedEditor()?.item.id, "nA");
+    await mountView([A, B]);
+    clickEdit("nB"); await settle();
+    pendingDetails.get("nB")!.reject(new Error("网断了")); await settle();
+    assert.deepEqual(errorToasts(), ["网断了"]);
+  });
+
+  /* ───────────── 五、页面真正发请求的那两个函数（参数名写错的话后端核对等于没有） ───────────── */
+  await check("S1 读运单带 v=2（后端只认新页面）；存备注带 remark + expectedRemark，没改备注只带 id", async () => {
+    const api = realRequire("../../services/arrival-notice-api");
+    const sent: Array<{ url: string; body: any }> = [];
+    const origFetch = globalThis.fetch;
+    (globalThis as any).fetch = async (url: string, init: any) => {
+      sent.push({ url: String(url), body: init?.body ? JSON.parse(init.body) : null });
+      return new Response(JSON.stringify({ code: "OK", message: "success", data: { item: {} } }), { status: 200, headers: { "Content-Type": "application/json" } });
+    };
+    try {
+      await api.fetchConvertedNoticeDetail("n1");
+      await api.refreshConvertedNotice("n1", { value: " 新备注 ", expected: " 旧备注 " });
+      await api.refreshConvertedNotice("n1");
+    } finally { (globalThis as any).fetch = origFetch; }
+    assert.match(sent[0].url, /\/staff\/arrival-notices\/converted-detail\?id=n1&v=2$/);
+    assert.deepEqual(sent[1].body, { id: "n1", remark: "新备注", expectedRemark: "旧备注" });
+    assert.deepEqual(sent[2].body, { id: "n1" });
   });
 
   if (failures > 0) { console.log(`\n${failures} 项没过`); process.exit(1); }

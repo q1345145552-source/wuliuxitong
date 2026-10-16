@@ -1,5 +1,19 @@
 # 项目交接日志
 
+## 2026-10-16～17 698ea50 上线后补审 + 热修（本地，未推未上线）
+- 上线后补 Codex + dsh 审查（老板直接说「上线吧」）。三轮，修的：
+  1. 员工直接调 `/staff/orders/patch-shipment-bundle` 能改正式运单（4-01 只把页面改成只读，后端漏挡）→ 只给超管；老测试里员工身份调它的 10 处换超管。
+  2. 员工拿员工建的单 / 到货通知转出来的单调 `/staff/prealerts/receive` 能改资料 → 确认收货只认客户报的待收货预报单（shipped），锁外锁里都核（预报单页本来只列 shipped / received）。
+  3. 在到货通知里改产品会盖掉订单那一格国内单号 → 不发（同运单管理）。
+  4. 重读比对到改单之间的空档 → `/admin/orders/update` 加可选 `expectedOrderUpdatedAt`，锁住订单后核对，对不上 409；运单管理自己的弹窗照旧不带。
+  5. 并发备注被旧的盖 → 备注改了才带、带 expectedRemark 锁里核对；带了备注不带 expectedRemark = 老页面 409。
+  6. 698ea50 老页面不带版本 → `converted-detail` 必须 `v=2`，不带 409「页面是旧版的，请刷新」（老页面打开 / 保存都先调它，走不到改运单）。
+  7. 连点两条「修改」乱序 / 作废的那次失败报错 → openGate（成功、失败都看门闩）。
+  8. 同步一条失败带走一批 → 逐条 try/catch；converted-detail 放进 RepeatableRead 快照；无产品行老单不清产品数量。
+- 测试：converted-edit 27 项（整页 G1～G3 真跑 ArrivalNoticesView、S1 真调 service 核参数名）、converted-db 21 项（D19～D21 另开事务挂锁、等 pg_stat_activity 里真有人在等锁再放，证明核对在锁后）；改坏 N1～N9、R1～R10 全红（R4～R6 换成确定性等待后重跑也红）。本机 CI build 68 / test-db 24 全过。
+- Codex / dsh 第 3 轮：生产代码都没有必须修；两家唯一的必须修是测试固定睡 400 毫秒可能假绿 → 已改成等锁等待者，没再送审。
+- 文档：api-contract 22.11、README、domain-dictionary。
+
 ## 2026-10-16 22:25（北京）上线 698ea50：超管在到货通知里也能改已转正式运单
 - 老板「上线吧」。推 GitHub 3624ab2..698ea50（6307ef5 文档 + 698ea50），服务器 `bash deploy.sh` 退出 0：没有待执行迁移、跳过备份，结构与迁移账本一致；14:25:01 UTC 换容器。
 - 核对：服务器 HEAD = GitHub = 698ea50；两个容器 healthy、重启 0；API 错误日志 0、「sync converted failed」0；容器里两条改单路都接了对齐、到货通知多了两个接口；前端包里有「这票已经转成正式运单」那句和 converted-refresh；两个新接口和列表不带登录 401。切换那 2 秒（14:25:00～01）7 次 5xx，之后 0。GitHub 自动检查 38915300734 success。

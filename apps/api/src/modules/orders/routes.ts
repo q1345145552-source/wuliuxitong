@@ -10,6 +10,9 @@ import { EXCLUDE_FCL_ORDER, FCL_EDIT_ELSEWHERE_MESSAGE } from "../core/fcl-scope
 import { PENDING_INBOUND, PENDING_INBOUND_EDIT_ELSEWHERE_MESSAGE } from "../arrival-notices/rules";
 import { arrivalNoticeHoldingMessage, followShipmentTrackingNos, followStaleArrivalNoticeHolding, lockTrackingNoForArrivalNotice } from "../arrival-notices/follow-tracking-no";
 import { syncConvertedNoticesFromShipments } from "../arrival-notices/routes";
+
+/** 「确认收货」只认客户报的、还没收货的预报单（2026-10-16） */
+const NOT_A_PENDING_PREALERT_MESSAGE = "这张单不是客户报的待收货预报单，不能「确认收货」（员工建的单、到货通知转出来的单都不走这一步；要改资料请超管在「运单管理」里改）";
 import { logger } from "../core/logger";
 import { buildNewOrderRows } from "./new-order-rows";
 import { getClientIp } from "../core/rate-limit";
@@ -721,6 +724,13 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
       fail(res, 400, "BAD_REQUEST", PENDING_INBOUND_EDIT_ELSEWHERE_MESSAGE);
       return;
     }
+    /* 只有客户报的、还没收货的预报单（shipped）才能「确认收货」（2026-10-16 dsh 审查）：预报单页只列 shipped / received，
+       员工建的单、到货通知转出来的单（approved）页面上从来没有这个按钮 —— 后端却放行，员工直接发请求就能改它们的资料
+       （到货通知转出来的正式运单只许超管改，员工端运单管理 4-01 起只能看）。锁里还会再核一遍 */
+    if (order.approvalStatus !== "shipped") {
+      fail(res, 400, "BAD_REQUEST", NOT_A_PENDING_PREALERT_MESSAGE);
+      return;
+    }
 
     const now = new Date();
     const updateData: any = {
@@ -777,6 +787,7 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
         // 上面那道「已确认收货」的判断是在事务外做的，两个人同时点会双双通过
         throw new BusinessError("这张单刚刚已经被确认收货了，本次没有重复执行，请刷新后再看");
       }
+      if (fresh.approvalStatus !== "shipped") throw new BusinessError(NOT_A_PENDING_PREALERT_MESSAGE);
 
       /**
        * ⚠️ 锁完运单要**重新读一遍它的状态**（2026-08-29 第十轮补）。
@@ -1753,7 +1764,9 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
    * 员工按运单维度一次性更新关联订单与运单的基础信息（与列表「订单详情」编辑一致）。
    */
   app.post("/staff/orders/patch-shipment-bundle", async (req, res) => {
-    const auth = requireRole(req, res, ["staff", "admin"]);
+    /* 只给超管（2026-10-16，Codex / dsh 审查）：员工端「运单管理」4-01 起就只能看（b041371，/staff/shipments 的 canEdit 只给 admin），
+       页面上员工没有编辑入口，这条接口却一直对员工开着 —— 员工直接发请求就能改正式运单。超管在员工页编辑照旧走这里 */
+    const auth = requireRole(req, res, ["admin"]);
     if (!auth) return;
 
     const body = (req.body ?? {}) as {

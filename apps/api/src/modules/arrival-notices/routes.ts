@@ -14,6 +14,7 @@ import { validateProductRows } from "../orders/product-row-guard";
 import { DEFAULT_STATUS_LABELS } from "../ai/ai-config-store";
 import { ARRIVAL_WAREHOUSE_IDS, PENDING_INBOUND } from "./rules";
 import { FCL_EDIT_ELSEWHERE_MESSAGE } from "../core/fcl-scope";
+import { logger } from "../core/logger";
 import { lockTrackingNoForArrivalNotice } from "./follow-tracking-no";
 import { CARGO_TYPES, strictestCargoType, type CargoType } from "../../../../../packages/shared-types/cargo-type";
 import { productNamesLabel } from "../../../../../packages/shared-types/product-names";
@@ -677,6 +678,9 @@ function ymdOrNull(v: string | null | undefined): string | null {
   return /^\d{4}-\d{2}-\d{2}$/.test(t) ? t : null;
 }
 
+/** 698ea50 那版页面（不带版本核对）来改已转正式运单：叫它刷新 */
+const OLD_CONVERTED_PAGE_MESSAGE = "你的页面是旧版的，这次没有保存。请刷新页面后再改";
+
 /** 转正式后运单又被改回「待入库」这种异常（正常走不到）：这时候底稿在到货通知，不能拿运单盖它 */
 const PENDING_INBOUND_HERE_MESSAGE = "那张运单现在是「待入库」，请刷新后在这里按待入库的方式改";
 
@@ -684,6 +688,8 @@ export interface ConvertedTruth {
   orderId: string;
   shipmentId: string;
   currentStatus: string;
+  /** 订单现在的 updatedAt：页面保存时带回去（expectedOrderUpdatedAt），超管改单那条路锁住订单后核对 */
+  orderUpdatedAt: string;
   /** 运单现在的样子，翻成到货通知那几项（备注不在里面：备注是到货通知自己的） */
   fields: Omit<NoticeFields, "remark">;
   /** 跟 fields.products 一一对应的订单产品行 id（超管改单时带回去：留着的改、没带的删、不带 id 的新加）；没有产品行时是空数组 */
@@ -698,7 +704,7 @@ async function readConvertedTruth(tx: Tx | typeof prisma, companyId: string, shi
     where: { id: ship.orderId, companyId },
     select: {
       clientId: true, warehouseId: true, itemName: true, packageCount: true, weightKg: true, volumeM3: true,
-      shipDate: true, domesticTrackingNo: true, transportMode: true, cargoType: true,
+      shipDate: true, domesticTrackingNo: true, transportMode: true, cargoType: true, updatedAt: true,
     },
   });
   if (!order) throw new BusinessError("这张运单的订单不见了，请刷新后再看", 409, "VALIDATION_ERROR");
@@ -739,6 +745,7 @@ async function readConvertedTruth(tx: Tx | typeof prisma, companyId: string, shi
     orderId: ship.orderId,
     shipmentId: ship.id,
     currentStatus: ship.currentStatus,
+    orderUpdatedAt: order.updatedAt.toISOString(),
     fields: {
       clientId: order.clientId.trim() ? order.clientId : null,
       trackingNo: ship.trackingNo.trim() ? ship.trackingNo : null,
@@ -762,9 +769,18 @@ async function readConvertedTruth(tx: Tx | typeof prisma, companyId: string, shi
  *    运单号有「新号被另一条到货通知登记着就不跟」那条规矩（到货通知表同一公司运单号唯一，硬改会撞唯一约束 ——
  *    2026-10-16 老测试 N24 当场抓到）；唛头换人要清「已通知」也在那边。卡片上的号本来就显示运单现在的（toDto，F06）。
  */
-async function refreshConvertedNotice(companyId: string, noticeId: string, remark?: string | null): Promise<NoticeRow | null> {
+async function refreshConvertedNotice(
+  companyId: string,
+  noticeId: string,
+  remark?: string | null,
+  /** 打开弹窗时看到的备注（改了备注才带）：锁里核对，同事这期间改过备注就 409，不拿旧的盖（2026-10-16 Codex 审查） */
+  expectedRemark?: string | null,
+): Promise<NoticeRow | null> {
   return prisma.$transaction(async (tx) => {
     const n = await lockNotice(tx, companyId, noticeId);
+    if (expectedRemark !== undefined && (n.remark ?? "") !== (expectedRemark ?? "")) {
+      throw new BusinessError("这条的备注刚刚被别人改过，你改的备注没有存上。请关掉重新点「修改」看最新的再改备注", 409, "VALIDATION_ERROR");
+    }
     if (n.convertedTo !== "formal") return null;
     const ship = await lockLinkedShipment(tx, n);
     if (!ship) return null;
@@ -793,7 +809,14 @@ export async function syncConvertedNoticesFromShipments(companyId: string, shipm
     select: { id: true },
     orderBy: { id: "asc" },
   });
-  for (const n of notices) await refreshConvertedNotice(companyId, n.id);
+  // 一条一条来，一条失败（比如这期间被删了）记下来接着做后面的，别让一条带走这一批（2026-10-16 dsh 审查）
+  for (const n of notices) {
+    try {
+      await refreshConvertedNotice(companyId, n.id);
+    } catch (e) {
+      logger.warn("arrival notice sync converted: one notice failed", { noticeId: n.id, error: String(e) });
+    }
+  }
 }
 
 /**
@@ -1515,14 +1538,28 @@ export function registerArrivalNoticeRoutes(app: MinimalHttpApp): void {
     if (!auth) return;
     const id = idOf(req.query.id);
     if (!id) { fail(res, 400, "BAD_REQUEST", "缺少到货通知 id"); return; }
-    const n = await prisma.arrivalNotice.findFirst({ where: { id, companyId: auth.companyId }, include: NOTICE_INCLUDE });
-    if (!n) { fail(res, 404, "NOT_FOUND", "这条到货通知不存在了（可能刚被同事删掉），请刷新"); return; }
-    const ship = n.convertedTo === "formal" && n.shipmentId
-      ? await prisma.shipment.findFirst({ where: { id: n.shipmentId, companyId: auth.companyId }, select: { id: true, orderId: true, currentStatus: true, trackingNo: true } })
-      : null;
-    if (!ship) { fail(res, 400, "BAD_REQUEST", "这条现在不是「已转正式运单」了（可能运单刚被删掉），请刷新后再改"); return; }
-    const truth = await readConvertedTruth(prisma, auth.companyId, ship);
-    const matches = await findPrealertMatches(prisma, auth.companyId, [prealertKeyOf(n)]);
+    /* 只认新页面（v=2，2026-10-16 Codex 第 2 轮）：698ea50 那版页面保存时不带订单版本 / 原来的备注、还会盖订单国内单号，
+       热修上线那一刻还开着它的话照样出事。老页面一打开 / 一保存都先调这里 —— 挡在这儿，它就走不到改运单那一步 */
+    if (req.query.v !== "2") { fail(res, 409, "VALIDATION_ERROR", OLD_CONVERTED_PAGE_MESSAGE); return; }
+    /* 一次快照里读完（同列表，只读不锁）：不然通知行、订单、产品行分几次读，中间有人存了就拼出一份从没存在过的样子，
+       页面拿它当「打开时的版本」（2026-10-16 Codex / dsh 审查） */
+    const snap = await prisma.$transaction(async (tx) => {
+      const n = await tx.arrivalNotice.findFirst({ where: { id, companyId: auth.companyId }, include: NOTICE_INCLUDE });
+      if (!n) return { error: 404 as const };
+      const ship = n.convertedTo === "formal" && n.shipmentId
+        ? await tx.shipment.findFirst({ where: { id: n.shipmentId, companyId: auth.companyId }, select: { id: true, orderId: true, currentStatus: true, trackingNo: true } })
+        : null;
+      if (!ship) return { error: 400 as const };
+      const truth = await readConvertedTruth(tx, auth.companyId, ship);
+      const matches = await findPrealertMatches(tx, auth.companyId, [prealertKeyOf(n)]);
+      return { n, ship, truth, matches };
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead, timeout: 15000, maxWait: 10000 });
+    if ("error" in snap) {
+      if (snap.error === 404) fail(res, 404, "NOT_FOUND", "这条到货通知不存在了（可能刚被同事删掉），请刷新");
+      else fail(res, 400, "BAD_REQUEST", "这条现在不是「已转正式运单」了（可能运单刚被删掉），请刷新后再改");
+      return;
+    }
+    const { n, ship, truth, matches } = snap;
     const base = toDto(n, ship, auth.role, matches.get(n.id) ?? []);
     const legacy = noticeLegacySummary(truth.fields.products);
     ok(res, {
@@ -1537,6 +1574,7 @@ export function registerArrivalNoticeRoutes(app: MinimalHttpApp): void {
       },
       orderId: truth.orderId,
       shipmentId: truth.shipmentId,
+      orderUpdatedAt: truth.orderUpdatedAt,
       productIds: truth.productIds,
       blockedReason: truth.blockedReason,
     });
@@ -1554,8 +1592,12 @@ export function registerArrivalNoticeRoutes(app: MinimalHttpApp): void {
     if (!id) { fail(res, 400, "BAD_REQUEST", "缺少到货通知 id"); return; }
     const remark = readText(body.remark, "备注", TEXT_LIMITS.remark);
     if ("error" in remark) { fail(res, 400, "VALIDATION_ERROR", remark.error); return; }
-    // 没带 remark 这个键 = 备注不动（别把原来的备注清掉）；带了空串 = 清掉
-    const row = await refreshConvertedNotice(auth.companyId, id, body.remark === undefined ? undefined : remark.value);
+    // 带了备注就必须带 expectedRemark（打开时看到的那份）：不带的是 698ea50 那版老页面，不让它拿旧备注盖（Codex 第 2 轮）
+    if (body.remark !== undefined && body.expectedRemark === undefined) { fail(res, 409, "VALIDATION_ERROR", OLD_CONVERTED_PAGE_MESSAGE); return; }
+    // 没带 remark 这个键 = 备注不动（别把原来的备注清掉）；带了空串 = 清掉。改备注时页面同时带 expectedRemark（打开时看到的），锁里核对
+    const expected = body.expectedRemark === undefined ? undefined : readText(body.expectedRemark, "原来的备注", TEXT_LIMITS.remark);
+    if (expected && "error" in expected) { fail(res, 400, "VALIDATION_ERROR", expected.error); return; }
+    const row = await refreshConvertedNotice(auth.companyId, id, body.remark === undefined ? undefined : remark.value, expected?.value);
     if (!row) { fail(res, 400, "BAD_REQUEST", "这条现在不是「已转正式运单」了（可能运单刚被删掉），请刷新后再看"); return; }
     ok(res, { item: await loadDto(auth.companyId, id, auth.role) });
   });

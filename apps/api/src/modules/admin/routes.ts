@@ -660,6 +660,11 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
       receiverAddressTh?: string;
       containerNo?: string | null;
       remark?: string | null;
+      /**
+       * 到货通知里改已转正式运单时带（2026-10-16）：打开弹窗时读到的订单 updatedAt。锁住订单后重读核对，对不上 409 不存。
+       * 「运单管理」自己的编辑弹窗不带，照旧。
+       */
+      expectedOrderUpdatedAt?: string;
       products?: Array<{
         /** 已有产品行的编号；不传表示这是新增的一行 */
         id?: string;
@@ -932,6 +937,14 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
          撞「记录不存在」→ 500。写法同下面删单那条路 */
       if (lockedOrder.length === 0) {
         throw new BusinessError("这张订单刚刚已经被删掉了，请刷新后再看", 409, "VALIDATION_ERROR");
+      }
+      /* 到货通知里改已转正式运单（2026-10-16 Codex 审查）：页面先重读比对、再发这个请求，两次请求之间同事在「运单管理」存了一次的话，
+         页面那次比对照不出来 —— 所以锁住订单以后再按打开时的 updatedAt 核一遍，对不上就不存（CLAUDE.md 第 28 条：锁完重读）。 */
+      if (typeof body.expectedOrderUpdatedAt === "string" && body.expectedOrderUpdatedAt) {
+        const cur = await tx.order.findFirst({ where: { id: orderId, companyId: auth.companyId }, select: { updatedAt: true } });
+        if (!cur || cur.updatedAt.toISOString() !== body.expectedOrderUpdatedAt) {
+          throw new BusinessError("这票刚刚被别人改过（超管端「运单管理」或别的超管），你这次没有保存。请关掉重新点「修改」看最新的再改", 409, "VALIDATION_ERROR");
+        }
       }
       const savedProductCargo = async () => {
         const products = await tx.orderProduct.findMany({
