@@ -147,7 +147,7 @@ export default function AgentFormModal(props: {
               ["普货", priceNormal, setPriceNormal],
               ["商检货", priceInspection, setPriceInspection],
               ["敏感货", priceSensitive, setPriceSensitive],
-              ["特别货", priceSpecial, setPriceSpecial],
+              ["特货", priceSpecial, setPriceSpecial],
             ] as const).map(([label, value, set]) => (
               <div key={label}>
                 <div style={{ fontSize: 12, color: "var(--t-muted)", marginBottom: 2 }}>{label}</div>

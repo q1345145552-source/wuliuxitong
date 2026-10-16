@@ -105,7 +105,7 @@ export const CARGO_TYPE_LABEL: Record<string, string> = {
   normal: "普货",
   inspection: "商检货",
   sensitive: "敏感货",
-  special: "特别货",
+  special: "特货",
 };
 
 export interface FeeBreakdownRow {

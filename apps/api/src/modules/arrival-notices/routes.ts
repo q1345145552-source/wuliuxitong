@@ -193,7 +193,7 @@ function readProduct(raw: Record<string, unknown>, index: number, count: number)
   let cargoType: CargoType;
   if (cargo === undefined || cargo === null || cargo === "") cargoType = "normal";
   else if (typeof cargo === "string" && (CARGO_TYPES as readonly string[]).includes(cargo)) cargoType = cargo as CargoType;
-  else return { error: `${label("货型")}只能选普货、商检货、敏感货、特别货` };
+  else return { error: `${label("货型")}只能选普货、商检货、敏感货、特货` };
 
   return {
     value: {

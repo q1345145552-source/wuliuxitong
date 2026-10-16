@@ -103,7 +103,7 @@ export function parseFclProductRow(p: FclProductInput, index: number): { error: 
   if (weightIssue) return { error: weightIssue };
 
   const cargoType = String(p.cargoType ?? "normal").trim() || "normal";
-  if (!CARGO_TYPES.includes(cargoType)) return { error: `${label}的货型只能是普货 / 商检货 / 敏感货 / 特别货` };
+  if (!CARGO_TYPES.includes(cargoType)) return { error: `${label}的货型只能是普货 / 商检货 / 敏感货 / 特货` };
 
   /* 体积 = 长×宽×高÷1000000×箱数，口径跟集货和批量下单一致。
      ⚠️ 这是**中间量，不入库** —— 只用来加总。所以按 6 位小数留着，

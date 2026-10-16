@@ -15,7 +15,7 @@ const KEYS = [
   { key: "normal", label: "普货" },
   { key: "inspection", label: "商检货" },
   { key: "sensitive", label: "敏感货" },
-  { key: "special", label: "特别货" },
+  { key: "special", label: "特货" },
 ] as const;
 
 function PriceEditor({ client, agentPrices, onSaved, onCancel }: { client: AgentClientItem; agentPrices: PriceTriple; onSaved: (msg: string) => void; onCancel: () => void }) {

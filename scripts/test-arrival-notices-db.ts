@@ -1212,7 +1212,7 @@ async function main(): Promise<void> {
         [{ products: [P(), P({ lengthCm: -1 })] }, /^第2款长\(cm\)必须是不小于 0 的数字$/],
         [{ products: [P(), P(), P({ heightCm: 1e8 })] }, /^第3款高\(cm\)太大了/],
         [{ products: [P({ productQuantity: "1.5" }), P()] }, /^第1款单箱数量必须是正整数$/],
-        [{ products: [P({ cargoType: "dangerous" }), P()] }, /^第1款货型只能选普货、商检货、敏感货、特别货$/],
+        [{ products: [P({ cargoType: "dangerous" }), P()] }, /^第1款货型只能选普货、商检货、敏感货、特货$/],
         [{ products: [P(), P({ domesticTrackingNo: "x".repeat(101) })] }, /^第2款国内快递单号太长了/],
         [{ products: [P({ itemName: "x".repeat(201) })] }, /^品名太长了（最多 200 个字）$/],
         [{ products: [P({ packageCount: 0 })] }, /^件数必须是正整数$/],

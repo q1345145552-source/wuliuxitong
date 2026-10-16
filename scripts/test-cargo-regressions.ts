@@ -7,7 +7,7 @@ import path from "node:path";
 import vm from "node:vm";
 import ts from "typescript";
 import { createRequire } from "node:module";
-import { CARGO_TYPE_ZH, CARGO_TYPE_HINT, cargoTypeLabel, parseCargoType, strictestCargoType } from "../packages/shared-types/cargo-type";
+import { CARGO_TYPE_ZH, CARGO_TYPE_HINT, cargoTypeLabel, cargoTypeZh, parseCargoType, strictestCargoType } from "../packages/shared-types/cargo-type";
 
 const failures: string[] = [];
 let total = 0;
@@ -121,14 +121,17 @@ function treeNodes(tree: any): any[] {
   if (!tree || typeof tree !== "object") return [];
   return [tree, ...treeNodes(tree.props?.children)];
 }
-async function clientImport(rawCargo: unknown, boxes = 2, dimensions: number[] | undefined = [40,30,20], legacy = false) {
+async function clientImport(rawCargo: unknown, boxes = 2, dimensions: number[] | undefined = [40,30,20], legacy = false, cargoHeaderName?: string) {
   let workbook: any;
   const xlsx = {...XLSX, writeFile(wb: any) { workbook = wb; }};
   evalTs(sourceFunction(clientFile, "downloadTemplate") + "\nmodule.exports=downloadTemplate;", {XLSX: xlsx})();
   assert.ok(workbook);
   const downloadedHeaders: string[] = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]], {header: 1})[0];
-  assert.equal(downloadedHeaders.find(h => h.includes("货型")), "货型（普货/商检货/敏感货/特别货，默认普货）");
-  const headers: string[] = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]], {header: 1})[0].filter((h: string) => !legacy || !h.includes("货型"));
+  assert.equal(downloadedHeaders.find(h => h.includes("货型")), "货型（普货/商检货/敏感货/特货，默认普货）");
+  const headers: string[] = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]], {header: 1})[0]
+    .filter((h: string) => !legacy || !h.includes("货型"))
+    // 换成别的货型表头（比如 10-11～10-16 下载的旧模板那句）
+    .map((h: string) => (cargoHeaderName && h.includes("货型") ? cargoHeaderName : h));
   const values = headers.map(h => {
     if (h.includes("货型")) return rawCargo;
     if (h.includes("仓库")) return "义乌仓";
@@ -183,16 +186,68 @@ async function clientImport(rawCargo: unknown, boxes = 2, dimensions: number[] |
 async function main() {
   await check("货型统一全称，旧简称/新全称输入映射相同且最严口径不变", () => {
     // 2026-10-11 加特别货（老板：「新增一个货型，叫特别货」；混装排最严，他回「按建议」）
-    assert.deepEqual(CARGO_TYPE_ZH, {normal: "普货", inspection: "商检货", sensitive: "敏感货", special: "特别货"});
-    assert.equal(cargoTypeLabel(["normal", "inspection", "sensitive", "inspection", "special"]), "普货 / 商检货 / 敏感货 / 特别货");
-    assert.equal(CARGO_TYPE_HINT, "货型只能填「普货」「商检货」「敏感货」「特别货」之一，留空按普货");
-    for (const [raw, value] of [["商检", "inspection"], ["商检货", "inspection"], ["敏感", "sensitive"], ["敏感货", "sensitive"], ["特别", "special"], ["特别货", "special"], ["ＳＰＥＣＩＡＬ", "special"]]) {
+    // 2026-10-16 老板「特别货改成特货吧」：显示一律「特货」，导入时「特货」「特别货」「特别」都认
+    assert.deepEqual(CARGO_TYPE_ZH, {normal: "普货", inspection: "商检货", sensitive: "敏感货", special: "特货"});
+    assert.equal(cargoTypeLabel(["normal", "inspection", "sensitive", "inspection", "special"]), "普货 / 商检货 / 敏感货 / 特货");
+    assert.equal(cargoTypeZh("special"), "特货");
+    assert.equal(CARGO_TYPE_HINT, "货型只能填「普货」「商检货」「敏感货」「特货」之一，留空按普货");
+    for (const [raw, value] of [["商检", "inspection"], ["商检货", "inspection"], ["敏感", "sensitive"], ["敏感货", "sensitive"], ["特货", "special"], [" 特 货 ", "special"], ["特别", "special"], ["特别货", "special"], ["ＳＰＥＣＩＡＬ", "special"]]) {
       assert.equal(parseCargoType(raw)?.value, value);
     }
     assert.equal(strictestCargoType(["normal", "inspection", "sensitive", "special"]), "special", "特别货最严");
     assert.equal(strictestCargoType(["special", "normal"]), "special");
     assert.equal(strictestCargoType(["normal", "inspection", "sensitive"]), "sensitive");
     assert.equal(strictestCargoType(["normal", "inspection"]), "inspection");
+  });
+  await check("2026-10-16「特别货」改叫「特货」：代码里（不算注释）只剩两处故意留的旧叫法 —— 导入认旧写法、旧模板表头照认", () => {
+    // 用 TypeScript 自己的词法把注释换成空格，只看真代码 / 页面文字 / 提示语
+    const blankComments = (text: string, fileName: string): string => {
+      const sf = ts.createSourceFile(fileName, text, ts.ScriptTarget.Latest, true, fileName.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
+      const ranges: Array<[number, number]> = [];
+      const visit = (node: ts.Node): void => {
+        for (const r of ts.getLeadingCommentRanges(text, node.getFullStart()) ?? []) ranges.push([r.pos, r.end]);
+        for (const r of ts.getTrailingCommentRanges(text, node.getEnd()) ?? []) ranges.push([r.pos, r.end]);
+        for (const child of node.getChildren(sf)) visit(child);
+      };
+      visit(sf);
+      const chars = text.split("");
+      for (const [a, b] of ranges) for (let i = a; i < b; i += 1) if (chars[i] !== "\n") chars[i] = " ";
+      return chars.join("");
+    };
+    const files: string[] = [];
+    const walk = (dir: string): void => {
+      for (const e of fs.readdirSync(path.join(root, dir), { withFileTypes: true })) {
+        if (e.name === "node_modules" || e.name.startsWith(".")) continue;
+        const rel = path.join(dir, e.name);
+        if (e.isDirectory()) walk(rel);
+        else if (/\.tsx?$/.test(e.name)) files.push(rel);
+      }
+    };
+    // 扫的范围：apps/api/src、apps/web/src、packages 下的 .ts / .tsx（页面文字、提示、导出都在这里；模板 xlsx、mobile、静态页里没有货型字样，另查过）
+    for (const d of ["apps/api/src", "apps/web/src", "packages"]) walk(d);
+    assert.ok(files.length > 100, `只扫到 ${files.length} 个文件，扫描写窄了`);
+    // 只盯「特别货」这个词（通用词「特别」以后正常文案会用到，不能一刀切禁掉 —— dsh / Codex 第 2 轮）
+    const hits: Record<string, number> = {};
+    for (const rel of files) {
+      const text = fs.readFileSync(path.join(root, rel), "utf8");
+      if (!text.includes("特别货")) continue;
+      const n = (blankComments(text, rel).match(/特别货/g) ?? []).length;
+      if (n > 0) hits[rel.split(path.sep).join("/")] = n;
+    }
+    assert.deepEqual(hits, {
+      "packages/shared-types/cargo-type.ts": 1,      // 别名表：旧写法「特别货」照认
+      "apps/web/src/modules/fcl/template.ts": 2,     // 整柜模板：值「特别货」照认 + 10-11～10-16 的旧表头照认
+    }, "页面 / 提示 / 导出里又写回了「特别货」（老板 10-16 定了叫「特货」）");
+    // 原来简写成「特别」的四处（代理价 / 返现），各自钉住现在的写法（剥了注释再看）
+    const code = (rel: string): string => blankComments(fs.readFileSync(path.join(root, rel), "utf8"), rel);
+    for (const [rel, snippet] of [
+      ["apps/web/src/components/agent/agent-ui.tsx", "` / 特货 ${p.special}`"],
+      ["apps/web/src/components/agent/AgentRebates.tsx", '{ key: "special", label: "特货" }'],
+      ["apps/web/src/components/admin/agents/AgentRebatesPanel.tsx", '["special", "特货"]'],
+      ["apps/web/src/app/admin/agents/page.tsx", "· 特货 {priceText(a.prices.special)}"],
+    ] as const) {
+      assert.ok(code(rel).includes(snippet), `${rel}：特货的简写不对（应是「${snippet}」）`);
+    }
   });
   await check("货型别名只接受自有键，继承属性及其他非法值全部拒绝", () => {
     for (const raw of ["constructor", "__proto__", "toString", "hasOwnProperty", "invalid", {}, true, 1]) {
@@ -271,7 +326,8 @@ async function main() {
     }
   });
   await check("客户端真模板上传保留新旧货型中文与英文枚举兼容", async () => {
-    for (const [raw, expected] of [["商检", "inspection"], ["商检货", "inspection"], ["敏感", "sensitive"], ["敏感货", "sensitive"], ["inspection", "inspection"], ["sensitive", "sensitive"]]) {
+    // 2026-10-16「特别货」改叫「特货」：新叫法、旧叫法、简写、英文都认
+    for (const [raw, expected] of [["商检", "inspection"], ["商检货", "inspection"], ["敏感", "sensitive"], ["敏感货", "sensitive"], ["inspection", "inspection"], ["sensitive", "sensitive"], ["特货", "special"], ["特别货", "special"], ["特别", "special"], ["special", "special"]]) {
       const result = await clientImport(raw);
       assert.equal(result.disabled, false);
       assert.equal(result.requests.length, 1);
@@ -279,6 +335,13 @@ async function main() {
       assert.equal(result.requests[0].packageCount, 2);
       assert.equal(result.requests[0].weightKg, 8);
       assert.equal(result.requests[0].volumeM3, 0.048);
+    }
+    // 10-11～10-16 下载的旧模板：货型表头写着「特别货」，填新旧写法都照样认（新表头 + 旧写法在上面的循环里）
+    for (const raw of ["特别货", "特货"]) {
+      const oldHeader = await clientImport(raw, 2, [40,30,20], false, "货型（普货/商检货/敏感货/特别货，默认普货）");
+      assert.equal(oldHeader.disabled, false, raw);
+      assert.equal(oldHeader.requests.length, 1, raw);
+      assert.equal(oldHeader.requests[0].cargoType, "special", raw);
     }
   });
   await check("客户端真实提交入口：constructor/普通非法值均禁用，老模板和空尺寸仍可用", async () => {
@@ -355,11 +418,17 @@ async function main() {
       const cargoHeader = downloadedHeaders.find(h => h.includes("货型"));
       assert.ok(cargoHeader);
       assert.doesNotMatch(cargoHeader, /商检(?!货)|敏感(?!货)/);
-      for (const value of ["constructor", "商检", "商检货", "敏感", "敏感货", "inspection", "sensitive", "legacy"]) {
-        const expected = value === "legacy" ? "normal" : ["敏感", "敏感货", "sensitive"].includes(value) ? "sensitive" : "inspection";
-        const headers: string[] = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]], {header:1})[0].filter((h: string) => value !== "legacy" || !h.includes("货型"));
+      // 2026-10-16「特别货」改叫「特货」：新旧叫法都认；员工模板还要认 10-11～10-16 的旧表头（写着特别货）。管理员模板表头就是「货型」两个字，没有新旧之分
+      const SPECIAL_VALUES = ["特货", "特别货", "特别", "special"];
+      const cases = ["constructor", "商检", "商检货", "敏感", "敏感货", "inspection", "sensitive", "legacy", ...SPECIAL_VALUES, ...(role === "staff" ? ["oldHeader", "oldHeaderNewValue"] : [])];
+      if (role === "staff") assert.equal(cargoHeader, "货型（普货/商检货/敏感货/特货，默认普货）");
+      for (const value of cases) {
+        const expected = value === "legacy" ? "normal" : ["敏感", "敏感货", "sensitive"].includes(value) ? "sensitive" : [...SPECIAL_VALUES, "oldHeader", "oldHeaderNewValue"].includes(value) ? "special" : "inspection";
+        const headers: string[] = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]], {header:1})[0]
+          .filter((h: string) => value !== "legacy" || !h.includes("货型"))
+          .map((h: string) => (value.startsWith("oldHeader") && h.includes("货型") ? "货型（普货/商检货/敏感货/特别货，默认普货）" : h));
         const values = headers.map(h => {
-          if (h.includes("货型")) return value;
+          if (h.includes("货型")) return value === "oldHeader" ? "特别货" : value === "oldHeaderNewValue" ? "特货" : value;
           if (h.includes("唛头") || h === "客户ID") return "fixture_client";
           if (h.includes("运单号")) return "YW-FIXTURE";
           if (h.includes("仓库")) return role === "admin" ? "wh_yiwu_01" : "义乌仓";

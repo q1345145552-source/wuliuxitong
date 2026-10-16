@@ -543,7 +543,7 @@ async function main(): Promise<void> {
     ];
     await expectBusiness(
       () => ltp.setClientWhrPrice({ companyId: "c1", clientId: "zz_c_agent", prices: { normal: 550, inspection: 650, sensitive: 750, special: 1249.99 }, actor }),
-      /^特别货不能低于湘泰给你的价 1250 元\/方$/,
+      /^特货不能低于湘泰给你的价 1250 元\/方$/,
       400,
     );
     assert.equal(db.prices.length, 0);
@@ -574,7 +574,7 @@ async function main(): Promise<void> {
     db.agents[0].priceSpecial = 1600;
     await expectBusiness(
       () => ltp.setClientWhrPrice({ companyId: "c1", clientId: "zz_c_agent", prices: { normal: 560, inspection: 660, sensitive: 760 }, actor }),
-      /^特别货不能低于湘泰给你的价 1600 元\/方$/,
+      /^特货不能低于湘泰给你的价 1600 元\/方$/,
       400,
     );
   });

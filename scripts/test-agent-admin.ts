@@ -615,7 +615,7 @@ async function main(): Promise<void> {
     // 柜里这几位客户的特别货价都是 1250（库默认值），代理特别货价调到 1300 → 拦，点名特别货
     let r = await call("POST", "/admin/agents/update", admin, updateBody({ normal: 400, inspection: 400, sensitive: 400, special: 1300 }));
     assert.equal(r.status, 400, JSON.stringify(r.body));
-    assert.match(r.body.message, /特别货 1250（新代理价 1300）/);
+    assert.match(r.body.message, /特货 1250（新代理价 1300）/);
     assert.ok(!events.some((e) => e.startsWith("write:")), `被拒时不许写：${events.join(" → ")}`);
     // 调低到 1200 → 成功
     r = await call("POST", "/admin/agents/update", admin, updateBody({ normal: 400, inspection: 400, sensitive: 400, special: 1200 }));
@@ -629,7 +629,7 @@ async function main(): Promise<void> {
     // 特别货价不合法照样拦（跟另外三档同一套校验）
     r = await call("POST", "/admin/agents/update", admin, updateBody({ normal: 400, inspection: 400, sensitive: 400, special: 0.001 }));
     assert.equal(r.status, 400);
-    assert.match(r.body.message, /特别货/);
+    assert.match(r.body.message, /特货/);
     // 还原（后面几项按三档 400 写）
     await call("POST", "/admin/agents/update", admin, updateBody({ normal: 400, inspection: 400, sensitive: 400, special: 1250 }, { name: savedName }));
   });

@@ -1,7 +1,9 @@
 /**
- * 货型（普货 / 商检货 / 敏感货 / 特别货）—— 2026-09-11 老板：「批量上传运单的模板不正确，
+ * 货型（普货 / 商检货 / 敏感货 / 特货）—— 2026-09-11 老板：「批量上传运单的模板不正确，
  * 需要加一个货型，不然默认普货。」
  * 2026-10-11 老板：「新增一个货型，叫特别货」，存 `special`；混装时排最严（他回「按建议」）。
+ * 2026-10-16 老板：「特别货改成特货吧」—— 只改显示的字，库里照旧存 `special`；
+ * 导入时「特货」「特别货」「特别」都认（旧模板、旧习惯照样能用）。
  *
  * 库里存的是 `normal` / `inspection` / `sensitive` / `special`（2026-10-11 起四个），
  * 人填的是中文。批量导入原来**根本没有这一列**，一律写死 `cargoType: "normal"`，
@@ -20,7 +22,7 @@ export const CARGO_TYPE_ZH: Record<CargoType, string> = {
   normal: "普货",
   inspection: "商检货",
   sensitive: "敏感货",
-  special: "特别货",
+  special: "特货",
 };
 
 /**
@@ -54,8 +56,9 @@ const CARGO_TYPE_ALIASES: Record<string, CargoType> = {
   敏感: "sensitive",
   敏感货: "sensitive",
   sensitive: "sensitive",
+  特货: "special",
   特别: "special",
-  特别货: "special",
+  特别货: "special", // 2026-10-16 前的叫法，旧模板 / 旧习惯照认
   special: "special",
 };
 
@@ -87,7 +90,7 @@ export function parseCargoType(raw: unknown): CargoTypeParse | null {
 }
 
 /** 填错时给人看的那句话 —— 三处调用方共用一份，别各写一句 */
-export const CARGO_TYPE_HINT = "货型只能填「普货」「商检货」「敏感货」「特别货」之一，留空按普货";
+export const CARGO_TYPE_HINT = "货型只能填「普货」「商检货」「敏感货」「特货」之一，留空按普货";
 
 /**
  * 一张运单上多条产品行货型不一样时，运单这一层记哪个。

@@ -362,8 +362,27 @@ check("13) 上传表格：表头缺列要说出来，有数据没品名的行不
   legacy["货型（普货/商检货/敏感货，默认普货）"] = "敏感货";
   assert.deepEqual(flat(tplMod.missingFclHeaders(legacy)), [], "旧模板的货型表头要照样认");
   assert.equal(tplMod.fclRowFromSheet(legacy).cargoType, "sensitive", "旧模板的货型要读得到");
-  assert.equal(tplMod.fclRowFromSheet({ ...full, [tplMod.FCL_TEMPLATE_HEADERS[8]]: "特别货" }).cargoType, "special", "特别货要认得");
-  assert.match(tplMod.FCL_TEMPLATE_HEADERS[8], /特别货/, "新模板表头要写上特别货");
+  // 2026-10-16 老板「特别货改成特货吧」：新表头写「特货」；填「特货」「特别货」都认；10-11～10-16 下载的模板（表头写着特别货）照样认
+  assert.equal(tplMod.fclRowFromSheet({ ...full, [tplMod.FCL_TEMPLATE_HEADERS[8]]: "特货" }).cargoType, "special", "特货要认得");
+  assert.equal(tplMod.fclRowFromSheet({ ...full, [tplMod.FCL_TEMPLATE_HEADERS[8]]: "特别货" }).cargoType, "special", "旧叫法特别货也要认得");
+  assert.equal(tplMod.FCL_TEMPLATE_HEADERS[8], "货型（普货/商检货/敏感货/特货，默认普货）", "新模板表头要写上特货");
+  const legacy1016: Record<string, string> = { ...full };
+  delete legacy1016[tplMod.FCL_TEMPLATE_HEADERS[8]];
+  legacy1016["货型（普货/商检货/敏感货/特别货，默认普货）"] = "特别货";
+  assert.deepEqual(flat(tplMod.missingFclHeaders(legacy1016)), [], "10-11～10-16 的模板表头（写着特别货）要照样认");
+  assert.equal(tplMod.fclRowFromSheet(legacy1016).cargoType, "special", "10-11～10-16 的模板货型要读得到");
+  // 新旧表头 × 新旧写法，读出来的行一路送进后端校验（parseFclProductRow），后端也得收、记成 special（Codex 第 2 轮）
+  for (const header of [tplMod.FCL_TEMPLATE_HEADERS[8], "货型（普货/商检货/敏感货/特别货，默认普货）"]) {
+    for (const value of ["特货", "特别货"]) {
+      const sheet: Record<string, string> = {};
+      tplMod.FCL_TEMPLATE_HEADERS.slice(0, 8).forEach((h: string, i: number) => { sheet[h] = ["鞋", "10", "20", "60", "40", "30", "2.5", "SF0001"][i]; });
+      sheet[header] = value;
+      assert.deepEqual(flat(tplMod.missingFclHeaders(sheet)), [], `${header} 表头要认`);
+      const r = parseFclProductRow(tplMod.fclRowFromSheet(sheet), 0);
+      if ("error" in r) throw new Error(`${header} / ${value} 过不了后端校验：${r.error}`);
+      assert.equal(r.row.cargoType, "special", `${header} / ${value} 后端要记成 special`);
+    }
+  }
 
   const ui = read("apps/web/src/components/fcl/FclContainerWorkbench.tsx");
   assert.match(ui, /missingFclHeaders/, "上传时没核对表头");

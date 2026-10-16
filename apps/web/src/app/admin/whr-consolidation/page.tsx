@@ -249,7 +249,7 @@ interface CreateCustomerForm {
 const SPECIAL_PRICE_PREFILL = String(SPECIAL_CARGO_DEFAULT_PRICE);
 
 const priceText = (p: { normal: number; inspection: number; sensitive: number; special?: number }) =>
-  `普货 ${p.normal} · 商检货 ${p.inspection} · 敏感货 ${p.sensitive}${p.special != null ? ` · 特别货 ${p.special}` : ""} 元/方`;
+  `普货 ${p.normal} · 商检货 ${p.inspection} · 敏感货 ${p.sensitive}${p.special != null ? ` · 特货 ${p.special}` : ""} 元/方`;
 
 // ============================================================================
 // 共用样式
@@ -541,7 +541,7 @@ export default function AdminWhrConsolidationPage() {
         ["普货", c.unitPriceNormal],
         ["商检货", c.unitPriceInspection],
         ["敏感货", c.unitPriceSensitive],
-        ["特别货", c.unitPriceSpecial],
+        ["特货", c.unitPriceSpecial],
       ];
       for (const [label, raw] of checks) {
         const issue = unitPriceIssue(label, raw);
@@ -758,7 +758,7 @@ export default function AdminWhrConsolidationPage() {
       ["普货", editPriceNormal],
       ["商检货", editPriceInspection],
       ["敏感货", editPriceSensitive],
-      ["特别货", editPriceSpecial],
+      ["特货", editPriceSpecial],
     ];
     let filled = 0;
     for (const [label, raw] of checks) {
@@ -818,7 +818,7 @@ export default function AdminWhrConsolidationPage() {
       ["普货", addPriceNormal],
       ["商检货", addPriceInspection],
       ["敏感货", addPriceSensitive],
-      ["特别货", addPriceSpecial],
+      ["特货", addPriceSpecial],
     ];
     for (const [label, raw] of priceChecks) {
       const issue = unitPriceIssue(label, raw);
@@ -1050,7 +1050,7 @@ export default function AdminWhrConsolidationPage() {
                             <span>普货：{c.unitPriceNormal} 元/方</span>
                             <span>商检货：{c.unitPriceInspection} 元/方</span>
                             <span>敏感货：{c.unitPriceSensitive} 元/方</span>
-                            <span>特别货：{c.unitPriceSpecial} 元/方</span>
+                            <span>特货：{c.unitPriceSpecial} 元/方</span>
                             {/* 2026-09-18 老板拍板恢复：柜里能改单价（每个柜价格都不一样）。
                                 只有还在「计划中 / 收货中 / 装柜中」的柜能改（跟后端 REPRICE_PLAN_STATUSES 同一份名单）：
                                 「已完成」的柜里每一票都泰国签收、都付过款了，改价不会改金额，
@@ -1491,7 +1491,7 @@ export default function AdminWhrConsolidationPage() {
                 <input type="number" min="0" step="0.01" value={editPriceSensitive} onChange={e => setEditPriceSensitive(e.target.value)} style={fi} />
               </div>
               <div>
-                <label style={fl}>特别货单价 (元/方)</label>
+                <label style={fl}>特货单价 (元/方)</label>
                 <input type="number" min="0" step="0.01" value={editPriceSpecial} onChange={e => setEditPriceSpecial(e.target.value)} style={fi} />
               </div>
             </div>
@@ -1545,7 +1545,7 @@ export default function AdminWhrConsolidationPage() {
               <div style={{ marginTop: 12 }}>
                 <label style={fl}>这一柜给他的单价（元/方，必填）</label>
                 <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-                  {([["普货", addPriceNormal, setAddPriceNormal], ["商检货", addPriceInspection, setAddPriceInspection], ["敏感货", addPriceSensitive, setAddPriceSensitive], ["特别货", addPriceSpecial, setAddPriceSpecial]] as Array<[string, string, (v: string) => void]>).map(([label, value, setter]) => (
+                  {([["普货", addPriceNormal, setAddPriceNormal], ["商检货", addPriceInspection, setAddPriceInspection], ["敏感货", addPriceSensitive, setAddPriceSensitive], ["特货", addPriceSpecial, setAddPriceSpecial]] as Array<[string, string, (v: string) => void]>).map(([label, value, setter]) => (
                     <label key={label} style={{ display: "flex", alignItems: "center", gap: 4 }}>
                       <span style={{ color: "var(--t-muted)", fontSize: 13 }}>{label}</span>
                       <input type="number" min="0" step="0.01" value={value} onChange={(e) => setter(e.target.value)} style={{ ...fi, width: 100, padding: "4px 8px" }} />
@@ -1651,7 +1651,7 @@ export default function AdminWhrConsolidationPage() {
                   return (
                     <div key={sc.clientId} style={{ border: "1px solid var(--l-soft)", borderRadius: 6, padding: "8px 12px", marginBottom: 6, fontSize: 13, display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
                       <span style={{ fontWeight: 600, minWidth: 90 }}>{sc.clientId}</span>
-                      {([["普货", "unitPriceNormal"], ["商检货", "unitPriceInspection"], ["敏感货", "unitPriceSensitive"], ["特别货", "unitPriceSpecial"]] as Array<[string, keyof CreateCustomerForm]>).map(([label, field]) => (
+                      {([["普货", "unitPriceNormal"], ["商检货", "unitPriceInspection"], ["敏感货", "unitPriceSensitive"], ["特货", "unitPriceSpecial"]] as Array<[string, keyof CreateCustomerForm]>).map(([label, field]) => (
                         <label key={field} style={{ display: "flex", alignItems: "center", gap: 4 }}>
                           <span style={{ color: "var(--t-muted)" }}>{label}</span>
                           <input

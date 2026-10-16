@@ -50,7 +50,7 @@ import {
 
 type Tx = any;
 
-const PRICE_LABEL: Record<keyof WhrPriceTriple, string> = { normal: "普货", inspection: "商检货", sensitive: "敏感货", special: "特别货" };
+const PRICE_LABEL: Record<keyof WhrPriceTriple, string> = { normal: "普货", inspection: "商检货", sensitive: "敏感货", special: "特货" };
 const fmtPrice = (n: number): string => String(Number(n.toFixed(2)));
 const str = (v: unknown): string => (typeof v === "string" ? v.trim() : "");
 const iso = (d: Date | null | undefined): string | null => (d ? d.toISOString() : null);

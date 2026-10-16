@@ -7,8 +7,8 @@
  */
 import type { FclProductInput } from "../../services/business-api";
 
-// 2026-10-11 加特别货
-const CARGO_ZH_TO_CODE: Record<string, string> = { 普货: "normal", 商检货: "inspection", 敏感货: "sensitive", 特别货: "special" };
+// 2026-10-11 加特别货；2026-10-16 老板「特别货改成特货」，旧模板里填的「特别货」照认
+const CARGO_ZH_TO_CODE: Record<string, string> = { 普货: "normal", 商检货: "inspection", 敏感货: "sensitive", 特货: "special", 特别货: "special" };
 
 /** 整柜货物清单模板的表头。⚠️ 新列只能加在最后（2026-09-11 的规矩），表头是精确匹配 */
 export const FCL_TEMPLATE_HEADERS = [
@@ -20,14 +20,18 @@ export const FCL_TEMPLATE_HEADERS = [
   "高cm *",
   "单箱重量kg（选填）",
   "国内单号（选填）",
-  "货型（普货/商检货/敏感货/特别货，默认普货）",
+  "货型（普货/商检货/敏感货/特货，默认普货）",
 ];
 
 /**
  * 加特别货之前的「货型」表头（2026-10-11 改表头前的写法）。客户 / 员工手里下载过的旧模板还是这一句，
  * 表头又是精确匹配 —— 不认它的话旧模板一上传就报「少一列」。读表时把它当成新表头。
  */
-const LEGACY_CARGO_HEADERS = ["货型（普货/商检货/敏感货，默认普货）"];
+const LEGACY_CARGO_HEADERS = [
+  "货型（普货/商检货/敏感货，默认普货）",
+  // 2026-10-11 ～ 10-16 的模板（「特别货」改叫「特货」之前下载的）
+  "货型（普货/商检货/敏感货/特别货，默认普货）",
+];
 
 /**
  * 把一行的**列名两头的空格去掉**再用。

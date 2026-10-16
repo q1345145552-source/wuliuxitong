@@ -181,7 +181,7 @@ export function registerWhrConsolidationRoutes(app: MinimalHttpApp): void {
         ["普货", c.unitPriceNormal],
         ["商检货", c.unitPriceInspection],
         ["敏感货", c.unitPriceSensitive],
-        ["特别货", c.unitPriceSpecial],
+        ["特货", c.unitPriceSpecial],
       ];
       for (const [label, val] of priceChecks) {
         // ⚠️ 用 requireUnitPrice（2026-08-29）：只判「大于 0」不够 ——
@@ -502,7 +502,7 @@ export function registerWhrConsolidationRoutes(app: MinimalHttpApp): void {
       ["unitPriceNormal", "普货单价", body.unitPriceNormal],
       ["unitPriceInspection", "商检货单价", body.unitPriceInspection],
       ["unitPriceSensitive", "敏感货单价", body.unitPriceSensitive],
-      ["unitPriceSpecial", "特别货单价", body.unitPriceSpecial],
+      ["unitPriceSpecial", "特货单价", body.unitPriceSpecial],
     ];
     for (const [field, label, raw] of priceFields) {
       if (raw == null) continue;
@@ -630,7 +630,7 @@ export function registerWhrConsolidationRoutes(app: MinimalHttpApp): void {
       ["商检货单价", body.unitPriceInspection],
       ["敏感货单价", body.unitPriceSensitive],
       // 特别货（2026-10-11 老板「1a」）：没传按默认 1250（老页面不会传这一档），传了照样校验
-      ["特别货单价", body.unitPriceSpecial ?? SPECIAL_CARGO_DEFAULT_PRICE],
+      ["特货单价", body.unitPriceSpecial ?? SPECIAL_CARGO_DEFAULT_PRICE],
     ];
     const prices: Record<string, number> = {};
     for (const [label, raw] of priceChecks) {
@@ -645,7 +645,7 @@ export function registerWhrConsolidationRoutes(app: MinimalHttpApp): void {
       normal: prices["普货单价"],
       inspection: prices["商检货单价"],
       sensitive: prices["敏感货单价"],
-      special: prices["特别货单价"],
+      special: prices["特货单价"],
     };
 
     const plan = await prisma.whrConsolidationPlan.findFirst({

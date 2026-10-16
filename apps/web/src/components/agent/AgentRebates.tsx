@@ -14,7 +14,7 @@ const BUCKETS = [
   { key: "normal", label: "普货" },
   { key: "inspection", label: "商检" },
   { key: "sensitive", label: "敏感" },
-  { key: "special", label: "特别" },
+  { key: "special", label: "特货" },
 ] as const;
 
 function perBucket(volumes: PriceTriple, prices: PriceTriple, pick: "volume" | "price"): string {

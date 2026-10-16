@@ -604,7 +604,7 @@ export default function ClientWhrConsolidationPage() {
 
             {/* -------- 价格信息 -------- */}
             <div style={{ fontSize: 13, color: "var(--t-muted)", marginBottom: 8 }}>
-              普货：{detail.unitPriceNormal}元/方 · 商检货：{detail.unitPriceInspection}元/方 · 敏感货：{detail.unitPriceSensitive}元/方{detail.unitPriceSpecial != null ? ` · 特别货：${detail.unitPriceSpecial}元/方` : ""}
+              普货：{detail.unitPriceNormal}元/方 · 商检货：{detail.unitPriceInspection}元/方 · 敏感货：{detail.unitPriceSensitive}元/方{detail.unitPriceSpecial != null ? ` · 特货：${detail.unitPriceSpecial}元/方` : ""}
             </div>
 
             {/* -------- 总费用及其算式 -------- */}

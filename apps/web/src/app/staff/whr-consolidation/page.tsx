@@ -368,7 +368,7 @@ export default function StaffWhrConsolidationPage() {
       ["普货", addPriceNormal],
       ["商检货", addPriceInspection],
       ["敏感货", addPriceSensitive],
-      ["特别货", addPriceSpecial],
+      ["特货", addPriceSpecial],
     ];
     for (const [label, raw] of priceChecks) {
       const issue = unitPriceIssue(label, raw);
@@ -389,7 +389,7 @@ export default function StaffWhrConsolidationPage() {
         }),
       });
       setToast(r?.unitPriceNormal != null
-        ? `客户已加入本计划，单价：普货 ${r.unitPriceNormal} · 商检货 ${r.unitPriceInspection} · 敏感货 ${r.unitPriceSensitive}${r.unitPriceSpecial != null ? ` · 特别货 ${r.unitPriceSpecial}` : ""} 元/方`
+        ? `客户已加入本计划，单价：普货 ${r.unitPriceNormal} · 商检货 ${r.unitPriceInspection} · 敏感货 ${r.unitPriceSensitive}${r.unitPriceSpecial != null ? ` · 特货 ${r.unitPriceSpecial}` : ""} 元/方`
         : "客户已加入本计划");
       setShowAddCustomer(false);
       loadPlanDetail(selectedPlanId);
@@ -1157,7 +1157,7 @@ export default function StaffWhrConsolidationPage() {
                         <span style={{ fontSize: 13, color: "var(--t-muted)" }}>{c.totalVolumeM3}方 · {c.totalFee ? `¥${amount2(c.totalFee)}` : ""}</span>
                       </div>
                       <div style={{ fontSize: 13, color: "var(--t-muted)", marginTop: 4, display: "flex", alignItems: "center", gap: 10 }}>
-                        <span>普货：{c.unitPriceNormal}元/方 · 商检货：{c.unitPriceInspection}元/方 · 敏感货：{c.unitPriceSensitive}元/方{c.unitPriceSpecial != null ? ` · 特别货：${c.unitPriceSpecial}元/方` : ""}</span>
+                        <span>普货：{c.unitPriceNormal}元/方 · 商检货：{c.unitPriceInspection}元/方 · 敏感货：{c.unitPriceSensitive}元/方{c.unitPriceSpecial != null ? ` · 特货：${c.unitPriceSpecial}元/方` : ""}</span>
                         {/* 已装柜/已发运的计划不给动参与名单，和「新增客户」同一条口径 */}
                         {["planning", "collecting"].includes(planDetail.status) && (
                           <button onClick={() => handleRemoveCustomer(c)} disabled={removingCustomerId === c.id} style={{ ...btnGray, padding: "3px 10px", fontSize: 12, color: "var(--c-red-deep)", borderColor: "#fecaca" }}>{removingCustomerId === c.id ? "移除中..." : "移除客户"}</button>
@@ -1546,7 +1546,7 @@ export default function StaffWhrConsolidationPage() {
               <div style={{ marginTop: 12 }}>
                 <label style={fl}>这一柜给他的单价（元/方，必填）</label>
                 <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-                  {([["普货", addPriceNormal, setAddPriceNormal], ["商检货", addPriceInspection, setAddPriceInspection], ["敏感货", addPriceSensitive, setAddPriceSensitive], ["特别货", addPriceSpecial, setAddPriceSpecial]] as Array<[string, string, (v: string) => void]>).map(([label, value, setter]) => (
+                  {([["普货", addPriceNormal, setAddPriceNormal], ["商检货", addPriceInspection, setAddPriceInspection], ["敏感货", addPriceSensitive, setAddPriceSensitive], ["特货", addPriceSpecial, setAddPriceSpecial]] as Array<[string, string, (v: string) => void]>).map(([label, value, setter]) => (
                     <label key={label} style={{ display: "flex", alignItems: "center", gap: 4 }}>
                       <span style={{ color: "var(--t-muted)", fontSize: 13 }}>{label}</span>
                       <input type="number" min="0" step="0.01" value={value} onChange={(e) => setter(e.target.value)} style={{ ...fi, width: 100, padding: "4px 8px" }} />

@@ -1133,7 +1133,7 @@ async function main(): Promise<void> {
       body: { destinationTh: "曼谷", customers: [{ clientId: C_XT, unitPriceNormal: 520, unitPriceInspection: 620, unitPriceSensitive: 720, unitPriceSpecial: 0.001 }] },
     });
     assert.equal(tiny.status, 400);
-    assert.match(tiny.message, /特别货单价/);
+    assert.match(tiny.message, /特货单价/);
     assert.deepEqual(writes().filter((w) => w.startsWith("write:whrConsolidationPlan")), [], "被拦下还建了柜");
     // 代理特别货价调到 1300：代理客户特别货价默认 1250 低于它 → 拦，点名特别货；填 1300 放行
     seed();
@@ -1142,7 +1142,7 @@ async function main(): Promise<void> {
       body: { destinationTh: "曼谷", customers: [{ clientId: C_AG, unitPriceNormal: 600, unitPriceInspection: 700, unitPriceSensitive: 800 }] },
     });
     assert.equal(low.status, 400, low.message);
-    assert.match(low.message, /特别货/);
+    assert.match(low.message, /特货/);
     const okAg = await callRoute("POST /admin/whr-consolidation/plans", ADMIN, {
       body: { destinationTh: "曼谷", customers: [{ clientId: C_AG, unitPriceNormal: 600, unitPriceInspection: 700, unitPriceSensitive: 800, unitPriceSpecial: 1300 }] },
     });
@@ -1187,7 +1187,7 @@ async function main(): Promise<void> {
     assert.equal(bad.status, 400);
   });
 
-  await check("S4) 客户看得到特别货：柜详情给特别货单价、费用明细写「特别货」那一行（1 方 × 1250）；客户列表给自己的特别货价", async () => {
+  await check("S4) 客户看得到特别货：柜详情给特别货单价、费用明细写「特货」那一行（1 方 × 1250）；客户列表给自己的特别货价", async () => {
     seed();
     mem.db.whrConsolidationPrealertItem.find((x) => x.id === "zz_b1_iX2")!.cargoType = "special";
     pa(PA_X).totalFee = 2 * 550 + 1250;
@@ -1196,7 +1196,7 @@ async function main(): Promise<void> {
     assert.equal(d.data.unitPriceSpecial, 1250);
     const row = d.data.feeBreakdown.rows.find((x: Row) => x.cargoType === "special");
     assert.ok(row, `费用明细里没有特别货那一行：${JSON.stringify(d.data.feeBreakdown)}`);
-    assert.deepEqual([row.label, row.unitPrice, row.amount], ["特别货", 1250, 1250]);
+    assert.deepEqual([row.label, row.unitPrice, row.amount], ["特货", 1250, 1250]);
     assert.equal(d.data.feeBreakdown.matchesStored, true, "明细加起来要跟单子金额对得上");
     const list = await callRoute("GET /client/whr-consolidation/plans", CLIENT_XT, { query: {} });
     assert.equal(list.status, 200, list.message);
