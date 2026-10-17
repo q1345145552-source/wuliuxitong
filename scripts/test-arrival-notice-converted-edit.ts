@@ -397,6 +397,26 @@ async function main(): Promise<void> {
   });
 
   /* ───────────── 三、卡片 ───────────── */
+  await check("B13 封禁的唛头（已转正式那条，dsh 第 9 轮）：保存走超管改单、唛头去首尾空格再比再发 —— 页面也去了再认：换成「 ZZB02 」（封禁）提示账号已封禁、不说没有这个唛头；原来就是封禁的 ZZA01、只多打个空格不提示", () => {
+    const warns = () => nodes((n) => n.props?.className === "an-warn").map(text);
+    const pick = (v: string) => { nodes((n) => n.props?.placeholder === "输入唛头搜索" && typeof n.props?.onChange === "function")[0].props.onChange(v); flush(); };
+    mountConverted(makeDetail());
+    props = { ...props, bannedClients: new Set(["ZZB02"]) }; flush();
+    pick(" ZZB02 ");
+    assert.deepEqual(warns(), ["账号已封禁"]);
+    mountConverted(makeDetail());
+    props = { ...props, clients: [{ id: "ZZB02" }], bannedClients: new Set(["ZZA01"]) }; flush();
+    pick("ZZA01 ");
+    assert.deepEqual(warns(), [], "原来就是它（去了空格一样），已转正式：不提示");
+    // 已标「已通知」的：只多打个空格不算换了唛头（不出「保存后会改回未通知」）；真换成别的唛头才出（dsh 第 10 轮：G01 也按保存时的认法）
+    mountConverted(makeDetail({ notifiedAt: "2026-10-16T10:00:00.000Z" }));
+    props = { ...props, clients: [{ id: "ZZA01" }, { id: "ZZB02" }], bannedClients: new Set() }; flush();
+    pick("ZZA01 ");
+    assert.deepEqual(warns(), [], "多打个空格不算换了唛头");
+    pick(" ZZB02 ");
+    assert.ok(warns().some((w) => /换了唛头，保存后会改回「未通知」/.test(w)), warns().join(" / "));
+  });
+
   await check("C1 卡片：没转的有「修改」；已转正式的只有 canEditConverted 才有（员工那份后端给 false）", () => {
     const card = (n: any) => mod.exports.NoticeCard({ n, busy: false, busyIds: new Set(), onCopyText() {}, onCopyImage() {}, onSaveImage() {}, onPreview() {}, onToggleNotified() {}, onEdit() {}, onConvert() {}, onDelete() {} });
     const hasEdit = (n: any) => { hooks = []; index = 0; const t = card(n); return nodes((x) => x.type === "button" && text(x) === "修改", t).length > 0; };

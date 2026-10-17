@@ -147,6 +147,12 @@ async function main() {
   mountBan(null);
   pickMark(" ZZBAN1 ");
   assert.deepEqual(warns(), ["系统里没有这个唛头，要选下拉里已有的"]);
+  // 普通到货通知保存时唛头原样发（不去空格）—— 页面「一字不差认」跟这个对得上（dsh 第 9 轮：别只测提示）
+  mountBan(null);
+  pickMark(" ZZOK1 ");
+  change("品名", "小样"); change("件数", "1");
+  await nodes((n) => n.type === "button" && text(n) === "保存")[0].props.onClick(); await settleSave();
+  assert.equal(submitted.clientId, " ZZOK1 ", "到货通知保存时唛头原样发");
   // 原来就挂在封禁唛头名下的那条：那个唛头留在下拉里（不然一点开就是「匹配 0 个」，dsh 审查）
   mountBan({ clientId: "ZZBAN1" });
   const pickerOpts = nodes((n) => n.props?.placeholder === "输入唛头搜索" && typeof n.props?.onChange === "function")[0].props.options;

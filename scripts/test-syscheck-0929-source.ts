@@ -111,7 +111,8 @@ async function main(): Promise<void> {
     assert.match(admin, /const headers = \[[^\]]*"货型", "运单号"\];/, "批量模板的「运单号」没加在最后一列");
     assert.match(admin, /trackingNo: String\(r\["运单号"\] \?\? r\.trackingNo \?\? ""\)\.trim\(\)/, "批量导入没把运单号传给后端");
     assert.match(admin, /trackingNo: createForm\.trackingNo\.trim\(\),/, "单个创建没传运单号");
-    assert.match(admin, /if \(!createForm\.trackingNo\.trim\(\)\) \{ setMessage\("请填写运单号"\); return; \}/);
+    // 2026-10-17 起创建订单弹窗用自己的提示 createOrderMessage（画在弹窗里，test-client-ban-ui U5）
+    assert.match(admin, /if \(!createForm\.trackingNo\.trim\(\)\) \{ setCreateOrderMessage\("请填写运单号"\); return; \}/);
     assert.doesNotMatch(admin, /receiverNameTh: createForm\.receiverNameTh/, "建单弹窗还在收泰国收货人（后端 6-04 起不存）");
     const staff = read("apps/web/src/app/staff/page.tsx");
     const s = staff.indexOf("const result = await createStaffOrder({");
@@ -239,7 +240,7 @@ async function main(): Promise<void> {
       const at = src.indexOf(anchor);
       assert.ok(at >= 0, `${f} 找不到 ${anchor}`);
       const before = src.slice(Math.max(0, at - 400), at);
-      assert.match(before, new RegExp(`unnamedFilledRowIssue\\(${arr}\\); if \\(unnamed\\) \\{ set(Toast|Message)\\(unnamed\\); return; \\}`), `${f} 提交前没拦「填了数据没填品名」的行`);
+      assert.match(before, new RegExp(`unnamedFilledRowIssue\\(${arr}\\); if \\(unnamed\\) \\{ set(Toast|Message|CreateOrderMessage)\\(unnamed\\); return; \\}`), `${f} 提交前没拦「填了数据没填品名」的行`);
     }
   });
 

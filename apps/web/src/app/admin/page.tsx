@@ -268,6 +268,12 @@ export default function AdminHomePage() {
   const [knowledgeGapStatus, setKnowledgeGapStatus] = useState<"open" | "resolved">("open");
   const [knowledgeItems, setKnowledgeItems] = useState<AiKnowledgeItem[]>([]);
   const [message, setMessage] = useState("");
+  /** 「创建订单」弹窗自己的提示（2026-10-17 dsh 第 9 轮）：不跟页面级 message 共用 —— 共用的话别处（刷新、封禁、加客户）还在飞的请求失败，
+   *  那句会串进这个弹窗，员工以为是创建失败。这里只放这个弹窗的错误，所以一律红字 */
+  const [createOrderMessage, setCreateOrderMessage] = useState("");
+  /** 「创建订单」弹窗自己的「提交中」（2026-10-17 dsh 第 10 轮）：不用整页共用的 loading —— 共用的话列表刷新 / 账号刷新 / 刚打开页面还在加载时
+   *  打开弹窗，「创建」「取消」都是灰的，弹窗又没有别的关法，网卡住就关不掉 */
+  const [creatingOrder, setCreatingOrder] = useState(false);
   const [toast, setToast] = useState("");
   const [shippingConfigSea, setShippingConfigSea] = useState("0.5");
   const [shippingConfigLand, setShippingConfigLand] = useState("0.3");
@@ -1028,7 +1034,8 @@ export default function AdminHomePage() {
         loadOpsOverview(),
         loadStaff(),
         loadClients(),
-        loadOrders(),
+        // 自动刷新刷上了，页面底下「列表刷新失败」那类旧话也清掉（不然列表早好了，红字还一直说失败 —— dsh 第 11 轮）
+        loadOrders().then((outcome) => { if (outcome === "applied") clearStaleListError(); }),
         shipmentOverviewPending.current ? null : loadShipmentOverview(), // 运单管理顶上那排数字跟列表一起刷新（2026-09-29）
       ]);
     },
@@ -1347,6 +1354,9 @@ export default function AdminHomePage() {
     }
   };
 
+  /** 列表刷上了：页面底下那句「列表刷新失败」类的话已经不对了，清掉；别的报错（封禁后账号列表刷新失败、上传失败……）不动（2026-10-17 Claude 审查第 11 轮） */
+  const clearStaleListError = () => setMessage((m) => (/^(订单已创建，但列表刷新失败|刷新失败，已保留上次结果)/.test(m) ? "" : m));
+
   const refreshOrderList = async () => {
     if (orderRefreshInFlight.current) return;
     orderRefreshInFlight.current = true;
@@ -1357,6 +1367,7 @@ export default function AdminHomePage() {
       // 被更新的一次请求作废时，只说「被替代」——那次请求可能还没回来、也可能失败，这里不许替它宣布「已更新」
       // （Codex 2026-09-06 第二轮：R1 手动→R2 轮询→R1 作废→R2 失败，全程列表没变，不能提示更新完成）
       setToast(outcome === "applied" ? "运单列表已刷新" : "本次刷新已被较新的请求替代");
+      if (outcome === "applied") clearStaleListError();
     } catch (error) {
       setMessage(`刷新失败，已保留上次结果：${error instanceof Error ? error.message : "请稍后重试"}`);
     } finally {
@@ -1532,8 +1543,9 @@ export default function AdminHomePage() {
         userId: memoryFilterUserId.trim() || undefined,
       });
       await loadSessionMemory();
-      setToast("会话记忆已清理");
-      setMessage(`已清理 ${result.removed} 条会话记忆。`);
+      /* 条数放进提示条（2026-10-17）：页面级 message 只留给错误 —— 运单编辑弹窗把它一律画成红字，
+         这句成功的要是晚到、碰上弹窗开着，会被画成红的（dsh 第 10 轮） */
+      setToast(`会话记忆已清理（${result.removed} 条）`);
     } catch (error) {
       const text = error instanceof Error ? error.message : "清理失败";
       setMessage(`清理失败：${text}`);
@@ -1955,7 +1967,7 @@ export default function AdminHomePage() {
               type="button"
               onClick={() => {
                 setShowCreateOrderModal(true);
-                setMessage(""); // 弹窗里会显示这条提示，打开时先清掉上一回的（同编辑运单弹窗）
+                setCreateOrderMessage(""); // 弹窗里会显示这条提示，打开时先清掉上一回的
                 /* 唛头下拉用页面上那份客户名单（推送 / 10 秒兜底一直在刷，2026-10-17），打开时再顺手拉一次；
                    拉失败就用手上那份，10 秒兜底会再拉（不留未处理的报错，dsh 第 3 轮） */
                 loadClients().catch(() => {});
@@ -2361,7 +2373,7 @@ export default function AdminHomePage() {
                           {/* 保存失败 / 没填全的提示原来只写在页面最底下，被这个全屏弹窗挡住，点保存像没反应。
                               拆过柜的单填了比已装走还少的数会被后端拒绝（2026-09-28 审查修复 #1），那句话必须让人看见 */}
                           {message ? (
-                            <p role="alert" style={{ margin: "0 0 8px", color: message.includes("失败") ? "var(--c-red-deep)" : "var(--c-green-deep)" }}>{message}</p>
+                            <p role="alert" style={{ margin: "0 0 8px", color: "var(--c-red-deep)" /* 这里只会是没填全 / 保存失败（成功走提示条），一律红字；原来只认「失败」，「请填写运单号。」成了绿字（dsh 第 9 轮） */ }}>{message}</p>
                           ) : null}
                           <div style={{ display: "flex", gap: 8 }}>
                             <button type="button" onClick={() => void submitOrderEdit()} disabled={loading} style={{ border: "none", borderRadius: 6, padding: "9px 18px", color: "var(--white)", background: "var(--c-navy)", cursor: "pointer", fontWeight: 600 }}>保存</button>
@@ -3054,24 +3066,29 @@ export default function AdminHomePage() {
             ))}
             <button onClick={() => setCreateProducts([...createProducts, { itemName: "", packageCount: "", lengthCm: "", widthCm: "", heightCm: "", productQuantity: "", cargoType: "normal", domesticTrackingNo: "" }])} style={{ border: "1px solid var(--c-blue)", borderRadius: 6, padding: "4px 10px", background: "var(--c-blue-bg)", color: "var(--c-blue)", cursor: "pointer", fontSize: 12, marginBottom: 16 }}>添加产品行</button>
             {/* 创建失败 / 没填全的提示原来只写在页面最底下，被这个全屏弹窗挡住，点「创建」像没反应（同上面编辑运单弹窗 2026-09-28 那次）。
-                2026-10-17 封禁唛头：名单还没刷新时后端拦下的「账号已封禁」也在这里看得见（Codex / dsh 第 8 轮） */}
-            {message ? (
-              <p role="alert" style={{ margin: "0 0 8px", color: message.includes("失败") || message.includes("请") ? "var(--c-red-deep)" : "var(--c-green-deep)" }}>{message}</p>
+                2026-10-17 封禁唛头：名单还没刷新时后端拦下的「账号已封禁」也在这里看得见（Codex / dsh 第 8 轮）。
+                这里只会有这个弹窗自己的错误（成功了直接关弹窗、弹提示条），所以一律红字 —— 原来按字里有没有「失败」「请」猜颜色，
+                「产品行1的箱数必须填正整数」这种就成了绿字（dsh 第 9 轮） */}
+            {createOrderMessage ? (
+              <p role="alert" style={{ margin: "0 0 8px", color: "var(--c-red-deep)" }}>{createOrderMessage}</p>
             ) : null}
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
-              <button onClick={() => setShowCreateOrderModal(false)} style={{ border: "1px solid var(--l-strong)", borderRadius: 8, padding: "8px 14px", background: "var(--white)", cursor: "pointer", color: "var(--t-strong)" }}>取消</button>
-              <button disabled={loading} onClick={async () => {
-                if (!createForm.clientId.trim()) { setMessage("请选择客户"); return; }
-                if (!createForm.trackingNo.trim()) { setMessage("请填写运单号"); return; }
-                { const unnamed = unnamedFilledRowIssue(createProducts); if (unnamed) { setMessage(unnamed); return; } }
+              {/* 这个弹窗提交中不让取消：不然取消后马上重开，上一次晚到的结果会写进新弹窗、甚至把新弹窗关掉（同账号弹窗，dsh 第 9 轮）。
+                  只看这个弹窗自己的 creatingOrder，不看整页的 loading（dsh 第 10 轮） */}
+              <button disabled={creatingOrder} onClick={() => setShowCreateOrderModal(false)} style={{ border: "1px solid var(--l-strong)", borderRadius: 8, padding: "8px 14px", background: "var(--white)", cursor: "pointer", color: "var(--t-strong)" }}>取消</button>
+              <button disabled={creatingOrder} onClick={async () => {
+                if (!createForm.clientId.trim()) { setCreateOrderMessage("请选择客户"); return; }
+                if (!createForm.trackingNo.trim()) { setCreateOrderMessage("请填写运单号"); return; }
+                { const unnamed = unnamedFilledRowIssue(createProducts); if (unnamed) { setCreateOrderMessage(unnamed); return; } }
                 const validProducts = createProducts.filter(p => p.itemName.trim());
-                if (validProducts.length === 0) { setMessage("请至少填写一个产品行"); return; }
+                if (validProducts.length === 0) { setCreateOrderMessage("请至少填写一个产品行"); return; }
                 // ⚠️ 跟另外三个入口同一份口径（箱数正整数、每箱几个全填或全空）
                 {
                   const rowIssue = validateProductRows(validProducts);
-                  if (rowIssue) { setMessage(rowIssue); return; }
+                  if (rowIssue) { setCreateOrderMessage(rowIssue); return; }
                 }
-                setLoading(true);
+                setCreateOrderMessage("");
+                setCreatingOrder(true);
                 try {
                   await createStaffOrder({
                     clientId: createForm.clientId.trim(),
@@ -3095,14 +3112,21 @@ export default function AdminHomePage() {
                       domesticTrackingNo: p.domesticTrackingNo.trim() || undefined,
                     })),
                   });
-                  setToast("订单创建成功");
-                  setShowCreateOrderModal(false);
-                  await loadOrders();
                 } catch (err) {
-                  setMessage(`创建失败：${err instanceof Error ? err.message : "未知错误"}`);
-                } finally { setLoading(false); }
+                  setCreateOrderMessage(`创建失败：${err instanceof Error ? err.message : "未知错误"}`);
+                  return;
+                } finally { setCreatingOrder(false); }
+                /* 建成了：后面刷新列表出错不能再说「创建失败」—— 原来跟建单共用一个 catch，员工以为没建成会重建（dsh 第 9 轮）。
+                   列表刷上了就清掉页面底下上一回「列表刷新失败」那类话（dsh 第 10 轮）；别的报错不动，不然弹窗遮着时写进来的别的提醒没被看见就清了（Claude 第 11 轮） */
+                setToast("订单创建成功");
+                setShowCreateOrderModal(false);
+                try {
+                  if ((await loadOrders()) === "applied") clearStaleListError();
+                } catch (err) {
+                  setMessage(`订单已创建，但列表刷新失败，请点「刷新」核对：${err instanceof Error ? err.message : "未知错误"}`);
+                }
               }} style={{ border: "none", borderRadius: 8, padding: "8px 14px", background: "var(--c-blue)", color: "var(--white)", fontWeight: 600, cursor: "pointer" }}>
-                {loading ? "提交中…" : "创建"}
+                {creatingOrder ? "提交中…" : "创建"}
               </button>
             </div>
           </div>

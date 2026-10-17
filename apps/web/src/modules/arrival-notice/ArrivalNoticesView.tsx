@@ -646,19 +646,23 @@ function NoticeEditor(props: {
      换成它 → 存不上；原来就是它、这条还没转运单 → 存得上、转不了；原来就是它、已经转了（待入库 / 正式）→ 已有的单照常，不提示 */
   /* ⚠️ 一字不差才算（不去首尾空格）：到货通知保存时唛头原样发、后端原样查（arrival-notices/routes.ts readNoticeFields / assertClient），
      去了空格再认的话，打「 XHH6698 」页面说「账号已封禁」、后端却回「唛头不存在」，两边打架（Codex / dsh 第 7、8 轮）。
-     带空格的就走下面「系统里没有这个唛头」，跟后端一致 */
-  const clientBanned = draft.clientId !== "" && props.bannedClients.has(draft.clientId);
+     带空格的就走下面「系统里没有这个唛头」，跟后端一致。
+     ⚠️ 只有超管改已转正式那条（converted）例外：那条保存走超管改单（buildAdminOrderPatch 去首尾空格再比、再发，后端也去），
+     页面也得去了再认，不然打「 B 」页面说「没有这个唛头」、存上去却是 B（dsh 第 9 轮）—— 怎么认跟着「保存时怎么发」走 */
+  const markAsSaved = (v: string) => (converted ? v.trim() : v);
+  const draftMark = markAsSaved(draft.clientId);
+  const clientBanned = draftMark !== "" && props.bannedClients.has(draftMark);
   const bannedNote = !clientBanned ? null
-    : draft.clientId !== (base?.clientId ?? "") ? BANNED_MARK_HINT
+    : draftMark !== markAsSaved(base?.clientId ?? "") ? BANNED_MARK_HINT
     : !editing?.convertedTo ? "账号已封禁，这条转不了运单" : null;
   /* 名单没拿到（接口失败 / 还没回来）时不说「没有这个唛头」。⚠️ 要连封禁的一起算：客户全被封了时下拉是空的，但名单是拿到了的（Codex 审查） */
   const clientListEmpty = props.clients.length === 0 && props.bannedClients.size === 0;
-  const clientKnown = !draft.clientId || clientListEmpty || clientBanned || props.clients.some((c) => c.id === draft.clientId);
+  const clientKnown = !draftMark || clientListEmpty || clientBanned || props.clients.some((c) => c.id === draftMark);
   /* F15：唛头下拉不截断（原来 .slice(0, 50)）—— MarkPicker 用 filterMarkOptions，空查询给全部 */
   /* G01：这条已标「已通知客户」、又把原来的唛头换成别的（或清空）—— 新唛头的客户其实没被通知过，保存时后端会改回「未通知」。
      原来没唛头、这次补上的后端不动，这里也不提醒（R8），不然页面说「会改回未通知」结果没改 */
-  const savedClient = base ? (base.clientId.trim() === "" ? null : base.clientId) : null;
-  const draftClient = draft.clientId.trim() === "" ? null : draft.clientId;
+  const savedClient = base ? (base.clientId.trim() === "" ? null : markAsSaved(base.clientId)) : null;
+  const draftClient = draft.clientId.trim() === "" ? null : draftMark;
   const clientChangedAfterNotify = Boolean(editing && notifiedAt && savedClient !== null && draftClient !== savedClient);
   const slotsLeft = photoSlotsLeft(images.length, queued.length);
 

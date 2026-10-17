@@ -94,9 +94,28 @@ check("U5 超管端：「创建订单」唛头框、「运单管理」改唛头�
   assert.match(sub![1], /enabled: session !== null,/, "超管页「账号」推送只看登没登录，不能再加别的开关（Codex 第 3 轮）");
   assert.match(src, /setShowCreateOrderModal\(true\);[\s\S]{0,300}?loadClients\(\)\.catch\(/, "点「创建订单」要顺手拉一次名单，失败也不留未处理的报错");
   // 创建订单弹窗里要看得见后端拦下的那句（「创建失败：账号已封禁」）：原来只写在页面最底下、被全屏弹窗挡住（Codex / dsh 第 8 轮）
-  const modal = src.slice(src.indexOf("<MarkPicker value={createForm.clientId}"), src.indexOf("{/* 批量导入弹窗 */}"));
-  assert.match(modal, /\{message \? \(\s*<p role="alert"[^>]*>\{message\}<\/p>\s*\) : null\}/, "创建订单弹窗里没显示 message");
-  assert.match(src, /setShowCreateOrderModal\(true\);\s*\n\s*setMessage\(""\);/, "打开创建订单弹窗要先清掉上一回的提示");
+  // dsh 第 9 轮：弹窗用自己那份 createOrderMessage（别处的报错不串进来）、一律红字、提交中不让取消、建成以后刷新失败不说「创建失败」
+  const modal = src.slice(src.indexOf("{showCreateOrderModal && ("), src.indexOf("{/* 批量导入弹窗 */}"));
+  assert.ok(modal.length > 0 && modal.includes("<MarkPicker value={createForm.clientId}"), "创建订单弹窗那段找不到");
+  assert.match(modal, /\{createOrderMessage \? \(\s*<p role="alert" style=\{\{ margin: "0 0 8px", color: "var\(--c-red-deep\)" \}\}>\{createOrderMessage\}<\/p>\s*\) : null\}/, "创建订单弹窗里要红字显示它自己的提示");
+  assert.ok(!/\{message \?/.test(modal), "创建订单弹窗不能再显示页面级 message（别处的报错会串进来）");
+  // 提交中禁用「取消」「创建」—— 只看弹窗自己的 creatingOrder，不看整页 loading（共用的话列表 / 账号刷新时打开弹窗两个按钮都灰、关不掉，dsh 第 10 轮）
+  assert.match(modal, /<button disabled=\{creatingOrder\} onClick=\{\(\) => setShowCreateOrderModal\(false\)\}/, "这个弹窗提交中要禁用「取消」");
+  assert.match(modal, /<button disabled=\{creatingOrder\} onClick=\{async \(\) => \{/, "这个弹窗提交中要禁用「创建」");
+  assert.ok(!/\{loading\b|disabled=\{loading\}|setLoading\(/.test(modal.replace(/\/\*[\s\S]*?\*\//g, "")), "创建订单弹窗不能再用整页共用的 loading");
+  // 提交前真的标成「提交中」（不然两个按钮写着 disabled={creatingOrder} 也一直能点 —— Claude 第 11 轮：删掉这句原来测不出来）
+  assert.match(modal, /setCreateOrderMessage\(""\);\s*\n\s*setCreatingOrder\(true\);\s*\n\s*try \{\s*\n\s*await createStaffOrder\(/, "提交前要先 setCreatingOrder(true)");
+  assert.match(modal, /setCreateOrderMessage\(`创建失败：[^`]*`\);\s*\n\s*return;\s*\n\s*\} finally \{ setCreatingOrder\(false\); \}[\s\S]*?setShowCreateOrderModal\(false\);[\s\S]*?if \(\(await loadOrders\(\)\) === "applied"\) clearStaleListError\(\);[\s\S]*?订单已创建，但列表刷新失败/, "建单失败和建成后刷新失败要分开说；建成后列表刷上了才清「列表刷新失败」那类旧话");
+  assert.equal((modal.match(/\bsetMessage\(/g) ?? []).length, 1, "弹窗里写页面级 message 的只有「建成后刷新失败」那一句（不再一刀全清）");
+  // 只清「列表刷新失败」类的话，别的报错不动；手动「刷新」刷上了也清（Claude 第 11 轮）
+  assert.match(src, /const clearStaleListError = \(\) => setMessage\(\(m\) => \(\/\^\(订单已创建，但列表刷新失败\|刷新失败，已保留上次结果\)\/\.test\(m\) \? "" : m\)\);/);
+  assert.match(src, /setToast\(outcome === "applied" \? "运单列表已刷新"[^\n]*\n\s*if \(outcome === "applied"\) clearStaleListError\(\);/, "手动刷新刷上了要清掉「列表刷新失败」那句");
+  assert.match(src, /loadOrders\(\)\.then\(\(outcome\) => \{ if \(outcome === "applied"\) clearStaleListError\(\); \}\),/, "10 秒自动刷新 / 推送刷上了也要清（dsh 第 11 轮）");
+  // 编辑运单弹窗：一律红字（那里只会是没填全 / 保存失败）；页面级 message 里不再放成功的话（清理会话记忆改走提示条，dsh 第 10 轮）
+  const editAlert = src.slice(src.indexOf("拆过柜的单填了比已装走还少的数会被后端拒绝"), src.indexOf("拆过柜的单填了比已装走还少的数会被后端拒绝") + 600);
+  assert.match(editAlert, /<p role="alert" style=\{\{ margin: "0 0 8px", color: "var\(--c-red-deep\)"/, "编辑运单弹窗的提示要一律红字");
+  assert.ok(!/setMessage\(`已清理/.test(src), "页面级 message 只留给错误：清理会话记忆的成功那句要走提示条");
+  assert.match(src, /setShowCreateOrderModal\(true\);\s*\n\s*setCreateOrderMessage\(""\);/, "打开创建订单弹窗要先清掉上一回的提示");
 });
 
 check("U6 全站每个唛头下拉点名：挂单的四处都去掉封禁的；整柜询价那个不在这次范围（询价不是单），照旧全给", () => {
