@@ -19,6 +19,7 @@
  * 没有 DATABASE_URL 打印「跳过」。测试数据全在假公司 zz_rv18_co 下，开跑前、跑完后都清干净。
  */
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 
@@ -249,18 +250,28 @@ async function main(): Promise<void> {
       const rid = "zzrv18req0000000000000000000002";
       /* 让两个请求一定都过了进门那次预查、都卡在取号锁上（第 3 轮 Codex：原来靠碰运气，可能后到的在预查就认出来了，
          撞主键那条路根本没走到）：先在另一个事务里拿住取号锁，等库里看到两个请求都在排这把锁，再放 */
+      // 取号锁的号跟 orders/routes.ts 里的对上（那边没导出，直接核源码）
+      const LOCK_KEY = 0x5afd00b1;
+      assert.ok(readFileSync(path.join(__dirname, "../apps/api/src/modules/orders/routes.ts"), "utf8").includes("const PREALERT_LOCK_KEY = 0x5afd00b1;"), "取号锁的号变了，这里要跟着改");
       let calls: Promise<{ status: number; data: any; message: string }>[] = [];
-      await pm.$transaction(async (tx: any) => {
-        await tx.$executeRaw`SELECT pg_advisory_xact_lock(${0x5afd00b1})`;
-        calls = [call("POST /client/prealerts", C1, prealert({ requestId: rid })), call("POST /client/prealerts", C1, prealert({ requestId: rid }))];
-        const deadline = Date.now() + 20000;
-        for (;;) {
-          const rows: { n: number }[] = await tx.$queryRaw`SELECT count(*)::int AS n FROM pg_locks WHERE locktype = 'advisory' AND objid = ${0x5afd00b1}::bigint::oid AND objsubid = 1 AND NOT granted`;
-          if (rows[0].n >= 2) break;
-          if (Date.now() > deadline) throw new Error(`20 秒内没等到两个请求都排在取号锁上（现在 ${rows[0].n} 个）`);
-          await new Promise((r) => setTimeout(r, 50));
-        }
-      }, { timeout: 30000, maxWait: 10000 });
+      try {
+        await pm.$transaction(async (tx: any) => {
+          await tx.$executeRaw`SELECT pg_advisory_xact_lock(${LOCK_KEY})`;
+          calls = [call("POST /client/prealerts", C1, prealert({ requestId: rid })), call("POST /client/prealerts", C1, prealert({ requestId: rid }))];
+          // 3 秒等不到就算失败：路由里那个事务默认 5 秒超时，等久了它们自己先超时（第 4 轮）
+          const deadline = Date.now() + 3000;
+          for (;;) {
+            // 只数本库、这把 bigint 锁（高 32 位 classid = 0、低 32 位 objid、objsubid = 1）上排队的（第 4 轮：别把别的库 / 别的锁算进来）
+            const rows: { n: number }[] = await tx.$queryRaw`SELECT count(*)::int AS n FROM pg_locks WHERE locktype = 'advisory' AND database = (SELECT oid FROM pg_database WHERE datname = current_database()) AND classid = 0 AND objid = ${LOCK_KEY}::bigint::oid AND objsubid = 1 AND NOT granted`;
+            if (rows[0].n >= 2) break;
+            if (Date.now() > deadline) throw new Error(`3 秒内没等到两个请求都排在取号锁上（现在 ${rows[0].n} 个）`);
+            await new Promise((r) => setTimeout(r, 20));
+          }
+        }, { timeout: 15000, maxWait: 5000 });
+      } catch (e) {
+        await Promise.allSettled(calls); // 别让两个请求拖到后面几项 / 清理之后才落库
+        throw e;
+      }
       const [a, b] = await Promise.all(calls);
       assert.equal(a.status, 200, `${a.status} ${a.message}`);
       assert.equal(b.status, 200, `${b.status} ${b.message}`);

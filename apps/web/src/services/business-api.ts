@@ -663,13 +663,19 @@ export async function createClientPrealert(payload: ClientPrealertPayload): Prom
        到点 abort 会连正文一起断，下面 catch 认出来 */
     return await parseApiResponse(response);
   } catch (error) {
-    /* 断网（TypeError）/ 到点（我们自己 abort）/ 网关 5xx：这一行到底建没建成不知道 —— 标成「结果不确定」，
-       页面叫客户直接再点「一键提交」（同一个编号，服务器认得出来），别改了重新上传（重新上传换编号，会当新单）。
-       后端明确拒了的（400 / 409，后端写的中文原因）照原样往上抛 */
-    const transport = controller?.signal.aborted === true || error instanceof TypeError; // 到点是我们自己 abort 的，看 signal 就知道
-    const gateway = response !== null && response.status >= 500;
-    if (controller && (transport || gateway)) {
-      const unknown = new Error("网络中断或服务器太久没回应，这一行可能已经下单了。直接再点「一键提交」重交，系统会自动认出已经建好的，不会重复下单；先别改了重新上传") as Error & { resultUnknown?: boolean };
+    /* 这一行到底建没建成不知道的，标成「结果不确定」：页面叫客户直接再点「一键提交」（同一个编号，服务器认得出来），
+       别改了重新上传（重新上传换编号，会当新单）。只有后端明确拒了的（4xx，后端写的中文原因）才算确定没建、原样往上抛（第 3、4 轮）：
+       - 没拿到回话：断网（TypeError）/ 到点（我们自己 abort 的，看 signal 就知道）；还没发出去就拦下的（内容太大，普通 Error）不算
+       - 拿到了但不是 4xx：5xx（网关 / 后端出错）、2xx 但内容是空的 / 坏的 / 读到一半断了 */
+    const aborted = controller?.signal.aborted === true;
+    const network = aborted || error instanceof TypeError;
+    const rejected = response !== null && response.status >= 400 && response.status < 500;
+    if (controller && !rejected && (response !== null || network)) {
+      const original = (error instanceof Error ? error.message : "").replace(/[。.\s]+$/, "");
+      const why = network ? "网络中断或服务器太久没回应"
+        : response !== null && response.status >= 500 ? original || "服务器出错了"
+        : "服务器回的内容不完整";
+      const unknown = new Error(`${why}。这一行可能已经下单了：直接再点「一键提交」重交，系统会自动认出已经建好的，不会重复下单；先别改了重新上传`) as Error & { resultUnknown?: boolean };
       unknown.resultUnknown = true;
       throw unknown;
     }

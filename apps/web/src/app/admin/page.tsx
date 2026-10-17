@@ -504,7 +504,7 @@ export default function AdminHomePage() {
   /* orderUpdatedAt（2026-10-18 全系统审查第一档第 6 条）：打开弹窗时订单的版本。改了产品行 / 合计保存时带回去，
      这期间别人存过就 409 —— 产品行是整组发的（没带回来的行后端会删），拿旧弹窗存会把别人刚加的行删掉、改的盖回去 */
   const [editSnapshot, setEditSnapshot] = useState<{ form: Record<string, string>; productsJson: string; orderUpdatedAt?: string } | null>(null);
-  /* 第几次打开编辑弹窗（2026-10-18 Codex 第 3 轮）：保存还没回来就点「取消」、又打开了别的单，旧请求的报错不能写进新弹窗 */
+  /* 第几次打开 / 关上编辑弹窗（2026-10-18 Codex 第 3、4 轮）：保存还没回来就关了（或又打开了别的单），旧请求的报错不能写进弹窗 */
   const editSessionRef = useRef(0);
   /* 编辑弹窗里实时提示「总重量/总体积保存时听谁的」（2026-08-31，排查报告第22条）。
      跟保存用的是同一个 decideEditTotals，界面上说的和实际存的不会两张皮。 */
@@ -800,6 +800,13 @@ export default function AdminHomePage() {
   /**
    * 载入待编辑订单到表单，便于管理员修改客户端订单信息。
    */
+  /* 关编辑弹窗也算「换了一次」（2026-10-18 Codex / dsh 第 4 轮）：保存还没回话就关了、没再打开别的单，
+     失败的报错要走提示条 —— 写进已经关掉的弹窗，人看不见。三个关的入口（取消、右上角关、再点一次「编辑」）都走这里 */
+  const closeEditOrder = () => {
+    editSessionRef.current += 1;
+    setEditingOrderId("");
+  };
+
   const startEditOrder = (order: AdminOrderItem) => {
     /* 待入库的货资料以「到货通知」为准，这里改了后端也会整单拒（admin/routes.ts 的待入库拦截，文案同 PENDING_INBOUND_EDIT_ELSEWHERE_MESSAGE）。
        电脑那一行和手机那一块都走这里，先在这里拦住，别让超管白填（2026-10-08 审查 F08） */
@@ -991,13 +998,13 @@ export default function AdminHomePage() {
          只在还是同一个弹窗时换（存的过程中关掉又开了别的单，那边已经有自己的基线） */
       setEditSnapshot((prev) => (prev && prev === snapAtSubmit ? { form: submittedForm, productsJson: submittedProductsJson, orderUpdatedAt: saved.updatedAt } : prev));
       // 手填值和自动计算冲突时明说哪边生效了，不再静默（排查报告第22条）
-      // 存的过程中已经关了 / 换了别的单：提示里写明是之前那张（Codex 第 3 轮）
+      // 存的过程中已经关了 / 换了别的单：提示里写明是之前那张（Codex 第 3、4 轮）
       const whose = editSessionRef.current === sessionAtSubmit ? "" : "之前那张单：";
       setToast(`${whose}${totalsNotes.length > 0 ? `订单信息已更新。${totalsNotes.join("；")}` : "订单信息已更新"}`);
       await loadOrders();
     } catch (error) {
       const text = error instanceof Error ? error.message : "保存失败";
-      // 还是同一次打开的弹窗才写进弹窗；已经关了 / 换了别的单，用提示条说「之前那张没存上」（Codex 第 3 轮）
+      // 还是同一次打开的弹窗才写进弹窗；已经关了 / 换了别的单，用提示条说「之前那张没存上」（Codex 第 3、4 轮）
       if (editSessionRef.current === sessionAtSubmit) setMessage(`保存失败：${text}`);
       else setToast(`之前那张单没存上：${text}`);
       // 被别人抢先存了：顺手把列表刷新，关掉重开就是最新的（不等 10 秒那次自动刷新）
@@ -2253,7 +2260,7 @@ export default function AdminHomePage() {
                         type="button"
                         onClick={() => {
                           if (editingOrderId === (o.orderId ?? o.id)) {
-                            setEditingOrderId("");
+                            closeEditOrder();
                           } else {
                             startEditOrder(o);
                           }
@@ -2344,7 +2351,7 @@ export default function AdminHomePage() {
                         <DetailModal
                           title="编辑运单"
                           subtitle={o.trackingNo ?? o.orderNo ?? "—"}
-                          onClose={() => setEditingOrderId("")}
+                          onClose={closeEditOrder}
                           closeOnEsc={false}
                         >
                         <div style={{ display: "grid", gap: 8 }}>
@@ -2422,7 +2429,7 @@ export default function AdminHomePage() {
                           ) : null}
                           <div style={{ display: "flex", gap: 8 }}>
                             <button type="button" onClick={() => void submitOrderEdit()} disabled={loading} style={{ border: "none", borderRadius: 6, padding: "9px 18px", color: "var(--white)", background: "var(--c-navy)", cursor: "pointer", fontWeight: 600 }}>保存</button>
-                            <button type="button" onClick={() => setEditingOrderId("")} style={{ border: "1px solid #d8d6d1", borderRadius: 6, padding: "9px 18px", background: "var(--white)", cursor: "pointer", color: "#14171D" }}>取消</button>
+                            <button type="button" onClick={closeEditOrder} style={{ border: "1px solid #d8d6d1", borderRadius: 6, padding: "9px 18px", background: "var(--white)", cursor: "pointer", color: "#14171D" }}>取消</button>
                           </div>
                         </div>
                         </DetailModal>

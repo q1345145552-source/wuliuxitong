@@ -14,7 +14,8 @@
  *   S7b 真跑页面里那段 submitOrderEdit（Codex / dsh 第 1、2 轮），假后端照真后端核版本：每次保存都带版本；存完基线换成这次提交的；
  *       别人先改了产品行、我只改备注也被拦下（旧产品行配不上新版本，不会漏拦丢数据）；409 不动基线；存的过程中重开弹窗不盖
  *   S10 超管列表 / 导出筛选的「国内单号」也认产品行上的号（Codex / dsh 第 1 轮）
- *   S11 真跑 createClientPrealert：带编号的超时连正文一起管；断网 / 到点 / 网关 5xx 标「结果不确定」，后端明确拒的原样抛（第 2、3 轮）
+ *   S11 真跑 createClientPrealert + 真 fetchWithSession / parseApiResponse 对本机假服务器：带编号的超时连正文一起管；只有明确的 4xx 算确定没建，
+ *       断网 / 到点 / 5xx / 2xx 内容空的坏的读一半断的都标「结果不确定」；还没发出去就拦下的不算（第 2～4 轮）
  *   S8  超管在员工页「保存订单信息」：草稿带订单版本、保存带回去；存完先换新版本
  *   S9  后端：两份列表给订单的 updatedAt；patch-shipment-bundle 锁住订单后核版本；两条改单路写订单时 updatedAt 跟返回值同一个 now
  */
@@ -158,6 +159,9 @@ check("S6 客户「批量下单」：失败的行记下来，跑完预览只留�
   assert.ok(/^[A-Za-z0-9-]{16,64}$/.test(a) && a !== b, `请求编号不合后端格式或不随机：${a} / ${b}`);
   const backend = read("apps/api/src/modules/orders/routes.ts");
   assert.ok(backend.includes("!/^[A-Za-z0-9-]{16,64}$/.test(requestId)"), "后端认的编号格式变了，前端这边要跟着核");
+  // 结果不确定的行（第 3、4 轮）：单独一句叫客户直接再点、别改了重传；明确失败的另一句叫改好另存（两种混着时两句都在）
+  assert.match(src, /unknownCount > 0\s*\?\s*`其中 \$\{unknownCount\} 条是网络或服务器没给准信、不确定有没有建好：请直接再点「一键提交」，不要把这几行改了重新上传（重新上传会当成新单）。`/);
+  assert.match(src, /rows\.length > unknownCount\s*\?\s*unknownCount > 0\s*\?\s*`其余 \$\{rows\.length - unknownCount\} 条按上面写的原因改好另存一张表再上传/);
 });
 
 check("S7 超管「运单管理」改单：打开时记订单版本；每次保存都带回去核对（第 2 轮）；存完基线换成刚存的；被抢先就刷新列表", () => {
@@ -172,6 +176,13 @@ check("S7 超管「运单管理」改单：打开时记订单版本；每次保�
   const openAt = src.indexOf("const startEditOrder = ");
   const openBody = src.slice(openAt, src.indexOf("setEditSnapshot({", openAt));
   assert.ok(openAt > 0 && /editSessionRef\.current \+= 1;/.test(openBody), "打开弹窗要给「第几次打开」加一");
+  assert.ok(/setMessage\(""\);/.test(openBody), "打开弹窗要先清掉上一回的提示");
+  // 关弹窗也 +1（第 4 轮）：三个关的入口都走 closeEditOrder，别处不许再直接 setEditingOrderId("")
+  const closeAt = src.indexOf("const closeEditOrder = ");
+  const closeBody = src.slice(closeAt, src.indexOf("};", closeAt));
+  assert.ok(closeAt > 0 && /editSessionRef\.current \+= 1;\s*setEditingOrderId\(""\);/.test(closeBody), "关弹窗要给「第几次」加一再关");
+  assert.equal((src.match(/setEditingOrderId\(""\)/g) ?? []).length, 1, "有地方绕过 closeEditOrder 直接关弹窗");
+  assert.equal((src.match(/closeEditOrder\b/g) ?? []).length, 4, "取消、右上角关、再点一次「编辑」三处都要用 closeEditOrder");
   assert.match(src, /const sessionAtSubmit = editSessionRef\.current;\s*setLoading\(true\);\s*setMessage\(""\);\s*try \{/, "保存前（try 外面）要记下是第几次打开");
   // 后端报的那句跟这里认的一样
   assert.match(read("apps/api/src/modules/admin/routes.ts"), /这票刚刚被别人改过（超管端「运单管理」或别的超管），你这次没有保存/);
@@ -398,6 +409,21 @@ async function main(): Promise<void> {
     open();
     await save({ ...F0, remark: "R12" }, P0.map((p) => ({ ...p })));
     assert.match(store.toast ?? "", /^订单信息已更新/);
+    // ⑥ 保存还没回来就点「取消」关了、没打开别的单（第 4 轮两家必须修）：用页面里真的 closeEditOrder 关；被拦的报错走提示条，不写进关掉的弹窗
+    const closeEditOrder = evalTs("module.exports=" + sourceNode("apps/web/src/app/admin/page.tsx", (n) => ts.isArrowFunction(n) && ts.isVariableDeclaration(n.parent) && n.parent.name.getText() === "closeEditOrder") + ";", {
+      editSessionRef: session, setEditingOrderId() {},
+    });
+    open();
+    server.version += 1;
+    duringSave = () => { closeEditOrder(); };
+    await save({ ...F0, remark: "R13" }, P0.map((p) => ({ ...p })));
+    assert.equal(store.message, "", `关掉的弹窗里写了报错，人看不见：${store.message}`);
+    assert.match(store.toast ?? "", /之前那张单没存上：.*刚刚被别人改过/);
+    // 关了不重开、这次存成功：提示写明之前那张
+    open();
+    duringSave = () => { closeEditOrder(); };
+    await save({ ...F0, remark: "R14" }, P0.map((p) => ({ ...p })));
+    assert.match(store.toast ?? "", /^之前那张单：订单信息已更新/);
   });
 
   await checkAsync("S10 超管列表 / 导出筛选的「国内单号」也认产品行上的号（导出带了，筛选得跟上）；员工那份照旧认", async () => {
@@ -413,44 +439,101 @@ async function main(): Promise<void> {
     assert.ok(search(f.staffShipmentFilterRow(item as any), "sf2001"), "员工那份照旧认产品行上的号");
   });
 
-  await checkAsync("S11 真跑 createClientPrealert（第 2、3 轮）：带编号的 30 秒超时连正文一起管；断网 / 到点 / 网关 5xx 标「结果不确定」，后端明确拒的原样抛；不带编号的照旧不加超时", async () => {
-    const fnText = sourceNode("apps/web/src/services/business-api.ts", (n) => ts.isFunctionDeclaration(n) && n.name?.text === "createClientPrealert");
-    const make = (fetchImpl: (url: string, init: Row) => Promise<any>, parse: (r: any) => Promise<any>) =>
-      evalTs(fnText.replace(/^export /, "") + "\nmodule.exports = createClientPrealert;", {
-        Error, TypeError, AbortController, setTimeout, clearTimeout, apiBaseUrl: () => "http://fixture.invalid", authHeaders: () => ({}), STAFF_ORDER_TIMEOUT_MS: 80,
-        fetch: fetchImpl, parseApiResponse: parse,
+  await checkAsync("S11 真跑 createClientPrealert + 真 fetchWithSession / parseApiResponse，对一个本机假服务器（第 2～4 轮）：带编号的超时连正文一起管；只有明确的 4xx 算确定没建、原样抛，断网 / 到点 / 5xx / 2xx 内容空的坏的读一半断的都标「结果不确定」；还没发出去就拦下的不算；不带编号的照旧不加超时、不改报错", async () => {
+    const http = await import("node:http");
+    const core = await import("../apps/web/src/services/core-api");
+    let mode = "ok";
+    let hits = 0;
+    const server = http.createServer((req, res) => {
+      hits++;
+      if (mode === "destroy") { req.socket.destroy(); return; }
+      req.resume();
+      req.on("end", () => {
+        const json = (status: number, body: unknown) => { res.writeHead(status, { "Content-Type": "application/json" }); res.end(JSON.stringify(body)); };
+        switch (mode) {
+          case "hang": res.writeHead(200, { "Content-Type": "application/json" }); res.write('{"code":"OK","data":{'); return; // 回了响应头，正文一直不结束
+          case "cut200": res.writeHead(200, { "Content-Type": "application/json" }); res.write('{"code":"OK","da'); setTimeout(() => req.socket.destroy(), 20); return; // 读到一半断了
+          case "html502": res.writeHead(502, { "Content-Type": "text/html" }); res.end("<html><body>502 Bad Gateway</body></html>"); return;
+          case "cn500": json(500, { code: "INTERNAL_ERROR", message: "数据库连接断了。" }); return;
+          case "c409": json(409, { code: "VALIDATION_ERROR", message: "请求编号已经被用过了，请刷新页面后重新上传" }); return;
+          case "b400": json(400, { code: "VALIDATION_ERROR", message: "仓库填错了" }); return;
+          case "empty200": res.writeHead(200); res.end(); return;
+          case "html200": res.writeHead(200, { "Content-Type": "text/html" }); res.end("<html>代理换掉的页面</html>"); return;
+          default: json(200, { code: "OK", data: { prealertId: "o_req_x", createdAt: "2026-10-18T00:00:00.000Z" } });
+        }
       });
-    const payload = { requestId: "req00000000000000", warehouseId: "wh_yiwu_01", packageCount: 1 };
-    // ① 响应头回来了、正文一直不结束：到点（这里 80 毫秒）连正文一起断，标结果不确定
-    let signalSeen: any = null;
-    const hang = make(async (_u, init) => { signalSeen = init.signal; return { status: 200 }; },
-      () => new Promise((_res, rej) => signalSeen.addEventListener("abort", () => rej(Object.assign(new Error("aborted"), { name: "AbortError" })))));
-    const t0 = Date.now();
-    // 再套一层 3 秒：超时没管到正文时这里会一直等，别让整个测试挂住
-    const e1: any = await Promise.race([
-      hang(payload).then(() => null, (e: any) => e),
-      new Promise((r) => setTimeout(() => r(new Error("3 秒了还没断：超时没管到读正文")), 3000)),
-    ]);
-    assert.ok(e1 && e1.resultUnknown === true, `正文卡住到点没断、或没标结果不确定：${e1?.message}`);
-    assert.ok(Date.now() - t0 < 2000, "正文卡住要按超时断开");
-    // ② 断网（fetch 抛 TypeError）
-    const e2: any = await make(async () => { throw new TypeError("Failed to fetch"); }, async () => null)(payload).then(() => null, (e: any) => e);
-    assert.equal(e2?.resultUnknown, true);
-    // ③ 网关 502：不知道后端办没办，同样不确定
-    const e3: any = await make(async () => ({ status: 502 }), async () => { throw new Error("服务器出错"); })(payload).then(() => null, (e: any) => e);
-    assert.equal(e3?.resultUnknown, true);
-    // ④ 后端明确拒了（409 别人的编号 / 400 填错）：原样抛、不标不确定
-    const e4: any = await make(async () => ({ status: 409 }), async () => { throw new Error("请求编号已经被用过了"); })(payload).then(() => null, (e: any) => e);
-    assert.equal(e4?.message, "请求编号已经被用过了");
-    assert.ok(!e4?.resultUnknown);
-    // ⑤ 成功照常返回
-    const ok = await make(async () => ({ status: 200 }), async () => ({ prealertId: "o_req_x" }))(payload);
-    assert.equal(ok.prealertId, "o_req_x");
-    // ⑥ 不带编号（单张下单）：不加超时、不改报错
-    let initSeen: any = null;
-    const e6: any = await make(async (_u, init) => { initSeen = init; throw new TypeError("Failed to fetch"); }, async () => null)({ warehouseId: "wh_yiwu_01", packageCount: 1 }).then(() => null, (e: any) => e);
-    assert.ok(initSeen && !("signal" in initSeen), "不带编号的不该加超时");
-    assert.ok(e6 instanceof TypeError && !(e6 as { resultUnknown?: boolean }).resultUnknown);
+    });
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", () => r()));
+    const base = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
+    try {
+      const fnText = sourceNode("apps/web/src/services/business-api.ts", (n) => ts.isFunctionDeclaration(n) && n.name?.text === "createClientPrealert");
+      let initSeen: any = null;
+      const createClientPrealert = evalTs(fnText.replace(/^export /, "") + "\nmodule.exports = createClientPrealert;", {
+        Error, TypeError, AbortController, setTimeout, clearTimeout, STAFF_ORDER_TIMEOUT_MS: 300,
+        apiBaseUrl: () => base, authHeaders: () => ({}),
+        // 跟 business-api 一样用 fetchWithSession（`fetchWithSession as fetch`）和 parseApiResponse，都是真的
+        fetch: (u: string, init: Row) => { initSeen = init; return core.fetchWithSession(u, init); },
+        parseApiResponse: core.parseApiResponse,
+      });
+      const withId = { requestId: "req00000000000000", warehouseId: "wh_yiwu_01", packageCount: 1 };
+      const run = async (m: string, payload: Row = withId): Promise<any> => {
+        mode = m;
+        // 再套一层 3 秒：超时没管到正文时这里会一直等，别让整个测试挂住
+        return Promise.race([
+          createClientPrealert(payload).then((v: any) => ({ value: v }), (e: any) => e),
+          new Promise((r) => setTimeout(() => r(new Error("3 秒了还没回来：超时没管到")), 3000)),
+        ]);
+      };
+      // ① 回了响应头、正文一直不结束：到点（这里 300 毫秒）连正文一起断，标不确定
+      const t0 = Date.now();
+      const e1 = await run("hang");
+      assert.equal(e1?.resultUnknown, true, `正文卡住：${e1?.message}`);
+      assert.ok(Date.now() - t0 < 2000, "正文卡住要按超时断开");
+      assert.match(e1.message, /^网络中断或服务器太久没回应。这一行可能已经下单了/);
+      // ② 断网（连接被掐，fetch 抛 TypeError）、③ 正文读到一半断了
+      for (const m of ["destroy", "cut200"]) {
+        const e = await run(m);
+        assert.equal(e?.resultUnknown, true, `${m}：${e?.message}`);
+      }
+      // ④ 网关 502（英文网页）、⑤ 后端自己的 500（中文原因）：都不确定；后端写的原因留着
+      const e4 = await run("html502");
+      assert.equal(e4?.resultUnknown, true);
+      assert.match(e4.message, /^服务器出错了，请稍后再试（反复出现请联系技术）。这一行可能已经下单了/);
+      const e5 = await run("cn500");
+      assert.equal(e5?.resultUnknown, true);
+      assert.match(e5.message, /^数据库连接断了。这一行可能已经下单了/);
+      // ⑥ 回的是 200 但内容是空的 / 被换成了网页（Codex 第 4 轮）：后端可能已经建好了，同样不确定
+      for (const m of ["empty200", "html200"]) {
+        const e = await run(m);
+        assert.equal(e?.resultUnknown, true, `${m}：${e?.message}`);
+        assert.match(e.message, /^服务器回的内容不完整。这一行可能已经下单了/);
+      }
+      // ⑦ 后端明确拒了（409 别人的编号 / 400 填错）：原样抛、不标不确定
+      const e7 = await run("c409");
+      assert.equal(e7?.message, "请求编号已经被用过了，请刷新页面后重新上传");
+      assert.ok(!e7?.resultUnknown);
+      const e8 = await run("b400");
+      assert.equal(e8?.message, "仓库填错了");
+      assert.ok(!e8?.resultUnknown);
+      // ⑧ 成功照常返回
+      const ok = await run("ok");
+      assert.equal(ok?.value?.prealertId, "o_req_x");
+      // ⑨ 还没发出去就拦下的（内容太大）：服务器什么都没收到，确定没建，不标不确定
+      const before = hits;
+      const big = await run("ok", { ...withId, remark: "x".repeat(core.REQUEST_BODY_MAX_BYTES + 10) });
+      assert.equal(hits, before, "内容太大的不该发出去");
+      assert.ok(big instanceof Error && !(big as { resultUnknown?: boolean }).resultUnknown && /太大/.test(big.message), `内容太大：${big?.message}`);
+      // ⑩ 不带编号（单张下单）：不加超时、不改报错
+      const noId = { warehouseId: "wh_yiwu_01", packageCount: 1 };
+      const e10 = await run("destroy", noId);
+      assert.ok(initSeen && !("signal" in initSeen), "不带编号的不该加超时");
+      assert.ok(e10 instanceof TypeError && !(e10 as { resultUnknown?: boolean }).resultUnknown, `不带编号断网：${e10?.message}`);
+      const e11 = await run("empty200", noId);
+      assert.ok(e11 instanceof Error && !(e11 as { resultUnknown?: boolean }).resultUnknown);
+    } finally {
+      server.closeAllConnections();
+      server.close();
+    }
   });
 
   console.log(`\n${passed} 项通过，${failed} 项失败`);
