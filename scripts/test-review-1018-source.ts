@@ -16,6 +16,7 @@
  *   S10 超管列表 / 导出筛选的「国内单号」也认产品行上的号（Codex / dsh 第 1 轮）
  *   S11 真跑 createClientPrealert + 真 fetchWithSession / parseApiResponse 对本机假服务器：带编号的超时连正文一起管；只有明确的 4xx 算确定没建，
  *       断网 / 到点 / 5xx / 2xx 内容空的坏的读一半断的都标「结果不确定」；还没发出去就拦下的不算（第 2～4 轮）
+ *   S12 真跑超管页「跟着 # 切分区」那段：真换了分区才算离开运单管理；点了 ✕ 还在放动画就离开的替它关完（第 5～7 轮）
  *   S8  超管在员工页「保存订单信息」：草稿带订单版本、保存带回去；存完先换新版本
  *   S9  后端：两份列表给订单的 updatedAt；patch-shipment-bundle 锁住订单后核版本；两条改单路写订单时 updatedAt 跟返回值同一个 now
  */
@@ -181,18 +182,20 @@ check("S7 超管「运单管理」改单：打开时记订单版本；每次保�
   // 关弹窗也 +1（第 4 轮）：三个关的入口都走 closeEditOrder，别处不许再直接 setEditingOrderId("")
   const closeAt = src.indexOf("const closeEditOrder = ");
   const closeBody = src.slice(closeAt, src.indexOf("};", closeAt));
-  assert.ok(closeAt > 0 && /editSessionRef\.current \+= 1;\s*setEditingOrderId\(""\);/.test(closeBody), "关弹窗要给「第几次」加一再关");
-  assert.equal((src.match(/setEditingOrderId\(""\)/g) ?? []).length, 1, "有地方绕过 closeEditOrder 直接关弹窗");
+  assert.ok(closeAt > 0 && /editSessionRef\.current \+= 1;\s*editCloseRequestedRef\.current = false;\s*setEditingOrderId\(""\);/.test(closeBody), "关弹窗要给「第几次」加一再关");
+  // 直接清 editingOrderId 的只有两处：closeEditOrder，和「点了 ✕ 还在放动画就离开运单管理」时替它关完（第 7 轮）
+  assert.equal((src.match(/setEditingOrderId\(""\)/g) ?? []).length, 2, "有地方绕过 closeEditOrder 直接关弹窗");
   assert.match(src, /if \(editingOrderId === \(o\.orderId \?\? o\.id\)\) \{\s*closeEditOrder\(\);/, "再点一次「编辑」要走 closeEditOrder");
   assert.match(src, /<button type="button" onClick=\{closeEditOrder\}[^>]*>取消<\/button>/, "「取消」要走 closeEditOrder");
   // 右上角 ✕（第 5 轮）：DetailModal 先放 0.2 秒动画才调 onClose —— 点 ✕ 那一刻就得 +1，借 confirmClose（点的时候同步调）
   assert.match(src, /title="编辑运单"[\s\S]{0,200}?onClose=\{closeEditOrder\}\s*confirmClose=\{beginCloseEditOrder\}/, "右上角 ✕ 要走 closeEditOrder，并且点下去那一刻就 +1");
   const beginAt = src.indexOf("const beginCloseEditOrder = ");
-  assert.ok(beginAt > 0 && /editSessionRef\.current \+= 1;\s*return true;/.test(src.slice(beginAt, src.indexOf("};", beginAt))), "点 ✕ 那一刻要 +1、照常放行");
+  assert.ok(beginAt > 0 && /editSessionRef\.current \+= 1;\s*editCloseRequestedRef\.current = true;\s*return true;/.test(src.slice(beginAt, src.indexOf("};", beginAt))), "点 ✕ 那一刻要 +1、记下已经点了 ✕、照常放行");
+  assert.ok(/editSessionRef\.current \+= 1;\s*editCloseRequestedRef\.current = false;/.test(openBody), "打开弹窗要清掉「已经点了 ✕」");
   const modal = code("apps/web/src/modules/layout/DetailModal.tsx");
   assert.match(modal, /if \(confirmClose && !confirmClose\(\)\) return;[\s\S]{0,200}?window\.setTimeout\(onClose, 200\)/, "DetailModal 得在放动画之前同步问 confirmClose，不然 ✕ 那 0.2 秒照样漏");
   // 离开「运单管理」（浏览器后退也算）：+1（第 5 轮）
-  assert.match(src, /const hashId = window\.location\.hash\.replace\(\/\^#\/, ""\);\s*if \(hashId !== "orders" && \(isSectionId\(hashId\) \|\| !hashId\)\) editSessionRef\.current \+= 1;/, "真离开运单管理才 +1（不认识的 # 不切页、不算离开）");
+  assert.match(src, /const hashId = window\.location\.hash\.replace\(\/\^#\/, ""\);\s*if \(hashId !== "orders" && \(isSectionId\(hashId\) \|\| !hashId\)\) \{\s*editSessionRef\.current \+= 1;\s*if \(editCloseRequestedRef\.current\) \{\s*editCloseRequestedRef\.current = false;\s*setEditingOrderId\(""\);\s*\}\s*\}/, "真离开运单管理才 +1（不认识的 # 不切页、不算离开）；点了 ✕ 还在放动画就离开的，替它关完（第 7 轮）");
   // 离开运单管理弹窗跟着卸掉（第 6 轮）：藏起来不卸会一直占着 Tab / Esc 和滚动锁
   assert.match(src, /\{editingOrderId === \(o\.orderId \?\? o\.id\) && activeSection === "orders" \? \(\s*<tr key=\{`edit-\$\{o\.id\}`\}/, "编辑弹窗只在运单管理这一页显示时挂");
   // 存上之后刷新列表失败，不能落进「保存失败」（dsh 第 5 轮；S7b 真跑）
@@ -342,6 +345,7 @@ async function main(): Promise<void> {
     let duringSave: ((payload: Row) => void) | null = null;
     let loadFails = false;
     const session = { current: 0 };
+    const closeRequested = { current: false };
     // 打开一次弹窗 = startEditOrder：第几次打开 +1、基线换成库里现在的样子
     const open = () => { session.current += 1; store.snapshot = { form: { ...F0 }, productsJson: JSON.stringify(P0), orderUpdatedAt: `V${server.version}` }; };
     const save = async (form: Row, products: Row[]) => {
@@ -426,7 +430,7 @@ async function main(): Promise<void> {
     assert.match(store.toast ?? "", /^订单信息已更新/);
     // ⑥ 保存还没回来就点「取消」关了、没打开别的单（第 4 轮两家必须修）：用页面里真的 closeEditOrder 关；被拦的报错走提示条，不写进关掉的弹窗
     const closeEditOrder = evalTs("module.exports=" + sourceNode("apps/web/src/app/admin/page.tsx", (n) => ts.isArrowFunction(n) && ts.isVariableDeclaration(n.parent) && n.parent.name.getText() === "closeEditOrder") + ";", {
-      editSessionRef: session, setEditingOrderId() {},
+      editSessionRef: session, editCloseRequestedRef: closeRequested, setEditingOrderId() {},
     });
     open();
     server.version += 1;
@@ -442,11 +446,11 @@ async function main(): Promise<void> {
     // ⑦ 点了右上角 ✕、还在放 0.2 秒关闭动画（closeEditOrder 还没调），保存这时被拦（第 5 轮两家必须修）：
     //    点 ✕ 那一刻 DetailModal 同步调的是 confirmClose = 页面里真的 beginCloseEditOrder
     const beginCloseEditOrder = evalTs("module.exports=" + sourceNode("apps/web/src/app/admin/page.tsx", (n) => ts.isArrowFunction(n) && ts.isVariableDeclaration(n.parent) && n.parent.name.getText() === "beginCloseEditOrder") + ";", {
-      editSessionRef: session,
+      editSessionRef: session, editCloseRequestedRef: closeRequested,
     });
     open();
     server.version += 1;
-    duringSave = () => { assert.equal(beginCloseEditOrder(), true, "confirmClose 要放行"); };
+    duringSave = () => { assert.equal(beginCloseEditOrder(), true, "confirmClose 要放行"); assert.equal(closeRequested.current, true, "点了 ✕ 要记下"); };
     await save({ ...F0, remark: "R15" }, P0.map((p) => ({ ...p })));
     assert.equal(store.message, "", `✕ 动画那 0.2 秒里回来的报错写进了正在关的弹窗：${store.message}`);
     assert.match(store.toast ?? "", /之前那张单没存上：.*刚刚被别人改过/);
@@ -454,10 +458,14 @@ async function main(): Promise<void> {
     open();
     loadFails = true;
     await save({ ...F0, remark: "R16" }, P0.map((p) => ({ ...p })));
-    loadFails = false;
     assert.equal(store.message, "", `存上了却显示：${store.message}`);
     assert.equal(store.toast, "订单信息已更新（列表这次没刷新上，稍后会自动刷新）");
     assert.equal(store.snapshot.form.remark, "R16", "存上了基线要换成刚存的");
+    // 「合计听谁的」那句也得留着（dsh 第 6、7 轮）：产品行尺寸填齐了、又手填了总体积 → 有一句说明
+    open();
+    await save({ ...F0, remark: "R17", volumeM3: "0.1" }, P0.map((p) => ({ ...p, lengthCm: "10", widthCm: "10", heightCm: "10" })));
+    loadFails = false;
+    assert.match(store.toast ?? "", /^订单信息已更新。产品行尺寸已填齐：总体积按尺寸自动算为 0\.002 m³，手填的 0\.1 不生效（列表这次没刷新上，稍后会自动刷新）$/, `合计说明丢了：${store.toast}`);
   });
 
   await checkAsync("S10 超管列表 / 导出筛选的「国内单号」也认产品行上的号（导出带了，筛选得跟上）；员工那份照旧认", async () => {
@@ -584,6 +592,45 @@ async function main(): Promise<void> {
       server.closeAllConnections();
       server.close();
     }
+  });
+
+  await checkAsync("S12 真跑超管页「跟着 # 切分区」那段（第 5～7 轮）：真换了分区才算离开运单管理（+1），不认识的 # 不算；点了 ✕ 还在放动画就离开的，替它把弹窗关完", async () => {
+    const file = "apps/web/src/app/admin/page.tsx";
+    const varInit = (name: string) => sourceNode(file, (n) => ts.isVariableDeclaration(n) && n.name.getText() === name && !!n.initializer).replace(/^[^=]*=\s*/, "");
+    const effect = sourceNode(file, (n) => ts.isCallExpression(n) && n.expression.getText() === "useEffect" && n.arguments[0]?.getText().includes("const syncSectionByHash") === true);
+    let listener: (() => void) | null = null;
+    const win = { location: { hash: "#orders" }, addEventListener: (_t: string, l: () => void) => { listener = l; }, removeEventListener() {} };
+    const sections: string[] = [];
+    const cleared: string[] = [];
+    const session = { current: 0 };
+    const closeRequested = { current: false };
+    evalTs(`module.exports = function bind() {
+      const SECTION_IDS = ${varInit("SECTION_IDS")};
+      const isSectionId = ${varInit("isSectionId")};
+      ${effect};
+    };`, {
+      window: win, useEffect: (fn: () => unknown) => { fn(); },
+      setActiveSection: (x: string) => sections.push(x), editSessionRef: session, editCloseRequestedRef: closeRequested,
+      setEditingOrderId: (x: string) => cleared.push(x),
+    })();
+    const go = (hash: string) => { win.location.hash = hash; listener!(); };
+    assert.equal(session.current, 0, "一打开就在运单管理，不算离开");
+    go("#overview");
+    assert.equal(session.current, 1, "去了总览要 +1");
+    assert.deepEqual(cleared, [], "没点 ✕ 的弹窗离开时不关（回来还在）");
+    go("#orders");
+    assert.equal(session.current, 1, "回到运单管理不 +1");
+    go("#foo");
+    assert.equal(session.current, 1, "不认识的 # 页面不切，不算离开");
+    closeRequested.current = true;
+    go("#clients");
+    assert.equal(session.current, 2);
+    assert.deepEqual(cleared, [""], "点了 ✕ 还在放动画就离开：要替它把弹窗关完，回来别又冒出来");
+    assert.equal(closeRequested.current, false);
+    go("#orders");
+    go("");
+    assert.equal(session.current, 3, "地址里没 # 回默认分区也算离开");
+    assert.deepEqual(cleared, [""], "没点 ✕ 的不关");
   });
 
   console.log(`\n${passed} 项通过，${failed} 项失败`);

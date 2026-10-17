@@ -506,6 +506,9 @@ export default function AdminHomePage() {
   const [editSnapshot, setEditSnapshot] = useState<{ form: Record<string, string>; productsJson: string; orderUpdatedAt?: string } | null>(null);
   /* 第几次打开 / 关上编辑弹窗（2026-10-18 Codex 第 3、4 轮）：保存还没回来就关了（或又打开了别的单），旧请求的报错不能写进弹窗 */
   const editSessionRef = useRef(0);
+  /* 点了 ✕、还在放 0.2 秒关闭动画（closeEditOrder 还没调）时离开「运单管理」：弹窗跟着卸掉、动画的定时器也没了，
+     回来弹窗又冒出来（Codex / dsh 第 7 轮）。记一下「已经点了 ✕」，离开时替它关完 */
+  const editCloseRequestedRef = useRef(false);
   /* 编辑弹窗里实时提示「总重量/总体积保存时听谁的」（2026-08-31，排查报告第22条）。
      跟保存用的是同一个 decideEditTotals，界面上说的和实际存的不会两张皮。 */
   const editTotalsPreview = useMemo(
@@ -804,12 +807,14 @@ export default function AdminHomePage() {
      失败的报错要走提示条 —— 写进已经关掉的弹窗，人看不见。三个关的入口（取消、右上角关、再点一次「编辑」）都走这里 */
   const closeEditOrder = () => {
     editSessionRef.current += 1;
+    editCloseRequestedRef.current = false;
     setEditingOrderId("");
   };
   /* 右上角 ✕ 要先放 0.2 秒关闭动画、放完才调 onClose（closeEditOrder）—— 这 0.2 秒里保存回来了也得算「已经关了」（Codex / dsh 第 5 轮）。
      借 DetailModal 的 confirmClose：它在点 ✕ 那一刻同步调、返回 true 照常关 */
   const beginCloseEditOrder = () => {
     editSessionRef.current += 1;
+    editCloseRequestedRef.current = true;
     return true;
   };
 
@@ -822,6 +827,7 @@ export default function AdminHomePage() {
     }
     setEditingOrderId(order.orderId ?? order.id);
     editSessionRef.current += 1;
+    editCloseRequestedRef.current = false;
     setMessage(""); // 弹窗里会显示这条提示（见「保存」按钮上面），打开时先清掉上一回的
     // 记下打开弹窗那一刻的样子，保存时只把改动过的项发出去，
     // 避免把别人在这期间改的字段一起覆盖掉
@@ -1583,7 +1589,13 @@ export default function AdminHomePage() {
       const hashId = window.location.hash.replace(/^#/, "");
       /* 离开「运单管理」（浏览器后退 / 手机返回也算）：那边的编辑弹窗看不见了，保存途中回来的结果别写进看不见的弹窗、走提示条（Codex 第 5 轮）。
          只认真换了分区的（不认识的 # 页面不切，弹窗还看得见，不算离开 —— dsh 第 6 轮） */
-      if (hashId !== "orders" && (isSectionId(hashId) || !hashId)) editSessionRef.current += 1;
+      if (hashId !== "orders" && (isSectionId(hashId) || !hashId)) {
+        editSessionRef.current += 1;
+        if (editCloseRequestedRef.current) {
+          editCloseRequestedRef.current = false;
+          setEditingOrderId("");
+        }
+      }
       if (isSectionId(hashId)) {
         setActiveSection(hashId);
       } else if (!hashId) {
