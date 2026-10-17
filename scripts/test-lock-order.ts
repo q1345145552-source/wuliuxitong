@@ -133,6 +133,15 @@ const LOCK_HELPERS: Record<string, string[]> = {
    * 拉清单那个事务的第一句、手里没有行锁；事务里只读业务表、只写对接用的清单版本表（不在任何锁链里）。第 10 项会去函数体里核实锁在。
    */
   lockChaipaiManifest: ["advisory_chaipai_manifest"],
+  /**
+   * 2026-10-17 封禁的唛头不许再挂新单：「封禁 / 解封」跟「往这个唛头名下挂单」按 公司 + 唛头 排队（咨询锁 83070，core/client-ban.ts 的 lockClientBan）。
+   * 封禁那边（/admin/users/toggle-ban）先「试着」拿独占档（只试不排队，拿不到隔 0.1 秒再试、10 秒后 409），拿到再锁客户行（最多 1 秒）、写 status；
+   * 挂单那边经 assertClientNotBanned 在各自锁序最后一环拿共享档。
+   * 不进表顺序比对；第 10 项会去函数体里核实锁真的在。
+   */
+  lockClientBan: ["advisory_client_ban"],
+  /** 挂单那一边拿同一把锁的共享档（函数体里直接是 pg_advisory_xact_lock_shared；第 10 项照样去核实锁在） */
+  assertClientNotBanned: ["advisory_client_ban"],
 };
 
 /**
@@ -257,7 +266,8 @@ function deadBlockEnd(lines: string[], i: number): number {
   }
   return lines.length;
 }
-const RAW_LOCK_RE = /FROM\s+(\w+)\s+WHERE[\s\S]*FOR (UPDATE|SHARE)|FOR (UPDATE|SHARE)/;
+// 2026-10-17：补上 NO KEY UPDATE（上面 LOCK_SQL_RE 早认了，这里漏了 —— 封禁接口先 FOR NO KEY UPDATE 锁客户行再写，原来被当成「没锁就写」）
+const RAW_LOCK_RE = /FROM\s+(\w+)\s+WHERE[\s\S]*FOR (NO KEY UPDATE|UPDATE|SHARE)|FOR (NO KEY UPDATE|UPDATE|SHARE)/;
 
 interface TxBlock {
   file: string;
@@ -875,13 +885,16 @@ function functionBody(lines: string[], name: string): string[] | null {
  * 口径跟上面 scanFile 完全一致：注释行不算、写死假条件的死块整块跳过、
  * 「同一行 if + 锁」不算数（真要条件锁就写成块形式，跟第 1/7 项一个规矩）。
  */
-function hasLiveAdvisoryLock(body: string[]): boolean {
+/** allowTry：只有「试到拿到为止、拿不到就抛」的 helper（现在只有 lockClientBan）才许用 pg_try_，别的一律要排队拿（dsh / Codex 第 6 轮） */
+function hasLiveAdvisoryLock(body: string[], allowTry = false): boolean {
   let k = 0;
   while (k < body.length) {
     const t = body[k].trim();
     if (t.startsWith("*") || t.startsWith("//") || t.startsWith("/*")) { k += 1; continue; }
     if (isDeadLine(body[k])) { k = deadBlockEnd(body, k); continue; }
-    if (body[k].includes("pg_advisory_xact_lock") && !(/\bif\s*\(/.test(t) && !/\{\s*$/.test(t))) {
+    // pg_try_advisory_xact_lock 只给 allowTry 的算（2026-10-17 封禁那边「只试不排队」：lockClientBan 里是试到拿到为止、拿不到就抛）；
+    // 别的 helper 改成 pg_try 又不看返回值，等于没锁 —— 不算
+    if ((allowTry ? /pg_(try_)?advisory_xact_lock/ : /pg_advisory_xact_lock/).test(body[k]) && !(/\bif\s*\(/.test(t) && !/\{\s*$/.test(t))) {
       return true;
     }
     k += 1;
@@ -916,8 +929,15 @@ check("10) 登记成 advisory 锁的取号 helper，函数体里必须真有 pg_
       1,
       `${name} 在模块里有 ${defs.length} 处定义 —— 登记表按名字给分，撞名就会发错绿灯，先改名再登记`,
     );
+    /* lockClientBan 是唯一许用 pg_try 的：还得真的是「循环试、看返回值、到点抛」 */
+    const tryOk = name === "lockClientBan";
+    if (tryOk) {
+      const text = defs[0].body!.join("\n");
+      assert.ok(/for \(;;\)/.test(text) && /if \(r\[0\]\?\.ok\) return;/.test(text) && /throw new BusinessError\(/.test(text),
+        `${rel(defs[0].f)} 的 lockClientBan：用 pg_try 就得循环试、看返回值、到点抛错，不然等于没锁`);
+    }
     assert.ok(
-      hasLiveAdvisoryLock(defs[0].body!),
+      hasLiveAdvisoryLock(defs[0].body!, tryOk),
       `${rel(defs[0].f)} 里的 ${name}：helper 登记了锁但函数体里没有锁` +
         `（pg_advisory_xact_lock 被删了或被死条件包住了）`,
     );

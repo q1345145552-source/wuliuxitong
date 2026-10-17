@@ -73,6 +73,12 @@ let updateFail: string | null = null;
 const pendingDetails = new Map<string, { resolve: (v: any) => void; reject: (e: unknown) => void }>();
 let deferDetails = false;
 let listItems: any[] = [];
+/** 整页测试：客户名单接口（/staff/clients）回什么（G4 用；别的测试回空） */
+let staffClientsMock: any[] = [];
+/** G4b：客户名单请求挂起在这里，测试按需要的顺序放 */
+let clientsDeferred: Array<(v: any) => void> | null = null;
+/** 页面订的推送：分类 → 收到时调的函数 */
+const liveRefresh = new Map<string, () => unknown>();
 const runtime = { jsx: (type: any, p: any, key: any) => ({ type, props: p, key }), jsxs: (type: any, p: any, key: any) => ({ type, props: p, key }) };
 const file = path.resolve("apps/web/src/modules/arrival-notice/ArrivalNoticesView.tsx");
 const realRequire = createRequire(file);
@@ -102,9 +108,14 @@ new Function("exports", "require", "module", out)(mod.exports, (id: string) => {
     };
   }
   if (id === "../../services/business-api") {
-    return { ...real, fetchStaffClients: async () => [], updateAdminOrder: async (patch: any) => { calls.push("update"); patches.push(patch); if (updateFail) throw new Error(updateFail); return { orderId: "o1" }; } };
+    return { ...real, fetchStaffClients: async () => {
+      // G4b：按顺序挂起，测试自己决定先回哪个（制造「旧请求晚回来」）
+      if (clientsDeferred) return new Promise((resolve) => clientsDeferred!.push(resolve));
+      if (!staffClientsMock) throw new Error("网断了"); return staffClientsMock;
+    }, updateAdminOrder: async (patch: any) => { calls.push("update"); patches.push(patch); if (updateFail) throw new Error(updateFail); return { orderId: "o1" }; } };
   }
-  if (id === "../realtime/useRealtime") return { useLiveRefresh() {} };
+  // 记下页面订了哪几类推送、收到时调什么（G4 用来模拟「账号」推送）
+  if (id === "../realtime/useRealtime") return { useLiveRefresh(o: any) { liveRefresh.set([...o.topics].sort().join(","), o.refresh); } };
   return real;
 }, mod);
 
@@ -139,7 +150,7 @@ function mountConverted(detail: any, fresh: any = detail) {
   freshDetail = fresh;
   props = {
     editor: { mode: "converted", item: detail.item, detail, seq: 1 },
-    clients: [{ id: "ZZA01" }, { id: "ZZB02" }], clientsFailed: false,
+    clients: [{ id: "ZZA01" }, { id: "ZZB02" }], bannedClients: new Set(), clientsFailed: false,
     onClose() {}, onChanged: async () => {}, onSaved(m: string) { savedMessage = m; },
   };
   flush();
@@ -449,6 +460,54 @@ async function main(): Promise<void> {
     clickEdit("nB"); await settle();
     pendingDetails.get("nB")!.reject(new Error("网断了")); await settle();
     assert.deepEqual(errorToasts(), ["网断了"]);
+  });
+
+  await check("G4 封禁的唛头（2026-10-17）：整页拿到客户名单后，弹窗的下拉里没有封禁的（只剩唛头、不带名字），封禁名单单独交给弹窗用来提示；收到「账号」推送重拉，重拉失败手上那份不动", async () => {
+    staffClientsMock = [{ id: "ZZOK1", name: "甲", status: "active" }, { id: "ZZBAN1", name: "乙", status: "inactive" }, { id: "ZZOLD", name: "老接口没带状态" }];
+    try {
+      await mountView([A, B]);
+      nodes((n) => n.type === "button" && text(n) === "＋ 登记到货", viewTree)[0].props.onClick(); await settle();
+      const ed = nodes((n) => n.type === mod.exports.NoticeEditor, viewTree)[0];
+      assert.ok(ed, "登记弹窗没开");
+      assert.deepEqual(ed.props.clients, [{ id: "ZZOK1" }, { id: "ZZOLD" }], "下拉只给没封的（没带状态的当没封）");
+      assert.deepEqual([...ed.props.bannedClients], ["ZZBAN1"]);
+      // 弹窗开着时超管解封了 ZZBAN1、封了 ZZOK1：收到「账号」推送就重拉名单（Codex 审查：原来只在打开页面时拉一次）
+      const onAccounts = liveRefresh.get("accounts");
+      assert.ok(onAccounts, "页面没订「账号」推送");
+      staffClientsMock = [{ id: "ZZOK1", name: "甲", status: "inactive" }, { id: "ZZBAN1", name: "乙", status: "active" }];
+      await onAccounts!(); await settle();
+      const ed2 = nodes((n) => n.type === mod.exports.NoticeEditor, viewTree)[0];
+      assert.deepEqual(ed2.props.clients, [{ id: "ZZBAN1" }]);
+      assert.deepEqual([...ed2.props.bannedClients], ["ZZOK1"]);
+      // 重拉失败：手上那份不动、也不说「名单没拿到」
+      const keep = ed2.props.clients;
+      staffClientsMock = null as any;
+      await onAccounts!(); await settle();
+      const ed3 = nodes((n) => n.type === mod.exports.NoticeEditor, viewTree)[0];
+      assert.deepEqual(ed3.props.clients, keep);
+      assert.equal(ed3.props.clientsFailed, false);
+    } finally { staffClientsMock = []; }
+  });
+
+  await check("G4b 客户名单两次请求倒着回来（打开页面那次晚于「账号」推送那次）：显示的还是后发那次的，封了的唛头不会被旧名单放回来", async () => {
+    clientsDeferred = [];
+    try {
+      await mountView([A, B]); // 打开页面那次：挂起
+      nodes((n) => n.type === "button" && text(n) === "＋ 登记到货", viewTree)[0].props.onClick();
+      await settle();
+      assert.equal(clientsDeferred.length, 1);
+      const onAccounts = liveRefresh.get("accounts")!;
+      const pushed = onAccounts(); await settle(); // 推送那次：也挂起
+      assert.equal(clientsDeferred.length, 2);
+      clientsDeferred[1]([{ id: "ZZOK1", name: "甲", status: "active" }, { id: "ZZBAN1", name: "乙", status: "inactive" }]); // 后发的先回
+      await pushed; await settle();
+      clientsDeferred[0]([{ id: "ZZOK1", name: "甲", status: "active" }, { id: "ZZBAN1", name: "乙", status: "active" }]); // 打开页面那次（封禁前的旧名单）晚回来
+      await settle();
+      const ed = nodes((n) => n.type === mod.exports.NoticeEditor, viewTree)[0];
+      assert.ok(ed, "登记弹窗没开");
+      assert.deepEqual(ed.props.clients, [{ id: "ZZOK1" }], "旧名单把封了的唛头放回来了");
+      assert.deepEqual([...ed.props.bannedClients], ["ZZBAN1"]);
+    } finally { clientsDeferred = null; }
   });
 
   /* ───────────── 五、页面真正发请求的那两个函数（参数名写错的话后端核对等于没有） ───────────── */

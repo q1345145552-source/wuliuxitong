@@ -1182,12 +1182,15 @@ export async function fetchShipmentImages(orderId: string): Promise<OrderProduct
   return data.images;
 }
 
-export async function fetchStaffClients(): Promise<Array<{ id: string; name: string }>> {
+/** status：active / inactive（封禁）。2026-10-17 加，挂单的下拉用它去掉封禁的唛头（modules/shared/client-ban.ts） */
+export type StaffClientItem = { id: string; name: string; status?: string };
+
+export async function fetchStaffClients(): Promise<StaffClientItem[]> {
   const response = await fetch(`${apiBaseUrl()}/staff/clients`, {
     method: "GET",
     headers: { ...authHeaders() },
   });
-  const data = await parseApiResponse<{ items: Array<{ id: string; name: string }> }>(response);
+  const data = await parseApiResponse<{ items: StaffClientItem[] }>(response);
   return data.items;
 }
 

@@ -73,7 +73,7 @@ function mount(products?: any[], volumeM3 = 0.065) {
   hooks = []; effects = []; saved = false; submitted = null;
   props = {
     editor: products ? { mode: "edit", item: { id: "zz-editor", clientId: null, trackingNo: null, products, weightKg: 300, volumeM3, images: [], notifiedAt: null } } : { mode: "create" },
-    clients: [], clientsFailed: false, onClose() {}, onChanged() {}, onSaved() { saved = true; },
+    clients: [], bannedClients: new Set(), clientsFailed: false, onClose() {}, onChanged() {}, onSaved() { saved = true; },
   };
   flush();
 }
@@ -116,6 +116,51 @@ async function main() {
   assert.equal(input("总重量").props.value, "300");
   assert.ok(!text(tree).includes("总重量只算了其余几款"));
   console.log("✅ E3 部分款未计入的提示真出现，清空单箱重解锁手填");
+
+  /* E4 封禁的唛头（2026-10-17，modules/shared/client-ban.ts）：下拉里没有它（父页面已经剔掉），但不能说「系统里没有这个唛头」；
+     换成它 → 提示存不上；原来就是它、还没转 → 提示转不了；原来就是它、已经转了 → 不提示（已有的单照常） */
+  const mountBan = (item: any) => {
+    hooks = []; effects = []; saved = false; submitted = null;
+    props = {
+      editor: item ? { mode: "edit", item: { id: "zz-ban", trackingNo: null, products: [product()], weightKg: null, volumeM3: null, images: [], notifiedAt: null, convertedTo: null, ...item } } : { mode: "create" },
+      clients: [{ id: "ZZOK1" }], bannedClients: new Set(["ZZBAN1"]), clientsFailed: false, onClose() {}, onChanged() {}, onSaved() {},
+    };
+    flush();
+  };
+  const pickMark = (v: string) => { nodes((n) => n.props?.placeholder === "输入唛头搜索" && typeof n.props?.onChange === "function")[0].props.onChange(v); flush(); };
+  const warns = () => nodes((n) => n.props?.className === "an-warn").map(text);
+  mountBan(null);
+  pickMark("ZZBAN1");
+  assert.deepEqual(warns(), ["账号已封禁"]);
+  pickMark("ZZNOPE");
+  assert.deepEqual(warns(), ["系统里没有这个唛头，要选下拉里已有的"], "真没有的照旧说没有");
+  pickMark("ZZOK1");
+  assert.deepEqual(warns(), []);
+  mountBan({ clientId: "ZZBAN1" });
+  assert.deepEqual(warns(), ["账号已封禁，这条转不了运单"]);
+  mountBan({ clientId: "ZZBAN1", convertedTo: "inbound" });
+  assert.deepEqual(warns(), [], "已经转了待入库：已有的单照常，不提示");
+  mountBan({ clientId: "ZZOK1", convertedTo: "inbound" });
+  pickMark("ZZBAN1");
+  assert.deepEqual(warns(), ["账号已封禁"], "换成封禁的：转没转都提示存不上");
+  // 带首尾空格打的封禁唛头也认（提交时会去空格）
+  mountBan(null);
+  pickMark(" ZZBAN1 ");
+  assert.deepEqual(warns(), ["账号已封禁"]);
+  // 原来就挂在封禁唛头名下的那条：那个唛头留在下拉里（不然一点开就是「匹配 0 个」，dsh 审查）
+  mountBan({ clientId: "ZZBAN1" });
+  const pickerOpts = nodes((n) => n.props?.placeholder === "输入唛头搜索" && typeof n.props?.onChange === "function")[0].props.options;
+  assert.deepEqual(pickerOpts, [{ id: "ZZBAN1" }, { id: "ZZOK1" }]);
+  // 新登记：下拉里没有封禁的
+  mountBan(null);
+  assert.deepEqual(nodes((n) => n.props?.placeholder === "输入唛头搜索" && typeof n.props?.onChange === "function")[0].props.options, [{ id: "ZZOK1" }]);
+  // 客户全被封了（下拉空的，但名单是拿到了的）：打个不存在的照样说「没有」（Codex 审查）
+  hooks = []; effects = [];
+  props = { ...props, editor: { mode: "create" }, clients: [], bannedClients: new Set(["ZZBAN1"]) };
+  flush();
+  pickMark("ZZNOPE");
+  assert.deepEqual(warns(), ["系统里没有这个唛头，要选下拉里已有的"]);
+  console.log("✅ E4 封禁的唛头：换成它提示存不上、原来就是它没转提示转不了、已经转了不提示；带空格也认；原来那个留在下拉里；真没有的照旧说没有（客户全被封了也一样）");
   process.exit(0);
 }
 main().catch((e) => { console.error(e); process.exit(1); });

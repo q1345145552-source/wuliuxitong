@@ -13,7 +13,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import DetailModal from "../layout/DetailModal";
 import Toast from "../layout/Toast";
 import { useLiveRefresh } from "../realtime/useRealtime";
-import { createRequestGate } from "../shared/request-gate";
+import { createQueryGate, createRequestGate } from "../shared/request-gate";
 import { beijingToday } from "../shared/beijing-date";
 import { compressImageForUpload } from "../shared/image-compress";
 import { openShipmentTrack } from "../shipment/ShipmentTrackModal";
@@ -21,6 +21,7 @@ import { shipmentStatusZh } from "../shipment/shipment-status";
 import { apiBaseUrl } from "../../services/core-api";
 import { fetchStaffClients, updateAdminOrder } from "../../services/business-api";
 import MarkPicker, { type MarkOption } from "../layout/MarkPicker";
+import { activeMarkOptions, bannedChangeHint, bannedClientIds, withCurrentMark } from "../shared/client-ban";
 import {
   convertArrivalNotice,
   deleteArrivalNotice,
@@ -160,6 +161,8 @@ export default function ArrivalNoticesView() {
   const [preview, setPreview] = useState<{ src: string; alt: string } | null>(null);
   const [toast, setToast] = useState<{ seq: number; message: string; tone: "success" | "error" }>({ seq: 0, message: "", tone: "success" });
   const [clients, setClients] = useState<MarkOption[]>([]);
+  /** 封禁的唛头（2026-10-17）：不进下拉；框里是它时提示一句（modules/shared/client-ban.ts） */
+  const [bannedClients, setBannedClients] = useState<ReadonlySet<string>>(() => new Set());
   const [clientsFailed, setClientsFailed] = useState(false);
   const gate = useRef(createRequestGate());
   /** 屏幕上这份列表是哪个页签 / 搜索词 / 页码的（F12：悄悄重拉失败时判断要不要报错） */
@@ -224,12 +227,23 @@ export default function ArrivalNoticesView() {
     refresh: async (isStillWanted) => { if (isStillWanted()) await load(true); },
   });
 
-  useEffect(() => {
-    let cancelled = false;
-    // 唛头下拉只要唛头（显示唛头不带客户名字，老板 09-19）；拿不到也能手输
-    fetchStaffClients().then((items) => { if (!cancelled) setClients(items.map((c) => ({ id: c.id }))); }).catch(() => { if (!cancelled) setClientsFailed(true); });
-    return () => { cancelled = true; };
-  }, []);
+  /* 唛头下拉只要唛头（显示唛头不带客户名字，老板 09-19）；拿不到也能手输。封禁的不进下拉（2026-10-17，后端登记 / 换唛头 / 转运单也拦）。
+     超管封禁 / 解封发的是「账号」推送：收到就悄悄重拉名单（Codex 审查），重拉失败不报、留着手上那份；晚回来的旧名单不盖新的 */
+  const clientsGate = useRef(createQueryGate<null>()).current;
+  const loadClients = async (silent: boolean) => {
+    const t = clientsGate.begin(null);
+    try {
+      const items = await fetchStaffClients();
+      if (!clientsGate.accept(t, null)) return;
+      setClients(activeMarkOptions(items));
+      setBannedClients(bannedClientIds(items));
+      setClientsFailed(false);
+    } catch {
+      if (!silent && !clientsGate.superseded(t)) setClientsFailed(true);
+    }
+  };
+  useEffect(() => { void loadClients(false); }, []);
+  useLiveRefresh({ topics: ["accounts"], refresh: () => loadClients(true) });
 
   const run = async (id: string, work: () => Promise<void>) => {
     setBusyIds((cur) => new Set(cur).add(id));
@@ -398,6 +412,7 @@ export default function ArrivalNoticesView() {
           key={`editor-${editor.seq}`}
           editor={editor}
           clients={clients}
+          bannedClients={bannedClients}
           clientsFailed={clientsFailed}
           onClose={() => closeEditor(editor.seq)}
           onSaved={(message) => { closeEditor(editor.seq); say(message); void reloadLatest(); }}
@@ -532,6 +547,7 @@ function NoticeCard(props: {
 function NoticeEditor(props: {
   editor: Editor;
   clients: MarkOption[];
+  bannedClients: ReadonlySet<string>;
   clientsFailed: boolean;
   onClose: () => void;
   onSaved: (message: string) => void;
@@ -626,7 +642,16 @@ function NoticeEditor(props: {
     const total = noticeProductTotals(filled).packageCount;
     return `合计：${filled.length} 款，${total !== null ? `${total} 件` : "件数没填全"}`;
   }, [draft.products]);
-  const clientKnown = !draft.clientId || props.clients.length === 0 || props.clients.some((c) => c.id === draft.clientId);
+  /* 封禁的唛头（2026-10-17）：系统里有，只是不进下拉，所以不算「没有这个唛头」，另外提示：
+     换成它 → 存不上；原来就是它、这条还没转运单 → 存得上、转不了；原来就是它、已经转了（待入库 / 正式）→ 已有的单照常，不提示 */
+  const draftMark = draft.clientId.trim();
+  const clientBanned = draftMark !== "" && props.bannedClients.has(draftMark);
+  const bannedNote = !clientBanned ? null
+    : bannedChangeHint(draft.clientId, base?.clientId, props.bannedClients)
+      ?? (!editing?.convertedTo ? "账号已封禁，这条转不了运单" : null);
+  /* 名单没拿到（接口失败 / 还没回来）时不说「没有这个唛头」。⚠️ 要连封禁的一起算：客户全被封了时下拉是空的，但名单是拿到了的（Codex 审查） */
+  const clientListEmpty = props.clients.length === 0 && props.bannedClients.size === 0;
+  const clientKnown = !draft.clientId || clientListEmpty || clientBanned || props.clients.some((c) => c.id === draft.clientId);
   /* F15：唛头下拉不截断（原来 .slice(0, 50)）—— MarkPicker 用 filterMarkOptions，空查询给全部 */
   /* G01：这条已标「已通知客户」、又把原来的唛头换成别的（或清空）—— 新唛头的客户其实没被通知过，保存时后端会改回「未通知」。
      原来没唛头、这次补上的后端不动，这里也不提醒（R8），不然页面说「会改回未通知」结果没改 */
@@ -820,8 +845,9 @@ function NoticeEditor(props: {
         {/* 不用 <label> 包：label 里点下拉的某一行，浏览器会把点击转给输入框，刚选完下拉又弹开 */}
         <div className="an-field">
           <span>唛头</span>
-          <MarkPicker disabled={saving} value={draft.clientId} onChange={(v) => set("clientId", v)} options={props.clients} loadFailed={props.clientsFailed} placeholder="输入唛头搜索" />
+          <MarkPicker disabled={saving} value={draft.clientId} onChange={(v) => set("clientId", v)} options={withCurrentMark(props.clients, base?.clientId)} loadFailed={props.clientsFailed} placeholder="输入唛头搜索" />
           {!clientKnown ? <small className="an-warn">系统里没有这个唛头，要选下拉里已有的</small> : null}
+          {bannedNote ? <small className="an-warn">{bannedNote}</small> : null}
           {clientChangedAfterNotify ? <small className="an-warn">这条已标「已通知客户」（通知的是 {savedClient}）。换了唛头，保存后会改回「未通知」，记得通知新客户</small> : null}
         </div>
         <label>

@@ -73,6 +73,7 @@ async function countClientBusinessRecords(
 }
 import { loadOrderTotalMetrics } from "../shipments/total-metrics";
 import { BusinessError } from "../core/business-error";
+import { CLIENT_BAN_BUSY_MESSAGE, CLIENT_BAN_ROW_WAIT, CLIENT_BAN_TX, assertClientNotBanned, lockClientBan } from "../core/client-ban";
 import { loadOrderProductDims } from "../orders/routes";
 import { strictestCargoType } from "../../../../../packages/shared-types/cargo-type";
 
@@ -893,6 +894,7 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
         fail(res, 400, "BAD_REQUEST", "唛头不存在或不属于当前公司，请核对客户唛头");
         return;
       }
+      // 封禁的唛头：换成它不行，原来就是它（没换）照常存 —— 换没换要锁住订单以后看，见下面事务里写订单那句前面（2026-10-17，core/client-ban.ts）
     }
 
     const now = new Date();
@@ -1087,6 +1089,12 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
         }
       }
 
+      /* 唛头换成封禁的那个：不许（2026-10-17，core/client-ban.ts）。原来就挂在这个唛头名下的单（页面原样带回唛头）照常存。
+         放在写订单之前、上面那些锁（订单、父运单）都拿完以后：assertClientNotBanned 要拿「封禁排队锁」，得排在锁序最后 */
+      if (nextClientId) {
+        const owner = await tx.order.findFirst({ where: { id: orderId, companyId: auth.companyId }, select: { clientId: true } });
+        if (owner && owner.clientId !== nextClientId) await assertClientNotBanned(tx, auth.companyId, nextClientId);
+      }
       await tx.order.update({
         where: { id: orderId },
         data: {
@@ -1710,7 +1718,26 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
     }
 
     const newStatus = row.status === "active" ? "inactive" : "active";
-    await prisma.user.update({ where: { id }, data: { status: newStatus } });
+    /* 跟「往这个唛头名下挂单」排队（2026-10-17，core/client-ban.ts 文件头）：先「试着」拿同一把锁的独占档（只试不排队，最多 10 秒），
+       拿到了再锁客户那一行（最多等 1 秒）、写 status、提交 —— 正在往这个唛头名下挂单的（拿着共享档）都提交了才轮得到，
+       封禁生效以后不会再冒出新单；封禁从不在锁队列里排着，后来的挂单最多等它拿着独占的那 1 秒（Codex / dsh 第 3～5 轮）。
+       试不到 / 等不到客户行都回 409。翻成什么照旧按上面读到的定（不在锁里重读再翻）：两个超管同时点「封禁」，两边都写 inactive */
+    try {
+      await prisma.$transaction(async (tx) => {
+        await lockClientBan(tx, auth.companyId, id);
+        await tx.$executeRawUnsafe(`SET LOCAL lock_timeout = '${CLIENT_BAN_ROW_WAIT}'`);
+        await tx.$queryRaw`SELECT id FROM users WHERE id = ${id} FOR NO KEY UPDATE`;
+        await tx.user.update({ where: { id }, data: { status: newStatus } });
+      }, CLIENT_BAN_TX);
+    } catch (e) {
+      // 客户那一行 1 秒等不到（55P03，客户管理改归属那种长事务锁着）/ 事务到点：一样叫他过几秒再点，别报「服务器出错了」
+      const pg = e instanceof Prisma.PrismaClientKnownRequestError ? e : null;
+      if (pg && (pg.code === "P2028" || pg.code === "P2024" || (pg.code === "P2010" && /55P03|lock timeout/i.test(`${String((pg.meta as { code?: unknown } | undefined)?.code ?? "")} ${pg.message}`)))) {
+        fail(res, 409, "VALIDATION_ERROR", CLIENT_BAN_BUSY_MESSAGE);
+        return;
+      }
+      throw e;
+    }
     ok(res, { id, status: newStatus });
   });
 

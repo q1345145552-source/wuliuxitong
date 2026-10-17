@@ -34,6 +34,7 @@ import { prisma } from "../../db/prisma";
 import type { MinimalHttpApp } from "../../server";
 import { fail, ok, requireRole } from "../core/http-utils";
 import { BusinessError } from "../core/business-error";
+import { assertClientNotBanned } from "../core/client-ban";
 import { logger } from "../core/logger";
 import { lockShipmentsChildrenFirst } from "../shipments/lock-shipments";
 import { arrivalNoticeHoldingMessage, followStaleArrivalNoticeHolding, lockTrackingNoForArrivalNotice } from "../arrival-notices/follow-tracking-no";
@@ -466,6 +467,8 @@ export function registerFclContainerRoutes(app: MinimalHttpApp): void {
             throw new BusinessError("这张询价单已经转过整柜了，别再建一个", 409, "VALIDATION_ERROR");
           }
         }
+        // 封禁的唛头不许建整柜（2026-10-17，core/client-ban.ts；从询价单转过来的也一样）。要拿「封禁排队锁」，排在询价单锁之后、锁序最后
+        await assertClientNotBanned(tx, auth.companyId, clientId);
 
         await tx.order.create({
           data: {
@@ -905,6 +908,9 @@ export function registerFclContainerRoutes(app: MinimalHttpApp): void {
           货物清单: productsChanged,
         };
         const changedNames = Object.entries(changed).filter(([, v]) => v).map(([k]) => k);
+
+        // 唛头换成封禁的那个：不许（2026-10-17，core/client-ban.ts）。没换（原来就挂在封禁唛头名下）的照常改
+        if (changed.客户唛头) await assertClientNotBanned(tx, auth.companyId, clientId);
 
         /* 从「整柜询价」转来的整柜（2026-09-28）：唛头不许改成别的客户 ——
            询价单是原来那个客户的，改了以后他那边显示「已转整柜」、去「我的整柜」却找不到，

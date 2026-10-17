@@ -33,9 +33,10 @@ import { optionalIntegerForReceive, optionalNumberForReceive, productDim, valida
 import EmptyStateCard from "../../modules/layout/EmptyStateCard";
 import DetailModal from "../../modules/layout/DetailModal";
 import MarkPicker from "../../modules/layout/MarkPicker";
+import { activeMarkOptions, bannedChangeHint, bannedClientIds } from "../../modules/shared/client-ban";
 import Toast from "../../modules/layout/Toast";
 import { apiBaseUrl, authHeaders, parseApiResponse, fetchWithSession as fetch } from "../../services/core-api";
-import { createRequestGate } from "../../modules/shared/request-gate";
+import { createQueryGate, createRequestGate } from "../../modules/shared/request-gate";
 import { useLiveRefresh } from "../../modules/realtime/useRealtime";
 import { createYieldGuard } from "../../modules/realtime/yield-guard";
 import { viewerCanSeeOperator } from "../../auth/operator-visibility";
@@ -50,6 +51,7 @@ import {
   fetchStaffShipments,
   fetchStaffShipmentOverview,
   type StaffShipmentOverview,
+  type StaffClientItem,
   fetchShipmentImages,
   patchStaffShipmentOrderBundle,
   repairStaffShipmentOrderLinks,
@@ -168,7 +170,9 @@ const EMPTY_SHIPMENT_SEARCH = {
   };
 
 export default function StaffHomePage() {
-  const [staffClients, setStaffClients] = useState<Array<{ id: string; name: string }>>([]);
+  const [staffClients, setStaffClients] = useState<StaffClientItem[]>([]);
+  /** 客户名单两处拉（整页重拉、「账号」推送重拉）：晚回来的旧名单不许盖掉新的（成功才作废，request-gate.ts 用法三；只有一份名单，条件恒为 null） */
+  const clientsGate = useRef(createQueryGate<null>()).current;
   const warehouseOptions = [
     { id: "wh_yiwu_01", label: "义乌仓" },
     { id: "wh_guangzhou_01", label: "广州仓" },
@@ -534,6 +538,7 @@ export default function StaffHomePage() {
    */
   const loadPageData = async (): Promise<ShipmentItem[]> => {
     void loadShipmentOverview(); // 顶上那排数字跟列表一起刷新（2026-09-29）
+    const clientsTicket = clientsGate.begin(null);
     const [shipmentItems, prealertItems, clientItems] = await Promise.all([fetchStaffShipments(), fetchStaffPrealerts(), fetchStaffClients()]);
     // 按运单号数字降序
     // 【审查问题 10】同 admin：原来 Number() 超 15 位丢精度，改成按位数+字符串比
@@ -543,7 +548,7 @@ export default function StaffHomePage() {
       if (an.length !== bn.length) return bn.length - an.length;
       return bn.localeCompare(an);
     });
-    setStaffClients(clientItems);
+    if (clientsGate.accept(clientsTicket, null)) setStaffClients(clientItems);
     setShipments(shipmentItems.filter(s => !s.parentTrackingNo));
     setPrealerts(prealertItems);
     // 2026-08-31（排查报告 44）：这里原来还调了一次 loadLmOrders() —— 页面一打开会和下面那个
@@ -757,6 +762,17 @@ export default function StaffHomePage() {
     enabled: activeSection === "staff-prealert-review" || activeSection === "staff-order-shipment"
       || activeSection === "staff-create-order" || activeSection === "staff-ops-tools",
     refresh: () => loadPageData(),
+  });
+  /* 客户名单跟着「账号」推送重拉（2026-10-17，Codex 审查）：超管封禁 / 解封发的是 accounts，不是 shipping ——
+     不订的话页面开着时封了的唛头还留在建单下拉里、解封的又回不来。只重拉名单，不重拉运单。
+     整页一直订（不按页签开关）：推送只在订着的时候收，停在别的页签时漏掉的封禁，切回建单也不会补拉（Codex 第 2 轮） */
+  useLiveRefresh({
+    topics: ["accounts"],
+    refresh: async () => {
+      const t = clientsGate.begin(null);
+      const items = await fetchStaffClients();
+      if (clientsGate.accept(t, null)) setStaffClients(items);
+    },
   });
   useLiveRefresh({
     topics: ["shipping"],
@@ -1155,16 +1171,19 @@ export default function StaffHomePage() {
   } as const;
 
   // 选客户只认唛头，不带客户名字（2026-09-19）
+  /* 封禁的唛头不进建单下拉、打全了也选不上（2026-10-17，modules/shared/client-ban.ts）；后端建单那条路也拦。
+     预报单里带出来的唛头一样要去掉封禁的（那份名单不带状态，按客户名单里的封禁名单剔） */
+  const bannedClients = useMemo(() => bannedClientIds(staffClients), [staffClients]);
   const allClientOptions = useMemo(() => {
     const byId = new Map<string, { id: string }>();
-    staffClients.forEach((item) => byId.set(item.id, { id: item.id }));
+    activeMarkOptions(staffClients).forEach((item) => byId.set(item.id, item));
     prealerts.forEach((item) => {
       if (!item.clientId) return;
-      if (byId.has(item.clientId)) return;
+      if (byId.has(item.clientId) || bannedClients.has(item.clientId)) return;
       byId.set(item.clientId, { id: item.clientId });
     });
     return Array.from(byId.values());
-  }, [staffClients, prealerts]);
+  }, [staffClients, prealerts, bannedClients]);
 
   const filteredPrealerts = useMemo(() => {
     const kw = prealertSearch.keyword.trim().toLowerCase();
@@ -1468,6 +1487,7 @@ export default function StaffHomePage() {
               inputStyle={{ ...orderCreateInputStyle, width: "100%" }}
             />
           </div>
+          {bannedChangeHint(clientSearchKeyword, "", bannedClients) ? <div style={{ color: "var(--c-red-deep)", fontSize: 12, marginBottom: 4 }}>{bannedChangeHint(clientSearchKeyword, "", bannedClients)}</div> : null}
           <input
             value={allClientOptions.find((c) => c.id === form.clientId)?.id ?? form.clientId}
             readOnly
@@ -2648,6 +2668,7 @@ export default function StaffHomePage() {
                   inputStyle={{ ...orderCreateInputStyle, width: "100%" }}
                 />
               </div>
+              {bannedChangeHint(clientSearchKeyword, "", bannedClients) ? <div style={{ color: "var(--c-red-deep)", fontSize: 12 }}>{bannedChangeHint(clientSearchKeyword, "", bannedClients)}</div> : null}
               <input value={allClientOptions.find((c) => c.id === form.clientId)?.id ?? form.clientId} readOnly style={{ ...orderCreateInputStyle, background: "var(--s-cool)", color: "var(--t-strong)", fontWeight: 600 }} placeholder="已选唛头" />
               <select value={form.warehouseId} onChange={(e) => setForm((v) => ({ ...v, warehouseId: e.target.value }))} style={orderCreateInputStyle}>
                 {warehouseOptions.map((item) => (

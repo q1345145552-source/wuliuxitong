@@ -366,9 +366,11 @@ async function main(): Promise<void> {
     const v = view();
     // 老板 10-08「唛头换个方式显示，太丑了」：不再用浏览器自带的 datalist
     assert.ok(!/<datalist/.test(v) && !/list="an-client-options"/.test(v), "到货通知的唛头又回到浏览器自带的 datalist 了");
-    assert.match(v, /<MarkPicker disabled=\{saving\} value=\{draft\.clientId\} onChange=\{\(v\) => set\("clientId", v\)\} options=\{props\.clients\}/, "唛头框要用 MarkPicker，值仍是 draft.clientId");
+    // 2026-10-17：选项外面包一层 withCurrentMark（原来就挂在封禁唛头名下的那条，那个唛头留在下拉里）
+    assert.match(v, /<MarkPicker disabled=\{saving\} value=\{draft\.clientId\} onChange=\{\(v\) => set\("clientId", v\)\} options=\{withCurrentMark\(props\.clients, base\?\.clientId\)\}/, "唛头框要用 MarkPicker，值仍是 draft.clientId");
     // 显示唛头时旁边不带客户名字（老板 2026-09-19「显示唛头就行了」；test:mark-display 也管）
-    assert.match(v, /items\.map\(\(c\) => \(\{ id: c\.id \}\)\)/, "唛头下拉只要唛头");
+    // 2026-10-17 起选项由 activeMarkOptions 出（去掉封禁的唛头、只留 { id }，test-client-ban-ui.ts U2 真调过）
+    assert.match(v, /setClients\(activeMarkOptions\(items\)\)/, "唛头下拉只要唛头");
     assert.ok(!/\.name\b/.test(read("apps/web/src/modules/layout/MarkPicker.tsx")) && !/\bname\b/.test(read("apps/web/src/modules/layout/mark-options.ts")), "唛头下拉不许带客户名字");
     // label 里点下拉的某一行，浏览器会把点击转给输入框，刚选完又弹开
     const field = sliceBetween(v, '<div className="an-field">', "</div>");

@@ -59,6 +59,7 @@ export async function loadOrderProducts(companyId: string, orderIds: string[]): 
 
 import { EXCEPTION_STATUSES } from "../shipments/status-flow";
 import { BusinessError } from "../core/business-error";
+import { assertClientNotBanned } from "../core/client-ban";
 import { UPLOAD_IMAGE_MAX_BASE64, uploadTooLargeMessage } from "../core/upload-limit";
 import { classifyStatusGroup, matchesShipmentListFilter, type ClientStatusGroup } from "../../../../../packages/shared-types/shipment-status";
 import { loadPartialAhead } from "../shipments/partial-status";
@@ -487,6 +488,9 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
        （取号的排队靠 generatePrealertNo 里的 advisory 锁，锁到提交才放）。 */
     const orderNo = await prisma.$transaction(async (tx) => {
       const newOrderNo = await generatePrealertNo(tx, body.warehouseId!.trim());
+      /* 封禁的账号不许再报预报单（2026-10-17，core/client-ban.ts；dsh 第 2 轮）：登录检查在进门时读一次，
+         读完到这里提交之间超管刚好封了，单子照样会落进来 —— 在取号锁之后、建单之前跟封禁排一次队、再读一次 */
+      await assertClientNotBanned(tx, auth.companyId, auth.userId, "账号已被封禁");
       await tx.order.create({
         data: {
           id: orderId,
@@ -1102,6 +1106,7 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
       fail(res, 400, "BAD_REQUEST", "唛头不存在或不属于当前公司，请核对客户唛头");
       return;
     }
+    // 封禁的唛头不许再建单：在下面建单的事务里查（2026-10-17，core/client-ban.ts）
 
     /**
      * ⚠️ 必须先卡格式，再交给 new Date（2026-08-29 加）。
@@ -1245,6 +1250,8 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
         }
         const held = await arrivalNoticeHoldingMessage(tx, auth.companyId, generatedTrackingNo, [], "create");
         if (held) throw new BusinessError(held);
+        // 封禁的唛头不许再建单（2026-10-17，core/client-ban.ts；员工 / 超管建单、两边批量导入都走这里）
+        await assertClientNotBanned(tx, auth.companyId, clientId);
         await tx.order.create({ data: rows.order });
         await tx.shipment.create({ data: rows.shipment });
         await tx.statusLog.create({ data: rows.statusLog });
@@ -2207,7 +2214,9 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
       where: { companyId: auth.companyId, role: "client" },
       // 用到这份名单的下拉只显示唛头，按唛头排（2026-09-19）
       orderBy: { id: "asc" },
-      select: { id: true, name: true },
+      /* status（2026-10-17）：建单 / 到货通知 / 超管改单这几个「挂单」的下拉不列封禁的唛头（core/client-ban.ts）。
+         名单本身照旧全给 —— 整柜询价、仓库版集货那几处也用它，那边不在这次范围 */
+      select: { id: true, name: true, status: true },
     });
 
     ok(res, { items: users });

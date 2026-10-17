@@ -25,6 +25,7 @@ import { ShipmentOverviewStrip } from "../../modules/shipment/ShipmentOverviewSt
 import LastmileAddressPanel from "../../components/lastmile/LastmileAddressPanel";
 import DetailModal from "../../modules/layout/DetailModal";
 import MarkPicker from "../../modules/layout/MarkPicker";
+import { activeMarkOptions, bannedChangeHint, bannedClientIds, withCurrentMark } from "../../modules/shared/client-ban";
 import { decideEditTotals } from "../../modules/orders/edit-totals";
 import AdminShipmentDetail from "../../components/admin/AdminShipmentDetail";
 import {
@@ -45,7 +46,7 @@ import { formatBeijingTime, formatMetric, shipmentStatusWithPartialZh, shipmentS
 import { normalizeWarehouseId, strictPackageUnit, strictTransport, WAREHOUSE_NAME_HINT } from "../../modules/staff/batchOrderImport";
 import { SHIPMENT_STATUS_FILTER_OPTIONS } from "../../modules/shipment/shipment-status";
 import ShippingConfig from "../../components/admin/ShippingConfig";
-import { createRequestGate } from "../../modules/shared/request-gate";
+import { createQueryGate, createRequestGate } from "../../modules/shared/request-gate";
 import { useLiveRefresh } from "../../modules/realtime/useRealtime";
 import { useIsPhone } from "../../modules/layout/useIsPhone";
 import ShipmentPhoneList from "../../modules/shipment/ShipmentPhoneList";
@@ -86,7 +87,6 @@ import {
   // 员工端共享功能
   uploadStaffOrderProductImage,
   deleteStaffOrderProductImage,
-  fetchStaffClients,
   fetchStaffPrealerts,
   createStaffOrder,
   type OrderProductImageItem,
@@ -349,7 +349,6 @@ export default function AdminHomePage() {
     }
   }
 
-  const [staffClients, setStaffClients] = useState<Array<{ id: string; name: string }>>([]);
   const [createForm, setCreateForm] = useState({
     clientId: "", warehouseId: "wh_yiwu_01", arrivedAt: beijingToday(),
     transportMode: "sea" as "sea" | "land", domesticTrackingNo: "", batchNo: "", shipDate: "",
@@ -683,14 +682,20 @@ export default function AdminHomePage() {
     setStaffList(list);
   }, [isAccountSnapshotCurrent]);
 
+  /** 客户名单好几处会拉（打开页面、10 秒兜底、推送、点「创建订单」）：晚回来的旧名单不盖新的（成功才作废，request-gate.ts 用法三）。
+   *  2026-10-17：建单 / 改唛头的下拉要按它去掉封禁的唛头，别人刚封的不能被一份旧名单又放回来（Codex 审查）。
+   *  上面那个 revision 管的是「本页自己刚写过」，管不了别的超管写的，所以两个都要 */
+  const clientsGate = useRef(createQueryGate<null>()).current;
   const loadClients = useCallback(async () => {
     const revision = accountWriteState.current.revision;
+    const ticket = clientsGate.begin(null);
     // 代理下拉跟客户列表一起拉；代理接口出错时返回空数组，不影响客户列表
     const [list, agents] = await Promise.all([fetchAdminClients(), fetchAgentOptions()]);
     if (!isAccountSnapshotCurrent(revision)) return;
+    if (!clientsGate.accept(ticket, null)) return;
     setClientList(list);
     setAgentOptions(agents);
-  }, [isAccountSnapshotCurrent]);
+  }, [isAccountSnapshotCurrent, clientsGate]);
 
   // 写成功已是事实。刷新错误单独反馈，并等两个读取都落定后才解除操作中的状态。
   const refreshAccountViews = useCallback(async (reload: () => Promise<unknown>, successMessage: string) => {
@@ -1948,7 +1953,12 @@ export default function AdminHomePage() {
             </button>
             <button
               type="button"
-              onClick={async () => { const clients = await fetchStaffClients(); setStaffClients(clients); setShowCreateOrderModal(true); }}
+              onClick={() => {
+                setShowCreateOrderModal(true);
+                /* 唛头下拉用页面上那份客户名单（推送 / 10 秒兜底一直在刷，2026-10-17），打开时再顺手拉一次；
+                   拉失败就用手上那份，10 秒兜底会再拉（不留未处理的报错，dsh 第 3 轮） */
+                loadClients().catch(() => {});
+              }}
               className="workbench-button workbench-button--primary"
             >
               创建订单
@@ -2281,8 +2291,10 @@ export default function AdminHomePage() {
                         >
                         <div style={{ display: "grid", gap: 8 }}>
                           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 8 }}>
-                            {/* 唛头用自己画的下拉（2026-10-08，替掉浏览器自带的 datalist）；只显示唛头 */}
-                            <MarkPicker value={orderEditForm.clientId} onChange={(v) => setOrderEditForm((f) => ({ ...f, clientId: v }))} options={clientList.map((c) => ({ id: c.id }))} placeholder="唛头" inputStyle={{ border: "1px solid var(--l-strong)", borderRadius: 8, padding: "8px 10px" }} />
+                            {/* 唛头用自己画的下拉（2026-10-08，替掉浏览器自带的 datalist）；只显示唛头。
+                                封禁的唛头不进下拉（2026-10-17，modules/shared/client-ban.ts）：换成它后端会拦，提示在这一排格子下面；
+                                原来就挂在封禁唛头名下的单照常改、不提示，那个唛头留在下拉里（不然一点开就是「匹配 0 个」） */}
+                            <MarkPicker value={orderEditForm.clientId} onChange={(v) => setOrderEditForm((f) => ({ ...f, clientId: v }))} options={withCurrentMark(activeMarkOptions(clientList), editSnapshot?.form.clientId)} placeholder="唛头" inputStyle={{ border: "1px solid var(--l-strong)", borderRadius: 8, padding: "8px 10px" }} />
                             <input value={orderEditForm.trackingNo} onChange={(e) => setOrderEditForm((v) => ({ ...v, trackingNo: e.target.value.toUpperCase() }))} placeholder="运单号" style={{ border: "1px solid var(--l-strong)", borderRadius: 8, padding: "8px 10px" }} />
                             <input value={orderEditForm.batchNo} onChange={(e) => setOrderEditForm((v) => ({ ...v, batchNo: e.target.value }))} placeholder="柜号" style={{ border: "1px solid var(--l-strong)", borderRadius: 8, padding: "8px 10px" }} />
                             <select value={orderEditForm.warehouseId} onChange={(e) => setOrderEditForm((v) => ({ ...v, warehouseId: e.target.value }))} style={{ border: "1px solid var(--l-strong)", borderRadius: 8, padding: "8px 10px" }}><option value="wh_yiwu_01">义乌仓</option><option value="wh_guangzhou_01">广州仓</option><option value="wh_dongguan_01">东莞仓</option><option value="wh_shenzhen_01">深圳仓</option></select>
@@ -2295,6 +2307,11 @@ export default function AdminHomePage() {
                             <input value={orderEditForm.volumeM3} onChange={(e) => setOrderEditForm((v) => ({ ...v, volumeM3: e.target.value }))} placeholder="体积(m³)" style={{ border: "1px solid var(--l-strong)", borderRadius: 8, padding: "8px 10px" }} />
                             <input type="date" value={orderEditForm.shipDate} onChange={(e) => setOrderEditForm((v) => ({ ...v, shipDate: e.target.value }))} style={{ border: "1px solid var(--l-strong)", borderRadius: 8, padding: "8px 10px" }} />
                           </div>
+                          {/* 换成封禁的唛头时的提示（放在格子外面，不把那一排撑高） */}
+                          {(() => {
+                            const hint = bannedChangeHint(orderEditForm.clientId, editSnapshot?.form.clientId, bannedClientIds(clientList));
+                            return hint ? <div style={{ color: "var(--c-red-deep)", fontSize: 12 }}>{hint}</div> : null;
+                          })()}
                           {/* 手填总重量/总体积和产品行自动计算冲突时，当场说清保存后哪边生效
                               （2026-08-31，排查报告第22条：原来静默扔掉手填值，没人察觉） */}
                           {editTotalsPreview.notes.length > 0 && (
@@ -2985,7 +3002,13 @@ export default function AdminHomePage() {
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 8, marginBottom: 12 }}>
               <div>
                 <label style={{ fontSize: 11, display: "block", marginBottom: 2 }}>客户 *</label>
-                <MarkPicker value={createForm.clientId} onChange={(v) => setCreateForm(f => ({ ...f, clientId: v }))} options={staffClients.map((c) => ({ id: c.id }))} placeholder="输入唛头搜索" inputStyle={{ border: "1px solid var(--l-strong)", borderRadius: 6, padding: "6px 8px", width: "100%", fontSize: 12 }} />
+                {/* 封禁的唛头不进下拉、打全了提示一句（2026-10-17，modules/shared/client-ban.ts；后端建单也拦）。
+                    名单用 clientList（带 status，推送 / 10 秒兜底一直在刷）；原来点开时单拉一份 /staff/clients，开着弹窗时别人封了不会变（Codex 审查） */}
+                <MarkPicker value={createForm.clientId} onChange={(v) => setCreateForm(f => ({ ...f, clientId: v }))} options={activeMarkOptions(clientList)} placeholder="输入唛头搜索" inputStyle={{ border: "1px solid var(--l-strong)", borderRadius: 6, padding: "6px 8px", width: "100%", fontSize: 12 }} />
+                {(() => {
+                  const hint = bannedChangeHint(createForm.clientId, "", bannedClientIds(clientList));
+                  return hint ? <div style={{ color: "var(--c-red-deep)", fontSize: 11, marginTop: 2 }}>{hint}</div> : null;
+                })()}
               </div>
               <div>
                 <label style={{ fontSize: 11, display: "block", marginBottom: 2 }}>仓库</label>

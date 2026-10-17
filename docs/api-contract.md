@@ -868,3 +868,17 @@
 - 客服对话：整柜卡片 `ref.no` 给现在的提单号。
 - 装柜单号不填柜号时自动编号按北京日期。
 
+
+## 24. 封禁的客户唛头不许再挂新单（2026-10-17，老板「为什么客户账号已经封禁了，还是能加进去运单？」选 A）
+
+规则和锁的设计：`apps/api/src/modules/core/client-ban.ts` 文件头。封禁 = `users.status` 不是 `active`（同登录口径）。
+- 遇到封禁的唛头一律 `400`「账号已封禁」（老板 10-17 定的字），一张不建 / 一个字不改：
+  - `POST /staff/orders`（员工 / 超管「创建订单」、两边批量导入都走这条）；
+  - `POST /staff/arrival-notices/save`：新登记；修改时**换成**封禁的唛头（含原来没唛头、这次补上；已转待入库的按那张运单现在的唛头比）；
+  - `POST /staff/arrival-notices/convert`：要新建一张运单的一律拦；待入库 → 正式（同一张运单）唛头没变照常转；
+  - `POST /staff/fcl-containers/create`（带 `inquiryId` 从询价单转的也拦，询价单状态不动）；`POST /staff/fcl-containers/update` 唛头**换成**封禁的；
+  - `POST /admin/orders/update` 唛头**换成**封禁的（页面原样带回原唛头不算换）；
+  - `POST /client/prealerts`：进门时还没封、提交时已经封了的那一下，`400`「账号已被封禁」（平时封禁的客户登录检查就挡在门外）。
+- 不拦（已有的单照常）：上面几条路不换唛头的修改、`/staff/prealerts/receive`、装柜 / 派送 / 签收 / 删单、整柜询价、集货。
+- 排队（`core/client-ban.ts` 文件头）：挂单的事务在各自锁序最后拿 `pg_advisory_xact_lock_shared(83070, hashtext(公司:唛头))`（共享档，挂单之间不互等）再读状态。`POST /admin/users/toggle-ban` 改成事务：先用 `pg_try_advisory_xact_lock` **只试不排队**地拿独占档（拿不到隔 0.1 秒再试，最多 10 秒），拿到再 `lock_timeout 1s` 锁客户行、写 status、提交 —— 正在挂单的都提交了才生效，封禁生效以后不会再冒出新单；封禁从不在锁队列里排着、试锁期间也不锁客户行，后来的挂单最多等它拿着独占的那 1 秒，同一客户存地址 / 发消息不受影响。试不到、客户行 1 秒等不到、事务到点，都回 `409`「刚好有同事正在给这个客户建单 / 改单，这次没改成，过几秒再点一次」（翻成什么照旧按进门时读到的定）。
+- `GET /staff/clients` 每项多 `status`（名单照旧全给）。员工页整页、到货通知页加订 `accounts` 推送，收到重拉客户名单；超管「创建订单」改用页面上的 `clientList`（`/admin/users?role=client`，本来就带 status、跟推送刷新）。

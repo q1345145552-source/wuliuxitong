@@ -4,6 +4,7 @@ import { prisma } from "../../db/prisma";
 import type { HttpRequest, HttpResponse, MinimalHttpApp } from "../../server";
 import { fail, ok, requireRole } from "../core/http-utils";
 import { BusinessError } from "../core/business-error";
+import { assertClientNotBanned } from "../core/client-ban";
 import { canSeeOperatorIdentity } from "../core/operator-visibility";
 import { parseNumericStrict, requirePositiveInt, requireSumWithinInt } from "../core/int-guard";
 import { DECIMAL_10_2, DECIMAL_10_3, checkTotalsWritable, requireDecimal, requireSumWithinDecimal } from "../core/decimal-guard";
@@ -1177,6 +1178,8 @@ export function registerArrivalNoticeRoutes(app: MinimalHttpApp): void {
             await lockTrackingNoForArrivalNotice(tx, f.trackingNo);
             await assertTrackingNoFree(tx, auth.companyId, f.trackingNo, null, null);
           }
+          // 封禁的唛头不许新登记（2026-10-17，core/client-ban.ts）
+          if (f.clientId) await assertClientNotBanned(tx, auth.companyId, f.clientId);
           return tx.arrivalNotice.create({
             data: {
               id: newId,
@@ -1241,6 +1244,12 @@ export function registerArrivalNoticeRoutes(app: MinimalHttpApp): void {
           throw new BusinessError("这条已经转成正式运单了，这里不能再改；要改运单请到「运单管理」");
         }
         if (f.trackingNo) await assertTrackingNoFree(tx, auth.companyId, f.trackingNo, n.id, ship?.id ?? null);
+        /* 唛头换成封禁的那个（含原来没唛头、这次补上）：不许（2026-10-17，core/client-ban.ts）。没换的照常存（已有的单不动）。
+           「原来是谁」：已经转了待入库的看那张运单现在挂在谁名下（下面会把唛头同步过去），还没转的看这条通知自己 */
+        const ownerNow = ship
+          ? (await tx.order.findFirst({ where: { id: ship.orderId, companyId: auth.companyId }, select: { clientId: true } }))?.clientId ?? null
+          : n.clientId;
+        if (f.clientId && f.clientId !== ownerNow) await assertClientNotBanned(tx, auth.companyId, f.clientId);
         if (n.convertedTo === "inbound" && ship) {
           assertStillPendingInbound(ship);
           // 已经是待入库的单：运单号、唛头不能清空（运单得有号、得有主）
@@ -1334,6 +1343,10 @@ export function registerArrivalNoticeRoutes(app: MinimalHttpApp): void {
           if (rowIssue) throw new BusinessError(`转正式运单前请先改：${rowIssue}`);
         }
         await assertClient(tx, auth.companyId, f.clientId!);
+        /* 封禁的唛头（2026-10-17，core/client-ban.ts）：要新建一张运单的一律拦；
+           待入库 → 正式用的是已经建好的那张运单，唛头跟那张单上的一样就照常转（已有的单不动），不一样（等于换唛头）才拦 */
+        const shipOwner = ship ? await tx.order.findFirst({ where: { id: ship.orderId, companyId: auth.companyId }, select: { clientId: true } }) : null;
+        if (!shipOwner || shipOwner.clientId !== f.clientId) await assertClientNotBanned(tx, auth.companyId, f.clientId!);
         await assertTrackingNoFree(tx, auth.companyId, f.trackingNo!, n.id, ship?.id ?? null);
         /* 撞上客户预报单（F01）：只提醒不拦 —— 页面确认框里列出来、员工点了「确定」才带着这几张预报单的 id 来。
            锁里重查：页面打开以后客户才报的预报单、或者没带确认的老页面，都要先说一声。待入库转正式也照样查 */

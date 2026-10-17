@@ -319,6 +319,9 @@ jobs:
       # 弹窗先重读再走超管改单再刷新卡片、别人改过不存、整柜不给存、卡片只给超管「修改」
       - name: Test arrival notice converted edit (admin)
         run: npm run test:arrival-notice-converted-edit
+      # 2026-10-17 封禁的唛头不进挂单的下拉（不连库）：提示跟后端拦下那句一样、员工 / 超管建单和改唛头的框都去掉封禁的、全站唛头下拉点名
+      - name: Test banned client marks in pickers
+        run: npm run test:client-ban-ui
       # 2026-10-08 模拟数据测试查出来的页面接线（不连库）：列表排序带 id 兜底、超管待入库到仓日期、袋装单位、改单带打开时的剩余件数
       - name: Test simulated-data fixes 1008 (source)
         run: npm run test:sim-fixes-1008-source
@@ -499,6 +502,10 @@ jobs:
       # 2026-10-16 超管改已转正式运单 + 运单管理改完卡片跟着变（真接口、真库）
       - name: Test arrival notice converted edit (real DB)
         run: bash .github/scripts/run-db-test.sh test:arrival-notice-converted-db
+      # 2026-10-17 封禁的唛头不许再挂新单（真接口、真库）：建单 / 到货通知登记·改唛头·转运单 / 整柜建·改 / 超管改唛头都拦，
+      # 已经挂在封禁唛头名下的单照常改、待入库照常转正式、预报单照常收货，解封后恢复
+      - name: Test banned client cannot get new orders (real DB)
+        run: bash .github/scripts/run-db-test.sh test:client-ban-db
       # 到货通知那份迁移：在「上线前的库」上连跑两遍、跟 schema 零差异、体检清单对上、外键在
       - name: Test arrival notices migration file (real DB)
         run: bash .github/scripts/run-db-test.sh test:migration-arrival-notices-db

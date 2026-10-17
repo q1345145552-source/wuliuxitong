@@ -538,7 +538,8 @@ for (const kind of ['staff', 'client'] as const) {
   test(`${kind}列表：写前/写途中GET在写后才返回也不能覆盖，写后新GET正常落地`, async () => {
     const account = accountWriteHarness(), requests: Array<ReturnType<typeof deferred<any[]>>> = [];
     let rows = [{ id: 'u-test', status: 'inactive' }];
-    const read = pageExpression(kind === 'staff' ? 'loadStaff' : 'loadClients', { ...account,
+    // clientsGate：客户名单的门闩（2026-10-17 封禁唛头那次加的，request-gate.ts 用法三）；员工名单那条不用它，多给不碍事
+    const read = pageExpression(kind === 'staff' ? 'loadStaff' : 'loadClients', { ...account, clientsGate: load(path.join(root, "modules/shared/request-gate.ts")).createQueryGate(),
       fetchAdminStaff: () => { const q = deferred<any[]>(); requests.push(q); return q.promise; },
       fetchAdminClients: () => { const q = deferred<any[]>(); requests.push(q); return q.promise; }, fetchAgentOptions: async () => [],
       setStaffList: (value: typeof rows) => { rows = value; }, setClientList: (value: typeof rows) => { rows = value; }, setAgentOptions: () => {},
@@ -670,7 +671,8 @@ for (const [name, endpoint] of [
 test('真实编辑客户后旧列表晚到不能把新名字盖回去', async () => {
   const account = accountWriteHarness(), reads: Array<ReturnType<typeof deferred<any[]>>> = [];
   let rows = [{ id: 'u-test', name: '改前', status: 'active' }];
-  const read = pageExpression('loadClients', { ...account, fetchAdminClients: () => { const q = deferred<any[]>(); reads.push(q); return q.promise; },
+  const read = pageExpression('loadClients', { ...account, clientsGate: load(path.join(root, "modules/shared/request-gate.ts")).createQueryGate(),
+    fetchAdminClients: () => { const q = deferred<any[]>(); reads.push(q); return q.promise; },
     fetchAgentOptions: async () => [], setClientList: (value: typeof rows) => { rows = value; }, setAgentOptions: () => {},
   });
   const old = read();
