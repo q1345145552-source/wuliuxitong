@@ -162,6 +162,7 @@ check("S6 客户「批量下单」：失败的行记下来，跑完预览只留�
   // 结果不确定的行（第 3、4 轮）：单独一句叫客户直接再点、别改了重传；明确失败的另一句叫改好另存（两种混着时两句都在）
   assert.match(src, /unknownCount > 0\s*\?\s*`其中 \$\{unknownCount\} 条是网络或服务器没给准信、不确定有没有建好：请直接再点「一键提交」，不要把这几行改了重新上传（重新上传会当成新单）。`/);
   assert.match(src, /rows\.length > unknownCount\s*\?\s*unknownCount > 0\s*\?\s*`其余 \$\{rows\.length - unknownCount\} 条按上面各自写的原因处理：要改内容的改好另存一张表再上传/);
+  assert.match(src, /:\s*"按上面每行写的原因处理：要改内容的，请只把这几行改好另存一张表再上传。"/, "没有不确定的时候也别一律叫客户改表（第 6 轮）");
 });
 
 check("S7 超管「运单管理」改单：打开时记订单版本；每次保存都带回去核对（第 2 轮）；存完基线换成刚存的；被抢先就刷新列表", () => {
@@ -191,9 +192,11 @@ check("S7 超管「运单管理」改单：打开时记订单版本；每次保�
   const modal = code("apps/web/src/modules/layout/DetailModal.tsx");
   assert.match(modal, /if \(confirmClose && !confirmClose\(\)\) return;[\s\S]{0,200}?window\.setTimeout\(onClose, 200\)/, "DetailModal 得在放动画之前同步问 confirmClose，不然 ✕ 那 0.2 秒照样漏");
   // 离开「运单管理」（浏览器后退也算）：+1（第 5 轮）
-  assert.match(src, /const hashId = window\.location\.hash\.replace\(\/\^#\/, ""\);\s*if \(hashId !== "orders"\) editSessionRef\.current \+= 1;/, "离开运单管理要 +1");
+  assert.match(src, /const hashId = window\.location\.hash\.replace\(\/\^#\/, ""\);\s*if \(hashId !== "orders" && \(isSectionId\(hashId\) \|\| !hashId\)\) editSessionRef\.current \+= 1;/, "真离开运单管理才 +1（不认识的 # 不切页、不算离开）");
+  // 离开运单管理弹窗跟着卸掉（第 6 轮）：藏起来不卸会一直占着 Tab / Esc 和滚动锁
+  assert.match(src, /\{editingOrderId === \(o\.orderId \?\? o\.id\) && activeSection === "orders" \? \(\s*<tr key=\{`edit-\$\{o\.id\}`\}/, "编辑弹窗只在运单管理这一页显示时挂");
   // 存上之后刷新列表失败，不能落进「保存失败」（dsh 第 5 轮；S7b 真跑）
-  assert.match(src, /await loadOrders\(\)\.catch\(\(\) => setToast\(`\$\{whose\}订单信息已更新，只是列表这次没刷新上，稍后会自动刷新`\)\);/);
+  assert.match(src, /await loadOrders\(\)\.catch\(\(\) => setToast\(`\$\{savedText\}（列表这次没刷新上，稍后会自动刷新）`\)\);/);
   assert.match(src, /const sessionAtSubmit = editSessionRef\.current;\s*setLoading\(true\);\s*setMessage\(""\);\s*try \{/, "保存前（try 外面）要记下是第几次打开");
   // 后端报的那句跟这里认的一样
   assert.match(read("apps/api/src/modules/admin/routes.ts"), /这票刚刚被别人改过（超管端「运单管理」或别的超管），你这次没有保存/);
@@ -453,7 +456,7 @@ async function main(): Promise<void> {
     await save({ ...F0, remark: "R16" }, P0.map((p) => ({ ...p })));
     loadFails = false;
     assert.equal(store.message, "", `存上了却显示：${store.message}`);
-    assert.match(store.toast ?? "", /^订单信息已更新，只是列表这次没刷新上/);
+    assert.equal(store.toast, "订单信息已更新（列表这次没刷新上，稍后会自动刷新）");
     assert.equal(store.snapshot.form.remark, "R16", "存上了基线要换成刚存的");
   });
 

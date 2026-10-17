@@ -1006,9 +1006,10 @@ export default function AdminHomePage() {
       // 手填值和自动计算冲突时明说哪边生效了，不再静默（排查报告第22条）
       // 存的过程中已经关了 / 换了别的单：提示里写明是之前那张（Codex 第 3、4 轮）
       const whose = editSessionRef.current === sessionAtSubmit ? "" : "之前那张单：";
-      setToast(`${whose}${totalsNotes.length > 0 ? `订单信息已更新。${totalsNotes.join("；")}` : "订单信息已更新"}`);
-      // 已经存上了：接着刷新列表失败不能落进下面的「保存失败」（dsh 第 5 轮）；10 秒后会自动再刷
-      await loadOrders().catch(() => setToast(`${whose}订单信息已更新，只是列表这次没刷新上，稍后会自动刷新`));
+      const savedText = `${whose}${totalsNotes.length > 0 ? `订单信息已更新。${totalsNotes.join("；")}` : "订单信息已更新"}`;
+      setToast(savedText);
+      // 已经存上了：接着刷新列表失败不能落进下面的「保存失败」（dsh 第 5 轮）；10 秒后会自动再刷。合计听谁的那句照样留着（dsh 第 6 轮）
+      await loadOrders().catch(() => setToast(`${savedText}（列表这次没刷新上，稍后会自动刷新）`));
     } catch (error) {
       const text = error instanceof Error ? error.message : "保存失败";
       // 还是同一次打开的弹窗才写进弹窗；已经关了 / 换了别的单，用提示条说「之前那张没存上」（Codex 第 3、4 轮）
@@ -1580,8 +1581,9 @@ export default function AdminHomePage() {
   useEffect(() => {
     const syncSectionByHash = () => {
       const hashId = window.location.hash.replace(/^#/, "");
-      /* 离开「运单管理」（浏览器后退 / 手机返回也算）：那边的编辑弹窗看不见了，保存途中回来的结果别写进看不见的弹窗、走提示条（Codex 第 5 轮） */
-      if (hashId !== "orders") editSessionRef.current += 1;
+      /* 离开「运单管理」（浏览器后退 / 手机返回也算）：那边的编辑弹窗看不见了，保存途中回来的结果别写进看不见的弹窗、走提示条（Codex 第 5 轮）。
+         只认真换了分区的（不认识的 # 页面不切，弹窗还看得见，不算离开 —— dsh 第 6 轮） */
+      if (hashId !== "orders" && (isSectionId(hashId) || !hashId)) editSessionRef.current += 1;
       if (isSectionId(hashId)) {
         setActiveSection(hashId);
       } else if (!hashId) {
@@ -2353,7 +2355,9 @@ export default function AdminHomePage() {
                       </td>
                     </tr>
                   ) : null}
-                  {editingOrderId === (o.orderId ?? o.id) ? (
+                  {/* 只在「运单管理」这一页显示时挂弹窗（2026-10-18 Codex / dsh 第 6 轮）：原来按浏览器后退离开，弹窗只是跟着整页藏起来、没卸掉，
+                      还占着全局键盘（Tab / Esc）和页面滚动锁。填的内容存在页面上（orderEditForm / editProducts），回来重新挂上照样在 */}
+                  {editingOrderId === (o.orderId ?? o.id) && activeSection === "orders" ? (
                     <tr key={`edit-${o.id}`} className="shipment-detail-row">
                       {/* 编辑表单同样改成全屏弹窗；格子只作挂载点，不占高度 */}
                       <td colSpan={ORDER_COL_WIDTHS.length} style={{ padding: 0, border: "none" }}>

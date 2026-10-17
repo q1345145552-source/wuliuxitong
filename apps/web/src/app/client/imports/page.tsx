@@ -292,7 +292,7 @@ export default function ClientImportsPage() {
               {rows.length > unknownCount
                 ? unknownCount > 0
                   ? `其余 ${rows.length - unknownCount} 条按上面各自写的原因处理：要改内容的改好另存一张表再上传（先把不确定的那几条点「一键提交」确认了，再换文件）。`
-                  : "要改内容的，请只把这几行改好另存一张表再上传。"
+                  : "按上面每行写的原因处理：要改内容的，请只把这几行改好另存一张表再上传。"
                 : ""}
             </div>
           </div>
