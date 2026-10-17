@@ -69,6 +69,8 @@ export default function ClientImportsPage() {
   const [failCount, setFailCount] = useState(0);
   const [errors, setErrors] = useState<string[]>([]);
   const [done, setDone] = useState(false);
+  /** 这一轮里「不确定建没建成」的行数（断网 / 超时 / 网关出错，2026-10-18 审查第 3 轮）：提示客户直接重交、别改了重新上传 */
+  const [unknownCount, setUnknownCount] = useState(0);
   const [message, setMessage] = useState("");
 
   // 标红（仓库 / 货型认不出来）的行不算有效（2026-09-28：认不出来的行现在留在预览里，不再悄悄丢掉）
@@ -155,6 +157,7 @@ export default function ClientImportsPage() {
     /** 这一轮没下成的行（2026-10-18 全系统审查第一档第 5 条）：跑完预览里只留它们 —— 原来跑完按钮还亮着、预览还是整批，
      *  再点一次（或者部分失败后点「重试」）会把已经成功的行再下一遍单（后端每次都新建订单，没有去重） */
     const failedRows: ImportRow[] = [];
+    let unknown = 0;
 
     for (let i = 0; i < batch.length; i++) {
       // 2026-09-01 竞态全扫：预览已不是出发时那份（理论上入口已禁用走不到这，兜底），
@@ -188,6 +191,7 @@ export default function ClientImportsPage() {
         const text = error instanceof Error ? error.message : "提交失败";
         errs.push(`表格第${row.rowNo}行(${row.itemName}): ${text}`);
         failedRows.push(row);
+        if ((error as { resultUnknown?: boolean } | null)?.resultUnknown) unknown++;
         // 2026-09-01 竞态全扫：失败分支同样认主人，旧批次的报错不许混进新预览
         if (previewRef.current !== batch) break;
         setFailCount(errs.length);
@@ -198,6 +202,7 @@ export default function ClientImportsPage() {
     // 2026-09-01 竞态全扫：只有预览还是出发时那份，才展示这批的完成汇总
     if (previewRef.current === batch) {
       setErrors(errs);
+      setUnknownCount(unknown);
       setDone(true);
       // 成功的行从预览里拿掉，只留没下成的：全成功了预览清空、按钮变灰；有失败的再点只重试这几行
       previewRef.current = failedRows;
@@ -279,7 +284,10 @@ export default function ClientImportsPage() {
             {/* 成功的已经下单了（2026-10-18 全系统审查第一档第 5 条）：下面预览只剩没下成的，别再上传同一个文件，不然成功的会再下一遍 */}
             <div style={{ marginTop: 6, fontSize: 13, color: "var(--t-strong)" }}>
               {successCount > 0 ? `成功的 ${successCount} 条已经下单，不用再交，也不要再上传同一个文件（会重复下单）。` : ""}
-              {rows.length > 0 ? `下面还剩 ${rows.length} 条没确认下成：再点「一键提交」只重交这几条（其中已经建好的系统会认出来，不会重复下单）；要改内容的，请只把这几行改好另存一张表再上传。` : ""}
+              {rows.length > 0 ? `下面还剩 ${rows.length} 条没确认下成：再点「一键提交」只重交这几条（其中已经建好的系统会认出来，不会重复下单）。` : ""}
+              {unknownCount > 0
+                ? `其中 ${unknownCount} 条是网络断了或太久没回话、不确定有没有建好：请直接再点「一键提交」，不要把这几行改了重新上传（重新上传会当成新单）。`
+                : rows.length > 0 ? "要改内容的，请只把这几行改好另存一张表再上传。" : ""}
             </div>
           </div>
         )}

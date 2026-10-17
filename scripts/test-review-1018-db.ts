@@ -12,7 +12,7 @@
  *   V7  patch-shipment-bundle 不带版本（上线那一刻还开着的老页面）：照旧存上
  *   V8  「运单管理」只改备注也带版本（第 2 轮起每次都带）：别人这期间改过产品行 → 409、备注不写（旧：不核对就存，基线换成新版本，下次改产品行漏拦）
  *   V9  客户批量下单带请求编号：同一个编号交两次只建一张，第二次回第一次的结果（服务器建好了、回话丢了再重试的情况）
- *   V10 同一个编号两个请求同时进来：都回同一张、库里只有一张
+ *   V10 同一个编号两个请求同时进来：都回同一张、库里只有一张（先拿住取号锁，等两个都排上再放 —— 一定走到撞主键那条路）
  *   V11 编号是别的客户用过的 409；格式不对 400；不带编号（单张下单 / 老页面）照旧每次新建
  *
  * 只连测试库：DATABASE_URL 不带 neon.tech 的不跑（一次性 docker 库设 AGENT_PORTAL_TEST_ALLOW_DB=1）；
@@ -244,13 +244,30 @@ async function main(): Promise<void> {
       assert.equal(await pm.shipment.count({ where: { orderId: a.prealertId } }), 1, "运单也只能有一张");
     });
 
-    await check("V10 同一个编号两个请求同时进来：都回同一张、库里只有一张", async () => {
+    await check("V10 同一个编号两个请求同时进来：都回同一张、库里只有一张（后到的真走「撞主键 → 再查」那条路）", async () => {
       const before = await ordersOf(C1);
       const rid = "zzrv18req0000000000000000000002";
-      const [a, b] = await Promise.all([call("POST /client/prealerts", C1, prealert({ requestId: rid })), call("POST /client/prealerts", C1, prealert({ requestId: rid }))]);
+      /* 让两个请求一定都过了进门那次预查、都卡在取号锁上（第 3 轮 Codex：原来靠碰运气，可能后到的在预查就认出来了，
+         撞主键那条路根本没走到）：先在另一个事务里拿住取号锁，等库里看到两个请求都在排这把锁，再放 */
+      let calls: Promise<{ status: number; data: any; message: string }>[] = [];
+      await pm.$transaction(async (tx: any) => {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(${0x5afd00b1})`;
+        calls = [call("POST /client/prealerts", C1, prealert({ requestId: rid })), call("POST /client/prealerts", C1, prealert({ requestId: rid }))];
+        const deadline = Date.now() + 20000;
+        for (;;) {
+          const rows: { n: number }[] = await tx.$queryRaw`SELECT count(*)::int AS n FROM pg_locks WHERE locktype = 'advisory' AND objid = ${0x5afd00b1}::bigint::oid AND objsubid = 1 AND NOT granted`;
+          if (rows[0].n >= 2) break;
+          if (Date.now() > deadline) throw new Error(`20 秒内没等到两个请求都排在取号锁上（现在 ${rows[0].n} 个）`);
+          await new Promise((r) => setTimeout(r, 50));
+        }
+      }, { timeout: 30000, maxWait: 10000 });
+      const [a, b] = await Promise.all(calls);
       assert.equal(a.status, 200, `${a.status} ${a.message}`);
       assert.equal(b.status, 200, `${b.status} ${b.message}`);
       assert.equal(a.data.prealertId, b.data.prealertId);
+      assert.equal(a.data.prealertId, `o_req_${rid}`);
+      // 两个都过了预查，「已经建好」只能是撞主键之后再查出来的
+      assert.equal([a, b].filter((r) => r.data.alreadyCreated === true).length, 1, "应该一个新建、一个撞主键后按已建好回");
       assert.equal((await ordersOf(C1)) - before, 1, "同时进来的同编号建了两张");
     });
 

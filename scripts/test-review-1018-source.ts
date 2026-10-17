@@ -14,6 +14,7 @@
  *   S7b 真跑页面里那段 submitOrderEdit（Codex / dsh 第 1、2 轮），假后端照真后端核版本：每次保存都带版本；存完基线换成这次提交的；
  *       别人先改了产品行、我只改备注也被拦下（旧产品行配不上新版本，不会漏拦丢数据）；409 不动基线；存的过程中重开弹窗不盖
  *   S10 超管列表 / 导出筛选的「国内单号」也认产品行上的号（Codex / dsh 第 1 轮）
+ *   S11 真跑 createClientPrealert：带编号的超时连正文一起管；断网 / 到点 / 网关 5xx 标「结果不确定」，后端明确拒的原样抛（第 2、3 轮）
  *   S8  超管在员工页「保存订单信息」：草稿带订单版本、保存带回去；存完先换新版本
  *   S9  后端：两份列表给订单的 updatedAt；patch-shipment-bundle 锁住订单后核版本；两条改单路写订单时 updatedAt 跟返回值同一个 now
  */
@@ -143,7 +144,7 @@ check("S6 客户「批量下单」：失败的行记下来，跑完预览只留�
   const src = code("apps/web/src/app/client/imports/page.tsx");
   assert.match(src, /const failedRows: ImportRow\[\] = \[\];/);
   assert.match(src, /errs\.push\(`表格第\$\{row\.rowNo\}行\(\$\{row\.itemName\}\): \$\{text\}`\);\s*failedRows\.push\(row\);/, "失败的行要记下来");
-  assert.match(src, /if \(previewRef\.current === batch\) \{\s*setErrors\(errs\);\s*setDone\(true\);\s*previewRef\.current = failedRows;\s*setRows\(failedRows\);\s*\}/, "跑完预览只留没下成的（快照一起换）");
+  assert.match(src, /if \(previewRef\.current === batch\) \{\s*setErrors\(errs\);\s*setUnknownCount\(unknown\);\s*setDone\(true\);\s*previewRef\.current = failedRows;\s*setRows\(failedRows\);\s*\}/, "跑完预览只留没下成的（快照一起换）");
   assert.equal((src.match(/failedRows\.push\(/g) ?? []).length, 1, "只有失败分支记");
   // 按钮只看预览有没有行：全成功后预览空了，按钮自然灰
   assert.match(src, /disabled=\{loading \|\| parsing \|\| rows\.length === 0 \|\| badCargoRows\.length > 0\}/);
@@ -167,6 +168,11 @@ check("S7 超管「运单管理」改单：打开时记订单版本；每次保�
   assert.ok(!/sendsWholeProducts/.test(src), "又回到「只在改产品行 / 合计时才带版本」了（第 2 轮：只改备注不核对，会把旧产品行配上新版本）");
   assert.match(src, /setEditSnapshot\(\(prev\) => \(prev && prev === snapAtSubmit \? \{ form: submittedForm, productsJson: submittedProductsJson, orderUpdatedAt: saved\.updatedAt \} : prev\)\);/, "存完要把基线整个换成刚存的（只换版本不够）");
   assert.match(src, /if \(\/刚刚被别人改过\/\.test\(text\)\) loadOrders\(\)\.catch\(\(\) => \{\}\);/);
+  // 第几次打开弹窗（第 3 轮）：每次打开 +1，保存前记下，报错时还是这一次才写进弹窗（S7b ⑤ 真跑）
+  const openAt = src.indexOf("const startEditOrder = ");
+  const openBody = src.slice(openAt, src.indexOf("setEditSnapshot({", openAt));
+  assert.ok(openAt > 0 && /editSessionRef\.current \+= 1;/.test(openBody), "打开弹窗要给「第几次打开」加一");
+  assert.match(src, /const sessionAtSubmit = editSessionRef\.current;\s*setLoading\(true\);\s*setMessage\(""\);\s*try \{/, "保存前（try 外面）要记下是第几次打开");
   // 后端报的那句跟这里认的一样
   assert.match(read("apps/api/src/modules/admin/routes.ts"), /这票刚刚被别人改过（超管端「运单管理」或别的超管），你这次没有保存/);
 });
@@ -255,7 +261,10 @@ async function main(): Promise<void> {
   await checkAsync("S6b 真跑客户「批量下单」的 handleSubmit：3 行第 2 行失败 → 预览只剩第 2 行；再交一次只重交它，成功后预览清空", async () => {
     const handler = sourceNode("apps/web/src/app/client/imports/page.tsx", (n) => ts.isArrowFunction(n) && ts.isVariableDeclaration(n.parent) && n.parent.name.getText() === "handleSubmit");
     const row = (i: number) => ({ rowNo: i + 2, requestId: `req0000000000000${i}`, warehouseId: "wh_yiwu_01", itemName: `货${i}`, packageCount: 1, packageUnit: "box", weightKg: 1, volumeM3: 0.1, shipDate: "2026-10-18", domesticTrackingNo: "", transportMode: "sea", cargoType: "normal", issues: [] });
+    let unknownSeen = -1;
+    let unknownFail = false;
     const submit = async (rows: Row[], failName: string | null) => {
+      unknownSeen = -1;
       const previewRef = { current: rows };
       const sent: string[] = [];
       const ids: string[] = [];
@@ -264,9 +273,13 @@ async function main(): Promise<void> {
         loading: false, parsing: false, rows, previewRef, isRowBad: () => false,
         setLoading() {}, setCurrent() {}, setSuccessCount() {}, setFailCount() {}, setErrors() {}, setDone() {}, setMessage() {},
         setRows(v: Row[]) { lastRows = v; },
-        createClientPrealert: async (p: Row) => { sent.push(p.itemName); ids.push(p.requestId); if (p.itemName === failName) throw new Error("网络断了"); },
+        setUnknownCount(n: number) { unknownSeen = n; },
+        createClientPrealert: async (p: Row) => {
+          sent.push(p.itemName); ids.push(p.requestId);
+          if (p.itemName === failName) throw Object.assign(new Error("网络断了"), unknownFail ? { resultUnknown: true } : {});
+        },
       })();
-      return { sent, ids, lastRows, preview: previewRef.current };
+      return { sent, ids, lastRows, preview: previewRef.current, unknown: unknownSeen };
     };
     const first = await submit([row(0), row(1), row(2)], "货1");
     // 沙箱里建的数组跟外面不是同一个 Array（原型不同），比内容用 Array.from 拷出来再比
@@ -278,6 +291,12 @@ async function main(): Promise<void> {
     // 每行带自己的请求编号，重交同一行编号不变（服务器认出来就不再建 —— 回话丢了也不重复，第 2 轮）
     assert.deepEqual(first.ids, ["req00000000000000", "req00000000000001", "req00000000000002"]);
     assert.deepEqual(retry.ids, ["req00000000000001"], "重交时请求编号变了，服务器认不出是同一行");
+    assert.equal(first.unknown, 0, "明确报错的不算「不确定」");
+    // 断网 / 超时（结果不确定）的行：照样留在预览里重交，另外记个数，页面据此提示「别改了重新上传」（第 3 轮）
+    unknownFail = true;
+    const shaky = await submit([row(0), row(1)], "货1");
+    assert.equal(shaky.unknown, 1, "结果不确定的行要单独记数");
+    assert.deepEqual(Array.from(shaky.lastRows ?? [], (r) => r.itemName), ["货1"]);
     assert.ok(retry.lastRows !== undefined && retry.lastRows.length === 0, "全成功后预览清空（按钮跟着变灰）");
   });
 
@@ -296,14 +315,18 @@ async function main(): Promise<void> {
     const sent: Row[] = [];
     const store: Row = {};
     let duringSave: ((payload: Row) => void) | null = null;
-    const open = () => { store.snapshot = { form: { ...F0 }, productsJson: JSON.stringify(P0), orderUpdatedAt: `V${server.version}` }; };
+    const session = { current: 0 };
+    // 打开一次弹窗 = startEditOrder：第几次打开 +1、基线换成库里现在的样子
+    const open = () => { session.current += 1; store.snapshot = { form: { ...F0 }, productsJson: JSON.stringify(P0), orderUpdatedAt: `V${server.version}` }; };
     const save = async (form: Row, products: Row[]) => {
       store.message = "";
+      store.toast = "";
       await evalTs("module.exports=" + handler + ";", {
+        editSessionRef: session,
         // 沙箱自带一份 Error，假后端抛的是外面这份：handler 里 `error instanceof Error` 认不出、报错文字被吞成「保存失败」——换成同一份
         Error,
         ...editTotals, ...guard, loading: false, editingOrderId: "o1", orderEditForm: form, editProducts: products, editSnapshot: store.snapshot,
-        setLoading() {}, setMessage(m: string) { store.message = m; }, setToast() {},
+        setLoading() {}, setMessage(m: string) { store.message = m; }, setToast(t: string) { store.toast = t; },
         setEditSnapshot(v: any) { store.snapshot = typeof v === "function" ? v(store.snapshot) : v; },
         updateAdminOrder: async (payload: Row) => {
           sent.push(JSON.parse(JSON.stringify(payload)));
@@ -357,6 +380,24 @@ async function main(): Promise<void> {
     const reopened = () => store.snapshot;
     await save({ ...F0, remark: "R9" }, P0.map((p) => ({ ...p })));
     assert.notEqual(reopened().form.remark, "R9", "存的过程中重开了弹窗，新弹窗的基线被这次保存盖了");
+    assert.match(store.toast ?? "", /^之前那张单：订单信息已更新/, "存的过程中换了弹窗，成功提示要写明是之前那张");
+
+    // ⑤ 保存还没回来就关了、打开了别的单，这次又被拦下（Codex 第 3 轮）：报错不能写进新弹窗，改用提示条说「之前那张没存上」
+    open();
+    server.version += 1; // 别人先存了，这次必然 409
+    duringSave = () => { open(); };
+    await save({ ...F0, remark: "R10" }, P0.map((p) => ({ ...p })));
+    assert.equal(store.message, "", `旧请求的报错写进了新打开的弹窗：${store.message}`);
+    assert.match(store.toast ?? "", /之前那张单没存上：.*刚刚被别人改过/);
+    // 同一个弹窗里被拦：照旧写进弹窗
+    open();
+    server.version += 1;
+    await save({ ...F0, remark: "R11" }, P0.map((p) => ({ ...p })));
+    assert.match(store.message ?? "", /保存失败：.*刚刚被别人改过/);
+    // 同一个弹窗里存成功：提示照旧
+    open();
+    await save({ ...F0, remark: "R12" }, P0.map((p) => ({ ...p })));
+    assert.match(store.toast ?? "", /^订单信息已更新/);
   });
 
   await checkAsync("S10 超管列表 / 导出筛选的「国内单号」也认产品行上的号（导出带了，筛选得跟上）；员工那份照旧认", async () => {
@@ -370,6 +411,46 @@ async function main(): Promise<void> {
     assert.ok(search(f.adminOrderFilterRow(item as any), "货拉拉"), "整票上的号照旧认");
     assert.ok(!search(f.adminOrderFilterRow(item as any), "zz404"));
     assert.ok(search(f.staffShipmentFilterRow(item as any), "sf2001"), "员工那份照旧认产品行上的号");
+  });
+
+  await checkAsync("S11 真跑 createClientPrealert（第 2、3 轮）：带编号的 30 秒超时连正文一起管；断网 / 到点 / 网关 5xx 标「结果不确定」，后端明确拒的原样抛；不带编号的照旧不加超时", async () => {
+    const fnText = sourceNode("apps/web/src/services/business-api.ts", (n) => ts.isFunctionDeclaration(n) && n.name?.text === "createClientPrealert");
+    const make = (fetchImpl: (url: string, init: Row) => Promise<any>, parse: (r: any) => Promise<any>) =>
+      evalTs(fnText.replace(/^export /, "") + "\nmodule.exports = createClientPrealert;", {
+        Error, TypeError, AbortController, setTimeout, clearTimeout, apiBaseUrl: () => "http://fixture.invalid", authHeaders: () => ({}), STAFF_ORDER_TIMEOUT_MS: 80,
+        fetch: fetchImpl, parseApiResponse: parse,
+      });
+    const payload = { requestId: "req00000000000000", warehouseId: "wh_yiwu_01", packageCount: 1 };
+    // ① 响应头回来了、正文一直不结束：到点（这里 80 毫秒）连正文一起断，标结果不确定
+    let signalSeen: any = null;
+    const hang = make(async (_u, init) => { signalSeen = init.signal; return { status: 200 }; },
+      () => new Promise((_res, rej) => signalSeen.addEventListener("abort", () => rej(Object.assign(new Error("aborted"), { name: "AbortError" })))));
+    const t0 = Date.now();
+    // 再套一层 3 秒：超时没管到正文时这里会一直等，别让整个测试挂住
+    const e1: any = await Promise.race([
+      hang(payload).then(() => null, (e: any) => e),
+      new Promise((r) => setTimeout(() => r(new Error("3 秒了还没断：超时没管到读正文")), 3000)),
+    ]);
+    assert.ok(e1 && e1.resultUnknown === true, `正文卡住到点没断、或没标结果不确定：${e1?.message}`);
+    assert.ok(Date.now() - t0 < 2000, "正文卡住要按超时断开");
+    // ② 断网（fetch 抛 TypeError）
+    const e2: any = await make(async () => { throw new TypeError("Failed to fetch"); }, async () => null)(payload).then(() => null, (e: any) => e);
+    assert.equal(e2?.resultUnknown, true);
+    // ③ 网关 502：不知道后端办没办，同样不确定
+    const e3: any = await make(async () => ({ status: 502 }), async () => { throw new Error("服务器出错"); })(payload).then(() => null, (e: any) => e);
+    assert.equal(e3?.resultUnknown, true);
+    // ④ 后端明确拒了（409 别人的编号 / 400 填错）：原样抛、不标不确定
+    const e4: any = await make(async () => ({ status: 409 }), async () => { throw new Error("请求编号已经被用过了"); })(payload).then(() => null, (e: any) => e);
+    assert.equal(e4?.message, "请求编号已经被用过了");
+    assert.ok(!e4?.resultUnknown);
+    // ⑤ 成功照常返回
+    const ok = await make(async () => ({ status: 200 }), async () => ({ prealertId: "o_req_x" }))(payload);
+    assert.equal(ok.prealertId, "o_req_x");
+    // ⑥ 不带编号（单张下单）：不加超时、不改报错
+    let initSeen: any = null;
+    const e6: any = await make(async (_u, init) => { initSeen = init; throw new TypeError("Failed to fetch"); }, async () => null)({ warehouseId: "wh_yiwu_01", packageCount: 1 }).then(() => null, (e: any) => e);
+    assert.ok(initSeen && !("signal" in initSeen), "不带编号的不该加超时");
+    assert.ok(e6 instanceof TypeError && !(e6 as { resultUnknown?: boolean }).resultUnknown);
   });
 
   console.log(`\n${passed} 项通过，${failed} 项失败`);

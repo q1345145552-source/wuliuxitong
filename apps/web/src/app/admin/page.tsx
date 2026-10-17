@@ -504,6 +504,8 @@ export default function AdminHomePage() {
   /* orderUpdatedAt（2026-10-18 全系统审查第一档第 6 条）：打开弹窗时订单的版本。改了产品行 / 合计保存时带回去，
      这期间别人存过就 409 —— 产品行是整组发的（没带回来的行后端会删），拿旧弹窗存会把别人刚加的行删掉、改的盖回去 */
   const [editSnapshot, setEditSnapshot] = useState<{ form: Record<string, string>; productsJson: string; orderUpdatedAt?: string } | null>(null);
+  /* 第几次打开编辑弹窗（2026-10-18 Codex 第 3 轮）：保存还没回来就点「取消」、又打开了别的单，旧请求的报错不能写进新弹窗 */
+  const editSessionRef = useRef(0);
   /* 编辑弹窗里实时提示「总重量/总体积保存时听谁的」（2026-08-31，排查报告第22条）。
      跟保存用的是同一个 decideEditTotals，界面上说的和实际存的不会两张皮。 */
   const editTotalsPreview = useMemo(
@@ -806,6 +808,7 @@ export default function AdminHomePage() {
       return;
     }
     setEditingOrderId(order.orderId ?? order.id);
+    editSessionRef.current += 1;
     setMessage(""); // 弹窗里会显示这条提示（见「保存」按钮上面），打开时先清掉上一回的
     // 记下打开弹窗那一刻的样子，保存时只把改动过的项发出去，
     // 避免把别人在这期间改的字段一起覆盖掉
@@ -918,6 +921,7 @@ export default function AdminHomePage() {
 
     const saveOrderId = editingOrderId;
     if (!saveOrderId) { setMessage("编辑失败：未选择订单"); return; }
+    const sessionAtSubmit = editSessionRef.current;
 
     setLoading(true);
     setMessage("");
@@ -987,11 +991,15 @@ export default function AdminHomePage() {
          只在还是同一个弹窗时换（存的过程中关掉又开了别的单，那边已经有自己的基线） */
       setEditSnapshot((prev) => (prev && prev === snapAtSubmit ? { form: submittedForm, productsJson: submittedProductsJson, orderUpdatedAt: saved.updatedAt } : prev));
       // 手填值和自动计算冲突时明说哪边生效了，不再静默（排查报告第22条）
-      setToast(totalsNotes.length > 0 ? `订单信息已更新。${totalsNotes.join("；")}` : "订单信息已更新");
+      // 存的过程中已经关了 / 换了别的单：提示里写明是之前那张（Codex 第 3 轮）
+      const whose = editSessionRef.current === sessionAtSubmit ? "" : "之前那张单：";
+      setToast(`${whose}${totalsNotes.length > 0 ? `订单信息已更新。${totalsNotes.join("；")}` : "订单信息已更新"}`);
       await loadOrders();
     } catch (error) {
       const text = error instanceof Error ? error.message : "保存失败";
-      setMessage(`保存失败：${text}`);
+      // 还是同一次打开的弹窗才写进弹窗；已经关了 / 换了别的单，用提示条说「之前那张没存上」（Codex 第 3 轮）
+      if (editSessionRef.current === sessionAtSubmit) setMessage(`保存失败：${text}`);
+      else setToast(`之前那张单没存上：${text}`);
       // 被别人抢先存了：顺手把列表刷新，关掉重开就是最新的（不等 10 秒那次自动刷新）
       if (/刚刚被别人改过/.test(text)) loadOrders().catch(() => {});
     } finally {

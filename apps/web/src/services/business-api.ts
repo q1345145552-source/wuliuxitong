@@ -648,7 +648,7 @@ export async function createClientPrealert(payload: ClientPrealertPayload): Prom
      不带编号的（单张下单）照旧不加 —— 那边重交会多建一张，宁可等 */
   const controller = payload.requestId ? new AbortController() : null;
   const timer = controller ? setTimeout(() => controller.abort(), STAFF_ORDER_TIMEOUT_MS) : null;
-  let response: Response;
+  let response: Response | null = null;
   try {
     response = await fetch(`${apiBaseUrl()}/client/prealerts`, {
       method: "POST",
@@ -659,15 +659,24 @@ export async function createClientPrealert(payload: ClientPrealertPayload): Prom
       body: JSON.stringify(payload),
       ...(controller ? { signal: controller.signal } : {}),
     });
+    /* 读回话正文也在 30 秒里（Codex 第 3 轮）：原来拿到响应头就清了计时，正文一直不结束就永远停在「提交中」。
+       到点 abort 会连正文一起断，下面 catch 认出来 */
+    return await parseApiResponse(response);
   } catch (error) {
-    if (controller) {
-      throw new Error("网络中断或服务器太久没回应，这一行可能已经下单了。再点「一键提交」重交时系统会自动认出来，不会重复下单");
+    /* 断网（TypeError）/ 到点（我们自己 abort）/ 网关 5xx：这一行到底建没建成不知道 —— 标成「结果不确定」，
+       页面叫客户直接再点「一键提交」（同一个编号，服务器认得出来），别改了重新上传（重新上传换编号，会当新单）。
+       后端明确拒了的（400 / 409，后端写的中文原因）照原样往上抛 */
+    const transport = controller?.signal.aborted === true || error instanceof TypeError; // 到点是我们自己 abort 的，看 signal 就知道
+    const gateway = response !== null && response.status >= 500;
+    if (controller && (transport || gateway)) {
+      const unknown = new Error("网络中断或服务器太久没回应，这一行可能已经下单了。直接再点「一键提交」重交，系统会自动认出已经建好的，不会重复下单；先别改了重新上传") as Error & { resultUnknown?: boolean };
+      unknown.resultUnknown = true;
+      throw unknown;
     }
     throw error;
   } finally {
     if (timer) clearTimeout(timer);
   }
-  return parseApiResponse(response);
 }
 
 /**
