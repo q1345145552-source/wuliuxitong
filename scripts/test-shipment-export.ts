@@ -126,8 +126,9 @@ check("4) 三个端各自的口径：到仓日期、国内单号、加收金额"
   assert.equal(matchesShipmentFilter(staffRow, cond({ domesticTrackingNo: "SF0002" })), true, "员工端要能搜产品行的国内单号");
   assert.equal(staffRow.arrivedAt, "2026-09-08", "员工端到仓日期用 arrivedAt");
   assert.equal(matchesShipmentFilter(staffRow, cond({ receivableAmount: "120.50" })), true, "员工端加收金额是两位小数");
-  // 管理员端那份不带产品行的国内单号（保持原样，不顺手改口径）
-  assert.equal(matchesShipmentFilter(adminOrderFilterRow(adminOrder), cond({ domesticTrackingNo: "SF0002" })), false);
+  // 管理员端原来不带产品行的国内单号（9-23 改导出时保持原样）；2026-10-18 全系统审查后超管导出带上了产品行的号，
+  // 筛选也跟着认（Codex / dsh 第 1 轮：不然按导出里看得到的号筛不出来），跟员工端一样
+  assert.equal(matchesShipmentFilter(adminOrderFilterRow(adminOrder), cond({ domesticTrackingNo: "SF0002" })), true, "超管端也要能搜产品行的国内单号");
 });
 
 check("5) 客户端：状态用客户那套说法；建单日期和到仓日期各管各的", () => {

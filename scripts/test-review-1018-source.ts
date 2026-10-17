@@ -11,6 +11,9 @@
  *   S6  客户「批量下单」跑完预览只留没下成的行（原来按钮还亮着、整批再点一次全部重下）
  *   S6b 真跑页面里那段 handleSubmit：3 行第 2 行失败 → 预览只剩第 2 行；再交一次只重交它，成功后预览清空
  *   S7  超管「运单管理」改单：打开时记下订单版本，改了产品行 / 合计才带回去核对；存完换成新版本；被抢先就刷新列表
+ *   S7b 真跑页面里那段 submitOrderEdit（Codex / dsh 第 1 轮）：存完基线整个换成刚存的 —— 接着改别的再存，第一次存过的字段不再发；
+ *       再改产品行带的是刚返回的新版本；存的过程中换了别的单，那边的基线不被盖
+ *   S10 超管列表 / 导出筛选的「国内单号」也认产品行上的号（Codex / dsh 第 1 轮）
  *   S8  超管在员工页「保存订单信息」：草稿带订单版本、保存带回去；存完先换新版本
  *   S9  后端：两份列表给订单的 updatedAt；patch-shipment-bundle 锁住订单后核版本；两条改单路写订单时 updatedAt 跟返回值同一个 now
  */
@@ -134,11 +137,11 @@ check("S7 超管「运单管理」改单：打开时记订单版本；改了产�
   const src = code("apps/web/src/app/admin/page.tsx");
   assert.match(src, /useState<\{ form: Record<string, string>; productsJson: string; orderUpdatedAt\?: string \} \| null>\(null\)/);
   assert.match(src, /productsJson: "",\s*orderUpdatedAt: order\.orderUpdatedAt,\s*\}\);/, "打开弹窗要记下订单（不是运单）的 updatedAt");
-  assert.match(src, /const sendsWholeProducts = productsChanged \|\| manualTotalsChanged;\s*const saved = await updateAdminOrder\(\{\s*orderId: saveOrderId,\s*\.\.\.\(sendsWholeProducts && editSnapshot\?\.orderUpdatedAt \? \{ expectedOrderUpdatedAt: editSnapshot\.orderUpdatedAt \} : \{\}\),/, "改了产品行 / 合计要带 expectedOrderUpdatedAt");
+  assert.match(src, /const sendsWholeProducts = productsChanged \|\| manualTotalsChanged;[\s\S]{0,600}?const saved = await updateAdminOrder\(\{\s*orderId: saveOrderId,\s*\.\.\.\(sendsWholeProducts && editSnapshot\?\.orderUpdatedAt \? \{ expectedOrderUpdatedAt: editSnapshot\.orderUpdatedAt \} : \{\}\),/, "改了产品行 / 合计要带 expectedOrderUpdatedAt");
   // 产品行 / 合计发出去的条件跟带版本的条件是同一个口径
   assert.match(src, /\.\.\.\(productsChanged \? \{\s*productQuantity: totalProductQuantity,/);
   assert.match(src, /\.\.\.\(productsChanged \|\| manualTotalsChanged \? \{\s*weightKg: finalWeight,/);
-  assert.match(src, /setEditSnapshot\(\(prev\) => \(prev \? \{ \.\.\.prev, orderUpdatedAt: saved\.updatedAt \} : prev\)\);/, "存完要换成新版本（弹窗不关，接着改再存不能被自己当成别人）");
+  assert.match(src, /setEditSnapshot\(\(prev\) => \(prev && prev === snapAtSubmit \? \{ form: submittedForm, productsJson: submittedProductsJson, orderUpdatedAt: saved\.updatedAt \} : prev\)\);/, "存完要把基线整个换成刚存的（只换版本不够）");
   assert.match(src, /if \(\/刚刚被别人改过\/\.test\(text\)\) loadOrders\(\)\.catch\(\(\) => \{\}\);/);
   // 后端报的那句跟这里认的一样
   assert.match(read("apps/api/src/modules/admin/routes.ts"), /这票刚刚被别人改过（超管端「运单管理」或别的超管），你这次没有保存/);
@@ -248,6 +251,65 @@ async function main(): Promise<void> {
     const retry = await submit(Array.from(first.lastRows!), null);
     assert.deepEqual(retry.sent, ["货1"], "再点只能重交没下成的那行，成功过的不能再下一遍");
     assert.ok(retry.lastRows !== undefined && retry.lastRows.length === 0, "全成功后预览清空（按钮跟着变灰）");
+  });
+
+  await checkAsync("S7b 真跑超管「运单管理」的 submitOrderEdit：存完基线换成刚存的 —— 接着改别的再存，第一次存过的字段不再发；再改产品行带刚返回的新版本；存的过程中换了别的单不盖那边的基线", async () => {
+    const editTotals = await import("../apps/web/src/modules/orders/edit-totals");
+    const guard = await import("../apps/web/src/modules/orders/productRowGuard");
+    const handler = sourceNode("apps/web/src/app/admin/page.tsx", (n) => ts.isArrowFunction(n) && ts.isVariableDeclaration(n.parent) && n.parent.name.getText() === "submitOrderEdit");
+    const F0: Row = {
+      clientId: "ZZC1", trackingNo: "ZZ-1", batchNo: "B0", warehouseId: "wh_yiwu_01", itemName: "鞋", transportMode: "sea", domesticTrackingNo: "",
+      receiverAddressTh: "", containerNo: "", productQuantity: "0", packageCount: "2", packageUnit: "box", weightKg: "10", volumeM3: "0.1",
+      cargoType: "normal", paymentStatus: "unpaid", shipDate: "2026-10-18", remark: "R0",
+    };
+    const P0 = [{ id: "p1", itemName: "鞋", packageCount: "2", lengthCm: "", widthCm: "", heightCm: "", productQuantity: "", weightKg: "", cargoType: "normal", domesticTrackingNo: "SF1" }];
+    // 模拟 React：state 放在 store 里，每次「点保存」都用当时的 state 重新取一份闭包（跟重新渲染一样）
+    const store: Row = { snapshot: { form: { ...F0 }, productsJson: JSON.stringify(P0), orderUpdatedAt: "V0" } };
+    const sent: Row[] = [];
+    let version = 0;
+    let duringSave: (() => void) | null = null;
+    const save = async (form: Row, products: Row[]) => {
+      await evalTs("module.exports=" + handler + ";", {
+        ...editTotals, ...guard, loading: false, editingOrderId: "o1", orderEditForm: form, editProducts: products, editSnapshot: store.snapshot,
+        setLoading() {}, setMessage(m: string) { store.message = m; }, setToast() {},
+        setEditSnapshot(v: any) { store.snapshot = typeof v === "function" ? v(store.snapshot) : v; },
+        updateAdminOrder: async (payload: Row) => { sent.push(JSON.parse(JSON.stringify(payload))); if (duringSave) { duringSave(); duringSave = null; } version += 1; return { orderId: "o1", updatedAt: `V${version}` }; },
+        loadOrders: async () => "applied",
+      })();
+    };
+    // 第一次：只改备注 R0 → R1
+    await save({ ...F0, remark: "R1" }, P0);
+    assert.equal(sent[0].remark, "R1");
+    assert.ok(!("products" in sent[0]) && !("expectedOrderUpdatedAt" in sent[0]), "只改单个字段不发产品行、不带版本");
+    assert.equal(store.snapshot.form.remark, "R1", "存完基线要换成刚存的备注");
+    assert.equal(store.snapshot.orderUpdatedAt, "V1");
+    // 第二次（同一弹窗）：只改批次号 —— 不能再把第一次的备注发一遍（别人这期间改的备注会被盖回）
+    await save({ ...F0, remark: "R1", batchNo: "B1" }, P0);
+    assert.equal(sent[1].batchNo, "B1");
+    assert.ok(!("remark" in sent[1]), `第一次存过的备注又发了一遍：${JSON.stringify(sent[1])}`);
+    assert.ok(!("products" in sent[1]), "产品行没动不能整组发");
+    // 第三次：改产品行 —— 带刚返回的新版本 V2，不是打开时的 V0
+    const P1 = [{ ...P0[0], packageCount: "3" }];
+    await save({ ...F0, remark: "R1", batchNo: "B1" }, P1);
+    assert.equal(sent[2].expectedOrderUpdatedAt, "V2", `改产品行带的版本不对：${sent[2].expectedOrderUpdatedAt}`);
+    assert.ok(Array.isArray(sent[2].products));
+    // 存的过程中关掉又开了别的单（基线换成了别人的）：回来以后不能用这次的去盖它
+    const other = { form: { ...F0, trackingNo: "ZZ-2" }, productsJson: "[]", orderUpdatedAt: "W0" };
+    duringSave = () => { store.snapshot = other; };
+    await save({ ...F0, remark: "R9", batchNo: "B1" }, P1);
+    assert.equal(store.snapshot, other, "存的过程中换了别的单，那张单的基线被这次保存盖了");
+  });
+
+  await checkAsync("S10 超管列表 / 导出筛选的「国内单号」也认产品行上的号（导出带了，筛选得跟上）；员工那份照旧认", async () => {
+    // 路径放变量里动态取：export-filter 引了 .tsx，测试脚本那份 tsconfig 没开 jsx，写死字面量 tsc 会去解析它报错
+    const filterPath = "../apps/web/src/modules/shipment/export-filter";
+    const f: any = await import(filterPath);
+    const item = { trackingNo: "ZZ-1", domesticTrackingNo: "货拉拉", products: [{ itemName: "鞋", domesticTrackingNo: "SF2001" }, { itemName: "包", domesticTrackingNo: "YT9" }] };
+    const search = (row: Row, kw: string) => f.matchesShipmentFilter(row as any, { ...f.EMPTY_SHIPMENT_FILTER, domesticTrackingNo: kw });
+    assert.ok(search(f.adminOrderFilterRow(item as any), "sf2001"), "超管按产品行上的国内单号筛不出来");
+    assert.ok(search(f.adminOrderFilterRow(item as any), "yt9"));
+    assert.ok(search(f.adminOrderFilterRow(item as any), "货拉拉"), "整票上的号照旧认");
+    assert.ok(!search(f.adminOrderFilterRow(item as any), "zz404"));
   });
 
   console.log(`\n${passed} 项通过，${failed} 项失败`);

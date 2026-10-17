@@ -177,7 +177,11 @@ export function adminOrderFilterRow(item: {
 }): ShipmentFilterRow {
   return {
     trackingNo: lower(item.trackingNo),
-    domesticTrackingNo: lower(item.domesticTrackingNo),
+    /* 产品行上的国内单号也要能搜到（2026-10-18 Codex / dsh 第 1 轮）：导出现在带上了产品行的号，
+       按这些号筛不出来的话，搜得到的员工 / 客户端和搜不到的超管端对不上。写法同员工 / 客户那两份 */
+    domesticTrackingNo: (
+      (item.domesticTrackingNo ?? "") + " " + (item.products?.map((p) => p.domesticTrackingNo ?? "").join(" ") ?? "")
+    ).toLowerCase(),
     clientName: `${item.clientName ?? ""} ${item.clientId ?? ""}`.toLowerCase(),
     warehouseId: lower(item.warehouseId),
     batchNo: lower(item.batchNo),

@@ -949,6 +949,10 @@ export default function AdminHomePage() {
          别人这期间改过的话会被盖掉，后端锁里核对、对不上 409 什么都不写。只改了别的单个字段照旧不带 —— 那些只发改动的那一项，
          两个人改不同字段本来就不会互相覆盖（上面 changed 那段的意思），不必为此让人重开 */
       const sendsWholeProducts = productsChanged || manualTotalsChanged;
+      // 这次发出去的是哪一份（存完拿它当新的「打开时的样子」；await 回来时 state 可能已经是用户接着输的新内容）
+      const snapAtSubmit = editSnapshot;
+      const submittedForm = Object.fromEntries(Object.entries(orderEditForm).map(([k, v]) => [k, v == null ? "" : String(v)])) as Record<string, string>;
+      const submittedProductsJson = JSON.stringify(activeProducts);
       const saved = await updateAdminOrder({
         orderId: saveOrderId,
         ...(sendsWholeProducts && editSnapshot?.orderUpdatedAt ? { expectedOrderUpdatedAt: editSnapshot.orderUpdatedAt } : {}),
@@ -977,8 +981,11 @@ export default function AdminHomePage() {
           volumeM3: finalVolume,
         } : {}),
       });
-      // 弹窗存完不关，接着改再存的话要拿刚存的这个版本比（不然被自己上一次保存当成「别人改过」）
-      setEditSnapshot((prev) => (prev ? { ...prev, orderUpdatedAt: saved.updatedAt } : prev));
+      /* 弹窗存完不关：「打开时的样子」整个换成刚存进去的这一份 + 返回的新版本（2026-10-18 Codex / dsh 第 1 轮）。
+         只换版本不换基线的话，接着改别的再存，第一次存过的字段会按旧基线又发一遍（不带版本，因为没动产品行），
+         别人这期间改的同一字段被盖回去；产品行也一直算「改过」、每次整组发。
+         只在还是同一个弹窗时换（存的过程中关掉又开了别的单，那边已经有自己的基线） */
+      setEditSnapshot((prev) => (prev && prev === snapAtSubmit ? { form: submittedForm, productsJson: submittedProductsJson, orderUpdatedAt: saved.updatedAt } : prev));
       // 手填值和自动计算冲突时明说哪边生效了，不再静默（排查报告第22条）
       setToast(totalsNotes.length > 0 ? `订单信息已更新。${totalsNotes.join("；")}` : "订单信息已更新");
       await loadOrders();
