@@ -53,6 +53,17 @@ async function main(): Promise<void> {
   const { BusinessError } = await import("../apps/api/src/modules/core/business-error");
   const { lockClientBan } = await import("../apps/api/src/modules/core/client-ban");
   const pm: any = prisma;
+  /* 跟库一来一回的网络时间（同 test-chaipai-db）：本机 / CI 的一次性库不到 1 毫秒，Neon 测试库约 35 毫秒。
+     按地址认 Neon（原主机名带 neon.tech，IPv4 绕法带 options=endpoint=…），不按测出来的快慢猜；慢库才给时间上限加余量，快库（CI）照旧用固定上限 */
+  const rttMs = await (async () => {
+    await pm.$queryRaw`SELECT 1`;
+    const xs: number[] = [];
+    for (let i = 0; i < 7; i++) { const t = performance.now(); await pm.$queryRaw`SELECT 1`; xs.push(performance.now() - t); }
+    return xs.sort((a, b) => a - b)[3];
+  })();
+  const slowDb = /neon\.tech|options=endpoint%3D/.test(url);
+  const netSlack = (trips: number) => (slowDb ? trips * rttMs : 0);
+  console.log(`跟数据库一来一回约 ${rttMs.toFixed(1)} 毫秒${slowDb ? "（Neon，B18 的时间上限加网络余量）" : ""}`);
   const routes = new Map<string, Function>();
   const app: any = {};
   for (const m of ["get", "post", "put", "patch", "delete"]) app[m] = (p: string, h: Function) => routes.set(`${m.toUpperCase()} ${p}`, h);
@@ -482,7 +493,10 @@ async function main(): Promise<void> {
       assert.equal(b!.status, 409, `${b!.status} ${b!.message}`);
       assert.match(b!.message, /过几秒再点一次/);
       // 下限：真的等了；上限：钉住 1 秒这个设计值（改成 3、5 秒，后来的挂单会被拖到默认 5 秒超时 —— Codex / dsh 第 5 轮）
-      assert.ok(waited >= 700 && waited <= 1800, `等客户行应该等 1 秒左右，实际 ${waited} 毫秒（改回 2 秒这里就红；值本身另在 test-client-ban-ui U7 核）`);
+      // 慢库余量（2026-10-17 晚换号后跑全套，Neon 上一次 2171 毫秒红、单独重跑两次都过）：计时那段封禁走 6 趟（查用户、BEGIN、试锁、SET LOCAL、
+      // 等客户行、ROLLBACK，PRISMA_LOG=1 数的），偶尔还要新开一条连到 Neon 的连接（TLS + 认证，按 20 趟算）。快库 / CI 不加，照旧 1.8 秒
+      const upper = 1800 + netSlack(6 + 20);
+      assert.ok(waited >= 700 && waited <= upper, `等客户行应该等 1 秒左右，实际 ${waited} 毫秒，上限 ${Math.round(upper)}（快库上改回 2 秒这里就红；值本身另在 test-client-ban-ui U7 核）`);
       assert.equal(await statusOf(OK8), "active");
     });
 

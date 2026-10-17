@@ -106,6 +106,11 @@ check("U5 超管端：「创建订单」唛头框、「运单管理」改唛头�
   // 提交前真的标成「提交中」（不然两个按钮写着 disabled={creatingOrder} 也一直能点 —— Claude 第 11 轮：删掉这句原来测不出来）
   assert.match(modal, /setCreateOrderMessage\(""\);\s*\n\s*setCreatingOrder\(true\);\s*\n\s*try \{\s*\n\s*await createStaffOrder\(/, "提交前要先 setCreatingOrder(true)");
   assert.match(modal, /setCreateOrderMessage\(`创建失败：[^`]*`\);\s*\n\s*return;\s*\n\s*\} finally \{ setCreatingOrder\(false\); \}[\s\S]*?setShowCreateOrderModal\(false\);[\s\S]*?if \(\(await loadOrders\(\)\) === "applied"\) clearStaleListError\(\);[\s\S]*?订单已创建，但列表刷新失败/, "建单失败和建成后刷新失败要分开说；建成后列表刷上了才清「列表刷新失败」那类旧话");
+  // 建单那个 try 里只能有 createStaffOrder：刷新列表 / 关弹窗放回 try 里，列表刷新失败就会被说成「创建失败」、弹窗还开着，员工会重建一张
+  // （上面那条只看后面有没有刷新，2026-10-17 换号后补做改坏验证时把 loadOrders 挪回 try 里，它照样过 —— .audit/2026-10-17/dialog-mutations/）
+  const createTry = modal.match(/setCreatingOrder\(true\);\s*\n\s*try \{([\s\S]*?)\n\s*\} catch \(err\) \{\s*\n\s*setCreateOrderMessage\(`创建失败：/);
+  assert.ok(createTry && /await createStaffOrder\(/.test(createTry[1]), "建单的 try 那段找不到");
+  assert.ok(!/loadOrders|setShowCreateOrderModal|setToast|clearStaleListError/.test(createTry![1]), "建单的 try 里只能有 createStaffOrder：刷新列表放进去的话，刷新失败会被说成「创建失败」");
   assert.equal((modal.match(/\bsetMessage\(/g) ?? []).length, 1, "弹窗里写页面级 message 的只有「建成后刷新失败」那一句（不再一刀全清）");
   // 只清「列表刷新失败」类的话，别的报错不动；手动「刷新」刷上了也清（Claude 第 11 轮）
   assert.match(src, /const clearStaleListError = \(\) => setMessage\(\(m\) => \(\/\^\(订单已创建，但列表刷新失败\|刷新失败，已保留上次结果\)\/\.test\(m\) \? "" : m\)\);/);
