@@ -661,7 +661,11 @@ export async function createClientPrealert(payload: ClientPrealertPayload): Prom
     });
     /* 读回话正文也在 30 秒里（Codex 第 3 轮）：原来拿到响应头就清了计时，正文一直不结束就永远停在「提交中」。
        到点 abort 会连正文一起断，下面 catch 认出来 */
-    return await parseApiResponse(response);
+    const result = await parseApiResponse<{ prealertId: string; createdAt: string }>(response);
+    /* 带编号的：回来的必须是这一行那张（o_req_<编号>）—— 网关 / 代理回个 {"code":"OK"} 空壳、或者别的单，
+       页面会当成功把这行拿掉，其实不知道建没建（Codex 第 5 轮）。对不上就当「回的内容不完整」，下面 catch 标不确定 */
+    if (controller && result?.prealertId !== `o_req_${(payload.requestId ?? "").trim()}`) throw new Error("服务器回的内容不完整");
+    return result;
   } catch (error) {
     /* 这一行到底建没建成不知道的，标成「结果不确定」：页面叫客户直接再点「一键提交」（同一个编号，服务器认得出来），
        别改了重新上传（重新上传换编号，会当新单）。只有后端明确拒了的（4xx，后端写的中文原因）才算确定没建、原样往上抛（第 3、4 轮）：

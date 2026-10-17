@@ -1074,7 +1074,7 @@ function navigationHarness(initialUrl: string) {
   assert.equal(effects.length, 1, "须定位页面实际注册的 hashchange effect");
   let cleanup: (() => void) | undefined;
   compile(`export default function bind(ctx: any) {
-    const { window, useEffect, setActiveSection } = ctx;
+    const { window, useEffect, setActiveSection, editSessionRef } = ctx;
     const SECTION_IDS = ${variable("SECTION_IDS").initializer!.getText(ast)};
     const isSectionId = ${variable("isSectionId").initializer!.getText(ast)};
     ${effects[0].getText(ast)};
@@ -1082,6 +1082,8 @@ function navigationHarness(initialUrl: string) {
     window: browser,
     useEffect: (effect: () => (() => void)) => { cleanup = effect(); },
     setActiveSection: (section: string) => { sectionChanges.push(section); },
+    // 2026-10-18 第 5 轮：离开「运单管理」时给编辑弹窗的「第几次」+1（那段在 test-review-1018-source S7 里核）
+    editSessionRef: { current: 0 },
   });
   const component = load(componentFile, { window: browser, URL, HashChangeEvent: BoundaryHashChangeEvent }, new Map()).default;
   const links = componentLinks(component);

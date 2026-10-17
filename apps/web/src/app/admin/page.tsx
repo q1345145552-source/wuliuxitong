@@ -806,6 +806,12 @@ export default function AdminHomePage() {
     editSessionRef.current += 1;
     setEditingOrderId("");
   };
+  /* 右上角 ✕ 要先放 0.2 秒关闭动画、放完才调 onClose（closeEditOrder）—— 这 0.2 秒里保存回来了也得算「已经关了」（Codex / dsh 第 5 轮）。
+     借 DetailModal 的 confirmClose：它在点 ✕ 那一刻同步调、返回 true 照常关 */
+  const beginCloseEditOrder = () => {
+    editSessionRef.current += 1;
+    return true;
+  };
 
   const startEditOrder = (order: AdminOrderItem) => {
     /* 待入库的货资料以「到货通知」为准，这里改了后端也会整单拒（admin/routes.ts 的待入库拦截，文案同 PENDING_INBOUND_EDIT_ELSEWHERE_MESSAGE）。
@@ -1001,7 +1007,8 @@ export default function AdminHomePage() {
       // 存的过程中已经关了 / 换了别的单：提示里写明是之前那张（Codex 第 3、4 轮）
       const whose = editSessionRef.current === sessionAtSubmit ? "" : "之前那张单：";
       setToast(`${whose}${totalsNotes.length > 0 ? `订单信息已更新。${totalsNotes.join("；")}` : "订单信息已更新"}`);
-      await loadOrders();
+      // 已经存上了：接着刷新列表失败不能落进下面的「保存失败」（dsh 第 5 轮）；10 秒后会自动再刷
+      await loadOrders().catch(() => setToast(`${whose}订单信息已更新，只是列表这次没刷新上，稍后会自动刷新`));
     } catch (error) {
       const text = error instanceof Error ? error.message : "保存失败";
       // 还是同一次打开的弹窗才写进弹窗；已经关了 / 换了别的单，用提示条说「之前那张没存上」（Codex 第 3、4 轮）
@@ -1573,6 +1580,8 @@ export default function AdminHomePage() {
   useEffect(() => {
     const syncSectionByHash = () => {
       const hashId = window.location.hash.replace(/^#/, "");
+      /* 离开「运单管理」（浏览器后退 / 手机返回也算）：那边的编辑弹窗看不见了，保存途中回来的结果别写进看不见的弹窗、走提示条（Codex 第 5 轮） */
+      if (hashId !== "orders") editSessionRef.current += 1;
       if (isSectionId(hashId)) {
         setActiveSection(hashId);
       } else if (!hashId) {
@@ -2352,6 +2361,7 @@ export default function AdminHomePage() {
                           title="编辑运单"
                           subtitle={o.trackingNo ?? o.orderNo ?? "—"}
                           onClose={closeEditOrder}
+                          confirmClose={beginCloseEditOrder}
                           closeOnEsc={false}
                         >
                         <div style={{ display: "grid", gap: 8 }}>

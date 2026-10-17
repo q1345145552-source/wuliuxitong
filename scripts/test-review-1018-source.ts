@@ -161,7 +161,7 @@ check("S6 客户「批量下单」：失败的行记下来，跑完预览只留�
   assert.ok(backend.includes("!/^[A-Za-z0-9-]{16,64}$/.test(requestId)"), "后端认的编号格式变了，前端这边要跟着核");
   // 结果不确定的行（第 3、4 轮）：单独一句叫客户直接再点、别改了重传；明确失败的另一句叫改好另存（两种混着时两句都在）
   assert.match(src, /unknownCount > 0\s*\?\s*`其中 \$\{unknownCount\} 条是网络或服务器没给准信、不确定有没有建好：请直接再点「一键提交」，不要把这几行改了重新上传（重新上传会当成新单）。`/);
-  assert.match(src, /rows\.length > unknownCount\s*\?\s*unknownCount > 0\s*\?\s*`其余 \$\{rows\.length - unknownCount\} 条按上面写的原因改好另存一张表再上传/);
+  assert.match(src, /rows\.length > unknownCount\s*\?\s*unknownCount > 0\s*\?\s*`其余 \$\{rows\.length - unknownCount\} 条按上面各自写的原因处理：要改内容的改好另存一张表再上传/);
 });
 
 check("S7 超管「运单管理」改单：打开时记订单版本；每次保存都带回去核对（第 2 轮）；存完基线换成刚存的；被抢先就刷新列表", () => {
@@ -182,7 +182,18 @@ check("S7 超管「运单管理」改单：打开时记订单版本；每次保�
   const closeBody = src.slice(closeAt, src.indexOf("};", closeAt));
   assert.ok(closeAt > 0 && /editSessionRef\.current \+= 1;\s*setEditingOrderId\(""\);/.test(closeBody), "关弹窗要给「第几次」加一再关");
   assert.equal((src.match(/setEditingOrderId\(""\)/g) ?? []).length, 1, "有地方绕过 closeEditOrder 直接关弹窗");
-  assert.equal((src.match(/closeEditOrder\b/g) ?? []).length, 4, "取消、右上角关、再点一次「编辑」三处都要用 closeEditOrder");
+  assert.match(src, /if \(editingOrderId === \(o\.orderId \?\? o\.id\)\) \{\s*closeEditOrder\(\);/, "再点一次「编辑」要走 closeEditOrder");
+  assert.match(src, /<button type="button" onClick=\{closeEditOrder\}[^>]*>取消<\/button>/, "「取消」要走 closeEditOrder");
+  // 右上角 ✕（第 5 轮）：DetailModal 先放 0.2 秒动画才调 onClose —— 点 ✕ 那一刻就得 +1，借 confirmClose（点的时候同步调）
+  assert.match(src, /title="编辑运单"[\s\S]{0,200}?onClose=\{closeEditOrder\}\s*confirmClose=\{beginCloseEditOrder\}/, "右上角 ✕ 要走 closeEditOrder，并且点下去那一刻就 +1");
+  const beginAt = src.indexOf("const beginCloseEditOrder = ");
+  assert.ok(beginAt > 0 && /editSessionRef\.current \+= 1;\s*return true;/.test(src.slice(beginAt, src.indexOf("};", beginAt))), "点 ✕ 那一刻要 +1、照常放行");
+  const modal = code("apps/web/src/modules/layout/DetailModal.tsx");
+  assert.match(modal, /if \(confirmClose && !confirmClose\(\)\) return;[\s\S]{0,200}?window\.setTimeout\(onClose, 200\)/, "DetailModal 得在放动画之前同步问 confirmClose，不然 ✕ 那 0.2 秒照样漏");
+  // 离开「运单管理」（浏览器后退也算）：+1（第 5 轮）
+  assert.match(src, /const hashId = window\.location\.hash\.replace\(\/\^#\/, ""\);\s*if \(hashId !== "orders"\) editSessionRef\.current \+= 1;/, "离开运单管理要 +1");
+  // 存上之后刷新列表失败，不能落进「保存失败」（dsh 第 5 轮；S7b 真跑）
+  assert.match(src, /await loadOrders\(\)\.catch\(\(\) => setToast\(`\$\{whose\}订单信息已更新，只是列表这次没刷新上，稍后会自动刷新`\)\);/);
   assert.match(src, /const sessionAtSubmit = editSessionRef\.current;\s*setLoading\(true\);\s*setMessage\(""\);\s*try \{/, "保存前（try 外面）要记下是第几次打开");
   // 后端报的那句跟这里认的一样
   assert.match(read("apps/api/src/modules/admin/routes.ts"), /这票刚刚被别人改过（超管端「运单管理」或别的超管），你这次没有保存/);
@@ -326,6 +337,7 @@ async function main(): Promise<void> {
     const sent: Row[] = [];
     const store: Row = {};
     let duringSave: ((payload: Row) => void) | null = null;
+    let loadFails = false;
     const session = { current: 0 };
     // 打开一次弹窗 = startEditOrder：第几次打开 +1、基线换成库里现在的样子
     const open = () => { session.current += 1; store.snapshot = { form: { ...F0 }, productsJson: JSON.stringify(P0), orderUpdatedAt: `V${server.version}` }; };
@@ -349,7 +361,7 @@ async function main(): Promise<void> {
           server.version += 1;
           return { orderId: "o1", updatedAt: `V${server.version}` };
         },
-        loadOrders: async () => "applied",
+        loadOrders: async () => { if (loadFails) throw new Error("列表接口断网了"); return "applied"; },
       })();
       return sent[sent.length - 1];
     };
@@ -424,6 +436,25 @@ async function main(): Promise<void> {
     duringSave = () => { closeEditOrder(); };
     await save({ ...F0, remark: "R14" }, P0.map((p) => ({ ...p })));
     assert.match(store.toast ?? "", /^之前那张单：订单信息已更新/);
+    // ⑦ 点了右上角 ✕、还在放 0.2 秒关闭动画（closeEditOrder 还没调），保存这时被拦（第 5 轮两家必须修）：
+    //    点 ✕ 那一刻 DetailModal 同步调的是 confirmClose = 页面里真的 beginCloseEditOrder
+    const beginCloseEditOrder = evalTs("module.exports=" + sourceNode("apps/web/src/app/admin/page.tsx", (n) => ts.isArrowFunction(n) && ts.isVariableDeclaration(n.parent) && n.parent.name.getText() === "beginCloseEditOrder") + ";", {
+      editSessionRef: session,
+    });
+    open();
+    server.version += 1;
+    duringSave = () => { assert.equal(beginCloseEditOrder(), true, "confirmClose 要放行"); };
+    await save({ ...F0, remark: "R15" }, P0.map((p) => ({ ...p })));
+    assert.equal(store.message, "", `✕ 动画那 0.2 秒里回来的报错写进了正在关的弹窗：${store.message}`);
+    assert.match(store.toast ?? "", /之前那张单没存上：.*刚刚被别人改过/);
+    // ⑧ 存上了、接着刷新列表失败（dsh 第 5 轮）：不能说成「保存失败」，基线照样换成刚存的
+    open();
+    loadFails = true;
+    await save({ ...F0, remark: "R16" }, P0.map((p) => ({ ...p })));
+    loadFails = false;
+    assert.equal(store.message, "", `存上了却显示：${store.message}`);
+    assert.match(store.toast ?? "", /^订单信息已更新，只是列表这次没刷新上/);
+    assert.equal(store.snapshot.form.remark, "R16", "存上了基线要换成刚存的");
   });
 
   await checkAsync("S10 超管列表 / 导出筛选的「国内单号」也认产品行上的号（导出带了，筛选得跟上）；员工那份照旧认", async () => {
@@ -459,7 +490,12 @@ async function main(): Promise<void> {
           case "b400": json(400, { code: "VALIDATION_ERROR", message: "仓库填错了" }); return;
           case "empty200": res.writeHead(200); res.end(); return;
           case "html200": res.writeHead(200, { "Content-Type": "text/html" }); res.end("<html>代理换掉的页面</html>"); return;
-          default: json(200, { code: "OK", data: { prealertId: "o_req_x", createdAt: "2026-10-18T00:00:00.000Z" } });
+          case "okNoData": json(200, { code: "OK" }); return;
+          case "okNull": json(200, { code: "OK", data: null }); return;
+          case "okEmpty": json(200, { code: "OK", data: {} }); return;
+          case "okOther": json(200, { code: "OK", data: { prealertId: "o_req_someoneelse000000", createdAt: "2026-10-18T00:00:00.000Z" } }); return;
+          case "okPlain": json(200, { code: "OK", data: { prealertId: "o_1792270210323_l5hr", createdAt: "2026-10-18T00:00:00.000Z" } }); return;
+          default: json(200, { code: "OK", data: { prealertId: "o_req_req00000000000000", createdAt: "2026-10-18T00:00:00.000Z" } });
         }
       });
     });
@@ -479,10 +515,13 @@ async function main(): Promise<void> {
       const run = async (m: string, payload: Row = withId): Promise<any> => {
         mode = m;
         // 再套一层 3 秒：超时没管到正文时这里会一直等，别让整个测试挂住
-        return Promise.race([
-          createClientPrealert(payload).then((v: any) => ({ value: v }), (e: any) => e),
-          new Promise((r) => setTimeout(() => r(new Error("3 秒了还没回来：超时没管到")), 3000)),
-        ]);
+        let watchdog: ReturnType<typeof setTimeout> | undefined;
+        try {
+          return await Promise.race([
+            createClientPrealert(payload).then((v: any) => ({ value: v }), (e: any) => e),
+            new Promise((r) => { watchdog = setTimeout(() => r(new Error("3 秒了还没回来：超时没管到")), 3000); }),
+          ]);
+        } finally { clearTimeout(watchdog); }
       };
       // ① 回了响应头、正文一直不结束：到点（这里 300 毫秒）连正文一起断，标不确定
       const t0 = Date.now();
@@ -515,9 +554,15 @@ async function main(): Promise<void> {
       const e8 = await run("b400");
       assert.equal(e8?.message, "仓库填错了");
       assert.ok(!e8?.resultUnknown);
-      // ⑧ 成功照常返回
+      // ⑧ 成功照常返回（回的就是这一行那张 o_req_<编号>）
       const ok = await run("ok");
-      assert.equal(ok?.value?.prealertId, "o_req_x");
+      assert.equal(ok?.value?.prealertId, "o_req_req00000000000000");
+      // ⑧b 回了 200、code 也是 OK，但没带单子 / 是空的 / 是别的单（第 5 轮 Codex）：不能当成功把这行拿掉，标不确定
+      for (const m of ["okNoData", "okNull", "okEmpty", "okOther"]) {
+        const e = await run(m);
+        assert.equal(e?.resultUnknown, true, `${m} 被当成成功了：${JSON.stringify(e?.value ?? e?.message)}`);
+        assert.match(e.message, /^服务器回的内容不完整。这一行可能已经下单了/);
+      }
       // ⑨ 还没发出去就拦下的（内容太大）：服务器什么都没收到，确定没建，不标不确定
       const before = hits;
       const big = await run("ok", { ...withId, remark: "x".repeat(core.REQUEST_BODY_MAX_BYTES + 10) });
@@ -530,6 +575,8 @@ async function main(): Promise<void> {
       assert.ok(e10 instanceof TypeError && !(e10 as { resultUnknown?: boolean }).resultUnknown, `不带编号断网：${e10?.message}`);
       const e11 = await run("empty200", noId);
       assert.ok(e11 instanceof Error && !(e11 as { resultUnknown?: boolean }).resultUnknown);
+      const plain = await run("okPlain", noId);
+      assert.equal(plain?.value?.prealertId, "o_1792270210323_l5hr", "不带编号的照旧认随机单号");
     } finally {
       server.closeAllConnections();
       server.close();
