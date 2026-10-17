@@ -11,8 +11,8 @@
  *   S6  客户「批量下单」跑完预览只留没下成的行（原来按钮还亮着、整批再点一次全部重下）
  *   S6b 真跑页面里那段 handleSubmit：3 行第 2 行失败 → 预览只剩第 2 行；再交一次只重交它，成功后预览清空
  *   S7  超管「运单管理」改单：打开时记下订单版本，改了产品行 / 合计才带回去核对；存完换成新版本；被抢先就刷新列表
- *   S7b 真跑页面里那段 submitOrderEdit（Codex / dsh 第 1 轮）：存完基线整个换成刚存的 —— 接着改别的再存，第一次存过的字段不再发；
- *       再改产品行带的是刚返回的新版本；存的过程中换了别的单，那边的基线不被盖
+ *   S7b 真跑页面里那段 submitOrderEdit（Codex / dsh 第 1、2 轮），假后端照真后端核版本：每次保存都带版本；存完基线换成这次提交的；
+ *       别人先改了产品行、我只改备注也被拦下（旧产品行配不上新版本，不会漏拦丢数据）；409 不动基线；存的过程中重开弹窗不盖
  *   S10 超管列表 / 导出筛选的「国内单号」也认产品行上的号（Codex / dsh 第 1 轮）
  *   S8  超管在员工页「保存订单信息」：草稿带订单版本、保存带回去；存完先换新版本
  *   S9  后端：两份列表给订单的 updatedAt；patch-shipment-bundle 锁住订单后核版本；两条改单路写订单时 updatedAt 跟返回值同一个 now
@@ -28,6 +28,22 @@ const ROOT = path.resolve(__dirname, "..");
 const read = (rel: string) => readFileSync(path.join(ROOT, rel), "utf8");
 /** 去掉注释再查，别让注释里的老写法 / 说明骗过检查 */
 const code = (rel: string) => read(rel).replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:"'`])\/\/[^\n]*/g, "$1");
+
+/** 同步版：从真源码里摘一个函数声明出来（S6 要真跑页面里的 newRequestId） */
+function sourceNodeSync(file: string, fnName: string): string {
+  const source = ts.createSourceFile(file, read(file), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  let selected: ts.Node | undefined;
+  const walk = (node: ts.Node) => { if (!selected && ts.isFunctionDeclaration(node) && node.name?.text === fnName) selected = node; if (!selected) node.forEachChild(walk); };
+  walk(source);
+  assert.ok(selected, `真源码里找不到 ${fnName}`);
+  return selected!.getText(source);
+}
+function evalSync(source: string): any {
+  const exports = {};
+  const sandbox: Record<string, unknown> = { exports, module: { exports }, crypto: globalThis.crypto, Uint8Array, Math, Array };
+  vm.runInNewContext(ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText, sandbox);
+  return (sandbox.module as Record<string, unknown>).exports;
+}
 
 let passed = 0;
 let failed = 0;
@@ -131,16 +147,24 @@ check("S6 客户「批量下单」：失败的行记下来，跑完预览只留�
   assert.equal((src.match(/failedRows\.push\(/g) ?? []).length, 1, "只有失败分支记");
   // 按钮只看预览有没有行：全成功后预览空了，按钮自然灰
   assert.match(src, /disabled=\{loading \|\| parsing \|\| rows\.length === 0 \|\| badCargoRows\.length > 0\}/);
+  // 每行一个请求编号（第 2 轮）：上传解析时给、提交时带上
+  assert.match(src, /const normalized = normalizeRows\(raw\)\.map\(\(row\) => \(\{ \.\.\.row, requestId: newRequestId\(\) \}\)\);/, "上传解析时每行要给一个请求编号");
+  assert.match(src, /const payload: ClientPrealertPayload = \{\s*requestId: row\.requestId,/, "提交时要带这一行的请求编号");
+  // 编号格式要过后端那道（字母数字和「-」、16～64 位）：真跑页面里的 newRequestId
+  const fn = sourceNodeSync("apps/web/src/app/client/imports/page.tsx", "newRequestId");
+  const gen = evalSync("module.exports=" + fn.replace(/^function newRequestId\(\): string/, "function newRequestId()") + ";");
+  const a = gen(); const b = gen();
+  assert.ok(/^[A-Za-z0-9-]{16,64}$/.test(a) && a !== b, `请求编号不合后端格式或不随机：${a} / ${b}`);
+  const backend = read("apps/api/src/modules/orders/routes.ts");
+  assert.ok(backend.includes("!/^[A-Za-z0-9-]{16,64}$/.test(requestId)"), "后端认的编号格式变了，前端这边要跟着核");
 });
 
-check("S7 超管「运单管理」改单：打开时记订单版本；改了产品行 / 合计才带回去核对；存完换成返回的新版本；被抢先就刷新列表", () => {
+check("S7 超管「运单管理」改单：打开时记订单版本；每次保存都带回去核对（第 2 轮）；存完基线换成刚存的；被抢先就刷新列表", () => {
   const src = code("apps/web/src/app/admin/page.tsx");
   assert.match(src, /useState<\{ form: Record<string, string>; productsJson: string; orderUpdatedAt\?: string \} \| null>\(null\)/);
   assert.match(src, /productsJson: "",\s*orderUpdatedAt: order\.orderUpdatedAt,\s*\}\);/, "打开弹窗要记下订单（不是运单）的 updatedAt");
-  assert.match(src, /const sendsWholeProducts = productsChanged \|\| manualTotalsChanged;[\s\S]{0,600}?const saved = await updateAdminOrder\(\{\s*orderId: saveOrderId,\s*\.\.\.\(sendsWholeProducts && editSnapshot\?\.orderUpdatedAt \? \{ expectedOrderUpdatedAt: editSnapshot\.orderUpdatedAt \} : \{\}\),/, "改了产品行 / 合计要带 expectedOrderUpdatedAt");
-  // 产品行 / 合计发出去的条件跟带版本的条件是同一个口径
-  assert.match(src, /\.\.\.\(productsChanged \? \{\s*productQuantity: totalProductQuantity,/);
-  assert.match(src, /\.\.\.\(productsChanged \|\| manualTotalsChanged \? \{\s*weightKg: finalWeight,/);
+  assert.match(src, /const saved = await updateAdminOrder\(\{\s*orderId: saveOrderId,\s*\.\.\.\(editSnapshot\?\.orderUpdatedAt \? \{ expectedOrderUpdatedAt: editSnapshot\.orderUpdatedAt \} : \{\}\),/, "每次保存都要带 expectedOrderUpdatedAt（不能只在改产品行时带）");
+  assert.ok(!/sendsWholeProducts/.test(src), "又回到「只在改产品行 / 合计时才带版本」了（第 2 轮：只改备注不核对，会把旧产品行配上新版本）");
   assert.match(src, /setEditSnapshot\(\(prev\) => \(prev && prev === snapAtSubmit \? \{ form: submittedForm, productsJson: submittedProductsJson, orderUpdatedAt: saved\.updatedAt \} : prev\)\);/, "存完要把基线整个换成刚存的（只换版本不够）");
   assert.match(src, /if \(\/刚刚被别人改过\/\.test\(text\)\) loadOrders\(\)\.catch\(\(\) => \{\}\);/);
   // 后端报的那句跟这里认的一样
@@ -230,18 +254,19 @@ async function main(): Promise<void> {
 
   await checkAsync("S6b 真跑客户「批量下单」的 handleSubmit：3 行第 2 行失败 → 预览只剩第 2 行；再交一次只重交它，成功后预览清空", async () => {
     const handler = sourceNode("apps/web/src/app/client/imports/page.tsx", (n) => ts.isArrowFunction(n) && ts.isVariableDeclaration(n.parent) && n.parent.name.getText() === "handleSubmit");
-    const row = (i: number) => ({ rowNo: i + 2, warehouseId: "wh_yiwu_01", itemName: `货${i}`, packageCount: 1, packageUnit: "box", weightKg: 1, volumeM3: 0.1, shipDate: "2026-10-18", domesticTrackingNo: "", transportMode: "sea", cargoType: "normal", issues: [] });
+    const row = (i: number) => ({ rowNo: i + 2, requestId: `req0000000000000${i}`, warehouseId: "wh_yiwu_01", itemName: `货${i}`, packageCount: 1, packageUnit: "box", weightKg: 1, volumeM3: 0.1, shipDate: "2026-10-18", domesticTrackingNo: "", transportMode: "sea", cargoType: "normal", issues: [] });
     const submit = async (rows: Row[], failName: string | null) => {
       const previewRef = { current: rows };
       const sent: string[] = [];
+      const ids: string[] = [];
       let lastRows: Row[] | undefined;
       await evalTs("module.exports=" + handler + ";", {
         loading: false, parsing: false, rows, previewRef, isRowBad: () => false,
         setLoading() {}, setCurrent() {}, setSuccessCount() {}, setFailCount() {}, setErrors() {}, setDone() {}, setMessage() {},
         setRows(v: Row[]) { lastRows = v; },
-        createClientPrealert: async (p: Row) => { sent.push(p.itemName); if (p.itemName === failName) throw new Error("网络断了"); },
+        createClientPrealert: async (p: Row) => { sent.push(p.itemName); ids.push(p.requestId); if (p.itemName === failName) throw new Error("网络断了"); },
       })();
-      return { sent, lastRows, preview: previewRef.current };
+      return { sent, ids, lastRows, preview: previewRef.current };
     };
     const first = await submit([row(0), row(1), row(2)], "货1");
     // 沙箱里建的数组跟外面不是同一个 Array（原型不同），比内容用 Array.from 拷出来再比
@@ -250,10 +275,13 @@ async function main(): Promise<void> {
     assert.equal(first.preview, first.lastRows, "提交用的快照要跟预览一起换（不然下一次提交认不出是同一份）");
     const retry = await submit(Array.from(first.lastRows!), null);
     assert.deepEqual(retry.sent, ["货1"], "再点只能重交没下成的那行，成功过的不能再下一遍");
+    // 每行带自己的请求编号，重交同一行编号不变（服务器认出来就不再建 —— 回话丢了也不重复，第 2 轮）
+    assert.deepEqual(first.ids, ["req00000000000000", "req00000000000001", "req00000000000002"]);
+    assert.deepEqual(retry.ids, ["req00000000000001"], "重交时请求编号变了，服务器认不出是同一行");
     assert.ok(retry.lastRows !== undefined && retry.lastRows.length === 0, "全成功后预览清空（按钮跟着变灰）");
   });
 
-  await checkAsync("S7b 真跑超管「运单管理」的 submitOrderEdit：存完基线换成刚存的 —— 接着改别的再存，第一次存过的字段不再发；再改产品行带刚返回的新版本；存的过程中换了别的单不盖那边的基线", async () => {
+  await checkAsync("S7b 真跑超管「运单管理」的 submitOrderEdit（假后端照真后端核版本）：每次都带版本；存完基线换成这次提交的；别人先改了产品行、我只改备注也被拦下，旧产品行配不上新版本；409 不动基线；存的过程中又开了一次弹窗不盖", async () => {
     const editTotals = await import("../apps/web/src/modules/orders/edit-totals");
     const guard = await import("../apps/web/src/modules/orders/productRowGuard");
     const handler = sourceNode("apps/web/src/app/admin/page.tsx", (n) => ts.isArrowFunction(n) && ts.isVariableDeclaration(n.parent) && n.parent.name.getText() === "submitOrderEdit");
@@ -263,41 +291,72 @@ async function main(): Promise<void> {
       cargoType: "normal", paymentStatus: "unpaid", shipDate: "2026-10-18", remark: "R0",
     };
     const P0 = [{ id: "p1", itemName: "鞋", packageCount: "2", lengthCm: "", widthCm: "", heightCm: "", productQuantity: "", weightKg: "", cargoType: "normal", domesticTrackingNo: "SF1" }];
-    // 模拟 React：state 放在 store 里，每次「点保存」都用当时的 state 重新取一份闭包（跟重新渲染一样）
-    const store: Row = { snapshot: { form: { ...F0 }, productsJson: JSON.stringify(P0), orderUpdatedAt: "V0" } };
+    // 假后端：跟 /admin/orders/update 一样，带了 expectedOrderUpdatedAt 就锁里核对，对不上 409、什么都不写
+    const server: Row = { version: 0, products: JSON.parse(JSON.stringify(P0)) };
     const sent: Row[] = [];
-    let version = 0;
-    let duringSave: (() => void) | null = null;
+    const store: Row = {};
+    let duringSave: ((payload: Row) => void) | null = null;
+    const open = () => { store.snapshot = { form: { ...F0 }, productsJson: JSON.stringify(P0), orderUpdatedAt: `V${server.version}` }; };
     const save = async (form: Row, products: Row[]) => {
+      store.message = "";
       await evalTs("module.exports=" + handler + ";", {
+        // 沙箱自带一份 Error，假后端抛的是外面这份：handler 里 `error instanceof Error` 认不出、报错文字被吞成「保存失败」——换成同一份
+        Error,
         ...editTotals, ...guard, loading: false, editingOrderId: "o1", orderEditForm: form, editProducts: products, editSnapshot: store.snapshot,
         setLoading() {}, setMessage(m: string) { store.message = m; }, setToast() {},
         setEditSnapshot(v: any) { store.snapshot = typeof v === "function" ? v(store.snapshot) : v; },
-        updateAdminOrder: async (payload: Row) => { sent.push(JSON.parse(JSON.stringify(payload))); if (duringSave) { duringSave(); duringSave = null; } version += 1; return { orderId: "o1", updatedAt: `V${version}` }; },
+        updateAdminOrder: async (payload: Row) => {
+          sent.push(JSON.parse(JSON.stringify(payload)));
+          if (duringSave) { const f = duringSave; duringSave = null; f(payload); }
+          if (payload.expectedOrderUpdatedAt !== undefined && payload.expectedOrderUpdatedAt !== `V${server.version}`) {
+            throw new Error("这票刚刚被别人改过（超管端「运单管理」或别的超管），你这次没有保存。请关掉重新打开，看最新的再改");
+          }
+          if (Array.isArray(payload.products)) server.products = payload.products;
+          server.version += 1;
+          return { orderId: "o1", updatedAt: `V${server.version}` };
+        },
         loadOrders: async () => "applied",
       })();
+      return sent[sent.length - 1];
     };
-    // 第一次：只改备注 R0 → R1
-    await save({ ...F0, remark: "R1" }, P0);
-    assert.equal(sent[0].remark, "R1");
-    assert.ok(!("products" in sent[0]) && !("expectedOrderUpdatedAt" in sent[0]), "只改单个字段不发产品行、不带版本");
-    assert.equal(store.snapshot.form.remark, "R1", "存完基线要换成刚存的备注");
-    assert.equal(store.snapshot.orderUpdatedAt, "V1");
-    // 第二次（同一弹窗）：只改批次号 —— 不能再把第一次的备注发一遍（别人这期间改的备注会被盖回）
-    await save({ ...F0, remark: "R1", batchNo: "B1" }, P0);
-    assert.equal(sent[1].batchNo, "B1");
-    assert.ok(!("remark" in sent[1]), `第一次存过的备注又发了一遍：${JSON.stringify(sent[1])}`);
-    assert.ok(!("products" in sent[1]), "产品行没动不能整组发");
-    // 第三次：改产品行 —— 带刚返回的新版本 V2，不是打开时的 V0
+    const last = () => sent[sent.length - 1];
+
+    // ① 同时改备注和一行产品：带打开时的版本 V0；存完基线 = 这次提交的那份
+    open();
     const P1 = [{ ...P0[0], packageCount: "3" }];
+    const typedDuringSave: Row = { ...F0, remark: "R1" };
+    duringSave = () => { typedDuringSave.batchNo = "正在输的"; }; // 保存还没回来，人又在批次号里打了字
+    await save(typedDuringSave, P1);
+    assert.equal(last().expectedOrderUpdatedAt, "V0", "每次保存都要带打开时的版本");
+    assert.ok(Array.isArray(last().products));
+    assert.equal(store.snapshot.orderUpdatedAt, "V1");
+    assert.equal(store.snapshot.form.remark, "R1");
+    assert.equal(store.snapshot.form.batchNo, "B0", "基线要用点保存那一刻发出去的，不能把保存期间新输的当成已存");
+    assert.equal(store.snapshot.productsJson, JSON.stringify(P1), "产品行基线要换成这次提交的");
+    // ② 同一弹窗接着只改批次号：不再发备注、不再发产品行，带 V1
     await save({ ...F0, remark: "R1", batchNo: "B1" }, P1);
-    assert.equal(sent[2].expectedOrderUpdatedAt, "V2", `改产品行带的版本不对：${sent[2].expectedOrderUpdatedAt}`);
-    assert.ok(Array.isArray(sent[2].products));
-    // 存的过程中关掉又开了别的单（基线换成了别人的）：回来以后不能用这次的去盖它
-    const other = { form: { ...F0, trackingNo: "ZZ-2" }, productsJson: "[]", orderUpdatedAt: "W0" };
-    duringSave = () => { store.snapshot = other; };
-    await save({ ...F0, remark: "R9", batchNo: "B1" }, P1);
-    assert.equal(store.snapshot, other, "存的过程中换了别的单，那张单的基线被这次保存盖了");
+    assert.equal(last().expectedOrderUpdatedAt, "V1");
+    assert.ok(!("remark" in last()) && !("products" in last()), `第一次存过的又发了一遍：${JSON.stringify(last())}`);
+    assert.equal(last().batchNo, "B1");
+
+    // ③ 丢数据那条链（Codex / dsh 第 2 轮）：我打开以后，别人把产品行改了；我只改备注 —— 必须被拦下，基线不动；再改产品行也照样被拦
+    open();
+    server.products = [{ ...P0[0], packageCount: "8" }, { id: "p2", itemName: "帽", packageCount: "1" }];
+    server.version += 1; // 别人存了一次
+    const before = store.snapshot;
+    await save({ ...F0, remark: "只改备注" }, JSON.parse(store.snapshot.productsJson));
+    assert.match(store.message ?? "", /刚刚被别人改过/, `别人改过产品行，我只改备注也得拦下（不拦的话旧产品行会配上新版本）。发的：${JSON.stringify(last())}；提示：${store.message}`);
+    assert.equal(store.snapshot, before, "被拦下的那次不能动基线");
+    await save({ ...F0, remark: "只改备注" }, [{ ...P0[0], packageCount: "5" }]);
+    assert.match(store.message ?? "", /刚刚被别人改过/);
+    assert.deepEqual(server.products.map((p: Row) => p.itemName), ["鞋", "帽"], "别人加的那行被删了");
+
+    // ④ 存的过程中关掉又开了一次（同一张单也一样）：回来以后不盖新弹窗的基线
+    open();
+    duringSave = () => { open(); };
+    const reopened = () => store.snapshot;
+    await save({ ...F0, remark: "R9" }, P0.map((p) => ({ ...p })));
+    assert.notEqual(reopened().form.remark, "R9", "存的过程中重开了弹窗，新弹窗的基线被这次保存盖了");
   });
 
   await checkAsync("S10 超管列表 / 导出筛选的「国内单号」也认产品行上的号（导出带了，筛选得跟上）；员工那份照旧认", async () => {
@@ -310,6 +369,7 @@ async function main(): Promise<void> {
     assert.ok(search(f.adminOrderFilterRow(item as any), "yt9"));
     assert.ok(search(f.adminOrderFilterRow(item as any), "货拉拉"), "整票上的号照旧认");
     assert.ok(!search(f.adminOrderFilterRow(item as any), "zz404"));
+    assert.ok(search(f.staffShipmentFilterRow(item as any), "sf2001"), "员工那份照旧认产品行上的号");
   });
 
   console.log(`\n${passed} 项通过，${failed} 项失败`);

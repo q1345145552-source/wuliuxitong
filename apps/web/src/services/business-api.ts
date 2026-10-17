@@ -37,6 +37,8 @@ export interface StaffCreateOrderPayload {
 }
 
 export interface ClientPrealertPayload {
+  /** 批量下单每一行的请求编号（2026-10-18）：重试同一行不变，服务器认出来就回第一次建好的那张、不再建 */
+  requestId?: string;
   warehouseId: string;
   itemName?: string;
   packageCount: number;
@@ -641,14 +643,30 @@ export async function createClientPrealert(payload: ClientPrealertPayload): Prom
   prealertId: string;
   createdAt: string;
 }> {
-  const response = await fetch(`${apiBaseUrl()}/client/prealerts`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...authHeaders(),
-    },
-    body: JSON.stringify(payload),
-  });
+  /* 带请求编号的（批量下单那一行）加 30 秒超时（2026-10-18 dsh 第 2 轮）：原来没有超时，卡住就一直「提交中」；
+     有了编号，超时 / 断网后再点「一键提交」重交这一行，服务器已经建好的会认出来、不会多建，所以可以放心叫客户重试。
+     不带编号的（单张下单）照旧不加 —— 那边重交会多建一张，宁可等 */
+  const controller = payload.requestId ? new AbortController() : null;
+  const timer = controller ? setTimeout(() => controller.abort(), STAFF_ORDER_TIMEOUT_MS) : null;
+  let response: Response;
+  try {
+    response = await fetch(`${apiBaseUrl()}/client/prealerts`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...authHeaders(),
+      },
+      body: JSON.stringify(payload),
+      ...(controller ? { signal: controller.signal } : {}),
+    });
+  } catch (error) {
+    if (controller) {
+      throw new Error("网络中断或服务器太久没回应，这一行可能已经下单了。再点「一键提交」重交时系统会自动认出来，不会重复下单");
+    }
+    throw error;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
   return parseApiResponse(response);
 }
 

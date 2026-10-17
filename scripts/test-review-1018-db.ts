@@ -10,6 +10,10 @@
  *   V5  超管在员工页「保存订单信息」（patch-shipment-bundle）拿旧版本：409、什么都不写 —— 别人刚改的重量、备注不被整份旧草稿写回去（旧：被写回）
  *   V6  patch-shipment-bundle 带对的版本：存上；返回的 updatedAt = 库里订单的，拿它再存一次照样存上
  *   V7  patch-shipment-bundle 不带版本（上线那一刻还开着的老页面）：照旧存上
+ *   V8  「运单管理」只改备注也带版本（第 2 轮起每次都带）：别人这期间改过产品行 → 409、备注不写（旧：不核对就存，基线换成新版本，下次改产品行漏拦）
+ *   V9  客户批量下单带请求编号：同一个编号交两次只建一张，第二次回第一次的结果（服务器建好了、回话丢了再重试的情况）
+ *   V10 同一个编号两个请求同时进来：都回同一张、库里只有一张
+ *   V11 编号是别的客户用过的 409；格式不对 400；不带编号（单张下单 / 老页面）照旧每次新建
  *
  * 只连测试库：DATABASE_URL 不带 neon.tech 的不跑（一次性 docker 库设 AGENT_PORTAL_TEST_ALLOW_DB=1）；
  * 没有 DATABASE_URL 打印「跳过」。测试数据全在假公司 zz_rv18_co 下，开跑前、跑完后都清干净。
@@ -25,6 +29,7 @@ const ADMIN: Auth = { userId: "zz_rv18_admin", companyId: CO, role: "admin", nam
 const ADMIN2: Auth = { userId: "zz_rv18_admin2", companyId: CO, role: "admin", name: "超管二", agentId: null };
 const STAFF: Auth = { userId: "zz_rv18_staff", companyId: CO, role: "staff", name: "员工", agentId: null };
 const C1: Auth = { userId: "ZZRV18C1", companyId: CO, role: "client", name: "客户一", agentId: null };
+const C2: Auth = { userId: "ZZRV18C2", companyId: CO, role: "client", name: "客户二", agentId: null };
 const NO = (s: string) => `ZZRV18${s}`;
 const beijingDay = () => new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString().slice(0, 10);
 
@@ -119,7 +124,7 @@ async function main(): Promise<void> {
 
   await cleanup();
   try {
-    for (const u of [ADMIN, ADMIN2, STAFF, C1]) {
+    for (const u of [ADMIN, ADMIN2, STAFF, C1, C2]) {
       await pm.user.create({ data: { id: u.userId, companyId: CO, role: u.role, name: u.name, passwordHash: "x", phone: `0${u.userId}`, status: "active" } });
     }
 
@@ -211,6 +216,57 @@ async function main(): Promise<void> {
       await must("POST /admin/orders/update", ADMIN2, { orderId, remark: "先改一下" });
       await must("POST /staff/orders/patch-shipment-bundle", ADMIN, { ...(await bundleDraft(shipmentId)), remark: "老页面存的" });
       assert.equal(await remarkOf(orderId), "老页面存的");
+    });
+
+    await check("V8 「运单管理」只改备注也带打开时的版本：别人这期间改了产品行 → 409、备注不写", async () => {
+      const { orderId } = await newOrder(NO("A4"));
+      const opened = (await orderRow(orderId)).updatedAt.toISOString();
+      const rows = asPayload(await productsOf(orderId)); rows[0].packageCount = 7;
+      await must("POST /admin/orders/update", ADMIN2, { orderId, products: rows, packageCount: 10, productQuantity: 0 });
+      const r = await call("POST /admin/orders/update", ADMIN, { orderId, expectedOrderUpdatedAt: opened, remark: "只改备注" });
+      assert.equal(r.status, 409, `只改备注拿旧版本也该 409，实际 ${r.status}：${r.message}`);
+      assert.equal(await remarkOf(orderId), null, "被拦下的那次不能写备注");
+      assert.equal((await productsOf(orderId))[0].packageCount, 7, "别人改的产品行不受影响");
+    });
+
+    const prealert = (extra: Row = {}) => ({ warehouseId: "wh_yiwu_01", itemName: "批量货", packageCount: 2, packageUnit: "box", transportMode: "sea", ...extra });
+    const ordersOf = async (client: Auth) => pm.order.count({ where: { companyId: CO, clientId: client.userId } });
+
+    await check("V9 客户批量下单带请求编号：同一个编号交两次只建一张，第二次回第一次的结果", async () => {
+      const before = await ordersOf(C1);
+      const rid = "zzrv18req0000000000000000000001";
+      const a = await must("POST /client/prealerts", C1, prealert({ requestId: rid }));
+      const b = await must("POST /client/prealerts", C1, prealert({ requestId: rid }));
+      assert.equal(b.prealertId, a.prealertId, "第二次应该回第一次那张");
+      assert.equal(b.trackingNo, a.trackingNo);
+      assert.equal(b.alreadyCreated, true);
+      assert.equal((await ordersOf(C1)) - before, 1, "同一个编号建了两张");
+      assert.equal(await pm.shipment.count({ where: { orderId: a.prealertId } }), 1, "运单也只能有一张");
+    });
+
+    await check("V10 同一个编号两个请求同时进来：都回同一张、库里只有一张", async () => {
+      const before = await ordersOf(C1);
+      const rid = "zzrv18req0000000000000000000002";
+      const [a, b] = await Promise.all([call("POST /client/prealerts", C1, prealert({ requestId: rid })), call("POST /client/prealerts", C1, prealert({ requestId: rid }))]);
+      assert.equal(a.status, 200, `${a.status} ${a.message}`);
+      assert.equal(b.status, 200, `${b.status} ${b.message}`);
+      assert.equal(a.data.prealertId, b.data.prealertId);
+      assert.equal((await ordersOf(C1)) - before, 1, "同时进来的同编号建了两张");
+    });
+
+    await check("V11 编号是别的客户用过的 409；格式不对 400；不带编号照旧每次新建", async () => {
+      const rid = "zzrv18req0000000000000000000001"; // V9 里客户一用过
+      const r = await call("POST /client/prealerts", C2, prealert({ requestId: rid }));
+      assert.equal(r.status, 409, `${r.status} ${r.message}`);
+      assert.equal(await ordersOf(C2), 0, "别人的编号不能让我建出单、也不能回别人的单");
+      for (const bad of ["短", "has space in it 1234", "x".repeat(65), 12345678901234567]) {
+        const bd = await call("POST /client/prealerts", C1, prealert({ requestId: bad }));
+        assert.equal(bd.status, 400, `编号 ${String(bad).slice(0, 20)} 应该 400，实际 ${bd.status}`);
+      }
+      const before = await ordersOf(C1);
+      await must("POST /client/prealerts", C1, prealert());
+      await must("POST /client/prealerts", C1, prealert());
+      assert.equal((await ordersOf(C1)) - before, 2, "不带编号要照旧每次新建");
     });
   } finally {
     await cleanup();

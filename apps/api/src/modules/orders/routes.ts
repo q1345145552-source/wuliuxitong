@@ -327,6 +327,8 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
         cargoType?: string;
         domesticTrackingNo?: string;
       }>;
+      /** 客户批量下单每一行的「请求编号」（2026-10-18）：重试同一行时不变，见下面建单那段 */
+      requestId?: string;
     };
 
     // 国内快递单号写成数字、或者不是文字（dsh 复核 2026-09-29）：原来 .trim() 当场抛错成 500。数字转成文字收下，别的给中文提示
@@ -478,7 +480,29 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
        原来 orderId / shipmentId 只用当前毫秒数，两个客户（或一个客户双击提交）
        撞同一毫秒就撞主键报错；同文件写轨迹编号（sl_）和派送单号（admin-ops 的 lm_）
        早就是「时间戳 + 随机后缀」的写法，这里对齐。 */
-    const orderId = `o_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+    /* 客户批量下单的「请求编号」（2026-10-18 全系统审查第一档第 5 条；Codex 第 1、2 轮）：每一行在预览时给一个随机编号，重试同一行不变。
+       服务器已经建好、回话却在路上丢了（断网 / 网关切换），页面当成没下成，客户点重试 —— 原来每次都新建一张，多出重复的预报单和运单。
+       现在编号直接拿来当订单 id（订单 id 本来就是文字主键，不用加表加列）：这个 id 已经有了，就把第一次的结果原样回给页面、不再建；
+       两个同编号的请求同时进来，后到的撞主键（P2002）也按「已经建好」回。不带编号（单张下单、上线那一刻开着的老页面）照旧每次新建 */
+    const requestId = typeof body.requestId === "string" ? body.requestId.trim() : "";
+    if (body.requestId !== undefined && body.requestId !== null && !/^[A-Za-z0-9-]{16,64}$/.test(requestId)) {
+      fail(res, 400, "VALIDATION_ERROR", "请求编号格式不对，请刷新页面后重新上传");
+      return;
+    }
+    const orderId = requestId ? `o_req_${requestId}` : `o_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+    /** 这个编号已经建过单：是自己的就回第一次的结果，不是自己的（别的客户 / 别的公司，正常碰不上）409 */
+    const replyIfAlreadyCreated = async (): Promise<boolean> => {
+      if (!requestId) return false;
+      const existing = await prisma.order.findUnique({ where: { id: orderId }, select: { companyId: true, clientId: true, orderNo: true, createdAt: true } });
+      if (!existing) return false;
+      if (existing.companyId !== auth.companyId || existing.clientId !== auth.userId) {
+        fail(res, 409, "VALIDATION_ERROR", "请求编号已经被用过了，请刷新页面后重新上传");
+        return true;
+      }
+      ok(res, { prealertId: orderId, trackingNo: existing.orderNo, createdAt: existing.createdAt.toISOString(), alreadyCreated: true });
+      return true;
+    };
+    if (await replyIfAlreadyCreated()) return;
 
     /* 2026-08-31（排查报告第 5 条）：取号、订单、产品行、运单、首条轨迹
        全部包进同一个事务。原来是四次各写各的，中间任何一步失败前面的不回滚，
@@ -486,7 +510,9 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
        但没运单号、装不了柜，只能找技术手工补。写法照同文件「确认收货」那条路；
        这里全是新建行、没有并发改同一行的问题，所以不需要行锁和锁后重读
        （取号的排队靠 generatePrealertNo 里的 advisory 锁，锁到提交才放）。 */
-    const orderNo = await prisma.$transaction(async (tx) => {
+    let orderNo: string;
+    try {
+    orderNo = await prisma.$transaction(async (tx) => {
       const newOrderNo = await generatePrealertNo(tx, body.warehouseId!.trim());
       /* 封禁的账号不许再报预报单（2026-10-17，core/client-ban.ts；dsh 第 2 轮）：登录检查在进门时读一次，
          读完到这里提交之间超管刚好封了，单子照样会落进来 —— 在取号锁之后、建单之前跟封禁排一次队、再读一次 */
@@ -583,6 +609,11 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
       // ⚠️ 事务回调必须 return，外层才拿得到值（CLAUDE.md 强制检查第 7 条）
       return newOrderNo;
     });
+    } catch (error) {
+      // 同一个请求编号的两个请求同时进来：后到的建订单撞主键 —— 先到的那张已经建好了，按「已经建好」回（上面那段的注释）
+      if ((error as { code?: string })?.code === "P2002" && (await replyIfAlreadyCreated())) return;
+      throw error;
+    }
 
     ok(res, { prealertId: orderId, trackingNo: orderNo, createdAt: now });
   });

@@ -7,6 +7,8 @@ import { parseCargoType, type CargoType } from "../../../../../packages/shared-t
 export interface ImportRow {
   /** 表格里的第几行（表头是第 1 行），预览和失败明细都按它说，客户好对着表格找 */
   rowNo: number;
+  /** 这一行的请求编号（2026-10-18）：上传解析时给、重试不变，换文件重新给。见 apps/api orders/routes.ts「客户批量下单的请求编号」 */
+  requestId?: string;
   /**
    * 这一行其它要改的地方（2026-09-29 Codex 全系统检查）：品名没填、箱数不是正整数、
    * 包装类型认不出来、长宽高 / 单箱重量不是数字。原来这些行被**悄悄丢掉**（品名空、箱数认不出），

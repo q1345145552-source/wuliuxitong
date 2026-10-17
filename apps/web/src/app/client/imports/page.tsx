@@ -47,6 +47,16 @@ function downloadTemplate(): void {
 const th: React.CSSProperties = { textAlign: "left", padding: "6px 4px", whiteSpace: "nowrap" };
 const td: React.CSSProperties = { padding: "6px 4px" };
 
+/** 一行的请求编号：32 位随机字母数字（只要随机、够长；后端只认字母数字和「-」、16～64 位） */
+function newRequestId(): string {
+  const c = globalThis.crypto;
+  if (c && typeof c.randomUUID === "function") return c.randomUUID().replace(/-/g, "");
+  const bytes = new Uint8Array(16);
+  if (c && typeof c.getRandomValues === "function") c.getRandomValues(bytes);
+  else for (let i = 0; i < bytes.length; i++) bytes[i] = Math.floor(Math.random() * 256);
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
 export default function ClientImportsPage() {
   const [rows, setRows] = useState<ImportRow[]>([]);
   const [loading, setLoading] = useState(false);
@@ -91,7 +101,8 @@ export default function ClientImportsPage() {
       const wb = XLSX.read(buffer, { type: "array" });
       const ws = wb.Sheets[wb.SheetNames[0]];
       const raw = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { defval: "" });
-      const normalized = normalizeRows(raw);
+      // 每一行一个请求编号（2026-10-18）：重试这一行时原样带上，服务器已经建好的就不再建（回话丢了也不会重复下单）
+      const normalized = normalizeRows(raw).map((row) => ({ ...row, requestId: newRequestId() }));
       // 2026-09-02 终审整改：成功分支验号——解析期间又选了新文件的话，这份旧结果整体作废
       if (!parseGate.isCurrent(ticket)) return;
       // 2026-09-01 竞态全扫：预览换主人，快照同步更新
@@ -153,6 +164,7 @@ export default function ClientImportsPage() {
       const row = batch[i];
       try {
         const payload: ClientPrealertPayload = {
+          requestId: row.requestId,
           // 上面已经拦掉没填 / 认不出来的仓库
           warehouseId: row.warehouseId ?? "",
           itemName: row.itemName,
@@ -267,7 +279,7 @@ export default function ClientImportsPage() {
             {/* 成功的已经下单了（2026-10-18 全系统审查第一档第 5 条）：下面预览只剩没下成的，别再上传同一个文件，不然成功的会再下一遍 */}
             <div style={{ marginTop: 6, fontSize: 13, color: "var(--t-strong)" }}>
               {successCount > 0 ? `成功的 ${successCount} 条已经下单，不用再交，也不要再上传同一个文件（会重复下单）。` : ""}
-              {rows.length > 0 ? `下面只剩没下成的 ${rows.length} 条：再点「一键提交」只重试这几条；要改内容的，请只把这几行改好另存一张表再上传。` : ""}
+              {rows.length > 0 ? `下面还剩 ${rows.length} 条没确认下成：再点「一键提交」只重交这几条（其中已经建好的系统会认出来，不会重复下单）；要改内容的，请只把这几行改好另存一张表再上传。` : ""}
             </div>
           </div>
         )}

@@ -150,6 +150,8 @@ async function clientImport(rawCargo: unknown, boxes = 2, dimensions: number[] |
   const cargo = evalTs(read("packages/shared-types/cargo-type.ts"));
   const service = evalTs(sourceFunction("apps/web/src/services/business-api.ts", "createClientPrealert"), {
     apiBaseUrl: () => "http://fixture.invalid", authHeaders: () => ({}),
+    // 批量下单那一行带请求编号时加 30 秒超时（2026-10-18），用的是同文件的这个常量
+    STAFF_ORDER_TIMEOUT_MS: 30_000,
     fetch: async (_url: string, init: Row) => { requests.push(JSON.parse(init.body)); return {data: {prealertId: "p1"}}; },
     parseApiResponse: async (response: Row) => response.data,
   });
@@ -320,6 +322,8 @@ async function main() {
     for (const boxes of [1,2,7]) {
       const result = await clientImport("商检", boxes);
       assert.equal(result.disabled, false); assert.equal(result.requests.length, 1);
+      // 真上传 → 真提交：每行带一个合后端格式的请求编号（2026-10-18，重交时服务器认得出来）
+      assert.match(String(result.requests[0].requestId), /^[A-Za-z0-9-]{16,64}$/, "批量下单提交没带请求编号");
       assert.equal(result.requests[0].volumeM3, 40*30*20*boxes/1_000_000);
       assert.equal(result.requests[0].weightKg, 4*boxes); assert.equal(result.requests[0].packageCount, boxes);
       assert.equal(result.requests[0].cargoType, "inspection");

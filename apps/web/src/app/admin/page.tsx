@@ -945,17 +945,17 @@ export default function AdminHomePage() {
       const manualTotalsChanged =
         changed("weightKg", orderEditForm.weightKg) || changed("volumeM3", orderEditForm.volumeM3);
 
-      /* 产品行 / 合计要发的时候带上打开时的订单版本（2026-10-18 全系统审查第一档第 6 条）：这两样是整组 / 按旧视图算出来写的，
-         别人这期间改过的话会被盖掉，后端锁里核对、对不上 409 什么都不写。只改了别的单个字段照旧不带 —— 那些只发改动的那一项，
-         两个人改不同字段本来就不会互相覆盖（上面 changed 那段的意思），不必为此让人重开 */
-      const sendsWholeProducts = productsChanged || manualTotalsChanged;
+      /* 每次保存都带上「打开时（或上次存完时）」的订单版本（2026-10-18 全系统审查第一档第 6 条；Codex / dsh 第 2 轮改成每次都带）：
+         后端锁里核对，别人这期间存过就 409、什么都不写。
+         ⚠️ 不能只在改产品行 / 合计时才带：只改备注那次不核对的话，别人刚改的产品行我这边看不见，存完基线却换成了新版本，
+         接着再改产品行时带着新版本一核对就放行 —— 旧产品行把别人加的行删掉、改的盖回去。代价是两人同时改不同的单项时后存的也要重开一次 */
       // 这次发出去的是哪一份（存完拿它当新的「打开时的样子」；await 回来时 state 可能已经是用户接着输的新内容）
       const snapAtSubmit = editSnapshot;
       const submittedForm = Object.fromEntries(Object.entries(orderEditForm).map(([k, v]) => [k, v == null ? "" : String(v)])) as Record<string, string>;
       const submittedProductsJson = JSON.stringify(activeProducts);
       const saved = await updateAdminOrder({
         orderId: saveOrderId,
-        ...(sendsWholeProducts && editSnapshot?.orderUpdatedAt ? { expectedOrderUpdatedAt: editSnapshot.orderUpdatedAt } : {}),
+        ...(editSnapshot?.orderUpdatedAt ? { expectedOrderUpdatedAt: editSnapshot.orderUpdatedAt } : {}),
         ...(changed("clientId", orderEditForm.clientId) ? { clientId: orderEditForm.clientId.trim() || "" } : {}),
         ...(changed("itemName", orderEditForm.itemName) || productsChanged ? { itemName: primaryItemName } : {}),
         ...(changed("trackingNo", orderEditForm.trackingNo) ? { trackingNo: orderEditForm.trackingNo.trim() || "" } : {}),
