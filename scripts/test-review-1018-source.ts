@@ -481,6 +481,53 @@ async function main(): Promise<void> {
     assert.ok(search(f.staffShipmentFilterRow(item as any), "sf2001"), "员工那份照旧认产品行上的号");
   });
 
+  await checkAsync("S12 真跑超管页「跟着 # 切分区」那段（第 5～7 轮）：真换了分区才算离开运单管理（+1），不认识的 # 不算；点了 ✕ 还在放动画就离开的，替它把弹窗关完", async () => {
+    const file = "apps/web/src/app/admin/page.tsx";
+    const varInit = (name: string) => sourceNode(file, (n) => ts.isVariableDeclaration(n) && n.name.getText() === name && !!n.initializer).replace(/^[^=]*=\s*/, "");
+    const effect = sourceNode(file, (n) => ts.isCallExpression(n) && n.expression.getText() === "useEffect" && n.arguments[0]?.getText().includes("const syncSectionByHash") === true);
+    let listener: (() => void) | null = null;
+    const win = { location: { hash: "#orders" }, addEventListener: (_t: string, l: () => void) => { listener = l; }, removeEventListener() {} };
+    const sections: string[] = [];
+    const cleared: string[] = [];
+    const session = { current: 0 };
+    const closeRequested = { current: false };
+    evalTs(`module.exports = function bind() {
+      const SECTION_IDS = ${varInit("SECTION_IDS")};
+      const isSectionId = ${varInit("isSectionId")};
+      ${effect};
+    };`, {
+      window: win, useEffect: (fn: () => unknown) => { fn(); },
+      setActiveSection: (x: string) => sections.push(x), editSessionRef: session, editCloseRequestedRef: closeRequested,
+      setEditingOrderId: (x: string) => cleared.push(x),
+    })();
+    const go = (hash: string) => { win.location.hash = hash; listener!(); };
+    assert.equal(session.current, 0, "一打开就在运单管理，不算离开");
+    assert.deepEqual(sections, ["orders"]);
+    go("#overview");
+    assert.equal(session.current, 1, "去了总览要 +1");
+    assert.deepEqual(cleared, [], "没点 ✕ 的弹窗离开时不关（回来还在）");
+    go("#orders");
+    assert.equal(session.current, 1, "回到运单管理不 +1");
+    assert.deepEqual(sections, ["orders", "overview", "orders"], "分区要真的跟着切");
+    go("#foo");
+    assert.equal(session.current, 1, "不认识的 # 页面不切，不算离开");
+    assert.deepEqual(sections, ["orders", "overview", "orders"], "不认识的 # 不切分区");
+    closeRequested.current = true;
+    go("#foo2");
+    assert.equal(closeRequested.current, true, "不认识的 # 弹窗还看得见，不替它关");
+    assert.deepEqual(cleared, []);
+    go("#clients");
+    assert.equal(session.current, 2);
+    assert.deepEqual(cleared, [""], "点了 ✕ 还在放动画就离开：要替它把弹窗关完，回来别又冒出来");
+    assert.equal(closeRequested.current, false);
+    go("#orders");
+    closeRequested.current = true;
+    go("");
+    assert.equal(session.current, 3, "地址里没 # 回默认分区也算离开");
+    assert.deepEqual(cleared, ["", ""], "没 # 回默认分区时点了 ✕ 的也替它关完");
+    assert.equal(sections[sections.length - 1], "overview");
+  });
+
   await checkAsync("S11 真跑 createClientPrealert + 真 fetchWithSession / parseApiResponse，对一个本机假服务器（第 2～4 轮）：带编号的超时连正文一起管；只有明确的 4xx 算确定没建、原样抛，断网 / 到点 / 5xx / 2xx 内容空的坏的读一半断的都标「结果不确定」；还没发出去就拦下的不算；不带编号的照旧不加超时、不改报错", async () => {
     const http = await import("node:http");
     const core = await import("../apps/web/src/services/core-api");
@@ -592,45 +639,6 @@ async function main(): Promise<void> {
       server.closeAllConnections();
       server.close();
     }
-  });
-
-  await checkAsync("S12 真跑超管页「跟着 # 切分区」那段（第 5～7 轮）：真换了分区才算离开运单管理（+1），不认识的 # 不算；点了 ✕ 还在放动画就离开的，替它把弹窗关完", async () => {
-    const file = "apps/web/src/app/admin/page.tsx";
-    const varInit = (name: string) => sourceNode(file, (n) => ts.isVariableDeclaration(n) && n.name.getText() === name && !!n.initializer).replace(/^[^=]*=\s*/, "");
-    const effect = sourceNode(file, (n) => ts.isCallExpression(n) && n.expression.getText() === "useEffect" && n.arguments[0]?.getText().includes("const syncSectionByHash") === true);
-    let listener: (() => void) | null = null;
-    const win = { location: { hash: "#orders" }, addEventListener: (_t: string, l: () => void) => { listener = l; }, removeEventListener() {} };
-    const sections: string[] = [];
-    const cleared: string[] = [];
-    const session = { current: 0 };
-    const closeRequested = { current: false };
-    evalTs(`module.exports = function bind() {
-      const SECTION_IDS = ${varInit("SECTION_IDS")};
-      const isSectionId = ${varInit("isSectionId")};
-      ${effect};
-    };`, {
-      window: win, useEffect: (fn: () => unknown) => { fn(); },
-      setActiveSection: (x: string) => sections.push(x), editSessionRef: session, editCloseRequestedRef: closeRequested,
-      setEditingOrderId: (x: string) => cleared.push(x),
-    })();
-    const go = (hash: string) => { win.location.hash = hash; listener!(); };
-    assert.equal(session.current, 0, "一打开就在运单管理，不算离开");
-    go("#overview");
-    assert.equal(session.current, 1, "去了总览要 +1");
-    assert.deepEqual(cleared, [], "没点 ✕ 的弹窗离开时不关（回来还在）");
-    go("#orders");
-    assert.equal(session.current, 1, "回到运单管理不 +1");
-    go("#foo");
-    assert.equal(session.current, 1, "不认识的 # 页面不切，不算离开");
-    closeRequested.current = true;
-    go("#clients");
-    assert.equal(session.current, 2);
-    assert.deepEqual(cleared, [""], "点了 ✕ 还在放动画就离开：要替它把弹窗关完，回来别又冒出来");
-    assert.equal(closeRequested.current, false);
-    go("#orders");
-    go("");
-    assert.equal(session.current, 3, "地址里没 # 回默认分区也算离开");
-    assert.deepEqual(cleared, [""], "没点 ✕ 的不关");
   });
 
   console.log(`\n${passed} 项通过，${failed} 项失败`);
