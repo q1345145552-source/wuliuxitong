@@ -588,6 +588,8 @@ export function registerShipmentRoutes(app: MinimalHttpApp): void {
       currentLocation: r.currentLocation ?? undefined,
       warehouseId: r.warehouseId,
       updatedAt: r.updatedAt.toISOString(),
+      /** 订单的 updatedAt（2026-10-18 全系统审查第一档第 6 条）：超管在员工页「保存订单信息」时带回来让后端核对，上面那个是运单的 */
+      orderUpdatedAt: r.order?.updatedAt?.toISOString(),
       transportMode: r.order?.transportMode ?? undefined,
       shipDate: r.order?.shipDate ?? undefined,
       receiverNameTh: r.order?.receiverNameTh ?? undefined,

@@ -11,7 +11,7 @@ import { sendAiMessage } from "../../services/ai-client";
 import { useCurrentSessionBrand } from "../../modules/branding/useWorkbenchBrand";
 import { productDim, volumeM3FromDimensionsCm, formatVolumeM3String, transportModeLabel, warehouseLabelFromId } from "../../modules/staff/utils";
 import ShipmentDetailBody from "../../modules/shipment/ShipmentDetailBody";
-import { productNamesLabel } from "../../../../../packages/shared-types/product-names";
+import { domesticNosLabel, productNamesLabel } from "../../../../../packages/shared-types/product-names";
 import { prealertApprovalZh, prealertStatusTag } from "../../modules/orders/prealert-status";
 import { CARGO_TYPES, CARGO_TYPE_ZH, cargoTypeLabel as cargoTypeLabelOf, strictestCargoType } from "../../../../../packages/shared-types/cargo-type";
 import {
@@ -266,7 +266,8 @@ export default function ClientHomePage() {
       品名: productNamesLabel(o.products, o.itemName) || "-",
       货型: cargoTypeLabelOf((o.products ?? []).map((p: any) => p.cargoType), o.cargoType),
       运输方式: transportModeLabel(o.transportMode),
-      国内单号: o.domesticTrackingNo ?? "-",
+      // 多款产品的号在产品行上，只拿整票那个会漏（2026-10-18 全系统审查第一档第 1 条）
+      国内单号: domesticNosLabel(o.products, o.domesticTrackingNo) || "-",
       // ⚠️ 没有「柜号」这一列：客户不能看到柜号（老板 2026-08-07 定，代理端导出也是这么做的）
       // received 也要翻（2026-09-28 分支审查）：已收货的单 9-27 修复后进了这个列表，原来导出这一列写英文 received
       审批状态: prealertApprovalZh(o.approvalStatus, "-"),

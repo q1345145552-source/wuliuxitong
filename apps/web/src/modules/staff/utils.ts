@@ -251,6 +251,7 @@ export function buildShipmentOrderEditDraft(item: ShipmentItem): ShipmentOrderEd
     productQuantity: item.productQuantity != null ? String(item.productQuantity) : "",
     packageCount: item.packageCount != null ? String(item.packageCount) : "",
     basePackageCount: item.packageCount ?? null,
+    baseOrderUpdatedAt: item.orderUpdatedAt ?? null,
     packageUnit: item.packageUnit === "bag" ? "bag" : "box",
     weightKg: item.weightKg != null ? String(item.weightKg) : "",
     volumeM3: item.volumeM3 != null ? String(item.volumeM3) : "",

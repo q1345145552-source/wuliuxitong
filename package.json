@@ -103,6 +103,8 @@
     "test:sim-fixes-1008-db": "tsx scripts/test-sim-fixes-1008-db.ts",
     "test:review-1014-source": "tsx scripts/test-review-1014-source.ts",
     "test:review-1014-db": "tsx scripts/test-review-1014-db.ts",
+    "test:review-1018-source": "tsx scripts/test-review-1018-source.ts",
+    "test:review-1018-db": "tsx scripts/test-review-1018-db.ts",
     "test:migration-special-cargo-type-db": "tsx scripts/test-migration-special-cargo-type-db.ts",
     "test:chaipai-source": "tsx scripts/test-chaipai-source.ts",
     "test:fetch-deadline": "tsx scripts/test-fetch-deadline.ts",

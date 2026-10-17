@@ -30,6 +30,8 @@ export type ShipmentOrderEditDraft = {
   packageCount: string;
   /** 打开编辑框那一刻运单上「还剩多少没装柜」，保存时原样带上去让后端核对（2026-10-08：编辑期间有人装柜，旧剩余数会把订单件数加多） */
   basePackageCount: number | null;
+  /** 打开编辑框那一刻订单的 updatedAt（2026-10-18 全系统审查第一档第 6 条）：保存时带上，别人这期间改过就 409、不把整份旧草稿写回去 */
+  baseOrderUpdatedAt: string | null;
   packageUnit: "bag" | "box";
   weightKg: string;
   volumeM3: string;

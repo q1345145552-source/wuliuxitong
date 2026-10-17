@@ -24,3 +24,36 @@ export function productNamesLabel(
   }
   return names.length > 0 ? names.join(" / ") : (fallback ?? "").trim();
 }
+
+/** 产品行没填国内单号时存的占位（后端建单 / 改单写的默认值，同 arrival-notices 的 BLANK_DOMESTIC_PLACEHOLDER） */
+const DOMESTIC_PLACEHOLDER = "货拉拉";
+
+/**
+ * 一票的「国内单号」怎么导出（2026-10-18 全系统审查第一档第 1 条，老板选 B）。
+ *
+ * 病根：一票多款产品时，每款产品有自己的国内快递单号（存在产品行上），订单 / 运单上那个整票的号常常是空的、
+ * 或者是「货拉拉」占位、或者只是其中一个号。员工 / 超管 / 客户三端导出和代理端列表原来只拿整票那个号 ——
+ * 线上 317 张多款订单导出时会漏掉产品行上的号（页面列表和搜索是认产品行号的）。
+ *
+ * 口径：
+ *   - 分了产品行的：按产品行顺序（sortOrder）拼产品行的号，去重，用「、」隔开 —— 跟员工端运单卡片「国内单号：」那行一样
+ *     （没填号的产品行存的是「货拉拉」，照样列出来）；整票上另有一个**真单号**（不是空、不是「货拉拉」）、产品行里又没有的，补在最后
+ *     （线上 254 张是这样，只认产品行会把它丢掉；整票是「货拉拉」占位的 626 张不补，免得每行都多一个「货拉拉」）。
+ *   - 没有产品行的老单：用整票的号。
+ * 都没有返回空串，调用方自己写「-」。
+ */
+export function domesticNosLabel(
+  products: ReadonlyArray<{ domesticTrackingNo?: string | null; sortOrder?: number | null }> | null | undefined,
+  orderLevel?: string | null,
+): string {
+  const top = (orderLevel ?? "").trim();
+  if (!products || products.length === 0) return top;
+  const sorted = [...products].sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
+  const nos: string[] = [];
+  for (const product of sorted) {
+    const no = (product.domesticTrackingNo ?? "").trim() || DOMESTIC_PLACEHOLDER;
+    if (!nos.includes(no)) nos.push(no);
+  }
+  if (top && top !== DOMESTIC_PLACEHOLDER && !nos.includes(top)) nos.push(top);
+  return nos.join("、");
+}

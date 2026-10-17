@@ -90,8 +90,12 @@ chmod +x scripts/backup-db.sh 2>/dev/null || true
 npm install --ignore-scripts 2>/dev/null || true
 
 # 7. 确保旧容器在运行（构建期间服务不中断）
+# ⚠️ 下面几处「保留旧容器」一律带 --no-recreate（2026-10-18 全系统审查第一档第 4 条，本机 compose 实测过）：
+# 光写 `docker compose up -d`，只要镜像标签已经指向新构建的镜像（这次刚 build 完、或者上一次部署 build 了却没切上去），
+# compose 就会按新镜像把容器**重建**——嘴上说「旧版本继续服务」，实际把新代码换上去了，新代码跑在没迁移的旧表结构上。
+# --no-recreate：容器在就不动（停着的照样拉起来），只有容器根本不存在时才新建。
 echo "🔧 确保旧服务运行中..."
-docker compose up -d 2>/dev/null || true
+docker compose up -d --no-recreate 2>/dev/null || true
 
 # 8. 构建
 echo "🔨 构建 Docker 镜像..."
@@ -113,7 +117,8 @@ fi
 # 那趟纯属白跑，还平白碰了一次生产库。构建都失败了，数据库一个字都不该动。
 if [ "$BUILD_OK" != true ]; then
   echo "⛔ 构建失败，保留旧容器，数据库不做任何改动"
-  docker compose up -d
+  # 两个服务可能有一个已经构建成功，不带 --no-recreate 会把它单独换成新的（前后端版本对不上）
+  docker compose up -d --no-recreate
   exit 1
 fi
 
@@ -244,7 +249,7 @@ else
         echo "⛔ 数据库缺少设计图里的字段（上面以 A 开头的几行），**不切换新容器**。"
         echo "   新代码用到这些字段时会直接报错。请补一个迁移文件再重跑部署。"
         echo ""
-        docker compose up -d   # 旧容器继续服务
+        docker compose up -d --no-recreate   # 旧容器继续服务（不带 --no-recreate 会按刚构建的新镜像重建，见第 7 节）
         exit 1
       fi
       note_issue "数据库结构与设计图有 ${DRIFT_COUNT} 处对不上（见上面几行）：均为「B 多余」，不影响使用"
@@ -274,7 +279,7 @@ if [ "$NEED_DB_WORK" = true ] && { [ "$BACKUP_OK" != true ] || [ "$DB_SYNC_OK" !
   echo "   新代码需要新字段，此时切上去会让相关页面直接报错。"
   echo "   请先解决上面的问题再重跑部署。代码已经拉到本地，服务本身不受影响。"
   echo ""
-  docker compose up -d   # 确保旧容器还在跑
+  docker compose up -d --no-recreate   # 确保旧容器还在跑（不带 --no-recreate 会按刚构建的新镜像重建，见第 7 节）
   exit 1
 fi
 

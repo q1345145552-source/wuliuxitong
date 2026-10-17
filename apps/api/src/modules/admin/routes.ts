@@ -594,6 +594,9 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
       partialAhead: partialAheadAdmin.get(r.trackingNo),
       warehouseId: r.warehouseId,
       updatedAt: r.updatedAt.toISOString(),
+      /** 订单的 updatedAt（2026-10-18 全系统审查第一档第 6 条）：「运单管理」打开改单弹窗时记下，改了产品行 / 合计保存时带回来让后端锁里核对。
+       *  上面那个 updatedAt 是运单的，不能拿来比（后端比的是订单） */
+      orderUpdatedAt: r.order?.updatedAt?.toISOString(),
       transportMode: r.order?.transportMode ?? undefined,
       shipDate: r.order?.shipDate ?? undefined,
       receiverAddressTh: r.order?.receiverAddressTh ?? undefined,
@@ -940,12 +943,13 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
       if (lockedOrder.length === 0) {
         throw new BusinessError("这张订单刚刚已经被删掉了，请刷新后再看", 409, "VALIDATION_ERROR");
       }
-      /* 到货通知里改已转正式运单（2026-10-16 Codex 审查）：页面先重读比对、再发这个请求，两次请求之间同事在「运单管理」存了一次的话，
+      /* 到货通知里改已转正式运单（2026-10-16 Codex 审查）、2026-10-18 起「运单管理」改产品行 / 合计也带（两个页面的按钮一个叫「修改」一个叫「编辑」，提示里只说「重新打开」）：
+         页面先重读比对、再发这个请求，两次请求之间同事在「运单管理」存了一次的话，
          页面那次比对照不出来 —— 所以锁住订单以后再按打开时的 updatedAt 核一遍，对不上就不存（CLAUDE.md 第 28 条：锁完重读）。 */
       if (typeof body.expectedOrderUpdatedAt === "string" && body.expectedOrderUpdatedAt) {
         const cur = await tx.order.findFirst({ where: { id: orderId, companyId: auth.companyId }, select: { updatedAt: true } });
         if (!cur || cur.updatedAt.toISOString() !== body.expectedOrderUpdatedAt) {
-          throw new BusinessError("这票刚刚被别人改过（超管端「运单管理」或别的超管），你这次没有保存。请关掉重新点「修改」看最新的再改", 409, "VALIDATION_ERROR");
+          throw new BusinessError("这票刚刚被别人改过（超管端「运单管理」或别的超管），你这次没有保存。请关掉重新打开，看最新的再改", 409, "VALIDATION_ERROR");
         }
       }
       const savedProductCargo = async () => {
@@ -1187,7 +1191,9 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
         // 从锁内实际保存的完整集合汇总，包含未改货型的旧行，不从请求字段猜测。
         const productCargo = await savedProductCargo();
         if (productCargo !== undefined) {
-          await tx.order.update({ where: { id: orderId }, data: { cargoType: productCargo } });
+          /* updatedAt 跟上面那次写成同一个 now（2026-10-18）：不写的话这里自动记成「现在」，比返回给页面的 updatedAt 晚几毫秒，
+             页面拿返回值当新版本再存一次就对不上、被当成「别人改过」 */
+          await tx.order.update({ where: { id: orderId }, data: { cargoType: productCargo, updatedAt: now } });
         }
       }
     });

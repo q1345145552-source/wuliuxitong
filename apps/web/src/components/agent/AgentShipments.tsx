@@ -15,6 +15,7 @@ import { knownPackageCount } from "../../modules/shipment/ShipmentTableGrid";
 import { shipmentStatusWithPartialZh, transportModeLabel } from "../../modules/staff/utils";
 import { CLIENT_STATUS_GROUP_ZH, type ClientStatusGroup } from "../../../../../packages/shared-types/shipment-status";
 import { cargoTypeLabel } from "../../../../../packages/shared-types/cargo-type";
+import { domesticNosLabel } from "../../../../../packages/shared-types/product-names";
 import {
   fetchAgentShipmentExportData,
   fetchAgentShipments,
@@ -47,7 +48,8 @@ function toExcelRow(o: AgentShipmentItem) {
     品名: o.productNames || o.itemName || "-",
     货型: cargoTypeLabel(o.products.map((p) => p.cargoType), o.cargoType),
     运输方式: transportModeLabel(o.transportMode),
-    国内单号: o.domesticTrackingNo ?? "-",
+    // 带上产品行的号（2026-10-18 全系统审查第一档第 1 条：多款产品的号在产品行上，原来只导整票那个）
+    国内单号: domesticNosLabel(o.products, o.domesticTrackingNo) || "-",
     审批状态: APPROVAL_ZH[o.approvalStatus] ?? o.approvalStatus,
     产品数量: o.productQuantity ?? "-",
     // 件数 0 = 没填（到货通知转待入库，订单表只能存 0），导出「-」（2026-10-08 审查 F03）
@@ -246,7 +248,7 @@ export default function AgentShipments() {
                     <td style={tdNum}>{fmtM3(o.totalVolumeM3 ?? o.volumeM3)}</td>
                     <td style={tdNum}>{o.totalWeightKg ?? o.weightKg ?? "—"}</td>
                     <td style={{ ...td, whiteSpace: "nowrap" }}>{transportModeLabel(o.transportMode)}</td>
-                    <td style={td}>{o.domesticTrackingNo ?? "—"}</td>
+                    <td style={td}>{domesticNosLabel(o.products, o.domesticTrackingNo) || "—"}</td>
                     <td style={{ ...td, minWidth: 180 }}>{o.receiverNameTh}{o.receiverPhoneTh ? ` ${o.receiverPhoneTh}` : ""}<div style={{ fontSize: 12, color: "var(--t-muted)" }}>{o.receiverAddressTh}</div></td>
                     <td style={td}>
                       {o.shipmentId ? (

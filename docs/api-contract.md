@@ -882,3 +882,11 @@
 - 不拦（已有的单照常）：上面几条路不换唛头的修改、`/staff/prealerts/receive`、装柜 / 派送 / 签收 / 删单、整柜询价、集货。
 - 排队（`core/client-ban.ts` 文件头）：挂单的事务在各自锁序最后拿 `pg_advisory_xact_lock_shared(83070, hashtext(公司:唛头))`（共享档，挂单之间不互等）再读状态。`POST /admin/users/toggle-ban` 改成事务：先用 `pg_try_advisory_xact_lock` **只试不排队**地拿独占档（拿不到隔 0.1 秒再试，最多 10 秒），拿到再 `lock_timeout 1s` 锁客户行、写 status、提交 —— 正在挂单的都提交了才生效，封禁生效以后不会再冒出新单；封禁从不在锁队列里排着、试锁期间也不锁客户行，后来的挂单最多等它拿着独占的那 1 秒，同一客户存地址 / 发消息不受影响。试不到、客户行 1 秒等不到、事务到点，都回 `409`「刚好有同事正在给这个客户建单 / 改单，这次没改成，过几秒再点一次」（翻成什么照旧按进门时读到的定）。
 - `GET /staff/clients` 每项多 `status`（名单照旧全给）。员工页整页、到货通知页加订 `accounts` 推送，收到重拉客户名单；超管「创建订单」改用页面上的 `clientList`（`/admin/users?role=client`，本来就带 status、跟推送刷新）。
+
+## 25. 2026-10-18 全系统审查修复（老板选 B，接口口径变化）
+
+清单：`.audit/2026-10-18/full-review/核实结果.md` 第一档 + 第二档第 6 条。只加不改，老页面照旧能用。
+- `GET /admin/orders`、`GET /staff/shipments` 每项多 `orderUpdatedAt`：**订单**的 updatedAt（原来那个 `updatedAt` 是运单的）。改单时带回来核对用。
+- `POST /admin/orders/update`：`expectedOrderUpdatedAt` 10-16 起就有（到货通知改已转正式那条带）；10-18 起「运单管理」改单弹窗**改了产品行 / 合计**时也带，锁住订单后跟订单现在的 updatedAt 比，对不上 `409`「这票刚刚被别人改过……请关掉重新打开，看最新的再改」、什么都不写。只改单个字段不带（只发改动的那一项，原来就这么设计）。返回的 `updatedAt` 现在等于库里订单的 updatedAt（同一次请求里第二次写订单货型也用同一个时刻），页面拿它当新版本接着存。
+- `POST /staff/orders/patch-shipment-bundle`（超管在员工页「保存订单信息」）：新增可选 `expectedOrderUpdatedAt`，锁住订单后核对，对不上 `409`「这票刚刚被别人改过（「运单管理」或别的页面），本次修改都没有保存。请关掉重新打开，看最新的再改」、什么都不写；不传（上线那一刻开着的老页面）照旧。返回的 `updatedAt` 等于库里订单的。
+- 导出 / 代理端列表的「国内单号」口径（前端，`packages/shared-types/product-names.ts` 的 `domesticNosLabel`）：分了产品行的按产品行的号（sortOrder、去重、「、」隔开，没号的行是「货拉拉」），整票上另有真单号且产品行里没有的补在最后；没产品行用整票号。

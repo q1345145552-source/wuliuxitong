@@ -163,6 +163,8 @@ export interface OrderProductImageItem {
 export interface ShipmentItem {
   id: string;
   orderId?: string;
+  /** 订单的 updatedAt（员工运单列表给，2026-10-18）：超管在员工页「保存订单信息」时带回去核对 */
+  orderUpdatedAt?: string;
   orderNo?: string;
   trackingNo: string;
   parentTrackingNo?: string;
@@ -386,6 +388,8 @@ export interface AdminOrderItem {
   partialAhead?: string;
   id: string;
   orderId?: string;
+  /** 订单的 updatedAt（2026-10-18）：「运单管理」改单弹窗打开时记下，改了产品行 / 合计保存时带回去核对（下面 updatedAt 是运单的） */
+  orderUpdatedAt?: string;
   shipmentId?: string;
   cargoType?: string;
   clientId: string;
@@ -1283,6 +1287,8 @@ export async function patchStaffShipmentOrderBundle(payload: {
   packageCount: number;
   /** 打开编辑框时看到的剩余件数；后端锁里跟运单现在的对不上就拦（2026-10-08） */
   basePackageCount?: number | null;
+  /** 打开编辑框时订单的 updatedAt（2026-10-18）：后端锁里核对，对不上 409 */
+  expectedOrderUpdatedAt?: string;
   packageUnit: "bag" | "box";
   weightKg?: number | null;
   volumeM3?: number | null;

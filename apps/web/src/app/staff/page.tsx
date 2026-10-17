@@ -1,7 +1,7 @@
 "use client";
 
 import { matchesShipmentListFilter } from "../../../../../packages/shared-types/shipment-status";
-import { productNamesLabel } from "../../../../../packages/shared-types/product-names";
+import { domesticNosLabel, productNamesLabel } from "../../../../../packages/shared-types/product-names";
 import ExportConditionFields, { type ExportFieldDef } from "../../modules/shipment/ExportConditionFields";
 import { EMPTY_SHIPMENT_FILTER, matchesShipmentFilter, mergeDateFrom, mergeDateTo, shipmentFilterDateInvalid, staffShipmentFilterRow, type ShipmentFilterValue } from "../../modules/shipment/export-filter";
 import { CARGO_TYPES, CARGO_TYPE_ZH, cargoTypeLabel } from "../../../../../packages/shared-types/cargo-type";
@@ -683,8 +683,9 @@ export default function StaffHomePage() {
     setLoading(true);
     setMessage("");
     try {
-      await patchStaffShipmentOrderBundle({
+      const saved = await patchStaffShipmentOrderBundle({
         shipmentId,
+        ...(draft.baseOrderUpdatedAt ? { expectedOrderUpdatedAt: draft.baseOrderUpdatedAt } : {}),
         trackingNo: draft.trackingNo.trim(),
         batchNo: draft.batchNo.trim() || null,
         itemName: draft.itemName.trim(),
@@ -703,6 +704,8 @@ export default function StaffHomePage() {
         warehouseId: draft.warehouseId.trim(),
         remark: draft.remark?.trim() || null,
       });
+      // 先把草稿的版本换成刚存的（2026-10-18）：下面刷新列表要是失败了，再点保存不会被自己这次当成「别人改过」
+      setShipmentOrderEditDrafts((prev) => (prev[shipmentId] ? { ...prev, [shipmentId]: { ...prev[shipmentId], baseOrderUpdatedAt: saved.updatedAt } } : prev));
       const shipmentItems = await loadPageData();
       const updated = shipmentItems.find((s) => s.id === shipmentId);
       if (updated) {
@@ -1387,7 +1390,8 @@ export default function StaffHomePage() {
       [billedVolumeCol]: (totalVolumeOf(item) ?? 0) > 0 ? Math.max(totalVolumeOf(item)!, minVolumeMap?.[item.transportMode ?? ""] ?? 0).toFixed(3) : "-",
       所属仓库: warehouseLabelFromId(item.warehouseId),
       收货地址: truncateText(item.receiverAddressTh, 40),
-      柜号: item.batchNo ?? "-", 国内单号: item.domesticTrackingNo ?? "-",
+      // 国内单号带上产品行的号（2026-10-18 全系统审查第一档第 1 条：原来只导整票那个，多款产品的号会漏）
+      柜号: item.batchNo ?? "-", 国内单号: domesticNosLabel(item.products, item.domesticTrackingNo) || "-",
       产品数量: item.productQuantity ?? "-", 到仓日期: formatDateTime(item.arrivedAt, "-"),
       可编辑: item.canEdit ? "是" : "否", 更新时间: item.updatedAt ?? "-",
     }));

@@ -329,6 +329,10 @@ jobs:
       # 装柜可选运单归拢已装子单、确认收货国内单号改了才发、集货取消记锁后状态
       - name: Test full review 1014 fixes (source)
         run: npm run test:review-1014-source
+      # 2026-10-18 全系统审查老板选 B 修的 6 处（不连库）：导出 / 代理列表带产品行国内单号、超管建单成功清空表单、
+      # 超管批量导入能停、deploy.sh 保留旧容器带 --no-recreate、客户批量下单跑完只留没下成的、两条超管改单路带订单版本
+      - name: Test full review 1018 fixes (source)
+        run: npm run test:review-1018-source
       # 对接拆派仓（2026-10-12）不连库那一半：配置门槛、清单分份 / 字段 / 上限、回传校验 / 目标状态 / 备注不出现「拆派仓」、
       # 签收图挑哪张、拆派仓写的轨迹不许单删、派送照片只给员工、六个环境变量不进前端
       - name: Test chaipai integration (source)
@@ -528,6 +532,9 @@ jobs:
       # 今日收货体积按整票、装柜映射带父单号、客户按运单 id 找、整柜卡片现号、自动柜号按北京日期
       - name: Test full review 1014 fixes (real DB)
         run: bash .github/scripts/run-db-test.sh test:review-1014-db
+      # 2026-10-18 全系统审查（连库）：两份列表给订单版本、超管改单 / 员工页保存拿旧版本 409 不写、返回的版本跟库里一致、老页面不带照旧
+      - name: Test full review 1018 fixes (real DB)
+        run: bash .github/scripts/run-db-test.sh test:review-1018-db
 
       # 9-28 审查报告那批小 bug（后端）：本月已签收按真签收时间数、装柜详情带整柜标记、
       # 集货轨迹柜号抹干净、补确认收货写父单、客户建单仓库校验、并发报价不重复记轨迹、

@@ -141,6 +141,9 @@ export default function ClientImportsPage() {
 
     let success = 0;
     const errs: string[] = [];
+    /** 这一轮没下成的行（2026-10-18 全系统审查第一档第 5 条）：跑完预览里只留它们 —— 原来跑完按钮还亮着、预览还是整批，
+     *  再点一次（或者部分失败后点「重试」）会把已经成功的行再下一遍单（后端每次都新建订单，没有去重） */
+    const failedRows: ImportRow[] = [];
 
     for (let i = 0; i < batch.length; i++) {
       // 2026-09-01 竞态全扫：预览已不是出发时那份（理论上入口已禁用走不到这，兜底），
@@ -172,6 +175,7 @@ export default function ClientImportsPage() {
       } catch (error) {
         const text = error instanceof Error ? error.message : "提交失败";
         errs.push(`表格第${row.rowNo}行(${row.itemName}): ${text}`);
+        failedRows.push(row);
         // 2026-09-01 竞态全扫：失败分支同样认主人，旧批次的报错不许混进新预览
         if (previewRef.current !== batch) break;
         setFailCount(errs.length);
@@ -183,6 +187,9 @@ export default function ClientImportsPage() {
     if (previewRef.current === batch) {
       setErrors(errs);
       setDone(true);
+      // 成功的行从预览里拿掉，只留没下成的：全成功了预览清空、按钮变灰；有失败的再点只重试这几行
+      previewRef.current = failedRows;
+      setRows(failedRows);
     }
     setLoading(false);
   };
@@ -257,6 +264,11 @@ export default function ClientImportsPage() {
                 {errors.map((e, i) => <li key={i}>{e}</li>)}
               </ul>
             )}
+            {/* 成功的已经下单了（2026-10-18 全系统审查第一档第 5 条）：下面预览只剩没下成的，别再上传同一个文件，不然成功的会再下一遍 */}
+            <div style={{ marginTop: 6, fontSize: 13, color: "var(--t-strong)" }}>
+              {successCount > 0 ? `成功的 ${successCount} 条已经下单，不用再交，也不要再上传同一个文件（会重复下单）。` : ""}
+              {rows.length > 0 ? `下面只剩没下成的 ${rows.length} 条：再点「一键提交」只重试这几条；要改内容的，请只把这几行改好另存一张表再上传。` : ""}
+            </div>
           </div>
         )}
 

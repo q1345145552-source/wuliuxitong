@@ -3,7 +3,7 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as XLSX from "xlsx";
 import { matchesShipmentListFilter } from "../../../../../packages/shared-types/shipment-status";
-import { productNamesLabel } from "../../../../../packages/shared-types/product-names";
+import { domesticNosLabel, productNamesLabel } from "../../../../../packages/shared-types/product-names";
 import ExportConditionFields, { type ExportFieldDef } from "../../modules/shipment/ExportConditionFields";
 import { EMPTY_SHIPMENT_FILTER, adminArrivedDate, adminOrderFilterRow, matchesShipmentFilter, mergeDateFrom, mergeDateTo, shipmentFilterDateInvalid, type ShipmentFilterValue } from "../../modules/shipment/export-filter";
 import { parseCargoType, CARGO_TYPE_HINT, CARGO_TYPES, CARGO_TYPE_ZH, cargoTypeLabel } from "../../../../../packages/shared-types/cargo-type";
@@ -214,6 +214,22 @@ const EMPTY_ORDER_SEARCH = {
 };
 
 
+/* 「创建订单」弹窗的空表单（2026-10-18 全系统审查第一档第 2 条）：建成一单后整个清回这个样子 ——
+   原来不清，再点「创建订单」带着上一单的唛头、单号、到仓日期和全部产品行，只改唛头和单号就建，新单会用上一单的产品行。
+   到仓日期每次取「北京今天」，所以写成函数 */
+function blankCreateOrderForm() {
+  return {
+    clientId: "", warehouseId: "wh_yiwu_01", arrivedAt: beijingToday(),
+    transportMode: "sea" as "sea" | "land", domesticTrackingNo: "", batchNo: "", shipDate: "",
+    // 运单号必填（2026-09-29 补：6-05 起后端要求必填，这个弹窗一直没这一项，点「创建」必失败）。
+    // 泰国收货人 / 电话 / 地址三项去掉：6-04 起后端建运单不存收货信息，填了也白填。
+    trackingNo: "",
+  };
+}
+function blankCreateProduct() {
+  return { itemName: "", packageCount: "", lengthCm: "", widthCm: "", heightCm: "", productQuantity: "", cargoType: "normal", domesticTrackingNo: "" };
+}
+
 export default function AdminHomePage() {
   const [session, setSession] = useState<AuthSession | null>(null);
   const [loading, setLoading] = useState(false);
@@ -355,13 +371,7 @@ export default function AdminHomePage() {
     }
   }
 
-  const [createForm, setCreateForm] = useState({
-    clientId: "", warehouseId: "wh_yiwu_01", arrivedAt: beijingToday(),
-    transportMode: "sea" as "sea" | "land", domesticTrackingNo: "", batchNo: "", shipDate: "",
-    // 运单号必填（2026-09-29 补：6-05 起后端要求必填，这个弹窗一直没这一项，点「创建」必失败）。
-    // 泰国收货人 / 电话 / 地址三项去掉：6-04 起后端建运单不存收货信息，填了也白填。
-    trackingNo: "",
-  });
+  const [createForm, setCreateForm] = useState(blankCreateOrderForm);
   /**
    * ⚠️ `packageCount` 存**字符串**（2026-08-29 第八轮改）。
    * 原来是 number、初值 1，而且输入框 onChange 写着
@@ -374,7 +384,7 @@ export default function AdminHomePage() {
   const [createProducts, setCreateProducts] = useState<Array<{
     itemName: string; packageCount: string; lengthCm: string; widthCm: string;
     heightCm: string; productQuantity: string; cargoType: string; domesticTrackingNo: string;
-  }>>([{ itemName: "", packageCount: "", lengthCm: "", widthCm: "", heightCm: "", productQuantity: "", cargoType: "normal", domesticTrackingNo: "" }]);
+  }>>(() => [blankCreateProduct()]);
   const [batchRows, setBatchRows] = useState<Array<any>>([]);
   const [batchLoading, setBatchLoading] = useState(false);
   const [batchProgress, setBatchProgress] = useState({ current: 0, success: 0, fail: 0 });
@@ -387,6 +397,13 @@ export default function AdminHomePage() {
   const [batchFailures, setBatchFailures] = useState<Array<{ row: number; clientId: string; itemName: string; reason: string }>>([]);
   /** 本轮导入是否已跑完（跑完且有失败时弹窗不自动关，留人看明细） */
   const [batchDone, setBatchDone] = useState(false);
+  /* 导入中点「停止导入」（2026-10-18 全系统审查第一档第 3 条）：原来这个键叫「取消」、只关弹窗，
+     后面的行照样一条条建进去，人以为取消了再导一遍就建重了。现在点了只记一个「停」，
+     建单循环每条开头看一眼，当前那条建完就停，弹窗留着说清停在第几行、哪几行没导 */
+  const batchStopRef = useRef(false);
+  const [batchStopping, setBatchStopping] = useState(false);
+  /** 停下来时已经处理到第几条（null = 没停，跑完了） */
+  const [batchStoppedAt, setBatchStoppedAt] = useState<number | null>(null);
   const [calcLength, setCalcLength] = useState("");
   const [calcWidth, setCalcWidth] = useState("");
   const [calcHeight, setCalcHeight] = useState("");
@@ -484,7 +501,9 @@ export default function AdminHomePage() {
     itemName: string; packageCount: string; lengthCm: string; widthCm: string; heightCm: string; productQuantity: string; weightKg: string; cargoType: string; domesticTrackingNo: string;
   }>>([]);
   /** 打开编辑弹窗那一刻的原始数据，用于保存时算出「哪些项被改过」 */
-  const [editSnapshot, setEditSnapshot] = useState<{ form: Record<string, string>; productsJson: string } | null>(null);
+  /* orderUpdatedAt（2026-10-18 全系统审查第一档第 6 条）：打开弹窗时订单的版本。改了产品行 / 合计保存时带回去，
+     这期间别人存过就 409 —— 产品行是整组发的（没带回来的行后端会删），拿旧弹窗存会把别人刚加的行删掉、改的盖回去 */
+  const [editSnapshot, setEditSnapshot] = useState<{ form: Record<string, string>; productsJson: string; orderUpdatedAt?: string } | null>(null);
   /* 编辑弹窗里实时提示「总重量/总体积保存时听谁的」（2026-08-31，排查报告第22条）。
      跟保存用的是同一个 decideEditTotals，界面上说的和实际存的不会两张皮。 */
   const editTotalsPreview = useMemo(
@@ -814,6 +833,7 @@ export default function AdminHomePage() {
         remark: order.remark ?? "",
       } as Record<string, string>,
       productsJson: "", // 下面构建完产品行后再填
+      orderUpdatedAt: order.orderUpdatedAt,
     });
     setOrderEditForm({
       clientId: order.clientId ?? "",
@@ -925,8 +945,13 @@ export default function AdminHomePage() {
       const manualTotalsChanged =
         changed("weightKg", orderEditForm.weightKg) || changed("volumeM3", orderEditForm.volumeM3);
 
-      await updateAdminOrder({
+      /* 产品行 / 合计要发的时候带上打开时的订单版本（2026-10-18 全系统审查第一档第 6 条）：这两样是整组 / 按旧视图算出来写的，
+         别人这期间改过的话会被盖掉，后端锁里核对、对不上 409 什么都不写。只改了别的单个字段照旧不带 —— 那些只发改动的那一项，
+         两个人改不同字段本来就不会互相覆盖（上面 changed 那段的意思），不必为此让人重开 */
+      const sendsWholeProducts = productsChanged || manualTotalsChanged;
+      const saved = await updateAdminOrder({
         orderId: saveOrderId,
+        ...(sendsWholeProducts && editSnapshot?.orderUpdatedAt ? { expectedOrderUpdatedAt: editSnapshot.orderUpdatedAt } : {}),
         ...(changed("clientId", orderEditForm.clientId) ? { clientId: orderEditForm.clientId.trim() || "" } : {}),
         ...(changed("itemName", orderEditForm.itemName) || productsChanged ? { itemName: primaryItemName } : {}),
         ...(changed("trackingNo", orderEditForm.trackingNo) ? { trackingNo: orderEditForm.trackingNo.trim() || "" } : {}),
@@ -952,12 +977,16 @@ export default function AdminHomePage() {
           volumeM3: finalVolume,
         } : {}),
       });
+      // 弹窗存完不关，接着改再存的话要拿刚存的这个版本比（不然被自己上一次保存当成「别人改过」）
+      setEditSnapshot((prev) => (prev ? { ...prev, orderUpdatedAt: saved.updatedAt } : prev));
       // 手填值和自动计算冲突时明说哪边生效了，不再静默（排查报告第22条）
       setToast(totalsNotes.length > 0 ? `订单信息已更新。${totalsNotes.join("；")}` : "订单信息已更新");
       await loadOrders();
     } catch (error) {
       const text = error instanceof Error ? error.message : "保存失败";
       setMessage(`保存失败：${text}`);
+      // 被别人抢先存了：顺手把列表刷新，关掉重开就是最新的（不等 10 秒那次自动刷新）
+      if (/刚刚被别人改过/.test(text)) loadOrders().catch(() => {});
     } finally {
       setLoading(false);
     }
@@ -1474,7 +1503,8 @@ export default function AdminHomePage() {
       运单号: o.trackingNo ?? "-", 客户: o.clientId ?? "-", 品名: productNamesLabel(o.products, o.itemName) || "-",
       // 货型（2026-09-11 老板点的），口径同员工端导出
       货型: cargoTypeLabel((o.products ?? []).map((p: any) => p.cargoType), o.cargoType),
-      运输方式: transportModeLabel(o.transportMode), 国内单号: o.domesticTrackingNo ?? "-", 柜号: o.batchNo ?? "-",
+      // 国内单号带上产品行的号（2026-10-18 全系统审查第一档第 1 条）
+      运输方式: transportModeLabel(o.transportMode), 国内单号: domesticNosLabel(o.products, o.domesticTrackingNo) || "-", 柜号: o.batchNo ?? "-",
       审批状态: o.approvalStatus === "pending" ? "待审核" : o.approvalStatus === "approved" ? "已审核" : o.approvalStatus === "shipped" ? "已发货" : o.approvalStatus === "received" ? "已收货" : o.approvalStatus,
       // 拆过柜的单 packageCount/weightKg/volumeM3 都是父单剩余量（超管列表接口按运单给）；
       // 导出跟列表那几列用同一套函数取整票（2026-09-28 审查修复 #10）
@@ -3064,7 +3094,7 @@ export default function AdminHomePage() {
                 </div>
               </div>
             ))}
-            <button onClick={() => setCreateProducts([...createProducts, { itemName: "", packageCount: "", lengthCm: "", widthCm: "", heightCm: "", productQuantity: "", cargoType: "normal", domesticTrackingNo: "" }])} style={{ border: "1px solid var(--c-blue)", borderRadius: 6, padding: "4px 10px", background: "var(--c-blue-bg)", color: "var(--c-blue)", cursor: "pointer", fontSize: 12, marginBottom: 16 }}>添加产品行</button>
+            <button onClick={() => setCreateProducts([...createProducts, blankCreateProduct()])} style={{ border: "1px solid var(--c-blue)", borderRadius: 6, padding: "4px 10px", background: "var(--c-blue-bg)", color: "var(--c-blue)", cursor: "pointer", fontSize: 12, marginBottom: 16 }}>添加产品行</button>
             {/* 创建失败 / 没填全的提示原来只写在页面最底下，被这个全屏弹窗挡住，点「创建」像没反应（同上面编辑运单弹窗 2026-09-28 那次）。
                 2026-10-17 封禁唛头：名单还没刷新时后端拦下的「账号已封禁」也在这里看得见（Codex / dsh 第 8 轮）。
                 这里只会有这个弹窗自己的错误（成功了直接关弹窗、弹提示条），所以一律红字 —— 原来按字里有没有「失败」「请」猜颜色，
@@ -3120,6 +3150,9 @@ export default function AdminHomePage() {
                    列表刷上了就清掉页面底下上一回「列表刷新失败」那类话（dsh 第 10 轮）；别的报错不动，不然弹窗遮着时写进来的别的提醒没被看见就清了（Claude 第 11 轮） */
                 setToast("订单创建成功");
                 setShowCreateOrderModal(false);
+                // 建成了就把表单清空，下次打开是一张空单（2026-10-18 全系统审查第一档第 2 条）；没建成的不清，改了再点「创建」
+                setCreateForm(blankCreateOrderForm());
+                setCreateProducts([blankCreateProduct()]);
                 try {
                   if ((await loadOrders()) === "applied") clearStaleListError();
                 } catch (err) {
@@ -3196,10 +3229,16 @@ export default function AdminHomePage() {
               <div>
                 {/* 进度：只用文字报数，不放进度条 */}
                 <div style={{ marginBottom: 8, fontSize: 12, color: "var(--t-strong)" }}>
-                  {batchDone ? "导入完成。" : `正在导入 ${batchRows.length} 条…`}
+                  {batchDone ? (batchStoppedAt !== null ? "已停止导入。" : "导入完成。") : batchStopping ? "正在停止（当前这条建完就停）…" : `正在导入 ${batchRows.length} 条…`}
                   {batchProgress.current > 0 ? `　已处理 ${batchProgress.current}/${batchRows.length}，成功 ${batchProgress.success} 条` : ""}
                   {batchProgress.fail > 0 ? <span style={{ color: "var(--c-red-deep)" }}>，失败 {batchProgress.fail} 条</span> : null}
                 </div>
+                {batchDone && batchStoppedAt !== null ? (
+                  <div style={{ marginBottom: 8, fontSize: 12, color: "var(--c-red-deep)" }}>
+                    第 {batchStoppedAt + 1}～{batchRows.length} 行没有导入（共 {batchRows.length - batchStoppedAt} 条）。已建好的 {batchProgress.success} 条不用重导；
+                    剩下的要导，请把这几行单独存一张表再导入，别整张表重导（会把已建好的再建一遍）。
+                  </div>
+                ) : null}
                 {/* 失败明细（2026-08-31，排查报告第46条）：列出行号+客户ID/品名+原因，
                     让人照着补录，别整表重导把已成功的建重 */}
                 {batchDone && batchFailures.length > 0 && (
@@ -3233,7 +3272,12 @@ export default function AdminHomePage() {
               </div>
             )}
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 16 }}>
-              <button onClick={() => { batchReadGate.cancel(); setBatchFileReading(false); setBatchFileError(""); setShowBatchImport(false); setBatchRows([]); setBatchConfirmed(false); setBatchFileName(""); setBatchDone(false); setBatchFailures([]); setBatchProgress({ current: 0, success: 0, fail: 0 }); }} style={{ border: "1px solid var(--l-strong)", borderRadius: 8, padding: "8px 14px", background: "var(--white)", cursor: "pointer" }}>{batchDone ? "关闭" : "取消"}</button>
+              {batchLoading ? (
+                /* 导入中只能「停止」，不能关弹窗：关了看不到停在哪、哪几行没导 */
+                <button type="button" disabled={batchStopping} onClick={() => { batchStopRef.current = true; setBatchStopping(true); }} style={{ border: "1px solid var(--c-red-deep)", borderRadius: 8, padding: "8px 14px", background: "var(--white)", color: "var(--c-red-deep)", cursor: batchStopping ? "not-allowed" : "pointer" }}>{batchStopping ? "正在停止…" : "停止导入"}</button>
+              ) : (
+                <button onClick={() => { batchReadGate.cancel(); setBatchFileReading(false); setBatchFileError(""); setShowBatchImport(false); setBatchRows([]); setBatchConfirmed(false); setBatchFileName(""); setBatchDone(false); setBatchFailures([]); setBatchProgress({ current: 0, success: 0, fail: 0 }); setBatchStoppedAt(null); }} style={{ border: "1px solid var(--l-strong)", borderRadius: 8, padding: "8px 14px", background: "var(--white)", cursor: "pointer" }}>{batchDone ? "关闭" : "取消"}</button>
+              )}
               {/* 导入跑完就把「开始导入」收起来，防止手抖再点一次把成功的整批建重 */}
               {batchConfirmed && !batchDone && (
                 <button disabled={batchLoading} onClick={async () => {
@@ -3241,9 +3285,15 @@ export default function AdminHomePage() {
                   // 开跑前清掉上一轮的数字，别让旧进度/旧明细混进这一轮
                   setBatchProgress({ current: 0, success: 0, fail: 0 });
                   setBatchFailures([]);
+                  batchStopRef.current = false;
+                  setBatchStopping(false);
+                  setBatchStoppedAt(null);
+                  let stoppedAt: number | null = null;
                   // 【排查报告第46条 · 2026-08-31】失败的行要逐条记下来，不许只报个数
                   const failures: Array<{ row: number; clientId: string; itemName: string; reason: string }> = [];
                   for (let i = 0; i < batchRows.length; i++) {
+                    // 点了「停止导入」：前一条已经建完（或失败），这一条起都不建
+                    if (batchStopRef.current) { stoppedAt = i; break; }
                     const r = batchRows[i];
                     try {
                       /* 仓库 / 包装单位 / 运输方式：中文和内部值都认，认不出来这一行失败（2026-10-14 全系统审查：
@@ -3299,9 +3349,14 @@ export default function AdminHomePage() {
                     setBatchProgress({ current: i + 1, success, fail });
                   }
                   setBatchLoading(false);
+                  setBatchStopping(false);
                   setBatchDone(true);
                   setBatchFailures(failures);
-                  if (fail === 0) {
+                  if (stoppedAt !== null) {
+                    // 停下来的弹窗不自动关：要让人看到停在第几行、哪几行没导
+                    setBatchStoppedAt(stoppedAt);
+                    setToast(`已停止导入：处理了 ${stoppedAt} 条（成功 ${success}，失败 ${fail}），第 ${stoppedAt + 1} 行起没导入`);
+                  } else if (fail === 0) {
                     // 全部成功才自动关弹窗；有失败就留着弹窗给人看明细（排查报告第46条）
                     setToast(`导入完成：${success} 条全部成功`);
                     setShowBatchImport(false); setBatchRows([]); setBatchConfirmed(false); setBatchDone(false);

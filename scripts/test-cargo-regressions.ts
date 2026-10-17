@@ -363,6 +363,8 @@ async function main() {
       await evalTs("module.exports=" + handler + ";", {
         ...cargoModule, ...staffModule, batchRows: rows, setBatchLoading() {}, setBatchProgress() {}, beijingToday: () => "2026-10-15",
         setBatchFailures(value: Row[]) {errors = value;}, setBatchDone() {}, setToast() {}, setShowBatchImport() {}, setBatchRows() {}, setBatchConfirmed() {},
+        // 「停止导入」（2026-10-18 全系统审查）：这里不停，只把循环要用的补上
+        batchStopRef: { current: false }, setBatchStopping() {}, setBatchStoppedAt() {},
         loadOrders: async () => {}, createStaffOrder: async (payload: Row) => {requests.push(JSON.parse(JSON.stringify(payload)));},
       })();
       return { requests, errors };
@@ -456,6 +458,7 @@ async function main() {
             // 仓库 / 包装 / 运输方式的中文换内部值（2026-10-14）用的是员工批量导入那几个函数
             ...cargoModule, ...staffModule, batchRows: rawRows, setBatchLoading() {}, setBatchProgress() {},
             setBatchFailures(value: Row[]) {errors = value;}, setBatchDone() {}, setToast() {}, setShowBatchImport() {}, setBatchRows() {}, setBatchConfirmed() {},
+            batchStopRef: { current: false }, setBatchStopping() {}, setBatchStoppedAt() {},
             loadOrders: async () => {}, createStaffOrder: async (payload: Row) => {requests.push(JSON.parse(JSON.stringify(payload)));},
           })();
           if (value === "constructor") {assert.equal(requests.length, 0); assert.equal(errors.length, 1); assert.match(errors[0].reason, /constructor/);}

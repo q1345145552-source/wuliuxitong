@@ -1797,6 +1797,8 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
       remark?: string;
       /** 打开编辑框时看到的「还剩多少没装柜」（2026-10-08 模拟数据测试）；不传 = 老页面，不核对 */
       basePackageCount?: number | null;
+      /** 打开编辑框时订单的 updatedAt（2026-10-18 全系统审查第一档第 6 条）；不传 = 老页面，不核对 */
+      expectedOrderUpdatedAt?: string;
     };
 
     const shipmentId = body.shipmentId?.trim();
@@ -1993,6 +1995,15 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
          跟装柜同时发生就互相等 —— PostgreSQL 判死锁、中止装柜那一边。这里只改订单的普通列、不改主键，
          NO KEY UPDATE 够用：两个编辑 / 收货之间照样排队，只是不再挡装柜插子单的外键检查。 */
       await tx.$queryRaw`SELECT id FROM orders WHERE id = ${curOrder.id} AND company_id = ${auth.companyId} FOR NO KEY UPDATE`;
+      /* 打开以后订单被别人改过就不存（2026-10-18 全系统审查第一档第 6 条）：这个编辑框保存时把**整份**草稿发上来（打开时那一刻的仓库、品名、重量、
+         国内单号……），超管 A 开着员工页的编辑框、B 在「运单管理」改了东西，A 只改个备注一保存，B 改的全被写回旧值。
+         锁住订单以后按打开时的 updatedAt 核一遍（CLAUDE.md 第 28 条：锁完重读），对不上 409、什么都不写 */
+      if (typeof body.expectedOrderUpdatedAt === "string" && body.expectedOrderUpdatedAt) {
+        const cur = await tx.order.findFirst({ where: { id: curOrder.id, companyId: auth.companyId }, select: { updatedAt: true } });
+        if (!cur || cur.updatedAt.toISOString() !== body.expectedOrderUpdatedAt) {
+          throw new BusinessError("这票刚刚被别人改过（「运单管理」或别的页面），本次修改都没有保存。请关掉重新打开，看最新的再改", 409, "VALIDATION_ERROR");
+        }
+      }
       await lockShipmentsChildrenFirst(tx, [shipmentId], auth.companyId);
       // 锁后重读运单号（CLAUDE.md 第 28 条）：拿锁之前那份快照里的
       // trackingNo 可能已被并发编辑改掉，查子单合计要用锁内的值
@@ -2104,6 +2115,9 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
           shipDate,
           receiverAddressTh,
           createdAt: arrived,
+          /* 跟返回给页面的 updatedAt 同一个 now（2026-10-18）：页面存完拿返回值当新版本，不写的话库里自动记的「现在」晚几毫秒，
+             再存一次就被当成「别人改过」 */
+          updatedAt: now,
         },
       });
       await tx.shipment.update({
