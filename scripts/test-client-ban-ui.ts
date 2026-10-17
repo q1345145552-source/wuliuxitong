@@ -93,6 +93,10 @@ check("U5 超管端：「创建订单」唛头框、「运单管理」改唛头�
   assert.ok(sub && /loadClients\(\)/.test(sub[1]), "超管页没订「账号」推送重拉客户名单");
   assert.match(sub![1], /enabled: session !== null,/, "超管页「账号」推送只看登没登录，不能再加别的开关（Codex 第 3 轮）");
   assert.match(src, /setShowCreateOrderModal\(true\);[\s\S]{0,300}?loadClients\(\)\.catch\(/, "点「创建订单」要顺手拉一次名单，失败也不留未处理的报错");
+  // 创建订单弹窗里要看得见后端拦下的那句（「创建失败：账号已封禁」）：原来只写在页面最底下、被全屏弹窗挡住（Codex / dsh 第 8 轮）
+  const modal = src.slice(src.indexOf("<MarkPicker value={createForm.clientId}"), src.indexOf("{/* 批量导入弹窗 */}"));
+  assert.match(modal, /\{message \? \(\s*<p role="alert"[^>]*>\{message\}<\/p>\s*\) : null\}/, "创建订单弹窗里没显示 message");
+  assert.match(src, /setShowCreateOrderModal\(true\);\s*\n\s*setMessage\(""\);/, "打开创建订单弹窗要先清掉上一回的提示");
 });
 
 check("U6 全站每个唛头下拉点名：挂单的四处都去掉封禁的；整柜询价那个不在这次范围（询价不是单），照旧全给", () => {

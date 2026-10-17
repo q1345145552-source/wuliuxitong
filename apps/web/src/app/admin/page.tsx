@@ -1955,6 +1955,7 @@ export default function AdminHomePage() {
               type="button"
               onClick={() => {
                 setShowCreateOrderModal(true);
+                setMessage(""); // 弹窗里会显示这条提示，打开时先清掉上一回的（同编辑运单弹窗）
                 /* 唛头下拉用页面上那份客户名单（推送 / 10 秒兜底一直在刷，2026-10-17），打开时再顺手拉一次；
                    拉失败就用手上那份，10 秒兜底会再拉（不留未处理的报错，dsh 第 3 轮） */
                 loadClients().catch(() => {});
@@ -3052,6 +3053,11 @@ export default function AdminHomePage() {
               </div>
             ))}
             <button onClick={() => setCreateProducts([...createProducts, { itemName: "", packageCount: "", lengthCm: "", widthCm: "", heightCm: "", productQuantity: "", cargoType: "normal", domesticTrackingNo: "" }])} style={{ border: "1px solid var(--c-blue)", borderRadius: 6, padding: "4px 10px", background: "var(--c-blue-bg)", color: "var(--c-blue)", cursor: "pointer", fontSize: 12, marginBottom: 16 }}>添加产品行</button>
+            {/* 创建失败 / 没填全的提示原来只写在页面最底下，被这个全屏弹窗挡住，点「创建」像没反应（同上面编辑运单弹窗 2026-09-28 那次）。
+                2026-10-17 封禁唛头：名单还没刷新时后端拦下的「账号已封禁」也在这里看得见（Codex / dsh 第 8 轮） */}
+            {message ? (
+              <p role="alert" style={{ margin: "0 0 8px", color: message.includes("失败") || message.includes("请") ? "var(--c-red-deep)" : "var(--c-green-deep)" }}>{message}</p>
+            ) : null}
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
               <button onClick={() => setShowCreateOrderModal(false)} style={{ border: "1px solid var(--l-strong)", borderRadius: 8, padding: "8px 14px", background: "var(--white)", cursor: "pointer", color: "var(--t-strong)" }}>取消</button>
               <button disabled={loading} onClick={async () => {

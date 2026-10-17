@@ -143,10 +143,10 @@ async function main() {
   mountBan({ clientId: "ZZOK1", convertedTo: "inbound" });
   pickMark("ZZBAN1");
   assert.deepEqual(warns(), ["账号已封禁"], "换成封禁的：转没转都提示存不上");
-  // 带首尾空格打的封禁唛头也认（提交时会去空格）
+  // 带首尾空格打的：到货通知保存时唛头原样发、后端原样查（查不到回「唛头不存在」），页面也按一字不差认 —— 说「系统里没有这个唛头」，跟后端一致（Codex / dsh 第 8 轮）
   mountBan(null);
   pickMark(" ZZBAN1 ");
-  assert.deepEqual(warns(), ["账号已封禁"]);
+  assert.deepEqual(warns(), ["系统里没有这个唛头，要选下拉里已有的"]);
   // 原来就挂在封禁唛头名下的那条：那个唛头留在下拉里（不然一点开就是「匹配 0 个」，dsh 审查）
   mountBan({ clientId: "ZZBAN1" });
   const pickerOpts = nodes((n) => n.props?.placeholder === "输入唛头搜索" && typeof n.props?.onChange === "function")[0].props.options;
@@ -160,7 +160,7 @@ async function main() {
   flush();
   pickMark("ZZNOPE");
   assert.deepEqual(warns(), ["系统里没有这个唛头，要选下拉里已有的"]);
-  console.log("✅ E4 封禁的唛头：换成它提示存不上、原来就是它没转提示转不了、已经转了不提示；带空格也认；原来那个留在下拉里；真没有的照旧说没有（客户全被封了也一样）");
+  console.log("✅ E4 封禁的唛头：换成它提示存不上、原来就是它没转提示转不了、已经转了不提示；带空格的按「没有这个唛头」（跟后端一致）；原来那个留在下拉里；真没有的照旧说没有（客户全被封了也一样）");
   process.exit(0);
 }
 main().catch((e) => { console.error(e); process.exit(1); });

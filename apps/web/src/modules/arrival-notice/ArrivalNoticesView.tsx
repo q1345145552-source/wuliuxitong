@@ -21,7 +21,7 @@ import { shipmentStatusZh } from "../shipment/shipment-status";
 import { apiBaseUrl } from "../../services/core-api";
 import { fetchStaffClients, updateAdminOrder } from "../../services/business-api";
 import MarkPicker, { type MarkOption } from "../layout/MarkPicker";
-import { activeMarkOptions, bannedChangeHint, bannedClientIds, withCurrentMark } from "../shared/client-ban";
+import { BANNED_MARK_HINT, activeMarkOptions, bannedClientIds, withCurrentMark } from "../shared/client-ban";
 import {
   convertArrivalNotice,
   deleteArrivalNotice,
@@ -644,11 +644,13 @@ function NoticeEditor(props: {
   }, [draft.products]);
   /* 封禁的唛头（2026-10-17）：系统里有，只是不进下拉，所以不算「没有这个唛头」，另外提示：
      换成它 → 存不上；原来就是它、这条还没转运单 → 存得上、转不了；原来就是它、已经转了（待入库 / 正式）→ 已有的单照常，不提示 */
-  const draftMark = draft.clientId.trim();
-  const clientBanned = draftMark !== "" && props.bannedClients.has(draftMark);
+  /* ⚠️ 一字不差才算（不去首尾空格）：到货通知保存时唛头原样发、后端原样查（arrival-notices/routes.ts readNoticeFields / assertClient），
+     去了空格再认的话，打「 XHH6698 」页面说「账号已封禁」、后端却回「唛头不存在」，两边打架（Codex / dsh 第 7、8 轮）。
+     带空格的就走下面「系统里没有这个唛头」，跟后端一致 */
+  const clientBanned = draft.clientId !== "" && props.bannedClients.has(draft.clientId);
   const bannedNote = !clientBanned ? null
-    : bannedChangeHint(draft.clientId, base?.clientId, props.bannedClients)
-      ?? (!editing?.convertedTo ? "账号已封禁，这条转不了运单" : null);
+    : draft.clientId !== (base?.clientId ?? "") ? BANNED_MARK_HINT
+    : !editing?.convertedTo ? "账号已封禁，这条转不了运单" : null;
   /* 名单没拿到（接口失败 / 还没回来）时不说「没有这个唛头」。⚠️ 要连封禁的一起算：客户全被封了时下拉是空的，但名单是拿到了的（Codex 审查） */
   const clientListEmpty = props.clients.length === 0 && props.bannedClients.size === 0;
   const clientKnown = !draft.clientId || clientListEmpty || clientBanned || props.clients.some((c) => c.id === draft.clientId);
