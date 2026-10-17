@@ -1,5 +1,11 @@
 # 项目交接日志
 
+## 2026-10-18 清理（老板「你把6清除了」）
+- GitHub 删了两个已并进 main 的云端分支 `claude/epic-carson-wazooi`、`claude/beautiful-bell-xgdmux`（删前 `merge-base --is-ancestor` 核过全在 main，没有开着的 PR）；现在只剩 main。
+- 服务器 `docker builder prune -f` 清掉构建缓存 14.32G：磁盘 62G → 49G 用、剩 48G；四个容器 healthy，卷 8 个没动。
+- 服务器两份 `.env.bak-*`（10-02、10-12 改配置前留的，含密钥）：核过里面每个配置项现在的 `.env` 都有；删文件按规矩给老板一条命令，他跑了（两行 removed），我核过：剩 0 个、`.env` 15 项、两个容器 healthy。
+- 他纠正：「这是物流系统，不是业务系统」——物流窗口列待办别混业务网站的事（记忆 logistics-window-not-business-site）。
+
 ## 2026-10-18 01:26（北京）上线 1266ae8：只带测试和文档（B18 慢库余量、U5 建单 try），线上代码跟 69139c6 一样
 - 老板「上线吧」。推 GitHub 69139c6..1266ae8（7827701 文档 + 1266ae8 测试），服务器 `bash deploy.sh` 退出 0：没有待执行迁移、跳过备份、结构与迁移账本一致；17:26:34 UTC 换容器。
 - 核对：服务器 HEAD = GitHub = 1266ae8；两个容器 healthy、重启 0；API 错误 0；`GET /` ok、网页 200、/staff/clients 不带登录 401、外网登录页 200；切换那 3 秒（17:26:34～37）6 次 5xx（页面自动刷新的订单 / 未读 / 推送），之后 0。GitHub 自动检查 39053755949 三组 success（CI 快库上 B18 来回 0.5 毫秒，照旧按 1.8 秒判，过）。日志 `.audit/2026-10-18/deploy/`。
