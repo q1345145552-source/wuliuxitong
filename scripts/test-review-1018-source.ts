@@ -690,6 +690,8 @@ async function main(): Promise<void> {
     const unmountA = mount(a);
     assert.deepEqual(openPanels, [a]);
     assert.ok(locked(), "开着要锁滚动");
+    fire(a); fire(a);
+    assert.deepEqual(openPanels, [a], "看得见时重复通知不能重复登记");
     // 手机侧栏这时写了 inline overflow：弹窗不碰它
     doc.body.style.overflow = "hidden";
     a.visible = false; fire(a);
@@ -740,7 +742,10 @@ async function main(): Promise<void> {
     assert.deepEqual(openPanels, []);
     outer.visible = true; inner.visible = true; fire(outer); fire(inner);
     assert.deepEqual(openPanels, [outer, inner], "后开的那个要还在最上层");
-    unmountInner(); unmountOuter();
+    unmountInner();
+    assert.deepEqual(openPanels, [outer]);
+    assert.ok(locked(), "关掉上面那个，下面那个还开着就得接着锁");
+    unmountOuter();
     assert.ok(!locked());
     // 老浏览器没有 ResizeObserver：照旧登记 / 卸掉，不报错
     const d = makePanel();
