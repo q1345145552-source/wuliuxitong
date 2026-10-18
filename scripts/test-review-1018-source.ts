@@ -17,6 +17,8 @@
  *   S11 真跑 createClientPrealert + 真 fetchWithSession / parseApiResponse 对本机假服务器：带编号的超时连正文一起管；只有明确的 4xx 算确定没建，
  *       断网 / 到点 / 5xx / 2xx 内容空的坏的读一半断的都标「结果不确定」；还没发出去就拦下的不算（第 2～4 轮）
  *   S12 真跑超管页「跟着 # 切分区」那段：真换了分区才算离开运单管理；点了 ✕ 还在放动画就离开的替它关完（第 5～7 轮）
+ *   S13 真跑共用弹窗 DetailModal 登记那段：所在那页藏起来就让出键盘和滚动锁，切回来再接上（老板选 A）
+ *   S14 真跑超管页「正在改的那张」：编辑弹窗挂在列表外面，按 editingOrderId 从全部列表里找（老板选 A）
  *   S8  超管在员工页「保存订单信息」：草稿带订单版本、保存带回去；存完先换新版本
  *   S9  后端：两份列表给订单的 updatedAt；patch-shipment-bundle 锁住订单后核版本；两条改单路写订单时 updatedAt 跟返回值同一个 now
  */
@@ -192,12 +194,20 @@ check("S7 超管「运单管理」改单：打开时记订单版本；每次保�
   const beginAt = src.indexOf("const beginCloseEditOrder = ");
   assert.ok(beginAt > 0 && /editSessionRef\.current \+= 1;\s*editCloseRequestedRef\.current = true;\s*return true;/.test(src.slice(beginAt, src.indexOf("};", beginAt))), "点 ✕ 那一刻要 +1、记下已经点了 ✕、照常放行");
   assert.ok(/editSessionRef\.current \+= 1;\s*editCloseRequestedRef\.current = false;/.test(openBody), "打开弹窗要清掉「已经点了 ✕」");
+  assert.ok(/setEditingOrderId\(order\.orderId \?\? order\.id\);\s*setEditingOrderMeta\(order\);/.test(openBody), "打开弹窗要记下这张（列表里找不到了还能接着显示）");
   const modal = code("apps/web/src/modules/layout/DetailModal.tsx");
   assert.match(modal, /if \(confirmClose && !confirmClose\(\)\) return;[\s\S]{0,200}?window\.setTimeout\(onClose, 200\)/, "DetailModal 得在放动画之前同步问 confirmClose，不然 ✕ 那 0.2 秒照样漏");
   // 离开「运单管理」（浏览器后退也算）：+1（第 5 轮）
   assert.match(src, /const hashId = window\.location\.hash\.replace\(\/\^#\/, ""\);\s*if \(hashId !== "orders" && \(isSectionId\(hashId\) \|\| !hashId\)\) \{\s*editSessionRef\.current \+= 1;\s*if \(editCloseRequestedRef\.current\) \{\s*editCloseRequestedRef\.current = false;\s*setEditingOrderId\(""\);\s*\}\s*\}/, "真离开运单管理才 +1（不认识的 # 不切页、不算离开）；点了 ✕ 还在放动画就离开的，替它关完（第 7 轮）");
-  // 离开运单管理弹窗跟着卸掉（第 6 轮）：藏起来不卸会一直占着 Tab / Esc 和滚动锁
-  assert.match(src, /\{editingOrderId === \(o\.orderId \?\? o\.id\) && activeSection === "orders" \? \(\s*<tr key=\{`edit-\$\{o\.id\}`\}/, "编辑弹窗只在运单管理这一页显示时挂");
+  // 离开运单管理弹窗跟着卸掉（第 6 轮）：藏起来不卸会一直占着 Tab / Esc 和滚动锁；
+  // 弹窗挂在列表外面（老板选 A）、key 跟着单子换（换一张就是新的一个弹窗，上一个的关闭定时器带不过来）
+  assert.match(src, /\{editingOrderRow && activeSection === "orders" \? \(\s*<DetailModal\s*key=\{editingOrderId\}\s*title="编辑运单"/, "编辑弹窗只在运单管理这一页显示时挂、挂在列表外面、key 跟着单子");
+  // 这一段用原文找（去注释那步会被 accept="image/*" 里的「/*」骗，把后面一大段当注释吞掉）
+  const raw = read("apps/web/src/app/admin/page.tsx");
+  const tableAt = raw.indexOf("{pagedOrders.map((o) => {");
+  const tableBlock = raw.slice(tableAt, raw.indexOf("</tbody>", tableAt));
+  assert.ok(tableAt > 0 && !tableBlock.includes('title="编辑运单"'), "编辑弹窗又挂回列表行里了：这张被挤到下一页 / 被筛掉，刷新一来弹窗就没了");
+  assert.equal((raw.match(/title="编辑运单"/g) ?? []).length, 1, "编辑弹窗只能有一个");
   // 存上之后刷新列表失败，不能落进「保存失败」（dsh 第 5 轮；S7b 真跑）
   assert.match(src, /await loadOrders\(\)\.catch\(\(\) => setToast\(`\$\{savedText\}（列表这次没刷新上，稍后会自动刷新）`\)\);/);
   assert.match(src, /const sessionAtSubmit = editSessionRef\.current;\s*setLoading\(true\);\s*setMessage\(""\);\s*try \{/, "保存前（try 外面）要记下是第几次打开");
@@ -639,6 +649,86 @@ async function main(): Promise<void> {
       server.closeAllConnections();
       server.close();
     }
+  });
+
+  await checkAsync("S13 真跑共用弹窗 DetailModal 登记那段（老板选 A）：所在那页被藏起来（display:none，大小变 0）就让出键盘和滚动锁，切回来再接上、焦点放回弹窗；藏着的时候卸掉不会提前放开别的弹窗的滚动锁；没有 ResizeObserver 照旧", async () => {
+    const effectText = sourceNode("apps/web/src/modules/layout/DetailModal.tsx", (n) => ts.isCallExpression(n) && n.expression.getText() === "useEffect" && n.arguments[0]?.getText().includes("const register = ") === true);
+    const effectFn = effectText.replace(/^useEffect\(/, "").replace(/,\s*\[\]\)$/, "");
+    class FakeEl { focus() { doc.activeElement = this; } }
+    const doc: Row = { body: { style: { overflow: "auto" } }, activeElement: null };
+    const observers: { cb: () => void; target: any }[] = [];
+    class FakeRO { cb: () => void; constructor(cb: () => void) { this.cb = cb; } observe(t: any) { observers.push({ cb: this.cb, target: t }); this.cb(); } disconnect() { const i = observers.findIndex((o) => o.cb === this.cb); if (i >= 0) observers.splice(i, 1); } }
+    const makePanel = () => {
+      const control = new FakeEl();
+      const panel: any = new FakeEl();
+      panel.visible = true;
+      panel.control = control;
+      panel.getClientRects = () => (panel.visible ? [{}] : []);
+      panel.contains = (el: unknown) => el === panel || el === control;
+      return panel;
+    };
+    const openPanels: any[] = [];
+    const mount = (panel: any, withRO = true) => evalTs("module.exports = " + effectFn + ";", {
+      panelRef: { current: panel }, openPanels, previousBodyOverflow: "", document: doc, HTMLElement: FakeEl,
+      window: { requestAnimationFrame: (f: () => void) => { f(); return 1; }, cancelAnimationFrame() {} },
+      ResizeObserver: withRO ? FakeRO : undefined,
+      focusableElements: (p: any) => [p.control],
+    })();
+    const fire = (panel: any) => observers.filter((o) => o.target === panel).forEach((o) => o.cb());
+    const a = makePanel();
+    const unmountA = mount(a);
+    assert.deepEqual(openPanels, [a]);
+    assert.equal(doc.body.style.overflow, "hidden", "开着要锁滚动");
+    // 切到别的分区：A 藏起来 → 让出
+    a.visible = false; fire(a);
+    assert.deepEqual(openPanels, [], "藏起来还占着键盘（最上层才接管 Tab / Esc）");
+    assert.equal(doc.body.style.overflow, "auto", "藏起来还锁着滚动：别的页滚不动");
+    fire(a);
+    assert.deepEqual(openPanels, [], "重复通知不能重复处理");
+    // 切回来：接上，焦点放回弹窗里
+    doc.activeElement = null;
+    a.visible = true; fire(a);
+    assert.deepEqual(openPanels, [a]);
+    assert.equal(doc.body.style.overflow, "hidden");
+    assert.equal(doc.activeElement, a.control, "切回来焦点要放回弹窗里");
+    // A 又藏起来、别的页开了 B；A 这时被卸掉，不能把 B 的滚动锁放开
+    a.visible = false; fire(a);
+    const b = makePanel();
+    const unmountB = mount(b);
+    assert.deepEqual(openPanels, [b]);
+    unmountA();
+    assert.deepEqual(openPanels, [b]);
+    assert.equal(doc.body.style.overflow, "hidden", "藏着的 A 卸掉时把 B 的滚动锁放开了");
+    unmountB();
+    assert.deepEqual(openPanels, []);
+    assert.equal(doc.body.style.overflow, "auto", "都关了要恢复滚动");
+    // 正常开关（一直看得见）照旧
+    const c = makePanel();
+    const unmountC = mount(c);
+    assert.equal(doc.body.style.overflow, "hidden");
+    unmountC();
+    assert.equal(doc.body.style.overflow, "auto");
+    // 老浏览器没有 ResizeObserver：照旧登记 / 卸掉，不报错
+    const d = makePanel();
+    const unmountD = mount(d, false);
+    assert.deepEqual(openPanels, [d]);
+    unmountD();
+    assert.deepEqual(openPanels, []);
+    assert.equal(doc.body.style.overflow, "auto");
+  });
+
+  await checkAsync("S14 真跑超管页「正在改的那张」（老板选 A）：编辑弹窗挂在列表外面，按 editingOrderId 从全部列表里找最新的那张；列表里没有了用打开时那份；对不上的不用", async () => {
+    const decl = sourceNode("apps/web/src/app/admin/page.tsx", (n) => ts.isVariableDeclaration(n) && n.name.getText() === "editingOrderRow");
+    const pick = evalTs(`module.exports = (ctx) => { const { editingOrderId, orderList, editingOrderMeta, useMemo } = ctx; const ${decl}; return editingOrderRow; };`);
+    const run = (editingOrderId: string, orderList: Row[], editingOrderMeta: Row | null) => pick({ editingOrderId, orderList, editingOrderMeta, useMemo: (fn: () => unknown) => fn() });
+    const meta = { id: "s1", orderId: "o1", trackingNo: "旧号" };
+    const fresh = { id: "s1", orderId: "o1", trackingNo: "新号" };
+    assert.equal(run("", [fresh], meta), null, "没在改就不挂");
+    assert.equal(run("o1", [{ id: "s9", orderId: "o9" }, fresh], meta), fresh, "列表里有就用列表里最新的（不管在第几页、搜没搜到）");
+    assert.equal(run("o1", [{ id: "s9", orderId: "o9" }], meta), meta, "列表里没有了（被删 / 超出拉取范围）用打开时那份，弹窗别消失");
+    assert.equal(run("o1", [], { id: "s2", orderId: "o2" }), null, "打开时那份是别的单，不能拿来用");
+    const noOrderId = { id: "s5", trackingNo: "无订单号" };
+    assert.equal(run("s5", [noOrderId], null), noOrderId, "没有 orderId 的老单按运单 id 认");
   });
 
   console.log(`\n${passed} 项通过，${failed} 项失败`);

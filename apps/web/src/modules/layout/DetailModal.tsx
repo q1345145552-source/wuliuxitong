@@ -55,20 +55,48 @@ export default function DetailModal(props: {
     const panel = panelRef.current;
     if (!panel) return;
     const returnTarget = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    if (openPanels.length === 0) previousBodyOverflow = document.body.style.overflow;
-    openPanels.push(panel);
-    document.body.style.overflow = "hidden";
+    // 登记成「开着的弹窗」：最上层那个接管键盘（Tab / Esc），有弹窗开着页面就不让滚
+    const register = () => {
+      if (openPanels.length === 0) previousBodyOverflow = document.body.style.overflow;
+      openPanels.push(panel);
+      document.body.style.overflow = "hidden";
+    };
+    const unregister = () => {
+      const index = openPanels.indexOf(panel);
+      if (index === -1) return;
+      openPanels.splice(index, 1);
+      if (openPanels.length === 0) document.body.style.overflow = previousBodyOverflow;
+    };
+    register();
     const focusFrame = window.requestAnimationFrame(() => {
       if (openPanels[openPanels.length - 1] === panel) {
         (focusableElements(panel)[0] ?? panel).focus({ preventScroll: true });
       }
     });
+    /* 弹窗所在那一页被藏起来时（页面按 # 切分区，切走的那页是 display:none；浏览器后退 / 手机返回也会切走），
+       弹窗没卸掉、只是看不见 —— 原来照样占着键盘和滚动锁：别的页滚不动、Tab 不好使（2026-10-18 老板选 A，
+       超管 / 员工「运单管理」、客户「运单查询」的详情都会碰上）。藏起来就让出来，切回来再接上、焦点放回弹窗里。
+       藏起来时弹窗的大小变成 0，ResizeObserver 会通知；没有 ResizeObserver 的老浏览器照旧（不让出） */
+    let hidden = false;
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(() => {
+      const nowHidden = panel.getClientRects().length === 0;
+      if (nowHidden === hidden) return;
+      hidden = nowHidden;
+      if (hidden) {
+        unregister();
+        return;
+      }
+      register();
+      if (openPanels[openPanels.length - 1] === panel && !panel.contains(document.activeElement)) {
+        (focusableElements(panel)[0] ?? panel).focus({ preventScroll: true });
+      }
+    });
+    observer?.observe(panel);
     return () => {
+      observer?.disconnect();
       window.cancelAnimationFrame(focusFrame);
       const wasTop = openPanels[openPanels.length - 1] === panel;
-      const index = openPanels.indexOf(panel);
-      if (index !== -1) openPanels.splice(index, 1);
-      if (openPanels.length === 0) document.body.style.overflow = previousBodyOverflow;
+      unregister();
       if (wasTop) {
         if (returnTarget?.isConnected && returnTarget.getClientRects().length > 0) {
           returnTarget.focus({ preventScroll: true });

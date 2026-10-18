@@ -319,6 +319,8 @@ export default function AdminHomePage() {
   const [orderRefreshing, setOrderRefreshing] = useState(false);
   const orderRefreshInFlight = useRef(false);
   const [editingOrderId, setEditingOrderId] = useState("");
+  /** 打开编辑弹窗时那张单（2026-10-18 老板选 A：弹窗挪到列表外面，列表里找不到这张了还能接着显示标题和产品图） */
+  const [editingOrderMeta, setEditingOrderMeta] = useState<AdminOrderItem | null>(null);
   const [expandedOrderId, setExpandedOrderId] = useState("");
   /** 手机排版（2026-10-05 老板拍板「1a」）：运单列表一单一块，详情 / 编辑弹窗照旧 */
   const isPhone = useIsPhone();
@@ -826,6 +828,7 @@ export default function AdminHomePage() {
       return;
     }
     setEditingOrderId(order.orderId ?? order.id);
+    setEditingOrderMeta(order);
     editSessionRef.current += 1;
     editCloseRequestedRef.current = false;
     setMessage(""); // 弹窗里会显示这条提示（见「保存」按钮上面），打开时先清掉上一回的
@@ -1446,6 +1449,12 @@ export default function AdminHomePage() {
   };
   const totalPages = Math.max(1, Math.ceil(filteredOrderList.length / pageSize));
   useEffect(() => { setCurrentPage((page) => Math.min(page, totalPages)); }, [totalPages]);
+  /** 正在改的那张：取全部列表（不管翻到第几页、搜没搜）里最新的；找不到了（别人删了 / 超出这次拉取的范围）用打开时那份 */
+  const editingOrderRow = useMemo(() => {
+    if (!editingOrderId) return null;
+    return orderList.find((x) => (x.orderId ?? x.id) === editingOrderId)
+      ?? (editingOrderMeta && (editingOrderMeta.orderId ?? editingOrderMeta.id) === editingOrderId ? editingOrderMeta : null);
+  }, [editingOrderId, orderList, editingOrderMeta]);
   const pagedOrders = useMemo(() => {
     const offset = (currentPage - 1) * pageSize;
     return filteredOrderList.slice(offset, offset + pageSize);
@@ -2367,101 +2376,6 @@ export default function AdminHomePage() {
                       </td>
                     </tr>
                   ) : null}
-                  {/* 只在「运单管理」这一页显示时挂弹窗（2026-10-18 Codex / dsh 第 6 轮）：原来按浏览器后退离开，弹窗只是跟着整页藏起来、没卸掉，
-                      还占着全局键盘（Tab / Esc）和页面滚动锁。填的内容存在页面上（orderEditForm / editProducts），回来重新挂上照样在 */}
-                  {editingOrderId === (o.orderId ?? o.id) && activeSection === "orders" ? (
-                    <tr key={`edit-${o.id}`} className="shipment-detail-row">
-                      {/* 编辑表单同样改成全屏弹窗；格子只作挂载点，不占高度 */}
-                      <td colSpan={ORDER_COL_WIDTHS.length} style={{ padding: 0, border: "none" }}>
-                        <DetailModal
-                          title="编辑运单"
-                          subtitle={o.trackingNo ?? o.orderNo ?? "—"}
-                          onClose={closeEditOrder}
-                          confirmClose={beginCloseEditOrder}
-                          closeOnEsc={false}
-                        >
-                        <div style={{ display: "grid", gap: 8 }}>
-                          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 8 }}>
-                            {/* 唛头用自己画的下拉（2026-10-08，替掉浏览器自带的 datalist）；只显示唛头。
-                                封禁的唛头不进下拉（2026-10-17，modules/shared/client-ban.ts）：换成它后端会拦，提示在这一排格子下面；
-                                原来就挂在封禁唛头名下的单照常改、不提示，那个唛头留在下拉里（不然一点开就是「匹配 0 个」） */}
-                            <MarkPicker value={orderEditForm.clientId} onChange={(v) => setOrderEditForm((f) => ({ ...f, clientId: v }))} options={withCurrentMark(activeMarkOptions(clientList), editSnapshot?.form.clientId)} placeholder="唛头" inputStyle={{ border: "1px solid var(--l-strong)", borderRadius: 8, padding: "8px 10px" }} />
-                            <input value={orderEditForm.trackingNo} onChange={(e) => setOrderEditForm((v) => ({ ...v, trackingNo: e.target.value.toUpperCase() }))} placeholder="运单号" style={{ border: "1px solid var(--l-strong)", borderRadius: 8, padding: "8px 10px" }} />
-                            <input value={orderEditForm.batchNo} onChange={(e) => setOrderEditForm((v) => ({ ...v, batchNo: e.target.value }))} placeholder="柜号" style={{ border: "1px solid var(--l-strong)", borderRadius: 8, padding: "8px 10px" }} />
-                            <select value={orderEditForm.warehouseId} onChange={(e) => setOrderEditForm((v) => ({ ...v, warehouseId: e.target.value }))} style={{ border: "1px solid var(--l-strong)", borderRadius: 8, padding: "8px 10px" }}><option value="wh_yiwu_01">义乌仓</option><option value="wh_guangzhou_01">广州仓</option><option value="wh_dongguan_01">东莞仓</option><option value="wh_shenzhen_01">深圳仓</option></select>
-                            <select value={orderEditForm.transportMode} onChange={(e) => setOrderEditForm((v) => ({ ...v, transportMode: e.target.value as "sea" | "land" }))} style={{ border: "1px solid var(--l-strong)", borderRadius: 8, padding: "8px 10px" }}><option value="sea">海运</option><option value="land">陆运</option></select>
-                            <input value={orderEditForm.domesticTrackingNo} onChange={(e) => setOrderEditForm((v) => ({ ...v, domesticTrackingNo: e.target.value }))} placeholder="货拉拉" style={{ border: "1px solid var(--l-strong)", borderRadius: 8, padding: "8px 10px" }} />
-                            <input value={orderEditForm.receiverAddressTh} onChange={(e) => setOrderEditForm((v) => ({ ...v, receiverAddressTh: e.target.value }))} placeholder="收货地址" style={{ border: "1px solid var(--l-strong)", borderRadius: 8, padding: "8px 10px" }} />
-                            <input value={orderEditForm.containerNo} onChange={(e) => setOrderEditForm((v) => ({ ...v, containerNo: e.target.value }))} placeholder="装柜号" style={{ border: "1px solid var(--l-strong)", borderRadius: 8, padding: "8px 10px" }} />
-                            <select value={orderEditForm.packageUnit} onChange={(e) => setOrderEditForm((v) => ({ ...v, packageUnit: e.target.value as "bag" | "box" }))} style={{ border: "1px solid var(--l-strong)", borderRadius: 8, padding: "8px 10px" }}><option value="box">箱</option><option value="bag">袋</option></select>
-                            <input value={orderEditForm.weightKg} onChange={(e) => setOrderEditForm((v) => ({ ...v, weightKg: e.target.value }))} placeholder="重量(kg)" style={{ border: "1px solid var(--l-strong)", borderRadius: 8, padding: "8px 10px" }} />
-                            <input value={orderEditForm.volumeM3} onChange={(e) => setOrderEditForm((v) => ({ ...v, volumeM3: e.target.value }))} placeholder="体积(m³)" style={{ border: "1px solid var(--l-strong)", borderRadius: 8, padding: "8px 10px" }} />
-                            <input type="date" value={orderEditForm.shipDate} onChange={(e) => setOrderEditForm((v) => ({ ...v, shipDate: e.target.value }))} style={{ border: "1px solid var(--l-strong)", borderRadius: 8, padding: "8px 10px" }} />
-                          </div>
-                          {/* 换成封禁的唛头时的提示（放在格子外面，不把那一排撑高） */}
-                          {(() => {
-                            const hint = bannedChangeHint(orderEditForm.clientId, editSnapshot?.form.clientId, bannedClientIds(clientList));
-                            return hint ? <div style={{ color: "var(--c-red-deep)", fontSize: 12 }}>{hint}</div> : null;
-                          })()}
-                          {/* 手填总重量/总体积和产品行自动计算冲突时，当场说清保存后哪边生效
-                              （2026-08-31，排查报告第22条：原来静默扔掉手填值，没人察觉） */}
-                          {editTotalsPreview.notes.length > 0 && (
-                            <div style={{ fontSize: 12, color: "var(--c-red-deep)", background: "#fef2f2", border: "1px solid #fca5a5", borderRadius: 8, padding: "6px 10px" }}>
-                              {editTotalsPreview.notes.map((n, i) => (<div key={i}>{n}</div>))}
-                            </div>
-                          )}
-                          <div style={{ border: "1px solid var(--l-soft)", borderRadius: 8, padding: 10, background: "var(--s-alt)", marginTop: 8 }}>
-                            <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 8, color: "var(--t-strong)" }}>产品行编辑</div>
-                            {editProducts.length === 0 && (
-                              <div style={{ fontSize: 12, color: "var(--t-faint)", padding: "4px 0" }}>无产品行，点击下方按钮添加</div>
-                            )}
-                            {editProducts.map((p, i) => (
-                              <div key={i} style={{ display: "grid", gridTemplateColumns: "2fr 0.4fr 0.3fr 0.3fr 0.3fr 0.4fr 0.45fr 0.8fr 1fr auto", gap: 4, marginBottom: 4, alignItems: "center" }}>
-                                <input value={p.itemName} onChange={(e) => { const n = [...editProducts]; n[i] = { ...n[i], itemName: e.target.value }; setEditProducts(n); }} placeholder="品名" style={{ border: "1px solid var(--l-strong)", borderRadius: 4, padding: "4px 6px", fontSize: 12 }} />
-                                <input type="number" value={p.packageCount} onChange={(e) => { const n = [...editProducts]; n[i] = { ...n[i], packageCount: e.target.value }; setEditProducts(n); }} placeholder="箱数" style={{ border: "1px solid var(--l-strong)", borderRadius: 4, padding: "4px 6px", fontSize: 12 }} />
-                                <input type="number" step="0.01" value={p.lengthCm} onChange={(e) => { const n = [...editProducts]; n[i] = { ...n[i], lengthCm: e.target.value }; setEditProducts(n); }} placeholder="长cm" style={{ border: "1px solid var(--l-strong)", borderRadius: 4, padding: "4px 6px", fontSize: 12 }} />
-                                <input type="number" step="0.01" value={p.widthCm} onChange={(e) => { const n = [...editProducts]; n[i] = { ...n[i], widthCm: e.target.value }; setEditProducts(n); }} placeholder="宽cm" style={{ border: "1px solid var(--l-strong)", borderRadius: 4, padding: "4px 6px", fontSize: 12 }} />
-                                <input type="number" step="0.01" value={p.heightCm} onChange={(e) => { const n = [...editProducts]; n[i] = { ...n[i], heightCm: e.target.value }; setEditProducts(n); }} placeholder="高cm" style={{ border: "1px solid var(--l-strong)", borderRadius: 4, padding: "4px 6px", fontSize: 12 }} />
-                                <input type="number" value={p.productQuantity} onChange={(e) => { const n = [...editProducts]; n[i] = { ...n[i], productQuantity: e.target.value }; setEditProducts(n); }} placeholder="单箱数量" style={{ border: "1px solid var(--l-strong)", borderRadius: 4, padding: "4px 6px", fontSize: 12 }} />
-                                <input type="number" step="0.01" value={p.weightKg} onChange={(e) => { const n = [...editProducts]; n[i] = { ...n[i], weightKg: e.target.value }; setEditProducts(n); }} placeholder="单箱重kg" style={{ border: "1px solid var(--l-strong)", borderRadius: 4, padding: "4px 6px", fontSize: 12 }} />
-                                <select value={(p.cargoType || "normal").toLowerCase()} onChange={(e) => { const n = [...editProducts]; n[i] = { ...n[i], cargoType: e.target.value }; setEditProducts(n); }} style={{ border: "1px solid var(--l-strong)", borderRadius: 4, padding: "4px 6px", fontSize: 12, background: "var(--white)" }}>
-                                  {CARGO_TYPES.map((c) => <option key={c} value={c}>{CARGO_TYPE_ZH[c]}</option>)}
-                                </select>
-                                <input value={p.domesticTrackingNo || ""} onChange={(e) => { const n = [...editProducts]; n[i] = { ...n[i], domesticTrackingNo: e.target.value }; setEditProducts(n); }} placeholder="货拉拉" style={{ border: "1px solid var(--l-strong)", borderRadius: 4, padding: "4px 6px", fontSize: 12 }} />
-                                <button type="button" onClick={() => setEditProducts((v) => v.filter((_, j) => j !== i))} style={{ border: "1px solid #fca5a5", borderRadius: 4, padding: "4px 6px", fontSize: 11, background: "var(--white)", color: "var(--c-red-2)", cursor: "pointer" }}>X</button>
-                              </div>
-                            ))}
-                            <button type="button" onClick={() => setEditProducts((v) => [...v, { itemName: "", packageCount: "", lengthCm: "", widthCm: "", heightCm: "", productQuantity: "", weightKg: "", cargoType: "normal", domesticTrackingNo: "" }])} style={{ border: "1px dashed var(--c-blue)", borderRadius: 4, padding: "4px 10px", fontSize: 12, background: "var(--white)", color: "var(--c-blue)", cursor: "pointer", marginTop: 4 }}>+ 添加产品</button>
-                          </div>
-                          {(o.productImages?.length ?? 0) > 0 && (
-                            <div style={{ marginTop: 8, padding: 10, background: "var(--s-cool)", borderRadius: 8, border: "1px solid var(--l-cool)" }}>
-                              <div style={{ fontWeight: 600, marginBottom: 6, fontSize: 13, color: "var(--t-strong)" }}>产品图</div>
-                              <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-                                {o.productImages!.map((img) => (
-                                  <img key={img.id} src={img.imageUrl ? `${apiBaseUrl()}${img.imageUrl}` : ""} alt={img.fileName} style={{ width: 88, height: 88, objectFit: "cover", borderRadius: 8, border: "1px solid var(--l-soft)" }} />
-                                ))}
-                              </div>
-                            </div>
-                          )}
-                          <div style={{ marginBottom: 12 }}>
-                            <div style={{ fontSize: 12, color: "var(--t-strong)", marginBottom: 4 }}>备注</div>
-                            <input value={orderEditForm.remark} onChange={(e) => setOrderEditForm((v) => ({ ...v, remark: e.target.value }))} placeholder="备注（可选）" style={{ border: "1px solid var(--l-strong)", borderRadius: 8, padding: "8px 10px", width: "100%", fontSize: 13 }} />
-                          </div>
-
-                          {/* 保存失败 / 没填全的提示原来只写在页面最底下，被这个全屏弹窗挡住，点保存像没反应。
-                              拆过柜的单填了比已装走还少的数会被后端拒绝（2026-09-28 审查修复 #1），那句话必须让人看见 */}
-                          {message ? (
-                            <p role="alert" style={{ margin: "0 0 8px", color: "var(--c-red-deep)" /* 这里只会是没填全 / 保存失败（成功走提示条），一律红字；原来只认「失败」，「请填写运单号。」成了绿字（dsh 第 9 轮） */ }}>{message}</p>
-                          ) : null}
-                          <div style={{ display: "flex", gap: 8 }}>
-                            <button type="button" onClick={() => void submitOrderEdit()} disabled={loading} style={{ border: "none", borderRadius: 6, padding: "9px 18px", color: "var(--white)", background: "var(--c-navy)", cursor: "pointer", fontWeight: 600 }}>保存</button>
-                            <button type="button" onClick={closeEditOrder} style={{ border: "1px solid #d8d6d1", borderRadius: 6, padding: "9px 18px", background: "var(--white)", cursor: "pointer", color: "#14171D" }}>取消</button>
-                          </div>
-                        </div>
-                        </DetailModal>
-                      </td>
-                    </tr>
-                  ) : null}
                   </Fragment>
                   );
                 })}
@@ -2471,6 +2385,100 @@ export default function AdminHomePage() {
           </>
         )}
         </div>
+        {/* 编辑弹窗挂在列表外面（2026-10-18 老板选 A）：原来挂在列表那一行里，正在改的这张被新单挤到下一页、被搜索筛掉，
+            10 秒自动刷新或实时推送一来弹窗就没了（填的内容还在，翻到那页才回来）。现在只看「正在改哪张」（editingOrderId），
+            列表怎么翻、怎么刷都不影响；标题和产品图取列表里这张最新的，列表里找不到了用打开时那份。
+            key 跟着单子换：换了一张就是新的一个弹窗（上一个的关闭动画、定时器不会带过来）。
+            只在「运单管理」这一页显示时挂（Codex / dsh 第 6 轮）：后退离开就卸掉；填的内容存在页面上，回来照样在 */}
+        {editingOrderRow && activeSection === "orders" ? (
+          <DetailModal
+            key={editingOrderId}
+            title="编辑运单"
+            subtitle={editingOrderRow.trackingNo ?? editingOrderRow.orderNo ?? "—"}
+            onClose={closeEditOrder}
+            confirmClose={beginCloseEditOrder}
+            closeOnEsc={false}
+          >
+          <div style={{ display: "grid", gap: 8 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 8 }}>
+              {/* 唛头用自己画的下拉（2026-10-08，替掉浏览器自带的 datalist）；只显示唛头。
+                  封禁的唛头不进下拉（2026-10-17，modules/shared/client-ban.ts）：换成它后端会拦，提示在这一排格子下面；
+                  原来就挂在封禁唛头名下的单照常改、不提示，那个唛头留在下拉里（不然一点开就是「匹配 0 个」） */}
+              <MarkPicker value={orderEditForm.clientId} onChange={(v) => setOrderEditForm((f) => ({ ...f, clientId: v }))} options={withCurrentMark(activeMarkOptions(clientList), editSnapshot?.form.clientId)} placeholder="唛头" inputStyle={{ border: "1px solid var(--l-strong)", borderRadius: 8, padding: "8px 10px" }} />
+              <input value={orderEditForm.trackingNo} onChange={(e) => setOrderEditForm((v) => ({ ...v, trackingNo: e.target.value.toUpperCase() }))} placeholder="运单号" style={{ border: "1px solid var(--l-strong)", borderRadius: 8, padding: "8px 10px" }} />
+              <input value={orderEditForm.batchNo} onChange={(e) => setOrderEditForm((v) => ({ ...v, batchNo: e.target.value }))} placeholder="柜号" style={{ border: "1px solid var(--l-strong)", borderRadius: 8, padding: "8px 10px" }} />
+              <select value={orderEditForm.warehouseId} onChange={(e) => setOrderEditForm((v) => ({ ...v, warehouseId: e.target.value }))} style={{ border: "1px solid var(--l-strong)", borderRadius: 8, padding: "8px 10px" }}><option value="wh_yiwu_01">义乌仓</option><option value="wh_guangzhou_01">广州仓</option><option value="wh_dongguan_01">东莞仓</option><option value="wh_shenzhen_01">深圳仓</option></select>
+              <select value={orderEditForm.transportMode} onChange={(e) => setOrderEditForm((v) => ({ ...v, transportMode: e.target.value as "sea" | "land" }))} style={{ border: "1px solid var(--l-strong)", borderRadius: 8, padding: "8px 10px" }}><option value="sea">海运</option><option value="land">陆运</option></select>
+              <input value={orderEditForm.domesticTrackingNo} onChange={(e) => setOrderEditForm((v) => ({ ...v, domesticTrackingNo: e.target.value }))} placeholder="货拉拉" style={{ border: "1px solid var(--l-strong)", borderRadius: 8, padding: "8px 10px" }} />
+              <input value={orderEditForm.receiverAddressTh} onChange={(e) => setOrderEditForm((v) => ({ ...v, receiverAddressTh: e.target.value }))} placeholder="收货地址" style={{ border: "1px solid var(--l-strong)", borderRadius: 8, padding: "8px 10px" }} />
+              <input value={orderEditForm.containerNo} onChange={(e) => setOrderEditForm((v) => ({ ...v, containerNo: e.target.value }))} placeholder="装柜号" style={{ border: "1px solid var(--l-strong)", borderRadius: 8, padding: "8px 10px" }} />
+              <select value={orderEditForm.packageUnit} onChange={(e) => setOrderEditForm((v) => ({ ...v, packageUnit: e.target.value as "bag" | "box" }))} style={{ border: "1px solid var(--l-strong)", borderRadius: 8, padding: "8px 10px" }}><option value="box">箱</option><option value="bag">袋</option></select>
+              <input value={orderEditForm.weightKg} onChange={(e) => setOrderEditForm((v) => ({ ...v, weightKg: e.target.value }))} placeholder="重量(kg)" style={{ border: "1px solid var(--l-strong)", borderRadius: 8, padding: "8px 10px" }} />
+              <input value={orderEditForm.volumeM3} onChange={(e) => setOrderEditForm((v) => ({ ...v, volumeM3: e.target.value }))} placeholder="体积(m³)" style={{ border: "1px solid var(--l-strong)", borderRadius: 8, padding: "8px 10px" }} />
+              <input type="date" value={orderEditForm.shipDate} onChange={(e) => setOrderEditForm((v) => ({ ...v, shipDate: e.target.value }))} style={{ border: "1px solid var(--l-strong)", borderRadius: 8, padding: "8px 10px" }} />
+            </div>
+            {/* 换成封禁的唛头时的提示（放在格子外面，不把那一排撑高） */}
+            {(() => {
+              const hint = bannedChangeHint(orderEditForm.clientId, editSnapshot?.form.clientId, bannedClientIds(clientList));
+              return hint ? <div style={{ color: "var(--c-red-deep)", fontSize: 12 }}>{hint}</div> : null;
+            })()}
+            {/* 手填总重量/总体积和产品行自动计算冲突时，当场说清保存后哪边生效
+                （2026-08-31，排查报告第22条：原来静默扔掉手填值，没人察觉） */}
+            {editTotalsPreview.notes.length > 0 && (
+              <div style={{ fontSize: 12, color: "var(--c-red-deep)", background: "#fef2f2", border: "1px solid #fca5a5", borderRadius: 8, padding: "6px 10px" }}>
+                {editTotalsPreview.notes.map((n, i) => (<div key={i}>{n}</div>))}
+              </div>
+            )}
+            <div style={{ border: "1px solid var(--l-soft)", borderRadius: 8, padding: 10, background: "var(--s-alt)", marginTop: 8 }}>
+              <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 8, color: "var(--t-strong)" }}>产品行编辑</div>
+              {editProducts.length === 0 && (
+                <div style={{ fontSize: 12, color: "var(--t-faint)", padding: "4px 0" }}>无产品行，点击下方按钮添加</div>
+              )}
+              {editProducts.map((p, i) => (
+                <div key={i} style={{ display: "grid", gridTemplateColumns: "2fr 0.4fr 0.3fr 0.3fr 0.3fr 0.4fr 0.45fr 0.8fr 1fr auto", gap: 4, marginBottom: 4, alignItems: "center" }}>
+                  <input value={p.itemName} onChange={(e) => { const n = [...editProducts]; n[i] = { ...n[i], itemName: e.target.value }; setEditProducts(n); }} placeholder="品名" style={{ border: "1px solid var(--l-strong)", borderRadius: 4, padding: "4px 6px", fontSize: 12 }} />
+                  <input type="number" value={p.packageCount} onChange={(e) => { const n = [...editProducts]; n[i] = { ...n[i], packageCount: e.target.value }; setEditProducts(n); }} placeholder="箱数" style={{ border: "1px solid var(--l-strong)", borderRadius: 4, padding: "4px 6px", fontSize: 12 }} />
+                  <input type="number" step="0.01" value={p.lengthCm} onChange={(e) => { const n = [...editProducts]; n[i] = { ...n[i], lengthCm: e.target.value }; setEditProducts(n); }} placeholder="长cm" style={{ border: "1px solid var(--l-strong)", borderRadius: 4, padding: "4px 6px", fontSize: 12 }} />
+                  <input type="number" step="0.01" value={p.widthCm} onChange={(e) => { const n = [...editProducts]; n[i] = { ...n[i], widthCm: e.target.value }; setEditProducts(n); }} placeholder="宽cm" style={{ border: "1px solid var(--l-strong)", borderRadius: 4, padding: "4px 6px", fontSize: 12 }} />
+                  <input type="number" step="0.01" value={p.heightCm} onChange={(e) => { const n = [...editProducts]; n[i] = { ...n[i], heightCm: e.target.value }; setEditProducts(n); }} placeholder="高cm" style={{ border: "1px solid var(--l-strong)", borderRadius: 4, padding: "4px 6px", fontSize: 12 }} />
+                  <input type="number" value={p.productQuantity} onChange={(e) => { const n = [...editProducts]; n[i] = { ...n[i], productQuantity: e.target.value }; setEditProducts(n); }} placeholder="单箱数量" style={{ border: "1px solid var(--l-strong)", borderRadius: 4, padding: "4px 6px", fontSize: 12 }} />
+                  <input type="number" step="0.01" value={p.weightKg} onChange={(e) => { const n = [...editProducts]; n[i] = { ...n[i], weightKg: e.target.value }; setEditProducts(n); }} placeholder="单箱重kg" style={{ border: "1px solid var(--l-strong)", borderRadius: 4, padding: "4px 6px", fontSize: 12 }} />
+                  <select value={(p.cargoType || "normal").toLowerCase()} onChange={(e) => { const n = [...editProducts]; n[i] = { ...n[i], cargoType: e.target.value }; setEditProducts(n); }} style={{ border: "1px solid var(--l-strong)", borderRadius: 4, padding: "4px 6px", fontSize: 12, background: "var(--white)" }}>
+                    {CARGO_TYPES.map((c) => <option key={c} value={c}>{CARGO_TYPE_ZH[c]}</option>)}
+                  </select>
+                  <input value={p.domesticTrackingNo || ""} onChange={(e) => { const n = [...editProducts]; n[i] = { ...n[i], domesticTrackingNo: e.target.value }; setEditProducts(n); }} placeholder="货拉拉" style={{ border: "1px solid var(--l-strong)", borderRadius: 4, padding: "4px 6px", fontSize: 12 }} />
+                  <button type="button" onClick={() => setEditProducts((v) => v.filter((_, j) => j !== i))} style={{ border: "1px solid #fca5a5", borderRadius: 4, padding: "4px 6px", fontSize: 11, background: "var(--white)", color: "var(--c-red-2)", cursor: "pointer" }}>X</button>
+                </div>
+              ))}
+              <button type="button" onClick={() => setEditProducts((v) => [...v, { itemName: "", packageCount: "", lengthCm: "", widthCm: "", heightCm: "", productQuantity: "", weightKg: "", cargoType: "normal", domesticTrackingNo: "" }])} style={{ border: "1px dashed var(--c-blue)", borderRadius: 4, padding: "4px 10px", fontSize: 12, background: "var(--white)", color: "var(--c-blue)", cursor: "pointer", marginTop: 4 }}>+ 添加产品</button>
+            </div>
+            {(editingOrderRow.productImages?.length ?? 0) > 0 && (
+              <div style={{ marginTop: 8, padding: 10, background: "var(--s-cool)", borderRadius: 8, border: "1px solid var(--l-cool)" }}>
+                <div style={{ fontWeight: 600, marginBottom: 6, fontSize: 13, color: "var(--t-strong)" }}>产品图</div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                  {editingOrderRow.productImages!.map((img) => (
+                    <img key={img.id} src={img.imageUrl ? `${apiBaseUrl()}${img.imageUrl}` : ""} alt={img.fileName} style={{ width: 88, height: 88, objectFit: "cover", borderRadius: 8, border: "1px solid var(--l-soft)" }} />
+                  ))}
+                </div>
+              </div>
+            )}
+            <div style={{ marginBottom: 12 }}>
+              <div style={{ fontSize: 12, color: "var(--t-strong)", marginBottom: 4 }}>备注</div>
+              <input value={orderEditForm.remark} onChange={(e) => setOrderEditForm((v) => ({ ...v, remark: e.target.value }))} placeholder="备注（可选）" style={{ border: "1px solid var(--l-strong)", borderRadius: 8, padding: "8px 10px", width: "100%", fontSize: 13 }} />
+            </div>
+
+            {/* 保存失败 / 没填全的提示原来只写在页面最底下，被这个全屏弹窗挡住，点保存像没反应。
+                拆过柜的单填了比已装走还少的数会被后端拒绝（2026-09-28 审查修复 #1），那句话必须让人看见 */}
+            {message ? (
+              <p role="alert" style={{ margin: "0 0 8px", color: "var(--c-red-deep)" /* 这里只会是没填全 / 保存失败（成功走提示条），一律红字；原来只认「失败」，「请填写运单号。」成了绿字（dsh 第 9 轮） */ }}>{message}</p>
+            ) : null}
+            <div style={{ display: "flex", gap: 8 }}>
+              <button type="button" onClick={() => void submitOrderEdit()} disabled={loading} style={{ border: "none", borderRadius: 6, padding: "9px 18px", color: "var(--white)", background: "var(--c-navy)", cursor: "pointer", fontWeight: 600 }}>保存</button>
+              <button type="button" onClick={closeEditOrder} style={{ border: "1px solid #d8d6d1", borderRadius: 6, padding: "9px 18px", background: "var(--white)", cursor: "pointer", color: "#14171D" }}>取消</button>
+            </div>
+          </div>
+          </DetailModal>
+        ) : null}
       </section>
 
       {/* 入库与标签工具 */}
