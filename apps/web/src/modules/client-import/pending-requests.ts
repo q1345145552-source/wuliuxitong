@@ -17,7 +17,8 @@
  * 「已建好」的那几行标出来、提交前再问一次（审查第 2 轮 dsh）。
  * 换了文件（把失败那行改好、另存了）再传：内容变了、指纹变了，对不上号 —— 那就按每一行的内容比（同样内容有几行就一对一配几行）：
  *   - 跟这个客户别的文件里「没确认」的某一行一模一样：用回那一行的编号（审查第 2 轮两家：原来换了文件就换新编号，上次其实建好了的会再建一张）；
- *     这一行有了结果（建好 / 明确失败）就把旧文件那边同一个编号的记号也清掉；
+ *     一个编号只给一行（审查第 3 轮两家：同一个编号挂在两个文件里、或者本文件按行号已经用了，不能再配给内容一样的另一行 —— 两行同一个编号只建得成一张）；
+ *     这一行有了结果：建好了 → 旧文件那边同一个编号转成「已建好」（以后再传旧文件会标出来，审查第 3 轮 dsh）；明确失败 → 旧文件那边一起删；
  *   - 跟「已建好」的某一行一模一样：标出来、提交前再问一次（不自动跳过：真要再下一单的也有）。
  * 第一版只记「没确认」的：同一批里已经确认建好的行，刷新后再传会再建一张（10-18 浏览器实测发现）；
  * 审查第 1 轮：有明确失败的那一批收尾时整条删了，改了文件再传也认不出（dsh）；不同客户在同一个标签页里共用记号（dsh）。
@@ -79,7 +80,8 @@ export function readPendingIds(storage: PendingStorage | null, fileKey: string, 
   return { ...(load(storage, now)[fileKey]?.ids ?? {}) };
 }
 
-/** 这个文件这一批里已经确认建好的行（表格第几行）：再传同一个文件时这几行不再交 */
+/** 这个文件这一批里已经确认建好的行（表格第几行）：再传同一个文件时这几行不再交。
+ *  同一行后来又交过一次（又记成没确认）就不在这里了 —— markPending 记的时候去掉它旧的「已建好」（审查第 3 轮 dsh） */
 export function readDoneRows(storage: PendingStorage | null, fileKey: string, now = Date.now()): string[] {
   if (!fileKey) return [];
   return (load(storage, now)[fileKey]?.done ?? []).map((d) => d.row);
@@ -102,15 +104,19 @@ export function readDoneSignatures(storage: PendingStorage | null, ownerPrefix: 
   return out;
 }
 
-/** 同一个客户别的文件里「没确认」的行：内容 + 原来的请求编号（换了文件再传时，内容一模一样的用回原编号） */
+/** 同一个客户别的文件里「没确认」的行：内容 + 原来的请求编号（换了文件再传时，内容一模一样的用回原编号）。
+ *  同一个编号挂在好几个文件里（A 换到 B 又没确认）只算一次（审查第 3 轮 Codex） */
 export function readOtherPending(storage: PendingStorage | null, ownerPrefix: string, exceptFileKey: string, now = Date.now()): Array<{ sig: string; requestId: string }> {
   if (!ownerPrefix) return [];
   const out: Array<{ sig: string; requestId: string }> = [];
+  const seen = new Set<string>();
   for (const [key, entry] of Object.entries(load(storage, now))) {
     if (key === exceptFileKey || !key.startsWith(ownerPrefix)) continue;
     for (const [row, requestId] of Object.entries(entry.ids)) {
       const sig = entry.sigs[row];
-      if (sig && requestId) out.push({ sig, requestId });
+      if (!sig || !requestId || seen.has(requestId)) continue;
+      seen.add(requestId);
+      out.push({ sig, requestId });
     }
   }
   return out;
@@ -122,14 +128,16 @@ function ownerOf(fileKey: string): string {
   return at >= 0 ? fileKey.slice(0, at + 1) : "";
 }
 
-/** 这个编号有了结果：同一个客户别的文件里还挂着同一个编号的「没确认」记号一起清掉（换了文件用回原编号的那种） */
-function settleElsewhere(store: PendingStore, fileKey: string, requestId: string | undefined): void {
+/** 这个编号有了结果：同一个客户别的文件里还挂着同一个编号的「没确认」记号跟着结（换了文件用回原编号的那种）——
+ *  建好了 → 那边转成「已建好」（以后再传那个旧文件，这一行会标出来，不会静默再下一遍：审查第 3 轮 dsh）；明确失败 → 那边一起删 */
+function settleElsewhere(store: PendingStore, fileKey: string, requestId: string | undefined, created: boolean): void {
   const owner = ownerOf(fileKey);
   if (!owner || !requestId) return;
   for (const [key, entry] of Object.entries(store)) {
     if (key === fileKey || !key.startsWith(owner)) continue;
     for (const [row, id] of Object.entries(entry.ids)) {
       if (id !== requestId) continue;
+      if (created && !entry.done.some((d) => d.row === row)) entry.done.push({ row, sig: entry.sigs[row] ?? "" });
       delete entry.ids[row];
       delete entry.sigs[row];
     }
@@ -144,6 +152,8 @@ export function markPending(storage: PendingStorage | null, fileKey: string, row
   const entry = store[fileKey] ?? { at: now, ids: {}, sigs: {}, done: [] };
   entry.ids[String(rowNo)] = requestId;
   entry.sigs[String(rowNo)] = sig;
+  // 这一行又交了一次：以前的「已建好」不算了，最近这次说了算（审查第 3 轮 dsh：不然再传会被当成已建好跳过、再也交不上）
+  entry.done = entry.done.filter((d) => d.row !== String(rowNo));
   entry.at = now;
   store[fileKey] = entry;
   save(storage, store);
@@ -155,7 +165,7 @@ export function clearPending(storage: PendingStorage | null, fileKey: string, ro
   const store = load(storage, now);
   const entry = store[fileKey];
   if (!entry) return;
-  settleElsewhere(store, fileKey, entry.ids[String(rowNo)]);
+  settleElsewhere(store, fileKey, entry.ids[String(rowNo)], false);
   delete entry.ids[String(rowNo)];
   delete entry.sigs[String(rowNo)];
   if (Object.keys(entry.ids).length === 0 && entry.done.length === 0) delete store[fileKey];
@@ -167,7 +177,7 @@ export function markDone(storage: PendingStorage | null, fileKey: string, rowNo:
   if (!fileKey) return;
   const store = load(storage, now);
   const entry = store[fileKey] ?? { at: now, ids: {}, sigs: {}, done: [] };
-  settleElsewhere(store, fileKey, entry.ids[String(rowNo)]);
+  settleElsewhere(store, fileKey, entry.ids[String(rowNo)], true);
   delete entry.ids[String(rowNo)];
   delete entry.sigs[String(rowNo)];
   if (!entry.done.some((d) => d.row === String(rowNo))) entry.done.push({ row: String(rowNo), sig });

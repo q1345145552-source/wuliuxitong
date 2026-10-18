@@ -125,19 +125,24 @@ export default function ClientImportsPage() {
       const skippedRowNos = allRows.filter((row) => doneRows.has(String(row.rowNo))).map((row) => row.rowNo);
       /* 换了文件（改过、另存过）对不上行号的：按内容认（同样内容有几行就一对一配几行）。跟这个客户别的文件里没确认的一模一样 → 用回那个编号
          （审查第 2 轮两家：原来换了文件就换新编号，上次其实建好了的会再建一张） */
+      /* 一个编号只给一行（审查第 3 轮两家）：先按行号把本文件没确认的编号占上，再从别的文件按内容配，用过的不再给 ——
+         两行带同一个编号，后端只建一张、第二行回「已建好」，静默少一单 */
+      const keptRows = allRows.filter((row) => !doneRows.has(String(row.rowNo)));
+      const usedIds = new Set(keptRows.map((row) => pendingIds[String(row.rowNo)]).filter((id): id is string => Boolean(id)));
       const otherPending = readOtherPending(store, ownerPrefix, fileKey);
       const takeOtherPending = (sig: string): string | undefined => {
-        const at = otherPending.findIndex((p) => p.sig === sig);
-        return at < 0 ? undefined : otherPending.splice(at, 1)[0].requestId;
+        const at = otherPending.findIndex((p) => p.sig === sig && !usedIds.has(p.requestId));
+        if (at < 0) return undefined;
+        const id = otherPending.splice(at, 1)[0].requestId;
+        usedIds.add(id);
+        return id;
       };
       const resumedRowNos: number[] = [];
-      const normalized = allRows
-        .filter((row) => !doneRows.has(String(row.rowNo)))
-        .map((row) => {
-          const reused = pendingIds[String(row.rowNo)] ?? takeOtherPending(rowSignature(row));
-          if (reused) resumedRowNos.push(row.rowNo);
-          return { ...row, requestId: reused ?? newRequestId() };
-        });
+      const normalized = keptRows.map((row) => {
+        const reused = pendingIds[String(row.rowNo)] ?? takeOtherPending(rowSignature(row));
+        if (reused) resumedRowNos.push(row.rowNo);
+        return { ...row, requestId: reused ?? newRequestId() };
+      });
       /* 跟这个客户已经建好的某一行一模一样的（别的文件没交完那几批的；同一个文件没有没确认的了也算）标出来，提交前再问一次 ——
          不自动跳过（真要再下一单的也有）。同样内容有几行建好了就最多标几行 */
       const builtPool = readDoneSignatures(store, ownerPrefix, resuming ? fileKey : "");

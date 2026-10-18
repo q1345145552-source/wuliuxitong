@@ -155,7 +155,7 @@ check("S6 客户「批量下单」：失败的行记下来，跑完预览只留�
   // 每行一个请求编号（第 2 轮）：上传解析时给、提交时带上
   // 同一个文件上次没确认的行用回原来的编号，其余行新编号（2026-10-18，pending-requests.ts；S16 真跑）
   // 2026-10-18 浏览器实测后补 + 审查第 2 轮：恢复没做完的同一个文件，建好的行不再交；没确认的按行号、换了文件按内容用回原编号（真跑在 test-small-fixes-1018-source F11）
-  assert.match(src, /\.filter\(\(row\) => !doneRows\.has\(String\(row\.rowNo\)\)\)\s*\.map\(\(row\) => \{\s*const reused = pendingIds\[String\(row\.rowNo\)\] \?\? takeOtherPending\(rowSignature\(row\)\);[\s\S]{0,120}?return \{ \.\.\.row, requestId: reused \?\? newRequestId\(\) \};/, "上传解析时每行要给一个请求编号（上次没确认的用回原来的）");
+  assert.match(src, /const keptRows = allRows\.filter\(\(row\) => !doneRows\.has\(String\(row\.rowNo\)\)\);[\s\S]{0,1200}?const normalized = keptRows\.map\(\(row\) => \{\s*const reused = pendingIds\[String\(row\.rowNo\)\] \?\? takeOtherPending\(rowSignature\(row\)\);[\s\S]{0,120}?return \{ \.\.\.row, requestId: reused \?\? newRequestId\(\) \};/, "上传解析时每行要给一个请求编号（上次没确认的用回原来的）");
   // 审查第 1 轮起文件键 =「唛头|内容指纹」（别的客户的记号用不上）
   assert.match(src, /const ownerPrefix = `\$\{getOptionalSession\(\)\?\.userId \?\? ""\}\|`;\s*const fileKey = `\$\{ownerPrefix\}\$\{await fileFingerprint\(buffer\)\}`;\s*const store = pendingStorage\(\);\s*const pendingIds = readPendingIds\(store, fileKey\);/, "按客户 + 文件内容取上次没确认的编号");
   assert.match(src, /const payload: ClientPrealertPayload = \{\s*requestId: row\.requestId,/, "提交时要带这一行的请求编号");
@@ -840,10 +840,19 @@ async function main(): Promise<void> {
     assert.ok(m.hasPendingRows(st, "A|old", t0));
     m.markPending(st, "A|new", 7, "idOld3", "sigP", t0);
     m.markDone(st, "A|new", 7, "sigP", t0);
-    assert.deepEqual(m.readPendingIds(st, "A|old", t0), { "4": "idOld4" }, "新文件那行建好了：旧文件那边同一个编号的没确认记号要清掉");
+    assert.deepEqual(m.readPendingIds(st, "A|old", t0), { "4": "idOld4" }, "新文件那行建好了：旧文件那边同一个编号的没确认记号要结掉");
+    assert.deepEqual(m.readDoneRows(st, "A|old", t0), ["3"], "旧文件那边转成「已建好」（以后再传旧文件会标出来，审查第 3 轮）");
     m.markPending(st, "A|new", 8, "idOld4", "sigP", t0);
     m.clearPending(st, "A|new", 8, t0);
     assert.equal(m.hasPendingRows(st, "A|old", t0), false, "明确失败了：旧文件那边同一个编号也清掉");
+    assert.deepEqual(m.readDoneRows(st, "A|old", t0), ["3"], "明确失败的不算建好");
+    // 同一个编号挂在两个文件里（A 换到 B 又没确认）：别的文件里只算一次（审查第 3 轮 Codex）
+    m.markPending(st, "Q|a", 3, "dup", "sigQ", t0); m.markPending(st, "Q|b", 2, "dup", "sigQ", t0);
+    assert.deepEqual(m.readOtherPending(st, "Q|", "Q|c", t0).map((p) => p.requestId), ["dup"]);
+    // 一行建好了、后来又交一次结果不确定：最近那次说了算 —— 不再算已建好（审查第 3 轮 dsh）
+    m.markPending(st, "R|f", 2, "first", "sigR", t0); m.markDone(st, "R|f", 2, "sigR", t0);
+    m.markPending(st, "R|f", 2, "second", "sigR", t0);
+    assert.deepEqual([m.readDoneRows(st, "R|f", t0), m.readPendingIds(st, "R|f", t0)], [[], { "2": "second" }]);
     assert.deepEqual(m.readPendingIds(st, "B|old", t0), { "3": "idB" }, "别的客户的不动");
     // 行内容：只看交给后端的那几格，行号 / 编号不算；有一格不一样就不一样
     const sigOf = (x: Record<string, any>) => m.rowSignature(x);

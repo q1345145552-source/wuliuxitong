@@ -247,6 +247,30 @@ for (const g of GATES) {
 
 /* F2b 反过来查（审查第 1 轮：只查「begin 后面第一个 setter」，同一份数据别处还有写入口就漏了 —— 客户首页 dashboardOrders 就是这么漏的）：
    文件里每一处调这个 setter 的地方，所在函数里都要先领号、再过门闩；只放过清空（[] / null / "" / undefined）和基于原值改（传函数）的 */
+/** 门闩的结果真管住了这一句（审查第 3 轮 Codex：只调用不看返回值、判断写反了，上面那道「出现过」照样过）：
+ *  要么这一句在「if (门闩通过 …)」的 then 里（条件里那次调用前面没有 !），要么前面有一句「if (!门闩 …) return」 */
+function guardedBy(call: ts.Node, gate: string, ticketVar: string, sf: ts.SourceFile): boolean {
+  const positive = new RegExp(`(^|[^!\\s]\\s*|&&\\s*|\\(\\s*)\\b${gate}\\.(accept|isCurrent)\\(\\s*${ticketVar}\\b`);
+  const negativeReturn = new RegExp(`^!\\s*${gate}\\.(accept|isCurrent)\\(\\s*${ticketVar}\\b[^)]*\\)$`);
+  for (let cur: ts.Node = call; cur.parent && !ts.isFunctionLike(cur); cur = cur.parent) {
+    const parent = cur.parent;
+    if (ts.isIfStatement(parent) && parent.thenStatement === cur) {
+      const cond = parent.expression.getText(sf);
+      if (positive.test(cond) && !new RegExp(`!\\s*${gate}\\.(accept|isCurrent)\\(\\s*${ticketVar}\\b`).test(cond)) return true;
+    }
+    if (ts.isBlock(parent) || ts.isSourceFile(parent)) {
+      const idx = parent.statements.indexOf(cur as ts.Statement);
+      for (const st of parent.statements.slice(0, Math.max(0, idx))) {
+        if (!ts.isIfStatement(st) || !negativeReturn.test(st.expression.getText(sf).trim())) continue;
+        const then = st.thenStatement;
+        const exits = ts.isReturnStatement(then) || (ts.isBlock(then) && then.statements.some(ts.isReturnStatement));
+        if (exits) return true;
+      }
+    }
+  }
+  return false;
+}
+
 function setterCallsWithoutGate(g: GateSite): string[] {
   const sf = ts.createSourceFile(g.file, read(g.file), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
   const bad: string[] = [];
@@ -270,7 +294,8 @@ function setterCallsWithoutGate(g: GateSite): string[] {
           if (begins.length === 0) continue;
           const last = begins[begins.length - 1];
           const ticketVar = last[1];
-          ok = new RegExp(`\\b${g.gate}\\.(accept|isCurrent)\\(\\s*${ticketVar}\\b`).test(text.slice(last.index!, callAt));
+          ok = new RegExp(`\\b${g.gate}\\.(accept|isCurrent)\\(\\s*${ticketVar}\\b`).test(text.slice(last.index!, callAt))
+            && guardedBy(n, g.gate, ticketVar, sf);
           if (!ok) break;
         }
         if (!ok) bad.push(`第 ${sf.getLineAndCharacterOfPosition(n.getStart(sf)).line + 1} 行 ${n.getText(sf).slice(0, 80)}`);
@@ -494,6 +519,36 @@ async function main(): Promise<void> {
     const twinIds = Array.from(twins.rows ?? [], (r: any) => r.requestId);
     assert.deepEqual(twinIds.slice(0, 2).sort(), ["twinA", "twinB"], `两行没确认的要各配回各自的编号：${twinIds.join(",")}`);
     assert.ok(!["twinA", "twinB"].includes(twinIds[2]), "第三行（上次没有）要新编号");
+    // ⑨ 同一个编号挂在两个文件里（A 没确认 → 换到 B 用回又没确认），再换文件 C 有两行一样的：只有一行拿到那个编号（审查第 3 轮 Codex）
+    pending.markPending(store, "ZZC1|sha256:A", 3, "dupP", sigOf("货8", 1));
+    pending.markPending(store, "ZZC1|sha256:B", 2, "dupP", sigOf("货8", 1));
+    content = "C 表"; sheet = [{ "仓库 *": "义乌仓", "品名 *": "货8", "箱数 *": 1, "运输方式 *（海运/陆运）": "海运" }, { "仓库 *": "义乌仓", "品名 *": "货8", "箱数 *": 1, "运输方式 *（海运/陆运）": "海运" }];
+    const dupC = await upload();
+    assert.deepEqual(Array.from(dupC.rows ?? [], (r: any) => r.requestId).filter((id: string) => id === "dupP").length, 1, "同一个编号只能给一行");
+    // ⑩ 本文件按行号已经用了这个编号，别的文件也挂着它：内容一样的另一行（哪怕排在前面）不能再拿它（审查第 3 轮 dsh）
+    content = "D 表"; sheet = [{ "仓库 *": "义乌仓", "品名 *": "货7", "箱数 *": 1, "运输方式 *（海运/陆运）": "海运" }, { "仓库 *": "义乌仓", "品名 *": "货7", "箱数 *": 1, "运输方式 *（海运/陆运）": "海运" }];
+    const dKey = (await upload()).fileKey!;
+    pending.markPending(store, dKey, 3, "ownP", sigOf("货7", 1));
+    pending.markPending(store, "ZZC1|sha256:E", 4, "ownP", sigOf("货7", 1));
+    const dAgain = await upload();
+    assert.deepEqual(Array.from(dAgain.rows ?? [], (r: any) => [r.rowNo, r.requestId === "ownP"]), [[2, false], [3, true]], "按行号的先占上，第 2 行不能再拿同一个编号");
+    // ⑪ 一行建好了、后来又交一次结果不确定，再刷新重传：这一行不能当已建好跳过，用回最近那次的编号（审查第 3 轮 dsh）
+    content = "F 表"; sheet = sheetOf(["货11", "货12"]);
+    const fKey = (await upload()).fileKey!;
+    pending.markPending(store, fKey, 2, "f2a", sigOf("货11", 1)); pending.markDone(store, fKey, 2, sigOf("货11", 1));
+    pending.markPending(store, fKey, 3, "f3", sigOf("货12", 2));
+    pending.markPending(store, fKey, 2, "f2b", sigOf("货11", 1));
+    const fAgain = await upload();
+    assert.deepEqual(Array.from(fAgain.rows ?? [], (r: any) => [r.rowNo, r.requestId]), [[2, "f2b"], [3, "f3"]], "又没确认的那行不能当已建好跳过");
+    // ⑫ 换文件那行建好了：旧文件那边转成已建好，以后再传旧文件（没有没确认的了）这一行会标出来，不会静默再下一遍（审查第 3 轮 dsh）
+    content = "G 旧表"; sheet = sheetOf(["货5"]);
+    const gKey = (await upload()).fileKey!;
+    pending.markPending(store, gKey, 2, "g2", sigOf("货5", 1));
+    pending.markPending(store, "ZZC1|sha256:G2", 2, "g2", sigOf("货5", 1));
+    pending.markDone(store, "ZZC1|sha256:G2", 2, sigOf("货5", 1));
+    pending.finishBatch(store, "ZZC1|sha256:G2", false);
+    const gAgain = await upload();
+    assert.deepEqual(gAgain.lookAlike, [2], "换文件那次已经建好的行，再传旧文件要标出来");
     // ⑥ 换了个客户在这个标签页里传同一个文件：上一个客户的记号一样都用不上
     userId = "ZZC2"; content = "同一份表"; sheet = sheetOf(["货1", "货2", "货3"]);
     const other = await upload();
