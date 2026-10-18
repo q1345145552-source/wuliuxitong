@@ -216,14 +216,16 @@ async function main(): Promise<void> {
       const src = read(file);
       assert.match(src, /\{isPhone \? \(?(\(\) => \{[\s\S]{0,400})?\s*<ShipmentPhoneList/, `${file}：手机列表不是只在手机上渲染`);
       assert.ok(src.includes(`isPhone ? "${table} is-phone-hidden" : "${table}"`), `${file}：宽表在手机上没收起`);
-      assert.ok((src.match(/className="shipment-detail-row"/g) ?? []).length >= 1, `${file}：详情那一行没标出来（手机上会被一起藏掉）`);
+      // 超管的详情 / 编辑弹窗 2026-10-18 起都挂在宽表外面（下面单独核），不再靠「详情那一行」
+      if (file !== "app/admin/page.tsx") assert.ok((src.match(/className="shipment-detail-row"/g) ?? []).length >= 1, `${file}：详情那一行没标出来（手机上会被一起藏掉）`);
     }
-    // 管理员：详情那一行留着；编辑弹窗 2026-10-18（老板选 A）挪到了表外面（不随宽表在手机上收起，也不随翻页 / 刷新消失）
+    // 管理员：详情、编辑两个弹窗 2026-10-18（老板选 A）都挪到了宽表外面（不随宽表在手机上收起，也不随翻页 / 刷新消失）
     const adminSrc = read("app/admin/page.tsx");
-    assert.equal((adminSrc.match(/className="shipment-detail-row"/g) ?? []).length, 1, "管理员的详情那一行要留");
     const adminTableEnd = adminSrc.indexOf("</table>", adminSrc.indexOf('"table-card shipment-table-scroll is-phone-hidden"'));
-    const adminEditAt = adminSrc.indexOf('title="编辑运单"');
-    assert.ok(adminTableEnd > 0 && adminEditAt > adminTableEnd, "管理员的编辑弹窗要挂在宽表外面（挂回表里手机上会被一起藏掉）");
+    for (const title of ["编辑运单", "运单详情"]) {
+      const at = adminSrc.indexOf(`title="${title}"`);
+      assert.ok(adminTableEnd > 0 && at > adminTableEnd, `管理员的「${title}」弹窗要挂在宽表外面（挂回表里手机上会被一起藏掉）`);
+    }
   });
   await check("M4 查询框运单号那一格常驻（8-11 定的查询框不藏），其余条件才收起", () => {
     const bar = read("modules/shipment/PhoneSearchBar.tsx");

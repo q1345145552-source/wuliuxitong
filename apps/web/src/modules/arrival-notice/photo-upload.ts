@@ -37,6 +37,17 @@ export function isDisplayablePhotoType(type: string): boolean {
   return DISPLAYABLE_PHOTO_TYPES.includes(type.trim().toLowerCase());
 }
 
+/**
+ * 单张图片能不能传（运单产品图那几个入口用：客户下预报单、员工 / 超管运单详情 —— 2026-10-18 全系统审查 E-6）。
+ * 能传返回空串，不能传返回给人看的原因。口径跟上面 pickPhotos 一样，后端 /staff/orders/product-images 也按同一份白名单挡。
+ */
+export function photoTypeIssue(f: { name: string; type: string }): string {
+  if (isHeicFile(f)) return `「${f.name}」是 HEIC 格式（苹果手机原图），电脑浏览器显示不了。请在手机上直接传，或先转成 JPG 再传`;
+  if (!f.type.startsWith("image/")) return `「${f.name}」不是能识别的图片`;
+  if (!isDisplayablePhotoType(f.type)) return `「${f.name}」的格式电脑上显示不了（只认 JPG / PNG / GIF / WebP / BMP），请先转成 JPG 再传`;
+  return "";
+}
+
 const listNames = (fs: ReadonlyArray<{ name: string }>) => `${fs.slice(0, 5).map((f) => f.name).join("、")}${fs.length > 5 ? " 等" : ""}`;
 
 /**

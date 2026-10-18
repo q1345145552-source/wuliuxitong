@@ -241,21 +241,35 @@ export default function FclContainerWorkbench({ canUnsign = false, canDelete = f
   }, []);
   useEffect(() => { void loadOverview(); }, [loadOverview]);
 
+  /* 派送页签的两份列表也过门闩（2026-10-18 全系统审查 B-P2-4）：实时推送的重拉、切到这一页签的加载、操作后的刷新同时在路上，
+     先发的后回来会把刚派的车 / 刚签收的柜又变回原样。成功回来的只要不比已显示的旧就用，失败的谁也不作废（用法三） */
+  const lmOrdersGate = useRef(createQueryGate<null>()).current;
+  const lmShipmentsGate = useRef(createQueryGate<null>()).current;
   const loadLmOrders = useCallback(async () => {
-    setLmError("");
-    try { setLmOrders((await fetchFclLastmileOrders()) as unknown as LastmileOrderItem[]); }
-    catch (e) { setLmError(e instanceof Error ? e.message : "加载派送单失败"); }
-  }, []);
+    const ticket = lmOrdersGate.begin(null);
+    try {
+      const list = (await fetchFclLastmileOrders()) as unknown as LastmileOrderItem[];
+      if (!lmOrdersGate.accept(ticket, null)) return;
+      setLmOrders(list);
+      setLmError("");
+    }
+    catch (e) { if (!lmOrdersGate.superseded(ticket)) setLmError(e instanceof Error ? e.message : "加载派送单失败"); }
+  }, [lmOrdersGate]);
   const loadLmShipments = useCallback(async (opts?: { silent?: boolean }) => {
     const silent = opts?.silent === true;
+    const ticket = lmShipmentsGate.begin(null);
     if (!silent) {
       setLmLoading(true);
       setLmError("");
     }
-    try { setLmShipments((await fetchFclLastmileShipments()) as unknown as LastmileShipmentOption[]); }
-    catch (e) { if (!silent) setLmError(e instanceof Error ? e.message : "加载可派送整柜失败"); }
+    try {
+      const list = (await fetchFclLastmileShipments()) as unknown as LastmileShipmentOption[];
+      if (!lmShipmentsGate.accept(ticket, null)) return;
+      setLmShipments(list);
+    }
+    catch (e) { if (!silent && !lmShipmentsGate.superseded(ticket)) setLmError(e instanceof Error ? e.message : "加载可派送整柜失败"); }
     finally { if (!silent) setLmLoading(false); }
-  }, []);
+  }, [lmShipmentsGate]);
   useEffect(() => {
     if (tab !== "lastmile") return;
     void loadLmOrders();

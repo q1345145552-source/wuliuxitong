@@ -149,6 +149,10 @@ export default function StaffConsolidationPage() {
   /** silent：有变化时悄悄重拉（2026-10-05）——只换详情内容，**不动报价框**（员工可能正在填）、失败不弹提示 */
   const loadDetail = useCallback(async (taskId: string, opts?: { silent?: boolean }) => {
     const silent = opts?.silent === true;
+    /* 先认主人再领号（2026-10-18 全系统审查 F-11，request-gate.ts 文件头那条规矩）：任务 A 的操作还在路上，员工返回列表点开了 B，
+       A 完成后回来刷新 A —— 原来先领号把 B 正在拉的那次作废，A 的结果又因为「不是现在选中的」被丢掉，页面上 B 选中着却一片空白。
+       现在不是当前选中的任务就不拉、不领号 */
+    if (selectedTaskIdRef.current !== taskId) return;
     if (silent && !detailYield.allowSilent(() => void loadDetail(taskId, { silent: true }))) return; // 用户点的请求在路上：先让路，它回来再补（Codex 复查 2026-10-05）
     const ticket = detailGate.begin(); // 出发时领号
     const endUser = silent ? null : detailYield.begin();

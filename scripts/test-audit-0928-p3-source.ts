@@ -27,7 +27,8 @@ function check(name: string, fn: () => void): void {
 
 check("C 员工端预报单列表：已收货的单只显示「已收货」，「修改」「确认收货」按钮在 received 判断的另一支里", () => {
   const src = read("apps/web/src/components/staff/StaffPrealertList.tsx");
-  const i = src.indexOf('item.approvalStatus === "received" ?');
+  // 找按状态分按钮的那段 JSX（2026-10-18 起上面算显示草稿那行也按 received 分，不能拿它当定位）
+  const i = src.indexOf('{item.approvalStatus === "received" ? (');
   assert.ok(i > 0, "没有按「已收货」分开");
   const tail = src.slice(i);
   const yes = tail.slice(0, tail.indexOf(") : ("));

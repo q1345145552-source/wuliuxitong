@@ -683,6 +683,10 @@ export function registerAdminOpsRoutes(app: MinimalHttpApp): void {
           // 号只往上加、删了也不回收（2026-09-29 老板选 A）：最大号只是底，真正发号看 number_sequences（core/number-sequence.ts）
           deliveryNo = `WD${String(await nextSequenceValue(tx, "WD", num)).padStart(6, "0")}`;
         }
+        /* 追加：目标那车现在的派送单行，下面跟要改派的旧行一起按 id 排序上锁（2026-10-18 全系统审查 B-P2-1） */
+        const targetRowIds = existingDeliveryNo
+          ? (await tx.adminLastmileOrder.findMany({ where: { deliveryNo: existingDeliveryNo, companyId: auth.companyId }, select: { id: true } })).map((row) => row.id)
+          : [];
         const deliveringRows = await tx.adminLastmileOrder.findMany({
           where: { shipmentId: { in: shipmentIds }, companyId: auth.companyId, status: "DELIVERING" },
           select: { id: true, shipmentId: true, deliveryNo: true },
@@ -700,8 +704,18 @@ export function registerAdminOpsRoutes(app: MinimalHttpApp): void {
         }
         // 与签收/删除一致：旧派送单（id 有序）先于运单；锁后重读，保留已签收历史。
         const oldIds = moveFromDelivering ? conflicts.map((row) => row.id) : [];
-        for (const oldId of [...oldIds].sort()) {
-          await tx.$queryRaw`SELECT id FROM admin_lastmile_orders WHERE id = ${oldId} AND company_id = ${auth.companyId} FOR UPDATE`;
+        // 目标车次的行和要改派的旧行放在一起按 id 排序锁（两个人互相往对方的车里改派也不会反向等）
+        for (const rowId of [...new Set([...targetRowIds, ...oldIds])].sort()) {
+          await tx.$queryRaw`SELECT id FROM admin_lastmile_orders WHERE id = ${rowId} AND company_id = ${auth.companyId} FOR UPDATE`;
+        }
+        /* 追加只许加到还在派送的车上（2026-10-18 全系统审查 B-P2-1）：原来只在事务外查「这个号有没有过」，
+           已经全部签收（页面显示「派送完成」）的车次、甚至刚被删空的车次照样能加进去 —— 旧车次又变回派送中、
+           后出发的货记在早就结束的车上。锁住这车的行以后再数一遍「派送中」的（同时在签收 / 删除的会先排完） */
+        if (existingDeliveryNo) {
+          const stillDelivering = await tx.adminLastmileOrder.count({ where: { deliveryNo: existingDeliveryNo, companyId: auth.companyId, status: "DELIVERING" } });
+          if (stillDelivering === 0) {
+            throw new LastmileConflictError(`派送单 ${existingDeliveryNo} 已经全部签收（或已经删空了），不能再往里加运单。请新建一个派送单`);
+          }
         }
         const movableRows = oldIds.length > 0 ? await tx.adminLastmileOrder.findMany({
           where: { id: { in: oldIds }, companyId: auth.companyId, status: "DELIVERING" },

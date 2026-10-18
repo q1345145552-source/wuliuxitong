@@ -60,7 +60,9 @@ check("5) 撤回成功后刷新列表和已经打开的明细（不然还显示�
   assert.ok(start > 0, "找不到 undoPaid");
   const body = panel.slice(start, panel.indexOf("\n  return (", start));
   assert.ok(body.includes("await load()"), "撤回后没刷新列表");
-  assert.match(body, /if \(detail\?\.statement\.id === s\.id\) setDetail\(await fetchAgentRebateDetail\(s\.id\)\)/, "撤回后没刷新打开着的明细");
+  // 2026-10-18（全系统审查 F-15）：刷新明细挪进 refreshOpenDetail（领号、晚回来时换了别的张或关了就不动）
+  assert.match(body, /await refreshOpenDetail\(s\.id\);/, "撤回后没刷新打开着的明细");
+  assert.match(panel, /const refreshOpenDetail = async \(id: string\) => \{\s*if \(detailRef\.current\?\.statement\.id !== id\) return;[\s\S]{0,200}?setDetail\(d\);/, "刷新明细要先认是不是还开着这张");
   assert.match(body, /setUndoError\(`撤回失败/, "撤回失败没给红字");
 });
 

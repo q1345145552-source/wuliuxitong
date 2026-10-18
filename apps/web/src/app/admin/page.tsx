@@ -51,6 +51,7 @@ import { useLiveRefresh } from "../../modules/realtime/useRealtime";
 import { useIsPhone } from "../../modules/layout/useIsPhone";
 import ShipmentPhoneList from "../../modules/shipment/ShipmentPhoneList";
 import PhoneSearchBar from "../../modules/shipment/PhoneSearchBar";
+import { photoTypeIssue } from "../../modules/arrival-notice/photo-upload";
 import {
   fetchAdminOverview,
   fetchStaffShipmentOverview,
@@ -322,6 +323,8 @@ export default function AdminHomePage() {
   /** 打开编辑弹窗时那张单（2026-10-18 老板选 A：弹窗挪到列表外面，列表里找不到这张了还能接着显示标题和产品图） */
   const [editingOrderMeta, setEditingOrderMeta] = useState<AdminOrderItem | null>(null);
   const [expandedOrderId, setExpandedOrderId] = useState("");
+  /** 打开「运单详情」时那一行（2026-10-18：详情弹窗挪到列表外面，列表里找不到这张了还能接着显示） */
+  const [expandedOrderMeta, setExpandedOrderMeta] = useState<AdminOrderItem | null>(null);
   /** 手机排版（2026-10-05 老板拍板「1a」）：运单列表一单一块，详情 / 编辑弹窗照旧 */
   const isPhone = useIsPhone();
   const [phoneFiltersOpen, setPhoneFiltersOpen] = useState(false);
@@ -415,8 +418,12 @@ export default function AdminHomePage() {
   const [lmShipmentsLoading, setLmShipmentsLoading] = useState(false);
   const [lmShipmentsError, setLmShipmentsError] = useState("");
   /** silent：有变化时悄悄重拉（2026-10-05 实时推送）——失败不弹提示、不把已有的列表换成报错 */
+  /* 晚到的旧列表不盖新的（2026-10-18 全系统审查 B-P2-4）：实时推送的重拉、操作后的刷新、页面初次加载同时在路上，
+     先发的后回来会把刚派出去的车 / 刚签收的单又变回原样。成功回来的只要不比已显示的旧就用，失败的谁也不作废（用法三） */
+  const lmShipmentsGate = useRef(createQueryGate<null>()).current;
   const loadLmShipments = async (opts?: { silent?: boolean }) => {
     const silent = opts?.silent === true;
+    const ticket = lmShipmentsGate.begin(null);
     // 2026-08-06：和员工端犯的是同一个错 —— 只拿第 1 页 500 条再在前端筛状态，
     // 能派送的 571 张里只到 126 张。改为统一走 fetchLastmileShipments()（后端按状态筛 + 翻页拿完）。
     if (!silent) {
@@ -424,12 +431,14 @@ export default function AdminHomePage() {
       setLmShipmentsError("");
     }
     try {
-      setLmShipments(await fetchLastmileShipments());
+      const list = await fetchLastmileShipments();
+      if (!lmShipmentsGate.accept(ticket, null)) return;
+      setLmShipments(list);
       if (silent) setLmShipmentsError("");
     }
     catch (e) {
       console.error(e);
-      if (silent) return;
+      if (silent || lmShipmentsGate.superseded(ticket)) return; // 更新的已经显示了：这次的报错不用说
       const reason = e instanceof Error ? e.message : "未知错误";
       setLmShipmentsError(reason);
       setToast(`可派送运单加载失败：${reason}`);
@@ -440,8 +449,10 @@ export default function AdminHomePage() {
   const [lmOrders, setLmOrders] = useState<LastmileOrderItem[]>([]);
   const [lmOrdersLoading, setLmOrdersLoading] = useState(false);
   const [lmOrdersError, setLmOrdersError] = useState("");
+  const lmOrdersGate = useRef(createQueryGate<null>()).current;
   const loadLastmileOrders = async (opts?: { silent?: boolean }) => {
     const silent = opts?.silent === true;
+    const ticket = lmOrdersGate.begin(null);
     if (!silent) {
       setLmOrdersLoading(true);
       setLmOrdersError("");
@@ -449,11 +460,12 @@ export default function AdminHomePage() {
     try {
       const response = await fetch(`${apiBaseUrl()}/admin/lastmile/orders`, { headers: authHeaders() });
       const data = await parseApiResponse<{ items: LastmileOrderItem[] }>(response);
+      if (!lmOrdersGate.accept(ticket, null)) return; // 比已经显示的旧（2026-10-18 全系统审查 B-P2-4）
       setLmOrders(data.items ?? []);
       if (silent) setLmOrdersError("");
     } catch (e) {
       console.error(e);
-      if (!silent) setLmOrdersError(e instanceof Error ? e.message : "未知错误");
+      if (!silent && !lmOrdersGate.superseded(ticket)) setLmOrdersError(e instanceof Error ? e.message : "未知错误");
     } finally {
       if (!silent) setLmOrdersLoading(false);
     }
@@ -1135,17 +1147,21 @@ export default function AdminHomePage() {
     setLoading(true);
     setMessage("");
     try {
-      await createKnowledgeItem({
-        title: title.trim(),
-        content: content.trim(),
-      });
+      try {
+        await createKnowledgeItem({
+          title: title.trim(),
+          content: content.trim(),
+        });
+      } catch (error) {
+        const text = error instanceof Error ? error.message : "投喂失败";
+        setMessage(`投喂失败：${text}`);
+        return;
+      }
       setTitle("");
       setContent("");
       setToast("知识投喂成功");
-      await loadKnowledge();
-    } catch (error) {
-      const text = error instanceof Error ? error.message : "投喂失败";
-      setMessage(`投喂失败：${text}`);
+      // 已经投进去了：刷新列表失败不能说成「投喂失败」—— 不然再点一次就多一条（2026-10-18 全系统审查 F-14 同类）
+      await loadKnowledge().catch(() => setToast("知识投喂成功（列表这次没刷新上，别再点投喂）"));
     } finally {
       setLoading(false);
     }
@@ -1155,12 +1171,16 @@ export default function AdminHomePage() {
     setLoading(true);
     setMessage("");
     try {
-      await deleteKnowledgeItem(id);
-      await loadKnowledge();
+      try {
+        await deleteKnowledgeItem(id);
+      } catch (error) {
+        const text = error instanceof Error ? error.message : "删除失败";
+        setMessage(`删除失败：${text}`);
+        return;
+      }
       setToast("知识条目删除成功");
-    } catch (error) {
-      const text = error instanceof Error ? error.message : "删除失败";
-      setMessage(`删除失败：${text}`);
+      // 已经删了：刷新列表失败不能说成「删除失败」（2026-10-18 全系统审查 F-14 同类）
+      await loadKnowledge().catch(() => setToast("知识条目删除成功（列表这次没刷新上，稍后再刷新看）"));
     } finally {
       setLoading(false);
     }
@@ -1449,6 +1469,12 @@ export default function AdminHomePage() {
   };
   const totalPages = Math.max(1, Math.ceil(filteredOrderList.length / pageSize));
   useEffect(() => { setCurrentPage((page) => Math.min(page, totalPages)); }, [totalPages]);
+  /** 正在看详情的那张：同下（编辑弹窗那份），按运单 id 认 */
+  const expandedOrderRow = useMemo(() => {
+    if (!expandedOrderId) return null;
+    return orderList.find((x) => x.id === expandedOrderId)
+      ?? (expandedOrderMeta && expandedOrderMeta.id === expandedOrderId ? expandedOrderMeta : null);
+  }, [expandedOrderId, orderList, expandedOrderMeta]);
   /** 正在改的那张：取全部列表（不管翻到第几页、搜没搜）里最新的；找不到了（别人删了 / 超出这次拉取的范围）用打开时那份 */
   const editingOrderRow = useMemo(() => {
     if (!editingOrderId) return null;
@@ -1470,11 +1496,14 @@ export default function AdminHomePage() {
     if (!confirm(`确定删除运单 ${o.trackingNo ?? "—"}（${o.itemName ?? ""}）？\n\n此操作不可撤销，将级联删除运单、状态日志、产品行等所有关联数据。`)) return;
     try {
       await deleteAdminOrder(o.orderId ?? o.id);
-      setToast(`已删除：${o.trackingNo ?? o.itemName ?? "—"}`);
-      await loadOrders();
     } catch (err) {
       setMessage(`删除失败：${err instanceof Error ? err.message : "未知错误"}`);
+      return;
     }
+    const doneText = `已删除：${o.trackingNo ?? o.itemName ?? "—"}`;
+    setToast(doneText);
+    // 已经删了：接着刷新列表失败不能说成「删除失败」（2026-10-18 全系统审查 F-14）；10 秒后会自动再刷
+    await loadOrders().catch(() => setToast(`${doneText}（列表这次没刷新上，稍后会自动刷新）`));
   };
   const printOrderLabel = (o: (typeof filteredOrderList)[number]) => {
     // 分母传整票件数（修复审查）：o.packageCount 是父单「剩余」件数，拆柜 / 部分装柜后是 0 或比整票少，会打出「101/71」或被误拦
@@ -1622,17 +1651,23 @@ export default function AdminHomePage() {
     setLoading(true);
     setMessage("");
     try {
-      const result = await clearAdminAiSessionMemory({
-        sessionId: memoryFilterSessionId.trim() || undefined,
-        userId: memoryFilterUserId.trim() || undefined,
-      });
-      await loadSessionMemory();
+      let result: Awaited<ReturnType<typeof clearAdminAiSessionMemory>>;
+      try {
+        result = await clearAdminAiSessionMemory({
+          sessionId: memoryFilterSessionId.trim() || undefined,
+          userId: memoryFilterUserId.trim() || undefined,
+        });
+      } catch (error) {
+        const text = error instanceof Error ? error.message : "清理失败";
+        setMessage(`清理失败：${text}`);
+        return;
+      }
       /* 条数放进提示条（2026-10-17）：页面级 message 只留给错误 —— 运单编辑弹窗把它一律画成红字，
          这句成功的要是晚到、碰上弹窗开着，会被画成红的（dsh 第 10 轮） */
-      setToast(`会话记忆已清理（${result.removed} 条）`);
-    } catch (error) {
-      const text = error instanceof Error ? error.message : "清理失败";
-      setMessage(`清理失败：${text}`);
+      const doneText = `会话记忆已清理（${result.removed} 条）`;
+      setToast(doneText);
+      // 已经清了：刷新列表失败不能说成「清理失败」（2026-10-18 全系统审查 F-14 同类）
+      await loadSessionMemory().catch(() => setToast(`${doneText}（列表这次没刷新上，稍后再刷新看）`));
     } finally {
       setLoading(false);
     }
@@ -1642,12 +1677,16 @@ export default function AdminHomePage() {
     setLoading(true);
     setMessage("");
     try {
-      await resolveAdminAiKnowledgeGap({ id });
-      await loadKnowledgeGaps();
+      try {
+        await resolveAdminAiKnowledgeGap({ id });
+      } catch (error) {
+        const text = error instanceof Error ? error.message : "操作失败";
+        setMessage(`操作失败：${text}`);
+        return;
+      }
       setToast("已标记为已处理");
-    } catch (error) {
-      const text = error instanceof Error ? error.message : "操作失败";
-      setMessage(`操作失败：${text}`);
+      // 已经标了：刷新列表失败不能说成「操作失败」（2026-10-18 全系统审查 F-14 同类）
+      await loadKnowledgeGaps().catch(() => setToast("已标记为已处理（列表这次没刷新上，稍后再刷新看）"));
     } finally {
       setLoading(false);
     }
@@ -2195,6 +2234,7 @@ export default function AdminHomePage() {
                 if (!o) return;
                 const oid = o.orderId ?? o.id;
                 fetchShipmentImages(oid).then((imgs: any) => setOrderImagesCache((c: any) => ({ ...c, [oid]: imgs }))).catch(() => {});
+                setExpandedOrderMeta(o);
                 setExpandedOrderId(o.id);
               }}
               actions={[
@@ -2276,14 +2316,13 @@ export default function AdminHomePage() {
                       <button
                         type="button"
                         onClick={() => {
-                          setExpandedOrderId((prev) => {
-                            if (prev === o.id) return "";
-                            const oid = o.orderId ?? o.id;
-                            fetchShipmentImages(oid).then((imgs: any) => {
-                              setOrderImagesCache((c: any) => ({ ...c, [oid]: imgs }));
-                            }).catch(() => {});
-                            return o.id;
-                          });
+                          if (expandedOrderId === o.id) { setExpandedOrderId(""); return; }
+                          const oid = o.orderId ?? o.id;
+                          fetchShipmentImages(oid).then((imgs: any) => {
+                            setOrderImagesCache((c: any) => ({ ...c, [oid]: imgs }));
+                          }).catch(() => {});
+                          setExpandedOrderMeta(o);
+                          setExpandedOrderId(o.id);
                         }}
                         className="row-act"
                       >
@@ -2326,57 +2365,6 @@ export default function AdminHomePage() {
 
                     </td>
                   </tr>
-                  {expandedOrderId === o.id ? (
-                    <tr className="shipment-detail-row">
-                      {/* 详情改成全屏弹窗：格子只作挂载点，内容用 position:fixed 铺满屏幕，
-                          所以这一行不占高度，表格不会被撑开 */}
-                      <td colSpan={ORDER_COL_WIDTHS.length} style={{ padding: 0, border: "none" }}>
-                        <DetailModal
-                          title="运单详情"
-                          subtitle={o.trackingNo ?? o.orderNo ?? "—"}
-                          onClose={() => setExpandedOrderId("")}
-                        >
-                        <div>
-                          <AdminShipmentDetail
-                            order={o}
-                            warehouseLabel={warehouseOptions.find(w => w.id === o.warehouseId)?.label ?? warehouseLabelFromId(o.warehouseId)}
-                          />
-                          {(o.productImages?.length ?? 0) > 0 || (orderImagesCache[o.orderId ?? o.id]?.length ?? 0) > 0 ? (
-                            <div style={{ marginBottom: 10, padding: 10, background: "var(--s-cool)", borderRadius: 8, border: "1px solid var(--l-cool)" }}>
-                              <div style={{ fontWeight: 600, marginBottom: 6, fontSize: 13, color: "var(--t-strong)" }}>产品图</div>
-                              <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-                                {(orderImagesCache[o.orderId ?? o.id] ?? o.productImages ?? []).map((img: any) => (
-                                  <div key={img.id} style={{ position: "relative" }}>
-                                    <img src={img.imageUrl ? `${apiBaseUrl()}${img.imageUrl}` : ""} alt={img.fileName} style={{ width: 88, height: 88, objectFit: "cover", borderRadius: 8, border: "1px solid var(--l-soft)" }} />
-                                    {o.currentStatus === "pendingInbound" ? null : <button type="button" onClick={async () => { try { await deleteStaffOrderProductImage(img.id); const oid = o.orderId ?? o.id; const imgs = await fetchShipmentImages(oid); setOrderImagesCache((c) => ({ ...c, [oid]: imgs })); } catch (err) { setMessage("删除失败：" + (err instanceof Error ? err.message : "未知错误")); } }} style={{ position: "absolute", top: -4, right: -4, width: 18, height: 18, borderRadius: "50%", background: "var(--c-red-2)", color: "var(--white)", border: "none", cursor: "pointer", fontSize: 11, lineHeight: 1 }}>×</button>}
-                                  </div>
-                                ))}
-                              </div>
-                              {/* 2026-10-06「待入库」的单照片在到货通知里传删（那边是底稿），这里只看（跟员工端一样） */}
-                              {o.currentStatus === "pendingInbound" ? (
-                                <div style={{ marginTop: 8, fontSize: 12, color: "var(--t-strong)" }}>这票货还是「待入库」，照片请到「到货通知」里传或删</div>
-                              ) : (
-                              <div style={{ marginTop: 8 }}>
-                                <input aria-label="上传产品图片" type="file" accept="image/*" onChange={async (e) => { const f = e.target.files?.[0]; if (!f) return; const oid = o.orderId ?? o.id; try { const toBase64 = (file: File) => new Promise<string>((resolve, reject) => { const r = new FileReader(); r.onloadend = () => resolve((r.result as string).split(",")[1]); r.onerror = () => reject(new Error("文件读取失败")); r.readAsDataURL(file); }); const base64 = await toBase64(f); await uploadStaffOrderProductImage({ orderId: oid, fileName: f.name, mime: f.type, contentBase64: base64 }); const imgs = await fetchShipmentImages(oid); setOrderImagesCache((c) => ({ ...c, [oid]: imgs })); setToast("产品图已上传"); } catch (err) { setMessage("上传失败：" + (err instanceof Error ? err.message : "未知错误")); } }} style={{ fontSize: 12 }} />
-                              </div>
-                              )}
-                            </div>
-                          ) : (
-                            <div style={{ marginBottom: 10 }}>
-                              <h3 style={{ margin: "0 0 8px", fontSize: 14, fontWeight: 600 }}>产品图片</h3>
-                              <p style={{ margin: "0 0 10px", fontSize: 13, color: "var(--t-muted)" }}>暂无产品图片</p>
-                              {o.currentStatus === "pendingInbound" ? (
-                                <div style={{ fontSize: 12, color: "var(--t-strong)" }}>这票货还是「待入库」，照片请到「到货通知」里传</div>
-                              ) : (
-                                <input aria-label="上传产品图片" type="file" accept="image/*" onChange={async (e) => { const f = e.target.files?.[0]; if (!f) return; const oid = o.orderId ?? o.id; try { const toBase64 = (file: File) => new Promise<string>((resolve, reject) => { const r = new FileReader(); r.onloadend = () => resolve((r.result as string).split(",")[1]); r.onerror = () => reject(new Error("文件读取失败")); r.readAsDataURL(file); }); const base64 = await toBase64(f); await uploadStaffOrderProductImage({ orderId: oid, fileName: f.name, mime: f.type, contentBase64: base64 }); const imgs = await fetchShipmentImages(oid); setOrderImagesCache((c) => ({ ...c, [oid]: imgs })); setToast("产品图已上传"); } catch (err) { setMessage("上传失败：" + (err instanceof Error ? err.message : "未知错误")); } }} style={{ fontSize: 12, color: "var(--c-blue)" }} />
-                              )}
-                            </div>
-                          )}
-                        </div>
-                        </DetailModal>
-                      </td>
-                    </tr>
-                  ) : null}
                   </Fragment>
                   );
                 })}
@@ -2480,6 +2468,58 @@ export default function AdminHomePage() {
           </div>
           </DetailModal>
         ) : null}
+        {/* 「运单详情」弹窗也挂在列表外面（2026-10-18 老板选 A，跟编辑弹窗同一个毛病）：原来挂在列表那一行里，
+            这张被新单挤到下一页 / 被筛掉，刷新一来详情就关了。按 expandedOrderId 从全部列表里取最新的，找不到用打开时那份；
+            只在「运单管理」这一页显示时挂。里面照旧用 o（详情的写法、测试都按 o 认） */}
+        {expandedOrderRow && activeSection === "orders" ? (() => {
+          const o = expandedOrderRow;
+          return (
+            <DetailModal
+              key={o.id}
+              title="运单详情"
+              subtitle={o.trackingNo ?? o.orderNo ?? "—"}
+              onClose={() => setExpandedOrderId("")}
+            >
+            <div>
+              <AdminShipmentDetail
+                order={o}
+                warehouseLabel={warehouseOptions.find(w => w.id === o.warehouseId)?.label ?? warehouseLabelFromId(o.warehouseId)}
+              />
+              {(o.productImages?.length ?? 0) > 0 || (orderImagesCache[o.orderId ?? o.id]?.length ?? 0) > 0 ? (
+                <div style={{ marginBottom: 10, padding: 10, background: "var(--s-cool)", borderRadius: 8, border: "1px solid var(--l-cool)" }}>
+                  <div style={{ fontWeight: 600, marginBottom: 6, fontSize: 13, color: "var(--t-strong)" }}>产品图</div>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                    {(orderImagesCache[o.orderId ?? o.id] ?? o.productImages ?? []).map((img: any) => (
+                      <div key={img.id} style={{ position: "relative" }}>
+                        <img src={img.imageUrl ? `${apiBaseUrl()}${img.imageUrl}` : ""} alt={img.fileName} style={{ width: 88, height: 88, objectFit: "cover", borderRadius: 8, border: "1px solid var(--l-soft)" }} />
+                        {o.currentStatus === "pendingInbound" ? null : <button type="button" onClick={async () => { try { await deleteStaffOrderProductImage(img.id); } catch (err) { setMessage("删除失败：" + (err instanceof Error ? err.message : "未知错误")); return; } /* 删掉了：刷新图片失败不能说成「删除失败」（2026-10-18 全系统审查 F-14 同类） */ const oid = o.orderId ?? o.id; try { const imgs = await fetchShipmentImages(oid); setOrderImagesCache((c) => ({ ...c, [oid]: imgs })); } catch { setToast("图片已删除（这次没刷新上，关掉详情再打开看）"); } }} style={{ position: "absolute", top: -4, right: -4, width: 18, height: 18, borderRadius: "50%", background: "var(--c-red-2)", color: "var(--white)", border: "none", cursor: "pointer", fontSize: 11, lineHeight: 1 }}>×</button>}
+                      </div>
+                    ))}
+                  </div>
+                  {/* 2026-10-06「待入库」的单照片在到货通知里传删（那边是底稿），这里只看（跟员工端一样） */}
+                  {o.currentStatus === "pendingInbound" ? (
+                    <div style={{ marginTop: 8, fontSize: 12, color: "var(--t-strong)" }}>这票货还是「待入库」，照片请到「到货通知」里传或删</div>
+                  ) : (
+                  <div style={{ marginTop: 8 }}>
+                    <input aria-label="上传产品图片" type="file" accept="image/*" onChange={async (e) => { const f = e.target.files?.[0]; if (!f) return; /* 电脑上显示不了的格式先拦下、说清（2026-10-18 全系统审查 E-6；后端也挡） */ const typeIssue = photoTypeIssue(f); if (typeIssue) { setMessage(typeIssue); return; } const oid = o.orderId ?? o.id; try { const toBase64 = (file: File) => new Promise<string>((resolve, reject) => { const r = new FileReader(); r.onloadend = () => resolve((r.result as string).split(",")[1]); r.onerror = () => reject(new Error("文件读取失败")); r.readAsDataURL(file); }); const base64 = await toBase64(f); await uploadStaffOrderProductImage({ orderId: oid, fileName: f.name, mime: f.type, contentBase64: base64 }); } catch (err) { setMessage("上传失败：" + (err instanceof Error ? err.message : "未知错误")); return; } /* 传上去了：刷新图片失败不能说成「上传失败」—— 不然再传一次就多一张（2026-10-18 全系统审查 F-14 同类） */ setToast("产品图已上传"); try { const imgs = await fetchShipmentImages(oid); setOrderImagesCache((c) => ({ ...c, [oid]: imgs })); } catch { setToast("产品图已上传（这次没刷新上，关掉详情再打开看，别再传一遍）"); } }} style={{ fontSize: 12 }} />
+                  </div>
+                  )}
+                </div>
+              ) : (
+                <div style={{ marginBottom: 10 }}>
+                  <h3 style={{ margin: "0 0 8px", fontSize: 14, fontWeight: 600 }}>产品图片</h3>
+                  <p style={{ margin: "0 0 10px", fontSize: 13, color: "var(--t-muted)" }}>暂无产品图片</p>
+                  {o.currentStatus === "pendingInbound" ? (
+                    <div style={{ fontSize: 12, color: "var(--t-strong)" }}>这票货还是「待入库」，照片请到「到货通知」里传</div>
+                  ) : (
+                    <input aria-label="上传产品图片" type="file" accept="image/*" onChange={async (e) => { const f = e.target.files?.[0]; if (!f) return; /* 电脑上显示不了的格式先拦下、说清（2026-10-18 全系统审查 E-6；后端也挡） */ const typeIssue = photoTypeIssue(f); if (typeIssue) { setMessage(typeIssue); return; } const oid = o.orderId ?? o.id; try { const toBase64 = (file: File) => new Promise<string>((resolve, reject) => { const r = new FileReader(); r.onloadend = () => resolve((r.result as string).split(",")[1]); r.onerror = () => reject(new Error("文件读取失败")); r.readAsDataURL(file); }); const base64 = await toBase64(f); await uploadStaffOrderProductImage({ orderId: oid, fileName: f.name, mime: f.type, contentBase64: base64 }); } catch (err) { setMessage("上传失败：" + (err instanceof Error ? err.message : "未知错误")); return; } /* 传上去了：刷新图片失败不能说成「上传失败」—— 不然再传一次就多一张（2026-10-18 全系统审查 F-14 同类） */ setToast("产品图已上传"); try { const imgs = await fetchShipmentImages(oid); setOrderImagesCache((c) => ({ ...c, [oid]: imgs })); } catch { setToast("产品图已上传（这次没刷新上，关掉详情再打开看，别再传一遍）"); } }} style={{ fontSize: 12, color: "var(--c-blue)" }} />
+                  )}
+                </div>
+              )}
+            </div>
+            </DetailModal>
+          );
+        })() : null}
       </section>
 
       {/* 入库与标签工具 */}

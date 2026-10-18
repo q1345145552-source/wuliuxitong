@@ -159,7 +159,9 @@ check("W3 员工运单页顶上那排数字：跟列表一起拉（loadPageData 
 check("W3 客户运单查询顶上那排数字：切到「运单查询」、10 秒轮询、执行查询、切分组都跟列表一起拉", () => {
   assertOverviewLoader(CLIENT, "fetchClientShipmentOverview", "客户");
   // 2026-10-05：10 秒轮询换成 useLiveRefresh（有变化马上拉 + 10 秒兜底），里面每一步照旧
-  const poll = block(CLIENT, "refresh: async (isStillWanted) =>");
+  // 2026-10-18：那段挪进 silentOrderRefreshRef（客户点的查询回来以后要补发一次，得能从外面叫到它），useLiveRefresh 转给它
+  assert.match(CLIENT, /refresh: \(isStillWanted\) => silentOrderRefreshRef\.current\(isStillWanted\)/, "useLiveRefresh 没转给 silentOrderRefreshRef");
+  const poll = block(CLIENT, "silentOrderRefreshRef.current = async (isStillWanted) =>");
   assert.match(poll, /fetchClientOrders/, "（定位错了：这不是运单列表的 10 秒轮询）");
   assert.match(poll, /if \(!shipmentOverviewPending\.current\) void loadShipmentOverview\(\)/, "10 秒轮询不刷数字，或者上一轮没回来也照发");
   assertPendingClears(CLIENT, "客户");

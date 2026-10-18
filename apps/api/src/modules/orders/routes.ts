@@ -9,7 +9,7 @@ import { prisma } from "../../db/prisma";
 import { EXCLUDE_FCL_ORDER, FCL_EDIT_ELSEWHERE_MESSAGE } from "../core/fcl-scope";
 import { PENDING_INBOUND, PENDING_INBOUND_EDIT_ELSEWHERE_MESSAGE } from "../arrival-notices/rules";
 import { arrivalNoticeHoldingMessage, followShipmentTrackingNos, followStaleArrivalNoticeHolding, lockTrackingNoForArrivalNotice } from "../arrival-notices/follow-tracking-no";
-import { syncConvertedNoticesFromShipments } from "../arrival-notices/routes";
+import { PHOTO_MIME_ALLOWED, syncConvertedNoticesFromShipments } from "../arrival-notices/routes";
 
 /** 「确认收货」只认客户报的、还没收货的预报单（2026-10-16） */
 const NOT_A_PENDING_PREALERT_MESSAGE = "这张单不是客户报的待收货预报单，不能「确认收货」（员工建的单、到货通知转出来的单都不走这一步；要改资料请超管在「运单管理」里改）";
@@ -815,7 +815,7 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
       await tx.$queryRaw`SELECT id FROM orders WHERE id = ${orderId} AND company_id = ${auth.companyId} FOR NO KEY UPDATE`;
       const fresh = await tx.order.findFirst({
         where: { id: orderId, companyId: auth.companyId },
-        select: { approvalStatus: true },
+        select: { approvalStatus: true, itemName: true },
       });
       if (!fresh) throw new BusinessError("订单不存在", 404, "NOT_FOUND");
       if (fresh.approvalStatus === "received") {
@@ -896,6 +896,19 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
         });
         if (productRows.length === 1 && productRows[0].packageCount !== receivePackageCount) {
           await tx.orderProduct.update({ where: { id: productRows[0].id }, data: { packageCount: receivePackageCount } });
+        }
+      }
+      /* 品名：只有一行产品时产品行跟着改（2026-10-18 全系统审查 A-P2-1）。原来只改订单和运单，产品行还是客户报的名字 ——
+         客户列表、三端导出、员工卡片都按产品行显示，改了等于没改。多行产品分不清改的是哪一行，产品行不动。
+         只认真改了的：跟订单锁内的原品名不一样才动（页面不管改没改都会把原品名带上来，原样带回来的不碰产品行） */
+      const receiveItemName = body.itemName?.trim() ?? "";
+      if (receiveItemName && receiveItemName !== fresh.itemName) {
+        const productRows = await tx.orderProduct.findMany({
+          where: { orderId, companyId: auth.companyId },
+          select: { id: true },
+        });
+        if (productRows.length === 1) {
+          await tx.orderProduct.update({ where: { id: productRows[0].id }, data: { itemName: receiveItemName } });
         }
       }
       /* 国内单号：只有一行产品时产品行跟着改（2026-10-14 全系统审查）。原来只写订单那一格，
@@ -1677,7 +1690,8 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
     // 单号不是文字原来 .trim 直接 500（2026-09-29 实跑发现），按「没传」处理
     const orderId = typeof body.orderId === "string" ? body.orderId.trim() : "";
     const fileName = body.fileName?.trim();
-    const mimeType = body.mime?.trim();
+    // 类型统一小写（MIME 不分大小写），跟到货通知上传那条一样
+    const mimeType = body.mime?.trim().toLowerCase();
     const contentBase64 = body.contentBase64?.trim();
     if (!orderId || !fileName || !mimeType || !contentBase64) {
       fail(res, 400, "BAD_REQUEST", "orderId, fileName, mime and contentBase64 are required");
@@ -1685,6 +1699,16 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
     }
     if (!mimeType.startsWith("image/")) {
       fail(res, 400, "BAD_REQUEST", "only image uploads are allowed");
+      return;
+    }
+    /* 电脑上显示不了的格式（HEIC 苹果手机原图、TIFF、SVG……）不收（2026-10-18 全系统审查 E-6）：原来只看是不是 image/ 开头，
+       认不出的类型一律存成 .jpg、按 image/jpeg 发出去 —— 上传「成功」、刷新就是破图。跟到货通知照片同一份白名单 */
+    if (/^image\/hei[cf]/.test(mimeType)) {
+      fail(res, 400, "BAD_REQUEST", "这张是 HEIC 格式（苹果手机原图），电脑浏览器显示不了。请在手机上直接传，或先转成 JPG 再传");
+      return;
+    }
+    if (!PHOTO_MIME_ALLOWED.includes(mimeType)) {
+      fail(res, 400, "BAD_REQUEST", `这张图片的格式（${mimeType}）电脑上显示不了，只能传 JPG / PNG / GIF / WebP / BMP。请先转成 JPG 再传`);
       return;
     }
     /* 2026-09-29：提示改中文；上限从 2000 万字收到 950 万字 —— 线上请求要过 Next 转发（10MiB 天花板），
@@ -2145,7 +2169,9 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
           transportMode,
           shipDate,
           receiverAddressTh,
-          createdAt: arrived,
+          /* 不再写 createdAt（2026-10-18 全系统审查 dsh 第 3 条）：原来把页面「到仓日期」写进了订单的创建时间 ——
+             到仓日期存在 ship_date（建单那条路就是这么存的，列表 / 导出 / 筛选都读它），改了不生效，
+             客户看到的「建单日期」反倒跟着变。页面现在把到仓日期放在 shipDate 里发上来；orderCreatedDate 只做老页面兼容的必填校验 */
           /* 跟返回给页面的 updatedAt 同一个 now（2026-10-18）：页面存完拿返回值当新版本，不写的话库里自动记的「现在」晚几毫秒，
              再存一次就被当成「别人改过」 */
           updatedAt: now,

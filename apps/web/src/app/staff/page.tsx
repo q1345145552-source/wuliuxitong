@@ -94,6 +94,7 @@ import {
   type StaffBatchOrder,
 } from "../../modules/staff/batchOrderImport";
 import { beijingDate, beijingToday } from "../../modules/shared/beijing-date";
+import { photoTypeIssue } from "../../modules/arrival-notice/photo-upload";
 import { nextAutoTotals, orderDimsVolume, productRowTotals } from "../../modules/orders/auto-totals";
 import {
   shipmentStatusZh,
@@ -173,6 +174,11 @@ export default function StaffHomePage() {
   const [staffClients, setStaffClients] = useState<StaffClientItem[]>([]);
   /** 客户名单两处拉（整页重拉、「账号」推送重拉）：晚回来的旧名单不许盖掉新的（成功才作废，request-gate.ts 用法三；只有一份名单，条件恒为 null） */
   const clientsGate = useRef(createQueryGate<null>()).current;
+  /* 运单 + 预报单列表也过门闩（2026-10-18 全系统审查 A-P2-6 / F-10）：原来回来就写 —— 实时推送的重拉、保存 / 收货后的刷新、
+     初次加载同时在路上，先发的后回来，刚建的运单又消失、刚收货的预报单又变回待收货。成功回来的只要不比已显示的旧就用（用法三） */
+  const pageListGate = useRef(createQueryGate<null>()).current;
+  /** 屏幕上正在显示的那份运单（没筛父子的全量）：这次刷新比它旧、没写上去时，把它给调用方（拿来重建草稿的得是最新的） */
+  const shownShipmentItemsRef = useRef<ShipmentItem[] | null>(null);
   const warehouseOptions = [
     { id: "wh_yiwu_01", label: "义乌仓" },
     { id: "wh_guangzhou_01", label: "广州仓" },
@@ -380,8 +386,12 @@ export default function StaffHomePage() {
   const [lmShipmentsLoading, setLmShipmentsLoading] = useState(false);
   const [lmShipmentsError, setLmShipmentsError] = useState("");
   /** silent：有变化时悄悄重拉（2026-10-05 实时推送）——失败不弹提示、不把已有的列表换成报错 */
+  /* 晚到的旧列表不盖新的（2026-10-18 全系统审查 B-P2-4）：实时推送的重拉、操作后的刷新、页面初次加载同时在路上，
+     先发的后回来会把刚派出去的车 / 刚签收的单又变回原样。成功回来的只要不比已显示的旧就用，失败的谁也不作废（用法三） */
+  const lmShipmentsGate = useRef(createQueryGate<null>()).current;
   const loadLmShipments = async (opts?: { silent?: boolean }) => {
     const silent = opts?.silent === true;
+    const ticket = lmShipmentsGate.begin(null);
     // 2026-08-06：原来是自己拼 `?pageSize=500&all=1` 再在前端筛状态 ——
     // 只拿到第 1 页 500 条（所有状态混着排），571 张能派送的里只到 126 张，漏了 445 张。
     // 改为统一走 fetchLastmileShipments()：后端按状态筛 + 翻页拿完。
@@ -390,12 +400,14 @@ export default function StaffHomePage() {
       setLmShipmentsError("");
     }
     try {
-      setLmShipments(await fetchLastmileShipments());
+      const list = await fetchLastmileShipments();
+      if (!lmShipmentsGate.accept(ticket, null)) return;
+      setLmShipments(list);
       if (silent) setLmShipmentsError("");
     }
     catch (e) {
       console.error(e);
-      if (silent) return;
+      if (silent || lmShipmentsGate.superseded(ticket)) return; // 更新的已经显示了：这次的报错不用说
       const reason = e instanceof Error ? e.message : "未知错误";
       setLmShipmentsError(reason);
       setToast(`可派送运单加载失败：${reason}`);
@@ -407,8 +419,10 @@ export default function StaffHomePage() {
   const [lmOrdersLoading, setLmOrdersLoading] = useState(false);
   const [lmOrdersError, setLmOrdersError] = useState("");
   // 【审查问题 3】走 parseApiResponse：401 会自动跳登录页
+  const lmOrdersGate = useRef(createQueryGate<null>()).current;
   const loadLmOrders = async (opts?: { silent?: boolean }) => {
     const silent = opts?.silent === true;
+    const ticket = lmOrdersGate.begin(null);
     if (!silent) {
       setLmOrdersLoading(true);
       setLmOrdersError("");
@@ -416,11 +430,12 @@ export default function StaffHomePage() {
     try {
       const response = await fetch(`${apiBaseUrl()}/admin/lastmile/orders`, { headers: authHeaders() });
       const data = await parseApiResponse<{ items: LastmileOrderItem[] }>(response);
+      if (!lmOrdersGate.accept(ticket, null)) return; // 比已经显示的旧（2026-10-18 全系统审查 B-P2-4）
       setLmOrderList(data.items ?? []);
       if (silent) setLmOrdersError("");
     } catch (e) {
       console.error(e);
-      if (!silent) setLmOrdersError(e instanceof Error ? e.message : "未知错误");
+      if (!silent && !lmOrdersGate.superseded(ticket)) setLmOrdersError(e instanceof Error ? e.message : "未知错误");
     } finally {
       if (!silent) setLmOrdersLoading(false);
     }
@@ -539,6 +554,7 @@ export default function StaffHomePage() {
   const loadPageData = async (): Promise<ShipmentItem[]> => {
     void loadShipmentOverview(); // 顶上那排数字跟列表一起刷新（2026-09-29）
     const clientsTicket = clientsGate.begin(null);
+    const pageTicket = pageListGate.begin(null);
     const [shipmentItems, prealertItems, clientItems] = await Promise.all([fetchStaffShipments(), fetchStaffPrealerts(), fetchStaffClients()]);
     // 按运单号数字降序
     // 【审查问题 10】同 admin：原来 Number() 超 15 位丢精度，改成按位数+字符串比
@@ -549,6 +565,9 @@ export default function StaffHomePage() {
       return bn.localeCompare(an);
     });
     if (clientsGate.accept(clientsTicket, null)) setStaffClients(clientItems);
+    // 比已经显示的旧（更晚发出的刷新已经先回来了）：这份不写，给调用方的也换成屏幕上那份新的
+    if (!pageListGate.accept(pageTicket, null)) return shownShipmentItemsRef.current ?? shipmentItems;
+    shownShipmentItemsRef.current = shipmentItems;
     setShipments(shipmentItems.filter(s => !s.parentTrackingNo));
     setPrealerts(prealertItems);
     // 2026-08-31（排查报告 44）：这里原来还调了一次 loadLmOrders() —— 页面一打开会和下面那个
@@ -576,7 +595,9 @@ export default function StaffHomePage() {
     setPrealertConfirmedDrafts((prev) => {
       const next: Record<string, PrealertEditDraft> = { ...prev };
       prealertItems.forEach((item) => {
-        if (!(item.id in next)) {
+        /* 已经收货的单按服务器上最新的显示（2026-10-18 全系统审查 F-12）：别的同事确认收货、改了实收数，
+           这边状态变成「已收货」，下面的件数 / 重量还是打开时那份。已收货的单不能再改，这份草稿没用了，换成最新的 */
+        if (!(item.id in next) || item.approvalStatus === "received") {
           next[item.id] = buildPrealertDraft(item);
         }
       });
@@ -590,25 +611,32 @@ export default function StaffHomePage() {
    */
   const uploadOrderProductImageAndReload = async (orderId: string, file: File) => {
     if (!orderId) { setToast("上传失败：缺少订单ID"); return; }
+    // 电脑上显示不了的格式先拦下、说清（2026-10-18 全系统审查 E-6；后端也挡）
+    const typeIssue = photoTypeIssue(file);
+    if (typeIssue) { setMessage(typeIssue); return; }
     setLoading(true);
     setMessage("");
     try {
-      const contentBase64 = await readFileAsBase64(file);
-      await uploadStaffOrderProductImage({
-        orderId,
-        fileName: file.name,
-        mime: file.type || "image/jpeg",
-        contentBase64,
-      });
-      await loadPageData();
+      try {
+        const contentBase64 = await readFileAsBase64(file);
+        await uploadStaffOrderProductImage({
+          orderId,
+          fileName: file.name,
+          mime: file.type || "image/jpeg",
+          contentBase64,
+        });
+      } catch (error) {
+        const text = error instanceof Error ? error.message : "上传失败";
+        setMessage(`上传失败：${text}`);
+        return;
+      }
+      setToast("产品图已上传");
       // 刷新该订单的图片缓存
       fetchShipmentImages(orderId).then((imgs) => {
         setShipmentImagesCache((c) => ({ ...c, [orderId]: imgs }));
       }).catch(() => {});
-      setToast("产品图已上传");
-    } catch (error) {
-      const text = error instanceof Error ? error.message : "上传失败";
-      setMessage(`上传失败：${text}`);
+      // 传上去了：刷新列表失败不能说成「上传失败」—— 不然再传一次就多一张（2026-10-18 全系统审查 F-14 同类）
+      await loadPageData().catch(() => setToast("产品图已上传（列表这次没刷新上，别再传一遍）"));
     } finally {
       setLoading(false);
     }
@@ -621,8 +649,14 @@ export default function StaffHomePage() {
     setLoading(true);
     setMessage("");
     try {
-      await deleteStaffOrderProductImage(imageId);
-      await loadPageData();
+      try {
+        await deleteStaffOrderProductImage(imageId);
+      } catch (error) {
+        const text = error instanceof Error ? error.message : "删除失败";
+        setMessage(`删除失败：${text}`);
+        return;
+      }
+      setToast("产品图已删除");
       // 清除该订单图片缓存（下次展开时重新加载）
       const oid = shipmentTableExpandedId ? shipments.find((s) => s.id === shipmentTableExpandedId)?.orderId : undefined;
       if (oid) {
@@ -630,10 +664,8 @@ export default function StaffHomePage() {
           setShipmentImagesCache((c) => ({ ...c, [oid]: imgs }));
         }).catch(() => {});
       }
-      setToast("产品图已删除");
-    } catch (error) {
-      const text = error instanceof Error ? error.message : "删除失败";
-      setMessage(`删除失败：${text}`);
+      // 删掉了：刷新列表失败不能说成「删除失败」（2026-10-18 全系统审查 F-14 同类）
+      await loadPageData().catch(() => setToast("产品图已删除（列表这次没刷新上，稍后会自动刷新）"));
     } finally {
       setLoading(false);
     }
@@ -698,20 +730,28 @@ export default function StaffHomePage() {
         domesticTrackingNo: draft.domesticTrackingNo.trim() || null,
         orderCreatedDate: draft.orderCreatedDate,
         transportMode: draft.transportMode,
-        shipDate: draft.shipLocal.trim() ? draft.shipLocal.trim().slice(0, 10) : null,
+        /* 到仓日期写进订单的 ship_date（2026-10-18 全系统审查 dsh 第 3 条）：原来「到仓日期」这一格被后端写进了创建时间、改了不生效。
+           「发货时间」那一格跟它是同一个字段（系统里没有单独的发货时间），两格已经联动；以到仓日期为准 */
+        shipDate: draft.orderCreatedDate.trim() || (draft.shipLocal.trim() ? draft.shipLocal.trim().slice(0, 10) : null),
         receiverAddressTh: draft.receiverAddressTh,
         containerNo: draft.containerNo.trim() || null,
         warehouseId: draft.warehouseId.trim(),
         remark: draft.remark?.trim() || null,
       });
-      // 先把草稿的版本换成刚存的（2026-10-18）：下面刷新列表要是失败了，再点保存不会被自己这次当成「别人改过」
-      setShipmentOrderEditDrafts((prev) => (prev[shipmentId] ? { ...prev, [shipmentId]: { ...prev[shipmentId], baseOrderUpdatedAt: saved.updatedAt } } : prev));
-      const shipmentItems = await loadPageData();
-      const updated = shipmentItems.find((s) => s.id === shipmentId);
-      if (updated) {
-        setShipmentOrderEditDrafts((prev) => ({ ...prev, [shipmentId]: buildShipmentOrderEditDraft(updated) }));
-      }
+      /* 先把草稿的版本、剩余件数换成刚存的（2026-10-18）：下面刷新列表要是失败了，再点保存不会被自己这次当成「别人改过」
+         「有人装柜或卸柜」（后端拿草稿里的剩余件数跟运单现在的比，刚存进去的就是这次填的 packageCount —— dsh 全系统审查第 2 条） */
+      setShipmentOrderEditDrafts((prev) => (prev[shipmentId] ? { ...prev, [shipmentId]: { ...prev[shipmentId], baseOrderUpdatedAt: saved.updatedAt, basePackageCount: packageCount } } : prev));
       setToast("订单信息已保存");
+      // 已经存上了：接着刷新列表失败不能落进下面的「保存失败」（2026-10-18 全系统审查 F-14 / dsh 第 2 条），10 秒后会自动再刷
+      try {
+        const shipmentItems = await loadPageData();
+        const updated = shipmentItems.find((s) => s.id === shipmentId);
+        if (updated) {
+          setShipmentOrderEditDrafts((prev) => ({ ...prev, [shipmentId]: buildShipmentOrderEditDraft(updated) }));
+        }
+      } catch {
+        setToast("订单信息已保存（列表这次没刷新上，稍后会自动刷新）");
+      }
     } catch (error) {
       const text = error instanceof Error ? error.message : "保存失败";
       setMessage(`保存失败：${text}`);
@@ -1664,15 +1704,19 @@ export default function StaffHomePage() {
                 onClick={async () => {
                   setLoading(true);
                   try {
-                    await setStaffShipmentContainer({
-                      shipmentId: containerDraft.shipmentId.trim(),
-                      containerNo: containerDraft.containerNo.trim(),
-                    });
-                    await loadPageData();
+                    try {
+                      await setStaffShipmentContainer({
+                        shipmentId: containerDraft.shipmentId.trim(),
+                        containerNo: containerDraft.containerNo.trim(),
+                      });
+                    } catch (error) {
+                      const text = error instanceof Error ? error.message : "更新失败";
+                      setMessage(`更新失败：${text}`);
+                      return;
+                    }
                     setToast("装柜号更新成功");
-                  } catch (error) {
-                    const text = error instanceof Error ? error.message : "更新失败";
-                    setMessage(`更新失败：${text}`);
+                    // 已经改了：刷新列表失败不能说成「更新失败」（2026-10-18 全系统审查 F-14 同类）
+                    await loadPageData().catch(() => setToast("装柜号更新成功（列表这次没刷新上，稍后会自动刷新）"));
                   } finally {
                     setLoading(false);
                   }
@@ -1749,20 +1793,28 @@ export default function StaffHomePage() {
                   }
                   setLoading(true);
                   try {
-                    await uploadStaffInboundPhoto({
-                      shipmentId: uploadShipmentId,
-                      fileName: photoDraft.fileName,
-                      mime: photoDraft.mime,
-                      contentBase64: photoDraft.contentBase64,
-                      note: photoDraft.note.trim() || undefined,
-                    });
-                    const items = await fetchStaffInboundPhotos(uploadShipmentId);
-                    // 响应回来时输入框已换成别的运单号 → A 的照片不许落到 B 的单号下面
-                    if (photoShipmentIdRef.current === uploadShipmentId) setPhotoList(items);
+                    try {
+                      await uploadStaffInboundPhoto({
+                        shipmentId: uploadShipmentId,
+                        fileName: photoDraft.fileName,
+                        mime: photoDraft.mime,
+                        contentBase64: photoDraft.contentBase64,
+                        note: photoDraft.note.trim() || undefined,
+                      });
+                    } catch (error) {
+                      const text = error instanceof Error ? error.message : "上传失败";
+                      setMessage(`上传失败：${text}`);
+                      return;
+                    }
                     setToast("入库照片已上传");
-                  } catch (error) {
-                    const text = error instanceof Error ? error.message : "上传失败";
-                    setMessage(`上传失败：${text}`);
+                    // 传上去了：刷新照片列表失败不能说成「上传失败」—— 不然再传一次就多一张（2026-10-18 全系统审查 F-14 同类）
+                    try {
+                      const items = await fetchStaffInboundPhotos(uploadShipmentId);
+                      // 响应回来时输入框已换成别的运单号 → A 的照片不许落到 B 的单号下面
+                      if (photoShipmentIdRef.current === uploadShipmentId) setPhotoList(items);
+                    } catch {
+                      setToast("入库照片已上传（照片列表这次没刷新上，别再传一遍）");
+                    }
                   } finally {
                     setLoading(false);
                   }
@@ -2227,7 +2279,11 @@ export default function StaffHomePage() {
                                             <input
                                               type="datetime-local"
                                               value={draft.shipLocal}
-                                              onChange={(e) => mergeShipmentOrderDraft(item.id, item, { shipLocal: e.target.value })}
+                                              onChange={(e) => {
+                                                // 跟「到仓日期」是同一个字段（订单的 ship_date），两格一起变（2026-10-18 全系统审查 dsh 第 3 条）
+                                                const v = e.target.value;
+                                                mergeShipmentOrderDraft(item.id, item, v ? { shipLocal: v, orderCreatedDate: v.slice(0, 10) } : { shipLocal: v });
+                                              }}
                                               disabled={formDisabled}
                                               style={inputInCard}
                                             />
@@ -2236,9 +2292,11 @@ export default function StaffHomePage() {
                                             <input
                                               type="date"
                                               value={draft.orderCreatedDate}
-                                              onChange={(e) =>
-                                                mergeShipmentOrderDraft(item.id, item, { orderCreatedDate: e.target.value })
-                                              }
+                                              onChange={(e) => {
+                                                // 跟上面「发货时间」是同一个字段，两格一起变（时分照旧）
+                                                const v = e.target.value;
+                                                mergeShipmentOrderDraft(item.id, item, { orderCreatedDate: v, shipLocal: v ? `${v}T${draft.shipLocal.slice(11, 16) || "00:00"}` : draft.shipLocal });
+                                              }}
                                               disabled={formDisabled}
                                               style={inputInCard}
                                             />
@@ -2639,18 +2697,21 @@ export default function StaffHomePage() {
                        弹窗一度接过「应收金额」，当晚拆除——普通运单不录钱。柜号保留。 */
                     batchNo: batchNo || undefined,
                   });
-                  setToast(`预报单 ${item.id} 确认收货`);
-                  await loadPageData();
-                  // ⚠️ **只有成功才关弹窗**（2026-08-29 改）。
-                  // 原来这句在 try/catch 外面，失败也照样关 —— 员工只看到一闪而过的
-                  // 提示，弹窗没了、填的东西也没了，根本不知道该改哪里。
-                  setApprovingPrealert(null);
                 } catch (error) {
                   const text = error instanceof Error ? error.message : "确认收货失败";
                   // 2026-08-31 排查条目43：服务器报错也走弹窗常驻红字，不再用一闪而过的 Toast
                   setReceiveModalError("确认收货失败：" + text);
                   // 失败时**保留弹窗和已填内容**，让员工照着提示改
+                  return;
                 }
+                setToast(`预报单 ${item.id} 确认收货`);
+                // ⚠️ **只有成功才关弹窗**（2026-08-29 改）。
+                // 原来这句在 try/catch 外面，失败也照样关 —— 员工只看到一闪而过的
+                // 提示，弹窗没了、填的东西也没了，根本不知道该改哪里。
+                setApprovingPrealert(null);
+                /* 收上了：接着刷新列表失败不能说成「确认收货失败」、弹窗也不能留着（2026-10-18 全系统审查 F-14 同类）——
+                   原来刷新一失败，弹窗留着红字「确认收货失败」，员工再点一次 */
+                await loadPageData().catch(() => setToast(`预报单 ${item.id} 确认收货（列表这次没刷新上，稍后会自动刷新）`));
               }} style={{ border: "none", borderRadius: 6, padding: "8px 16px", fontSize: 13, background: "var(--c-blue)", color: "var(--white)", fontWeight: 500, cursor: "pointer" }}>确认收货</button>
             </div>
           </div>

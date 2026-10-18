@@ -1,7 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLiveRefresh } from "../../../modules/realtime/useRealtime";
+import { createQueryGate, createRequestGate } from "../../../modules/shared/request-gate";
 import { formatBeijingTimeShort } from "../../../modules/staff/utils";
 import {
   fetchAgentRebateDetail,
@@ -57,39 +58,69 @@ export default function AgentRebatesPanel({ agents }: { agents: AdminAgentItem[]
    *  页面上那条 ErrorBar 会被它压在后面，员工只看到「点了没反应」（Opus 复核 2026-09-18 第 1 条）。 */
   const [undoError, setUndoError] = useState("");
 
+  /* 列表按「现在的筛选」认（2026-10-18 全系统审查 F-15，request-gate 用法三）：快速换代理 / 月份 / 状态，旧条件的列表晚回来，
+     筛选框显示 B、列表却是 A。成功回来的只要还是现在的筛选、不比已显示的旧就用；失败的谁也不作废 */
+  const listGate = useRef(createQueryGate<{ agentId: string; month: string; status: string }>()).current;
+  const filterKey = useMemo(() => ({ agentId, month, status }), [agentId, month, status]);
+  const filterKeyRef = useRef(filterKey);
+  filterKeyRef.current = filterKey;
   const load = useCallback(async () => {
+    const ticket = listGate.begin(filterKey);
     setLoading(true);
     setError("");
     try {
-      setItems(await fetchAgentRebateStatements({ agentId, month, status }));
+      const list = await fetchAgentRebateStatements(filterKey);
+      if (!listGate.accept(ticket, filterKeyRef.current)) return;
+      setItems(list);
     } catch (e) {
+      if (listGate.superseded(ticket) || !Object.is(ticket.key, filterKeyRef.current)) return;
       setError(`返现单加载失败：${e instanceof Error ? e.message : "未知错误"}`);
     } finally {
-      setLoading(false);
+      if (Object.is(ticket.key, filterKeyRef.current)) setLoading(false);
     }
-  }, [agentId, month, status]);
+  }, [filterKey, listGate]);
   useEffect(() => { void load(); }, [load]);
 
   // 实时更新（2026-10-05）：别的管理员标了付款 / 撤回、返现单新出了，悄悄按此刻的筛选重拉（不开「加载中」、失败接着显示手上的）
   useLiveRefresh({
     topics: ["accounts"],
     refresh: async () => {
+      const key = filterKeyRef.current;
+      const ticket = listGate.begin(key);
       try {
-        setItems(await fetchAgentRebateStatements({ agentId, month, status }));
+        const list = await fetchAgentRebateStatements(key);
+        if (!listGate.accept(ticket, filterKeyRef.current)) return;
+        setItems(list);
         setError("");
       } catch { /* 同上 */ }
     },
   });
 
+  /* 明细只认最后点开的那张（2026-10-18 全系统审查 F-15）：连着点 A、B 的「看明细」，A 慢回来不能把 B 的弹框换成 A；关了弹框，晚到的也不许再弹出来 */
+  const detailGate = useRef(createRequestGate()).current;
+  const detailRef = useRef(detail);
+  detailRef.current = detail;
+  const closeDetail = () => { detailGate.cancel(); setDetail(null); };
   const openDetail = async (id: string) => {
+    const ticket = detailGate.begin();
     setDetailLoading(id);
     try {
-      setDetail(await fetchAgentRebateDetail(id));
+      const d = await fetchAgentRebateDetail(id);
+      if (!detailGate.isCurrent(ticket)) return;
+      setDetail(d);
     } catch (e) {
+      if (!detailGate.isCurrent(ticket)) return;
       setError(`明细加载失败：${e instanceof Error ? e.message : "未知错误"}`);
     } finally {
-      setDetailLoading("");
+      setDetailLoading((cur) => (cur === id ? "" : cur));
     }
+  };
+  /** 标已返 / 撤回之后：弹框开着的还是这张就把明细换成最新的（领号；晚回来时已经换了别的张或关了就不动） */
+  const refreshOpenDetail = async (id: string) => {
+    if (detailRef.current?.statement.id !== id) return;
+    const ticket = detailGate.begin();
+    const d = await fetchAgentRebateDetail(id);
+    if (detailGate.isCurrent(ticket) && detailRef.current?.statement.id === id) setDetail(d);
   };
 
   const markPaid = async (s: AgentRebateStatementItem) => {
@@ -109,7 +140,7 @@ export default function AgentRebatesPanel({ agents }: { agents: AdminAgentItem[]
     // 同撤回：刷新失败不能说成「标记失败」（已返已经记上了）
     try {
       await load();
-      if (detail?.statement.id === s.id) setDetail(await fetchAgentRebateDetail(s.id));
+      await refreshOpenDetail(s.id);
     } catch (e) {
       setError(`已返已经记上了，但页面没刷新出来（${e instanceof Error ? e.message : "未知错误"}），点一下「刷新」`);
     }
@@ -143,7 +174,7 @@ export default function AgentRebatesPanel({ agents }: { agents: AdminAgentItem[]
     // ⚠️ 刷新失败不能说成「撤回失败」：库里已经改了、流水也写了（Opus 复核 2026-09-18 第 2 条）
     try {
       await load();
-      if (detail?.statement.id === s.id) setDetail(await fetchAgentRebateDetail(s.id));
+      await refreshOpenDetail(s.id);
     } catch (e) {
       setError(`撤回已经成功了，但页面没刷新出来（${e instanceof Error ? e.message : "未知错误"}），点一下「刷新」`);
     }
@@ -233,7 +264,7 @@ export default function AgentRebatesPanel({ agents }: { agents: AdminAgentItem[]
       )}
 
       {detail && (
-        <Modal wide onClose={() => setDetail(null)}>
+        <Modal wide onClose={closeDetail}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
             <div>
               <h3 style={{ margin: "0 0 4px" }}>{detail.statement.agentName} · {detail.statement.month} 返现单</h3>
@@ -249,7 +280,7 @@ export default function AgentRebatesPanel({ agents }: { agents: AdminAgentItem[]
               ) : (
                 <button type="button" onClick={() => { setUndoing(detail.statement); setUndoReason(""); setUndoError(""); }} disabled={paying === detail.statement.id} style={btnCancel}>撤回「已返」</button>
               )}
-              <button type="button" onClick={() => setDetail(null)} style={btnCancel}>关闭</button>
+              <button type="button" onClick={closeDetail} style={btnCancel}>关闭</button>
             </div>
           </div>
           <div style={{ fontSize: 12, color: "var(--t-muted)", margin: "8px 0" }}>

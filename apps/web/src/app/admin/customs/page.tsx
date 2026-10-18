@@ -57,17 +57,25 @@ export default function AdminCustomsPage() {
             onClick={async () => {
               setLoading(true);
               try {
-                await createAdminCustomsCase({
-                  shipmentId: form.shipmentId.trim() || undefined,
-                  orderId: form.orderId.trim() || undefined,
-                  status: form.status,
-                  remark: form.remark.trim() || undefined,
-                });
-                await reload();
-                setMessage("关务状态已更新");
-              } catch (error) {
-                const text = error instanceof Error ? error.message : "更新失败";
-                setMessage(`更新失败：${text}`);
+                try {
+                  await createAdminCustomsCase({
+                    shipmentId: form.shipmentId.trim() || undefined,
+                    orderId: form.orderId.trim() || undefined,
+                    status: form.status,
+                    remark: form.remark.trim() || undefined,
+                  });
+                } catch (error) {
+                  const text = error instanceof Error ? error.message : "更新失败";
+                  setMessage(`更新失败：${text}`);
+                  return;
+                }
+                /* 已经记上了：接着刷新列表失败不能说成「更新失败」—— 不然再点一次就多一条记录（2026-10-18 全系统审查 F-14） */
+                try {
+                  await reload();
+                  setMessage("关务状态已更新");
+                } catch (error) {
+                  setMessage(`关务状态已更新，只是列表这次没刷新上（别再点保存，会多记一条）：${error instanceof Error ? error.message : "请稍后刷新"}`);
+                }
               } finally {
                 setLoading(false);
               }

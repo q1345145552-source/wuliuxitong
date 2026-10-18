@@ -1172,6 +1172,7 @@ export function registerConsolidationRoutes(app: MinimalHttpApp): void {
         if (fresh.paymentStatus === "paid") {
           throw new PaymentConflictError("该任务已付款，不用重复付");
         }
+        const paidNow = new Date();
         const amount = fresh.totalFee == null ? 0 : Number(fresh.totalFee);
         if (!(amount > 0)) {
           throw new PaymentConflictError("这个任务还没有报价金额，请联系客服核对后再付款");
@@ -1200,7 +1201,10 @@ export function registerConsolidationRoutes(app: MinimalHttpApp): void {
             //   ② 员工还能重新报价，把已付款任务的金额从 100 改成 999
             //   ③ 还能被取消，而且一分钱不退
             status: "paid",
-            paymentProofUploadedAt: new Date(),
+            paymentProofUploadedAt: paidNow,
+            // 记下付款时间（2026-10-18 全系统审查 C-P2-1）：原来只有「审核付款凭证」那条老路写 paidAt，
+            // 余额付款不写 → 客户详情不显示付款时间；撤销后再付，显示的还是第一次那个时间
+            paidAt: paidNow,
             paymentRejectReason: null,
           },
         });
@@ -2346,6 +2350,7 @@ export function registerConsolidationRoutes(app: MinimalHttpApp): void {
            */
           status: "quoted",
           paymentProofUploadedAt: null,
+          paidAt: null, // 钱退了，付款时间一起清掉（2026-10-18 全系统审查 C-P2-1）；再付的时候重新记
         },
       });
       await tx.consolidationStatusLog.create({

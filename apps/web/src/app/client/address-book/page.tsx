@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useLiveRefresh } from "../../../modules/realtime/useRealtime";
+import { createQueryGate } from "../../../modules/shared/request-gate";
 import {
   createClientAddress,
   deleteClientAddress,
@@ -27,11 +28,17 @@ export default function ClientAddressBookPage() {
     isDefault: false,
   });
 
+  /* 晚到的旧列表不许盖新的（2026-10-18 全系统审查 D-P2-6）：实时推送的重拉和「新增 / 删除 / 设默认」之后的刷新同时在路上，
+     先发的后回来，会把刚加的地址抹掉、刚删的又冒出来。成功回来的只要不比已经显示的旧就用；失败的谁也不作废（request-gate 用法三） */
+  const listGate = useRef(createQueryGate<string>()).current;
+
   /**
    * 刷新地址列表。
    */
   const reload = async () => {
+    const ticket = listGate.begin("all");
     const list = await fetchClientAddresses();
+    if (!listGate.accept(ticket, "all")) return;
     setItems(list);
   };
 
@@ -82,15 +89,21 @@ export default function ClientAddressBookPage() {
               setLoading(true);
               setMessage("");
               try {
-                await createClientAddress({
-                  label: form.label.trim() || undefined,
-                  contactName: form.contactName.trim(),
-                  contactPhone: form.contactPhone.trim(),
-                  addressDetail: form.addressDetail.trim(),
-                  lat: form.lat.trim() ? Number(form.lat) : undefined,
-                  lng: form.lng.trim() ? Number(form.lng) : undefined,
-                  isDefault: form.isDefault,
-                });
+                try {
+                  await createClientAddress({
+                    label: form.label.trim() || undefined,
+                    contactName: form.contactName.trim(),
+                    contactPhone: form.contactPhone.trim(),
+                    addressDetail: form.addressDetail.trim(),
+                    lat: form.lat.trim() ? Number(form.lat) : undefined,
+                    lng: form.lng.trim() ? Number(form.lng) : undefined,
+                    isDefault: form.isDefault,
+                  });
+                } catch (error) {
+                  const text = error instanceof Error ? error.message : "新增失败";
+                  setMessage(`新增失败：${text}`);
+                  return;
+                }
                 setForm({
                   label: "",
                   contactName: "",
@@ -100,11 +113,13 @@ export default function ClientAddressBookPage() {
                   lng: "",
                   isDefault: false,
                 });
-                await reload();
-                setMessage("地址新增成功");
-              } catch (error) {
-                const text = error instanceof Error ? error.message : "新增失败";
-                setMessage(`新增失败：${text}`);
+                // 已经存上了：刷新列表失败不能说成「新增失败」—— 不然再点一次就多一条地址（2026-10-18 全系统审查 F-14 同类）
+                try {
+                  await reload();
+                  setMessage("地址新增成功");
+                } catch {
+                  setMessage("地址新增成功（列表这次没刷新上，别再点保存，稍后刷新页面看）");
+                }
               } finally {
                 setLoading(false);
               }
@@ -138,11 +153,15 @@ export default function ClientAddressBookPage() {
                       setLoading(true);
                       setMessage("");
                       try {
-                        await setDefaultClientAddress(item.id);
-                        await reload();
-                      } catch (error) {
-                        // 失败要说出来（2026-09-29 Codex 全系统检查：原来按钮看起来像没反应）
-                        setMessage(`设为默认失败：${error instanceof Error ? error.message : "请稍后重试"}`);
+                        try {
+                          await setDefaultClientAddress(item.id);
+                        } catch (error) {
+                          // 失败要说出来（2026-09-29 Codex 全系统检查：原来按钮看起来像没反应）
+                          setMessage(`设为默认失败：${error instanceof Error ? error.message : "请稍后重试"}`);
+                          return;
+                        }
+                        // 已经设好了：刷新失败不能说成「设为默认失败」（2026-10-18 全系统审查 F-14 同类）
+                        await reload().catch(() => setMessage("已设为默认（列表这次没刷新上，稍后刷新页面看）"));
                       } finally {
                         setLoading(false);
                       }
@@ -158,10 +177,14 @@ export default function ClientAddressBookPage() {
                       setLoading(true);
                       setMessage("");
                       try {
-                        await deleteClientAddress(item.id);
-                        await reload();
-                      } catch (error) {
-                        setMessage(`删除失败：${error instanceof Error ? error.message : "请稍后重试"}`);
+                        try {
+                          await deleteClientAddress(item.id);
+                        } catch (error) {
+                          setMessage(`删除失败：${error instanceof Error ? error.message : "请稍后重试"}`);
+                          return;
+                        }
+                        // 已经删了：刷新失败不能说成「删除失败」（2026-10-18 全系统审查 F-14 同类）
+                        await reload().catch(() => setMessage("地址已删除（列表这次没刷新上，稍后刷新页面看）"));
                       } finally {
                         setLoading(false);
                       }

@@ -12,13 +12,13 @@
  * 2026-10-02 老板：已读不回容易漏 → 列表上面分「全部 / 待回复」两个页签，待回复的那一行标「待回复 · 等了多久」。
  * 待回复 = 最新一条还在的消息是客户发的（有人看过也算，看过不回照样挂着）。最上面一行可以开浏览器系统通知（ChatPushToggle）。
  */
-import { Suspense, useCallback, useEffect, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import ChatThread, { CHAT_UNREAD_EVENT } from "../../../modules/cs-chat/ChatThread";
 import ChatPushToggle from "../../../modules/cs-chat/ChatPushToggle";
 import { fetchChatConversations, type ChatConversation } from "../../../services/cs-chat-api";
 import { subscribeRealtime } from "../../../services/realtime";
-import { createRequestGate } from "../../../modules/shared/request-gate";
+import { createQueryGate } from "../../../modules/shared/request-gate";
 
 const LIST_POLL_MS = 5000;
 
@@ -66,19 +66,21 @@ function StaffChatInbox() {
   const [pendingCount, setPendingCount] = useState(0);
   const [selected, setSelected] = useState<string>("");
   const [startInput, setStartInput] = useState("");
-  const gate = useRef(createRequestGate()).current;
-  const searchRef = useRef(search);
-  searchRef.current = search;
-  const tabRef = useRef(tab);
-  tabRef.current = tab;
+  /* 列表用「成功才作废」的门闩（2026-10-18 全系统审查 D-P2-5，request-gate 用法三）：原来「只认最新一次」，
+     每 5 秒一次的轮询 + 实时推送不停领新号，接口一慢（回话要 5 秒以上），每次成功回来都已经被下一次作废了 —— 列表一直不更新。
+     现在成功回来的只要还是现在的搜索 / 页签、不比已经显示的旧，就用；失败的谁也不作废 */
+  const gate = useRef(createQueryGate<{ search: string; tab: "all" | "pending" }>()).current;
+  const queryKey = useMemo(() => ({ search, tab }), [search, tab]);
+  const queryKeyRef = useRef(queryKey);
+  queryKeyRef.current = queryKey;
   /** 哪些客户已经划到代理名下（只能看、不能发）：记下每次列表里见过的，搜索把选中的客户过滤掉了也还认得（2026-09-28 分支审查） */
   const closedSeenRef = useRef(new Map<string, boolean>());
 
   const loadList = useCallback(async () => {
-    const ticket = gate.begin();
+    const ticket = gate.begin(queryKeyRef.current);
     try {
-      const data = await fetchChatConversations(searchRef.current, tabRef.current === "pending" ? "pending" : undefined);
-      if (!gate.isCurrent(ticket)) return;
+      const data = await fetchChatConversations(ticket.key.search, ticket.key.tab === "pending" ? "pending" : undefined);
+      if (!gate.accept(ticket, queryKeyRef.current)) return;
       for (const c of data.items ?? []) closedSeenRef.current.set(c.clientId, c.closed === true);
       /* 这个列表不报提示音（Codex 复查 2026-10-02）：左边菜单已经是 5 秒一次（老板：「当时收的时候响」），
          列表再报一份只会跟菜单抢「第一次只记不响」，把真新消息悄悄吞掉。正开着客户甲时客户乙来消息，菜单 5 秒内响 */
@@ -86,11 +88,12 @@ function StaffChatInbox() {
       setTruncated(data.truncated === true);
       setPendingCount(Number(data.pendingCount) || 0);
       setListError("");
+      setListLoaded(true);
     } catch (e) {
-      if (!gate.isCurrent(ticket)) return;
+      // 条件已经换了，或者比它新的已经显示了：这次的报错不用说
+      if (gate.superseded(ticket) || !Object.is(ticket.key, queryKeyRef.current)) return;
       setListError(e instanceof Error ? e.message : "加载失败");
-    } finally {
-      if (gate.isCurrent(ticket)) setListLoaded(true);
+      setListLoaded(true);
     }
   }, [gate]);
 

@@ -138,6 +138,8 @@ interface ModelIntent {
   metric?: SummaryMetric;
   confidence?: number;
 }
+/** 海运 / 陆运（2026-10-18 全系统审查 D-P2-2）：问句里说了哪种就只数那种，没说就不分 */
+type TransportScope = "sea" | "land";
 interface SessionMemory {
   intent?: "tracking" | "summary";
   itemName?: string;
@@ -305,12 +307,18 @@ export class ClientAiService implements AiService {
         modelIntent.metric,
         isFollowUp ? memory?.metric : undefined,
       );
+      /* 海运 / 陆运（2026-10-18 全系统审查 D-P2-2）：原来不认 ——「海运在途有多少单」把陆运的也数进去，
+         「陆运有多少单」把「陆运」当成品名去查、回「没查到」。只认这一句问句里说的：
+         会话记忆存在 ai_session_memory 表里、没有这一列，追问不沿用（要沿用得加列 = 改表结构，先不动）；
+         答复的「查询范围」只在真筛了时才写海运 / 陆运，客户看得出这次没分 */
+      const transportMode = this.resolveTransportMode(restQuestion);
       const filteredShipments = this.filterShipmentsByScope(
         tickets,
         orders,
         timeWindow,
         statusScope,
         productScope,
+        transportMode,
       );
       const evidenceOrderIdSet = new Set(
         filteredShipments.map((item) => item.orderId).filter((id): id is string => Boolean(id)),
@@ -333,6 +341,7 @@ export class ClientAiService implements AiService {
         timeLabel: timeWindow.label,
         statusLabel: this.statusScopeLabel(statusScope),
         productLabel: productScope.label,
+        transportLabel: transportMode === "sea" ? "海运" : transportMode === "land" ? "陆运" : undefined,
         metric,
         // 按状态筛过之后，「在途/已完成」的分项是拿筛剩下的再统计的，会自相矛盾，
         // 所以只有「全部运单」才打那两行。详见 formatSummaryAnswer 的注释。
@@ -1026,7 +1035,8 @@ export class ClientAiService implements AiService {
       /* 2026-09-30 补「几天」：「这几天发了多少单」→ 品名「这几天」（改这几轮之前就这样）；
          补「上个月 / 半个月 / 礼拜 / 一周 / 两周 / 十天」：「上个月有多少单」→ 品名「上个月」（dsh 第五轮，线上就这样）。
          不单独加「周」字 —— 会把「周边」这类真货名当成整句拒掉。这些时间说法系统没有对应的查询窗口，按 9-03 的规矩退回「全部 + 分项」 */
-      /(最近|几天|上个月|上月|半个月|半月|礼拜|一周|两周|几周|十天|今天|今日|昨天|昨日|本周|这周|本星期|这星期|这个星期|本月|这个月|这月|当月|在途|路上|运输|完成|未完成|异常|退回|取消|到仓|进仓|到达仓库|泰国仓|国内仓|到货|装柜|发出|发走|派送|签收|丢件|丢了|丢失|少件|破损|什么时候|多少|几单|几件|统计|汇总|有多少|还有|查询范围)/.test(
+      /* 2026-10-18 补「海运|陆运|陆路」（全系统审查 D-P2-2）：「陆运有多少单」原来把「陆运」当成品名，回「没查到」 */
+      /(最近|几天|上个月|上月|半个月|半月|礼拜|一周|两周|几周|十天|今天|今日|昨天|昨日|本周|这周|本星期|这星期|这个星期|本月|这个月|这月|当月|在途|路上|运输|海运|陆运|陆路|完成|未完成|异常|退回|取消|到仓|进仓|到达仓库|泰国仓|国内仓|到货|装柜|发出|发走|派送|签收|丢件|丢了|丢失|少件|破损|什么时候|多少|几单|几件|统计|汇总|有多少|还有|查询范围)/.test(
         keyword,
       );
     if (fromSentence && looksLikeSentence) return undefined;
@@ -1136,6 +1146,7 @@ export class ClientAiService implements AiService {
     timeWindow: TimeWindow,
     statusScope: StatusScope,
     productScope: ProductScope,
+    transportMode?: TransportScope,
   ): Shipment[] {
     const keyword = productScope.keyword;
     const matchedOrderIds =
@@ -1144,10 +1155,22 @@ export class ClientAiService implements AiService {
         : new Set(
             orders.filter((item) => this.matchesProductKeyword(item, keyword)).map((item) => item.id),
           );
+    // 运单自己没填运输方式的老数据按订单的（跟列表同口径）
+    const orderModeById = new Map(orders.map((item) => [item.id, (item as { transportMode?: string }).transportMode]));
     return shipments
       .filter((item) => (matchedOrderIds ? matchedOrderIds.has(item.orderId) : true))
+      .filter((item) => !transportMode || (item.transportMode ?? orderModeById.get(item.orderId)) === transportMode)
       .filter((item) => this.inTimeWindow(item, timeWindow))
       .filter((item) => this.matchStatusScope(item, statusScope));
+  }
+
+  /** 问句里说的运输方式：只说了海运 / 只说了陆运才筛，两个都说了（「海运陆运各多少」）或都没说就不分 */
+  private resolveTransportMode(message: string): TransportScope | undefined {
+    const sea = /海运|走海/.test(message);
+    const land = /陆运|陆路|走陆/.test(message);
+    if (sea && !land) return "sea";
+    if (land && !sea) return "land";
+    return undefined;
   }
 
   /**
@@ -1606,9 +1629,17 @@ export class ClientAiService implements AiService {
       `最近更新时间：${this.formatBeijingTime(shipment.updatedAt)}`,
       "",
       "【建议操作】",
+      /* 已取消 / 已退回 / 异常不能说「仍在运输流程中」（2026-10-18 全系统审查 D-P2-3）：
+         上面刚写了「当前状态：已取消」，下面又说还在运输，客户以为货还在走 */
       shipment.currentStatus === "delivered"
         ? "该运单已签收，建议核对收货数量并归档。"
-        : "该运单仍在运输流程中，建议稍后再次查询最新节点。",
+        : shipment.currentStatus === "cancelled"
+          ? "该运单已取消，不再运输。如有疑问请联系客服。"
+          : shipment.currentStatus === "returned"
+            ? "该运单已退回，不再继续派送。如有疑问请联系客服。"
+            : shipment.currentStatus === "exception"
+              ? "该运单目前标记为异常，建议联系客服了解具体情况。"
+              : "该运单仍在运输流程中，建议稍后再次查询最新节点。",
     ].join("\n");
   }
 
@@ -1657,6 +1688,8 @@ export class ClientAiService implements AiService {
       timeLabel: string;
       statusLabel: string;
       productLabel: string;
+      /** 只查了海运 / 陆运时写进「查询范围」那一行；没分就不写 */
+      transportLabel?: string;
       metric: SummaryMetric;
       /**
        * 要不要打「在途中 / 已完成」这两行分项。
@@ -1710,7 +1743,7 @@ export class ClientAiService implements AiService {
       focusHint,
       "",
       "【统计明细】",
-      `查询范围：${scope.timeLabel}，${scope.statusLabel}，${scope.productLabel}`,
+      `查询范围：${scope.timeLabel}，${scope.statusLabel}，${scope.transportLabel ? `${scope.transportLabel}，` : ""}${scope.productLabel}`,
       ...(scope.productNote ? [scope.productNote] : []),
       ...(scope.showStatusBreakdown
         ? [

@@ -358,7 +358,11 @@ async function main(): Promise<void> {
     assert.match(v, /const reloadLatest = useCallback\(\(\) => loadRef\.current\(true\), \[\]\);/);
     assert.equal((v.match(/await reloadLatest\(\)/g) ?? []).length, 3, "标已通知 / 转运单 / 删除 三处");
     assert.match(v, /onChanged=\{reloadLatest\}/);
-    assert.match(v, /if \(gate\.current\.isCurrent\(ticket\)\) setLoading\(false\);/, "最新那次（悄悄的也算）要收掉加载态");
+    // 2026-10-18（全系统审查 D-P2-4）改成「成功才作废」的门闩：现在这个条件的请求回来了（悄悄的也算）就收掉加载态；
+    // 成功的只要不比已经显示的旧就用，失败的谁也不作废
+    assert.match(v, /if \(Object\.is\(ticket\.key, listKeyRef\.current\)\) setLoading\(false\);/, "现在这个条件的请求回来了（悄悄的也算）要收掉加载态");
+    assert.match(v, /if \(!gate\.accept\(ticket, listKeyRef\.current\)\) return;/, "成功回来的要过「还是现在的条件、不比已显示的旧」");
+    assert.match(v, /if \(gate\.superseded\(ticket\) \|\| !Object\.is\(ticket\.key, listKeyRef\.current\)\) return;/, "失败的：条件换了或更新的已显示，报错不用说");
     assert.match(v, /if \(!silent \|\| shownKeyRef\.current !== key\) setLoadError/, "手上列的是别的页签时，悄悄重拉失败也要报");
   });
 

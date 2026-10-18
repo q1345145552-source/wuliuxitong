@@ -1,4 +1,5 @@
 import { partialAheadStatus } from "../../../../../packages/shared-types/shipment-status";
+import { customsClearedAtOf, familyContainers } from "./track-containers";
 import { deleteBlockedReasonOf, isCurrentStatusLog, isManagedLastmileLog } from "../shipments/managed-lastmile-log";
 import { findDeletedLogAudits } from "../shipments/deleted-log-audits";
 import { STATUS_FLOW as SHIP_FLOW, STATUS_FLOW_LAND as SHIP_FLOW_LAND } from "../shipments/status-flow";
@@ -507,7 +508,8 @@ export function registerContainerRoutes(app: MinimalHttpApp): void {
   // ============ 变更柜子状态（含自动连带）============
   // - IN_TRANSIT 时记录 departureDate（若未填）
   // - ARRIVED 时记录 ata（实际到港）
-  // - CUSTOMS 完成 → 自动写 customsClearedAt
+  // - 清关已放行（CUSTOMS_CLEARED）：只记进状态时间表 statusDates，customsClearedAt 那一列不写；
+  //   轨迹弹窗读的时候那一列空着就从状态时间表取（2026-10-18 全系统审查 B-P3-1，见 track-containers.ts）
   // - DELIVERING 时把柜内所有运单的 currentStatus 推进到 outForDelivery
   // - SIGNED 时把柜内所有运单的 currentStatus 推进到 delivered
   app.post("/admin/containers/status", async (req, res) => {
@@ -1498,11 +1500,6 @@ export function registerContainerRoutes(app: MinimalHttpApp): void {
     }
 
     const totalVolume = shipment.volumeM3 ? decToNumber(shipment.volumeM3) : 0;
-    const totalLoaded = shipment.containerItems.reduce(
-      (sum, it) => sum + decToNumber(it.loadedVolumeM3),
-      0,
-    );
-    const isSplit = shipment.containerItems.length > 1;
 
     const lastmileOrder = await prisma.adminLastmileOrder.findFirst({
       where: { shipmentId: shipment.id },
@@ -1515,11 +1512,20 @@ export function registerContainerRoutes(app: MinimalHttpApp): void {
           where: { parentTrackingNo: shipment.trackingNo, companyId: auth.companyId },
           include: {
             statusLogs: { orderBy: { changedAt: "asc" } },
-            // 子单装在哪个柜：抹备注里的柜号要用（2026-09-28）
-            containerItems: { select: { container: { select: { containerNo: true } } } },
+            // 子单装在哪个柜：抹备注里的柜号要用（2026-09-28）；「装柜时间」那块也从这里来（2026-10-18，见 track-containers.ts）
+            containerItems: { include: { container: true } },
           },
           orderBy: { trackingNo: "asc" },
         });
+
+    /* 这票货装过的柜 = 父单自己的 + 全部子单的，同一个柜只算一次（2026-10-18 全系统审查 A-P2-3 / B-P2-3）：
+       现在装柜都先拆子单、柜里记的是子单，原来只看父单自己的柜 —— 点父单看轨迹，「装柜时间」那块永远是空的 */
+    const familyItems = familyContainers(
+      [...shipment.containerItems, ...childShipments.flatMap((cs) => cs.containerItems)],
+      decToNumber,
+    );
+    const totalLoaded = familyItems.reduce((sum, it) => sum + it.loadedVolumeM3, 0);
+    const isSplit = familyItems.length > 1;
 
     /**
      * 派送单挂在哪张单上就在哪张单上查（2026-09-28 审查修复 #3）：
@@ -1669,24 +1675,22 @@ export function registerContainerRoutes(app: MinimalHttpApp): void {
       totalVolumeM3: totalVolume,
       totalLoadedM3: Number(totalLoaded.toFixed(3)),
       isSplit,
-      splitCount: shipment.containerItems.length,
-      // 所属的所有柜子（拆柜情况下会有多个）— 客户端隐藏
+      splitCount: familyItems.length,
+      // 所属的所有柜子（父单 + 子单，拆柜情况下会有多个）— 客户端不给柜号
       containers: auth.role === "client"
-        ? shipment.containerItems.map((it) => ({
+        ? familyItems.map((it) => ({
             loadingDate: it.container.loadingDate?.toISOString() ?? null,
             departureDate: it.container.departureDate?.toISOString() ?? null,
             ata: it.container.ata?.toISOString() ?? null,
-            customsClearedAt: it.container.customsClearedAt?.toISOString() ?? null,
+            customsClearedAt: customsClearedAtOf(it.container),
             containerStatus: it.container.currentStatus,
           }))
-        : shipment.containerItems
-        .sort((a, b) => a.container.createdAt.getTime() - b.container.createdAt.getTime())
-        .map((it) => ({
+        : familyItems.map((it) => ({
           containerId: it.containerId,
           containerNo: it.container.containerNo,
           containerType: it.container.containerType,
           carrierName: it.container.carrierName ?? null,
-          loadedVolumeM3: decToNumber(it.loadedVolumeM3),
+          loadedVolumeM3: Number(it.loadedVolumeM3.toFixed(3)),
           loadedPieceCount: it.loadedPieceCount,
           containerStatus: it.container.currentStatus,
           containerStatusLabel:
@@ -1695,7 +1699,7 @@ export function registerContainerRoutes(app: MinimalHttpApp): void {
           departureDate: it.container.departureDate?.toISOString() ?? null,
           eta: it.container.eta?.toISOString() ?? null,
           ata: it.container.ata?.toISOString() ?? null,
-          customsClearedAt: it.container.customsClearedAt?.toISOString() ?? null,
+          customsClearedAt: customsClearedAtOf(it.container),
         })),
       // 状态时间线（父单为合并后的完整链路，子单为自身记录）
       timeline: mergedTimeline,

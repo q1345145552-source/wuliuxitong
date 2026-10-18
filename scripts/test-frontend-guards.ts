@@ -135,9 +135,11 @@ check("3) 确认收货那两个弹窗都接了校验，而且失败不许关弹�
   const catchIdx = submitBody.indexOf('const text = error instanceof Error ? error.message : "确认收货失败"');
   assert.ok(closeIdx > 0, "提交函数里找不到关弹窗那一句");
   assert.ok(catchIdx > 0, "提交函数里找不到 catch 那一句");
+  /* 2026-10-18（全系统审查 F-14 同类）：收货成功后刷新列表失败不能落进「确认收货失败」，关弹窗挪到 try / catch 后面 ——
+     那就要求 catch 里失败先 return（失败不许走到关弹窗那句）。两种写法认一种 */
   assert.ok(
-    closeIdx < catchIdx,
-    "关弹窗那句排在 catch 后面 —— 说明失败也会关弹窗，员工看不到错在哪",
+    closeIdx < catchIdx || (closeIdx > catchIdx && /return;\s*\}/.test(submitBody.slice(catchIdx, closeIdx))),
+    "关弹窗那句排在 catch 后面、catch 里又没先 return —— 说明失败也会关弹窗，员工看不到错在哪",
   );
 
   const admin = codeLines(path.join(WEB, "app", "admin", "prealerts", "page.tsx"));

@@ -65,19 +65,27 @@ export default function AdminLmpPage() {
             onClick={async () => {
               setLoading(true);
               try {
-                await createAdminLmpRate({
-                  routeCode: form.routeCode.trim(),
-                  supplierName: form.supplierName.trim(),
-                  transportMode: form.transportMode,
-                  seasonTag: form.seasonTag,
-                  supplierCost: Number(form.supplierCost),
-                  quotePrice: Number(form.quotePrice),
-                });
-                await reload();
-                setMessage("LMP 规则新增成功");
-              } catch (error) {
-                const text = error instanceof Error ? error.message : "新增失败";
-                setMessage(`新增失败：${text}`);
+                try {
+                  await createAdminLmpRate({
+                    routeCode: form.routeCode.trim(),
+                    supplierName: form.supplierName.trim(),
+                    transportMode: form.transportMode,
+                    seasonTag: form.seasonTag,
+                    supplierCost: Number(form.supplierCost),
+                    quotePrice: Number(form.quotePrice),
+                  });
+                } catch (error) {
+                  const text = error instanceof Error ? error.message : "新增失败";
+                  setMessage(`新增失败：${text}`);
+                  return;
+                }
+                /* 已经加上了：接着刷新列表失败不能说成「新增失败」—— 不然再点一次就多一条（2026-10-18 全系统审查 F-14） */
+                try {
+                  await reload();
+                  setMessage("LMP 规则新增成功");
+                } catch (error) {
+                  setMessage(`LMP 规则已新增，只是列表这次没刷新上（别再点保存，会多加一条）：${error instanceof Error ? error.message : "请稍后刷新"}`);
+                }
               } finally {
                 setLoading(false);
               }

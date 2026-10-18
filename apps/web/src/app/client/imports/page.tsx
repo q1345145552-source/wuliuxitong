@@ -6,6 +6,7 @@ import { createRequestGate } from "../../../modules/shared/request-gate";
 import { createClientPrealert, type ClientPrealertPayload } from "../../../services/business-api";
 import { CARGO_TYPE_ZH } from "../../../../../../packages/shared-types/cargo-type";
 import { WAREHOUSE_ZH, isRowBad, normalizeRows, type ImportRow } from "../../../modules/client-import/import-rows";
+import { clearPending, fileFingerprint, finishBatch, markDone, markPending, pendingStorage, readDoneRows, readPendingIds } from "../../../modules/client-import/pending-requests";
 
 function downloadTemplate(): void {
   const worksheet = XLSX.utils.json_to_sheet([
@@ -81,6 +82,8 @@ export default function ClientImportsPage() {
      旧批次的进度/结果就不许再往新预览上写。主防线是提交期间禁用上传入口（见下），
      这个快照是第二道保险。 */
   const previewRef = useRef<ImportRow[]>([]);
+  /** 当前预览是哪个文件（按内容算的指纹）：没确认的行按它记编号（2026-10-18，见 pending-requests.ts） */
+  const fileKeyRef = useRef("");
 
   const handleUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -103,11 +106,22 @@ export default function ClientImportsPage() {
       const wb = XLSX.read(buffer, { type: "array" });
       const ws = wb.Sheets[wb.SheetNames[0]];
       const raw = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { defval: "" });
-      // 每一行一个请求编号（2026-10-18）：重试这一行时原样带上，服务器已经建好的就不再建（回话丢了也不会重复下单）
-      const normalized = normalizeRows(raw).map((row) => ({ ...row, requestId: newRequestId() }));
+      /* 每一行一个请求编号（2026-10-18）：重试这一行时原样带上，服务器已经建好的就不再建（回话丢了也不会重复下单）。
+         同一个文件上一批没收尾干净（断网 / 超时后刷新了页面再传）：那一批已经建好的行不再交，「发出去了、没确认」的行用回上次的编号，
+         其余行新编号（pending-requests.ts） */
+      const fileKey = await fileFingerprint(buffer, file);
+      const pendingIds = readPendingIds(pendingStorage(), fileKey);
+      const doneRows = new Set(readDoneRows(pendingStorage(), fileKey));
+      const allRows = normalizeRows(raw);
+      const skippedRowNos = allRows.filter((row) => doneRows.has(String(row.rowNo))).map((row) => row.rowNo);
+      const normalized = allRows
+        .filter((row) => !doneRows.has(String(row.rowNo)))
+        .map((row) => ({ ...row, requestId: pendingIds[String(row.rowNo)] ?? newRequestId() }));
+      const resumedRowNos = normalized.filter((row) => pendingIds[String(row.rowNo)] === row.requestId).map((row) => row.rowNo);
       // 2026-09-02 终审整改：成功分支验号——解析期间又选了新文件的话，这份旧结果整体作废
       if (!parseGate.isCurrent(ticket)) return;
       // 2026-09-01 竞态全扫：预览换主人，快照同步更新
+      fileKeyRef.current = fileKey;
       previewRef.current = normalized;
       setRows(normalized);
       setCurrent(0);
@@ -116,11 +130,16 @@ export default function ClientImportsPage() {
       setErrors([]);
       setDone(false);
       const badCount = normalized.filter(isRowBad).length;
+      const skippedNote = skippedRowNos.length > 0 ? `表格第 ${skippedRowNos.join("、")} 行上次已经建好了（「预报单」里能看到），这次不再交` : "";
+      const resumedNote = resumedRowNos.length > 0
+        ? `表格第 ${resumedRowNos.join("、")} 行上次发出去了、没确认建没建好：再交时上次要是其实已经建好，系统会认出来、不会重复下单`
+        : "";
+      const notes = [skippedNote, resumedNote].filter(Boolean).join("。");
       setMessage(normalized.length === 0
-        ? "这个文件里没有读到数据（表格是空的），请填好模板再上传"
+        ? (skippedRowNos.length > 0 ? `这个文件上次已经全部建好了（「预报单」里能看到），不用再交。${skippedNote}` : "这个文件里没有读到数据（表格是空的），请填好模板再上传")
         : badCount > 0
-          ? `已读取 ${normalized.length} 条，其中 ${badCount} 条标红的要改（看最右边「要改的地方」），改好再上传`
-          : `已读取 ${normalized.length} 条有效数据`);
+          ? `已读取 ${normalized.length} 条，其中 ${badCount} 条标红的要改（看最右边「要改的地方」），改好再上传${notes ? `。${notes}` : ""}`
+          : `已读取 ${normalized.length} 条有效数据${notes ? `。${notes}` : ""}`);
     } catch {
       // 2026-09-02 终审整改：失败分支同样验号，旧解析的报错不许盖到新解析的提示上
       if (!parseGate.isCurrent(ticket)) return;
@@ -144,6 +163,8 @@ export default function ClientImportsPage() {
     if (rows.some(isRowBad)) return;
     // 2026-09-01 竞态全扫：记下这次提交的是哪一份预览（点击那一刻的 rows 快照）
     const batch = rows;
+    const batchFileKey = fileKeyRef.current;
+    const store = pendingStorage();
     setLoading(true);
     setCurrent(0);
     setSuccessCount(0);
@@ -182,7 +203,10 @@ export default function ClientImportsPage() {
           // 货型（2026-09-11）：上面已经拦掉认不出来的，这里一定是那三个值之一
           cargoType: row.cargoType ?? "normal",
         };
+        // 发出去之前先记下「没确认」（发到一半刷新页面也算），建好了挪到「已建好」（pending-requests.ts）
+        if (row.requestId) markPending(store, batchFileKey, row.rowNo, row.requestId);
         await createClientPrealert(payload);
+        markDone(store, batchFileKey, row.rowNo);
         success++;
         // 2026-09-01 竞态全扫：响应回来先认主人，预览换了就不写计数
         if (previewRef.current !== batch) break;
@@ -191,7 +215,9 @@ export default function ClientImportsPage() {
         const text = error instanceof Error ? error.message : "提交失败";
         errs.push(`表格第${row.rowNo}行(${row.itemName}): ${text}`);
         failedRows.push(row);
+        // 结果不确定的留着「没确认」的记号（再传同一个文件能认出来）；后端明确拒了的（肯定没建）删掉
         if ((error as { resultUnknown?: boolean } | null)?.resultUnknown) unknown++;
+        else clearPending(store, batchFileKey, row.rowNo);
         // 2026-09-01 竞态全扫：失败分支同样认主人，旧批次的报错不许混进新预览
         if (previewRef.current !== batch) break;
         setFailCount(errs.length);
@@ -199,6 +225,8 @@ export default function ClientImportsPage() {
       }
     }
 
+    // 这一批收尾：没有「没确认」的了就整条清掉（以后同一份表照旧当新单）；还有就留着，再传同一个文件时用（pending-requests.ts）
+    finishBatch(store, batchFileKey);
     // 2026-09-01 竞态全扫：只有预览还是出发时那份，才展示这批的完成汇总
     if (previewRef.current === batch) {
       setErrors(errs);

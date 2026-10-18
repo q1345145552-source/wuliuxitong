@@ -5,7 +5,7 @@ import { formatBreakdownVolume } from "../../../modules/shared/volume-format";
 import { apiBaseUrl, apiRequest } from "../../../services/core-api";
 import { formatBeijingTime } from "../../../modules/staff/utils";
 import { base64Bytes, compressImageForUpload, formatBytes } from "../../../modules/shared/image-compress";
-import { createRequestGate } from "../../../modules/shared/request-gate";
+import { createQueryGate, createRequestGate } from "../../../modules/shared/request-gate";
 import { useLiveRefresh } from "../../../modules/realtime/useRealtime";
 import { createYieldGuard } from "../../../modules/realtime/yield-guard";
 import { CARGO_TYPES, CARGO_TYPE_ZH, cargoTypeZh } from "../../../../../../packages/shared-types/cargo-type";
@@ -284,31 +284,39 @@ export default function ClientWhrConsolidationPage() {
   // ==========================================================================
   /** 读集货余额。付款弹窗要用它判断够不够，付完也要刷新。
    *  silent（有变化时悄悄重拉）读失败：保留上一次读到的数，不让正开着的付款框突然变灰（Codex 复查 2026-10-05） */
+  /* 余额、计划列表晚到的旧结果不盖新的（2026-10-18 全系统审查 F-10）：实时推送的重拉、付款后的刷新、初次加载同时在路上，
+     先发的后回来 —— 刚付完款余额又变回付款前、刚装柜的计划又退回去。成功回来的只要不比已显示的旧就用（用法三）。
+     余额照旧把这一次读到的数返回给调用方（付款前那次现读要用它判断够不够） */
+  const balanceGate = useRef(createQueryGate<null>()).current;
+  const plansGate = useRef(createQueryGate<null>()).current;
   const loadBalance = useCallback(async (opts?: { silent?: boolean }): Promise<number | null> => {
+    const ticket = balanceGate.begin(null);
     try {
       const r = await apiRequest<{ balance?: number; accounts?: { currency: string; balance: number }[] }>(
         `${apiBaseUrl()}/client/wallet/overview`
       );
       const v = typeof r.balance === "number" ? r.balance : (r.accounts?.find(a => a.currency === "CNY")?.balance ?? 0);
-      setBalance(v);
+      if (balanceGate.accept(ticket, null)) setBalance(v);
       return v;
     } catch {
-      if (!opts?.silent) setBalance(null);
+      if (!opts?.silent && !balanceGate.superseded(ticket)) setBalance(null);
       return null;
     }
-  }, []);
+  }, [balanceGate]);
 
 
   /** silent：有变化时悄悄重拉（2026-10-05 实时推送）——不开「加载中」、失败不弹提示 */
   const loadPlans = useCallback(async (opts?: { silent?: boolean }) => {
     const silent = opts?.silent === true;
+    const ticket = plansGate.begin(null);
     if (!silent) setLoading(true);
     try {
       const data = await apiRequest<{ items: MyPlan[] }>(`${apiBaseUrl()}/client/whr-consolidation/plans`);
+      if (!plansGate.accept(ticket, null)) return;
       setPlans(data.items ?? []);
-    } catch (e: any) { if (!silent) setToast(e?.message ?? "加载计划列表失败"); }
+    } catch (e: any) { if (!silent && !plansGate.superseded(ticket)) setToast(e?.message ?? "加载计划列表失败"); }
     finally { if (!silent) setLoading(false); }
-  }, []);
+  }, [plansGate]);
 
   /** 悄悄重拉失败时，手上已有详情（换计划时会清空，所以有就是当前这个计划的）就接着显示 */
   const detailRef = useRef<MyDetail | null>(null);

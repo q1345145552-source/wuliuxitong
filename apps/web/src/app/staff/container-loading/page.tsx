@@ -673,29 +673,39 @@ export default function StaffContainerLoadingPage() {
     // 对不上就会把运单装进另一个柜
     if (!guardDetailOwner(selectedId)) return;
     setAdding(true);
-    let success = 0;
-    const errors: string[] = [];
-    // 运输方式对不上的只提醒不拦（后端也不拦），线上真实存在海陆混装的柜
-    const modeWarnings: string[] = [];
-    for (const [trackingNo, pieceCount] of entries) {
-      if (!trackingNo) { errors.push("空运单号"); continue; }
-      try {
-        const r = await addShipmentToManifest(selectedId, trackingNo, pieceCount > 0 ? pieceCount : undefined);
-        if (r.warning) modeWarnings.push(`${trackingNo}（${r.warning}）`);
-        success++;
-      } catch (e: any) {
-        errors.push(`${trackingNo}: ${e.message ?? "失败"}`);
+    /* 整段包进 try / finally（2026-10-18 全系统审查 F-13）：原来 setAdding(false) 排在两次刷新后面，
+       刷新一失败就跳过，按钮永远停在「添加中…」，只能重开页面 */
+    try {
+      let success = 0;
+      const errors: string[] = [];
+      // 运输方式对不上的只提醒不拦（后端也不拦），线上真实存在海陆混装的柜
+      const modeWarnings: string[] = [];
+      for (const [trackingNo, pieceCount] of entries) {
+        if (!trackingNo) { errors.push("空运单号"); continue; }
+        try {
+          const r = await addShipmentToManifest(selectedId, trackingNo, pieceCount > 0 ? pieceCount : undefined);
+          if (r.warning) modeWarnings.push(`${trackingNo}（${r.warning}）`);
+          success++;
+        } catch (e: any) {
+          errors.push(`${trackingNo}: ${e.message ?? "失败"}`);
+        }
       }
+      setToast(
+        `成功添加 ${success} 个运单到装柜` +
+        (errors.length > 0 ? `，失败 ${errors.length} 个：${errors.join("；")}` : "") +
+        (modeWarnings.length > 0 ? `⚠️ 运输方式对不上：${modeWarnings.join("；")}（已装进去，如需调整请卸柜）` : ""),
+      );
+      setSelectedShipments({});
+      // 已经装进去了：接着刷新失败只另外说一句，不改上面那句结论（实时推送 / 下次操作会再刷）
+      try {
+        await loadDetail(selectedId);
+        await loadShipmentList();
+      } catch (e) {
+        setError(`已添加，只是运单列表这次没刷新上：${e instanceof Error ? e.message : "请稍后刷新"}`);
+      }
+    } finally {
+      setAdding(false);
     }
-    setToast(
-      `成功添加 ${success} 个运单到装柜` +
-      (errors.length > 0 ? `，失败 ${errors.length} 个：${errors.join("；")}` : "") +
-      (modeWarnings.length > 0 ? `⚠️ 运输方式对不上：${modeWarnings.join("；")}（已装进去，如需调整请卸柜）` : ""),
-    );
-    setSelectedShipments({});
-    await loadDetail(selectedId);
-    await loadShipmentList();
-    setAdding(false);
   };
 
   const handleRemoveShipment = async (itemId: string, pieceCount?: number) => {
@@ -705,11 +715,17 @@ export default function StaffContainerLoadingPage() {
     if (!guardDetailOwner(selectedId)) return;
     try {
       await removeShipmentFromManifest(selectedId, itemId, pieceCount);
-      setToast("运单已从装柜卸下");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "卸柜失败");
+      return;
+    }
+    setToast("运单已从装柜卸下");
+    // 卸成功了：刷新失败不能说成「卸柜失败」（2026-10-18 全系统审查 F-14 同类）
+    try {
       await loadDetail(selectedId);
       await loadShipmentList();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "卸柜失败");
+      setError(`已卸下，只是运单列表这次没刷新上：${e instanceof Error ? e.message : "请稍后刷新"}`);
     }
   };
 

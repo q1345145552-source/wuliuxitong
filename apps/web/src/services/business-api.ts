@@ -1199,7 +1199,13 @@ export async function fetchLastmileShipments(): Promise<LastmileShipmentItem[]> 
     if (items.length === 0 || collected.length >= total) break;
     page += 1;
   }
-  return collected.filter((s) => s.parentTrackingNo || !s.hasChildren || (s.packageCount ?? 0) !== 0).map((s) => ({
+  return collected.filter((s) => s.parentTrackingNo || !s.hasChildren || (s.packageCount ?? 0) !== 0).map(toLastmileCandidate);
+}
+
+/** /staff/shipments 的一行 → 尾端派送候选（普通和整柜共用，2026-10-18 全系统审查 B-P2-2：整柜那边原来直接强转，
+ *  品名只有第一个产品、按第二个产品名搜不到；收货人 / 电话 / 地址的字段名也对不上，工作台读不到） */
+function toLastmileCandidate(s: any): LastmileShipmentItem {
+  return {
     id: s.id,
     trackingNo: s.trackingNo,
     clientId: s.clientId ?? "",
@@ -1211,7 +1217,7 @@ export async function fetchLastmileShipments(): Promise<LastmileShipmentItem[]> 
     receiverName: s.receiverNameTh || undefined,
     receiverPhone: s.receiverPhoneTh || undefined,
     receiverAddress: s.receiverAddressTh || undefined,
-  }));
+  };
 }
 
 export async function fetchShipmentImages(orderId: string): Promise<OrderProductImageItem[]> {
@@ -2837,7 +2843,7 @@ export async function fetchFclLastmileShipments(): Promise<LastmileShipmentItem[
     if (items.length < pageSize || (total && page * pageSize >= total)) break;
     page += 1;
   }
-  return collected as LastmileShipmentItem[];
+  return collected.map(toLastmileCandidate);
 }
 
 /** 整柜的派送单列表（scope=fcl，跟普通尾端各看各的） */

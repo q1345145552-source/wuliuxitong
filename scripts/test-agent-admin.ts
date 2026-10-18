@@ -808,7 +808,8 @@ async function main(): Promise<void> {
     assert.match(shell, /const oldTrim = oldPwd\.trim\(\);/);
     assert.match(shell, /const newTrim = newPwd\.trim\(\);/);
     assert.match(shell, /if \(!oldTrim \|\| !newTrim\)/, "改密码：判空要用去空格后的");
-    assert.match(shell, /if \(newTrim\.length < 8\)/, "改密码：长度要按去空格后的算");
+    // 2026-10-18 全系统审查 F-7：客户不卡长度（老板 8-07「客户端那边不用管」），员工 / 管理员 / 代理照旧按去空格后的算
+    assert.match(shell, /if \(session\?\.role !== "client" && newTrim\.length < 8\)/, "改密码：长度要按去空格后的算（客户不卡）");
     assert.match(shell, /if \(newTrim !== confirmPwd\.trim\(\)\)/, "改密码：两次输入按去空格后的比");
     assert.match(shell, /changeOwnPassword\(\{ oldPassword: oldTrim, newPassword: newTrim \}\)/, "改密码：发出去的要去首尾空格");
     assert.equal((shell.match(/\b(oldPwd|newPwd)\b(?!\.trim\(\))/g) ?? []).length, 0, "改密码：除了取 trim，不许再直接用 oldPwd / newPwd 原值");

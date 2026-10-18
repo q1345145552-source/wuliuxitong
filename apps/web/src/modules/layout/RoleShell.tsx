@@ -225,7 +225,8 @@ export default function RoleShell(props: {
       setPwdError("请把旧密码和新密码都填上");
       return;
     }
-    if (newTrim.length < 8) {
+    // 客户不卡长度（2026-08-07 老板「客户端那边不用管」，后端也只对员工 / 管理员 / 代理卡 —— 2026-10-18 全系统审查 F-7）
+    if (session?.role !== "client" && newTrim.length < 8) {
       setPwdError("新密码至少 8 位");
       return;
     }
@@ -697,7 +698,7 @@ export default function RoleShell(props: {
                   type={showPwd ? "text" : "password"}
                   value={newPwd}
                   onChange={(e) => setNewPwd(e.target.value)}
-                  placeholder="新密码（至少 8 位，不能全是数字）"
+                  placeholder={session?.role === "client" ? "新密码" : "新密码（至少 8 位，不能全是数字）"}
                   autoComplete="new-password"
                   style={{ border: "1px solid var(--hairline)", borderRadius: 8, padding: "8px 12px", fontSize: 14 }}
                 />

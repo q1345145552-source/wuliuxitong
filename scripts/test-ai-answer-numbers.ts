@@ -1631,6 +1631,45 @@ async function main() {
       assert.equal(totalCountOf(delivering.answer), 3, `应该按全部 3 单答（附分项）：\n${delivering.answer}`);
     });
 
+    await check("73) ⭐ 海运 / 陆运分开数；「陆运」不当成品名（2026-10-18 全系统审查 D-P2-2）", async () => {
+      const now = Date.now();
+      const land = (x: Shipment) => ({ ...x, transportMode: "land" }) as Shipment;
+      const fx = [
+        shipment({ id: "sea1", createdAtMs: now - 3600_000, updatedAtMs: now - 3600_000, status: "loaded" }),
+        land(shipment({ id: "land1", createdAtMs: now - 3600_000, updatedAtMs: now - 3600_000, status: "loaded" })),
+        land(shipment({ id: "land2", createdAtMs: now - 3600_000, updatedAtMs: now - 3600_000, status: "delivered" })),
+      ];
+      const sea = await ask({ shipments: fx, message: "海运有多少单" });
+      assert.equal(totalCountOf(sea.answer), 1, `海运只有 1 单：\n${sea.answer}`);
+      assert.match(sea.answer, /查询范围：[^\n]*海运/);
+      const landAll = await ask({ shipments: fx, message: "陆运有多少单" });
+      assert.ok(!/未查询到品名/.test(landAll.answer), `「陆运」被当成品名了：\n${landAll.answer}`);
+      assert.equal(totalCountOf(landAll.answer), 2, `陆运 2 单：\n${landAll.answer}`);
+      const landTransit = await ask({ shipments: fx, message: "陆运在途有多少单" });
+      assert.equal(totalCountOf(landTransit.answer), 1, `陆运在途 1 单：\n${landTransit.answer}`);
+      const seaTransit = await ask({ shipments: fx, message: "海运在途有多少单" });
+      assert.equal(totalCountOf(seaTransit.answer), 1, `海运在途 1 单（不能把陆运的也算进去）：\n${seaTransit.answer}`);
+      const both = await ask({ shipments: fx, message: "海运陆运一共有多少单" });
+      assert.equal(totalCountOf(both.answer), 3, `两种都说了就不分：\n${both.answer}`);
+      const none = await ask({ shipments: fx, message: "我有多少单" });
+      assert.equal(totalCountOf(none.answer), 3, `没说就不分：\n${none.answer}`);
+      assert.ok(!/查询范围：[^\n]*(海运|陆运)/.test(none.answer), `没说运输方式不该写进查询范围：\n${none.answer}`);
+      // 追问不沿用运输方式（会话记忆的表没有这一列，不改表结构）：照实不分，查询范围里也不能写陆运
+      const [, followUp] = await askSeries({ shipments: fx, messages: ["陆运有多少单", "那在途的呢"] });
+      assert.equal(totalCountOf(followUp), 2, `追问不沿用运输方式，在途 2 单：\n${followUp}`);
+      assert.ok(!/查询范围：[^\n]*陆运/.test(followUp), `没筛陆运却写了陆运：\n${followUp}`);
+    });
+
+    await check("74) ⭐ 查单号：已取消 / 已退回 / 异常不说「仍在运输流程中」（2026-10-18 全系统审查 D-P2-3）", async () => {
+      const now = Date.now();
+      for (const [status, want] of [["cancelled", /已取消，不再运输/], ["returned", /已退回，不再继续派送/], ["exception", /标记为异常/], ["delivered", /已签收/], ["loaded", /仍在运输流程中/]] as const) {
+        const target = shipment({ id: `st_${status}`, createdAtMs: now - 86400_000, updatedAtMs: now, status: status as ShipmentStatus });
+        const { answer } = await ask({ shipments: [{ ...target, trackingNo: "THST0001" } as Shipment], message: "单号 THST0001 到哪了" });
+        assert.match(answer, want, `${status}：\n${answer}`);
+        if (status !== "loaded") assert.ok(!answer.includes("仍在运输流程中"), `${status} 还说仍在运输：\n${answer}`);
+      }
+    });
+
     await check("72) ⭐「你好，我本月有多少单」给数字，不只回欢迎语", async () => {
       const now = Date.now();
       const fx = [

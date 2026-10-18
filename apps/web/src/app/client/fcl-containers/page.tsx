@@ -23,6 +23,7 @@ import { formatBeijingTime } from "../../../modules/staff/utils";
 import EmptyStateCard from "../../../modules/layout/EmptyStateCard";
 import { beijingDate } from "../../../modules/shared/beijing-date";
 import { useLiveRefresh } from "../../../modules/realtime/useRealtime";
+import { createQueryGate } from "../../../modules/shared/request-gate";
 
 // 货型中文：用共享那一份（2026-10-11 加特别货时收过来，原来这里抄了三个）
 const CARGO_TYPE_ZH: Record<string, string> = SHARED_CARGO_TYPE_ZH;
@@ -40,20 +41,25 @@ export default function ClientFclContainersPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [detail, setDetail] = useState<FclContainerDetail | null>(null);
 
+  /* 晚到的旧列表不盖新的（2026-10-18 全系统审查 B-P2-4 / F-10）：初次加载和实时推送的重拉同时在路上，先发的后回来，
+     刚变的状态又退回去。成功回来的只要不比已显示的旧就用，失败的谁也不作废（request-gate 用法三） */
+  const listGate = useRef(createQueryGate<null>()).current;
   /** silent：有变化时悄悄重拉（2026-10-05 实时推送）——不开「加载中」、失败不弹提示 */
   const load = useCallback(async (opts?: { silent?: boolean }) => {
     const silent = opts?.silent === true;
+    const ticket = listGate.begin(null);
     if (!silent) setLoading(true);
     try {
       const r = await fetchMyFclContainers();
+      if (!listGate.accept(ticket, null)) return;
       setRows(r.items ?? []);
       setListNote(r.truncated ? (r.note ?? "只显示最近 500 个整柜") : "");
     } catch (e) {
-      if (!silent) setToast(`加载失败：${e instanceof Error ? e.message : "请稍后重试"}`);
+      if (!silent && !listGate.superseded(ticket)) setToast(`加载失败：${e instanceof Error ? e.message : "请稍后重试"}`);
     } finally {
       if (!silent) setLoading(false);
     }
-  }, []);
+  }, [listGate]);
 
   useEffect(() => { void load(); }, [load]);
 

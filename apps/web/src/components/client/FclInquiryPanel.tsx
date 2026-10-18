@@ -228,7 +228,8 @@ export default function FclInquiryPanel(props: ClientFclInquiryProps) {
       props.onToast(`没接受成功：${e?.message || "请刷新后重试"}`);
     } finally {
       setAccepting(null);
-      loadList(listPage);
+      // 用现在的页码（2026-10-18 全系统审查 F-18）：接受的请求在路上时客户翻了页，原来回来按点按钮那一刻的页码重拉、把人拉回旧页
+      loadList(listPageRef.current);
     }
   };
 

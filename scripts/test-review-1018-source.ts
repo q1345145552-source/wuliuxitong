@@ -153,7 +153,10 @@ check("S6 客户「批量下单」：失败的行记下来，跑完预览只留�
   // 按钮只看预览有没有行：全成功后预览空了，按钮自然灰
   assert.match(src, /disabled=\{loading \|\| parsing \|\| rows\.length === 0 \|\| badCargoRows\.length > 0\}/);
   // 每行一个请求编号（第 2 轮）：上传解析时给、提交时带上
-  assert.match(src, /const normalized = normalizeRows\(raw\)\.map\(\(row\) => \(\{ \.\.\.row, requestId: newRequestId\(\) \}\)\);/, "上传解析时每行要给一个请求编号");
+  // 同一个文件上次没确认的行用回原来的编号，其余行新编号（2026-10-18，pending-requests.ts；S16 真跑）
+  // 2026-10-18 浏览器实测后补：同一个文件上一批没收尾干净的，那一批建好的行不再交（真跑在 test-small-fixes-1018-source F11）
+  assert.match(src, /\.filter\(\(row\) => !doneRows\.has\(String\(row\.rowNo\)\)\)\s*\.map\(\(row\) => \(\{ \.\.\.row, requestId: pendingIds\[String\(row\.rowNo\)\] \?\? newRequestId\(\) \}\)\);/, "上传解析时每行要给一个请求编号（上次没确认的用回原来的）");
+  assert.match(src, /const fileKey = await fileFingerprint\(buffer, file\);\s*const pendingIds = readPendingIds\(pendingStorage\(\), fileKey\);/, "按文件内容取上次没确认的编号");
   assert.match(src, /const payload: ClientPrealertPayload = \{\s*requestId: row\.requestId,/, "提交时要带这一行的请求编号");
   // 编号格式要过后端那道（字母数字和「-」、16～64 位）：真跑页面里的 newRequestId
   const fn = sourceNodeSync("apps/web/src/app/client/imports/page.tsx", "newRequestId");
@@ -224,7 +227,8 @@ check("S8 超管在员工页「保存订单信息」：草稿记订单版本、�
   assert.match(code("apps/web/src/modules/staff/types.ts"), /baseOrderUpdatedAt: string \| null;/);
   const src = code("apps/web/src/app/staff/page.tsx");
   assert.match(src, /const saved = await patchStaffShipmentOrderBundle\(\{\s*shipmentId,\s*\.\.\.\(draft\.baseOrderUpdatedAt \? \{ expectedOrderUpdatedAt: draft\.baseOrderUpdatedAt \} : \{\}\),/);
-  assert.match(src, /setShipmentOrderEditDrafts\(\(prev\) => \(prev\[shipmentId\] \? \{ \.\.\.prev, \[shipmentId\]: \{ \.\.\.prev\[shipmentId\], baseOrderUpdatedAt: saved\.updatedAt \} \} : prev\)\);\s*const shipmentItems = await loadPageData\(\);/, "存完先换版本、再刷新");
+  // 存完先换版本（2026-10-18 起连剩余件数一起换，dsh 全系统审查第 2 条），再刷新；刷新失败单独接住、不落进「保存失败」
+  assert.match(src, /setShipmentOrderEditDrafts\(\(prev\) => \(prev\[shipmentId\] \? \{ \.\.\.prev, \[shipmentId\]: \{ \.\.\.prev\[shipmentId\], baseOrderUpdatedAt: saved\.updatedAt, basePackageCount: packageCount \} \} : prev\)\);\s*setToast\("订单信息已保存"\);\s*try \{\s*const shipmentItems = await loadPageData\(\);/, "存完先换版本和剩余件数、再刷新（刷新单独 try）");
   const api = code("apps/web/src/services/business-api.ts");
   const fnAt = api.indexOf("export async function patchStaffShipmentOrderBundle(");
   const sig = api.slice(fnAt, api.indexOf("{\n", api.indexOf("}): Promise<", fnAt)));
@@ -243,7 +247,9 @@ check("S9 后端：两份列表给订单 updatedAt；patch-shipment-bundle 锁�
   const childLockAt = route.indexOf("await lockShipmentsChildrenFirst(tx, [shipmentId], auth.companyId);");
   assert.ok(lockAt > 0 && checkAt > lockAt && childLockAt > checkAt, "核版本要在锁住订单之后、锁运单 / 写库之前");
   assert.match(route, /if \(!cur \|\| cur\.updatedAt\.toISOString\(\) !== body\.expectedOrderUpdatedAt\) \{\s*throw new BusinessError\("这票刚刚被别人改过[^"]*", 409, "VALIDATION_ERROR"\);/);
-  assert.match(route, /createdAt: arrived,\s*updatedAt: now,\s*\},\s*\}\);/, "patch-shipment-bundle 写订单要带 updatedAt: now（跟返回值一样）");
+  assert.match(route, /updatedAt: now,\s*\},\s*\}\);/, "patch-shipment-bundle 写订单要带 updatedAt: now（跟返回值一样）");
+  // 到仓日期不许再写进创建时间（2026-10-18 全系统审查 dsh 第 3 条）
+  assert.ok(!/createdAt: arrived/.test(route), "patch-shipment-bundle 又把到仓日期写进订单的创建时间了");
   assert.match(route, /ok\(res, \{[\s\S]*?updatedAt: now\.toISOString\(\),/);
   const admin = code("apps/api/src/modules/admin/routes.ts");
   assert.match(admin, /await tx\.order\.update\(\{ where: \{ id: orderId \}, data: \{ cargoType: productCargo, updatedAt: now \} \}\);/, "超管改单第二次写订单（货型）也要用同一个 now");
@@ -305,25 +311,39 @@ async function main(): Promise<void> {
     const row = (i: number) => ({ rowNo: i + 2, requestId: `req0000000000000${i}`, warehouseId: "wh_yiwu_01", itemName: `货${i}`, packageCount: 1, packageUnit: "box", weightKg: 1, volumeM3: 0.1, shipDate: "2026-10-18", domesticTrackingNo: "", transportMode: "sea", cargoType: "normal", issues: [] });
     let unknownSeen = -1;
     let unknownFail = false;
+    // 「没确认」的编号（pending-requests.ts，真函数 + 假的 sessionStorage）
+    const pending = await import("../apps/web/src/modules/client-import/pending-requests");
+    const mem = new Map<string, string>();
+    const fakeStorage = { getItem: (k: string) => mem.get(k) ?? null, setItem: (k: string, v: string) => { mem.set(k, v); } };
+    const FILE = "sha256:testfile";
+    const pendingNow = () => pending.readPendingIds(fakeStorage, FILE);
     const submit = async (rows: Row[], failName: string | null) => {
       unknownSeen = -1;
       const previewRef = { current: rows };
       const sent: string[] = [];
       const ids: string[] = [];
+      const pendingAtSend: string[] = [];
       let lastRows: Row[] | undefined;
       await evalTs("module.exports=" + handler + ";", {
         loading: false, parsing: false, rows, previewRef, isRowBad: () => false,
+        fileKeyRef: { current: FILE }, pendingStorage: () => fakeStorage, markPending: pending.markPending, clearPending: pending.clearPending,
+        markDone: pending.markDone, finishBatch: pending.finishBatch,
         setLoading() {}, setCurrent() {}, setSuccessCount() {}, setFailCount() {}, setErrors() {}, setDone() {}, setMessage() {},
         setRows(v: Row[]) { lastRows = v; },
         setUnknownCount(n: number) { unknownSeen = n; },
         createClientPrealert: async (p: Row) => {
           sent.push(p.itemName); ids.push(p.requestId);
+          // 发出去的那一刻，这一行要已经记成「没确认」（发到一半刷新页面也认得出来）
+          if (pendingNow()[String(rows.find((r) => r.requestId === p.requestId)?.rowNo)] === p.requestId) pendingAtSend.push(p.itemName);
           if (p.itemName === failName) throw Object.assign(new Error("网络断了"), unknownFail ? { resultUnknown: true } : {});
         },
       })();
-      return { sent, ids, lastRows, preview: previewRef.current, unknown: unknownSeen };
+      return { sent, ids, lastRows, preview: previewRef.current, unknown: unknownSeen, pendingAtSend };
     };
     const first = await submit([row(0), row(1), row(2)], "货1");
+    assert.deepEqual(first.pendingAtSend, ["货0", "货1", "货2"], "每行发出去之前要先记成「没确认」");
+    assert.deepEqual(pendingNow(), {}, "建好的、后端明确拒的都要删掉「没确认」的记号");
+    assert.deepEqual(pending.readDoneRows(fakeStorage, FILE), [], "一批收尾干净（没有没确认的）要整条清掉，以后同一份表照旧当新单");
     // 沙箱里建的数组跟外面不是同一个 Array（原型不同），比内容用 Array.from 拷出来再比
     assert.deepEqual(first.sent, ["货0", "货1", "货2"]);
     assert.deepEqual(Array.from(first.lastRows ?? [], (r) => r.itemName), ["货1"], "跑完预览要只剩没下成的那行");
@@ -338,6 +358,8 @@ async function main(): Promise<void> {
     unknownFail = true;
     const shaky = await submit([row(0), row(1)], "货1");
     assert.equal(shaky.unknown, 1, "结果不确定的行要单独记数");
+    assert.deepEqual(pendingNow(), { "3": "req00000000000001" }, "结果不确定的那行要留着「没确认」的记号（刷新后重传同一个文件能认出来）；建好的那行删掉");
+    assert.deepEqual(pending.readDoneRows(fakeStorage, FILE), ["2"], "没收尾干净的那一批，已经建好的行要记下（刷新后重传同一个文件不再交它）");
     assert.deepEqual(Array.from(shaky.lastRows ?? [], (r) => r.itemName), ["货1"]);
     assert.ok(retry.lastRows !== undefined && retry.lastRows.length === 0, "全成功后预览清空（按钮跟着变灰）");
   });
@@ -768,6 +790,76 @@ async function main(): Promise<void> {
     assert.equal(run("o1", [], { id: "s2", orderId: "o2" }), null, "打开时那份是别的单，不能拿来用");
     const noOrderId = { id: "s5", trackingNo: "无订单号" };
     assert.equal(run("s5", [noOrderId], null), noOrderId, "没有 orderId 的老单按运单 id 认");
+  });
+
+  await checkAsync("S16 真跑客户批量下单「没确认」的编号（pending-requests.ts，2026-10-18 dsh 第 3 轮建议 2）：按文件记、确认了删、一天过期、存不了当没有；同一份内容同一个指纹", async () => {
+    const m = await import("../apps/web/src/modules/client-import/pending-requests");
+    const mem = new Map<string, string>();
+    const st = { getItem: (k: string) => mem.get(k) ?? null, setItem: (k: string, v: string) => { mem.set(k, v); } };
+    const t0 = 1_800_000_000_000;
+    m.markPending(st, "fA", 3, "idA3", t0);
+    m.markPending(st, "fA", 5, "idA5", t0);
+    m.markPending(st, "fB", 3, "idB3", t0);
+    assert.deepEqual(m.readPendingIds(st, "fA", t0 + 1000), { "3": "idA3", "5": "idA5" });
+    assert.deepEqual(m.readPendingIds(st, "fB", t0 + 1000), { "3": "idB3" }, "不同文件各记各的");
+    assert.deepEqual(m.readPendingIds(st, "fC", t0), {}, "没记过的文件是空的");
+    m.clearPending(st, "fA", 3, t0 + 2000);
+    assert.deepEqual(m.readPendingIds(st, "fA", t0 + 2000), { "5": "idA5" });
+    m.clearPending(st, "fA", 5, t0 + 2000);
+    assert.deepEqual(m.readPendingIds(st, "fA", t0 + 2000), {});
+    assert.ok(!JSON.parse(mem.get("xt.clientImport.pending.v1") ?? "{}").fA, "文件没剩下的要整条删");
+    // 建好了挪到「已建好」：一批没收尾干净（还有没确认的）整条留着；收尾干净了整条删
+    m.markPending(st, "fD", 2, "idD2", t0);
+    m.markPending(st, "fD", 3, "idD3", t0);
+    m.markDone(st, "fD", 2, t0 + 100);
+    assert.deepEqual(m.readPendingIds(st, "fD", t0 + 200), { "3": "idD3" }, "建好的那行不再算没确认");
+    assert.deepEqual(m.readDoneRows(st, "fD", t0 + 200), ["2"]);
+    m.finishBatch(st, "fD", t0 + 300);
+    assert.deepEqual(m.readDoneRows(st, "fD", t0 + 300), ["2"], "还有没确认的，一批跑完也要留着（刷新后重传用）");
+    m.clearPending(st, "fD", 3, t0 + 400);
+    assert.deepEqual(m.readDoneRows(st, "fD", t0 + 400), ["2"], "明确拒了一行，但还有已建好的：不能整条删");
+    m.finishBatch(st, "fD", t0 + 500);
+    assert.deepEqual([m.readPendingIds(st, "fD", t0 + 500), m.readDoneRows(st, "fD", t0 + 500)], [{}, []], "收尾干净了要整条删");
+    m.markDone(st, "fE", 4, t0);
+    m.markDone(st, "fE", 4, t0);
+    assert.deepEqual(m.readDoneRows(st, "fE", t0), ["4"], "同一行不重复记");
+    mem.set("xt.clientImport.pending.v1", JSON.stringify({ fOld: { at: t0, ids: { "2": "x" } } }));
+    assert.deepEqual(m.readDoneRows(st, "fOld", t0), [], "老格式（没有 done）当没有已建好的");
+    assert.deepEqual(m.readPendingIds(st, "fB", t0 + 25 * 3600_000), {}, "放了一天以上就过期");
+    // 浏览器不让存 / 取（隐私模式等）：当没有，不报错
+    const broken = { getItem: () => { throw new Error("denied"); }, setItem: () => { throw new Error("denied"); } };
+    assert.doesNotThrow(() => m.markPending(broken, "fA", 1, "x"));
+    assert.deepEqual(m.readPendingIds(broken, "fA"), {});
+    assert.deepEqual(m.readPendingIds(null, "fA"), {});
+    mem.set("xt.clientImport.pending.v1", "不是 JSON");
+    assert.deepEqual(m.readPendingIds(st, "fA"), {}, "存的东西坏了当没有");
+    // 指纹：同一份内容（文件名不同也一样）同一个；内容不同就不同
+    const enc = (t: string) => new TextEncoder().encode(t).buffer as ArrayBuffer;
+    const k1 = await m.fileFingerprint(enc("同一份表"), { name: "a.xlsx", size: 1 });
+    const k2 = await m.fileFingerprint(enc("同一份表"), { name: "改了名.xlsx", size: 1 });
+    const k3 = await m.fileFingerprint(enc("另一份表"), { name: "a.xlsx", size: 1 });
+    assert.equal(k1, k2);
+    assert.notEqual(k1, k3);
+    assert.match(k1, /^sha256:[0-9a-f]{64}$/);
+  });
+
+  await checkAsync("S15 超管「运单详情」弹窗也挂在列表外面（老板选 A）：按 expandedOrderId 从全部列表里找、key 跟着单子、只在运单管理这一页显示时挂；打开时记下这一行", async () => {
+    const raw = read("apps/web/src/app/admin/page.tsx");
+    const tableAt = raw.indexOf("{pagedOrders.map((o) => {");
+    const tableBlock = raw.slice(tableAt, raw.indexOf("</tbody>", tableAt));
+    assert.ok(tableAt > 0 && !tableBlock.includes('title="运单详情"'), "运单详情弹窗又挂回列表行里了");
+    assert.match(raw, /\{expandedOrderRow && activeSection === "orders" \? \(\(\) => \{\s*const o = expandedOrderRow;\s*return \(\s*<DetailModal\s*key=\{o\.id\}\s*title="运单详情"/);
+    assert.match(raw, /\}, \[expandedOrderId, orderList, expandedOrderMeta\]\);/);
+    assert.equal((raw.match(/setExpandedOrderMeta\(o\);\s*setExpandedOrderId\(o\.id\);/g) ?? []).length, 2, "电脑那一行、手机那一块打开详情都要记下这一行");
+    const decl = sourceNode("apps/web/src/app/admin/page.tsx", (n) => ts.isVariableDeclaration(n) && n.name.getText() === "expandedOrderRow");
+    const pick = evalTs(`module.exports = (ctx) => { const { expandedOrderId, orderList, expandedOrderMeta, useMemo } = ctx; const ${decl}; return expandedOrderRow; };`);
+    const run = (expandedOrderId: string, orderList: Row[], expandedOrderMeta: Row | null) => pick({ expandedOrderId, orderList, expandedOrderMeta, useMemo: (fn: () => unknown) => fn() });
+    const meta = { id: "s1", trackingNo: "旧" };
+    const fresh = { id: "s1", trackingNo: "新" };
+    assert.equal(run("", [fresh], meta), null);
+    assert.equal(run("s1", [{ id: "s9" }, fresh], meta), fresh, "列表里有就用最新的");
+    assert.equal(run("s1", [{ id: "s9" }], meta), meta, "列表里没有了用打开时那份");
+    assert.equal(run("s1", [], { id: "s2" }), null, "打开时那份对不上不用");
   });
 
   console.log(`\n${passed} 项通过，${failed} 项失败`);

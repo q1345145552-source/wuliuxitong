@@ -101,6 +101,7 @@ const db: any = strict("prisma", {
   orderProduct: strict("orderProduct", { async findMany(args: any) { return list("orderProduct",[],args); } }),
   orderProductImage: strict("orderProductImage", { async findMany(args: any) { return list("orderProductImage",[],args); } }),
   adminLastmileOrder: strict("adminLastmileOrder", {
+    async count(args: any) { reads.push({model:"adminLastmileOrder.count",args:copy(args)});return deliveries.filter(r=>match(r,args.where)).length; },
     async findMany(args: any) { return list("adminLastmileOrder",deliveries,args); },
     async findFirst(args: any) { return list("adminLastmileOrder",deliveries,{...args,take:1})[0] ?? null; },
     async findUnique(args: any) { return list("adminLastmileOrder",deliveries,{...args,take:1})[0] ?? null; },
@@ -229,6 +230,21 @@ async function main() {
   }
   assert.equal(deliveries.length,1);assert.equal(logs.length,0);assert.equal(ships[0].currentStatus,"inWarehouseTH");
  });
+ check("6b) 追加只许加到还在派送的车上：已全部签收的 409 不写；锁住那一刻刚签收完的也 409（2026-10-18 全系统审查 B-P2-1）",async()=>{
+  reset([ship("S1"),ship("S2")]);deliveries=[delivery("lm1","S1","WD000001","SIGNED")];
+  let r=await call("POST /admin/lastmile/orders",{shipmentIds:["S2"],deliveryNo:"WD000001"});
+  assert.equal(r.status,409);assert.match(r.raw.message,/WD000001 已经全部签收/);
+  assert.equal(deliveries.length,1);assert.equal(logs.length,0);assert.equal(ships[1].currentStatus,"inWarehouseTH");
+  reset([ship("S1"),ship("S2")]);deliveries=[delivery("lm1","S1","WD000001")];
+  afterLock=(key)=>{if(key==="lastmile:lm1")deliveries[0].status="SIGNED";};
+  r=await call("POST /admin/lastmile/orders",{shipmentIds:["S2"],deliveryNo:"WD000001"});
+  assert.equal(r.status,409);assert.match(r.raw.message,/已经全部签收/);assert.equal(deliveries.length,1);assert.equal(logs.length,0);
+  assert.ok(locks.includes("lastmile:lm1"),"要先锁住目标车次的行再数");
+  // 还有一票在派送：照常追加
+  reset([ship("S1"),ship("S2")]);deliveries=[delivery("lm1","S1","WD000001")];
+  r=await call("POST /admin/lastmile/orders",{shipmentIds:["S2"],deliveryNo:"WD000001"});
+  assert.equal(r.status,200);assert.equal(r.data.count,1);assert.equal(deliveries.length,2);
+ });
  check("7) 旧行锁后已SIGNED：保留历史和凭证，正常再派且moved=0",async()=>{
   reset([ship("S1")]);deliveries=[delivery("lm1","S1","WD000001")];
   afterLock=(key)=>{if(key==="lastmile:lm1"){deliveries[0].status="SIGNED";deliveries[0].signImageBase64="proof";ships[0].currentStatus="delivered";}};
@@ -242,7 +258,8 @@ async function main() {
    deliveries=[delivery("b","C1","WD000001"),delivery("a","C2","WD000001"),delivery("t","T","WD000002")];
    const r=await call("POST /admin/lastmile/orders",{shipmentIds:["C2","C1"],moveFromDelivering:true,deliveryNo:append?"WD000002":undefined});
    assert.equal(r.status,200);assert.equal(r.data.moved,2);
-   assert.deepEqual(locks,[...(append?[]:["2901"]),"lastmile:a","lastmile:b","shipment:C1","shipment:C2","shipment:P","shipment:P","shipment:P"]);
+   // 追加时目标车次（WD000002 的 t）的行跟要改派的旧行放在一起按 id 排序锁（2026-10-18 全系统审查 B-P2-1）
+   assert.deepEqual(locks,[...(append?[]:["2901"]),"lastmile:a","lastmile:b",...(append?["lastmile:t"]:[]),"shipment:C1","shipment:C2","shipment:P","shipment:P","shipment:P"]);
    console.log(`LOCK ${append?"append":"new"}: ${locks.join(" -> ")}`);
   }
  });
@@ -342,7 +359,8 @@ async function main() {
  check("22) 同WD已SIGNED历史保留跳过；非boolean改派标志400",async()=>{
   reset([ship("S1")]);ships[0].currentStatus="delivered";deliveries=[{...delivery("signed","S1","WD000001","SIGNED"),signImageBase64:"proof"}];
   const snapshot=copy({ships,deliveries,logs});
-  const skipped=await call("POST /admin/lastmile/orders",{shipmentIds:["S1"],deliveryNo:"WD000001",moveFromDelivering:true});assert.equal(skipped.status,200);assert.deepEqual(skipped.data.skipped,["S1"]);assert.equal(skipped.data.moved,0);assert.deepEqual({ships,deliveries,logs},snapshot);
+  // 2026-10-18（全系统审查 B-P2-1）：这车已经全部签收，追加一律 409（原来同一票回「跳过」）；两种都不写，签收历史和凭证原样
+  const skipped=await call("POST /admin/lastmile/orders",{shipmentIds:["S1"],deliveryNo:"WD000001",moveFromDelivering:true});assert.equal(skipped.status,409);assert.match(skipped.raw.message,/已经全部签收/);assert.deepEqual({ships,deliveries,logs},snapshot);
   const invalid=await call("POST /admin/lastmile/orders",{shipmentIds:["S1"],moveFromDelivering:"true"});assert.equal(invalid.status,400);assert.deepEqual({ships,deliveries,logs},snapshot);
  });
 

@@ -246,7 +246,12 @@ export function registerAuthRoutes(app: MinimalHttpApp): void {
       return;
     }
 
-    const invalidReason = checkPasswordStrength(newPassword, oldPassword, auth.userId);
+    /* 客户照客户的规矩：不卡强度（2026-08-07 老板「客户端那边不用管」—— 客户密码普遍就是唛头；2026-10-18 全系统审查 F-7：
+       原来这里不分角色一律按员工的强密码规则，客户想改成 6 位、全数字、跟唛头一样都被拦）。只挡太长、跟旧的一样。
+       员工 / 管理员 / 代理照旧卡（代理名下的客户也是客户，照客户规矩） */
+    const invalidReason = auth.role === "client"
+      ? (newPassword.length > 128 ? "密码太长了（最多 128 位）" : newPassword === oldPassword ? "新密码不能和旧密码一样" : null)
+      : checkPasswordStrength(newPassword, oldPassword, auth.userId);
     if (invalidReason) {
       fail(res, 400, "BAD_REQUEST", invalidReason);
       return;

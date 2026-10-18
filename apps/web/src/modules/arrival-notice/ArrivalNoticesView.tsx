@@ -164,7 +164,13 @@ export default function ArrivalNoticesView() {
   /** 封禁的唛头（2026-10-17）：不进下拉；框里是它时提示一句（modules/shared/client-ban.ts） */
   const [bannedClients, setBannedClients] = useState<ReadonlySet<string>>(() => new Set());
   const [clientsFailed, setClientsFailed] = useState(false);
-  const gate = useRef(createRequestGate());
+  /* 列表用「成功才作废」的门闩（2026-10-18 全系统审查 D-P2-4，request-gate 用法三）：原来「只认最新一次」，
+     员工刚按新条件查（前台），实时推送又来一次悄悄重拉（后台）把前台那次作废；后台那次偏偏失败又不报错，列表就停在旧条件。
+     现在成功回来的只要还是现在的页签 / 搜索词 / 页码、不比已经显示的旧，就用；失败的谁也不作废 */
+  const gate = useRef(createQueryGate<{ tab: string; keyword: string; page: number }>()).current;
+  const listKey = useMemo(() => ({ tab, keyword, page }), [tab, keyword, page]);
+  const listKeyRef = useRef(listKey);
+  listKeyRef.current = listKey;
   /** 屏幕上这份列表是哪个页签 / 搜索词 / 页码的（F12：悄悄重拉失败时判断要不要报错） */
   const shownKeyRef = useRef<string | null>(null);
   const editorSeq = useRef(0);
@@ -181,26 +187,27 @@ export default function ArrivalNoticesView() {
 
   const load = useCallback(async (silent: boolean) => {
     const key = JSON.stringify([tab, keyword, page]);
-    const ticket = gate.current.begin();
+    const ticket = gate.begin(listKey);
     if (!silent) setLoading(true);
     try {
       const res = await fetchArrivalNotices({ tab, keyword, page, pageSize: PAGE_SIZE });
-      if (!gate.current.isCurrent(ticket)) return;
+      if (!gate.accept(ticket, listKeyRef.current)) return;
       // 删掉 / 转走了最后一页的最后一条：别停在空白页，退回上一页
       if (res.items.length === 0 && page > 1) { setPage((p) => Math.max(1, p - 1)); return; }
       setData(res);
       shownKeyRef.current = key;
       setLoadError("");
     } catch (e) {
-      if (!gate.current.isCurrent(ticket)) return;
+      // 条件已经换了，或者比它新的已经显示了：这次的报错不用说
+      if (gate.superseded(ticket) || !Object.is(ticket.key, listKeyRef.current)) return;
       // 悄悄重拉失败：手上显示的就是这个页签的，接着显示、不弹错；
       // 手上的还是别的页签的（切页签那次请求被这次顶掉了），不说的话就是「亮着 A、列着 B」（F12）
       if (!silent || shownKeyRef.current !== key) setLoadError(e instanceof Error ? e.message : "加载失败");
     } finally {
-      // 不论悄悄与否：它是最新的那次，加载就算结束了（它顶掉的那次不会再来关）
-      if (gate.current.isCurrent(ticket)) setLoading(false);
+      // 还是现在这个条件的请求回来了（不论成败、悄悄与否），加载就算结束了；条件已经换了的不碰（新条件那次自己会关）
+      if (Object.is(ticket.key, listKeyRef.current)) setLoading(false);
     }
-  }, [tab, keyword, page]);
+  }, [tab, keyword, page, listKey, gate]);
 
   useEffect(() => { void load(false); }, [load]);
 

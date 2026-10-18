@@ -15,6 +15,7 @@
    6. 名下客户列表为空时直接回空，**绝不**把空数组塞进 `in: []` 以外的写法（CLAUDE.md #27）。
    ========================================================================== */
 
+import { customsClearedAtOf, familyContainers } from "../containers/track-containers";
 import type { Prisma } from "@prisma/client";
 import { prisma } from "../../db/prisma";
 import { EXCLUDE_FCL_ORDER } from "../core/fcl-scope";
@@ -610,6 +611,7 @@ export function registerAgentPortalRoutes(app: MinimalHttpApp): void {
         containerItems: {
           orderBy: { createdAt: "asc" },
           select: {
+            containerId: true,
             container: {
               select: {
                 currentStatus: true,
@@ -617,6 +619,9 @@ export function registerAgentPortalRoutes(app: MinimalHttpApp): void {
                 departureDate: true,
                 ata: true,
                 customsClearedAt: true,
+                // 清关放行日期专门那一列没人写，读的时候从状态时间表里取（2026-10-18，track-containers.ts）；不下发
+                statusDates: true,
+                createdAt: true,
                 // ⚠️ 只用来抹备注里的柜号（2026-09-28 审查修复 #2），绝不下发：下面 containers 逐字段映射，没有它
                 containerNo: true,
               },
@@ -657,8 +662,15 @@ export function registerAgentPortalRoutes(app: MinimalHttpApp): void {
               orderBy: { changedAt: "asc" },
               select: { fromStatus: true, toStatus: true, remark: true, nextStop: true, changedAt: true },
             },
-            // 同上：只用来抹柜号，不下发
-            containerItems: { select: { container: { select: { containerNo: true } } } },
+            // 同上：柜号只用来抹，不下发；日期给「装柜时间」那块（2026-10-18：现在装柜都挂在子单上，见 track-containers.ts）
+            containerItems: {
+              select: {
+                containerId: true,
+                container: {
+                  select: { currentStatus: true, loadingDate: true, departureDate: true, ata: true, customsClearedAt: true, statusDates: true, createdAt: true, containerNo: true },
+                },
+              },
+            },
           },
         });
     // 这票货（父单 + 子单）真实装过的柜号 + 本公司全部柜号，备注按号精确抹（2026-09-28 审查修复 #2；Codex 复核后扩到全公司）
@@ -739,12 +751,16 @@ export function registerAgentPortalRoutes(app: MinimalHttpApp): void {
       receiverNameTh: shipment.order.receiverNameTh ?? null,
       receiverAddressTh: shipment.order.receiverAddressTh ?? null,
       totalVolumeM3: num(shipment.volumeM3),
-      containers: shipment.containerItems.map((it) => ({
+      // 父单 + 子单装过的柜，同一个柜只算一次（2026-10-18 全系统审查 A-P2-3，跟 /client/shipments/track 同一份算法）
+      containers: familyContainers(
+        [...shipment.containerItems, ...childShipments.flatMap((cs) => cs.containerItems)].map((it) => ({ ...it, loadedVolumeM3: 0 })),
+        (v: number) => v,
+      ).map((it) => ({
         containerStatus: it.container.currentStatus,
         loadingDate: iso(it.container.loadingDate),
         departureDate: iso(it.container.departureDate),
         ata: iso(it.container.ata),
-        customsClearedAt: iso(it.container.customsClearedAt),
+        customsClearedAt: customsClearedAtOf(it.container),
       })),
       timeline,
       children:

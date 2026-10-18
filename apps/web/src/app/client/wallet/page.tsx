@@ -105,6 +105,9 @@ export default function ClientWalletPage() {
         if (failedParts.length > 0) {
           const why = firstError?.reason instanceof Error ? firstError.reason.message : "请稍后重试";
           setMessage(`${failedParts.join("、")}没加载出来（${why}），请刷新页面再看`);
+        } else {
+          // 三样都拿到了：上一次留下的「没加载出来」不能一直挂着（2026-10-18 全系统审查 F-19；这页的提示只有加载失败这一种）
+          setMessage("");
         }
       }
       if (seq === ledgerSeqRef.current && ledR.status === "fulfilled") {
@@ -137,26 +140,29 @@ export default function ClientWalletPage() {
      先记一笔，等翻页回来再按那时的页码补拉一次 */
   const ledgerUserLoadsRef = useRef(0);
   const ledgerRefreshAfterRef = useRef(false);
-  const loadLedgerPage = useCallback(async (targetPage: number, opts?: { silent?: boolean }) => {
+  /** 返回这一次有没有把流水刷上（悄悄重拉时用来决定能不能把旧的「没加载出来」清掉） */
+  const loadLedgerPage = useCallback(async (targetPage: number, opts?: { silent?: boolean }): Promise<boolean> => {
     const silent = opts?.silent === true;
     if (silent && ledgerUserLoadsRef.current > 0) {
       ledgerRefreshAfterRef.current = true;
-      return;
+      return false;
     }
     const seq = ++ledgerSeqRef.current;
     if (!silent) ledgerUserLoadsRef.current += 1;
     try {
       const res = await fetchConsolidationLedger({ page: targetPage, pageSize: LEDGER_PAGE_SIZE });
-      if (seq !== ledgerSeqRef.current) return; // 旧响应后到，丢弃
+      if (seq !== ledgerSeqRef.current) return false; // 旧响应后到，丢弃
       setLedger(res.items);
       setLedgerTotal(res.total);
       setLedgerPage(res.page);
+      return true;
     } catch (error) {
-      if (seq !== ledgerSeqRef.current) return; // 过期请求的报错也不提示，免得盖住新请求的结果
-      if (silent) return; // 有变化时悄悄重拉的：失败不打扰人，表格保持原样
+      if (seq !== ledgerSeqRef.current) return false; // 过期请求的报错也不提示，免得盖住新请求的结果
+      if (silent) return false; // 有变化时悄悄重拉的：失败不打扰人，表格保持原样
       const text = error instanceof Error ? error.message : "未知错误";
       // 失败时页码和表格都保持原样，只提示；再点一次按钮即可重试
       setMessage(`流水翻页失败：${text}`);
+      return false;
     } finally {
       if (!silent) {
         ledgerUserLoadsRef.current -= 1;
@@ -185,7 +191,9 @@ export default function ClientWalletPage() {
         // 万一作废了一次正在转圈的 loadData：它的 finally 验号不过、不会收「加载中」，这里替它收
         setLoading(false);
       }
-      await ledgerTask;
+      const ledgerOk = await ledgerTask;
+      // 三样都刷上了：旧的「没加载出来 / 加载失败」清掉（2026-10-18 全系统审查 F-19）
+      if (walletGate.isCurrent(walletTicket) && overviewR.status === "fulfilled" && recsR.status === "fulfilled" && ledgerOk) setMessage("");
     },
   });
 

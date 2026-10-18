@@ -18,7 +18,7 @@ import {
   type ConsolidationProductItem,
   fetchClientWalletOverview,} from "../../../services/business-api";
 import { formatBeijingTime } from "../../../modules/staff/utils";
-import { createRequestGate } from "../../../modules/shared/request-gate";
+import { createQueryGate, createRequestGate } from "../../../modules/shared/request-gate";
 import { useLiveRefresh } from "../../../modules/realtime/useRealtime";
 import { createYieldGuard } from "../../../modules/realtime/yield-guard";
 import { useRouter } from "next/navigation";
@@ -179,31 +179,39 @@ function ClientConsolidationContent() {
   /** 读集货余额。付款弹窗用它判断够不够，付完刷新。
    *  silent（有变化时悄悄重拉）读失败：保留上一次读到的数，不变成「读取中」—— 不然正开着的付款框确认按钮会突然变灰
    *  （Codex 复查 2026-10-05）。付款前那次照旧强制现读，失败照旧 null。 */
+  /* 余额、任务列表晚到的旧结果不盖新的（2026-10-18 全系统审查 F-10）：实时推送的重拉、付款后的刷新、初次加载同时在路上，
+     先发的后回来 —— 刚付完款余额又变回付款前、刚报的价又不见了。成功回来的只要不比已显示的旧就用（用法三）。
+     余额照旧把这一次读到的数返回给调用方（付款前那次现读要用它判断够不够） */
+  const balanceGate = useRef(createQueryGate<null>()).current;
+  const tasksGate = useRef(createQueryGate<null>()).current;
   const loadBalance = useCallback(async (opts?: { silent?: boolean }): Promise<number | null> => {
+    const ticket = balanceGate.begin(null);
     try {
       const r = await fetchClientWalletOverview();
       const v = typeof (r as any).balance === "number" ? (r as any).balance : (r.accounts?.find(a => a.currency === "CNY")?.balance ?? 0);
-      setBalance(v);
+      if (balanceGate.accept(ticket, null)) setBalance(v);
       return v;
     } catch {
-      if (!opts?.silent) setBalance(null);
+      if (!opts?.silent && !balanceGate.superseded(ticket)) setBalance(null);
       return null;
     }
-  }, []);
+  }, [balanceGate]);
 
   /** silent：有变化时悄悄重拉（2026-10-05 实时推送）——不开「加载中」（不然别人每改一次列表就闪一下）、失败不弹提示 */
   const loadTasks = useCallback(async (opts?: { silent?: boolean }) => {
     const silent = opts?.silent === true;
+    const ticket = tasksGate.begin(null);
     if (!silent) setLoading(true);
     try {
       const data = await fetchClientConsolidationTasks();
+      if (!tasksGate.accept(ticket, null)) return;
       setTasks(data);
     } catch (e: any) {
-      if (!silent) setToast(e.message);
+      if (!silent && !tasksGate.superseded(ticket)) setToast(e.message);
     } finally {
       if (!silent) setLoading(false);
     }
-  }, []);
+  }, [tasksGate]);
 
   // 2026-09-01 竞态全扫：详情数据要认主人——快速点 A 又点 B（或点了返回）时，
   // A 的晚响应不许把 B 的详情盖掉。ref 里永远存「当前选中的任务 id」，

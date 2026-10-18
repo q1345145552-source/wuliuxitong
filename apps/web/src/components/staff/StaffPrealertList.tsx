@@ -150,7 +150,8 @@ export default function StaffPrealertList(props: StaffPrealertListProps) {
             {props.filteredPrealerts.map((item) => {
               const draft = props.prealertEditDrafts[item.id] ?? buildPrealertDraft(item);
               const isEditing = props.editingPrealertId === item.id;
-              const confirmedDraft = props.prealertConfirmedDrafts[item.id] ?? buildPrealertDraft(item);
+              // 已收货的单一律按服务器上最新的显示（2026-10-18 全系统审查 F-12；没收货的才用员工「确认修改」后还没交的那份）
+              const confirmedDraft = item.approvalStatus === "received" ? buildPrealertDraft(item) : (props.prealertConfirmedDrafts[item.id] ?? buildPrealertDraft(item));
               const displayDraft = isEditing ? draft : confirmedDraft;
               return (
                 <div key={item.id} style={{ border: "1px solid var(--l-soft)", borderRadius: 6, padding: 8, background: "var(--white)" }}>

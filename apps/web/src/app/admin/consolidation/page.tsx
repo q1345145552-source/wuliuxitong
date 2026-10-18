@@ -419,7 +419,8 @@ export default function AdminConsolidationPage() {
         setEditPrealert(null);
         setToast(refreshed ? "预报单已更新" : "预报单已更新，但下面的明细没刷新出来，请点「返回」再进来，看一眼最新的再改");
       }
-      await loadTasks();
+      // 已经存上了：任务列表刷新失败不弹错（不然把「预报单已更新」盖掉，像是没存上 —— 2026-10-18 全系统审查 dsh 第 2 条）
+      await loadTasks({ silent: true });
     } catch (e: any) { setToast(e.message); } finally { setEditSubmitting(false); }
   };
 
@@ -432,8 +433,10 @@ export default function AdminConsolidationPage() {
       await adminDeleteConsolidationPrealert(pid);
       setDeletePrealertId(null);
       setToast("预报单已删除");
-      if (selectedTaskId) await loadDetail(selectedTaskId);
-      await loadTasks();
+      // 已经删了：接着刷新失败不弹错盖掉上面那句（2026-10-18 全系统审查 F-14 同类）；明细没刷出来说清楚，别对着旧明细接着操作
+      const refreshed = selectedTaskId ? await loadDetail(selectedTaskId, { silent: true }) : true;
+      if (!refreshed) setToast("预报单已删除，但下面的明细没刷新出来，请点「返回」再进来，看一眼最新的");
+      await loadTasks({ silent: true });
     } catch (e: any) {
       setToast(e.message);
       // 失败也要刷新（2026-08-27 补）：后端现在会说「刚刚被别人改过，请刷新后再看」，

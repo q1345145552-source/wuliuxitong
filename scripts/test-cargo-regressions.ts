@@ -170,6 +170,8 @@ async function clientImport(rawCargo: unknown, boxes = 2, dimensions: number[] |
     if (name.endsWith("/cargo-type")) return cargo;
     if (name.endsWith("/business-api")) return service;
     // 2026-09-29：读表格那段挪进了这个模块，照样用真代码
+    // 2026-10-18：没确认的行的请求编号记在本标签页（沙箱里没有 window，等于存不了，照样跑真代码）
+    if (name.endsWith("/client-import/pending-requests")) return evalTs(read("apps/web/src/modules/client-import/pending-requests.ts"), {}, "apps/web/src/modules/client-import/pending-requests.ts");
     if (name.endsWith("/client-import/import-rows")) return evalTs(read("apps/web/src/modules/client-import/import-rows.ts"), {require(n: string) {
       if (n.endsWith("/cargo-type")) return cargo;
       throw new Error(`Unimplemented frontend require ${n}`);

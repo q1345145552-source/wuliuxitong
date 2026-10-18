@@ -57,6 +57,8 @@ import { nextAutoTotals, orderDimsVolume, productRowTotals } from "../../modules
 import { useLiveRefresh } from "../../modules/realtime/useRealtime";
 import { useIsPhone } from "../../modules/layout/useIsPhone";
 import ShipmentPhoneList from "../../modules/shipment/ShipmentPhoneList";
+import { photoTypeIssue } from "../../modules/arrival-notice/photo-upload";
+import { createYieldGuard } from "../../modules/realtime/yield-guard";
 
 /** 运输方式标签：只有 sea / land 才画彩色标签；到货通知转「待入库」时还没定（库里是空串）显示「—」（2026-10-08 审查 F04） */
 function transportTag(mode: string | null | undefined) {
@@ -154,6 +156,10 @@ export default function ClientHomePage() {
      光比分组不够：同分组下「带条件查询」和「清空条件」两份请求分组一样，只有号能分出先后；
      queryModeRef 的分组比对保留当第二道防线。 */
   const orderListGate = useRef(createRequestGate()).current;
+  /* 后台刷新给客户自己点的查询让路（2026-10-18 全系统审查 D-P2-7，yield-guard.ts）：「执行查询」「切分组」还在路上时，
+     10 秒轮询 / 实时推送那次先不发 —— 原来它一发就领新号把客户那次作废，自己再悄悄失败，客户点的那一下就白点了。
+     客户那次回来以后再补发一次 */
+  const orderListYield = useRef(createYieldGuard()).current;
   const [prealerts, setPrealerts] = useState<OrderItem[]>([]);
   const [dashboardOrders, setDashboardOrders] = useState<OrderItem[]>([]);
   const [prealertSearch, setPrealertSearch] = useState("");
@@ -591,6 +597,7 @@ export default function ClientHomePage() {
        带条件执行查询后点「清空条件」，两份请求分组一样，慢的旧请求照样盖新结果。
        从运单列表统一门闩领号，成功/失败/finally 三个分支都验号。 */
     const ticket = orderListGate.begin();
+    const endUser = orderListYield.begin();
     try {
       const baseOrders =
         modeAtStart === "all"
@@ -635,6 +642,7 @@ export default function ClientHomePage() {
     } finally {
       // 2026-09-01 竞态全扫（缺口①）：旧请求不许提前掐掉新请求的 loading
       if (orderListGate.isCurrent(ticket)) setLoading(false);
+      endUser();
     }
   };
 
@@ -679,6 +687,7 @@ export default function ClientHomePage() {
     setLoading(true);
     // 2026-09-01 竞态全扫（缺口②）：从运单列表统一门闩领号，作废所有在途的旧请求（含带条件的手动查询）
     const ticket = orderListGate.begin();
+    const endUser = orderListYield.begin();
     fetchClientOrders(mode === "all" ? undefined : { statusGroup: mode })
       .then((orders) => {
         if (!orderListGate.isCurrent(ticket)) return; // 已有更新的请求出发，这份作废
@@ -695,7 +704,7 @@ export default function ClientHomePage() {
         setMessage(`查询失败：${text}`);
       })
       // 2026-09-01 竞态全扫：旧请求不许提前掐掉新请求的 loading
-      .finally(() => { if (orderListGate.isCurrent(ticket)) setLoading(false); });
+      .finally(() => { if (orderListGate.isCurrent(ticket)) setLoading(false); endUser(); });
   };
 
   const runAiSearch = async () => {
@@ -767,16 +776,25 @@ export default function ClientHomePage() {
      原来那条 setTimeout 链换成它，里面每一步照旧（领号验号、核分组、替手动查询收 loading）。 */
   // 有搜索条件时不自动刷新；纯浏览分组（在途/已完成/全部）正常刷新
   const queryHasFilter = !!(search.batchNo || search.domesticTrackingNo || search.status || search.transportMode || search.warehouseId || search.arrivedDateFrom || search.arrivedDateTo);
+  const queryHasFilterRef = useRef(queryHasFilter);
+  queryHasFilterRef.current = queryHasFilter;
+  /** 补发的那次（客户点的查询回来以后）：那时候填了筛选条件就不补 —— 补的是不带条件的，回来会把筛好的结果盖掉 */
+  const silentOrderRefreshRef = useRef<(isStillWanted: () => boolean) => Promise<void>>(async () => {});
   useLiveRefresh({
     topics: ["shipping"],
     enabled: activeSection === "client-query" && !queryHasFilter && !dashboardLoading,
     pollMs: 10000,
     livePollMs: 10000,
-    refresh: async (isStillWanted) => {
+    refresh: (isStillWanted) => silentOrderRefreshRef.current(isStillWanted),
+  });
+  silentOrderRefreshRef.current = async (isStillWanted) => {
+      if (queryHasFilterRef.current) return;
       if (!shipmentOverviewPending.current) void loadShipmentOverview(); // 顶上那排数字跟列表一起刷新（2026-09-29）
       const mode = queryModeRef.current;
       // 2026-08-31（条目23）：分组值改成 statusGroup 四分类，类型对上后不再需要 as 强转
       if (!mode) return;
+      // 客户点的查询还在路上：这次先不发、不领号，等它回来补一次（2026-10-18 全系统审查 D-P2-7）
+      if (!orderListYield.allowSilent(() => void silentOrderRefreshRef.current(() => true))) return;
       /* 2026-09-01 竞态全扫（缺口②）：轮询每一次开火都要重新领号 ——
          领一次囤着复用的话，第二轮起号就旧了，会把自己的响应永远作废。 */
       const ticket = orderListGate.begin();
@@ -797,8 +815,7 @@ export default function ClientHomePage() {
            别让「执行查询」按钮一直转圈。 */
         if (isStillWanted() && orderListGate.isCurrent(ticket)) setLoading(false);
       }
-    },
-  });
+  };
 
   /* 主页、预报单这两栏：原来不自动刷新，员工收了货 / 改了状态要客户自己刷新页面。
      现在有变化就悄悄重拉这两栏用到的两样：预报单当前页 + 运单（不开「加载中」）。
@@ -1538,7 +1555,12 @@ export default function ClientHomePage() {
             <div style={{ marginTop: 10, border: "1px dashed var(--l-strong)", borderRadius: 8, padding: 10 }}>
               <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 6, color: "var(--t-strong)" }}>产品图片（可选，可多选）</div>
               <input type="file" multiple accept="image/*" aria-label="上传产品图片" disabled={prealertSubmitting} onChange={(e) => {
-                const files = Array.from(e.target.files || []);
+                const picked = Array.from(e.target.files || []);
+                /* 电脑上显示不了的格式（HEIC、TIFF、SVG……）不加进来、说清哪几张（2026-10-18 全系统审查 E-6）：
+                   原来照样传，后端存成 .jpg，单子建好了图却是破的 */
+                const issues = picked.map((f) => photoTypeIssue(f)).filter(Boolean);
+                const files = picked.filter((f) => !photoTypeIssue(f));
+                if (issues.length) setToast(`这次选了 ${picked.length} 张，加了 ${files.length} 张。${issues.join("；")}`);
                 setPrealertImageFiles(files);
                 setPrealertImagePreviews(files.map(f => URL.createObjectURL(f)));
               }} style={{ fontSize: 12 }} />
