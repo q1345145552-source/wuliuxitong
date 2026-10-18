@@ -154,8 +154,8 @@ check("S6 客户「批量下单」：失败的行记下来，跑完预览只留�
   assert.match(src, /disabled=\{loading \|\| parsing \|\| rows\.length === 0 \|\| badCargoRows\.length > 0\}/);
   // 每行一个请求编号（第 2 轮）：上传解析时给、提交时带上
   // 同一个文件上次没确认的行用回原来的编号，其余行新编号（2026-10-18，pending-requests.ts；S16 真跑）
-  // 2026-10-18 浏览器实测后补：同一个文件上一批没收尾干净的，那一批建好的行不再交（真跑在 test-small-fixes-1018-source F11）
-  assert.match(src, /\.filter\(\(row\) => !doneRows\.has\(String\(row\.rowNo\)\)\)\s*\.map\(\(row\) => \(\{ \.\.\.row, requestId: pendingIds\[String\(row\.rowNo\)\] \?\? newRequestId\(\) \}\)\);/, "上传解析时每行要给一个请求编号（上次没确认的用回原来的）");
+  // 2026-10-18 浏览器实测后补 + 审查第 2 轮：恢复没做完的同一个文件，建好的行不再交；没确认的按行号、换了文件按内容用回原编号（真跑在 test-small-fixes-1018-source F11）
+  assert.match(src, /\.filter\(\(row\) => !doneRows\.has\(String\(row\.rowNo\)\)\)\s*\.map\(\(row\) => \{\s*const reused = pendingIds\[String\(row\.rowNo\)\] \?\? takeOtherPending\(rowSignature\(row\)\);[\s\S]{0,120}?return \{ \.\.\.row, requestId: reused \?\? newRequestId\(\) \};/, "上传解析时每行要给一个请求编号（上次没确认的用回原来的）");
   // 审查第 1 轮起文件键 =「唛头|内容指纹」（别的客户的记号用不上）
   assert.match(src, /const ownerPrefix = `\$\{getOptionalSession\(\)\?\.userId \?\? ""\}\|`;\s*const fileKey = `\$\{ownerPrefix\}\$\{await fileFingerprint\(buffer\)\}`;\s*const store = pendingStorage\(\);\s*const pendingIds = readPendingIds\(store, fileKey\);/, "按客户 + 文件内容取上次没确认的编号");
   assert.match(src, /const payload: ClientPrealertPayload = \{\s*requestId: row\.requestId,/, "提交时要带这一行的请求编号");
@@ -799,9 +799,9 @@ async function main(): Promise<void> {
     const mem = new Map<string, string>();
     const st = { getItem: (k: string) => mem.get(k) ?? null, setItem: (k: string, v: string) => { mem.set(k, v); } };
     const t0 = 1_800_000_000_000;
-    m.markPending(st, "fA", 3, "idA3", t0);
-    m.markPending(st, "fA", 5, "idA5", t0);
-    m.markPending(st, "fB", 3, "idB3", t0);
+    m.markPending(st, "fA", 3, "idA3", "sA3", t0);
+    m.markPending(st, "fA", 5, "idA5", "sA5", t0);
+    m.markPending(st, "fB", 3, "idB3", "sB3", t0);
     assert.deepEqual(m.readPendingIds(st, "fA", t0 + 1000), { "3": "idA3", "5": "idA5" });
     assert.deepEqual(m.readPendingIds(st, "fB", t0 + 1000), { "3": "idB3" }, "不同文件各记各的");
     assert.deepEqual(m.readPendingIds(st, "fC", t0), {}, "没记过的文件是空的");
@@ -811,8 +811,8 @@ async function main(): Promise<void> {
     assert.deepEqual(m.readPendingIds(st, "fA", t0 + 2000), {});
     assert.ok(!JSON.parse(mem.get("xt.clientImport.pending.v1") ?? "{}").fA, "文件没剩下的要整条删");
     // 建好了挪到「已建好」：一批没收尾干净（还有没确认的）整条留着；收尾干净了整条删
-    m.markPending(st, "fD", 2, "idD2", t0);
-    m.markPending(st, "fD", 3, "idD3", t0);
+    m.markPending(st, "fD", 2, "idD2", "sig2", t0);
+    m.markPending(st, "fD", 3, "idD3", "sig3", t0);
     m.markDone(st, "fD", 2, "sig2", t0 + 100);
     assert.deepEqual(m.readPendingIds(st, "fD", t0 + 200), { "3": "idD3" }, "建好的那行不再算没确认");
     assert.deepEqual(m.readDoneRows(st, "fD", t0 + 200), ["2"]);
@@ -834,6 +834,17 @@ async function main(): Promise<void> {
     assert.deepEqual(m.readDoneSignatures(st, "A|", "A|f2", t0).sort(), ["sigX"], "只拿同一个客户、别的文件的");
     assert.deepEqual(m.readDoneSignatures(st, "A|", "A|new", t0).sort(), ["sigX", "sigY"]);
     assert.deepEqual(m.readDoneSignatures(st, "", "x", t0), [], "没登录（没有唛头）一律不比");
+    // 别的文件里没确认的行（内容 + 原编号）；有了结果以后旧文件那边同一个编号一起清（审查第 2 轮：换了文件用回原编号的那种）
+    m.markPending(st, "A|old", 3, "idOld3", "sigP", t0); m.markPending(st, "A|old", 4, "idOld4", "sigP", t0); m.markPending(st, "B|old", 3, "idB", "sigP", t0);
+    assert.deepEqual(m.readOtherPending(st, "A|", "A|new", t0).filter((p) => p.sig === "sigP").map((p) => p.requestId).sort(), ["idOld3", "idOld4"], "同一个客户别的文件的没确认行，一行一条");
+    assert.ok(m.hasPendingRows(st, "A|old", t0));
+    m.markPending(st, "A|new", 7, "idOld3", "sigP", t0);
+    m.markDone(st, "A|new", 7, "sigP", t0);
+    assert.deepEqual(m.readPendingIds(st, "A|old", t0), { "4": "idOld4" }, "新文件那行建好了：旧文件那边同一个编号的没确认记号要清掉");
+    m.markPending(st, "A|new", 8, "idOld4", "sigP", t0);
+    m.clearPending(st, "A|new", 8, t0);
+    assert.equal(m.hasPendingRows(st, "A|old", t0), false, "明确失败了：旧文件那边同一个编号也清掉");
+    assert.deepEqual(m.readPendingIds(st, "B|old", t0), { "3": "idB" }, "别的客户的不动");
     // 行内容：只看交给后端的那几格，行号 / 编号不算；有一格不一样就不一样
     const sigOf = (x: Record<string, any>) => m.rowSignature(x);
     const r1 = { rowNo: 2, requestId: "a", warehouseId: "wh_yiwu_01", itemName: "货1", packageCount: 1, packageUnit: "box", transportMode: "sea", cargoType: "normal" };
@@ -844,7 +855,7 @@ async function main(): Promise<void> {
     assert.deepEqual(m.readPendingIds(st, "fB", t0 + 25 * 3600_000), {}, "放了一天以上就过期");
     // 浏览器不让存 / 取（隐私模式等）：当没有，不报错
     const broken = { getItem: () => { throw new Error("denied"); }, setItem: () => { throw new Error("denied"); } };
-    assert.doesNotThrow(() => m.markPending(broken, "fA", 1, "x"));
+    assert.doesNotThrow(() => m.markPending(broken, "fA", 1, "x", "s"));
     assert.deepEqual(m.readPendingIds(broken, "fA"), {});
     assert.deepEqual(m.readPendingIds(null, "fA"), {});
     mem.set("xt.clientImport.pending.v1", "不是 JSON");

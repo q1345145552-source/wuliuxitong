@@ -155,6 +155,7 @@ export default function FclInquiryPanel(props: ClientFclInquiryProps) {
       setList(data.items ?? []); // 【审查问题 13】接口少了 items 就会让整页崩掉
       setListTotal(data.total ?? (data.items ?? []).length);
       setListPage(page); // 页码跟数据同一批更新，不再出现「页码是新的、数据是旧的」
+      listPageRef.current = page; // 同步记上（审查第 2 轮）：下一帧之前紧接着的刷新失败、退回「屏幕上那页」时别退到旧页
       setListError(false);
       setListLoaded(true);
     } catch (e: any) {

@@ -303,10 +303,14 @@ export default function ClientWhrConsolidationPage() {
         setBalance(v);
         return v;
       }
-      // 比屏幕上那份旧（更晚的已经先回来了）：给调用方的也换成那份新的 —— 付款前现读够不够付不能拿旧数判断（小修审查第 1 轮）
-      return shownBalanceRef.current ?? v;
+      // 比屏幕上那份旧（更晚的已经先回来了）：给调用方的也换成那份新的 —— 付款前现读够不够付不能拿旧数判断（小修审查第 1 轮）；
+      // 屏幕上那份是「没查到」（更晚的那次失败了）就是 null，不拿自己这份旧的顶（第 2 轮）
+      return shownBalanceRef.current;
     } catch {
-      if (!opts?.silent && !balanceGate.superseded(ticket)) setBalance(null);
+      if (!opts?.silent && !balanceGate.superseded(ticket)) {
+        shownBalanceRef.current = null; // 屏幕上清成「没查到」，被挡下的旧响应也不许再拿旧数给调用方（审查第 2 轮）
+        setBalance(null);
+      }
       return null;
     }
   }, [balanceGate]);

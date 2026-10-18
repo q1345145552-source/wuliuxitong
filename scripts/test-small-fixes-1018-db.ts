@@ -185,6 +185,20 @@ async function main(): Promise<void> {
       after = await save({ orderCreatedDate: "2026-09-08", shipDate: null });
       assert.equal(after.shipDate, "2026-09-08", `没带 shipDate 把 ship_date 清空了：${after.shipDate}`);
       assert.equal(after.createdAt.getTime(), before.createdAt.getTime(), "订单创建时间被改了");
+      // 库里万一是带时间的老值：按年-月-日比，老页面只改到仓日期照样生效（审查第 2 轮）
+      await pm.order.update({ where: { id: d.orderId }, data: { shipDate: "2026-09-08T12:00" } });
+      after = await save({ orderCreatedDate: "2026-09-09", shipDate: "2026-09-08" });
+      assert.equal(after.shipDate, "2026-09-09", `库里带时间时老页面只改到仓日期没生效：${after.shipDate}`);
+      // 不存在的日子（2 月 31 号）不收、什么都不写
+      for (const bad of [{ orderCreatedDate: "2026-02-31", shipDate: "2026-02-31" }, { orderCreatedDate: "2026-09-10", shipDate: "2026-02-30" }, { orderCreatedDate: "2026/09/10" }]) {
+        const r = await call("POST /staff/orders/patch-shipment-bundle", ADMIN, {
+          shipmentId: s.id, trackingNo: s.trackingNo, itemName: "鞋", packageCount: 5, basePackageCount: 5, productQuantity: 0, packageUnit: "box",
+          weightKg: Number(s.weightKg), volumeM3: Number(s.volumeM3), domesticTrackingNo: before.domesticTrackingNo, transportMode: "sea",
+          warehouseId: "wh_yiwu_01", receiverAddressTh: "", remark: null, ...bad,
+        });
+        assert.equal(r.status, 400, `${JSON.stringify(bad)} 没被拦：${r.status} ${r.message}`);
+      }
+      assert.equal((await pm.order.findUnique({ where: { id: d.orderId } })).shipDate, "2026-09-09", "被拦了还写了");
     });
 
     // ---------- T3 产品图格式 ----------

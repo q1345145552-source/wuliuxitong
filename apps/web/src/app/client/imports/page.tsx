@@ -6,7 +6,7 @@ import { createRequestGate } from "../../../modules/shared/request-gate";
 import { createClientPrealert, type ClientPrealertPayload } from "../../../services/business-api";
 import { CARGO_TYPE_ZH } from "../../../../../../packages/shared-types/cargo-type";
 import { WAREHOUSE_ZH, isRowBad, normalizeRows, type ImportRow } from "../../../modules/client-import/import-rows";
-import { clearPending, fileFingerprint, finishBatch, markDone, markPending, pendingStorage, readDoneRows, readDoneSignatures, readPendingIds, rowSignature } from "../../../modules/client-import/pending-requests";
+import { clearPending, fileFingerprint, finishBatch, hasPendingRows, markDone, markPending, pendingStorage, readDoneRows, readDoneSignatures, readOtherPending, readPendingIds, rowSignature } from "../../../modules/client-import/pending-requests";
 import { getOptionalSession } from "../../../auth/auth-session";
 
 function downloadTemplate(): void {
@@ -117,19 +117,39 @@ export default function ClientImportsPage() {
       const fileKey = `${ownerPrefix}${await fileFingerprint(buffer)}`;
       const store = pendingStorage();
       const pendingIds = readPendingIds(store, fileKey);
-      const doneRows = new Set(readDoneRows(store, fileKey));
+      /* 同一个文件、那一批还有没确认的（恢复还没做完）：已建好的行自动跳过。已经没有没确认的了（只剩明确失败的）：
+         同一个文件再传多半是想再下一批 —— 不跳过，下面按「一模一样」标出来、提交前再问（审查第 2 轮 dsh） */
+      const resuming = hasPendingRows(store, fileKey);
+      const doneRows = new Set(resuming ? readDoneRows(store, fileKey) : []);
       const allRows = normalizeRows(raw);
       const skippedRowNos = allRows.filter((row) => doneRows.has(String(row.rowNo))).map((row) => row.rowNo);
+      /* 换了文件（改过、另存过）对不上行号的：按内容认（同样内容有几行就一对一配几行）。跟这个客户别的文件里没确认的一模一样 → 用回那个编号
+         （审查第 2 轮两家：原来换了文件就换新编号，上次其实建好了的会再建一张） */
+      const otherPending = readOtherPending(store, ownerPrefix, fileKey);
+      const takeOtherPending = (sig: string): string | undefined => {
+        const at = otherPending.findIndex((p) => p.sig === sig);
+        return at < 0 ? undefined : otherPending.splice(at, 1)[0].requestId;
+      };
+      const resumedRowNos: number[] = [];
       const normalized = allRows
         .filter((row) => !doneRows.has(String(row.rowNo)))
-        .map((row) => ({ ...row, requestId: pendingIds[String(row.rowNo)] ?? newRequestId() }));
-      const resumedRowNos = normalized.filter((row) => pendingIds[String(row.rowNo)] === row.requestId).map((row) => row.rowNo);
-      /* 换了文件（改过、另存过）对不上号的：按内容比，跟这个客户没交完那几批里已经建好的某一行一模一样的标出来（审查第 1 轮 dsh）。
-         不自动跳过（真要再下一单的也有），提交前再问一次 */
-      const builtElsewhere = new Set(readDoneSignatures(store, ownerPrefix, fileKey));
-      const lookAlikeRowNos = builtElsewhere.size > 0
-        ? normalized.filter((row) => !resumedRowNos.includes(row.rowNo) && builtElsewhere.has(rowSignature(row))).map((row) => row.rowNo)
-        : [];
+        .map((row) => {
+          const reused = pendingIds[String(row.rowNo)] ?? takeOtherPending(rowSignature(row));
+          if (reused) resumedRowNos.push(row.rowNo);
+          return { ...row, requestId: reused ?? newRequestId() };
+        });
+      /* 跟这个客户已经建好的某一行一模一样的（别的文件没交完那几批的；同一个文件没有没确认的了也算）标出来，提交前再问一次 ——
+         不自动跳过（真要再下一单的也有）。同样内容有几行建好了就最多标几行 */
+      const builtPool = readDoneSignatures(store, ownerPrefix, resuming ? fileKey : "");
+      const lookAlikeRowNos = normalized
+        .filter((row) => {
+          if (resumedRowNos.includes(row.rowNo)) return false;
+          const at = builtPool.indexOf(rowSignature(row));
+          if (at < 0) return false;
+          builtPool.splice(at, 1);
+          return true;
+        })
+        .map((row) => row.rowNo);
       // 2026-09-02 终审整改：成功分支验号——解析期间又选了新文件的话，这份旧结果整体作废
       if (!parseGate.isCurrent(ticket)) return;
       // 2026-09-01 竞态全扫：预览换主人，快照同步更新
@@ -148,7 +168,7 @@ export default function ClientImportsPage() {
         ? `表格第 ${resumedRowNos.join("、")} 行上次发出去了、没确认建没建好：再交时上次要是其实已经建好，系统会认出来、不会重复下单`
         : "";
       const lookAlikeNote = lookAlikeRowNos.length > 0
-        ? `⚠️ 表格第 ${lookAlikeRowNos.join("、")} 行跟上次没交完那批里已经建好的一行一模一样（「预报单」里能看到）：要是同一票货，请从表里删掉再传；真要再下一单，提交时会再问你一次`
+        ? `⚠️ 表格第 ${lookAlikeRowNos.join("、")} 行跟上次那批里已经建好的一行一模一样（「预报单」里能看到）：要是同一票货，请从表里删掉再传；真要再下一单，提交时会再问你一次`
         : "";
       const notes = [skippedNote, resumedNote, lookAlikeNote].filter(Boolean).join("。");
       setMessage(normalized.length === 0
@@ -183,7 +203,7 @@ export default function ClientImportsPage() {
     const store = pendingStorage();
     // 跟上次没交完那批里已经建好的一模一样的行：再问一次（点取消就不交，回去把表里那几行删掉再传）
     const lookAlike = lookAlikeRowsRef.current.filter((rowNo) => batch.some((row) => row.rowNo === rowNo));
-    if (lookAlike.length > 0 && !window.confirm(`表格第 ${lookAlike.join("、")} 行跟上次没交完那批里已经建好的一行一模一样。\n\n要是同一票货，点「取消」，回去把这几行从表里删掉再传；\n真要再下一单，点「确定」照常提交。`)) return;
+    if (lookAlike.length > 0 && !window.confirm(`表格第 ${lookAlike.join("、")} 行跟上次那批里已经建好的一行一模一样。\n\n要是同一票货，点「取消」，回去把这几行从表里删掉再传；\n真要再下一单，点「确定」照常提交。`)) return;
     setLoading(true);
     setCurrent(0);
     setSuccessCount(0);
@@ -223,7 +243,7 @@ export default function ClientImportsPage() {
           cargoType: row.cargoType ?? "normal",
         };
         // 发出去之前先记下「没确认」（发到一半刷新页面也算），建好了挪到「已建好」（pending-requests.ts）
-        if (row.requestId) markPending(store, batchFileKey, row.rowNo, row.requestId);
+        if (row.requestId) markPending(store, batchFileKey, row.rowNo, row.requestId, rowSignature(row));
         await createClientPrealert(payload);
         markDone(store, batchFileKey, row.rowNo, rowSignature(row));
         success++;

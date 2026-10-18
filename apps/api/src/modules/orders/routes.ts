@@ -11,6 +11,14 @@ import { PENDING_INBOUND, PENDING_INBOUND_EDIT_ELSEWHERE_MESSAGE } from "../arri
 import { arrivalNoticeHoldingMessage, followShipmentTrackingNos, followStaleArrivalNoticeHolding, lockTrackingNoForArrivalNotice } from "../arrival-notices/follow-tracking-no";
 import { PHOTO_MIME_ALLOWED, syncConvertedNoticesFromShipments } from "../arrival-notices/routes";
 
+/** 是不是真实存在的「年-月-日」（2026-02-31 这种不算；不靠 new Date 顺延） */
+function isRealYmd(text: string): boolean {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(text);
+  if (!m) return false;
+  const d = new Date(`${text}T00:00:00.000Z`);
+  return !Number.isNaN(d.getTime()) && d.getUTCFullYear() === Number(m[1]) && d.getUTCMonth() + 1 === Number(m[2]) && d.getUTCDate() === Number(m[3]);
+}
+
 /** 「确认收货」只认客户报的、还没收货的预报单（2026-10-16） */
 const NOT_A_PENDING_PREALERT_MESSAGE = "这张单不是客户报的待收货预报单，不能「确认收货」（员工建的单、到货通知转出来的单都不走这一步；要改资料请超管在「运单管理」里改）";
 import { logger } from "../core/logger";
@@ -2000,21 +2008,20 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
       fail(res, 400, "BAD_REQUEST", "orderCreatedDate is required");
       return;
     }
-    const arrived = new Date(`${orderCreatedDate}T00:00:00`);
-    if (Number.isNaN(arrived.getTime())) {
+    /** 页面「到仓日期」那一格（年-月-日），下面锁里跟发上来的 shipDate 一起定订单的 ship_date。
+     *  现在真写进 ship_date 了，按建单那条路的规矩严格核（小修审查第 2 轮：原来 new Date 会把 2026-02-31 顺延放过去） */
+    const arrivedDay = orderCreatedDate.slice(0, 10);
+    if (!isRealYmd(arrivedDay)) {
       fail(res, 400, "BAD_REQUEST", "invalid orderCreatedDate");
       return;
     }
-    /** 页面「到仓日期」那一格（年-月-日），下面锁里跟发上来的 shipDate 一起定订单的 ship_date */
-    const arrivedDay = orderCreatedDate.slice(0, 10);
 
     const transportMode = body.transportMode === "land" ? "land" : "sea";
 
     let shipDate: string | null = null;
     if (body.shipDate !== undefined && body.shipDate !== null && String(body.shipDate).trim() !== "") {
       const raw = String(body.shipDate).trim().slice(0, 10);
-      const sd = new Date(`${raw}T00:00:00`);
-      if (Number.isNaN(sd.getTime())) {
+      if (!isRealYmd(raw)) {
         fail(res, 400, "BAD_REQUEST", "invalid shipDate");
         return;
       }
@@ -2065,7 +2072,8 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
          上线那一刻还开着的老页面两格各发各的 —— 只改了「到仓日期」的，shipDate 还是原来的值，只认 shipDate 就等于没改（静默不生效）。
          所以：shipDate 发了、而且跟锁内库里的不一样 = 改了「发货时间」，用它；否则用「到仓日期」（两种页面都必发）。
          老页面改哪一格都生效；老页面 shipDate 没带上（原来会把 ship_date 清空）也不会清空 */
-      const lockedShipDate = (await tx.order.findFirst({ where: { id: curOrder.id, companyId: auth.companyId }, select: { shipDate: true } }))?.shipDate ?? null;
+      // 库里那个按年-月-日比（发上来的已经截成 10 位；万一库里存着带时间的老值，不截的话永远「不一样」，老页面改到仓日期又不生效 —— 第 2 轮）
+      const lockedShipDate = String((await tx.order.findFirst({ where: { id: curOrder.id, companyId: auth.companyId }, select: { shipDate: true } }))?.shipDate ?? "").trim().slice(0, 10) || null;
       const nextShipDate = shipDate && shipDate !== lockedShipDate ? shipDate : arrivedDay;
       await lockShipmentsChildrenFirst(tx, [shipmentId], auth.companyId);
       // 锁后重读运单号（CLAUDE.md 第 28 条）：拿锁之前那份快照里的
