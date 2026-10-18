@@ -855,6 +855,13 @@ async function main(): Promise<void> {
     assert.deepEqual([m.readDoneRows(st, "W|a", t0), m.readDoneRows(st, "W|b", t0)], [["3"], ["2"]], "两个旧文件都转成已建好");
     assert.deepEqual(m.readDoneSignatures(st, "W|", "", t0), ["sigW"], "同一张单只算一张");
     assert.deepEqual(m.readDoneSignatures(st, "W|", "W|a", t0), [], "W|a 自己跳过的那张，别的文件里同一张不再算");
+    // 反过来：不同的编号（真是两张单）内容一样，照样算两张；跳过的那个文件算过的是 P1，别的文件同内容的 P2 照样算（审查第 5 轮两家）
+    m.markPending(st, "U|f", 2, "U1", "sigU", t0); m.markDone(st, "U|f", 2, "sigU", t0);
+    m.markPending(st, "U|f", 3, "U2", "sigU", t0); m.markDone(st, "U|f", 3, "sigU", t0);
+    assert.deepEqual(m.readDoneSignatures(st, "U|", "", t0), ["sigU", "sigU"], "两张单内容一样也是两张");
+    m.markPending(st, "U|g", 2, "U3", "sigU", t0); m.markDone(st, "U|g", 2, "sigU", t0);
+    m.markPending(st, "U|f", 4, "U4", "sigOther", t0); // U|f 还有没确认的（页面传 exceptFileKey 时就是这样）
+    assert.deepEqual(m.readDoneSignatures(st, "U|", "U|f", t0), ["sigU"], "U|f 跳过的是 U1、U2，U|g 的 U3 是另一张，照样算");
     // 内容对不上的不结（页面上同一个编号总是同样内容；对不上的留着没确认，审查第 4 轮 dsh）
     m.markPending(st, "V|a", 2, "PV", "sigOther", t0); m.markPending(st, "V|b", 3, "PV", "sigV", t0); m.markDone(st, "V|b", 3, "sigV", t0);
     assert.deepEqual([m.readPendingIds(st, "V|a", t0), m.readDoneRows(st, "V|a", t0)], [{ "2": "PV" }, []]);

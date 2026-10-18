@@ -294,13 +294,21 @@ function guardedBy(call: ts.Node, gate: string, ticketVar: string, sf: ts.Source
     return found;
   };
   const callAt = call.getStart(sf);
+  /** 条件里第一个门闩调用结束的位置：从这里起到条件结束，也不许有 await（审查第 5 轮两家：`gate.accept(t) && await x` 也是等完才写） */
+  const gateEndIn = (cond: ts.Expression): number => {
+    let at = -1;
+    const visit = (m: ts.Node) => { if (at >= 0) return; if (ts.isCallExpression(m) && isGateCall(m)) { at = m.getEnd(); return; } m.forEachChild(visit); };
+    visit(cond);
+    return at < 0 ? cond.getEnd() : at;
+  };
   for (let cur: ts.Node = call; cur.parent && !ts.isFunctionLike(cur); cur = cur.parent) {
     const parent = cur.parent;
-    if (ts.isIfStatement(parent) && parent.thenStatement === cur && implies(parent.expression) && !awaitBetween(parent.expression.getEnd(), callAt)) return true;
+    if (ts.isIfStatement(parent) && parent.thenStatement === cur && implies(parent.expression) && !awaitBetween(gateEndIn(parent.expression), callAt)) return true;
     if (ts.isBlock(parent) || ts.isSourceFile(parent)) {
       const idx = parent.statements.indexOf(cur as ts.Statement);
       for (const st of parent.statements.slice(0, Math.max(0, idx))) {
-        if (ts.isIfStatement(st) && !st.elseStatement && exits(st.thenStatement) && coversFailure(st.expression) && !awaitBetween(st.getEnd(), callAt)) return true;
+        if (ts.isIfStatement(st) && !st.elseStatement && exits(st.thenStatement) && coversFailure(st.expression)
+          && !awaitBetween(gateEndIn(st.expression), st.expression.getEnd()) && !awaitBetween(st.getEnd(), callAt)) return true;
       }
     }
   }
@@ -342,7 +350,7 @@ function setterCallsWithoutGate(g: GateSite): string[] {
   visit(sf);
   return bad;
 }
-check("F2c F2b 那道判断本身：该认的认、不该认的不认（审查第 4 轮两家列的写法）", () => {
+check("F2c F2b 那道判断本身：该认的认、不该认的不认（审查第 4、5 轮两家列的写法）", () => {
   const judge = (body: string): boolean => {
     const src = `async function f() { const t = gate.begin(null); const x = await load(); ${body} }`;
     const sf = ts.createSourceFile("x.ts", src, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
@@ -362,6 +370,11 @@ check("F2c F2b 那道判断本身：该认的认、不该认的不认（审查�
     "if ((gate.accept(t, null))) { setRows(x); }",
     "if (gate.accept(t, null) || gate.isCurrent(t)) setRows(x);",
     "if (stale || !gate.accept(t, null)) return; setRows(x);",
+    // await 在门闩之前：等完才看门闩，安全（审查第 5 轮 dsh：别改成一刀切）
+    "if ((await later()) && gate.accept(t, null)) setRows(x);",
+    "if ((await later()) || !gate.accept(t, null)) return; setRows(x);",
+    // 早退那块里面的 await 不算（走进去就 return 了）
+    "if (!gate.accept(t, null)) { await log(); return; } setRows(x);",
   ];
   const no = [
     "gate.accept(t, null); setRows(x);",
@@ -376,6 +389,10 @@ check("F2c F2b 那道判断本身：该认的认、不该认的不认（审查�
     "if (gate.accept(t, null)) { await later(); setRows(x); }",
     "if (stale && !gate.accept(t, null)) return; setRows(x);",
     "if (!gate.accept(t, null)) log(); setRows(x);",
+    // 条件里、门闩之后的 await（审查第 5 轮两家）
+    "if (gate.accept(t, null) && (await later())) setRows(x);",
+    "if (!gate.accept(t, null) || (await later())) return; setRows(x);",
+    "if (!(gate.accept(t, null) && (await later()))) return; setRows(x);",
   ];
   for (const b of yes) assert.equal(judge(b), true, `该认没认：${b}`);
   for (const b of no) assert.equal(judge(b), false, `不该认却认了：${b}`);
