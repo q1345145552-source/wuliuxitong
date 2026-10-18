@@ -247,24 +247,60 @@ for (const g of GATES) {
 
 /* F2b 反过来查（审查第 1 轮：只查「begin 后面第一个 setter」，同一份数据别处还有写入口就漏了 —— 客户首页 dashboardOrders 就是这么漏的）：
    文件里每一处调这个 setter 的地方，所在函数里都要先领号、再过门闩；只放过清空（[] / null / "" / undefined）和基于原值改（传函数）的 */
-/** 门闩的结果真管住了这一句（审查第 3 轮 Codex：只调用不看返回值、判断写反了，上面那道「出现过」照样过）：
- *  要么这一句在「if (门闩通过 …)」的 then 里（条件里那次调用前面没有 !），要么前面有一句「if (!门闩 …) return」 */
+/** 门闩的结果真管住了这一句（审查第 3 轮 Codex；第 4 轮两家：按语法结构判断，不在条件文本里找字）：
+ *  要么这一句在「if (条件)」的 then 里、而且条件成立就能推出门闩通过（&& 有一边够；|| 两边都得够；括号去掉再看）；
+ *  要么前面有一句「if (条件) return / throw」、而且门闩没通过就一定走进去（!门闩、门闩 === false；|| 一边够、&& 两边都得够）。
+ *  门闩那句和写屏幕之间不许夹 await（等的那会儿新的请求可能已经领号、这一次的结果已经旧了） */
 function guardedBy(call: ts.Node, gate: string, ticketVar: string, sf: ts.SourceFile): boolean {
-  const positive = new RegExp(`(^|[^!\\s]\\s*|&&\\s*|\\(\\s*)\\b${gate}\\.(accept|isCurrent)\\(\\s*${ticketVar}\\b`);
-  const negativeReturn = new RegExp(`^!\\s*${gate}\\.(accept|isCurrent)\\(\\s*${ticketVar}\\b[^)]*\\)$`);
+  const unparen = (e: ts.Expression): ts.Expression => { let x = e; while (ts.isParenthesizedExpression(x)) x = x.expression; return x; };
+  const isGateCall = (e: ts.Expression): boolean => {
+    const x = unparen(e);
+    return ts.isCallExpression(x) && ts.isPropertyAccessExpression(x.expression) && x.expression.expression.getText(sf) === gate
+      && ["accept", "isCurrent"].includes(x.expression.name.text) && x.arguments.length > 0 && unparen(x.arguments[0]).getText(sf) === ticketVar;
+  };
+  const opOf = (e: ts.BinaryExpression) => e.operatorToken.kind;
+  /** 条件成立 ⇒ 门闩通过 */
+  const implies = (e: ts.Expression): boolean => {
+    const x = unparen(e);
+    if (isGateCall(x)) return true;
+    if (ts.isBinaryExpression(x) && opOf(x) === ts.SyntaxKind.AmpersandAmpersandToken) return implies(x.left) || implies(x.right);
+    if (ts.isBinaryExpression(x) && opOf(x) === ts.SyntaxKind.BarBarToken) return implies(x.left) && implies(x.right);
+    return false;
+  };
+  /** 门闩没通过 ⇒ 条件成立 */
+  const coversFailure = (e: ts.Expression): boolean => {
+    const x = unparen(e);
+    if (ts.isPrefixUnaryExpression(x) && x.operator === ts.SyntaxKind.ExclamationToken) return implies(x.operand);
+    if (ts.isBinaryExpression(x) && [ts.SyntaxKind.EqualsEqualsEqualsToken, ts.SyntaxKind.EqualsEqualsToken].includes(opOf(x))) {
+      return (isGateCall(x.left) && x.right.kind === ts.SyntaxKind.FalseKeyword) || (isGateCall(x.right) && x.left.kind === ts.SyntaxKind.FalseKeyword);
+    }
+    if (ts.isBinaryExpression(x) && opOf(x) === ts.SyntaxKind.BarBarToken) return coversFailure(x.left) || coversFailure(x.right);
+    if (ts.isBinaryExpression(x) && opOf(x) === ts.SyntaxKind.AmpersandAmpersandToken) return coversFailure(x.left) && coversFailure(x.right);
+    return false;
+  };
+  const exits = (st: ts.Statement): boolean =>
+    ts.isReturnStatement(st) || ts.isThrowStatement(st) || (ts.isBlock(st) && st.statements.some((x) => ts.isReturnStatement(x) || ts.isThrowStatement(x)));
+  /** from..to 之间（不进嵌套函数）有没有 await */
+  let fnNode: ts.Node | undefined = call.parent;
+  while (fnNode && !ts.isFunctionLike(fnNode)) fnNode = fnNode.parent;
+  const awaitBetween = (from: number, to: number): boolean => {
+    let found = false;
+    const visit = (m: ts.Node) => {
+      if (found || (ts.isFunctionLike(m) && m !== fnNode)) return;
+      if (ts.isAwaitExpression(m) && m.getStart(sf) >= from && m.getStart(sf) < to) { found = true; return; }
+      m.forEachChild(visit);
+    };
+    if (fnNode) visit(fnNode);
+    return found;
+  };
+  const callAt = call.getStart(sf);
   for (let cur: ts.Node = call; cur.parent && !ts.isFunctionLike(cur); cur = cur.parent) {
     const parent = cur.parent;
-    if (ts.isIfStatement(parent) && parent.thenStatement === cur) {
-      const cond = parent.expression.getText(sf);
-      if (positive.test(cond) && !new RegExp(`!\\s*${gate}\\.(accept|isCurrent)\\(\\s*${ticketVar}\\b`).test(cond)) return true;
-    }
+    if (ts.isIfStatement(parent) && parent.thenStatement === cur && implies(parent.expression) && !awaitBetween(parent.expression.getEnd(), callAt)) return true;
     if (ts.isBlock(parent) || ts.isSourceFile(parent)) {
       const idx = parent.statements.indexOf(cur as ts.Statement);
       for (const st of parent.statements.slice(0, Math.max(0, idx))) {
-        if (!ts.isIfStatement(st) || !negativeReturn.test(st.expression.getText(sf).trim())) continue;
-        const then = st.thenStatement;
-        const exits = ts.isReturnStatement(then) || (ts.isBlock(then) && then.statements.some(ts.isReturnStatement));
-        if (exits) return true;
+        if (ts.isIfStatement(st) && !st.elseStatement && exits(st.thenStatement) && coversFailure(st.expression) && !awaitBetween(st.getEnd(), callAt)) return true;
       }
     }
   }
@@ -306,6 +342,45 @@ function setterCallsWithoutGate(g: GateSite): string[] {
   visit(sf);
   return bad;
 }
+check("F2c F2b 那道判断本身：该认的认、不该认的不认（审查第 4 轮两家列的写法）", () => {
+  const judge = (body: string): boolean => {
+    const src = `async function f() { const t = gate.begin(null); const x = await load(); ${body} }`;
+    const sf = ts.createSourceFile("x.ts", src, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+    let call: ts.Node | undefined;
+    const walk = (n: ts.Node) => { if (!call && ts.isCallExpression(n) && n.expression.getText(sf) === "setRows") call = n; if (!call) n.forEachChild(walk); };
+    walk(sf);
+    assert.ok(call, body);
+    return guardedBy(call!, "gate", "t", sf);
+  };
+  const yes = [
+    "if (!gate.accept(t, null)) return; setRows(x);",
+    "if (!(gate.accept(t, null))) return; setRows(x);",
+    "if (gate.accept(t, null) === false) return; setRows(x);",
+    "if (!gate.isCurrent(t)) { return; } setRows(x);",
+    "if (gate.accept(t, null)) setRows(x);",
+    "if (ok && gate.accept(t, null)) setRows(x);",
+    "if ((gate.accept(t, null))) { setRows(x); }",
+    "if (gate.accept(t, null) || gate.isCurrent(t)) setRows(x);",
+    "if (stale || !gate.accept(t, null)) return; setRows(x);",
+  ];
+  const no = [
+    "gate.accept(t, null); setRows(x);",
+    "if (gate.accept(t, null)) return; setRows(x);",
+    "if (!(gate.accept(t, null))) setRows(x);",
+    "if (gate.accept(t, null) || allowCached) setRows(x);",
+    "if (allowCached || gate.accept(t, null)) setRows(x);",
+    "if (Boolean(gate.accept(t, null))) setRows(x);",
+    "if (y === gate.accept(t, null)) setRows(x);",
+    "if (!gate.accept(other, null)) return; setRows(x);",
+    "if (!gate.accept(t, null)) return; await later(); setRows(x);",
+    "if (gate.accept(t, null)) { await later(); setRows(x); }",
+    "if (stale && !gate.accept(t, null)) return; setRows(x);",
+    "if (!gate.accept(t, null)) log(); setRows(x);",
+  ];
+  for (const b of yes) assert.equal(judge(b), true, `该认没认：${b}`);
+  for (const b of no) assert.equal(judge(b), false, `不该认却认了：${b}`);
+});
+
 for (const g of GATES) {
   check(`F2b ${g.file.replace("apps/web/src/", "")}：所有 ${g.setter}(数据) 都先过 ${g.gate}（不只 begin 后面那一处）`, () => {
     assert.deepEqual(setterCallsWithoutGate(g), [], `${g.setter} 有没过门闩的写入口`);
@@ -549,6 +624,13 @@ async function main(): Promise<void> {
     pending.finishBatch(store, "ZZC1|sha256:G2", false);
     const gAgain = await upload();
     assert.deepEqual(gAgain.lookAlike, [2], "换文件那次已经建好的行，再传旧文件要标出来");
+    // ⑬ A、B 都挂着同一个没确认编号，C 用回它建好了 → A、B 都转成已建好；再传有两行一样内容的文件，只标一行（只建过一张，审查第 4 轮 Codex）
+    pending.markPending(store, "ZZC1|sha256:HA", 2, "hP", sigOf("货6", 1));
+    pending.markPending(store, "ZZC1|sha256:HB", 3, "hP", sigOf("货6", 1));
+    pending.markPending(store, "ZZC1|sha256:HC", 4, "hP", sigOf("货6", 1)); pending.markDone(store, "ZZC1|sha256:HC", 4, sigOf("货6", 1));
+    content = "H 两行"; sheet = [{ "仓库 *": "义乌仓", "品名 *": "货6", "箱数 *": 1, "运输方式 *（海运/陆运）": "海运" }, { "仓库 *": "义乌仓", "品名 *": "货6", "箱数 *": 1, "运输方式 *（海运/陆运）": "海运" }];
+    const twoLike = await upload();
+    assert.deepEqual(twoLike.lookAlike, [2], "只建过一张，最多标一行");
     // ⑥ 换了个客户在这个标签页里传同一个文件：上一个客户的记号一样都用不上
     userId = "ZZC2"; content = "同一份表"; sheet = sheetOf(["货1", "货2", "货3"]);
     const other = await upload();

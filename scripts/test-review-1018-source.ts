@@ -849,6 +849,20 @@ async function main(): Promise<void> {
     // 同一个编号挂在两个文件里（A 换到 B 又没确认）：别的文件里只算一次（审查第 3 轮 Codex）
     m.markPending(st, "Q|a", 3, "dup", "sigQ", t0); m.markPending(st, "Q|b", 2, "dup", "sigQ", t0);
     assert.deepEqual(m.readOtherPending(st, "Q|", "Q|c", t0).map((p) => p.requestId), ["dup"]);
+    // 同一张单（同一个编号）在几个文件里都转成「已建好」：只算一张（审查第 4 轮 Codex）；跳过它的那个文件已经算过的，别处不再算
+    m.markPending(st, "W|a", 3, "P1", "sigW", t0); m.markPending(st, "W|b", 2, "P1", "sigW", t0);
+    m.markPending(st, "W|c", 5, "P1", "sigW", t0); m.markDone(st, "W|c", 5, "sigW", t0);
+    assert.deepEqual([m.readDoneRows(st, "W|a", t0), m.readDoneRows(st, "W|b", t0)], [["3"], ["2"]], "两个旧文件都转成已建好");
+    assert.deepEqual(m.readDoneSignatures(st, "W|", "", t0), ["sigW"], "同一张单只算一张");
+    assert.deepEqual(m.readDoneSignatures(st, "W|", "W|a", t0), [], "W|a 自己跳过的那张，别的文件里同一张不再算");
+    // 内容对不上的不结（页面上同一个编号总是同样内容；对不上的留着没确认，审查第 4 轮 dsh）
+    m.markPending(st, "V|a", 2, "PV", "sigOther", t0); m.markPending(st, "V|b", 3, "PV", "sigV", t0); m.markDone(st, "V|b", 3, "sigV", t0);
+    assert.deepEqual([m.readPendingIds(st, "V|a", t0), m.readDoneRows(st, "V|a", t0)], [{ "2": "PV" }, []]);
+    // 结算动过的旧记号重新算一天（审查第 4 轮：快过期的转完马上没了，再传旧文件就认不出）
+    const DAY = 24 * 3600_000;
+    m.markPending(st, "T|old", 2, "PT", "sigT", t0);
+    m.markPending(st, "T|new", 2, "PT", "sigT", t0 + DAY - 60_000); m.markDone(st, "T|new", 2, "sigT", t0 + DAY - 60_000);
+    assert.deepEqual(m.readDoneRows(st, "T|old", t0 + DAY + 120_000), ["2"], "结算后旧记号要重新算一天");
     // 一行建好了、后来又交一次结果不确定：最近那次说了算 —— 不再算已建好（审查第 3 轮 dsh）
     m.markPending(st, "R|f", 2, "first", "sigR", t0); m.markDone(st, "R|f", 2, "sigR", t0);
     m.markPending(st, "R|f", 2, "second", "sigR", t0);

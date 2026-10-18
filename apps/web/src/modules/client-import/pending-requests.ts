@@ -29,8 +29,8 @@
 const STORAGE_KEY = "xt.clientImport.pending.v1";
 const MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
-/** ids：没确认的行 → 请求编号；sigs：没确认的行 → 这一行的内容；done：这一批里已经确认建好的行（表格第几行 + 这一行的内容） */
-type DoneRow = { row: string; sig: string };
+/** ids：没确认的行 → 请求编号；sigs：没确认的行 → 这一行的内容；done：这一批里已经确认建好的行（表格第几行 + 这一行的内容 + 建它的那个编号） */
+type DoneRow = { row: string; sig: string; requestId?: string };
 type PendingEntry = { at: number; ids: Record<string, string>; sigs: Record<string, string>; done: DoneRow[] };
 type PendingStore = Record<string, PendingEntry>;
 /** 只用到 getItem / setItem 的那一点（测试里换成假的） */
@@ -54,7 +54,9 @@ function load(storage: PendingStorage | null, now: number): PendingStore {
     for (const [key, entry] of Object.entries(parsed ?? {})) {
       if (!entry || typeof entry.at !== "number" || now - entry.at >= MAX_AGE_MS || !entry.ids || typeof entry.ids !== "object") continue;
       const done: DoneRow[] = Array.isArray(entry.done)
-        ? entry.done.map((d: any) => (d && typeof d === "object" ? { row: String(d.row), sig: String(d.sig ?? "") } : { row: String(d), sig: "" }))
+        ? entry.done.map((d: any) => (d && typeof d === "object"
+          ? { row: String(d.row), sig: String(d.sig ?? ""), ...(d.requestId ? { requestId: String(d.requestId) } : {}) }
+          : { row: String(d), sig: "" }))
         : [];
       const sigs: Record<string, string> = entry.sigs && typeof entry.sigs === "object" ? entry.sigs : {};
       fresh[key] = { at: entry.at, ids: entry.ids, sigs, done };
@@ -93,13 +95,24 @@ export function hasPendingRows(storage: PendingStorage | null, fileKey: string, 
   return Object.keys(load(storage, now)[fileKey]?.ids ?? {}).length > 0;
 }
 
-/** 同一个客户（键前缀「唛头|」）别的文件没收尾那几批里，已经建好的那些行的内容：换了文件再传时拿来比（有几行算几行） */
+/** 同一个客户（键前缀「唛头|」）别的文件没收尾那几批里，已经建好的那些行的内容：换了文件再传时拿来比（有几张算几张）。
+ *  同一张单（同一个编号）在好几个文件里都记着「已建好」（换文件用回原编号、建好后各处都转了）只算一张；
+ *  exceptFileKey 那个文件已经自动跳过的，别的文件里同一张也不再算（审查第 4 轮 Codex：不然一张单被算成两张，内容一样的两行都标「已建好」） */
 export function readDoneSignatures(storage: PendingStorage | null, ownerPrefix: string, exceptFileKey: string, now = Date.now()): string[] {
   if (!ownerPrefix) return [];
+  const store = load(storage, now);
+  const counted = new Set((store[exceptFileKey]?.done ?? []).map((d) => d.requestId).filter((id): id is string => Boolean(id)));
   const out: string[] = [];
-  for (const [key, entry] of Object.entries(load(storage, now))) {
+  for (const [key, entry] of Object.entries(store)) {
     if (key === exceptFileKey || !key.startsWith(ownerPrefix)) continue;
-    for (const d of entry.done) if (d.sig) out.push(d.sig);
+    for (const d of entry.done) {
+      if (!d.sig) continue;
+      if (d.requestId) {
+        if (counted.has(d.requestId)) continue;
+        counted.add(d.requestId);
+      }
+      out.push(d.sig);
+    }
   }
   return out;
 }
@@ -129,19 +142,23 @@ function ownerOf(fileKey: string): string {
 }
 
 /** 这个编号有了结果：同一个客户别的文件里还挂着同一个编号的「没确认」记号跟着结（换了文件用回原编号的那种）——
- *  建好了 → 那边转成「已建好」（以后再传那个旧文件，这一行会标出来，不会静默再下一遍：审查第 3 轮 dsh）；明确失败 → 那边一起删 */
-function settleElsewhere(store: PendingStore, fileKey: string, requestId: string | undefined, created: boolean): void {
+ *  建好了 → 那边转成「已建好」（以后再传那个旧文件，这一行会标出来，不会静默再下一遍：审查第 3 轮 dsh）；明确失败 → 那边一起删。
+ *  只结内容一样的那行（审查第 4 轮 dsh：页面上同一个编号总是同样内容，对不上的不动）；动过的记号重新算一天（第 4 轮两家：不然快过期的旧记号转完马上没了） */
+function settleElsewhere(store: PendingStore, fileKey: string, requestId: string | undefined, created: boolean, sig: string, now: number): void {
   const owner = ownerOf(fileKey);
   if (!owner || !requestId) return;
   for (const [key, entry] of Object.entries(store)) {
     if (key === fileKey || !key.startsWith(owner)) continue;
+    let touched = false;
     for (const [row, id] of Object.entries(entry.ids)) {
-      if (id !== requestId) continue;
-      if (created && !entry.done.some((d) => d.row === row)) entry.done.push({ row, sig: entry.sigs[row] ?? "" });
+      if (id !== requestId || (sig && entry.sigs[row] && entry.sigs[row] !== sig)) continue;
+      if (created && !entry.done.some((d) => d.row === row)) entry.done.push({ row, sig: entry.sigs[row] ?? sig, requestId });
       delete entry.ids[row];
       delete entry.sigs[row];
+      touched = true;
     }
     if (Object.keys(entry.ids).length === 0 && entry.done.length === 0) delete store[key];
+    else if (touched) entry.at = now;
   }
 }
 
@@ -165,7 +182,7 @@ export function clearPending(storage: PendingStorage | null, fileKey: string, ro
   const store = load(storage, now);
   const entry = store[fileKey];
   if (!entry) return;
-  settleElsewhere(store, fileKey, entry.ids[String(rowNo)], false);
+  settleElsewhere(store, fileKey, entry.ids[String(rowNo)], false, entry.sigs[String(rowNo)] ?? "", now);
   delete entry.ids[String(rowNo)];
   delete entry.sigs[String(rowNo)];
   if (Object.keys(entry.ids).length === 0 && entry.done.length === 0) delete store[fileKey];
@@ -177,10 +194,11 @@ export function markDone(storage: PendingStorage | null, fileKey: string, rowNo:
   if (!fileKey) return;
   const store = load(storage, now);
   const entry = store[fileKey] ?? { at: now, ids: {}, sigs: {}, done: [] };
-  settleElsewhere(store, fileKey, entry.ids[String(rowNo)], true);
+  const requestId = entry.ids[String(rowNo)];
+  settleElsewhere(store, fileKey, requestId, true, sig, now);
   delete entry.ids[String(rowNo)];
   delete entry.sigs[String(rowNo)];
-  if (!entry.done.some((d) => d.row === String(rowNo))) entry.done.push({ row: String(rowNo), sig });
+  if (!entry.done.some((d) => d.row === String(rowNo))) entry.done.push({ row: String(rowNo), sig, ...(requestId ? { requestId } : {}) });
   entry.at = now;
   store[fileKey] = entry;
   save(storage, store);
