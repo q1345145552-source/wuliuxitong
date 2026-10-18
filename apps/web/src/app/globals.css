@@ -2052,6 +2052,12 @@ button:disabled {
   margin-right: 0 !important;
 }
 
+/* 共用弹窗（DetailModal）开着时锁页面滚动：它往 body 上加这个 class（2026-10-18），
+   不再写 body.style.overflow —— 手机侧栏也写那个，两边各记「原来的值」会互相盖掉 */
+body.detail-modal-open {
+  overflow: hidden !important;
+}
+
 .detail-overlay {
   position: fixed;
   inset: 0;

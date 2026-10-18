@@ -2199,7 +2199,8 @@ export default function AdminHomePage() {
               }}
               actions={[
                 { label: "物流轨迹", onClick: (id) => { const o = pagedOrders.find((x) => x.id === id); if (o) openShipmentTrack(o.trackingNo ? { trackingNo: o.trackingNo } : { shipmentId: o.id }); } },
-                { label: "编辑", onClick: (id) => { const o = pagedOrders.find((x) => x.id === id); if (o) startEditOrder(o); } },
+                // 跟电脑那一行一样：点的就是正在改的那张 = 关（关闭动画那 0.2 秒里遮罩点得穿，dsh）
+                { label: "编辑", onClick: (id) => { const o = pagedOrders.find((x) => x.id === id); if (!o) return; if (editingOrderId === (o.orderId ?? o.id)) closeEditOrder(); else startEditOrder(o); } },
                 // 跟电脑宽表那一行一样：点单号复制、打印、删除（详情 = 点整块）
                 { label: "复制单号", onClick: (id) => { const o = pagedOrders.find((x) => x.id === id); if (o?.trackingNo) void copyOrderNumber(o.trackingNo); } },
                 { label: "打印", onClick: (id) => { const o = pagedOrders.find((x) => x.id === id); if (o) printOrderLabel(o); } },

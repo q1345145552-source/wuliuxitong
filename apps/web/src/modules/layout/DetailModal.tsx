@@ -4,7 +4,10 @@ import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from 
 
 // 详情之间可能叠加打开；只有最上层接管键盘，最后一个关闭后才恢复页面滚动。
 const openPanels: HTMLDivElement[] = [];
-let previousBodyOverflow = "";
+/* 锁页面滚动用 body 上的 class（globals.css 里 body.detail-modal-open），不写 body.style.overflow（2026-10-18 Codex）：
+   手机侧栏（RoleShell）也写 body.style.overflow、各自记「原来的值」再写回去 —— 弹窗藏起来让出、再接上时两边会把对方的锁当成原值，
+   最后一个关掉时页面可能一直滚不动。两边用不同的东西锁，谁也不盖谁 */
+const SCROLL_LOCK_CLASS = "detail-modal-open";
 
 function focusableElements(panel: HTMLElement): HTMLElement[] {
   return Array.from(panel.querySelectorAll<HTMLElement>(
@@ -57,15 +60,14 @@ export default function DetailModal(props: {
     const returnTarget = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     // 登记成「开着的弹窗」：最上层那个接管键盘（Tab / Esc），有弹窗开着页面就不让滚
     const register = () => {
-      if (openPanels.length === 0) previousBodyOverflow = document.body.style.overflow;
       openPanels.push(panel);
-      document.body.style.overflow = "hidden";
+      document.body.classList.add(SCROLL_LOCK_CLASS);
     };
     const unregister = () => {
       const index = openPanels.indexOf(panel);
       if (index === -1) return;
       openPanels.splice(index, 1);
-      if (openPanels.length === 0) document.body.style.overflow = previousBodyOverflow;
+      if (openPanels.length === 0) document.body.classList.remove(SCROLL_LOCK_CLASS);
     };
     register();
     const focusFrame = window.requestAnimationFrame(() => {
@@ -87,7 +89,9 @@ export default function DetailModal(props: {
         return;
       }
       register();
-      if (openPanels[openPanels.length - 1] === panel && !panel.contains(document.activeElement)) {
+      // 焦点没在别处（大图、轨迹这类盖在上面的弹层里）才放回弹窗，别抢（dsh）
+      const active = document.activeElement;
+      if (openPanels[openPanels.length - 1] === panel && (!active || active === document.body)) {
         (focusableElements(panel)[0] ?? panel).focus({ preventScroll: true });
       }
     });

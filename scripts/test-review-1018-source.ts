@@ -208,6 +208,10 @@ check("S7 超管「运单管理」改单：打开时记订单版本；每次保�
   const tableBlock = raw.slice(tableAt, raw.indexOf("</tbody>", tableAt));
   assert.ok(tableAt > 0 && !tableBlock.includes('title="编辑运单"'), "编辑弹窗又挂回列表行里了：这张被挤到下一页 / 被筛掉，刷新一来弹窗就没了");
   assert.equal((raw.match(/title="编辑运单"/g) ?? []).length, 1, "编辑弹窗只能有一个");
+  assert.match(raw, /key=\{editingOrderId\}\s*title="编辑运单"\s*subtitle=\{editingOrderRow\.trackingNo \?\? editingOrderRow\.orderNo \?\? "—"\}/, "编辑弹窗标题要取 editingOrderRow");
+  assert.match(raw, /\(editingOrderRow\.productImages\?\.length \?\? 0\) > 0 && \([\s\S]{0,400}?editingOrderRow\.productImages!\.map\(/, "编辑弹窗产品图要取 editingOrderRow");
+  assert.match(src, /\}, \[editingOrderId, orderList, editingOrderMeta\]\);/, "editingOrderRow 要跟着 orderList 变（别人改了这张，标题 / 产品图跟着变）");
+  assert.match(src, /\{ label: "编辑", onClick: \(id\) => \{ const o = pagedOrders\.find\(\(x\) => x\.id === id\); if \(!o\) return; if \(editingOrderId === \(o\.orderId \?\? o\.id\)\) closeEditOrder\(\); else startEditOrder\(o\); \} \}/, "手机「编辑」要跟电脑一样：点正在改的那张 = 关");
   // 存上之后刷新列表失败，不能落进「保存失败」（dsh 第 5 轮；S7b 真跑）
   assert.match(src, /await loadOrders\(\)\.catch\(\(\) => setToast\(`\$\{savedText\}（列表这次没刷新上，稍后会自动刷新）`\)\);/);
   assert.match(src, /const sessionAtSubmit = editSessionRef\.current;\s*setLoading\(true\);\s*setMessage\(""\);\s*try \{/, "保存前（try 外面）要记下是第几次打开");
@@ -651,17 +655,24 @@ async function main(): Promise<void> {
     }
   });
 
-  await checkAsync("S13 真跑共用弹窗 DetailModal 登记那段（老板选 A）：所在那页被藏起来（display:none，大小变 0）就让出键盘和滚动锁，切回来再接上、焦点放回弹窗；藏着的时候卸掉不会提前放开别的弹窗的滚动锁；没有 ResizeObserver 照旧", async () => {
+  await checkAsync("S13 真跑共用弹窗 DetailModal 登记那段（老板选 A）：所在那页被藏起来（display:none，大小变 0）就让出键盘和滚动锁，切回来再接上、焦点没在别处才放回弹窗；滚动锁用 body 的 class、不碰侧栏写的 inline overflow；藏着卸掉不放开别的弹窗的锁；一开始就藏着的不锁；卸掉后不再响应；没有 ResizeObserver 照旧", async () => {
     const effectText = sourceNode("apps/web/src/modules/layout/DetailModal.tsx", (n) => ts.isCallExpression(n) && n.expression.getText() === "useEffect" && n.arguments[0]?.getText().includes("const register = ") === true);
     const effectFn = effectText.replace(/^useEffect\(/, "").replace(/,\s*\[\]\)$/, "");
+    const lockClass = /const SCROLL_LOCK_CLASS = "([^"]+)";/.exec(read("apps/web/src/modules/layout/DetailModal.tsx"))?.[1];
+    assert.equal(lockClass, "detail-modal-open");
+    assert.match(read("apps/web/src/app/globals.css"), /body\.detail-modal-open \{\s*overflow: hidden !important;\s*\}/, "globals.css 里要有锁滚动那条");
+    assert.ok(!/document\.body\.style\.overflow/.test(code("apps/web/src/modules/layout/DetailModal.tsx")), "弹窗又去写 body.style.overflow 了（会跟手机侧栏互相盖）");
     class FakeEl { focus() { doc.activeElement = this; } }
-    const doc: Row = { body: { style: { overflow: "auto" } }, activeElement: null };
+    const classes = new Set<string>();
+    const doc: Row = { body: { style: { overflow: "" }, classList: { add: (c: string) => classes.add(c), remove: (c: string) => classes.delete(c) } }, activeElement: null };
+    doc.activeElement = doc.body;
+    const locked = () => classes.has("detail-modal-open");
     const observers: { cb: () => void; target: any }[] = [];
     class FakeRO { cb: () => void; constructor(cb: () => void) { this.cb = cb; } observe(t: any) { observers.push({ cb: this.cb, target: t }); this.cb(); } disconnect() { const i = observers.findIndex((o) => o.cb === this.cb); if (i >= 0) observers.splice(i, 1); } }
-    const makePanel = () => {
+    const makePanel = (visible = true) => {
       const control = new FakeEl();
       const panel: any = new FakeEl();
-      panel.visible = true;
+      panel.visible = visible;
       panel.control = control;
       panel.getClientRects = () => (panel.visible ? [{}] : []);
       panel.contains = (el: unknown) => el === panel || el === control;
@@ -669,7 +680,7 @@ async function main(): Promise<void> {
     };
     const openPanels: any[] = [];
     const mount = (panel: any, withRO = true) => evalTs("module.exports = " + effectFn + ";", {
-      panelRef: { current: panel }, openPanels, previousBodyOverflow: "", document: doc, HTMLElement: FakeEl,
+      panelRef: { current: panel }, openPanels, SCROLL_LOCK_CLASS: lockClass, document: doc, HTMLElement: FakeEl,
       window: { requestAnimationFrame: (f: () => void) => { f(); return 1; }, cancelAnimationFrame() {} },
       ResizeObserver: withRO ? FakeRO : undefined,
       focusableElements: (p: any) => [p.control],
@@ -678,19 +689,28 @@ async function main(): Promise<void> {
     const a = makePanel();
     const unmountA = mount(a);
     assert.deepEqual(openPanels, [a]);
-    assert.equal(doc.body.style.overflow, "hidden", "开着要锁滚动");
-    // 切到别的分区：A 藏起来 → 让出
+    assert.ok(locked(), "开着要锁滚动");
+    // 手机侧栏这时写了 inline overflow：弹窗不碰它
+    doc.body.style.overflow = "hidden";
     a.visible = false; fire(a);
     assert.deepEqual(openPanels, [], "藏起来还占着键盘（最上层才接管 Tab / Esc）");
-    assert.equal(doc.body.style.overflow, "auto", "藏起来还锁着滚动：别的页滚不动");
+    assert.ok(!locked(), "藏起来还锁着滚动：别的页滚不动");
+    assert.equal(doc.body.style.overflow, "hidden", "侧栏写的锁被弹窗动了");
     fire(a);
     assert.deepEqual(openPanels, [], "重复通知不能重复处理");
-    // 切回来：接上，焦点放回弹窗里
-    doc.activeElement = null;
+    doc.body.style.overflow = "";
+    // 切回来：焦点在 body 上（原来那页的东西藏起来、焦点掉回 body）→ 放回弹窗
+    doc.activeElement = doc.body;
     a.visible = true; fire(a);
     assert.deepEqual(openPanels, [a]);
-    assert.equal(doc.body.style.overflow, "hidden");
+    assert.ok(locked());
     assert.equal(doc.activeElement, a.control, "切回来焦点要放回弹窗里");
+    // 焦点在别的弹层里（比如大图）时切回来：不抢
+    a.visible = false; fire(a);
+    const other = new FakeEl();
+    doc.activeElement = other;
+    a.visible = true; fire(a);
+    assert.equal(doc.activeElement, other, "焦点在大图 / 轨迹那类弹层里，切回来不能抢");
     // A 又藏起来、别的页开了 B；A 这时被卸掉，不能把 B 的滚动锁放开
     a.visible = false; fire(a);
     const b = makePanel();
@@ -698,23 +718,37 @@ async function main(): Promise<void> {
     assert.deepEqual(openPanels, [b]);
     unmountA();
     assert.deepEqual(openPanels, [b]);
-    assert.equal(doc.body.style.overflow, "hidden", "藏着的 A 卸掉时把 B 的滚动锁放开了");
+    assert.ok(locked(), "藏着的 A 卸掉时把 B 的滚动锁放开了");
+    fire(a);
+    assert.deepEqual(openPanels, [b], "卸掉以后不该再响应");
     unmountB();
     assert.deepEqual(openPanels, []);
-    assert.equal(doc.body.style.overflow, "auto", "都关了要恢复滚动");
-    // 正常开关（一直看得见）照旧
-    const c = makePanel();
-    const unmountC = mount(c);
-    assert.equal(doc.body.style.overflow, "hidden");
-    unmountC();
-    assert.equal(doc.body.style.overflow, "auto");
+    assert.ok(!locked(), "都关了要恢复滚动");
+    // 一开始就挂在藏着的那页：不锁、不占键盘；露出来再接上
+    const h = makePanel(false);
+    const unmountH = mount(h);
+    assert.deepEqual(openPanels, [], "一开始就藏着的弹窗不该占着键盘");
+    assert.ok(!locked(), "一开始就藏着的弹窗不该锁滚动");
+    h.visible = true; fire(h);
+    assert.deepEqual(openPanels, [h]);
+    unmountH();
+    assert.ok(!locked());
+    // 两个都看得见、叠着开（详情里再开一个）：一起藏起来再一起露出来，后开的那个还在最上层
+    const outer = makePanel(); const unmountOuter = mount(outer);
+    const inner = makePanel(); const unmountInner = mount(inner);
+    outer.visible = false; inner.visible = false; fire(outer); fire(inner);
+    assert.deepEqual(openPanels, []);
+    outer.visible = true; inner.visible = true; fire(outer); fire(inner);
+    assert.deepEqual(openPanels, [outer, inner], "后开的那个要还在最上层");
+    unmountInner(); unmountOuter();
+    assert.ok(!locked());
     // 老浏览器没有 ResizeObserver：照旧登记 / 卸掉，不报错
     const d = makePanel();
     const unmountD = mount(d, false);
     assert.deepEqual(openPanels, [d]);
     unmountD();
     assert.deepEqual(openPanels, []);
-    assert.equal(doc.body.style.overflow, "auto");
+    assert.ok(!locked());
   });
 
   await checkAsync("S14 真跑超管页「正在改的那张」（老板选 A）：编辑弹窗挂在列表外面，按 editingOrderId 从全部列表里找最新的那张；列表里没有了用打开时那份；对不上的不用", async () => {
