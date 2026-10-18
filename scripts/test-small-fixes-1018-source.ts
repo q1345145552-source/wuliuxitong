@@ -18,7 +18,9 @@
  *   F10 尾端派送候选（普通和整柜共用 toLastmileCandidate，#22）：真跑那个函数 —— 品名带全部产品名（按第二个产品名也搜得到）、
  *       收货人 / 电话 / 地址从后端的 *Th 字段取（原来整柜那边直接强转，字段名对不上读不到）；两个取数函数都走它
  *   F11 客户批量下单重传同一个文件（X2，10-18 浏览器实测后补完整）：真跑上传那段 —— 上一批没收尾干净时，那一批已经建好的行不再交、
- *       提示说清是第几行；没确认的行用回原来的编号；其余行新编号；全部建好过的说「不用再交」；收尾干净的文件照旧全当新单
+ *       提示说清是第几行；没确认的行用回原来的编号；其余行新编号；全部建好过的说「不用再交」；收尾干净的文件照旧全当新单；
+ *       换了文件（改过 / 另存过）跟已建好的那行一模一样的标出来、记下来（提交前再问）；别的客户的记号用不上（审查第 1 轮）
+ *   F12 真跑提交那段：有「跟已建好的一模一样」的行，点「取消」一张都不交、点「确定」照常交；一批有明确失败的，建好的行留着记号
  */
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync, statSync } from "node:fs";
@@ -63,7 +65,7 @@ function webFiles(): string[] {
   walk(WEB);
   return out;
 }
-type Candidate = { file: string; line: number; write: string; refresh: string };
+type Candidate = { file: string; line: number; write: string; refresh: string; at: ts.Node };
 /** 一个 try 里先 await 写、后 await 刷新，catch 里说失败的 */
 function scanCandidates(): Candidate[] {
   const out: Candidate[] = [];
@@ -82,7 +84,7 @@ function scanCandidates(): Candidate[] {
         const firstWrite = awaits.findIndex((a) => a && !isRefreshName(a));
         const laterRefresh = firstWrite >= 0 ? awaits.slice(firstWrite + 1).find(isRefreshName) : undefined;
         if (laterRefresh && /失败|setError|setToast\(e|setToast\(err|setMessage\(/.test(n.catchClause.block.getText())) {
-          out.push({ file, line: sf.getLineAndCharacterOfPosition(n.getStart()).line + 1, write: awaits[firstWrite], refresh: laterRefresh });
+          out.push({ file, line: sf.getLineAndCharacterOfPosition(n.getStart()).line + 1, write: awaits[firstWrite], refresh: laterRefresh, at: n });
         }
       }
       n.forEachChild(visit);
@@ -107,9 +109,23 @@ function bodyOf(n: ts.Node): ts.Block | null {
   if ((ts.isArrowFunction(n) || ts.isFunctionExpression(n) || ts.isFunctionDeclaration(n)) && n.body && ts.isBlock(n.body)) return n.body;
   return null;
 }
+/** 从这个 try 往外一层层找最近的同名声明（审查第 1 轮 dsh：原来取文件里第一个同名函数，同一个文件里有好几个 load 就可能看错） */
+function findFunctionInScope(from: ts.Node, name: string): ts.Node | null {
+  for (let cur: ts.Node | undefined = from.parent; cur; cur = cur.parent) {
+    const stmts = ts.isBlock(cur) || ts.isSourceFile(cur) ? cur.statements : null;
+    if (!stmts) continue;
+    for (const st of stmts) {
+      if (ts.isFunctionDeclaration(st) && st.name?.text === name) return st;
+      if (ts.isVariableStatement(st)) {
+        for (const d of st.declarationList.declarations) if (ts.isIdentifier(d.name) && d.name.text === name && d.initializer) return d.initializer;
+      }
+    }
+  }
+  return null;
+}
 /** 刷新函数自己会不会把报错往外抛：整个函数体的 await 都在不 rethrow 的 try 里，或者只等 Promise.allSettled，才算不抛 */
 function refreshMayThrow(c: Candidate): string | null {
-  const fn = findFunction(sourceOf(c.file), c.refresh);
+  const fn = findFunctionInScope(c.at, c.refresh) ?? findFunction(sourceOf(c.file), c.refresh);
   if (!fn) return "刷新函数不在本文件（多半是直接请求接口 → 会抛）";
   const body = bodyOf(fn);
   if (!body) return "看不出刷新函数的函数体";
@@ -123,6 +139,37 @@ function refreshMayThrow(c: Candidate): string | null {
   if (outside.length && !onlySettled) return "有 await 不在 try 里";
   return null;
 }
+
+/** 另外两种写法（审查第 1 轮：F1 只看 try 里直接 await 的）：① 写().then(→ 刷新).catch(说失败) ② try 的 finally 里 await 刷新 —— 现在一处都没有，以后也别出现 */
+function otherRiskyShapes(): string[] {
+  const out: string[] = [];
+  for (const file of webFiles()) {
+    const sf = sourceOf(file);
+    const visit = (n: ts.Node) => {
+      if (ts.isCallExpression(n) && ts.isPropertyAccessExpression(n.expression) && n.expression.name.text === "catch") {
+        const inner = n.expression.expression;
+        if (ts.isCallExpression(inner) && ts.isPropertyAccessExpression(inner.expression) && inner.expression.name.text === "then") {
+          const head = inner.expression.expression;
+          const headName = ts.isCallExpression(head) ? calleeName(head.expression) : "";
+          if (headName && !isRefreshName(headName) && /\b(load|reload|refresh|fetch)\w*\(/i.test(inner.arguments[0]?.getText(sf) ?? "")
+            && /失败|setError|setMessage/.test(n.arguments[0]?.getText(sf) ?? "")) {
+            out.push(`${path.relative(WEB, file)}:${sf.getLineAndCharacterOfPosition(n.getStart()).line + 1} ${headName}().then(刷新).catch(说失败)`);
+          }
+        }
+      }
+      if (ts.isTryStatement(n) && n.finallyBlock && /\bawait\s+(load|reload|refresh|fetch)\w*\(/i.test(n.finallyBlock.getText(sf))) {
+        out.push(`${path.relative(WEB, file)}:${sf.getLineAndCharacterOfPosition(n.getStart()).line + 1} finally 里 await 刷新`);
+      }
+      n.forEachChild(visit);
+    };
+    visit(sf);
+  }
+  return out;
+}
+
+check("F1b 「写().then(刷新).catch(说失败)」和「finally 里 await 刷新」这两种写法全前端一处都没有", () => {
+  assert.deepEqual(otherRiskyShapes(), []);
+});
 
 check("F1 写成功、刷新失败不会报成「保存 / 删除失败」：全前端「先写后刷新、catch 说失败」的地方，刷新函数都自己接住报错", () => {
   const cands = scanCandidates();
@@ -156,6 +203,7 @@ const GATES: GateSite[] = [
   { file: "apps/web/src/components/fcl/FclContainerWorkbench.tsx", gate: "lmOrdersGate", setter: "setLmOrders", kind: "query" },
   { file: "apps/web/src/components/fcl/FclContainerWorkbench.tsx", gate: "lmShipmentsGate", setter: "setLmShipments", kind: "query" },
   { file: "apps/web/src/modules/arrival-notice/ArrivalNoticesView.tsx", gate: "gate", setter: "setData", kind: "query" },
+  { file: "apps/web/src/app/client/page.tsx", gate: "dashboardOrdersGate", setter: "setDashboardOrders", kind: "query", minSites: 2 },
 ];
 for (const g of GATES) {
   check(`F2 ${g.file.replace("apps/web/src/", "")}：${g.gate} 领号以后、${g.setter} 写上屏幕之前先过门闩${g.kind === "query" ? "（成功才作废那种）" : ""}`, () => {
@@ -171,6 +219,45 @@ for (const g of GATES) {
       assert.ok(new RegExp(`${g.gate}\\.(accept|isCurrent)\\(`).test(between),
         `${g.gate} 领号以后没过门闩就写了 ${g.setter}：\n${between.slice(0, 400)}`);
     }
+  });
+}
+
+/* F2b 反过来查（审查第 1 轮：只查「begin 后面第一个 setter」，同一份数据别处还有写入口就漏了 —— 客户首页 dashboardOrders 就是这么漏的）：
+   文件里每一处调这个 setter 的地方，所在函数里都要先领号、再过门闩；只放过清空（[] / null / "" / undefined）和基于原值改（传函数）的 */
+function setterCallsWithoutGate(g: GateSite): string[] {
+  const sf = ts.createSourceFile(g.file, read(g.file), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  const bad: string[] = [];
+  const visit = (n: ts.Node) => {
+    if (ts.isCallExpression(n) && ts.isIdentifier(n.expression) && n.expression.text === g.setter) {
+      const arg = n.arguments[0];
+      const isReset = !arg || arg.kind === ts.SyntaxKind.NullKeyword || (ts.isIdentifier(arg) && arg.text === "undefined")
+        || (ts.isArrayLiteralExpression(arg) && arg.elements.length === 0) || ts.isStringLiteral(arg) && arg.text === "";
+      const isUpdater = !!arg && (ts.isArrowFunction(arg) || ts.isFunctionExpression(arg));
+      if (!isReset && !isUpdater) {
+        let fn: ts.Node | undefined = n.parent;
+        while (fn && !ts.isFunctionLike(fn)) fn = fn.parent;
+        // 回调（.then / .finally 里）往外找到领号的那一层
+        let ok = false;
+        for (let cur: ts.Node | undefined = fn; cur && !ok; cur = cur.parent) {
+          if (!ts.isFunctionLike(cur)) continue;
+          const text = cur.getText(sf);
+          const callAt = n.getStart(sf) - cur.getStart(sf);
+          const beginAt = text.search(new RegExp(`\\b${g.gate}\\.begin\\(`));
+          if (beginAt < 0 || beginAt > callAt) continue;
+          ok = new RegExp(`\\b${g.gate}\\.(accept|isCurrent)\\(`).test(text.slice(beginAt, callAt));
+          if (!ok) break;
+        }
+        if (!ok) bad.push(`第 ${sf.getLineAndCharacterOfPosition(n.getStart(sf)).line + 1} 行 ${n.getText(sf).slice(0, 80)}`);
+      }
+    }
+    n.forEachChild(visit);
+  };
+  visit(sf);
+  return bad;
+}
+for (const g of GATES) {
+  check(`F2b ${g.file.replace("apps/web/src/", "")}：所有 ${g.setter}(数据) 都先过 ${g.gate}（不只 begin 后面那一处）`, () => {
+    assert.deepEqual(setterCallsWithoutGate(g), [], `${g.setter} 有没过门闩的写入口`);
   });
 }
 
@@ -206,10 +293,14 @@ check("F4 员工集货详情：先认主人再领号（不是当前选中的任�
   assert.match(src, /onClick=\{\(\) => \{ selectedTaskIdRef\.current = t\.id;[^}]*setSelectedTaskId\(t\.id\); \}\}/);
 });
 
-check("F5 整柜询价「接受」以后按现在的页码重拉；集货余额页：三样都刷上了才清掉旧提示", () => {
+check("F5 整柜询价「接受」/ 报价以后按客户最后要看的那页重拉；集货余额页：三样都刷上了才清掉旧提示", () => {
   const inq = read("apps/web/src/components/client/FclInquiryPanel.tsx");
-  assert.match(inq, /setAccepting\(null\);\s*\/\/[^\n]*\n\s*loadList\(listPageRef\.current\);/);
+  assert.match(inq, /setAccepting\(null\);\s*\/\/[^\n]*\n\s*loadList\(wantedPageRef\.current\);/);
   assert.ok(!/setAccepting\(null\);\s*loadList\(listPage\);/.test(inq));
+  // 要看的页在点翻页那一刻就记（审查第 1 轮：只在回来时更新的话，翻页在路上时操作先完成，会把人拉回旧页）；没翻成退回屏幕上那页
+  assert.match(inq, /if \(!silent\) \{\s*listUserLoadsRef\.current \+= 1;\s*wantedPageRef\.current = page;\s*\}/);
+  assert.match(inq, /if \(silent\) return;\s*wantedPageRef\.current = listPageRef\.current;/);
+  assert.ok(!/loadList\(listPageRef\.current/.test(inq), "还有按屏幕上那页刷新的地方");
   const wallet = read("apps/web/src/app/client/wallet/page.tsx");
   assert.match(wallet, /const loadLedgerPage = useCallback\(async \(targetPage: number, opts\?: \{ silent\?: boolean \}\): Promise<boolean>/);
   assert.match(wallet, /const ledgerOk = await ledgerTask;/);
@@ -219,6 +310,17 @@ check("F5 整柜询价「接受」以后按现在的页码重拉；集货余额�
 check("F6 员工页刷新被更晚的那次盖过：不写屏幕，给调用方的是屏幕上那份新的", () => {
   const src = read("apps/web/src/app/staff/page.tsx");
   assert.match(src, /if \(!pageListGate\.accept\(pageTicket, null\)\) return shownShipmentItemsRef\.current \?\? shipmentItems;\s*shownShipmentItemsRef\.current = shipmentItems;\s*setShipments\(/);
+});
+
+check("F6b 客户集货两页的余额：被更晚的盖过时给调用方屏幕上那份（付款前现读够不够不拿旧数）；余额页流水刷上清掉旧的「流水翻页失败」；装柜页一个都没加上不说「已添加」", () => {
+  for (const f of ["apps/web/src/app/client/consolidation/page.tsx", "apps/web/src/app/client/whr-consolidation/page.tsx"]) {
+    const src = read(f);
+    assert.match(src, /if \(balanceGate\.accept\(ticket, null\)\) \{\s*shownBalanceRef\.current = v;\s*setBalance\(v\);\s*return v;\s*\}[\s\S]{0,200}?return shownBalanceRef\.current \?\? v;/, `${f} 被挡下的旧余额还给调用方`);
+  }
+  const wallet = read("apps/web/src/app/client/wallet/page.tsx");
+  assert.match(wallet, /setLedgerPage\(res\.page\);[\s\S]{0,200}?setMessage\(\(m\) => \(m\.startsWith\("流水翻页失败"\) \? "" : m\)\);\s*return true;/);
+  const loading = read("apps/web/src/app/staff/container-loading/page.tsx");
+  assert.match(loading, /setError\(success > 0 \? `已添加 \$\{success\} 个，只是运单列表这次没刷新上：\$\{why\}` : `运单列表这次没刷新上：\$\{why\}`\);/);
 });
 
 check("F7 员工页「订单详情」：到仓日期当 shipDate 发，两格联动；后端不再写订单创建时间", () => {
@@ -300,15 +402,20 @@ async function main(): Promise<void> {
     const { createRequestGate } = await import("../apps/web/src/modules/shared/request-gate");
     const mem = new Map<string, string>();
     const store = { getItem: (k: string) => mem.get(k) ?? null, setItem: (k: string, v: string) => { mem.set(k, v); } };
-    const sheet = ["货1", "货2", "货3"].map((name, i) => ({ "仓库 *": "义乌仓", "品名 *": name, "箱数 *": i + 1, "运输方式 *（海运/陆运）": "海运" }));
+    const sheetOf = (names: string[]) => names.map((name, i) => ({ "仓库 *": "义乌仓", "品名 *": name, "箱数 *": i + 1, "运输方式 *（海运/陆运）": "海运" }));
+    let sheet = sheetOf(["货1", "货2", "货3"]);
+    let content = "同一份表";
+    let userId = "ZZC1";
     let seq = 0;
     const upload = async () => {
-      const out: { rows?: any[]; message?: string; fileKey?: string } = {};
+      const out: { rows?: any[]; message?: string; fileKey?: string; lookAlike?: number[] } = {};
       const fileKeyRef = { current: "" };
+      const lookAlikeRowsRef = { current: [] as number[] };
       const fn = (() => {
         const sandbox: Record<string, any> = {
           module: { exports: {} }, console,
-          loading: false, parsing: false, parseGate: createRequestGate(), previewRef: { current: [] }, fileKeyRef,
+          loading: false, parsing: false, parseGate: createRequestGate(), previewRef: { current: [] }, fileKeyRef, lookAlikeRowsRef,
+          getOptionalSession: () => ({ userId }), readDoneSignatures: pending.readDoneSignatures, rowSignature: pending.rowSignature,
           XLSX: { read: () => ({ SheetNames: ["s"], Sheets: { s: {} } }), utils: { sheet_to_json: () => sheet.map((r) => ({ ...r })) } },
           fileFingerprint: pending.fileFingerprint, readPendingIds: pending.readPendingIds, readDoneRows: pending.readDoneRows, pendingStorage: () => store,
           normalizeRows: importRows.normalizeRows, isRowBad: importRows.isRowBad, newRequestId: () => `new${++seq}`,
@@ -318,34 +425,97 @@ async function main(): Promise<void> {
         vm.runInNewContext(ts.transpileModule(`module.exports = ${handler};`, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX } }).outputText, sandbox);
         return sandbox.module.exports as (e: any) => Promise<void>;
       })();
-      const bytes = new TextEncoder().encode("同一份表").buffer;
+      const bytes = new TextEncoder().encode(content).buffer;
       await fn({ target: { files: [{ name: "a.xlsx", size: 1, lastModified: 1, arrayBuffer: async () => bytes }], value: "x" } });
       out.fileKey = fileKeyRef.current;
+      out.lookAlike = Array.from(lookAlikeRowsRef.current);
       return out;
     };
     // ① 第一次传：三行全新编号
     const first = await upload();
     assert.deepEqual(Array.from(first.rows ?? [], (r: any) => [r.rowNo, r.requestId]), [[2, "new1"], [3, "new2"], [4, "new3"]]);
     const key = first.fileKey!;
-    assert.match(key, /^sha256:/);
+    assert.match(key, /^ZZC1\|sha256:/, "文件键要带唛头（别的客户用不上）");
+    const sigOf = (name: string, n: number) => pending.rowSignature({ warehouseId: "wh_yiwu_01", itemName: name, packageCount: n, packageUnit: "box", transportMode: "sea", cargoType: "normal" });
     // ② 上一批：第 2 行建好了、第 3 行断网没确认、第 4 行还没发出去就刷新了 → 重传同一个文件
-    pending.markPending(store, key, 2, "new1"); pending.markDone(store, key, 2);
+    pending.markPending(store, key, 2, "new1"); pending.markDone(store, key, 2, sigOf("货1", 1));
     pending.markPending(store, key, 3, "new2");
     const again = await upload();
     assert.deepEqual(Array.from(again.rows ?? [], (r: any) => [r.rowNo, r.requestId]), [[3, "new2"], [4, "new4"]], "建好的第 2 行要跳过，没确认的第 3 行用回原编号，第 4 行新编号");
     assert.match(again.message ?? "", /表格第 2 行上次已经建好了/, again.message ?? "");
     assert.match(again.message ?? "", /表格第 3 行上次发出去了、没确认建没建好/, again.message ?? "");
+    // ⑤ 换了文件（第 3 行改了箱数另存）：对不上号，按内容比 —— 跟已建好的「货1」一模一样的第 2 行标出来；改过的、没建过的不标
+    content = "改过的表"; sheet = sheetOf(["货1", "货2", "货3"]).map((r, i) => (i === 1 ? { ...r, "箱数 *": 9 } : r));
+    const edited = await upload();
+    assert.notEqual(edited.fileKey, key);
+    assert.deepEqual(edited.lookAlike, [2], "跟已建好的那行一模一样的要标出来（提交前再问）");
+    assert.deepEqual(Array.from(edited.rows ?? [], (r: any) => r.rowNo), [2, 3, 4], "换了文件的不自动跳过");
+    assert.match(edited.message ?? "", /表格第 2 行跟上次没交完那批里已经建好的一行一模一样/, edited.message ?? "");
+    // ⑥ 换了个客户在这个标签页里传同一个文件：上一个客户的记号一样都用不上
+    userId = "ZZC2"; content = "同一份表"; sheet = sheetOf(["货1", "货2", "货3"]);
+    const other = await upload();
+    assert.match(other.fileKey ?? "", /^ZZC2\|/);
+    assert.deepEqual(Array.from(other.rows ?? [], (r: any) => r.rowNo), [2, 3, 4], "别的客户的「已建好」不能拿来跳行");
+    assert.ok(Array.from(other.rows ?? [], (r: any) => r.requestId).every((id: string) => id !== "new2"), "别的客户的编号不能复用");
+    assert.deepEqual(other.lookAlike, [], "别的客户建好的不拿来比");
+    userId = "ZZC1";
     // ③ 上一批三行全建好了、只是收尾前刷新了（还没 finishBatch）：不用再交
-    pending.markDone(store, key, 3); pending.markDone(store, key, 4);
+    pending.markDone(store, key, 3, sigOf("货2", 2)); pending.markDone(store, key, 4, sigOf("货3", 3));
     const allDone = await upload();
     assert.equal((allDone.rows ?? []).length, 0);
     assert.match(allDone.message ?? "", /上次已经全部建好了/, allDone.message ?? "");
     // ④ 收尾干净（finishBatch）以后再传同一份表：照旧全当新单（同一份表就是要再下一次）
-    pending.finishBatch(store, key);
+    pending.finishBatch(store, key, false);
     const fresh = await upload();
     assert.deepEqual(Array.from(fresh.rows ?? [], (r: any) => r.rowNo), [2, 3, 4]);
     assert.ok(Array.from(fresh.rows ?? [], (r: any) => r.requestId).every((id: string) => /^new\d+$/.test(id) && !["new1", "new2", "new3", "new4"].includes(id)), "收尾干净以后要全是新编号");
     assert.ok(!/上次/.test(fresh.message ?? ""), fresh.message ?? "");
+  });
+
+  await checkAsync("F12 批量下单提交：跟上次已建好的一模一样的行先问一次（取消就一张都不交）；有明确失败的一批，建好的行留着记号", async () => {
+    const file = "apps/web/src/app/client/imports/page.tsx";
+    const sf = ts.createSourceFile(file, read(file), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+    let handler = "";
+    const walk = (n: ts.Node) => {
+      if (!handler && ts.isVariableDeclaration(n) && n.name.getText(sf) === "handleSubmit" && n.initializer) handler = n.initializer.getText(sf);
+      if (!handler) n.forEachChild(walk);
+    };
+    walk(sf);
+    assert.ok(handler, "真源码里找不到 handleSubmit");
+    const pending = await import("../apps/web/src/modules/client-import/pending-requests");
+    const mem = new Map<string, string>();
+    const store = { getItem: (k: string) => mem.get(k) ?? null, setItem: (k: string, v: string) => { mem.set(k, v); } };
+    const row = (i: number) => ({ rowNo: i + 2, requestId: `req${i}`, warehouseId: "wh_yiwu_01", itemName: `货${i}`, packageCount: 1, packageUnit: "box", transportMode: "sea", cargoType: "normal", issues: [] });
+    const run = async (rows: any[], lookAlike: number[], answer: boolean, rejectName: string | null) => {
+      const sent: string[] = [];
+      const asked: string[] = [];
+      const sandbox: Record<string, any> = {
+        module: { exports: {} }, console,
+        loading: false, parsing: false, rows, previewRef: { current: rows }, isRowBad: () => false,
+        fileKeyRef: { current: "ZZC1|sha256:f" }, lookAlikeRowsRef: { current: lookAlike },
+        pendingStorage: () => store, markPending: pending.markPending, clearPending: pending.clearPending, markDone: pending.markDone,
+        finishBatch: pending.finishBatch, rowSignature: pending.rowSignature,
+        window: { confirm: (m: string) => { asked.push(m); return answer; } },
+        setLoading() {}, setCurrent() {}, setSuccessCount() {}, setFailCount() {}, setErrors() {}, setDone() {}, setMessage() {}, setRows() {}, setUnknownCount() {},
+        createClientPrealert: async (p: any) => { sent.push(p.itemName); if (p.itemName === rejectName) throw new Error("账号已封禁"); },
+      };
+      vm.runInNewContext(ts.transpileModule(`module.exports = ${handler};`, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX } }).outputText, sandbox);
+      await (sandbox.module.exports as () => Promise<void>)();
+      return { sent, asked };
+    };
+    const cancelled = await run([row(0), row(1)], [3], false, null);
+    assert.equal(cancelled.asked.length, 1, "有一模一样的行要先问一次");
+    assert.match(cancelled.asked[0], /表格第 3 行跟上次没交完那批里已经建好的一行一模一样/);
+    assert.deepEqual(cancelled.sent, [], "点了取消一张都不能交");
+    const confirmed = await run([row(0), row(1)], [3], true, null);
+    assert.deepEqual(confirmed.sent, ["货0", "货1"], "点了确定照常交");
+    const notInBatch = await run([row(0)], [3], false, null);
+    assert.deepEqual([notInBatch.asked.length, notInBatch.sent], [0, ["货0"]], "那一行已经不在这次要交的里面了就不问");
+    // 一批里有明确失败（4xx）的：建好的那行记号留着（改好失败那行、刷新后再传同一个文件还认得出）
+    mem.clear();
+    await run([row(0), row(1)], [], true, "货1");
+    assert.deepEqual(pending.readDoneRows(store, "ZZC1|sha256:f"), ["2"]);
+    assert.deepEqual(pending.readPendingIds(store, "ZZC1|sha256:f"), {}, "明确失败的那行不算没确认");
   });
 
   console.log(`\n通过 ${passed} 项，失败 ${failed} 项`);

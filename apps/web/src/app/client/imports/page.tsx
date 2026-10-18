@@ -6,7 +6,8 @@ import { createRequestGate } from "../../../modules/shared/request-gate";
 import { createClientPrealert, type ClientPrealertPayload } from "../../../services/business-api";
 import { CARGO_TYPE_ZH } from "../../../../../../packages/shared-types/cargo-type";
 import { WAREHOUSE_ZH, isRowBad, normalizeRows, type ImportRow } from "../../../modules/client-import/import-rows";
-import { clearPending, fileFingerprint, finishBatch, markDone, markPending, pendingStorage, readDoneRows, readPendingIds } from "../../../modules/client-import/pending-requests";
+import { clearPending, fileFingerprint, finishBatch, markDone, markPending, pendingStorage, readDoneRows, readDoneSignatures, readPendingIds, rowSignature } from "../../../modules/client-import/pending-requests";
+import { getOptionalSession } from "../../../auth/auth-session";
 
 function downloadTemplate(): void {
   const worksheet = XLSX.utils.json_to_sheet([
@@ -82,8 +83,10 @@ export default function ClientImportsPage() {
      旧批次的进度/结果就不许再往新预览上写。主防线是提交期间禁用上传入口（见下），
      这个快照是第二道保险。 */
   const previewRef = useRef<ImportRow[]>([]);
-  /** 当前预览是哪个文件（按内容算的指纹）：没确认的行按它记编号（2026-10-18，见 pending-requests.ts） */
+  /** 当前预览是哪个文件（「唛头|内容指纹」）：没确认的行按它记编号（2026-10-18，见 pending-requests.ts） */
   const fileKeyRef = useRef("");
+  /** 这份预览里跟「上次没交完那批里已经建好的某一行」一模一样的行（表格第几行）：提交前再问一次 */
+  const lookAlikeRowsRef = useRef<number[]>([]);
 
   const handleUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -109,19 +112,29 @@ export default function ClientImportsPage() {
       /* 每一行一个请求编号（2026-10-18）：重试这一行时原样带上，服务器已经建好的就不再建（回话丢了也不会重复下单）。
          同一个文件上一批没收尾干净（断网 / 超时后刷新了页面再传）：那一批已经建好的行不再交，「发出去了、没确认」的行用回上次的编号，
          其余行新编号（pending-requests.ts） */
-      const fileKey = await fileFingerprint(buffer, file);
-      const pendingIds = readPendingIds(pendingStorage(), fileKey);
-      const doneRows = new Set(readDoneRows(pendingStorage(), fileKey));
+      // 记号按客户分开（审查第 1 轮：同一个标签页换了账号，别的客户的记号不能拿来跳行 / 复用编号）
+      const ownerPrefix = `${getOptionalSession()?.userId ?? ""}|`;
+      const fileKey = `${ownerPrefix}${await fileFingerprint(buffer)}`;
+      const store = pendingStorage();
+      const pendingIds = readPendingIds(store, fileKey);
+      const doneRows = new Set(readDoneRows(store, fileKey));
       const allRows = normalizeRows(raw);
       const skippedRowNos = allRows.filter((row) => doneRows.has(String(row.rowNo))).map((row) => row.rowNo);
       const normalized = allRows
         .filter((row) => !doneRows.has(String(row.rowNo)))
         .map((row) => ({ ...row, requestId: pendingIds[String(row.rowNo)] ?? newRequestId() }));
       const resumedRowNos = normalized.filter((row) => pendingIds[String(row.rowNo)] === row.requestId).map((row) => row.rowNo);
+      /* 换了文件（改过、另存过）对不上号的：按内容比，跟这个客户没交完那几批里已经建好的某一行一模一样的标出来（审查第 1 轮 dsh）。
+         不自动跳过（真要再下一单的也有），提交前再问一次 */
+      const builtElsewhere = new Set(readDoneSignatures(store, ownerPrefix, fileKey));
+      const lookAlikeRowNos = builtElsewhere.size > 0
+        ? normalized.filter((row) => !resumedRowNos.includes(row.rowNo) && builtElsewhere.has(rowSignature(row))).map((row) => row.rowNo)
+        : [];
       // 2026-09-02 终审整改：成功分支验号——解析期间又选了新文件的话，这份旧结果整体作废
       if (!parseGate.isCurrent(ticket)) return;
       // 2026-09-01 竞态全扫：预览换主人，快照同步更新
       fileKeyRef.current = fileKey;
+      lookAlikeRowsRef.current = lookAlikeRowNos;
       previewRef.current = normalized;
       setRows(normalized);
       setCurrent(0);
@@ -134,7 +147,10 @@ export default function ClientImportsPage() {
       const resumedNote = resumedRowNos.length > 0
         ? `表格第 ${resumedRowNos.join("、")} 行上次发出去了、没确认建没建好：再交时上次要是其实已经建好，系统会认出来、不会重复下单`
         : "";
-      const notes = [skippedNote, resumedNote].filter(Boolean).join("。");
+      const lookAlikeNote = lookAlikeRowNos.length > 0
+        ? `⚠️ 表格第 ${lookAlikeRowNos.join("、")} 行跟上次没交完那批里已经建好的一行一模一样（「预报单」里能看到）：要是同一票货，请从表里删掉再传；真要再下一单，提交时会再问你一次`
+        : "";
+      const notes = [skippedNote, resumedNote, lookAlikeNote].filter(Boolean).join("。");
       setMessage(normalized.length === 0
         ? (skippedRowNos.length > 0 ? `这个文件上次已经全部建好了（「预报单」里能看到），不用再交。${skippedNote}` : "这个文件里没有读到数据（表格是空的），请填好模板再上传")
         : badCount > 0
@@ -165,6 +181,9 @@ export default function ClientImportsPage() {
     const batch = rows;
     const batchFileKey = fileKeyRef.current;
     const store = pendingStorage();
+    // 跟上次没交完那批里已经建好的一模一样的行：再问一次（点取消就不交，回去把表里那几行删掉再传）
+    const lookAlike = lookAlikeRowsRef.current.filter((rowNo) => batch.some((row) => row.rowNo === rowNo));
+    if (lookAlike.length > 0 && !window.confirm(`表格第 ${lookAlike.join("、")} 行跟上次没交完那批里已经建好的一行一模一样。\n\n要是同一票货，点「取消」，回去把这几行从表里删掉再传；\n真要再下一单，点「确定」照常提交。`)) return;
     setLoading(true);
     setCurrent(0);
     setSuccessCount(0);
@@ -206,7 +225,7 @@ export default function ClientImportsPage() {
         // 发出去之前先记下「没确认」（发到一半刷新页面也算），建好了挪到「已建好」（pending-requests.ts）
         if (row.requestId) markPending(store, batchFileKey, row.rowNo, row.requestId);
         await createClientPrealert(payload);
-        markDone(store, batchFileKey, row.rowNo);
+        markDone(store, batchFileKey, row.rowNo, rowSignature(row));
         success++;
         // 2026-09-01 竞态全扫：响应回来先认主人，预览换了就不写计数
         if (previewRef.current !== batch) break;
@@ -225,8 +244,8 @@ export default function ClientImportsPage() {
       }
     }
 
-    // 这一批收尾：没有「没确认」的了就整条清掉（以后同一份表照旧当新单）；还有就留着，再传同一个文件时用（pending-requests.ts）
-    finishBatch(store, batchFileKey);
+    // 这一批收尾：一行不落全建好了就整条清掉（以后同一份表照旧当新单）；有没下成的就留着，再传时用（pending-requests.ts）
+    finishBatch(store, batchFileKey, failedRows.length > 0);
     // 2026-09-01 竞态全扫：只有预览还是出发时那份，才展示这批的完成汇总
     if (previewRef.current === batch) {
       setErrors(errs);
@@ -311,7 +330,12 @@ export default function ClientImportsPage() {
             )}
             {/* 成功的已经下单了（2026-10-18 全系统审查第一档第 5 条）：下面预览只剩没下成的，别再上传同一个文件，不然成功的会再下一遍 */}
             <div style={{ marginTop: 6, fontSize: 13, color: "var(--t-strong)" }}>
-              {successCount > 0 ? `成功的 ${successCount} 条已经下单，不用再交，也不要再上传同一个文件（会重复下单）。` : ""}
+              {/* 跟恢复办法对上（审查第 1 轮 Codex）：还有没下成的时候，刷新了页面要接着交就传同一个原文件，建好的会自动跳过；全下成了再传就是新单 */}
+              {successCount > 0
+                ? rows.length > 0
+                  ? `成功的 ${successCount} 条已经下单，不用再交。刷新了页面要接着交的话，传同一个原文件（别改、别另存），已经建好的会自动跳过。`
+                  : `成功的 ${successCount} 条已经下单，不用再交，也不要再上传同一个文件（会再下一遍）。`
+                : ""}
               {rows.length > 0 ? `下面还剩 ${rows.length} 条没确认下成：再点「一键提交」只重交这几条（其中已经建好的系统会认出来，不会重复下单）。` : ""}
               {unknownCount > 0
                 ? `其中 ${unknownCount} 条是网络或服务器没给准信、不确定有没有建好：请直接再点「一键提交」，不要把这几行改了重新上传（重新上传会当成新单）。`

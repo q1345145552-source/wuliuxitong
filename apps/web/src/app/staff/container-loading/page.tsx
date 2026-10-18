@@ -701,7 +701,9 @@ export default function StaffContainerLoadingPage() {
         await loadDetail(selectedId);
         await loadShipmentList();
       } catch (e) {
-        setError(`已添加，只是运单列表这次没刷新上：${e instanceof Error ? e.message : "请稍后刷新"}`);
+        // 一个都没加上的不能说「已添加」（小修审查第 1 轮）：结论看上面那句，这里只补「列表没刷新上」
+        const why = e instanceof Error ? e.message : "请稍后刷新";
+        setError(success > 0 ? `已添加 ${success} 个，只是运单列表这次没刷新上：${why}` : `运单列表这次没刷新上：${why}`);
       }
     } finally {
       setAdding(false);

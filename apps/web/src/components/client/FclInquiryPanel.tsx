@@ -113,6 +113,9 @@ export default function FclInquiryPanel(props: ClientFclInquiryProps) {
   /** 当前在第几页：报价晚回来时刷新的是「现在这一页」，不是点报价那会儿的那一页（Codex 复看第 9 条） */
   const listPageRef = useRef(listPage);
   listPageRef.current = listPage;
+  /** 客户最后要看的那一页：点翻页那一刻就记（不等回来）。接受 / 报价完、悄悄重拉都按它刷新 —— 翻页还在路上时操作先完成，
+   *  按「屏幕上那页」刷新会把翻页那次作废、把人拉回旧页（2026-10-18 小修审查第 1 轮）。翻页没翻成就退回屏幕上那页 */
+  const wantedPageRef = useRef(listPage);
 
   /* 用户自己点的翻页 / 重试还在路上时，悄悄重拉不去作废它（不然那一下点击像没反应，dsh 复查 2026-10-05）：
      先记一笔，等它回来再按那时的页码补拉一次 */
@@ -125,7 +128,10 @@ export default function FclInquiryPanel(props: ClientFclInquiryProps) {
       listRefreshAfterRef.current = true;
       return;
     }
-    if (!silent) listUserLoadsRef.current += 1;
+    if (!silent) {
+      listUserLoadsRef.current += 1;
+      wantedPageRef.current = page;
+    }
     try {
       await loadListOnce(page, silent);
     } finally {
@@ -133,7 +139,7 @@ export default function FclInquiryPanel(props: ClientFclInquiryProps) {
         listUserLoadsRef.current -= 1;
         if (listUserLoadsRef.current === 0 && listRefreshAfterRef.current) {
           listRefreshAfterRef.current = false;
-          void loadList(listPageRef.current, { silent: true });
+          void loadList(wantedPageRef.current, { silent: true });
         }
       }
     }
@@ -154,6 +160,7 @@ export default function FclInquiryPanel(props: ClientFclInquiryProps) {
     } catch (e: any) {
       if (!listGate.isCurrent(ticket)) return; // 2026-09-01 竞态全扫：旧请求的报错不许安到新请求头上
       if (silent) return;
+      wantedPageRef.current = listPageRef.current; // 没翻成：后面的刷新按屏幕上那页来
       props.onToast("加载询价记录失败：" + (e.message || "网络错误"));
       setListError(true);
       setListLoaded(true);
@@ -201,7 +208,7 @@ export default function FclInquiryPanel(props: ClientFclInquiryProps) {
         body: JSON.stringify({ id, amountCny: quoteAmount.trim(), note: quoteNote.trim() }),
       });
       props.onToast(wasQuoted ? "报价已修改，客户要重新点「接受」" : "已报价，客户在「整柜询价」里能看到");
-      loadList(listPageRef.current);
+      loadList(wantedPageRef.current);
       if (detailSeqRef.current === seq) await openDetail(id);
     } catch (e: any) {
       const msg = `报价没保存：${e?.message || "请重试"}`;
@@ -229,7 +236,7 @@ export default function FclInquiryPanel(props: ClientFclInquiryProps) {
     } finally {
       setAccepting(null);
       // 用现在的页码（2026-10-18 全系统审查 F-18）：接受的请求在路上时客户翻了页，原来回来按点按钮那一刻的页码重拉、把人拉回旧页
-      loadList(listPageRef.current);
+      loadList(wantedPageRef.current);
     }
   };
 
@@ -243,7 +250,7 @@ export default function FclInquiryPanel(props: ClientFclInquiryProps) {
      现在每次切到「整柜询价」就自己拉当前这一页；切走再切回来也重拉（客户新提交的询价不用刷新整页就能看到）。
      面板在页面上一直挂着、只是藏起来（visible=false），所以按 visible 触发、不在挂载时拉：没打开这一栏就不发请求。 */
   useEffect(() => {
-    if (props.visible) void loadList(listPageRef.current);
+    if (props.visible) void loadList(wantedPageRef.current);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [props.visible]);
 
@@ -263,7 +270,7 @@ export default function FclInquiryPanel(props: ClientFclInquiryProps) {
             .then((d) => { if (detailSeqRef.current === seq && detailRef.current?.id === d.id) setDetail(d); })
             .catch(() => { /* 悄悄重拉失败：接着显示手上的 */ })
         : null;
-      await Promise.all([loadList(listPageRef.current, { silent: true }), detailTask]);
+      await Promise.all([loadList(wantedPageRef.current, { silent: true }), detailTask]);
     },
   });
 
@@ -425,7 +432,7 @@ export default function FclInquiryPanel(props: ClientFclInquiryProps) {
       <h3 style={{ fontSize: 15, marginBottom: 10 }}>询价记录</h3>
       {!listLoaded && <p style={{ color: "var(--t-faint)", fontSize: 13 }}>加载中…</p>}
       {/* 2026-09-29：原来点「重试」只是把状态退回「没加载」，还得再点一次「加载记录」才真去拉 —— 现在点一下就重拉当前页 */}
-      {listLoaded && listError && <button onClick={() => loadList(listPageRef.current)} style={{ border: "1px solid #fca5a5", borderRadius: 6, padding: "6px 14px", background: "var(--white)", color: "var(--c-red-2)", cursor: "pointer", fontSize: 13 }}>加载失败，点击重试</button>}
+      {listLoaded && listError && <button onClick={() => loadList(wantedPageRef.current)} style={{ border: "1px solid #fca5a5", borderRadius: 6, padding: "6px 14px", background: "var(--white)", color: "var(--c-red-2)", cursor: "pointer", fontSize: 13 }}>加载失败，点击重试</button>}
       {listLoaded && !listError && list.length === 0 && <p style={{ color: "var(--t-faint)", fontSize: 13 }}>暂无询价记录</p>}
       {/* 2026-08-31（Codex 二轮）：后端翻页，共 N 条用后端 total（照客户预报单列表的写法） */}
       {listLoaded && !listError && listTotal > 0 && (

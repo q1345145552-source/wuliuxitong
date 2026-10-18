@@ -1649,6 +1649,13 @@ async function main() {
       assert.equal(totalCountOf(landTransit.answer), 1, `陆运在途 1 单：\n${landTransit.answer}`);
       const seaTransit = await ask({ shipments: fx, message: "海运在途有多少单" });
       assert.equal(totalCountOf(seaTransit.answer), 1, `海运在途 1 单（不能把陆运的也算进去）：\n${seaTransit.answer}`);
+      // 「走海 / 走陆」也认（小修审查第 1 轮：原来当成品名「走海」去查，回「没查到」）
+      const walkSea = await ask({ shipments: fx, message: "走海的订单有多少" });
+      assert.ok(!/未查询到品名/.test(walkSea.answer), `「走海」被当成品名了：\n${walkSea.answer}`);
+      assert.equal(totalCountOf(walkSea.answer), 1, `走海 1 单：\n${walkSea.answer}`);
+      const walkLand = await ask({ shipments: fx, message: "走陆的货有多少单" });
+      assert.ok(!/未查询到品名/.test(walkLand.answer), `「走陆」被当成品名了：\n${walkLand.answer}`);
+      assert.equal(totalCountOf(walkLand.answer), 2, `走陆 2 单：\n${walkLand.answer}`);
       const both = await ask({ shipments: fx, message: "海运陆运一共有多少单" });
       assert.equal(totalCountOf(both.answer), 3, `两种都说了就不分：\n${both.answer}`);
       const none = await ask({ shipments: fx, message: "我有多少单" });

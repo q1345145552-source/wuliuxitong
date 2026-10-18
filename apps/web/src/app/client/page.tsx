@@ -31,7 +31,7 @@ import {
   type OrderProductImageItem,
   type StaffShipmentOverview,
 } from "../../services/business-api";
-import { createRequestGate } from "../../modules/shared/request-gate";
+import { createQueryGate, createRequestGate } from "../../modules/shared/request-gate";
 import { openShipmentTrack } from "../../modules/shipment/ShipmentTrackModal";
 import ShipmentStatusGroups, { SHIPMENT_GROUP_OPTIONS, type ShipmentGroupFilter } from "../../modules/shipment/ShipmentStatusGroups";
 import ShipmentExportPanel from "../../modules/shipment/ShipmentExportPanel";
@@ -156,6 +156,9 @@ export default function ClientHomePage() {
      光比分组不够：同分组下「带条件查询」和「清空条件」两份请求分组一样，只有号能分出先后；
      queryModeRef 的分组比对保留当第二道防线。 */
   const orderListGate = useRef(createRequestGate()).current;
+  /* 主页那份运单（订单状态分布、在途那几样数）两处拉：下单后的整页刷新、实时推送的悄悄重拉。晚回来的旧快照不许盖新的
+     （2026-10-18 小修审查第 1 轮：刚建的单又消失）。成功回来的只要不比已显示的旧就用（request-gate 用法三） */
+  const dashboardOrdersGate = useRef(createQueryGate<null>()).current;
   /* 后台刷新给客户自己点的查询让路（2026-10-18 全系统审查 D-P2-7，yield-guard.ts）：「执行查询」「切分组」还在路上时，
      10 秒轮询 / 实时推送那次先不发 —— 原来它一发就领新号把客户那次作废，自己再悄悄失败，客户点的那一下就白点了。
      客户那次回来以后再补发一次 */
@@ -378,6 +381,7 @@ export default function ClientHomePage() {
        同时作废在途的建池请求并清池：马上要拿新数据（多半是刚新建了预报单），
        建池前发出的那份 500 条旧快照晚到时不许写回搜索池（Codex 复核缺口④）。 */
     const prealertTicket = prealertListGate.begin();
+    const dashboardTicket = dashboardOrdersGate.begin(null);
     prealertPoolGate.begin();
     // 2026-08-31（条目47收尾）：新建预报单后搜索池已过期，清掉让下面的搜索 effect 按需重拉
     setPrealertSearchPool(null);
@@ -392,7 +396,7 @@ export default function ClientHomePage() {
       setPrealerts(results[0].value.items);
       setPrealertTotal(results[0].value.total);
     }
-    if (results[1].status === "fulfilled") setDashboardOrders(results[1].value);
+    if (results[1].status === "fulfilled" && dashboardOrdersGate.accept(dashboardTicket, null)) setDashboardOrders(results[1].value);
     // 2026-08-07 删除：这里原来读 results[2].value.exchangeRate.rate。
     // 后端 /client/wallet/overview 在集货余额改造后已不再返回 exchangeRate
     // （余额收窄成集货专用、只有人民币，用不着汇率），显示汇率的界面当时也一并删了，
@@ -825,6 +829,7 @@ export default function ClientHomePage() {
     const userPaging = prealertUserLoadsRef.current > 0;
     if (userPaging) prealertRefreshAfterRef.current = true; // 预报单这次先不拉，等翻页回来补
     const prealertTicket = userPaging ? null : prealertListGate.begin();
+    const dashboardTicket = dashboardOrdersGate.begin(null);
     const [pre, orders] = await Promise.allSettled([
       prealertTicket === null ? Promise.reject(new Error("翻页中，稍后补拉")) : fetchClientPrealerts("all", { page: prealertPage, pageSize }),
       fetchClientOrders(),
@@ -837,7 +842,7 @@ export default function ClientHomePage() {
         setPrealertSearchPool(null);
       }
     }
-    if (orders.status === "fulfilled") setDashboardOrders(orders.value);
+    if (orders.status === "fulfilled" && dashboardOrdersGate.accept(dashboardTicket, null)) setDashboardOrders(orders.value);
   };
   /** 给 loadPrealertPage 的 finally 用：翻页回来后补拉一次（它定义在前面，拿不到这里的函数，用 ref 递过去） */
   const prealertLiveRefreshRef = useRef<() => void>(() => {});

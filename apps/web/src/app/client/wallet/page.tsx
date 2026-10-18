@@ -155,6 +155,8 @@ export default function ClientWalletPage() {
       setLedger(res.items);
       setLedgerTotal(res.total);
       setLedgerPage(res.page);
+      // 流水刷上了：之前那句「流水翻页失败」不能一直挂着（小修审查第 1 轮；悄悄补拉成功的也算）。别的提示不动
+      setMessage((m) => (m.startsWith("流水翻页失败") ? "" : m));
       return true;
     } catch (error) {
       if (seq !== ledgerSeqRef.current) return false; // 过期请求的报错也不提示，免得盖住新请求的结果

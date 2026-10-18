@@ -156,7 +156,8 @@ check("S6 客户「批量下单」：失败的行记下来，跑完预览只留�
   // 同一个文件上次没确认的行用回原来的编号，其余行新编号（2026-10-18，pending-requests.ts；S16 真跑）
   // 2026-10-18 浏览器实测后补：同一个文件上一批没收尾干净的，那一批建好的行不再交（真跑在 test-small-fixes-1018-source F11）
   assert.match(src, /\.filter\(\(row\) => !doneRows\.has\(String\(row\.rowNo\)\)\)\s*\.map\(\(row\) => \(\{ \.\.\.row, requestId: pendingIds\[String\(row\.rowNo\)\] \?\? newRequestId\(\) \}\)\);/, "上传解析时每行要给一个请求编号（上次没确认的用回原来的）");
-  assert.match(src, /const fileKey = await fileFingerprint\(buffer, file\);\s*const pendingIds = readPendingIds\(pendingStorage\(\), fileKey\);/, "按文件内容取上次没确认的编号");
+  // 审查第 1 轮起文件键 =「唛头|内容指纹」（别的客户的记号用不上）
+  assert.match(src, /const ownerPrefix = `\$\{getOptionalSession\(\)\?\.userId \?\? ""\}\|`;\s*const fileKey = `\$\{ownerPrefix\}\$\{await fileFingerprint\(buffer\)\}`;\s*const store = pendingStorage\(\);\s*const pendingIds = readPendingIds\(store, fileKey\);/, "按客户 + 文件内容取上次没确认的编号");
   assert.match(src, /const payload: ClientPrealertPayload = \{\s*requestId: row\.requestId,/, "提交时要带这一行的请求编号");
   // 编号格式要过后端那道（字母数字和「-」、16～64 位）：真跑页面里的 newRequestId
   const fn = sourceNodeSync("apps/web/src/app/client/imports/page.tsx", "newRequestId");
@@ -327,7 +328,7 @@ async function main(): Promise<void> {
       await evalTs("module.exports=" + handler + ";", {
         loading: false, parsing: false, rows, previewRef, isRowBad: () => false,
         fileKeyRef: { current: FILE }, pendingStorage: () => fakeStorage, markPending: pending.markPending, clearPending: pending.clearPending,
-        markDone: pending.markDone, finishBatch: pending.finishBatch,
+        markDone: pending.markDone, finishBatch: pending.finishBatch, rowSignature: pending.rowSignature, lookAlikeRowsRef: { current: [] },
         setLoading() {}, setCurrent() {}, setSuccessCount() {}, setFailCount() {}, setErrors() {}, setDone() {}, setMessage() {},
         setRows(v: Row[]) { lastRows = v; },
         setUnknownCount(n: number) { unknownSeen = n; },
@@ -343,7 +344,7 @@ async function main(): Promise<void> {
     const first = await submit([row(0), row(1), row(2)], "货1");
     assert.deepEqual(first.pendingAtSend, ["货0", "货1", "货2"], "每行发出去之前要先记成「没确认」");
     assert.deepEqual(pendingNow(), {}, "建好的、后端明确拒的都要删掉「没确认」的记号");
-    assert.deepEqual(pending.readDoneRows(fakeStorage, FILE), [], "一批收尾干净（没有没确认的）要整条清掉，以后同一份表照旧当新单");
+    assert.deepEqual(pending.readDoneRows(fakeStorage, FILE), ["2", "4"], "这一批有没下成的（明确失败也算），建好的行要留着（改好失败那行、刷新后再传还认得出）");
     // 沙箱里建的数组跟外面不是同一个 Array（原型不同），比内容用 Array.from 拷出来再比
     assert.deepEqual(first.sent, ["货0", "货1", "货2"]);
     assert.deepEqual(Array.from(first.lastRows ?? [], (r) => r.itemName), ["货1"], "跑完预览要只剩没下成的那行");
@@ -353,6 +354,7 @@ async function main(): Promise<void> {
     // 每行带自己的请求编号，重交同一行编号不变（服务器认出来就不再建 —— 回话丢了也不重复，第 2 轮）
     assert.deepEqual(first.ids, ["req00000000000000", "req00000000000001", "req00000000000002"]);
     assert.deepEqual(retry.ids, ["req00000000000001"], "重交时请求编号变了，服务器认不出是同一行");
+    assert.deepEqual([pendingNow(), pending.readDoneRows(fakeStorage, FILE)], [{}, []], "重交那次一行不落全建好了：整条清掉，以后同一份表照旧当新单");
     assert.equal(first.unknown, 0, "明确报错的不算「不确定」");
     // 断网 / 超时（结果不确定）的行：照样留在预览里重交，另外记个数，页面据此提示「别改了重新上传」（第 3 轮）
     unknownFail = true;
@@ -811,18 +813,32 @@ async function main(): Promise<void> {
     // 建好了挪到「已建好」：一批没收尾干净（还有没确认的）整条留着；收尾干净了整条删
     m.markPending(st, "fD", 2, "idD2", t0);
     m.markPending(st, "fD", 3, "idD3", t0);
-    m.markDone(st, "fD", 2, t0 + 100);
+    m.markDone(st, "fD", 2, "sig2", t0 + 100);
     assert.deepEqual(m.readPendingIds(st, "fD", t0 + 200), { "3": "idD3" }, "建好的那行不再算没确认");
     assert.deepEqual(m.readDoneRows(st, "fD", t0 + 200), ["2"]);
-    m.finishBatch(st, "fD", t0 + 300);
-    assert.deepEqual(m.readDoneRows(st, "fD", t0 + 300), ["2"], "还有没确认的，一批跑完也要留着（刷新后重传用）");
+    m.finishBatch(st, "fD", true, t0 + 300);
+    assert.deepEqual(m.readDoneRows(st, "fD", t0 + 300), ["2"], "这一批有没下成的，跑完也要留着（刷新后重传用）");
+    m.finishBatch(st, "fD", false, t0 + 310);
+    assert.deepEqual(m.readDoneRows(st, "fD", t0 + 310), ["2"], "还有没确认的，就算这次没失败也不能删");
     m.clearPending(st, "fD", 3, t0 + 400);
     assert.deepEqual(m.readDoneRows(st, "fD", t0 + 400), ["2"], "明确拒了一行，但还有已建好的：不能整条删");
-    m.finishBatch(st, "fD", t0 + 500);
+    m.finishBatch(st, "fD", true, t0 + 450);
+    assert.deepEqual(m.readDoneRows(st, "fD", t0 + 450), ["2"], "这一批有明确失败的：不能删（改好那行再传还要认得出建好的）");
+    m.finishBatch(st, "fD", false, t0 + 500);
     assert.deepEqual([m.readPendingIds(st, "fD", t0 + 500), m.readDoneRows(st, "fD", t0 + 500)], [{}, []], "收尾干净了要整条删");
-    m.markDone(st, "fE", 4, t0);
-    m.markDone(st, "fE", 4, t0);
+    m.markDone(st, "fE", 4, "sig4", t0);
+    m.markDone(st, "fE", 4, "sig4", t0);
     assert.deepEqual(m.readDoneRows(st, "fE", t0), ["4"], "同一行不重复记");
+    // 同一个客户别的文件里已经建好的行的内容（换了文件再传时比）；别的客户的不算、自己这个文件的不算
+    m.markDone(st, "A|f1", 2, "sigX", t0); m.markDone(st, "A|f2", 3, "sigY", t0); m.markDone(st, "B|f9", 2, "sigZ", t0);
+    assert.deepEqual(m.readDoneSignatures(st, "A|", "A|f2", t0).sort(), ["sigX"], "只拿同一个客户、别的文件的");
+    assert.deepEqual(m.readDoneSignatures(st, "A|", "A|new", t0).sort(), ["sigX", "sigY"]);
+    assert.deepEqual(m.readDoneSignatures(st, "", "x", t0), [], "没登录（没有唛头）一律不比");
+    // 行内容：只看交给后端的那几格，行号 / 编号不算；有一格不一样就不一样
+    const sigOf = (x: Record<string, any>) => m.rowSignature(x);
+    const r1 = { rowNo: 2, requestId: "a", warehouseId: "wh_yiwu_01", itemName: "货1", packageCount: 1, packageUnit: "box", transportMode: "sea", cargoType: "normal" };
+    assert.equal(sigOf(r1), sigOf({ ...r1, rowNo: 9, requestId: "b" }));
+    assert.notEqual(sigOf(r1), sigOf({ ...r1, packageCount: 2 }));
     mem.set("xt.clientImport.pending.v1", JSON.stringify({ fOld: { at: t0, ids: { "2": "x" } } }));
     assert.deepEqual(m.readDoneRows(st, "fOld", t0), [], "老格式（没有 done）当没有已建好的");
     assert.deepEqual(m.readPendingIds(st, "fB", t0 + 25 * 3600_000), {}, "放了一天以上就过期");
@@ -835,12 +851,28 @@ async function main(): Promise<void> {
     assert.deepEqual(m.readPendingIds(st, "fA"), {}, "存的东西坏了当没有");
     // 指纹：同一份内容（文件名不同也一样）同一个；内容不同就不同
     const enc = (t: string) => new TextEncoder().encode(t).buffer as ArrayBuffer;
-    const k1 = await m.fileFingerprint(enc("同一份表"), { name: "a.xlsx", size: 1 });
-    const k2 = await m.fileFingerprint(enc("同一份表"), { name: "改了名.xlsx", size: 1 });
-    const k3 = await m.fileFingerprint(enc("另一份表"), { name: "a.xlsx", size: 1 });
+    // 只看内容（文件名、修改时间根本不传进来）
+    const k1 = await m.fileFingerprint(enc("同一份表"));
+    const k2 = await m.fileFingerprint(enc("同一份表"));
+    const k3 = await m.fileFingerprint(enc("另一份表"));
     assert.equal(k1, k2);
     assert.notEqual(k1, k3);
     assert.match(k1, /^sha256:[0-9a-f]{64}$/);
+    // 浏览器不给算摘要（不是 https）：按内容自己算，不看文件名 / 大小 / 修改时间（审查第 1 轮）
+    const realCrypto = Object.getOwnPropertyDescriptor(globalThis, "crypto");
+    Object.defineProperty(globalThis, "crypto", { value: undefined, configurable: true, writable: true });
+    try {
+      const f1 = await m.fileFingerprint(enc("同一份表"));
+      const f2 = await m.fileFingerprint(enc("同一份表"));
+      const f3 = await m.fileFingerprint(enc("同一份表 "));
+      const f4 = await m.fileFingerprint(enc("表份一同"));
+      assert.equal(f1, f2);
+      assert.notEqual(f1, f3, "内容不同（哪怕一样长短）要不一样");
+      assert.notEqual(f1, f4, "同样的字节换了顺序要不一样");
+      assert.match(f1, /^fnv:\d+:[0-9a-f]{16}$/);
+    } finally {
+      if (realCrypto) Object.defineProperty(globalThis, "crypto", realCrypto);
+    }
   });
 
   await checkAsync("S15 超管「运单详情」弹窗也挂在列表外面（老板选 A）：按 expandedOrderId 从全部列表里找、key 跟着单子、只在运单管理这一页显示时挂；打开时记下这一行", async () => {

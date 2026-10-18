@@ -2005,6 +2005,8 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
       fail(res, 400, "BAD_REQUEST", "invalid orderCreatedDate");
       return;
     }
+    /** 页面「到仓日期」那一格（年-月-日），下面锁里跟发上来的 shipDate 一起定订单的 ship_date */
+    const arrivedDay = orderCreatedDate.slice(0, 10);
 
     const transportMode = body.transportMode === "land" ? "land" : "sea";
 
@@ -2059,6 +2061,12 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
           throw new BusinessError("这票刚刚被别人改过（「运单管理」或别的页面），本次修改都没有保存。请关掉重新打开，看最新的再改", 409, "VALIDATION_ERROR");
         }
       }
+      /* 订单的 ship_date 写哪个（2026-10-18 小修审查第 1 轮）：新页面「发货时间」「到仓日期」两格联动、两个字段发一样的；
+         上线那一刻还开着的老页面两格各发各的 —— 只改了「到仓日期」的，shipDate 还是原来的值，只认 shipDate 就等于没改（静默不生效）。
+         所以：shipDate 发了、而且跟锁内库里的不一样 = 改了「发货时间」，用它；否则用「到仓日期」（两种页面都必发）。
+         老页面改哪一格都生效；老页面 shipDate 没带上（原来会把 ship_date 清空）也不会清空 */
+      const lockedShipDate = (await tx.order.findFirst({ where: { id: curOrder.id, companyId: auth.companyId }, select: { shipDate: true } }))?.shipDate ?? null;
+      const nextShipDate = shipDate && shipDate !== lockedShipDate ? shipDate : arrivedDay;
       await lockShipmentsChildrenFirst(tx, [shipmentId], auth.companyId);
       // 锁后重读运单号（CLAUDE.md 第 28 条）：拿锁之前那份快照里的
       // trackingNo 可能已被并发编辑改掉，查子单合计要用锁内的值
@@ -2167,11 +2175,11 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
           volumeM3: (orderVolumeM3 as unknown as Prisma.Decimal | null),
           domesticTrackingNo,
           transportMode,
-          shipDate,
+          shipDate: nextShipDate,
           receiverAddressTh,
           /* 不再写 createdAt（2026-10-18 全系统审查 dsh 第 3 条）：原来把页面「到仓日期」写进了订单的创建时间 ——
              到仓日期存在 ship_date（建单那条路就是这么存的，列表 / 导出 / 筛选都读它），改了不生效，
-             客户看到的「建单日期」反倒跟着变。页面现在把到仓日期放在 shipDate 里发上来；orderCreatedDate 只做老页面兼容的必填校验 */
+             客户看到的「建单日期」反倒跟着变。现在到仓日期写 ship_date（怎么定见上面 nextShipDate） */
           /* 跟返回给页面的 updatedAt 同一个 now（2026-10-18）：页面存完拿返回值当新版本，不写的话库里自动记的「现在」晚几毫秒，
              再存一次就被当成「别人改过」 */
           updatedAt: now,

@@ -3,7 +3,8 @@
  * 清单：.audit/2026-10-18/small-fixes/plan.md；审查原文摘录在同目录 sources.md。
  *
  *   T1  确认收货改了品名：只有一行产品时产品行跟着改（#15）；多行产品不动；原样带回来的品名不碰产品行
- *   T2  员工页「订单详情」保存：到仓日期写进 ship_date，订单的创建时间一个字不动（#16，原来写进 created_at）
+ *   T2  员工页「订单详情」保存：到仓日期写进 ship_date，订单的创建时间一个字不动（#16，原来写进 created_at）；
+ *       上线那一刻还开着的老页面（两格各发各的）：只改到仓日期、只改发货时间都生效，没带 shipDate 也不清空（审查第 1 轮）
  *   T3  运单产品图：HEIC / TIFF / SVG 400、库里不多图（#21，原来存成 .jpg 破图）；大写的 IMAGE/PNG 照收、存成小写
  *   T4  改密码：客户不卡强度（6 位全数字照改）、跟旧的一样 / 太长 400；员工、代理照旧卡（#24）
  *   T5  普通集货余额付款写付款时间；撤销付款清掉；再付记新的（#25）
@@ -161,16 +162,29 @@ async function main(): Promise<void> {
       });
       const before = await pm.order.findUnique({ where: { id: d.orderId } });
       const s = await pm.shipment.findFirst({ where: { trackingNo: NO("B1") } });
-      const r = await call("POST /staff/orders/patch-shipment-bundle", ADMIN, {
-        shipmentId: s.id, trackingNo: s.trackingNo, itemName: "鞋", packageCount: 5, basePackageCount: 5, productQuantity: 0, packageUnit: "box",
-        weightKg: Number(s.weightKg), volumeM3: Number(s.volumeM3), domesticTrackingNo: before.domesticTrackingNo, transportMode: "sea",
-        orderCreatedDate: "2026-09-01", shipDate: "2026-09-01", warehouseId: "wh_yiwu_01", receiverAddressTh: "", remark: null,
-        baseOrderUpdatedAt: before.updatedAt.toISOString(),
-      });
-      assert.equal(r.status, 200, r.message);
-      const after = await pm.order.findUnique({ where: { id: d.orderId } });
+      const save = async (dates: { orderCreatedDate: string; shipDate?: string | null }) => {
+        const r = await call("POST /staff/orders/patch-shipment-bundle", ADMIN, {
+          shipmentId: s.id, trackingNo: s.trackingNo, itemName: "鞋", packageCount: 5, basePackageCount: 5, productQuantity: 0, packageUnit: "box",
+          weightKg: Number(s.weightKg), volumeM3: Number(s.volumeM3), domesticTrackingNo: before.domesticTrackingNo, transportMode: "sea",
+          warehouseId: "wh_yiwu_01", receiverAddressTh: "", remark: null, ...dates,
+        });
+        assert.equal(r.status, 200, r.message);
+        return pm.order.findUnique({ where: { id: d.orderId } });
+      };
+      // 新页面：两格联动，发一样的
+      let after = await save({ orderCreatedDate: "2026-09-01", shipDate: "2026-09-01" });
       assert.equal(after.shipDate, "2026-09-01", `到仓日期没存进 ship_date：${after.shipDate}`);
       assert.equal(after.createdAt.getTime(), before.createdAt.getTime(), `订单创建时间被改了：${before.createdAt.toISOString()} → ${after.createdAt.toISOString()}`);
+      // 老页面只改「到仓日期」：shipDate 还是库里原来的 → 认到仓日期（原来静默不生效）
+      after = await save({ orderCreatedDate: "2026-09-05", shipDate: "2026-09-01" });
+      assert.equal(after.shipDate, "2026-09-05", `老页面只改到仓日期没生效：${after.shipDate}`);
+      // 老页面只改「发货时间」：shipDate 跟库里的不一样 → 认它
+      after = await save({ orderCreatedDate: "2026-09-05", shipDate: "2026-09-07" });
+      assert.equal(after.shipDate, "2026-09-07", `老页面只改发货时间没生效：${after.shipDate}`);
+      // 老页面 shipDate 没带上：不清空，按到仓日期
+      after = await save({ orderCreatedDate: "2026-09-08", shipDate: null });
+      assert.equal(after.shipDate, "2026-09-08", `没带 shipDate 把 ship_date 清空了：${after.shipDate}`);
+      assert.equal(after.createdAt.getTime(), before.createdAt.getTime(), "订单创建时间被改了");
     });
 
     // ---------- T3 产品图格式 ----------
@@ -272,7 +286,8 @@ async function main(): Promise<void> {
     await pm.shipmentContainerItem.create({ data: { shipmentId: "zz_sf18_Uc1", containerId: K2.id, loadedVolumeM3: 0.4, loadedPieceCount: 4 } });
 
     const dates = (cs: Row[]) => cs.map((c) => [c.loadingDate, c.customsClearedAt]);
-    const EXPECT = [["2026-09-10T02:00:00.000Z", CLEARED], ["2026-09-12T02:00:00.000Z", "2026-09-25T02:00:00.000Z"]];
+    // K2 两样都有：状态时间表说了算（那一列是早年老代码在「开始派送」时写的，审查第 1 轮）
+    const EXPECT = [["2026-09-10T02:00:00.000Z", CLEARED], ["2026-09-12T02:00:00.000Z", "2026-09-24T02:00:00.000Z"]];
     await check("T6a 客户点父单看轨迹：两张子单装的同一个柜只出一次、另一个柜也在，按装柜先后；清关放行那一列空着就取状态时间表；没有柜号", async () => {
       const r = await call("GET /client/shipments/track", AGC, {}, { trackingNo: NO("T") });
       assert.equal(r.status, 200, r.message);
@@ -287,7 +302,7 @@ async function main(): Promise<void> {
       assert.equal(r.data.isSplit, true);
       assert.equal(r.data.totalLoadedM3, 3.5);
       assert.deepEqual(r.data.containers.map((c: Row) => [c.containerNo, c.loadedVolumeM3, c.loadedPieceCount, c.customsClearedAt]),
-        [["ZZSF18K1", 1.5, 5, CLEARED], ["ZZSF18K2", 2, 5, "2026-09-25T02:00:00.000Z"]]);
+        [["ZZSF18K1", 1.5, 5, CLEARED], ["ZZSF18K2", 2, 5, "2026-09-24T02:00:00.000Z"]]);
     });
     await check("T6c 代理看同一票：跟客户一样的两个柜、同样的日期，没有柜号", async () => {
       const r = await call("GET /agent/shipments/track", AG, {}, { trackingNo: NO("T") });
@@ -305,8 +320,14 @@ async function main(): Promise<void> {
       assert.equal(c.status, 200, c.message);
       assert.equal(c.data.containers.length, 1);
     });
-    await check("T6e 清关放行日期取法：那一列有值用那一列；状态时间表坏了 / 没这一格 / 日期乱写都是空，不报错", async () => {
-      assert.equal(customsClearedAtOf({ customsClearedAt: new Date(CLEARED), statusDates: "{坏的" }), CLEARED);
+    await check("T6e 清关放行日期取法：状态时间表说了算（撤销后没这一格就是空，那一列有值也不用）；没有 / 坏了的老柜子才看那一列", async () => {
+      const OLD = new Date("2026-05-20T06:55:51.871Z");
+      assert.equal(customsClearedAtOf({ customsClearedAt: OLD, statusDates: JSON.stringify({ LOADING: CLEARED }) }), null, "撤销了清关（状态时间表里没这一格）还显示那一列的老日期");
+      assert.equal(customsClearedAtOf({ customsClearedAt: OLD, statusDates: JSON.stringify({ CUSTOMS_CLEARED: CLEARED }) }), CLEARED);
+      assert.equal(customsClearedAtOf({ customsClearedAt: OLD, statusDates: null }), OLD.toISOString(), "没有状态时间表的老柜子（线上那 3 个）照原来显示那一列");
+      assert.equal(customsClearedAtOf({ customsClearedAt: OLD, statusDates: "{坏的" }), OLD.toISOString());
+      assert.equal(customsClearedAtOf({ customsClearedAt: OLD, statusDates: "null" }), OLD.toISOString());
+      assert.equal(customsClearedAtOf({ customsClearedAt: OLD, statusDates: "[1]" }), OLD.toISOString());
       assert.equal(customsClearedAtOf({ customsClearedAt: null, statusDates: "{坏的" }), null);
       assert.equal(customsClearedAtOf({ customsClearedAt: null, statusDates: JSON.stringify({ LOADING: CLEARED }) }), null);
       assert.equal(customsClearedAtOf({ customsClearedAt: null, statusDates: JSON.stringify({ CUSTOMS_CLEARED: "不是日期" }) }), null);

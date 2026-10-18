@@ -183,14 +183,21 @@ function ClientConsolidationContent() {
      先发的后回来 —— 刚付完款余额又变回付款前、刚报的价又不见了。成功回来的只要不比已显示的旧就用（用法三）。
      余额照旧把这一次读到的数返回给调用方（付款前那次现读要用它判断够不够） */
   const balanceGate = useRef(createQueryGate<null>()).current;
+  /** 屏幕上那份余额（门闩收下的最新一次） */
+  const shownBalanceRef = useRef<number | null>(null);
   const tasksGate = useRef(createQueryGate<null>()).current;
   const loadBalance = useCallback(async (opts?: { silent?: boolean }): Promise<number | null> => {
     const ticket = balanceGate.begin(null);
     try {
       const r = await fetchClientWalletOverview();
       const v = typeof (r as any).balance === "number" ? (r as any).balance : (r.accounts?.find(a => a.currency === "CNY")?.balance ?? 0);
-      if (balanceGate.accept(ticket, null)) setBalance(v);
-      return v;
+      if (balanceGate.accept(ticket, null)) {
+        shownBalanceRef.current = v;
+        setBalance(v);
+        return v;
+      }
+      // 比屏幕上那份旧（更晚的已经先回来了）：给调用方的也换成那份新的 —— 付款前现读够不够付不能拿旧数判断（小修审查第 1 轮）
+      return shownBalanceRef.current ?? v;
     } catch {
       if (!opts?.silent && !balanceGate.superseded(ticket)) setBalance(null);
       return null;

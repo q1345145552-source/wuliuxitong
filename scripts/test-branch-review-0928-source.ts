@@ -109,7 +109,8 @@ check("V3 整柜询价报价（写法钉子；真点的在 test-cs-chat-ui-behav
   assert.match(body, /savingQuoteIdsRef\.current\.add\(id\);/);
   assert.match(body, /finally \{\s*savingQuoteIdsRef\.current\.delete\(id\);/);
   assert.match(body, /const seq = detailSeqRef\.current;/, "报价没记下是哪一次打开的详情");
-  assert.match(body, /loadList\(listPageRef\.current\);\s*if \(detailSeqRef\.current === seq\) await openDetail\(id\);/, "要刷新「现在这一页」；重新加载详情只在还是同一次打开时做");
+  // 2026-10-18 小修审查第 1 轮：「现在这一页」= 客户最后要看的那页（wantedPageRef，点翻页那一刻就记），不是屏幕上那页
+  assert.match(body, /loadList\(wantedPageRef\.current\);\s*if \(detailSeqRef\.current === seq\) await openDetail\(id\);/, "要刷新「现在这一页」；重新加载详情只在还是同一次打开时做");
   assert.match(body, /if \(detailSeqRef\.current === seq\) setQuoteMessage\(msg\);\s*else props\.onToast\(msg\);/, "详情关了 / 换了，报价失败一声不吭");
   assert.match(src, /listPageRef\.current = listPage;/);
   assert.match(src, /disabled=\{savingQuoteIds\.includes\(detail\.id\)\}/, "按钮没按「这张单在不在保存」变灰");
