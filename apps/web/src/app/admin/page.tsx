@@ -966,6 +966,10 @@ export default function AdminHomePage() {
       setMessage("请填写员工姓名和手机号。"); // 画在弹窗里（见弹窗底部红条）
       return;
     }
+    if (staffForm.remark.trim().length > 50) {
+      setMessage("备注太长了（最多 50 个字）。");
+      return;
+    }
     setLoading(true);
     setMessage("");
     let created: { id: string } | null = null;
@@ -1695,11 +1699,12 @@ export default function AdminHomePage() {
                 </div>
                 {editingRemarkFor === u.id ? (
                   <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px solid var(--l-soft)", display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                    {/* 不用 maxLength：粘贴超长会被浏览器悄悄截掉尾巴，存的时候明确说「太长了」（审查第 1 轮）；存的那一两秒锁住，免得打的字被存完清掉 */}
                     <input
                       value={remarkDraft}
                       onChange={(e) => setRemarkDraft(e.target.value)}
-                      maxLength={50}
-                      placeholder="哪里的员工，如：义乌仓管、广州仓管、泰国员工（空着 = 清掉）"
+                      disabled={loading}
+                      placeholder="哪里的员工，如：义乌仓管、广州仓管、泰国员工（空着 = 清掉，最多 50 个字）"
                       aria-label={`员工 ${u.id} 的备注`}
                       style={{ border: "1px solid var(--l-strong)", borderRadius: 8, padding: "6px 10px", width: 320, maxWidth: "100%" }}
                     />
@@ -1714,6 +1719,7 @@ export default function AdminHomePage() {
                     <button
                       type="button"
                       onClick={() => { setEditingRemarkFor(null); setRemarkDraft(""); setRemarkError(""); }}
+                      disabled={loading}
                       style={{ border: "1px solid var(--l-strong)", borderRadius: 8, padding: "6px 12px", background: "var(--white)", cursor: "pointer", color: "var(--t-strong)" }}
                     >
                       取消
@@ -2824,7 +2830,7 @@ export default function AdminHomePage() {
               {/* 员工备注（2026-10-20）：哪里的员工，只有超管看得到 */}
               <div>
                 <label style={{ fontSize: 12, color: "var(--t-strong)", display: "block", marginBottom: 4 }}>备注（选填）</label>
-                <input value={staffForm.remark} onChange={(e) => setStaffForm((f) => ({ ...f, remark: e.target.value }))} maxLength={50} placeholder="哪里的员工，如：义乌仓管、广州仓管、泰国员工" autoComplete="off" style={{ border: "1px solid var(--l-strong)", borderRadius: 8, padding: "8px 10px", width: "100%", fontSize: 13 }} />
+                <input value={staffForm.remark} onChange={(e) => setStaffForm((f) => ({ ...f, remark: e.target.value }))} placeholder="哪里的员工，如：义乌仓管、广州仓管、泰国员工（最多 50 个字）" autoComplete="off" style={{ border: "1px solid var(--l-strong)", borderRadius: 8, padding: "8px 10px", width: "100%", fontSize: 13 }} />
               </div>
               <div>
                 <label style={{ fontSize: 12, color: "var(--t-strong)", display: "block", marginBottom: 4 }}>登录密码</label>

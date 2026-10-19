@@ -344,16 +344,22 @@ for (const kind of ["overview", "ops"] as const) {
 
 // 真写回调与真 loader 组合，必须让旧 GET 在写成功时仍未返回；仅测先完成再调用会漏掉丢刷新。
 async function flushMicrotasks() { for (let i = 0; i < 8; i++) await Promise.resolve(); }
-function mutationCaller(kind: "staff" | "client" | "ban" | "edit", loadOverview: (force?: boolean) => Promise<unknown>, options: {
+function mutationCaller(kind: "staff" | "client" | "ban" | "edit" | "remark", loadOverview: (force?: boolean) => Promise<unknown>, options: {
   account?: RecordValue; write?: (signal?: AbortSignal) => Promise<unknown>; reload?: () => Promise<unknown>;
   banKind?: "员工" | "客户"; status?: string; confirmedStatus?: string; clock?: ReturnType<typeof fakeClock>;
   /** 客户表单里的密码。默认：建号带一个测试密码（2026-10-11 起必填），编辑留空（= 不改密码，这条路必须照常能存） */
   clientPassword?: string;
   /** 名字留空（测「请填写…」那两条校验） */
   blankName?: boolean;
+  /** 2026-10-20 改员工备注：框里打的字（默认带前后空格）、后端回的值（默认 = 去空格后的，空 = null） */
+  remarkDraft?: string; confirmedRemark?: string | null;
+  /** 建员工弹窗里的备注 */
+  staffRemark?: string;
 } = {}) {
   const state = { writes: 0, reloads: 0, messages: [] as string[], toasts: [] as string[], loading: false, cleared: 0, signals: [] as (AbortSignal | undefined)[], payloads: [] as unknown[],
-    staff: [{ id: "u-test", status: options.status ?? "active" }], clients: [{ id: "u-test", status: options.status ?? "active" }] };
+    staff: [{ id: "u-test", status: options.status ?? "active" } as RecordValue], clients: [{ id: "u-test", status: options.status ?? "active" }],
+    /** 改备注：画在那一行的错（不写页面最底下那行）、展开的是谁、框里的字 */
+    remarkErrors: [] as string[], editingRemarkFor: "u-test" as string | null, remarkDraft: options.remarkDraft ?? "  广州仓管 " };
   const reload = async () => { state.reloads++; return options.reload?.(); };
   const write = async (signal?: AbortSignal) => { state.writes++; state.signals.push(signal); return options.write?.(signal); };
   const clock = options.clock ?? fakeClock();
@@ -363,18 +369,28 @@ function mutationCaller(kind: "staff" | "client" | "ban" | "edit", loadOverview:
     loading: false, setLoading: (value: boolean) => { state.loading = value; },
     setToast: (text: string) => { state.toasts.push(text); }, setMessage: (text: string) => { if (text) state.messages.push(text); },
     // 2026-10-20 建员工表单多了「备注」（页面上的 staffForm 一直带着这一格）
-    staffForm: { id: "", name: options.blankName ? "" : "员工测试", phone: "13000000000", password: "", remark: "" },
+    staffForm: { id: "", name: options.blankName ? "" : "员工测试", phone: "13000000000", password: "", remark: options.staffRemark ?? "" },
     // 2026-10-11 起建客户号密码必填（Codex 审查：不填建出来的号登不进）；编辑客户留空 = 不改密码（Codex 第 2 轮：别让夹具把这条路盖住）
     clientForm: { id: "", name: options.blankName ? "" : "客户测试", companyName: "", phone: "13000000001", email: "", password: options.clientPassword ?? (kind === "edit" ? "" : "Abc12345"), agentId: "" },
     editingClientId: "u-test", editingClientAgentId: null, setEditingClientId: () => {}, setEditingClientAgentId: () => {},
     agentOptions: [], setStaffForm: () => { state.cleared++; }, setClientForm: () => { state.cleared++; }, setShowStaffModal: () => {}, setShowClientModal: () => {},
     setStaffList: (fn: (rows: typeof state.staff) => typeof state.staff) => { state.staff = fn(state.staff); },
     setClientList: (fn: (rows: typeof state.clients) => typeof state.clients) => { state.clients = fn(state.clients); },
-    createAdminStaff: (_payload: unknown, signal?: AbortSignal) => write(signal),
+    createAdminStaff: (payload: unknown, signal?: AbortSignal) => { state.payloads.push(payload); return write(signal); },
     createAdminClient: (_payload: unknown, signal?: AbortSignal) => write(signal),
     updateAdminClient: (payload: unknown, signal?: AbortSignal) => { state.payloads.push(payload); return write(signal); },
     toggleUserBan: async (_id: string, signal?: AbortSignal) => { await write(signal); return { id: "u-test", status: options.confirmedStatus ?? "inactive" }; }, window: { confirm: () => true },
     loadStaff: reload, loadClients: reload, loadOverview,
+    // 2026-10-20 改员工备注（submitStaffRemark）
+    remarkDraft: options.remarkDraft ?? "  广州仓管 ",
+    setRemarkError: (text: string) => { if (text) state.remarkErrors.push(text); },
+    setEditingRemarkFor: (value: string | null) => { state.editingRemarkFor = value; if (value === null) state.cleared++; },
+    setRemarkDraft: (value: string) => { state.remarkDraft = value; },
+    setAdminStaffRemark: async (id: string, remark: string, signal?: AbortSignal) => {
+      state.payloads.push({ id, remark });
+      await write(signal);
+      return { id, remark: options.confirmedRemark !== undefined ? options.confirmedRemark : (remark || null) };
+    },
   };
   if (findNodes((n): n is ts.VariableDeclaration => ts.isVariableDeclaration(n) && n.name.getText(ast) === 'runAccountWrite').length) {
     bindings.runAccountWrite = pageExpression('runAccountWrite', bindings);
@@ -382,8 +398,8 @@ function mutationCaller(kind: "staff" | "client" | "ban" | "edit", loadOverview:
   if (findNodes((n): n is ts.VariableDeclaration => ts.isVariableDeclaration(n) && n.name.getText(ast) === 'refreshAccountViews').length) {
     bindings.refreshAccountViews = pageExpression('refreshAccountViews', bindings);
   }
-  const callback = pageExpression(kind === "staff" ? "submitAddStaff" : kind === "client" ? "submitAddClient" : kind === "edit" ? "submitEditClient" : "confirmToggleBan", bindings);
-  return { state, run: (): Promise<void> => kind === "ban" ? callback("u-test", "测试", options.status ?? "active", reload, options.banKind ?? "员工") : callback() };
+  const callback = pageExpression(kind === "staff" ? "submitAddStaff" : kind === "client" ? "submitAddClient" : kind === "edit" ? "submitEditClient" : kind === "remark" ? "submitStaffRemark" : "confirmToggleBan", bindings);
+  return { state, run: (): Promise<void> => kind === "ban" ? callback("u-test", "测试", options.status ?? "active", reload, options.banKind ?? "员工") : kind === "remark" ? callback("u-test") : callback() };
 }
 
 for (const pw of ["", "   "]) {
@@ -439,7 +455,7 @@ test("编辑客户密码留空：照常保存，而且发出去的请求里没�
   assert.equal((mutation.state.payloads[0] as { password?: unknown }).password, undefined, "留空密码却发了密码过去（会把客户密码改掉）");
 });
 
-for (const kind of ["staff", "client", "ban", "edit"] as const) {
+for (const kind of ["staff", "client", "ban", "edit", "remark"] as const) {
   test(`${kind}真实写成功发生在旧GET途中：旧响应不落地，补发刷新并等待新响应`, async () => {
     const seed = { fixture: "last displayed" }, loader = overviewLoader("overview", seed);
     const old = loader.run();
@@ -465,7 +481,7 @@ for (const kind of ["staff", "client", "ban", "edit"] as const) {
   });
 }
 // 写成功与刷新失败是两类结果；直接执行三个真实调用点，不用假包装替它们吞错。
-for (const kind of ['staff', 'client', 'ban', 'edit'] as const) {
+for (const kind of ['staff', 'client', 'ban', 'edit', 'remark'] as const) {
   for (const failure of ['list', 'overview', 'both'] as const) {
     test(`${kind}写成功但${failure}刷新失败：仅提示成功后的刷新问题，不提示写失败`, async () => {
       const loader = overviewLoader('overview');
@@ -494,7 +510,12 @@ for (const kind of ['staff', 'client', 'ban', 'edit'] as const) {
     await mutation.run();
     assert.equal(mutation.state.cleared, 0);
     assert.equal(mutation.state.toasts.length, 0);
-    assert.match(mutation.state.messages[0], /失败/);
+    if (kind === 'remark') {
+      // 改备注没存上：原因画在那一行（页面最底下那行离得远看不见），框里的字留着
+      assert.deepEqual(mutation.state.messages, []);
+      assert.match(mutation.state.remarkErrors[0], /备注没存上：403 FORBIDDEN/);
+      assert.equal(mutation.state.editingRemarkFor, 'u-test');
+    } else assert.match(mutation.state.messages[0], /失败/);
     assert.equal(mutation.state.loading, false);
     assert.equal(loader.account.accountWriteState.current.active, 0);
     const read = loader.run(); loader.requests.at(-1)!.resolve({ fixture: 'recovery' }); await read;
@@ -534,6 +555,62 @@ for (const kind of ['员工', '客户'] as const) {
     });
   }
 }
+// 2026-10-20 改员工备注：真跑 submitStaffRemark（审查第 1 轮：源码测试只核了「有这几个字」）
+test('改备注：发去空格的字；那一行用后端回的值（名单刷新失败也一样）；收起编辑框、提示「备注已保存」', async () => {
+  const mutation = mutationCaller('remark', async () => {}, { confirmedRemark: '广州仓管', reload: async () => { throw new Error('list offline'); } });
+  await mutation.run();
+  assert.deepEqual(mutation.state.payloads, [{ id: 'u-test', remark: '广州仓管' }]);
+  assert.equal(mutation.state.staff[0].remark, '广州仓管', '名单没刷新上也要用后端回的值改那一行');
+  assert.equal(mutation.state.editingRemarkFor, null);
+  assert.equal(mutation.state.remarkDraft, '');
+  assert.deepEqual(mutation.state.toasts, ['备注已保存']);
+  assert.match(mutation.state.messages[0], /备注已保存；账号列表刷新失败/);
+  assert.equal(mutation.state.loading, false);
+});
+test('改备注：空着 = 清掉（后端回 null，那一行变空，提示「备注已清掉」）', async () => {
+  const mutation = mutationCaller('remark', async () => {}, { remarkDraft: '   ' });
+  mutation.state.staff[0].remark = '义乌仓管';
+  await mutation.run();
+  assert.deepEqual(mutation.state.payloads, [{ id: 'u-test', remark: '' }]);
+  assert.equal(mutation.state.staff[0].remark, null);
+  assert.deepEqual(mutation.state.toasts, ['备注已清掉']);
+});
+test('改备注：51 个字当场拦（不发请求、画在那一行、框里的字留着）；50 个字照发', async () => {
+  const long = mutationCaller('remark', async () => {}, { remarkDraft: '广'.repeat(51) });
+  await long.run();
+  assert.equal(long.state.writes, 0);
+  assert.deepEqual(long.state.remarkErrors, ['备注太长了（最多 50 个字）']);
+  assert.equal(long.state.editingRemarkFor, 'u-test');
+  assert.equal(long.state.remarkDraft, '广'.repeat(51));
+  assert.equal(long.state.loading, false);
+  const ok50 = mutationCaller('remark', async () => {}, { remarkDraft: ` ${'广'.repeat(50)} ` });
+  await ok50.run();
+  assert.equal(ok50.state.writes, 1);
+});
+test('建员工带备注：发去空格的备注；空白不发；51 个字当场拦在弹窗里（不发请求、不清表单）', async () => {
+  const withRemark = mutationCaller('staff', async () => {}, { staffRemark: '  义乌仓管 ' });
+  await withRemark.run();
+  assert.equal((withRemark.state.payloads[0] as { remark?: unknown }).remark, '义乌仓管');
+  const blank = mutationCaller('staff', async () => {}, { staffRemark: '   ' });
+  await blank.run();
+  assert.equal((blank.state.payloads[0] as { remark?: unknown }).remark, undefined, '空白备注不该发');
+  const long = mutationCaller('staff', async () => {}, { staffRemark: '广'.repeat(51) });
+  await long.run();
+  assert.equal(long.state.writes, 0);
+  assert.deepEqual(long.state.messages, ['备注太长了（最多 50 个字）。']);
+  assert.equal(long.state.cleared, 0);
+});
+test('改备注：30 秒没回话说「结果未确认」，画在那一行，不说成没存上', async () => {
+  const clock = fakeClock();
+  const mutation = mutationCaller('remark', async () => {}, { clock, write: () => new Promise<never>(() => {}) });
+  const done = mutation.run(); await flushMicrotasks();
+  assert.equal(mutation.state.loading, true);
+  clock.advance(30000); await done;
+  assert.match(mutation.state.remarkErrors[0], /结果未确认/);
+  assert.doesNotMatch(mutation.state.remarkErrors[0], /没存上/);
+  assert.deepEqual(mutation.state.messages, []);
+  assert.equal(mutation.state.loading, false);
+});
 // 实际列表loader要与写入共用失效边界，不能让轮询晚到覆盖已确认的封禁状态。
 for (const kind of ['staff', 'client'] as const) {
   test(`${kind}列表：写前/写途中GET在写后才返回也不能覆盖，写后新GET正常落地`, async () => {

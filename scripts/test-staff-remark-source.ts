@@ -91,8 +91,11 @@ check("R3a 前端接口：AdminUserItem 有 remark；建员工可带 remark；�
 check("R3b 建员工弹窗多一格「备注」（选填、最多 50、提示例子），发请求带去空格的备注；开弹窗 / 建完都清空", () => {
   const modal = slice(page, "创建员工账号</h3>", "{showClientModal && (");
   assert.match(modal, />备注（选填）</);
-  assert.match(modal, /value=\{staffForm\.remark\} onChange=\{\(e\) => setStaffForm\(\(f\) => \(\{ \.\.\.f, remark: e\.target\.value \}\)\)\} maxLength=\{50\}/);
-  assert.match(modal, /义乌仓管、广州仓管、泰国员工/);
+  const remarkInput = modal.match(/<input value=\{staffForm\.remark\}[\s\S]*?\/>/)?.[0] ?? "";
+  assert.match(remarkInput, /onChange=\{\(e\) => setStaffForm\(\(f\) => \(\{ \.\.\.f, remark: e\.target\.value \}\)\)\}/);
+  assert.match(remarkInput, /义乌仓管、广州仓管、泰国员工（最多 50 个字）/);
+  assert.ok(!/maxLength/.test(remarkInput), "不用 maxLength：粘贴超长会被悄悄截掉，要在提交时明确拦（审查第 1 轮）");
+  assert.match(slice(page, "const submitAddStaff", "\n  };"), /if \(staffForm\.remark\.trim\(\)\.length > 50\) \{\s*setMessage\("备注太长了（最多 50 个字）。"\);\s*return;/);
   assert.match(slice(page, "const submitAddStaff", "\n  };"), /remark: staffForm\.remark\.trim\(\) \|\| undefined,/);
   assert.equal((page.match(/setStaffForm\(\{ id: "", name: "", phone: "", password: "", remark: "" \}\)/g) ?? []).length, 2, "开弹窗、建完两处都清空备注");
   assert.ok(!/setStaffForm\(\{ id: "", name: "", phone: "", password: "" \}\)/.test(page), "还有没带备注的清空");
@@ -106,8 +109,11 @@ check("R3c 员工那一行：显示「备注」（没写显示「未写」）+�
   assert.match(row, /\{editingRemarkFor === u\.id \? "取消改备注" : "改备注"\}/);
   assert.match(row, /onClick=\{\(\) => \{ setEditingRemarkFor\(null\); setShowSettingPassword\(false\);/, "点「设置密码」收起改备注");
   const editor = slice(row, "{editingRemarkFor === u.id ? (", ") : null}");
-  assert.match(editor, /value=\{remarkDraft\}/);
-  assert.match(editor, /maxLength=\{50\}/);
+  const input = editor.match(/<input[\s\S]*?\/>/)?.[0] ?? "";
+  assert.match(input, /value=\{remarkDraft\}/);
+  assert.match(input, /disabled=\{loading\}/, "存的时候锁住（不然存完把后来打的字清掉）");
+  assert.ok(!/maxLength/.test(input), "不用 maxLength（粘贴超长会被悄悄截掉）");
+  assert.equal((editor.match(/disabled=\{loading\}/g) ?? []).length, 3, "输入框、保存、取消三样存的时候都锁");
   assert.match(editor, /onClick=\{\(\) => void submitStaffRemark\(u\.id\)\}/);
   assert.match(editor, /disabled=\{loading\}/);
   assert.match(editor, />\s*保存备注\s*</);
