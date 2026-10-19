@@ -601,6 +601,18 @@ test('建员工带备注：发去空格的备注；空白不发；51 个字当�
   assert.deepEqual(long.state.messages, ['备注太长了（最多 50 个字）。']);
   assert.equal(long.state.cleared, 0);
 });
+test('改备注：别的超管刚改过（409）：画在那一行、框和字留着、名单刷新一次、不报成功', async () => {
+  const conflict = '这个员工的备注刚被别人改过（名单已刷新），请点「取消改备注」再点「改备注」，看到最新的再改';
+  const mutation = mutationCaller('remark', async () => {}, { write: async () => { throw new Error(conflict); } });
+  await mutation.run(); await flushMicrotasks();
+  assert.deepEqual(mutation.state.remarkErrors, [`备注没存上：${conflict}`]);
+  assert.equal(mutation.state.editingRemarkFor, 'u-test');
+  assert.equal(mutation.state.remarkDraft, '  广州仓管 ');
+  assert.equal(mutation.state.reloads, 1, '没存上要把名单刷新一次，关掉重开才看得到最新的');
+  assert.deepEqual(mutation.state.toasts, []);
+  assert.deepEqual(mutation.state.messages, []);
+  assert.equal(mutation.state.loading, false);
+});
 test('改备注：30 秒没回话说「结果未确认」，画在那一行，不说成没存上', async () => {
   const clock = fakeClock();
   const mutation = mutationCaller('remark', async () => {}, { clock, write: () => new Promise<never>(() => {}) });
@@ -609,6 +621,7 @@ test('改备注：30 秒没回话说「结果未确认」，画在那一行，�
   clock.advance(30000); await done;
   assert.match(mutation.state.remarkErrors[0], /结果未确认/);
   assert.doesNotMatch(mutation.state.remarkErrors[0], /没存上/);
+  assert.equal(mutation.state.reloads, 0, '结果未确认时不自动刷新（提示里让人自己核对）');
   assert.deepEqual(mutation.state.messages, []);
   assert.equal(mutation.state.loading, false);
 });
@@ -747,6 +760,22 @@ for (const [name, endpoint] of [
     }
   });
 }
+test('setAdminStaffRemark 真服务包装：路径、带点开时那份（null 也发）、透传取消信号、只发一次（dsh 第 2 轮）', async () => {
+  for (const [expected, withSignal] of [[null, false], ['义乌仓管', true]] as const) {
+    const c = new AbortController(), response = { raw: true }, parsed = { id: 'u-test', remark: '广州仓管' }; let count = 0;
+    const call = serviceWrapper('setAdminStaffRemark', { apiBaseUrl: () => 'https://fixture.invalid', authHeaders: () => ({ Authorization: 'Bearer fixture' }),
+      fetch: async (url: string, options: RecordValue) => {
+        count++; assert.equal(url, 'https://fixture.invalid/admin/users/staff-remark'); assert.equal(options.method, 'POST');
+        assert.equal(options.headers.Authorization, 'Bearer fixture'); assert.equal(options.headers['Content-Type'], 'application/json');
+        assert.equal(options.signal, withSignal ? c.signal : undefined);
+        assert.equal(options.body, JSON.stringify({ id: 'u-test', remark: '广州仓管', expectedRemark: expected }), 'null 也要发出去（不发 = 后端不核）');
+        return response;
+      }, parseApiResponse: async (value: unknown) => { assert.equal(value, response); return parsed; },
+    });
+    assert.equal(await call('u-test', '广州仓管', expected, withSignal ? c.signal : undefined), parsed);
+    assert.equal(count, 1);
+  }
+});
 test('真实编辑客户后旧列表晚到不能把新名字盖回去', async () => {
   const account = accountWriteHarness(), reads: Array<ReturnType<typeof deferred<any[]>>> = [];
   let rows = [{ id: 'u-test', name: '改前', status: 'active' }];

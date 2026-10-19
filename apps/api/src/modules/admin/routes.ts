@@ -1337,7 +1337,7 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
       where: { id: user.id, companyId: auth.companyId, role: "staff", ...(expected ? { remark: expected.value } : {}) },
       data: { remark: remark.value },
     });
-    if (written.count === 0) { fail(res, 409, "VALIDATION_ERROR", "这个员工的备注刚被别人改过，请点「刷新」后重新点「改备注」"); return; }
+    if (written.count === 0) { fail(res, 409, "VALIDATION_ERROR", "这个员工的备注刚被别人改过（名单已刷新），请点「取消改备注」再点「改备注」，看到最新的再改"); return; }
     ok(res, { id: user.id, remark: remark.value });
   });
 

@@ -132,7 +132,8 @@ check("R4 存备注：先拦超长；走 runAccountWrite；超时 / 失败写在
   assert.match(fn, /value\.length > 50\) \{\s*setRemarkError\(/);
   assert.match(fn, /runAccountWrite\(\(signal\) => setAdminStaffRemark\(userId, value, remarkBase, signal\)\)/, "要走账号写入边界、带点开时那份");
   assert.match(fn, /AccountWriteTimeoutError"\) \{\s*setRemarkError\(error\.message\);\s*return;/);
-  assert.match(fn, /setRemarkError\(`备注没存上：\$\{text\}`\);\s*return;/);
+  assert.match(fn, /setRemarkError\(`备注没存上：\$\{text\}`\);\s*void loadStaff\(\)\.catch\(\(\) => \{\}\);\s*return;/, "没存上就刷新名单（不改点开时那份）");
+  assert.ok(!/setRemarkBase\(/.test(fn), "存的时候不许自动改「点开时那份」（不然再点保存就盖掉别人的）");
   assert.ok(!/setMessage\(/.test(fn), "错误不许写到页面最底下那行（看不见）");
   assert.match(fn, /setStaffList\(\(rows\) => rows\.map\(\(row\) => \(row\.id === result\.id \? \{ \.\.\.row, remark: result\.remark \} : row\)\)\)/, "用后端回的值");
   assert.match(fn, /await refreshAccountViews\(loadStaff, done\);/);
@@ -154,57 +155,110 @@ check("R5 员工备注只在超管页：员工 / 客户 / 代理那几页不调�
   assert.deepEqual(callers("apps/web/src").sort(), ["apps/web/src/app/admin/page.tsx", "apps/web/src/services/business-api.ts"]);
 });
 
-check("R6 员工备注不会顺着别的接口漏出去：后端查账号一律写明要哪几项；带出关联账号也写明（dsh 第 1 轮：以后有人加一个不写 select 的查询就漏）", () => {
-  // 账号表（User）在别的表里的关联名（schema.prisma 里 `xxx User @relation`）
+check("R6 员工备注不会顺着别的接口漏出去：后端读账号一律写明要哪几项（dsh 第 1、2 轮：以后有人加一个不写 select 的查询就漏）", () => {
+  // 账号表（User）在别的表里的关联名（schema.prisma 里 `xxx User @relation` / `xxx User[] @relation` / `xxx User? @relation`）
   const schema = read("apps/api/prisma/schema.prisma");
-  const relNames = new Set([...schema.matchAll(/^\s+(\w+)\s+User\??\s+@relation/gm)].map((m) => m[1]));
-  assert.ok(relNames.has("client") && relNames.has("actor"), `关联名没读出来：${[...relNames].join(",")}`);
+  const relNames = new Set([...schema.matchAll(/^\s+(\w+)\s+User(?:\[\])?\??\s+@relation/gm)].map((m) => m[1]));
+  for (const must of ["client", "actor", "users"]) assert.ok(relNames.has(must), `关联名没读出来 ${must}：${[...relNames].join(",")}`);
   const files = (dir: string): string[] => fs.readdirSync(path.join(ROOT, dir), { withFileTypes: true }).flatMap((d) => {
     const rel = path.join(dir, d.name);
     return d.isDirectory() ? files(rel) : /\.ts$/.test(d.name) ? [rel] : [];
   });
+  /** 属性名（不管写成 remark 还是 "remark"） */
+  const keyOf = (p: ts.ObjectLiteralElementLike): string | undefined =>
+    p.name && (ts.isIdentifier(p.name) || ts.isStringLiteral(p.name)) ? p.name.text : undefined;
+  const objProp = (o: ts.ObjectLiteralExpression, name: string) =>
+    o.properties.find((p): p is ts.PropertyAssignment => ts.isPropertyAssignment(p) && keyOf(p) === name);
   const bad: string[] = [];
-  const remarkAt: string[] = [];
-  /** 账号的 select 里点名要了 remark（含 remark: true / remark: {...}）就记下在哪 */
-  const noteRemark = (rel: string, sf: ts.SourceFile, sel: ts.Expression | undefined) => {
-    if (sel && ts.isObjectLiteralExpression(sel) && objProp(sel, "remark")) remarkAt.push(`${rel}:${sf.getLineAndCharacterOfPosition(sel.getStart()).line + 1}`);
-  };
-  const objProp = (o: ts.ObjectLiteralExpression, name: string) => o.properties.find((p): p is ts.PropertyAssignment => ts.isPropertyAssignment(p) && p.name.getText() === name);
+  const remarkAt: Array<{ rel: string; pos: number; line: number }> = [];
+  const USER_READS = /^(find(Many|First|Unique)(OrThrow)?)$/;
+  const USER_WRITES = /^(create|update|upsert|delete)$/; // 不带 select 会把整行带回来；createMany / updateMany / deleteMany 只回条数
   for (const rel of files("apps/api/src")) {
     const sf = ts.createSourceFile(rel, read(rel), ts.ScriptTarget.Latest, true);
-    const visit = (n: ts.Node): void => {
-      // ① xxx.user.findMany / findFirst / findUnique（及 OrThrow）的参数里必须有 select
-      if (ts.isCallExpression(n) && ts.isPropertyAccessExpression(n.expression) && /^find(Many|First|Unique)(OrThrow)?$/.test(n.expression.name.text)
-        && ts.isPropertyAccessExpression(n.expression.expression) && n.expression.expression.name.text === "user") {
-        const arg = n.arguments[0];
-        if (!arg || !ts.isObjectLiteralExpression(arg) || !objProp(arg, "select")) bad.push(`${rel}:${sf.getLineAndCharacterOfPosition(n.getStart()).line + 1} 查账号没写 select`);
-        else noteRemark(rel, sf, objProp(arg, "select")!.initializer);
+    const at = (n: ts.Node) => `${rel}:${sf.getLineAndCharacterOfPosition(n.getStart()).line + 1}`;
+    /** select 写成同文件的常量也认（追一层）；认不出来返回 undefined */
+    const resolve = (e: ts.Expression): ts.ObjectLiteralExpression | undefined => {
+      if (ts.isObjectLiteralExpression(e)) return e;
+      if (ts.isIdentifier(e)) {
+        let found: ts.ObjectLiteralExpression | undefined;
+        const find = (n: ts.Node): void => {
+          if (ts.isVariableDeclaration(n) && ts.isIdentifier(n.name) && n.name.text === e.text && n.initializer) {
+            const init = ts.isAsExpression(n.initializer) || ts.isSatisfiesExpression(n.initializer) ? n.initializer.expression : n.initializer;
+            if (ts.isObjectLiteralExpression(init)) found = init;
+          }
+          if (!found) ts.forEachChild(n, find);
+        };
+        find(sf);
+        return found;
       }
-      // ② include 里带出关联账号：不许 `client: true`，展开的也要有 select
-      if (ts.isPropertyAssignment(n) && n.name.getText() === "include" && ts.isObjectLiteralExpression(n.initializer)) {
-        for (const p of n.initializer.properties) {
-          if (!ts.isPropertyAssignment(p) || !relNames.has(p.name.getText())) continue;
-          const v = p.initializer;
-          if (v.kind === ts.SyntaxKind.TrueKeyword || (ts.isObjectLiteralExpression(v) && !objProp(v, "select"))) {
-            bad.push(`${rel}:${sf.getLineAndCharacterOfPosition(p.getStart()).line + 1} include 带出整行账号（${p.name.getText()}）`);
-          } else if (ts.isObjectLiteralExpression(v)) noteRemark(rel, sf, objProp(v, "select")!.initializer);
+      return undefined;
+    };
+    /** 账号的 select：记下要没要 remark；里面再带出的关联账号也照样查 */
+    const userSelect = (sel: ts.ObjectLiteralExpression) => {
+      if (objProp(sel, "remark")) remarkAt.push({ rel, pos: sel.getStart(), line: sf.getLineAndCharacterOfPosition(sel.getStart()).line + 1 });
+      if (sel.properties.some((p) => ts.isSpreadAssignment(p))) bad.push(`${at(sel)} 账号 select 里有展开（...），看不出要了哪几项`);
+    };
+    const isUserModel = (e: ts.Expression) => ts.isPropertyAccessExpression(e) && e.name.text === "user";
+    const visit = (n: ts.Node): void => {
+      // ① prisma.user / tx.user 不许赋给变量（不然下面按 .user.findMany 认不出来）
+      if (ts.isVariableDeclaration(n) && n.initializer && isUserModel(n.initializer)
+        && /^(prisma|tx|db)$/.test((n.initializer as ts.PropertyAccessExpression).expression.getText())) bad.push(`${at(n)} 把账号表赋给了变量`);
+      // ② xxx.user.findMany / findFirst / findUnique：必须写 select；create / update / upsert / delete：结果要用就必须写 select
+      if (ts.isCallExpression(n) && ts.isPropertyAccessExpression(n.expression) && isUserModel(n.expression.expression)) {
+        const method = n.expression.name.text;
+        const arg = n.arguments[0];
+        const selProp = arg && ts.isObjectLiteralExpression(arg) ? objProp(arg, "select") : undefined;
+        const sel = selProp ? resolve(selProp.initializer) : undefined;
+        if (selProp && !sel) bad.push(`${at(n)} 账号 select 认不出来（不是对象，也不是同文件常量）`);
+        if (sel) userSelect(sel);
+        if (USER_READS.test(method) && !selProp) bad.push(`${at(n)} 查账号没写 select`);
+        if (USER_WRITES.test(method) && !selProp) {
+          const up = ts.isAwaitExpression(n.parent) ? n.parent.parent : n.parent;
+          if (!ts.isExpressionStatement(up)) bad.push(`${at(n)} 写账号没写 select，结果却拿去用了（会带回整行）`);
         }
       }
+      // ③ include / select 里带出关联账号：不许 `client: true`，展开的也要有 select
+      if (ts.isPropertyAssignment(n) && (keyOf(n) === "include" || keyOf(n) === "select") && ts.isObjectLiteralExpression(n.initializer)) {
+        for (const p of n.initializer.properties) {
+          if (ts.isSpreadAssignment(p) && keyOf(n) === "include") { bad.push(`${at(p)} include 里有展开（...），看不出带出了什么`); continue; }
+          const key = keyOf(p);
+          if (!ts.isPropertyAssignment(p) || !key || !relNames.has(key)) continue;
+          const v = p.initializer;
+          if (v.kind === ts.SyntaxKind.TrueKeyword) { bad.push(`${at(p)} ${keyOf(n)} 带出整行账号（${key}: true）`); continue; }
+          if (!ts.isObjectLiteralExpression(v)) continue; // false / 变量：false 不带；变量的情况少见，交给审查
+          const inner = objProp(v, "select");
+          const innerSel = inner ? resolve(inner.initializer) : undefined;
+          if (!inner) bad.push(`${at(p)} ${keyOf(n)} 带出整行账号（${key} 没写 select）`);
+          else if (!innerSel) bad.push(`${at(p)} 关联账号的 select 认不出来`);
+          else userSelect(innerSel);
+        }
+      }
+      // ④ 手写 SQL：读 users 的不许 SELECT * / 别名.*，也不许点名 remark
+      const sqlText = (t: ts.Node | undefined): string | undefined =>
+        !t ? undefined : ts.isNoSubstitutionTemplateLiteral(t) || ts.isStringLiteral(t) ? t.text
+          : ts.isTemplateExpression(t) ? [t.head.text, ...t.templateSpans.map((s) => s.literal.text)].join(" ? ") : undefined;
+      let sql: string | undefined;
+      if (ts.isTaggedTemplateExpression(n) && /\$(queryRaw|executeRaw)$/.test(n.tag.getText())) sql = sqlText(n.template);
+      if (ts.isCallExpression(n) && ts.isPropertyAccessExpression(n.expression) && /^\$(queryRaw|executeRaw)(Unsafe)?$/.test(n.expression.name.text)) sql = sqlText(n.arguments[0]);
+      if (sql && /\b(public\.)?"?users"?\b/i.test(sql) && (/\bremark\b/i.test(sql) || /\bselect\s+(\w+\.)?\*/i.test(sql) || /\b\w+\.\*/.test(sql))) bad.push(`${at(n)} 手写 SQL 整行读账号或点名 remark`);
       ts.forEachChild(n, visit);
     };
     visit(sf);
   }
   assert.deepEqual(bad, []);
-  // ③ 手写 SQL 不许 SELECT * FROM users
-  for (const rel of files("apps/api/src")) assert.ok(!/SELECT\s+\*\s+FROM\s+"?users"?/i.test(read(rel)), `${rel} 手写 SQL 整行读账号`);
-  // ④ 账号 select 里要了 remark 的只有「员工名单」GET /admin/users 那两处（只给超管）
-  assert.equal(remarkAt.length, 2, `账号 select 里要 remark 的地方：${remarkAt.join("、")}`);
-  const list = slice(adminApi, `app.get("/admin/users", async`, "\n  });");
-  const listStart = read("apps/api/src/modules/admin/routes.ts").split("\n").findIndex((l) => l.includes(`app.get("/admin/users", async`)) + 1;
-  const listEnd = listStart + list.split("\n").length;
-  for (const at of remarkAt) {
-    const [file, line] = at.split(":");
-    assert.ok(/apps\/api\/src\/modules\/admin\/routes\.ts$/.test(file) && Number(line) > listStart && Number(line) < listEnd, `${at} 不在员工名单接口里`);
+  // ⑤ 账号 select 里要了 remark 的，只能在「员工名单」GET /admin/users 这一个接口里（只给超管）
+  const adminRel = path.join("apps/api/src/modules/admin/routes.ts");
+  const adminSf = ts.createSourceFile(adminRel, read(adminRel), ts.ScriptTarget.Latest, true);
+  let listNode: ts.Node | undefined;
+  const findList = (n: ts.Node): void => {
+    if (ts.isCallExpression(n) && n.expression.getText(adminSf) === "app.get" && ts.isStringLiteral(n.arguments[0]) && n.arguments[0].text === "/admin/users") listNode = n;
+    if (!listNode) ts.forEachChild(n, findList);
+  };
+  findList(adminSf);
+  assert.ok(listNode, "找不到 GET /admin/users");
+  assert.ok(remarkAt.length > 0, "员工名单接口里没有要 remark");
+  for (const r of remarkAt) {
+    assert.ok(r.rel === adminRel && r.pos > listNode!.getStart(adminSf) && r.pos < listNode!.getEnd(), `${r.rel}:${r.line} 的账号 select 要了 remark，但不在员工名单接口里`);
   }
 });
 

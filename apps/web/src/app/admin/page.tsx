@@ -1086,6 +1086,9 @@ export default function AdminHomePage() {
         }
         const text = error instanceof Error ? error.message : "保存失败";
         setRemarkError(`备注没存上：${text}`);
+        // 没存上（比如别的超管刚改过 → 409）：顺手把名单刷新，按提示关掉重开就能看到最新的再改；
+        // 不自动改「点开时那份」——不然再点一次保存就把人家的盖掉了（dsh 第 2 轮）
+        void loadStaff().catch(() => {});
         return;
       }
       // 用服务器确认的值（后端会去掉两头空格、空 = 清掉）

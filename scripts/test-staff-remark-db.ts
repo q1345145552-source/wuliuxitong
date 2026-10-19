@@ -216,7 +216,7 @@ async function main(): Promise<void> {
       assert.equal((await set("广州仓管", null)).status, 200);
       const late = await set("义乌仓管", null);
       assert.equal(late.status, 409, `${late.status} ${late.message}`);
-      assert.match(late.message, /刚被别人改过/);
+      assert.match(late.message, /刚被别人改过.*请点「取消改备注」再点「改备注」/, "提示要跟那一行的按钮字对得上（dsh 第 2 轮）");
       assert.equal(await remarkOf(STAFF2), "广州仓管", "甲把乙的备注盖掉了");
       // 甲刷新后看到「广州仓管」再改：对得上（前后空格不算）
       assert.equal((await set("义乌仓管", " 广州仓管 ")).status, 200);
