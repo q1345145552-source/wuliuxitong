@@ -56,6 +56,9 @@ export const OPERATOR_IDENTITY_FIELDS = [
   "createdByName",
   "notifiedBy",
   "notifiedByName",
+  // ArrivalNoticeSnapshot 转正式运单时存的原样：谁转的（2026-10-19）。接口逐字段下发，这里登记兜底
+  "convertedById",
+  "convertedByName",
 ] as const;
 
 export type OperatorIdentityField = (typeof OPERATOR_IDENTITY_FIELDS)[number];

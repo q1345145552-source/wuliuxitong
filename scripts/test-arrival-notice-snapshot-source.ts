@@ -2,21 +2,24 @@
  * 到货通知转正式运单时存原样（2026-10-19 老板选 B）—— 不连库那一半。连库的在 test-arrival-notice-snapshot-db.ts，迁移在 test-migration-arrival-notice-snapshots-db.ts。
  * 计划和老板认可的细节：.audit/2026-10-19/notice-snapshot/plan.md。
  *
- *   S1～S5 比对函数（snapshot-diff.ts）直接调：一样的不标、改了的标出「原来 → 现在」、多一款 / 少一款单独一行、
- *          仓库 / 运输方式说中文、空的跟没填当一回事、卡片上那一行产品写法只有一份
- *   R1～R7 弹窗（SnapshotModal）真跑起来（假 React，接口换成桩）：读取中、上线前转的、一份 / 两份（最近一次在前）、
- *          改过的那行标「改过」、没改的写「同左」、谁转的只在后端给了才显示、坏的那份、读失败、关掉以后晚回来的不管
+ *   S1～S7 比对函数（snapshot-diff.ts）直接调：一样的不标、改了的标出「原来 → 现在」、多一款 / 少一款单独一行、
+ *          仓库 / 运输方式说中文、空的跟没填当一回事、卡片上那一行产品写法只有一份；
+ *          （审查第 1 轮）按字段比不按拼出来的字比（两种填法拼出同一行字也要标出来）、国内单号「货拉拉」= 没填
+ *   R1～R8 弹窗（SnapshotModal）真跑起来（假 React，接口换成桩）：读取中、上线前转的、一份 / 两份（最近一次在前）、
+ *          改过的那行标「改过」、没改的写「同左」、谁转的只在后端给了才显示、坏的那份、读失败、关掉以后晚回来的不管；
+ *          「现在」拿后端同一个请求回的 current（不拿列表里的卡片），没回 current 报错不凑数
  *   C1～C2 卡片（NoticeCard）：存过就给按钮（几份写几份，运单被删回到「没转」的也给）；已转正式没存过的写「上线前转的，没存原样」；
  *          待入库 / 没转的什么都不写
- *   V1     页面接线：弹窗 key 带前缀（同层还有按数字给 key 的 Toast，教训 39）、拿列表里这张卡片现在的样子比、关的是自己那一次
- *   B1～B3 后端：存原样跟转运单在同一个事务里、只在转正式时存；读原样谁转的只给超管；存的字段跟页面的类型一一对上
+ *   V1     整页真跑：点卡片开弹窗、换一张卡片是新的一个（key 带「snap-」前缀，同层还有按数字给 key 的 Toast，教训 39）、
+ *          旧弹窗的关闭不关新的、弹窗不从列表拿「现在」
+ *   B1～B3 后端：存原样跟转运单在同一个事务里、只在转正式时存；读原样谁转的只给超管、回 current；存的字段跟页面的类型一一对上
  */
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { createRequire } from "node:module";
 import ts from "typescript";
-import { productLine, snapshotChangeCount, snapshotMetaRows, snapshotProductRows } from "../apps/web/src/modules/arrival-notice/snapshot-diff";
+import { BLANK_DOMESTIC_PLACEHOLDER, productLine, snapshotChangeCount, snapshotMetaRows, snapshotProductRows } from "../apps/web/src/modules/arrival-notice/snapshot-diff";
 
 const ROOT = path.resolve(__dirname, "..");
 const read = (rel: string) => fs.readFileSync(path.join(ROOT, rel), "utf8");
@@ -69,6 +72,8 @@ const runtime = { jsx: (type: any, p: any, key: any) => ({ type, props: p, key }
 
 /** 读原样接口的桩：每次调用挂起，测试自己决定回什么 */
 let pending: Array<{ id: string; resolve: (v: any) => void; reject: (e: unknown) => void }> = [];
+/** 整页测试：列表接口回什么 */
+let listItems: any[] = [];
 function load(rel: string, extraExports = ""): any {
   const file = path.join(ROOT, rel);
   const realRequire = createRequire(file);
@@ -82,8 +87,14 @@ function load(rel: string, extraExports = ""): any {
     if (id === "../layout/DetailModal") return { __esModule: true, default: function DetailModal(p: any) { return { type: "modal", props: p }; } };
     const real = realRequire(id);
     if (id === "../../services/arrival-notice-api") {
-      return { ...real, fetchArrivalNoticeSnapshots: (nid: string) => new Promise((resolve, reject) => pending.push({ id: nid, resolve, reject })) };
+      return {
+        ...real,
+        fetchArrivalNoticeSnapshots: (nid: string) => new Promise((resolve, reject) => pending.push({ id: nid, resolve, reject })),
+        fetchArrivalNotices: async () => ({ items: listItems, total: listItems.length, page: 1, pageSize: 30, counts: { todo: 0, notified: 0, inbound: 0, formal: listItems.length, all: listItems.length } }),
+      };
     }
+    if (id === "../../services/business-api") return { ...real, fetchStaffClients: async () => [] };
+    if (id === "../realtime/useRealtime") return { useLiveRefresh() {} };
     return real;
   }, mod);
   return mod.exports;
@@ -119,9 +130,9 @@ function flush() {
   }
   throw new Error("无限重画");
 }
-function mount(notice: any, current: any = notice) {
+function mount(notice: any) {
   hooks = []; effects = []; cleanups = []; pending = [];
-  props = { notice, current, onClose() {} };
+  props = { notice, onClose() {} };
   flush();
 }
 function unmount() { cleanups.forEach((c) => c()); cleanups = []; }
@@ -181,6 +192,29 @@ async function main(): Promise<void> {
     assert.equal(productLine(SHOE), "鞋 × 5 件 · 敏感货 · 国内单号 YT9");
   });
 
+  await check("S6（审查第 1 轮）按字段比、不按拼出来的那行字比：国内单号「X · 60×40×30cm」没尺寸 vs 国内单号「X」有尺寸，拼出来一样也要标「改过」", () => {
+    const was = P({ itemName: "灯具", packageCount: 2, domesticTrackingNo: "X · 60×40×30cm" });
+    const now = P({ itemName: "灯具", packageCount: 2, domesticTrackingNo: "X", lengthCm: 60, widthCm: 40, heightCm: 30 });
+    assert.equal(productLine(was), productLine(now), "前提：两种填法拼出来的字一样");
+    const [r] = snapshotProductRows({ ...SNAP, products: [was] }, card({ products: [now] }));
+    assert.equal(r.changed, true);
+  });
+
+  await check("S7（审查第 1 轮）国内单号「货拉拉」= 没填（同后端同步卡片的口径）：原样里写的「货拉拉」、卡片同步成没填，不算改过，两边都不显示「货拉拉」；前后空白 / 只有空格也当一回事", () => {
+    assert.match(read("apps/api/src/modules/arrival-notices/routes.ts"), new RegExp(`const BLANK_DOMESTIC_PLACEHOLDER = "${BLANK_DOMESTIC_PLACEHOLDER}";`), "前后端的占位字要一样");
+    const rows = snapshotProductRows(
+      { ...SNAP, products: [{ ...LAMP, domesticTrackingNo: "货拉拉" }, { ...SHOE, itemName: " 鞋 ", domesticTrackingNo: "  " }] },
+      card({ products: [{ ...LAMP, domesticTrackingNo: null }, { ...SHOE, domesticTrackingNo: null }] }),
+    );
+    assert.deepEqual(rows.map((r) => r.changed), [false, false]);
+    assert.ok(!rows[0].was.includes("货拉拉") && !rows[0].was.includes("国内单号"), rows[0].was);
+    // 真改了国内单号照样标
+    assert.equal(snapshotProductRows({ ...SNAP, products: [{ ...LAMP, domesticTrackingNo: "货拉拉" }] }, card({ products: [{ ...LAMP, domesticTrackingNo: "SF9" }] }))[0].changed, true);
+    // 整票：数字按值比、字符串去空白
+    const meta = snapshotMetaRows({ ...SNAP, clientId: " ZZA01 ", weightKg: 75 }, card({ weightKg: 75.0 }));
+    assert.deepEqual(meta.filter((r) => r.changed), []);
+  });
+
   /* ───────────── 弹窗 ───────────── */
   await check("R1 一打开就去读这一条的原样，没回来时写「读取中…」", () => {
     mount(card());
@@ -193,16 +227,16 @@ async function main(): Promise<void> {
 
   await check("R2 一份都没有（上线前转的）：照实说「这条没有存原样（上线前转的）」", async () => {
     mount(card({ snapshotCount: 0 }));
-    await answer({ items: [] });
+    await answer({ items: [], current: card({ snapshotCount: 0 }) });
     assert.ok(text(tree).includes("这条没有存原样（上线前转的）"), text(tree));
     assert.ok(!text(tree).includes("读取中"), "回来了还写读取中");
     assert.equal(sections().length, 0);
   });
 
-  await check("R3 一份、运单改过件数：标题写「有 1 处跟现在不一样」；改过那一行标「改过」、写现在的；没改的写「同左」；员工看不到谁转的", async () => {
-    const now = card({ products: [{ ...LAMP, packageCount: 12 }, SHOE] });
-    mount(card(), now);
-    await answer({ items: [{ id: "a1", convertedAt: "2026-10-19T02:05:00.000Z", convertedByName: null, data: SNAP }] });
+  await check("R3 一份、运单改过件数：比的是后端回的 current（不是点的那张卡片）；标题写「有 1 处跟现在不一样」；改过那一行标「改过」、写现在的；没改的写「同左」；员工看不到谁转的", async () => {
+    const now = card({ trackingNo: "YW0001", products: [{ ...LAMP, packageCount: 12 }, SHOE] });
+    mount(card());
+    await answer({ items: [{ id: "a1", convertedAt: "2026-10-19T02:05:00.000Z", convertedByName: null, data: SNAP }], current: now });
     const [s] = sections();
     assert.ok(s, "没画出那一份");
     const head = text(nodes((n) => n.type === "h4", s));
@@ -224,7 +258,7 @@ async function main(): Promise<void> {
     await answer({ items: [
       { id: "a2", convertedAt: "2026-10-19T03:00:00.000Z", convertedByName: "员工小李", data: { ...SNAP, remark: "重转前改过" } },
       { id: "a1", convertedAt: "2026-10-19T02:00:00.000Z", convertedByName: null, data: SNAP },
-    ] });
+    ], current: card({ snapshotCount: 2 }) });
     const heads = sections().map((s) => text(nodes((n) => n.type === "h4", s)));
     assert.equal(heads.length, 2);
     assert.ok(heads[0].startsWith("最近一次转运单：2026/10/19 11:00 · 员工小李 转的"), heads[0]);
@@ -236,7 +270,7 @@ async function main(): Promise<void> {
 
   await check("R5 存的那份坏了（后端给 null）：这一份写「读不出来」，不报错，另一份照常比", async () => {
     mount(card());
-    await answer({ items: [{ id: "bad", convertedAt: "2026-10-19T03:00:00.000Z", convertedByName: null, data: null }, { id: "a1", convertedAt: "2026-10-19T02:00:00.000Z", convertedByName: null, data: SNAP }] });
+    await answer({ items: [{ id: "bad", convertedAt: "2026-10-19T03:00:00.000Z", convertedByName: null, data: null }, { id: "a1", convertedAt: "2026-10-19T02:00:00.000Z", convertedByName: null, data: SNAP }], current: card() });
     const [bad, good] = sections();
     assert.ok(text(bad).includes("这一份读不出来"), text(bad));
     assert.equal(rowsOf(bad).length, 0);
@@ -255,10 +289,18 @@ async function main(): Promise<void> {
     mount(card());
     unmount();
     const p = pending.shift()!;
-    p.resolve({ items: [{ id: "a1", convertedAt: "2026-10-19T02:00:00.000Z", convertedByName: null, data: SNAP }] });
+    p.resolve({ items: [{ id: "a1", convertedAt: "2026-10-19T02:00:00.000Z", convertedByName: null, data: SNAP }], current: card() });
     await new Promise<void>((r) => setImmediate(r));
     assert.equal(dirty, false, "关掉了还在改状态");
     assert.equal(hooks[0], null, "关掉了还写进了原样");
+  });
+
+  await check("R8 后端没回 current（前后端版本没对上）：报「请刷新页面」，不拿点的那张卡片凑「现在」", async () => {
+    mount(card());
+    await answer({ items: [{ id: "a1", convertedAt: "2026-10-19T02:00:00.000Z", convertedByName: null, data: SNAP }] });
+    const t = text(tree);
+    assert.ok(t.includes("读原样失败：页面版本跟后台不一致，请刷新页面再点"), t);
+    assert.equal(sections().length, 0, "没有 current 不许画比对");
   });
 
   /* ───────────── 卡片 ───────────── */
@@ -295,17 +337,46 @@ async function main(): Promise<void> {
   });
 
   /* ───────────── 页面接线 ───────────── */
-  await check("V1 页面：弹窗 key 带「snap-」前缀（同层有 Toast key={toast.seq}，教训 39）；拿列表里这张卡片现在的样子比；关的只是自己那一次", () => {
-    const view = read("apps/web/src/modules/arrival-notice/ArrivalNoticesView.tsx");
-    const block = view.slice(view.indexOf("<SnapshotModal"), view.indexOf("/>", view.indexOf("<SnapshotModal")));
-    assert.match(block, /key=\{`snap-\$\{snapView\.seq\}`\}/);
-    assert.match(block, /current=\{data\?\.items\.find\(\(x\) => x\.id === snapView\.notice\.id\) \?\? snapView\.notice\}/);
-    assert.match(block, /onClose=\{\(\) => \{ const seq = snapView\.seq; setSnapView\(\(v\) => \(v && v\.seq === seq \? null : v\)\); \}\}/);
-    assert.match(view, /onViewSnapshots=\{\(\) => \{ snapSeqRef\.current \+= 1; setSnapView\(\{ seq: snapSeqRef\.current, notice: n \}\); \}\}/);
-    // 同一层按数字给 key 的兄弟元素：除了 Toast 之外都要带前缀
-    const code = view.split("\n").filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join("\n");
-    const bare = [...code.matchAll(/\bkey=\{([a-zA-Z]+)\.seq\}/g)].map((m) => m[1]);
-    assert.deepEqual(bare, ["toast"], `又有裸数字 key：${bare.join("、")}`);
+  await check("V1 整页真跑：点卡片开弹窗（key「snap-1」）、换一张是新的一个（「snap-2」、只有一个弹窗）；旧那次的关闭不关新的；弹窗不从列表拿「现在」；同层 key 不重", async () => {
+    listItems = [card({ id: "nA", trackingNo: "YWA" }), card({ id: "nB", trackingNo: "YWB", snapshotCount: 2 })];
+    hooks = []; effects = []; cleanups = [];
+    let viewTree: any;
+    const renderView = () => {
+      for (let n = 0; n < 30; n++) {
+        index = 0; dirty = false; viewTree = View.default({});
+        const queue = effects; effects = [];
+        for (const fn of queue) { const c = fn(); if (typeof c === "function") cleanups.push(c as () => void); }
+        if (!dirty) return;
+      }
+      throw new Error("整页无限重画");
+    };
+    renderView();
+    for (let i = 0; i < 5; i++) { await new Promise<void>((r) => setImmediate(r)); renderView(); }
+    const cards = () => nodes((n) => n.type === View.NoticeCard, viewTree);
+    const modals = () => nodes((n) => typeof n.type === "function" && n.type.name === "SnapshotModal", viewTree);
+    assert.equal(cards().length, 2, "列表没画出两张卡片");
+    assert.equal(modals().length, 0);
+    cards()[0].props.onViewSnapshots(); renderView();
+    assert.equal(modals().length, 1);
+    const first = modals()[0];
+    assert.equal(first.key, "snap-1");
+    assert.equal(first.props.notice.id, "nA");
+    assert.ok(!("current" in first.props), "弹窗的「现在」由后端回，不从列表拿");
+    cards()[1].props.onViewSnapshots(); renderView();
+    assert.equal(modals().length, 1, "同时只开一个");
+    assert.deepEqual([modals()[0].key, modals()[0].props.notice.id], ["snap-2", "nB"]);
+    first.props.onClose(); renderView();
+    assert.equal(modals().length, 1, "旧那次（snap-1）的关闭把新开的关掉了");
+    modals()[0].props.onClose(); renderView();
+    assert.equal(modals().length, 0);
+    // 同一层兄弟元素 key 不重（Toast 用裸数字 seq，弹窗必须带前缀，教训 39）
+    cards()[0].props.onViewSnapshots(); renderView();
+    const parent = nodes((n) => Array.isArray(n.props?.children) && n.props.children.some((c: any) => c && c.type?.name === "SnapshotModal"), viewTree)[0];
+    assert.ok(parent, "找不到弹窗所在那一层");
+    const keys = (parent.props.children as any[]).filter((c) => c && typeof c === "object" && c.key != null).map((c) => String(c.key));
+    assert.equal(new Set(keys).size, keys.length, `同层 key 重了：${keys.join(", ")}`);
+    assert.ok(keys.includes("snap-3"), keys.join(", "));
+    unmount();
   });
 
   /* ───────────── 后端 ───────────── */
@@ -324,11 +395,13 @@ async function main(): Promise<void> {
     assert.ok(!/arrivalNoticeSnapshot\.(update|upsert|updateMany|delete|deleteMany)\(/.test(api), "原样不许改、不许删（删到货通知靠外键跟着删）");
   });
 
-  await check("B2 读原样：只给员工 / 超管、按公司查、新的在前；谁转的只给超管（canSeeOperatorIdentity）", () => {
+  await check("B2 读原样：只给员工 / 超管、按公司查、新的在前；谁转的只给超管（canSeeOperatorIdentity）；一起回 current", () => {
     const start = api.indexOf('app.get("/staff/arrival-notices/snapshots"');
     const body = api.slice(start, api.indexOf("app.post(", start));
     assert.match(body, /requireRole\(req, res, \["staff", "admin"\]\)/);
-    assert.match(body, /where: \{ id, companyId: auth\.companyId \}/);
+    // 先按公司读这条到货通知现在的样子（读不到 404），一起回给页面当「现在」
+    assert.match(body, /const current = await loadDto\(auth\.companyId, id, auth\.role\);\s*if \(!current\) \{ fail\(res, 404/);
+    assert.match(body, /\n\s*current,\n\s*\}\);/);
     assert.match(body, /where: \{ noticeId: id, companyId: auth\.companyId \}/);
     assert.match(body, /orderBy: \[\{ createdAt: "desc" \}, \{ id: "desc" \}\]/);
     assert.match(body, /const showWho = canSeeOperatorIdentity\(auth\.role\);/);

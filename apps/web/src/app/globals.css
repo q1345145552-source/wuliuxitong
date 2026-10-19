@@ -4612,6 +4612,13 @@ table.a3-table.shipment-product-table > tbody > tr > td {
 .an-snap-table thead th:first-child { width: 8.5em; }
 .an-snap-table tbody th { color: var(--ink-2); font-weight: 500; }
 .an-snap-table td { color: var(--ink); }
+/* 平板宽度（641～900px）全站表格是「整块横滚 + 不折行」；这张表本来就是折行排的，不跟。
+   ≤640px 手机那套（一行摊成一块）照旧，所以这里只管 641 起 */
+@media (min-width: 641px) and (max-width: 900px) {
+  .an-snap-table { display: table; overflow-x: visible; white-space: normal; }
+  .an-snap-table th, .an-snap-table td { white-space: normal; }
+  .an-snap-table thead th { white-space: nowrap; }
+}
 .an-snap-table td.is-empty { color: var(--t-faint); }
 .an-snap-table tr.is-changed td, .an-snap-table tr.is-changed th { background: var(--c-amber-bg); }
 .an-snap-flag { margin-left: 6px; padding: 0 5px; border: 1px solid var(--c-amber-deep); border-radius: var(--a3-radius); color: var(--c-amber-deep); font-size: 11px; font-weight: 500; }

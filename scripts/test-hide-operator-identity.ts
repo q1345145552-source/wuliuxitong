@@ -408,7 +408,8 @@ async function main(): Promise<void> {
     const found = new Set<string>();
     for (const m of schema.matchAll(/^\s+(\w+)\s+String\??\s/gm)) {
       const f = m[1];
-      if (/By$/.test(f) || /^(operator|actor)[A-Z]/.test(f) || f === "creatorName" || f === "createdByRole" || f === "reviewerName") found.add(f);
+      // 2026-10-19 审查：*ById / *ByName（到货通知原样的 convertedById / convertedByName）也认
+      if (/By(Id|Name)?$/.test(f) || /^(operator|actor)[A-Z]/.test(f) || f === "creatorName" || f === "createdByRole" || f === "reviewerName") found.add(f);
     }
     assert.ok(found.size >= 10, `从 schema 里只认出 ${found.size} 个字段，正则可能写窄了`);
     const missing = [...found].filter((f) => !(OPERATOR_IDENTITY_FIELDS as readonly string[]).includes(f));

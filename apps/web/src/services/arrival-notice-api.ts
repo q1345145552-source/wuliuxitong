@@ -294,9 +294,12 @@ export interface ConvertedNoticeDetail {
   blockedReason: string | null;
 }
 
-/** 转正式运单时存下的原样（新的在前），卡片上「看转运单时的原样」用 */
-export function fetchArrivalNoticeSnapshots(id: string): Promise<{ items: ArrivalNoticeSnapshot[] }> {
-  return apiRequest<{ items: ArrivalNoticeSnapshot[] }>(`${apiBaseUrl()}/staff/arrival-notices/snapshots?${new URLSearchParams({ id }).toString()}`);
+/**
+ * 转正式运单时存下的原样（新的在前），卡片上「看转运单时的原样」用。
+ * current = 这条到货通知现在的样子（后端同一个请求里现读，跟列表卡片同一个口径），弹窗拿它比
+ */
+export function fetchArrivalNoticeSnapshots(id: string): Promise<{ items: ArrivalNoticeSnapshot[]; current?: ArrivalNotice }> {
+  return apiRequest<{ items: ArrivalNoticeSnapshot[]; current?: ArrivalNotice }>(`${apiBaseUrl()}/staff/arrival-notices/snapshots?${new URLSearchParams({ id }).toString()}`);
 }
 
 export function fetchConvertedNoticeDetail(id: string): Promise<ConvertedNoticeDetail> {

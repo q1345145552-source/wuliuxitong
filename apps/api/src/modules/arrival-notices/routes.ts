@@ -526,15 +526,36 @@ export function snapshotDataOf(f: NoticeFields): NoticeSnapshotData {
   };
 }
 
-/** 库里那一行读出来：坏了（手改过库、以后的新格式这版认不出）就是 null，页面说「这一份读不出来」，不报错 */
+const isTextOrNull = (v: unknown): v is string | null => v === null || typeof v === "string";
+const isNumberOrNull = (v: unknown): v is number | null => v === null || (typeof v === "number" && Number.isFinite(v));
+const isPlainObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
+
+/**
+ * 库里那一行读出来：坏了（手改过库、以后的新格式这版认不出）就是 null，页面说「这一份读不出来」，不报错。
+ * 每个字段都核类型（审查第 1 轮 Codex / dsh：只核 v 和 products 是数组，`{"v":1,"clientId":{}}`、`products:[null]` 这种
+ * 照样下发，页面一 trim 就整个弹窗白屏、同一张通知里好的那份也看不了）；缺字段也算坏。只回认得的字段。
+ * 货型只核是字符串（以后加新货型，老原样不该因此读不出；页面认不出的按普货显示）。
+ */
 function parseSnapshotData(text: string): NoticeSnapshotData | null {
-  try {
-    const d = JSON.parse(text) as Partial<NoticeSnapshotData> | null;
-    if (!d || typeof d !== "object" || d.v !== 1 || !Array.isArray(d.products)) return null;
-    return d as NoticeSnapshotData;
-  } catch {
-    return null;
+  let d: unknown;
+  try { d = JSON.parse(text); } catch { return null; }
+  if (!isPlainObject(d) || d.v !== 1 || !Array.isArray(d.products)) return null;
+  const { clientId, trackingNo, warehouseId, arrivedAt, remark, transportMode, weightKg, volumeM3 } = d;
+  if (!isTextOrNull(clientId) || !isTextOrNull(trackingNo) || !isTextOrNull(warehouseId) || !isTextOrNull(arrivedAt) || !isTextOrNull(remark)) return null;
+  if (transportMode !== null && transportMode !== "sea" && transportMode !== "land") return null;
+  if (!isNumberOrNull(weightKg) || !isNumberOrNull(volumeM3)) return null;
+  const products: NoticeSnapshotData["products"] = [];
+  for (const p of d.products) {
+    if (!isPlainObject(p)) return null;
+    const { itemName, packageCount, lengthCm, widthCm, heightCm, productQuantity, weightKg: unitWeight, cargoType, domesticTrackingNo } = p;
+    if (!isTextOrNull(itemName) || !isTextOrNull(cargoType) || !isTextOrNull(domesticTrackingNo)) return null;
+    if (![packageCount, lengthCm, widthCm, heightCm, productQuantity, unitWeight].every(isNumberOrNull)) return null;
+    products.push({
+      itemName, packageCount: packageCount as number | null, lengthCm: lengthCm as number | null, widthCm: widthCm as number | null,
+      heightCm: heightCm as number | null, productQuantity: productQuantity as number | null, weightKg: unitWeight as number | null, cargoType, domesticTrackingNo,
+    });
   }
+  return { v: 1, clientId, trackingNo, warehouseId, transportMode, arrivedAt, weightKg, volumeM3, remark, products };
 }
 
 /** 回滚 / 新旧容器交接时旧版只写镜像：在通知行锁内拒绝覆盖，不猜两份数据哪边正确。
@@ -1529,14 +1550,16 @@ export function registerArrivalNoticeRoutes(app: MinimalHttpApp): void {
   /**
    * 转正式运单时存下的原样（2026-10-19 老板选 B）：卡片上「看转运单时的原样」点开读这里。只读，新的在前。
    * 员工、超管都能看（到货通知本来就只给这两种账号）；谁转的名字只给超管（老板 2026-09-15：操作人只给超管看）。
+   * 同时回这条到货通知**现在**的样子（current，跟列表卡片同一个 loadDto）：页面拿它比，不拿列表里那张 ——
+   * 弹窗开着时列表刷新、这张卡片被搜索条件 / 翻页挤掉了，再拿打开时那份旧的冒充「现在」会漏报（审查第 1 轮 Codex）。
    */
   app.get("/staff/arrival-notices/snapshots", async (req: HttpRequest, res: HttpResponse) => {
     const auth = requireRole(req, res, ["staff", "admin"]);
     if (!auth) return;
     const id = idOf(req.query.id);
     if (!id) { fail(res, 400, "BAD_REQUEST", "缺少到货通知 id"); return; }
-    const notice = await prisma.arrivalNotice.findFirst({ where: { id, companyId: auth.companyId }, select: { id: true } });
-    if (!notice) { fail(res, 404, "NOT_FOUND", "这条到货通知不存在（可能刚被删了），请刷新页面"); return; }
+    const current = await loadDto(auth.companyId, id, auth.role);
+    if (!current) { fail(res, 404, "NOT_FOUND", "这条到货通知不存在（可能刚被删了），请刷新页面"); return; }
     const rows = await prisma.arrivalNoticeSnapshot.findMany({
       where: { noticeId: id, companyId: auth.companyId },
       orderBy: [{ createdAt: "desc" }, { id: "desc" }],
@@ -1549,6 +1572,7 @@ export function registerArrivalNoticeRoutes(app: MinimalHttpApp): void {
         convertedByName: showWho ? r.convertedByName : null,
         data: parseSnapshotData(r.data),
       })),
+      current,
     });
   });
 

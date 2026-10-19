@@ -9,9 +9,12 @@
  *   P4  转正式没转成（缺资料）：一份都不存
  *   P5  运单在「运单管理」被删：卡片回到「没转」，原样还在（snapshotCount 照旧 1、读得到）；改资料存一下回包也带着；
  *       重新转正式再存一份，两份都在、新的在前、各记各的运单
- *   P6  读原样：别家公司的 404、没带 id 400、客户 / 代理进不来；坏了的 / 认不出的新格式那一份 data 是 null、不报错
+ *   P6  读原样：别家公司的 404、没带 id 400、客户 / 代理进不来；坏了的 / 认不出的新格式 / 字段类型不对（审查第 1 轮）那一份 data 是 null、不报错；
+ *       别家公司的原样混在同一条到货通知下：读原样、列表、改资料回包、超管修改详情的份数都不算它
  *   P7  删到货通知（运单被删、回到「没转」才删得掉）：原样跟着删
  *   P8  超管点「修改」时拿的已转运单详情也带 snapshotCount
+ *   P9  刚转完、谁都没改：页面真比对函数跟读原样回的 current 比，一处「改过」都没有（各种填法、国内单号写「货拉拉」、待入库再转正式；
+ *       运单管理改了无关的一项触发同步之后也一样）；current 跟列表上那张卡片一模一样
  *
  * 只连测试库：DATABASE_URL 不带 neon.tech 的不跑（一次性 docker 库设 AGENT_PORTAL_TEST_ALLOW_DB=1）；
  * 没有 DATABASE_URL 打印「跳过」。测试数据全在假公司 zz_ansnap_co / zz_ansnap_co2 下，开跑前、跑完后都清干净。
@@ -75,6 +78,7 @@ async function main(): Promise<void> {
     return l.items.find((x: Row) => x.trackingNo === trackingNo || x.id === trackingNo);
   };
   const snaps = (auth: Auth, id: string) => must("GET /staff/arrival-notices/snapshots", auth, {}, { id }).then((d) => d.items as Row[]);
+  const snapsCurrent = (auth: Auth, id: string) => must("GET /staff/arrival-notices/snapshots", auth, {}, { id }).then((d) => d.current as Row);
   // 一款产品（页面 draftToBody 发的样子：没填的是 null）
   const P = (o: Row = {}): Row => ({ itemName: null, packageCount: null, lengthCm: null, widthCm: null, heightCm: null, productQuantity: null, weightKg: null, cargoType: "normal", domesticTrackingNo: null, ...o });
   const full = (no: string): Row => ({
@@ -145,6 +149,8 @@ async function main(): Promise<void> {
       assert.deepEqual(asStaff[0].data, data);
       assert.equal(asStaff[0].convertedAt, rows[0].createdAt.toISOString());
       assert.equal((await snaps(ADMIN, n.id))[0].convertedByName, STAFF.name, "超管看得到");
+      // 一起回的 current = 列表上那张卡片（同一个口径）
+      assert.deepEqual(await snapsCurrent(STAFF, n.id), await listItem(STAFF, NO("A1")), "读原样回的「现在」跟列表卡片不一样");
     });
 
     await check("P2 转待入库不存；待入库时改资料、再转正式：存的是改过之后、转正式那一刻的；只这一份", async () => {
@@ -197,8 +203,11 @@ async function main(): Promise<void> {
       assert.equal(card.shipmentGone, true);
       assert.equal(card.snapshotCount, 1, "以前那份原样还在");
       assert.equal((await snaps(STAFF, n.id)).length, 1);
+      // 别家公司的原样混在这条下面（审查第 1 轮）：改资料回包的份数不算它
+      await pm.arrivalNoticeSnapshot.create({ data: { id: "zz_ansnap_x5", companyId: CO2, noticeId: n.id, data: "{}", convertedById: OTHER_STAFF.userId } });
       const edited = await save(STAFF, { ...full("D1"), id: n.id, remark: "重转前改一下" });
-      assert.equal(edited.snapshotCount, 1, "改资料存完回给页面的卡片也要带着（不然按钮就不见了）");
+      assert.equal(edited.snapshotCount, 1, "改资料存完回给页面的卡片也要带着（不然按钮就不见了），也不算别家公司的");
+      await pm.arrivalNoticeSnapshot.delete({ where: { id: "zz_ansnap_x5" } });
       await new Promise((r) => setTimeout(r, 5));
       const second = await convert(STAFF, n.id, "formal");
       assert.equal(second.snapshotCount, 2);
@@ -218,8 +227,28 @@ async function main(): Promise<void> {
       assert.equal((await call("GET /staff/arrival-notices/snapshots", CLIENT, {}, { id: p1Id })).status, 403);
       assert.equal((await call("GET /staff/arrival-notices/snapshots", AGENT, {}, { id: p1Id })).status, 403);
       await pm.arrivalNoticeSnapshot.create({ data: { id: "zz_ansnap_bad", companyId: CO, noticeId: p1Id, data: "{坏的", convertedById: STAFF.userId, createdAt: new Date(Date.now() + 60_000) } });
-      // 以后的新格式（v=2）这一版认不出：也给 null，不拿新格式硬套老页面
-      await pm.arrivalNoticeSnapshot.create({ data: { id: "zz_ansnap_v2", companyId: CO, noticeId: p1Id, data: JSON.stringify({ v: 2, products: [] }), convertedById: STAFF.userId, createdAt: new Date(Date.now() + 30_000) } });
+      const good = JSON.parse((await pm.arrivalNoticeSnapshot.findFirst({ where: { noticeId: p1Id, id: { not: "zz_ansnap_bad" } } })).data);
+      // 以后的新格式（v=2，别的字段都齐、类型也对）这一版认不出：也给 null，不拿新格式硬套老页面
+      await pm.arrivalNoticeSnapshot.create({ data: { id: "zz_ansnap_v2", companyId: CO, noticeId: p1Id, data: JSON.stringify({ ...good, v: 2 }), convertedById: STAFF.userId, createdAt: new Date(Date.now() + 30_000) } });
+      // 审查第 1 轮：JSON 能解析、v=1，但字段类型不对 / 缺字段 / 产品不是对象 —— 一律当坏的（不然页面一 trim 就白屏）
+      const broken: Array<[string, unknown]> = [
+        ["clientId 是对象", { ...good, clientId: {} }],
+        ["缺 remark", (({ remark, ...rest }) => rest)(good)],
+        ["运输方式认不出", { ...good, transportMode: "air" }],
+        ["总重是字符串", { ...good, weightKg: "60" }],
+        ["产品里有 null", { ...good, products: [null] }],
+        ["产品是空对象", { ...good, products: [{}] }],
+        ["件数是字符串", { ...good, products: [{ ...good.products[0], packageCount: "12" }] }],
+        ["整份是数组", [good]],
+      ];
+      let at = 20_000;
+      for (const [i, [, data]] of broken.entries()) {
+        await pm.arrivalNoticeSnapshot.create({ data: { id: `zz_ansnap_b${i}`, companyId: CO, noticeId: p1Id, data: JSON.stringify(data), convertedById: STAFF.userId, createdAt: new Date(Date.now() + (at -= 1000)) } });
+      }
+      const all = await snaps(STAFF, p1Id);
+      for (const [i, [why]] of broken.entries()) assert.equal(all.find((x: Row) => x.id === `zz_ansnap_b${i}`)?.data, null, `${why}：应该给 null`);
+      assert.deepEqual(all.find((x: Row) => !x.id.startsWith("zz_ansnap_"))?.data, good, "好的那份原样给（只回认得的字段）");
+      await pm.arrivalNoticeSnapshot.deleteMany({ where: { id: { startsWith: "zz_ansnap_b" }, NOT: { id: "zz_ansnap_bad" } } });
       const items = await snaps(STAFF, p1Id);
       assert.equal(items.length, 3);
       assert.deepEqual(items.map((x: Row) => x.id).slice(0, 2), ["zz_ansnap_bad", "zz_ansnap_v2"]);
@@ -229,6 +258,10 @@ async function main(): Promise<void> {
       // 别家公司的原样混进来也不给（按公司过滤）
       await pm.arrivalNoticeSnapshot.create({ data: { id: "zz_ansnap_x", companyId: CO2, noticeId: p1Id, data: "{}", convertedById: OTHER_STAFF.userId } });
       assert.equal((await snaps(STAFF, p1Id)).length, 3, "别家公司的那份不能混进来");
+      // 份数也不算它（审查第 1 轮 dsh / Codex）：列表、读原样回的 current、超管修改详情；改资料回包的在 D1 那条上核
+      assert.equal((await listItem(STAFF, NO("A1"))).snapshotCount, 3, "列表的份数把别家公司那份算进去了");
+      assert.equal((await snapsCurrent(STAFF, p1Id)).snapshotCount, 3);
+      assert.equal((await must("GET /staff/arrival-notices/converted-detail", ADMIN, {}, { id: p1Id, v: "2" })).item.snapshotCount, 3);
       await pm.arrivalNoticeSnapshot.deleteMany({ where: { id: { in: ["zz_ansnap_bad", "zz_ansnap_v2", "zz_ansnap_x"] } } });
     });
 
@@ -256,15 +289,20 @@ async function main(): Promise<void> {
           weightKg: null, volumeM3: null, remark: "  前后有空格  ", products: [P({ itemName: "电池", packageCount: 7, lengthCm: 33.3, widthCm: 21.7, heightCm: 15.5, weightKg: 2.25, productQuantity: 40, cargoType: "special", domesticTrackingNo: "JD0001" })] }],
         ["E4 有的款填了尺寸、有的没填（整票数以手填为准）", { clientId: CLIENT.userId, trackingNo: NO("E4"), transportMode: "sea", warehouseId: "wh_yiwu_01", arrivedAt: "2026-10-16",
           weightKg: 50, volumeM3: 0.5, remark: "x", products: [P({ itemName: "灯具", packageCount: 2, lengthCm: 60, widthCm: 40, heightCm: 30, weightKg: 5, domesticTrackingNo: "SF1" }), P({ itemName: "鞋", packageCount: 4 })] }],
+        // 审查第 1 轮：到货通知上国内单号就写的「货拉拉」（同步回来变成没填）
+        ["E5 国内单号写的「货拉拉」", { clientId: CLIENT.userId, trackingNo: NO("E5"), transportMode: "sea", warehouseId: "wh_yiwu_01", arrivedAt: "2026-10-15",
+          weightKg: 20, volumeM3: 0.2, remark: null, products: [P({ itemName: "杯子", packageCount: 3, domesticTrackingNo: "货拉拉" })] }],
       ];
       const problems: string[] = [];
+      // 跟弹窗一样：拿读原样那个接口一起回的 current 比（顺便核它跟列表卡片一模一样）
       const compare = async (label: string, trackingNo: string) => {
-        const id = (await listItem(STAFF, trackingNo)).id;
         const card = await listItem(STAFF, trackingNo);
-        const [s] = await snaps(STAFF, id);
+        const r = await must("GET /staff/arrival-notices/snapshots", STAFF, {}, { id: card.id });
+        assert.deepEqual(r.current, card, `${label}：current 跟列表卡片不一样`);
+        const [s] = r.items;
         assert.ok(s?.data, `${label}：没存原样`);
-        const diff = [...snapshotMetaRows(s.data, card), ...snapshotProductRows(s.data, card)].filter((r) => r.changed);
-        for (const r of diff) problems.push(`${label} · ${r.label}：转运单时「${r.was}」/ 现在「${r.now}」`);
+        const diff = [...snapshotMetaRows(s.data, r.current), ...snapshotProductRows(s.data, r.current)].filter((x) => x.changed);
+        for (const x of diff) problems.push(`${label} · ${x.label}：转运单时「${x.was}」/ 现在「${x.now}」`);
       };
       for (const [label, body] of shapes) {
         const n = await save(STAFF, body);

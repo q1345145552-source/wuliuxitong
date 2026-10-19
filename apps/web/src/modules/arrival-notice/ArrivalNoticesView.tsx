@@ -422,9 +422,8 @@ export default function ArrivalNoticesView() {
         <SnapshotModal
           // 加前缀，同上面 editor 那条：同一层还有别的按数字给 key 的元素
           key={`snap-${snapView.seq}`}
+          // 比的「现在」由弹窗自己跟原样一起读（后端同一个请求现读），不拿列表里的卡片（审查第 1 轮 Codex）
           notice={snapView.notice}
-          // 拿列表里这张卡片现在的样子来比（弹窗开着时列表刷新了就跟着新的）；这一页已经没有它了就用打开时那份
-          current={data?.items.find((x) => x.id === snapView.notice.id) ?? snapView.notice}
           onClose={() => { const seq = snapView.seq; setSnapView((v) => (v && v.seq === seq ? null : v)); }}
         />
       ) : null}
