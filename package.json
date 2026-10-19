@@ -116,7 +116,10 @@
     "test:arrival-notice-snapshot-db": "tsx scripts/test-arrival-notice-snapshot-db.ts",
     "test:migration-arrival-notice-snapshots-db": "tsx scripts/test-migration-arrival-notice-snapshots-db.ts",
     "test:staff-perms-source": "tsx scripts/test-staff-perms-source.ts",
-    "test:staff-perms-db": "tsx scripts/test-staff-perms-db.ts"
+    "test:staff-perms-db": "tsx scripts/test-staff-perms-db.ts",
+    "test:staff-remark-source": "tsx scripts/test-staff-remark-source.ts",
+    "test:staff-remark-db": "tsx scripts/test-staff-remark-db.ts",
+    "test:migration-user-remark-db": "tsx scripts/test-migration-user-remark-db.ts"
   },
   "devDependencies": {
     "@types/node": "^26.0.1",

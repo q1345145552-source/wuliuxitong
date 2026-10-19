@@ -65,6 +65,7 @@ import {
   clearAdminAiSessionMemory,
   resolveAdminAiKnowledgeGap,
   createAdminStaff,
+  setAdminStaffRemark,
   createAdminClient,
   updateAdminClient,
   toggleUserBan,
@@ -493,7 +494,12 @@ export default function AdminHomePage() {
   /* 点了 ✕、还在放 0.2 秒关闭动画（closeEditOrder 还没调）时离开「运单管理」：弹窗跟着卸掉、动画的定时器也没了，
      回来弹窗又冒出来（Codex / dsh 第 7 轮）。记一下「已经点了 ✕」，离开时替它关完 */
   const editCloseRequestedRef = useRef(false);
-  const [staffForm, setStaffForm] = useState({ id: "", name: "", phone: "", password: "" });
+  const [staffForm, setStaffForm] = useState({ id: "", name: "", phone: "", password: "", remark: "" });
+  /** 正在改哪个员工的备注（2026-10-20）；跟「设置密码」一样在那一行下面展开 */
+  const [editingRemarkFor, setEditingRemarkFor] = useState<string | null>(null);
+  const [remarkDraft, setRemarkDraft] = useState("");
+  /** 改备注没存上的原因，画在那一行的输入框下面（页面底部那行离得太远看不见） */
+  const [remarkError, setRemarkError] = useState("");
   const [clientForm, setClientForm] = useState({ id: "", name: "", companyName: "", phone: "", email: "", password: "", agentId: "" });
   const [showStaffModal, setShowStaffModal] = useState(false);
   const [showClientModal, setShowClientModal] = useState(false);
@@ -970,6 +976,7 @@ export default function AdminHomePage() {
           name: staffForm.name.trim(),
           phone: staffForm.phone.trim(),
           password: staffForm.password.trim() || undefined,
+          remark: staffForm.remark.trim() || undefined,
         }, signal));
       } catch (error) {
         if (error instanceof Error && error.name === "AccountWriteTimeoutError") {
@@ -986,7 +993,7 @@ export default function AdminHomePage() {
       }
       // 员工建号密码是选填的：没填就说清楚要先「设置密码」才能登（在清空表单之前读）
       const staffPwHint = staffForm.password.trim() ? "" : "（还没设密码，要先点「设置密码」才能登录）";
-      setStaffForm({ id: "", name: "", phone: "", password: "" });
+      setStaffForm({ id: "", name: "", phone: "", password: "", remark: "" });
       setShowStaffModal(false);
       // 登录只认账号（不认名字）；账号留空时是系统起的，必须当场告诉他（2026-10-11）
       setToast(created?.id ? `员工添加成功，登录账号：${created.id}${staffPwHint}` : "员工添加成功");
@@ -1046,6 +1053,42 @@ export default function AdminHomePage() {
       else setClientList(applyStatus);
       setToast(result.status === "active" ? "已解除封禁" : "已封禁，该账号无法再登录");
       await refreshAccountViews(reload, result.status === "active" ? "已解除封禁" : "已封禁");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  /** 存员工备注（2026-10-20）：空着 = 清掉 */
+  const submitStaffRemark = async (userId: string) => {
+    if (loading) return;
+    const value = remarkDraft.trim();
+    if (value.length > 50) {
+      setRemarkError("备注太长了（最多 50 个字）");
+      return;
+    }
+    setLoading(true);
+    setRemarkError("");
+    try {
+      let result: Awaited<ReturnType<typeof setAdminStaffRemark>>;
+      try {
+        // 走账号写入那道边界：存之前发出去、存完才回来的旧员工列表不许把备注盖回去（同封禁）
+        result = await runAccountWrite((signal) => setAdminStaffRemark(userId, value, signal));
+      } catch (error) {
+        if (error instanceof Error && error.name === "AccountWriteTimeoutError") {
+          setRemarkError(error.message);
+          return;
+        }
+        const text = error instanceof Error ? error.message : "保存失败";
+        setRemarkError(`备注没存上：${text}`);
+        return;
+      }
+      // 用服务器确认的值（后端会去掉两头空格、空 = 清掉）
+      setStaffList((rows) => rows.map((row) => (row.id === result.id ? { ...row, remark: result.remark } : row)));
+      setEditingRemarkFor(null);
+      setRemarkDraft("");
+      const done = result.remark ? "备注已保存" : "备注已清掉";
+      setToast(done);
+      await refreshAccountViews(loadStaff, done);
     } finally {
       setLoading(false);
     }
@@ -1602,7 +1645,7 @@ export default function AdminHomePage() {
           <button
             type="button"
             disabled={loading}
-            onClick={() => { setShowStaffModal(true); setShowNewAccountPassword(true); setMessage(""); setStaffForm({ id: "", name: "", phone: "", password: "" }); }}
+            onClick={() => { setShowStaffModal(true); setShowNewAccountPassword(true); setMessage(""); setStaffForm({ id: "", name: "", phone: "", password: "", remark: "" }); }}
             style={{ border: "none", borderRadius: 8, padding: "8px 14px", background: "var(--c-blue)", color: "var(--white)", fontWeight: 600, cursor: "pointer" }}
           >
             创建账号
@@ -1620,11 +1663,21 @@ export default function AdminHomePage() {
                   <span><strong>姓名</strong> {u.name}</span>
                   <span><strong>手机</strong> {u.phone}</span>
                   <span><strong>状态</strong> {u.status === "inactive" ? "已封禁" : "正常"}</span>
+                  {/* 员工备注（2026-10-20，如「义乌仓管」「广州仓管」「泰国员工」） */}
+                  <span style={{ overflowWrap: "anywhere" }}><strong>备注</strong> {u.remark ? u.remark : <span style={{ color: "var(--t-faint)" }}>未写</span>}</span>
                   <span style={{ color: "var(--t-strong)", fontSize: 12 }}>{beijingDate(u.createdAt)}</span>
                   <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                     <button
                       type="button"
-                      onClick={() => { setShowSettingPassword(false); setSettingPasswordValue(""); setSettingPasswordFor(settingPasswordFor === u.id ? null : u.id); }}
+                      onClick={() => { setSettingPasswordFor(null); setRemarkError(""); setRemarkDraft(u.remark ?? ""); setEditingRemarkFor(editingRemarkFor === u.id ? null : u.id); }}
+                      disabled={loading}
+                      style={{ border: "1px solid var(--c-blue)", color: "var(--c-blue)", borderRadius: 8, padding: "6px 10px", background: "var(--white)", cursor: "pointer", fontSize: 13 }}
+                    >
+                      {editingRemarkFor === u.id ? "取消改备注" : "改备注"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => { setEditingRemarkFor(null); setShowSettingPassword(false); setSettingPasswordValue(""); setSettingPasswordFor(settingPasswordFor === u.id ? null : u.id); }}
                       disabled={loading}
                       style={{ border: "1px solid var(--c-green)", color: "var(--c-green)", borderRadius: 8, padding: "6px 10px", background: "#f0fdf4", cursor: "pointer", fontSize: 13 }}
                     >
@@ -1640,6 +1693,36 @@ export default function AdminHomePage() {
                     </button>
                   </div>
                 </div>
+                {editingRemarkFor === u.id ? (
+                  <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px solid var(--l-soft)", display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                    <input
+                      value={remarkDraft}
+                      onChange={(e) => setRemarkDraft(e.target.value)}
+                      maxLength={50}
+                      placeholder="哪里的员工，如：义乌仓管、广州仓管、泰国员工（空着 = 清掉）"
+                      aria-label={`员工 ${u.id} 的备注`}
+                      style={{ border: "1px solid var(--l-strong)", borderRadius: 8, padding: "6px 10px", width: 320, maxWidth: "100%" }}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => void submitStaffRemark(u.id)}
+                      disabled={loading}
+                      style={{ border: "none", borderRadius: 8, padding: "6px 12px", background: "var(--c-blue)", color: "var(--white)", cursor: "pointer" }}
+                    >
+                      保存备注
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => { setEditingRemarkFor(null); setRemarkDraft(""); setRemarkError(""); }}
+                      style={{ border: "1px solid var(--l-strong)", borderRadius: 8, padding: "6px 12px", background: "var(--white)", cursor: "pointer", color: "var(--t-strong)" }}
+                    >
+                      取消
+                    </button>
+                    {remarkError ? (
+                      <div role="alert" style={{ flexBasis: "100%", padding: "6px 10px", background: "var(--c-red-bg)", color: "var(--c-red-deep)", borderRadius: 8, fontSize: 13 }}>{remarkError}</div>
+                    ) : null}
+                  </div>
+                ) : null}
                 {settingPasswordFor === u.id ? (
                   <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px solid var(--l-soft)", display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
                     <input
@@ -2737,6 +2820,11 @@ export default function AdminHomePage() {
               <div>
                 <label style={{ fontSize: 12, color: "var(--t-strong)", display: "block", marginBottom: 4 }}>手机 *</label>
                 <input value={staffForm.phone} onChange={(e) => setStaffForm((f) => ({ ...f, phone: e.target.value }))} placeholder="手机号" style={{ border: "1px solid var(--l-strong)", borderRadius: 8, padding: "8px 10px", width: "100%", fontSize: 13 }} />
+              </div>
+              {/* 员工备注（2026-10-20）：哪里的员工，只有超管看得到 */}
+              <div>
+                <label style={{ fontSize: 12, color: "var(--t-strong)", display: "block", marginBottom: 4 }}>备注（选填）</label>
+                <input value={staffForm.remark} onChange={(e) => setStaffForm((f) => ({ ...f, remark: e.target.value }))} maxLength={50} placeholder="哪里的员工，如：义乌仓管、广州仓管、泰国员工" autoComplete="off" style={{ border: "1px solid var(--l-strong)", borderRadius: 8, padding: "8px 10px", width: "100%", fontSize: 13 }} />
               </div>
               <div>
                 <label style={{ fontSize: 12, color: "var(--t-strong)", display: "block", marginBottom: 4 }}>登录密码</label>

@@ -326,6 +326,8 @@ export interface AdminUserItem {
   createdAt: string;
   companyName?: string;
   email?: string;
+  /** 员工备注（2026-10-20，如「义乌仓管」「广州仓管」「泰国员工」）：只有超管看得到；null / 没有 = 没写 */
+  remark?: string | null;
   /**
    * 2026-09-16 代理账号：以下三项只有 GET /admin/users?role=client 才有（只给超级管理员的接口）。
    * 员工端客户下拉走 /staff/clients，那边没有这些字段。
@@ -1241,6 +1243,17 @@ export async function fetchStaffClients(): Promise<StaffClientItem[]> {
   return data.items;
 }
 
+/** 超管改员工备注（2026-10-20）：空串 = 清掉；后端只认本公司员工号 */
+export async function setAdminStaffRemark(id: string, remark: string, signal?: AbortSignal): Promise<{ id: string; remark: string | null }> {
+  const response = await fetch(`${apiBaseUrl()}/admin/users/staff-remark`, {
+    method: "POST",
+    signal,
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({ id, remark }),
+  });
+  return parseApiResponse<{ id: string; remark: string | null }>(response);
+}
+
 /** 员工重置客户密码（2026-10-19）：后端只认客户号，员工 / 超管 / 代理的号会 403 */
 export async function resetStaffClientPassword(id: string, password: string): Promise<{ updated: boolean; id: string }> {
   const response = await fetch(`${apiBaseUrl()}/staff/clients/set-password`, {
@@ -1452,6 +1465,8 @@ export async function createAdminStaff(payload: {
   name: string;
   phone: string;
   password?: string;
+  /** 员工备注（2026-10-20）：空着不传 */
+  remark?: string;
 }, signal?: AbortSignal): Promise<{ id: string; name: string; phone: string; createdAt: string }> {
   const response = await fetch(`${apiBaseUrl()}/admin/users`, {
     method: "POST",

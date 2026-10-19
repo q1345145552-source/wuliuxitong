@@ -34,6 +34,8 @@ model User {
   createdAt    DateTime @default(now()) @map("created_at")
   /// 2026-09-16 代理账号：role=agent 的行 = 这个代理的登录号；role=client 的行 = 归这个代理的客户；湘泰自己的为空
   agentId      String?  @map("agent_id")
+  /// 2026-10-20 员工备注（老板：「给员工账号备注是哪里的员工，比如义乌仓管，广州仓管，泰国员工」）：只有超管在「员工管理」里写、看；空 = 没写
+  remark       String?  @map("remark")
 
   agent    Agent?          @relation("AgentUsers", fields: [agentId], references: [id], onDelete: Restrict)
   whrPrice ClientWhrPrice?

@@ -327,6 +327,10 @@ jobs:
       # 编辑运单超管 / 员工共用一个框（WaybillEditDialog）、不在运单管理时不画但内容留着、员工页开关 / 离开运单管理 +1、后端哪些放开哪些照旧
       - name: Test staff permissions (source)
         run: npm run test:staff-perms-source
+      # 2026-10-20 员工账号备注（老板「管理员给员工账号进行备注」，不连库）：字段 / 迁移只加一列 / 体检清单、改备注只给超管只认员工号且写时再核、
+      # 建员工弹窗多一格备注、员工那一行显示备注 +「改备注」、存备注走账号写入边界用后端回的值、错误画在那一行、只有超管页用
+      - name: Test staff remark (source)
+        run: npm run test:staff-remark-source
       # 2026-10-17 封禁的唛头不进挂单的下拉（不连库）：提示跟后端拦下那句一样、员工 / 超管建单和改唛头的框都去掉封禁的、全站唛头下拉点名
       - name: Test banned client marks in pickers
         run: npm run test:client-ban-ui
@@ -524,6 +528,10 @@ jobs:
       # 员工改运单（同超管那条、版本核对、封禁 / 待入库照拦、客户代理 403）、删运单 / 旧保存照旧只给超管、到货通知改已转运单员工走完
       - name: Test staff permissions (real DB)
         run: bash .github/scripts/run-db-test.sh test:staff-perms-db
+      # 2026-10-20 员工账号备注（真接口、真库）：建员工带备注 / 超长不建、改 / 清备注、只认本公司员工号、只有超管能改能看、
+      # 查和写之间改成客户号 409
+      - name: Test staff remark (real DB)
+        run: bash .github/scripts/run-db-test.sh test:staff-remark-db
       # 2026-10-17 封禁的唛头不许再挂新单（真接口、真库）：建单 / 到货通知登记·改唛头·转运单 / 整柜建·改 / 超管改唛头都拦，
       # 已经挂在封禁唛头名下的单照常改、待入库照常转正式、预报单照常收货，解封后恢复
       - name: Test banned client cannot get new orders (real DB)
@@ -544,6 +552,9 @@ jobs:
       # 存原样那份迁移：上线前的库上连跑两遍、跟 schema 零差异、体检清单对上、不回填老数据、删到货通知跟着删 / 删运单不动
       - name: Test arrival notice snapshots migration file (real DB)
         run: bash .github/scripts/run-db-test.sh test:migration-arrival-notice-snapshots-db
+      # 2026-10-20 员工备注迁移真跑：上线前的库上连跑两遍、跟 schema 零差异、上线体检不报、老的号一个字不动
+      - name: Test user remark migration (real DB)
+        run: bash .github/scripts/run-db-test.sh test:migration-user-remark-db
       # 2026-10-08 模拟数据测试（多人同时操作）查出来的：建单查到货通知占号、同号并发不 500、删单 vs 装柜不死锁、
       # 删单那一刻看列表不 500、改单遇删单 409、编辑期间被装柜拦旧剩余数、删单删图片文件、到货通知搜索转义 / 按显示的号搜、客服选运单全品名
       - name: Test simulated-data fixes 1008 (real DB)

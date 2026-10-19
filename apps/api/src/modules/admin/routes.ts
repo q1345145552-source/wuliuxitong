@@ -187,6 +187,17 @@ async function attachLinkedShipments(
   return result;
 }
 
+/** 员工备注最多几个字（「义乌仓管」「广州仓管」「泰国员工」这种，50 足够） */
+export const STAFF_REMARK_MAX = 50;
+/** 读员工备注：不传 / null / 空白 = 没写（null）；不是文字或超长给出错原因 */
+function readStaffRemark(raw: unknown): { value: string | null } | { error: string } {
+  if (raw === undefined || raw === null) return { value: null };
+  if (typeof raw !== "string") return { error: "备注要是文字" };
+  const v = raw.trim();
+  if (v.length > STAFF_REMARK_MAX) return { error: `备注太长了（最多 ${STAFF_REMARK_MAX} 个字）` };
+  return { value: v || null };
+}
+
 export function registerAdminRoutes(app: MinimalHttpApp): void {
   app.get("/admin/dashboard/overview", async (req, res) => {
     const auth = requireRole(req, res, ["admin"]);
@@ -422,6 +433,7 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
           createdAt: true,
           companyName: true,
           email: true,
+          remark: true,
         },
       });
       ok(res, { items: allRows });
@@ -441,6 +453,8 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
         createdAt: true,
         companyName: true,
         email: true,
+        // 员工备注（2026-10-20）：只在这个只给超管的接口里给
+        remark: true,
         // 2026-09-16 代理账号：所属代理和长期价只在这个**只给超管**的接口里给（requireRole admin）。
         // 员工端客户下拉走 /staff/clients，那边只有 id + name，不带这些。
         agentId: true,
@@ -462,6 +476,7 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
         createdAt: r.createdAt.toISOString(),
         companyName: r.companyName ?? undefined,
         email: r.email ?? undefined,
+        remark: r.remark ?? null,
         ...(role === "client"
           ? {
               agentId: r.agentId ?? null,
@@ -1232,6 +1247,8 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
       password?: string;
       role?: string;
       agentId?: string | null;
+      /** 员工备注（2026-10-20）：只认开员工号时带的，开客户号不认 */
+      remark?: unknown;
     };
     const name = typeof body.name === "string" ? body.name.trim() : "";
     const phone = typeof body.phone === "string" ? body.phone.trim() : "";
@@ -1240,6 +1257,11 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
       return;
     }
     const targetRole = body.role === "client" ? "client" : "staff";
+    const remark = targetRole === "staff" ? readStaffRemark(body.remark) : { value: null };
+    if ("error" in remark) {
+      fail(res, 400, "BAD_REQUEST", remark.error);
+      return;
+    }
     const rawPassword = typeof body.password === "string" ? body.password.trim() : "";
     // 这个入口也能开客户（role=client）：客户号没密码就谁都登不进，跟 /admin/users/client 一样必填（2026-10-11 Codex 第 2 轮）。
     // 员工号照旧选填（建好后再「设置密码」）。排在查代理之前（dsh 第 3 轮：注定被拒的请求别先查库，报错也别被代理那句盖住）。
@@ -1284,11 +1306,32 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
         warehouseIds: "[]",
         passwordHash,
         agentId: agentInput?.agentId ?? null,
+        remark: remark.value,
       },
       select: { id: true, name: true, role: true, phone: true, createdAt: true },
     });
 
     ok(res, { id: created.id, name: created.name, phone: created.phone, createdAt: created.createdAt.toISOString() });
+  });
+
+  /**
+   * 改员工备注（2026-10-20 老板：「给员工账号备注是哪里的员工，比如义乌仓管，广州仓管，泰国员工」→「管理员给员工账号进行备注」）。
+   * 只给超管、只认本公司的员工号（客户 / 代理 / 超管的号 400）；空着 = 清掉；最多 50 个字。写的时候再核一次是员工号（CLAUDE.md 第 28 条）。
+   */
+  app.post("/admin/users/staff-remark", async (req, res) => {
+    const auth = requireRole(req, res, ["admin"]);
+    if (!auth) return;
+    const body = (req.body ?? {}) as { id?: unknown; remark?: unknown };
+    const id = typeof body.id === "string" ? body.id.trim() : "";
+    if (!id) { fail(res, 400, "BAD_REQUEST", "请选一个员工"); return; }
+    const remark = readStaffRemark(body.remark);
+    if ("error" in remark) { fail(res, 400, "BAD_REQUEST", remark.error); return; }
+    const user = await prisma.user.findFirst({ where: { id, companyId: auth.companyId }, select: { id: true, role: true } });
+    if (!user) { fail(res, 404, "NOT_FOUND", "没有这个员工号，请刷新再试"); return; }
+    if (user.role !== "staff") { fail(res, 400, "BAD_REQUEST", "备注只能写在员工号上"); return; }
+    const written = await prisma.user.updateMany({ where: { id: user.id, companyId: auth.companyId, role: "staff" }, data: { remark: remark.value } });
+    if (written.count === 0) { fail(res, 409, "VALIDATION_ERROR", "这个账号刚刚被改过，请刷新再试"); return; }
+    ok(res, { id: user.id, remark: remark.value });
   });
 
   app.post("/admin/users/client", async (req, res) => {

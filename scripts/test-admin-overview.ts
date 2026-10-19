@@ -362,7 +362,8 @@ function mutationCaller(kind: "staff" | "client" | "ban" | "edit", loadOverview:
     ...(options.account ?? accountWriteHarness()),
     loading: false, setLoading: (value: boolean) => { state.loading = value; },
     setToast: (text: string) => { state.toasts.push(text); }, setMessage: (text: string) => { if (text) state.messages.push(text); },
-    staffForm: { id: "", name: options.blankName ? "" : "员工测试", phone: "13000000000", password: "" },
+    // 2026-10-20 建员工表单多了「备注」（页面上的 staffForm 一直带着这一格）
+    staffForm: { id: "", name: options.blankName ? "" : "员工测试", phone: "13000000000", password: "", remark: "" },
     // 2026-10-11 起建客户号密码必填（Codex 审查：不填建出来的号登不进）；编辑客户留空 = 不改密码（Codex 第 2 轮：别让夹具把这条路盖住）
     clientForm: { id: "", name: options.blankName ? "" : "客户测试", companyName: "", phone: "13000000001", email: "", password: options.clientPassword ?? (kind === "edit" ? "" : "Abc12345"), agentId: "" },
     editingClientId: "u-test", editingClientAgentId: null, setEditingClientId: () => {}, setEditingClientAgentId: () => {},
