@@ -76,23 +76,28 @@ const modeZh = (v: string | null): string => (v === "sea" ? "海运" : v === "la
 const warehouseZh = (v: string | null): string => (v ? (WAREHOUSE_ZH[v] ?? v) : "");
 const amount = (v: number | null, unit: string): string => (v === null ? "" : `${v} ${unit}`);
 
-/** 一项：changed 按规范化以后的值比（was / now 只是显示） */
-function row<T extends string | number | null>(label: string, was: T, now: T, show: (v: T) => string): SnapshotDiffRow {
-  return { label, was: show(was), now: show(now), changed: was !== now };
+/**
+ * 一项：changed 按规范化以后的值比；显示用 show 拿原值写（跟卡片上看到的一样，审查第 3 轮 dsh：
+ * 唛头保存时不去空格，卡片照原样显示，这里也照原样）
+ */
+function row<T extends string | number | null>(label: string, was: unknown, now: unknown, norm: (v: unknown) => T, show: (raw: unknown, v: T) => string): SnapshotDiffRow {
+  const a = norm(was), b = norm(now);
+  return { label, was: show(was, a), now: show(now, b), changed: a !== b };
 }
+/** 字符串原样显示（null = 没填） */
+const asIs = (raw: unknown): string => (typeof raw === "string" ? raw : "");
 
 /** 整票那几项：唛头、运单号、仓库、运输方式、到仓日期、总重量、总体积、备注 */
 export function snapshotMetaRows(snap: ArrivalNoticeSnapshotData, current: ArrivalNotice): SnapshotDiffRow[] {
-  const plain = (v: string | null) => v ?? "";
   return [
-    row("唛头", str(snap.clientId), str(current.clientId), plain),
-    row("运单号", str(snap.trackingNo), str(current.trackingNo), plain),
-    row("仓库", str(snap.warehouseId), str(current.warehouseId), warehouseZh),
-    row("运输方式", str(snap.transportMode), str(current.transportMode), modeZh),
-    row("到仓日期", str(snap.arrivedAt), str(current.arrivedAt), plain),
-    row("总重量", num(snap.weightKg), num(current.weightKg), (v) => amount(v, "kg")),
-    row("总体积", num(snap.volumeM3), num(current.volumeM3), (v) => amount(v, "m³")),
-    row("备注", str(snap.remark), str(current.remark), plain),
+    row("唛头", snap.clientId, current.clientId, str, asIs),
+    row("运单号", snap.trackingNo, current.trackingNo, str, asIs),
+    row("仓库", snap.warehouseId, current.warehouseId, str, (_, v) => warehouseZh(v)),
+    row("运输方式", snap.transportMode, current.transportMode, str, (_, v) => modeZh(v)),
+    row("到仓日期", snap.arrivedAt, current.arrivedAt, str, asIs),
+    row("总重量", snap.weightKg, current.weightKg, num, (_, v) => amount(v, "kg")),
+    row("总体积", snap.volumeM3, current.volumeM3, num, (_, v) => amount(v, "m³")),
+    row("备注", snap.remark, current.remark, str, asIs),
   ];
 }
 
@@ -125,7 +130,13 @@ export function snapshotProductRows(snap: ArrivalNoticeSnapshotData, current: Ar
   return out;
 }
 
-/** 跟现在比有几处不一样（标题上说「有 N 处跟现在不一样」/「跟现在一样」） */
+/**
+ * 跟现在比有几处不一样（标题上说「有 N 处跟现在不一样」/「跟现在一样」）。
+ * 按下面实际列出来的项数算（审查第 3 轮 dsh：一款改了品名和件数，原来算 1 处、下面却列两行）：
+ * 整票一项算 1；改过的产品按逐项列的条数；多出来 / 少了的一款算 1
+ */
 export function snapshotChangeCount(snap: ArrivalNoticeSnapshotData, current: ArrivalNotice): number {
-  return [...snapshotMetaRows(snap, current), ...snapshotProductRows(snap, current)].filter((r) => r.changed).length;
+  const meta = snapshotMetaRows(snap, current).filter((r) => r.changed).length;
+  const products = snapshotProductRows(snap, current).filter((r) => r.changed).reduce((n, r) => n + (r.details?.length || 1), 0);
+  return meta + products;
 }

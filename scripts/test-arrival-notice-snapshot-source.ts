@@ -2,10 +2,11 @@
  * 到货通知转正式运单时存原样（2026-10-19 老板选 B）—— 不连库那一半。连库的在 test-arrival-notice-snapshot-db.ts，迁移在 test-migration-arrival-notice-snapshots-db.ts。
  * 计划和老板认可的细节：.audit/2026-10-19/notice-snapshot/plan.md。
  *
- *   S1～S7 比对函数（snapshot-diff.ts）直接调：一样的不标、改了的标出「原来 → 现在」、多一款 / 少一款单独一行、
+ *   S1～S8 比对函数（snapshot-diff.ts）直接调：一样的不标、改了的标出「原来 → 现在」、多一款 / 少一款单独一行、
  *          仓库 / 运输方式说中文、空的跟没填当一回事、卡片上那一行产品写法只有一份；
  *          （审查第 1 轮）按字段比不按拼出来的字比（两种填法拼出同一行字也要标出来）、国内单号「货拉拉」= 没填；
- *          （审查第 2 轮）改过的产品逐项列「件数：12 件 → 15 件」，那一行照卡片写法写原来存的；货型 null / 认不出的按普货不算改过
+ *          （审查第 2 轮）改过的产品逐项列「件数：12 件 → 15 件」，那一行照卡片写法写原来存的；货型 null / 认不出的按普货不算改过；
+ *          （审查第 3 轮）「有 N 处」按实际列出来的项数算；整票几项也照原样显示
  *   R1～R9 弹窗（SnapshotModal）真跑起来（假 React，接口换成桩）：读取中、上线前转的、一份 / 两份 / 三份（按先后编号、最近一次标出来）、
  *          改过的那行标「改过」、没改的写「同左」、谁转的只在后端给了才显示、坏的那份、读失败、关掉以后晚回来的不管；
  *          「现在」拿后端同一个请求回的 current（不拿列表里的卡片），没回 current 报错不凑数；没改过但写法不一样（「货拉拉」）照写现在的、不写「同左」
@@ -226,6 +227,17 @@ async function main(): Promise<void> {
     // 整票：数字按值比、字符串去空白
     const meta = snapshotMetaRows({ ...SNAP, clientId: " ZZA01 ", weightKg: 75 }, card({ weightKg: 75.0 }));
     assert.deepEqual(meta.filter((r) => r.changed), []);
+  });
+
+  await check("S8（审查第 3 轮）「有 N 处」按下面实际列出来的项数算：一款改了品名和件数算 2 处；多 / 少一款算 1 处；整票的唛头只差前后空格不算改过、照原样显示", () => {
+    const now = card({ products: [{ ...LAMP, itemName: "台灯", packageCount: 11 }, SHOE, P({ itemName: "支架", packageCount: 1 })] });
+    const rows = snapshotProductRows(SNAP, now);
+    assert.deepEqual(rows[0].details, ["品名：灯具 → 台灯", "件数：10 件 → 11 件"]);
+    assert.equal(rows[2].details, undefined, "多出来的一款不逐项列");
+    assert.equal(snapshotChangeCount(SNAP, now), 3, "2（第 1 款两项）+ 1（多一款）");
+    const meta = snapshotMetaRows({ ...SNAP, clientId: " ZZA01 " }, card({ clientId: "ZZA01" }));
+    const mark = meta.find((r) => r.label === "唛头")!;
+    assert.deepEqual([mark.changed, mark.was, mark.now], [false, " ZZA01 ", "ZZA01"], "唛头保存时不去空格，弹窗照原样写、比的时候不算改过");
   });
 
   /* ───────────── 弹窗 ───────────── */
