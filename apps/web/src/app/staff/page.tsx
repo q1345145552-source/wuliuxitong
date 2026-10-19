@@ -35,6 +35,7 @@ import DetailModal from "../../modules/layout/DetailModal";
 import MarkPicker from "../../modules/layout/MarkPicker";
 import { activeMarkOptions, bannedChangeHint, bannedClientIds } from "../../modules/shared/client-ban";
 import Toast from "../../modules/layout/Toast";
+import WaybillEditDialog from "../../modules/orders/WaybillEditDialog";
 import { apiBaseUrl, authHeaders, parseApiResponse, fetchWithSession as fetch } from "../../services/core-api";
 import { createQueryGate, createRequestGate } from "../../modules/shared/request-gate";
 import { useLiveRefresh } from "../../modules/realtime/useRealtime";
@@ -224,6 +225,14 @@ export default function StaffHomePage() {
   const [shipmentOrderEditDrafts, setShipmentOrderEditDrafts] = useState<Record<string, ShipmentOrderEditDraft>>({});
   const [clientSearchKeyword, setClientSearchKeyword] = useState("");
   const [shipments, setShipments] = useState<ShipmentItem[]>([]);
+  /* 「编辑运单」（2026-10-19 老板拍板「给员工加权限」：员工也能改运单）：跟超管「运单管理」同一个编辑框（modules/orders/WaybillEditDialog.tsx），
+     开 / 关 / 第几次打开的规矩也照超管页（admin/page.tsx 的 startEditOrder / closeEditOrder / beginCloseEditOrder） */
+  const [waybillEditId, setWaybillEditId] = useState("");
+  const [waybillEditMeta, setWaybillEditMeta] = useState<ShipmentItem | null>(null);
+  /** 第几次打开 / 关上：保存还没回来就关了（或又打开了别的单、离开了运单管理），旧请求的报错不写进弹窗、走提示条 */
+  const waybillEditSessionRef = useRef(0);
+  /** 点了 ✕、还在放关闭动画时离开「运单管理」：离开时替它关完（不然回来弹窗又冒出来） */
+  const waybillEditCloseRequestedRef = useRef(false);
   const [prealerts, setPrealerts] = useState<OrderItem[]>([]);
   const [prealertBatchDrafts, setPrealertBatchDrafts] = useState<Record<string, string>>({});
   const [prealertEditDrafts, setPrealertEditDrafts] = useState<Record<string, PrealertEditDraft>>({});
@@ -860,6 +869,15 @@ export default function StaffHomePage() {
   useEffect(() => {
     const syncSectionByHash = () => {
       const hashId = window.location.hash.replace(/^#/, "");
+      /* 离开「运单管理」（后退 / 手机返回也算）：编辑运单的弹窗看不见了，保存途中回来的结果走提示条（同超管页）。
+         只认真换了分区的（不认识的 # 页面不切，弹窗还看得见，不算离开） */
+      if (hashId !== "staff-order-shipment" && (isStaffSectionId(hashId) || !hashId)) {
+        waybillEditSessionRef.current += 1;
+        if (waybillEditCloseRequestedRef.current) {
+          waybillEditCloseRequestedRef.current = false;
+          setWaybillEditId("");
+        }
+      }
       if (isStaffSectionId(hashId)) {
         setActiveSection(hashId);
       } else if (!hashId) {
@@ -871,6 +889,36 @@ export default function StaffHomePage() {
     window.addEventListener("hashchange", syncSectionByHash);
     return () => window.removeEventListener("hashchange", syncSectionByHash);
   }, []);
+
+  /** 正在改的那张：取列表里最新的（标题、产品图跟着变）；列表里找不到了用打开时那份（同超管页 editingOrderRow） */
+  const waybillEditRow = useMemo(() => {
+    if (!waybillEditId) return null;
+    return shipments.find((x) => (x.orderId ?? x.id) === waybillEditId)
+      ?? (waybillEditMeta && (waybillEditMeta.orderId ?? waybillEditMeta.id) === waybillEditId ? waybillEditMeta : null);
+  }, [waybillEditId, shipments, waybillEditMeta]);
+  const startWaybillEdit = (item: ShipmentItem) => {
+    // 待入库的货资料以「到货通知」为准，后端也会整单拒（同超管页）
+    if (item.currentStatus === "pendingInbound") {
+      setToast("这票货还是「待入库」，资料请到「到货通知」里补，补全后点「转正式运单」");
+      return;
+    }
+    setWaybillEditId(item.orderId ?? item.id);
+    setWaybillEditMeta(item);
+    waybillEditSessionRef.current += 1;
+    waybillEditCloseRequestedRef.current = false;
+  };
+  /* 关（取消、✕ 的关闭动画放完）也算换了一次：保存还没回话就关了，失败的报错走提示条 */
+  const closeWaybillEdit = () => {
+    waybillEditSessionRef.current += 1;
+    waybillEditCloseRequestedRef.current = false;
+    setWaybillEditId("");
+  };
+  /* 点 ✕ 那一刻（关闭动画放之前）：这时候保存回来了也算「已经关了」 */
+  const beginCloseWaybillEdit = () => {
+    waybillEditSessionRef.current += 1;
+    waybillEditCloseRequestedRef.current = true;
+    return true;
+  };
 
   const submitOrder = async () => {
     if (loading) return;
@@ -2553,6 +2601,17 @@ export default function StaffHomePage() {
                                       </button>
                                     </>
                                   ) : null}
+                                  {/* 编辑运单（2026-10-19 员工也能改运单）：关掉详情、开跟超管同一个编辑框；待入库的不给（资料在到货通知里补） */}
+                                  {item.orderId && item.currentStatus !== "pendingInbound" ? (
+                                    <button
+                                      type="button"
+                                      disabled={loading}
+                                      onClick={() => { setShipmentTableExpandedId(null); startWaybillEdit(item); }}
+                                      style={{ border: "none", borderRadius: 8, padding: "8px 14px", color: "var(--white)", background: "var(--c-navy)", cursor: "pointer", fontWeight: 600 }}
+                                    >
+                                      编辑运单
+                                    </button>
+                                  ) : null}
                                   <button
                                     type="button"
                                     disabled={loading}
@@ -2614,6 +2673,23 @@ export default function StaffHomePage() {
           （如「产品数量必须大于 0。」）不带这两个字，被显示成绿色、看着像成功。
           改成和弹窗那份一致：只有带「成功」才绿，其余一律红。 */}
       {message ? <p style={{ marginTop: 12, color: message.includes("成功") ? "var(--c-green-deep)" : "var(--c-red-deep)" }}>{message}</p> : null}
+{/* 编辑运单的弹窗：不在「运单管理」时不画（visible），但组件留着、填的内容留着（同超管页） */}
+      {waybillEditRow && waybillEditMeta ? (
+        <WaybillEditDialog
+          key={`waybill-${waybillEditId}`}
+          initial={waybillEditMeta}
+          current={waybillEditRow}
+          visible={activeSection === "staff-order-shipment"}
+          clientList={staffClients}
+          sessionRef={waybillEditSessionRef}
+          busy={loading}
+          setBusy={setLoading}
+          onClose={closeWaybillEdit}
+          confirmClose={beginCloseWaybillEdit}
+          onToast={setToast}
+          reloadList={loadPageData}
+        />
+      ) : null}
 <Toast open={toast.length > 0} message={toast} />
       {/* 预报单审核弹窗 */}
       {approvingPrealert && (

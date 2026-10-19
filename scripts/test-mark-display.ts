@@ -334,7 +334,8 @@ check("5) 选客户的下拉只显示唛头：选项值就是唛头，选中后�
   assert.equal([...staff.matchAll(/setForm\(\(f\) => \(\{ \.\.\.f, clientId: match \? match\.id : "" \}\)\)/g)].length, 2, "输入框不是完整唛头时没把「已选唛头」清空");
   // 超管两处、整柜询价一处：选项也只给唛头
   const admin = read("apps/web/src/app/admin/page.tsx");
-  assert.match(admin, /<MarkPicker value=\{orderEditForm\.clientId\}[^\n]*options=\{withCurrentMark\(activeMarkOptions\(clientList\), editSnapshot\?\.form\.clientId\)\}/, "超管编辑运单的唛头下拉选项不是只有唛头");
+  // 编辑运单 2026-10-19 搬进共用的 WaybillEditDialog（超管页 / 员工页都挂它）
+  assert.match(read("apps/web/src/modules/orders/WaybillEditDialog.tsx"), /<MarkPicker value=\{form\.clientId\}[^\n]*options=\{withCurrentMark\(activeMarkOptions\(clientList\), snapshot\?\.form\.clientId\)\}/, "编辑运单的唛头下拉选项不是只有唛头");
   assert.deepEqual(withCurrentMark([{ id: "A1" }], "B2"), [{ id: "B2" }, { id: "A1" }], "留下原来那个唛头时也只带唛头");
   assert.match(admin, /<MarkPicker value=\{createForm\.clientId\}[^\n]*options=\{activeMarkOptions\(clientList\)\}/, "超管创建订单的唛头下拉选项不是只有唛头");
   assert.match(read("apps/web/src/components/client/FclInquiryPanel.tsx"), /options=\{\(props\.clients \?\? \[\]\)\.map\(\(c\) => \(\{ id: c\.id \}\)\)\}/, "整柜询价的唛头下拉选项不是只有唛头");

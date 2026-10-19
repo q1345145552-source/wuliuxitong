@@ -25,8 +25,8 @@ import { ShipmentOverviewStrip } from "../../modules/shipment/ShipmentOverviewSt
 import LastmileAddressPanel from "../../components/lastmile/LastmileAddressPanel";
 import DetailModal from "../../modules/layout/DetailModal";
 import MarkPicker from "../../modules/layout/MarkPicker";
-import { activeMarkOptions, bannedChangeHint, bannedClientIds, withCurrentMark } from "../../modules/shared/client-ban";
-import { decideEditTotals } from "../../modules/orders/edit-totals";
+import { activeMarkOptions, bannedChangeHint, bannedClientIds } from "../../modules/shared/client-ban";
+import WaybillEditDialog from "../../modules/orders/WaybillEditDialog";
 import AdminShipmentDetail from "../../components/admin/AdminShipmentDetail";
 import {
   GridColgroup,
@@ -60,7 +60,6 @@ import {
   fetchAdminClients,
   fetchAdminOrders,
   fetchShipmentImages,
-  updateAdminOrder,
   fetchAdminAiSessionMemory,
   fetchAdminAiKnowledgeGaps,
   clearAdminAiSessionMemory,
@@ -489,46 +488,11 @@ export default function AdminHomePage() {
     }
   };
   const [orderImagesCache, setOrderImagesCache] = useState<Record<string, Array<{ id: string; fileName: string; mime: string; contentBase64?: string; filePath?: string | null; imageUrl?: string; createdAt: string }>>>({});
-  const [orderEditForm, setOrderEditForm] = useState({
-    clientId: "",
-    trackingNo: "",
-    batchNo: "",
-    warehouseId: "wh_yiwu_01",
-    itemName: "",
-    transportMode: "sea" as "sea" | "land",
-    domesticTrackingNo: "",
-    receiverAddressTh: "",
-    containerNo: "",
-    productQuantity: "",
-    packageCount: "",
-    packageUnit: "box" as "bag" | "box",
-    weightKg: "",
-    volumeM3: "",
-    paymentStatus: "unpaid" as "paid" | "unpaid",
-    shipDate: "",
-    cargoType: "normal",
-    remark: "",
-  });
-  const [editProducts, setEditProducts] = useState<Array<{
-    /** 已有产品行的编号；新加的行为空，后端据此判断是改还是新增 */
-    id?: string;
-    itemName: string; packageCount: string; lengthCm: string; widthCm: string; heightCm: string; productQuantity: string; weightKg: string; cargoType: string; domesticTrackingNo: string;
-  }>>([]);
-  /** 打开编辑弹窗那一刻的原始数据，用于保存时算出「哪些项被改过」 */
-  /* orderUpdatedAt（2026-10-18 全系统审查第一档第 6 条）：打开弹窗时订单的版本。改了产品行 / 合计保存时带回去，
-     这期间别人存过就 409 —— 产品行是整组发的（没带回来的行后端会删），拿旧弹窗存会把别人刚加的行删掉、改的盖回去 */
-  const [editSnapshot, setEditSnapshot] = useState<{ form: Record<string, string>; productsJson: string; orderUpdatedAt?: string } | null>(null);
   /* 第几次打开 / 关上编辑弹窗（2026-10-18 Codex 第 3、4 轮）：保存还没回来就关了（或又打开了别的单），旧请求的报错不能写进弹窗 */
   const editSessionRef = useRef(0);
   /* 点了 ✕、还在放 0.2 秒关闭动画（closeEditOrder 还没调）时离开「运单管理」：弹窗跟着卸掉、动画的定时器也没了，
      回来弹窗又冒出来（Codex / dsh 第 7 轮）。记一下「已经点了 ✕」，离开时替它关完 */
   const editCloseRequestedRef = useRef(false);
-  /* 编辑弹窗里实时提示「总重量/总体积保存时听谁的」（2026-08-31，排查报告第22条）。
-     跟保存用的是同一个 decideEditTotals，界面上说的和实际存的不会两张皮。 */
-  const editTotalsPreview = useMemo(
-    () => decideEditTotals(editProducts, orderEditForm.weightKg, orderEditForm.volumeM3),
-    [editProducts, orderEditForm.weightKg, orderEditForm.volumeM3],
-  );
   const [staffForm, setStaffForm] = useState({ id: "", name: "", phone: "", password: "" });
   const [clientForm, setClientForm] = useState({ id: "", name: "", companyName: "", phone: "", email: "", password: "", agentId: "" });
   const [showStaffModal, setShowStaffModal] = useState(false);
@@ -843,204 +807,8 @@ export default function AdminHomePage() {
     setEditingOrderMeta(order);
     editSessionRef.current += 1;
     editCloseRequestedRef.current = false;
-    setMessage(""); // 弹窗里会显示这条提示（见「保存」按钮上面），打开时先清掉上一回的
-    // 记下打开弹窗那一刻的样子，保存时只把改动过的项发出去，
-    // 避免把别人在这期间改的字段一起覆盖掉
-    setEditSnapshot({
-      form: {
-        clientId: order.clientId ?? "",
-        trackingNo: order.trackingNo ?? "",
-        batchNo: order.batchNo ?? "",
-        warehouseId: order.warehouseId ?? "wh_yiwu_01",
-        itemName: order.itemName ?? "",
-        transportMode: order.transportMode === "land" ? "land" : "sea",
-        domesticTrackingNo: order.domesticTrackingNo ?? "",
-        receiverAddressTh: order.receiverAddressTh ?? "",
-        containerNo: order.containerNo ?? "",
-        productQuantity: String(order.productQuantity ?? 0),
-        packageCount: String(order.packageCount ?? 0),
-        packageUnit: order.packageUnit === "bag" ? "bag" : "box",
-        // 拆过柜的单：列表接口的 weightKg/volumeM3 是父单**剩余量**，整票在 totalWeightKg/totalVolumeM3。
-        // 编辑框必须填整票（后端按整票算，2026-09-28 审查修复 #1：原来预填剩余量，一保存订单总重就被改小）
-        weightKg: (order.totalWeightKg ?? order.weightKg) == null ? "" : String(order.totalWeightKg ?? order.weightKg),
-        volumeM3: (order.totalVolumeM3 ?? order.volumeM3) == null ? "" : String(order.totalVolumeM3 ?? order.volumeM3),
-        cargoType: order.cargoType ?? "normal",
-        paymentStatus: order.paymentStatus === "paid" ? "paid" : "unpaid",
-        shipDate: order.shipDate ?? "",
-        remark: order.remark ?? "",
-      } as Record<string, string>,
-      productsJson: "", // 下面构建完产品行后再填
-      orderUpdatedAt: order.orderUpdatedAt,
-    });
-    setOrderEditForm({
-      clientId: order.clientId ?? "",
-      trackingNo: order.trackingNo ?? "",
-      batchNo: order.batchNo ?? "",
-      warehouseId: order.warehouseId ?? "wh_yiwu_01",
-      itemName: order.itemName ?? "",
-      transportMode: order.transportMode === "land" ? "land" : "sea",
-      domesticTrackingNo: order.domesticTrackingNo ?? "",
-      receiverAddressTh: order.receiverAddressTh ?? "",
-      containerNo: order.containerNo ?? "",
-      productQuantity: String(order.productQuantity ?? 0),
-      packageCount: String(order.packageCount ?? 0),
-      packageUnit: order.packageUnit === "bag" ? "bag" : "box",
-      weightKg: (order.totalWeightKg ?? order.weightKg) == null ? "" : String(order.totalWeightKg ?? order.weightKg),
-      volumeM3: (order.totalVolumeM3 ?? order.volumeM3) == null ? "" : String(order.totalVolumeM3 ?? order.volumeM3),
-      cargoType: order.cargoType ?? "normal",
-      paymentStatus: order.paymentStatus === "paid" ? "paid" : "unpaid",
-      shipDate: order.shipDate ?? "",
-      remark: order.remark ?? "",
-    });
-    const rows = (order.products ?? []).map((p) => ({
-      id: p.id,
-      itemName: p.itemName ?? "",
-      packageCount: String(p.packageCount ?? ""),
-      lengthCm: p.lengthCm != null ? String(p.lengthCm) : "",
-      widthCm: p.widthCm != null ? String(p.widthCm) : "",
-      heightCm: p.heightCm != null ? String(p.heightCm) : "",
-      productQuantity: p.productQuantity != null ? String(p.productQuantity) : "",
-      weightKg: p.weightKg != null ? String(p.weightKg) : "",
-      cargoType: p.cargoType ?? "normal",
-      domesticTrackingNo: p.domesticTrackingNo ?? "货拉拉",
-    }));
-    setEditProducts(rows);
-    // 产品行的快照直接用表单自己的格式，比对时不会因为格式差异误判
-    setEditSnapshot((prev) => (prev ? { ...prev, productsJson: JSON.stringify(rows) } : prev));
-  };
-
-  /**
-   * 保存管理员对客户端订单的编辑结果。
-   */
-  const submitOrderEdit = async () => {
-    if (loading) return;
-    if (!editingOrderId) {
-      setMessage("请先选择要编辑的订单。");
-      return;
-    }
-    if (!orderEditForm.trackingNo.trim()) {
-      setMessage("请填写运单号。");
-      return;
-    }
-    // 从产品行计算总数
-    const activeProducts = editProducts;
-    // ⚠️ 先把产品行卡住再算合计（2026-08-29 补）。箱数是三个合计的乘数，
-    // 原来 `Number(p.packageCount) || 1` 会把「没填」和「填 0」悄悄当成 1 箱。
-    {
-      const rowIssue = validateProductRows(activeProducts);
-      if (rowIssue) { setMessage(rowIssue); return; }
-    }
-    const totalPackageCount = activeProducts.reduce((s, p) => s + Number(String(p.packageCount).trim()), 0);
-    // ⚠️ 产品行上的「数量」口径是**单箱几个**（这一页的表头就写着「单箱数量」），
-    // 所以总数必须乘箱数。2026-08-28 复核实测：这里原来直接相加，跟批量导入犯的是同一个错。
-    // 口径见 apps/api/src/modules/orders/routes.ts:833 的注释。
-    const totalProductQuantity = activeProducts.reduce(
-      (s, p) => s + (Number(p.productQuantity) || 0) * Number(String(p.packageCount).trim()),
-      0,
-    );
-    const primaryItemName = activeProducts[0]?.itemName.trim() || orderEditForm.itemName.trim();
-    if (!primaryItemName) {
-      setMessage("请填写品名。");
-      return;
-    }
-    if (activeProducts.length === 0) {
-      setMessage("请至少添加一个产品行。");
-      return;
-    }
-    // 总体积/总重量「自动算 vs 手填」的裁决统一走 decideEditTotals
-    // （2026-08-31，排查报告第22条：原来任何一行填了尺寸就静默扔掉手填值）
-    const { finalVolume, finalWeight, notes: totalsNotes } = decideEditTotals(
-      activeProducts, orderEditForm.weightKg, orderEditForm.volumeM3,
-    );
-
-    const saveOrderId = editingOrderId;
-    if (!saveOrderId) { setMessage("编辑失败：未选择订单"); return; }
-    const sessionAtSubmit = editSessionRef.current;
-
-    setLoading(true);
     setMessage("");
-    try {
-      const products = activeProducts.map(p => ({
-        id: p.id,
-        itemName: p.itemName.trim(),
-        packageCount: packageCountForPayload(p.packageCount),
-        lengthCm: p.lengthCm ? Number(p.lengthCm) : undefined,
-        widthCm: p.widthCm ? Number(p.widthCm) : undefined,
-        heightCm: p.heightCm ? Number(p.heightCm) : undefined,
-        productQuantity: p.productQuantity ? Number(p.productQuantity) : undefined,
-        cargoType: p.cargoType || "normal",
-        domesticTrackingNo: p.domesticTrackingNo.trim() || "货拉拉",
-        weightKg: p.weightKg ? Number(p.weightKg) : undefined,
-      }));
-
-      // 只把「打开弹窗之后被改动过的项」发出去。没改的不发，
-      // 后端就不会去动它 —— 这样两个人改不同字段不会互相覆盖。
-      const snap = editSnapshot?.form;
-      const changed = (key: string, current: string) => !snap || snap[key] !== current;
-      const productsChanged = !editSnapshot || editSnapshot.productsJson !== JSON.stringify(activeProducts);
-      // 只改了手填的总重量/总体积、没动产品明细时也要保存（2026-08-31，排查报告第22条：
-      // 原来这两个数只跟着产品行一起发，单独改手填框等于白填）
-      const manualTotalsChanged =
-        changed("weightKg", orderEditForm.weightKg) || changed("volumeM3", orderEditForm.volumeM3);
-
-      /* 每次保存都带上「打开时（或上次存完时）」的订单版本（2026-10-18 全系统审查第一档第 6 条；Codex / dsh 第 2 轮改成每次都带）：
-         后端锁里核对，别人这期间存过就 409、什么都不写。
-         ⚠️ 不能只在改产品行 / 合计时才带：只改备注那次不核对的话，别人刚改的产品行我这边看不见，存完基线却换成了新版本，
-         接着再改产品行时带着新版本一核对就放行 —— 旧产品行把别人加的行删掉、改的盖回去。代价是两人同时改不同的单项时后存的也要重开一次 */
-      // 这次发出去的是哪一份（存完拿它当新的「打开时的样子」；await 回来时 state 可能已经是用户接着输的新内容）
-      const snapAtSubmit = editSnapshot;
-      const submittedForm = Object.fromEntries(Object.entries(orderEditForm).map(([k, v]) => [k, v == null ? "" : String(v)])) as Record<string, string>;
-      const submittedProductsJson = JSON.stringify(activeProducts);
-      const saved = await updateAdminOrder({
-        orderId: saveOrderId,
-        ...(editSnapshot?.orderUpdatedAt ? { expectedOrderUpdatedAt: editSnapshot.orderUpdatedAt } : {}),
-        ...(changed("clientId", orderEditForm.clientId) ? { clientId: orderEditForm.clientId.trim() || "" } : {}),
-        ...(changed("itemName", orderEditForm.itemName) || productsChanged ? { itemName: primaryItemName } : {}),
-        ...(changed("trackingNo", orderEditForm.trackingNo) ? { trackingNo: orderEditForm.trackingNo.trim() || "" } : {}),
-        ...(changed("batchNo", orderEditForm.batchNo) ? { batchNo: orderEditForm.batchNo.trim() || "" } : {}),
-        ...(changed("warehouseId", orderEditForm.warehouseId) ? { warehouseId: orderEditForm.warehouseId } : {}),
-        ...(changed("transportMode", orderEditForm.transportMode) ? { transportMode: orderEditForm.transportMode } : {}),
-        ...(changed("domesticTrackingNo", orderEditForm.domesticTrackingNo) ? { domesticTrackingNo: orderEditForm.domesticTrackingNo.trim() || "" } : {}),
-        ...(changed("receiverAddressTh", orderEditForm.receiverAddressTh) ? { receiverAddressTh: orderEditForm.receiverAddressTh.trim() } : {}),
-        ...(changed("containerNo", orderEditForm.containerNo) ? { containerNo: orderEditForm.containerNo.trim() || "" } : {}),
-        ...(changed("packageUnit", orderEditForm.packageUnit) ? { packageUnit: orderEditForm.packageUnit } : {}),
-        ...(changed("cargoType", orderEditForm.cargoType) ? { cargoType: orderEditForm.cargoType } : {}),
-        ...(changed("shipDate", orderEditForm.shipDate) ? { shipDate: orderEditForm.shipDate.trim() } : {}),
-        ...(changed("remark", orderEditForm.remark ?? "") ? { remark: orderEditForm.remark?.trim() || null } : {}),
-        // 件数/数量是按产品行算出来的，产品行没动就不发
-        ...(productsChanged ? {
-          productQuantity: totalProductQuantity,
-          packageCount: totalPackageCount,
-          products,
-        } : {}),
-        // 重量/体积单独判断：产品行或手填框任一动过就发（见上面 manualTotalsChanged 的注释）
-        ...(productsChanged || manualTotalsChanged ? {
-          weightKg: finalWeight,
-          volumeM3: finalVolume,
-        } : {}),
-      });
-      /* 弹窗存完不关：「打开时的样子」整个换成刚存进去的这一份 + 返回的新版本（2026-10-18 Codex / dsh 第 1 轮）。
-         只换版本不换基线的话，接着改别的再存，第一次存过的字段会按旧基线又发一遍（不带版本，因为没动产品行），
-         别人这期间改的同一字段被盖回去；产品行也一直算「改过」、每次整组发。
-         只在还是同一个弹窗时换（存的过程中关掉又开了别的单，那边已经有自己的基线） */
-      setEditSnapshot((prev) => (prev && prev === snapAtSubmit ? { form: submittedForm, productsJson: submittedProductsJson, orderUpdatedAt: saved.updatedAt } : prev));
-      // 手填值和自动计算冲突时明说哪边生效了，不再静默（排查报告第22条）
-      // 存的过程中已经关了 / 换了别的单：提示里写明是之前那张（Codex 第 3、4 轮）
-      const whose = editSessionRef.current === sessionAtSubmit ? "" : "之前那张单：";
-      const savedText = `${whose}${totalsNotes.length > 0 ? `订单信息已更新。${totalsNotes.join("；")}` : "订单信息已更新"}`;
-      setToast(savedText);
-      // 已经存上了：接着刷新列表失败不能落进下面的「保存失败」（dsh 第 5 轮）；10 秒后会自动再刷。合计听谁的那句照样留着（dsh 第 6 轮）
-      await loadOrders().catch(() => setToast(`${savedText}（列表这次没刷新上，稍后会自动刷新）`));
-    } catch (error) {
-      const text = error instanceof Error ? error.message : "保存失败";
-      // 还是同一次打开的弹窗才写进弹窗；已经关了 / 换了别的单，用提示条说「之前那张没存上」（Codex 第 3、4 轮）
-      if (editSessionRef.current === sessionAtSubmit) setMessage(`保存失败：${text}`);
-      else setToast(`之前那张单没存上：${text}`);
-      // 被别人抢先存了：顺手把列表刷新，关掉重开就是最新的（不等 10 秒那次自动刷新）
-      if (/刚刚被别人改过/.test(text)) loadOrders().catch(() => {});
-    } finally {
-      setLoading(false);
-    }
+    // 表单、产品行、「打开时的样子」在编辑弹窗挂上那一刻按这一行建（modules/orders/WaybillEditDialog.tsx 的 waybillEditStateOf，2026-10-19 搬出去）
   };
 
   const loadSessionMemory = useCallback(async () => {
@@ -2379,94 +2147,23 @@ export default function AdminHomePage() {
             列表怎么翻、怎么刷都不影响；标题和产品图取列表里这张最新的，列表里找不到了用打开时那份。
             key 跟着单子换：换了一张就是新的一个弹窗（上一个的关闭动画、定时器不会带过来）。
             只在「运单管理」这一页显示时挂（Codex / dsh 第 6 轮）：后退离开就卸掉；填的内容存在页面上，回来照样在 */}
-        {editingOrderRow && activeSection === "orders" ? (
-          <DetailModal
+        {/* 编辑框本身在 modules/orders/WaybillEditDialog.tsx（2026-10-19 搬出去，员工「运单管理」也挂它）。
+            不在「运单管理」这一页时不画（visible），但组件留着、填的内容留着 */}
+        {editingOrderRow && editingOrderMeta ? (
+          <WaybillEditDialog
             key={editingOrderId}
-            title="编辑运单"
-            subtitle={editingOrderRow.trackingNo ?? editingOrderRow.orderNo ?? "—"}
+            initial={editingOrderMeta}
+            current={editingOrderRow}
+            visible={activeSection === "orders"}
+            clientList={clientList}
+            sessionRef={editSessionRef}
+            busy={loading}
+            setBusy={setLoading}
             onClose={closeEditOrder}
             confirmClose={beginCloseEditOrder}
-            closeOnEsc={false}
-          >
-          <div style={{ display: "grid", gap: 8 }}>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 8 }}>
-              {/* 唛头用自己画的下拉（2026-10-08，替掉浏览器自带的 datalist）；只显示唛头。
-                  封禁的唛头不进下拉（2026-10-17，modules/shared/client-ban.ts）：换成它后端会拦，提示在这一排格子下面；
-                  原来就挂在封禁唛头名下的单照常改、不提示，那个唛头留在下拉里（不然一点开就是「匹配 0 个」） */}
-              <MarkPicker value={orderEditForm.clientId} onChange={(v) => setOrderEditForm((f) => ({ ...f, clientId: v }))} options={withCurrentMark(activeMarkOptions(clientList), editSnapshot?.form.clientId)} placeholder="唛头" inputStyle={{ border: "1px solid var(--l-strong)", borderRadius: 8, padding: "8px 10px" }} />
-              <input value={orderEditForm.trackingNo} onChange={(e) => setOrderEditForm((v) => ({ ...v, trackingNo: e.target.value.toUpperCase() }))} placeholder="运单号" style={{ border: "1px solid var(--l-strong)", borderRadius: 8, padding: "8px 10px" }} />
-              <input value={orderEditForm.batchNo} onChange={(e) => setOrderEditForm((v) => ({ ...v, batchNo: e.target.value }))} placeholder="柜号" style={{ border: "1px solid var(--l-strong)", borderRadius: 8, padding: "8px 10px" }} />
-              <select value={orderEditForm.warehouseId} onChange={(e) => setOrderEditForm((v) => ({ ...v, warehouseId: e.target.value }))} style={{ border: "1px solid var(--l-strong)", borderRadius: 8, padding: "8px 10px" }}><option value="wh_yiwu_01">义乌仓</option><option value="wh_guangzhou_01">广州仓</option><option value="wh_dongguan_01">东莞仓</option><option value="wh_shenzhen_01">深圳仓</option></select>
-              <select value={orderEditForm.transportMode} onChange={(e) => setOrderEditForm((v) => ({ ...v, transportMode: e.target.value as "sea" | "land" }))} style={{ border: "1px solid var(--l-strong)", borderRadius: 8, padding: "8px 10px" }}><option value="sea">海运</option><option value="land">陆运</option></select>
-              <input value={orderEditForm.domesticTrackingNo} onChange={(e) => setOrderEditForm((v) => ({ ...v, domesticTrackingNo: e.target.value }))} placeholder="货拉拉" style={{ border: "1px solid var(--l-strong)", borderRadius: 8, padding: "8px 10px" }} />
-              <input value={orderEditForm.receiverAddressTh} onChange={(e) => setOrderEditForm((v) => ({ ...v, receiverAddressTh: e.target.value }))} placeholder="收货地址" style={{ border: "1px solid var(--l-strong)", borderRadius: 8, padding: "8px 10px" }} />
-              <input value={orderEditForm.containerNo} onChange={(e) => setOrderEditForm((v) => ({ ...v, containerNo: e.target.value }))} placeholder="装柜号" style={{ border: "1px solid var(--l-strong)", borderRadius: 8, padding: "8px 10px" }} />
-              <select value={orderEditForm.packageUnit} onChange={(e) => setOrderEditForm((v) => ({ ...v, packageUnit: e.target.value as "bag" | "box" }))} style={{ border: "1px solid var(--l-strong)", borderRadius: 8, padding: "8px 10px" }}><option value="box">箱</option><option value="bag">袋</option></select>
-              <input value={orderEditForm.weightKg} onChange={(e) => setOrderEditForm((v) => ({ ...v, weightKg: e.target.value }))} placeholder="重量(kg)" style={{ border: "1px solid var(--l-strong)", borderRadius: 8, padding: "8px 10px" }} />
-              <input value={orderEditForm.volumeM3} onChange={(e) => setOrderEditForm((v) => ({ ...v, volumeM3: e.target.value }))} placeholder="体积(m³)" style={{ border: "1px solid var(--l-strong)", borderRadius: 8, padding: "8px 10px" }} />
-              <input type="date" value={orderEditForm.shipDate} onChange={(e) => setOrderEditForm((v) => ({ ...v, shipDate: e.target.value }))} style={{ border: "1px solid var(--l-strong)", borderRadius: 8, padding: "8px 10px" }} />
-            </div>
-            {/* 换成封禁的唛头时的提示（放在格子外面，不把那一排撑高） */}
-            {(() => {
-              const hint = bannedChangeHint(orderEditForm.clientId, editSnapshot?.form.clientId, bannedClientIds(clientList));
-              return hint ? <div style={{ color: "var(--c-red-deep)", fontSize: 12 }}>{hint}</div> : null;
-            })()}
-            {/* 手填总重量/总体积和产品行自动计算冲突时，当场说清保存后哪边生效
-                （2026-08-31，排查报告第22条：原来静默扔掉手填值，没人察觉） */}
-            {editTotalsPreview.notes.length > 0 && (
-              <div style={{ fontSize: 12, color: "var(--c-red-deep)", background: "#fef2f2", border: "1px solid #fca5a5", borderRadius: 8, padding: "6px 10px" }}>
-                {editTotalsPreview.notes.map((n, i) => (<div key={i}>{n}</div>))}
-              </div>
-            )}
-            <div style={{ border: "1px solid var(--l-soft)", borderRadius: 8, padding: 10, background: "var(--s-alt)", marginTop: 8 }}>
-              <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 8, color: "var(--t-strong)" }}>产品行编辑</div>
-              {editProducts.length === 0 && (
-                <div style={{ fontSize: 12, color: "var(--t-faint)", padding: "4px 0" }}>无产品行，点击下方按钮添加</div>
-              )}
-              {editProducts.map((p, i) => (
-                <div key={i} style={{ display: "grid", gridTemplateColumns: "2fr 0.4fr 0.3fr 0.3fr 0.3fr 0.4fr 0.45fr 0.8fr 1fr auto", gap: 4, marginBottom: 4, alignItems: "center" }}>
-                  <input value={p.itemName} onChange={(e) => { const n = [...editProducts]; n[i] = { ...n[i], itemName: e.target.value }; setEditProducts(n); }} placeholder="品名" style={{ border: "1px solid var(--l-strong)", borderRadius: 4, padding: "4px 6px", fontSize: 12 }} />
-                  <input type="number" value={p.packageCount} onChange={(e) => { const n = [...editProducts]; n[i] = { ...n[i], packageCount: e.target.value }; setEditProducts(n); }} placeholder="箱数" style={{ border: "1px solid var(--l-strong)", borderRadius: 4, padding: "4px 6px", fontSize: 12 }} />
-                  <input type="number" step="0.01" value={p.lengthCm} onChange={(e) => { const n = [...editProducts]; n[i] = { ...n[i], lengthCm: e.target.value }; setEditProducts(n); }} placeholder="长cm" style={{ border: "1px solid var(--l-strong)", borderRadius: 4, padding: "4px 6px", fontSize: 12 }} />
-                  <input type="number" step="0.01" value={p.widthCm} onChange={(e) => { const n = [...editProducts]; n[i] = { ...n[i], widthCm: e.target.value }; setEditProducts(n); }} placeholder="宽cm" style={{ border: "1px solid var(--l-strong)", borderRadius: 4, padding: "4px 6px", fontSize: 12 }} />
-                  <input type="number" step="0.01" value={p.heightCm} onChange={(e) => { const n = [...editProducts]; n[i] = { ...n[i], heightCm: e.target.value }; setEditProducts(n); }} placeholder="高cm" style={{ border: "1px solid var(--l-strong)", borderRadius: 4, padding: "4px 6px", fontSize: 12 }} />
-                  <input type="number" value={p.productQuantity} onChange={(e) => { const n = [...editProducts]; n[i] = { ...n[i], productQuantity: e.target.value }; setEditProducts(n); }} placeholder="单箱数量" style={{ border: "1px solid var(--l-strong)", borderRadius: 4, padding: "4px 6px", fontSize: 12 }} />
-                  <input type="number" step="0.01" value={p.weightKg} onChange={(e) => { const n = [...editProducts]; n[i] = { ...n[i], weightKg: e.target.value }; setEditProducts(n); }} placeholder="单箱重kg" style={{ border: "1px solid var(--l-strong)", borderRadius: 4, padding: "4px 6px", fontSize: 12 }} />
-                  <select value={(p.cargoType || "normal").toLowerCase()} onChange={(e) => { const n = [...editProducts]; n[i] = { ...n[i], cargoType: e.target.value }; setEditProducts(n); }} style={{ border: "1px solid var(--l-strong)", borderRadius: 4, padding: "4px 6px", fontSize: 12, background: "var(--white)" }}>
-                    {CARGO_TYPES.map((c) => <option key={c} value={c}>{CARGO_TYPE_ZH[c]}</option>)}
-                  </select>
-                  <input value={p.domesticTrackingNo || ""} onChange={(e) => { const n = [...editProducts]; n[i] = { ...n[i], domesticTrackingNo: e.target.value }; setEditProducts(n); }} placeholder="货拉拉" style={{ border: "1px solid var(--l-strong)", borderRadius: 4, padding: "4px 6px", fontSize: 12 }} />
-                  <button type="button" onClick={() => setEditProducts((v) => v.filter((_, j) => j !== i))} style={{ border: "1px solid #fca5a5", borderRadius: 4, padding: "4px 6px", fontSize: 11, background: "var(--white)", color: "var(--c-red-2)", cursor: "pointer" }}>X</button>
-                </div>
-              ))}
-              <button type="button" onClick={() => setEditProducts((v) => [...v, { itemName: "", packageCount: "", lengthCm: "", widthCm: "", heightCm: "", productQuantity: "", weightKg: "", cargoType: "normal", domesticTrackingNo: "" }])} style={{ border: "1px dashed var(--c-blue)", borderRadius: 4, padding: "4px 10px", fontSize: 12, background: "var(--white)", color: "var(--c-blue)", cursor: "pointer", marginTop: 4 }}>+ 添加产品</button>
-            </div>
-            {(editingOrderRow.productImages?.length ?? 0) > 0 && (
-              <div style={{ marginTop: 8, padding: 10, background: "var(--s-cool)", borderRadius: 8, border: "1px solid var(--l-cool)" }}>
-                <div style={{ fontWeight: 600, marginBottom: 6, fontSize: 13, color: "var(--t-strong)" }}>产品图</div>
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-                  {editingOrderRow.productImages!.map((img) => (
-                    <img key={img.id} src={img.imageUrl ? `${apiBaseUrl()}${img.imageUrl}` : ""} alt={img.fileName} style={{ width: 88, height: 88, objectFit: "cover", borderRadius: 8, border: "1px solid var(--l-soft)" }} />
-                  ))}
-                </div>
-              </div>
-            )}
-            <div style={{ marginBottom: 12 }}>
-              <div style={{ fontSize: 12, color: "var(--t-strong)", marginBottom: 4 }}>备注</div>
-              <input value={orderEditForm.remark} onChange={(e) => setOrderEditForm((v) => ({ ...v, remark: e.target.value }))} placeholder="备注（可选）" style={{ border: "1px solid var(--l-strong)", borderRadius: 8, padding: "8px 10px", width: "100%", fontSize: 13 }} />
-            </div>
-
-            {/* 保存失败 / 没填全的提示原来只写在页面最底下，被这个全屏弹窗挡住，点保存像没反应。
-                拆过柜的单填了比已装走还少的数会被后端拒绝（2026-09-28 审查修复 #1），那句话必须让人看见 */}
-            {message ? (
-              <p role="alert" style={{ margin: "0 0 8px", color: "var(--c-red-deep)" /* 这里只会是没填全 / 保存失败（成功走提示条），一律红字；原来只认「失败」，「请填写运单号。」成了绿字（dsh 第 9 轮） */ }}>{message}</p>
-            ) : null}
-            <div style={{ display: "flex", gap: 8 }}>
-              <button type="button" onClick={() => void submitOrderEdit()} disabled={loading} style={{ border: "none", borderRadius: 6, padding: "9px 18px", color: "var(--white)", background: "var(--c-navy)", cursor: "pointer", fontWeight: 600 }}>保存</button>
-              <button type="button" onClick={closeEditOrder} style={{ border: "1px solid #d8d6d1", borderRadius: 6, padding: "9px 18px", background: "var(--white)", cursor: "pointer", color: "#14171D" }}>取消</button>
-            </div>
-          </div>
-          </DetailModal>
+            onToast={setToast}
+            reloadList={loadOrders}
+          />
         ) : null}
         {/* 「运单详情」弹窗也挂在列表外面（2026-10-18 老板选 A，跟编辑弹窗同一个毛病）：原来挂在列表那一行里，
             这张被新单挤到下一页 / 被筛掉，刷新一来详情就关了。按 expandedOrderId 从全部列表里取最新的，找不到用打开时那份；
@@ -2789,7 +2486,7 @@ export default function AdminHomePage() {
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
           <h2 style={{ margin: 0, fontSize: 18 }}>{SECTION_LABELS["ai-memory"]}</h2>
           {/* 这里原来错贴了一个运单编辑的「备注」输入框（2026-08-31 删，排查报告第45条）：
-              在这打字会写进 orderEditForm，极端操作下会存成别的运单的备注。 */}
+              在这打字会写进编辑框的表单（WaybillEditDialog），极端操作下会存成别的运单的备注。 */}
           <div style={{ display: "flex", gap: 8 }}>
             <button
               type="button"

@@ -4624,6 +4624,25 @@ table.a3-table.shipment-product-table > tbody > tr > td {
 .an-snap-now { min-width: 0; }
 .an-snap-details { margin: 4px 0 0; padding-left: 16px; color: var(--c-amber-deep); font-size: 12px; text-align: left; }
 .an-snap-flag { margin-left: 6px; padding: 0 5px; border: 1px solid var(--c-amber-deep); border-radius: var(--a3-radius); color: var(--c-amber-deep); font-size: 11px; font-weight: 500; }
+/* 员工端「客户账号」（2026-10-19）：重置客户密码 */
+.ca-page { display: grid; gap: 12px; min-width: 0; }
+.ca-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 16px; padding-bottom: 10px; border-bottom: 1px solid var(--line); }
+.ca-toolbar-right { display: flex; align-items: center; gap: 8px; }
+.ca-hint { margin: 0; color: var(--ink-2); font-size: 13px; }
+.ca-search { width: 220px; max-width: 100%; min-height: 34px; padding: 0 10px; border: 1px solid var(--line); border-radius: var(--a3-radius); background: var(--panel); color: var(--ink); font: inherit; font-size: 13px; }
+.ca-btn { min-height: 32px; padding: 0 12px; border: 1px solid var(--line); border-radius: var(--a3-radius); background: var(--panel) !important; color: var(--ink) !important; font: inherit; font-size: 13px; font-weight: 500; white-space: nowrap; }
+.ca-btn:hover:not(:disabled) { border-color: var(--ink-3); }
+.ca-btn-primary { border-color: var(--brand); background: var(--brand) !important; color: var(--white) !important; }
+.ca-btn-primary:hover:not(:disabled) { border-color: var(--brand-hover); background: var(--brand-hover) !important; }
+.ca-table { width: 100%; max-width: 640px; border-collapse: collapse; font-size: 13px; }
+.ca-table th, .ca-table td { padding: 6px 10px; text-align: left; }
+.ca-banned { color: var(--bad); font-weight: 500; }
+.ca-muted { margin: 0; color: var(--t-faint); font-size: 12px; }
+.ca-error { margin: 0; color: var(--bad); font-size: 13px; }
+.ca-form { display: grid; gap: 10px; max-width: 420px; }
+.ca-field { display: grid; gap: 4px; color: var(--ink-2); font-size: 12px; }
+.ca-field input { min-height: 36px; padding: 0 10px; border: 1px solid var(--line); border-radius: var(--a3-radius); background: var(--panel); color: var(--ink); font: inherit; font-size: 14px; }
+.ca-actions { display: flex; justify-content: flex-end; gap: 8px; }
 .an-pad { padding: 12px 0; }
 .an-preview { position: fixed; inset: 0; z-index: 10001; display: flex; align-items: center; justify-content: center; padding: 16px; background: rgba(0, 0, 0, 0.78); cursor: zoom-out; }
 .an-preview img { max-width: 100%; max-height: 100%; object-fit: contain; }

@@ -23,7 +23,8 @@ function isRealYmd(text: string): boolean {
 const NOT_A_PENDING_PREALERT_MESSAGE = "这张单不是客户报的待收货预报单，不能「确认收货」（员工建的单、到货通知转出来的单都不走这一步；要改资料请超管在「运单管理」里改）";
 import { logger } from "../core/logger";
 import { buildNewOrderRows } from "./new-order-rows";
-import { getClientIp } from "../core/rate-limit";
+import { clearLoginFailures, getClientIp } from "../core/rate-limit";
+import { hashPassword } from "../auth/crypto-utils";
 import type { MinimalHttpApp } from "../../server";
 
 /* 2026-08-07：运单不再涉及金额。
@@ -2307,6 +2308,33 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
     });
 
     ok(res, { items: users });
+  });
+
+  /**
+   * 员工重置客户密码（2026-10-19 老板拍板「给员工加权限」：客户忘了密码不用再找超管）。
+   * ⚠️ 只认本公司的**客户号**（role = client，代理名下的客户也算）；员工 / 超管 / 代理的号一律 403 ——
+   *    那几种照旧只有超管在「员工管理 / 代理管理」里重置（/admin/users/set-password、/admin/agents/reset-password）。
+   * 客户密码的规矩跟客户自己改一样：不卡强度（2026-08-07 老板「客户端不动」，客户密码普遍就是唛头），只挡空的、太长的。
+   * 重置完清登录失败计数（同超管那条，不然被锁的人拿新密码也进不去）；客户已经登录的设备靠密码指纹自动退出（auth/session-guard.ts）。
+   */
+  app.post("/staff/clients/set-password", async (req, res) => {
+    const auth = requireRole(req, res, ["staff", "admin"]);
+    if (!auth) return;
+    const body = (req.body ?? {}) as { id?: unknown; password?: unknown };
+    const id = typeof body.id === "string" ? body.id.trim() : "";
+    if (!id) { fail(res, 400, "BAD_REQUEST", "请选一个客户"); return; }
+    const password = typeof body.password === "string" ? body.password.trim() : "";
+    if (!password) { fail(res, 400, "BAD_REQUEST", "请填新密码"); return; }
+    if (password.length > 128) { fail(res, 400, "BAD_REQUEST", "密码太长了（最多 128 位）"); return; }
+    const user = await prisma.user.findFirst({ where: { id, companyId: auth.companyId }, select: { id: true, role: true } });
+    if (!user) { fail(res, 404, "NOT_FOUND", "没有这个客户（可能唛头写错了），请刷新再试"); return; }
+    if (user.role !== "client") { fail(res, 403, "FORBIDDEN", "这里只能重置客户的密码；员工、超管、代理的密码请找超管"); return; }
+    // 写的时候再核一次是客户号（查和写之间被改成别的角色就不写，CLAUDE.md 第 28 条）
+    const written = await prisma.user.updateMany({ where: { id: user.id, companyId: auth.companyId, role: "client" }, data: { passwordHash: hashPassword(password) } });
+    if (written.count === 0) { fail(res, 409, "VALIDATION_ERROR", "这个账号刚刚被改过，请刷新再试"); return; }
+    clearLoginFailures(user.id);
+    logger.info("staff reset client password", { companyId: auth.companyId, clientId: user.id, by: auth.userId });
+    ok(res, { updated: true, id: user.id });
   });
 }
 

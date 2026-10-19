@@ -1102,8 +1102,8 @@ function toDto(n: NoticeRow, ship: { currentStatus: string; trackingNo?: string 
     shipmentId: shipmentGone ? null : n.shipmentId,
     shipmentStatus: shipmentGone ? null : (ship?.currentStatus ?? null),
     shipmentGone,
-    /** 已转正式运单、运单还在，而且看的人是超管：卡片上给「修改」（改的是那张运单，2026-10-16）。员工照旧只读 */
-    canEditConverted: viewerRole === "admin" && !shipmentGone && n.convertedTo === "formal" && Boolean(ship),
+    /** 已转正式运单、运单还在：卡片上给「修改」（改的是那张运单，2026-10-16 只给超管；2026-10-19 老板「给员工加权限」，员工也能改运单了，一起放开） */
+    canEditConverted: (viewerRole === "admin" || viewerRole === "staff") && !shipmentGone && n.convertedTo === "formal" && Boolean(ship),
     convertedAt: shipmentGone ? null : (n.convertedAt?.toISOString() ?? null),
     createdByName: showWho ? n.createdByName : null,
     createdAt: n.createdAt.toISOString(),
@@ -1691,11 +1691,12 @@ export function registerArrivalNoticeRoutes(app: MinimalHttpApp): void {
   });
 
   /**
-   * 已转正式运单：超管点「修改」时读运单**现在**的样子（2026-10-16，规矩见 readConvertedTruth 上面那段）。
+   * 已转正式运单：点「修改」时读运单**现在**的样子（2026-10-16，规矩见 readConvertedTruth 上面那段）。
    * item 跟列表里的一条同一个形状，只是资料换成了运单现在的；productIds 跟 item.products 一一对应（保存时带回 /admin/orders/update）。
+   * 2026-10-19 起员工也能用（老板「给员工加权限」：员工能改运单了）。
    */
   app.get("/staff/arrival-notices/converted-detail", async (req: HttpRequest, res: HttpResponse) => {
-    const auth = requireRole(req, res, ["admin"]);
+    const auth = requireRole(req, res, ["staff", "admin"]);
     if (!auth) return;
     const id = idOf(req.query.id);
     if (!id) { fail(res, 400, "BAD_REQUEST", "缺少到货通知 id"); return; }
@@ -1743,11 +1744,11 @@ export function registerArrivalNoticeRoutes(app: MinimalHttpApp): void {
   });
 
   /**
-   * 超管在到货通知里改完已转正式运单（运单那边已经由 /admin/orders/update 存好）之后调：
-   * 这一行对齐成运单现在的样子，备注照页面上的存（备注是到货通知自己的，不进运单）。
+   * 在到货通知里改完已转正式运单（运单那边已经由 /admin/orders/update 存好）之后调：
+   * 这一行对齐成运单现在的样子，备注照页面上的存（备注是到货通知自己的，不进运单）。2026-10-19 起员工也能用。
    */
   app.post("/staff/arrival-notices/converted-refresh", async (req: HttpRequest, res: HttpResponse) => {
-    const auth = requireRole(req, res, ["admin"]);
+    const auth = requireRole(req, res, ["staff", "admin"]);
     if (!auth) return;
     const body = bodyOf(req);
     const id = idOf(body.id);

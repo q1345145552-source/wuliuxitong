@@ -11,7 +11,7 @@
  *   S6  客户「批量下单」跑完预览只留没下成的行（原来按钮还亮着、整批再点一次全部重下）
  *   S6b 真跑页面里那段 handleSubmit：3 行第 2 行失败 → 预览只剩第 2 行；再交一次只重交它，成功后预览清空
  *   S7  超管「运单管理」改单：打开时记下订单版本，改了产品行 / 合计才带回去核对；存完换成新版本；被抢先就刷新列表
- *   S7b 真跑页面里那段 submitOrderEdit（Codex / dsh 第 1、2 轮），假后端照真后端核版本：每次保存都带版本；存完基线换成这次提交的；
+ *   S7b 真跑编辑框里那段保存（原超管页 submitOrderEdit，2026-10-19 搬进 WaybillEditDialog 的 submit；Codex / dsh 第 1、2 轮），假后端照真后端核版本：每次保存都带版本；存完基线换成这次提交的；
  *       别人先改了产品行、我只改备注也被拦下（旧产品行配不上新版本，不会漏拦丢数据）；409 不动基线；存的过程中重开弹窗不盖
  *   S10 超管列表 / 导出筛选的「国内单号」也认产品行上的号（Codex / dsh 第 1 轮）
  *   S11 真跑 createClientPrealert + 真 fetchWithSession / parseApiResponse 对本机假服务器：带编号的超时连正文一起管；只有明确的 4xx 算确定没建，
@@ -172,17 +172,19 @@ check("S6 客户「批量下单」：失败的行记下来，跑完预览只留�
   assert.match(src, /:\s*"按上面每行写的原因处理：要改内容的，请只把这几行改好另存一张表再上传。"/, "没有不确定的时候也别一律叫客户改表（第 6 轮）");
 });
 
-check("S7 超管「运单管理」改单：打开时记订单版本；每次保存都带回去核对（第 2 轮）；存完基线换成刚存的；被抢先就刷新列表", () => {
+check("S7 超管「运单管理」改单：打开时记订单版本；每次保存都带回去核对（第 2 轮）；存完基线换成刚存的；被抢先就刷新列表（2026-10-19 编辑框搬进 WaybillEditDialog，超管页 / 员工页共用）", () => {
   const src = code("apps/web/src/app/admin/page.tsx");
-  assert.match(src, /useState<\{ form: Record<string, string>; productsJson: string; orderUpdatedAt\?: string \} \| null>\(null\)/);
-  assert.match(src, /productsJson: "",\s*orderUpdatedAt: order\.orderUpdatedAt,\s*\}\);/, "打开弹窗要记下订单（不是运单）的 updatedAt");
-  assert.match(src, /const saved = await updateAdminOrder\(\{\s*orderId: saveOrderId,\s*\.\.\.\(editSnapshot\?\.orderUpdatedAt \? \{ expectedOrderUpdatedAt: editSnapshot\.orderUpdatedAt \} : \{\}\),/, "每次保存都要带 expectedOrderUpdatedAt（不能只在改产品行时带）");
-  assert.ok(!/sendsWholeProducts/.test(src), "又回到「只在改产品行 / 合计时才带版本」了（第 2 轮：只改备注不核对，会把旧产品行配上新版本）");
-  assert.match(src, /setEditSnapshot\(\(prev\) => \(prev && prev === snapAtSubmit \? \{ form: submittedForm, productsJson: submittedProductsJson, orderUpdatedAt: saved\.updatedAt \} : prev\)\);/, "存完要把基线整个换成刚存的（只换版本不够）");
-  assert.match(src, /if \(\/刚刚被别人改过\/\.test\(text\)\) loadOrders\(\)\.catch\(\(\) => \{\}\);/);
+  const dlg = code("apps/web/src/modules/orders/WaybillEditDialog.tsx");
+  assert.match(dlg, /export type WaybillEditSnapshot = \{ form: Record<string, string>; productsJson: string; orderUpdatedAt\?: string \};/);
+  assert.match(dlg, /snapshot: \{ form: \{ \.\.\.form \} as Record<string, string>, productsJson: JSON\.stringify\(products\), orderUpdatedAt: order\.orderUpdatedAt \},/, "打开弹窗要记下订单（不是运单）的 updatedAt");
+  assert.match(dlg, /const \[opened\] = useState\(\(\) => waybillEditStateOf\(initial\)\);/, "表单只在挂上那一刻按打开时那一行建一次（列表刷新不许把正在填的冲掉）");
+  assert.match(dlg, /const saved = await updateAdminOrder\(\{\s*orderId: saveOrderId,\s*\.\.\.\(snapshot\?\.orderUpdatedAt \? \{ expectedOrderUpdatedAt: snapshot\.orderUpdatedAt \} : \{\}\),/, "每次保存都要带 expectedOrderUpdatedAt（不能只在改产品行时带）");
+  assert.ok(!/sendsWholeProducts/.test(dlg), "又回到「只在改产品行 / 合计时才带版本」了（第 2 轮：只改备注不核对，会把旧产品行配上新版本）");
+  assert.match(dlg, /setSnapshot\(\(prev\) => \(prev && prev === snapAtSubmit \? \{ form: submittedForm, productsJson: submittedProductsJson, orderUpdatedAt: saved\.updatedAt \} : prev\)\);/, "存完要把基线整个换成刚存的（只换版本不够）");
+  assert.match(dlg, /if \(\/刚刚被别人改过\/\.test\(text\)\) reloadList\(\)\.catch\(\(\) => \{\}\);/);
   // 第几次打开弹窗（第 3 轮）：每次打开 +1，保存前记下，报错时还是这一次才写进弹窗（S7b ⑤ 真跑）
   const openAt = src.indexOf("const startEditOrder = ");
-  const openBody = src.slice(openAt, src.indexOf("setEditSnapshot({", openAt));
+  const openBody = src.slice(openAt, src.indexOf("\n  };", openAt));
   assert.ok(openAt > 0 && /editSessionRef\.current \+= 1;/.test(openBody), "打开弹窗要给「第几次打开」加一");
   assert.ok(/setMessage\(""\);/.test(openBody), "打开弹窗要先清掉上一回的提示");
   // 关弹窗也 +1（第 4 轮）：三个关的入口都走 closeEditOrder，别处不许再直接 setEditingOrderId("")
@@ -192,9 +194,10 @@ check("S7 超管「运单管理」改单：打开时记订单版本；每次保�
   // 直接清 editingOrderId 的只有两处：closeEditOrder，和「点了 ✕ 还在放动画就离开运单管理」时替它关完（第 7 轮）
   assert.equal((src.match(/setEditingOrderId\(""\)/g) ?? []).length, 2, "有地方绕过 closeEditOrder 直接关弹窗");
   assert.match(src, /if \(editingOrderId === \(o\.orderId \?\? o\.id\)\) \{\s*closeEditOrder\(\);/, "再点一次「编辑」要走 closeEditOrder");
-  assert.match(src, /<button type="button" onClick=\{closeEditOrder\}[^>]*>取消<\/button>/, "「取消」要走 closeEditOrder");
+  assert.match(dlg, /<button type="button" onClick=\{onClose\}[^>]*>取消<\/button>/, "「取消」要走页面给的关（超管页给的是 closeEditOrder）");
   // 右上角 ✕（第 5 轮）：DetailModal 先放 0.2 秒动画才调 onClose —— 点 ✕ 那一刻就得 +1，借 confirmClose（点的时候同步调）
-  assert.match(src, /title="编辑运单"[\s\S]{0,200}?onClose=\{closeEditOrder\}\s*confirmClose=\{beginCloseEditOrder\}/, "右上角 ✕ 要走 closeEditOrder，并且点下去那一刻就 +1");
+  assert.match(dlg, /title="编辑运单"[\s\S]{0,200}?onClose=\{onClose\}\s*confirmClose=\{confirmClose\}/, "右上角 ✕ 要走页面给的关，并且点下去那一刻就问页面");
+  assert.match(src, /onClose=\{closeEditOrder\}\s*confirmClose=\{beginCloseEditOrder\}/, "超管页给编辑框的关 = closeEditOrder、点 ✕ 那一刻 = beginCloseEditOrder");
   const beginAt = src.indexOf("const beginCloseEditOrder = ");
   assert.ok(beginAt > 0 && /editSessionRef\.current \+= 1;\s*editCloseRequestedRef\.current = true;\s*return true;/.test(src.slice(beginAt, src.indexOf("};", beginAt))), "点 ✕ 那一刻要 +1、记下已经点了 ✕、照常放行");
   assert.ok(/editSessionRef\.current \+= 1;\s*editCloseRequestedRef\.current = false;/.test(openBody), "打开弹窗要清掉「已经点了 ✕」");
@@ -203,24 +206,28 @@ check("S7 超管「运单管理」改单：打开时记订单版本；每次保�
   assert.match(modal, /if \(confirmClose && !confirmClose\(\)\) return;[\s\S]{0,200}?window\.setTimeout\(onClose, 200\)/, "DetailModal 得在放动画之前同步问 confirmClose，不然 ✕ 那 0.2 秒照样漏");
   // 离开「运单管理」（浏览器后退也算）：+1（第 5 轮）
   assert.match(src, /const hashId = window\.location\.hash\.replace\(\/\^#\/, ""\);\s*if \(hashId !== "orders" && \(isSectionId\(hashId\) \|\| !hashId\)\) \{\s*editSessionRef\.current \+= 1;\s*if \(editCloseRequestedRef\.current\) \{\s*editCloseRequestedRef\.current = false;\s*setEditingOrderId\(""\);\s*\}\s*\}/, "真离开运单管理才 +1（不认识的 # 不切页、不算离开）；点了 ✕ 还在放动画就离开的，替它关完（第 7 轮）");
-  // 离开运单管理弹窗跟着卸掉（第 6 轮）：藏起来不卸会一直占着 Tab / Esc 和滚动锁；
-  // 弹窗挂在列表外面（老板选 A）、key 跟着单子换（换一张就是新的一个弹窗，上一个的关闭定时器带不过来）
-  assert.match(src, /\{editingOrderRow && activeSection === "orders" \? \(\s*<DetailModal\s*key=\{editingOrderId\}\s*title="编辑运单"/, "编辑弹窗只在运单管理这一页显示时挂、挂在列表外面、key 跟着单子");
+  // 离开运单管理弹窗不画（第 6 轮）：藏起来还挂着会一直占着 Tab / Esc 和滚动锁 —— 编辑框 visible=false 时在 DetailModal 之前就 return null；
+  // 组件本身留着，填的内容回来照样在。挂在列表外面（老板选 A）、key 跟着单子换（换一张就是新的一个弹窗，上一个的关闭定时器带不过来）
+  assert.match(src, /\{editingOrderRow && editingOrderMeta \? \(\s*<WaybillEditDialog\s*key=\{editingOrderId\}\s*initial=\{editingOrderMeta\}\s*current=\{editingOrderRow\}\s*visible=\{activeSection === "orders"\}/, "编辑弹窗挂在列表外面、key 跟着单子、只在运单管理这一页显示");
+  assert.ok(dlg.indexOf("if (!visible) return null;") > 0 && dlg.indexOf("if (!visible) return null;") < dlg.indexOf("<DetailModal"), "不在运单管理时要在 DetailModal 之前就不画");
   // 这一段用原文找（去注释那步会被 accept="image/*" 里的「/*」骗，把后面一大段当注释吞掉）
   const raw = read("apps/web/src/app/admin/page.tsx");
   const tableAt = raw.indexOf("{pagedOrders.map((o) => {");
   const tableBlock = raw.slice(tableAt, raw.indexOf("</tbody>", tableAt));
-  assert.ok(tableAt > 0 && !tableBlock.includes('title="编辑运单"'), "编辑弹窗又挂回列表行里了：这张被挤到下一页 / 被筛掉，刷新一来弹窗就没了");
-  assert.equal((raw.match(/title="编辑运单"/g) ?? []).length, 1, "编辑弹窗只能有一个");
-  assert.match(raw, /key=\{editingOrderId\}\s*title="编辑运单"\s*subtitle=\{editingOrderRow\.trackingNo \?\? editingOrderRow\.orderNo \?\? "—"\}/, "编辑弹窗标题要取 editingOrderRow");
-  assert.match(raw, /\(editingOrderRow\.productImages\?\.length \?\? 0\) > 0 && \([\s\S]{0,400}?editingOrderRow\.productImages!\.map\(/, "编辑弹窗产品图要取 editingOrderRow");
+  assert.ok(tableAt > 0 && !tableBlock.includes("<WaybillEditDialog"), "编辑弹窗又挂回列表行里了：这张被挤到下一页 / 被筛掉，刷新一来弹窗就没了");
+  assert.equal((raw.match(/<WaybillEditDialog/g) ?? []).length, 1, "编辑弹窗只能有一个");
+  assert.ok(!raw.includes('title="编辑运单"'), "超管页里又自己写了一个编辑框（要用共用的 WaybillEditDialog）");
+  const rawDlg = read("apps/web/src/modules/orders/WaybillEditDialog.tsx");
+  assert.match(rawDlg, /title="编辑运单"\s*subtitle=\{current\.trackingNo \?\? current\.orderNo \?\? "—"\}/, "编辑弹窗标题要取列表里最新那张（current）");
+  assert.match(rawDlg, /\(current\.productImages\?\.length \?\? 0\) > 0 && \([\s\S]{0,400}?current\.productImages!\.map\(/, "编辑弹窗产品图要取列表里最新那张（current）");
   assert.match(src, /\}, \[editingOrderId, orderList, editingOrderMeta\]\);/, "editingOrderRow 要跟着 orderList 变（别人改了这张，标题 / 产品图跟着变）");
   assert.match(src, /\{ label: "编辑", onClick: \(id\) => \{ const o = pagedOrders\.find\(\(x\) => x\.id === id\); if \(!o\) return; if \(editingOrderId === \(o\.orderId \?\? o\.id\)\) closeEditOrder\(\); else startEditOrder\(o\); \} \}/, "手机「编辑」要跟电脑一样：点正在改的那张 = 关");
   // 存上之后刷新列表失败，不能落进「保存失败」（dsh 第 5 轮；S7b 真跑）
-  assert.match(src, /await loadOrders\(\)\.catch\(\(\) => setToast\(`\$\{savedText\}（列表这次没刷新上，稍后会自动刷新）`\)\);/);
-  assert.match(src, /const sessionAtSubmit = editSessionRef\.current;\s*setLoading\(true\);\s*setMessage\(""\);\s*try \{/, "保存前（try 外面）要记下是第几次打开");
+  assert.match(dlg, /await reloadList\(\)\.catch\(\(\) => onToast\(`\$\{savedText\}（列表这次没刷新上，稍后会自动刷新）`\)\);/);
+  assert.match(src, /sessionRef=\{editSessionRef\}\s*busy=\{loading\}\s*setBusy=\{setLoading\}\s*onClose=\{closeEditOrder\}\s*confirmClose=\{beginCloseEditOrder\}\s*onToast=\{setToast\}\s*reloadList=\{loadOrders\}/, "超管页给编辑框的第几次 / 忙 / 提示条 / 刷新要接对");
+  assert.match(dlg, /const sessionAtSubmit = sessionRef\.current;\s*setBusy\(true\);\s*setMessage\(""\);\s*try \{/, "保存前（try 外面）要记下是第几次打开");
   // 后端报的那句跟这里认的一样
-  assert.match(read("apps/api/src/modules/admin/routes.ts"), /这票刚刚被别人改过（超管端「运单管理」或别的超管），你这次没有保存/);
+  assert.match(read("apps/api/src/modules/admin/routes.ts"), /这票刚刚被别人改过（「运单管理」里或别的同事），你这次没有保存/);
 });
 
 check("S8 超管在员工页「保存订单信息」：草稿记订单版本、保存带回去、存完先换成返回的新版本", () => {
@@ -366,10 +373,11 @@ async function main(): Promise<void> {
     assert.ok(retry.lastRows !== undefined && retry.lastRows.length === 0, "全成功后预览清空（按钮跟着变灰）");
   });
 
-  await checkAsync("S7b 真跑超管「运单管理」的 submitOrderEdit（假后端照真后端核版本）：每次都带版本；存完基线换成这次提交的；别人先改了产品行、我只改备注也被拦下，旧产品行配不上新版本；409 不动基线；存的过程中又开了一次弹窗不盖", async () => {
+  await checkAsync("S7b 真跑「运单管理」编辑框的保存（WaybillEditDialog 的 submit，假后端照真后端核版本）：每次都带版本；存完基线换成这次提交的；别人先改了产品行、我只改备注也被拦下，旧产品行配不上新版本；409 不动基线；存的过程中又开了一次弹窗不盖", async () => {
     const editTotals = await import("../apps/web/src/modules/orders/edit-totals");
     const guard = await import("../apps/web/src/modules/orders/productRowGuard");
-    const handler = sourceNode("apps/web/src/app/admin/page.tsx", (n) => ts.isArrowFunction(n) && ts.isVariableDeclaration(n.parent) && n.parent.name.getText() === "submitOrderEdit");
+    // 2026-10-19 编辑框搬进 WaybillEditDialog（超管页 / 员工页共用）：真跑那里的 submit
+    const handler = sourceNode("apps/web/src/modules/orders/WaybillEditDialog.tsx", (n) => ts.isArrowFunction(n) && ts.isVariableDeclaration(n.parent) && n.parent.name.getText() === "submit");
     const F0: Row = {
       clientId: "ZZC1", trackingNo: "ZZ-1", batchNo: "B0", warehouseId: "wh_yiwu_01", itemName: "鞋", transportMode: "sea", domesticTrackingNo: "",
       receiverAddressTh: "", containerNo: "", productQuantity: "0", packageCount: "2", packageUnit: "box", weightKg: "10", volumeM3: "0.1",
@@ -390,23 +398,23 @@ async function main(): Promise<void> {
       store.message = "";
       store.toast = "";
       await evalTs("module.exports=" + handler + ";", {
-        editSessionRef: session,
+        sessionRef: session,
         // 沙箱自带一份 Error，假后端抛的是外面这份：handler 里 `error instanceof Error` 认不出、报错文字被吞成「保存失败」——换成同一份
         Error,
-        ...editTotals, ...guard, loading: false, editingOrderId: "o1", orderEditForm: form, editProducts: products, editSnapshot: store.snapshot,
-        setLoading() {}, setMessage(m: string) { store.message = m; }, setToast(t: string) { store.toast = t; },
-        setEditSnapshot(v: any) { store.snapshot = typeof v === "function" ? v(store.snapshot) : v; },
+        ...editTotals, ...guard, busy: false, initial: { id: "s1", orderId: "o1" }, form, products, snapshot: store.snapshot,
+        setBusy() {}, setMessage(m: string) { store.message = m; }, onToast(t: string) { store.toast = t; },
+        setSnapshot(v: any) { store.snapshot = typeof v === "function" ? v(store.snapshot) : v; },
         updateAdminOrder: async (payload: Row) => {
           sent.push(JSON.parse(JSON.stringify(payload)));
           if (duringSave) { const f = duringSave; duringSave = null; f(payload); }
           if (payload.expectedOrderUpdatedAt !== undefined && payload.expectedOrderUpdatedAt !== `V${server.version}`) {
-            throw new Error("这票刚刚被别人改过（超管端「运单管理」或别的超管），你这次没有保存。请关掉重新打开，看最新的再改");
+            throw new Error("这票刚刚被别人改过（「运单管理」里或别的同事），你这次没有保存。请关掉重新打开，看最新的再改");
           }
           if (Array.isArray(payload.products)) server.products = payload.products;
           server.version += 1;
           return { orderId: "o1", updatedAt: `V${server.version}` };
         },
-        loadOrders: async () => { if (loadFails) throw new Error("列表接口断网了"); return "applied"; },
+        reloadList: async () => { if (loadFails) throw new Error("列表接口断网了"); return "applied"; },
       })();
       return sent[sent.length - 1];
     };

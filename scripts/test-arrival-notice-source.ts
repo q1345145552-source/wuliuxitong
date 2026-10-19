@@ -163,12 +163,12 @@ async function main(): Promise<void> {
     assert.ok(back.every((p) => p.startsWith("/staff/arrival-notices/")), back.join(","));
     for (const p of back) assert.ok(api.includes(p), `前端没调 ${p}`);
     assert.match(routes, /requireRole\(req, res, \["staff", "admin"\]\)/);
-    assert.equal((routes.match(/requireRole\(req, res, \["staff", "admin"\]\)/g) ?? []).length, 8, "原来那 7 个 + 读原样（2026-10-19）给员工 / 超管");
-    // 2026-10-16 超管改已转正式运单：这两个只给超管（员工照旧不能改已转正式的）
+    assert.equal((routes.match(/requireRole\(req, res, \["staff", "admin"\]\)/g) ?? []).length, 10, "原来那 7 个 + 读原样 + 改已转正式运单那两个（2026-10-19）给员工 / 超管");
+    // 改已转正式运单那两个：2026-10-16 只给超管；2026-10-19 老板「给员工加权限」—— 员工也能改运单了，一起放开
     for (const p of ["/staff/arrival-notices/converted-detail", "/staff/arrival-notices/converted-refresh"]) {
       const at = routes.indexOf(`"${p}"`);
       assert.ok(at >= 0, `没有 ${p}`);
-      assert.match(routes.slice(at, at + 300), /requireRole\(req, res, \["admin"\]\)/, `${p} 要只给超管`);
+      assert.match(routes.slice(at, at + 300), /requireRole\(req, res, \["staff", "admin"\]\)/, `${p} 要给员工 / 超管`);
     }
   });
 

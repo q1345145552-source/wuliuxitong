@@ -475,8 +475,9 @@ async function main() {
       }
     }
   });
-  await check("管理员入口权限和合法大小写：员工拒绝；默认空值/大小写与建单一致", async () => {
-    reset(); assert.equal((await api({orderId: "o1", cargoType: "sensitive"}, "staff")).code, 403); assert.equal(calls.length, 0);
+  // 2026-10-19 老板「给员工加权限」：员工也能改运单（这条改单路放开给员工），客户 / 代理照旧拒
+  await check("管理员入口权限和合法大小写：客户 / 代理拒绝；默认空值/大小写与建单一致", async () => {
+    for (const role of ["client", "agent"]) { reset(); assert.equal((await api({orderId: "o1", cargoType: "sensitive"}, role)).code, 403); assert.equal(calls.length, 0); }
     for (const [raw, want] of [[" INSPECTION ", "inspection"], ["", "normal"], [null, "normal"]]) {
       reset([]); assert.equal((await api({orderId: "o1", cargoType: raw})).code, 200); assert.equal(rows.order[0].cargoType, want);
     }

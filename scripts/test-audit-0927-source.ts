@@ -33,14 +33,15 @@ check("#5 员工列表 orderProductImage.findMany 有 select 且不含 contentBa
   assert.match(block, /filePath:\s*true/, "要取 filePath（列表里 imageUrl 用它）");
 });
 
-check("#1 超管编辑框预填用 totalWeightKg ?? weightKg / totalVolumeM3 ?? volumeM3（两处：快照 + 表单）", () => {
-  const src = read("apps/web/src/app/admin/page.tsx");
-  const i = src.indexOf("const startEditOrder = ");
-  const block = src.slice(i, src.indexOf("const rows = (order.products", i));
+check("#1 编辑框预填用 totalWeightKg ?? weightKg / totalVolumeM3 ?? volumeM3（2026-10-19 搬进 WaybillEditDialog：表单一处，「打开时的样子」照表单抄一份）", () => {
+  const src = read("apps/web/src/modules/orders/WaybillEditDialog.tsx");
+  const i = src.indexOf("export function waybillEditStateOf(");
+  const block = src.slice(i, src.indexOf("const products: WaybillEditProduct[]", i));
   const w = block.match(/weightKg:\s*[^,]*totalWeightKg[^,]*,/g) ?? [];
   const v = block.match(/volumeM3:\s*[^,]*totalVolumeM3[^,]*,/g) ?? [];
-  assert.equal(w.length, 2, `weightKg 预填要用 totalWeightKg（快照 + 表单各一处），实际 ${w.length} 处`);
-  assert.equal(v.length, 2, `volumeM3 预填要用 totalVolumeM3，实际 ${v.length} 处`);
+  assert.equal(w.length, 1, `weightKg 预填要用 totalWeightKg，实际 ${w.length} 处`);
+  assert.equal(v.length, 1, `volumeM3 预填要用 totalVolumeM3，实际 ${v.length} 处`);
+  assert.match(src.slice(i), /snapshot: \{ form: \{ \.\.\.form \}/, "「打开时的样子」要照表单抄（不然两份预填会对不上）");
   assert.ok(!/weightKg:\s*order\.weightKg === null/.test(block), "还残留着按剩余量预填的老写法");
 });
 

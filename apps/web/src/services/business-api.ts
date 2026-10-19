@@ -1241,6 +1241,16 @@ export async function fetchStaffClients(): Promise<StaffClientItem[]> {
   return data.items;
 }
 
+/** 员工重置客户密码（2026-10-19）：后端只认客户号，员工 / 超管 / 代理的号会 403 */
+export async function resetStaffClientPassword(id: string, password: string): Promise<{ updated: boolean; id: string }> {
+  const response = await fetch(`${apiBaseUrl()}/staff/clients/set-password`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({ id, password }),
+  });
+  return parseApiResponse<{ updated: boolean; id: string }>(response);
+}
+
 /** 修复运单-订单关联接口的返回结果。 */
 export type RepairStaffShipmentOrderLinksResult = {
   ok: boolean;

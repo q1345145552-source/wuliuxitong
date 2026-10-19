@@ -159,6 +159,13 @@ export const roleFunctionGroups: Record<AuthRole, MenuGroup[]> = {
         { id: "staff-func-chat", label: "客户消息", href: "/staff/chat" },
       ],
     },
+    {
+      groupLabel: "账号",
+      items: [
+        // 员工给客户重置密码（2026-10-19 老板拍板「给员工加权限」）
+        { id: "staff-func-client-accounts", label: "客户账号", href: "/staff/client-accounts" },
+      ],
+    },
   ],
   client: [
     {

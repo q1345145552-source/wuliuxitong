@@ -542,7 +542,7 @@ function NoticeCard(props: {
       <footer className="an-actions">
         <span className="an-who">{n.createdByName ? `${n.createdByName} ` : ""}登记于 {shortTime(n.createdAt)}</span>
         <button type="button" className="an-btn" disabled={busy} onClick={props.onToggleNotified}>{n.notifiedAt ? "改回未通知" : "标为已通知客户"}</button>
-        {/* 已转正式运单：只给超管（canEditConverted，后端按身份给），改的是那张运单（2026-10-16）；员工照旧只读 */}
+        {/* 已转正式运单：后端给 canEditConverted 才有「修改」，改的是那张运单（2026-10-16 只给超管；2026-10-19 员工也能改运单了，后端一起给） */}
         {!formal || n.canEditConverted ? <button type="button" className="an-btn" disabled={busy} onClick={props.onEdit}>修改</button> : null}
         {!formal ? <button type="button" className="an-btn an-btn-go" disabled={busy} onClick={() => props.onConvert("formal")}>转正式运单</button> : null}
         {!formal && !inbound ? <button type="button" className="an-btn" disabled={busy} onClick={() => props.onConvert("inbound")}>转待入库</button> : null}
@@ -724,7 +724,7 @@ function NoticeEditor(props: {
       const fresh = await fetchConvertedNoticeDetail(detail.item.id);
       if (fresh.blockedReason) throw new Error(fresh.blockedReason);
       if (!sameConvertedDraft(base, convertedDraftOf(fresh))) {
-        throw new Error("这票刚刚被别人改过（超管端「运单管理」或别的超管），你这次没有保存。请点「取消」关掉，重新点「修改」看最新的再改");
+        throw new Error("这票刚刚被别人改过（「运单管理」里或别的同事），你这次没有保存。请点「取消」关掉，重新点「修改」看最新的再改");
       }
       // 自己改了备注、同事这期间也改了备注：不存（没改备注就不管别人改没改）
       if (remarkChanged(base, draft) && (fresh.item.remark ?? "").trim() !== base.remark.trim()) {
@@ -858,7 +858,7 @@ function NoticeEditor(props: {
         <p className="an-note">这票货已经转成「待入库」运单，这里保存会同步改那张运单；资料齐了回列表点「转正式运单」。</p>
       ) : null}
       {converted ? (
-        <p className="an-note">这票已经转成正式运单。下面是那张运单现在的内容，保存就是改这张运单（跟超管端「运单管理」点「编辑」同样的规矩），这张卡片也会跟着变成新的。照片请到「运单管理」那张运单里改。</p>
+        <p className="an-note">这票已经转成正式运单。下面是那张运单现在的内容，保存就是改这张运单（跟「运单管理」点「编辑」同样的规矩），这张卡片也会跟着变成新的。照片请到「运单管理」那张运单里改。</p>
       ) : null}
       {converted?.blockedReason ? <p role="alert" className="an-error">{converted.blockedReason}</p> : null}
       {/* 保存 / 传照片期间整张表锁住（修复第 2 轮）：保存发出去的是点「保存」那一刻的资料，传照片那几十秒里再改的字

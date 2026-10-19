@@ -222,8 +222,9 @@ async function main(): Promise<void> {
     // 管理员：详情、编辑两个弹窗 2026-10-18（老板选 A）都挪到了宽表外面（不随宽表在手机上收起，也不随翻页 / 刷新消失）
     const adminSrc = read("app/admin/page.tsx");
     const adminTableEnd = adminSrc.indexOf("</table>", adminSrc.indexOf('"table-card shipment-table-scroll is-phone-hidden"'));
-    for (const title of ["编辑运单", "运单详情"]) {
-      const at = adminSrc.indexOf(`title="${title}"`);
+    // 编辑运单 2026-10-19 起是共用的 <WaybillEditDialog>（员工页也挂它）
+    for (const [title, marker] of [["编辑运单", "<WaybillEditDialog"], ["运单详情", 'title="运单详情"']] as const) {
+      const at = adminSrc.indexOf(marker);
       assert.ok(adminTableEnd > 0 && at > adminTableEnd, `管理员的「${title}」弹窗要挂在宽表外面（挂回表里手机上会被一起藏掉）`);
     }
   });

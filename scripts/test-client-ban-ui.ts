@@ -80,8 +80,12 @@ check("U4 员工端「创建订单」两个唛头框：选项去掉封禁的（�
 
 check("U5 超管端：「创建订单」唛头框、「运单管理」改唛头框都去掉封禁的（改单时原来那个唛头留着）；改单的提示只在换成封禁的时出", () => {
   const src = read("apps/web/src/app/admin/page.tsx");
-  assert.match(src, /<MarkPicker value=\{orderEditForm\.clientId\}[^\n]*options=\{withCurrentMark\(activeMarkOptions\(clientList\), editSnapshot\?\.form\.clientId\)\}/);
-  assert.match(src, /bannedChangeHint\(orderEditForm\.clientId, editSnapshot\?\.form\.clientId, bannedClientIds\(clientList\)\)/, "改单提示要拿原来的唛头比");
+  // 「编辑运单」2026-10-19 搬进共用的 WaybillEditDialog（员工页也挂它）：超管页 / 员工页都把会跟推送刷新的那份名单交进去
+  const dlg = read("apps/web/src/modules/orders/WaybillEditDialog.tsx");
+  assert.match(dlg, /<MarkPicker value=\{form\.clientId\}[^\n]*options=\{withCurrentMark\(activeMarkOptions\(clientList\), snapshot\?\.form\.clientId\)\}/);
+  assert.match(dlg, /bannedChangeHint\(form\.clientId, snapshot\?\.form\.clientId, bannedClientIds\(clientList\)\)/, "改单提示要拿原来的唛头比");
+  assert.match(src, /<WaybillEditDialog[\s\S]{0,400}?clientList=\{clientList\}/, "超管页交给编辑框的要是页面上那份 clientList");
+  assert.match(read("apps/web/src/app/staff/page.tsx"), /<WaybillEditDialog[\s\S]{0,400}?clientList=\{staffClients\}/, "员工页交给编辑框的要是页面上那份 staffClients（跟推送刷新）");
   // 创建订单用页面上那份 clientList（推送 / 10 秒兜底一直在刷）；原来点开时单拉一份，开着弹窗时别人封了不会变（Codex 第 2 轮）
   assert.match(src, /<MarkPicker value=\{createForm\.clientId\}[^\n]*options=\{activeMarkOptions\(clientList\)\}/);
   assert.match(src, /bannedChangeHint\(createForm\.clientId, "", bannedClientIds\(clientList\)\)/);
@@ -117,7 +121,7 @@ check("U5 超管端：「创建订单」唛头框、「运单管理」改唛头�
   assert.match(src, /setToast\(outcome === "applied" \? "运单列表已刷新"[^\n]*\n\s*if \(outcome === "applied"\) clearStaleListError\(\);/, "手动刷新刷上了要清掉「列表刷新失败」那句");
   assert.match(src, /loadOrders\(\)\.then\(\(outcome\) => \{ if \(outcome === "applied"\) clearStaleListError\(\); \}\),/, "10 秒自动刷新 / 推送刷上了也要清（dsh 第 11 轮）");
   // 编辑运单弹窗：一律红字（那里只会是没填全 / 保存失败）；页面级 message 里不再放成功的话（清理会话记忆改走提示条，dsh 第 10 轮）
-  const editAlert = src.slice(src.indexOf("拆过柜的单填了比已装走还少的数会被后端拒绝"), src.indexOf("拆过柜的单填了比已装走还少的数会被后端拒绝") + 600);
+  const editAlert = dlg.slice(dlg.indexOf("拆过柜的单填了比已装走还少的数会被后端拒绝"), dlg.indexOf("拆过柜的单填了比已装走还少的数会被后端拒绝") + 600);
   assert.match(editAlert, /<p role="alert" style=\{\{ margin: "0 0 8px", color: "var\(--c-red-deep\)"/, "编辑运单弹窗的提示要一律红字");
   assert.ok(!/setMessage\(`已清理/.test(src), "页面级 message 只留给错误：清理会话记忆的成功那句要走提示条");
   assert.match(src, /setShowCreateOrderModal\(true\);\s*\n\s*setCreateOrderMessage\(""\);/, "打开创建订单弹窗要先清掉上一回的提示");
@@ -129,8 +133,10 @@ check("U6 全站每个唛头下拉点名：挂单的四处都去掉封禁的；�
     "apps/web/src/app/staff/page.tsx",
     "apps/web/src/components/client/FclInquiryPanel.tsx",
     "apps/web/src/modules/arrival-notice/ArrivalNoticesView.tsx",
+    // 2026-10-19 「编辑运单」搬出来的共用编辑框（超管页 / 员工页都挂它）：改唛头 = 挂单
+    "apps/web/src/modules/orders/WaybillEditDialog.tsx",
   ];
-  // 先确认没有漏掉的文件：全站用 MarkPicker 的就这四个
+  // 先确认没有漏掉的文件：全站用 MarkPicker 的就这五个
   const all: string[] = [];
   const walk = (dir: string) => {
     for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -144,7 +150,9 @@ check("U6 全站每个唛头下拉点名：挂单的四处都去掉封禁的；�
   // 挂单的那几个框：选项都得经过「去掉封禁的」那一步（直接去名单或父页面剔过的那份）；整柜询价那个照旧全给
   const optionsOf = (rel: string) => [...read(rel).matchAll(/<MarkPicker\b[\s\S]*?options=\{([^\n]*?)\}\s*(?:loadFailed|placeholder)/g)].map((m) => m[1]);
   for (const o of optionsOf(files[0])) assert.match(o, /activeMarkOptions\(/, `超管页有个唛头下拉没去掉封禁的：${o}`);
-  assert.equal(optionsOf(files[0]).length, 2);
+  assert.equal(optionsOf(files[0]).length, 1, "超管页自己只剩「创建订单」那个（编辑运单的在 WaybillEditDialog）");
+  for (const o of optionsOf(files[4])) assert.match(o, /activeMarkOptions\(/, `编辑运单的唛头下拉没去掉封禁的：${o}`);
+  assert.equal(optionsOf(files[4]).length, 1);
   for (const o of optionsOf(files[1])) assert.equal(o, "allClientOptions");
   assert.equal(optionsOf(files[1]).length, 2);
   for (const o of optionsOf(files[3])) assert.match(o, /props\.clients/);

@@ -640,9 +640,12 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
 
   /**
    * 管理员更新客户端订单基础信息，并同步到关联运单的同名字段。
+   * 员工也能调（2026-10-19 老板拍板「给员工加权限」：员工端「运单管理」的「编辑运单」、到货通知改已转正式运单都走这里，
+   * 跟超管同一个编辑框 modules/orders/WaybillEditDialog.tsx）。这条路里没有按角色分的逻辑、也不写「管理员…」轨迹。
+   * 删除运单、撤销误签收、批量导入、超管建单照旧只给超管。
    */
   app.post("/admin/orders/update", async (req, res) => {
-    const auth = requireRole(req, res, ["admin"]);
+    const auth = requireRole(req, res, ["admin", "staff"]);
     if (!auth) return;
 
     const body = (req.body ?? {}) as {
@@ -949,7 +952,7 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
       if (typeof body.expectedOrderUpdatedAt === "string" && body.expectedOrderUpdatedAt) {
         const cur = await tx.order.findFirst({ where: { id: orderId, companyId: auth.companyId }, select: { updatedAt: true } });
         if (!cur || cur.updatedAt.toISOString() !== body.expectedOrderUpdatedAt) {
-          throw new BusinessError("这票刚刚被别人改过（超管端「运单管理」或别的超管），你这次没有保存。请关掉重新打开，看最新的再改", 409, "VALIDATION_ERROR");
+          throw new BusinessError("这票刚刚被别人改过（「运单管理」里或别的同事），你这次没有保存。请关掉重新打开，看最新的再改", 409, "VALIDATION_ERROR");
         }
       }
       const savedProductCargo = async () => {

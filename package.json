@@ -114,7 +114,9 @@
     "test:migration-chaipai-db": "tsx scripts/test-migration-chaipai-db.ts",
     "test:arrival-notice-snapshot-source": "tsx scripts/test-arrival-notice-snapshot-source.ts",
     "test:arrival-notice-snapshot-db": "tsx scripts/test-arrival-notice-snapshot-db.ts",
-    "test:migration-arrival-notice-snapshots-db": "tsx scripts/test-migration-arrival-notice-snapshots-db.ts"
+    "test:migration-arrival-notice-snapshots-db": "tsx scripts/test-migration-arrival-notice-snapshots-db.ts",
+    "test:staff-perms-source": "tsx scripts/test-staff-perms-source.ts",
+    "test:staff-perms-db": "tsx scripts/test-staff-perms-db.ts"
   },
   "devDependencies": {
     "@types/node": "^26.0.1",

@@ -45,6 +45,7 @@ const PAGE_TITLES: Record<string, string> = {
   "/staff/container-loading": "装柜管理",
   "/staff/chat": "客户消息",
   "/staff/arrival-notices": "到货通知",
+  "/staff/client-accounts": "客户账号",
   "/client": "客户端工作台",
   "/client/imports": "客户端批量下单",
   "/client/consolidation": "集货拼柜",

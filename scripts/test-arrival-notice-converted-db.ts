@@ -110,15 +110,18 @@ async function main(): Promise<void> {
     const A = await makeConverted("ZZCV0001");
     const blank = (await must("POST /staff/arrival-notices/save", STAFF, { remark: "还没转" })).item;
 
-    await check("D1 列表：已转正式的只给超管「能改」标记；员工拿到 false；没转的不带这个标记（false）", async () => {
+    await check("D1 列表：已转正式的给「能改」标记（2026-10-19 起员工也给：老板「给员工加权限」，员工能改运单了）；没转的不带这个标记（false）", async () => {
       assert.equal((await listItem(ADMIN, A.id)).canEditConverted, true);
-      assert.equal((await listItem(STAFF, A.id)).canEditConverted, false);
+      assert.equal((await listItem(STAFF, A.id)).canEditConverted, true);
       assert.equal((await listItem(ADMIN, blank.id)).canEditConverted, false);
     });
 
-    await check("D2 converted-detail：只给超管（员工 403）；读的是运单现在的样子，行号跟订单产品行一一对应；没转的 400", async () => {
+    await check("D2 converted-detail：员工 / 超管都能读（2026-10-19 起员工也能改运单），客户 403；读的是运单现在的样子，行号跟订单产品行一一对应；没转的 400", async () => {
       const r = await call("GET /staff/arrival-notices/converted-detail", STAFF, {}, { id: A.id, v: "2" });
-      assert.equal(r.status, 403);
+      assert.equal(r.status, 200, r.message);
+      assert.deepEqual(r.data.productIds, (await detail(A.id)).productIds, "员工读到的跟超管一样（行号对得上才能存）");
+      const asClient = await call("GET /staff/arrival-notices/converted-detail", { userId: CA, companyId: CO, role: "client", name: "客户甲", agentId: null }, {}, { id: A.id, v: "2" });
+      assert.equal(asClient.status, 403);
       const d = await detail(A.id);
       const { ps, o } = await orderOf(A.shipmentId);
       assert.deepEqual(d.productIds, ps.map((p: Row) => p.id));
@@ -186,9 +189,11 @@ async function main(): Promise<void> {
       assert.equal(sameConvertedDraft(base, convertedDraftOf(await detail(A.id))), false);
     });
 
-    await check("D6 converted-refresh：员工 403；不带备注 = 备注不动；带空串 = 清掉；没转的 400；什么都没变时不白改 updatedAt", async () => {
-      assert.equal((await call("POST /staff/arrival-notices/converted-refresh", STAFF, { id: A.id, remark: "x", expectedRemark: "外箱有破损" })).status, 403);
+    await check("D6 converted-refresh：员工也能调（2026-10-19）、客户 403；不带备注 = 备注不动；带空串 = 清掉；没转的 400；什么都没变时不白改 updatedAt", async () => {
+      assert.equal((await call("POST /staff/arrival-notices/converted-refresh", { userId: CA, companyId: CO, role: "client", name: "客户甲", agentId: null }, { id: A.id })).status, 403);
       const before = await pm.arrivalNotice.findFirst({ where: { id: A.id } });
+      await must("POST /staff/arrival-notices/converted-refresh", STAFF, { id: A.id });
+      assert.equal((await pm.arrivalNotice.findFirst({ where: { id: A.id } })).updatedAt.getTime(), before.updatedAt.getTime(), "员工调、资料一样时也不白改");
       await must("POST /staff/arrival-notices/converted-refresh", ADMIN, { id: A.id });
       const after = await pm.arrivalNotice.findFirst({ where: { id: A.id } });
       assert.equal(after.remark, before.remark);
