@@ -1,6 +1,10 @@
 # 项目交接日志
 
-## 2026-10-20 员工账号备注（本地 214b822 → b01110d，未推未上线；带迁移）
+## 2026-10-20 04:44（北京）上线 0b1d513：员工账号备注（带迁移 20261020_user_remark）+ b52f075（CI 测试修复）
+- 老板「上」。上线前：本地干净、比 GitHub 多 6 个提交；只读看服务器 HEAD dfe7a88、只有 package-lock 被改、没有会撞的未跟踪文件、磁盘剩 42G、容器 healthy、线上 users 还没有 remark。推 GitHub dfe7a88..0b1d513，ssh 跑 `bash deploy.sh` 退出 0：有待执行迁移 → 先整库备份 `/root/db-backups/xiangtai_predeploy_20261019_204241.sql.gz`（602M）→ 迁移 20261020_user_remark → 体检一致 → 20:43 UTC 换容器。日志 `.audit/2026-10-20/deploy-remark/deploy.log`。
+- 核对：服务器 HEAD = GitHub = 0b1d513；两个容器 healthy、重启 0；users.remark 是 text、可空，现有 0 行有值（没回填）；体检 0 行；后端有改备注接口、不登录 401；前端包里有「取消改备注」；API 报错 0；外网首页 / 登录 / 管理员页 200。GitHub 自动检查 39321322897 三组（build / android / test-db）全绿。
+
+## 2026-10-20 员工账号备注（本地 214b822 → b01110d；已随 0b1d513 上线，见上一条）
 - 老板：「给员工账号备注是哪里的员工，比如义乌仓管，广州仓管，泰国员工」→ 我说要加一个字段 →「管理员给员工账号进行备注」。只有超管在「员工管理」里写、看。
 - 做法：`users` 加一列 `remark`（可空；手写迁移 `20261020_user_remark`，只加不删、不回填、IF NOT EXISTS；体检清单 769 个字段）。
   后端：建员工可带备注（建客户不认）；`POST /admin/users/staff-remark` 只给超管、只认本公司员工号、写的时候 where 再带 role=staff 和「点开时那份」（expectedRemark，别的超管这期间改过 → 409，不盖人家的）、去空格、空 = 清掉、最多 50 字；`GET /admin/users` 带 remark。
