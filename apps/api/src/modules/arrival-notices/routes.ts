@@ -1117,14 +1117,15 @@ function toDto(n: NoticeRow, ship: { currentStatus: string; trackingNo?: string 
   };
 }
 
-async function loadDto(companyId: string, id: string, viewerRole: string) {
-  const n = await prisma.arrivalNotice.findFirst({ where: { id, companyId }, include: NOTICE_INCLUDE });
+/** 读一条、拼成给页面的一行。db 默认全局连接；读原样那个接口传事务进来（跟原样在同一个快照里读，2026-10-19 审查第 2 轮） */
+async function loadDto(companyId: string, id: string, viewerRole: string, db: Tx | typeof prisma = prisma) {
+  const n = await db.arrivalNotice.findFirst({ where: { id, companyId }, include: NOTICE_INCLUDE });
   if (!n) return null;
   const ship = n.shipmentId
-    ? await prisma.shipment.findFirst({ where: { id: n.shipmentId, companyId }, select: { currentStatus: true, trackingNo: true } })
+    ? await db.shipment.findFirst({ where: { id: n.shipmentId, companyId }, select: { currentStatus: true, trackingNo: true } })
     : null;
-  const matches = await findPrealertMatches(prisma, companyId, [prealertKeyOf(n)]);
-  const snapshotCount = await prisma.arrivalNoticeSnapshot.count({ where: { noticeId: n.id, companyId } });
+  const matches = await findPrealertMatches(db, companyId, [prealertKeyOf(n)]);
+  const snapshotCount = await db.arrivalNoticeSnapshot.count({ where: { noticeId: n.id, companyId } });
   return toDto(n, ship, viewerRole, matches.get(n.id) ?? [], snapshotCount);
 }
 
@@ -1552,18 +1553,25 @@ export function registerArrivalNoticeRoutes(app: MinimalHttpApp): void {
    * 员工、超管都能看（到货通知本来就只给这两种账号）；谁转的名字只给超管（老板 2026-09-15：操作人只给超管看）。
    * 同时回这条到货通知**现在**的样子（current，跟列表卡片同一个 loadDto）：页面拿它比，不拿列表里那张 ——
    * 弹窗开着时列表刷新、这张卡片被搜索条件 / 翻页挤掉了，再拿打开时那份旧的冒充「现在」会漏报（审查第 1 轮 Codex）。
+   * current 和原样放在同一个「可重复读」快照里读（审查第 2 轮 Codex）：不然两次读之间有人改了到货通知又重转正式，
+   * 会回「旧的现在 + 新存的原样」，刚存的那份被标成「改过」。只读，不锁任何行。
    */
   app.get("/staff/arrival-notices/snapshots", async (req: HttpRequest, res: HttpResponse) => {
     const auth = requireRole(req, res, ["staff", "admin"]);
     if (!auth) return;
     const id = idOf(req.query.id);
     if (!id) { fail(res, 400, "BAD_REQUEST", "缺少到货通知 id"); return; }
-    const current = await loadDto(auth.companyId, id, auth.role);
-    if (!current) { fail(res, 404, "NOT_FOUND", "这条到货通知不存在（可能刚被删了），请刷新页面"); return; }
-    const rows = await prisma.arrivalNoticeSnapshot.findMany({
-      where: { noticeId: id, companyId: auth.companyId },
-      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
-    });
+    const read = await prisma.$transaction(async (tx) => {
+      const current = await loadDto(auth.companyId, id, auth.role, tx);
+      if (!current) return null;
+      const rows = await tx.arrivalNoticeSnapshot.findMany({
+        where: { noticeId: id, companyId: auth.companyId },
+        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+      });
+      return { current, rows };
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead, timeout: 15000, maxWait: 10000 });
+    if (!read) { fail(res, 404, "NOT_FOUND", "这条到货通知不存在（可能刚被删了），请刷新页面"); return; }
+    const { current, rows } = read;
     const showWho = canSeeOperatorIdentity(auth.role);
     ok(res, {
       items: rows.map((r) => ({

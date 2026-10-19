@@ -15,6 +15,8 @@
  *   P8  超管点「修改」时拿的已转运单详情也带 snapshotCount
  *   P9  刚转完、谁都没改：页面真比对函数跟读原样回的 current 比，一处「改过」都没有（各种填法、国内单号写「货拉拉」、待入库再转正式；
  *       运单管理改了无关的一项触发同步之后也一样）；current 跟列表上那张卡片一模一样
+ *   P10 （审查第 2 轮）current 和原样在同一个快照里读：读到一半（current 读完、原样还没读）有人改了备注又多存了一份，
+ *       回的还是同一时刻的「现在 + 原样」（不会「旧的现在 + 新存的原样」）
  *
  * 只连测试库：DATABASE_URL 不带 neon.tech 的不跑（一次性 docker 库设 AGENT_PORTAL_TEST_ALLOW_DB=1）；
  * 没有 DATABASE_URL 打印「跳过」。测试数据全在假公司 zz_ansnap_co / zz_ansnap_co2 下，开跑前、跑完后都清干净。
@@ -231,22 +233,39 @@ async function main(): Promise<void> {
       // 以后的新格式（v=2，别的字段都齐、类型也对）这一版认不出：也给 null，不拿新格式硬套老页面
       await pm.arrivalNoticeSnapshot.create({ data: { id: "zz_ansnap_v2", companyId: CO, noticeId: p1Id, data: JSON.stringify({ ...good, v: 2 }), convertedById: STAFF.userId, createdAt: new Date(Date.now() + 30_000) } });
       // 审查第 1 轮：JSON 能解析、v=1，但字段类型不对 / 缺字段 / 产品不是对象 —— 一律当坏的（不然页面一 trim 就白屏）
+      // 审查第 2 轮：每次只坏一个字段（顶层、产品里每一个都轮一遍：类型不对、整个缺掉），别让别的字段顺带挡住
+      const without = (o: Row, k: string) => { const c = { ...o }; delete c[k]; return c; };
+      const p0 = good.products[0];
       const broken: Array<[string, unknown]> = [
-        ["clientId 是对象", { ...good, clientId: {} }],
-        ["缺 remark", (({ remark, ...rest }) => rest)(good)],
-        ["运输方式认不出", { ...good, transportMode: "air" }],
-        ["总重是字符串", { ...good, weightKg: "60" }],
+        ...["clientId", "trackingNo", "warehouseId", "arrivedAt", "remark"].flatMap((k): Array<[string, unknown]> => [[`${k} 是对象`, { ...good, [k]: {} }], [`缺 ${k}`, without(good, k)]]),
+        ["运输方式认不出", { ...good, transportMode: "air" }], ["缺运输方式", without(good, "transportMode")],
+        ...["weightKg", "volumeM3"].flatMap((k): Array<[string, unknown]> => [[`${k} 是字符串`, { ...good, [k]: "60" }], [`缺 ${k}`, without(good, k)]]),
+        ...["itemName", "cargoType", "domesticTrackingNo"].flatMap((k): Array<[string, unknown]> => [[`产品 ${k} 是数字`, { ...good, products: [{ ...p0, [k]: 1 }] }], [`产品缺 ${k}`, { ...good, products: [without(p0, k)] }]]),
+        ...["packageCount", "lengthCm", "widthCm", "heightCm", "productQuantity", "weightKg"].flatMap((k): Array<[string, unknown]> => [[`产品 ${k} 是字符串`, { ...good, products: [{ ...p0, [k]: "12" }] }], [`产品缺 ${k}`, { ...good, products: [without(p0, k)] }]]),
         ["产品里有 null", { ...good, products: [null] }],
-        ["产品是空对象", { ...good, products: [{}] }],
-        ["件数是字符串", { ...good, products: [{ ...good.products[0], packageCount: "12" }] }],
+        ["产品是数组", { ...good, products: [[p0]] }],
+        ["products 不是数组", { ...good, products: {} }],
         ["整份是数组", [good]],
+      ];
+      // 正常的边界照样认：货型 null / 以后的新货型、件数 0、小数、整票数 null
+      const fine: Array<[string, Row]> = [
+        ["货型 null", { ...good, products: [{ ...p0, cargoType: null }] }],
+        ["以后的新货型", { ...good, products: [{ ...p0, cargoType: "futureType" }] }],
+        ["件数 0、小数", { ...good, weightKg: 12.345, volumeM3: 0.001, products: [{ ...p0, packageCount: 0, lengthCm: 33.3, weightKg: 2.25 }] }],
+        ["整票数、产品数字全是 null", { ...good, weightKg: null, volumeM3: null, products: [{ ...p0, packageCount: null, lengthCm: null, widthCm: null, heightCm: null, productQuantity: null, weightKg: null }] }],
+        ["没有产品", { ...good, products: [] }],
       ];
       let at = 20_000;
       for (const [i, [, data]] of broken.entries()) {
         await pm.arrivalNoticeSnapshot.create({ data: { id: `zz_ansnap_b${i}`, companyId: CO, noticeId: p1Id, data: JSON.stringify(data), convertedById: STAFF.userId, createdAt: new Date(Date.now() + (at -= 1000)) } });
       }
+      for (const [i, [, data]] of fine.entries()) {
+        await pm.arrivalNoticeSnapshot.create({ data: { id: `zz_ansnap_f${i}`, companyId: CO, noticeId: p1Id, data: JSON.stringify(data), convertedById: STAFF.userId, createdAt: new Date(Date.now() + (at -= 1000)) } });
+      }
       const all = await snaps(STAFF, p1Id);
       for (const [i, [why]] of broken.entries()) assert.equal(all.find((x: Row) => x.id === `zz_ansnap_b${i}`)?.data, null, `${why}：应该给 null`);
+      for (const [i, [why, data]] of fine.entries()) assert.deepEqual(all.find((x: Row) => x.id === `zz_ansnap_f${i}`)?.data, data, `${why}：是正常的，应该原样给`);
+      await pm.arrivalNoticeSnapshot.deleteMany({ where: { id: { startsWith: "zz_ansnap_f" } } });
       assert.deepEqual(all.find((x: Row) => !x.id.startsWith("zz_ansnap_"))?.data, good, "好的那份原样给（只回认得的字段）");
       await pm.arrivalNoticeSnapshot.deleteMany({ where: { id: { startsWith: "zz_ansnap_b" }, NOT: { id: "zz_ansnap_bad" } } });
       const items = await snaps(STAFF, p1Id);
@@ -259,7 +278,7 @@ async function main(): Promise<void> {
       await pm.arrivalNoticeSnapshot.create({ data: { id: "zz_ansnap_x", companyId: CO2, noticeId: p1Id, data: "{}", convertedById: OTHER_STAFF.userId } });
       assert.equal((await snaps(STAFF, p1Id)).length, 3, "别家公司的那份不能混进来");
       // 份数也不算它（审查第 1 轮 dsh / Codex）：列表、读原样回的 current、超管修改详情；改资料回包的在 D1 那条上核
-      assert.equal((await listItem(STAFF, NO("A1"))).snapshotCount, 3, "列表的份数把别家公司那份算进去了");
+      assert.equal((await listItem(STAFF, NO("A1"))).snapshotCount, 3, "列表的份数不能把别家公司那份算进去");
       assert.equal((await snapsCurrent(STAFF, p1Id)).snapshotCount, 3);
       assert.equal((await must("GET /staff/arrival-notices/converted-detail", ADMIN, {}, { id: p1Id, v: "2" })).item.snapshotCount, 3);
       await pm.arrivalNoticeSnapshot.deleteMany({ where: { id: { in: ["zz_ansnap_bad", "zz_ansnap_v2", "zz_ansnap_x"] } } });
@@ -315,6 +334,48 @@ async function main(): Promise<void> {
       }
       await compare("B1 待入库再转正式", NO("B1"));
       assert.deepEqual(problems, [], "谁都没改，却标了「改过」");
+    });
+
+    await check("P10 （审查第 2 轮）current 和原样在同一个快照里读：读到一半有人改了备注又多存一份，回的还是同一时刻的（份数、备注、原样条数对得上）", async () => {
+      const { PrismaClient } = await import("@prisma/client");
+      const locker = new PrismaClient();
+      try {
+        const n = await save(STAFF, full("F1"));
+        await convert(STAFF, n.id, "formal");
+        const before = await snapsCurrent(STAFF, n.id);
+        assert.equal(before.snapshotCount, 1);
+        let locked!: () => void, release!: () => void;
+        const isLocked = new Promise<void>((r) => { locked = r; });
+        const gate = new Promise<void>((r) => { release = r; });
+        // 另一条连接：先把原样表锁住（读原样那个请求读完 current 里的到货通知、数份数时就会卡住），等它卡住了再改备注、多存一份、放锁
+        const other = locker.$transaction(async (tx) => {
+          await tx.$executeRawUnsafe(`LOCK TABLE arrival_notice_snapshots IN ACCESS EXCLUSIVE MODE`);
+          locked();
+          await gate;
+          await tx.$executeRawUnsafe(`UPDATE arrival_notices SET remark = '读到一半改的备注' WHERE id = '${n.id}'`);
+          await tx.$executeRawUnsafe(`INSERT INTO arrival_notice_snapshots (id, company_id, notice_id, data, converted_by_id) VALUES ('zz_ansnap_mid', '${CO}', '${n.id}', '{}', '${STAFF.userId}')`);
+        }, { timeout: 30000, maxWait: 10000 });
+        await isLocked;
+        const reading = call("GET /staff/arrival-notices/snapshots", STAFF, {}, { id: n.id });
+        // 等那个请求真的卡在锁上（看数据库里有没有在等锁的查询）
+        let waiting = 0;
+        for (let i = 0; i < 100 && waiting === 0; i++) {
+          await new Promise((r) => setTimeout(r, 50));
+          waiting = Number((await locker.$queryRawUnsafe<Array<{ n: bigint }>>(`SELECT count(*) AS n FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock' AND query ILIKE '%arrival_notice_snapshots%'`))[0].n);
+        }
+        assert.ok(waiting > 0, "前提：读原样的请求没卡在锁上，这一项没测到「读到一半」");
+        release();
+        await other;
+        const r = await reading;
+        assert.equal(r.status, 200, r.message);
+        assert.equal(r.data.items.length, r.data.current.snapshotCount, "原样条数跟 current 的份数对不上（不是同一时刻读的）");
+        assert.deepEqual([r.data.items.length, r.data.current.remark], [1, before.remark], "读到一半别人提交的不该混进来（要么全是之前的，要么全是之后的）");
+        const after = await must("GET /staff/arrival-notices/snapshots", STAFF, {}, { id: n.id });
+        assert.deepEqual([after.items.length, after.current.remark], [2, "读到一半改的备注"], "再读一次就是新的");
+        await pm.arrivalNoticeSnapshot.deleteMany({ where: { id: "zz_ansnap_mid" } });
+      } finally {
+        await locker.$disconnect();
+      }
     });
   } finally {
     await cleanup();

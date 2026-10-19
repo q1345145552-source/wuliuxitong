@@ -26,7 +26,15 @@ function DiffTable(props: { rows: SnapshotDiffRow[] }) {
           <tr key={r.label} className={r.changed ? "is-changed" : undefined}>
             <th scope="row">{r.label}{r.changed ? <span className="an-snap-flag">改过</span> : null}</th>
             <td className={r.was ? undefined : "is-empty"}>{r.was || "未填"}</td>
-            <td className={r.now ? undefined : "is-empty"}>{r.changed ? (r.now || "（现在没有）") : "同左"}</td>
+            <td className={r.now ? undefined : "is-empty"}>
+              {/* 没改过、写法也一样才写「同左」；没改过但写法不一样（「货拉拉」同步成没填那种）照写现在的 */}
+              {r.changed || r.now !== r.was ? (r.now || "（现在没有）") : "同左"}
+              {r.details?.length ? (
+                <ul className="an-snap-details" aria-label="改了哪几项">
+                  {r.details.map((d) => <li key={d}>{d}</li>)}
+                </ul>
+              ) : null}
+            </td>
           </tr>
         ))}
       </tbody>
@@ -73,7 +81,8 @@ export default function SnapshotModal(props: {
           return (
             <section key={s.id} className="an-snap-one" aria-label={`第 ${i + 1} 份原样`}>
               <h4>
-                {items.length > 1 ? (i === 0 ? "最近一次转运单：" : "更早一次转运单：") : ""}
+                {/* 好几份时按先后编号（第 1 次最早），最新那份再标「最近一次」（审查第 2 轮 dsh：三份以上原来都叫「更早一次」） */}
+                {items.length > 1 ? `第 ${items.length - i} 次转运单${i === 0 ? "（最近一次）" : ""}：` : ""}
                 {when(s.convertedAt)}{s.convertedByName ? ` · ${s.convertedByName} 转的` : ""}
                 <span className={changes > 0 ? "an-snap-count is-changed" : "an-snap-count"}>{s.data ? (changes > 0 ? `有 ${changes} 处跟现在不一样` : "跟现在一样") : ""}</span>
               </h4>

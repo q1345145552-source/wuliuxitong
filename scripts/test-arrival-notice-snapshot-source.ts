@@ -4,10 +4,12 @@
  *
  *   S1～S7 比对函数（snapshot-diff.ts）直接调：一样的不标、改了的标出「原来 → 现在」、多一款 / 少一款单独一行、
  *          仓库 / 运输方式说中文、空的跟没填当一回事、卡片上那一行产品写法只有一份；
- *          （审查第 1 轮）按字段比不按拼出来的字比（两种填法拼出同一行字也要标出来）、国内单号「货拉拉」= 没填
- *   R1～R8 弹窗（SnapshotModal）真跑起来（假 React，接口换成桩）：读取中、上线前转的、一份 / 两份（最近一次在前）、
+ *          （审查第 1 轮）按字段比不按拼出来的字比（两种填法拼出同一行字也要标出来）、国内单号「货拉拉」= 没填；
+ *          （审查第 2 轮）改过的产品逐项列「件数：12 件 → 15 件」，那一行照卡片写法写原来存的；货型 null / 认不出的按普货不算改过
+ *   R1～R9 弹窗（SnapshotModal）真跑起来（假 React，接口换成桩）：读取中、上线前转的、一份 / 两份 / 三份（按先后编号、最近一次标出来）、
  *          改过的那行标「改过」、没改的写「同左」、谁转的只在后端给了才显示、坏的那份、读失败、关掉以后晚回来的不管；
- *          「现在」拿后端同一个请求回的 current（不拿列表里的卡片），没回 current 报错不凑数
+ *          「现在」拿后端同一个请求回的 current（不拿列表里的卡片），没回 current 报错不凑数；没改过但写法不一样（「货拉拉」）照写现在的、不写「同左」
+ *   K1     平板宽度（641～900）这张表单独折行（全站表格那段是整块横滚 + 不折行，审查第 1 轮 Codex / 第 2 轮 dsh 要钉住）
  *   C1～C2 卡片（NoticeCard）：存过就给按钮（几份写几份，运单被删回到「没转」的也给）；已转正式没存过的写「上线前转的，没存原样」；
  *          待入库 / 没转的什么都不写
  *   V1     整页真跑：点卡片开弹窗、换一张卡片是新的一个（key 带「snap-」前缀，同层还有按数字给 key 的 Toast，教训 39）、
@@ -165,6 +167,8 @@ async function main(): Promise<void> {
     assert.deepEqual([changed[0].was, changed[0].now], ["YW0001", "YW0002"]);
     assert.deepEqual([changed[1].was, changed[1].now], ["75 kg", "80 kg"]);
     assert.ok(changed[2].was.includes("× 10 件") && changed[2].now.includes("× 12 件"), `${changed[2].was} / ${changed[2].now}`);
+    assert.deepEqual(changed[2].details, ["件数：10 件 → 12 件"], "改过的产品要逐项说改了啥（老板认可的样子：件数 原来 10 → 现在 12）");
+    assert.equal(changed[0].details, undefined, "整票那几项一行就是一项，不另列");
     assert.equal(snapshotChangeCount(SNAP, now), 3);
   });
 
@@ -184,10 +188,13 @@ async function main(): Promise<void> {
     assert.deepEqual(snapshotProductRows({ ...SNAP, products: [] }, card({ products: [] })), []);
   });
 
-  await check("S5 卡片上那一行产品写法只有一份（页面从 snapshot-diff 引，不再自己写一个），比对用的就是它", () => {
-    const view = read("apps/web/src/modules/arrival-notice/ArrivalNoticesView.tsx");
-    assert.ok(!/function productLine\(/.test(view), "ArrivalNoticesView 里又自己写了一个 productLine，两边会写得不一样");
-    assert.match(view, /import \{[^}]*\bproductLine\b[^}]*\} from "\.\/snapshot-diff"/);
+  await check("S5 卡片上每一款的写法跟弹窗里「转运单时 / 现在」那一行是同一种写法（真把卡片画出来比）", () => {
+    hooks = []; effects = []; index = 0;
+    const t = View.NoticeCard({ n: card({ products: [LAMP, SHOE] }), busy: false, busyIds: new Set(), onCopyText() {}, onCopyImage() {}, onSaveImage() {}, onPreview() {}, onToggleNotified() {}, onEdit() {}, onConvert() {}, onDelete() {}, onViewSnapshots() {} });
+    const lis = nodes((n) => n.type === "ol" && n.props?.className === "an-products", t).flatMap((ol) => nodes((n) => n.type === "li", ol)).map(text);
+    assert.deepEqual(lis, [productLine(LAMP), productLine(SHOE)]);
+    const rows = snapshotProductRows(SNAP, card());
+    assert.deepEqual(rows.map((r) => r.was), lis, "弹窗那一行跟卡片写法不一样");
     assert.equal(productLine(LAMP), "灯具 × 10 件 · 国内单号 SF123 · 60×40×30cm · 单箱 5kg · 每箱 10 个");
     assert.equal(productLine(SHOE), "鞋 × 5 件 · 敏感货 · 国内单号 YT9");
   });
@@ -198,16 +205,22 @@ async function main(): Promise<void> {
     assert.equal(productLine(was), productLine(now), "前提：两种填法拼出来的字一样");
     const [r] = snapshotProductRows({ ...SNAP, products: [was] }, card({ products: [now] }));
     assert.equal(r.changed, true);
+    // 审查第 2 轮：一行字一样也要看得出改了啥
+    assert.deepEqual(r.details, ["尺寸：未填 → 60×40×30cm", "国内单号：X · 60×40×30cm → X"]);
   });
 
-  await check("S7（审查第 1 轮）国内单号「货拉拉」= 没填（同后端同步卡片的口径）：原样里写的「货拉拉」、卡片同步成没填，不算改过，两边都不显示「货拉拉」；前后空白 / 只有空格也当一回事", () => {
+  await check("S7（审查第 1 / 2 轮）国内单号「货拉拉」= 没填（同后端同步卡片的口径）：原样里写的「货拉拉」、卡片同步成没填，不算改过；那一行照卡片写法写原来存的（有「货拉拉」）；前后空白 / 只有空格也当一回事；货型 null / 认不出的 = 普货", () => {
     assert.match(read("apps/api/src/modules/arrival-notices/routes.ts"), new RegExp(`const BLANK_DOMESTIC_PLACEHOLDER = "${BLANK_DOMESTIC_PLACEHOLDER}";`), "前后端的占位字要一样");
     const rows = snapshotProductRows(
       { ...SNAP, products: [{ ...LAMP, domesticTrackingNo: "货拉拉" }, { ...SHOE, itemName: " 鞋 ", domesticTrackingNo: "  " }] },
       card({ products: [{ ...LAMP, domesticTrackingNo: null }, { ...SHOE, domesticTrackingNo: null }] }),
     );
     assert.deepEqual(rows.map((r) => r.changed), [false, false]);
-    assert.ok(!rows[0].was.includes("货拉拉") && !rows[0].was.includes("国内单号"), rows[0].was);
+    assert.ok(rows[0].was.includes("国内单号 货拉拉") && !rows[0].now.includes("国内单号"), `${rows[0].was} / ${rows[0].now}`);
+    // 货型：存的是 null 或者以后的新货型，现在是普货 —— 页面都按普货，不算改过
+    for (const cargoType of [null, "futureType"]) {
+      assert.equal(snapshotProductRows({ ...SNAP, products: [{ ...LAMP, cargoType }] }, card({ products: [{ ...LAMP, cargoType: "normal" }] }))[0].changed, false, String(cargoType));
+    }
     // 真改了国内单号照样标
     assert.equal(snapshotProductRows({ ...SNAP, products: [{ ...LAMP, domesticTrackingNo: "货拉拉" }] }, card({ products: [{ ...LAMP, domesticTrackingNo: "SF9" }] }))[0].changed, true);
     // 整票：数字按值比、字符串去空白
@@ -253,7 +266,7 @@ async function main(): Promise<void> {
     assert.equal(rows.filter((r) => r.flagged).length, 1);
   });
 
-  await check("R4 两份（运单被删、重转过）：照后端给的顺序，第一份写「最近一次转运单」、第二份「更早一次」；超管拿到名字才写谁转的", async () => {
+  await check("R4 两份（运单被删、重转过）：照后端给的顺序，按先后编号「第 2 次转运单（最近一次）」「第 1 次转运单」；超管拿到名字才写谁转的", async () => {
     mount(card({ snapshotCount: 2 }));
     await answer({ items: [
       { id: "a2", convertedAt: "2026-10-19T03:00:00.000Z", convertedByName: "员工小李", data: { ...SNAP, remark: "重转前改过" } },
@@ -261,9 +274,9 @@ async function main(): Promise<void> {
     ], current: card({ snapshotCount: 2 }) });
     const heads = sections().map((s) => text(nodes((n) => n.type === "h4", s)));
     assert.equal(heads.length, 2);
-    assert.ok(heads[0].startsWith("最近一次转运单：2026/10/19 11:00 · 员工小李 转的"), heads[0]);
+    assert.ok(heads[0].startsWith("第 2 次转运单（最近一次）：2026/10/19 11:00 · 员工小李 转的"), heads[0]);
     assert.ok(heads[0].includes("有 1 处跟现在不一样"), heads[0]);
-    assert.ok(heads[1].startsWith("更早一次转运单：2026/10/19 10:00") && !heads[1].includes("转的"), heads[1]);
+    assert.ok(heads[1].startsWith("第 1 次转运单：2026/10/19 10:00") && !heads[1].includes("转的"), heads[1]);
     assert.ok(heads[1].includes("跟现在一样"), heads[1]);
     assert.deepEqual(sections().map((s) => s.key), ["a2", "a1"]);
   });
@@ -301,6 +314,37 @@ async function main(): Promise<void> {
     const t = text(tree);
     assert.ok(t.includes("读原样失败：页面版本跟后台不一致，请刷新页面再点"), t);
     assert.equal(sections().length, 0, "没有 current 不许画比对");
+  });
+
+  await check("R9（审查第 2 轮）三份：第 3 次（最近一次）/ 第 2 次 / 第 1 次；改过的产品下面逐项列；没改过但写法不一样（「货拉拉」同步成没填）照写现在的、不标改过、不写「同左」", async () => {
+    mount(card({ snapshotCount: 3 }));
+    const hll = { ...SNAP, products: [{ ...LAMP, domesticTrackingNo: "货拉拉" }, SHOE] };
+    const now = card({ products: [{ ...LAMP, domesticTrackingNo: null }, { ...SHOE, packageCount: 7 }] });
+    await answer({ items: [
+      { id: "s3", convertedAt: "2026-10-19T04:00:00.000Z", convertedByName: null, data: hll },
+      { id: "s2", convertedAt: "2026-10-19T03:00:00.000Z", convertedByName: null, data: hll },
+      { id: "s1", convertedAt: "2026-10-19T02:00:00.000Z", convertedByName: null, data: hll },
+    ], current: now });
+    const heads = sections().map((s) => text(nodes((n) => n.type === "h4", s)));
+    assert.deepEqual(heads.map((h) => h.split("：")[0]), ["第 3 次转运单（最近一次）", "第 2 次转运单", "第 1 次转运单"]);
+    const rows = rowsOf(sections()[0]);
+    const lamp = rows.find((r) => r.label === "第 1 款")!;
+    assert.equal(lamp.flagged, false);
+    assert.ok(lamp.was.includes("国内单号 货拉拉"), lamp.was);
+    assert.equal(lamp.now, productLine({ ...LAMP, domesticTrackingNo: null }), "写法不一样就照写现在的，不写「同左」");
+    const shoe = rows.find((r) => r.label === "第 2 款")!;
+    assert.ok(shoe.flagged);
+    assert.ok(shoe.now.includes("件数：5 件 → 7 件"), `改过的要逐项列出来：${shoe.now}`);
+  });
+
+  await check("K1 平板宽度（641～900px）这张表单独折行、按表格排（全站表格那段是整块横滚 + 不折行）；≤640 手机那套不碰", () => {
+    const css = read("apps/web/src/app/globals.css");
+    const at = css.indexOf("@media (min-width: 641px) and (max-width: 900px) {\n  .an-snap-table {");
+    assert.ok(at > 0, "找不到这张表的平板那段");
+    const block = css.slice(at, css.indexOf("\n}", at));
+    assert.match(block, /\.an-snap-table \{ display: table; overflow-x: visible; white-space: normal; \}/);
+    assert.match(block, /\.an-snap-table th, \.an-snap-table td \{ white-space: normal; \}/);
+    assert.ok(!/phone-stack/.test(block), "平板那段不许碰手机那套");
   });
 
   /* ───────────── 卡片 ───────────── */
@@ -399,8 +443,15 @@ async function main(): Promise<void> {
     const start = api.indexOf('app.get("/staff/arrival-notices/snapshots"');
     const body = api.slice(start, api.indexOf("app.post(", start));
     assert.match(body, /requireRole\(req, res, \["staff", "admin"\]\)/);
-    // 先按公司读这条到货通知现在的样子（读不到 404），一起回给页面当「现在」
-    assert.match(body, /const current = await loadDto\(auth\.companyId, id, auth\.role\);\s*if \(!current\) \{ fail\(res, 404/);
+    // 按公司读这条到货通知现在的样子（读不到 404），一起回给页面当「现在」；跟原样在同一个「可重复读」事务里读（审查第 2 轮）
+    const tx = body.slice(body.indexOf("await prisma.$transaction(async (tx) => {"), body.indexOf("if (!read) { fail(res, 404"));
+    assert.ok(tx.length > 0, "读原样要放进一个事务");
+    assert.match(tx, /const current = await loadDto\(auth\.companyId, id, auth\.role, tx\);\s*if \(!current\) return null;/);
+    assert.match(tx, /const rows = await tx\.arrivalNoticeSnapshot\.findMany\(/);
+    assert.match(tx, /\{ isolationLevel: Prisma\.TransactionIsolationLevel\.RepeatableRead,/);
+    assert.ok(!/prisma\.(arrivalNotice|arrivalNoticeSnapshot|shipment)\./.test(tx), "事务里又用了全局连接");
+    const load = api.slice(api.indexOf("async function loadDto("), api.indexOf("\n}\n", api.indexOf("async function loadDto(")));
+    assert.ok(!/\bprisma\./.test(load) && !/findPrealertMatches\(prisma/.test(load), "loadDto 里还有写死全局连接的地方（传事务进来就不在一个快照里了）");
     assert.match(body, /\n\s*current,\n\s*\}\);/);
     assert.match(body, /where: \{ noticeId: id, companyId: auth\.companyId \}/);
     assert.match(body, /orderBy: \[\{ createdAt: "desc" \}, \{ id: "desc" \}\]/);

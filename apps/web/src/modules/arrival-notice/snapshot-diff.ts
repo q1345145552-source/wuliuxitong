@@ -9,7 +9,9 @@
  * 比的是**每个字段规范化以后的值**，不是拼出来的那一行字（审查第 1 轮 Codex：两种不同的填法可能拼出同一行字，
  * 改了却显示「同左」）。规范化跟后端同步卡片时一个口径：空白 = 没填；国内单号「货拉拉」= 没填
  * （运单那边空号就写「货拉拉」，同步回卡片时当没填，后端 arrival-notices/routes.ts 的 BLANK_DOMESTIC_PLACEHOLDER）；
- * 货型认不出来 = 普货。显示也按规范化以后的写。
+ * 货型认不出来 = 普货。
+ * 显示：那一行照卡片的写法写**原来存的 / 现在的**（不规范化，跟卡片上看到的一样，审查第 2 轮 Codex）；
+ * 改过的产品另外逐项列出改了哪几项（「件数：12 件 → 15 件」），拼出来的一行字恰好一样时也看得出改了啥（审查第 2 轮两家）。
  */
 import { CARGO_TYPE_ZH } from "../../../../../packages/shared-types/cargo-type";
 import { noticeProductsOf, type ArrivalNotice, type ArrivalNoticeProduct, type ArrivalNoticeSnapshotData } from "../../services/arrival-notice-api";
@@ -43,6 +45,8 @@ export interface SnapshotDiffRow {
   /** 现在的（空 = 没填 / 没有这一款） */
   now: string;
   changed: boolean;
+  /** 改过的产品：逐项「件数：12 件 → 15 件」（两边都有这一款时才有；整票那几项一行就是一项，不用） */
+  details?: string[];
 }
 
 /** 字符串：去掉前后空白，空的当没填 */
@@ -92,15 +96,31 @@ export function snapshotMetaRows(snap: ArrivalNoticeSnapshotData, current: Arriv
   ];
 }
 
+const unfilled = (v: string | null): string => v ?? "未填";
+/** 逐项列改了什么：品名、件数、尺寸、单箱数量、单箱重、货型、国内单号（值按规范化以后的写，没填写「未填」） */
+const PRODUCT_FIELDS: Array<{ label: string; keys: ReadonlyArray<(typeof PRODUCT_KEYS)[number]>; show: (p: ArrivalNoticeProduct) => string | null }> = [
+  { label: "品名", keys: ["itemName"], show: (p) => p.itemName },
+  { label: "件数", keys: ["packageCount"], show: (p) => (p.packageCount === null ? null : `${p.packageCount} 件`) },
+  { label: "尺寸", keys: ["lengthCm", "widthCm", "heightCm"], show: (p) => (p.lengthCm === null && p.widthCm === null && p.heightCm === null ? null : `${p.lengthCm ?? "?"}×${p.widthCm ?? "?"}×${p.heightCm ?? "?"}cm`) },
+  { label: "单箱数量", keys: ["productQuantity"], show: (p) => (p.productQuantity === null ? null : `每箱 ${p.productQuantity} 个`) },
+  { label: "单箱重", keys: ["weightKg"], show: (p) => (p.weightKg === null ? null : `${p.weightKg}kg`) },
+  { label: "货型", keys: ["cargoType"], show: (p) => CARGO_TYPE_ZH[cargoTypeOf(p.cargoType)] },
+  { label: "国内单号", keys: ["domesticTrackingNo"], show: (p) => p.domesticTrackingNo },
+];
+
 /** 各款产品按顺序比：第 N 款原来 / 现在；原来有现在没有（或反过来）的那一边是空 */
 export function snapshotProductRows(snap: ArrivalNoticeSnapshotData, current: ArrivalNotice): SnapshotDiffRow[] {
-  const was = (Array.isArray(snap.products) ? snap.products : []).map(normalizedProduct);
-  const now = noticeProductsOf(current).map(normalizedProduct);
+  const wasRaw = Array.isArray(snap.products) ? snap.products : [];
+  const nowRaw = noticeProductsOf(current);
   const out: SnapshotDiffRow[] = [];
-  for (let i = 0; i < Math.max(was.length, now.length); i++) {
-    const a = was[i], b = now[i];
+  for (let i = 0; i < Math.max(wasRaw.length, nowRaw.length); i++) {
+    const a = wasRaw[i] ? normalizedProduct(wasRaw[i]) : null;
+    const b = nowRaw[i] ? normalizedProduct(nowRaw[i]) : null;
     const changed = !a || !b || PRODUCT_KEYS.some((k) => a[k] !== b[k]);
-    out.push({ label: `第 ${i + 1} 款`, was: a ? productLine(a) : "", now: b ? productLine(b) : "", changed });
+    const details = a && b && changed
+      ? PRODUCT_FIELDS.filter((f) => f.keys.some((k) => a[k] !== b[k])).map((f) => `${f.label}：${unfilled(f.show(a))} → ${unfilled(f.show(b))}`)
+      : undefined;
+    out.push({ label: `第 ${i + 1} 款`, was: wasRaw[i] ? productLine(wasRaw[i]) : "", now: nowRaw[i] ? productLine(nowRaw[i]) : "", changed, ...(details ? { details } : {}) });
   }
   return out;
 }
