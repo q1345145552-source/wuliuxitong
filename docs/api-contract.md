@@ -855,6 +855,11 @@
 - `/staff/orders/patch-shipment-bundle` 改成**只给超管**（员工端运单管理 4-01 起只能看，原来接口漏挡，员工 `403`）。
 - `POST /staff/prealerts/receive`（确认收货）：**只认客户报的、还没收货的预报单（`approvalStatus = shipped`）**，锁外锁里都核；员工建的单、到货通知转出来的单（approved）→ `400`「这张单不是客户报的待收货预报单…」（预报单页本来只列 shipped / received，原来接口漏挡，员工能拿别的单号来改资料）。
 
+### 22.12 转正式运单时存原样（2026-10-19，老板选 B）
+- 表 `arrival_notice_snapshots`（迁移 `20261019_arrival_notice_snapshots`，只加不删）：`POST /staff/arrival-notices/convert` 转**正式**时，在同一个事务里存一行（转之前那一刻的到货通知：唛头、运单号、仓库、运输方式、到仓日期、整票重量体积、备注、各款产品；`data` 是 JSON，`v: 1`）+ 谁转的、什么时候。转待入库不存；运单被删、重转再存一行。删到货通知跟着删；不挂运单外键。写了就不改。
+- 列表 / 单条回包每条多 `snapshotCount`（存了几份；0 = 上线前转的或没转过正式）。老后端不回 = 当 0。
+- `GET /staff/arrival-notices/snapshots?id=`（员工 / 超管；客户、代理 `403`）：没带 id `400`，别家公司 / 不存在 `404`。返回 `{ items: [{ id, convertedAt, convertedByName, data }], current }`：`items` 新的在前；`convertedByName` 只给超管（员工是 `null`）；`data` 逐字段核类型，坏的 / 认不出的格式给 `null`；`current` = 这条到货通知现在的样子（跟列表一条同形状），跟 `items` 在同一个「可重复读」事务里读，页面拿它比。
+
 ## 23. 2026-10-14 全系统审查修复（接口口径变化）
 
 清单和核实依据：`.audit/2026-10-14/full-review/核实结果.md`；修复过程 `docs/sessions/2026-10-14-full-review-fixes.md`。

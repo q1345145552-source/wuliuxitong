@@ -22,7 +22,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { createRequire } from "node:module";
 import ts from "typescript";
-import { BLANK_DOMESTIC_PLACEHOLDER, productLine, snapshotChangeCount, snapshotMetaRows, snapshotProductRows } from "../apps/web/src/modules/arrival-notice/snapshot-diff";
+import { BLANK_DOMESTIC_PLACEHOLDER, PRODUCT_FIELDS, normalizedProduct, productLine, snapshotChangeCount, snapshotMetaRows, snapshotProductRows } from "../apps/web/src/modules/arrival-notice/snapshot-diff";
 
 const ROOT = path.resolve(__dirname, "..");
 const read = (rel: string) => fs.readFileSync(path.join(ROOT, rel), "utf8");
@@ -235,9 +235,16 @@ async function main(): Promise<void> {
     assert.deepEqual(rows[0].details, ["品名：灯具 → 台灯", "件数：10 件 → 11 件"]);
     assert.equal(rows[2].details, undefined, "多出来的一款不逐项列");
     assert.equal(snapshotChangeCount(SNAP, now), 3, "2（第 1 款两项）+ 1（多一款）");
-    const meta = snapshotMetaRows({ ...SNAP, clientId: " ZZA01 " }, card({ clientId: "ZZA01" }));
-    const mark = meta.find((r) => r.label === "唛头")!;
-    assert.deepEqual([mark.changed, mark.was, mark.now], [false, " ZZA01 ", "ZZA01"], "唛头保存时不去空格，弹窗照原样写、比的时候不算改过");
+    assert.equal(snapshotChangeCount(SNAP, card({ products: [LAMP] })), 1, "少一款算 1 处");
+    // 整票的字符串几项都照原样显示、比的时候去空格（审查第 4 轮 dsh：原来只测了唛头）
+    const meta = snapshotMetaRows({ ...SNAP, clientId: " ZZA01 ", trackingNo: " YW0001", arrivedAt: "2026-10-19 ", remark: " 外箱破损 " }, card());
+    for (const [label, was] of [["唛头", " ZZA01 "], ["运单号", " YW0001"], ["到仓日期", "2026-10-19 "], ["备注", " 外箱破损 "]] as const) {
+      const r = meta.find((x) => x.label === label)!;
+      assert.deepEqual([r.changed, r.was], [false, was], label);
+    }
+    // 产品每个字段都在「比哪几项」那张表里（改过就一定列得出来）
+    const covered = new Set(PRODUCT_FIELDS.flatMap((f) => f.keys));
+    assert.deepEqual(Object.keys(normalizedProduct(LAMP)).filter((k) => !covered.has(k as any)), [], "有字段没进 PRODUCT_FIELDS");
   });
 
   /* ───────────── 弹窗 ───────────── */

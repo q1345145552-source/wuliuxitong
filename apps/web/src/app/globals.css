@@ -4621,7 +4621,8 @@ table.a3-table.shipment-product-table > tbody > tr > td {
 }
 .an-snap-table td.is-empty { color: var(--t-faint); }
 .an-snap-table tr.is-changed td, .an-snap-table tr.is-changed th { background: var(--c-amber-bg); }
-.an-snap-details { margin: 4px 0 0; padding-left: 16px; color: var(--c-amber-deep); font-size: 12px; }
+.an-snap-now { min-width: 0; }
+.an-snap-details { margin: 4px 0 0; padding-left: 16px; color: var(--c-amber-deep); font-size: 12px; text-align: left; }
 .an-snap-flag { margin-left: 6px; padding: 0 5px; border: 1px solid var(--c-amber-deep); border-radius: var(--a3-radius); color: var(--c-amber-deep); font-size: 11px; font-weight: 500; }
 .an-pad { padding: 12px 0; }
 .an-preview { position: fixed; inset: 0; z-index: 10001; display: flex; align-items: center; justify-content: center; padding: 16px; background: rgba(0, 0, 0, 0.78); cursor: zoom-out; }

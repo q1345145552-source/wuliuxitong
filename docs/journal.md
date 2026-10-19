@@ -1,5 +1,13 @@
 # 项目交接日志
 
+## 2026-10-19 老板选 B：到货通知转正式运单时存原样（本地提交 48c4bb9 起 5 个，未推未上线；带一份只加不删的迁移）
+- 老板原话：「转运单之后，又修改运单……怕之后数据不一样，但又怕改错了直接没有原始信息」→ 我给 A/B/C，他「b先详细说说」→ 讲细节 →「可以」。认可的 7 条见 `.audit/2026-10-19/notice-snapshot/plan.md`（存整份、待入库再转正式按转正式那刻存、只读看 + 标改过、员工超管都能看、同步照旧、不做一键恢复、上线前转的写「上线前转的，没存原样」、新表只加不删）。
+- 后端：新表 `arrival_notice_snapshots`（手写迁移 `20261019_arrival_notice_snapshots`，外键跟到货通知走、删通知跟着删，不挂运单；体检清单 61 张表 / 768 个字段）；转正式在同一个事务里存一份转之前的到货通知（转待入库不存）；`GET /staff/arrival-notices/snapshots` 员工 / 超管、按公司、新的在前、谁转的只给超管、坏的 / 认不出的给 null，跟 current（同列表卡片口径）在同一个「可重复读」事务里读；卡片 DTO 带 snapshotCount。`convertedById` / `convertedByName` 进操作人名单。
+- 前端：卡片「看转运单时的原样（N 份）」/「上线前转的，没存原样」；只读弹窗逐项比（按字段规范化比：空白、国内单号「货拉拉」= 没填，货型认不出 = 普货；显示照卡片写法），改过的产品逐项列「件数：12 件 → 15 件」，「有 N 处」按列出来的项数；好几份按先后编号。卡片那一行产品写法挪到 `snapshot-diff.ts` 共用。**卡片和客户复制文案的显示没动。**
+- 测试：`test-arrival-notice-snapshot-source`（24 项）/ `-db`（10 项，P10 用表锁把请求卡在读 current 和读原样中间）/ `test-migration-arrival-notice-snapshots-db`（6 项）进 package.json + ci.yml；老测试 arrival-notice-source（接口数 / productLine 位置）、migration-arrival-notices-db（开头一起拆新表、M2 前按顺序跑 1019）、hide-operator-identity（全覆盖闸认 *ById / *ByName）跟着改。改坏 63 条 62 红（B17 等价）。本机 CI build 72 / test-db 29 全过；本地演练（线上结构 + 迁移账本）只剩这一条、deploy 后体检 0 行、再 deploy No pending；两个镜像本地 build 过；只读看服务器 HEAD 2a594f9、没有会撞的未跟踪文件、磁盘 46G。浏览器一次性库 + 临时 3201 / 3202 实点过（五种卡片、弹窗比对、超管 / 员工看谁转的、平板 / 手机、连开连关、列表没刷新时弹窗现读）。
+- 审查：Codex + dsh 第 1 轮（Codex 必须修 3：按字段比、坏结构给 null、「现在」由后端回）、第 2 轮（Codex 必须修 3：逐项列改了啥、照卡片写法显示、同一个快照读）都改了；第 3 轮 Codex 额度用完（到 10-25）没跑成，dsh 没有必须修，照建议改了计数 / 原样显示；第 4 轮 dsh + 替补 opus5-high 审全功能，都没有必须修，照建议收尾（字段表只留一张、手机一格包一层、提示语、api-contract 22.12）。原文 `.audit/2026-10-19/notice-snapshot/`（替补那份 `claude-r3.md`）。
+- 上线时 deploy.sh 会发现有迁移 → 先整库备份 → migrate deploy → 体检 → 换容器。上线那几分钟旧容器转的正式没有原样（卡片写「上线前转的」），已接受。
+
 ## 2026-10-18 20:23（北京）上线 2a594f9：B 方案 6 处 + 老板选 A 的两个弹窗 + 小问题批（20 个提交，不动数据库）
 - 老板「上」。本机：工作区干净、20 个提交里没有表结构 / 迁移改动（deploy.sh 本身改过 --no-recreate，改动在脚本 reset 那行之后、前面字节不变）。只读看服务器：HEAD 1266ae8、只有 package-lock 被改（常态）、磁盘剩 48G、两个容器 healthy。推 GitHub 1266ae8..2a594f9，ssh 跑 `bash deploy.sh` 退出 0：没有待执行迁移、跳过备份、结构与设计图一致；12:23:09 UTC 换容器。
 - 核对：服务器 HEAD = GitHub = 2a594f9；两个容器 healthy、重启 0；API 报错 0；后端容器里有 track-containers.ts，前端包里有批量下单新记号；`GET /` 200、不登录查轨迹 401、网页 200、外网登录页 200；切换那 10 秒（12:23:10～19）16 次 5xx（页面自动刷新的未读 / 订单 / 事件推送），之后 0（57 个请求）。GitHub 自动检查 39126887788 success。日志 `.audit/2026-10-18/deploy2/`。

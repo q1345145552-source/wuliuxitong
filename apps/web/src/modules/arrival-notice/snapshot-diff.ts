@@ -54,8 +54,6 @@ const str = (v: unknown): string | null => (typeof v === "string" && v.trim() ? 
 /** 数字：只认有限数字，别的当没填 */
 const num = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? v : null);
 
-const PRODUCT_KEYS = ["itemName", "packageCount", "lengthCm", "widthCm", "heightCm", "productQuantity", "weightKg", "cargoType", "domesticTrackingNo"] as const;
-
 /** 一款规范化：比对和显示都用它 */
 export function normalizedProduct(p: ArrivalNoticeProduct): ArrivalNoticeProduct {
   const domestic = str(p.domesticTrackingNo);
@@ -102,8 +100,11 @@ export function snapshotMetaRows(snap: ArrivalNoticeSnapshotData, current: Arriv
 }
 
 const unfilled = (v: string | null): string => v ?? "未填";
-/** 逐项列改了什么：品名、件数、尺寸、单箱数量、单箱重、货型、国内单号（值按规范化以后的写，没填写「未填」） */
-const PRODUCT_FIELDS: Array<{ label: string; keys: ReadonlyArray<(typeof PRODUCT_KEYS)[number]>; show: (p: ArrivalNoticeProduct) => string | null }> = [
+/**
+ * 一款产品比哪几项、改了怎么说：品名、件数、尺寸、单箱数量、单箱重、货型、国内单号（值按规范化以后的写，没填写「未填」）。
+ * 「改过没有」和逐项列都只看这一张表（审查第 4 轮 dsh：原来两张清单手工对齐，加字段漏一张就会「标了改过、下面一条不列」）
+ */
+export const PRODUCT_FIELDS: Array<{ label: string; keys: ReadonlyArray<keyof ArrivalNoticeProduct>; show: (p: ArrivalNoticeProduct) => string | null }> = [
   { label: "品名", keys: ["itemName"], show: (p) => p.itemName },
   { label: "件数", keys: ["packageCount"], show: (p) => (p.packageCount === null ? null : `${p.packageCount} 件`) },
   { label: "尺寸", keys: ["lengthCm", "widthCm", "heightCm"], show: (p) => (p.lengthCm === null && p.widthCm === null && p.heightCm === null ? null : `${p.lengthCm ?? "?"}×${p.widthCm ?? "?"}×${p.heightCm ?? "?"}cm`) },
@@ -121,10 +122,9 @@ export function snapshotProductRows(snap: ArrivalNoticeSnapshotData, current: Ar
   for (let i = 0; i < Math.max(wasRaw.length, nowRaw.length); i++) {
     const a = wasRaw[i] ? normalizedProduct(wasRaw[i]) : null;
     const b = nowRaw[i] ? normalizedProduct(nowRaw[i]) : null;
-    const changed = !a || !b || PRODUCT_KEYS.some((k) => a[k] !== b[k]);
-    const details = a && b && changed
-      ? PRODUCT_FIELDS.filter((f) => f.keys.some((k) => a[k] !== b[k])).map((f) => `${f.label}：${unfilled(f.show(a))} → ${unfilled(f.show(b))}`)
-      : undefined;
+    const diff = a && b ? PRODUCT_FIELDS.filter((f) => f.keys.some((k) => a[k] !== b[k])) : [];
+    const changed = !a || !b || diff.length > 0;
+    const details = a && b && diff.length > 0 ? diff.map((f) => `${f.label}：${unfilled(f.show(a))} → ${unfilled(f.show(b))}`) : undefined;
     out.push({ label: `第 ${i + 1} 款`, was: wasRaw[i] ? productLine(wasRaw[i]) : "", now: nowRaw[i] ? productLine(nowRaw[i]) : "", changed, ...(details ? { details } : {}) });
   }
   return out;

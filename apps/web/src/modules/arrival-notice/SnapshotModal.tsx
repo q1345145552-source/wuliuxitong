@@ -27,13 +27,16 @@ function DiffTable(props: { rows: SnapshotDiffRow[] }) {
             <th scope="row">{r.label}{r.changed ? <span className="an-snap-flag">改过</span> : null}</th>
             <td className={r.was ? undefined : "is-empty"}>{r.was || "未填"}</td>
             <td className={r.now ? undefined : "is-empty"}>
-              {/* 没改过、写法也一样才写「同左」；没改过但写法不一样（「货拉拉」同步成没填那种）照写现在的 */}
-              {r.changed || r.now !== r.was ? (r.now || "（现在没有）") : "同左"}
-              {r.details?.length ? (
-                <ul className="an-snap-details" aria-label="改了哪几项">
-                  {r.details.map((d) => <li key={d}>{d}</li>)}
-                </ul>
-              ) : null}
+              {/* 包一层：手机上一格是「左列名、右内容」横排，文字和逐项列要在右边上下叠着，不能挤成并排的两块（审查第 3 轮替补） */}
+              <div className="an-snap-now">
+                {/* 没改过、写法也一样才写「同左」；没改过但写法不一样（「货拉拉」同步成没填那种）照写现在的 */}
+                {r.changed || r.now !== r.was ? (r.now || "（现在没有）") : "同左"}
+                {r.details?.length ? (
+                  <ul className="an-snap-details" aria-label="改了哪几项">
+                    {r.details.map((d) => <li key={d}>{d}</li>)}
+                  </ul>
+                ) : null}
+              </div>
             </td>
           </tr>
         ))}
@@ -91,7 +94,7 @@ export default function SnapshotModal(props: {
                   <DiffTable rows={snapshotMetaRows(s.data, current)} />
                   <DiffTable rows={snapshotProductRows(s.data, current)} />
                 </>
-              ) : <p className="an-missing">这一份读不出来（存的内容坏了），请告诉技术。</p>}
+              ) : <p className="an-missing">这一份读不出来（可能是页面版本旧了），请刷新页面再看；还不行请告诉技术。</p>}
             </section>
           );
         })}
