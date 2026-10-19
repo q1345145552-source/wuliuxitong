@@ -20,7 +20,7 @@ function isRealYmd(text: string): boolean {
 }
 
 /** 「确认收货」只认客户报的、还没收货的预报单（2026-10-16） */
-const NOT_A_PENDING_PREALERT_MESSAGE = "这张单不是客户报的待收货预报单，不能「确认收货」（员工建的单、到货通知转出来的单都不走这一步；要改资料请超管在「运单管理」里改）";
+const NOT_A_PENDING_PREALERT_MESSAGE = "这张单不是客户报的待收货预报单，不能「确认收货」（员工建的单、到货通知转出来的单都不走这一步；要改资料请到「运单管理」里改）";
 import { logger } from "../core/logger";
 import { buildNewOrderRows } from "./new-order-rows";
 import { clearLoginFailures, getClientIp } from "../core/rate-limit";
@@ -770,7 +770,7 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
     }
     /* 只有客户报的、还没收货的预报单（shipped）才能「确认收货」（2026-10-16 dsh 审查）：预报单页只列 shipped / received，
        员工建的单、到货通知转出来的单（approved）页面上从来没有这个按钮 —— 后端却放行，员工直接发请求就能改它们的资料
-       （到货通知转出来的正式运单只许超管改，员工端运单管理 4-01 起只能看）。锁里还会再核一遍 */
+       （到货通知转出来的正式运单在「运单管理」的「编辑运单」里改，2026-10-19 起员工也能改）。锁里还会再核一遍 */
     if (order.approvalStatus !== "shipped") {
       fail(res, 400, "BAD_REQUEST", NOT_A_PENDING_PREALERT_MESSAGE);
       return;
@@ -1836,7 +1836,8 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
    */
   app.post("/staff/orders/patch-shipment-bundle", async (req, res) => {
     /* 只给超管（2026-10-16，Codex / dsh 审查）：员工端「运单管理」4-01 起就只能看（b041371，/staff/shipments 的 canEdit 只给 admin），
-       页面上员工没有编辑入口，这条接口却一直对员工开着 —— 员工直接发请求就能改正式运单。超管在员工页编辑照旧走这里 */
+       页面上员工没有编辑入口，这条接口却一直对员工开着 —— 员工直接发请求就能改正式运单。超管在员工页编辑照旧走这里。
+       2026-10-19 员工能改运单了，但走的是跟超管同一个编辑框（WaybillEditDialog → /admin/orders/update），这条旧路照旧只给超管 */
     const auth = requireRole(req, res, ["admin"]);
     if (!auth) return;
 

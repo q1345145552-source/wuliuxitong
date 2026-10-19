@@ -203,19 +203,36 @@ async function main(): Promise<void> {
     const toast = nodes((n) => n.type === ToastStub.default, tree)[0];
     assert.equal(toast.props.message, "唛头 xyz-9 的密码已重置，请把新密码告诉客户");
     assert.equal(toast.key, 1);
-    // 关了以后才回来的：不往关掉的弹窗里写，也不弹「已重置」
+    // 重置中不让关（✕ 和 Esc 都走 confirmClose，审查第 1 轮两家）
     nodes((n) => n.type === "button" && text(n) === "重置密码", tree)[0].props.onClick(); renderPage();
     assert.equal(modalEl().key, "reset-2");
     const m2 = { hooks: [] as any[], effects: [] as Array<() => unknown> };
     let mm = renderModal(modalEl(), m2);
+    assert.equal(mm.props.confirmClose(), true, "没在重置时能关");
     nodes((n) => n.type === "input", mm)[0].props.onChange({ target: { value: "abc" } }); mm = renderModal(modalEl(), m2);
     nodes((n) => n.type === "form", mm)[0].props.onSubmit({ preventDefault() {} }); mm = renderModal(modalEl(), m2);
-    modalEl().props.onClose(); renderPage();
+    assert.equal(mm.props.confirmClose(), false, "重置中点 ✕ / 按 Esc 不许关（关了结果回来没地方说）");
+    // 万一弹窗还是没了（整页切走之类）：成功照样出提示条 —— 密码真改了，员工得知道
     for (const c of (m2 as any).cleanups ?? []) c();
     resetCalls.shift()!.resolve({ updated: true, id: "xyz-9" });
     await new Promise<void>((r) => setImmediate(r)); renderPage();
-    assert.equal(nodes((n) => n.type === ToastStub.default, tree)[0].key, 1, "关了以后才回来的成功不该再弹提示（也没开新弹窗）");
-    assert.equal(modalEl(), undefined);
+    let t2 = nodes((n) => n.type === ToastStub.default, tree)[0];
+    assert.deepEqual([t2.key, t2.props.message, t2.props.tone], [2, "唛头 xyz-9 的密码已重置，请把新密码告诉客户", "success"], "弹窗不在了，成功也要出提示条");
+    // 弹窗不在了才失败：走红色提示条
+    nodes((n) => n.type === "button" && text(n) === "重置密码", tree)[0].props.onClick(); renderPage();
+    const m3 = { hooks: [] as any[], effects: [] as Array<() => unknown> };
+    let m3t = renderModal(modalEl(), m3);
+    nodes((n) => n.type === "input", m3t)[0].props.onChange({ target: { value: "def" } }); m3t = renderModal(modalEl(), m3);
+    nodes((n) => n.type === "form", m3t)[0].props.onSubmit({ preventDefault() {} });
+    for (const c of (m3 as any).cleanups ?? []) c();
+    resetCalls.shift()!.reject(new Error("网断了"));
+    await new Promise<void>((r) => setImmediate(r)); renderPage();
+    t2 = nodes((n) => n.type === ToastStub.default, tree)[0];
+    assert.deepEqual([t2.props.message, t2.props.tone], ["唛头 xyz-9 的密码没重置上：网断了", "error"]);
+    // 前端调的接口就是后端那条（页面测试把接口换成了桩，这里核真代码里的路径和发的东西）
+    const api = read("apps/web/src/services/business-api.ts");
+    const fnAt = api.indexOf("export async function resetStaffClientPassword(");
+    assert.match(api.slice(fnAt, api.indexOf("\n}", fnAt)), /fetch\(`\$\{apiBaseUrl\(\)\}\/staff\/clients\/set-password`, \{\s*method: "POST",[\s\S]*?body: JSON\.stringify\(\{ id, password \}\),/);
   });
 
   await check("E1 编辑运单只有一个框：超管页、员工页都挂 WaybillEditDialog，两页都不再自己写编辑框", () => {
@@ -259,6 +276,10 @@ async function main(): Promise<void> {
     const staffFile = "apps/web/src/app/staff/page.tsx";
     const src = read(staffFile);
     assert.match(src, /\{item\.orderId && item\.currentStatus !== "pendingInbound" \? \(\s*<button[\s\S]{0,200}?onClick=\{\(\) => \{ setShipmentTableExpandedId\(null\); startWaybillEdit\(item\); \}\}[\s\S]{0,300}?编辑运单\s*<\/button>/, "详情里「编辑运单」的条件 / 动作不对");
+    // 详情不再写「只读」；「可编辑」按能不能开编辑运单（原来按只给超管的 canEdit，员工一律「否」，审查第 1 轮两家）
+    assert.ok(!src.includes("运单详情（只读）"), "员工能改运单了，详情还写着「只读」");
+    assert.match(src, /<InfoItem label="可编辑" value=\{item\.orderId && item\.currentStatus !== "pendingInbound" \? "是" : "否"\} \/>/);
+    assert.match(src, /可编辑: item\.orderId && item\.currentStatus !== "pendingInbound" \? "是" : "否",/, "导出的「可编辑」列也要跟着");
     assert.match(src, /<WaybillEditDialog\s*key=\{`waybill-\$\{waybillEditId\}`\}\s*initial=\{waybillEditMeta\}\s*current=\{waybillEditRow\}\s*visible=\{activeSection === "staff-order-shipment"\}\s*clientList=\{staffClients\}\s*sessionRef=\{waybillEditSessionRef\}\s*busy=\{loading\}\s*setBusy=\{setLoading\}\s*onClose=\{closeWaybillEdit\}\s*confirmClose=\{beginCloseWaybillEdit\}\s*onToast=\{setToast\}\s*reloadList=\{loadPageData\}/, "员工页交给编辑框的东西不对");
     // 真跑开 / 关 / ✕
     const fn = (name: string) => {
@@ -336,6 +357,10 @@ async function main(): Promise<void> {
     assert.match(body, /updateMany\(\{ where: \{ id: user\.id, companyId: auth\.companyId, role: "client" \}/, "写的时候再核一次是客户号");
     assert.match(body, /clearLoginFailures\(user\.id\);/, "重置完要清连错计数");
     assert.ok(!/checkPasswordStrength/.test(body), "客户密码不卡强度（2026-08-07 客户端不动）");
+    assert.ok(!/password[^\n]*logger|logger[^\n]*password\b/.test(body.replace(/staff reset client password/, "")), "日志里不许带密码");
+    // 重置密码不推送（名单、运单都没变；原来落到「运单」那一类，全公司页面白拉一遍）
+    assert.match(read("apps/api/src/modules/realtime/topics.ts"), /const SKIP_EXACT[\s\S]*?"\/staff\/clients\/set-password",/);
+    assert.match(orders, /要改资料请到「运单管理」里改）";/, "确认收货的提示别再叫员工找超管");
   });
 
   console.log(`\n通过 ${passed} / 失败 ${failed}`);

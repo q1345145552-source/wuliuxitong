@@ -55,7 +55,8 @@ async function main(): Promise<void> {
   await check("R1 从源码读到的改数据接口不少于 110 个（读漏了这条测试就没意义）", () => {
     assert.ok(writeRoutes.size >= 110, `只读到 ${writeRoutes.size} 个`);
   });
-  await check("R1 只有写明的 7 个不推，其余全部归了类", () => {
+  // 2026-10-19 加第 8 个：员工给客户重置密码（名单、运单都没变）
+  await check("R1 只有写明的 8 个不推，其余全部归了类", () => {
     const skipped = [...writeRoutes].filter((p) => topicForWrite(p) === null).sort();
     assert.deepEqual(skipped, [
       "/auth/change-password",
@@ -65,6 +66,7 @@ async function main(): Promise<void> {
       "/client/chat/push/unsubscribe",
       "/staff/chat/push/subscribe",
       "/staff/chat/push/unsubscribe",
+      "/staff/clients/set-password",
     ]);
     for (const p of writeRoutes) {
       const t = topicForWrite(p);

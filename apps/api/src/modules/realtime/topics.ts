@@ -36,6 +36,8 @@ export const AGENT_TOPICS: ReadonlySet<RealtimeTopic> = new Set<RealtimeTopic>([
  * ⚠️ 只放「确定别的页面看不到变化」的。拿不准就别放，多推一次只是多拉一次。
  */
 const SKIP_EXACT: ReadonlySet<string> = new Set([
+  // 员工给客户重置密码（2026-10-19）：名单、运单都没变，不用叫全公司的页面重拉（原来落到「运单」那一类，审查第 1 轮替补）
+  "/staff/clients/set-password",
   "/auth/login",
   "/auth/logout",
   "/auth/change-password",

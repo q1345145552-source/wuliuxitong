@@ -1481,7 +1481,8 @@ export default function StaffHomePage() {
       // 国内单号带上产品行的号（2026-10-18 全系统审查第一档第 1 条：原来只导整票那个，多款产品的号会漏）
       柜号: item.batchNo ?? "-", 国内单号: domesticNosLabel(item.products, item.domesticTrackingNo) || "-",
       产品数量: item.productQuantity ?? "-", 到仓日期: formatDateTime(item.arrivedAt, "-"),
-      可编辑: item.canEdit ? "是" : "否", 更新时间: item.updatedAt ?? "-",
+      // 「可编辑」= 能不能开「编辑运单」（2026-10-19 员工也能改；canEdit 管的是只给超管的旧「保存订单信息」，别拿它）
+      可编辑: item.orderId && item.currentStatus !== "pendingInbound" ? "是" : "否", 更新时间: item.updatedAt ?? "-",
     }));
     const ws = XLSX.utils.json_to_sheet(rows);
     const wb = XLSX.utils.book_new();
@@ -2194,7 +2195,8 @@ export default function StaffHomePage() {
                                   <span>加收金额：<strong>{item.receivableAmountCny != null ? `${item.receivableCurrency === "THB" ? "THB" : "CNY"} ${item.receivableAmountCny.toFixed(2)}` : "0"}</strong></span>
                                   <span>收货地址：<strong>{item.receiverAddressTh ?? "—"}</strong></span>
                                 </div>
-                                <div style={{ fontWeight: 700, marginBottom: 12, color: "#14171D" }}>运单详情（只读）</div>
+                                {/* 这一块只是看；要改点下面的「编辑运单」（2026-10-19 员工也能改运单了，原来写的「只读」去掉） */}
+                                <div style={{ fontWeight: 700, marginBottom: 12, color: "#14171D" }}>运单详情</div>
                                 {(() => {
                                   const draft = shipmentOrderEditDrafts[item.id] ?? buildShipmentOrderEditDraft(item);
                                   /* 件数 / 重量 / 体积按整票显示（修复第 1 轮）：草稿里的是父单剩余量，拆柜 / 部分装柜后跟列表「总箱数」对不上 */
@@ -2554,7 +2556,7 @@ export default function StaffHomePage() {
                                           </ShipmentEditFormField>
 
                                           <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-                                            <InfoItem label="可编辑" value={item.canEdit ? "是" : "否"} />
+                                            <InfoItem label="可编辑" value={item.orderId && item.currentStatus !== "pendingInbound" ? "是" : "否"} />
                                             <InfoItem label="更新时间" value={item.updatedAt ?? "-"} />
                                           </div>
                                         </div>

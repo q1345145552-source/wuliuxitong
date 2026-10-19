@@ -17,7 +17,7 @@ export default function ClientAccountsView() {
   const [keyword, setKeyword] = useState("");
   const [resetting, setResetting] = useState<{ seq: number; id: string } | null>(null);
   const resetSeqRef = useRef(0);
-  const [toast, setToast] = useState<{ seq: number; message: string }>({ seq: 0, message: "" });
+  const [toast, setToast] = useState<{ seq: number; message: string; tone: "success" | "error" }>({ seq: 0, message: "", tone: "success" });
   /* 第几次拉名单：点了「刷新」又点一次，先发的晚回来不许盖掉后发的 */
   const loadSeqRef = useRef(0);
 
@@ -91,17 +91,25 @@ export default function ClientAccountsView() {
           onDone={(message) => {
             const seq = resetting.seq;
             setResetting((v) => (v && v.seq === seq ? null : v));
-            setToast((t) => ({ seq: t.seq + 1, message }));
+            setToast((t) => ({ seq: t.seq + 1, message, tone: "success" }));
           }}
+          onLateFail={(message) => setToast((t) => ({ seq: t.seq + 1, message, tone: "error" }))}
         />
       ) : null}
-      <Toast key={toast.seq} open={toast.message.length > 0} message={toast.message} />
+      <Toast key={toast.seq} open={toast.message.length > 0} message={toast.message} tone={toast.tone} />
     </div>
   );
 }
 
-function ResetPasswordModal(props: { clientId: string; onClose: () => void; onDone: (message: string) => void }) {
-  const { clientId, onClose, onDone } = props;
+function ResetPasswordModal(props: {
+  clientId: string;
+  onClose: () => void;
+  /** 重置成功：关弹窗、出提示条。弹窗已经不在了也照样调（密码真改了，员工得知道，不然会叫客户用老密码） */
+  onDone: (message: string) => void;
+  /** 弹窗已经不在了才失败：没地方写，走提示条 */
+  onLateFail: (message: string) => void;
+}) {
+  const { clientId, onClose, onDone, onLateFail } = props;
   const [password, setPassword] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -123,16 +131,20 @@ function ResetPasswordModal(props: { clientId: string; onClose: () => void; onDo
     setError("");
     try {
       await resetStaffClientPassword(clientId, value);
-      if (aliveRef.current) onDone(`唛头 ${clientId} 的密码已重置，请把新密码告诉客户`);
+      // 不看弹窗还在不在（审查第 1 轮两家）：密码已经改了，提示条一定要出
+      onDone(`唛头 ${clientId} 的密码已重置，请把新密码告诉客户`);
     } catch (e) {
-      if (aliveRef.current) setError(e instanceof Error ? e.message : "重置失败，请稍后再试");
+      const why = e instanceof Error ? e.message : "重置失败，请稍后再试";
+      if (aliveRef.current) setError(why);
+      else onLateFail(`唛头 ${clientId} 的密码没重置上：${why}`);
     } finally {
       if (aliveRef.current) setSaving(false);
     }
   };
 
   return (
-    <DetailModal title="重置密码" subtitle={`唛头 ${clientId}`} onClose={onClose}>
+    /* 重置中不让关（✕ 和 Esc 都走 confirmClose，审查第 1 轮两家）：关了以后结果回来没地方说，员工以为没改成 */
+    <DetailModal title="重置密码" subtitle={`唛头 ${clientId}`} onClose={onClose} confirmClose={() => !saving}>
       <form className="ca-form" onSubmit={(e) => { e.preventDefault(); void submit(); }}>
         <label className="ca-field">
           <span>新密码</span>
