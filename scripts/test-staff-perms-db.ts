@@ -234,13 +234,12 @@ async function main(): Promise<void> {
       assert.equal((await pm.shipment.findUnique({ where: { id: W.shipmentId } })).remark, "员工改的备注");
       assert.ok(r2.updatedAt);
       // 员工页的编辑框拿 /staff/shipments 那一条建表单（WaybillEditDialog 的 waybillEditStateOf）：行号、订单版本、整票数都要对得上，不然存不上 / 会删行
-      // 路径放变量里动态取：WaybillEditDialog 是 .tsx，测试脚本那份 tsconfig 没开 jsx（同 test-review-1018-source S10）
-      const dialogPath = "../apps/web/src/modules/orders/WaybillEditDialog";
-      const { waybillEditStateOf } = (await import(dialogPath)) as { waybillEditStateOf: (o: Row) => { form: Row; products: Row[]; snapshot: Row } };
+      // 只引纯逻辑那一半（waybill-edit-state.ts）：GitHub 连库那组没装 react，引带页面的 .tsx 会报「Cannot find module 'react'」（dfe7a88 那次）
+      const { waybillEditStateOf } = await import("../apps/web/src/modules/orders/waybill-edit-state");
       const list = await must("GET /staff/shipments", STAFF, {}, { pageSize: "500" });
       const row = list.items.find((x: Row) => x.id === W.shipmentId);
       assert.ok(row, "员工列表里找不到这张");
-      const st = waybillEditStateOf(row);
+      const st = waybillEditStateOf(row as any);
       const o2 = await pm.order.findUnique({ where: { id: W.orderId } });
       assert.equal(st.snapshot.orderUpdatedAt, o2.updatedAt.toISOString(), "订单版本要跟库里一样（不然一存就 409）");
       assert.deepEqual(st.products.map((p) => [p.id, p.packageCount]), ps2.map((p: Row) => [p.id, String(p.packageCount)]), "产品行号要跟库里一一对应（不然存的时候会把行删了重建）");

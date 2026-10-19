@@ -175,8 +175,11 @@ check("S6 客户「批量下单」：失败的行记下来，跑完预览只留�
 check("S7 超管「运单管理」改单：打开时记订单版本；每次保存都带回去核对（第 2 轮）；存完基线换成刚存的；被抢先就刷新列表（2026-10-19 编辑框搬进 WaybillEditDialog，超管页 / 员工页共用）", () => {
   const src = code("apps/web/src/app/admin/page.tsx");
   const dlg = code("apps/web/src/modules/orders/WaybillEditDialog.tsx");
-  assert.match(dlg, /export type WaybillEditSnapshot = \{ form: Record<string, string>; productsJson: string; orderUpdatedAt\?: string \};/);
-  assert.match(dlg, /snapshot: \{ form: \{ \.\.\.form \} as Record<string, string>, productsJson: JSON\.stringify\(products\), orderUpdatedAt: order\.orderUpdatedAt \},/, "打开弹窗要记下订单（不是运单）的 updatedAt");
+  // 打开时建表单那一半在 waybill-edit-state.ts（2026-10-20 拆出来，连库测试要单独引）
+  const state = code("apps/web/src/modules/orders/waybill-edit-state.ts");
+  assert.match(state, /export type WaybillEditSnapshot = \{ form: Record<string, string>; productsJson: string; orderUpdatedAt\?: string \};/);
+  assert.match(state, /snapshot: \{ form: \{ \.\.\.form \} as Record<string, string>, productsJson: JSON\.stringify\(products\), orderUpdatedAt: order\.orderUpdatedAt \},/, "打开弹窗要记下订单（不是运单）的 updatedAt");
+  assert.match(dlg, /import \{ waybillEditStateOf,[^}]*\} from "\.\/waybill-edit-state";/, "编辑框要用 waybill-edit-state 那一份建表单");
   assert.match(dlg, /const \[opened\] = useState\(\(\) => waybillEditStateOf\(initial\)\);/, "表单只在挂上那一刻按打开时那一行建一次（列表刷新不许把正在填的冲掉）");
   assert.match(dlg, /const saved = await updateAdminOrder\(\{\s*orderId: saveOrderId,\s*\.\.\.\(snapshot\?\.orderUpdatedAt \? \{ expectedOrderUpdatedAt: snapshot\.orderUpdatedAt \} : \{\}\),/, "每次保存都要带 expectedOrderUpdatedAt（不能只在改产品行时带）");
   assert.ok(!/sendsWholeProducts/.test(dlg), "又回到「只在改产品行 / 合计时才带版本」了（第 2 轮：只改备注不核对，会把旧产品行配上新版本）");

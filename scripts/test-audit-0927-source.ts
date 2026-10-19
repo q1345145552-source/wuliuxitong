@@ -33,8 +33,8 @@ check("#5 员工列表 orderProductImage.findMany 有 select 且不含 contentBa
   assert.match(block, /filePath:\s*true/, "要取 filePath（列表里 imageUrl 用它）");
 });
 
-check("#1 编辑框预填用 totalWeightKg ?? weightKg / totalVolumeM3 ?? volumeM3（2026-10-19 搬进 WaybillEditDialog：表单一处，「打开时的样子」照表单抄一份）", () => {
-  const src = read("apps/web/src/modules/orders/WaybillEditDialog.tsx");
+check("#1 编辑框预填用 totalWeightKg ?? weightKg / totalVolumeM3 ?? volumeM3（2026-10-19 搬进 WaybillEditDialog、10-20 拆到 waybill-edit-state.ts：表单一处，「打开时的样子」照表单抄一份）", () => {
+  const src = read("apps/web/src/modules/orders/waybill-edit-state.ts");
   const i = src.indexOf("export function waybillEditStateOf(");
   const block = src.slice(i, src.indexOf("const products: WaybillEditProduct[]", i));
   const w = block.match(/weightKg:\s*[^,]*totalWeightKg[^,]*,/g) ?? [];
