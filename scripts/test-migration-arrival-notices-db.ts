@@ -14,6 +14,7 @@
  *   （修复第 3 轮）回填跳过的那几条，部署后的只读体检 check-arrival-notice-tracking-no.sql 要正好列出来。
  *   （修复第 4 轮）末尾再回填唛头：订单被改给别的客户的老到货通知跟上订单现在的客户、清掉「已通知」（M1d）。
  *   （2026-10-09 多款产品）再跑 20261009 那份（建产品子表 + 把老数据回填成一款），也连跑两遍（M1e）；
+ *   （2026-10-19 存原样）这张表也指着到货通知，开头一起拆掉，M2 之前按上线顺序跑 20261019 那份补回来（M1f）；
  *   部署后的只读体检 check-arrival-notice-products.sql 迁移后零行、能照出部署窗口里旧代码登记 / 修改的那两种。
  */
 import assert from "node:assert/strict";
@@ -29,6 +30,8 @@ const MIGRATION = path.join(ROOT, "apps/api/prisma/migrations/20261006_arrival_n
 const MIGRATION_1008 = path.join(ROOT, "apps/api/prisma/migrations/20261008_arrival_notice_fixes/migration.sql");
 /** 2026-10-09 多款产品：产品子表 + 回填。上线顺序 1006 → 1008 → 1009 */
 const MIGRATION_1009 = path.join(ROOT, "apps/api/prisma/migrations/20261009_arrival_notice_products/migration.sql");
+/** 2026-10-19 存原样那张表（外键指着到货通知）：上线顺序在最后。它自己的细项在 test-migration-arrival-notice-snapshots-db.ts，这里只按顺序补上，好跟 schema 比 */
+const MIGRATION_1019 = path.join(ROOT, "apps/api/prisma/migrations/20261019_arrival_notice_snapshots/migration.sql");
 const PRODUCTS_CHECK = path.join(ROOT, "scripts/check-arrival-notice-products.sql");
 const DRIFT = path.join(ROOT, "scripts/check-schema-drift.sql");
 
@@ -67,7 +70,9 @@ async function main(): Promise<void> {
   try {
     const push = prisma(["db", "push", `--schema=${SCHEMA}`, "--skip-generate"], tmpUrl);
     assert.equal(push.code, 0, `临时库建结构失败：${push.out.slice(-400)}`);
-    // 回到上线前的样子：拆掉这几份迁移自己加的三张表（产品子表是 20261009 加的，外键指着到货通知，先删）
+    // 回到上线前的样子：拆掉这几份迁移自己加的三张表（产品子表是 20261009 加的，外键指着到货通知，先删）。
+    // 存原样那张（20261019）也指着到货通知、又是后来加的：一起拆掉，最后单独跑它那份迁移补回来（它自己的测试在 test-migration-arrival-notice-snapshots-db.ts）
+    await db.$executeRawUnsafe(`DROP TABLE "arrival_notice_snapshots"`);
     await db.$executeRawUnsafe(`DROP TABLE "arrival_notice_products"`);
     await db.$executeRawUnsafe(`DROP TABLE "arrival_notice_images"`);
     await db.$executeRawUnsafe(`DROP TABLE "arrival_notices"`);
@@ -299,6 +304,11 @@ async function main(): Promise<void> {
       // 删到货通知：产品行跟着删（外键 ON DELETE CASCADE）
       await ins(`DELETE FROM "arrival_notices" WHERE id LIKE 'zz_miga_e%'`);
       assert.equal((await db.$queryRawUnsafe<any[]>(`SELECT id FROM "arrival_notice_products" WHERE notice_id LIKE 'zz_miga_e%'`)).length, 0, "删了到货通知，产品行还在（外键没建上）");
+    });
+
+    await check("M1f 再跑 20261019 那份（存原样表）：在上完 1006 → 1008 → 1009 的库上能跑通", () => {
+      const r = prisma(["db", "execute", `--schema=${SCHEMA}`, "--file", MIGRATION_1019], tmpUrl);
+      assert.equal(r.code, 0, r.out.slice(-400));
     });
 
     await check("M2 跑完以后库跟 schema.prisma 一点差异都没有（列、类型、索引、外键全对上）", () => {

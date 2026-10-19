@@ -50,6 +50,8 @@ import { missingForFormal } from "./missing";
 import { copyImage, copyText, saveImage } from "./copy-helpers";
 import { CLIENT_CHANGED_NOTE, MAX_NOTICE_IMAGES, photoFailMessage, photoSlotsLeft, pickPhotos, uploadQueuedPhotos } from "./photo-upload";
 import { makeThumb } from "./photo-thumb";
+import { productLine } from "./snapshot-diff";
+import SnapshotModal from "./SnapshotModal";
 import { nextAutoTotals, type AutoTotalsMemory } from "../orders/auto-totals";
 import { CARGO_TYPES, CARGO_TYPE_ZH } from "../../../../../packages/shared-types/cargo-type";
 import { MAX_NOTICE_PRODUCTS, isBlankNoticeProduct, noticeProductTotals } from "../../../../../packages/shared-types/arrival-notice-products";
@@ -109,22 +111,7 @@ function emptyDraft(): ArrivalNoticeDraft {
 }
 
 
-/** 卡片上一款怎么写：「灯具 × 12 件 · 敏感货 · 国内单号 SF123 · 60×40×30cm · 单箱 5kg · 每箱 10 个」，空的项不写 */
-function productLine(p: ArrivalNoticeProduct): string {
-  const cargo = cargoTypeOf(p.cargoType);
-  const dims = p.lengthCm !== null || p.widthCm !== null || p.heightCm !== null
-    ? `${p.lengthCm ?? "?"}×${p.widthCm ?? "?"}×${p.heightCm ?? "?"}cm`
-    : "";
-  return [
-    `${p.itemName || "品名未填"}${p.packageCount !== null ? ` × ${p.packageCount} 件` : ""}`,
-    p.packageCount === null ? "件数未填" : "",
-    cargo !== "normal" ? CARGO_TYPE_ZH[cargo] : "",
-    p.domesticTrackingNo ? `国内单号 ${p.domesticTrackingNo}` : "",
-    dims,
-    p.weightKg !== null ? `单箱 ${p.weightKg}kg` : "",
-    p.productQuantity !== null ? `每箱 ${p.productQuantity} 个` : "",
-  ].filter(Boolean).join(" · ");
-}
+/* 卡片上一款怎么写（productLine）挪到 snapshot-diff.ts 了：「看转运单时的原样」也按同一种写法比（2026-10-19） */
 
 /** 给客户的文案：各款走 noticeProductsOf（老后端没回 products 也拼得出一款） */
 function noticeText(n: ArrivalNotice): string {
@@ -159,6 +146,9 @@ export default function ArrivalNoticesView() {
   const [busyIds, setBusyIds] = useState<ReadonlySet<string>>(() => new Set());
   const [editor, setEditor] = useState<Editor | null>(null);
   const [preview, setPreview] = useState<{ src: string; alt: string } | null>(null);
+  /** 「看转运单时的原样」弹窗（2026-10-19）：seq 每打开一次 +1，当弹窗的 key（关掉再开是新的一个，旧的晚回来的读取不管） */
+  const [snapView, setSnapView] = useState<{ seq: number; notice: ArrivalNotice } | null>(null);
+  const snapSeqRef = useRef(0);
   const [toast, setToast] = useState<{ seq: number; message: string; tone: "success" | "error" }>({ seq: 0, message: "", tone: "success" });
   const [clients, setClients] = useState<MarkOption[]>([]);
   /** 封禁的唛头（2026-10-17）：不进下拉；框里是它时提示一句（modules/shared/client-ban.ts） */
@@ -398,6 +388,7 @@ export default function ArrivalNoticesView() {
             onPreview={(img) => setPreview({ src: imgSrc(img), alt: img.fileName })}
             onToggleNotified={() => void onToggleNotified(n)}
             onEdit={() => (n.convertedTo === "formal" ? void onEditConverted(n) : openEditor({ mode: "edit", item: n }))}
+            onViewSnapshots={() => { snapSeqRef.current += 1; setSnapView({ seq: snapSeqRef.current, notice: n }); }}
             onConvert={(to) => onConvert(n, to)}
             onDelete={() => onDelete(n)}
           />
@@ -427,6 +418,17 @@ export default function ArrivalNoticesView() {
         />
       ) : null}
 
+      {snapView ? (
+        <SnapshotModal
+          // 加前缀，同上面 editor 那条：同一层还有别的按数字给 key 的元素
+          key={`snap-${snapView.seq}`}
+          notice={snapView.notice}
+          // 拿列表里这张卡片现在的样子来比（弹窗开着时列表刷新了就跟着新的）；这一页已经没有它了就用打开时那份
+          current={data?.items.find((x) => x.id === snapView.notice.id) ?? snapView.notice}
+          onClose={() => { const seq = snapView.seq; setSnapView((v) => (v && v.seq === seq ? null : v)); }}
+        />
+      ) : null}
+
       {preview ? (
         <div className="an-preview" role="dialog" aria-label="照片大图" onClick={() => setPreview(null)}>
           {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -452,8 +454,11 @@ function NoticeCard(props: {
   onEdit: () => void;
   onConvert: (to: "formal" | "inbound") => void;
   onDelete: () => void;
+  /** 「看转运单时的原样」（2026-10-19） */
+  onViewSnapshots: () => void;
 }) {
   const { n, busy } = props;
+  const snapshotCount = n.snapshotCount ?? 0;
   const text = useMemo(() => noticeText(n), [n]);
   const products = useMemo(() => noticeProductsOf(n), [n]);
   const missing = missingForFormal(n);
@@ -545,6 +550,11 @@ function NoticeCard(props: {
         {trackShipmentId ? (
           <button type="button" className="an-btn" onClick={() => openShipmentTrack({ shipmentId: trackShipmentId })}>物流轨迹</button>
         ) : null}
+        {/* 转正式运单那一刻存的原样（2026-10-19 老板选 B）：存过就给看（运单被删、回到「没转」的也给看以前那份）；
+            已转正式、但没存过的是上线前转的，照实说 */}
+        {snapshotCount > 0 ? (
+          <button type="button" className="an-btn" onClick={props.onViewSnapshots}>看转运单时的原样{snapshotCount > 1 ? `（${snapshotCount} 份）` : ""}</button>
+        ) : formal ? <span className="an-muted">上线前转的，没存原样</span> : null}
         {!formal && !inbound ? <button type="button" className="an-btn an-btn-danger" disabled={busy} onClick={props.onDelete}>删除</button> : null}
       </footer>
     </article>

@@ -159,11 +159,11 @@ async function main(): Promise<void> {
     assert.ok(front.every((rest) => rest.startsWith("/")), `有裸网址：${front.join(",")}`);
     const routes = read("apps/api/src/modules/arrival-notices/routes.ts");
     const back = [...routes.matchAll(/app\.(get|post|delete|put)\("([^"]+)"/g)].map((m) => m[2]);
-    assert.equal(back.length, 9);
+    assert.equal(back.length, 10, "2026-10-19 加了读原样 /staff/arrival-notices/snapshots，共 10 个");
     assert.ok(back.every((p) => p.startsWith("/staff/arrival-notices/")), back.join(","));
     for (const p of back) assert.ok(api.includes(p), `前端没调 ${p}`);
     assert.match(routes, /requireRole\(req, res, \["staff", "admin"\]\)/);
-    assert.equal((routes.match(/requireRole\(req, res, \["staff", "admin"\]\)/g) ?? []).length, 7, "原来那 7 个接口给员工 / 超管");
+    assert.equal((routes.match(/requireRole\(req, res, \["staff", "admin"\]\)/g) ?? []).length, 8, "原来那 7 个 + 读原样（2026-10-19）给员工 / 超管");
     // 2026-10-16 超管改已转正式运单：这两个只给超管（员工照旧不能改已转正式的）
     for (const p of ["/staff/arrival-notices/converted-detail", "/staff/arrival-notices/converted-refresh"]) {
       const at = routes.indexOf(`"${p}"`);
@@ -529,7 +529,8 @@ async function main(): Promise<void> {
     assert.match(v, /CARGO_TYPES\.map\(\(c\) => <option key=\{c\} value=\{c\}>\{CARGO_TYPE_ZH\[c\]\}<\/option>\)/);
     // 2026-10-16 草稿函数（draftOf）挪到 draft.ts（组件带 JSX，测试要直接调）
     assert.match(read("apps/web/src/modules/arrival-notice/draft.ts"), /cargoType: cargoTypeOf\(p\.cargoType\),/, "修改时带出库里每款的货型");
-    assert.match(v, /cargo !== "normal" \? CARGO_TYPE_ZH\[cargo\] : ""/, "卡片上每款写货型（普货不写）");
+    // 2026-10-19 卡片上那一行产品写法（productLine）挪到 snapshot-diff.ts（「看转运单时的原样」比对也用它，只留一份）
+    assert.match(read("apps/web/src/modules/arrival-notice/snapshot-diff.ts"), /cargo !== "normal" \? CARGO_TYPE_ZH\[cargo\] : ""/, "卡片上每款写货型（普货不写）");
     // F01：卡片提醒、确认框列出来、确认后带 orderId 转；按钮不藏（R2）
     assert.match(v, /const prealerts = n\.prealertMatches \?\? \[\];/);
     assert.match(v, /const matches = n\.prealertMatches \?\? \[\];/);

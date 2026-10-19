@@ -1423,6 +1423,8 @@ model ArrivalNotice {
   /// 新代码每次保存按各款汇总写一遍（packages/shared-types/arrival-notice-products.ts 的 noticeLegacySummary），只给回滚后的旧代码 / 部署期间的旧容器看；
   /// weightKg / volumeM3 仍是真正的整票总重量、总体积
   products ArrivalNoticeProduct[]
+  /// 转正式运单那一刻的原样（2026-10-19 老板选 B）：转一次存一份，只增不改
+  snapshots ArrivalNoticeSnapshot[]
 
   /// 同一家公司里一个运单号只能登记一条（两个人同时登记同一个号，后到的被数据库挡下；运单号空着的不算重复，PostgreSQL 里 NULL 互不相等）
   @@unique([companyId, trackingNo])
@@ -1480,6 +1482,31 @@ model ArrivalNoticeProduct {
 
   @@index([noticeId, sortOrder])
   @@map("arrival_notice_products")
+}
+
+/// 到货通知转成正式运单那一刻的原样（2026-10-19 老板选 B）。
+/// 老板原话：「转运单之后，又修改运单……怕之后数据不一样，但又怕改错了直接没有原始信息」→ 同步照旧（卡片跟着运单变），
+/// 另外在转正式那一刻把到货通知上的内容整份存一份，卡片上「看转运单时的原样」只读看、标出跟现在不一样的地方。
+/// 只在「转正式运单」时写（直接转、待入库补齐后转都算；转待入库不写）；写了就不改、不删（谁都改不了）。
+/// 运单被删、到货通知回到「没转」再转：再存一份，几份都留着。照片不存（到货通知自己那份照片本来就一直在）。
+/// 每一列都显式写 @map（CLAUDE.md 第 26 条）。
+model ArrivalNoticeSnapshot {
+  id              String   @id
+  companyId       String   @map("company_id")
+  noticeId        String   @map("notice_id")
+  /// 这一次转出去的那张运单（shipments.id）。不加外键：运单删了这份原样照样留着
+  shipmentId      String?  @map("shipment_id")
+  /// 当时到货通知上的内容（JSON）：唛头、运单号、仓库、运输方式、到仓日期、整票重量 / 体积、备注、各款产品
+  data            String   @db.Text
+  /// 谁点的「转正式运单」（名字只给超管看，老板 2026-09-15 定的）
+  convertedById   String   @map("converted_by_id")
+  convertedByName String?  @map("converted_by_name")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  notice ArrivalNotice @relation(fields: [noticeId], references: [id], onDelete: Cascade)
+
+  @@index([noticeId, createdAt])
+  @@map("arrival_notice_snapshots")
 }
 
 // ============================================================================

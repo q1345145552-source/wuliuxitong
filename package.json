@@ -111,7 +111,10 @@
     "test:chaipai-source": "tsx scripts/test-chaipai-source.ts",
     "test:fetch-deadline": "tsx scripts/test-fetch-deadline.ts",
     "test:chaipai-db": "tsx scripts/test-chaipai-db.ts",
-    "test:migration-chaipai-db": "tsx scripts/test-migration-chaipai-db.ts"
+    "test:migration-chaipai-db": "tsx scripts/test-migration-chaipai-db.ts",
+    "test:arrival-notice-snapshot-source": "tsx scripts/test-arrival-notice-snapshot-source.ts",
+    "test:arrival-notice-snapshot-db": "tsx scripts/test-arrival-notice-snapshot-db.ts",
+    "test:migration-arrival-notice-snapshots-db": "tsx scripts/test-migration-arrival-notice-snapshots-db.ts"
   },
   "devDependencies": {
     "@types/node": "^26.0.1",

@@ -319,6 +319,10 @@ jobs:
       # 弹窗先重读再走超管改单再刷新卡片、别人改过不存、整柜不给存、卡片只给超管「修改」
       - name: Test arrival notice converted edit (admin)
         run: npm run test:arrival-notice-converted-edit
+      # 2026-10-19 转正式运单时存原样（老板选 B，不连库）：比对函数标得对、弹窗读取中 / 上线前转的 / 两份 / 坏的 / 读失败 / 关掉后晚回来、
+      # 卡片按钮和「上线前转的，没存原样」、弹窗 key 带前缀、后端在同一个事务里只在转正式时存、谁转的只给超管、存的字段跟页面一致
+      - name: Test arrival notice snapshot (source)
+        run: npm run test:arrival-notice-snapshot-source
       # 2026-10-17 封禁的唛头不进挂单的下拉（不连库）：提示跟后端拦下那句一样、员工 / 超管建单和改唛头的框都去掉封禁的、全站唛头下拉点名
       - name: Test banned client marks in pickers
         run: npm run test:client-ban-ui
@@ -508,6 +512,10 @@ jobs:
       # 2026-10-16 超管改已转正式运单 + 运单管理改完卡片跟着变（真接口、真库）
       - name: Test arrival notice converted edit (real DB)
         run: bash .github/scripts/run-db-test.sh test:arrival-notice-converted-db
+      # 2026-10-19 转正式运单时存原样（真接口、真库）：转正式存一份 = 转之前那一刻的、待入库不存、没转成不存、运单管理改了原样不动、
+      # 运单被删重转存两份、别家公司 404、员工看不到谁转的、删到货通知跟着删、刚转完谁都没改弹窗里一处「改过」都没有
+      - name: Test arrival notice snapshot (real DB)
+        run: bash .github/scripts/run-db-test.sh test:arrival-notice-snapshot-db
       # 2026-10-17 封禁的唛头不许再挂新单（真接口、真库）：建单 / 到货通知登记·改唛头·转运单 / 整柜建·改 / 超管改唛头都拦，
       # 已经挂在封禁唛头名下的单照常改、待入库照常转正式、预报单照常收货，解封后恢复
       - name: Test banned client cannot get new orders (real DB)
@@ -525,6 +533,9 @@ jobs:
       # 对接拆派仓那份迁移：上线前的库上连跑两遍、跟 schema 零差异、体检清单对上、删运单时每票状态跟着删
       - name: Test chaipai migration file (real DB)
         run: bash .github/scripts/run-db-test.sh test:migration-chaipai-db
+      # 存原样那份迁移：上线前的库上连跑两遍、跟 schema 零差异、体检清单对上、不回填老数据、删到货通知跟着删 / 删运单不动
+      - name: Test arrival notice snapshots migration file (real DB)
+        run: bash .github/scripts/run-db-test.sh test:migration-arrival-notice-snapshots-db
       # 2026-10-08 模拟数据测试（多人同时操作）查出来的：建单查到货通知占号、同号并发不 500、删单 vs 装柜不死锁、
       # 删单那一刻看列表不 500、改单遇删单 409、编辑期间被装柜拦旧剩余数、删单删图片文件、到货通知搜索转义 / 按显示的号搜、客服选运单全品名
       - name: Test simulated-data fixes 1008 (real DB)

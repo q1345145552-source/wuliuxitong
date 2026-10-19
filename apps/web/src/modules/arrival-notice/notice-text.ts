@@ -13,7 +13,8 @@
  */
 import { noticeProductTotals } from "../../../../../packages/shared-types/arrival-notice-products";
 
-const WAREHOUSE_ZH: Record<string, string> = {
+/** 仓库中文名（「看转运单时的原样」比对也用这一份，snapshot-diff.ts） */
+export const WAREHOUSE_ZH: Record<string, string> = {
   wh_yiwu_01: "义乌仓",
   wh_guangzhou_01: "广州仓",
   wh_dongguan_01: "东莞仓",

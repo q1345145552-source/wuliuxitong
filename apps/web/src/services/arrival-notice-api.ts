@@ -96,6 +96,35 @@ export interface ArrivalNotice {
   images: ArrivalNoticeImage[];
   /** 撞上的客户预报单（F01）；空数组 = 没撞上。老后端不回 = undefined，读的时候一律 `?? []` */
   prealertMatches?: PrealertMatch[];
+  /**
+   * 转正式运单时存了几份原样（2026-10-19 老板选 B）。0 = 上线前转的 / 没转过正式；运单被删、重转过的会有好几份。
+   * 老后端不回 = undefined，当 0
+   */
+  snapshotCount?: number;
+}
+
+/** 转正式运单那一刻存下的到货通知（后端 NoticeSnapshotData，格式版本 v=1）；产品格式跟卡片上的一样 */
+export interface ArrivalNoticeSnapshotData {
+  v: 1;
+  clientId: string | null;
+  trackingNo: string | null;
+  warehouseId: string | null;
+  transportMode: string | null;
+  arrivedAt: string | null;
+  weightKg: number | null;
+  volumeM3: number | null;
+  remark: string | null;
+  products: ArrivalNoticeProduct[];
+}
+
+export interface ArrivalNoticeSnapshot {
+  id: string;
+  /** 什么时候转的 */
+  convertedAt: string;
+  /** 谁转的：只有超管拿得到，员工是 null（老板 2026-09-15：操作人只给超管看） */
+  convertedByName: string | null;
+  /** 读不出来（库里那一份坏了 / 以后的新格式）就是 null */
+  data: ArrivalNoticeSnapshotData | null;
 }
 
 export interface ArrivalNoticePage {
@@ -263,6 +292,11 @@ export interface ConvertedNoticeDetail {
   productIds: string[];
   /** 从这里改不了的原因（整柜的单要去「整柜管理」）；能改是 null */
   blockedReason: string | null;
+}
+
+/** 转正式运单时存下的原样（新的在前），卡片上「看转运单时的原样」用 */
+export function fetchArrivalNoticeSnapshots(id: string): Promise<{ items: ArrivalNoticeSnapshot[] }> {
+  return apiRequest<{ items: ArrivalNoticeSnapshot[] }>(`${apiBaseUrl()}/staff/arrival-notices/snapshots?${new URLSearchParams({ id }).toString()}`);
 }
 
 export function fetchConvertedNoticeDetail(id: string): Promise<ConvertedNoticeDetail> {
