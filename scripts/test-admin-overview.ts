@@ -386,8 +386,9 @@ function mutationCaller(kind: "staff" | "client" | "ban" | "edit" | "remark", lo
     setRemarkError: (text: string) => { if (text) state.remarkErrors.push(text); },
     setEditingRemarkFor: (value: string | null) => { state.editingRemarkFor = value; if (value === null) state.cleared++; },
     setRemarkDraft: (value: string) => { state.remarkDraft = value; },
-    setAdminStaffRemark: async (id: string, remark: string, signal?: AbortSignal) => {
-      state.payloads.push({ id, remark });
+    remarkBase: '义乌仓管',
+    setAdminStaffRemark: async (id: string, remark: string, expectedRemark: string | null, signal?: AbortSignal) => {
+      state.payloads.push({ id, remark, expectedRemark });
       await write(signal);
       return { id, remark: options.confirmedRemark !== undefined ? options.confirmedRemark : (remark || null) };
     },
@@ -559,7 +560,7 @@ for (const kind of ['员工', '客户'] as const) {
 test('改备注：发去空格的字；那一行用后端回的值（名单刷新失败也一样）；收起编辑框、提示「备注已保存」', async () => {
   const mutation = mutationCaller('remark', async () => {}, { confirmedRemark: '广州仓管', reload: async () => { throw new Error('list offline'); } });
   await mutation.run();
-  assert.deepEqual(mutation.state.payloads, [{ id: 'u-test', remark: '广州仓管' }]);
+  assert.deepEqual(mutation.state.payloads, [{ id: 'u-test', remark: '广州仓管', expectedRemark: '义乌仓管' }], '要带点开时看到的那份');
   assert.equal(mutation.state.staff[0].remark, '广州仓管', '名单没刷新上也要用后端回的值改那一行');
   assert.equal(mutation.state.editingRemarkFor, null);
   assert.equal(mutation.state.remarkDraft, '');
@@ -571,7 +572,7 @@ test('改备注：空着 = 清掉（后端回 null，那一行变空，提示「
   const mutation = mutationCaller('remark', async () => {}, { remarkDraft: '   ' });
   mutation.state.staff[0].remark = '义乌仓管';
   await mutation.run();
-  assert.deepEqual(mutation.state.payloads, [{ id: 'u-test', remark: '' }]);
+  assert.deepEqual(mutation.state.payloads, [{ id: 'u-test', remark: '', expectedRemark: '义乌仓管' }]);
   assert.equal(mutation.state.staff[0].remark, null);
   assert.deepEqual(mutation.state.toasts, ['备注已清掉']);
 });

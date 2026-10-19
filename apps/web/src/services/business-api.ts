@@ -1243,13 +1243,14 @@ export async function fetchStaffClients(): Promise<StaffClientItem[]> {
   return data.items;
 }
 
-/** 超管改员工备注（2026-10-20）：空串 = 清掉；后端只认本公司员工号 */
-export async function setAdminStaffRemark(id: string, remark: string, signal?: AbortSignal): Promise<{ id: string; remark: string | null }> {
+/** 超管改员工备注（2026-10-20）：空串 = 清掉；后端只认本公司员工号。
+ *  expectedRemark = 点开「改备注」时看到的那份，别的超管这期间改过后端回 409（不盖掉人家的） */
+export async function setAdminStaffRemark(id: string, remark: string, expectedRemark: string | null, signal?: AbortSignal): Promise<{ id: string; remark: string | null }> {
   const response = await fetch(`${apiBaseUrl()}/admin/users/staff-remark`, {
     method: "POST",
     signal,
     headers: { "Content-Type": "application/json", ...authHeaders() },
-    body: JSON.stringify({ id, remark }),
+    body: JSON.stringify({ id, remark, expectedRemark }),
   });
   return parseApiResponse<{ id: string; remark: string | null }>(response);
 }

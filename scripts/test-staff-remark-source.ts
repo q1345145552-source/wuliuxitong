@@ -14,6 +14,7 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
+import ts from "typescript";
 
 const ROOT = path.resolve(__dirname, "..");
 const read = (rel: string) => fs.readFileSync(path.join(ROOT, rel), "utf8");
@@ -52,7 +53,9 @@ check("R2a 后端改备注：只给超管、只认本公司员工号、写的时
   assert.match(ep, /requireRole\(req, res, \["admin"\]\)/, "只给超管");
   assert.match(ep, /findFirst\(\{ where: \{ id, companyId: auth\.companyId \}/, "按本公司查");
   assert.match(ep, /user\.role !== "staff"[^\n]*fail\(res, 400/, "不是员工号 400");
-  assert.match(ep, /updateMany\(\{ where: \{ id: user\.id, companyId: auth\.companyId, role: "staff" \}/, "写的时候 where 再带公司和 role=staff");
+  assert.match(ep, /where: \{ id: user\.id, companyId: auth\.companyId, role: "staff", \.\.\.\(expected \? \{ remark: expected\.value \} : \{\}\) \}/,
+    "写的时候 where 再带公司、role=staff、点开时那份备注");
+  assert.match(ep, /const expected = body\.expectedRemark === undefined \? undefined : readStaffRemark\(body\.expectedRemark\);/);
   assert.match(ep, /written\.count === 0[^\n]*fail\(res, 409/, "没写上 409");
   assert.match(adminApi, /export const STAFF_REMARK_MAX = 50;/);
   const helper = slice(adminApi, "function readStaffRemark(", "\n}");
@@ -85,7 +88,7 @@ check("R3a 前端接口：AdminUserItem 有 remark；建员工可带 remark；�
   assert.ok(adminApi.includes(`app.post("${sent}", async`), `后端没有 ${sent} 这条`);
   assert.match(fn, /method: "POST"/);
   assert.match(fn, /signal,/);
-  assert.match(fn, /JSON\.stringify\(\{ id, remark \}\)/);
+  assert.match(fn, /JSON\.stringify\(\{ id, remark, expectedRemark \}\)/);
 });
 
 check("R3b 建员工弹窗多一格「备注」（选填、最多 50、提示例子），发请求带去空格的备注；开弹窗 / 建完都清空", () => {
@@ -104,13 +107,15 @@ check("R3b 建员工弹窗多一格「备注」（选填、最多 50、提示例
 check("R3c 员工那一行：显示「备注」（没写显示「未写」）+「改备注」；改备注 / 设置密码一次只开一个；展开框最多 50、可取消", () => {
   const row = slice(page, "{staffList.map((u) => (", "{settingPasswordFor === u.id ? (");
   assert.match(row, /<strong>备注<\/strong> \{u\.remark \? u\.remark : <span[^>]*>未写<\/span>\}/);
-  assert.match(row, /onClick=\{\(\) => \{ setSettingPasswordFor\(null\); setRemarkError\(""\); setRemarkDraft\(u\.remark \?\? ""\); setEditingRemarkFor\(editingRemarkFor === u\.id \? null : u\.id\); \}\}/,
-    "点「改备注」：收起设置密码、清掉上次的错、框里填现在的备注");
+  assert.match(row, /onClick=\{\(\) => \{ setSettingPasswordFor\(null\); setRemarkError\(""\); setRemarkDraft\(u\.remark \?\? ""\); setRemarkBase\(u\.remark \?\? null\); setEditingRemarkFor\(editingRemarkFor === u\.id \? null : u\.id\); \}\}/,
+    "点「改备注」：收起设置密码、清掉上次的错、框里填现在的备注、记下点开时那份");
   assert.match(row, /\{editingRemarkFor === u\.id \? "取消改备注" : "改备注"\}/);
   assert.match(row, /onClick=\{\(\) => \{ setEditingRemarkFor\(null\); setShowSettingPassword\(false\);/, "点「设置密码」收起改备注");
   const editor = slice(row, "{editingRemarkFor === u.id ? (", ") : null}");
   const input = editor.match(/<input[\s\S]*?\/>/)?.[0] ?? "";
   assert.match(input, /value=\{remarkDraft\}/);
+  assert.match(input, /onChange=\{\(e\) => setRemarkDraft\(e\.target\.value\)\}/, "能打字（dsh 第 1 轮：删掉 onChange 框就成只读了）");
+  assert.match(editor, /onClick=\{\(\) => \{ setEditingRemarkFor\(null\); setRemarkDraft\(""\); setRemarkError\(""\); \}\}\s*disabled=\{loading\}[^>]*>\s*取消\s*</, "「取消」收起、清掉草稿和错");
   assert.match(input, /disabled=\{loading\}/, "存的时候锁住（不然存完把后来打的字清掉）");
   assert.ok(!/maxLength/.test(input), "不用 maxLength（粘贴超长会被悄悄截掉）");
   assert.equal((editor.match(/disabled=\{loading\}/g) ?? []).length, 3, "输入框、保存、取消三样存的时候都锁");
@@ -125,7 +130,7 @@ check("R4 存备注：先拦超长；走 runAccountWrite；超时 / 失败写在
   assert.match(fn, /if \(loading\) return;/);
   assert.match(fn, /const value = remarkDraft\.trim\(\);/);
   assert.match(fn, /value\.length > 50\) \{\s*setRemarkError\(/);
-  assert.match(fn, /runAccountWrite\(\(signal\) => setAdminStaffRemark\(userId, value, signal\)\)/, "要走账号写入边界，旧名单不许盖回去");
+  assert.match(fn, /runAccountWrite\(\(signal\) => setAdminStaffRemark\(userId, value, remarkBase, signal\)\)/, "要走账号写入边界、带点开时那份");
   assert.match(fn, /AccountWriteTimeoutError"\) \{\s*setRemarkError\(error\.message\);\s*return;/);
   assert.match(fn, /setRemarkError\(`备注没存上：\$\{text\}`\);\s*return;/);
   assert.ok(!/setMessage\(/.test(fn), "错误不许写到页面最底下那行（看不见）");
@@ -147,6 +152,60 @@ check("R5 员工备注只在超管页：员工 / 客户 / 代理那几页不调�
     return /\.(ts|tsx)$/.test(d.name) && /setAdminStaffRemark/.test(read(rel)) ? [rel] : [];
   });
   assert.deepEqual(callers("apps/web/src").sort(), ["apps/web/src/app/admin/page.tsx", "apps/web/src/services/business-api.ts"]);
+});
+
+check("R6 员工备注不会顺着别的接口漏出去：后端查账号一律写明要哪几项；带出关联账号也写明（dsh 第 1 轮：以后有人加一个不写 select 的查询就漏）", () => {
+  // 账号表（User）在别的表里的关联名（schema.prisma 里 `xxx User @relation`）
+  const schema = read("apps/api/prisma/schema.prisma");
+  const relNames = new Set([...schema.matchAll(/^\s+(\w+)\s+User\??\s+@relation/gm)].map((m) => m[1]));
+  assert.ok(relNames.has("client") && relNames.has("actor"), `关联名没读出来：${[...relNames].join(",")}`);
+  const files = (dir: string): string[] => fs.readdirSync(path.join(ROOT, dir), { withFileTypes: true }).flatMap((d) => {
+    const rel = path.join(dir, d.name);
+    return d.isDirectory() ? files(rel) : /\.ts$/.test(d.name) ? [rel] : [];
+  });
+  const bad: string[] = [];
+  const remarkAt: string[] = [];
+  /** 账号的 select 里点名要了 remark（含 remark: true / remark: {...}）就记下在哪 */
+  const noteRemark = (rel: string, sf: ts.SourceFile, sel: ts.Expression | undefined) => {
+    if (sel && ts.isObjectLiteralExpression(sel) && objProp(sel, "remark")) remarkAt.push(`${rel}:${sf.getLineAndCharacterOfPosition(sel.getStart()).line + 1}`);
+  };
+  const objProp = (o: ts.ObjectLiteralExpression, name: string) => o.properties.find((p): p is ts.PropertyAssignment => ts.isPropertyAssignment(p) && p.name.getText() === name);
+  for (const rel of files("apps/api/src")) {
+    const sf = ts.createSourceFile(rel, read(rel), ts.ScriptTarget.Latest, true);
+    const visit = (n: ts.Node): void => {
+      // ① xxx.user.findMany / findFirst / findUnique（及 OrThrow）的参数里必须有 select
+      if (ts.isCallExpression(n) && ts.isPropertyAccessExpression(n.expression) && /^find(Many|First|Unique)(OrThrow)?$/.test(n.expression.name.text)
+        && ts.isPropertyAccessExpression(n.expression.expression) && n.expression.expression.name.text === "user") {
+        const arg = n.arguments[0];
+        if (!arg || !ts.isObjectLiteralExpression(arg) || !objProp(arg, "select")) bad.push(`${rel}:${sf.getLineAndCharacterOfPosition(n.getStart()).line + 1} 查账号没写 select`);
+        else noteRemark(rel, sf, objProp(arg, "select")!.initializer);
+      }
+      // ② include 里带出关联账号：不许 `client: true`，展开的也要有 select
+      if (ts.isPropertyAssignment(n) && n.name.getText() === "include" && ts.isObjectLiteralExpression(n.initializer)) {
+        for (const p of n.initializer.properties) {
+          if (!ts.isPropertyAssignment(p) || !relNames.has(p.name.getText())) continue;
+          const v = p.initializer;
+          if (v.kind === ts.SyntaxKind.TrueKeyword || (ts.isObjectLiteralExpression(v) && !objProp(v, "select"))) {
+            bad.push(`${rel}:${sf.getLineAndCharacterOfPosition(p.getStart()).line + 1} include 带出整行账号（${p.name.getText()}）`);
+          } else if (ts.isObjectLiteralExpression(v)) noteRemark(rel, sf, objProp(v, "select")!.initializer);
+        }
+      }
+      ts.forEachChild(n, visit);
+    };
+    visit(sf);
+  }
+  assert.deepEqual(bad, []);
+  // ③ 手写 SQL 不许 SELECT * FROM users
+  for (const rel of files("apps/api/src")) assert.ok(!/SELECT\s+\*\s+FROM\s+"?users"?/i.test(read(rel)), `${rel} 手写 SQL 整行读账号`);
+  // ④ 账号 select 里要了 remark 的只有「员工名单」GET /admin/users 那两处（只给超管）
+  assert.equal(remarkAt.length, 2, `账号 select 里要 remark 的地方：${remarkAt.join("、")}`);
+  const list = slice(adminApi, `app.get("/admin/users", async`, "\n  });");
+  const listStart = read("apps/api/src/modules/admin/routes.ts").split("\n").findIndex((l) => l.includes(`app.get("/admin/users", async`)) + 1;
+  const listEnd = listStart + list.split("\n").length;
+  for (const at of remarkAt) {
+    const [file, line] = at.split(":");
+    assert.ok(/apps\/api\/src\/modules\/admin\/routes\.ts$/.test(file) && Number(line) > listStart && Number(line) < listEnd, `${at} 不在员工名单接口里`);
+  }
 });
 
 console.log(`\n通过 ${passed} 项，失败 ${failed} 项`);

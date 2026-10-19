@@ -1317,20 +1317,27 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
   /**
    * 改员工备注（2026-10-20 老板：「给员工账号备注是哪里的员工，比如义乌仓管，广州仓管，泰国员工」→「管理员给员工账号进行备注」）。
    * 只给超管、只认本公司的员工号（客户 / 代理 / 超管的号 400）；空着 = 清掉；最多 50 个字。写的时候再核一次是员工号（CLAUDE.md 第 28 条）。
+   * expectedRemark = 点开「改备注」时看到的那份：写的时候核它没变，别的超管这期间改过就 409、不盖掉人家的（审查第 1 轮两家都提）；
+   * 不传 = 不核。
    */
   app.post("/admin/users/staff-remark", async (req, res) => {
     const auth = requireRole(req, res, ["admin"]);
     if (!auth) return;
-    const body = (req.body ?? {}) as { id?: unknown; remark?: unknown };
+    const body = (req.body ?? {}) as { id?: unknown; remark?: unknown; expectedRemark?: unknown };
     const id = typeof body.id === "string" ? body.id.trim() : "";
     if (!id) { fail(res, 400, "BAD_REQUEST", "请选一个员工"); return; }
     const remark = readStaffRemark(body.remark);
     if ("error" in remark) { fail(res, 400, "BAD_REQUEST", remark.error); return; }
+    const expected = body.expectedRemark === undefined ? undefined : readStaffRemark(body.expectedRemark);
+    if (expected && "error" in expected) { fail(res, 400, "BAD_REQUEST", "请刷新后重新点「改备注」"); return; }
     const user = await prisma.user.findFirst({ where: { id, companyId: auth.companyId }, select: { id: true, role: true } });
     if (!user) { fail(res, 404, "NOT_FOUND", "没有这个员工号，请刷新再试"); return; }
     if (user.role !== "staff") { fail(res, 400, "BAD_REQUEST", "备注只能写在员工号上"); return; }
-    const written = await prisma.user.updateMany({ where: { id: user.id, companyId: auth.companyId, role: "staff" }, data: { remark: remark.value } });
-    if (written.count === 0) { fail(res, 409, "VALIDATION_ERROR", "这个账号刚刚被改过，请刷新再试"); return; }
+    const written = await prisma.user.updateMany({
+      where: { id: user.id, companyId: auth.companyId, role: "staff", ...(expected ? { remark: expected.value } : {}) },
+      data: { remark: remark.value },
+    });
+    if (written.count === 0) { fail(res, 409, "VALIDATION_ERROR", "这个员工的备注刚被别人改过，请点「刷新」后重新点「改备注」"); return; }
     ok(res, { id: user.id, remark: remark.value });
   });
 

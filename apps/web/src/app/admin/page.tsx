@@ -498,6 +498,8 @@ export default function AdminHomePage() {
   /** 正在改哪个员工的备注（2026-10-20）；跟「设置密码」一样在那一行下面展开 */
   const [editingRemarkFor, setEditingRemarkFor] = useState<string | null>(null);
   const [remarkDraft, setRemarkDraft] = useState("");
+  /** 点开「改备注」时那一行的备注：存的时候带给后端，别的超管这期间改过就不盖（审查第 1 轮） */
+  const [remarkBase, setRemarkBase] = useState<string | null>(null);
   /** 改备注没存上的原因，画在那一行的输入框下面（页面底部那行离得太远看不见） */
   const [remarkError, setRemarkError] = useState("");
   const [clientForm, setClientForm] = useState({ id: "", name: "", companyName: "", phone: "", email: "", password: "", agentId: "" });
@@ -1076,7 +1078,7 @@ export default function AdminHomePage() {
       let result: Awaited<ReturnType<typeof setAdminStaffRemark>>;
       try {
         // 走账号写入那道边界：存之前发出去、存完才回来的旧员工列表不许把备注盖回去（同封禁）
-        result = await runAccountWrite((signal) => setAdminStaffRemark(userId, value, signal));
+        result = await runAccountWrite((signal) => setAdminStaffRemark(userId, value, remarkBase, signal));
       } catch (error) {
         if (error instanceof Error && error.name === "AccountWriteTimeoutError") {
           setRemarkError(error.message);
@@ -1673,7 +1675,7 @@ export default function AdminHomePage() {
                   <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                     <button
                       type="button"
-                      onClick={() => { setSettingPasswordFor(null); setRemarkError(""); setRemarkDraft(u.remark ?? ""); setEditingRemarkFor(editingRemarkFor === u.id ? null : u.id); }}
+                      onClick={() => { setSettingPasswordFor(null); setRemarkError(""); setRemarkDraft(u.remark ?? ""); setRemarkBase(u.remark ?? null); setEditingRemarkFor(editingRemarkFor === u.id ? null : u.id); }}
                       disabled={loading}
                       style={{ border: "1px solid var(--c-blue)", color: "var(--c-blue)", borderRadius: 8, padding: "6px 10px", background: "var(--white)", cursor: "pointer", fontSize: 13 }}
                     >

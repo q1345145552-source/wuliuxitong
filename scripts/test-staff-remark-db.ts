@@ -7,6 +7,8 @@
  *   B3 只认本公司员工号：客户 / 超管 / 代理的号 400 且没写上；别家公司的员工 404；没有这个号 404；没选人 400
  *   B4 只有超管能改、能看：员工 / 客户 / 代理改备注 403、看员工名单 403
  *   B5 查和写之间这个号被改成客户号：写的时候再核一次 → 409，备注没写上
+ *   B6 两个超管改同一个员工（审查第 1 轮）：带上点开时看到的那份（expectedRemark），别人这期间改过 → 409、不盖掉人家的；
+ *      对得上照存（去空格、空 = 没写）；不带 = 不核
  *
  * 只连测试库：DATABASE_URL 不带 neon.tech 的不跑（一次性 docker 库设 AGENT_PORTAL_TEST_ALLOW_DB=1）。测试数据全在假公司 zz_rmk_co / zz_rmk_co2 下，跑前跑后都清。
  */
@@ -205,6 +207,34 @@ async function main(): Promise<void> {
         await pm.user.update({ where: { id: STAFF2 }, data: { role: "staff" } });
         await locker.$disconnect();
       }
+    });
+
+    await check("B6 两个超管改同一个员工：带点开时那份，别人改过 → 409 不盖；对得上照存；不带 = 不核", async () => {
+      await pm.user.update({ where: { id: STAFF2 }, data: { remark: null } });
+      const set = (remark: string, expectedRemark: unknown) => call("POST /admin/users/staff-remark", ADMIN, { id: STAFF2, remark, expectedRemark });
+      // 甲、乙都在备注是空的时候点开；乙先存
+      assert.equal((await set("广州仓管", null)).status, 200);
+      const late = await set("义乌仓管", null);
+      assert.equal(late.status, 409, `${late.status} ${late.message}`);
+      assert.match(late.message, /刚被别人改过/);
+      assert.equal(await remarkOf(STAFF2), "广州仓管", "甲把乙的备注盖掉了");
+      // 甲刷新后看到「广州仓管」再改：对得上（前后空格不算）
+      assert.equal((await set("义乌仓管", " 广州仓管 ")).status, 200);
+      assert.equal(await remarkOf(STAFF2), "义乌仓管");
+      // 看到的是空白 = 没写；现在不是空的 → 409
+      assert.equal((await set("泰国员工", "   ")).status, 409);
+      // 清掉也要核：看到的是旧值就不让清
+      assert.equal((await set("", "广州仓管")).status, 409);
+      assert.equal(await remarkOf(STAFF2), "义乌仓管");
+      assert.equal((await set("", "义乌仓管")).status, 200);
+      assert.equal(await remarkOf(STAFF2), null);
+      // 不带 = 不核（直接写）
+      assert.equal((await call("POST /admin/users/staff-remark", ADMIN, { id: STAFF2, remark: "泰国员工" })).status, 200);
+      assert.equal(await remarkOf(STAFF2), "泰国员工");
+      // 带了但不是文字 / 超长：400，不写
+      assert.equal((await set("x", 5)).status, 400);
+      assert.equal((await set("x", "广".repeat(51))).status, 400);
+      assert.equal(await remarkOf(STAFF2), "泰国员工");
     });
   } finally {
     await cleanup();
