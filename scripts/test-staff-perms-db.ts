@@ -176,6 +176,8 @@ async function main(): Promise<void> {
     await check("K3 查和写之间这个号被改成员工号：写的时候再核一次 → 409，密码一个字没动", async () => {
       const { PrismaClient } = await import("@prisma/client");
       const locker = new PrismaClient();
+      let releaseLock: (() => void) | undefined;
+      let otherTx: Promise<unknown> | undefined;
       try {
         const before = await hashOf(C2);
         let locked!: () => void, release!: () => void;
@@ -187,6 +189,8 @@ async function main(): Promise<void> {
           locked();
           await gate;
         }, { timeout: 30000, maxWait: 10000 });
+        releaseLock = release;
+        otherTx = other;
         await isLocked;
         const req = setPw(STAFF, C2, "racy");
         let waiting = 0;
@@ -201,6 +205,9 @@ async function main(): Promise<void> {
         assert.equal(r.status, 409, `${r.status} ${r.message}`);
         assert.equal(await hashOf(C2), before, "已经是员工号了，密码被改了");
       } finally {
+        // 先放锁、等那条事务结束，再把角色改回来（不然上面断言失败时这里会一直等那把锁到超时，审查第 2 轮 dsh）
+        releaseLock?.();
+        await otherTx?.catch(() => {});
         await pm.user.update({ where: { id: C2 }, data: { role: "client" } });
         await locker.$disconnect();
       }

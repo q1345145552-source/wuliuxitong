@@ -2201,7 +2201,7 @@ export default function StaffHomePage() {
                                   const draft = shipmentOrderEditDrafts[item.id] ?? buildShipmentOrderEditDraft(item);
                                   /* 件数 / 重量 / 体积按整票显示（修复第 1 轮）：草稿里的是父单剩余量，拆柜 / 部分装柜后跟列表「总箱数」对不上 */
                                   const totals = shipmentDetailTotalsText(item);
-                                  /** 员工端运单列表统一只读，禁止在此处修改任何字段。 */
+                                  /** 详情这一块只是看，字段都不能在这里改；要改点下面的「编辑运单」（2026-10-19 起员工也能改，跟超管同一个编辑框） */
                                   const formDisabled = true;
                                   const inputInCard = { ...orderCreateInputStyle, marginBottom: 0 } as const;
                                   const currentShipmentStatus = item.currentStatus?.trim() || "created";

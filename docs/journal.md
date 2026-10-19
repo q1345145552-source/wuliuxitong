@@ -1,5 +1,12 @@
 # 项目交接日志
 
+## 2026-10-19 晚 老板「那就给员工加权限吧」：员工能改运单、能重置客户密码（本地 420f8c0 起 3 个提交，未推未上线；不改表）
+- 过程：他问要不要加仓管账号（义乌仓、广州仓）→「直接给员工端多一些权限算了？」→ 我建议加两项（改运单、重置客户密码；跟 4-01 b041371「员工运单只读」冲突，说了）→ 他问加权限还是仓管号 → 我建议加权限（系统权限写死四档，加一档号要改 24 个后端文件；义乌仓的人在用超管号）→「那就给员工加权限吧」。**我先说「只动两处」说错了**：员工「运单管理」详情是只读的、没有能改的编辑框，当场更正（要把超管编辑框搬过来）。
+- 改运单：超管「运单管理」编辑框原样抽成 `modules/orders/WaybillEditDialog.tsx`（超管页 / 员工页共用；搬前后逐行对过，只是改名），员工「运单详情」加「编辑运单」；`/admin/orders/update` 放开给员工（不收金额 / 付款状态，没有按角色的逻辑）；到货通知改已转正式运单（converted-detail / converted-refresh / canEditConverted）一起放开。照旧只给超管：删运单、撤销误签收、批量导入、超管建单、员工页旧「保存订单信息」。
+- 重置客户密码：`POST /staff/clients/set-password`（只认本公司客户号、写时再核、不卡强度、清连错计数、客户旧登录自动失效）；员工端新页「客户账号」(/staff/client-accounts，菜单新组「账号」），只显示唛头，重置中不让关。
+- 测试：test-staff-perms-source（6 项）/ -db（7 项，含真并发）进 package.json + ci.yml；老测试 review-1018 / client-ban-ui / mark-display / audit-0927 / phone-layout / arrival-notice-source / arrival-notice-converted-db / cargo-regressions / realtime-source 跟着改。改坏 42 条全红。本机 CI build 73 / test-db 30 全过。浏览器一次性库实点：员工重置密码、员工改运单（库里核）、离开运单管理再回来内容还在、员工在到货通知改已转运单、超管编辑照旧；实点发现重置弹窗开发环境「挂两次」卡在「重置中…」已修。
+- 审查：Codex 额度到 10-25，dsh + 替补 opus5-high：第 1 轮都没有必须修，照建议收尾（1d0e0a7）；第 2 轮 dsh 没有必须修，只补测试说明 / 注释。细节 `.audit/2026-10-19/staff-perms/plan.md`。
+
 ## 2026-10-19 19:16（北京）上线 e99011f：到货通知转正式运单时存原样（带迁移 20261019，只加一张表）
 - 老板「上」。上线前：本地干净、比 GitHub 多 6 个提交（含 10-18 上线记录），表结构只多 arrival_notice_snapshots；只读看服务器 HEAD 2a594f9、只有 package-lock 被改、磁盘剩 46G、容器 healthy；线上已转正式的到货通知 40 张（我之前跟他说 29 张，是 10-16 的数，这 40 张卡片都会写「上线前转的，没存原样」）。
 - 推 GitHub 2a594f9..e99011f，ssh 跑 `bash deploy.sh` 退出 0：发现迁移 → 先整库备份 `/root/db-backups/xiangtai_predeploy_20261019_111521.sql.gz`（602M）→ migrate deploy 20261019 → 体检一致 → 11:16 UTC 换容器 → 新容器连库、账本一致。日志 `.audit/2026-10-19/deploy/deploy.log`。
