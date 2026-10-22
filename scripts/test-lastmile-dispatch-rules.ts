@@ -536,22 +536,27 @@ async function main() {
 
  /* dsh 第 5 轮：照片还在读的那一会儿，上传签收 / 撤销签收按钮就得锁住（原来读完图才锁，
     读图期间还能再点一次同一票，第二次选的照片会被第一次的收尾悄悄清掉）；签完放开。 */
- check("32) 照片一开始读就锁住上传签收按钮，签完才放开",async()=>{
-  const rows=[{...delivery("lm1","S1","WD000001","DELIVERING"),trackingNo:"S1"},{...delivery("lm2","S2","WD000002","DELIVERING"),trackingNo:"S2"}];
-  const pendingA:{load?:()=>void}={};
-  const Reader=class{result:string|null=null;onload:any;onerror:any;onabort:any;
-    readAsDataURL(){this.result="data:image/jpeg;base64,/9j/AAAA";pendingA.load=()=>this.onload?.();}};
-  const ui=workspaceFixture(rows,[{status:200,data:{}}],[],false,{FileReader:Reader});
-  const signButtons=()=>{const all:any[]=[];const walk=(t:any):void=>{if(Array.isArray(t))return t.forEach(walk);if(!t||typeof t!=="object")return;if(typeof t.type==="function")return walk(t.type(t.props));if(t.type==="button"&&ui.text(t).includes("上传签收"))all.push(t);walk(t.props?.children);};walk(ui.render());return all;};
-  assert.equal(signButtons().length,2);
-  assert.ok(signButtons().every(b=>!b.props.disabled),"还没选照片按钮就锁了");
-  ui.clickSign(0);await ui.chooseFile({size:10,name:"a.jpg"});
-  assert.ok(pendingA.load,"没开始读图");
-  assert.ok(signButtons().every(b=>b.props.disabled),"照片还在读，上传签收按钮没锁");
-  pendingA.load!();
-  for(let i=0;i<5;i++)await new Promise<void>(resolve=>setImmediate(resolve));
-  assert.deepEqual(ui.requests.map((r:Row)=>r.id),["lm1"]);
-  assert.ok(signButtons().every(b=>!b.props.disabled),"签完按钮没放开");
+ check("32) 照片一开始读就锁住上传签收 / 撤销签收按钮，签完（成功或后端报错）才放开",async()=>{
+  // 两张派送中的（两个「上传签收」）+ 一张已签收的（管理端看得到「撤销签收」）
+  const rows=[{...delivery("lm1","S1","WD000001","DELIVERING"),trackingNo:"S1"},{...delivery("lm2","S2","WD000002","DELIVERING"),trackingNo:"S2"},{...delivery("lm3","S1","WD000003","SIGNED"),trackingNo:"S1"}];
+  for(const reply of [{status:200,data:{}},{status:400,message:"签收照片不对"}]){
+   const pendingA:{load?:()=>void}={};
+   const Reader=class{result:string|null=null;onload:any;onerror:any;onabort:any;
+     readAsDataURL(){this.result="data:image/jpeg;base64,/9j/AAAA";pendingA.load=()=>this.onload?.();}};
+   const ui=workspaceFixture(rows,[reply],[],true,{FileReader:Reader});
+   const buttons=(label:string)=>{const all:any[]=[];const walk=(t:any):void=>{if(Array.isArray(t))return t.forEach(walk);if(!t||typeof t!=="object")return;if(typeof t.type==="function")return walk(t.type(t.props));if(t.type==="button"&&ui.text(t).includes(label))all.push(t);walk(t.props?.children);};walk(ui.render());return all;};
+   assert.equal(buttons("上传签收").length,2);
+   assert.equal(buttons("撤销签收").length,1,"已签收那张没渲染出「撤销签收」，这一项等于没测");
+   const all=()=>[...buttons("上传签收"),...buttons("撤销签收")];
+   assert.ok(all().every(b=>!b.props.disabled),"还没选照片按钮就锁了");
+   ui.clickSign(0);await ui.chooseFile({size:10,name:"a.jpg"});
+   assert.ok(pendingA.load,"没开始读图");
+   assert.ok(all().every(b=>b.props.disabled),"照片还在读，上传签收 / 撤销签收按钮没锁");
+   pendingA.load!();
+   for(let i=0;i<5;i++)await new Promise<void>(resolve=>setImmediate(resolve));
+   assert.deepEqual(ui.requests.map((r:Row)=>r.id),["lm1"]);
+   assert.ok(all().every(b=>!b.props.disabled),`后端回 ${reply.status} 之后按钮没放开`);
+  }
  });
 
  /* 整柜不进尾端派送候选（老板 2026-09-23：「排除，整柜的尾端单独在页面里弄」）。
