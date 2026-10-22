@@ -14,9 +14,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Node 版本跟线上镜像钉成同一个（2026-10-23 安全审查 S2）：Dockerfile.api / Dockerfile.web 是 node:22.23.4-alpine，
+      # 这里原来写 22 会取当时最新的 22.x，跟线上不一定一样（CLAUDE.md 第 44 条）。升级时三处 node-version 和两个 Dockerfile 一起改
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: "22.23.4"
 
       - name: Install dependencies
         run: |
@@ -457,7 +459,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: "22.23.4"
 
       - name: Install dependencies
         run: npm ci --ignore-scripts
@@ -564,8 +566,9 @@ jobs:
       # 换写法拿来退出也不行；改密码、封号两道老闸照旧
       - name: Test logout token variants (real DB)
         run: bash .github/scripts/run-db-test.sh test:logout-variants-db
-      # 2026-10-23 安全审查 S3（真接口、真库）：第一次签收必须带照片、不是图（A / 文字 / data: 前缀 / 超大）一律挡且不动数据，
-      # 已签收换照片照旧、撤销误签收后再签要重新带照片、改派送中不要求照片
+      # 2026-10-23 安全审查 S3（真接口、真库）：第一次签收必须带照片、不是图（A / 文字 / data: 前缀 / 只凑对开头几个字节 / 超大）一律挡且不动数据，
+      # 已签收换照片照旧、撤销误签收后再签要重新带照片（含撤销正在提交时同时来签收）、改派送中不要求照片、真 HTTP 不带照片 400；
+      # 推柜子不许推到「派送中 / 已签收」（原来能绕过照片把整柜货改成已送达）
       - name: Test lastmile sign photo (real DB)
         run: bash .github/scripts/run-db-test.sh test:sign-photo-db
       # 2026-10-08 模拟数据测试（多人同时操作）查出来的：建单查到货通知占号、同号并发不 500、删单 vs 装柜不死锁、
@@ -619,7 +622,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: "22.23.4"
 
       # Capacitor 8 要 Java 21（GitHub 的机器自带安卓 SDK，在 ANDROID_HOME）
       - uses: actions/setup-java@v4

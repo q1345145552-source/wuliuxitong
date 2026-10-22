@@ -217,6 +217,7 @@ const shipmentStatusZh = (status: string): string => SHIPMENT_STATUS_ZH[status] 
 /**
  * 「派送中 / 已签收」不是装柜页推的，是尾端派送那边推的。
  * 在装柜页撤销会把客户已经签收的单子悄悄退回去，还会删掉尾端派送写的轨迹，必须挡住（撤销和撤销预览共用）。
+ * 推进也不许推到这两步（2026-10-23 安全审查 S3 复核，见 POST /admin/containers/status）。
  */
 const LASTMILE_ONLY_CONTAINER_STATUSES = new Set(["OUT_FOR_DELIVERY", "SIGNED", "DELIVERING"]);
 
@@ -510,8 +511,7 @@ export function registerContainerRoutes(app: MinimalHttpApp): void {
   // - ARRIVED 时记录 ata（实际到港）
   // - 清关已放行（CUSTOMS_CLEARED）：只记进状态时间表 statusDates，customsClearedAt 那一列不写；
   //   轨迹弹窗读的时候那一列空着就从状态时间表取（2026-10-18 全系统审查 B-P3-1，见 track-containers.ts）
-  // - DELIVERING 时把柜内所有运单的 currentStatus 推进到 outForDelivery
-  // - SIGNED 时把柜内所有运单的 currentStatus 推进到 delivered
+  // - 「派送中 / 已签收」这里不许推（2026-10-23 安全审查 S3 复核），见下面 LASTMILE_ONLY_CONTAINER_STATUSES 那道拦
   app.post("/admin/containers/status", async (req, res) => {
     const auth = requireRole(req, res, ["admin", "staff"]);
     if (!auth) return;
@@ -558,6 +558,14 @@ export function registerContainerRoutes(app: MinimalHttpApp): void {
         "VALIDATION_ERROR",
         `「${CONTAINER_STATUS_LABEL[toStatus] ?? toStatus}」不属于${isLand ? "陆运" : "海运"}流程`,
       );
+      return;
+    }
+
+    /* 「派送中 / 已签收」只归尾端派送按票推（2026-10-23 安全审查 S3 复核）：装柜页 8-14 起就不给这两步，后端原来没拦 ——
+       员工直接调接口推到「已签收」，柜里每票货都变已送达、客户轨迹多一条已签收，既没有派送单也没有签收照片。
+       线上停在这两步的柜子只有 6 月以前推的 3 个，它们本来就是最后一步，不受影响。 */
+    if (LASTMILE_ONLY_CONTAINER_STATUSES.has(toStatus)) {
+      fail(res, 400, "VALIDATION_ERROR", `「${CONTAINER_STATUS_LABEL[toStatus] ?? toStatus}」不在装柜管理里推，请到尾端派送按票操作（签收要上传签收照片）`);
       return;
     }
 

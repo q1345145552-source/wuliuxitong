@@ -116,7 +116,9 @@ function main(): void {
     }
   });
 
-  check("4) 头、内容两段换写法也验不过（补 = / 换字母表 / 改末位空位）", () => {
+  /* 头、内容两段本来就签在签名里（改一个字签名就对不上），这一项不靠这次的修复也会过；
+     所以连日志原因一起核 —— 原因得是「编码不规范」，说明是新那道先挡下的（审查 10-23 指出原来这项是假绿） */
+  check("4) 头、内容两段换写法也验不过，而且是「编码不规范」那道先挡下（补 = / 换字母表 / 改末位空位）", () => {
     let tried = 0;
     for (let i = 0; i < 50; i += 1) {
       const t = signAuthToken({ ...WHO, userName: "x".repeat(i) });
@@ -128,6 +130,7 @@ function main(): void {
         if (v === t) continue;
         tried += 1;
         assert.equal(verifyAuthToken(v), null, `第 ${i} 张的变体验过了：${v.slice(0, 40)}…`);
+        assert.equal(describeTokenFailure(v), NON_CANONICAL, `第 ${i} 张的变体不是被「编码不规范」挡下的`);
       }
     }
     assert.ok(tried > 100, `只试了 ${tried} 个变体`);

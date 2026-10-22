@@ -136,11 +136,11 @@ function loadWebModule(relative: string, fetchImpl: (input:any,init?:RequestInit
   return load(relative);
 }
 // 真工作台 JSX/回调；只替换 hooks 与 I/O，不启动浏览器或 HTTP 服务。
-function workspaceFixture(orderRows: Row[], replies: Array<{status:number;data?:Row;message?:string}>, answers: boolean[], canUnsign=false) {
+function workspaceFixture(orderRows: Row[], replies: Array<{status:number;data?:Row;message?:string}>, answers: boolean[], canUnsign=false, globals: Row = {}) {
   let cursor=0;const states:any[]=[];const requests:Row[]=[];const confirms:string[]=[];const toasts:string[]=[];let reloads=0;
   const hook=(init:any)=>{const i=cursor++;if(!(i in states))states[i]=typeof init==="function"?init():init;return [states[i],(v:any)=>{states[i]=typeof v==="function"?v(states[i]):v}]};
   const jsx= (type:any,props:any,key?:any)=>({type,props:props??{},key});
-  const ctx=vm.createContext({console,Error,Set,Map,Date,JSON,requestAnimationFrame:(fn:Function)=>fn(),confirm:(message:string)=>{confirms.push(message);assert.ok(answers.length>0,"Unexpected confirmation");return answers.shift();}});
+  const ctx=vm.createContext({console,Error,Set,Map,Date,JSON,requestAnimationFrame:(fn:Function)=>fn(),confirm:(message:string)=>{confirms.push(message);assert.ok(answers.length>0,"Unexpected confirmation");return answers.shift();},...globals});
   function load(file:string):any {
     const mod={exports:{}};const code=ts.transpileModule(fs.readFileSync(file,"utf8"),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText;
     vm.runInContext(`(function(require,module,exports){${code}\n})`,ctx,{filename:file})((name:string)=>{
@@ -166,6 +166,10 @@ function workspaceFixture(orderRows: Row[], replies: Array<{status:number;data?:
     /** ⚠️ text(render()) 不会展开函数组件（卡片是子组件），找卡片里的按钮必须走 nodes() */
     findButton(label:string){return nodes(render()).find(n=>n.type==="button"&&text(n).includes(label));},
     async clickUnsign(){const node=nodes(render()).find(n=>n.type==="button"&&text(n).includes("撤销签收"));assert.ok(node,"撤销签收 button");await node.props.onClick();await new Promise<void>(resolve=>setImmediate(resolve));},
+    /** 点「上传签收」再在隐藏的选文件框里选一个文件（页面上就是这两步） */
+    async pickSignFile(file:Row){const btn=nodes(render()).find(n=>n.type==="button"&&text(n).includes("上传签收"));assert.ok(btn,"上传签收 button");btn.props.onClick();
+      const input=nodes(render()).find(n=>n.type==="input"&&n.props.type==="file");assert.ok(input,"file input");input.props.onChange({target:{files:[file],value:"x"}});
+      for(let i=0;i<5;i++)await new Promise<void>(resolve=>setImmediate(resolve));},
   };
 }
 
@@ -466,6 +470,27 @@ async function main() {
   await accept.clickUnsign();
   assert.equal(accept.requests.length,1);assert.equal(accept.requests[0].id,"lm1");
   assert.equal(accept.toasts.at(-1),"已撤销 WD000001 里 S1 的签收");assert.equal(accept.reloads,1);
+ });
+
+ /* 2026-10-23 安全审查 S3 复核：上传签收时照片读不出来（空文件 / 读图出错 / 中途取消 / 读出来是空的）当场提示、不发请求；
+    原来读图出错一声不吭，空文件发过去被后端挡成「签收要上传签收照片」（员工明明选了图）。读到照片照常发、照常提示已签收。 */
+ check("29) 上传签收：照片读不出来当场提示、不发请求；读到了照常签收",async()=>{
+  const rows=[{...delivery("lm1","S1","WD000001","DELIVERING"),trackingNo:"S1"}];
+  const fakeReader=(mode:string)=>class{result:string|null=null;onload:any;onerror:any;onabort:any;
+    readAsDataURL(){setImmediate(()=>{if(mode==="error")this.onerror?.();else if(mode==="abort")this.onabort?.();else{this.result=mode==="blank"?"data:image/jpeg;base64,":"data:image/jpeg;base64,/9j/AAAA";this.onload?.();}});}};
+  for(const mode of ["empty","error","abort","blank","ok"]){
+   // 读不出照片的那几种不给后端回话：真发了请求，夹具会当场报「Unexpected request」
+   const ui=workspaceFixture(rows,mode==="ok"?[{status:200,data:{}}]:[],[],false,{FileReader:fakeReader(mode)});
+   await ui.pickSignFile({size:mode==="empty"?0:10,name:"a.jpg"});
+   const sent=ui.requests;
+   if(mode==="ok"){
+    assert.deepEqual(sent,[{id:"lm1",status:"SIGNED",signImageBase64:"/9j/AAAA"}],`提示：${JSON.stringify(ui.toasts)}`);
+    assert.equal(ui.toasts.at(-1),"该票运单已签收");assert.equal(ui.reloads,1);
+   }else{
+    assert.equal(sent.length,0,`${mode}：读不出照片还发了请求`);
+    assert.match(ui.toasts.at(-1)??"",/照片读不出来/,`${mode}：没有提示`);assert.equal(ui.reloads,0);
+   }
+  }
  });
 
  /* 整柜不进尾端派送候选（老板 2026-09-23：「排除，整柜的尾端单独在页面里弄」）。

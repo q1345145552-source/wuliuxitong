@@ -249,9 +249,19 @@ export default function LastmileDispatchWorkspace(props: LastmileDispatchWorkspa
 
   const handleSign = (file: File) => {
     if (!signTargetId) return;
+    /* 照片读不出来就当场说、不发请求（2026-10-23 安全审查 S3 复核）：原来读图失败页面一声不吭；
+       空文件发过去，没签收的被后端以「签收要上传签收照片」挡掉（员工明明选了图），已签收的还提示「已签收」其实照片没换 */
+    const unreadable = () => {
+      props.onToast("照片读不出来（可能是空文件，或照片还没下载到手机上），请重新拍一张或换一张");
+      setSignTargetId("");
+    };
+    if (file.size === 0) { unreadable(); return; }
     const reader = new FileReader();
+    reader.onerror = unreadable;
+    reader.onabort = unreadable;
     reader.onload = async () => {
       const signImageBase64 = String(reader.result ?? "").split(",")[1] || "";
+      if (!signImageBase64) { unreadable(); return; }
       setBusy(true);
       try {
         const response = await fetch(`${apiBaseUrl()}/admin/lastmile/status`, {
