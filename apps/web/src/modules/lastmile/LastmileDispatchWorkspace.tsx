@@ -254,10 +254,14 @@ export default function LastmileDispatchWorkspace(props: LastmileDispatchWorkspa
        空文件发过去，没签收的被后端以「签收要上传签收照片」挡掉（员工明明选了图），已签收的还提示「已签收」其实照片没换 */
     const unreadable = () => {
       props.onToast("照片读不出来（可能是空文件，或照片还没下载到手机上），请重新拍一张或换一张");
+      setBusy(false);
       // 读图失败回来时员工可能已经点了别的票，只清自己这一票（dsh 第 3 轮；签完那条见下面 finally）
       setSignTargetId((cur) => (cur === targetId ? "" : cur));
     };
     if (file.size === 0) { unreadable(); return; }
+    /* 从开始读图就算「处理中」，上传签收 / 撤销签收按钮跟着锁住（dsh 第 5 轮）：原来要等读完图才锁，
+       读图那一会儿还能再点一次（同一票或别的票），两次互相清掉签收目标、第二次选的照片悄悄丢掉，或旧图后到盖掉新图 */
+    setBusy(true);
     let reader: FileReader;
     try {
       reader = new FileReader();
@@ -270,7 +274,6 @@ export default function LastmileDispatchWorkspace(props: LastmileDispatchWorkspa
     reader.onload = async () => {
       const signImageBase64 = String(reader.result ?? "").split(",")[1] || "";
       if (!signImageBase64) { unreadable(); return; }
-      setBusy(true);
       try {
         const response = await fetch(`${apiBaseUrl()}/admin/lastmile/status`, {
           method: "POST",
