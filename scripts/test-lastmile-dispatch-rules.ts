@@ -15,6 +15,8 @@ const writes: string[] = [];
 const numberSeqs = new Map<string, number>();
 let afterLock: (key: string) => void = () => {};
 const copy = <T>(v: T): T => structuredClone(v);
+// 签收要带一张真图（2026-10-23 安全审查 S3 起后端认文件头），1×1 的 PNG
+const PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
 const relations = new Set(["order", "client", "products", "shipments", "containerItems", "container", "statusLogs", "addresses"]);
 function match(row: Row, where: any = {}): boolean {
   return Object.entries(where).every(([k, v]: [string, any]) => {
@@ -327,7 +329,7 @@ async function main() {
   reset([ship("P",0),ship("C",2,"P")]);deliveries=[delivery("old","C","WD000001")];
   const moved=await call("POST /admin/lastmile/orders",{shipmentIds:["C"],moveFromDelivering:true});assert.equal(moved.status,200);
   const snapshot=copy({ships,deliveries,logs});
-  const signed=await call("POST /admin/lastmile/status",{id:"old",status:"SIGNED",signImageBase64:"proof"});assert.equal(signed.status,404);
+  const signed=await call("POST /admin/lastmile/status",{id:"old",status:"SIGNED",signImageBase64:PNG});assert.equal(signed.status,404);
   const deleted=await call("DELETE /admin/lastmile/orders",{}, {id:"old"});assert.equal(deleted.status,404);
   assert.deepEqual({ships,deliveries,logs},snapshot);
  });

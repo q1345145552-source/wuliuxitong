@@ -56,6 +56,11 @@ jobs:
       - name: Test login throttle
         run: npm run test:login-throttle
 
+      # 2026-10-23 安全审查 S1：令牌三段只认系统签出来的标准写法 —— 正常令牌（含没有 pv / jti 的老令牌）不误杀，
+      # 签名补 = / 加 ! / 夹空格 / 换字母表 / 改末位空位一律验不过，退出拉黑后没有别的写法能绕过
+      - name: Test token canonical encoding
+        run: npm run test:token-canonical
+
       - name: Test shipment list display
         run: npm run test:shipment-list-display
 
@@ -555,6 +560,14 @@ jobs:
       # 2026-10-20 员工备注迁移真跑：上线前的库上连跑两遍、跟 schema 零差异、上线体检不报、老的号一个字不动
       - name: Test user remark migration (real DB)
         run: bash .github/scripts/run-db-test.sh test:migration-user-remark-db
+      # 2026-10-23 安全审查 S1（真 HTTP 服务 + 真退出接口 + 真库）：退出后原令牌和各种换写法都 401、同秒另一张照常能用，
+      # 换写法拿来退出也不行；改密码、封号两道老闸照旧
+      - name: Test logout token variants (real DB)
+        run: bash .github/scripts/run-db-test.sh test:logout-variants-db
+      # 2026-10-23 安全审查 S3（真接口、真库）：第一次签收必须带照片、不是图（A / 文字 / data: 前缀 / 超大）一律挡且不动数据，
+      # 已签收换照片照旧、撤销误签收后再签要重新带照片、改派送中不要求照片
+      - name: Test lastmile sign photo (real DB)
+        run: bash .github/scripts/run-db-test.sh test:sign-photo-db
       # 2026-10-08 模拟数据测试（多人同时操作）查出来的：建单查到货通知占号、同号并发不 500、删单 vs 装柜不死锁、
       # 删单那一刻看列表不 500、改单遇删单 409、编辑期间被装柜拦旧剩余数、删单删图片文件、到货通知搜索转义 / 按显示的号搜、客服选运单全品名
       - name: Test simulated-data fixes 1008 (real DB)

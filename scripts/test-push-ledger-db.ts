@@ -22,6 +22,8 @@ const CO = "zz_ledger_co";
 const P = "zz_ledger_";
 const STAFF: Auth = { userId: `${P}staff`, companyId: CO, role: "staff", name: "测试员工" };
 const ADMIN: Auth = { userId: `${P}admin`, companyId: CO, role: "admin", name: "测试管理员" };
+/** 签收照片（2026-10-23 安全审查 S3 起签收必须带图、后端认文件头）：1×1 的 PNG */
+const PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
 const MAP: Record<string, string> = {
   LOADING: "loaded", SEALED: "loaded", IN_TRANSIT: "departed", ARRIVED: "arrivedPort", CUSTOMS: "customsTH",
   CUSTOMS_CLEARED: "customsCleared", UNLOADING: "unloading", IN_WAREHOUSE_TH: "inWarehouseTH",
@@ -213,7 +215,7 @@ async function main(): Promise<void> {
       const s1 = await pm.shipment.findFirst({ where: { trackingNo: c1, companyId: CO }, select: { id: true } });
       await must("POST /admin/lastmile/orders", ADMIN, { shipmentIds: [s1.id] });
       const lm = await pm.adminLastmileOrder.findFirst({ where: { shipmentId: s1.id }, select: { id: true } });
-      await must("POST /admin/lastmile/status", ADMIN, { id: lm.id, status: "SIGNED" });
+      await must("POST /admin/lastmile/status", ADMIN, { id: lm.id, status: "SIGNED", signImageBase64: PNG }); // 10-23 起签收必须带图
       const signedLogsBefore = await pm.statusLog.count({ where: { shipmentId: s1.id } });
       const u1 = await undo(box.id); const u2 = await undo(box.id);
       const after = { box: await boxStatus(box.id), c1: await statusOf(c1), c2: await statusOf(c2), signedLogs: await pm.statusLog.count({ where: { shipmentId: s1.id } }) };

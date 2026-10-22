@@ -37,6 +37,20 @@ function base64UrlDecode(input: string): Buffer {
   return Buffer.from(normalized + "=".repeat(padLen), "base64");
 }
 
+/**
+ * 令牌每一段都必须是「我们自己签出来的那种」标准写法（2026-10-23 安全审查 S1）。
+ *
+ * base64 解码很宽容：签名段后面多补一个 `=`、夹一个会被忽略的 `!`，解出来还是同一串字节，验签照样通过；
+ * 可退出登录的黑名单是按**令牌原文**记的（token-blacklist.ts），换个写法就对不上 ——
+ * 退出之后，拿着抄来的令牌改一个字照样能用（本地一次性库实测：加 `=` / `!` 都 200）。
+ * 所以验签前先卡死：只许 base64url 字母表、不许补 `=`，而且「解开再编回去」必须一字不差（尾巴上多出来的位也不行）。
+ * signAuthToken 签出来的永远是标准写法，正常登录的人不受影响。
+ */
+function isCanonicalBase64Url(segment: string): boolean {
+  if (!/^[A-Za-z0-9_-]+$/.test(segment)) return false;
+  return base64UrlEncode(base64UrlDecode(segment)) === segment;
+}
+
 function tokenSecret(): string {
   const secret = process.env.AUTH_SECRET?.trim();
   if (!secret) {
@@ -97,6 +111,7 @@ export function describeTokenFailure(token: string): string {
   if (parts.length !== 3) return "格式不对（不是三段）";
   const [encodedHeader, encodedPayload, encodedSig] = parts;
   if (!encodedHeader || !encodedPayload || !encodedSig) return "格式不对（有空段）";
+  if (!parts.every(isCanonicalBase64Url)) return "编码不规范（不是系统签出来的写法，可能被改过）";
   try {
     const body = `${encodedHeader}.${encodedPayload}`;
     const expectedSig = crypto.createHmac("sha256", tokenSecret()).update(body).digest();
@@ -123,6 +138,8 @@ export function verifyAuthToken(token: string): AuthTokenPayload | null {
   if (parts.length !== 3) return null;
   const [encodedHeader, encodedPayload, encodedSig] = parts;
   if (!encodedHeader || !encodedPayload || !encodedSig) return null;
+  // 三段都得是标准写法，不然同一张令牌能写出好几种样子、退出登录拉黑不住（见 isCanonicalBase64Url）
+  if (!parts.every(isCanonicalBase64Url)) return null;
 
   const body = `${encodedHeader}.${encodedPayload}`;
   const expectedSig = crypto.createHmac("sha256", tokenSecret()).update(body).digest();

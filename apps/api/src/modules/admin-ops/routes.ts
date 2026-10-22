@@ -14,6 +14,9 @@ import { EXCLUDE_FCL_SHIPMENT, ONLY_FCL_SHIPMENT } from "../core/fcl-scope";
 import { nextSequenceValue } from "../core/number-sequence";
 import { PENDING_INBOUND } from "../arrival-notices/rules";
 import { LASTMILE_DISPATCHABLE_STATUSES } from "../../../../../packages/shared-types/shipment-status";
+import { BusinessError } from "../core/business-error";
+import { UPLOAD_IMAGE_MAX_BASE64, uploadTooLargeMessage } from "../core/upload-limit";
+import { sniffImageBase64 } from "../core/image-sniff";
 
 /** 同一票货重复进派送单时抛这个，调用方转成 400 而不是 500 */
 class LastmileConflictError extends Error {
@@ -923,8 +926,17 @@ export function registerAdminOpsRoutes(app: MinimalHttpApp): void {
       fail(res, 400, "VALIDATION_ERROR", `状态不合法：${body.status}。只允许 DELIVERING（派送中）或 SIGNED（已签收）`);
       return;
     }
+    /* 签收照片要真是一张图（2026-10-23 安全审查 S3）：原来收到什么存什么，直接调接口传个「A」也存进去，签收凭证打不开。
+       页面是选图片文件、原样转成 base64 发的（LastmileDispatchWorkspace.tsx 的 handleSign）；线上 2087 张全是 jpg / png / webp */
+    const rawSignImage = body.signImageBase64;
+    const hasSignImage = rawSignImage !== undefined && rawSignImage !== null && rawSignImage !== "";
+    if (hasSignImage) {
+      if (typeof rawSignImage !== "string") { fail(res, 400, "VALIDATION_ERROR", "签收照片不对，请重新拍一张或选一张 jpg / png 图片"); return; }
+      if (rawSignImage.length > UPLOAD_IMAGE_MAX_BASE64) { fail(res, 400, "VALIDATION_ERROR", uploadTooLargeMessage(rawSignImage.length)); return; }
+      if (!sniffImageBase64(rawSignImage)) { fail(res, 400, "VALIDATION_ERROR", "签收照片不对，请重新拍一张或选一张 jpg / png 图片"); return; }
+    }
     const updateData: any = { status: body.status };
-    if (body.signImageBase64) updateData.signImageBase64 = body.signImageBase64;
+    if (hasSignImage) updateData.signImageBase64 = rawSignImage;
     const now = new Date();
 
     /**
@@ -980,6 +992,12 @@ export function registerAdminOpsRoutes(app: MinimalHttpApp): void {
        */
       if (alreadySigned && body.status === "DELIVERING") {
         throw new LastmileConflictError("这张派送单已经签收，不能改回派送中。要再派一趟请重新建一张派送单。");
+      }
+      /* 签收必须带照片（2026-10-23 安全审查 S3）：页面上不选照片点不了签收，后端原来不查，直接调接口不传照片也能签成。
+         按锁后的状态判断（CLAUDE.md 第 28 条）：从没签收 → 签收，这一次必须带；撤销误签收后再签也算这一种（照片保留，但要重拍覆盖）。
+         已经签收过的再提交（换一张更清楚的照片）是原来就有的用法，照旧 —— 不带照片就什么都不改 */
+      if (body.status === "SIGNED" && !alreadySigned && !hasSignImage) {
+        throw new BusinessError("签收要上传签收照片", 400, "VALIDATION_ERROR");
       }
 
       const row = await tx.adminLastmileOrder.update({ where: { id: own.id }, data: updateData });
