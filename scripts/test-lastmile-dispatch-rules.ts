@@ -500,14 +500,14 @@ async function main() {
     失败只许清 A 自己，不许把 B 的签收目标清掉（清掉了 B 选完照片什么都不发）。 */
  check("30) A 票读图失败回来得晚、员工已点了 B 票：B 照常签收",async()=>{
   const rows=[{...delivery("lm1","S1","WD000001","DELIVERING"),trackingNo:"S1"},{...delivery("lm2","S2","WD000002","DELIVERING"),trackingNo:"S2"}];
-  let failA:(()=>void)|null=null;
+  const pendingA:{fail?:()=>void}={};
   const Reader=class{result:string|null=null;onload:any;onerror:any;onabort:any;
-    readAsDataURL(file:Row){if(file.name==="a.jpg"){failA=()=>this.onerror?.();return;}setImmediate(()=>{this.result="data:image/jpeg;base64,/9j/AAAA";this.onload?.();});}};
+    readAsDataURL(file:Row){if(file.name==="a.jpg"){pendingA.fail=()=>this.onerror?.();return;}setImmediate(()=>{this.result="data:image/jpeg;base64,/9j/AAAA";this.onload?.();});}};
   const ui=workspaceFixture(rows,[{status:200,data:{}}],[],false,{FileReader:Reader});
   ui.clickSign(0);await ui.chooseFile({size:10,name:"a.jpg"});
-  assert.ok(failA,"A 票没开始读图");
+  assert.ok(pendingA.fail,"A 票没开始读图");
   ui.clickSign(1);
-  failA!();
+  pendingA.fail!();
   assert.match(ui.toasts.at(-1)??"",/照片读不出来/);
   await ui.chooseFile({size:10,name:"b.jpg"});
   assert.deepEqual(ui.requests,[{id:"lm2",status:"SIGNED",signImageBase64:"/9j/AAAA"}],`B 没签上：${JSON.stringify(ui.toasts)}`);

@@ -732,7 +732,9 @@ export function registerLoadingManifestRoutes(app: MinimalHttpApp): void {
          下面会按柜子走过的环节给新货补轨迹，最后一步落在「已送达 / 派送中」—— 没有派送单、也没有签收照片。
          这两步只归尾端派送按票推（推柜子也挡了）；线上停在这两步的只有 6 月以前推到「已签收」的 3 个老柜。按锁后的状态判断 */
       if (LASTMILE_ONLY_CONTAINER_STATUSES.has(container.currentStatus)) {
-        throw new Error(`这个柜子已经「${CONTAINER_STATUS_LABEL[container.currentStatus] ?? container.currentStatus}」，不能再往里装货；请换一个还在路上或刚到仓的柜子`);
+        // DELIVERING 是派送中的老名字，状态名单里没有它的中文（Codex 第 3 轮）
+        const zh = CONTAINER_STATUS_LABEL[container.currentStatus] ?? (container.currentStatus === "DELIVERING" ? "派送中" : container.currentStatus);
+        throw new Error(`这个柜子已经「${zh}」，不能再往里装货；请换一个还在路上或刚到仓的柜子`);
       }
 
       // 先锁再读，防并发 TOCTOU

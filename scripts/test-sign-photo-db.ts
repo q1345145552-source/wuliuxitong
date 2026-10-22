@@ -332,9 +332,9 @@ async function main(): Promise<void> {
       assert.deepEqual(await state(), { ...atBooked, box: "SIGNED" });
     });
 
-    await check("P10 停在「已签收 / 派送中」的柜子不许再装货（400，货、柜子、轨迹都不动）；刚到仓的柜子照常能装", async () => {
-      const box = async (currentStatus: string) => pm.container.create({ data: {
-        companyId: CO, containerNo: `ZZSGPLM${++seq}`, containerType: "40HQ", transportMode: "sea", currentStatus, warehouseId: "wh_yiwu_01",
+    await check("P10 停在「已签收 / 派送中」（含老名字 DELIVERING）的柜子不许再装货（400，货、柜子、轨迹都不动）；到仓 / 预约派送 / 陆运到仓的柜子照常能装", async () => {
+      const box = async (currentStatus: string, transportMode = "sea") => pm.container.create({ data: {
+        companyId: CO, containerNo: `ZZSGPLM${++seq}`, containerType: "40HQ", transportMode, currentStatus, warehouseId: "wh_yiwu_01",
         statusDates: JSON.stringify({ SEALED: "2026-09-01T00:00:00.000Z", IN_TRANSIT: "2026-09-03T00:00:00.000Z", ARRIVED: "2026-09-12T00:00:00.000Z", [currentStatus]: "2026-09-20T00:00:00.000Z" }),
       } });
       const ship = await seedShipment("inWarehouseCN");
@@ -346,11 +346,12 @@ async function main(): Promise<void> {
         logs: await pm.statusLog.count({ where: { companyId: CO } }),
       });
       const before = await state();
-      for (const st of ["SIGNED", "OUT_FOR_DELIVERY"]) {
+      for (const st of ["SIGNED", "OUT_FOR_DELIVERY", "DELIVERING"]) {
         const b = await box(st);
         const r = await call("POST /staff/loading-manifests/add-shipment", STAFF, { trackingNo }, { id: b.id });
         assert.equal(r.status, 400, `往「${st}」的柜子加货没挡住（${r.status}）`);
         assert.match(r.message, /不能再往里装货/, r.message);
+        assert.doesNotMatch(r.message, /[A-Z_]{5,}/, `提示里露出了英文状态名：${r.message}`);
         assert.deepEqual(await state(), before, `往「${st}」的柜子加货动了数据`);
         assert.equal((await pm.container.findUnique({ where: { id: b.id }, select: { currentStatus: true } })).currentStatus, st);
       }
@@ -362,11 +363,16 @@ async function main(): Promise<void> {
       const oddR = await call("POST /staff/loading-manifests/add-shipment", STAFF, { trackingNo }, { id: odd.id });
       assert.equal(oddR.status, 400, `时间表记过已签收的柜子加货没挡住（${oddR.status}）`);
       assert.deepEqual(await state(), before, "时间表记过已签收的柜子加货动了数据");
-      const okBox = await box("IN_WAREHOUSE_TH");
-      const ok = await call("POST /staff/loading-manifests/add-shipment", STAFF, { trackingNo }, { id: okBox.id });
-      assert.equal(ok.status, 200, ok.message);
-      const child = await pm.shipment.findFirst({ where: { companyId: CO, parentTrackingNo: trackingNo }, select: { currentStatus: true } });
-      assert.equal(child?.currentStatus, "inWarehouseTH", `装进刚到仓的柜子后子单状态不对：${child?.currentStatus}`);
+      // 正常能装的三种：海运到仓、海运预约派送、陆运到仓（每种用一票新货，装完子单落在柜子对应的状态）
+      for (const [st, mode, want] of [["IN_WAREHOUSE_TH", "sea", "inWarehouseTH"], ["DELIVERY_BOOKED", "sea", "deliveryBooked"], ["IN_WAREHOUSE_TH", "land", "inWarehouseTH"]] as const) {
+        const okShip = await seedShipment("inWarehouseCN");
+        const okNo = (await pm.shipment.findUnique({ where: { id: okShip }, select: { trackingNo: true } })).trackingNo;
+        const okBox = await box(st, mode);
+        const ok = await call("POST /staff/loading-manifests/add-shipment", STAFF, { trackingNo: okNo }, { id: okBox.id });
+        assert.equal(ok.status, 200, `${mode} ${st}：${ok.message}`);
+        const child = await pm.shipment.findFirst({ where: { companyId: CO, parentTrackingNo: okNo }, select: { currentStatus: true } });
+        assert.equal(child?.currentStatus, want, `装进 ${mode} ${st} 的柜子后子单状态不对：${child?.currentStatus}`);
+      }
     });
   } finally {
     await cleanup();
