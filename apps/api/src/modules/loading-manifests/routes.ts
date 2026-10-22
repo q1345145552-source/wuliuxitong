@@ -17,6 +17,7 @@ import {
   CONTAINER_TO_SHIPMENT_STATUS,
   flowOf,
   neverGuessOf,
+  LASTMILE_ONLY_CONTAINER_STATUSES,
 } from "../containers/status-flow";
 import { STATUS_FLOW as SHIP_FLOW, STATUS_FLOW_LAND as SHIP_FLOW_LAND } from "../shipments/status-flow";
 import { DEFAULT_STATUS_LABELS } from "../ai/ai-config-store";
@@ -727,6 +728,12 @@ export function registerLoadingManifestRoutes(app: MinimalHttpApp): void {
          整柜是一个客户包的一整柜，塞进来的货会跟着它一路推到「已签收」，
          柜内统计和整柜页面也会对不上。整柜的事都在「整柜管理」里做。 */
       if (container.isFcl) throw new Error("这是整柜，不能再往里装货；整柜请到「整柜管理」里处理");
+      /* 「派送中 / 已签收」的柜子不许再装货（2026-10-23 安全审查 S3 复核，Codex 第 2 轮）：
+         下面会按柜子走过的环节给新货补轨迹，最后一步落在「已送达 / 派送中」—— 没有派送单、也没有签收照片。
+         这两步只归尾端派送按票推（推柜子也挡了）；线上停在这两步的只有 6 月以前推到「已签收」的 3 个老柜。按锁后的状态判断 */
+      if (LASTMILE_ONLY_CONTAINER_STATUSES.has(container.currentStatus)) {
+        throw new Error(`这个柜子已经「${CONTAINER_STATUS_LABEL[container.currentStatus] ?? container.currentStatus}」，不能再往里装货；请换一个还在路上或刚到仓的柜子`);
+      }
 
       // 先锁再读，防并发 TOCTOU
       const shipment = await tx.shipment.findFirst({

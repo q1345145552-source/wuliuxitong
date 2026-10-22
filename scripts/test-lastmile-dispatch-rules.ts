@@ -472,13 +472,13 @@ async function main() {
   assert.equal(accept.toasts.at(-1),"已撤销 WD000001 里 S1 的签收");assert.equal(accept.reloads,1);
  });
 
- /* 2026-10-23 安全审查 S3 复核：上传签收时照片读不出来（空文件 / 读图出错 / 中途取消 / 读出来是空的）当场提示、不发请求；
+ /* 2026-10-23 安全审查 S3 复核：上传签收时照片读不出来（空文件 / 读图出错 / 读图中途被中止 / 读出来是空的 / 浏览器当场拒绝读）当场提示、不发请求；
     原来读图出错一声不吭，空文件发过去被后端挡成「签收要上传签收照片」（员工明明选了图）。读到照片照常发、照常提示已签收。 */
  check("29) 上传签收：照片读不出来当场提示、不发请求；读到了照常签收",async()=>{
   const rows=[{...delivery("lm1","S1","WD000001","DELIVERING"),trackingNo:"S1"}];
   const fakeReader=(mode:string)=>class{result:string|null=null;onload:any;onerror:any;onabort:any;
-    readAsDataURL(){setImmediate(()=>{if(mode==="error")this.onerror?.();else if(mode==="abort")this.onabort?.();else{this.result=mode==="blank"?"data:image/jpeg;base64,":"data:image/jpeg;base64,/9j/AAAA";this.onload?.();}});}};
-  for(const mode of ["empty","error","abort","blank","ok"]){
+    readAsDataURL(){if(mode==="throw")throw new Error("InvalidStateError");setImmediate(()=>{if(mode==="error")this.onerror?.();else if(mode==="abort")this.onabort?.();else{this.result=mode==="blank"?"data:image/jpeg;base64,":"data:image/jpeg;base64,/9j/AAAA";this.onload?.();}});}};
+  for(const mode of ["empty","error","abort","blank","throw","ok"]){
    // 读不出照片的那几种不给后端回话：真发了请求，夹具会当场报「Unexpected request」
    const ui=workspaceFixture(rows,mode==="ok"?[{status:200,data:{}}]:[],[],false,{FileReader:fakeReader(mode)});
    await ui.pickSignFile({size:mode==="empty"?0:10,name:"a.jpg"});

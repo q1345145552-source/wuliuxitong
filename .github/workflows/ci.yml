@@ -568,7 +568,7 @@ jobs:
         run: bash .github/scripts/run-db-test.sh test:logout-variants-db
       # 2026-10-23 安全审查 S3（真接口、真库）：第一次签收必须带照片、不是图（A / 文字 / data: 前缀 / 只凑对开头几个字节 / 超大）一律挡且不动数据，
       # 已签收换照片照旧、撤销误签收后再签要重新带照片（含撤销正在提交时同时来签收）、改派送中不要求照片、真 HTTP 不带照片 400；
-      # 推柜子不许推到「派送中 / 已签收」（原来能绕过照片把整柜货改成已送达）
+      # 推柜子不许推到「派送中 / 已签收」、停在这两步的柜子不许再装货（原来都能绕过照片把货改成已送达）
       - name: Test lastmile sign photo (real DB)
         run: bash .github/scripts/run-db-test.sh test:sign-photo-db
       # 2026-10-08 模拟数据测试（多人同时操作）查出来的：建单查到货通知占号、同号并发不 500、删单 vs 装柜不死锁、

@@ -233,6 +233,15 @@ export function neverGuessOf(transportMode: string | null | undefined): Readonly
   return transportMode === "land" ? NEVER_GUESS_LAND : NEVER_GUESS_SEA;
 }
 
+/**
+ * 「派送中 / 已签收」不是装柜页推的，是尾端派送那边按票推的（DELIVERING 是老名字）。
+ * 用到的地方（2026-10-23 安全审查 S3 复核后挪到这里共用）：
+ *   · 装柜页撤销 / 撤销预览：撤了会把客户已经签收的单子悄悄退回去，还会删掉尾端派送写的轨迹（containers/routes.ts）
+ *   · 推柜子不许推到这两步：不然整柜货一下变已送达 / 派送中，没有派送单也没有签收照片（同上）
+ *   · 停在这两步的柜子不许再装货：新货会按柜子状态补轨迹、直接变已送达（loading-manifests/routes.ts 加货那条）
+ */
+export const LASTMILE_ONLY_CONTAINER_STATUSES: ReadonlySet<string> = new Set(["OUT_FOR_DELIVERY", "SIGNED", "DELIVERING"]);
+
 /** 柜子状态推进时，对应推运单到什么状态 */
 export const CONTAINER_TO_SHIPMENT_STATUS: Record<string, string> = {
   // 陆运专属

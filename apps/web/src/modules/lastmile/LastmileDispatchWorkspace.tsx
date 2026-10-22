@@ -249,7 +249,7 @@ export default function LastmileDispatchWorkspace(props: LastmileDispatchWorkspa
 
   const handleSign = (file: File) => {
     if (!signTargetId) return;
-    /* 照片读不出来就当场说、不发请求（2026-10-23 安全审查 S3 复核）：原来读图失败页面一声不吭；
+    /* 照片读不出来（空文件、读图出错、读图中途被中止、读出来是空的）就当场说、不发请求（2026-10-23 安全审查 S3 复核）：原来读图失败页面一声不吭；
        空文件发过去，没签收的被后端以「签收要上传签收照片」挡掉（员工明明选了图），已签收的还提示「已签收」其实照片没换 */
     const unreadable = () => {
       props.onToast("照片读不出来（可能是空文件，或照片还没下载到手机上），请重新拍一张或换一张");
@@ -279,7 +279,11 @@ export default function LastmileDispatchWorkspace(props: LastmileDispatchWorkspa
         setSignTargetId("");
       }
     };
-    reader.readAsDataURL(file);
+    try {
+      reader.readAsDataURL(file);
+    } catch {
+      unreadable(); // 极少见：浏览器当场就拒绝读这个文件
+    }
   };
 
   /** 撤销误签收（2026-09-11）：点错签收之后唯一正经的出路，只有管理端看得到这个按钮 */

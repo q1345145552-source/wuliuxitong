@@ -40,6 +40,7 @@ import {
   CONTAINER_TO_SHIPMENT_STATUS,
   flowOf,
   neverGuessOf,
+  LASTMILE_ONLY_CONTAINER_STATUSES,
 } from "./status-flow";
 import { isFutureStatusTime, parseStatusTime } from "./status-time";
 
@@ -213,13 +214,6 @@ async function legacyUndoPlan(
 /** 撤销预览、撤销结果、推柜子跳过提示里给员工看的货状态中文名（名单唯一来源在 ai-config-store） */
 const SHIPMENT_STATUS_ZH: Record<string, string> = Object.fromEntries(DEFAULT_STATUS_LABELS.map((i) => [i.status, i.labelZh]));
 const shipmentStatusZh = (status: string): string => SHIPMENT_STATUS_ZH[status] ?? status;
-
-/**
- * 「派送中 / 已签收」不是装柜页推的，是尾端派送那边推的。
- * 在装柜页撤销会把客户已经签收的单子悄悄退回去，还会删掉尾端派送写的轨迹，必须挡住（撤销和撤销预览共用）。
- * 推进也不许推到这两步（2026-10-23 安全审查 S3 复核，见 POST /admin/containers/status）。
- */
-const LASTMILE_ONLY_CONTAINER_STATUSES = new Set(["OUT_FOR_DELIVERY", "SIGNED", "DELIVERING"]);
 
 /**
  * 撤销会不会把柜子和柜里的货退进两条不同的运输流程（2026-09-17，Codex 第三批第 4 轮）。

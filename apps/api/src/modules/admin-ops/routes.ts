@@ -996,7 +996,7 @@ export function registerAdminOpsRoutes(app: MinimalHttpApp): void {
       /* 签收必须带照片（2026-10-23 安全审查 S3）：页面上不选照片点不了签收，后端原来不查，直接调接口不传照片也能签成。
          按锁后的状态判断（CLAUDE.md 第 28 条）：从没签收 → 签收，这一次必须带；撤销误签收后再签也算这一种（照片保留，但要重拍覆盖）。
          已经签收过的再提交（换一张更清楚的照片）是原来就有的用法，照旧 —— 不带照片也照旧放过：状态还是已签收、照片不动，
-         运单和轨迹不碰（下面 alreadySigned 那句），只是这一行的更新时间会变 */
+         运单和轨迹不碰（下面 alreadySigned 那句），只是这一行的更新时间会变（也会触发一次页面实时刷新） */
       if (body.status === "SIGNED" && !alreadySigned && !hasSignImage) {
         throw new BusinessError("签收要上传签收照片", 400, "VALIDATION_ERROR");
       }
