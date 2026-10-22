@@ -492,6 +492,8 @@ async function main() {
    }else{
     assert.equal(sent.length,0,`${mode}：读不出照片还发了请求`);
     assert.match(ui.toasts.at(-1)??"",/照片读不出来/,`${mode}：没有提示`);assert.equal(ui.reloads,0);
+    // 读不出来也得把按钮放开，不然员工卡在「处理中」再也点不了（第 32 项起读图一开始就锁按钮）
+    assert.equal(ui.findButton("上传签收")?.props.disabled,false,`${mode}：读不出照片后上传签收按钮没放开`);
    }
   }
  });
