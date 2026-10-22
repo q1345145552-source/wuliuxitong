@@ -249,14 +249,22 @@ export default function LastmileDispatchWorkspace(props: LastmileDispatchWorkspa
 
   const handleSign = (file: File) => {
     if (!signTargetId) return;
+    const targetId = signTargetId;
     /* 照片读不出来（空文件、读图出错、读图中途被中止、读出来是空的）就当场说、不发请求（2026-10-23 安全审查 S3 复核）：原来读图失败页面一声不吭；
        空文件发过去，没签收的被后端以「签收要上传签收照片」挡掉（员工明明选了图），已签收的还提示「已签收」其实照片没换 */
     const unreadable = () => {
       props.onToast("照片读不出来（可能是空文件，或照片还没下载到手机上），请重新拍一张或换一张");
-      setSignTargetId("");
+      // 读图失败回来时员工可能已经点了别的票，只清自己这一票（dsh 第 3 轮）
+      setSignTargetId((cur) => (cur === targetId ? "" : cur));
     };
     if (file.size === 0) { unreadable(); return; }
-    const reader = new FileReader();
+    let reader: FileReader;
+    try {
+      reader = new FileReader();
+    } catch {
+      unreadable();
+      return;
+    }
     reader.onerror = unreadable;
     reader.onabort = unreadable;
     reader.onload = async () => {

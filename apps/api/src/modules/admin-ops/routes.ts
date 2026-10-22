@@ -931,9 +931,9 @@ export function registerAdminOpsRoutes(app: MinimalHttpApp): void {
     const rawSignImage = body.signImageBase64;
     const hasSignImage = rawSignImage !== undefined && rawSignImage !== null && rawSignImage !== "";
     if (hasSignImage) {
-      if (typeof rawSignImage !== "string") { fail(res, 400, "VALIDATION_ERROR", "签收照片不对，请重新拍一张或选一张 jpg / png 图片"); return; }
+      if (typeof rawSignImage !== "string") { fail(res, 400, "VALIDATION_ERROR", "签收照片不对，请重新拍一张，或选一张 jpg / png / webp 图片"); return; }
       if (rawSignImage.length > UPLOAD_IMAGE_MAX_BASE64) { fail(res, 400, "VALIDATION_ERROR", uploadTooLargeMessage(rawSignImage.length)); return; }
-      if (!sniffImageBase64(rawSignImage)) { fail(res, 400, "VALIDATION_ERROR", "签收照片不对，请重新拍一张或选一张 jpg / png 图片"); return; }
+      if (!sniffImageBase64(rawSignImage)) { fail(res, 400, "VALIDATION_ERROR", "签收照片不对，请重新拍一张，或选一张 jpg / png / webp 图片"); return; }
     }
     const updateData: any = { status: body.status };
     if (hasSignImage) updateData.signImageBase64 = rawSignImage;

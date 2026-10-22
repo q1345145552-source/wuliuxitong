@@ -167,8 +167,11 @@ function workspaceFixture(orderRows: Row[], replies: Array<{status:number;data?:
     findButton(label:string){return nodes(render()).find(n=>n.type==="button"&&text(n).includes(label));},
     async clickUnsign(){const node=nodes(render()).find(n=>n.type==="button"&&text(n).includes("撤销签收"));assert.ok(node,"撤销签收 button");await node.props.onClick();await new Promise<void>(resolve=>setImmediate(resolve));},
     /** 点「上传签收」再在隐藏的选文件框里选一个文件（页面上就是这两步） */
-    async pickSignFile(file:Row){const btn=nodes(render()).find(n=>n.type==="button"&&text(n).includes("上传签收"));assert.ok(btn,"上传签收 button");btn.props.onClick();
-      const input=nodes(render()).find(n=>n.type==="input"&&n.props.type==="file");assert.ok(input,"file input");input.props.onChange({target:{files:[file],value:"x"}});
+    async pickSignFile(file:Row){this.clickSign(0);await this.chooseFile(file);},
+    /** 点第 index 个「上传签收」 */
+    clickSign(index:number){const btns=nodes(render()).filter(n=>n.type==="button"&&text(n).includes("上传签收"));assert.ok(btns[index],`上传签收 button #${index}`);btns[index].props.onClick();},
+    /** 在隐藏的选文件框里选一个文件（用最新一次渲染的处理函数，跟页面一样） */
+    async chooseFile(file:Row){const input=nodes(render()).find(n=>n.type==="input"&&n.props.type==="file");assert.ok(input,"file input");input.props.onChange({target:{files:[file],value:"x"}});
       for(let i=0;i<5;i++)await new Promise<void>(resolve=>setImmediate(resolve));},
   };
 }
@@ -476,9 +479,9 @@ async function main() {
     原来读图出错一声不吭，空文件发过去被后端挡成「签收要上传签收照片」（员工明明选了图）。读到照片照常发、照常提示已签收。 */
  check("29) 上传签收：照片读不出来当场提示、不发请求；读到了照常签收",async()=>{
   const rows=[{...delivery("lm1","S1","WD000001","DELIVERING"),trackingNo:"S1"}];
-  const fakeReader=(mode:string)=>class{result:string|null=null;onload:any;onerror:any;onabort:any;
+  const fakeReader=(mode:string)=>class{result:string|null=null;onload:any;onerror:any;onabort:any;constructor(){if(mode==="ctor")throw new Error("no FileReader");}
     readAsDataURL(){if(mode==="throw")throw new Error("InvalidStateError");setImmediate(()=>{if(mode==="error")this.onerror?.();else if(mode==="abort")this.onabort?.();else{this.result=mode==="blank"?"data:image/jpeg;base64,":"data:image/jpeg;base64,/9j/AAAA";this.onload?.();}});}};
-  for(const mode of ["empty","error","abort","blank","throw","ok"]){
+  for(const mode of ["empty","error","abort","blank","throw","ctor","ok"]){
    // 读不出照片的那几种不给后端回话：真发了请求，夹具会当场报「Unexpected request」
    const ui=workspaceFixture(rows,mode==="ok"?[{status:200,data:{}}]:[],[],false,{FileReader:fakeReader(mode)});
    await ui.pickSignFile({size:mode==="empty"?0:10,name:"a.jpg"});
@@ -491,6 +494,23 @@ async function main() {
     assert.match(ui.toasts.at(-1)??"",/照片读不出来/,`${mode}：没有提示`);assert.equal(ui.reloads,0);
    }
   }
+ });
+
+ /* dsh 第 3 轮：A 票的照片读图失败回来得晚，员工这时已经点了 B 票的「上传签收」——
+    失败只许清 A 自己，不许把 B 的签收目标清掉（清掉了 B 选完照片什么都不发）。 */
+ check("30) A 票读图失败回来得晚、员工已点了 B 票：B 照常签收",async()=>{
+  const rows=[{...delivery("lm1","S1","WD000001","DELIVERING"),trackingNo:"S1"},{...delivery("lm2","S2","WD000002","DELIVERING"),trackingNo:"S2"}];
+  let failA:(()=>void)|null=null;
+  const Reader=class{result:string|null=null;onload:any;onerror:any;onabort:any;
+    readAsDataURL(file:Row){if(file.name==="a.jpg"){failA=()=>this.onerror?.();return;}setImmediate(()=>{this.result="data:image/jpeg;base64,/9j/AAAA";this.onload?.();});}};
+  const ui=workspaceFixture(rows,[{status:200,data:{}}],[],false,{FileReader:Reader});
+  ui.clickSign(0);await ui.chooseFile({size:10,name:"a.jpg"});
+  assert.ok(failA,"A 票没开始读图");
+  ui.clickSign(1);
+  failA!();
+  assert.match(ui.toasts.at(-1)??"",/照片读不出来/);
+  await ui.chooseFile({size:10,name:"b.jpg"});
+  assert.deepEqual(ui.requests,[{id:"lm2",status:"SIGNED",signImageBase64:"/9j/AAAA"}],`B 没签上：${JSON.stringify(ui.toasts)}`);
  });
 
  /* 整柜不进尾端派送候选（老板 2026-09-23：「排除，整柜的尾端单独在页面里弄」）。

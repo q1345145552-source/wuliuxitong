@@ -988,6 +988,11 @@ export function registerLoadingManifestRoutes(app: MinimalHttpApp): void {
       }
 
       const finalStatus = steps[steps.length - 1]!.shipmentStatus;
+      /* 兜底（2026-10-23 安全审查 S3 复核，dsh 第 3 轮）：上面已按柜子当前状态挡了「派送中 / 已签收」的柜子，
+         但补轨迹走的是柜子的状态时间表 —— 老数据里时间表要是记过这两步，这里照样会算出派送中 / 已送达。加货永远不许写出这两种 */
+      if (finalStatus === "delivered" || finalStatus === "outForDelivery") {
+        throw new Error("这个柜子的状态记录里已经到了派送 / 签收那一步，不能再往里装货；请换一个柜子，或联系管理员核对这个柜子的状态");
+      }
       await tx.shipment.update({ where: { id: loadShipmentId }, data: { currentStatus: finalStatus, updatedAt: now } });
 
       const partial = reqPieces < totalPkg ? `（分装 ${reqPieces}件）` : "";

@@ -164,6 +164,9 @@ async function main(): Promise<void> {
         ["只有 PNG 前 4 个字节", pad(Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47]), Buffer.from("not a png at all")]))],
         ["GIF8 开头的乱码", pad(Buffer.from("GIF8definitely not gif"))],
         ["RIFF…WEBP 后面不是 VP", pad(Buffer.concat([Buffer.from("RIFF"), Buffer.from([0x20, 0, 0, 0]), Buffer.from("WEBPxx")]))],
+        // dsh 第 3 轮：原来 WebP 只比到 VP、JPEG 只比 3 个字节
+        ["WebP 首块是 VP9", webp("VP9 ")], ["WebP 首块是 VPZZ", webp("VPZZ")],
+        ["FF D8 FF 后面跟 00", pad(Buffer.from([0xff, 0xd8, 0xff, 0x00]))],
         ["数字", 12345], ["对象", { a: 1 }], ["数组", [PNG]],
       ];
       for (const [name, img] of bad) {
@@ -351,6 +354,14 @@ async function main(): Promise<void> {
         assert.deepEqual(await state(), before, `往「${st}」的柜子加货动了数据`);
         assert.equal((await pm.container.findUnique({ where: { id: b.id }, select: { currentStatus: true } })).currentStatus, st);
       }
+      // 柜子当前状态正常、但状态时间表里记过「已签收」（老数据）：补轨迹会补到已送达，写库前那道兜底挡住（dsh 第 3 轮）
+      const odd = await pm.container.create({ data: {
+        companyId: CO, containerNo: `ZZSGPLM${++seq}`, containerType: "40HQ", transportMode: "sea", currentStatus: "IN_WAREHOUSE_TH", warehouseId: "wh_yiwu_01",
+        statusDates: JSON.stringify({ SEALED: "2026-09-01T00:00:00.000Z", IN_WAREHOUSE_TH: "2026-09-20T00:00:00.000Z", SIGNED: "2026-09-25T00:00:00.000Z" }),
+      } });
+      const oddR = await call("POST /staff/loading-manifests/add-shipment", STAFF, { trackingNo }, { id: odd.id });
+      assert.equal(oddR.status, 400, `时间表记过已签收的柜子加货没挡住（${oddR.status}）`);
+      assert.deepEqual(await state(), before, "时间表记过已签收的柜子加货动了数据");
       const okBox = await box("IN_WAREHOUSE_TH");
       const ok = await call("POST /staff/loading-manifests/add-shipment", STAFF, { trackingNo }, { id: okBox.id });
       assert.equal(ok.status, 200, ok.message);
