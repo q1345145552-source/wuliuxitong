@@ -254,7 +254,7 @@ export default function LastmileDispatchWorkspace(props: LastmileDispatchWorkspa
        空文件发过去，没签收的被后端以「签收要上传签收照片」挡掉（员工明明选了图），已签收的还提示「已签收」其实照片没换 */
     const unreadable = () => {
       props.onToast("照片读不出来（可能是空文件，或照片还没下载到手机上），请重新拍一张或换一张");
-      // 读图失败回来时员工可能已经点了别的票，只清自己这一票（dsh 第 3 轮）
+      // 读图失败回来时员工可能已经点了别的票，只清自己这一票（dsh 第 3 轮；签完那条见下面 finally）
       setSignTargetId((cur) => (cur === targetId ? "" : cur));
     };
     if (file.size === 0) { unreadable(); return; }
@@ -275,7 +275,7 @@ export default function LastmileDispatchWorkspace(props: LastmileDispatchWorkspa
         const response = await fetch(`${apiBaseUrl()}/admin/lastmile/status`, {
           method: "POST",
           headers: { "Content-Type": "application/json", ...authHeaders() },
-          body: JSON.stringify({ id: signTargetId, status: "SIGNED", signImageBase64 }),
+          body: JSON.stringify({ id: targetId, status: "SIGNED", signImageBase64 }),
         });
         await parseApiResponse(response);
         props.onToast("该票运单已签收");
@@ -284,7 +284,8 @@ export default function LastmileDispatchWorkspace(props: LastmileDispatchWorkspa
         props.onToast(error instanceof Error ? error.message : "签收失败，请重试");
       } finally {
         setBusy(false);
-        setSignTargetId("");
+        // 跟读图失败一样只清自己这一票：A 票签完回来时员工可能已经点了 B 票（dsh 第 4 轮）
+        setSignTargetId((cur) => (cur === targetId ? "" : cur));
       }
     };
     try {

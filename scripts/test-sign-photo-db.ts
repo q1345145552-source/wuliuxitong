@@ -192,7 +192,7 @@ async function main(): Promise<void> {
       }
     });
 
-    await check("P4 已签收：换一张照片照旧能换、轨迹不加；不带照片 200、状态 / 照片 / 运单 / 轨迹都不变；乱传 400 旧照片不丢", async () => {
+    await check("P4 已签收：换一张照片照旧能换、轨迹不加；不带照片 200、状态 / 照片 / 运单 / 轨迹都不变（这一行更新时间会变）；乱传 400 旧照片不丢", async () => {
       const ids = await seed();
       assert.equal((await sign(ids.lm, JPG)).status, 200);
       const r1 = await sign(ids.lm, PNG);

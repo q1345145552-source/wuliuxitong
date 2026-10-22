@@ -102,6 +102,7 @@ export const CONTAINER_STATUS_LABEL: Record<string, string> = {
   UNLOADING: "正在卸柜",
   IN_WAREHOUSE_TH: "已到仓",
   OUT_FOR_DELIVERY: "派送中",
+  DELIVERING: "派送中", // 派送中的老名字，流程里已经不用；提示里别露英文（2026-10-23 Codex 第 4 轮）
   SIGNED: "已签收",
   // 陆运专属
   AT_PORT_CN: "到达凭祥口岸",

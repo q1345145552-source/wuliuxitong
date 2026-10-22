@@ -1,7 +1,7 @@
 /**
  * 看 base64 图片的文件头认出是什么图（2026-10-23 安全审查 S3，签收照片用）。
  *
- * 只认 jpg / png / gif / webp 四种，文件头按浏览器认图的标准（WHATWG MIME Sniffing）比完整的那几个字节，有两处比标准再严一点：
+ * 只认 jpg / png / gif / webp 四种，文件头按浏览器认图的标准（WHATWG MIME Sniffing）比完整的那几个字节（JPEG、WebP 两处比标准再严一点）：
  *   · PNG 8 个字节、GIF 6 个（GIF87a / GIF89a）
  *   · JPEG：FF D8 FF 之后第 4 个字节得是 JPEG 的段标记（C0～FF），FF D8 FF 00 这种不算（dsh 第 3 轮）
  *   · WebP：RIFF + 4 字节 + WEBP 之后，首块必须正好是 VP8␠ / VP8L / VP8X（真 WebP 只有这三种；dsh 第 3 轮：原来只比到 VP，VP9 也混过去）

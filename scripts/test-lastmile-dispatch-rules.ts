@@ -513,6 +513,25 @@ async function main() {
   assert.deepEqual(ui.requests,[{id:"lm2",status:"SIGNED",signImageBase64:"/9j/AAAA"}],`B 没签上：${JSON.stringify(ui.toasts)}`);
  });
 
+ /* dsh 第 4 轮：A 票照片读完、签收请求回来（成功 / 失败）时，员工已经点了 B 票 ——
+    A 收尾只许清 A 自己；A 的请求发的必须是 A 的单号，不能被换成 B。 */
+ check("31) A 票签收回来得晚（成功 / 后端报错）、员工已点了 B 票：A 发的是 A、B 照常签收",async()=>{
+  const rows=[{...delivery("lm1","S1","WD000001","DELIVERING"),trackingNo:"S1"},{...delivery("lm2","S2","WD000002","DELIVERING"),trackingNo:"S2"}];
+  for(const aReply of [{status:200,data:{}},{status:400,message:"签收照片不对"}]){
+   const pendingA:{load?:()=>void}={};
+   const Reader=class{result:string|null=null;onload:any;onerror:any;onabort:any;
+     readAsDataURL(file:Row){this.result="data:image/jpeg;base64,/9j/AAAA";if(file.name==="a.jpg"){pendingA.load=()=>this.onload?.();return;}setImmediate(()=>this.onload?.());}};
+   const ui=workspaceFixture(rows,[aReply,{status:200,data:{}}],[],false,{FileReader:Reader});
+   ui.clickSign(0);await ui.chooseFile({size:10,name:"a.jpg"});
+   assert.ok(pendingA.load,"A 票没开始读图");
+   ui.clickSign(1);
+   pendingA.load!();
+   for(let i=0;i<5;i++)await new Promise<void>(resolve=>setImmediate(resolve));
+   await ui.chooseFile({size:10,name:"b.jpg"});
+   assert.deepEqual(ui.requests.map((r:Row)=>r.id),["lm1","lm2"],`A 回 ${aReply.status}：发出去的单号不对 ${JSON.stringify(ui.requests.map((r:Row)=>r.id))}，提示 ${JSON.stringify(ui.toasts)}`);
+  }
+ });
+
  /* 整柜不进尾端派送候选（老板 2026-09-23：「排除，整柜的尾端单独在页面里弄」）。
     ⚠️ 上面那些假运单的 containerItems 都是空的，所以整柜排除那条在它们身上**等于没测**
     （2026-09-23 第 2 轮复核点名要补的）。这里专门造一张「装在整柜里」的单，
