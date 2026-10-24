@@ -269,7 +269,7 @@ async function main(): Promise<void> {
 
     await check("Q11 1 小时按请求进来的时间算：59 分 50 秒时发来、在订单锁上等了 12 秒，照样能传", async () => {
       const id = await prealert();
-      // 锁到手以后再在锁里把建单时间改成 59 分 55 秒前（Codex / dsh 第 5 轮：先改时间再去拿锁，慢机器上会在拿到锁之前就超时，假红）
+      // 锁到手以后再在锁里把建单时间改成 59 分 50 秒前（Codex / dsh 第 5 轮：先改时间再去拿锁，慢机器上会在拿到锁之前就超时，假红）
       const { results, waiting, files } = await withOrderLockHeld(
         id,
         async (tx) => { await tx.order.update({ where: { id }, data: { createdAt: new Date(Date.now() - 60 * MIN + 10_000) } }); },
@@ -335,7 +335,8 @@ async function main(): Promise<void> {
       // ⑤ 跑完了没提交成，回查也查不了（数据库那会儿连不上）：照样留文件、回「确认不了」（Codex 第 3 轮那条，接口层再钉一次）
       id = await prealert();
       const origFindFirst = pm.orderProductImage.findFirst;
-      pm.orderProductImage.findFirst = async () => { throw new Error("回查时连不上数据库"); };
+      let lookups = 0;
+      pm.orderProductImage.findFirst = async () => { lookups += 1; throw new Error("回查时连不上数据库"); };
       try {
         await withTx((fn, opts) => origTx.call(pm, async (tx: any) => { await fn(tx); throw p2028(); }, opts), async () => {
           const r = await upload(C1, id);
@@ -345,6 +346,7 @@ async function main(): Promise<void> {
       } finally {
         pm.orderProductImage.findFirst = origFindFirst;
       }
+      assert.equal(lookups, 1, "跑完了却没去回查（dsh 第 7 轮：不查直接回「确认不了」这条也会绿，加个计数钉住）");
       assert.equal(filesOf(id).length, 1, "回查查不了的时候把文件删了（万一库里有就是裂图）");
     });
   } finally {

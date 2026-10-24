@@ -107,13 +107,14 @@ async function main(): Promise<void> {
   });
 
   await check("R5 客户看到的话不说「再传一次」（客户页面没有重传入口，页面会自己接一句「联系客服补上」）；员工的照旧说", async () => {
+    // 第二项是「事务里那段跑完、要去提交了没有」（reachedCommit）
     const cases: Array<[unknown, boolean, () => Promise<boolean>]> = [
       [known("P2024"), false, async () => false], [known("P2002"), false, async () => false],
       [known("P2028"), true, async () => false], [known("P1017"), true, async () => { throw new Error("x"); }],
     ];
-    for (const [e, inserted, lookup] of cases) {
-      const c = await failedUploadAction(e, "client", inserted, lookup);
-      const st = await failedUploadAction(e, "staff", inserted, lookup);
+    for (const [e, reachedCommit, lookup] of cases) {
+      const c = await failedUploadAction(e, "client", reachedCommit, lookup);
+      const st = await failedUploadAction(e, "staff", reachedCommit, lookup);
       assert.ok(c.respond.kind === "fail" && !/再传/.test(c.respond.message), `客户看到：${c.respond.kind === "fail" ? c.respond.message : "ok"}`);
       assert.ok(st.respond.kind === "fail" && /再传/.test(st.respond.message), `员工看到：${st.respond.kind === "fail" ? st.respond.message : "ok"}`);
       assert.equal(c.keepFile, st.keepFile, "客户和员工留不留文件不该不一样");

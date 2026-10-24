@@ -1776,7 +1776,7 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
     }
     const now = new Date();
     const imageId = `opi_${Date.now()}_${crypto.randomBytes(4).toString("hex")}`;
-    // 保存文件到磁盘（先写文件、再在事务里记库；记库没成就把文件删掉，不留孤儿文件）
+    // 保存文件到磁盘（先写文件、再在事务里记库；肯定没存上才删文件，拿不准时宁可留着防裂图 —— 见 failedUploadAction）
     let filePath: string;
     try {
       filePath = saveImageToDisk(orderId, mimeType, contentBase64);
