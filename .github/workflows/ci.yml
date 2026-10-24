@@ -63,6 +63,11 @@ jobs:
       - name: Test token canonical encoding
         run: npm run test:token-canonical
 
+      # 2026-10-24 订单照片上传的纯规则（不连库）：客户 1 小时窗口、哪些错算「同事在处理」、记库失败以后文件留不留 / 回什么话、
+      # 客户的话不说「再传一次」。整条接口在 test-db 组的 test:client-photo-lock-db 里测
+      - name: Test order photo upload rules
+        run: npm run test:order-photo-rules
+
       - name: Test shipment list display
         run: npm run test:shipment-list-display
 

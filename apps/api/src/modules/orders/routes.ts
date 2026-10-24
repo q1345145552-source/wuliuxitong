@@ -36,7 +36,7 @@ import type { MinimalHttpApp } from "../../server";
 // parseJsonArray 不再用了：/staff/prealerts 的仓库过滤已删（2026-08-31，排查报告第 7 条）；
 // 全仓库引用归零后，http-utils 里的函数本体也已删除（2026-08-31 复查第 16 条收尾）
 import { fail, ok, requireRole } from "../core/http-utils";
-import { CLIENT_PHOTO_LOCKED_MESSAGE, clientMayAddOrderPhoto, failedUploadOutcome, isOrderBusyError, loadProductImagesForOrders, MAX_ORDER_PRODUCT_IMAGES } from "./product-images";
+import { CLIENT_PHOTO_LOCKED_MESSAGE, clientMayAddOrderPhoto, failedUploadAction, loadProductImagesForOrders, MAX_ORDER_PRODUCT_IMAGES } from "./product-images";
 import { saveImageToDisk, deleteImageFile } from "./image-storage";
 import { sanitizeRemarkForClient } from "../core/client-privacy";
 import { companyContainerNosForMasking } from "../core/container-nos";
@@ -1809,7 +1809,7 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
         if (lockedCount >= MAX_ORDER_PRODUCT_IMAGES) {
           throw new BusinessError(`image limit reached (max ${MAX_ORDER_PRODUCT_IMAGES})`, 400, "BAD_REQUEST");
         }
-        await tx.orderProductImage.create({
+        return tx.orderProductImage.create({
           data: {
             id: imageId,
             companyId: auth.companyId,
@@ -1821,37 +1821,26 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
             uploadedBy: auth.userId,
             createdAt: now,
           },
+          select: { id: true },
         });
       }, { timeout: 35_000, maxWait: 10_000 }); // 到货通知转单那条事务会拿着订单锁最多 30 秒，等得过它；默认 5 秒等不到就白白报错
     } catch (err) {
-      // 没进库就删掉刚写的文件；删不掉只记日志，照旧回原来的原因（不然 403 / 400 会被盖成 500）
-      const removeFile = () => {
+      // 文件留不留、回什么话：规则见 failedUploadAction（回库里查时连公司、订单、文件路径一起核，Codex 第 4 轮）
+      const action = await failedUploadAction(err, auth.role, async () => Boolean(await prisma.orderProductImage.findFirst({
+        where: { id: imageId, companyId: auth.companyId, orderId, filePath },
+        select: { id: true },
+      })));
+      if (!action.keepFile) {
+        // 删不掉只记日志，照旧回原来的原因（不然 403 / 400 会被盖成 500）
         try { deleteImageFile(filePath); } catch (e) { console.error("[product-image] cleanup failed:", e); }
-      };
-      if (err instanceof BusinessError) {
-        removeFile();
-        fail(res, err.httpStatus, err.code, err.message);
-        return;
       }
-      // 不是业务原因：可能提交其实成功了、只是回话路上出错（连接断了）—— 回库里查这一行再决定（规则见 failedUploadOutcome）
-      const outcome = await failedUploadOutcome(false, async () =>
-        Boolean(await prisma.orderProductImage.findUnique({ where: { id: imageId }, select: { id: true } })));
-      if (outcome === "saved") {
+      if (action.respond.kind === "ok") {
         ok(res, { id: imageId, orderId, fileName, mime: mimeType, filePath, createdAt: now.toISOString() });
         return;
       }
-      if (outcome === "unknown") {
-        console.error("[product-image] save outcome unknown, file kept:", err);
-        fail(res, 500, "INTERNAL_ERROR", "这张照片存没存上暂时确认不了，请刷新页面看一下，没有的话再传一次");
-        return;
-      }
-      removeFile();
-      if (isOrderBusyError(err)) {
-        fail(res, 409, "VALIDATION_ERROR", "这张单刚好有同事在处理，照片没存上，请稍后再传一次");
-        return;
-      }
-      console.error("[product-image] save failed:", err);
-      fail(res, 500, "INTERNAL_ERROR", "图片没存上（服务器出错），请稍后再传一次；反复出现请联系技术");
+      // 原因（磁盘路径、系统报错原文）只记日志，不给页面（2026-09-29 Codex 全系统检查）
+      if (action.respond.status >= 500) console.error("[product-image] save failed:", err, action.keepFile ? "(file kept)" : "");
+      fail(res, action.respond.status, action.respond.code, action.respond.message);
       return;
     }
     ok(res, { id: imageId, orderId, fileName, mime: mimeType, filePath, createdAt: now.toISOString() });

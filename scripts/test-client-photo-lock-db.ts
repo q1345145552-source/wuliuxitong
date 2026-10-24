@@ -13,7 +13,8 @@
  *   Q7 员工、超管照旧能传能删
  *   Q8 客户上传那一刻仓库正在确认收货：等收货提交后按「已收货」判，挡住，不留文件（锁后重读）
  *   Q9 同一张单同时传好几张、只差一张就到上限：只进一张，没进的文件也删干净
- *   Q10 记库出错以后怎么收尾（不连库的规则）：查得到按成功、明确没有删文件、连查都查不了就留着文件；哪些错算「同事在处理」
+ *   Q11 1 小时按请求进来的时间算：59 分 58 秒时发来、在订单锁上等了几秒，照样能传
+ * 收尾规则（文件留不留、回什么话、哪些错算同事在处理）是纯逻辑，在 test-order-photo-rules.ts 里测（不连库）。
  *
  * 只连一次性库：DATABASE_URL 不是 Neon 时要 AGENT_PORTAL_TEST_ALLOW_DB=1。测试数据前缀 zz_cpl_，跑完清到 0。
  */
@@ -42,6 +43,8 @@ async function main(): Promise<void> {
     return;
   }
   process.env.NODE_ENV = process.env.NODE_ENV || "test";
+  // Q9 同时要 5 条连接（持锁 1 + 上传 3 + 查等锁 1）；Prisma 默认连接数 = CPU 数 × 2 + 1，单核机器只有 3 条，写明给够（dsh 第 4 轮）
+  if (!/[?&]connection_limit=/.test(url)) process.env.DATABASE_URL = `${url}${url.includes("?") ? "&" : "?"}connection_limit=10`;
   const imagesDir = fs.mkdtempSync(path.join(os.tmpdir(), "zz_cpl_images_"));
   process.env.IMAGES_DIR = imagesDir;
   const { prisma } = await import("../apps/api/src/db/prisma");
@@ -192,7 +195,7 @@ async function main(): Promise<void> {
      * 模拟另一边（确认收货 / 别的同事）拿着这张单的订单锁不放；mutate 是锁住以后、提交以前要改的东西。
      * 等「上传都写完文件、都卡在锁上」再放锁，保证上传真走到了锁里那一遍（dsh / Codex 第 2 轮：只靠 Promise.all 不确定）
      */
-    async function withOrderLockHeld(id: string, mutate: ((tx: any) => Promise<void>) | null, start: () => Promise<Array<{ status: number; message: string }>>, expectWaiting: number) {
+    async function withOrderLockHeld(id: string, mutate: ((tx: any) => Promise<void>) | null, start: () => Promise<Array<{ status: number; message: string }>>, expectWaiting: number, holdExtraMs = 0) {
       let release!: () => void;
       const gate = new Promise<void>((r) => { release = r; });
       let locked!: () => void;
@@ -219,6 +222,7 @@ async function main(): Promise<void> {
           files = filesOf(id).length;
           if (waiting < expectWaiting || files < expectWaiting) await new Promise((r) => setTimeout(r, 50));
         }
+        if (holdExtraMs) await new Promise((r) => setTimeout(r, holdExtraMs));
       } finally {
         release();
         await holder;
@@ -260,21 +264,13 @@ async function main(): Promise<void> {
       assert.equal(filesOf(id).length, 1, `磁盘上有 ${filesOf(id).length} 个文件（没进库的没删）`);
     });
 
-    await check("Q10 记库出错以后怎么收尾：查得到按成功、明确没有删文件、查不了留文件；哪些错算「同事在处理」", async () => {
-      const { failedUploadOutcome, isOrderBusyError } = await import("../apps/api/src/modules/orders/product-images");
-      const { Prisma } = await import("@prisma/client");
-      assert.equal(await failedUploadOutcome(true, async () => { throw new Error("不该查"); }), "business");
-      assert.equal(await failedUploadOutcome(false, async () => true), "saved");
-      assert.equal(await failedUploadOutcome(false, async () => false), "absent");
-      assert.equal(await failedUploadOutcome(false, async () => { throw new Error("连接断了"); }), "unknown", "查不了也当成没有，会把已经存上的照片文件删掉（裂图）");
-      const known = (code: string, meta?: Record<string, unknown>) => new Prisma.PrismaClientKnownRequestError("x", { code, clientVersion: "test", meta });
-      for (const e of [known("P2028"), known("P2024"), known("P2034"), known("P2010", { code: "40P01" }), known("P2010", { code: "40001" }),
-        new Prisma.PrismaClientUnknownRequestError("ERROR: deadlock detected", { clientVersion: "test" })]) {
-        assert.equal(isOrderBusyError(e), true, `${(e as any).code ?? e.message} 应算同事在处理`);
-      }
-      for (const e of [known("P2002"), known("P2003"), new Error("deadlock detected"), new BusinessError("x", 400, "BAD_REQUEST"), null]) {
-        assert.equal(isOrderBusyError(e), false, `${(e as any)?.code ?? (e as any)?.message} 不该算同事在处理`);
-      }
+    await check("Q11 1 小时按请求进来的时间算：59 分 58 秒时发来、在订单锁上等了 3 秒，照样能传", async () => {
+      const id = await prealert();
+      await pm.order.update({ where: { id }, data: { createdAt: new Date(Date.now() - 60 * MIN + 2_000) } });
+      const { results, waiting, files } = await withOrderLockHeld(id, null, async () => [await upload(C1, id)], 1, 3_000);
+      assert.ok(waiting >= 1 && files >= 1, `上传没卡在订单锁上（等锁 ${waiting}、文件 ${files}），这一项没测到`);
+      assert.equal(results[0].status, 200, `请求进来时还在 1 小时内，等了一会儿锁就被挡了（${results[0].status}）：${results[0].message}`);
+      assert.equal((await images(id)).length, 1);
     });
   } finally {
     await cleanup();

@@ -123,7 +123,8 @@
     "test:token-canonical": "tsx scripts/test-token-canonical.ts",
     "test:logout-variants-db": "tsx scripts/test-logout-variants-db.ts",
     "test:sign-photo-db": "TZ=UTC tsx scripts/test-sign-photo-db.ts",
-    "test:client-photo-lock-db": "TZ=UTC tsx scripts/test-client-photo-lock-db.ts"
+    "test:client-photo-lock-db": "TZ=UTC tsx scripts/test-client-photo-lock-db.ts",
+    "test:order-photo-rules": "tsx scripts/test-order-photo-rules.ts"
   },
   "devDependencies": {
     "@types/node": "^26.0.1",
