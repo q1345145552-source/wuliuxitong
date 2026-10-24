@@ -37,8 +37,8 @@ export function isOrderBusyError(e: unknown): boolean {
   } else if (!(e instanceof Prisma.PrismaClientUnknownRequestError)) {
     return false;
   }
-  // 原话或引擎写的结构化代码（code: "40P01"），不认裸数字
-  return /deadlock detected|could not serialize access|code: "(?:40P01|40001)"/i.test(String(e.message ?? ""));
+  // 原话或引擎写的结构化代码（code: "40P01" / Code: `40P01`），不认裸数字
+  return /deadlock detected|could not serialize access|code:\s*["`](?:40P01|40001)["`]/i.test(String(e.message ?? ""));
 }
 
 /** 上传记库失败以后：文件留不留、回什么话。客户的话不说「再传一次」（客户页面没有重传入口，页面自己会接一句「联系客服补上」） */
@@ -54,17 +54,18 @@ export function saveFailedMessage(role: UserRole): string {
 }
 
 /**
- * 上传订单照片：文件已经写到磁盘、记库那一步抛错以后怎么收尾（2026-10-24 Codex 第 3～5 轮 / dsh 第 4 轮）。
- * 按「出错时那一行插进去没有」（insertedBeforeError，事务里 create 成功后才置 true）分，不按错误种类猜：
- *   还没插进去：提交根本不会发出去，肯定没存上 —— 删文件；同事在处理回 409，业务原因照原因回，其余 500
- *   已经插进去：错是在提交那一下出的（连接断了、P2028 提交超时……Prisma 5.22 把提交也算在事务期限里，Codex 第 5 轮），拿不准 ——
+ * 上传订单照片：文件已经写到磁盘、记库那一步抛错以后怎么收尾（2026-10-24 Codex 第 3～6 轮 / dsh 第 4～6 轮）。
+ * 按「出错时事务里那段跑完、要去提交了没有」（reachedCommit，事务里最后一句才置 true）分，不按错误种类猜：
+ *   没跑完：Prisma 只有那段跑完才发提交，提交根本没发出去，肯定没存上 —— 删文件；业务原因照原因回，同事在处理回 409，其余 500
+ *   跑完了：错是在提交那一下出的（连接断了、P2028 提交超时……Prisma 5.22 把提交也算在事务期限里，Codex 第 5 轮），拿不准 ——
  *           回库里查这一行（lookupSaved）：查得到说明其实存上了，按成功回、文件留着；
  *           查不到或连查都失败，文件也留着（可能提交还没看得见，删了就是裂图；宁可多一个没人用的文件），回「确认不了，请刷新看看」
+ * 先看跑没跑完、再看是不是业务原因（dsh 第 6 轮：反过来的话，以后有人在跑完以后抛业务错误，会把可能已存上的文件删掉）
  */
-export async function failedUploadAction(err: unknown, role: UserRole, insertedBeforeError: boolean, lookupSaved: () => Promise<boolean>): Promise<FailedUploadAction> {
+export async function failedUploadAction(err: unknown, role: UserRole, reachedCommit: boolean, lookupSaved: () => Promise<boolean>): Promise<FailedUploadAction> {
   const client = role === "client";
-  if (err instanceof BusinessError) return { keepFile: false, respond: failWith(err.httpStatus, err.code, err.message) };
-  if (!insertedBeforeError) {
+  if (!reachedCommit) {
+    if (err instanceof BusinessError) return { keepFile: false, respond: failWith(err.httpStatus, err.code, err.message) };
     if (isOrderBusyError(err)) {
       return { keepFile: false, respond: failWith(409, "VALIDATION_ERROR", client ? "这张单刚好有同事在处理，照片没存上" : "这张单刚好有同事在处理，照片没存上，请稍后再传一次") };
     }

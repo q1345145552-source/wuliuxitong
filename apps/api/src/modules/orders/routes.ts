@@ -1786,8 +1786,10 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
       fail(res, 500, "INTERNAL_ERROR", saveFailedMessage(auth.role));
       return;
     }
-    // 出错时这一行插进去没有：没插进去，提交根本不会发出去，肯定没存上；插进去以后再出错，就是卡在提交那一下，拿不准（见 failedUploadAction）
-    let inserted = false;
+    /* 出错时事务里那段是不是已经整个跑完、要去提交了（Codex / dsh 第 6 轮：比「插进去没有」准 —— Prisma 只有这段跑完才发提交）。
+       没跑完就出错，提交根本不会发出去，肯定没存上；跑完以后再出错，就是卡在提交那一下，拿不准（见 failedUploadAction）。
+       ⚠️ 这个标记必须是事务里最后一句（return 前），以后在中间加检查也不会把「已经存上」的文件当没存上删掉 */
+    let reachedCommit = false;
     try {
       /* 锁住订单再重读、再判断、再记库（2026-10-24 Codex / dsh：原来「能不能传」「满没满」都在锁外判，
          客户上传那一刻仓库正好确认收货、或同一张单同时传好几张，都能穿过去 —— CLAUDE.md 第 28 条）。
@@ -1825,12 +1827,12 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
           },
           select: { id: true },
         });
-        inserted = true;
+        reachedCommit = true;
         return created;
       }, { timeout: 35_000, maxWait: 10_000 }); // 到货通知转单那条事务会拿着订单锁最多 30 秒，等得过它；默认 5 秒等不到就白白报错
     } catch (err) {
       // 文件留不留、回什么话：规则见 failedUploadAction（回库里查时连公司、订单、文件路径一起核，Codex 第 4 轮）
-      const action = await failedUploadAction(err, auth.role, inserted, async () => Boolean(await prisma.orderProductImage.findFirst({
+      const action = await failedUploadAction(err, auth.role, reachedCommit, async () => Boolean(await prisma.orderProductImage.findFirst({
         where: { id: imageId, companyId: auth.companyId, orderId, filePath },
         select: { id: true },
       })));
