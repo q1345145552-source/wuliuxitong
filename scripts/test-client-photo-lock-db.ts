@@ -13,6 +13,7 @@
  *   Q7 员工、超管照旧能传能删
  *   Q8 客户上传那一刻仓库正在确认收货：等收货提交后按「已收货」判，挡住，不留文件（锁后重读）
  *   Q9 同一张单同时传好几张、只差一张就到上限：只进一张，没进的文件也删干净
+ *   Q10 记库出错以后怎么收尾（不连库的规则）：查得到按成功、明确没有删文件、连查都查不了就留着文件；哪些错算「同事在处理」
  *
  * 只连一次性库：DATABASE_URL 不是 Neon 时要 AGENT_PORTAL_TEST_ALLOW_DB=1。测试数据前缀 zz_cpl_，跑完清到 0。
  */
@@ -210,8 +211,10 @@ async function main(): Promise<void> {
       let files = 0;
       try {
         for (let i = 0; i < 160 && (waiting < expectWaiting || files < expectWaiting); i += 1) {
+          // 只数这个库、这个账号的会话（dsh 第 3 轮：共用测试库上别的用例也可能在等 orders 的锁）
           const rows: Array<{ n: number }> = await pm.$queryRaw`SELECT count(*)::int AS n FROM pg_stat_activity
-            WHERE pid <> pg_backend_pid() AND wait_event_type = 'Lock' AND query ILIKE '%FROM orders%FOR NO KEY UPDATE%'`;
+            WHERE pid <> pg_backend_pid() AND datname = current_database() AND usename = current_user
+              AND wait_event_type = 'Lock' AND query ILIKE '%FROM orders%FOR NO KEY UPDATE%'`;
           waiting = rows[0]?.n ?? 0;
           files = filesOf(id).length;
           if (waiting < expectWaiting || files < expectWaiting) await new Promise((r) => setTimeout(r, 50));
@@ -245,6 +248,7 @@ async function main(): Promise<void> {
       await pm.orderProductImage.createMany({ data: Array.from({ length: MAX_ORDER_PRODUCT_IMAGES - 1 }, (_, i) => ({
         id: `zz_cpl_fill_${i}`, companyId: CO, orderId: id, fileName: `fill${i}.png`, mime: "image/png", contentBase64: "x", uploadedBy: STAFF.userId,
       })) });
+      // 同时要 5 条数据库连接（持锁 1 + 上传 3 + 查等锁 1）；Prisma 默认连接数 = CPU 数 × 2 + 1，2 核以上都够
       const { results: rs, waiting, files } = await withOrderLockHeld(
         id, null, () => Promise.all([upload(STAFF, id), upload(STAFF, id), upload(ADMIN, id)]), 3,
       );
@@ -254,6 +258,23 @@ async function main(): Promise<void> {
       assert.ok(rs.filter((r) => r.status !== 200).every((r) => r.status === 400 && /image limit reached/.test(r.message)), JSON.stringify(rs.map((r) => [r.status, r.message])));
       assert.equal(await pm.orderProductImage.count({ where: { orderId: id } }), MAX_ORDER_PRODUCT_IMAGES);
       assert.equal(filesOf(id).length, 1, `磁盘上有 ${filesOf(id).length} 个文件（没进库的没删）`);
+    });
+
+    await check("Q10 记库出错以后怎么收尾：查得到按成功、明确没有删文件、查不了留文件；哪些错算「同事在处理」", async () => {
+      const { failedUploadOutcome, isOrderBusyError } = await import("../apps/api/src/modules/orders/product-images");
+      const { Prisma } = await import("@prisma/client");
+      assert.equal(await failedUploadOutcome(true, async () => { throw new Error("不该查"); }), "business");
+      assert.equal(await failedUploadOutcome(false, async () => true), "saved");
+      assert.equal(await failedUploadOutcome(false, async () => false), "absent");
+      assert.equal(await failedUploadOutcome(false, async () => { throw new Error("连接断了"); }), "unknown", "查不了也当成没有，会把已经存上的照片文件删掉（裂图）");
+      const known = (code: string, meta?: Record<string, unknown>) => new Prisma.PrismaClientKnownRequestError("x", { code, clientVersion: "test", meta });
+      for (const e of [known("P2028"), known("P2024"), known("P2034"), known("P2010", { code: "40P01" }), known("P2010", { code: "40001" }),
+        new Prisma.PrismaClientUnknownRequestError("ERROR: deadlock detected", { clientVersion: "test" })]) {
+        assert.equal(isOrderBusyError(e), true, `${(e as any).code ?? e.message} 应算同事在处理`);
+      }
+      for (const e of [known("P2002"), known("P2003"), new Error("deadlock detected"), new BusinessError("x", 400, "BAD_REQUEST"), null]) {
+        assert.equal(isOrderBusyError(e), false, `${(e as any)?.code ?? (e as any)?.message} 不该算同事在处理`);
+      }
     });
   } finally {
     await cleanup();

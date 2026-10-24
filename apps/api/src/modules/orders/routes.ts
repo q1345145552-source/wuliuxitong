@@ -36,7 +36,7 @@ import type { MinimalHttpApp } from "../../server";
 // parseJsonArray 不再用了：/staff/prealerts 的仓库过滤已删（2026-08-31，排查报告第 7 条）；
 // 全仓库引用归零后，http-utils 里的函数本体也已删除（2026-08-31 复查第 16 条收尾）
 import { fail, ok, requireRole } from "../core/http-utils";
-import { CLIENT_PHOTO_LOCKED_MESSAGE, clientMayAddOrderPhoto, loadProductImagesForOrders, MAX_ORDER_PRODUCT_IMAGES } from "./product-images";
+import { CLIENT_PHOTO_LOCKED_MESSAGE, clientMayAddOrderPhoto, failedUploadOutcome, isOrderBusyError, loadProductImagesForOrders, MAX_ORDER_PRODUCT_IMAGES } from "./product-images";
 import { saveImageToDisk, deleteImageFile } from "./image-storage";
 import { sanitizeRemarkForClient } from "../core/client-privacy";
 import { companyContainerNosForMasking } from "../core/container-nos";
@@ -101,14 +101,6 @@ function classifyClientStatusGroup(
  * 这张订单的运单是不是「待入库」（2026-10-06 到货通知）。产品图上传 / 删除用：待入库的单底稿在到货通知。
  * 只会从「待入库」变走（到货通知转正式），不会有别的路把运单变成待入库，所以事务外查一次就够。
  */
-/** 事务等锁超时 / 撞上死锁：同一张单正好有同事在处理（上传订单照片那条用，2026-10-24 dsh） */
-function isOrderBusyError(e: unknown): boolean {
-  if (!(e instanceof Prisma.PrismaClientKnownRequestError)) return false;
-  if (e.code === "P2028" || e.code === "P2034") return true;
-  const pg = String((e.meta as { code?: unknown } | undefined)?.code ?? "");
-  return pg === "40P01" || pg === "40001";
-}
-
 async function isPendingInboundOrder(companyId: string, orderId: string): Promise<boolean> {
   const hit = await prisma.shipment.findFirst({
     where: { companyId, orderId, currentStatus: PENDING_INBOUND },
@@ -1698,6 +1690,8 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
   app.post("/staff/orders/product-images", async (req, res) => {
     const auth = requireRole(req, res, ["staff", "admin", "client"]);
     if (!auth) return;
+    // 客户「1 小时内」按请求进来的时间算：59:59 发来、在锁上等了几秒的，不算超时（dsh 第 3 轮）
+    const requestedAtMs = Date.now();
     const body = (req.body ?? {}) as {
       orderId?: string;
       fileName?: string;
@@ -1759,7 +1753,7 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
        只留下预报单那一下附照片：客户页面是先建预报单、拿到单号马上一张张传（client/page.tsx 提交预报单那段）。
        所以客户只能往「自己刚报、仓库还没收货、建好不到 1 小时」的单上传 —— 规则见 clientMayAddOrderPhoto。
        这里只是先给个提示、省得写磁盘；说了算的是下面事务里锁住订单后重读的那一遍 */
-    if (auth.role === "client" && !clientMayAddOrderPhoto(order, Date.now())) {
+    if (auth.role === "client" && !clientMayAddOrderPhoto(order, requestedAtMs)) {
       fail(res, 403, "FORBIDDEN", CLIENT_PHOTO_LOCKED_MESSAGE);
       return;
     }
@@ -1808,7 +1802,7 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
           select: { id: true },
         });
         if (pendingInbound) throw new BusinessError(PENDING_INBOUND_EDIT_ELSEWHERE_MESSAGE, 400, "BAD_REQUEST");
-        if (auth.role === "client" && (fresh.clientId !== auth.userId || !clientMayAddOrderPhoto(fresh, Date.now()))) {
+        if (auth.role === "client" && (fresh.clientId !== auth.userId || !clientMayAddOrderPhoto(fresh, requestedAtMs))) {
           throw new BusinessError(CLIENT_PHOTO_LOCKED_MESSAGE, 403, "FORBIDDEN");
         }
         const lockedCount = await tx.orderProductImage.count({ where: { companyId: auth.companyId, orderId } });
@@ -1828,7 +1822,7 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
             createdAt: now,
           },
         });
-      }, { timeout: 20_000, maxWait: 10_000 }); // 到货通知转单那条事务会拿着订单锁最多 30 秒，默认 5 秒等不到就白白报错
+      }, { timeout: 35_000, maxWait: 10_000 }); // 到货通知转单那条事务会拿着订单锁最多 30 秒，等得过它；默认 5 秒等不到就白白报错
     } catch (err) {
       // 没进库就删掉刚写的文件；删不掉只记日志，照旧回原来的原因（不然 403 / 400 会被盖成 500）
       const removeFile = () => {
@@ -1839,10 +1833,16 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
         fail(res, err.httpStatus, err.code, err.message);
         return;
       }
-      // 提交其实成功了、只是回话路上出错（连接断了）：库里已经有这一行，文件不能删，按成功回
-      const saved = await prisma.orderProductImage.findUnique({ where: { id: imageId }, select: { id: true } }).catch(() => null);
-      if (saved) {
+      // 不是业务原因：可能提交其实成功了、只是回话路上出错（连接断了）—— 回库里查这一行再决定（规则见 failedUploadOutcome）
+      const outcome = await failedUploadOutcome(false, async () =>
+        Boolean(await prisma.orderProductImage.findUnique({ where: { id: imageId }, select: { id: true } })));
+      if (outcome === "saved") {
         ok(res, { id: imageId, orderId, fileName, mime: mimeType, filePath, createdAt: now.toISOString() });
+        return;
+      }
+      if (outcome === "unknown") {
+        console.error("[product-image] save outcome unknown, file kept:", err);
+        fail(res, 500, "INTERNAL_ERROR", "这张照片存没存上暂时确认不了，请刷新页面看一下，没有的话再传一次");
         return;
       }
       removeFile();
