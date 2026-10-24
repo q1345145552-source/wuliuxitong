@@ -36,7 +36,7 @@ import type { MinimalHttpApp } from "../../server";
 // parseJsonArray 不再用了：/staff/prealerts 的仓库过滤已删（2026-08-31，排查报告第 7 条）；
 // 全仓库引用归零后，http-utils 里的函数本体也已删除（2026-08-31 复查第 16 条收尾）
 import { fail, ok, requireRole } from "../core/http-utils";
-import { CLIENT_PHOTO_LOCKED_MESSAGE, CLIENT_PREALERT_PHOTO_WINDOW_MS, loadProductImagesForOrders, MAX_ORDER_PRODUCT_IMAGES } from "./product-images";
+import { CLIENT_PHOTO_LOCKED_MESSAGE, clientMayAddOrderPhoto, loadProductImagesForOrders, MAX_ORDER_PRODUCT_IMAGES } from "./product-images";
 import { saveImageToDisk, deleteImageFile } from "./image-storage";
 import { sanitizeRemarkForClient } from "../core/client-privacy";
 import { companyContainerNosForMasking } from "../core/container-nos";
@@ -1749,9 +1749,9 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
     }
     /* 客户不能改订单照片（2026-10-24 老板：「不要给客户任何编辑的权限」「订单照片的权限改了」；安全审查 NEW-04）。
        只留下预报单那一下附照片：客户页面是先建预报单、拿到单号马上一张张传（client/page.tsx 提交预报单那段）。
-       所以客户只能往「自己刚报、仓库还没收货、建好不到 30 分钟」的单上传 —— approvalStatus=shipped 只有客户报预报单会写出来，
-       员工建的单 / 到货通知转的单是 approved、仓库收了货是 received。其余一律不行，要补照片找客服（员工、超管照旧能传能删） */
-    if (auth.role === "client" && !(order.approvalStatus === "shipped" && Date.now() - order.createdAt.getTime() <= CLIENT_PREALERT_PHOTO_WINDOW_MS)) {
+       所以客户只能往「自己刚报、仓库还没收货、建好不到 1 小时」的单上传 —— 规则见 clientMayAddOrderPhoto。
+       这里只是先给个提示、省得写磁盘；说了算的是下面事务里锁住订单后重读的那一遍 */
+    if (auth.role === "client" && !clientMayAddOrderPhoto(order, Date.now())) {
       fail(res, 403, "FORBIDDEN", CLIENT_PHOTO_LOCKED_MESSAGE);
       return;
     }
@@ -1774,28 +1774,64 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
     }
     const now = new Date();
     const imageId = `opi_${Date.now()}_${crypto.randomBytes(4).toString("hex")}`;
-    // 保存文件到磁盘
+    // 保存文件到磁盘（先写文件、再在事务里记库；记库没成就把文件删掉，不留孤儿文件）
+    let filePath: string;
     try {
-      const filePath = saveImageToDisk(orderId, mimeType, contentBase64);
-      await prisma.orderProductImage.create({
-        data: {
-          id: imageId,
-          companyId: auth.companyId,
-          orderId,
-          fileName,
-          mime: mimeType,
-          contentBase64,
-          filePath,
-          uploadedBy: auth.userId,
-          createdAt: now,
-        },
-      });
-      ok(res, { id: imageId, orderId, fileName, mime: mimeType, filePath, createdAt: now.toISOString() });
+      filePath = saveImageToDisk(orderId, mimeType, contentBase64);
     } catch (err) {
       console.error("[product-image] save failed:", err);
       // 原因（磁盘路径、系统报错原文）只记日志，不给页面（2026-09-29 Codex 全系统检查）
       fail(res, 500, "INTERNAL_ERROR", "图片没存上（服务器出错），请稍后再传一次；反复出现请联系技术");
+      return;
     }
+    try {
+      /* 锁住订单再重读、再判断、再记库（2026-10-24 Codex / dsh：原来「能不能传」「满没满」都在锁外判，
+         客户上传那一刻仓库正好确认收货、或同一张单同时传好几张，都能穿过去 —— CLAUDE.md 第 28 条）。
+         锁法跟「确认收货」「到货通知转单」一样用 FOR NO KEY UPDATE，不挡装柜那边的 FOR KEY SHARE */
+      await prisma.$transaction(async (tx) => {
+        await tx.$queryRaw`SELECT id FROM orders WHERE id = ${orderId} AND company_id = ${auth.companyId} FOR NO KEY UPDATE`;
+        const fresh = await tx.order.findFirst({
+          where: { id: orderId, companyId: auth.companyId },
+          select: { approvalStatus: true, createdAt: true, clientId: true },
+        });
+        if (!fresh) throw new BusinessError("order not found", 404, "NOT_FOUND");
+        const pendingInbound = await tx.shipment.findFirst({
+          where: { companyId: auth.companyId, orderId, currentStatus: PENDING_INBOUND },
+          select: { id: true },
+        });
+        if (pendingInbound) throw new BusinessError(PENDING_INBOUND_EDIT_ELSEWHERE_MESSAGE, 400, "BAD_REQUEST");
+        if (auth.role === "client" && (fresh.clientId !== auth.userId || !clientMayAddOrderPhoto(fresh, Date.now()))) {
+          throw new BusinessError(CLIENT_PHOTO_LOCKED_MESSAGE, 403, "FORBIDDEN");
+        }
+        const lockedCount = await tx.orderProductImage.count({ where: { companyId: auth.companyId, orderId } });
+        if (lockedCount >= MAX_ORDER_PRODUCT_IMAGES) {
+          throw new BusinessError(`image limit reached (max ${MAX_ORDER_PRODUCT_IMAGES})`, 400, "BAD_REQUEST");
+        }
+        await tx.orderProductImage.create({
+          data: {
+            id: imageId,
+            companyId: auth.companyId,
+            orderId,
+            fileName,
+            mime: mimeType,
+            contentBase64,
+            filePath,
+            uploadedBy: auth.userId,
+            createdAt: now,
+          },
+        });
+      });
+    } catch (err) {
+      deleteImageFile(filePath);
+      if (err instanceof BusinessError) {
+        fail(res, err.httpStatus, err.code, err.message);
+        return;
+      }
+      console.error("[product-image] save failed:", err);
+      fail(res, 500, "INTERNAL_ERROR", "图片没存上（服务器出错），请稍后再传一次；反复出现请联系技术");
+      return;
+    }
+    ok(res, { id: imageId, orderId, fileName, mime: mimeType, filePath, createdAt: now.toISOString() });
   });
 
   app.delete("/staff/orders/product-images", async (req, res) => {
@@ -1810,7 +1846,7 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
     const image = await prisma.orderProductImage.findFirst({
       where: { id, companyId: auth.companyId },
       include: {
-        order: { select: { warehouseId: true, approvalStatus: true, clientId: true } },
+        order: { select: { warehouseId: true } },
       },
     });
     if (!image || !image.order) {

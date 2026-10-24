@@ -5,12 +5,14 @@
  *       连仓库员工传的入库照也能删（客户页面上没有删除按钮，是直接调接口）。
  * 现在：
  *   Q1 客户页面真流程：报预报单 → 马上传照片，照常成功（这是「下单那一下附照片」，不算改）
- *   Q2 预报单建好 30 分钟以后再传：挡住（29 分钟还行）
+ *   Q2 预报单建好 1 小时以后再传：挡住（59 分钟还行）
  *   Q3 仓库收了货的单：刚建也不许传
  *   Q4 员工建的单（不是客户自己报的）：不许传
  *   Q5 别的客户的单：照旧挡
  *   Q6 客户删照片：自己传的、员工传的都删不了，记录和文件都还在
  *   Q7 员工、超管照旧能传能删
+ *   Q8 客户上传那一刻仓库正在确认收货：等收货提交后按「已收货」判，挡住，不留文件（锁后重读）
+ *   Q9 同一张单同时传好几张、只差一张就到上限：只进一张，没进的文件也删干净
  *
  * 只连一次性库：DATABASE_URL 不是 Neon 时要 AGENT_PORTAL_TEST_ALLOW_DB=1。测试数据前缀 zz_cpl_，跑完清到 0。
  */
@@ -111,13 +113,13 @@ async function main(): Promise<void> {
       assert.ok(imgs.every((x: Row) => x.uploadedBy === C1.userId));
     });
 
-    await check("Q2 建好 29 分钟还能传；30 分钟以后再传：挡住、提示找客服、一张都不多", async () => {
+    await check("Q2 建好 59 分钟还能传；1 小时以后再传：挡住、提示找客服、一张都不多", async () => {
       const id = await prealert();
-      await ageOrder(id, 29);
-      assert.equal((await upload(C1, id)).status, 200, "29 分钟就挡了，下单时传慢一点的会被误挡");
-      await ageOrder(id, 31);
+      await ageOrder(id, 59);
+      assert.equal((await upload(C1, id)).status, 200, "59 分钟就挡了，下单时网慢、照片多的会被误挡");
+      await ageOrder(id, 61);
       const r = await upload(C1, id);
-      assert.equal(r.status, 403, `过了 30 分钟还能传（${r.status}）`);
+      assert.equal(r.status, 403, `过了 1 小时还能传（${r.status}）`);
       assert.equal(r.message, CLIENT_PHOTO_LOCKED_MESSAGE);
       assert.equal((await images(id)).length, 1);
     });
@@ -134,8 +136,11 @@ async function main(): Promise<void> {
     await check("Q4 员工建给客户的单（不是客户自己报的）：客户不许传", async () => {
       const r0 = await call("POST /staff/orders", STAFF, { clientId: C1.userId, trackingNo: "ZZCPLSTAFF1", warehouseId: "wh_yiwu_01", itemName: "鞋", packageCount: 2, transportMode: "sea", arrivedAt: "2026-10-20" });
       assert.equal(r0.status, 200, r0.message);
-      const order = await pm.order.findFirst({ where: { companyId: CO, clientId: C1.userId, approvalStatus: { not: "shipped" } }, orderBy: { createdAt: "desc" } });
+      // 直接用员工建出来的那一张（Codex 10-24：原来按「不是 shipped 的最新一张」去找，会捡到 Q3 那张已收货的，假绿）
+      const order = await pm.order.findUnique({ where: { id: r0.data.orderId } });
       assert.ok(order, "员工建的单没找到");
+      assert.equal(order.clientId, C1.userId);
+      assert.equal(order.approvalStatus, "approved", `员工建的单状态是 ${order.approvalStatus}，规则要跟着改`);
       const r = await upload(C1, order.id);
       assert.equal(r.status, 403, `员工建的单客户还能传（${r.status}）`);
       assert.equal((await images(order.id)).length, 0);
@@ -162,7 +167,7 @@ async function main(): Promise<void> {
       assert.equal((await images(id)).length, 2);
     });
 
-    await check("Q7 员工、超管照旧：收了货、过了 30 分钟的单也能传能删（删了文件也删）", async () => {
+    await check("Q7 员工、超管照旧：收了货、过了 1 小时的单也能传能删（删了文件也删）", async () => {
       const id = await prealert();
       await pm.order.update({ where: { id }, data: { approvalStatus: "received", createdAt: new Date(Date.now() - 120 * MIN) } });
       for (const who of [STAFF, ADMIN]) {
@@ -177,6 +182,58 @@ async function main(): Promise<void> {
         assert.ok(!fs.existsSync(path.join(imagesDir, path.basename(imgs[i].filePath))), "员工删了照片，文件还在");
       }
       assert.equal((await images(id)).length, 0);
+    });
+
+    /** 磁盘上属于这张单的照片文件（文件名以订单号开头），用来核「没进库的文件删干净了」 */
+    const filesOf = (orderId: string) => fs.readdirSync(imagesDir).filter((f) => f.startsWith(`${orderId.replace(/[^a-zA-Z0-9_-]/g, "_")}_`));
+
+    await check("Q8 客户上传那一刻仓库正在确认收货：等收货提交后按「已收货」判，挡住，不留文件", async () => {
+      const id = await prealert();
+      let release!: () => void;
+      const gate = new Promise<void>((r) => { release = r; });
+      let locked!: () => void;
+      const lockedNow = new Promise<void>((r) => { locked = r; });
+      // 模拟「确认收货」那一边：锁订单（跟它同一种锁）→ 改成已收货 → 先不提交
+      const holder = pm.$transaction(async (tx: any) => {
+        await tx.$queryRaw`SELECT id FROM orders WHERE id = ${id} FOR NO KEY UPDATE`;
+        await tx.order.update({ where: { id }, data: { approvalStatus: "received" } });
+        locked();
+        await gate;
+      }, { timeout: 30_000, maxWait: 10_000 });
+      await lockedNow;
+      const pending = upload(C1, id);
+      let waiting = 0;
+      try {
+        for (let i = 0; i < 40 && !waiting; i += 1) {
+          const rows: Array<{ n: number }> = await pm.$queryRaw`SELECT count(*)::int AS n FROM pg_stat_activity
+            WHERE pid <> pg_backend_pid() AND wait_event_type = 'Lock' AND query ILIKE '%FROM orders%FOR NO KEY UPDATE%'`;
+          waiting = rows[0]?.n ?? 0;
+          if (!waiting) await new Promise((r) => setTimeout(r, 50));
+        }
+      } finally {
+        release();
+        await holder;
+      }
+      const r = await pending;
+      assert.equal(waiting, 1, "上传没卡在订单锁上，这一项没测到并发");
+      assert.equal(r.status, 403, `收货提交后还是传进去了（${r.status}）：${r.message}`);
+      assert.equal(r.message, CLIENT_PHOTO_LOCKED_MESSAGE);
+      assert.equal((await images(id)).length, 0);
+      assert.deepEqual(filesOf(id), [], "挡住了但文件留在磁盘上");
+    });
+
+    await check("Q9 同一张单同时传 3 张、只差 1 张到上限：只进 1 张，没进的文件也删干净", async () => {
+      const { MAX_ORDER_PRODUCT_IMAGES } = await import("../apps/api/src/modules/orders/product-images");
+      const id = await prealert();
+      await pm.orderProductImage.createMany({ data: Array.from({ length: MAX_ORDER_PRODUCT_IMAGES - 1 }, (_, i) => ({
+        id: `zz_cpl_fill_${i}`, companyId: CO, orderId: id, fileName: `fill${i}.png`, mime: "image/png", contentBase64: "x", uploadedBy: STAFF.userId,
+      })) });
+      const rs = await Promise.all([upload(STAFF, id), upload(STAFF, id), upload(ADMIN, id)]);
+      const okCount = rs.filter((r) => r.status === 200).length;
+      assert.equal(okCount, 1, `进了 ${okCount} 张：${JSON.stringify(rs.map((r) => [r.status, r.message]))}`);
+      assert.ok(rs.filter((r) => r.status !== 200).every((r) => r.status === 400 && /image limit reached/.test(r.message)), JSON.stringify(rs.map((r) => [r.status, r.message])));
+      assert.equal(await pm.orderProductImage.count({ where: { orderId: id } }), MAX_ORDER_PRODUCT_IMAGES);
+      assert.equal(filesOf(id).length, 1, `磁盘上有 ${filesOf(id).length} 个文件（没进库的没删）`);
     });
   } finally {
     await cleanup();
