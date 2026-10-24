@@ -7,8 +7,9 @@ process.env.DATABASE_URL = "postgresql://blocked:blocked@127.0.0.1:1/never?conne
  * 订单照片上传的规则（2026-10-24 老板「不要给客户任何编辑的权限」；规则在 apps/api/src/modules/orders/product-images.ts）：
  *   R1 客户什么时候还能传：自己报的预报单（shipped）、建好 1 小时内（含边界）
  *   R2 哪些数据库错误算「同事在处理」
- *   R3 哪些失败能肯定「没存上」
- *   R4 记库失败以后文件留不留、回什么话（每种情况）；客户的话不说「再传一次」
+ *   R3 记库失败以后文件留不留、回什么话 —— 按「出错时那一行插进去没有」分（没插：肯定没存上；插了：卡在提交那一下，拿不准）
+ *   R4 同上，拿不准时回查的三种结果
+ *   R5 客户的话不说「再传一次」
  * 整条接口（锁、并发、真文件）在 test-client-photo-lock-db.ts 里测。
  */
 import assert from "node:assert/strict";
@@ -19,7 +20,7 @@ import {
   clientMayAddOrderPhoto,
   failedUploadAction,
   isOrderBusyError,
-  surelyNotSaved,
+  saveFailedMessage,
 } from "../apps/api/src/modules/orders/product-images";
 
 const failures: string[] = [];
@@ -54,7 +55,8 @@ async function main(): Promise<void> {
 
   await check("R2 等锁 / 等连接超时、死锁、串行化失败算「同事在处理」；唯一冲突、外键、普通报错不算", () => {
     for (const e of [known("P2028"), known("P2024"), known("P2034"), known("P2010", { code: "40P01" }), known("P2010", { code: "40001" }),
-      unknown("ERROR: deadlock detected"), unknown("ERROR: could not serialize access due to concurrent update")]) {
+      unknown("ERROR: deadlock detected"), unknown("ERROR: could not serialize access due to concurrent update"),
+      unknown('QueryError(PostgresError { code: "40P01", message: "...", severity: "ERROR" })')]) {
       assert.equal(isOrderBusyError(e), true, `${(e as any).code ?? e.message} 应算同事在处理`);
     }
     // 原文里碰巧有 40001 这串数字（比如唯一键的值）不算（dsh 第 4 轮）
@@ -64,60 +66,60 @@ async function main(): Promise<void> {
     }
   });
 
-  await check("R3 能肯定没存上：业务原因、执行某一句就报错的；拿不准：连接类（P1xxx）、认不出的错", () => {
-    for (const e of [new BusinessError("x", 403, "FORBIDDEN"), known("P2002"), known("P2003"), known("P2024"), known("P2028"), unknown("ERROR: deadlock detected")]) {
-      assert.equal(surelyNotSaved(e), true, `${(e as any).code ?? (e as any).message} 应能肯定没存上`);
+  await check("R3 还没插进去就出错：提交根本没发出去，肯定没存上 —— 删文件、不回查；同事在处理 409、业务原因照原因回、其余 500", async () => {
+    let lookups = 0;
+    const found = async () => { lookups += 1; return true; };
+    let a = await failedUploadAction(new BusinessError("预报单提交以后，照片就不能再加了；要补照片请联系客服", 403, "FORBIDDEN"), "client", false, found);
+    assert.deepEqual(a, { keepFile: false, respond: { kind: "fail", status: 403, code: "FORBIDDEN", message: "预报单提交以后，照片就不能再加了；要补照片请联系客服" } });
+    // 等连接 / 等锁 / 开不了事务超时、死锁：409（Codex / dsh 第 4 轮：原来先回查，连接池满时回查也失败、409 到不了）
+    for (const e of [known("P2024"), known("P2028"), known("P2034"), unknown("ERROR: deadlock detected")]) {
+      a = await failedUploadAction(e, "staff", false, found);
+      assert.equal(a.keepFile, false, `${(e as any).code ?? e.message} 留了文件`);
+      assert.equal(a.respond.kind === "fail" && a.respond.status, 409, `${(e as any).code ?? e.message} 没回 409`);
     }
-    for (const e of [known("P1001"), known("P1017"), unknown("Server has closed the connection"), new Error("socket hang up"), null]) {
-      assert.equal(surelyNotSaved(e), false, `${(e as any)?.code ?? (e as any)?.message ?? e} 不该肯定没存上`);
+    // 连接断了、认不出的错：没插进去也是肯定没存上
+    for (const e of [known("P2002"), known("P1017"), unknown("Server has closed the connection"), new Error("socket hang up")]) {
+      a = await failedUploadAction(e, "staff", false, found);
+      assert.equal(a.keepFile, false, `${(e as any).code ?? e.message} 留了文件`);
+      assert.equal(a.respond.kind === "fail" && a.respond.status, 500);
     }
+    assert.equal(lookups, 0, "还没插进去就出错的还去回查了");
   });
 
-  await check("R4 记库失败以后：肯定没存上就删文件；拿不准就回查——查得到按成功、查不到或查不了都留文件回「确认不了」", async () => {
+  await check("R4 已经插进去再出错（卡在提交那一下，含 P2028 提交超时）：回查 —— 查得到按成功、查不到或查不了都留文件回「确认不了」", async () => {
     let lookups = 0;
     const found = async () => { lookups += 1; return true; };
     const absent = async () => { lookups += 1; return false; };
     const broken = async (): Promise<boolean> => { lookups += 1; throw new Error("连接池满了"); };
-
-    // 业务原因：删文件、照原因回、不用回查
-    let a = await failedUploadAction(new BusinessError("预报单提交以后，照片就不能再加了；要补照片请联系客服", 403, "FORBIDDEN"), "client", found);
-    assert.deepEqual(a, { keepFile: false, respond: { kind: "fail", status: 403, code: "FORBIDDEN", message: "预报单提交以后，照片就不能再加了；要补照片请联系客服" } });
-    // 等连接超时 / 等锁超时 / 死锁：删文件、409、不用回查（Codex / dsh 第 4 轮：原来先回查，连接池满时回查也失败，409 永远到不了）
-    for (const e of [known("P2024"), known("P2028"), known("P2034")]) {
-      a = await failedUploadAction(e, "staff", broken);
-      assert.equal(a.keepFile, false, `${(e as any).code} 留了文件`);
-      assert.equal(a.respond.kind === "fail" && a.respond.status, 409, `${(e as any).code} 没回 409`);
+    // Codex / dsh 第 5 轮：Prisma 5.22 把提交也算在事务期限里，提交时超时报 P2028，库里可能已经存上了 —— 不能删文件
+    for (const e of [known("P2028"), known("P1017"), unknown("Server has closed the connection"), known("P2034")]) {
+      let a = await failedUploadAction(e, "staff", true, found);
+      assert.deepEqual(a, { keepFile: true, respond: { kind: "ok" } }, `${(e as any).code ?? e.message}：其实存上了，应按成功回、留文件`);
+      a = await failedUploadAction(e, "staff", true, absent);
+      assert.equal(a.keepFile, true, `${(e as any).code ?? e.message}：查不到也删了文件（提交可能还没看得见，删了就是裂图）`);
+      assert.match(a.respond.kind === "fail" ? a.respond.message : "", /确认不了/);
+      a = await failedUploadAction(e, "staff", true, broken);
+      assert.equal(a.keepFile, true, `${(e as any).code ?? e.message}：查不了也删了文件`);
+      assert.match(a.respond.kind === "fail" ? a.respond.message : "", /确认不了/);
     }
-    // 唯一冲突之类：删文件、500
-    a = await failedUploadAction(known("P2002"), "staff", found);
-    assert.equal(a.keepFile, false);
-    assert.equal(a.respond.kind === "fail" && a.respond.status, 500);
-    assert.equal(lookups, 0, "肯定没存上的还去回查了");
-
-    // 拿不准（连接断了）：回查
-    a = await failedUploadAction(known("P1017"), "staff", found);
-    assert.deepEqual(a, { keepFile: true, respond: { kind: "ok" } }, "提交其实成功了，应按成功回、留文件");
-    a = await failedUploadAction(known("P1017"), "staff", absent);
-    assert.equal(a.keepFile, true, "拿不准、查不到也删了文件（提交可能还没看得见，删了就是裂图）");
-    assert.match(a.respond.kind === "fail" ? a.respond.message : "", /确认不了/);
-    a = await failedUploadAction(unknown("Server has closed the connection"), "staff", broken);
-    assert.equal(a.keepFile, true, "连查都查不了还删了文件");
-    assert.match(a.respond.kind === "fail" ? a.respond.message : "", /确认不了/);
-    assert.equal(lookups, 3);
+    assert.equal(lookups, 12);
   });
 
   await check("R5 客户看到的话不说「再传一次」（客户页面没有重传入口，页面会自己接一句「联系客服补上」）；员工的照旧说", async () => {
-    const cases: Array<[unknown, () => Promise<boolean>]> = [
-      [known("P2024"), async () => false], [known("P2002"), async () => false], [known("P1017"), async () => false],
-      [known("P1017"), async () => { throw new Error("x"); }],
+    const cases: Array<[unknown, boolean, () => Promise<boolean>]> = [
+      [known("P2024"), false, async () => false], [known("P2002"), false, async () => false],
+      [known("P2028"), true, async () => false], [known("P1017"), true, async () => { throw new Error("x"); }],
     ];
-    for (const [e, lookup] of cases) {
-      const c = await failedUploadAction(e, "client", lookup);
-      const s = await failedUploadAction(e, "staff", lookup);
+    for (const [e, inserted, lookup] of cases) {
+      const c = await failedUploadAction(e, "client", inserted, lookup);
+      const st = await failedUploadAction(e, "staff", inserted, lookup);
       assert.ok(c.respond.kind === "fail" && !/再传/.test(c.respond.message), `客户看到：${c.respond.kind === "fail" ? c.respond.message : "ok"}`);
-      assert.ok(s.respond.kind === "fail" && /再传/.test(s.respond.message), `员工看到：${s.respond.kind === "fail" ? s.respond.message : "ok"}`);
-      assert.equal(c.keepFile, s.keepFile, "客户和员工留不留文件不该不一样");
+      assert.ok(st.respond.kind === "fail" && /再传/.test(st.respond.message), `员工看到：${st.respond.kind === "fail" ? st.respond.message : "ok"}`);
+      assert.equal(c.keepFile, st.keepFile, "客户和员工留不留文件不该不一样");
     }
+    // 写磁盘失败那条也一样（Codex 第 5 轮）
+    assert.ok(!/再传/.test(saveFailedMessage("client")));
+    assert.ok(/再传/.test(saveFailedMessage("staff")) && /再传/.test(saveFailedMessage("admin")));
   });
 
   if (failures.length > 0) {

@@ -36,7 +36,7 @@ import type { MinimalHttpApp } from "../../server";
 // parseJsonArray 不再用了：/staff/prealerts 的仓库过滤已删（2026-08-31，排查报告第 7 条）；
 // 全仓库引用归零后，http-utils 里的函数本体也已删除（2026-08-31 复查第 16 条收尾）
 import { fail, ok, requireRole } from "../core/http-utils";
-import { CLIENT_PHOTO_LOCKED_MESSAGE, clientMayAddOrderPhoto, failedUploadAction, loadProductImagesForOrders, MAX_ORDER_PRODUCT_IMAGES } from "./product-images";
+import { CLIENT_PHOTO_LOCKED_MESSAGE, clientMayAddOrderPhoto, failedUploadAction, loadProductImagesForOrders, MAX_ORDER_PRODUCT_IMAGES, saveFailedMessage } from "./product-images";
 import { saveImageToDisk, deleteImageFile } from "./image-storage";
 import { sanitizeRemarkForClient } from "../core/client-privacy";
 import { companyContainerNosForMasking } from "../core/container-nos";
@@ -1783,9 +1783,11 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
     } catch (err) {
       console.error("[product-image] save failed:", err);
       // 原因（磁盘路径、系统报错原文）只记日志，不给页面（2026-09-29 Codex 全系统检查）
-      fail(res, 500, "INTERNAL_ERROR", "图片没存上（服务器出错），请稍后再传一次；反复出现请联系技术");
+      fail(res, 500, "INTERNAL_ERROR", saveFailedMessage(auth.role));
       return;
     }
+    // 出错时这一行插进去没有：没插进去，提交根本不会发出去，肯定没存上；插进去以后再出错，就是卡在提交那一下，拿不准（见 failedUploadAction）
+    let inserted = false;
     try {
       /* 锁住订单再重读、再判断、再记库（2026-10-24 Codex / dsh：原来「能不能传」「满没满」都在锁外判，
          客户上传那一刻仓库正好确认收货、或同一张单同时传好几张，都能穿过去 —— CLAUDE.md 第 28 条）。
@@ -1809,7 +1811,7 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
         if (lockedCount >= MAX_ORDER_PRODUCT_IMAGES) {
           throw new BusinessError(`image limit reached (max ${MAX_ORDER_PRODUCT_IMAGES})`, 400, "BAD_REQUEST");
         }
-        return tx.orderProductImage.create({
+        const created = await tx.orderProductImage.create({
           data: {
             id: imageId,
             companyId: auth.companyId,
@@ -1823,10 +1825,12 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
           },
           select: { id: true },
         });
+        inserted = true;
+        return created;
       }, { timeout: 35_000, maxWait: 10_000 }); // 到货通知转单那条事务会拿着订单锁最多 30 秒，等得过它；默认 5 秒等不到就白白报错
     } catch (err) {
       // 文件留不留、回什么话：规则见 failedUploadAction（回库里查时连公司、订单、文件路径一起核，Codex 第 4 轮）
-      const action = await failedUploadAction(err, auth.role, async () => Boolean(await prisma.orderProductImage.findFirst({
+      const action = await failedUploadAction(err, auth.role, inserted, async () => Boolean(await prisma.orderProductImage.findFirst({
         where: { id: imageId, companyId: auth.companyId, orderId, filePath },
         select: { id: true },
       })));

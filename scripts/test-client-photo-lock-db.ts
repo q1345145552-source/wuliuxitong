@@ -13,7 +13,9 @@
  *   Q7 员工、超管照旧能传能删
  *   Q8 客户上传那一刻仓库正在确认收货：等收货提交后按「已收货」判，挡住，不留文件（锁后重读）
  *   Q9 同一张单同时传好几张、只差一张就到上限：只进一张，没进的文件也删干净
- *   Q11 1 小时按请求进来的时间算：59 分 58 秒时发来、在订单锁上等了几秒，照样能传
+ *   Q11 1 小时按请求进来的时间算：59 分 55 秒时发来、在订单锁上等了几秒，照样能传
+ *   Q12 记库那一步出错以后接口真的怎么收尾（把事务换成会出错的版本）：存上了但提交报错 → 按成功、留文件；
+ *       插进去了没提交 → 留文件、回「确认不了」；开不了事务 → 删文件、回 409
  * 收尾规则（文件留不留、回什么话、哪些错算同事在处理）是纯逻辑，在 test-order-photo-rules.ts 里测（不连库）。
  *
  * 只连一次性库：DATABASE_URL 不是 Neon 时要 AGENT_PORTAL_TEST_ALLOW_DB=1。测试数据前缀 zz_cpl_，跑完清到 0。
@@ -264,13 +266,57 @@ async function main(): Promise<void> {
       assert.equal(filesOf(id).length, 1, `磁盘上有 ${filesOf(id).length} 个文件（没进库的没删）`);
     });
 
-    await check("Q11 1 小时按请求进来的时间算：59 分 58 秒时发来、在订单锁上等了 3 秒，照样能传", async () => {
+    await check("Q11 1 小时按请求进来的时间算：59 分 55 秒时发来、在订单锁上等了 8 秒，照样能传", async () => {
       const id = await prealert();
-      await pm.order.update({ where: { id }, data: { createdAt: new Date(Date.now() - 60 * MIN + 2_000) } });
-      const { results, waiting, files } = await withOrderLockHeld(id, null, async () => [await upload(C1, id)], 1, 3_000);
+      // 锁到手以后再在锁里把建单时间改成 59 分 55 秒前（Codex / dsh 第 5 轮：先改时间再去拿锁，慢机器上会在拿到锁之前就超时，假红）
+      const { results, waiting, files } = await withOrderLockHeld(
+        id,
+        async (tx) => { await tx.order.update({ where: { id }, data: { createdAt: new Date(Date.now() - 60 * MIN + 5_000) } }); },
+        async () => [await upload(C1, id)],
+        1,
+        8_000,
+      );
       assert.ok(waiting >= 1 && files >= 1, `上传没卡在订单锁上（等锁 ${waiting}、文件 ${files}），这一项没测到`);
       assert.equal(results[0].status, 200, `请求进来时还在 1 小时内，等了一会儿锁就被挡了（${results[0].status}）：${results[0].message}`);
       assert.equal((await images(id)).length, 1);
+    });
+
+    await check("Q12 记库那一步出错以后接口真的怎么收尾：存上了但提交报错按成功；插进去没提交留文件回确认不了；开不了事务删文件回 409", async () => {
+      const { Prisma } = await import("@prisma/client");
+      const p2028 = () => new Prisma.PrismaClientKnownRequestError("Transaction API error", { code: "P2028", clientVersion: "test" });
+      const origTx = pm.$transaction;
+      const withTx = async (fake: (fn: any, opts: any) => Promise<any>, run: () => Promise<void>) => {
+        pm.$transaction = fake;
+        try { await run(); } finally { pm.$transaction = origTx; }
+      };
+      // ① 真提交了，回话时报 P2028（提交超时那一支）：其实存上了 —— 按成功回、文件留着
+      let id = await prealert();
+      await withTx(async (fn, opts) => { await origTx.call(pm, fn, opts); throw p2028(); }, async () => {
+        const r = await upload(C1, id);
+        assert.equal(r.status, 200, `其实存上了却报错（${r.status}）：${r.message}`);
+      });
+      let rows = await images(id);
+      assert.equal(rows.length, 1);
+      assert.ok(fs.existsSync(path.join(imagesDir, path.basename(rows[0].filePath))), "存上了的照片文件被删了（裂图）");
+      // ② 插进去了，但没提交成（回滚了）：拿不准 —— 留文件、回「确认不了」，库里没有
+      id = await prealert();
+      await withTx((fn, opts) => origTx.call(pm, async (tx: any) => { await fn(tx); throw p2028(); }, opts), async () => {
+        const r = await upload(C1, id);
+        assert.equal(r.status, 500, `${r.status}：${r.message}`);
+        assert.match(r.message, /确认不了/);
+        assert.doesNotMatch(r.message, /再传/, "客户看到了「再传一次」");
+      });
+      assert.equal((await images(id)).length, 0);
+      assert.equal(filesOf(id).length, 1, "拿不准的时候把文件删了（万一库里有就是裂图）");
+      // ③ 开不了事务（等连接 / 开事务超时）：还没插进去，肯定没存上 —— 删文件、回 409
+      id = await prealert();
+      await withTx(async () => { throw p2028(); }, async () => {
+        const r = await upload(STAFF, id);
+        assert.equal(r.status, 409, `${r.status}：${r.message}`);
+        assert.match(r.message, /同事在处理/);
+      });
+      assert.equal((await images(id)).length, 0);
+      assert.deepEqual(filesOf(id), [], "肯定没存上还留着文件");
     });
   } finally {
     await cleanup();

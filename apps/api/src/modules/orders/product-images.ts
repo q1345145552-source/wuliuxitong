@@ -3,6 +3,7 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "../../db/prisma";
 import { BusinessError } from "../core/business-error";
 import type { ErrorCode } from "../core/http-utils";
+import type { UserRole } from "../../../../../packages/shared-types/role";
 
 /** 单个订单最多保存的产品详情图数量。 */
 export const MAX_ORDER_PRODUCT_IMAGES = 999;
@@ -33,22 +34,11 @@ export function isOrderBusyError(e: unknown): boolean {
     if (e.code === "P2028" || e.code === "P2024" || e.code === "P2034") return true;
     const pg = String((e.meta as { code?: unknown } | undefined)?.code ?? "");
     if (pg === "40P01" || pg === "40001") return true;
+  } else if (!(e instanceof Prisma.PrismaClientUnknownRequestError)) {
+    return false;
   }
-  if (e instanceof Prisma.PrismaClientKnownRequestError || e instanceof Prisma.PrismaClientUnknownRequestError) {
-    return /deadlock detected|could not serialize access/.test(String(e.message ?? ""));
-  }
-  return false;
-}
-
-/**
- * 这次失败能不能肯定「没存上」：业务原因挡下的、数据库在执行某一句时就报了错（唯一冲突、外键、等连接 / 等锁超时、死锁……）都肯定整个回滚了。
- * 连接类错误（P1xxx：连不上、连接断了）和认不出的错误，可能卡在「提交」那一下，不能肯定（Codex / dsh 第 4 轮）
- */
-export function surelyNotSaved(e: unknown): boolean {
-  if (e instanceof BusinessError) return true;
-  if (isOrderBusyError(e)) return true;
-  if (e instanceof Prisma.PrismaClientKnownRequestError) return !e.code.startsWith("P1");
-  return false;
+  // 原话或引擎写的结构化代码（code: "40P01"），不认裸数字
+  return /deadlock detected|could not serialize access|code: "(?:40P01|40001)"/i.test(String(e.message ?? ""));
 }
 
 /** 上传记库失败以后：文件留不留、回什么话。客户的话不说「再传一次」（客户页面没有重传入口，页面自己会接一句「联系客服补上」） */
@@ -58,20 +48,27 @@ export type FailedUploadAction = {
 };
 const failWith = (status: number, code: ErrorCode, message: string): FailedUploadAction["respond"] => ({ kind: "fail", status, code, message });
 
+/** 照片没存上（服务器出错）的提示；写磁盘失败那条也用它（Codex 第 5 轮：原来那条对客户也说「再传一次」） */
+export function saveFailedMessage(role: UserRole): string {
+  return role === "client" ? "图片没存上（服务器出错）" : "图片没存上（服务器出错），请稍后再传一次；反复出现请联系技术";
+}
+
 /**
- * 上传订单照片：文件已经写到磁盘、记库那一步抛错以后怎么收尾（2026-10-24 Codex 第 3、4 轮 / dsh 第 4 轮）。
- *   肯定没存上（surelyNotSaved）：删文件；同事在处理回 409，业务原因照原因回，其余 500
- *   拿不准：回库里查这一行（lookupSaved）——查得到说明提交其实成功了，按成功回、文件留着；
+ * 上传订单照片：文件已经写到磁盘、记库那一步抛错以后怎么收尾（2026-10-24 Codex 第 3～5 轮 / dsh 第 4 轮）。
+ * 按「出错时那一行插进去没有」（insertedBeforeError，事务里 create 成功后才置 true）分，不按错误种类猜：
+ *   还没插进去：提交根本不会发出去，肯定没存上 —— 删文件；同事在处理回 409，业务原因照原因回，其余 500
+ *   已经插进去：错是在提交那一下出的（连接断了、P2028 提交超时……Prisma 5.22 把提交也算在事务期限里，Codex 第 5 轮），拿不准 ——
+ *           回库里查这一行（lookupSaved）：查得到说明其实存上了，按成功回、文件留着；
  *           查不到或连查都失败，文件也留着（可能提交还没看得见，删了就是裂图；宁可多一个没人用的文件），回「确认不了，请刷新看看」
  */
-export async function failedUploadAction(err: unknown, role: string, lookupSaved: () => Promise<boolean>): Promise<FailedUploadAction> {
+export async function failedUploadAction(err: unknown, role: UserRole, insertedBeforeError: boolean, lookupSaved: () => Promise<boolean>): Promise<FailedUploadAction> {
   const client = role === "client";
   if (err instanceof BusinessError) return { keepFile: false, respond: failWith(err.httpStatus, err.code, err.message) };
-  if (surelyNotSaved(err)) {
+  if (!insertedBeforeError) {
     if (isOrderBusyError(err)) {
       return { keepFile: false, respond: failWith(409, "VALIDATION_ERROR", client ? "这张单刚好有同事在处理，照片没存上" : "这张单刚好有同事在处理，照片没存上，请稍后再传一次") };
     }
-    return { keepFile: false, respond: failWith(500, "INTERNAL_ERROR", client ? "图片没存上（服务器出错）" : "图片没存上（服务器出错），请稍后再传一次；反复出现请联系技术") };
+    return { keepFile: false, respond: failWith(500, "INTERNAL_ERROR", saveFailedMessage(role)) };
   }
   const unsure = failWith(500, "INTERNAL_ERROR", client ? "这张照片存没存上暂时确认不了，请刷新页面看一下" : "这张照片存没存上暂时确认不了，请刷新页面看一下，没有的话再传一次");
   try {
