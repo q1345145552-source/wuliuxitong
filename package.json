@@ -122,7 +122,8 @@
     "test:migration-user-remark-db": "tsx scripts/test-migration-user-remark-db.ts",
     "test:token-canonical": "tsx scripts/test-token-canonical.ts",
     "test:logout-variants-db": "tsx scripts/test-logout-variants-db.ts",
-    "test:sign-photo-db": "TZ=UTC tsx scripts/test-sign-photo-db.ts"
+    "test:sign-photo-db": "TZ=UTC tsx scripts/test-sign-photo-db.ts",
+    "test:client-photo-lock-db": "TZ=UTC tsx scripts/test-client-photo-lock-db.ts"
   },
   "devDependencies": {
     "@types/node": "^26.0.1",

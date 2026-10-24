@@ -4,6 +4,13 @@ import { prisma } from "../../db/prisma";
 /** 单个订单最多保存的产品详情图数量。 */
 export const MAX_ORDER_PRODUCT_IMAGES = 999;
 
+/**
+ * 客户只能在「下预报单那一下」附照片（2026-10-24 老板：不给客户任何编辑订单照片的权限）。
+ * 页面是建完单马上一张张传，30 分钟够慢网络把十来张大图传完；过了就算「改」，要补找客服。
+ */
+export const CLIENT_PREALERT_PHOTO_WINDOW_MS = 30 * 60 * 1000;
+export const CLIENT_PHOTO_LOCKED_MESSAGE = "预报单提交以后，照片就不能再加了；要补照片请联系客服";
+
 export type OrderProductImagePayload = {
   id: string;
   fileName: string;

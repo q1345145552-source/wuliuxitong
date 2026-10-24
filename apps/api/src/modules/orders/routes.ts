@@ -36,7 +36,7 @@ import type { MinimalHttpApp } from "../../server";
 // parseJsonArray 不再用了：/staff/prealerts 的仓库过滤已删（2026-08-31，排查报告第 7 条）；
 // 全仓库引用归零后，http-utils 里的函数本体也已删除（2026-08-31 复查第 16 条收尾）
 import { fail, ok, requireRole } from "../core/http-utils";
-import { loadProductImagesForOrders, MAX_ORDER_PRODUCT_IMAGES } from "./product-images";
+import { CLIENT_PHOTO_LOCKED_MESSAGE, CLIENT_PREALERT_PHOTO_WINDOW_MS, loadProductImagesForOrders, MAX_ORDER_PRODUCT_IMAGES } from "./product-images";
 import { saveImageToDisk, deleteImageFile } from "./image-storage";
 import { sanitizeRemarkForClient } from "../core/client-privacy";
 import { companyContainerNosForMasking } from "../core/container-nos";
@@ -1728,7 +1728,7 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
     }
     const order = await prisma.order.findFirst({
       where: { id: orderId, companyId: auth.companyId },
-      select: { id: true, warehouseId: true, approvalStatus: true, clientId: true },
+      select: { id: true, warehouseId: true, approvalStatus: true, clientId: true, createdAt: true },
     });
     if (!order) {
       fail(res, 404, "NOT_FOUND", "order not found");
@@ -1745,6 +1745,14 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
     // 2026-10-06「待入库」的单照片在到货通知里传（那边是底稿，传了会自动同步到这里）。这里再开一个口子，两边就对不上了
     if (await isPendingInboundOrder(auth.companyId, orderId)) {
       fail(res, 400, "BAD_REQUEST", PENDING_INBOUND_EDIT_ELSEWHERE_MESSAGE);
+      return;
+    }
+    /* 客户不能改订单照片（2026-10-24 老板：「不要给客户任何编辑的权限」「订单照片的权限改了」；安全审查 NEW-04）。
+       只留下预报单那一下附照片：客户页面是先建预报单、拿到单号马上一张张传（client/page.tsx 提交预报单那段）。
+       所以客户只能往「自己刚报、仓库还没收货、建好不到 30 分钟」的单上传 —— approvalStatus=shipped 只有客户报预报单会写出来，
+       员工建的单 / 到货通知转的单是 approved、仓库收了货是 received。其余一律不行，要补照片找客服（员工、超管照旧能传能删） */
+    if (auth.role === "client" && !(order.approvalStatus === "shipped" && Date.now() - order.createdAt.getTime() <= CLIENT_PREALERT_PHOTO_WINDOW_MS)) {
+      fail(res, 403, "FORBIDDEN", CLIENT_PHOTO_LOCKED_MESSAGE);
       return;
     }
     const count = await prisma.orderProductImage.count({
@@ -1791,7 +1799,8 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
   });
 
   app.delete("/staff/orders/product-images", async (req, res) => {
-    const auth = requireRole(req, res, ["staff", "admin", "client"]);
+    // 客户不能删订单照片（2026-10-24 老板拍板，见上面上传那条的说明；客户页面本来就没有删照片的按钮）
+    const auth = requireRole(req, res, ["staff", "admin"]);
     if (!auth) return;
     const id = req.query.id?.trim();
     if (!id) {
@@ -1806,10 +1815,6 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
     });
     if (!image || !image.order) {
       fail(res, 404, "NOT_FOUND", "image not found");
-      return;
-    }
-    if (auth.role === "client" && image.order.clientId !== auth.userId) {
-      fail(res, 403, "FORBIDDEN", "client can only manage product images for their own orders");
       return;
     }
     if (!(await staffCanEditOrderWarehouse(auth, image.order.warehouseId))) {
