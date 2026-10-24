@@ -187,48 +187,68 @@ async function main(): Promise<void> {
     /** 磁盘上属于这张单的照片文件（文件名以订单号开头），用来核「没进库的文件删干净了」 */
     const filesOf = (orderId: string) => fs.readdirSync(imagesDir).filter((f) => f.startsWith(`${orderId.replace(/[^a-zA-Z0-9_-]/g, "_")}_`));
 
-    await check("Q8 客户上传那一刻仓库正在确认收货：等收货提交后按「已收货」判，挡住，不留文件", async () => {
-      const id = await prealert();
+    /**
+     * 模拟另一边（确认收货 / 别的同事）拿着这张单的订单锁不放；mutate 是锁住以后、提交以前要改的东西。
+     * 等「上传都写完文件、都卡在锁上」再放锁，保证上传真走到了锁里那一遍（dsh / Codex 第 2 轮：只靠 Promise.all 不确定）
+     */
+    async function withOrderLockHeld(id: string, mutate: ((tx: any) => Promise<void>) | null, start: () => Promise<Array<{ status: number; message: string }>>, expectWaiting: number) {
       let release!: () => void;
       const gate = new Promise<void>((r) => { release = r; });
       let locked!: () => void;
       const lockedNow = new Promise<void>((r) => { locked = r; });
-      // 模拟「确认收货」那一边：锁订单（跟它同一种锁）→ 改成已收货 → 先不提交
       const holder = pm.$transaction(async (tx: any) => {
         await tx.$queryRaw`SELECT id FROM orders WHERE id = ${id} FOR NO KEY UPDATE`;
-        await tx.order.update({ where: { id }, data: { approvalStatus: "received" } });
+        if (mutate) await mutate(tx);
         locked();
         await gate;
       }, { timeout: 30_000, maxWait: 10_000 });
-      await lockedNow;
-      const pending = upload(C1, id);
+      // 持锁那一边出错的话别一直干等
+      await Promise.race([lockedNow, holder.then(() => { throw new Error("持锁事务没等到放锁就结束了"); }),
+        new Promise((_, rej) => setTimeout(() => rej(new Error("10 秒没锁上订单")), 10_000))]);
+      const pending = start();
       let waiting = 0;
+      let files = 0;
       try {
-        for (let i = 0; i < 40 && !waiting; i += 1) {
+        for (let i = 0; i < 160 && (waiting < expectWaiting || files < expectWaiting); i += 1) {
           const rows: Array<{ n: number }> = await pm.$queryRaw`SELECT count(*)::int AS n FROM pg_stat_activity
             WHERE pid <> pg_backend_pid() AND wait_event_type = 'Lock' AND query ILIKE '%FROM orders%FOR NO KEY UPDATE%'`;
           waiting = rows[0]?.n ?? 0;
-          if (!waiting) await new Promise((r) => setTimeout(r, 50));
+          files = filesOf(id).length;
+          if (waiting < expectWaiting || files < expectWaiting) await new Promise((r) => setTimeout(r, 50));
         }
       } finally {
         release();
         await holder;
       }
-      const r = await pending;
-      assert.equal(waiting, 1, "上传没卡在订单锁上，这一项没测到并发");
+      return { results: await pending, waiting, files };
+    }
+
+    await check("Q8 客户上传那一刻仓库正在确认收货：等收货提交后按「已收货」判，挡住，不留文件", async () => {
+      const id = await prealert();
+      const { results, waiting, files } = await withOrderLockHeld(
+        id,
+        async (tx) => { await tx.order.update({ where: { id }, data: { approvalStatus: "received" } }); },
+        async () => [await upload(C1, id)],
+        1,
+      );
+      assert.ok(waiting >= 1 && files >= 1, `上传没写完文件 / 没卡在订单锁上（等锁 ${waiting}、文件 ${files}），这一项没测到并发`);
+      const r = results[0];
       assert.equal(r.status, 403, `收货提交后还是传进去了（${r.status}）：${r.message}`);
       assert.equal(r.message, CLIENT_PHOTO_LOCKED_MESSAGE);
       assert.equal((await images(id)).length, 0);
       assert.deepEqual(filesOf(id), [], "挡住了但文件留在磁盘上");
     });
 
-    await check("Q9 同一张单同时传 3 张、只差 1 张到上限：只进 1 张，没进的文件也删干净", async () => {
+    await check("Q9 同一张单同时传 3 张、只差 1 张到上限：三张都排到锁里，只进 1 张，没进的 2 个文件删干净", async () => {
       const { MAX_ORDER_PRODUCT_IMAGES } = await import("../apps/api/src/modules/orders/product-images");
       const id = await prealert();
       await pm.orderProductImage.createMany({ data: Array.from({ length: MAX_ORDER_PRODUCT_IMAGES - 1 }, (_, i) => ({
         id: `zz_cpl_fill_${i}`, companyId: CO, orderId: id, fileName: `fill${i}.png`, mime: "image/png", contentBase64: "x", uploadedBy: STAFF.userId,
       })) });
-      const rs = await Promise.all([upload(STAFF, id), upload(STAFF, id), upload(ADMIN, id)]);
+      const { results: rs, waiting, files } = await withOrderLockHeld(
+        id, null, () => Promise.all([upload(STAFF, id), upload(STAFF, id), upload(ADMIN, id)]), 3,
+      );
+      assert.ok(waiting >= 3 && files >= 3, `三张没都排到锁里（等锁 ${waiting}、文件 ${files}），这一项没测到并发`);
       const okCount = rs.filter((r) => r.status === 200).length;
       assert.equal(okCount, 1, `进了 ${okCount} 张：${JSON.stringify(rs.map((r) => [r.status, r.message]))}`);
       assert.ok(rs.filter((r) => r.status !== 200).every((r) => r.status === 400 && /image limit reached/.test(r.message)), JSON.stringify(rs.map((r) => [r.status, r.message])));

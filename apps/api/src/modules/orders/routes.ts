@@ -101,6 +101,14 @@ function classifyClientStatusGroup(
  * 这张订单的运单是不是「待入库」（2026-10-06 到货通知）。产品图上传 / 删除用：待入库的单底稿在到货通知。
  * 只会从「待入库」变走（到货通知转正式），不会有别的路把运单变成待入库，所以事务外查一次就够。
  */
+/** 事务等锁超时 / 撞上死锁：同一张单正好有同事在处理（上传订单照片那条用，2026-10-24 dsh） */
+function isOrderBusyError(e: unknown): boolean {
+  if (!(e instanceof Prisma.PrismaClientKnownRequestError)) return false;
+  if (e.code === "P2028" || e.code === "P2034") return true;
+  const pg = String((e.meta as { code?: unknown } | undefined)?.code ?? "");
+  return pg === "40P01" || pg === "40001";
+}
+
 async function isPendingInboundOrder(companyId: string, orderId: string): Promise<boolean> {
   const hit = await prisma.shipment.findFirst({
     where: { companyId, orderId, currentStatus: PENDING_INBOUND },
@@ -1820,11 +1828,26 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
             createdAt: now,
           },
         });
-      });
+      }, { timeout: 20_000, maxWait: 10_000 }); // 到货通知转单那条事务会拿着订单锁最多 30 秒，默认 5 秒等不到就白白报错
     } catch (err) {
-      deleteImageFile(filePath);
+      // 没进库就删掉刚写的文件；删不掉只记日志，照旧回原来的原因（不然 403 / 400 会被盖成 500）
+      const removeFile = () => {
+        try { deleteImageFile(filePath); } catch (e) { console.error("[product-image] cleanup failed:", e); }
+      };
       if (err instanceof BusinessError) {
+        removeFile();
         fail(res, err.httpStatus, err.code, err.message);
+        return;
+      }
+      // 提交其实成功了、只是回话路上出错（连接断了）：库里已经有这一行，文件不能删，按成功回
+      const saved = await prisma.orderProductImage.findUnique({ where: { id: imageId }, select: { id: true } }).catch(() => null);
+      if (saved) {
+        ok(res, { id: imageId, orderId, fileName, mime: mimeType, filePath, createdAt: now.toISOString() });
+        return;
+      }
+      removeFile();
+      if (isOrderBusyError(err)) {
+        fail(res, 409, "VALIDATION_ERROR", "这张单刚好有同事在处理，照片没存上，请稍后再传一次");
         return;
       }
       console.error("[product-image] save failed:", err);

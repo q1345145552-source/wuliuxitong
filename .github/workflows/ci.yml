@@ -572,7 +572,7 @@ jobs:
       - name: Test lastmile sign photo (real DB)
         run: bash .github/scripts/run-db-test.sh test:sign-photo-db
       # 2026-10-24 老板「不要给客户任何编辑的权限」（安全审查 NEW-04，真接口、真库）：客户只能在报预报单那一下附照片
-      # （自己报的、仓库没收货、建好 30 分钟内），别的单 / 过了时间 / 收了货都不许传；客户一律不许删照片；员工、超管照旧
+      # （自己报的、仓库没收货、建好 1 小时内），别的单 / 过了时间 / 收了货都不许传；客户一律不许删照片；员工、超管照旧
       - name: Test client cannot edit order photos (real DB)
         run: bash .github/scripts/run-db-test.sh test:client-photo-lock-db
       # 2026-10-08 模拟数据测试（多人同时操作）查出来的：建单查到货通知占号、同号并发不 500、删单 vs 装柜不死锁、

@@ -27,7 +27,13 @@ export function saveImageToDisk(orderId: string, mime: string, contentBase64: st
   const name = `${safeId}_${crypto.randomBytes(6).toString("hex")}${ext}`;
   const filePath = path.join(getImagesDir(), name);
   const buffer = Buffer.from(contentBase64, "base64");
-  fs.writeFileSync(filePath, buffer);
+  try {
+    fs.writeFileSync(filePath, buffer);
+  } catch (err) {
+    // 写到一半失败（磁盘满 / 读写出错）会留下半截文件，调用方拿不到路径删不了，这里顺手删掉（2026-10-24 dsh）
+    try { fs.rmSync(filePath, { force: true }); } catch { /* 删不掉也只能留着，原来的错照旧往外抛 */ }
+    throw err;
+  }
   return `${IMAGES_URL_PREFIX}/${name}`;
 }
 

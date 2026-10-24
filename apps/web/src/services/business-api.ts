@@ -611,7 +611,7 @@ export async function createStaffOrder(payload: StaffCreateOrderPayload): Promis
 }
 
 /**
- * 员工上传订单详情产品图（单订单最多 5 张）。
+ * 上传订单详情产品图（单订单最多 999 张，后端 MAX_ORDER_PRODUCT_IMAGES）。客户只能在报预报单那一下传（2026-10-24），员工 / 超管随时能传。
  */
 export async function uploadStaffOrderProductImage(payload: {
   orderId: string;
