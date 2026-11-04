@@ -196,6 +196,8 @@ const API_ALLOW: Allow[] = [
   { file: "apps/api/src/modules/consolidation/routes.ts", re: /^clientName: (?:t|task)\.client\.name,$/, why: "普通版集货员工 / 超管接口（搜索）" },
   { file: "apps/api/src/modules/admin-ops/routes.ts", re: /^clientName: order\?\.client\?\.name \?\? null,$/, why: "尾端派送列表（搜索）" },
   { file: "apps/api/src/modules/shipping-config/routes.ts", re: /^customerName: null as string \| null,$/, why: "运费配置：恒为空，没发名字" },
+  // 对接海外仓财务系统（2026-11-04）：字段名沿用两边约定（修改清单 5.4），值一律是唛头，客户名字不出物流系统
+  { file: "apps/api/src/modules/finance-link/views.ts", re: /^(clientName\?: string;|if \(isAgent\) item\.clientName = row\.clientId;)$/, why: "财务系统对接：字段名沿用约定，值是唛头" },
 ];
 /** 每个文件最多几处（防止在同一个文件里「照着允许的那行再抄一份」给客户接口） */
 const API_MAX_PER_FILE: Record<string, number> = {
@@ -205,6 +207,7 @@ const API_MAX_PER_FILE: Record<string, number> = {
   "apps/api/src/modules/consolidation/routes.ts": 3,
   "apps/api/src/modules/admin-ops/routes.ts": 1,
   "apps/api/src/modules/shipping-config/routes.ts": 1,
+  "apps/api/src/modules/finance-link/views.ts": 2,
 };
 
 console.log("唛头显示（唛头=账号，客户名字只给内部看）");

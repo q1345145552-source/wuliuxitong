@@ -363,6 +363,10 @@ jobs:
       # 签收图挑哪张、拆派仓写的轨迹不许单删、派送照片只给员工、六个环境变量不进前端
       - name: Test chaipai integration (source)
         run: npm run test:chaipai-source
+      # 对接海外仓财务系统（2026-11-04）不连库那一半：配置门槛、状态中文跟客户端逐条一致、字段逐个裁、账号核对先后、
+      # 只有 5 条精确路径不跑登录解析、代理端四个函数只加 export、三个环境变量不进前端、迁移只加不删、日志里没有密码和授权
+      - name: Test finance link (source)
+        run: npm run test:finance-link-source
       # 拆派仓只读接口到点就走（2026-10-14）：Node 22 的 fetch 带 redirect:"error" 时，读响应体中途碰上垃圾回收 abort() 就失灵、
       # 一挂 300 秒（10-12 这里 V9 等了 300333ms）。不连库：假服务器 + 强制回收内存，看是不是按时断开、连接真断了。
       # ⚠️ 只有 Node 22 照得出老毛病（本机 Node 24 照不出），所以这项必须在 CI 跑
@@ -561,6 +565,11 @@ jobs:
       # 对接拆派仓那份迁移：上线前的库上连跑两遍、跟 schema 零差异、体检清单对上、删运单时每票状态跟着删
       - name: Test chaipai migration file (real DB)
         run: bash .github/scripts/run-db-test.sh test:migration-chaipai-db
+      # 对接海外仓财务系统（2026-11-04）：真接口 + 真库 —— 授权（一次性码、限流、员工管理员不能授权、跳回地址）、
+      # 运单范围（普通客户 / 代理 / 客户转走、总数跟客户端代理端一致、整柜集货不出现、响应里没有柜号金额收件人操作人）、
+      # 封禁改密码改角色立刻失效、总开关；迁移文件在上线前的库上连跑两遍、跟 schema 零差异
+      - name: Test finance link (real DB)
+        run: bash .github/scripts/run-db-test.sh test:finance-link-db
       # 存原样那份迁移：上线前的库上连跑两遍、跟 schema 零差异、体检清单对上、不回填老数据、删到货通知跟着删 / 删运单不动
       - name: Test arrival notice snapshots migration file (real DB)
         run: bash .github/scripts/run-db-test.sh test:migration-arrival-notice-snapshots-db

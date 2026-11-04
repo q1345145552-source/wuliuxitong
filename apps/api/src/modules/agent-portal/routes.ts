@@ -108,7 +108,7 @@ interface AgentClientRow {
 }
 
 /** 这个代理名下的客户（id + 名字）。条件跟 core/agent-scope.ts 的 listAgentClientIds 完全一样 */
-async function loadAgentClients(auth: AgentAuth): Promise<AgentClientRow[]> {
+export async function loadAgentClients(auth: AgentAuth): Promise<AgentClientRow[]> {
   if (!auth.agentId || !auth.companyId) return [];
   return prisma.user.findMany({
     where: { agentId: auth.agentId, companyId: auth.companyId, role: "client" },
@@ -149,7 +149,7 @@ interface ShipmentFilters {
  * 所以先只取 id + 父单状态这两样把全集筛完、数出真实 total，再按页去拉明细 ——
  * 不能「拉一页回来在前端筛」（CLAUDE.md #19，尾端派送丢过 445 张单）。
  */
-async function listScopedOrderIds(
+export async function listScopedOrderIds(
   auth: AgentAuth,
   clientIds: string[],
   filters: ShipmentFilters,
@@ -211,7 +211,7 @@ async function listScopedOrderIds(
 }
 
 /** 按 id 拉订单明细，逐字段给代理。顺序跟 orderIds 一致 */
-async function loadShipmentRows(auth: AgentAuth, orderIds: string[], clientNames: Map<string, string>) {
+export async function loadShipmentRows(auth: AgentAuth, orderIds: string[], clientNames: Map<string, string>) {
   if (orderIds.length === 0) return [];
   const orders = await prisma.order.findMany({
     where: { id: { in: orderIds }, companyId: auth.companyId, clientId: { in: [...clientNames.keys()] } },
@@ -332,7 +332,7 @@ async function loadShipmentRows(auth: AgentAuth, orderIds: string[], clientNames
     });
 }
 
-function readShipmentFilters(req: HttpRequest): ShipmentFilters | string {
+export function readShipmentFilters(req: HttpRequest): ShipmentFilters | string {
   const statusGroup = queryText(req, "statusGroup", 20);
   if (statusGroup && !["all", "pending", "transit", "arrived", "delivered", "closed", "attention"].includes(statusGroup)) {
     return "状态分组不对";

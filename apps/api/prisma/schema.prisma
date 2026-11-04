@@ -1585,3 +1585,41 @@ model ChaipaiManifestVersion {
 
   @@map("chaipai_manifest_versions")
 }
+
+/// 财务系统来申请授权的一次请求（2026-11-04 对接海外仓财务系统）。10 分钟过期；user_id 授权后才有；一次性码只存哈希。
+/// 故意不加外键（不跟用户表的删除搅在一起）；建新请求时顺手删掉过期的。
+model FinanceLinkRequest {
+  id            String    @id
+  warehouseRef  String    @map("warehouse_ref")
+  warehouseName String    @map("warehouse_name")
+  userId        String?   @map("user_id")
+  codeHash      String?   @map("code_hash")
+  codeExpiresAt DateTime? @map("code_expires_at")
+  codeUsedAt    DateTime? @map("code_used_at")
+  expiresAt     DateTime  @map("expires_at")
+  createdAt     DateTime  @default(now()) @map("created_at")
+
+  @@index([expiresAt])
+  @@map("finance_link_requests")
+}
+
+/// 财务系统的长期只读授权（2026-11-04）：一条 = 财务的一个仓 + 物流的一个账号。长期授权只存 SHA-256。
+/// 每次查运单按账号现在的状态核对（封禁 / 改角色 / 改密码就写上 revoked_at、revoked_reason）。不加外键，理由同上。
+model FinanceLinkAuthorization {
+  id                  String    @id
+  companyId           String    @map("company_id")
+  userId              String    @map("user_id")
+  warehouseRef        String    @map("warehouse_ref")
+  warehouseName       String    @map("warehouse_name")
+  tokenHash           String    @unique @map("token_hash")
+  passwordFingerprint String    @map("password_fingerprint")
+  role                String
+  createdAt           DateTime  @default(now()) @map("created_at")
+  lastUsedAt          DateTime? @map("last_used_at")
+  revokedAt           DateTime? @map("revoked_at")
+  /// PASSWORD_CHANGED / ACCOUNT_DISABLED / ROLE_CHANGED / REVOKED
+  revokedReason       String?   @map("revoked_reason")
+
+  @@index([userId, warehouseRef])
+  @@map("finance_link_authorizations")
+}

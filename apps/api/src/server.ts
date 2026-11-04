@@ -8,6 +8,7 @@ import { isBusinessError } from "./modules/core/business-error";
 import { fail } from "./modules/core/http-utils";
 import { agentGateRejection } from "./modules/core/agent-scope";
 import { INTEGRATION_PATHS } from "./modules/chaipai/paths";
+import { FINANCE_LINK_PATHS } from "./modules/finance-link/paths";
 import { openEventStream, REALTIME_STREAM_PATH } from "./realtime-stream";
 import { publishAfterWrite } from "./modules/realtime/publish";
 import type { UserRole } from "../../../packages/shared-types/role";
@@ -61,6 +62,8 @@ type RouteTable = Record<string, Handler>;
  * 排查时完全没有线索。这里补上日志（只记原因和路径，绝不记令牌内容）。
  */
 async function parseAuth(headers: IncomingMessage["headers"], path?: string): Promise<HttpRequest["auth"]> {
+  // 财务系统对接那几条（2026-11-04，精确路径）带的 Bearer 是对接密钥、不是登录令牌，接口自己核对，这里不解析
+  if (path && FINANCE_LINK_PATHS.has(path)) return undefined;
   const authHeader = typeof headers.authorization === "string" ? headers.authorization.trim() : "";
   const match = authHeader.match(/^Bearer\s+(.+)$/i);
   if (!match?.[1]) {

@@ -1,5 +1,14 @@
 # 项目交接日志
 
+## 2026-11-04：对接海外仓财务系统第 1 轮（本地做完，未提交、未上线；等老板点头提交）
+- 任务：财务窗口贴来的「物流系统 · 对接财务系统运单状态（第 1 轮）」，约定以财务仓库 `docs/物流运单对接修改清单.md` 第五、六、八节为准。分支 feat/finance-link（基于 016bcc5，未提交）。工作记录 `docs/sessions/2026-11-04-finance-link.md`，接口 `docs/api-contract.md` 第 26 节。
+- 做了：`modules/finance-link/`（paths、config、status-zh、views、authorization、routes）、迁移 `20261104_finance_link`（只加两张表）、授权页 `app/login/authorize/page.tsx`、两个测试。代理端四个函数只加 export；server.ts 在 parseAuth 第一句按精确路径跳过，拆派仓那句一字没动。总开关默认关。
+- 名字：他问「名字就是唛头吧？」后回了「b」，我按「所有人都填唛头」做并告诉他了：name、clientName 字段名沿用约定，值是唛头，模块不查 users.name。
+- 清单外改了两个文件（我说好「回了就算同意」）：`scripts/check-schema-drift.sql`、`scripts/test-mark-display.ts`。结果和数字见工作记录。全用本机一次性库，没碰 Neon 和生产。
+- 第 1 轮审查（Codex + dsh，`.audit/2026-11-04/finance-link/review-r1/`）：属实的修了 6 条必须修 + 若干建议。第 2 轮（review-r2）又修了手写柜号写法、列表不接日期、长密码误挡。处理清单在工作记录文末。修完全套 build 77/77、test-db 36/36。
+- 原来就有、没动：`/agent/shipments?dateTo=2026-99-99` 会 500；登录的响应快慢差异。
+- 没做：Node 22 没跑（本机 Node 24）；线上账号长度没核（只读查线上这次没放行）。
+
 ## 2026-10-26 06:16（北京）上线 08b9ba2：10-23 安全审查三项 + 10-24 客户不能改订单照片（共 19 个提交）
 - 老板说「上」。上线前：问了 Codex 能不能上（`.audit/2026-10-25/go-live-review/codex.md`，结论「可以上线」，门禁：推完等 GitHub 三组全绿再部署、部署若报有迁移立刻停）；最终 HEAD 本地全套 build 76 / test-db 35 全过（`.audit/2026-10-25/ci-final`）；服务器能连 Docker Hub；服务器 HEAD ad51341、只有 package-lock 被改、磁盘剩 46G、容器 healthy、Node 22.23.3。
 - 推 GitHub ad51341..08b9ba2 → GitHub 自动检查 40243441373 三组（build / test-db / android）全绿 → ssh 跑 `bash deploy.sh` 退出 0：没有待执行迁移（没备份、没动库），23:16 UTC 换容器。日志 `.audit/2026-10-26/deploy/deploy.log`。

@@ -69,6 +69,10 @@ services:
       CHAIPAI_CALLBACK_SECRET: ${CHAIPAI_CALLBACK_SECRET:-}
       CHAIPAI_READ_SECRET: ${CHAIPAI_READ_SECRET:-}
       CHAIPAI_API_BASE: ${CHAIPAI_API_BASE:-}
+      # 2026-11-04 对接海外仓财务系统（modules/finance-link/config.ts）。同上：不在这里透传，改 .env 进不了容器
+      FINANCE_LINK_ENABLED: ${FINANCE_LINK_ENABLED:-}
+      FINANCE_LINK_SECRET: ${FINANCE_LINK_SECRET:-}
+      FINANCE_LINK_RETURN_URL: ${FINANCE_LINK_RETURN_URL:-}
       IMAGES_DIR: /images
       PORT: "3001"
       DATABASE_URL: postgresql://${POSTGRES_USER:-xiangtai}:${POSTGRES_PASSWORD:-xiangtai_dev}@postgres:5432/${POSTGRES_DB:-xiangtai}?schema=public

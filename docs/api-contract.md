@@ -896,3 +896,47 @@
 - `POST /staff/orders/patch-shipment-bundle`（超管在员工页「保存订单信息」）：新增可选 `expectedOrderUpdatedAt`，锁住订单后核对，对不上 `409`「这票刚刚被别人改过（「运单管理」或别的页面），本次修改都没有保存。请关掉重新打开，看最新的再改」、什么都不写；不传（上线那一刻开着的老页面）照旧。返回的 `updatedAt` 等于库里订单的。
 - 导出 / 代理端列表的「国内单号」口径（前端，`packages/shared-types/product-names.ts` 的 `domesticNosLabel`）：分了产品行的按产品行的号（sortOrder、去重、「、」隔开，没号的行是「货拉拉」），整票上另有真单号且产品行里没有的补在最后；没产品行用整票号。
 - `POST /client/prealerts`：新增可选 `requestId`（字母数字和「-」，16～64 位，不对 `400`）。客户批量下单每一行上传解析时给一个、重试不变；服务器拿它当订单 id（`o_req_<编号>`），已经建过就回第一次的结果（多一个 `alreadyCreated: true`）、不再建，两个同编号同时进来后到的撞主键也按已建好回；编号是别的客户的 `409`。不带（单张下单、老页面）照旧每次新建。批量那一行请求前端加了 30 秒超时（有编号才加）。
+
+## 26. 对接海外仓财务系统（2026-11-04，第 1 轮）
+
+老板原话：「物流系统要对接运单状态，只要运单就行了，集货的不要……登陆一次账号后就可以一直看到物流系统的运单状态了」。约定原文在财务仓库 `docs/物流运单对接修改清单.md` 第五节。代码 `apps/api/src/modules/finance-link/`，授权页 `apps/web/src/app/login/authorize/page.tsx`。
+
+**配置**：`FINANCE_LINK_ENABLED`（只认 `true`，默认关）、`FINANCE_LINK_SECRET`（财务 `LOGISTICS_LINK_SECRET` 同一个值，门槛同拆派仓 `isSafeSecret`）、`FINANCE_LINK_RETURN_URL`（生产只认 https，不许带 `?` `#`）。不合格按关闭处理，不让进程退出。
+
+**财务后端调的 5 条**（带 `Authorization: Bearer <FINANCE_LINK_SECRET>`；这 5 条精确路径不跑登录解析，拆派仓那 3 条是另一组，各自放行）。成功回裸 JSON：
+
+| 接口 | 另带 | 请求 | 成功 |
+|---|---|---|---|
+| `POST /integrations/finance/v1/link-requests` | | `{ warehouseRef, warehouseName }` | 201 `{ requestId, authorizeUrl, expiresAt }`（10 分钟过期） |
+| `POST /integrations/finance/v1/link-tokens` | | `{ requestId, code }` | 200 `{ token, authorizationId, account: { account, name, role } }`，token 只回这一次 |
+| `POST /integrations/finance/v1/link-tokens/revoke` | `X-Link-Token` | | 200 `{ ok: true }`，重复也 200；没带 `X-Link-Token` 400 |
+| `GET /integrations/finance/v1/waybills` | `X-Link-Token` | `page, pageSize（上限 100）, trackingNo, keyword, clientId, statusGroup`（筛选规则沿用 `/agent/shipments`，不接日期） | 200 `{ account: { account, role }, page, pageSize, total, clients, items }` |
+| `GET /integrations/finance/v1/waybills/track` | `X-Link-Token` | `trackingNo` | 200 `{ trackingNo, currentStatus, statusZh, logs, children }` |
+
+**名字（2026-11-04 老板选全部填唛头）**：`account.name`、`clients[].name`、`clientName` 字段名沿用约定，值一律是唛头，客户名字不出物流系统。
+
+`items` 每一行：`trackingNo`（没有运单的订单是 null）、`clientId`、`clientName`（只有代理账号有，值是唛头）、`productNames`、`packageCount`、`packageUnit`、`weightKg`、`volumeM3`、`totalWeightKg`、`totalVolumeM3`、`transportMode`、`domesticTrackingNo`（同代理端列表：一票多款用「、」拼起来，产品行没填号的显示「货拉拉」；没有产品行又没整票号才是 null）、`currentStatus`、`statusZh`、`partialAhead`（状态码，同 `currentStatus` 那一套；没有是 null）、`statusGroup`、`updatedAt`。`clients` 只有代理账号有内容：`[{ clientId, name }]`（`name` 是唛头）。
+
+`logs` 每一条：`{ at, status, statusZh, remark, nextStop }`，父单 = 自己 + 同一张订单的全部子单、按时间排；备注和下一站都抹柜号（含手写的「柜号：XXX」）和系统拼的「管理员」。`children` 每一条：`{ trackingNo, currentStatus, statusZh }`。不在范围、不存在、没审过、整柜、集货都回同一个 404。
+
+一律不给：柜号（`batchNo`、`containerNo`）、金额（`receivableAmountCny`）、收件人姓名电话地址、员工和操作人、内部备注、内部 id、订单号、客户名字。
+
+**授权页用的 2 条**（用户浏览器调，不带登录令牌、不签登录令牌）：
+
+- `GET /auth/finance-link/request?request=<requestId>`：200 `{ warehouseName, expired }`。仓名只从数据库取；不存在、过期、已授权过都是 `{ warehouseName: null, expired: true }`。
+- `POST /auth/finance-link/authorize`，请求 `{ requestId, account, password }`：200 `{ redirectUrl: "<FINANCE_LINK_RETURN_URL>#request=...&code=..." }`。`code` 一次性、5 分钟过期、数据库只存哈希。限流、失败计数、失败提示跟 `/auth/login` 同一份（键也一样，两边加起来算）。员工和管理员 403「这个账号不能授权」。链接失效 400 `LINK_REQUEST_INVALID`。
+
+**错误码**（`code`、`reason` 在最外层）：
+
+| 情况 | 返回 |
+|---|---|
+| 总开关没开或配置不合格（7 条都是） | 503 `LINK_DISABLED` |
+| 对接密钥不对 | 401 `LINK_SECRET_INVALID` |
+| 授权无效 | 401 `LINK_REVOKED`，`reason`：`PASSWORD_CHANGED` / `ACCOUNT_DISABLED` / `ROLE_CHANGED` / `REVOKED` |
+| 一次性码用过、过期、登录后改过密码 / 角色 / 公司、账号被封 | 400 `LINK_CODE_INVALID` |
+| 参数不对 | 400 `BAD_REQUEST` |
+| 运单不在范围 | 404 `NOT_FOUND` |
+
+每次查运单都按账号现在的状态核对：封禁 → 角色 → 密码，不对就把这条授权写成已撤销（解封、改回去也不恢复，要重新授权）。同一个账号 + 同一个 `warehouseRef` 再次授权：撤销旧的，发新的。
+
+**财务那边要知道的**：`LOGISTICS_API_BASE` 填 `https://xianlianth.com`（填 `https://api.xianlianth.com` 也行，授权页地址都指回主域名）。换物流的 `AUTH_SECRET` 时全部授权会变成 `PASSWORD_CHANGED`，要重新授权。
