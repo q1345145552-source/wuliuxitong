@@ -44,6 +44,7 @@ import {
   type RevokedReason,
 } from "./authorization";
 import { bearerMatches, financeLinkConfig, type FinanceLinkConfig } from "./config";
+import { ORDER_MONTH_INVALID, parseOrderMonth, type OrderMonthRange } from "./order-month";
 import {
   AUTHORIZE_INFO_PATH,
   AUTHORIZE_SUBMIT_PATH,
@@ -178,6 +179,27 @@ async function loadLinkScope(link: LinkedAccount) {
   const clientIds = link.role === "agent" ? (await loadAgentClients(auth)).map((c) => c.id) : [link.userId];
   // loadShipmentRows 要一张「唛头 → 显示名」，这里显示名也填唛头
   return { auth, clientIds, marksById: new Map(clientIds.map((id) => [id, id])) };
+}
+
+/** 一次 IN 列表最多放多少个订单 id，名下单子再多也不会把查询撑爆 */
+const MONTH_FILTER_CHUNK = 5000;
+
+/**
+ * 范围内的订单再按下单时间（订单 createdAt）筛一遍月份，留下的照 listScopedOrderIds 原来的顺序（建单时间倒序）。
+ * 不复用代理端的 dateFrom / dateTo：那组筛的是到仓日期 shipDate，不是下单时间。
+ * chunk 只给连库测试用（拿小批数验证分批不丢、不重复、不乱序），接口里一律用默认值。
+ */
+export async function keepOrderMonth(companyId: string, orderIds: string[], range: OrderMonthRange, chunk = MONTH_FILTER_CHUNK): Promise<string[]> {
+  if (!Number.isSafeInteger(chunk) || chunk < 1) throw new Error(`每批个数要是正整数：${String(chunk)}`); // 传 0 或负数循环不往前走
+  const hit = new Set<string>();
+  for (let i = 0; i < orderIds.length; i += chunk) {
+    const rows = await prisma.order.findMany({
+      where: { id: { in: orderIds.slice(i, i + chunk) }, companyId, createdAt: { gte: range.from, lt: range.to } },
+      select: { id: true },
+    });
+    for (const row of rows) hit.add(row.id);
+  }
+  return orderIds.filter((id) => hit.has(id));
 }
 
 const TRACK_LOG_SELECT = {
@@ -384,9 +406,14 @@ export function registerFinanceLinkRoutes(app: MinimalHttpApp): void {
     if (typeof parsed === "string") { fail(res, 400, "BAD_REQUEST", parsed); return; }
     // 约定只有这四个筛选。日期不接：代理端那边 2026-99-99 这种写法过得了格式检查、算第二天时报错
     const filters = { trackingNo: parsed.trackingNo, clientId: parsed.clientId, statusGroup: parsed.statusGroup, keyword: parsed.keyword };
+    // 下单月份另算（2026-11-07 代理利润第 1 轮，规则在 order-month.ts）：没传不筛；传了格式不对 400，不许 500
+    const orderMonth = parseOrderMonth(req.query.orderMonth);
+    if (orderMonth === null) { fail(res, 400, "BAD_REQUEST", ORDER_MONTH_INVALID); return; }
 
     const scope = await loadLinkScope(link);
-    const allIds = await listScopedOrderIds(scope.auth, scope.clientIds, filters);
+    const scopedIds = await listScopedOrderIds(scope.auth, scope.clientIds, filters);
+    // total 和分页都按筛完月份以后的算
+    const allIds = orderMonth ? await keepOrderMonth(link.companyId, scopedIds, orderMonth) : scopedIds;
     const pageIds = allIds.slice((page - 1) * pageSize, page * pageSize);
     const rows = await loadShipmentRows(scope.auth, pageIds, scope.marksById);
     const isAgent = link.role === "agent";

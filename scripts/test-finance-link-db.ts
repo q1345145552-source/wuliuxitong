@@ -124,7 +124,8 @@ async function main(): Promise<void> {
   const { registerOrderRoutes } = await import("../apps/api/src/modules/orders/routes");
   const { registerAgentPortalRoutes } = await import("../apps/api/src/modules/agent-portal/routes");
   const { registerAgentAdminRoutes } = await import("../apps/api/src/modules/agents/admin-routes");
-  const { registerFinanceLinkRoutes } = await import("../apps/api/src/modules/finance-link/routes");
+  const { registerFinanceLinkRoutes, keepOrderMonth } = await import("../apps/api/src/modules/finance-link/routes");
+  const { orderMonthRange } = await import("../apps/api/src/modules/finance-link/order-month");
   const { __resetFailureStoreForTest } = await import("../apps/api/src/modules/core/rate-limit");
   const { sha256Hex } = await import("../apps/api/src/modules/finance-link/authorization");
   const { CLIENT_STATUS_ZH_OVERRIDES, shipmentStatusZh } = await import("../apps/web/src/modules/shipment/shipment-status");
@@ -701,10 +702,13 @@ async function main(): Promise<void> {
       assert.equal(r.body.total, 2);
       assert.deepEqual(Object.keys(r.body).sort(), ["account", "clients", "items", "page", "pageSize", "total"]);
       const item = (r.body.items as Row[]).find((i) => i.trackingNo === "ZZFT0000001")!;
+      const createdAt = (await db.order.findUnique({ where: { id: `${P}o_a1` } })).createdAt as Date;
       assert.deepEqual(item, {
         trackingNo: "ZZFT0000001", clientId: CLIENT, productNames: "鞋子A1", packageCount: 3, packageUnit: "箱", weightKg: 30, volumeM3: 1.5,
         totalWeightKg: item.totalWeightKg, totalVolumeM3: item.totalVolumeM3, transportMode: "sea", domesticTrackingNo: "SFZZFT0001",
         currentStatus: "customsCleared", statusZh: "清关已放行", partialAhead: "inWarehouseTH", statusGroup: "transit", updatedAt: item.updatedAt,
+        // 2026-11-07 代理利润第 1 轮多给的四个：没有产品行的老单 products 是空数组
+        orderedAt: createdAt.toISOString(), cargoType: "normal", estimated: false, products: [],
       });
       assert.ok(!("clientName" in item));
     });
@@ -907,6 +911,131 @@ async function main(): Promise<void> {
         assert.equal(r.status, 200, `${q}: ${r.text.slice(0, 120)}`);
         assert.equal(r.body.total, 2, q);
       }
+    });
+
+    console.log("\n【代理利润第 1 轮：新字段和下单月份】");
+    // 单独一个没挂代理的客户，单子全在这里，不影响上面各项的总数
+    const CLIENT_M = "ZZFTM";
+    await db.user.create({ data: { id: CLIENT_M, companyId: CO, role: "client", name: "月份客户ZZFT", phone: "0800000000", status: "active", passwordHash: hashPassword(PASSWORD) } });
+    const monthOrder = (id: string, createdAt: string, extra: Row = {}) => ({
+      id: `${P}o_${id}`, companyId: CO, clientId: CLIENT_M, warehouseId: "wh", orderNo: `ZZFTORD${id}`, itemName: `月份货${id}`, productQuantity: 1, packageCount: 1,
+      packageUnit: "箱", transportMode: "sea", receiverNameTh: "收件人陈ZZFT", receiverPhoneTh: "0899998888", receiverAddressTh: "曼谷收件地址ZZFT",
+      approvalStatus: "approved", batchNo: BATCH_ONLY, volumeM3: 1, receivableAmountCny: 8765.43, createdAt: new Date(createdAt), ...extra,
+    });
+    /** 编号 → 下单时间（UTC）。泰国时间 = UTC+7 */
+    const MONTH_ORDERS: Array<[string, string, Row?]> = [
+      ["m_oct_last", "2026-10-31T16:59:59.999Z"],
+      ["m_nov_first", "2026-10-31T17:00:00.000Z"],
+      ["m_mix", "2026-11-03T03:15:00.000Z", { approvalStatus: "shipped", cargoType: "sensitive", volumeM3: 2 }],
+      ["m_odd", "2026-11-15T00:00:00.000Z", { approvalStatus: "received", cargoType: "frozen", volumeM3: 0.5 }],
+      ["m_nov_last", "2026-11-30T16:59:59.999Z"],
+      ["m_dec_first", "2026-11-30T17:00:00.000Z"],
+      ["m_dec_last", "2026-12-31T16:59:59.999Z"],
+      ["m_jan_first", "2026-12-31T17:00:00.000Z"],
+    ];
+    await db.order.createMany({ data: MONTH_ORDERS.map(([id, at, extra]) => monthOrder(id, at, extra)) });
+    const monthNo = (id: string) => `ZZFTM${String(MONTH_ORDERS.findIndex(([k]) => k === id) + 1).padStart(3, "0")}`;
+    await db.shipment.createMany({ data: MONTH_ORDERS.map(([id]) => ({
+      id: `${P}s_${id}`, companyId: CO, orderId: `${P}o_${id}`, trackingNo: monthNo(id), parentTrackingNo: null, currentStatus: "inWarehouseCN", warehouseId: "wh",
+      batchNo: BATCH_ONLY, containerNo: SEA_CONTAINER, remark: "内部备注ZZFT", volumeM3: 1, transportMode: "sea",
+    })) });
+    await db.orderProduct.createMany({ data: [
+      // 返回要按 sortOrder 排：三行的插入顺序、id 大小、货型字母序、货型严格程度、方数大小排出来都跟 sortOrder 不一样
+      { id: `${P}pm5`, companyId: CO, orderId: `${P}o_m_mix`, itemName: "样品", packageCount: 1, lengthCm: 100, widthCm: 100, heightCm: 100, cargoType: "inspection", sortOrder: 2 },
+      { id: `${P}pm6`, companyId: CO, orderId: `${P}o_m_mix`, itemName: "衣服", packageCount: 1, lengthCm: 100, widthCm: 100, heightCm: 50, cargoType: "normal", sortOrder: 0 },
+      { id: `${P}pm7`, companyId: CO, orderId: `${P}o_m_mix`, itemName: "电池", packageCount: 2, lengthCm: 100, widthCm: 100, heightCm: 100, cargoType: "sensitive", sortOrder: 1 },
+      { id: `${P}pm3`, companyId: CO, orderId: `${P}o_m_odd`, itemName: "怪货", packageCount: 2, lengthCm: 60, widthCm: 40, heightCm: null, cargoType: "frozen", sortOrder: 0 },
+      { id: `${P}pm4`, companyId: CO, orderId: `${P}o_m_odd`, itemName: "样品", packageCount: 3, lengthCm: 33.3, widthCm: 33.3, heightCm: 33.3, cargoType: "inspection", sortOrder: 1 },
+    ] });
+    const monthLink = await link(CLIENT_M);
+    const monthNos = async (q: string) => {
+      const r = await waybills(monthLink.token, q);
+      assert.equal(r.status, 200, `${q}: ${r.text.slice(0, 160)}`);
+      return { total: r.body.total as number, nos: (r.body.items as Row[]).map((i) => i.trackingNo as string) };
+    };
+
+    await test("P1 新字段：orderedAt 是下单时间（UTC）；整票货型认不出来给 null；只有客户预报还没收货的 estimated 是 true；产品行按 sortOrder 排、每行只有货型和方数", async () => {
+      const items = ((await waybills(monthLink.token, "?pageSize=100")).body.items as Row[]);
+      const mix = items.find((i) => i.trackingNo === monthNo("m_mix"))!;
+      assert.equal(mix.orderedAt, "2026-11-03T03:15:00.000Z");
+      assert.equal(mix.cargoType, "sensitive");
+      assert.equal(mix.estimated, true, "approvalStatus=shipped");
+      assert.deepEqual(mix.products, [{ cargoType: "normal", declaredVolumeM3: 0.5 }, { cargoType: "sensitive", declaredVolumeM3: 2 }, { cargoType: "inspection", declaredVolumeM3: 1 }]);
+      const odd = items.find((i) => i.trackingNo === monthNo("m_odd"))!;
+      assert.equal(odd.cargoType, null, "库里是 frozen：不当普货");
+      assert.equal(odd.estimated, false, "approvalStatus=received");
+      assert.deepEqual(odd.products, [{ cargoType: null, declaredVolumeM3: null }, { cargoType: "inspection", declaredVolumeM3: 0.110778 }], "缺高给 null；33.3³×3 保留 6 位");
+      const plain = items.find((i) => i.trackingNo === monthNo("m_oct_last"))!;
+      assert.equal(plain.estimated, false, "approvalStatus=approved");
+      assert.deepEqual(plain.products, [], "没有产品行不补一行");
+      for (const i of items) for (const p of i.products as Row[]) assert.deepEqual(Object.keys(p).sort(), ["cargoType", "declaredVolumeM3"]);
+    });
+
+    await test("P2 月份边界按泰国时间：10-31T16:59:59.999Z 不在 2026-11；10-31T17:00Z 在；11-30T16:59:59.999Z 在；11-30T17:00Z 不在", async () => {
+      const nov = await monthNos("?orderMonth=2026-11&pageSize=100");
+      assert.ok(!nov.nos.includes(monthNo("m_oct_last")));
+      assert.ok(nov.nos.includes(monthNo("m_nov_first")));
+      assert.ok(nov.nos.includes(monthNo("m_nov_last")));
+      assert.ok(!nov.nos.includes(monthNo("m_dec_first")));
+      assert.deepEqual((await monthNos("?orderMonth=2026-10")).nos, [monthNo("m_oct_last")]);
+    });
+
+    await test("P3 带 orderMonth 时 total 是这个月的票数，分页按筛完的分，顺序跟不带月份时一样（下单时间倒序）", async () => {
+      const all = await monthNos("?pageSize=100");
+      assert.equal(all.total, MONTH_ORDERS.length);
+      const nov = await monthNos("?orderMonth=2026-11&pageSize=100");
+      const expected = [monthNo("m_nov_last"), monthNo("m_odd"), monthNo("m_mix"), monthNo("m_nov_first")];
+      assert.equal(nov.total, 4);
+      assert.deepEqual(nov.nos, expected);
+      assert.deepEqual(nov.nos, all.nos.filter((no) => expected.includes(no)), "原来的顺序不变");
+      const paged: string[] = [];
+      for (let page = 1; page <= 5; page++) {
+        const r = await monthNos(`?orderMonth=2026-11&pageSize=1&page=${page}`);
+        assert.equal(r.total, 4, `第 ${page} 页的 total`);
+        paged.push(...r.nos);
+      }
+      assert.deepEqual(paged, expected, "一页一条翻完正好 4 条，第 5 页空");
+      assert.deepEqual(await monthNos("?orderMonth="), all, "传空串跟不带一样");
+    });
+
+    await test("P4 2026-12 跨年：结束是 2026-12-31T17:00:00.000Z；那一刻下的单算 2027-01", async () => {
+      assert.deepEqual((await monthNos("?orderMonth=2026-12")).nos, [monthNo("m_dec_last"), monthNo("m_dec_first")]);
+      assert.deepEqual((await monthNos("?orderMonth=2027-01")).nos, [monthNo("m_jan_first")]);
+    });
+
+    await test("P5 月份格式不对回 400 BAD_REQUEST 和那句提示，不报 500；跟别的筛选一起用照样筛", async () => {
+      for (const v of ["2026-99-99", "2026-13", "2026-1", "26-11", "abc", "2026-00", "2019-12", "2101-01", " 2026-11", "2026/11"]) {
+        const r = await waybills(monthLink.token, `?orderMonth=${encodeURIComponent(v)}`);
+        assert.equal(r.status, 400, `${v}: ${r.text.slice(0, 120)}`);
+        assert.equal(r.body.code, "BAD_REQUEST", v);
+        assert.equal(r.body.message, "下单月份格式不对，请写成 2026-11 这种格式", v);
+      }
+      assert.deepEqual((await monthNos(`?orderMonth=2026-11&trackingNo=${monthNo("m_mix")}`)).nos, [monthNo("m_mix")]);
+      assert.deepEqual((await monthNos(`?orderMonth=2026-12&trackingNo=${monthNo("m_mix")}`)).nos, []);
+    });
+
+    await test("P6 按月份筛时订单 id 分批查：每批几个都不丢、不重复、顺序照原样；公司不对一个都不留", async () => {
+      const ids = MONTH_ORDERS.map(([id]) => `${P}o_${id}`);
+      const scrambled = [ids[5], ids[2], ids[7], ids[0], ids[4], ids[1], ids[6], ids[3]];
+      const novIds = ["m_nov_first", "m_mix", "m_odd", "m_nov_last"].map((id) => `${P}o_${id}`);
+      const want = scrambled.filter((id) => novIds.includes(id));
+      const nov = orderMonthRange(2026, 11);
+      for (const chunk of [1, 2, 3, 5, 7, 8, 9, 5000]) {
+        assert.deepEqual(await keepOrderMonth(CO, scrambled, nov, chunk), want, `每批 ${chunk} 个`);
+      }
+      assert.deepEqual(await keepOrderMonth(CO, scrambled, nov), want, "默认每批 5000");
+      assert.deepEqual(await keepOrderMonth(OTHER_CO, scrambled, nov, 3), [], "别家公司的 id 一个都不留");
+      assert.deepEqual(await keepOrderMonth(CO, [], nov), []);
+      for (const bad of [0, -1, 2.5, Number.NaN]) await assert.rejects(keepOrderMonth(CO, scrambled, nov, bad), /每批个数要是正整数/, String(bad));
+    });
+
+    await test("P7 同一个 orderMonth 传两次按最后一个算（后台读网址都是这样）；最后一个写错照样 400", async () => {
+      const r = await monthNos("?orderMonth=2026-10&orderMonth=2026-11&pageSize=100");
+      assert.equal(r.total, 4, "按 2026-11 筛");
+      assert.deepEqual((await monthNos("?orderMonth=2026-11&orderMonth=2026-10")).nos, [monthNo("m_oct_last")], "按 2026-10 筛");
+      const bad = await waybills(monthLink.token, "?orderMonth=2026-11&orderMonth=2026-99-99");
+      assert.equal(bad.status, 400, bad.text.slice(0, 120));
+      assert.equal(bad.body.message, "下单月份格式不对，请写成 2026-11 这种格式");
     });
 
     console.log("\n【每次查询都核对】");

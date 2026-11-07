@@ -1,5 +1,13 @@
 # 项目交接日志
 
+## 2026-11-07：代理利润第 1 轮（已提交到本地分支 feat/finance-link-profit，未推送、未上线；这轮先不上线）
+- 任务：财务窗口贴来的「物流系统 · 代理利润第 1 轮」，计划书在财务仓库 `docs/代理利润计划书.md`。分支 feat/finance-link-profit（从 eb5705d 拉）。工作记录 `docs/sessions/2026-11-07-finance-link-profit.md`。
+- 做了：财务运单列表一行多给 `orderedAt`、`cargoType`、`estimated`、`products`（每项只有货型和客户报的方数），加 `orderMonth` 下单月份筛选（泰国时间分月，格式不对 400）。改了 views.ts、routes.ts，新建 order-month.ts，两个测试和接口文档第 26 节。代理端 routes.ts、货型共用文件、数据库都没动。
+- 老字段改前改后同一批数据逐个比过，0 个不一样。
+- 线上 5 个数：老板说「去查吧」后只读查了生产库（范围 2952 票，已收货 0 票）：混装 92、整票货型跟产品行最严不一样 289、混装缺尺寸 0、没产品行 0、混装已收货方数对不上 0。那 289 票全是 9-10 及以前的老单（整票写普货、产品行是敏感 / 商检），9-11 起一票没有。细节见工作记录第三部分。
+- 老板回「你做好了再说」后补了审查：Codex 三轮 + dsh 一轮。修了两处方数取整（正好半立方厘米少舍 1；超过 2^53 立方厘米差最后一位），补测试 P6、P7 等，接口文档写清 `estimated` 只看审核状态。第 3 轮「没有必须修」。dsh 担心的「10-18 以前编辑会改订单 createdAt」只读查线上：范围内 0 票受影响。
+- Node 22.23.4（Docker）跑两个测试：38 / 38、55 / 55。之后老板说电脑卡、让关 Docker，已关，以后连库测试用本机 Homebrew PG。最终全套 build 76 / 77（同改前，副本打包老原因）、test-db 36 / 36；老字段 127 个 0 差。老板说「提交吧」→ 已提交到本地分支 feat/finance-link-profit，没推送、没上线（这轮先不上线）。
+
 ## 2026-11-04：对接海外仓财务系统第 1 轮（本地做完，未提交、未上线；等老板点头提交）
 - 任务：财务窗口贴来的「物流系统 · 对接财务系统运单状态（第 1 轮）」，约定以财务仓库 `docs/物流运单对接修改清单.md` 第五、六、八节为准。分支 feat/finance-link（基于 016bcc5，未提交）。工作记录 `docs/sessions/2026-11-04-finance-link.md`，接口 `docs/api-contract.md` 第 26 节。
 - 做了：`modules/finance-link/`（paths、config、status-zh、views、authorization、routes）、迁移 `20261104_finance_link`（只加两张表）、授权页 `app/login/authorize/page.tsx`、两个测试。代理端四个函数只加 export；server.ts 在 parseAuth 第一句按精确路径跳过，拆派仓那句一字没动。总开关默认关。

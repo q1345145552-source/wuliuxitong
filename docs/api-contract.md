@@ -910,12 +910,21 @@
 | `POST /integrations/finance/v1/link-requests` | | `{ warehouseRef, warehouseName }` | 201 `{ requestId, authorizeUrl, expiresAt }`（10 分钟过期） |
 | `POST /integrations/finance/v1/link-tokens` | | `{ requestId, code }` | 200 `{ token, authorizationId, account: { account, name, role } }`，token 只回这一次 |
 | `POST /integrations/finance/v1/link-tokens/revoke` | `X-Link-Token` | | 200 `{ ok: true }`，重复也 200；没带 `X-Link-Token` 400 |
-| `GET /integrations/finance/v1/waybills` | `X-Link-Token` | `page, pageSize（上限 100）, trackingNo, keyword, clientId, statusGroup`（筛选规则沿用 `/agent/shipments`，不接日期） | 200 `{ account: { account, role }, page, pageSize, total, clients, items }` |
+| `GET /integrations/finance/v1/waybills` | `X-Link-Token` | `page, pageSize（上限 100）, trackingNo, keyword, clientId, statusGroup`（筛选规则沿用 `/agent/shipments`，不接到仓日期）、`orderMonth`（2026-11-07 加，见下） | 200 `{ account: { account, role }, page, pageSize, total, clients, items }` |
 | `GET /integrations/finance/v1/waybills/track` | `X-Link-Token` | `trackingNo` | 200 `{ trackingNo, currentStatus, statusZh, logs, children }` |
 
 **名字（2026-11-04 老板选全部填唛头）**：`account.name`、`clients[].name`、`clientName` 字段名沿用约定，值一律是唛头，客户名字不出物流系统。
 
 `items` 每一行：`trackingNo`（没有运单的订单是 null）、`clientId`、`clientName`（只有代理账号有，值是唛头）、`productNames`、`packageCount`、`packageUnit`、`weightKg`、`volumeM3`、`totalWeightKg`、`totalVolumeM3`、`transportMode`、`domesticTrackingNo`（同代理端列表：一票多款用「、」拼起来，产品行没填号的显示「货拉拉」；没有产品行又没整票号才是 null）、`currentStatus`、`statusZh`、`partialAhead`（状态码，同 `currentStatus` 那一套；没有是 null）、`statusGroup`、`updatedAt`。`clients` 只有代理账号有内容：`[{ clientId, name }]`（`name` 是唛头）。
+
+**2026-11-07 代理利润第 1 轮多给的**（财务系统拿去算代理利润；价格全在财务系统，这边照旧不给任何金额。老字段的名字和值一个不变，老版本财务系统会忽略新字段）：
+
+- `orderedAt`：订单的 `createdAt`，ISO、UTC，例 `"2026-11-07T03:15:00.000Z"`。
+- `cargoType`：整票货型，只会是 `normal` / `inspection` / `sensitive` / `special`；库里是别的值给 `null`，不当普货。
+- `estimated`：`approvalStatus` 是 `shipped`（客户报的预报单、仓库还没确认收货）给 `true`，别的给 `false`。方数谁填的：客户预报单是客户报的（按产品行尺寸算，算不出来时用客户手填的整票方数），仓库确认收货时员工可以改成量出来的数（弹窗里预先填着客户报的数，员工不改就还是客户报的）；员工建单、到货通知转出来的运单是员工在仓库填的，`estimated` 都是 `false`。`estimated` 只看审核状态，不记方数到底是谁填的：确认收货时员工没改方数，`estimated` 也是 `false`（方数仍是客户报的）；反过来，还没确认收货的预报单被超管在运单编辑里改了方数，仍是 `true`。
+- `products`：按 `sortOrder` 排，每项只有 `{ cargoType, declaredVolumeM3 }`。`cargoType` 同上；`declaredVolumeM3` = 长 × 宽 × 高 × 件数 ÷ 1,000,000（跟建单算整票方数同一个公式），保留 6 位小数（按十进制精确算、四舍五入，正好半立方厘米的进位），四样里有一样没填或不大于 0 给 `null`。没有产品行的老单是 `[]`。这个数只用来按客户报的比例分整票方数；整票方数用 `totalVolumeM3`（落库 3 位小数），各行加起来不一定正好等于它，别拿各行加总当整票。确认收货不改产品行的长宽高和货型（员工在收货弹窗改货型只改整票那一格）；只有一个产品行时，员工改的箱数会同步到那一行，这一行的方数跟着变。
+
+**下单月份 `orderMonth`**（2026-11-07 加）：只认 `YYYY-MM`（年 2020～2100、月 01～12）。没传或空串不筛；别的写法（`2026-99-99`、`2026-13`、`2026-1`、`26-11`、`abc`、带空格、全角数字）400 `BAD_REQUEST`「下单月份格式不对，请写成 2026-11 这种格式」。按**泰国时间（UTC+7）**筛订单的 `createdAt`：`2026-11` = `2026-10-31T17:00:00.000Z`（含）到 `2026-11-30T17:00:00.000Z`（不含），`2026-12` 结束是 `2026-12-31T17:00:00.000Z`。先按上面那几个筛选拿到范围内的订单，再按月份筛，顺序不变；`total` 和分页都按筛完的算。同一个参数传两次，按最后一个算（整个后台读网址参数都这样）。不复用代理端的 `dateFrom` / `dateTo`（那组筛的是到仓日期）。规则在 `modules/finance-link/order-month.ts`。
 
 `logs` 每一条：`{ at, status, statusZh, remark, nextStop }`，父单 = 自己 + 同一张订单的全部子单、按时间排；备注和下一站都抹柜号（含手写的「柜号：XXX」）和系统拼的「管理员」。`children` 每一条：`{ trackingNo, currentStatus, statusZh }`。不在范围、不存在、没审过、整柜、集货都回同一个 404。
 

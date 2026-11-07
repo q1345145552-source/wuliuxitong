@@ -27,7 +27,8 @@ import { INTEGRATION_PATHS } from "../apps/api/src/modules/chaipai/paths";
 import { readFinanceLinkConfig } from "../apps/api/src/modules/finance-link/config";
 import { AUTHORIZE_INFO_PATH, AUTHORIZE_SUBMIT_PATH, FINANCE_LINK_PATHS } from "../apps/api/src/modules/finance-link/paths";
 import { WAYBILL_STATUS_ZH, waybillStatusZh } from "../apps/api/src/modules/finance-link/status-zh";
-import { mapTrackChild, mapTrackLog, mapWaybillRow, maskHandwrittenContainerNos } from "../apps/api/src/modules/finance-link/views";
+import { ORDER_MONTH_INVALID, orderMonthRange, parseOrderMonth } from "../apps/api/src/modules/finance-link/order-month";
+import { cargoTypeOrNull, declaredVolumeM3, mapTrackChild, mapTrackLog, mapWaybillRow, maskHandwrittenContainerNos } from "../apps/api/src/modules/finance-link/views";
 import { CLIENT_STATUS_ZH_OVERRIDES, SHIPMENT_STATUS_ZH, shipmentStatusZh } from "../apps/web/src/modules/shipment/shipment-status";
 
 const ROOT = path.join(__dirname, "..");
@@ -103,19 +104,29 @@ const FULL_ROW = {
   currentStatus: "inWarehouseTH", partialAhead: "delivered", statusGroup: "arrived", updatedAt: "2026-11-03T08:00:00.000Z",
   // 这些是 loadShipmentRows 行里有、绝不能带出去的
   id: "order-id", orderNo: "ORD1", shipmentId: "ship-id", approvalStatus: "approved", itemName: "x", productQuantity: 1,
-  lengthCm: "1", widthCm: "1", heightCm: "1", cargoType: "normal", shipDate: "2026-10-01", createdAt: "2026-10-01",
-  receiverNameTh: "收件人", receiverPhoneTh: "0899", receiverAddressTh: "地址", products: [{ itemName: "x", domesticTrackingNo: "SF1" }],
+  lengthCm: "1", widthCm: "1", heightCm: "1", cargoType: "normal", shipDate: "2026-10-01", createdAt: "2026-10-01T03:15:00.000Z",
+  receiverNameTh: "收件人", receiverPhoneTh: "0899", receiverAddressTh: "地址",
+  products: [{ itemName: "x", domesticTrackingNo: "SF1", productQuantity: 1, lengthCm: 50, widthCm: 40, heightCm: 30, packageCount: 2, weightKg: 9, cargoType: "normal" }],
   // 将来谁给那一行加了这些，也带不出去
   batchNo: "MEDU1234567", containerNo: "MEDU1234567", receivableAmountCny: 8765.43, operatorName: "员工", remark: "内部备注",
 };
+/** 2026-11-04 第 1 轮就有的字段：名字和值一个都不许变（老版本的财务系统只认这些） */
 const WAYBILL_KEYS = ["trackingNo", "clientId", "productNames", "packageCount", "packageUnit", "weightKg", "volumeM3", "totalWeightKg", "totalVolumeM3",
   "transportMode", "domesticTrackingNo", "currentStatus", "statusZh", "partialAhead", "statusGroup", "updatedAt"];
+/** 2026-11-07 代理利润第 1 轮多给的，只有这四个 */
+const PROFIT_KEYS = ["orderedAt", "cargoType", "estimated", "products"];
+/** FULL_ROW 在改之前（eb5705d）mapWaybillRow 出来的老字段，一个字不差 */
+const OLD_VALUES = {
+  trackingNo: "YW1", clientId: "C01", productNames: "鞋", packageCount: 3, packageUnit: "箱", weightKg: 12.5, volumeM3: 0.42, totalWeightKg: 12.5,
+  totalVolumeM3: 0.42, transportMode: "sea", domesticTrackingNo: "SF1", currentStatus: "inWarehouseTH", statusZh: "已到仓", partialAhead: "delivered",
+  statusGroup: "arrived", updatedAt: "2026-11-03T08:00:00.000Z",
+};
 
-check("V1 运单一行只出修改清单 5.4 那些字段：普通客户没有 clientName，代理才有", () => {
+check("V1 运单一行只出修改清单 5.4 那些字段 + 代理利润那四个：普通客户没有 clientName，代理才有", () => {
   const asClient = mapWaybillRow(FULL_ROW, false);
-  assert.deepEqual(Object.keys(asClient).sort(), [...WAYBILL_KEYS].sort());
+  assert.deepEqual(Object.keys(asClient).sort(), [...WAYBILL_KEYS, ...PROFIT_KEYS].sort());
   const asAgent = mapWaybillRow(FULL_ROW, true);
-  assert.deepEqual(Object.keys(asAgent).sort(), [...WAYBILL_KEYS, "clientName"].sort());
+  assert.deepEqual(Object.keys(asAgent).sort(), [...WAYBILL_KEYS, ...PROFIT_KEYS, "clientName"].sort());
   assert.equal(asAgent.clientName, "C01", "值是唛头，不是客户名字");
   assert.ok(!JSON.stringify(asAgent).includes("客户名"), "客户名字不许带出去");
   assert.equal(asAgent.statusZh, "已到仓");
@@ -129,6 +140,125 @@ check("V1b 国内单号跟代理端列表同一个口径：一票多款把产品
   assert.equal(mapWaybillRow(row([], "SF9"), false).domesticTrackingNo, "SF9", "没有产品行的老单用整票的号");
   assert.equal(mapWaybillRow(row([], null), false).domesticTrackingNo, null);
   assert.equal(mapWaybillRow(row([{ domesticTrackingNo: null }], null), false).domesticTrackingNo, "货拉拉", "产品行没填号的占位，跟代理端列表一样");
+});
+
+/* ─────────────── 代理利润第 1 轮（2026-11-07）：多给的四个字段 ─────────────── */
+
+check("V4 老字段一个不少、值不变；新的只有四个：orderedAt 原样是下单时间、整票货型、estimated、products", () => {
+  for (const isAgent of [false, true]) {
+    const item = mapWaybillRow(FULL_ROW, isAgent) as unknown as Record<string, unknown>;
+    for (const [k, v] of Object.entries(OLD_VALUES)) assert.deepEqual(item[k], v, k);
+    const added = Object.keys(item).filter((k) => !(k in OLD_VALUES) && k !== "clientName");
+    assert.deepEqual(added.sort(), [...PROFIT_KEYS].sort());
+  }
+  const item = mapWaybillRow(FULL_ROW, false);
+  assert.equal(item.orderedAt, "2026-10-01T03:15:00.000Z");
+  assert.equal(item.cargoType, "normal");
+  assert.deepEqual(item.products, [{ cargoType: "normal", declaredVolumeM3: 0.12 }]);
+  const text = JSON.stringify(mapWaybillRow(FULL_ROW, true));
+  for (const word of ["MEDU1234567", "8765.43", "收件人", "0899", "内部备注", "order-id", "ship-id", "ORD1", "客户名", "itemName", "weightKg\":9", "approvalStatus"]) {
+    assert.ok(!text.includes(word), `带出去了 ${word}`);
+  }
+});
+
+check("V5 estimated 只在客户预报、还没确认收货（approvalStatus = shipped）时是 true", () => {
+  const est = (approvalStatus: string) => mapWaybillRow({ ...FULL_ROW, approvalStatus }, false).estimated;
+  assert.equal(est("shipped"), true);
+  for (const s of ["received", "approved", "pending", "rejected", "", "Shipped"]) assert.equal(est(s), false, s);
+});
+
+check("V6 products 每项只有 cargoType、declaredVolumeM3 两个键，顺序照来的（已按 sortOrder 排）；没有产品行给空数组", () => {
+  const products = [
+    { domesticTrackingNo: "SF1", itemName: "衣服", weightKg: 5, lengthCm: 100, widthCm: 100, heightCm: 100, packageCount: 1, cargoType: "normal" },
+    { domesticTrackingNo: "SF2", itemName: "电池", weightKg: 6, lengthCm: 100, widthCm: 100, heightCm: 100, packageCount: 1, cargoType: "sensitive" },
+  ];
+  const item = mapWaybillRow({ ...FULL_ROW, products }, true);
+  assert.deepEqual(item.products, [{ cargoType: "normal", declaredVolumeM3: 1 }, { cargoType: "sensitive", declaredVolumeM3: 1 }]);
+  for (const p of item.products) assert.deepEqual(Object.keys(p).sort(), ["cargoType", "declaredVolumeM3"]);
+  assert.deepEqual(mapWaybillRow({ ...FULL_ROW, products: [] }, false).products, []);
+});
+
+check("V7 货型只认 normal / inspection / sensitive / special；认不出来（含中文、大小写、带空格、空）给 null，绝不当普货", () => {
+  for (const v of ["normal", "inspection", "sensitive", "special"]) assert.equal(cargoTypeOrNull(v), v);
+  for (const v of ["frozen", "普货", "Normal", " normal", "SPECIAL", "", null, undefined]) assert.equal(cargoTypeOrNull(v), null, String(v));
+  assert.equal(mapWaybillRow({ ...FULL_ROW, cargoType: "frozen" }, false).cargoType, null, "整票");
+  assert.equal(mapWaybillRow({ ...FULL_ROW, cargoType: null }, false).cargoType, null, "整票没值");
+  assert.deepEqual(mapWaybillRow({ ...FULL_ROW, products: [{ ...FULL_ROW.products[0], cargoType: "frozen" }] }, false).products, [{ cargoType: null, declaredVolumeM3: 0.12 }], "产品行");
+});
+
+check("V8 产品行方数 = 长×宽×高×件数÷1,000,000，保留 6 位；缺一个尺寸、件数，或不大于 0 都给 null，不当 0", () => {
+  const vol = (l: unknown, w: unknown, h: unknown, pkg: unknown) =>
+    declaredVolumeM3({ lengthCm: l as number, widthCm: w as number, heightCm: h as number, packageCount: pkg as number });
+  assert.equal(vol(100, 100, 100, 1), 1);
+  assert.equal(vol(50, 40, 30, 2), 0.12);
+  assert.equal(vol(33.3, 33.3, 33.3, 3), 0.110778, "36926.037 立方厘米 × 3，舍到 6 位");
+  assert.equal(vol(0.5, 0.5, 0.5, 1), 0, "不到半立方厘米舍成 0（尺寸都是正数，算出来就是这么小）");
+  assert.equal(vol(120, 100, 100, 1), 1.2);
+  for (const [l, w, h, pkg] of [[null, 40, 30, 1], [50, undefined, 30, 1], [50, 40, null, 1], [50, 40, 30, null], [0, 40, 30, 1], [50, 40, 30, 0], [-50, 40, 30, 1], [50, 40, 30, -1], [Number.NaN, 40, 30, 1], [Number.POSITIVE_INFINITY, 40, 30, 1], ["50", 40, 30, 1]]) {
+    assert.equal(vol(l, w, h, pkg), null, JSON.stringify([l, w, h, pkg]));
+  }
+  // 正好半立方厘米的要进位：浮点直接乘会乘成 .4999…（11-07 Codex 审查抓到的）
+  assert.equal(vol(10, 10.5, 16.9, 1), 0.001775, "1774.5 立方厘米");
+  assert.equal(vol(10, 1.5, 4.1, 1), 0.000062, "61.5 立方厘米");
+  assert.equal(vol(10, 1.5, 33.3, 1), 0.0005, "499.5 立方厘米");
+  assert.equal(vol(10, 1.5, 33.3, 3), 0.001499, "1498.5 立方厘米");
+  // 跟「尺寸都乘 100 变整数再算」的精确值逐个比（两位小数以内的尺寸），一个都不许差；同时小数最多 6 位、不带浮点尾巴
+  const exact = (l: number, w: number, h: number, pkg: number) => {
+    const n = BigInt(Math.round(l * 100)) * BigInt(Math.round(w * 100)) * BigInt(Math.round(h * 100)) * BigInt(pkg); // 立方厘米 × 1,000,000
+    const cm3 = (n + 500_000n) / 1_000_000n;
+    return Number(`${cm3 / 1_000_000n}.${(cm3 % 1_000_000n).toString().padStart(6, "0")}`);
+  };
+  // 大到超过 2^53 立方厘米也不许差最后一位（第 2 轮审查）；科学计数法写法的数（String 出来带 e）照样算对
+  assert.equal(vol(21001, 21401, 21523, 941), 9102621217.716343);
+  assert.equal(vol(1e-7, 1e7, 1, 1), 0.000001, "1e-7 × 1e7 = 1 立方厘米");
+  assert.equal(vol(1e21, 1e-21, 1, 1), 0.000001, "1e21 × 1e-21 = 1 立方厘米");
+  assert.equal(vol(2.5e-7, 2, 1, 1), 0, "0.0000005 立方厘米舍成 0");
+  const cases: Array<[number, number, number, number]> = [[33.3, 33.3, 33.3, 3], [12.7, 9.9, 3.3, 7], [0.1, 0.2, 0.3, 1], [99.99, 88.88, 77.77, 11], [10, 10.5, 16.9, 1], [10, 1.5, 65.1, 4], [45.5, 12.5, 7.3, 2], [0.01, 0.01, 0.01, 1], [1200, 800, 600.5, 9]];
+  for (let a = 1; a <= 120; a++) for (const b of [1.5, 10.5, 12.25, 33.3]) cases.push([10, b, a / 10, 1 + (a % 5)]);
+  for (const [l, w, h, pkg] of cases) {
+    const v = vol(l, w, h, pkg)!;
+    assert.ok(/^\d+(\.\d{1,6})?$/.test(String(v)), `${String(v)} 不是最多 6 位小数`);
+    assert.equal(v, exact(l, w, h, pkg), JSON.stringify([l, w, h, pkg]));
+  }
+});
+
+check("V9 下单月份：只认 YYYY-MM（2020～2100、01～12）；没传 / 空串不筛；别的写法一律格式不对", () => {
+  const iso = (r: ReturnType<typeof parseOrderMonth>) => (r ? [r.from.toISOString(), r.to.toISOString()] : r);
+  assert.deepEqual(iso(parseOrderMonth("2026-11")), ["2026-10-31T17:00:00.000Z", "2026-11-30T17:00:00.000Z"]);
+  assert.deepEqual(iso(parseOrderMonth("2026-12")), ["2026-11-30T17:00:00.000Z", "2026-12-31T17:00:00.000Z"], "12 月跨年");
+  assert.deepEqual(iso(parseOrderMonth("2027-01")), ["2026-12-31T17:00:00.000Z", "2027-01-31T17:00:00.000Z"]);
+  assert.deepEqual(iso(parseOrderMonth("2024-02")), ["2024-01-31T17:00:00.000Z", "2024-02-29T17:00:00.000Z"], "闰年 2 月");
+  assert.deepEqual(iso(parseOrderMonth("2020-01")), ["2019-12-31T17:00:00.000Z", "2020-01-31T17:00:00.000Z"]);
+  assert.deepEqual(iso(parseOrderMonth("2100-12")), ["2100-11-30T17:00:00.000Z", "2100-12-31T17:00:00.000Z"]);
+  assert.deepEqual(iso(orderMonthRange(2026, 11)), iso(parseOrderMonth("2026-11")));
+  assert.equal(parseOrderMonth(undefined), undefined);
+  assert.equal(parseOrderMonth(""), undefined);
+  for (const bad of ["2026-99-99", "2026-13", "2026-1", "26-11", "abc", "2026-00", "2019-12", "2101-01", "2026-11-01", " 2026-11", "2026-11 ", "2026-11\n",
+    "2026/11", "202611", "２０２６-１１", "2026-1１", "+2026-11", "-2026-11", " ", 202611, ["2026-11"], null, {}]) {
+    assert.equal(parseOrderMonth(bad), null, JSON.stringify(bad));
+  }
+  assert.equal(ORDER_MONTH_INVALID, "下单月份格式不对，请写成 2026-11 这种格式");
+});
+
+check("V10 接线：月份在 listScopedOrderIds 之后按订单 createdAt 再筛一遍；total 和分页用筛完的；不碰 dateFrom / dateTo；order-month.ts 不碰数据库", () => {
+  const routes = read("apps/api/src/modules/finance-link/routes.ts");
+  const handler = routes.slice(routes.indexOf("app.get(WAYBILLS_PATH"), routes.indexOf("app.get(WAYBILL_TRACK_PATH"));
+  assert.match(handler, /parseOrderMonth\(req\.query\.orderMonth\)/);
+  assert.match(handler, /if \(orderMonth === null\) \{ fail\(res, 400, "BAD_REQUEST", ORDER_MONTH_INVALID\); return; \}/);
+  assert.match(handler, /const scopedIds = await listScopedOrderIds\(scope\.auth, scope\.clientIds, filters\);/);
+  assert.match(handler, /const allIds = orderMonth \? await keepOrderMonth\(link\.companyId, scopedIds, orderMonth\) : scopedIds;/);
+  assert.match(handler, /total: allIds\.length/);
+  assert.match(handler, /allIds\.slice\(\(page - 1\) \* pageSize, page \* pageSize\)/);
+  assert.ok(!/dateFrom|dateTo/.test(handler.replace(/\/\/.*$/gm, "")), "不许把代理端的到仓日期筛选接进来");
+  const keep = routes.slice(routes.indexOf("async function keepOrderMonth"), routes.indexOf("const TRACK_LOG_SELECT"));
+  assert.match(routes, /const MONTH_FILTER_CHUNK = 5000;/);
+  assert.match(keep, /chunk = MONTH_FILTER_CHUNK\)/, "接口里每批默认 5000");
+  assert.match(keep, /if \(!Number\.isSafeInteger\(chunk\) \|\| chunk < 1\) throw/, "每批个数不是正整数直接报错，不许死循环");
+  assert.match(keep, /createdAt: \{ gte: range\.from, lt: range\.to \}/);
+  assert.match(keep, /where: \{ id: \{ in: orderIds\.slice\(i, i \+ chunk\) \}, companyId, createdAt: \{ gte: range\.from, lt: range\.to \} \}/, "查询条件里要带公司（光有参数名不算）");
+  assert.match(keep, /return orderIds\.filter\(\(id\) => hit\.has\(id\)\);/, "顺序照 listScopedOrderIds 的");
+  const monthSrc = read("apps/api/src/modules/finance-link/order-month.ts");
+  assert.ok(!/import /.test(monthSrc), "order-month.ts 只放解析和起止时间，不引别的");
 });
 
 check("V2 轨迹一条只有 at/status/statusZh/remark/nextStop；柜号抹掉、代码拼的「管理员」抹掉（跟代理端同一个函数）", () => {
