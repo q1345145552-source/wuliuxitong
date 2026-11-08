@@ -114,6 +114,7 @@
     "test:migration-chaipai-db": "tsx scripts/test-migration-chaipai-db.ts",
     "test:finance-link-source": "tsx scripts/test-finance-link-source.ts",
     "test:finance-link-db": "tsx scripts/test-finance-link-db.ts",
+    "test:admin-client-filter": "tsx scripts/test-admin-client-filter.ts",
     "test:arrival-notice-snapshot-source": "tsx scripts/test-arrival-notice-snapshot-source.ts",
     "test:arrival-notice-snapshot-db": "tsx scripts/test-arrival-notice-snapshot-db.ts",
     "test:migration-arrival-notice-snapshots-db": "tsx scripts/test-migration-arrival-notice-snapshots-db.ts",

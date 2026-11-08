@@ -367,6 +367,9 @@ jobs:
       # 只有 5 条精确路径不跑登录解析、代理端四个函数只加 export、三个环境变量不进前端、迁移只加不删、日志里没有密码和授权
       - name: Test finance link (source)
         run: npm run test:finance-link-source
+      # 客户管理按归属筛（2026-11-08 老板要）：全部 / 湘泰自己的 / 某个代理的，跟搜索叠着用、顺序不变、页面接上了
+      - name: Test admin client filter (source)
+        run: npm run test:admin-client-filter
       # 拆派仓只读接口到点就走（2026-10-14）：Node 22 的 fetch 带 redirect:"error" 时，读响应体中途碰上垃圾回收 abort() 就失灵、
       # 一挂 300 秒（10-12 这里 V9 等了 300333ms）。不连库：假服务器 + 强制回收内存，看是不是按时断开、连接真断了。
       # ⚠️ 只有 Node 22 照得出老毛病（本机 Node 24 照不出），所以这项必须在 CI 跑

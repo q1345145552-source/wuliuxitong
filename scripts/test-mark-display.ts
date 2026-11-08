@@ -88,6 +88,8 @@ function scan(files: string[], field: RegExp, notClient: NotClient[]): Hit[] {
   return hits;
 }
 type Allow = { file: string; re: RegExp; why: string };
+/** 整行原样放行（别的写法照样拦），省得手写一长串转义 */
+const exactLine = (line: string): RegExp => new RegExp(`^${line.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`);
 function assertAllAllowed(hits: Hit[], allow: Allow[], generic: Array<{ re: RegExp; why: string }> = []): void {
   const bad = hits.filter((h) =>
     !generic.some((g) => g.re.test(h.text)) &&
@@ -153,7 +155,12 @@ const WEB_ALLOW: Allow[] = [
   { file: "apps/web/src/app/staff/page.tsx", re: /^value=\{item\.clientName \?\? item\.clientId \?\? "—"\}$/, why: "员工运单「运单所属用户」" },
 
   // ── 客户管理页：名字就是在这里给内部看、给内部改的 ──
-  { file: "apps/web/src/app/admin/page.tsx", re: /^\[u\.id, u\.name, u\.companyName, u\.phone, u\.email\]$/, why: "客户管理搜索" },
+  // 客户管理搜索（2026-11-08 跟按归属筛一起挪进 modules/admin-clients/agent-filter.ts，搜的东西没变）
+  { file: "apps/web/src/modules/admin-clients/agent-filter.ts", re: /^&& \(!q \|\| \[u\.id, u\.name, u\.companyName, u\.phone, u\.email\]\.some\(\(v\) => \(v \?\? ""\)\.toLowerCase\(\)\.includes\(q\)\)\),$/, why: "客户管理搜索" },
+  // 按归属筛的下拉：这三行读的是代理名（代理名单那一行），逐行放行，同一个文件里别的 .name 照样拦（Codex 第 2 轮）
+  { file: "apps/web/src/modules/admin-clients/agent-filter.ts", re: exactLine("rows.push({ id: a.id, name: a.name, loginId: a.loginId });"), why: "代理名（按归属筛的下拉）" },
+  { file: "apps/web/src/modules/admin-clients/agent-filter.ts", re: exactLine("for (const r of rows) sameName.set(r.name, (sameName.get(r.name) ?? 0) + 1);"), why: "代理名（同名代理计数）" },
+  { file: "apps/web/src/modules/admin-clients/agent-filter.ts", re: exactLine("label: (sameName.get(r.name) ?? 0) > 1 ? `${r.name}（${r.loginId ? `账号 ${r.loginId}` : `编号尾 ${r.id.slice(-6)}`}）` : r.name,"), why: "代理名（同名带账号）" },
   { file: "apps/web/src/app/admin/page.tsx", re: /^<span><strong>客户名字<\/strong> \{u\.name\}<\/span>$/, why: "客户管理卡片" },
   { file: "apps/web/src/app/admin/page.tsx", re: /^name: u\.name,$/, why: "客户管理「编辑」带出原名字" },
   { file: "apps/web/src/app/admin/page.tsx", re: /^<span><strong>姓名<\/strong> \{u\.name\}<\/span>$|^onClick=\{\(\) => void confirmToggleBan\(u\.id, u\.name, u\.status, loadStaff, "员工"\)\}$/, why: "员工管理（员工不是客户）" },

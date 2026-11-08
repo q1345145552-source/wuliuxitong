@@ -1,5 +1,15 @@
 # 项目交接日志
 
+## 2026-11-08：客户管理按归属筛（老板：「客户管理那边要加筛选，比如筛选是哪个代理的客户或者我们自己的」）
+- 管理员工作台 → 客户管理，搜索框左边加下拉「全部客户 / 湘泰自己的客户 / 代理：某某」，选了马上筛、跟搜索叠着用；数量那句和空状态带归属；同名代理后面带登录账号。只改前端：客户名单 `/admin/users?role=client` 本来就一次全给、没分页。
+- 规则在新文件 `apps/web/src/modules/admin-clients/agent-filter.ts`；测试 `scripts/test-admin-client-filter.ts`（11 项，进 package.json + ci.yml build 组，含「客户名单接口不许加分页」）。`fetchAgentOptions` 出错改回 null（原来回空数组），`loadClients` 拉失败留着上一次的代理名单。`test-mark-display.ts`：客户管理搜索那行跟着挪到新文件，代理名三行逐行放行。
+- Codex 两轮（`.audit/2026-11-08/client-filter/`）：第 1 轮同名分不清、拉失败清空代理两条已改；第 2 轮指出开客户 / 编辑客户弹窗里同名代理分不清、首次拉代理失败提示「还没有代理」—— 原来就有、不在这次需求里，没动，已告诉老板。
+- 验证：build 组 78/78（含网页打包）；临时库 + 临时后台 + 副本网页浏览器实测（各选项、叠搜索、0 个、同名、手机宽度），无页面报错。
+- ⚠️ 本机坑：副本链接仓库 node_modules 跑 `db:generate` 会把仓库的 Prisma 客户端改成去副本找 .env（老板本机 3001 一重启就连不上库）；跑完回仓库 `npm run db:generate`。收临时后台别 `pkill -f main.ts`（会连老板 launchd 的 3001 一起杀）。
+
+## 2026-11-08 12:36（北京）上线 7365f16：代理利润第 1 轮
+- 财务窗口贴「代理利润第 1 轮上线」，老板说「上吧」。main 快进到 7365f16 推 GitHub，三组检查全绿 → 服务器 deploy.sh 退出 0：没有迁移、不动库，只重建 api / web。核对：服务器 HEAD 7365f16、健康 200、不带授权请求财务运单列表 401、财务开关仍开着、五张表条数前后一样、登录页 200、后台启动后报错 0；换容器那 5 秒 nginx 8 个 502/500，之后 0。上线后手动备份 `/root/db-backups/xiangtai_postdeploy_7365f16_20261108_043717.sql.gz` 748M（没用 backup-db.sh：它库没响应会重启库、结尾删旧备份）。
+
 ## 2026-11-07：代理利润第 1 轮（已提交到本地分支 feat/finance-link-profit，未推送、未上线；这轮先不上线）
 - 任务：财务窗口贴来的「物流系统 · 代理利润第 1 轮」，计划书在财务仓库 `docs/代理利润计划书.md`。分支 feat/finance-link-profit（从 eb5705d 拉）。工作记录 `docs/sessions/2026-11-07-finance-link-profit.md`。
 - 做了：财务运单列表一行多给 `orderedAt`、`cargoType`、`estimated`、`products`（每项只有货型和客户报的方数），加 `orderMonth` 下单月份筛选（泰国时间分月，格式不对 400）。改了 views.ts、routes.ts，新建 order-month.ts，两个测试和接口文档第 26 节。代理端 routes.ts、货型共用文件、数据库都没动。

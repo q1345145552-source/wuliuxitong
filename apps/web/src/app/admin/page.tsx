@@ -47,6 +47,7 @@ import { normalizeWarehouseId, strictPackageUnit, strictTransport, WAREHOUSE_NAM
 import { SHIPMENT_STATUS_FILTER_OPTIONS } from "../../modules/shipment/shipment-status";
 import ShippingConfig from "../../components/admin/ShippingConfig";
 import { createQueryGate, createRequestGate } from "../../modules/shared/request-gate";
+import { CLIENT_AGENT_FILTER_ALL, clientAgentFilterLabel, clientAgentFilterOptions, clientAgentFilterValue, filterAdminClients, parseClientAgentFilter, type ClientAgentFilter } from "../../modules/admin-clients/agent-filter";
 import { useLiveRefresh } from "../../modules/realtime/useRealtime";
 import { useIsPhone } from "../../modules/layout/useIsPhone";
 import ShipmentPhoneList from "../../modules/shipment/ShipmentPhoneList";
@@ -275,6 +276,8 @@ export default function AdminHomePage() {
    */
   const [clientSearchInput, setClientSearchInput] = useState("");
   const [clientSearchQuery, setClientSearchQuery] = useState("");
+  /** 按归属筛（2026-11-08 老板要）：全部 / 湘泰自己的 / 某个代理的。选了就生效，不用点搜索 */
+  const [clientAgentFilter, setClientAgentFilter] = useState<ClientAgentFilter>(CLIENT_AGENT_FILTER_ALL);
   const [orderList, setOrderList] = useState<AdminOrderItem[]>([]);
   const [ordersLoaded, setOrdersLoaded] = useState(false);
   const [ordersError, setOrdersError] = useState(false);
@@ -705,12 +708,12 @@ export default function AdminHomePage() {
   const loadClients = useCallback(async () => {
     const revision = accountWriteState.current.revision;
     const ticket = clientsGate.begin(null);
-    // 代理下拉跟客户列表一起拉；代理接口出错时返回空数组，不影响客户列表
+    // 代理下拉跟客户列表一起拉；代理接口出错时返回 null，不影响客户列表，代理下拉留着上一次的（2026-11-08）
     const [list, agents] = await Promise.all([fetchAdminClients(), fetchAgentOptions()]);
     if (!isAccountSnapshotCurrent(revision)) return;
     if (!clientsGate.accept(ticket, null)) return;
     setClientList(list);
-    setAgentOptions(agents);
+    if (agents) setAgentOptions(agents);
   }, [isAccountSnapshotCurrent, clientsGate]);
 
   // 写成功已是事实。刷新错误单独反馈，并等两个读取都落定后才解除操作中的状态。
@@ -740,18 +743,19 @@ export default function AdminHomePage() {
   }, [loadOverview]);
 
   /**
-   * 按搜索词筛客户。账号、客户名字、公司名字、电话、邮箱 —— 五样里命中任意一样就算。
-   * 不分大小写；两头的空格自动去掉（从别处复制过来常常带空格）。
-   * 在前端筛而不是重新请求接口：客户总共几十个，一次都取回来了，本地筛更快也不用等。
+   * 按归属和搜索词筛客户（规则在 modules/admin-clients/agent-filter.ts）。搜索词：账号、客户名字、公司名字、电话、邮箱 ——
+   * 五样里命中任意一样就算，不分大小写，两头的空格自动去掉（从别处复制过来常常带空格）。
+   * 在前端筛而不是重新请求接口：客户一次都取回来了（接口没有分页），本地筛更快也不用等。
    */
-  const filteredClientList = useMemo(() => {
-    const q = clientSearchQuery.trim().toLowerCase();
-    if (!q) return clientList;
-    return clientList.filter((u) =>
-      [u.id, u.name, u.companyName, u.phone, u.email]
-        .some((v) => (v ?? "").toLowerCase().includes(q)),
-    );
-  }, [clientList, clientSearchQuery]);
+  const clientAgentOptions = useMemo(
+    () => clientAgentFilterOptions(agentOptions, clientList, clientAgentFilter),
+    [agentOptions, clientList, clientAgentFilter],
+  );
+  const filteredClientList = useMemo(
+    () => filterAdminClients(clientList, clientSearchQuery, clientAgentFilter),
+    [clientList, clientSearchQuery, clientAgentFilter],
+  );
+  const clientAgentLabel = clientAgentFilterLabel(clientAgentFilter, clientAgentOptions);
 
   // 运单列表的门闩：10 秒轮询和手动「刷新」都走 loadOrders，慢的旧响应不许盖掉快的新响应（2026-09-05 复查补）
   const orderListGate = useRef(createRequestGate()).current;
@@ -1796,6 +1800,20 @@ export default function AdminHomePage() {
             创建账号
           </button>
 
+          {/* 按归属筛（2026-11-08）：全部 / 湘泰自己的客户 / 某个代理的客户，选了马上筛，跟搜索叠着用 */}
+          <select
+            aria-label="按归属筛客户"
+            value={clientAgentFilterValue(clientAgentFilter)}
+            onChange={(e) => setClientAgentFilter(parseClientAgentFilter(e.target.value))}
+            style={{ border: "1px solid var(--l-strong)", borderRadius: 8, padding: "8px 12px", background: "var(--white)", color: "var(--t-strong)", marginLeft: "auto", maxWidth: 220 }}
+          >
+            <option value="all">全部客户</option>
+            <option value="self">湘泰自己的客户</option>
+            {clientAgentOptions.map((a) => (
+              <option key={a.id} value={clientAgentFilterValue({ kind: "agent", agentId: a.id })}>代理：{a.label}</option>
+            ))}
+          </select>
+
           {/* 客户搜索（2026-08-27 加）：按回车等同于点「搜索」，两种习惯都照顾到 */}
           <input
             type="search"
@@ -1803,7 +1821,7 @@ export default function AdminHomePage() {
             onChange={(e) => setClientSearchInput(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter") setClientSearchQuery(clientSearchInput); }}
             placeholder="搜账号 / 名字 / 公司 / 电话 / 邮箱"
-            style={{ border: "1px solid var(--l-strong)", borderRadius: 8, padding: "8px 12px", width: 260, marginLeft: "auto" }}
+            style={{ border: "1px solid var(--l-strong)", borderRadius: 8, padding: "8px 12px", width: 260 }}
           />
           <button
             type="button"
@@ -1823,17 +1841,25 @@ export default function AdminHomePage() {
           ) : null}
         </div>
 
-        {/* 搜过之后告诉用户找到几个，找不到时也好判断是没有还是打错了 */}
-        {clientSearchQuery ? (
+        {/* 筛过 / 搜过之后告诉用户找到几个，找不到时也好判断是没有还是打错了 */}
+        {clientSearchQuery || clientAgentLabel ? (
           <div style={{ marginBottom: 12, fontSize: 13, color: "var(--t-muted)" }}>
-            搜「{clientSearchQuery}」找到 <strong style={{ color: "var(--t-strong)" }}>{filteredClientList.length}</strong> 个客户（共 {clientList.length} 个）
+            {clientSearchQuery
+              ? <>{clientAgentLabel ? `${clientAgentLabel}里` : ""}搜「{clientSearchQuery}」找到 <strong style={{ color: "var(--t-strong)" }}>{filteredClientList.length}</strong> 个客户</>
+              : <>{clientAgentLabel}：<strong style={{ color: "var(--t-strong)" }}>{filteredClientList.length}</strong> 个</>}
+            （共 {clientList.length} 个）
           </div>
         ) : null}
 
         {clientList.length === 0 ? (
           <EmptyStateCard title="暂无客户" description="请在上方添加客户。" />
         ) : filteredClientList.length === 0 ? (
-          <EmptyStateCard title="没找到匹配的客户" description={`「${clientSearchQuery}」没有匹配到任何客户，换个词试试，或者点「清空」看全部。`} />
+          <EmptyStateCard
+            title="没找到匹配的客户"
+            description={clientSearchQuery
+              ? `${clientAgentLabel ? `${clientAgentLabel}里` : ""}「${clientSearchQuery}」没有匹配到任何客户，换个词试试，或者点「清空」${clientAgentLabel ? "、把归属选回「全部客户」" : ""}看全部。`
+              : `${clientAgentLabel}一个都没有，把归属选回「全部客户」看全部。`}
+          />
         ) : (
           <div style={{ display: "grid", gap: 8 }}>
             {filteredClientList.map((u) => (

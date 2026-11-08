@@ -353,18 +353,21 @@ export interface AdminClientWhrPrice {
 export interface AgentOption {
   id: string;
   name: string;
+  /** 代理的登录账号：代理能重名，客户管理按归属筛的下拉遇到同名时拿它区分（2026-11-08）；接口没给是空串 */
+  loginId?: string;
 }
 
 /**
- * 代理下拉列表。接口没好 / 出错时返回空数组，不让「客户管理」整块报错
- * （选不了代理时照样能开湘泰自己的客户）。
+ * 代理下拉列表。接口没好 / 出错时返回 null，不让「客户管理」整块报错（选不了代理时照样能开湘泰自己的客户）。
+ * 2026-11-08 起出错不再返回空数组：要跟「成功了、但一个代理都没有」分开 —— 调用方拿到 null 就留着上一次的名单，
+ * 不然 10 秒兜底刷新碰上一次失败，下拉里的代理就全没了（Codex 审查）。
  */
-export async function fetchAgentOptions(): Promise<AgentOption[]> {
+export async function fetchAgentOptions(): Promise<AgentOption[] | null> {
   try {
-    const data = await apiRequest<{ items?: Array<{ id: string; name: string }> }>(`${apiBaseUrl()}/admin/agents/list`);
-    return (data.items ?? []).map((a) => ({ id: a.id, name: a.name }));
+    const data = await apiRequest<{ items?: Array<{ id: string; name: string; loginId?: string }> }>(`${apiBaseUrl()}/admin/agents/list`);
+    return (data.items ?? []).map((a) => ({ id: a.id, name: a.name, loginId: a.loginId ?? "" }));
   } catch {
-    return [];
+    return null;
   }
 }
 
