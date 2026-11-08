@@ -1,5 +1,11 @@
 # 项目交接日志
 
+## 2026-11-08：代理申请第 1 轮（物流收申请、超管审批；本地提交在 feat/finance-link-agent-apply，不推送不上线）
+- 来源：海外仓财务系统窗口（老板 11-08「开始第 1 轮」）。老板定的：「财务提交，物流审批」；已是客户的另开代理号；密码超管审批时设、线下告诉对方；通过后对方在财务系统用新代理号授权登录一次才绑上。
+- 新表 agent_applications（迁移 20261108_agent_applications，只建一张表 + 3 个索引）；对接接口 POST / GET /integrations/finance/v1/agent-applications；超管 /admin/agents/applications/list、approve、reject；代理管理加「代理申请」页签。开代理的校验和建号抽成共用函数，/admin/agents/create 行为没变。
+- 公司：有正常超管的那一家（只认一家），还要跟已有申请的公司一致，否则 503；交申请咨询锁 83090 排队。一个仓一张在审：pending_warehouse_id + 唯一约束。
+- Codex 三轮（5 + 2 条必须修全改，第 3 轮没有必须修）；全套 build 79/79、test-db 37/37；新测试 11 + 19 项。细节 `docs/sessions/2026-11-08-agent-apply.md`。
+
 ## 2026-11-08：客户管理按归属筛（老板：「客户管理那边要加筛选，比如筛选是哪个代理的客户或者我们自己的」）
 - 管理员工作台 → 客户管理，搜索框左边加下拉「全部客户 / 湘泰自己的客户 / 代理：某某」，选了马上筛、跟搜索叠着用；数量那句和空状态带归属；同名代理后面带登录账号。只改前端：客户名单 `/admin/users?role=client` 本来就一次全给、没分页。
 - 规则在新文件 `apps/web/src/modules/admin-clients/agent-filter.ts`；测试 `scripts/test-admin-client-filter.ts`（11 项，进 package.json + ci.yml build 组，含「客户名单接口不许加分页」）。`fetchAgentOptions` 出错改回 null（原来回空数组），`loadClients` 拉失败留着上一次的代理名单。`test-mark-display.ts`：客户管理搜索那行跟着挪到新文件，代理名三行逐行放行。

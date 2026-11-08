@@ -71,7 +71,7 @@ export interface AdminAgentListItem {
 }
 
 /** Prisma 唯一约束冲突 → 人话 */
-function uniqueConflictMessage(error: unknown): string | null {
+export function uniqueConflictMessage(error: unknown): string | null {
   const e = error as { code?: string; meta?: { target?: unknown } };
   if (e?.code !== "P2002") return null;
   const target = JSON.stringify(e.meta?.target ?? "");
@@ -104,6 +104,102 @@ function readLogo(body: Record<string, unknown>): { mime: string; base64: string
   const issue = validateAgentLogo(logo);
   if (issue) throw new BusinessError(issue);
   return { mime: String(logo.mime), base64: String(logo.base64) };
+}
+
+/**
+ * 开代理要填的那些（2026-11-08 抽出来）：「代理申请」通过时当场开号，走的是同一份校验和建号，
+ * 两边说法、规矩一模一样。⚠️ 抽的时候 /admin/agents/create 的检查顺序、提示文字、返回一点都没变（test:agent-admin 钉着）。
+ */
+export interface AgentCreateInput {
+  name: string;
+  slug: string | null;
+  customDomain: string | null;
+  prices: WhrPriceTriple & { specialGiven: boolean };
+  loginId: string;
+  password: string;
+  phone: string;
+  logo: { mime: string; base64: string } | null;
+}
+
+/**
+ * 按开代理的规矩读请求体。不合格返回那句中文提示（调用方回 400）；
+ * 价格和 logo 不合格照旧抛 BusinessError（server.ts 统一转 400），跟原来一样。
+ */
+export function parseAgentCreateBody(body: Record<string, unknown>): { ok: true; input: AgentCreateInput } | { ok: false; message: string } {
+  const name = str(body.name);
+  if (!name) return { ok: false, message: "请填代理名字" };
+  if (name.length > 50) return { ok: false, message: "代理名字太长了（最多 50 个字）" };
+
+  const slug = normalizeAgentSlug(body.slug);
+  const slugIssue = validateAgentSlug(slug);
+  if (slugIssue) return { ok: false, message: slugIssue };
+
+  const customDomain = normalizeAgentDomain(body.customDomain);
+  const domainIssue = validateAgentDomain(customDomain);
+  if (domainIssue) return { ok: false, message: domainIssue };
+
+  const prices = readPrices(body); // 不合法抛 BusinessError → 400
+
+  const loginId = str(body.loginId);
+  const loginIssue = validateAgentLoginId(loginId);
+  if (loginIssue) return { ok: false, message: loginIssue };
+
+  // 2.9：代理账号能看名下所有客户和返现，密码太简单一律拦
+  // 首尾空格去掉再存（2026-10-15）：登录页提交前会去掉首尾空格，存了带空格的这个号就永远登不进
+  const password = typeof body.password === "string" ? body.password.trim() : "";
+  if (!password) return { ok: false, message: "请填代理登录密码" };
+  const weak = checkPasswordStrength(password, undefined, loginId);
+  if (weak) return { ok: false, message: weak };
+
+  const phone = str(body.phone).slice(0, 40);
+  const logo = readLogo(body);
+  return { ok: true, input: { name, slug, customDomain, prices, loginId, password, phone, logo } };
+}
+
+/** 早点给个好看的提示（账号、后缀、域名已经有人用）；真正说了算的是数据库唯一约束（调用方 catch P2002） */
+export async function agentCreateTakenMessage(input: AgentCreateInput): Promise<string | null> {
+  const [idTaken, slugTaken, domainTaken] = await Promise.all([
+    prisma.user.findUnique({ where: { id: input.loginId }, select: { id: true } }),
+    input.slug ? prisma.agent.findUnique({ where: { slug: input.slug }, select: { id: true } }) : Promise.resolve(null),
+    input.customDomain ? prisma.agent.findUnique({ where: { customDomain: input.customDomain }, select: { id: true } }) : Promise.resolve(null),
+  ]);
+  if (idTaken) return "这个登录账号已经有人用了，换一个";
+  if (slugTaken) return "这个后缀已经被别的代理用了，换一个";
+  if (domainTaken) return "这个专属域名已经被别的代理用了";
+  return null;
+}
+
+/**
+ * 代理行 + 登录号的嵌套写入数据。
+ * ⚠️ 代理行和登录号必须同生同死：一次嵌套写入，Prisma 自动包在一个数据库事务里，
+ * 登录号建不出来（比如账号撞了）代理行也回滚，不会留下「有代理没登录号」的脏数据。
+ * 两行都是全新插入，没有「先读再判」，并发靠唯一约束兜（users.id 主键、agents.slug / custom_domain 唯一）。
+ */
+export function agentCreateData(companyId: string, input: AgentCreateInput, logoPath: string | null) {
+  return {
+    companyId,
+    name: input.name,
+    logoPath,
+    slug: input.slug,
+    customDomain: input.customDomain,
+    priceNormal: input.prices.normal,
+    priceInspection: input.prices.inspection,
+    priceSensitive: input.prices.sensitive,
+    // 新建代理：特别货没传就是默认 1250（老板 10-11「2a」）
+    priceSpecial: input.prices.special,
+    users: {
+      create: [{
+        id: input.loginId,
+        companyId,
+        role: "agent",
+        name: input.name,
+        phone: input.phone,
+        status: "active",
+        warehouseIds: "[]",
+        passwordHash: hashPassword(input.password),
+      }],
+    },
+  };
 }
 
 /** 报错里最多点名几处，多了整条 400 会变成几千字（CLAUDE.md #21：截断要说清总数） */
@@ -229,87 +325,30 @@ export function registerAgentAdminRoutes(app: MinimalHttpApp): void {
     if (!auth) return;
     const body = (req.body ?? {}) as Record<string, unknown>;
 
-    const name = str(body.name);
-    if (!name) return fail(res, 400, "BAD_REQUEST", "请填代理名字");
-    if (name.length > 50) return fail(res, 400, "BAD_REQUEST", "代理名字太长了（最多 50 个字）");
+    // 校验、建号数据跟「代理申请」通过时共用（2026-11-08 抽出来，检查顺序和提示一个字没变）
+    const parsed = parseAgentCreateBody(body);
+    if (!parsed.ok) return fail(res, 400, "BAD_REQUEST", parsed.message);
+    const input = parsed.input;
 
-    const slug = normalizeAgentSlug(body.slug);
-    const slugIssue = validateAgentSlug(slug);
-    if (slugIssue) return fail(res, 400, "BAD_REQUEST", slugIssue);
-
-    const customDomain = normalizeAgentDomain(body.customDomain);
-    const domainIssue = validateAgentDomain(customDomain);
-    if (domainIssue) return fail(res, 400, "BAD_REQUEST", domainIssue);
-
-    const prices = readPrices(body); // 不合法抛 BusinessError → 400
-
-    const loginId = str(body.loginId);
-    const loginIssue = validateAgentLoginId(loginId);
-    if (loginIssue) return fail(res, 400, "BAD_REQUEST", loginIssue);
-
-    // 2.9：代理账号能看名下所有客户和返现，密码太简单一律拦
-    // 首尾空格去掉再存（2026-10-15）：登录页提交前会去掉首尾空格，存了带空格的这个号就永远登不进
-    const password = typeof body.password === "string" ? body.password.trim() : "";
-    if (!password) return fail(res, 400, "BAD_REQUEST", "请填代理登录密码");
-    const weak = checkPasswordStrength(password, undefined, loginId);
-    if (weak) return fail(res, 400, "BAD_REQUEST", weak);
-
-    const phone = str(body.phone).slice(0, 40);
-    const logo = readLogo(body);
-
-    // 早点给个好看的提示；真正说了算的是数据库唯一约束（下面 catch P2002）
-    const [idTaken, slugTaken, domainTaken] = await Promise.all([
-      prisma.user.findUnique({ where: { id: loginId }, select: { id: true } }),
-      slug ? prisma.agent.findUnique({ where: { slug }, select: { id: true } }) : Promise.resolve(null),
-      customDomain ? prisma.agent.findUnique({ where: { customDomain }, select: { id: true } }) : Promise.resolve(null),
-    ]);
-    if (idTaken) return fail(res, 400, "BAD_REQUEST", "这个登录账号已经有人用了，换一个");
-    if (slugTaken) return fail(res, 400, "BAD_REQUEST", "这个后缀已经被别的代理用了，换一个");
-    if (domainTaken) return fail(res, 400, "BAD_REQUEST", "这个专属域名已经被别的代理用了");
+    const taken = await agentCreateTakenMessage(input);
+    if (taken) return fail(res, 400, "BAD_REQUEST", taken);
 
     let logoPath: string | null = null;
-    if (logo) {
+    if (input.logo) {
       try {
-        logoPath = saveImageToDisk("agent_logo", logo.mime, logo.base64);
+        logoPath = saveImageToDisk("agent_logo", input.logo.mime, input.logo.base64);
       } catch {
         return fail(res, 400, "BAD_REQUEST", "logo 保存失败，请重试");
       }
     }
 
     try {
-      /**
-       * ⚠️ 代理行和登录号必须同生同死：一次嵌套写入，Prisma 自动包在一个数据库事务里，
-       * 登录号建不出来（比如账号撞了）代理行也回滚，不会留下「有代理没登录号」的脏数据。
-       * 两行都是全新插入，没有「先读再判」，并发靠唯一约束兜（users.id 主键、agents.slug / custom_domain 唯一）。
-       */
+      // 代理行和登录号一次嵌套写入 = 一个事务（见 agentCreateData 的注释）
       const created = await prisma.agent.create({
-        data: {
-          companyId: auth.companyId,
-          name,
-          logoPath,
-          slug,
-          customDomain,
-          priceNormal: prices.normal,
-          priceInspection: prices.inspection,
-          priceSensitive: prices.sensitive,
-          // 新建代理：特别货没传就是默认 1250（老板 10-11「2a」）
-          priceSpecial: prices.special,
-          users: {
-            create: [{
-              id: loginId,
-              companyId: auth.companyId,
-              role: "agent",
-              name,
-              phone,
-              status: "active",
-              warehouseIds: "[]",
-              passwordHash: hashPassword(password),
-            }],
-          },
-        },
+        data: agentCreateData(auth.companyId, input, logoPath),
         select: { id: true },
       });
-      ok(res, { id: created.id, loginId });
+      ok(res, { id: created.id, loginId: input.loginId });
     } catch (error) {
       if (logoPath) { try { deleteImageFile(logoPath); } catch { /* ignore */ } }
       const msg = uniqueConflictMessage(error);

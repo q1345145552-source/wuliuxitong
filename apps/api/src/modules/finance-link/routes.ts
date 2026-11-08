@@ -71,7 +71,7 @@ const AUTHORIZE_PASSWORD_MAX_LEN = 1024;
 const REQUEST_INVALID = "这个授权链接已失效，请回财务系统重新发起";
 
 /** 错误响应：code、reason 放最外层，财务系统按它们判断（修改清单 5.7）。requestId、timestamp 由 server.ts 盖章 */
-function linkError(res: HttpResponse, status: number, code: string, message: string, reason?: RevokedReason): void {
+export function linkError(res: HttpResponse, status: number, code: string, message: string, reason?: RevokedReason): void {
   res.status(status).json(reason ? { code, reason, message } : { code, message });
 }
 
@@ -92,8 +92,8 @@ function cleanText(value: unknown, maxLen: number): string | null {
   return text;
 }
 
-/** 开关 + 对接密钥。两样都过才放行 */
-function requireFinanceSecret(req: HttpRequest, res: HttpResponse): FinanceLinkConfig | null {
+/** 开关 + 对接密钥。两样都过才放行（代理申请那两条也用它，2026-11-08） */
+export function requireFinanceSecret(req: HttpRequest, res: HttpResponse): FinanceLinkConfig | null {
   const cfg = financeLinkConfig();
   if (!cfg) { disabled(res); return null; }
   if (!bearerMatches(req.headers.authorization, cfg.secret)) {

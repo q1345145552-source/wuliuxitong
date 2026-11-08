@@ -184,7 +184,8 @@ const API_NOT_CLIENT: NotClient[] = [
   // 客户接口里不许用（客户自己操作记唛头，第 2b 项盯着），老记录显示时走 operatorNameForDisplay（第 11 项）
   { file: /./, recv: /^auth$/, why: "当前登录的人（员工 / 管理员）" },
   { file: /\/modules\/branding\//, recv: /^(?:brand|row)$/, why: "品牌名" },
-  { file: /\/modules\/agents\//, recv: /^(?:a|agent|body|actor)$/, why: "代理名 / 代理管理的输入 / 返现单操作人" },
+  // input = 开代理 / 代理申请通过时填的那份（代理名字，2026-11-08 抽成共用函数）；reviewer = 处理代理申请的超管
+  { file: /\/modules\/agents\//, recv: /^(?:a|agent|body|actor|input|reviewer)$/, why: "代理名 / 代理管理的输入 / 返现单操作人 / 代理申请的处理人" },
   { file: /\/modules\/admin\/routes\.ts$/, recv: /^(?:agent|body|updateData|created|updated|reviewer)$/, why: "客户管理 / 员工管理的增改、代理名、审核人" },
   { file: /\/modules\/shipments\/routes\.ts$/, recv: /^u$/, why: "轨迹操作人名字表" },
   { file: /\/modules\/shipments\/unload-item\.ts$/, recv: /^operator$/, why: "卸柜操作人（员工）" },

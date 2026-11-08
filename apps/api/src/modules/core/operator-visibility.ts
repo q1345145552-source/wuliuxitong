@@ -59,6 +59,9 @@ export const OPERATOR_IDENTITY_FIELDS = [
   // ArrivalNoticeSnapshot 转正式运单时存的原样：谁转的（2026-10-19）。接口逐字段下发，这里登记兜底
   "convertedById",
   "convertedByName",
+  // AgentApplication 代理申请：谁处理的（通过 / 驳回，2026-11-08）。只有超管的接口给，给财务的「申请」不带，这里登记兜底。
+  // 同表的提交人是海外仓那边的人、不是员工账号，库里那一列叫 submitter_name，不在这张表里
+  "reviewedById",
 ] as const;
 
 export type OperatorIdentityField = (typeof OPERATOR_IDENTITY_FIELDS)[number];

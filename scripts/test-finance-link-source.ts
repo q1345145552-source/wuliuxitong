@@ -361,8 +361,9 @@ check("A6 授权页地址：线上 https；走 Next 看 x-forwarded-host；直�
 
 /* ─────────────── 接线 ─────────────── */
 
-check("W1 财务这组只有 5 条精确路径不跑登录解析；拆派仓那组没动；授权页那两条不在里面", () => {
+check("W1 财务这组只有 6 条精确路径不跑登录解析（2026-11-08 加了代理申请那条）；拆派仓那组没动；授权页那两条不在里面", () => {
   assert.deepEqual([...FINANCE_LINK_PATHS].sort(), [
+    "/integrations/finance/v1/agent-applications",
     "/integrations/finance/v1/link-requests",
     "/integrations/finance/v1/link-tokens",
     "/integrations/finance/v1/link-tokens/revoke",

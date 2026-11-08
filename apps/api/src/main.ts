@@ -17,12 +17,14 @@ import { registerCsChatRoutes } from "./modules/cs-chat/routes";
 import { registerArrivalNoticeRoutes } from "./modules/arrival-notices/routes";
 import { registerChaipaiRoutes } from "./modules/chaipai/routes";
 import { registerFinanceLinkRoutes } from "./modules/finance-link/routes";
+import { registerFinanceAgentApplicationRoutes } from "./modules/finance-link/agent-applications";
 import { registerFclContainerRoutes } from "./modules/fcl-containers/routes";
 import { registerConsolidationRoutes } from "./modules/consolidation/routes";
 import { registerWhrConsolidationRoutes } from "./modules/whr-consolidation/routes";
 import { registerWhrConsolidationStaffRoutes } from "./modules/whr-consolidation/staff-routes";
 import { registerWhrConsolidationClientRoutes } from "./modules/whr-consolidation/client-routes";
 import { registerAgentAdminRoutes } from "./modules/agents/admin-routes";
+import { registerAgentApplicationAdminRoutes } from "./modules/agents/application-routes";
 import { startAgentRebateScheduler } from "./modules/agents/rebate-scheduler";
 import { registerAgentPortalRoutes } from "./modules/agent-portal/routes";
 import { registerBrandingRoutes } from "./modules/branding/routes";
@@ -70,6 +72,8 @@ registerArrivalNoticeRoutes(app);
 registerChaipaiRoutes(app);
 // 对接海外仓财务系统（2026-11-04）：长期只读授权 + 运单状态。总开关 FINANCE_LINK_ENABLED 默认关
 registerFinanceLinkRoutes(app);
+// 代理申请：海外仓财务系统交申请、按仓查（2026-11-08）
+registerFinanceAgentApplicationRoutes(app);
 // 整柜管理（2026-09-23）：客户自己包一整柜，我们只追踪
 registerFclContainerRoutes(app);
 registerConsolidationRoutes(app);
@@ -80,6 +84,8 @@ startDailyExchangeRateScheduler();
 
 // ===== 代理账号（2026-09-16）=====
 registerAgentAdminRoutes(app);
+// 代理申请：超管审批（2026-11-08）
+registerAgentApplicationAdminRoutes(app);
 registerAgentPortalRoutes(app);
 registerBrandingRoutes(app);
 startAgentRebateScheduler();

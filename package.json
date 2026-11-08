@@ -115,6 +115,8 @@
     "test:finance-link-source": "tsx scripts/test-finance-link-source.ts",
     "test:finance-link-db": "tsx scripts/test-finance-link-db.ts",
     "test:admin-client-filter": "tsx scripts/test-admin-client-filter.ts",
+    "test:agent-apply-source": "tsx scripts/test-agent-apply-source.ts",
+    "test:agent-apply-db": "tsx scripts/test-agent-apply-db.ts",
     "test:arrival-notice-snapshot-source": "tsx scripts/test-arrival-notice-snapshot-source.ts",
     "test:arrival-notice-snapshot-db": "tsx scripts/test-arrival-notice-snapshot-db.ts",
     "test:migration-arrival-notice-snapshots-db": "tsx scripts/test-migration-arrival-notice-snapshots-db.ts",

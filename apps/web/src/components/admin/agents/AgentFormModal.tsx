@@ -2,8 +2,10 @@
 
 import { useState } from "react";
 import {
+  approveAdminAgentApplication,
   createAdminAgent,
   updateAdminAgent,
+  type AdminAgentApplicationItem,
   type AdminAgentItem,
   type AgentLogoUpload,
 } from "../../../services/agents-admin-api";
@@ -14,15 +16,20 @@ import { Modal, ErrorBar, btnCancel, btnConfirm, btnSmall, fi, fl, hint, readLog
  * 开代理 / 编辑代理弹窗（2026-09-16，B2；确认单 2.1 / 2.8 / 2.9 / 4.2 / 5.5 / 6.1）。
  * 开代理时多填登录账号和密码；编辑时不改账号密码（重置密码单独一个按钮）。
  * 校验以后端为准，这里只挡「一眼就知道不对」的，免得白点一次。
+ * 代理申请「通过」也用这个弹窗（2026-11-08）：带上 application 就是通过模式 —— 代理名字、登录账号、电话按申请预先填好，
+ * 三档价和密码空着由超管填（特货照开代理一样先填默认价），提交走 /admin/agents/applications/approve，字段和校验跟开代理一样。
  */
 export default function AgentFormModal(props: {
   mode: "create" | "edit";
   agent?: AdminAgentItem | null;
+  /** 从「代理申请」点通过时带上：只在 mode="create" 时生效 */
+  application?: AdminAgentApplicationItem | null;
   onClose: () => void;
   onSaved: (message: string) => void;
 }) {
   const { mode, agent, onClose, onSaved } = props;
-  const [name, setName] = useState(agent?.name ?? "");
+  const application = mode === "create" ? props.application ?? null : null;
+  const [name, setName] = useState(agent?.name ?? application?.agentName ?? "");
   const [slug, setSlug] = useState(agent?.slug ?? "");
   const [customDomain, setCustomDomain] = useState(agent?.customDomain ?? "");
   const [priceNormal, setPriceNormal] = useState(agent ? String(agent.prices.normal) : "");
@@ -30,9 +37,9 @@ export default function AgentFormModal(props: {
   const [priceSensitive, setPriceSensitive] = useState(agent ? String(agent.prices.sensitive) : "");
   // 特别货（2026-10-11 老板「2a」）：新开代理先填 1250（= 默认不产生返现），能改
   const [priceSpecial, setPriceSpecial] = useState(agent ? String(agent.prices.special) : String(SPECIAL_CARGO_DEFAULT_PRICE));
-  const [loginId, setLoginId] = useState("");
+  const [loginId, setLoginId] = useState(application?.loginId ?? "");
   const [password, setPassword] = useState("");
-  const [phone, setPhone] = useState("");
+  const [phone, setPhone] = useState(application?.contactPhone ?? "");
   const [logo, setLogo] = useState<AgentLogoUpload | null>(null);
   const [logoPreview, setLogoPreview] = useState<string>(agent?.logoUrl ?? "");
   const [removeLogo, setRemoveLogo] = useState(false);
@@ -77,7 +84,13 @@ export default function AgentFormModal(props: {
     setSaving(true);
     setError("");
     try {
-      if (mode === "create") {
+      if (mode === "create" && application) {
+        const r = await approveAdminAgentApplication({
+          applicationId: application.id,
+          name: name.trim(), slug, customDomain, prices, loginId: loginId.trim(), password: password.trim(), phone: phone.trim(), logo,
+        });
+        onSaved(`已通过，代理已开好，登录账号 ${r.loginId}。密码请线下告诉对方，对方要在海外仓财务系统用这个账号授权登录一次才绑上`);
+      } else if (mode === "create") {
         const r = await createAdminAgent({
           name: name.trim(), slug, customDomain, prices, loginId: loginId.trim(), password: password.trim(), phone: phone.trim(), logo,
         });
@@ -95,7 +108,13 @@ export default function AgentFormModal(props: {
 
   return (
     <Modal onClose={onClose}>
-      <h3 style={{ marginTop: 0 }}>{mode === "create" ? "开代理" : `编辑代理：${agent?.name ?? ""}`}</h3>
+      <h3 style={{ marginTop: 0 }}>{application ? `通过代理申请：${application.agentName}` : mode === "create" ? "开代理" : `编辑代理：${agent?.name ?? ""}`}</h3>
+      {application && (
+        <div style={{ ...hint, marginBottom: 10, fontSize: 13 }}>
+          来自海外仓「{application.warehouseName}」，联系人 {application.contactName}。名字、账号、电话按申请预先填好了，可以改；
+          价和密码由你填。点「通过并开代理」马上开号，密码请线下告诉对方。
+        </div>
+      )}
       <ErrorBar message={error} />
 
       <div style={{ display: "grid", gap: 12 }}>
@@ -167,7 +186,8 @@ export default function AgentFormModal(props: {
               <input value={loginId} onChange={(e) => setLoginId(e.target.value)} placeholder="代理登录时填的账号" style={fi} autoComplete="off" maxLength={40} />
             </div>
             <div>
-              <label style={fl}>登录密码（代理提供）</label>
+              {/* 代理申请通过时密码由超管设好、线下告诉对方（老板 2026-11-08）；直接开代理照旧是代理提供 */}
+              <label style={fl}>{application ? "登录密码（你来设，线下告诉对方）" : "登录密码（代理提供）"}</label>
               <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} style={fi} autoComplete="new-password" />
               <div style={hint}>至少 8 位，不能全是数字，不能跟账号一样</div>
             </div>
@@ -182,7 +202,7 @@ export default function AgentFormModal(props: {
       <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 18 }}>
         <button type="button" onClick={onClose} style={btnCancel}>取消</button>
         <button type="button" onClick={() => void submit()} disabled={saving} style={{ ...btnConfirm, opacity: saving ? 0.6 : 1 }}>
-          {saving ? "保存中…" : mode === "create" ? "开代理" : "保存"}
+          {saving ? "保存中…" : application ? "通过并开代理" : mode === "create" ? "开代理" : "保存"}
         </button>
       </div>
     </Modal>

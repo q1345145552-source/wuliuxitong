@@ -370,6 +370,10 @@ jobs:
       # 客户管理按归属筛（2026-11-08 老板要）：全部 / 湘泰自己的 / 某个代理的，跟搜索叠着用、顺序不变、页面接上了
       - name: Test admin client filter (source)
         run: npm run test:admin-client-filter
+      # 代理申请（2026-11-08，「财务提交，物流审批」）不连库那一半：字段规则、给财务的 12 个字段、路径精确放行、
+      # 超管三条只给超管、通过在一个事务里先带条件改状态再建号、开代理同一份校验、迁移只建一张表、体检清单 19 个字段
+      - name: Test agent apply (source)
+        run: npm run test:agent-apply-source
       # 拆派仓只读接口到点就走（2026-10-14）：Node 22 的 fetch 带 redirect:"error" 时，读响应体中途碰上垃圾回收 abort() 就失灵、
       # 一挂 300 秒（10-12 这里 V9 等了 300333ms）。不连库：假服务器 + 强制回收内存，看是不是按时断开、连接真断了。
       # ⚠️ 只有 Node 22 照得出老毛病（本机 Node 24 照不出），所以这项必须在 CI 跑
@@ -573,6 +577,11 @@ jobs:
       # 封禁改密码改角色立刻失效、总开关；迁移文件在上线前的库上连跑两遍、跟 schema 零差异
       - name: Test finance link (real DB)
         run: bash .github/scripts/run-db-test.sh test:finance-link-db
+      # 代理申请（2026-11-08）：真接口 + 真库 —— 交申请（字段规则、一个仓只能一张在审、并发只留一张、密钥和开关）、
+      # 按仓查（最多 20 张、新的在前、12 个字段）、超管通过 / 驳回（只给超管、事务回滚、重复处理 409、并发）、
+      # 公司只认有正常超管的那一家；迁移文件在上线前的库上连跑两遍、跟 schema 零差异
+      - name: Test agent apply (real DB)
+        run: bash .github/scripts/run-db-test.sh test:agent-apply-db
       # 存原样那份迁移：上线前的库上连跑两遍、跟 schema 零差异、体检清单对上、不回填老数据、删到货通知跟着删 / 删运单不动
       - name: Test arrival notice snapshots migration file (real DB)
         run: bash .github/scripts/run-db-test.sh test:migration-arrival-notice-snapshots-db

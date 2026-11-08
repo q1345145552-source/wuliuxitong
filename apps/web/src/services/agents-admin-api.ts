@@ -151,3 +151,42 @@ export async function markAgentRebatePaid(id: string): Promise<{ id: string; sta
 export async function undoAgentRebatePaid(id: string, reason: string): Promise<{ id: string; status: "unpaid"; alreadyUnpaid: boolean }> {
   return apiRequest(`${apiBaseUrl()}/admin/agents/rebates/undo-paid`, { method: "POST", headers: jsonPost, body: JSON.stringify({ id, reason }) });
 }
+
+/* ────────────────────────── 代理申请（2026-11-08，老板：「财务提交，物流审批」） ────────────────────────── */
+
+export type AgentApplicationStatus = "pending" | "approved" | "rejected";
+
+/** GET /admin/agents/applications/list 每一行（后端 agents/application-routes.ts 的 AdminAgentApplicationItem） */
+export interface AdminAgentApplicationItem {
+  id: string;
+  status: AgentApplicationStatus;
+  warehouseId: number;
+  warehouseName: string;
+  submittedBy: string;
+  agentName: string;
+  contactName: string;
+  contactPhone: string;
+  /** 申请时想用的登录账号；真正开出来的在 approvedLoginId */
+  loginId: string;
+  remark: string | null;
+  createdAt: string;
+  reviewedAt: string | null;
+  reviewedById: string | null;
+  reviewedByName: string | null;
+  rejectReason: string | null;
+  approvedAgentId: string | null;
+  approvedLoginId: string | null;
+}
+
+export async function fetchAdminAgentApplications(status: AgentApplicationStatus | "all" = "all"): Promise<{ items: AdminAgentApplicationItem[]; counts: Record<AgentApplicationStatus, number> }> {
+  return apiRequest(`${apiBaseUrl()}/admin/agents/applications/list?status=${encodeURIComponent(status)}`);
+}
+
+/** 通过：跟开代理同一套字段，多带申请编号 */
+export async function approveAdminAgentApplication(payload: CreateAgentPayload & { applicationId: string }): Promise<{ id: string; status: "approved"; agentId: string; loginId: string }> {
+  return apiRequest(`${apiBaseUrl()}/admin/agents/applications/approve`, { method: "POST", headers: jsonPost, body: JSON.stringify(payload) });
+}
+
+export async function rejectAdminAgentApplication(applicationId: string, reason: string): Promise<{ id: string; status: "rejected" }> {
+  return apiRequest(`${apiBaseUrl()}/admin/agents/applications/reject`, { method: "POST", headers: jsonPost, body: JSON.stringify({ applicationId, reason }) });
+}

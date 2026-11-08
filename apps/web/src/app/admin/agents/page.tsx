@@ -1,9 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { createQueryGate } from "../../../modules/shared/request-gate";
 import { useLiveRefresh } from "../../../modules/realtime/useRealtime";
 import AgentFormModal from "../../../components/admin/agents/AgentFormModal";
 import AgentRebatesPanel from "../../../components/admin/agents/AgentRebatesPanel";
+import AgentApplicationsPanel from "../../../components/admin/agents/AgentApplicationsPanel";
 import {
   ErrorBar,
   Modal,
@@ -20,20 +22,26 @@ import {
   thS,
 } from "../../../components/admin/agents/agent-ui";
 import {
+  fetchAdminAgentApplications,
   fetchAdminAgents,
   resetAdminAgentPassword,
   setAdminAgentLoginStatus,
+  type AdminAgentApplicationItem,
   type AdminAgentItem,
+  type AgentApplicationStatus,
 } from "../../../services/agents-admin-api";
 
 /**
  * 代理管理（2026-09-16，B2；确认单 2.1 / 2.7 / 2.8 / 2.9 / 4.2 / 6.1 / 6.4）。
  * 外壳（左边菜单、登录核验、只许超管进）由根布局的 WorkbenchFrame 统一套上，这页**不许**再包 RoleShell。
- * 两块：代理列表（开代理、编辑、重置密码、停用登录号）和返现单。
+ * 三块：代理列表（开代理、编辑、重置密码、停用登录号）、返现单、代理申请（2026-11-08，海外仓财务系统交进来的，超管审批）。
  * 代理的客户在「管理员工作台 → 客户管理」里开（选归属），不在这页。
  */
+type Tab = "agents" | "rebates" | "applications";
+const NO_COUNTS: Record<AgentApplicationStatus, number> = { pending: 0, approved: 0, rejected: 0 };
+
 export default function AdminAgentsPage() {
-  const [tab, setTab] = useState<"agents" | "rebates">("agents");
+  const [tab, setTab] = useState<Tab>("agents");
   const [agents, setAgents] = useState<AdminAgentItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -43,6 +51,10 @@ export default function AdminAgentsPage() {
   const [newPassword, setNewPassword] = useState("");
   const [resetError, setResetError] = useState("");
   const [busyId, setBusyId] = useState("");
+  const [applications, setApplications] = useState<AdminAgentApplicationItem[]>([]);
+  const [appCounts, setAppCounts] = useState<Record<AgentApplicationStatus, number>>(NO_COUNTS);
+  const [appLoading, setAppLoading] = useState(false);
+  const [appError, setAppError] = useState("");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -57,6 +69,31 @@ export default function AdminAgentsPage() {
   }, []);
   useEffect(() => { void load(); }, [load]);
 
+  // 代理申请：一打开页面就拉一次（页签上要标待审几张），切到这个页签、点刷新、处理完、实时推送时再拉。
+  // 好几处会拉：成功回来的、不比已经显示的旧，才用；失败的谁也不作废（request-gate.ts 用法三，Codex 第 2 轮：
+  // 「只认最后发的」会让后发先失败的那次把先发成功的结果扔掉）
+  const appGate = useRef(createQueryGate<null>()).current;
+  const appInFlight = useRef(0);
+  const loadApplications = useCallback(async () => {
+    const ticket = appGate.begin(null);
+    appInFlight.current += 1;
+    setAppLoading(true);
+    try {
+      const r = await fetchAdminAgentApplications("all");
+      if (!appGate.accept(ticket, null)) return;
+      setApplications(r.items);
+      setAppCounts(r.counts);
+      setAppError("");
+    } catch (e) {
+      if (appGate.superseded(ticket)) return; // 比它新的已经显示了，这次的报错不用说
+      setAppError(`代理申请加载失败：${e instanceof Error ? e.message : "未知错误"}`);
+    } finally {
+      appInFlight.current -= 1;
+      if (appInFlight.current === 0) setAppLoading(false);
+    }
+  }, [appGate]);
+  useEffect(() => { void loadApplications(); }, [loadApplications]);
+
   // 实时更新（2026-10-05）：别的管理员开了 / 改了 / 停了代理，悄悄重拉（不开「加载中」、失败接着显示手上的）
   useLiveRefresh({
     topics: ["accounts"],
@@ -65,6 +102,7 @@ export default function AdminAgentsPage() {
         setAgents(await fetchAdminAgents());
         setError("");
       } catch { /* 同上 */ }
+      void loadApplications(); // 别的超管处理了申请，页签上的待审数跟着变
     },
   });
 
@@ -109,10 +147,10 @@ export default function AdminAgentsPage() {
     }
   };
 
-  const tabBtn = (key: "agents" | "rebates", label: string) => (
+  const tabBtn = (key: Tab, label: string) => (
     <button
       type="button"
-      onClick={() => setTab(key)}
+      onClick={() => { setTab(key); if (key === "applications") void loadApplications(); }}
       style={{
         padding: "6px 16px", fontSize: 14, cursor: "pointer", background: "transparent", border: "none",
         borderBottom: tab === key ? "2px solid var(--c-blue)" : "2px solid transparent",
@@ -131,11 +169,15 @@ export default function AdminAgentsPage() {
             <button type="button" onClick={() => setForm({ mode: "create", agent: null })} style={btnConfirm}>+ 开代理</button>
           </div>
         )}
+        {tab === "applications" && (
+          <button type="button" onClick={() => void loadApplications()} disabled={appLoading} style={btnCancel}>{appLoading ? "刷新中…" : "刷新"}</button>
+        )}
       </div>
 
       <div style={{ display: "flex", gap: 4, borderBottom: "1px solid var(--l-soft)", marginBottom: 16 }}>
         {tabBtn("agents", "代理")}
         {tabBtn("rebates", "返现单")}
+        {tabBtn("applications", appCounts.pending > 0 ? `代理申请（${appCounts.pending} 待审）` : "代理申请")}
       </div>
 
       {toast && (
@@ -205,8 +247,17 @@ export default function AdminAgentsPage() {
             </div>
           )}
         </>
-      ) : (
+      ) : tab === "rebates" ? (
         <AgentRebatesPanel agents={agents} />
+      ) : (
+        <AgentApplicationsPanel
+          items={applications}
+          counts={appCounts}
+          loading={appLoading}
+          error={appError}
+          onChanged={(message) => { setToast(message); void loadApplications(); void load(); }}
+          onReload={() => { void loadApplications(); }}
+        />
       )}
 
       {form && (

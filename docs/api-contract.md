@@ -949,3 +949,105 @@
 每次查运单都按账号现在的状态核对：封禁 → 角色 → 密码，不对就把这条授权写成已撤销（解封、改回去也不恢复，要重新授权）。同一个账号 + 同一个 `warehouseRef` 再次授权：撤销旧的，发新的。
 
 **财务那边要知道的**：`LOGISTICS_API_BASE` 填 `https://xianlianth.com`（填 `https://api.xianlianth.com` 也行，授权页地址都指回主域名）。换物流的 `AUTH_SECRET` 时全部授权会变成 `PASSWORD_CHANGED`，要重新授权。
+
+### 26.2 代理申请（2026-11-08，老板原话：「财务提交，物流审批」）
+
+别的海外仓想当湘泰的代理：在海外仓财务系统里提交申请，财务后端调下面两条交给物流；物流超管在「代理管理 → 代理申请」通过（当场开代理号）或驳回。老板 2026-11-08 定的：
+
+1. 已经是普通客户的，**另开一个代理号**，原来的客户号不动（不做「客户改代理」）。
+2. 密码由超管审批时设好，**线下告诉对方**（不做自助设密码页）。
+3. 通过以后，对方要在海外仓财务系统用新代理号**授权登录一次**才绑上（不自动绑定，26 节授权流程一行不改）。
+
+代码：`apps/api/src/modules/finance-link/agent-applications.ts`（两条接口）、`agent-application-views.ts`（字段规则、返回格式）；超管那三条在 `apps/api/src/modules/agents/application-routes.ts`；表 `agent_applications`（迁移 `20261108_agent_applications`）。
+
+**认证、开关、外层格式跟本节上面完全一样**：带 `Authorization: Bearer <FINANCE_LINK_SECRET>`；开关没开 / 配置不合格 503 `LINK_DISABLED`；密钥不对 401 `LINK_SECRET_INVALID`。路径 `/integrations/finance/v1/agent-applications` 加进了 `FINANCE_LINK_PATHS`（精确路径，不跑登录解析）。成功回裸 JSON；出错是 `{ code, message, ... }`，`requestId`、`timestamp` 照旧。
+
+**申请算哪家公司**：这两条没有登录用户。拆派仓用环境变量 `CHAIPAI_COMPANY_ID` 指定公司，这一轮不加环境变量 —— 取「有正常超管账号的那家公司」，**只认正好一家**，而且要跟表里**已经收进来的申请**是同一家；没有、不止一家、跟已有申请对不上，都 503 `AGENT_APPLY_UNAVAILABLE`「物流系统现在收不了代理申请，请联系湘泰」，不猜、不悄悄改记到别家。交申请时「定公司 → 核对 → 写进去」在一个事务里排队做完。（2026-11-08 线上只读核过：只有一家公司。）
+
+#### POST /integrations/finance/v1/agent-applications（交申请）
+
+```json
+{
+  "warehouseId": 12,
+  "warehouseName": "曼谷 A 仓",
+  "submittedBy": "张三",
+  "agentName": "曼谷 A 仓",
+  "contactName": "李四",
+  "contactPhone": "0812345678",
+  "loginId": "bkk-a",
+  "remark": "可以不传"
+}
+```
+
+| 字段 | 规则 | 不对时的提示（400 `BAD_REQUEST`） |
+|---|---|---|
+| `warehouseId` | 海外仓财务系统的仓 id，JSON 数字，正整数 1～2147483647（字符串 `"12"` 不认） | 「请填仓库编号」/「仓库编号要是正整数」 |
+| `warehouseName` | 1～100 字 | 「请填仓名」/「仓名太长了（最多 100 个字）」 |
+| `submittedBy` | 1～100 字 | 「请填提交人」/「提交人太长了（最多 100 个字）」 |
+| `agentName` | 1～50 字（跟开代理同一上限） | 「请填代理名字」/「代理名字太长了（最多 50 个字）」 |
+| `contactName` | 1～50 字 | 「请填联系人」/「联系人太长了（最多 50 个字）」 |
+| `contactPhone` | 1～40 字 | 「请填联系电话」/「联系电话太长了（最多 40 个字）」 |
+| `loginId` | 想用的代理登录账号，跟开代理同一规则：字母、数字和 `_ . @ -`，3～40 位 | 「请填登录账号」/「登录账号只能用字母、数字和 _ . @ -，3 到 40 位」 |
+| `remark` | 选填，0～500 字；不传、`null`、只有空格都存成 `null` | 「备注太长了（最多 500 个字）」 |
+
+- 文字一律先去掉控制字符、再去首尾空格，然后量长度（长度按 JavaScript 字符串长度算）。不是字符串的回「xx要是文字」。
+- 多传不认识的字段回 400「不认识的字段：xxx」；请求体不是 JSON 对象回 400。
+- **不检查登录账号有没有被占用**（不然能拿这个接口试探物流有哪些账号）。撞了由超管审批时换一个，实际开出来的账号看 `approvedLoginId`。
+- 这个仓已经有一张在审的：409 `APPLICATION_PENDING`「这个仓已经有一张在审的申请」。数据库唯一约束兜底，两个请求同时交只留一张。通过或驳回之后这个仓可以再交。
+
+成功 201：
+
+```json
+{
+  "application": {
+    "id": "cmw8...",
+    "status": "pending",
+    "agentName": "曼谷 A 仓",
+    "contactName": "李四",
+    "contactPhone": "0812345678",
+    "loginId": "bkk-a",
+    "remark": "可以不传",
+    "submittedBy": "张三",
+    "createdAt": "2026-11-08T09:00:00.000Z",
+    "reviewedAt": null,
+    "rejectReason": null,
+    "approvedLoginId": null
+  }
+}
+```
+
+#### GET /integrations/finance/v1/agent-applications?warehouseId=12（按仓查）
+
+- `warehouseId` 只认十进制正整数（不带正负号、小数点、空格、前导 0，最大 2147483647），不带或乱写 400「请带上仓库编号 warehouseId」/「仓库编号要是正整数」。
+- 只给这个仓的，新的在前（按提交时间），**最多 20 张**。没交过的仓 200 `{ "items": [] }`。
+
+成功 200：`{ "items": [ <申请>, ... ] }`。
+
+#### 「申请」的字段（就这 12 个，一个不多）
+
+| 字段 | 说明 |
+|---|---|
+| `id` | 申请编号 |
+| `status` | `pending`（在审）/ `approved`（已通过）/ `rejected`（已驳回） |
+| `agentName`、`contactName`、`contactPhone`、`remark`、`submittedBy` | 交的时候填的（已去空格、控制字符） |
+| `loginId` | 申请时想用的登录账号 |
+| `createdAt` | 提交时间，ISO、UTC |
+| `reviewedAt` | 处理时间，ISO、UTC；没处理是 `null` |
+| `rejectReason` | 驳回原因（超管写的，1～200 字）；不是驳回是 `null` |
+| `approvedLoginId` | 真正开出来的代理登录账号，可能跟 `loginId` 不一样；没通过是 `null` |
+
+**不给**：代理价、密码或哈希、审批人、代理 id、公司、仓号、在审标记、别的仓的申请。
+
+#### 错误码一览
+
+| 情况 | 返回 |
+|---|---|
+| 开关没开或配置不合格 | 503 `LINK_DISABLED` |
+| 对接密钥不对 / 没带 | 401 `LINK_SECRET_INVALID` |
+| 物流认不出该算哪家公司（没有或不止一家有正常超管，或跟已有申请的公司对不上） | 503 `AGENT_APPLY_UNAVAILABLE` |
+| 字段不对、多传字段、仓号乱写 | 400 `BAD_REQUEST`（`message` 是中文提示） |
+| 这个仓已经有在审的 | 409 `APPLICATION_PENDING` |
+
+#### 物流超管那边（只给物流自己的页面用，财务不用调）
+
+`GET /admin/agents/applications/list?status=pending|approved|rejected|all`、`POST /admin/agents/applications/approve`（`applicationId` + 跟 `/admin/agents/create` 完全一样的字段和校验）、`POST /admin/agents/applications/reject`（`applicationId` + `reason` 1～200 字）。只给超管（员工、客户、代理 403），按公司过滤。通过时「申请改成已通过 + 建代理和代理登录号 + 记下开出来的账号」在同一个事务里，任何一步失败全部回滚（申请还是在审、不留代理和登录号、logo 删掉）；已经处理过的再通过 / 驳回 409「这张申请已经处理过了」。`/admin/agents/create` 的行为没变。

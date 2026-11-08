@@ -1623,3 +1623,38 @@ model FinanceLinkAuthorization {
   @@index([userId, warehouseRef])
   @@map("finance_link_authorizations")
 }
+
+/// 代理申请（2026-11-08，老板：「财务提交，物流审批」）：别的海外仓在海外仓财务系统里申请当湘泰的代理，
+/// 财务后端调对接接口交进来，物流超管在「代理管理 → 代理申请」通过（当场开代理号）或驳回。
+/// 不加外键（跟 finance_link_* 一样，不跟用户 / 代理的删除搅在一起）：处理人、开出来的代理只存编号。
+model AgentApplication {
+  id                 String    @id @default(cuid())
+  companyId          String    @map("company_id")
+  /// 海外仓财务系统那边的仓 id 和仓名
+  warehouseId        Int       @map("warehouse_id")
+  warehouseName      String    @map("warehouse_name")
+  /// 海外仓那边提交的人（不是物流员工账号；接口字段名照旧叫 submittedBy）
+  submitterName      String    @map("submitter_name")
+  agentName          String    @map("agent_name")
+  contactName        String    @map("contact_name")
+  contactPhone       String    @map("contact_phone")
+  /// 申请时想用的登录账号（提交时不查占没占用；真正开出来的在 approvedLoginId）
+  loginId            String    @map("login_id")
+  remark             String?
+  /// pending / approved / rejected
+  status             String    @default("pending")
+  /// 在审时等于 warehouseId，处理后清空：配上下面的唯一约束，同一个仓同一时间只能有一张在审的（并发靠数据库兜）
+  pendingWarehouseId Int?      @map("pending_warehouse_id")
+  rejectReason       String?   @map("reject_reason")
+  reviewedById       String?   @map("reviewed_by_id")
+  reviewedAt         DateTime? @map("reviewed_at")
+  approvedAgentId    String?   @map("approved_agent_id")
+  approvedLoginId    String?   @map("approved_login_id")
+  createdAt          DateTime  @default(now()) @map("created_at")
+  updatedAt          DateTime  @updatedAt @map("updated_at")
+
+  @@unique([companyId, pendingWarehouseId])
+  @@index([companyId, warehouseId, createdAt])
+  @@index([companyId, status, createdAt])
+  @@map("agent_applications")
+}

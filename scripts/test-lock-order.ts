@@ -134,6 +134,12 @@ const LOCK_HELPERS: Record<string, string[]> = {
    */
   lockChaipaiManifest: ["advisory_chaipai_manifest"],
   /**
+   * 2026-11-08 代理申请：海外仓财务系统交申请排队（咨询锁 83090，finance-link/agent-applications.ts 的 lockAgentApplicationIntake）。
+   * 「定公司 → 核对已有申请的公司 → 写进去」在同一个事务里一张一张来；事务第一句、手里没有行锁，只写 agent_applications。
+   * 第 10 项会去函数体里核实锁在。
+   */
+  lockAgentApplicationIntake: ["advisory_agent_application_intake"],
+  /**
    * 2026-10-17 封禁的唛头不许再挂新单：「封禁 / 解封」跟「往这个唛头名下挂单」按 公司 + 唛头 排队（咨询锁 83070，core/client-ban.ts 的 lockClientBan）。
    * 封禁那边（/admin/users/toggle-ban）先「试着」拿独占档（只试不排队，拿不到隔 0.1 秒再试、10 秒后 409），拿到再锁客户行（最多 1 秒）、写 status；
    * 挂单那边经 assertClientNotBanned 在各自锁序最后一环拿共享档。
