@@ -32,9 +32,13 @@ import {
   bangkokDate,
   departRemark,
   eventHashOf,
+  followUpOf,
+  followUpRemark,
   parseChaipaiEvent,
   pickSignPhoto,
   planForEvent,
+  signedRemark,
+  type ChaipaiEvent,
 } from "../apps/api/src/modules/chaipai/events";
 import { deleteBlockedReasonOf } from "../apps/api/src/modules/shipments/managed-lastmile-log";
 import { RESERVED_AGENT_SLUGS } from "../apps/api/src/modules/agents/agent-rules";
@@ -287,6 +291,97 @@ check("E6 派送日期按曼谷时间取日子；签收图取签收前最新一�
   assert.equal(pickSignPhoto(photos, "2026-10-12T03:00:00.000Z"), "c");
   assert.equal(pickSignPhoto(photos, "2026-10-12T01:00:00.000Z"), "a");
   assert.equal(pickSignPhoto([], "2026-10-12T03:00:00.000Z"), null);
+});
+
+const dl = (over: Record<string, unknown> = {}) => ({ kind: "SIGNED", expectedBoxCount: 6, deliveredBoxCount: 4, missingBoxCount: 2, ...over });
+const parsed = (over: Record<string, unknown>) => { const r = parseChaipaiEvent(ev({ status: "DELIVERED", actualBoxCount: undefined, shortage: undefined, ...over }), "xiangtai"); assert.ok(r.ok); return r.event; };
+
+check("E7 签收件数 delivery（11-09）：三种都认；格式不对（kind 不认识、件数不是非负安全整数、补送 / 丢失缺自己那个正整数）一律当没带、不拒收；不是 DELIVERED 带了也不认", () => {
+  assert.deepEqual(parsed({ delivery: dl() }).delivery,
+    { kind: "SIGNED", expectedBoxCount: 6, deliveredBoxCount: 4, missingBoxCount: 2, supplementBoxCount: null, lostBoxCount: null });
+  assert.deepEqual(parsed({ delivery: dl({ kind: "SUPPLEMENT_SIGNED", deliveredBoxCount: 6, missingBoxCount: 0, supplementBoxCount: 2 }) }).delivery,
+    { kind: "SUPPLEMENT_SIGNED", expectedBoxCount: 6, deliveredBoxCount: 6, missingBoxCount: 0, supplementBoxCount: 2, lostBoxCount: null });
+  assert.deepEqual(parsed({ delivery: dl({ kind: "LOSS_CONFIRMED", lostBoxCount: 2 }) }).delivery,
+    { kind: "LOSS_CONFIRMED", expectedBoxCount: 6, deliveredBoxCount: 4, missingBoxCount: 2, supplementBoxCount: null, lostBoxCount: 2 });
+  // 送齐了也带（missingBoxCount 0）、件数 0 也算合格
+  assert.equal(parsed({ delivery: dl({ deliveredBoxCount: 6, missingBoxCount: 0 }) }).delivery?.missingBoxCount, 0);
+  assert.equal(parsed({ delivery: dl({ expectedBoxCount: 0, deliveredBoxCount: 0, missingBoxCount: 0 }) }).delivery?.kind, "SIGNED");
+  // 别的种类不该有的字段不管（SIGNED 带了 lostBoxCount 照样是 SIGNED，丢失件数不留）
+  assert.equal(parsed({ delivery: dl({ lostBoxCount: 2, supplementBoxCount: 1 }) }).delivery?.lostBoxCount, null);
+  for (const bad of [
+    undefined, null, "SIGNED", [dl()], {}, dl({ kind: "PARTIAL" }), dl({ kind: "signed" }), dl({ kind: undefined }),
+    dl({ expectedBoxCount: undefined }), dl({ deliveredBoxCount: -1 }), dl({ missingBoxCount: 1.5 }), dl({ missingBoxCount: "2" }),
+    dl({ expectedBoxCount: Number.MAX_SAFE_INTEGER + 1 }), dl({ deliveredBoxCount: Number.NaN }), dl({ deliveredBoxCount: Infinity }),
+    dl({ kind: "SUPPLEMENT_SIGNED" }), dl({ kind: "SUPPLEMENT_SIGNED", supplementBoxCount: 0 }), dl({ kind: "SUPPLEMENT_SIGNED", supplementBoxCount: -2 }),
+    dl({ kind: "SUPPLEMENT_SIGNED", supplementBoxCount: "2" }), dl({ kind: "SUPPLEMENT_SIGNED", lostBoxCount: 2 }),
+    dl({ kind: "LOSS_CONFIRMED" }), dl({ kind: "LOSS_CONFIRMED", lostBoxCount: 0 }), dl({ kind: "LOSS_CONFIRMED", lostBoxCount: 1.5 }),
+    dl({ kind: "LOSS_CONFIRMED", supplementBoxCount: 2 }),
+  ]) {
+    const r = parseChaipaiEvent(ev({ status: "DELIVERED", delivery: bad }), "xiangtai");
+    assert.ok(r.ok, `不该拒收：${JSON.stringify(bad)}`);
+    assert.equal(r.event.delivery, null, JSON.stringify(bad));
+  }
+  for (const status of ["ARRIVED", "LOADED", "OUT_FOR_DELIVERY"]) {
+    assert.equal(parsed({ status, delivery: dl() }).delivery, null, status);
+  }
+});
+
+check("E8 只有补送 / 丢失才算「签收以后的事」（只记轨迹）；第一次签收、没带、格式不对都照以前的签收办", () => {
+  assert.equal(followUpOf(parsed({ delivery: dl() })), null);
+  assert.equal(followUpOf(parsed({})), null);
+  assert.equal(followUpOf(parsed({ delivery: dl({ kind: "SUPPLEMENT_SIGNED" }) })), null, "缺 supplementBoxCount 当没带");
+  assert.equal(followUpOf(parsed({ delivery: dl({ kind: "SUPPLEMENT_SIGNED", supplementBoxCount: 2 }) }))?.kind, "SUPPLEMENT_SIGNED");
+  assert.equal(followUpOf(parsed({ delivery: dl({ kind: "LOSS_CONFIRMED", lostBoxCount: 2 }) }))?.kind, "LOSS_CONFIRMED");
+});
+
+check("E9 摘要算上 delivery：件数 / 种类任一变了摘要就变、键的先后不管；没带的跟以前的算法一字不差（上线前收下的消息重发照样 DUPLICATE）", () => {
+  const hashOf = (over: Record<string, unknown>) => eventHashOf(parsed(over));
+  const base = hashOf({ delivery: dl() });
+  assert.equal(hashOf({ delivery: Object.fromEntries(Object.entries(dl()).reverse()) }), base);
+  assert.notEqual(hashOf({}), base, "带不带 delivery 摘要要不一样");
+  for (const over of [{ kind: "LOSS_CONFIRMED", lostBoxCount: 2 }, { expectedBoxCount: 7 }, { deliveredBoxCount: 5 }, { missingBoxCount: 1 }]) {
+    assert.notEqual(hashOf({ delivery: dl(over) }), base, JSON.stringify(over));
+  }
+  const sup = (n: number) => hashOf({ delivery: dl({ kind: "SUPPLEMENT_SIGNED", supplementBoxCount: n }) });
+  assert.notEqual(sup(1), sup(2));
+  const loss = (n: number) => hashOf({ delivery: dl({ kind: "LOSS_CONFIRMED", lostBoxCount: n }) });
+  assert.notEqual(loss(1), loss(2));
+  // 认不得的就不算：delivery 里多出来的字段、格式不对的 delivery（当没带）、非 DELIVERED 带的
+  assert.equal(hashOf({ delivery: { ...dl(), someFutureField: 1 } }), base);
+  assert.equal(hashOf({ delivery: dl({ kind: "PARTIAL" }) }), hashOf({}));
+  const arrivedWith = parseChaipaiEvent(ev({ delivery: dl() }), "xiangtai");
+  const arrivedWithout = parseChaipaiEvent(ev(), "xiangtai");
+  assert.ok(arrivedWith.ok && arrivedWithout.ok);
+  assert.equal(eventHashOf(arrivedWith.event), eventHashOf(arrivedWithout.event));
+  // 没带 delivery 时照 11-09 以前的写法原样重算一遍（不经过 eventHashOf），必须一字不差
+  const legacy = (e: ChaipaiEvent) => createHash("sha256").update(JSON.stringify([
+    e.eventId, e.companyId, e.sourceShipmentId, e.sequence, e.status, e.occurredAt, e.actualBoxCount, e.shortage,
+    ["waybillNo", "parentWaybillNo", "sourceUpdatedAt", "batchKey", "batchNo", "containerNo", "execution"].map((k) => e.extras[k] ?? null),
+  ])).digest("hex");
+  for (const e of [parsed({}), arrivedWithout.event, parsed({ execution: { status: "ON_HOLD" } })]) assert.equal(eventHashOf(e), legacy(e));
+});
+
+check("E10 三句轨迹（第 54 条）：少送「实送 4 件，少 2 件」、补送「补送 2 件已签收，累计送到 6 件」（没齐加「还少 N 件」）、丢失「少的 2 件确认丢失，累计送到 4 件」；送齐 / 没带照旧；都不出现「拆派仓」", () => {
+  const d = (over: Record<string, unknown>) => parsed({ delivery: dl(over) }).delivery!;
+  const all = [
+    signedRemark("WD000123"),
+    signedRemark("WD000123", d({})),
+    signedRemark("WD000123", d({ deliveredBoxCount: 6, missingBoxCount: 0 })),
+    followUpRemark(d({ kind: "SUPPLEMENT_SIGNED", deliveredBoxCount: 6, missingBoxCount: 0, supplementBoxCount: 2 })),
+    followUpRemark(d({ kind: "SUPPLEMENT_SIGNED", deliveredBoxCount: 5, missingBoxCount: 1, supplementBoxCount: 1 })),
+    followUpRemark(d({ kind: "LOSS_CONFIRMED", lostBoxCount: 2 })),
+  ];
+  assert.deepEqual(all, [
+    "尾程派送已签收（WD000123）",
+    "尾程派送已签收（WD000123），实送 4 件，少 2 件",
+    "尾程派送已签收（WD000123）",
+    "补送 2 件已签收，累计送到 6 件",
+    "补送 1 件已签收，累计送到 5 件，还少 1 件",
+    "少的 2 件确认丢失，累计送到 4 件",
+  ]);
+  // 补送 / 丢失的件数不会跑到第一次签收那句里去
+  assert.equal(signedRemark("WD000123", d({ kind: "LOSS_CONFIRMED", lostBoxCount: 2 })), "尾程派送已签收（WD000123）");
+  assert.ok(all.every((x) => !x.includes("拆派仓")));
 });
 
 check("W1 拆派仓写的轨迹不许单删（第 254 条）：已到仓 / 已装车 sl_cp_ 新原因，派送那几条走尾端派送的老规矩", () => {

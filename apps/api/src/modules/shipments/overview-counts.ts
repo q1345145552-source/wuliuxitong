@@ -23,8 +23,11 @@ import { beijingMonthOf, beijingMonthStart } from "../agents/agent-rules";
 /** 本月已签收（见 countShipmentOverview 里那段说明）。where 跟其余几格同一份，公司、客户、排整柜都照它 */
 async function countSignedThisMonth(where: Record<string, unknown>, startOfMonth: Date): Promise<number> {
   const companyId = typeof where.companyId === "string" ? where.companyId : undefined;
+  /* 只数真正签进来的那一步（从别的状态到已签收）：已签收 → 已签收是签收以后的补充 ——
+     拆派仓的补送 / 确认丢失（2026-11-09）、员工先签过后拆派仓补一句少送件数 —— 上个月签收的货这个月补送，不能算成本月签收。
+     （生产 11-09 只读查过：加这条前已签收 → 已签收的老记录只有 3 条，都在 7～8 月，不影响以前的数） */
   const logs = await prisma.statusLog.findMany({
-    where: { toStatus: "delivered", changedAt: { gte: startOfMonth }, ...(companyId ? { companyId } : {}) },
+    where: { toStatus: "delivered", fromStatus: { not: "delivered" }, changedAt: { gte: startOfMonth }, ...(companyId ? { companyId } : {}) },
     select: { shipment: { select: { trackingNo: true, parentTrackingNo: true } } },
   });
   const familyNos = [...new Set(logs.map((l) => l.shipment.parentTrackingNo ?? l.shipment.trackingNo))];

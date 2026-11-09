@@ -1563,6 +1563,228 @@ async function main(): Promise<void> {
       assert.equal(r5.status, 401);
     });
 
+    console.log("\n【少送 / 补送 / 确认丢失（2026-11-09 老板第 54、56 条）】");
+    /** DELIVERED 带的件数；还差几件按「应到 - 送到，最小 0」算 */
+    const dlv = (kind: string, expected: number, delivered: number, more: Row = {}) =>
+      ({ delivery: { kind, expectedBoxCount: expected, deliveredBoxCount: delivered, missingBoxCount: Math.max(0, expected - delivered), ...more } });
+    /** 派送单整行原样（含更新时间、签收图），比「一点没动」用 */
+    const rowsSnap = async (id: string) => JSON.stringify(await rowsOf(id));
+    const lastLog = async (id: string) => { const l = await logsOf(id); return l[l.length - 1]; };
+    /** 走一遍拆派仓的派送中 + 第一次签收（带件数） */
+    const shipAndSign = async (tag: string, signDelivery: Row) => {
+      const id = await fresh(tag);
+      fake.set(id, { route: { ...routeA, id: `${P}route${tag}` }, photos: [{ id: `${tag}p`, createdAt: "2026-10-12T03:00:00.000Z", bytes: Buffer.from(`${tag}-PHOTO`) }] });
+      await send(id, "OUT_FOR_DELIVERY");
+      const r = await send(id, "DELIVERED", signDelivery);
+      assert.equal(r.raw.result, "APPLIED", JSON.stringify(r.raw));
+      return id;
+    };
+    let SG1 = "";
+    await test("G1 第一次签收少送了：轨迹「尾程派送已签收（WD…），实送 4 件，少 2 件」；派送单签收、签收图、运单已签收照以前办", async () => {
+      SG1 = await shipAndSign("G1", dlv("SIGNED", 6, 4));
+      const rows = await rowsOf(SG1);
+      assert.deepEqual(rows.map((x: Row) => [x.status, x.signImageBase64]), [["SIGNED", Buffer.from("G1-PHOTO").toString("base64")]]);
+      assert.equal((await shipmentOf(SG1)).currentStatus, "delivered");
+      const last = await lastLog(SG1);
+      assert.deepEqual([last.id.startsWith("sl_lm_cp_"), last.fromStatus, last.toStatus, last.remark],
+        [true, "outForDelivery", "delivered", `尾程派送已签收（${rows[0].deliveryNo}），实送 4 件，少 2 件`]);
+    });
+    await test("G2 第一次签收送齐了（missingBoxCount 0）：轨迹照旧「尾程派送已签收（WD…）」，不写件数", async () => {
+      const SG2 = await shipAndSign("G2", dlv("SIGNED", 3, 3));
+      assert.equal((await lastLog(SG2)).remark, `尾程派送已签收（${(await rowsOf(SG2))[0].deliveryNo}）`);
+    });
+    await test("G3 补送签收：只记一条「补送 1 件已签收，累计送到 5 件，还少 1 件」；状态、派送单（连签收图、更新时间）、回传进度都不动；不去拆派仓取东西", async () => {
+      fake.set(SG1, { status: 503 }); // 真去拆派仓取司机车牌 / 照片就会 503
+      const hitsBefore = fakeHits.length;
+      const rowsBefore = await rowsSnap(SG1);
+      const stBefore = await pm.chaipaiShipmentState.findUnique({ where: { shipmentId: SG1 } });
+      const r = await send(SG1, "DELIVERED", dlv("SUPPLEMENT_SIGNED", 6, 5, { supplementBoxCount: 1 }), { occurredAt: "2026-11-12T05:00:00.000Z" });
+      assert.deepEqual([r.status, r.raw], [200, { eventId: r.body.eventId, result: "APPLIED" }]);
+      assert.equal(fakeHits.length, hitsBefore, "补送去拆派仓取东西了");
+      assert.equal(await rowsSnap(SG1), rowsBefore, "补送动了派送单");
+      assert.equal((await shipmentOf(SG1)).currentStatus, "delivered");
+      const last = await lastLog(SG1);
+      assert.deepEqual([last.id.startsWith("sl_cp_"), last.fromStatus, last.toStatus, last.remark, last.changedAt.toISOString(), last.operatorName],
+        [true, "delivered", "delivered", "补送 1 件已签收，累计送到 5 件，还少 1 件", "2026-11-12T05:00:00.000Z", "拆派仓"]);
+      // 回传进度整行不动（补送不参与状态先后，见 event-routes.ts 那段说明；G12 是它要防的事）
+      assert.deepEqual(await pm.chaipaiShipmentState.findUnique({ where: { shipmentId: SG1 } }), stBefore);
+      assert.equal((await pm.chaipaiCallbackEvent.findUnique({ where: { eventId: r.body.eventId } })).result, "APPLIED");
+      // 再补 1 件就送齐了：不写「还少」
+      const r2 = await send(SG1, "DELIVERED", dlv("SUPPLEMENT_SIGNED", 6, 6, { supplementBoxCount: 1 }), { occurredAt: "2026-11-13T05:00:00.000Z" });
+      assert.equal(r2.raw.result, "APPLIED");
+      assert.equal((await lastLog(SG1)).remark, "补送 1 件已签收，累计送到 6 件");
+      assert.equal(await rowsSnap(SG1), rowsBefore);
+      assert.equal(fakeHits.length, hitsBefore);
+    });
+    let lossBody: Row = {};
+    let SG4 = "";
+    await test("G4 确认丢失：只记一条「少的 2 件确认丢失，累计送到 4 件」；状态、派送单不动；不去拆派仓取东西", async () => {
+      SG4 = await shipAndSign("G4", dlv("SIGNED", 6, 4));
+      fake.set(SG4, { status: 503 });
+      const hitsBefore = fakeHits.length;
+      const rowsBefore = await rowsSnap(SG4);
+      const r = await send(SG4, "DELIVERED", dlv("LOSS_CONFIRMED", 6, 4, { lostBoxCount: 2 }), { occurredAt: "2026-11-12T06:00:00.000Z" });
+      lossBody = r.body;
+      assert.deepEqual([r.status, r.raw.result], [200, "APPLIED"]);
+      assert.deepEqual([fakeHits.length, await rowsSnap(SG4), (await shipmentOf(SG4)).currentStatus], [hitsBefore, rowsBefore, "delivered"]);
+      const last = await lastLog(SG4);
+      assert.deepEqual([last.id.startsWith("sl_cp_"), last.fromStatus, last.toStatus, last.remark],
+        [true, "delivered", "delivered", "少的 2 件确认丢失，累计送到 4 件"]);
+    });
+    await test("G5 同一编号重发 → DUPLICATE 不多写；同一编号换了件数 → 409；序号旧的补送 → IGNORED_OLDER 不写", async () => {
+      const before = (await logsOf(SG4)).length;
+      const stBefore = await pm.chaipaiShipmentState.findUnique({ where: { shipmentId: SG4 } });
+      const again = await call("POST /integrations/chaipai/v2/events", { body: lossBody, authorization: `Bearer ${CB}` });
+      assert.deepEqual(again.raw, { eventId: lossBody.eventId, result: "DUPLICATE" });
+      const changed = await call("POST /integrations/chaipai/v2/events", {
+        body: { ...lossBody, delivery: { ...lossBody.delivery, lostBoxCount: 1, deliveredBoxCount: 5, missingBoxCount: 1 } }, authorization: `Bearer ${CB}`,
+      });
+      assert.equal(changed.status, 409);
+      const old = await send(SG4, "DELIVERED", dlv("SUPPLEMENT_SIGNED", 6, 6, { supplementBoxCount: 2 }), { seq: 1 });
+      assert.equal(old.raw.result, "IGNORED_OLDER");
+      assert.equal((await logsOf(SG4)).length, before);
+      assert.deepEqual(await pm.chaipaiShipmentState.findUnique({ where: { shipmentId: SG4 } }), stBefore);
+    });
+    await test("G6 这票挂着两张派送中 + 两张已签收（老数据，正常签收会 503 交人工）：补送 / 丢失照样 APPLIED，派送单一张不动", async () => {
+      const SG6 = await fresh("G6", "delivered");
+      await manualRow("g6a", SG6, "WDZZG6A", "SIGNED");
+      await manualRow("g6b", SG6, "WDZZG6B", "SIGNED");
+      await manualRow("g6c", SG6, "WDZZG6C", "DELIVERING");
+      await manualRow("g6d", SG6, "WDZZG6D", "DELIVERING");
+      fake.set(SG6, { route: { ...routeA, id: `${P}routeG6` }, photos: [] });
+      // （前提）同样的单子，不带件数的签收确实走到交人工那条路
+      const plain = await send(SG6, "DELIVERED");
+      assert.equal(plain.status, 503, "（前提）这几张单该让正常签收交人工");
+      const rowsBefore = await rowsSnap(SG6);
+      const sup = await send(SG6, "DELIVERED", dlv("SUPPLEMENT_SIGNED", 4, 3, { supplementBoxCount: 1 }));
+      const loss = await send(SG6, "DELIVERED", dlv("LOSS_CONFIRMED", 4, 3, { lostBoxCount: 1 }));
+      assert.deepEqual([sup.status, sup.raw.result, loss.status, loss.raw.result], [200, "APPLIED", 200, "APPLIED"]);
+      assert.equal(await rowsSnap(SG6), rowsBefore);
+      assert.deepEqual((await logsOf(SG6)).map((l: Row) => l.remark),
+        ["补送 1 件已签收，累计送到 3 件，还少 1 件", "少的 1 件确认丢失，累计送到 3 件"]);
+    });
+    await test("G7 湘泰这票当时不是「已签收」（员工手工改过）、也没收过别的回传：补送只记轨迹（这行标签是已签收），运单状态不改、不建回传进度", async () => {
+      const SG7 = await fresh("G7", "inWarehouseTH");
+      const r = await send(SG7, "DELIVERED", dlv("SUPPLEMENT_SIGNED", 2, 2, { supplementBoxCount: 1 }));
+      assert.equal(r.raw.result, "APPLIED");
+      assert.deepEqual([(await shipmentOf(SG7)).currentStatus, (await rowsOf(SG7)).length], ["inWarehouseTH", 0]);
+      const last = await lastLog(SG7);
+      assert.deepEqual([last.fromStatus, last.toStatus, last.remark], ["delivered", "delivered", "补送 1 件已签收，累计送到 2 件"]);
+      assert.equal(await pm.chaipaiShipmentState.findUnique({ where: { shipmentId: SG7 } }), null);
+      assert.equal((await pm.chaipaiCallbackEvent.findUnique({ where: { eventId: r.body.eventId } })).result, "APPLIED");
+    });
+    await test("G12 拆派仓各条各自重试：补送 / 丢失赶在还在重试的签收前头到 → 照记；那条签收重发时照常签收（不当旧消息扔掉）；两条补送 / 丢失前一条晚到也照记；轨迹按时间排对", async () => {
+      const SG12 = await fresh("G12");
+      const route = { ...routeA, id: `${P}routeG12` };
+      fake.set(SG12, { route, photos: [{ id: "g12p", createdAt: "2026-10-12T03:00:00.000Z" }] });
+      await send(SG12, "OUT_FOR_DELIVERY");
+      fake.set(SG12, { status: 503 }); // 签收那会儿拆派仓只读接口坏了 → 签收回 503，拆派仓过会儿重发
+      const sign = await send(SG12, "DELIVERED", dlv("SIGNED", 6, 4), { occurredAt: "2026-11-12T01:00:00.000Z" });
+      assert.equal(sign.status, 503);
+      const s = sign.body.sequence;
+      // 序号 s+1 的补送也失败过一次在重试，s+2 的丢失先到
+      const loss = await send(SG12, "DELIVERED", dlv("LOSS_CONFIRMED", 6, 5, { lostBoxCount: 1 }), { seq: s + 2, occurredAt: "2026-11-12T03:00:00.000Z" });
+      const sup = await send(SG12, "DELIVERED", dlv("SUPPLEMENT_SIGNED", 6, 5, { supplementBoxCount: 1 }), { seq: s + 1, occurredAt: "2026-11-12T02:00:00.000Z" });
+      assert.deepEqual([loss.raw.result, sup.raw.result], ["APPLIED", "APPLIED"]);
+      assert.equal((await shipmentOf(SG12)).currentStatus, "outForDelivery", "补送 / 丢失不该改状态");
+      fake.set(SG12, { route, photos: [{ id: "g12p", createdAt: "2026-10-12T03:00:00.000Z" }] });
+      const retry = await call("POST /integrations/chaipai/v2/events", { body: sign.body, authorization: `Bearer ${CB}` });
+      assert.equal(retry.raw.result, "APPLIED", "签收重发被当成旧消息了");
+      assert.deepEqual([(await shipmentOf(SG12)).currentStatus, (await rowsOf(SG12)).map((x: Row) => x.status)], ["delivered", ["SIGNED"]]);
+      const wd = (await rowsOf(SG12))[0].deliveryNo;
+      assert.deepEqual((await logsOf(SG12)).slice(-3).map((l: Row) => [l.fromStatus, l.toStatus, l.remark]), [
+        ["outForDelivery", "delivered", `尾程派送已签收（${wd}），实送 4 件，少 2 件`],
+        ["delivered", "delivered", "补送 1 件已签收，累计送到 5 件，还少 1 件"],
+        ["delivered", "delivered", "少的 1 件确认丢失，累计送到 5 件"],
+      ]);
+      // 客户看到的三行标签都是「已签收」，不会有「派送中」排在签收后面（11-09 Codex / dsh 第 1 轮）
+      const track = await call("GET /client/shipments/track", { auth: CLIENT, query: { trackingNo: `ZZCPT${stamp}G12` } });
+      assert.deepEqual(track.raw.data.timeline.slice(-3).map((t: Row) => t.toStatus), ["delivered", "delivered", "delivered"]);
+      assert.equal((await pm.chaipaiShipmentState.findUnique({ where: { shipmentId: SG12 } })).lastSequence, s);
+    });
+    await test("G13 上个月签收的货这个月补送 / 丢失：「本月已签收」不多算这一票；这个月才签收的照常算", async () => {
+      const { countShipmentOverview } = await import("../apps/api/src/modules/shipments/overview-counts");
+      const { beijingMonthOf, beijingMonthStart } = await import("../apps/api/src/modules/agents/agent-rules");
+      const monthStart = beijingMonthStart(beijingMonthOf(new Date())).getTime();
+      const iso = (ms: number) => new Date(ms).toISOString();
+      // 按运单 id 圈（统计函数自己会用 trackingNo: { in: 本月签收的单号 } 盖掉传进去的 trackingNo 条件）
+      const signedThisMonth = async (tag: string) =>
+        (await countShipmentOverview({ companyId: CO, id: `${P}s_ZZCPT${stamp}${tag}` })).signedThisMonthCount;
+      // 上个月：派送中 + 签收（少 2 件）；这个月：补送 1 件、确认丢失 1 件
+      const old = await fresh("G13");
+      fake.set(old, { route: { ...routeA, id: `${P}routeG13` }, photos: [{ id: "g13p", createdAt: iso(monthStart - 3 * 86400000) }] });
+      await send(old, "OUT_FOR_DELIVERY", {}, { occurredAt: iso(monthStart - 3 * 86400000) });
+      await send(old, "DELIVERED", dlv("SIGNED", 6, 4), { occurredAt: iso(monthStart - 2 * 86400000) });
+      assert.equal(await signedThisMonth("G13"), 0, "（前提）上个月签收的不算本月");
+      await send(old, "DELIVERED", dlv("SUPPLEMENT_SIGNED", 6, 5, { supplementBoxCount: 1 }), { occurredAt: iso(monthStart + 3600000) });
+      await send(old, "DELIVERED", dlv("LOSS_CONFIRMED", 6, 5, { lostBoxCount: 1 }), { occurredAt: iso(monthStart + 7200000) });
+      assert.equal((await logsOf(old)).filter((l: Row) => l.changedAt.getTime() >= monthStart && l.toStatus === "delivered").length, 2, "（前提）本月有两条已签收标签的轨迹");
+      assert.equal(await signedThisMonth("G13"), 0, "补送 / 丢失把上个月签收的货算成本月签收了");
+      // 这个月才签收的照常算（同一条统计没被改坏）
+      const now = await fresh("G13b");
+      fake.set(now, { route: { ...routeA, id: `${P}routeG13b` }, photos: [] });
+      await send(now, "OUT_FOR_DELIVERY", {}, { occurredAt: iso(monthStart + 60000) });
+      await send(now, "DELIVERED", dlv("SIGNED", 2, 1), { occurredAt: iso(monthStart + 120000) });
+      assert.equal(await signedThisMonth("G13b"), 1);
+    });
+    await test("G14 这票只收到过补送（前面的到仓 / 派送 / 签收都还没办成）：员工照样看得到派送照片，不显示「没有」", async () => {
+      fake.set(`${P}s_ZZCPT${stamp}G7`, { route: null, photos: [{ id: "g7p", createdAt: "2026-10-12T03:00:00.000Z" }] });
+      const r = await call("GET /staff/shipments/chaipai-photos", { auth: STAFF, query: { trackingNo: `ZZCPT${stamp}G7` } });
+      assert.deepEqual([r.raw.data.state, r.raw.data.items.map((p: Row) => p.id)], ["ok", ["g7p"]]);
+    });
+    await test("G8 客户轨迹看得到补送 / 少送那几句、看不到「拆派仓」；员工单删补送那条 409", async () => {
+      const track = await call("GET /client/shipments/track", { auth: CLIENT, query: { trackingNo: `ZZCPT${stamp}G1` } });
+      assert.equal(track.status, 200);
+      const remarks = track.raw.data.timeline.map((t: Row) => t.remark);
+      for (const want of ["补送 1 件已签收，累计送到 5 件，还少 1 件", "补送 1 件已签收，累计送到 6 件"]) assert.ok(remarks.includes(want), `客户看不到「${want}」`);
+      assert.ok(remarks.some((x: string) => /^尾程派送已签收（WD\d+），实送 4 件，少 2 件$/.test(x)), "客户看不到少送那句");
+      assert.ok(!JSON.stringify(track.raw.data.timeline).includes("拆派仓"), "客户看到了「拆派仓」");
+      const sup = (await logsOf(SG1)).find((l: Row) => l.remark.startsWith("补送"));
+      const del = await call("POST /staff/shipments/track/delete-log", { auth: STAFF, body: { logId: sup.id } });
+      assert.equal(del.status, 409);
+    });
+    await test("G9 delivery 格式不对（补送没给 supplementBoxCount）→ 当没带：照以前的签收办（派送单签收、轨迹不写件数）", async () => {
+      const SG9 = await shipAndSign("G9", dlv("SUPPLEMENT_SIGNED", 6, 6));
+      assert.deepEqual([(await shipmentOf(SG9)).currentStatus, (await rowsOf(SG9)).map((x: Row) => x.status)], ["delivered", ["SIGNED"]]);
+      assert.equal((await lastLog(SG9)).remark, `尾程派送已签收（${(await rowsOf(SG9))[0].deliveryNo}）`);
+    });
+    await test("G10 补送不拿派送单号锁、不等派送单行锁：别人握着这两把锁 1.5 秒，补送照样先办完（删了那两处跳过这项就红）", async () => {
+      const SG10 = await shipAndSign("G10", dlv("SIGNED", 5, 3));
+      const rowId = (await rowsOf(SG10))[0].id;
+      let released = 0;
+      let gotLock!: () => void;
+      const locked = new Promise<void>((r) => { gotLock = r; });
+      const holder = pm.$transaction(async (tx: any) => {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(2901)`;
+        await tx.$queryRaw`SELECT id FROM admin_lastmile_orders WHERE id = ${rowId} FOR UPDATE`;
+        gotLock();
+        await new Promise((r) => setTimeout(r, 1500));
+        released = Date.now();
+      }, { timeout: 10000 });
+      await locked;
+      const r = await send(SG10, "DELIVERED", dlv("LOSS_CONFIRMED", 5, 3, { lostBoxCount: 2 }), { occurredAt: "2026-11-12T07:00:00.000Z" });
+      const doneAt = Date.now();
+      await holder;
+      assert.equal(r.raw.result, "APPLIED");
+      assert.ok(released === 0 || doneAt < released, "补送等了派送单号锁 / 派送单行锁");
+      assert.equal((await lastLog(SG10)).remark, "少的 2 件确认丢失，累计送到 3 件");
+    });
+    await test("G11 员工已手工签过同一张派送单，拆派仓的签收后到：少送了照写一条带件数的；送齐了照旧不重复写", async () => {
+      for (const [tag, delivery, extra] of [["G11a", dlv("SIGNED", 6, 4), ["尾程派送已签收（WDZZG11a），实送 4 件，少 2 件"]], ["G11b", dlv("SIGNED", 6, 6), []]] as const) {
+        const id = await fresh(tag, "delivered");
+        await manualRow(tag, id, `WDZZ${tag}`, "SIGNED", { signImageBase64: "AAAA" });
+        fake.set(id, { route: routeA, photos: [{ id: `${tag}p`, createdAt: "2026-10-12T03:00:00.000Z" }] });
+        await pm.statusLog.create({ data: {
+          id: `sl_lm_${P}${tag}`, companyId: CO, shipmentId: id, operatorId: "zz_staff", operatorRole: "staff", operatorName: "员工",
+          fromStatus: "outForDelivery", toStatus: "delivered", remark: `尾程派送已签收（WDZZ${tag}）`, changedAt: new Date("2026-10-12T03:30:00.000Z"),
+        } });
+        const r = await send(id, "DELIVERED", delivery, { occurredAt: "2026-10-12T04:00:00.000Z" });
+        assert.equal(r.raw.result, "APPLIED", tag);
+        const delivered = (await logsOf(id)).filter((l: Row) => l.toStatus === "delivered").map((l: Row) => l.remark);
+        assert.deepEqual(delivered, [`尾程派送已签收（WDZZ${tag}）`, ...extra], tag);
+      }
+    });
+
     console.log("\n【派送照片（只给员工）】");
     await test("F1 员工：25 张照片翻两页取全、按拍照时间排；客户调这个接口 403；没经过拆派仓的票是 none；开关关着是 disabled", async () => {
       const photos = Array.from({ length: 25 }, (_, i) => ({ id: `f${String(i).padStart(2, "0")}`, createdAt: new Date(Date.UTC(2026, 9, 12, 0, 59 - i)).toISOString() }));

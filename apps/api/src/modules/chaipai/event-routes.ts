@@ -14,6 +14,8 @@ import {
   bangkokDate,
   departRemark,
   eventHashOf,
+  followUpOf,
+  followUpRemark,
   parseChaipaiEvent,
   pickSignPhoto,
   planForEvent,
@@ -109,12 +111,14 @@ async function applyEvent(
   const occurredAt = new Date(ev.occurredAt);
   const now = new Date();
   const sid = ev.sourceShipmentId;
-  const needsNumberLock = ev.status === "OUT_FOR_DELIVERY" || ev.status === "DELIVERED";
+  /** 补送签收 / 确认丢失：派送单一张都不碰，所以号锁、派送单行锁都不拿，只锁运单 */
+  const followUp = followUpOf(ev);
+  const needsNumberLock = !followUp && (ev.status === "OUT_FOR_DELIVERY" || ev.status === "DELIVERED");
   return prisma.$transaction(async (tx) => {
     if (needsNumberLock) {
       await tx.$executeRawUnsafe("SELECT pg_advisory_xact_lock(2901)");
     }
-    const rowIdsBefore = (await tx.adminLastmileOrder.findMany({
+    const rowIdsBefore = followUp ? [] : (await tx.adminLastmileOrder.findMany({
       where: { shipmentId: sid, companyId },
       select: { id: true },
     })).map((r) => r.id);
@@ -152,6 +156,28 @@ async function applyEvent(
       select: { id: true, trackingNo: true, currentStatus: true, parentTrackingNo: true, order: { select: { clientId: true } } },
     });
     if (!shipment) return { result: "IGNORED_OLDER" as const, changed: false, clientId: null };
+
+    if (followUp) {
+      /* 补送签收 / 确认丢失（2026-11-09 老板第 54、56 条）：只记一条轨迹（客户看得到），运单状态不改、
+         派送单不建也不动、签收图不换 —— 这票当时就算不是「已签收」（员工手工改过）也一样。
+         这条是签收以后的补充、不是状态变化：前后状态一律写「已签收」（轨迹那行的标签跟这句话对得上）。
+         不照收到那一刻湘泰的状态写：签收那条还在重试、补送先到时湘泰还是派送中，签收到了以后这两行会显示成
+         「派送中」排在「已签收」后面（11-09 Codex / dsh 第 1 轮）。前后都是已签收，「本月已签收」也不会数它（overview-counts.ts）。
+         前缀 sl_cp_：拆派仓写的，员工不能单删（第 254 条）。比存过的序号旧照样 IGNORED_OLDER（上面已判），重发靠编号认 DUPLICATE。
+         ⚠️ 不推进这票的回传进度（序号 / 粗状态 / 趟次都不动）。拆派仓发件箱每条消息各自重试、不排队
+         （outbox.sender.ts：失败的退后重试，后面的照发），所以补送可能赶在还在重试的「第一次签收」前头到：
+         要是补送把序号推上去，那条签收再来就成了旧消息，湘泰永远停在派送中；两条补送 / 丢失前一条晚到也会被扔掉。
+         补送只是一句轨迹、不改状态，不参与状态先后；任务书原写「照常更新回传进度」，这里有意不跟（技术细节，见 journal）。 */
+      await tx.statusLog.create({
+        data: {
+          id: `sl_cp_${Date.now()}_${rand4()}`, companyId, shipmentId: sid, ...OPERATOR,
+          fromStatus: "delivered", toStatus: "delivered", remark: followUpRemark(followUp), changedAt: occurredAt,
+        },
+      });
+      await ledger("APPLIED");
+      return { result: "APPLIED" as const, changed: true, clientId: shipment.order?.clientId ?? null };
+    }
+
     const rows = await tx.adminLastmileOrder.findMany({
       where: { shipmentId: sid, companyId },
       orderBy: { updatedAt: "desc" },
@@ -462,8 +488,10 @@ async function applyEvent(
       }
       deliveryNo = signedNo;
       const alreadyLogged = status === "delivered" && signedBefore !== null && signedBefore === signedNo;
-      if (status !== "delivered" || (coarseChanged && !alreadyLogged)) {
-        await writeLog("sl_lm_cp_", "delivered", signedRemark(signedNo));
+      // 少送了（2026-11-09 第 54 条）：员工先手工签过也照写一条 —— 「实送几件、少几件」是新信息
+      const shortDelivered = ev.delivery?.kind === "SIGNED" && ev.delivery.missingBoxCount > 0;
+      if (status !== "delivered" || (coarseChanged && (!alreadyLogged || shortDelivered))) {
+        await writeLog("sl_lm_cp_", "delivered", signedRemark(signedNo, ev.delivery));
       }
     }
 
@@ -522,7 +550,10 @@ export function registerChaipaiEventRoutes(app: MinimalHttpApp): void {
     const ev = parsed.event;
     const hash = eventHashOf(ev);
     const reply = (result: EventResult) => {
-      logger.info("拆派仓回传", { eventId: ev.eventId, sourceShipmentId: ev.sourceShipmentId, status: ev.status, result, 耗时ms: Date.now() - started });
+      logger.info("拆派仓回传", {
+        eventId: ev.eventId, sourceShipmentId: ev.sourceShipmentId, status: ev.status,
+        ...(ev.delivery ? { 签收件数: ev.delivery.kind } : {}), result, 耗时ms: Date.now() - started,
+      });
       res.status(200).json({ eventId: ev.eventId, result });
     };
 
@@ -560,7 +591,8 @@ export function registerChaipaiEventRoutes(app: MinimalHttpApp): void {
     const isOlder = !!shipment.chaipaiState && ev.sequence <= shipment.chaipaiState.lastSequence;
 
     try {
-      const info = !isOlder && (ev.status === "OUT_FOR_DELIVERY" || ev.status === "DELIVERED")
+      // 补送签收 / 确认丢失不碰派送单，不用去拆派仓取司机车牌和照片（取不到也就不会 503）
+      const info = !isOlder && !followUpOf(ev) && (ev.status === "OUT_FOR_DELIVERY" || ev.status === "DELIVERED")
         ? await prepareLastmileInfo(cfg, ev)
         : null;
       const out = await applyEvent(ev, hash, req.body, shipment.companyId, info);
