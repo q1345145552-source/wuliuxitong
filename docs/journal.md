@@ -1,5 +1,10 @@
 # 项目交接日志
 
+## 2026-11-09 07:35（北京）上线 2138234：代理申请第 1 轮
+- 财务窗口贴「代理申请上线物流」任务，老板在物流窗口说「上吧」。main 快进到 2138234 推 GitHub（**没等 GitHub 检查**：老板 11-08「GitHub没额度」，关口用本机全套 build 79/79、test-db 37/37）→ 服务器 deploy.sh 退出 0：先备份 `xiangtai_predeploy_20261109_003418.sql.gz` 748M，只执行 20261108_agent_applications，结构体检通过，只重建 api / web。
+- 核对：HEAD 2138234；migrate status up to date；agent_applications 0 行、3 个索引 + 主键、无外键；表 64 → 65（跟上线前备份的表名单逐个比，没少、只多这张）；drift 重跑 0 行；健康 200；不带授权 agent-applications / waybills 都 401；财务开关仍 true；六张表条数前后一样（订单 2955、运单 5841、产品行 7666、用户 127、代理 1、授权 2）；登录页 200；API 启动后报错 0；换容器那 10 秒 nginx 9 个 502/500，之后 0。
+- 上线后手动备份 `/root/db-backups/xiangtai_postdeploy_2138234_20261109_003831.sql.gz` 748M（直接 pg_dump + gzip -t，没用 backup-db.sh）。报告已发财务窗口；下一步财务系统上线，线上验收等两边都上了再做。
+
 ## 2026-11-08：代理申请第 1 轮（物流收申请、超管审批；本地提交在 feat/finance-link-agent-apply，不推送不上线）
 - 来源：海外仓财务系统窗口（老板 11-08「开始第 1 轮」）。老板定的：「财务提交，物流审批」；已是客户的另开代理号；密码超管审批时设、线下告诉对方；通过后对方在财务系统用新代理号授权登录一次才绑上。
 - 新表 agent_applications（迁移 20261108_agent_applications，只建一张表 + 3 个索引）；对接接口 POST / GET /integrations/finance/v1/agent-applications；超管 /admin/agents/applications/list、approve、reject；代理管理加「代理申请」页签。开代理的校验和建号抽成共用函数，/admin/agents/create 行为没变。
