@@ -240,9 +240,21 @@ export function bangkokDate(iso: string | null | undefined, fallbackIso: string)
   return new Date((Number.isFinite(t) ? t : Date.parse(fallbackIso)) + 7 * 60 * 60 * 1000).toISOString().slice(0, 10);
 }
 
-/** 签收图：拆派仓先拍照才能签收，取签收那一刻之前最新的一张；都在之后（时钟差）就取最新一张 */
-export function pickSignPhoto(photos: ReadonlyArray<{ id: string; createdAt: string }>, occurredAt: string): string | null {
-  const valid = photos.filter((p) => Number.isFinite(Date.parse(p.createdAt)));
+/**
+ * 签收图：拆派仓先拍照才能签收，取签收那一刻之前最新的一张；都在之后（时钟差）就取最新一张。
+ * 2026-11-12 拆派仓 flow23 起照片带 kind（拆派仓全面排查第四份报告第 2 条）：列表里除了司机签收照，还有拆派仓员工
+ * 到仓 / 派送中补传的照片，只按时间挑会把员工照当签收图。所以列表里只要有一张带了 kind，就只在 SIGN_OFF 里挑；
+ * 一张 SIGN_OFF 都没有就不配签收图（不拿员工照顶）。整个列表都没有 kind（拆派仓还是旧版本）照旧按时间挑。
+ * 「派送照片」（员工看，photo-routes.ts）不经过这里，照旧给全部照片（第 256 条）。
+ * ⚠️ 拆派仓的 SIGN_OFF 也包括司机在停靠点拍了、那次没送成的照片（拆派仓 photos/photo-policy.ts）。换一趟再送时
+ * 新一趟必须重拍、时间更晚，挑得对；同一趟先点「送不成」又改成签收、没重拍时，挑到的就是那张 —— 湘泰这边分不出来（11-12 dsh）。
+ */
+export function pickSignPhoto(
+  photos: ReadonlyArray<{ id: string; createdAt: string; kind?: "SIGN_OFF" | "STAFF" | null }>,
+  occurredAt: string,
+): string | null {
+  const pool = photos.some((p) => p.kind != null) ? photos.filter((p) => p.kind === "SIGN_OFF") : photos;
+  const valid = pool.filter((p) => Number.isFinite(Date.parse(p.createdAt)));
   if (valid.length === 0) return null;
   const byTimeDesc = [...valid].sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt) || (a.id < b.id ? 1 : -1));
   const cutoff = Date.parse(occurredAt);

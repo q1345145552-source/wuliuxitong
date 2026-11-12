@@ -293,6 +293,24 @@ check("E6 派送日期按曼谷时间取日子；签收图取签收前最新一�
   assert.equal(pickSignPhoto([], "2026-10-12T03:00:00.000Z"), null);
 });
 
+check("E6b 签收图只挑签收照（11-12 拆派仓照片带 kind）：有 kind 就只在 SIGN_OFF 里挑、一张没有就不配；全都没 kind 照旧", () => {
+  const P = (id: string, hhmm: string, kind?: "SIGN_OFF" | "STAFF" | null) => ({ id, createdAt: `2026-11-12T${hhmm}:00.000Z`, kind });
+  // 任务书的例子：10:00 签收照、10:01 员工补传、10:02 签收 → 10:00 那张
+  assert.equal(pickSignPhoto([P("sign", "03:00", "SIGN_OFF"), P("staff", "03:01", "STAFF")], "2026-11-12T03:02:00.000Z"), "sign");
+  // 只有员工照 → 不配
+  assert.equal(pickSignPhoto([P("a", "03:00", "STAFF"), P("b", "03:01", "STAFF")], "2026-11-12T03:02:00.000Z"), null);
+  // 都没 kind（undefined / null）→ 跟以前一样按时间挑
+  assert.equal(pickSignPhoto([P("a", "03:00"), P("b", "03:01")], "2026-11-12T03:02:00.000Z"), "b");
+  assert.equal(pickSignPhoto([P("a", "03:00", null), P("b", "03:01", null)], "2026-11-12T03:02:00.000Z"), "b");
+  // 有一张带了 kind，没带的也不算签收照
+  assert.equal(pickSignPhoto([P("a", "03:00", "SIGN_OFF"), P("b", "03:01", null)], "2026-11-12T03:02:00.000Z"), "a");
+  assert.equal(pickSignPhoto([P("a", "03:00", "STAFF"), P("b", "03:01", null)], "2026-11-12T03:02:00.000Z"), null);
+  // 签收照都在签收之后（时钟差）→ 最新的签收照，不拿签收前的员工照
+  assert.equal(pickSignPhoto([P("staff", "03:00", "STAFF"), P("s1", "03:05", "SIGN_OFF"), P("s2", "03:06", "SIGN_OFF")], "2026-11-12T03:02:00.000Z"), "s2");
+  // 几张签收照：签收前最新的那张（以前派送没送成时司机拍的签收照更早，不会被挑中）
+  assert.equal(pickSignPhoto([P("old", "01:00", "SIGN_OFF"), P("new", "03:00", "SIGN_OFF"), P("staff", "03:01", "STAFF")], "2026-11-12T03:02:00.000Z"), "new");
+});
+
 const dl = (over: Record<string, unknown> = {}) => ({ kind: "SIGNED", expectedBoxCount: 6, deliveredBoxCount: 4, missingBoxCount: 2, ...over });
 const parsed = (over: Record<string, unknown>) => { const r = parseChaipaiEvent(ev({ status: "DELIVERED", actualBoxCount: undefined, shortage: undefined, ...over }), "xiangtai"); assert.ok(r.ok); return r.event; };
 

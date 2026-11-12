@@ -7,8 +7,9 @@ import { fetchWithDeadline, readBodyWithDeadline } from "../core/fetch-deadline"
  * 照拆派仓 integrations/domestic/domestic-read.{controller,service}.ts：
  *   详情 GET {base}/integrations/domestic/v2/shipments/{id}[?afterPhoto=<游标>]
  *     → 200 {code:"OK", data:{ route:{id,driverName,plateNo,departedAt}|null, handover:{carrierName,trackingNo}|null,
- *                              photos:{items:[{id,createdAt}], nextCursor} }}
+ *                              photos:{items:[{id,createdAt,kind}], nextCursor} }}
  *     照片按 id 升序（不是按时间），每页最多 20，nextCursor 不为空就接着翻；没照片是 200 + 空列表；
+ *     kind（2026-11-12 拆派仓 flow23 起才有）："SIGN_OFF" 签收照（司机签收拍的、转交时传的单据）/ "STAFF" 拆派仓员工照（到仓、派送中补传）；
  *     404 = 拆派仓没这票或不在只读范围（代理的票、清单外登记的票……）
  *   单张 GET …/photos/{photoId} → 200 图片本身（只会是 jpeg / png，最大 10MiB）；404 没这张；410 过了保留期或已清理
  * 一律不跟随跳转、带超时；拆派仓生产环境所有 5xx 文案都一样，分不清原因，统一当「暂时取不到」。
@@ -20,7 +21,9 @@ export type ReadResult<T> =
   | { kind: "gone" }
   | { kind: "error"; reason: string };
 
-export interface ChaipaiPhotoRef { id: string; createdAt: string }
+export type ChaipaiPhotoKind = "SIGN_OFF" | "STAFF";
+/** kind 只认这两个值，别的值或没有都是 null（拆派仓旧版本不给） */
+export interface ChaipaiPhotoRef { id: string; createdAt: string; kind: ChaipaiPhotoKind | null }
 
 export interface ChaipaiDetail {
   route: { id: string; driverName: string; plateNo: string; departedAt: string | null } | null;
@@ -96,7 +99,9 @@ export async function fetchChaipaiDetail(
       for (const raw of list.items) {
         const id = str((raw as { id?: unknown })?.id, 128);
         const createdAt = timeText((raw as { createdAt?: unknown })?.createdAt);
-        if (id && createdAt) photos.push({ id, createdAt });
+        const kindRaw = (raw as { kind?: unknown })?.kind;
+        const kind = kindRaw === "SIGN_OFF" || kindRaw === "STAFF" ? kindRaw : null;
+        if (id && createdAt) photos.push({ id, createdAt, kind });
       }
       cursor = str(list.nextCursor, 128);
       if (!cursor) break;

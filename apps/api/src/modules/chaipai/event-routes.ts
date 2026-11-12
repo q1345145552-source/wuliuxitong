@@ -440,7 +440,8 @@ async function applyEvent(
       }
     } else {
       // DELIVERED：签当前这趟 —— 先找派送中的（跟踪的那张优先），没有才找跟踪的 / 最近一张已签收的（员工先手工签了），
-      // 都没有就直接建一张已签收的。签收图一律换成拆派仓这票最新一张（老板：签收单放拆派仓的照片）
+      // 都没有就直接建一张已签收的。签收图换成拆派仓这票的签收照（老板：签收单放拆派仓的照片；11-12 起只挑签收照，
+      // 见 pickSignPhoto）；挑不到（只有拆派仓员工照、没照片、照片已不在）就不换，原来有的图留着
       assertSingleDelivering();
       let target = live.find((r) => r.status === "DELIVERING" && r.id === lastmileOrderId)
         ?? live.find((r) => r.status === "DELIVERING")

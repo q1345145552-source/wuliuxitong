@@ -49,7 +49,7 @@ async function test(label: string, fn: () => Promise<void>): Promise<void> {
 }
 
 /** 假拆派仓只读接口：按运单 id 配好详情和照片 */
-interface FakePhoto { id: string; createdAt: string; status?: number; bytes?: Buffer; type?: string; delayMs?: number }
+interface FakePhoto { id: string; createdAt: string; status?: number; bytes?: Buffer; type?: string; delayMs?: number; /** 照片种类（11-12 拆派仓 flow23 起才给）；不写就不放这个键 */ kind?: unknown }
 interface FakeShipment { status?: number; route?: Row | null; handover?: Row | null; photos?: FakePhoto[]; slowBody?: boolean; pageDelayMs?: number }
 const fake = new Map<string, FakeShipment>();
 const fakeHits: string[] = [];
@@ -84,7 +84,7 @@ function startFake(): Promise<Server> {
     if (s.pageDelayMs) await new Promise((r) => setTimeout(r, s.pageDelayMs));
     const after = u.searchParams.get("afterPhoto");
     const rest = photos.filter((p) => !after || p.id > after);
-    const page = rest.slice(0, 20).map((p) => ({ id: p.id, createdAt: p.createdAt }));
+    const page = rest.slice(0, 20).map((p) => ({ id: p.id, createdAt: p.createdAt, ...(p.kind !== undefined ? { kind: p.kind } : {}) }));
     res.setHeader("content-type", "application/json");
     res.end(JSON.stringify({ code: "OK", message: "success", data: {
       protocolVersion: 2, route: s.route ?? null, handover: s.handover ?? null,
@@ -1783,6 +1783,103 @@ async function main(): Promise<void> {
         const delivered = (await logsOf(id)).filter((l: Row) => l.toStatus === "delivered").map((l: Row) => l.remark);
         assert.deepEqual(delivered, [`尾程派送已签收（WDZZ${tag}）`, ...extra], tag);
       }
+    });
+
+    console.log("\n【签收图只挑拆派仓的签收照（2026-11-12，拆派仓照片带 kind）】");
+    /** 派送中 + 签收（签收时间可指定），返回运单 id */
+    const signWith = async (tag: string, photos: FakePhoto[], signAt: string) => {
+      const id = await fresh(tag);
+      fake.set(id, { route: { ...routeA, id: `${P}route${tag}` }, photos });
+      await send(id, "OUT_FOR_DELIVERY", {}, { occurredAt: "2026-11-12T01:00:00.000Z" });
+      const r = await send(id, "DELIVERED", {}, { occurredAt: signAt });
+      assert.equal(r.raw.result, "APPLIED", JSON.stringify(r.raw));
+      return id;
+    };
+    const photoHitsOf = (id: string) => fakeHits.filter((u) => u.includes(`/shipments/${encodeURIComponent(id)}/photos/`));
+    const b64 = (s: string) => Buffer.from(s).toString("base64");
+    await test("H1 任务书的例子：10:00 司机签收照、10:01 拆派仓员工补传一张、10:02 签收 → 签收图是 10:00 那张；员工那张不去取；客户看到的签收单也是它", async () => {
+      const before = fakeHits.length;
+      const id = await signWith("H1", [
+        { id: "h1-sign", createdAt: "2026-11-12T03:00:00.000Z", kind: "SIGN_OFF", bytes: Buffer.from("H1-SIGN") },
+        { id: "h1-staff", createdAt: "2026-11-12T03:01:00.000Z", kind: "STAFF", bytes: Buffer.from("H1-STAFF") },
+      ], "2026-11-12T03:02:00.000Z");
+      const row = (await rowsOf(id))[0];
+      assert.deepEqual([row.status, row.signImageBase64], ["SIGNED", b64("H1-SIGN")]);
+      assert.deepEqual(fakeHits.slice(before).filter((u) => u.includes("/photos/")).map((u) => u.split("/photos/")[1]), ["h1-sign"]);
+      const track = await call("GET /client/shipments/track", { auth: CLIENT, query: { trackingNo: `ZZCPT${stamp}H1` } });
+      assert.equal(track.raw.data.lastmile.signImageBase64, `data:image/jpeg;base64,${b64("H1-SIGN")}`);
+    });
+    await test("H2 只有拆派仓员工照、没有签收照 → 不配签收图（不拿员工照顶）：派送单照样签收、运单已签收；员工先手工签过带的图原样留着", async () => {
+      const staffOnly = (tag: string): FakePhoto[] => [
+        { id: `${tag}-a`, createdAt: "2026-11-12T03:00:00.000Z", kind: "STAFF" },
+        { id: `${tag}-b`, createdAt: "2026-11-12T03:01:00.000Z", kind: "STAFF" },
+      ];
+      const id = await signWith("H2", staffOnly("h2"), "2026-11-12T03:02:00.000Z");
+      const row = (await rowsOf(id))[0];
+      assert.deepEqual([row.status, row.signImageBase64, (await shipmentOf(id)).currentStatus], ["SIGNED", null, "delivered"]);
+      assert.deepEqual(photoHitsOf(id), [], "去取了员工照");
+      // 员工已手工签收（带了图），拆派仓签收到了但只有员工照：图不换
+      const id2 = await fresh("H2b", "delivered");
+      await manualRow("h2b", id2, "WDZZH2B", "SIGNED", { signImageBase64: "AAAA" });
+      fake.set(id2, { route: routeA, photos: staffOnly("h2b") });
+      assert.equal((await send(id2, "DELIVERED", {}, { occurredAt: "2026-11-12T03:02:00.000Z" })).raw.result, "APPLIED");
+      assert.deepEqual((await rowsOf(id2)).map((x: Row) => [x.status, x.signImageBase64]), [["SIGNED", "AAAA"]]);
+      assert.deepEqual(photoHitsOf(id2), []);
+      // 派送中那条没收到、直接签收（直接建一张已签收的派送单），也只有员工照：新单不放图
+      const id3 = await fresh("H2c");
+      fake.set(id3, { route: { ...routeA, id: `${P}routeH2c` }, photos: staffOnly("h2c") });
+      assert.equal((await send(id3, "DELIVERED", {}, { occurredAt: "2026-11-12T03:02:00.000Z" })).raw.result, "APPLIED");
+      assert.deepEqual((await rowsOf(id3)).map((x: Row) => [x.status, x.signImageBase64]), [["SIGNED", null]]);
+      assert.deepEqual(photoHitsOf(id3), []);
+    });
+    await test("H3 老数据（照片都没带 kind，拆派仓还没上这版）→ 跟以前一样：签收前最新的一张", async () => {
+      const id = await signWith("H3", [
+        { id: "h3-a", createdAt: "2026-11-12T03:00:00.000Z", bytes: Buffer.from("H3-A") },
+        { id: "h3-b", createdAt: "2026-11-12T03:01:00.000Z", bytes: Buffer.from("H3-B") },
+        { id: "h3-c", createdAt: "2026-11-12T03:05:00.000Z", bytes: Buffer.from("H3-C") },
+      ], "2026-11-12T03:02:00.000Z");
+      assert.equal((await rowsOf(id))[0].signImageBase64, b64("H3-B"));
+    });
+    await test("H4 签收照都在签收时间之后（时钟差）→ 取最新的签收照，不取签收前的员工照；签收照在第 2 页也翻得到", async () => {
+      const id = await signWith("H4", [
+        { id: "h4-staff", createdAt: "2026-11-12T03:00:00.000Z", kind: "STAFF", bytes: Buffer.from("H4-STAFF") },
+        { id: "h4-sign1", createdAt: "2026-11-12T03:05:00.000Z", kind: "SIGN_OFF", bytes: Buffer.from("H4-SIGN1") },
+        { id: "h4-sign2", createdAt: "2026-11-12T03:06:00.000Z", kind: "SIGN_OFF", bytes: Buffer.from("H4-SIGN2") },
+      ], "2026-11-12T03:02:00.000Z");
+      assert.equal((await rowsOf(id))[0].signImageBase64, b64("H4-SIGN2"));
+      // 21 张员工照占满第 1 页，签收照在第 2 页
+      const many: FakePhoto[] = Array.from({ length: 21 }, (_, i) => ({
+        id: `h4b-${String(i).padStart(2, "0")}`, createdAt: new Date(Date.UTC(2026, 10, 12, 2, 0, i)).toISOString(), kind: "STAFF",
+      }));
+      many.push({ id: "h4b-zz", createdAt: "2026-11-12T01:30:00.000Z", kind: "SIGN_OFF", bytes: Buffer.from("H4B-SIGN") });
+      const id2 = await signWith("H4b", many, "2026-11-12T03:02:00.000Z");
+      assert.equal((await rowsOf(id2))[0].signImageBase64, b64("H4B-SIGN"));
+    });
+    await test("H5 kind 认不得的值当没给：全是认不得的 → 照旧按时间挑；认不得的混着签收照 → 只挑签收照", async () => {
+      const id = await signWith("H5", [
+        { id: "h5-a", createdAt: "2026-11-12T03:00:00.000Z", kind: "OTHER", bytes: Buffer.from("H5-A") },
+        { id: "h5-b", createdAt: "2026-11-12T03:01:00.000Z", kind: "sign_off", bytes: Buffer.from("H5-B") },
+      ], "2026-11-12T03:02:00.000Z");
+      assert.equal((await rowsOf(id))[0].signImageBase64, b64("H5-B"));
+      const id2 = await signWith("H5b", [
+        { id: "h5b-a", createdAt: "2026-11-12T03:00:00.000Z", kind: "SIGN_OFF", bytes: Buffer.from("H5B-SIGN") },
+        { id: "h5b-b", createdAt: "2026-11-12T03:01:00.000Z", kind: "OTHER", bytes: Buffer.from("H5B-OTHER") },
+        { id: "h5b-c", createdAt: "2026-11-12T03:01:30.000Z", kind: null, bytes: Buffer.from("H5B-NULL") },
+      ], "2026-11-12T03:02:00.000Z");
+      assert.equal((await rowsOf(id2))[0].signImageBase64, b64("H5B-SIGN"));
+      // 一张员工照 + 一张根本没有 kind 这个键的（更晚）：没键的也不算签收照 → 不配图（钉住解析层「没有 = null」；11-12 dsh）
+      const id3 = await signWith("H5c", [
+        { id: "h5c-a", createdAt: "2026-11-12T03:00:00.000Z", kind: "STAFF", bytes: Buffer.from("H5C-STAFF") },
+        { id: "h5c-b", createdAt: "2026-11-12T03:01:00.000Z", bytes: Buffer.from("H5C-NOKEY") },
+      ], "2026-11-12T03:02:00.000Z");
+      assert.equal((await rowsOf(id3))[0].signImageBase64, null);
+    });
+    await test("H6 员工看的「派送照片」照旧给全部：签收照、拆派仓员工照都在（第 256 条不变）；客户调这个接口照旧 403", async () => {
+      const r = await call("GET /staff/shipments/chaipai-photos", { auth: STAFF, query: { trackingNo: `ZZCPT${stamp}H1` } });
+      assert.deepEqual([r.raw.data.state, r.raw.data.items.map((p: Row) => p.id)], ["ok", ["h1-sign", "h1-staff"]]);
+      const staffOnly = await call("GET /staff/shipments/chaipai-photos", { auth: STAFF, query: { trackingNo: `ZZCPT${stamp}H2` } });
+      assert.deepEqual([staffOnly.raw.data.state, staffOnly.raw.data.items.length], ["ok", 2]);
+      assert.equal((await call("GET /staff/shipments/chaipai-photos", { auth: CLIENT, query: { trackingNo: `ZZCPT${stamp}H1` } })).status, 403);
     });
 
     console.log("\n【派送照片（只给员工）】");
