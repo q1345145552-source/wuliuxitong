@@ -17,4 +17,4 @@
 - 审查一轮（Codex gpt-5.6-sol max + dsh）：两家都「没有必须修」，建议里改了过时注释、补了测试；`.audit/2026-11-12/sign-photo-kind/review-r1/`。
 
 ## 状态
-- 本地已提交，没推没上线，等老板说上线。
+- 2026-11-12 22:21（北京）已上线 c32a3e8（老板自己跑的 push + deploy.sh），线上已核，见 journal。
