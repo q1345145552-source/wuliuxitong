@@ -343,6 +343,10 @@ jobs:
       # 建员工弹窗多一格备注、员工那一行显示备注 +「改备注」、存备注走账号写入边界用后端回的值、错误画在那一行、只有超管页用
       - name: Test staff remark (source)
         run: npm run test:staff-remark-source
+      # 2026-11-14 员工号改成客户号（老板「a」，不连库）：「记账号的列」清单跟 schema 对得上（新加记账号的列不进清单就红）、
+      # 后端只给超管且锁里核员工号和没留下东西再改、员工那一行「改成客户号」先确认走写入边界两份名单都刷新
+      - name: Test staff to client (source)
+        run: npm run test:staff-to-client-source
       # 2026-10-17 封禁的唛头不进挂单的下拉（不连库）：提示跟后端拦下那句一样、员工 / 超管建单和改唛头的框都去掉封禁的、全站唛头下拉点名
       - name: Test banned client marks in pickers
         run: npm run test:client-ban-ui
@@ -555,6 +559,10 @@ jobs:
       # 查和写之间改成客户号 409
       - name: Test staff remark (real DB)
         run: bash .github/scripts/run-db-test.sh test:staff-remark-db
+      # 2026-11-14 员工号改成客户号（真接口、真库）：没用过的改成客户号只动角色、原员工登录失效；封着的照封；用过的 409；
+      # 只开过通知不算用过；只认本公司员工号；只有超管；锁里再核（别人刚留下记录 → 409）；记账号的列在库里全都真有
+      - name: Test staff to client (real DB)
+        run: bash .github/scripts/run-db-test.sh test:staff-to-client-db
       # 2026-10-17 封禁的唛头不许再挂新单（真接口、真库）：建单 / 到货通知登记·改唛头·转运单 / 整柜建·改 / 超管改唛头都拦，
       # 已经挂在封禁唛头名下的单照常改、待入库照常转正式、预报单照常收货，解封后恢复
       - name: Test banned client cannot get new orders (real DB)

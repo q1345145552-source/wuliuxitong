@@ -1784,6 +1784,17 @@ export async function fetchFinanceSummary(): Promise<FinanceSummary> {
 // 用户要求砍掉重复入口，页面已删。
 // 员工/客户列表用 fetchAdminStaff / fetchAdminClients，改密码用 setAdminStaffPassword。
 
+/** 员工号改成客户号（2026-11-14）：只给超管；只认还没在系统里留下过东西的员工号，用过的后端回 409 */
+export async function convertStaffToClient(id: string, signal?: AbortSignal): Promise<{ id: string; role: "client"; status: string }> {
+  const response = await fetch(`${apiBaseUrl()}/admin/users/staff-to-client`, {
+    method: "POST",
+    signal,
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({ id }),
+  });
+  return parseApiResponse<{ id: string; role: "client"; status: string }>(response);
+}
+
 /**
  * 禁用/启用用户（管理员）。
  */

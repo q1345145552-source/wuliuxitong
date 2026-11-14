@@ -76,6 +76,7 @@ import { BusinessError } from "../core/business-error";
 import { CLIENT_BAN_BUSY_MESSAGE, CLIENT_BAN_ROW_WAIT, CLIENT_BAN_TX, assertClientNotBanned, lockClientBan } from "../core/client-ban";
 import { loadOrderProductDims } from "../orders/routes";
 import { strictestCargoType } from "../../../../../packages/shared-types/cargo-type";
+import { findUserReferences } from "./user-references";
 
 /** Decimal | null → number | null */
 function decToNumber(value: Prisma.Decimal | null | undefined): number | null {
@@ -1339,6 +1340,44 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
     });
     if (written.count === 0) { fail(res, 409, "VALIDATION_ERROR", "这个员工的备注刚被别人改过（名单已刷新），请点「取消改备注」再点「改备注」，看到最新的再改"); return; }
     ok(res, { id: user.id, remark: remark.value });
+  });
+
+  /**
+   * 员工号改成客户号（2026-11-14 老板「a」）：客服在「员工管理」把客户 XHH-6669 建成了员工号 → 管理员在系统里自己改。
+   * 只给超管；只认本公司、现在还是员工号、**在系统里什么都没留下过**的（user-references.ts 那些列一条都没有）——
+   * 经手过单子 / 记录的真员工改了，那些记录就挂到一个客户名下了。
+   * 改的只有 role（→ client），顺手清掉员工备注；密码、名字、手机、封没封都不动；原来的员工登录当场失效（session-guard 核 role）。
+   * 锁住这一行、在锁里核「还是员工号」「没留下东西」再改（CLAUDE.md 第 28 条）。
+   */
+  app.post("/admin/users/staff-to-client", async (req, res) => {
+    const auth = requireRole(req, res, ["admin"]);
+    if (!auth) return;
+    const body = (req.body ?? {}) as { id?: unknown };
+    const id = typeof body.id === "string" ? body.id.trim() : "";
+    if (!id) { fail(res, 400, "BAD_REQUEST", "请选一个员工号"); return; }
+    const result = await prisma.$transaction(async (tx) => {
+      const rows = await tx.$queryRaw<Array<{ role: string; company_id: string; status: string }>>`
+        SELECT role, company_id, status FROM users WHERE id = ${id} FOR UPDATE`;
+      const u = rows[0];
+      if (!u || u.company_id !== auth.companyId) return { kind: "notFound" } as const;
+      if (u.role !== "staff") return { kind: "notStaff", role: u.role } as const;
+      const used = await findUserReferences(tx, id);
+      if (used.length > 0) return { kind: "used", used } as const;
+      await tx.user.update({ where: { id }, data: { role: "client", remark: null } });
+      return { kind: "ok", status: u.status } as const;
+    });
+    if (result.kind === "notFound") { fail(res, 404, "NOT_FOUND", "没有这个员工号，请刷新再试"); return; }
+    if (result.kind === "notStaff") {
+      fail(res, 409, "VALIDATION_ERROR", result.role === "client" ? "这个号已经是客户号了，请刷新再看" : "只有员工号能改成客户号");
+      return;
+    }
+    if (result.kind === "used") {
+      logger.info("staff-to-client refused: account has records", { id, used: result.used });
+      fail(res, 409, "VALIDATION_ERROR", "这个员工号已经用过（经手过单子或留下过记录），不能改成客户号");
+      return;
+    }
+    logger.info("staff converted to client", { id, by: auth.userId });
+    ok(res, { id, role: "client", status: result.status });
   });
 
   app.post("/admin/users/client", async (req, res) => {

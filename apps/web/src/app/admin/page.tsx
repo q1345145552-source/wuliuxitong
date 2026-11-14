@@ -67,6 +67,7 @@ import {
   resolveAdminAiKnowledgeGap,
   createAdminStaff,
   setAdminStaffRemark,
+  convertStaffToClient,
   createAdminClient,
   updateAdminClient,
   toggleUserBan,
@@ -505,6 +506,8 @@ export default function AdminHomePage() {
   const [remarkBase, setRemarkBase] = useState<string | null>(null);
   /** 改备注没存上的原因，画在那一行的输入框下面（页面底部那行离得太远看不见） */
   const [remarkError, setRemarkError] = useState("");
+  /** 「改成客户号」没改成的原因（2026-11-14），画在那个员工那一行下面 */
+  const [convertError, setConvertError] = useState<{ id: string; text: string } | null>(null);
   const [clientForm, setClientForm] = useState({ id: "", name: "", companyName: "", phone: "", email: "", password: "", agentId: "" });
   const [showStaffModal, setShowStaffModal] = useState(false);
   const [showClientModal, setShowClientModal] = useState(false);
@@ -1063,6 +1066,45 @@ export default function AdminHomePage() {
       else setClientList(applyStatus);
       setToast(result.status === "active" ? "已解除封禁" : "已封禁，该账号无法再登录");
       await refreshAccountViews(reload, result.status === "active" ? "已解除封禁" : "已封禁");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  /**
+   * 员工号改成客户号（2026-11-14 老板「a」：客服在「员工管理」把客户 XHH-6669 建成了员工号，管理员要能自己改）。
+   * 先确认；后端只认还没在系统里留下过东西的员工号。改成了：这一行从员工名单里拿掉，员工 / 客户两份名单都刷新。
+   */
+  const confirmConvertStaffToClient = async (u: AdminUserItem) => {
+    if (loading) return;
+    // 系统弹窗不认 markdown，别写 ** **
+    const tip = `把员工号「${u.id}」改成客户号吗？\n\n· 改完它会从「员工管理」挪到「客户管理」，登录密码不变\n· 这个号就不能再登员工工作台了\n· 只有还没经手过任何单子、记录的员工号能改`;
+    if (!window.confirm(tip)) return;
+    setLoading(true);
+    setMessage("");
+    setConvertError(null);
+    try {
+      let result: Awaited<ReturnType<typeof convertStaffToClient>>;
+      try {
+        result = await runAccountWrite((signal) => convertStaffToClient(u.id, signal));
+      } catch (error) {
+        if (error instanceof Error && error.name === "AccountWriteTimeoutError") {
+          setConvertError({ id: u.id, text: error.message });
+          return;
+        }
+        const text = error instanceof Error ? error.message : "改成客户号失败";
+        setConvertError({ id: u.id, text: `没改成：${text}` });
+        return;
+      }
+      // 用后端确认的结果：这一行不再是员工号，先从员工名单里拿掉（旧名单晚到由写入边界拦着），开着的编辑框跟着收
+      setStaffList((rows) => rows.filter((row) => row.id !== result.id));
+      setEditingRemarkFor((cur) => (cur === result.id ? null : cur));
+      setSettingPasswordFor((cur) => (cur === result.id ? null : cur));
+      const done = result.status === "active"
+        ? `已把 ${result.id} 改成客户号，在「客户管理」里能看到了`
+        : `已把 ${result.id} 改成客户号（它还在封禁中，要用的话去「客户管理」点「解除封禁」）`;
+      setToast(done);
+      await refreshAccountViews(() => Promise.all([loadStaff(), loadClients()]), done);
     } finally {
       setLoading(false);
     }
@@ -1705,8 +1747,20 @@ export default function AdminHomePage() {
                     >
                       {u.status === "inactive" ? "解除封禁" : "封禁"}
                     </button>
+                    {/* 2026-11-14：员工管理里误建的客户号，管理员自己改回客户号（只认还没用过的员工号） */}
+                    <button
+                      type="button"
+                      onClick={() => void confirmConvertStaffToClient(u)}
+                      disabled={loading}
+                      style={{ border: "1px solid var(--l-strong)", color: "var(--t-strong)", borderRadius: 8, padding: "6px 10px", background: "var(--white)", cursor: "pointer", fontSize: 13 }}
+                    >
+                      改成客户号
+                    </button>
                   </div>
                 </div>
+                {convertError?.id === u.id ? (
+                  <div role="alert" style={{ marginTop: 10, padding: "6px 10px", background: "var(--c-red-bg)", color: "var(--c-red-deep)", borderRadius: 8, fontSize: 13 }}>{convertError.text}</div>
+                ) : null}
                 {editingRemarkFor === u.id ? (
                   <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px solid var(--l-soft)", display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
                     {/* 不用 maxLength：粘贴超长会被浏览器悄悄截掉尾巴，存的时候明确说「太长了」（审查第 1 轮）；存的那一两秒锁住，免得打的字被存完清掉 */}
