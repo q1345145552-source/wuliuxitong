@@ -1078,8 +1078,8 @@ export default function AdminHomePage() {
   const confirmConvertStaffToClient = async (u: AdminUserItem) => {
     if (loading) return;
     // 系统弹窗不认 markdown，别写 ** **
-    const who = u.name && u.name !== u.id ? `「${u.id}」（${u.name}）` : `「${u.id}」`;
-    const tip = `把员工号${who}改成客户号吗？\n\n· 改完它会从「员工管理」挪到「客户管理」，登录密码不变，员工备注会清掉\n· 改完算湘泰自己的客户（没挂代理），要挂代理再去「客户管理」点「编辑」\n· 这个号就不能再登员工工作台了，改了也改不回员工号\n· 只有还没经手过任何单子、记录的员工号能改`;
+    // 只写账号不带名字：改完就是客户号了，显示客户只显示唛头（2026-09-19 老板，test:mark-display 管着）
+    const tip = `把员工号「${u.id}」改成客户号吗？\n\n· 改完它会从「员工管理」挪到「客户管理」，登录密码不变，员工备注会清掉\n· 改完算湘泰自己的客户（没挂代理），要挂代理再去「客户管理」点「编辑」\n· 这个号就不能再登员工工作台了，改了也改不回员工号\n· 只有还没经手过任何单子、记录的员工号能改`;
     if (!window.confirm(tip)) return;
     setLoading(true);
     setMessage("");

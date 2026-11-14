@@ -121,8 +121,8 @@ async function main(): Promise<void> {
     const h = slice(page, "const confirmConvertStaffToClient = async (u: AdminUserItem) => {", "\n  };");
     assert.match(h, /if \(loading\) return;/);
     assert.match(h, /if \(!window\.confirm\(tip\)\) return;/, "要先确认");
-    assert.match(h, /tip = `把员工号\$\{who\}改成客户号吗？/);
-    assert.match(h, /const who = u\.name && u\.name !== u\.id \? `「\$\{u\.id\}」（\$\{u\.name\}）` : `「\$\{u\.id\}」`;/, "名字跟账号不一样时带上名字");
+    assert.match(h, /tip = `把员工号「\$\{u\.id\}」改成客户号吗？/);
+    assert.ok(!/u\.name/.test(h), "确认框只写账号不带名字（改完是客户号，显示客户只显示唛头）");
     assert.ok(h.indexOf("window.confirm") < h.indexOf("setLoading(true)"), "确认在前");
     assert.match(h, /runAccountWrite\(\(signal\) => convertStaffToClient\(u\.id, signal\)\)/, "走账号写入边界（旧名单晚到不许把它又放回员工名单）");
     assert.match(h, /setConvertError\(\{ id: u\.id, text: `没改成：\$\{text\}` \}\);\s*return;/);
