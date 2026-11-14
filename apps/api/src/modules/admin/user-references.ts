@@ -12,8 +12,11 @@
  *  - USER_REFERENCE_TEXT_COLUMNS：一大段文字 / JSON 里出现过带引号的这个号就算（审计记录里存着被删掉的轨迹，恢复时 operatorId 会原样回来，dsh 第 1 轮）
  *  - USER_REFERENCE_EXCLUDED：名字像、或者是大段文字 / JSON，但不记账号的（每条写明理由）
  *
- * ⚠️ 只能保证「查的那一刻」这个号没留下东西：员工正在提交的请求（已经过了登录检查）写不锁账号那一行的表（比如轨迹），
- *    可能在改号那一瞬间之后才落库。要硬挡得让所有员工写入都核角色，那就不止「员工管理」了（dsh 第 1 轮，老板要的是改误建、没人用的号）。
+ * ⚠️ 只能保证「查的那一刻」这个号没留下东西：员工正在提交的请求（已经过了登录检查）可能在改号之后才落库——
+ *    写不锁账号那一行的表（比如轨迹）随时能落；连着账号外键的（比如审计 actor_id）会被改号的行锁挡到改号提交之后。
+ *    要硬挡得让所有员工写入都核角色，那就不止「员工管理」了（dsh / Codex 第 1、2 轮，老板要的是改误建、没人用的号）。
+ *
+ * T1 只认得 schema 里 Json 和 @db.Text 的大段文字列；普通 String 里塞 JSON（比如 users.warehouse_ids）不在它眼里，加这种列时自己归类。
  */
 import type { Prisma } from "@prisma/client";
 
@@ -136,6 +139,8 @@ const ident = (name: string) => {
 export async function findUserReferences(tx: Prisma.TransactionClient, userId: string): Promise<string[]> {
   const all = [
     ...USER_REFERENCE_COLUMNS.map(([t, c]) => ({ key: `${t}.${c}`, sql: `EXISTS (SELECT 1 FROM ${ident(t)} WHERE ${ident(c)} = $1)` })),
+    // 审计里「被操作的是这个账号」（现在没有写这种的，以后给账号操作加审计时不用再记得来补，dsh 第 2 轮）
+    { key: "audit_logs.resource_id(User)", sql: `EXISTS (SELECT 1 FROM "audit_logs" WHERE "resource_type" = 'User' AND "resource_id" = $1)` },
     // strpos 不认通配符（号里有 _ % 也不会误中）；带引号找，「XHH-66」不会被「XHH-6669」带上
     ...USER_REFERENCE_TEXT_COLUMNS.map(([t, c]) => ({ key: `${t}.${c}`, sql: `EXISTS (SELECT 1 FROM ${ident(t)} WHERE strpos(${ident(c)}, $2) > 0)` })),
   ];

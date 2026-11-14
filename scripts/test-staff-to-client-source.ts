@@ -63,6 +63,7 @@ async function main(): Promise<void> {
     for (const [t, c, why] of refs.USER_REFERENCE_EXCLUDED) assert.ok(why.trim().length >= 2, `${t}.${c} 没写不算的理由`);
     assert.deepEqual(refs.USER_REFERENCE_TEXT_COLUMNS.map(([t, c]) => `${t}.${c}`), ["audit_logs.before_json", "audit_logs.after_json"], "审计记录里存着被删的轨迹，要查");
     // 「故意不算」的名单钉死：把真记账号的列（比如 orders.client_id）挪进来混过去，这里会红；真要加，改这里并在清单里写理由
+    // 钉死的名单：新加大段文字列归进「故意不算」时，这里也加一行（故意的：把真记账号的列挪进去混过去会红）
     assert.deepEqual(refs.USER_REFERENCE_EXCLUDED.map(([t, c]) => `${t}.${c}`).sort(), [
       "admin_lastmile_orders.sign_product_image_base64", "agent_applications.login_id", "agent_rebate_lines.product_names",
       "ai_audit_logs.answer_summary", "ai_audit_logs.question", "ai_knowledge_gaps.answer_summary",
@@ -88,14 +89,17 @@ async function main(): Promise<void> {
   await check("T2 后端：只给超管；锁住这一行 → 核本公司 / 员工号 / 有密码 → 改 → 拿着锁再查没留下东西，有就整个撤销；只改 role 和员工备注；锁等不到 409；推送落「账号」", async () => {
     const ep = slice(api, `app.post("/admin/users/staff-to-client"`, "\n  });");
     assert.match(ep, /requireRole\(req, res, \["admin"\]\)/);
-    const tx = slice(ep, "prisma.$transaction(async (tx) => {", "\n      });");
+    const tx = slice(ep, "prisma.$transaction(async (tx) => {", "\n      }, { timeout");
     const at = (needle: string) => { const n = tx.indexOf(needle); assert.ok(n >= 0, `事务里没有：${needle}`); return n; };
+    assert.match(tx, /coalesce\(password_hash, ''\) <> '' AS has_password/, "空串密码也算没设");
     const order = [at("SET LOCAL lock_timeout"), at("FOR UPDATE"), at("u.company_id !== auth.companyId"), at(`u.role !== "staff"`), at("!u.has_password"),
       at("tx.user.update("), at("findUserReferences(tx, id)"), at("throw new UsedAfterAll(used)")];
     assert.deepEqual([...order].sort((a, b) => a - b), order, "顺序要是：设等锁上限 → 锁住这一行 → 核公司 → 核员工号 → 核密码 → 改 → 再查 → 有就抛出去撤销");
     assert.match(tx, /tx\.user\.update\(\{ where: \{ id \}, data: \{ role: "client", remark: null \} \}\)/, "只改角色、清员工备注，别的不动");
     assert.match(ep, /e instanceof UsedAfterAll\) \{[\s\S]*?fail\(res, 409/);
-    assert.match(ep, /P2028[\s\S]*?55P03[\s\S]*?fail\(res, 409, "VALIDATION_ERROR", "这个号正被别人改着，过几秒再点"\)/);
+    assert.match(ep, /pg\.code === "P2010" && \/55P03\|lock timeout\/i[\s\S]*?fail\(res, 409, "VALIDATION_ERROR", "这个号正被别人改着，过几秒再点"\)/, "只有等行锁超时才说「别人正改着」");
+    assert.match(ep, /pg\.code === "P2028" \|\| pg\.code === "P2024"\)\) \{\s*fail\(res, 409, "VALIDATION_ERROR", "系统忙，这次没改成，过几秒再点"\)/, "事务 / 连接池超时说系统忙");
+    assert.match(ep, /\}, \{ timeout: 15000, maxWait: 5000 \}\);/, "事务时限要宽过等锁 3 秒 + 再查");
     assert.match(ep, /result\.kind === "noPassword"\) \{\s*fail\(res, 409/);
     const { topicForWrite } = await import("../apps/api/src/modules/realtime/topics");
     assert.equal(topicForWrite("/admin/users/staff-to-client"), "accounts", "改完别的超管开着的员工 / 客户管理要跟着刷新");

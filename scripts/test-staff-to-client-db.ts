@@ -226,6 +226,7 @@ async function main(): Promise<void> {
         await other;
         const r = await req;
         assert.equal(r.status, 409, `${r.status} ${r.message}`);
+        assert.match(r.message, /已经用过/, "要是「正被别人改着」就是等锁超时顶了包，没测到再查（dsh 第 2 轮）");
         assert.equal((await userOf(RACE)).role, "staff", "锁里没再核，把刚做过事的员工改成客户了");
       } finally {
         releaseLock?.();
@@ -247,10 +248,17 @@ async function main(): Promise<void> {
     await check("C9 没外键的员工记录也拦（轨迹、聊天）；被删的轨迹存在审计里也拦；审计里只有长得像的号不误拦", async () => {
       for (const [id, where] of [[USED_LOG, "status_logs.operator_id"], [USED_CHAT, "cs_messages.sender_id"], [USED_DELETED, "audit_logs.before_json"]] as const) {
         assert.deepEqual(await prisma.$transaction((tx) => findUserReferences(tx, id)), [where], `${id} 查到的位置不对`);
+        await pm.user.update({ where: { id }, data: { remark: "广州仓管" } });
+        const before = await pm.user.findUnique({ where: { id } });
         const r = await convert(ADMIN, id);
         assert.equal(r.status, 409, `${id}：${r.status} ${r.message}`);
-        assert.equal((await userOf(id)).role, "staff", `${id} 被改了`);
+        assert.match(r.message, /已经用过/);
+        assert.deepEqual(await pm.user.findUnique({ where: { id } }), before, `${id} 被改了（改完再查到用过要整个撤销：角色、备注都回原样）`);
       }
+      // 审计里「被操作的是这个账号」也算
+      await pm.auditLog.create({ data: { companyId: CO, actorId: ADMIN.userId, actorRole: "admin", action: "UPDATE", resourceType: "User", resourceId: LOOKALIKE } });
+      assert.deepEqual(await prisma.$transaction((tx) => findUserReferences(tx, LOOKALIKE)), ["audit_logs.resource_id(User)"]);
+      await pm.auditLog.deleteMany({ where: { resourceType: "User", resourceId: LOOKALIKE } });
       const look = await convert(ADMIN, LOOKALIKE);
       assert.equal(look.status, 200, `只有长得像的号就被拦了：${look.message}`);
     });
@@ -285,7 +293,8 @@ async function main(): Promise<void> {
         const r = await convert(ADMIN, BUSY);
         assert.equal(r.status, 409, `${r.status} ${r.message}`);
         assert.match(r.message, /正被别人改着/);
-        assert.ok(Date.now() - t0 < 10000, "等太久了");
+        const waited = Date.now() - t0;
+        assert.ok(waited >= 2500 && waited < 10000, `等了 ${waited} 毫秒：该是等锁 3 秒到点（太快说明走了别的 409）`);
       } finally {
         release?.();
         await other?.catch(() => {});

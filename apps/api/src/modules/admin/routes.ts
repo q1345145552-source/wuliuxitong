@@ -1348,7 +1348,7 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
    * 经手过单子 / 记录的真员工改了，那些记录就挂到一个客户名下了。
    * 改的只有 role（→ client），顺手清掉员工备注；密码、名字、手机、封没封都不动；原来的员工登录当场失效（session-guard 核 role）。
    * 锁住这一行、在锁里核「还是员工号」→ 改 → 还拿着锁再查「没留下东西」，有就整个撤销（CLAUDE.md 第 28 条）。
-   * 只能保证改号这一刻之前落库的记录都查到了（见 user-references.ts 文件头的 ⚠️）。
+   * 只能保证「再查那一刻」已经落库的记录都查到了（见 user-references.ts 文件头的 ⚠️）。
    */
   app.post("/admin/users/staff-to-client", async (req, res) => {
     const auth = requireRole(req, res, ["admin"]);
@@ -1364,18 +1364,18 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
         // 别人（封禁 / 另一个超管）锁着这一行时最多等 3 秒，等不到回 409 叫他过几秒再点（dsh 第 1 轮，同封禁）
         await tx.$executeRawUnsafe(`SET LOCAL lock_timeout = '3s'`);
         const rows = await tx.$queryRaw<Array<{ role: string; company_id: string; status: string; has_password: boolean }>>`
-          SELECT role, company_id, status, password_hash IS NOT NULL AS has_password FROM users WHERE id = ${id} FOR UPDATE`;
+          SELECT role, company_id, status, coalesce(password_hash, '') <> '' AS has_password FROM users WHERE id = ${id} FOR UPDATE`;
         const u = rows[0];
         if (!u || u.company_id !== auth.companyId) return { kind: "notFound" } as const;
         if (u.role !== "staff") return { kind: "notStaff", role: u.role } as const;
         // 员工建号密码选填，客户号密码必填（2026-10-11）：没密码改过去客户登不进，先叫他设（Codex 第 1 轮）
         if (!u.has_password) return { kind: "noPassword" } as const;
         await tx.user.update({ where: { id }, data: { role: "client", remark: null } });
-        // 改完（锁还拿着）再查：查的就是改号这一刻之前落库的全部记录，有一条就整个撤销
+        // 改完（锁还拿着）再查：再查那一刻已经落库的记录都算，有一条就整个撤销
         const used = await findUserReferences(tx, id);
         if (used.length > 0) throw new UsedAfterAll(used);
         return { kind: "ok", status: u.status } as const;
-      });
+      }, { timeout: 15000, maxWait: 5000 }); // 等锁最多 3 秒 + 54 列再查，默认 5 秒不够宽裕（dsh / Codex 第 2 轮，同封禁的 CLIENT_BAN_TX）
     } catch (e) {
       if (e instanceof UsedAfterAll) {
         logger.info("staff-to-client refused: account has records", { id, used: e.used });
@@ -1383,8 +1383,13 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
         return;
       }
       const pg = e instanceof Prisma.PrismaClientKnownRequestError ? e : null;
-      if (pg && (pg.code === "P2028" || pg.code === "P2024" || (pg.code === "P2010" && /55P03|lock timeout/i.test(`${String((pg.meta as { code?: unknown } | undefined)?.code ?? "")} ${pg.message}`)))) {
+      // 只有等行锁超时（55P03）才是「别人正改着」；事务 / 连接池超时是系统忙，别说成有人锁着（dsh / Codex 第 2 轮）
+      if (pg && pg.code === "P2010" && /55P03|lock timeout/i.test(`${String((pg.meta as { code?: unknown } | undefined)?.code ?? "")} ${pg.message}`)) {
         fail(res, 409, "VALIDATION_ERROR", "这个号正被别人改着，过几秒再点");
+        return;
+      }
+      if (pg && (pg.code === "P2028" || pg.code === "P2024")) {
+        fail(res, 409, "VALIDATION_ERROR", "系统忙，这次没改成，过几秒再点");
         return;
       }
       throw e;
