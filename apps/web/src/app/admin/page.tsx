@@ -1661,7 +1661,8 @@ export default function AdminHomePage() {
             onClick={() => { setShowStaffModal(true); setShowNewAccountPassword(true); setMessage(""); setStaffForm({ id: "", name: "", phone: "", password: "", remark: "" }); }}
             style={{ border: "none", borderRadius: 8, padding: "8px 14px", background: "var(--c-blue)", color: "var(--white)", fontWeight: 600, cursor: "pointer" }}
           >
-            创建账号
+            {/* 2026-11-14 原来跟客户管理那个按钮都叫「创建账号」，客服在这里把客户 XHH-6669 建成了员工号 */}
+            创建员工账号
           </button>
           <span style={{ marginLeft: 8, fontSize: 12, color: "var(--t-strong)" }}>需使用管理员身份登录</span>
         </div>
@@ -1797,7 +1798,7 @@ export default function AdminHomePage() {
             onClick={() => { setShowClientModal(true); setShowNewAccountPassword(true); setMessage(""); setEditingClientId(null); setClientForm({ id: "", name: "", companyName: "", phone: "", email: "", password: "", agentId: "" }); }}
             style={{ border: "none", borderRadius: 8, padding: "8px 14px", background: "var(--c-blue)", color: "var(--white)", fontWeight: 600, cursor: "pointer" }}
           >
-            创建账号
+            创建客户账号
           </button>
 
           {/* 按归属筛（2026-11-08）：全部 / 湘泰自己的客户 / 某个代理的客户，选了马上筛，跟搜索叠着用 */}

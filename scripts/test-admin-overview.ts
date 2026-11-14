@@ -442,6 +442,13 @@ test("建员工 / 建客户（含编辑）两个账号弹窗里都画了报错�
     assert.ok(at > 0, `找不到入口 ${opener}`);
     assert.ok(/disabled=\{loading\}\s*$/.test(src.slice(Math.max(0, at - 80), at)), `${opener} 那个「创建账号」按钮在请求进行中还能点`);
   }
+  // 2026-11-14 两个按钮原来都叫「创建账号」，客服在「员工管理」里把客户 XHH-6669 建成了员工号 → 按钮字写明建的是哪种号
+  for (const [opener, label] of [["setShowStaffModal(true)", "创建员工账号"], ["setShowClientModal(true)", "创建客户账号"]] as const) {
+    const at = src.indexOf(`onClick={() => { ${opener}`);
+    const buttonText = src.slice(at, src.indexOf("</button>", at)).replace(/\{\/\*[\s\S]*?\*\/\}/g, "").split(">").pop()!.trim();
+    assert.equal(buttonText, label, `${opener} 那个按钮的字`);
+  }
+  assert.ok(!/>\s*创建账号\s*<\/button>/.test(src), "还有按钮只写「创建账号」，分不清建的是员工号还是客户号");
 });
 test("编辑客户密码留空：照常保存，而且发出去的请求里没有密码（= 不改密码），不被建号的必填规则误挡（2026-10-11）", async () => {
   const loader = overviewLoader("overview", { fixture: "x" });
