@@ -31,7 +31,7 @@ function slice(src: string, start: string, end: string): string {
 async function main(): Promise<void> {
   const refs = await import("../apps/api/src/modules/admin/user-references");
 
-  await check("T1 「记账号的列」清单跟 schema.prisma 对得上（新加记账号的列不加进清单就红）", () => {
+  await check("T1 「记账号的列」三份清单跟 schema.prisma 对得上：新加记账号的列 / 大段文字列不归类就红；故意不算的每条有理由、名单钉死", () => {
     const schema = read("apps/api/prisma/schema.prisma");
     const derived = new Set<string>();
     for (const m of schema.matchAll(/^model (\w+) \{([\s\S]*?)^\}/gm)) {
@@ -48,28 +48,55 @@ async function main(): Promise<void> {
         if (rel) derived.add(`${table}.${colOf(rel[1])}`);
         // 名字像记账号的字符串列（没建关联的也算：operatorId、createdBy 这些大多没建）
         const str = line.match(/^\s+(\w+)\s+String\??(\s|$)/);
-        if (str && /(operator|actor|user|staff|client|customer|reviewer|sender|uploader|creator|login|signer)|By$|ById$/i.test(str[1])
+        if (str && /(operator|actor|user|staff|client|customer|reviewer|sender|uploader|creator|login|signer|owner|assignee|approver|handler|requester|evaluator|account|member|employee|driver|courier|admin)|By$|ById$/i.test(str[1])
           && !/(Name|Phone|Note|Text|Type|Status|Role|Label|Url|Mark)$/i.test(str[1])) derived.add(`${table}.${colOf(str[1])}`);
+        // 大段文字 / JSON 列：里面可能塞着账号（审计记录就塞着被删的轨迹），每一列都得归类（dsh / Codex 第 1 轮）
+        const big = line.match(/^\s+(\w+)\s+(Json|String)(\[\])?\??(?:\s+(.*))?$/);
+        if (big && (big[2] === "Json" || /@db\.Text/.test(big[4] ?? ""))) derived.add(`${table}.${colOf(big[1])}`);
       }
     }
-    const listed = new Set([...refs.USER_REFERENCE_COLUMNS, ...refs.USER_REFERENCE_EXCLUDED].map(([t, c]) => `${t}.${c}`));
-    assert.equal(listed.size, refs.USER_REFERENCE_COLUMNS.length + refs.USER_REFERENCE_EXCLUDED.length, "清单里有重复的");
-    assert.deepEqual([...derived].filter((k) => !listed.has(k)).sort(), [], "schema 里记账号的列没进清单（要么加进 USER_REFERENCE_COLUMNS，要么写进 USER_REFERENCE_EXCLUDED 并写明理由）");
-    assert.deepEqual([...listed].filter((k) => !derived.has(k)).sort(), [], "清单里有 schema 推不出来的列（拼错了或表 / 列已经没了）");
-    assert.ok(refs.USER_REFERENCE_EXCLUDED.some(([t, c]) => t === "cs_push_subscriptions" && c === "user_id"), "浏览器通知订阅不算用过（写在故意不算里）");
+    const listed = [...refs.USER_REFERENCE_COLUMNS, ...refs.USER_REFERENCE_TEXT_COLUMNS, ...refs.USER_REFERENCE_EXCLUDED].map(([t, c]) => `${t}.${c}`);
+    assert.equal(new Set(listed).size, listed.length, "三份清单里有重复的");
+    const listedSet = new Set(listed);
+    assert.deepEqual([...derived].filter((k) => !listedSet.has(k)).sort(), [], "schema 里记账号的列 / 大段文字列没归类（要么查、要么写进 USER_REFERENCE_EXCLUDED 并写明理由）");
+    assert.deepEqual(listed.filter((k) => !derived.has(k)).sort(), [], "清单里有 schema 推不出来的列（拼错了或表 / 列已经没了）");
+    for (const [t, c, why] of refs.USER_REFERENCE_EXCLUDED) assert.ok(why.trim().length >= 2, `${t}.${c} 没写不算的理由`);
+    assert.deepEqual(refs.USER_REFERENCE_TEXT_COLUMNS.map(([t, c]) => `${t}.${c}`), ["audit_logs.before_json", "audit_logs.after_json"], "审计记录里存着被删的轨迹，要查");
+    // 「故意不算」的名单钉死：把真记账号的列（比如 orders.client_id）挪进来混过去，这里会红；真要加，改这里并在清单里写理由
+    assert.deepEqual(refs.USER_REFERENCE_EXCLUDED.map(([t, c]) => `${t}.${c}`).sort(), [
+      "admin_lastmile_orders.sign_product_image_base64", "agent_applications.login_id", "agent_rebate_lines.product_names",
+      "ai_audit_logs.answer_summary", "ai_audit_logs.question", "ai_knowledge_gaps.answer_summary",
+      "ai_knowledge_gaps.question", "ai_knowledge_items.content", "arrival_notice_snapshots.data",
+      "audit_logs.user_agent", "chaipai_callback_events.payload", "chaipai_shipment_states.released_routes",
+      "client_documents.content_base64", "consolidation_prealert_products.product_image_base64", "consolidation_prealerts.received_proof_base64",
+      "consolidation_tasks.destination_th", "consolidation_tasks.payment_proof_base64", "consolidation_tasks.payment_reject_reason",
+      "credit_histories.evaluator", "credit_histories.metrics", "credit_histories.reason",
+      "cs_messages.content", "cs_push_subscriptions.user_id", "fcl_inquiries.address",
+      "fcl_inquiries.cert_file_base64", "fcl_inquiries.product_images", "fcl_inquiries.product_name",
+      "fcl_inquiries.quote_note", "finance_link_authorizations.warehouse_ref", "finance_link_requests.warehouse_ref",
+      "order_product_images.content_base64", "orders.payment_proof_base64", "orders.payment_proofs",
+      "staff_inbound_photos.content_base64", "wallet_recharges.proof_image", "whr_consolidation_plan_customers.delivery_address",
+      "whr_consolidation_plans.destination_th", "whr_consolidation_prealert_items.product_image_base64", "whr_consolidation_prealerts.cancel_reason",
+      "whr_consolidation_prealerts.customer_id", "whr_consolidation_prealerts.payment_proofs", "whr_consolidation_prealerts.payment_reject_reason",
+      "whr_consolidation_prealerts.thailand_receipt_proofs", "whr_consolidation_prealerts.warehouse_receipt_proofs",
+    ]);
     assert.ok(refs.USER_REFERENCE_COLUMNS.length >= 50, `清单才 ${refs.USER_REFERENCE_COLUMNS.length} 条，像是被删了`);
+    for (const k of ["orders.client_id", "status_logs.operator_id", "cs_messages.sender_id", "audit_logs.actor_id"]) assert.ok(refs.USER_REFERENCE_COLUMNS.some(([t, c]) => `${t}.${c}` === k), `${k} 必须查`);
   });
 
   const api = code("apps/api/src/modules/admin/routes.ts");
-  await check("T2 后端：只给超管；锁住这一行在事务里核「还是员工号」「没留下东西」再改；只改 role 和员工备注；推送落「账号」", async () => {
+  await check("T2 后端：只给超管；锁住这一行 → 核本公司 / 员工号 / 有密码 → 改 → 拿着锁再查没留下东西，有就整个撤销；只改 role 和员工备注；锁等不到 409；推送落「账号」", async () => {
     const ep = slice(api, `app.post("/admin/users/staff-to-client"`, "\n  });");
     assert.match(ep, /requireRole\(req, res, \["admin"\]\)/);
-    const tx = slice(ep, "prisma.$transaction(async (tx) => {", "\n    });");
-    const lock = tx.indexOf("FOR UPDATE"), roleCheck = tx.indexOf(`u.role !== "staff"`), refCheck = tx.indexOf("findUserReferences(tx, id)"), write = tx.indexOf("tx.user.update(");
-    assert.ok(lock > 0 && lock < roleCheck && roleCheck < refCheck && refCheck < write, "顺序要是：锁住这一行 → 核员工号 → 核没留下东西 → 改");
-    assert.match(tx, /u\.company_id !== auth\.companyId\) return \{ kind: "notFound" \}/, "按公司核");
+    const tx = slice(ep, "prisma.$transaction(async (tx) => {", "\n      });");
+    const at = (needle: string) => { const n = tx.indexOf(needle); assert.ok(n >= 0, `事务里没有：${needle}`); return n; };
+    const order = [at("SET LOCAL lock_timeout"), at("FOR UPDATE"), at("u.company_id !== auth.companyId"), at(`u.role !== "staff"`), at("!u.has_password"),
+      at("tx.user.update("), at("findUserReferences(tx, id)"), at("throw new UsedAfterAll(used)")];
+    assert.deepEqual([...order].sort((a, b) => a - b), order, "顺序要是：设等锁上限 → 锁住这一行 → 核公司 → 核员工号 → 核密码 → 改 → 再查 → 有就抛出去撤销");
     assert.match(tx, /tx\.user\.update\(\{ where: \{ id \}, data: \{ role: "client", remark: null \} \}\)/, "只改角色、清员工备注，别的不动");
-    assert.match(ep, /result\.kind === "used"\) \{[\s\S]*?fail\(res, 409/);
+    assert.match(ep, /e instanceof UsedAfterAll\) \{[\s\S]*?fail\(res, 409/);
+    assert.match(ep, /P2028[\s\S]*?55P03[\s\S]*?fail\(res, 409, "VALIDATION_ERROR", "这个号正被别人改着，过几秒再点"\)/);
+    assert.match(ep, /result\.kind === "noPassword"\) \{\s*fail\(res, 409/);
     const { topicForWrite } = await import("../apps/api/src/modules/realtime/topics");
     assert.equal(topicForWrite("/admin/users/staff-to-client"), "accounts", "改完别的超管开着的员工 / 客户管理要跟着刷新");
   });
@@ -94,7 +121,8 @@ async function main(): Promise<void> {
     const h = slice(page, "const confirmConvertStaffToClient = async (u: AdminUserItem) => {", "\n  };");
     assert.match(h, /if \(loading\) return;/);
     assert.match(h, /if \(!window\.confirm\(tip\)\) return;/, "要先确认");
-    assert.match(h, /tip = `把员工号「\$\{u\.id\}」改成客户号吗？/);
+    assert.match(h, /tip = `把员工号\$\{who\}改成客户号吗？/);
+    assert.match(h, /const who = u\.name && u\.name !== u\.id \? `「\$\{u\.id\}」（\$\{u\.name\}）` : `「\$\{u\.id\}」`;/, "名字跟账号不一样时带上名字");
     assert.ok(h.indexOf("window.confirm") < h.indexOf("setLoading(true)"), "确认在前");
     assert.match(h, /runAccountWrite\(\(signal\) => convertStaffToClient\(u\.id, signal\)\)/, "走账号写入边界（旧名单晚到不许把它又放回员工名单）");
     assert.match(h, /setConvertError\(\{ id: u\.id, text: `没改成：\$\{text\}` \}\);\s*return;/);

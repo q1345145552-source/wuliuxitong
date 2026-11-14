@@ -9,6 +9,10 @@
  *   C6 只有超管能改：员工 / 客户 / 代理 403
  *   C7 锁里再核：查之前另一条连接锁住这一行、塞了一条操作记录还没提交 → 请求卡在锁上 → 放锁后看到记录 → 409、角色没动
  *   C8 记账号的列（user-references.ts）在库里全都真有：拿不存在的号查一遍不报错、一条都没有
+ *   C9 （dsh 第 1 轮）没有外键的员工记录也拦：轨迹 operator_id、聊天 sender_id；被删掉的轨迹整条存在审计记录里（能恢复）也拦；
+ *      审计记录里只有「长得像」的号（多一个字 / 下划线当通配符）不误拦
+ *   C10 当初没设密码的员工号：不许改（客户号必须有密码，改过去登不进），409 叫他先设；设好再改就行（Codex 第 1 轮）
+ *   C11 别人锁着这一行超过 3 秒：409「正被别人改着」，角色没动
  *
  * 只连测试库：DATABASE_URL 不带 neon.tech 的不跑（一次性库设 AGENT_PORTAL_TEST_ALLOW_DB=1）。测试数据全在假公司 zz_s2c_co / zz_s2c_co2 下，跑前跑后都清。
  */
@@ -28,6 +32,12 @@ const USED = "zz_s2c_used";      // 真员工（留下过操作记录）
 const USED_AI = "zz_s2c_used_ai"; // 只问过 AI
 const PUSH_ONLY = "ZZS2C-PUSH";  // 只开过浏览器通知
 const RACE = "ZZS2C-RACE";
+const USED_LOG = "zz_s2c_used_log";   // 留下过轨迹（status_logs 没外键）
+const USED_CHAT = "zz_s2c_used_chat"; // 回过客户消息（cs_messages 没外键）
+const USED_DELETED = "zz_s2c_used_del"; // 加过的轨迹被删了，整条存在审计记录里
+const LOOKALIKE = "zz_s2c_look";      // 审计记录里只有长得像的号
+const NO_PW = "ZZS2C-NOPW";            // 当初没设密码
+const BUSY = "ZZS2C-BUSY";
 const OTHER = "zz_s2c_other_staff";
 
 async function main(): Promise<void> {
@@ -68,6 +78,11 @@ async function main(): Promise<void> {
   async function cleanup(): Promise<void> {
     for (const co of [CO, CO2]) {
       await pm.auditLog.deleteMany({ where: { companyId: co } });
+      await pm.$executeRawUnsafe(`DELETE FROM cs_messages WHERE company_id = '${co}'`);
+      await pm.$executeRawUnsafe(`DELETE FROM cs_conversations WHERE company_id = '${co}'`);
+      await pm.$executeRawUnsafe(`DELETE FROM status_logs WHERE company_id = '${co}'`);
+      await pm.$executeRawUnsafe(`DELETE FROM shipments WHERE company_id = '${co}'`);
+      await pm.$executeRawUnsafe(`DELETE FROM orders WHERE company_id = '${co}'`);
       await pm.aiSessionMemory.deleteMany({ where: { companyId: co } });
       await pm.csPushSubscription.deleteMany({ where: { companyId: co } });
       await pm.user.deleteMany({ where: { companyId: co } });
@@ -89,11 +104,29 @@ async function main(): Promise<void> {
       [CLIENT.userId, CO, "client", "客户一", "active"], [NEW1, CO, "staff", NEW1, "active"], [NEW_BANNED, CO, "staff", NEW_BANNED, "inactive"],
       [USED, CO, "staff", "老员工", "active"], [USED_AI, CO, "staff", "问过 AI 的员工", "active"], [PUSH_ONLY, CO, "staff", PUSH_ONLY, "active"],
       [RACE, CO, "staff", RACE, "active"], [OTHER, CO2, "staff", "别家员工", "active"],
+      [USED_LOG, CO, "staff", "加过轨迹的员工", "active"], [USED_CHAT, CO, "staff", "回过消息的员工", "active"],
+      [USED_DELETED, CO, "staff", "轨迹被删的员工", "active"], [LOOKALIKE, CO, "staff", LOOKALIKE, "active"],
+      [NO_PW, CO, "staff", NO_PW, "active"], [BUSY, CO, "staff", BUSY, "active"],
     ];
     for (const [id, co, role, name, status] of users) {
       await pm.user.create({ data: { id, companyId: co, role, name, phone: "-", status, passwordHash: hashPassword("Zz#s2c2026x"), agentId: role === "agent" ? AGENT.agentId : null } });
     }
     await pm.user.update({ where: { id: NEW1 }, data: { remark: "义乌仓管" } });
+    await pm.user.update({ where: { id: NO_PW }, data: { passwordHash: null } });
+    // 客户一的一票货 + 轨迹（员工 USED_LOG 加的）；客户一的对话 + 员工 USED_CHAT 的回复；被删轨迹整条存进审计（删的人是超管）
+    await pm.$executeRawUnsafe(`INSERT INTO orders (id, company_id, client_id, warehouse_id, item_name, product_quantity, package_count, package_unit,
+        receiver_name_th, receiver_phone_th, receiver_address_th, transport_mode, updated_at)
+      VALUES ('zz_s2c_o1', '${CO}', '${CLIENT.userId}', 'wh_yiwu_01', '鞋', 1, 1, 'box', '收货人', '000', '地址', 'sea', now())`);
+    await pm.$executeRawUnsafe(`INSERT INTO shipments (id, company_id, order_id, tracking_no, current_status, warehouse_id, updated_at)
+      VALUES ('zz_s2c_s1', '${CO}', 'zz_s2c_o1', 'ZZS2C-T1', 'inWarehouseCN', 'wh_yiwu_01', now())`);
+    await pm.$executeRawUnsafe(`INSERT INTO status_logs (id, company_id, shipment_id, operator_id, operator_role, from_status, to_status)
+      VALUES ('zz_s2c_log1', '${CO}', 'zz_s2c_s1', '${USED_LOG}', 'staff', 'created', 'inWarehouseCN')`);
+    const conv = await pm.csConversation.create({ data: { companyId: CO, clientId: CLIENT.userId } });
+    await pm.csMessage.create({ data: { companyId: CO, conversationId: conv.id, senderId: USED_CHAT, senderRole: "staff", content: "您好" } });
+    await pm.auditLog.create({ data: { companyId: CO, actorId: ADMIN.userId, actorRole: "admin", action: "DELETE", resourceType: "StatusLog", resourceId: "gone",
+      beforeJson: JSON.stringify({ id: "gone", operatorId: USED_DELETED, operatorRole: "staff", toStatus: "inWarehouseCN" }) } });
+    await pm.auditLog.create({ data: { companyId: CO, actorId: ADMIN.userId, actorRole: "admin", action: "DELETE", resourceType: "StatusLog", resourceId: "gone2",
+      beforeJson: JSON.stringify({ operatorId: `${LOOKALIKE}X` }), afterJson: JSON.stringify({ operatorId: "zzXs2cXlook" }) } });
     await pm.auditLog.create({ data: { companyId: CO, actorId: USED, actorRole: "staff", action: "UPDATE", resourceType: "Shipment", resourceId: "x" } });
     await pm.aiSessionMemory.create({ data: { key: "zz_s2c_mem", companyId: CO, userId: USED_AI, sessionId: "s" } });
     await pm.csPushSubscription.create({ data: { companyId: CO, userId: PUSH_ONLY, role: "staff", endpoint: "https://push.example.invalid/zz-s2c", p256dh: "k", auth: "a", passwordFp: "fp" } });
@@ -164,7 +197,7 @@ async function main(): Promise<void> {
       assert.equal((await userOf(RACE)).role, "staff");
     });
 
-    await check("C7 锁里再核：另一条连接锁住这一行、塞了操作记录没提交 → 请求卡在锁上 → 放锁后看到记录 → 409、角色没动", async () => {
+    await check("C7 锁里再核：另一条连接锁住这一行、塞了操作记录没提交 → 请求卡在锁上 → 放锁后看到记录 → 409、角色没动（只保证改号这一刻之前落库的）", async () => {
       const { PrismaClient } = await import("@prisma/client");
       const locker = new PrismaClient();
       let releaseLock: (() => void) | undefined;
@@ -208,6 +241,57 @@ async function main(): Promise<void> {
       assert.deepEqual(missing, [], "这些列库里没有");
       assert.deepEqual(await prisma.$transaction((tx) => findUserReferences(tx, "zz_s2c_nobody")), []);
       assert.deepEqual(await prisma.$transaction((tx) => findUserReferences(tx, USED)), ["audit_logs.actor_id"]);
+      assert.deepEqual(await prisma.$transaction((tx) => findUserReferences(tx, CLIENT.userId)), ["orders.client_id", "cs_conversations.client_id"]);
+    });
+
+    await check("C9 没外键的员工记录也拦（轨迹、聊天）；被删的轨迹存在审计里也拦；审计里只有长得像的号不误拦", async () => {
+      for (const [id, where] of [[USED_LOG, "status_logs.operator_id"], [USED_CHAT, "cs_messages.sender_id"], [USED_DELETED, "audit_logs.before_json"]] as const) {
+        assert.deepEqual(await prisma.$transaction((tx) => findUserReferences(tx, id)), [where], `${id} 查到的位置不对`);
+        const r = await convert(ADMIN, id);
+        assert.equal(r.status, 409, `${id}：${r.status} ${r.message}`);
+        assert.equal((await userOf(id)).role, "staff", `${id} 被改了`);
+      }
+      const look = await convert(ADMIN, LOOKALIKE);
+      assert.equal(look.status, 200, `只有长得像的号就被拦了：${look.message}`);
+    });
+
+    await check("C10 当初没设密码的员工号：409 叫他先设密码、角色没动；设好再改就行", async () => {
+      const r = await convert(ADMIN, NO_PW);
+      assert.equal(r.status, 409, `${r.status} ${r.message}`);
+      assert.match(r.message, /还没有登录密码，先点「设置密码」/);
+      assert.equal((await userOf(NO_PW)).role, "staff");
+      await pm.user.update({ where: { id: NO_PW }, data: { passwordHash: hashPassword("Zz#s2c2026y") } });
+      const ok2 = await convert(ADMIN, NO_PW);
+      assert.equal(ok2.status, 200, ok2.message);
+      assert.equal((await userOf(NO_PW)).role, "client");
+    });
+
+    await check("C11 别人锁着这一行超过 3 秒：409「正被别人改着」，角色没动", async () => {
+      const { PrismaClient } = await import("@prisma/client");
+      const locker = new PrismaClient();
+      let release!: () => void;
+      let other: Promise<unknown> | undefined;
+      try {
+        let locked!: () => void;
+        const isLocked = new Promise<void>((r) => { locked = r; });
+        const gate = new Promise<void>((r) => { release = r; });
+        other = locker.$transaction(async (tx) => {
+          await tx.$queryRawUnsafe(`SELECT id FROM users WHERE id = '${BUSY}' FOR UPDATE`);
+          locked();
+          await gate;
+        }, { timeout: 30000, maxWait: 10000 });
+        await isLocked;
+        const t0 = Date.now();
+        const r = await convert(ADMIN, BUSY);
+        assert.equal(r.status, 409, `${r.status} ${r.message}`);
+        assert.match(r.message, /正被别人改着/);
+        assert.ok(Date.now() - t0 < 10000, "等太久了");
+      } finally {
+        release?.();
+        await other?.catch(() => {});
+        await locker.$disconnect();
+      }
+      assert.equal((await userOf(BUSY)).role, "staff");
     });
   } finally {
     await cleanup();

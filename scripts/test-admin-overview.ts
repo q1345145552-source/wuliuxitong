@@ -661,8 +661,10 @@ test('改成客户号：先问；点「取消」什么都不发', async () => {
   await mutation.run();
   assert.equal(mutation.state.writes, 0);
   assert.equal(mutation.state.confirms.length, 1);
-  assert.match(mutation.state.confirms[0], /把员工号「u-test」改成客户号吗？/);
-  assert.match(mutation.state.confirms[0], /登录密码不变/);
+  assert.match(mutation.state.confirms[0], /把员工号「u-test」（测试）改成客户号吗？/, "名字跟账号不一样时带上名字，好核对是哪个号");
+  assert.match(mutation.state.confirms[0], /登录密码不变，员工备注会清掉/);
+  assert.match(mutation.state.confirms[0], /湘泰自己的客户（没挂代理）/);
+  assert.match(mutation.state.confirms[0], /改了也改不回员工号/);
   assert.match(mutation.state.confirms[0], /只有还没经手过任何单子、记录的员工号能改/);
   assert.doesNotMatch(mutation.state.confirms[0], /\*\*/, '系统弹窗不认 markdown');
   assert.deepEqual(mutation.state.staff.map((r) => r.id), ['u-test']);

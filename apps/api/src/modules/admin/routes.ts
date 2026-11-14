@@ -1347,7 +1347,8 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
    * 只给超管；只认本公司、现在还是员工号、**在系统里什么都没留下过**的（user-references.ts 那些列一条都没有）——
    * 经手过单子 / 记录的真员工改了，那些记录就挂到一个客户名下了。
    * 改的只有 role（→ client），顺手清掉员工备注；密码、名字、手机、封没封都不动；原来的员工登录当场失效（session-guard 核 role）。
-   * 锁住这一行、在锁里核「还是员工号」「没留下东西」再改（CLAUDE.md 第 28 条）。
+   * 锁住这一行、在锁里核「还是员工号」→ 改 → 还拿着锁再查「没留下东西」，有就整个撤销（CLAUDE.md 第 28 条）。
+   * 只能保证改号这一刻之前落库的记录都查到了（见 user-references.ts 文件头的 ⚠️）。
    */
   app.post("/admin/users/staff-to-client", async (req, res) => {
     const auth = requireRole(req, res, ["admin"]);
@@ -1355,25 +1356,46 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
     const body = (req.body ?? {}) as { id?: unknown };
     const id = typeof body.id === "string" ? body.id.trim() : "";
     if (!id) { fail(res, 400, "BAD_REQUEST", "请选一个员工号"); return; }
-    const result = await prisma.$transaction(async (tx) => {
-      const rows = await tx.$queryRaw<Array<{ role: string; company_id: string; status: string }>>`
-        SELECT role, company_id, status FROM users WHERE id = ${id} FOR UPDATE`;
-      const u = rows[0];
-      if (!u || u.company_id !== auth.companyId) return { kind: "notFound" } as const;
-      if (u.role !== "staff") return { kind: "notStaff", role: u.role } as const;
-      const used = await findUserReferences(tx, id);
-      if (used.length > 0) return { kind: "used", used } as const;
-      await tx.user.update({ where: { id }, data: { role: "client", remark: null } });
-      return { kind: "ok", status: u.status } as const;
-    });
+    /** 改完再查到用过：整个撤销（抛出去让事务回滚） */
+    class UsedAfterAll extends Error { constructor(readonly used: string[]) { super("used"); } }
+    let result: { kind: "notFound" } | { kind: "notStaff"; role: string } | { kind: "noPassword" } | { kind: "ok"; status: string };
+    try {
+      result = await prisma.$transaction(async (tx) => {
+        // 别人（封禁 / 另一个超管）锁着这一行时最多等 3 秒，等不到回 409 叫他过几秒再点（dsh 第 1 轮，同封禁）
+        await tx.$executeRawUnsafe(`SET LOCAL lock_timeout = '3s'`);
+        const rows = await tx.$queryRaw<Array<{ role: string; company_id: string; status: string; has_password: boolean }>>`
+          SELECT role, company_id, status, password_hash IS NOT NULL AS has_password FROM users WHERE id = ${id} FOR UPDATE`;
+        const u = rows[0];
+        if (!u || u.company_id !== auth.companyId) return { kind: "notFound" } as const;
+        if (u.role !== "staff") return { kind: "notStaff", role: u.role } as const;
+        // 员工建号密码选填，客户号密码必填（2026-10-11）：没密码改过去客户登不进，先叫他设（Codex 第 1 轮）
+        if (!u.has_password) return { kind: "noPassword" } as const;
+        await tx.user.update({ where: { id }, data: { role: "client", remark: null } });
+        // 改完（锁还拿着）再查：查的就是改号这一刻之前落库的全部记录，有一条就整个撤销
+        const used = await findUserReferences(tx, id);
+        if (used.length > 0) throw new UsedAfterAll(used);
+        return { kind: "ok", status: u.status } as const;
+      });
+    } catch (e) {
+      if (e instanceof UsedAfterAll) {
+        logger.info("staff-to-client refused: account has records", { id, used: e.used });
+        fail(res, 409, "VALIDATION_ERROR", "这个员工号已经用过（经手过单子或留下过记录），不能改成客户号");
+        return;
+      }
+      const pg = e instanceof Prisma.PrismaClientKnownRequestError ? e : null;
+      if (pg && (pg.code === "P2028" || pg.code === "P2024" || (pg.code === "P2010" && /55P03|lock timeout/i.test(`${String((pg.meta as { code?: unknown } | undefined)?.code ?? "")} ${pg.message}`)))) {
+        fail(res, 409, "VALIDATION_ERROR", "这个号正被别人改着，过几秒再点");
+        return;
+      }
+      throw e;
+    }
     if (result.kind === "notFound") { fail(res, 404, "NOT_FOUND", "没有这个员工号，请刷新再试"); return; }
     if (result.kind === "notStaff") {
       fail(res, 409, "VALIDATION_ERROR", result.role === "client" ? "这个号已经是客户号了，请刷新再看" : "只有员工号能改成客户号");
       return;
     }
-    if (result.kind === "used") {
-      logger.info("staff-to-client refused: account has records", { id, used: result.used });
-      fail(res, 409, "VALIDATION_ERROR", "这个员工号已经用过（经手过单子或留下过记录），不能改成客户号");
+    if (result.kind === "noPassword") {
+      fail(res, 409, "VALIDATION_ERROR", "这个员工号还没有登录密码，先点「设置密码」设好再改（客户号必须有密码）");
       return;
     }
     logger.info("staff converted to client", { id, by: auth.userId });

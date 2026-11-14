@@ -1078,7 +1078,8 @@ export default function AdminHomePage() {
   const confirmConvertStaffToClient = async (u: AdminUserItem) => {
     if (loading) return;
     // 系统弹窗不认 markdown，别写 ** **
-    const tip = `把员工号「${u.id}」改成客户号吗？\n\n· 改完它会从「员工管理」挪到「客户管理」，登录密码不变\n· 这个号就不能再登员工工作台了\n· 只有还没经手过任何单子、记录的员工号能改`;
+    const who = u.name && u.name !== u.id ? `「${u.id}」（${u.name}）` : `「${u.id}」`;
+    const tip = `把员工号${who}改成客户号吗？\n\n· 改完它会从「员工管理」挪到「客户管理」，登录密码不变，员工备注会清掉\n· 改完算湘泰自己的客户（没挂代理），要挂代理再去「客户管理」点「编辑」\n· 这个号就不能再登员工工作台了，改了也改不回员工号\n· 只有还没经手过任何单子、记录的员工号能改`;
     if (!window.confirm(tip)) return;
     setLoading(true);
     setMessage("");
@@ -1100,6 +1101,7 @@ export default function AdminHomePage() {
       setStaffList((rows) => rows.filter((row) => row.id !== result.id));
       setEditingRemarkFor((cur) => (cur === result.id ? null : cur));
       setSettingPasswordFor((cur) => (cur === result.id ? null : cur));
+      // 没设密码的后端直接拦（叫他先设）；封着的改完照封，提醒去解封
       const done = result.status === "active"
         ? `已把 ${result.id} 改成客户号，在「客户管理」里能看到了`
         : `已把 ${result.id} 改成客户号（它还在封禁中，要用的话去「客户管理」点「解除封禁」）`;
@@ -1759,7 +1761,7 @@ export default function AdminHomePage() {
                   </div>
                 </div>
                 {convertError?.id === u.id ? (
-                  <div role="alert" style={{ marginTop: 10, padding: "6px 10px", background: "var(--c-red-bg)", color: "var(--c-red-deep)", borderRadius: 8, fontSize: 13 }}>{convertError.text}</div>
+                  <div role="alert" style={{ marginTop: 10, padding: "6px 10px", background: "var(--c-red-bg)", color: "var(--c-red-deep)", borderRadius: 8, fontSize: 13, whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{convertError.text}</div>
                 ) : null}
                 {editingRemarkFor === u.id ? (
                   <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px solid var(--l-soft)", display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
