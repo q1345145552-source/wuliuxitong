@@ -117,6 +117,8 @@
     "test:admin-client-filter": "tsx scripts/test-admin-client-filter.ts",
     "test:agent-apply-source": "tsx scripts/test-agent-apply-source.ts",
     "test:agent-apply-db": "tsx scripts/test-agent-apply-db.ts",
+    "test:finance2-holds-source": "tsx scripts/test-finance2-holds-source.ts",
+    "test:finance2-holds-db": "tsx scripts/test-finance2-holds-db.ts",
     "test:arrival-notice-snapshot-source": "tsx scripts/test-arrival-notice-snapshot-source.ts",
     "test:arrival-notice-snapshot-db": "tsx scripts/test-arrival-notice-snapshot-db.ts",
     "test:migration-arrival-notice-snapshots-db": "tsx scripts/test-migration-arrival-notice-snapshots-db.ts",

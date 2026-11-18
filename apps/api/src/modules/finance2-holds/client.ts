@@ -1,0 +1,161 @@
+import type { Finance2HoldsConfig } from "./config";
+import { fetchWithDeadline, readBodyWithDeadline } from "../core/fetch-deadline";
+
+/**
+ * 去财务系统2 取扣货名单 / 实时核对（约定第 5 节）。密钥只在后台用，不下发浏览器、不打日志。
+ *   GET {base}/holds                                   → { serverTime, generatedAt, holds:[{customerMark, heldSince}], releasedWaybills:[{waybillNo, customerMark, releasedAt}] }
+ *   GET {base}/holds/check?customerMark=…[&waybillNo=…] → { serverTime, customerMark, waybillNo, blocked, checkedAt }
+ * 超时：名单 10 秒、核对 5 秒（约定 1.3）。一律不跟随跳转；等头、读 body 都走 core/fetch-deadline.ts（CLAUDE.md 第 44 条）。
+ * 格式不对（缺字段、时间不带时区、blocked 不是布尔……）一律当失败，**不猜**：名单失败就留着上一份，核对失败就按本地名单拦。
+ */
+
+export type CallResult<T> =
+  | { kind: "ok"; value: T }
+  /** retryable：5xx / 超时 / 连不上 / 429，下一次可以再试；4xx 和格式错不重试 */
+  | { kind: "error"; reason: string; retryable: boolean; retryAfterSec?: number };
+
+export interface HoldList {
+  generatedAt: Date;
+  holds: Array<{ customerMark: string; heldSince: Date }>;
+  releasedWaybills: Array<{ waybillNo: string; customerMark: string; releasedAt: Date }>;
+}
+
+export interface HoldCheck {
+  customerMark: string;
+  waybillNo: string | null;
+  blocked: boolean;
+  /** 财务那边核对的时间（没给就用它的 serverTime）。记「核对放过」用它，不用物流服务器的钟：
+   *  「放过」要跟财务名单的 generatedAt 比先后，两台服务器的钟对不齐会误放 / 误拦 */
+  checkedAt: Date | null;
+}
+
+/** 名单最大 8 MiB（一万个唛头也就几百 KB） */
+const LIST_MAX_BYTES = 8 * 1024 * 1024;
+const CHECK_MAX_BYTES = 64 * 1024;
+export const LIST_TIMEOUT_MS = 10_000;
+export const CHECK_TIMEOUT_MS = 5_000;
+
+/** 唛头、运单号：去不掉的空白和控制字符不要；长度跟物流系统自己的号对得上 */
+function code(v: unknown, max: number): string | null {
+  if (typeof v !== "string" || v.length === 0 || v.length > max) return null;
+  if (v !== v.trim() || /[\x00-\x1f\x7f]/.test(v)) return null;
+  return v;
+}
+
+/** 约定 1.2：时间一律带时区（Z 或 ±hh:mm），不带的按格式错 */
+export function zonedTime(v: unknown): Date | null {
+  if (typeof v !== "string" || v.length > 40) return null;
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d{1,9})?)?(Z|[+-]\d{2}:\d{2})$/.test(v)) return null;
+  const t = Date.parse(v);
+  return Number.isFinite(t) ? new Date(t) : null;
+}
+
+export function parseHoldList(body: unknown): HoldList | string {
+  if (!body || typeof body !== "object" || Array.isArray(body)) return "名单不是 JSON 对象";
+  const b = body as Record<string, unknown>;
+  const generatedAt = zonedTime(b.generatedAt);
+  if (!generatedAt) return "generatedAt 缺失或不带时区";
+  if (!Array.isArray(b.holds)) return "holds 不是数组";
+  if (!Array.isArray(b.releasedWaybills)) return "releasedWaybills 不是数组";
+  const holds = new Map<string, Date>();
+  for (const [i, raw] of b.holds.entries()) {
+    const r = (raw ?? {}) as Record<string, unknown>;
+    const mark = code(r.customerMark, 128);
+    const heldSince = zonedTime(r.heldSince);
+    if (!mark || !heldSince) return `holds 第 ${i + 1} 条格式不对`;
+    const prev = holds.get(mark);
+    if (!prev || heldSince < prev) holds.set(mark, heldSince);
+  }
+  const released = new Map<string, { waybillNo: string; customerMark: string; releasedAt: Date }>();
+  for (const [i, raw] of b.releasedWaybills.entries()) {
+    const r = (raw ?? {}) as Record<string, unknown>;
+    const waybillNo = code(r.waybillNo, 128);
+    const mark = code(r.customerMark, 128);
+    const releasedAt = zonedTime(r.releasedAt);
+    if (!waybillNo || !mark || !releasedAt) return `releasedWaybills 第 ${i + 1} 条格式不对`;
+    released.set(waybillNo, { waybillNo, customerMark: mark, releasedAt });
+  }
+  return {
+    generatedAt,
+    holds: [...holds].map(([customerMark, heldSince]) => ({ customerMark, heldSince })),
+    releasedWaybills: [...released.values()],
+  };
+}
+
+export function parseHoldCheck(body: unknown, askedMark: string, askedWaybill: string | null): HoldCheck | string {
+  if (!body || typeof body !== "object" || Array.isArray(body)) return "核对结果不是 JSON 对象";
+  const b = body as Record<string, unknown>;
+  if (typeof b.blocked !== "boolean") return "blocked 不是 true / false";
+  // 回的不是问的那个唛头 / 那票：当失败（宁可按本地名单拦，也不拿别人的结果放货）
+  if (b.customerMark !== askedMark) return "回的唛头跟问的不一样";
+  if (askedWaybill && b.waybillNo !== askedWaybill) return "回的运单号跟问的不一样";
+  return {
+    customerMark: askedMark,
+    waybillNo: askedWaybill,
+    blocked: b.blocked,
+    checkedAt: zonedTime(b.checkedAt) ?? zonedTime(b.serverTime),
+  };
+}
+
+function retryAfter(header: string | null): number | undefined {
+  if (!header) return undefined;
+  const n = Number(header);
+  return Number.isInteger(n) && n >= 0 ? n : undefined;
+}
+
+async function getJson(cfg: Finance2HoldsConfig, url: string, timeoutMs: number, maxBytes: number): Promise<CallResult<unknown>> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    let body: Buffer | null;
+    try {
+      const response = await fetchWithDeadline(url, {
+        headers: { Authorization: `Bearer ${cfg.secret}`, Accept: "application/json" },
+        redirect: "error",
+        signal: controller.signal,
+      });
+      if (response.status !== 200) {
+        await response.body?.cancel().catch(() => undefined);
+        const s = response.status;
+        return {
+          kind: "error",
+          reason: s === 401 || s === 403 ? `HTTP ${s}（密钥不对或不许调）` : `HTTP ${s}`,
+          retryable: s >= 500 || s === 429,
+          retryAfterSec: s === 429 ? retryAfter(response.headers.get("retry-after")) : undefined,
+        };
+      }
+      body = await readBodyWithDeadline(response, controller.signal, maxBytes);
+    } catch (error) {
+      return { kind: "error", reason: controller.signal.aborted ? "超时" : "连不上", retryable: true };
+    }
+    if (!body) return { kind: "error", reason: "返回内容太大", retryable: false };
+    try {
+      return { kind: "ok", value: JSON.parse(body.toString("utf8")) };
+    } catch {
+      return { kind: "error", reason: "返回的不是 JSON", retryable: false };
+    }
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+export async function fetchHoldList(cfg: Finance2HoldsConfig, timeoutMs = LIST_TIMEOUT_MS): Promise<CallResult<HoldList>> {
+  const r = await getJson(cfg, `${cfg.apiBase}/holds`, timeoutMs, LIST_MAX_BYTES);
+  if (r.kind !== "ok") return r;
+  const parsed = parseHoldList(r.value);
+  return typeof parsed === "string" ? { kind: "error", reason: `名单格式不对：${parsed}`, retryable: false } : { kind: "ok", value: parsed };
+}
+
+export async function checkHold(
+  cfg: Finance2HoldsConfig,
+  customerMark: string,
+  waybillNo: string | null,
+  timeoutMs = CHECK_TIMEOUT_MS,
+): Promise<CallResult<HoldCheck>> {
+  const qs = new URLSearchParams({ customerMark });
+  if (waybillNo) qs.set("waybillNo", waybillNo);
+  const r = await getJson(cfg, `${cfg.apiBase}/holds/check?${qs.toString()}`, timeoutMs, CHECK_MAX_BYTES);
+  if (r.kind !== "ok") return r;
+  const parsed = parseHoldCheck(r.value, customerMark, waybillNo);
+  return typeof parsed === "string" ? { kind: "error", reason: `核对结果格式不对：${parsed}`, retryable: false } : { kind: "ok", value: parsed };
+}

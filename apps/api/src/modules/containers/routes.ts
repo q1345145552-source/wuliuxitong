@@ -30,6 +30,8 @@ import { hideOperatorIdentity, operatorNameForDisplay } from "../core/operator-v
 import { productNamesLabel } from "../../../../../packages/shared-types/product-names";
 import { logger } from "../core/logger";
 import { canTransitLoose } from "../shipments/routes";
+import { RELEASE_STATUSES, heldMessage, loadCandidates, logHeldAfterCommit, splitHeldForBatch, type GateResult } from "../finance2-holds/gate";
+import { finance2HoldsConfig } from "../finance2-holds/config";
 import { BusinessError } from "../core/business-error";
 // 柜子状态流程的唯一定义处，别在本文件里再抄一份
 import {
@@ -637,6 +639,11 @@ export function registerContainerRoutes(app: MinimalHttpApp): void {
     const shipmentNextStatus: string | null = CONTAINER_TO_SHIPMENT_STATUS[toStatus] ?? null;
     let affectedShipmentCount = 0;
     let skippedShipments: Array<{ trackingNo: string; status: string }> = [];
+    /** 被扣货名单扣下、没跟着推的（只有推到「预约派送」时才会有） */
+    let heldShipments: Array<{ trackingNo: string; customerMark: string }> = [];
+    let holdMessage: string | null = null;
+    let holdNotice: string | null = null;
+    let holdLog: GateResult | null = null;
 
     /**
      * 2026-09-17（推进账本）：退回/取消的货、比这一步靠后的派送/签收货，推柜子时跳过，不再挡住整柜。
@@ -739,7 +746,7 @@ export function registerContainerRoutes(app: MinimalHttpApp): void {
             where: { id: { in: freshShipmentIds }, companyId: auth.companyId },
             select: { id: true, trackingNo: true, currentStatus: true, parentTrackingNo: true },
           });
-          const moving = freshShipments.filter((sp: { currentStatus: string }) => !skipOnPush(sp.currentStatus));
+          let moving = freshShipments.filter((sp: { currentStatus: string }) => !skipOnPush(sp.currentStatus));
           skippedShipments = freshShipments
             .filter((sp: { currentStatus: string }) => skipOnPush(sp.currentStatus))
             .map((sp: { trackingNo: string; currentStatus: string }) => ({ trackingNo: sp.trackingNo, status: sp.currentStatus }));
@@ -751,6 +758,22 @@ export function registerContainerRoutes(app: MinimalHttpApp): void {
               .map((sp: { trackingNo: string; currentStatus: string }) => `${sp.trackingNo}(${sp.currentStatus})`)
               .join(", ");
             throw new BusinessError(`以下运单刚刚变了状态，本次推进没有执行，请刷新后再看：${ids}`, 400, "VALIDATION_ERROR");
+          }
+          /* 财务系统2 扣货名单（2026-11-19 第 9 期）：推到「预约派送」是往外放货，名单上的那几票不推、其余照推、单独列出来
+             （接口⑦ 老板还没定是「只扣那几票」还是「整柜不让推」，先按只扣那几票做）。没推的票不写轨迹、不进推进账本，
+             还停在「已到仓」；钱付了以后直接在尾端派送出车（那边也查名单）。开关 off 时一条都不多查。
+             日志等事务提交以后再记（下面 holdLog），没提交成就不记。 */
+          if (RELEASE_STATUSES.has(shipmentNextStatus) && finance2HoldsConfig()) {
+            // 已经在预约派送 / 派送中的（直接调接口同状态再推时）不是新放出去的，不查
+            const releasingIds = moving.filter((sp: { currentStatus: string }) => !RELEASE_STATUSES.has(sp.currentStatus)).map((sp: { id: string }) => sp.id);
+            const { heldIds, result } = await splitHeldForBatch(tx, await loadCandidates(tx, releasingIds));
+            holdNotice = result.notice;
+            holdLog = result;
+            if (heldIds.size > 0) {
+              heldShipments = result.held.map((h) => ({ trackingNo: h.trackingNo, customerMark: h.customerMark }));
+              holdMessage = heldMessage(result.held, result.listGeneratedAt!, "这几票没跟着推，还在泰国仓");
+              moving = moving.filter((sp: { id: string }) => !heldIds.has(sp.id));
+            }
           }
           if (moving.length > 0) {
             const movingIds = moving.map((sp: { id: string }) => sp.id);
@@ -806,6 +829,7 @@ export function registerContainerRoutes(app: MinimalHttpApp): void {
       },
       { timeout: 30000, maxWait: 10000 },
     );
+    if (holdLog) logHeldAfterCommit(holdLog, { entry: "柜子推进", operatorId: auth.userId }, "扣下没推，其余照推");
 
     ok(res, {
       id: container.id,
@@ -814,6 +838,9 @@ export function registerContainerRoutes(app: MinimalHttpApp): void {
       toStatus,
       affectedShipmentCount,
       skippedShipments,
+      heldShipments,
+      holdMessage,
+      holdNotice,
       updatedAt: now.toISOString(),
     });
   });

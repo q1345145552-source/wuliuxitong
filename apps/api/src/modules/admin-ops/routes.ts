@@ -1,4 +1,6 @@
 // B-7: 已从 node:sqlite 迁移到 Prisma + PostgreSQL（2026-05-20）
+import { assertReleasable, toCandidate } from "../finance2-holds/gate";
+import { finance2HoldsConfig } from "../finance2-holds/config";
 import { ShipmentsNotFoundError, lockAndSyncParents, lockShipmentsChildrenFirst } from "../shipments/lock-shipments";
 import { Prisma } from "@prisma/client";
 import { prisma } from "../../db/prisma";
@@ -761,6 +763,22 @@ export function registerAdminOpsRoutes(app: MinimalHttpApp): void {
         const orderedIds = lockedIds.filter((id) => selectedIds.has(id)); // 祖先只锁不派。
         /** 父单留到最后统一同步，别夹在子单锁中间（见上面 ②） */
         const parentNosToSync = new Set<string>();
+        /* 财务系统2 扣货名单（2026-11-19 第 9 期）：出车 = 往外放货。锁后按这一车要新放出去的票查名单，
+           有被扣的整车不建（事务一起撤），报错里列出唛头和运单号、写明按几点的名单。
+           不查的两种：已经在这张派送单里的（下面会跳过）、本来就在派送中只是改派换车的（货早就出去了，不是新放）。
+           ⚠️ 报错的话里不能有「派送中」三个字：前端 LastmileDispatchWorkspace 见到 409 + 「派送中」会当成改派、弹确认框重发 */
+        if (finance2HoldsConfig()) { // 开关 off 时一条都不多查
+          const preRows = await tx.shipment.findMany({
+            where: { id: { in: orderedIds }, companyId: auth.companyId },
+            select: { id: true, trackingNo: true, parentTrackingNo: true, currentStatus: true, order: { select: { clientId: true } } },
+          });
+          const alreadyHere = new Set((await tx.adminLastmileOrder.findMany({
+            where: { shipmentId: { in: orderedIds }, companyId: auth.companyId, deliveryNo },
+            select: { shipmentId: true },
+          })).map((row) => row.shipmentId));
+          const releasing = preRows.filter((row) => row.currentStatus !== "outForDelivery" && !alreadyHere.has(row.id));
+          await assertReleasable(tx, releasing.map(toCandidate), { entry: "尾端派送出车", operatorId: auth.userId });
+        }
         for (const sid of orderedIds) {
           /**
            * ⚠️ 一票货不能同时在两张「还没签收」的派送单里（2026-08-25 新增）。

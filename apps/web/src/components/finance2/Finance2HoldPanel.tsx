@@ -1,0 +1,197 @@
+"use client";
+
+import { useCallback, useEffect, useRef, useState } from "react";
+import { getOptionalSession } from "../../auth/auth-session";
+import {
+  FINANCE2_HOLD_EVENT,
+  fetchFinance2HoldStatus,
+  recheckFinance2Hold,
+  refreshFinance2HoldList,
+  type Finance2HoldStatus,
+} from "../../services/finance2-holds-api";
+
+/**
+ * 放货页上的「扣货名单」一块（2026-11-19，财务系统2 第 9 期；约定 5.3）。放在装柜管理、尾端派送（管理员 / 员工 / 整柜）上面。
+ * - 开关关着：什么都不显示。
+ * - 写明「按几点的名单」；没有名单 / 超过 1 天没更新 / 最近连不上财务系统时黄条提示（老板 2026-11-19 定）。
+ * - 「我刚才被拦的」每票一个「重新核对」，实时问财务系统2；也能自己输运单号核对。
+ * - 后端拦货时（报错以【扣货】开头）core-api 发事件，这里马上刷新。
+ * 不显示金额（名单里本来就没有），客户只显示唛头。
+ */
+export function Finance2HoldPanel() {
+  const [status, setStatus] = useState<Finance2HoldStatus | null>(null);
+  const [loadError, setLoadError] = useState("");
+  const [checking, setChecking] = useState<string | null>(null);
+  const [results, setResults] = useState<Record<string, { blocked: boolean; message: string }>>({});
+  const [manualNo, setManualNo] = useState("");
+  const [refreshing, setRefreshing] = useState(false);
+  const [refreshMsg, setRefreshMsg] = useState("");
+  const [flash, setFlash] = useState(false);
+  const boxRef = useRef<HTMLDivElement | null>(null);
+  const seq = useRef(0);
+  const timerRef = useRef<number | null>(null);
+  /** 拿到过一次「开着」的状态才显示报错：开关 off（或后端还没上这个接口）时取不到也一声不吭 */
+  const everLive = useRef(false);
+  const isAdmin = getOptionalSession()?.role === "admin";
+
+  const load = useCallback(async () => {
+    const mine = ++seq.current;
+    try {
+      const next = await fetchFinance2HoldStatus();
+      if (mine !== seq.current) return;
+      setStatus(next);
+      setLoadError("");
+      if (next.mode === "off") {
+        // 开关关着：不再轮询（上线时打开开关要重启后台，员工刷新页面就又会来取）
+        if (timerRef.current !== null) { window.clearInterval(timerRef.current); timerRef.current = null; }
+      } else {
+        everLive.current = true;
+      }
+    } catch (e) {
+      if (mine !== seq.current) return;
+      if (everLive.current) setLoadError(e instanceof Error ? e.message : "扣货名单状态没取到");
+    }
+  }, []);
+
+  useEffect(() => {
+    void load();
+    timerRef.current = window.setInterval(() => { if (document.visibilityState === "visible") void load(); }, 60_000);
+    const onBlocked = () => {
+      void load();
+      setFlash(true);
+      window.setTimeout(() => setFlash(false), 3000);
+      boxRef.current?.scrollIntoView?.({ behavior: "smooth", block: "nearest" });
+    };
+    window.addEventListener(FINANCE2_HOLD_EVENT, onBlocked);
+    return () => {
+      if (timerRef.current !== null) window.clearInterval(timerRef.current);
+      timerRef.current = null;
+      window.removeEventListener(FINANCE2_HOLD_EVENT, onBlocked);
+    };
+  }, [load]);
+
+  const recheck = async (trackingNo: string) => {
+    const no = trackingNo.trim();
+    if (!no || checking) return;
+    setChecking(no);
+    try {
+      const r = await recheckFinance2Hold(no);
+      setResults((cur) => ({ ...cur, [no]: { blocked: r.blocked, message: r.message } }));
+      if (!r.blocked) void load();
+    } catch (e) {
+      setResults((cur) => ({ ...cur, [no]: { blocked: true, message: e instanceof Error ? e.message : "核对没成功" } }));
+    } finally {
+      setChecking(null);
+    }
+  };
+
+  const refresh = async () => {
+    if (refreshing) return;
+    setRefreshing(true);
+    setRefreshMsg("");
+    try {
+      const r = await refreshFinance2HoldList();
+      setRefreshMsg(r.replaced ? `已更新：扣 ${r.holds ?? 0} 家，单票放行 ${r.released ?? 0} 票` : r.note ?? "已取到，名单没变");
+      await load();
+    } catch (e) {
+      setRefreshMsg(e instanceof Error ? e.message : "没取到");
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
+  if (!status && !loadError) return null;
+  if (status?.mode === "off") return null;
+
+  /** 走到这里只剩开着的（observe / enforce）或者还没取到状态（只有报错） */
+  const live = status as Exclude<Finance2HoldStatus, { mode: "off" }> | null;
+  const warnings: string[] = [];
+  if (live) {
+    if (live.notice) warnings.push(live.notice);
+    if (live.lastErrorAt && (!live.fetchedAt || live.lastErrorAt > live.fetchedAt) && live.listLabel) {
+      warnings.push(`最近一次（${live.lastErrorLabel}）没连上财务系统，现在${live.listLabel}拦。`);
+    }
+  }
+  const recent = live ? live.recent : [];
+
+  return (
+    <div
+      ref={boxRef}
+      data-testid="finance2-hold-panel"
+      style={{
+        border: `1px solid ${flash ? "var(--c-red-2)" : "var(--l-soft)"}`, borderRadius: 8, padding: "10px 12px", marginBottom: 12,
+        background: "var(--white)", fontSize: 13, color: "var(--t-body)", transition: "border-color .3s",
+      }}
+    >
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
+        <strong style={{ color: "var(--t-strong)" }}>扣货名单</strong>
+        {live && (
+          <span style={{ color: "var(--t-muted)" }}>
+            {live.listLabel ? `现在${live.listLabel}拦` : "还没有名单"}
+            {live.mode === "observe" ? "（试运行：只记不拦）" : ""}
+          </span>
+        )}
+        {loadError && <span style={{ color: "var(--c-red-deep)" }}>{loadError}</span>}
+        {isAdmin && (
+          <button type="button" onClick={refresh} disabled={refreshing} style={btn}>
+            {refreshing ? "更新中…" : "立即更新名单"}
+          </button>
+        )}
+        {refreshMsg && <span style={{ color: "var(--t-muted)" }}>{refreshMsg}</span>}
+      </div>
+
+      {warnings.map((w) => (
+        <div key={w} style={{ marginTop: 6, padding: "6px 8px", borderRadius: 6, background: "var(--c-amber-bg)", color: "var(--c-amber-deep)" }}>{w}</div>
+      ))}
+
+      {recent.length > 0 && (
+        <div style={{ marginTop: 8 }}>
+          <div style={{ color: "var(--t-muted)", marginBottom: 4 }}>
+            {recent.some((r) => !r.observed) ? "你刚才被拦下的货（这家客户有欠款，放货前请联系财务；钱付了可以点「重新核对」）：" : "试运行期间本来会拦的货："}
+          </div>
+          {recent.map((r) => (
+            <div key={r.trackingNo} style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center", padding: "4px 0", borderTop: "1px dashed var(--l-soft)" }}>
+              <span style={{ whiteSpace: "nowrap", fontWeight: 600, color: "var(--t-strong)" }}>{r.trackingNo}</span>
+              <span style={{ whiteSpace: "nowrap" }}>唛头 {r.customerMark}</span>
+              {r.entry && <span style={{ color: "var(--t-faint)" }}>{r.entry}</span>}
+              <button type="button" onClick={() => recheck(r.trackingNo)} disabled={checking !== null} style={btn}>
+                {checking === r.trackingNo ? "核对中…" : "重新核对"}
+              </button>
+              {results[r.trackingNo] && (
+                <span style={{ color: results[r.trackingNo]!.blocked ? "var(--c-red-deep)" : "var(--c-green)" }}>{results[r.trackingNo]!.message}</span>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* 核对过、已经不在「刚才被拦的」里的（核对放行了就会掉出去）：结果留在这里，不一闪就没 */}
+      {Object.entries(results).filter(([no]) => !recent.some((r) => r.trackingNo === no) && no !== manualNo.trim()).map(([no, r]) => (
+        <div key={`done-${no}`} style={{ marginTop: 4, color: r.blocked ? "var(--c-red-deep)" : "var(--c-green)" }}>
+          {no}：{r.message}
+        </div>
+      ))}
+
+      <div style={{ marginTop: 8, display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
+        <input
+          value={manualNo}
+          onChange={(e) => setManualNo(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter" && !e.nativeEvent.isComposing) void recheck(manualNo); }}
+          placeholder="输运单号重新核对"
+          style={{ border: "1px solid var(--l-strong)", borderRadius: 6, padding: "4px 8px", minWidth: 160, fontSize: 13 }}
+        />
+        <button type="button" onClick={() => recheck(manualNo)} disabled={checking !== null || !manualNo.trim()} style={btn}>
+          {checking && checking === manualNo.trim() ? "核对中…" : "重新核对"}
+        </button>
+        {manualNo.trim() && results[manualNo.trim()] && !recent.some((r) => r.trackingNo === manualNo.trim()) && (
+          <span style={{ color: results[manualNo.trim()]!.blocked ? "var(--c-red-deep)" : "var(--c-green)" }}>{results[manualNo.trim()]!.message}</span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+const btn: React.CSSProperties = {
+  border: "1px solid var(--c-blue)", color: "var(--c-blue)", background: "var(--white)", borderRadius: 6,
+  padding: "3px 10px", fontSize: 12, cursor: "pointer", whiteSpace: "nowrap",
+};

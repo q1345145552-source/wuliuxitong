@@ -38,6 +38,9 @@ export const AGENT_TOPICS: ReadonlySet<RealtimeTopic> = new Set<RealtimeTopic>([
 const SKIP_EXACT: ReadonlySet<string> = new Set([
   // 员工给客户重置密码（2026-10-19）：名单、运单都没变，不用叫全公司的页面重拉（原来落到「运单」那一类，审查第 1 轮替补）
   "/staff/clients/set-password",
+  // 扣货名单「重新核对」「立即更新名单」（2026-11-19）：运单没变，只是本地名单 / 核对记录变了，各人自己的「扣货名单」那一块会自己刷新
+  "/admin/finance2-holds/recheck",
+  "/admin/finance2-holds/refresh",
   "/auth/login",
   "/auth/logout",
   "/auth/change-password",

@@ -28,6 +28,8 @@ import { registerAgentApplicationAdminRoutes } from "./modules/agents/applicatio
 import { startAgentRebateScheduler } from "./modules/agents/rebate-scheduler";
 import { registerAgentPortalRoutes } from "./modules/agent-portal/routes";
 import { registerBrandingRoutes } from "./modules/branding/routes";
+import { registerFinance2HoldRoutes } from "./modules/finance2-holds/routes";
+import { startFinance2HoldScheduler } from "./modules/finance2-holds/sync";
 import { createApp } from "./server";
 import { startDailyExchangeRateScheduler } from "./modules/exchange-rate/rate-sync";
 import { logger } from "./modules/core/logger";
@@ -89,6 +91,9 @@ registerAgentApplicationAdminRoutes(app);
 registerAgentPortalRoutes(app);
 registerBrandingRoutes(app);
 startAgentRebateScheduler();
+// 财务系统2 扣货名单（2026-11-19，第 9 期）：放货页那一块的接口 + 每 15 分钟取名单。开关 FINANCE2_HOLDS_MODE 默认 off，off 时定时任务什么都不做
+registerFinance2HoldRoutes(app);
+startFinance2HoldScheduler();
 
 // ===== AI routes =====
 registerClientAiRoutes(app);

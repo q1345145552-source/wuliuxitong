@@ -31,6 +31,8 @@ import {
 import { beijingDate, beijingNowMinute } from "../../../modules/shared/beijing-date";
 import { checkPushTime } from "../../../modules/staff/container-push-time";
 import { formatTime } from "../../../modules/shipment/track-time";
+import { Finance2HoldPanel } from "../../../components/finance2/Finance2HoldPanel";
+import { FINANCE2_HOLD_EVENT } from "../../../services/finance2-holds-api";
 
 const STATUS_LABEL: Record<string, string> = {
   LOADING: "装柜中",
@@ -536,10 +538,14 @@ export default function StaffContainerLoadingPage() {
         }
       }
       const skippedCount = result.skippedShipments?.length ?? 0;
+      const heldCount = result.heldShipments?.length ?? 0;
       setToast(
         `柜子「${result.containerNo}」已推进至 ${STATUS_LABEL[toStatus] ?? toStatus}（影响 ${result.affectedShipmentCount} 个运单` +
-        (skippedCount > 0 ? `；${skippedCount} 票已派送、签收、退回或取消，没跟着推` : "") + `）`,
+        (skippedCount > 0 ? `；${skippedCount} 票已派送、签收、退回或取消，没跟着推` : "") + `）` +
+        // 财务系统2 扣货名单扣下的几票（2026-11-19 第 9 期）：话里带唛头和名单时间；页面上「扣货名单」那一块会列出来、能重新核对
+        (heldCount > 0 && result.holdMessage ? `。${result.holdMessage}` : ""),
       );
+      if (heldCount > 0) window.dispatchEvent(new Event(FINANCE2_HOLD_EVENT));
     } else if (stillHere) {
       pushError(pushId, failure); // 下面是静默刷新，不会把它清掉
     } else {
@@ -736,6 +742,8 @@ export default function StaffContainerLoadingPage() {
   return (
     <>
       <h1 style={{ fontSize: 22, fontWeight: 700, color: "#14171D", margin: "0 0 16px" }}>装柜管理</h1>
+      {/* 财务系统2 扣货名单（2026-11-19 第 9 期）：推到「预约派送」、往预约派送的柜子加货时查名单。开关关着时不显示 */}
+      <Finance2HoldPanel />
 
       {/* 搜索 & 新建 */}
       <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap", alignItems: "center" }}>

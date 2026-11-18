@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { apiBaseUrl, authHeaders, parseApiResponse, fetchWithSession as fetch } from "../../services/core-api";
 import { openShipmentTrack } from "../shipment/ShipmentTrackModal";
+import { Finance2HoldPanel } from "../../components/finance2/Finance2HoldPanel";
 import { createRequestGate } from "../shared/request-gate";
 import { downloadLastmileCustomerWorkbook } from "./exportDispatchWorkbooks";
 import type { LastmileOrderItem, LastmileShipmentOption, LastmileWdGroup } from "./types";
@@ -378,6 +379,9 @@ export default function LastmileDispatchWorkspace(props: LastmileDispatchWorkspa
           </button>
         </header>
       )}
+
+      {/* 财务系统2 扣货名单（2026-11-19 第 9 期）：出车前查名单；被拦的在这里「重新核对」。开关关着时不显示 */}
+      <Finance2HoldPanel />
 
       <div className="lastmile-summary" aria-label="派送任务统计">
         <div><strong>{summary.totalWd}</strong><span>WD 总数</span></div>

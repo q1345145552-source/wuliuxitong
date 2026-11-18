@@ -200,6 +200,11 @@ export async function parseApiResponse<T>(response: Response, sentToken?: string
        后端自己写的中文提示照原样给（2026-09-29 Codex 全系统检查）。 */
     const raw = payload?.message;
     if (response.status >= 500 && !(raw && /[\u4e00-\u9fa5]/.test(raw))) throw new Error(SERVER_ERROR_TEXT);
+    // 放货被扣货名单拦了（2026-11-19 财务系统2 第 9 期）：通知页面上的「扣货名单」那一块刷新，那里有「重新核对」。
+    // 前缀和事件名跟 services/finance2-holds-api.ts 一致（不 import，免得 core-api 依赖业务文件）
+    if (raw?.startsWith("【扣货】") && typeof window !== "undefined") {
+      window.dispatchEvent(new Event("finance2-hold-blocked"));
+    }
     throw new Error(raw ?? "请求没有成功，请稍后重试");
   }
   return payload.data as T;

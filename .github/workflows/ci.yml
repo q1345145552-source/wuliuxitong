@@ -378,6 +378,10 @@ jobs:
       # 超管三条只给超管、通过在一个事务里先带条件改状态再建号、开代理同一份校验、迁移只建一张表、体检清单 19 个字段
       - name: Test agent apply (source)
         run: npm run test:agent-apply-source
+      # 财务系统2 扣货名单（2026-11-19 第 9 期）不连库那一半：开关默认 off、配置门槛、约定 5.1 / 5.2 样例原样能收、坏数据整份不收、
+      # 真发请求（密钥在头里、401 不重试、5xx 能重试、超时按时断开）、拦货的话、放货入口一处不漏（新加写这两个状态的代码会红）、前端接上了
+      - name: Test finance2 holds (source)
+        run: npm run test:finance2-holds-source
       # 拆派仓只读接口到点就走（2026-10-14）：Node 22 的 fetch 带 redirect:"error" 时，读响应体中途碰上垃圾回收 abort() 就失灵、
       # 一挂 300 秒（10-12 这里 V9 等了 300333ms）。不连库：假服务器 + 强制回收内存，看是不是按时断开、连接真断了。
       # ⚠️ 只有 Node 22 照得出老毛病（本机 Node 24 照不出），所以这项必须在 CI 跑
@@ -590,6 +594,11 @@ jobs:
       # 公司只认有正常超管的那一家；迁移文件在上线前的库上连跑两遍、跟 schema 零差异
       - name: Test agent apply (real DB)
         run: bash .github/scripts/run-db-test.sh test:agent-apply-db
+      # 财务系统2 扣货名单（2026-11-19 第 9 期）：真接口 + 真库 + 本进程里的假财务系统2 —— 柜子推到预约派送只扣名单上那几票、
+      # 尾端出车 / 往预约派送的柜子加货整个拦、单票放行连子单、重新核对（放 / 继续拦 / 超时按本地名单）、取名单失败留上一份、
+      # 整份替换、没名单不拦有提示、超过 1 天提示、off / observe；迁移文件在上线前的库上连跑两遍、跟 schema 零差异
+      - name: Test finance2 holds (real DB)
+        run: bash .github/scripts/run-db-test.sh test:finance2-holds-db
       # 存原样那份迁移：上线前的库上连跑两遍、跟 schema 零差异、体检清单对上、不回填老数据、删到货通知跟着删 / 删运单不动
       - name: Test arrival notice snapshots migration file (real DB)
         run: bash .github/scripts/run-db-test.sh test:migration-arrival-notice-snapshots-db

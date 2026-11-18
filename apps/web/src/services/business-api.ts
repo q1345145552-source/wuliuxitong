@@ -2007,6 +2007,11 @@ export async function updateContainerStatus(payload: {
   affectedShipmentCount: number;
   /** 已派送/签收（比这一步靠后）、退回、取消的货推柜子时跳过，列在这里（2026-09-17 推进账本） */
   skippedShipments?: Array<{ trackingNo: string; status: string }>;
+  /** 推到「预约派送」时被财务系统2 扣货名单扣下、没跟着推的（2026-11-19 第 9 期）；holdMessage 是给人看的一句话（含唛头、按几点的名单） */
+  heldShipments?: Array<{ trackingNo: string; customerMark: string }>;
+  holdMessage?: string | null;
+  /** 没有扣货名单 / 名单超过 1 天没更新时的提示 */
+  holdNotice?: string | null;
   /** 这一步记的时间（填了用填的，没填是服务器当前时间）。必填：页面拿它当下一步「比上一步早」的基准，不许用本机时间顶替 */
   updatedAt: string;
 }> {
