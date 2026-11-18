@@ -1,0 +1,313 @@
+{
+  "GET /waybills/changes?since=2000-01-01T00:00:00Z&limit=2": {
+    "serverTime": "2026-11-18T20:34:10.486Z",
+    "items": [
+      {
+        "waybillNo": "ZZF2OLD1",
+        "customerMark": "ZZF2OLDC",
+        "agentId": null,
+        "warehouseCode": "wh_yiwu_01",
+        "transportMode": "sea",
+        "cargoType": "normal",
+        "volumeCbm": null,
+        "weightKg": null,
+        "pieces": 1,
+        "products": [],
+        "approvalStatus": "approved",
+        "status": "inWarehouseCN",
+        "statusChangedAt": null,
+        "statusHistory": [],
+        "warehouseConfirmedAt": null,
+        "signedAt": null,
+        "isFcl": false,
+        "fcl": null,
+        "containers": [],
+        "splits": [],
+        "createdAt": "2026-07-01T00:00:00.000Z",
+        "changedAt": "2026-08-02T00:00:00.000Z",
+        "deletedAt": null
+      },
+      {
+        "waybillNo": "ZZF2A007",
+        "customerMark": "ZZF2C1",
+        "agentId": null,
+        "warehouseCode": "wh_yiwu_01",
+        "transportMode": "sea",
+        "cargoType": "inspection",
+        "volumeCbm": "0.950",
+        "weightKg": "95.00",
+        "pieces": 5,
+        "products": [
+          {
+            "productLineId": "cmwmkxbg8000lkbu07mspqdd4",
+            "cargoType": "inspection",
+            "name": "小家电",
+            "lengthCm": "60",
+            "widthCm": "50",
+            "heightCm": "50",
+            "pieces": 5,
+            "volumeCbm": "0.750000"
+          }
+        ],
+        "approvalStatus": "approved",
+        "status": "inWarehouseCN",
+        "statusChangedAt": "2026-11-18T20:35:07.671Z",
+        "statusHistory": [
+          {
+            "status": "inWarehouseCN",
+            "at": "2026-11-18T20:34:07.536Z"
+          },
+          {
+            "status": "inWarehouseCN",
+            "at": "2026-11-18T20:35:07.671Z"
+          }
+        ],
+        "warehouseConfirmedAt": "2026-11-18T20:34:07.536Z",
+        "signedAt": null,
+        "isFcl": false,
+        "fcl": null,
+        "containers": [],
+        "splits": [],
+        "createdAt": "2026-11-18T20:34:07.542Z",
+        "changedAt": "2026-11-18T20:34:07.672Z",
+        "deletedAt": null
+      }
+    ],
+    "nextCursor": "eyJ0IjoiMjAyNi0xMS0xOFQyMDozNDowNy42NzJaIiwidyI6IlpaRjJBMDA3In0",
+    "hasMore": true
+  },
+  "GET /waybills/ZZF2A005（拆了子运单、装了两个柜）": {
+    "serverTime": "2026-11-18T20:34:10.500Z",
+    "item": {
+      "waybillNo": "ZZF2A005",
+      "customerMark": "ZZF2C2",
+      "agentId": "zz_f2_ag2",
+      "warehouseCode": "wh_yiwu_01",
+      "transportMode": "sea",
+      "cargoType": "normal",
+      "volumeCbm": "5.600",
+      "weightKg": "720.00",
+      "pieces": 40,
+      "products": [
+        {
+          "productLineId": "cmwmkxbf5000ekbu0o8jhf8mj",
+          "cargoType": "normal",
+          "name": "塑料凳",
+          "lengthCm": "70",
+          "widthCm": "50",
+          "heightCm": "40",
+          "pieces": 40,
+          "volumeCbm": "5.600000"
+        }
+      ],
+      "approvalStatus": "approved",
+      "status": "departed",
+      "statusChangedAt": "2099-01-01T00:00:00.000Z",
+      "statusHistory": [
+        {
+          "status": "inWarehouseCN",
+          "at": "2026-11-18T20:34:07.499Z"
+        },
+        {
+          "status": "departed",
+          "at": "2099-01-01T00:00:00.000Z"
+        }
+      ],
+      "warehouseConfirmedAt": "2026-11-18T20:34:07.499Z",
+      "signedAt": null,
+      "isFcl": false,
+      "fcl": null,
+      "containers": [
+        {
+          "containerNo": "ZZFU1234568",
+          "trackingNo": "ZZF2A005-1",
+          "volumeCbm": "3.500",
+          "pieces": 25,
+          "loadedAt": "2026-11-12T11:30:00.000Z"
+        },
+        {
+          "containerNo": "ZZGU7654321",
+          "trackingNo": "ZZF2A005-2",
+          "volumeCbm": "2.100",
+          "pieces": 15,
+          "loadedAt": "2026-11-14T12:10:00.000Z"
+        }
+      ],
+      "splits": [
+        {
+          "trackingNo": "ZZF2A005-1",
+          "status": "arrivedPort",
+          "statusChangedAt": "2026-11-17T15:00:00.000Z",
+          "volumeCbm": "3.500",
+          "pieces": 25
+        },
+        {
+          "trackingNo": "ZZF2A005-2",
+          "status": "loaded",
+          "statusChangedAt": "2026-11-14T12:10:00.000Z",
+          "volumeCbm": "2.100",
+          "pieces": 15
+        }
+      ],
+      "createdAt": "2026-11-18T20:34:07.503Z",
+      "changedAt": "2026-11-18T20:34:08.267Z",
+      "deletedAt": null
+    }
+  },
+  "GET /waybills/ZZF2A003（混货型）": {
+    "serverTime": "2026-11-18T20:34:10.530Z",
+    "item": {
+      "waybillNo": "ZZF2A003",
+      "customerMark": "ZZF2C1",
+      "agentId": null,
+      "warehouseCode": "wh_yiwu_01",
+      "transportMode": "sea",
+      "cargoType": "sensitive",
+      "volumeCbm": "0.200",
+      "weightKg": "42.80",
+      "pieces": 6,
+      "products": [
+        {
+          "productLineId": "cmwmkxbeo0009kbu0xkijxvt0",
+          "cargoType": "normal",
+          "name": "毛巾",
+          "lengthCm": "50",
+          "widthCm": "40",
+          "heightCm": "25",
+          "pieces": 2,
+          "volumeCbm": "0.100000"
+        },
+        {
+          "productLineId": "cmwmkxbeo000akbu0v4tu3pkb",
+          "cargoType": "sensitive",
+          "name": "充电宝",
+          "lengthCm": "40",
+          "widthCm": "25",
+          "heightCm": "25",
+          "pieces": 4,
+          "volumeCbm": "0.100000"
+        }
+      ],
+      "approvalStatus": "approved",
+      "status": "inWarehouseCN",
+      "statusChangedAt": "2026-11-18T20:34:07.481Z",
+      "statusHistory": [
+        {
+          "status": "inWarehouseCN",
+          "at": "2026-11-18T20:34:07.481Z"
+        }
+      ],
+      "warehouseConfirmedAt": "2026-11-18T20:34:07.481Z",
+      "signedAt": null,
+      "isFcl": false,
+      "fcl": null,
+      "containers": [],
+      "splits": [],
+      "createdAt": "2026-11-18T20:34:07.487Z",
+      "changedAt": "2026-11-18T20:34:08.304Z",
+      "deletedAt": null
+    }
+  },
+  "GET /waybills/ZZF2A009（被删除）": {
+    "serverTime": "2026-11-18T20:34:10.620Z",
+    "item": {
+      "waybillNo": "ZZF2A009",
+      "customerMark": null,
+      "agentId": null,
+      "warehouseCode": null,
+      "transportMode": null,
+      "cargoType": null,
+      "volumeCbm": null,
+      "weightKg": null,
+      "pieces": null,
+      "products": [],
+      "approvalStatus": null,
+      "status": null,
+      "statusChangedAt": null,
+      "statusHistory": [],
+      "warehouseConfirmedAt": null,
+      "signedAt": null,
+      "isFcl": false,
+      "fcl": null,
+      "containers": [],
+      "splits": [],
+      "createdAt": null,
+      "changedAt": "2026-11-18T20:34:07.814Z",
+      "deletedAt": "2026-11-18T20:34:07.814Z"
+    }
+  },
+  "GET /waybills/numbers?createdFrom=2026-07-01T00:00:00Z&limit=2": {
+    "serverTime": "2026-11-18T20:34:10.635Z",
+    "items": [
+      {
+        "waybillNo": "ZZF2OLD1",
+        "changedAt": "2026-08-02T00:00:00.000Z",
+        "deletedAt": null
+      },
+      {
+        "waybillNo": "ZZF2A001",
+        "changedAt": "2026-11-18T20:34:08.061Z",
+        "deletedAt": null
+      }
+    ],
+    "nextCursor": "eyJjIjoiMjAyNi0xMS0xOFQyMDozNDowNy40NjRaIiwidyI6IlpaRjJBMDAxIn0",
+    "hasMore": true
+  },
+  "GET /customers?limit=2": {
+    "serverTime": "2026-11-18T20:34:10.642Z",
+    "items": [
+      {
+        "customerMark": "ZZF2C1",
+        "name": "直属客户ZZF2",
+        "agentId": null,
+        "active": true
+      },
+      {
+        "customerMark": "ZZF2C2",
+        "name": "代理客户ZZF2",
+        "agentId": "zz_f2_ag2",
+        "active": true
+      }
+    ],
+    "nextCursor": "eyJtIjoiWlpGMkMyIn0",
+    "hasMore": true
+  },
+  "GET /customers/agent-changes?since=2000-01-01T00:00:00Z": {
+    "serverTime": "2026-11-18T20:34:10.646Z",
+    "items": [
+      {
+        "customerMark": "ZZF2C2",
+        "fromAgentId": "zz_f2_ag1",
+        "toAgentId": "zz_f2_ag2",
+        "changedAt": "2026-11-18T20:34:08.758Z"
+      },
+      {
+        "customerMark": "ZZF2C1",
+        "fromAgentId": null,
+        "toAgentId": "zz_f2_ag1",
+        "changedAt": "2026-11-18T20:34:08.762Z"
+      },
+      {
+        "customerMark": "ZZF2C1",
+        "fromAgentId": "zz_f2_ag1",
+        "toAgentId": null,
+        "changedAt": "2026-11-18T20:34:08.794Z"
+      }
+    ],
+    "nextCursor": null,
+    "hasMore": false
+  },
+  "GET /agents": {
+    "serverTime": "2026-11-18T20:34:10.652Z",
+    "items": [
+      {
+        "agentId": "zz_f2_ag1",
+        "name": "代理一ZZF2"
+      },
+      {
+        "agentId": "zz_f2_ag2",
+        "name": "代理二ZZF2"
+      }
+    ]
+  }
+}

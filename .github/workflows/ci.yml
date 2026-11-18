@@ -371,6 +371,10 @@ jobs:
       # 只有 5 条精确路径不跑登录解析、代理端四个函数只加 export、三个环境变量不进前端、迁移只加不删、日志里没有密码和授权
       - name: Test finance link (source)
         run: npm run test:finance-link-source
+      # 给财务系统2 的只读接口（2026-11-19，不连库那一半）：密钥只认指纹、新旧两把；路径只放行那几条；
+      # 运单拼出来跟约定第 3 节一样（字段不多不少、金额体积是字符串、时间带 Z）；确认收货 / 签收时间的取法
+      - name: Test finance2 read-only API (source)
+        run: npm run test:finance2-source
       # 客户管理按归属筛（2026-11-08 老板要）：全部 / 湘泰自己的 / 某个代理的，跟搜索叠着用、顺序不变、页面接上了
       - name: Test admin client filter (source)
         run: npm run test:admin-client-filter
@@ -585,6 +589,11 @@ jobs:
       # 封禁改密码改角色立刻失效、总开关；迁移文件在上线前的库上连跑两遍、跟 schema 零差异
       - name: Test finance link (real DB)
         run: bash .github/scripts/run-db-test.sh test:finance-link-db
+      # 给财务系统2 的只读接口（2026-11-19）：自己临时建库、迁移文件连跑两遍（零差异、体检不报、老运单补一条）、真 HTTP 服务 + 真建单 / 收货 /
+      # 到货通知 / 整柜 / 删单接口 —— 鉴权新旧两把、每个接口前后库里一个字不变、约定第 3 节十种情况、确认收货三条路、
+      # 只改一处就只出现那一票、翻页不漏不重、删除记录、公司隔离、换代理记录、触发器记失败不影响原操作
+      - name: Test finance2 read-only API (real DB)
+        run: bash .github/scripts/run-db-test.sh test:finance2-db
       # 代理申请（2026-11-08）：真接口 + 真库 —— 交申请（字段规则、一个仓只能一张在审、并发只留一张、密钥和开关）、
       # 按仓查（最多 20 张、新的在前、12 个字段）、超管通过 / 驳回（只给超管、事务回滚、重复处理 409、并发）、
       # 公司只认有正常超管的那一家；迁移文件在上线前的库上连跑两遍、跟 schema 零差异

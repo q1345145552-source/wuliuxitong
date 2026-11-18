@@ -1,5 +1,11 @@
 # 项目交接日志
 
+## 2026-11-19 给财务系统2 的只读接口（第 7 期物流这一边；本机分支 claude/caiwu2-api-54a826，没推、没上线、没碰线上库）
+- 来源：财务系统2 窗口（老板定物流这边也由我们做）。约定在财务系统2 `docs/物流系统接口约定.md` 第二版；只做 A 部分（只读接口），放货拦截（B 部分）另一个窗口在做，没动放货那块。
+- 新接口 `/integrations/finance2/v1/{waybills/changes, waybills/<号>, waybills/numbers, customers, customers/agent-changes, agents}`，专用密钥只存指纹（`FINANCE2_API_KEY_SHA256` + `_PREV`），只看 `FINANCE2_COMPANY_ID` 一家，查库在数据库只读事务里。
+- 「改过」用**触发器**记（迁移 20261119_finance2_readonly_api：两张只追加的表 + 15 个触发器 + 给现有母运单补一条），不在业务代码里一处处加；原有代码只动了 server.ts（登录解析跳过这几条 + 「取一票」带号路径的路由，8 行）和 main.ts。触发器语句级、只插新表不锁别的行、记失败只发 WARNING。
+- 测试：`test:finance2-source` 14、`test:finance2-db` 38（临时建库、迁移连跑两遍、真接口建单 / 收货 / 到货通知 / 整柜 / 删单 / 改号）；`test-mark-display` 给财务系统2 客户名单的 name 放行（约定 2.7 老板定）。核对结果、跟约定对不上的、要问的、上线步骤全在 `docs/finance2-对接-核对.md`。
+
 ## 2026-11-14（北京）上线 84c1db9：员工管理「改成客户号」（+ 57eac74 上线记录）
 - 老板「上吧」。上线前：只读看服务器 HEAD a9cb67c、只有 package-lock 被改、没有会撞的未跟踪文件、磁盘剩 37G、容器 healthy；没有迁移。推 GitHub a9cb67c..84c1db9，ssh 跑 `bash deploy.sh` 退出 0（没有待执行迁移、跳过备份）。日志 `.audit/2026-11-14/deploy/deploy2.log`。
 - 核对：服务器 HEAD = GitHub = 84c1db9；两个容器 healthy、重启 0；后端有新接口和 user-references.ts、不登录 401；前端包里有「改成客户号」；API 报错 0；XHH-6669 仍是 client；外网首页 / 登录 / 管理员页 200。线上只读跑「留下过东西没有」那条查法（54 列 + 审计两列 + 被操作账号）对最早 3 个员工号：25 毫秒，1 个查出做过事、2 个没有。没等 GitHub 自动检查（11-08 他说别调用），本机 CI 80 + test-db 38 当关口。

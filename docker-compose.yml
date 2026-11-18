@@ -73,6 +73,10 @@ services:
       FINANCE_LINK_ENABLED: ${FINANCE_LINK_ENABLED:-}
       FINANCE_LINK_SECRET: ${FINANCE_LINK_SECRET:-}
       FINANCE_LINK_RETURN_URL: ${FINANCE_LINK_RETURN_URL:-}
+      # 2026-11-19 给财务系统2 的只读接口（modules/finance2/config.ts）。同上：不在这里透传，改 .env 进不了容器
+      FINANCE2_COMPANY_ID: ${FINANCE2_COMPANY_ID:-}
+      FINANCE2_API_KEY_SHA256: ${FINANCE2_API_KEY_SHA256:-}
+      FINANCE2_API_KEY_SHA256_PREV: ${FINANCE2_API_KEY_SHA256_PREV:-}
       IMAGES_DIR: /images
       PORT: "3001"
       DATABASE_URL: postgresql://${POSTGRES_USER:-xiangtai}:${POSTGRES_PASSWORD:-xiangtai_dev}@postgres:5432/${POSTGRES_DB:-xiangtai}?schema=public

@@ -206,6 +206,10 @@ const API_ALLOW: Allow[] = [
   { file: "apps/api/src/modules/shipping-config/routes.ts", re: /^customerName: null as string \| null,$/, why: "运费配置：恒为空，没发名字" },
   // 对接海外仓财务系统（2026-11-04）：字段名沿用两边约定（修改清单 5.4），值一律是唛头，客户名字不出物流系统
   { file: "apps/api/src/modules/finance-link/views.ts", re: /^(clientName\?: string;|if \(isAgent\) item\.clientName = row\.clientId;)$/, why: "财务系统对接：字段名沿用约定，值是唛头" },
+  // 给财务系统2 的只读接口（2026-11-19）：约定 2.7 客户名单带 name（老板 2026-11-19 定：只在财务新建客户档案时带过去参考，客户主要认唛头），
+  // 只给财务系统2 后端（专用密钥），不给客户 / 代理看；代理名单的 name 是代理名字，不是客户名字
+  { file: "apps/api/src/modules/finance2/views.ts", re: exactLine(`return { customerMark: user.id, name: user.name === "" ? null : user.name, agentId: user.agentId, active: user.status === "active" };`), why: "财务系统2 客户名单（约定 2.7）" },
+  { file: "apps/api/src/modules/finance2/views.ts", re: exactLine("return { agentId: agent.id, name: agent.name };"), why: "财务系统2 代理名单：代理名字" },
 ];
 /** 每个文件最多几处（防止在同一个文件里「照着允许的那行再抄一份」给客户接口） */
 const API_MAX_PER_FILE: Record<string, number> = {
@@ -216,6 +220,7 @@ const API_MAX_PER_FILE: Record<string, number> = {
   "apps/api/src/modules/admin-ops/routes.ts": 1,
   "apps/api/src/modules/shipping-config/routes.ts": 1,
   "apps/api/src/modules/finance-link/views.ts": 2,
+  "apps/api/src/modules/finance2/views.ts": 2,
 };
 
 console.log("唛头显示（唛头=账号，客户名字只给内部看）");

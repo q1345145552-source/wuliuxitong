@@ -9,6 +9,7 @@ import { fail } from "./modules/core/http-utils";
 import { agentGateRejection } from "./modules/core/agent-scope";
 import { INTEGRATION_PATHS } from "./modules/chaipai/paths";
 import { FINANCE_LINK_PATHS } from "./modules/finance-link/paths";
+import { FINANCE2_WAYBILL_ITEM_ROUTE, finance2WaybillNoFromPath, isFinance2Path } from "./modules/finance2/paths";
 import { openEventStream, REALTIME_STREAM_PATH } from "./realtime-stream";
 import { publishAfterWrite } from "./modules/realtime/publish";
 import type { UserRole } from "../../../packages/shared-types/role";
@@ -64,6 +65,8 @@ type RouteTable = Record<string, Handler>;
 async function parseAuth(headers: IncomingMessage["headers"], path?: string): Promise<HttpRequest["auth"]> {
   // 财务系统对接那几条（2026-11-04，精确路径）带的 Bearer 是对接密钥、不是登录令牌，接口自己核对，这里不解析
   if (path && FINANCE_LINK_PATHS.has(path)) return undefined;
+  // 财务系统2 那几条（2026-11-19，精确路径 + 「取一票」那一种）同理：Bearer 是专用密钥，接口自己核对
+  if (path && isFinance2Path(path)) return undefined;
   const authHeader = typeof headers.authorization === "string" ? headers.authorization.trim() : "";
   const match = authHeader.match(/^Bearer\s+(.+)$/i);
   if (!match?.[1]) {
@@ -260,7 +263,10 @@ export function createApp(): MinimalHttpApp {
 
         const routeTable =
           method === "POST" ? postRoutes : method === "DELETE" ? deleteRoutes : getRoutes;
-        const handler = routeTable[path];
+        /* 路由表只认精确路径。财务系统2「取一票」是 /integrations/finance2/v1/waybills/<运单号>（2026-11-19），
+           只有认出是这种路径时才去取它注册的那个占位键，别的路径照旧 */
+        const handler = routeTable[path]
+          ?? (method === "GET" && finance2WaybillNoFromPath(path) !== null ? routeTable[FINANCE2_WAYBILL_ITEM_ROUTE] : undefined);
         const res = createJsonResponse(rawRes);
         if (!handler) {
           // 这条以前也是自己拼的，同样少了 errors / requestId / timestamp
