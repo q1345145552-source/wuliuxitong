@@ -99,6 +99,8 @@ export interface HoldLogInput {
   listGeneratedAt?: Date | null;
   detail?: string | null;
   operatorId?: string | null;
+  /** 要报给财务的（kind = chaipai）记 pending，报成 / 被拒后改掉（reports.ts） */
+  reportStatus?: "pending" | null;
 }
 
 function logRow(i: HoldLogInput) {
@@ -112,7 +114,24 @@ function logRow(i: HoldLogInput) {
     listGeneratedAt: i.listGeneratedAt ?? null,
     detail: i.detail ? i.detail.slice(0, 1000) : null,
     operatorId: i.operatorId ?? null,
+    reportStatus: i.reportStatus ?? null,
   };
+}
+
+/**
+ * 记几条要报给财务的日志，返回新行的 id（拿去马上报一次）。跟 writeHoldLogs 一样：不收 tx、记失败只打日志、返回空。
+ */
+export async function writeHoldLogsReturningIds(rows: HoldLogInput[]): Promise<string[]> {
+  const ids: string[] = [];
+  for (const row of rows) {
+    try {
+      const created = await prisma.finance2HoldLog.create({ data: logRow(row), select: { id: true } });
+      ids.push(created.id);
+    } catch (error) {
+      logger.error("扣货日志没记上（不影响操作）", { 条数: 1, 原因: error instanceof Error ? error.message : String(error) });
+    }
+  }
+  return ids;
 }
 
 /**

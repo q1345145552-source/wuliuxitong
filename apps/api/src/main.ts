@@ -94,7 +94,8 @@ registerAgentPortalRoutes(app);
 registerFinance2WalletRoutes(app);
 registerBrandingRoutes(app);
 startAgentRebateScheduler();
-// 财务系统2 扣货名单（2026-11-19，第 9 期）：放货页那一块的接口 + 每 15 分钟取名单。开关 FINANCE2_HOLDS_MODE 默认 off，off 时定时任务什么都不做
+// 财务系统2 扣货名单（2026-11-19，第 9 期）：放货页那一块的接口 + 每 15 分钟取名单、补报没报进去的扣货上报。
+// 开关 FINANCE2_HOLDS_MODE：没填时配了财务地址 / 密钥就按 observe（只记不拦），都没配才是 off；off 时定时任务什么都不做
 registerFinance2HoldRoutes(app);
 startFinance2HoldScheduler();
 

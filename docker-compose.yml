@@ -73,7 +73,8 @@ services:
       FINANCE_LINK_ENABLED: ${FINANCE_LINK_ENABLED:-}
       FINANCE_LINK_SECRET: ${FINANCE_LINK_SECRET:-}
       FINANCE_LINK_RETURN_URL: ${FINANCE_LINK_RETURN_URL:-}
-      # 2026-11-19 财务系统2 扣货名单（modules/finance2-holds/config.ts）。同上：不在这里透传，改 .env 进不了容器
+      # 2026-11-19 财务系统2 扣货名单（modules/finance2-holds/config.ts）。同上：不在这里透传，改 .env 进不了容器。
+      # MODE 不填：地址 / 密钥配了就按 observe（只记不拦），都没配是关；off 关、observe 只记不拦、enforce 真拦（老板 2026-11-19 定）
       FINANCE2_HOLDS_MODE: ${FINANCE2_HOLDS_MODE:-}
       FINANCE2_HOLDS_SECRET: ${FINANCE2_HOLDS_SECRET:-}
       FINANCE2_API_BASE: ${FINANCE2_API_BASE:-}

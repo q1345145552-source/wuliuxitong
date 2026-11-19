@@ -12,6 +12,8 @@ import { isSyncRunning, syncHoldList } from "./sync";
  *   GET  /admin/finance2-holds/status    名单几点的、有没有提示、我最近被拦的几票（带「重新核对」）
  *   POST /admin/finance2-holds/recheck   重新核对：{ trackingNo } —— 实时问财务系统2（约定 5.2、5.3 第 4 条）
  *   POST /admin/finance2-holds/refresh   立即去取一次整份名单（只给管理员）
+ *   GET  /admin/finance2-holds/observe-log  试运行（observe）这几天「本来会拦谁」（只给管理员；老板 2026-11-19 答「放货拦截 4」：
+ *                                          先只记不拦看几天，确认名单没算错再真拦）
  * 不返回金额（名单里本来也没有）；客户只显示唛头。
  */
 
@@ -19,7 +21,12 @@ export const FINANCE2_HOLD_PATHS = {
   status: "/admin/finance2-holds/status",
   recheck: "/admin/finance2-holds/recheck",
   refresh: "/admin/finance2-holds/refresh",
+  observeLog: "/admin/finance2-holds/observe-log",
 } as const;
+
+/** 试运行记录看最近几天、最多几条 */
+export const OBSERVE_LOG_DAYS = 7;
+export const OBSERVE_LOG_LIMIT = 300;
 
 /** 「我最近被拦的」看多久以内的 */
 const RECENT_MS = 2 * 60 * 60 * 1000;
@@ -156,6 +163,44 @@ export function registerFinance2HoldRoutes(app: MinimalHttpApp): void {
     });
     await writeHoldLogs([{ ...logBase, result: byWaybill.value.blocked ? "财务说还在扣，继续拦" : "这家还在扣，这一票可以放" }]);
     await answer("ticket", false);
+  });
+
+  /**
+   * 试运行记录：最近 7 天 kind = observe 的日志（新的在前，最多 300 条）。只给管理员；
+   * 只回唛头、运单号、母运单号、从哪个入口、几点、按几点的名单 —— 不回金额（本来就没有）、不回客户名字、不回操作人。
+   * 开关 off 时回 off、不查库。
+   */
+  app.get(FINANCE2_HOLD_PATHS.observeLog, async (req, res) => {
+    const auth = requireRole(req, res, ["admin"]);
+    if (!auth) return;
+    const cfg = finance2HoldsConfig();
+    if (!cfg) {
+      ok(res, { mode: "off", days: OBSERVE_LOG_DAYS, rows: [], truncated: false });
+      return;
+    }
+    const since = new Date(Date.now() - OBSERVE_LOG_DAYS * 24 * 60 * 60 * 1000);
+    const logs = await prisma.finance2HoldLog.findMany({
+      where: { kind: "observe", createdAt: { gte: since } },
+      orderBy: { createdAt: "desc" },
+      take: OBSERVE_LOG_LIMIT + 1,
+      select: { id: true, customerMark: true, waybillNo: true, trackingNo: true, entry: true, listGeneratedAt: true, createdAt: true },
+    });
+    const truncated = logs.length > OBSERVE_LOG_LIMIT;
+    ok(res, {
+      mode: cfg.mode,
+      days: OBSERVE_LOG_DAYS,
+      truncated,
+      rows: logs.slice(0, OBSERVE_LOG_LIMIT).map((l) => ({
+        id: l.id,
+        customerMark: l.customerMark,
+        trackingNo: l.trackingNo,
+        waybillNo: l.waybillNo,
+        entry: l.entry,
+        at: l.createdAt.toISOString(),
+        atLabel: formatListTime(l.createdAt),
+        listLabel: l.listGeneratedAt ? listLabel(l.listGeneratedAt) : null,
+      })),
+    });
   });
 
   app.post(FINANCE2_HOLD_PATHS.refresh, async (req, res) => {

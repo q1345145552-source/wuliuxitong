@@ -3,14 +3,17 @@ import { isSafeSecret } from "../chaipai/config";
 
 /**
  * 放货时查财务系统2 的扣货名单（2026-11-19，第 9 期）。三个环境变量，不进前端、不进 Git：
- *   FINANCE2_HOLDS_MODE     开关，默认 off（什么都不做：不取名单、不拦、不提示）
- *                           observe = 取名单、页面上提示、该拦的只记日志不拦（上线后先看几天对不对）
- *                           enforce = 真拦
+ *   FINANCE2_HOLDS_MODE     开关：
+ *                           off      = 关，什么都不做（不取名单、不拦、不提示、不往财务报）——**只有明确写 off 才是关**
+ *                           observe  = 试运行：取名单、页面上提示、该拦的只记日志不拦（管理员在放货页能看「本来会拦谁」）
+ *                           enforce  = 真拦
+ *                           没填（空）：FINANCE2_API_BASE、FINANCE2_HOLDS_SECRET 至少配了一个 → 按 observe（先只记不拦）；
+ *                                       两个都没配 → 按 off（老板 2026-11-19 答「放货拦截 4」：先开只记不拦看几天，确认名单没算错再真拦）
  *   FINANCE2_API_BASE       财务系统2 的根地址（例如 https://caiwu.example.com），后面自己拼 /integrations/logistics/v1/…
  *   FINANCE2_HOLDS_SECRET   「物流拉财务」那把密钥（财务系统2 发给我们的，跟「财务拉物流」那把不是同一把）
  *
- * ⚠️ 开关和「连财务的配置」分开看（2026-11-19 Codex 审查第 1 条）：
- *   - 开关是 off（或没填）：什么都不做 —— 这是唯一「全放」的情况。
+ * ⚠️ 开关和「连财务的配置」分开看（2026-11-19 Codex 审查第 1 条；老板 2026-11-19 答「放货拦截 5」定：宁可多拦）：
+ *   - 开关是 off（或没填、地址密钥也都没配）：什么都不做 —— 这是唯一「全放」的情况。
  *   - 开关开着，但密钥 / 地址配错了：**照本地存的名单拦**，只是取不到新名单、「重新核对」问不了，页面上提示配置有问题。
  *     原来配错一律按 off，换密钥漏配一项，欠款客户的货就全放出去了、页面也不提示。
  *   - 开关写了个不认识的词：当成 enforce（填了就是想开；宁可多拦，日志里报错）。
@@ -51,10 +54,16 @@ function normalizeApiBase(raw: string | undefined, production: boolean): string 
 
 export function readFinance2HoldsConfig(env: NodeJS.ProcessEnv = process.env): Finance2HoldsConfigResult {
   const rawMode = (env.FINANCE2_HOLDS_MODE ?? "").trim();
-  if (rawMode === "" || rawMode === "off") return { ok: false, off: true, reason: "开关没开（FINANCE2_HOLDS_MODE 是 off 或没填）" };
+  if (rawMode === "off") return { ok: false, off: true, reason: "开关关着（FINANCE2_HOLDS_MODE=off）" };
+  // 没填：配了连财务的地址或密钥（哪怕只配了一个）就先「只记不拦」，都没配才是关（老板 2026-11-19 答「放货拦截 4」）
+  const configured = (env.FINANCE2_API_BASE ?? "").trim() !== "" || (env.FINANCE2_HOLDS_SECRET ?? "").trim() !== "";
+  if (rawMode === "" && !configured) {
+    return { ok: false, off: true, reason: "开关没填、财务系统2 的地址和密钥也都没配，按关处理" };
+  }
   const problems: string[] = [];
   let mode: "observe" | "enforce";
-  if (rawMode === "observe" || rawMode === "enforce") mode = rawMode;
+  if (rawMode === "") mode = "observe";
+  else if (rawMode === "observe" || rawMode === "enforce") mode = rawMode;
   else {
     mode = "enforce";
     problems.push("FINANCE2_HOLDS_MODE 只认 off / observe / enforce，填了别的按 enforce（真拦）处理");

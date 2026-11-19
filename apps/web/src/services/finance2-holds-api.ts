@@ -53,3 +53,29 @@ export function recheckFinance2Hold(trackingNo: string): Promise<Finance2Recheck
 export function refreshFinance2HoldList(): Promise<{ kind: string; replaced?: boolean; holds?: number; released?: number; note?: string }> {
   return apiRequest(`${apiBaseUrl()}/admin/finance2-holds/refresh`, { method: "POST" });
 }
+
+/** 试运行（observe）记录的一行：只有唛头、运单号、入口、时间，没有金额、没有客户名字 */
+export interface Finance2ObserveRow {
+  id: string;
+  customerMark: string | null;
+  trackingNo: string | null;
+  waybillNo: string | null;
+  entry: string | null;
+  at: string;
+  /** 泰国时间 */
+  atLabel: string;
+  /** 「按 … 的名单」 */
+  listLabel: string | null;
+}
+
+export interface Finance2ObserveLog {
+  mode: "off" | "observe" | "enforce";
+  days: number;
+  truncated: boolean;
+  rows: Finance2ObserveRow[];
+}
+
+/** 试运行这几天「本来会拦谁」（只给管理员） */
+export function fetchFinance2ObserveLog(): Promise<Finance2ObserveLog> {
+  return apiRequest(`${apiBaseUrl()}/admin/finance2-holds/observe-log`, { method: "GET" });
+}

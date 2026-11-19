@@ -3,12 +3,13 @@ import { BusinessError } from "../core/business-error";
 import { logger } from "../core/logger";
 import { prisma } from "../../db/prisma";
 import { finance2HoldsConfig, type HoldMode } from "./config";
-import { STALE_AFTER_MS, writeHoldLogs, type HoldLogInput } from "./store";
+import { reportReleasedNow } from "./reports";
+import { STALE_AFTER_MS, writeHoldLogs, writeHoldLogsReturningIds, type HoldLogInput } from "./store";
 
 /**
  * 放货前查扣货名单（约定 5.3 第 2、5 条）。只管「判断」，各个放货入口自己决定拦了以后怎么办：
  *   - 单票的入口（尾端派送单……）：有被扣的就整个操作不做，回 409（assertReleasable）。
- *   - 柜子整柜推进：被扣的那几票不推、其余照推、单独列出来（接口⑦ 老板还没定，先这么做，见 routes 里的 heldBack）。
+ *   - 柜子整柜推进：被扣的那几票不推、其余照推、单独列出来（接口⑦，老板 2026-11-19 定：只扣这几票、其余照推）。
  *
  * 判断规矩：
  *   - 开关 off：什么都不查。
@@ -222,7 +223,7 @@ export function toCandidate(row: { id: string; trackingNo: string; parentTrackin
 }
 
 /**
- * 整批推进用（柜子推到预约派送）：被扣的那几票挑出来不推，其余照推（接口⑦ 老板还没定，先这么做）。
+ * 整批推进用（柜子推到预约派送）：被扣的那几票挑出来不推，其余照推（接口⑦，老板 2026-11-19 定：只扣这几票、其余照推）。
  * 返回要扣下的运单 id；observe 模式一票都不扣。**不记日志**：调用方等事务提交后调 logHeldAfterCommit。
  */
 export async function splitHeldForBatch(db: Db, candidates: ReleaseCandidate[]): Promise<{ heldIds: Set<string>; result: GateResult }> {
@@ -233,18 +234,37 @@ export async function splitHeldForBatch(db: Db, candidates: ReleaseCandidate[]):
 }
 
 /**
- * 拆派仓回传「派送中」（接口⑧ 老板还没定，先这么做）：货已经在外面了，照收；名单上的记一条日志、打警告。
- * 在回传事务提交之后调，不等它；出错只打日志。
+ * 拆派仓回传「派送中」（或没经过派送中直接回「已签收」）：货已经在外面了，照收（拦不住）。名单上的记一条 chaipai 日志、打警告，
+ * **另外报给财务系统2**（接口⑧，老板 2026-11-19 答「放货拦截 2」：照收、记日志，财务系统老板首页报一条警报；约定 11.1）。
+ * observe（试运行）也报：货确实出去了。开关 off 什么都不做。
+ * 在回传事务提交之后调，不等它；出错只打日志。报不进去的留着 pending，15 分钟那一轮补报（reports.ts）。
  */
-export async function noteChaipaiRelease(shipmentId: string): Promise<void> {
+export function noteChaipaiRelease(shipmentId: string): Promise<void> {
+  const p = noteChaipaiReleaseInner(shipmentId).finally(() => pending.delete(p));
+  pending.add(p); // 测试用 flushHoldLogs 等它（日志 + 马上报那一次）都做完
+  return p;
+}
+
+async function noteChaipaiReleaseInner(shipmentId: string): Promise<void> {
   try {
     if (!finance2HoldsConfig()) return;
     const result = await evaluateRelease(prisma, await loadCandidates(prisma, [shipmentId]));
     if (result.held.length === 0) return;
-    logHeld(result, { entry: "拆派仓回传派送中", operatorId: null }, "chaipai", "货已经由拆派仓派出去了，拦不住，照收");
-    logger.warn("扣货名单上的货被拆派仓派出去了（照收，请通知财务）", {
+    const ids = await writeHoldLogsReturningIds(result.held.map((h) => ({
+      kind: "chaipai" as const,
+      result: "货已经由拆派仓派出去了，拦不住，照收；报给财务",
+      customerMark: h.customerMark,
+      waybillNo: h.motherTrackingNo,
+      trackingNo: h.trackingNo,
+      entry: "拆派仓回传派送中",
+      listGeneratedAt: result.listGeneratedAt,
+      operatorId: null,
+      reportStatus: "pending" as const,
+    })));
+    logger.warn("扣货名单上的货被拆派仓派出去了（照收，报给财务系统2）", {
       运单: result.held.map((h) => h.trackingNo), 唛头: [...new Set(result.held.map((h) => h.customerMark))],
     });
+    await reportReleasedNow(ids);
   } catch (error) {
     logger.error("拆派仓回传后查扣货名单出错（回传照常）", { 原因: error instanceof Error ? error.message : String(error) });
   }

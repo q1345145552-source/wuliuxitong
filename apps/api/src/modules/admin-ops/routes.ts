@@ -1092,6 +1092,8 @@ export function registerAdminOpsRoutes(app: MinimalHttpApp): void {
    *   · 客户轨迹写明「撤销误签收」，不偷偷把那条已签收抹掉（数据忠实记录）
    *
    * ⚠️ 锁序跟签收/删除一致【派送单 → 运单 → 父单】，锁完重读再判断（CLAUDE.md 第 28 条）。
+   *
+   * 财务系统2 扣货名单：这里**不查名单、不拦**（老板 2026-11-19 答「放货拦截 3」定不拦）——货当时已经出车，只是纠正点错的签收。
    */
   app.post("/admin/lastmile/unsign", async (req, res) => {
     const auth = requireRole(req, res, ["admin"]);

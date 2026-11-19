@@ -162,3 +162,83 @@ export async function checkHold(
   const parsed = parseHoldCheck(r.value, customerMark, waybillNo);
   return typeof parsed === "string" ? { kind: "error", reason: `核对结果格式不对：${parsed}`, retryable: false } : { kind: "ok", value: parsed };
 }
+
+/* ───────────── 物流 → 财务：扣货上报（约定第 11 节，老板 2026-11-19 答「放货拦截 2、6」） ───────────── */
+
+/** 上报一件事等多久（约定没单写，跟取名单一样 10 秒） */
+export const EVENT_TIMEOUT_MS = 10_000;
+/** 约定 11：请求体不超过 8 KB */
+const EVENT_MAX_BYTES = 8 * 1024;
+const EVENT_REPLY_MAX_BYTES = 64 * 1024;
+
+/** 约定 11.1：扣着的货被放出去了 */
+export interface ReleasedWhileHeldEvent {
+  kind: "releasedWhileHeld";
+  occurredAt: string;
+  customerMark: string;
+  waybillNo: string;
+  trackingNo: string;
+  entry: string;
+  listGeneratedAt: string | null;
+}
+/** 约定 11.2：拿不到扣货名单 */
+export interface HoldListUnavailableEvent {
+  kind: "holdListUnavailable";
+  occurredAt: string;
+  reason: string;
+  failingSince: string;
+  lastFetchedAt: string | null;
+}
+/** 约定 11.2：又取到了 */
+export interface HoldListRecoveredEvent {
+  kind: "holdListRecovered";
+  occurredAt: string;
+}
+export type HoldEvent = ReleasedWhileHeldEvent | HoldListUnavailableEvent | HoldListRecoveredEvent;
+
+/**
+ * POST {base}/hold-events 报一件事（约定 11）。一次报一件；同一件事重报财务那边只算一条，所以失败了放心重发。
+ * 结果：ok = 财务回 200；error 里 retryable = 连不上、超时、5xx、429、别的不是 200 的（下一轮接着报），
+ * 不是 retryable = 4xx（调用方打 error 日志、这一条不再报）。
+ * 密钥只在请求头；reason 由调用方保证不带密钥。一律不跟随跳转；等头、读 body 都走 core/fetch-deadline.ts。
+ */
+export async function postHoldEvent(cfg: Finance2Remote, event: HoldEvent, timeoutMs = EVENT_TIMEOUT_MS): Promise<CallResult<true>> {
+  const payload = JSON.stringify(event);
+  if (Buffer.byteLength(payload, "utf8") > EVENT_MAX_BYTES) return { kind: "error", reason: "上报内容超过 8 KB", retryable: false };
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    let response: Response;
+    try {
+      response = await fetchWithDeadline(`${cfg.apiBase}/hold-events`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${cfg.secret}`, Accept: "application/json", "Content-Type": "application/json; charset=utf-8" },
+        body: payload,
+        redirect: "error",
+        signal: controller.signal,
+      });
+    } catch {
+      return { kind: "error", reason: controller.signal.aborted ? "超时" : "连不上", retryable: true };
+    }
+    const s = response.status;
+    // 回话只看状态码；4xx 时带上财务回的 message（截短，方便查是哪个字段不对）
+    let message = "";
+    try {
+      const body = await readBodyWithDeadline(response, controller.signal, EVENT_REPLY_MAX_BYTES);
+      if (body && s >= 400 && s < 500) {
+        const parsed = JSON.parse(body.toString("utf8")) as { message?: unknown } | null;
+        if (typeof parsed?.message === "string") message = parsed.message.slice(0, 200);
+      }
+    } catch { /* 回话读不出来不影响结果 */ }
+    if (s === 200) return { kind: "ok", value: true };
+    const rejected = s >= 400 && s < 500 && s !== 429;
+    return {
+      kind: "error",
+      reason: (s === 401 || s === 403 ? `HTTP ${s}（密钥不对或不许调）` : `HTTP ${s}`) + (message ? `：${message}` : ""),
+      retryable: !rejected,
+      status: s,
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+}

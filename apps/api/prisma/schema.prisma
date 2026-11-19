@@ -1679,6 +1679,9 @@ model Finance2HoldState {
   lastErrorAt   DateTime? @map("last_error_at")
   /// 这一串连续失败从什么时候开始（取成功后清空）；连续 1 小时取不到报警用（约定 1.3），从来没取到过也算
   failingSince  DateTime? @map("failing_since")
+  /// 「拿不到扣货名单」报给财务没有（约定 11.2，2026-11-19 加）：null = 没报过 / pending = 报了没收到 200（还会再报）/
+  /// sent = 财务收下了 / rejected = 财务回 4xx（这一串失败里不再报）。又取到名单时：pending、sent 报一次「恢复了」后清空，rejected 直接清空
+  unavailableReport String? @map("unavailable_report")
   updatedAt     DateTime  @updatedAt @map("updated_at")
 
   @@map("finance2_hold_state")
@@ -1736,6 +1739,13 @@ model Finance2HoldLog {
   detail          String?
   operatorId      String?   @map("operator_id")
   createdAt       DateTime  @default(now()) @map("created_at")
+  /// 报给财务没有（约定 11.1「扣着的货被放出去了」，只有 kind = chaipai 的有值；2026-11-19 加）：
+  /// pending = 还没报成（15 分钟那一轮接着报，最近 7 天的）/ sent = 财务回 200 / rejected = 财务回 4xx、不再报
+  reportStatus    String?   @map("report_status")
+  /// 报成（sent）或被拒（rejected）的时间
+  reportedAt      DateTime? @map("reported_at")
+  /// 最近一次没报成的原因（不含密钥）
+  reportError     String?   @map("report_error")
 
   @@index([createdAt])
   @@index([operatorId, createdAt])

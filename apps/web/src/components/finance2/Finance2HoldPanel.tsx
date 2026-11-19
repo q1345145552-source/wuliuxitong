@@ -5,9 +5,11 @@ import { getOptionalSession } from "../../auth/auth-session";
 import {
   FINANCE2_HOLD_EVENT,
   fetchFinance2HoldStatus,
+  fetchFinance2ObserveLog,
   recheckFinance2Hold,
   refreshFinance2HoldList,
   type Finance2HoldStatus,
+  type Finance2ObserveLog,
 } from "../../services/finance2-holds-api";
 
 /**
@@ -16,6 +18,8 @@ import {
  * - 写明「按几点的名单」；没有名单 / 超过 1 天没更新 / 最近连不上财务系统时黄条提示（老板 2026-11-19 定）。
  * - 「我刚才被拦的」每票一个「重新核对」，实时问财务系统2；也能自己输运单号核对。
  * - 后端拦货时（报错以【扣货】开头）core-api 发事件，这里马上刷新。
+ * - 试运行（observe）时管理员能点开「试运行记录」：最近 7 天本来会拦谁（唛头、运单号、入口、几点、按几点的名单），
+ *   看几天确认名单没算错，老板说开再改 enforce（老板 2026-11-19 答「放货拦截 4」）。员工看不到这个列表。
  * 不显示金额（名单里本来就没有），客户只显示唛头。
  */
 export function Finance2HoldPanel() {
@@ -27,6 +31,10 @@ export function Finance2HoldPanel() {
   const [refreshing, setRefreshing] = useState(false);
   const [refreshMsg, setRefreshMsg] = useState("");
   const [flash, setFlash] = useState(false);
+  const [observeOpen, setObserveOpen] = useState(false);
+  const [observeLog, setObserveLog] = useState<Finance2ObserveLog | null>(null);
+  const [observeLoading, setObserveLoading] = useState(false);
+  const [observeError, setObserveError] = useState("");
   const boxRef = useRef<HTMLDivElement | null>(null);
   const seq = useRef(0);
   const timerRef = useRef<number | null>(null);
@@ -109,6 +117,25 @@ export function Finance2HoldPanel() {
     }
   };
 
+  /** 点开 / 刷新试运行记录（只在点的时候取，不跟着 1 分钟轮询） */
+  const loadObserveLog = async () => {
+    if (observeLoading) return;
+    setObserveLoading(true);
+    setObserveError("");
+    try {
+      setObserveLog(await fetchFinance2ObserveLog());
+    } catch (e) {
+      setObserveError(e instanceof Error ? e.message : "试运行记录没取到");
+    } finally {
+      setObserveLoading(false);
+    }
+  };
+  const toggleObserve = () => {
+    const next = !observeOpen;
+    setObserveOpen(next);
+    if (next) void loadObserveLog();
+  };
+
   if (!status && !loadError) return null;
   if (status?.mode === "off") return null;
 
@@ -148,6 +175,60 @@ export function Finance2HoldPanel() {
         )}
         {refreshMsg && <span style={{ color: "var(--t-muted)" }}>{refreshMsg}</span>}
       </div>
+
+      {isAdmin && live?.mode === "observe" && (
+        <div style={{ marginTop: 6 }}>
+          <button type="button" onClick={toggleObserve} style={btn} data-testid="finance2-observe-toggle">
+            {observeOpen ? "收起试运行记录" : "试运行记录：这几天本来会拦谁"}
+          </button>
+          {observeOpen && (
+            <div data-testid="finance2-observe-log" style={{ marginTop: 6 }}>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center", color: "var(--t-muted)" }}>
+                <span>
+                  最近 {observeLog?.days ?? 7} 天试运行期间本来会拦、没拦的（只记不拦）。核对几天没算错，老板说开再把开关改成 enforce。
+                </span>
+                <button type="button" onClick={() => void loadObserveLog()} disabled={observeLoading} style={btn}>
+                  {observeLoading ? "取记录中…" : "刷新"}
+                </button>
+              </div>
+              {observeError && <div style={{ marginTop: 4, color: "var(--c-red-deep)" }}>{observeError}</div>}
+              {observeLog && observeLog.rows.length === 0 && !observeLoading && (
+                <div style={{ marginTop: 4, color: "var(--t-faint)" }}>最近 {observeLog.days} 天没有本来会拦的货。</div>
+              )}
+              {observeLog && observeLog.rows.length > 0 && (
+                <div style={{ marginTop: 4, overflowX: "auto" }}>
+                  <table style={{ borderCollapse: "collapse", fontSize: 12, minWidth: 560 }}>
+                    <thead>
+                      <tr style={{ color: "var(--t-muted)", textAlign: "left" }}>
+                        <th style={cell}>几点（泰国时间）</th>
+                        <th style={cell}>唛头</th>
+                        <th style={cell}>运单号</th>
+                        <th style={cell}>从哪个入口</th>
+                        <th style={cell}>按的名单</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {observeLog.rows.map((r) => (
+                        <tr key={r.id} style={{ borderTop: "1px dashed var(--l-soft)" }}>
+                          <td style={cell}>{r.atLabel}</td>
+                          <td style={{ ...cell, minWidth: 100 }}>{r.customerMark ?? "—"}</td>
+                          <td style={{ ...cell, minWidth: 100 }}>
+                            {r.trackingNo ?? "—"}
+                            {r.waybillNo && r.trackingNo && r.waybillNo !== r.trackingNo ? `（母单 ${r.waybillNo}）` : ""}
+                          </td>
+                          <td style={cell}>{r.entry ?? "—"}</td>
+                          <td style={cell}>{r.listLabel ?? "—"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  {observeLog.truncated && <div style={{ marginTop: 4, color: "var(--t-faint)" }}>只列最近 {observeLog.rows.length} 条。</div>}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
 
       {warnings.map((w) => (
         <div key={w} style={{ marginTop: 6, padding: "6px 8px", borderRadius: 6, background: "var(--c-amber-bg)", color: "var(--c-amber-deep)" }}>{w}</div>
@@ -203,6 +284,9 @@ export function Finance2HoldPanel() {
 /** 开着：1 分钟问一次状态；关着 / 取不到：10 分钟一次（关着也不完全停，免得后台打开了开关、开着的页面一直不知道） */
 const ON_POLL_MS = 60_000;
 const OFF_POLL_MS = 10 * 60_000;
+
+/** 表格格子：编号类不换行（AGENTS.md 第 18 条） */
+const cell: React.CSSProperties = { padding: "3px 8px", whiteSpace: "nowrap", verticalAlign: "top" };
 
 const btn: React.CSSProperties = {
   border: "1px solid var(--c-blue)", color: "var(--c-blue)", background: "var(--white)", borderRadius: 6,

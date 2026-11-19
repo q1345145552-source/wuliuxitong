@@ -760,7 +760,7 @@ export function registerContainerRoutes(app: MinimalHttpApp): void {
             throw new BusinessError(`以下运单刚刚变了状态，本次推进没有执行，请刷新后再看：${ids}`, 400, "VALIDATION_ERROR");
           }
           /* 财务系统2 扣货名单（2026-11-19 第 9 期）：推到「预约派送」是往外放货，名单上的那几票不推、其余照推、单独列出来
-             （接口⑦ 老板还没定是「只扣那几票」还是「整柜不让推」，先按只扣那几票做）。没推的票不写轨迹、不进推进账本，
+             （接口⑦，老板 2026-11-19 定：只扣这几票、其余照推，不是整柜不让推）。没推的票不写轨迹、不进推进账本，
              还停在「已到仓」；钱付了以后直接在尾端派送出车（那边也查名单）。开关 off 时一条都不多查。
              日志等事务提交以后再记（下面 holdLog），没提交成就不记。 */
           if (RELEASE_STATUSES.has(shipmentNextStatus) && finance2HoldsConfig()) {

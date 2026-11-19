@@ -1,14 +1,16 @@
 /**
  * 放货时查财务系统2 扣货名单：不连库的部分（2026-11-19，第 9 期）。
  *
- * ① 开关和配置：默认 off；只认 off / observe / enforce；配错按 off；生产只认 https；地址自己拼 /integrations/logistics/v1
+ * ① 开关和配置（老板 2026-11-19 定）：不填时配了地址 / 密钥按 observe、都没配是 off；明确写 off 才关；不认识的词按 enforce；
+ *    开着时密钥 / 地址配错照本地名单拦；生产只认 https；地址自己拼 /integrations/logistics/v1
  * ② 解析财务系统2 的返回（约定 5.1、5.2 的样例原样能收；时间不带时区、数字当唛头、blocked 不是布尔一律当失败）
  * ③ 真起一个假财务系统2：密钥在请求头不在地址里；401 不重试、5xx 能重试；超时按时断开
  * ④ 提示的话：【扣货】开头、带唛头和「按几点（泰国时间）的名单」、不带「派送中」（前端见到会当改派）
  * ⑤ 放货入口：后端里会把运单写成 deliveryBooked / outForDelivery 的地方逐个钉住，每处都过了扣货判断；
  *    按「写死字面量」「data: { currentStatus: 变量 }」「xx.currentStatus = 值」三种常见写法扫，新加这三种写法会红。
  *    ⚠️ 扫不到所有写法（多行对象、展开、currentStatus 不在第一个键……），不能代替改代码时自己想「这里会不会把货放出去」
- * ⑥ 前端：拦货报错时通知「扣货名单」那一块；装柜管理、尾端派送都放了这一块
+ * ⑥ 前端：拦货报错时通知「扣货名单」那一块；装柜管理、尾端派送都放了这一块；试运行记录只给管理员看
+ * ⑦ 扣货上报（约定第 11 节，老板 11-19 答「放货拦截 2、6」）：请求体字段和请求头对着约定、4xx 不重试、5xx / 连不上 / 超时下一轮再报
  * 用法：npm run test:finance2-holds-source
  */
 import assert from "node:assert/strict";
@@ -17,7 +19,8 @@ import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import * as path from "node:path";
 import { readFinance2HoldsConfig } from "../apps/api/src/modules/finance2-holds/config";
-import { checkHold, fetchHoldList, parseHoldCheck, parseHoldList, zonedTime } from "../apps/api/src/modules/finance2-holds/client";
+import { checkHold, fetchHoldList, parseHoldCheck, parseHoldList, postHoldEvent, zonedTime } from "../apps/api/src/modules/finance2-holds/client";
+import { releasedEventOf, safeReason } from "../apps/api/src/modules/finance2-holds/reports";
 import { heldByRules, heldMessage, listLabel, noticeFor, NO_LIST_NOTICE, motherOf } from "../apps/api/src/modules/finance2-holds/gate";
 
 const ROOT = path.join(__dirname, "..");
@@ -62,14 +65,36 @@ function walk(dir: string, out: string[] = []): string[] {
 async function main(): Promise<void> {
   console.log("\n【① 开关和配置】");
   const good = { FINANCE2_HOLDS_MODE: "enforce", FINANCE2_HOLDS_SECRET: SECRET, FINANCE2_API_BASE: "https://caiwu.example.com/" } as NodeJS.ProcessEnv;
-  await test("K1 默认 off：没填、填 off 才是关（唯一「全放」的情况）；填了不认识的词按 enforce（宁可多拦）并说原因", () => {
+  await test("K1 填 off 才是关（配了地址密钥也关）；填了不认识的词按 enforce（宁可多拦）并说原因（老板 2026-11-19 答「放货拦截 5」）", () => {
     assert.equal(readFinance2HoldsConfig({} as NodeJS.ProcessEnv).ok, false);
     const off = readFinance2HoldsConfig({ ...good, FINANCE2_HOLDS_MODE: "off" });
     assert.equal(off.ok, false);
+    assert.equal(readFinance2HoldsConfig({ ...good, FINANCE2_HOLDS_MODE: " off " }).ok, false, "前后空格照认");
     const bad = readFinance2HoldsConfig({ ...good, FINANCE2_HOLDS_MODE: "on" });
     assert.ok(bad.ok);
     assert.equal(bad.ok && bad.cfg.mode, "enforce");
     assert.match(bad.ok ? bad.cfg.problem ?? "" : "", /只认 off \/ observe \/ enforce/);
+  });
+  await test("K1b 开关不填（老板 2026-11-19 答「放货拦截 4」：默认先只记不拦）：地址、密钥至少配了一个 → observe；两个都没配 / 只有空白 → off", () => {
+    const blank = { ...good, FINANCE2_HOLDS_MODE: "" };
+    for (const env of [blank, { ...good, FINANCE2_HOLDS_MODE: undefined }, { ...good, FINANCE2_HOLDS_MODE: "  " }]) {
+      const r = readFinance2HoldsConfig(env as NodeJS.ProcessEnv);
+      assert.ok(r.ok, "配了地址和密钥、开关不填 = observe，不是关");
+      assert.equal(r.ok && r.cfg.mode, "observe");
+      assert.equal(r.ok && r.cfg.problem, null);
+      assert.ok(r.ok && r.cfg.remote);
+    }
+    // 只配了一个：照样 observe（照本地名单「只记」，页面提示配置有问题）
+    const onlySecret = readFinance2HoldsConfig({ FINANCE2_HOLDS_SECRET: SECRET } as NodeJS.ProcessEnv);
+    assert.ok(onlySecret.ok && onlySecret.cfg.mode === "observe" && onlySecret.cfg.remote === null);
+    assert.match(onlySecret.ok ? onlySecret.cfg.problem ?? "" : "", /FINANCE2_API_BASE 不对/);
+    const onlyBase = readFinance2HoldsConfig({ FINANCE2_API_BASE: "https://caiwu.example.com" } as NodeJS.ProcessEnv);
+    assert.ok(onlyBase.ok && onlyBase.cfg.mode === "observe" && onlyBase.cfg.remote === null);
+    assert.match(onlyBase.ok ? onlyBase.cfg.problem ?? "" : "", /FINANCE2_HOLDS_SECRET 不合格/);
+    // 两个都没配（docker-compose 透传进来是空串）/ 只有空白：关
+    for (const env of [{}, { FINANCE2_HOLDS_MODE: "", FINANCE2_HOLDS_SECRET: "", FINANCE2_API_BASE: "" }, { FINANCE2_HOLDS_SECRET: "  ", FINANCE2_API_BASE: " " }]) {
+      assert.equal(readFinance2HoldsConfig(env as NodeJS.ProcessEnv).ok, false, JSON.stringify(env));
+    }
   });
   await test("K2 observe / enforce 开；地址去掉结尾 / 拼上 /integrations/logistics/v1；配置没问题时 problem 为空", () => {
     for (const mode of ["observe", "enforce"]) {
@@ -418,6 +443,132 @@ async function main(): Promise<void> {
     assert.ok(!/amount|金额|¥/.test(panel.replace(/\/\*[^]*?\*\//g, "").replace(/\/\/.*$/gm, "")));
     assert.match(panel, /\{isAdmin && \(/);
   });
+  await test("W5 试运行记录（老板 2026-11-19 答「放货拦截 4」）：接口只给管理员、只查 observe、最近 7 天、限条数、不回金额 / 名字 / 操作人；面板只在 observe + 管理员时出这个按钮", () => {
+    const routes = read("apps/api/src/modules/finance2-holds/routes.ts");
+    const fn = routes.slice(routes.indexOf("app.get(FINANCE2_HOLD_PATHS.observeLog"), routes.indexOf("app.post(FINANCE2_HOLD_PATHS.refresh"));
+    assert.match(fn, /requireRole\(req, res, \["admin"\]\)/);
+    assert.match(fn, /where: \{ kind: "observe", createdAt: \{ gte: since \} \}/);
+    assert.match(fn, /take: OBSERVE_LOG_LIMIT \+ 1/);
+    assert.ok(!/operatorId|amount|clientName|name:/.test(fn), "不回操作人、金额、名字");
+    assert.match(routes, /OBSERVE_LOG_DAYS = 7;/);
+    const panel = read("apps/web/src/components/finance2/Finance2HoldPanel.tsx");
+    assert.match(panel, /\{isAdmin && live\?\.mode === "observe" && \(/);
+    assert.match(read("apps/web/src/services/finance2-holds-api.ts"), /\/admin\/finance2-holds\/observe-log/);
+  });
+  await test("W6 文档里不再有过时的「配错按 off」，写明不填时按 observe、off 才关", () => {
+    for (const f of [".env.example", "env.example", "apps/api/src/modules/finance2-holds/config.ts"]) {
+      assert.ok(!read(f).includes("配错按 off"), f);
+    }
+    for (const f of [".env.example", "env.example"]) {
+      assert.match(read(f), /不填   → 下面地址、密钥至少配了一个就按 observe/, f);
+      assert.match(read(f), /off     → 关：什么都不做/, f);
+    }
+    assert.match(read("docker-compose.yml"), /MODE 不填：地址 \/ 密钥配了就按 observe/);
+  });
+
+  console.log("\n【⑦ 扣货上报（约定第 11 节）】");
+  {
+    interface Seen { method: string; url: string; headers: Record<string, string | string[] | undefined>; body: string }
+    const got: Seen[] = [];
+    let ev: { status: number; body: string; delayMs?: number } = { status: 200, body: JSON.stringify({ serverTime: "2026-12-05T10:15:03+07:00", accepted: true }) };
+    const srv = createServer((req, res) => {
+      const chunks: Buffer[] = [];
+      req.on("data", (c: Buffer) => chunks.push(c));
+      req.on("end", () => {
+        got.push({ method: req.method ?? "", url: req.url ?? "", headers: req.headers, body: Buffer.concat(chunks).toString("utf8") });
+        const send = () => { if (!res.destroyed) { res.writeHead(ev.status, { "content-type": "application/json" }); res.end(ev.body); } };
+        if (ev.delayMs) setTimeout(send, ev.delayMs); else send();
+      });
+    });
+    await new Promise<void>((r) => srv.listen(0, "127.0.0.1", r));
+    const remote = { secret: SECRET, apiBase: `http://127.0.0.1:${(srv.address() as AddressInfo).port}/integrations/logistics/v1` };
+    const row = {
+      id: "log1", customerMark: "10086", waybillNo: "XT2611180001", trackingNo: "XT2611180001-2", entry: "拆派仓回传派送中",
+      listGeneratedAt: new Date("2026-12-05T03:00:00Z"), createdAt: new Date("2026-12-05T10:15:02.123Z"),
+    };
+    try {
+      await test("R1 releasedWhileHeld：POST …/hold-events，Bearer 密钥在请求头、JSON 请求体字段跟约定 11.1 一模一样（不多不少）", async () => {
+        const r = await postHoldEvent(remote, releasedEventOf(row));
+        assert.equal(r.kind, "ok");
+        const g = got.at(-1)!;
+        assert.equal(g.method, "POST");
+        assert.equal(g.url, "/integrations/logistics/v1/hold-events");
+        assert.equal(g.headers.authorization, `Bearer ${SECRET}`);
+        assert.match(String(g.headers["content-type"]), /^application\/json/);
+        assert.ok(!g.url.includes(SECRET));
+        assert.deepEqual(JSON.parse(g.body), {
+          kind: "releasedWhileHeld",
+          occurredAt: "2026-12-05T10:15:02.123Z",
+          customerMark: "10086",
+          waybillNo: "XT2611180001",
+          trackingNo: "XT2611180001-2",
+          entry: "拆派仓回传派送中",
+          listGeneratedAt: "2026-12-05T03:00:00.000Z",
+        });
+        assert.ok(Buffer.byteLength(g.body) <= 8 * 1024);
+        // 母运单自己出去的：trackingNo 跟 waybillNo 一样；没有名单时间给 null（不省略）
+        const own = releasedEventOf({ ...row, trackingNo: "XT2611180001", listGeneratedAt: null }) as unknown as Record<string, unknown>;
+        assert.equal(own.trackingNo, "XT2611180001");
+        assert.ok("listGeneratedAt" in own && own.listGeneratedAt === null);
+      });
+      await test("R2 holdListUnavailable / holdListRecovered 的请求体照约定 11.2；reason 里的密钥换掉、截到 200 字、不许空", async () => {
+        await postHoldEvent(remote, { kind: "holdListUnavailable", occurredAt: "2026-12-05T11:15:00.000Z", reason: "HTTP 401", failingSince: "2026-12-05T10:00:00.000Z", lastFetchedAt: null });
+        assert.deepEqual(JSON.parse(got.at(-1)!.body), { kind: "holdListUnavailable", occurredAt: "2026-12-05T11:15:00.000Z", reason: "HTTP 401", failingSince: "2026-12-05T10:00:00.000Z", lastFetchedAt: null });
+        await postHoldEvent(remote, { kind: "holdListRecovered", occurredAt: "2026-12-05T11:30:00.000Z" });
+        assert.deepEqual(JSON.parse(got.at(-1)!.body), { kind: "holdListRecovered", occurredAt: "2026-12-05T11:30:00.000Z" });
+        assert.equal(safeReason(`连不上 ${SECRET} 了`, SECRET), "连不上 *** 了");
+        assert.equal(safeReason("x".repeat(500), SECRET).length, 200);
+        assert.equal(safeReason("  ", SECRET), "取不到扣货名单");
+      });
+      await test("R3 只有 200 算报进去；4xx（400 / 401 / 403 / 404 / 413）不重试；5xx / 429 / 别的状态码 / 超时 / 连不上下一轮再报；超过 8 KB 不发", async () => {
+        for (const [status, retryable] of [[400, false], [401, false], [403, false], [404, false], [413, false], [500, true], [502, true], [503, true], [429, true], [204, true], [302, true]] as const) {
+          ev = { status, body: status === 400 ? JSON.stringify({ error: "bad_request", message: "customerMark 太长" }) : "{}" };
+          const r = await postHoldEvent(remote, releasedEventOf(row));
+          assert.equal(r.kind, "error", String(status));
+          assert.equal(r.kind === "error" && r.retryable, retryable, String(status));
+          if (status === 400) assert.match(r.kind === "error" ? r.reason : "", /HTTP 400：customerMark 太长/);
+        }
+        ev = { status: 200, body: "{}", delayMs: 2000 };
+        const t0 = Date.now();
+        const slow = await postHoldEvent(remote, releasedEventOf(row), 300);
+        assert.ok(slow.kind === "error" && slow.retryable && slow.reason === "超时", JSON.stringify(slow));
+        assert.ok(Date.now() - t0 < 1500);
+        const down = await postHoldEvent({ ...remote, apiBase: "http://127.0.0.1:1/integrations/logistics/v1" }, releasedEventOf(row));
+        assert.ok(down.kind === "error" && down.retryable && down.reason === "连不上", JSON.stringify(down));
+        const n = got.length;
+        const big = await postHoldEvent(remote, { ...(releasedEventOf(row) as object), entry: "长".repeat(5000) } as never);
+        assert.ok(big.kind === "error" && !big.retryable);
+        assert.equal(got.length, n, "超过 8 KB 本地就不发（约定 11）");
+      });
+    } finally {
+      srv.close();
+    }
+    await test("R4 拆派仓回传：记 chaipai 日志时标 pending、马上报一次；15 分钟那一轮（runHoldRound）补报最近 7 天的；observe 也报、开关 off 不报", () => {
+      const gate = read("apps/api/src/modules/finance2-holds/gate.ts");
+      const note = gate.slice(gate.indexOf("async function noteChaipaiReleaseInner"));
+      assert.match(note, /if \(!finance2HoldsConfig\(\)\) return;/);
+      assert.match(note, /reportStatus: "pending" as const/);
+      assert.match(note, /await reportReleasedNow\(ids\)/);
+      assert.ok(!/result\.enforce|mode === "enforce"/.test(note), "observe 也要报（货确实出去了），不许按 enforce 判断");
+      const reports = read("apps/api/src/modules/finance2-holds/reports.ts");
+      assert.match(reports, /REPORT_RETRY_WINDOW_MS = 7 \* 24 \* 60 \* 60 \* 1000/);
+      assert.match(reports, /where: \{ kind: "chaipai", reportStatus: "pending", createdAt: \{ gte:/);
+      const sync = read("apps/api/src/modules/finance2-holds/sync.ts");
+      assert.match(sync, /const reports = await retryPendingReports\(\);/);
+      assert.match(sync, /const run = \(\) => \{\n\s+runHoldRound\(\)/, "定时任务每一轮都补报");
+    });
+    await test("R5 取名单报警的那几种同时报给财务（有 remote 才报）；取到名单时报「恢复了」；上报函数整个包在 try 里、不影响取名单", () => {
+      const sync = read("apps/api/src/modules/finance2-holds/sync.ts");
+      const alert = sync.slice(sync.indexOf("if (/HTTP 40[13]|配置有问题/.test(lastReason) || longDown)"));
+      assert.match(alert.slice(0, 600), /if \(cfg\.remote\) \{\n\s+await reportHoldListUnavailable\(cfg\.remote,/);
+      assert.match(sync, /await reportHoldListRecovered\(cfg\.remote!\);/);
+      const reports = read("apps/api/src/modules/finance2-holds/reports.ts");
+      for (const fn of ["reportReleasedNow", "reportHoldListUnavailable", "reportHoldListRecovered"]) {
+        const body = reports.slice(reports.indexOf(`export async function ${fn}`));
+        assert.match(body.slice(0, 400), /\{\n\s+(if \(logIds\.length === 0\) return;\n\s+)?try \{/, `${fn} 要整个包在 try 里`);
+      }
+    });
+  }
 
   console.log(`\n通过 ${passes}，失败 ${failures}`);
   process.exit(failures > 0 ? 1 : 0);

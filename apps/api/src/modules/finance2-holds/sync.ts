@@ -1,6 +1,7 @@
 import { logger } from "../core/logger";
 import { finance2HoldsConfig } from "./config";
 import { fetchHoldList } from "./client";
+import { reportHoldListRecovered, reportHoldListUnavailable, retryPendingReports, type RetryOutcome } from "./reports";
 import { readHoldState, recordFetchFailure, replaceHoldList, writeHoldLogs } from "./store";
 
 /**
@@ -8,6 +9,8 @@ import { readHoldState, recordFetchFailure, replaceHoldList, writeHoldLogs } fro
  * 失败重试：等 5 秒、30 秒、2 分钟，三次都不行就这一轮放弃、保留上一份，等下一轮（约定 1.3）。
  * 4xx、格式不对不重试（重试也一样）；429 按 Retry-After 等（最多等 2 分钟）。
  * 开关 off 时什么都不做。同一时间只跑一轮。
+ * 报警（约定 1.3、11.2；老板 2026-11-19 答「放货拦截 6」）：401 / 403、配置有问题、连续 1 小时取不到 → 打 error 日志，
+ * 并且（有 remote 时）报给财务系统2 老板首页 holdListUnavailable；之后又取到了报一次 holdListRecovered。报的成败不影响取名单。
  */
 
 export const SYNC_INTERVAL_MS = 15 * 60 * 1000;
@@ -52,6 +55,8 @@ async function syncOnce(retryDelaysMs: number[]): Promise<SyncOutcome> {
           result: `取到名单：扣 ${outcome.holds} 家、单票放行 ${outcome.released} 票`,
           listGeneratedAt: r.value.generatedAt,
         }]);
+        // 之前报过「拿不到名单」：报一次「恢复了」（没报过什么都不发）
+        await reportHoldListRecovered(cfg.remote!);
         return { kind: "ok", replaced: true, holds: outcome.holds, released: outcome.released };
       } catch (error) {
         lastReason = `存名单失败：${error instanceof Error ? error.message.slice(0, 200) : String(error)}`;
@@ -70,14 +75,18 @@ async function syncOnce(retryDelaysMs: number[]): Promise<SyncOutcome> {
     logger.error("扣货名单：记录取名单失败也没记上", { 原因: error instanceof Error ? error.message : String(error) });
   }
   await writeHoldLogs([{ kind: "fetch_fail", result: "没取到名单，保留上一份", detail: lastReason }]);
-  // 约定 1.3：401 / 403（密钥不对）、配置不对、连续 1 小时取不到 → 报警（打 error 日志；物流系统没有「异常提醒」页）。
-  // 「连续」从这一串失败的第一次算起，从来没取到过名单的也算（Codex 审查第 9 条）
+  // 约定 1.3：401 / 403（密钥不对）、配置不对、连续 1 小时取不到 → 报警：打 error 日志，同时报给财务系统2 老板首页（约定 11.2）。
+  // 「连续」从这一串失败的第一次算起，从来没取到过名单的也算（Codex 审查第 9 条）。
+  // 配置有问题（没有 remote）时连不上财务，报不了，只打日志。这一轮只报一次（这里每轮只走到一次）
   const state = await readHoldState().catch(() => null);
   const longDown = !!failingSince && Date.now() - failingSince.getTime() > ALERT_AFTER_MS;
   if (/HTTP 40[13]|配置有问题/.test(lastReason) || longDown) {
     logger.error("扣货名单取不到了，请检查财务系统2 和密钥（照上一份名单拦）", {
       原因: lastReason, 最后取到: state?.fetchedAt?.toISOString() ?? "从来没有", 连续失败起点: failingSince?.toISOString() ?? null,
     });
+    if (cfg.remote) {
+      await reportHoldListUnavailable(cfg.remote, { reason: lastReason, failingSince: failingSince ?? new Date(), lastFetchedAt: state?.fetchedAt ?? null });
+    }
   } else {
     logger.warn("扣货名单这一轮没取到，保留上一份", { 原因: lastReason });
   }
@@ -91,11 +100,24 @@ export function syncHoldList(opts: { retryDelaysMs?: number[] } = {}): Promise<S
   return running;
 }
 
+/**
+ * 定时任务的一轮：先取名单，再把最近 7 天没报进去的「扣着的货被放出去了」补报（约定 11.3）。
+ * 两件事互不影响：取名单失败照样补报，补报失败不影响取名单。
+ */
+export async function runHoldRound(opts: { retryDelaysMs?: number[] } = {}): Promise<{ sync: SyncOutcome; reports: RetryOutcome }> {
+  const sync = await syncHoldList(opts).catch((error): SyncOutcome => {
+    logger.error("扣货名单定时任务出错", { 原因: error instanceof Error ? error.message : String(error) });
+    return { kind: "failed", reason: "定时任务出错" };
+  });
+  const reports = await retryPendingReports();
+  return { sync, reports };
+}
+
 /** 启动时先取一次，之后每 15 分钟一次。FINANCE2_HOLDS_SCHEDULER=off 时不启动（测试用） */
 export function startFinance2HoldScheduler(): void {
   if (process.env.FINANCE2_HOLDS_SCHEDULER === "off") return;
   const run = () => {
-    syncHoldList().catch((error) => logger.error("扣货名单定时任务出错", { 原因: error instanceof Error ? error.message : String(error) }));
+    runHoldRound().catch((error) => logger.error("扣货名单定时任务出错", { 原因: error instanceof Error ? error.message : String(error) }));
   };
   setTimeout(run, 10_000).unref();
   setInterval(run, SYNC_INTERVAL_MS).unref();

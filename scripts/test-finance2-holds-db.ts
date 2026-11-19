@@ -8,6 +8,10 @@
  *   单票放行（连子单）能放、不在名单的照放；从来没取到过名单不拦有提示；超过 1 天有提示；
  *   重新核对 回 false 能放 / 回 true 继续拦 / 超时连不上按本地名单拦并写名单时间；
  *   取名单失败保留上一份；整份替换后旧唛头不再拦；其他状态流转不受影响；开关 off / observe。
+ * 老板 2026-11-19 答「放货拦截 1～6」后加（假财务系统2 也收 POST /hold-events，约定第 11 节）：
+ *   拆派仓派出去的报 releasedWhileHeld（字段 / 请求头、报不进去下一轮补报、4xx 不再报、observe 也报、off 不报、只补 7 天内）；
+ *   取不到名单报 holdListUnavailable（一串失败只报成一次、报不进去下一轮再报）、恢复报一次 holdListRecovered；
+ *   开关不填时按 observe / 都没配是 off；试运行记录接口只给管理员；撤销误签收不拦；新迁移跟上一份接着跑两遍零差异。
  *
  * 只连测试库：没设 AGENT_PORTAL_TEST_ALLOW_DB=1 一律不跑；没有 DATABASE_URL 打印「跳过」。
  * 测试数据全在假公司 zz_f2h_co 下，开跑前、跑完后都清干净。迁移文件那一段要临时建库，只在本机一次性库上跑。
@@ -33,6 +37,7 @@ const SECRET = "F1n2Hold-aB3dE5gH7jK9mN1pQ3sT5vXyZ";
 const ROOT = path.join(__dirname, "..");
 const SCHEMA = path.join(ROOT, "apps/api/prisma/schema.prisma");
 const MIGRATION = path.join(ROOT, "apps/api/prisma/migrations/20261119_finance2_holds/migration.sql");
+const MIGRATION_REPORTS = path.join(ROOT, "apps/api/prisma/migrations/20261119_finance2_holds_reports/migration.sql");
 const DRIFT = path.join(ROOT, "scripts/check-schema-drift.sql");
 
 const ADMIN = "zz_f2h_admin";
@@ -89,6 +94,10 @@ const fake = {
   check: (_mark: string, _waybill: string | null): FakeReply | null => null,
   requests: [] as Array<{ path: string; auth: string | undefined; query: URLSearchParams }>,
   lastCheckedAt: null as Date | null,
+  /** 扣货上报（约定 11）POST /hold-events 回什么；默认 200 收下 */
+  events: { status: 200, body: { serverTime: "2026-12-05T10:15:03+07:00", accepted: true } } as FakeReply,
+  /** 收到的上报（不算进 requests，免得改了老用例的请求数） */
+  posts: [] as Array<{ auth: string | undefined; contentType: string | undefined; body: Row }>,
 };
 function listBody(generatedAt: Date, holds: string[], released: Array<{ no: string; mark: string }>): unknown {
   return {
@@ -107,6 +116,23 @@ function checkReply(mark: string, waybill: string | null, blocked: boolean, at: 
 async function startFake(): Promise<string> {
   const server = createServer((req: IncomingMessage, res: ServerResponse) => {
     const u = new URL(req.url ?? "/", "http://x");
+    if (req.method === "POST" && u.pathname === "/integrations/logistics/v1/hold-events") {
+      const chunks: Buffer[] = [];
+      req.on("data", (c: Buffer) => chunks.push(c));
+      req.on("end", () => {
+        let body: Row = {};
+        try { body = JSON.parse(Buffer.concat(chunks).toString("utf8")) as Row; } catch { /* 留空 */ }
+        fake.posts.push({ auth: req.headers.authorization, contentType: req.headers["content-type"], body });
+        const reply = req.headers.authorization !== `Bearer ${SECRET}` ? { status: 401, body: { error: "unauthorized" } } as FakeReply : fake.events;
+        const send = () => {
+          if (res.destroyed) return;
+          res.writeHead(reply.status, { "content-type": "application/json; charset=utf-8" });
+          res.end(reply.raw ?? JSON.stringify(reply.body ?? {}));
+        };
+        if (reply.delayMs) setTimeout(send, reply.delayMs); else send();
+      });
+      return;
+    }
     fake.requests.push({ path: u.pathname, auth: req.headers.authorization, query: u.searchParams });
     let reply: FakeReply;
     if (req.headers.authorization !== `Bearer ${SECRET}`) reply = { status: 401, body: { error: "unauthorized" } };
@@ -149,7 +175,8 @@ async function main(): Promise<void> {
   const { registerLoadingManifestRoutes } = await import("../apps/api/src/modules/loading-manifests/routes");
   const { registerAdminOpsRoutes } = await import("../apps/api/src/modules/admin-ops/routes");
   const { registerFinance2HoldRoutes } = await import("../apps/api/src/modules/finance2-holds/routes");
-  const { syncHoldList } = await import("../apps/api/src/modules/finance2-holds/sync");
+  const { syncHoldList, runHoldRound } = await import("../apps/api/src/modules/finance2-holds/sync");
+  const { retryPendingReports, REPORT_RETRY_WINDOW_MS } = await import("../apps/api/src/modules/finance2-holds/reports");
   const { flushHoldLogs, noteChaipaiRelease, NO_LIST_NOTICE, formatListTime } = await import("../apps/api/src/modules/finance2-holds/gate");
 
   const db = prisma as any;
@@ -233,6 +260,8 @@ async function main(): Promise<void> {
     fake.list = { status: 200, body: listBody(ago(0.1), [A, B], [{ no: "ZZF2H00B1", mark: B }]) };
     fake.check = () => null;
     fake.requests = [];
+    fake.events = { status: 200, body: { serverTime: bkk(new Date()), accepted: true } };
+    fake.posts = [];
   }
 
   const PORT = await freePort();
@@ -717,8 +746,29 @@ async function main(): Promise<void> {
       const s = await staff("GET", "/admin/finance2-holds/status");
       assert.deepEqual(s.body.data, { mode: "off" });
       assert.equal((await logs("block")).length + (await logs("observe")).length, 0);
+      // 开关不填（老板 2026-11-19 答「放货拦截 4」）：配了地址 / 密钥 = observe（去取名单、只记不拦）；都没配才是 off
       delete process.env.FINANCE2_HOLDS_MODE;
-      assert.equal((await sync()).kind, "off", "没填等于 off");
+      fake.requests = [];
+      assert.equal((await sync()).kind, "ok", "没填、配了地址密钥 = observe，照样取名单");
+      assert.equal(fake.requests.length, 1);
+      assert.equal((await staff("GET", "/admin/finance2-holds/status")).body.data.mode, "observe");
+      await db.adminLastmileOrder.deleteMany({ where: { companyId: CO } });
+      await db.shipment.update({ where: { trackingNo: "ZZF2H00A2-1" }, data: { currentStatus: "inWarehouseTH" } });
+      assert.equal((await dispatch(["ZZF2H00A2-1"])).status, 200, "observe 不拦");
+      assert.ok((await logs("observe")).some((l: Row) => l.trackingNo === "ZZF2H00A2-1"), "只记一笔");
+      const keep = { s: process.env.FINANCE2_HOLDS_SECRET, b: process.env.FINANCE2_API_BASE };
+      process.env.FINANCE2_HOLDS_SECRET = "";
+      process.env.FINANCE2_API_BASE = "";
+      try {
+        fake.requests = [];
+        assert.equal((await sync()).kind, "off", "没填、地址密钥也都没配 = off");
+        assert.equal(fake.requests.length, 0);
+        assert.deepEqual((await staff("GET", "/admin/finance2-holds/status")).body.data, { mode: "off" });
+      } finally {
+        process.env.FINANCE2_HOLDS_SECRET = keep.s;
+        process.env.FINANCE2_API_BASE = keep.b;
+        process.env.FINANCE2_HOLDS_MODE = "enforce";
+      }
     });
     await test("S3 开了但配错（密钥太短 / 地址错）：照本地名单拦（Codex 审查第 1 条）；页面和回话提示配置有问题；不去连财务；核对答「问不了」", async () => {
       await fresh("enforce");
@@ -761,18 +811,328 @@ async function main(): Promise<void> {
       }
     });
 
-    console.log("\n【拆派仓回传派送中 —— 照收、记一笔】");
-    await test("K1 名单上的货被拆派仓派出去了：记一条 chaipai 日志 + 警告", async () => {
+    console.log("\n【拆派仓回传派送中 —— 照收、记一笔、报给财务（老板 2026-11-19 答「放货拦截 2」；约定 11.1）】");
+    const zonedOk = (v: unknown) => typeof v === "string" && /(Z|[+-]\d{2}:\d{2})$/.test(v) && Number.isFinite(Date.parse(v));
+    const chaipaiRows = async () => { await flushHoldLogs(); return db.finance2HoldLog.findMany({ where: { kind: "chaipai" }, orderBy: { createdAt: "asc" } }); };
+    await test("K1 名单上的货被拆派仓派出去了：记一条 chaipai 日志 + 警告，马上报给财务（请求体、请求头照约定 11.1），记成 sent；不在名单上的不记不报", async () => {
       await fresh();
       await sync();
-      await noteChaipaiRelease(`${P}s_a1`);
-      await flushHoldLogs();
-      const k = await logs("chaipai");
+      const gen = (await db.finance2HoldState.findUnique({ where: { id: "current" } })).generatedAt as Date;
+      await noteChaipaiRelease(`${P}s_a2c`);
+      const k = await chaipaiRows();
       assert.equal(k.length, 1);
-      assert.equal(k[0].trackingNo, "ZZF2H00A1");
+      assert.equal(k[0].trackingNo, "ZZF2H00A2-1");
       assert.ok(captured.some((l) => l.includes("扣货名单上的货被拆派仓派出去了")));
+      assert.equal(fake.posts.length, 1);
+      const post = fake.posts[0];
+      assert.equal(post.auth, `Bearer ${SECRET}`);
+      assert.match(post.contentType ?? "", /^application\/json/);
+      assert.deepEqual(post.body, {
+        kind: "releasedWhileHeld",
+        occurredAt: k[0].createdAt.toISOString(),
+        customerMark: A,
+        waybillNo: "ZZF2H00A2",
+        trackingNo: "ZZF2H00A2-1",
+        entry: "拆派仓回传派送中",
+        listGeneratedAt: gen.toISOString(),
+      });
+      assert.ok(!JSON.stringify(post.body).includes(NAME_A), "不带客户名字");
+      assert.equal(k[0].reportStatus, "sent");
+      assert.ok(k[0].reportedAt);
+      assert.equal(k[0].reportError, null);
       await noteChaipaiRelease(`${P}s_c1`);
-      assert.equal((await logs("chaipai")).length, 1, "不在名单上的不记");
+      assert.equal((await chaipaiRows()).length, 1, "不在名单上的不记");
+      assert.equal(fake.posts.length, 1, "不在名单上的不报");
+      // 15 分钟那一轮：报成了的不再报
+      await runHoldRound();
+      assert.equal(fake.posts.length, 1);
+    });
+    await test("K2 报不进去（500 / 超时 / 连不上）不丢：留着 pending + 原因；下一轮（runHoldRound，定时任务那一轮）接着报，200 后记 sent、不再报", async () => {
+      await fresh();
+      await sync();
+      fake.events = { status: 500, body: {} };
+      await noteChaipaiRelease(`${P}s_a1`);
+      let [row] = await chaipaiRows();
+      assert.equal(row.reportStatus, "pending");
+      assert.match(row.reportError, /HTTP 500/);
+      assert.equal(row.reportedAt, null);
+      // 下一轮还连不上：照样留着
+      fake.events = { status: 503, body: {} };
+      const r1 = await runHoldRound();
+      assert.equal(r1.sync.kind, "ok", "补报不影响取名单");
+      assert.deepEqual(r1.reports, { kind: "done", tried: 1, sent: 0, rejected: 0, pending: 1 });
+      [row] = await chaipaiRows();
+      assert.equal(row.reportStatus, "pending");
+      assert.match(row.reportError, /HTTP 503/);
+      // 财务恢复了：这一轮补报成功
+      fake.events = { status: 200, body: { serverTime: bkk(new Date()), accepted: true } };
+      const before = fake.posts.length;
+      const r2 = await runHoldRound();
+      assert.deepEqual(r2.reports, { kind: "done", tried: 1, sent: 1, rejected: 0, pending: 0 });
+      assert.equal(fake.posts.length, before + 1);
+      assert.equal(fake.posts.at(-1)!.body.trackingNo, "ZZF2H00A1");
+      [row] = await chaipaiRows();
+      assert.equal(row.reportStatus, "sent");
+      assert.equal(row.reportError, null);
+      await runHoldRound();
+      assert.equal(fake.posts.length, before + 1, "报成了不再报");
+    });
+    await test("K2b 名单取不到的那一轮也照样补报（两件事互不影响）；连不上时一轮里碰到第一条连不上就停，不一条条等超时", async () => {
+      await fresh();
+      await sync();
+      fake.events = { status: 502, body: {} };
+      await noteChaipaiRelease(`${P}s_a1`);
+      await noteChaipaiRelease(`${P}s_b2`);
+      const before = fake.posts.length;
+      const r1 = await runHoldRound();
+      assert.deepEqual(r1.reports, { kind: "done", tried: 1, sent: 0, rejected: 0, pending: 1 }, "第一条连不上就停");
+      assert.equal(fake.posts.length, before + 1);
+      fake.list = { status: 500, body: {} };
+      fake.events = { status: 200, body: { serverTime: bkk(new Date()), accepted: true } };
+      const r2 = await runHoldRound({ retryDelaysMs: [] });
+      assert.equal(r2.sync.kind, "failed");
+      assert.deepEqual(r2.reports, { kind: "done", tried: 2, sent: 2, rejected: 0, pending: 0 });
+      assert.ok((await chaipaiRows()).every((l: Row) => l.reportStatus === "sent"));
+    });
+    await test("K3 财务回 4xx（400 / 401）：记 rejected、打 error 日志，以后不再报这一条", async () => {
+      await fresh();
+      await sync();
+      fake.events = { status: 400, body: { error: "bad_request", message: "customerMark 1～64 字" } };
+      const mark = captured.length;
+      await noteChaipaiRelease(`${P}s_a1`);
+      const [row] = await chaipaiRows();
+      assert.equal(row.reportStatus, "rejected");
+      assert.ok(row.reportedAt);
+      assert.match(row.reportError, /HTTP 400：customerMark 1～64 字/);
+      assert.ok(captured.slice(mark).some((l) => l.includes("[ERROR]") && l.includes("不再报")));
+      fake.events = { status: 200, body: { serverTime: bkk(new Date()), accepted: true } };
+      const before = fake.posts.length;
+      const r = await runHoldRound();
+      assert.deepEqual(r.reports, { kind: "done", tried: 0, sent: 0, rejected: 0, pending: 0 });
+      assert.equal(fake.posts.length, before);
+    });
+    await test("K4 observe（试运行）也报：货确实出去了", async () => {
+      await fresh("observe");
+      await sync();
+      await noteChaipaiRelease(`${P}s_a1`);
+      const [row] = await chaipaiRows();
+      assert.equal(row.reportStatus, "sent");
+      assert.equal(fake.posts.length, 1);
+      assert.equal(fake.posts[0].body.kind, "releasedWhileHeld");
+    });
+    await test("K5 开关 off：不记不报；off 时 15 分钟那一轮也不补报以前没报成的", async () => {
+      await fresh();
+      await sync();
+      fake.events = { status: 500, body: {} };
+      await noteChaipaiRelease(`${P}s_a1`);
+      assert.equal((await chaipaiRows())[0].reportStatus, "pending");
+      process.env.FINANCE2_HOLDS_MODE = "off";
+      try {
+        fake.events = { status: 200, body: {} };
+        const before = fake.posts.length;
+        await noteChaipaiRelease(`${P}s_b2`);
+        assert.equal((await chaipaiRows()).length, 1, "off 不记");
+        const r = await retryPendingReports();
+        assert.deepEqual(r, { kind: "off" });
+        assert.equal(fake.posts.length, before, "off 一条都不报");
+      } finally {
+        process.env.FINANCE2_HOLDS_MODE = "enforce";
+      }
+    });
+    await test("K6 只补报最近 7 天的（更早的留着不动）；连财务的配置有问题时报不了、留着 pending，配好以后补报", async () => {
+      await fresh();
+      await sync();
+      fake.events = { status: 500, body: {} };
+      await noteChaipaiRelease(`${P}s_a1`);
+      const [old] = await chaipaiRows();
+      await db.finance2HoldLog.update({ where: { id: old.id }, data: { createdAt: new Date(Date.now() - REPORT_RETRY_WINDOW_MS - 60_000) } });
+      fake.events = { status: 200, body: {} };
+      const before = fake.posts.length;
+      assert.deepEqual(await retryPendingReports(), { kind: "done", tried: 0, sent: 0, rejected: 0, pending: 0 });
+      assert.equal(fake.posts.length, before);
+      const keep = process.env.FINANCE2_HOLDS_SECRET;
+      process.env.FINANCE2_HOLDS_SECRET = "short";
+      try {
+        await noteChaipaiRelease(`${P}s_b2`);
+        const b2 = (await chaipaiRows()).find((l: Row) => l.trackingNo === "ZZF2H00B2");
+        assert.equal(b2.reportStatus, "pending", "配置有问题：先记着");
+        assert.equal(fake.posts.length, before, "没法报就不发");
+        assert.deepEqual(await retryPendingReports(), { kind: "noRemote" });
+      } finally {
+        process.env.FINANCE2_HOLDS_SECRET = keep;
+      }
+      const r = await retryPendingReports();
+      assert.deepEqual(r, { kind: "done", tried: 1, sent: 1, rejected: 0, pending: 0 });
+      assert.equal(fake.posts.at(-1)!.body.trackingNo, "ZZF2H00B2");
+    });
+
+    console.log("\n【拿不到扣货名单 → 报给财务（老板 2026-11-19 答「放货拦截 6」；约定 11.2）】");
+    const eventsOf = (kind: string) => fake.posts.filter((p) => p.body.kind === kind);
+    await test("A1 取名单 401：打 error 日志，同时报 holdListUnavailable（reason 不带密钥、带连续失败起点和上次取到的时间）；一轮只报一次，下一轮还失败不再报", async () => {
+      await fresh();
+      await sync();
+      const fetchedAt = (await db.finance2HoldState.findUnique({ where: { id: "current" } })).fetchedAt as Date;
+      fake.list = { status: 401, body: { error: "unauthorized" } };
+      await syncHoldList({ retryDelaysMs: [10, 10] });
+      const un = eventsOf("holdListUnavailable");
+      assert.equal(un.length, 1);
+      assert.equal(un[0].auth, `Bearer ${SECRET}`);
+      assert.match(un[0].body.reason, /HTTP 401/);
+      assert.ok(!JSON.stringify(un[0].body).includes(SECRET));
+      const st = await db.finance2HoldState.findUnique({ where: { id: "current" } });
+      assert.equal(un[0].body.failingSince, st.failingSince.toISOString());
+      assert.equal(un[0].body.lastFetchedAt, fetchedAt.toISOString());
+      assert.ok(zonedOk(un[0].body.occurredAt));
+      assert.deepEqual(Object.keys(un[0].body).sort(), ["failingSince", "kind", "lastFetchedAt", "occurredAt", "reason"]);
+      assert.equal(st.unavailableReport, "sent");
+      await sync();
+      await sync();
+      assert.equal(eventsOf("holdListUnavailable").length, 1, "报成了，这一串失败里不再报");
+      assert.equal(eventsOf("holdListRecovered").length, 0);
+    });
+    await test("A2 又取到了：报一次 holdListRecovered（字段只有 kind、occurredAt），清掉记号；再取到不再报", async () => {
+      fake.list = { status: 200, body: listBody(new Date(), [A, B], []) };
+      await sync();
+      const rec = eventsOf("holdListRecovered");
+      assert.equal(rec.length, 1);
+      assert.deepEqual(Object.keys(rec[0].body).sort(), ["kind", "occurredAt"]);
+      assert.equal((await db.finance2HoldState.findUnique({ where: { id: "current" } })).unavailableReport, null);
+      await sync();
+      assert.equal(eventsOf("holdListRecovered").length, 1);
+    });
+    await test("A3 连续 1 小时取不到（5xx）也报；报不进去（503）留着 pending，下一轮失败时再报；从来没报过的不报「恢复了」", async () => {
+      await fresh();
+      await sync();
+      fake.list = { status: 500, body: {} };
+      await sync();
+      assert.equal(eventsOf("holdListUnavailable").length, 0, "刚开始失败、还不到 1 小时：只打 warn，不报");
+      await db.finance2HoldState.update({ where: { id: "current" }, data: { failingSince: ago(2) } });
+      fake.events = { status: 503, body: {} };
+      await syncHoldList({ retryDelaysMs: [10, 10] });
+      assert.equal(eventsOf("holdListUnavailable").length, 1, "一轮（带重试）里只报一次");
+      assert.equal((await db.finance2HoldState.findUnique({ where: { id: "current" } })).unavailableReport, "pending");
+      fake.events = { status: 200, body: { serverTime: bkk(new Date()), accepted: true } };
+      await sync();
+      assert.equal(eventsOf("holdListUnavailable").length, 2, "上一轮没报进去，这一轮再报");
+      assert.equal((await db.finance2HoldState.findUnique({ where: { id: "current" } })).unavailableReport, "sent");
+      fake.list = { status: 200, body: listBody(new Date(), [A, B], []) };
+      await sync();
+      assert.equal(eventsOf("holdListRecovered").length, 1);
+      // 没报过：普通的一次失败后取到，不报「恢复了」
+      fake.list = { status: 500, body: {} };
+      await sync();
+      fake.list = { status: 200, body: listBody(new Date(), [A, B], []) };
+      await sync();
+      assert.equal(eventsOf("holdListRecovered").length, 1);
+      assert.equal(eventsOf("holdListUnavailable").length, 2);
+    });
+    await test("A4 财务拒收（4xx）「拿不到名单」：打 error、这一串失败里不再报；恢复时也不报「恢复了」", async () => {
+      await fresh();
+      await sync();
+      fake.list = { status: 403, body: {} };
+      fake.events = { status: 400, body: { error: "bad_request", message: "reason 太长" } };
+      const mark = captured.length;
+      await sync();
+      assert.equal(eventsOf("holdListUnavailable").length, 1);
+      assert.equal((await db.finance2HoldState.findUnique({ where: { id: "current" } })).unavailableReport, "rejected");
+      assert.ok(captured.slice(mark).some((l) => l.includes("[ERROR]") && l.includes("不收「拿不到扣货名单」")));
+      await sync();
+      assert.equal(eventsOf("holdListUnavailable").length, 1);
+      fake.events = { status: 200, body: {} };
+      fake.list = { status: 200, body: listBody(new Date(), [A, B], []) };
+      await sync();
+      assert.equal(eventsOf("holdListRecovered").length, 0);
+      assert.equal((await db.finance2HoldState.findUnique({ where: { id: "current" } })).unavailableReport, null);
+    });
+    await test("A5 配置有问题（没有 remote）：只打 error 日志、报不了；报的失败（连不上）不影响取名单的结果", async () => {
+      await fresh();
+      await sync();
+      const keep = process.env.FINANCE2_API_BASE;
+      process.env.FINANCE2_API_BASE = "http://10.0.0.5:1";
+      try {
+        const r = await sync();
+        assert.equal(r.kind, "failed");
+        assert.equal(fake.posts.length, 0);
+      } finally {
+        process.env.FINANCE2_API_BASE = keep;
+      }
+      // 名单能取到、上报连不上（财务那边 hold-events 超时）：名单照样替换成功
+      await db.finance2HoldState.update({ where: { id: "current" }, data: { unavailableReport: "sent" } });
+      fake.events = { status: 200, body: {}, delayMs: 11_000 };
+      fake.list = { status: 200, body: listBody(new Date(), [C], []) };
+      const r = await sync();
+      assert.equal(r.kind, "ok");
+      assert.deepEqual((await db.finance2Hold.findMany()).map((h: Row) => h.customerMark), [C]);
+      assert.equal((await db.finance2HoldState.findUnique({ where: { id: "current" } })).unavailableReport, "sent", "恢复没报进去，留着下次再报");
+      fake.events = { status: 200, body: {} };
+    });
+    await test("A6 开关 off：取名单都不做，也什么都不报", async () => {
+      await fresh();
+      process.env.FINANCE2_HOLDS_MODE = "off";
+      try {
+        fake.list = { status: 401, body: {} };
+        await sync();
+        await runHoldRound();
+        assert.equal(fake.posts.length, 0);
+      } finally {
+        process.env.FINANCE2_HOLDS_MODE = "enforce";
+      }
+    });
+
+    console.log("\n【试运行记录（老板 2026-11-19 答「放货拦截 4」）】");
+    await test("O1 管理员看最近 7 天 observe 记录：唛头、运单号、母运单号、入口、几点、按几点的名单；不带金额 / 客户名字 / 操作人；更早的不列", async () => {
+      await fresh("observe");
+      await sync();
+      assert.equal((await dispatch(["ZZF2H00A2-1"])).status, 200);
+      assert.equal((await pushWh()).status, 200);
+      await flushHoldLogs();
+      const old = await db.finance2HoldLog.create({ data: { kind: "observe", result: "试运行：本来会拦，没拦", customerMark: A, trackingNo: "ZZF2HOLD8D", waybillNo: "ZZF2HOLD8D", entry: "柜子推进", createdAt: ago(24 * 8) } });
+      await db.finance2HoldLog.create({ data: { kind: "block", result: "拦了", customerMark: B, trackingNo: "ZZF2HBLOCK", entry: "尾端派送", operatorId: STAFF } });
+      const r = await admin("GET", "/admin/finance2-holds/observe-log");
+      assert.equal(r.status, 200, r.text);
+      const d = r.body.data;
+      assert.equal(d.mode, "observe");
+      assert.equal(d.days, 7);
+      assert.equal(d.truncated, false);
+      const nos = d.rows.map((x: Row) => x.trackingNo);
+      assert.ok(nos.includes("ZZF2H00A2-1") && nos.includes("ZZF2H00A1") && nos.includes("ZZF2H00B2"), JSON.stringify(nos));
+      assert.ok(!nos.includes(old.trackingNo), "8 天前的不列");
+      assert.ok(!nos.includes("ZZF2HBLOCK"), "只列 observe");
+      const child = d.rows.find((x: Row) => x.trackingNo === "ZZF2H00A2-1" && x.entry === "尾端派送出车");
+      assert.ok(child, JSON.stringify(d.rows));
+      assert.equal(child.waybillNo, "ZZF2H00A2");
+      assert.equal(child.customerMark, A);
+      assert.match(child.listLabel, /^按 \d{4}-\d{2}-\d{2} \d{2}:\d{2}（泰国时间）的名单$/);
+      assert.match(child.atLabel, /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/);
+      assert.deepEqual(Object.keys(child).sort(), ["at", "atLabel", "customerMark", "entry", "id", "listLabel", "trackingNo", "waybillNo"]);
+      assert.ok(!r.text.includes(NAME_A) && !r.text.includes(STAFF) && !/28000|金额|operator/.test(r.text), r.text.slice(0, 300));
+      // 新的在前
+      const ats = d.rows.map((x: Row) => x.at);
+      assert.deepEqual([...ats].sort().reverse(), ats);
+    });
+    await test("O2 只给管理员：员工 403、客户 403；开关 off 回 off、空列表", async () => {
+      assert.equal((await staff("GET", "/admin/finance2-holds/observe-log")).status, 403);
+      assert.equal((await call("GET", "/admin/finance2-holds/observe-log", CLIENT_OK, "client")).status, 403);
+      process.env.FINANCE2_HOLDS_MODE = "off";
+      try {
+        const r = await admin("GET", "/admin/finance2-holds/observe-log");
+        assert.equal(r.status, 200, r.text);
+        assert.deepEqual(r.body.data, { mode: "off", days: 7, rows: [], truncated: false });
+      } finally {
+        process.env.FINANCE2_HOLDS_MODE = "enforce";
+      }
+    });
+
+    console.log("\n【撤销误签收不拦（老板 2026-11-19 答「放货拦截 3」）】");
+    await test("U1 名单上的 A1 签收点错了：管理员撤销误签收照常改回派送中，不拦、不记 block", async () => {
+      await fresh();
+      await sync();
+      await db.shipment.update({ where: { trackingNo: "ZZF2H00A1" }, data: { currentStatus: "delivered" } });
+      await db.adminLastmileOrder.create({ data: { id: `${P}lm_sig`, companyId: CO, deliveryNo: "WDZZF2HU1", shipmentId: `${P}s_a1`, carrierName: "自营", driverName: "司机", licensePlate: "", phoneNumber: "", deliveryDate: "", externalTrackingNo: "", status: "SIGNED" } });
+      const r = await admin("POST", "/admin/lastmile/unsign", { id: `${P}lm_sig` });
+      assert.equal(r.status, 200, r.text);
+      assert.equal(await statusOf("ZZF2H00A1"), "outForDelivery");
+      assert.equal((await logs("block")).length, 0);
     });
 
     await test("Z1 日志里没有密钥", async () => {
@@ -809,6 +1169,18 @@ async function main(): Promise<void> {
             const r = runPrisma(["db", "execute", `--schema=${SCHEMA}`, "--file", MIGRATION], tmpUrl);
             assert.equal(r.code, 0, `第 ${n} 遍失败：${r.out.slice(-400)}`);
           }
+          // 上一轮那份迁移已经上过、表里有日志了，再上这一轮加列的迁移（2026-11-19 扣货上报）：两遍都不报错、老日志一行不动
+          await tmpDb.$executeRawUnsafe(`INSERT INTO finance2_hold_logs (id, kind, result, customer_mark) VALUES ('ZZM1LOG', 'chaipai', '老日志', 'ZZM1')`);
+          await tmpDb.$executeRawUnsafe(`INSERT INTO finance2_hold_state (id, generated_at, updated_at) VALUES ('current', '2026-11-19T00:00:00Z', now())`);
+          for (const n of [1, 2]) {
+            const r = runPrisma(["db", "execute", `--schema=${SCHEMA}`, "--file", MIGRATION_REPORTS], tmpUrl);
+            assert.equal(r.code, 0, `上报那份第 ${n} 遍失败：${r.out.slice(-400)}`);
+          }
+          const oldLog = await tmpDb.$queryRawUnsafe<Row[]>(`SELECT kind, result, report_status, reported_at, report_error FROM finance2_hold_logs WHERE id = 'ZZM1LOG'`);
+          assert.deepEqual(oldLog, [{ kind: "chaipai", result: "老日志", report_status: null, reported_at: null, report_error: null }], "老日志不动、新列空着（不会被当成要补报的）");
+          const st = await tmpDb.$queryRawUnsafe<Row[]>(`SELECT unavailable_report FROM finance2_hold_state WHERE id = 'current'`);
+          assert.deepEqual(st, [{ unavailable_report: null }]);
+          assert.ok(path.basename(path.dirname(MIGRATION_REPORTS)) > path.basename(path.dirname(MIGRATION)), "上报那份要排在后面（prisma 按目录名排）");
           const diff = runPrisma(["migrate", "diff", "--from-url", tmpUrl, "--to-schema-datamodel", SCHEMA, "--script", "--exit-code"], tmpUrl);
           assert.equal(diff.code, 0, `还差这些：\n${diff.out.split("\n").filter((l) => l.trim() && !l.startsWith("--")).slice(0, 12).join("\n")}`);
           const drift = await tmpDb.$queryRawUnsafe<Row[]>(readFileSync(DRIFT, "utf8"));
