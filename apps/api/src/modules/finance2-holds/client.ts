@@ -163,7 +163,9 @@ export async function checkHold(
   return typeof parsed === "string" ? { kind: "error", reason: `核对结果格式不对：${parsed}`, retryable: false } : { kind: "ok", value: parsed };
 }
 
-/* ───────────── 物流 → 财务：扣货上报（约定第 11 节，老板 2026-11-19 答「放货拦截 2、6」） ───────────── */
+/* ───────────── 物流 → 财务：扣货上报（约定第 11.2 节，老板 2026-11-19 答「放货拦截 6」） ─────────────
+   只报「拿不到名单 / 恢复了」。约定 11.1 releasedWhileHeld（拆派仓把扣着的货派出去了）物流不报：
+   财务拉运单时自己认出来、自己报警（财务系统2 ADR 0142）。 */
 
 /** 上报一件事等多久（约定没单写，跟取名单一样 10 秒） */
 export const EVENT_TIMEOUT_MS = 10_000;
@@ -171,16 +173,6 @@ export const EVENT_TIMEOUT_MS = 10_000;
 const EVENT_MAX_BYTES = 8 * 1024;
 const EVENT_REPLY_MAX_BYTES = 64 * 1024;
 
-/** 约定 11.1：扣着的货被放出去了 */
-export interface ReleasedWhileHeldEvent {
-  kind: "releasedWhileHeld";
-  occurredAt: string;
-  customerMark: string;
-  waybillNo: string;
-  trackingNo: string;
-  entry: string;
-  listGeneratedAt: string | null;
-}
 /** 约定 11.2：拿不到扣货名单 */
 export interface HoldListUnavailableEvent {
   kind: "holdListUnavailable";
@@ -194,7 +186,7 @@ export interface HoldListRecoveredEvent {
   kind: "holdListRecovered";
   occurredAt: string;
 }
-export type HoldEvent = ReleasedWhileHeldEvent | HoldListUnavailableEvent | HoldListRecoveredEvent;
+export type HoldEvent = HoldListUnavailableEvent | HoldListRecoveredEvent;
 
 /**
  * POST {base}/hold-events 报一件事（约定 11）。一次报一件；同一件事重报财务那边只算一条，所以失败了放心重发。

@@ -604,8 +604,8 @@ export function registerChaipaiEventRoutes(app: MinimalHttpApp): void {
         : null;
       const out = await applyEvent(ev, hash, req.body, shipment.companyId, info);
       /* 财务系统2 扣货名单（2026-11-19 第 9 期，接口⑧ 老板 2026-11-19 定）：拆派仓说「派送中」时货已经出去了，拦不住 ——
-         照收（不拒收，拒收只会让两边对不上），名单上的记一条日志、打一行警告，另外报给财务系统2（老板首页报警，约定 11.1）。
-         事务已经提交、不等它：记失败 / 报不进去都不影响回传，报不进去的 15 分钟那一轮补报 */
+         照收（不拒收，拒收只会让两边对不上），名单上的记一条日志、打一行警告。老板首页的警报由财务拉运单时自己报
+         （财务系统2 ADR 0142），物流不另报。事务已经提交、不等它：记失败不影响回传 */
       const wentOut = (out as { wentOut?: string | null }).wentOut;
       if (wentOut) void noteChaipaiRelease(wentOut);
       if (out.changed) {

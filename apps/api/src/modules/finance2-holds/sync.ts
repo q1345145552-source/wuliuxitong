@@ -1,7 +1,7 @@
 import { logger } from "../core/logger";
 import { finance2HoldsConfig } from "./config";
 import { fetchHoldList } from "./client";
-import { reportHoldListRecovered, reportHoldListUnavailable, retryPendingReports, type RetryOutcome } from "./reports";
+import { reportHoldListRecovered, reportHoldListUnavailable } from "./reports";
 import { readHoldState, recordFetchFailure, replaceHoldList, writeHoldLogs } from "./store";
 
 /**
@@ -100,24 +100,11 @@ export function syncHoldList(opts: { retryDelaysMs?: number[] } = {}): Promise<S
   return running;
 }
 
-/**
- * 定时任务的一轮：先取名单，再把最近 7 天没报进去的「扣着的货被放出去了」补报（约定 11.3）。
- * 两件事互不影响：取名单失败照样补报，补报失败不影响取名单。
- */
-export async function runHoldRound(opts: { retryDelaysMs?: number[] } = {}): Promise<{ sync: SyncOutcome; reports: RetryOutcome }> {
-  const sync = await syncHoldList(opts).catch((error): SyncOutcome => {
-    logger.error("扣货名单定时任务出错", { 原因: error instanceof Error ? error.message : String(error) });
-    return { kind: "failed", reason: "定时任务出错" };
-  });
-  const reports = await retryPendingReports();
-  return { sync, reports };
-}
-
 /** 启动时先取一次，之后每 15 分钟一次。FINANCE2_HOLDS_SCHEDULER=off 时不启动（测试用） */
 export function startFinance2HoldScheduler(): void {
   if (process.env.FINANCE2_HOLDS_SCHEDULER === "off") return;
   const run = () => {
-    runHoldRound().catch((error) => logger.error("扣货名单定时任务出错", { 原因: error instanceof Error ? error.message : String(error) }));
+    syncHoldList().catch((error) => logger.error("扣货名单定时任务出错", { 原因: error instanceof Error ? error.message : String(error) }));
   };
   setTimeout(run, 10_000).unref();
   setInterval(run, SYNC_INTERVAL_MS).unref();

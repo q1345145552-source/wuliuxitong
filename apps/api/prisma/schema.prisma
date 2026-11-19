@@ -1739,13 +1739,6 @@ model Finance2HoldLog {
   detail          String?
   operatorId      String?   @map("operator_id")
   createdAt       DateTime  @default(now()) @map("created_at")
-  /// 报给财务没有（约定 11.1「扣着的货被放出去了」，只有 kind = chaipai 的有值；2026-11-19 加）：
-  /// pending = 还没报成（15 分钟那一轮接着报，最近 7 天的）/ sent = 财务回 200 / rejected = 财务回 4xx、不再报
-  reportStatus    String?   @map("report_status")
-  /// 报成（sent）或被拒（rejected）的时间
-  reportedAt      DateTime? @map("reported_at")
-  /// 最近一次没报成的原因（不含密钥）
-  reportError     String?   @map("report_error")
 
   @@index([createdAt])
   @@index([operatorId, createdAt])

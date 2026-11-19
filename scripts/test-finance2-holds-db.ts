@@ -9,7 +9,7 @@
  *   重新核对 回 false 能放 / 回 true 继续拦 / 超时连不上按本地名单拦并写名单时间；
  *   取名单失败保留上一份；整份替换后旧唛头不再拦；其他状态流转不受影响；开关 off / observe。
  * 老板 2026-11-19 答「放货拦截 1～6」后加（假财务系统2 也收 POST /hold-events，约定第 11 节）：
- *   拆派仓派出去的报 releasedWhileHeld（字段 / 请求头、报不进去下一轮补报、4xx 不再报、observe 也报、off 不报、只补 7 天内）；
+ *   拆派仓派出去的照收、只记日志，不报财务（财务拉运单时自己报警，财务系统2 ADR 0142）；
  *   取不到名单报 holdListUnavailable（一串失败只报成一次、报不进去下一轮再报）、恢复报一次 holdListRecovered；
  *   开关不填时按 observe / 都没配是 off；试运行记录接口只给管理员；撤销误签收不拦；新迁移跟上一份接着跑两遍零差异。
  *
@@ -175,8 +175,7 @@ async function main(): Promise<void> {
   const { registerLoadingManifestRoutes } = await import("../apps/api/src/modules/loading-manifests/routes");
   const { registerAdminOpsRoutes } = await import("../apps/api/src/modules/admin-ops/routes");
   const { registerFinance2HoldRoutes } = await import("../apps/api/src/modules/finance2-holds/routes");
-  const { syncHoldList, runHoldRound } = await import("../apps/api/src/modules/finance2-holds/sync");
-  const { retryPendingReports, REPORT_RETRY_WINDOW_MS } = await import("../apps/api/src/modules/finance2-holds/reports");
+  const { syncHoldList } = await import("../apps/api/src/modules/finance2-holds/sync");
   const { flushHoldLogs, noteChaipaiRelease, NO_LIST_NOTICE, formatListTime } = await import("../apps/api/src/modules/finance2-holds/gate");
 
   const db = prisma as any;
@@ -811,159 +810,39 @@ async function main(): Promise<void> {
       }
     });
 
-    console.log("\n【拆派仓回传派送中 —— 照收、记一笔、报给财务（老板 2026-11-19 答「放货拦截 2」；约定 11.1）】");
+    console.log("\n【拆派仓回传派送中 —— 照收、记一笔；不报财务（财务拉运单时自己报警，ADR 0142）】");
     const zonedOk = (v: unknown) => typeof v === "string" && /(Z|[+-]\d{2}:\d{2})$/.test(v) && Number.isFinite(Date.parse(v));
     const chaipaiRows = async () => { await flushHoldLogs(); return db.finance2HoldLog.findMany({ where: { kind: "chaipai" }, orderBy: { createdAt: "asc" } }); };
-    await test("K1 名单上的货被拆派仓派出去了：记一条 chaipai 日志 + 警告，马上报给财务（请求体、请求头照约定 11.1），记成 sent；不在名单上的不记不报", async () => {
+    await test("K1 名单上的货被拆派仓派出去了：记一条 chaipai 日志（母单号、名单时间）+ 警告；**不往财务报**；不在名单上的不记", async () => {
       await fresh();
       await sync();
-      const gen = (await db.finance2HoldState.findUnique({ where: { id: "current" } })).generatedAt as Date;
       await noteChaipaiRelease(`${P}s_a2c`);
       const k = await chaipaiRows();
       assert.equal(k.length, 1);
       assert.equal(k[0].trackingNo, "ZZF2H00A2-1");
+      assert.equal(k[0].waybillNo, "ZZF2H00A2");
+      assert.equal(k[0].customerMark, A);
+      assert.ok(k[0].listGeneratedAt);
       assert.ok(captured.some((l) => l.includes("扣货名单上的货被拆派仓派出去了")));
-      assert.equal(fake.posts.length, 1);
-      const post = fake.posts[0];
-      assert.equal(post.auth, `Bearer ${SECRET}`);
-      assert.match(post.contentType ?? "", /^application\/json/);
-      assert.deepEqual(post.body, {
-        kind: "releasedWhileHeld",
-        occurredAt: k[0].createdAt.toISOString(),
-        customerMark: A,
-        waybillNo: "ZZF2H00A2",
-        trackingNo: "ZZF2H00A2-1",
-        entry: "拆派仓回传派送中",
-        listGeneratedAt: gen.toISOString(),
-      });
-      assert.ok(!JSON.stringify(post.body).includes(NAME_A), "不带客户名字");
-      assert.equal(k[0].reportStatus, "sent");
-      assert.ok(k[0].reportedAt);
-      assert.equal(k[0].reportError, null);
+      assert.equal(fake.posts.length, 0, "财务拉运单时自己报警（ADR 0142），物流不另报");
       await noteChaipaiRelease(`${P}s_c1`);
       assert.equal((await chaipaiRows()).length, 1, "不在名单上的不记");
-      assert.equal(fake.posts.length, 1, "不在名单上的不报");
-      // 15 分钟那一轮：报成了的不再报
-      await runHoldRound();
-      assert.equal(fake.posts.length, 1);
-    });
-    await test("K2 报不进去（500 / 超时 / 连不上）不丢：留着 pending + 原因；下一轮（runHoldRound，定时任务那一轮）接着报，200 后记 sent、不再报", async () => {
-      await fresh();
       await sync();
-      fake.events = { status: 500, body: {} };
-      await noteChaipaiRelease(`${P}s_a1`);
-      let [row] = await chaipaiRows();
-      assert.equal(row.reportStatus, "pending");
-      assert.match(row.reportError, /HTTP 500/);
-      assert.equal(row.reportedAt, null);
-      // 下一轮还连不上：照样留着
-      fake.events = { status: 503, body: {} };
-      const r1 = await runHoldRound();
-      assert.equal(r1.sync.kind, "ok", "补报不影响取名单");
-      assert.deepEqual(r1.reports, { kind: "done", tried: 1, sent: 0, rejected: 0, pending: 1 });
-      [row] = await chaipaiRows();
-      assert.equal(row.reportStatus, "pending");
-      assert.match(row.reportError, /HTTP 503/);
-      // 财务恢复了：这一轮补报成功
-      fake.events = { status: 200, body: { serverTime: bkk(new Date()), accepted: true } };
-      const before = fake.posts.length;
-      const r2 = await runHoldRound();
-      assert.deepEqual(r2.reports, { kind: "done", tried: 1, sent: 1, rejected: 0, pending: 0 });
-      assert.equal(fake.posts.length, before + 1);
-      assert.equal(fake.posts.at(-1)!.body.trackingNo, "ZZF2H00A1");
-      [row] = await chaipaiRows();
-      assert.equal(row.reportStatus, "sent");
-      assert.equal(row.reportError, null);
-      await runHoldRound();
-      assert.equal(fake.posts.length, before + 1, "报成了不再报");
+      assert.equal(fake.posts.length, 0, "定时那一轮也不补报");
     });
-    await test("K2b 名单取不到的那一轮也照样补报（两件事互不影响）；连不上时一轮里碰到第一条连不上就停，不一条条等超时", async () => {
-      await fresh();
-      await sync();
-      fake.events = { status: 502, body: {} };
-      await noteChaipaiRelease(`${P}s_a1`);
-      await noteChaipaiRelease(`${P}s_b2`);
-      const before = fake.posts.length;
-      const r1 = await runHoldRound();
-      assert.deepEqual(r1.reports, { kind: "done", tried: 1, sent: 0, rejected: 0, pending: 1 }, "第一条连不上就停");
-      assert.equal(fake.posts.length, before + 1);
-      fake.list = { status: 500, body: {} };
-      fake.events = { status: 200, body: { serverTime: bkk(new Date()), accepted: true } };
-      const r2 = await runHoldRound({ retryDelaysMs: [] });
-      assert.equal(r2.sync.kind, "failed");
-      assert.deepEqual(r2.reports, { kind: "done", tried: 2, sent: 2, rejected: 0, pending: 0 });
-      assert.ok((await chaipaiRows()).every((l: Row) => l.reportStatus === "sent"));
-    });
-    await test("K3 财务回 4xx（400 / 401）：记 rejected、打 error 日志，以后不再报这一条", async () => {
-      await fresh();
-      await sync();
-      fake.events = { status: 400, body: { error: "bad_request", message: "customerMark 1～64 字" } };
-      const mark = captured.length;
-      await noteChaipaiRelease(`${P}s_a1`);
-      const [row] = await chaipaiRows();
-      assert.equal(row.reportStatus, "rejected");
-      assert.ok(row.reportedAt);
-      assert.match(row.reportError, /HTTP 400：customerMark 1～64 字/);
-      assert.ok(captured.slice(mark).some((l) => l.includes("[ERROR]") && l.includes("不再报")));
-      fake.events = { status: 200, body: { serverTime: bkk(new Date()), accepted: true } };
-      const before = fake.posts.length;
-      const r = await runHoldRound();
-      assert.deepEqual(r.reports, { kind: "done", tried: 0, sent: 0, rejected: 0, pending: 0 });
-      assert.equal(fake.posts.length, before);
-    });
-    await test("K4 observe（试运行）也报：货确实出去了", async () => {
+    await test("K2 observe（试运行）照记不报；开关 off 不记不报", async () => {
       await fresh("observe");
       await sync();
       await noteChaipaiRelease(`${P}s_a1`);
-      const [row] = await chaipaiRows();
-      assert.equal(row.reportStatus, "sent");
-      assert.equal(fake.posts.length, 1);
-      assert.equal(fake.posts[0].body.kind, "releasedWhileHeld");
-    });
-    await test("K5 开关 off：不记不报；off 时 15 分钟那一轮也不补报以前没报成的", async () => {
-      await fresh();
-      await sync();
-      fake.events = { status: 500, body: {} };
-      await noteChaipaiRelease(`${P}s_a1`);
-      assert.equal((await chaipaiRows())[0].reportStatus, "pending");
+      assert.equal((await chaipaiRows()).length, 1);
       process.env.FINANCE2_HOLDS_MODE = "off";
       try {
-        fake.events = { status: 200, body: {} };
-        const before = fake.posts.length;
         await noteChaipaiRelease(`${P}s_b2`);
         assert.equal((await chaipaiRows()).length, 1, "off 不记");
-        const r = await retryPendingReports();
-        assert.deepEqual(r, { kind: "off" });
-        assert.equal(fake.posts.length, before, "off 一条都不报");
       } finally {
         process.env.FINANCE2_HOLDS_MODE = "enforce";
       }
-    });
-    await test("K6 只补报最近 7 天的（更早的留着不动）；连财务的配置有问题时报不了、留着 pending，配好以后补报", async () => {
-      await fresh();
-      await sync();
-      fake.events = { status: 500, body: {} };
-      await noteChaipaiRelease(`${P}s_a1`);
-      const [old] = await chaipaiRows();
-      await db.finance2HoldLog.update({ where: { id: old.id }, data: { createdAt: new Date(Date.now() - REPORT_RETRY_WINDOW_MS - 60_000) } });
-      fake.events = { status: 200, body: {} };
-      const before = fake.posts.length;
-      assert.deepEqual(await retryPendingReports(), { kind: "done", tried: 0, sent: 0, rejected: 0, pending: 0 });
-      assert.equal(fake.posts.length, before);
-      const keep = process.env.FINANCE2_HOLDS_SECRET;
-      process.env.FINANCE2_HOLDS_SECRET = "short";
-      try {
-        await noteChaipaiRelease(`${P}s_b2`);
-        const b2 = (await chaipaiRows()).find((l: Row) => l.trackingNo === "ZZF2H00B2");
-        assert.equal(b2.reportStatus, "pending", "配置有问题：先记着");
-        assert.equal(fake.posts.length, before, "没法报就不发");
-        assert.deepEqual(await retryPendingReports(), { kind: "noRemote" });
-      } finally {
-        process.env.FINANCE2_HOLDS_SECRET = keep;
-      }
-      const r = await retryPendingReports();
-      assert.deepEqual(r, { kind: "done", tried: 1, sent: 1, rejected: 0, pending: 0 });
-      assert.equal(fake.posts.at(-1)!.body.trackingNo, "ZZF2H00B2");
+      assert.equal(fake.posts.length, 0);
     });
 
     console.log("\n【拿不到扣货名单 → 报给财务（老板 2026-11-19 答「放货拦截 6」；约定 11.2）】");
@@ -1072,7 +951,6 @@ async function main(): Promise<void> {
       try {
         fake.list = { status: 401, body: {} };
         await sync();
-        await runHoldRound();
         assert.equal(fake.posts.length, 0);
       } finally {
         process.env.FINANCE2_HOLDS_MODE = "enforce";
@@ -1169,15 +1047,17 @@ async function main(): Promise<void> {
             const r = runPrisma(["db", "execute", `--schema=${SCHEMA}`, "--file", MIGRATION], tmpUrl);
             assert.equal(r.code, 0, `第 ${n} 遍失败：${r.out.slice(-400)}`);
           }
-          // 上一轮那份迁移已经上过、表里有日志了，再上这一轮加列的迁移（2026-11-19 扣货上报）：两遍都不报错、老日志一行不动
+          // 上一轮那份迁移已经上过、表里有数据了，再上这一轮加列的迁移（2026-11-19 扣货上报）：两遍都不报错、老数据一行不动
           await tmpDb.$executeRawUnsafe(`INSERT INTO finance2_hold_logs (id, kind, result, customer_mark) VALUES ('ZZM1LOG', 'chaipai', '老日志', 'ZZM1')`);
           await tmpDb.$executeRawUnsafe(`INSERT INTO finance2_hold_state (id, generated_at, updated_at) VALUES ('current', '2026-11-19T00:00:00Z', now())`);
           for (const n of [1, 2]) {
             const r = runPrisma(["db", "execute", `--schema=${SCHEMA}`, "--file", MIGRATION_REPORTS], tmpUrl);
             assert.equal(r.code, 0, `上报那份第 ${n} 遍失败：${r.out.slice(-400)}`);
           }
-          const oldLog = await tmpDb.$queryRawUnsafe<Row[]>(`SELECT kind, result, report_status, reported_at, report_error FROM finance2_hold_logs WHERE id = 'ZZM1LOG'`);
-          assert.deepEqual(oldLog, [{ kind: "chaipai", result: "老日志", report_status: null, reported_at: null, report_error: null }], "老日志不动、新列空着（不会被当成要补报的）");
+          const oldLog = await tmpDb.$queryRawUnsafe<Row[]>(`SELECT kind, result FROM finance2_hold_logs WHERE id = 'ZZM1LOG'`);
+          assert.deepEqual(oldLog, [{ kind: "chaipai", result: "老日志" }], "老日志不动");
+          const logCols = await tmpDb.$queryRawUnsafe<Row[]>(`SELECT column_name FROM information_schema.columns WHERE table_name = 'finance2_hold_logs' AND column_name LIKE 'report%'`);
+          assert.deepEqual(logCols, [], "日志表不加上报的列（拆派仓那件事物流不报）");
           const st = await tmpDb.$queryRawUnsafe<Row[]>(`SELECT unavailable_report FROM finance2_hold_state WHERE id = 'current'`);
           assert.deepEqual(st, [{ unavailable_report: null }]);
           assert.ok(path.basename(path.dirname(MIGRATION_REPORTS)) > path.basename(path.dirname(MIGRATION)), "上报那份要排在后面（prisma 按目录名排）");
