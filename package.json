@@ -119,6 +119,8 @@
     "test:agent-apply-db": "tsx scripts/test-agent-apply-db.ts",
     "test:finance2-holds-source": "tsx scripts/test-finance2-holds-source.ts",
     "test:finance2-holds-db": "tsx scripts/test-finance2-holds-db.ts",
+    "test:finance2-wallet-source": "tsx scripts/test-finance2-wallet-source.ts",
+    "test:finance2-wallet-db": "tsx scripts/test-finance2-wallet-db.ts",
     "test:arrival-notice-snapshot-source": "tsx scripts/test-arrival-notice-snapshot-source.ts",
     "test:arrival-notice-snapshot-db": "tsx scripts/test-arrival-notice-snapshot-db.ts",
     "test:migration-arrival-notice-snapshots-db": "tsx scripts/test-migration-arrival-notice-snapshots-db.ts",

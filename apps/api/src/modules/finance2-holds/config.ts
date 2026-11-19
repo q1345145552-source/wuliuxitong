@@ -59,16 +59,22 @@ export function readFinance2HoldsConfig(env: NodeJS.ProcessEnv = process.env): F
     mode = "enforce";
     problems.push("FINANCE2_HOLDS_MODE 只认 off / observe / enforce，填了别的按 enforce（真拦）处理");
   }
-  let remote: Finance2Remote | null = null;
+  const { remote, problem } = readFinance2Remote(env);
+  if (problem) problems.push(problem);
+  return { ok: true, cfg: { mode, remote, problem: problems.length > 0 ? problems.join("；") : null } };
+}
+
+/**
+ * 连财务系统2 的地址和密钥（不看扣货开关）。「物流拉财务」只有这一把密钥（约定 1.1、10.0），
+ * 扣货名单和代理钱包（第 13 期）共用；变量名沿用 FINANCE2_HOLDS_SECRET，免得上线时多配一个。
+ */
+export function readFinance2Remote(env: NodeJS.ProcessEnv = process.env): { remote: Finance2Remote | null; problem: string | null } {
   const base = normalizeApiBase(env.FINANCE2_API_BASE, env.NODE_ENV === "production");
   if (!isSafeSecret(env.FINANCE2_HOLDS_SECRET)) {
-    problems.push("FINANCE2_HOLDS_SECRET 不合格（至少 32 位随机字符、不能有空白、不能是占位词）");
-  } else if (!base) {
-    problems.push("FINANCE2_API_BASE 不对（生产只认 https，不许带用户名密码、? 和 #）");
-  } else {
-    remote = { apiBase: base + FINANCE2_LOGISTICS_PREFIX, secret: env.FINANCE2_HOLDS_SECRET! };
+    return { remote: null, problem: "FINANCE2_HOLDS_SECRET 不合格（至少 32 位随机字符、不能有空白、不能是占位词）" };
   }
-  return { ok: true, cfg: { mode, remote, problem: problems.length > 0 ? problems.join("；") : null } };
+  if (!base) return { remote: null, problem: "FINANCE2_API_BASE 不对（生产只认 https，不许带用户名密码、? 和 #）" };
+  return { remote: { apiBase: base + FINANCE2_LOGISTICS_PREFIX, secret: env.FINANCE2_HOLDS_SECRET! }, problem: null };
 }
 
 let lastLoggedProblem: string | null = null;

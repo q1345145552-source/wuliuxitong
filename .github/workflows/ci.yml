@@ -382,6 +382,10 @@ jobs:
       # 真发请求（密钥在头里、401 不重试、5xx 能重试、超时按时断开）、拦货的话、放货入口一处不漏（新加写这两个状态的代码会红）、前端接上了
       - name: Test finance2 holds (source)
         run: npm run test:finance2-holds-source
+      # 代理端「我的钱包」（2026-11-19 财务系统2 第 13 期）不连库那一半：约定第 10 节三个样例原样能收、坏数据不收、
+      # 财务多给的字段不往下传、金额照字符串显示、只用登录代理的编号、密钥不进前端、页面只能看
+      - name: Test finance2 agent wallet (source)
+        run: npm run test:finance2-wallet-source
       # 拆派仓只读接口到点就走（2026-10-14）：Node 22 的 fetch 带 redirect:"error" 时，读响应体中途碰上垃圾回收 abort() 就失灵、
       # 一挂 300 秒（10-12 这里 V9 等了 300333ms）。不连库：假服务器 + 强制回收内存，看是不是按时断开、连接真断了。
       # ⚠️ 只有 Node 22 照得出老毛病（本机 Node 24 照不出），所以这项必须在 CI 跑
@@ -599,6 +603,10 @@ jobs:
       # 整份替换、没名单不拦有提示、超过 1 天提示、off / observe；迁移文件在上线前的库上连跑两遍、跟 schema 零差异
       - name: Test finance2 holds (real DB)
         run: bash .github/scripts/run-db-test.sh test:finance2-holds-db
+      # 代理端「我的钱包」（2026-11-19 第 13 期）：真接口 + 真账号 + 本进程里的假财务系统2 —— 代理只看自己的（页面传别的编号没用）、
+      # 客户员工管理员 403、没配 / 404 / 500 / 超时 / 格式不对都回好懂的状态、翻页游标原样转、多给的字段不往下传
+      - name: Test finance2 agent wallet (real DB)
+        run: bash .github/scripts/run-db-test.sh test:finance2-wallet-db
       # 存原样那份迁移：上线前的库上连跑两遍、跟 schema 零差异、体检清单对上、不回填老数据、删到货通知跟着删 / 删运单不动
       - name: Test arrival notice snapshots migration file (real DB)
         run: bash .github/scripts/run-db-test.sh test:migration-arrival-notice-snapshots-db

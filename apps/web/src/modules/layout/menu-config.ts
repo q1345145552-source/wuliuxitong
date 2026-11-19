@@ -220,6 +220,8 @@ export const roleFunctionGroups: Record<AuthRole, MenuGroup[]> = {
             ]
           : []),
         { id: "agent-func-rebates", label: "返现单", href: "/agent#rebates" },
+        // 我的钱包（2026-11-19，财务系统2 第 13 期）：差价钱包，数据在财务系统2，只读。跟上面关着的「集货余额」不是一回事
+        { id: "agent-func-my-wallet", label: "我的钱包", href: "/agent#my-wallet" },
         ...(AGENT_WHR_FEATURES_ENABLED ? [{ id: "agent-func-me", label: "我的价格", href: "/agent#me" }] : []),
       ],
     },

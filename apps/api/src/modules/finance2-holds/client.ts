@@ -12,7 +12,7 @@ import { fetchWithDeadline, readBodyWithDeadline } from "../core/fetch-deadline"
 export type CallResult<T> =
   | { kind: "ok"; value: T }
   /** retryable：5xx / 超时 / 连不上 / 429，下一次可以再试；4xx 和格式错不重试 */
-  | { kind: "error"; reason: string; retryable: boolean; retryAfterSec?: number };
+  | { kind: "error"; reason: string; retryable: boolean; retryAfterSec?: number; /** 对方回的 HTTP 状态码（连不上 / 超时没有） */ status?: number };
 
 export interface HoldList {
   generatedAt: Date;
@@ -104,7 +104,8 @@ function retryAfter(header: string | null): number | undefined {
   return Number.isInteger(n) && n >= 0 ? n : undefined;
 }
 
-async function getJson(cfg: Finance2Remote, url: string, timeoutMs: number, maxBytes: number): Promise<CallResult<unknown>> {
+/** 带密钥 GET 一个财务系统2 的只读接口、读出 JSON（扣货名单和代理钱包共用） */
+export async function getFinance2Json(cfg: Finance2Remote, url: string, timeoutMs: number, maxBytes: number): Promise<CallResult<unknown>> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
@@ -123,6 +124,7 @@ async function getJson(cfg: Finance2Remote, url: string, timeoutMs: number, maxB
           reason: s === 401 || s === 403 ? `HTTP ${s}（密钥不对或不许调）` : `HTTP ${s}`,
           retryable: s >= 500 || s === 429,
           retryAfterSec: s === 429 ? retryAfter(response.headers.get("retry-after")) : undefined,
+          status: s,
         };
       }
       body = await readBodyWithDeadline(response, controller.signal, maxBytes);
@@ -141,7 +143,7 @@ async function getJson(cfg: Finance2Remote, url: string, timeoutMs: number, maxB
 }
 
 export async function fetchHoldList(cfg: Finance2Remote, timeoutMs = LIST_TIMEOUT_MS): Promise<CallResult<HoldList>> {
-  const r = await getJson(cfg, `${cfg.apiBase}/holds`, timeoutMs, LIST_MAX_BYTES);
+  const r = await getFinance2Json(cfg, `${cfg.apiBase}/holds`, timeoutMs, LIST_MAX_BYTES);
   if (r.kind !== "ok") return r;
   const parsed = parseHoldList(r.value);
   return typeof parsed === "string" ? { kind: "error", reason: `名单格式不对：${parsed}`, retryable: false } : { kind: "ok", value: parsed };
@@ -155,7 +157,7 @@ export async function checkHold(
 ): Promise<CallResult<HoldCheck>> {
   const qs = new URLSearchParams({ customerMark });
   if (waybillNo) qs.set("waybillNo", waybillNo);
-  const r = await getJson(cfg, `${cfg.apiBase}/holds/check?${qs.toString()}`, timeoutMs, CHECK_MAX_BYTES);
+  const r = await getFinance2Json(cfg, `${cfg.apiBase}/holds/check?${qs.toString()}`, timeoutMs, CHECK_MAX_BYTES);
   if (r.kind !== "ok") return r;
   const parsed = parseHoldCheck(r.value, customerMark, waybillNo);
   return typeof parsed === "string" ? { kind: "error", reason: `核对结果格式不对：${parsed}`, retryable: false } : { kind: "ok", value: parsed };

@@ -343,3 +343,65 @@ export function fetchAgentRebates(): Promise<{ items: AgentRebateStatement[] } &
 export function fetchAgentRebateDetail(statementId: string): Promise<{ statement: AgentRebateStatement; lines: AgentRebateLine[] }> {
   return apiRequest(`${apiBaseUrl()}/agent/rebates/detail${qs({ statementId })}`);
 }
+
+/* ── 我的钱包（2026-11-19，财务系统2 第 13 期）。后端 apps/api/src/modules/finance2-wallet/routes.ts，数据现从财务系统2 取，只读 ──
+ * 金额一律是字符串（两位小数、可以是负数），不转数字；时间是财务给的原样（泰国时间 +07:00）。
+ * state：notConfigured 还没开通 / notFound 财务那边还没有你的钱包 / unreachable 暂时连不上 / ok */
+export type FinanceWalletState = "ok" | "notConfigured" | "notFound" | "unreachable";
+
+export interface FinanceWalletBalance {
+  currency: string;
+  /** 待结算：客户账单出了、钱还没到的差价（看得到、动不了） */
+  pending: string;
+  /** 可用余额：能提现的；可以是负数 */
+  available: string;
+  /** 已提现合计 */
+  withdrawn: string;
+  lastSeq: number;
+  lastEntryAt: string | null;
+  serverTime: string | null;
+}
+
+export interface FinanceWalletLedgerItem {
+  seq: number;
+  kind: string;
+  kindLabel: string;
+  pendingChange: string;
+  availableChange: string;
+  pendingAfter: string;
+  availableAfter: string;
+  waybillNo: string | null;
+  customerMark: string | null;
+  billNo: string | null;
+  withdrawalId: string | null;
+  createdAt: string;
+}
+
+export interface FinanceWalletWithdrawal {
+  withdrawalId: string;
+  amount: string;
+  status: string;
+  statusLabel: string;
+  requestedAt: string;
+  decidedAt: string | null;
+  paidOn: string | null;
+  voidedAt: string | null;
+}
+
+export interface FinanceWalletPage<T> {
+  items: T[];
+  nextCursor: string | null;
+  hasMore: boolean;
+}
+
+export function fetchFinanceWalletBalance(): Promise<{ state: FinanceWalletState; balance?: FinanceWalletBalance }> {
+  return apiRequest(`${apiBaseUrl()}/agent/finance-wallet`, { method: "GET" });
+}
+
+export function fetchFinanceWalletLedger(cursor?: string | null): Promise<{ state: FinanceWalletState; page?: FinanceWalletPage<FinanceWalletLedgerItem> }> {
+  return apiRequest(`${apiBaseUrl()}/agent/finance-wallet/ledger${qs({ cursor })}`, { method: "GET" });
+}
+
+export function fetchFinanceWalletWithdrawals(cursor?: string | null): Promise<{ state: FinanceWalletState; page?: FinanceWalletPage<FinanceWalletWithdrawal> }> {
+  return apiRequest(`${apiBaseUrl()}/agent/finance-wallet/withdrawals${qs({ cursor })}`, { method: "GET" });
+}
