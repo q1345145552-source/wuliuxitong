@@ -709,6 +709,8 @@ export function registerLoadingManifestRoutes(app: MinimalHttpApp): void {
       if (pieceErr) { fail(res, 400, "VALIDATION_ERROR", pieceErr); return; }
     }
 
+    /** 扣货名单的提示（加货补到预约派送时才有；Codex 审查第 7 条） */
+    let holdNotice: string | null = null;
     try {
       const result = await prisma.$transaction(async (tx) => {
       /**
@@ -1000,12 +1002,12 @@ export function registerLoadingManifestRoutes(app: MinimalHttpApp): void {
       if (RELEASE_STATUSES.has(finalStatus) && finance2HoldsConfig()) { // 开关 off 时一条都不多查
         const owner = await tx.order.findUnique({ where: { id: locked.orderId }, select: { clientId: true } });
         // 按员工输的那张（母运单）判断、记日志：分装时新拆的子单号会跟着事务一起撤掉，记它查不到
-        await assertReleasable(tx, [{
+        holdNotice = (await assertReleasable(tx, [{
           shipmentId: shipment.id,
           trackingNo: locked.trackingNo,
           parentTrackingNo: null,
           customerMark: owner?.clientId ?? null,
-        }], { entry: "往预约派送的柜子加货", operatorId: auth.userId });
+        }], { entry: "往预约派送的柜子加货", operatorId: auth.userId })).notice;
       }
       await tx.shipment.update({ where: { id: loadShipmentId }, data: { currentStatus: finalStatus, updatedAt: now } });
 
@@ -1122,6 +1124,7 @@ export function registerLoadingManifestRoutes(app: MinimalHttpApp): void {
       warning: result.modeMismatch
         ? `这是${ZH[result.modeMismatch.containerMode] ?? result.modeMismatch.containerMode}柜，装进来的是${ZH[result.modeMismatch.shipmentMode] ?? result.modeMismatch.shipmentMode}的货`
         : null,
+      holdNotice,
     });
     } catch (e: any) {
       /* 数据库自己的错（死锁 / 别的 Prisma 报错）不把英文原文甩给员工（2026-10-08 模拟数据测试：

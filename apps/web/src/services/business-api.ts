@@ -1968,7 +1968,7 @@ export async function deleteContainer(containerId: string): Promise<{ deleted: b
   return parseApiResponse(response);
 }
 
-export async function addShipmentToManifest(manifestId: string, trackingNo: string, pieceCount?: number): Promise<{ message: string; trackingNo: string; isPartial?: boolean; parentTrackingNo?: string; warning?: string | null }> {
+export async function addShipmentToManifest(manifestId: string, trackingNo: string, pieceCount?: number): Promise<{ message: string; trackingNo: string; isPartial?: boolean; parentTrackingNo?: string; warning?: string | null; holdNotice?: string | null }> {
   const response = await fetch(`${apiBaseUrl()}/staff/loading-manifests/add-shipment?id=${manifestId}`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeaders() },

@@ -4,7 +4,8 @@
 - 财务系统2 总窗口派的活（老板 11-19 定物流这边也由我们做）。约定：财务系统2 `docs/物流系统接口约定.md` 第 5 节。细节、入口清单、上线要配什么、要问老板的都在 `docs/sessions/2026-11-19-finance2-holds.md`。
 - 做法：每 15 分钟从财务系统2 取整份名单存本地（五张新表，迁移 20261119_finance2_holds）；运单推到预约派送 / 派送中前按唛头（orders.client_id）查，单票放行按母运单号（子单一起放）。柜子推进只扣名单上那几票、其余照推；往预约派送的柜子加货、尾端派送出车整个拦；拆派仓回传派送中照收记日志；撤销误签收不拦。「重新核对」实时问（先问唛头、再问这一票）；连不上按上次名单拦并写名单时间；从没取到过名单不拦但提示；超过 1 天提示（老板定）。
 - 开关 `FINANCE2_HOLDS_MODE` 默认 off；observe 只记不拦；enforce 真拦。财务系统2 的名单接口还没做（第 8 期），用本进程里的假接口测。
-- 测试：test:finance2-holds-source（31）、test:finance2-holds-db（38，含迁移连跑两遍）；改了 test-lastmile-dispatch-rules（桩）、test-lock-order（登记咨询锁 83091）、user-references（新表 operator_id 归类）。改坏 14 处 13 处红（剩 1 处是等价改动）；本机浏览器走查过；子代理审查第 1 轮必须修 2 条已修。
+- Codex 第二次审查（老板授权）7 条必须改都成立、都改了：配错照本地名单拦（不再等于关）、核对放 / 扣都记按财务时间取最新、判断一条 SQL 读完、单票放行要唛头也对上、核对一律真问财务、核对时间不可靠当问不到、放货回话带提示 + 关着时 10 分钟问一次状态；另加连续失败起点报警。
+- 测试：test:finance2-holds-source（35）、test:finance2-holds-db（44，含迁移连跑两遍）；改了 test-lastmile-dispatch-rules（桩）、test-lock-order（登记咨询锁 83091）、user-references（新表 operator_id 归类）。改坏 14 处 13 处红（剩 1 处是等价改动）；本机浏览器走查过；子代理审查第 1 轮必须修 2 条已修。
 
 ## 2026-11-14（北京）上线 84c1db9：员工管理「改成客户号」（+ 57eac74 上线记录）
 - 老板「上吧」。上线前：只读看服务器 HEAD a9cb67c、只有 package-lock 被改、没有会撞的未跟踪文件、磁盘剩 37G、容器 healthy；没有迁移。推 GitHub a9cb67c..84c1db9，ssh 跑 `bash deploy.sh` 退出 0（没有待执行迁移、跳过备份）。日志 `.audit/2026-11-14/deploy/deploy2.log`。

@@ -18,7 +18,7 @@ import type { AddressInfo } from "node:net";
 import * as path from "node:path";
 import { readFinance2HoldsConfig } from "../apps/api/src/modules/finance2-holds/config";
 import { checkHold, fetchHoldList, parseHoldCheck, parseHoldList, zonedTime } from "../apps/api/src/modules/finance2-holds/client";
-import { heldMessage, listLabel, noticeFor, NO_LIST_NOTICE, motherOf } from "../apps/api/src/modules/finance2-holds/gate";
+import { heldByRules, heldMessage, listLabel, noticeFor, NO_LIST_NOTICE, motherOf } from "../apps/api/src/modules/finance2-holds/gate";
 
 const ROOT = path.join(__dirname, "..");
 const read = (p: string) => readFileSync(path.join(ROOT, p), "utf8");
@@ -62,32 +62,46 @@ function walk(dir: string, out: string[] = []): string[] {
 async function main(): Promise<void> {
   console.log("\n【① 开关和配置】");
   const good = { FINANCE2_HOLDS_MODE: "enforce", FINANCE2_HOLDS_SECRET: SECRET, FINANCE2_API_BASE: "https://caiwu.example.com/" } as NodeJS.ProcessEnv;
-  await test("K1 默认 off：没填、填 off 都不开；填错词不开且说原因", () => {
-    assert.deepEqual(readFinance2HoldsConfig({} as NodeJS.ProcessEnv).ok, false);
+  await test("K1 默认 off：没填、填 off 才是关（唯一「全放」的情况）；填了不认识的词按 enforce（宁可多拦）并说原因", () => {
+    assert.equal(readFinance2HoldsConfig({} as NodeJS.ProcessEnv).ok, false);
     const off = readFinance2HoldsConfig({ ...good, FINANCE2_HOLDS_MODE: "off" });
     assert.equal(off.ok, false);
-    assert.equal(off.ok === false && off.off, true);
     const bad = readFinance2HoldsConfig({ ...good, FINANCE2_HOLDS_MODE: "on" });
-    assert.equal(bad.ok === false && !bad.off, true);
+    assert.ok(bad.ok);
+    assert.equal(bad.ok && bad.cfg.mode, "enforce");
+    assert.match(bad.ok ? bad.cfg.problem ?? "" : "", /只认 off \/ observe \/ enforce/);
   });
-  await test("K2 observe / enforce 开；地址去掉结尾 / 拼上 /integrations/logistics/v1", () => {
+  await test("K2 observe / enforce 开；地址去掉结尾 / 拼上 /integrations/logistics/v1；配置没问题时 problem 为空", () => {
     for (const mode of ["observe", "enforce"]) {
       const r = readFinance2HoldsConfig({ ...good, FINANCE2_HOLDS_MODE: mode });
       assert.ok(r.ok);
       assert.equal(r.ok && r.cfg.mode, mode);
-      assert.equal(r.ok && r.cfg.apiBase, "https://caiwu.example.com/integrations/logistics/v1");
+      assert.equal(r.ok && r.cfg.remote?.apiBase, "https://caiwu.example.com/integrations/logistics/v1");
+      assert.equal(r.ok && r.cfg.problem, null);
     }
   });
-  await test("K3 密钥太短 / 占位词 / 带空白不开；生产不认 http；开发只认本机 http；地址带 ? # 用户名不开", () => {
+  await test("K3 开着但密钥 / 地址配错：**开关照开**（照本地名单拦），只是连不了财务、说清哪里错（Codex 审查第 1 条）", () => {
+    const remoteOf = (env: NodeJS.ProcessEnv) => {
+      const r = readFinance2HoldsConfig(env);
+      assert.ok(r.ok, "配错不许变成关");
+      return r.ok ? r.cfg : null;
+    };
     for (const secret of ["short", "change-me-change-me-change-me-change-me", ` ${SECRET}`, undefined]) {
-      assert.equal(readFinance2HoldsConfig({ ...good, FINANCE2_HOLDS_SECRET: secret }).ok, false, String(secret));
+      const c = remoteOf({ ...good, FINANCE2_HOLDS_SECRET: secret });
+      assert.equal(c?.remote, null, String(secret));
+      assert.match(c?.problem ?? "", /FINANCE2_HOLDS_SECRET 不合格/);
+      assert.equal(c?.mode, "enforce");
     }
-    assert.equal(readFinance2HoldsConfig({ ...good, FINANCE2_API_BASE: "http://127.0.0.1:4000", NODE_ENV: "production" }).ok, false);
-    assert.equal(readFinance2HoldsConfig({ ...good, FINANCE2_API_BASE: "http://127.0.0.1:4000" }).ok, true);
-    assert.equal(readFinance2HoldsConfig({ ...good, FINANCE2_API_BASE: "http://10.0.0.5:4000" }).ok, false);
+    assert.equal(remoteOf({ ...good, FINANCE2_API_BASE: "http://127.0.0.1:4000", NODE_ENV: "production" })?.remote, null);
+    assert.ok(remoteOf({ ...good, FINANCE2_API_BASE: "http://127.0.0.1:4000" })?.remote);
+    assert.equal(remoteOf({ ...good, FINANCE2_API_BASE: "http://10.0.0.5:4000" })?.remote, null);
     for (const base of ["https://a.com/?x=1", "https://a.com/#x", "https://u:p@a.com", "ftp://a.com", ""]) {
-      assert.equal(readFinance2HoldsConfig({ ...good, FINANCE2_API_BASE: base }).ok, false, base);
+      const c = remoteOf({ ...good, FINANCE2_API_BASE: base });
+      assert.equal(c?.remote, null, base);
+      assert.match(c?.problem ?? "", /FINANCE2_API_BASE 不对/);
     }
+    // 配置问题里不许带密钥
+    assert.ok(!(remoteOf({ ...good, FINANCE2_API_BASE: "" })?.problem ?? "").includes(SECRET));
   });
 
   console.log("\n【② 解析返回】");
@@ -130,6 +144,25 @@ async function main(): Promise<void> {
     assert.equal(typeof parseHoldCheck(SAMPLE_CHECK, "10086", "XT0000000000"), "string");
     const noWaybill = parseHoldCheck({ ...SAMPLE_CHECK, waybillNo: null, blocked: false }, "10086", null);
     assert.ok(typeof noWaybill !== "string" && noWaybill.blocked === false);
+  });
+  await test("P4b 核对时间要可靠（Codex 审查第 6 条）：checkedAt 不带时区 / 两个时间都没有 → 失败；只问唛头回来却带了运单号 → 失败", () => {
+    assert.equal(typeof parseHoldCheck({ ...SAMPLE_CHECK, checkedAt: "2026-12-05T10:21:40" }, "10086", "XT2611180001"), "string");
+    const { checkedAt: _c, serverTime: _s, ...noTimes } = SAMPLE_CHECK;
+    assert.equal(typeof parseHoldCheck(noTimes, "10086", "XT2611180001"), "string");
+    const onlyServer = parseHoldCheck({ ...noTimes, serverTime: "2026-12-05T10:21:40+07:00" }, "10086", "XT2611180001");
+    assert.ok(typeof onlyServer !== "string" && onlyServer.checkedAt.toISOString() === "2026-12-05T03:21:40.000Z");
+    assert.equal(typeof parseHoldCheck({ ...SAMPLE_CHECK, blocked: false }, "10086", null), "string", "只问唛头，回的带着 XT2611180001");
+  });
+  await test("P6 判断规则（heldByRules）：整家看最新核对、没核对看名单；这一票看最新核对、没核对看单票放行", () => {
+    const H = (onList: boolean, released: boolean, markDecision: boolean | null, ticketDecision: boolean | null) => heldByRules({ onList, released, markDecision, ticketDecision });
+    assert.equal(H(false, false, null, null), false, "不在名单");
+    assert.equal(H(true, false, null, null), true, "在名单");
+    assert.equal(H(true, true, null, null), false, "单票放行");
+    assert.equal(H(true, false, false, null), false, "核对说整家不扣");
+    assert.equal(H(false, false, true, null), true, "名单上没有，但刚核对说扣（财务刚加上）");
+    assert.equal(H(true, false, true, false), false, "整家扣、这一票核对说放");
+    assert.equal(H(true, true, true, true), true, "名单说单放，但更新的核对说这一票还扣（老板撤了单放）");
+    assert.equal(H(true, true, false, true), false, "整家都不扣了，这一票的旧答案不算");
   });
   await test("P5 时间：Z 和 +07:00 都认；不带时区、乱写不认", () => {
     assert.equal(zonedTime("2026-11-18T07:05:00.000Z")!.toISOString(), "2026-11-18T07:05:00.000Z");
@@ -316,6 +349,23 @@ async function main(): Promise<void> {
     assert.match(read("apps/api/src/modules/finance2-holds/gate.ts"), /if \(!finance2HoldsConfig\(\)\) return;\n\s+const result = await evaluateRelease\(prisma, await loadCandidates/);
     assert.ok(!read("apps/api/src/modules/containers/routes.ts").includes("order: { select: { clientId: true } } },\n          });\n          let moving"), "柜子推进不再无条件多查客户");
   });
+  await test("E7c 判断一条 SQL 读完（名单替换夹在中间也读不到两个版本；Codex 审查第 3 条）；单票放行按唛头 + 母运单号对（第 4 条）", () => {
+    const gate = read("apps/api/src/modules/finance2-holds/gate.ts");
+    const fn = gate.slice(gate.indexOf("export async function evaluateRelease"), gate.indexOf("/** 前端认这个开头"));
+    assert.equal((fn.match(/await db\./g) ?? []).length, 1, "evaluateRelease 里只许一次查库");
+    assert.match(fn, /db\.\$queryRaw<VerdictRow\[\]>/);
+    assert.match(fn, /r\.waybill_no = c\.mother AND r\.customer_mark = c\.mark/);
+    assert.match(fn, /ORDER BY d\.cleared_at DESC, d\.blocked DESC LIMIT 1/, "同一时间的放和扣，扣赢");
+  });
+  await test("E7d 放出去了也带提示（没名单 / 名单太旧 / 配置有问题；Codex 审查第 7 条）：三个入口回 holdNotice，页面都接上了", () => {
+    assert.match(read("apps/api/src/modules/admin-ops/routes.ts"), /ok\(res, \{ deliveryNo, count: results\.length, moved, skipped, holdNotice \}\)/);
+    assert.match(read("apps/api/src/modules/loading-manifests/routes.ts"), /holdNotice = \(await assertReleasable\(tx,/);
+    assert.match(read("apps/api/src/modules/loading-manifests/routes.ts"), /\n      holdNotice,\n    \}\);/);
+    const page = read("apps/web/src/app/staff/container-loading/page.tsx");
+    assert.match(page, /result\.holdNotice \? `。⚠️ \$\{result\.holdNotice\}`/);
+    assert.match(page, /if \(r\.holdNotice\) holdNotice = r\.holdNotice;/);
+    assert.match(read("apps/web/src/modules/lastmile/LastmileDispatchWorkspace.tsx"), /result\.holdNotice \? `。⚠️ \$\{result\.holdNotice\}`/);
+  });
   await test("E8 日志不在事务里写（写坏了会连累原操作）：writeHoldLogs 不收 tx", () => {
     const store = read("apps/api/src/modules/finance2-holds/store.ts");
     assert.match(store, /export async function writeHoldLogs\(rows: HoldLogInput\[\]\): Promise<void>/);
@@ -359,7 +409,10 @@ async function main(): Promise<void> {
   });
   await test("W4 「扣货名单」那一块：开关 off 什么都不画、不再轮询、取不到也不冒红字；不显示金额；「立即更新名单」只给管理员", () => {
     const panel = read("apps/web/src/components/finance2/Finance2HoldPanel.tsx");
-    assert.match(panel, /if \(next\.mode === "off"\) \{\n[^]*?window\.clearInterval\(timerRef\.current\)/);
+    // 关着改成 10 分钟问一次（不完全停：后台开了开关，开着的页面最多 10 分钟就知道；Codex 审查第 7 条）
+    assert.match(panel, /schedule\(next\.mode === "off" \? OFF_POLL_MS : ON_POLL_MS\)/);
+    assert.match(panel, /const OFF_POLL_MS = 10 \* 60_000;/);
+    assert.match(panel, /seq\.current\+\+; \/\/ 还在路上的那次回来也不再排下一轮/);
     assert.match(panel, /if \(everLive\.current\) setLoadError\(/);
     assert.match(panel, /if \(status\?\.mode === "off"\) return null;/);
     assert.ok(!/amount|金额|¥/.test(panel.replace(/\/\*[^]*?\*\//g, "").replace(/\/\/.*$/gm, "")));

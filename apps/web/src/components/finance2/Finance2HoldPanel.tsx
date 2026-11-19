@@ -34,6 +34,16 @@ export function Finance2HoldPanel() {
   const everLive = useRef(false);
   const isAdmin = getOptionalSession()?.role === "admin";
 
+  const pollMsRef = useRef(0);
+  const loadRef = useRef<() => void>(() => {});
+  /** 换轮询间隔：一样就不动 */
+  const schedule = useCallback((ms: number) => {
+    if (pollMsRef.current === ms && timerRef.current !== null) return;
+    if (timerRef.current !== null) window.clearInterval(timerRef.current);
+    pollMsRef.current = ms;
+    timerRef.current = window.setInterval(() => { if (document.visibilityState === "visible") loadRef.current(); }, ms);
+  }, []);
+
   const load = useCallback(async () => {
     const mine = ++seq.current;
     try {
@@ -41,21 +51,19 @@ export function Finance2HoldPanel() {
       if (mine !== seq.current) return;
       setStatus(next);
       setLoadError("");
-      if (next.mode === "off") {
-        // 开关关着：不再轮询（上线时打开开关要重启后台，员工刷新页面就又会来取）
-        if (timerRef.current !== null) { window.clearInterval(timerRef.current); timerRef.current = null; }
-      } else {
-        everLive.current = true;
-      }
+      // 开关关着：改成 10 分钟问一次（页面开着时后台打开了开关，最多 10 分钟这一块就出来）；开着：1 分钟一次
+      schedule(next.mode === "off" ? OFF_POLL_MS : ON_POLL_MS);
+      if (next.mode !== "off") everLive.current = true;
     } catch (e) {
       if (mine !== seq.current) return;
       if (everLive.current) setLoadError(e instanceof Error ? e.message : "扣货名单状态没取到");
+      schedule(everLive.current ? ON_POLL_MS : OFF_POLL_MS);
     }
-  }, []);
+  }, [schedule]);
+  loadRef.current = () => { void load(); };
 
   useEffect(() => {
     void load();
-    timerRef.current = window.setInterval(() => { if (document.visibilityState === "visible") void load(); }, 60_000);
     const onBlocked = () => {
       void load();
       setFlash(true);
@@ -64,6 +72,7 @@ export function Finance2HoldPanel() {
     };
     window.addEventListener(FINANCE2_HOLD_EVENT, onBlocked);
     return () => {
+      seq.current++; // 还在路上的那次回来也不再排下一轮（不然页面关了还留着定时器）
       if (timerRef.current !== null) window.clearInterval(timerRef.current);
       timerRef.current = null;
       window.removeEventListener(FINANCE2_HOLD_EVENT, onBlocked);
@@ -190,6 +199,10 @@ export function Finance2HoldPanel() {
     </div>
   );
 }
+
+/** 开着：1 分钟问一次状态；关着 / 取不到：10 分钟一次（关着也不完全停，免得后台打开了开关、开着的页面一直不知道） */
+const ON_POLL_MS = 60_000;
+const OFF_POLL_MS = 10 * 60_000;
 
 const btn: React.CSSProperties = {
   border: "1px solid var(--c-blue)", color: "var(--c-blue)", background: "var(--white)", borderRadius: 6,

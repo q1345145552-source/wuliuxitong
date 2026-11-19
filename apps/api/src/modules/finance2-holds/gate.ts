@@ -3,7 +3,7 @@ import { BusinessError } from "../core/business-error";
 import { logger } from "../core/logger";
 import { prisma } from "../../db/prisma";
 import { finance2HoldsConfig, type HoldMode } from "./config";
-import { readHoldState, STALE_AFTER_MS, writeHoldLogs, type HoldLogInput } from "./store";
+import { STALE_AFTER_MS, writeHoldLogs, type HoldLogInput } from "./store";
 
 /**
  * 放货前查扣货名单（约定 5.3 第 2、5 条）。只管「判断」，各个放货入口自己决定拦了以后怎么办：
@@ -86,40 +86,63 @@ export function motherOf(c: { trackingNo: string; parentTrackingNo: string | nul
   return c.parentTrackingNo || c.trackingNo;
 }
 
-/** 只判断，不拦、不记日志 */
+interface VerdictRow {
+  generated_at: Date | null;
+  no: string | null;
+  mark: string | null;
+  mother: string | null;
+  on_list: boolean | null;
+  released: boolean | null;
+  mark_decision: boolean | null;
+  ticket_decision: boolean | null;
+}
+
+/**
+ * 判断这几票该不该扣（纯规则，测试直接调）：
+ *   整家扣不扣 = 「重新核对」问整家的最新答案；没问过就看在不在名单上
+ *   这一票扣不扣（整家扣的前提下）= 问这一票的最新答案；没问过就看名单上是不是单票放行了（唛头 + 母运单号都要对上）
+ */
+export function heldByRules(r: { onList: boolean; released: boolean; markDecision: boolean | null; ticketDecision: boolean | null }): boolean {
+  const markBlocked = r.markDecision ?? r.onList;
+  if (!markBlocked) return false;
+  return r.ticketDecision ?? !r.released;
+}
+
+/**
+ * 只判断，不拦、不记日志。
+ * ⚠️ 名单抬头、扣货名单、单票放行、核对结果**一条 SQL 读完**（2026-11-19 Codex 审查第 3 条）：分几次查的话，整份替换正好
+ * 夹在中间提交，会读到「旧名单的扣 + 新名单的放行」拼出来的结果。PostgreSQL 一条语句里看到的是同一个快照。
+ * ⚠️ 单票放行按「唛头 + 母运单号」对（第 4 条）：运单号改过 / 删了重建时，旧号可能落到别的客户头上。
+ */
 export async function evaluateRelease(db: Db, candidates: ReleaseCandidate[], now: Date = new Date()): Promise<GateResult> {
   const cfg = finance2HoldsConfig();
   if (!cfg) return { mode: "off", enforce: false, listGeneratedAt: null, notice: null, held: [] };
-  const state = await readHoldState(db);
-  const generatedAt = state.generatedAt;
-  const notice = noticeFor(generatedAt, now);
+  const withMark = candidates.filter((c): c is ReleaseCandidate & { customerMark: string } => !!c.customerMark);
+  const nos = withMark.map((c) => c.trackingNo);
+  const marks = withMark.map((c) => c.customerMark);
+  const mothers = withMark.map(motherOf);
+  const rows = await db.$queryRaw<VerdictRow[]>`
+    WITH st AS (SELECT generated_at FROM finance2_hold_state WHERE id = 'current'),
+         c AS (SELECT * FROM unnest(${nos}::text[], ${marks}::text[], ${mothers}::text[]) AS t(no, mark, mother))
+    SELECT (SELECT generated_at FROM st) AS generated_at, c.no, c.mark, c.mother,
+      EXISTS (SELECT 1 FROM finance2_holds h WHERE h.customer_mark = c.mark) AS on_list,
+      EXISTS (SELECT 1 FROM finance2_hold_releases r WHERE r.waybill_no = c.mother AND r.customer_mark = c.mark) AS released,
+      (SELECT d.blocked FROM finance2_hold_clears d
+        WHERE d.customer_mark = c.mark AND d.waybill_no IS NULL AND d.cleared_at > (SELECT generated_at FROM st)
+        ORDER BY d.cleared_at DESC, d.blocked DESC LIMIT 1) AS mark_decision,
+      (SELECT d.blocked FROM finance2_hold_clears d
+        WHERE d.customer_mark = c.mark AND d.waybill_no = c.mother AND d.cleared_at > (SELECT generated_at FROM st)
+        ORDER BY d.cleared_at DESC, d.blocked DESC LIMIT 1) AS ticket_decision
+    FROM (SELECT 1) AS one LEFT JOIN c ON true`;
+  const generatedAt = rows[0]?.generated_at ?? null;
+  const notice = [cfg.problem ? `扣货名单的配置有问题，取不到新名单、「重新核对」问不了，请找管理员（${cfg.problem}）。` : null, noticeFor(generatedAt, now)]
+    .filter(Boolean).join(" ") || null;
   if (!generatedAt) return { mode: cfg.mode, enforce: false, listGeneratedAt: null, notice, held: [] };
-
-  const marks = [...new Set(candidates.map((c) => c.customerMark).filter((m): m is string => !!m))];
-  if (marks.length === 0) return { mode: cfg.mode, enforce: cfg.mode === "enforce", listGeneratedAt: generatedAt, notice, held: [] };
-  const holds = await db.finance2Hold.findMany({ where: { customerMark: { in: marks } }, select: { customerMark: true } });
-  const heldMarks = new Set(holds.map((h) => h.customerMark));
-  const onList = candidates.filter((c) => c.customerMark && heldMarks.has(c.customerMark));
-  let held: HeldItem[] = [];
-  if (onList.length > 0) {
-    const mothers = [...new Set(onList.map(motherOf))];
-    const [released, clears] = await Promise.all([
-      db.finance2HoldRelease.findMany({ where: { waybillNo: { in: mothers } }, select: { waybillNo: true } }),
-      db.finance2HoldClear.findMany({
-        where: { customerMark: { in: [...heldMarks] }, clearedAt: { gt: generatedAt } },
-        select: { customerMark: true, waybillNo: true },
-      }),
-    ]);
-    const releasedNos = new Set(released.map((r) => r.waybillNo));
-    const clearedMarks = new Set(clears.filter((c) => !c.waybillNo).map((c) => c.customerMark));
-    const clearedNos = new Set(clears.filter((c) => c.waybillNo).map((c) => `${c.customerMark}\u0000${c.waybillNo}`));
-    held = onList
-      .filter((c) => {
-        const mother = motherOf(c);
-        return !releasedNos.has(mother) && !clearedMarks.has(c.customerMark!) && !clearedNos.has(`${c.customerMark}\u0000${mother}`);
-      })
-      .map((c) => ({ trackingNo: c.trackingNo, motherTrackingNo: motherOf(c), customerMark: c.customerMark! }));
-  }
+  const held: HeldItem[] = rows
+    .filter((r) => r.no && r.mark && r.mother && heldByRules({
+      onList: !!r.on_list, released: !!r.released, markDecision: r.mark_decision, ticketDecision: r.ticket_decision,
+    }))
+    .map((r) => ({ trackingNo: r.no!, motherTrackingNo: r.mother!, customerMark: r.mark! }));
   return { mode: cfg.mode, enforce: cfg.mode === "enforce", listGeneratedAt: generatedAt, notice, held };
 }
 

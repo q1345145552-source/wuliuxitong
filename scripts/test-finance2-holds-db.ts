@@ -88,6 +88,7 @@ const fake = {
   /** 按 (唛头, 运单号) 回核对结果；返回 null = 用 checkDefault */
   check: (_mark: string, _waybill: string | null): FakeReply | null => null,
   requests: [] as Array<{ path: string; auth: string | undefined; query: URLSearchParams }>,
+  lastCheckedAt: null as Date | null,
 };
 function listBody(generatedAt: Date, holds: string[], released: Array<{ no: string; mark: string }>): unknown {
   return {
@@ -97,8 +98,11 @@ function listBody(generatedAt: Date, holds: string[], released: Array<{ no: stri
     releasedWaybills: released.map((r) => ({ waybillNo: r.no, customerMark: r.mark, releasedAt: "2026-12-04T15:20:00+07:00" })),
   };
 }
-function checkReply(mark: string, waybill: string | null, blocked: boolean): FakeReply {
-  return { status: 200, body: { serverTime: bkk(new Date()), customerMark: mark, waybillNo: waybill, blocked, checkedAt: bkk(new Date()) } };
+/** 核对的回话：checkedAt 带毫秒（同一秒里先扣后放也分得清先后）；at 给了就用它（造「晚到的旧答案」） */
+function checkReply(mark: string, waybill: string | null, blocked: boolean, at: Date = new Date()): FakeReply {
+  const checkedAt = new Date(at.getTime() + 7 * 3600_000).toISOString().replace(/Z$/, "+07:00");
+  fake.lastCheckedAt = at;
+  return { status: 200, body: { serverTime: bkk(new Date()), customerMark: mark, waybillNo: waybill, blocked, checkedAt } };
 }
 async function startFake(): Promise<string> {
   const server = createServer((req: IncomingMessage, res: ServerResponse) => {
@@ -293,10 +297,11 @@ async function main(): Promise<void> {
       assert.equal(s.body.data.listGeneratedAt, null);
       assert.equal(s.body.data.notice, NO_LIST_NOTICE);
     });
-    await test("N2 没有名单：尾端派送照常出车", async () => {
+    await test("N2 没有名单：尾端派送照常出车，回话里带「现在没有扣货名单」（页面开着时才开开关，那一块还没出来也能看到）", async () => {
       await fresh();
       const r = await dispatch(["ZZF2H00A1"]);
       assert.equal(r.status, 200, r.text);
+      assert.equal(r.body.data.holdNotice, NO_LIST_NOTICE);
       assert.equal(await statusOf("ZZF2H00A1"), "outForDelivery");
     });
 
@@ -414,6 +419,15 @@ async function main(): Promise<void> {
       await db.adminLastmileOrder.deleteMany({ where: { companyId: CO, shipmentId: `${P}s_a1` } });
       await db.shipment.update({ where: { trackingNo: "ZZF2H00A1" }, data: { currentStatus: "inWarehouseTH" } });
     });
+    await test("D3b 单票放行要唛头也对上（Codex 审查第 4 条）：放行记录的号对、唛头是别人的 → 不算放行", async () => {
+      await db.finance2HoldRelease.create({ data: { waybillNo: "ZZF2H00B2", customerMark: C, releasedAt: new Date() } });
+      try {
+        const r = await dispatch(["ZZF2H00B2"]);
+        assert.equal(r.status, 409, r.text);
+      } finally {
+        await db.finance2HoldRelease.delete({ where: { waybillNo: "ZZF2H00B2" } });
+      }
+    });
     await test("D5 已签收的再派一趟也查名单（签收后把 A1 改成已签收再派）", async () => {
       await db.shipment.update({ where: { trackingNo: "ZZF2H00A1" }, data: { currentStatus: "delivered" } });
       const r = await dispatch(["ZZF2H00A1"]);
@@ -461,21 +475,19 @@ async function main(): Promise<void> {
       const s = await staff("GET", "/admin/finance2-holds/status");
       assert.ok(!s.body.data.recent.some((x: Row) => x.customerMark === A), "放了的不再列在「刚才被拦的」");
     });
-    await test("R2b 「核对放过」记的是财务那边的核对时间（不用物流服务器的钟）", async () => {
-      const c = await db.finance2HoldClear.findFirst({ where: { customerMark: A, waybillNo: null } });
+    await test("R2b 核对结果记的是财务那边的核对时间（不用物流服务器的钟）；放和扣都记", async () => {
+      const c = await db.finance2HoldClear.findFirst({ where: { customerMark: A, waybillNo: null }, orderBy: { clearedAt: "desc" } });
       assert.ok(c);
-      const asked = fake.requests.filter((q) => q.path.endsWith("/holds/check")).at(-1);
-      assert.ok(asked);
-      assert.ok(Math.abs(c.clearedAt.getTime() - Date.now()) < 120_000);
-      // 假财务的 checkedAt 是秒级（bkk 去掉了毫秒），物流自己的钟带毫秒
-      assert.equal(c.clearedAt.getMilliseconds(), 0);
+      assert.equal(c.blocked, false);
+      assert.equal(c.clearedAt.getTime(), fake.lastCheckedAt!.getTime());
+      assert.ok(await db.finance2HoldClear.count({ where: { customerMark: A, waybillNo: null, blocked: true } }) >= 1, "R1 问整家时回的「还扣」也记了");
     });
     await test("R3 新名单比本地的新、但比核对早：替换了，核对留着（还能放）；比核对晚的名单作废核对、照新名单拦", async () => {
       // 先让 A 的别的票能被测：把 A1 退回仓里
       await db.adminLastmileOrder.deleteMany({ where: { companyId: CO } });
       await db.shipment.update({ where: { trackingNo: "ZZF2H00A1" }, data: { currentStatus: "inWarehouseTH" } });
       const stored = (await db.finance2HoldState.findUnique({ where: { id: "current" } })).generatedAt as Date;
-      const clear = await db.finance2HoldClear.findFirst({ where: { customerMark: A, waybillNo: null } });
+      const clear = await db.finance2HoldClear.findFirst({ where: { customerMark: A, waybillNo: null }, orderBy: { clearedAt: "desc" } });
       const between = new Date((stored.getTime() + clear.clearedAt.getTime()) / 2);
       assert.ok(between > stored && between < clear.clearedAt);
       fake.list = { status: 200, body: listBody(between, [A, B], []) };
@@ -522,11 +534,38 @@ async function main(): Promise<void> {
       }
       assert.equal((await dispatch(["ZZF2H00A1"])).status, 409);
     });
-    await test("R7 不在名单上的票点核对：直接说能放，不去问财务", async () => {
+    await test("R7 不在名单上的票点核对：也真去问财务（Codex 审查第 5 条）；财务说不扣 → 能放", async () => {
+      fake.check = (mark, wb) => checkReply(mark, wb, false);
       const before = fake.requests.length;
       const r = await recheck("ZZF2H00C1");
-      assert.equal(r.body.data.blocked, false);
-      assert.equal(fake.requests.length, before);
+      assert.equal(r.body.data.blocked, false, r.text);
+      assert.equal(fake.requests.length, before + 1);
+      assert.equal(fake.requests.at(-1)!.query.get("customerMark"), C);
+    });
+    await test("R7b 名单上还没有、财务刚把这家加上：核对说扣 → 这家马上开始拦（不等 15 分钟）", async () => {
+      fake.check = () => null; // 都回「扣」
+      const r = await recheck("ZZF2H00C1");
+      assert.equal(r.body.data.blocked, true, r.text);
+      assert.equal((await dispatch(["ZZF2H00C1"])).status, 409);
+    });
+    await test("R7c 晚到的旧答案盖不掉新答案（Codex 审查第 2 条）：先记了 10:00:05 的「扣」，再来一个 10:00:01 的「放」→ 照拦", async () => {
+      const t = new Date();
+      fake.check = (mark, wb) => checkReply(mark, wb, true, t);
+      assert.equal((await recheck("ZZF2H00C1")).body.data.blocked, true);
+      fake.check = (mark, wb) => checkReply(mark, wb, false, new Date(t.getTime() - 4000));
+      const late = await recheck("ZZF2H00C1");
+      assert.equal(late.body.data.blocked, true, `旧的「放」不许盖掉新的「扣」：${late.text}`);
+      assert.equal((await dispatch(["ZZF2H00C1"])).status, 409);
+      fake.check = (mark, wb) => checkReply(mark, wb, false, new Date(t.getTime() + 1000));
+      assert.equal((await recheck("ZZF2H00C1")).body.data.blocked, false, "更新的「放」才算");
+    });
+    await test("R7d 核对时间不可靠的回话（没带时区 / 只问唛头却回了运单号）当问不到，什么都不记", async () => {
+      const n = await db.finance2HoldClear.count();
+      fake.check = (mark, wb) => ({ status: 200, body: { customerMark: mark, waybillNo: wb, blocked: false, checkedAt: "2026-12-05T10:21:40", serverTime: "2026-12-05T10:21:40" } });
+      assert.equal((await recheck("ZZF2H00A1")).body.data.unreachable, true);
+      fake.check = (mark, _wb) => checkReply(mark, "ZZF2H00A1", false);
+      assert.equal((await recheck("ZZF2H00A1")).body.data.unreachable, true);
+      assert.equal(await db.finance2HoldClear.count(), n);
     });
     await test("R8 别的公司的真运单号：404（第 27 条：造另一家的数据实测）；不存在的号 404；客户号不能用这几个接口", async () => {
       const OTHER = "zz_f2h_other_co";
@@ -558,9 +597,26 @@ async function main(): Promise<void> {
       const st = await db.finance2HoldState.findUnique({ where: { id: "current" } });
       assert.match(st.lastError, /HTTP 500/);
       assert.equal((await logs("fetch_fail")).length, 1);
+      assert.ok(st.failingSince, "记下连续失败的起点");
       const s = await staff("GET", "/admin/finance2-holds/status");
       assert.ok(s.body.data.lastErrorLabel);
       assert.ok(s.body.data.listLabel);
+    });
+    await test("E1b 连续 1 小时取不到打 error 报警（从来没取到过也算；Codex 审查第 9 条）；取到一次就清掉起点", async () => {
+      await db.finance2HoldState.update({ where: { id: "current" }, data: { failingSince: ago(2) } });
+      const mark = captured.length;
+      await sync();
+      assert.ok(captured.slice(mark).some((l) => l.includes("[ERROR]") && l.includes("扣货名单取不到了")));
+      fake.list = { status: 200, body: listBody(new Date(), [A, B], []) };
+      await sync();
+      assert.equal((await db.finance2HoldState.findUnique({ where: { id: "current" } })).failingSince, null);
+      // 从来没取到过：起点也照记
+      await db.finance2HoldState.deleteMany({});
+      fake.list = { status: 500, body: {} };
+      await sync();
+      assert.ok((await db.finance2HoldState.findUnique({ where: { id: "current" } })).failingSince);
+      fake.list = { status: 200, body: listBody(new Date(), [A, B], []) };
+      await sync();
     });
     await test("E2 5xx 会重试（照约定等几次）；401 不重试", async () => {
       fake.requests = [];
@@ -664,13 +720,45 @@ async function main(): Promise<void> {
       delete process.env.FINANCE2_HOLDS_MODE;
       assert.equal((await sync()).kind, "off", "没填等于 off");
     });
-    await test("S3 开了但配错（密钥太短）：按 off 处理、不拦，日志里不打密钥", async () => {
+    await test("S3 开了但配错（密钥太短 / 地址错）：照本地名单拦（Codex 审查第 1 条）；页面和回话提示配置有问题；不去连财务；核对答「问不了」", async () => {
       await fresh("enforce");
       await sync();
-      process.env.FINANCE2_HOLDS_SECRET = "short";
-      const r = await dispatch(["ZZF2H00A1"]);
-      assert.equal(r.status, 200, r.text);
-      process.env.FINANCE2_HOLDS_SECRET = SECRET;
+      for (const [k, v] of [["FINANCE2_HOLDS_SECRET", "short"], ["FINANCE2_API_BASE", "http://10.0.0.5:1"]] as const) {
+        const keep = process.env[k];
+        process.env[k] = v;
+        try {
+          const r = await dispatch(["ZZF2H00A1"]);
+          assert.equal(r.status, 409, `配错不许变成全放：${r.text}`);
+          const ok = await dispatch(["ZZF2H00C1"]);
+          assert.equal(ok.status, 200, ok.text);
+          assert.match(ok.body.data.holdNotice ?? "", /配置有问题/);
+          await db.adminLastmileOrder.deleteMany({ where: { companyId: CO } });
+          await db.shipment.update({ where: { trackingNo: "ZZF2H00C1" }, data: { currentStatus: "inWarehouseTH" } });
+          const s = await staff("GET", "/admin/finance2-holds/status");
+          assert.equal(s.body.data.mode, "enforce");
+          assert.match(s.body.data.notice ?? "", /配置有问题/);
+          fake.requests = [];
+          const sy = await sync();
+          assert.equal(sy.kind, "failed");
+          assert.equal(fake.requests.length, 0);
+          const rc = await recheck("ZZF2H00A1");
+          assert.equal(rc.body.data.blocked, true);
+          assert.equal(rc.body.data.unreachable, true);
+        } finally {
+          process.env[k] = keep;
+        }
+      }
+      assert.ok(!captured.join("\n").includes(SECRET));
+    });
+    await test("S4 开关写了不认识的词：按 enforce 拦", async () => {
+      await fresh("enforce");
+      await sync();
+      process.env.FINANCE2_HOLDS_MODE = "on";
+      try {
+        assert.equal((await dispatch(["ZZF2H00A1"])).status, 409);
+      } finally {
+        process.env.FINANCE2_HOLDS_MODE = "enforce";
+      }
     });
 
     console.log("\n【拆派仓回传派送中 —— 照收、记一笔】");

@@ -4,7 +4,7 @@
 --   finance2_hold_state      名单抬头（一行）：名单生成时间、最后一次取到 / 去取 / 失败的时间和原因
 --   finance2_holds           被扣的唛头（每 15 分钟整份替换）
 --   finance2_hold_releases   老板单票放行的母运单号（整份替换）
---   finance2_hold_clears     「重新核对」财务说可以放的唛头 / 单票（下一份更新的名单出来后作废）
+--   finance2_hold_clears     「重新核对」问财务的结果（放 / 扣都记，按财务的核对时间取最新；下一份更新的名单出来后作废）
 --   finance2_hold_logs       取名单、拦、重新核对的日志
 -- 不加外键（名单里的唛头物流系统可能还没有）。全部 IF NOT EXISTS，重复执行不会出错。
 -- ⚠️ 手写迁移，不许用 migrate dev / db push / 影子库 diff 生成（12 张表没迁移记录，重放会挂）。
@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS "finance2_hold_state" (
     "last_attempt_at" TIMESTAMP(3),
     "last_error" TEXT,
     "last_error_at" TIMESTAMP(3),
+    "failing_since" TIMESTAMP(3),
     "updated_at" TIMESTAMP(3) NOT NULL,
 
     CONSTRAINT "finance2_hold_state_pkey" PRIMARY KEY ("id")
@@ -46,6 +47,7 @@ CREATE TABLE IF NOT EXISTS "finance2_hold_clears" (
     "id" TEXT NOT NULL,
     "customer_mark" TEXT NOT NULL,
     "waybill_no" TEXT,
+    "blocked" BOOLEAN NOT NULL DEFAULT false,
     "cleared_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "operator_id" TEXT,
 

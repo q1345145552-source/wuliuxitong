@@ -9,19 +9,30 @@ import { isSafeSecret } from "../chaipai/config";
  *   FINANCE2_API_BASE       财务系统2 的根地址（例如 https://caiwu.example.com），后面自己拼 /integrations/logistics/v1/…
  *   FINANCE2_HOLDS_SECRET   「物流拉财务」那把密钥（财务系统2 发给我们的，跟「财务拉物流」那把不是同一把）
  *
- * 配置不合格时**不让进程退出、不抛异常**：记一次原因（不打密钥）然后按 off 处理 —— 放货照常、不拦。
- * （跟拆派仓、海外仓财务对接一样的做法。开关打开却配错，宁可不拦也不能把所有放货卡死。）
+ * ⚠️ 开关和「连财务的配置」分开看（2026-11-19 Codex 审查第 1 条）：
+ *   - 开关是 off（或没填）：什么都不做 —— 这是唯一「全放」的情况。
+ *   - 开关开着，但密钥 / 地址配错了：**照本地存的名单拦**，只是取不到新名单、「重新核对」问不了，页面上提示配置有问题。
+ *     原来配错一律按 off，换密钥漏配一项，欠款客户的货就全放出去了、页面也不提示。
+ *   - 开关写了个不认识的词：当成 enforce（填了就是想开；宁可多拦，日志里报错）。
+ * 都不让进程退出、不抛异常。
  */
 export type HoldMode = "off" | "observe" | "enforce";
 
-export interface Finance2HoldsConfig {
-  mode: Exclude<HoldMode, "off">;
+export interface Finance2Remote {
   /** 去掉了结尾的 /，已拼好 /integrations/logistics/v1 */
   apiBase: string;
   secret: string;
 }
 
-export type Finance2HoldsConfigResult = { ok: true; cfg: Finance2HoldsConfig } | { ok: false; off: boolean; reason: string };
+export interface Finance2HoldsConfig {
+  mode: Exclude<HoldMode, "off">;
+  /** 连财务系统2 的配置；配错了是 null（照本地名单拦，取不到新名单） */
+  remote: Finance2Remote | null;
+  /** 配置哪里不对（给页面和日志看，不含密钥）；没问题是 null */
+  problem: string | null;
+}
+
+export type Finance2HoldsConfigResult = { ok: true; cfg: Finance2HoldsConfig } | { ok: false; off: true; reason: string };
 
 export const FINANCE2_LOGISTICS_PREFIX = "/integrations/logistics/v1";
 
@@ -41,29 +52,38 @@ function normalizeApiBase(raw: string | undefined, production: boolean): string 
 export function readFinance2HoldsConfig(env: NodeJS.ProcessEnv = process.env): Finance2HoldsConfigResult {
   const rawMode = (env.FINANCE2_HOLDS_MODE ?? "").trim();
   if (rawMode === "" || rawMode === "off") return { ok: false, off: true, reason: "开关没开（FINANCE2_HOLDS_MODE 是 off 或没填）" };
-  if (rawMode !== "observe" && rawMode !== "enforce") {
-    return { ok: false, off: false, reason: "FINANCE2_HOLDS_MODE 只认 off / observe / enforce" };
+  const problems: string[] = [];
+  let mode: "observe" | "enforce";
+  if (rawMode === "observe" || rawMode === "enforce") mode = rawMode;
+  else {
+    mode = "enforce";
+    problems.push("FINANCE2_HOLDS_MODE 只认 off / observe / enforce，填了别的按 enforce（真拦）处理");
   }
-  if (!isSafeSecret(env.FINANCE2_HOLDS_SECRET)) {
-    return { ok: false, off: false, reason: "FINANCE2_HOLDS_SECRET 不合格（至少 32 位随机字符、不能有空白、不能是占位词）" };
-  }
+  let remote: Finance2Remote | null = null;
   const base = normalizeApiBase(env.FINANCE2_API_BASE, env.NODE_ENV === "production");
-  if (!base) return { ok: false, off: false, reason: "FINANCE2_API_BASE 不对（生产只认 https，不许带用户名密码、? 和 #）" };
-  return { ok: true, cfg: { mode: rawMode, apiBase: base + FINANCE2_LOGISTICS_PREFIX, secret: env.FINANCE2_HOLDS_SECRET! } };
+  if (!isSafeSecret(env.FINANCE2_HOLDS_SECRET)) {
+    problems.push("FINANCE2_HOLDS_SECRET 不合格（至少 32 位随机字符、不能有空白、不能是占位词）");
+  } else if (!base) {
+    problems.push("FINANCE2_API_BASE 不对（生产只认 https，不许带用户名密码、? 和 #）");
+  } else {
+    remote = { apiBase: base + FINANCE2_LOGISTICS_PREFIX, secret: env.FINANCE2_HOLDS_SECRET! };
+  }
+  return { ok: true, cfg: { mode, remote, problem: problems.length > 0 ? problems.join("；") : null } };
 }
 
-let lastLoggedReason: string | null = null;
+let lastLoggedProblem: string | null = null;
 
-/** 每次现读环境变量（测试能直接改 process.env）；不合格的原因同一句只记一次日志 */
+/** 开关 off 时是 null；开着时返回模式 + 连财务的配置（可能配错）。每次现读环境变量；配置问题同一句只记一次日志 */
 export function finance2HoldsConfig(): Finance2HoldsConfig | null {
   const result = readFinance2HoldsConfig();
-  if (result.ok) {
-    lastLoggedReason = null;
-    return result.cfg;
+  if (!result.ok) {
+    lastLoggedProblem = null;
+    return null;
   }
-  if (!result.off && result.reason !== lastLoggedReason) {
-    lastLoggedReason = result.reason;
-    logger.error("财务系统2 扣货名单配置不合格，按关闭处理（不取名单、不拦）", { 原因: result.reason });
+  const problem = result.cfg.problem;
+  if (problem && problem !== lastLoggedProblem) {
+    logger.error("财务系统2 扣货名单配置有问题：照本地存的名单拦，取不到新名单、重新核对问不了", { 原因: problem });
   }
-  return null;
+  lastLoggedProblem = problem;
+  return result.cfg;
 }

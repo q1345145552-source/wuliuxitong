@@ -1677,6 +1677,8 @@ model Finance2HoldState {
   /// 最后一次取失败的原因（不含密钥）和时间；取成功后清空
   lastError     String?   @map("last_error")
   lastErrorAt   DateTime? @map("last_error_at")
+  /// 这一串连续失败从什么时候开始（取成功后清空）；连续 1 小时取不到报警用（约定 1.3），从来没取到过也算
+  failingSince  DateTime? @map("failing_since")
   updatedAt     DateTime  @updatedAt @map("updated_at")
 
   @@map("finance2_hold_state")
@@ -1699,12 +1701,15 @@ model Finance2HoldRelease {
   @@map("finance2_hold_releases")
 }
 
-/// 「重新核对」财务说可以放的：waybillNo 为空 = 整个唛头可放；有值 = 只这一票（母运单号）可放。
-/// 下一份整份名单的生成时间晚于 clearedAt 时作废（那份名单已经把这次核对算进去了）
+/// 「重新核对」问财务的结果（放 / 扣都记）：waybillNo 为空 = 整个唛头的答案；有值 = 这一票（母运单号）的答案。
+/// clearedAt 是财务那边的核对时间。同一个唛头 / 同一票按核对时间取最新的一条，晚到的旧答案盖不掉新答案；
+/// 下一份整份名单的生成时间晚于它时作废（那份名单已经把这次核对算进去了）
 model Finance2HoldClear {
   id           String   @id @default(cuid())
   customerMark String   @map("customer_mark")
   waybillNo    String?  @map("waybill_no")
+  /// true = 财务说还扣；false = 财务说可以放
+  blocked      Boolean  @default(false)
   clearedAt    DateTime @default(now()) @map("cleared_at")
   operatorId   String?  @map("operator_id")
 

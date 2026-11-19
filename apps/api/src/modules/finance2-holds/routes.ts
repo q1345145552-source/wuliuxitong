@@ -3,7 +3,7 @@ import type { MinimalHttpApp } from "../../server";
 import { fail, ok, requireRole } from "../core/http-utils";
 import { checkHold } from "./client";
 import { finance2HoldsConfig } from "./config";
-import { evaluateRelease, flushHoldLogs, formatListTime, listLabel, loadCandidates, motherOf, noticeFor } from "./gate";
+import { evaluateRelease, flushHoldLogs, formatListTime, listLabel, loadCandidates, motherOf } from "./gate";
 import { readHoldState, writeHoldLogs } from "./store";
 import { isSyncRunning, syncHoldList } from "./sync";
 
@@ -65,11 +65,20 @@ export function registerFinance2HoldRoutes(app: MinimalHttpApp): void {
       lastError: state.lastError,
       lastErrorAt: iso(state.lastErrorAt),
       lastErrorLabel: state.lastErrorAt ? formatListTime(state.lastErrorAt) : null,
-      notice: noticeFor(state.generatedAt, now),
+      // 跟放货时用同一句（含「配置有问题」），不另拼
+      notice: (await evaluateRelease(prisma, [], now)).notice,
       recent,
     });
   });
 
+  /**
+   * 重新核对（约定 5.2、5.3 第 4 条；2026-11-19 Codex 审查第 2、5、6 条改过）：
+   *   - 只要开关开着、这票有唛头，**一律去问财务**（本地名单上没有也问：财务可能刚把这家加上 / 撤了单票放行）。
+   *   - 先只问唛头：这家扣不扣；还扣再带母运单号问：这一票能不能放。**放和扣都记下来**，带财务的核对时间。
+   *     判断时同一个唛头 / 同一票按核对时间取最新的一条（evaluateRelease），晚到的旧答案盖不掉新答案。
+   *   - 问不到（超时 / 连不上 / 回的格式不对 / 配置有问题）：什么都不记，按本地名单答。
+   *   - 最后按记完以后的有效状态重新判断一次再回话，不拿这一次问到的结果直接回。
+   */
   app.post(FINANCE2_HOLD_PATHS.recheck, async (req, res) => {
     const auth = requireRole(req, res, ["admin", "staff"]);
     if (!auth) return;
@@ -91,44 +100,62 @@ export function registerFinance2HoldRoutes(app: MinimalHttpApp): void {
       return;
     }
     const [cand] = await loadCandidates(prisma, [ship.id]);
-    const before = await evaluateRelease(prisma, [cand]);
-    const state = await readHoldState();
     const mark = cand.customerMark;
     const mother = motherOf(cand);
-    if (!mark || before.held.length === 0) {
-      ok(res, { trackingNo, blocked: false, message: "这票现在不在扣货名单上，可以放货。", listLabel: state.generatedAt ? listLabel(state.generatedAt) : null });
+    const answer = async (asked: string | null, unreachable: boolean) => {
+      const v = await evaluateRelease(prisma, [cand]);
+      const label = v.listGeneratedAt ? listLabel(v.listGeneratedAt) : "现在没有扣货名单";
+      const blocked = v.held.length > 0;
+      let message: string;
+      if (unreachable) {
+        message = blocked
+          ? `连不上财务系统，${label}继续拦。过一会儿再点一次，或者直接联系财务。`
+          : `连不上财务系统；${v.listGeneratedAt ? `${label}，这票不在扣货名单上` : "本地没有扣货名单、不拦"}，可以放货。`;
+      } else if (!blocked) {
+        message = asked === "ticket"
+          ? `财务系统说 ${mark} 还在扣货，但运单 ${mother} 这一票可以放（连同它的子运单）。请再操作一次（柜子推进时没跟着推的，到尾端派送直接出车）。`
+          : `财务系统说 ${mark ?? "这家"} 现在不扣货，这家的货都可以放。请再操作一次（柜子推进时没跟着推的，到尾端派送直接出车）。`;
+      } else {
+        message = `财务系统说 ${mark} 还在扣货（刚刚核对的），不能放。请联系财务。`;
+      }
+      ok(res, { trackingNo, blocked, ...(unreachable ? { unreachable: true } : {}), message, listLabel: v.listGeneratedAt ? listLabel(v.listGeneratedAt) : null });
+    };
+    if (!mark) {
+      await answer(null, false);
       return;
     }
-    const logBase = { kind: "recheck" as const, customerMark: mark, waybillNo: mother, trackingNo, listGeneratedAt: state.generatedAt, operatorId: auth.userId };
-    const fallback = state.generatedAt ? listLabel(state.generatedAt) : "按本地名单";
-
-    // 先只问唛头：财务说不扣了 = 这家所有的货都能放；还扣的话再带上这票问一次（老板可能单放了这一票）
-    const byMark = await checkHold(cfg, mark, null);
+    const before = await evaluateRelease(prisma, [cand]);
+    const logBase = { kind: "recheck" as const, customerMark: mark, waybillNo: mother, trackingNo, listGeneratedAt: before.listGeneratedAt, operatorId: auth.userId };
+    if (!cfg.remote) {
+      await writeHoldLogs([{ ...logBase, result: "配置有问题，问不了财务，按本地名单", detail: cfg.problem }]);
+      await answer(null, true);
+      return;
+    }
+    const byMark = await checkHold(cfg.remote, mark, null);
     if (byMark.kind !== "ok") {
-      await writeHoldLogs([{ ...logBase, result: "连不上财务系统，继续拦", detail: byMark.reason }]);
-      ok(res, { trackingNo, blocked: true, unreachable: true, message: `连不上财务系统，${fallback}继续拦。过一会儿再点一次，或者直接联系财务。` });
+      await writeHoldLogs([{ ...logBase, result: "连不上财务系统，按本地名单", detail: byMark.reason }]);
+      await answer(null, true);
       return;
     }
+    await prisma.finance2HoldClear.create({
+      data: { customerMark: mark, waybillNo: null, blocked: byMark.value.blocked, operatorId: auth.userId, clearedAt: byMark.value.checkedAt },
+    });
     if (!byMark.value.blocked) {
-      await prisma.finance2HoldClear.create({ data: { customerMark: mark, waybillNo: null, operatorId: auth.userId, clearedAt: byMark.value.checkedAt ?? new Date() } });
-      await writeHoldLogs([{ ...logBase, result: "财务说这家不扣了，可以放" }]);
-      ok(res, { trackingNo, blocked: false, message: `财务系统说 ${mark} 现在不扣货了，这家的货都可以放。请再操作一次（柜子推进时没跟着推的，到尾端派送直接出车）。` });
+      await writeHoldLogs([{ ...logBase, result: "财务说这家不扣，可以放" }]);
+      await answer("mark", false);
       return;
     }
-    const byWaybill = await checkHold(cfg, mark, mother);
+    const byWaybill = await checkHold(cfg.remote, mark, mother);
     if (byWaybill.kind !== "ok") {
-      await writeHoldLogs([{ ...logBase, result: "唛头还在扣；问单票时连不上，继续拦", detail: byWaybill.reason }]);
-      ok(res, { trackingNo, blocked: true, unreachable: true, message: `财务系统说 ${mark} 还在扣货；问这一票时没连上，${fallback}继续拦。` });
+      await writeHoldLogs([{ ...logBase, result: "唛头还在扣；问单票时连不上，按本地名单", detail: byWaybill.reason }]);
+      await answer("mark", true);
       return;
     }
-    if (!byWaybill.value.blocked) {
-      await prisma.finance2HoldClear.create({ data: { customerMark: mark, waybillNo: mother, operatorId: auth.userId, clearedAt: byWaybill.value.checkedAt ?? new Date() } });
-      await writeHoldLogs([{ ...logBase, result: "这家还在扣，这一票可以放" }]);
-      ok(res, { trackingNo, blocked: false, message: `财务系统说 ${mark} 还在扣货，但运单 ${mother} 这一票可以放（连同它的子运单）。请再操作一次（柜子推进时没跟着推的，到尾端派送直接出车）。` });
-      return;
-    }
-    await writeHoldLogs([{ ...logBase, result: "财务说还在扣，继续拦" }]);
-    ok(res, { trackingNo, blocked: true, message: `财务系统说 ${mark} 还在扣货（刚刚核对的），不能放。请联系财务。` });
+    await prisma.finance2HoldClear.create({
+      data: { customerMark: mark, waybillNo: mother, blocked: byWaybill.value.blocked, operatorId: auth.userId, clearedAt: byWaybill.value.checkedAt },
+    });
+    await writeHoldLogs([{ ...logBase, result: byWaybill.value.blocked ? "财务说还在扣，继续拦" : "这家还在扣，这一票可以放" }]);
+    await answer("ticket", false);
   });
 
   app.post(FINANCE2_HOLD_PATHS.refresh, async (req, res) => {

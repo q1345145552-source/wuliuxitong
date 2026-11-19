@@ -25,6 +25,7 @@ export interface HoldState {
   lastAttemptAt: Date | null;
   lastError: string | null;
   lastErrorAt: Date | null;
+  failingSince: Date | null;
 }
 
 export async function readHoldState(db: Db = prisma): Promise<HoldState> {
@@ -35,6 +36,7 @@ export async function readHoldState(db: Db = prisma): Promise<HoldState> {
     lastAttemptAt: row?.lastAttemptAt ?? null,
     lastError: row?.lastError ?? null,
     lastErrorAt: row?.lastErrorAt ?? null,
+    failingSince: row?.failingSince ?? null,
   };
 }
 
@@ -54,7 +56,10 @@ export async function replaceHoldList(list: HoldList, now: Date = new Date()): P
       // 旧名单不盖新的。不算「取成功」：财务那边的名单时间要是往回跳了（改钟、恢复备份），以后每次都会走到这里，
       // 记成失败页面上才看得到「最近没取到」，不会看着正常、实际一直进不来新名单
       const reason = "拿到的名单比本地的还旧（财务系统的名单时间往回跳了？），没替换";
-      await tx.finance2HoldState.update({ where: { id: STATE_ID }, data: { lastAttemptAt: now, lastError: reason, lastErrorAt: now } });
+      await tx.finance2HoldState.update({
+        where: { id: STATE_ID },
+        data: { lastAttemptAt: now, lastError: reason, lastErrorAt: now, failingSince: state.failingSince ?? now },
+      });
       return { replaced: false as const, reason };
     }
     await tx.finance2Hold.deleteMany({});
@@ -68,16 +73,20 @@ export async function replaceHoldList(list: HoldList, now: Date = new Date()): P
     }
     // 名单生成时间晚于核对时间：财务那边已经把这次核对算进新名单了，本地记的「可放」作废
     await tx.finance2HoldClear.deleteMany({ where: { clearedAt: { lte: list.generatedAt } } });
-    const data = { generatedAt: list.generatedAt, fetchedAt: now, lastAttemptAt: now, lastError: null, lastErrorAt: null };
+    const data = { generatedAt: list.generatedAt, fetchedAt: now, lastAttemptAt: now, lastError: null, lastErrorAt: null, failingSince: null };
     await tx.finance2HoldState.upsert({ where: { id: STATE_ID }, create: { id: STATE_ID, ...data }, update: data });
     return { replaced: true as const, holds: list.holds.length, released: list.releasedWaybills.length };
   }, { timeout: 60_000 });
 }
 
-/** 取名单失败：保留上一份不动，只记原因和时间 */
-export async function recordFetchFailure(reason: string, now: Date = new Date()): Promise<void> {
+/** 取名单失败：保留上一份不动，只记原因和时间；返回这一串连续失败从什么时候开始 */
+export async function recordFetchFailure(reason: string, now: Date = new Date()): Promise<Date> {
   const data = { lastAttemptAt: now, lastError: reason.slice(0, 500), lastErrorAt: now };
-  await prisma.finance2HoldState.upsert({ where: { id: STATE_ID }, create: { id: STATE_ID, ...data }, update: data });
+  await prisma.finance2HoldState.upsert({ where: { id: STATE_ID }, create: { id: STATE_ID, ...data, failingSince: now }, update: data });
+  // 只在还没记过的时候填，带条件更新（两个同时失败也不会把起点往后挪）
+  await prisma.finance2HoldState.updateMany({ where: { id: STATE_ID, failingSince: null }, data: { failingSince: now } });
+  const row = await prisma.finance2HoldState.findUnique({ where: { id: STATE_ID }, select: { failingSince: true } });
+  return row?.failingSince ?? now;
 }
 
 export interface HoldLogInput {

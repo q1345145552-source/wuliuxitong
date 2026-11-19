@@ -663,6 +663,8 @@ export function registerAdminOpsRoutes(app: MinimalHttpApp): void {
     const results: Array<{ id: string; shipmentId: string }> = [];
     let moved = 0;
     const skipped: string[] = [];
+    /** 扣货名单的提示（没名单 / 名单太旧 / 配置有问题），放出去了也要告诉员工（Codex 审查第 7 条） */
+    let holdNotice: string | null = null;
     try {
       await prisma.$transaction(async (tx) => {
         if (!existingDeliveryNo) {
@@ -777,7 +779,7 @@ export function registerAdminOpsRoutes(app: MinimalHttpApp): void {
             select: { shipmentId: true },
           })).map((row) => row.shipmentId));
           const releasing = preRows.filter((row) => row.currentStatus !== "outForDelivery" && !alreadyHere.has(row.id));
-          await assertReleasable(tx, releasing.map(toCandidate), { entry: "尾端派送出车", operatorId: auth.userId });
+          holdNotice = (await assertReleasable(tx, releasing.map(toCandidate), { entry: "尾端派送出车", operatorId: auth.userId })).notice;
         }
         for (const sid of orderedIds) {
           /**
@@ -928,7 +930,7 @@ export function registerAdminOpsRoutes(app: MinimalHttpApp): void {
       }
       throw e;
     }
-    ok(res, { deliveryNo, count: results.length, moved, skipped });
+    ok(res, { deliveryNo, count: results.length, moved, skipped, holdNotice });
   });
 
   // 尾程派送状态更新

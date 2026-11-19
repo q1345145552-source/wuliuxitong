@@ -171,7 +171,7 @@ export default function LastmileDispatchWorkspace(props: LastmileDispatchWorkspa
     dispatchPending.current = true;
     setBusy(true);
     try {
-      let result: { deliveryNo?: string; count: number; moved: number; skipped: string[] } | undefined;
+      let result: { deliveryNo?: string; count: number; moved: number; skipped: string[]; holdNotice?: string | null } | undefined;
       for (let attempt = 0; attempt < 2; attempt += 1) {
         const response = await fetch(`${apiBaseUrl()}/admin/lastmile/orders`, {
           method: "POST",
@@ -187,7 +187,7 @@ export default function LastmileDispatchWorkspace(props: LastmileDispatchWorkspa
           }),
         });
         try {
-          result = await parseApiResponse<{ deliveryNo?: string; count: number; moved: number; skipped: string[] }>(response);
+          result = await parseApiResponse<{ deliveryNo?: string; count: number; moved: number; skipped: string[]; holdNotice?: string | null }>(response);
           break;
         } catch (error) {
           if (attempt === 0 && response.status === 409 && error instanceof Error && error.message.includes("派送中")) {
@@ -208,7 +208,9 @@ export default function LastmileDispatchWorkspace(props: LastmileDispatchWorkspa
       props.onToast((appendTarget
         ? `已追加 ${result.count} 票到 ${deliveryNo}`
         : `${deliveryNo} 已创建（${result.count}票运单）`) +
-        (extras.length > 0 ? `；${extras.join("，")}` : ""));
+        (extras.length > 0 ? `；${extras.join("，")}` : "") +
+        // 扣货名单的提示（没名单 / 名单太旧 / 配置有问题）：放出去了也要说一声（2026-11-19 Codex 审查第 7 条）
+        (result.holdNotice ? `。⚠️ ${result.holdNotice}` : ""));
       resetCreateDraft();
       setAppendTarget("");
       setActiveView("tasks");

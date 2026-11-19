@@ -34,8 +34,11 @@ async function syncOnce(retryDelaysMs: number[]): Promise<SyncOutcome> {
   const cfg = finance2HoldsConfig();
   if (!cfg) return { kind: "off" };
   let lastReason = "";
-  for (let attempt = 0; attempt <= retryDelaysMs.length; attempt++) {
-    const r = await fetchHoldList(cfg);
+  // 开关开着、连财务的配置却不对：这一轮直接算失败（照本地名单拦，页面上有提示），不去瞎连
+  const attempts = cfg.remote ? retryDelaysMs.length : -1;
+  if (!cfg.remote) lastReason = `配置有问题，没去取：${cfg.problem}`;
+  for (let attempt = 0; attempt <= attempts; attempt++) {
+    const r = await fetchHoldList(cfg.remote!);
     if (r.kind === "ok") {
       try {
         const outcome = await replaceHoldList(r.value);
@@ -60,17 +63,21 @@ async function syncOnce(retryDelaysMs: number[]): Promise<SyncOutcome> {
     const wait = r.retryAfterSec !== undefined ? Math.min(r.retryAfterSec * 1000, 120_000) : retryDelaysMs[attempt];
     await sleep(wait);
   }
+  let failingSince: Date | null = null;
   try {
-    await recordFetchFailure(lastReason);
+    failingSince = await recordFetchFailure(lastReason);
   } catch (error) {
     logger.error("扣货名单：记录取名单失败也没记上", { 原因: error instanceof Error ? error.message : String(error) });
   }
   await writeHoldLogs([{ kind: "fetch_fail", result: "没取到名单，保留上一份", detail: lastReason }]);
-  // 约定 1.3：401 / 403（密钥不对）、连续 1 小时取不到 → 报警（打 error 日志；老板首页「异常」那种提醒物流系统没有）
+  // 约定 1.3：401 / 403（密钥不对）、配置不对、连续 1 小时取不到 → 报警（打 error 日志；物流系统没有「异常提醒」页）。
+  // 「连续」从这一串失败的第一次算起，从来没取到过名单的也算（Codex 审查第 9 条）
   const state = await readHoldState().catch(() => null);
-  const longDown = !state?.fetchedAt || Date.now() - state.fetchedAt.getTime() > ALERT_AFTER_MS;
-  if (/HTTP 40[13]/.test(lastReason) || (state?.fetchedAt && longDown)) {
-    logger.error("扣货名单取不到了，请检查财务系统2 和密钥（照上一份名单拦）", { 原因: lastReason, 最后取到: state?.fetchedAt?.toISOString() ?? "从来没有" });
+  const longDown = !!failingSince && Date.now() - failingSince.getTime() > ALERT_AFTER_MS;
+  if (/HTTP 40[13]|配置有问题/.test(lastReason) || longDown) {
+    logger.error("扣货名单取不到了，请检查财务系统2 和密钥（照上一份名单拦）", {
+      原因: lastReason, 最后取到: state?.fetchedAt?.toISOString() ?? "从来没有", 连续失败起点: failingSince?.toISOString() ?? null,
+    });
   } else {
     logger.warn("扣货名单这一轮没取到，保留上一份", { 原因: lastReason });
   }

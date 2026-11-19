@@ -543,7 +543,9 @@ export default function StaffContainerLoadingPage() {
         `柜子「${result.containerNo}」已推进至 ${STATUS_LABEL[toStatus] ?? toStatus}（影响 ${result.affectedShipmentCount} 个运单` +
         (skippedCount > 0 ? `；${skippedCount} 票已派送、签收、退回或取消，没跟着推` : "") + `）` +
         // 财务系统2 扣货名单扣下的几票（2026-11-19 第 9 期）：话里带唛头和名单时间；页面上「扣货名单」那一块会列出来、能重新核对
-        (heldCount > 0 && result.holdMessage ? `。${result.holdMessage}` : ""),
+        (heldCount > 0 && result.holdMessage ? `。${result.holdMessage}` : "") +
+        // 没有扣货名单 / 名单太旧 / 配置有问题：放出去了也要说一声（页面开着时后台才打开开关，上面那一块可能还没出来）
+        (result.holdNotice ? `。⚠️ ${result.holdNotice}` : ""),
       );
       if (heldCount > 0) window.dispatchEvent(new Event(FINANCE2_HOLD_EVENT));
     } else if (stillHere) {
@@ -686,11 +688,14 @@ export default function StaffContainerLoadingPage() {
       const errors: string[] = [];
       // 运输方式对不上的只提醒不拦（后端也不拦），线上真实存在海陆混装的柜
       const modeWarnings: string[] = [];
+      /** 扣货名单的提示（没名单 / 名单太旧 / 配置有问题），装进预约派送的柜子时后端会带回来 */
+      let holdNotice = "";
       for (const [trackingNo, pieceCount] of entries) {
         if (!trackingNo) { errors.push("空运单号"); continue; }
         try {
           const r = await addShipmentToManifest(selectedId, trackingNo, pieceCount > 0 ? pieceCount : undefined);
           if (r.warning) modeWarnings.push(`${trackingNo}（${r.warning}）`);
+          if (r.holdNotice) holdNotice = r.holdNotice;
           success++;
         } catch (e: any) {
           errors.push(`${trackingNo}: ${e.message ?? "失败"}`);
@@ -699,7 +704,8 @@ export default function StaffContainerLoadingPage() {
       setToast(
         `成功添加 ${success} 个运单到装柜` +
         (errors.length > 0 ? `，失败 ${errors.length} 个：${errors.join("；")}` : "") +
-        (modeWarnings.length > 0 ? `⚠️ 运输方式对不上：${modeWarnings.join("；")}（已装进去，如需调整请卸柜）` : ""),
+        (modeWarnings.length > 0 ? `⚠️ 运输方式对不上：${modeWarnings.join("；")}（已装进去，如需调整请卸柜）` : "") +
+        (holdNotice ? `。⚠️ ${holdNotice}` : ""),
       );
       setSelectedShipments({});
       // 已经装进去了：接着刷新失败只另外说一句，不改上面那句结论（实时推送 / 下次操作会再刷）

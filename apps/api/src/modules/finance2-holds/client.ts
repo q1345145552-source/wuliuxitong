@@ -1,4 +1,4 @@
-import type { Finance2HoldsConfig } from "./config";
+import type { Finance2Remote } from "./config";
 import { fetchWithDeadline, readBodyWithDeadline } from "../core/fetch-deadline";
 
 /**
@@ -24,9 +24,9 @@ export interface HoldCheck {
   customerMark: string;
   waybillNo: string | null;
   blocked: boolean;
-  /** 财务那边核对的时间（没给就用它的 serverTime）。记「核对放过」用它，不用物流服务器的钟：
-   *  「放过」要跟财务名单的 generatedAt 比先后，两台服务器的钟对不齐会误放 / 误拦 */
-  checkedAt: Date | null;
+  /** 财务那边核对的时间（没给 checkedAt 就用它的 serverTime，两个都没有 / 不带时区 = 格式错）。
+   *  记核对结果用它，不用物流服务器的钟：要跟财务名单的 generatedAt 比先后，两台服务器的钟对不齐会误放 / 误拦 */
+  checkedAt: Date;
 }
 
 /** 名单最大 8 MiB（一万个唛头也就几百 KB） */
@@ -89,12 +89,13 @@ export function parseHoldCheck(body: unknown, askedMark: string, askedWaybill: s
   // 回的不是问的那个唛头 / 那票：当失败（宁可按本地名单拦，也不拿别人的结果放货）
   if (b.customerMark !== askedMark) return "回的唛头跟问的不一样";
   if (askedWaybill && b.waybillNo !== askedWaybill) return "回的运单号跟问的不一样";
-  return {
-    customerMark: askedMark,
-    waybillNo: askedWaybill,
-    blocked: b.blocked,
-    checkedAt: zonedTime(b.checkedAt) ?? zonedTime(b.serverTime),
-  };
+  // 只问唛头时，回的必须也是「整家」的答案：带了某张运单号回来，可能是单票的结果，不能当成整家放（Codex 审查第 6 条）
+  if (!askedWaybill && b.waybillNo !== undefined && b.waybillNo !== null) return "只问了唛头，回的却带着运单号";
+  // 时间要么不给、要么带时区；checkedAt 给了却认不出来也算格式错，不往下找 serverTime 凑
+  if (b.checkedAt !== undefined && b.checkedAt !== null && !zonedTime(b.checkedAt)) return "checkedAt 不带时区或认不出来";
+  const checkedAt = zonedTime(b.checkedAt) ?? zonedTime(b.serverTime);
+  if (!checkedAt) return "没有核对时间（checkedAt / serverTime 都没有或不带时区）";
+  return { customerMark: askedMark, waybillNo: askedWaybill, blocked: b.blocked, checkedAt };
 }
 
 function retryAfter(header: string | null): number | undefined {
@@ -103,7 +104,7 @@ function retryAfter(header: string | null): number | undefined {
   return Number.isInteger(n) && n >= 0 ? n : undefined;
 }
 
-async function getJson(cfg: Finance2HoldsConfig, url: string, timeoutMs: number, maxBytes: number): Promise<CallResult<unknown>> {
+async function getJson(cfg: Finance2Remote, url: string, timeoutMs: number, maxBytes: number): Promise<CallResult<unknown>> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
@@ -139,7 +140,7 @@ async function getJson(cfg: Finance2HoldsConfig, url: string, timeoutMs: number,
   }
 }
 
-export async function fetchHoldList(cfg: Finance2HoldsConfig, timeoutMs = LIST_TIMEOUT_MS): Promise<CallResult<HoldList>> {
+export async function fetchHoldList(cfg: Finance2Remote, timeoutMs = LIST_TIMEOUT_MS): Promise<CallResult<HoldList>> {
   const r = await getJson(cfg, `${cfg.apiBase}/holds`, timeoutMs, LIST_MAX_BYTES);
   if (r.kind !== "ok") return r;
   const parsed = parseHoldList(r.value);
@@ -147,7 +148,7 @@ export async function fetchHoldList(cfg: Finance2HoldsConfig, timeoutMs = LIST_T
 }
 
 export async function checkHold(
-  cfg: Finance2HoldsConfig,
+  cfg: Finance2Remote,
   customerMark: string,
   waybillNo: string | null,
   timeoutMs = CHECK_TIMEOUT_MS,
