@@ -1060,7 +1060,7 @@
 
 **认证**：`Authorization: Bearer <密钥>`，只比指纹、定长比较、新旧两把都认；不对 401 `{error:"unauthorized"}`。这几条路径不跑登录解析（`finance2/paths.ts` 的精确路径 + `/waybills/<运单号>`）。
 
-**接口**（GET，只读，查库在数据库只读事务里；响应不包 `{code,data}`，照约定是 `{serverTime, items, nextCursor, hasMore}` / `{serverTime, item}`，出错 `{error, message}`）：
+**接口**（GET，只读，查库在数据库只读事务里；响应不包 `{code,data}`，照约定是 `{serverTime, items, nextCursor, hasMore}` / `{serverTime, item}`，出错 `{serverTime, error, message}`）：
 - `/integrations/finance2/v1/waybills/changes?since=<带时区>&cursor=&limit=`（默认 200、最大 500）
 - `/integrations/finance2/v1/waybills/<运单号>`（子运单号返回母运单那一票；删掉的给删除记录；没有过的 404）
 - `/integrations/finance2/v1/waybills/numbers?createdFrom=&createdTo=&cursor=&limit=`

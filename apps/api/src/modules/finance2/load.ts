@@ -44,31 +44,66 @@ export async function dbNow(tx: Tx): Promise<Date> {
 export interface ChangeRow { waybillNo: string; changedAt: Date; deletedAt: Date | null }
 
 /**
- * since 之后改过的运单号（按 changedAt、再按运单号排，运单号按字节序比，跟游标一致）。
- * 每票的 changedAt = 它在改动记录表里最新那一笔；deletedAt = 最新一笔「删掉」的时间（还在不在由调用方看运单表）。
- * 先用 (company_id, changed_at) 索引找出候选，再按 (company_id, waybill_no, changed_at) 索引取每票最新一笔。
+ * 「稳定线」：早于它的改动都已经提交完了，以后不会再冒出更早的改动。
+ *
+ * 为什么要它（Codex 第二次审查第 1 条）：改动记录的时间是「改的那一刻」，不是「提交的那一刻」。
+ * 同一票事务 A 先改（t1）、事务 B 后改（t2）但先提交，财务这时拉到「B 的内容 + changedAt=t2」；
+ * A 再提交，内容变了，最新一笔还是 t2 —— 约定第 4 节「changedAt 不比已存的新就跳过」，A 的改动就丢了。
+ *
+ * 做法：看数据库里还开着、已经写过东西的事务（pg_stat_activity 里有 backend_xid 的），取最早开始的那个时间。
+ * 它们以后提交的改动，时间一定不早于各自开始的时间，也就不早于稳定线。
+ *   · changes 只给最新一笔早于稳定线的运单；晚于的这一轮先不给，下一轮（往回多拉 10 分钟）再给，那时内容已经齐了；
+ *   · 取一票、对账清单给出的 changedAt 不超过稳定线（超过的报成稳定线前 1 毫秒），以后真正稳定下来的版本一定比它新。
+ * 有事务一直不提交（卡住了）时，稳定线最多往回压 9 分钟，不让增量整个停掉 —— 比财务往回多拉的 10 分钟短，压住的那些下一轮照样拉得到。
+ * 本连接自己是只读事务，没有 backend_xid，不算。
  */
-export async function listChanges(tx: Tx, companyId: string, since: Date, cursor: { t: Date; w: string } | null, limit: number): Promise<ChangeRow[]> {
+const HORIZON_MAX_LAG = "9 minutes";
+
+export async function stableHorizon(tx: Tx): Promise<Date> {
+  const rows = await tx.$queryRawUnsafe<Array<{ h: string }>>(`
+    SELECT to_char(GREATEST(
+             COALESCE((SELECT min(xact_start) FROM pg_stat_activity
+                        WHERE datname = current_database() AND backend_xid IS NOT NULL AND pid <> pg_backend_pid()),
+                      clock_timestamp()),
+             clock_timestamp() - interval '${HORIZON_MAX_LAG}'
+           ) AT TIME ZONE 'UTC', ${UTC_TEXT}) AS h`);
+  return new Date(rows[0].h);
+}
+
+/** 给出去的 changedAt 不超过稳定线（见 stableHorizon） */
+export function capToHorizon(changedAt: Date, horizon: Date): Date {
+  return changedAt < horizon ? changedAt : new Date(horizon.getTime() - 1);
+}
+
+/**
+ * since 之后改过、并且最新一笔早于稳定线的运单号（按 changedAt、再按运单号排，运单号按字节序比，跟游标一致）。
+ * 每票的 changedAt = 它在改动记录表里最新那一笔；deletedAt = 最新一笔「删掉」的时间（还在不在由调用方看运单表）。
+ * 只聚合 changed_at ≥ 下限的那些行（(company_id, changed_at) 索引）：一票只要有一笔在下限之后，它的最新一笔也就在这些行里，
+ * 不用再去翻它的全部历史（Codex 第二次审查第 7 条）。删除时间只给这一页的几票单独查。
+ */
+export async function listChanges(tx: Tx, companyId: string, since: Date, cursor: { t: Date; w: string } | null, limit: number, horizon: Date): Promise<ChangeRow[]> {
   const lower = cursor && cursor.t > since ? cursor.t : since;
   const rows = await tx.$queryRaw<Array<{ waybill_no: string; changed_at: string; deleted_at: string | null }>>`
-    WITH cand AS (
-      SELECT DISTINCT waybill_no FROM finance2_waybill_changes
+    WITH latest AS (
+      SELECT waybill_no, max(changed_at) AS changed_at
+      FROM finance2_waybill_changes
       WHERE company_id = ${companyId} AND changed_at >= (${lower.toISOString()}::timestamptz AT TIME ZONE 'UTC')
-    ), latest AS (
-      SELECT c.waybill_no, max(c.changed_at) AS changed_at, max(c.changed_at) FILTER (WHERE c.deleted) AS deleted_at
-      FROM finance2_waybill_changes c JOIN cand ON cand.waybill_no = c.waybill_no
-      WHERE c.company_id = ${companyId}
-      GROUP BY c.waybill_no
+      GROUP BY waybill_no
+    ), page AS (
+      SELECT waybill_no, changed_at FROM latest
+      WHERE changed_at > (${since.toISOString()}::timestamptz AT TIME ZONE 'UTC')
+        AND changed_at < (${horizon.toISOString()}::timestamptz AT TIME ZONE 'UTC')
+        AND (${cursor === null}
+             OR (changed_at, waybill_no COLLATE "C") > ((${(cursor?.t ?? since).toISOString()}::timestamptz AT TIME ZONE 'UTC'), ${cursor?.w ?? ""} COLLATE "C"))
+      ORDER BY changed_at, waybill_no COLLATE "C"
+      LIMIT ${limit}
     )
-    SELECT waybill_no,
-           to_char(changed_at, 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS changed_at,
-           to_char(deleted_at, 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS deleted_at
-    FROM latest
-    WHERE changed_at > (${since.toISOString()}::timestamptz AT TIME ZONE 'UTC')
-      AND (${cursor === null}
-           OR (changed_at, waybill_no COLLATE "C") > ((${(cursor?.t ?? since).toISOString()}::timestamptz AT TIME ZONE 'UTC'), ${cursor?.w ?? ""} COLLATE "C"))
-    ORDER BY changed_at, waybill_no COLLATE "C"
-    LIMIT ${limit}
+    SELECT p.waybill_no,
+           to_char(p.changed_at, 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS changed_at,
+           (SELECT to_char(max(d.changed_at), 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') FROM finance2_waybill_changes d
+             WHERE d.company_id = ${companyId} AND d.waybill_no = p.waybill_no AND d.deleted) AS deleted_at
+    FROM page p
+    ORDER BY p.changed_at, p.waybill_no COLLATE "C"
   `;
   return rows.map((r) => ({ waybillNo: r.waybill_no, changedAt: new Date(r.changed_at), deletedAt: r.deleted_at ? new Date(r.deleted_at) : null }));
 }

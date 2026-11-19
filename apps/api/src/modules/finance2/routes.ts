@@ -17,7 +17,7 @@ import type { HttpRequest, HttpResponse, MinimalHttpApp } from "../../server";
 import { logger } from "../core/logger";
 import { bearerKeyMatchesAny } from "./api-key";
 import { finance2Config, type Finance2Config } from "./config";
-import { dbNow, latestChangeOf, listChanges, listNumbers, loadWaybills, motherNoOf, readOnlySnapshot } from "./load";
+import { capToHorizon, dbNow, latestChangeOf, listChanges, listNumbers, loadWaybills, motherNoOf, readOnlySnapshot, stableHorizon } from "./load";
 import {
   FINANCE2_AGENT_CHANGES_PATH,
   FINANCE2_AGENTS_PATH,
@@ -32,8 +32,9 @@ import { decodeCursor, encodeCursor, mapAgent, mapCustomer, parseZonedTime } fro
 const LIMIT_DEFAULT = 200;
 const LIMIT_MAX = 500;
 
+/** 出错也带 serverTime（约定 1.3「每个响应都带」）。用本机时钟：密钥不对、数据库不可用时不为了取时间再去查库（Codex 第二次审查第 5 条） */
 function sendError(res: HttpResponse, status: number, error: string, message: string): void {
-  res.status(status).json({ error, message });
+  res.status(status).json({ serverTime: new Date().toISOString(), error, message });
 }
 
 /** 开关（配齐没有）→ 密钥。都过才给配置 */
@@ -82,7 +83,8 @@ export function registerFinance2Routes(app: MinimalHttpApp): void {
     const body = await readOnlySnapshot(async (tx) => {
       // serverTime 先取：这一刻以后提交的改动时间一定不早于它往回 10 分钟（财务下一轮从这里往回拉）
       const serverTime = await dbNow(tx);
-      const { items: rows, hasMore } = page(await listChanges(tx, cfg.companyId, since, cursor, limit + 1), limit);
+      const horizon = await stableHorizon(tx);
+      const { items: rows, hasMore } = page(await listChanges(tx, cfg.companyId, since, cursor, limit + 1, horizon), limit);
       const items = await loadWaybills(tx, cfg.companyId, rows);
       const last = rows[rows.length - 1];
       return {
@@ -118,11 +120,12 @@ export function registerFinance2Routes(app: MinimalHttpApp): void {
 
     const body = await readOnlySnapshot(async (tx) => {
       const serverTime = await dbNow(tx);
+      const horizon = await stableHorizon(tx);
       const { items: rows, hasMore } = page(await listNumbers(tx, cfg.companyId, from, to, cursor, limit + 1), limit);
       const last = rows[rows.length - 1];
       return {
         serverTime: serverTime.toISOString(),
-        items: rows.map((r) => ({ waybillNo: r.waybillNo, changedAt: r.changedAt.toISOString(), deletedAt: null })),
+        items: rows.map((r) => ({ waybillNo: r.waybillNo, changedAt: capToHorizon(r.changedAt, horizon).toISOString(), deletedAt: null })),
         nextCursor: hasMore && last ? encodeCursor({ c: last.createdAt.toISOString(), w: last.waybillNo }) : null,
         hasMore,
       };
@@ -140,8 +143,12 @@ export function registerFinance2Routes(app: MinimalHttpApp): void {
     const body = await readOnlySnapshot(async (tx) => {
       const serverTime = await dbNow(tx);
       const waybillNo = (await motherNoOf(tx, cfg.companyId, no)) ?? no;
+      const horizon = await stableHorizon(tx);
       const latest = await latestChangeOf(tx, cfg.companyId, waybillNo);
-      const [item] = await loadWaybills(tx, cfg.companyId, [{ waybillNo, changedAt: latest?.changedAt ?? null, deletedAt: latest?.deletedAt ?? null }]);
+      // 还没稳定的改动（见 stableHorizon）：changedAt 报成稳定线前 1 毫秒，以后稳定下来的版本一定比它新
+      const changedAt = latest ? capToHorizon(latest.changedAt, horizon) : null;
+      const deletedAt = latest?.deletedAt && changedAt && latest.deletedAt > changedAt ? changedAt : latest?.deletedAt ?? null;
+      const [item] = await loadWaybills(tx, cfg.companyId, [{ waybillNo, changedAt, deletedAt }]);
       // 母运单不在、改动记录里也从来没有这个号 = 从来没有过
       if (item.deletedAt !== null && !latest) return null;
       return { serverTime: serverTime.toISOString(), item };

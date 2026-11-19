@@ -201,7 +201,7 @@ test("V5 确认收货时间：取母运单最早那条 inWarehouseCN（卸柜退
   assert.equal(warehouseConfirmedAtOf("approved", "inWarehouseCN", []), null, "老单没轨迹给 null");
 });
 
-test("V6 签收时间：母单和子单都签收（退回 / 取消的不等）才有，取一家里最后那条 delivered；有一张没签给 null", () => {
+test("V6 签收时间：母单和所有子单都 delivered 才有（约定 2.3），取一家里最后那条 delivered；有一张没签、退回、取消都给 null", () => {
   const s = splitSource();
   s.mother.currentStatus = "delivered";
   s.children[0].currentStatus = "delivered";
@@ -211,8 +211,10 @@ test("V6 签收时间：母单和子单都签收（退回 / 取消的不等）�
   logs.set("s2", [{ toStatus: "delivered", changedAt: T("2026-11-21T01:00:00Z") }]);
   s.logsByShipmentId = logs;
   assert.equal(signedAtOf(s), null);
-  s.children[1].currentStatus = "cancelled";
-  assert.equal(signedAtOf(s)?.toISOString(), "2026-11-21T01:00:00.000Z", "取消的那张不等，它那条旧轨迹照算最晚");
+  for (const st of ["cancelled", "returned"]) {
+    s.children[1].currentStatus = st;
+    assert.equal(signedAtOf(s), null, `子单${st}也不算全部签收（约定 2.3，Codex 第二次审查第 2 条）`);
+  }
   s.children[1].currentStatus = "delivered";
   assert.equal(signedAtOf(s)?.toISOString(), "2026-11-21T01:00:00.000Z");
   s.mother.currentStatus = "outForDelivery";

@@ -3,6 +3,7 @@
 -- 只加不删，不改任何现有表的结构和数据：
 --   ① finance2_waybill_changes —— 运单「改过」的记录（只追加）。财务系统2 按它增量拉运单。
 --   ② finance2_customer_agent_changes —— 客户换代理的记录（只追加）。物流系统原来不记换代理的日子。
+--      换代理时他名下每票母运单也记一笔（运单上的 agentId 是现在的代理，约定 2.2 第 1 条：字段变了就算改过）。
 --   ③ 几个触发器：订单 / 运单 / 产品行 / 装柜明细 / 轨迹 / 柜子 / 账号的有关列一变，往上面两张表记一笔。
 --      为什么用触发器、不在业务代码里一处处记：会改这些表的地方有几十处（建单、改单、确认收货、到货通知、装柜卸柜、
 --      分柜并柜、柜子推进撤销、尾端派送、拆派仓回传、删 / 恢复轨迹、整柜建改删、删订单……），手写一定会漏；
@@ -45,6 +46,12 @@ CREATE INDEX IF NOT EXISTS "finance2_waybill_changes_company_id_changed_at_idx" 
 CREATE INDEX IF NOT EXISTS "finance2_waybill_changes_company_id_waybill_no_changed_at_idx" ON "finance2_waybill_changes"("company_id", "waybill_no", "changed_at");
 CREATE INDEX IF NOT EXISTS "finance2_customer_agent_changes_company_id_changed_at_idx" ON "finance2_customer_agent_changes"("company_id", "changed_at");
 
+-- 应急开关：`ALTER DATABASE <库名> SET finance2.capture = 'off'`（新连接生效，不用重启；恢复用 RESET）关掉以后触发器什么都不记。
+-- ⚠️ 关着的那段时间的改动财务拉不到，打开以后要按 docs/finance2-对接-核对.md「应急开关」给所有母运单补记一条
+CREATE OR REPLACE FUNCTION finance2_capture_off() RETURNS boolean LANGUAGE sql STABLE AS $$
+  SELECT coalesce(current_setting('finance2.capture', true), '') = 'off'
+$$;
+
 -- 数据库时钟的 UTC，毫秒（列是 TIMESTAMP(3)，跟游标里的毫秒对得上）
 CREATE OR REPLACE FUNCTION finance2_now() RETURNS timestamp(3) LANGUAGE sql VOLATILE AS $$
   SELECT (clock_timestamp() AT TIME ZONE 'UTC')::timestamp(3)
@@ -53,6 +60,7 @@ $$;
 /* ---------- 订单：改了约定里用到的列（客户、仓、运输方式、货型、体积、重量、件数、审核状态、整柜金额、建单时间）---------- */
 CREATE OR REPLACE FUNCTION finance2_track_orders() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
+  IF finance2_capture_off() THEN RETURN NULL; END IF;
   INSERT INTO finance2_waybill_changes (company_id, waybill_no, changed_at, deleted, source)
   SELECT DISTINCT s.company_id, s.tracking_no, finance2_now(), false, 'orders'
   FROM new_rows n
@@ -73,6 +81,7 @@ $$;
 /* ---------- 运单：新建、删掉、改了有关的列（号、父单号、状态、体积、重量、件数、订单）。子运单的改动算到母运单头上 ---------- */
 CREATE OR REPLACE FUNCTION finance2_track_shipments() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
+  IF finance2_capture_off() THEN RETURN NULL; END IF;
   IF TG_OP = 'INSERT' THEN
     INSERT INTO finance2_waybill_changes (company_id, waybill_no, changed_at, deleted, source)
     SELECT DISTINCT n.company_id, COALESCE(n.parent_tracking_no, n.tracking_no), finance2_now(), false, 'shipments'
@@ -110,6 +119,7 @@ $$;
 /* ---------- 产品行：增、删、改了品名 / 箱数 / 长宽高 / 货型 / 顺序 ---------- */
 CREATE OR REPLACE FUNCTION finance2_track_order_products() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
+  IF finance2_capture_off() THEN RETURN NULL; END IF;
   IF TG_OP = 'INSERT' THEN
     INSERT INTO finance2_waybill_changes (company_id, waybill_no, changed_at, deleted, source)
     SELECT DISTINCT s.company_id, s.tracking_no, finance2_now(), false, 'order_products'
@@ -144,6 +154,7 @@ $$;
 /* ---------- 装柜明细：装柜、卸柜、改装柜量 ---------- */
 CREATE OR REPLACE FUNCTION finance2_track_container_items() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
+  IF finance2_capture_off() THEN RETURN NULL; END IF;
   IF TG_OP = 'INSERT' THEN
     INSERT INTO finance2_waybill_changes (company_id, waybill_no, changed_at, deleted, source)
     SELECT DISTINCT s.company_id, COALESCE(s.parent_tracking_no, s.tracking_no), finance2_now(), false, 'shipment_container_items'
@@ -173,6 +184,7 @@ $$;
 /* ---------- 轨迹：加、删、改了状态或时间（进入当前状态的时间、确认收货、签收都从轨迹取）---------- */
 CREATE OR REPLACE FUNCTION finance2_track_status_logs() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
+  IF finance2_capture_off() THEN RETURN NULL; END IF;
   IF TG_OP = 'INSERT' THEN
     INSERT INTO finance2_waybill_changes (company_id, waybill_no, changed_at, deleted, source)
     SELECT DISTINCT s.company_id, COALESCE(s.parent_tracking_no, s.tracking_no), finance2_now(), false, 'status_logs'
@@ -201,6 +213,7 @@ $$;
 /* ---------- 柜子：改了柜号、柜型、装柜日期、是不是整柜（柜里每一票都算改了）。删柜子连带删装柜明细，由装柜明细那个触发器记 ---------- */
 CREATE OR REPLACE FUNCTION finance2_track_containers() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
+  IF finance2_capture_off() THEN RETURN NULL; END IF;
   INSERT INTO finance2_waybill_changes (company_id, waybill_no, changed_at, deleted, source)
   SELECT DISTINCT s.company_id, COALESCE(s.parent_tracking_no, s.tracking_no), finance2_now(), false, 'containers'
   FROM new_rows n
@@ -216,13 +229,21 @@ EXCEPTION WHEN OTHERS THEN
 END
 $$;
 
-/* ---------- 客户换代理：users.agent_id 变了（只记客户号）---------- */
+/* ---------- 客户换代理：users.agent_id 变了（只记客户号）。运单上的 agentId 是「现在的代理」，所以他名下每票母运单也算改了 ---------- */
 CREATE OR REPLACE FUNCTION finance2_track_user_agent() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
+  IF finance2_capture_off() THEN RETURN NULL; END IF;
   INSERT INTO finance2_customer_agent_changes (company_id, customer_mark, from_agent_id, to_agent_id, changed_at)
   SELECT n.company_id, n.id, o.agent_id, n.agent_id, finance2_now()
   FROM new_rows n JOIN old_rows o ON o.id = n.id
   WHERE n.role = 'client' AND n.agent_id IS DISTINCT FROM o.agent_id;
+  INSERT INTO finance2_waybill_changes (company_id, waybill_no, changed_at, deleted, source)
+  SELECT DISTINCT s.company_id, s.tracking_no, finance2_now(), false, 'users'
+  FROM new_rows n
+  JOIN old_rows o ON o.id = n.id
+  JOIN orders ord ON ord.company_id = n.company_id AND ord.client_id = n.id
+  JOIN shipments s ON s.order_id = ord.id AND s.parent_tracking_no IS NULL
+  WHERE n.agent_id IS DISTINCT FROM o.agent_id;
   RETURN NULL;
 EXCEPTION WHEN OTHERS THEN
   RAISE WARNING 'finance2 换代理记录没记上：%', SQLERRM;

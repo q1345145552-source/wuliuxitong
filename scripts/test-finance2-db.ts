@@ -217,6 +217,7 @@ async function main(): Promise<void> {
     const shipByNo = (no: string) => db.shipment.findFirst({ where: { trackingNo: no }, include: { order: true } });
     const logsOf = (shipmentId: string) => db.statusLog.findMany({ where: { shipmentId }, orderBy: { changedAt: "asc" } });
 
+    const ISO_Z = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
     console.log("\n【迁移文件】");
     await test("M1 上线前的库上连跑两遍不报错；跟 schema.prisma 零差异；上线体检一行不报；15 个触发器在；老运单补了一条且只补一条", async () => {
       const diff = runPrisma(["migrate", "diff", "--from-url", tmpUrl, "--to-schema-datamodel", SCHEMA, "--script", "--exit-code"], tmpUrl);
@@ -237,7 +238,8 @@ async function main(): Promise<void> {
       assert.equal((await f2("/agents", null)).status, 401);
       const wrong = await f2("/agents", "wrong-key-wrong-key-wrong-key-123456");
       assert.equal(wrong.status, 401);
-      assert.deepEqual(Object.keys(wrong.body).sort(), ["error", "message"]);
+      assert.deepEqual(Object.keys(wrong.body).sort(), ["error", "message", "serverTime"], "出错也带 serverTime（约定 1.3）");
+      assert.match(wrong.body.serverTime, ISO_Z);
       assert.equal((await f2("/agents", null, { authorization: `bearer ${KEY}` })).status, 401);
       assert.equal((await f2("/waybills/changes?since=2026-01-01T00:00:00Z", KEY.slice(0, -1))).status, 401);
       assert.equal((await f2("/agents", KEY)).status, 200);
@@ -316,7 +318,6 @@ async function main(): Promise<void> {
     await db.order.create({ data: { id: "zz_f2_o_x", companyId: OTHER_CO, clientId: "ZZF2X1", warehouseId: WH, itemName: "别家", productQuantity: 1, packageCount: 1, packageUnit: "箱", transportMode: "sea", receiverNameTh: "-", receiverPhoneTh: "-", receiverAddressTh: "-" } });
     await db.shipment.create({ data: { id: "zz_f2_s_x", companyId: OTHER_CO, orderId: "zz_f2_o_x", trackingNo: "ZZF2X001", currentStatus: "inWarehouseCN", warehouseId: WH } });
 
-    const ISO_Z = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
     function checkFormat(w: Row): void {
       assert.deepEqual(Object.keys(w), [...WAYBILL_KEYS], `${w.waybillNo} 字段对不上`);
       const dec = (v: unknown, digits: number, label: string) => {
@@ -612,6 +613,56 @@ async function main(): Promise<void> {
       assert.equal((await item("ZZF2A004")).deletedAt, got.get("ZZF2A004")!.deletedAt);
     });
 
+    await test("I16 同一票两个事务倒着提交（先开始的后提交，Codex 第二次审查第 1 条）：没提交完之前 changes 先不给这票、取一票和对账清单的 changedAt 压在稳定线前；都提交以后再给，changedAt 比先前报的新、内容是全的", async () => {
+      const t = await checkpoint();
+      const s = await shipByNo("ZZF2A001");
+      let wrote!: () => void; const wroteP = new Promise<void>((r) => { wrote = r; });
+      let release!: () => void; const releaseP = new Promise<void>((r) => { release = r; });
+      // 事务 A：先改状态、写轨迹，卡着不提交
+      const txA = db.$transaction(async (tx: any) => {
+        await tx.shipment.update({ where: { id: s.id }, data: { currentStatus: "loaded" } });
+        await tx.statusLog.create({ data: slog("zz_f2_l16", s.id, "loaded", new Date().toISOString()) });
+        wrote();
+        await releaseP;
+      }, { timeout: 30_000 });
+      try {
+        await wroteP;
+        await sleep(5);
+        // 事务 B：后改体积，先提交
+        await db.order.update({ where: { id: s.orderId }, data: { volumeM3: 3.21 } });
+        const bAt = (await raw.$queryRawUnsafe<Row[]>(`SELECT to_char(max(changed_at), 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS t FROM finance2_waybill_changes WHERE waybill_no = 'ZZF2A001'`))[0].t as string;
+        assert.ok(!(await changedSince(t)).includes("ZZF2A001"), "A 还没提交，这票先不该给");
+        const mid = await item("ZZF2A001");
+        assert.equal(mid.volumeCbm, "3.210");
+        assert.notEqual(mid.status, "loaded", "A 还没提交，看不到 A 的状态");
+        assert.ok(mid.changedAt < bAt, `取一票的 changedAt ${mid.changedAt} 应压在 B 那一笔 ${bAt} 之前`);
+        const nums = await ok200("/waybills/numbers?createdFrom=2026-11-01T00:00:00Z&limit=500");
+        assert.ok(nums.items.find((i: Row) => i.waybillNo === "ZZF2A001").changedAt < bAt);
+        release();
+        await txA;
+        const after = latestByNo(await pullChanges(t)).get("ZZF2A001");
+        assert.ok(after, "都提交以后要给这票");
+        assert.equal(after!.status, "loaded");
+        assert.equal(after!.volumeCbm, "3.210");
+        assert.ok(after!.changedAt > mid.changedAt, "都提交以后的版本要比先前报的新，财务才不会跳过");
+      } finally {
+        release();
+        await txA.catch(() => undefined);
+      }
+    });
+
+    await test("I17 应急开关：这个连接设了 finance2.capture=off 就一笔不记、原操作照常；别的连接照记", async () => {
+      const before = Number((await raw.$queryRawUnsafe<Row[]>(`SELECT count(*)::int AS n FROM finance2_waybill_changes`))[0].n);
+      await raw.$transaction([
+        raw.$executeRawUnsafe(`SET LOCAL finance2.capture = 'off'`),
+        raw.$executeRawUnsafe(`UPDATE shipments SET current_status = 'holdLoading' WHERE tracking_no = 'ZZF2A002'`),
+      ]);
+      assert.equal(Number((await raw.$queryRawUnsafe<Row[]>(`SELECT count(*)::int AS n FROM finance2_waybill_changes`))[0].n), before);
+      assert.equal((await shipByNo("ZZF2A002")).currentStatus, "holdLoading");
+      await raw.$executeRawUnsafe(`UPDATE shipments SET current_status = 'inWarehouseCN' WHERE tracking_no = 'ZZF2A002'`);
+      assert.ok(Number((await raw.$queryRawUnsafe<Row[]>(`SELECT count(*)::int AS n FROM finance2_waybill_changes`))[0].n) > before);
+    });
+
     await test("I14 since / limit / cursor 不对一律 400（不带时区、乱写、0、501、改过的游标）", async () => {
       for (const q of ["", "?since=2026-11-18%2010:00:00", "?since=2026-11-18T10:00:00", "?since=abc", "?since=2026-11-18T10:00:00Z&limit=0", "?since=2026-11-18T10:00:00Z&limit=501", "?since=2026-11-18T10:00:00Z&limit=1.5", "?since=2026-11-18T10:00:00Z&cursor=xyz!", "?since=2026-11-18T10:00:00Z&cursor=e30"]) {
         const r = await f2(`/waybills/changes${q}`);
@@ -657,7 +708,7 @@ async function main(): Promise<void> {
       assert.equal(got.find((c) => c.customerMark === C_OTHER)!.active, false);
     });
 
-    await test("U2 代理：只有本公司的；客户换代理 → 换代理记录里有一条（从哪个到哪个、什么时候）、客户名单跟着变；运单不因此出现在 changes 里", async () => {
+    await test("U2 代理：只有本公司的；客户换代理 → 换代理记录里有一条（从哪个到哪个、什么时候）、客户名单跟着变；他名下每票母运单都进 changes、agentId 是新的（约定 2.2 第 1 条）；员工改名不算", async () => {
       const agents = await ok200("/agents");
       assert.deepEqual(agents.items, [{ agentId: AG1, name: "代理一ZZF2" }, { agentId: AG2, name: "代理二ZZF2" }]);
       const t = await checkpoint();
@@ -674,8 +725,13 @@ async function main(): Promise<void> {
       assert.equal(page1.items.length, 1);
       const page2 = await ok200(`/customers/agent-changes?since=${encodeURIComponent(t)}&limit=1&cursor=${page1.nextCursor}`);
       assert.equal(page2.items[0].customerMark, C_DIRECT);
-      assert.deepEqual(await changedSince(t), []);
-      assert.equal((await item("ZZF2A002")).agentId, AG2, "取一票时给的是现在的代理");
+      const expected = (await db.shipment.findMany({ where: { companyId: CO, parentTrackingNo: null, order: { clientId: { in: [C_AGENT, C_DIRECT] } } }, select: { trackingNo: true } }))
+        .map((x: Row) => x.trackingNo as string).sort();
+      assert.ok(expected.length > 10);
+      const pulled = latestByNo(await pullChanges(t));
+      assert.deepEqual([...pulled.keys()].sort(), expected);
+      assert.equal(pulled.get("ZZF2A002")!.agentId, AG2);
+      assert.equal(pulled.get("ZZF2A001")!.agentId, AG1);
       await db.user.update({ where: { id: C_DIRECT }, data: { agentId: null } });
     });
 

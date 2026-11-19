@@ -4,7 +4,8 @@
 - 来源：财务系统2 窗口（老板定物流这边也由我们做）。约定在财务系统2 `docs/物流系统接口约定.md` 第二版；只做 A 部分（只读接口），放货拦截（B 部分）另一个窗口在做，没动放货那块。
 - 新接口 `/integrations/finance2/v1/{waybills/changes, waybills/<号>, waybills/numbers, customers, customers/agent-changes, agents}`，专用密钥只存指纹（`FINANCE2_API_KEY_SHA256` + `_PREV`），只看 `FINANCE2_COMPANY_ID` 一家，查库在数据库只读事务里。
 - 「改过」用**触发器**记（迁移 20261119_finance2_readonly_api：两张只追加的表 + 15 个触发器 + 给现有母运单补一条），不在业务代码里一处处加；原有代码只动了 server.ts（登录解析跳过这几条 + 「取一票」带号路径的路由，8 行）和 main.ts。触发器语句级、只插新表不锁别的行、记失败只发 WARNING。
-- 测试：`test:finance2-source` 14、`test:finance2-db` 38（临时建库、迁移连跑两遍、真接口建单 / 收货 / 到货通知 / 整柜 / 删单 / 改号）；`test-mark-display` 给财务系统2 客户名单的 name 放行（约定 2.7 老板定）。核对结果、跟约定对不上的、要问的、上线步骤全在 `docs/finance2-对接-核对.md`。
+- Codex 第二次审查 3 条必须改都成立、都改了：并发晚提交漏改动（加「稳定线」，没提交完的先不给）、子单退回 / 取消不再算全部签收（照约定）、换代理时名下母运单都进增量；建议项：出错带 serverTime、增量查询只聚合下限之后的、加应急开关 `finance2.capture=off`、文档写清触发器兜不住的情况和上线前要在线上核的。
+- 测试：`test:finance2-source` 14、`test:finance2-db` 40（临时建库、迁移连跑两遍、真接口建单 / 收货 / 到货通知 / 整柜 / 删单 / 改号）；`test-mark-display` 给财务系统2 客户名单的 name 放行（约定 2.7 老板定）。核对结果、跟约定对不上的、要问的、上线步骤全在 `docs/finance2-对接-核对.md`。
 
 ## 2026-11-14（北京）上线 84c1db9：员工管理「改成客户号」（+ 57eac74 上线记录）
 - 老板「上吧」。上线前：只读看服务器 HEAD a9cb67c、只有 package-lock 被改、没有会撞的未跟踪文件、磁盘剩 37G、容器 healthy；没有迁移。推 GitHub a9cb67c..84c1db9，ssh 跑 `bash deploy.sh` 退出 0（没有待执行迁移、跳过备份）。日志 `.audit/2026-11-14/deploy/deploy2.log`。

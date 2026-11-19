@@ -195,17 +195,16 @@ export function warehouseConfirmedAtOf(approvalStatus: string, motherStatus: str
   return earliest;
 }
 
-/** 子运单退回 / 取消就不再往前走了，签收时不等它们（跟 shipments/parent-status.ts 推父单状态同一个口径） */
-const SETTLED_CHILD_STATUSES = new Set(["delivered", "returned", "cancelled"]);
-
 /**
- * 签收时间：母运单已签收、子运单都签收了（退回 / 取消的不等），取这一家最后一条到 delivered 的轨迹时间。
+ * 签收时间（约定 2.3）：母运单和**所有**子运单都是 delivered 才有，取这一家最后一条到 delivered 的轨迹时间。
+ * 有子单退回 / 取消的一律 null（Codex 第二次审查第 2 条：约定原文是「都到了 delivered」；物流系统推父单状态时不等退回 / 取消的子单，
+ * 母单会显示已签收，但财务这边要不要从那天起算账期，等老板定，见 docs/finance2-对接-核对.md 第六节）。
  * 母运单自己 0 件时它的状态是跟着最慢的子单推的、不写轨迹，所以要把子单的轨迹一起看。
  * 都签收了却一条 delivered 轨迹都没有（老数据、员工删过轨迹）给 null。
  */
 export function signedAtOf(source: Pick<WaybillSource, "mother" | "children" | "logsByShipmentId">): Date | null {
   if (source.mother.currentStatus !== "delivered") return null;
-  if (!source.children.every((c) => SETTLED_CHILD_STATUSES.has(c.currentStatus))) return null;
+  if (!source.children.every((c) => c.currentStatus === "delivered")) return null;
   let latest: Date | null = null;
   for (const shipment of [source.mother, ...source.children]) {
     for (const log of source.logsByShipmentId.get(shipment.id) ?? []) {
