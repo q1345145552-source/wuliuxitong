@@ -1,5 +1,11 @@
 # 项目交接日志
 
+## 2026-11-19 扣货拦截：落实老板对「放货拦截」1～6 的答复（本机分支 claude/caiwu2-hold-answers，接在钱包分支后面，不推不上线）
+- 老板都照建议答：① 柜子推进只扣欠款那几票、其余照推（本来就是）；② 拆派仓派出去的照收、记日志，**另外报给财务系统老板首页**；③ 撤销误签收不拦；④ **先只记不拦看几天再真拦**；⑤ 配错照本地名单拦（宁可多拦）；⑥ 拿不到名单也**报给财务系统老板首页**。
+- 做法：财务系统2 新开的上报接口（约定第 11 节，`POST …/hold-events`，同一把「物流拉财务」密钥）。拆派仓派出去的报 releasedWhileHeld：chaipai 日志标 pending，马上报一次，没报进去 15 分钟那一轮补报最近 7 天的，200 / 4xx 落定（4xx 打 error 不再报）；observe 也报，off 不报。取名单 401 / 403、连续 1 小时取不到时报 holdListUnavailable（一串失败报成一次），又取到报一次 holdListRecovered。新迁移 `20261119_finance2_holds_reports`（四个可空新列）。
+- 开关：`FINANCE2_HOLDS_MODE` 不填时配了地址 / 密钥就按 observe，都没配才是 off；明确写 off 才关。管理员在放货页「扣货名单」那一块看「试运行记录」（最近 7 天本来会拦谁，`GET /admin/finance2-holds/observe-log`）。⚠️ 只为代理钱包配了地址密钥也会开始 observe。
+- 测试：test:finance2-holds-source 43、test:finance2-holds-db 59。细节、上线步骤在 `docs/sessions/2026-11-19-finance2-hold-answers.md`。
+
 ## 2026-11-19 代理端「我的钱包」（财务系统2 第 13 期；本机分支 claude/caiwu2-agent-wallet，接在扣货拦截分支后面，不推不上线）
 - 菜单「我的钱包」→ /agent#my-wallet：可用余额、待结算、已提现，流水、提现记录，只能看。数据打开页面时从财务系统2 现取（约定第 10 节），后端 /agent/finance-wallet*，代理编号只用登录的这个代理。
 - 连财务跟扣货名单共用一把密钥（FINANCE2_HOLDS_SECRET + FINANCE2_API_BASE），不看扣货开关；没配时页面说「钱包还没开通」。原来的「集货余额」（#wallet，对代理关着）没动。
