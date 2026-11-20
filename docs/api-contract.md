@@ -1051,3 +1051,21 @@
 #### 物流超管那边（只给物流自己的页面用，财务不用调）
 
 `GET /admin/agents/applications/list?status=pending|approved|rejected|all`、`POST /admin/agents/applications/approve`（`applicationId` + 跟 `/admin/agents/create` 完全一样的字段和校验）、`POST /admin/agents/applications/reject`（`applicationId` + `reason` 1～200 字）。只给超管（员工、客户、代理 403），按公司过滤。通过时「申请改成已通过 + 建代理和代理登录号 + 记下开出来的账号」在同一个事务里，任何一步失败全部回滚（申请还是在审、不留代理和登录号、logo 删掉）；已经处理过的再通过 / 驳回 409「这张申请已经处理过了」。`/admin/agents/create` 的行为没变。
+
+## 27. 给财务系统2 的只读接口（2026-11-19，第 7 期物流这一边）
+
+约定原文在财务系统2 项目 `docs/物流系统接口约定.md`（第二版）；本仓库的核对、差异、上线步骤见 `docs/finance2-对接-核对.md`，真跑出来的样例 `docs/finance2-接口样例.json`。
+
+**配置**：`FINANCE2_COMPANY_ID`（只给这一家的单）、`FINANCE2_API_KEY_SHA256`（密钥的 sha256 指纹，不是密钥本身）、`FINANCE2_API_KEY_SHA256_PREV`（换密钥期间上一把的指纹）。没配齐一律 503 `{error:"disabled"}`。
+
+**认证**：`Authorization: Bearer <密钥>`，只比指纹、定长比较、新旧两把都认；不对 401 `{error:"unauthorized"}`。这几条路径不跑登录解析（`finance2/paths.ts` 的精确路径 + `/waybills/<运单号>`）。
+
+**接口**（GET，只读，查库在数据库只读事务里；响应不包 `{code,data}`，照约定是 `{serverTime, items, nextCursor, hasMore}` / `{serverTime, item}`，出错 `{serverTime, error, message}`）：
+- `/integrations/finance2/v1/waybills/changes?since=<带时区>&cursor=&limit=`（默认 200、最大 500）
+- `/integrations/finance2/v1/waybills/<运单号>`（子运单号返回母运单那一票；删掉的给删除记录；没有过的 404）
+- `/integrations/finance2/v1/waybills/numbers?createdFrom=&createdTo=&cursor=&limit=`
+- `/integrations/finance2/v1/customers?cursor=&limit=`
+- `/integrations/finance2/v1/customers/agent-changes?since=&cursor=&limit=`（约定以外多给：客户换代理记录）
+- `/integrations/finance2/v1/agents`
+
+**「改过」怎么来的**：迁移 `20261119_finance2_readonly_api` 的触发器往 `finance2_waybill_changes` 记（订单 / 运单 / 产品行 / 装柜明细 / 轨迹 / 柜子有关的列一变就记，记失败不影响原操作），业务代码一行没改。原来给海外仓财务系统的 `/integrations/finance/v1/…` 不变。

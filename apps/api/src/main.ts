@@ -18,6 +18,7 @@ import { registerArrivalNoticeRoutes } from "./modules/arrival-notices/routes";
 import { registerChaipaiRoutes } from "./modules/chaipai/routes";
 import { registerFinanceLinkRoutes } from "./modules/finance-link/routes";
 import { registerFinanceAgentApplicationRoutes } from "./modules/finance-link/agent-applications";
+import { registerFinance2Routes } from "./modules/finance2/routes";
 import { registerFclContainerRoutes } from "./modules/fcl-containers/routes";
 import { registerConsolidationRoutes } from "./modules/consolidation/routes";
 import { registerWhrConsolidationRoutes } from "./modules/whr-consolidation/routes";
@@ -74,6 +75,8 @@ registerChaipaiRoutes(app);
 registerFinanceLinkRoutes(app);
 // 代理申请：海外仓财务系统交申请、按仓查（2026-11-08）
 registerFinanceAgentApplicationRoutes(app);
+// 给财务系统2 的只读接口（2026-11-19）：运单增量 / 取一票 / 对账运单号 / 客户 / 代理。没配 FINANCE2_COMPANY_ID 和密钥指纹就是关着（503）
+registerFinance2Routes(app);
 // 整柜管理（2026-09-23）：客户自己包一整柜，我们只追踪
 registerFclContainerRoutes(app);
 registerConsolidationRoutes(app);

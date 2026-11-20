@@ -1658,3 +1658,41 @@ model AgentApplication {
   @@index([companyId, status, createdAt])
   @@map("agent_applications")
 }
+
+// ============================================================================
+// 给财务系统2 的只读接口（2026-11-19，约定见 docs/finance2-对接-核对.md）
+// 两张表都只追加、不改不删，由数据库触发器写（迁移 20261119_finance2_readonly_api），业务代码不写它们。
+// ============================================================================
+
+/// 运单「改过」的记录：订单 / 运单 / 产品行 / 装柜明细 / 轨迹 / 柜子有关的列一变，触发器记一笔（运单号 = 母运单号）。
+/// 删运单时记 deleted = true。财务系统2 按 changed_at 增量拉（/integrations/finance2/v1/waybills/changes）。
+model Finance2WaybillChange {
+  id        BigInt   @id @default(autoincrement())
+  companyId String   @map("company_id")
+  /// 母运单号（shipments.parent_tracking_no 为空那一行的 tracking_no）
+  waybillNo String   @map("waybill_no")
+  /// 数据库时钟（UTC），毫秒
+  changedAt DateTime @map("changed_at")
+  /// 这一笔是母运单被删掉（或改了号，旧号算删掉）
+  deleted   Boolean  @default(false)
+  /// 哪张表触发的（查问题用）：orders / shipments / order_products / shipment_container_items / status_logs / containers / backfill
+  source    String
+
+  @@index([companyId, changedAt])
+  @@index([companyId, waybillNo, changedAt])
+  @@map("finance2_waybill_changes")
+}
+
+/// 客户换代理的记录：users.agent_id 一变，触发器记一笔（只记 role = client 的）。物流系统原来不记换代理的日子
+model Finance2CustomerAgentChange {
+  id           BigInt   @id @default(autoincrement())
+  companyId    String   @map("company_id")
+  /// 唛头 = users.id
+  customerMark String   @map("customer_mark")
+  fromAgentId  String?  @map("from_agent_id")
+  toAgentId    String?  @map("to_agent_id")
+  changedAt    DateTime @map("changed_at")
+
+  @@index([companyId, changedAt])
+  @@map("finance2_customer_agent_changes")
+}
