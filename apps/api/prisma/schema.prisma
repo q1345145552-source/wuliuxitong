@@ -1696,3 +1696,90 @@ model Finance2CustomerAgentChange {
   @@index([companyId, changedAt])
   @@map("finance2_customer_agent_changes")
 }
+
+// ════════════════════════════════════════════════════════════════════════
+// 财务系统2 扣货名单（2026-11-19，第 9 期；约定：财务系统2 docs/物流系统接口约定.md 第 5 节）
+// 物流系统每 15 分钟去财务系统2 取整份名单，存在下面几张表里；放货（推到预约派送 / 派送中）前照名单拦。
+// 唛头 = users.id（全库唯一），所以这几张表不分公司。不加外键：名单里的唛头物流系统可能还没有（财务先建档）。
+// ════════════════════════════════════════════════════════════════════════
+
+/// 名单的「抬头」：只有一行（id = "current"）。从来没取到过名单 = 这一行不存在或 generatedAt 为空
+model Finance2HoldState {
+  id            String    @id
+  /// 财务系统2 那份名单的生成时间（界面上「按几点的名单」用它）
+  generatedAt   DateTime? @map("generated_at")
+  /// 最后一次成功取到名单的时间
+  fetchedAt     DateTime? @map("fetched_at")
+  /// 最后一次去取（不管成没成）
+  lastAttemptAt DateTime? @map("last_attempt_at")
+  /// 最后一次取失败的原因（不含密钥）和时间；取成功后清空
+  lastError     String?   @map("last_error")
+  lastErrorAt   DateTime? @map("last_error_at")
+  /// 这一串连续失败从什么时候开始（取成功后清空）；连续 1 小时取不到报警用（约定 1.3），从来没取到过也算
+  failingSince  DateTime? @map("failing_since")
+  /// 「拿不到扣货名单」报给财务没有（约定 11.2，2026-11-19 加）：null = 没报过 / pending = 报了没收到 200（还会再报）/
+  /// sent = 财务收下了 / rejected = 财务回 4xx（这一串失败里不再报）。又取到名单时：pending、sent 报一次「恢复了」后清空，rejected 直接清空
+  unavailableReport String? @map("unavailable_report")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+
+  @@map("finance2_hold_state")
+}
+
+/// 被扣的唛头（整份替换）
+model Finance2Hold {
+  customerMark String   @id @map("customer_mark")
+  heldSince    DateTime @map("held_since")
+
+  @@map("finance2_holds")
+}
+
+/// 老板单票放行的母运单号（整份替换）；它的子运单一起放
+model Finance2HoldRelease {
+  waybillNo    String   @id @map("waybill_no")
+  customerMark String   @map("customer_mark")
+  releasedAt   DateTime @map("released_at")
+
+  @@map("finance2_hold_releases")
+}
+
+/// 「重新核对」问财务的结果（放 / 扣都记）：waybillNo 为空 = 整个唛头的答案；有值 = 这一票（母运单号）的答案。
+/// clearedAt 是财务那边的核对时间。同一个唛头 / 同一票按核对时间取最新的一条，晚到的旧答案盖不掉新答案；
+/// 下一份整份名单的生成时间晚于它时作废（那份名单已经把这次核对算进去了）
+model Finance2HoldClear {
+  id           String   @id @default(cuid())
+  customerMark String   @map("customer_mark")
+  waybillNo    String?  @map("waybill_no")
+  /// true = 财务说还扣；false = 财务说可以放
+  blocked      Boolean  @default(false)
+  clearedAt    DateTime @default(now()) @map("cleared_at")
+  operatorId   String?  @map("operator_id")
+
+  @@index([customerMark])
+  @@map("finance2_hold_clears")
+}
+
+/// 日志：每次取名单（成 / 败）、每次拦、每次重新核对都记一条
+model Finance2HoldLog {
+  id              String    @id @default(cuid())
+  /// fetch_ok / fetch_fail / block / observe（只记不拦）/ recheck / passive（被动跟随，记不拦）/ chaipai（拆派仓回传，照收）
+  kind            String
+  /// 结果：拦了 / 放了 / 连不上……（中文短句）
+  result          String
+  customerMark    String?   @map("customer_mark")
+  /// 母运单号
+  waybillNo       String?   @map("waybill_no")
+  /// 实际被拦的那张运单号（子运单时跟 waybillNo 不一样）
+  trackingNo      String?   @map("tracking_no")
+  /// 哪个入口（柜子推进 / 尾端派送 / ……）
+  entry           String?
+  /// 按的是几点的名单
+  listGeneratedAt DateTime? @map("list_generated_at")
+  detail          String?
+  operatorId      String?   @map("operator_id")
+  createdAt       DateTime  @default(now()) @map("created_at")
+
+  @@index([createdAt])
+  @@index([operatorId, createdAt])
+  @@index([customerMark, createdAt])
+  @@map("finance2_hold_logs")
+}

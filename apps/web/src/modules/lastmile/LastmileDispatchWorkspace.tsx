@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { apiBaseUrl, authHeaders, parseApiResponse, fetchWithSession as fetch } from "../../services/core-api";
 import { openShipmentTrack } from "../shipment/ShipmentTrackModal";
+import { Finance2HoldPanel } from "../../components/finance2/Finance2HoldPanel";
 import { createRequestGate } from "../shared/request-gate";
 import { downloadLastmileCustomerWorkbook } from "./exportDispatchWorkbooks";
 import type { LastmileOrderItem, LastmileShipmentOption, LastmileWdGroup } from "./types";
@@ -170,7 +171,7 @@ export default function LastmileDispatchWorkspace(props: LastmileDispatchWorkspa
     dispatchPending.current = true;
     setBusy(true);
     try {
-      let result: { deliveryNo?: string; count: number; moved: number; skipped: string[] } | undefined;
+      let result: { deliveryNo?: string; count: number; moved: number; skipped: string[]; holdNotice?: string | null } | undefined;
       for (let attempt = 0; attempt < 2; attempt += 1) {
         const response = await fetch(`${apiBaseUrl()}/admin/lastmile/orders`, {
           method: "POST",
@@ -186,7 +187,7 @@ export default function LastmileDispatchWorkspace(props: LastmileDispatchWorkspa
           }),
         });
         try {
-          result = await parseApiResponse<{ deliveryNo?: string; count: number; moved: number; skipped: string[] }>(response);
+          result = await parseApiResponse<{ deliveryNo?: string; count: number; moved: number; skipped: string[]; holdNotice?: string | null }>(response);
           break;
         } catch (error) {
           if (attempt === 0 && response.status === 409 && error instanceof Error && error.message.includes("派送中")) {
@@ -207,7 +208,9 @@ export default function LastmileDispatchWorkspace(props: LastmileDispatchWorkspa
       props.onToast((appendTarget
         ? `已追加 ${result.count} 票到 ${deliveryNo}`
         : `${deliveryNo} 已创建（${result.count}票运单）`) +
-        (extras.length > 0 ? `；${extras.join("，")}` : ""));
+        (extras.length > 0 ? `；${extras.join("，")}` : "") +
+        // 扣货名单的提示（没名单 / 名单太旧 / 配置有问题）：放出去了也要说一声（2026-11-19 Codex 审查第 7 条）
+        (result.holdNotice ? `。⚠️ ${result.holdNotice}` : ""));
       resetCreateDraft();
       setAppendTarget("");
       setActiveView("tasks");
@@ -378,6 +381,9 @@ export default function LastmileDispatchWorkspace(props: LastmileDispatchWorkspa
           </button>
         </header>
       )}
+
+      {/* 财务系统2 扣货名单（2026-11-19 第 9 期）：出车前查名单；被拦的在这里「重新核对」。开关关着时不显示 */}
+      <Finance2HoldPanel />
 
       <div className="lastmile-summary" aria-label="派送任务统计">
         <div><strong>{summary.totalWd}</strong><span>WD 总数</span></div>

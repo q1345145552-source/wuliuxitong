@@ -40,10 +40,10 @@ async function main(): Promise<void> {
   assert.match(flags, /AGENT_DISABLED_SECTIONS = \["whr", "clients", "wallet", "me"\] as const;/, "关掉的分区名单不对");
 });
 
-  await check("2) 菜单里没有那四项，剩下首页 / 运单 / 返现单", async () => {
+  await check("2) 菜单里没有那四项，剩下首页 / 运单 / 返现单 / 我的钱包（2026-11-19 第 13 期加的，代理自己的差价钱包，不是关着的集货余额）", async () => {
   const mod = await import("../apps/web/src/modules/layout/menu-config");
   const items = mod.roleFunctionGroups.agent.flatMap((g: { items: Array<{ id: string; label: string }> }) => g.items);
-  assert.deepEqual(items.map((i) => i.id), ["agent-func-home", "agent-func-shipments", "agent-func-rebates"], `代理菜单现在是 ${items.map((i) => i.label).join(" / ")}`);
+  assert.deepEqual(items.map((i) => i.id), ["agent-func-home", "agent-func-shipments", "agent-func-rebates", "agent-func-my-wallet"], `代理菜单现在是 ${items.map((i) => i.label).join(" / ")}`);
   // 源码里那四项还留着（用开关包起来），以后开回来不用重新写
   for (const id of ["agent-func-whr", "agent-func-clients", "agent-func-wallet", "agent-func-me"]) {
     assert.ok(menu.includes(id), `menu-config 里把 ${id} 删掉了，以后开不回来`);

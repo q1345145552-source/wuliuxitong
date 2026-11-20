@@ -7,6 +7,24 @@
 - Codex 第二次审查 3 条必须改都成立、都改了：并发晚提交漏改动（加「稳定线」，没提交完的先不给）、子单退回 / 取消不再算全部签收（照约定）、换代理时名下母运单都进增量；建议项：出错带 serverTime、增量查询只聚合下限之后的、加应急开关 `finance2.capture=off`、文档写清触发器兜不住的情况和上线前要在线上核的。
 - 测试：`test:finance2-source` 14、`test:finance2-db` 40（临时建库、迁移连跑两遍、真接口建单 / 收货 / 到货通知 / 整柜 / 删单 / 改号）；`test-mark-display` 给财务系统2 客户名单的 name 放行（约定 2.7 老板定）。核对结果、跟约定对不上的、要问的、上线步骤全在 `docs/finance2-对接-核对.md`。
 
+## 2026-11-19 扣货拦截：落实老板对「放货拦截」1～6 的答复（本机分支 claude/caiwu2-hold-answers，接在钱包分支后面，不推不上线）
+- 老板都照建议答：① 柜子推进只扣欠款那几票、其余照推（本来就是）；② 拆派仓派出去的照收、记日志，财务系统老板首页报警；③ 撤销误签收不拦；④ **先只记不拦看几天再真拦**；⑤ 配错照本地名单拦（宁可多拦）；⑥ 拿不到名单也**报给财务系统老板首页**。
+- 做法：② 拆派仓派出去的物流只记 chaipai 日志、打 warn，**不报财务**——财务拉运单时自己认出来报警（财务系统2 ADR 0142）。第一版（9659f0d）物流也报了 releasedWhileHeld，总调度通知后去掉（同一件事别报两遍）。⑥ 用财务系统2 新开的上报接口（约定 11.2，`POST …/hold-events`，同一把「物流拉财务」密钥）：取名单 401 / 403、连续 1 小时取不到时报 holdListUnavailable（一串失败报成一次，没报进去下一轮再报，4xx 不再报），又取到报一次 holdListRecovered。新迁移 `20261119_finance2_holds_reports`（只给 finance2_hold_state 加一列 unavailable_report）。
+- 开关：`FINANCE2_HOLDS_MODE` 不填时配了地址 / 密钥就按 observe，都没配才是 off；明确写 off 才关。管理员在放货页「扣货名单」那一块看「试运行记录」（最近 7 天本来会拦谁，`GET /admin/finance2-holds/observe-log`）。⚠️ 只为代理钱包配了地址密钥也会开始 observe。
+- 测试：test:finance2-holds-source 43、test:finance2-holds-db 54。细节、上线步骤在 `docs/sessions/2026-11-19-finance2-hold-answers.md`。
+
+## 2026-11-19 代理端「我的钱包」（财务系统2 第 13 期；本机分支 claude/caiwu2-agent-wallet，接在扣货拦截分支后面，不推不上线）
+- 菜单「我的钱包」→ /agent#my-wallet：可用余额、待结算、已提现，流水、提现记录，只能看。数据打开页面时从财务系统2 现取（约定第 10 节），后端 /agent/finance-wallet*，代理编号只用登录的这个代理。
+- 连财务跟扣货名单共用一把密钥（FINANCE2_HOLDS_SECRET + FINANCE2_API_BASE），不看扣货开关；没配时页面说「钱包还没开通」。原来的「集货余额」（#wallet，对代理关着）没动。
+- 测试 test:finance2-wallet-source 12、test:finance2-wallet-db 12。细节和要问老板的在 docs/sessions/2026-11-19-finance2-agent-wallet.md。
+
+## 2026-11-19 放货时查财务系统2 的扣货名单（财务系统2 第 9 期物流这一边；本机分支 claude/caiwu2-hold-6c059b，不推不上线）
+- 财务系统2 总窗口派的活（老板 11-19 定物流这边也由我们做）。约定：财务系统2 `docs/物流系统接口约定.md` 第 5 节。细节、入口清单、上线要配什么、要问老板的都在 `docs/sessions/2026-11-19-finance2-holds.md`。
+- 做法：每 15 分钟从财务系统2 取整份名单存本地（五张新表，迁移 20261119_finance2_holds）；运单推到预约派送 / 派送中前按唛头（orders.client_id）查，单票放行按母运单号（子单一起放）。柜子推进只扣名单上那几票、其余照推；往预约派送的柜子加货、尾端派送出车整个拦；拆派仓回传派送中照收记日志；撤销误签收不拦。「重新核对」实时问（先问唛头、再问这一票）；连不上按上次名单拦并写名单时间；从没取到过名单不拦但提示；超过 1 天提示（老板定）。
+- 开关 `FINANCE2_HOLDS_MODE` 默认 off；observe 只记不拦；enforce 真拦。财务系统2 的名单接口还没做（第 8 期），用本进程里的假接口测。
+- Codex 第二次审查（老板授权）7 条必须改都成立、都改了：配错照本地名单拦（不再等于关）、核对放 / 扣都记按财务时间取最新、判断一条 SQL 读完、单票放行要唛头也对上、核对一律真问财务、核对时间不可靠当问不到、放货回话带提示 + 关着时 10 分钟问一次状态；另加连续失败起点报警。
+- 测试：test:finance2-holds-source（35）、test:finance2-holds-db（44，含迁移连跑两遍）；改了 test-lastmile-dispatch-rules（桩）、test-lock-order（登记咨询锁 83091）、user-references（新表 operator_id 归类）。改坏 14 处 13 处红（剩 1 处是等价改动）；本机浏览器走查过；子代理审查第 1 轮必须修 2 条已修。
+
 ## 2026-11-14（北京）上线 84c1db9：员工管理「改成客户号」（+ 57eac74 上线记录）
 - 老板「上吧」。上线前：只读看服务器 HEAD a9cb67c、只有 package-lock 被改、没有会撞的未跟踪文件、磁盘剩 37G、容器 healthy；没有迁移。推 GitHub a9cb67c..84c1db9，ssh 跑 `bash deploy.sh` 退出 0（没有待执行迁移、跳过备份）。日志 `.audit/2026-11-14/deploy/deploy2.log`。
 - 核对：服务器 HEAD = GitHub = 84c1db9；两个容器 healthy、重启 0；后端有新接口和 user-references.ts、不登录 401；前端包里有「改成客户号」；API 报错 0；XHH-6669 仍是 client；外网首页 / 登录 / 管理员页 200。线上只读跑「留下过东西没有」那条查法（54 列 + 审计两列 + 被操作账号）对最早 3 个员工号：25 毫秒，1 个查出做过事、2 个没有。没等 GitHub 自动检查（11-08 他说别调用），本机 CI 80 + test-db 38 当关口。

@@ -151,6 +151,8 @@ function workspaceFixture(orderRows: Row[], replies: Array<{status:number;data?:
       if(name.endsWith("request-gate"))return {createRequestGate:()=>({})};
       if(name.endsWith("ShipmentTrackModal"))return {openShipmentTrack:()=>{throw Error("Unexpected track")}};
       if(name.endsWith("exportDispatchWorkbooks"))return {downloadLastmileCustomerWorkbook:()=>{throw Error("Unexpected export")}};
+      // 扣货名单那一块自己去取状态（2026-11-19）；这里只测派送工作台，画成空
+      if(name.endsWith("Finance2HoldPanel"))return {Finance2HoldPanel:()=>null};
       throw Error(`Unstubbed workspace import ${name}`);
     },mod,mod.exports);return mod.exports;
   }

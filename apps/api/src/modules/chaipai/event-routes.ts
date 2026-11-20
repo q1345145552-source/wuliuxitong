@@ -1,4 +1,5 @@
 import type { Prisma } from "@prisma/client";
+import { noteChaipaiRelease } from "../finance2-holds/gate";
 import { prisma } from "../../db/prisma";
 import type { MinimalHttpApp } from "../../server";
 import { fail } from "../core/http-utils";
@@ -516,7 +517,12 @@ async function applyEvent(
     if (changed && shipment.parentTrackingNo) {
       await syncParentStatusFromChildren(tx, shipment.parentTrackingNo, companyId);
     }
-    return { result: "APPLIED" as const, changed: changed || logSeq > 0, clientId: shipment.order?.clientId ?? null };
+    return {
+      result: "APPLIED" as const, changed: changed || logSeq > 0, clientId: shipment.order?.clientId ?? null,
+      // 这一条把货放出去了（扣货名单要记一笔，见路由里 noteChaipaiRelease）：变成「派送中」，
+      // 或者没经过派送中直接从仓里变成「已签收」（没派送单时拆派仓直接回签收）
+      wentOut: changed && (status === "outForDelivery" || (status === "delivered" && fromStatus !== "outForDelivery")) ? sid : null,
+    };
   /* 跟员工手工建派送单那个事务一样放宽（10-12 dsh 审查）：两边抢同一把 2901 号锁，手工建一大车时可能握好几秒；
      超过拆派仓 10 秒等不到回复也没关系 —— 它重发时这边已经记下了，回 DUPLICATE */
   }, { timeout: 30000, maxWait: 10000 });
@@ -597,6 +603,11 @@ export function registerChaipaiEventRoutes(app: MinimalHttpApp): void {
         ? await prepareLastmileInfo(cfg, ev)
         : null;
       const out = await applyEvent(ev, hash, req.body, shipment.companyId, info);
+      /* 财务系统2 扣货名单（2026-11-19 第 9 期，接口⑧ 老板 2026-11-19 定）：拆派仓说「派送中」时货已经出去了，拦不住 ——
+         照收（不拒收，拒收只会让两边对不上），名单上的记一条日志、打一行警告。老板首页的警报由财务拉运单时自己报
+         （财务系统2 ADR 0142），物流不另报。事务已经提交、不等它：记失败不影响回传 */
+      const wentOut = (out as { wentOut?: string | null }).wentOut;
+      if (wentOut) void noteChaipaiRelease(wentOut);
       if (out.changed) {
         // 回传不是登录用户，publishAfterWrite 不推；这里自己告诉在线页面「运单变了」
         realtimeHub.publish({

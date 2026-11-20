@@ -20,10 +20,12 @@ import AgentWhr from "../../components/agent/AgentWhr";
 import AgentClients from "../../components/agent/AgentClients";
 import AgentWallet from "../../components/agent/AgentWallet";
 import AgentRebates from "../../components/agent/AgentRebates";
+import AgentFinanceWallet from "../../components/agent/AgentFinanceWallet";
 import AgentMe from "../../components/agent/AgentMe";
 
 /** 跟 menu-config.ts 里 agent 那组菜单的 # 一一对应 */
-const SECTION_IDS = ["home", "shipments", "whr", "clients", "wallet", "rebates", "me"] as const;
+/** wallet = 集货余额（客户的集货钱包，关着）；my-wallet = 我的钱包（代理自己的差价钱包，2026-11-19 第 13 期） */
+const SECTION_IDS = ["home", "shipments", "whr", "clients", "wallet", "rebates", "my-wallet", "me"] as const;
 type SectionId = (typeof SECTION_IDS)[number];
 
 function isSectionId(v: string): v is SectionId {
@@ -78,6 +80,7 @@ export default function AgentWorkbenchPage() {
       {isAgentSectionEnabled("clients") && section === "clients" ? <AgentClients /> : null}
       {isAgentSectionEnabled("wallet") && section === "wallet" ? <AgentWallet /> : null}
       {section === "rebates" ? <AgentRebates /> : null}
+      {section === "my-wallet" ? <AgentFinanceWallet /> : null}
       {isAgentSectionEnabled("me") && section === "me" ? <AgentMe /> : null}
     </div>
   );

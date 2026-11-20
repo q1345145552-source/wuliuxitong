@@ -1,4 +1,6 @@
 // B-7: 已从 node:sqlite 迁移到 Prisma + PostgreSQL（2026-05-20）
+import { assertReleasable, toCandidate } from "../finance2-holds/gate";
+import { finance2HoldsConfig } from "../finance2-holds/config";
 import { ShipmentsNotFoundError, lockAndSyncParents, lockShipmentsChildrenFirst } from "../shipments/lock-shipments";
 import { Prisma } from "@prisma/client";
 import { prisma } from "../../db/prisma";
@@ -661,6 +663,8 @@ export function registerAdminOpsRoutes(app: MinimalHttpApp): void {
     const results: Array<{ id: string; shipmentId: string }> = [];
     let moved = 0;
     const skipped: string[] = [];
+    /** 扣货名单的提示（没名单 / 名单太旧 / 配置有问题），放出去了也要告诉员工（Codex 审查第 7 条） */
+    let holdNotice: string | null = null;
     try {
       await prisma.$transaction(async (tx) => {
         if (!existingDeliveryNo) {
@@ -761,6 +765,22 @@ export function registerAdminOpsRoutes(app: MinimalHttpApp): void {
         const orderedIds = lockedIds.filter((id) => selectedIds.has(id)); // 祖先只锁不派。
         /** 父单留到最后统一同步，别夹在子单锁中间（见上面 ②） */
         const parentNosToSync = new Set<string>();
+        /* 财务系统2 扣货名单（2026-11-19 第 9 期）：出车 = 往外放货。锁后按这一车要新放出去的票查名单，
+           有被扣的整车不建（事务一起撤），报错里列出唛头和运单号、写明按几点的名单。
+           不查的两种：已经在这张派送单里的（下面会跳过）、本来就在派送中只是改派换车的（货早就出去了，不是新放）。
+           ⚠️ 报错的话里不能有「派送中」三个字：前端 LastmileDispatchWorkspace 见到 409 + 「派送中」会当成改派、弹确认框重发 */
+        if (finance2HoldsConfig()) { // 开关 off 时一条都不多查
+          const preRows = await tx.shipment.findMany({
+            where: { id: { in: orderedIds }, companyId: auth.companyId },
+            select: { id: true, trackingNo: true, parentTrackingNo: true, currentStatus: true, order: { select: { clientId: true } } },
+          });
+          const alreadyHere = new Set((await tx.adminLastmileOrder.findMany({
+            where: { shipmentId: { in: orderedIds }, companyId: auth.companyId, deliveryNo },
+            select: { shipmentId: true },
+          })).map((row) => row.shipmentId));
+          const releasing = preRows.filter((row) => row.currentStatus !== "outForDelivery" && !alreadyHere.has(row.id));
+          holdNotice = (await assertReleasable(tx, releasing.map(toCandidate), { entry: "尾端派送出车", operatorId: auth.userId })).notice;
+        }
         for (const sid of orderedIds) {
           /**
            * ⚠️ 一票货不能同时在两张「还没签收」的派送单里（2026-08-25 新增）。
@@ -910,7 +930,7 @@ export function registerAdminOpsRoutes(app: MinimalHttpApp): void {
       }
       throw e;
     }
-    ok(res, { deliveryNo, count: results.length, moved, skipped });
+    ok(res, { deliveryNo, count: results.length, moved, skipped, holdNotice });
   });
 
   // 尾程派送状态更新
@@ -1072,6 +1092,8 @@ export function registerAdminOpsRoutes(app: MinimalHttpApp): void {
    *   · 客户轨迹写明「撤销误签收」，不偷偷把那条已签收抹掉（数据忠实记录）
    *
    * ⚠️ 锁序跟签收/删除一致【派送单 → 运单 → 父单】，锁完重读再判断（CLAUDE.md 第 28 条）。
+   *
+   * 财务系统2 扣货名单：这里**不查名单、不拦**（老板 2026-11-19 答「放货拦截 3」定不拦）——货当时已经出车，只是纠正点错的签收。
    */
   app.post("/admin/lastmile/unsign", async (req, res) => {
     const auth = requireRole(req, res, ["admin"]);
