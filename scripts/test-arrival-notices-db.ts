@@ -19,6 +19,8 @@
  *   N37~N49 2026-10-09 多款产品：两款存取 / 镜像列、每款校验报「第N款」、没品名能存转正式点名、待入库要么全建要么全不建、
  *           两款转正式跟「创建订单」一样、产品行算重量体积、冲突检测「产品明细变了」、老页面兼容（1 款能存 / 2 款挡）、
  *           平铺镜像不校验、第二款撞预报单、按第二款搜、部署窗口兜底、单箱数量全填或全空
+ *   N54     2026-11-20 按仓库看：只看某个仓 / 其他（没选仓库 + 老仓库）、页签数字跟着仓库走、仓库数字跟着页签和搜索词走、认不出的参数 = 全部、别家公司不算
+ *   N55     按仓库看 × 转过但运单被删（按「没转」算）× 运单改过号（按运单现在的号搜）：仓库筛、页签、两种数字都跟没分仓库时一个口径
  *
  * 只连测试库：DATABASE_URL 不带 neon.tech 的不跑（一次性 docker 库设 AGENT_PORTAL_TEST_ALLOW_DB=1）；
  * 没有 DATABASE_URL 打印「跳过」。测试数据全在假公司 zz_arrival_co / zz_arrival_co2 下，开跑前、跑完后都清干净。
@@ -1521,6 +1523,96 @@ async function main(): Promise<void> {
         await must("POST /staff/arrival-notices/convert", STAFF, { id: n.id, to: "formal" });
         assert.equal(Number((await pm.arrivalNotice.findUnique({ where: { id: n.id } })).volumeM3), expected);
       }
+    });
+
+    await check("N54 按仓库看（2026-11-20 老板选 A）：只看某个仓 / 其他、页签数字跟仓库走、仓库按钮数字跟页签和搜索词走、认不出 = 全部、别家不算", async () => {
+      const K = "WHVIEW"; // 只数这一批：搜索词 = 运单号里共有的一段
+      const yw1 = await save(STAFF, { trackingNo: NO(`${K}YW1`), warehouseId: "wh_yiwu_01" });
+      const yw2 = await save(STAFF, { trackingNo: NO(`${K}YW2`), warehouseId: "wh_yiwu_01" });
+      await must("POST /staff/arrival-notices/notify", STAFF, { id: yw2.id, notified: true });
+      const gz = await save(STAFF, { trackingNo: NO(`${K}GZ1`), warehouseId: "wh_guangzhou_01" });
+      const sz = await save(STAFF, { trackingNo: NO(`${K}SZ1`), warehouseId: "wh_shenzhen_01" });
+      const none = await save(STAFF, { trackingNo: NO(`${K}NO1`) });
+      const retired = await save(STAFF, { trackingNo: NO(`${K}OLD1`), warehouseId: "wh_yiwu_01" });
+      await pm.arrivalNotice.update({ where: { id: retired.id }, data: { warehouseId: "wh_retired_zz" } }); // 老数据：仓库已经不在单子里
+      const blank = await save(STAFF, { trackingNo: NO(`${K}BL1`) });
+      await pm.arrivalNotice.update({ where: { id: blank.id }, data: { warehouseId: "" } }); // 老数据：空串当没选
+      await save(OTHER_STAFF, { trackingNo: NO(`${K}CO2`), warehouseId: "wh_guangzhou_01" }); // 别家公司，同一个搜索词
+      const ids = (page: Row) => page.items.map((x: Row) => x.id).sort();
+
+      const all = await list(STAFF, { keyword: K, tab: "all" });
+      assert.equal(all.total, 7);
+      assert.deepEqual(all.warehouseCounts, { all: 7, wh_yiwu_01: 2, wh_guangzhou_01: 1, wh_dongguan_01: 0, wh_shenzhen_01: 1, other: 3 });
+
+      const g = await list(STAFF, { keyword: K, tab: "all", warehouse: "wh_guangzhou_01" });
+      assert.deepEqual(ids(g), [gz.id], "只看广州仓：只有广州那条，别家公司那条不算");
+      assert.equal(g.total, 1);
+      assert.deepEqual(g.counts, { todo: 1, notified: 0, inbound: 0, formal: 0, all: 1 }, "页签数字按选的仓库数");
+      assert.deepEqual(g.warehouseCounts, all.warehouseCounts, "仓库按钮的数字不管选了哪个仓");
+
+      const o = await list(STAFF, { keyword: K, tab: "all", warehouse: "other" });
+      assert.deepEqual(ids(o), [none.id, retired.id, blank.id].sort(), "其他 = 没选仓库（null / 空串）+ 仓库不在单子里的");
+
+      const yTodo = await list(STAFF, { keyword: K, tab: "todo", warehouse: "wh_yiwu_01" });
+      assert.deepEqual(ids(yTodo), [yw1.id], "义乌仓待通知：通知过的那条不在");
+      assert.deepEqual(yTodo.counts, { todo: 1, notified: 1, inbound: 0, formal: 0, all: 2 });
+      assert.deepEqual(yTodo.warehouseCounts, { all: 6, wh_yiwu_01: 1, wh_guangzhou_01: 1, wh_dongguan_01: 0, wh_shenzhen_01: 1, other: 3 }, "仓库数字按现在的页签（待通知）数");
+
+      const s1 = await list(STAFF, { keyword: `${K}SZ`, tab: "all" });
+      assert.deepEqual(s1.warehouseCounts, { all: 1, wh_yiwu_01: 0, wh_guangzhou_01: 0, wh_dongguan_01: 0, wh_shenzhen_01: 1, other: 0 }, "仓库数字跟着搜索词");
+      assert.deepEqual(ids(s1), [sz.id]);
+
+      const dg = await list(STAFF, { keyword: K, tab: "all", warehouse: "wh_dongguan_01" });
+      assert.equal(dg.total, 0);
+      assert.equal(dg.items.length, 0);
+
+      for (const junk of ["wh_bangkok", "WH_YIWU_01", "all", " other"]) {
+        const j = await list(STAFF, { keyword: K, tab: "all", warehouse: junk });
+        assert.equal(j.total, 7, `认不出的仓库参数「${junk}」按全部算`);
+      }
+
+      const theirs = await list(OTHER_STAFF, { keyword: K, tab: "all" });
+      assert.equal(theirs.warehouseCounts.all, 1, "别家公司只数到自己那 1 条");
+      assert.equal(theirs.warehouseCounts.wh_guangzhou_01, 1);
+
+      const oAll = await list(STAFF, { keyword: K, tab: "all", warehouse: "other" });
+      assert.equal(oAll.total, 3);
+      assert.deepEqual(oAll.counts, { todo: 3, notified: 0, inbound: 0, formal: 0, all: 3 }, "「其他」的页签数字");
+    });
+
+    await check("N55 按仓库看 × 转过但运单被删（按「没转」算）× 运单改过号（按运单现在的号搜）：仓库筛、页签、两种数字都跟没分仓库时一个口径", async () => {
+      const K = "WHGONE";
+      // 深圳：转待入库后运单在「运单管理」被删 → 回到「没转」、待通知
+      const gone = await save(STAFF, { clientId: CLIENT_B.userId, trackingNo: NO(`${K}1`), warehouseId: "wh_shenzhen_01" });
+      await must("POST /staff/arrival-notices/convert", STAFF, { id: gone.id, to: "inbound" });
+      const ship = await pm.shipment.findFirst({ where: { trackingNo: NO(`${K}1`) } });
+      await must("POST /admin/orders/delete", ADMIN, { orderId: ship.orderId });
+      // 深圳：还在待入库的一条
+      const inb = await save(STAFF, { clientId: CLIENT_B.userId, trackingNo: NO(`${K}2`), warehouseId: "wh_shenzhen_01" });
+      await must("POST /staff/arrival-notices/convert", STAFF, { id: inb.id, to: "inbound" });
+      // 义乌：待入库，运单的号被直接改过（迁移跳过的老数据：到货通知存的号跟运单现在的对不上）
+      const stale = await save(STAFF, { clientId: CLIENT_B.userId, trackingNo: NO(`${K}3`), warehouseId: "wh_yiwu_01" });
+      await must("POST /staff/arrival-notices/convert", STAFF, { id: stale.id, to: "inbound" });
+      const sShip = await pm.shipment.findFirst({ where: { trackingNo: NO(`${K}3`) } });
+      await pm.shipment.update({ where: { id: sShip.id }, data: { trackingNo: NO("WHNEW3") } });
+
+      const sz = await list(STAFF, { keyword: K, tab: "all", warehouse: "wh_shenzhen_01" });
+      assert.deepEqual(sz.counts, { todo: 2, notified: 0, inbound: 1, formal: 0, all: 2 }, "深圳：被删运单那条按没转算（待通知），不在待入库里");
+      assert.equal(sz.items.find((x: Row) => x.id === gone.id)?.shipmentGone, true);
+      const szInbound = await list(STAFF, { keyword: K, tab: "inbound", warehouse: "wh_shenzhen_01" });
+      assert.deepEqual(szInbound.items.map((x: Row) => x.id), [inb.id]);
+      // 义乌那条的运单已经改了号，按 WHGONE 搜不到它（搜的是运单现在的号，跟不分仓库时一样），所以义乌是 0
+      assert.deepEqual(szInbound.warehouseCounts, { all: 1, wh_yiwu_01: 0, wh_guangzhou_01: 0, wh_dongguan_01: 0, wh_shenzhen_01: 1, other: 0 }, "待入库页签的仓库数字：被删运单那条不算、改过号的按新号认");
+
+      // 按运单现在的号搜：义乌那条搜得到，旧号搜不到；仓库数字跟着
+      const byNew = await list(STAFF, { keyword: NO("WHNEW3"), tab: "all", warehouse: "wh_yiwu_01" });
+      assert.deepEqual(byNew.items.map((x: Row) => x.id), [stale.id]);
+      assert.equal(byNew.warehouseCounts.wh_yiwu_01, 1);
+      assert.equal(byNew.warehouseCounts.all, 1);
+      assert.equal((await list(STAFF, { keyword: NO("WHNEW3"), tab: "all", warehouse: "wh_shenzhen_01" })).total, 0);
+      const byOld = await list(STAFF, { keyword: NO(`${K}3`), tab: "all", warehouse: "wh_yiwu_01" });
+      assert.equal(byOld.total, 0, "旧号（运单已经改掉了）搜不到，跟不分仓库时一样");
+      assert.equal(byOld.warehouseCounts.all, 0);
     });
   } finally {
     await cleanup();

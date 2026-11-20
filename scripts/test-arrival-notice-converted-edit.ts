@@ -5,6 +5,8 @@
  * 二、真把弹窗（NoticeEditor）跑起来（同 test-arrival-notice-editor.ts 的假 React），接口全换成桩，核对：
  *     先重读运单 → 一样才走超管改单那条路 → 再刷新卡片和备注；别人改过就不存；只改备注不碰运单；整柜的不给存……
  * 三、卡片（NoticeCard）：已转正式运单只有 canEditConverted（后端按超管给）才出「修改」。
+ * 四、2026-11-20 按仓库看：存完告诉列表「这条现在在哪个仓」（B14）—— 卡片刷新成功按回来的；刷新失败时改了仓就是「说不准」（undefined：改单接口会顺手对齐到货通知，
+ *     但那一步失败只记日志，审查第 3 轮），没改仓按原来的。
  */
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -363,6 +365,25 @@ async function main(): Promise<void> {
     await save();
     assert.deepEqual(calls, ["fetch", "update", "refresh"]);
     assert.match(savedMessage ?? "", /运单已经改好了，但到货通知这张卡片没刷新成新的（网断了）/);
+  });
+
+  await check("B14 按仓库看：存完交回「这条在哪个仓」—— 刷新成功按回来的；刷新失败、这次改了仓说不准（undefined，改单接口顺手对齐那一步可能也失败了）；刷新失败、没改仓按原来的", async () => {
+    const run = async (newWh: string | null, fail: boolean) => {
+      mountConverted(makeDetail());
+      let landed: unknown = "（没回调）";
+      props.onSaved = (m: string, wh: string | null) => { savedMessage = m; landed = wh; };
+      if (newWh) change("仓库", newWh);
+      change("总重量", "34");
+      const first = nodes((n) => n.props?.className === "an-prod")[0];
+      change("单箱重", "", first);
+      refreshFail = fail;
+      await save();
+      return landed;
+    };
+    assert.equal(await run("wh_guangzhou_01", true), undefined, "刷新失败、改了仓：说不准（不能点名改成的仓，也不能说还在原来的）");
+    assert.match(savedMessage ?? "", /运单已经改好了，但到货通知这张卡片没刷新成新的/);
+    assert.equal(await run(null, true), "wh_yiwu_01", "刷新失败、没改仓：还是原来的仓");
+    assert.equal(await run("wh_guangzhou_01", false), "wh_yiwu_01", "刷新成功：按后端回来的那份（桩回的是义乌）");
   });
 
   await check("B7 必填项清空了：当场拦，一个接口都不调", async () => {

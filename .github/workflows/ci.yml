@@ -335,6 +335,10 @@ jobs:
       # 卡片按钮和「上线前转的，没存原样」、弹窗 key 带前缀、后端在同一个事务里只在转正式时存、谁转的只给超管、存的字段跟页面一致
       - name: Test arrival notice snapshot (source)
         run: npm run test:arrival-notice-snapshot-source
+      # 2026-11-20 到货通知按仓库看（老板选 A「上面加一排仓库按钮」，不连库）：整页真跑点仓库按钮、记住上次选的、「其他」什么时候出来、
+      # 看着某个仓登记默认填它、存完不在正看的仓下面要说一句、老后端没回数字整排藏起来、换仓等新的时旧列表 / 数字 / 分页变灰锁住；后端两种数字各数各的那一维（连库的在 arrival-notices-db N54）
+      - name: Test arrival notice warehouse view
+        run: npm run test:arrival-notice-warehouse
       # 2026-10-19 员工加权限（老板「那就给员工加权限吧」，不连库）：员工菜单「客户账号」、重置密码页真跑（只列唛头、拦空 / 太长、关了才回来的不写）、
       # 编辑运单超管 / 员工共用一个框（WaybillEditDialog）、不在运单管理时不画但内容留着、员工页开关 / 离开运单管理 +1、后端哪些放开哪些照旧
       - name: Test staff permissions (source)

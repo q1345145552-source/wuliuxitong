@@ -133,7 +133,12 @@ export interface ArrivalNoticePage {
   page: number;
   pageSize: number;
   counts: Record<ArrivalNoticeTab, number>;
+  /** 仓库按钮上的数字（2026-11-20 按仓库看）：按现在的页签和搜索词数。上线那几分钟的老后端没有这一项 */
+  warehouseCounts?: Record<"all" | ArrivalWarehouseFilter, number>;
 }
+
+/** 按哪个仓看：四个国内仓 / other（没选仓库的 + 老数据里不在这四个的） */
+export type ArrivalWarehouseFilter = "wh_yiwu_01" | "wh_guangzhou_01" | "wh_dongguan_01" | "wh_shenzhen_01" | "other";
 
 /**
  * 修改弹窗里的一款（空串 = 没填）。key 只给页面当 React 的 key 用，发给后端前去掉。
@@ -224,8 +229,9 @@ function post<T>(path: string, body: unknown): Promise<T> {
   return apiRequest<T>(`${apiBaseUrl()}${path}`, { method: "POST", headers: JSON_HEADERS, body: JSON.stringify(body) });
 }
 
-export function fetchArrivalNotices(opts: { tab: ArrivalNoticeTab; keyword?: string; page?: number; pageSize?: number }): Promise<ArrivalNoticePage> {
+export function fetchArrivalNotices(opts: { tab: ArrivalNoticeTab; keyword?: string; page?: number; pageSize?: number; warehouse?: ArrivalWarehouseFilter | "" }): Promise<ArrivalNoticePage> {
   const q = new URLSearchParams({ tab: opts.tab });
+  if (opts.warehouse) q.set("warehouse", opts.warehouse);
   if (opts.keyword?.trim()) q.set("keyword", opts.keyword.trim());
   if (opts.page) q.set("page", String(opts.page));
   if (opts.pageSize) q.set("pageSize", String(opts.pageSize));

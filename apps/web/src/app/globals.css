@@ -4547,6 +4547,13 @@ table.a3-table.shipment-product-table > tbody > tr > td {
    ⚠️ 全局 button 默认是赭红底白字（button:not(...) 那条，权重很高），白底按钮要 !important 压回来。
    ========================================================================== */
 .an-page { display: grid; gap: 14px; min-width: 0; }
+/* 按仓库看（2026-11-20）：页签上面一排仓库按钮，白底描边、不做实心；选中的加粗加深边。
+   ⚠️ 全局 button:hover 会把 box-shadow 换掉（权重更高），选中那个停鼠标时要再写一遍，不然深边一停就没了 */
+.an-warehouses { display: flex; flex-wrap: wrap; gap: 8px; min-width: 0; }
+.an-wh { min-height: 32px; padding: 0 12px; border: 1px solid var(--line); border-radius: var(--a3-radius); background: var(--panel) !important; color: var(--ink-2) !important; font: inherit; font-size: 13px; font-weight: 500; white-space: nowrap; }
+.an-wh:hover:not(.is-active) { border-color: var(--ink-3); }
+.an-wh.is-active, .an-wh.is-active:hover:not(:disabled) { border-color: var(--ink); box-shadow: inset 0 0 0 1px var(--ink); color: var(--ink) !important; font-weight: 600; }
+.an-wh-count { margin-left: 6px; font-family: var(--a3-mono); font-size: 11px; opacity: 0.8; }
 .an-toolbar { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 10px 16px; border-bottom: 1px solid var(--line); }
 .an-tabs { display: flex; gap: 20px; min-width: 0; }
 .an-tab { margin-bottom: -1px; padding: 8px 1px 10px; border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: transparent !important; color: var(--ink-2) !important; font: inherit; font-size: 13px; font-weight: 500; white-space: nowrap; }
@@ -4563,6 +4570,15 @@ table.a3-table.shipment-product-table > tbody > tr > td {
 .an-link { padding: 2px 4px; border: 0; border-radius: var(--a3-radius); background: transparent !important; color: var(--brand) !important; font: inherit; font-size: 12px; }
 .an-link-danger { color: var(--bad) !important; }
 .an-list { display: grid; gap: 12px; }
+/* 列着的是上一个仓 / 页签的（新的还没回来或没取到）：变灰点不了。进灰晚 0.25 秒（回得快就看不到），出灰马上 */
+.an-list { transition: opacity 0.15s ease; }
+.an-list.is-stale, .an-pager.is-stale { opacity: 0.45; pointer-events: none; transition: opacity 0.15s ease 0.25s; }
+.an-pager, .an-tab-count, .an-wh-count { transition: opacity 0.15s ease; }
+/* 数字也是上一个条件的：一起变淡（同样晚 0.25 秒） */
+.an-page.is-stale :is(.an-tab-count, .an-wh-count) { opacity: 0.3; transition: opacity 0.15s ease 0.25s; }
+/* 「正在加载…」晚 0.25 秒才出来（新插进来的元素没有过渡，用动画：等的那 0.25 秒是透明的） */
+.an-late { animation: an-late-in 0.15s ease 0.25s both; }
+@keyframes an-late-in { from { opacity: 0; } to { opacity: 1; } }
 .an-card { display: grid; gap: 10px; min-width: 0; padding: 14px 16px; border: 1px solid var(--line); border-radius: var(--a3-radius-lg); background: var(--panel); }
 .an-card.is-done { background: var(--ground); }
 .an-card[aria-busy="true"] { opacity: 0.7; }
@@ -4698,6 +4714,7 @@ table.a3-table.shipment-product-table > tbody > tr > td {
 
 @media (max-width: 640px) {
   .an-toolbar { flex-direction: column; align-items: stretch; }
+  .an-wh { min-height: 40px; font-size: 14px; }
   .an-tabs { gap: 16px; overflow-x: auto; scrollbar-width: none; }
   .an-toolbar-right { padding-bottom: 10px; }
   .an-search { flex: 1; width: auto; min-width: 0; min-height: 40px; font-size: 16px; }

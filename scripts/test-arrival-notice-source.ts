@@ -332,7 +332,7 @@ async function main(): Promise<void> {
     // React 认错元素，存完 / 点 ✕ 弹窗关不掉、卡在「保存中…」（10-08 浏览器实点抓到）
     assert.ok(!/<NoticeEditor\s+(?:\/\/[^\n]*\n\s*)*key=\{editor\.seq\}/.test(v), "弹窗 key 不许是光秃秃的 editor.seq（会和 Toast 的 key 撞）");
     assert.match(v, /<Toast key=\{toast\.seq\}/, "Toast 的 key 变了，上面防撞的判断要跟着看");
-    assert.match(v, /onSaved=\{\(message\) => \{ closeEditor\(editor\.seq\);/);
+    assert.match(v, /onSaved=\{\(message, warehouseId\) => \{\s*closeEditor\(editor\.seq\);/);
     assert.match(v, /onClose=\{\(\) => closeEditor\(editor\.seq\)\}/);
     // R1：开发模式 StrictMode 会先卸再装，ref 不复位的话 next dev 下照片永远不传、卡在「保存中」
     assert.match(v, /cancelledRef\.current = false;[\s\S]{0,200}return \(\) => \{\s*cancelledRef\.current = true;/, "弹窗卸载要叫停后台上传，装上时要复位");

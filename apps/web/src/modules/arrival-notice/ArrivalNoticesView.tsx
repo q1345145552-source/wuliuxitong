@@ -40,6 +40,7 @@ import {
   type DraftProduct,
   type ArrivalNoticePage,
   type ArrivalNoticeTab,
+  type ArrivalWarehouseFilter,
   type ConvertedNoticeDetail,
   type PrealertMatch,
 } from "../../services/arrival-notice-api";
@@ -77,6 +78,33 @@ const WAREHOUSE_ZH: Record<string, string> = Object.fromEntries(WAREHOUSES.map((
 /** 上次登记选的仓库（每台电脑记自己的，只是省一下点选） */
 const LAST_WAREHOUSE_KEY = "xt_arrival_last_warehouse";
 
+/**
+ * 按仓库看（2026-11-20 老板：「这个地方有点乱……我觉得应该分仓库」，选 A「上面加一排仓库按钮」）。
+ * 每台电脑记住上次点的仓（义乌的人打开就是义乌的）；按钮上带数字，别的仓有货也看得见、不会漏。
+ * 「其他」= 没选仓库的 + 老数据里仓库不在这四个的：平时没有就不显示这个按钮。
+ */
+type WarehouseView = "" | ArrivalWarehouseFilter;
+const LIST_WAREHOUSE_KEY = "xt_arrival_list_warehouse";
+const OTHER_WAREHOUSE_LABEL = "其他";
+const WAREHOUSE_VIEW_IDS: readonly string[] = [...WAREHOUSES.map((w) => w.id), "other"];
+
+function readListWarehouse(): WarehouseView {
+  try {
+    const v = window.localStorage.getItem(LIST_WAREHOUSE_KEY) ?? "";
+    return WAREHOUSE_VIEW_IDS.includes(v) ? (v as ArrivalWarehouseFilter) : "";
+  } catch { return ""; /* 隐私模式读不了就看全部 */ }
+}
+
+function warehouseViewLabel(w: WarehouseView): string {
+  if (!w) return "全部仓库";
+  return w === "other" ? OTHER_WAREHOUSE_LABEL : (WAREHOUSE_ZH[w] ?? w);
+}
+
+/** 一条到货通知算在哪个仓的按钮下面（跟后端 warehouseWhere 同一个分法） */
+function warehouseViewOf(warehouseId: string | null | undefined): ArrivalWarehouseFilter {
+  return warehouseId && WAREHOUSE_ZH[warehouseId] ? (warehouseId as ArrivalWarehouseFilter) : "other";
+}
+
 function shortTime(iso: string | null): string {
   if (!iso) return "";
   return new Intl.DateTimeFormat("zh-CN", { timeZone: "Asia/Shanghai", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(new Date(iso));
@@ -99,9 +127,12 @@ function prealertLabel(m: PrealertMatch): string {
 }
 
 
-function emptyDraft(): ArrivalNoticeDraft {
-  let warehouseId = "";
-  try { warehouseId = window.localStorage.getItem(LAST_WAREHOUSE_KEY) ?? ""; } catch { /* 隐私模式读不了就算了 */ }
+/** viewing：正在看哪个仓。看着某一个仓时点「登记到货」，仓库先填那个仓；看全部 / 其他时照旧填上次登记选的 */
+function emptyDraft(viewing: WarehouseView): ArrivalNoticeDraft {
+  let warehouseId = viewing && viewing !== "other" ? viewing : "";
+  if (!warehouseId) {
+    try { warehouseId = window.localStorage.getItem(LAST_WAREHOUSE_KEY) ?? ""; } catch { /* 隐私模式读不了就算了 */ }
+  }
   if (!WAREHOUSE_ZH[warehouseId]) warehouseId = "";
   return {
     clientId: "", trackingNo: "", weightKg: "", volumeM3: "",
@@ -135,6 +166,10 @@ type Editor =
 
 export default function ArrivalNoticesView() {
   const [tab, setTab] = useState<ArrivalNoticeTab>("todo");
+  const [warehouse, setWarehouse] = useState<WarehouseView>(() => (typeof window === "undefined" ? "" : readListWarehouse()));
+  /** 存完弹窗时拿「现在」看的是哪个仓（点保存后又换了仓也按换完的说） */
+  const warehouseRef = useRef(warehouse);
+  warehouseRef.current = warehouse;
   const [keywordInput, setKeywordInput] = useState("");
   const [keyword, setKeyword] = useState("");
   const [page, setPage] = useState(1);
@@ -157,10 +192,18 @@ export default function ArrivalNoticesView() {
   /* 列表用「成功才作废」的门闩（2026-10-18 全系统审查 D-P2-4，request-gate 用法三）：原来「只认最新一次」，
      员工刚按新条件查（前台），实时推送又来一次悄悄重拉（后台）把前台那次作废；后台那次偏偏失败又不报错，列表就停在旧条件。
      现在成功回来的只要还是现在的页签 / 搜索词 / 页码、不比已经显示的旧，就用；失败的谁也不作废 */
-  const gate = useRef(createQueryGate<{ tab: string; keyword: string; page: number }>()).current;
-  const listKey = useMemo(() => ({ tab, keyword, page }), [tab, keyword, page]);
+  const gate = useRef(createQueryGate<{ tab: string; keyword: string; page: number; warehouse: string }>()).current;
+  const listKey = useMemo(() => ({ tab, keyword, page, warehouse }), [tab, keyword, page, warehouse]);
   const listKeyRef = useRef(listKey);
   listKeyRef.current = listKey;
+  /** 每次取数领一个号（2026-11-20 审查第 3 轮）：配合下面的 outdatedAfter，认「是不是标作废以后才发出去的那次」 */
+  const loadSeqRef = useRef(0);
+  /** 存完把一张卡挪到了别的仓（或说不准挪没挪）：屏上这份作废了 —— 那张卡可能还列着。记下当时的号，
+      之后发出去的某一次取成功了才算刷新过；在那之前列表、数字、分页跟「换了条件、新的还没回来」一样变灰锁住 */
+  const [outdatedAfter, setOutdatedAfter] = useState<number | null>(null);
+  /** 同上，同步读（取数回来那一刻要判断，不能等重画） */
+  const outdatedAfterRef = useRef<number | null>(null);
+  const markOutdated = useCallback(() => { outdatedAfterRef.current = loadSeqRef.current; setOutdatedAfter(loadSeqRef.current); }, []);
   /** 屏幕上这份列表是哪个页签 / 搜索词 / 页码的（F12：悄悄重拉失败时判断要不要报错） */
   const shownKeyRef = useRef<string | null>(null);
   const editorSeq = useRef(0);
@@ -176,16 +219,22 @@ export default function ArrivalNoticesView() {
   }, [keywordInput]);
 
   const load = useCallback(async (silent: boolean) => {
-    const key = JSON.stringify([tab, keyword, page]);
+    const key = JSON.stringify([tab, keyword, page, warehouse]);
+    const seq = ++loadSeqRef.current;
     const ticket = gate.begin(listKey);
     if (!silent) setLoading(true);
     try {
-      const res = await fetchArrivalNotices({ tab, keyword, page, pageSize: PAGE_SIZE });
+      const res = await fetchArrivalNotices({ tab, keyword, page, pageSize: PAGE_SIZE, warehouse });
       if (!gate.accept(ticket, listKeyRef.current)) return;
       // 删掉 / 转走了最后一页的最后一条：别停在空白页，退回上一页
       if (res.items.length === 0 && page > 1) { setPage((p) => Math.max(1, p - 1)); return; }
       setData(res);
       shownKeyRef.current = key;
+      /* 标作废之前就发出去、晚回来的这次（审查第 4 轮 Codex）：它可能还带着挪走的那张卡，不算刷新过 —— 列表接着锁，
+         也不许把作废之后那次的报错（带「重试」）清掉，不然锁着又没地方点重试 */
+      if (outdatedAfterRef.current !== null && seq <= outdatedAfterRef.current) return;
+      outdatedAfterRef.current = null;
+      setOutdatedAfter(null);
       setLoadError("");
     } catch (e) {
       // 条件已经换了，或者比它新的已经显示了：这次的报错不用说
@@ -197,7 +246,7 @@ export default function ArrivalNoticesView() {
       // 还是现在这个条件的请求回来了（不论成败、悄悄与否），加载就算结束了；条件已经换了的不碰（新条件那次自己会关）
       if (Object.is(ticket.key, listKeyRef.current)) setLoading(false);
     }
-  }, [tab, keyword, page, listKey, gate]);
+  }, [tab, keyword, page, warehouse, listKey, gate]);
 
   useEffect(() => { void load(false); }, [load]);
 
@@ -207,6 +256,8 @@ export default function ArrivalNoticesView() {
   const loadRef = useRef(load);
   useLayoutEffect(() => { loadRef.current = load; }, [load]);
   const reloadLatest = useCallback(() => loadRef.current(true), []);
+  /** 同上，但没刷成要说（存完挪到了别的仓：不刷掉的话那张卡还留在这里，跟「这里不显示」那句对不上） */
+  const reloadLatestLoud = useCallback(() => loadRef.current(false), []);
 
   /* 打开弹窗只认最后一次（2026-10-16 Codex 审查）：已转正式运单要先读一次运单再开，连着点 A、B 两条的「修改」时，
      A 慢回来不能把 B 的弹窗换成 A（员工以为在改 B、其实存到 A）。任何一次打开 / 关闭都作废还在路上的那次 */
@@ -329,10 +380,57 @@ export default function ArrivalNoticesView() {
   };
 
   const counts = data?.counts;
+  /* 屏上这份是不是别的条件的（2026-11-20 审查：刚换了仓 / 页签 / 搜索词，新的还没回来，或者没取到）：
+     先变灰、点不了，免得在「深圳仓」底下点到广州的卡；页签 / 仓库按钮上的数字、分页也是上一个条件的，一起变灰（审查第 2 轮），
+     分页点不了。变灰晚 0.25 秒才显出来（globals.css），回得快的不闪 */
+  const showingOther = data !== null && shownKeyRef.current !== JSON.stringify([tab, keyword, page, warehouse]);
+  /** 屏上这份不能当真：条件换了没取到，或者存完挪走了一张卡还没刷新成（审查第 3 轮） */
+  const stale = showingOther || (data !== null && outdatedAfter !== null);
+  const whCounts = data?.warehouseCounts;
+  const whCountsRef = useRef(whCounts);
+  whCountsRef.current = whCounts;
   const totalPages = data ? Math.max(1, Math.ceil(data.total / PAGE_SIZE)) : 1;
 
+  const pickWarehouse = (w: WarehouseView) => {
+    // 再点一下正在看的仓（已经在第 1 页）：React 看值没变不会重拉。没取到 / 列表灰着的时候员工多半就这么点，得真去重拉一次
+    if (w === warehouse && page === 1) { if (loadError || stale) void load(false); return; }
+    setWarehouse(w);
+    setPage(1);
+    try { window.localStorage.setItem(LIST_WAREHOUSE_KEY, w); } catch { /* 记不住就算了，这次照样能看 */ }
+  };
+  /* 上线那几分钟新页面碰上老后端：老后端不认仓库参数、回的是全部，回包里也没有仓库数字。
+     这时整排藏起来（看着像没分仓库的老样子），不能亮着「广州仓」底下列的却是全部仓 */
+  const warehouseSupported = !data || Boolean(whCounts);
+  /** 「其他」平时没有就不显示；有了、或者正看着它（记住的是它）才显示 */
+  const warehouseButtons: WarehouseView[] = ["", ...WAREHOUSES.map((w) => w.id as ArrivalWarehouseFilter), ...((whCounts?.other ?? 0) > 0 || warehouse === "other" ? ["other" as const] : [])];
+
+  /** 存完了，可它不在正看着的这个仓下面：说一句在哪，不然员工以为没存上 */
+  const savedElsewhereNote = (warehouseId: string | null): string => {
+    const viewing = warehouseRef.current;
+    // 老后端（没回仓库数字）不按仓库筛：哪条都在这页，不用说
+    if (!viewing || !whCountsRef.current) return "";
+    const lands = warehouseViewOf(warehouseId);
+    if (lands === viewing) return "";
+    return `。这条在「${warehouseViewLabel(lands)}」下面，现在看的是「${warehouseViewLabel(viewing)}」，所以这里不显示`;
+  };
+
   return (
-    <div className="an-page">
+    <div className={`an-page${stale ? " is-stale" : ""}`}>
+      {warehouseSupported ? <div className="an-warehouses" role="group" aria-label="按仓库看">
+        {warehouseButtons.map((w) => (
+          <button
+            key={w || "all"}
+            type="button"
+            aria-pressed={warehouse === w}
+            className={`an-wh${warehouse === w ? " is-active" : ""}`}
+            title={w === "other" ? "没选仓库的，或者仓库不在这几个里的" : undefined}
+            onClick={() => pickWarehouse(w)}
+          >
+            {warehouseViewLabel(w)}
+            {whCounts ? <span className="an-wh-count">{whCounts[w || "all"]}</span> : null}
+          </button>
+        ))}
+      </div> : null}
       <div className="an-toolbar">
         <div className="an-tabs" role="tablist" aria-label="到货通知分类">
           {TAB_LABELS.map((t) => (
@@ -369,13 +467,15 @@ export default function ArrivalNoticesView() {
       ) : null}
 
       {loading && !data ? <p className="an-muted an-pad">加载中…</p> : null}
-      {data && data.items.length === 0 ? (
+      {/* 上一个条件本来就是空的：等新的那会儿正文什么都没有，说一句（晚 0.25 秒才出来，回得快就看不到）；没取到时上面有报错，不说 */}
+      {data && data.items.length === 0 && stale && !loadError ? <p className="an-muted an-pad an-late">正在加载…</p> : null}
+      {data && data.items.length === 0 && !stale ? (
         <div className="an-empty">
-          {keyword ? `没有搜到「${keyword}」` : tab === "todo" ? "没有要通知的到货。新到的货点右上角「登记到货」。" : "这里还没有记录。"}
+          {(warehouse && warehouseSupported ? `${warehouseViewLabel(warehouse)}：` : "") + (keyword ? `没有搜到「${keyword}」` : tab === "todo" ? "没有要通知的到货。新到的货点右上角「登记到货」。" : "这里还没有记录。")}
         </div>
       ) : null}
 
-      <div className="an-list">
+      <div className={`an-list${stale ? " is-stale" : ""}`} aria-busy={stale || undefined} inert={stale || undefined}>
         {data?.items.map((n) => (
           <NoticeCard
             key={n.id}
@@ -396,7 +496,7 @@ export default function ArrivalNoticesView() {
       </div>
 
       {data && data.total > PAGE_SIZE ? (
-        <div className="an-pager">
+        <div className={`an-pager${stale ? " is-stale" : ""}`} inert={stale || undefined}>
           <button type="button" className="an-btn" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>上一页</button>
           <span>第 {page} / {totalPages} 页，共 {data.total} 条</span>
           <button type="button" className="an-btn" disabled={page >= totalPages} onClick={() => setPage((p) => p + 1)}>下一页</button>
@@ -409,11 +509,25 @@ export default function ArrivalNoticesView() {
           // React 会认错元素，存完 / 点 ✕ 弹窗关不掉、卡在「保存中…」（10-08 实点：两边都数到 7 时撞上）
           key={`editor-${editor.seq}`}
           editor={editor}
+          // 未确认接口支持仓库筛选（例如滚动发布中），不要把隐藏的筛选偏好当作登记默认值。
+          viewingWarehouse={whCounts ? warehouse : ""}
           clients={clients}
           bannedClients={bannedClients}
           clientsFailed={clientsFailed}
           onClose={() => closeEditor(editor.seq)}
-          onSaved={(message) => { closeEditor(editor.seq); say(message); void reloadLatest(); }}
+          onSaved={(message, warehouseId) => {
+            closeEditor(editor.seq);
+            // undefined = 说不准现在在哪个仓（超管改已转运单、卡片没刷新成）：不说具体哪个仓，但当成可能挪走了
+            const unsure = warehouseId === undefined;
+            const note = unsure ? "" : savedElsewhereNote(warehouseId);
+            say(message + note);
+            if (note || unsure) {
+              // 改的是列表里那张卡、挪走了（或说不准）：它还列着，先把屏上这份作废（变灰锁住），再大声刷新；刷成了恢复，刷不成报错 + 一直锁着。
+              // 新登记的本来就不在屏上，屏上这份照样有效：只大声刷新、不锁（审查第 5 轮 dsh）
+              if (editor.mode !== "new") markOutdated();
+              void reloadLatestLoud();
+            } else void reloadLatest();
+          }}
           onChanged={reloadLatest}
         />
       ) : null}
@@ -562,18 +676,21 @@ function NoticeCard(props: {
 
 function NoticeEditor(props: {
   editor: Editor;
+  /** 列表正看着哪个仓：新登记的仓库先填它（看全部 / 其他时填上次登记选的） */
+  viewingWarehouse: WarehouseView;
   clients: MarkOption[];
   bannedClients: ReadonlySet<string>;
   clientsFailed: boolean;
   onClose: () => void;
-  onSaved: (message: string) => void;
+  /** warehouseId：存完以后这条在哪个仓（列表正看着别的仓时，父页面要说一句「在 X 仓下面」）；undefined = 说不准（父页面不点名，但当成可能挪走了） */
+  onSaved: (message: string, warehouseId: string | null | undefined) => void;
   /** 修改时当场删了照片：列表跟着刷新 */
   onChanged: () => void | Promise<unknown>;
 }) {
   const editing = props.editor.mode === "edit" || props.editor.mode === "converted" ? props.editor.item : null;
   /** 超管改已转正式运单的那条（2026-10-16）：草稿是运单现在的样子，保存走超管「运单管理」改单那条路 */
   const converted = props.editor.mode === "converted" ? props.editor.detail : null;
-  const initialDraft = (): ArrivalNoticeDraft => (converted ? convertedDraftOf(converted) : editing ? draftOf(editing) : emptyDraft());
+  const initialDraft = (): ArrivalNoticeDraft => (converted ? convertedDraftOf(converted) : editing ? draftOf(editing) : emptyDraft(props.viewingWarehouse));
   const [draft, setDraft] = useState<ArrivalNoticeDraft>(initialDraft);
   /** 新登记存过一次之后就有 id 了：照片没传完再点「保存」是接着传，不能再登记出一条新的 */
   const [savedId, setSavedId] = useState<string | null>(editing?.id ?? null);
@@ -741,15 +858,22 @@ function NoticeEditor(props: {
       return;
     }
     let message = "已保存，那张运单也改好了";
+    /** 卡片按到货通知自己存的仓库分：刷新成功就是新的。没刷新成也不能断定还在原来那个仓 —— 改单接口自己会把到货通知
+        跟着运单对齐一遍（admin/routes.ts → syncConvertedNoticesFromShipments，仓库也跟着改，审查第 2 轮 Codex），
+        可那一步失败只记日志、改单照样成功（审查第 3 轮 Codex），所以也不能断定在改成的仓：这次改了仓就说不准（undefined），
+        父页面不点名、把列表作废再大声刷新；没改仓按原来的 */
+    let landsIn: string | null | undefined = editing?.warehouseId ?? null;
     try {
       const { item } = await refreshConvertedNotice(detail.item.id, remarkChanged(base, draft) ? { value: draft.remark, expected: base.remark } : undefined);
+      landsIn = item.warehouseId;
       // G01：换了唛头，原来那次「已通知」通知的是旧客户 —— 按接口真回来的说
       if (clientChangedAfterNotify && !item.notifiedAt) message += `。${CLIENT_CHANGED_NOTE}`;
     } catch (e) {
       message = `运单已经改好了，但到货通知这张卡片没刷新成新的（${e instanceof Error ? e.message : "刷新失败"}），点一下刷新再看`;
+      if (draft.warehouseId !== base.warehouseId) landsIn = undefined;
     }
     if (cancelledRef.current) { void props.onChanged(); return; }
-    props.onSaved(message);
+    props.onSaved(message, landsIn);
   };
 
   const submit = async () => {
@@ -758,10 +882,12 @@ function NoticeEditor(props: {
     setSaving(true);
     let id = savedId;
     let existingCount = images.length;
+    let landsIn: string | null = draft.warehouseId || null;
     let doneMessage = editing ? "已保存" : "已登记，可以复制文案通知客户了";
     try {
       const { item } = await saveArrivalNotice(id, draft, base);
       id = item.id;
+      landsIn = item.warehouseId;
       existingCount = item.images.length;
       // G01：换了唛头、后端把「已通知」改回去了 —— 按接口真回来的说，不按自己猜的
       // 记进 savedNoteRef：照片没传完、再点保存时 base 已是新唛头、notifiedAt 已是 null，第二次算不出来，不记就丢了（10-08 修复审查）
@@ -827,7 +953,7 @@ function NoticeEditor(props: {
       void props.onChanged();
       return;
     }
-    props.onSaved(doneMessage);
+    props.onSaved(doneMessage, landsIn);
   };
 
   /**

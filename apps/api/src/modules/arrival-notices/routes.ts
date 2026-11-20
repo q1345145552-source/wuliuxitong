@@ -1149,6 +1149,20 @@ function tabWhere(tab: Tab, gone: string[]): Prisma.ArrivalNoticeWhereInput {
   return {};
 }
 
+/**
+ * 按仓库看（2026-11-20 老板：「这个地方有点乱……我觉得应该分仓库」，选 A「上面加一排仓库按钮」）。
+ * 四个国内仓各一个；other = 没选仓库的、或者存的仓库已经不在这四个里了（老数据），这样「全部」= 各仓加起来，一条都不会没处看。
+ * 没传 / 认不出 = 不按仓库筛（全部）。
+ */
+const WAREHOUSE_FILTERS = [...ARRIVAL_WAREHOUSE_IDS, "other"] as const;
+type WarehouseFilter = (typeof WAREHOUSE_FILTERS)[number];
+function warehouseWhere(w: WarehouseFilter | null): Prisma.ArrivalNoticeWhereInput {
+  if (!w) return {};
+  // NOT IN 不认 NULL，没选仓库的要单独 OR 进来
+  if (w === "other") return { OR: [{ warehouseId: null }, { warehouseId: { notIn: [...ARRIVAL_WAREHOUSE_IDS] } }] };
+  return { warehouseId: w };
+}
+
 function bodyOf(req: HttpRequest): Record<string, unknown> {
   const b = req.body;
   return b && typeof b === "object" && !Array.isArray(b) ? (b as Record<string, unknown>) : {};
@@ -1164,6 +1178,7 @@ export function registerArrivalNoticeRoutes(app: MinimalHttpApp): void {
     const auth = requireRole(req, res, ["staff", "admin"]);
     if (!auth) return;
     const tab: Tab = (TABS as readonly string[]).includes(req.query.tab ?? "") ? (req.query.tab as Tab) : "all";
+    const warehouse: WarehouseFilter | null = (WAREHOUSE_FILTERS as readonly string[]).includes(req.query.warehouse ?? "") ? (req.query.warehouse as WarehouseFilter) : null;
     const keyword = (req.query.keyword ?? "").trim().slice(0, 100);
     const page = Math.max(parseInt(req.query.page ?? "", 10) || 1, 1);
     const pageSize = Math.min(Math.max(parseInt(req.query.pageSize ?? "", 10) || 50, 1), 200);
@@ -1174,7 +1189,7 @@ export function registerArrivalNoticeRoutes(app: MinimalHttpApp): void {
     /* 转过、但运单已经被删了的（通常一条都没有）：页签按「没转」算。
        下面这几句放在同一个「可重复读」快照里：不然算 gone、数页签、拉这一页、查运单状态之间正好有人删 / 转了一张，
        同一次返回里页签数字和行上的说法会打架（2026-10-06 Codex 第二轮 S1；只读，不锁任何行） */
-    const { total, rows, counts, shipMap, matches, snapCounts } = await prisma.$transaction(async (tx) => {
+    const { total, rows, counts, warehouseCounts, shipMap, matches, snapCounts } = await prisma.$transaction(async (tx) => {
       const goneRows = await tx.$queryRaw<Array<{ id: string }>>`
         SELECT n.id FROM arrival_notices n
         LEFT JOIN shipments s ON s.id = n.shipment_id
@@ -1212,7 +1227,8 @@ export function registerArrivalNoticeRoutes(app: MinimalHttpApp): void {
             ],
           }
         : {};
-      const where: Prisma.ArrivalNoticeWhereInput = { AND: [base, search, tabWhere(tab, gone)] };
+      const byWarehouse = warehouseWhere(warehouse);
+      const where: Prisma.ArrivalNoticeWhereInput = { AND: [base, search, tabWhere(tab, gone), byWarehouse] };
       const total = await tx.arrivalNotice.count({ where });
       const rows = await tx.arrivalNotice.findMany({
         where,
@@ -1222,7 +1238,15 @@ export function registerArrivalNoticeRoutes(app: MinimalHttpApp): void {
         include: NOTICE_INCLUDE,
       });
       const counts: number[] = [];
-      for (const t of TABS) counts.push(await tx.arrivalNotice.count({ where: { AND: [base, search, tabWhere(t, gone)] } }));
+      // 页签上的数字跟着选的仓库走；仓库按钮上的数字跟着现在的页签和搜索词走（两边各数各的那一维，同一个快照里）
+      for (const t of TABS) counts.push(await tx.arrivalNotice.count({ where: { AND: [base, search, tabWhere(t, gone), byWarehouse] } }));
+      const whRows = await tx.arrivalNotice.groupBy({ by: ["warehouseId"], where: { AND: [base, search, tabWhere(tab, gone)] }, _count: { _all: true } });
+      const warehouseCounts = Object.fromEntries([["all", 0], ...WAREHOUSE_FILTERS.map((w) => [w, 0])]) as Record<"all" | WarehouseFilter, number>;
+      for (const r of whRows) {
+        const key: WarehouseFilter = r.warehouseId && (ARRIVAL_WAREHOUSE_IDS as readonly string[]).includes(r.warehouseId) ? (r.warehouseId as WarehouseFilter) : "other";
+        warehouseCounts[key] += r._count._all;
+        warehouseCounts.all += r._count._all;
+      }
       const shipIds = rows.map((r) => r.shipmentId).filter((v): v is string => Boolean(v));
       const ships = shipIds.length
         ? await tx.shipment.findMany({ where: { id: { in: shipIds }, companyId: auth.companyId }, select: { id: true, currentStatus: true, trackingNo: true } })
@@ -1233,7 +1257,7 @@ export function registerArrivalNoticeRoutes(app: MinimalHttpApp): void {
         ? await tx.arrivalNoticeSnapshot.groupBy({ by: ["noticeId"], where: { companyId: auth.companyId, noticeId: { in: rows.map((r) => r.id) } }, _count: { _all: true } })
         : [];
       const snapCounts = new Map(snapRows.map((r) => [r.noticeId, r._count._all]));
-      return { total, rows, counts, shipMap: new Map(ships.map((s) => [s.id, s])), matches, snapCounts };
+      return { total, rows, counts, warehouseCounts, shipMap: new Map(ships.map((s) => [s.id, s])), matches, snapCounts };
     }, { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead, timeout: 15000, maxWait: 10000 });
     ok(res, {
       items: rows.map((r) => toDto(r, r.shipmentId ? shipMap.get(r.shipmentId) : null, auth.role, matches.get(r.id) ?? [], snapCounts.get(r.id) ?? 0)),
@@ -1241,6 +1265,7 @@ export function registerArrivalNoticeRoutes(app: MinimalHttpApp): void {
       page,
       pageSize,
       counts: Object.fromEntries(TABS.map((t, i) => [t, counts[i]])) as Record<Tab, number>,
+      warehouseCounts,
     });
   });
 
