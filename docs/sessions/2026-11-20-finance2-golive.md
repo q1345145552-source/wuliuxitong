@@ -1,4 +1,4 @@
-# 2026-11-20 财务系统2 对接合进物流系统（上线记录草稿，还没上线）
+# 2026-11-20 财务系统2 对接合进物流系统（已上线 2026-11-20 20:20）
 
 老板已同意把财务系统2 对接合进湘泰物流系统并上线。这一份是**合并和检查**的记录，加上线要做的清单；**上线由总调度做**，这里没推、没 ssh、没碰线上库，本机没用 Docker。
 
@@ -73,3 +73,12 @@
 ## 还没定的（从各分支会话记录里带过来，上线后问老板）
 - 钱包菜单一上线就对所有代理显示、时间按北京时间、手机底部要不要加入口（`docs/sessions/2026-11-19-finance2-agent-wallet.md`）。
 - 只读接口第六节 1～7 条（`docs/finance2-对接-核对.md`）。
+
+
+## 上线结果（2026-11-20 晚，总调度）
+- 线上只读核对：statement_timeout / lock_timeout 都是 0；没有长时间不提交的事务；那几张表原来没有别的触发器；只有一家公司 c_001；母运单 3280 张。
+- 推 `c24710b` 到 origin/main（从 5a974da 直接接上），服务器 `bash deploy.sh`：三个迁移跑完、结构体检一致、API/Web 正常、图片检查正常，新版本 c24710b。
+- 服务器 `.env` 先备份成 `.env.bak-20261120-finance2`，再加 FINANCE2_COMPANY_ID=c_001、FINANCE2_API_KEY_SHA256、FINANCE2_API_BASE=https://xtcwxt.site、FINANCE2_HOLDS_SECRET；**FINANCE2_HOLDS_MODE 没填 = 只记不拦**。`docker compose up -d api`。
+- 核对：只读接口不带密钥 401、带密钥 /agents 200；finance2_waybill_changes 3280 行 = 母运单数；finance2_hold_logs 有 fetch_ok；财务那边一次同步拉到代理 3、客户 122、运单 3280。
+- 密钥原文没进 git、没进文档。
+- 老板本机 main 工作区（订单附加费等没提交的改动）没动；它现在落后 origin/main，老板提交前要先拉最新的。
