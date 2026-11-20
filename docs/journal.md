@@ -1,5 +1,11 @@
 # 项目交接日志
 
+## 2026-11-20 财务系统2 对接合进物流系统（上线记录草稿：本机分支 claude/caiwu2-golive，没推、没上线）
+- 老板同意合进去上线。从 origin/main 5a974da 切出，依次合 `claude/caiwu2-api-54a826`（39c2812，给财务的只读接口，没冲突）、`claude/caiwu2-hold-answers`（f6e86d1，扣货拦截 + 代理钱包 + 老板 11-19 答复）。冲突 6 个文件都两边留：schema.prisma、check-schema-drift.sql（合起来 71 张表 / 852 个字段）、env.example、.env.example、docker-compose.yml、journal。
+- 迁移三个都只加不删：20261119_finance2_holds、20261119_finance2_holds_reports、20261119_finance2_readonly_api（两张表 + 15 个触发器 + 补记现有母运单）。「上线前」库上连跑两遍、跟 schema 零差异。
+- 检查：三套类型检查 0 错；CI build 组 84 / 84、test-db 组 41 / 41；带触发器的库上 test-db 组再跑 40 / 40。
+- 上线清单（物流 .env 6 个变量、财务系统2 .env 3 个变量、上线前后核对）在 `docs/sessions/2026-11-20-finance2-golive.md`。上线后在这条补上线时间和核对结果。
+
 ## 2026-11-19 给财务系统2 的只读接口（第 7 期物流这一边；本机分支 claude/caiwu2-api-54a826，没推、没上线、没碰线上库）
 - 来源：财务系统2 窗口（老板定物流这边也由我们做）。约定在财务系统2 `docs/物流系统接口约定.md` 第二版；只做 A 部分（只读接口），放货拦截（B 部分）另一个窗口在做，没动放货那块。
 - 新接口 `/integrations/finance2/v1/{waybills/changes, waybills/<号>, waybills/numbers, customers, customers/agent-changes, agents}`，专用密钥只存指纹（`FINANCE2_API_KEY_SHA256` + `_PREV`），只看 `FINANCE2_COMPANY_ID` 一家，查库在数据库只读事务里。
