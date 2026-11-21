@@ -80,6 +80,9 @@ async function main(): Promise<void> {
     assert.equal(r.hasMore, false);
     const odd = parseLedger({ ...LEDGER, items: [{ ...LEDGER.items[0], kind: "somethingNew" }] }, AG);
     assert.ok(typeof odd !== "string" && odd.items[0].kindLabel === "其他（somethingNew）");
+    // 财务系统2 ADR 0163（2026-11-22）：账单减项减掉那部分的差价直接划掉，流水多一种 marginForfeited。
+    const forfeit = parseLedger({ ...LEDGER, items: [{ ...LEDGER.items[0], kind: "marginForfeited" }] }, AG);
+    assert.ok(typeof forfeit !== "string" && forfeit.items[0].kindLabel === "减项划掉");
   });
   await test("P3 约定 10.3 提现样例原样能收；状态配中文", () => {
     const r = parseWithdrawals(WITHDRAWALS, AG);

@@ -15,6 +15,7 @@ export const LEDGER_KIND_ZH: Record<string, string> = {
   marginAccrued: "差价待结算",
   marginReleased: "转可用",
   marginReversed: "冲回",
+  marginForfeited: "减项划掉", // 财务系统2 ADR 0163：账单减项减掉那部分的差价不给，直接划掉
   withdrawal: "提现",
   withdrawalVoided: "提现作废退回",
 };
