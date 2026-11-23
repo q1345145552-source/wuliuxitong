@@ -195,6 +195,8 @@ export interface ShipmentItem {
   remark?: string | null;
   transportMode?: string;
   shipDate?: string;
+  /** 录入时间（员工运单列表给，2026-11-23）：同一天到仓的按它排；后端老版本没有这个字段时退回按运单号排 */
+  createdAt?: string;
   receiverNameTh?: string;
   receiverPhoneTh?: string;
   receiverAddressTh?: string;

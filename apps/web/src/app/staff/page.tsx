@@ -95,6 +95,7 @@ import {
   type StaffBatchOrder,
 } from "../../modules/staff/batchOrderImport";
 import { beijingDate, beijingToday } from "../../modules/shared/beijing-date";
+import { compareWaybillsByArrival } from "../../modules/shipment/waybill-sort";
 import { photoTypeIssue } from "../../modules/arrival-notice/photo-upload";
 import { nextAutoTotals, orderDimsVolume, productRowTotals } from "../../modules/orders/auto-totals";
 import {
@@ -565,14 +566,8 @@ export default function StaffHomePage() {
     const clientsTicket = clientsGate.begin(null);
     const pageTicket = pageListGate.begin(null);
     const [shipmentItems, prealertItems, clientItems] = await Promise.all([fetchStaffShipments(), fetchStaffPrealerts(), fetchStaffClients()]);
-    // 按运单号数字降序
-    // 【审查问题 10】同 admin：原来 Number() 超 15 位丢精度，改成按位数+字符串比
-    shipmentItems.sort((a, b) => {
-      const an = (a.trackingNo ?? "").replace(/\D/g, "").replace(/^0+/, "");
-      const bn = (b.trackingNo ?? "").replace(/\D/g, "").replace(/^0+/, "");
-      if (an.length !== bn.length) return bn.length - an.length;
-      return bn.localeCompare(an);
-    });
+    // 到仓日期新的在上、同一天晚录入的在上（2026-11-23 老板选 A；原来按运单号数字，各仓号码长短不一排乱了），同管理员页
+    shipmentItems.sort(compareWaybillsByArrival);
     if (clientsGate.accept(clientsTicket, null)) setStaffClients(clientItems);
     // 比已经显示的旧（更晚发出的刷新已经先回来了）：这份不写，给调用方的也换成屏幕上那份新的
     if (!pageListGate.accept(pageTicket, null)) return shownShipmentItemsRef.current ?? shipmentItems;

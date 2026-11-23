@@ -1,5 +1,10 @@
 # 项目交接日志
 
+## 2026-11-23 运单管理按到仓日期排 + 编辑框格子写名字（工作副本分支 claude/waybill-sort-labels，没提交、没上线）
+- 老板「怎么物流系统的不是按运单的时间来排序的？」选 A 按到仓日期；「编辑的时候为什么看不到长宽高？」。原来两页按运单号数字排，各仓号码长短不一，当天新单排到第 2634 位；编辑框格子名只在提示字里。
+- 做法：`modules/shipment/waybill-sort.ts`（到仓日期新→同日晚录入→运单号兜底；排的是那一页「到仓日期」那一列显示的日期，管理员页没填时是建单日期；不存在的日子当没填）；`/staff/shipments` 加 createdAt；编辑弹窗每格上面写名字 + 读屏名字，产品行列名跟格子同一个网格。详情 `docs/sessions/2026-11-23-waybill-sort-labels.md`。
+- 检查：新 `test:waybill-sort-labels` 7 项；改坏 21 处全红；本机全套 build 85/85、test-db 41/41；浏览器员工 / 管理员两页实看；线上 3344 张只读跑真排序 0 处颠倒（第 1 位会是到仓日期填成 2026-12-30 的 SZ260702773）；排序提速后 2.6 毫秒；dsh 5 轮最后三轮没有必须修（Codex 额度用完没审成）。
+
 ## 2026-11-20 财务系统2 对接合进物流系统（上线记录草稿：本机分支 claude/caiwu2-golive，没推、没上线）
 - 老板同意合进去上线。从 origin/main 5a974da 切出，依次合 `claude/caiwu2-api-54a826`（39c2812，给财务的只读接口，没冲突）、`claude/caiwu2-hold-answers`（f6e86d1，扣货拦截 + 代理钱包 + 老板 11-19 答复）。冲突 6 个文件都两边留：schema.prisma、check-schema-drift.sql（合起来 71 张表 / 852 个字段）、env.example、.env.example、docker-compose.yml、journal。
 - 迁移三个都只加不删：20261119_finance2_holds、20261119_finance2_holds_reports、20261119_finance2_readonly_api（两张表 + 15 个触发器 + 补记现有母运单）。「上线前」库上连跑两遍、跟 schema 零差异。

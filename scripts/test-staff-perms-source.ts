@@ -52,6 +52,8 @@ const fakeReact = {
   },
   useCallback(fn: any) { index++; return fn; },
   useLayoutEffect() { index++; },
+  // 编辑弹窗产品行用 <Fragment key>（2026-11-23）：跟下面 jsx 运行时同一个标记，别再缺一个导出（dsh 11-23 第 4 轮）
+  Fragment: "fragment",
 };
 const runtime = { jsx: (type: any, p: any, key: any) => ({ type, props: p, key }), jsxs: (type: any, p: any, key: any) => ({ type, props: p, key }), Fragment: "fragment" };
 

@@ -14,7 +14,7 @@
  *   报错不写进弹窗、走提示条「之前那张单没存上」，成功也说「之前那张单：」；
  * - 页面切到别的栏目时弹窗不挂（visible=false 时不画），但这个组件还在，填的内容留着，回来照样在。
  */
-import { useMemo, useState, type MutableRefObject } from "react";
+import { Fragment, useMemo, useState, type MutableRefObject, type ReactNode } from "react";
 import DetailModal from "../layout/DetailModal";
 import MarkPicker from "../layout/MarkPicker";
 import { activeMarkOptions, bannedChangeHint, bannedClientIds, withCurrentMark } from "../shared/client-ban";
@@ -30,6 +30,23 @@ export type { WaybillEditForm, WaybillEditProduct, WaybillEditSnapshot, WaybillE
 
 const field = { border: "1px solid var(--l-strong)", borderRadius: 8, padding: "8px 10px" } as const;
 const cell = { border: "1px solid var(--l-strong)", borderRadius: 4, padding: "4px 6px", fontSize: 12 } as const;
+/* 每个格子上面的名字（2026-11-23 老板：「我编辑的时候为什么看不到长宽高？」—— 格子名原来只写在灰色提示字里，
+   一填上数字就没了，一排全是 10 分不出哪个是长宽高）。名字常驻在格子上面，填了也看得见。
+   用 div 不用 label：唛头那格是自己画的下拉，里面有清空 / 展开按钮，label 会把点名字转成点按钮。
+   读屏名字（dsh 11-23 第 1 轮）：原生格子各自写 aria-label，跟上面显示的名字一字不差（test-waybill-sort-labels S5 逐个核）；
+   唛头那格是组件（MarkPicker），它输入框的提示字「唛头」就是名字 */
+const fieldName = { fontSize: 12, color: "var(--t-faint)", lineHeight: 1.2 } as const;
+function Named(props: { caption: string; children: ReactNode }) {
+  return (
+    <div style={{ display: "grid", gap: 3, minWidth: 0 }}>
+      <span style={fieldName}>{props.caption}</span>
+      {props.children}
+    </div>
+  );
+}
+/** 产品行的列：名字那一行和每一行格子共用，对得齐 */
+const productGrid = "2fr 0.4fr 0.3fr 0.3fr 0.3fr 0.4fr 0.45fr 0.8fr 1fr auto";
+const PRODUCT_COLUMN_NAMES = ["品名", "箱数", "长cm", "宽cm", "高cm", "单箱数量", "单箱重kg", "货型", "国内单号"] as const;
 
 export default function WaybillEditDialog(props: {
   /** 打开时点的那一行（表单只在挂上那一刻按它建一次） */
@@ -210,18 +227,18 @@ export default function WaybillEditDialog(props: {
           {/* 唛头用自己画的下拉（2026-10-08，替掉浏览器自带的 datalist）；只显示唛头。
               封禁的唛头不进下拉（2026-10-17，modules/shared/client-ban.ts）：换成它后端会拦，提示在这一排格子下面；
               原来就挂在封禁唛头名下的单照常改、不提示，那个唛头留在下拉里（不然一点开就是「匹配 0 个」） */}
-          <MarkPicker value={form.clientId} onChange={(v) => setForm((f) => ({ ...f, clientId: v }))} options={withCurrentMark(activeMarkOptions(clientList), snapshot?.form.clientId)} placeholder="唛头" inputStyle={field} />
-          <input value={form.trackingNo} onChange={(e) => setForm((v) => ({ ...v, trackingNo: e.target.value.toUpperCase() }))} placeholder="运单号" style={field} />
-          <input value={form.batchNo} onChange={(e) => setForm((v) => ({ ...v, batchNo: e.target.value }))} placeholder="柜号" style={field} />
-          <select value={form.warehouseId} onChange={(e) => setForm((v) => ({ ...v, warehouseId: e.target.value }))} style={field}><option value="wh_yiwu_01">义乌仓</option><option value="wh_guangzhou_01">广州仓</option><option value="wh_dongguan_01">东莞仓</option><option value="wh_shenzhen_01">深圳仓</option></select>
-          <select value={form.transportMode} onChange={(e) => setForm((v) => ({ ...v, transportMode: e.target.value as "sea" | "land" }))} style={field}><option value="sea">海运</option><option value="land">陆运</option></select>
-          <input value={form.domesticTrackingNo} onChange={(e) => setForm((v) => ({ ...v, domesticTrackingNo: e.target.value }))} placeholder="货拉拉" style={field} />
-          <input value={form.receiverAddressTh} onChange={(e) => setForm((v) => ({ ...v, receiverAddressTh: e.target.value }))} placeholder="收货地址" style={field} />
-          <input value={form.containerNo} onChange={(e) => setForm((v) => ({ ...v, containerNo: e.target.value }))} placeholder="装柜号" style={field} />
-          <select value={form.packageUnit} onChange={(e) => setForm((v) => ({ ...v, packageUnit: e.target.value as "bag" | "box" }))} style={field}><option value="box">箱</option><option value="bag">袋</option></select>
-          <input value={form.weightKg} onChange={(e) => setForm((v) => ({ ...v, weightKg: e.target.value }))} placeholder="重量(kg)" style={field} />
-          <input value={form.volumeM3} onChange={(e) => setForm((v) => ({ ...v, volumeM3: e.target.value }))} placeholder="体积(m³)" style={field} />
-          <input type="date" value={form.shipDate} onChange={(e) => setForm((v) => ({ ...v, shipDate: e.target.value }))} style={field} />
+          <Named caption="唛头"><MarkPicker value={form.clientId} onChange={(v) => setForm((f) => ({ ...f, clientId: v }))} options={withCurrentMark(activeMarkOptions(clientList), snapshot?.form.clientId)} placeholder="唛头" inputStyle={field} /></Named>
+          <Named caption="运单号"><input aria-label="运单号" value={form.trackingNo} onChange={(e) => setForm((v) => ({ ...v, trackingNo: e.target.value.toUpperCase() }))} placeholder="运单号" style={field} /></Named>
+          <Named caption="柜号"><input aria-label="柜号" value={form.batchNo} onChange={(e) => setForm((v) => ({ ...v, batchNo: e.target.value }))} placeholder="柜号" style={field} /></Named>
+          <Named caption="仓库"><select aria-label="仓库" value={form.warehouseId} onChange={(e) => setForm((v) => ({ ...v, warehouseId: e.target.value }))} style={field}><option value="wh_yiwu_01">义乌仓</option><option value="wh_guangzhou_01">广州仓</option><option value="wh_dongguan_01">东莞仓</option><option value="wh_shenzhen_01">深圳仓</option></select></Named>
+          <Named caption="运输方式"><select aria-label="运输方式" value={form.transportMode} onChange={(e) => setForm((v) => ({ ...v, transportMode: e.target.value as "sea" | "land" }))} style={field}><option value="sea">海运</option><option value="land">陆运</option></select></Named>
+          <Named caption="国内单号"><input aria-label="国内单号" value={form.domesticTrackingNo} onChange={(e) => setForm((v) => ({ ...v, domesticTrackingNo: e.target.value }))} placeholder="货拉拉" style={field} /></Named>
+          <Named caption="收货地址"><input aria-label="收货地址" value={form.receiverAddressTh} onChange={(e) => setForm((v) => ({ ...v, receiverAddressTh: e.target.value }))} placeholder="收货地址" style={field} /></Named>
+          <Named caption="装柜号"><input aria-label="装柜号" value={form.containerNo} onChange={(e) => setForm((v) => ({ ...v, containerNo: e.target.value }))} placeholder="装柜号" style={field} /></Named>
+          <Named caption="包装"><select aria-label="包装" value={form.packageUnit} onChange={(e) => setForm((v) => ({ ...v, packageUnit: e.target.value as "bag" | "box" }))} style={field}><option value="box">箱</option><option value="bag">袋</option></select></Named>
+          <Named caption="总重量(kg)"><input aria-label="总重量(kg)" value={form.weightKg} onChange={(e) => setForm((v) => ({ ...v, weightKg: e.target.value }))} placeholder="重量(kg)" style={field} /></Named>
+          <Named caption="总体积(m³)"><input aria-label="总体积(m³)" value={form.volumeM3} onChange={(e) => setForm((v) => ({ ...v, volumeM3: e.target.value }))} placeholder="体积(m³)" style={field} /></Named>
+          <Named caption="到仓日期"><input aria-label="到仓日期" type="date" value={form.shipDate} onChange={(e) => setForm((v) => ({ ...v, shipDate: e.target.value }))} style={field} /></Named>
         </div>
         {/* 换成封禁的唛头时的提示（放在格子外面，不把那一排撑高） */}
         {(() => {
@@ -240,22 +257,31 @@ export default function WaybillEditDialog(props: {
           {products.length === 0 && (
             <div style={{ fontSize: 12, color: "var(--t-faint)", padding: "4px 0" }}>无产品行，点击下方按钮添加</div>
           )}
-          {products.map((p, i) => (
-            <div key={i} style={{ display: "grid", gridTemplateColumns: "2fr 0.4fr 0.3fr 0.3fr 0.3fr 0.4fr 0.45fr 0.8fr 1fr auto", gap: 4, marginBottom: 4, alignItems: "center" }}>
-              <input value={p.itemName} onChange={(e) => setProduct(i, "itemName", e.target.value)} placeholder="品名" style={cell} />
-              <input type="number" value={p.packageCount} onChange={(e) => setProduct(i, "packageCount", e.target.value)} placeholder="箱数" style={cell} />
-              <input type="number" step="0.01" value={p.lengthCm} onChange={(e) => setProduct(i, "lengthCm", e.target.value)} placeholder="长cm" style={cell} />
-              <input type="number" step="0.01" value={p.widthCm} onChange={(e) => setProduct(i, "widthCm", e.target.value)} placeholder="宽cm" style={cell} />
-              <input type="number" step="0.01" value={p.heightCm} onChange={(e) => setProduct(i, "heightCm", e.target.value)} placeholder="高cm" style={cell} />
-              <input type="number" value={p.productQuantity} onChange={(e) => setProduct(i, "productQuantity", e.target.value)} placeholder="单箱数量" style={cell} />
-              <input type="number" step="0.01" value={p.weightKg} onChange={(e) => setProduct(i, "weightKg", e.target.value)} placeholder="单箱重kg" style={cell} />
-              <select value={(p.cargoType || "normal").toLowerCase()} onChange={(e) => setProduct(i, "cargoType", e.target.value)} style={{ ...cell, background: "var(--white)" }}>
-                {CARGO_TYPES.map((c) => <option key={c} value={c}>{CARGO_TYPE_ZH[c]}</option>)}
-              </select>
-              <input value={p.domesticTrackingNo || ""} onChange={(e) => setProduct(i, "domesticTrackingNo", e.target.value)} placeholder="货拉拉" style={cell} />
-              <button type="button" onClick={() => setProducts((v) => v.filter((_, j) => j !== i))} style={{ border: "1px solid #fca5a5", borderRadius: 4, padding: "4px 6px", fontSize: 11, background: "var(--white)", color: "var(--c-red-2)", cursor: "pointer" }}>X</button>
+          {/* 列名一行 + 所有产品行放在同一个网格里：列宽是按格子（输入框）算出来的，列名单独一个网格的话两边各算各的、对不齐（11-23 实看「箱数」跑到第三格上面） */}
+          {products.length > 0 && (
+            <div style={{ display: "grid", gridTemplateColumns: productGrid, columnGap: 4, rowGap: 4, alignItems: "center", marginBottom: 4 }}>
+              {/* 列名给眼睛看；读屏靠每个格子自己的 aria-label（第几行 + 列名），列名这行就不再读一遍 */}
+              {PRODUCT_COLUMN_NAMES.map((name) => <span key={`col-${name}`} aria-hidden="true" style={{ ...fieldName, paddingLeft: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", minWidth: 0 }}>{name}</span>)}
+              {/* 最后一列是「X」删除按钮，不写名字 */}
+              <span key="col-remove" aria-hidden="true" />
+              {products.map((p, i) => (
+                <Fragment key={`row-${i}`}>
+                  <input aria-label={`第${i + 1}行 品名`} value={p.itemName} onChange={(e) => setProduct(i, "itemName", e.target.value)} placeholder="品名" style={cell} />
+                  <input aria-label={`第${i + 1}行 箱数`} type="number" value={p.packageCount} onChange={(e) => setProduct(i, "packageCount", e.target.value)} placeholder="箱数" style={cell} />
+                  <input aria-label={`第${i + 1}行 长cm`} type="number" step="0.01" value={p.lengthCm} onChange={(e) => setProduct(i, "lengthCm", e.target.value)} placeholder="长cm" style={cell} />
+                  <input aria-label={`第${i + 1}行 宽cm`} type="number" step="0.01" value={p.widthCm} onChange={(e) => setProduct(i, "widthCm", e.target.value)} placeholder="宽cm" style={cell} />
+                  <input aria-label={`第${i + 1}行 高cm`} type="number" step="0.01" value={p.heightCm} onChange={(e) => setProduct(i, "heightCm", e.target.value)} placeholder="高cm" style={cell} />
+                  <input aria-label={`第${i + 1}行 单箱数量`} type="number" value={p.productQuantity} onChange={(e) => setProduct(i, "productQuantity", e.target.value)} placeholder="单箱数量" style={cell} />
+                  <input aria-label={`第${i + 1}行 单箱重kg`} type="number" step="0.01" value={p.weightKg} onChange={(e) => setProduct(i, "weightKg", e.target.value)} placeholder="单箱重kg" style={cell} />
+                  <select aria-label={`第${i + 1}行 货型`} value={(p.cargoType || "normal").toLowerCase()} onChange={(e) => setProduct(i, "cargoType", e.target.value)} style={{ ...cell, background: "var(--white)" }}>
+                    {CARGO_TYPES.map((c) => <option key={c} value={c}>{CARGO_TYPE_ZH[c]}</option>)}
+                  </select>
+                  <input aria-label={`第${i + 1}行 国内单号`} value={p.domesticTrackingNo || ""} onChange={(e) => setProduct(i, "domesticTrackingNo", e.target.value)} placeholder="货拉拉" style={cell} />
+                  <button type="button" aria-label={`删除第${i + 1}行`} onClick={() => setProducts((v) => v.filter((_, j) => j !== i))} style={{ border: "1px solid #fca5a5", borderRadius: 4, padding: "4px 6px", fontSize: 11, background: "var(--white)", color: "var(--c-red-2)", cursor: "pointer" }}>X</button>
+                </Fragment>
+              ))}
             </div>
-          ))}
+          )}
           <button type="button" onClick={() => setProducts((v) => [...v, { itemName: "", packageCount: "", lengthCm: "", widthCm: "", heightCm: "", productQuantity: "", weightKg: "", cargoType: "normal", domesticTrackingNo: "" }])} style={{ border: "1px dashed var(--c-blue)", borderRadius: 4, padding: "4px 10px", fontSize: 12, background: "var(--white)", color: "var(--c-blue)", cursor: "pointer", marginTop: 4 }}>+ 添加产品</button>
         </div>
         {(current.productImages?.length ?? 0) > 0 && (

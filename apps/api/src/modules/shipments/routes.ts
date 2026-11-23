@@ -592,6 +592,9 @@ export function registerShipmentRoutes(app: MinimalHttpApp): void {
       orderUpdatedAt: r.order?.updatedAt?.toISOString(),
       transportMode: r.order?.transportMode ?? undefined,
       shipDate: r.order?.shipDate ?? undefined,
+      /** 录入时间（2026-11-23）：「运单管理」同一天到仓的按它排、晚录入的在上（modules/shipment/waybill-sort.ts）。
+       *  跟管理员列表 /admin/orders 同一个口径：订单的建单时间，没有订单才用运单自己的 */
+      createdAt: (r.order?.createdAt ?? r.createdAt).toISOString(),
       receiverNameTh: r.order?.receiverNameTh ?? undefined,
       receiverPhoneTh: r.order?.receiverPhoneTh ?? undefined,
       receiverAddressTh: r.order?.receiverAddressTh ?? undefined,

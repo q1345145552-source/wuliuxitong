@@ -101,6 +101,7 @@ import {
   fetchLastmileShipments,
 } from "../../services/business-api";
 import { beijingDate, beijingToday } from "../../modules/shared/beijing-date";
+import { waybillArrivalComparator } from "../../modules/shipment/waybill-sort";
 import {
   createKnowledgeItem,
   deleteKnowledgeItem,
@@ -181,6 +182,9 @@ const warehouseOptions = [
    modules/shipment/shipment-status.ts）—— 原来这里写死 15 个，加状态没人回来改，
    实测缺 15 个，陆运那五步从上线起就一直筛不到。**别再改回写死。** */
 const logisticsStatusOptions = SHIPMENT_STATUS_FILTER_OPTIONS;
+/** 「运单管理」排序（2026-11-23 老板选 A 按到仓日期）：排的就是「到仓日期」那一列显示的日期 ——
+ *  这一页没填到仓日期时显示建单日期（待入库的显示「—」），排序跟着它，不然显示「11-23」的单会排到最后（dsh 11-23 第 1 轮） */
+const compareAdminWaybillsByArrival = waybillArrivalComparator(adminArrivedDate);
 
 
 /** 中文状态 → 英文 status */
@@ -778,15 +782,9 @@ export default function AdminHomePage() {
       throw error;
     }
     if (!orderListGate.isCurrent(ticket)) return "stale";
-    // 按运单号数字降序：YW0001220 > YW0001219
-    // 【审查问题 10】原来用 Number() 比大小，超过 15 位会丢精度导致排序乱。
-    // 改成先按位数、再按字符串比 —— 纯数字字符串等长时字典序就是数值序，不受长度限制。
-    list.sort((a, b) => {
-      const an = (a.trackingNo ?? "").replace(/\D/g, "").replace(/^0+/, "");
-      const bn = (b.trackingNo ?? "").replace(/\D/g, "").replace(/^0+/, "");
-      if (an.length !== bn.length) return bn.length - an.length;
-      return bn.localeCompare(an);
-    });
+    // 到仓日期新的在上、同一天晚录入的在上（2026-11-23 老板选 A；原来按运单号数字，各仓号码长短不一排乱了），同员工页；
+    // 排的是这一页「到仓日期」那一列显示的日期（没填退到建单日期，见 compareAdminWaybillsByArrival）
+    list.sort(compareAdminWaybillsByArrival);
     setOrderList(list);
     setOrdersLoaded(true);
     setOrdersError(false);

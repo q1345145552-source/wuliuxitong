@@ -1121,8 +1121,13 @@ function ordersLoader(seed: RecordValue[] = [], loaded = false) {
   const state = { list: seed, loaded, error: false };
   const requests: ReturnType<typeof deferred<RecordValue[]>>[] = [];
   const { createRequestGate } = load(path.join(root, "modules/shared/request-gate.ts"));
+  // 2026-11-23 起列表按到仓日期排（老板选 A），排序是页面引进来的真函数
+  // 管理员页排的是「到仓日期」那一列显示的日期（没填退到建单日期），页面模块顶上那句照原样用真函数拼
+  const { waybillArrivalComparator } = load(path.join(root, "modules/shipment/waybill-sort.ts"));
+  const { adminArrivedDate } = load(path.join(root, "modules/shipment/export-filter.ts"));
+  const compareAdminWaybillsByArrival = waybillArrivalComparator(adminArrivedDate);
   const run: () => Promise<"applied" | "stale"> = pageExpression("loadOrders", {
-    useCallback: (callback: unknown) => callback, orderListGate: createRequestGate(),
+    useCallback: (callback: unknown) => callback, orderListGate: createRequestGate(), compareAdminWaybillsByArrival,
     fetchAdminOrders: () => { const request = deferred<RecordValue[]>(); requests.push(request); return request.promise; },
     setOrderList: (value: RecordValue[]) => { state.list = value; },
     setOrdersLoaded: (value: boolean) => { state.loaded = value; },
@@ -1187,15 +1192,29 @@ test("运单并发：新请求失败后旧成功不能伪造首次加载成功",
   assert.equal(loader.state.error, true);
   assert.deepEqual(loader.state.list, []);
 });
-test("运单原数字降序排序保留，超安全整数的编号不损失精度", async () => {
+test("运单按到仓日期新的在上、同一天晚录入的在上（2026-11-23 老板选 A）；日期时间都一样才按运单号数字降序，超安全整数的编号不损失精度", async () => {
   const loader = ordersLoader();
   const promise = loader.run();
   loader.requests[0].resolve([
-    { trackingNo: "YW9007199254740992" }, { trackingNo: "YW0009" },
-    { trackingNo: "YW9007199254740993" }, { trackingNo: "YW0010" },
+    { trackingNo: "YW9007199254740992", shipDate: "2026-11-01", createdAt: "2026-11-01T01:00:00.000Z" },
+    { trackingNo: "YW0009", shipDate: "2026-11-01", createdAt: "2026-11-01T01:00:00.000Z" },
+    { trackingNo: "YW9007199254740993", shipDate: "2026-11-01", createdAt: "2026-11-01T01:00:00.000Z" },
+    { trackingNo: "YW0010", shipDate: "2026-11-01", createdAt: "2026-11-01T01:00:00.000Z" },
+    { trackingNo: "JL20260701-3051", shipDate: "2026-10-26", createdAt: "2026-11-17T02:00:00.000Z" },
+    { trackingNo: "YW0001912", shipDate: "2026-11-23", createdAt: "2026-11-22T19:55:00.000Z" },
+    { trackingNo: "YW0001911", shipDate: "2026-11-23", createdAt: "2026-11-22T19:51:00.000Z" },
+    // 没填到仓日期、不是待入库：这一页那一列显示建单日期（北京 11-23），就排在 11-23 那一堆里
+    { trackingNo: "111", shipDate: null, createdAt: "2026-11-22T20:30:00.000Z", currentStatus: "loaded" },
+    // 待入库没填：显示「—」，排最后
+    { trackingNo: "YW0001999", shipDate: null, createdAt: "2026-11-23T01:00:00.000Z", currentStatus: "pendingInbound" },
   ]);
   await promise;
-  assert.deepEqual(loader.state.list.map((row) => row.trackingNo), ["YW9007199254740993", "YW9007199254740992", "YW0010", "YW0009"]);
+  assert.deepEqual(loader.state.list.map((row) => row.trackingNo), [
+    "111", "YW0001912", "YW0001911",
+    "YW9007199254740993", "YW9007199254740992", "YW0010", "YW0009",
+    "JL20260701-3051",
+    "YW0001999",
+  ]);
 });
 
 // 从真页面 AST 提取完整 overview 区域，防止只测组件而漏掉实际挂载或传参。

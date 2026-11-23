@@ -317,6 +317,9 @@ jobs:
       # 底部入口照拍板的配、手机样式一条都不漏到电脑上、表格摊平标对列名、运单号查询框不藏。
       - name: Test phone layout
         run: npm run test:phone-layout
+      # 2026-11-23 运单管理按到仓日期排（老板选 A）+ 编辑框每个格子写名字（「编辑的时候为什么看不到长宽高」）
+      - name: Test waybill sort by arrival date and edit field captions
+        run: npm run test:waybill-sort-labels
       # 湘泰 app（安卓外壳 mobile/，2026-10-05 老板「做安卓app」）。不连库：浏览器里一行不执行、
       # 存文件不靠 fetch（CSP 会拦）、只接管空白窗口、返回键先后、已登录直接进、正式包不开调试口、拍照不申请相机权限。
       - name: Test native app shell

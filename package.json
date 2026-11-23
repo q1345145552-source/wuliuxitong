@@ -90,6 +90,7 @@
     "test:realtime-source": "tsx scripts/test-realtime-source.ts",
     "test:realtime-client": "tsx scripts/test-realtime-client.ts",
     "test:phone-layout": "tsx scripts/test-phone-layout.ts",
+    "test:waybill-sort-labels": "tsx scripts/test-waybill-sort-labels.ts",
     "test:native-app": "tsx scripts/test-native-app.ts",
     "test:arrival-notice-source": "tsx scripts/test-arrival-notice-source.ts",
     "test:arrival-notice-editor": "tsx scripts/test-arrival-notice-editor.ts",
