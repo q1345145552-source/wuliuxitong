@@ -30,4 +30,4 @@
 - dsh 5 轮：r1 必须修 2（管理员页显示的日期和排序的不是同一个、不存在的日子）→ 改；建议读屏名字、测试逐格核 → 改；手机溢出没改（原来就有）。r2 必须修 1（测试静态引 export-filter 让脚本类型检查红）→ 改。r3 没有必须修。r4 没有必须修（建议假 React 补 Fragment → 做了）。r5（提速那处）没有必须修：它对照无缓存实现随机 2000 张 × 5 轮原地改值 0 处不同、2 万组三元组一致性 0 处不一致、强制回收后内存不涨；建议注释写准（只看开头 10 位、比 isRealYmd 宽松）、补管理员页改状态后重排的测试 → 都做了。
 
 ## 当前状态
-- 工作副本 `.claude/worktrees/waybill-sort-labels`（分支 claude/waybill-sort-labels，从 origin/main e4bcf18 切），没提交、没推、没上线。不动数据、不改表结构。
+- **11-23 曼谷 22:21 已上线 66dbb2f**（老板「上线」）：线上 = GitHub = 66dbb2f，核过（见 journal 同日上线记录）。工作副本 `.claude/worktrees/waybill-sort-labels`（分支 claude/waybill-sort-labels）；主目录 main 没动（有 11-17 附加费那批别人的改动，main 还在 cca3a9c 跟 GitHub 分叉）。不动数据、不改表结构。
