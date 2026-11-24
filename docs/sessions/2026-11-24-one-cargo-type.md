@@ -36,4 +36,4 @@
 - 另外：超管建单弹窗产品行右边超出弹窗 ~65px 是原来就有的（改前多一列货型，超出更多），没动。
 
 ## 当前状态
-- 工作副本 `.claude/worktrees/waybill-sort-labels`，分支 `claude/one-cargo-type`（从 3bb003a 切出），**没提交、没上线**。
+- **11-24 北京 16:45 已上线 8ee373f**（老板「上线」）：线上 = GitHub = 8ee373f，核过（见 journal 同日上线记录）。工作副本 `.claude/worktrees/waybill-sort-labels`，分支 `claude/one-cargo-type`。

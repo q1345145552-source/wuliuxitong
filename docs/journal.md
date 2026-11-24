@@ -1,5 +1,9 @@
 # 项目交接日志
 
+## 2026-11-24（北京 16:45）上线 8ee373f：一票只有一个货型
+- 老板「上线」。上线前只读看服务器：HEAD = GitHub = 66dbb2f、只有 package-lock 被改和 3 个 .env.bak 未跟踪文件、磁盘剩 42G；没有迁移。从工作副本分支 claude/one-cargo-type 推 GitHub main（66dbb2f..8ee373f，带上 11-23 那条没推的上线记录 3bb003a），服务器 nohup 跑 `bash deploy.sh`：没有待执行迁移、结构一致、API / Web 正常、DEPLOY_EXIT=0。
+- 核对：服务器 HEAD = GitHub = 8ee373f；两个容器 healthy、重启 0；容器里 orders/cargo-read.ts、admin/routes.ts 跟提交一字不差；前端包里有「保存后整票统一成上面选的」「一票只能有一个货型，表格里」；后端报错 0；不登录 POST /staff/orders 401；外网 / /login /staff /admin /client 都 200。切换那 13 秒（08:45:52～08:46:05 UTC）有 47 次 502、5 次 500（开着的页面自动刷新），之后全 200。
+
 ## 2026-11-24 一票只有一个货型（工作副本分支 claude/one-cargo-type，没提交、没上线）
 - 老板「改一下逻辑，一票只会有一个货型，不能单独产品选择货型」。原来每条产品行各选、整票取最严；线上 101 票一票混着两三种（最近一个月还在出），按 9-17「不改线上数据」不改库，有人打开编辑存一次才统一。
 - 做法：共用 `distinctCargoTypes / mixedCargoTypeIssue / waybillCargoTypeOf`；后端 `orders/cargo-read.ts` 的 `readOneCargoType`（产品行填了的不止一种 400），客户预报 / 员工建单 / 超管改单（订单 + 全部产品行 updateMany）/ 收货 / 到货通知保存与转运单 / 整柜都只认一个；页面编辑运单、员工两套建单、超管建单、客户预报、到货通知、整柜只在整票选一次，批量导入同一票几行不一样报错。集货预报单没动。细节 `docs/sessions/2026-11-24-one-cargo-type.md`。
