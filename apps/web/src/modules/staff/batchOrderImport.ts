@@ -1,4 +1,4 @@
-import { parseCargoType, strictestCargoType, CARGO_TYPE_HINT, type CargoType } from "../../../../../packages/shared-types/cargo-type";
+import { parseCargoType, mixedCargoTypeIssue, CARGO_TYPE_ZH, CARGO_TYPE_HINT, type CargoType } from "../../../../../packages/shared-types/cargo-type";
 export interface StaffBatchProduct {
   itemName: string;
   packageCount: number;
@@ -24,7 +24,7 @@ export interface StaffBatchOrder {
   transportMode: "sea" | "land";
   domesticTrackingNo?: string;
   productQuantity?: number;
-  /** 运单这一层的货型：多条产品行不一致时取最严的那个（见 strictestCargoType） */
+  /** 运单这一层的货型（2026-11-24 起一票一个货型：几行填得不一样直接报错，产品行全写成这一个） */
   cargoType: CargoType;
   products: StaffBatchProduct[];
   sourceRows: number[];
@@ -71,6 +71,8 @@ interface GroupDraft {
    * 员工明明填了东西却被说没填，比不报还糟。
    */
   reported: Set<string>;
+  /** 「货型」那一格填了的行（2026-11-24 一票一个货型）：几行填得不一样要报出是哪几行；空着的行跟着填了的走 */
+  cargoFilled: Array<{ rowNumber: number; value: CargoType }>;
 }
 
 export const WAREHOUSE_NAME_MAP: Record<string, string> = {
@@ -552,6 +554,7 @@ export function parseStaffBatchRows(rows: Record<string, unknown>[]): StaffBatch
       sourceRows: [],
       issues: [],
       reported: new Set<string>(),
+      cargoFilled: [],
     };
     groups.set(trackingNo, draft);
     draft.sourceRows.push(rowNumber);
@@ -741,6 +744,7 @@ export function parseStaffBatchRows(rows: Record<string, unknown>[]): StaffBatch
       });
     }
     const cargoType: CargoType = cargoTypeParsed?.value ?? "normal";
+    if (cargoTypeParsed?.filled) draft.cargoFilled.push({ rowNumber, value: cargoTypeParsed.value });
 
     if (itemName && packageCount !== undefined) {
       draft.products.push({
@@ -765,6 +769,16 @@ export function parseStaffBatchRows(rows: Record<string, unknown>[]): StaffBatch
     if (!draft.arrivedAt && !draft.reported.has("到仓日期")) draft.issues.push({ trackingNo: draft.trackingNo, message: "到仓日期为必填" });
     if (!draft.transportMode && !draft.reported.has("运输方式")) draft.issues.push({ trackingNo: draft.trackingNo, message: "运输方式为必填" });
     if (draft.products.length === 0) draft.issues.push({ trackingNo: draft.trackingNo, message: "至少需要一条有效产品明细" });
+    /* 一票一个货型（2026-11-24 老板：「一票只会有一个货型，不能单独产品选择货型」）：
+       同一运单几行的货型填得不一样 → 报错、不导入（原来按行各记、运单记最严的）。只比填了的；空着的行跟着填了的那行，一行都没填就是普货 */
+    const cargoIssue = mixedCargoTypeIssue(draft.cargoFilled.map((c) => c.value));
+    if (cargoIssue) {
+      draft.issues.push({
+        trackingNo: draft.trackingNo,
+        message: `${cargoIssue}（${draft.cargoFilled.map((c) => `第${c.rowNumber}行填的「${CARGO_TYPE_ZH[c.value]}」`).join("、")}），请改成同一个`,
+      });
+    }
+    const waybillCargo: CargoType = draft.cargoFilled[0]?.value ?? "normal";
 
     const weights = draft.products.map((product) => product.weightKg);
     const dimensions = draft.products.map((product) => product.lengthCm !== undefined && product.widthCm !== undefined && product.heightCm !== undefined);
@@ -831,9 +845,9 @@ export function parseStaffBatchRows(rows: Record<string, unknown>[]): StaffBatch
       transportMode: draft.transportMode!,
       domesticTrackingNo: domesticTrackingNos.length > 0 ? domesticTrackingNos.join(" / ") : undefined,
       productQuantity,
-      // 同一运单几条产品行货型不一样时，运单这一层记最严的那个（宁可多准备材料）
-      cargoType: strictestCargoType(draft.products.map((product) => product.cargoType ?? "normal")),
-      products: draft.products,
+      // 一票一个货型（2026-11-24）：整票和每条产品行都是这一个
+      cargoType: waybillCargo,
+      products: draft.products.map((product) => ({ ...product, cargoType: waybillCargo })),
       sourceRows: draft.sourceRows,
     });
   }

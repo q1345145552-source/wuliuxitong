@@ -87,7 +87,8 @@ async function main(): Promise<void> {
     clientId: CLIENT.userId, trackingNo: NO(no), transportMode: "sea", warehouseId: "wh_yiwu_01", arrivedAt: "2026-10-19",
     weightKg: 85.5, volumeM3: 0.625, remark: "内部备注：外箱有破损",
     products: [
-      P({ itemName: "灯具", packageCount: 12, lengthCm: 60, widthCm: 40, heightCm: 30, productQuantity: 10, weightKg: 5, domesticTrackingNo: "SF1234567890" }),
+      // 2026-11-24 一票一个货型：两款同一个（原来是普货 + 敏感货混着）
+      P({ itemName: "灯具", packageCount: 12, lengthCm: 60, widthCm: 40, heightCm: 30, productQuantity: 10, weightKg: 5, cargoType: "sensitive", domesticTrackingNo: "SF1234567890" }),
       P({ itemName: "鞋", packageCount: 5, productQuantity: 2, cargoType: "sensitive", domesticTrackingNo: "YT9876543210" }),
     ],
   });
@@ -303,7 +304,7 @@ async function main(): Promise<void> {
         ["E1 两款、尺寸 / 单箱重 / 国内单号都填", full("E1")],
         // 国内单号空着（运单那边会写「货拉拉」）、没尺寸没单箱重、整票数手填、陆运、没备注
         ["E2 国内单号空着、整票数手填", { clientId: CLIENT.userId, trackingNo: NO("E2"), transportMode: "land", warehouseId: "wh_guangzhou_01", arrivedAt: "2026-10-18",
-          weightKg: 33.5, volumeM3: 0.123, remark: null, products: [P({ itemName: "杯子", packageCount: 3 }), P({ itemName: "盘子", packageCount: 1, cargoType: "inspection" })] }],
+          weightKg: 33.5, volumeM3: 0.123, remark: null, products: [P({ itemName: "杯子", packageCount: 3, cargoType: "inspection" }), P({ itemName: "盘子", packageCount: 1, cargoType: "inspection" })] }],
         ["E3 一款、小数尺寸、特货", { clientId: CLIENT.userId, trackingNo: NO("E3"), transportMode: "sea", warehouseId: "wh_yiwu_01", arrivedAt: "2026-10-17",
           weightKg: null, volumeM3: null, remark: "  前后有空格  ", products: [P({ itemName: "电池", packageCount: 7, lengthCm: 33.3, widthCm: 21.7, heightCm: 15.5, weightKg: 2.25, productQuantity: 40, cargoType: "special", domesticTrackingNo: "JD0001" })] }],
         ["E4 有的款填了尺寸、有的没填（整票数以手填为准）", { clientId: CLIENT.userId, trackingNo: NO("E4"), transportMode: "sea", warehouseId: "wh_yiwu_01", arrivedAt: "2026-10-16",

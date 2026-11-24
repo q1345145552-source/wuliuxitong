@@ -982,7 +982,7 @@ export default function StaffHomePage() {
         cargoType: form.cargoType,
         transportMode: form.transportMode,
         remark: form.remark?.trim() || undefined,
-        products: hasProducts ? staffFormProducts.filter(p => p.itemName.trim()).map(p => ({ itemName: p.itemName.trim(), packageCount: packageCountForPayload(p.packageCount), lengthCm: p.lengthCm ? Number(p.lengthCm) : undefined, widthCm: p.widthCm ? Number(p.widthCm) : undefined, heightCm: p.heightCm ? Number(p.heightCm) : undefined, productQuantity: p.productQuantity ? Number(p.productQuantity) : undefined, weightKg: p.weightKg ? Number(p.weightKg) : undefined, cargoType: (p.cargoType || "normal").toLowerCase(), domesticTrackingNo: p.domesticTrackingNo.trim() || "货拉拉" })) : undefined,
+        products: hasProducts ? staffFormProducts.filter(p => p.itemName.trim()).map(p => ({ itemName: p.itemName.trim(), packageCount: packageCountForPayload(p.packageCount), lengthCm: p.lengthCm ? Number(p.lengthCm) : undefined, widthCm: p.widthCm ? Number(p.widthCm) : undefined, heightCm: p.heightCm ? Number(p.heightCm) : undefined, productQuantity: p.productQuantity ? Number(p.productQuantity) : undefined, weightKg: p.weightKg ? Number(p.weightKg) : undefined, cargoType: form.cargoType, /* 一票一个货型（2026-11-24）：每条产品行都发整票选的那一个 */ domesticTrackingNo: p.domesticTrackingNo.trim() || "货拉拉" })) : undefined,
       });
       /* 上传产品图片（2026-09-29 Codex 全系统检查）：运单到这里**已经建好了**。
          原来任何一张图失败就停在建单框里只说「图片上传失败」—— 员工以为没建成再点一次，撞「运单号已存在」；
@@ -1114,7 +1114,8 @@ export default function StaffHomePage() {
       ["10.「每箱几个」填的是「一箱里装几个」，不是这一行一共几个。系统会自动乘箱数。举例：5 箱、每箱 7 个，这里填 7，系统算出总数 35。"],
       ["11. 数字格可以带单位（100cm、10kg、5箱 都认），但不要写成「1米」「40*30」这种，系统会当场报错让你改。"],
       ["12.「货型」留空就是普货；商检货填「商检货」，敏感货填「敏感货」，特货填「特货」。填别的字（比如「普通货物」「危险品」）会在上传时当场报错，不会悄悄变成普货。"],
-      ["13. 同一运单的几行可以填不同货型，按行各自记；运单那一层会记最严的那个（特货 > 敏感货 > 商检货 > 普货）。"],
+      // 2026-11-24 老板：「一票只会有一个货型，不能单独产品选择货型」
+      ["13. 一票只能有一个货型：同一运单的几行，货型要填成一样的；只在其中一行填、别的行空着也行（空着的跟着填了的那行）。几行填得不一样会在上传时当场报错。"],
     ]);
     instructions["!cols"] = [{ wch: 110 }];
     XLSX.utils.book_append_sheet(wb, instructions, "填写说明");
@@ -1593,6 +1594,10 @@ export default function StaffHomePage() {
               </option>
             ))}
           </select>
+          {/* 一票一个货型（2026-11-24 老板：「不能单独产品选择货型」）：整票选一次，下面每个产品都跟它 */}
+          <select aria-label="货型" value={form.cargoType} onChange={(e) => setForm((v) => ({ ...v, cargoType: e.target.value }))} style={orderCreateInputStyle}>
+            {CARGO_TYPES.map((c) => <option key={c} value={c}>货型：{CARGO_TYPE_ZH[c]}</option>)}
+          </select>
           <input value={form.trackingNo} onChange={(e) => setForm((v) => ({ ...v, trackingNo: e.target.value }))} placeholder="运单号 *" style={orderCreateInputStyle} />
           <input value={form.batchNo} onChange={(e) => setForm((v) => ({ ...v, batchNo: e.target.value }))} placeholder="柜号（可选）" style={orderCreateInputStyle} />
           <input value={form.itemName} onChange={(e) => setForm((v) => ({ ...v, itemName: e.target.value }))} placeholder="品名 *" style={orderCreateInputStyle} />
@@ -1610,7 +1615,7 @@ export default function StaffHomePage() {
             const prodVol = (pL > 0 && pW > 0 && pH > 0) ? (pL * pW * pH * pPkg) / 1_000_000 : 0;
             const prodWt = pWt * pPkg;
             return (
-              <div key={i} style={{ display: "grid", gridTemplateColumns: "2.5fr 0.45fr 0.35fr 0.35fr 0.35fr 0.4fr 0.42fr 0.7fr 0.8fr 0.6fr 0.6fr auto", gap: 2, marginBottom: 3, alignItems: "center" }}>
+              <div key={i} style={{ display: "grid", gridTemplateColumns: "2.5fr 0.45fr 0.35fr 0.35fr 0.35fr 0.4fr 0.42fr 0.8fr 0.6fr 0.6fr auto", gap: 2, marginBottom: 3, alignItems: "center" }}>
                 <input value={p.itemName} onChange={(e) => { const n = [...staffFormProducts]; n[i] = { ...n[i], itemName: e.target.value }; setStaffFormProducts(n); }} placeholder="品名" style={{ border: "1px solid var(--l-strong)", borderRadius: 4, padding: "3px 4px", fontSize: 11 }} />
                 <input type="number" value={p.packageCount} onChange={(e) => { const n = [...staffFormProducts]; n[i] = { ...n[i], packageCount: e.target.value }; setStaffFormProducts(n); }} placeholder="箱数" style={{ border: "1px solid var(--l-strong)", borderRadius: 4, padding: "3px 4px", fontSize: 11, minWidth: 0 }} />
                 <input type="number" step="0.01" value={p.lengthCm} onChange={(e) => { const n = [...staffFormProducts]; n[i] = { ...n[i], lengthCm: e.target.value }; setStaffFormProducts(n); }} placeholder="长" style={{ border: "1px solid var(--l-strong)", borderRadius: 4, padding: "3px 4px", fontSize: 11, minWidth: 0 }} />
@@ -1618,9 +1623,6 @@ export default function StaffHomePage() {
                 <input type="number" step="0.01" value={p.heightCm} onChange={(e) => { const n = [...staffFormProducts]; n[i] = { ...n[i], heightCm: e.target.value }; setStaffFormProducts(n); }} placeholder="高" style={{ border: "1px solid var(--l-strong)", borderRadius: 4, padding: "3px 4px", fontSize: 11, minWidth: 0 }} />
                 <input type="number" value={p.productQuantity} onChange={(e) => { const n = [...staffFormProducts]; n[i] = { ...n[i], productQuantity: e.target.value }; setStaffFormProducts(n); }} placeholder="单箱数量" style={{ border: "1px solid var(--l-strong)", borderRadius: 4, padding: "3px 4px", fontSize: 11, minWidth: 0 }} />
                 <input type="number" step="0.01" value={p.weightKg} onChange={(e) => { const n = [...staffFormProducts]; n[i] = { ...n[i], weightKg: e.target.value }; setStaffFormProducts(n); }} placeholder="单箱重kg" style={{ border: "1px solid var(--l-strong)", borderRadius: 4, padding: "3px 4px", fontSize: 11, minWidth: 0 }} />
-                <select value={(p.cargoType || "normal").toLowerCase()} onChange={(e) => { const n = [...staffFormProducts]; n[i] = { ...n[i], cargoType: e.target.value }; setStaffFormProducts(n); }} style={{ border: "1px solid var(--l-strong)", borderRadius: 4, padding: "3px 2px", fontSize: 11, background: "var(--white)", minWidth: 0 }}>
-                  {CARGO_TYPES.map((c) => <option key={c} value={c}>{CARGO_TYPE_ZH[c]}</option>)}
-                </select>
                 <input value={p.domesticTrackingNo || ""} onChange={(e) => { const n = [...staffFormProducts]; n[i] = { ...n[i], domesticTrackingNo: e.target.value }; setStaffFormProducts(n); }} placeholder="货拉拉" style={{ border: "1px solid var(--l-strong)", borderRadius: 4, padding: "3px 4px", fontSize: 11, minWidth: 0 }} />
                 <span style={{ fontSize: 10, color: prodVol > 0 ? "var(--c-blue)" : "var(--t-faint)", textAlign: "right", padding: "0 2px", whiteSpace: "nowrap" }}>{prodVol > 0 ? prodVol.toFixed(3) + "m³" : "—"}</span>
                 <span style={{ fontSize: 10, color: prodWt > 0 ? "var(--c-blue)" : "var(--t-faint)", textAlign: "right", padding: "0 2px", whiteSpace: "nowrap" }}>{prodWt > 0 ? prodWt.toFixed(2) + "kg" : "—"}</span>
@@ -2829,7 +2831,7 @@ export default function StaffHomePage() {
                   const prodVol = (pL > 0 && pW > 0 && pH > 0) ? (pL * pW * pH * pPkg) / 1_000_000 : 0;
                   const prodWt = pWt * pPkg;
                   return (
-                  <div key={i} style={{ display: "grid", gridTemplateColumns: "2.5fr 0.45fr 0.35fr 0.35fr 0.35fr 0.4fr 0.42fr 0.7fr 0.8fr 0.6fr 0.6fr auto", gap: 2, marginBottom: 3, alignItems: "center" }}>
+                  <div key={i} style={{ display: "grid", gridTemplateColumns: "2.5fr 0.45fr 0.35fr 0.35fr 0.35fr 0.4fr 0.42fr 0.8fr 0.6fr 0.6fr auto", gap: 2, marginBottom: 3, alignItems: "center" }}>
                     <input value={p.itemName} onChange={(e) => { const n = [...staffFormProducts]; n[i] = { ...n[i], itemName: e.target.value }; setStaffFormProducts(n); }} placeholder="品名" style={{ border: "1px solid var(--l-strong)", borderRadius: 4, padding: "3px 4px", fontSize: 11 }} />
                     <input type="number" value={p.packageCount} onChange={(e) => { const n = [...staffFormProducts]; n[i] = { ...n[i], packageCount: e.target.value }; setStaffFormProducts(n); }} placeholder="箱数" style={{ border: "1px solid var(--l-strong)", borderRadius: 4, padding: "3px 4px", fontSize: 11, minWidth: 0 }} />
                     <input type="number" step="0.01" value={p.lengthCm} onChange={(e) => { const n = [...staffFormProducts]; n[i] = { ...n[i], lengthCm: e.target.value }; setStaffFormProducts(n); }} placeholder="长" style={{ border: "1px solid var(--l-strong)", borderRadius: 4, padding: "3px 4px", fontSize: 11, minWidth: 0 }} />
@@ -2837,9 +2839,6 @@ export default function StaffHomePage() {
                     <input type="number" step="0.01" value={p.heightCm} onChange={(e) => { const n = [...staffFormProducts]; n[i] = { ...n[i], heightCm: e.target.value }; setStaffFormProducts(n); }} placeholder="高" style={{ border: "1px solid var(--l-strong)", borderRadius: 4, padding: "3px 4px", fontSize: 11, minWidth: 0 }} />
                     <input type="number" value={p.productQuantity} onChange={(e) => { const n = [...staffFormProducts]; n[i] = { ...n[i], productQuantity: e.target.value }; setStaffFormProducts(n); }} placeholder="单箱数量" style={{ border: "1px solid var(--l-strong)", borderRadius: 4, padding: "3px 4px", fontSize: 11, minWidth: 0 }} />
                     <input type="number" step="0.01" value={p.weightKg} onChange={(e) => { const n = [...staffFormProducts]; n[i] = { ...n[i], weightKg: e.target.value }; setStaffFormProducts(n); }} placeholder="单箱重kg" style={{ border: "1px solid var(--l-strong)", borderRadius: 4, padding: "3px 4px", fontSize: 11, minWidth: 0 }} />
-                    <select value={(p.cargoType || "normal").toLowerCase()} onChange={(e) => { const n = [...staffFormProducts]; n[i] = { ...n[i], cargoType: e.target.value }; setStaffFormProducts(n); }} style={{ border: "1px solid var(--l-strong)", borderRadius: 4, padding: "3px 2px", fontSize: 11, background: "var(--white)", minWidth: 0 }}>
-                      {CARGO_TYPES.map((c) => <option key={c} value={c}>{CARGO_TYPE_ZH[c]}</option>)}
-                    </select>
                     <input value={p.domesticTrackingNo || ""} onChange={(e) => { const n = [...staffFormProducts]; n[i] = { ...n[i], domesticTrackingNo: e.target.value }; setStaffFormProducts(n); }} placeholder="货拉拉" style={{ border: "1px solid var(--l-strong)", borderRadius: 4, padding: "3px 4px", fontSize: 11, minWidth: 0 }} />
                     <span style={{ fontSize: 10, color: prodVol > 0 ? "var(--c-blue)" : "var(--t-faint)", textAlign: "right", padding: "0 2px", whiteSpace: "nowrap" }}>{prodVol > 0 ? prodVol.toFixed(3) + "m³" : "—"}</span>
                     <span style={{ fontSize: 10, color: prodWt > 0 ? "var(--c-blue)" : "var(--t-faint)", textAlign: "right", padding: "0 2px", whiteSpace: "nowrap" }}>{prodWt > 0 ? prodWt.toFixed(2) + "kg" : "—"}</span>
@@ -2901,6 +2900,10 @@ export default function StaffHomePage() {
               <select value={form.transportMode} onChange={(e) => setForm((v) => ({ ...v, transportMode: e.target.value as "sea" | "land" }))} style={orderCreateInputStyle}>
                 <option value="sea">海运</option>
                 <option value="land">陆运</option>
+              </select>
+              {/* 一票一个货型（2026-11-24 老板：「不能单独产品选择货型」）：整票选一次，上面每个产品都跟它 */}
+              <select aria-label="货型" value={form.cargoType} onChange={(e) => setForm((v) => ({ ...v, cargoType: e.target.value }))} style={orderCreateInputStyle}>
+                {CARGO_TYPES.map((c) => <option key={c} value={c}>货型：{CARGO_TYPE_ZH[c]}</option>)}
               </select>
               <input type="date" value={form.arrivedAt} onChange={(e) => setForm((v) => ({ ...v, arrivedAt: e.target.value }))} style={orderCreateInputStyle} />
               <div style={{ fontSize: 11, color: "var(--t-strong)", marginTop: -4 }}>到仓日期 *</div>

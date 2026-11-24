@@ -105,7 +105,7 @@ async function main(): Promise<void> {
   let seq = 0;
   const uniq = (t: string) => `ZZFU${t}${Date.now().toString(36).toUpperCase()}${seq++}`;
   const ROW_A = { itemName: "鞋", packageCount: 10, quantityPerBox: 20, lengthCm: 60, widthCm: 40, heightCm: 30, unitWeightKg: 2.5, domesticTrackingNo: "SF001", cargoType: "normal" };
-  const ROW_B = { itemName: "包", packageCount: 5, quantityPerBox: 4, lengthCm: 50, widthCm: 50, heightCm: 40, unitWeightKg: 3, domesticTrackingNo: "SF002", cargoType: "inspection" };
+  const ROW_B = { itemName: "包", packageCount: 5, quantityPerBox: 4, lengthCm: 50, widthCm: 50, heightCm: 40, unitWeightKg: 3, domesticTrackingNo: "SF002", cargoType: "normal" }; // 2026-11-24 一票一个货型：跟 ROW_A 同一个（原来是商检货，跟 ROW_A 混着）
 
   /** 建一个整柜，返回它的全套 id 和当初提交的那份 */
   async function makeFcl(over: Row = {}): Promise<Row> {
@@ -164,7 +164,8 @@ async function main(): Promise<void> {
   // ── B：改货物清单 → 三处汇总都要跟着重算 ──────────────────────────────
   {
     const f = await makeFcl();
-    const r = await must("POST /staff/fcl-containers/update", STAFF, toUpdateBody(f, { products: [ROW_A, ROW_B] }));
+    // 2026-11-24 一票一个货型：新页面在上面选一次、清单每行都发那一个（这里两行都是商检货）
+    const r = await must("POST /staff/fcl-containers/update", STAFF, toUpdateBody(f, { products: [{ ...ROW_A, cargoType: "inspection" }, { ...ROW_B, cargoType: "inspection" }] }));
     const db = await dbOf(f.containerId);
     const sp = db.items[0].shipment, od = sp.order;
     // 手算：鞋 0.6*0.4*0.3*10 = 0.72；包 0.5*0.5*0.4*5 = 0.5 → 1.22 方；箱数 15；总重 25+15=40
@@ -184,12 +185,21 @@ async function main(): Promise<void> {
       assert.equal(Number(shoes.weightKg), 2.5, `存成整行总重了：${shoes.weightKg}（该是单箱重 2.5）`);
       assert.equal(shoes.productQuantity, 20, `每箱数量存错了：${shoes.productQuantity}`);
     });
-    expect("B4) 品名摘要和货型跟着清单走（货型取最严的那个）", () => {
+    expect("B4) 品名摘要和货型跟着清单走（一票一个货型，2026-11-24）", () => {
       assert.equal(od.itemName, "鞋 等 2 项", `品名摘要没跟着改：${od.itemName}`);
-      assert.equal(od.cargoType, "inspection", `货型该取最严的商检货，实际 ${od.cargoType}`);
+      assert.equal(od.cargoType, "inspection", `货型该是清单上那一个商检货，实际 ${od.cargoType}`);
+      assert.deepEqual(od.products.map((p: Row) => p.cargoType), ["inspection", "inspection"]);
     });
     expect("B5) 返回里说清楚改了哪几样", () => {
       assert.deepEqual(r.changedFields, ["货物清单"], JSON.stringify(r.changedFields));
+    });
+    // 清单几行货型不一样（没刷新的老页面还在逐行选）：400、库里不动（2026-11-24 一票一个货型）
+    const mixed = await call("POST /staff/fcl-containers/update", STAFF, toUpdateBody(f, { products: [ROW_A, { ...ROW_B, cargoType: "special" }] }));
+    const db2 = await dbOf(f.containerId);
+    expect("B6) 清单几行货型不一样：400 叫他刷新，库里还是上一次存的", () => {
+      assert.equal(mixed.status, 400, mixed.message);
+      assert.match(mixed.message, /一票只能有一个货型/);
+      assert.deepEqual(db2.items[0].shipment.order.products.map((p: Row) => p.cargoType), ["inspection", "inspection"]);
     });
   }
 

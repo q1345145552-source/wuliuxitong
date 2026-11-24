@@ -2,7 +2,7 @@
  * 到货通知弹窗的草稿（2026-10-16 从 ArrivalNoticesView.tsx 挪出来：组件带 JSX，测试要直接调这几个函数）。
  */
 import { noticeProductsOf, type ArrivalNotice, type ArrivalNoticeDraft, type ConvertedNoticeDetail, type DraftProduct } from "../../services/arrival-notice-api";
-import { CARGO_TYPES, type CargoType } from "../../../../../packages/shared-types/cargo-type";
+import { CARGO_TYPES, waybillCargoTypeOf, type CargoType } from "../../../../../packages/shared-types/cargo-type";
 
 /** 认不出来的值（含 null = 普货）一律按普货 */
 export function cargoTypeOf(v: string | null | undefined): CargoType {
@@ -44,6 +44,8 @@ export function draftOf(n: ArrivalNotice): ArrivalNoticeDraft {
     arrivedAt: s(n.arrivedAt),
     remark: s(n.remark),
     products: products.length > 0 ? products : [emptyProduct()],
+    /* 整票的货型（2026-11-24 一票一个货型）：各款现在的（混着几种的老通知取最严的 —— 跟原来整票记的同一个）；一款都没有看整票存的 */
+    cargoType: waybillCargoTypeOf(products.map((p) => p.cargoType), n.cargoType),
   };
 }
 

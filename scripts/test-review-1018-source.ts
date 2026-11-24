@@ -178,7 +178,8 @@ check("S7 超管「运单管理」改单：打开时记订单版本；每次保�
   // 打开时建表单那一半在 waybill-edit-state.ts（2026-10-20 拆出来，连库测试要单独引）
   const state = code("apps/web/src/modules/orders/waybill-edit-state.ts");
   assert.match(state, /export type WaybillEditSnapshot = \{ form: Record<string, string>; productsJson: string; orderUpdatedAt\?: string \};/);
-  assert.match(state, /snapshot: \{ form: \{ \.\.\.form \} as Record<string, string>, productsJson: JSON\.stringify\(products\), orderUpdatedAt: order\.orderUpdatedAt \},/, "打开弹窗要记下订单（不是运单）的 updatedAt");
+  // 2026-11-24：混着几种货型的老单，「打开时的样子」里货型记成空串（随便存一次就把整票货型发出去、统一产品行）
+  assert.match(state, /snapshot: \{ form: \{ \.\.\.form, \.\.\.\(kinds\.length > 1 \? \{ cargoType: "" \} : \{\}\) \} as Record<string, string>, productsJson: JSON\.stringify\(products\), orderUpdatedAt: order\.orderUpdatedAt \},/, "打开弹窗要记下订单（不是运单）的 updatedAt");
   assert.match(dlg, /import \{ waybillEditStateOf,[^}]*\} from "\.\/waybill-edit-state";/, "编辑框要用 waybill-edit-state 那一份建表单");
   assert.match(dlg, /const \[opened\] = useState\(\(\) => waybillEditStateOf\(initial\)\);/, "表单只在挂上那一刻按打开时那一行建一次（列表刷新不许把正在填的冲掉）");
   assert.match(dlg, /const saved = await updateAdminOrder\(\{\s*orderId: saveOrderId,\s*\.\.\.\(snapshot\?\.orderUpdatedAt \? \{ expectedOrderUpdatedAt: snapshot\.orderUpdatedAt \} : \{\}\),/, "每次保存都要带 expectedOrderUpdatedAt（不能只在改产品行时带）");
@@ -263,7 +264,12 @@ check("S9 后端：两份列表给订单 updatedAt；patch-shipment-bundle 锁�
   assert.ok(!/createdAt: arrived/.test(route), "patch-shipment-bundle 又把到仓日期写进订单的创建时间了");
   assert.match(route, /ok\(res, \{[\s\S]*?updatedAt: now\.toISOString\(\),/);
   const admin = code("apps/api/src/modules/admin/routes.ts");
-  assert.match(admin, /await tx\.order\.update\(\{ where: \{ id: orderId \}, data: \{ cargoType: productCargo, updatedAt: now \} \}\);/, "超管改单第二次写订单（货型）也要用同一个 now");
+  /* 2026-11-24 一票一个货型：货型跟别的项在同一次写订单里（那一次带着 updatedAt: now），不再另写第二次 ——
+     要是哪天又加回第二次写订单，也得带同一个 now（不然比返回给页面的版本晚几毫秒，再存一次被当成「别人改过」） */
+  assert.match(admin, /cargoType: nextCargo,\s*transportMode,[\s\S]{0,400}?updatedAt: now,\s*\},\s*\}\);/, "超管改单写货型要跟别的项同一次、带同一个 now");
+  for (const m of admin.matchAll(/await tx\.order\.update\(\{ where: \{ id: orderId \}, data: \{([^}]*)\} \}\);/g)) {
+    assert.match(m[1], /updatedAt: now/, `超管改单又多写了一次订单、没带同一个 now：${m[0]}`);
+  }
 });
 
 /* ---------- 真跑页面代码的两项（同 test-cargo-regressions 的做法：从真源码里摘那段函数，换掉 React 的 setter 再执行） ---------- */

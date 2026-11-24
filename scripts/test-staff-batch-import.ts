@@ -770,20 +770,43 @@ const CARGO_COL = "货型（普货/商检/敏感，默认普货）";
   }
 }
 
-/** 同一运单几行货型不一样 → 按行各自记，运单这一层取最严的（敏感 > 商检 > 普货） */
+/**
+ * 同一运单几行货型不一样 → **报错、不导入**，说清是哪几行（2026-11-24 老板：「一票只会有一个货型，不能单独产品选择货型」）。
+ * 原来按行各自记、运单这一层取最严的；现在一票一个货型。
+ */
 {
   const r = parseStaffBatchRows([
     { ...CARGO_BASE, "品名 *": "沙发", [CARGO_COL]: "普货" },
     { ...CARGO_BASE, "品名 *": "茶几", [CARGO_COL]: "商检" },
     { ...CARGO_BASE, "品名 *": "台灯", [CARGO_COL]: "敏感" },
   ]);
-  assert.deepEqual(r.issues, [], `混合货型报错了：${JSON.stringify(r.issues.map((i) => i.message))}`);
+  assert.equal(r.orders.length, 0, "同一票三行三种货型却还是导进去了");
+  const msg = r.issues.map((i) => i.message).join("；");
+  assert.ok(msg.includes("一票只能有一个货型"), `报错没说一票只能一个货型：${msg}`);
+  assert.ok(/第2行.*普货/.test(msg) && /第3行.*商检货/.test(msg) && /第4行.*敏感货/.test(msg), `报错没点名是哪几行、各填了什么：${msg}`);
+}
+
+/** 同一运单只在一行填了货型、别的行空着 → 整票（每一行）都是填的那个；几行填得一样也行 */
+{
+  const r = parseStaffBatchRows([
+    { ...CARGO_BASE, "品名 *": "沙发", [CARGO_COL]: "" },
+    { ...CARGO_BASE, "品名 *": "茶几", [CARGO_COL]: "敏感" },
+    { ...CARGO_BASE, "品名 *": "台灯", [CARGO_COL]: "敏感货" },
+  ]);
+  assert.deepEqual(r.issues, [], `空着的行该跟着填了的走，却报错了：${JSON.stringify(r.issues.map((i) => i.message))}`);
   const o = r.orders[0];
-  assert.deepEqual(o.products.map((p) => p.cargoType), ["normal", "inspection", "sensitive"], "每行的货型没各自记住");
-  assert.equal(o.cargoType, "sensitive", `运单层该取最严的 sensitive，实际 ${o.cargoType}`);
-  // 混合货型不许顺带把别的数字算错
+  assert.deepEqual(o.products.map((p) => p.cargoType), ["sensitive", "sensitive", "sensitive"], "空着的那行没跟着整票走");
+  assert.equal(o.cargoType, "sensitive");
+  // 货型不许顺带把别的数字算错
   assert.equal(o.packageCount, 6, `箱数被货型影响了：${o.packageCount}`);
   assert.equal(o.itemName, "沙发 / 茶几 / 台灯", `品名拼错了：${o.itemName}`);
+}
+
+/** 模板填写说明不能还写着「几行可以填不同货型」 */
+{
+  const staffPage = fs.readFileSync("apps/web/src/app/staff/page.tsx", "utf8");
+  assert.ok(!staffPage.includes("可以填不同货型"), "模板填写说明还在说同一运单几行可以填不同货型");
+  assert.ok(staffPage.includes("一票只能有一个货型"), "模板填写说明没写一票只能一个货型");
 }
 
 /**
@@ -947,9 +970,10 @@ const CARGO_COL = "货型（普货/商检/敏感，默认普货）";
 {
   const clientPage = fs.readFileSync("apps/web/src/app/client/page.tsx", "utf8");
   assert.ok(!/cargoType: "normal" \}\)\)/.test(clientPage), "客户预报单提交还在写死 cargoType: \"normal\"");
-  assert.ok(clientPage.includes("cargoType: p.cargoType || \"normal\""), "客户预报单没把每条产品行自己的货型发出去");
-  assert.ok(/<select value=\{p\.cargoType/.test(clientPage), "客户端产品行里没有货型下拉");
-  assert.ok(/<select value=\{form\.cargoType/.test(clientPage), "客户端没有整票货型下拉（没分产品行时用）");
+  // 2026-11-24 一票一个货型：整票一个下拉（不管分没分产品行都显示），每条产品行都发整票那一个，产品行上没有货型下拉
+  assert.ok(clientPage.includes("cargoType: form.cargoType || \"normal\""), "客户预报单的产品行没发整票选的那个货型");
+  assert.ok(!/<select value=\{p\.cargoType/.test(clientPage), "客户端产品行里还有货型下拉（一票只能一个货型）");
+  assert.ok(/<select aria-label="货型" value=\{form\.cargoType/.test(clientPage), "客户端没有整票货型下拉");
 
   // 2026-09-29：客户批量下单读表格那段挪到了 modules/client-import/import-rows.ts（页面文件不许导出别的函数，测试要直接调）
   const clientImports = fs.readFileSync("apps/web/src/app/client/imports/page.tsx", "utf8") + fs.readFileSync("apps/web/src/modules/client-import/import-rows.ts", "utf8");

@@ -277,33 +277,59 @@ async function main() {
       }
     }
   });
-  await check("管理员改产品：锁内按保存后的完整产品集重算整票，数字不变", async () => {
+  /* 2026-11-24 老板：「一票只会有一个货型，不能单独产品选择货型」—— 下面几条从「逐行记、整票取最严」改成一票一个货型 */
+  await check("管理员改产品（一票一个货型）：填了的那个就是整票，没填的行跟着它，数字不变", async () => {
     reset(); const originalShipment = JSON.stringify(rows.shipment);
     const response = await api({orderId: "o1", products: [{id: "p1", itemName: "鞋", packageCount: 2, cargoType: "sensitive"}, {id: "p2", itemName: "帽", packageCount: 3}]});
     assert.equal(response.code, 200); assert.equal(rows.order[0].cargoType, "sensitive");
-    assert.deepEqual(rows.orderProduct.map(p => p.cargoType), ["sensitive", "normal"]);
+    assert.deepEqual(rows.orderProduct.map(p => p.cargoType), ["sensitive", "sensitive"]);
     assert.equal(rows.order[0].packageCount, 5); assert.equal(rows.order[0].weightKg, 8); assert.equal(rows.order[0].volumeM3, 0.05);
     const savedShipment = {...rows.shipment[0]}; delete savedShipment.updatedAt;
     assert.equal(JSON.stringify([savedShipment]), originalShipment);
-    assert.ok(calls.indexOf("orderProduct.findMany") > calls.indexOf("lock:order"), calls.join(" → "));
+    assert.ok(calls.lastIndexOf("orderProduct.updateMany") > calls.indexOf("lock:order"), calls.join(" → "));
   });
-  await check("管理员仅改整票：有明细且最严不一致时 400，保持所有旧值", async () => {
-    for (const wanted of ["normal", "inspection"]) {
-      reset(["sensitive", "normal"], "sensitive"); const before = JSON.stringify(rows);
-      const response = await api({orderId: "o1", cargoType: wanted});
-      assert.equal(response.code, 400); assert.match(response.body.message, /产品.*货型/);
-      assert.equal(JSON.stringify(rows), before);
+  await check("管理员产品行货型不止一种（没刷新的老页面）：400、叫他刷新，什么都不写、不查库", async () => {
+    for (const values of [["sensitive", "normal"], ["normal", "inspection", "special"]]) {
+      reset(); const before = JSON.stringify(rows);
+      const response = await api({orderId: "o1", products: values.map((cargoType, i) => ({id: `p${i+1}`, itemName: `货${i}`, packageCount: 2, cargoType}))});
+      assert.equal(response.code, 400); assert.match(response.body.message, /一票只能有一个货型/); assert.match(response.body.message, /刷新/);
+      assert.equal(JSON.stringify(rows), before); assert.deepEqual(calls, []);
     }
-    reset(["inspection", "normal"], "inspection");
-    assert.equal((await api({orderId: "o1", cargoType: "inspection"})).code, 200);
   });
-  await check("管理员产品增删/缺省货型：保留旧行、重新取最严、不信整票旧值", async () => {
+  await check("管理员仅改整票货型：这票全部产品行跟着改（混着几种的老单也统一），别的数字不动", async () => {
+    for (const wanted of ["normal", "inspection", "special"]) {
+      reset(["sensitive", "normal"], "sensitive");
+      const pkg = rows.order[0].packageCount; const wt = rows.order[0].weightKg; const vol = rows.order[0].volumeM3; const ship = JSON.stringify(rows.shipment);
+      const response = await api({orderId: "o1", cargoType: wanted});
+      assert.equal(response.code, 200, JSON.stringify(response.body));
+      assert.equal(rows.order[0].cargoType, wanted);
+      assert.deepEqual(rows.orderProduct.map(p => p.cargoType), [wanted, wanted]);
+      assert.equal(rows.order[0].packageCount, pkg); assert.equal(rows.order[0].weightKg, wt); assert.equal(rows.order[0].volumeM3, vol);
+      const s0 = {...rows.shipment[0]}; delete s0.updatedAt; const b0 = JSON.parse(ship)[0]; delete b0.updatedAt;
+      assert.deepEqual(s0, b0, "只改货型却动了运单上的数");
+      assert.ok(calls.lastIndexOf("orderProduct.updateMany") > calls.indexOf("lock:order"), calls.join(" → "));
+    }
+  });
+  await check("管理员产品增删 / 产品行没带货型：整票发了就用整票的；都没带按留下来的老行算（混着的取最严），新加的行也跟着", async () => {
     reset(["inspection", "sensitive"], "sensitive");
     assert.equal((await api({orderId: "o1", cargoType: "normal", products: [{id: "p1", itemName: "鞋", packageCount: 2}, {itemName: "新帽", packageCount: 1}]})).code, 200);
-    assert.deepEqual(rows.orderProduct.map(p => p.cargoType), ["inspection", "normal"]);
-    assert.equal(rows.order[0].cargoType, "inspection");
-    assert.equal((await api({orderId: "o1", products: [{id: "p1", itemName: "鞋", packageCount: 2, cargoType: "normal"}]})).code, 200);
-    assert.equal(rows.orderProduct.length, 1); assert.equal(rows.order[0].cargoType, "normal");
+    assert.deepEqual(rows.orderProduct.map(p => p.cargoType), ["normal", "normal"]);
+    assert.equal(rows.order[0].cargoType, "normal");
+    // 删掉唯一一行敏感货、只留商检那行：按留下来的算 = 商检（不把剩下的统一成被删掉那行的敏感货 —— dsh 11-24 第 1 轮）
+    reset(["inspection", "sensitive"], "sensitive");
+    assert.equal((await api({orderId: "o1", products: [{id: "p1", itemName: "鞋", packageCount: 2}]})).code, 200);
+    assert.equal(rows.orderProduct.length, 1); assert.deepEqual(rows.orderProduct.map(p => p.cargoType), ["inspection"]); assert.equal(rows.order[0].cargoType, "inspection");
+    // 两行都留着、混着：取最严；再加一行新的也跟着
+    reset(["inspection", "sensitive"], "normal");
+    assert.equal((await api({orderId: "o1", products: [{id: "p1", itemName: "鞋", packageCount: 2}, {id: "p2", itemName: "帽", packageCount: 3}, {itemName: "新", packageCount: 1}]})).code, 200);
+    assert.deepEqual(rows.orderProduct.map(p => p.cargoType), ["sensitive", "sensitive", "sensitive"]); assert.equal(rows.order[0].cargoType, "sensitive");
+    // 一行老的都没留（全换成新加的）：看订单自己记的
+    reset(["inspection", "sensitive"], "special");
+    assert.equal((await api({orderId: "o1", products: [{itemName: "新一", packageCount: 1}]})).code, 200);
+    assert.deepEqual(rows.orderProduct.map(p => p.cargoType), ["special"]); assert.equal(rows.order[0].cargoType, "special");
+    reset(["inspection", "inspection"], "normal"); // 老单：产品行都是商检、订单记成普货（9-10 前的老数据）→ 跟着产品行（列表上显示的就是它）
+    assert.equal((await api({orderId: "o1", products: [{id: "p1", itemName: "鞋", packageCount: 2}, {itemName: "新帽", packageCount: 1}]})).code, 200);
+    assert.deepEqual(rows.orderProduct.map(p => p.cargoType), ["inspection", "inspection"]); assert.equal(rows.order[0].cargoType, "inspection");
   });
   await check("管理员旧无产品单、仅改备注和空 products 沿用增量契约", async () => {
     reset([], "sensitive"); assert.equal((await api({orderId: "o1", cargoType: "inspection"})).code, 200);
@@ -313,13 +339,19 @@ async function main() {
     assert.equal(rows.order[0].cargoType, "normal"); assert.equal(JSON.stringify(rows.orderProduct), before);
     assert.ok(!calls.includes("orderProduct.findMany"));
   });
-  await check("管理员 27 种三产品组合的最严货型与全部产品逐行一致", async () => {
-    const types = ["normal", "inspection", "sensitive"];
+  await check("管理员 64 种三产品组合：一样的照存、每行都是它；不一样的 400 什么都不写", async () => {
+    const types = ["normal", "inspection", "sensitive", "special"];
     for (const a of types) for (const b of types) for (const c of types) {
-      reset(); const values = [a,b,c];
-      assert.equal((await api({orderId: "o1", products: values.map((cargoType, i) => ({itemName: `品名${i}`, packageCount: 2, cargoType}))})).code, 200);
-      assert.deepEqual(rows.orderProduct.map(p => p.cargoType), values);
-      assert.equal(rows.order[0].cargoType, types[Math.max(...values.map(v => types.indexOf(v)))]);
+      reset(); const values = [a,b,c]; const before = JSON.stringify(rows);
+      const response = await api({orderId: "o1", products: values.map((cargoType, i) => ({itemName: `品名${i}`, packageCount: 2, cargoType}))});
+      if (new Set(values).size === 1) {
+        assert.equal(response.code, 200);
+        assert.deepEqual(rows.orderProduct.map(p => p.cargoType), values);
+        assert.equal(rows.order[0].cargoType, a);
+      } else {
+        assert.equal(response.code, 400, values.join("+"));
+        assert.equal(JSON.stringify(rows), before);
+      }
     }
   });
   await check("客户端真模板→XLSX上传→真提交序列化：体积乘箱数、重量仍是整票", async () => {

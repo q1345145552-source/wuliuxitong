@@ -13,7 +13,7 @@ import { productDim, volumeM3FromDimensionsCm, formatVolumeM3String, transportMo
 import ShipmentDetailBody from "../../modules/shipment/ShipmentDetailBody";
 import { domesticNosLabel, productNamesLabel } from "../../../../../packages/shared-types/product-names";
 import { prealertApprovalZh, prealertStatusTag } from "../../modules/orders/prealert-status";
-import { CARGO_TYPES, CARGO_TYPE_ZH, cargoTypeLabel as cargoTypeLabelOf, strictestCargoType } from "../../../../../packages/shared-types/cargo-type";
+import { CARGO_TYPES, CARGO_TYPE_ZH, cargoTypeLabel as cargoTypeLabelOf } from "../../../../../packages/shared-types/cargo-type";
 import {
   fetchClientAddresses,
   createClientPrealert,
@@ -1468,14 +1468,15 @@ export default function ClientHomePage() {
                 <option value="">选择仓库</option>
                 {warehouseOptions.map((w) => (<option key={w.id} value={w.id}>{w.label}</option>))}
               </select></label>
+              {/* 一票一个货型（2026-11-24 老板：「一票只会有一个货型，不能单独产品选择货型」）：整票选一次，下面每个产品都跟它。
+                  原来没分产品行时才在这里选、分了产品行就每个产品各选各的 */}
+              <label className="client-prealert-field"><span>货型</span><select aria-label="货型" value={form.cargoType} onChange={(e) => setForm((v) => ({ ...v, cargoType: e.target.value }))} style={{ border: "1px solid var(--l-strong)", borderRadius: 6, padding: "8px 10px", fontSize: 13, width: "100%" }}>{CARGO_TYPES.map((value) => (<option key={value} value={value}>{CARGO_TYPE_ZH[value]}</option>))}</select></label>
               {/* Multi-product section */}
               <div className="client-prealert-products">
                 <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 8, color: "var(--t-strong)" }}>产品列表</div>
                 {formProducts.length === 0 ? (
                   <>
                     <label className="client-prealert-field"><span>品名（必填）</span><input value={form.itemName} onChange={(e) => setForm((v) => ({ ...v, itemName: e.target.value }))} placeholder="品名 *" style={{ border: "1px solid var(--l-strong)", borderRadius: 6, padding: "8px 10px", fontSize: 13, width: "100%" }} /></label>
-                    {/* 没有分产品行时，整票一个货型（2026-09-11） */}
-                    <label className="client-prealert-field"><span>货型</span><select value={form.cargoType} onChange={(e) => setForm((v) => ({ ...v, cargoType: e.target.value }))} style={{ border: "1px solid var(--l-strong)", borderRadius: 6, padding: "8px 10px", fontSize: 13, width: "100%" }}>{CARGO_TYPES.map((value) => (<option key={value} value={value}>{CARGO_TYPE_ZH[value]}</option>))}</select></label>
                   </>
                 ) : null}
                 {formProducts.map((p, i) => {
@@ -1498,8 +1499,6 @@ export default function ClientHomePage() {
                     <label className="client-prealert-field"><span>单箱数量</span><input type="number" value={p.productQuantity} onChange={(e) => setFormProducts((v) => { const n = [...v]; n[i] = { ...n[i], productQuantity: e.target.value }; return n; })} placeholder="单箱数量" style={{ border: "1px solid var(--l-strong)", borderRadius: 4, padding: "4px 6px", fontSize: 12 }} /></label>
                     <label className="client-prealert-field"><span>单箱重量（kg）</span><input type="number" step="0.01" value={p.weightKg} onChange={(e) => setFormProducts((v) => { const n = [...v]; n[i] = { ...n[i], weightKg: e.target.value }; return n; })} placeholder="单箱重量kg" style={{ border: "1px solid var(--l-strong)", borderRadius: 4, padding: "4px 6px", fontSize: 12 }} /></label>
                     <label className="client-prealert-field client-prealert-field--wide"><span>国内快递单号</span><input value={p.domesticTrackingNo || ""} onChange={(e) => setFormProducts((v) => { const n = [...v]; n[i] = { ...n[i], domesticTrackingNo: e.target.value }; return n; })} placeholder="货拉拉" style={{ border: "1px solid var(--l-strong)", borderRadius: 4, padding: "4px 6px", fontSize: 12 }} /></label>
-                    {/* 货型（2026-09-11）：下拉只给三个值，客户填不出第四种写法 */}
-                    <label className="client-prealert-field"><span>货型</span><select value={p.cargoType || "normal"} onChange={(e) => setFormProducts((v) => { const n = [...v]; n[i] = { ...n[i], cargoType: e.target.value }; return n; })} style={{ border: "1px solid var(--l-strong)", borderRadius: 4, padding: "4px 6px", fontSize: 12 }}>{CARGO_TYPES.map((value) => (<option key={value} value={value}>{CARGO_TYPE_ZH[value]}</option>))}</select></label>
                     <div className="client-prealert-field"><span>本项体积（m³）</span><output>{prodVol > 0 ? prodVol.toFixed(3) : "---"}</output></div>
                     <div className="client-prealert-field"><span>本项重量（kg）</span><output>{prodWt > 0 ? prodWt.toFixed(2) : "---"}</output></div>
                     </div>
@@ -1601,10 +1600,9 @@ export default function ClientHomePage() {
                 try {
                   const payload: any = { ...form, packageCount: +form.packageCount || 0, weightKg: form.weightKg ? +form.weightKg : undefined, volumeM3: form.volumeM3 ? +form.volumeM3 : undefined, transportMode: form.transportMode as "sea"  |  "land", trackingNo: form.trackingNo?.trim() || undefined };
                   if (hasProducts) {
-                    payload.products = formProducts.filter((p) => p.itemName.trim()).map((p) => ({ itemName: p.itemName.trim(), packageCount: packageCountForPayload(p.packageCount), lengthCm: p.lengthCm ? Number(p.lengthCm) : undefined, widthCm: p.widthCm ? Number(p.widthCm) : undefined, heightCm: p.heightCm ? Number(p.heightCm) : undefined, productQuantity: p.productQuantity ? Number(p.productQuantity) : undefined, weightKg: p.weightKg ? Number(p.weightKg) : undefined, domesticTrackingNo: p.domesticTrackingNo?.trim() || "货拉拉", cargoType: p.cargoType || "normal" }));
+                    payload.products = formProducts.filter((p) => p.itemName.trim()).map((p) => ({ itemName: p.itemName.trim(), packageCount: packageCountForPayload(p.packageCount), lengthCm: p.lengthCm ? Number(p.lengthCm) : undefined, widthCm: p.widthCm ? Number(p.widthCm) : undefined, heightCm: p.heightCm ? Number(p.heightCm) : undefined, productQuantity: p.productQuantity ? Number(p.productQuantity) : undefined, weightKg: p.weightKg ? Number(p.weightKg) : undefined, domesticTrackingNo: p.domesticTrackingNo?.trim() || "货拉拉", cargoType: form.cargoType || "normal" }));
                     payload.itemName = payload.products[0].itemName;
-                    // 整票记最严的那个（特别 > 敏感 > 商检 > 普货），跟批量导入同一个口径
-                    payload.cargoType = strictestCargoType(payload.products.map((x: any) => x.cargoType));
+                    // 一票一个货型（2026-11-24）：整票和每个产品都是上面选的那一个（payload 里的 cargoType 就是 form.cargoType）
                   }
                   const result = await createClientPrealert(payload);
                   /* 2026-09-29（老板选 A）：图片没传上的要告诉客户是哪张、为什么。

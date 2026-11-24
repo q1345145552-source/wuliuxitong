@@ -6,6 +6,7 @@
  * （跟「批量下单」那套同一个规矩，2026-09-11）。
  */
 import type { FclProductInput } from "../../services/business-api";
+import { CARGO_TYPES, CARGO_TYPE_ZH, distinctCargoTypes } from "../../../../../packages/shared-types/cargo-type";
 
 // 2026-10-11 加特别货；2026-10-16 老板「特别货改成特货」，旧模板里填的「特别货」照认
 const CARGO_ZH_TO_CODE: Record<string, string> = { 普货: "normal", 商检货: "inspection", 敏感货: "sensitive", 特货: "special", 特别货: "special" };
@@ -92,4 +93,70 @@ export function fclRowFromSheet(rawInput: Record<string, unknown>): FclProductIn
     domesticTrackingNo: pick(FCL_TEMPLATE_HEADERS[7]),
     cargoType: cargoZh ? (CARGO_ZH_TO_CODE[cargoZh] ?? cargoZh) : "normal",
   };
+}
+
+/**
+ * 整柜就是一票，一票一个货型（2026-11-24 老板：「一票只会有一个货型，不能单独产品选择货型」）。
+ * 传表格时「货型」那一格只看读进来的行、只看填了的：认不出来的、几行填得不一样的都不读，说清是第几行；
+ * 都一样（或者只有几行填了）就是它，一行都没填按普货。
+ *
+ * ⚠️ 取那一格必须跟 fclRowFromSheet 走同一把尺子（normalizeKeys：表头两头空格、10-11 / 10-16 前的旧表头）——
+ * dsh 11-24 第 1 轮抓到：原来页面上直接按新表头取，旧模板 / 表头带空格时那一格永远是空，
+ * 整柜就按普货存了（敏感货被悄悄当普货）。
+ *
+ * @param rows 读进来的行：rowNo 是表格里的第几行（给人看），raw 是那一行原样
+ */
+export function fclSheetCargo(rows: ReadonlyArray<{ rowNo: number; raw: Record<string, unknown> }>): { cargoType: string } | { error: string } {
+  const cells = rows
+    .map(({ rowNo, raw }) => {
+      const v = normalizeKeys(raw)[FCL_TEMPLATE_HEADERS[8]];
+      const text = v === undefined || v === null ? "" : String(v).trim();
+      return { rowNo, text, code: CARGO_ZH_TO_CODE[text] ?? text };
+    })
+    .filter((c) => c.text !== "");
+  const unknown = cells.filter((c) => !(CARGO_TYPES as readonly string[]).includes(c.code));
+  if (unknown.length > 0) {
+    return { error: `表格第 ${unknown.map((c) => c.rowNo).join("、")} 行的货型（${unknown.map((c) => `「${c.text}」`).join("")}）认不出来，只能填普货、商检货、敏感货、特货，或者空着。改好再传一次。` };
+  }
+  const kinds = distinctCargoTypes(cells.map((c) => c.code));
+  if (kinds.length > 1) {
+    return { error: `一票只能有一个货型，表格里${cells.map((c) => `第 ${c.rowNo} 行填的「${CARGO_TYPE_ZH[distinctCargoTypes([c.code])[0]]}」`).join("、")}。改成同一个再传一次。` };
+  }
+  return { cargoType: kinds[0] ?? "normal" };
+}
+
+/**
+ * 表格第一张工作表 → 一行一个对象，带上它在表格里是第几行（报错给人看的那个行号）。
+ *
+ * blankrows: true —— 表格中间整行空的也留着（调用方按「整行都空」跳过），下标才跟表格行号对得上；
+ * 表头在第几行按表格的有效范围（!ref）算。原来 `sheet_to_json(..., { defval: "" })` 会把中间的整行空行丢掉，
+ * 表头上面空了几行时也不算，报的「第几行」会错位（dsh 11-24 第 2 轮用 xlsx 0.18.5 实测）。
+ * 只读到最后一行有字的地方：整列刷过格式的表格 !ref 能拉到第 100 万行，空行全留着会白占几百 MB 内存（dsh 11-24 第 3 轮）。
+ */
+/** 只用到 xlsx 的这几个函数（不直接引 xlsx 的类型：测试脚本那份类型检查不一定装了网页那边的依赖） */
+type XlsxRange = { s: { r: number; c: number }; e: { r: number; c: number } };
+type XlsxReader = {
+  utils: {
+    sheet_to_json<T>(sheet: unknown, opts: { defval: string; blankrows: boolean; range?: XlsxRange }): T[];
+    decode_range(ref: string): XlsxRange;
+    decode_cell(address: string): { r: number; c: number };
+  };
+};
+export function fclSheetRows(XLSX: XlsxReader, sheet: { "!ref"?: string } & Record<string, unknown>): Array<{ rowNo: number; raw: Record<string, unknown> }> {
+  const ref = sheet["!ref"];
+  if (!ref) return [];
+  const range = XLSX.utils.decode_range(ref);
+  // 最后一行有字的是第几行（只看真有值的格子；「!」开头的是表格自己的设置，不是格子）
+  let lastRow = range.s.r;
+  for (const [address, cell] of Object.entries(sheet)) {
+    if (address.startsWith("!")) continue;
+    const v = (cell as { v?: unknown } | null)?.v;
+    if (v === undefined || v === null || String(v).trim() === "") continue;
+    lastRow = Math.max(lastRow, XLSX.utils.decode_cell(address).r);
+  }
+  const json = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, {
+    defval: "", blankrows: true, range: { s: range.s, e: { r: Math.min(range.e.r, lastRow), c: range.e.c } },
+  });
+  const headerRow = range.s.r + 1;
+  return json.map((raw, i) => ({ rowNo: headerRow + 1 + i, raw }));
 }

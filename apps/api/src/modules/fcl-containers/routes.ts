@@ -43,6 +43,7 @@ import { sanitizeRemarkForClient } from "../core/client-privacy";
 import { DECIMAL_12_2, requireDecimal } from "../core/decimal-guard";
 import { parseNumericStrict } from "../core/int-guard";
 import { lockInquiry } from "../fcl-inquiries/routes";
+import { mixedCargoTypeIssue } from "../../../../../packages/shared-types/cargo-type";
 import { companyContainerNosForMasking } from "../core/container-nos";
 import {
   CONTAINER_TYPES,
@@ -289,6 +290,10 @@ function parseFclProducts(input: unknown): { error: string } | {
     if ("error" in parsed) return { error: parsed.error };
     rows.push(parsed.row);
   }
+  /* 一票一个货型（2026-11-24 老板）：整柜就是一票，清单里几行的货型必须是同一个。
+     新页面只在上面选一次、每行都发那一个；不止一种 = 没刷新的老页面还在逐行选，拦住 */
+  const mixed = mixedCargoTypeIssue(rows.map((r) => r.cargoType));
+  if (mixed) return { error: `${mixed}，这次没有保存。请刷新页面，在上面的「货型」里选一个` };
   const totals = sumFclRows(rows);
   if ("error" in totals) return { error: totals.error };
   return { rows, totals };

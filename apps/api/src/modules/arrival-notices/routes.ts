@@ -17,7 +17,7 @@ import { ARRIVAL_WAREHOUSE_IDS, PENDING_INBOUND } from "./rules";
 import { FCL_EDIT_ELSEWHERE_MESSAGE } from "../core/fcl-scope";
 import { logger } from "../core/logger";
 import { lockTrackingNoForArrivalNotice } from "./follow-tracking-no";
-import { CARGO_TYPES, strictestCargoType, type CargoType } from "../../../../../packages/shared-types/cargo-type";
+import { CARGO_TYPES, mixedCargoTypeIssue, strictestCargoType, type CargoType } from "../../../../../packages/shared-types/cargo-type";
 import { productNamesLabel } from "../../../../../packages/shared-types/product-names";
 import {
   MAX_NOTICE_PRODUCTS,
@@ -271,6 +271,9 @@ export function readNoticeFields(body: Record<string, unknown>): { fields: Notic
       if ("error" in r) return r;
       if (!isBlankNoticeProduct(r.value)) kept.push(r.value);
     }
+    /* 一票一个货型（2026-11-24 老板）：新页面每款都发整票选的那一个；不止一种 = 没刷新的老页面还在逐款选，拦住、叫他刷新 */
+    const mixed = mixedCargoTypeIssue(kept.map((p) => p.cargoType));
+    if (mixed) return { error: `${mixed}，这次没有保存。请刷新页面，在整票的「货型」里选一个` };
     out.products = kept;
   } else {
     const r = readProduct({ itemName: body.itemName, packageCount: body.packageCount, domesticTrackingNo: body.domesticTrackingNo, cargoType: body.cargoType }, 0, 1);
@@ -614,6 +617,10 @@ async function assertTrackingNoFree(tx: Tx | typeof prisma, companyId: string, t
 function orderValuesOf(f: NoticeFields) {
   const totals = noticeProductTotals(f.products);
   const complete = noticeProductsComplete(f.products);
+  /* 货型（F11）：各款取最严的（特别 > 敏感 > 商检 > 普货），没有产品就是普货（同「创建订单」）。
+     2026-11-24 起一票一个货型：保存时已经拦住了不止一种的，正常这里各款就是同一个；上线前登记、混着几种的老通知
+     转运单 / 同步时，订单产品行也统一写成这一个（不把混装带进运单） */
+  const cargoType = strictestCargoType(f.products.map((p) => p.cargoType));
   /* 产品行照抄本款（同「创建订单」的产品行）：长宽高、单箱数量、单箱重员工填了才有 —— 填了下游会按尺寸算方数，
      跟「创建订单」分了产品行时一个样（原来只建一条不带长宽高的兜底行，CLAUDE.md 第 33 条说的是兜底行，不是这里）。
      国内单号空着写「货拉拉」（同「创建订单」）。 */
@@ -625,7 +632,7 @@ function orderValuesOf(f: NoticeFields) {
         widthCm: p.widthCm,
         heightCm: p.heightCm,
         productQuantity: p.productQuantity,
-        cargoType: p.cargoType,
+        cargoType,
         domesticTrackingNo: p.domesticTrackingNo || "货拉拉",
         weightKg: p.weightKg,
         sortOrder: i,
@@ -654,8 +661,7 @@ function orderValuesOf(f: NoticeFields) {
     domesticTrackingNo: firstDomesticTrackingNo(f.products),
     // 不完整时没有订单产品行可供查询：运单保留全部单号，订单仍只存第一款（兼容其整串相等筛选）。
     shipmentDomesticTrackingNo: complete ? firstDomesticTrackingNo(f.products) : noticeLegacySummary(f.products).domesticTrackingNo,
-    // 货型（F11）：各款取最严的（特别 > 敏感 > 商检 > 普货），没有产品就是普货（同「创建订单」）
-    cargoType: strictestCargoType(f.products.map((p) => p.cargoType)),
+    cargoType,
     products,
   };
 }

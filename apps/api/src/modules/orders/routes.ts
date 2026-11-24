@@ -73,7 +73,7 @@ import { UPLOAD_IMAGE_MAX_BASE64, uploadTooLargeMessage } from "../core/upload-l
 import { classifyStatusGroup, matchesShipmentListFilter, type ClientStatusGroup } from "../../../../../packages/shared-types/shipment-status";
 import { loadPartialAhead } from "../shipments/partial-status";
 import { productNamesLabel } from "../../../../../packages/shared-types/product-names";
-import { CARGO_TYPES, CARGO_TYPE_HINT, strictestCargoType, type CargoType } from "../../../../../packages/shared-types/cargo-type";
+import { readCargoTypes, readOneCargoType } from "./cargo-read";
 
 /**
  * 客户端订单五分类。判断逻辑在 packages/shared-types 的 classifyStatusGroup，
@@ -403,7 +403,8 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
      * 货型校验（2026-09-11）：非法值当场 400，不许静默存成普货。
      * 客户端现在有货型下拉，只会发那三个值；这道闸挡的是直接调接口的。
      */
-    const cargo = readCargoTypes(body.cargoType, body.products);
+    // 一票一个货型（2026-11-24）：产品行货型不止一种就拦住；每条产品行都写成这一个
+    const cargo = readOneCargoType(body.cargoType, body.products);
     if ("error" in cargo) { fail(res, 400, "VALIDATION_ERROR", cargo.error); return; }
 
     // Compute products totals
@@ -414,7 +415,7 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
           lengthCm: p.lengthCm ?? null,
           widthCm: p.widthCm ?? null,
           heightCm: p.heightCm ?? null,
-          productQuantity: p.productQuantity ?? null, cargoType: cargo.products[i], domesticTrackingNo: p.domesticTrackingNo?.trim() || "货拉拉", weightKg: p.weightKg ?? null, sortOrder: i }))
+          productQuantity: p.productQuantity ?? null, cargoType: cargo.order, domesticTrackingNo: p.domesticTrackingNo?.trim() || "货拉拉", weightKg: p.weightKg ?? null, sortOrder: i }))
       // 兜底分支的字段要和上面那支**完全一致**，否则联合类型里少了几个字段，
       // 下面 reduce 读 weightKg / cargoType 时会报错（2026-08-27 补齐）
       : [{
@@ -548,8 +549,8 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
           transportMode: body.transportMode!,
           // 订单这一层的货型（2026-09-11 补）：原来这条路**根本没写这个字段**，
           // 一律吃数据库默认的 normal，客户选了商检也看不出来。
-          // 有产品行时取最严的那个（特别 > 敏感 > 商检 > 普货），跟批量导入同一个口径。
-          cargoType: body.products?.length ? strictestCargoType(cargo.products) : cargo.order,
+          // 2026-11-24 起一票一个货型（readOneCargoType），产品行跟它是同一个。
+          cargoType: cargo.order,
           receiverNameTh: body.receiverNameTh?.trim() || "",
           receiverPhoneTh: body.receiverPhoneTh?.trim() || "",
           receiverAddressTh: body.receiverAddressTh?.trim() || "",
@@ -924,6 +925,11 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
          员工 / 超管运单列表、搜索、导出读的是运单和产品行上的号，改了等于没改。多行产品分不清改的是哪一行，产品行不动。
          ⚠️ 只认带了「员工真改过」标记的（Codex 第 4 轮）：上线那一刻还开着的老页面不管改没改都发号（默认是第一行产品的
          「货拉拉」），不认标记的话会拿它把运单上的真号盖掉；不带标记照旧只改订单那一格 */
+      /* 货型：改了整票货型，产品行全部跟着改（2026-11-24 一票一个货型）。原来只改订单那一格，产品行还是原来的 ——
+         列表按产品行显示货型，改了等于没改。现在页面上收货没有货型这一格，这里管的是直接调接口的 */
+      if (updateData.cargoType !== undefined) {
+        await tx.orderProduct.updateMany({ where: { orderId, companyId: auth.companyId }, data: { cargoType: updateData.cargoType } });
+      }
       const receiveDomesticNo = body.domesticTrackingNoEdited === true && typeof body.domesticTrackingNo === "string" ? body.domesticTrackingNo.trim() : "";
       if (receiveDomesticNo) {
         const productRows = await tx.orderProduct.findMany({
@@ -1079,7 +1085,8 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
     }
 
     // 货型校验（2026-09-11）：批量导入现在会真传货型上来，非法值必须 400，不能静默变普货
-    const staffCargo = readCargoTypes(body.cargoType, body.products);
+    // 2026-11-24 一票一个货型：产品行货型不止一种就拦住；每条产品行都写成这一个
+    const staffCargo = readOneCargoType(body.cargoType, body.products);
     if ("error" in staffCargo) { fail(res, 400, "VALIDATION_ERROR", staffCargo.error); return; }
 
     const staffProducts = body.products?.length
@@ -1089,7 +1096,7 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
           lengthCm: p.lengthCm ?? null,
           widthCm: p.widthCm ?? null,
           heightCm: p.heightCm ?? null,
-          productQuantity: p.productQuantity ?? null, cargoType: staffCargo.products[i], domesticTrackingNo: p.domesticTrackingNo?.trim() || "货拉拉", weightKg: p.weightKg ?? null, sortOrder: i }))
+          productQuantity: p.productQuantity ?? null, cargoType: staffCargo.order, domesticTrackingNo: p.domesticTrackingNo?.trim() || "货拉拉", weightKg: p.weightKg ?? null, sortOrder: i }))
       : body.itemName ? [{
           itemName: body.itemName.trim(),
           packageCount: Number(body.packageCount ?? 0),
@@ -1275,8 +1282,8 @@ export function registerOrderRoutes(app: MinimalHttpApp): void {
       volumeM3: prVol > 0 ? prVol : volumeM3,
       shipDate: arrivedAtText,
       domesticTrackingNo: body.domesticTrackingNo ?? null,
-      // 有产品行时取最严的那个（特别 > 敏感 > 商检 > 普货），跟批量导入和客户预报单同一个口径
-      cargoType: body.products?.length ? strictestCargoType(staffCargo.products) : staffCargo.order,
+      // 一票一个货型（2026-11-24，readOneCargoType），产品行跟它是同一个
+      cargoType: staffCargo.order,
       batchNo,
       remark: body.remark?.trim() || null,
       products: staffProducts,
@@ -2415,44 +2422,9 @@ export type OrderProductDims = {
   names?: string;
 };
 
-/**
- * 货型只认 `normal` / `inspection` / `sensitive`（2026-09-11 加）。
- *
- * 原来四个写入口全是 `body.cargoType?.trim() || "normal"` —— **传什么存什么**。
- * 传个「商检」进来会原样存进库，而三端显示用的 `cargoTypeLabelOf` 认不出来就
- * 一律显示「普货」：单子上白写了一个错货型，而且没人会发现。
- *
- * 空着按普货（跟数据库默认值一致）；填了认不出来的就 400，不静默兜底。
- */
-class CargoTypeError extends Error {}
-function readCargoType(raw: unknown, where: string): CargoType {
-  if (raw === undefined || raw === null || (typeof raw === "string" && raw.trim() === "")) return "normal";
-  const value = String(raw).trim().toLowerCase();
-  if (typeof raw === "string" && (CARGO_TYPES as readonly string[]).includes(value)) return value as CargoType;
-  throw new CargoTypeError(`${where}的货型「${String(raw).trim()}」不合法，只能是 ${CARGO_TYPES.join(" / ")}。${CARGO_TYPE_HINT}`);
-}
-
-/** 整票 + 每条产品行一起校验；有问题返回那句话，没问题返回校验过的值 */
-export function readCargoTypes(
-  orderRaw: unknown,
-  products: ReadonlyArray<{ cargoType?: string }> | undefined,
-): { order: CargoType; products: CargoType[] } | { error: string } {
-  /* 产品行本身不是对象（null、字符串）：下面读 .cargoType 会当场抛错成 500。超管改单这条路先走这里、
-     后走 validateProductRows，那道中文提示轮不到（dsh 第三轮 2026-09-30）—— 在这里就用同一句话挡住 */
-  // products 整个不是数组（字符串 / 对象 / 数字）：下面 findIndex 就抛错成 500（dsh 第四轮，改前也是 500）
-  if (products !== undefined && products !== null && !Array.isArray(products)) return { error: "产品行的数据格式不对" };
-  const badRow = (products ?? []).findIndex((product) => !product || typeof product !== "object");
-  if (badRow >= 0) return { error: `产品行${badRow + 1}的数据格式不对` };
-  try {
-    return {
-      order: readCargoType(orderRaw, "整票"),
-      products: (products ?? []).map((product, index) => readCargoType(product.cargoType, `第 ${index + 1} 条产品`)),
-    };
-  } catch (error) {
-    if (error instanceof CargoTypeError) return { error: error.message };
-    throw error;
-  }
-}
+/* 货型校验（readCargoTypes / readOneCargoType）2026-11-24 挪到 ./cargo-read.ts（纯函数，测试能直接调），这里转出去，
+   超管改单那边照旧从这里引 */
+export { readCargoTypes, readOneCargoType } from "./cargo-read";
 
 export async function loadOrderProductDims(
   companyId: string,

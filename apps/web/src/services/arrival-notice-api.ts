@@ -176,6 +176,11 @@ export interface ArrivalNoticeDraft {
   remark: string;
   /** 至少一款（页面上删到只剩一款就不给删了）；全空的那款后端会丢掉 */
   products: DraftProduct[];
+  /**
+   * 整票的货型（2026-11-24 老板：「一票只会有一个货型，不能单独产品选择货型」）：弹窗上只选这一个，保存时每款都发它。
+   * 不带（老测试 / 老代码建的草稿）= 按各款取最严的。各款自己的 cargoType 只是库里原来的样子（混着几种的老通知看得出来），页面上不再改
+   */
+  cargoType?: CargoType;
 }
 
 /** 发给后端的一款：空串当没填（null），数字框原样传文字，后端严格校验 */
@@ -238,6 +243,12 @@ export function fetchArrivalNotices(opts: { tab: ArrivalNoticeTab; keyword?: str
   return apiRequest<ArrivalNoticePage>(`${apiBaseUrl()}/staff/arrival-notices/list?${q.toString()}`);
 }
 
+/** 这条到货通知整票的货型：草稿上选的那个；老草稿没有这一项就按各款取最严的（填了东西的那几款） */
+export function noticeCargoTypeOf(d: Pick<ArrivalNoticeDraft, "cargoType" | "products">): CargoType {
+  if (d.cargoType) return d.cargoType;
+  return strictestCargoType(d.products.filter((p) => !isBlankNoticeProduct({ ...p, cargoType: "normal" })).map((p) => p.cargoType));
+}
+
 /**
  * 草稿 → 接口要的样子：空串当没填（null），数字框原样传文字，后端严格校验。
  * - products **每款都发、空白的那款也发**：后端报「第N款…」用的是数组里的位置，跟页面上的顺序对得上；全空的款后端校验完自己丢掉。
@@ -245,8 +256,13 @@ export function fetchArrivalNotices(opts: { tab: ArrivalNoticeTab; keyword?: str
  * - 另外附上平铺镜像（品名拼起来、件数每款都填了才写合计、国内单号用「、」拼、货型取最严）：只给回滚后的旧后端用，
  *   新后端看到 products 就不读它们。
  */
-export function draftToBody(d: ArrivalNoticeDraft): ArrivalNoticeSaveBody {
+export function draftToBody(d: ArrivalNoticeDraft, opts: { rowCargoAsStored?: boolean } = {}): ArrivalNoticeSaveBody {
   const v = (s: string) => (s.trim() === "" ? null : s.trim());
+  /* 一票一个货型（2026-11-24）：填了东西的每一款都发整票那一个；完全空白的那款（刚点「加一款」还没填）照旧发普货，
+     不然它带着「敏感货」就不算空白了，后端会当成一款没填品名的货。
+     rowCargoAsStored：转「打开时的样子」（base）用 —— 后端拿它跟库里现在的逐款比，得是库里原来的样子（混着几种的老通知就照混着的发），
+     统一成一个的话老通知一存就被当成「同事改过货型」 */
+  const cargo = noticeCargoTypeOf(d);
   const products: ArrivalNoticeProductBody[] = d.products.map((p) => ({
     itemName: v(p.itemName),
     packageCount: v(p.packageCount),
@@ -255,7 +271,7 @@ export function draftToBody(d: ArrivalNoticeDraft): ArrivalNoticeSaveBody {
     heightCm: v(p.heightCm),
     productQuantity: v(p.productQuantity),
     weightKg: v(p.weightKg),
-    cargoType: p.cargoType,
+    cargoType: opts.rowCargoAsStored ? p.cargoType : isBlankNoticeProduct({ ...p, cargoType: "normal" }) ? "normal" : cargo,
     domesticTrackingNo: v(p.domesticTrackingNo),
   }));
   // 镜像不算全空的那款（跟新后端一样丢掉），不然末尾多一行空白就把件数合计算成 null
@@ -285,7 +301,7 @@ export function draftToBody(d: ArrivalNoticeDraft): ArrivalNoticeSaveBody {
  * 有人在这期间改过就不存、告诉他重开（防两个人同时改、后存的把先存的盖掉）。
  */
 export function saveArrivalNotice(id: string | null, draft: ArrivalNoticeDraft, base?: ArrivalNoticeDraft | null): Promise<{ item: ArrivalNotice }> {
-  return post("/staff/arrival-notices/save", { ...(id ? { id } : {}), ...draftToBody(draft), ...(id && base ? { base: draftToBody(base) } : {}) });
+  return post("/staff/arrival-notices/save", { ...(id ? { id } : {}), ...draftToBody(draft), ...(id && base ? { base: draftToBody(base, { rowCargoAsStored: true }) } : {}) });
 }
 
 /** 已转正式运单：超管点「修改」时读运单现在的样子（item 的资料换成了运单的；productIds 跟 item.products 一一对应） */

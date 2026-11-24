@@ -91,6 +91,8 @@
     "test:realtime-client": "tsx scripts/test-realtime-client.ts",
     "test:phone-layout": "tsx scripts/test-phone-layout.ts",
     "test:waybill-sort-labels": "tsx scripts/test-waybill-sort-labels.ts",
+    "test:one-cargo-type": "tsx scripts/test-one-cargo-type.ts",
+    "test:one-cargo-type-db": "tsx scripts/test-one-cargo-type-db.ts",
     "test:native-app": "tsx scripts/test-native-app.ts",
     "test:arrival-notice-source": "tsx scripts/test-arrival-notice-source.ts",
     "test:arrival-notice-editor": "tsx scripts/test-arrival-notice-editor.ts",

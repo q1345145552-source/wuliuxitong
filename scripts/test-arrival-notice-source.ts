@@ -475,9 +475,12 @@ async function main(): Promise<void> {
     const dp = (o: Partial<import("../apps/web/src/services/arrival-notice-api").DraftProduct>) => ({
       key: "k", itemName: "", packageCount: "", lengthCm: "", widthCm: "", heightCm: "", productQuantity: "", weightKg: "", domesticTrackingNo: "", cargoType: "normal" as const, ...o,
     });
-    const d = { clientId: "A", trackingNo: "T", weightKg: "", volumeM3: "", transportMode: "" as const, warehouseId: "", arrivedAt: "", remark: "", products: [dp({ key: "p1", cargoType: "sensitive" })] };
-    assert.equal(api.draftToBody(d).products[0].cargoType, "sensitive", "每款的货型要传给后端（原来一律普货）");
+    const d = { clientId: "A", trackingNo: "T", weightKg: "", volumeM3: "", transportMode: "" as const, warehouseId: "", arrivedAt: "", remark: "", products: [dp({ key: "p1", itemName: "灯", cargoType: "sensitive" })] };
+    assert.equal(api.draftToBody(d).products[0].cargoType, "sensitive", "货型要传给后端（原来一律普货）");
     assert.equal(api.draftToBody({ ...d, products: [dp({})] }).products[0].cargoType, "normal", "普货也要明着传");
+    // 2026-11-24 一票一个货型：草稿上整票选的那个发到每一款（各款自己存的不算）；完全空白的那款发普货（带着敏感货就不算空白了）
+    assert.equal(api.draftToBody({ ...d, cargoType: "special" as const }).products[0].cargoType, "special", "整票选的货型没发到每一款");
+    assert.equal(api.draftToBody({ ...d, cargoType: "sensitive" as const, products: [dp({ itemName: "灯" }), dp({})] }).products.map((p) => p.cargoType).join(), "sensitive,normal", "空白那款不该带整票货型");
     // 2026-10-09 多款：products 每款都发（空白的也发，后端报「第N款」的序号跟页面一致）、去掉 key、空串当 null、数字原样传文字
     const multi = api.draftToBody({
       ...d, weightKg: " 85 ", volumeM3: "",
@@ -488,7 +491,8 @@ async function main(): Promise<void> {
       ],
     });
     assert.deepEqual(multi.products, [
-      { itemName: "灯具", packageCount: "12", lengthCm: "60", widthCm: "40", heightCm: "30", productQuantity: "10", weightKg: "5", cargoType: "inspection", domesticTrackingNo: "SF1" },
+      // 老草稿（没有整票货型那一项）、各款混着：按最严的发到每一款（2026-11-24 一票一个货型）
+      { itemName: "灯具", packageCount: "12", lengthCm: "60", widthCm: "40", heightCm: "30", productQuantity: "10", weightKg: "5", cargoType: "sensitive", domesticTrackingNo: "SF1" },
       { itemName: null, packageCount: null, lengthCm: null, widthCm: null, heightCm: null, productQuantity: null, weightKg: null, cargoType: "normal", domesticTrackingNo: null },
       { itemName: "鞋", packageCount: "5", lengthCm: null, widthCm: null, heightCm: null, productQuantity: null, weightKg: null, cargoType: "sensitive", domesticTrackingNo: "YT2" },
     ]);
@@ -525,7 +529,9 @@ async function main(): Promise<void> {
     assert.ok(bodies.every((b) => b.url.includes("/staff/arrival-notices/")));
     const v = view();
     // F11
-    assert.match(v, /<select disabled=\{saving\} value=\{p\.cargoType\} onChange=\{\(e\) => setProduct\(p\.key, "cargoType", cargoTypeOf\(e\.target\.value\)\)\}>/, "每款能选货型");
+    // 2026-11-24 一票一个货型：整票选一次（草稿上的 cargoType），每款不能再单独选
+    assert.match(v, /<select aria-label="货型" disabled=\{saving\} value=\{draft\.cargoType \?\? "normal"\} onChange=\{\(e\) => set\("cargoType", cargoTypeOf\(e\.target\.value\)\)\}>/, "整票能选货型");
+    assert.ok(!/setProduct\(p\.key, "cargoType"/.test(v), "每款还能单独选货型（一票只能一个货型）");
     assert.match(v, /CARGO_TYPES\.map\(\(c\) => <option key=\{c\} value=\{c\}>\{CARGO_TYPE_ZH\[c\]\}<\/option>\)/);
     // 2026-10-16 草稿函数（draftOf）挪到 draft.ts（组件带 JSX，测试要直接调）
     assert.match(read("apps/web/src/modules/arrival-notice/draft.ts"), /cargoType: cargoTypeOf\(p\.cargoType\),/, "修改时带出库里每款的货型");
@@ -618,7 +624,7 @@ async function main(): Promise<void> {
     const controls = form.split("\n").filter((line) => /<(input|select|textarea|button)\b/.test(line));
     // 2026-10-09 多款：产品行是动态的，不再数个数；整票 7 个 + 每款 9 个（品名 / 件数 / 货型 / 国内单号 / 长宽高 / 单箱数量 / 单箱重）+ 删除 / 加一款两个按钮
     assert.ok(controls.length >= 18, `表里的控件少了（${controls.length}），对一下这条测试`);
-    for (const re of [/value=\{p\.itemName\}/, /value=\{p\.packageCount\}/, /value=\{p\.cargoType\}/, /value=\{p\.domesticTrackingNo\}/, /value=\{p\.lengthCm\}/, /value=\{p\.widthCm\}/, /value=\{p\.heightCm\}/, /value=\{p\.productQuantity\}/, /value=\{p\.weightKg\}/, /删除这一款/, /＋ 加一款/, /value=\{draft\.weightKg\}/, /value=\{draft\.volumeM3\}/, /value=\{draft\.remark\}/]) {
+    for (const re of [/value=\{p\.itemName\}/, /value=\{p\.packageCount\}/, /value=\{draft\.cargoType \?\? "normal"\}/, /value=\{p\.domesticTrackingNo\}/, /value=\{p\.lengthCm\}/, /value=\{p\.widthCm\}/, /value=\{p\.heightCm\}/, /value=\{p\.productQuantity\}/, /value=\{p\.weightKg\}/, /删除这一款/, /＋ 加一款/, /value=\{draft\.weightKg\}/, /value=\{draft\.volumeM3\}/, /value=\{draft\.remark\}/]) {
       assert.equal(controls.filter((c) => re.test(c)).length, 1, `找不到控件 ${re}`);
     }
     const pickers = form.split("\n").filter((line) => /<MarkPicker\b/.test(line));

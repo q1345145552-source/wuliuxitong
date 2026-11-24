@@ -228,6 +228,8 @@ function blankCreateOrderForm() {
   return {
     clientId: "", warehouseId: "wh_yiwu_01", arrivedAt: beijingToday(),
     transportMode: "sea" as "sea" | "land", domesticTrackingNo: "", batchNo: "", shipDate: "",
+    // 整票一个货型（2026-11-24 老板：「不能单独产品选择货型」），产品行跟它
+    cargoType: "normal",
     // 运单号必填（2026-09-29 补：6-05 起后端要求必填，这个弹窗一直没这一项，点「创建」必失败）。
     // 泰国收货人 / 电话 / 地址三项去掉：6-04 起后端建运单不存收货信息，填了也白填。
     trackingNo: "",
@@ -3044,6 +3046,13 @@ export default function AdminHomePage() {
                   <option value="sea">海运</option><option value="land">陆运</option>
                 </select>
               </div>
+              {/* 一票一个货型（2026-11-24）：整票选一次，下面每个产品行都跟它 */}
+              <div>
+                <label style={{ fontSize: 11, display: "block", marginBottom: 2 }}>货型</label>
+                <select aria-label="货型" value={createForm.cargoType} onChange={(e) => setCreateForm(f => ({ ...f, cargoType: e.target.value }))} style={{ border: "1px solid var(--l-strong)", borderRadius: 6, padding: "6px 8px", width: "100%", fontSize: 12 }}>
+                  {CARGO_TYPES.map((c) => <option key={c} value={c}>{CARGO_TYPE_ZH[c]}</option>)}
+                </select>
+              </div>
               <div>
                 <label style={{ fontSize: 11, display: "block", marginBottom: 2 }}>国内单号</label>
                 <input value={createForm.domesticTrackingNo} onChange={(e) => setCreateForm(f => ({ ...f, domesticTrackingNo: e.target.value }))} placeholder="货拉拉" style={{ border: "1px solid var(--l-strong)", borderRadius: 6, padding: "6px 8px", width: "100%", fontSize: 12 }} />
@@ -3055,14 +3064,11 @@ export default function AdminHomePage() {
             </div>
             <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 8 }}>产品行</div>
             {createProducts.map((p, i) => (
-              <div key={i} style={{ display: "grid", gridTemplateColumns: "2fr 0.6fr 0.8fr 0.8fr 0.8fr 1.2fr", gap: 4, marginBottom: 4 }}>
+              <div key={i} style={{ display: "grid", gridTemplateColumns: "2fr 0.6fr 0.8fr 0.8fr 1.2fr", gap: 4, marginBottom: 4 }}>
                 <input value={p.itemName} onChange={(e) => { const n = [...createProducts]; n[i].itemName = e.target.value; setCreateProducts(n); }} placeholder="品名" style={{ border: "1px solid var(--l-strong)", borderRadius: 6, padding: "4px 6px", fontSize: 11 }} />
                 <input type="number" value={p.packageCount} onChange={(e) => { const n = [...createProducts]; n[i].packageCount = e.target.value; setCreateProducts(n); }} placeholder="箱数" style={{ border: "1px solid var(--l-strong)", borderRadius: 6, padding: "4px 6px", fontSize: 11 }} />
                 <input value={p.productQuantity} onChange={(e) => { const n = [...createProducts]; n[i].productQuantity = e.target.value; setCreateProducts(n); }} placeholder="数量/箱" style={{ border: "1px solid var(--l-strong)", borderRadius: 6, padding: "4px 6px", fontSize: 11 }} />
                 <input value={`${p.lengthCm}×${p.widthCm}×${p.heightCm}`} onChange={(e) => { const parts = e.target.value.split("×"); const n = [...createProducts]; n[i].lengthCm = parts[0] || ""; n[i].widthCm = parts[1] || ""; n[i].heightCm = parts[2] || ""; setCreateProducts(n); }} placeholder="L×W×H cm" style={{ border: "1px solid var(--l-strong)", borderRadius: 6, padding: "4px 6px", fontSize: 11 }} />
-                <select value={p.cargoType} onChange={(e) => { const n = [...createProducts]; n[i].cargoType = e.target.value; setCreateProducts(n); }} style={{ border: "1px solid var(--l-strong)", borderRadius: 6, padding: "4px 6px", fontSize: 11 }}>
-                  {CARGO_TYPES.map((c) => <option key={c} value={c}>{CARGO_TYPE_ZH[c]}</option>)}
-                </select>
                 <div style={{ display: "flex", gap: 4 }}>
                   <input value={p.domesticTrackingNo} onChange={(e) => { const n = [...createProducts]; n[i].domesticTrackingNo = e.target.value; setCreateProducts(n); }} placeholder="国内单号" style={{ border: "1px solid var(--l-strong)", borderRadius: 6, padding: "4px 6px", fontSize: 11, flex: 1 }} />
                   {createProducts.length > 1 && <button onClick={() => { setCreateProducts(createProducts.filter((_, j) => j !== i)); }} style={{ border: "none", background: "#fecaca", color: "var(--c-red-2)", borderRadius: 4, cursor: "pointer", fontSize: 11 }}>×</button>}
@@ -3106,6 +3112,7 @@ export default function AdminHomePage() {
                     itemName: validProducts[0].itemName.trim(),
                     packageCount: packageCountForPayload(validProducts[0].packageCount),
                     packageUnit: "box",
+                    cargoType: createForm.cargoType,
                     products: validProducts.map(p => ({
                       itemName: p.itemName.trim(),
                       packageCount: packageCountForPayload(p.packageCount),
@@ -3113,7 +3120,7 @@ export default function AdminHomePage() {
                       widthCm: Number(p.widthCm) || undefined,
                       heightCm: Number(p.heightCm) || undefined,
                       productQuantity: Number(p.productQuantity) || undefined,
-                      cargoType: p.cargoType,
+                      cargoType: createForm.cargoType, // 一票一个货型（2026-11-24）
                       domesticTrackingNo: p.domesticTrackingNo.trim() || undefined,
                     })),
                   });

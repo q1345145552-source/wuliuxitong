@@ -41,7 +41,8 @@ check("#1 编辑框预填用 totalWeightKg ?? weightKg / totalVolumeM3 ?? volume
   const v = block.match(/volumeM3:\s*[^,]*totalVolumeM3[^,]*,/g) ?? [];
   assert.equal(w.length, 1, `weightKg 预填要用 totalWeightKg，实际 ${w.length} 处`);
   assert.equal(v.length, 1, `volumeM3 预填要用 totalVolumeM3，实际 ${v.length} 处`);
-  assert.match(src.slice(i), /snapshot: \{ form: \{ \.\.\.form \}/, "「打开时的样子」要照表单抄（不然两份预填会对不上）");
+  // 2026-11-24：混着几种货型的老单「打开时的样子」里货型记成空串（存一次就统一货型），别的项照表单抄
+  assert.match(src.slice(i), /snapshot: \{ form: \{ \.\.\.form[ ,}]/, "「打开时的样子」要照表单抄（不然两份预填会对不上）");
   assert.ok(!/weightKg:\s*order\.weightKg === null/.test(block), "还残留着按剩余量预填的老写法");
 });
 
