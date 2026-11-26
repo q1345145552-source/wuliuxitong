@@ -639,9 +639,12 @@ jobs:
         run: bash .github/scripts/run-db-test.sh test:finance2-balance-db
       # 客户余额第 2 轮（2026-11-27）：管理员加 / 减 / 冲掉。迁移连跑两遍零差异、同一个提交编号连点真并发只加一笔、两人同时冲同一笔只冲一次、
       # 两笔减同时来不减成负数、冲成负数后付集货被拒 / 财务扣 0、加金额和付集货同时来余额对、员工客户 403、流水字段和中文名
-      # ⚠️ test:wallet-first-row-known-issue-db（集货付款钱包行第一次出现时的已知问题复现）故意不放这里：它是给老板看的复现，不是必过项
       - name: Test wallet admin adjustments (real DB)
         run: bash .github/scripts/run-db-test.sh test:wallet-adjust-db
+      # 钱包行第一次出现的那一刻（2026-11-27 修）：集货付款 / 退款原来「先锁、再另外读余额」，没行时什么也没锁住，
+      # 中间插进来的充值会被整行写回盖掉（余额 900、流水 1900）。强制时序复现 + 对照 + 不强制时序多轮，余额必须等于流水合计
+      - name: Test wallet first-row race (real DB)
+        run: bash .github/scripts/run-db-test.sh test:wallet-first-row-db
       # 存原样那份迁移：上线前的库上连跑两遍、跟 schema 零差异、体检清单对上、不回填老数据、删到货通知跟着删 / 删运单不动
       - name: Test arrival notice snapshots migration file (real DB)
         run: bash .github/scripts/run-db-test.sh test:migration-arrival-notice-snapshots-db

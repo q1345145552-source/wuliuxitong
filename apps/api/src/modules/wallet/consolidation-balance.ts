@@ -93,6 +93,9 @@ export class PaymentConflictError extends Error {
  *
  * 加了 FOR UPDATE 之后，B 会卡在这一行等 A 提交完，然后读到 11000，算出 10000。
  *
+ * 2026-11-27 起付款、退款改用下面的 lockAndReadBalance（锁和读同一句）；这个只剩充值记流水在用
+ * （那条路同一个事务里刚 upsert 过这一行，行一定在、已经被自己锁着）。
+ *
  * ⚠️ 账户行还不存在时（客户从没有过余额），这里锁不到任何东西 ——
  *    扣款那条路不受影响（读出来是 0，直接报余额不足）；
  *    退款/充值那条路走 upsert 新建，极端情况下两个并发新建会撞唯一约束报错，
@@ -109,6 +112,28 @@ async function lockAccount(tx: Tx, clientId: string): Promise<void> {
     WHERE "clientId" = ${clientId} AND currency = ${CONSOLIDATION_CURRENCY}
     FOR UPDATE
   `;
+}
+
+/**
+ * 锁住钱包行、同一句读出余额（元）（2026-11-27 修「钱包行第一次出现」的竞态）。行不存在给 null —— 这时什么也没锁住，
+ * 调用方必须把 null 当成「这一刻余额就是 0」，**不许再去读第二遍**。
+ *
+ * ## 为什么锁和读要是同一句
+ * 原来是 lockAccount（锁）→ readBalance（另一句读）。客户从没有过钱包行时，锁那一句什么也锁不到；
+ * 要是这时候：① 管理员通过第一笔充值（建出钱包行 1000、提交）落在「锁」和「读」之间，付款读到 1000；
+ * ② 第二笔充值（行上 +1000、提交）落在「读」和「写」之间，付款手里没锁、挡不住；③ 付款按读到的 1000 整行写成 900 ——
+ * 第二笔充值的钱没了，流水上却记着（余额 900、流水合计 1900）。scripts/test-wallet-first-row-db.ts 强制时序复现过。
+ * 锁和读是同一句以后：锁的那一刻没有行 = 这一刻余额就是 0，付款当场报余额不足，后面谁建行、谁加钱都跟它无关。
+ */
+async function lockAndReadBalance(tx: Tx, clientId: string): Promise<number | null> {
+  // 列名 "clientId" 是驼峰的（见 lockAccount 的注释）。numeric 转成文本再 Number，跟原来 readBalance 的 Number(Decimal) 同一个数
+  const rows = await tx.$queryRaw`
+    SELECT balance::text AS balance FROM client_wallet_accounts
+    WHERE "clientId" = ${clientId} AND currency = ${CONSOLIDATION_CURRENCY}
+    FOR UPDATE
+  `;
+  const row = (rows as Array<{ balance: string }>)[0];
+  return row ? Number(row.balance) : null;
 }
 
 /** 读当前集货余额（元）。没有账户当 0 处理。 */
@@ -143,8 +168,8 @@ export async function chargeForConsolidation(tx: Tx, args: MoveArgs): Promise<nu
   const amount = round2(args.amount);
   if (!(amount > 0)) throw new Error("扣款金额必须大于 0");
 
-  await lockAccount(tx, args.clientId);
-  const have = await readBalance(tx, args.clientId);
+  // 锁和读是同一句（2026-11-27）：锁不到行 = 这一刻余额是 0（不建行、不再读第二遍）
+  const have = (await lockAndReadBalance(tx, args.clientId)) ?? 0;
   if (have < amount) throw new InsufficientBalanceError(amount, have);
 
   const after = round2(have - amount);
@@ -164,8 +189,18 @@ export async function refundToConsolidation(tx: Tx, args: MoveArgs): Promise<num
   const amount = round2(args.amount);
   if (!(amount > 0)) throw new Error("退款金额必须大于 0");
 
-  await lockAccount(tx, args.clientId);
-  const have = await readBalance(tx, args.clientId);
+  // 锁和读是同一句（2026-11-27）。退款是往里加钱、这一行反正要有：锁不到行就先建一行 0
+  // （两个一起建时后一个等前一个提交、然后什么都不做，不撞主键），再锁一次、读一次 —— 这次一定锁得到。
+  // 建出来的这一行在同一个事务里马上被下面改成退款后的余额，不会留下余额 0 的空行。
+  let have = await lockAndReadBalance(tx, args.clientId);
+  if (have === null) {
+    await tx.$queryRaw`
+      INSERT INTO client_wallet_accounts ("clientId", company_id, currency, balance, updated_at)
+      VALUES (${args.clientId}, ${args.companyId}, ${CONSOLIDATION_CURRENCY}, 0, CURRENT_TIMESTAMP)
+      ON CONFLICT DO NOTHING
+    `;
+    have = (await lockAndReadBalance(tx, args.clientId)) ?? 0;
+  }
   const after = round2(have + amount);
   await tx.clientWalletAccount.upsert({
     where: { clientId_currency: { clientId: args.clientId, currency: CONSOLIDATION_CURRENCY } },

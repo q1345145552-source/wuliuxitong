@@ -393,6 +393,16 @@ async function raw(strings: TemplateStringsArray, ...values: any[]): Promise<any
   }
   if (/FROM client_wallet_accounts/.test(sql) && /FOR UPDATE/.test(sql)) {
     emit(`lock:wallet:${values[0]}`);
+    // 2026-11-27 起付款 / 退款是「锁和读同一句」（wallet/consolidation-balance.ts 的 lockAndReadBalance）：照真库回这一行的余额
+    const acc = mem.db.clientWalletAccount.find((a) => a.clientId === values[0] && a.currency === values[1]);
+    return acc ? [{ clientId: acc.clientId, balance: String(acc.balance) }] : [];
+  }
+  // 退款锁不到钱包行时先建一行 0（ON CONFLICT DO NOTHING）
+  if (/^INSERT INTO client_wallet_accounts .* ON CONFLICT DO NOTHING$/.test(sql)) {
+    if (!mem.db.clientWalletAccount.some((a) => a.clientId === values[0] && a.currency === values[2])) {
+      emit(`write:clientWalletAccount:${values[0]}`);
+      mem.db.clientWalletAccount.push({ clientId: values[0], companyId: values[1], currency: values[2], balance: 0, updatedAt: new Date() });
+    }
     return [];
   }
   if (/FROM consolidation_tasks WHERE id = \? FOR UPDATE/.test(sql)) {
