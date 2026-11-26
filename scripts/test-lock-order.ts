@@ -145,6 +145,12 @@ const LOCK_HELPERS: Record<string, string[]> = {
    */
   lockHoldListReplace: ["advisory_finance2_hold_list"],
   /**
+   * 2026-11-27 财务系统2 客户余额：同一个请求编号排队（咨询锁 83092 + 编号哈希，finance2-balance/ops.ts 的 lockFinance2BalanceRequest）。
+   * 扣款 / 退回两个事务的第一句、手里没有行锁；之后才锁钱包行（wallet/consolidation-balance.ts 的 chargeBillUpTo / refundBillCharge），
+   * 「编号 → 钱包」跟集货「单据 → 钱包」同向。第 10 项会去函数体里核实锁在。
+   */
+  lockFinance2BalanceRequest: ["advisory_finance2_balance_request"],
+  /**
    * 2026-10-17 封禁的唛头不许再挂新单：「封禁 / 解封」跟「往这个唛头名下挂单」按 公司 + 唛头 排队（咨询锁 83070，core/client-ban.ts 的 lockClientBan）。
    * 封禁那边（/admin/users/toggle-ban）先「试着」拿独占档（只试不排队，拿不到隔 0.1 秒再试、10 秒后 409），拿到再锁客户行（最多 1 秒）、写 status；
    * 挂单那边经 assertClientNotBanned 在各自锁序最后一环拿共享档。

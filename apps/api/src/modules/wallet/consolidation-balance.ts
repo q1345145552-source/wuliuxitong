@@ -10,10 +10,38 @@
      2. 三个函数都要求传入事务 tx：扣钱和改单据状态必须在同一个事务里，
         不然会出现「钱扣了单子没付上」或者反过来。
      3. 余额不足直接抛错，由调用方 catch 后转成 400 提示。
+
+   2026-11-27 财务系统2 客户余额（ADR 0191，约定第 12 节）：老板定客户的余额只有这一本账。
+   财务系统2 的账单发给客户时来扣、作废时来退，走文件末尾的 chargeBillUpTo / refundBillCharge：
+     · 同样必须传事务、先锁后读、算钱在锁里（锁和读是同一句 SELECT … FOR UPDATE）；
+     · 扣款是「扣完为止」，余额不够不抛错（跟上面第 3 条不一样），扣到多少回多少；
+     · 流水的关联类型是 finance2_charge（ref_id = 扣款的请求编号，退回也挂这个编号），
+       不跟 whr / normal / recharge 共用：撤销付款、删单是按 ref_type + ref_id 加总算退款的，共用会算串。
+   上面集货那几个函数的行为一行没改（writeLedger 只是放开了类型、多返回一个流水编号）。
    ========================================================================== */
+import { Prisma } from "@prisma/client";
 
 /** 集货余额只有人民币 */
 export const CONSOLIDATION_CURRENCY = "CNY";
+
+/**
+ * 流水类型（consolidation_balance_ledger.type）。
+ * 前三种是集货原有的；bill_charge / bill_refund 是财务系统2 来扣 / 退（2026-11-27）；
+ * topup / topup_reversal / deduction 留给第 2 轮管理员加减（管理员充值 / 冲掉充值 / 管理员减金额），这一轮没人写。
+ * 客户余额页的中文名在 client-compliance/routes.ts 的 typeZh，加类型要一起加。
+ */
+export type LedgerType =
+  | "pay"
+  | "refund"
+  | "recharge"
+  | "bill_charge"
+  | "bill_refund"
+  | "topup"
+  | "topup_reversal"
+  | "deduction";
+
+/** 财务系统2 来扣的那一次在流水上的关联类型。ref_id = 扣款的请求编号（退回也挂它），ref_no = 账单号 */
+export const FINANCE2_CHARGE_REF_TYPE = "finance2_charge";
 
 /** 余额不足时抛这个，调用方据此返回 400 而不是 500 */
 export class InsufficientBalanceError extends Error {
@@ -164,14 +192,18 @@ export async function recordRechargeCredit(tx: Tx, args: MoveArgs): Promise<numb
   return after;
 }
 
+/** 记流水要的那几样（金额单独传，带正负号） */
+type LedgerArgs = Omit<MoveArgs, "amount">;
+
+/** @returns 这笔流水的编号（集货那几条路不用它，财务系统2 那两条要回给对方） */
 async function writeLedger(
   tx: Tx,
-  args: MoveArgs,
-  type: "pay" | "refund" | "recharge",
-  signedAmount: number,
-  balanceAfter: number,
-): Promise<void> {
-  await tx.consolidationBalanceLedger.create({
+  args: LedgerArgs,
+  type: LedgerType,
+  signedAmount: number | Prisma.Decimal,
+  balanceAfter: number | Prisma.Decimal,
+): Promise<string> {
+  const row = await tx.consolidationBalanceLedger.create({
     data: {
       companyId: args.companyId,
       clientId: args.clientId,
@@ -185,7 +217,9 @@ async function writeLedger(
       operatorId: args.operatorId ?? null,
       operatorName: args.operatorName ?? null,
     },
+    select: { id: true },
   });
+  return row.id as string;
 }
 
 /** 钱一律留两位小数，避免浮点误差一分一分地积累 */
@@ -298,4 +332,159 @@ export async function refundPendingOnDelete(
     total = round2(total + r.amount);
   }
   return total;
+}
+
+/* --------------------------------------------------------------------------
+   财务系统2 来扣 / 退（2026-11-27，ADR 0191，约定第 12 节）
+   ------------------------------------------------------------------------
+   老板定：客户的余额只有这一本账。财务系统2 的账单点「已发给客户」时来扣（扣完为止），
+   账单作废 / 那笔扣款作废 / 扣多了时来退。请求编号去重、谁能调在 finance2-balance/ 那个模块，这里只管钱。
+
+   跟上面集货那几个函数的区别：
+     · 金额用 Prisma.Decimal 算（不经过 JS 浮点），进出都是两位小数；
+     · 锁和读是同一句（SELECT balance … FOR UPDATE），读到的一定是锁住那一刻的数；
+     · 钱包行还不存在时 FOR UPDATE 锁不到东西（见 lockAccount 的注释），两条路各自处理：
+         扣款：锁不到行 = 这一刻余额就是 0 → 扣 0、不建行、不写流水（不再去读第二遍，免得读到锁之后才建出来的行）；
+         退回：先 INSERT … ON CONFLICT DO NOTHING 保证行在（两个一起建时后一个等前一个提交、然后什么都不做，不撞主键），再锁再读。
+   锁序：调用方先拿单据那边的锁（这里是「这个请求编号」的排队锁），再进这里锁钱包，跟集货「单据 → 钱包」同向。
+   -------------------------------------------------------------------------- */
+
+const Decimal = Prisma.Decimal;
+
+type BillTx = Tx & {
+  $executeRaw: (strings: TemplateStringsArray, ...values: any[]) => Promise<number>;
+  consolidationBalanceLedger: { aggregate: (args: any) => Promise<any> };
+};
+
+/** 实扣 / 实退的结果 */
+export interface BillMoveResult {
+  /** 实扣 / 实退（≥ 0，两位小数） */
+  amount: Prisma.Decimal;
+  /** 动完以后的余额（可以是负数：管理员冲掉充值时不够冲，第 2 轮） */
+  balanceAfter: Prisma.Decimal;
+  /** 写的那笔流水；一分没动是 null */
+  ledgerId: string | null;
+}
+
+/** 要退的比这次扣款还能退的多。调用方据此回 409 over_refund，不动钱 */
+export class OverRefundError extends Error {
+  constructor(
+    public readonly requested: Prisma.Decimal,
+    public readonly refundable: Prisma.Decimal,
+  ) {
+    super(`这次扣款还能退 ¥${refundable.toFixed(2)}，要退 ¥${requested.toFixed(2)}，超了`);
+    this.name = "OverRefundError";
+  }
+}
+
+/** 锁住这个客户的钱包行并读余额（同一句）。行不存在给 null（这时什么也没锁住） */
+async function lockAndReadWallet(tx: BillTx, clientId: string): Promise<Prisma.Decimal | null> {
+  // 列名 "clientId" 是驼峰的（没写 @map），company_id / updated_at 是下划线的 —— 见 lockAccount 的注释（CLAUDE.md 第 26 条）
+  const rows: Array<{ balance: string }> = await tx.$queryRaw`
+    SELECT balance::text AS balance FROM client_wallet_accounts
+    WHERE "clientId" = ${clientId} AND currency = ${CONSOLIDATION_CURRENCY}
+    FOR UPDATE
+  `;
+  return rows[0] ? new Decimal(rows[0].balance) : null;
+}
+
+/** 两位小数、大于 0 的金额，不是就抛（调用方先校验过格式，这里是第二道） */
+function positiveMoney(value: Prisma.Decimal | string, label: string): Prisma.Decimal {
+  const d = new Decimal(value);
+  if (!d.isFinite() || !d.gt(0) || d.decimalPlaces() > 2) throw new Error(`${label}必须是大于 0、最多两位小数的金额`);
+  return d;
+}
+
+/**
+ * 财务系统2 账单扣款：扣完为止。
+ * 实扣 = min(上限, max(余额, 0))；实扣大于 0 才改余额、写一笔 bill_charge 流水（金额为负，ref = finance2_charge + 请求编号，ref_no = 账单号）。
+ * 余额 0 或负数、钱包行不存在：扣 0，不写流水，不建钱包行。
+ */
+export async function chargeBillUpTo(
+  tx: BillTx,
+  args: { companyId: string; clientId: string; maxAmount: Prisma.Decimal | string; requestId: string; billNo: string },
+): Promise<BillMoveResult> {
+  const cap = positiveMoney(args.maxAmount, "扣款上限");
+  const have = await lockAndReadWallet(tx, args.clientId);
+  // 锁不到行 = 从来没有过余额：这一刻就是 0
+  if (have === null) return { amount: new Decimal(0), balanceAfter: new Decimal(0), ledgerId: null };
+  const charged = Decimal.min(cap, Decimal.max(have, 0));
+  if (!charged.gt(0)) return { amount: new Decimal(0), balanceAfter: have, ledgerId: null };
+
+  const after = have.minus(charged);
+  await tx.clientWalletAccount.update({
+    where: { clientId_currency: { clientId: args.clientId, currency: CONSOLIDATION_CURRENCY } },
+    data: { balance: after },
+  });
+  const ledgerId = await writeLedger(
+    tx,
+    {
+      companyId: args.companyId,
+      clientId: args.clientId,
+      refType: FINANCE2_CHARGE_REF_TYPE,
+      refId: args.requestId,
+      refNo: args.billNo,
+      remark: null,
+      operatorId: null,
+      operatorName: null,
+    },
+    "bill_charge",
+    charged.neg(),
+    after,
+  );
+  return { amount: charged, balanceAfter: after, ledgerId };
+}
+
+/**
+ * 财务系统2 退回某一次扣款（全部或一部分）。
+ * 锁住钱包后按流水重算「这次扣款还能退多少」= -(这次扣款编号下 bill_charge + bill_refund 的合计)，
+ * 要退的超了抛 OverRefundError（一分不动）；没超就加回余额、写一笔 bill_refund 流水（金额为正，挂在原来那次扣款的编号上）。
+ * 同一次扣款的几次退回都锁同一个钱包行，所以是排着队算的，加起来不会超过扣的。
+ */
+export async function refundBillCharge(
+  tx: BillTx,
+  args: { companyId: string; clientId: string; amount: Prisma.Decimal | string; chargeRequestId: string; billNo: string },
+): Promise<BillMoveResult> {
+  const amount = positiveMoney(args.amount, "退回金额");
+  // 先保证钱包行在（正常情况下扣过钱一定在；这里兜住行不在的情况），再锁。
+  // ON CONFLICT DO NOTHING：两个请求同时建，后一个等前一个提交后什么都不做，不会撞主键报错
+  await tx.$executeRaw`
+    INSERT INTO client_wallet_accounts ("clientId", company_id, currency, balance, updated_at)
+    VALUES (${args.clientId}, ${args.companyId}, ${CONSOLIDATION_CURRENCY}, 0, CURRENT_TIMESTAMP)
+    ON CONFLICT DO NOTHING
+  `;
+  const have = await lockAndReadWallet(tx, args.clientId);
+  if (have === null) throw new Error("钱包行刚建过却锁不到");
+
+  // 锁里重算（CLAUDE.md 第 28 条：不用锁之前的快照）
+  const agg = await tx.consolidationBalanceLedger.aggregate({
+    where: { companyId: args.companyId, clientId: args.clientId, refType: FINANCE2_CHARGE_REF_TYPE, refId: args.chargeRequestId },
+    _sum: { amount: true },
+  });
+  const net = new Decimal(agg?._sum?.amount ?? 0);
+  const refundable = Decimal.max(net.neg(), 0);
+  if (amount.gt(refundable)) throw new OverRefundError(amount, refundable);
+
+  const after = have.plus(amount);
+  await tx.clientWalletAccount.update({
+    where: { clientId_currency: { clientId: args.clientId, currency: CONSOLIDATION_CURRENCY } },
+    data: { balance: after },
+  });
+  const ledgerId = await writeLedger(
+    tx,
+    {
+      companyId: args.companyId,
+      clientId: args.clientId,
+      refType: FINANCE2_CHARGE_REF_TYPE,
+      refId: args.chargeRequestId,
+      refNo: args.billNo,
+      remark: null,
+      operatorId: null,
+      operatorName: null,
+    },
+    "bill_refund",
+    amount,
+    after,
+  );
+  return { amount, balanceAfter: after, ledgerId };
 }

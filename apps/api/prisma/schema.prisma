@@ -59,6 +59,8 @@ model User {
   csConversations              CsConversation[]
   consolidationTasks           ConsolidationTask[]
   WhrConsolidationPlanCustomer WhrConsolidationPlanCustomer[]
+  /// 2026-11-27 财务系统2 来扣 / 退这个客户余额的请求登记
+  finance2BalanceRequests      Finance2BalanceRequest[]       @relation("Finance2BalanceRequestClient")
 
   @@index([companyId])
   @@index([role])
@@ -393,12 +395,15 @@ model ConsolidationBalanceLedger {
   companyId    String   @map("company_id")
   clientId     String   @map("client_id")
   /// recharge=充值到账 | pay=集货付款 | refund=管理员撤销退款
+  /// 2026-11-27 起（财务系统2 客户余额，ADR 0191）：bill_charge=运费账单扣款 | bill_refund=账单作废退回；
+  /// 第 2 轮管理员加减要用的 topup=管理员充值 | topup_reversal=冲掉充值 | deduction=管理员减金额（类型先留好，这一轮没人写）
   type         String
   /// 正数进账、负数出账，单位元
   amount       Decimal  @db.Decimal(14, 2)
   /// 这一笔之后的余额，客户对账时不用自己累加
   balanceAfter Decimal  @map("balance_after") @db.Decimal(14, 2)
   /// 关联单据：whr=仓库版预报单 | normal=普通版任务 | recharge=充值单
+  /// | finance2_charge=财务系统2 来扣的那一次（ref_id = 扣款的请求编号，退回也挂这个编号；ref_no = 账单号）
   refType      String?  @map("ref_type")
   refId        String?  @map("ref_id")
   /// 给客户看的单号（预报单号 / 计划号等）
@@ -408,11 +413,16 @@ model ConsolidationBalanceLedger {
   operatorId   String?  @map("operator_id")
   operatorName String?  @map("operator_name")
   createdAt    DateTime @default(now()) @map("created_at")
+  /// 2026-11-27 写这一笔的数据库事务号（库自己填 pg_current_xact_id()，代码不用管、也别去填）。
+  /// 给财务系统2 拉流水用（/integrations/finance2-balance/v1/ledger）：只给事务号比「还没结束的最老那个事务」小的，
+  /// 后写先提交的那笔不会被游标跳过（finance2-balance/ledger.ts）。上线前的老流水是 0
+  txId         BigInt   @default(dbgenerated("((pg_current_xact_id())::text)::bigint")) @map("tx_id")
 
   client User @relation(fields: [clientId], references: [id])
 
   @@index([companyId, clientId, createdAt])
   @@index([refType, refId])
+  @@index([companyId, txId, createdAt, id])
   @@map("consolidation_balance_ledger")
 }
 
@@ -1782,4 +1792,47 @@ model Finance2HoldLog {
   @@index([operatorId, createdAt])
   @@index([customerMark, createdAt])
   @@map("finance2_hold_logs")
+}
+
+// ════════════════════════════════════════════════════════════════════════
+// 财务系统2 客户余额（2026-11-27，ADR 0191；约定：财务系统2 docs/物流系统接口约定.md 第 12 节）
+// 客户的余额只有一本账，就是集货余额那一本（client_wallet_accounts + consolidation_balance_ledger）。
+// 财务系统2 的账单发给客户时来扣（扣完为止）、作废时来退，都带一个请求编号；这张表按编号记下第一次的结果，
+// 同号同内容再来原样回、不再动钱；同号不同内容 409。钱怎么动在 wallet/consolidation-balance.ts。
+// ════════════════════════════════════════════════════════════════════════
+
+/// 一个请求编号一行。跟扣钱 / 退钱在同一个事务里写进来（先拿这个编号的排队锁，主键唯一兜底），所以有行 = 钱已经按 result_amount 动过了
+model Finance2BalanceRequest {
+  /// 财务系统2 生成的请求编号（全局不重复，字母数字 - _，最长 64）
+  requestId       String   @id @map("request_id")
+  /// charge=扣款 | refund=退回
+  kind            String
+  /// 请求内容的指纹（sha256 十六进制）：同号再来时比它，不一样就 409 request_conflict
+  fingerprint     String
+  companyId       String   @map("company_id")
+  /// 客户（唛头 = users.id）。退回记的是原来那次扣款的客户
+  clientId        String   @map("client_id")
+  /// 账单号。退回记的是原来那次扣款的账单号
+  billNo          String   @map("bill_no")
+  /// 扣款才有：bulk=散货账单 | fcl=整柜账单
+  billKind        String?  @map("bill_kind")
+  /// 扣款：最多扣多少（maxAmount）；退回：要退多少（amount）。都大于 0
+  amount          Decimal  @db.Decimal(14, 2)
+  /// 退回才有：退的是哪一次扣款（那次扣款的请求编号）
+  chargeRequestId String?  @map("charge_request_id")
+  /// 退回才有：billVoided | receiptVoided | overCharged
+  reason          String?
+  /// 实扣 / 实退（扣款可以是 0：余额 0 或负数时一分不扣，编号照记）
+  resultAmount    Decimal  @map("result_amount") @db.Decimal(14, 2)
+  /// 扣完 / 退完那一刻的余额（重复请求原样回这个数）
+  balanceAfter    Decimal  @map("balance_after") @db.Decimal(14, 2)
+  /// 这一次写的那笔流水（consolidation_balance_ledger.id）；一分没扣是空
+  ledgerId        String?  @map("ledger_id")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  client User @relation("Finance2BalanceRequestClient", fields: [clientId], references: [id])
+
+  @@index([chargeRequestId])
+  @@index([companyId, clientId, createdAt])
+  @@map("finance2_balance_requests")
 }

@@ -76,6 +76,8 @@ export const USER_REFERENCE_COLUMNS: ReadonlyArray<readonly [table: string, colu
   // 2026-11-19 财务系统2 扣货名单：员工被拦、点「重新核对」的记录
   ["finance2_hold_logs", "operator_id"],
   ["finance2_hold_clears", "operator_id"],
+  // 2026-11-27 财务系统2 客户余额：来扣 / 退这个客户余额的请求登记（扣的是谁的钱）
+  ["finance2_balance_requests", "client_id"],
 ];
 
 /** 大段文字 / JSON 里出现过 "号"（带双引号，跟 JSON.stringify 一样）就算用过 */

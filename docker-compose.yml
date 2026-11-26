@@ -77,6 +77,10 @@ services:
       FINANCE2_COMPANY_ID: ${FINANCE2_COMPANY_ID:-}
       FINANCE2_API_KEY_SHA256: ${FINANCE2_API_KEY_SHA256:-}
       FINANCE2_API_KEY_SHA256_PREV: ${FINANCE2_API_KEY_SHA256_PREV:-}
+      # 2026-11-27 财务系统2 客户余额（modules/finance2-balance/config.ts）。同上：不在这里透传，改 .env 进不了容器。开关只认 true，默认关
+      FINANCE2_BALANCE_ENABLED: ${FINANCE2_BALANCE_ENABLED:-}
+      FINANCE2_BALANCE_KEY_SHA256: ${FINANCE2_BALANCE_KEY_SHA256:-}
+      FINANCE2_BALANCE_KEY_SHA256_PREV: ${FINANCE2_BALANCE_KEY_SHA256_PREV:-}
       # 2026-11-19 财务系统2 扣货名单（modules/finance2-holds/config.ts）。同上：不在这里透传，改 .env 进不了容器。
       # MODE 不填：地址 / 密钥配了就按 observe（只记不拦），都没配是关；off 关、observe 只记不拦、enforce 真拦（老板 2026-11-19 定）
       FINANCE2_HOLDS_MODE: ${FINANCE2_HOLDS_MODE:-}

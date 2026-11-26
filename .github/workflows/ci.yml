@@ -397,6 +397,11 @@ jobs:
       # 财务多给的字段不往下传、金额照字符串显示、只用登录代理的编号、密钥不进前端、页面只能看
       - name: Test finance2 agent wallet (source)
         run: npm run test:finance2-wallet-source
+      # 财务系统2 客户余额（2026-11-27，ADR 0191）不连库那一半：开关 / 单独一把钥匙、四条精确路径跳过登录解析、
+      # 金额只认两位小数字符串、同号内容指纹、流水 11 个字段和操作人规则、游标；钱包先锁后读、扣款不建钱包行、
+      # 退回先建行再锁再算能退多少、关联类型不跟集货共用、推送只推那一个客户、客户页每种流水都有中文名
+      - name: Test finance2 customer balance (source)
+        run: npm run test:finance2-balance-source
       # 拆派仓只读接口到点就走（2026-10-14）：Node 22 的 fetch 带 redirect:"error" 时，读响应体中途碰上垃圾回收 abort() 就失灵、
       # 一挂 300 秒（10-12 这里 V9 等了 300333ms）。不连库：假服务器 + 强制回收内存，看是不是按时断开、连接真断了。
       # ⚠️ 只有 Node 22 照得出老毛病（本机 Node 24 照不出），所以这项必须在 CI 跑
@@ -623,6 +628,11 @@ jobs:
       # 客户员工管理员 403、没配 / 404 / 500 / 超时 / 格式不对都回好懂的状态、翻页游标原样转、多给的字段不往下传
       - name: Test finance2 agent wallet (real DB)
         run: bash .github/scripts/run-db-test.sh test:finance2-wallet-db
+      # 财务系统2 客户余额（2026-11-27，ADR 0191，第一组会动钱的对接接口）：自己临时建库、迁移连跑两遍（零差异、体检不报、老流水 tx_id=0）、
+      # 真 HTTP —— 扣满 / 扣一部分 / 余额 0 或负数扣 0、同号重复只扣一次、8 个一模一样的请求真并发只扣一次、同号不同内容 409、
+      # 扣款和客户付集货拼柜真并发余额流水都对、退回超额 409、两个编号同时退加起来超了只成一个、流水翻页不漏（后写先提交的那笔不被跳过）、推送
+      - name: Test finance2 customer balance (real DB)
+        run: bash .github/scripts/run-db-test.sh test:finance2-balance-db
       # 存原样那份迁移：上线前的库上连跑两遍、跟 schema 零差异、体检清单对上、不回填老数据、删到货通知跟着删 / 删运单不动
       - name: Test arrival notice snapshots migration file (real DB)
         run: bash .github/scripts/run-db-test.sh test:migration-arrival-notice-snapshots-db

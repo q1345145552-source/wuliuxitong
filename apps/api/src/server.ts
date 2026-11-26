@@ -10,6 +10,7 @@ import { agentGateRejection } from "./modules/core/agent-scope";
 import { INTEGRATION_PATHS } from "./modules/chaipai/paths";
 import { FINANCE_LINK_PATHS } from "./modules/finance-link/paths";
 import { FINANCE2_WAYBILL_ITEM_ROUTE, finance2WaybillNoFromPath, isFinance2Path } from "./modules/finance2/paths";
+import { isFinance2BalancePath } from "./modules/finance2-balance/paths";
 import { openEventStream, REALTIME_STREAM_PATH } from "./realtime-stream";
 import { publishAfterWrite } from "./modules/realtime/publish";
 import type { UserRole } from "../../../packages/shared-types/role";
@@ -67,6 +68,8 @@ async function parseAuth(headers: IncomingMessage["headers"], path?: string): Pr
   if (path && FINANCE_LINK_PATHS.has(path)) return undefined;
   // 财务系统2 那几条（2026-11-19，精确路径 + 「取一票」那一种）同理：Bearer 是专用密钥，接口自己核对
   if (path && isFinance2Path(path)) return undefined;
+  // 财务系统2 客户余额那四条（2026-11-27，精确路径）同理：Bearer 是另一把专用密钥，接口自己核对
+  if (path && isFinance2BalancePath(path)) return undefined;
   const authHeader = typeof headers.authorization === "string" ? headers.authorization.trim() : "";
   const match = authHeader.match(/^Bearer\s+(.+)$/i);
   if (!match?.[1]) {

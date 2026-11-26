@@ -7,7 +7,7 @@
 --   B 多余  → 数据库有、设计图没有。一旦跑 prisma db push，这些字段连同里面的数据会被删掉
 --
 -- 什么都不输出 = 完全一致，没问题。
--- 生成自 schema.prisma，共 71 张表 / 852 个字段（2026-11-20 合并给财务系统2 的只读接口：加两张表 finance2_waybill_changes 6 个字段、finance2_customer_agent_changes 6 个字段，加之前共 69 张表 / 840 个字段；2026-11-19 财务系统2 扣货上报加 1 列：finance2_hold_state.unavailable_report；之前 2026-11-19 财务系统2 扣货名单加五张表 finance2_hold_state 8、finance2_holds 2、finance2_hold_releases 3、finance2_hold_clears 6、finance2_hold_logs 11 个字段，加之前共 64 张表 / 809 个字段；2026-11-08 代理申请加一张表 agent_applications 19 个字段，加之前共 63 张表 / 790 个字段；2026-11-04 对接海外仓财务系统加两张表 finance_link_requests 9 个字段、finance_link_authorizations 12 个字段，加之前共 61 张表 / 769 个字段；2026-10-20 users 加 remark 1 个字段；2026-10-19 到货通知转正式时存原样加一张表 arrival_notice_snapshots 8 个字段；2026-10-12 对接拆派仓加三张表 chaipai_callback_events 11 个字段、chaipai_shipment_states 16 个字段、chaipai_manifest_versions 5 个字段；2026-10-11 特别货加 8 列：柜里客户单价、付款快照两列、代理价、客户长期价、返现明细三列；2026-10-09 到货通知多款产品加一张表 arrival_notice_products 14 个字段；2026-10-08 到货通知第四轮审查加 arrival_notices.cargo_type、arrival_notice_images.thumb_path 两列；2026-10-06 到货通知加两张表 arrival_notices 23 个字段、arrival_notice_images 9 个字段；2026-10-02 客服对话加撤回 / 关联单号 5 列 + 系统通知订阅一张表 10 个字段；2026-09-29 加 number_sequences 一张表 3 个字段；2026-09-28 加客服对话两张表 + 询价报价 8 列后是 52 张 / 653 个）。
+-- 生成自 schema.prisma，共 72 张表 / 867 个字段（2026-11-27 财务系统2 客户余额：consolidation_balance_ledger 加 1 列 tx_id、加一张表 finance2_balance_requests 14 个字段，加之前共 71 张表 / 852 个字段；2026-11-20 合并给财务系统2 的只读接口：加两张表 finance2_waybill_changes 6 个字段、finance2_customer_agent_changes 6 个字段，加之前共 69 张表 / 840 个字段；2026-11-19 财务系统2 扣货上报加 1 列：finance2_hold_state.unavailable_report；之前 2026-11-19 财务系统2 扣货名单加五张表 finance2_hold_state 8、finance2_holds 2、finance2_hold_releases 3、finance2_hold_clears 6、finance2_hold_logs 11 个字段，加之前共 64 张表 / 809 个字段；2026-11-08 代理申请加一张表 agent_applications 19 个字段，加之前共 63 张表 / 790 个字段；2026-11-04 对接海外仓财务系统加两张表 finance_link_requests 9 个字段、finance_link_authorizations 12 个字段，加之前共 61 张表 / 769 个字段；2026-10-20 users 加 remark 1 个字段；2026-10-19 到货通知转正式时存原样加一张表 arrival_notice_snapshots 8 个字段；2026-10-12 对接拆派仓加三张表 chaipai_callback_events 11 个字段、chaipai_shipment_states 16 个字段、chaipai_manifest_versions 5 个字段；2026-10-11 特别货加 8 列：柜里客户单价、付款快照两列、代理价、客户长期价、返现明细三列；2026-10-09 到货通知多款产品加一张表 arrival_notice_products 14 个字段；2026-10-08 到货通知第四轮审查加 arrival_notices.cargo_type、arrival_notice_images.thumb_path 两列；2026-10-06 到货通知加两张表 arrival_notices 23 个字段、arrival_notice_images 9 个字段；2026-10-02 客服对话加撤回 / 关联单号 5 列 + 系统通知订阅一张表 10 个字段；2026-09-29 加 number_sequences 一张表 3 个字段；2026-09-28 加客服对话两张表 + 询价报价 8 列后是 52 张 / 653 个）。
 --
 -- ⚠️ 这份清单是手抄的，schema.prisma 加了字段必须回来同步一行，否则部署时会报
 --    「B 多余」的假警告（2026-08-05 加 containers.transport_mode 时就漏了一次）。
@@ -771,6 +771,7 @@ WITH expected(table_name, column_name) AS (VALUES
   ('consolidation_balance_ledger','operator_id'),
   ('consolidation_balance_ledger','operator_name'),
   ('consolidation_balance_ledger','created_at'),
+  ('consolidation_balance_ledger','tx_id'),
   -- 代理账号（2026-09-16，迁移 20260916_agent_accounts）
   ('users','agent_id'),
   -- 员工备注（2026-10-20，迁移 20261020_user_remark）
@@ -867,7 +868,21 @@ WITH expected(table_name, column_name) AS (VALUES
   ('container_push_entries','to_status'),
   ('container_push_entries','status_log_id'),
   ('container_push_entries','kind'),
-  ('container_push_entries','created_at')
+  ('container_push_entries','created_at'),
+  ('finance2_balance_requests','request_id'),
+  ('finance2_balance_requests','kind'),
+  ('finance2_balance_requests','fingerprint'),
+  ('finance2_balance_requests','company_id'),
+  ('finance2_balance_requests','client_id'),
+  ('finance2_balance_requests','bill_no'),
+  ('finance2_balance_requests','bill_kind'),
+  ('finance2_balance_requests','amount'),
+  ('finance2_balance_requests','charge_request_id'),
+  ('finance2_balance_requests','reason'),
+  ('finance2_balance_requests','result_amount'),
+  ('finance2_balance_requests','balance_after'),
+  ('finance2_balance_requests','ledger_id'),
+  ('finance2_balance_requests','created_at')
 ),
 actual AS (
   SELECT c.table_name::text AS table_name, c.column_name::text AS column_name

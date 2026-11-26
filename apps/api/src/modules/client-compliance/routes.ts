@@ -175,8 +175,14 @@ export function registerClientComplianceRoutes(app: MinimalHttpApp): void {
     /* 2026-10-14 全系统审查：退款流水的备注里拼着员工填的「作废原因」、管理员填的「撤销付款原因」，
        写了柜号客户就原样看到。跟仓库版集货详情一样抹（看的人自己的运单号不抹）。 */
     const maskNos = rows.some((r) => r.remark) ? await companyContainerNosForMasking(auth.companyId, [auth.userId]) : [];
-    const typeZh: Record<string, string> = { recharge: "充值到账", pay: "集货付款", refund: "撤销退款" };
-    const refZh: Record<string, string> = { whr: "仓库版集货", normal: "普通版集货", recharge: "充值单" };
+    // 2026-11-27 财务系统2 客户余额（ADR 0191）：账单扣款 / 作废退回先补上；管理员充值 / 冲掉 / 减金额第 2 轮才有人写，名字先放好。
+    // 流水类型的全集在 wallet/consolidation-balance.ts 的 LedgerType，加类型要一起加（别让英文类型名漏到客户页面上）
+    const typeZh: Record<string, string> = {
+      recharge: "充值到账", pay: "集货付款", refund: "撤销退款",
+      bill_charge: "运费账单扣款", bill_refund: "账单作废退回",
+      topup: "管理员充值", topup_reversal: "冲掉充值", deduction: "管理员减金额",
+    };
+    const refZh: Record<string, string> = { whr: "仓库版集货", normal: "普通版集货", recharge: "充值单", finance2_charge: "运费账单" };
     ok(res, {
       items: rows.map((r) => ({
         id: r.id,

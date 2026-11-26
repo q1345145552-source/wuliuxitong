@@ -1088,3 +1088,48 @@
 - 有意的取舍：11-24 之前就开着的页面也不带 `cargoPerRow`，它要是特意把混着的几款 / 几行改成同一种，也会被拦、提示刷新（刷新后照常能改）；各发各的不受影响。后端分不出这种页面和 11-24～11-26 那版，放宽就等于把那版的覆盖路重新打开。
 - 三个接口的标记是同一个名字、同一个意思：`cargoPerRow: true` = 「这个页面是逐行选货型的」。直接调接口想把混着的特意统一成一种，三个接口都要带它。
 - 员工批量导入：11-24～11-26 下载的模板「填写说明」里写着「空着的跟着填了的那行」，现在空着 = 普货。页面读表格时认出这份旧模板（随便哪张工作表里有这句话，不看表名）就整份不读、提示重新下载模板；这是前端的事，接口没变。认不出来的：把说明那张表整张删了、把那句话删了或改写了、或另存成只有明细的文件。
+
+## 29. 财务系统2 客户余额（2026-11-27，财务系统2 ADR 0191；这一组会动客户的钱）
+
+约定原文在财务系统2 项目 `docs/物流系统接口约定.md` 第 12 节（格式、出错见同一份的 1.1～1.3）。老板 11-27 定：客户的余额只有一本账，就是集货余额那一本（`client_wallet_accounts` + `consolidation_balance_ledger`）。财务系统2 的账单发给客户时来扣（扣完为止），作废时来退；另外来读余额和流水。代码在 `apps/api/src/modules/finance2-balance/`（跟第 27 节那组只读接口分开放），动钱的两个函数在 `wallet/consolidation-balance.ts`（`chargeBillUpTo` / `refundBillCharge`）。集货付款、撤销、退款、充值审核一行没改。
+
+**配置**：`FINANCE2_BALANCE_ENABLED`（只认 `true`，默认关）、`FINANCE2_COMPANY_ID`（跟第 27 节同一个）、`FINANCE2_BALANCE_KEY_SHA256`（密钥的 sha256 指纹，**单独一把**，跟第 27 节那把一样就按没配齐）、`FINANCE2_BALANCE_KEY_SHA256_PREV`（换密钥期间上一把）。关着 / 没配齐：四个接口一律 `503 {serverTime, error:"disabled", message}`（先看开关再看密钥）。
+
+**认证**：`Authorization: Bearer <密钥>`，只比指纹、定长比较、新旧两把都认；不对 / 没带 `401 {error:"unauthorized"}`。这四条精确路径不跑登录解析（`finance2-balance/paths.ts`），不按 `/integrations/` 前缀整段放。
+
+**外壳**：不包 `{code,data}`，照约定是裸 JSON、每个响应带 `serverTime`（带 Z）；出错 `{serverTime, error, message}`（约定写的是 `{error, serverTime}`，多给一个中文 `message`，跟第 27 节一样）。金额一律两位小数的字符串（`"530.00"`、`"-120.00"`），时间带 Z，能空的给 `null`。没接住的异常走 server.ts 的 500（`{code:"INTERNAL_ERROR",…}`），财务按 5xx 原样重发。
+
+**客户**：`customerMark` = `users.id`，必须是 `FINANCE2_COMPANY_ID` 这家的 `role=client`（封禁的也算）；别的当不认识。
+
+### 29.1 `GET /integrations/finance2-balance/v1/balances?marks=a,b,c`
+- `marks` 逗号分隔，最多 200 个；没带、空、有空的一段、某个唛头超过 128 个字 / 带控制字符 / 首尾空白 → `400 bad_request`。
+- 回 `{serverTime, items:[{customerMark, balance, updatedAt}]}`：按传进来的顺序、重复的只给一次；不认识的不出现；从没有过钱包行的 `balance:"0.00", updatedAt:null`；余额可以是负数。
+
+### 29.2 `POST /integrations/finance2-balance/v1/charges`（扣完为止）
+- 请求 `{requestId, customerMark, billNo, billKind:"bulk"|"fcl", maxAmount}`。`requestId` 1～64 位字母数字 `-` `_`；`billNo` 1～64 个字、无控制字符、无首尾空白；`maxAmount` 大于 0 的两位小数字符串（整数部分最多 12 位）。多带的字段不管。格式不对 `400 bad_request`。
+- 实扣 = min(`maxAmount`, max(余额, 0))。实扣大于 0：改余额、写一笔流水 `type=bill_charge`、金额为负、`ref_type=finance2_charge`、`ref_id=requestId`、`ref_no=billNo`、操作人空。余额 0 / 负数 / 从没有过钱包行：扣 0、不写流水、不建钱包行，编号照记。
+- 回 `{serverTime, requestId, customerMark, charged, balanceAfter, ledgerId, duplicate}`（一分没扣 `ledgerId:null`）。
+- 不认识的客户 `404 unknown_customer`（什么都不记）。
+
+### 29.3 `POST /integrations/finance2-balance/v1/refunds`
+- 请求 `{requestId, chargeRequestId, amount, reason:"billVoided"|"receiptVoided"|"overCharged"}`，格式同上。
+- `chargeRequestId` 必须是这家公司登记过的一次**扣款**，否则 `404 unknown_charge`。客户、账单号以那次扣款为准。
+- 锁住钱包后按流水重算「这次扣款还能退多少」= −（`ref_type=finance2_charge`、`ref_id=chargeRequestId` 的流水加总）；要退的超了 `409 over_refund`，一分不动、编号不记。没超：加回余额、写一笔 `type=bill_refund`、金额为正、挂在原来那次扣款的编号上、`ref_no` 是那张账单号。
+- 回 `{serverTime, requestId, chargeRequestId, refunded, balanceAfter, ledgerId, duplicate}`。
+
+### 29.4 同一个请求编号（两个写接口共用一套编号，表 `finance2_balance_requests`，主键 = 编号）
+- 同号同内容（内容 = 扣款的 客户 / 账单号 / 种类 / 上限，退回的 扣款编号 / 金额 / 原因）：不再动钱，原样回第一次的结果（`balanceAfter` 也是第一次那时候的），`duplicate:true`。
+- 同号不同内容（包括拿扣款的编号来退、拿退回的编号来扣）：`409 request_conflict`，不动钱。
+- 只有成功（200）的才记编号：回过 `400` / `404` / `409` 的编号没记，之后拿同一个编号发对的内容照常办。
+- 做法：事务第一句拿这个编号的排队锁（咨询锁 83092 + 编号哈希）→ 锁里查登记过没有 → 没有才动钱、并在同一个事务里把编号和结果写进去；主键唯一兜底（万一两个都走到写那一步，后写的整个回滚、再按第一条回）。锁序「编号 → 钱包」，跟集货「单据 → 钱包」同向。
+
+### 29.5 `GET /integrations/finance2-balance/v1/ledger?cursor=&limit=`
+- 全公司全部类型的流水（集货付款 / 撤销退款 / 充值到账也在），从旧到新；`limit` 默认 200、1～500，别的 `400`；不带 `cursor` 从头；`cursor` 乱写 `400`。
+- 回 `{serverTime, items, nextCursor, hasMore}`，`nextCursor` 一直给（这一页一条都没有就把来的那个原样给回去）。每条 11 个字段：`id, customerMark, type, amount, balanceAfter, refType, refId, refNo, remark, operatorName, createdAt`。`operatorName`：客户自己付的那笔给唛头（跟超管看记录同一条规则），系统自动的 / 财务来扣的 `null`，员工管理员照写名字。
+- **不漏的做法**：流水表加了一列 `tx_id`（写这一笔的数据库事务号，库自己填 `pg_current_xact_id()`，上线前的老流水是 0）。按（`tx_id`，`created_at`，`id`）排、游标就是上一页最后一条的这三样；每一页**只给 `tx_id` 小于「这一刻还没结束的最老那个事务的号」**（`pg_snapshot_xmin(pg_current_snapshot())`）的流水。比它小的事务都已经结束、以后不会再冒出更小的号，所以「先开始写、后提交」的那笔一定排在游标后面，下一轮拉得到。代价：有写库事务一直不结束时，之后的流水先压着不给（`hasMore:false`），结束了再一起给（晚到、不漏）。「从旧到新」指的是写入事务的先后。
+
+### 29.6 推送
+- 扣 / 退真动了钱（不是重复请求、实扣大于 0）：给这一个客户推「wallet」那一类（客户开着的余额页自己刷新）；员工 / 管理员照旧收全公司的；别的客户、代理收不到。对接请求没有登录身份，server.ts 的自动推送不推，这里自己推。
+
+### 29.7 客户余额页（`GET /client/wallet/ledger`）跟着补的
+- `typeLabel` 新加：`bill_charge`「运费账单扣款」、`bill_refund`「账单作废退回」，第 2 轮要用的 `topup`「管理员充值」、`topup_reversal`「冲掉充值」、`deduction`「管理员减金额」；`source` 新加 `finance2_charge`「运费账单」。返回结构没变，前端没改。

@@ -464,6 +464,8 @@ check("11) 超管看记录时，客户自己操作的那几步「操作人」显
     ["apps/api/src/modules/containers/routes.ts", /operatorName: operatorNameForDisplay\(log\),/],
     // 超管「删过的轨迹」：被删那条原样发回，客户那步也要换（第 3 轮 Opus）
     ["apps/api/src/modules/shipments/routes.ts", /log = \{ \.\.\.log, operatorName: operatorNameForDisplay\(log as /],
+    // 2026-11-27 给财务系统2 的余额流水（/integrations/finance2-balance/v1/ledger）：客户自己付的那笔也给唛头
+    ["apps/api/src/modules/finance2-balance/views.ts", /const shown = operatorNameForDisplay\(\{\s*operatorRole: r\.operator_id !== null && r\.operator_id === r\.client_id \? "client" : "staff",/],
   ];
   for (const [file, re] of uses) assert.match(stripComments(read(file)), re, `${file} 发操作人没走 operatorNameForDisplay`);
   // 除了上面这几处和两处「恢复被删的记录」原样搬回（不是显示），接口里不许再有人直接把 xx.operatorName 发出去

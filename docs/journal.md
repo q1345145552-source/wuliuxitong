@@ -1,5 +1,12 @@
 # 项目交接日志
 
+## 2026-11-27 财务系统2 客户余额 · 物流第 1 轮：账和对接接口（工作树分支 claude/caiwu2-balance，本机提交，没推、没上线、没碰线上库）
+- 来源：财务系统2 总窗口（老板 11-27 点头的 ADR 0191：客户的余额只有一本账 = 集货余额那一本；财务的账单发出时来扣、作废时来退）。约定在财务系统2 `docs/物流系统接口约定.md` 第 12 节。
+- 做法：钱包加 `chargeBillUpTo`（扣完为止，钱包行不在 = 扣 0 不建行）/ `refundBillCharge`（先保证行在再锁，锁里按流水算能退多少），金额用 Decimal；新流水类型 `bill_charge` / `bill_refund`（第 2 轮的 topup / topup_reversal / deduction 先留类型），新关联类型 `finance2_charge`（ref_id = 扣款请求编号）。新表 `finance2_balance_requests`（编号主键 + 内容指纹 + 结果），流水表加 `tx_id`（事务号，给拉流水防漏）。迁移 `20261127_finance2_balance`。
+- 新模块 `modules/finance2-balance/`：`/integrations/finance2-balance/v1/{balances, charges, refunds, ledger}`，开关 `FINANCE2_BALANCE_ENABLED`、单独一把钥匙 `FINANCE2_BALANCE_KEY_SHA256(_PREV)`。同号：编号排队锁（咨询锁 83092）+ 主键兜底。流水防漏：只给事务号小于「还没结束的最老事务」的。集货付款 / 撤销 / 退款 / 充值审核一行没改。
+- 测试：`test:finance2-balance-source` 8、`test:finance2-balance-db` 34（临时库、迁移两遍零差异、8 个同号真并发只扣一次、扣款和集货付款真并发、两个编号同时退超了只成一个、后写先提交的流水不被跳过）；变异 6 处全红（去掉编号锁只红退回那项，扣款靠主键兜底）。细节 `docs/sessions/2026-11-27-finance2-balance.md`，接口 `docs/api-contract.md` 第 29 节。
+- 检查：本机照 CI 逐步跑 build 组 86/86、test-db 组 42/42（Homebrew PG16 一次性空库，没用 Docker；本机 Node 24，CI 是 22 没复刻）；真起 main.ts 对四个接口冒烟（扣 / 同号再来 / 退 / 流水 / 钥匙不对 401 / 日志无密钥）。没做浏览器走查（这一轮没有页面改动，客户页流水中文名靠 P2 连库测试真调接口核的）。还没经过子代理审查。
+
 ## 2026-11-26 「一票只有一个货型」改回去（工作副本分支 claude/revert-one-cargo-type；老板「等复审完再上」，上线记录见上一条 / 提交后补）
 - 老板看完修改记录说「1这个一票只有一个货型的改回去吧」（1 = 11-24 上线的 8ee373f）。排序和编辑框格子名字（66dbb2f）不动。
 - 做法：`git revert --no-commit 8ee373f`，文档保留。除 docs/ 外先回到 11-23 那版（3bb003a）逐字一样：每条产品行各选各的货型、整票记最严。不动数据、不改表结构、没有迁移。
