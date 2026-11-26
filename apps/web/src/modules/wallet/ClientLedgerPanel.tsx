@@ -8,6 +8,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { fetchAdminAdjustmentProof, fetchStaffWalletLedger, type StaffWalletLedgerItem } from "../../services/business-api";
 import { useLiveRefresh } from "../realtime/useRealtime";
+import { useNarrowBox } from "./useNarrowBox";
 
 const PAGE_SIZE = 50;
 
@@ -41,6 +42,8 @@ export default function ClientLedgerPanel({
   const [error, setError] = useState("");
   const [proof, setProof] = useState<{ id: string; src: string } | null>(null);
   const [proofError, setProofError] = useState("");
+  // 窄（手机、平板带侧边栏）就一条一块，「冲掉」不用横着滚就点得到（2026-11-27）
+  const { ref: boxRef, narrow } = useNarrowBox<HTMLDivElement>(860);
   // 只认最后一次发出去的（换客户 / 翻页很快时，晚到的旧结果不许盖新的）
   const seq = useRef(0);
   const onBalanceRef = useRef(onBalance);
@@ -88,8 +91,27 @@ export default function ClientLedgerPanel({
     }
   };
 
+  /** 「冲掉」「看水单」两个按钮（表格和一条一块共用） */
+  const actions = (r: StaffWalletLedgerItem) => (
+    <>
+      {r.adjustment?.canReverse && onReverse ? (
+        <button type="button" style={{ ...btn, color: "var(--c-red-2)", borderColor: "#fca5a5" }} onClick={() => onReverse(r)}>冲掉</button>
+      ) : null}
+      {r.adjustment?.hasProof ? (
+        <button type="button" style={{ ...btn, marginLeft: 6 }} onClick={() => void showProof(r.adjustment!.id)}>看水单</button>
+      ) : null}
+    </>
+  );
+  const reversedNote = (r: StaffWalletLedgerItem) => r.adjustment?.reversed ? (
+    <div style={{ marginTop: 4, fontSize: 12, color: "var(--c-red-deep)" }}>
+      已冲掉：{beijingTime(r.adjustment.reversed.at)}
+      {r.adjustment.reversed.byName ? ` · ${r.adjustment.reversed.byName}` : ""}
+      {` · 原因：${r.adjustment.reversed.reason}`}
+    </div>
+  ) : null;
+
   return (
-    <div>
+    <div ref={boxRef}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
         <span style={{ fontSize: 12, color: "var(--t-strong)" }}>共 {total} 条 · 第 {page}/{totalPages} 页</span>
         <button type="button" style={btn} disabled={loading || page <= 1} onClick={() => void load(page - 1)}>上一页</button>
@@ -105,6 +127,29 @@ export default function ClientLedgerPanel({
       {proofError ? <p role="alert" style={{ color: "var(--c-red-deep)", fontSize: 13 }}>{proofError}</p> : null}
       {items.length === 0 && !loading && !error ? (
         <p style={{ color: "var(--t-muted)", fontSize: 13 }}>这个客户还没有流水</p>
+      ) : narrow ? (
+        <div style={{ display: "grid", gap: 8 }}>
+          {items.map((r) => (
+            <div key={r.id} style={{ border: "1px solid var(--l-soft)", borderRadius: 10, padding: "10px 12px", fontSize: 13 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+                <span style={{ fontWeight: 600 }}>{r.typeLabel}</span>
+                <span style={{ fontWeight: 700, whiteSpace: "nowrap", color: r.amount < 0 ? "var(--c-red-deep)" : undefined }}>{r.amount >= 0 ? "+" : "−"}¥{Math.abs(r.amount).toFixed(2)}</span>
+              </div>
+              <div style={{ color: "var(--t-muted)", fontSize: 12, marginTop: 2, display: "flex", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+                <span>{beijingTime(r.createdAt)} · {r.source || "—"}{r.refNo ? ` · ${r.refNo}` : ""}</span>
+                <span style={{ whiteSpace: "nowrap", color: r.balanceAfter < 0 ? "var(--c-red-deep)" : undefined }}>余额 {yuan(r.balanceAfter)}</span>
+              </div>
+              {r.remark ? <div style={{ marginTop: 4, color: "var(--t-body)", wordBreak: "break-all" }}>{r.remark}</div> : null}
+              {reversedNote(r)}
+              {isAdmin && (r.operatorName || r.adjustment?.canReverse || r.adjustment?.hasProof) ? (
+                <div style={{ marginTop: 6, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                  <span style={{ fontSize: 12, color: "var(--t-muted)" }}>{r.operatorName ? `操作人：${r.operatorName}` : ""}</span>
+                  <span>{actions(r)}</span>
+                </div>
+              ) : null}
+            </div>
+          ))}
+        </div>
       ) : (
         <div style={{ overflowX: "auto" }}>
           <table className="a3-table" style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
@@ -134,24 +179,11 @@ export default function ClientLedgerPanel({
                   <td style={{ ...td, textAlign: "right", whiteSpace: "nowrap", color: r.balanceAfter < 0 ? "var(--c-red-deep)" : "var(--t-muted)" }}>{yuan(r.balanceAfter)}</td>
                   <td style={{ ...td, color: "var(--t-muted)", maxWidth: 260 }}>
                     {r.remark || "—"}
-                    {r.adjustment?.reversed ? (
-                      <div style={{ marginTop: 4, fontSize: 12, color: "var(--c-red-deep)" }}>
-                        已冲掉：{beijingTime(r.adjustment.reversed.at)}
-                        {r.adjustment.reversed.byName ? ` · ${r.adjustment.reversed.byName}` : ""}
-                        {` · 原因：${r.adjustment.reversed.reason}`}
-                      </div>
-                    ) : null}
+                    {reversedNote(r)}
                   </td>
                   {isAdmin ? <td style={{ ...td, whiteSpace: "nowrap" }}>{r.operatorName || "—"}</td> : null}
                   {isAdmin ? (
-                    <td style={{ ...td, whiteSpace: "nowrap" }}>
-                      {r.adjustment?.canReverse && onReverse ? (
-                        <button type="button" style={{ ...btn, color: "var(--c-red-2)", borderColor: "#fca5a5" }} onClick={() => onReverse(r)}>冲掉</button>
-                      ) : null}
-                      {r.adjustment?.hasProof ? (
-                        <button type="button" style={{ ...btn, marginLeft: 6 }} onClick={() => void showProof(r.adjustment!.id)}>看水单</button>
-                      ) : null}
-                    </td>
+                    <td style={{ ...td, whiteSpace: "nowrap" }}>{actions(r)}</td>
                   ) : null}
                 </tr>
               ))}

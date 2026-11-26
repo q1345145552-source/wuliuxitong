@@ -168,6 +168,20 @@ async function main(): Promise<void> {
     assert.match(code("apps/web/src/app/admin/finance/page.tsx"), /个客户账上还有钱（负数余额已抵减）/);
   });
 
+  await check("W4c 窄屏：流水和客户列表按这一块的宽度换成「一条一块」，冲掉按钮在块里（不用横着滚）；弹窗手机上能滚、底下留出底栏；两个集货付款弹窗负数余额写「−¥」标红", () => {
+    const panel = code("apps/web/src/modules/wallet/ClientLedgerPanel.tsx");
+    assert.match(panel, /const \{ ref: boxRef, narrow \} = useNarrowBox<HTMLDivElement>\(860\);/);
+    assert.match(panel, /\) : narrow \? \(\s*<div style=\{\{ display: "grid", gap: 8 \}\}>[\s\S]*?<span>\{actions\(r\)\}<\/span>/, "一条一块里有「冲掉」");
+    assert.match(page, /const \{ ref: listBoxRef, narrow \} = useNarrowBox<HTMLElement>\(640\);/);
+    assert.match(page, /maxHeight: "calc\(100dvh - 84px - env\(safe-area-inset-bottom\)\)", overflowY: "auto"/);
+    assert.match(page, /padding: "12px 12px calc\(72px \+ env\(safe-area-inset-bottom\)\)"/);
+    const hook = read("apps/web/src/modules/wallet/useNarrowBox.ts");
+    assert.match(hook, /new ResizeObserver\(sync\)/);
+    for (const f of ["apps/web/src/app/client/consolidation/page.tsx", "apps/web/src/app/client/whr-consolidation/page.tsx"]) {
+      assert.match(code(f), /当前余额：<strong style=\{\{ color: balance !== null && balance < 0 \? "var\(--c-red-deep\)" : undefined \}\}>\{balance === null \? "正在读取…（一直读不出来请刷新页面）" : `\$\{balance < 0 \? "−" : ""\}¥\$\{Math\.abs\(balance\)\.toFixed\(2\)\}`\}<\/strong>/, f);
+    }
+  });
+
   await check("W5 「集货余额」给人看的字一个不剩（注释、标识符、老测试的历史数据不算）；菜单 / 标题改名；代理入口改名但照旧关着", () => {
     const left: string[] = [];
     for (const f of [...walk(path.join(ROOT, "apps/web/src"), [".ts", ".tsx"]), ...walk(path.join(ROOT, "apps/api/src"), [".ts"])]) {

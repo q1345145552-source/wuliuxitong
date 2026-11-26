@@ -1051,7 +1051,7 @@ export default function ClientWhrConsolidationPage() {
             <p style={{ fontSize: 12, color: "var(--t-muted)", marginTop: 8 }}>收货地址：{detail?.deliveryAddress || "未填写"}</p>
 
             <div style={{ marginTop: 12, padding: "10px 12px", border: "1px solid var(--l-soft)", borderRadius: 6 }}>
-              <div style={{ fontSize: 13 }}>当前余额：<strong>{balance === null ? "正在读取…（一直读不出来请刷新页面）" : `¥${balance.toFixed(2)}`}</strong></div>
+              <div style={{ fontSize: 13 }}>当前余额：<strong style={{ color: balance !== null && balance < 0 ? "var(--c-red-deep)" : undefined }}>{balance === null ? "正在读取…（一直读不出来请刷新页面）" : `${balance < 0 ? "−" : ""}¥${Math.abs(balance).toFixed(2)}`}</strong></div>
               {fee > 0 && balance !== null && (
                 enough
                   ? <div style={{ fontSize: 13, color: "var(--t-body)", marginTop: 4 }}>付款后剩余：¥{(balance - fee).toFixed(2)}</div>

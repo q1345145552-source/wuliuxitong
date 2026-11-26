@@ -955,7 +955,7 @@ function ClientConsolidationContent() {
                 <h3 style={{ marginTop: 0 }}>用余额付款</h3>
                 <p style={{ fontSize: 24, fontWeight: 700, color: "var(--c-navy)", margin: "12px 0" }}>¥{amount2(fee)}</p>
                 <div style={{ padding: "10px 12px", border: "1px solid var(--l-soft)", borderRadius: 6, marginBottom: 12 }}>
-                  <div style={{ fontSize: 13 }}>当前余额：<strong>{balance === null ? "正在读取…（一直读不出来请刷新页面）" : `¥${balance.toFixed(2)}`}</strong></div>
+                  <div style={{ fontSize: 13 }}>当前余额：<strong style={{ color: balance !== null && balance < 0 ? "var(--c-red-deep)" : undefined }}>{balance === null ? "正在读取…（一直读不出来请刷新页面）" : `${balance < 0 ? "−" : ""}¥${Math.abs(balance).toFixed(2)}`}</strong></div>
                   {fee > 0 && balance !== null && (
                     enough
                       ? <div style={{ fontSize: 13, color: "var(--t-body)", marginTop: 4 }}>付款后剩余：¥{(balance - fee).toFixed(2)}</div>

@@ -22,6 +22,7 @@ import {
 } from "../../../services/business-api";
 import { useLiveRefresh } from "../../../modules/realtime/useRealtime";
 import ClientLedgerPanel, { beijingTime, yuan } from "../../../modules/wallet/ClientLedgerPanel";
+import { useNarrowBox } from "../../../modules/wallet/useNarrowBox";
 
 /** 一次性提交编号：32 位十六进制。不用 crypto.randomUUID（不是 https 的局域网地址上没有它） */
 function newSubmitKey(): string {
@@ -53,6 +54,8 @@ export default function AdminClientBalancePage() {
   const [selectedBalance, setSelectedBalance] = useState<number | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
   const [toast, setToast] = useState("");
+  // 窄（手机、平板带侧边栏）：客户列表一条一块，不用横着滚（2026-11-27）
+  const { ref: listBoxRef, narrow } = useNarrowBox<HTMLElement>(640);
 
   const [dialog, setDialog] = useState<Dialog | null>(null);
   const [amount, setAmount] = useState("");
@@ -181,11 +184,11 @@ export default function AdminClientBalancePage() {
       {toast ? (
         <div role="status" style={{ ...box, background: "var(--c-green-bg, #ecfdf5)", display: "flex", justifyContent: "space-between", gap: 8 }}>
           <span>{toast}</span>
-          <button type="button" style={btn} onClick={() => setToast("")}>知道了</button>
+          <button type="button" style={{ ...btn, whiteSpace: "nowrap", flexShrink: 0, alignSelf: "flex-start" }} onClick={() => setToast("")}>知道了</button>
         </div>
       ) : null}
 
-      <section style={box}>
+      <section style={box} ref={listBoxRef}>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
           <input aria-label="按唛头搜客户" value={keyword} onChange={(e) => setKeyword(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void loadClients(); }}
             placeholder="按唛头搜…" style={{ ...input, width: 220 }} />
@@ -196,6 +199,22 @@ export default function AdminClientBalancePage() {
         {loaded ? (
           <>
             <div style={{ fontSize: 12, color: "var(--t-strong)", marginBottom: 6 }}>共 {clients.length} 个客户</div>
+            {narrow ? (
+              <div style={{ display: "grid", gap: 8, maxHeight: 420, overflowY: "auto" }}>
+                {clients.map((c) => (
+                  <div key={c.clientId} style={{ border: "1px solid var(--l-soft)", borderRadius: 10, padding: "10px 12px", background: c.clientId === selected ? "var(--c-blue-bg)" : undefined }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+                      <strong style={{ wordBreak: "break-all" }}>{c.clientId}</strong>
+                      <strong style={{ whiteSpace: "nowrap", color: c.balance < 0 ? "var(--c-red-deep)" : undefined }}>{yuan(c.balance)}</strong>
+                    </div>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap", marginTop: 6 }}>
+                      <span style={{ fontSize: 12, color: "var(--t-muted)" }}>{c.status === "active" ? "正常" : "已封禁"} · {c.updatedAt ? beijingTime(c.updatedAt) : "没有过余额"}</span>
+                      <button type="button" style={btn} onClick={() => { setSelected(c.clientId); setSelectedBalance(null); setToast(""); }}>看流水 / 调整</button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
             <div style={{ overflowX: "auto", maxHeight: 360, overflowY: "auto" }}>
               <table className="a3-table" style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
                 <thead>
@@ -222,6 +241,7 @@ export default function AdminClientBalancePage() {
                 </tbody>
               </table>
             </div>
+            )}
           </>
         ) : null}
       </section>
@@ -248,8 +268,9 @@ export default function AdminClientBalancePage() {
 
       {dialog && selected ? (
         <div role="dialog" aria-modal="true" aria-label={dialog.kind === "topup" ? "给客户加金额" : dialog.kind === "deduct" ? "减金额" : "冲掉这一笔"}
-          style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000, padding: 16 }}>
-          <div style={{ background: "var(--white)", borderRadius: 12, padding: 20, width: "100%", maxWidth: 440 }}>
+          style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000, padding: "12px 12px calc(72px + env(safe-area-inset-bottom))" }}>
+          {/* 手机上：弹窗最高占满屏、里面能滚；底下留出底部那排常用入口的高度（它压在页面最上层），按钮不会被挡住（2026-11-27） */}
+          <div style={{ background: "var(--white)", borderRadius: 12, padding: 16, width: "100%", maxWidth: 440, maxHeight: "calc(100dvh - 84px - env(safe-area-inset-bottom))", overflowY: "auto", boxSizing: "border-box" }}>
             {dialog.kind === "reverse" ? (
               <>
                 <h3 style={{ marginTop: 0 }}>冲掉这一笔管理员充值</h3>
@@ -290,7 +311,7 @@ export default function AdminClientBalancePage() {
                 <h3 style={{ marginTop: 0 }}>请再核对一遍</h3>
                 {/* 加错了系统拦不住（老板很在意）：唛头和金额大字再显示一遍 */}
                 <div style={{ fontSize: 15, lineHeight: 1.9, border: "1px solid var(--l-soft)", borderRadius: 10, padding: 12, background: "var(--s-alt)" }}>
-                  <div>唛头：<strong style={{ fontSize: 18 }}>{selected}</strong></div>
+                  <div style={{ wordBreak: "break-all" }}>唛头：<strong style={{ fontSize: 18 }}>{selected}</strong></div>
                   <div>{dialog.kind === "topup" ? "加" : "减"}：<strong style={{ fontSize: 22, color: dialog.kind === "topup" ? "var(--c-navy)" : "var(--c-red-deep)" }}>{parsedAmount === null ? "—" : yuan(parsedAmount)}</strong></div>
                   <div style={{ fontSize: 13 }}>
                     余额：{currentBalance === null ? "—" : yuan(currentBalance)} → {currentBalance === null || parsedAmount === null ? "—" : yuan(dialog.kind === "topup" ? currentBalance + parsedAmount : currentBalance - parsedAmount)}
@@ -302,7 +323,7 @@ export default function AdminClientBalancePage() {
               </>
             )}
             {dialogError ? <p role="alert" style={{ color: "var(--c-red-deep)", fontSize: 13 }}>{dialogError}</p> : null}
-            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 14 }}>
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 14, flexWrap: "wrap" }}>
               {dialog.kind !== "reverse" && dialog.step === "confirm" ? (
                 <button type="button" style={btn} disabled={submitting} onClick={backToFill}>返回修改</button>
               ) : (
