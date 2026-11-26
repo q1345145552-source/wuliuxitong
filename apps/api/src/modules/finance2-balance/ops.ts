@@ -56,8 +56,25 @@ export async function findStoredRequest(db: Tx | typeof prisma, requestId: strin
   return db.finance2BalanceRequest.findUnique({ where: { requestId }, select: STORED_SELECT });
 }
 
-/** 事务的时限：财务那边等 10 秒（约定 12.0），这里 8 秒内一定给回话（超了回 500，财务拿原样的请求再发，不会多扣） */
-const TX_OPTIONS = { maxWait: 3_000, timeout: 8_000 } as const;
+/**
+ * 时限（2026-11-27 审查第 4 条改）：财务那边等 10 秒（约定 12.0），这里要在 8 秒内给回话。
+ * Prisma 的 maxWait（等连接）不算在 timeout 里，而且事务时限到点不一定打断正在等锁的那一句 SQL ——
+ * 所以：等连接最多 1.5 秒；事务里第一句就设数据库自己的 lock_timeout（等锁最多 4 秒，提交编号排队锁、钱包行锁都算）
+ * 和 statement_timeout（单条最多 5 秒）；事务时限 6 秒。最坏 1.5 + 6 ≈ 7.5 秒内一定回话。
+ * 到点：数据库撒手、事务整个回滚（钱没动、编号没记）、接口回 503 busy，财务原样重发（约定 12.0「5xx 下一轮再发」），连接还回连接池。
+ */
+const TX_OPTIONS = { maxWait: 1_500, timeout: 6_000 } as const;
+export async function limitWaits(tx: Tx): Promise<void> {
+  await tx.$executeRawUnsafe("SET LOCAL lock_timeout = '4s'");
+  await tx.$executeRawUnsafe("SET LOCAL statement_timeout = '5s'");
+}
+
+/** 等锁 / 语句超时、等连接超时、事务时限到了：调用方回 503 busy */
+export function isBusyError(error: unknown): boolean {
+  const e = error as { code?: string; message?: string; meta?: { code?: unknown } } | null;
+  const text = `${e?.code ?? ""} ${JSON.stringify(e?.meta ?? {})} ${e?.message ?? ""}`;
+  return /55P03|57014|P2024|P2028|lock timeout|statement timeout|canceling statement|Transaction already closed|expired transaction/i.test(text);
+}
 
 export type ChargeOutcome =
   | { kind: "done"; duplicate: boolean; stored: StoredRequest }
@@ -68,6 +85,7 @@ export type ChargeOutcome =
 export async function runCharge(companyId: string, req: ChargeRequest): Promise<ChargeOutcome> {
   const fingerprint = chargeFingerprint(req);
   return prisma.$transaction(async (tx) => {
+    await limitWaits(tx);
     await lockFinance2BalanceRequest(tx, req.requestId);
     const seen = await findStoredRequest(tx, req.requestId);
     if (seen) return seen.fingerprint === fingerprint ? { kind: "done" as const, duplicate: true, stored: seen } : { kind: "conflict" as const };
@@ -117,6 +135,7 @@ export async function runRefund(companyId: string, req: RefundRequest): Promise<
   const fingerprint = refundFingerprint(req);
   try {
     return await prisma.$transaction(async (tx) => {
+      await limitWaits(tx);
       await lockFinance2BalanceRequest(tx, req.requestId);
       const seen = await findStoredRequest(tx, req.requestId);
       if (seen) return seen.fingerprint === fingerprint ? { kind: "done" as const, duplicate: true, stored: seen } : { kind: "conflict" as const };

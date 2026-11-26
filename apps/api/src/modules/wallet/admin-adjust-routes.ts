@@ -75,7 +75,8 @@ export function parseAdjustText(raw: unknown): { ok: true; text: string } | { ok
 export function proofImageIssue(proof: string): string | null {
   if (!proof) return null;
   const isDataImage = /^data:image\/(png|jpe?g|gif|webp|bmp);base64,[A-Za-z0-9+/=\s]+$/.test(proof);
-  const isLocalPath = /^\/images\/[A-Za-z0-9._-]+$/.test(proof);
+  // 站内路径：只许一段文件名，不许 .. / 以点开头（2026-11-27 审查）
+  const isLocalPath = /^\/images\/[A-Za-z0-9_-][A-Za-z0-9._-]*$/.test(proof) && !proof.includes("..");
   if (!isDataImage && !isLocalPath) return "水单格式不对，请重新上传图片";
   if (proof.length > PROOF_MAX) return "水单图片过大，请压缩后再上传";
   return null;
@@ -85,13 +86,16 @@ function newAdjustmentId(): string {
   return `adj_${Date.now().toString(36)}${randomBytes(6).toString("hex")}`;
 }
 
+/**
+ * 调整单要读的列。⚠️ 不读 proof_image（水单原图，最大 8MB）：要知道「有没有水单」「水单跟这次传的一样不一样」，
+ * 一律在库里算（proofFacts），不把整列读出来（CLAUDE.md 第 3 条，2026-11-27 审查）。
+ */
 const ADJ_SELECT = {
   id: true,
   kind: true,
   clientId: true,
   amount: true,
   remark: true,
-  proofImage: true,
   submitKey: true,
   ledgerId: true,
   balanceAfter: true,
@@ -103,8 +107,17 @@ const ADJ_SELECT = {
 } satisfies Prisma.WalletAdjustmentSelect;
 type AdjRow = Prisma.WalletAdjustmentGetPayload<{ select: typeof ADJ_SELECT }>;
 
+/** 在库里比水单：这一张有没有水单、跟这次传来的（空串当没传）是不是同一张。不把原图读出来 */
+async function proofFacts(db: Tx | typeof prisma, adjustmentId: string, given: string): Promise<{ hasProof: boolean; sameProof: boolean }> {
+  const rows = await db.$queryRaw<Array<{ has_proof: boolean; same_proof: boolean }>>`
+    SELECT proof_image IS NOT NULL AS has_proof, proof_image IS NOT DISTINCT FROM ${given || null}::text AS same_proof
+    FROM wallet_adjustments WHERE id = ${adjustmentId}
+  `;
+  return { hasProof: !!rows[0]?.has_proof, sameProof: !!rows[0]?.same_proof };
+}
+
 /** 加 / 减办完回给页面的（逐个字段列，不带水单图） */
-function adjustReply(a: AdjRow, duplicate: boolean) {
+function adjustReply(a: AdjRow, hasProof: boolean, duplicate: boolean) {
   return {
     adjustment: {
       id: a.id,
@@ -112,7 +125,7 @@ function adjustReply(a: AdjRow, duplicate: boolean) {
       clientId: a.clientId,
       amount: Number(a.amount),
       remark: a.remark ?? "",
-      hasProof: !!a.proofImage,
+      hasProof,
       createdAt: a.createdAt.toISOString(),
     },
     balanceAfter: Number(a.balanceAfter),
@@ -120,26 +133,54 @@ function adjustReply(a: AdjRow, duplicate: boolean) {
   };
 }
 
+/**
+ * 这几个事务里的等待都要有头（2026-11-27 审查第 4 条）：等锁（提交编号排队锁、调整单行锁、钱包行锁）最多 LOCK_WAIT，
+ * 单条语句最多 STATEMENT_MAX；到点数据库自己撒手、事务回滚、接口回 503「系统忙」，连接还回连接池。
+ * Prisma 的事务时限到点不一定能打断正在等锁的那一句 SQL，所以用数据库自己的 lock_timeout / statement_timeout。
+ * 管理员页面拿到 503 会提示「不确定办成没有」、用同一个提交编号原样重试，不会加两遍。
+ */
+const ADMIN_TX = { maxWait: 3_000, timeout: 12_000 } as const;
+async function limitWaits(tx: Tx): Promise<void> {
+  await tx.$executeRawUnsafe("SET LOCAL lock_timeout = '5s'");
+  await tx.$executeRawUnsafe("SET LOCAL statement_timeout = '8s'");
+}
+
+/** 等锁 / 语句超时、事务时限到了：回 503 让人过一会儿原样再点（钱没动） */
+export function isBusyError(error: unknown): boolean {
+  const e = error as { code?: string; message?: string; meta?: { code?: unknown } } | null;
+  const text = `${e?.code ?? ""} ${JSON.stringify(e?.meta ?? {})} ${e?.message ?? ""}`;
+  return /55P03|57014|P2024|P2028|lock timeout|statement timeout|canceling statement|Transaction already closed|expired transaction/i.test(text);
+}
+
 type CreateOutcome =
-  | { kind: "done"; row: AdjRow; duplicate: boolean }
+  | { kind: "done"; row: AdjRow; hasProof: boolean; duplicate: boolean }
   | { kind: "conflict" }
   | { kind: "noClient" }
-  | { kind: "insufficient"; have: number; need: number };
+  | { kind: "insufficient"; have: number; need: number }
+  | { kind: "busy" };
 
 /** 加金额 / 减金额：一个事务办完（见文件头「防重复」） */
 async function runCreate(
   auth: { companyId: string; userId: string; name: string },
   input: { kind: "topup" | "deduction"; clientId: string; amount: Prisma.Decimal; remark: string; proofImage: string; submitKey: string },
 ): Promise<CreateOutcome> {
+  /** 这个编号办过没有：办过的内容跟这次一样 → 原样回（duplicate）；不一样 → 冲突。还要看这个编号有没有被拿去冲掉过（不许一号两用） */
+  const lookupDuplicate = async (db: Tx | typeof prisma): Promise<CreateOutcome | null> => {
+    const usedForReverse = await db.walletAdjustment.findUnique({ where: { reverseSubmitKey: input.submitKey }, select: { id: true } });
+    if (usedForReverse) return { kind: "conflict" };
+    const seen = await db.walletAdjustment.findUnique({ where: { submitKey: input.submitKey }, select: { ...ADJ_SELECT, companyId: true } });
+    if (!seen) return null;
+    const proof = await proofFacts(db, seen.id, input.proofImage);
+    const same = seen.companyId === auth.companyId && seen.kind === input.kind && seen.clientId === input.clientId
+      && new Prisma.Decimal(seen.amount).eq(input.amount) && (seen.remark ?? "") === input.remark && proof.sameProof;
+    return same ? { kind: "done", row: seen, hasProof: proof.hasProof, duplicate: true } : { kind: "conflict" };
+  };
   try {
     return await prisma.$transaction(async (tx) => {
+      await limitWaits(tx);
       await lockWalletAdjustSubmit(tx, input.submitKey);
-      const seen = await tx.walletAdjustment.findUnique({ where: { submitKey: input.submitKey }, select: { ...ADJ_SELECT, companyId: true } });
-      if (seen) {
-        const same = seen.companyId === auth.companyId && seen.kind === input.kind && seen.clientId === input.clientId
-          && new Prisma.Decimal(seen.amount).eq(input.amount) && (seen.remark ?? "") === input.remark && (seen.proofImage ?? "") === input.proofImage;
-        return same ? { kind: "done" as const, row: seen, duplicate: true } : { kind: "conflict" as const };
-      }
+      const dup = await lookupDuplicate(tx);
+      if (dup) return dup;
       // 客户：这家公司的客户角色（封禁的也算，钱还是他的）
       const client = await tx.user.findFirst({ where: { id: input.clientId, companyId: auth.companyId, role: "client" }, select: { id: true } });
       if (!client) return { kind: "noClient" as const };
@@ -172,20 +213,14 @@ async function runCreate(
         },
         select: ADJ_SELECT,
       });
-      return { kind: "done" as const, row, duplicate: false };
-    }, { maxWait: 5_000, timeout: 15_000 });
+      return { kind: "done" as const, row, hasProof: !!input.proofImage, duplicate: false };
+    }, ADMIN_TX);
   } catch (error) {
     // 减成负数：钱包那边抛的，事务已经整个回滚（一分没动、编号没登记）
     if (error instanceof InsufficientBalanceError) return { kind: "insufficient", have: error.have, need: error.need };
     // 兜底：排队锁没起作用、同一个编号两个都走到写那一步，后写的撞唯一约束整个回滚 —— 按先写的那条回
-    if (isUniqueOn(error, "submit_key")) {
-      const seen = await prisma.walletAdjustment.findUnique({ where: { submitKey: input.submitKey }, select: { ...ADJ_SELECT, companyId: true } });
-      if (seen && seen.companyId === auth.companyId && seen.kind === input.kind && seen.clientId === input.clientId
-        && new Prisma.Decimal(seen.amount).eq(input.amount) && (seen.remark ?? "") === input.remark && (seen.proofImage ?? "") === input.proofImage) {
-        return { kind: "done", row: seen, duplicate: true };
-      }
-      return { kind: "conflict" };
-    }
+    if (isUniqueOn(error, "submit_key")) return (await lookupDuplicate(prisma)) ?? { kind: "conflict" };
+    if (isBusyError(error)) return { kind: "busy" };
     throw error;
   }
 }
@@ -203,7 +238,8 @@ type ReverseOutcome =
   | { kind: "notFound" }
   | { kind: "notTopup" }
   | { kind: "wrongClient" }
-  | { kind: "alreadyReversed"; at: Date; reason: string };
+  | { kind: "alreadyReversed"; at: Date; reason: string }
+  | { kind: "busy" };
 
 /** 冲掉一笔管理员充值 */
 async function runReverse(
@@ -211,6 +247,9 @@ async function runReverse(
   input: { adjustmentId: string; clientId: string; reason: string; submitKey: string },
 ): Promise<ReverseOutcome> {
   const lookupDuplicate = async (db: Tx | typeof prisma): Promise<ReverseOutcome | null> => {
+    // 这个编号被拿去加 / 减过：不许再拿来冲掉（一号两用，2026-11-27 审查）
+    const usedForCreate = await db.walletAdjustment.findUnique({ where: { submitKey: input.submitKey }, select: { id: true } });
+    if (usedForCreate) return { kind: "conflict" };
     const seen = await db.walletAdjustment.findUnique({ where: { reverseSubmitKey: input.submitKey }, select: { ...ADJ_SELECT, companyId: true } });
     if (!seen) return null;
     const same = seen.companyId === auth.companyId && seen.id === input.adjustmentId && seen.clientId === input.clientId && (seen.reverseReason ?? "") === input.reason;
@@ -218,6 +257,7 @@ async function runReverse(
   };
   try {
     return await prisma.$transaction(async (tx) => {
+      await limitWaits(tx);
       await lockWalletAdjustSubmit(tx, input.submitKey);
       const dup = await lookupDuplicate(tx);
       if (dup) return dup;
@@ -255,11 +295,10 @@ async function runReverse(
         select: ADJ_SELECT,
       });
       return { kind: "done" as const, row, duplicate: false };
-    }, { maxWait: 5_000, timeout: 15_000 });
+    }, ADMIN_TX);
   } catch (error) {
-    if (isUniqueOn(error, "reverse_submit_key")) {
-      return (await lookupDuplicate(prisma)) ?? { kind: "conflict" };
-    }
+    if (isUniqueOn(error, "reverse_submit_key")) return (await lookupDuplicate(prisma)) ?? { kind: "conflict" };
+    if (isBusyError(error)) return { kind: "busy" };
     throw error;
   }
 }
@@ -342,10 +381,11 @@ export function registerWalletAdjustRoutes(app: MinimalHttpApp): void {
     ]);
     // 这一页里管理员调整单的状态（冲掉了没有、有没有水单）
     const adjIds = [...new Set(rows.filter((r) => r.refType === ADMIN_ADJUST_REF_TYPE && r.refId).map((r) => r.refId!))];
-    const adjs = adjIds.length === 0 ? [] : await prisma.walletAdjustment.findMany({
-      where: { id: { in: adjIds }, companyId: auth.companyId },
-      select: { id: true, kind: true, ledgerId: true, proofImage: true, reversedAt: true, reversedByName: true, reverseReason: true },
-    });
+    // ⚠️ 不读 proof_image 原图（一页最多 500 条、一张最多 8MB，这一页收到推送还会悄悄重拉）：「有没有水单」在库里算
+    const adjs = adjIds.length === 0 ? [] : await prisma.$queryRaw<Array<{ id: string; kind: string; ledger_id: string; has_proof: boolean; reversed_at: Date | null; reversed_by_name: string | null; reverse_reason: string | null }>>`
+      SELECT id, kind, ledger_id, proof_image IS NOT NULL AS has_proof, reversed_at, reversed_by_name, reverse_reason
+      FROM wallet_adjustments WHERE id = ANY(${adjIds}) AND company_id = ${auth.companyId}
+    `;
     const adjById = new Map(adjs.map((a) => [a.id, a]));
     const seeOperator = canSeeOperatorIdentity(auth.role);
     ok(res, {
@@ -355,7 +395,7 @@ export function registerWalletAdjustRoutes(app: MinimalHttpApp): void {
       items: rows.map((r) => {
         const adj = r.refType === ADMIN_ADJUST_REF_TYPE && r.refId ? adjById.get(r.refId) : undefined;
         // 「管理员充值」那一行（不是冲掉那一行）才带调整单的状态
-        const isTopupRow = !!adj && adj.kind === "topup" && adj.ledgerId === r.id;
+        const isTopupRow = !!adj && adj.kind === "topup" && adj.ledger_id === r.id;
         return {
           id: r.id,
           type: r.type,
@@ -373,12 +413,12 @@ export function registerWalletAdjustRoutes(app: MinimalHttpApp): void {
           adjustment: adj ? {
             id: adj.id,
             kind: adj.kind,
-            canReverse: isTopupRow && !adj.reversedAt,
-            hasProof: !!adj.proofImage && adj.ledgerId === r.id,
-            reversed: isTopupRow && !!adj.reversedAt ? {
-              at: adj.reversedAt!.toISOString(),
-              reason: adj.reverseReason ?? "",
-              byName: seeOperator ? (adj.reversedByName ?? "") : undefined,
+            canReverse: isTopupRow && !adj.reversed_at,
+            hasProof: adj.has_proof && adj.ledger_id === r.id,
+            reversed: isTopupRow && !!adj.reversed_at ? {
+              at: new Date(adj.reversed_at!).toISOString(),
+              reason: adj.reverse_reason ?? "",
+              byName: seeOperator ? (adj.reversed_by_name ?? "") : undefined,
             } : null,
           } : null,
         };
@@ -418,6 +458,7 @@ export function registerWalletAdjustRoutes(app: MinimalHttpApp): void {
     if (!reason.text) { fail(res, 400, "BAD_REQUEST", "请写冲掉的原因"); return; }
     const out = await runReverse(auth, { adjustmentId, clientId, reason: reason.text, submitKey });
     switch (out.kind) {
+      case "busy": fail(res, 503, "INTERNAL_ERROR", "系统忙，这一次没有办（钱没动）。请过一会儿原样再点一次"); return;
       case "conflict": fail(res, 409, "VALIDATION_ERROR", "这次提交的编号已经用过了，内容不一样。请关掉弹窗重新打开再点"); return;
       case "notFound": fail(res, 404, "NOT_FOUND", "没有这一笔"); return;
       case "notTopup": fail(res, 400, "BAD_REQUEST", "只有「管理员充值」能冲掉"); return;
@@ -475,6 +516,7 @@ async function handleCreate(
   }
   const out = await runCreate(auth, { kind, clientId, amount, remark: text.text, proofImage, submitKey });
   switch (out.kind) {
+    case "busy": fail(res, 503, "INTERNAL_ERROR", "系统忙，这一次没有办（钱没动）。请过一会儿原样再点一次"); return;
     case "conflict": fail(res, 409, "VALIDATION_ERROR", "这次提交的编号已经用过了，内容不一样。请关掉弹窗重新打开再填"); return;
     case "noClient": fail(res, 404, "NOT_FOUND", "没有这个客户"); return;
     case "insufficient":
@@ -482,5 +524,5 @@ async function handleCreate(
       return;
     default: break;
   }
-  ok(res, adjustReply(out.row, out.duplicate));
+  ok(res, adjustReply(out.row, out.hasProof, out.duplicate));
 }

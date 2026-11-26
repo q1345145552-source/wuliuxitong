@@ -55,7 +55,7 @@ async function main(): Promise<void> {
     assert.equal(routesMod.proofImageIssue(""), null);
     assert.equal(routesMod.proofImageIssue("data:image/png;base64,iVBORw0KGgo="), null);
     assert.equal(routesMod.proofImageIssue("/images/a_b-1.jpg"), null);
-    for (const bad of ["javascript:alert(1)", "data:text/html;base64,PHNjcmlwdD4=", "data:image/svg+xml;base64,PHN2Zz4=", 'x" onerror="alert(1)', "/images/../x", "https://evil.example/x.png", `data:image/png;base64,${"A".repeat(8 * 1024 * 1024)}`]) {
+    for (const bad of ["javascript:alert(1)", "data:text/html;base64,PHNjcmlwdD4=", "data:image/svg+xml;base64,PHN2Zz4=", 'x" onerror="alert(1)', "/images/../x", "/images/..", "/images/.env", "/images/a..b.png", "https://evil.example/x.png", `data:image/png;base64,${"A".repeat(8 * 1024 * 1024)}`]) {
       assert.ok(routesMod.proofImageIssue(bad), bad.slice(0, 40));
     }
   });
@@ -73,7 +73,15 @@ async function main(): Promise<void> {
     }
     const txs = r.split("prisma.$transaction(async (tx) => {").slice(1);
     assert.equal(txs.length, 2, "加减一个事务、冲掉一个事务");
-    for (const t of txs) assert.match(t.trimStart(), /^await lockWalletAdjustSubmit\(tx, input\.submitKey\);/, "事务第一句必须是提交编号排队锁");
+    for (const t of txs) assert.match(t.trimStart(), /^await limitWaits\(tx\);\s*await lockWalletAdjustSubmit\(tx, input\.submitKey\);/, "事务开头必须是：设等锁时限 → 提交编号排队锁");
+    assert.match(r, /SET LOCAL lock_timeout = '5s'/);
+    // 水单原图不随调整单 / 流水读出来（只在库里算有没有、一样不一样）
+    assert.doesNotMatch(r.slice(r.indexOf("const ADJ_SELECT = {"), r.indexOf("satisfies Prisma.WalletAdjustmentSelect")), /proofImage/);
+    assert.match(r, /proof_image IS NOT NULL AS has_proof/);
+    assert.equal((r.match(/select: \{ proofImage: true \}/g) ?? []).length, 1, "只有「看水单」那一个接口读原图");
+    // 一个提交编号不许既拿来加 / 减又拿来冲掉
+    assert.match(r, /const usedForReverse = await db\.walletAdjustment\.findUnique\(\{ where: \{ reverseSubmitKey: input\.submitKey \}/);
+    assert.match(r, /const usedForCreate = await db\.walletAdjustment\.findUnique\(\{ where: \{ submitKey: input\.submitKey \}/);
     const rev = txs[1];
     assert.ok(rev.indexOf("FROM wallet_adjustments WHERE id = ${input.adjustmentId} AND company_id = ${auth.companyId} FOR UPDATE") < rev.indexOf("if (adj.reversedAt)"), "冲掉：先锁调整单再看冲过没有");
     assert.ok(rev.indexOf("if (adj.reversedAt)") < rev.indexOf("adminReverseTopup("), "看过没冲才动钱");
@@ -98,7 +106,7 @@ async function main(): Promise<void> {
     }
     // 看流水：操作人 / 谁冲的只给管理员；不整行展开
     assert.match(r, /const seeOperator = canSeeOperatorIdentity\(auth\.role\);/);
-    assert.match(r, /byName: seeOperator \? \(adj\.reversedByName \?\? ""\) : undefined,/);
+    assert.match(r, /byName: seeOperator \? \(adj\.reversed_by_name \?\? ""\) : undefined,/);
     assert.doesNotMatch(r, /\.\.\.\s*(r|row|adj|a|seen)\b(?!\w)(?!:)/, "不许整行展开（CLAUDE.md 第 31 条）");
     assert.match(read("apps/api/src/main.ts"), /\nregisterWalletAdjustRoutes\(app\);/);
   });
@@ -136,8 +144,11 @@ async function main(): Promise<void> {
     assert.match(page, /setDialog\(\{ kind, step: "fill", submitKey: newSubmitKey\(\) \}\)/);
     assert.match(page, /setDialog\(\{ kind: "reverse", row, submitKey: newSubmitKey\(\) \}\)/);
     assert.match(page, /const backToFill = \(\) => \{[\s\S]*?submitKey: newSubmitKey\(\)/);
-    assert.match(page, /crypto\.getRandomValues\(bytes\)/);
-    for (const fn of ["adminWalletTopup", "adminWalletDeduct", "adminWalletReverse"]) assert.match(page, new RegExp(`${fn}\\(\\{[^}]*submitKey: dialog\\.submitKey`), fn);
+    assert.match(read("apps/web/src/modules/wallet/submit-keys.ts"), /crypto\.getRandomValues\(bytes\)/);
+    // 交出去用哪个编号：同样的内容之前「不知道办成没有」→ 用回原来那个（2026-11-27 审查第 1 条）
+    assert.match(page, /const ck = contentKeyOf\(content\);\s*const submitKey = pickSubmitKey\(uncertain, ck, dialog\.submitKey\);/);
+    for (const fn of ["adminWalletTopup", "adminWalletDeduct", "adminWalletReverse"]) assert.match(page, new RegExp(`await ${fn}\\(\\{[^}]*submitKey \\}\\);\\s*uncertain\\.forget\\(ck\\);`), `${fn}：成功（含重复回话）才把记录清掉`);
+    assert.match(page, /if \(e instanceof SubmitOutcomeUnknownError\) \{\s*uncertain\.remember\(ck, submitKey\);[\s\S]*?setReloadKey\(\(k\) => k \+ 1\);\s*void loadClients\(\{ silent: true \}\);\s*\} else \{\s*uncertain\.forget\(ck\);/, "不知道办成没有：记下编号、重拉流水和余额；明确没办：清掉");
     // 两步：先「下一步：核对」，核对那一步大字显示唛头和金额，才有「确认加金额」
     assert.match(page, />下一步：核对</);
     assert.match(page, /请再核对一遍[\s\S]*?唛头：<strong style=\{\{ fontSize: 18 \}\}>\{selected\}<\/strong>[\s\S]*?<strong style=\{\{ fontSize: 22,[^}]*\}\}>\{parsedAmount === null \? "—" : yuan\(parsedAmount\)\}<\/strong>/);
@@ -182,6 +193,130 @@ async function main(): Promise<void> {
     }
   });
 
+  await check("W7 行为：提交编号跟内容绑在一起（不知道办成没有 → 同样内容再交用回原编号；成功 / 明确没办 → 清掉；改了内容 → 新的；记在浏览器里 24 小时）", async () => {
+    const sk = await import("../apps/web/src/modules/wallet/submit-keys");
+    const mem = new Map<string, string>();
+    const storage = { getItem: (k: string) => mem.get(k) ?? null, setItem: (k: string, v: string) => { mem.set(k, v); } };
+    let clock = 1_000_000;
+    const store = sk.createUncertainStore(storage, () => clock);
+    const c = (amount: string, text = "线下转账") => sk.contentKeyOf({ kind: "topup", clientId: "C1", amount, text, proof: "" });
+    assert.equal(c("100"), c("100.00"), "100 和 100.00 是同一个数");
+    assert.equal(c("100", " 线下转账 "), c("100"), "首尾空白不算");
+    assert.notEqual(c("100"), c("100.01"));
+    assert.notEqual(c("100"), c("100", "别的备注"));
+    assert.notEqual(sk.contentKeyOf({ kind: "topup", clientId: "C1", amount: "100", text: "", proof: "" }), sk.contentKeyOf({ kind: "deduct", clientId: "C1", amount: "100", text: "", proof: "" }));
+    assert.notEqual(sk.contentKeyOf({ kind: "topup", clientId: "C1", amount: "1", text: "", proof: "data:image/png;base64,AAA" }), sk.contentKeyOf({ kind: "topup", clientId: "C1", amount: "1", text: "", proof: "data:image/png;base64,AAB" }));
+    assert.match(sk.newSubmitKey(), /^[0-9a-f]{32}$/);
+    // 第一次交：没记录 → 用弹窗的新编号；不知道办成没有 → 记下
+    const k1 = sk.pickSubmitKey(store, c("100"), "fresh-1");
+    assert.equal(k1, "fresh-1");
+    store.remember(c("100"), k1);
+    // 返回修改没改 / 关掉重开填同一个数（弹窗给了新编号）→ 还是原来那个
+    assert.equal(sk.pickSubmitKey(store, c("100.00"), "fresh-2"), "fresh-1");
+    // 刷新页面（新的 store、同一个浏览器存储）→ 还认得
+    assert.equal(sk.pickSubmitKey(sk.createUncertainStore(storage, () => clock), c("100"), "fresh-3"), "fresh-1");
+    // 改了内容 → 新编号
+    assert.equal(sk.pickSubmitKey(store, c("200"), "fresh-4"), "fresh-4");
+    // 后端回了（成功 / 重复回话 / 明确没办）→ 清掉，之后同样的内容是新的一笔
+    store.forget(c("100"));
+    assert.equal(sk.pickSubmitKey(store, c("100"), "fresh-5"), "fresh-5");
+    // 24 小时后作废
+    store.remember(c("300"), "old");
+    clock += 24 * 60 * 60 * 1000 + 1;
+    assert.equal(sk.pickSubmitKey(store, c("300"), "fresh-6"), "fresh-6");
+    // 浏览器存储坏了 / 拿不到：只记在内存里，照样认
+    const broken = sk.createUncertainStore({ getItem: () => { throw new Error("x"); }, setItem: () => { throw new Error("x"); } });
+    broken.remember(c("1"), "m1");
+    assert.equal(sk.pickSubmitKey(broken, c("1"), "f"), "m1");
+    assert.equal(sk.pickSubmitKey(sk.createUncertainStore(null), c("1"), "f"), "f");
+  });
+
+  await check("W8 行为：加 / 减 / 冲掉的请求分清「后端明确没办」和「不知道办没办成」（网断、超时、5xx、2xx 读不全 → SubmitOutcomeUnknownError；4xx 照原因）", async () => {
+    const api = await import("../apps/web/src/services/business-api");
+    const sk = await import("../apps/web/src/modules/wallet/submit-keys");
+    const realFetch = globalThis.fetch;
+    const payload = { clientId: "C1", amount: "1.00", remark: "", proofImage: "", submitKey: "k".repeat(32) };
+    const outcome = async (impl: () => Promise<Response>) => {
+      (globalThis as any).fetch = impl;
+      try { return { ok: await api.adminWalletTopup(payload) }; }
+      catch (e) { return { unknown: e instanceof sk.SubmitOutcomeUnknownError, message: (e as Error).message }; }
+      finally { (globalThis as any).fetch = realFetch; }
+    };
+    const json = (status: number, body: unknown) => async () => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+    assert.deepEqual(await outcome(async () => { throw new TypeError("Failed to fetch"); }), { unknown: true, message: (await outcome(async () => { throw new TypeError("x"); })).message });
+    for (const status of [500, 502, 503, 504]) assert.equal((await outcome(json(status, { code: "INTERNAL_ERROR", message: "busy" }))).unknown, true, String(status));
+    assert.equal((await outcome(async () => new Response("<html>bad gateway</html>", { status: 502 }))).unknown, true);
+    assert.equal((await outcome(async () => new Response("{\"code\":\"OK\",\"da", { status: 200 }))).unknown, true, "2xx 读不全");
+    const bad = await outcome(json(400, { code: "BAD_REQUEST", message: "余额不够减：现在 ¥1.00，要减 ¥2.00。没有减，一分没动" }));
+    assert.equal(bad.unknown, false, "4xx 是后端明确没办");
+    assert.match(bad.message!, /余额不够减/);
+    const conflict = await outcome(json(409, { code: "VALIDATION_ERROR", message: "这次提交的编号已经用过了" }));
+    assert.equal(conflict.unknown, false);
+    const good = await outcome(json(200, { code: "OK", message: "success", data: { adjustment: { id: "adj_1" }, balanceAfter: 1, duplicate: false } }));
+    assert.equal((good as any).ok.adjustment.id, "adj_1");
+    assert.match((await outcome(async () => { throw new TypeError("x"); })).message!, /不确定办成没有.*请先看下面的流水，已经有这一笔就不要再点/);
+  });
+
+  await check("W9 行为：流水「加载中」不会卡死（前台在路上、静默刷新后发先回）；办完一笔回第 1 页、晚到的旧页用不上；静默失败不吭声", async () => {
+    const { createLedgerLoader } = await import("../apps/web/src/modules/wallet/ledger-loader");
+    type Pending = { q: { clientId: string; page: number }; resolve: (v: any) => void; reject: (e: Error) => void };
+    const pending: Pending[] = [];
+    const shown: Array<{ page: number; tag: string }> = [];
+    const loadingLog: boolean[] = [];
+    const errors: string[] = [];
+    const loader = createLedgerLoader<string>({
+      fetchPage: (q) => new Promise((resolve, reject) => pending.push({ q, resolve, reject })),
+      onData: (d) => shown.push({ page: d.page, tag: d.items[0] }),
+      onError: (m) => { if (m) errors.push(m); },
+      onLoading: (l) => loadingLog.push(l),
+    });
+    const page = (tag: string, p: number) => ({ items: [tag], page: p, total: 200, balance: 0 });
+    const tick = () => new Promise((r) => setTimeout(r, 0));
+    // 审查说的那个时序：前台 A（回第 1 页）在路上，推送触发的静默刷新 B 后发、先回；A 后回
+    const a = loader.goTo("C1", 1);
+    const b = loader.refreshSilently();
+    pending[1].resolve(page("B", 1));
+    await b;
+    pending[0].resolve(page("A", 1));
+    await a;
+    assert.equal(loadingLog.at(-1), false, "「加载中」熄了（原来这里永远是 true）");
+    assert.deepEqual(shown, [{ page: 1, tag: "B" }], "后发先回的 B 用上了，比它旧的 A 不再盖回去");
+    // 停在第 3 页时，静默刷新（第 3 页）在路上；管理员办完一笔 → 回第 1 页；第 3 页那次晚到也用不上
+    const g3 = loader.goTo("C1", 3);
+    pending[2].resolve(page("P3", 3));
+    await g3;
+    const s3 = loader.refreshSilently();
+    const g1 = loader.goTo("C1", 1);
+    pending[4].resolve(page("NEW", 1));
+    await g1;
+    pending[3].resolve(page("P3-late", 3));
+    await s3;
+    assert.deepEqual(shown.at(-1), { page: 1, tag: "NEW" }, "办完一笔回到第 1 页，看得到刚加的那一笔");
+    assert.equal(loadingLog.at(-1), false);
+    // 静默刷新失败：不吭声、不动「加载中」；前台失败：报出来、「加载中」照样熄
+    const before = errors.length;
+    const s = loader.refreshSilently();
+    pending[5].reject(new Error("断了"));
+    await s;
+    assert.equal(errors.length, before, "静默失败不吭声");
+    const f = loader.goTo("C1", 2);
+    pending[6].reject(new Error("流水没加载出来：网络断了"));
+    await f;
+    assert.equal(errors.at(-1), "流水没加载出来：网络断了");
+    assert.equal(loadingLog.at(-1), false);
+    // 两个前台请求一前一后：先回的那个不许提前熄掉后一个的「加载中」
+    const x = loader.goTo("C1", 1);
+    const y = loader.goTo("C1", 2);
+    pending[7].resolve(page("X", 1));
+    await x;
+    assert.equal(loadingLog.at(-1), true, "第二个还在路上，「加载中」还亮着");
+    pending[8].resolve(page("Y", 2));
+    await y;
+    assert.equal(loadingLog.at(-1), false);
+    assert.deepEqual(shown.at(-1), { page: 2, tag: "Y" });
+    await tick();
+  });
+
   await check("W5 「集货余额」给人看的字一个不剩（注释、标识符、老测试的历史数据不算）；菜单 / 标题改名；代理入口改名但照旧关着", () => {
     const left: string[] = [];
     for (const f of [...walk(path.join(ROOT, "apps/web/src"), [".ts", ".tsx"]), ...walk(path.join(ROOT, "apps/api/src"), [".ts"])]) {
@@ -192,7 +327,7 @@ async function main(): Promise<void> {
     const menu = read("apps/web/src/modules/layout/menu-config.ts");
     assert.match(menu, /\{ id: "staff-func-wallet", label: "客户余额", href: "\/staff#staff-wallet" \}/);
     assert.match(menu, /\{ id: "client-func-wallet", label: "余额", href: "\/client\/wallet" \}/);
-    assert.match(menu, /\.\.\.\(AGENT_WHR_FEATURES_ENABLED\s*\?\s*\[[\s\S]*?\{ id: "agent-func-wallet", label: "余额", href: "\/agent#wallet" \}/, "代理入口改名、照旧在开关后面");
+    assert.match(menu, /\.\.\.\(AGENT_WHR_FEATURES_ENABLED\s*\?\s*\[[\s\S]*?\{ id: "agent-func-wallet", label: "客户余额", href: "\/agent#wallet" \}/, "代理入口改名、照旧在开关后面");
     assert.match(read("apps/web/src/modules/agent/agent-features.ts"), /AGENT_WHR_FEATURES_ENABLED = false/);
     assert.match(read("apps/web/src/modules/layout/WorkbenchFrame.tsx"), /"\/client\/wallet": "余额",/);
   });
@@ -213,7 +348,7 @@ async function main(): Promise<void> {
       assert.match(ledgerItem, new RegExp(`\\b${k}:`), `后端流水一行没有 ${k}`);
     }
     for (const k of ["clientId", "status", "balance", "updatedAt"]) assert.match(r.slice(r.indexOf("clients: users.map"), r.indexOf("total: users.length")), new RegExp(`\\b${k}:`));
-    assert.match(r, /adjustment: \{\s*id: a\.id,\s*kind: a\.kind,\s*clientId: a\.clientId,\s*amount: Number\(a\.amount\),\s*remark: a\.remark \?\? "",\s*hasProof: !!a\.proofImage,\s*createdAt: a\.createdAt\.toISOString\(\),\s*\},\s*balanceAfter: Number\(a\.balanceAfter\),\s*duplicate,/);
+    assert.match(r, /adjustment: \{\s*id: a\.id,\s*kind: a\.kind,\s*clientId: a\.clientId,\s*amount: Number\(a\.amount\),\s*remark: a\.remark \?\? "",\s*hasProof,\s*createdAt: a\.createdAt\.toISOString\(\),\s*\},\s*balanceAfter: Number\(a\.balanceAfter\),\s*duplicate,/);
     assert.match(api, /adjustment: \{ id: string; kind: string; clientId: string; amount: number; remark: string; hasProof: boolean; createdAt: string \};\s*balanceAfter: number;/);
     for (const k of ["adjustmentId", "clientId", "amount", "reason", "reversedAt", "balanceAfter", "duplicate"]) {
       assert.match(r.slice(r.indexOf("ok(res, {\n      adjustmentId"), r.indexOf("duplicate: out.duplicate,") + 30), new RegExp(`\\b${k}:`));

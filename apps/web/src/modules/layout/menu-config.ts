@@ -218,7 +218,7 @@ export const roleFunctionGroups: Record<AuthRole, MenuGroup[]> = {
           ? [
               { id: "agent-func-whr", label: "仓库版集货", href: "/agent#whr" },
               { id: "agent-func-clients", label: "客户和价格", href: "/agent#clients" },
-              { id: "agent-func-wallet", label: "余额", href: "/agent#wallet" },
+              { id: "agent-func-wallet", label: "客户余额", href: "/agent#wallet" },
             ]
           : []),
         { id: "agent-func-rebates", label: "返现单", href: "/agent#rebates" },

@@ -529,6 +529,69 @@ async function main(): Promise<void> {
     });
 
     /* ==================== 老路 ==================== */
+    console.log("\n【审查补的（2026-11-27）】");
+    await test("A1 一个提交编号不许既拿来加 / 减又拿来冲掉（两个方向都 409，不动钱）；水单路径不许带 ..", async () => {
+      const t = await ok200(topup(ADMIN, { clientId: C.A, amount: "3.00", submitKey: newKey() }));
+      const topKey = (await db.walletAdjustment.findUnique({ where: { id: t.adjustment.id } })).submitKey;
+      const before = await balanceOf(C.A);
+      const r1 = await reverse(ADMIN, { adjustmentId: t.adjustment.id, clientId: C.A, reason: "拿加金额的编号来冲", submitKey: topKey });
+      assert.equal(r1.status, 409, r1.out?.message);
+      const rk = newKey();
+      await ok200(reverse(ADMIN, { adjustmentId: t.adjustment.id, clientId: C.A, reason: "正常冲", submitKey: rk }));
+      const r2 = await topup(ADMIN, { clientId: C.A, amount: "3.00", submitKey: rk });
+      assert.equal(r2.status, 409, r2.out?.message);
+      assert.equal(await balanceOf(C.A), (Number(before) - 3).toFixed(2), "只冲了那一次");
+      for (const bad of ["/images/..", "/images/../x.png", "/images/a..b.png", "/images/.hidden"]) {
+        const r = await topup(ADMIN, { clientId: C.A, amount: "1.00", proofImage: bad, submitKey: newKey() });
+        assert.equal(r.status, 400, bad);
+      }
+      const okPath = await ok200(topup(ADMIN, { clientId: C.A, amount: "1.00", proofImage: "/images/proof_1.jpg", submitKey: newKey() }));
+      assert.equal(okPath.adjustment.hasProof, true);
+    });
+    await test("A2 重复交带水单的：回第一次的结果、hasProof 照样对（库里比，不读原图）；同号换了水单 409", async () => {
+      const k = newKey();
+      const first = await ok200(topup(ADMIN, { clientId: C.A, amount: "2.00", proofImage: PNG, submitKey: k }));
+      const again = await ok200(topup(ADMIN, { clientId: C.A, amount: "2.00", proofImage: PNG, submitKey: k }));
+      assert.equal(again.duplicate, true);
+      assert.equal(again.adjustment.hasProof, true);
+      assert.equal(again.adjustment.id, first.adjustment.id);
+      const other = await topup(ADMIN, { clientId: C.A, amount: "2.00", proofImage: PNG.replace("AAAA", "AAAB"), submitKey: k });
+      assert.equal(other.status, 409);
+      const noProof = await topup(ADMIN, { clientId: C.A, amount: "2.00", submitKey: k });
+      assert.equal(noProof.status, 409, "第一次带了水单、这次没带：内容不一样");
+    });
+    await test("A3 钱包行被别人锁住 7 秒：加金额 6 秒内回 503（钱没动、编号没记）；放开后同一个编号原样再交 —— 办成、只加一次", async () => {
+      const k = newKey();
+      const before = await balanceOf(C.A);
+      let locked!: () => void;
+      const isLocked = new Promise<void>((r) => { locked = r; });
+      const blocker = raw.$transaction(async (t) => {
+        await t.$queryRawUnsafe(`SELECT 1 FROM client_wallet_accounts WHERE "clientId" = '${C.A}' FOR UPDATE`);
+        locked();
+        await sleep(7_000);
+      }, { timeout: 20_000 });
+      await isLocked;
+      const t0 = Date.now();
+      const r = await topup(ADMIN, { clientId: C.A, amount: "4.00", submitKey: k });
+      const ms = Date.now() - t0;
+      console.log(`     加金额等了 ${ms} 毫秒，回 ${r.status}：${r.out?.message}`);
+      assert.equal(r.status, 503);
+      assert.ok(ms < 6_500, `${ms} 毫秒`);
+      assert.equal(await db.walletAdjustment.findUnique({ where: { submitKey: k } }), null);
+      await blocker;
+      assert.equal(await balanceOf(C.A), before);
+      const again = await ok200(topup(ADMIN, { clientId: C.A, amount: "4.00", submitKey: k }));
+      assert.equal(again.duplicate, false);
+      const third = await ok200(topup(ADMIN, { clientId: C.A, amount: "4.00", submitKey: k }));
+      assert.equal(third.duplicate, true);
+      assert.equal(await balanceOf(C.A), (Number(before) + 4).toFixed(2));
+    });
+    await test("A4 看流水不把水单原图读出来（这一页有带水单的，hasProof 照样对）", async () => {
+      const page = await ok200(call("GET /staff/wallet/ledger", ADMIN, {}, { clientId: C.A, pageSize: "500" }));
+      assert.ok(page.items.some((i: Row) => i.adjustment?.hasProof === true));
+      assert.ok(page.items.some((i: Row) => i.adjustment && i.adjustment.hasProof === false));
+    });
+
     console.log("\n【老路照旧】");
     await test("O1 客户提交充值 → 管理员通过：照旧进余额、记「充值到账」流水；拒绝照旧", async () => {
       const sub = await ok200(call("POST /client/wallet/recharge", clientAuth(C.N), { amount: 66, paymentMethod: "WECHAT", proofImage: PNG }));

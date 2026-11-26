@@ -5,15 +5,19 @@
  * 数据：GET /staff/wallet/ledger（新的在前、真分页，教训 21）。谁做的只有管理员拿得到（后端摘掉）。
  * 管理员（isAdmin）每一笔「管理员充值」后面有「冲掉」（已冲掉的写明谁、什么时候、为什么）和「看水单」；员工只能看。
  */
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { fetchAdminAdjustmentProof, fetchStaffWalletLedger, type StaffWalletLedgerItem } from "../../services/business-api";
 import { useLiveRefresh } from "../realtime/useRealtime";
 import { useNarrowBox } from "./useNarrowBox";
+import { createLedgerLoader } from "./ledger-loader";
 
 const PAGE_SIZE = 50;
 
 export const yuan = (n: number) =>
   `${n < 0 ? "−" : ""}¥${Math.abs(n).toLocaleString("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+/** 流水里的金额：进账带 +、出账带 −，千分位跟这一页别的钱一样（2026-11-27 总窗口亲手点时看到「+¥5000.00」跟「¥17,000.00」不一致） */
+export const signedYuan = (n: number) => `${n >= 0 ? "+" : "−"}${yuan(Math.abs(n))}`;
 
 /** 北京时间（后端给的是带 Z 的 UTC） */
 export const beijingTime = (iso: string) =>
@@ -44,36 +48,27 @@ export default function ClientLedgerPanel({
   const [proofError, setProofError] = useState("");
   // 窄（手机、平板带侧边栏）就一条一块，「冲掉」不用横着滚就点得到（2026-11-27）
   const { ref: boxRef, narrow } = useNarrowBox<HTMLDivElement>(860);
-  // 只认最后一次发出去的（换客户 / 翻页很快时，晚到的旧结果不许盖新的）
-  const seq = useRef(0);
   const onBalanceRef = useRef(onBalance);
   onBalanceRef.current = onBalance;
 
-  const load = useCallback(async (p: number, opts?: { silent?: boolean }) => {
-    const mine = ++seq.current;
-    if (!opts?.silent) { setLoading(true); setError(""); }
-    try {
-      const data = await fetchStaffWalletLedger(clientId, p, PAGE_SIZE);
-      if (mine !== seq.current) return;
+  /* 取数（2026-11-27 审查第 2 条改）：前台加载和实时推送的静默刷新共用一个 loader —— 「加载中」按前台请求个数算、
+     不会卡死；晚到的旧结果用不上（见 ledger-loader.ts）。组件活着就一直用同一个 loader */
+  const loader = useMemo(() => createLedgerLoader<StaffWalletLedgerItem>({
+    fetchPage: (q) => fetchStaffWalletLedger(q.clientId, q.page, PAGE_SIZE),
+    onData: (data) => {
       setItems(data.items);
       setTotal(data.total);
       setPage(data.page);
-      setError("");
       onBalanceRef.current?.(data.balance);
-    } catch (e) {
-      if (mine !== seq.current) return;
-      if (!opts?.silent) setError(e instanceof Error ? e.message : "流水没加载出来");
-    } finally {
-      if (mine === seq.current && !opts?.silent) setLoading(false);
-    }
-  }, [clientId]);
+    },
+    onError: setError,
+    onLoading: setLoading,
+  }), []);
 
-  // 换客户 / 外面办完一笔：回到第一页重拉
-  useEffect(() => { void load(1); }, [load, reloadKey]);
+  // 换客户 / 外面办完一笔：一定回到第一页重拉（新的在前，刚办的那一笔就在最上面）
+  useEffect(() => { void loader.goTo(clientId, 1); }, [loader, clientId, reloadKey]);
 
-  const pageRef = useRef(page);
-  pageRef.current = page;
-  useLiveRefresh({ topics: ["wallet", "consolidation", "whr"], refresh: () => load(pageRef.current, { silent: true }) });
+  useLiveRefresh({ topics: ["wallet", "consolidation", "whr"], refresh: () => loader.refreshSilently() });
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const th = { padding: "8px 10px", textAlign: "left" as const, fontWeight: 600, color: "var(--t-body)", whiteSpace: "nowrap" as const };
@@ -114,14 +109,14 @@ export default function ClientLedgerPanel({
     <div ref={boxRef}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
         <span style={{ fontSize: 12, color: "var(--t-strong)" }}>共 {total} 条 · 第 {page}/{totalPages} 页</span>
-        <button type="button" style={btn} disabled={loading || page <= 1} onClick={() => void load(page - 1)}>上一页</button>
-        <button type="button" style={btn} disabled={loading || page >= totalPages} onClick={() => void load(page + 1)}>下一页</button>
-        <button type="button" style={btn} disabled={loading} onClick={() => void load(page)}>{loading ? "加载中…" : "刷新"}</button>
+        <button type="button" style={btn} disabled={loading || page <= 1} onClick={() => void loader.goTo(clientId, page - 1)}>上一页</button>
+        <button type="button" style={btn} disabled={loading || page >= totalPages} onClick={() => void loader.goTo(clientId, page + 1)}>下一页</button>
+        <button type="button" style={btn} disabled={loading} onClick={() => void loader.reload()}>{loading ? "加载中…" : "刷新"}</button>
       </div>
       {error ? (
         <p role="alert" style={{ color: "var(--c-red-deep)", fontSize: 13 }}>
           流水没加载出来：{error}
-          <button type="button" style={{ ...btn, marginLeft: 8 }} onClick={() => void load(page)}>重试</button>
+          <button type="button" style={{ ...btn, marginLeft: 8 }} onClick={() => void loader.reload()}>重试</button>
         </p>
       ) : null}
       {proofError ? <p role="alert" style={{ color: "var(--c-red-deep)", fontSize: 13 }}>{proofError}</p> : null}
@@ -133,7 +128,7 @@ export default function ClientLedgerPanel({
             <div key={r.id} style={{ border: "1px solid var(--l-soft)", borderRadius: 10, padding: "10px 12px", fontSize: 13 }}>
               <div style={{ display: "flex", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
                 <span style={{ fontWeight: 600 }}>{r.typeLabel}</span>
-                <span style={{ fontWeight: 700, whiteSpace: "nowrap", color: r.amount < 0 ? "var(--c-red-deep)" : undefined }}>{r.amount >= 0 ? "+" : "−"}¥{Math.abs(r.amount).toFixed(2)}</span>
+                <span style={{ fontWeight: 700, whiteSpace: "nowrap", color: r.amount < 0 ? "var(--c-red-deep)" : undefined }}>{signedYuan(r.amount)}</span>
               </div>
               <div style={{ color: "var(--t-muted)", fontSize: 12, marginTop: 2, display: "flex", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
                 <span>{beijingTime(r.createdAt)} · {r.source || "—"}{r.refNo ? ` · ${r.refNo}` : ""}</span>
@@ -174,7 +169,7 @@ export default function ClientLedgerPanel({
                   <td style={{ ...td, whiteSpace: "nowrap" }}>{r.source || "—"}</td>
                   <td style={{ ...td, whiteSpace: "nowrap", fontFamily: "monospace", fontSize: 12 }}>{r.refNo || "—"}</td>
                   <td style={{ ...td, textAlign: "right", fontWeight: 600, whiteSpace: "nowrap", color: r.amount < 0 ? "var(--c-red-deep)" : undefined }}>
-                    {r.amount >= 0 ? "+" : "−"}¥{Math.abs(r.amount).toFixed(2)}
+                    {signedYuan(r.amount)}
                   </td>
                   <td style={{ ...td, textAlign: "right", whiteSpace: "nowrap", color: r.balanceAfter < 0 ? "var(--c-red-deep)" : "var(--t-muted)" }}>{yuan(r.balanceAfter)}</td>
                   <td style={{ ...td, color: "var(--t-muted)", maxWidth: 260 }}>

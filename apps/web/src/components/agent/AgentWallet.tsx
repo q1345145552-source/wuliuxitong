@@ -24,7 +24,7 @@ export default function AgentWallet() {
   return (
     <section>
       <SectionHeader
-        title="余额"
+        title="客户余额"
         desc="名下客户的余额和充值记录。客户充值打给湘泰，由湘泰审核到账。"
         actions={<button type="button" style={btn} onClick={reload} disabled={loading}>刷新</button>}
       />
@@ -34,7 +34,7 @@ export default function AgentWallet() {
           <EmptyStateCard title="你名下还没有客户" description="客户账号由湘泰超级管理员开在你名下。" />
         ) : (
           <>
-            <Panel title="余额">
+            <Panel title="客户余额">
               <TableWrap label="客户余额">
                 <table className="a3-table" style={{ width: "100%", borderCollapse: "collapse", minWidth: 420 }}>
                   <thead>

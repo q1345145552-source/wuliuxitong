@@ -1,6 +1,7 @@
 import { LASTMILE_DISPATCHABLE_STATUSES, matchesShipmentListFilter, type ClientStatusGroup } from "../../../../packages/shared-types/shipment-status";
 import { productNamesLabel } from "../../../../packages/shared-types/product-names";
 import { authHeaders, apiBaseUrl, parseApiResponse, apiRequest, fetchWithSession as fetch } from "./core-api";
+import { SubmitOutcomeUnknownError } from "../modules/wallet/submit-keys";
 
 export interface StaffCreateOrderPayload {
   clientId: string;
@@ -977,36 +978,58 @@ export interface AdminWalletAdjustResult {
   duplicate: boolean;
 }
 
-/** 管理员给客户加金额。submitKey = 弹窗打开时生成的一次性编号（连点两下只加一笔） */
+/**
+ * 管理员加 / 减 / 冲掉都走这里（2026-11-27 审查第 1 条）：分清「后端明确说没办」和「不知道办没办成」。
+ *   · 网断、等了 20 秒没回话、5xx、2xx 却看不懂 → 抛 SubmitOutcomeUnknownError（页面记下这个编号，同样的内容再交还用它）；
+ *   · 4xx（带原因）、401 → 照常抛带原因的错（后端没办）；
+ *   · 请求体太大（fetchWithSession 当场拦下、没发出去）→ 照常抛（没发出去就是没办）。
+ */
+async function postAdjust<T>(path: string, payload: unknown): Promise<T> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 20_000);
+  try {
+    let response: Response;
+    try {
+      response = await fetch(`${apiBaseUrl()}${path}`, {
+        method: "POST",
+        headers: { ...authHeaders(), "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+        signal: controller.signal,
+      });
+    } catch (e) {
+      // 到点掐断 / 浏览器连不上、中途断了（TypeError）：不知道办没办成；别的（比如请求体太大、没发出去）照常抛
+      if (controller.signal.aborted) throw new SubmitOutcomeUnknownError("等了 20 秒没回话");
+      if (e instanceof TypeError) throw new SubmitOutcomeUnknownError("网络断了");
+      throw e;
+    }
+    if (response.status >= 500) throw new SubmitOutcomeUnknownError(`服务器回了 ${response.status}`);
+    try {
+      return await parseApiResponse<T>(response);
+    } catch (e) {
+      // 2xx 却读不出来（读到一半断了）：不知道办没办成；4xx 是后端明确没办，照原因抛
+      if (response.ok || controller.signal.aborted || e instanceof TypeError) throw new SubmitOutcomeUnknownError("回话没收全");
+      throw e;
+    }
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** 管理员给客户加金额。submitKey 见 modules/wallet/submit-keys.ts（网断以后同样的内容还用原来那个） */
 export async function adminWalletTopup(payload: { clientId: string; amount: string; remark: string; proofImage: string; submitKey: string }): Promise<AdminWalletAdjustResult> {
-  const response = await fetch(`${apiBaseUrl()}/admin/wallet/adjustments/topup`, {
-    method: "POST",
-    headers: { ...authHeaders(), "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-  return parseApiResponse(response);
+  return postAdjust("/admin/wallet/adjustments/topup", payload);
 }
 
 /** 管理员减金额（把余额退给客户）。不能减成负数 */
 export async function adminWalletDeduct(payload: { clientId: string; amount: string; reason: string; submitKey: string }): Promise<AdminWalletAdjustResult> {
-  const response = await fetch(`${apiBaseUrl()}/admin/wallet/adjustments/deduct`, {
-    method: "POST",
-    headers: { ...authHeaders(), "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-  return parseApiResponse(response);
+  return postAdjust("/admin/wallet/adjustments/deduct", payload);
 }
 
 /** 管理员冲掉一笔管理员充值（整笔）。clientId 是那一笔的客户（后端会核对） */
 export async function adminWalletReverse(payload: { adjustmentId: string; clientId: string; reason: string; submitKey: string }): Promise<{
   adjustmentId: string; clientId: string; amount: number; reason: string; reversedAt: string; balanceAfter: number; duplicate: boolean;
 }> {
-  const response = await fetch(`${apiBaseUrl()}/admin/wallet/adjustments/reverse`, {
-    method: "POST",
-    headers: { ...authHeaders(), "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-  return parseApiResponse(response);
+  return postAdjust("/admin/wallet/adjustments/reverse", payload);
 }
 
 /** 管理员看一张调整单的水单图 */

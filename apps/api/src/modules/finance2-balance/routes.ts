@@ -21,7 +21,7 @@ import { bearerKeyMatchesAny } from "../finance2/api-key";
 import { finance2BalanceConfig, type Finance2BalanceConfig } from "./config";
 import { listLedger, loadBalances, readOnlySnapshot } from "./ledger";
 import { prisma } from "../../db/prisma";
-import { findStoredRequest, isRequestIdCollision, runCharge, runRefund, type ChargeOutcome, type RefundOutcome, type StoredRequest } from "./ops";
+import { findStoredRequest, isBusyError, isRequestIdCollision, runCharge, runRefund, type ChargeOutcome, type RefundOutcome, type StoredRequest } from "./ops";
 import {
   FINANCE2_BALANCE_BALANCES_PATH,
   FINANCE2_BALANCE_CHARGES_PATH,
@@ -138,6 +138,8 @@ export function registerFinance2BalanceRoutes(app: MinimalHttpApp): void {
     try {
       outcome = await runCharge(cfg.companyId, body);
     } catch (error) {
+      // 等锁 / 语句超时：事务已整个回滚（钱没动、编号没记）。回 503，财务原样重发（约定 12.0）
+      if (isBusyError(error)) { sendError(res, 503, "busy", "系统忙，这一次没有办，请原样重发"); return; }
       if (!isRequestIdCollision(error)) throw error;
       // 兜底（见 ops.ts 文件头）：同号的另一个请求先写进去了，这一个已整个回滚，按它的结果回
       const seen = await findStoredRequest(prisma, body.requestId);
@@ -165,6 +167,8 @@ export function registerFinance2BalanceRoutes(app: MinimalHttpApp): void {
     try {
       outcome = await runRefund(cfg.companyId, body);
     } catch (error) {
+      // 等锁 / 语句超时：事务已整个回滚（钱没动、编号没记）。回 503，财务原样重发（约定 12.0）
+      if (isBusyError(error)) { sendError(res, 503, "busy", "系统忙，这一次没有办，请原样重发"); return; }
       if (!isRequestIdCollision(error)) throw error;
       const seen = await findStoredRequest(prisma, body.requestId);
       outcome = seen && seen.fingerprint === refundFingerprint(body) ? { kind: "done" as const, duplicate: true, stored: seen } : { kind: "conflict" as const };

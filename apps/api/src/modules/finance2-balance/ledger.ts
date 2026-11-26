@@ -27,14 +27,18 @@ import { type LedgerCursor, type LedgerSqlRow } from "./views";
 
 type Tx = Prisma.TransactionClient;
 
-/** 只读快照事务。时限给 8 秒（财务那边等 10 秒） */
+/**
+ * 只读快照事务。财务那边等 10 秒：等连接最多 1.5 秒 + 事务 6 秒，单条语句数据库自己最多 5 秒（2026-11-27 审查第 4 条），
+ * 7.5 秒内一定回话（到点回 5xx，财务下一轮再拉）
+ */
 export async function readOnlySnapshot<T>(fn: (tx: Tx) => Promise<T>): Promise<T> {
   return prisma.$transaction(
     async (tx) => {
       await tx.$executeRawUnsafe("SET TRANSACTION READ ONLY");
+      await tx.$executeRawUnsafe("SET LOCAL statement_timeout = '5s'");
       return fn(tx);
     },
-    { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead, maxWait: 3_000, timeout: 8_000 },
+    { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead, maxWait: 1_500, timeout: 6_000 },
   );
 }
 

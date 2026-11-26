@@ -23,12 +23,18 @@ import {
 import { useLiveRefresh } from "../../../modules/realtime/useRealtime";
 import ClientLedgerPanel, { beijingTime, yuan } from "../../../modules/wallet/ClientLedgerPanel";
 import { useNarrowBox } from "../../../modules/wallet/useNarrowBox";
+import {
+  contentKeyOf,
+  createUncertainStore,
+  newSubmitKey,
+  pickSubmitKey,
+  SubmitOutcomeUnknownError,
+  type AdjustContent,
+} from "../../../modules/wallet/submit-keys";
 
-/** 一次性提交编号：32 位十六进制。不用 crypto.randomUUID（不是 https 的局域网地址上没有它） */
-function newSubmitKey(): string {
-  const bytes = new Uint8Array(16);
-  crypto.getRandomValues(bytes);
-  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+/** 浏览器存储（隐私模式等拿不到就是 null，退回只在这一页里认） */
+function browserStorage(): Storage | null {
+  try { return typeof window === "undefined" ? null : window.localStorage; } catch { return null; }
 }
 
 /** 金额格子：大于 0、最多两位小数；不合格给 null（跟后端同一个规矩） */
@@ -63,6 +69,11 @@ export default function AdminClientBalancePage() {
   const [proof, setProof] = useState("");
   const [dialogError, setDialogError] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  /**
+   * 「不知道办成没有」的那几笔：内容 → 当时用的提交编号（2026-11-27 审查第 1 条，规矩见 modules/wallet/submit-keys.ts）。
+   * 同样的内容再交（原样重试、返回修改没改、关掉重开填同一个数）都用回原来那个编号，后端认得出是同一笔，不会办两遍
+   */
+  const uncertain = useMemo(() => createUncertainStore(browserStorage()), []);
 
   const listSeq = useRef(0);
   const keywordRef = useRef(keyword);
@@ -128,7 +139,7 @@ export default function AdminClientBalancePage() {
     setDialogError("");
     setDialog({ ...dialog, step: "confirm" });
   };
-  /** 回去改：内容会变，换一个新的提交编号（同一个编号只认第一次的内容） */
+  /** 回去改：换一个新编号备着；内容要是没改、又是之前「不知道办成没有」的那一笔，提交时还是用回原来那个（pickSubmitKey） */
   const backToFill = () => {
     if (!dialog || dialog.kind === "reverse") return;
     setDialogError("");
@@ -142,27 +153,51 @@ export default function AdminClientBalancePage() {
     submittingRef.current = true;
     setSubmitting(true);
     setDialogError("");
+    // 这一次填的内容 → 用哪个提交编号（之前「不知道办成没有」的同样内容用回原来那个）
+    const content: AdjustContent = dialog.kind === "reverse"
+      ? { kind: "reverse", adjustmentId: dialog.row.adjustment!.id, clientId: selected, text }
+      : { kind: dialog.kind, clientId: selected, amount, text, proof };
+    const ck = contentKeyOf(content);
+    const submitKey = pickSubmitKey(uncertain, ck, dialog.submitKey);
     try {
       if (dialog.kind === "topup") {
-        const r = await adminWalletTopup({ clientId: selected, amount: amount.trim(), remark: text.trim(), proofImage: proof, submitKey: dialog.submitKey });
-        setToast(`已给 ${selected} 加 ${yuan(r.adjustment.amount)}，现在余额 ${yuan(r.balanceAfter)}${r.duplicate ? "（刚才那一下已经加过了，没有重复加）" : ""}`);
+        const r = await adminWalletTopup({ clientId: selected, amount: amount.trim(), remark: text.trim(), proofImage: proof, submitKey });
+        uncertain.forget(ck);
+        setToast(r.duplicate
+          ? `这一笔刚才其实已经加过了（那次没收到回话，但办成了），这次没有重复加。现在余额 ${yuan(r.balanceAfter)}。真要再加一笔同样的数，请再打开弹窗提交一次`
+          : `已给 ${selected} 加 ${yuan(r.adjustment.amount)}，现在余额 ${yuan(r.balanceAfter)}`);
         setSelectedBalance(r.balanceAfter);
       } else if (dialog.kind === "deduct") {
-        const r = await adminWalletDeduct({ clientId: selected, amount: amount.trim(), reason: text.trim(), submitKey: dialog.submitKey });
-        setToast(`已从 ${selected} 的余额减 ${yuan(r.adjustment.amount)}，现在余额 ${yuan(r.balanceAfter)}${r.duplicate ? "（刚才那一下已经减过了，没有重复减）" : ""}`);
+        const r = await adminWalletDeduct({ clientId: selected, amount: amount.trim(), reason: text.trim(), submitKey });
+        uncertain.forget(ck);
+        setToast(r.duplicate
+          ? `这一笔刚才其实已经减过了（那次没收到回话，但办成了），这次没有重复减。现在余额 ${yuan(r.balanceAfter)}。真要再减一笔同样的数，请再打开弹窗提交一次`
+          : `已从 ${selected} 的余额减 ${yuan(r.adjustment.amount)}，现在余额 ${yuan(r.balanceAfter)}`);
         setSelectedBalance(r.balanceAfter);
       } else if (dialog.kind === "reverse") {
         if (!text.trim()) { setDialogError("请写冲掉的原因"); return; }
-        const r = await adminWalletReverse({ adjustmentId: dialog.row.adjustment!.id, clientId: selected, reason: text.trim(), submitKey: dialog.submitKey });
-        setToast(`已冲掉那一笔 ${yuan(r.amount)}，现在余额 ${yuan(r.balanceAfter)}${r.balanceAfter < 0 ? "（成了负数，财务系统会报警给老板）" : ""}`);
+        const r = await adminWalletReverse({ adjustmentId: dialog.row.adjustment!.id, clientId: selected, reason: text.trim(), submitKey });
+        uncertain.forget(ck);
+        setToast(r.duplicate
+          ? `这一笔刚才其实已经冲掉了（那次没收到回话，但办成了），这次没有重复冲。现在余额 ${yuan(r.balanceAfter)}`
+          : `已冲掉那一笔 ${yuan(r.amount)}，现在余额 ${yuan(r.balanceAfter)}${r.balanceAfter < 0 ? "（成了负数，财务系统会报警给老板）" : ""}`);
         setSelectedBalance(r.balanceAfter);
       }
       setDialog(null);
       setReloadKey((k) => k + 1);
       void loadClients({ silent: true });
     } catch (e) {
-      // 没成：弹窗留着、写清原因；提交编号不换 —— 网断了再点一次，后端认得出是同一笔，不会加两遍
-      setDialogError(e instanceof Error ? e.message : "没有办成，请稍后再试");
+      if (e instanceof SubmitOutcomeUnknownError) {
+        // 不知道办成没有：记下「这个内容 → 这个编号」，同样的内容再交还用它；流水和余额马上重拉一次给人看
+        uncertain.remember(ck, submitKey);
+        setDialogError(`${e.message}。关掉这个框就能看到流水`);
+        setReloadKey((k) => k + 1);
+        void loadClients({ silent: true });
+      } else {
+        // 后端明确说没办（带原因）：照原因改，改完再交就是新的一笔
+        uncertain.forget(ck);
+        setDialogError(e instanceof Error ? e.message : "没有办成，请稍后再试");
+      }
     } finally {
       submittingRef.current = false;
       setSubmitting(false);

@@ -777,6 +777,67 @@ async function main(): Promise<void> {
       assert.deepEqual(own.map((p) => [p.clientId, p.amount]), [[C_R, 30]], "按自己的关联类型算，扣 100 退 70 还剩 30");
     });
 
+    console.log("\n【等锁有头（2026-11-27 审查第 4 条）】");
+    /** 另一个连接拿着一把锁 holdMs 毫秒；返回「拿到锁了」和「放开了」两个信号 */
+    function hold(sql: string, holdMs: number): { locked: Promise<void>; done: Promise<unknown> } {
+      let locked!: () => void;
+      const lockedP = new Promise<void>((r) => { locked = r; });
+      const done = raw.$transaction(async (t) => {
+        await t.$executeRawUnsafe(sql);
+        locked();
+        await sleep(holdMs);
+      }, { timeout: holdMs + 10_000, maxWait: 5_000 });
+      return { locked: lockedP, done };
+    }
+    /** 本库里除了我们自己这条，还有没有连接正在等锁（接口回了以后不该还有人在等） */
+    const waitingBackends = async () => Number((await raw.$queryRawUnsafe<Row[]>(`SELECT count(*)::int AS n FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock' AND pid <> pg_backend_pid()`))[0].n);
+    await test("T1 钱包行被别人锁住 9.5 秒：扣款 8 秒内回 503 busy（钱没动、编号没记）、连接没被占着；放开后原样重发能办成、只扣一次", async () => {
+      await seed(C_X, "300.00");
+      const body = { requestId: "zz-t1", customerMark: C_X, billNo: "B-T1", billKind: "bulk", maxAmount: "10.00" };
+      const h = hold(`SELECT 1 FROM client_wallet_accounts WHERE "clientId" = '${C_X}' FOR UPDATE`, 9_500);
+      await h.locked;
+      const t0 = Date.now();
+      const r = await charge(body);
+      const ms = Date.now() - t0;
+      console.log(`     扣款等了 ${ms} 毫秒，回 ${r.status} ${r.body.error ?? ""}`);
+      assert.equal(r.status, 503, r.text);
+      assert.equal(r.body.error, "busy");
+      assert.match(r.body.serverTime, ISO_Z);
+      assert.ok(ms < 8_000, `${ms} 毫秒，超过 8 秒（财务只等 10 秒）`);
+      assert.equal(await db.finance2BalanceRequest.findUnique({ where: { requestId: "zz-t1" } }), null, "编号没记");
+      assert.equal(await balanceOf(C_X), "300.00", "钱没动");
+      assert.equal(await waitingBackends(), 0, "回了 503 以后没有连接还在等锁");
+      await h.done;
+      const again = await ok200(charge(body));
+      assert.equal(again.duplicate, false, "上一次整个回滚了，这次是第一次办成");
+      assert.equal(again.charged, "10.00");
+      const third = await ok200(charge(body));
+      assert.equal(third.duplicate, true);
+      assert.equal(await balanceOf(C_X), "290.00", "只扣一次");
+      assert.equal((await ledgerOf(C_X)).filter((l: Row) => l.refId === "zz-t1").length, 1);
+    });
+    await test("T2 同一个请求编号的排队锁被别人一直拿着：也是 8 秒内 503 busy；退回同样有头", async () => {
+      const h = hold(`SELECT pg_advisory_xact_lock(83092, hashtext('zz-t2'))`, 9_500);
+      await h.locked;
+      const t0 = Date.now();
+      const r = await charge({ requestId: "zz-t2", customerMark: C_X, billNo: "B-T2", billKind: "bulk", maxAmount: "1.00" });
+      const ms = Date.now() - t0;
+      assert.equal(r.status, 503, r.text);
+      assert.ok(ms < 8_000, `${ms} 毫秒`);
+      await h.done;
+      const h2 = hold(`SELECT 1 FROM client_wallet_accounts WHERE "clientId" = '${C_X}' FOR UPDATE`, 9_500);
+      await h2.locked;
+      const t1 = Date.now();
+      const rf = await refund({ requestId: "zz-t2-r", chargeRequestId: "zz-t1", amount: "1.00", reason: "billVoided" });
+      const ms2 = Date.now() - t1;
+      console.log(`     排队锁那次等了 ${ms} 毫秒；退回等了 ${ms2} 毫秒，回 ${rf.status}`);
+      assert.equal(rf.status, 503, rf.text);
+      assert.ok(ms2 < 8_000, `${ms2} 毫秒`);
+      await h2.done;
+      assert.equal((await ok200(refund({ requestId: "zz-t2-r", chargeRequestId: "zz-t1", amount: "1.00", reason: "billVoided" }))).duplicate, false);
+      assert.equal(await waitingBackends(), 0);
+    });
+
     await test("Z1 日志里没有密钥、没有指纹；这几条路径没跑登录解析（没有「认证失败」）", async () => {
       const all = captured.join("\n");
       for (const s of [KEY, OLD_KEY, READ_KEY, sha256(KEY), sha256(OLD_KEY)]) assert.ok(!all.includes(s), "日志里出现了密钥或指纹");

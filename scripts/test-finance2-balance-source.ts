@@ -151,7 +151,11 @@ async function main(): Promise<void> {
     const ops = code("apps/api/src/modules/finance2-balance/ops.ts");
     const txBodies = ops.split("$transaction(async (tx) => {").slice(1);
     assert.equal(txBodies.length, 2, "扣款、退回两个事务");
-    for (const body of txBodies) assert.match(body.trimStart(), /^await lockFinance2BalanceRequest\(tx, req\.requestId\);/, "事务第一句必须是编号排队锁");
+    // 2026-11-27 审查第 4 条：第一句先给等锁 / 单条语句设时限（数据库自己的 lock_timeout / statement_timeout），紧接着才是编号排队锁
+    for (const body of txBodies) assert.match(body.trimStart(), /^await limitWaits\(tx\);\s*await lockFinance2BalanceRequest\(tx, req\.requestId\);/, "事务开头必须是：设时限 → 编号排队锁");
+    assert.match(ops, /SET LOCAL lock_timeout = '4s'/);
+    assert.match(ops, /SET LOCAL statement_timeout = '5s'/);
+    assert.match(ops, /const TX_OPTIONS = \{ maxWait: 1_500, timeout: 6_000 \} as const;/, "等连接 + 事务 ≤ 7.5 秒（财务等 10 秒）");
     assert.match(ops, /pg_advisory_xact_lock\(\$\{REQUEST_LOCK_KEY\}::int, hashtext\(\$\{requestId\}\)\)/);
     assert.match(ops, /const REQUEST_LOCK_KEY = 83092;/);
     assert.match(read("scripts/test-lock-order.ts"), /lockFinance2BalanceRequest: \["advisory_finance2_balance_request"\]/);

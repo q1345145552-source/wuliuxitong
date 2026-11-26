@@ -166,8 +166,8 @@ async function main(): Promise<void> {
   await test("W1 菜单「我的钱包」→ /agent#my-wallet；分区接上；关着的「集货余额」不受影响", () => {
     const menu = read("apps/web/src/modules/layout/menu-config.ts");
     assert.match(menu, /\{ id: "agent-func-my-wallet", label: "我的钱包", href: "\/agent#my-wallet" \}/);
-    // 2026-11-27「集货余额」改叫「余额」（财务系统2 ADR 0191 第 2 轮），入口照旧关着
-    assert.match(menu, /\{ id: "agent-func-wallet", label: "余额", href: "\/agent#wallet" \}/);
+    // 2026-11-27「集货余额」改叫「客户余额」（挨着「我的钱包」，叫「余额」容易混；财务系统2 ADR 0191），入口照旧关着
+    assert.match(menu, /\{ id: "agent-func-wallet", label: "客户余额", href: "\/agent#wallet" \}/);
     const page = read("apps/web/src/app/agent/page.tsx");
     assert.match(page, /"rebates", "my-wallet", "me"\] as const/);
     assert.match(page, /\{section === "my-wallet" \? <AgentFinanceWallet \/> : null\}/);
