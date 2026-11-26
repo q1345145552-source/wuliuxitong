@@ -4,7 +4,6 @@
  * 引带页面的 .tsx 会报「Cannot find module 'react'」（dfe7a88 那次检查红在这）。这里只引类型，不引 react。
  */
 import type { OrderProductImageItem, OrderProductItem } from "../../services/business-api";
-import { distinctCargoTypes, waybillCargoTypeOf, type CargoType } from "../../../../../packages/shared-types/cargo-type";
 
 /** 编辑框要读的那几项：超管列表（AdminOrderItem）和员工列表（ShipmentItem）一条都有，口径一样（都是父单那一行） */
 export interface WaybillEditSource {
@@ -68,17 +67,8 @@ export type WaybillEditProduct = {
    这期间别人存过就 409 —— 产品行是整组发的（没带回来的行后端会删），拿旧弹窗存会把别人刚加的行删掉、改的盖回去 */
 export type WaybillEditSnapshot = { form: Record<string, string>; productsJson: string; orderUpdatedAt?: string };
 
-/**
- * 打开弹窗：从列表那一行建表单、产品行和「打开时的样子」（原 admin/page.tsx 的 startEditOrder）。
- *
- * 货型（2026-11-24 一票一个货型）：整票那一格先显示这票现在的货型 —— 有产品行看产品行（列表显示的就是产品行的），
- * 混着几种的老单取最严的（跟原来整票记的同一个）。混着的老单 mixedCargo 列出那几种，
- * 「打开时的样子」里货型记成空串：这样随便存一次都会把货型发出去，后端把整票产品行统一成框里这一个
- * （弹窗上写明了「保存后统一成…」，不是悄悄改）；存过一次，「打开时的样子」换成存进去的，提示也就没了。
- */
-export function waybillEditStateOf(order: WaybillEditSource): { form: WaybillEditForm; products: WaybillEditProduct[]; snapshot: WaybillEditSnapshot; mixedCargo: CargoType[] | null } {
-  const productCargo = (order.products ?? []).map((p) => p.cargoType);
-  const kinds = distinctCargoTypes(productCargo);
+/** 打开弹窗：从列表那一行建表单、产品行和「打开时的样子」（原 admin/page.tsx 的 startEditOrder） */
+export function waybillEditStateOf(order: WaybillEditSource): { form: WaybillEditForm; products: WaybillEditProduct[]; snapshot: WaybillEditSnapshot } {
   const form: WaybillEditForm = {
     clientId: order.clientId ?? "",
     trackingNo: order.trackingNo ?? "",
@@ -96,7 +86,7 @@ export function waybillEditStateOf(order: WaybillEditSource): { form: WaybillEdi
     // 编辑框必须填整票（后端按整票算，2026-09-28 审查修复 #1：原来预填剩余量，一保存订单总重就被改小）
     weightKg: (order.totalWeightKg ?? order.weightKg) == null ? "" : String(order.totalWeightKg ?? order.weightKg),
     volumeM3: (order.totalVolumeM3 ?? order.volumeM3) == null ? "" : String(order.totalVolumeM3 ?? order.volumeM3),
-    cargoType: waybillCargoTypeOf(productCargo, order.cargoType),
+    cargoType: order.cargoType ?? "normal",
     paymentStatus: order.paymentStatus === "paid" ? "paid" : "unpaid",
     shipDate: order.shipDate ?? "",
     remark: order.remark ?? "",
@@ -118,7 +108,6 @@ export function waybillEditStateOf(order: WaybillEditSource): { form: WaybillEdi
     products,
     // 记下打开弹窗那一刻的样子，保存时只把改动过的项发出去，避免把别人在这期间改的字段一起覆盖掉；
     // 产品行的快照直接用表单自己的格式，比对时不会因为格式差异误判
-    snapshot: { form: { ...form, ...(kinds.length > 1 ? { cargoType: "" } : {}) } as Record<string, string>, productsJson: JSON.stringify(products), orderUpdatedAt: order.orderUpdatedAt },
-    mixedCargo: kinds.length > 1 ? kinds : null,
+    snapshot: { form: { ...form } as Record<string, string>, productsJson: JSON.stringify(products), orderUpdatedAt: order.orderUpdatedAt },
   };
 }

@@ -14,7 +14,7 @@ import { fail, ok, requireRole } from "../core/http-utils";
 import { CONSOLIDATION_CURRENCY, recordRechargeCredit } from "../wallet/consolidation-balance";
 import { loadProductImagesForOrders } from "../orders/product-images";
 import { deleteImageFile } from "../orders/image-storage";
-import { loadOrderProducts, readOneCargoType } from "../orders/routes";
+import { loadOrderProducts, readCargoTypes } from "../orders/routes";
 import { hashPassword } from "../auth/crypto-utils";
 import { countShipmentOverview } from "../shipments/overview-counts";
 import { loadPartialAhead } from "../shipments/partial-status";
@@ -75,7 +75,7 @@ import { loadOrderTotalMetrics } from "../shipments/total-metrics";
 import { BusinessError } from "../core/business-error";
 import { CLIENT_BAN_BUSY_MESSAGE, CLIENT_BAN_ROW_WAIT, CLIENT_BAN_TX, assertClientNotBanned, lockClientBan } from "../core/client-ban";
 import { loadOrderProductDims } from "../orders/routes";
-import { waybillCargoTypeOf, type CargoType } from "../../../../../packages/shared-types/cargo-type";
+import { strictestCargoType } from "../../../../../packages/shared-types/cargo-type";
 import { findUserReferences } from "./user-references";
 
 /** Decimal | null → number | null */
@@ -688,6 +688,8 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
        * 「运单管理」自己的编辑弹窗不带，照旧。
        */
       expectedOrderUpdatedAt?: string;
+      /** 现在的页面保存时带 true：货型是一条产品行一条产品行选的（没带的按没刷新的老页面看，见下面「没刷新的老页面」） */
+      cargoPerRow?: boolean;
       products?: Array<{
         /** 已有产品行的编号；不传表示这是新增的一行 */
         id?: string;
@@ -704,9 +706,7 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
     };
 
     const rawId = body.orderId?.trim();
-    /* 一票一个货型（2026-11-24 老板）：产品行货型不止一种就拦住（没刷新的老页面还能逐行选）。
-       这一票存哪个、产品行怎么跟，见下面事务里「整票货型」那段 */
-    const cargo = readOneCargoType(body.cargoType, body.products);
+    const cargo = readCargoTypes(body.cargoType, body.products);
     if ("error" in cargo) {
       fail(res, 400, "VALIDATION_ERROR", cargo.error);
       return;
@@ -973,21 +973,49 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
           throw new BusinessError("这票刚刚被别人改过（「运单管理」里或别的同事），你这次没有保存。请关掉重新打开，看最新的再改", 409, "VALIDATION_ERROR");
         }
       }
-      /* 整票货型（2026-11-24 一票一个货型）。这次存哪个：
-           · 请求里说了（产品行填了货型，或者发了整票货型）→ 就是它；
-           · 只改产品行、产品行没带货型（直接调接口的）→ 按这次**留下来的老行**算（混着几种的取最严）——
-             跟原来「存完再按保存后的整组取最严」同一个口径：删掉唯一一行特货，剩下的普货不会被统一成特货（dsh 11-24 第 1 轮）；
-             一行老的都没留（全是新加的）看订单自己的；
-           · 产品行和整票货型都没动 → 货型不碰（老单混着几种的照旧混着，9-17「不改线上数据」）。
-         动了的话，订单和**这票全部产品行**都写成这一个（包括这次没提交、留着的老行），
-         原来只改整票货型、跟产品行最严的对不上就报错叫人去产品行改，现在不要了：产品行已经没有货型可改 */
-      let nextCargo: CargoType | undefined;
-      if (cargo.explicit) nextCargo = cargo.order;
-      else if (body.products?.length) {
-        const keptIds = new Set(body.products.map((p) => p.id?.trim()).filter((v): v is string => Boolean(v)));
-        const savedRows = await tx.orderProduct.findMany({ where: { orderId, companyId: auth.companyId }, select: { id: true, cargoType: true } });
-        const savedOrder = await tx.order.findFirst({ where: { id: orderId, companyId: auth.companyId }, select: { cargoType: true } });
-        nextCargo = waybillCargoTypeOf(savedRows.filter((r) => keptIds.has(r.id)).map((r) => r.cargoType), savedOrder?.cargoType);
+      const loadSavedProductCargoRows = () => tx.orderProduct.findMany({
+        where: { orderId, companyId: auth.companyId },
+        select: { cargoType: true },
+      });
+      /** 这些产品行里最严的货型（一行都没有 = undefined）；库里有认不出来的货型值就报出来 */
+      const strictestOfSaved = (products: Array<{ cargoType: string }>) => {
+        const savedCargo = readCargoTypes(undefined, products);
+        if ("error" in savedCargo) throw new BusinessError(savedCargo.error);
+        return products.length > 0 ? strictestCargoType(savedCargo.products) : undefined;
+      };
+      const savedProductCargo = async () => strictestOfSaved(await loadSavedProductCargoRows());
+      {
+        /* 没刷新的老页面（2026-11-26 货型从「一票一个」改回「每条产品行各选各的」时加）。
+           11-24～11-26 线上那版是「一票一个货型」：只在上面选整票货型、产品行没有货型那一格，改产品行时每一行都发成同一个货型。
+           改回来以后那版页面照存的话，同事特意分开选的货型全被改成同一种，而且没人知道。
+           现在的页面（编辑运单弹窗、到货通知「修改已转运单」）请求里都带 cargoPerRow: true；**没带**的按老页面看，两种样子拦住叫他刷新 ——
+             ① 发来的每条产品行都明写着货型、而且全是同一种，库里这票的产品行现在却不止一种；
+             ② 没发产品行、只带了整票货型（现在的页面从来不发这一项），库里这票的产品行不止一种 —— 这一次本身不碰产品行，
+                但那版弹窗存成功一次，就把「打开时的样子」换成存进去的，下一次再改产品行时跟 ① 一样（dsh 11-26 第 1 轮）；
+                所以那版页面在混着的单上，这次只要带了整票货型或产品行就存不成功。完全不碰货型的（不带整票货型、也不带产品行，比如只改备注）照常存。
+           ⚠️ 不能只认「带了整票货型」的（Codex 第 3 轮 / dsh 第 4 轮）：库里是 普货 + 认不出来的老值（或大小写不一样、空串）时，
+              那版页面把它们都当普货、以为只有一种，改产品行时**不带**整票货型、每行发普货 —— 所以 ① 不看带没带整票货型，只看有没有标记。
+           ⚠️ 「几种」按库里原样数、不先校验（dsh 第 2 轮）：带产品行的请求照 11-23 的规矩是「写完再校验」，不能在这里提前报货型不合法。
+           有意的取舍：11-24 之前就开着的页面也不带标记，它特意把混着的改成同一种（包括删到只剩一行）也会被拦、叫刷新，刷新后照常能改。
+           直接调接口、产品行各写各的 / 没每行都写货型的，不是老页面的样子，照原来的规矩走（保存后按最严同步整票）；要特意统一就带 cargoPerRow: true */
+        const sentRows = body.products?.length ? body.products : null;
+        const unifiesRows = !!sentRows && sentRows.every((p, i) => p.cargoType !== undefined && cargo.products[i] === cargo.products[0]);
+        const onlyOrderCargo = has("cargoType") && !sentRows;
+        const looksLikeOldPage = body.cargoPerRow !== true && (unifiesRows || onlyOrderCargo);
+        if (looksLikeOldPage || onlyOrderCargo) {
+          const savedRows = await loadSavedProductCargoRows();
+          if (looksLikeOldPage && new Set(savedRows.map((r) => r.cargoType)).size > 1) {
+            throw new BusinessError("这个页面不是最新的：现在每个产品可以各选各的货型，这票几个产品的货型本来就不一样。这次没有保存，请刷新页面后再改");
+          }
+          // 只改整票货型不应偷偷覆盖明细；已有产品时请在产品行修改，再按最严同步。
+          if (onlyOrderCargo) {
+            const productCargo = strictestOfSaved(savedRows);
+            if (productCargo !== undefined && productCargo !== cargo.order) {
+              // 老页面的产品行没有货型那一格，照「在产品行修改」找不到地方改 —— 所以带一句「先刷新页面」
+              throw new BusinessError("整票货型须与产品明细的最严货型一致，请在产品行修改货型后保存（产品行里没有「货型」那一格，说明这个页面不是最新的，请先刷新页面）");
+            }
+          }
+        }
       }
       let parentPackageCount = packageCount;
       let parentWeightKg = weightKg;
@@ -1130,7 +1158,7 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
           // （非空值在事务外面已经核对过：本公司、client 角色 —— 见上面第55条那段）
           ...(nextClientId ? { clientId: nextClientId } : {}),
           itemName,
-          cargoType: nextCargo,
+          cargoType: body.cargoType !== undefined ? cargo.order : undefined,
           transportMode,
           domesticTrackingNo,
           productQuantity,
@@ -1190,7 +1218,7 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
             widthCm: p.widthCm ?? null,
             heightCm: p.heightCm ?? null,
             productQuantity: p.productQuantity ?? null,
-            cargoType: nextCargo,
+            cargoType: p.cargoType !== undefined || !p.id?.trim() ? cargo.products[i] : undefined,
             domesticTrackingNo: p.domesticTrackingNo?.trim() || "货拉拉",
             weightKg: p.weightKg ?? null,
             sortOrder: i,
@@ -1209,10 +1237,13 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
             });
           }
         }
-      }
-      // 货型动了：这票全部产品行都写成这一个（上面那段只写了这次提交的行；只改整票货型、没发产品行时一行都没写）
-      if (nextCargo !== undefined) {
-        await tx.orderProduct.updateMany({ where: { orderId, companyId: auth.companyId }, data: { cargoType: nextCargo } });
+        // 从锁内实际保存的完整集合汇总，包含未改货型的旧行，不从请求字段猜测。
+        const productCargo = await savedProductCargo();
+        if (productCargo !== undefined) {
+          /* updatedAt 跟上面那次写成同一个 now（2026-10-18）：不写的话这里自动记成「现在」，比返回给页面的 updatedAt 晚几毫秒，
+             页面拿返回值当新版本再存一次就对不上、被当成「别人改过」 */
+          await tx.order.update({ where: { id: orderId }, data: { cargoType: productCargo, updatedAt: now } });
+        }
       }
     });
     /* 到货通知转出来的单改了号：那条到货通知跟着改（F06，2026-10-08）。

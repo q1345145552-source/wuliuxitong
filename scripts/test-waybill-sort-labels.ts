@@ -145,12 +145,12 @@ check("S5 编辑框上面那排：每个格子都有名字，名字是这几个�
   const block = dialog.slice(start, end);
   const controls = block.match(/<(MarkPicker|input|select)\b/g) ?? [];
   const captions = [...block.matchAll(/<Named caption="([^"]+)">/g)].map((m) => m[1]);
-  assert.equal(controls.length, 13); // 2026-11-24 加了整票「货型」
+  assert.equal(controls.length, 12);
   assert.equal(captions.length, controls.length, "有格子没包名字");
-  assert.deepEqual(captions, ["唛头", "运单号", "柜号", "仓库", "运输方式", "货型", "国内单号", "收货地址", "装柜号", "包装", "总重量(kg)", "总体积(m³)", "到仓日期"]);
+  assert.deepEqual(captions, ["唛头", "运单号", "柜号", "仓库", "运输方式", "国内单号", "收货地址", "装柜号", "包装", "总重量(kg)", "总体积(m³)", "到仓日期"]);
   // 每个名字包住的正好是一个格子，而且是对的那个字段（名字写「运单号」包的却是柜号那格，测得出来）
   const fieldOf: Record<string, string> = {
-    clientId: "唛头", trackingNo: "运单号", batchNo: "柜号", warehouseId: "仓库", transportMode: "运输方式", cargoType: "货型",
+    clientId: "唛头", trackingNo: "运单号", batchNo: "柜号", warehouseId: "仓库", transportMode: "运输方式",
     domesticTrackingNo: "国内单号", receiverAddressTh: "收货地址", containerNo: "装柜号", packageUnit: "包装",
     weightKg: "总重量(kg)", volumeM3: "总体积(m³)", shipDate: "到仓日期",
   };
@@ -164,7 +164,7 @@ check("S5 编辑框上面那排：每个格子都有名字，名字是这几个�
   for (const m of block.matchAll(/<Named caption="([^"]+)"><(input|select) ([^\n]*)/g)) {
     assert.match(m[3], new RegExp(`^aria-label="${m[1].replace(/[()]/g, "\\$&")}" `), `「${m[1]}」那格读屏名字不对`);
   }
-  assert.equal([...block.matchAll(/<Named caption="[^"]+"><(input|select) aria-label=/g)].length, 12);
+  assert.equal([...block.matchAll(/<Named caption="[^"]+"><(input|select) aria-label=/g)].length, 11);
   assert.match(block, /<Named caption="唛头"><MarkPicker [^\n]*placeholder="唛头"/);
   // 名字常驻：画在格子外面，不靠 placeholder
   assert.match(dialog, /function Named\(props: \{ caption: string; children: ReactNode \}\) \{[\s\S]{0,200}<span style=\{fieldName\}>\{props\.caption\}<\/span>\s*\{props\.children\}/);

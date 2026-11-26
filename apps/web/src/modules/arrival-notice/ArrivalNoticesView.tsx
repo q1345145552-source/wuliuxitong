@@ -54,7 +54,7 @@ import { makeThumb } from "./photo-thumb";
 import { productLine } from "./snapshot-diff";
 import SnapshotModal from "./SnapshotModal";
 import { nextAutoTotals, type AutoTotalsMemory } from "../orders/auto-totals";
-import { CARGO_TYPES, CARGO_TYPE_ZH, distinctCargoTypes } from "../../../../../packages/shared-types/cargo-type";
+import { CARGO_TYPES, CARGO_TYPE_ZH } from "../../../../../packages/shared-types/cargo-type";
 import { MAX_NOTICE_PRODUCTS, isBlankNoticeProduct, noticeProductTotals } from "../../../../../packages/shared-types/arrival-notice-products";
 
 const PAGE_SIZE = 30;
@@ -138,7 +138,6 @@ function emptyDraft(viewing: WarehouseView): ArrivalNoticeDraft {
     clientId: "", trackingNo: "", weightKg: "", volumeM3: "",
     transportMode: "", warehouseId, arrivedAt: beijingToday(), remark: "",
     products: [emptyProduct()], // 默认一款空的
-    cargoType: "normal", // 整票一个货型（2026-11-24），默认普货
   };
 }
 
@@ -697,13 +696,6 @@ function NoticeEditor(props: {
   const [savedId, setSavedId] = useState<string | null>(editing?.id ?? null);
   /** 库里那份（打开时 / 每次存上以后）：保存时一起传，后端比一下有没有人在这期间改过 */
   const [base, setBase] = useState<ArrivalNoticeDraft | null>(() => (editing ? initialDraft() : null));
-  /* 上线前登记、几款混着几种货型的老通知（2026-11-24 一票一个货型）：弹窗上说清楚保存后统一成上面选的那个。
-     按库里那份（base）算：存上以后 base 换成新的，就不再提示 */
-  const mixedCargo = useMemo(() => {
-    if (!base) return null;
-    const kinds = distinctCargoTypes(base.products.filter((p) => !isBlankNoticeProduct({ ...p, cargoType: "normal" })).map((p) => p.cargoType));
-    return kinds.length > 1 ? kinds : null;
-  }, [base]);
   const [images, setImages] = useState<ArrivalNoticeImage[]>(editing?.images ?? []);
   /** 库里这条现在算不算「已通知」（存上以后跟着接口回来的那份走）—— G01 换唛头提醒用 */
   const [notifiedAt, setNotifiedAt] = useState<string | null>(editing?.notifiedAt ?? null);
@@ -857,7 +849,8 @@ function NoticeEditor(props: {
       }
       // 带上刚重读到的订单版本：后端锁住订单后再核一遍（这里重读到发请求之间还有空档）
       const { patch, changed } = buildAdminOrderPatch(fresh.shipmentId, base, draft, fresh.orderUpdatedAt);
-      if (changed) await updateAdminOrder(patch);
+      // cargoPerRow: true —— 告诉后端「这个页面每款各选各的货型」（见 updateAdminOrder 的说明）。buildAdminOrderPatch 已经带了，这里再写一遍是让类型盯着（请求类型里它是必填）
+      if (changed) await updateAdminOrder({ ...patch, cargoPerRow: true });
     } catch (e) {
       setError(e instanceof Error ? e.message : "没保存上");
       // 同 submit：被挡多半是别人刚改过，刷一下列表，关掉重开拿到的才是最新的（最多等 5 秒）
@@ -1029,6 +1022,12 @@ function NoticeEditor(props: {
                   <span>件数</span>
                   <input disabled={saving} value={p.packageCount} onChange={(e) => setProduct(p.key, "packageCount", e.target.value)} inputMode="numeric" />
                 </label>
+                <label>
+                  <span>货型</span>
+                  <select disabled={saving} value={p.cargoType} onChange={(e) => setProduct(p.key, "cargoType", cargoTypeOf(e.target.value))}>
+                    {CARGO_TYPES.map((c) => <option key={c} value={c}>{CARGO_TYPE_ZH[c]}</option>)}
+                  </select>
+                </label>
                 <label className="an-prod-wide">
                   <span>国内快递单号</span>
                   <input disabled={saving} value={p.domesticTrackingNo} onChange={(e) => setProduct(p.key, "domesticTrackingNo", e.target.value)} />
@@ -1078,16 +1077,6 @@ function NoticeEditor(props: {
         {convertedNotes.length > 0 ? (
           // 一句一行（两句并排时挤成一长串看不清，10-16 浏览器实点发现）
           <div className="an-form-wide">{convertedNotes.map((h) => <div key={h}><small className="an-warn">{h}</small></div>)}</div>
-        ) : null}
-        {/* 一票一个货型（2026-11-24 老板：「一票只会有一个货型，不能单独产品选择货型」）：整票选一次，每一款都跟它 */}
-        <label>
-          <span>货型</span>
-          <select aria-label="货型" disabled={saving} value={draft.cargoType ?? "normal"} onChange={(e) => set("cargoType", cargoTypeOf(e.target.value))}>
-            {CARGO_TYPES.map((c) => <option key={c} value={c}>{CARGO_TYPE_ZH[c]}</option>)}
-          </select>
-        </label>
-        {mixedCargo ? (
-          <div className="an-form-wide"><small className="an-warn">这票原来几款的货型不一样（{mixedCargo.map((c) => CARGO_TYPE_ZH[c]).join("、")}）。一票只能有一个货型，保存后统一成上面选的「{CARGO_TYPE_ZH[draft.cargoType ?? "normal"]}」。</small></div>
         ) : null}
         <label>
           <span>运输方式</span>

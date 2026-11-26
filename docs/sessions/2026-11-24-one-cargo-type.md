@@ -37,3 +37,4 @@
 
 ## 当前状态
 - **11-24 北京 16:45 已上线 8ee373f**（老板「上线」）：线上 = GitHub = 8ee373f，核过（见 journal 同日上线记录）。工作副本 `.claude/worktrees/waybill-sort-labels`，分支 `claude/one-cargo-type`。
+- **11-26 老板说「1这个一票只有一个货型的改回去吧」**：这一份里的做法整个撤回（分支 `claude/revert-one-cargo-type`），回到每条产品行各选各的、整票记最严。见 `docs/sessions/2026-11-26-revert-one-cargo-type.md`。上面的内容留着当记录，别再照它做。

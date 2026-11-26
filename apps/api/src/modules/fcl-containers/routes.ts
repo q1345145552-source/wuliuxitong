@@ -43,7 +43,6 @@ import { sanitizeRemarkForClient } from "../core/client-privacy";
 import { DECIMAL_12_2, requireDecimal } from "../core/decimal-guard";
 import { parseNumericStrict } from "../core/int-guard";
 import { lockInquiry } from "../fcl-inquiries/routes";
-import { mixedCargoTypeIssue } from "../../../../../packages/shared-types/cargo-type";
 import { companyContainerNosForMasking } from "../core/container-nos";
 import {
   CONTAINER_TYPES,
@@ -290,10 +289,6 @@ function parseFclProducts(input: unknown): { error: string } | {
     if ("error" in parsed) return { error: parsed.error };
     rows.push(parsed.row);
   }
-  /* 一票一个货型（2026-11-24 老板）：整柜就是一票，清单里几行的货型必须是同一个。
-     新页面只在上面选一次、每行都发那一个；不止一种 = 没刷新的老页面还在逐行选，拦住 */
-  const mixed = mixedCargoTypeIssue(rows.map((r) => r.cargoType));
-  if (mixed) return { error: `${mixed}，这次没有保存。请刷新页面，在上面的「货型」里选一个` };
   const totals = sumFclRows(rows);
   if ("error" in totals) return { error: totals.error };
   return { rows, totals };
@@ -787,6 +782,8 @@ export function registerFclContainerRoutes(app: MinimalHttpApp): void {
 
     const body = (req.body ?? {}) as FclHeaderBody & {
       containerId?: string; products?: FclProductInput[]; expectUpdatedAt?: string;
+      /** 现在的页面保存时带 true：清单货型是一行一行选的（老页面不带，说明见下面「没刷新的老页面」） */
+      cargoPerRow?: boolean;
     };
     const containerId = String(body.containerId ?? "").trim();
     if (!containerId) { fail(res, 400, "BAD_REQUEST", "containerId 为必填"); return; }
@@ -892,6 +889,17 @@ export function registerFclContainerRoutes(app: MinimalHttpApp): void {
             "这个整柜刚刚被别人改过了。请先关掉这个框、重新点「详情」看一眼最新的内容，再改 —— 直接保存会把别人刚才的修改覆盖掉。",
             409, "VALIDATION_ERROR",
           );
+        }
+
+        /* 没刷新的老页面（2026-11-26 货型改回「清单每一行各选各的」）：11-24～11-26 那版整柜页面是「一柜一个货型」，
+           每次保存都把清单每一行发成同一个货型 —— 只改个金额或备注，也会把同事特意分开选的货型悄悄统一成一种。
+           老页面发的跟现在的页面「特意把各行改成同一种」长得一模一样，所以现在的页面保存时带 cargoPerRow: true，
+           没带这个标记、库里这柜清单本来不止一种货型、这次发来的却只有一种 → 拦住叫他刷新。
+           判断用的是锁里读到的清单（order.products），不用事务外那份。 */
+        if (body.cargoPerRow !== true
+          && new Set(order.products.map((p) => p.cargoType)).size > 1
+          && new Set(rows.map((r) => r.cargoType)).size <= 1) {
+          throw new BusinessError("这个页面不是最新的：现在清单每一行可以各选各的货型，这个整柜几行的货型本来就不一样。这次没有保存，请刷新页面后再改");
         }
 
         // ---- 到底改了哪几样（下面三道闸按「改了才拦」判，没改就放行）----

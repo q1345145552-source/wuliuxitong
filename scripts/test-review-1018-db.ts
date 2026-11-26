@@ -149,12 +149,11 @@ async function main(): Promise<void> {
       const { orderId } = await newOrder(NO("A1"));
       const v0 = (await orderRow(orderId)).updatedAt.toISOString();
       const rows = await productsOf(orderId);
-      // 整票改成敏感货（2026-11-24 一票一个货型：每款都发同一个）：货型跟别的项同一次写订单，updatedAt 也得跟返回值对上
-      const p1 = asPayload(rows); p1.forEach((p: Row) => { p.cargoType = "sensitive"; }); p1[1].packageCount = 4;
+      // 第二款改成敏感货：后端会第二次写订单（整票货型），这一下的 updatedAt 也得跟返回值对上
+      const p1 = asPayload(rows); p1[1].cargoType = "sensitive"; p1[1].packageCount = 4;
       const r1 = await must("POST /admin/orders/update", ADMIN, { orderId, expectedOrderUpdatedAt: v0, products: p1, packageCount: 6, productQuantity: 0, weightKg: 26, volumeM3: 0.144 });
       const o1 = await orderRow(orderId);
-      assert.equal(o1.cargoType, "sensitive", "整票货型要跟着变");
-      assert.deepEqual((await productsOf(orderId)).map((p: Row) => p.cargoType), ["sensitive", "sensitive"], "每款都是整票那个");
+      assert.equal(o1.cargoType, "sensitive", "整票货型要跟着变（走到了第二次写订单那句）");
       assert.equal(r1.updatedAt, o1.updatedAt.toISOString(), "返回的 updatedAt 要等于库里订单的（不然页面拿它再存会被当成别人改过）");
       const p2 = asPayload(await productsOf(orderId)); p2[0].packageCount = 3;
       await must("POST /admin/orders/update", ADMIN, { orderId, expectedOrderUpdatedAt: r1.updatedAt, products: p2, packageCount: 7, productQuantity: 0, weightKg: 31, volumeM3: 0.168 });

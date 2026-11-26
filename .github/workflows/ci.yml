@@ -320,9 +320,6 @@ jobs:
       # 2026-11-23 运单管理按到仓日期排（老板选 A）+ 编辑框每个格子写名字（「编辑的时候为什么看不到长宽高」）
       - name: Test waybill sort by arrival date and edit field captions
         run: npm run test:waybill-sort-labels
-      # 2026-11-24 老板「一票只会有一个货型，不能单独产品选择货型」：页面上只在整票选一次、产品行没有货型；后端几个入口拦混着的
-      - name: Test one cargo type per waybill
-        run: npm run test:one-cargo-type
       # 湘泰 app（安卓外壳 mobile/，2026-10-05 老板「做安卓app」）。不连库：浏览器里一行不执行、
       # 存文件不靠 fetch（CSP 会拦）、只接管空白窗口、返回键先后、已登录直接进、正式包不开调试口、拍照不申请相机权限。
       - name: Test native app shell
@@ -589,9 +586,6 @@ jobs:
       # 已经挂在封禁唛头名下的单照常改、待入库照常转正式、预报单照常收货，解封后恢复
       - name: Test banned client cannot get new orders (real DB)
         run: bash .github/scripts/run-db-test.sh test:client-ban-db
-      # 2026-11-24 一票一个货型：员工建单 / 客户预报 / 超管改单 / 收货 / 到货通知 / 整柜，真接口看库里订单和每条产品行的货型
-      - name: Test one cargo type per waybill (real DB)
-        run: bash .github/scripts/run-db-test.sh test:one-cargo-type-db
       # 到货通知那份迁移：在「上线前的库」上连跑两遍、跟 schema 零差异、体检清单对上、外键在
       - name: Test arrival notices migration file (real DB)
         run: bash .github/scripts/run-db-test.sh test:migration-arrival-notices-db

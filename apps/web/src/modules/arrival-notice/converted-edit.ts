@@ -15,8 +15,7 @@
  *     不然别人在「运单管理」手填的总数，打开这里存一下就被悄悄换掉。
  * 单独放一个文件：组件带 JSX，测试隔离加载不了；这里的函数测试直接调。
  */
-import { noticeCargoTypeOf, type ArrivalNoticeDraft, type DraftProduct } from "../../services/arrival-notice-api";
-import { distinctCargoTypes } from "../../../../../packages/shared-types/cargo-type";
+import type { ArrivalNoticeDraft, DraftProduct } from "../../services/arrival-notice-api";
 import { isBlankNoticeProduct, missingForFormalNotice } from "../../../../../packages/shared-types/arrival-notice-products";
 import { decideEditTotals } from "../orders/edit-totals";
 
@@ -49,10 +48,11 @@ export interface AdminOrderPatch {
   productQuantity?: number;
   weightKg?: number | null;
   volumeM3?: number | null;
-  /** 整票货型（2026-11-24 一票一个货型）：后端把这票全部产品行都写成它 */
-  cargoType?: string;
   products?: AdminOrderPatchProduct[];
   expectedOrderUpdatedAt?: string;
+  /** 告诉后端「这个页面每款各选各的货型」（2026-11-26）：后端把没带的当成没刷新的 11-24～11-26 那版页面，
+      库里产品行货型不止一种、这次每行又发成同一种时拦住叫刷新。buildAdminOrderPatch 算完 changed 之后加上，不算一项改动 */
+  cargoPerRow?: true;
 }
 
 const t = (s: string | undefined | null) => (s ?? "").trim();
@@ -98,18 +98,12 @@ export function convertedDraftIssue(d: ArrivalNoticeDraft): string | null {
   return null;
 }
 
-/** 产品行比较用的样子（含原来的行号 id；空白的款不算）。
-    货型不在里面（2026-11-24 一票一个货型）：货型是整票的，单独比（cargoKey / 下面 patch.cargoType 那段） */
+/** 产品行比较用的样子（含原来的行号 id；空白的款不算） */
 function productsKey(d: ArrivalNoticeDraft): string {
   return JSON.stringify(filledProducts(d).map((p) => [
     p.orderProductId ?? null, t(p.itemName), t(p.packageCount), t(p.lengthCm), t(p.widthCm), t(p.heightCm),
-    t(p.productQuantity), t(p.weightKg), t(p.domesticTrackingNo),
+    t(p.productQuantity), t(p.weightKg), p.cargoType, t(p.domesticTrackingNo),
   ]));
-}
-
-/** 运单上各款现在存的货型（比「打开时」和「现在」两份库里的样子用：同事在「运单管理」改了货型要看得出来） */
-function cargoKey(d: ArrivalNoticeDraft): string {
-  return JSON.stringify(filledProducts(d).map((p) => p.cargoType));
 }
 
 /**
@@ -124,8 +118,7 @@ export function sameConvertedDraft(a: ArrivalNoticeDraft, b: ArrivalNoticeDraft)
     && a.transportMode === b.transportMode
     && a.warehouseId === b.warehouseId
     && t(a.arrivedAt) === t(b.arrivedAt)
-    && productsKey(a) === productsKey(b)
-    && cargoKey(a) === cargoKey(b);
+    && productsKey(a) === productsKey(b);
 }
 
 /** 备注改没改（备注是到货通知自己的，单独存） */
@@ -145,11 +138,6 @@ export function buildAdminOrderPatch(shipmentId: string, base: ArrivalNoticeDraf
   if (draft.transportMode !== base.transportMode && draft.transportMode) patch.transportMode = draft.transportMode;
   if (t(draft.arrivedAt) !== t(base.arrivedAt)) patch.shipDate = t(draft.arrivedAt);
 
-  /* 整票货型（2026-11-24 一票一个货型）：改了就发；打开时运单上几款混着几种（上线前的老单）也发 ——
-     弹窗上写明了「保存后统一成上面选的」，后端把这票全部产品行都写成这一个。没改又不混就不发、不碰 */
-  const cargo = noticeCargoTypeOf(draft);
-  if (cargo !== noticeCargoTypeOf(base) || distinctCargoTypes(filledProducts(base).map((p) => p.cargoType)).length > 1) patch.cargoType = cargo;
-
   const productsChanged = productsKey(draft) !== productsKey(base);
   if (productsChanged) {
     const ps = filledProducts(draft);
@@ -162,7 +150,7 @@ export function buildAdminOrderPatch(shipmentId: string, base: ArrivalNoticeDraf
       widthCm: optional(p.widthCm),
       heightCm: optional(p.heightCm),
       productQuantity: optional(p.productQuantity),
-      cargoType: cargo,
+      cargoType: p.cargoType || "normal",
       domesticTrackingNo: t(p.domesticTrackingNo) || BLANK_DOMESTIC_PLACEHOLDER,
       weightKg: optional(p.weightKg),
     }));
@@ -183,5 +171,7 @@ export function buildAdminOrderPatch(shipmentId: string, base: ArrivalNoticeDraf
   if (productsChanged || round(finalVolume, 3) !== round(asNum(base.volumeM3), 3)) patch.volumeM3 = finalVolume;
   const changed = Object.keys(patch).length > 1;
   if (changed && expectedOrderUpdatedAt) patch.expectedOrderUpdatedAt = expectedOrderUpdatedAt;
+  // 标记放在算完 changed 之后：它不是改动，不能让「什么都没改」变成「改了」
+  if (changed) patch.cargoPerRow = true;
   return { patch, changed };
 }

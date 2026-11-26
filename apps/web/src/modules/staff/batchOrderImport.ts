@@ -1,4 +1,4 @@
-import { parseCargoType, mixedCargoTypeIssue, CARGO_TYPE_ZH, CARGO_TYPE_HINT, type CargoType } from "../../../../../packages/shared-types/cargo-type";
+import { parseCargoType, strictestCargoType, CARGO_TYPE_HINT, type CargoType } from "../../../../../packages/shared-types/cargo-type";
 export interface StaffBatchProduct {
   itemName: string;
   packageCount: number;
@@ -24,7 +24,7 @@ export interface StaffBatchOrder {
   transportMode: "sea" | "land";
   domesticTrackingNo?: string;
   productQuantity?: number;
-  /** 运单这一层的货型（2026-11-24 起一票一个货型：几行填得不一样直接报错，产品行全写成这一个） */
+  /** 运单这一层的货型：多条产品行不一致时取最严的那个（见 strictestCargoType） */
   cargoType: CargoType;
   products: StaffBatchProduct[];
   sourceRows: number[];
@@ -71,8 +71,6 @@ interface GroupDraft {
    * 员工明明填了东西却被说没填，比不报还糟。
    */
   reported: Set<string>;
-  /** 「货型」那一格填了的行（2026-11-24 一票一个货型）：几行填得不一样要报出是哪几行；空着的行跟着填了的走 */
-  cargoFilled: Array<{ rowNumber: number; value: CargoType }>;
 }
 
 export const WAREHOUSE_NAME_MAP: Record<string, string> = {
@@ -501,6 +499,40 @@ export function lastRowWithCells(cellKeys: string[]): number {
   return max;
 }
 
+/** 认旧模板只用到工作簿的这两样（不引 xlsx 的类型，页面上 XLSX.read 读出来的直接传进来） */
+export interface StaffBatchWorkbookLike {
+  SheetNames: string[];
+  Sheets: Record<string, Record<string, unknown> | undefined>;
+}
+
+/** 11-24～11-26 那版模板「填写说明」第 13 条里才有的一句（现在的模板没有） */
+export const OLD_ONE_CARGO_TEMPLATE_MARK = "空着的跟着填了的那行";
+
+/**
+ * 认出 11 月 24 日～26 日下载的旧模板：认出来返回一句提示，不是就返回 null。
+ *
+ * 那两天是「一票一个货型」，模板说明第 13 条叫人「只在其中一行填、别的行空着也行（空着的跟着填了的那行）」。
+ * 2026-11-26 货型改回每条产品行各填各的，空着就是普货（见 parseCargoType）——
+ * 照那版说明填（第一行填敏感货、第二行空着）再上传，第二行会悄悄存成普货，一句错都不报。
+ * 所以随便哪张工作表里有一格写着那句，就整份不读，叫他换新模板。
+ * 不看表名（Codex 11-26）：有人把「填写说明」那张表改了名，那句话还在，照样得认出来；
+ * 认不出来的只剩「把说明那张表整张删了 / 另存成只有明细的文件」这一种。
+ */
+export function oldOneCargoTemplateIssue(wb: StaffBatchWorkbookLike): string | null {
+  for (const name of wb.SheetNames) {
+    const sheet = wb.Sheets[name];
+    if (!sheet) continue;
+    for (const [key, cell] of Object.entries(sheet)) {
+      if (key.charCodeAt(0) === 33) continue;   // "!ref" / "!cols" 这类元信息
+      const text = (cell as { v?: unknown } | null)?.v;
+      if (typeof text === "string" && text.includes(OLD_ONE_CARGO_TEMPLATE_MARK)) {
+        return "这个表格是 11 月 24 日～26 日下载的旧模板（里面第 13 条写的是「空着的跟着填了的那行」）。现在货型改回每一行各填各的、空着就是普货，照旧模板填会把货型存错。请重新点「下载模板」，把内容贴进新模板、每一行的货型都填上，再上传。";
+      }
+    }
+  }
+  return null;
+}
+
 /**
  * Excel 一行代表一种产品规格；同一运单号的多行会合并成一张订单。
  * 连续明细行可省略运单号及公共字段，解析时继承上一行所属运单的数据。
@@ -554,7 +586,6 @@ export function parseStaffBatchRows(rows: Record<string, unknown>[]): StaffBatch
       sourceRows: [],
       issues: [],
       reported: new Set<string>(),
-      cargoFilled: [],
     };
     groups.set(trackingNo, draft);
     draft.sourceRows.push(rowNumber);
@@ -744,7 +775,6 @@ export function parseStaffBatchRows(rows: Record<string, unknown>[]): StaffBatch
       });
     }
     const cargoType: CargoType = cargoTypeParsed?.value ?? "normal";
-    if (cargoTypeParsed?.filled) draft.cargoFilled.push({ rowNumber, value: cargoTypeParsed.value });
 
     if (itemName && packageCount !== undefined) {
       draft.products.push({
@@ -769,16 +799,6 @@ export function parseStaffBatchRows(rows: Record<string, unknown>[]): StaffBatch
     if (!draft.arrivedAt && !draft.reported.has("到仓日期")) draft.issues.push({ trackingNo: draft.trackingNo, message: "到仓日期为必填" });
     if (!draft.transportMode && !draft.reported.has("运输方式")) draft.issues.push({ trackingNo: draft.trackingNo, message: "运输方式为必填" });
     if (draft.products.length === 0) draft.issues.push({ trackingNo: draft.trackingNo, message: "至少需要一条有效产品明细" });
-    /* 一票一个货型（2026-11-24 老板：「一票只会有一个货型，不能单独产品选择货型」）：
-       同一运单几行的货型填得不一样 → 报错、不导入（原来按行各记、运单记最严的）。只比填了的；空着的行跟着填了的那行，一行都没填就是普货 */
-    const cargoIssue = mixedCargoTypeIssue(draft.cargoFilled.map((c) => c.value));
-    if (cargoIssue) {
-      draft.issues.push({
-        trackingNo: draft.trackingNo,
-        message: `${cargoIssue}（${draft.cargoFilled.map((c) => `第${c.rowNumber}行填的「${CARGO_TYPE_ZH[c.value]}」`).join("、")}），请改成同一个`,
-      });
-    }
-    const waybillCargo: CargoType = draft.cargoFilled[0]?.value ?? "normal";
 
     const weights = draft.products.map((product) => product.weightKg);
     const dimensions = draft.products.map((product) => product.lengthCm !== undefined && product.widthCm !== undefined && product.heightCm !== undefined);
@@ -845,9 +865,9 @@ export function parseStaffBatchRows(rows: Record<string, unknown>[]): StaffBatch
       transportMode: draft.transportMode!,
       domesticTrackingNo: domesticTrackingNos.length > 0 ? domesticTrackingNos.join(" / ") : undefined,
       productQuantity,
-      // 一票一个货型（2026-11-24）：整票和每条产品行都是这一个
-      cargoType: waybillCargo,
-      products: draft.products.map((product) => ({ ...product, cargoType: waybillCargo })),
+      // 同一运单几条产品行货型不一样时，运单这一层记最严的那个（宁可多准备材料）
+      cargoType: strictestCargoType(draft.products.map((product) => product.cargoType ?? "normal")),
+      products: draft.products,
       sourceRows: draft.sourceRows,
     });
   }

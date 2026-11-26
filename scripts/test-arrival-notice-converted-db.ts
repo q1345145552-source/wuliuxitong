@@ -87,8 +87,7 @@ async function main(): Promise<void> {
     const saved = (await must("POST /staff/arrival-notices/save", STAFF, {
       clientId: CA, trackingNo: no, transportMode: "sea", warehouseId: "wh_yiwu_01", arrivedAt: "2026-10-16", remark: "外箱有破损",
       products: [
-        // 2026-11-24 一票一个货型：两款同一个（原来是普货 + 敏感货混着）
-        { itemName: "冰敷袋", packageCount: "2", lengthCm: "42", widthCm: "42", heightCm: "41", weightKg: "13", cargoType: "sensitive", domesticTrackingNo: "S665" },
+        { itemName: "冰敷袋", packageCount: "2", lengthCm: "42", widthCm: "42", heightCm: "41", weightKg: "13", cargoType: "normal", domesticTrackingNo: "S665" },
         { itemName: "支架", packageCount: "1", lengthCm: "38", widthCm: "37.5", heightCm: "38", weightKg: "7", cargoType: "sensitive", domesticTrackingNo: null },
       ],
     })).item;
@@ -127,7 +126,7 @@ async function main(): Promise<void> {
       const { ps, o } = await orderOf(A.shipmentId);
       assert.deepEqual(d.productIds, ps.map((p: Row) => p.id));
       assert.deepEqual(d.item.products.map((p: Row) => [p.itemName, p.packageCount, p.cargoType, p.domesticTrackingNo]),
-        [["冰敷袋", 2, "sensitive", "S665"], ["支架", 1, "sensitive", null]], "订单上「货拉拉」回到这边当没填");
+        [["冰敷袋", 2, "normal", "S665"], ["支架", 1, "sensitive", null]], "订单上「货拉拉」回到这边当没填");
       assert.equal(d.item.weightKg, Number(o.weightKg));
       assert.equal(d.item.remark, "外箱有破损", "备注是到货通知自己的");
       assert.equal(d.blockedReason, null);
@@ -144,7 +143,7 @@ async function main(): Promise<void> {
         weightKg: 47, volumeM3: 0.307,
         itemName: "冰敷袋", packageCount: 5,
         products: [
-          { id: ps[0].id, itemName: "冰敷袋", packageCount: 2, lengthCm: 42, widthCm: 42, heightCm: 41, weightKg: 13, cargoType: "sensitive", domesticTrackingNo: "S665" },
+          { id: ps[0].id, itemName: "冰敷袋", packageCount: 2, lengthCm: 42, widthCm: 42, heightCm: 41, weightKg: 13, cargoType: "normal", domesticTrackingNo: "S665" },
           { id: ps[1].id, itemName: "支架", packageCount: 3, lengthCm: 38, widthCm: 37.5, heightCm: 38, weightKg: 7, cargoType: "sensitive", domesticTrackingNo: "JT888" },
         ],
       });
@@ -176,9 +175,7 @@ async function main(): Promise<void> {
       assert.equal(ps.length, 1, "删掉的那款订单上也要删掉");
       assert.equal(ps[0].packageCount, 4);
       assert.equal(o.packageCount, 4);
-      // 2026-11-24 一票一个货型：删一款整票货型不变（原来是「只剩普货那款就变普货」）
-      assert.equal(o.cargoType, "sensitive", "删一款整票货型不该变");
-      assert.equal(ps[0].cargoType, "sensitive");
+      assert.equal(o.cargoType, "normal", "只剩普货那款：整票货型跟着变成普货");
       assert.equal(refreshed.remark, "改成一款");
       assert.deepEqual(refreshed.products.map((p: Row) => [p.itemName, p.packageCount]), [["冰敷袋", 4]]);
       assert.equal(refreshed.weightKg, Number(o.weightKg));

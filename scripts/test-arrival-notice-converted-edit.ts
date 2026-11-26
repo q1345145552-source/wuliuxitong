@@ -200,7 +200,8 @@ async function main(): Promise<void> {
     const base = convertedDraftOf(makeDetail());
     const { patch, changed } = buildAdminOrderPatch("ship1", base, { ...base, warehouseId: "wh_guangzhou_01", arrivedAt: "2026-10-15" });
     assert.equal(changed, true);
-    assert.deepEqual(patch, { orderId: "ship1", warehouseId: "wh_guangzhou_01", shipDate: "2026-10-15" });
+    // cargoPerRow: 2026-11-26 加的标记（告诉后端这是每款各选各的货型的页面），有改动才带；上面「什么都没改」那条钉着它不算一项改动
+    assert.deepEqual(patch, { orderId: "ship1", warehouseId: "wh_guangzhou_01", shipDate: "2026-10-15", cargoPerRow: true });
   });
 
   await check("F3 改了一款的件数：产品整份发、带原来的行号；件数合计、品名、总数（按产品行算）一起发；订单那一格国内单号不发", () => {

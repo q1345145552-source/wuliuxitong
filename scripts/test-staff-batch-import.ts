@@ -1,11 +1,16 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import { createRequire } from "node:module";
+import path from "node:path";
 import { cargoTypeLabel, parseCargoType, strictestCargoType } from "../packages/shared-types/cargo-type";
 import {
   BATCH_SHEET_TO_JSON_OPTIONS,
   lastRowWithCells,
   formatStaffBatchErrorLocation,
+  OLD_ONE_CARGO_TEMPLATE_MARK,
+  oldOneCargoTemplateIssue,
   parseStaffBatchRows,
+  type StaffBatchWorkbookLike,
 } from "../apps/web/src/modules/staff/batchOrderImport";
 
 function buildRows(orderCount: number): Record<string, unknown>[] {
@@ -770,43 +775,20 @@ const CARGO_COL = "货型（普货/商检/敏感，默认普货）";
   }
 }
 
-/**
- * 同一运单几行货型不一样 → **报错、不导入**，说清是哪几行（2026-11-24 老板：「一票只会有一个货型，不能单独产品选择货型」）。
- * 原来按行各自记、运单这一层取最严的；现在一票一个货型。
- */
+/** 同一运单几行货型不一样 → 按行各自记，运单这一层取最严的（敏感 > 商检 > 普货） */
 {
   const r = parseStaffBatchRows([
     { ...CARGO_BASE, "品名 *": "沙发", [CARGO_COL]: "普货" },
     { ...CARGO_BASE, "品名 *": "茶几", [CARGO_COL]: "商检" },
     { ...CARGO_BASE, "品名 *": "台灯", [CARGO_COL]: "敏感" },
   ]);
-  assert.equal(r.orders.length, 0, "同一票三行三种货型却还是导进去了");
-  const msg = r.issues.map((i) => i.message).join("；");
-  assert.ok(msg.includes("一票只能有一个货型"), `报错没说一票只能一个货型：${msg}`);
-  assert.ok(/第2行.*普货/.test(msg) && /第3行.*商检货/.test(msg) && /第4行.*敏感货/.test(msg), `报错没点名是哪几行、各填了什么：${msg}`);
-}
-
-/** 同一运单只在一行填了货型、别的行空着 → 整票（每一行）都是填的那个；几行填得一样也行 */
-{
-  const r = parseStaffBatchRows([
-    { ...CARGO_BASE, "品名 *": "沙发", [CARGO_COL]: "" },
-    { ...CARGO_BASE, "品名 *": "茶几", [CARGO_COL]: "敏感" },
-    { ...CARGO_BASE, "品名 *": "台灯", [CARGO_COL]: "敏感货" },
-  ]);
-  assert.deepEqual(r.issues, [], `空着的行该跟着填了的走，却报错了：${JSON.stringify(r.issues.map((i) => i.message))}`);
+  assert.deepEqual(r.issues, [], `混合货型报错了：${JSON.stringify(r.issues.map((i) => i.message))}`);
   const o = r.orders[0];
-  assert.deepEqual(o.products.map((p) => p.cargoType), ["sensitive", "sensitive", "sensitive"], "空着的那行没跟着整票走");
-  assert.equal(o.cargoType, "sensitive");
-  // 货型不许顺带把别的数字算错
+  assert.deepEqual(o.products.map((p) => p.cargoType), ["normal", "inspection", "sensitive"], "每行的货型没各自记住");
+  assert.equal(o.cargoType, "sensitive", `运单层该取最严的 sensitive，实际 ${o.cargoType}`);
+  // 混合货型不许顺带把别的数字算错
   assert.equal(o.packageCount, 6, `箱数被货型影响了：${o.packageCount}`);
   assert.equal(o.itemName, "沙发 / 茶几 / 台灯", `品名拼错了：${o.itemName}`);
-}
-
-/** 模板填写说明不能还写着「几行可以填不同货型」 */
-{
-  const staffPage = fs.readFileSync("apps/web/src/app/staff/page.tsx", "utf8");
-  assert.ok(!staffPage.includes("可以填不同货型"), "模板填写说明还在说同一运单几行可以填不同货型");
-  assert.ok(staffPage.includes("一票只能有一个货型"), "模板填写说明没写一票只能一个货型");
 }
 
 /**
@@ -970,10 +952,9 @@ const CARGO_COL = "货型（普货/商检/敏感，默认普货）";
 {
   const clientPage = fs.readFileSync("apps/web/src/app/client/page.tsx", "utf8");
   assert.ok(!/cargoType: "normal" \}\)\)/.test(clientPage), "客户预报单提交还在写死 cargoType: \"normal\"");
-  // 2026-11-24 一票一个货型：整票一个下拉（不管分没分产品行都显示），每条产品行都发整票那一个，产品行上没有货型下拉
-  assert.ok(clientPage.includes("cargoType: form.cargoType || \"normal\""), "客户预报单的产品行没发整票选的那个货型");
-  assert.ok(!/<select value=\{p\.cargoType/.test(clientPage), "客户端产品行里还有货型下拉（一票只能一个货型）");
-  assert.ok(/<select aria-label="货型" value=\{form\.cargoType/.test(clientPage), "客户端没有整票货型下拉");
+  assert.ok(clientPage.includes("cargoType: p.cargoType || \"normal\""), "客户预报单没把每条产品行自己的货型发出去");
+  assert.ok(/<select value=\{p\.cargoType/.test(clientPage), "客户端产品行里没有货型下拉");
+  assert.ok(/<select value=\{form\.cargoType/.test(clientPage), "客户端没有整票货型下拉（没分产品行时用）");
 
   // 2026-09-29：客户批量下单读表格那段挪到了 modules/client-import/import-rows.ts（页面文件不许导出别的函数，测试要直接调）
   const clientImports = fs.readFileSync("apps/web/src/app/client/imports/page.tsx", "utf8") + fs.readFileSync("apps/web/src/modules/client-import/import-rows.ts", "utf8");
@@ -991,6 +972,79 @@ const CARGO_COL = "货型（普货/商检/敏感，默认普货）";
     const code = fs.readFileSync(file, "utf8");
     assert.ok(/货型: cargoTypeLabel\(/.test(code), `${label}运单列表导出没有货型这一列`);
   }
+}
+
+/**
+ * 11-24～11-26 下载的旧模板（2026-11-26 货型改回每行各填各的）：那版说明第 13 条叫人「空着的跟着填了的那行」，
+ * 现在空着就是普货 —— 照填会把货型悄悄存错，所以整份不读、叫他换新模板。
+ * 工作簿用页面同一个 xlsx 真写一份 .xlsx 再真读回来（跟页面上 XLSX.read 拿到的是同一种东西），不手搓单元格。
+ */
+{
+  const XLSX = createRequire(path.resolve("apps/web/package.json"))("xlsx") as {
+    utils: {
+      book_new(): unknown;
+      aoa_to_sheet(rows: unknown[][]): unknown;
+      book_append_sheet(wb: unknown, ws: unknown, name: string): void;
+    };
+    write(wb: unknown, opts: { type: "array"; bookType: "xlsx" }): ArrayBuffer;
+    read(data: ArrayBuffer, opts: { type: "array" }): StaffBatchWorkbookLike;
+  };
+  const roundTrip = (sheets: Array<[string, unknown[][]]>): StaffBatchWorkbookLike => {
+    const wb = XLSX.utils.book_new();
+    for (const [name, rows] of sheets) XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(rows), name);
+    return XLSX.read(XLSX.write(wb, { type: "array", bookType: "xlsx" }), { type: "array" });
+  };
+  const dataSheet: [string, unknown[][]] = ["员工批量下单模板", [["唛头 *", "运单号 *", "货型"], ["TEST413CLIENT", "UTOLD001", "敏感货"], ["", "", ""]]];
+  // 8ee373f（11-24 上线）staff/page.tsx 里模板说明第 13 条的原话
+  const OLD_LINE_13 = "13. 一票只能有一个货型：同一运单的几行，货型要填成一样的；只在其中一行填、别的行空着也行（空着的跟着填了的那行）。几行填得不一样会在上传时当场报错。";
+
+  // ① 那两天的旧模板 → 认出来，叫他重新下载模板
+  const oldIssue = oldOneCargoTemplateIssue(roundTrip([dataSheet, ["填写说明", [["填写说明"], ["12.「货型」留空就是普货"], [OLD_LINE_13]]]]));
+  assert.ok(oldIssue, "11-24～11-26 的旧模板没认出来");
+  assert.ok(oldIssue!.includes("重新") && oldIssue!.includes("下载模板"), `旧模板提示里没叫他重新下载模板：${oldIssue}`);
+  assert.ok(oldIssue!.includes(OLD_ONE_CARGO_TEMPLATE_MARK), `旧模板提示里没说是哪一句：${oldIssue}`);
+
+  // ② 现在的模板 → null。说明直接从真页面源码里抠（「填写说明」那张表的每一行），谁把那句加回现在的模板这里就红
+  const staffPage = fs.readFileSync("apps/web/src/app/staff/page.tsx", "utf8");
+  const block = /const instructions = XLSX\.utils\.aoa_to_sheet\(\[([\s\S]*?)\]\);/.exec(staffPage);
+  assert.ok(block, "员工页面里找不到模板「填写说明」那一段");
+  const lines = [...block![1].matchAll(/\["([^"]*)"\]/g)].map((m) => [m[1]]);
+  assert.ok(lines.some(([t]) => t.startsWith("13. 同一运单的几行可以填不同货型")), `现在模板的第 13 条不是「可以填不同货型」：${JSON.stringify(lines)}`);
+  assert.equal(oldOneCargoTemplateIssue(roundTrip([dataSheet, ["填写说明", lines]])), null, "现在的模板被当成旧模板拦下了");
+
+  // ③ 没有「填写说明」那张表 / 说明表是空的 → null
+  assert.equal(oldOneCargoTemplateIssue(roundTrip([dataSheet])), null, "没有填写说明表也被拦了");
+  assert.equal(oldOneCargoTemplateIssue(roundTrip([dataSheet, ["填写说明", []]])), null, "填写说明表是空的也被拦了");
+  // 不看表名（Codex 11-26）：说明那张表被改了名、挪到最前面，那句话还在 → 照样认出来
+  assert.match(oldOneCargoTemplateIssue(roundTrip([dataSheet, ["说明", [[OLD_LINE_13]]]])) ?? "", /重新.*下载模板/, "说明表改了名就认不出旧模板了");
+  assert.match(oldOneCargoTemplateIssue(roundTrip([["看这里", [[OLD_LINE_13]]], dataSheet])) ?? "", /重新.*下载模板/, "说明表挪到前面就认不出旧模板了");
+  // 现在的说明换个表名也不能被误认
+  assert.equal(oldOneCargoTemplateIssue(roundTrip([dataSheet, ["说明", lines]])), null, "现在的说明改了表名被当成旧模板拦下了");
+
+  // ④ 页面入口：凡是调了 parseStaffBatchRows 的页面，都要在读行之前先认旧模板，认出来走跟「行数超限」同一个报错出口、直接 return
+  const callers: string[] = [];
+  const walk = (dir: string) => {
+    for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
+      const p = path.join(dir, ent.name);
+      if (ent.isDirectory()) walk(p);
+      else if (/\.tsx?$/.test(ent.name) && !p.endsWith(path.join("staff", "batchOrderImport.ts")) && /parseStaffBatchRows\(/.test(fs.readFileSync(p, "utf8"))) callers.push(p);
+    }
+  };
+  walk("apps/web/src");
+  assert.ok(callers.includes(path.join("apps/web/src/app/staff/page.tsx")), `员工页面不在批量导入入口里了：${JSON.stringify(callers)}`);
+  for (const file of callers) {
+    const code = fs.readFileSync(file, "utf8");
+    const check = code.indexOf("oldOneCargoTemplateIssue(wb)");
+    const toJson = code.indexOf("sheet_to_json(", check);
+    assert.ok(check > 0, `${file} 读批量导入表格前没先认旧模板`);
+    assert.ok(check < code.indexOf("parseStaffBatchRows(raw") && toJson > check && code.lastIndexOf("sheet_to_json(", check) < code.lastIndexOf("XLSX.read(", check), `${file} 认旧模板不在读行之前`);
+    const branch = code.slice(check, toJson);
+    assert.ok(/if \(oldTemplateIssue\) \{[\s\S]*setBatchRows\(\[\]\);[\s\S]*setBatchErrors\(\[oldTemplateIssue\]\);\s*return;\s*\}/.test(branch), `${file} 认出旧模板后没有报错并停下`);
+  }
+  // 管理员页的批量导入是另一张 13 列模板（自己读，不走 parseStaffBatchRows），8ee373f 没改过它的说明，这里钉住
+  const adminPage = fs.readFileSync("apps/web/src/app/admin/page.tsx", "utf8");
+  assert.ok(!adminPage.includes("parseStaffBatchRows("), "管理员页开始用员工批量导入的解析了 —— 上面的入口检查会要求它也先认旧模板");
+  assert.ok(!adminPage.includes(OLD_ONE_CARGO_TEMPLATE_MARK), "管理员导入模板的说明里出现了旧模板那句");
 }
 
 console.log("staff batch import parser: 100 orders / 300 rows passed");

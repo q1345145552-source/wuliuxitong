@@ -277,59 +277,184 @@ async function main() {
       }
     }
   });
-  /* 2026-11-24 老板：「一票只会有一个货型，不能单独产品选择货型」—— 下面几条从「逐行记、整票取最严」改成一票一个货型 */
-  await check("管理员改产品（一票一个货型）：填了的那个就是整票，没填的行跟着它，数字不变", async () => {
+  await check("管理员改产品：锁内按保存后的完整产品集重算整票，数字不变", async () => {
     reset(); const originalShipment = JSON.stringify(rows.shipment);
     const response = await api({orderId: "o1", products: [{id: "p1", itemName: "鞋", packageCount: 2, cargoType: "sensitive"}, {id: "p2", itemName: "帽", packageCount: 3}]});
     assert.equal(response.code, 200); assert.equal(rows.order[0].cargoType, "sensitive");
-    assert.deepEqual(rows.orderProduct.map(p => p.cargoType), ["sensitive", "sensitive"]);
+    assert.deepEqual(rows.orderProduct.map(p => p.cargoType), ["sensitive", "normal"]);
     assert.equal(rows.order[0].packageCount, 5); assert.equal(rows.order[0].weightKg, 8); assert.equal(rows.order[0].volumeM3, 0.05);
     const savedShipment = {...rows.shipment[0]}; delete savedShipment.updatedAt;
     assert.equal(JSON.stringify([savedShipment]), originalShipment);
-    assert.ok(calls.lastIndexOf("orderProduct.updateMany") > calls.indexOf("lock:order"), calls.join(" → "));
+    assert.ok(calls.indexOf("orderProduct.findMany") > calls.indexOf("lock:order"), calls.join(" → "));
   });
-  await check("管理员产品行货型不止一种（没刷新的老页面）：400、叫他刷新，什么都不写、不查库", async () => {
-    for (const values of [["sensitive", "normal"], ["normal", "inspection", "special"]]) {
-      reset(); const before = JSON.stringify(rows);
-      const response = await api({orderId: "o1", products: values.map((cargoType, i) => ({id: `p${i+1}`, itemName: `货${i}`, packageCount: 2, cargoType}))});
-      assert.equal(response.code, 400); assert.match(response.body.message, /一票只能有一个货型/); assert.match(response.body.message, /刷新/);
-      assert.equal(JSON.stringify(rows), before); assert.deepEqual(calls, []);
-    }
-  });
-  await check("管理员仅改整票货型：这票全部产品行跟着改（混着几种的老单也统一），别的数字不动", async () => {
-    for (const wanted of ["normal", "inspection", "special"]) {
-      reset(["sensitive", "normal"], "sensitive");
-      const pkg = rows.order[0].packageCount; const wt = rows.order[0].weightKg; const vol = rows.order[0].volumeM3; const ship = JSON.stringify(rows.shipment);
+  await check("管理员仅改整票：有明细且最严不一致时 400，保持所有旧值", async () => {
+    for (const wanted of ["normal", "inspection"]) {
+      reset(["sensitive", "sensitive"], "sensitive"); const before = JSON.stringify(rows);
       const response = await api({orderId: "o1", cargoType: wanted});
-      assert.equal(response.code, 200, JSON.stringify(response.body));
-      assert.equal(rows.order[0].cargoType, wanted);
-      assert.deepEqual(rows.orderProduct.map(p => p.cargoType), [wanted, wanted]);
-      assert.equal(rows.order[0].packageCount, pkg); assert.equal(rows.order[0].weightKg, wt); assert.equal(rows.order[0].volumeM3, vol);
-      const s0 = {...rows.shipment[0]}; delete s0.updatedAt; const b0 = JSON.parse(ship)[0]; delete b0.updatedAt;
-      assert.deepEqual(s0, b0, "只改货型却动了运单上的数");
-      assert.ok(calls.lastIndexOf("orderProduct.updateMany") > calls.indexOf("lock:order"), calls.join(" → "));
+      assert.equal(response.code, 400); assert.match(response.body.message, /在产品行修改货型/);
+      // 页面上现在走不到这句，会碰到的是还开着 11-24～11-26 那版页面的人（产品行没有货型那一格）：得告诉他刷新
+      assert.match(response.body.message, /刷新页面/);
+      assert.equal(JSON.stringify(rows), before);
     }
+    // 产品行只有一种、整票发的就是它：照常放行（混着几种的见下一条）
+    reset(["inspection", "inspection"], "inspection");
+    assert.equal((await api({orderId: "o1", cargoType: "inspection"})).code, 200);
+    assert.deepEqual(rows.orderProduct.map(p => p.cargoType), ["inspection", "inspection"]);
   });
-  await check("管理员产品增删 / 产品行没带货型：整票发了就用整票的；都没带按留下来的老行算（混着的取最严），新加的行也跟着", async () => {
+  /* 2026-11-26 货型改回「每条产品行各选各的」：11-24～11-26 线上那版（一票一个货型）的页面没刷新时，
+     打开混着几种货型的单一保存就带整票货型、产品行一动每行都发成整票那一个 —— 照存会把同事分开选的货型改成同一种。
+     老页面在混着的单上，这次只要带了整票货型或产品行就存不成功（dsh 第 1 轮：老弹窗存成功一次就不再带整票货型，之后改产品行就认不出来了）；
+     完全不碰货型的（只改备注）照常存 */
+  await check("没刷新的老页面碰上混着几种货型的单：拦住叫刷新、锁后才读、读完没写；现在的页面和直接调接口的不受影响", async () => {
+    const sameRows = (cargoType?: string) => [{id: "p1", itemName: "鞋", packageCount: 9, ...(cargoType ? {cargoType} : {})}, {id: "p2", itemName: "帽", packageCount: 3, ...(cargoType ? {cargoType} : {})}];
+    const WRITES = ["order.update", "order.updateMany", "shipment.update", "shipment.updateMany", "orderProduct.update", "orderProduct.updateMany", "orderProduct.create", "orderProduct.deleteMany"];
+    /** 被拦住的这一次：400 + 叫刷新；库里订单 / 运单 / 产品行一个字没变；读产品行在锁订单之后；拦之前一句写库的都没有 */
+    const blocked = async (body: Row, label: string) => {
+      reset(["normal", "sensitive"], "sensitive"); const before = JSON.stringify(rows);
+      const response = await api(body);
+      assert.equal(response.code, 400, `${label} ${JSON.stringify(response.body)}`);
+      assert.match(response.body.message, /不是最新的.*刷新页面/, label);
+      assert.equal(JSON.stringify(rows), before, `${label}：被拦住的这次订单 / 运单 / 产品行一个字都不能写`);
+      assert.ok(calls.indexOf("lock:order") >= 0 && calls.indexOf("orderProduct.findMany") > calls.indexOf("lock:order"), `${label}：要先锁订单再读产品行 ${calls.join(" → ")}`);
+      assert.deepEqual(calls.filter(c => WRITES.includes(c)), [], `${label}：要先拦后写，不能写了再靠回滚 ${calls.join(" → ")}`);
+    };
+    // 老页面改产品行：带整票货型 + 每条产品行都发整票那一个；库里这票是 普货 + 敏感货
+    await blocked({orderId: "o1", cargoType: "sensitive", products: sameRows("sensitive")}, "老页面改产品行");
+    // 老页面把整票换成库里没有的那种（特货）再动产品行
+    await blocked({orderId: "o1", cargoType: "special", products: sameRows("special")}, "老页面换整票货型又改产品行");
+    // 老页面没动产品行（只改备注 / 什么都没改就存）：带的整票货型刚好等于最严那个 —— 也得拦，
+    // 不然这一次存成功，老弹窗下一次改产品行就不带整票货型了，上面两句拦不到
+    await blocked({orderId: "o1", cargoType: "sensitive", remark: "只改了备注"}, "老页面只改备注");
+    await blocked({orderId: "o1", cargoType: "sensitive", products: []}, "老页面空产品行");
+    // 老页面只把整票货型改成另一个
+    await blocked({orderId: "o1", cargoType: "normal"}, "老页面只改整票货型");
+    // 先核版本号、后拦（dsh 第 2 轮）：版本号过期的老页面该看到的是「刚刚被别人改过」那句 409，而且这时还没去读产品行
+    reset(["normal", "sensitive"], "sensitive"); rows.order[0].updatedAt = new Date("2026-11-26T00:00:00.000Z"); // 这份假数据平时不带版本号，这条要比版本号
+    { const before = JSON.stringify(rows);
+      const stale = await api({orderId: "o1", cargoType: "sensitive", products: sameRows("sensitive"), expectedOrderUpdatedAt: "2000-01-01T00:00:00.000Z"});
+      assert.equal(stale.code, 409, JSON.stringify(stale.body)); assert.match(stale.body.message, /刚刚被别人改过/);
+      assert.equal(JSON.stringify(rows), before); assert.ok(!calls.includes("orderProduct.findMany"), `版本号对不上就不该再去读产品行 ${calls.join(" → ")}`); }
+    // 库里有认不出来的老货型值（dsh 第 2 轮）：混着的照样拦，给的是「请刷新页面」而不是「货型不合法」
+    reset(["futureType", "sensitive"], "sensitive");
+    { const before = JSON.stringify(rows);
+      const r = await api({orderId: "o1", cargoType: "sensitive", products: sameRows("sensitive")});
+      assert.equal(r.code, 400); assert.match(r.body.message, /不是最新的.*刷新页面/); assert.equal(JSON.stringify(rows), before); }
+    // 库里只有一种、但那一种认不出来：带产品行的照 11-23 的规矩「写完再校验」，这次把它盖成合法的就能存，不能提前报错
+    reset(["futureType", "futureType"], "normal");
+    assert.equal((await api({orderId: "o1", cargoType: "sensitive", products: sameRows("sensitive")})).code, 200);
+    assert.deepEqual(rows.orderProduct.map(p => p.cargoType), ["sensitive", "sensitive"]); assert.equal(rows.order[0].cargoType, "sensitive");
+    // 同样的库、只改整票（不带产品行）：照 11-23 的规矩当场报「货型不合法」，一个字不写
+    reset(["futureType", "futureType"], "normal");
+    { const before = JSON.stringify(rows);
+      const r = await api({orderId: "o1", cargoType: "sensitive"});
+      assert.equal(r.code, 400); assert.match(r.body.message, /不合法/); assert.equal(JSON.stringify(rows), before); }
+    // 没带标记、也没带整票货型，每行发成同一种（Codex 第 3 轮 / dsh 第 4 轮）：库里是 普货 + 认不出来的老值 / 大小写不一样的 / 空串 时，
+    // 那版页面把它们都当普货、以为只有一种，改产品行时不带整票货型、每行发普货 —— 照样得拦，不能把原来的值悄悄盖掉
+    for (const stored of [["normal", "futureType"], ["normal", "NORMAL"], ["normal", ""], ["normal", "sensitive"]]) {
+      reset(stored, "sensitive"); const before = JSON.stringify(rows);
+      const r = await api({orderId: "o1", products: sameRows("normal")});
+      assert.equal(r.code, 400, `库里 ${JSON.stringify(stored)}：${JSON.stringify(r.body)}`); assert.match(r.body.message, /不是最新的.*刷新页面/);
+      assert.equal(JSON.stringify(rows), before, `库里 ${JSON.stringify(stored)}：被拦住的这次一个字都不能写`);
+      assert.deepEqual(calls.filter(c => WRITES.includes(c)), [], `要先拦后写 ${calls.join(" → ")}`);
+    }
+    // 删到只剩一行、那一行明写着货型（没带标记）：也是「发来的全是同一种」，库里不止一种就拦（11-24 之前的页面这么做会被叫去刷新，有意的取舍）
+    reset(["normal", "sensitive"], "sensitive");
+    assert.equal((await api({orderId: "o1", products: [{id: "p1", itemName: "鞋", packageCount: 9, cargoType: "normal"}]})).code, 400);
+    assert.equal(rows.orderProduct.length, 2);
+    // 现在的页面（带 cargoPerRow: true）：把认不出来的那个值改成普货 / 特意把两行都改成敏感货 / 删到只剩一行 → 照常存
+    reset(["normal", "futureType"], "sensitive");
+    assert.equal((await api({orderId: "o1", cargoPerRow: true, products: sameRows("normal")})).code, 200);
+    assert.deepEqual(rows.orderProduct.map(p => p.cargoType), ["normal", "normal"]); assert.equal(rows.order[0].cargoType, "normal");
+    reset(["normal", "sensitive"], "sensitive");
+    assert.equal((await api({orderId: "o1", cargoPerRow: true, products: [{id: "p1", itemName: "鞋", packageCount: 9, cargoType: "normal"}]})).code, 200);
+    assert.equal(rows.orderProduct.length, 1); assert.equal(rows.order[0].cargoType, "normal");
+    // 带了标记、只发整票货型（直接调接口）：不按老页面拦，照 11-23 的老规矩 —— 等于最严的放行、对不上的 400
+    reset(["normal", "sensitive"], "sensitive");
+    assert.equal((await api({orderId: "o1", cargoPerRow: true, cargoType: "sensitive"})).code, 200);
+    assert.deepEqual(rows.orderProduct.map(p => p.cargoType), ["normal", "sensitive"]);
+    { const r = await api({orderId: "o1", cargoPerRow: true, cargoType: "normal"}); assert.equal(r.code, 400); assert.match(r.body.message, /在产品行修改货型/); }
+    // cargoPerRow 不是 true（写成 "true" / 1 / false）不算标记
+    for (const fake of ["true", 1, false]) {
+      reset(["normal", "sensitive"], "sensitive");
+      assert.equal((await api({orderId: "o1", cargoPerRow: fake, products: sameRows("sensitive")})).code, 400, `cargoPerRow=${JSON.stringify(fake)} 不该算标记`);
+    }
+    // 现在的页面：带标记、不带整票货型，特意把两行都改成敏感货 → 照常存
+    reset(["normal", "sensitive"], "sensitive");
+    assert.equal((await api({orderId: "o1", cargoPerRow: true, products: sameRows("sensitive")})).code, 200);
+    assert.deepEqual(rows.orderProduct.map(p => p.cargoType), ["sensitive", "sensitive"]); assert.equal(rows.orderProduct[0].packageCount, 9);
+    // 现在的页面：不带整票货型，只改备注 → 照常存，产品行不动、也不去读产品行
+    reset(["normal", "sensitive"], "sensitive");
+    assert.equal((await api({orderId: "o1", cargoPerRow: true, remark: "现在的页面只改备注"})).code, 200);
+    assert.deepEqual(rows.orderProduct.map(p => p.cargoType), ["normal", "sensitive"]); assert.ok(!calls.includes("orderProduct.findMany"));
+    // 没带标记、不碰货型的（11-24 之前就开着的页面 / 直接调接口，只改备注或收货地址）：混着的单上也照常存，产品行不动、也不去读产品行（dsh 第 5 轮）
+    // （改运单号那条路要查到货通知，这份假数据库没有那张表，这里不测；它跟货型拦截不相干）
+    for (const body of [{remark: "没带标记只改备注"}, {receiverAddressTh: "Bangkok"}, {remark: "空产品行", products: []}]) {
+      reset(["normal", "sensitive"], "sensitive");
+      const r = await api({orderId: "o1", ...body});
+      assert.equal(r.code, 200, `${JSON.stringify(body)} ${JSON.stringify(r.body)}`);
+      assert.deepEqual(rows.orderProduct.map(p => p.cargoType), ["normal", "sensitive"]); assert.ok(!calls.includes("orderProduct.findMany"), `${JSON.stringify(body)}：不碰货型就不该去读产品行`);
+    }
+    // 老页面碰上本来就只有一种货型的单：改箱数、连货型一起换，照常存（老页面在这种单上跟现在的页面没区别）
+    reset(["normal", "normal"], "normal");
+    assert.equal((await api({orderId: "o1", cargoType: "inspection", products: sameRows("inspection")})).code, 200);
+    assert.deepEqual(rows.orderProduct.map(p => p.cargoType), ["inspection", "inspection"]); assert.equal(rows.order[0].cargoType, "inspection");
+    // 带了整票货型、但产品行各写各的（直接调接口的）：不是老页面的样子，照原来的规矩存、整票记最严
+    reset(["normal", "sensitive"], "sensitive");
+    assert.equal((await api({orderId: "o1", cargoType: "sensitive", products: [{id: "p1", itemName: "鞋", packageCount: 2, cargoType: "inspection"}, {id: "p2", itemName: "帽", packageCount: 3, cargoType: "sensitive"}]})).code, 200);
+    assert.deepEqual(rows.orderProduct.map(p => p.cargoType), ["inspection", "sensitive"]); assert.equal(rows.order[0].cargoType, "sensitive");
+    // 带了整票货型、产品行没写货型（直接调接口的老用法）：各行保留原来的，不拦
+    reset(["normal", "sensitive"], "sensitive");
+    assert.equal((await api({orderId: "o1", cargoType: "sensitive", products: sameRows()})).code, 200);
+    assert.deepEqual(rows.orderProduct.map(p => p.cargoType), ["normal", "sensitive"]);
+    // 只有一行明写了货型、另一行没写：也不是老页面的样子（老页面每行都写），不拦
+    reset(["normal", "sensitive"], "sensitive");
+    assert.equal((await api({orderId: "o1", cargoType: "sensitive", products: [{id: "p1", itemName: "鞋", packageCount: 2, cargoType: "sensitive"}, {id: "p2", itemName: "帽", packageCount: 3}]})).code, 200);
+    assert.deepEqual(rows.orderProduct.map(p => p.cargoType), ["sensitive", "sensitive"]);
+  });
+  await check("现在的两个改单页面都带 cargoPerRow: true（后端靠它认现在的页面），也不发整票货型", async () => {
+    const fs = await import("node:fs"); const path = await import("node:path");
+    const web = path.join(__dirname, "../apps/web/src");
+    const read = (rel: string) => fs.readFileSync(path.join(web, rel), "utf8");
+    // 调 /admin/orders/update 的只有这两个页面（另一个是接口封装自己）；多出来一个调用方就得回来看它发不发整票货型
+    const callers: string[] = [];
+    const walk = (dir: string) => { for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, e.name);
+      if (e.isDirectory()) walk(full);
+      else if (/\.tsx?$/.test(e.name) && /updateAdminOrder\(|admin\/orders\/update/.test(fs.readFileSync(full, "utf8").replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, ""))) callers.push(path.relative(web, full));
+    } };
+    walk(web);
+    assert.deepEqual(callers.sort(), ["modules/arrival-notice/ArrivalNoticesView.tsx", "modules/orders/WaybillEditDialog.tsx", "services/business-api.ts"]);
+    // 编辑运单弹窗：整票货型没有输入的地方（没有哪一句往表单里写 cargoType），所以「改了才发」那一项永远不发
+    const dialog = read("modules/orders/WaybillEditDialog.tsx").replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, "");
+    // 往表单里写 cargoType 的 setForm（回调写成 (v) => ({...}) 或 v => ({...}) 都算）。先拿几句真写法试一下这句正则自己认不认得出来（dsh 第 2 轮：上一版一句都认不出来，等于没钉）
+    const writesFormCargo = /setForm\((?:\([^)]*\)|[A-Za-z_$][\w$]*)\s*=>\s*\(?\{[^}]*\bcargoType\b/;
+    for (const sample of ["setForm((v) => ({ ...v, cargoType: e.target.value }))", "setForm((f) => ({ ...f, cargoType: v }))", "setForm(v => ({ ...v, itemName: x, cargoType: y }))"]) assert.match(sample, writesFormCargo);
+    assert.doesNotMatch("setForm((v) => ({ ...v, batchNo: e.target.value }))", writesFormCargo);
+    assert.doesNotMatch(dialog, writesFormCargo, "编辑运单弹窗里有地方改整票货型了：先改后端「没刷新的老页面」那段");
+    assert.doesNotMatch(dialog, /aria-label="货型"/, "编辑运单弹窗上面那排又有整票货型了：先改后端「没刷新的老页面」那段");
+    assert.match(dialog, /aria-label=\{`第\$\{i \+ 1\}行 货型`\}/, "产品行上的货型下拉不见了");
+    // 到货通知「修改已转运单」：发给改单接口的那份里没有整票货型这一项
+    const patch = /export interface AdminOrderPatch \{([\s\S]*?)\n\}/.exec(read("modules/arrival-notice/converted-edit.ts").replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, ""));
+    assert.ok(patch, "找不到 AdminOrderPatch");
+    assert.doesNotMatch(patch![1], /^\s*cargoType\??:/m, "到货通知改已转运单又发整票货型了：先改后端「没刷新的老页面」那段");
+    // 两个页面都带 cargoPerRow: true（后端把没带的当成没刷新的老页面）；请求类型里写成必填的 true，以后多一个调用方漏带编译就不过
+    assert.match(read("services/business-api.ts").replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, ""), /export async function updateAdminOrder\(payload: \{\s*orderId: string;\s*cargoPerRow: true;/, "改单接口的请求类型里 cargoPerRow 不是必填的 true");
+    assert.match(dialog, /await updateAdminOrder\(\{\s*orderId: saveOrderId,\s*\.\.\.\(snapshot\?\.orderUpdatedAt \? \{ expectedOrderUpdatedAt: snapshot\.orderUpdatedAt \} : \{\}\),\s*cargoPerRow: true,/, "编辑运单弹窗保存时没带 cargoPerRow: true");
+    // 到货通知改已转运单：拼请求的函数自己带上（算完 changed 之后，不算改动）—— 照页面流程跑的连库测试拿到的也是带标记的
+    const convertedEdit = read("modules/arrival-notice/converted-edit.ts").replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, "");
+    assert.match(convertedEdit, /const changed = Object\.keys\(patch\)\.length > 1;[\s\S]{0,160}?if \(changed\) patch\.cargoPerRow = true;\s*return \{ patch, changed \};/, "buildAdminOrderPatch 没在算完 changed 之后带上 cargoPerRow");
+    const noticeView = read("modules/arrival-notice/ArrivalNoticesView.tsx").replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, "");
+    const noticeCalls = [...noticeView.matchAll(/updateAdminOrder\(([^;]*)\);/g)].map((m) => m[1]);
+    assert.ok(noticeCalls.length >= 1 && noticeCalls.every((c) => /cargoPerRow: true/.test(c)), `到货通知改已转运单有一处没带 cargoPerRow: true：${noticeCalls.join(" | ")}`);
+  });
+  await check("管理员产品增删/缺省货型：保留旧行、重新取最严、不信整票旧值", async () => {
     reset(["inspection", "sensitive"], "sensitive");
     assert.equal((await api({orderId: "o1", cargoType: "normal", products: [{id: "p1", itemName: "鞋", packageCount: 2}, {itemName: "新帽", packageCount: 1}]})).code, 200);
-    assert.deepEqual(rows.orderProduct.map(p => p.cargoType), ["normal", "normal"]);
-    assert.equal(rows.order[0].cargoType, "normal");
-    // 删掉唯一一行敏感货、只留商检那行：按留下来的算 = 商检（不把剩下的统一成被删掉那行的敏感货 —— dsh 11-24 第 1 轮）
-    reset(["inspection", "sensitive"], "sensitive");
-    assert.equal((await api({orderId: "o1", products: [{id: "p1", itemName: "鞋", packageCount: 2}]})).code, 200);
-    assert.equal(rows.orderProduct.length, 1); assert.deepEqual(rows.orderProduct.map(p => p.cargoType), ["inspection"]); assert.equal(rows.order[0].cargoType, "inspection");
-    // 两行都留着、混着：取最严；再加一行新的也跟着
-    reset(["inspection", "sensitive"], "normal");
-    assert.equal((await api({orderId: "o1", products: [{id: "p1", itemName: "鞋", packageCount: 2}, {id: "p2", itemName: "帽", packageCount: 3}, {itemName: "新", packageCount: 1}]})).code, 200);
-    assert.deepEqual(rows.orderProduct.map(p => p.cargoType), ["sensitive", "sensitive", "sensitive"]); assert.equal(rows.order[0].cargoType, "sensitive");
-    // 一行老的都没留（全换成新加的）：看订单自己记的
-    reset(["inspection", "sensitive"], "special");
-    assert.equal((await api({orderId: "o1", products: [{itemName: "新一", packageCount: 1}]})).code, 200);
-    assert.deepEqual(rows.orderProduct.map(p => p.cargoType), ["special"]); assert.equal(rows.order[0].cargoType, "special");
-    reset(["inspection", "inspection"], "normal"); // 老单：产品行都是商检、订单记成普货（9-10 前的老数据）→ 跟着产品行（列表上显示的就是它）
-    assert.equal((await api({orderId: "o1", products: [{id: "p1", itemName: "鞋", packageCount: 2}, {itemName: "新帽", packageCount: 1}]})).code, 200);
-    assert.deepEqual(rows.orderProduct.map(p => p.cargoType), ["inspection", "inspection"]); assert.equal(rows.order[0].cargoType, "inspection");
+    assert.deepEqual(rows.orderProduct.map(p => p.cargoType), ["inspection", "normal"]);
+    assert.equal(rows.order[0].cargoType, "inspection");
+    // 删到只剩一行、货型改成普货：库里这时是 商检货 + 普货 两种，现在的页面带 cargoPerRow 才不会被当成没刷新的老页面（2026-11-26）
+    assert.equal((await api({orderId: "o1", cargoPerRow: true, products: [{id: "p1", itemName: "鞋", packageCount: 2, cargoType: "normal"}]})).code, 200);
+    assert.equal(rows.orderProduct.length, 1); assert.equal(rows.order[0].cargoType, "normal");
   });
   await check("管理员旧无产品单、仅改备注和空 products 沿用增量契约", async () => {
     reset([], "sensitive"); assert.equal((await api({orderId: "o1", cargoType: "inspection"})).code, 200);
@@ -339,19 +464,13 @@ async function main() {
     assert.equal(rows.order[0].cargoType, "normal"); assert.equal(JSON.stringify(rows.orderProduct), before);
     assert.ok(!calls.includes("orderProduct.findMany"));
   });
-  await check("管理员 64 种三产品组合：一样的照存、每行都是它；不一样的 400 什么都不写", async () => {
-    const types = ["normal", "inspection", "sensitive", "special"];
+  await check("管理员 27 种三产品组合的最严货型与全部产品逐行一致", async () => {
+    const types = ["normal", "inspection", "sensitive"];
     for (const a of types) for (const b of types) for (const c of types) {
-      reset(); const values = [a,b,c]; const before = JSON.stringify(rows);
-      const response = await api({orderId: "o1", products: values.map((cargoType, i) => ({itemName: `品名${i}`, packageCount: 2, cargoType}))});
-      if (new Set(values).size === 1) {
-        assert.equal(response.code, 200);
-        assert.deepEqual(rows.orderProduct.map(p => p.cargoType), values);
-        assert.equal(rows.order[0].cargoType, a);
-      } else {
-        assert.equal(response.code, 400, values.join("+"));
-        assert.equal(JSON.stringify(rows), before);
-      }
+      reset(); const values = [a,b,c];
+      assert.equal((await api({orderId: "o1", products: values.map((cargoType, i) => ({itemName: `品名${i}`, packageCount: 2, cargoType}))})).code, 200);
+      assert.deepEqual(rows.orderProduct.map(p => p.cargoType), values);
+      assert.equal(rows.order[0].cargoType, types[Math.max(...values.map(v => types.indexOf(v)))]);
     }
   });
   await check("客户端真模板→XLSX上传→真提交序列化：体积乘箱数、重量仍是整票", async () => {

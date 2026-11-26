@@ -1423,6 +1423,9 @@ export async function fetchAdminOrders(): Promise<AdminOrderItem[]> {
  */
 export async function updateAdminOrder(payload: {
   orderId: string;
+  /** 现在的页面一律带 true（写成必填，漏带编译就不过）：货型是一条产品行一条产品行选的。
+      后端把没带的当成没刷新的 11-24～11-26 那版「一票一个货型」页面：库里产品行货型不止一种、这次每行又发成同一种时拦住叫刷新（2026-11-26） */
+  cargoPerRow: true;
   // 除 orderId 外全部可选：只传本次改动过的项，没传的后端不会去动
   /** 到货通知里改已转正式运单时带（2026-10-16）：打开时订单的 updatedAt，后端锁里核对，对不上 409 */
   expectedOrderUpdatedAt?: string;
@@ -2799,6 +2802,9 @@ export async function updateFclContainer(payload: {
   containerId: string;
   /** 打开编辑框时那个柜的 updatedAt。后端比不上就回 409，不闷头覆盖别人刚改的东西 */
   expectUpdatedAt?: string;
+  /** 现在的页面一律带 true（写成必填，漏带编译就不过）：清单货型是一行一行选的。不带的是 11-24～11-26 那版「一柜一个货型」的老页面，
+      库里清单货型不止一种时后台会拦住叫刷新（2026-11-26） */
+  cargoPerRow: true;
   clientId: string;
   trackingNo: string;
   containerNo: string;

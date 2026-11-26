@@ -20,7 +20,7 @@ import MarkPicker from "../layout/MarkPicker";
 import { activeMarkOptions, bannedChangeHint, bannedClientIds, withCurrentMark } from "../shared/client-ban";
 import { decideEditTotals } from "./edit-totals";
 import { validateProductRows, packageCountForPayload } from "./productRowGuard";
-import { CARGO_TYPES, CARGO_TYPE_ZH, cargoTypeZh } from "../../../../../packages/shared-types/cargo-type";
+import { CARGO_TYPES, CARGO_TYPE_ZH } from "../../../../../packages/shared-types/cargo-type";
 import { apiBaseUrl } from "../../services/core-api";
 import { updateAdminOrder } from "../../services/business-api";
 import { waybillEditStateOf, type WaybillEditForm, type WaybillEditProduct, type WaybillEditSnapshot, type WaybillEditSource } from "./waybill-edit-state";
@@ -44,10 +44,9 @@ function Named(props: { caption: string; children: ReactNode }) {
     </div>
   );
 }
-/** 产品行的列：名字那一行和每一行格子共用，对得齐。
-    货型不在这里（2026-11-24 老板：「一票只会有一个货型，不能单独产品选择货型」）—— 在上面整票那一排选一次 */
-const productGrid = "2fr 0.4fr 0.3fr 0.3fr 0.3fr 0.4fr 0.45fr 1fr auto";
-const PRODUCT_COLUMN_NAMES = ["品名", "箱数", "长cm", "宽cm", "高cm", "单箱数量", "单箱重kg", "国内单号"] as const;
+/** 产品行的列：名字那一行和每一行格子共用，对得齐 */
+const productGrid = "2fr 0.4fr 0.3fr 0.3fr 0.3fr 0.4fr 0.45fr 0.8fr 1fr auto";
+const PRODUCT_COLUMN_NAMES = ["品名", "箱数", "长cm", "宽cm", "高cm", "单箱数量", "单箱重kg", "货型", "国内单号"] as const;
 
 export default function WaybillEditDialog(props: {
   /** 打开时点的那一行（表单只在挂上那一刻按它建一次） */
@@ -73,7 +72,6 @@ export default function WaybillEditDialog(props: {
 }) {
   const { initial, current, visible, clientList, sessionRef, busy, setBusy, onClose, confirmClose, onToast, reloadList } = props;
   const [opened] = useState(() => waybillEditStateOf(initial));
-  const mixedCargo = opened.mixedCargo;
   const [form, setForm] = useState<WaybillEditForm>(opened.form);
   const [products, setProducts] = useState<WaybillEditProduct[]>(opened.products);
   const [snapshot, setSnapshot] = useState<WaybillEditSnapshot | null>(opened.snapshot);
@@ -136,8 +134,7 @@ export default function WaybillEditDialog(props: {
         widthCm: p.widthCm ? Number(p.widthCm) : undefined,
         heightCm: p.heightCm ? Number(p.heightCm) : undefined,
         productQuantity: p.productQuantity ? Number(p.productQuantity) : undefined,
-        // 一票一个货型（2026-11-24）：每条产品行都发整票选的那一个
-        cargoType: form.cargoType || "normal",
+        cargoType: p.cargoType || "normal",
         domesticTrackingNo: p.domesticTrackingNo.trim() || "货拉拉",
         weightKg: p.weightKg ? Number(p.weightKg) : undefined,
       }));
@@ -162,6 +159,7 @@ export default function WaybillEditDialog(props: {
       const saved = await updateAdminOrder({
         orderId: saveOrderId,
         ...(snapshot?.orderUpdatedAt ? { expectedOrderUpdatedAt: snapshot.orderUpdatedAt } : {}),
+        cargoPerRow: true, // 告诉后端「这个页面每条产品行各选各的货型」（见 updateAdminOrder 的说明）
         ...(changed("clientId", form.clientId) ? { clientId: form.clientId.trim() || "" } : {}),
         ...(changed("itemName", form.itemName) || productsChanged ? { itemName: primaryItemName } : {}),
         ...(changed("trackingNo", form.trackingNo) ? { trackingNo: form.trackingNo.trim() || "" } : {}),
@@ -172,6 +170,9 @@ export default function WaybillEditDialog(props: {
         ...(changed("receiverAddressTh", form.receiverAddressTh) ? { receiverAddressTh: form.receiverAddressTh.trim() } : {}),
         ...(changed("containerNo", form.containerNo) ? { containerNo: form.containerNo.trim() || "" } : {}),
         ...(changed("packageUnit", form.packageUnit) ? { packageUnit: form.packageUnit } : {}),
+        /* ⚠️ 页面上没有整票货型那一格（货型在下面每条产品行上选），form.cargoType 没人改，所以这一项现在永远不会发。
+           后端认「现在的页面」靠的是上面那个 cargoPerRow: true（2026-11-26）。整票货型这一格不要加回来：
+           加了就又变回「一票一个货型」（11-24 那版，老板 11-26 让改回来的），而且带着标记后端不会拦（test:cargo-regressions 钉着没有地方改它） */
         ...(changed("cargoType", form.cargoType) ? { cargoType: form.cargoType } : {}),
         ...(changed("shipDate", form.shipDate) ? { shipDate: form.shipDate.trim() } : {}),
         ...(changed("remark", form.remark ?? "") ? { remark: form.remark?.trim() || null } : {}),
@@ -235,8 +236,6 @@ export default function WaybillEditDialog(props: {
           <Named caption="柜号"><input aria-label="柜号" value={form.batchNo} onChange={(e) => setForm((v) => ({ ...v, batchNo: e.target.value }))} placeholder="柜号" style={field} /></Named>
           <Named caption="仓库"><select aria-label="仓库" value={form.warehouseId} onChange={(e) => setForm((v) => ({ ...v, warehouseId: e.target.value }))} style={field}><option value="wh_yiwu_01">义乌仓</option><option value="wh_guangzhou_01">广州仓</option><option value="wh_dongguan_01">东莞仓</option><option value="wh_shenzhen_01">深圳仓</option></select></Named>
           <Named caption="运输方式"><select aria-label="运输方式" value={form.transportMode} onChange={(e) => setForm((v) => ({ ...v, transportMode: e.target.value as "sea" | "land" }))} style={field}><option value="sea">海运</option><option value="land">陆运</option></select></Named>
-          {/* 整票一个货型（2026-11-24），产品行跟着它 */}
-          <Named caption="货型"><select aria-label="货型" value={form.cargoType} onChange={(e) => setForm((v) => ({ ...v, cargoType: e.target.value }))} style={field}>{CARGO_TYPES.map((c) => <option key={c} value={c}>{CARGO_TYPE_ZH[c]}</option>)}</select></Named>
           <Named caption="国内单号"><input aria-label="国内单号" value={form.domesticTrackingNo} onChange={(e) => setForm((v) => ({ ...v, domesticTrackingNo: e.target.value }))} placeholder="货拉拉" style={field} /></Named>
           <Named caption="收货地址"><input aria-label="收货地址" value={form.receiverAddressTh} onChange={(e) => setForm((v) => ({ ...v, receiverAddressTh: e.target.value }))} placeholder="收货地址" style={field} /></Named>
           <Named caption="装柜号"><input aria-label="装柜号" value={form.containerNo} onChange={(e) => setForm((v) => ({ ...v, containerNo: e.target.value }))} placeholder="装柜号" style={field} /></Named>
@@ -245,12 +244,6 @@ export default function WaybillEditDialog(props: {
           <Named caption="总体积(m³)"><input aria-label="总体积(m³)" value={form.volumeM3} onChange={(e) => setForm((v) => ({ ...v, volumeM3: e.target.value }))} placeholder="体积(m³)" style={field} /></Named>
           <Named caption="到仓日期"><input aria-label="到仓日期" type="date" value={form.shipDate} onChange={(e) => setForm((v) => ({ ...v, shipDate: e.target.value }))} style={field} /></Named>
         </div>
-        {/* 上线前就混着几种货型的老单（2026-11-24 一票一个货型）：说清楚一保存就统一成上面选的那个。存过一次「打开时的样子」换成存进去的，这句就不出了 */}
-        {mixedCargo && snapshot?.form.cargoType === "" ? (
-          <div style={{ color: "var(--c-red-deep)", fontSize: 12 }}>
-            这票原来几个产品的货型不一样（{mixedCargo.map((c) => CARGO_TYPE_ZH[c]).join("、")}）。一票只能有一个货型，保存后整票统一成上面选的「{cargoTypeZh(form.cargoType)}」。
-          </div>
-        ) : null}
         {/* 换成封禁的唛头时的提示（放在格子外面，不把那一排撑高） */}
         {(() => {
           const hint = bannedChangeHint(form.clientId, snapshot?.form.clientId, bannedClientIds(clientList));
@@ -284,6 +277,9 @@ export default function WaybillEditDialog(props: {
                   <input aria-label={`第${i + 1}行 高cm`} type="number" step="0.01" value={p.heightCm} onChange={(e) => setProduct(i, "heightCm", e.target.value)} placeholder="高cm" style={cell} />
                   <input aria-label={`第${i + 1}行 单箱数量`} type="number" value={p.productQuantity} onChange={(e) => setProduct(i, "productQuantity", e.target.value)} placeholder="单箱数量" style={cell} />
                   <input aria-label={`第${i + 1}行 单箱重kg`} type="number" step="0.01" value={p.weightKg} onChange={(e) => setProduct(i, "weightKg", e.target.value)} placeholder="单箱重kg" style={cell} />
+                  <select aria-label={`第${i + 1}行 货型`} value={(p.cargoType || "normal").toLowerCase()} onChange={(e) => setProduct(i, "cargoType", e.target.value)} style={{ ...cell, background: "var(--white)" }}>
+                    {CARGO_TYPES.map((c) => <option key={c} value={c}>{CARGO_TYPE_ZH[c]}</option>)}
+                  </select>
                   <input aria-label={`第${i + 1}行 国内单号`} value={p.domesticTrackingNo || ""} onChange={(e) => setProduct(i, "domesticTrackingNo", e.target.value)} placeholder="货拉拉" style={cell} />
                   <button type="button" aria-label={`删除第${i + 1}行`} onClick={() => setProducts((v) => v.filter((_, j) => j !== i))} style={{ border: "1px solid #fca5a5", borderRadius: 4, padding: "4px 6px", fontSize: 11, background: "var(--white)", color: "var(--c-red-2)", cursor: "pointer" }}>X</button>
                 </Fragment>

@@ -44,9 +44,11 @@ const tpl = loadModule("apps/web/src/modules/fcl/template.ts");
 const { FCL_TEMPLATE_HEADERS, fclRowFromSheet } = tpl;
 
 let failures = 0;
+let passed = 0;
 function check(name: string, run: () => void): void {
   try {
     run();
+    passed++;
     console.log(`  ✅ ${name}`);
   } catch (e) {
     failures++;
@@ -800,8 +802,34 @@ check("28) 给人看的正文不许混 Markdown 星号（会原样印在页面�
   assert.deepEqual(bad, [], "下面这几行会把星号原样印给用户看：\n     " + bad.join("\n     "));
 });
 
+check("29) 改整柜保存时带 cargoPerRow: true（2026-11-26 货型改回逐行选，后台靠它认出没刷新的老页面）", () => {
+  /* 11-24～11-26 那版页面每次保存都把清单每一行发成同一个货型；后台对「不带这个标记、库里货型不止一种、
+     这次只发来一种」的请求拦住叫刷新。现在的页面漏带的话，同事特意把各行改成同一种也会被当成老页面拦住。 */
+  const ui = read("apps/web/src/components/fcl/FclContainerWorkbench.tsx");
+  assert.match(ui, /updateFclContainer\(\{ \.\.\.payload, containerId: editingId, expectUpdatedAt: editingVersion \?\? undefined, cargoPerRow: true \}\)/,
+    "改整柜保存时没带 cargoPerRow: true");
+  // 请求类型里写成必填的 true：以后再加一个调改整柜接口的地方、漏带标记，编译就不过（Codex 11-26）
+  assert.match(read("apps/web/src/services/business-api.ts"), /expectUpdatedAt\?: string;[\s\S]{0,260}\n  cargoPerRow: true;\n/, "改整柜的请求类型里 cargoPerRow 不是必填的 true");
+  {
+    // 调 updateFclContainer 的每一处都带着标记
+    const calls = [...ui.matchAll(/updateFclContainer\(\{[^}]*\}\)/g)].map((m) => m[0]);
+    assert.ok(calls.length >= 1 && calls.every((c) => /cargoPerRow: true/.test(c)), `有调改整柜接口的地方没带 cargoPerRow：${calls.join(" | ")}`);
+  }
+  const api = read("apps/api/src/modules/fcl-containers/routes.ts");
+  assert.match(api, /if \(body\.cargoPerRow !== true\s*&& new Set\(order\.products\.map\(\(p\) => p\.cargoType\)\)\.size > 1\s*&& new Set\(rows\.map\(\(r\) => r\.cargoType\)\)\.size <= 1\)/,
+    "后台认老页面的那句判断被改了");
+  // 位置（dsh 第 3 轮）：锁里核完版本号之后（版本过期的老页面该看到的是 409「刚刚被别人改过」）、算「改了哪几样」和任何写库之前（先拦后写）
+  const guard = api.indexOf("if (body.cargoPerRow !== true");
+  const version = api.lastIndexOf("这个整柜刚刚被别人改过了", guard);
+  const changedCalc = api.indexOf("// ---- 到底改了哪几样", guard);
+  assert.ok(guard > 0 && version > 0 && version < guard, "认老页面的拦截要排在版本号核对之后");
+  assert.ok(changedCalc > guard, "认老页面的拦截要排在算「改了哪几样」之前");
+  const handlerStart = api.lastIndexOf('app.post("/staff/fcl-containers/update"', guard);
+  assert.doesNotMatch(api.slice(handlerStart, guard), /tx\.\w+\.(update|updateMany|create|createMany|delete|deleteMany|upsert)\(/, "认老页面的拦截之前不能有写库的语句");
+});
+
 if (failures > 0) {
   console.log(`❌ 失败 ${failures} 项`);
   process.exit(1);
 }
-console.log("✅ 整柜管理：31 项全部通过");
+console.log(`✅ 整柜管理：${passed} 项全部通过`);

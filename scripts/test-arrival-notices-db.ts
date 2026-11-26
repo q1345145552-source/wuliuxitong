@@ -1175,16 +1175,15 @@ async function main(): Promise<void> {
 
     await check("N37 两款保存：回包 / 列表按顺序带两款；主表镜像列 = 品名拼起来、件数合计、国内单号用「、」拼（旧代码拆得开）、货型取最严；调换顺序重存；删通知产品行跟着删", async () => {
       const n = await save(STAFF, { ...ticket, trackingNo: NO("MP1"), weightKg: 85, volumeM3: 0.62, products: [
-        // 2026-11-24 一票一个货型：两款同一个（页面上整票选一次、每款都发它）；混着的另见 N37b
-        P({ itemName: "灯具", packageCount: "12", cargoType: "sensitive", domesticTrackingNo: "SF1234567890" }),
+        P({ itemName: "灯具", packageCount: "12", domesticTrackingNo: "SF1234567890" }),
         P({ itemName: "鞋", packageCount: 5, cargoType: "sensitive", domesticTrackingNo: "YT9876543210" }),
       ] });
-      assert.deepEqual(n.products.map((p: Row) => [p.itemName, p.packageCount, p.cargoType, p.domesticTrackingNo]), [["灯具", 12, "sensitive", "SF1234567890"], ["鞋", 5, "sensitive", "YT9876543210"]]);
+      assert.deepEqual(n.products.map((p: Row) => [p.itemName, p.packageCount, p.cargoType, p.domesticTrackingNo]), [["灯具", 12, "normal", "SF1234567890"], ["鞋", 5, "sensitive", "YT9876543210"]]);
       assert.deepEqual(Object.keys(n.products[0]).sort(), ["cargoType", "domesticTrackingNo", "heightCm", "itemName", "lengthCm", "packageCount", "productQuantity", "weightKg", "widthCm"], "产品不带 id");
       assert.equal(n.itemName, "灯具 / 鞋", "顶层品名给老页面看：拼起来");
       assert.equal(n.packageCount, 17);
       assert.equal(n.domesticTrackingNo, "SF1234567890、YT9876543210");
-      assert.equal(n.cargoType, "sensitive", "顶层货型 = 整票那一个");
+      assert.equal(n.cargoType, "sensitive", "顶层货型取最严");
       assert.equal(n.weightKg, 85, "没填单箱重：整票重量用手填的");
       assert.equal(n.volumeM3, 0.62);
       const row = await pm.arrivalNotice.findUnique({ where: { id: n.id } });
@@ -1204,15 +1203,6 @@ async function main(): Promise<void> {
       const gone = await save(STAFF, { products: [P({ itemName: "要删的" }), P({ itemName: "要删的2" })] });
       await must("POST /staff/arrival-notices/delete", STAFF, { id: gone.id });
       assert.equal(await pm.arrivalNoticeProduct.count({ where: { noticeId: gone.id } }), 0, "删通知产品行跟着删");
-    });
-
-    await check("N37b 一票一个货型（2026-11-24）：几款货型不一样 400（叫他刷新），库里什么都不多；改已有那条时混着发也 400、库里不变", async () => {
-      const before = await pm.arrivalNotice.count({ where: { companyId: CO } });
-      await refuse(SAVE_URL, STAFF, { ...ticket, trackingNo: NO("MP1X"), products: [P({ itemName: "灯具", packageCount: 2 }), P({ itemName: "鞋", packageCount: 1, cargoType: "special" })] }, /^一票只能有一个货型，现在这票的产品里有「普货」「特货」2 种，这次没有保存。请刷新页面，在整票的「货型」里选一个$/);
-      assert.equal(await pm.arrivalNotice.count({ where: { companyId: CO } }), before);
-      const n = await save(STAFF, { ...ticket, trackingNo: NO("MP1Y"), products: [P({ itemName: "灯具", packageCount: 2 }), P({ itemName: "鞋", packageCount: 1 })] });
-      await refuse(SAVE_URL, STAFF, { ...ticket, id: n.id, trackingNo: NO("MP1Y"), products: [P({ itemName: "灯具", packageCount: 2, cargoType: "inspection" }), P({ itemName: "鞋", packageCount: 1 })] }, /一票只能有一个货型/);
-      assert.deepEqual((await dbProducts(n.id)).map((p: Row) => p.cargoType), ["normal", "normal"]);
     });
 
     await check("N38 每款的校验：两款及以上报「第N款」（按请求里原来的位置，空白款也数）、只有一款跟原来一字不差；第 51 款拒；格式不对拒；合计溢出拒；空白款丢掉、sort_order 重编", async () => {
@@ -1242,9 +1232,8 @@ async function main(): Promise<void> {
       const fifty = await save(STAFF, { products: Array.from({ length: 50 }, (_, i) => P({ itemName: `款${i + 1}` })) });
       assert.equal(fifty.products.length, 50);
       // 空白款：页面「＋ 加一款」后什么都没填的那几行丢掉，剩下的从 0 重新编号
-      // 2026-11-24 一票一个货型：灯具也是商检货（页面每款都发整票那个）；混着的另见 N37b
-      const n = await save(STAFF, { products: [P(), P({ itemName: "灯具", packageCount: 2, cargoType: "inspection" }), P({ domesticTrackingNo: "   " }), P({ cargoType: "inspection" })] });
-      assert.deepEqual(n.products.map((p: Row) => [p.itemName, p.cargoType]), [["灯具", "inspection"], [null, "inspection"]], "只有货型不是普货的那款不算空白");
+      const n = await save(STAFF, { products: [P(), P({ itemName: "灯具", packageCount: 2 }), P({ domesticTrackingNo: "   " }), P({ cargoType: "inspection" })] });
+      assert.deepEqual(n.products.map((p: Row) => [p.itemName, p.cargoType]), [["灯具", "normal"], [null, "inspection"]], "只有货型不是普货的那款不算空白");
       assert.deepEqual((await dbProducts(n.id)).map((p: Row) => p.sortOrder), [0, 1]);
       // products: [] 合法 = 一款都没登记
       const none = await save(STAFF, { products: [] });
@@ -1275,7 +1264,7 @@ async function main(): Promise<void> {
       assert.equal(ship.order.productQuantity, 0);
       assert.equal(ship.order.domesticTrackingNo, "SF4440001", "订单国内单号取第一个非空的");
       await save(STAFF, { id: n.id, clientId: CLIENT.userId, trackingNo: NO("MP4"), products: [
-        P({ itemName: "灯具", packageCount: 12, productQuantity: 10, cargoType: "inspection", domesticTrackingNo: "SF4440001" }),
+        P({ itemName: "灯具", packageCount: 12, productQuantity: 10, domesticTrackingNo: "SF4440001" }),
         P({ itemName: "鞋", packageCount: 5, productQuantity: 2, cargoType: "inspection" }),
       ] });
       ship = await load();
@@ -1283,17 +1272,16 @@ async function main(): Promise<void> {
       assert.equal(ship.order.packageCount, 17);
       assert.equal(ship.order.itemName, "灯具", "建了产品行：订单品名取第一款（同「创建订单」）");
       assert.equal(ship.order.productQuantity, 130, "Σ 单箱数量 × 件数（原来同步时不写产品数量）");
-      assert.equal(ship.order.cargoType, "inspection", "整票那一个货型");
+      assert.equal(ship.order.cargoType, "inspection", "最严的货型");
       assert.deepEqual(ship.order.products.map((p: Row) => [p.itemName, p.packageCount, p.productQuantity, p.cargoType, p.domesticTrackingNo, p.sortOrder]),
-        [["灯具", 12, 10, "inspection", "SF4440001", 0], ["鞋", 5, 2, "inspection", "货拉拉", 1]], "国内单号空着写「货拉拉」（同「创建订单」）");
+        [["灯具", 12, 10, "normal", "SF4440001", 0], ["鞋", 5, 2, "inspection", "货拉拉", 1]], "国内单号空着写「货拉拉」（同「创建订单」）");
       const st = (await must("GET /staff/shipments", STAFF, {}, { pageSize: "500" })).items.find((x: Row) => x.trackingNo === NO("MP4"));
       assert.equal(st.totalPackageCount, 17);
     });
 
     await check("N41 两款转正式：订单 / 运单 / 产品行跟员工「创建订单」两款建单逐项一样（品名、件数、重量、体积、产品数量、最严货型、每行字段）；单箱重和尺寸盖掉手填的重量体积", async () => {
       const prods = [
-        // 2026-11-24 一票一个货型：两款同一个（「创建订单」那边混着的也会被拦）
-        { itemName: "灯具", packageCount: 12, lengthCm: 60, widthCm: 40, heightCm: 30, productQuantity: 10, weightKg: 5, cargoType: "sensitive", domesticTrackingNo: "SF1234560001" },
+        { itemName: "灯具", packageCount: 12, lengthCm: 60, widthCm: 40, heightCm: 30, productQuantity: 10, weightKg: 5, cargoType: "normal", domesticTrackingNo: "SF1234560001" },
         { itemName: "鞋", packageCount: 5, lengthCm: 50, widthCm: 40, heightCm: 30, productQuantity: 2, weightKg: 5, cargoType: "sensitive", domesticTrackingNo: "YT9876540002" },
       ];
       const n = await save(STAFF, { ...ticket, trackingNo: NO("MPT"), weightKg: 999, volumeM3: 9, products: prods.map((p) => P({ ...p, packageCount: String(p.packageCount), lengthCm: String(p.lengthCm) })) });
@@ -1427,9 +1415,8 @@ async function main(): Promise<void> {
       assert.deepEqual(it.products, [{ itemName: "旧容器登记的", packageCount: 6, lengthCm: null, widthCm: null, heightCm: null, productQuantity: null, weightKg: null, cargoType: "inspection", domesticTrackingNo: "SF6660006" }]);
       assert.equal(it.packageCount, 6);
       const base = { clientId: it.clientId, trackingNo: it.trackingNo, weightKg: it.weightKg, volumeM3: it.volumeM3, transportMode: it.transportMode, warehouseId: it.warehouseId, arrivedAt: it.arrivedAt, remark: it.remark, products: it.products };
-      // 新加的一款跟整票同一个货型（2026-11-24 一票一个货型：页面每款都发整票那个）
-      await save(STAFF, { ...base, id: "zz_an_mirror", products: [...it.products, P({ itemName: "新加一款", packageCount: 1, cargoType: "inspection" })], base });
-      assert.deepEqual((await dbProducts("zz_an_mirror")).map((p: Row) => [p.itemName, p.packageCount, p.cargoType]), [["旧容器登记的", 6, "inspection"], ["新加一款", 1, "inspection"]]);
+      await save(STAFF, { ...base, id: "zz_an_mirror", products: [...it.products, P({ itemName: "新加一款", packageCount: 1 })], base });
+      assert.deepEqual((await dbProducts("zz_an_mirror")).map((p: Row) => [p.itemName, p.packageCount, p.cargoType]), [["旧容器登记的", 6, "inspection"], ["新加一款", 1, "normal"]]);
       // 转运单也认兜底那一款（没有产品行时 fieldsOf 拿主表那几列）
       await pm.$executeRawUnsafe(`INSERT INTO arrival_notices (id, company_id, created_by, updated_at, tracking_no, client_id, item_name, package_count)
         VALUES ('zz_an_mirror2', '${CO}', '${STAFF.userId}', now(), '${NO("MP14")}', '${CLIENT.userId}', '旧容器2', 3)`);
@@ -1626,6 +1613,72 @@ async function main(): Promise<void> {
       const byOld = await list(STAFF, { keyword: NO(`${K}3`), tab: "all", warehouse: "wh_yiwu_01" });
       assert.equal(byOld.total, 0, "旧号（运单已经改掉了）搜不到，跟不分仓库时一样");
       assert.equal(byOld.warehouseCounts.all, 0);
+    });
+
+    await check("N56 货型改回每款各选各的（2026-11-26）× 没刷新的 11-24～11-26 那版页面（每款都发同一个货型、不带 cargoPerRow）：库里几款货型不一样时挡住叫刷新、一个字不写（转了待入库的订单产品行也不动）；现在的页面带 cargoPerRow 能统一；老页面各发各的 / 库里本来一种的照常存", async () => {
+      // 那版页面发的样子：products 每款都是整票那一个货型（打开混着的通知时整票 = 最严的），base 照库里原样（rowCargoAsStored）
+      const openedOf = (it: Row) => ({ clientId: it.clientId, trackingNo: it.trackingNo, weightKg: it.weightKg, volumeM3: it.volumeM3, transportMode: it.transportMode, warehouseId: it.warehouseId, arrivedAt: it.arrivedAt, remark: it.remark,
+        products: it.products.map((p: Row) => ({ ...p, packageCount: p.packageCount === null ? "" : String(p.packageCount) })) });
+      const unified = (opened: Row, cargo: string) => opened.products.map((p: Row) => ({ ...p, cargoType: cargo }));
+      const cargoInDb = async (id: string) => (await dbProducts(id)).map((p: Row) => p.cargoType);
+
+      // ① 库里 普货 / 敏感货，老页面只改备注、两款都发成敏感货 → 400 叫刷新，库里货型、备注都不变
+      const n = await save(STAFF, { ...ticket, trackingNo: NO("CPR1"), products: [P({ itemName: "灯具", packageCount: 2 }), P({ itemName: "鞋", packageCount: 3, cargoType: "sensitive" })] });
+      const opened = openedOf(n);
+      const oldPage = { ...opened, id: n.id, remark: "老页面只改备注", products: unified(opened, "sensitive"), base: opened };
+      await refuse(SAVE_URL, STAFF, oldPage, /^这个页面不是最新的：现在每款产品可以各选各的货型，这条到货通知几款的货型本来就不一样。这次没有保存，请刷新页面后再改$/);
+      await refuse(SAVE_URL, STAFF, { ...oldPage, products: unified(opened, "normal") }, /刷新页面/);
+      await refuse(SAVE_URL, STAFF, { ...oldPage, base: { ...opened, remark: "同事改过" } }, /^这个页面不是最新的/, 400); // 排在 base 比对之前
+      assert.deepEqual(await cargoInDb(n.id), ["normal", "sensitive"], "库里各款货型不变");
+      const row1 = await pm.arrivalNotice.findUnique({ where: { id: n.id } });
+      assert.equal(row1.remark, null, "备注也没写进去");
+      assert.equal(row1.cargoType, "sensitive");
+
+      // ③ 不带标记、两款还是各发各的（11-24 之前就开着的页面）→ 照常存
+      const perRow = await save(STAFF, { ...opened, id: n.id, remark: "老老页面改备注", base: opened });
+      assert.equal(perRow.remark, "老老页面改备注");
+      assert.deepEqual(await cargoInDb(n.id), ["normal", "sensitive"]);
+
+      // ② 现在的页面（带 cargoPerRow: true）特意把两款改成同一种 → 能存
+      const opened2 = openedOf(perRow);
+      const now = await save(STAFF, { ...opened2, id: n.id, products: unified(opened2, "normal"), base: opened2, cargoPerRow: true });
+      assert.deepEqual(now.products.map((p: Row) => p.cargoType), ["normal", "normal"]);
+      assert.deepEqual(await cargoInDb(n.id), ["normal", "normal"]);
+      assert.equal((await pm.arrivalNotice.findUnique({ where: { id: n.id } })).cargoType, null, "主表镜像：普货存 null");
+
+      // ⑤ 库里本来就一种货型：老页面照常存（只改备注、整票换一种都行）
+      const one = await save(STAFF, { ...ticket, trackingNo: NO("CPR5"), products: [P({ itemName: "灯具", packageCount: 2 }), P({ itemName: "鞋", packageCount: 3 })] });
+      const o5 = openedOf(one);
+      const kept = await save(STAFF, { ...o5, id: one.id, remark: "单一货型改备注", products: unified(o5, "normal"), base: o5 });
+      assert.equal(kept.remark, "单一货型改备注");
+      const o5b = openedOf(kept);
+      await save(STAFF, { ...o5b, id: one.id, products: unified(o5b, "inspection"), base: o5b });
+      assert.deepEqual(await cargoInDb(one.id), ["inspection", "inspection"]);
+
+      // ④ 已经转了待入库的：老页面统一 → 400，到货通知和订单产品行的货型都不变
+      const inb = await save(STAFF, { ...ticket, trackingNo: NO("CPR4"), products: [P({ itemName: "灯具", packageCount: 2 }), P({ itemName: "鞋", packageCount: 3, cargoType: "special" })] });
+      await must("POST /staff/arrival-notices/convert", STAFF, { id: inb.id, to: "inbound" });
+      const loadOrder = async () => (await pm.shipment.findFirst({ where: { trackingNo: NO("CPR4") }, include: { order: { include: { products: { orderBy: { sortOrder: "asc" } } } } } })).order;
+      const before = await loadOrder();
+      assert.deepEqual(before.products.map((p: Row) => p.cargoType), ["normal", "special"], "转待入库时按款建了产品行");
+      const o4 = openedOf((await list(STAFF, { keyword: NO("CPR4") })).items[0]);
+      await refuse(SAVE_URL, STAFF, { ...o4, id: inb.id, remark: "老页面改待入库的备注", products: unified(o4, "special"), base: o4 }, /^这个页面不是最新的.*请刷新页面后再改$/);
+      const after = await loadOrder();
+      assert.deepEqual(after.products.map((p: Row) => p.cargoType), ["normal", "special"], "订单产品行的货型没被盖");
+      assert.equal(after.updatedAt.getTime(), before.updatedAt.getTime(), "订单一个字没写");
+      assert.deepEqual(await cargoInDb(inb.id), ["normal", "special"]);
+      // 同一张带上 cargoPerRow（现在的页面）→ 能统一，订单产品行跟着变
+      await save(STAFF, { ...o4, id: inb.id, products: unified(o4, "special"), base: o4, cargoPerRow: true });
+      assert.deepEqual((await loadOrder()).products.map((p: Row) => p.cargoType), ["special", "special"]);
+
+      // ⑥ 库里有认不出来的老货型值（Codex / dsh 11-26）：普货 + 认不出来的。那版页面把它也显示成普货、两款都发普货 ——
+      //    「库里几种」按产品行原样数是两种，照样拦；按归一后的数（都当普货）就放过去、把那个值悄悄盖成普货了
+      const raw = await save(STAFF, { ...ticket, trackingNo: NO("CPR6"), products: [P({ itemName: "灯具", packageCount: 2 }), P({ itemName: "鞋", packageCount: 3 })] });
+      await pm.arrivalNoticeProduct.update({ where: { id: (await dbProducts(raw.id))[1].id }, data: { cargoType: "legacy_x" } });
+      const oRaw = openedOf((await list(STAFF, { keyword: NO("CPR6") })).items[0]);
+      assert.deepEqual(oRaw.products.map((p: Row) => p.cargoType), ["normal", "normal"], "页面读到的是两款普货（认不出来的当普货显示）");
+      await refuse(SAVE_URL, STAFF, { ...oRaw, id: raw.id, remark: "老页面只改备注", products: unified(oRaw, "normal"), base: oRaw }, /^这个页面不是最新的.*请刷新页面后再改$/);
+      assert.deepEqual(await cargoInDb(raw.id), ["normal", "legacy_x"], "认不出来的那个值没被盖成普货");
     });
   } finally {
     await cleanup();

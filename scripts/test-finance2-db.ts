@@ -264,13 +264,11 @@ async function main(): Promise<void> {
     await staffOrder(C_DIRECT, "ZZF2A001", { volumeM3: 1.234, weightKg: 186.5, products: [{ itemName: "收纳盒", packageCount: 12, lengthCm: 60, widthCm: 40, heightCm: 40, cargoType: "normal" }] });
     // 3.2 代理的客户，陆运
     await staffOrder(C_AGENT, "ZZF2A002", { transportMode: "land", volumeM3: 0.25, weightKg: 31, products: [{ itemName: "服装", packageCount: 3, lengthCm: 50, widthCm: 40, heightCm: 40, cargoType: "normal" }] });
-    // 3.3 混货型：2026-11-24 起一票只能一个货型（新建混着的会被拦），线上还有上线前混着的老单 —— 按新规矩建好，再直接改库造成老单的样子
+    // 3.3 混货型
     await staffOrder(C_DIRECT, "ZZF2A003", { volumeM3: 0.3, weightKg: 42.8, products: [
       { itemName: "毛巾", packageCount: 2, lengthCm: 50, widthCm: 40, heightCm: 25, cargoType: "normal" },
-      { itemName: "充电宝", packageCount: 4, lengthCm: 40, widthCm: 25, heightCm: 25, cargoType: "normal" },
+      { itemName: "充电宝", packageCount: 4, lengthCm: 40, widthCm: 25, heightCm: 25, cargoType: "sensitive" },
     ] });
-    await db.orderProduct.updateMany({ where: { itemName: "充电宝", order: { shipments: { some: { trackingNo: "ZZF2A003" } } } }, data: { cargoType: "sensitive" } });
-    await db.order.updateMany({ where: { shipments: { some: { trackingNo: "ZZF2A003" } } }, data: { cargoType: "sensitive" } });
     // 3.4 没有产品明细：现在员工建单没填产品也会补一行，老单才没有 —— 建完把产品行删掉，模拟 2026-07 以前的老单
     await staffOrder(C_DIRECT, "ZZF2A004", { itemName: "杂货", packageCount: 20, cargoType: "special", volumeM3: 2.05 });
     await db.orderProduct.deleteMany({ where: { order: { shipments: { some: { trackingNo: "ZZF2A004" } } } } });

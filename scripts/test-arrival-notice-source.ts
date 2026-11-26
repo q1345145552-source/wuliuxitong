@@ -475,12 +475,9 @@ async function main(): Promise<void> {
     const dp = (o: Partial<import("../apps/web/src/services/arrival-notice-api").DraftProduct>) => ({
       key: "k", itemName: "", packageCount: "", lengthCm: "", widthCm: "", heightCm: "", productQuantity: "", weightKg: "", domesticTrackingNo: "", cargoType: "normal" as const, ...o,
     });
-    const d = { clientId: "A", trackingNo: "T", weightKg: "", volumeM3: "", transportMode: "" as const, warehouseId: "", arrivedAt: "", remark: "", products: [dp({ key: "p1", itemName: "灯", cargoType: "sensitive" })] };
-    assert.equal(api.draftToBody(d).products[0].cargoType, "sensitive", "货型要传给后端（原来一律普货）");
+    const d = { clientId: "A", trackingNo: "T", weightKg: "", volumeM3: "", transportMode: "" as const, warehouseId: "", arrivedAt: "", remark: "", products: [dp({ key: "p1", cargoType: "sensitive" })] };
+    assert.equal(api.draftToBody(d).products[0].cargoType, "sensitive", "每款的货型要传给后端（原来一律普货）");
     assert.equal(api.draftToBody({ ...d, products: [dp({})] }).products[0].cargoType, "normal", "普货也要明着传");
-    // 2026-11-24 一票一个货型：草稿上整票选的那个发到每一款（各款自己存的不算）；完全空白的那款发普货（带着敏感货就不算空白了）
-    assert.equal(api.draftToBody({ ...d, cargoType: "special" as const }).products[0].cargoType, "special", "整票选的货型没发到每一款");
-    assert.equal(api.draftToBody({ ...d, cargoType: "sensitive" as const, products: [dp({ itemName: "灯" }), dp({})] }).products.map((p) => p.cargoType).join(), "sensitive,normal", "空白那款不该带整票货型");
     // 2026-10-09 多款：products 每款都发（空白的也发，后端报「第N款」的序号跟页面一致）、去掉 key、空串当 null、数字原样传文字
     const multi = api.draftToBody({
       ...d, weightKg: " 85 ", volumeM3: "",
@@ -491,8 +488,7 @@ async function main(): Promise<void> {
       ],
     });
     assert.deepEqual(multi.products, [
-      // 老草稿（没有整票货型那一项）、各款混着：按最严的发到每一款（2026-11-24 一票一个货型）
-      { itemName: "灯具", packageCount: "12", lengthCm: "60", widthCm: "40", heightCm: "30", productQuantity: "10", weightKg: "5", cargoType: "sensitive", domesticTrackingNo: "SF1" },
+      { itemName: "灯具", packageCount: "12", lengthCm: "60", widthCm: "40", heightCm: "30", productQuantity: "10", weightKg: "5", cargoType: "inspection", domesticTrackingNo: "SF1" },
       { itemName: null, packageCount: null, lengthCm: null, widthCm: null, heightCm: null, productQuantity: null, weightKg: null, cargoType: "normal", domesticTrackingNo: null },
       { itemName: "鞋", packageCount: "5", lengthCm: null, widthCm: null, heightCm: null, productQuantity: null, weightKg: null, cargoType: "sensitive", domesticTrackingNo: "YT2" },
     ]);
@@ -503,6 +499,9 @@ async function main(): Promise<void> {
     assert.deepEqual([multi.itemName, multi.packageCount, multi.domesticTrackingNo, multi.cargoType], ["灯具 / 鞋", "17", "SF1、YT2", "sensitive"]);
     const half = api.draftToBody({ ...d, products: [dp({ itemName: "灯具", packageCount: "3" }), dp({ itemName: "鞋" })] });
     assert.deepEqual([half.itemName, half.packageCount, half.domesticTrackingNo, half.cargoType], ["灯具 / 鞋", null, null, "normal"], "有一款没件数：镜像件数是 null；普货也明着传");
+    // 2026-11-26 货型改回每款各选各的：带 cargoPerRow: true，后端靠它跟没刷新的「一票一个货型」老页面分开（没带 + 库里几款货型不一样 + 这次统一成一种 = 叫他刷新）
+    assert.equal(multi.cargoPerRow, true, "现在的页面保存要带 cargoPerRow: true");
+    assert.equal(api.draftToBody({ ...d, products: [dp({ itemName: "灯具", cargoType: "sensitive" }), dp({ itemName: "鞋", cargoType: "sensitive" })] }).cargoPerRow, true, "几款特意选成同一种时也要带");
     // 保存：base 用同一个函数转，也带 products
     const saved = await captureBodies(async () => { await api.saveArrivalNotice("n9", d, { ...d, products: [dp({ key: "b1", itemName: "旧" })] }); });
     assert.equal(saved.length, 1);
@@ -510,6 +509,24 @@ async function main(): Promise<void> {
     assert.equal(sb.id, "n9");
     assert.equal(sb.products.length, 1);
     assert.equal(sb.base.products[0].itemName, "旧");
+    assert.equal((sb as { cargoPerRow?: unknown }).cargoPerRow, true, "真发出去的保存请求里也要有 cargoPerRow: true");
+    // 后端那道拦截（没带标记 + 库里几款货型不止一种 + 这次发来的不超过一种）：钉住写法和位置 ——
+    // 库里几种按产品行原样数（n.products）；排在老老页面那段之后、base 比对之前、任何一句写库之前（先拦后写，不能靠回滚）
+    {
+      const routes = fs.readFileSync(path.join(__dirname, "../apps/api/src/modules/arrival-notices/routes.ts"), "utf8");
+      const guard = routes.indexOf('if (!parsed.legacy && body.cargoPerRow !== true');
+      assert.ok(guard > 0, "到货通知保存里没找到「没刷新的老页面」那道拦截");
+      const guardText = routes.slice(guard, guard + 400);
+      assert.match(guardText, /&& new Set\(n\.products\.map\(\(p\) => p\.cargoType\)\)\.size > 1\s*&& new Set\(f\.products\.map\(\(p\) => p\.cargoType\)\)\.size <= 1\) \{\s*throw new BusinessError\("这个页面不是最新的/, "拦截的判断被改了（库里几种要按 n.products 原样数）");
+      const legacy = routes.lastIndexOf("if (parsed.legacy) {", guard);
+      const lock = routes.lastIndexOf("const n = await lockNotice(tx, auth.companyId, id);", guard);
+      const baseCmp = routes.indexOf("if (openedBase !== null) {", guard);
+      const sync = routes.indexOf("await syncToPendingShipment(tx, auth.companyId, f, ship);", guard);
+      const write = routes.indexOf("const row = await tx.arrivalNotice.update({", guard);
+      assert.ok(lock > 0 && legacy > lock, "拦截要在锁住这条通知、处理完老老页面之后");
+      assert.ok(baseCmp > guard && sync > baseCmp && write > sync, "拦截要排在 base 比对、同步待入库运单、写这条通知之前");
+      assert.doesNotMatch(routes.slice(lock, guard), /tx\.\w+\.(update|updateMany|create|createMany|delete|deleteMany|upsert)\(|\$executeRaw/, "拦截之前不能有写库的语句");
+    }
     assert.ok(!JSON.stringify(sb).includes('"key"'));
     // 发给后端的请求体
     const bodies = await captureBodies(async () => {
@@ -529,9 +546,7 @@ async function main(): Promise<void> {
     assert.ok(bodies.every((b) => b.url.includes("/staff/arrival-notices/")));
     const v = view();
     // F11
-    // 2026-11-24 一票一个货型：整票选一次（草稿上的 cargoType），每款不能再单独选
-    assert.match(v, /<select aria-label="货型" disabled=\{saving\} value=\{draft\.cargoType \?\? "normal"\} onChange=\{\(e\) => set\("cargoType", cargoTypeOf\(e\.target\.value\)\)\}>/, "整票能选货型");
-    assert.ok(!/setProduct\(p\.key, "cargoType"/.test(v), "每款还能单独选货型（一票只能一个货型）");
+    assert.match(v, /<select disabled=\{saving\} value=\{p\.cargoType\} onChange=\{\(e\) => setProduct\(p\.key, "cargoType", cargoTypeOf\(e\.target\.value\)\)\}>/, "每款能选货型");
     assert.match(v, /CARGO_TYPES\.map\(\(c\) => <option key=\{c\} value=\{c\}>\{CARGO_TYPE_ZH\[c\]\}<\/option>\)/);
     // 2026-10-16 草稿函数（draftOf）挪到 draft.ts（组件带 JSX，测试要直接调）
     assert.match(read("apps/web/src/modules/arrival-notice/draft.ts"), /cargoType: cargoTypeOf\(p\.cargoType\),/, "修改时带出库里每款的货型");
@@ -624,7 +639,7 @@ async function main(): Promise<void> {
     const controls = form.split("\n").filter((line) => /<(input|select|textarea|button)\b/.test(line));
     // 2026-10-09 多款：产品行是动态的，不再数个数；整票 7 个 + 每款 9 个（品名 / 件数 / 货型 / 国内单号 / 长宽高 / 单箱数量 / 单箱重）+ 删除 / 加一款两个按钮
     assert.ok(controls.length >= 18, `表里的控件少了（${controls.length}），对一下这条测试`);
-    for (const re of [/value=\{p\.itemName\}/, /value=\{p\.packageCount\}/, /value=\{draft\.cargoType \?\? "normal"\}/, /value=\{p\.domesticTrackingNo\}/, /value=\{p\.lengthCm\}/, /value=\{p\.widthCm\}/, /value=\{p\.heightCm\}/, /value=\{p\.productQuantity\}/, /value=\{p\.weightKg\}/, /删除这一款/, /＋ 加一款/, /value=\{draft\.weightKg\}/, /value=\{draft\.volumeM3\}/, /value=\{draft\.remark\}/]) {
+    for (const re of [/value=\{p\.itemName\}/, /value=\{p\.packageCount\}/, /value=\{p\.cargoType\}/, /value=\{p\.domesticTrackingNo\}/, /value=\{p\.lengthCm\}/, /value=\{p\.widthCm\}/, /value=\{p\.heightCm\}/, /value=\{p\.productQuantity\}/, /value=\{p\.weightKg\}/, /删除这一款/, /＋ 加一款/, /value=\{draft\.weightKg\}/, /value=\{draft\.volumeM3\}/, /value=\{draft\.remark\}/]) {
       assert.equal(controls.filter((c) => re.test(c)).length, 1, `找不到控件 ${re}`);
     }
     const pickers = form.split("\n").filter((line) => /<MarkPicker\b/.test(line));

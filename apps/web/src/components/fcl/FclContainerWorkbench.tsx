@@ -12,7 +12,7 @@
  * 推状态不在这里做 —— 整柜建完就是普通柜子，走现成的「装柜管理」改状态。
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { CARGO_TYPES, CARGO_TYPE_ZH as SHARED_CARGO_TYPE_ZH, cargoTypeZh, distinctCargoTypes, waybillCargoTypeOf } from "../../../../../packages/shared-types/cargo-type";
+import { CARGO_TYPES, CARGO_TYPE_ZH as SHARED_CARGO_TYPE_ZH } from "../../../../../packages/shared-types/cargo-type";
 import { amount2 } from "../../modules/shared/money-format";
 import {
   createFclContainer,
@@ -34,7 +34,7 @@ import type { LastmileOrderItem, LastmileShipmentOption } from "../../modules/la
 import { shipmentStatusZh } from "../../modules/shipment/shipment-status";
 import { formatBeijingTime } from "../../modules/staff/utils";
 import EmptyStateCard from "../../modules/layout/EmptyStateCard";
-import { FCL_TEMPLATE_HEADERS, fclRowFromSheet, fclSheetCargo, fclSheetRows, missingFclHeaders } from "../../modules/fcl/template";
+import { FCL_TEMPLATE_HEADERS, fclRowFromSheet, missingFclHeaders } from "../../modules/fcl/template";
 import { apiBaseUrl, apiRequest } from "../../services/core-api";
 import { beijingDate, beijingToday } from "../../modules/shared/beijing-date";
 import { useLiveRefresh } from "../../modules/realtime/useRealtime";
@@ -152,11 +152,6 @@ export default function FclContainerWorkbench({ canUnsign = false, canDelete = f
     transportMode: "sea", warehouseId: WAREHOUSES[0].id, loadingDate: "", amountCny: "", remark: "",
   });
   const [products, setProducts] = useState<FclProductInput[]>([emptyRow()]);
-  /* 整柜一个货型（2026-11-24 老板：「一票只会有一个货型，不能单独产品选择货型」）：整柜就是一票，在上面选一次，
-     提交时清单每一行都发这一个。原来每行一个下拉、整柜记最严的 */
-  const [fclCargo, setFclCargo] = useState<string>("normal");
-  /** 改整柜时打开那一刻清单里混着几种货型（上线前建的老整柜）：提示保存后统一成上面选的 */
-  const [fclMixedCargo, setFclMixedCargo] = useState<string[] | null>(null);
   const [parsing, setParsing] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const submitInFlight = useRef(false);
@@ -187,8 +182,6 @@ export default function FclContainerWorkbench({ canUnsign = false, canDelete = f
           amountCny: d.quoteAmountCny == null ? "" : String(d.quoteAmountCny), remark: "",
         });
         setProducts([{ ...emptyRow(), itemName: d.productName }]);
-        setFclCargo("normal");
-        setFclMixedCargo(null);
         setFromInquiry({ id: d.id, clientId: d.clientId, productName: d.productName, containerType: d.containerType, quoteAmountCny: d.quoteAmountCny });
         setInquiryNote(mapped ? "" : `询价单上的柜型是「${d.containerType}」，整柜只分 20GP / 40HQ，请按实际装的选；两个柜的请分开建，询价单只关联第一个。`);
         setEditingId(null);
@@ -378,13 +371,10 @@ export default function FclContainerWorkbench({ canUnsign = false, canDelete = f
       const wb = XLSX.read(buf, { type: "array" });
       const sheet = wb.Sheets[wb.SheetNames[0]];
       if (!sheet) { setToast("这个表格里没有工作表，请确认用的是整柜货物清单模板"); return; }
-      // 每行带上表格里的行号（中间的整行空行也留着，下面跳过；行号按表头在第几行算 —— 见 fclSheetRows）
-      const sheetRows = fclSheetRows(XLSX, sheet);
-      const json = sheetRows.map((r) => r.raw);
-      const rowNoOf = (i: number) => sheetRows[i].rowNo;
+      const json = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: "" });
       /* 只有表头、一行数据都没填的空模板：单独说一句，别报「少了全部 9 列」把人带偏
          （2026-09-24 上线前自审发现）。 */
-      if (json.length === 0 || json.every((row) => Object.values(row).every((v) => String(v ?? "").trim() === ""))) {
+      if (json.length === 0) {
         setToast("这个表格里一行货都没填，请把货物填进模板再传。");
         return;
       }
@@ -401,7 +391,7 @@ export default function FclContainerWorkbench({ canUnsign = false, canDelete = f
       const noName: number[] = [];
       const parsed = all.filter((r, i) => {
         if (isBlankFclRow(r)) return false;
-        if (String(r.itemName ?? "").trim() === "") { noName.push(rowNoOf(i)); return false; }
+        if (String(r.itemName ?? "").trim() === "") { noName.push(i + 2); return false; }  // +2：表头占第 1 行
         return true;
       });
       if (noName.length > 0) {
@@ -412,11 +402,6 @@ export default function FclContainerWorkbench({ canUnsign = false, canDelete = f
         setToast("没读到有效的货物行。请用「下载模板」那个表格填，表头不能改。");
         return;
       }
-      /* 一票一个货型（2026-11-24）：整柜就是一票。「货型」那一格怎么认见 fclSheetCargo（跟读表同一把尺子，旧表头也认） */
-      const readIn = new Set(parsed); // 上面挑出来的有效行（空行已经跳过）
-      const sheetCargo = fclSheetCargo(all.flatMap((r, i) => (readIn.has(r) ? [{ rowNo: rowNoOf(i), raw: json[i] }] : [])));
-      if ("error" in sheetCargo) { setToast(sheetCargo.error); return; }
-      setFclCargo(sheetCargo.cargoType);
       setProducts(parsed);
       setToast(`表格读到 ${parsed.length} 行货，已填进下面，核对后再提交`);
     } catch (e) {
@@ -442,8 +427,6 @@ export default function FclContainerWorkbench({ canUnsign = false, canDelete = f
   const resetCreate = () => {
     setForm({ clientId: "", trackingNo: "", containerNo: "", containerType: "40HQ", transportMode: "sea", warehouseId: WAREHOUSES[0].id, loadingDate: "", amountCny: "", remark: "" });
     setProducts([emptyRow()]);
-    setFclCargo("normal");
-    setFclMixedCargo(null);
   };
 
   /** 把详情里那一份填回表单 —— 编辑用（老板 2026-09-24：「加上编辑功能」） */
@@ -476,12 +459,6 @@ export default function FclContainerWorkbench({ canUnsign = false, canDelete = f
           cargoType: p.cargoType ?? "normal",
         }))
       : [emptyRow()]);
-    // 整柜的货型：清单各行现在的（混着几种的老整柜取最严的 —— 跟原来整柜记的同一个），一行都没有按普货
-    {
-      const kinds = distinctCargoTypes(d.products.map((p) => p.cargoType));
-      setFclCargo(waybillCargoTypeOf(d.products.map((p) => p.cargoType)));
-      setFclMixedCargo(kinds.length > 1 ? kinds.map((c) => SHARED_CARGO_TYPE_ZH[c]) : null);
-    }
     /* 打开这一刻的版本号，保存时原样带回去 —— 后端比一下「你看的时候之后别人改过没有」。
        不带的话，两个人同时开着这一页，后点保存的会把前一个人的改动整份冲掉
        （2026-09-24 复核实测：B 加了一行货保存好，A 只改了个金额，B 那行就没了）。 */
@@ -521,13 +498,14 @@ export default function FclContainerWorkbench({ canUnsign = false, canDelete = f
       amountCny: form.amountCny.trim() === "" ? undefined : form.amountCny.trim(),
       loadingDate: form.loadingDate.trim() || undefined,
       remark: form.remark.trim() || undefined,
-      // 一票一个货型（2026-11-24）：清单每一行都发上面选的那一个
-      products: filled.map((r) => ({ ...r, cargoType: fclCargo })),
+      products: filled,
     };
     const linkInquiry = !editingId && fromInquiry ? fromInquiry : null;
     try {
       if (editingId) {
-        const r = await updateFclContainer({ ...payload, containerId: editingId, expectUpdatedAt: editingVersion ?? undefined });
+        /* cargoPerRow: true 告诉后台「这是清单每一行各选各的货型的页面」（2026-11-26）。
+           11-24～11-26 那版老页面每次保存都把每一行发成同一个货型，后台靠没有这个标记认出它，叫人刷新 */
+        const r = await updateFclContainer({ ...payload, containerId: editingId, expectUpdatedAt: editingVersion ?? undefined, cargoPerRow: true });
         setToast(r.changedFields.length > 0
           ? `已保存：改了${r.changedFields.join("、")}；现在是 ${r.rowCount} 行货、${r.packageCount} 箱、${r.volumeM3} 方`
           : "已保存（金额 / 备注）");
@@ -673,17 +651,6 @@ export default function FclContainerWorkbench({ canUnsign = false, canDelete = f
               <option value="sea">海运</option><option value="land">陆运</option>
             </select>
           </div>
-          {/* 一票一个货型（2026-11-24）：整柜选一次，下面清单每一行都跟它 */}
-          <div><label style={fl}>货型 *</label>
-            <select aria-label="货型" style={fi} value={fclCargo} onChange={(e) => setFclCargo(e.target.value)}>
-              {CARGO_TYPES.map((c) => <option key={c} value={c}>{SHARED_CARGO_TYPE_ZH[c]}</option>)}
-            </select>
-          </div>
-          {fclMixedCargo ? (
-            <div style={{ gridColumn: "1 / -1", fontSize: 12, color: "var(--c-red-deep)" }}>
-              这个整柜原来清单里的货型不一样（{fclMixedCargo.join("、")}）。一票只能有一个货型，保存后整柜统一成上面选的「{cargoTypeZh(fclCargo)}」。
-            </div>
-          ) : null}
           <div><label style={fl}>仓库 *</label>
             <select style={fi} value={form.warehouseId} onChange={(e) => setForm((v) => ({ ...v, warehouseId: e.target.value }))}>
               {WAREHOUSES.map((w) => <option key={w.id} value={w.id}>{w.label}</option>)}
@@ -711,7 +678,7 @@ export default function FclContainerWorkbench({ canUnsign = false, canDelete = f
             <thead><tr style={{ background: "var(--s-sunken)" }}>
               <th style={th}>品名 *</th><th style={th}>箱数 *</th><th style={th}>每箱数量</th>
               <th style={th}>长cm *</th><th style={th}>宽cm *</th><th style={th}>高cm *</th>
-              <th style={th}>单箱重kg</th><th style={th}>国内单号</th>
+              <th style={th}>单箱重kg</th><th style={th}>国内单号</th><th style={th}>货型</th>
               <th style={th}>体积m³</th><th style={th}></th>
             </tr></thead>
             <tbody>
@@ -729,6 +696,11 @@ export default function FclContainerWorkbench({ canUnsign = false, canDelete = f
                     <td style={td}><input style={{ ...fi, width: 70 }} value={String(r.heightCm ?? "")} onChange={(e) => setCell("heightCm", e.target.value)} /></td>
                     <td style={td}><input style={{ ...fi, width: 80 }} value={String(r.unitWeightKg ?? "")} onChange={(e) => setCell("unitWeightKg", e.target.value)} /></td>
                     <td style={td}><input style={{ ...fi, width: 110 }} value={String(r.domesticTrackingNo ?? "")} onChange={(e) => setCell("domesticTrackingNo", e.target.value)} /></td>
+                    <td style={td}>
+                      <select style={{ ...fi, width: 95 }} value={String(r.cargoType ?? "normal")} onChange={(e) => setCell("cargoType", e.target.value)}>
+                        {CARGO_TYPES.map((c) => <option key={c} value={c}>{SHARED_CARGO_TYPE_ZH[c]}</option>)}
+                      </select>
+                    </td>
                     <td style={td}>{pv.volumeM3 || "—"}</td>
                     <td style={td}>
                       <button type="button" className="workbench-button"
