@@ -99,6 +99,8 @@ export const roleFunctionGroups: Record<AuthRole, MenuGroup[]> = {
         { id: "admin-func-finance", label: "财务管理", href: "/admin/finance" },
         { id: "admin-func-settlement", label: "柜子收款", href: "/admin/settlement" },
         { id: "admin-func-wallet-recharges", label: "充值审核", href: "/admin#wallet-recharges" },
+        // 客户余额（2026-11-27，财务系统2 ADR 0191 第 2 轮）：管理员给客户加 / 减 / 冲掉余额、按客户看流水
+        { id: "admin-func-client-balance", label: "客户余额", href: "/admin/client-balance" },
       ],
     },
     {
@@ -135,7 +137,7 @@ export const roleFunctionGroups: Record<AuthRole, MenuGroup[]> = {
       items: [
         { id: "staff-func-consolidation", label: "集货拼柜", href: "/staff/consolidation" },
         { id: "staff-func-whr-consolidation", label: "集货拼柜(仓库版)", href: "/staff/whr-consolidation" },
-        { id: "staff-func-wallet", label: "客户集货余额", href: "/staff#staff-wallet" },
+        { id: "staff-func-wallet", label: "客户余额", href: "/staff#staff-wallet" },
       ],
     },
     {
@@ -183,7 +185,7 @@ export const roleFunctionGroups: Record<AuthRole, MenuGroup[]> = {
       items: [
         { id: "client-func-consolidation", label: "集货拼柜", href: "/client/consolidation" },
         { id: "client-func-whr-consolidation", label: "集货拼柜(仓库版)", href: "/client/whr-consolidation" },
-        { id: "client-func-wallet", label: "集货余额", href: "/client/wallet" },
+        { id: "client-func-wallet", label: "余额", href: "/client/wallet" },
       ],
     },
     {
@@ -216,7 +218,7 @@ export const roleFunctionGroups: Record<AuthRole, MenuGroup[]> = {
           ? [
               { id: "agent-func-whr", label: "仓库版集货", href: "/agent#whr" },
               { id: "agent-func-clients", label: "客户和价格", href: "/agent#clients" },
-              { id: "agent-func-wallet", label: "集货余额", href: "/agent#wallet" },
+              { id: "agent-func-wallet", label: "余额", href: "/agent#wallet" },
             ]
           : []),
         { id: "agent-func-rebates", label: "返现单", href: "/agent#rebates" },

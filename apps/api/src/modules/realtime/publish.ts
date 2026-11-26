@@ -24,5 +24,11 @@ export function publishAfterWrite(req: HttpRequest, statusCode: number, hub: Rea
     const clientId = typeof raw === "string" ? raw.trim() : "";
     if (clientId) clientIds = [clientId];
   }
+  // 管理员给客户加 / 减 / 冲掉余额（2026-11-27）：请求里带 clientId（冲掉那条后端还核过是不是这一笔的客户），只推给这一个客户
+  if (topic === "wallet" && req.path.startsWith("/admin/wallet/adjustments/") && actor.role === "admin") {
+    const raw = (req.body as { clientId?: unknown } | undefined)?.clientId;
+    const clientId = typeof raw === "string" ? raw.trim() : "";
+    if (clientId) clientIds = [clientId];
+  }
   hub.publish({ companyId: req.auth.companyId, topic, actor, clientIds });
 }

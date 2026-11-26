@@ -912,6 +912,109 @@ export async function fetchStaffWalletBalances(): Promise<{ balances: StaffWalle
   return parseApiResponse(response);
 }
 
+// ===== 客户余额：员工 / 管理员按客户看流水，管理员加 / 减 / 冲掉（2026-11-27，财务系统2 ADR 0191 第 2 轮） =====
+// ⚠️ 手写类型，跟后端 wallet/admin-adjust-routes.ts 逐字段对着写（CLAUDE.md 第 22 条），后端改了这里一起改
+
+/** /staff/wallet/clients 一行：客户只给唛头（2026-09-19「显示唛头就行了」） */
+export interface StaffWalletClientItem {
+  clientId: string;
+  /** active | inactive（封禁） */
+  status: string;
+  /** 人民币余额，可以是负数 */
+  balance: number;
+  /** 余额最后变动的时间；从没有过余额的是 null */
+  updatedAt: string | null;
+}
+
+export async function fetchStaffWalletClients(keyword?: string): Promise<{ clients: StaffWalletClientItem[]; total: number }> {
+  const q = keyword?.trim() ? `?keyword=${encodeURIComponent(keyword.trim())}` : "";
+  const response = await fetch(`${apiBaseUrl()}/staff/wallet/clients${q}`, { method: "GET", headers: { ...authHeaders() } });
+  return parseApiResponse(response);
+}
+
+/** 管理员调整单在流水那一行上的状态 */
+export interface StaffWalletLedgerAdjustment {
+  id: string;
+  /** topup | deduction */
+  kind: string;
+  /** 这一行是「管理员充值」、还没冲掉（只有管理员页面会用它出「冲掉」按钮） */
+  canReverse: boolean;
+  /** 这一行带水单图（管理员点开看） */
+  hasProof: boolean;
+  /** 冲掉了：什么时候、为什么；谁冲的只给管理员（员工拿到的是 undefined） */
+  reversed: { at: string; reason: string; byName?: string } | null;
+}
+
+export interface StaffWalletLedgerItem {
+  id: string;
+  type: string;
+  typeLabel: string;
+  amount: number;
+  balanceAfter: number;
+  source: string;
+  refNo: string;
+  remark: string;
+  /** 谁做的，只给管理员（员工拿到的是 undefined） */
+  operatorName?: string;
+  createdAt: string;
+  adjustment: StaffWalletLedgerAdjustment | null;
+}
+
+export async function fetchStaffWalletLedger(
+  clientId: string,
+  page: number,
+  pageSize: number,
+): Promise<{ clientId: string; balance: number; updatedAt: string | null; items: StaffWalletLedgerItem[]; page: number; pageSize: number; total: number }> {
+  const q = new URLSearchParams({ clientId, page: String(page), pageSize: String(pageSize) });
+  const response = await fetch(`${apiBaseUrl()}/staff/wallet/ledger?${q.toString()}`, { method: "GET", headers: { ...authHeaders() } });
+  return parseApiResponse(response);
+}
+
+export interface AdminWalletAdjustResult {
+  adjustment: { id: string; kind: string; clientId: string; amount: number; remark: string; hasProof: boolean; createdAt: string };
+  balanceAfter: number;
+  /** 同一个提交编号已经办过：这次没再动钱，回的是第一次的结果 */
+  duplicate: boolean;
+}
+
+/** 管理员给客户加金额。submitKey = 弹窗打开时生成的一次性编号（连点两下只加一笔） */
+export async function adminWalletTopup(payload: { clientId: string; amount: string; remark: string; proofImage: string; submitKey: string }): Promise<AdminWalletAdjustResult> {
+  const response = await fetch(`${apiBaseUrl()}/admin/wallet/adjustments/topup`, {
+    method: "POST",
+    headers: { ...authHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  return parseApiResponse(response);
+}
+
+/** 管理员减金额（把余额退给客户）。不能减成负数 */
+export async function adminWalletDeduct(payload: { clientId: string; amount: string; reason: string; submitKey: string }): Promise<AdminWalletAdjustResult> {
+  const response = await fetch(`${apiBaseUrl()}/admin/wallet/adjustments/deduct`, {
+    method: "POST",
+    headers: { ...authHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  return parseApiResponse(response);
+}
+
+/** 管理员冲掉一笔管理员充值（整笔）。clientId 是那一笔的客户（后端会核对） */
+export async function adminWalletReverse(payload: { adjustmentId: string; clientId: string; reason: string; submitKey: string }): Promise<{
+  adjustmentId: string; clientId: string; amount: number; reason: string; reversedAt: string; balanceAfter: number; duplicate: boolean;
+}> {
+  const response = await fetch(`${apiBaseUrl()}/admin/wallet/adjustments/reverse`, {
+    method: "POST",
+    headers: { ...authHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  return parseApiResponse(response);
+}
+
+/** 管理员看一张调整单的水单图 */
+export async function fetchAdminAdjustmentProof(id: string): Promise<{ id: string; proofImage: string }> {
+  const response = await fetch(`${apiBaseUrl()}/admin/wallet/adjustments/proof?id=${encodeURIComponent(id)}`, { method: "GET", headers: { ...authHeaders() } });
+  return parseApiResponse(response);
+}
+
 export async function fetchClientOrders(params?: {
   statusGroup?: ClientStatusGroup | "attention";
 }): Promise<OrderItem[]> {

@@ -43,13 +43,16 @@ export type LedgerType =
 /** 财务系统2 来扣的那一次在流水上的关联类型。ref_id = 扣款的请求编号（退回也挂它），ref_no = 账单号 */
 export const FINANCE2_CHARGE_REF_TYPE = "finance2_charge";
 
+/** 管理员加 / 减 / 冲掉余额在流水上的关联类型。ref_id = 调整单编号（wallet_adjustments.id，冲掉那笔也挂原来那张单） */
+export const ADMIN_ADJUST_REF_TYPE = "admin_adjust";
+
 /** 余额不足时抛这个，调用方据此返回 400 而不是 500 */
 export class InsufficientBalanceError extends Error {
   constructor(
     public readonly need: number,
     public readonly have: number,
   ) {
-    super(`余额不足：本次需要 ¥${need.toFixed(2)}，当前集货余额 ¥${have.toFixed(2)}，还差 ¥${(need - have).toFixed(2)}`);
+    super(`余额不足：本次需要 ¥${need.toFixed(2)}，当前余额 ¥${have.toFixed(2)}，还差 ¥${(need - have).toFixed(2)}`);
     this.name = "InsufficientBalanceError";
   }
 }
@@ -487,4 +490,92 @@ export async function refundBillCharge(
     after,
   );
   return { amount, balanceAfter: after, ledgerId };
+}
+
+/* --------------------------------------------------------------------------
+   管理员加 / 减 / 冲掉余额（2026-11-27，财务系统2 ADR 0191 第 2 轮）
+   ------------------------------------------------------------------------
+   老板：「充值的话线下转，然后管理员去加金额」「加了就算数」。调整单、一次性提交编号、谁能做在 wallet/admin-adjust-routes.ts，这里只管钱。
+   写法跟上面财务系统2 那两条一样：必须传事务；先保证钱包行在再锁（锁和读同一句）；金额用 Decimal；判断都在锁里。
+     · adminTopup          加金额（topup，正数）
+     · adminDeduct         减金额（deduction，负数）：不能减成负数，不够就抛 InsufficientBalanceError，一分不动
+     · adminReverseTopup   冲掉一笔管理员充值（topup_reversal，负数）：不够冲也照冲，余额可以变成负数（老板要能纠正加错的）
+   流水：关联类型 admin_adjust、ref_id = 调整单编号、单号空、备注 = 管理员写的备注 / 原因、操作人 = 这个管理员。
+   锁序：调用方先拿「这次提交」的排队锁（冲掉还要先锁那张调整单），再进这里锁钱包 —— 单据 → 钱包。
+   -------------------------------------------------------------------------- */
+
+interface AdminMoveArgs {
+  companyId: string;
+  clientId: string;
+  /** 大于 0、最多两位小数 */
+  amount: Prisma.Decimal | string;
+  /** 调整单编号（冲掉时是原来那张充值单的编号） */
+  adjustmentId: string;
+  /** 加金额的备注（可空）/ 减金额、冲掉的原因 */
+  remark: string | null;
+  operatorId: string;
+  operatorName: string;
+}
+
+/** 钱包行不在就建一行 0（两个一起建时后一个等前一个提交、然后什么都不做，不撞主键） */
+async function ensureWalletRow(tx: BillTx, companyId: string, clientId: string): Promise<void> {
+  await tx.$executeRaw`
+    INSERT INTO client_wallet_accounts ("clientId", company_id, currency, balance, updated_at)
+    VALUES (${clientId}, ${companyId}, ${CONSOLIDATION_CURRENCY}, 0, CURRENT_TIMESTAMP)
+    ON CONFLICT DO NOTHING
+  `;
+}
+
+/** 锁住钱包 → 算新余额（锁里判断）→ 改余额 → 记流水 */
+async function adminMove(
+  tx: BillTx,
+  args: AdminMoveArgs,
+  type: "topup" | "deduction" | "topup_reversal",
+  sign: 1 | -1,
+  allowNegative: boolean,
+): Promise<BillMoveResult> {
+  const amount = positiveMoney(args.amount, "金额");
+  await ensureWalletRow(tx, args.companyId, args.clientId);
+  const have = await lockAndReadWallet(tx, args.clientId);
+  if (have === null) throw new Error("钱包行刚建过却锁不到");
+  const after = sign > 0 ? have.plus(amount) : have.minus(amount);
+  // 减金额不许减成负数（锁里用锁住那一刻的余额判断）
+  if (!allowNegative && after.lt(0)) throw new InsufficientBalanceError(amount.toNumber(), have.toNumber());
+  await tx.clientWalletAccount.update({
+    where: { clientId_currency: { clientId: args.clientId, currency: CONSOLIDATION_CURRENCY } },
+    data: { balance: after },
+  });
+  const ledgerId = await writeLedger(
+    tx,
+    {
+      companyId: args.companyId,
+      clientId: args.clientId,
+      refType: ADMIN_ADJUST_REF_TYPE,
+      refId: args.adjustmentId,
+      refNo: null,
+      remark: args.remark,
+      operatorId: args.operatorId,
+      operatorName: args.operatorName,
+    },
+    type,
+    sign > 0 ? amount : amount.neg(),
+    after,
+  );
+  return { amount, balanceAfter: after, ledgerId };
+}
+
+/** 管理员给客户加金额（topup） */
+export async function adminTopup(tx: BillTx, args: AdminMoveArgs): Promise<BillMoveResult> {
+  // 余额原来是负数时加完也可能还是负数：加钱只会让它变好，不拦
+  return adminMove(tx, args, "topup", 1, true);
+}
+
+/** 管理员减金额（deduction）：不够就抛 InsufficientBalanceError，一分不动 */
+export async function adminDeduct(tx: BillTx, args: AdminMoveArgs): Promise<BillMoveResult> {
+  return adminMove(tx, args, "deduction", -1, false);
+}
+
+/** 冲掉一笔管理员充值（topup_reversal）：余额不够也照冲，可以冲成负数 */
+export async function adminReverseTopup(tx: BillTx, args: AdminMoveArgs): Promise<BillMoveResult> {
+  return adminMove(tx, args, "topup_reversal", -1, true);
 }

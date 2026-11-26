@@ -1217,7 +1217,7 @@ export function registerConsolidationRoutes(app: MinimalHttpApp): void {
             operatorName: auth.userId, // 客户自己付的款：记唛头（2026-09-19）
             fromStatus: "quoted",
             toStatus: "paid",
-            remark: `客户用集货余额付款 ¥${amount.toFixed(2)}`,
+            remark: `客户用余额付款 ¥${amount.toFixed(2)}`,
           },
         });
         return { balanceAfter: after, amount };
@@ -1228,7 +1228,7 @@ export function registerConsolidationRoutes(app: MinimalHttpApp): void {
         taskId: task.id,
         paidAmount: paid.amount,
         balanceAfter: paid.balanceAfter,
-        message: `付款成功，已扣 ¥${paid.amount.toFixed(2)}，集货余额剩余 ¥${paid.balanceAfter.toFixed(2)}`,
+        message: `付款成功，已扣 ¥${paid.amount.toFixed(2)}，余额剩余 ¥${paid.balanceAfter.toFixed(2)}`,
       });
     } catch (e) {
       if (e instanceof InsufficientBalanceError || e instanceof PaymentConflictError) {
@@ -2362,7 +2362,7 @@ export function registerConsolidationRoutes(app: MinimalHttpApp): void {
           operatorName: auth.name || auth.userId,
           fromStatus: "paid",
           toStatus: "quoted",
-          remark: `管理员撤销付款，退回集货余额 ¥${refundable.toFixed(2)}${body.reason?.trim() ? `（${body.reason.trim()}）` : ""}`,
+          remark: `管理员撤销付款，退回余额 ¥${refundable.toFixed(2)}${body.reason?.trim() ? `（${body.reason.trim()}）` : ""}`,
         },
       });
       return { balanceAfter: after, refundable };
@@ -2374,7 +2374,7 @@ export function registerConsolidationRoutes(app: MinimalHttpApp): void {
       balanceAfter,
       paymentStatus: "unpaid",
       status: "quoted",
-      message: `已退回 ¥${refundable.toFixed(2)} 到客户集货余额，任务回到未付款`,
+      message: `已退回 ¥${refundable.toFixed(2)} 到客户余额，任务回到未付款`,
     });
   });
 

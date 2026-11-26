@@ -160,7 +160,7 @@ function ClientConsolidationContent() {
   const [prealertSubmitting, setPrealertSubmitting] = useState(false);
 
   const [showPay, setShowPay] = useState(false);
-  // 集货余额（2026-08-07）：付款直接扣这里的钱
+  // 余额（2026-08-07）：付款直接扣这里的钱
   /* null = 还没读到（读取中 / 读失败）。原来读失败一律当 0，付款弹窗就说「余额不足」把人拦住（2026-09-29 Codex 全系统检查） */
   const [balance, setBalance] = useState<number | null>(null);
   const [payProofFileName, setPayProofFileName] = useState("");
@@ -176,7 +176,7 @@ function ClientConsolidationContent() {
   const [showAllProducts, setShowAllProducts] = useState(false);
 
   // ---- 数据加载 ----
-  /** 读集货余额。付款弹窗用它判断够不够，付完刷新。
+  /** 读余额。付款弹窗用它判断够不够，付完刷新。
    *  silent（有变化时悄悄重拉）读失败：保留上一次读到的数，不变成「读取中」—— 不然正开着的付款框确认按钮会突然变灰
    *  （Codex 复查 2026-10-05）。付款前那次照旧强制现读，失败照旧 null。 */
   /* 余额、任务列表晚到的旧结果不盖新的（2026-10-18 全系统审查 F-10）：实时推送的重拉、付款后的刷新、初次加载同时在路上，
@@ -454,7 +454,7 @@ function ClientConsolidationContent() {
     }
   };
 
-  // ---- 付款：用集货余额直接扣（2026-08-07 改）----
+  // ---- 付款：用余额直接扣（2026-08-07 改）----
   // 原来是上传付款凭证等审核，现在当场扣余额、当场付清。
   // 不可撤销，所以先弹一道确认；点错了只能找客服在管理员端撤销。
   const handlePay = async () => {
@@ -462,9 +462,9 @@ function ClientConsolidationContent() {
     if (!(fee > 0)) { setToast("这个任务还没有报价金额，请联系客服"); return; }
     // 付之前现读一次余额（2026-09-29）：页面开着的时候客户可能刚充过值，拿老数字会误拦
     const nowBalance = await loadBalance();
-    if (nowBalance === null) { setToast("集货余额没读出来，请稍后再试或刷新页面"); return; }
-    if (nowBalance < fee) { setToast(`集货余额不足，还差 ¥${(fee - nowBalance).toFixed(2)}，请先去「集货余额」充值`); return; }
-    if (!confirm(`确认用集货余额支付 ¥${fee.toFixed(2)}？\n\n此次付款不可撤销，误操作请联系客服。`)) return;
+    if (nowBalance === null) { setToast("余额没读出来，请稍后再试或刷新页面"); return; }
+    if (nowBalance < fee) { setToast(`余额不足，还差 ¥${(fee - nowBalance).toFixed(2)}，请先去「余额」充值`); return; }
+    if (!confirm(`确认用余额支付 ¥${fee.toFixed(2)}？\n\n此次付款不可撤销，误操作请联系客服。`)) return;
     // 2026-09-02 三审整改：操作回调里的刷新一律传「本次操作发生时」的明确任务 id。
     // 用户中途切走时，loadDetail 进门认主人会直接拒收这次刷新，不会作废新任务的在途请求。
     const opTaskId = selectedTaskId;
@@ -952,14 +952,14 @@ function ClientConsolidationContent() {
             const enough = balance !== null && balance >= fee && fee > 0;
             return (
               <>
-                <h3 style={{ marginTop: 0 }}>用集货余额付款</h3>
+                <h3 style={{ marginTop: 0 }}>用余额付款</h3>
                 <p style={{ fontSize: 24, fontWeight: 700, color: "var(--c-navy)", margin: "12px 0" }}>¥{amount2(fee)}</p>
                 <div style={{ padding: "10px 12px", border: "1px solid var(--l-soft)", borderRadius: 6, marginBottom: 12 }}>
-                  <div style={{ fontSize: 13 }}>当前集货余额：<strong>{balance === null ? "正在读取…（一直读不出来请刷新页面）" : `¥${balance.toFixed(2)}`}</strong></div>
+                  <div style={{ fontSize: 13 }}>当前余额：<strong>{balance === null ? "正在读取…（一直读不出来请刷新页面）" : `¥${balance.toFixed(2)}`}</strong></div>
                   {fee > 0 && balance !== null && (
                     enough
                       ? <div style={{ fontSize: 13, color: "var(--t-body)", marginTop: 4 }}>付款后剩余：¥{(balance - fee).toFixed(2)}</div>
-                      : <div style={{ fontSize: 13, color: "var(--c-red-deep)", marginTop: 4 }}>余额不足，还差 ¥{(fee - balance).toFixed(2)}，请先去「集货余额」充值</div>
+                      : <div style={{ fontSize: 13, color: "var(--c-red-deep)", marginTop: 4 }}>余额不足，还差 ¥{(fee - balance).toFixed(2)}，请先去「余额」充值</div>
                   )}
                 </div>
                 {/* 不可撤销必须写清楚 —— 扣款是当场生效的 */}

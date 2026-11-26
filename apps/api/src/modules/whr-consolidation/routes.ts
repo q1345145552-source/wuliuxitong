@@ -1041,7 +1041,7 @@ export function registerWhrConsolidationRoutes(app: MinimalHttpApp): void {
           operatorName: auth.name || auth.userId,
           fromStatus: "paid",
           toStatus: "received_pending_payment",
-          remark: `管理员撤销付款，退回集货余额 ¥${refundable.toFixed(2)}${body.reason?.trim() ? `（${body.reason.trim()}）` : ""}`,
+          remark: `管理员撤销付款，退回余额 ¥${refundable.toFixed(2)}${body.reason?.trim() ? `（${body.reason.trim()}）` : ""}`,
         },
       });
       return { balanceAfter: after, refundable, repricedFee, paidFee };
@@ -1055,8 +1055,8 @@ export function registerWhrConsolidationRoutes(app: MinimalHttpApp): void {
       status: "received_pending_payment",
       totalFee: repricedFee,
       message: repriced
-        ? `已退回 ¥${refundable.toFixed(2)} 到客户集货余额，单子回到待付款；付款后单价改过，重新付款按现在的单价 ¥${repricedFee.toFixed(2)}`
-        : `已退回 ¥${refundable.toFixed(2)} 到客户集货余额，单子回到待付款`,
+        ? `已退回 ¥${refundable.toFixed(2)} 到客户余额，单子回到待付款；付款后单价改过，重新付款按现在的单价 ¥${repricedFee.toFixed(2)}`
+        : `已退回 ¥${refundable.toFixed(2)} 到客户余额，单子回到待付款`,
     });
   });
 

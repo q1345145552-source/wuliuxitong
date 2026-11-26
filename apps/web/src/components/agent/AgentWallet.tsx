@@ -24,8 +24,8 @@ export default function AgentWallet() {
   return (
     <section>
       <SectionHeader
-        title="集货余额"
-        desc="名下客户的集货余额和充值记录。客户充值打给湘泰，由湘泰审核到账。"
+        title="余额"
+        desc="名下客户的余额和充值记录。客户充值打给湘泰，由湘泰审核到账。"
         actions={<button type="button" style={btn} onClick={reload} disabled={loading}>刷新</button>}
       />
       <LoadState loading={loading && !data} error={error} onRetry={reload} />
@@ -40,7 +40,7 @@ export default function AgentWallet() {
                   <thead>
                     <tr>
                       <th scope="col" style={th}>客户</th>
-                      <th scope="col" style={{ ...th, textAlign: "right" }}>集货余额</th>
+                      <th scope="col" style={{ ...th, textAlign: "right" }}>余额</th>
                       <th scope="col" style={th}>最近变动</th>
                     </tr>
                   </thead>
@@ -70,7 +70,7 @@ export default function AgentWallet() {
               }
             >
               {data.recharges.items.length === 0 ? (
-                <EmptyStateCard title="没有充值记录" description="客户在客户端「集货余额」里提交充值后会出现在这里。" />
+                <EmptyStateCard title="没有充值记录" description="客户在客户端「余额」里提交充值后会出现在这里。" />
               ) : (
                 <>
                   <TableWrap label="充值记录">

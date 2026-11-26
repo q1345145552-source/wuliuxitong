@@ -719,7 +719,7 @@ export default function AdminWhrConsolidationPage() {
    */
   const handleRevokePayment = async (pa: any) => {
     if (!selectedPlanId) return;
-    const reason = prompt(`撤销「${pa.trackingNo}」的付款？\n\n钱会退回客户的集货余额，单子回到「待付款」。\n请填写撤销原因（会记进流水和轨迹）：`);
+    const reason = prompt(`撤销「${pa.trackingNo}」的付款？\n\n钱会退回客户的余额，单子回到「待付款」。\n请填写撤销原因（会记进流水和轨迹）：`);
     if (reason == null) return;
     setRevokingId(pa.id);
     try {
@@ -1710,7 +1710,7 @@ export default function AdminWhrConsolidationPage() {
                 {(deletePlanPreview.refundTotal ?? 0) > 0 && (
                   <div style={{ background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: 6, padding: 10, marginBottom: 12, fontSize: 13, color: "var(--c-green-dark)" }}>
                     删除时会把已付的 <b>¥{(deletePlanPreview.refundTotal ?? 0).toFixed(2)}</b>
-                    {" "}退回给 {deletePlanPreview.refundCount} 位客户的集货余额。
+                    {" "}退回给 {deletePlanPreview.refundCount} 位客户的余额。
                   </div>
                 )}
                 {deletePlanPreview.blockers.length > 0 && (

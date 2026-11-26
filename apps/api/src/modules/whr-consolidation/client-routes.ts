@@ -799,7 +799,7 @@ export function registerWhrConsolidationClientRoutes(app: MinimalHttpApp): void 
             operatorName: auth.userId, // 客户自己付的款：记唛头（2026-09-19）
             fromStatus: "received_pending_payment",
             toStatus: "paid",
-            remark: `客户用集货余额付款 ¥${amount.toFixed(2)}`,
+            remark: `客户用余额付款 ¥${amount.toFixed(2)}`,
           },
         });
         return { balanceAfter: after, amount };
@@ -810,7 +810,7 @@ export function registerWhrConsolidationClientRoutes(app: MinimalHttpApp): void 
         status: "paid",
         paidAmount: paid.amount,
         balanceAfter: paid.balanceAfter,
-        message: `付款成功，已扣 ¥${paid.amount.toFixed(2)}，集货余额剩余 ¥${paid.balanceAfter.toFixed(2)}`,
+        message: `付款成功，已扣 ¥${paid.amount.toFixed(2)}，余额剩余 ¥${paid.balanceAfter.toFixed(2)}`,
       });
     } catch (e) {
       if (e instanceof PlanCancelledError || e instanceof PlanMissingError) {

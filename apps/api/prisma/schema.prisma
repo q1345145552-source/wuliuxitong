@@ -61,6 +61,8 @@ model User {
   WhrConsolidationPlanCustomer WhrConsolidationPlanCustomer[]
   /// 2026-11-27 财务系统2 来扣 / 退这个客户余额的请求登记
   finance2BalanceRequests      Finance2BalanceRequest[]       @relation("Finance2BalanceRequestClient")
+  /// 2026-11-27 管理员给这个客户加 / 减余额的调整单
+  walletAdjustments            WalletAdjustment[]             @relation("WalletAdjustmentClient")
 
   @@index([companyId])
   @@index([role])
@@ -1835,4 +1837,46 @@ model Finance2BalanceRequest {
   @@index([chargeRequestId])
   @@index([companyId, clientId, createdAt])
   @@map("finance2_balance_requests")
+}
+
+/// 管理员调整客户余额的调整单（2026-11-27，财务系统2 ADR 0191 第 2 轮；老板：「充值的话线下转，然后管理员去加金额」「加了就算数」）。
+/// 一张单 = 一次「给客户加金额」（kind=topup）或一次「减金额」（kind=deduction，线下把钱退给客户）。
+/// 加错了只能把那张 topup 整笔冲掉：冲掉的信息记在这张单的 reversed_* 上（一张只能冲一次），另记一笔 topup_reversal 流水。
+/// 流水的关联类型 admin_adjust、ref_id = 这张单的 id（冲掉的那笔流水也挂这个 id）。钱怎么动在 wallet/consolidation-balance.ts。
+model WalletAdjustment {
+  /// adj_ 开头
+  id               String    @id
+  companyId        String    @map("company_id")
+  /// 客户（唛头 = users.id）
+  clientId         String    @map("client_id")
+  /// topup=管理员充值 | deduction=管理员减金额
+  kind             String
+  /// 金额，大于 0（减金额也记正数，流水上是负数）
+  amount           Decimal   @db.Decimal(14, 2)
+  /// 加金额的备注（可空）/ 减金额的原因（必填）。客户的流水里看得到（抹柜号）
+  remark           String?
+  /// 水单图（加金额时可以传，不强制）：data:image/…;base64,… 或 /images/xxx。列表里不带，单独接口取
+  proofImage       String?   @map("proof_image") @db.Text
+  /// 弹窗打开时生成的一次性提交编号：同一个编号再来回第一次的结果（防管理员连点两下加两笔）
+  submitKey        String    @unique @map("submit_key")
+  operatorId       String    @map("operator_id")
+  operatorName     String    @map("operator_name")
+  /// 这张单写的那笔流水
+  ledgerId         String    @map("ledger_id")
+  /// 办完那一刻的余额（重复提交原样回这个数）
+  balanceAfter     Decimal   @map("balance_after") @db.Decimal(14, 2)
+  createdAt        DateTime  @default(now()) @map("created_at")
+  /// 冲掉（只有 topup 能冲、只能冲一次）：什么时候、谁、为什么、冲掉那笔流水、冲掉时的一次性提交编号、冲完的余额
+  reversedAt       DateTime? @map("reversed_at")
+  reversedById     String?   @map("reversed_by_id")
+  reversedByName   String?   @map("reversed_by_name")
+  reverseReason    String?   @map("reverse_reason")
+  reversalLedgerId String?   @map("reversal_ledger_id")
+  reverseSubmitKey String?   @unique @map("reverse_submit_key")
+  reverseBalanceAfter Decimal? @map("reverse_balance_after") @db.Decimal(14, 2)
+
+  client User @relation("WalletAdjustmentClient", fields: [clientId], references: [id])
+
+  @@index([companyId, clientId, createdAt])
+  @@map("wallet_adjustments")
 }

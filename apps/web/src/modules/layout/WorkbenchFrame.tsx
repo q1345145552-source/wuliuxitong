@@ -32,6 +32,7 @@ const PAGE_TITLES: Record<string, string> = {
   "/admin/whr-consolidation": "集货拼柜（仓库版）",
   "/admin/finance": "财务报表",
   "/admin/settlement": "柜子收款",
+  "/admin/client-balance": "客户余额",
   "/admin/lmp": "渠道与价格管理（LMP）",
   "/admin/customs": "关务监控",
   "/admin/agents": "代理管理",
@@ -52,7 +53,7 @@ const PAGE_TITLES: Record<string, string> = {
   "/client/whr-consolidation": "集货拼柜（仓库版）",
   "/client/track": "查国内快递",
   "/client/chat": "在线客服",
-  "/client/wallet": "集货余额",
+  "/client/wallet": "余额",
   "/client/address-book": "常用地址库",
   "/agent": "代理工作台",
 };

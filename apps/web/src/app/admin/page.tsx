@@ -2578,7 +2578,7 @@ export default function AdminHomePage() {
                               type="button"
                               disabled={loading}
                               onClick={async () => {
-                                if (!window.confirm(`确认通过 ${r.clientId} 的 ¥${r.amount} 集货余额充值？\n\n通过后钱立刻进入他的集货余额。`)) return;
+                                if (!window.confirm(`确认通过 ${r.clientId} 的 ¥${r.amount} 余额充值？\n\n通过后钱立刻进入他的余额。`)) return;
                                 setLoading(true);
                                 try {
                                   await approveRecharge(r.id);

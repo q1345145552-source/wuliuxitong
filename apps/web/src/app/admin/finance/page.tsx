@@ -77,7 +77,8 @@ export default function AdminFinancePage() {
           {[
             { label: "待收款", value: money(data.receivableAmount), sub: `${data.receivableCount} 张 · 货已到仓待付款` },
             { label: "已收款", value: money(data.receivedAmount), sub: `${data.receivedCount} 张` },
-            { label: "客户余额", value: money(data.balanceAmount), sub: `${data.balanceClientCount} 个客户充值未用` },
+            // 2026-11-27 余额不只付集货了（运费账单也从这里扣），「充值未用」会误导；合计是所有客户余额加起来（负数的已经抵掉）
+            { label: "客户余额", value: money(data.balanceAmount), sub: `${data.balanceClientCount} 个客户账上还有钱（负数余额已抵减）` },
             { label: "未到收款环节", value: money(data.notYetAmount), sub: `${data.notYetCount} 张 · 还没到该收钱的环节` },
           ].map((kpi) => (
             <div key={kpi.label} style={{ border: "1px solid var(--hairline)", borderRadius: "var(--radius-md)", padding: 16, background: "var(--canvas)" }}>

@@ -124,7 +124,7 @@ function AgentHomeStuck({ onOpenPlan }: { onOpenPlan: (planId: string) => void }
             </Panel>
 
             <Panel title={`没付款（${data.caps?.unpaid.total ?? data.unpaid.length}）`}>
-              <p style={{ margin: "0 0 8px", fontSize: 13, color: "var(--t-muted)" }}>仓库已签收、金额已算好，客户还没付款。不付款的货装不了柜，请催客户在客户端点「付款」（从集货余额里扣）。</p>
+              <p style={{ margin: "0 0 8px", fontSize: 13, color: "var(--t-muted)" }}>仓库已签收、金额已算好，客户还没付款。不付款的货装不了柜，请催客户在客户端点「付款」（从余额里扣）。</p>
               <TruncatedNote {...data.caps?.unpaid} unit="张" which="最早的" hint={STUCK_HINT} />
               {data.unpaid.length === 0 ? <EmptyStateCard title="没有" description="名下客户签收的单都付款了。" /> : <PrealertTable rows={data.unpaid} showFee onOpenPlan={onOpenPlan} />}
             </Panel>

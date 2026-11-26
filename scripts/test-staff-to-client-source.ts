@@ -76,7 +76,7 @@ async function main(): Promise<void> {
       "fcl_inquiries.cert_file_base64", "fcl_inquiries.product_images", "fcl_inquiries.product_name",
       "fcl_inquiries.quote_note", "finance_link_authorizations.warehouse_ref", "finance_link_requests.warehouse_ref",
       "order_product_images.content_base64", "orders.payment_proof_base64", "orders.payment_proofs",
-      "staff_inbound_photos.content_base64", "wallet_recharges.proof_image", "whr_consolidation_plan_customers.delivery_address",
+      "staff_inbound_photos.content_base64", "wallet_adjustments.proof_image", "wallet_recharges.proof_image", "whr_consolidation_plan_customers.delivery_address",
       "whr_consolidation_plans.destination_th", "whr_consolidation_prealert_items.product_image_base64", "whr_consolidation_prealerts.cancel_reason",
       "whr_consolidation_prealerts.customer_id", "whr_consolidation_prealerts.payment_proofs", "whr_consolidation_prealerts.payment_reject_reason",
       "whr_consolidation_prealerts.thailand_receipt_proofs", "whr_consolidation_prealerts.warehouse_receipt_proofs",

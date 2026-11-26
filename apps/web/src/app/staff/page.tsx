@@ -98,6 +98,7 @@ import {
 import { beijingDate, beijingToday } from "../../modules/shared/beijing-date";
 import { compareWaybillsByArrival } from "../../modules/shipment/waybill-sort";
 import { photoTypeIssue } from "../../modules/arrival-notice/photo-upload";
+import ClientLedgerPanel from "../../modules/wallet/ClientLedgerPanel";
 import { nextAutoTotals, orderDimsVolume, productRowTotals } from "../../modules/orders/auto-totals";
 import {
   shipmentStatusZh,
@@ -454,6 +455,8 @@ export default function StaffHomePage() {
 
   // 客户余额
   const [walletBalances, setWalletBalances] = useState<StaffWalletBalanceItem[]>([]);
+  /** 正在看哪个客户的流水（2026-11-27） */
+  const [walletLedgerClient, setWalletLedgerClient] = useState<string | null>(null);
   /* 2026-09-29（老板选 A）：原来只有点「刷新」才拉，每次进来都是「暂无数据，点击刷新加载」；
      拉失败也只在控制台打一行，页面上跟「没数据」一模一样。
      现在：切到这一栏就自己拉（切回来也重拉）；拉的时候写「加载中…」，失败写原因、「重试」点一下就重拉。 */
@@ -3237,7 +3240,8 @@ export default function StaffHomePage() {
                   <tr style={{ background: "var(--s-alt)", borderBottom: "1px solid var(--l-soft)" }}>
                     <th style={{ padding: "8px 12px", textAlign: "left", fontWeight: 600, color: "var(--t-body)" }}>客户</th>
                     <th style={{ padding: "8px 12px", textAlign: "left", fontWeight: 600, color: "var(--t-body)" }}>公司</th>
-                    <th style={{ padding: "8px 12px", textAlign: "right", fontWeight: 600, color: "var(--t-body)" }}>集货余额</th>
+                    <th style={{ padding: "8px 12px", textAlign: "right", fontWeight: 600, color: "var(--t-body)" }}>余额</th>
+                    <th style={{ padding: "8px 12px", textAlign: "left", fontWeight: 600, color: "var(--t-body)" }}>流水</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -3245,13 +3249,26 @@ export default function StaffHomePage() {
                     <tr key={b.clientId} style={{ borderBottom: "1px solid var(--s-sunken)" }}>
                       <td style={{ padding: "8px 12px" }}>{b.clientId}</td>
                       <td style={{ padding: "8px 12px", color: "var(--t-muted)" }}>{b.companyName || "—"}</td>
-                      <td style={{ padding: "8px 12px", textAlign: "right", fontWeight: 600 }}>¥{b.cny.toFixed(2)}</td>
+                      <td style={{ padding: "8px 12px", textAlign: "right", fontWeight: 600, color: b.cny < 0 ? "var(--c-red-deep)" : undefined }}>{b.cny < 0 ? "−" : ""}¥{Math.abs(b.cny).toFixed(2)}</td>
+                      <td style={{ padding: "8px 12px" }}>
+                        {/* 2026-11-27：员工能看单个客户的流水（只读；加 / 减 / 冲掉只有管理员） */}
+                        <button type="button" onClick={() => setWalletLedgerClient(walletLedgerClient === b.clientId ? null : b.clientId)}
+                          style={{ border: "1px solid var(--l-strong)", borderRadius: 6, padding: "2px 10px", background: "var(--white)", cursor: "pointer", fontSize: 12 }}>
+                          {walletLedgerClient === b.clientId ? "收起" : "看流水"}
+                        </button>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
           )}
+          {walletLedgerClient ? (
+            <div style={{ marginTop: 14 }}>
+              <h3 style={{ margin: "0 0 8px", fontSize: 15 }}>唛头 {walletLedgerClient} 的流水</h3>
+              <ClientLedgerPanel clientId={walletLedgerClient} isAdmin={false} />
+            </div>
+          ) : null}
         </section>
       )}
     </>

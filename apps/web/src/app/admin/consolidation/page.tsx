@@ -292,7 +292,7 @@ export default function AdminConsolidationPage() {
    */
   const handleRevokePayment = async () => {
     if (!selectedTaskId) return;
-    const reason = prompt("撤销这笔付款？\n\n钱会退回客户的集货余额，任务回到「未付款」。\n请填写撤销原因（会记进流水和日志）：");
+    const reason = prompt("撤销这笔付款？\n\n钱会退回客户的余额，任务回到「未付款」。\n请填写撤销原因（会记进流水和日志）：");
     if (reason == null) return;
     setRevoking(true);
     try {
@@ -600,7 +600,7 @@ export default function AdminConsolidationPage() {
             <div style={{ marginBottom: 20, padding: "12px 16px", border: "1px solid var(--l-soft)", borderRadius: 8 }}>
               <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 6 }}>已付款</div>
               <div style={{ fontSize: 13, color: "var(--t-muted)", marginBottom: 10 }}>
-                客户用集货余额支付。客户点错了可以在这里撤销：钱退回他的集货余额，任务回到「未付款」。
+                客户用余额支付。客户点错了可以在这里撤销：钱退回他的余额，任务回到「未付款」。
               </div>
               <button onClick={handleRevokePayment} disabled={revoking} style={{ padding: "8px 16px", border: "1px solid #fecaca", color: "var(--c-red-deep)", background: "var(--white)", borderRadius: 6, cursor: revoking ? "not-allowed" : "pointer", fontWeight: 600 }}>
                 {revoking ? "退款中..." : "撤销付款并退款"}
@@ -723,7 +723,7 @@ export default function AdminConsolidationPage() {
               {(deletePreview.refundTotal ?? 0) > 0 && (
                 <div style={{ background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: 6, padding: 10, marginBottom: 12, fontSize: 13, color: "var(--c-green-dark)" }}>
                   删除时会把已付的 <b>¥{(deletePreview.refundTotal ?? 0).toFixed(2)}</b>
-                  {" "}退回给 {deletePreview.refundCount} 位客户的集货余额。
+                  {" "}退回给 {deletePreview.refundCount} 位客户的余额。
                 </div>
               )}
               {deletePreview.blockers.length > 0 && (

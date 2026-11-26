@@ -251,7 +251,7 @@ export default function ClientWalletPage() {
     setRechargeError("");
   };
 
-  /** 集货余额只有人民币（2026-08-07 起泰铢废弃） */
+  /** 余额只有人民币（2026-08-07 起泰铢废弃） */
   /* null = 余额还没拿到（加载中或加载失败）。原来一律当 0，客户看到 ¥0.00 会以为钱没了（2026-09-29） */
   const balance = useMemo((): number | null => {
     if (!data) return null;
@@ -264,7 +264,7 @@ export default function ClientWalletPage() {
       {/* 余额卡片 */}
       <section style={{ border: "1px solid var(--l-soft)", borderRadius: 12, padding: 16, background: "var(--white)", marginBottom: 14 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-          <h2 style={{ margin: 0 }}>集货余额</h2>
+          <h2 style={{ margin: 0 }}>余额</h2>
           <button
             onClick={() => setShowRechargeModal(true)}
             style={{
@@ -284,9 +284,11 @@ export default function ClientWalletPage() {
         {loading ? <p style={{ color: "var(--t-strong)" }}>加载中...</p> : null}
         <div style={{ border: "1px solid var(--l-cool)", borderRadius: 10, padding: "14px 16px", background: "var(--s-cool)", maxWidth: 320 }}>
           <div style={{ color: "var(--t-strong)", fontSize: 12 }}>可用余额（人民币）</div>
-          <div style={{ fontSize: 30, fontWeight: 700 }}>{balance === null ? "—" : `¥${balance.toFixed(2)}`}</div>
+          {/* 余额可以是负数（管理员冲掉一笔充值时不够冲，2026-11-27）：负数标红 */}
+          <div style={{ fontSize: 30, fontWeight: 700, color: balance !== null && balance < 0 ? "var(--c-red-deep)" : undefined }}>{balance === null ? "—" : `${balance < 0 ? "−" : ""}¥${Math.abs(balance).toFixed(2)}`}</div>
+          {balance !== null && balance < 0 ? <div style={{ fontSize: 12, color: "var(--c-red-deep)", marginTop: 4 }}>余额是负数：要先补上这一块，才能付集货拼柜，请联系客服</div> : null}
           {balance === null && !loading ? <div style={{ fontSize: 12, color: "var(--c-red-deep)", marginTop: 4 }}>余额没加载出来，请刷新页面</div> : null}
-          <div style={{ fontSize: 12, color: "var(--t-muted)", marginTop: 4 }}>只能用于集货拼柜付款</div>
+          <div style={{ fontSize: 12, color: "var(--t-muted)", marginTop: 4 }}>可以付集货拼柜；运费账单出来会自动从这里扣</div>
         </div>
       </section>
 
@@ -329,7 +331,7 @@ export default function ClientWalletPage() {
                     <td style={{ padding: "8px 12px", textAlign: "right", fontWeight: 600, whiteSpace: "nowrap" }}>
                       {r.amount >= 0 ? "+" : "−"}¥{Math.abs(r.amount).toFixed(2)}
                     </td>
-                    <td style={{ padding: "8px 12px", textAlign: "right", whiteSpace: "nowrap", color: "var(--t-muted)" }}>¥{r.balanceAfter.toFixed(2)}</td>
+                    <td style={{ padding: "8px 12px", textAlign: "right", whiteSpace: "nowrap", color: r.balanceAfter < 0 ? "var(--c-red-deep)" : "var(--t-muted)" }}>{r.balanceAfter < 0 ? "−" : ""}¥{Math.abs(r.balanceAfter).toFixed(2)}</td>
                     <td style={{ padding: "8px 12px", color: "var(--t-muted)", maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={r.remark}>{r.remark || "—"}</td>
                   </tr>
                 ))}
@@ -405,8 +407,8 @@ export default function ClientWalletPage() {
       <section style={{ border: "1px solid var(--l-soft)", borderRadius: 12, padding: 16, background: "var(--white)" }}>
         <h3 style={{ marginTop: 0 }}>说明</h3>
         <ul style={{ margin: 0, paddingLeft: 18, color: "var(--t-strong)" }}>
-          <li>集货余额<strong>只能用于集货拼柜（普通版和仓库版）付款</strong>，不能用于普通运单。</li>
-          <li>充值只收人民币。提交充值申请并上传水单后，由管理员审核，通过才会到账。</li>
+          <li>余额<strong>可以付集货拼柜（普通版和仓库版）；运费账单出来会自动从这里扣</strong>（扣到多少算多少，「单号」那一列是账单号）。</li>
+          <li>充值只收人民币。提交充值申请并上传水单后，由管理员审核，通过才会到账；线下转账给我们的，管理员确认后直接给你加上。</li>
           <li>在集货拼柜里付款时<strong>直接扣余额、当场完成</strong>，不用再传水单。付款不可自行撤销，点错了请联系客服。</li>
           <li>如有疑问请联系客服。</li>
         </ul>

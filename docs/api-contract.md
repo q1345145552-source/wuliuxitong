@@ -1133,3 +1133,19 @@
 
 ### 29.7 客户余额页（`GET /client/wallet/ledger`）跟着补的
 - `typeLabel` 新加：`bill_charge`「运费账单扣款」、`bill_refund`「账单作废退回」，第 2 轮要用的 `topup`「管理员充值」、`topup_reversal`「冲掉充值」、`deduction`「管理员减金额」；`source` 新加 `finance2_charge`「运费账单」。返回结构没变，前端没改。
+
+### 29.8 管理员加 / 减 / 冲掉客户余额、按客户看流水（2026-11-27 第 2 轮）
+
+老板：「充值的话线下转，然后管理员去加金额」「加了就算数」。代码 `apps/api/src/modules/wallet/admin-adjust-routes.ts`，钱走 `consolidation-balance.ts` 的 `adminTopup` / `adminDeduct` / `adminReverseTopup`。新表 `wallet_adjustments`（迁移 `20261127_wallet_adjustments`）：一次加 / 减一行，冲掉记在同一行的 `reversed_*`。流水关联类型 `admin_adjust`、`ref_id` = 调整单号（`adj_…`，冲掉那笔也挂原来那张单）、单号空、备注 = 管理员写的备注 / 原因、操作人 = 这个管理员。客户提交充值 → 管理员通过 / 拒绝那条路不变。
+
+**一次性提交编号 `submitKey`**（三个写接口都必带，16～64 位字母数字 `-` `_`）：页面在弹窗打开时生成。同一个编号再来：内容一样 → 不再动钱，回第一次的结果（`duplicate: true`）；内容不一样 → `409`。做法：事务第一句拿这个编号的排队锁（咨询锁 83093 + 编号哈希）→ 锁里查办过没有 → 没办过才动钱，同一个事务里把编号写进 `submit_key` / `reverse_submit_key`（都唯一，兜底）。
+
+- `POST /admin/wallet/adjustments/topup`（只给 admin）`{clientId, amount, remark?, proofImage?, submitKey}`：`amount` 大于 0、最多两位小数（字符串或数字，按字符串核）；`remark` ≤200 字；`proofImage` 可不传，传了只认图片 data URL（png/jpg/gif/webp/bmp）或站内 `/images/xxx`、8MB 以内（同客户充值凭证那道闸）。客户必须是本公司的客户角色，否则 404。余额是负数也能加。回 `{adjustment:{id,kind,clientId,amount,remark,hasProof,createdAt}, balanceAfter, duplicate}`。
+- `POST /admin/wallet/adjustments/deduct`（只给 admin）`{clientId, amount, reason, submitKey}`：原因必填；不收水单；锁里判断，减完小于 0 → `400`「余额不够减：现在 ¥x，要减 ¥y」，一分不动、编号不记。回同上。
+- `POST /admin/wallet/adjustments/reverse`（只给 admin）`{adjustmentId, clientId, reason, submitKey}`：整笔冲掉一笔**管理员充值**；原因必填；`clientId` 必须是那一笔的客户（否则 400，推送靠它只推这一个客户）；先锁住那张调整单再看冲过没有：冲过 → `409`「刚刚已经被冲掉了」；减金额那种 → `400`；没有 / 别家公司 → `404`。余额不够冲也照冲，可以成负数。回 `{adjustmentId, clientId, amount, reason, reversedAt, balanceAfter, duplicate}`。
+- `GET /admin/wallet/adjustments/proof?id=`（只给 admin）：`{id, proofImage}`（列表里不带图）。
+- `GET /staff/wallet/clients?keyword=`（员工、管理员）：本公司全部客户 `{clientId, status, balance, updatedAt}`（只给唛头、不给名字；没钱包的 0 / null；按唛头模糊搜），`total`。
+- `GET /staff/wallet/ledger?clientId=&page=&pageSize=`（员工、管理员）：这个客户的流水，新的在前、真分页（默认 50、最多 500），带 `balance`。每行 `{id,type,typeLabel,amount,balanceAfter,source,refNo,remark,operatorName?,createdAt,adjustment}`；`adjustment` = `{id,kind,canReverse,hasProof,reversed:{at,reason,byName?}|null}`（只有管理员调整的那几行有）。`operatorName` 和 `reversed.byName` 只给管理员（员工拿不到这两个字段）。
+
+推送：三个写接口路径带 `/wallet/`，自动推「wallet」；请求里的 `clientId` 让它只推给这一个客户（员工、管理员照旧收全公司）。
+客户余额页（`/client/wallet/ledger`）：`typeLabel` 管理员充值 / 冲掉充值 / 管理员减金额，`source`「后台调整」；认不出的类型 / 来源一律写「其他」（原来会把英文代码原样给客户）。

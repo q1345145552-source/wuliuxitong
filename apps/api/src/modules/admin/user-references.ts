@@ -78,6 +78,10 @@ export const USER_REFERENCE_COLUMNS: ReadonlyArray<readonly [table: string, colu
   ["finance2_hold_clears", "operator_id"],
   // 2026-11-27 财务系统2 客户余额：来扣 / 退这个客户余额的请求登记（扣的是谁的钱）
   ["finance2_balance_requests", "client_id"],
+  // 2026-11-27 管理员调整客户余额：给谁调的、谁调的、谁冲掉的
+  ["wallet_adjustments", "client_id"],
+  ["wallet_adjustments", "operator_id"],
+  ["wallet_adjustments", "reversed_by_id"],
 ];
 
 /** 大段文字 / JSON 里出现过 "号"（带双引号，跟 JSON.stringify 一样）就算用过 */
@@ -105,6 +109,7 @@ export const USER_REFERENCE_EXCLUDED: ReadonlyArray<readonly [table: string, col
   ["ai_knowledge_gaps", "answer_summary", "回答摘要"],
   ["client_documents", "content_base64", "客户资料文件"],
   ["wallet_recharges", "proof_image", "充值截图"],
+  ["wallet_adjustments", "proof_image", "管理员加金额时传的水单图（谁传的记在 operator_id）"],
   ["staff_inbound_photos", "content_base64", "入库照片（谁拍的记在 operator_id）"],
   ["order_product_images", "content_base64", "产品图（谁传的记在 uploaded_by）"],
   ["admin_lastmile_orders", "sign_product_image_base64", "签收图"],

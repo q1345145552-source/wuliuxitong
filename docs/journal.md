@@ -1,5 +1,12 @@
 # 项目交接日志
 
+## 2026-11-27 财务系统2 客户余额 · 物流第 2 轮：管理员加 / 减 / 冲掉，页面改名（同一分支 claude/caiwu2-balance，本机提交，没推、没上线）
+- 老板定：客户线下转钱、管理员在后台加，加了就算数；「集货余额」就是客户唯一的「余额」。方案第五节 1～7。
+- 后端：新表 `wallet_adjustments`（迁移 `20261127_wallet_adjustments`），三个只给管理员的接口加 / 减 / 冲掉（`modules/wallet/admin-adjust-routes.ts`），钱走 `adminTopup` / `adminDeduct` / `adminReverseTopup`；防连点 = 弹窗打开时生成一次性提交编号 + 编号排队锁（83093）+ 唯一约束兜底；冲掉先锁调整单、一笔只冲一次、可冲成负数；减金额不许负。员工、管理员按客户看流水（操作人只给管理员）。加减冲只推给那一个客户。
+- 页面：管理员新页「客户余额」（/admin/client-balance，两步核对、金额默认空、提交中禁用）；员工「客户余额」能看流水；客户余额页改名改文案、负数标红；「集货余额」给人看的字全改成「余额」（代理入口只改名、照旧关着）。
+- 测试：`test:wallet-adjust-source` 7、`test:wallet-adjust-db` 21；变异 6 处连库 + 7 处不连库全红。已知问题（集货付款钱包行第一次出现时可能盖掉一笔充值）单独复现在 `test:wallet-first-row-known-issue-db`，不进 CI。细节 `docs/sessions/2026-11-27-finance2-balance.md`，接口 `docs/api-contract.md` 29.8。
+- 检查：本机照 CI 逐步跑 build 组 87/87、test-db 组 43/43（Homebrew PG16 一次性空库）；浏览器三端亲手点过（一次性库 + 本机前后端），控制台 0 报错。还没经过子代理审查。
+
 ## 2026-11-27 财务系统2 客户余额 · 物流第 1 轮：账和对接接口（工作树分支 claude/caiwu2-balance，本机提交，没推、没上线、没碰线上库）
 - 来源：财务系统2 总窗口（老板 11-27 点头的 ADR 0191：客户的余额只有一本账 = 集货余额那一本；财务的账单发出时来扣、作废时来退）。约定在财务系统2 `docs/物流系统接口约定.md` 第 12 节。
 - 做法：钱包加 `chargeBillUpTo`（扣完为止，钱包行不在 = 扣 0 不建行）/ `refundBillCharge`（先保证行在再锁，锁里按流水算能退多少），金额用 Decimal；新流水类型 `bill_charge` / `bill_refund`（第 2 轮的 topup / topup_reversal / deduction 先留类型），新关联类型 `finance2_charge`（ref_id = 扣款请求编号）。新表 `finance2_balance_requests`（编号主键 + 内容指纹 + 结果），流水表加 `tx_id`（事务号，给拉流水防漏）。迁移 `20261127_finance2_balance`。

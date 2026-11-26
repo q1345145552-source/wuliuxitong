@@ -6,6 +6,7 @@ import { registerAdminOpsRoutes } from "./modules/admin-ops/routes";
 import { registerAuthRoutes } from "./modules/auth/routes";
 import { registerClientAddressRoutes } from "./modules/client-addresses/routes";
 import { registerClientComplianceRoutes } from "./modules/client-compliance/routes";
+import { registerWalletAdjustRoutes } from "./modules/wallet/admin-adjust-routes";
 import { registerContainerRoutes } from "./modules/containers/routes";
 import { registerLoadingManifestRoutes } from "./modules/loading-manifests/routes";
 import { registerFinanceRoutes } from "./modules/finance/routes";
@@ -62,6 +63,8 @@ registerOrderRoutes(app);
 registerShipmentRoutes(app);
 registerClientAddressRoutes(app);
 registerClientComplianceRoutes(app);
+// 客户余额：管理员加 / 减 / 冲掉，员工和管理员按客户看流水（2026-11-27，财务系统2 ADR 0191 第 2 轮）
+registerWalletAdjustRoutes(app);
 registerAdminRoutes(app);
 registerAdminOpsRoutes(app);
 registerContainerRoutes(app);

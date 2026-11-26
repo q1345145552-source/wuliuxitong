@@ -135,7 +135,7 @@ export function registerClientComplianceRoutes(app: MinimalHttpApp): void {
     ok(res, {
       id: recharge.id,
       status: recharge.status,
-      message: "充值申请已提交，等待管理员审核，通过后才会进集货余额",
+      message: "充值申请已提交，等待管理员审核，通过后才会进余额",
     });
   });
 
@@ -182,15 +182,16 @@ export function registerClientComplianceRoutes(app: MinimalHttpApp): void {
       bill_charge: "运费账单扣款", bill_refund: "账单作废退回",
       topup: "管理员充值", topup_reversal: "冲掉充值", deduction: "管理员减金额",
     };
-    const refZh: Record<string, string> = { whr: "仓库版集货", normal: "普通版集货", recharge: "充值单", finance2_charge: "运费账单" };
+    const refZh: Record<string, string> = { whr: "仓库版集货", normal: "普通版集货", recharge: "充值单", finance2_charge: "运费账单", admin_adjust: "后台调整" };
     ok(res, {
       items: rows.map((r) => ({
         id: r.id,
         type: r.type,
-        typeLabel: typeZh[r.type] ?? r.type,
+        // 认不出的类型 / 来源写「其他」，不把英文代码漏给客户（2026-11-27）
+        typeLabel: typeZh[r.type] ?? "其他",
         amount: Number(r.amount),
         balanceAfter: Number(r.balanceAfter),
-        source: r.refType ? (refZh[r.refType] ?? r.refType) : "",
+        source: r.refType ? (refZh[r.refType] ?? "其他") : "",
         refNo: r.refNo ?? "",
         // 2026-09-15：「管理员删除集货任务…」这类代码拼的备注，开头的「管理员」不给客户（库里原文不动）
         remark: hideOperatorInRemark(maskFreeTextForClient(r.remark ?? "", maskNos), "client"),

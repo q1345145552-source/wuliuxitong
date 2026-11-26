@@ -37,3 +37,26 @@
 - 管理员加 / 冲 / 减（`topup` / `topup_reversal` / `deduction`）：类型和客户页中文名已留好，函数、入口、关联类型（约定样例写的 `admin_adjust`）都没做；客户页 `source` 认不出的关联类型会原样露英文，第 2 轮加关联类型时一起在 `refZh` 补。
 - 页面改名「集货余额」→「余额」、说明文字：没做。
 - 本机两边连起来对着测的做法见交接给总窗口的报告（也抄在 journal）。
+
+## 第 2 轮（同一天，总窗口验收第 1 轮后接着做）：管理员加 / 减 / 冲掉，页面改名改文案
+
+依据：财务系统2 ADR 0191、`docs/方案-客户余额充值-2026-11-27.md` 第二节、第五节 1～7。
+
+### 做了什么
+- 后端 `apps/api/src/modules/wallet/admin-adjust-routes.ts`（接口见 `docs/api-contract.md` 29.8）；钱包公共函数 `adminTopup` / `adminDeduct` / `adminReverseTopup`（`consolidation-balance.ts` 末尾，先保证行在 → 锁和读同一句 → 锁里判断）。
+- 新表 `wallet_adjustments` + 迁移 `20261127_wallet_adjustments`（外键 users，两条 CHECK）；结构漂移清单 73 张表 / 887 个字段。
+- `realtime/publish.ts`：加减冲只推给请求里那一个客户。`core/operator-visibility.ts` 登记 reversedById / reversedByName；`admin/user-references.ts` 登记新表三列 + 水单列不算。
+- 客户余额页流水：认不出的类型 / 来源写「其他」；新来源 `admin_adjust`「后台调整」。
+- 前端：`app/admin/client-balance/page.tsx`（新页，菜单在「充值审核」下面）、`modules/wallet/ClientLedgerPanel.tsx`（管理员 / 员工共用的流水）；员工「客户余额」加「看流水」；客户余额页改名、两处文案、负数标红；集货两个付款弹窗、管理员集货撤销 / 删除提示、充值审核确认框、代理（关着的）入口、菜单、页面标题里的「集货余额」都改「余额」；财务页「N 个客户充值未用」改成「账上还有钱（负数余额已抵减）」。后端给人看的提示 / 新流水备注同样改。
+- `scripts/finance2-make-key.ts` 加 `balance` 参数。
+
+### 测试
+- `test:wallet-adjust-source`（7 项）、`test:wallet-adjust-db`（21 项），都进 CI；改了老测试：test-finance2-wallet-source（代理菜单名）、test-mark-display（钉住新的操作人显示处）、test-staff-to-client-source（钉死名单加水单列）、test-lock-order（登记排队锁）。
+- 变异：去掉编号排队锁（冲掉的同号并发红；加金额靠唯一约束兜底仍绿）、再去掉兜底（加金额同号并发红）、冲掉不锁调整单（两人同时冲红）、钱包读不加锁（两笔同时减、加金额和付集货同时来红）、减金额不拦负数、冲掉不看冲过没有 —— 全红。
+- 已知问题复现 `test:wallet-first-row-known-issue-db`（不进 CI）：强制时序复现出来了（应 1900 实 900）；钱包行已存在的对照正确；自然并发 100 轮 0 轮出错。
+
+### 浏览器（本机一次性库 + 后端 4521 + 前端 3217，亲手点）
+- 管理员：客户余额页 → 看流水 → 加金额（金额默认空、两步核对、连点两下「确认加金额」库里只有一笔）→ 冲掉（没写原因被拦、写了冲掉、那一笔下面写明已冲掉）→ 减金额（超过余额被拦、100 减成功）；财务页那句、菜单入口。控制台 0 报错。
+- 员工：客户余额 → 看流水（没有「冲掉」、没有操作人）。控制台 0 报错。
+- 客户：余额页标题 / 文案 / 新流水中文名 / 账单号在单号列；用 SQL 把余额改成负数看了标红；两个集货页没有「集货余额」字样。控制台 0 报错。
+- 没看的：集货付款弹窗本身（库里没有待付款的单，没打开）、手机宽度、代理端（入口关着）。

@@ -274,7 +274,7 @@ export default function ClientWhrConsolidationPage() {
   // 付款上传 — 预报单级别
   const [showPay, setShowPay] = useState(false);
   const [currentPayPrealertId, setCurrentPayPrealertId] = useState<string | null>(null);
-  // 集货余额（2026-08-07）：付款直接扣这里的钱
+  // 余额（2026-08-07）：付款直接扣这里的钱
   /* null = 还没读到（读取中 / 读失败）。原来读失败一律当 0，付款弹窗就说「余额不足」把人拦住（2026-09-29 Codex 全系统检查） */
   const [balance, setBalance] = useState<number | null>(null);
   const [paySubmitting, setPaySubmitting] = useState(false);
@@ -282,7 +282,7 @@ export default function ClientWhrConsolidationPage() {
   // ==========================================================================
   // 数据加载
   // ==========================================================================
-  /** 读集货余额。付款弹窗要用它判断够不够，付完也要刷新。
+  /** 读余额。付款弹窗要用它判断够不够，付完也要刷新。
    *  silent（有变化时悄悄重拉）读失败：保留上一次读到的数，不让正开着的付款框突然变灰（Codex 复查 2026-10-05） */
   /* 余额、计划列表晚到的旧结果不盖新的（2026-10-18 全系统审查 F-10）：实时推送的重拉、付款后的刷新、初次加载同时在路上，
      先发的后回来 —— 刚付完款余额又变回付款前、刚装柜的计划又退回去。成功回来的只要不比已显示的旧就用（用法三）。
@@ -492,7 +492,7 @@ export default function ClientWhrConsolidationPage() {
   };
 
   // ==========================================================================
-  // 操作：用集货余额付款（预报单级别，2026-08-07 改）
+  // 操作：用余额付款（预报单级别，2026-08-07 改）
   // 原来是上传付款凭证等审核，现在直接扣余额、当场完成。
   // 不可撤销，所以下单前有一道确认；点错了只能找客服在管理员端撤销。
   // ==========================================================================
@@ -503,9 +503,9 @@ export default function ClientWhrConsolidationPage() {
     if (!(fee > 0)) { setToast("这张预报单还没有计费金额，请联系客服"); return; }
     // 付之前现读一次余额（2026-09-29）：页面开着的时候客户可能刚充过值，拿老数字会误拦
     const nowBalance = await loadBalance();
-    if (nowBalance === null) { setToast("集货余额没读出来，请稍后再试或刷新页面"); return; }
-    if (nowBalance < fee) { setToast(`集货余额不足，还差 ¥${(fee - nowBalance).toFixed(2)}，请先去「集货余额」充值`); return; }
-    if (!confirm(`确认用集货余额支付 ¥${fee.toFixed(2)}？\n\n此次付款不可撤销，误操作请联系客服。`)) return;
+    if (nowBalance === null) { setToast("余额没读出来，请稍后再试或刷新页面"); return; }
+    if (nowBalance < fee) { setToast(`余额不足，还差 ¥${(fee - nowBalance).toFixed(2)}，请先去「余额」充值`); return; }
+    if (!confirm(`确认用余额支付 ¥${fee.toFixed(2)}？\n\n此次付款不可撤销，误操作请联系客服。`)) return;
     setPaySubmitting(true);
     try {
       const r = await apiRequest<any>(
@@ -1042,7 +1042,7 @@ export default function ClientWhrConsolidationPage() {
           const enough = balance !== null && balance >= fee && fee > 0;
           return (
           <Modal onClose={() => { setShowPay(false); setCurrentPayPrealertId(null); }}>
-            <h3 style={{ marginTop: 0 }}>用集货余额付款</h3>
+            <h3 style={{ marginTop: 0 }}>用余额付款</h3>
             <p style={{ fontSize: 13, color: "var(--t-muted)", marginBottom: 8 }}>
               预报单：{payPa?.trackingNo ?? "—"}
               &nbsp;· 应付：<strong style={{ color: "var(--c-navy)", fontSize: 16 }}>{fee > 0 ? money(fee) : "—"}</strong>
@@ -1051,11 +1051,11 @@ export default function ClientWhrConsolidationPage() {
             <p style={{ fontSize: 12, color: "var(--t-muted)", marginTop: 8 }}>收货地址：{detail?.deliveryAddress || "未填写"}</p>
 
             <div style={{ marginTop: 12, padding: "10px 12px", border: "1px solid var(--l-soft)", borderRadius: 6 }}>
-              <div style={{ fontSize: 13 }}>当前集货余额：<strong>{balance === null ? "正在读取…（一直读不出来请刷新页面）" : `¥${balance.toFixed(2)}`}</strong></div>
+              <div style={{ fontSize: 13 }}>当前余额：<strong>{balance === null ? "正在读取…（一直读不出来请刷新页面）" : `¥${balance.toFixed(2)}`}</strong></div>
               {fee > 0 && balance !== null && (
                 enough
                   ? <div style={{ fontSize: 13, color: "var(--t-body)", marginTop: 4 }}>付款后剩余：¥{(balance - fee).toFixed(2)}</div>
-                  : <div style={{ fontSize: 13, color: "var(--c-red-deep)", marginTop: 4 }}>余额不足，还差 ¥{(fee - balance).toFixed(2)}，请先去「集货余额」充值</div>
+                  : <div style={{ fontSize: 13, color: "var(--c-red-deep)", marginTop: 4 }}>余额不足，还差 ¥{(fee - balance).toFixed(2)}，请先去「余额」充值</div>
               )}
             </div>
 

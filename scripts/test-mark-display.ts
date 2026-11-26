@@ -466,6 +466,8 @@ check("11) 超管看记录时，客户自己操作的那几步「操作人」显
     ["apps/api/src/modules/shipments/routes.ts", /log = \{ \.\.\.log, operatorName: operatorNameForDisplay\(log as /],
     // 2026-11-27 给财务系统2 的余额流水（/integrations/finance2-balance/v1/ledger）：客户自己付的那笔也给唛头
     ["apps/api/src/modules/finance2-balance/views.ts", /const shown = operatorNameForDisplay\(\{\s*operatorRole: r\.operator_id !== null && r\.operator_id === r\.client_id \? "client" : "staff",/],
+    // 2026-11-27 员工 / 管理员按客户看余额流水（/staff/wallet/ledger）：只给管理员、客户自己付的那步给唛头
+    ["apps/api/src/modules/wallet/admin-adjust-routes.ts", /operatorName: seeOperator\s*\? operatorNameForDisplay\(\{ operatorRole: r\.operatorId !== null && r\.operatorId === clientId \? "client" : "staff", operatorId: r\.operatorId, operatorName: r\.operatorName \}\)/],
   ];
   for (const [file, re] of uses) assert.match(stripComments(read(file)), re, `${file} 发操作人没走 operatorNameForDisplay`);
   // 除了上面这几处和两处「恢复被删的记录」原样搬回（不是显示），接口里不许再有人直接把 xx.operatorName 发出去
@@ -478,6 +480,8 @@ check("11) 超管看记录时，客户自己操作的那几步「操作人」显
       const restoreFile = file.endsWith("/shipments/routes.ts") || file.endsWith("/containers/routes.ts");
       for (const m of line.matchAll(/([\w$\])]*)\s*[?!]?\.operatorName\b/g)) {
         if ((m[1] === "before" && restoreFile) || (m[1] === "args" && file.endsWith("/wallet/consolidation-balance.ts"))) continue;
+        // 按客户看余额流水：把 r.operatorName 交给 operatorNameForDisplay 的那一处（上面 uses 里钉住了整句）
+        if (m[1] === "r" && file.endsWith("/wallet/admin-adjust-routes.ts") && /operatorNameForDisplay\(\{ operatorRole: r\.operatorId/.test(line)) continue;
         raw.push(`${file}:${n + 1}  ${line.trim()}`);
       }
       // 方括号取值、解构（第 3 轮 Opus 实测绕过）
