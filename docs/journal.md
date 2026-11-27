@@ -1,5 +1,13 @@
 # 项目交接日志
 
+## 2026-11-27（北京 16:05）上线 e9988c6：财务系统2 客户余额（物流这边五个提交 e9f262f、b5341d0、9a2e1ce、c740e5a、e9988c6）
+- 老板在财务窗口点的头（原话「改完就上线」；先上物流、再上财务，财务那边自动扣的开关先关着）。上线从财务窗口做的，没动本机主目录（那里有别人 38 处没提交的改动）：工作树 `claude/caiwu2-balance` 直接快进推到 GitHub main（`6c3a19f..e9988c6`，这两天远端没有别人的新提交）。GitHub 自动检查那次是 success。
+- 上线前只读看：服务器 HEAD 6c3a19f、只有 package-lock 被改、磁盘剩 38G、容器 healthy、PostgreSQL 16.14、没有卡住的迁移；正式库只差 `20261127_finance2_balance`、`20261127_wallet_adjustments` 两个迁移（只加不删）。正式库的集货余额只有两个测试号有钱（`u_client_001` 12000、`测试唛头` 450），流水 0 条——没有真实客户的钱。
+- 服务器 `.env`：先备份成 `.env.bak-20261127-balance`，加了 `FINANCE2_BALANCE_ENABLED=true` 和 `FINANCE2_BALANCE_KEY_SHA256`（余额那把新钥匙的指纹，`scripts/finance2-make-key.ts balance` 生成；钥匙本身只给财务系统2 的服务器）。
+- `bash deploy.sh` 退出 0：有迁移 → 先整库备份 `/root/db-backups/xiangtai_predeploy_20261127_080408.sql.gz`（823M）→ 两个迁移跑上 → 结构体检一致 → 「部署完成，一切正常」。
+- 上线后核对：HEAD e9988c6；api / web 容器新建、healthy、重启 0；后端日志 0 条 ERROR；`finance2_balance_requests`、`wallet_adjustments` 两张新表在、0 行，流水表 `tx_id` 列的默认值对；两个测试号余额没变；服务器本机访问 `/login`、`/admin/client-balance` 都 200。余额接口从外面（`https://api.xianlianth.com/integrations/finance2-balance/v1`）试：不带钥匙 401、带错钥匙 401、带新钥匙查余额 200（两个测试号的数对、不认识的唛头不出现）、流水 200 空。
+- 没验的：没登录正式站点页面（不输正式密码）；管理员「客户余额」页、客户余额页的新样子要老板或管理员自己看一眼。财务系统2 那边接上以后才会真来扣。
+
 ## 2026-11-27 客户余额第 4 轮：审查 + 总窗口亲手点的 9 处（新提交，没改写前面的）
 - 网断以后同一笔不会加两遍（提交编号跟填的内容绑定，不确定办成没有时同样内容再交用回原编号）；流水「加载中」不再卡死；看流水不再把水单原图读出来；财务接口和管理员加减冲等锁有头（数据库 lock_timeout / statement_timeout，财务那边 8 秒内一定回话，实测 4.2 秒回 503、重发只扣一次）；流水金额带千分位；代理入口改叫「客户余额」；水单路径不许 ..；提交编号不许两用。
 - 「菜单点了不跳」复现不出来（开发、生产构建都点过），没改代码。细节 `docs/sessions/2026-11-27-finance2-balance.md` 第 4 轮。
