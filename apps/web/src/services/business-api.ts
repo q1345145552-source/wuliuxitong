@@ -927,9 +927,22 @@ export interface StaffWalletClientItem {
   updatedAt: string | null;
 }
 
-export async function fetchStaffWalletClients(keyword?: string): Promise<{ clients: StaffWalletClientItem[]; total: number }> {
-  const q = keyword?.trim() ? `?keyword=${encodeURIComponent(keyword.trim())}` : "";
-  const response = await fetch(`${apiBaseUrl()}/staff/wallet/clients${q}`, { method: "GET", headers: { ...authHeaders() } });
+/**
+ * 客户和余额（2026-11-27 起后端排好序：负数最前 → 有余额的多的在上 → 0 的按唛头）。
+ * onlyNonZero：只要余额不是 0 的（含负数）。matched / positiveCount / negativeCount 是按唛头搜出来的总数和其中正 / 负的个数（不受 onlyNonZero 影响）
+ */
+export async function fetchStaffWalletClients(keyword?: string, onlyNonZero = false): Promise<{
+  clients: StaffWalletClientItem[];
+  total: number;
+  matched: number;
+  positiveCount: number;
+  negativeCount: number;
+}> {
+  const q = new URLSearchParams();
+  if (keyword?.trim()) q.set("keyword", keyword.trim());
+  if (onlyNonZero) q.set("onlyNonZero", "1");
+  const suffix = q.size > 0 ? `?${q.toString()}` : "";
+  const response = await fetch(`${apiBaseUrl()}/staff/wallet/clients${suffix}`, { method: "GET", headers: { ...authHeaders() } });
   return parseApiResponse(response);
 }
 

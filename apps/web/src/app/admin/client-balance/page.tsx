@@ -75,15 +75,24 @@ export default function AdminClientBalancePage() {
    */
   const uncertain = useMemo(() => createUncertainStore(browserStorage()), []);
 
+  /** 「只看有余额的」（余额不是 0 的，含负数）。默认不勾（2026-11-27 老板） */
+  const [onlyNonZero, setOnlyNonZero] = useState(false);
+  /** 按唛头搜出来一共几个、其中余额大于 0 / 小于 0 的各几个（不受「只看有余额的」影响） */
+  const [counts, setCounts] = useState<{ matched: number; positive: number; negative: number } | null>(null);
+
   const listSeq = useRef(0);
   const keywordRef = useRef(keyword);
   keywordRef.current = keyword;
+  const onlyNonZeroRef = useRef(onlyNonZero);
+  onlyNonZeroRef.current = onlyNonZero;
   const loadClients = useCallback(async (opts?: { silent?: boolean }) => {
     const mine = ++listSeq.current;
     try {
-      const data = await fetchStaffWalletClients(keywordRef.current);
+      // 顺序后端排好了（负数最前 → 有余额的多的在上 → 0 的按唛头），这里照原样显示，不再自己排
+      const data = await fetchStaffWalletClients(keywordRef.current, onlyNonZeroRef.current);
       if (mine !== listSeq.current) return;
       setClients(data.clients);
+      setCounts({ matched: data.matched, positive: data.positiveCount, negative: data.negativeCount });
       setLoaded(true);
       setListError("");
     } catch (e) {
@@ -91,7 +100,8 @@ export default function AdminClientBalancePage() {
       setListError(e instanceof Error ? e.message : "客户没加载出来");
     }
   }, []);
-  useEffect(() => { void loadClients(); }, [loadClients]);
+  // 第一次打开、勾上 / 取消「只看有余额的」都重拉
+  useEffect(() => { void loadClients(); }, [loadClients, onlyNonZero]);
   useLiveRefresh({ topics: ["wallet", "consolidation", "whr"], refresh: () => loadClients({ silent: true }) });
 
   const selectedClient = useMemo(() => clients.find((c) => c.clientId === selected) ?? null, [clients, selected]);
@@ -228,13 +238,26 @@ export default function AdminClientBalancePage() {
           <input aria-label="按唛头搜客户" value={keyword} onChange={(e) => setKeyword(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void loadClients(); }}
             placeholder="按唛头搜…" style={{ ...input, width: 220 }} />
           <button type="button" style={btn} onClick={() => void loadClients()}>搜索</button>
+          <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 13, cursor: "pointer" }}>
+            <input type="checkbox" checked={onlyNonZero} onChange={(e) => setOnlyNonZero(e.target.checked)} />
+            只看有余额的（含负数）
+          </label>
         </div>
         {listError ? <p role="alert" style={{ color: "var(--c-red-deep)", fontSize: 13 }}>客户没加载出来：{listError}</p> : null}
         {!loaded && !listError ? <p style={{ color: "var(--t-muted)", fontSize: 13 }}>加载中…</p> : null}
         {loaded ? (
           <>
-            <div style={{ fontSize: 12, color: "var(--t-strong)", marginBottom: 6 }}>共 {clients.length} 个客户</div>
-            {narrow ? (
+            <div style={{ fontSize: 12, color: "var(--t-strong)", marginBottom: 6 }}>
+              共 {counts?.matched ?? clients.length} 个客户
+              {counts ? `，其中有余额的 ${counts.positive} 个${counts.negative > 0 ? `、负数的 ${counts.negative} 个` : ""}` : ""}
+              {onlyNonZero ? ` · 下面只列出余额不是 0 的 ${clients.length} 个` : ""}
+              <span style={{ color: "var(--t-muted)" }}>（负数的排最前，再是余额多的，余额是 0 的在后面）</span>
+            </div>
+            {clients.length === 0 ? (
+              <p style={{ color: "var(--t-muted)", fontSize: 13 }}>
+                {onlyNonZero && (counts?.matched ?? 0) > 0 ? "搜到的客户余额都是 0；把「只看有余额的」去掉勾就能看到他们" : "没有找到客户"}
+              </p>
+            ) : narrow ? (
               <div style={{ display: "grid", gap: 8, maxHeight: 420, overflowY: "auto" }}>
                 {clients.map((c) => (
                   <div key={c.clientId} style={{ border: "1px solid var(--l-soft)", borderRadius: 10, padding: "10px 12px", background: c.clientId === selected ? "var(--c-blue-bg)" : undefined }}>

@@ -317,6 +317,28 @@ async function main(): Promise<void> {
     await tick();
   });
 
+  await check("W10 客户列表的顺序在后端排（负数最前 → 多的在上 → 0 的按唛头，Decimal 比、稳定排序）；「只看有余额的」默认不勾、勾了带 onlyNonZero=1；计数那一句", async () => {
+    const { sortByBalanceForList } = await import("../apps/api/src/modules/wallet/balance-order");
+    const { Prisma } = await import("@prisma/client");
+    const rows = [["A", "0"], ["B", "100"], ["C", "-50"], ["D", "100"], ["E", "-200.01"], ["F", "0.00"], ["G", "0.01"], ["H", "-200"]] as const;
+    assert.deepEqual(sortByBalanceForList(rows, (r) => new Prisma.Decimal(r[1])).map((r) => r[0]), ["E", "H", "C", "B", "D", "G", "A", "F"]);
+    assert.deepEqual(rows.map((r) => r[0]), ["A", "B", "C", "D", "E", "F", "G", "H"], "不改传进来的数组");
+    const r = code("apps/api/src/modules/wallet/admin-adjust-routes.ts");
+    assert.match(r, /const shown = sortByBalanceForList\(onlyNonZero \? rows\.filter\(\(r\) => !r\.balance\.isZero\(\)\) : rows, \(r\) => r\.balance\);/);
+    assert.match(code("apps/api/src/modules/admin/routes.ts"), /const entries = sortByBalanceForList\(\[\.\.\.map\.entries\(\)\], \(\[, b\]\) => new Prisma\.Decimal\(b\.cny\)\);/, "员工那份也排");
+    assert.match(page, /const \[onlyNonZero, setOnlyNonZero\] = useState\(false\);/, "默认不勾");
+    assert.match(page, /<input type="checkbox" checked=\{onlyNonZero\} onChange=\{\(e\) => setOnlyNonZero\(e\.target\.checked\)\} \/>\s*只看有余额的（含负数）/);
+    assert.match(page, /fetchStaffWalletClients\(keywordRef\.current, onlyNonZeroRef\.current\)/);
+    assert.match(page, /useEffect\(\(\) => \{ void loadClients\(\); \}, \[loadClients, onlyNonZero\]\);/);
+    assert.match(page, /，其中有余额的 \$\{counts\.positive\} 个\$\{counts\.negative > 0 \? `、负数的 \$\{counts\.negative\} 个` : ""\}/, "负数是 0 时不写后半句");
+    assert.doesNotMatch(page, /clients\.sort\(|\[\.\.\.clients\]\.sort/, "页面不自己排");
+    assert.match(page, /onlyNonZero && \(counts\?\.matched \?\? 0\) > 0 \? "搜到的客户余额都是 0；把「只看有余额的」去掉勾就能看到他们" : "没有找到客户"/, "勾着开关、搜到的都是 0 时说清楚");
+    const api = read("apps/web/src/services/business-api.ts");
+    assert.match(api, /if \(onlyNonZero\) q\.set\("onlyNonZero", "1"\);/);
+    assert.match(api, /export async function fetchStaffWalletClients\(keyword\?: string, onlyNonZero = false\)/);
+    for (const k of ["matched", "positiveCount", "negativeCount"]) assert.match(r, new RegExp(`\\b${k}[,:]`), `后端给了 ${k}`);
+  });
+
   await check("W5 「集货余额」给人看的字一个不剩（注释、标识符、老测试的历史数据不算）；菜单 / 标题改名；代理入口改名但照旧关着", () => {
     const left: string[] = [];
     for (const f of [...walk(path.join(ROOT, "apps/web/src"), [".ts", ".tsx"]), ...walk(path.join(ROOT, "apps/api/src"), [".ts"])]) {
@@ -347,7 +369,7 @@ async function main(): Promise<void> {
     for (const k of ["id", "type", "typeLabel", "amount", "balanceAfter", "source", "refNo", "remark", "operatorName", "createdAt", "adjustment", "canReverse", "hasProof", "reversed", "at", "reason", "byName"]) {
       assert.match(ledgerItem, new RegExp(`\\b${k}:`), `后端流水一行没有 ${k}`);
     }
-    for (const k of ["clientId", "status", "balance", "updatedAt"]) assert.match(r.slice(r.indexOf("clients: users.map"), r.indexOf("total: users.length")), new RegExp(`\\b${k}:`));
+    for (const k of ["clientId", "status", "balance", "updatedAt"]) assert.match(r.slice(r.indexOf("clients: shown.map"), r.indexOf("total: shown.length")), new RegExp(`\\b${k}:`));
     assert.match(r, /adjustment: \{\s*id: a\.id,\s*kind: a\.kind,\s*clientId: a\.clientId,\s*amount: Number\(a\.amount\),\s*remark: a\.remark \?\? "",\s*hasProof,\s*createdAt: a\.createdAt\.toISOString\(\),\s*\},\s*balanceAfter: Number\(a\.balanceAfter\),\s*duplicate,/);
     assert.match(api, /adjustment: \{ id: string; kind: string; clientId: string; amount: number; remark: string; hasProof: boolean; createdAt: string \};\s*balanceAfter: number;/);
     for (const k of ["adjustmentId", "clientId", "amount", "reason", "reversedAt", "balanceAfter", "duplicate"]) {

@@ -1144,8 +1144,13 @@
 - `POST /admin/wallet/adjustments/deduct`（只给 admin）`{clientId, amount, reason, submitKey}`：原因必填；不收水单；锁里判断，减完小于 0 → `400`「余额不够减：现在 ¥x，要减 ¥y」，一分不动、编号不记。回同上。
 - `POST /admin/wallet/adjustments/reverse`（只给 admin）`{adjustmentId, clientId, reason, submitKey}`：整笔冲掉一笔**管理员充值**；原因必填；`clientId` 必须是那一笔的客户（否则 400，推送靠它只推这一个客户）；先锁住那张调整单再看冲过没有：冲过 → `409`「刚刚已经被冲掉了」；减金额那种 → `400`；没有 / 别家公司 → `404`。余额不够冲也照冲，可以成负数。回 `{adjustmentId, clientId, amount, reason, reversedAt, balanceAfter, duplicate}`。
 - `GET /admin/wallet/adjustments/proof?id=`（只给 admin）：`{id, proofImage}`（列表里不带图）。
-- `GET /staff/wallet/clients?keyword=`（员工、管理员）：本公司全部客户 `{clientId, status, balance, updatedAt}`（只给唛头、不给名字；没钱包的 0 / null；按唛头模糊搜），`total`。
+- `GET /staff/wallet/clients?keyword=&onlyNonZero=`（员工、管理员）：本公司全部客户 `{clientId, status, balance, updatedAt}`（只给唛头、不给名字；没钱包的 0 / null；按唛头模糊搜）。
+  顺序（2026-11-27 第 5 轮，老板看了正式站「122 个客户满屏 ¥0.00」）在后端排：余额是负数的最前（负得多的在上）→ 余额大于 0 的（多的在上）→ 余额是 0 的；一样多的照旧按唛头。金额用 Decimal 比。
+  `onlyNonZero=1` 只列余额不是 0 的（含负数）；不传或 `0` 全列；别的值 400。跟 `keyword` 能叠着用。
+  回 `clients`、`total`（这次列出来的条数）、`matched`（按搜索词搜到的客户数，不受开关影响）、`positiveCount` / `negativeCount`（搜到的里面余额大于 0 / 小于 0 的个数）。
 - `GET /staff/wallet/ledger?clientId=&page=&pageSize=`（员工、管理员）：这个客户的流水，新的在前、真分页（默认 50、最多 500），带 `balance`。每行 `{id,type,typeLabel,amount,balanceAfter,source,refNo,remark,operatorName?,createdAt,adjustment}`；`adjustment` = `{id,kind,canReverse,hasProof,reversed:{at,reason,byName?}|null}`（只有管理员调整的那几行有）。`operatorName` 和 `reversed.byName` 只给管理员（员工拿不到这两个字段）。
+
+- `GET /staff/wallet/balances`（员工页「客户余额」，只列有钱包的客户）：同样负数最前 → 多的在上 → 0 的；一样多按唛头（第 5 轮）。
 
 推送：三个写接口路径带 `/wallet/`，自动推「wallet」；请求里的 `clientId` 让它只推给这一个客户（员工、管理员照旧收全公司）。
 客户余额页（`/client/wallet/ledger`）：`typeLabel` 管理员充值 / 冲掉充值 / 管理员减金额，`source`「后台调整」；认不出的类型 / 来源一律写「其他」（原来会把英文代码原样给客户）。

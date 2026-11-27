@@ -32,6 +32,7 @@ import {
   CONSOLIDATION_CURRENCY,
   InsufficientBalanceError,
 } from "./consolidation-balance";
+import { sortByBalanceForList } from "./balance-order";
 
 type Tx = Prisma.TransactionClient;
 
@@ -322,12 +323,18 @@ const REF_ZH: Record<string, string> = {
 };
 
 export function registerWalletAdjustRoutes(app: MinimalHttpApp): void {
-  /* ===== 员工 / 管理员：客户和余额（按唛头搜，不带客户名字 —— 2026-09-19「显示唛头就行了」） ===== */
+  /* ===== 员工 / 管理员：客户和余额（按唛头搜，不带客户名字 —— 2026-09-19「显示唛头就行了」） =====
+     顺序（2026-11-27 老板看了正式站改的）：负数的最前（负得多的在上）→ 有余额的（多的在上）→ 0 的（按唛头）。在这里排好再给，页面不再自己排。
+     onlyNonZero=1：只给余额不是 0 的（含负数）；跟 keyword 可以一起用。
+     matched / positiveCount / negativeCount：按唛头搜出来的客户一共多少、其中余额大于 0 的、小于 0 的（不受 onlyNonZero 影响） */
   app.get("/staff/wallet/clients", async (req, res) => {
     const auth = requireRole(req, res, ["staff", "admin"]);
     if (!auth) return;
     const keyword = (typeof req.query.keyword === "string" ? req.query.keyword : "").trim();
     if (keyword.length > 64) { fail(res, 400, "BAD_REQUEST", "搜索词太长"); return; }
+    const rawFlag = req.query.onlyNonZero;
+    if (rawFlag !== undefined && rawFlag !== "" && rawFlag !== "0" && rawFlag !== "1") { fail(res, 400, "BAD_REQUEST", "onlyNonZero 只能是 0 或 1"); return; }
+    const onlyNonZero = rawFlag === "1";
     const users = await prisma.user.findMany({
       where: { companyId: auth.companyId, role: "client", ...(keyword ? { id: { contains: keyword, mode: "insensitive" } } : {}) },
       orderBy: { id: "asc" },
@@ -338,17 +345,24 @@ export function registerWalletAdjustRoutes(app: MinimalHttpApp): void {
       select: { clientId: true, balance: true, updatedAt: true },
     });
     const byClient = new Map(accounts.map((a) => [a.clientId, a]));
+    const rows = users.map((u) => {
+      const a = byClient.get(u.id);
+      return { id: u.id, status: u.status, balance: a ? new Prisma.Decimal(a.balance) : new Prisma.Decimal(0), updatedAt: a ? a.updatedAt : null };
+    });
+    const positiveCount = rows.filter((r) => r.balance.gt(0)).length;
+    const negativeCount = rows.filter((r) => r.balance.lt(0)).length;
+    const shown = sortByBalanceForList(onlyNonZero ? rows.filter((r) => !r.balance.isZero()) : rows, (r) => r.balance);
     ok(res, {
-      clients: users.map((u) => {
-        const a = byClient.get(u.id);
-        return {
-          clientId: u.id,
-          status: u.status,
-          balance: a ? Number(a.balance) : 0,
-          updatedAt: a ? a.updatedAt.toISOString() : null,
-        };
-      }),
-      total: users.length,
+      clients: shown.map((r) => ({
+        clientId: r.id,
+        status: r.status,
+        balance: Number(r.balance),
+        updatedAt: r.updatedAt ? r.updatedAt.toISOString() : null,
+      })),
+      total: shown.length,
+      matched: rows.length,
+      positiveCount,
+      negativeCount,
     });
   });
 

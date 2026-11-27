@@ -529,6 +529,35 @@ async function main(): Promise<void> {
     });
 
     /* ==================== 老路 ==================== */
+    console.log("\n【列表顺序和「只看有余额的」（2026-11-27 老板看了正式站）】");
+    await test("S1 客户列表：负数最前（负得多的在上）→ 有余额的（多的在上、一样多按唛头）→ 0 的按唛头；数对；「只看有余额的」只列不是 0 的；搜索能叠着用；员工那份同样排", async () => {
+      const SCO = "zz_wadj_sort";
+      const SADMIN = { userId: "zz_wadj_sadmin", companyId: SCO, role: "admin", name: "排序管理员", agentId: null };
+      await mkUser(SADMIN.userId, "admin", SCO);
+      const bal: Record<string, string | null> = { ZZSA: null, ZZSB: "100.00", ZZSC: "-50.00", ZZSD: "100.00", ZZSE: "-200.00", ZZSF: "0.00", ZZSG: "5.00" };
+      for (const [id, b] of Object.entries(bal)) {
+        await mkUser(id, "client", SCO);
+        if (b !== null) await db.clientWalletAccount.create({ data: { clientId: id, companyId: SCO, currency: "CNY", balance: b } });
+      }
+      const all = await ok200(call("GET /staff/wallet/clients", SADMIN));
+      assert.deepEqual(all.clients.map((c: Row) => c.clientId), ["ZZSE", "ZZSC", "ZZSB", "ZZSD", "ZZSG", "ZZSA", "ZZSF"]);
+      assert.deepEqual([all.matched, all.positiveCount, all.negativeCount, all.total], [7, 3, 2, 7]);
+      const nz = await ok200(call("GET /staff/wallet/clients", SADMIN, {}, { onlyNonZero: "1" }));
+      assert.deepEqual(nz.clients.map((c: Row) => c.clientId), ["ZZSE", "ZZSC", "ZZSB", "ZZSD", "ZZSG"]);
+      assert.deepEqual([nz.matched, nz.positiveCount, nz.negativeCount, nz.total], [7, 3, 2, 5], "数按搜出来的全部算，不受开关影响");
+      const off = await ok200(call("GET /staff/wallet/clients", SADMIN, {}, { onlyNonZero: "0" }));
+      assert.equal(off.total, 7);
+      const kw = await ok200(call("GET /staff/wallet/clients", SADMIN, {}, { keyword: "zzsb" }));
+      assert.deepEqual(kw.clients.map((c: Row) => c.clientId), ["ZZSB"]);
+      const kwZero = await ok200(call("GET /staff/wallet/clients", SADMIN, {}, { keyword: "ZZSF", onlyNonZero: "1" }));
+      assert.deepEqual([kwZero.clients.length, kwZero.matched, kwZero.positiveCount, kwZero.negativeCount], [0, 1, 0, 0], "搜到一个 0 的、勾上开关就不列");
+      const kwNeg = await ok200(call("GET /staff/wallet/clients", SADMIN, {}, { keyword: "ZZS", onlyNonZero: "1" }));
+      assert.deepEqual(kwNeg.clients.map((c: Row) => c.clientId), ["ZZSE", "ZZSC", "ZZSB", "ZZSD", "ZZSG"]);
+      assert.equal((await call("GET /staff/wallet/clients", SADMIN, {}, { onlyNonZero: "yes" })).status, 400);
+      const staffList = await ok200(call("GET /staff/wallet/balances", { ...SADMIN, role: "staff" }));
+      assert.deepEqual(staffList.balances.map((b: Row) => b.clientId), ["ZZSE", "ZZSC", "ZZSB", "ZZSD", "ZZSG", "ZZSF"], "员工那份（只列有钱包的）同样排");
+    });
+
     console.log("\n【审查补的（2026-11-27）】");
     await test("A1 一个提交编号不许既拿来加 / 减又拿来冲掉（两个方向都 409，不动钱）；水单路径不许带 ..", async () => {
       const t = await ok200(topup(ADMIN, { clientId: C.A, amount: "3.00", submitKey: newKey() }));

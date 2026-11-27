@@ -12,6 +12,7 @@ import { logger } from "../core/logger";
 import type { MinimalHttpApp } from "../../server";
 import { fail, ok, requireRole } from "../core/http-utils";
 import { CONSOLIDATION_CURRENCY, recordRechargeCredit } from "../wallet/consolidation-balance";
+import { sortByBalanceForList } from "../wallet/balance-order";
 import { loadProductImagesForOrders } from "../orders/product-images";
 import { deleteImageFile } from "../orders/image-storage";
 import { loadOrderProducts, readCargoTypes } from "../orders/routes";
@@ -2228,8 +2229,10 @@ export function registerAdminRoutes(app: MinimalHttpApp): void {
       if (a.currency === "THB") entry.thb = Number(a.balance.toString());
     }
 
+    // 顺序（2026-11-27 老板看了正式站改的，跟管理员「客户余额」页同一个规矩）：人民币余额负数的最前 → 有余额的（多的在上）→ 0 的（按唛头）
+    const entries = sortByBalanceForList([...map.entries()], ([, b]) => new Prisma.Decimal(b.cny));
     ok(res, {
-      balances: [...map.entries()].map(([clientId, b]) => ({
+      balances: entries.map(([clientId, b]) => ({
         clientId,
         companyName: userMap.get(clientId)?.companyName ?? "",
         cny: b.cny,
